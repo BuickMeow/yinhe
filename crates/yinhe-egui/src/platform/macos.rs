@@ -14,6 +14,142 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use rust_i18n::t;
 
 use super::MenuAction;
+use yinhe_editor_core::shortcuts::{self, Keybindings};
+
+/// 原生菜单项（按 i18n key 标识）与快捷键配置动作的对应关系，
+/// 供 `refresh_native_menu_accelerators` 把用户自定义快捷键同步到 macOS 菜单栏。
+const MENU_ACCEL_MAP: &[(&str, &str)] = &[
+    ("menu.new", shortcuts::ACTION_NEW_PROJECT),
+    ("menu.open", shortcuts::ACTION_OPEN),
+    ("menu.save", shortcuts::ACTION_SAVE),
+    ("menu.save_as", shortcuts::ACTION_SAVE_AS),
+    ("menu.close", shortcuts::ACTION_CLOSE_DOCUMENT),
+    ("menu.undo", shortcuts::ACTION_UNDO),
+    ("menu.redo", shortcuts::ACTION_REDO),
+    ("menu.cut", shortcuts::ACTION_CUT),
+    ("menu.copy", shortcuts::ACTION_COPY),
+    ("menu.paste", shortcuts::ACTION_PASTE),
+    ("menu.select_all", shortcuts::ACTION_SELECT_ALL),
+    ("menu.duplicate", shortcuts::ACTION_DUPLICATE),
+    ("menu.delete", shortcuts::ACTION_DELETE),
+    ("menu.octave_up", shortcuts::ACTION_TRANSPOSE_UP),
+    ("menu.octave_down", shortcuts::ACTION_TRANSPOSE_DOWN),
+    ("menu.settings", shortcuts::ACTION_SETTINGS),
+    ("menu.quit", shortcuts::ACTION_EXIT),
+];
+
+/// 键名（`Keybindings` 中 `KeyCombo.key`）→ macOS 加速键码。
+fn str_to_muda_code(s: &str) -> Option<Code> {
+    let alpha = |c: char| -> Option<Code> {
+        Some(match c {
+            'A' => Code::KeyA,
+            'B' => Code::KeyB,
+            'C' => Code::KeyC,
+            'D' => Code::KeyD,
+            'E' => Code::KeyE,
+            'F' => Code::KeyF,
+            'G' => Code::KeyG,
+            'H' => Code::KeyH,
+            'I' => Code::KeyI,
+            'J' => Code::KeyJ,
+            'K' => Code::KeyK,
+            'L' => Code::KeyL,
+            'M' => Code::KeyM,
+            'N' => Code::KeyN,
+            'O' => Code::KeyO,
+            'P' => Code::KeyP,
+            'Q' => Code::KeyQ,
+            'R' => Code::KeyR,
+            'S' => Code::KeyS,
+            'T' => Code::KeyT,
+            'U' => Code::KeyU,
+            'V' => Code::KeyV,
+            'W' => Code::KeyW,
+            'X' => Code::KeyX,
+            'Y' => Code::KeyY,
+            'Z' => Code::KeyZ,
+            _ => return None,
+        })
+    };
+    let digit = |c: char| -> Option<Code> {
+        Some(match c {
+            '0' => Code::Digit0,
+            '1' => Code::Digit1,
+            '2' => Code::Digit2,
+            '3' => Code::Digit3,
+            '4' => Code::Digit4,
+            '5' => Code::Digit5,
+            '6' => Code::Digit6,
+            '7' => Code::Digit7,
+            '8' => Code::Digit8,
+            '9' => Code::Digit9,
+            _ => return None,
+        })
+    };
+    let first = s.chars().next()?;
+    if s.chars().count() == 1 {
+        if first.is_ascii_alphabetic() {
+            return alpha(first.to_ascii_uppercase());
+        }
+        if first.is_ascii_digit() {
+            return digit(first);
+        }
+    }
+    Some(match s {
+        "F1" => Code::F1,
+        "F2" => Code::F2,
+        "F3" => Code::F3,
+        "F4" => Code::F4,
+        "F5" => Code::F5,
+        "F6" => Code::F6,
+        "F7" => Code::F7,
+        "F8" => Code::F8,
+        "F9" => Code::F9,
+        "F10" => Code::F10,
+        "F11" => Code::F11,
+        "F12" => Code::F12,
+        "Space" => Code::Space,
+        "Enter" => Code::Enter,
+        "Escape" => Code::Escape,
+        "Tab" => Code::Tab,
+        "Backspace" => Code::Backspace,
+        "Delete" => Code::Delete,
+        "Insert" => Code::Insert,
+        "Home" => Code::Home,
+        "End" => Code::End,
+        "PageUp" => Code::PageUp,
+        "PageDown" => Code::PageDown,
+        "ArrowUp" => Code::ArrowUp,
+        "ArrowDown" => Code::ArrowDown,
+        "ArrowLeft" => Code::ArrowLeft,
+        "ArrowRight" => Code::ArrowRight,
+        "Comma" => Code::Comma,
+        "Period" => Code::Period,
+        "Minus" => Code::Minus,
+        "Plus" => Code::Equal,
+        "Semicolon" => Code::Semicolon,
+        "Quote" => Code::Quote,
+        "Backtick" => Code::Backquote,
+        "Backslash" => Code::Backslash,
+        "Slash" => Code::Slash,
+        _ => return None,
+    })
+}
+
+/// `KeyCombo` → 原生加速键；键名无法映射时返回 None（不设置加速键）。
+fn combo_to_accelerator(combo: &yinhe_editor_core::shortcuts::KeyCombo) -> Option<Accelerator> {
+    let mut mods = Modifiers::empty();
+    if combo.command {
+        mods |= Modifiers::SUPER;
+    }
+    if combo.shift {
+        mods |= Modifiers::SHIFT;
+    }
+    if combo.alt {
+        mods |= Modifiers::ALT;
+    }
+    Some(Accelerator::new(Some(mods), str_to_muda_code(&combo.key)?))
+}
 
 /// Helper to look up an Objective-C class by name at runtime.
 fn cls(name: &std::ffi::CStr) -> Option<&'static AnyClass> {
@@ -313,6 +449,8 @@ thread_local! {
 /// 这里扩展统一入口，语言切换时可以逐个刷新 NSMenuItem 标题。
 trait MenuText: IsMenuItem {
     fn set_text(&self, text: &str);
+    /// 更新菜单项加速键（快捷键配置变化时调用）。
+    fn update_accelerator(&self, accelerator: Option<Accelerator>);
 }
 
 impl MenuText for MenuItem {
@@ -320,11 +458,21 @@ impl MenuText for MenuItem {
         // 全限定调用固有方法，避免与 trait 方法同名递归
         MenuItem::set_text(self, text);
     }
+
+    fn update_accelerator(&self, accelerator: Option<Accelerator>) {
+        if let Err(e) = MenuItem::set_accelerator(self, accelerator) {
+            tracing::warn!("Failed to update menu accelerator: {e:?}");
+        }
+    }
 }
 
 impl MenuText for Submenu {
     fn set_text(&self, text: &str) {
         Submenu::set_text(self, text);
+    }
+
+    fn update_accelerator(&self, _accelerator: Option<Accelerator>) {
+        // 子菜单没有加速键
     }
 }
 
@@ -610,11 +758,31 @@ fn refresh_native_menu_texts() {
     });
 }
 
+/// 把用户自定义快捷键同步到原生菜单加速键。
+/// 由 `MenuBarInner::poll` 在检测到快捷键配置变化后调用（主线程）。
+fn refresh_native_menu_accelerators(keybindings: &Keybindings) {
+    NATIVE_MENU.with(|cell| {
+        if let Some(native) = cell.get() {
+            for (key, item) in &native._items {
+                let key = *key;
+                if let Some((_, action_id)) = MENU_ACCEL_MAP.iter().find(|(k, _)| *k == key) {
+                    let acc = keybindings
+                        .get(action_id)
+                        .and_then(|c| combo_to_accelerator(&c));
+                    item.update_accelerator(acc);
+                }
+            }
+        }
+    });
+}
+
 pub(crate) struct MenuBarInner {
     rx: mpsc::Receiver<MenuAction>,
     open_files_rx: mpsc::Receiver<String>,
     /// 上次应用到原生菜单的 locale，变化时刷新菜单文本。
     last_locale: String,
+    /// 上次应用到原生菜单加速键的配置，变化时刷新加速键。
+    last_keybindings: Keybindings,
 }
 
 impl MenuBarInner {
@@ -629,16 +797,23 @@ impl MenuBarInner {
             rx,
             open_files_rx,
             last_locale: rust_i18n::locale().to_string(),
+            last_keybindings: Keybindings::default(),
         }
     }
 
-    pub fn poll(&mut self) -> Vec<MenuAction> {
+    pub fn poll(&mut self, keybindings: &Keybindings) -> Vec<MenuAction> {
         // 应用内语言切换（设置对话框）时原生菜单文本不会自动更新，
         // 检测 locale 变化后逐个刷新标题（setText 走主线程，poll 在 UI 帧内调用）。
         let locale = rust_i18n::locale();
         if *locale != self.last_locale {
             self.last_locale = locale.to_string();
             refresh_native_menu_texts();
+        }
+        // 快捷键配置（设置页）变化时同步原生菜单加速键。
+        // 初始值相等时不刷新（init_native_menu 已按默认值构建）。
+        if keybindings != &self.last_keybindings {
+            self.last_keybindings = keybindings.clone();
+            refresh_native_menu_accelerators(keybindings);
         }
         std::iter::from_fn(|| self.rx.try_recv().ok()).collect()
     }

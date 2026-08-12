@@ -1,6 +1,7 @@
 //! Stub implementations for non-macOS platforms.
 
 use super::MenuAction;
+use yinhe_editor_core::shortcuts::Keybindings;
 
 pub(crate) struct MenuBarInner {
     _rx: std::sync::mpsc::Receiver<MenuAction>,
@@ -12,7 +13,7 @@ impl MenuBarInner {
         Self { _rx: rx }
     }
 
-    pub fn poll(&mut self) -> Vec<MenuAction> {
+    pub fn poll(&mut self, _keybindings: &Keybindings) -> Vec<MenuAction> {
         Vec::new()
     }
 

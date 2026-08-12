@@ -127,7 +127,7 @@ impl eframe::App for App {
         // ── macOS: poll native menu bar actions ──
         // 路由：Select/SelectVertical 工具且有锚点选中时，copy/paste/duplicate/delete 作用于自动化锚点
         let route_to_automation = self.has_selected_automation_anchors();
-        for action in self.menu_bar.poll() {
+        for action in self.menu_bar.poll(&self.audio_settings.keybindings) {
             use crate::platform::MenuAction;
             let file_action = match action {
                 MenuAction::NewProject => transport_bar::FileAction::NewProject,
@@ -300,19 +300,26 @@ impl eframe::App for App {
             &mut self.title_bar_press_pos,
             &mut self.tab_scroll_offset,
             &mut self.status_hint,
+            &self.audio_settings.pinned_file_actions,
         );
-        if let Some(title_bar::TitleBarAction::CloseDocument(idx)) = title_bar_action {
-            if self.documents.get(idx).is_some_and(|d| d.is_dirty()) {
-                self.pending_unsaved = Some(PendingFileAction::CloseDocument(idx));
-                // 把 unsaved 弹窗拉到主窗口前台（用户点击 tab 关闭按钮是主动
-                // 操作，应该立刻看到弹窗）
-                crate::chrome::dialog::raise_viewport(
-                    ui.ctx(),
-                    egui::ViewportId::from_hash_of("unsaved_dialog"),
-                );
-            } else {
-                self.close_document(idx);
+        match title_bar_action {
+            Some(title_bar::TitleBarAction::CloseDocument(idx)) => {
+                if self.documents.get(idx).is_some_and(|d| d.is_dirty()) {
+                    self.pending_unsaved = Some(PendingFileAction::CloseDocument(idx));
+                    // 把 unsaved 弹窗拉到主窗口前台（用户点击 tab 关闭按钮是主动
+                    // 操作，应该立刻看到弹窗）
+                    crate::chrome::dialog::raise_viewport(
+                        ui.ctx(),
+                        egui::ViewportId::from_hash_of("unsaved_dialog"),
+                    );
+                } else {
+                    self.close_document(idx);
+                }
             }
+            Some(title_bar::TitleBarAction::RunFileAction(action)) => {
+                self.handle_file_action(action, ui.ctx());
+            }
+            None => {}
         }
 
         // ── Defensive: ensure active_doc is always in bounds ──
@@ -426,6 +433,7 @@ impl eframe::App for App {
                 follow_mode: &mut self.follow_mode,
                 active_tool: &mut self.active_tool,
                 status_hint: &mut self.status_hint,
+                settings: &mut self.audio_settings,
             },
         );
 
@@ -448,6 +456,10 @@ impl eframe::App for App {
         self.interpolate_playback_cursor();
 
         // ── Handle file menu actions ──
+        // 键盘触发的文件动作（非 macOS）与传输栏菜单触发的合并处理
+        if let Some(action) = kb.file_action {
+            self.handle_file_action(action, ui.ctx());
+        }
         if let Some(action) = transport_response.pending_file_action {
             self.handle_file_action(action, ui.ctx());
         }

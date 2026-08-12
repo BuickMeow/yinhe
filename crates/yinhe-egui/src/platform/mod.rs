@@ -48,8 +48,12 @@ impl MenuBar {
     }
 
     /// Poll for pending menu actions.
-    pub fn poll(&mut self) -> Vec<MenuAction> {
-        self.inner.poll()
+    /// `keybindings` 用于检测快捷键配置变化并同步原生菜单加速键（macOS）。
+    pub fn poll(
+        &mut self,
+        keybindings: &yinhe_editor_core::shortcuts::Keybindings,
+    ) -> Vec<MenuAction> {
+        self.inner.poll(keybindings)
     }
 
     /// Poll for file paths passed in by the OS (Finder "Open With" on macOS).

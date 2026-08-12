@@ -2,10 +2,12 @@ use eframe::egui;
 use egui_material_icons::icons::*;
 use rust_i18n::t;
 
+use crate::audio_settings::AudioSettings;
 use crate::file_loader::FileLoader;
 use crate::view_interaction::{FollowMode, FollowModeExt};
 use crate::widgets::tools_panel::{ALL_TOOLS, Tool};
 use yinhe_editor_core::document::Document;
+use yinhe_editor_core::shortcuts;
 use yinhe_types::time_format;
 
 /// Actions triggered from the file menu dropdown.
@@ -22,11 +24,80 @@ pub enum FileAction {
     Exit,
 }
 
-struct MenuItem {
-    icon: egui_material_icons::MaterialIcon,
-    label: String,
-    action: FileAction,
-    enabled: bool,
+impl FileAction {
+    /// 全部文件动作。**顺序即 `AudioSettings::pinned_file_actions` 数组索引**。
+    pub const ALL: [FileAction; 9] = [
+        FileAction::NewProject,
+        FileAction::Open,
+        FileAction::Save,
+        FileAction::SaveAs,
+        FileAction::CloseDocument,
+        FileAction::ExportAudio,
+        FileAction::ExportMidi,
+        FileAction::Settings,
+        FileAction::Exit,
+    ];
+
+    pub const fn pinned_index(self) -> usize {
+        match self {
+            FileAction::NewProject => 0,
+            FileAction::Open => 1,
+            FileAction::Save => 2,
+            FileAction::SaveAs => 3,
+            FileAction::CloseDocument => 4,
+            FileAction::ExportAudio => 5,
+            FileAction::ExportMidi => 6,
+            FileAction::Settings => 7,
+            FileAction::Exit => 8,
+        }
+    }
+
+    /// 快捷键表（`Keybindings`）中的动作 id。
+    pub const fn action_id(self) -> &'static str {
+        match self {
+            FileAction::NewProject => shortcuts::ACTION_NEW_PROJECT,
+            FileAction::Open => shortcuts::ACTION_OPEN,
+            FileAction::Save => shortcuts::ACTION_SAVE,
+            FileAction::SaveAs => shortcuts::ACTION_SAVE_AS,
+            FileAction::CloseDocument => shortcuts::ACTION_CLOSE_DOCUMENT,
+            FileAction::ExportAudio => shortcuts::ACTION_EXPORT_AUDIO,
+            FileAction::ExportMidi => shortcuts::ACTION_EXPORT_MIDI,
+            FileAction::Settings => shortcuts::ACTION_SETTINGS,
+            FileAction::Exit => shortcuts::ACTION_EXIT,
+        }
+    }
+
+    pub const fn icon(self) -> egui_material_icons::MaterialIcon {
+        match self {
+            FileAction::NewProject => ICON_NOTE_ADD,
+            FileAction::Open => ICON_FOLDER_OPEN,
+            FileAction::Save => ICON_SAVE,
+            FileAction::SaveAs => ICON_SAVE_ALT,
+            FileAction::CloseDocument => ICON_CLOSE,
+            FileAction::ExportAudio => ICON_AUDIO_FILE,
+            FileAction::ExportMidi => ICON_MUSIC_NOTE,
+            FileAction::Settings => ICON_SETTINGS,
+            FileAction::Exit => ICON_EXIT_TO_APP,
+        }
+    }
+
+    /// 动作名的 i18n key（由 `crate::shortcuts::action_label_key` 统一维护）。
+    pub fn label_key(self) -> &'static str {
+        crate::shortcuts::action_label_key(self.action_id())
+    }
+
+    /// 该动作是否可用（菜单中置灰）。
+    fn is_enabled(self, has_active: bool, loading: bool) -> bool {
+        match self {
+            FileAction::NewProject | FileAction::Open => !loading,
+            FileAction::Save
+            | FileAction::SaveAs
+            | FileAction::CloseDocument
+            | FileAction::ExportAudio
+            | FileAction::ExportMidi => has_active,
+            FileAction::Settings | FileAction::Exit => true,
+        }
+    }
 }
 
 /// Aggregated input for the transport bar — replaces 12 positional parameters.
@@ -37,6 +108,8 @@ pub struct TransportContext<'a> {
     pub active_tool: &'a mut Tool,
     /// 状态栏讲解行：控件 hover 时写入提示，空白处清空；鼠标不在传输栏时不动。
     pub status_hint: &'a mut Option<String>,
+    /// 应用设置（快捷键表 + 图钉状态，图钉变化时在此 save）。
+    pub settings: &'a mut AudioSettings,
 }
 
 /// Output from the transport bar — replaces `&mut bool` out-parameters.
@@ -102,6 +175,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     &file_btn,
                     ctx.file_loader,
                     has_active,
+                    ctx.settings,
                     &mut pending_file_action,
                 );
 
@@ -300,120 +374,110 @@ fn tool_hint(tool: Tool) -> String {
 
 /// Show the file menu popup. Extracted from `show` for readability.
 /// 容器与量化弹框同款：Popup::from_toggle_button_response + CloseOnClickOutside。
+/// 固定宽度（快捷键 + 图钉需要稳定的行宽）；每项右侧显示快捷键与图钉按钮。
 fn show_file_menu(
     button: &egui::Response,
     file_loader: &FileLoader,
     has_active: bool,
+    settings: &mut AudioSettings,
     pending_action: &mut Option<FileAction>,
 ) {
     egui::Popup::from_toggle_button_response(button)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .width(crate::theme::FILE_MENU_WIDTH)
         .show(|ui| {
-            ui.set_min_width(180.0);
-
             fn menu_items(
                 ui: &mut egui::Ui,
-                items: &[MenuItem],
+                actions: &[FileAction],
+                has_active: bool,
+                loading: bool,
+                settings: &mut AudioSettings,
                 pending_action: &mut Option<FileAction>,
             ) {
-                // 所有菜单项等宽铺满整行：短文字（如"退出"）也能获得整行的
-                // 点击/悬停区域，而不是只包住图标+文字的一小块。
-                let full_width = ui.available_width();
-                for item in items {
-                    let icon_color = if item.enabled {
+                // 所有菜单项等宽铺满整行：短文字（如"退出"）也有整行的
+                // 点击/悬停区域；右侧留出图钉按钮宽度。
+                const PIN_W: f32 = 26.0;
+                for &action in actions {
+                    let enabled = action.is_enabled(has_active, loading);
+                    let pinned = settings.pinned_file_actions[action.pinned_index()];
+                    // 图钉启用时整行文字用强调色（与 mode bar 的激活态一致）
+                    let icon_color = if pinned {
+                        crate::theme::accent_active()
+                    } else if enabled {
                         crate::theme::text_bright()
                     } else {
                         crate::theme::text_disabled()
                     };
-                    let resp = ui.add_enabled(
-                        item.enabled,
-                        egui::Button::selectable(
+                    let shortcut = settings
+                        .keybindings
+                        .get(action.action_id())
+                        .map(|c| crate::shortcuts::display_combo(&c));
+
+                    ui.horizontal(|ui| {
+                        let main_w = (ui.available_width() - PIN_W).max(0.0);
+                        let mut main_btn = egui::Button::selectable(
                             false,
                             crate::widgets::icon_text::icon_text(
-                                item.icon,
-                                &item.label,
+                                action.icon(),
+                                &t!(action.label_key()),
                                 crate::theme::FILE_MENU_FONT,
                                 icon_color,
                             ),
                         )
-                        .min_size(egui::vec2(full_width, 0.0)),
-                    );
-                    if resp.clicked() {
-                        *pending_action = Some(item.action);
-                        ui.close();
-                    }
+                        .min_size(egui::vec2(main_w, 0.0));
+                        if let Some(sc) = &shortcut {
+                            main_btn = main_btn.shortcut_text(egui::RichText::new(sc));
+                        }
+                        let main_resp = ui.add_enabled(enabled, main_btn);
+
+                        let pin_color = if pinned {
+                            crate::theme::accent_active()
+                        } else {
+                            crate::theme::text_disabled()
+                        };
+                        let pin_resp = ui.add(
+                            egui::Button::new(
+                                ICON_KEEP
+                                    .rich_text()
+                                    .size(crate::theme::FILE_MENU_FONT)
+                                    .color(pin_color),
+                            )
+                            .frame(false)
+                            .min_size(egui::vec2(PIN_W, 0.0)),
+                        );
+
+                        if main_resp.clicked() {
+                            *pending_action = Some(action);
+                            ui.close();
+                        }
+                        if pin_resp.clicked() {
+                            // 图钉只切换固定状态，不关闭菜单
+                            let idx = action.pinned_index();
+                            settings.pinned_file_actions[idx] = !settings.pinned_file_actions[idx];
+                            settings.save();
+                        }
+                    });
                 }
             }
 
-            let items = [
-                MenuItem {
-                    icon: ICON_NOTE_ADD,
-                    label: t!("file.new_project").to_string(),
-                    action: FileAction::NewProject,
-                    enabled: !file_loader.is_loading(),
-                },
-                MenuItem {
-                    icon: ICON_FOLDER_OPEN,
-                    label: t!("file.open").to_string(),
-                    action: FileAction::Open,
-                    enabled: !file_loader.is_loading(),
-                },
-                MenuItem {
-                    icon: ICON_SAVE,
-                    label: t!("file.save").to_string(),
-                    action: FileAction::Save,
-                    enabled: has_active,
-                },
-                MenuItem {
-                    icon: ICON_SAVE_ALT,
-                    label: t!("file.save_as").to_string(),
-                    action: FileAction::SaveAs,
-                    enabled: has_active,
-                },
-                MenuItem {
-                    icon: ICON_CLOSE,
-                    label: t!("file.close").to_string(),
-                    action: FileAction::CloseDocument,
-                    enabled: has_active,
-                },
+            // 分组：新建/打开 | 保存/另存/关闭 | 导出音频/导出MIDI | 设置/退出
+            let groups: [&[FileAction]; 4] = [
+                &[FileAction::NewProject, FileAction::Open],
+                &[
+                    FileAction::Save,
+                    FileAction::SaveAs,
+                    FileAction::CloseDocument,
+                ],
+                &[FileAction::ExportAudio, FileAction::ExportMidi],
+                &[FileAction::Settings, FileAction::Exit],
             ];
-            menu_items(ui, &items, pending_action);
-
-            ui.separator();
-
-            let export_items = [
-                MenuItem {
-                    icon: ICON_AUDIO_FILE,
-                    label: t!("file.export_audio").to_string(),
-                    action: FileAction::ExportAudio,
-                    enabled: has_active,
-                },
-                MenuItem {
-                    icon: ICON_MUSIC_NOTE,
-                    label: t!("file.export_midi").to_string(),
-                    action: FileAction::ExportMidi,
-                    enabled: has_active,
-                },
-            ];
-            menu_items(ui, &export_items, pending_action);
-
-            ui.separator();
-
-            let misc_items = [
-                MenuItem {
-                    icon: ICON_SETTINGS,
-                    label: t!("file.settings").to_string(),
-                    action: FileAction::Settings,
-                    enabled: true,
-                },
-                MenuItem {
-                    icon: ICON_EXIT_TO_APP,
-                    label: t!("file.exit").to_string(),
-                    action: FileAction::Exit,
-                    enabled: true,
-                },
-            ];
-            menu_items(ui, &misc_items, pending_action);
+            let loading = file_loader.is_loading();
+            for (i, group) in groups.iter().enumerate() {
+                if i > 0 {
+                    ui.separator();
+                }
+                menu_items(ui, group, has_active, loading, settings, pending_action);
+            }
         });
 }
 

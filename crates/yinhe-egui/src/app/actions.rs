@@ -5,7 +5,9 @@ use rust_i18n::t;
 
 use crate::app::{App, PendingFileAction};
 use crate::chrome::transport_bar;
+use crate::chrome::transport_bar::FileAction;
 use yinhe_editor_core::document::Document;
+use yinhe_editor_core::shortcuts;
 
 /// Actions detected from keyboard input in the current frame.
 #[derive(Default)]
@@ -23,6 +25,8 @@ pub(crate) struct KeyboardActions {
     pub cut: bool,
     pub paste: bool,
     pub select_all: bool,
+    /// 文件菜单动作（非 macOS 平台由键盘触发；macOS 走原生菜单栏）。
+    pub file_action: Option<FileAction>,
 }
 
 impl App {
@@ -33,7 +37,8 @@ impl App {
 
         // 文本输入焦点（TextEdit/DragValue 等）优先：全局快捷键让位给输入框，
         // 与成熟 DAW 一致（Backspace/Delete/Cmd+C/V/Z 等作用于文本而非选区）。
-        if ui.ctx().egui_wants_keyboard_input() {
+        // 设置页快捷键录制期间同样让位（录制器自己消费按键）。
+        if ui.ctx().egui_wants_keyboard_input() || self.audio_settings.shortcut_recording {
             return actions;
         }
 
@@ -44,63 +49,94 @@ impl App {
             .map(|a| a.handle.is_playing())
             .unwrap_or(false);
 
-        ui.input(|i| {
-            if i.key_pressed(egui::Key::Space) {
+        // 本帧唯一一次主键按下（排除纯修饰键）。
+        let pressed = ui.input(|i| {
+            i.events.iter().find_map(|ev| match ev {
+                egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if crate::shortcuts::is_recordable_key(*key) => Some((*key, *modifiers)),
+                _ => None,
+            })
+        });
+
+        let kb = &self.audio_settings.keybindings;
+        let matches = |id: &str, key: egui::Key, modifiers: egui::Modifiers| {
+            kb.get(id)
+                .is_some_and(|c| crate::shortcuts::matches_combo(&c, modifiers, key))
+        };
+
+        if let Some((key, modifiers)) = pressed {
+            // ── 文件动作 ──
+            // macOS 由原生菜单栏（加速键）触发，这里只处理其他平台，
+            // 避免与系统菜单栏双触发。
+            #[cfg(not(target_os = "macos"))]
+            {
+                for action in FileAction::ALL {
+                    if matches(action.action_id(), key, modifiers) {
+                        actions.file_action = Some(action);
+                        break;
+                    }
+                }
+            }
+
+            // ── 播放/停止 ──
+            if matches(shortcuts::ACTION_TOGGLE_PLAY, key, modifiers) {
                 if is_playing_any {
                     actions.pause_return = true;
                 } else {
                     actions.toggle_play = true;
                 }
             }
-            if i.key_pressed(egui::Key::Escape) {
+            if matches(shortcuts::ACTION_STOP, key, modifiers) {
                 actions.stop_play = true;
             }
 
-            // Delete / Backspace - delete selected notes
-            if i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace) {
+            // ── 编辑 ──
+            if matches(shortcuts::ACTION_DELETE, key, modifiers) {
                 actions.delete_selected = true;
             }
-
-            // Ctrl+D / Cmd+D - duplicate selected notes
-            if (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::D) {
+            if matches(shortcuts::ACTION_DUPLICATE, key, modifiers) {
                 actions.duplicate_selected = true;
             }
-
-            // Shift+↑ / Shift+↓ - transpose octave
-            if i.modifiers.shift {
-                if i.key_pressed(egui::Key::ArrowUp) {
-                    actions.transpose_up = true;
-                }
-                if i.key_pressed(egui::Key::ArrowDown) {
-                    actions.transpose_down = true;
-                }
+            if matches(shortcuts::ACTION_TRANSPOSE_UP, key, modifiers) {
+                actions.transpose_up = true;
             }
-
-            // Cmd/Ctrl+Z - undo;  Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y - redo.
-            let cmd = i.modifiers.command || i.modifiers.ctrl;
-            if cmd && i.key_pressed(egui::Key::Z) {
-                if i.modifiers.shift {
-                    actions.redo = true;
-                } else {
-                    actions.undo = true;
-                }
+            if matches(shortcuts::ACTION_TRANSPOSE_DOWN, key, modifiers) {
+                actions.transpose_down = true;
             }
-            if cmd && i.key_pressed(egui::Key::Y) {
+            if matches(shortcuts::ACTION_UNDO, key, modifiers) {
+                actions.undo = true;
+            }
+            if matches(shortcuts::ACTION_REDO, key, modifiers) {
                 actions.redo = true;
             }
-
-            // Copy / Cut / Paste / Select All
-            if cmd && i.key_pressed(egui::Key::C) {
-                actions.copy = true;
-            }
-            if cmd && i.key_pressed(egui::Key::X) {
+            if matches(shortcuts::ACTION_CUT, key, modifiers) {
                 actions.cut = true;
             }
-            if cmd && i.key_pressed(egui::Key::V) {
+            if matches(shortcuts::ACTION_COPY, key, modifiers) {
+                actions.copy = true;
+            }
+            if matches(shortcuts::ACTION_PASTE, key, modifiers) {
                 actions.paste = true;
             }
-            if cmd && i.key_pressed(egui::Key::A) {
+            if matches(shortcuts::ACTION_SELECT_ALL, key, modifiers) {
                 actions.select_all = true;
+            }
+        }
+
+        // ── 兼容别名（配置表之外的历史默认）──
+        ui.input(|i| {
+            // Backspace 等同 Delete
+            if i.key_pressed(egui::Key::Backspace) {
+                actions.delete_selected = true;
+            }
+            // Cmd/Ctrl+Y 也触发重做
+            let cmd = i.modifiers.command || i.modifiers.ctrl;
+            if cmd && i.key_pressed(egui::Key::Y) {
+                actions.redo = true;
             }
         });
 

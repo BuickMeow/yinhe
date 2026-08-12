@@ -3,17 +3,19 @@ use eframe::egui;
 use pinyin::ToPinyin;
 use rust_i18n::t;
 
+use yinhe_editor_core::shortcuts::{self, KeyCombo, Keybindings};
 use yinhe_theme::base::{BaseColors, Rgba};
 
 use crate::audio_settings::AudioSettings;
 
 // ── 设置分类（左侧导航，顺序即 settings_tab 索引） ──
 
-const CATEGORY_KEYS: [&str; 5] = [
+const CATEGORY_KEYS: [&str; 6] = [
     "settings.cat.theme",
     "settings.cat.language",
     "settings.cat.audio",
     "settings.cat.render",
+    "settings.cat.shortcuts",
     "settings.cat.general",
 ];
 
@@ -170,6 +172,20 @@ const SETTING_ITEMS: &[SettingItem] = &[
     },
     SettingItem {
         cat: 4,
+        zh: "快捷键",
+        en: "Shortcuts",
+        ja: "ショートカット",
+        ko: "단축키",
+    },
+    SettingItem {
+        cat: 4,
+        zh: "恢复默认快捷键",
+        en: "Reset shortcuts",
+        ja: "ショートカット初期化",
+        ko: "단축키 초기화",
+    },
+    SettingItem {
+        cat: 5,
         zh: "恢复出厂设置",
         en: "Factory reset",
         ja: "工場出荷時リセット",
@@ -228,6 +244,7 @@ fn show_search_results(
             1 => show_language_tab(ui, settings),
             2 => show_audio_tab(ui, settings),
             3 => show_render_tab(ui, settings),
+            4 => show_shortcuts_tab(ui, settings),
             _ => show_general_tab(ui, settings),
         };
     }
@@ -681,6 +698,169 @@ fn show_render_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     changed
 }
 
+/// 快捷键配置页：列出全部可配置动作，点击快捷键按钮进入录制。
+/// 录制期间 `settings.shortcut_recording` 置位，让全局快捷键让位给录制器。
+fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
+    let mut changed = false;
+
+    let rec_id = egui::Id::new("kb_recording_action");
+    let recording: Option<String> = ui.data(|d| d.get_temp(rec_id));
+
+    // ── 录制：捕获本帧按键（Esc 取消）──
+    if let Some(action_id) = &recording {
+        let mut captured: Option<Option<KeyCombo>> = None; // None = 取消
+        let events = ui.input(|i| i.events.clone());
+        for ev in &events {
+            if let egui::Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } = ev
+            {
+                if *key == egui::Key::Escape {
+                    captured = Some(None);
+                    break;
+                }
+                if crate::shortcuts::is_recordable_key(*key) {
+                    captured = Some(Some(KeyCombo {
+                        command: modifiers.command || modifiers.ctrl,
+                        shift: modifiers.shift,
+                        alt: modifiers.alt,
+                        key: crate::shortcuts::key_to_str(*key),
+                    }));
+                    break;
+                }
+            }
+        }
+        if let Some(combo) = captured {
+            if let Some(combo) = combo {
+                settings.keybindings.set(action_id, Some(combo));
+                changed = true;
+            }
+            ui.data_mut(|d| d.remove::<String>(rec_id));
+            settings.shortcut_recording = false;
+        }
+    }
+
+    // ── 标题 + 恢复默认 ──
+    ui.horizontal(|ui| {
+        ui.heading(t!("settings.shortcuts.title").as_ref());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button(t!("settings.shortcuts.reset").as_ref()).clicked() {
+                settings.keybindings.reset_to_defaults();
+                changed = true;
+            }
+        });
+    });
+    ui.add_space(4.0);
+    ui.label(
+        egui::RichText::new(t!("settings.shortcuts.hint").as_ref())
+            .color(crate::theme::text_secondary()),
+    );
+    ui.add_space(6.0);
+
+    // ── 分组列表 ──
+    let groups: [(&str, &[&str]); 3] = [
+        (
+            "settings.shortcuts.group_file",
+            &[
+                shortcuts::ACTION_NEW_PROJECT,
+                shortcuts::ACTION_OPEN,
+                shortcuts::ACTION_SAVE,
+                shortcuts::ACTION_SAVE_AS,
+                shortcuts::ACTION_CLOSE_DOCUMENT,
+                shortcuts::ACTION_EXPORT_AUDIO,
+                shortcuts::ACTION_EXPORT_MIDI,
+                shortcuts::ACTION_SETTINGS,
+                shortcuts::ACTION_EXIT,
+            ],
+        ),
+        (
+            "settings.shortcuts.group_edit",
+            &[
+                shortcuts::ACTION_UNDO,
+                shortcuts::ACTION_REDO,
+                shortcuts::ACTION_CUT,
+                shortcuts::ACTION_COPY,
+                shortcuts::ACTION_PASTE,
+                shortcuts::ACTION_SELECT_ALL,
+                shortcuts::ACTION_DUPLICATE,
+                shortcuts::ACTION_DELETE,
+                shortcuts::ACTION_TRANSPOSE_UP,
+                shortcuts::ACTION_TRANSPOSE_DOWN,
+            ],
+        ),
+        (
+            "settings.shortcuts.group_play",
+            &[shortcuts::ACTION_TOGGLE_PLAY, shortcuts::ACTION_STOP],
+        ),
+    ];
+
+    for (group_key, ids) in groups {
+        ui.add_space(6.0);
+        ui.label(
+            egui::RichText::new(t!(group_key).as_ref())
+                .strong()
+                .color(crate::theme::text_secondary()),
+        );
+        for &id in ids {
+            let is_recording = recording.as_deref() == Some(id);
+            let combo = settings.keybindings.get(id);
+
+            ui.horizontal(|ui| {
+                let label_key = crate::shortcuts::action_label_key(id);
+                ui.add_sized(
+                    [150.0, 24.0],
+                    egui::Label::new(t!(label_key).as_ref()).selectable(false),
+                );
+
+                let btn_text = if is_recording {
+                    t!("settings.shortcuts.recording").to_string()
+                } else if let Some(c) = &combo {
+                    crate::shortcuts::display_combo(c)
+                } else {
+                    t!("settings.shortcuts.none").to_string()
+                };
+                let kb_btn = egui::Button::new(btn_text).min_size(egui::vec2(140.0, 24.0));
+                if ui.add(kb_btn).clicked() && !is_recording {
+                    ui.data_mut(|d| d.insert_temp(rec_id, id.to_string()));
+                    settings.shortcut_recording = true;
+                    ui.ctx().request_repaint();
+                }
+
+                if combo.is_some()
+                    && !is_recording
+                    && ui.button(t!("settings.shortcuts.clear").as_ref()).clicked()
+                {
+                    settings.keybindings.set(id, None);
+                    changed = true;
+                }
+
+                if let Some(c) = &combo
+                    && let Some(other) = find_conflict(&settings.keybindings, id, c)
+                {
+                    let other_label = crate::shortcuts::action_label_key(other);
+                    ui.colored_label(
+                        crate::theme::warning_gold(),
+                        t!("settings.shortcuts.conflict", other = t!(other_label)).as_ref(),
+                    );
+                }
+            });
+        }
+    }
+
+    changed
+}
+
+/// 找与 `combo` 冲突的其他动作 id（返回第一个冲突者）。
+fn find_conflict(kb: &Keybindings, action_id: &str, combo: &KeyCombo) -> Option<&'static str> {
+    shortcuts::ALL_ACTION_IDS
+        .iter()
+        .copied()
+        .find(|other| *other != action_id && kb.get(other).as_ref() == Some(combo))
+}
+
 fn show_general_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     let mut changed = false;
     ui.heading(t!("settings.general.heading").as_ref());
@@ -823,6 +1003,7 @@ pub(crate) fn show_viewport(
                 if close {
                     vctx.send_viewport_cmd(eframe::egui::ViewportCommand::Visible(false));
                     s.show_settings = false;
+                    s.shortcut_recording = false;
                 }
             }
             *settings_cb.borrow_mut() = slot;

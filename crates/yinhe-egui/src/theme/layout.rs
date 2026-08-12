@@ -27,6 +27,8 @@ pub const TRANSPORT_BTN_SIZE: f32 = 32.0;
 pub const TRANSPORT_BTN_FONT: f32 = ICON_BTN_FONT;
 pub const TIMECODE_FONT: f32 = 12.0;
 pub const FILE_MENU_FONT: f32 = 14.0;
+/// 文件菜单固定宽度（图标 + 文字 + 快捷键 + 图钉，用户无需调整）。
+pub const FILE_MENU_WIDTH: f32 = 220.0;
 
 // ── Layout defaults ──
 pub const MIN_ARR_HEIGHT: f32 = 60.0;

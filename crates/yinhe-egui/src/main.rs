@@ -18,6 +18,7 @@ mod platform;
 mod render_context;
 mod right_panel;
 mod selection;
+mod shortcuts;
 mod theme;
 mod view_interaction;
 mod widgets;
