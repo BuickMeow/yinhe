@@ -10,6 +10,7 @@ pub mod playback;
 pub mod progress;
 pub mod project_data;
 pub mod quantize;
+pub mod shortcuts;
 
 pub use config::{ProjectSfConfig, SfEntry};
 pub use document::automation_edit::AnchorField;

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::config::GlobalSfConfig;
+use crate::shortcuts::Keybindings;
 use yinhe_mid2::MidiImportEncoding;
 
 /// 用户可拖拽调整的布局状态（跨会话持久化）。
@@ -72,6 +73,11 @@ pub struct AudioSettings {
     pub content_opacity: f32,
     /// 用户可拖拽调整的布局状态（分割线宽度/比例、PR 显示开关）。
     pub layout: LayoutSettings,
+    /// 用户自定义快捷键表（跨会话持久化）。
+    pub keybindings: Keybindings,
+    /// 文件菜单里被图钉固定的动作（顺序对应 `FileAction::ALL`，9 项）。
+    /// 被固定的动作会显示在标题栏上，属于用户自定义工作区，跨会话保存。
+    pub pinned_file_actions: [bool; 9],
     #[serde(skip)]
     pub show_settings: bool,
     /// 设置页当前选中的分类（左侧导航）。
@@ -80,6 +86,9 @@ pub struct AudioSettings {
     /// 设置页搜索词（不持久化）。
     #[serde(skip)]
     pub settings_search: String,
+    /// 设置页快捷键录制中（键盘事件交给录制器，全局快捷键暂停）。
+    #[serde(skip)]
+    pub shortcut_recording: bool,
     #[serde(skip)]
     pub available_devices: Vec<String>,
     #[serde(skip)]
@@ -108,9 +117,12 @@ impl Default for AudioSettings {
             ui_scale: 1.0, // UI 缩放（egui zoom_factor，1.0 = 100%）
             content_opacity: 0.7,
             layout: LayoutSettings::default(),
+            keybindings: Keybindings::default(),
+            pinned_file_actions: [false; 9],
             show_settings: false,
             settings_tab: 0,
             settings_search: String::new(),
+            shortcut_recording: false,
             available_devices: Vec::new(),
             available_sample_rates: Vec::new(),
         }
