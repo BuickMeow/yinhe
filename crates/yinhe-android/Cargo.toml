@@ -1,0 +1,26 @@
+[package]
+name = "yinhe-android"
+version = "0.1.0"
+edition = "2024"
+description = "Yinhe MIDI editor Android UI (touch-first rewrite)"
+
+[lib]
+name = "yinhe_android"
+# cdylib：安卓端产出 libyinhe_android.so 由 GameActivity 加载；
+# rlib：桌面端 bin 复用同一份 App 代码做本地调试。
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "yinhe-android-desktop"
+path = "src/bin/desktop.rs"
+
+[dependencies]
+eframe = { workspace = true, features = ["android-game-activity"] }
+egui = { workspace = true }
+# android_main 的签名类型（与 eframe 使用的 winit 版本一致）
+winit = "0.30"
+
+[target.'cfg(target_os = "android")'.dependencies]
+# 安卓上 stdout 不可见，日志必须走 logcat。
+android_logger = "0.14"
+log = "0.4"

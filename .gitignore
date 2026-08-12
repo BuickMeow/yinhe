@@ -4,3 +4,12 @@
 /.kilo
 /.trae
 /.mimocode
+
+# Android 构建产物（由 cargo-ndk / gradle 生成）
+/android/.gradle
+/android/build
+/android/app/build
+/android/app/src/main/jniLibs
+/android/local.properties
+*.apk
+*.aab

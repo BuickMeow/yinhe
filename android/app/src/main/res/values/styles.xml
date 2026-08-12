@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- GameActivity 继承自 AppCompatActivity，必须使用 AppCompat 主题；
+         games-activity 4.x 不自带主题资源，这里继承 appcompat 库的主题 -->
+    <style name="Theme.Yinhe" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowFullscreen">true</item>
+    </style>
+</resources>
