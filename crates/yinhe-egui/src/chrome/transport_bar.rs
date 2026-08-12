@@ -316,6 +316,9 @@ fn show_file_menu(
                 items: &[MenuItem],
                 pending_action: &mut Option<FileAction>,
             ) {
+                // 所有菜单项等宽铺满整行：短文字（如"退出"）也能获得整行的
+                // 点击/悬停区域，而不是只包住图标+文字的一小块。
+                let full_width = ui.available_width();
                 for item in items {
                     let icon_color = if item.enabled {
                         crate::theme::text_bright()
@@ -332,7 +335,8 @@ fn show_file_menu(
                                 crate::theme::FILE_MENU_FONT,
                                 icon_color,
                             ),
-                        ),
+                        )
+                        .min_size(egui::vec2(full_width, 0.0)),
                     );
                     if resp.clicked() {
                         *pending_action = Some(item.action);
