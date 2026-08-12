@@ -13,6 +13,9 @@ use yinhe_audio::spawn::{AudioCommand, CpalAudioHandle};
 
 /// 阶段 0.5 音频验证用的音色库路径（adb push 到 app 私有目录）。
 const TEST_SF_PATH: &str = "/data/data/com.jieneng.yinhe/files/generaluser.sf2";
+/// 阶段 1 测试 MIDI：小曲（链路验证）与大曲（性能测试）。
+const TEST_MIDI_PATH: &str = "/data/data/com.jieneng.yinhe/files/test.mid";
+const BIG_MIDI_PATH: &str = "/data/data/com.jieneng.yinhe/files/big.mid";
 
 /// 阶段 0 的最小验证 App。
 pub struct YinheApp {
@@ -30,6 +33,11 @@ pub struct YinheApp {
     /// 音色加载诊断：开始时刻 + 加载前的已加载计数。
     sf_load_start: Option<std::time::Instant>,
     sf_loaded_baseline: usize,
+    /// 阶段 1：MIDI 加载（复用 file_loading 模块，后台线程 + 进度）。
+    midi_loader: Option<yinhe_editor_core::file_loading::FileLoader>,
+    midi_load_start: Option<std::time::Instant>,
+    /// 最近一次加载结果统计。
+    midi_stats: String,
 }
 
 impl YinheApp {
@@ -44,6 +52,9 @@ impl YinheApp {
             audio_status: "未初始化".to_string(),
             sf_load_start: None,
             sf_loaded_baseline: 0,
+            midi_loader: None,
+            midi_load_start: None,
+            midi_stats: String::new(),
         }
     }
 
@@ -99,6 +110,74 @@ impl YinheApp {
             self.sf_load_start = None;
         } else {
             self.audio_status = format!("音色加载中... 已等待 {elapsed:.0} 秒");
+        }
+    }
+
+    /// 加载指定 MIDI（file_loading 后台线程 + 进度上报）。
+    fn start_midi_load(&mut self, path: &str) {
+        use yinhe_editor_core::file_loading::{FileLoader, LoadStageLabels};
+        let loader = self.midi_loader.get_or_insert_with(|| {
+            FileLoader::new(
+                yinhe_editor_core::progress::new_shared(),
+                LoadStageLabels {
+                    yin: String::new(),
+                    archive: String::new(),
+                    yin_decompress: String::new(),
+                    yin_rebuild: String::new(),
+                    yin_resort: String::new(),
+                },
+            )
+        });
+        if loader.is_loading() {
+            self.midi_stats = "已在加载中，请等待".to_string();
+            return;
+        }
+        loader.load_path(path.to_string(), yinhe_mid2::MidiImportEncoding::Utf8);
+        self.midi_load_start = Some(std::time::Instant::now());
+        self.midi_stats = format!("加载中: {path}");
+    }
+
+    /// 每帧轮询 MIDI 加载结果，完成后生成统计。
+    fn poll_midi_load(&mut self) {
+        let Some(loader) = &mut self.midi_loader else {
+            return;
+        };
+        if !loader.is_loading() {
+            return;
+        }
+        // 进度条：stage 0 的 progress/detail。
+        if let Ok(p) = loader.load_progress().lock()
+            && let Some(stage) = p.stages.first()
+            && stage.status != yinhe_editor_core::progress::StageStatus::Done
+        {
+            let pct = stage.progress * 100.0;
+            self.midi_stats = format!("解析中 {pct:.0}% ({})", stage.detail);
+        }
+        use yinhe_editor_core::file_loading::LoadResult;
+        match loader.poll_loading() {
+            LoadResult::ModelLoaded { path, model } => {
+                let elapsed = self
+                    .midi_load_start
+                    .take()
+                    .map(|t| t.elapsed().as_secs_f32())
+                    .unwrap_or(0.0);
+                let notes: u64 = model.track_note_count.iter().sum();
+                let seconds = model.tempo_map.duration_seconds();
+                let tracks = model.tracks.len();
+                let minutes = seconds / 60.0;
+                self.midi_stats = format!(
+                    "加载完成！{} 音符 | {tracks} 轨 | 时长 {minutes:.1} 分钟\n耗时 {elapsed:.1} 秒",
+                    notes,
+                );
+                // 顺便用加载的模型初始化音频播放（下一步用）
+                self.audio_status = "模型已加载，可初始化音频播放".to_string();
+                let _ = path;
+            }
+            LoadResult::ModelFromYin { .. }
+            | LoadResult::ArchivePickerNeeded { .. }
+            | LoadResult::PasswordNeeded { .. }
+            | LoadResult::ArchiveError(_)
+            | LoadResult::NotReady => {}
         }
     }
 
@@ -238,6 +317,22 @@ impl eframe::App for YinheApp {
             );
             ui.separator();
 
+            // ── 阶段 1：MIDI 加载验证（file_loading 模块）──
+            ui.label(egui::RichText::new("MIDI 加载验证").strong());
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("加载小曲").clicked() {
+                    self.start_midi_load(TEST_MIDI_PATH);
+                }
+                if ui.button("加载大曲").clicked() {
+                    self.start_midi_load(BIG_MIDI_PATH);
+                }
+            });
+            self.poll_midi_load();
+            ui.label(
+                egui::RichText::new(&self.midi_stats).color(egui::Color32::from_rgb(140, 200, 255)),
+            );
+            ui.separator();
+
             // ── 触摸画布：占满剩余空间，点按画点、双击计数、拖拽跟手 ──
             let rect = ui.available_rect_before_wrap();
             let resp = ui.allocate_rect(rect, egui::Sense::click_and_drag());
@@ -307,6 +402,10 @@ pub extern "C" fn android_main(app: winit::platform::android::activity::AndroidA
     let options = eframe::NativeOptions {
         android_app: Some(app),
         renderer: eframe::Renderer::Wgpu,
+        // 安卓上窗口状态持久化会走 storage_dir → home_dir → getpwuid_r，
+        // 静态链接的 bionic libc 的 getpwuid 路径在部分设备（小米）上崩溃
+        //（oem_id_from_name → sscanf → strtod 空指针）。关闭持久化绕开。
+        persist_window: false,
         ..Default::default()
     };
     let _ = run(options);

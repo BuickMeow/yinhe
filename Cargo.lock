@@ -7185,6 +7185,8 @@ dependencies = [
  "log",
  "winit",
  "yinhe-audio",
+ "yinhe-editor-core",
+ "yinhe-mid2",
 ]
 
 [[package]]
