@@ -19,18 +19,31 @@ pub fn app_config_dir() -> PathBuf {
     let ctx = ndk_context::android_context();
     let fallback = || PathBuf::from(".");
     // ndk-context 的 JavaVM/Context 只在 android_main 之后有效。
-    let Ok(vm) = (unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }) else {
+    if ctx.vm().is_null() {
         return fallback();
-    };
-    let dir = vm.attach_current_thread(|mut env| {
-        let files_dir = env.call_method(ctx.context(), "getFilesDir", "()Ljava/io/File;", &[])?;
-        let abs = env.call_method(
-            files_dir.l()?,
-            "getAbsolutePath",
-            "()Ljava/lang/String;",
-            &[],
-        )?;
-        let s = env.get_string(&abs.l()?.into())?;
+    }
+    let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) };
+    let raw_context = ctx.context() as jni::sys::jobject;
+    let dir = vm.attach_current_thread(|env: &mut jni::Env<'_>| {
+        let context_obj = unsafe { jni::objects::JObject::from_raw(env, raw_context) };
+        let files_dir = env
+            .call_method(
+                &context_obj,
+                jni::strings::JNIString::new("getFilesDir"),
+                jni::jni_sig!("()Ljava/io/File;"),
+                &[],
+            )?
+            .l()?;
+        let abs = env
+            .call_method(
+                &files_dir,
+                jni::strings::JNIString::new("getAbsolutePath"),
+                jni::jni_sig!("()Ljava/lang/String;"),
+                &[],
+            )?
+            .l()?;
+        let abs = unsafe { jni::objects::JString::from_raw(env, abs.into_raw()) };
+        let s = abs.mutf8_chars(env)?;
         let s: String = s.into();
         Ok::<PathBuf, jni::errors::Error>(PathBuf::from(s).join("yinhe"))
     });
