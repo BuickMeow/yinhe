@@ -17,6 +17,8 @@ path = "src/bin/desktop.rs"
 [dependencies]
 eframe = { workspace = true, features = ["android-game-activity"] }
 egui = { workspace = true }
+yinhe-audio = { path = "../yinhe-audio" }
+cpal = { workspace = true }
 # android_main 的签名类型（与 eframe 使用的 winit 版本一致）
 winit = "0.30"
 

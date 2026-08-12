@@ -9,6 +9,10 @@
 //! 见 `src/bin/desktop.rs`，两者共用同一个 [`YinheApp`]。
 
 use eframe::egui;
+use yinhe_audio::spawn::{AudioCommand, CpalAudioHandle};
+
+/// 阶段 0.5 音频验证用的音色库路径（adb push 到 app 私有目录）。
+const TEST_SF_PATH: &str = "/data/data/com.jieneng.yinhe/files/generaluser.sf2";
 
 /// 阶段 0 的最小验证 App。
 pub struct YinheApp {
@@ -20,6 +24,9 @@ pub struct YinheApp {
     double_click_count: u32,
     /// 长按检测状态：按下起点 + 按下时刻。
     press_state: Option<(egui::Pos2, f64)>,
+    /// 音频验证：cpal(AAudio) + xsynth 全链路。
+    audio: Option<CpalAudioHandle>,
+    audio_status: String,
 }
 
 impl YinheApp {
@@ -30,7 +37,76 @@ impl YinheApp {
             last_gesture: String::new(),
             double_click_count: 0,
             press_state: None,
+            audio: None,
+            audio_status: "未初始化".to_string(),
         }
+    }
+
+    /// 初始化音频引擎：cpal(AAudio) + xsynth 渲染线程。
+    fn init_audio(&mut self) {
+        use yinhe_audio::channel_layout::ChannelLayout;
+        let layout = ChannelLayout::from_mask(vec![true; 16]);
+        match yinhe_audio::spawn_cpal_audio(48000, layout, cpal::BufferSize::Default, None) {
+            Ok(handle) => {
+                self.audio_status = format!("音频引擎已初始化 @ {}Hz", handle.sample_rate);
+                self.audio = Some(handle);
+            }
+            Err(e) => {
+                self.audio_status = format!("初始化失败: {e}");
+            }
+        }
+    }
+
+    /// 加载测试音色库（GeneralUser GS）。
+    fn load_soundfont(&mut self) {
+        let Some(audio) = &self.audio else {
+            self.audio_status = "请先初始化音频".to_string();
+            return;
+        };
+        if !std::path::Path::new(TEST_SF_PATH).exists() {
+            self.audio_status = format!("音色库不存在: {TEST_SF_PATH}");
+            return;
+        }
+        audio.handle.send(AudioCommand::LoadSoundFont {
+            port: 0,
+            paths: vec![TEST_SF_PATH.to_string()],
+        });
+        self.audio_status = "音色加载中（大文件需几秒），稍后点播放...".to_string();
+    }
+
+    /// 播放 C 大调和弦（持续音，直到点停止）。
+    fn play_chord(&mut self) {
+        let Some(audio) = &self.audio else {
+            self.audio_status = "请先初始化音频".to_string();
+            return;
+        };
+        use yinhe_audio::spawn::PreviewNoteParams;
+        audio.handle.send(AudioCommand::PreviewNotes {
+            notes: vec![
+                PreviewNoteParams {
+                    channel: 0,
+                    key: 60,
+                    velocity: 100,
+                    target_tick: 0,
+                    duration_ticks: 0,
+                },
+                PreviewNoteParams {
+                    channel: 0,
+                    key: 64,
+                    velocity: 100,
+                    target_tick: 0,
+                    duration_ticks: 0,
+                },
+                PreviewNoteParams {
+                    channel: 0,
+                    key: 67,
+                    velocity: 100,
+                    target_tick: 0,
+                    duration_ticks: 0,
+                },
+            ],
+        });
+        self.audio_status = "播放中（点停止结束）".to_string();
     }
 }
 
@@ -81,15 +157,16 @@ impl eframe::App for YinheApp {
         }
 
         egui::CentralPanel::default().show(ui, |ui| {
+            let screen = ui.ctx().viewport_rect();
             ui.heading("银河 MIDI 编辑器 · Android 验证");
             ui.label("阶段 0：管道跑通 + 中文渲染 + 触摸事件");
             ui.separator();
 
             ui.horizontal(|ui| {
                 ui.label(format!(
-                    "窗口: {:.0} x {:.0}",
-                    ui.available_width(),
-                    ui.available_height()
+                    "屏幕: {:.0} x {:.0}",
+                    screen.width(),
+                    screen.height()
                 ));
                 ui.separator();
                 ui.label(format!("长按: {}", if long_press { "是" } else { "否" }));
@@ -103,13 +180,55 @@ impl eframe::App for YinheApp {
                 ui.label(&self.last_gesture);
             }
 
-            // ── 触摸画布：点按画点、双击计数、拖拽跟手 ──
-            let (rect, resp) = ui.allocate_exact_size(
-                egui::vec2(ui.available_width(), ui.available_height().max(200.0)),
-                egui::Sense::click_and_drag(),
+            // ── 音频验证（cpal/AAudio + xsynth 全链路）──
+            ui.separator();
+            ui.label(egui::RichText::new("音频验证").strong());
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("初始化音频").clicked() {
+                    self.init_audio();
+                }
+                if ui.button("加载音色库").clicked() {
+                    self.load_soundfont();
+                }
+                if ui.button("播放 C 和弦").clicked() {
+                    self.play_chord();
+                }
+                if ui.button("停止").clicked()
+                    && let Some(a) = &self.audio
+                {
+                    a.handle.send(AudioCommand::PreviewStop);
+                    self.audio_status = "已停止".to_string();
+                }
+            });
+            ui.label(
+                egui::RichText::new(&self.audio_status)
+                    .color(egui::Color32::from_rgb(120, 200, 120)),
             );
+            ui.separator();
+
+            // ── 触摸画布：占满剩余空间，点按画点、双击计数、拖拽跟手 ──
+            let rect = ui.available_rect_before_wrap();
+            let resp = ui.allocate_rect(rect, egui::Sense::click_and_drag());
+            let rect = resp.rect;
             let painter = ui.painter();
             painter.rect_filled(rect, 8.0, egui::Color32::from_gray(28));
+            painter.rect_stroke(
+                rect,
+                8.0,
+                egui::Stroke::new(1.0, egui::Color32::from_gray(90)),
+                egui::StrokeKind::Inside,
+            );
+            painter.text(
+                rect.left_top() + egui::vec2(8.0, 6.0),
+                egui::Align2::LEFT_TOP,
+                format!(
+                    "画布: {:.0} x {:.0}（点这里测试）",
+                    rect.width(),
+                    rect.height()
+                ),
+                egui::FontId::proportional(12.0),
+                egui::Color32::from_gray(140),
+            );
 
             if resp.double_clicked() {
                 self.double_click_count += 1;

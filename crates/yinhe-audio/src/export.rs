@@ -87,6 +87,7 @@ const STEREO_CHANNELS: usize = 2;
 const RENDER_CHUNK_FRAMES: usize = 1024;
 /// GPU 路径块大小：比 CPU 大 4 倍，减少每块的 write_buffer/提交/同步等待开销。
 /// partial 缓冲 = voices × frames × 2 线性增长，可承受。
+#[cfg(feature = "gpu")]
 const GPU_RENDER_CHUNK_FRAMES: usize = 4096;
 /// Safety limit: stop rendering tails after this many seconds even if voices
 /// are still active (prevents infinite loop on stuck voices).

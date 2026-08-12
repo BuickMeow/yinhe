@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicIsize, Ordering};
 // ---------------------------------------------------------------------------
 // macOS: jemalloc — its macOS backend aggressively munmaps freed segments,
 //        keeping RSS close to the true live allocation size.
+// Android: system allocator (bionic/scudo) — mimalloc uses initial-exec TLS
+//        which Android's dlopen rejects ("TLS symbol (null) using IE access model").
 // Other platforms (Linux, Windows): mimalloc — excellent performance and
 //        low fragmentation, with acceptable RSS behaviour on those OSes.
 //
@@ -16,13 +18,19 @@ use std::sync::atomic::{AtomicIsize, Ordering};
 #[cfg(target_os = "macos")]
 pub use tikv_jemallocator::Jemalloc as BackendAlloc;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "android")]
+pub use std::alloc::System as BackendAlloc;
+
+#[cfg(all(not(target_os = "macos"), not(target_os = "android")))]
 pub use mimalloc::MiMalloc as BackendAlloc;
 
 #[cfg(target_os = "macos")]
 const BACKEND: BackendAlloc = BackendAlloc;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "android")]
+const BACKEND: BackendAlloc = BackendAlloc;
+
+#[cfg(all(not(target_os = "macos"), not(target_os = "android")))]
 const BACKEND: BackendAlloc = BackendAlloc;
 
 pub mod perf_probe;
@@ -112,7 +120,12 @@ pub fn purge_free_pages() {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "android")]
+pub fn purge_free_pages() {
+    // Android 用系统分配器（scudo），无手动 purge 接口。
+}
+
+#[cfg(all(not(target_os = "macos"), not(target_os = "android")))]
 pub fn purge_free_pages() {
     unsafe extern "C" {
         fn mi_collect(force: bool);

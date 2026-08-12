@@ -7179,10 +7179,12 @@ name = "yinhe-android"
 version = "0.1.0"
 dependencies = [
  "android_logger",
+ "cpal",
  "eframe",
  "egui",
  "log",
  "winit",
+ "yinhe-audio",
 ]
 
 [[package]]
