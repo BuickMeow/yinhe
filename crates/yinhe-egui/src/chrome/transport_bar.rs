@@ -416,11 +416,6 @@ fn show_file_menu(
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .width(crate::theme::FILE_MENU_WIDTH)
         .show(|ui| {
-            // 锁死内容宽度（min == max）：popup 实际宽度由内容决定，
-            // 亚像素抖动会让 get_best_align 在候选位置间翻转、整体文字微跳；
-            // 宽度恒定后 Area 尺寸与对齐计算全部稳定。
-            ui.set_min_width(crate::theme::FILE_MENU_WIDTH);
-            ui.set_max_width(crate::theme::FILE_MENU_WIDTH);
             fn menu_items(
                 ui: &mut egui::Ui,
                 actions: &[FileAction],
