@@ -130,11 +130,7 @@ impl Default for AudioSettings {
 }
 
 fn config_path() -> PathBuf {
-    let dir = dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("yinhe");
-    std::fs::create_dir_all(&dir).ok();
-    dir.join("yinhe_settings.json")
+    crate::paths::app_config_file()
 }
 
 impl AudioSettings {

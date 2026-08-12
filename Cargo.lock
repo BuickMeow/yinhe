@@ -7192,6 +7192,8 @@ name = "yinhe-editor-core"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "jni",
+ "ndk-context",
  "serde",
  "serde_json",
  "tracing",

@@ -6,6 +6,7 @@ pub mod edit_state;
 pub mod follow;
 pub mod history;
 pub mod num_expr;
+pub mod paths;
 pub mod playback;
 pub mod progress;
 pub mod project_data;
