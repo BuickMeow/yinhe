@@ -27,6 +27,9 @@ pub struct YinheApp {
     /// 音频验证：cpal(AAudio) + xsynth 全链路。
     audio: Option<CpalAudioHandle>,
     audio_status: String,
+    /// 音色加载诊断：开始时刻 + 加载前的已加载计数。
+    sf_load_start: Option<std::time::Instant>,
+    sf_loaded_baseline: usize,
 }
 
 impl YinheApp {
@@ -39,6 +42,8 @@ impl YinheApp {
             press_state: None,
             audio: None,
             audio_status: "未初始化".to_string(),
+            sf_load_start: None,
+            sf_loaded_baseline: 0,
         }
     }
 
@@ -46,7 +51,9 @@ impl YinheApp {
     fn init_audio(&mut self) {
         use yinhe_audio::channel_layout::ChannelLayout;
         let layout = ChannelLayout::from_mask(vec![true; 16]);
-        match yinhe_audio::spawn_cpal_audio(48000, layout, cpal::BufferSize::Default, None) {
+        // 固定 1024 帧缓冲：AAudio 动态调优在 MIUI 上收敛慢，固定值更稳。
+        //（预览路径 ring 目标 512 帧 ≈10ms，调度抖动即欠载 → 用固定缓冲缓冲抖动）
+        match yinhe_audio::spawn_cpal_audio(48000, layout, cpal::BufferSize::Fixed(1024), None) {
             Ok(handle) => {
                 self.audio_status = format!("音频引擎已初始化 @ {}Hz", handle.sample_rate);
                 self.audio = Some(handle);
@@ -71,7 +78,28 @@ impl YinheApp {
             port: 0,
             paths: vec![TEST_SF_PATH.to_string()],
         });
+        self.sf_load_start = Some(std::time::Instant::now());
+        self.sf_loaded_baseline = audio.handle.sf_loaded_count();
         self.audio_status = "音色加载中（大文件需几秒），稍后点播放...".to_string();
+    }
+
+    /// 每帧更新音色加载状态：轮询 sf_loaded_count 显示完成/耗时。
+    fn poll_sf_load(&mut self) {
+        let Some(start) = self.sf_load_start else {
+            return;
+        };
+        let Some(audio) = &self.audio else {
+            self.sf_load_start = None;
+            return;
+        };
+        let elapsed = start.elapsed().as_secs_f32();
+        let loaded = audio.handle.sf_loaded_count();
+        if loaded > self.sf_loaded_baseline {
+            self.audio_status = format!("音色加载完成，耗时 {elapsed:.1} 秒！点播放试试");
+            self.sf_load_start = None;
+        } else {
+            self.audio_status = format!("音色加载中... 已等待 {elapsed:.0} 秒");
+        }
     }
 
     /// 播放 C 大调和弦（持续音，直到点停止）。
@@ -132,6 +160,9 @@ fn setup_fonts(ctx: &egui::Context) {
 impl eframe::App for YinheApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // 安卓上无触摸事件时 egui 不重绘（桌面有鼠标移动持续触发）——
+        // 请求周期重绘让计时/状态文字持续刷新。
+        ctx.request_repaint_after(std::time::Duration::from_millis(100));
 
         // ── 触摸手势摘要 ──
         let mut gesture = String::new();
@@ -200,6 +231,7 @@ impl eframe::App for YinheApp {
                     self.audio_status = "已停止".to_string();
                 }
             });
+            self.poll_sf_load();
             ui.label(
                 egui::RichText::new(&self.audio_status)
                     .color(egui::Color32::from_rgb(120, 200, 120)),
