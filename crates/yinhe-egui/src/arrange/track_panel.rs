@@ -368,11 +368,11 @@ pub(crate) fn show(
 
         if !is_conductor {
             if ui
-                .add(
-                    egui::Button::new(t!("arrange.add_below").as_ref())
-                        .min_size(egui::vec2(ui.available_width(), 0.0))
-                        .stroke(egui::Stroke::NONE),
-                )
+                .add(crate::widgets::menu::menu_item_button(
+                    ui,
+                    false,
+                    t!("arrange.add_below"),
+                ))
                 .clicked()
             {
                 actions.push(TrackAction::AddTrack {
@@ -381,11 +381,11 @@ pub(crate) fn show(
                 ui.close();
             }
             if ui
-                .add(
-                    egui::Button::new(t!("arrange.add_above").as_ref())
-                        .min_size(egui::vec2(ui.available_width(), 0.0))
-                        .stroke(egui::Stroke::NONE),
-                )
+                .add(crate::widgets::menu::menu_item_button(
+                    ui,
+                    false,
+                    t!("arrange.add_above"),
+                ))
                 .clicked()
             {
                 actions.push(TrackAction::AddTrack {
@@ -397,11 +397,11 @@ pub(crate) fn show(
             if idx > 0
                 && conductor_track_idx != Some((idx - 1) as u16)
                 && ui
-                    .add(
-                        egui::Button::new(t!("arrange.move_up").as_ref())
-                            .min_size(egui::vec2(ui.available_width(), 0.0))
-                            .stroke(egui::Stroke::NONE),
-                    )
+                    .add(crate::widgets::menu::menu_item_button(
+                        ui,
+                        false,
+                        t!("arrange.move_up"),
+                    ))
                     .clicked()
             {
                 actions.push(TrackAction::MoveUp { idx });
@@ -409,11 +409,11 @@ pub(crate) fn show(
             }
             if idx < num_tracks - 1
                 && ui
-                    .add(
-                        egui::Button::new(t!("arrange.move_down").as_ref())
-                            .min_size(egui::vec2(ui.available_width(), 0.0))
-                            .stroke(egui::Stroke::NONE),
-                    )
+                    .add(crate::widgets::menu::menu_item_button(
+                        ui,
+                        false,
+                        t!("arrange.move_down"),
+                    ))
                     .clicked()
             {
                 actions.push(TrackAction::MoveDown { idx });
@@ -421,11 +421,11 @@ pub(crate) fn show(
             }
             ui.separator();
             if ui
-                .add(
-                    egui::Button::new(t!("arrange.delete_track").as_ref())
-                        .min_size(egui::vec2(ui.available_width(), 0.0))
-                        .stroke(egui::Stroke::NONE),
-                )
+                .add(crate::widgets::menu::menu_item_button(
+                    ui,
+                    false,
+                    t!("arrange.delete_track"),
+                ))
                 .clicked()
             {
                 actions.push(TrackAction::RemoveTrack { idx });
@@ -434,11 +434,11 @@ pub(crate) fn show(
         } else {
             // Conductor track: only allow adding after
             if ui
-                .add(
-                    egui::Button::new(t!("arrange.add_below").as_ref())
-                        .min_size(egui::vec2(ui.available_width(), 0.0))
-                        .stroke(egui::Stroke::NONE),
-                )
+                .add(crate::widgets::menu::menu_item_button(
+                    ui,
+                    false,
+                    t!("arrange.add_below"),
+                ))
                 .clicked()
             {
                 actions.push(TrackAction::AddTrack {

@@ -1232,14 +1232,11 @@ fn show_target_combo(
                                 // Velocity (special: not an AutomationTarget, renders from notes)
                                 let vel_selected = panel.show_velocity;
                                 if ui
-                                    .add(
-                                        egui::Button::selectable(
-                                            vel_selected,
-                                            t!("automation.velocity").as_ref(),
-                                        )
-                                        .min_size(egui::vec2(ui.available_width(), 0.0))
-                                        .stroke(egui::Stroke::NONE),
-                                    )
+                                    .add(crate::widgets::menu::menu_item_button(
+                                        ui,
+                                        vel_selected,
+                                        t!("automation.velocity"),
+                                    ))
                                     .clicked()
                                 {
                                     panel.show_velocity = true;
@@ -1257,11 +1254,7 @@ fn show_target_combo(
                                 let selected =
                                     !panel.show_velocity && panel.selected_target == *target;
                                 if ui
-                                    .add(
-                                        egui::Button::selectable(selected, &name)
-                                            .min_size(egui::vec2(ui.available_width(), 0.0))
-                                            .stroke(egui::Stroke::NONE),
-                                    )
+                                    .add(crate::widgets::menu::menu_item_button(ui, selected, name))
                                     .clicked()
                                 {
                                     panel.selected_target = target.clone();

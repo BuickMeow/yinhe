@@ -14,11 +14,11 @@ pub fn show(
     ui.set_max_width(200.0);
     for preset in QuantizePreset::ALL {
         if ui
-            .add(
-                egui::Button::selectable(*preset == current, preset.display_item(ppq))
-                    .min_size(egui::vec2(ui.available_width(), 0.0))
-                    .stroke(egui::Stroke::NONE),
-            )
+            .add(crate::widgets::menu::menu_item_button(
+                ui,
+                *preset == current,
+                preset.display_item(ppq),
+            ))
             .clicked()
         {
             *pending = Some(*preset);
@@ -30,11 +30,11 @@ pub fn show(
     // ── 自定义时值 ──
     let is_frac = matches!(current, QuantizePreset::Fraction(_, _));
     if ui
-        .add(
-            egui::Button::selectable(is_frac, t!("quantize.custom_fraction").as_ref())
-                .min_size(egui::vec2(ui.available_width(), 0.0))
-                .stroke(egui::Stroke::NONE),
-        )
+        .add(crate::widgets::menu::menu_item_button(
+            ui,
+            is_frac,
+            t!("quantize.custom_fraction"),
+        ))
         .clicked()
     {
         *pending = Some(QuantizePreset::Fraction(1, 1));
@@ -73,11 +73,11 @@ pub fn show(
     // ── 自定义Tick ──
     let is_abs = matches!(current, QuantizePreset::Absolute(_));
     if ui
-        .add(
-            egui::Button::selectable(is_abs, t!("quantize.custom_tick").as_ref())
-                .min_size(egui::vec2(ui.available_width(), 0.0))
-                .stroke(egui::Stroke::NONE),
-        )
+        .add(crate::widgets::menu::menu_item_button(
+            ui,
+            is_abs,
+            t!("quantize.custom_tick"),
+        ))
         .clicked()
     {
         *pending = Some(QuantizePreset::Absolute(1));

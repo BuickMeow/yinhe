@@ -207,11 +207,11 @@ pub(super) fn cell_row_header(
             ui.set_min_width(160.0);
             ui.set_max_width(160.0);
             if ui
-                .add(
-                    egui::Button::new("在上方插入")
-                        .min_size(egui::vec2(ui.available_width(), 0.0))
-                        .stroke(egui::Stroke::NONE),
-                )
+                .add(crate::widgets::menu::menu_item_button(
+                    ui,
+                    false,
+                    "在上方插入",
+                ))
                 .clicked()
             {
                 ui.ctx().memory_mut(|m| {
@@ -221,11 +221,11 @@ pub(super) fn cell_row_header(
                 ui.close();
             }
             if ui
-                .add(
-                    egui::Button::new("在下方插入")
-                        .min_size(egui::vec2(ui.available_width(), 0.0))
-                        .stroke(egui::Stroke::NONE),
-                )
+                .add(crate::widgets::menu::menu_item_button(
+                    ui,
+                    false,
+                    "在下方插入",
+                ))
                 .clicked()
             {
                 ui.ctx().memory_mut(|m| {
@@ -236,11 +236,7 @@ pub(super) fn cell_row_header(
             }
             ui.separator();
             if ui
-                .add(
-                    egui::Button::new("删除")
-                        .min_size(egui::vec2(ui.available_width(), 0.0))
-                        .stroke(egui::Stroke::NONE),
-                )
+                .add(crate::widgets::menu::menu_item_button(ui, false, "删除"))
                 .clicked()
             {
                 ui.ctx().memory_mut(|m| {

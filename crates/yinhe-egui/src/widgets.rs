@@ -4,6 +4,7 @@ pub mod grid_lines;
 pub(crate) mod hint;
 pub(crate) mod hover;
 pub(crate) mod icon_text;
+pub(crate) mod menu;
 pub mod numeric_input;
 pub mod quantize_button;
 pub mod quantize_popup;

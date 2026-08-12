@@ -161,11 +161,11 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                     ui.set_max_width(100.0);
                     if i > 0
                         && ui
-                            .add(
-                                egui::Button::new(t!("sf_list.move_up").as_ref())
-                                    .min_size(egui::vec2(ui.available_width(), 0.0))
-                                    .stroke(egui::Stroke::NONE),
-                            )
+                            .add(crate::widgets::menu::menu_item_button(
+                                ui,
+                                false,
+                                t!("sf_list.move_up"),
+                            ))
                             .clicked()
                     {
                         action = Some(SfAction::MoveUp);
@@ -173,11 +173,11 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                     }
                     if i + 1 < total
                         && ui
-                            .add(
-                                egui::Button::new(t!("sf_list.move_down").as_ref())
-                                    .min_size(egui::vec2(ui.available_width(), 0.0))
-                                    .stroke(egui::Stroke::NONE),
-                            )
+                            .add(crate::widgets::menu::menu_item_button(
+                                ui,
+                                false,
+                                t!("sf_list.move_down"),
+                            ))
                             .clicked()
                     {
                         action = Some(SfAction::MoveDown);
@@ -185,11 +185,11 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                     }
                     ui.separator();
                     if ui
-                        .add(
-                            egui::Button::new(t!("sf_list.delete").as_ref())
-                                .min_size(egui::vec2(ui.available_width(), 0.0))
-                                .stroke(egui::Stroke::NONE),
-                        )
+                        .add(crate::widgets::menu::menu_item_button(
+                            ui,
+                            false,
+                            t!("sf_list.delete"),
+                        ))
                         .clicked()
                     {
                         action = Some(SfAction::Remove);
