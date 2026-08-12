@@ -357,6 +357,7 @@ pub(crate) fn show(
     }
 
     resp.context_menu(|ui| {
+        ui.set_min_width(160.0);
         let idx = ui
             .ctx()
             .data(|d| d.get_temp::<usize>(ctx_menu_idx_id))
@@ -365,13 +366,25 @@ pub(crate) fn show(
         let is_conductor = conductor_track_idx == Some(track_idx);
 
         if !is_conductor {
-            if ui.button(t!("arrange.add_below").as_ref()).clicked() {
+            if ui
+                .add(
+                    egui::Button::new(t!("arrange.add_below").as_ref())
+                        .min_size(egui::vec2(ui.available_width(), 0.0)),
+                )
+                .clicked()
+            {
                 actions.push(TrackAction::AddTrack {
                     after_idx: Some(idx),
                 });
                 ui.close();
             }
-            if ui.button(t!("arrange.add_above").as_ref()).clicked() {
+            if ui
+                .add(
+                    egui::Button::new(t!("arrange.add_above").as_ref())
+                        .min_size(egui::vec2(ui.available_width(), 0.0)),
+                )
+                .clicked()
+            {
                 actions.push(TrackAction::AddTrack {
                     after_idx: Some(idx.saturating_sub(1)),
                 });
@@ -380,23 +393,47 @@ pub(crate) fn show(
             ui.separator();
             if idx > 0
                 && conductor_track_idx != Some((idx - 1) as u16)
-                && ui.button(t!("arrange.move_up").as_ref()).clicked()
+                && ui
+                    .add(
+                        egui::Button::new(t!("arrange.move_up").as_ref())
+                            .min_size(egui::vec2(ui.available_width(), 0.0)),
+                    )
+                    .clicked()
             {
                 actions.push(TrackAction::MoveUp { idx });
                 ui.close();
             }
-            if idx < num_tracks - 1 && ui.button(t!("arrange.move_down").as_ref()).clicked() {
+            if idx < num_tracks - 1
+                && ui
+                    .add(
+                        egui::Button::new(t!("arrange.move_down").as_ref())
+                            .min_size(egui::vec2(ui.available_width(), 0.0)),
+                    )
+                    .clicked()
+            {
                 actions.push(TrackAction::MoveDown { idx });
                 ui.close();
             }
             ui.separator();
-            if ui.button(t!("arrange.delete_track").as_ref()).clicked() {
+            if ui
+                .add(
+                    egui::Button::new(t!("arrange.delete_track").as_ref())
+                        .min_size(egui::vec2(ui.available_width(), 0.0)),
+                )
+                .clicked()
+            {
                 actions.push(TrackAction::RemoveTrack { idx });
                 ui.close();
             }
         } else {
             // Conductor track: only allow adding after
-            if ui.button(t!("arrange.add_below").as_ref()).clicked() {
+            if ui
+                .add(
+                    egui::Button::new(t!("arrange.add_below").as_ref())
+                        .min_size(egui::vec2(ui.available_width(), 0.0)),
+                )
+                .clicked()
+            {
                 actions.push(TrackAction::AddTrack {
                     after_idx: Some(idx),
                 });

@@ -158,16 +158,36 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                 let mut action: Option<SfAction> = None;
                 resp.context_menu(|ui| {
                     ui.set_min_width(100.0);
-                    if i > 0 && ui.button(t!("sf_list.move_up").as_ref()).clicked() {
+                    if i > 0
+                        && ui
+                            .add(
+                                egui::Button::new(t!("sf_list.move_up").as_ref())
+                                    .min_size(egui::vec2(ui.available_width(), 0.0)),
+                            )
+                            .clicked()
+                    {
                         action = Some(SfAction::MoveUp);
                         ui.close();
                     }
-                    if i + 1 < total && ui.button(t!("sf_list.move_down").as_ref()).clicked() {
+                    if i + 1 < total
+                        && ui
+                            .add(
+                                egui::Button::new(t!("sf_list.move_down").as_ref())
+                                    .min_size(egui::vec2(ui.available_width(), 0.0)),
+                            )
+                            .clicked()
+                    {
                         action = Some(SfAction::MoveDown);
                         ui.close();
                     }
                     ui.separator();
-                    if ui.button(t!("sf_list.delete").as_ref()).clicked() {
+                    if ui
+                        .add(
+                            egui::Button::new(t!("sf_list.delete").as_ref())
+                                .min_size(egui::vec2(ui.available_width(), 0.0)),
+                        )
+                        .clicked()
+                    {
                         action = Some(SfAction::Remove);
                         ui.close();
                     }
