@@ -414,7 +414,13 @@ fn show_file_menu(
                         .map(|c| crate::shortcuts::display_combo(&c));
 
                     ui.horizontal(|ui| {
-                        let main_w = (ui.available_width() - PIN_W).max(0.0);
+                        // 主按钮用 add_sized 锁定精确宽度：
+                        // shortcut_text 内部的 grow atom 会试图填满整行（把图钉挤出、
+                        // 行宽超出 popup 宽度 → 每帧变宽的正反馈），固定宽度可避免；
+                        // 同时扣除 item_spacing 保证行总宽恰好等于菜单内容宽。
+                        let main_w =
+                            (ui.available_width() - ui.spacing().item_spacing.x - PIN_W).max(0.0);
+                        let btn_h = ui.spacing().interact_size.y;
                         let mut main_btn = egui::Button::selectable(
                             false,
                             crate::widgets::icon_text::icon_text(
@@ -423,12 +429,13 @@ fn show_file_menu(
                                 crate::theme::FILE_MENU_FONT,
                                 icon_color,
                             ),
-                        )
-                        .min_size(egui::vec2(main_w, 0.0));
+                        );
                         if let Some(sc) = &shortcut {
                             main_btn = main_btn.shortcut_text(egui::RichText::new(sc));
                         }
-                        let main_resp = ui.add_enabled(enabled, main_btn);
+                        let main_resp = ui
+                            .add_enabled_ui(enabled, |ui| ui.add_sized([main_w, btn_h], main_btn))
+                            .inner;
 
                         let pin_color = if pinned {
                             crate::theme::accent_active()
