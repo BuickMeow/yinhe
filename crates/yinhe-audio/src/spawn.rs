@@ -708,7 +708,6 @@ pub fn spawn_cpal_audio(
     let handle_producer_position = Arc::clone(&renderer_state.producer_sample_position);
     let renderer_playing = Arc::clone(&renderer_state.playing);
     let renderer_duration = Arc::clone(&renderer_state.duration_samples);
-    let initialized = Arc::clone(&renderer_state.initialized);
     let reset_generation = Arc::clone(&renderer_state.reset_generation);
     // 清空边界：ack 时丢弃边界前的旧音频、保留新音频（竞态安全清空）。
     let clear_base_sample = Arc::clone(&renderer_state.clear_base_sample);
@@ -766,16 +765,13 @@ pub fn spawn_cpal_audio(
                     acknowledged_generation = generation;
                 }
 
-                if initialized.load(Ordering::Acquire) {
-                    let popped = ring_consumer.pop_into(data);
-                    if popped < data.len() {
-                        data[popped..].fill(0.0);
-                    }
-                    consumer_sample_position =
-                        consumer_sample_position.saturating_add((popped / STEREO_CHANNELS) as u64);
-                } else {
-                    data.fill(0.0);
+                // ring 有音频就读，没有就填静音（含未加载模型时的纯预览场景）。
+                let popped = ring_consumer.pop_into(data);
+                if popped < data.len() {
+                    data[popped..].fill(0.0);
                 }
+                consumer_sample_position =
+                    consumer_sample_position.saturating_add((popped / STEREO_CHANNELS) as u64);
 
                 sp.store(consumer_sample_position, Ordering::Relaxed);
                 pl.store(renderer_playing.load(Ordering::Relaxed), Ordering::Relaxed);

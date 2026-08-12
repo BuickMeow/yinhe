@@ -17,6 +17,12 @@ const STEREO_CHANNELS: usize = 2;
 const RENDER_CHUNK_FRAMES: usize = 512;
 const TARGET_BUFFER_FRAMES: usize = 4096;
 /// 预览激活时的 ring 目标（帧数）：降低输出延迟（≈10ms @48k）。
+/// 安卓：MIUI 等 ROM 对后台线程调度抖动大（线程 sleep 实际延迟可达 10ms+），
+/// 10ms 缓冲极易欠载 → 声音卡顿。放大到 4096 帧（≈85ms）换取稳定性，
+/// 预览延迟增加但不再断音。桌面保持 10ms 低延迟。
+#[cfg(target_os = "android")]
+const PREVIEW_TARGET_FRAMES: usize = 4096;
+#[cfg(not(target_os = "android"))]
 const PREVIEW_TARGET_FRAMES: usize = 512;
 const WAKE_SLEEP: Duration = Duration::from_millis(1);
 
@@ -637,11 +643,12 @@ impl AudioRenderer {
     }
 
     fn render_if_needed(&mut self) -> bool {
-        if !self.state.initialized.load(Ordering::Acquire) {
+        // 预览组非空或有余音时强制渲染：未播放时也要输出。
+        // 预览引擎是独立合成器（不依赖模型），所以预览时不需要 initialized。
+        let previewing = self.preview_engine.previewing();
+        if !self.state.initialized.load(Ordering::Acquire) && !previewing {
             return false;
         }
-        // 预览组非空或有余音时强制渲染：未播放时也要输出。
-        let previewing = self.preview_engine.previewing();
         if !self.engine.playing() && !previewing {
             return false;
         }
