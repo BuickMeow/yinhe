@@ -34,6 +34,11 @@ const TRACK_PALETTE: [[f32; 4]; 12] = [
     [0.60, 0.80, 0.55, 1.0],
 ];
 
+/// 诊断开关：真机帧率/渲染调试用。每次同步读回（cull_visible_count、
+/// diag_draw_experiments、纹理读回）都会阻塞主线程等 GPU，默认必须关，
+/// 定位完问题后这段诊断应整体删除。
+const PR_DIAG: bool = false;
+
 /// PR 视图：视口状态 + GPU 渲染 + 触摸交互。
 pub struct PrView {
     wgpu_state: Arc<eframe::egui_wgpu::RenderState>,
@@ -158,7 +163,7 @@ impl PrView {
                 0.0,
                 true,
             );
-            log::info!(
+            log::debug!(
                 "pr_view: draw 帧 notes_uploaded={} cull_ready={} ppu={} scroll=({:.0},{:.0})",
                 self.notes_uploaded,
                 renderer.cull_is_ready(),
@@ -167,7 +172,7 @@ impl PrView {
                 job.uniforms.scroll_y,
             );
             self.diag_frame += 1;
-            if self.diag_frame.is_multiple_of(30) {
+            if PR_DIAG && self.diag_frame.is_multiple_of(30) {
                 log::info!("pr_view: cull visible = {}", renderer.cull_visible_count());
             }
             renderer.upload_uniforms(job.uniforms);
@@ -181,7 +186,9 @@ impl PrView {
             renderer.draw(&mut encoder, &self.texture_view, self.width, self.height);
             self.wgpu_state.queue.submit([encoder.finish()]);
             self.diag_frame += 1;
-            if self.diag_frame.is_multiple_of(60) {
+            // 诊断：同步读回会阻塞主线程等 GPU，真机上周期性大卡顿源，
+            // 仅在 PR_DIAG 开启时执行。
+            if PR_DIAG && self.diag_frame.is_multiple_of(60) {
                 log::info!(
                     "pr_view: 诊断 cull_visible={} ",
                     renderer.cull_visible_count()
