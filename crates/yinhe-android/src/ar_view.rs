@@ -33,6 +33,8 @@ pub enum ArEvent {
         track0: usize,
         track1: usize,
     },
+    /// 单击空白（Select 工具）：清除全部选框。
+    ClearArrSel,
 }
 
 /// AR 视图：视口状态 + GPU 渲染 + 音轨面板 + 触摸交互。
@@ -61,6 +63,8 @@ pub struct ArView {
     marquee_drag: Option<(f64, f64)>,
     /// AR 选框拖拽当前点 (tick, track)（预览绘制用）。
     marquee_cur: Option<(f64, f64)>,
+    /// 选框释放帧标记：保留预览画到本帧结束（防松手闪烁），下一帧开头清。
+    marquee_done: bool,
     /// 上一次内容矩形（诊断日志用：变化时打印坐标）。
     last_rect: egui::Rect,
     /// 主题色（与桌面端同源：BaseColors 7 色派生）。
@@ -116,6 +120,7 @@ impl ArView {
             prev_touches: 0,
             marquee_drag: None,
             marquee_cur: None,
+            marquee_done: false,
             last_rect: egui::Rect::NOTHING,
             theme: derive_theme(BaseColors::DARK),
         }
@@ -134,6 +139,7 @@ impl ArView {
         self.status = "就绪".to_string();
         self.marquee_drag = None;
         self.marquee_cur = None;
+        self.marquee_done = false;
     }
 
     /// 设置播放光标位置（tick），None 隐藏。lib.rs 每帧从音频位置换算后调用。
@@ -202,6 +208,13 @@ impl ArView {
         let painter = ui.painter().clone();
         let rect = resp.rect;
 
+        // 释放帧标记：上一帧已提交选框，本帧 doc 已更新，清掉预览（持久选框接管）。
+        if self.marquee_done {
+            self.marquee_drag = None;
+            self.marquee_cur = None;
+            self.marquee_done = false;
+        }
+
         // ── 触摸：双指永远导航（平移+缩放），单指滚动仅抓手工具。──
         let (zoom, pan, touches, touch_center) = ui.ctx().input(|i| {
             let mt = i.multi_touch();
@@ -264,6 +277,8 @@ impl ArView {
         } else if resp.dragged()
             && let Some(pos) = resp.interact_pointer_pos()
         {
+            // 边缘自动滚动视口（48px 触发区，桌面端同款参数）。
+            self.auto_scroll(ui, rect, pos);
             let d = resp.drag_delta();
             if pos.x < rect.min.x + PANEL_W {
                 // 音轨面板：任何工具都可单指垂直滚动（轨道列表）。
@@ -284,17 +299,26 @@ impl ArView {
                 self.marquee_cur = Some((t, tr));
             }
         }
-        // 选框拖拽结束：提交事件（拖动中释放）。
+        // 选框拖拽结束：提交事件（释放帧保留预览数据到本帧绘制结束）。
         if resp.drag_stopped()
-            && let Some((t0, tr0)) = self.marquee_drag.take()
+            && let Some((t0, tr0)) = self.marquee_drag
         {
             let (t1, tr1) = self.marquee_cur.take().unwrap_or((t0, tr0));
+            self.marquee_done = true;
             events.push(ArEvent::SelectRect {
                 t0: t0.min(t1),
                 t1: t0.max(t1) + 1.0,
                 track0: tr0.min(tr1) as usize,
                 track1: tr0.max(tr1) as usize,
             });
+        }
+        // Select 工具单击空白（音符区）：清除全部选框（桌面端行为）。
+        if resp.clicked()
+            && tool == crate::app::Tool::Select
+            && let Some(pos) = resp.interact_pointer_pos()
+            && pos.x >= rect.min.x + PANEL_W
+        {
+            events.push(ArEvent::ClearArrSel);
         }
 
         // ── 点击命中：M/S 按钮 → 静音/独奏；轨道行 → 进入 PR ──
@@ -450,6 +474,38 @@ impl ArView {
             events.push(ArEvent::EnterPr(row_idx as u16));
         }
         events
+    }
+
+    /// 拖动中边缘自动滚动视口（与 PR 同款：内容区边缘 48px 内触发，
+    /// 越界越多滚得越快，15px/s 基础速度）。
+    fn auto_scroll(&mut self, ui: &egui::Ui, rect: egui::Rect, pos: egui::Pos2) {
+        const MARGIN: f32 = 48.0;
+        const BASE_SPEED: f32 = 15.0;
+        let dt = ui.input(|i| i.unstable_dt);
+        let mut dx = 0.0f32;
+        let mut dy = 0.0f32;
+        if pos.x < rect.min.x + MARGIN {
+            dx = -(rect.min.x + MARGIN - pos.x) * BASE_SPEED * dt;
+        } else if pos.x > rect.max.x - MARGIN {
+            dx = (pos.x - (rect.max.x - MARGIN)) * BASE_SPEED * dt;
+        }
+        if pos.y < rect.min.y + MARGIN {
+            dy = -(rect.min.y + MARGIN - pos.y) * BASE_SPEED * dt;
+        } else if pos.y > rect.max.y - MARGIN {
+            dy = (pos.y - (rect.max.y - MARGIN)) * BASE_SPEED * dt;
+        }
+        if dx != 0.0 || dy != 0.0 {
+            let base = &mut self.view.base;
+            base.scroll_x = (base.scroll_x + dx).max(0.0);
+            base.scroll_y = (base.scroll_y + dy).max(0.0);
+            let total_ticks = self
+                .model
+                .as_ref()
+                .map_or(0.0, |m| m.tempo_map.tick_length as f64);
+            base.clamp_scroll_x(rect.width(), total_ticks);
+            base.dirty = true;
+            ui.ctx().request_repaint();
+        }
     }
 
     /// 视口坐标 → 音乐坐标 (吸附 tick, 轨道浮点位置)。

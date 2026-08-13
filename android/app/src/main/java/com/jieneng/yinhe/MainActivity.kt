@@ -69,8 +69,10 @@ class MainActivity : GameActivity() {
         val mode = when {
             Build.VERSION.SDK_INT >= 30 ->
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+
             Build.VERSION.SDK_INT >= 28 ->
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+
             else -> return
         }
         window.attributes = window.attributes.apply { layoutInDisplayCutoutMode = mode }
@@ -90,10 +92,10 @@ class MainActivity : GameActivity() {
                 WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         } else {
             window.decorView.systemUiVisibility = (
-                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                    or View.SYSTEM_UI_FLAG_FULLSCREEN
-                )
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                            or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                            or View.SYSTEM_UI_FLAG_FULLSCREEN
+                    )
         }
     }
 
@@ -113,6 +115,25 @@ class MainActivity : GameActivity() {
     private fun pushCurrentInsets() {
         val root = window.decorView.rootWindowInsets ?: return
         pushInsets(WindowInsetsCompat.toWindowInsetsCompat(root, window.decorView))
+    }
+
+    /** Rust 侧（ime 模块）调用：显示软键盘（输入法）。 */
+    fun showIme() {
+        val imm = getSystemService(
+            android.content.Context.INPUT_METHOD_SERVICE
+        ) as android.view.inputmethod.InputMethodManager
+        imm.showSoftInput(
+            window.decorView,
+            android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT
+        )
+    }
+
+    /** Rust 侧（ime 模块）调用：隐藏软键盘。 */
+    fun hideIme() {
+        val imm = getSystemService(
+            android.content.Context.INPUT_METHOD_SERVICE
+        ) as android.view.inputmethod.InputMethodManager
+        imm.hideSoftInputFromWindow(window.decorView.windowToken, 0)
     }
 
     /** Rust 侧（file_picker 模块）在菜单"本地打开"时通过 JNI 调用。 */

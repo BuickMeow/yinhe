@@ -16,6 +16,7 @@ use yinhe_core::YinModel;
 mod app;
 mod ar_view;
 mod file_picker;
+mod ime;
 mod insets;
 mod pages;
 mod pr_view;

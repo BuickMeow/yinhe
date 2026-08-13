@@ -27,6 +27,15 @@ pub fn init(app: winit::platform::android::activity::AndroidApp) {
     *ANDROID_APP.lock().unwrap_or_else(|e| e.into_inner()) = Some(app);
 }
 
+/// 取回 AndroidApp 引用（ime 等模块复用，避免重复存储）。
+#[cfg(target_os = "android")]
+pub(crate) fn android_app() -> Option<winit::platform::android::activity::AndroidApp> {
+    ANDROID_APP
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
 /// 打开系统文件选择器。非安卓平台为空操作。
 #[cfg(target_os = "android")]
 pub fn open_file_picker() {

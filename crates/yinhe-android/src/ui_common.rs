@@ -81,6 +81,7 @@ pub(crate) fn quantize_popup(
     egui::Window::new("量化")
         .id(egui::Id::new(id))
         .open(&mut open)
+        .title_bar(false)
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .collapsible(false)
         .resizable(false)
@@ -151,6 +152,7 @@ pub(crate) fn right_edit_area(
     name: &str,
     quantize: yinhe_editor_core::quantize::QuantizePreset,
 ) -> (bool, bool) {
+    // 从右往左排：名称框 → 重做 → 撤销 → 工具 → 量化，视觉上撤销在左、重做在右。
     let name_clicked = right_side_button(ui, name, NAME_BTN_W).clicked();
     let (can_undo, can_redo) = app
         .doc
@@ -159,18 +161,18 @@ pub(crate) fn right_edit_area(
         .unwrap_or((false, false));
     use egui_material_icons::icons::{ICON_REDO, ICON_UNDO};
     if ui
-        .add_enabled(can_undo, egui::Button::new(icon_text(ICON_UNDO)))
-        .on_hover_text("撤销")
-        .clicked()
-    {
-        app.undo();
-    }
-    if ui
         .add_enabled(can_redo, egui::Button::new(icon_text(ICON_REDO)))
         .on_hover_text("重做")
         .clicked()
     {
         app.redo();
+    }
+    if ui
+        .add_enabled(can_undo, egui::Button::new(icon_text(ICON_UNDO)))
+        .on_hover_text("撤销")
+        .clicked()
+    {
+        app.undo();
     }
     // 工具选择（显示当前工具图标，点击弹居中工具窗）。
     if ui

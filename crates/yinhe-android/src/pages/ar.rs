@@ -108,6 +108,11 @@ impl YinheApp {
                                 doc.edit.arr_sel_rect = vec![(t0, t1, track0, track1)];
                             }
                         }
+                        crate::ar_view::ArEvent::ClearArrSel => {
+                            if let Some(doc) = &mut self.doc {
+                                doc.edit.arr_sel_rect.clear();
+                            }
+                        }
                     }
                 }
             });
@@ -178,7 +183,10 @@ impl YinheApp {
             begin_edit, commit_artist, commit_description, commit_project_name,
         };
 
+        // 标题栏 X / 点击外部关闭（open 同步回 project_settings_open）。
+        let mut open = self.project_settings_open;
         egui::Window::new("工程设置")
+            .open(&mut open)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(false)
@@ -209,6 +217,8 @@ impl YinheApp {
                         resp.id.value(),
                         &doc.data.model.meta.name,
                     );
+                    // 输入法：聚焦弹键盘（android-activity 的自动弹不工作，走 JNI 桥）。
+                    crate::ime::show();
                 }
                 if resp.changed() {
                     let model = Arc::make_mut(&mut doc.data.model);
@@ -219,6 +229,7 @@ impl YinheApp {
                     }
                 }
                 if resp.lost_focus() {
+                    crate::ime::hide();
                     let name = doc.data.model.meta.name.clone();
                     commit_project_name(doc, resp.id.value(), &name);
                 }
@@ -235,11 +246,13 @@ impl YinheApp {
                         resp.id.value(),
                         &doc.data.model.meta.artist,
                     );
+                    crate::ime::show();
                 }
                 if resp.changed() {
                     Arc::make_mut(&mut doc.data.model).meta.artist = artist;
                 }
                 if resp.lost_focus() {
+                    crate::ime::hide();
                     let artist = doc.data.model.meta.artist.clone();
                     commit_artist(doc, resp.id.value(), &artist);
                 }
@@ -256,11 +269,13 @@ impl YinheApp {
                         resp.id.value(),
                         &doc.data.model.meta.description,
                     );
+                    crate::ime::show();
                 }
                 if resp.changed() {
                     Arc::make_mut(&mut doc.data.model).meta.description = desc;
                 }
                 if resp.lost_focus() {
+                    crate::ime::hide();
                     let desc = doc.data.model.meta.description.clone();
                     commit_description(doc, resp.id.value(), &desc);
                 }
@@ -269,10 +284,9 @@ impl YinheApp {
                 let meta = &doc.data.model.meta;
                 ui.label(format!("PPQ：{}（修改需重排音符，暂不支持）", meta.ppq));
                 ui.label(format!("压缩等级：{}", meta.compression_level));
-                ui.add_space(8.0);
-                if ui.button("完成").clicked() {
-                    self.project_settings_open = false;
-                }
             });
+        if !open {
+            self.project_settings_open = false;
+        }
     }
 }

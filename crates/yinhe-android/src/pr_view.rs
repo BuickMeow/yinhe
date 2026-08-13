@@ -618,6 +618,18 @@ impl PrView {
                     if tick != t0 as u32 || key != k0 as u8 {
                         let (a, b) = (t0.min(tick as f64), t0.max(tick as f64));
                         let (ka, kb) = (k0.min(key as f64), k0.max(key as f64));
+                        // 释放帧直接更新本地渲染选区：事件处理在绘制后才写 doc，
+                        // 否则这一帧预览消失、持久选框未到，会闪一帧空白。
+                        let mut sel = Selection::default();
+                        sel.add_rect_track(
+                            a as u32,
+                            b as u32 + 1,
+                            ka as u8,
+                            kb as u8,
+                            editing,
+                            editing,
+                        );
+                        self.selected = sel;
                         events.push(PrEvent::SelectRect {
                             t0: a as u32,
                             t1: b as u32 + 1,
@@ -625,6 +637,8 @@ impl PrView {
                             k1: kb as u8,
                         });
                     } else {
+                        // 单击空白：清选区（同步本地，防闪烁）。
+                        self.selected = Selection::default();
                         events.push(PrEvent::ClearSelection);
                     }
                 }
