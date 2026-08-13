@@ -9,7 +9,10 @@ use std::sync::{Arc, Mutex};
 
 use eframe::egui;
 use yinhe_core::{Selection, YinModel};
-use yinhe_types::{PianoRollView, TimelineViewBase};
+use yinhe_types::{
+    PianoRollView, TimelineViewBase, build_time_sig_segments, compute_measure_divisor,
+    measure_ticks,
+};
 use yinhe_wgpu::{InstanceRenderer, NoteInstance, build_all_notes, build_render_job};
 
 /// 后台构建的音符实例数据（加载后一次性构建 + 上传）。
@@ -35,10 +38,8 @@ const TRACK_PALETTE: [[f32; 4]; 12] = [
 ];
 
 /// 顶部小节标尺高度（px）：内容区整体下移该距离给标尺让位。
-const RULER_H: f32 = 24.0;
-
-/// 一小节 tick 数（4/4 拍 @ 480ppq）。
-const BAR_TICKS: i64 = 1920;
+/// 手机屏幕紧张，比桌面端（~28px）更矮。
+const RULER_H: f32 = 16.0;
 
 /// PR 视图：视口状态 + GPU 渲染 + 触摸交互。
 pub struct PrView {
@@ -47,8 +48,15 @@ pub struct PrView {
     texture_view: wgpu::TextureView,
     texture_id: egui::TextureId,
     renderer: Option<InstanceRenderer>,
+    /// uniforms/视口逻辑尺寸（逻辑像素，egui 坐标单位）。
     width: u32,
     height: u32,
+    /// 离屏纹理物理尺寸（逻辑尺寸 × pixels_per_point）。纹理按物理像素
+    /// 创建，否则高分屏上音符发虚。
+    tex_w: u32,
+    tex_h: u32,
+    /// 当前像素密度（每帧从 egui 读取）。
+    ppp: f32,
     view: PianoRollView,
     model: Option<Arc<YinModel>>,
     notes_build: Option<Arc<Mutex<Option<NoteBuildResult>>>>,
@@ -83,6 +91,9 @@ impl PrView {
             renderer: None,
             width: 1,
             height: 1,
+            tex_w: 1,
+            tex_h: 1,
+            ppp: 1.0,
             view: PianoRollView {
                 base: TimelineViewBase {
                     pixels_per_tick: 0.05,
@@ -160,6 +171,8 @@ impl PrView {
         self.keyboard_w = 64.0;
         self.view.base.left_panel_width = self.keyboard_w;
         self.view.viewport_h = rect.height();
+        // 像素密度：纹理按物理像素创建（高分屏不发虚）。
+        self.ppp = ui.ctx().pixels_per_point().max(0.25);
         // 首次渲染：纵向定位到中央音区（key 60），否则 scroll_y=0 显示最高音区。
         // 与 GPU 音符层同一参考系：key 127 在顶，key 60 行中心 = 128kh - 60.5kh。
         if !self.view_initialized {
@@ -193,7 +206,8 @@ impl PrView {
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
             // draw 的 pass 自带透明 clear，音符绘制在这里完成。
-            renderer.draw(&mut encoder, &self.texture_view, self.width, self.height);
+            // viewport 必须用纹理物理尺寸。
+            renderer.draw(&mut encoder, &self.texture_view, self.tex_w, self.tex_h);
             self.wgpu_state.queue.submit([encoder.finish()]);
         }
 
@@ -208,6 +222,7 @@ impl PrView {
             rect.max,
         );
         self.draw_scale_bands(ui, content_rect);
+        self.draw_octave_lines(ui, content_rect);
         self.draw_keyboard(ui, kb_rect);
         self.draw_grid(ui, content_rect);
         // 离屏纹理覆盖整个 rect（含键盘列，与桌面端一致）：shader 的音符
@@ -215,11 +230,12 @@ impl PrView {
         // 否则音符整体右移 keyboard_width 像素且右端溢出被裁（安卓看不到
         // 音符的根因）。键盘列是纹理的透明区，由 egui 键盘层透出。
         // 顶部 ruler_h 像素让给标尺：贴图目标与 UV 同步裁掉该段，保持 1:1。
+        // UV 用物理像素（纹理是物理尺寸，ruler_h 是逻辑像素）。
         painter.image(
             self.texture_id,
             egui::Rect::from_min_max(egui::pos2(rect.min.x, rect.min.y + ruler_h), rect.max),
             egui::Rect::from_min_max(
-                egui::pos2(0.0, ruler_h / self.height.max(1) as f32),
+                egui::pos2(0.0, (ruler_h * self.ppp) / self.tex_h.max(1) as f32),
                 egui::pos2(1.0, 1.0),
             ),
             egui::Color32::WHITE,
@@ -262,35 +278,41 @@ impl PrView {
             if touch_center.is_some_and(|c| c.x < rect.min.x + self.keyboard_w) {
                 // 键盘列上捏合 → 垂直缩放 key_height。锚点 = 双指中心对应的
                 // key 浮点位置，缩放后该 key 仍停留在手指处（同 shader 参考系）。
+                // 下限 = 128 键恰好铺满视口（不允许比视口更小）。
                 let y0 = touch_center.expect("checked above").y;
                 let kh = self.view.key_height;
                 let bottom = 128.0 * kh - base.scroll_y;
                 let anchor_key = (bottom - (y0 - rect.min.y)) / kh;
-                let new_kh = (kh * zoom).clamp(4.0, 48.0);
+                let new_kh = (kh * zoom).clamp(rect.height() / 128.0, 48.0);
                 let new_bottom = (y0 - rect.min.y) + anchor_key * new_kh;
-                base.scroll_y = (128.0 * new_kh - new_bottom).max(0.0);
+                let max_scroll = (128.0 * new_kh - rect.height()).max(0.0);
+                base.scroll_y = (128.0 * new_kh - new_bottom).clamp(0.0, max_scroll);
                 self.view.key_height = new_kh;
                 base.dirty = true;
             } else {
-                // 内容区捏合 → 水平缩放。scroll_x 是内容区（不含键盘列）的
-                // 滚动偏移，缩放中心取内容区中点。
+                // 内容区捏合 → 水平缩放。锚点 = 手指（双指中心）在内容区内
+                // 的位置，缩放后该 tick 停在手指处；无手指信息时取内容区中点。
                 let content_w = rect.width() - self.keyboard_w;
-                let center_tick =
-                    (base.scroll_x + content_w / 2.0) / base.pixels_per_tick.max(1e-6);
+                let cx = touch_center
+                    .map(|c| (c.x - rect.min.x - self.keyboard_w).clamp(0.0, content_w))
+                    .unwrap_or(content_w / 2.0);
+                let center_tick = (base.scroll_x + cx) / base.pixels_per_tick.max(1e-6);
                 base.pixels_per_tick = (base.pixels_per_tick * zoom).clamp(0.0005, 8.0);
-                base.scroll_x = center_tick * base.pixels_per_tick - content_w / 2.0;
+                base.scroll_x = (center_tick * base.pixels_per_tick - cx).max(0.0);
                 base.dirty = true;
             }
         }
+        // 垂直滚动上限：128 键总高（128*kh）不能小于视口高，滚到底即全部可见。
+        let max_scroll = (128.0 * self.view.key_height - rect.height()).max(0.0);
         if touches >= 2 {
             if let Some(pan) = pan {
                 base.scroll_x = (base.scroll_x - pan.x).max(0.0);
-                base.scroll_y = (base.scroll_y - pan.y).max(0.0);
+                base.scroll_y = (base.scroll_y - pan.y).clamp(0.0, max_scroll);
                 base.dirty = true;
             }
         } else if pointer_down {
             base.scroll_x = (base.scroll_x - pointer_delta.x).max(0.0);
-            base.scroll_y = (base.scroll_y - pointer_delta.y).max(0.0);
+            base.scroll_y = (base.scroll_y - pointer_delta.y).clamp(0.0, max_scroll);
             base.dirty = true;
         }
     }
@@ -384,27 +406,31 @@ impl PrView {
     }
 
     /// 离屏纹理尺寸跟随可用区域（双向重建）。
-    /// 纹理宽 = 整个 rect（含键盘列）：shader 的音符像素坐标以
-    /// keyboard_width 为原点（x_offset = keyboard_width - scroll_x），
-    /// NDC 用总宽做分母，与桌面端一致（桌面端纹理就是 content_rect 总宽）。
+    /// 纹理 = 逻辑尺寸 × pixels_per_point（物理像素，高分屏清晰）；
+    /// uniforms 与滚动仍是逻辑坐标（shader 里 NDC 用 u.width 做分母，
+    /// 只要分子分母同单位比例就正确，纹理物理尺寸只决定采样分辨率）。
     fn ensure_texture_size(&mut self, rect: egui::Rect) {
         let w = rect.width().max(1.0) as u32;
         let h = rect.height().max(1.0) as u32;
-        if w == self.width && h == self.height {
+        let tex_w = (rect.width() * self.ppp).round().max(1.0) as u32;
+        let tex_h = (rect.height() * self.ppp).round().max(1.0) as u32;
+        if w == self.width && h == self.height && tex_w == self.tex_w && tex_h == self.tex_h {
             return;
         }
         let (texture, texture_view, texture_id) = create_target(
             &self.wgpu_state.device,
             &mut self.wgpu_state.renderer.write(),
             self.wgpu_state.target_format,
-            w,
-            h,
+            tex_w,
+            tex_h,
         );
         self.texture = texture;
         self.texture_view = texture_view;
         self.texture_id = texture_id;
         self.width = w;
         self.height = h;
+        self.tex_w = tex_w;
+        self.tex_h = tex_h;
     }
 
     /// 键盘列：可见键范围内的黑白键。
@@ -498,28 +524,53 @@ impl PrView {
         }
     }
 
-    /// 顶部小节标尺：深色底 + 每小节（1920 tick）刻度线 + 小节号。
-    /// 背景覆盖整个 rect（含键盘列上方，避免空缝），刻度只画在内容区。
-    /// 刻度 x 与 draw_grid 同公式（tick→像素）；步长过密时只画刻度不画
-    /// 数字，更密时整条隐藏（阈值与 draw_grid 一致）。
+    /// 八度分隔线：每个 C（key % 12 == 0）的顶部一条横线，与桌面端
+    /// bg::paint_octave_lines 一致，纵向定位八度。
+    fn draw_octave_lines(&self, ui: &egui::Ui, rect: egui::Rect) {
+        let kh = self.view.key_height;
+        let bottom = 128.0 * kh - self.view.base.scroll_y;
+        let painter = ui.painter();
+        for key in (0u8..128).step_by(12) {
+            let y = rect.min.y + bottom - key as f32 * kh;
+            if y < rect.min.y || y > rect.max.y {
+                continue;
+            }
+            painter.line_segment(
+                [egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)],
+                egui::Stroke::new(1.0, egui::Color32::from_gray(60)),
+            );
+        }
+    }
+
+    /// 顶部小节标尺：深色底（铺满全宽，含键盘列上方）+ 每小节刻度线 + 小节号。
+    /// 与网格线同级别：刻度 = 每小节（变拍子感知），数字只在合并边界显示
+    /// （缩放小时每 2/4/8… 小节一个数字），过密时整条隐藏。
     fn draw_ruler(&self, ui: &egui::Ui, rect: egui::Rect, content_rect: egui::Rect, ruler_h: f32) {
         if ruler_h <= 0.0 {
             return;
         }
+        let Some(model) = &self.model else {
+            return;
+        };
         let ppu = self.view.base.pixels_per_tick;
-        let scroll_x = self.view.base.scroll_x;
-        let step_px = BAR_TICKS as f32 * ppu;
-        if step_px < 6.0 {
+        if ppu <= 0.001 {
             return;
         }
-        // 背景铺满整个 rect 宽度（含键盘列上方），刻度从内容区开始。
+        let scroll_x = self.view.base.scroll_x;
+        let tpb = model.meta.ppq.max(1);
+        let (def_num, def_den) = model.tempo_map.time_sig_default;
+        let def_den = def_den.trailing_zeros() as u8;
+        let segments = build_time_sig_segments(&model.conductor.time_sig, def_num, def_den);
+        let tick_start = scroll_x as f64 / ppu as f64;
+        let tick_end = (scroll_x + content_rect.width()) as f64 / ppu as f64;
+        const MIN_SPACING: f32 = 38.0;
+
         let ruler_rect = egui::Rect::from_min_max(
             egui::pos2(rect.min.x, rect.min.y),
             egui::pos2(rect.max.x, rect.min.y + ruler_h),
         );
         let painter = ui.painter();
         painter.rect_filled(ruler_rect, 0.0, egui::Color32::from_gray(30));
-        // 与内容区的分界线。
         painter.line_segment(
             [
                 egui::pos2(ruler_rect.min.x, ruler_rect.max.y),
@@ -527,48 +578,69 @@ impl PrView {
             ],
             egui::Stroke::new(1.0, egui::Color32::from_gray(50)),
         );
-        let show_number = step_px >= 30.0;
-        let start_tick = ((scroll_x / ppu) as i64 / BAR_TICKS) * BAR_TICKS;
-        let mut bar = start_tick / BAR_TICKS;
-        let mut x = content_rect.min.x + (start_tick as f32 * ppu - scroll_x);
-        // 跳过仍位于键盘列上方的刻度。
-        while x < content_rect.min.x {
-            x += step_px;
-            bar += 1;
-        }
-        while x < content_rect.max.x {
-            painter.line_segment(
-                [
-                    egui::pos2(x, ruler_rect.min.y),
-                    egui::pos2(x, ruler_rect.max.y),
-                ],
-                egui::Stroke::new(1.0, egui::Color32::from_gray(90)),
-            );
-            if show_number {
-                painter.text(
-                    egui::pos2(x + 3.0, ruler_rect.min.y + 1.0),
-                    egui::Align2::LEFT_TOP,
-                    // 小节号从 1 开始（tick 0 = 第 1 小节）。
-                    (bar + 1).to_string(),
-                    egui::FontId::proportional(11.0),
-                    egui::Color32::from_gray(170),
-                );
+
+        let mut bar_offset = 0u32;
+        for (i, &(seg_start, num, den)) in segments.iter().enumerate() {
+            let seg_end = segments.get(i + 1).map_or(u32::MAX, |&(t, _, _)| t);
+            if seg_start as f64 > tick_end {
+                break;
             }
-            x += step_px;
-            bar += 1;
+            let ticks_per_measure = measure_ticks(tpb, num, den).max(1);
+            let measure_px = ticks_per_measure as f32 * ppu;
+            if measure_px < 6.0 {
+                // 太密整条隐藏（与桌面阈值一致）；段内小节数仍累计。
+                let seg_ticks = seg_end.saturating_sub(seg_start) as f32;
+                bar_offset += (seg_ticks / ticks_per_measure as f32).ceil() as u32;
+                continue;
+            }
+            let divisor = compute_measure_divisor(measure_px, MIN_SPACING);
+            let show_number = measure_px >= 30.0;
+            let first_tick = seg_start.max(tick_start as u32);
+            let mut tick = seg_start.saturating_add(
+                first_tick.saturating_sub(seg_start) / ticks_per_measure * ticks_per_measure,
+            );
+            while (tick as f64) <= tick_end && tick < seg_end {
+                let local = tick - seg_start;
+                let x = content_rect.min.x + tick as f32 * ppu - scroll_x;
+                if x >= content_rect.min.x && x <= content_rect.max.x {
+                    painter.line_segment(
+                        [
+                            egui::pos2(x, ruler_rect.min.y),
+                            egui::pos2(x, ruler_rect.max.y),
+                        ],
+                        egui::Stroke::new(1.0, egui::Color32::from_gray(90)),
+                    );
+                    if show_number && local % (ticks_per_measure * divisor) == 0 {
+                        painter.text(
+                            egui::pos2(x + 3.0, ruler_rect.min.y + 1.0),
+                            egui::Align2::LEFT_TOP,
+                            // 小节号从 1 开始（tick 0 = 第 1 小节），跨段累计。
+                            (bar_offset + local / ticks_per_measure + 1).to_string(),
+                            egui::FontId::proportional(10.0),
+                            egui::Color32::from_gray(170),
+                        );
+                    }
+                }
+                tick += ticks_per_measure;
+            }
+            let seg_ticks = seg_end.saturating_sub(seg_start) as f32;
+            bar_offset += (seg_ticks / ticks_per_measure as f32).ceil() as u32;
         }
     }
 
     /// 播放光标：竖线随 scroll_x 移动，y 从标尺底部到内容区底。
-    /// x 与网格同公式（tick→像素），并 clamp 在内容区内。
+    /// 光标不在视口内时不画——贴边显示会误导"线就在那里"。
     fn draw_cursor(&self, ui: &egui::Ui, rect: egui::Rect, ruler_h: f32) {
         let Some(tick) = self.cursor_tick else {
             return;
         };
         let ppu = self.view.base.pixels_per_tick;
         let scroll_x = self.view.base.scroll_x;
-        let x = rect.min.x + self.keyboard_w + (tick as f32 * ppu - scroll_x);
-        let x = x.clamp(rect.min.x + self.keyboard_w, rect.max.x);
+        let left = rect.min.x + self.keyboard_w;
+        let x = left + (tick as f32 * ppu - scroll_x);
+        if x < left || x > rect.max.x {
+            return;
+        }
         let painter = ui.painter();
         painter.line_segment(
             [
@@ -579,28 +651,101 @@ impl PrView {
         );
     }
 
-    /// 网格线：每 1920 tick（4/4 小节 @480ppq）一条竖线，过密时跳过。
-    /// 首条 start_tick 是 <= 视口起点的最大整小节，x 可能在键盘列上方，
-    /// 需推进到内容区内再画（否则多画一条盖在钢琴列上）。
+    /// 网格线分层（与桌面端 grid_lines 一致，支持变拍子）：
+    /// 小节线 2px、四分音符线 1px、十六分线 1px、tick 线（最大缩放）。
+    /// 每拍号段从段起点 local 对齐，变拍子段不会错位。
     fn draw_grid(&self, ui: &egui::Ui, rect: egui::Rect) {
+        let Some(model) = &self.model else {
+            return;
+        };
         let ppu = self.view.base.pixels_per_tick;
-        let scroll_x = self.view.base.scroll_x;
-        let step_px = BAR_TICKS as f32 * ppu;
-        if step_px < 6.0 {
+        if ppu <= 0.001 {
             return;
         }
-        let start_tick = ((scroll_x / ppu) as i64 / BAR_TICKS) * BAR_TICKS;
+        let scroll_x = self.view.base.scroll_x;
+        let left = rect.min.x;
+        let right = rect.max.x;
+        let tick_start = scroll_x as f64 / ppu as f64;
+        let tick_end = (scroll_x + rect.width()) as f64 / ppu as f64;
+        let tpb = model.meta.ppq.max(1);
+        let (def_num, def_den) = model.tempo_map.time_sig_default;
+        let def_den = def_den.trailing_zeros() as u8;
+        let segments = build_time_sig_segments(&model.conductor.time_sig, def_num, def_den);
         let painter = ui.painter();
-        let mut x = rect.min.x + (start_tick as f32 * ppu - scroll_x);
-        while x < rect.min.x {
-            x += step_px;
-        }
-        while x < rect.max.x {
-            painter.line_segment(
-                [egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)],
-                egui::Stroke::new(1.0, egui::Color32::from_gray(45)),
+        // 网格线 = 标尺标签的下一级（与桌面 grid_lines 同规则）：
+        // 合并小节标签 → 合并/2 小节线；每小节标签 → 四分音符线；
+        // beat 标签 → 十六分线；sub 标签 → tick 线（仅最大缩放）。
+        const MIN_SPACING: f32 = 38.0;
+        const SUB_BEAT_DIV: u32 = 4;
+        const MAX_PPU: f32 = 10.0;
+        let ticks_per_sub = (tpb / SUB_BEAT_DIV).max(1);
+
+        for (i, &(seg_start, num, den)) in segments.iter().enumerate() {
+            let seg_end = segments.get(i + 1).map_or(u32::MAX, |&(t, _, _)| t);
+            let seg_start_f = seg_start as f64;
+            if seg_start_f > tick_end {
+                break;
+            }
+
+            let ticks_per_measure = measure_ticks(tpb, num, den).max(1);
+            let ticks_per_beat = (ticks_per_measure / num.max(1) as u32).max(1);
+            let measure_divisor =
+                compute_measure_divisor(ticks_per_measure as f32 * ppu, MIN_SPACING);
+            let merged_measure_ticks = ticks_per_measure.saturating_mul(measure_divisor);
+            let merged = measure_divisor > 1;
+            let show_beat = !merged;
+            let show_sub = show_beat && (ticks_per_beat as f32 * ppu) >= MIN_SPACING;
+            let show_tick = show_sub && ppu >= MAX_PPU;
+            let grid_measure_ticks = if merged {
+                (merged_measure_ticks / 2).max(1)
+            } else {
+                ticks_per_measure
+            };
+            let step = if show_tick {
+                1u32
+            } else if show_sub {
+                ticks_per_sub
+            } else if show_beat {
+                ticks_per_beat
+            } else {
+                grid_measure_ticks.max(1)
+            };
+
+            // 段内 local 对齐：变拍子段的 seg_start 通常不在全局 step 网格上。
+            let first_tick = seg_start_f.max(tick_start);
+            let step_f = step as f64;
+            let first = seg_start.saturating_add(
+                (((first_tick - seg_start_f) / step_f).floor() as u32).saturating_mul(step),
             );
-            x += step_px;
+
+            let mut tick = first;
+            while (tick as f64) <= tick_end && tick < seg_end {
+                let local = tick - seg_start;
+                let x = rect.min.x + tick as f32 * ppu - scroll_x;
+                if x >= left && x <= right {
+                    let is_measure = local % ticks_per_measure == 0;
+                    let beat_local = local % ticks_per_measure;
+                    let is_beat_pos = beat_local.is_multiple_of(ticks_per_beat) && beat_local > 0;
+                    let is_sub_pos = local % ticks_per_sub == 0;
+                    let (w, color) = if is_measure {
+                        (2.0, egui::Color32::from_gray(95))
+                    } else if show_beat && is_beat_pos {
+                        (1.0, egui::Color32::from_gray(55))
+                    } else if show_sub && is_sub_pos {
+                        (1.0, egui::Color32::from_gray(40))
+                    } else if show_tick {
+                        (1.0, egui::Color32::from_gray(32))
+                    } else {
+                        tick += step;
+                        continue;
+                    };
+                    painter.line_segment(
+                        [egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)],
+                        egui::Stroke::new(w, color),
+                    );
+                }
+                tick += step;
+            }
         }
     }
 }
