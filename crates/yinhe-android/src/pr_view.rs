@@ -9,13 +9,74 @@ use std::sync::{Arc, Mutex};
 
 use eframe::egui;
 use yinhe_core::{Selection, YinModel};
+use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_theme::base::BaseColors;
 use yinhe_theme::egui_colors::{Theme, derive_theme, mix};
 use yinhe_types::{
     PianoRollView, TimelineViewBase, build_time_sig_segments, compute_measure_divisor,
     measure_ticks,
 };
-use yinhe_wgpu::{InstanceRenderer, NoteInstance, build_all_notes, build_render_job};
+use yinhe_wgpu::{
+    InstanceRenderer, NoteInstance, build_all_notes, build_key_notes, build_render_job,
+};
+
+use crate::app::Tool;
+
+/// PR 编辑手势事件：本帧由触摸交互产生，页面层消费（写 doc + undo + 音频）。
+#[derive(Debug, Clone, PartialEq)]
+pub enum PrEvent {
+    /// 铅笔画新音符（track 由页面层取 editing_track）。
+    AddNote {
+        start_tick: u32,
+        end_tick: u32,
+        key: u8,
+    },
+    /// 铅笔改音高：原音符 (track, start_tick, key) 整体平移 delta_keys。
+    RetuneNote {
+        track: u16,
+        start_tick: u32,
+        key: u8,
+        delta_keys: i32,
+    },
+    /// 选择工具移动选中音符（绝对位移，释放时提交一次）。
+    MoveNotes { delta_ticks: i64, delta_keys: i32 },
+    /// 选择工具点中音符：选中单音符（按下时）。
+    SelectNote { track: u16, tick: u32, key: u8 },
+    /// 框选（track 范围 = editing_track 单轨）。
+    SelectRect { t0: u32, t1: u32, k0: u8, k1: u8 },
+    /// 橡皮框选擦除。
+    EraseRect { t0: u32, t1: u32, k0: u8, k1: u8 },
+    /// 橡皮单击擦除单个音符。
+    EraseNote { track: u16, tick: u32, key: u8 },
+    /// 单击空白：取消选择。
+    ClearSelection,
+}
+
+/// PR 单指编辑手势状态机（非抓手工具、无双指时激活）：
+/// 按下初始化 → 拖动中更新（egui 预览矩形）→ 释放提交事件。
+#[derive(Clone, PartialEq)]
+enum EditGesture {
+    /// 铅笔画新音符：起点（吸附后），end_tick 跟随手指。
+    PencilDraw {
+        start_tick: u32,
+        key: u8,
+        end_tick: u32,
+    },
+    /// 铅笔改音高：命中的原音符，cur_key 跟随手指。
+    PencilRetune {
+        track: u16,
+        start_tick: u32,
+        key: u8,
+        length: u32,
+        cur_key: u8,
+    },
+    /// 选择框选/移动：起点 (tick, key) 浮点（框选显示用）。
+    Marquee { t0: f64, k0: f64 },
+    /// 选择移动音符：起点（吸附后）。
+    MoveNotes { t0: f64, k0: f64 },
+    /// 橡皮框选擦除：起点。
+    EraseMarquee { t0: f64, k0: f64 },
+}
 
 /// 后台构建的音符实例数据（加载后一次性构建 + 上传）。
 struct NoteBuildResult {
@@ -57,6 +118,10 @@ pub struct PrView {
     prev_touches: u32,
     /// 上次上传到 GPU cull 的轨道可见性掩码（比较检测变化，变化才上传）。
     last_mask: Vec<bool>,
+    /// 当前编辑手势（非抓手工具单指按下时激活）。
+    gesture: Option<EditGesture>,
+    /// 当前选区（doc.edit.selected 的引用副本，渲染高亮 + 移动预览用）。
+    selected: Selection,
     /// 主题色（与桌面端同源：BaseColors 7 色派生）。
     theme: Theme,
 }
@@ -108,6 +173,8 @@ impl PrView {
             cursor_tick: None,
             prev_touches: 0,
             last_mask: Vec::new(),
+            gesture: None,
+            selected: Selection::default(),
             theme: derive_theme(BaseColors::DARK),
         }
     }
@@ -125,6 +192,8 @@ impl PrView {
         self.notes_build = None;
         self.notes_uploaded = false;
         self.last_mask.clear();
+        self.gesture = None;
+        self.selected = Selection::default();
         self.status = "正在构建音符数据...".to_string();
     }
 
@@ -148,6 +217,9 @@ impl PrView {
     /// safe 为安全区 insets（逻辑点）：[left, top, right, bottom]。
     /// track_visible 为轨道显隐（doc.edit.track_visible），editing_track 为
     /// 当前编辑轨（doc.edit.editing_track）——编辑轨强制可见。
+    /// `tool` 为当前工具（抓手=单指滚动，其他=编辑手势）；`selected` 为
+    /// 当前选区（doc.edit.selected，渲染高亮 + 移动预览）。
+    #[allow(clippy::too_many_arguments)]
     pub fn ui(
         &mut self,
         ui: &mut egui::Ui,
@@ -155,7 +227,10 @@ impl PrView {
         track_visible: &[bool],
         editing_track: Option<u16>,
         hand_scroll: bool,
-    ) {
+        tool: Tool,
+        selected: &Selection,
+    ) -> Vec<PrEvent> {
+        let mut events = Vec::new();
         let full = ui.available_rect_before_wrap();
         let painter = ui.painter();
         // 背景铺满整个视口（延伸到挖孔/刘海后面，视觉融合）；
@@ -166,7 +241,7 @@ impl PrView {
             full.max - egui::vec2(safe[2], safe[3]),
         );
         if rect.width() <= 0.0 || rect.height() <= 0.0 {
-            return;
+            return events;
         }
 
         // 顶部小节标尺带：高度充足时内容区整体下移 24px 让位，否则不画标尺。
@@ -180,7 +255,7 @@ impl PrView {
                 egui::FontId::proportional(18.0),
                 self.theme.text_muted,
             );
-            return;
+            return events;
         };
 
         self.keyboard_w = 64.0;
@@ -196,9 +271,37 @@ impl PrView {
             self.view_initialized = true;
         }
         self.ensure_texture_size(rect);
+        // egui 层内容区：键盘列与内容区都从标尺带下方开始，与音符层（纹理
+        // 1:1 贴图、顶部让位）保持对齐。手势坐标换算与预览绘制都用它。
+        let kb_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.min.x, rect.min.y + ruler_h),
+            egui::pos2(rect.min.x + self.keyboard_w, rect.max.y),
+        );
+        let content_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.min.x + self.keyboard_w, rect.min.y + ruler_h),
+            rect.max,
+        );
         self.handle_touch(ui, rect, hand_scroll);
         self.ensure_renderer();
         self.ensure_notes(&model);
+        self.selected = selected.clone();
+        if !hand_scroll {
+            let quantize = QuantizePreset::Fraction(1, 16);
+            self.handle_edit_gesture(
+                ui,
+                rect,
+                content_rect,
+                &model,
+                tool,
+                editing_track,
+                quantize,
+                model.meta.ppq,
+                &mut events,
+            );
+        }
+        // 编辑后增量同步：比较 per-key revision，变化的 key 重建并上传（
+        // build_key_notes 只扫命中桶，1 亿音符工程编辑也只重建受影响桶）。
+        self.sync_edited_keys();
 
         // 轨道显隐掩码：PR 可见性 = track_visible，且编辑轨强制可见。
         // 与上次上传比较，变化才上传（upload_track_mask 会强制 cull 重跑
@@ -215,12 +318,11 @@ impl PrView {
 
         if let Some(renderer) = &mut self.renderer {
             let track_colors = crate::track_colors_for(&model);
-            let selected = Selection::default();
             let job = build_render_job(
                 self.width,
                 self.height,
                 &self.view,
-                &selected,
+                &self.selected,
                 &track_colors,
                 0,
                 0.0,
@@ -239,16 +341,7 @@ impl PrView {
             self.wgpu_state.queue.submit([encoder.finish()]);
         }
 
-        // egui 层：键盘列与内容区都从标尺带下方开始，与音符层（纹理 1:1
-        // 贴图、顶部让位）保持对齐。
-        let kb_rect = egui::Rect::from_min_max(
-            egui::pos2(rect.min.x, rect.min.y + ruler_h),
-            egui::pos2(rect.min.x + self.keyboard_w, rect.max.y),
-        );
-        let content_rect = egui::Rect::from_min_max(
-            egui::pos2(rect.min.x + self.keyboard_w, rect.min.y + ruler_h),
-            rect.max,
-        );
+        // egui 层绘制（键盘列/标尺/网格/纹理贴图）。
         self.draw_scale_bands(ui, content_rect);
         self.draw_octave_lines(ui, content_rect);
         self.draw_keyboard(ui, kb_rect);
@@ -270,6 +363,8 @@ impl PrView {
         );
         self.draw_ruler(ui, rect, content_rect, ruler_h);
         self.draw_cursor(ui, rect, ruler_h);
+        // 编辑手势预览（画音符/选框），叠在音符层之上。
+        self.draw_gesture_preview(ui, rect, content_rect);
 
         let notes: u64 = model.track_note_count.iter().sum();
         let status = format!(
@@ -283,6 +378,7 @@ impl PrView {
             egui::FontId::proportional(13.0),
             self.theme.text_label,
         );
+        events
     }
 
     /// 触摸手势：双指永远导航（平移+缩放）；单指滚动仅抓手工具。
@@ -302,6 +398,10 @@ impl PrView {
         // 第二指刚落下那一帧 zoom_delta 有距离跳变，忽略缩放（防闪缩）。
         let fresh_pinch = touches >= 2 && self.prev_touches < 2;
         self.prev_touches = touches as u32;
+        // 双指导航优先：取消编辑手势，避免双指滚动/缩放时误编辑。
+        if touches >= 2 {
+            self.gesture = None;
+        }
         let base = &mut self.view.base;
         if let Some(zoom) = zoom
             && (zoom - 1.0).abs() > 0.02
@@ -346,6 +446,329 @@ impl PrView {
             base.scroll_x = (base.scroll_x - pointer_delta.x).max(0.0);
             base.scroll_y = (base.scroll_y - pointer_delta.y).clamp(0.0, max_scroll);
             base.dirty = true;
+        }
+    }
+
+    /// 单指编辑手势状态机（非抓手工具时调用）：
+    /// 按下初始化 → 拖动中更新（egui 预览矩形）→ 释放提交事件。
+    /// 双指（导航）期间不进入；`editing_track` 为编辑目标轨。
+    #[allow(clippy::too_many_arguments)]
+    fn handle_edit_gesture(
+        &mut self,
+        ui: &egui::Ui,
+        rect: egui::Rect,
+        content_rect: egui::Rect,
+        model: &Arc<YinModel>,
+        tool: Tool,
+        editing_track: Option<u16>,
+        quantize: QuantizePreset,
+        ppq: u32,
+        events: &mut Vec<PrEvent>,
+    ) {
+        let (touches, pressed, released, pos, down) = ui.ctx().input(|i| {
+            let mt = i.multi_touch();
+            (
+                mt.map(|m| m.num_touches).unwrap_or(0),
+                i.pointer.primary_pressed(),
+                i.pointer.primary_released(),
+                i.pointer.interact_pos(),
+                i.pointer.primary_down(),
+            )
+        });
+        if touches >= 2 {
+            self.gesture = None;
+            return;
+        }
+        let Some(editing) = editing_track else {
+            return;
+        };
+        // 位置 → 吸附后的 (tick, key)。坐标参考系与 GPU 音符层一致：
+        // x 相对 rect.min（x_to_tick 内部减键盘列宽），y 相对内容区顶。
+        let view = &self.view;
+        let local = |pos: egui::Pos2| {
+            let raw_tick = view.x_to_tick(pos.x - rect.min.x);
+            let tick = quantize.snap_tick(raw_tick, ppq).max(0.0) as u32;
+            let key = view.y_to_key(pos.y - content_rect.min.y);
+            (tick, key)
+        };
+
+        if pressed
+            && let Some(pos) = pos
+            && self.gesture.is_none()
+        {
+            let (tick, key) = local(pos);
+            match tool {
+                Tool::Pencil => {
+                    if let Some((nt, ne, nk)) = self.hit_note(model, editing, tick, key) {
+                        self.gesture = Some(EditGesture::PencilRetune {
+                            track: editing,
+                            start_tick: nt,
+                            key: nk,
+                            length: ne - nt,
+                            cur_key: key,
+                        });
+                    } else {
+                        // 默认长度 = 一个量化网格；拖动拉长，单击画默认长度。
+                        let interval = quantize.tick_interval(ppq).max(1);
+                        self.gesture = Some(EditGesture::PencilDraw {
+                            start_tick: tick,
+                            key,
+                            end_tick: tick.saturating_add(interval),
+                        });
+                    }
+                }
+                Tool::Select => {
+                    if self.hit_note(model, editing, tick, key).is_some() {
+                        events.push(PrEvent::SelectNote {
+                            track: editing,
+                            tick,
+                            key,
+                        });
+                        self.gesture = Some(EditGesture::MoveNotes {
+                            t0: tick as f64,
+                            k0: key as f64,
+                        });
+                    } else {
+                        self.gesture = Some(EditGesture::Marquee {
+                            t0: tick as f64,
+                            k0: key as f64,
+                        });
+                    }
+                }
+                Tool::Eraser => {
+                    self.gesture = Some(EditGesture::EraseMarquee {
+                        t0: tick as f64,
+                        k0: key as f64,
+                    });
+                }
+                Tool::Hand => {}
+            }
+        }
+
+        // 拖动中：更新手势（tick/key 跟随手指）。
+        if down
+            && let Some(pos) = pos
+            && let Some(g) = &mut self.gesture
+        {
+            let (tick, key) = local(pos);
+            match g {
+                EditGesture::PencilDraw {
+                    start_tick,
+                    end_tick,
+                    ..
+                } => {
+                    *end_tick = tick.max(start_tick.saturating_add(1));
+                }
+                EditGesture::PencilRetune { cur_key, .. } => {
+                    *cur_key = key;
+                }
+                _ => {}
+            }
+        }
+
+        // 释放：提交事件（一次 undo entry 的原材料）。
+        if released && let Some(g) = self.gesture.take() {
+            let cur = pos.map(local);
+            match g {
+                EditGesture::PencilDraw {
+                    start_tick,
+                    key,
+                    end_tick,
+                } => {
+                    events.push(PrEvent::AddNote {
+                        start_tick,
+                        end_tick: end_tick.max(start_tick + 1),
+                        key,
+                    });
+                }
+                EditGesture::PencilRetune {
+                    track,
+                    start_tick,
+                    key,
+                    cur_key,
+                    ..
+                } => {
+                    let dk = cur_key as i32 - key as i32;
+                    if dk != 0 {
+                        events.push(PrEvent::RetuneNote {
+                            track,
+                            start_tick,
+                            key,
+                            delta_keys: dk,
+                        });
+                    }
+                }
+                EditGesture::MoveNotes { t0, k0 } => {
+                    let (tick, key) = cur.unwrap_or((t0 as u32, k0 as u8));
+                    let dt = tick as i64 - t0 as i64;
+                    let dk = key as i64 - k0 as i64;
+                    if dt != 0 || dk != 0 {
+                        events.push(PrEvent::MoveNotes {
+                            delta_ticks: dt,
+                            delta_keys: dk as i32,
+                        });
+                    }
+                    // dt==0 && dk==0：纯单击选中（SelectNote 已选，无 undo）。
+                }
+                EditGesture::Marquee { t0, k0 } => {
+                    let (tick, key) = cur.unwrap_or((t0 as u32, k0 as u8));
+                    if tick != t0 as u32 || key != k0 as u8 {
+                        let (a, b) = (t0.min(tick as f64), t0.max(tick as f64));
+                        let (ka, kb) = (k0.min(key as f64), k0.max(key as f64));
+                        events.push(PrEvent::SelectRect {
+                            t0: a as u32,
+                            t1: b as u32 + 1,
+                            k0: ka as u8,
+                            k1: kb as u8,
+                        });
+                    } else {
+                        events.push(PrEvent::ClearSelection);
+                    }
+                }
+                EditGesture::EraseMarquee { t0, k0 } => {
+                    let (tick, key) = cur.unwrap_or((t0 as u32, k0 as u8));
+                    if tick != t0 as u32 || key != k0 as u8 {
+                        let (a, b) = (t0.min(tick as f64), t0.max(tick as f64));
+                        let (ka, kb) = (k0.min(key as f64), k0.max(key as f64));
+                        events.push(PrEvent::EraseRect {
+                            t0: a as u32,
+                            t1: b as u32 + 1,
+                            k0: ka as u8,
+                            k1: kb as u8,
+                        });
+                    } else {
+                        events.push(PrEvent::EraseNote {
+                            track: editing,
+                            tick,
+                            key,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    /// 命中检测：点击网格点处该 key 桶中覆盖点击 tick 的同轨音符
+    ///（黑乐谱同 tick 多音符时取最上层=最后一个），返回 (start, end, key)。
+    fn hit_note(&self, model: &YinModel, track: u16, tick: u32, key: u8) -> Option<(u32, u32, u8)> {
+        let lo = tick.saturating_sub(2);
+        let hi = tick.saturating_add(3);
+        model.notes[key as usize]
+            .range(lo, hi)
+            .filter(|n| n.track == track && n.start_tick <= tick && n.end_tick > tick)
+            .map(|n| (n.start_tick, n.end_tick, key))
+            .last()
+    }
+
+    /// 编辑后增量同步：比较 per-key revision，变化的 key 重建 NoteInstance 并
+    /// 增量上传 GPU cull（只扫命中桶，1 亿音符工程编辑也只重建受影响桶）。
+    fn sync_edited_keys(&mut self) {
+        let Some(model) = &self.model else {
+            return;
+        };
+        if !self.notes_uploaded {
+            return;
+        }
+        let Some(renderer) = &mut self.renderer else {
+            return;
+        };
+        let uploaded = *renderer.uploaded_key_revisions();
+        let n = model.tracks.len();
+        for key in 0..128u8 {
+            let rev = model.note_revisions[key as usize];
+            if uploaded[key as usize] == rev {
+                continue;
+            }
+            let notes = build_key_notes(model.as_ref(), key, &HashSet::new(), &vec![true; n]);
+            if !renderer.try_incremental_key_upload(key, &notes, rev) {
+                // 该 key 从未上传（异常路径）：退化为全量重建。
+                self.notes_build = None;
+                self.notes_uploaded = false;
+                return;
+            }
+        }
+    }
+
+    /// 编辑手势预览：铅笔音符/改音高/移动选区/选框，叠在音符层之上。
+    fn draw_gesture_preview(&self, ui: &egui::Ui, rect: egui::Rect, content_rect: egui::Rect) {
+        let Some(g) = &self.gesture else {
+            return;
+        };
+        let painter = ui.painter();
+        let preview_color = self.theme.accent_active.gamma_multiply(0.45);
+        let preview_stroke = egui::Stroke::new(1.5, self.theme.accent_active);
+        // 音符矩形：tick 区间 + key 行。坐标与 GPU 音符层一致。
+        let note_rect = |painter: &egui::Painter, t0: f64, t1: f64, key: u8| {
+            let x0 = rect.min.x + self.view.tick_to_x(t0);
+            let x1 = rect.min.x + self.view.tick_to_x(t1);
+            let y0 = content_rect.min.y + self.view.key_to_y(key);
+            let y1 = content_rect.min.y + self.view.key_to_y(key + 1);
+            let r = egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1));
+            painter.rect_filled(r, 2.0, preview_color);
+            painter.rect_stroke(r, 2.0, preview_stroke, egui::StrokeKind::Inside);
+        };
+        match g {
+            EditGesture::PencilDraw {
+                start_tick,
+                key,
+                end_tick,
+            } => {
+                note_rect(
+                    painter,
+                    *start_tick as f64,
+                    (*end_tick).max(*start_tick + 1) as f64,
+                    *key,
+                );
+            }
+            EditGesture::PencilRetune {
+                start_tick,
+                length,
+                cur_key,
+                ..
+            } => {
+                note_rect(
+                    painter,
+                    *start_tick as f64,
+                    (*start_tick + *length) as f64,
+                    *cur_key,
+                );
+            }
+            EditGesture::Marquee { t0, k0 } | EditGesture::EraseMarquee { t0, k0 } => {
+                let pos = ui.ctx().input(|i| i.pointer.interact_pos());
+                let Some(pos) = pos else { return };
+                let tick = self.view.x_to_tick(pos.x - rect.min.x);
+                let key = self.view.y_to_key(pos.y - content_rect.min.y);
+                let x0 = rect.min.x + self.view.tick_to_x(*t0);
+                let x1 = rect.min.x + self.view.tick_to_x(tick);
+                let y0 = content_rect.min.y + self.view.key_to_y((*k0).min(key as f64) as u8);
+                let y1 = content_rect.min.y + self.view.key_to_y((*k0).max(key as f64) as u8 + 1);
+                let r = egui::Rect::from_min_max(
+                    egui::pos2(x0.min(x1), y0.min(y1)),
+                    egui::pos2(x0.max(x1), y0.max(y1)),
+                );
+                painter.rect_filled(r, 1.0, preview_color);
+                painter.rect_stroke(r, 1.0, preview_stroke, egui::StrokeKind::Inside);
+            }
+            EditGesture::MoveNotes { t0, k0 } => {
+                // 拖动中把选中音符的矩形偏移画预览（选区矩形偏移显示）。
+                let pos = ui.ctx().input(|i| i.pointer.interact_pos());
+                let Some(pos) = pos else { return };
+                let tick = self.view.x_to_tick(pos.x - rect.min.x);
+                let key = self.view.y_to_key(pos.y - content_rect.min.y);
+                let dt = tick - *t0;
+                let dk = key as f64 - *k0;
+                for &(ts, te, kl, kh, _, _) in &self.selected.rects {
+                    let x0 = rect.min.x + self.view.tick_to_x(ts as f64 + dt);
+                    let x1 = rect.min.x + self.view.tick_to_x(te as f64 + dt);
+                    let y0 =
+                        content_rect.min.y + self.view.key_to_y((kl as f64 + dk).max(0.0) as u8);
+                    let y1 = content_rect.min.y
+                        + self.view.key_to_y((kh as f64 + dk).max(0.0) as u8 + 1);
+                    let r = egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1));
+                    painter.rect_filled(r, 2.0, preview_color);
+                    painter.rect_stroke(r, 2.0, preview_stroke, egui::StrokeKind::Inside);
+                }
+            }
         }
     }
 

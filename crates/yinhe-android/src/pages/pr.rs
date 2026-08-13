@@ -21,6 +21,27 @@ impl YinheApp {
             }
             ui.separator();
             transport::bar(self, ui);
+            // 撤销/重做（编辑防误触的最终兜底）。
+            use egui_material_icons::icons::{ICON_REDO, ICON_UNDO};
+            let (can_undo, can_redo) = self
+                .doc
+                .as_ref()
+                .map(|d| (d.history.can_undo(), d.history.can_redo()))
+                .unwrap_or((false, false));
+            if ui
+                .add_enabled(can_undo, egui::Button::new(icon_text(ICON_UNDO)))
+                .on_hover_text("撤销")
+                .clicked()
+            {
+                self.undo();
+            }
+            if ui
+                .add_enabled(can_redo, egui::Button::new(icon_text(ICON_REDO)))
+                .on_hover_text("重做")
+                .clicked()
+            {
+                self.redo();
+            }
             // 右侧：当前编辑轨名称（过长截断），点击弹轨道显隐列表。
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let name = self
@@ -42,24 +63,35 @@ impl YinheApp {
             .show(ui, |ui| {
                 // 页面背景（含挖孔区域）铺默认面板背景色。
                 fill_page_background(ui);
-                let (tv, et) = self
+                let (tv, et, sel) = self
                     .doc
                     .as_ref()
-                    .map(|d| (d.edit.track_visible.clone(), d.edit.editing_track))
+                    .map(|d| {
+                        (
+                            d.edit.track_visible.clone(),
+                            d.edit.editing_track,
+                            d.edit.selected.clone(),
+                        )
+                    })
                     .unwrap_or_default();
-                self.pr_view.ui(
+                let events = self.pr_view.ui(
                     ui,
                     self.safe_insets,
                     &tv,
                     et,
                     self.tool == crate::app::Tool::Hand,
+                    self.tool,
+                    &sel,
                 );
+                for ev in events {
+                    self.handle_pr_event(ev);
+                }
             });
         // 轨道显隐列表（点击顶栏右侧轨道名打开）。
         if self.track_list_open {
             self.track_list_ui(ui);
         }
-        // 工具选择弹窗：屏幕中央、横向排列（选择/铅笔/橡皮）。
+        // 工具选择弹窗：屏幕中央、横向排列（选择/铅笔/橡皮/抓手）。
         if self.tool_picker_open {
             egui::Window::new("工具")
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
@@ -142,6 +174,105 @@ impl YinheApp {
             && let Some(doc) = &mut self.doc
         {
             doc.edit.track_visible = v;
+        }
+    }
+
+    /// 消费 PR 编辑事件：写 doc（选区/音符编辑）+ undo 事务 + 音频联动。
+    fn handle_pr_event(&mut self, ev: crate::pr_view::PrEvent) {
+        use yinhe_core::NoteEvent;
+        use yinhe_editor_core::Selection;
+        match ev {
+            crate::pr_view::PrEvent::AddNote {
+                start_tick,
+                end_tick,
+                key,
+            } => {
+                let Some(track) = self.doc.as_ref().and_then(|d| d.edit.editing_track) else {
+                    return;
+                };
+                let vel = self
+                    .doc
+                    .as_ref()
+                    .map(|d| d.edit.default_velocity(track))
+                    .unwrap_or(100);
+                self.with_undo("画音符", |doc| {
+                    doc.add_note(
+                        track,
+                        NoteEvent {
+                            id: 0,
+                            start_tick,
+                            end_tick,
+                            key,
+                            velocity: vel,
+                        },
+                    )
+                });
+            }
+            crate::pr_view::PrEvent::RetuneNote {
+                track,
+                start_tick,
+                key,
+                delta_keys,
+            } => {
+                self.with_undo("改音高", |doc| {
+                    doc.pencil_drag_note(&yinhe_editor_core::PencilNoteDrag::Move {
+                        track,
+                        start_tick,
+                        key,
+                        delta_ticks: 0,
+                        delta_keys,
+                    })
+                });
+            }
+            crate::pr_view::PrEvent::MoveNotes {
+                delta_ticks,
+                delta_keys,
+            } => {
+                self.with_undo("移动音符", |doc| {
+                    doc.move_selected_notes(delta_ticks, delta_keys)
+                });
+            }
+            crate::pr_view::PrEvent::SelectNote { track, tick, key } => {
+                if let Some(doc) = &mut self.doc {
+                    let mut sel = Selection::default();
+                    sel.add_rect_track(tick, tick + 1, key, key, track, track);
+                    doc.edit.selected = sel;
+                }
+            }
+            crate::pr_view::PrEvent::SelectRect { t0, t1, k0, k1 } => {
+                let Some(track) = self.doc.as_ref().and_then(|d| d.edit.editing_track) else {
+                    return;
+                };
+                if let Some(doc) = &mut self.doc {
+                    let mut sel = Selection::default();
+                    sel.add_rect_track(t0, t1, k0, k1, track, track);
+                    doc.edit.selected = sel;
+                }
+            }
+            crate::pr_view::PrEvent::EraseRect { t0, t1, k0, k1 } => {
+                let Some(track) = self.doc.as_ref().and_then(|d| d.edit.editing_track) else {
+                    return;
+                };
+                self.with_undo("擦除", |doc| {
+                    let mut sel = Selection::default();
+                    sel.add_rect_track(t0, t1, k0, k1, track, track);
+                    doc.edit.selected = sel;
+                    doc.delete_selected()
+                });
+            }
+            crate::pr_view::PrEvent::EraseNote { track, tick, key } => {
+                self.with_undo("擦除", |doc| {
+                    let mut sel = Selection::default();
+                    sel.add_rect_track(tick, tick + 1, key, key, track, track);
+                    doc.edit.selected = sel;
+                    doc.delete_selected()
+                });
+            }
+            crate::pr_view::PrEvent::ClearSelection => {
+                if let Some(doc) = &mut self.doc {
+                    doc.edit.selected.clear();
+                }
+            }
         }
     }
 }

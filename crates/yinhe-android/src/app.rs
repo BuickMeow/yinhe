@@ -182,6 +182,55 @@ impl YinheApp {
         }
     }
 
+    /// 统一编辑事务：编辑前捕获快照，操作返回 UndoAction 才入栈（无变化不入栈），
+    /// 然后标记模型已变（GPU 增量上传由 pr_view 每帧比较 revision 自动完成，
+    /// 音频走 update_notes 纯音符路径，不重建 CC/chase）。
+    pub(crate) fn with_undo(
+        &mut self,
+        label: &str,
+        f: impl FnOnce(&mut Document) -> Option<yinhe_editor_core::UndoAction>,
+    ) {
+        let Some(doc) = &mut self.doc else {
+            return;
+        };
+        let before = doc.capture_snapshot();
+        let action = f(doc);
+        let Some(action) = action else {
+            return;
+        };
+        doc.push_undo(action, label, before);
+        doc.data.bump_revision();
+        if let Some(audio) = &self.audio {
+            audio.update_notes(doc.data.model.clone());
+        }
+    }
+
+    /// 撤销：恢复模型 + 音频全量重载（undo 可能恢复自动化等非音符数据）。
+    pub(crate) fn undo(&mut self) {
+        let Some(doc) = &mut self.doc else {
+            return;
+        };
+        if doc.undo() {
+            doc.data.bump_revision();
+            if let Some(audio) = &self.audio {
+                audio.reload_notes(doc.data.model.clone());
+            }
+        }
+    }
+
+    /// 重做。
+    pub(crate) fn redo(&mut self) {
+        let Some(doc) = &mut self.doc else {
+            return;
+        };
+        if doc.redo() {
+            doc.data.bump_revision();
+            if let Some(audio) = &self.audio {
+                audio.reload_notes(doc.data.model.clone());
+            }
+        }
+    }
+
     /// 加载指定 MIDI（file_loading 后台线程 + 进度上报）。
     pub(crate) fn start_midi_load(&mut self, path: &str) {
         use yinhe_editor_core::file_loading::{FileLoader, LoadStageLabels};
