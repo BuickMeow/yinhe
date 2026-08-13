@@ -21,6 +21,7 @@ yinhe-audio = { path = "../yinhe-audio" }
 yinhe-editor-core = { path = "../yinhe-editor-core" }
 yinhe-mid2 = { path = "../yinhe-mid2" }
 yinhe-wgpu = { path = "../yinhe-wgpu" }
+yinhe-yin = { path = "../yinhe-yin" }
 yinhe-core = { path = "../yinhe-core" }
 yinhe-types = { path = "../yinhe-types" }
 yinhe-theme = { path = "../yinhe-theme", features = ["egui"] }

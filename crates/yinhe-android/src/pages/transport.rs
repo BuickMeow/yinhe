@@ -13,7 +13,7 @@ use crate::ui_common::icon_text;
 /// 位置 = 小节.拍.tick、时间 = m:ss.mmm（桌面端 timecode 同款格式），
 /// 点击位置/时间在两者间切换。
 pub(crate) fn bar(app: &mut YinheApp, ui: &mut egui::Ui) {
-    if app.model.is_none() {
+    if app.doc.is_none() {
         ui.label("未加载工程");
         return;
     }
@@ -33,9 +33,12 @@ pub(crate) fn bar(app: &mut YinheApp, ui: &mut egui::Ui) {
             audio.handle.send(AudioCommand::Pause);
         } else {
             let from_sample = (app
-                .model
+                .doc
                 .as_ref()
-                .map(|m| m.tempo_map.tick_to_seconds(app.cursor_tick as u64))
+                .map(|d| {
+                    let m = d.model();
+                    m.tempo_map.tick_to_seconds(app.cursor_tick as u64)
+                })
                 .unwrap_or(0.0)
                 * audio.sample_rate as f64) as u64;
             audio.handle.send(AudioCommand::Play { from_sample });
@@ -74,10 +77,10 @@ pub(crate) fn bar(app: &mut YinheApp, ui: &mut egui::Ui) {
         app.tool_picker_open = !app.tool_picker_open;
     }
 
-    let Some(model) = &app.model else {
+    let Some(model) = &app.doc else {
         return;
     };
-    let tm = &model.tempo_map;
+    let tm = &model.data.model.tempo_map;
     // BPM：当前光标处的速度（tempo 分段变化时随位置更新）。
     let cur_sec = tm.tick_to_seconds(app.cursor_tick as u64);
     ui.label(format!(
@@ -88,7 +91,7 @@ pub(crate) fn bar(app: &mut YinheApp, ui: &mut egui::Ui) {
     let (def_num, def_den) = tm.time_sig_default;
     let pos_str = yinhe_types::time_format::format_tick_bar_beat_with_time_sig(
         app.cursor_tick,
-        model.meta.ppq,
+        model.data.model.meta.ppq,
         &tm.time_sig_events,
         def_num,
         def_den,
@@ -121,11 +124,11 @@ pub(crate) fn update(app: &mut YinheApp) {
     if !audio.handle.is_playing() {
         return;
     }
-    let Some(model) = &app.model else {
+    let Some(doc) = &app.doc else {
         return;
     };
     let seconds = audio.handle.sample_position() as f64 / audio.sample_rate as f64;
-    let tick = crate::seconds_to_tick(model, seconds);
+    let tick = crate::seconds_to_tick(&doc.data.model, seconds);
     app.cursor_tick = tick;
     app.pr_view.set_cursor(Some(tick));
     app.ar_view.set_cursor(Some(tick));

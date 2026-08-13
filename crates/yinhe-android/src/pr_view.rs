@@ -53,6 +53,8 @@ pub struct PrView {
     view_initialized: bool,
     /// 播放光标 tick（None = 不显示）。由 lib.rs 每帧从音频位置换算后设置。
     cursor_tick: Option<f64>,
+    /// 上次上传到 GPU cull 的轨道可见性掩码（比较检测变化，变化才上传）。
+    last_mask: Vec<bool>,
     /// 主题色（与桌面端同源：BaseColors 7 色派生）。
     theme: Theme,
 }
@@ -102,6 +104,7 @@ impl PrView {
             keyboard_w: 0.0,
             view_initialized: false,
             cursor_tick: None,
+            last_mask: Vec::new(),
             theme: derive_theme(BaseColors::DARK),
         }
     }
@@ -118,6 +121,7 @@ impl PrView {
         self.model = Some(model);
         self.notes_build = None;
         self.notes_uploaded = false;
+        self.last_mask.clear();
         self.status = "正在构建音符数据...".to_string();
     }
 
@@ -139,7 +143,15 @@ impl PrView {
 
     /// 主 UI 入口：背景 + 键盘列 + 网格 + GPU 音符层 + 触摸交互。
     /// safe 为安全区 insets（逻辑点）：[left, top, right, bottom]。
-    pub fn ui(&mut self, ui: &mut egui::Ui, safe: [f32; 4]) {
+    /// track_visible 为轨道显隐（doc.edit.track_visible），editing_track 为
+    /// 当前编辑轨（doc.edit.editing_track）——编辑轨强制可见。
+    pub fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        safe: [f32; 4],
+        track_visible: &[bool],
+        editing_track: Option<u16>,
+    ) {
         let full = ui.available_rect_before_wrap();
         let painter = ui.painter();
         // 背景铺满整个视口（延伸到挖孔/刘海后面，视觉融合）；
@@ -183,6 +195,19 @@ impl PrView {
         self.handle_touch(ui, rect);
         self.ensure_renderer();
         self.ensure_notes(&model);
+
+        // 轨道显隐掩码：PR 可见性 = track_visible，且编辑轨强制可见。
+        // 与上次上传比较，变化才上传（upload_track_mask 会强制 cull 重跑
+        // dispatch，每帧上传会浪费 GPU；重新可见无需重建音符数据）。
+        if let Some(renderer) = &mut self.renderer {
+            let pr_visible: Vec<bool> = (0..track_visible.len())
+                .map(|i| track_visible[i] || editing_track == Some(i as u16))
+                .collect();
+            if pr_visible != self.last_mask {
+                renderer.upload_track_mask(&pr_visible);
+                self.last_mask = pr_visible;
+            }
+        }
 
         if let Some(renderer) = &mut self.renderer {
             let track_colors = crate::track_colors_for(&model);

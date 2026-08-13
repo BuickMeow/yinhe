@@ -22,8 +22,10 @@ const PANEL_W: f32 = 168.0;
 pub enum ArEvent {
     /// 点击轨道行 → 进入 PR 编辑该轨。
     EnterPr(u16),
-    /// 静音/独奏状态变化后的音频 skip mask。
-    SkipTracks(Vec<bool>),
+    /// 点击静音按钮（轨道号）。状态写入 doc.edit.track_overrides。
+    ToggleMute(u16),
+    /// 点击独奏按钮（轨道号）。状态写入 doc.edit.track_overrides。
+    ToggleSolo(u16),
 }
 
 /// AR 视图：视口状态 + GPU 渲染 + 音轨面板 + 触摸交互。
@@ -44,10 +46,6 @@ pub struct ArView {
     view: ArrangementView,
     model: Option<Arc<YinModel>>,
     status: String,
-    /// 独奏轨索引（None = 无独奏）。与 muted 共同决定音频 skip mask。
-    solo: Option<u16>,
-    /// 每轨静音状态。
-    muted: Vec<bool>,
     /// 播放光标 tick（None = 隐藏），lib.rs 每帧从音频位置换算后设置。
     cursor_tick: Option<f64>,
     /// 上一次内容矩形（诊断日志用：变化时打印坐标）。
@@ -101,8 +99,6 @@ impl ArView {
             },
             model: None,
             status: String::new(),
-            solo: None,
-            muted: Vec::new(),
             cursor_tick: None,
             last_rect: egui::Rect::NOTHING,
             theme: derive_theme(BaseColors::DARK),
@@ -118,8 +114,6 @@ impl ArView {
         self.view.base.scroll_x = 0.0;
         self.view.base.scroll_y = 0.0;
         self.view.base.dirty = true;
-        self.muted = model.tracks.iter().map(|t| t.muted).collect();
-        self.solo = None;
         self.model = Some(model);
         self.status = "就绪".to_string();
     }
@@ -142,7 +136,13 @@ impl ArView {
 
     /// 主 UI 入口：背景 + 音轨面板 + GPU 音符层 + 触摸交互。
     /// `safe` 为安全区 insets（逻辑点）：[left, top, right, bottom]。
-    pub fn ui(&mut self, ui: &mut egui::Ui, safe: [f32; 4]) -> Vec<ArEvent> {
+    /// `overrides` 为每轨 M/S 状态（doc.edit.track_overrides）。
+    pub fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        safe: [f32; 4],
+        overrides: &[yinhe_editor_core::TrackOverride],
+    ) -> Vec<ArEvent> {
         let mut events = Vec::new();
         let full = ui.available_rect_before_wrap();
         let painter = ui.painter();
@@ -315,7 +315,7 @@ impl ArView {
 
         // ── 音轨面板（egui 层，画在纹理面板列透明区之上）──
         let tc = crate::track_colors_for(&model);
-        self.draw_track_panel(&painter, rect, &model, &tc);
+        self.draw_track_panel(&painter, rect, &model, &tc, overrides);
 
         // ── 播放线 ──
         if let Some(tick) = self.cursor_tick {
@@ -370,43 +370,15 @@ impl ArView {
             hit_s = true;
         }
         if hit_m {
-            let idx = row_idx as u16;
-            let new_state = !self.muted.get(idx as usize).copied().unwrap_or(false);
-            if self.muted.len() > idx as usize {
-                self.muted[idx as usize] = new_state;
-            }
-            events.push(ArEvent::SkipTracks(self.skip_mask()));
-            self.status = format!(
-                "轨道 {idx:03} {}",
-                if new_state { "静音" } else { "取消静音" }
-            );
+            events.push(ArEvent::ToggleMute(row_idx as u16));
+            self.status = format!("轨道 {row_idx:03} 静音切换");
         } else if hit_s {
-            let idx = row_idx as u16;
-            self.solo = if self.solo == Some(idx) {
-                None
-            } else {
-                Some(idx)
-            };
-            events.push(ArEvent::SkipTracks(self.skip_mask()));
-            self.status = match self.solo {
-                Some(s) => format!("独奏轨道 {s:03}"),
-                None => "取消独奏".to_string(),
-            };
+            events.push(ArEvent::ToggleSolo(row_idx as u16));
+            self.status = format!("轨道 {row_idx:03} 独奏切换");
         } else {
             events.push(ArEvent::EnterPr(row_idx as u16));
         }
         events
-    }
-
-    /// 当前 skip mask：独奏时只留独奏轨，否则按 muted。
-    fn skip_mask(&self) -> Vec<bool> {
-        let n = self.muted.len();
-        (0..n)
-            .map(|i| match self.solo {
-                Some(s) => i as u16 != s,
-                None => self.muted[i],
-            })
-            .collect()
     }
 
     /// 音轨面板：可见范围内的轨道行（色条/编号/名称/M/S）。
@@ -416,7 +388,9 @@ impl ArView {
         rect: egui::Rect,
         model: &Arc<YinModel>,
         track_colors: &[[f32; 4]],
+        overrides: &[yinhe_editor_core::TrackOverride],
     ) {
+        let has_solo = overrides.iter().any(|o| o.soloed);
         let lane_h = self.view.lane_height();
         let num = model.tracks.len();
         let (first, last) = ArrangementView::visible_track_range_static(
@@ -478,8 +452,10 @@ impl ArView {
                 self.theme.text_label,
             );
             // M/S 按钮：行右侧竖排。
+            let ov = overrides.get(idx);
+            let muted = ov.map(|o| o.muted).unwrap_or(false);
+            let soloed = ov.map(|o| o.soloed).unwrap_or(false);
             if let Some(m_rect) = ms_button_rect(row, MsButton::Mute) {
-                let muted = self.muted.get(idx).copied().unwrap_or(false);
                 painter.rect_filled(
                     m_rect,
                     4.0,
@@ -502,11 +478,11 @@ impl ArView {
                 );
             }
             if let Some(s_rect) = ms_button_rect(row, MsButton::Solo) {
-                let solo = self.solo == Some(idx as u16);
+                let active = soloed && has_solo;
                 painter.rect_filled(
                     s_rect,
                     4.0,
-                    if solo {
+                    if active {
                         self.theme.solo_active
                     } else {
                         self.theme.btn_bg
@@ -517,7 +493,7 @@ impl ArView {
                     egui::Align2::CENTER_CENTER,
                     "S",
                     egui::FontId::proportional(small),
-                    if solo {
+                    if active {
                         self.theme.contrast_fg
                     } else {
                         self.theme.text_muted

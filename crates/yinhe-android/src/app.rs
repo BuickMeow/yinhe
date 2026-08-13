@@ -1,10 +1,9 @@
 //! 应用根：YinheApp 结构与音频/MIDI 生命周期。
 //! 页面 UI（菜单/AR/PR/走带）在 `pages/` 各模块中，按页面解耦。
 
-use std::sync::Arc;
-
 use yinhe_audio::spawn::{AudioCommand, CpalAudioHandle};
-use yinhe_core::YinModel;
+use yinhe_editor_core::document::Document;
+use yinhe_editor_core::quantize::QuantizePreset;
 
 use crate::ar_view::ArView;
 use crate::pr_view::PrView;
@@ -17,17 +16,17 @@ pub(crate) enum Page {
     Pr,
 }
 
-/// 编辑工具（初期只做选择 UI 与状态，实际编辑功能后续接入）。
-/// 图标与桌面端 tools_panel 一致。
+/// 编辑工具（选择/铅笔/橡皮/抓手）。图标与桌面端 tools 一致。
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum Tool {
     Select,
     Pencil,
     Eraser,
+    Hand,
 }
 
 impl Tool {
-    pub(crate) const ALL: [Tool; 3] = [Tool::Select, Tool::Pencil, Tool::Eraser];
+    pub(crate) const ALL: [Tool; 4] = [Tool::Select, Tool::Pencil, Tool::Eraser, Tool::Hand];
 
     pub(crate) fn icon(self) -> egui_material_icons::MaterialIcon {
         use egui_material_icons::icons::*;
@@ -35,6 +34,7 @@ impl Tool {
             Self::Select => ICON_SELECT,
             Self::Pencil => ICON_EDIT,
             Self::Eraser => ICON_INK_ERASER,
+            Self::Hand => ICON_PAN_TOOL,
         }
     }
 
@@ -43,6 +43,7 @@ impl Tool {
             Self::Select => "选择",
             Self::Pencil => "铅笔",
             Self::Eraser => "橡皮",
+            Self::Hand => "抓手",
         }
     }
 }
@@ -67,8 +68,9 @@ pub(crate) struct YinheApp {
     pub(crate) midi_load_start: Option<std::time::Instant>,
     /// 最近一次加载结果统计。
     pub(crate) midi_stats: String,
-    /// 当前 MIDI 模型（加载完成后的唯一引用，音频引擎与 PR 视图共享同一份）。
-    pub(crate) model: Option<Arc<YinModel>>,
+    /// 当前工程文档（加载完成后的唯一引用；音频引擎与 PR/AR 视图共享
+    /// `doc.data.model` 的 Arc 克隆）。
+    pub(crate) doc: Option<Document>,
     /// 播放光标（tick）：暂停/停止后保留，作为下次播放起点。
     pub(crate) cursor_tick: f64,
     /// 跟随播放：开启后滚动让光标始终位于内容区中央。
@@ -79,6 +81,10 @@ pub(crate) struct YinheApp {
     pub(crate) tool: Tool,
     /// 工具选择弹窗是否打开。
     pub(crate) tool_picker_open: bool,
+    /// 工程设置弹窗（AR 顶栏右侧工程名按钮触发）。
+    pub(crate) project_settings_open: bool,
+    /// 轨道显隐列表弹窗（PR 顶栏右侧轨道名按钮触发）。
+    pub(crate) track_list_open: bool,
     /// 安全区 insets（逻辑点）：[left, top, right, bottom]，每帧从 [`crate::insets`] 刷新。
     pub(crate) safe_insets: [f32; 4],
 }
@@ -97,12 +103,14 @@ impl YinheApp {
             midi_loader: None,
             midi_load_start: None,
             midi_stats: String::new(),
-            model: None,
+            doc: None,
             cursor_tick: 0.0,
             follow_play: false,
             time_show_ticks: false,
-            tool: Tool::Select,
+            tool: Tool::Hand,
             tool_picker_open: false,
+            project_settings_open: false,
+            track_list_open: false,
             safe_insets: [0.0; 4],
         };
         // 启动先进菜单（选歌/设置），不再自动加载测试 MIDI；音频/音色库提前初始化。
@@ -217,11 +225,30 @@ impl YinheApp {
         use yinhe_editor_core::file_loading::LoadResult;
         match loader.poll_loading() {
             LoadResult::ModelLoaded { path, model } => {
+                // 构造 Document：conductor 检测/插入 + 工程文件结构 + 轨道状态缓存。
+                let project_file = yinhe_yin::ProjectFile::from_meta(&model.meta);
+                let mapping_file = yinhe_yin::MappingFile::default();
+                let mut doc = match Document::from_model(
+                    &path,
+                    model,
+                    QuantizePreset::Fraction(1, 4),
+                    QuantizePreset::Fraction(1, 16),
+                    project_file,
+                    mapping_file,
+                ) {
+                    Ok(doc) => doc,
+                    Err(e) => {
+                        self.midi_stats = format!("工程初始化失败: {e}");
+                        return;
+                    }
+                };
+                doc.mark_loaded();
                 let elapsed = self
                     .midi_load_start
                     .take()
                     .map(|t| t.elapsed().as_secs_f32())
                     .unwrap_or(0.0);
+                let model = &doc.data.model;
                 let notes: u64 = model.track_note_count.iter().sum();
                 let seconds = model.tempo_map.duration_seconds();
                 let tracks = model.tracks.len();
@@ -230,8 +257,8 @@ impl YinheApp {
                     "加载完成！{} 音符 | {tracks} 轨 | 时长 {minutes:.1} 分钟\n耗时 {elapsed:.1} 秒",
                     notes,
                 );
-                // 加载完成 → 模型交给音频引擎（播放）与 AR/PR 视图（渲染）
-                let model = Arc::new(model);
+                // 模型交给音频引擎（播放）与 AR/PR 视图（渲染）。
+                let model = model.clone();
                 if let Some(audio) = &self.audio {
                     audio.handle.send(AudioCommand::LoadModel {
                         model: model.clone(),
@@ -244,11 +271,10 @@ impl YinheApp {
                 } else {
                     self.audio_status = "音频未初始化，无法播放".to_string();
                 }
-                self.model = Some(model.clone());
+                self.doc = Some(doc);
                 self.pr_view.set_model(model.clone());
                 self.ar_view.set_model(model);
                 self.page = Page::Ar;
-                let _ = path;
             }
             LoadResult::ModelFromYin { .. }
             | LoadResult::ArchivePickerNeeded { .. }

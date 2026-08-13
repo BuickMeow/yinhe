@@ -43,11 +43,25 @@ pub(crate) fn show_toolbar(
                 return;
             }
             ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
-                ui.horizontal_centered(|ui| {
+                // 左对齐（不走 horizontal_centered）：页面可在右侧用
+                // right_to_left 布局放名称/状态按钮。
+                ui.horizontal(|ui| {
                     add_contents(ui);
                 });
             });
         });
+}
+
+/// 顶栏右侧按钮：右起先留圆角空间，再放一个全宽截断按钮（名称过长显示省略号）。
+/// 调用方需自行包在 `Layout::right_to_left` 中。
+pub(crate) fn right_side_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    // 右起 12px：现代手机全面屏四角是圆的，按钮不能贴最右。
+    ui.add_space(12.0);
+    let w = ui.available_width().max(48.0);
+    ui.add_sized(
+        egui::vec2(w, 26.0),
+        egui::Button::new(egui::RichText::new(text).size(14.0)).truncate(),
+    )
 }
 
 /// 页面背景：整个可用区域（含挖孔区域）铺默认面板背景色。
