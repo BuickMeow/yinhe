@@ -58,7 +58,7 @@ pub struct YinheApp {
     cursor_tick: f64,
     /// 跟随播放：开启后滚动让光标始终位于内容区中央。
     follow_play: bool,
-    /// 走带时间显示格式：false = mm:ss，true = tick 数（点击切换）。
+    /// 走带位置/时间显示：false = 时间 m:ss.mmm，true = 位置 小节.拍.tick。
     time_show_ticks: bool,
 }
 
@@ -289,6 +289,10 @@ fn setup_fonts(ctx: &egui::Context) {
         list.insert(1, "MiSans".to_owned());
     }
     ctx.set_fonts(fonts);
+    // Material Icons（走带/图标按钮用）；y_offset_factor=0 保证字形居中（同桌面端）。
+    let mut font_insert = egui_material_icons::font_insert();
+    font_insert.data.tweak.y_offset_factor = 0.0;
+    ctx.add_font(font_insert);
 }
 
 impl eframe::App for YinheApp {
@@ -328,7 +332,9 @@ impl YinheApp {
             });
     }
 
-    /// 走带控制条：播放/暂停、停止、跟随播放开关、当前/总时长。
+    /// 走带控制条：播放/暂停、停止、跟随播放开关、BPM、位置/时间显示。
+    /// 位置 = 小节.拍.tick、时间 = m:ss.mmm（桌面端 timecode 同款格式），
+    /// 点击位置/时间在两者间切换。
     fn transport_ui(&mut self, ui: &mut egui::Ui) {
         if self.model.is_none() {
             ui.label("模型未加载");
@@ -339,8 +345,16 @@ impl YinheApp {
             return;
         };
         let playing = audio.handle.is_playing();
+        use egui_material_icons::icons::{ICON_PAUSE, ICON_PLAY_ARROW, ICON_STOP};
+        let play_icon = if playing { ICON_PAUSE } else { ICON_PLAY_ARROW };
+        let icon_text = |icon: egui_material_icons::MaterialIcon| {
+            egui::RichText::new(icon.codepoint)
+                .family(icon.font_family())
+                .size(18.0)
+        };
         if ui
-            .button(if playing { "⏸ 暂停" } else { "▶ 播放" })
+            .button(icon_text(play_icon))
+            .on_hover_text("播放/暂停")
             .clicked()
         {
             if playing {
@@ -355,42 +369,51 @@ impl YinheApp {
                 audio.handle.send(AudioCommand::Play { from_sample });
             }
         }
-        if ui.button("⏹ 停止").clicked() {
+        if ui
+            .button(icon_text(ICON_STOP))
+            .on_hover_text("停止")
+            .clicked()
+        {
             audio.handle.send(AudioCommand::Stop);
             self.cursor_tick = 0.0;
             self.pr_view.set_cursor(Some(0.0));
         }
         ui.toggle_value(&mut self.follow_play, "跟随");
-        // BPM：当前光标处的速度（tempo 分段变化时随位置更新）。
-        let cur_sec = self
-            .model
-            .as_ref()
-            .map(|m| m.tempo_map.tick_to_seconds(self.cursor_tick as u64))
-            .unwrap_or(0.0);
-        let bpm = self
-            .model
-            .as_ref()
-            .map(|m| m.tempo_map.bpm_at_time(cur_sec))
-            .unwrap_or(120.0);
-        ui.label(format!("{bpm:.0} BPM"));
-        // 时间显示：点击在 mm:ss 与 tick 之间切换。
-        let total_sec = self
-            .model
-            .as_ref()
-            .map(|m| m.tempo_map.duration_seconds())
-            .unwrap_or(0.0);
-        let time_text = if self.time_show_ticks {
-            let total_ticks = self
-                .model
-                .as_ref()
-                .map(|m| m.tempo_map.tick_length)
-                .unwrap_or(0);
-            format!("{} / {} tick", self.cursor_tick as u64, total_ticks)
-        } else {
-            let fmt = |s: f64| format!("{:02}:{:02}", (s / 60.0) as u32, s as u32 % 60);
-            format!("{} / {}", fmt(cur_sec), fmt(total_sec))
+
+        let Some(model) = &self.model else {
+            return;
         };
-        let time_resp = ui.add(egui::Label::new(time_text).sense(egui::Sense::click()));
+        let tm = &model.tempo_map;
+        // BPM：当前光标处的速度（tempo 分段变化时随位置更新）。
+        let cur_sec = tm.tick_to_seconds(self.cursor_tick as u64);
+        ui.label(format!(
+            "{} BPM",
+            yinhe_types::time_format::format_bpm(tm.bpm_at_time(cur_sec))
+        ));
+        // 位置（小节.拍.tick）与时间（m:ss.mmm）：点击切换显示。
+        let (def_num, def_den) = tm.time_sig_default;
+        let pos_str = yinhe_types::time_format::format_tick_bar_beat_with_time_sig(
+            self.cursor_tick,
+            model.meta.ppq,
+            &tm.time_sig_events,
+            def_num,
+            def_den,
+        );
+        let time_str = yinhe_types::time_format::format_time(cur_sec);
+        let time_resp = ui
+            .add(
+                egui::Label::new(if self.time_show_ticks {
+                    pos_str
+                } else {
+                    time_str
+                })
+                .sense(egui::Sense::click()),
+            )
+            .on_hover_text(if self.time_show_ticks {
+                "时间 (秒)".to_string()
+            } else {
+                "位置 (小节.拍.tick)".to_string()
+            });
         if time_resp.clicked() {
             self.time_show_ticks = !self.time_show_ticks;
         }

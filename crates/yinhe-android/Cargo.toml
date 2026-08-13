@@ -23,6 +23,8 @@ yinhe-mid2 = { path = "../yinhe-mid2" }
 yinhe-wgpu = { path = "../yinhe-wgpu" }
 yinhe-core = { path = "../yinhe-core" }
 yinhe-types = { path = "../yinhe-types" }
+yinhe-theme = { path = "../yinhe-theme", features = ["egui"] }
+egui_material_icons = { workspace = true }
 wgpu = { workspace = true }
 cpal = { workspace = true }
 log = "0.4"

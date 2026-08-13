@@ -9,6 +9,8 @@ use std::sync::{Arc, Mutex};
 
 use eframe::egui;
 use yinhe_core::{Selection, YinModel};
+use yinhe_theme::base::BaseColors;
+use yinhe_theme::egui_colors::{Theme, derive_theme, mix};
 use yinhe_types::{
     PianoRollView, TimelineViewBase, build_time_sig_segments, compute_measure_divisor,
     measure_ticks,
@@ -20,22 +22,6 @@ struct NoteBuildResult {
     notes: Vec<NoteInstance>,
     offsets: [u32; 129],
 }
-
-/// 轨道颜色调色板（12 色循环；桌面端来自主题，安卓先用固定调色板）。
-const TRACK_PALETTE: [[f32; 4]; 12] = [
-    [0.98, 0.55, 0.35, 1.0],
-    [0.35, 0.75, 0.98, 1.0],
-    [0.55, 0.90, 0.45, 1.0],
-    [0.95, 0.85, 0.30, 1.0],
-    [0.80, 0.45, 0.95, 1.0],
-    [0.40, 0.90, 0.90, 1.0],
-    [0.98, 0.40, 0.55, 1.0],
-    [0.70, 0.70, 0.75, 1.0],
-    [0.90, 0.70, 0.40, 1.0],
-    [0.45, 0.55, 0.98, 1.0],
-    [0.85, 0.65, 0.60, 1.0],
-    [0.60, 0.80, 0.55, 1.0],
-];
 
 /// 顶部小节标尺高度（px）：内容区整体下移该距离给标尺让位。
 /// 手机屏幕紧张，比桌面端（~28px）更矮。
@@ -67,6 +53,8 @@ pub struct PrView {
     view_initialized: bool,
     /// 播放光标 tick（None = 不显示）。由 lib.rs 每帧从音频位置换算后设置。
     cursor_tick: Option<f64>,
+    /// 主题色（与桌面端同源：BaseColors 7 色派生）。
+    theme: Theme,
 }
 
 impl PrView {
@@ -114,6 +102,7 @@ impl PrView {
             keyboard_w: 0.0,
             view_initialized: false,
             cursor_tick: None,
+            theme: derive_theme(BaseColors::DARK),
         }
     }
 
@@ -152,7 +141,7 @@ impl PrView {
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         let rect = ui.available_rect_before_wrap();
         let painter = ui.painter();
-        painter.rect_filled(rect, 0.0, egui::Color32::from_gray(22));
+        painter.rect_filled(rect, 0.0, self.theme.app_bg);
 
         // 顶部小节标尺带：高度充足时内容区整体下移 24px 让位，否则不画标尺。
         let ruler_h = if rect.height() > 200.0 { RULER_H } else { 0.0 };
@@ -163,7 +152,7 @@ impl PrView {
                 egui::Align2::CENTER_CENTER,
                 "未加载 MIDI",
                 egui::FontId::proportional(18.0),
-                egui::Color32::GRAY,
+                self.theme.text_muted,
             );
             return;
         };
@@ -253,7 +242,7 @@ impl PrView {
             egui::Align2::LEFT_TOP,
             status,
             egui::FontId::proportional(13.0),
-            egui::Color32::from_gray(200),
+            self.theme.text_label,
         );
     }
 
@@ -448,9 +437,9 @@ impl PrView {
         for key in key_lo..=key_hi {
             let y = rect.min.y + bottom - (key as f32 + 1.0) * kh;
             let color = if is_black(key) {
-                egui::Color32::from_gray(36)
+                self.theme.track_bg
             } else {
-                egui::Color32::from_gray(72)
+                self.theme.control_bg
             };
             painter.rect_filled(
                 egui::Rect::from_min_max(egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y + kh)),
@@ -463,7 +452,7 @@ impl PrView {
                 egui::pos2(rect.max.x, rect.min.y),
                 egui::pos2(rect.max.x, rect.max.y),
             ],
-            egui::Stroke::new(1.0, egui::Color32::from_gray(60)),
+            egui::Stroke::new(1.0, self.theme.line_fg),
         );
     }
 
@@ -503,20 +492,23 @@ impl PrView {
 
         let Some(ev) = eff else {
             // 无调号：白键行浅色，与键盘列黑白键呼应。
+            let white = mix(self.theme.app_bg, self.theme.text_primary, 0.06);
             for key in key_lo..=key_hi {
                 if !matches!(key % 12, 1 | 3 | 6 | 8 | 10) {
-                    band(painter, key, egui::Color32::from_gray(26));
+                    band(painter, key, white);
                 }
             }
             return;
         };
         let mask = ev.scale.pitch_classes(ev.root);
+        let in_scale = mix(self.theme.app_bg, self.theme.text_primary, 0.06);
+        let root = mix(self.theme.app_bg, self.theme.text_primary, 0.12);
         for key in key_lo..=key_hi {
             let pc = (key as u8) % 12;
             let color = if pc == ev.root {
-                egui::Color32::from_gray(34)
+                root
             } else if mask & (1u16 << pc) != 0 {
-                egui::Color32::from_gray(26)
+                in_scale
             } else {
                 continue;
             };
@@ -537,7 +529,7 @@ impl PrView {
             }
             painter.line_segment(
                 [egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)],
-                egui::Stroke::new(1.0, egui::Color32::from_gray(60)),
+                egui::Stroke::new(1.0, self.theme.line_fg),
             );
         }
     }
@@ -570,13 +562,13 @@ impl PrView {
             egui::pos2(rect.max.x, rect.min.y + ruler_h),
         );
         let painter = ui.painter();
-        painter.rect_filled(ruler_rect, 0.0, egui::Color32::from_gray(30));
+        painter.rect_filled(ruler_rect, 0.0, self.theme.track_bg);
         painter.line_segment(
             [
                 egui::pos2(ruler_rect.min.x, ruler_rect.max.y),
                 egui::pos2(ruler_rect.max.x, ruler_rect.max.y),
             ],
-            egui::Stroke::new(1.0, egui::Color32::from_gray(50)),
+            egui::Stroke::new(1.0, self.theme.line_fg),
         );
 
         let mut bar_offset = 0u32;
@@ -608,7 +600,7 @@ impl PrView {
                             egui::pos2(x, ruler_rect.min.y),
                             egui::pos2(x, ruler_rect.max.y),
                         ],
-                        egui::Stroke::new(1.0, egui::Color32::from_gray(90)),
+                        egui::Stroke::new(1.0, self.theme.tick_label),
                     );
                     if show_number && local % (ticks_per_measure * divisor) == 0 {
                         painter.text(
@@ -617,7 +609,7 @@ impl PrView {
                             // 小节号从 1 开始（tick 0 = 第 1 小节），跨段累计。
                             (bar_offset + local / ticks_per_measure + 1).to_string(),
                             egui::FontId::proportional(10.0),
-                            egui::Color32::from_gray(170),
+                            self.theme.measure_label,
                         );
                     }
                 }
@@ -647,7 +639,7 @@ impl PrView {
                 egui::pos2(x, rect.min.y + ruler_h),
                 egui::pos2(x, rect.max.y),
             ],
-            egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 200, 80)),
+            egui::Stroke::new(2.0, self.theme.accent_active),
         );
     }
 
@@ -677,7 +669,9 @@ impl PrView {
         // beat 标签 → 十六分线；sub 标签 → tick 线（仅最大缩放）。
         const MIN_SPACING: f32 = 38.0;
         const SUB_BEAT_DIV: u32 = 4;
-        const MAX_PPU: f32 = 10.0;
+        // tick 线只在最大缩放显示：安卓 ppu 上限 8.0（与 handle_touch clamp 一致），
+        // 桌面端 10.0 在这里永远不可达，tick 线会永不显示。
+        const MAX_PPU: f32 = 8.0;
         let ticks_per_sub = (tpb / SUB_BEAT_DIV).max(1);
 
         for (i, &(seg_start, num, den)) in segments.iter().enumerate() {
@@ -728,13 +722,13 @@ impl PrView {
                     let is_beat_pos = beat_local.is_multiple_of(ticks_per_beat) && beat_local > 0;
                     let is_sub_pos = local % ticks_per_sub == 0;
                     let (w, color) = if is_measure {
-                        (2.0, egui::Color32::from_gray(95))
+                        (2.0, self.theme.line_fg)
                     } else if show_beat && is_beat_pos {
-                        (1.0, egui::Color32::from_gray(55))
+                        (1.0, self.theme.text_label)
                     } else if show_sub && is_sub_pos {
-                        (1.0, egui::Color32::from_gray(40))
+                        (1.0, self.theme.grid_sub_beat)
                     } else if show_tick {
-                        (1.0, egui::Color32::from_gray(32))
+                        (1.0, self.theme.grid_tick)
                     } else {
                         tick += step;
                         continue;
@@ -750,13 +744,13 @@ impl PrView {
     }
 }
 
-/// 按轨道索引生成颜色（12 色调色板循环）。
+/// 按轨道索引生成颜色：直接循环主题的 16 色轨道调色板（RGB → RGBA）。
 fn track_colors_for(model: &YinModel) -> Vec<[f32; 4]> {
-    model
-        .tracks
+    yinhe_theme::palette::TRACK_PALETTE
         .iter()
-        .enumerate()
-        .map(|(i, _)| TRACK_PALETTE[i % TRACK_PALETTE.len()])
+        .cycle()
+        .take(model.tracks.len())
+        .map(|&[r, g, b]| [r, g, b, 1.0])
         .collect()
 }
 
