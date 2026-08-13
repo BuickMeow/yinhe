@@ -29,7 +29,7 @@ class MainActivity : GameActivity() {
         // Android 12+ 的 sensorLandscape 尊重用户旋转锁（自动旋转关闭时 app
         // 会停在竖屏）；游戏全屏应用需显式忽略旋转请求，保持强制横屏。
         if (Build.VERSION.SDK_INT >= 31) {
-            window.setIgnoreOrientationRequest(true)
+            setIgnoreOrientationRequest(true)
         }
         allowDrawingIntoCutout()
         // WindowInsets 变化（挖孔/系统栏/圆角）时推送给 Rust 侧做安全区布局。
