@@ -234,7 +234,7 @@ pub(crate) struct CullState {
     /// 每帧读回 CPU 缓存（`per_key_draw_args_cpu`）供直接 draw。
     ///
     /// **注意**：Adreno 730 驱动的 draw_indexed_indirect 整体失效
-    /// （diag_draw_experiments 实锤：CPU 手写 args 依然 0 像素），因此
+    /// （CPU 手写 args 依然 0 像素，真机实测），因此
     /// 不走 indirect draw，args 读回 CPU 后循环直接 `draw_indexed`。
     per_key_draw_args_buffers: Vec<Option<Buffer>>,
     /// Per-key 本帧 chunk args 的 CPU 缓存：每 chunk
@@ -616,11 +616,6 @@ impl CullState {
         self.per_key_all_bind_groups[key as usize].as_ref()
     }
 
-    /// 诊断：某个 key 的 visible_indices buffer（最小 indirect draw 测试用）。
-    pub(crate) fn diag_visible_buffer(&self, key: u8) -> Option<&Buffer> {
-        self.per_key_visible_buffers[key as usize].as_ref()
-    }
-
     /// Recreate the bind group for a single key (after its buffer grew).
     /// Binds: uniform, all_notes[k], visible_notes[k], per-key draw_args[k],
     /// and the dispatch-args slot k (256-byte slice at offset k*256).
@@ -826,7 +821,7 @@ impl CullState {
     /// 供 `draw_visible_notes` 直接 draw 用。
     ///
     /// **为什么读回而不是 indirect draw？** Adreno 730 驱动的
-    /// `draw_indexed_indirect` 整体失效（`diag_draw_experiments` 实锤：CPU 手写
+    /// `draw_indexed_indirect` 整体失效（真机实测：CPU 手写
     /// args [6,1,0,0,0]、纯 INDIRECT usage 依然 0 像素），而直接 `draw_indexed`
     /// 完全正常。跨 submit 读回则一直稳定（STORAGE→COPY_SRC barrier 正常）。
     ///
@@ -907,147 +902,6 @@ impl CullState {
         }
     }
 
-    /// 诊断用：读回所有 key 的 draw_args，求「GPU cull 判定为可见」的音符总数。
-    /// GPU 同步 + 逐 key 读回，慢（每小节一次可接受）；仅用于真实运行时的
-    /// 「CPU 构建数 vs GPU 显示数」对比，定位显示中断点。
-    pub(crate) fn readback_total_instances(&self, device: &Device, queue: &Queue) -> u64 {
-        let mut total = 0u64;
-        for key in 0..128 {
-            let chunk_count = self.frame_chunk_counts[key] as usize;
-            if chunk_count == 0 {
-                continue;
-            }
-            let Some(args_buf) = &self.per_key_draw_args_buffers[key] else {
-                continue;
-            };
-            // DrawIndexedIndirectArgs = 20B per chunk.
-            let readback = device.create_buffer(&BufferDescriptor {
-                label: Some("diag_readback"),
-                size: 20 * chunk_count as u64,
-                usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            });
-            let mut enc = device.create_command_encoder(&CommandEncoderDescriptor::default());
-            enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 20 * chunk_count as u64);
-            queue.submit([enc.finish()]);
-            let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-            let done2 = done.clone();
-            readback.slice(..).map_async(wgpu::MapMode::Read, move |_| {
-                done2.store(true, std::sync::atomic::Ordering::SeqCst);
-            });
-            let _ = device.poll(wgpu::PollType::wait_indefinitely());
-            if !done.load(std::sync::atomic::Ordering::SeqCst) {
-                continue;
-            }
-            let view = readback
-                .slice(..)
-                .get_mapped_range()
-                .expect("diag readback map");
-            {
-                let args: &[u32] = bytemuck::cast_slice(&view);
-                for c in 0..chunk_count {
-                    total += args[c * 5 + 1] as u64; // instance_count @ offset 4
-                }
-            }
-            drop(view);
-            readback.unmap();
-        }
-        total
-    }
-
-    /// 诊断：读回一个 key 的 draw_args 前 `n` 个 chunk 的完整 5 字段
-    /// (index_count, instance_count, first_index, base_vertex, first_instance)。
-    /// 同步读回，仅诊断用。
-    pub(crate) fn readback_draw_args(
-        &self,
-        device: &Device,
-        queue: &Queue,
-        key: u8,
-        n: u32,
-    ) -> Vec<u32> {
-        let Some(args_buf) = &self.per_key_draw_args_buffers[key as usize] else {
-            return Vec::new();
-        };
-        let bytes = (n as u64).min(args_buf.size() / 20) * 20;
-        let readback = device.create_buffer(&BufferDescriptor {
-            label: Some("diag_args_readback"),
-            size: bytes,
-            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let mut enc = device.create_command_encoder(&CommandEncoderDescriptor::default());
-        enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, bytes);
-        queue.submit([enc.finish()]);
-        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let done2 = done.clone();
-        readback.slice(..).map_async(wgpu::MapMode::Read, move |_| {
-            done2.store(true, std::sync::atomic::Ordering::SeqCst);
-        });
-        let _ = device.poll(wgpu::PollType::wait_indefinitely());
-        if !done.load(std::sync::atomic::Ordering::SeqCst) {
-            return Vec::new();
-        }
-        let view = readback
-            .slice(..)
-            .get_mapped_range()
-            .expect("diag args readback map");
-        let out = {
-            let v = &view[..bytes as usize];
-            v.chunks_exact(4)
-                .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                .collect()
-        };
-        drop(view);
-        readback.unmap();
-        out
-    }
-
-    /// 诊断：读回一个 key 的 visible_indices 前 `n` 个 u32（稀疏槽位内容）。
-    pub(crate) fn readback_visible_indices(
-        &self,
-        device: &Device,
-        queue: &Queue,
-        key: u8,
-        n: u32,
-    ) -> Vec<u32> {
-        let Some(vis_buf) = &self.per_key_visible_buffers[key as usize] else {
-            return Vec::new();
-        };
-        let bytes = (n as u64).min(vis_buf.size() / 4) * 4;
-        let readback = device.create_buffer(&BufferDescriptor {
-            label: Some("diag_vis_readback"),
-            size: bytes,
-            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let mut enc = device.create_command_encoder(&CommandEncoderDescriptor::default());
-        enc.copy_buffer_to_buffer(vis_buf, 0, &readback, 0, bytes);
-        queue.submit([enc.finish()]);
-        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let done2 = done.clone();
-        readback.slice(..).map_async(wgpu::MapMode::Read, move |_| {
-            done2.store(true, std::sync::atomic::Ordering::SeqCst);
-        });
-        let _ = device.poll(wgpu::PollType::wait_indefinitely());
-        if !done.load(std::sync::atomic::Ordering::SeqCst) {
-            return Vec::new();
-        }
-        let view = readback
-            .slice(..)
-            .get_mapped_range()
-            .expect("diag vis readback map");
-        let out = {
-            let v = &view[..bytes as usize];
-            v.chunks_exact(4)
-                .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                .collect()
-        };
-        drop(view);
-        readback.unmap();
-        out
-    }
-
-    /// GPU 同步 + 逐 key 读回，慢（每小节一次可接受）；仅用于真实运行时的
     /// Draw the culled notes：循环 CPU 缓存的 chunk args 直接 `draw_indexed`。
     /// chunks 按输入（=tick）顺序写入，draw 顺序相同，z-order 帧间确定。
     ///
@@ -1079,7 +933,7 @@ impl CullState {
             };
             pass.set_bind_group(1, bg, &[]);
             pass.set_vertex_buffer(0, vis_buf.slice(..));
-            // Adreno 驱动的 draw_indexed_indirect 整体失效（diag 实验实锤），
+            // Adreno 驱动的 draw_indexed_indirect 整体失效（真机实测），
             // 用 CPU 读回的 args 直接 draw。instances range 的 start 即
             // first_instance（顶点流索引 = start + instance_index），与
             // indirect args 的语义一致，且属 wgpu 核心行为，无需任何 feature。
@@ -4052,10 +3906,8 @@ mod tests {
                     .expect("poll");
                 let skip_ms = (t.elapsed().as_secs_f64() * 1e3 - empty_poll_ms).max(0.0);
 
-                // GPU 可见数（读回 draw_args）+ 每帧 dispatch/chunk 数。
                 // frame_chunk_counts 对全部 128 key 都填（含 Y 方向视口外的 key），
                 // 实际 dispatch 的只有 key_lo..=key_hi 且 chunk>0 的 key。
-                let gpu_visible = cull.readback_total_instances(&device, &queue);
                 let dispatch_count = (key_lo..=key_hi)
                     .filter(|&k| cull.frame_chunk_counts[k as usize] > 0)
                     .count();
@@ -4078,10 +3930,6 @@ mod tests {
                     dispatch_count,
                     chunk_total,
                     skip_ms,
-                );
-                println!(
-                    "    GPU cull 可见={gpu_visible}（CPU={cpu_visible}，比值 {:.2}）",
-                    gpu_visible as f64 / cpu_visible.max(1) as f64
                 );
             }
         }
