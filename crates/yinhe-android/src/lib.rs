@@ -370,14 +370,6 @@ impl YinheApp {
                     }
                     ui.label(egui::RichText::new("钢琴卷帘").strong());
                     self.transport_ui(ui);
-                    // 工具按钮（显示当前工具图标，点击弹出居中工具选择窗）
-                    if ui
-                        .button(icon_text(self.tool.icon()))
-                        .on_hover_text(format!("工具：{}", self.tool.name()))
-                        .clicked()
-                    {
-                        self.tool_picker_open = !self.tool_picker_open;
-                    }
                 });
             });
         egui::CentralPanel::default()
@@ -468,6 +460,15 @@ impl YinheApp {
             .clicked()
         {
             self.follow_play = !self.follow_play;
+        }
+        // 工具按钮（显示当前工具图标，点击弹出居中工具选择窗）。
+        // 位置：跟随之后、BPM 之前。
+        if ui
+            .button(icon_text(self.tool.icon()))
+            .on_hover_text(format!("工具：{}", self.tool.name()))
+            .clicked()
+        {
+            self.tool_picker_open = !self.tool_picker_open;
         }
 
         let Some(model) = &self.model else {
