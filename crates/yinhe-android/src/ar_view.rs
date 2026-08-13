@@ -419,10 +419,6 @@ impl ArView {
     ) {
         let lane_h = self.view.lane_height();
         let num = model.tracks.len();
-        // 面板列铺 control_bg（比 app_bg 亮一档）：让挖孔避让区的边界清晰可见
-        //（否则面板列与避让区同为深色，看不出内容已让开挖孔）。
-        let panel = egui::Rect::from_min_size(rect.min, egui::vec2(PANEL_W, rect.height()));
-        painter.rect_filled(panel, 0.0, self.theme.control_bg);
         let (first, last) = ArrangementView::visible_track_range_static(
             self.view.base.scroll_y,
             rect.height(),
