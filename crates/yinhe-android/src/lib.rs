@@ -524,6 +524,8 @@ impl YinheApp {
     /// AR 首页：顶栏（工程名 + 走带 + 打开 + 设置）+ 音轨面板 + GPU 音符视图。
     fn ui_ar(&mut self, ui: &mut egui::Ui) {
         self.update_transport();
+        // 每帧轮询后台加载结果（模型加载完成后留在 AR 页展示）。
+        self.poll_midi_load();
         // 顶栏：内边距 + 挖孔安全区避让（同 ui_pr）。
         let [sl, st, sr, _] = self.safe_insets;
         egui::Panel::top("ar_toolbar")
