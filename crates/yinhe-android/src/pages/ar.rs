@@ -111,6 +111,10 @@ impl YinheApp {
     /// 改 meta 用 Arc::make_mut：大块数据（音符桶/轨道）都是 Arc 浅拷贝，
     /// 只有 meta 分叉，代价可忽略，且音频引擎/视图继续用旧 Arc 不受影响。
     fn project_settings_ui(&mut self, ui: &mut egui::Ui) {
+        use yinhe_editor_core::history::{
+            begin_edit, commit_artist, commit_description, commit_project_name,
+        };
+
         egui::Window::new("工程设置")
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
@@ -121,7 +125,6 @@ impl YinheApp {
                     ui.label("未加载工程");
                     return;
                 };
-                let meta = &mut Arc::make_mut(&mut doc.data.model).meta;
                 let label = |ui: &mut egui::Ui, s: &str| {
                     ui.label(
                         egui::RichText::new(s)
@@ -129,25 +132,78 @@ impl YinheApp {
                             .color(ui.visuals().weak_text_color()),
                     );
                 };
+                // 与桌面端 project_info 相同的编辑模式：gained_focus 记录旧值，
+                // changed 实时写 model，lost_focus 时 commit（变才 push undo）。
                 label(ui, "工程名");
-                ui.add_sized(
+                let mut name = doc.data.model.meta.name.clone();
+                let resp = ui.add_sized(
                     egui::vec2(ui.available_width(), 24.0),
-                    egui::TextEdit::singleline(&mut meta.name).hint_text("未命名工程"),
+                    egui::TextEdit::singleline(&mut name).hint_text("未命名工程"),
                 );
+                if resp.gained_focus() {
+                    begin_edit(
+                        &mut doc.edit.pending_edits,
+                        resp.id.value(),
+                        &doc.data.model.meta.name,
+                    );
+                }
+                if resp.changed() {
+                    let model = Arc::make_mut(&mut doc.data.model);
+                    model.meta.name = name.clone();
+                    // SMF 标准：track 0 name = song title，同步更新。
+                    if let Some(track) = model.tracks.get_mut(0) {
+                        Arc::make_mut(track).name = name.clone();
+                    }
+                }
+                if resp.lost_focus() {
+                    let name = doc.data.model.meta.name.clone();
+                    commit_project_name(doc, resp.id.value(), &name);
+                }
                 ui.add_space(6.0);
                 label(ui, "艺术家");
-                ui.add_sized(
+                let mut artist = doc.data.model.meta.artist.clone();
+                let resp = ui.add_sized(
                     egui::vec2(ui.available_width(), 24.0),
-                    egui::TextEdit::singleline(&mut meta.artist),
+                    egui::TextEdit::singleline(&mut artist),
                 );
+                if resp.gained_focus() {
+                    begin_edit(
+                        &mut doc.edit.pending_edits,
+                        resp.id.value(),
+                        &doc.data.model.meta.artist,
+                    );
+                }
+                if resp.changed() {
+                    Arc::make_mut(&mut doc.data.model).meta.artist = artist;
+                }
+                if resp.lost_focus() {
+                    let artist = doc.data.model.meta.artist.clone();
+                    commit_artist(doc, resp.id.value(), &artist);
+                }
                 ui.add_space(6.0);
                 label(ui, "描述");
-                ui.add_sized(
+                let mut desc = doc.data.model.meta.description.clone();
+                let resp = ui.add_sized(
                     egui::vec2(ui.available_width(), 56.0),
-                    egui::TextEdit::multiline(&mut meta.description),
+                    egui::TextEdit::multiline(&mut desc),
                 );
+                if resp.gained_focus() {
+                    begin_edit(
+                        &mut doc.edit.pending_edits,
+                        resp.id.value(),
+                        &doc.data.model.meta.description,
+                    );
+                }
+                if resp.changed() {
+                    Arc::make_mut(&mut doc.data.model).meta.description = desc;
+                }
+                if resp.lost_focus() {
+                    let desc = doc.data.model.meta.description.clone();
+                    commit_description(doc, resp.id.value(), &desc);
+                }
                 ui.add_space(6.0);
                 ui.separator();
+                let meta = &doc.data.model.meta;
                 ui.label(format!("PPQ：{}（修改需重排音符，暂不支持）", meta.ppq));
                 ui.label(format!("压缩等级：{}", meta.compression_level));
                 ui.add_space(8.0);
