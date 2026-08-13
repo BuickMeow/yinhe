@@ -302,6 +302,35 @@ fn icon_text(icon: egui_material_icons::MaterialIcon) -> egui::RichText {
         .size(18.0)
 }
 
+/// 顶栏：默认面板背景色 + 挖孔安全区避让 + 对称内边距（按钮垂直居中）。
+/// 三个页面（菜单/AR/PR）共用，保证视觉一致。
+fn show_toolbar(
+    ui: &mut egui::Ui,
+    id: &'static str,
+    safe: [f32; 4],
+    add_contents: impl FnOnce(&mut egui::Ui),
+) {
+    let [sl, st, sr, _] = safe;
+    egui::Panel::top(id)
+        .frame(egui::Frame::NONE.fill(ui.visuals().panel_fill))
+        .show(ui, |ui| {
+            let avail = ui.available_rect_before_wrap();
+            // frame margin 是 i8（放不下大 inset），手动缩进：上下对称 8px。
+            let inner = egui::Rect::from_min_max(
+                avail.min + egui::vec2(sl + 8.0, st + 8.0),
+                avail.max - egui::vec2(sr + 8.0, 8.0),
+            );
+            if inner.width() <= 0.0 || inner.height() <= 0.0 {
+                return;
+            }
+            ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
+                ui.horizontal_centered(|ui| {
+                    add_contents(ui);
+                });
+            });
+        });
+}
+
 impl eframe::App for YinheApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
@@ -331,39 +360,28 @@ impl YinheApp {
     /// PR 钢琴卷帘页：顶部工具条（返回 + 走带控制 + 工具）+ 视图。
     fn ui_pr(&mut self, ui: &mut egui::Ui) {
         self.update_transport();
-        // 工具条保留少量内边距；内容区零边框，PR 视图铺满（不留黑缝）。
-        // 左右/顶部让出挖孔安全区，防止返回/走带按钮被挖孔遮挡。
-        // frame margin 是 i8（放不下大 inset），这里手动缩进可用区域。
-        let [sl, st, sr, _] = self.safe_insets;
-        egui::Panel::top("pr_toolbar")
-            .frame(egui::Frame::NONE)
-            .show(ui, |ui| {
-                let avail = ui.available_rect_before_wrap();
-                let inner = egui::Rect::from_min_max(
-                    avail.min + egui::vec2(sl + 8.0, st + 6.0),
-                    avail.max - egui::vec2(sr + 8.0, 6.0),
-                );
-                if inner.width() <= 0.0 || inner.height() <= 0.0 {
-                    return;
-                }
-                ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
-                    ui.horizontal(|ui| {
-                        use egui_material_icons::icons::ICON_ARROW_BACK;
-                        if ui
-                            .button(icon_text(ICON_ARROW_BACK))
-                            .on_hover_text("返回")
-                            .clicked()
-                        {
-                            self.page = Page::Ar;
-                        }
-                        ui.label(egui::RichText::new("钢琴卷帘").strong());
-                        self.transport_ui(ui);
-                    });
-                });
-            });
+        // 顶栏：默认背景色 + 挖孔安全区避让 + 对称内边距。
+        show_toolbar(ui, "pr_toolbar", self.safe_insets, |ui| {
+            use egui_material_icons::icons::ICON_ARROW_BACK;
+            if ui
+                .button(icon_text(ICON_ARROW_BACK))
+                .on_hover_text("返回")
+                .clicked()
+            {
+                self.page = Page::Ar;
+            }
+            ui.label(egui::RichText::new("钢琴卷帘").strong());
+            self.transport_ui(ui);
+        });
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
+                // 页面背景（含挖孔区域）铺默认面板背景色。
+                ui.painter().rect_filled(
+                    ui.available_rect_before_wrap(),
+                    0.0,
+                    ui.visuals().panel_fill,
+                );
                 self.pr_view.ui(ui, self.safe_insets);
             });
         // 工具选择弹窗：屏幕中央、横向排列（选择/铅笔/橡皮）。
@@ -523,44 +541,36 @@ impl YinheApp {
         // 每帧轮询后台加载结果（模型加载完成后留在 AR 页展示）。
         self.poll_midi_load();
         // 顶栏：内边距 + 挖孔安全区避让（同 ui_pr）。
-        let [sl, st, sr, _] = self.safe_insets;
-        egui::Panel::top("ar_toolbar")
-            .frame(egui::Frame::NONE)
-            .show(ui, |ui| {
-                let avail = ui.available_rect_before_wrap();
-                let inner = egui::Rect::from_min_max(
-                    avail.min + egui::vec2(sl + 8.0, st + 6.0),
-                    avail.max - egui::vec2(sr + 8.0, 6.0),
-                );
-                if inner.width() <= 0.0 || inner.height() <= 0.0 {
-                    return;
-                }
-                ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
-                    ui.horizontal(|ui| {
-                        // 最左侧：主页按钮（进入菜单，文件夹/设置入口合并于此）。
-                        use egui_material_icons::icons::ICON_HOME;
-                        if ui
-                            .button(icon_text(ICON_HOME))
-                            .on_hover_text("主页")
-                            .clicked()
-                        {
-                            self.page = Page::Menu;
-                        }
-                        // 工程名。
-                        let title = self
-                            .model
-                            .as_ref()
-                            .map(|m| m.meta.name.clone())
-                            .unwrap_or_else(|| "未命名工程".to_string());
-                        ui.label(egui::RichText::new(title).strong());
-                        ui.separator();
-                        self.transport_ui(ui);
-                    });
-                });
-            });
+        // 顶栏：默认背景色 + 挖孔安全区避让 + 对称内边距。
+        show_toolbar(ui, "ar_toolbar", self.safe_insets, |ui| {
+            // 最左侧：主页按钮（进入菜单，文件夹/设置入口合并于此）。
+            use egui_material_icons::icons::ICON_HOME;
+            if ui
+                .button(icon_text(ICON_HOME))
+                .on_hover_text("主页")
+                .clicked()
+            {
+                self.page = Page::Menu;
+            }
+            // 工程名。
+            let title = self
+                .model
+                .as_ref()
+                .map(|m| m.meta.name.clone())
+                .unwrap_or_else(|| "未命名工程".to_string());
+            ui.label(egui::RichText::new(title).strong());
+            ui.separator();
+            self.transport_ui(ui);
+        });
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
+                // 页面背景（含挖孔区域）铺默认面板背景色。
+                ui.painter().rect_filled(
+                    ui.available_rect_before_wrap(),
+                    0.0,
+                    ui.visuals().panel_fill,
+                );
                 let events = self.ar_view.ui(ui, self.safe_insets);
                 for ev in events {
                     match ev {
@@ -586,39 +596,27 @@ impl YinheApp {
         if let Some(path) = file_picker::take_picked_path() {
             self.start_midi_load(&path);
         }
-        // 顶栏：返回（回 AR）+ 标题。
-        let [sl, st, sr, _] = self.safe_insets;
-        egui::Panel::top("menu_toolbar")
-            .frame(egui::Frame::NONE)
-            .show(ui, |ui| {
-                let avail = ui.available_rect_before_wrap();
-                let inner = egui::Rect::from_min_max(
-                    avail.min + egui::vec2(sl + 8.0, st + 6.0),
-                    avail.max - egui::vec2(sr + 8.0, 6.0),
-                );
-                if inner.width() <= 0.0 || inner.height() <= 0.0 {
-                    return;
-                }
-                ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
-                    ui.horizontal(|ui| {
-                        use egui_material_icons::icons::ICON_ARROW_BACK;
-                        if ui
-                            .button(icon_text(ICON_ARROW_BACK))
-                            .on_hover_text("返回工程")
-                            .clicked()
-                        {
-                            self.page = Page::Ar;
-                        }
-                        ui.label(egui::RichText::new("菜单").strong());
-                    });
-                });
-            });
+        // 顶栏：返回（回 AR）+ 标题，默认背景色 + 挖孔避让 + 对称内边距。
+        show_toolbar(ui, "menu_toolbar", self.safe_insets, |ui| {
+            use egui_material_icons::icons::ICON_ARROW_BACK;
+            if ui
+                .button(icon_text(ICON_ARROW_BACK))
+                .on_hover_text("返回工程")
+                .clicked()
+            {
+                self.page = Page::Ar;
+            }
+            ui.label(egui::RichText::new("菜单").strong());
+        });
         // 左右分栏：左侧选歌，右侧设置。
         let [sl, st, sr, sb] = self.safe_insets;
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
                 let avail = ui.available_rect_before_wrap();
+                // 页面背景（含挖孔区域）铺默认面板背景色。
+                ui.painter()
+                    .rect_filled(avail, 0.0, ui.visuals().panel_fill);
                 let inner = egui::Rect::from_min_max(
                     avail.min + egui::vec2(sl, st),
                     avail.max - egui::vec2(sr, sb),
