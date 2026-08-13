@@ -654,8 +654,6 @@ pub fn show(
             content_rect,
             true,
         );
-        // 诊断：每小节打印 CPU 构建数 vs GPU 显示数（YIN_CULL_DIAG=1 时生效）
-        pianoroll.cull_diag_bar(view, midi, w as f32, h as f32, &hidden_notes, track_visible);
     } else {
         // Render thread handles GPU work — just display the latest texture
         render_ctx.paint_texture_only(pw, ph, &painter, content_rect);
