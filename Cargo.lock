@@ -7183,10 +7183,15 @@ dependencies = [
  "eframe",
  "egui",
  "log",
+ "tracing-log",
+ "wgpu",
  "winit",
  "yinhe-audio",
+ "yinhe-core",
  "yinhe-editor-core",
  "yinhe-mid2",
+ "yinhe-types",
+ "yinhe-wgpu",
 ]
 
 [[package]]
@@ -7378,6 +7383,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "half",
+ "log",
  "pollster 1.0.1",
  "rayon",
  "stacker",

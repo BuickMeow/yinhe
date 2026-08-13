@@ -229,10 +229,18 @@ pub(crate) struct CullState {
     /// 索引化（12B → 4B/槽）使全曲稀疏槽位显存降到 1/3；顶点阶段经
     /// shader.wgsl 的 @group(1) 从 all_instances 间接读回完整数据。
     per_key_visible_buffers: Vec<Option<Buffer>>,
-    /// Per-key draw args buffer (one DrawIndirectArgs per chunk, 16B each).
-    /// Written by the cull shader's thread 0 per chunk; read by
-    /// `multi_draw_indirect` in draw order (chunk order = input order).
+    /// Per-key draw args buffer（每 chunk 一个 DrawIndexedIndirectArgs，20B）。
+    /// 由 cull shader 每 chunk 的线程 0 写入（chunk 顺序 = 输入顺序）；
+    /// 每帧读回 CPU 缓存（`per_key_draw_args_cpu`）供直接 draw。
+    ///
+    /// **注意**：Adreno 730 驱动的 draw_indexed_indirect 整体失效
+    /// （diag_draw_experiments 实锤：CPU 手写 args 依然 0 像素），因此
+    /// 不走 indirect draw，args 读回 CPU 后循环直接 `draw_indexed`。
     per_key_draw_args_buffers: Vec<Option<Buffer>>,
+    /// Per-key 本帧 chunk args 的 CPU 缓存：每 chunk
+    /// `(instance_count, first_instance)`，由 `readback_args_to_cpu` 填充，
+    /// `draw_visible_notes` 直接 draw 用。skip 帧保持上次值（args 未变）。
+    per_key_draw_args_cpu: Vec<Vec<(u32, u32)>>,
     /// Per-track visibility bitmask (1 bit per track, MAX_TRACKS bits).
     /// Written by `upload_track_mask`; read by cull.wgsl (binding 5).
     /// Fixed-size (MAX_TRACKS/8 bytes) so per-key bind groups never need
@@ -428,6 +436,7 @@ impl CullState {
             per_key_buffers: (0..128).map(|_| None).collect(),
             per_key_visible_buffers: (0..128).map(|_| None).collect(),
             per_key_draw_args_buffers: (0..128).map(|_| None).collect(),
+            per_key_draw_args_cpu: (0..128).map(|_| Vec::new()).collect(),
             track_mask_buffer,
             frame_chunk_counts: [0; 128],
             per_key_counts: [0; 128],
@@ -520,7 +529,7 @@ impl CullState {
             // 释放旧的三个 buffer（如有）并创建新的三个：
             //   all_notes: 大小 needed.max(4096)，usage STORAGE | COPY_DST
             //   visible:   大小 vis_size（4B 索引），usage STORAGE | VERTEX
-            //   draw_args: 大小 args_size，usage STORAGE | INDIRECT
+            //   draw_args: 大小 args_size，usage STORAGE | COPY_SRC | COPY_DST
             // 全部走 yinhe_memtrace::sub_gpu_resource / add_gpu_resource
             // （可先统一释放旧的三个，再统一创建新的三个）。
             // 只释放当前 key 的三个 buffer——不能遍历全部 keys，那会销毁
@@ -562,11 +571,9 @@ impl CullState {
             let args_buf = device.create_buffer(&BufferDescriptor {
                 label: Some("draw_args_key"),
                 size: args_size,
+                // COPY_SRC 供每帧读回 CPU（draw 用）+ 诊断；
                 // COPY_DST so tests can overwrite draw args directly.
-                usage: BufferUsages::STORAGE
-                    | BufferUsages::INDIRECT
-                    | BufferUsages::COPY_SRC
-                    | BufferUsages::COPY_DST,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             yinhe_memtrace::add_gpu_resource(args_size);
@@ -607,6 +614,11 @@ impl CullState {
     /// usage 带进 render scope。
     pub(crate) fn per_key_all_bind_group(&self, key: u8) -> Option<&BindGroup> {
         self.per_key_all_bind_groups[key as usize].as_ref()
+    }
+
+    /// 诊断：某个 key 的 visible_indices buffer（最小 indirect draw 测试用）。
+    pub(crate) fn diag_visible_buffer(&self, key: u8) -> Option<&Buffer> {
+        self.per_key_visible_buffers[key as usize].as_ref()
     }
 
     /// Recreate the bind group for a single key (after its buffer grew).
@@ -699,6 +711,7 @@ impl CullState {
         self.per_key_counts.fill(0);
         self.frame_chunk_counts.fill(0);
         self.bucket_indexes.fill(None);
+        self.per_key_draw_args_cpu.iter_mut().for_each(Vec::clear);
         self.uploaded_key_revisions.fill(0);
         self.last_cull_uniforms = None;
         self.notes_dirty = false;
@@ -723,6 +736,7 @@ impl CullState {
     /// frame's `visible_notes` + per-key draw args are still valid and the
     /// entire dispatch is skipped. This makes idle frames (no scroll, no edit)
     /// cost zero GPU compute work.
+    /// 是否跳过本帧 dispatch（uniform 与 notes 都没变，上帧输出仍有效）。
     pub(crate) fn dispatch_cull(
         &mut self,
         encoder: &mut CommandEncoder,
@@ -730,7 +744,7 @@ impl CullState {
         key_lo: u8,
         key_hi: u8,
         uniforms: &Uniforms,
-    ) {
+    ) -> bool {
         // Skip if nothing changed since last cull.
         if !self.notes_dirty
             && self
@@ -738,7 +752,7 @@ impl CullState {
                 .as_ref()
                 .is_some_and(|last| culling_relevant_eq(last, uniforms))
         {
-            return;
+            return false;
         }
 
         // Viewport tick range, computed with the same f32 math as the shader
@@ -805,6 +819,92 @@ impl CullState {
 
         self.last_cull_uniforms = Some(*uniforms);
         self.notes_dirty = false;
+        true
+    }
+
+    /// 把本帧 GPU cull 写出的 args 同步读回 CPU 缓存（`per_key_draw_args_cpu`），
+    /// 供 `draw_visible_notes` 直接 draw 用。
+    ///
+    /// **为什么读回而不是 indirect draw？** Adreno 730 驱动的
+    /// `draw_indexed_indirect` 整体失效（`diag_draw_experiments` 实锤：CPU 手写
+    /// args [6,1,0,0,0]、纯 INDIRECT usage 依然 0 像素），而直接 `draw_indexed`
+    /// 完全正常。跨 submit 读回则一直稳定（STORAGE→COPY_SRC barrier 正常）。
+    ///
+    /// 每帧派发的 chunk args 总量很小（可见 chunk × 20B，通常 < 2KB），
+    /// 同步读回开销可忽略；skip 帧不调用（args 未变，缓存仍有效）。
+    pub(crate) fn readback_args_to_cpu(&mut self, device: &Device, queue: &Queue) {
+        // 每 key 一个 readback buffer + 一个 copy 命令，合并为一次提交。
+        let mut readbacks: Vec<Option<Buffer>> = Vec::with_capacity(128);
+        let mut enc = device.create_command_encoder(&CommandEncoderDescriptor::default());
+        for key in 0..128u8 {
+            let chunk_count = self.frame_chunk_counts[key as usize] as usize;
+            if chunk_count == 0 {
+                // 本帧不可见的 key：清空 CPU 缓存，防止 draw 画旧 args。
+                self.per_key_draw_args_cpu[key as usize].clear();
+                readbacks.push(None);
+                continue;
+            }
+            let Some(src) = &self.per_key_draw_args_buffers[key as usize] else {
+                self.per_key_draw_args_cpu[key as usize].clear();
+                readbacks.push(None);
+                continue;
+            };
+            let bytes = 20 * chunk_count as u64;
+            let readback = device.create_buffer(&BufferDescriptor {
+                label: Some("args_sync_readback"),
+                size: bytes,
+                usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            enc.copy_buffer_to_buffer(src, 0, &readback, 0, bytes);
+            readbacks.push(Some(readback));
+        }
+        if readbacks.is_empty() || readbacks.iter().all(Option::is_none) {
+            return;
+        }
+        queue.submit([enc.finish()]);
+
+        // 先全部 map_async，再 poll 一次等全部完成：逐个 poll 会让每个 key
+        // 都等一次 GPU 全队列，真机上每帧几十次同步等待 → 帧率骤降。
+        let mut pending: Vec<(u8, std::sync::Arc<std::sync::atomic::AtomicBool>)> = Vec::new();
+        for key in 0..128u8 {
+            let Some(readback) = &readbacks[key as usize] else {
+                continue;
+            };
+            let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let done2 = done.clone();
+            readback.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                done2.store(true, std::sync::atomic::Ordering::SeqCst);
+            });
+            pending.push((key, done));
+        }
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+
+        for (key, done) in pending {
+            if !done.load(std::sync::atomic::Ordering::SeqCst) {
+                continue;
+            }
+            let Some(readback) = &readbacks[key as usize] else {
+                continue;
+            };
+            let Ok(view) = readback.slice(..).get_mapped_range() else {
+                continue;
+            };
+            // 每 chunk 20B：(index_count=6, instance_count, first_index=0,
+            // base_vertex=0, first_instance) → 只留 draw 需要的两个字段。
+            let args: Vec<(u32, u32)> = view
+                .chunks_exact(20)
+                .map(|c| {
+                    (
+                        u32::from_le_bytes([c[4], c[5], c[6], c[7]]),
+                        u32::from_le_bytes([c[16], c[17], c[18], c[19]]),
+                    )
+                })
+                .collect();
+            drop(view);
+            readback.unmap();
+            self.per_key_draw_args_cpu[key as usize] = args;
+        }
     }
 
     /// 诊断用：读回所有 key 的 draw_args，求「GPU cull 判定为可见」的音符总数。
@@ -827,9 +927,7 @@ impl CullState {
                 usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
                 mapped_at_creation: false,
             });
-            let mut enc = device.create_command_encoder(&CommandEncoderDescriptor {
-                label: Some("diag_copy"),
-            });
+            let mut enc = device.create_command_encoder(&CommandEncoderDescriptor::default());
             enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 20 * chunk_count as u64);
             queue.submit([enc.finish()]);
             let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -837,17 +935,19 @@ impl CullState {
             readback.slice(..).map_async(wgpu::MapMode::Read, move |_| {
                 done2.store(true, std::sync::atomic::Ordering::SeqCst);
             });
-            device
-                .poll(wgpu::PollType::wait_indefinitely())
-                .expect("diag poll failed");
-            assert!(done.load(std::sync::atomic::Ordering::SeqCst));
+            let _ = device.poll(wgpu::PollType::wait_indefinitely());
+            if !done.load(std::sync::atomic::Ordering::SeqCst) {
+                continue;
+            }
             let view = readback
                 .slice(..)
                 .get_mapped_range()
                 .expect("diag readback map");
-            let args: &[u32] = bytemuck::cast_slice(&view);
-            for c in 0..chunk_count {
-                total += args[c * 5 + 1] as u64; // instance_count @ offset 4
+            {
+                let args: &[u32] = bytemuck::cast_slice(&view);
+                for c in 0..chunk_count {
+                    total += args[c * 5 + 1] as u64; // instance_count @ offset 4
+                }
             }
             drop(view);
             readback.unmap();
@@ -855,10 +955,101 @@ impl CullState {
         total
     }
 
-    /// Draw the culled notes via `multi_draw_indexed_indirect`. Each key's
-    /// chunks are drawn in buffer order, and chunks are written in dispatch
-    /// order (= input/tick order), so the z-order is fully deterministic
-    /// across frames — no dependence on GPU workgroup scheduling.
+    /// 诊断：读回一个 key 的 draw_args 前 `n` 个 chunk 的完整 5 字段
+    /// (index_count, instance_count, first_index, base_vertex, first_instance)。
+    /// 同步读回，仅诊断用。
+    pub(crate) fn readback_draw_args(
+        &self,
+        device: &Device,
+        queue: &Queue,
+        key: u8,
+        n: u32,
+    ) -> Vec<u32> {
+        let Some(args_buf) = &self.per_key_draw_args_buffers[key as usize] else {
+            return Vec::new();
+        };
+        let bytes = (n as u64).min(args_buf.size() / 20) * 20;
+        let readback = device.create_buffer(&BufferDescriptor {
+            label: Some("diag_args_readback"),
+            size: bytes,
+            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut enc = device.create_command_encoder(&CommandEncoderDescriptor::default());
+        enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, bytes);
+        queue.submit([enc.finish()]);
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let done2 = done.clone();
+        readback.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+            done2.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        if !done.load(std::sync::atomic::Ordering::SeqCst) {
+            return Vec::new();
+        }
+        let view = readback
+            .slice(..)
+            .get_mapped_range()
+            .expect("diag args readback map");
+        let out = {
+            let v = &view[..bytes as usize];
+            v.chunks_exact(4)
+                .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect()
+        };
+        drop(view);
+        readback.unmap();
+        out
+    }
+
+    /// 诊断：读回一个 key 的 visible_indices 前 `n` 个 u32（稀疏槽位内容）。
+    pub(crate) fn readback_visible_indices(
+        &self,
+        device: &Device,
+        queue: &Queue,
+        key: u8,
+        n: u32,
+    ) -> Vec<u32> {
+        let Some(vis_buf) = &self.per_key_visible_buffers[key as usize] else {
+            return Vec::new();
+        };
+        let bytes = (n as u64).min(vis_buf.size() / 4) * 4;
+        let readback = device.create_buffer(&BufferDescriptor {
+            label: Some("diag_vis_readback"),
+            size: bytes,
+            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut enc = device.create_command_encoder(&CommandEncoderDescriptor::default());
+        enc.copy_buffer_to_buffer(vis_buf, 0, &readback, 0, bytes);
+        queue.submit([enc.finish()]);
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let done2 = done.clone();
+        readback.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+            done2.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        if !done.load(std::sync::atomic::Ordering::SeqCst) {
+            return Vec::new();
+        }
+        let view = readback
+            .slice(..)
+            .get_mapped_range()
+            .expect("diag vis readback map");
+        let out = {
+            let v = &view[..bytes as usize];
+            v.chunks_exact(4)
+                .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect()
+        };
+        drop(view);
+        readback.unmap();
+        out
+    }
+
+    /// GPU 同步 + 逐 key 读回，慢（每小节一次可接受）；仅用于真实运行时的
+    /// Draw the culled notes：循环 CPU 缓存的 chunk args 直接 `draw_indexed`。
+    /// chunks 按输入（=tick）顺序写入，draw 顺序相同，z-order 帧间确定。
     ///
     /// Per-key bind group (@group(1)) is set before each key's draw so the
     /// vertex shader can indirect-read that key's `all_instances` from the
@@ -879,11 +1070,8 @@ impl CullState {
             let Some(vis_buf) = &self.per_key_visible_buffers[key as usize] else {
                 continue;
             };
-            let Some(args_buf) = &self.per_key_draw_args_buffers[key as usize] else {
-                continue;
-            };
-            let chunk_count = self.frame_chunk_counts[key as usize];
-            if chunk_count == 0 {
+            let chunks = &self.per_key_draw_args_cpu[key as usize];
+            if chunks.is_empty() {
                 continue;
             }
             let Some(bg) = self.per_key_all_bind_group(key) else {
@@ -891,16 +1079,14 @@ impl CullState {
             };
             pass.set_bind_group(1, bg, &[]);
             pass.set_vertex_buffer(0, vis_buf.slice(..));
-            // multi_draw_indexed_indirect draws chunks in buffer order (= input
-            // order), giving deterministic z-order. Split into ≤1M-draw segments
-            // in case a single key ever exceeds maxDrawIndirectCount (1,000,000).
-            let mut remaining = chunk_count;
-            let mut offset = 0u32;
-            while remaining > 0 {
-                let n = remaining.min(1_000_000);
-                pass.multi_draw_indexed_indirect(args_buf, offset as u64 * 20, n);
-                offset += n;
-                remaining -= n;
+            // Adreno 驱动的 draw_indexed_indirect 整体失效（diag 实验实锤），
+            // 用 CPU 读回的 args 直接 draw。instances range 的 start 即
+            // first_instance（顶点流索引 = start + instance_index），与
+            // indirect args 的语义一致，且属 wgpu 核心行为，无需任何 feature。
+            for &(instance_count, first_instance) in chunks {
+                if instance_count > 0 {
+                    pass.draw_indexed(0..6, 0, first_instance..first_instance + instance_count);
+                }
             }
         }
     }
@@ -919,9 +1105,8 @@ mod tests {
     fn headless_device() -> Option<(Device, Queue)> {
         let instance = Instance::default();
         let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
-        // 启用 INDIRECT_FIRST_INSTANCE：cull 的 multi_draw_indirect 依赖
-        // first_instance≠0 定位 chunk 槽位；feature 未启用时 wgpu/Metal 会
-        // 静默丢弃这些 draw（见 cull_draw_first_instance_semantics）。
+        // cull 已改为 CPU 读回 args + 直接 draw_indexed（Adreno indirect
+        // draw 失效），draw 路径不再需要 INDIRECT_FIRST_INSTANCE feature。
         let desc = DeviceDescriptor {
             required_features: adapter.features() & Features::INDIRECT_FIRST_INSTANCE,
             ..Default::default()
@@ -3251,7 +3436,7 @@ mod tests {
     }
 
     /// 最小复现：手工构造一个 key（10 chunks），视口只覆盖后 2 chunks
-    /// （c_lo=8）。验证 multi_draw_indirect 在 first_instance 非零时的绘制。
+    /// （c_lo=8）。验证 c_lo≠0 时 chunk 槽位定位（first_instance≠0）正确。
     #[test]
     fn cull_draw_c_lo_nonzero_minimal() {
         let Some((device, queue)) = headless_device() else {
@@ -3472,198 +3657,6 @@ mod tests {
         println!("场景B(c_lo=8): 像素={px_b} chunk数={cc_b}（预期 ~512 音符）");
         assert!(px_a > 1000, "场景A 应画出大量音符，实际像素={px_a}");
         assert!(px_b > 200, "场景B 应画出音符，实际像素={px_b}");
-    }
-
-    /// 判别实验：multi_draw_indirect 的 first_instance 到底发生了什么。
-    /// 两个 chunk 的音符分别落在屏幕左半/右半；覆写 args 为单条
-    /// (6, 256, 0, 256)（只画 chunk 1，槽位 256..512 = 右半音符）：
-    /// - 右有左无 → first_instance 被正确 honoring（则大值失败是幅值问题）
-    /// - 左有右无 → first_instance 被忽略成 0（抓到槽位 0 的 chunk 0 数据）
-    /// - 左右都无 → 该 draw 被整体丢弃
-    #[test]
-    fn cull_draw_first_instance_semantics() {
-        let Some((device, queue)) = headless_device() else {
-            return;
-        };
-        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
-        let mut renderer = crate::InstanceRenderer::new(device.clone(), queue.clone(), format);
-
-        // key 60，512 音符（2 chunks）：
-        //   chunk 0（槽位 0..256）:   tick [0, 25610]      → 屏幕左半 x∈[60,188]
-        //   chunk 1（槽位 256..512）: tick [221600, 247210] → 屏幕右半 x∈[1168,1296]
-        let mut notes = Vec::new();
-        for i in 0..256u32 {
-            notes.push(NoteInstance {
-                start_tick: i * 100,
-                end_tick: i * 100 + 10,
-                packed: NoteInstance::pack(60, 0, 100),
-            });
-        }
-        for i in 0..256u32 {
-            notes.push(NoteInstance {
-                start_tick: 221_600 + i * 100,
-                end_tick: 221_600 + i * 100 + 10,
-                packed: NoteInstance::pack(60, 0, 100),
-            });
-        }
-        let mut offsets = [0u32; 129];
-        for o in offsets.iter_mut().take(129).skip(61) {
-            *o = 512;
-        }
-        offsets[128] = 512;
-        renderer.upload_all_notes_for_cull(&notes, &offsets, &[0; 128]);
-
-        let (w, h, kh, kb_w) = (1376.0f32, 419.0f32, 3.2734375, 60.0f32);
-        let ppu = 0.005f32; // 视口 tick [0, 263200]：两个区域都在屏内
-        let pw = w as u32;
-        let ph = h as u32;
-        let track_colors: Vec<[f32; 4]> = vec![[0.2, 0.7, 1.0, 1.0]];
-
-        let target = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("fi_target"),
-            size: wgpu::Extent3d {
-                width: pw,
-                height: ph,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let target_view = target.create_view(&Default::default());
-        let bytes_per_row = pw * 4;
-        let aligned_row = bytes_per_row.div_ceil(256) * 256;
-
-        // 渲染一帧并分别统计左半 / 右半的非黑像素数。
-        let render_lr = |renderer: &mut crate::InstanceRenderer| -> (u64, u64) {
-            let view = yinhe_types::PianoRollView {
-                key_height: kh,
-                viewport_h: h,
-                base: yinhe_types::TimelineViewBase {
-                    pixels_per_tick: ppu,
-                    scroll_x: 0.0,
-                    scroll_y: 0.0,
-                    left_panel_width: kb_w,
-                    dirty: true,
-                    track_panel_row_height: 40.0,
-                    track_panel_scroll_y: 0.0,
-                },
-            };
-            let job = crate::pianoroll::build_render_job(
-                pw,
-                ph,
-                &view,
-                &yinhe_core::Selection::default(),
-                &track_colors,
-                0,
-                0.0,
-                false,
-            );
-            renderer.upload_uniforms(job.uniforms);
-            renderer.upload_track_colors(&job.track_colors);
-            renderer.upload_selection(&job.selection);
-            renderer.ensure_layers(1);
-            let mut encoder = device.create_command_encoder(&Default::default());
-            renderer.draw(&mut encoder, &target_view, pw, ph);
-            queue.submit([encoder.finish()]);
-
-            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("px"),
-                size: (aligned_row * ph) as u64,
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            });
-            let mut enc = device.create_command_encoder(&Default::default());
-            enc.copy_texture_to_buffer(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &target,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::TexelCopyBufferInfo {
-                    buffer: &buffer,
-                    layout: wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(aligned_row),
-                        rows_per_image: Some(ph),
-                    },
-                },
-                wgpu::Extent3d {
-                    width: pw,
-                    height: ph,
-                    depth_or_array_layers: 1,
-                },
-            );
-            queue.submit([enc.finish()]);
-            let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-            let done2 = done.clone();
-            buffer.slice(..).map_async(wgpu::MapMode::Read, move |_| {
-                done2.store(true, std::sync::atomic::Ordering::SeqCst);
-            });
-            device
-                .poll(wgpu::PollType::wait_indefinitely())
-                .expect("poll failed");
-            assert!(done.load(std::sync::atomic::Ordering::SeqCst));
-            let mapped = buffer.slice(..).get_mapped_range().expect("readback map");
-            let (mut left, mut right) = (0u64, 0u64);
-            for row in 0..ph {
-                let start = (row as usize) * aligned_row as usize;
-                let row_data = &mapped[start..start + bytes_per_row as usize];
-                for (col, p) in row_data.chunks_exact(4).enumerate() {
-                    if p[0] > 8 || p[1] > 8 || p[2] > 8 {
-                        if (col as u32) < pw / 2 {
-                            left += 1;
-                        } else {
-                            right += 1;
-                        }
-                    }
-                }
-            }
-            drop(mapped);
-            buffer.unmap();
-            (left, right)
-        };
-
-        // 基准：正常 dispatch，args=[(6,256,0,0,0),(6,256,0,0,256)]。
-        // （bug 存在时右半已画不出，仅打印不断言；决定性证据在下面两段）
-        let (l0, r0) = render_lr(&mut renderer);
-        println!("基准（两条 args）: left={l0} right={r0}");
-
-        // 覆写 args 并重画（uniforms 不变 → dispatch 被跳过，args 保持覆写值）。
-        // DrawIndexedIndirectArgs = [index_count, instance_count, first_index,
-        // base_vertex, first_instance]。
-        let overwrite_args = |renderer: &mut crate::InstanceRenderer, args: [u32; 5]| {
-            let args_buf = renderer.cull.per_key_draw_args_buffers[60]
-                .as_ref()
-                .expect("args buffer");
-            queue.write_buffer(args_buf, 0, bytemuck::cast_slice(&args));
-            renderer.cull.frame_chunk_counts[60] = 1;
-        };
-
-        // 对照：单条 first_instance=0 → 只画 chunk 0（左半）。
-        overwrite_args(&mut renderer, [6, 256, 0, 0, 0]);
-        let (lc, rc) = render_lr(&mut renderer);
-        println!("对照 first_instance=0: left={lc} right={rc}");
-        assert!(lc > 100, "对照左半应有像素: {lc}");
-        assert_eq!(rc, 0, "对照右半应无像素: {rc}");
-
-        // 实验：单条 first_instance=256 → 应只画 chunk 1（右半）。
-        overwrite_args(&mut renderer, [6, 256, 0, 0, 256]);
-        let (l1, r1) = render_lr(&mut renderer);
-        println!("实验 first_instance=256: left={l1} right={r1}");
-        if r1 > 0 && l1 == 0 {
-            println!("结论: first_instance 被正确 honoring");
-        } else if l1 > 0 && r1 == 0 {
-            println!("结论: first_instance 被忽略成 0（抓到槽位 0 数据）");
-        } else {
-            println!("结论: draw 被整体丢弃或结果异常");
-        }
-        assert_eq!(l1, 0, "first_instance=256 不应抓到槽位 0 的数据: left={l1}");
-        assert!(r1 > 100, "first_instance=256 应画出 chunk 1: right={r1}");
     }
 
     /// PR 模式可见 key 范围（与 `InstanceRenderer::visible_key_range` 同款计算）。
