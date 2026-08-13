@@ -7,7 +7,7 @@ use yinhe_audio::spawn::AudioCommand;
 
 use crate::app::{Page, YinheApp};
 use crate::pages::transport;
-use crate::ui_common::{fill_page_background, icon_text, right_side_button, show_toolbar};
+use crate::ui_common::{fill_page_background, icon_text, show_toolbar};
 
 impl YinheApp {
     /// AR 首页：顶栏（主页 + 走带 + 工程名）+ 音轨面板 + GPU 音符视图。
@@ -27,15 +27,25 @@ impl YinheApp {
             }
             ui.separator();
             transport::bar(self, ui);
-            // 右侧：工程名（过长截断），点击弹工程设置（同桌面端 project_info）。
+            // 右侧编辑区：工程名 → 撤销 → 重做 → 工具 → 量化。
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let title = self
                     .doc
                     .as_ref()
                     .map(|d| d.model().meta.name.clone())
                     .unwrap_or_else(|| "未命名工程".to_string());
-                if right_side_button(ui, &title).clicked() {
+                let q = self
+                    .doc
+                    .as_ref()
+                    .map(|d| d.edit.quantize_arrange)
+                    .unwrap_or(yinhe_editor_core::quantize::QuantizePreset::Fraction(1, 4));
+                let (name_clicked, q_clicked) =
+                    crate::ui_common::right_edit_area(ui, self, &title, q);
+                if name_clicked {
                     self.project_settings_open = !self.project_settings_open;
+                }
+                if q_clicked {
+                    self.ar_quantize_open = !self.ar_quantize_open;
                 }
             });
         });
@@ -77,6 +87,20 @@ impl YinheApp {
         // 工程设置弹窗（点击顶栏右侧工程名打开）。
         if self.project_settings_open {
             self.project_settings_ui(ui);
+        }
+        // 量化弹窗（AR 独立量化：quantize_arrange）。
+        if self.ar_quantize_open {
+            let ppq = self.doc.as_ref().map(|d| d.model().meta.ppq).unwrap_or(480);
+            let current = self
+                .doc
+                .as_ref()
+                .map(|d| d.edit.quantize_arrange)
+                .unwrap_or(yinhe_editor_core::quantize::QuantizePreset::Fraction(1, 4));
+            if let Some(q) = crate::ui_common::quantize_popup(ui.ctx(), "ar_quantize", ppq, current)
+                && let Some(doc) = &mut self.doc
+            {
+                doc.edit.quantize_arrange = q;
+            }
         }
     }
 

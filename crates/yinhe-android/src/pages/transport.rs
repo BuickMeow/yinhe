@@ -67,15 +67,6 @@ pub(crate) fn bar(app: &mut YinheApp, ui: &mut egui::Ui) {
     {
         app.follow_play = !app.follow_play;
     }
-    // 工具按钮（显示当前工具图标，点击弹出居中工具选择窗）。
-    // 位置：跟随之后、BPM 之前。
-    if ui
-        .button(icon_text(app.tool.icon()))
-        .on_hover_text(format!("工具：{}", app.tool.name()))
-        .clicked()
-    {
-        app.tool_picker_open = !app.tool_picker_open;
-    }
 
     let Some(model) = &app.doc else {
         return;

@@ -4,7 +4,7 @@ use eframe::egui;
 
 use crate::app::{Page, Tool, YinheApp};
 use crate::pages::transport;
-use crate::ui_common::{fill_page_background, icon_text, right_side_button, show_toolbar};
+use crate::ui_common::{fill_page_background, icon_text, show_toolbar};
 
 impl YinheApp {
     /// PR 钢琴卷帘页：顶部工具条（返回 + 走带控制 + 轨道名）+ 视图。
@@ -21,28 +21,7 @@ impl YinheApp {
             }
             ui.separator();
             transport::bar(self, ui);
-            // 撤销/重做（编辑防误触的最终兜底）。
-            use egui_material_icons::icons::{ICON_REDO, ICON_UNDO};
-            let (can_undo, can_redo) = self
-                .doc
-                .as_ref()
-                .map(|d| (d.history.can_undo(), d.history.can_redo()))
-                .unwrap_or((false, false));
-            if ui
-                .add_enabled(can_undo, egui::Button::new(icon_text(ICON_UNDO)))
-                .on_hover_text("撤销")
-                .clicked()
-            {
-                self.undo();
-            }
-            if ui
-                .add_enabled(can_redo, egui::Button::new(icon_text(ICON_REDO)))
-                .on_hover_text("重做")
-                .clicked()
-            {
-                self.redo();
-            }
-            // 右侧：当前编辑轨名称（过长截断），点击弹轨道显隐列表。
+            // 右侧编辑区：Track 名 → 撤销 → 重做 → 工具 → 量化。
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let name = self
                     .doc
@@ -53,8 +32,18 @@ impl YinheApp {
                     })
                     .map(|t| t.name.clone())
                     .unwrap_or_else(|| "Track 1".to_string());
-                if right_side_button(ui, &name).clicked() {
+                let q = self
+                    .doc
+                    .as_ref()
+                    .map(|d| d.edit.quantize_pianoroll)
+                    .unwrap_or(yinhe_editor_core::quantize::QuantizePreset::Fraction(1, 16));
+                let (name_clicked, q_clicked) =
+                    crate::ui_common::right_edit_area(ui, self, &name, q);
+                if name_clicked {
                     self.track_list_open = !self.track_list_open;
+                }
+                if q_clicked {
+                    self.pr_quantize_open = !self.pr_quantize_open;
                 }
             });
         });
@@ -63,7 +52,7 @@ impl YinheApp {
             .show(ui, |ui| {
                 // 页面背景（含挖孔区域）铺默认面板背景色。
                 fill_page_background(ui);
-                let (tv, et, sel) = self
+                let (tv, et, sel, q) = self
                     .doc
                     .as_ref()
                     .map(|d| {
@@ -71,6 +60,7 @@ impl YinheApp {
                             d.edit.track_visible.clone(),
                             d.edit.editing_track,
                             d.edit.selected.clone(),
+                            d.edit.quantize_pianoroll,
                         )
                     })
                     .unwrap_or_default();
@@ -82,6 +72,7 @@ impl YinheApp {
                     self.tool == crate::app::Tool::Hand,
                     self.tool,
                     &sel,
+                    q,
                 );
                 for ev in events {
                     self.handle_pr_event(ev);
@@ -90,6 +81,20 @@ impl YinheApp {
         // 轨道显隐列表（点击顶栏右侧轨道名打开）。
         if self.track_list_open {
             self.track_list_ui(ui);
+        }
+        // 量化弹窗（PR 独立量化：quantize_pianoroll）。
+        if self.pr_quantize_open {
+            let ppq = self.doc.as_ref().map(|d| d.model().meta.ppq).unwrap_or(480);
+            let current = self
+                .doc
+                .as_ref()
+                .map(|d| d.edit.quantize_pianoroll)
+                .unwrap_or(yinhe_editor_core::quantize::QuantizePreset::Fraction(1, 16));
+            if let Some(q) = crate::ui_common::quantize_popup(ui.ctx(), "pr_quantize", ppq, current)
+                && let Some(doc) = &mut self.doc
+            {
+                doc.edit.quantize_pianoroll = q;
+            }
         }
         // 工具选择弹窗：屏幕中央、横向排列（选择/铅笔/橡皮/抓手）。
         if self.tool_picker_open {

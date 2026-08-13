@@ -85,6 +85,9 @@ pub(crate) struct YinheApp {
     pub(crate) project_settings_open: bool,
     /// 轨道显隐列表弹窗（PR 顶栏右侧轨道名按钮触发）。
     pub(crate) track_list_open: bool,
+    /// 量化弹窗（AR/PR 各自独立：quantize_arrange / quantize_pianoroll）。
+    pub(crate) ar_quantize_open: bool,
+    pub(crate) pr_quantize_open: bool,
     /// 安全区 insets（逻辑点）：[left, top, right, bottom]，每帧从 [`crate::insets`] 刷新。
     pub(crate) safe_insets: [f32; 4],
 }
@@ -111,6 +114,8 @@ impl YinheApp {
             tool_picker_open: false,
             project_settings_open: false,
             track_list_open: false,
+            ar_quantize_open: false,
+            pr_quantize_open: false,
             safe_insets: [0.0; 4],
         };
         // 启动先进菜单（选歌/设置），不再自动加载测试 MIDI；音频/音色库提前初始化。

@@ -218,7 +218,8 @@ impl PrView {
     /// track_visible 为轨道显隐（doc.edit.track_visible），editing_track 为
     /// 当前编辑轨（doc.edit.editing_track）——编辑轨强制可见。
     /// `tool` 为当前工具（抓手=单指滚动，其他=编辑手势）；`selected` 为
-    /// 当前选区（doc.edit.selected，渲染高亮 + 移动预览）。
+    /// 当前选区（doc.edit.selected，渲染高亮 + 移动预览）。`quantize` 为
+    /// 当前量化（doc.edit.quantize_pianoroll，与 AR 的 quantize_arrange 独立）。
     #[allow(clippy::too_many_arguments)]
     pub fn ui(
         &mut self,
@@ -229,6 +230,7 @@ impl PrView {
         hand_scroll: bool,
         tool: Tool,
         selected: &Selection,
+        quantize: QuantizePreset,
     ) -> Vec<PrEvent> {
         let mut events = Vec::new();
         let full = ui.available_rect_before_wrap();
@@ -286,7 +288,6 @@ impl PrView {
         self.ensure_notes(&model);
         self.selected = selected.clone();
         if !hand_scroll {
-            let quantize = QuantizePreset::Fraction(1, 16);
             self.handle_edit_gesture(
                 ui,
                 rect,
@@ -484,8 +485,8 @@ impl PrView {
         };
         // 位置 → 吸附后的 (tick, key)。坐标参考系与 GPU 音符层一致：
         // x 相对 rect.min（x_to_tick 内部减键盘列宽），y 相对内容区顶。
-        let view = &self.view;
-        let local = |pos: egui::Pos2| {
+        // view 用参数传入：拖动中 auto_scroll 需要 &mut self，闭包不能捕获 self。
+        let local = |view: &PianoRollView, pos: egui::Pos2| {
             let raw_tick = view.x_to_tick(pos.x - rect.min.x);
             let tick = quantize.snap_tick(raw_tick, ppq).max(0.0) as u32;
             let key = view.y_to_key(pos.y - content_rect.min.y);
@@ -496,7 +497,7 @@ impl PrView {
             && let Some(pos) = pos
             && self.gesture.is_none()
         {
-            let (tick, key) = local(pos);
+            let (tick, key) = local(&self.view, pos);
             match tool {
                 Tool::Pencil => {
                     if let Some((nt, ne, nk)) = self.hit_note(model, editing, tick, key) {
@@ -545,30 +546,32 @@ impl PrView {
             }
         }
 
-        // 拖动中：更新手势（tick/key 跟随手指）。
-        if down
-            && let Some(pos) = pos
-            && let Some(g) = &mut self.gesture
-        {
-            let (tick, key) = local(pos);
-            match g {
-                EditGesture::PencilDraw {
-                    start_tick,
-                    end_tick,
-                    ..
-                } => {
-                    *end_tick = tick.max(start_tick.saturating_add(1));
+        // 拖动中：先边缘自动滚动视口，再更新手势（tick/key 跟随手指）。
+        if down && let Some(pos) = pos {
+            // 拖到内容区边缘 20px 内自动滚动（桌面端同款），选区/音符坐标
+            // 是音乐坐标（tick/key），滚动后预览自动跟随。
+            self.auto_scroll(ui, content_rect, pos);
+            if let Some(g) = &mut self.gesture {
+                let (tick, key) = local(&self.view, pos);
+                match g {
+                    EditGesture::PencilDraw {
+                        start_tick,
+                        end_tick,
+                        ..
+                    } => {
+                        *end_tick = tick.max(start_tick.saturating_add(1));
+                    }
+                    EditGesture::PencilRetune { cur_key, .. } => {
+                        *cur_key = key;
+                    }
+                    _ => {}
                 }
-                EditGesture::PencilRetune { cur_key, .. } => {
-                    *cur_key = key;
-                }
-                _ => {}
             }
         }
 
         // 释放：提交事件（一次 undo entry 的原材料）。
         if released && let Some(g) = self.gesture.take() {
-            let cur = pos.map(local);
+            let cur = pos.map(|p| local(&self.view, p));
             match g {
                 EditGesture::PencilDraw {
                     start_tick,
@@ -660,6 +663,38 @@ impl PrView {
             .last()
     }
 
+    /// 拖动中边缘自动滚动视口（桌面端 auto_scroll_on_drag 同款：
+    /// 内容区边缘 20px 内，越界越多滚得越快，15px/s 基础速度）。
+    fn auto_scroll(&mut self, ui: &egui::Ui, content_rect: egui::Rect, pos: egui::Pos2) {
+        const MARGIN: f32 = 20.0;
+        const BASE_SPEED: f32 = 15.0;
+        let dt = ui.input(|i| i.unstable_dt);
+        let mut dx = 0.0f32;
+        let mut dy = 0.0f32;
+        if pos.x < content_rect.min.x + MARGIN {
+            dx = -(content_rect.min.x + MARGIN - pos.x) * BASE_SPEED * dt;
+        } else if pos.x > content_rect.max.x - MARGIN {
+            dx = (pos.x - (content_rect.max.x - MARGIN)) * BASE_SPEED * dt;
+        }
+        if pos.y < content_rect.min.y + MARGIN {
+            dy = -(content_rect.min.y + MARGIN - pos.y) * BASE_SPEED * dt;
+        } else if pos.y > content_rect.max.y - MARGIN {
+            dy = (pos.y - (content_rect.max.y - MARGIN)) * BASE_SPEED * dt;
+        }
+        if dx != 0.0 || dy != 0.0 {
+            let base = &mut self.view.base;
+            base.scroll_x = (base.scroll_x + dx).max(0.0);
+            base.scroll_y = (base.scroll_y + dy).max(0.0);
+            let total_ticks = self
+                .model
+                .as_ref()
+                .map_or(0.0, |m| m.tempo_map.tick_length as f64);
+            base.clamp_scroll_x(content_rect.width(), total_ticks);
+            base.dirty = true;
+            ui.ctx().request_repaint();
+        }
+    }
+
     /// 编辑后增量同步：比较 per-key revision，变化的 key 重建 NoteInstance 并
     /// 增量上传 GPU cull（只扫命中桶，1 亿音符工程编辑也只重建受影响桶）。
     fn sync_edited_keys(&mut self) {
@@ -703,7 +738,8 @@ impl PrView {
             let x1 = rect.min.x + self.view.tick_to_x(t1);
             let y0 = content_rect.min.y + self.view.key_to_y(key);
             let y1 = content_rect.min.y + self.view.key_to_y(key + 1);
-            let r = egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1));
+            let r = egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1))
+                .intersect(content_rect);
             painter.rect_filled(r, 2.0, preview_color);
             painter.rect_stroke(r, 2.0, preview_stroke, egui::StrokeKind::Inside);
         };
@@ -745,7 +781,8 @@ impl PrView {
                 let r = egui::Rect::from_min_max(
                     egui::pos2(x0.min(x1), y0.min(y1)),
                     egui::pos2(x0.max(x1), y0.max(y1)),
-                );
+                )
+                .intersect(content_rect);
                 painter.rect_filled(r, 1.0, preview_color);
                 painter.rect_stroke(r, 1.0, preview_stroke, egui::StrokeKind::Inside);
             }
@@ -764,7 +801,8 @@ impl PrView {
                         content_rect.min.y + self.view.key_to_y((kl as f64 + dk).max(0.0) as u8);
                     let y1 = content_rect.min.y
                         + self.view.key_to_y((kh as f64 + dk).max(0.0) as u8 + 1);
-                    let r = egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1));
+                    let r = egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1))
+                        .intersect(content_rect);
                     painter.rect_filled(r, 2.0, preview_color);
                     painter.rect_stroke(r, 2.0, preview_stroke, egui::StrokeKind::Inside);
                 }
