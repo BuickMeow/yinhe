@@ -7183,6 +7183,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui_material_icons",
+ "jni",
  "log",
  "tracing-log",
  "wgpu",
