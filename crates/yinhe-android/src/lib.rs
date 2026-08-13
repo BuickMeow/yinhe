@@ -27,6 +27,36 @@ enum Page {
     Pr,
 }
 
+/// 编辑工具（初期只做选择 UI 与状态，实际编辑功能后续接入）。
+/// 图标与桌面端 tools_panel 一致。
+#[derive(Clone, Copy, PartialEq)]
+enum Tool {
+    Select,
+    Pencil,
+    Eraser,
+}
+
+impl Tool {
+    const ALL: [Tool; 3] = [Tool::Select, Tool::Pencil, Tool::Eraser];
+
+    fn icon(self) -> egui_material_icons::MaterialIcon {
+        use egui_material_icons::icons::*;
+        match self {
+            Self::Select => ICON_SELECT,
+            Self::Pencil => ICON_EDIT,
+            Self::Eraser => ICON_INK_ERASER,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Select => "选择",
+            Self::Pencil => "铅笔",
+            Self::Eraser => "橡皮",
+        }
+    }
+}
+
 /// 阶段 0 的最小验证 App。
 pub struct YinheApp {
     /// 当前页面。
@@ -60,6 +90,10 @@ pub struct YinheApp {
     follow_play: bool,
     /// 走带位置/时间显示：false = 时间 m:ss.mmm，true = 位置 小节.拍.tick。
     time_show_ticks: bool,
+    /// 当前编辑工具（工具弹窗选择）。
+    tool: Tool,
+    /// 工具选择弹窗是否打开。
+    tool_picker_open: bool,
 }
 
 impl YinheApp {
@@ -83,6 +117,8 @@ impl YinheApp {
             cursor_tick: 0.0,
             follow_play: false,
             time_show_ticks: false,
+            tool: Tool::Select,
+            tool_picker_open: false,
         };
         // 调试阶段：启动即自动加载小曲 + 初始化音频/音色库，免去手动点击按钮。
         app.start_midi_load(TEST_MIDI_PATH);
@@ -95,9 +131,10 @@ impl YinheApp {
     fn init_audio(&mut self) {
         use yinhe_audio::channel_layout::ChannelLayout;
         let layout = ChannelLayout::from_mask(vec![true; 16]);
-        // 固定 1024 帧缓冲：AAudio 动态调优在 MIUI 上收敛慢，固定值更稳。
-        //（预览路径 ring 目标 512 帧 ≈10ms，调度抖动即欠载 → 用固定缓冲缓冲抖动）
-        match yinhe_audio::spawn_cpal_audio(48000, layout, cpal::BufferSize::Fixed(1024), None) {
+        // 固定 2048 帧缓冲：AAudio 动态调优在 MIUI 上收敛慢，固定值更稳；
+        // 蓝牙 A2DP 路径需要更大缓冲（编码/传输延迟高，1024 会周期性欠载
+        // → 平均断续），cpal 的 Fixed(n) 实际 capacity 是 2n，2048≈85ms。
+        match yinhe_audio::spawn_cpal_audio(48000, layout, cpal::BufferSize::Fixed(2048), None) {
             Ok(handle) => {
                 log::info!(
                     "audio: 引擎初始化成功 @ {}Hz (sample_rate={})",
@@ -310,7 +347,7 @@ impl eframe::App for YinheApp {
 }
 
 impl YinheApp {
-    /// PR 钢琴卷帘页：顶部工具条（返回 + 走带控制）+ 视图。
+    /// PR 钢琴卷帘页：顶部工具条（返回 + 走带控制 + 工具）+ 视图。
     fn ui_pr(&mut self, ui: &mut egui::Ui) {
         self.update_transport();
         // 工具条保留少量内边距；内容区零边框，PR 视图铺满（不留黑缝）。
@@ -318,11 +355,29 @@ impl YinheApp {
             .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(8, 6)))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    if ui.button("◀ 返回").clicked() {
+                    let icon_text = |icon: egui_material_icons::MaterialIcon| {
+                        egui::RichText::new(icon.codepoint)
+                            .family(icon.font_family())
+                            .size(18.0)
+                    };
+                    use egui_material_icons::icons::ICON_ARROW_BACK;
+                    if ui
+                        .button(icon_text(ICON_ARROW_BACK))
+                        .on_hover_text("返回")
+                        .clicked()
+                    {
                         self.page = Page::Verify;
                     }
                     ui.label(egui::RichText::new("钢琴卷帘").strong());
                     self.transport_ui(ui);
+                    // 工具按钮（显示当前工具图标，点击弹出居中工具选择窗）
+                    if ui
+                        .button(icon_text(self.tool.icon()))
+                        .on_hover_text(format!("工具：{}", self.tool.name()))
+                        .clicked()
+                    {
+                        self.tool_picker_open = !self.tool_picker_open;
+                    }
                 });
             });
         egui::CentralPanel::default()
@@ -330,6 +385,29 @@ impl YinheApp {
             .show(ui, |ui| {
                 self.pr_view.ui(ui);
             });
+        // 工具选择弹窗：屏幕中央、横向排列（选择/铅笔/橡皮）。
+        if self.tool_picker_open {
+            egui::Window::new("工具")
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .collapsible(false)
+                .resizable(false)
+                .show(ui.ctx(), |ui| {
+                    ui.horizontal(|ui| {
+                        for t in Tool::ALL {
+                            let icon = t.icon();
+                            let text =
+                                egui::RichText::new(format!("{}\n{}", icon.codepoint, t.name()))
+                                    .family(icon.font_family())
+                                    .size(26.0)
+                                    .text_style(egui::TextStyle::Body);
+                            if ui.selectable_label(self.tool == t, text).clicked() {
+                                self.tool = t;
+                                self.tool_picker_open = false;
+                            }
+                        }
+                    });
+                });
+        }
     }
 
     /// 走带控制条：播放/暂停、停止、跟随播放开关、BPM、位置/时间显示。
@@ -378,7 +456,19 @@ impl YinheApp {
             self.cursor_tick = 0.0;
             self.pr_view.set_cursor(Some(0.0));
         }
-        ui.toggle_value(&mut self.follow_play, "跟随");
+        // 跟随播放：图标按钮，选中高亮。
+        use egui_material_icons::icons::ICON_CENTER_FOCUS_STRONG;
+        if ui
+            .add(egui::Button::new(icon_text(ICON_CENTER_FOCUS_STRONG)).selected(self.follow_play))
+            .on_hover_text(if self.follow_play {
+                "跟随播放：开"
+            } else {
+                "跟随播放：关"
+            })
+            .clicked()
+        {
+            self.follow_play = !self.follow_play;
+        }
 
         let Some(model) = &self.model else {
             return;

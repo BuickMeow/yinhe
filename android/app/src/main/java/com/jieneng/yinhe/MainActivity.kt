@@ -29,11 +29,14 @@ class MainActivity : GameActivity() {
     /**
      * 沉浸式全屏：隐藏状态栏 + 导航栏（三大金刚键/小白条）。
      * 滑动屏幕边缘可临时唤出，几秒后自动收回（transient bars）。
+     *
+     * 注意：不能调用 setDecorFitsSystemWindows(false)（edge-to-edge）——
+     * 它会声明"应用自己处理安全区"，使 displayCutoutMode=never 的
+     * 挖孔自动避让（letterbox 黑边）失效（系统认为应用不需要避让）。
      */
     private fun hideSystemBars() {
         @Suppress("DEPRECATION")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            window.setDecorFitsSystemWindows(false)
             val controller = window.insetsController
             controller?.hide(WindowInsets.Type.systemBars())
             controller?.systemBarsBehavior =
