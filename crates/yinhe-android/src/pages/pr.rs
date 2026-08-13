@@ -96,28 +96,12 @@ impl YinheApp {
                 doc.edit.quantize_pianoroll = q;
             }
         }
-        // 工具选择弹窗：屏幕中央、横向排列（选择/铅笔/橡皮/抓手）。
-        if self.tool_picker_open {
-            egui::Window::new("工具")
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                .collapsible(false)
-                .resizable(false)
-                .show(ui.ctx(), |ui| {
-                    ui.horizontal(|ui| {
-                        for t in Tool::ALL {
-                            let icon = t.icon();
-                            let text =
-                                egui::RichText::new(format!("{}\n{}", icon.codepoint, t.name()))
-                                    .family(icon.font_family())
-                                    .size(26.0)
-                                    .text_style(egui::TextStyle::Body);
-                            if ui.selectable_label(self.tool == t, text).clicked() {
-                                self.tool = t;
-                                self.tool_picker_open = false;
-                            }
-                        }
-                    });
-                });
+        // 工具选择弹窗（PR 工具集：选择/铅笔/橡皮/抓手）。
+        if self.tool_picker_open
+            && let Some(t) = crate::ui_common::tool_picker(ui, &Tool::PR_TOOLS, self.tool)
+        {
+            self.tool = t;
+            self.tool_picker_open = false;
         }
     }
 

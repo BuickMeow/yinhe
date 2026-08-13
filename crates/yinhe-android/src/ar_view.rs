@@ -26,6 +26,13 @@ pub enum ArEvent {
     ToggleMute(u16),
     /// 点击独奏按钮（轨道号）。状态写入 doc.edit.track_overrides。
     ToggleSolo(u16),
+    /// AR 框选完成：tick 半开范围 [t0, t1)，track 闭区间 [track0, track1]。
+    SelectRect {
+        t0: f64,
+        t1: f64,
+        track0: usize,
+        track1: usize,
+    },
 }
 
 /// AR 视图：视口状态 + GPU 渲染 + 音轨面板 + 触摸交互。
@@ -50,6 +57,10 @@ pub struct ArView {
     cursor_tick: Option<f64>,
     /// 上一帧触点数：检测第二指落下的那一帧（忽略该帧缩放跳变）。
     prev_touches: u32,
+    /// AR 选框拖拽（Select 工具）：起点 (tick, track) 音乐坐标。
+    marquee_drag: Option<(f64, f64)>,
+    /// AR 选框拖拽当前点 (tick, track)（预览绘制用）。
+    marquee_cur: Option<(f64, f64)>,
     /// 上一次内容矩形（诊断日志用：变化时打印坐标）。
     last_rect: egui::Rect,
     /// 主题色（与桌面端同源：BaseColors 7 色派生）。
@@ -103,6 +114,8 @@ impl ArView {
             status: String::new(),
             cursor_tick: None,
             prev_touches: 0,
+            marquee_drag: None,
+            marquee_cur: None,
             last_rect: egui::Rect::NOTHING,
             theme: derive_theme(BaseColors::DARK),
         }
@@ -119,6 +132,8 @@ impl ArView {
         self.view.base.dirty = true;
         self.model = Some(model);
         self.status = "就绪".to_string();
+        self.marquee_drag = None;
+        self.marquee_cur = None;
     }
 
     /// 设置播放光标位置（tick），None 隐藏。lib.rs 每帧从音频位置换算后调用。
@@ -140,13 +155,19 @@ impl ArView {
     /// 主 UI 入口：背景 + 音轨面板 + GPU 音符层 + 触摸交互。
     /// `safe` 为安全区 insets（逻辑点）：[left, top, right, bottom]。
     /// `overrides` 为每轨 M/S 状态（doc.edit.track_overrides）。
-    /// `hand_scroll`：当前工具是否为抓手（抓手才允许单指滚动）。
+    /// `hand_scroll`：当前工具是否为抓手；`tool` 为当前工具（Select 在
+    /// AR 里拖动 = 框选）。`quantize` 为 AR 量化（quantize_arrange）。
+    /// `arr_sel` 为持久选框（doc.edit.arr_sel_rect）。
+    #[allow(clippy::too_many_arguments)]
     pub fn ui(
         &mut self,
         ui: &mut egui::Ui,
         safe: [f32; 4],
         overrides: &[yinhe_editor_core::TrackOverride],
         hand_scroll: bool,
+        tool: crate::app::Tool,
+        quantize: yinhe_editor_core::quantize::QuantizePreset,
+        arr_sel: &[(f64, f64, usize, usize)],
     ) -> Vec<ArEvent> {
         let mut events = Vec::new();
         let full = ui.available_rect_before_wrap();
@@ -228,19 +249,52 @@ impl ArView {
             }
         }
         let num_tracks = self.model.as_ref().map(|m| m.tracks.len()).unwrap_or(0);
+        let model_ppq = self.model.as_ref().map(|m| m.meta.ppq).unwrap_or(480);
         let max_scroll_y = (num_tracks as f32 * self.view.lane_height() - rect.height()).max(0.0);
         if touches >= 2 {
+            // 双指：取消选框拖拽，导航优先。
+            self.marquee_drag = None;
+            self.marquee_cur = None;
             if let Some(pan) = pan {
                 self.view.base.scroll_x = (self.view.base.scroll_x - pan.x).max(0.0);
                 self.view.base.scroll_y =
                     (self.view.base.scroll_y - pan.y).clamp(0.0, max_scroll_y);
                 self.view.base.dirty = true;
             }
-        } else if hand_scroll && resp.dragged() {
+        } else if resp.dragged()
+            && let Some(pos) = resp.interact_pointer_pos()
+        {
             let d = resp.drag_delta();
-            self.view.base.scroll_x = (self.view.base.scroll_x - d.x).max(0.0);
-            self.view.base.scroll_y = (self.view.base.scroll_y - d.y).clamp(0.0, max_scroll_y);
-            self.view.base.dirty = true;
+            if pos.x < rect.min.x + PANEL_W {
+                // 音轨面板：任何工具都可单指垂直滚动（轨道列表）。
+                self.view.base.scroll_y = (self.view.base.scroll_y - d.y).clamp(0.0, max_scroll_y);
+                self.view.base.dirty = true;
+            } else if hand_scroll {
+                // 抓手：音符区单指全视口滚动。
+                self.view.base.scroll_x = (self.view.base.scroll_x - d.x).max(0.0);
+                self.view.base.scroll_y = (self.view.base.scroll_y - d.y).clamp(0.0, max_scroll_y);
+                self.view.base.dirty = true;
+            } else if tool == crate::app::Tool::Select {
+                // 选择工具：AR 框选（tick × track 范围，按 AR 量化吸附）。
+                if self.marquee_drag.is_none() {
+                    let (t, tr) = self.music_pos(pos, rect, quantize, model_ppq);
+                    self.marquee_drag = Some((t, tr));
+                }
+                let (t, tr) = self.music_pos(pos, rect, quantize, model_ppq);
+                self.marquee_cur = Some((t, tr));
+            }
+        }
+        // 选框拖拽结束：提交事件（拖动中释放）。
+        if resp.drag_stopped()
+            && let Some((t0, tr0)) = self.marquee_drag.take()
+        {
+            let (t1, tr1) = self.marquee_cur.take().unwrap_or((t0, tr0));
+            events.push(ArEvent::SelectRect {
+                t0: t0.min(t1),
+                t1: t0.max(t1) + 1.0,
+                track0: tr0.min(tr1) as usize,
+                track1: tr0.max(tr1) as usize,
+            });
         }
 
         // ── 点击命中：M/S 按钮 → 静音/独奏；轨道行 → 进入 PR ──
@@ -327,6 +381,13 @@ impl ArView {
         let tc = crate::track_colors_for(&model);
         self.draw_track_panel(&painter, rect, &model, &tc, overrides);
 
+        // ── AR 选框（持久 + 拖拽预览）──
+        let preview = match (self.marquee_drag, self.marquee_cur) {
+            (Some(a), Some(b)) => Some((a, b)),
+            _ => None,
+        };
+        self.draw_arr_sel(&painter, rect, &model, arr_sel, preview);
+
         // ── 播放线 ──
         if let Some(tick) = self.cursor_tick {
             let x = rect.min.x + PANEL_W + tick as f32 * self.view.base.pixels_per_tick
@@ -389,6 +450,75 @@ impl ArView {
             events.push(ArEvent::EnterPr(row_idx as u16));
         }
         events
+    }
+
+    /// 视口坐标 → 音乐坐标 (吸附 tick, 轨道浮点位置)。
+    /// x 相对 rect.min（x_to_tick 内部减面板列宽），y 相对 rect.min。
+    fn music_pos(
+        &self,
+        pos: egui::Pos2,
+        rect: egui::Rect,
+        quantize: yinhe_editor_core::quantize::QuantizePreset,
+        ppq: u32,
+    ) -> (f64, f64) {
+        let raw_tick = self.view.x_to_tick(pos.x - rect.min.x);
+        let tick = quantize.snap_tick(raw_tick, ppq).max(0.0);
+        let track = ((pos.y - rect.min.y + self.view.base.scroll_y)
+            / self.view.lane_height().max(1.0))
+        .clamp(0.0, 1e9) as f64;
+        (tick, track)
+    }
+
+    /// 绘制 AR 选框：持久选框（doc.edit.arr_sel_rect）+ 拖拽预览。
+    /// 选框覆盖 tick 半开范围 [t0, t1) 与 track 闭区间 [track0, track1]。
+    fn draw_arr_sel(
+        &self,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        model: &Arc<YinModel>,
+        arr_sel: &[(f64, f64, usize, usize)],
+        preview: Option<((f64, f64), (f64, f64))>,
+    ) {
+        let lane_h = self.view.lane_height();
+        let scroll_y = self.view.base.scroll_y;
+        let num_tracks = model.tracks.len();
+        let fill = self.theme.accent_active.gamma_multiply(0.22);
+        let stroke = egui::Stroke::new(1.5, self.theme.accent_active);
+        // 统一收集：持久 rects + 预览 rect（预览边界排序 + 半开 tick）。
+        let mut rects: Vec<(f64, f64, f64, f64)> = arr_sel
+            .iter()
+            .map(|&(t0, t1, tr0, tr1)| {
+                (
+                    t0.min(t1),
+                    t0.max(t1),
+                    tr0.min(tr1) as f64,
+                    tr0.max(tr1) as f64 + 1.0,
+                )
+            })
+            .collect();
+        if let Some(((t0, tr0), (t1, tr1))) = preview {
+            rects.push((
+                t0.min(t1),
+                t0.max(t1) + 1.0,
+                tr0.min(tr1),
+                tr0.max(tr1) + 1.0,
+            ));
+        }
+        for (t0, t1, tr0, tr1) in rects {
+            let x0 = rect.min.x + self.view.tick_to_x(t0);
+            let x1 = rect.min.x + self.view.tick_to_x(t1);
+            let track0 = (tr0 as usize).min(num_tracks.saturating_sub(1));
+            let track1 = (tr1 as usize).min(num_tracks);
+            let y0 = rect.min.y + ArrangementView::lane_y_static(track0, scroll_y, lane_h);
+            let y1 = rect.min.y + ArrangementView::lane_y_static(track1, scroll_y, lane_h);
+            let r = egui::Rect::from_min_max(
+                egui::pos2(x0.min(x1), y0.min(y1)),
+                egui::pos2(x0.max(x1), y0.max(y1)),
+            )
+            .intersect(rect);
+            painter.rect_filled(r, 1.0, fill);
+            painter.rect_stroke(r, 1.0, stroke, egui::StrokeKind::Inside);
+        }
     }
 
     /// 音轨面板：可见范围内的轨道行（色条/编号/名称/M/S）。

@@ -365,7 +365,7 @@ impl PrView {
         self.draw_ruler(ui, rect, content_rect, ruler_h);
         self.draw_cursor(ui, rect, ruler_h);
         // 编辑手势预览（画音符/选框），叠在音符层之上。
-        self.draw_gesture_preview(ui, rect, content_rect);
+        self.draw_gesture_preview(ui, rect, content_rect, quantize, model.meta.ppq);
 
         let notes: u64 = model.track_note_count.iter().sum();
         let status = format!(
@@ -663,10 +663,10 @@ impl PrView {
             .last()
     }
 
-    /// 拖动中边缘自动滚动视口（桌面端 auto_scroll_on_drag 同款：
-    /// 内容区边缘 20px 内，越界越多滚得越快，15px/s 基础速度）。
+    /// 拖动中边缘自动滚动视口（桌面端 auto_scroll_on_drag 同款，触发区
+    /// 放宽到 48px：手机屏幕边缘难精确按住，太窄的触发区拉不到）。
     fn auto_scroll(&mut self, ui: &egui::Ui, content_rect: egui::Rect, pos: egui::Pos2) {
-        const MARGIN: f32 = 20.0;
+        const MARGIN: f32 = 48.0;
         const BASE_SPEED: f32 = 15.0;
         let dt = ui.input(|i| i.unstable_dt);
         let mut dx = 0.0f32;
@@ -725,7 +725,16 @@ impl PrView {
     }
 
     /// 编辑手势预览：铅笔音符/改音高/移动选区/选框，叠在音符层之上。
-    fn draw_gesture_preview(&self, ui: &egui::Ui, rect: egui::Rect, content_rect: egui::Rect) {
+    /// 选框/移动预览的 tick 与提交一致（按当前量化吸附），避免"预览没吸附、
+    /// 松手跳一格"的错位感。
+    fn draw_gesture_preview(
+        &self,
+        ui: &egui::Ui,
+        rect: egui::Rect,
+        content_rect: egui::Rect,
+        quantize: QuantizePreset,
+        ppq: u32,
+    ) {
         let Some(g) = &self.gesture else {
             return;
         };
@@ -772,7 +781,8 @@ impl PrView {
             EditGesture::Marquee { t0, k0 } | EditGesture::EraseMarquee { t0, k0 } => {
                 let pos = ui.ctx().input(|i| i.pointer.interact_pos());
                 let Some(pos) = pos else { return };
-                let tick = self.view.x_to_tick(pos.x - rect.min.x);
+                let raw_tick = self.view.x_to_tick(pos.x - rect.min.x);
+                let tick = quantize.snap_tick(raw_tick, ppq).max(0.0);
                 let key = self.view.y_to_key(pos.y - content_rect.min.y);
                 let x0 = rect.min.x + self.view.tick_to_x(*t0);
                 let x1 = rect.min.x + self.view.tick_to_x(tick);
@@ -790,7 +800,8 @@ impl PrView {
                 // 拖动中把选中音符的矩形偏移画预览（选区矩形偏移显示）。
                 let pos = ui.ctx().input(|i| i.pointer.interact_pos());
                 let Some(pos) = pos else { return };
-                let tick = self.view.x_to_tick(pos.x - rect.min.x);
+                let raw_tick = self.view.x_to_tick(pos.x - rect.min.x);
+                let tick = quantize.snap_tick(raw_tick, ppq).max(0.0);
                 let key = self.view.y_to_key(pos.y - content_rect.min.y);
                 let dt = tick - *t0;
                 let dk = key as f64 - *k0;

@@ -192,6 +192,35 @@ pub(crate) fn right_edit_area(
     (name_clicked, quantize_clicked)
 }
 
+/// 工具选择弹窗：屏幕中央、横向排列。`tools` 为当前页面的工具集
+///（AR/PR 不同），点击返回新工具。
+pub(crate) fn tool_picker(
+    ui: &mut egui::Ui,
+    tools: &[crate::app::Tool],
+    current: crate::app::Tool,
+) -> Option<crate::app::Tool> {
+    let mut picked = None;
+    egui::Window::new("工具")
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .collapsible(false)
+        .resizable(false)
+        .show(ui.ctx(), |ui| {
+            ui.horizontal(|ui| {
+                for &t in tools {
+                    let icon = t.icon();
+                    let text = egui::RichText::new(format!("{}\n{}", icon.codepoint, t.name()))
+                        .family(icon.font_family())
+                        .size(26.0)
+                        .text_style(egui::TextStyle::Body);
+                    if ui.selectable_label(t == current, text).clicked() {
+                        picked = Some(t);
+                    }
+                }
+            });
+        });
+    picked
+}
+
 /// 页面背景：整个可用区域（含挖孔区域）铺默认面板背景色。
 /// 调用时机：每个页面的 CentralPanel 内容开头。
 pub(crate) fn fill_page_background(ui: &mut egui::Ui) {

@@ -26,7 +26,10 @@ pub(crate) enum Tool {
 }
 
 impl Tool {
-    pub(crate) const ALL: [Tool; 4] = [Tool::Select, Tool::Pencil, Tool::Eraser, Tool::Hand];
+    /// PR 工具集（全量）。
+    pub(crate) const PR_TOOLS: [Tool; 4] = [Tool::Select, Tool::Pencil, Tool::Eraser, Tool::Hand];
+    /// AR 工具集：无音符编辑，不提供铅笔/橡皮。
+    pub(crate) const AR_TOOLS: [Tool; 2] = [Tool::Select, Tool::Hand];
 
     pub(crate) fn icon(self) -> egui_material_icons::MaterialIcon {
         use egui_material_icons::icons::*;

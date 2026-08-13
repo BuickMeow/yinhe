@@ -5,13 +5,17 @@ use std::sync::Arc;
 use eframe::egui;
 use yinhe_audio::spawn::AudioCommand;
 
-use crate::app::{Page, YinheApp};
+use crate::app::{Page, Tool, YinheApp};
 use crate::pages::transport;
 use crate::ui_common::{fill_page_background, icon_text, show_toolbar};
 
 impl YinheApp {
     /// AR 首页：顶栏（主页 + 走带 + 工程名）+ 音轨面板 + GPU 音符视图。
     pub(crate) fn ui_ar(&mut self, ui: &mut egui::Ui) {
+        // AR 工具集不含铅笔/橡皮：切进来时兜底到抓手。
+        if !Tool::AR_TOOLS.contains(&self.tool) {
+            self.tool = Tool::Hand;
+        }
         transport::update(self);
         // 每帧轮询后台加载结果（模型加载完成后留在 AR 页展示）。
         self.poll_midi_load();
@@ -59,11 +63,24 @@ impl YinheApp {
                     .as_ref()
                     .map(|d| d.edit.track_overrides.clone())
                     .unwrap_or_default();
+                let arr_sel: Vec<(f64, f64, usize, usize)> = self
+                    .doc
+                    .as_ref()
+                    .map(|d| d.edit.arr_sel_rect.clone())
+                    .unwrap_or_default();
+                let q = self
+                    .doc
+                    .as_ref()
+                    .map(|d| d.edit.quantize_arrange)
+                    .unwrap_or(yinhe_editor_core::quantize::QuantizePreset::Fraction(1, 4));
                 let events = self.ar_view.ui(
                     ui,
                     self.safe_insets,
                     &overrides,
-                    self.tool == crate::app::Tool::Hand,
+                    self.tool == Tool::Hand,
+                    self.tool,
+                    q,
+                    &arr_sel,
                 );
                 for ev in events {
                     match ev {
@@ -80,6 +97,16 @@ impl YinheApp {
                         }
                         crate::ar_view::ArEvent::ToggleSolo(track) => {
                             self.toggle_solo(track);
+                        }
+                        crate::ar_view::ArEvent::SelectRect {
+                            t0,
+                            t1,
+                            track0,
+                            track1,
+                        } => {
+                            if let Some(doc) = &mut self.doc {
+                                doc.edit.arr_sel_rect = vec![(t0, t1, track0, track1)];
+                            }
                         }
                     }
                 }
@@ -101,6 +128,13 @@ impl YinheApp {
             {
                 doc.edit.quantize_arrange = q;
             }
+        }
+        // 工具选择弹窗（AR 工具集：选择/抓手）。
+        if self.tool_picker_open
+            && let Some(t) = crate::ui_common::tool_picker(ui, &Tool::AR_TOOLS, self.tool)
+        {
+            self.tool = t;
+            self.tool_picker_open = false;
         }
     }
 
