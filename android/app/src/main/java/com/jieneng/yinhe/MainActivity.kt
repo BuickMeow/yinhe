@@ -45,7 +45,10 @@ class MainActivity : GameActivity() {
         super.onConfigurationChanged(newConfig)
         // 旋转（configChanges 不重建 Activity）时 WindowInsets 不会重新派发，
         // 必须手动重读；post 等旋转布局完成后再读（否则还是旧值）。
-        window.decorView.post { pushCurrentInsets() }
+        window.decorView.post {
+            pushCurrentInsets()
+            android.util.Log.i("yinhe", "onConfigurationChanged: 旋转后重读 insets")
+        }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
