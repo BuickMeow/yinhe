@@ -34,10 +34,11 @@ const TRACK_PALETTE: [[f32; 4]; 12] = [
     [0.60, 0.80, 0.55, 1.0],
 ];
 
-/// 诊断开关：真机帧率/渲染调试用。每次同步读回（cull_visible_count、
-/// diag_draw_experiments、纹理读回）都会阻塞主线程等 GPU，默认必须关，
-/// 定位完问题后这段诊断应整体删除。
-const PR_DIAG: bool = false;
+/// 顶部小节标尺高度（px）：内容区整体下移该距离给标尺让位。
+const RULER_H: f32 = 24.0;
+
+/// 一小节 tick 数（4/4 拍 @ 480ppq）。
+const BAR_TICKS: i64 = 1920;
 
 /// PR 视图：视口状态 + GPU 渲染 + 触摸交互。
 pub struct PrView {
@@ -56,8 +57,8 @@ pub struct PrView {
     keyboard_w: f32,
     /// 首次渲染时是否已完成初始视口定位（key 60 居中）。
     view_initialized: bool,
-    /// 诊断：visible count 打印计数。
-    diag_frame: u32,
+    /// 播放光标 tick（None = 不显示）。由 lib.rs 每帧从音频位置换算后设置。
+    cursor_tick: Option<f64>,
 }
 
 impl PrView {
@@ -101,7 +102,7 @@ impl PrView {
             status: String::new(),
             keyboard_w: 0.0,
             view_initialized: false,
-            diag_frame: 0,
+            cursor_tick: None,
         }
     }
 
@@ -120,11 +121,20 @@ impl PrView {
         self.status = "正在构建音符数据...".to_string();
     }
 
+    /// 设置播放光标位置（tick），None 隐藏。由 lib.rs 每帧从音频位置换算后调用。
+    #[allow(dead_code)] // 预留接口：lib.rs 接入播放光标后移除本 allow。
+    pub fn set_cursor(&mut self, tick: Option<f64>) {
+        self.cursor_tick = tick;
+    }
+
     /// 主 UI 入口：背景 + 键盘列 + 网格 + GPU 音符层 + 触摸交互。
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         let rect = ui.available_rect_before_wrap();
         let painter = ui.painter();
         painter.rect_filled(rect, 0.0, egui::Color32::from_gray(22));
+
+        // 顶部小节标尺带：高度充足时内容区整体下移 24px 让位，否则不画标尺。
+        let ruler_h = if rect.height() > 200.0 { RULER_H } else { 0.0 };
 
         let Some(model) = self.model.clone() else {
             painter.text(
@@ -163,18 +173,6 @@ impl PrView {
                 0.0,
                 true,
             );
-            log::debug!(
-                "pr_view: draw 帧 notes_uploaded={} cull_ready={} ppu={} scroll=({:.0},{:.0})",
-                self.notes_uploaded,
-                renderer.cull_is_ready(),
-                job.uniforms.pixels_per_tick,
-                job.uniforms.scroll_x,
-                job.uniforms.scroll_y,
-            );
-            self.diag_frame += 1;
-            if PR_DIAG && self.diag_frame.is_multiple_of(30) {
-                log::info!("pr_view: cull visible = {}", renderer.cull_visible_count());
-            }
             renderer.upload_uniforms(job.uniforms);
             renderer.upload_track_colors(&job.track_colors);
             renderer.upload_selection(&job.selection);
@@ -185,51 +183,37 @@ impl PrView {
             // draw 的 pass 自带透明 clear，音符绘制在这里完成。
             renderer.draw(&mut encoder, &self.texture_view, self.width, self.height);
             self.wgpu_state.queue.submit([encoder.finish()]);
-            self.diag_frame += 1;
-            // 诊断：同步读回会阻塞主线程等 GPU，真机上周期性大卡顿源，
-            // 仅在 PR_DIAG 开启时执行。
-            if PR_DIAG && self.diag_frame.is_multiple_of(60) {
-                log::info!(
-                    "pr_view: 诊断 cull_visible={} ",
-                    renderer.cull_visible_count()
-                );
-                // 读回 key 60 的 draw_args 前 2 个 chunk（5 字段/chunk）+
-                // visible_indices 前 8 个槽，确认 GPU 端数据真实存在。
-                let args = renderer.cull_draw_args_diag(60, 2);
-                let vis = renderer.cull_visible_indices_diag(60, 8);
-                log::info!("pr_view: key60 args={args:?} visible_indices={vis:?}");
-                // 三对照实验：定位「cull 数据全对但渲染 0 像素」的断点（indirect /
-                // 顶点 storage / 光栅化三环节逐个排除）。
-                let exp = renderer.diag_draw_experiments(
-                    self.wgpu_state.target_format,
-                    self.width,
-                    self.height,
-                );
-                log::info!("pr_view: draw实验 {exp}");
-                self.diag_tex_readback();
-            }
         }
 
+        // egui 层：键盘列与内容区都从标尺带下方开始，与音符层（纹理 1:1
+        // 贴图、顶部让位）保持对齐。
         let kb_rect = egui::Rect::from_min_max(
-            rect.min,
+            egui::pos2(rect.min.x, rect.min.y + ruler_h),
             egui::pos2(rect.min.x + self.keyboard_w, rect.max.y),
         );
         let content_rect = egui::Rect::from_min_max(
-            egui::pos2(rect.min.x + self.keyboard_w, rect.min.y),
+            egui::pos2(rect.min.x + self.keyboard_w, rect.min.y + ruler_h),
             rect.max,
         );
+        self.draw_octave_bands(ui, content_rect);
         self.draw_keyboard(ui, kb_rect);
         self.draw_grid(ui, content_rect);
         // 离屏纹理覆盖整个 rect（含键盘列，与桌面端一致）：shader 的音符
         // 像素坐标从 keyboard_width 起步，NDC 用总宽做分母，纹理必须同宽，
         // 否则音符整体右移 keyboard_width 像素且右端溢出被裁（安卓看不到
         // 音符的根因）。键盘列是纹理的透明区，由 egui 键盘层透出。
+        // 顶部 ruler_h 像素让给标尺：贴图目标与 UV 同步裁掉该段，保持 1:1。
         painter.image(
             self.texture_id,
-            rect,
-            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Rect::from_min_max(egui::pos2(rect.min.x, rect.min.y + ruler_h), rect.max),
+            egui::Rect::from_min_max(
+                egui::pos2(0.0, ruler_h / self.height.max(1) as f32),
+                egui::pos2(1.0, 1.0),
+            ),
             egui::Color32::WHITE,
         );
+        self.draw_ruler(ui, content_rect, ruler_h);
+        self.draw_cursor(ui, rect, ruler_h);
 
         let notes: u64 = model.track_note_count.iter().sum();
         let status = format!(
@@ -237,7 +221,7 @@ impl PrView {
             self.status, self.view.base.pixels_per_tick,
         );
         painter.text(
-            egui::pos2(rect.min.x + 8.0, rect.min.y + 8.0),
+            egui::pos2(rect.min.x + 8.0, rect.min.y + ruler_h + 8.0),
             egui::Align2::LEFT_TOP,
             status,
             egui::FontId::proportional(13.0),
@@ -423,89 +407,108 @@ impl PrView {
         );
     }
 
-    /// 诊断：读回离屏纹理并统计非零像素，确认 GPU 是否真的画了音符。
-    fn diag_tex_readback(&mut self) {
-        let device = &self.wgpu_state.device;
-        let bpp = 4;
-        // wgpu 要求 bytes_per_row 是 COPY_BYTES_PER_ROW_ALIGNMENT(256) 的倍数，
-        // 否则 submit 会被拒绝、读回全 0（上次就是这个原因导致诊断误判）。
-        let bytes_per_row = (self.width * bpp).div_ceil(256) * 256;
-        let size = bytes_per_row as u64 * self.height as u64;
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("pr_diag_readback"),
-            size,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyBufferInfo {
-                buffer: &buffer,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(bytes_per_row),
-                    rows_per_image: Some(self.height),
-                },
-            },
-            wgpu::Extent3d {
-                width: self.width,
-                height: self.height,
-                depth_or_array_layers: 1,
-            },
-        );
-        self.wgpu_state.queue.submit([encoder.finish()]);
-        let (tx, rx) = std::sync::mpsc::channel();
-        buffer.slice(..).map_async(wgpu::MapMode::Read, move |r| {
-            tx.send(r).ok();
-        });
-        let _ = device.poll(wgpu::PollType::wait_indefinitely());
-        if rx.recv().is_err() {
-            log::error!("pr_view: readback map 失败");
+    /// 八度色带：每 12 个 key 一个八度，交替极浅明暗底色，辅助纵向定位八度。
+    /// y 与 GPU 音符层同参考系（key 越大越靠上），保证色带与音符精确对齐；
+    /// 八度总共只有 11 个，全画再由 painter 裁剪，无需复制可见范围计算。
+    fn draw_octave_bands(&self, ui: &egui::Ui, rect: egui::Rect) {
+        let kh = self.view.key_height;
+        let scroll_y = self.view.base.scroll_y;
+        let painter = ui.painter();
+        for oct in 0..=10 {
+            // 八度顶部 = 最高 key 的顶边，底部 = 最低 key 的底边（同 shader 公式）。
+            let y_top = rect.min.y + 128.0 * kh - scroll_y - (oct * 12 + 12) as f32 * kh;
+            let y_bottom = rect.min.y + 128.0 * kh - scroll_y - (oct * 12) as f32 * kh;
+            if y_bottom <= rect.min.y || y_top >= rect.max.y {
+                continue;
+            }
+            let color = if oct % 2 == 0 {
+                egui::Color32::from_gray(24)
+            } else {
+                egui::Color32::from_gray(28)
+            };
+            painter.rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(rect.min.x, y_top),
+                    egui::pos2(rect.max.x, y_bottom),
+                ),
+                0.0,
+                color,
+            );
+        }
+    }
+
+    /// 顶部小节标尺：深色底 + 每小节（1920 tick）刻度线 + 小节号。
+    /// 刻度 x 与 draw_grid 同公式（tick→像素）；步长过密时只画刻度不画
+    /// 数字，更密时整条隐藏（阈值与 draw_grid 一致）。
+    fn draw_ruler(&self, ui: &egui::Ui, rect: egui::Rect, ruler_h: f32) {
+        if ruler_h <= 0.0 {
             return;
         }
-        let data = match buffer.slice(..).get_mapped_range() {
-            Ok(d) => d,
-            Err(e) => {
-                log::error!("pr_view: readback 映射失败: {e}");
-                return;
-            }
-        };
-        let mut nonzero_alpha = 0u64;
-        let mut nonzero_rgb = 0u64;
-        let mut non_red = 0u64;
-        let mut sample_first: Option<[u8; 4]> = None;
-        for chunk in data.chunks_exact(4) {
-            let px = [chunk[0], chunk[1], chunk[2], chunk[3]];
-            if px[3] > 0 {
-                nonzero_alpha += 1;
-                if sample_first.is_none() {
-                    sample_first = Some(px);
-                }
-            }
-            if px[0] > 0 || px[1] > 0 || px[2] > 0 {
-                nonzero_rgb += 1;
-            }
-            // 当前 clear 是纯红 [255,0,0,255]：统计非红像素判断是否画了东西。
-            if px[0] != 255 || px[1] != 0 || px[2] != 0 {
-                non_red += 1;
-            }
+        let ppu = self.view.base.pixels_per_tick;
+        let scroll_x = self.view.base.scroll_x;
+        let step_px = BAR_TICKS as f32 * ppu;
+        if step_px < 6.0 {
+            return;
         }
-        drop(data);
-        buffer.unmap();
-        log::info!(
-            "pr_view: 纹理读回 {}x{} 非零alpha={} 非零RGB={} 非红像素={} 首个={:?}",
-            self.width,
-            self.height,
-            nonzero_alpha,
-            nonzero_rgb,
-            non_red,
-            sample_first
+        // rect 是让位后的内容区，标尺带正好贴在它上方。
+        let ruler_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.min.x, rect.min.y - ruler_h),
+            egui::pos2(rect.max.x, rect.min.y),
+        );
+        let painter = ui.painter();
+        painter.rect_filled(ruler_rect, 0.0, egui::Color32::from_gray(30));
+        // 与内容区的分界线。
+        painter.line_segment(
+            [
+                egui::pos2(ruler_rect.min.x, ruler_rect.max.y),
+                egui::pos2(ruler_rect.max.x, ruler_rect.max.y),
+            ],
+            egui::Stroke::new(1.0, egui::Color32::from_gray(50)),
+        );
+        let show_number = step_px >= 30.0;
+        let start_tick = ((scroll_x / ppu) as i64 / BAR_TICKS) * BAR_TICKS;
+        let mut bar = start_tick / BAR_TICKS;
+        let mut x = rect.min.x + (start_tick as f32 * ppu - scroll_x);
+        while x < rect.max.x {
+            painter.line_segment(
+                [
+                    egui::pos2(x, ruler_rect.min.y),
+                    egui::pos2(x, ruler_rect.max.y),
+                ],
+                egui::Stroke::new(1.0, egui::Color32::from_gray(90)),
+            );
+            if show_number {
+                painter.text(
+                    egui::pos2(x + 3.0, ruler_rect.min.y + 1.0),
+                    egui::Align2::LEFT_TOP,
+                    // 小节号从 1 开始（tick 0 = 第 1 小节）。
+                    (bar + 1).to_string(),
+                    egui::FontId::proportional(11.0),
+                    egui::Color32::from_gray(170),
+                );
+            }
+            x += step_px;
+            bar += 1;
+        }
+    }
+
+    /// 播放光标：竖线随 scroll_x 移动，y 从标尺底部到内容区底。
+    /// x 与网格同公式（tick→像素），并 clamp 在内容区内。
+    fn draw_cursor(&self, ui: &egui::Ui, rect: egui::Rect, ruler_h: f32) {
+        let Some(tick) = self.cursor_tick else {
+            return;
+        };
+        let ppu = self.view.base.pixels_per_tick;
+        let scroll_x = self.view.base.scroll_x;
+        let x = rect.min.x + self.keyboard_w + (tick as f32 * ppu - scroll_x);
+        let x = x.clamp(rect.min.x + self.keyboard_w, rect.max.x);
+        let painter = ui.painter();
+        painter.line_segment(
+            [
+                egui::pos2(x, rect.min.y + ruler_h),
+                egui::pos2(x, rect.max.y),
+            ],
+            egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 200, 80)),
         );
     }
 
@@ -513,12 +516,11 @@ impl PrView {
     fn draw_grid(&self, ui: &egui::Ui, rect: egui::Rect) {
         let ppu = self.view.base.pixels_per_tick;
         let scroll_x = self.view.base.scroll_x;
-        const STEP_TICKS: i64 = 1920;
-        let step_px = STEP_TICKS as f32 * ppu;
+        let step_px = BAR_TICKS as f32 * ppu;
         if step_px < 6.0 {
             return;
         }
-        let start_tick = ((scroll_x / ppu) as i64 / STEP_TICKS) * STEP_TICKS;
+        let start_tick = ((scroll_x / ppu) as i64 / BAR_TICKS) * BAR_TICKS;
         let painter = ui.painter();
         let mut x = rect.min.x + (start_tick as f32 * ppu - scroll_x);
         while x < rect.max.x {
