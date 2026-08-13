@@ -207,7 +207,7 @@ impl PrView {
             egui::pos2(rect.min.x + self.keyboard_w, rect.min.y + ruler_h),
             rect.max,
         );
-        self.draw_octave_bands(ui, content_rect);
+        self.draw_scale_bands(ui, content_rect);
         self.draw_keyboard(ui, kb_rect);
         self.draw_grid(ui, content_rect);
         // 离屏纹理覆盖整个 rect（含键盘列，与桌面端一致）：shader 的音符
@@ -224,7 +224,7 @@ impl PrView {
             ),
             egui::Color32::WHITE,
         );
-        self.draw_ruler(ui, content_rect, ruler_h);
+        self.draw_ruler(ui, rect, content_rect, ruler_h);
         self.draw_cursor(ui, rect, ruler_h);
 
         let notes: u64 = model.track_note_count.iter().sum();
@@ -241,9 +241,10 @@ impl PrView {
         );
     }
 
-    /// 触摸手势：双指捏合 → 水平缩放（围绕屏幕中心）；双指/单指 → 滚动。
+    /// 触摸手势：双指捏合 → 键盘列上垂直缩放 key_height / 内容区水平缩放；
+    /// 双指/单指 → 滚动。
     fn handle_touch(&mut self, ui: &egui::Ui, rect: egui::Rect) {
-        let (zoom, pan, touches, pointer_delta, pointer_down) = ui.ctx().input(|i| {
+        let (zoom, pan, touches, pointer_delta, pointer_down, touch_center) = ui.ctx().input(|i| {
             let mt = i.multi_touch();
             (
                 mt.map(|m| m.zoom_delta),
@@ -251,18 +252,35 @@ impl PrView {
                 mt.map(|m| m.num_touches).unwrap_or(0),
                 i.pointer.delta(),
                 i.pointer.primary_down(),
+                mt.map(|m| m.center_pos),
             )
         });
         let base = &mut self.view.base;
         if let Some(zoom) = zoom
             && (zoom - 1.0).abs() > 0.001
         {
-            // scroll_x 是内容区（不含键盘列）的滚动偏移，缩放中心取内容区中点。
-            let content_w = rect.width() - self.keyboard_w;
-            let center_tick = (base.scroll_x + content_w / 2.0) / base.pixels_per_tick.max(1e-6);
-            base.pixels_per_tick = (base.pixels_per_tick * zoom).clamp(0.0005, 8.0);
-            base.scroll_x = center_tick * base.pixels_per_tick - content_w / 2.0;
-            base.dirty = true;
+            if touch_center.is_some_and(|c| c.x < rect.min.x + self.keyboard_w) {
+                // 键盘列上捏合 → 垂直缩放 key_height。锚点 = 双指中心对应的
+                // key 浮点位置，缩放后该 key 仍停留在手指处（同 shader 参考系）。
+                let y0 = touch_center.expect("checked above").y;
+                let kh = self.view.key_height;
+                let bottom = 128.0 * kh - base.scroll_y;
+                let anchor_key = (bottom - (y0 - rect.min.y)) / kh;
+                let new_kh = (kh * zoom).clamp(4.0, 48.0);
+                let new_bottom = (y0 - rect.min.y) + anchor_key * new_kh;
+                base.scroll_y = (128.0 * new_kh - new_bottom).max(0.0);
+                self.view.key_height = new_kh;
+                base.dirty = true;
+            } else {
+                // 内容区捏合 → 水平缩放。scroll_x 是内容区（不含键盘列）的
+                // 滚动偏移，缩放中心取内容区中点。
+                let content_w = rect.width() - self.keyboard_w;
+                let center_tick =
+                    (base.scroll_x + content_w / 2.0) / base.pixels_per_tick.max(1e-6);
+                base.pixels_per_tick = (base.pixels_per_tick * zoom).clamp(0.0005, 8.0);
+                base.scroll_x = center_tick * base.pixels_per_tick - content_w / 2.0;
+                base.dirty = true;
+            }
         }
         if touches >= 2 {
             if let Some(pan) = pan {
@@ -423,40 +441,68 @@ impl PrView {
         );
     }
 
-    /// 八度色带：每 12 个 key 一个八度，交替极浅明暗底色，辅助纵向定位八度。
-    /// y 与 GPU 音符层同参考系（key 越大越靠上），保证色带与音符精确对齐；
-    /// 八度总共只有 11 个，全画再由 painter 裁剪，无需复制可见范围计算。
-    fn draw_octave_bands(&self, ui: &egui::Ui, rect: egui::Rect) {
+    /// 横向背景色带：有调号时按当前生效调式着色（调内音浅色、根音更亮），
+    /// 无调号时退化为白键行浅色——与桌面端 bg::paint 同一策略，辅助定位
+    /// 音高与调性。y 与 GPU 音符层同参考系（key 越大越靠上）。
+    fn draw_scale_bands(&self, ui: &egui::Ui, rect: egui::Rect) {
         let kh = self.view.key_height;
         let scroll_y = self.view.base.scroll_y;
+        let bottom = 128.0 * kh - scroll_y;
+        let top_key = ((bottom / kh).ceil() as i32 - 1).clamp(0, 127);
+        let bottom_key = (((bottom - rect.height()) / kh).ceil() as i32 - 1).clamp(0, 127);
+        let (key_lo, key_hi) = (bottom_key.min(top_key), bottom_key.max(top_key));
         let painter = ui.painter();
-        for oct in 0..=10 {
-            // 八度顶部 = 最高 key 的顶边，底部 = 最低 key 的底边（同 shader 公式）。
-            let y_top = rect.min.y + 128.0 * kh - scroll_y - (oct * 12 + 12) as f32 * kh;
-            let y_bottom = rect.min.y + 128.0 * kh - scroll_y - (oct * 12) as f32 * kh;
-            if y_bottom <= rect.min.y || y_top >= rect.max.y {
-                continue;
-            }
-            let color = if oct % 2 == 0 {
-                egui::Color32::from_gray(24)
-            } else {
-                egui::Color32::from_gray(28)
-            };
+        let band = |painter: &egui::Painter, key: i32, color: egui::Color32| {
+            let y = rect.min.y + bottom - (key as f32 + 1.0) * kh;
             painter.rect_filled(
-                egui::Rect::from_min_max(
-                    egui::pos2(rect.min.x, y_top),
-                    egui::pos2(rect.max.x, y_bottom),
-                ),
+                egui::Rect::from_min_max(egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y + kh)),
                 0.0,
                 color,
             );
+        };
+
+        // 当前生效调号：视口起点之前最后一个调号事件（无则取第一个）。
+        let scroll_tick = self.view.base.scroll_x / self.view.base.pixels_per_tick.max(1e-6);
+        let scroll_tick = scroll_tick as f64;
+        let key_sig = self
+            .model
+            .as_ref()
+            .map(|m| m.conductor.key_sig.as_slice())
+            .unwrap_or(&[]);
+        let eff = key_sig
+            .iter()
+            .rev()
+            .find(|e| e.tick as f64 <= scroll_tick)
+            .or_else(|| key_sig.first());
+
+        let Some(ev) = eff else {
+            // 无调号：白键行浅色，与键盘列黑白键呼应。
+            for key in key_lo..=key_hi {
+                if !matches!(key % 12, 1 | 3 | 6 | 8 | 10) {
+                    band(painter, key, egui::Color32::from_gray(26));
+                }
+            }
+            return;
+        };
+        let mask = ev.scale.pitch_classes(ev.root);
+        for key in key_lo..=key_hi {
+            let pc = (key as u8) % 12;
+            let color = if pc == ev.root {
+                egui::Color32::from_gray(34)
+            } else if mask & (1u16 << pc) != 0 {
+                egui::Color32::from_gray(26)
+            } else {
+                continue;
+            };
+            band(painter, key, color);
         }
     }
 
     /// 顶部小节标尺：深色底 + 每小节（1920 tick）刻度线 + 小节号。
+    /// 背景覆盖整个 rect（含键盘列上方，避免空缝），刻度只画在内容区。
     /// 刻度 x 与 draw_grid 同公式（tick→像素）；步长过密时只画刻度不画
     /// 数字，更密时整条隐藏（阈值与 draw_grid 一致）。
-    fn draw_ruler(&self, ui: &egui::Ui, rect: egui::Rect, ruler_h: f32) {
+    fn draw_ruler(&self, ui: &egui::Ui, rect: egui::Rect, content_rect: egui::Rect, ruler_h: f32) {
         if ruler_h <= 0.0 {
             return;
         }
@@ -466,10 +512,10 @@ impl PrView {
         if step_px < 6.0 {
             return;
         }
-        // rect 是让位后的内容区，标尺带正好贴在它上方。
+        // 背景铺满整个 rect 宽度（含键盘列上方），刻度从内容区开始。
         let ruler_rect = egui::Rect::from_min_max(
-            egui::pos2(rect.min.x, rect.min.y - ruler_h),
-            egui::pos2(rect.max.x, rect.min.y),
+            egui::pos2(rect.min.x, rect.min.y),
+            egui::pos2(rect.max.x, rect.min.y + ruler_h),
         );
         let painter = ui.painter();
         painter.rect_filled(ruler_rect, 0.0, egui::Color32::from_gray(30));
@@ -484,8 +530,13 @@ impl PrView {
         let show_number = step_px >= 30.0;
         let start_tick = ((scroll_x / ppu) as i64 / BAR_TICKS) * BAR_TICKS;
         let mut bar = start_tick / BAR_TICKS;
-        let mut x = rect.min.x + (start_tick as f32 * ppu - scroll_x);
-        while x < rect.max.x {
+        let mut x = content_rect.min.x + (start_tick as f32 * ppu - scroll_x);
+        // 跳过仍位于键盘列上方的刻度。
+        while x < content_rect.min.x {
+            x += step_px;
+            bar += 1;
+        }
+        while x < content_rect.max.x {
             painter.line_segment(
                 [
                     egui::pos2(x, ruler_rect.min.y),
@@ -529,6 +580,8 @@ impl PrView {
     }
 
     /// 网格线：每 1920 tick（4/4 小节 @480ppq）一条竖线，过密时跳过。
+    /// 首条 start_tick 是 <= 视口起点的最大整小节，x 可能在键盘列上方，
+    /// 需推进到内容区内再画（否则多画一条盖在钢琴列上）。
     fn draw_grid(&self, ui: &egui::Ui, rect: egui::Rect) {
         let ppu = self.view.base.pixels_per_tick;
         let scroll_x = self.view.base.scroll_x;
@@ -539,6 +592,9 @@ impl PrView {
         let start_tick = ((scroll_x / ppu) as i64 / BAR_TICKS) * BAR_TICKS;
         let painter = ui.painter();
         let mut x = rect.min.x + (start_tick as f32 * ppu - scroll_x);
+        while x < rect.min.x {
+            x += step_px;
+        }
         while x < rect.max.x {
             painter.line_segment(
                 [egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)],

@@ -306,18 +306,23 @@ impl YinheApp {
     /// PR 钢琴卷帘页：顶部工具条（返回 + 走带控制）+ 视图。
     fn ui_pr(&mut self, ui: &mut egui::Ui) {
         self.update_transport();
-        egui::Panel::top("pr_toolbar").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                if ui.button("◀ 返回").clicked() {
-                    self.page = Page::Verify;
-                }
-                ui.label(egui::RichText::new("钢琴卷帘").strong());
-                self.transport_ui(ui);
+        // 工具条保留少量内边距；内容区零边框，PR 视图铺满（不留黑缝）。
+        egui::Panel::top("pr_toolbar")
+            .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(8, 6)))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("◀ 返回").clicked() {
+                        self.page = Page::Verify;
+                    }
+                    ui.label(egui::RichText::new("钢琴卷帘").strong());
+                    self.transport_ui(ui);
+                });
             });
-        });
-        egui::CentralPanel::default().show(ui, |ui| {
-            self.pr_view.ui(ui);
-        });
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(ui, |ui| {
+                self.pr_view.ui(ui);
+            });
     }
 
     /// 走带控制条：播放/暂停、停止、跟随播放开关、当前/总时长。
