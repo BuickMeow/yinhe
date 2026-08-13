@@ -41,6 +41,13 @@ class MainActivity : GameActivity() {
         pushCurrentInsets()
     }
 
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // 旋转（configChanges 不重建 Activity）时 WindowInsets 不会重新派发，
+        // 必须手动重读；post 等旋转布局完成后再读（否则还是旧值）。
+        window.decorView.post { pushCurrentInsets() }
+    }
+
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         // 失去焦点时系统可能恢复导航栏（如通知栏下拉），回焦后重新隐藏。
