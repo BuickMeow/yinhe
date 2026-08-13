@@ -13,6 +13,7 @@ use yinhe_audio::spawn::{AudioCommand, CpalAudioHandle};
 use yinhe_core::YinModel;
 
 mod ar_view;
+mod file_picker;
 mod insets;
 mod pr_view;
 
@@ -22,9 +23,10 @@ const TEST_SF_PATH: &str = "/data/data/com.jieneng.yinhe/files/generaluser.sf2";
 const TEST_MIDI_PATH: &str = "/data/data/com.jieneng.yinhe/files/test.mid";
 const BIG_MIDI_PATH: &str = "/data/data/com.jieneng.yinhe/files/big.mid";
 
-/// 页面：AR 工程走带（首页）/ PR 钢琴卷帘。
+/// 页面：菜单（启动页，选歌/设置）/ AR 工程走带（根）/ PR 钢琴卷帘。
 #[derive(PartialEq)]
 enum Page {
+    Menu,
     Ar,
     Pr,
 }
@@ -90,10 +92,6 @@ pub struct YinheApp {
     tool: Tool,
     /// 工具选择弹窗是否打开。
     tool_picker_open: bool,
-    /// 打开工程弹窗是否打开（AR 顶栏）。
-    open_menu_open: bool,
-    /// 设置弹窗是否打开（AR 顶栏）。
-    settings_open: bool,
     /// 安全区 insets（逻辑点）：[left, top, right, bottom]，每帧从 [`insets`] 刷新。
     safe_insets: [f32; 4],
 }
@@ -102,7 +100,7 @@ impl YinheApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         setup_fonts(&cc.egui_ctx);
         let mut app = Self {
-            page: Page::Ar,
+            page: Page::Menu,
             ar_view: ar_view::ArView::new(cc),
             pr_view: pr_view::PrView::new(cc),
             audio: None,
@@ -118,12 +116,9 @@ impl YinheApp {
             time_show_ticks: false,
             tool: Tool::Select,
             tool_picker_open: false,
-            open_menu_open: false,
-            settings_open: false,
             safe_insets: [0.0; 4],
         };
-        // 调试阶段：启动即自动加载小曲 + 初始化音频/音色库，免去手动点击按钮。
-        app.start_midi_load(TEST_MIDI_PATH);
+        // 启动先进菜单（选歌/设置），不再自动加载测试 MIDI；音频/音色库提前初始化。
         app.init_audio();
         app.load_soundfont();
         app
@@ -325,6 +320,7 @@ impl eframe::App for YinheApp {
         ];
 
         match self.page {
+            Page::Menu => self.ui_menu(ui),
             Page::Ar => self.ui_ar(ui),
             Page::Pr => self.ui_pr(ui),
         }
@@ -541,7 +537,16 @@ impl YinheApp {
                 }
                 ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
                     ui.horizontal(|ui| {
-                        // 工程名（AR = 首页，无返回按钮）。
+                        // 最左侧：主页按钮（进入菜单，文件夹/设置入口合并于此）。
+                        use egui_material_icons::icons::ICON_HOME;
+                        if ui
+                            .button(icon_text(ICON_HOME))
+                            .on_hover_text("主页")
+                            .clicked()
+                        {
+                            self.page = Page::Menu;
+                        }
+                        // 工程名。
                         let title = self
                             .model
                             .as_ref()
@@ -550,26 +555,6 @@ impl YinheApp {
                         ui.label(egui::RichText::new(title).strong());
                         ui.separator();
                         self.transport_ui(ui);
-                        // 打开工程（临时测试入口，后续接系统文件选择器）。
-                        use egui_material_icons::icons::ICON_FOLDER_OPEN;
-                        if ui
-                            .button(icon_text(ICON_FOLDER_OPEN))
-                            .on_hover_text("打开工程")
-                            .clicked()
-                        {
-                            self.open_menu_open = !self.open_menu_open;
-                            self.settings_open = false;
-                        }
-                        // 设置。
-                        use egui_material_icons::icons::ICON_SETTINGS;
-                        if ui
-                            .button(icon_text(ICON_SETTINGS))
-                            .on_hover_text("设置")
-                            .clicked()
-                        {
-                            self.settings_open = !self.settings_open;
-                            self.open_menu_open = false;
-                        }
                     });
                 });
             });
@@ -591,65 +576,163 @@ impl YinheApp {
                     }
                 }
             });
-        self.ui_ar_dialogs(ui);
     }
 
-    /// AR 弹窗：打开工程（临时测试入口）/ 设置（音频状态）。
-    fn ui_ar_dialogs(&mut self, ui: &mut egui::Ui) {
-        if self.open_menu_open {
-            egui::Window::new("打开工程")
-                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 8.0))
-                .collapsible(false)
-                .resizable(false)
-                .show(ui.ctx(), |ui| {
-                    ui.label("（临时入口，后续接系统文件选择器）");
-                    if ui.button("加载小曲 test.mid").clicked() {
-                        self.start_midi_load(TEST_MIDI_PATH);
-                        self.open_menu_open = false;
-                    }
-                    if ui.button("加载大曲 big.mid").clicked() {
-                        self.start_midi_load(BIG_MIDI_PATH);
-                        self.open_menu_open = false;
-                    }
-                    self.poll_midi_load();
-                    if !self.midi_stats.is_empty() {
-                        ui.label(
-                            egui::RichText::new(&self.midi_stats)
-                                .color(egui::Color32::from_rgb(140, 200, 255)),
-                        );
-                    }
-                });
+    /// 菜单页（启动页）：左上角返回 AR；左侧歌曲卡片 + 本地打开；右侧设置。
+    fn ui_menu(&mut self, ui: &mut egui::Ui) {
+        // 每帧轮询：选歌后加载完成自动进入 AR；音色/文件选择结果在此消费。
+        self.poll_midi_load();
+        self.poll_sf_load();
+        if let Some(path) = file_picker::take_picked_path() {
+            self.start_midi_load(&path);
         }
-        if self.settings_open {
-            egui::Window::new("设置")
-                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 8.0))
-                .collapsible(false)
-                .resizable(false)
-                .show(ui.ctx(), |ui| {
-                    self.poll_sf_load();
-                    let sr = self.audio.as_ref().map(|a| a.sample_rate).unwrap_or(0);
-                    ui.label(format!("采样率: {sr} Hz"));
-                    let playing = self
-                        .audio
-                        .as_ref()
-                        .map(|a| a.handle.is_playing())
-                        .unwrap_or(false);
-                    ui.label(format!(
-                        "播放状态: {}",
-                        if playing { "播放中" } else { "停止" }
-                    ));
-                    ui.label(&self.audio_status);
-                    if self.sf_load_start.is_some() {
-                        ui.label("音色加载中...");
-                    }
-                    if ui.button("重新加载音色库").clicked() {
-                        self.load_soundfont();
-                    }
+        // 顶栏：返回（回 AR）+ 标题。
+        let [sl, st, sr, _] = self.safe_insets;
+        egui::Panel::top("menu_toolbar")
+            .frame(egui::Frame::NONE)
+            .show(ui, |ui| {
+                let avail = ui.available_rect_before_wrap();
+                let inner = egui::Rect::from_min_max(
+                    avail.min + egui::vec2(sl + 8.0, st + 6.0),
+                    avail.max - egui::vec2(sr + 8.0, 6.0),
+                );
+                if inner.width() <= 0.0 || inner.height() <= 0.0 {
+                    return;
+                }
+                ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
+                    ui.horizontal(|ui| {
+                        use egui_material_icons::icons::ICON_ARROW_BACK;
+                        if ui
+                            .button(icon_text(ICON_ARROW_BACK))
+                            .on_hover_text("返回工程")
+                            .clicked()
+                        {
+                            self.page = Page::Ar;
+                        }
+                        ui.label(egui::RichText::new("菜单").strong());
+                    });
                 });
+            });
+        // 左右分栏：左侧选歌，右侧设置。
+        let [sl, st, sr, sb] = self.safe_insets;
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(ui, |ui| {
+                let avail = ui.available_rect_before_wrap();
+                let inner = egui::Rect::from_min_max(
+                    avail.min + egui::vec2(sl, st),
+                    avail.max - egui::vec2(sr, sb),
+                );
+                if inner.width() <= 0.0 || inner.height() <= 0.0 {
+                    return;
+                }
+                let left_w = (inner.width() * 0.55).clamp(280.0, 520.0);
+                let left_rect = egui::Rect::from_min_max(
+                    inner.min,
+                    egui::pos2(inner.min.x + left_w, inner.max.y),
+                );
+                let right_rect = egui::Rect::from_min_max(
+                    egui::pos2(inner.min.x + left_w + 12.0, inner.min.y),
+                    inner.max,
+                );
+                ui.scope_builder(egui::UiBuilder::new().max_rect(left_rect), |ui| {
+                    self.menu_songs_ui(ui);
+                });
+                ui.scope_builder(egui::UiBuilder::new().max_rect(right_rect), |ui| {
+                    self.menu_settings_ui(ui);
+                });
+            });
+    }
+
+    /// 菜单左侧：歌曲卡片（测试曲目）+ 本地打开（SAF 文件选择器）。
+    fn menu_songs_ui(&mut self, ui: &mut egui::Ui) {
+        ui.heading("选择歌曲");
+        ui.add_space(10.0);
+        let card_w = ui.available_width();
+        let cards = [
+            ("小曲", "test.mid（链路验证）", TEST_MIDI_PATH),
+            ("大曲", "big.mid（性能测试）", BIG_MIDI_PATH),
+        ];
+        for (title, desc, path) in cards {
+            if ui
+                .add_sized(
+                    [card_w, 64.0],
+                    egui::Button::new(egui::RichText::new(title).size(18.0).strong()),
+                )
+                .on_hover_text(desc)
+                .clicked()
+            {
+                self.start_midi_load(path);
+            }
+            ui.label(
+                egui::RichText::new(desc)
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+            );
+            ui.add_space(8.0);
+        }
+        // 本地打开：SAF 系统文件选择器（MainActivity 桥）。
+        if ui
+            .add_sized(
+                [card_w, 56.0],
+                egui::Button::new(egui::RichText::new("本地打开 MIDI").size(16.0)),
+            )
+            .clicked()
+        {
+            file_picker::open_file_picker();
+        }
+        ui.add_space(10.0);
+        // 加载进度/结果。
+        if !self.midi_stats.is_empty() {
+            ui.label(
+                egui::RichText::new(&self.midi_stats).color(egui::Color32::from_rgb(140, 200, 255)),
+            );
+        }
+    }
+
+    /// 菜单右侧：设置（音色库 + 音频状态）。
+    fn menu_settings_ui(&mut self, ui: &mut egui::Ui) {
+        ui.heading("设置");
+        ui.add_space(10.0);
+        ui.label(egui::RichText::new("音色库").strong());
+        ui.label(&self.audio_status);
+        if self.sf_load_start.is_some() {
+            ui.label("音色加载中...");
+        }
+        if ui.button("重新加载音色库").clicked() {
+            self.load_soundfont();
+        }
+        ui.separator();
+        ui.label(egui::RichText::new("音频").strong());
+        let sr = self.audio.as_ref().map(|a| a.sample_rate).unwrap_or(0);
+        ui.label(format!("采样率: {sr} Hz"));
+        let playing = self
+            .audio
+            .as_ref()
+            .map(|a| a.handle.is_playing())
+            .unwrap_or(false);
+        ui.label(format!(
+            "播放状态: {}",
+            if playing { "播放中" } else { "停止" }
+        ));
+        if self.audio.is_none() && ui.button("初始化音频").clicked() {
+            self.init_audio();
         }
     }
 }
 
+/// 轨道颜色：TRACK_PALETTE 循环分配（与桌面端 track_panel/AR 一致）。
+/// PR 与 AR 共用，保证同一工程两个视图的轨道色相同。
+pub(crate) fn track_colors_for(model: &YinModel) -> Vec<[f32; 4]> {
+    yinhe_theme::palette::TRACK_PALETTE
+        .iter()
+        .cycle()
+        .take(model.tracks.len())
+        .map(|&[r, g, b]| [r, g, b, 1.0])
+        .collect()
+}
+
+/// 加载项目自带字体（与桌面端一致的 Pretendard 主字体 + MiSans 中文回退）。
 /// 由秒反查 tick：tempo_map 只提供 tick_to_seconds（随 tempo 分段单调递增），
 /// 二分 40 次足够收敛到亚 tick 精度，音频播放位置反查用。
 fn seconds_to_tick(model: &YinModel, seconds: f64) -> f64 {
@@ -682,6 +765,8 @@ pub fn run(options: eframe::NativeOptions) -> Result<(), eframe::Error> {
 #[allow(improper_ctypes_definitions)]
 #[unsafe(no_mangle)]
 pub extern "C" fn android_main(app: winit::platform::android::activity::AndroidApp) {
+    // 本地打开文件（SAF）桥需要 AndroidApp 引用。
+    file_picker::init(app.clone());
     android_logger::init_once(
         android_logger::Config::default()
             .with_tag("yinhe")

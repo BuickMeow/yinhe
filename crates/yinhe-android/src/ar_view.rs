@@ -174,25 +174,33 @@ impl ArView {
         if let Some(zoom) = zoom
             && (zoom - 1.0).abs() > 0.001
         {
-            let content_w = (rect.width() - PANEL_W).max(1.0);
-            let cx = touch_center
-                .map(|c| (c.x - rect.min.x - PANEL_W).clamp(0.0, content_w))
-                .unwrap_or(content_w / 2.0);
-            let cy = touch_center
-                .map(|c| (c.y - rect.min.y).clamp(0.0, rect.height()))
-                .unwrap_or(rect.height() / 2.0);
-            let center_tick =
-                (self.view.base.scroll_x + cx) / self.view.base.pixels_per_tick.max(1e-6);
-            self.view.base.pixels_per_tick =
-                (self.view.base.pixels_per_tick * zoom).clamp(0.0005, 8.0);
-            self.view.base.scroll_x = (center_tick * self.view.base.pixels_per_tick - cx).max(0.0);
-            // lane 高度缩放（锚点 = 双指中心对应的轨道位置）。
-            let old_h = self.view.lane_height();
-            let new_h = (old_h * zoom).clamp(16.0, 120.0);
-            let track_frac = (cy + self.view.base.scroll_y) / old_h.max(1.0);
-            self.view.base.scroll_y = (track_frac * new_h - cy).max(0.0);
-            self.view.base.track_panel_row_height = new_h;
-            self.view.base.dirty = true;
+            // 音轨面板上捏合 = 垂直缩放（lane 高度）；AR 视口捏合 = 水平缩放（同 PR）。
+            let in_panel = touch_center
+                .map(|c| c.x < rect.min.x + PANEL_W)
+                .unwrap_or(false);
+            if in_panel {
+                let cy = touch_center
+                    .map(|c| (c.y - rect.min.y).clamp(0.0, rect.height()))
+                    .unwrap_or(rect.height() / 2.0);
+                let old_h = self.view.lane_height();
+                let new_h = (old_h * zoom).clamp(16.0, 120.0);
+                let track_frac = (cy + self.view.base.scroll_y) / old_h.max(1.0);
+                self.view.base.scroll_y = (track_frac * new_h - cy).max(0.0);
+                self.view.base.track_panel_row_height = new_h;
+                self.view.base.dirty = true;
+            } else {
+                let content_w = (rect.width() - PANEL_W).max(1.0);
+                let cx = touch_center
+                    .map(|c| (c.x - rect.min.x - PANEL_W).clamp(0.0, content_w))
+                    .unwrap_or(content_w / 2.0);
+                let center_tick =
+                    (self.view.base.scroll_x + cx) / self.view.base.pixels_per_tick.max(1e-6);
+                self.view.base.pixels_per_tick =
+                    (self.view.base.pixels_per_tick * zoom).clamp(0.0005, 8.0);
+                self.view.base.scroll_x =
+                    (center_tick * self.view.base.pixels_per_tick - cx).max(0.0);
+                self.view.base.dirty = true;
+            }
         }
         let num_tracks = self.model.as_ref().map(|m| m.tracks.len()).unwrap_or(0);
         let max_scroll_y = (num_tracks as f32 * self.view.lane_height() - rect.height()).max(0.0);
@@ -258,7 +266,7 @@ impl ArView {
                 value_scroll: 0.0,
             };
             renderer.upload_uniforms(uniforms);
-            let tc: Vec<[f32; 4]> = model.tracks.iter().map(|t| t.color).collect();
+            let tc = crate::track_colors_for(&model);
             renderer.upload_track_colors(&tc);
             renderer.ensure_layers(2);
             let vh = self.view.render_hash();
@@ -291,7 +299,8 @@ impl ArView {
         );
 
         // ── 音轨面板（egui 层，画在纹理面板列透明区之上）──
-        self.draw_track_panel(&painter, rect, &model);
+        let tc = crate::track_colors_for(&model);
+        self.draw_track_panel(&painter, rect, &model, &tc);
 
         // ── 播放线 ──
         if let Some(tick) = self.cursor_tick {
@@ -386,7 +395,13 @@ impl ArView {
     }
 
     /// 音轨面板：可见范围内的轨道行（色条/编号/名称/M/S）。
-    fn draw_track_panel(&self, painter: &egui::Painter, rect: egui::Rect, model: &Arc<YinModel>) {
+    fn draw_track_panel(
+        &self,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        model: &Arc<YinModel>,
+        track_colors: &[[f32; 4]],
+    ) {
         let lane_h = self.view.lane_height();
         let num = model.tracks.len();
         let (first, last) = ArrangementView::visible_track_range_static(
@@ -407,11 +422,15 @@ impl ArView {
                 painter.rect_filled(row, 0.0, self.theme.stripe_bg);
             }
             let track = &model.tracks[idx];
+            let c = track_colors
+                .get(idx)
+                .copied()
+                .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
             let color = egui::Color32::from_rgba_unmultiplied(
-                (track.color[0] * 255.0) as u8,
-                (track.color[1] * 255.0) as u8,
-                (track.color[2] * 255.0) as u8,
-                (track.color[3] * 255.0) as u8,
+                (c[0] * 255.0) as u8,
+                (c[1] * 255.0) as u8,
+                (c[2] * 255.0) as u8,
+                (c[3] * 255.0) as u8,
             );
             painter.rect_filled(
                 egui::Rect::from_min_size(row.min, egui::vec2(6.0, lane_h)),

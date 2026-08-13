@@ -185,7 +185,7 @@ impl PrView {
         self.ensure_notes(&model);
 
         if let Some(renderer) = &mut self.renderer {
-            let track_colors = track_colors_for(&model);
+            let track_colors = crate::track_colors_for(&model);
             let selected = Selection::default();
             let job = build_render_job(
                 self.width,
@@ -752,16 +752,6 @@ impl PrView {
             }
         }
     }
-}
-
-/// 按轨道索引生成颜色：直接循环主题的 16 色轨道调色板（RGB → RGBA）。
-fn track_colors_for(model: &YinModel) -> Vec<[f32; 4]> {
-    yinhe_theme::palette::TRACK_PALETTE
-        .iter()
-        .cycle()
-        .take(model.tracks.len())
-        .map(|&[r, g, b]| [r, g, b, 1.0])
-        .collect()
 }
 
 /// 创建离屏渲染纹理并注册为 egui 纹理（与桌面 RenderContext 同款）。
