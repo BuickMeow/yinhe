@@ -1,7 +1,9 @@
 package com.jieneng.yinhe
 
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.provider.OpenableColumns
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
@@ -10,12 +12,17 @@ import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.google.androidgamesdk.GameActivity
+import java.io.File
 
 /**
  * GameActivity 外壳：加载 libyinhe_android.so 并转发生命周期。
  * 所有 UI 逻辑都在 Rust 侧（yinhe-android crate）。
  */
 class MainActivity : GameActivity() {
+
+    companion object {
+        private const val REQ_OPEN_FILE = 1001
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -97,6 +104,46 @@ class MainActivity : GameActivity() {
         val root = window.decorView.rootWindowInsets ?: return
         pushInsets(WindowInsetsCompat.toWindowInsetsCompat(root, window.decorView))
     }
+
+    /** Rust 侧（file_picker 模块）在菜单"本地打开"时通过 JNI 调用。 */
+    fun openFilePicker() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("audio/midi", "audio/x-midi", "audio/mid"))
+        }
+        startActivityForResult(intent, REQ_OPEN_FILE)
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_OPEN_FILE || resultCode != RESULT_OK) {
+            return
+        }
+        val uri = data?.data ?: return
+        // SAF uri 只在授权期内可读，复制到私有目录后 Rust 侧拿稳定文件路径。
+        val name = displayName(uri) ?: "picked.mid"
+        val dest = File(filesDir, name)
+        try {
+            contentResolver.openInputStream(uri)?.use { input ->
+                dest.outputStream().use { output -> input.copyTo(output) }
+            }
+            onFilePicked(dest.absolutePath)
+        } catch (e: Exception) {
+            android.util.Log.e("yinhe", "复制所选文件失败: $e")
+        }
+    }
+
+    private fun displayName(uri: android.net.Uri): String? {
+        return contentResolver.query(uri, null, null, null, null)?.use { c ->
+            val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (idx >= 0) c.getString(idx) else null
+        }
+    }
+
+    /** Rust 侧（file_picker 模块）的回调：文件已复制到私有目录。 */
+    private external fun onFilePicked(path: String)
 
     /** Rust 侧（insets 模块）的 JNI 回调，写入全局安全区状态（px）。 */
     private external fun onSystemInsetsChanged(left: Int, top: Int, right: Int, bottom: Int)
