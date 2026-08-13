@@ -11,14 +11,27 @@
 use eframe::egui;
 use yinhe_audio::spawn::{AudioCommand, CpalAudioHandle};
 
+mod pr_view;
+
 /// 阶段 0.5 音频验证用的音色库路径（adb push 到 app 私有目录）。
 const TEST_SF_PATH: &str = "/data/data/com.jieneng.yinhe/files/generaluser.sf2";
 /// 阶段 1 测试 MIDI：小曲（链路验证）与大曲（性能测试）。
 const TEST_MIDI_PATH: &str = "/data/data/com.jieneng.yinhe/files/test.mid";
 const BIG_MIDI_PATH: &str = "/data/data/com.jieneng.yinhe/files/big.mid";
 
+/// 页面：验证页 / PR 钢琴卷帘。
+#[derive(PartialEq)]
+enum Page {
+    Verify,
+    Pr,
+}
+
 /// 阶段 0 的最小验证 App。
 pub struct YinheApp {
+    /// 当前页面。
+    page: Page,
+    /// PR 钢琴卷帘（GPU cull 渲染 + 触摸交互）。
+    pr_view: pr_view::PrView,
     /// 点按画布上留下的触点（验证触摸位置）。
     taps: Vec<egui::Pos2>,
     /// 最近一次触摸手势摘要。
@@ -43,7 +56,9 @@ pub struct YinheApp {
 impl YinheApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         setup_fonts(&cc.egui_ctx);
-        Self {
+        let mut app = Self {
+            page: Page::Verify,
+            pr_view: pr_view::PrView::new(cc),
             taps: Vec::new(),
             last_gesture: String::new(),
             double_click_count: 0,
@@ -55,7 +70,10 @@ impl YinheApp {
             midi_loader: None,
             midi_load_start: None,
             midi_stats: String::new(),
-        }
+        };
+        // 调试阶段：启动即自动加载小曲，免去手动点击按钮。
+        app.start_midi_load(TEST_MIDI_PATH);
+        app
     }
 
     /// 初始化音频引擎：cpal(AAudio) + xsynth 渲染线程。
@@ -169,8 +187,9 @@ impl YinheApp {
                     "加载完成！{} 音符 | {tracks} 轨 | 时长 {minutes:.1} 分钟\n耗时 {elapsed:.1} 秒",
                     notes,
                 );
-                // 顺便用加载的模型初始化音频播放（下一步用）
-                self.audio_status = "模型已加载，可初始化音频播放".to_string();
+                // 加载完成 → 进入 PR 钢琴卷帘视图
+                self.pr_view.set_model(std::sync::Arc::new(model));
+                self.page = Page::Pr;
                 let _ = path;
             }
             LoadResult::ModelFromYin { .. }
@@ -242,6 +261,33 @@ impl eframe::App for YinheApp {
         // 安卓上无触摸事件时 egui 不重绘（桌面有鼠标移动持续触发）——
         // 请求周期重绘让计时/状态文字持续刷新。
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
+
+        match self.page {
+            Page::Verify => self.ui_verify(ui),
+            Page::Pr => self.ui_pr(ui),
+        }
+    }
+}
+
+impl YinheApp {
+    /// PR 钢琴卷帘页：顶部工具条 + 视图。
+    fn ui_pr(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::top("pr_toolbar").show(ui, |ui| {
+            ui.horizontal(|ui| {
+                if ui.button("◀ 返回").clicked() {
+                    self.page = Page::Verify;
+                }
+                ui.label(egui::RichText::new("钢琴卷帘").strong());
+            });
+        });
+        egui::CentralPanel::default().show(ui, |ui| {
+            self.pr_view.ui(ui);
+        });
+    }
+
+    /// 验证页：触摸/音频/MIDI 加载验证。
+    fn ui_verify(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
 
         // ── 触摸手势摘要 ──
         let mut gesture = String::new();
@@ -396,12 +442,54 @@ pub extern "C" fn android_main(app: winit::platform::android::activity::AndroidA
     android_logger::init_once(
         android_logger::Config::default()
             .with_tag("yinhe")
-            .with_max_level(log::LevelFilter::Info),
+            .with_max_level(log::LevelFilter::Debug),
     );
+    // tracing → log 桥：yinhe-wgpu 内部用 tracing（cull 状态等），安卓 stderr 不可见。
+    // 默认 LogTracer 只转发 Info 以上，cull 的 debug 日志全被吞——显式提到 Debug。
+    tracing_log::LogTracer::builder()
+        .with_max_level(log::LevelFilter::Debug)
+        .init()
+        .ok();
+    // Rust panic 在安卓上直接 abort 且消息不可见（不进 logcat），必须显式 hook。
+    std::panic::set_hook(Box::new(|info| {
+        log::error!("PANIC: {info}");
+        let bt = std::backtrace::Backtrace::force_capture();
+        log::error!("BACKTRACE:\n{bt}");
+    }));
     log::info!("yinhe-android starting");
     let options = eframe::NativeOptions {
         android_app: Some(app),
         renderer: eframe::Renderer::Wgpu,
+        // 与桌面端一致的 wgpu 配置：GPU cull 需要 13 个 storage buffer
+        //（默认 limits 只有 8，pipeline 会静默创建失败 → 音符不渲染）。
+        wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
+            wgpu_setup: {
+                use eframe::egui_wgpu::wgpu;
+                let mut setup = eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle();
+                setup.device_descriptor = std::sync::Arc::new(|adapter| {
+                    let base_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
+                        wgpu::Limits::downlevel_webgl2_defaults()
+                    } else {
+                        wgpu::Limits::default()
+                    };
+                    wgpu::DeviceDescriptor {
+                        label: Some("egui wgpu device"),
+                        // cull 已改为 CPU 读回 args + 直接 draw_indexed
+                        // （Adreno indirect draw 失效），不再需要
+                        // INDIRECT_FIRST_INSTANCE feature。
+                        required_features: wgpu::Features::empty(),
+                        required_limits: wgpu::Limits {
+                            max_texture_dimension_2d: 8192,
+                            max_storage_buffers_per_shader_stage: 16,
+                            ..base_limits
+                        },
+                        ..Default::default()
+                    }
+                });
+                eframe::egui_wgpu::WgpuSetup::CreateNew(setup)
+            },
+            ..Default::default()
+        },
         // 安卓上窗口状态持久化会走 storage_dir → home_dir → getpwuid_r，
         // 静态链接的 bionic libc 的 getpwuid 路径在部分设备（小米）上崩溃
         //（oem_id_from_name → sscanf → strtod 空指针）。关闭持久化绕开。

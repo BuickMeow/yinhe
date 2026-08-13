@@ -93,21 +93,12 @@ fn main() {
                     } else {
                         wgpu::Limits::default()
                     };
-                    if !adapter
-                        .features()
-                        .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE)
-                    {
-                        tracing::error!(
-                            "适配器不支持 INDIRECT_FIRST_INSTANCE，GPU cull 会丢失音符"
-                        );
-                    }
                     wgpu::DeviceDescriptor {
                         label: Some("egui wgpu device"),
-                        // GPU cull 的 multi_draw_indirect 依赖 first_instance≠0
-                        // 定位 chunk 槽位；feature 未启用时 wgpu（Metal/DX12）
-                        // 会静默丢弃这些 draw，音符大面积丢失。
-                        required_features: adapter.features()
-                            & wgpu::Features::INDIRECT_FIRST_INSTANCE,
+                        // cull 已改为 CPU 读回 args + 直接 draw_indexed
+                        // （Adreno indirect draw 失效），不再需要
+                        // INDIRECT_FIRST_INSTANCE feature。
+                        required_features: wgpu::Features::empty(),
                         required_limits: wgpu::Limits {
                             max_texture_dimension_2d: 8192,
                             // GPU 合成器需要 13 个 storage buffer（采样块 + 段结构 + 指令）
