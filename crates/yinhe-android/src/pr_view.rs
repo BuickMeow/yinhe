@@ -122,9 +122,19 @@ impl PrView {
     }
 
     /// 设置播放光标位置（tick），None 隐藏。由 lib.rs 每帧从音频位置换算后调用。
-    #[allow(dead_code)] // 预留接口：lib.rs 接入播放光标后移除本 allow。
     pub fn set_cursor(&mut self, tick: Option<f64>) {
         self.cursor_tick = tick;
+    }
+
+    /// 播放跟随：水平滚动让光标位于内容区中央（lib.rs 在跟随模式开启时每帧调用）。
+    pub fn follow_cursor(&mut self) {
+        let Some(tick) = self.cursor_tick else {
+            return;
+        };
+        let content_w = (self.width as f32 - self.keyboard_w).max(1.0);
+        let target = tick as f32 * self.view.base.pixels_per_tick - content_w / 2.0;
+        self.view.base.scroll_x = target.max(0.0);
+        self.view.base.dirty = true;
     }
 
     /// 主 UI 入口：背景 + 键盘列 + 网格 + GPU 音符层 + 触摸交互。
@@ -151,8 +161,10 @@ impl PrView {
         self.view.base.left_panel_width = self.keyboard_w;
         self.view.viewport_h = rect.height();
         // 首次渲染：纵向定位到中央音区（key 60），否则 scroll_y=0 显示最高音区。
+        // 与 GPU 音符层同一参考系：key 127 在顶，key 60 行中心 = 128kh - 60.5kh。
         if !self.view_initialized {
-            self.view.base.scroll_y = (60.0 * self.view.key_height - rect.height() / 2.0).max(0.0);
+            let kh = self.view.key_height;
+            self.view.base.scroll_y = ((128.0 - 60.5) * kh - rect.height() / 2.0).max(0.0);
             self.view_initialized = true;
         }
         self.ensure_texture_size(rect);
@@ -378,15 +390,19 @@ impl PrView {
     }
 
     /// 键盘列：可见键范围内的黑白键。
+    /// 纵向参考系与 GPU 音符层一致（key 127 在顶，piano 惯例高音在上）：
+    /// 之前用 key 0 在顶的公式导致键盘列上下颠倒且与音符层错位。
     fn draw_keyboard(&self, ui: &egui::Ui, rect: egui::Rect) {
         let kh = self.view.key_height;
         let scroll_y = self.view.base.scroll_y;
-        let key_lo = (scroll_y / kh).floor() as i32;
-        let key_hi = ((scroll_y + rect.height()) / kh).ceil() as i32;
+        let bottom = 128.0 * kh - scroll_y;
+        let top_key = ((bottom / kh).ceil() as i32 - 1).clamp(0, 127);
+        let bottom_key = (((bottom - rect.height()) / kh).ceil() as i32 - 1).clamp(0, 127);
+        let (key_lo, key_hi) = (bottom_key.min(top_key), bottom_key.max(top_key));
         let painter = ui.painter();
         let is_black = |k: i32| matches!(k % 12, 1 | 3 | 6 | 8 | 10);
-        for key in key_lo.clamp(0, 127)..=key_hi.clamp(0, 127) {
-            let y = rect.min.y + key as f32 * kh - scroll_y;
+        for key in key_lo..=key_hi {
+            let y = rect.min.y + bottom - (key as f32 + 1.0) * kh;
             let color = if is_black(key) {
                 egui::Color32::from_gray(36)
             } else {
