@@ -49,7 +49,12 @@ impl YinheApp {
                     .as_ref()
                     .map(|d| d.edit.track_overrides.clone())
                     .unwrap_or_default();
-                let events = self.ar_view.ui(ui, self.safe_insets, &overrides);
+                let events = self.ar_view.ui(
+                    ui,
+                    self.safe_insets,
+                    &overrides,
+                    self.tool == crate::app::Tool::Hand,
+                );
                 for ev in events {
                     match ev {
                         crate::ar_view::ArEvent::EnterPr(track) => {

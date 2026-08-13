@@ -48,6 +48,8 @@ pub struct ArView {
     status: String,
     /// 播放光标 tick（None = 隐藏），lib.rs 每帧从音频位置换算后设置。
     cursor_tick: Option<f64>,
+    /// 上一帧触点数：检测第二指落下的那一帧（忽略该帧缩放跳变）。
+    prev_touches: u32,
     /// 上一次内容矩形（诊断日志用：变化时打印坐标）。
     last_rect: egui::Rect,
     /// 主题色（与桌面端同源：BaseColors 7 色派生）。
@@ -100,6 +102,7 @@ impl ArView {
             model: None,
             status: String::new(),
             cursor_tick: None,
+            prev_touches: 0,
             last_rect: egui::Rect::NOTHING,
             theme: derive_theme(BaseColors::DARK),
         }
@@ -137,11 +140,13 @@ impl ArView {
     /// 主 UI 入口：背景 + 音轨面板 + GPU 音符层 + 触摸交互。
     /// `safe` 为安全区 insets（逻辑点）：[left, top, right, bottom]。
     /// `overrides` 为每轨 M/S 状态（doc.edit.track_overrides）。
+    /// `hand_scroll`：当前工具是否为抓手（抓手才允许单指滚动）。
     pub fn ui(
         &mut self,
         ui: &mut egui::Ui,
         safe: [f32; 4],
         overrides: &[yinhe_editor_core::TrackOverride],
+        hand_scroll: bool,
     ) -> Vec<ArEvent> {
         let mut events = Vec::new();
         let full = ui.available_rect_before_wrap();
@@ -176,7 +181,7 @@ impl ArView {
         let painter = ui.painter().clone();
         let rect = resp.rect;
 
-        // ── 触摸：单指拖动滚动，双指捏合缩放（x 缩放 + lane 缩放）──
+        // ── 触摸：双指永远导航（平移+缩放），单指滚动仅抓手工具。──
         let (zoom, pan, touches, touch_center) = ui.ctx().input(|i| {
             let mt = i.multi_touch();
             (
@@ -186,8 +191,13 @@ impl ArView {
                 mt.map(|m| m.center_pos),
             )
         });
+        // 第二指刚落下那一帧 zoom_delta 有距离跳变，忽略缩放（防闪缩）。
+        let fresh_pinch = touches >= 2 && self.prev_touches < 2;
+        self.prev_touches = touches as u32;
+        // 缩放判定阈值 2%：双指距离轻微抖动一律按平移处理。
         if let Some(zoom) = zoom
-            && (zoom - 1.0).abs() > 0.001
+            && (zoom - 1.0).abs() > 0.02
+            && !fresh_pinch
         {
             // 音轨面板上捏合 = 垂直缩放（lane 高度）；AR 视口捏合 = 水平缩放（同 PR）。
             let in_panel = touch_center
@@ -226,7 +236,7 @@ impl ArView {
                     (self.view.base.scroll_y - pan.y).clamp(0.0, max_scroll_y);
                 self.view.base.dirty = true;
             }
-        } else if resp.dragged() {
+        } else if hand_scroll && resp.dragged() {
             let d = resp.drag_delta();
             self.view.base.scroll_x = (self.view.base.scroll_x - d.x).max(0.0);
             self.view.base.scroll_y = (self.view.base.scroll_y - d.y).clamp(0.0, max_scroll_y);

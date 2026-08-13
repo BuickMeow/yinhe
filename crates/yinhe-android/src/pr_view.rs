@@ -53,6 +53,8 @@ pub struct PrView {
     view_initialized: bool,
     /// 播放光标 tick（None = 不显示）。由 lib.rs 每帧从音频位置换算后设置。
     cursor_tick: Option<f64>,
+    /// 上一帧触点数：检测第二指落下的那一帧（忽略该帧缩放跳变）。
+    prev_touches: u32,
     /// 上次上传到 GPU cull 的轨道可见性掩码（比较检测变化，变化才上传）。
     last_mask: Vec<bool>,
     /// 主题色（与桌面端同源：BaseColors 7 色派生）。
@@ -104,6 +106,7 @@ impl PrView {
             keyboard_w: 0.0,
             view_initialized: false,
             cursor_tick: None,
+            prev_touches: 0,
             last_mask: Vec::new(),
             theme: derive_theme(BaseColors::DARK),
         }
@@ -151,6 +154,7 @@ impl PrView {
         safe: [f32; 4],
         track_visible: &[bool],
         editing_track: Option<u16>,
+        hand_scroll: bool,
     ) {
         let full = ui.available_rect_before_wrap();
         let painter = ui.painter();
@@ -192,7 +196,7 @@ impl PrView {
             self.view_initialized = true;
         }
         self.ensure_texture_size(rect);
-        self.handle_touch(ui, rect);
+        self.handle_touch(ui, rect, hand_scroll);
         self.ensure_renderer();
         self.ensure_notes(&model);
 
@@ -281,9 +285,9 @@ impl PrView {
         );
     }
 
-    /// 触摸手势：双指捏合 → 键盘列上垂直缩放 key_height / 内容区水平缩放；
-    /// 双指/单指 → 滚动。
-    fn handle_touch(&mut self, ui: &egui::Ui, rect: egui::Rect) {
+    /// 触摸手势：双指永远导航（平移+缩放）；单指滚动仅抓手工具。
+    /// 缩放判定阈值 2% + 第二指落帧忽略，防误缩放。
+    fn handle_touch(&mut self, ui: &egui::Ui, rect: egui::Rect, hand_scroll: bool) {
         let (zoom, pan, touches, pointer_delta, pointer_down, touch_center) = ui.ctx().input(|i| {
             let mt = i.multi_touch();
             (
@@ -295,9 +299,13 @@ impl PrView {
                 mt.map(|m| m.center_pos),
             )
         });
+        // 第二指刚落下那一帧 zoom_delta 有距离跳变，忽略缩放（防闪缩）。
+        let fresh_pinch = touches >= 2 && self.prev_touches < 2;
+        self.prev_touches = touches as u32;
         let base = &mut self.view.base;
         if let Some(zoom) = zoom
-            && (zoom - 1.0).abs() > 0.001
+            && (zoom - 1.0).abs() > 0.02
+            && !fresh_pinch
         {
             if touch_center.is_some_and(|c| c.x < rect.min.x + self.keyboard_w) {
                 // 键盘列上捏合 → 垂直缩放 key_height。锚点 = 双指中心对应的
@@ -334,7 +342,7 @@ impl PrView {
                 base.scroll_y = (base.scroll_y - pan.y).clamp(0.0, max_scroll);
                 base.dirty = true;
             }
-        } else if pointer_down {
+        } else if hand_scroll && pointer_down {
             base.scroll_x = (base.scroll_x - pointer_delta.x).max(0.0);
             base.scroll_y = (base.scroll_y - pointer_delta.y).clamp(0.0, max_scroll);
             base.dirty = true;

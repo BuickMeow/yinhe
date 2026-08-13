@@ -47,7 +47,13 @@ impl YinheApp {
                     .as_ref()
                     .map(|d| (d.edit.track_visible.clone(), d.edit.editing_track))
                     .unwrap_or_default();
-                self.pr_view.ui(ui, self.safe_insets, &tv, et);
+                self.pr_view.ui(
+                    ui,
+                    self.safe_insets,
+                    &tv,
+                    et,
+                    self.tool == crate::app::Tool::Hand,
+                );
             });
         // 轨道显隐列表（点击顶栏右侧轨道名打开）。
         if self.track_list_open {
