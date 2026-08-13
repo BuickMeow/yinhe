@@ -50,6 +50,8 @@ pub struct ArView {
     muted: Vec<bool>,
     /// 播放光标 tick（None = 隐藏），lib.rs 每帧从音频位置换算后设置。
     cursor_tick: Option<f64>,
+    /// 上一次内容矩形（诊断日志用：变化时打印坐标）。
+    last_rect: egui::Rect,
     /// 主题色（与桌面端同源：BaseColors 7 色派生）。
     theme: Theme,
 }
@@ -102,6 +104,7 @@ impl ArView {
             solo: None,
             muted: Vec::new(),
             cursor_tick: None,
+            last_rect: egui::Rect::NOTHING,
             theme: derive_theme(BaseColors::DARK),
         }
     }
@@ -149,6 +152,14 @@ impl ArView {
             full.min + egui::vec2(safe[0], safe[1]),
             full.max - egui::vec2(safe[2], safe[3]),
         );
+        // 诊断：坐标变化时打印一次，定位挖孔避让/错位问题。
+        if rect != self.last_rect {
+            self.last_rect = rect;
+            log::debug!(
+                "ar_view: full={full:?} safe={safe:?} rect={rect:?} ppp={}",
+                self.ppp
+            );
+        }
         if rect.width() <= 0.0 || rect.height() <= 0.0 {
             return events;
         }
