@@ -10,6 +10,7 @@
 
 use eframe::egui;
 use yinhe_audio::spawn::{AudioCommand, CpalAudioHandle};
+use yinhe_core::YinModel;
 
 mod pr_view;
 
@@ -51,6 +52,12 @@ pub struct YinheApp {
     midi_load_start: Option<std::time::Instant>,
     /// 最近一次加载结果统计。
     midi_stats: String,
+    /// 当前 MIDI 模型（加载完成后的唯一引用，音频引擎与 PR 视图共享同一份）。
+    model: Option<std::sync::Arc<YinModel>>,
+    /// 播放光标（tick）：暂停/停止后保留，作为下次播放起点。
+    cursor_tick: f64,
+    /// 跟随播放：开启后滚动让光标始终位于内容区中央。
+    follow_play: bool,
 }
 
 impl YinheApp {
@@ -70,6 +77,9 @@ impl YinheApp {
             midi_loader: None,
             midi_load_start: None,
             midi_stats: String::new(),
+            model: None,
+            cursor_tick: 0.0,
+            follow_play: false,
         };
         // 调试阶段：启动即自动加载小曲，免去手动点击按钮。
         app.start_midi_load(TEST_MIDI_PATH);
@@ -187,8 +197,18 @@ impl YinheApp {
                     "加载完成！{} 音符 | {tracks} 轨 | 时长 {minutes:.1} 分钟\n耗时 {elapsed:.1} 秒",
                     notes,
                 );
-                // 加载完成 → 进入 PR 钢琴卷帘视图
-                self.pr_view.set_model(std::sync::Arc::new(model));
+                // 加载完成 → 模型交给音频引擎（播放）与 PR 卷帘视图（渲染）
+                let model = std::sync::Arc::new(model);
+                if let Some(audio) = &self.audio {
+                    audio.handle.send(AudioCommand::LoadModel {
+                        model: model.clone(),
+                    });
+                    self.audio_status = "模型已加载到音频引擎，可播放".to_string();
+                } else {
+                    self.audio_status = "音频未初始化，无法播放".to_string();
+                }
+                self.model = Some(model.clone());
+                self.pr_view.set_model(model);
                 self.page = Page::Pr;
                 let _ = path;
             }
@@ -270,19 +290,88 @@ impl eframe::App for YinheApp {
 }
 
 impl YinheApp {
-    /// PR 钢琴卷帘页：顶部工具条 + 视图。
+    /// PR 钢琴卷帘页：顶部工具条（返回 + 走带控制）+ 视图。
     fn ui_pr(&mut self, ui: &mut egui::Ui) {
+        self.update_transport();
         egui::Panel::top("pr_toolbar").show(ui, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("◀ 返回").clicked() {
                     self.page = Page::Verify;
                 }
                 ui.label(egui::RichText::new("钢琴卷帘").strong());
+                self.transport_ui(ui);
             });
         });
         egui::CentralPanel::default().show(ui, |ui| {
             self.pr_view.ui(ui);
         });
+    }
+
+    /// 走带控制条：播放/暂停、停止、跟随播放开关、当前/总时长。
+    fn transport_ui(&mut self, ui: &mut egui::Ui) {
+        if self.model.is_none() {
+            ui.label("模型未加载");
+            return;
+        }
+        let Some(audio) = &self.audio else {
+            ui.label("音频未初始化");
+            return;
+        };
+        let playing = audio.handle.is_playing();
+        if ui
+            .button(if playing { "⏸ 暂停" } else { "▶ 播放" })
+            .clicked()
+        {
+            if playing {
+                audio.handle.send(AudioCommand::Pause);
+            } else {
+                let from_sample = (self
+                    .model
+                    .as_ref()
+                    .map(|m| m.tempo_map.tick_to_seconds(self.cursor_tick as u64))
+                    .unwrap_or(0.0)
+                    * audio.sample_rate as f64) as u64;
+                audio.handle.send(AudioCommand::Play { from_sample });
+            }
+        }
+        if ui.button("⏹ 停止").clicked() {
+            audio.handle.send(AudioCommand::Stop);
+            self.cursor_tick = 0.0;
+            self.pr_view.set_cursor(Some(0.0));
+        }
+        ui.toggle_value(&mut self.follow_play, "跟随");
+        let fmt = |s: f64| format!("{:02}:{:02}", (s / 60.0) as u32, s as u32 % 60);
+        let cur = self
+            .model
+            .as_ref()
+            .map(|m| m.tempo_map.tick_to_seconds(self.cursor_tick as u64))
+            .unwrap_or(0.0);
+        let total = self
+            .model
+            .as_ref()
+            .map(|m| m.tempo_map.duration_seconds())
+            .unwrap_or(0.0);
+        ui.label(format!("{} / {}", fmt(cur), fmt(total)));
+    }
+
+    /// 每帧从音频引擎同步播放位置：换算 tick 更新播放光标，跟随模式时滚动视口。
+    fn update_transport(&mut self) {
+        let Some(audio) = &self.audio else {
+            return;
+        };
+        if !audio.handle.is_playing() {
+            return;
+        }
+        let Some(model) = &self.model else {
+            return;
+        };
+        let seconds = audio.handle.sample_position() as f64 / audio.sample_rate as f64;
+        let tick = seconds_to_tick(model, seconds);
+        self.cursor_tick = tick;
+        self.pr_view.set_cursor(Some(tick));
+        if self.follow_play {
+            self.pr_view.follow_cursor();
+        }
     }
 
     /// 验证页：触摸/音频/MIDI 加载验证。
@@ -422,6 +511,23 @@ impl YinheApp {
             }
         });
     }
+}
+
+/// 由秒反查 tick：tempo_map 只提供 tick_to_seconds（随 tempo 分段单调递增），
+/// 二分 40 次足够收敛到亚 tick 精度，音频播放位置反查用。
+fn seconds_to_tick(model: &YinModel, seconds: f64) -> f64 {
+    let total = model.tempo_map.tick_length.max(1) as f64;
+    let mut lo = 0.0;
+    let mut hi = total;
+    for _ in 0..40 {
+        let mid = (lo + hi) * 0.5;
+        if model.tempo_map.tick_to_seconds(mid as u64) < seconds {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    (lo + hi) * 0.5
 }
 
 /// 创建 eframe 运行入口（安卓与桌面共用）。
