@@ -7182,6 +7182,7 @@ dependencies = [
  "cpal",
  "eframe",
  "egui",
+ "egui_material_icons",
  "log",
  "tracing-log",
  "wgpu",
@@ -7190,6 +7191,7 @@ dependencies = [
  "yinhe-core",
  "yinhe-editor-core",
  "yinhe-mid2",
+ "yinhe-theme",
  "yinhe-types",
  "yinhe-wgpu",
 ]
