@@ -58,6 +58,8 @@ pub struct YinheApp {
     cursor_tick: f64,
     /// 跟随播放：开启后滚动让光标始终位于内容区中央。
     follow_play: bool,
+    /// 走带时间显示格式：false = mm:ss，true = tick 数（点击切换）。
+    time_show_ticks: bool,
 }
 
 impl YinheApp {
@@ -80,6 +82,7 @@ impl YinheApp {
             model: None,
             cursor_tick: 0.0,
             follow_play: false,
+            time_show_ticks: false,
         };
         // 调试阶段：启动即自动加载小曲 + 初始化音频/音色库，免去手动点击按钮。
         app.start_midi_load(TEST_MIDI_PATH);
@@ -358,18 +361,39 @@ impl YinheApp {
             self.pr_view.set_cursor(Some(0.0));
         }
         ui.toggle_value(&mut self.follow_play, "跟随");
-        let fmt = |s: f64| format!("{:02}:{:02}", (s / 60.0) as u32, s as u32 % 60);
-        let cur = self
+        // BPM：当前光标处的速度（tempo 分段变化时随位置更新）。
+        let cur_sec = self
             .model
             .as_ref()
             .map(|m| m.tempo_map.tick_to_seconds(self.cursor_tick as u64))
             .unwrap_or(0.0);
-        let total = self
+        let bpm = self
+            .model
+            .as_ref()
+            .map(|m| m.tempo_map.bpm_at_time(cur_sec))
+            .unwrap_or(120.0);
+        ui.label(format!("{bpm:.0} BPM"));
+        // 时间显示：点击在 mm:ss 与 tick 之间切换。
+        let total_sec = self
             .model
             .as_ref()
             .map(|m| m.tempo_map.duration_seconds())
             .unwrap_or(0.0);
-        ui.label(format!("{} / {}", fmt(cur), fmt(total)));
+        let time_text = if self.time_show_ticks {
+            let total_ticks = self
+                .model
+                .as_ref()
+                .map(|m| m.tempo_map.tick_length)
+                .unwrap_or(0);
+            format!("{} / {} tick", self.cursor_tick as u64, total_ticks)
+        } else {
+            let fmt = |s: f64| format!("{:02}:{:02}", (s / 60.0) as u32, s as u32 % 60);
+            format!("{} / {}", fmt(cur_sec), fmt(total_sec))
+        };
+        let time_resp = ui.add(egui::Label::new(time_text).sense(egui::Sense::click()));
+        if time_resp.clicked() {
+            self.time_show_ticks = !self.time_show_ticks;
+        }
     }
 
     /// 每帧从音频引擎同步播放位置：换算 tick 更新播放光标，跟随模式时滚动视口。
