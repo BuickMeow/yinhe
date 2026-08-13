@@ -138,10 +138,20 @@ impl PrView {
     }
 
     /// 主 UI 入口：背景 + 键盘列 + 网格 + GPU 音符层 + 触摸交互。
-    pub fn ui(&mut self, ui: &mut egui::Ui) {
-        let rect = ui.available_rect_before_wrap();
+    /// safe 为安全区 insets（逻辑点）：[left, top, right, bottom]。
+    pub fn ui(&mut self, ui: &mut egui::Ui, safe: [f32; 4]) {
+        let full = ui.available_rect_before_wrap();
         let painter = ui.painter();
-        painter.rect_filled(rect, 0.0, self.theme.app_bg);
+        // 背景铺满整个视口（延伸到挖孔/刘海后面，视觉融合）；
+        // 内容区（纹理/键盘/标尺）整体避开安全区，挖孔区域只显示背景色。
+        painter.rect_filled(full, 0.0, self.theme.app_bg);
+        let rect = egui::Rect::from_min_max(
+            full.min + egui::vec2(safe[0], safe[1]),
+            full.max - egui::vec2(safe[2], safe[3]),
+        );
+        if rect.width() <= 0.0 || rect.height() <= 0.0 {
+            return;
+        }
 
         // 顶部小节标尺带：高度充足时内容区整体下移 24px 让位，否则不画标尺。
         let ruler_h = if rect.height() > 200.0 { RULER_H } else { 0.0 };

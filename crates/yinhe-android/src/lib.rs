@@ -12,6 +12,7 @@ use eframe::egui;
 use yinhe_audio::spawn::{AudioCommand, CpalAudioHandle};
 use yinhe_core::YinModel;
 
+mod insets;
 mod pr_view;
 
 /// 阶段 0.5 音频验证用的音色库路径（adb push 到 app 私有目录）。
@@ -94,6 +95,8 @@ pub struct YinheApp {
     tool: Tool,
     /// 工具选择弹窗是否打开。
     tool_picker_open: bool,
+    /// 安全区 insets（逻辑点）：[left, top, right, bottom]，每帧从 [`insets`] 刷新。
+    safe_insets: [f32; 4],
 }
 
 impl YinheApp {
@@ -119,6 +122,7 @@ impl YinheApp {
             time_show_ticks: false,
             tool: Tool::Select,
             tool_picker_open: false,
+            safe_insets: [0.0; 4],
         };
         // 调试阶段：启动即自动加载小曲 + 初始化音频/音色库，免去手动点击按钮。
         app.start_midi_load(TEST_MIDI_PATH);
@@ -339,6 +343,16 @@ impl eframe::App for YinheApp {
         // 请求周期重绘让计时/状态文字持续刷新。
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
 
+        // 挖孔/刘海安全区：物理 px → 逻辑点（insets 变化后至多 100ms 内生效）。
+        let ppp = ctx.pixels_per_point().max(0.25);
+        let px = insets::safe_insets_px();
+        self.safe_insets = [
+            px[0] as f32 / ppp,
+            px[1] as f32 / ppp,
+            px[2] as f32 / ppp,
+            px[3] as f32 / ppp,
+        ];
+
         match self.page {
             Page::Verify => self.ui_verify(ui),
             Page::Pr => self.ui_pr(ui),
@@ -351,31 +365,44 @@ impl YinheApp {
     fn ui_pr(&mut self, ui: &mut egui::Ui) {
         self.update_transport();
         // 工具条保留少量内边距；内容区零边框，PR 视图铺满（不留黑缝）。
+        // 左右/顶部让出挖孔安全区，防止返回/走带按钮被挖孔遮挡。
+        // frame margin 是 i8（放不下大 inset），这里手动缩进可用区域。
+        let [sl, st, sr, _] = self.safe_insets;
         egui::Panel::top("pr_toolbar")
-            .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(8, 6)))
+            .frame(egui::Frame::NONE)
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    let icon_text = |icon: egui_material_icons::MaterialIcon| {
-                        egui::RichText::new(icon.codepoint)
-                            .family(icon.font_family())
-                            .size(18.0)
-                    };
-                    use egui_material_icons::icons::ICON_ARROW_BACK;
-                    if ui
-                        .button(icon_text(ICON_ARROW_BACK))
-                        .on_hover_text("返回")
-                        .clicked()
-                    {
-                        self.page = Page::Verify;
-                    }
-                    ui.label(egui::RichText::new("钢琴卷帘").strong());
-                    self.transport_ui(ui);
+                let avail = ui.available_rect_before_wrap();
+                let inner = egui::Rect::from_min_max(
+                    avail.min + egui::vec2(sl + 8.0, st + 6.0),
+                    avail.max - egui::vec2(sr + 8.0, 6.0),
+                );
+                if inner.width() <= 0.0 || inner.height() <= 0.0 {
+                    return;
+                }
+                ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
+                    ui.horizontal(|ui| {
+                        let icon_text = |icon: egui_material_icons::MaterialIcon| {
+                            egui::RichText::new(icon.codepoint)
+                                .family(icon.font_family())
+                                .size(18.0)
+                        };
+                        use egui_material_icons::icons::ICON_ARROW_BACK;
+                        if ui
+                            .button(icon_text(ICON_ARROW_BACK))
+                            .on_hover_text("返回")
+                            .clicked()
+                        {
+                            self.page = Page::Verify;
+                        }
+                        ui.label(egui::RichText::new("钢琴卷帘").strong());
+                        self.transport_ui(ui);
+                    });
                 });
             });
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
-                self.pr_view.ui(ui);
+                self.pr_view.ui(ui, self.safe_insets);
             });
         // 工具选择弹窗：屏幕中央、横向排列（选择/铅笔/橡皮）。
         if self.tool_picker_open {
@@ -557,114 +584,127 @@ impl YinheApp {
             self.press_state = None;
         }
 
+        let [sl, st, sr, sb] = self.safe_insets;
         egui::CentralPanel::default().show(ui, |ui| {
-            let screen = ui.ctx().viewport_rect();
-            ui.heading("银河 MIDI 编辑器 · Android 验证");
-            ui.label("阶段 0：管道跑通 + 中文渲染 + 触摸事件");
-            ui.separator();
-
-            ui.horizontal(|ui| {
-                ui.label(format!(
-                    "屏幕: {:.0} x {:.0}",
-                    screen.width(),
-                    screen.height()
-                ));
-                ui.separator();
-                ui.label(format!("长按: {}", if long_press { "是" } else { "否" }));
-                ui.separator();
-                ui.label(format!("双击次数: {}", self.double_click_count));
-            });
-            if !gesture.is_empty() {
-                self.last_gesture.clone_from(&gesture);
+            // 挖孔安全区避让：手动缩进可用区域（frame margin 是 i8，放不下大 inset）。
+            let avail = ui.available_rect_before_wrap();
+            let inner = egui::Rect::from_min_max(
+                avail.min + egui::vec2(sl, st),
+                avail.max - egui::vec2(sr, sb),
+            );
+            if inner.width() <= 0.0 || inner.height() <= 0.0 {
+                return;
             }
-            if !self.last_gesture.is_empty() {
-                ui.label(&self.last_gesture);
-            }
+            ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
+                let screen = ui.ctx().viewport_rect();
+                ui.heading("银河 MIDI 编辑器 · Android 验证");
+                ui.label("阶段 0：管道跑通 + 中文渲染 + 触摸事件");
+                ui.separator();
 
-            // ── 音频验证（cpal/AAudio + xsynth 全链路）──
-            ui.separator();
-            ui.label(egui::RichText::new("音频验证").strong());
-            ui.horizontal_wrapped(|ui| {
-                if ui.button("初始化音频").clicked() {
-                    self.init_audio();
+                ui.horizontal(|ui| {
+                    ui.label(format!(
+                        "屏幕: {:.0} x {:.0}",
+                        screen.width(),
+                        screen.height()
+                    ));
+                    ui.separator();
+                    ui.label(format!("长按: {}", if long_press { "是" } else { "否" }));
+                    ui.separator();
+                    ui.label(format!("双击次数: {}", self.double_click_count));
+                });
+                if !gesture.is_empty() {
+                    self.last_gesture.clone_from(&gesture);
                 }
-                if ui.button("加载音色库").clicked() {
-                    self.load_soundfont();
+                if !self.last_gesture.is_empty() {
+                    ui.label(&self.last_gesture);
                 }
-                if ui.button("播放 C 和弦").clicked() {
-                    self.play_chord();
+
+                // ── 音频验证（cpal/AAudio + xsynth 全链路）──
+                ui.separator();
+                ui.label(egui::RichText::new("音频验证").strong());
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("初始化音频").clicked() {
+                        self.init_audio();
+                    }
+                    if ui.button("加载音色库").clicked() {
+                        self.load_soundfont();
+                    }
+                    if ui.button("播放 C 和弦").clicked() {
+                        self.play_chord();
+                    }
+                    if ui.button("停止").clicked()
+                        && let Some(a) = &self.audio
+                    {
+                        a.handle.send(AudioCommand::PreviewStop);
+                        self.audio_status = "已停止".to_string();
+                    }
+                });
+                self.poll_sf_load();
+                ui.label(
+                    egui::RichText::new(&self.audio_status)
+                        .color(egui::Color32::from_rgb(120, 200, 120)),
+                );
+                ui.separator();
+
+                // ── 阶段 1：MIDI 加载验证（file_loading 模块）──
+                ui.label(egui::RichText::new("MIDI 加载验证").strong());
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("加载小曲").clicked() {
+                        self.start_midi_load(TEST_MIDI_PATH);
+                    }
+                    if ui.button("加载大曲").clicked() {
+                        self.start_midi_load(BIG_MIDI_PATH);
+                    }
+                });
+                self.poll_midi_load();
+                ui.label(
+                    egui::RichText::new(&self.midi_stats)
+                        .color(egui::Color32::from_rgb(140, 200, 255)),
+                );
+                ui.separator();
+
+                // ── 触摸画布：占满剩余空间，点按画点、双击计数、拖拽跟手 ──
+                let rect = ui.available_rect_before_wrap();
+                let resp = ui.allocate_rect(rect, egui::Sense::click_and_drag());
+                let rect = resp.rect;
+                let painter = ui.painter();
+                painter.rect_filled(rect, 8.0, egui::Color32::from_gray(28));
+                painter.rect_stroke(
+                    rect,
+                    8.0,
+                    egui::Stroke::new(1.0, egui::Color32::from_gray(90)),
+                    egui::StrokeKind::Inside,
+                );
+                painter.text(
+                    rect.left_top() + egui::vec2(8.0, 6.0),
+                    egui::Align2::LEFT_TOP,
+                    format!(
+                        "画布: {:.0} x {:.0}（点这里测试）",
+                        rect.width(),
+                        rect.height()
+                    ),
+                    egui::FontId::proportional(12.0),
+                    egui::Color32::from_gray(140),
+                );
+
+                if resp.double_clicked() {
+                    self.double_click_count += 1;
                 }
-                if ui.button("停止").clicked()
-                    && let Some(a) = &self.audio
+                if let Some(pos) = resp.interact_pointer_pos()
+                    && rect.contains(pos)
                 {
-                    a.handle.send(AudioCommand::PreviewStop);
-                    self.audio_status = "已停止".to_string();
+                    self.taps.push(pos);
+                    if self.taps.len() > 200 {
+                        self.taps.remove(0);
+                    }
+                }
+                for tap in &self.taps {
+                    painter.circle_filled(*tap, 6.0, egui::Color32::from_rgb(255, 140, 60));
+                }
+                if let Some(hover) = resp.hover_pos() {
+                    painter.circle_stroke(hover, 12.0, egui::Stroke::new(1.5, egui::Color32::GRAY));
                 }
             });
-            self.poll_sf_load();
-            ui.label(
-                egui::RichText::new(&self.audio_status)
-                    .color(egui::Color32::from_rgb(120, 200, 120)),
-            );
-            ui.separator();
-
-            // ── 阶段 1：MIDI 加载验证（file_loading 模块）──
-            ui.label(egui::RichText::new("MIDI 加载验证").strong());
-            ui.horizontal_wrapped(|ui| {
-                if ui.button("加载小曲").clicked() {
-                    self.start_midi_load(TEST_MIDI_PATH);
-                }
-                if ui.button("加载大曲").clicked() {
-                    self.start_midi_load(BIG_MIDI_PATH);
-                }
-            });
-            self.poll_midi_load();
-            ui.label(
-                egui::RichText::new(&self.midi_stats).color(egui::Color32::from_rgb(140, 200, 255)),
-            );
-            ui.separator();
-
-            // ── 触摸画布：占满剩余空间，点按画点、双击计数、拖拽跟手 ──
-            let rect = ui.available_rect_before_wrap();
-            let resp = ui.allocate_rect(rect, egui::Sense::click_and_drag());
-            let rect = resp.rect;
-            let painter = ui.painter();
-            painter.rect_filled(rect, 8.0, egui::Color32::from_gray(28));
-            painter.rect_stroke(
-                rect,
-                8.0,
-                egui::Stroke::new(1.0, egui::Color32::from_gray(90)),
-                egui::StrokeKind::Inside,
-            );
-            painter.text(
-                rect.left_top() + egui::vec2(8.0, 6.0),
-                egui::Align2::LEFT_TOP,
-                format!(
-                    "画布: {:.0} x {:.0}（点这里测试）",
-                    rect.width(),
-                    rect.height()
-                ),
-                egui::FontId::proportional(12.0),
-                egui::Color32::from_gray(140),
-            );
-
-            if resp.double_clicked() {
-                self.double_click_count += 1;
-            }
-            if let Some(pos) = resp.interact_pointer_pos()
-                && rect.contains(pos)
-            {
-                self.taps.push(pos);
-                if self.taps.len() > 200 {
-                    self.taps.remove(0);
-                }
-            }
-            for tap in &self.taps {
-                painter.circle_filled(*tap, 6.0, egui::Color32::from_rgb(255, 140, 60));
-            }
-            if let Some(hover) = resp.hover_pos() {
-                painter.circle_stroke(hover, 12.0, egui::Stroke::new(1.5, egui::Color32::GRAY));
-            }
         });
     }
 }
