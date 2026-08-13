@@ -81,8 +81,10 @@ impl YinheApp {
             cursor_tick: 0.0,
             follow_play: false,
         };
-        // 调试阶段：启动即自动加载小曲，免去手动点击按钮。
+        // 调试阶段：启动即自动加载小曲 + 初始化音频/音色库，免去手动点击按钮。
         app.start_midi_load(TEST_MIDI_PATH);
+        app.init_audio();
+        app.load_soundfont();
         app
     }
 
@@ -94,10 +96,16 @@ impl YinheApp {
         //（预览路径 ring 目标 512 帧 ≈10ms，调度抖动即欠载 → 用固定缓冲缓冲抖动）
         match yinhe_audio::spawn_cpal_audio(48000, layout, cpal::BufferSize::Fixed(1024), None) {
             Ok(handle) => {
+                log::info!(
+                    "audio: 引擎初始化成功 @ {}Hz (sample_rate={})",
+                    handle.sample_rate,
+                    handle.sample_rate
+                );
                 self.audio_status = format!("音频引擎已初始化 @ {}Hz", handle.sample_rate);
                 self.audio = Some(handle);
             }
             Err(e) => {
+                log::error!("audio: 引擎初始化失败: {e}");
                 self.audio_status = format!("初始化失败: {e}");
             }
         }
@@ -110,6 +118,7 @@ impl YinheApp {
             return;
         };
         if !std::path::Path::new(TEST_SF_PATH).exists() {
+            log::error!("audio: 音色库不存在 {TEST_SF_PATH}");
             self.audio_status = format!("音色库不存在: {TEST_SF_PATH}");
             return;
         }
@@ -203,6 +212,10 @@ impl YinheApp {
                     audio.handle.send(AudioCommand::LoadModel {
                         model: model.clone(),
                     });
+                    log::info!(
+                        "audio: LoadModel 已发送 ({} 音符)",
+                        model.track_note_count.iter().sum::<u64>()
+                    );
                     self.audio_status = "模型已加载到音频引擎，可播放".to_string();
                 } else {
                     self.audio_status = "音频未初始化，无法播放".to_string();
