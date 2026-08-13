@@ -169,7 +169,11 @@ impl ArView {
         self.ppp = ui.ctx().pixels_per_point().max(0.25);
         self.ensure_texture_size(rect);
 
-        let (resp, painter) = ui.allocate_painter(rect.size(), egui::Sense::click_and_drag());
+        // 注意：不能在这里用 allocate_painter(rect.size())——它从当前光标位置
+        // 分配，会把挖孔避让后的 rect 覆盖回 (0, top)，导致整个内容左移一个
+        // 挖孔距离。用 allocate_rect 在指定位置分配。
+        let resp = ui.allocate_rect(rect, egui::Sense::click_and_drag());
+        let painter = ui.painter().clone();
         let rect = resp.rect;
 
         // ── 触摸：单指拖动滚动，双指捏合缩放（x 缩放 + lane 缩放）──
