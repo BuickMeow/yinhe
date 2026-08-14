@@ -759,7 +759,7 @@ fn refresh_native_menu_texts() {
 }
 
 /// 把用户自定义快捷键同步到原生菜单加速键。
-/// 由 `MenuBarInner::poll` 在检测到快捷键配置变化后调用（主线程）。
+/// 由 MenuBarInner::poll 在检测到快捷键配置变化后调用（主线程）。
 fn refresh_native_menu_accelerators(keybindings: &Keybindings) {
     NATIVE_MENU.with(|cell| {
         if let Some(native) = cell.get() {
@@ -778,6 +778,23 @@ fn refresh_native_menu_accelerators(keybindings: &Keybindings) {
     });
 }
 
+/// 清空全部原生菜单加速键。
+/// 设置窗口打开或快捷键录制期间调用：macOS 的菜单加速键由 AppKit 在
+/// 系统层面拦截按键（不经过 egui），不清空的话设置页内按 Cmd+S 等组合
+/// 会直接触发菜单动作，录制器收不到按键。
+fn clear_native_menu_accelerators() {
+    NATIVE_MENU.with(|cell| {
+        if let Some(native) = cell.get() {
+            for (key, item) in &native._items {
+                let key = *key;
+                if MENU_ACCEL_MAP.iter().any(|(k, _)| *k == key) {
+                    item.update_accelerator(None);
+                }
+            }
+        }
+    });
+}
+
 pub(crate) struct MenuBarInner {
     rx: mpsc::Receiver<MenuAction>,
     open_files_rx: mpsc::Receiver<String>,
@@ -785,6 +802,9 @@ pub(crate) struct MenuBarInner {
     last_locale: String,
     /// 上次应用到原生菜单加速键的配置，变化时刷新加速键。
     last_keybindings: Keybindings,
+    /// 加速键是否处于暂停（设置窗口打开/录制中）。暂停期间全部清空，
+    /// 避免 AppKit 系统级拦截按键导致设置页录不到组合键。
+    accelerators_suspended: bool,
 }
 
 impl MenuBarInner {
@@ -800,10 +820,13 @@ impl MenuBarInner {
             open_files_rx,
             last_locale: rust_i18n::locale().to_string(),
             last_keybindings: Keybindings::default(),
+            accelerators_suspended: false,
         }
     }
 
-    pub fn poll(&mut self, keybindings: &Keybindings) -> Vec<MenuAction> {
+    /// suspend 为 true 时清空全部菜单加速键（设置窗口打开或快捷键录制中），
+    /// 防止系统在应用层面前拦截组合键；恢复 false 后按最新配置刷新。
+    pub fn poll(&mut self, keybindings: &Keybindings, suspend: bool) -> Vec<MenuAction> {
         // 应用内语言切换（设置对话框）时原生菜单文本不会自动更新，
         // 检测 locale 变化后逐个刷新标题（setText 走主线程，poll 在 UI 帧内调用）。
         let locale = rust_i18n::locale();
@@ -811,9 +834,14 @@ impl MenuBarInner {
             self.last_locale = locale.to_string();
             refresh_native_menu_texts();
         }
-        // 快捷键配置（设置页）变化时同步原生菜单加速键。
-        // 初始值相等时不刷新（init_native_menu 已按默认值构建）。
-        if keybindings != &self.last_keybindings {
+        if suspend {
+            if !self.accelerators_suspended {
+                self.accelerators_suspended = true;
+                clear_native_menu_accelerators();
+            }
+        } else if self.accelerators_suspended || keybindings != &self.last_keybindings {
+            // 恢复或配置变化：按最新配置刷新（初始值相等时不刷新，init_native_menu 已按默认值构建）。
+            self.accelerators_suspended = false;
             self.last_keybindings = keybindings.clone();
             refresh_native_menu_accelerators(keybindings);
         }

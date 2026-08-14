@@ -13,7 +13,7 @@ impl MenuBarInner {
         Self { _rx: rx }
     }
 
-    pub fn poll(&mut self, _keybindings: &Keybindings) -> Vec<MenuAction> {
+    pub fn poll(&mut self, _keybindings: &Keybindings, _suspend: bool) -> Vec<MenuAction> {
         Vec::new()
     }
 

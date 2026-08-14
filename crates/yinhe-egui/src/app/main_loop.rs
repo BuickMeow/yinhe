@@ -127,7 +127,15 @@ impl eframe::App for App {
         // ── macOS: poll native menu bar actions ──
         // 路由：Select/SelectVertical 工具且有锚点选中时，copy/paste/duplicate/delete 作用于自动化锚点
         let route_to_automation = self.has_selected_automation_anchors();
-        for action in self.menu_bar.poll(&self.audio_settings.keybindings) {
+        // 设置窗口打开或快捷键录制期间暂停原生菜单加速键：macOS 的菜单加速键由
+        // AppKit 在系统层面拦截（不经过 egui），不暂停会导致设置页内按 Cmd+S 等
+        // 组合直接触发菜单动作、录制器收不到按键。
+        let suspend_menu_accels =
+            self.audio_settings.show_settings || self.audio_settings.shortcut_recording;
+        for action in self
+            .menu_bar
+            .poll(&self.audio_settings.keybindings, suspend_menu_accels)
+        {
             use crate::platform::MenuAction;
             let file_action = match action {
                 MenuAction::NewProject => transport_bar::FileAction::NewProject,

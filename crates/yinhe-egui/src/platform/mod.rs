@@ -48,12 +48,15 @@ impl MenuBar {
     }
 
     /// Poll for pending menu actions.
-    /// `keybindings` 用于检测快捷键配置变化并同步原生菜单加速键（macOS）。
+    /// keybindings 用于检测快捷键配置变化并同步原生菜单加速键（macOS）；
+    /// suspend 为 true（设置窗口打开/快捷键录制中）时暂停原生菜单加速键，
+    /// 避免系统级拦截组合键。
     pub fn poll(
         &mut self,
         keybindings: &yinhe_editor_core::shortcuts::Keybindings,
+        suspend: bool,
     ) -> Vec<MenuAction> {
-        self.inner.poll(keybindings)
+        self.inner.poll(keybindings, suspend)
     }
 
     /// Poll for file paths passed in by the OS (Finder "Open With" on macOS).
