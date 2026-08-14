@@ -143,7 +143,10 @@ class MainActivity : GameActivity() {
             et.isFocusableInTouchMode = true
             // 多行：描述框需要换行；工程名/艺术家里 egui singleline 会过滤 \n。
             et.inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
-            et.imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+            // NO_EXTRACT_UI：横屏下输入法默认显示提取模式（白色放大编辑区），
+            // 请求不显示，键盘直接悬浮（egui 输入框就在下方，无需放大区）。
+            et.imeOptions =
+                android.view.inputmethod.EditorInfo.IME_ACTION_DONE or android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI
             // 输入法 action 键（完成/前往/换行等）一律收键盘；多行时换行键
             // 走 commitText 插入 \n，不触发此回调，所以换行不受影响。
             et.setOnEditorActionListener { _, _, _ ->
