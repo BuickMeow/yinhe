@@ -476,10 +476,11 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                         }
                         ui.add_space(2.0);
                     }
-                    // 把左侧按钮 + 右侧工具按钮都纳入"按钮区"，
-                    // 避免双击/拖拽误触发窗口最大化或拖动。
-                    button_right = Some(ui.cursor().min.x);
                 }
+                // 把左侧按钮 + 右侧工具按钮都纳入"按钮区"，
+                // 避免双击/拖拽误触发窗口最大化或拖动。
+                // （无文档时也有左侧按钮，同样需要排除。）
+                button_right = Some(ui.cursor().min.x);
             });
 
             // ── 状态栏讲解行：控件 hover 提示写入，传输栏空白处清空 ──
@@ -493,6 +494,13 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
             } else if pointer_pos.is_some_and(|p| bar_rect.contains(p)) {
                 *ctx.status_hint = None;
             }
+            // 判断 pos 是否在传输栏"空白区"：bar 内、非按钮区、非时间码。
+            // 双击最大化与窗口拖拽共用此判定（按钮/时间码上不触发）。
+            let is_blank_area = |pos: egui::Pos2| {
+                bar_rect.contains(pos)
+                    && !timecode_rect.is_some_and(|r| r.contains(pos))
+                    && !button_right.is_some_and(|r| pos.x >= bar_rect.min.x && pos.x < r)
+            };
 
             // ── Double-click transport bar blank area to toggle maximize/restore ──
             // Manual click-timestamp tracking avoids egui's button_double_clicked()
@@ -503,26 +511,17 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
             let dbl_id = ui.id().with("transport_bar_dbl_click");
             if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary))
                 && let Some(pos) = ui.input(|i| i.pointer.interact_pos())
+                && is_blank_area(pos)
             {
-                let bar_rect = ui.max_rect();
-                let in_bar = bar_rect.contains(pos);
-                let in_timecode = timecode_rect
-                    .map(|r: egui::Rect| r.contains(pos))
-                    .unwrap_or(false);
-                let in_buttons = button_right
-                    .map(|r: f32| pos.x >= bar_rect.min.x && pos.x < r)
-                    .unwrap_or(false);
-                if in_bar && !in_timecode && !in_buttons {
-                    let now = ui.input(|i| i.time);
-                    let last_click: f64 = ui.data_mut(|d| d.get_persisted(dbl_id)).unwrap_or(0.0);
-                    if now - last_click < DOUBLE_CLICK_MS / 1000.0 {
-                        let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
-                        ui.ctx()
-                            .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
-                        ui.data_mut(|d| d.insert_persisted(dbl_id, 0.0)); // reset
-                    } else {
-                        ui.data_mut(|d| d.insert_persisted(dbl_id, now));
-                    }
+                let now = ui.input(|i| i.time);
+                let last_click: f64 = ui.data_mut(|d| d.get_persisted(dbl_id)).unwrap_or(0.0);
+                if now - last_click < DOUBLE_CLICK_MS / 1000.0 {
+                    let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                    ui.data_mut(|d| d.insert_persisted(dbl_id, 0.0)); // reset
+                } else {
+                    ui.data_mut(|d| d.insert_persisted(dbl_id, now));
                 }
             }
 
@@ -530,20 +529,24 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
             // Uses manual pointer tracking (no ui.interact) to avoid consuming
             // button clicks. Only starts a drag if the press began in a blank area
             // (outside buttons and timecode display).
-            let bar_rect = ui.max_rect();
+            // StartDrag 只在指针移过 egui 点击距离阈值后才发送：如果按下就
+            // 立即 StartDrag，macOS 会进入系统级窗口拖拽循环并吞掉 release
+            // 事件，导致 click（进而双击最大化）永远无法触发。
             let drag_id = ui.id().with("tb_drag_started");
             let mut drag_started: bool = ui.data_mut(|d| d.get_temp(drag_id)).unwrap_or(false);
 
             if ui.input(|i| i.pointer.primary_down()) {
-                if !drag_started && let Some(pos) = ui.input(|i| i.pointer.press_origin()) {
-                    let in_bar = bar_rect.contains(pos);
-                    let in_timecode = timecode_rect
-                        .map(|r: egui::Rect| r.contains(pos))
-                        .unwrap_or(false);
-                    let in_buttons = button_right
-                        .map(|r: f32| pos.x >= bar_rect.min.x && pos.x < r)
-                        .unwrap_or(false);
-                    if in_bar && !in_timecode && !in_buttons {
+                if !drag_started
+                    && let Some(pos) = ui.input(|i| i.pointer.press_origin())
+                    && is_blank_area(pos)
+                {
+                    // 位移超过点击阈值（egui 判定 click/drag 的分界线）才启动窗口拖动
+                    let moved_past_click_dist = ui.input(|i| {
+                        i.pointer.hover_pos().is_some_and(|p| {
+                            p.distance(pos) >= egui::InputOptions::default().max_click_dist
+                        })
+                    });
+                    if moved_past_click_dist {
                         drag_started = true;
                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
                     }
@@ -1080,7 +1083,6 @@ fn show_timecode_display(ui: &mut egui::Ui, doc: &Document) -> egui::Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::view_interaction::FollowModeExt;
 
     /// 回归测试：播放菜单各行的垂直间距必须一致。
     /// 此前出现过"播放/暂停"与"停止"之间间距异常的问题。
@@ -1132,5 +1134,191 @@ mod tests {
             gaps.iter().all(|g| (g - expected).abs() < 1.5),
             "行间距异常: {gaps:?}（期望约 {expected}）"
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 双击空白区最大化 / 空白区拖拽窗口 的回归测试（egui_kittest 无头模拟）
+    // 此前 press 立即发送 StartDrag 会让 macOS 系统窗口拖拽循环吞掉
+    // click 事件，导致双击最大化永远无法触发。
+    // ─────────────────────────────────────────────────────────────
+
+    use egui_kittest::Harness;
+
+    fn make_transport_harness<'a>(doc: Option<&'a Document>) -> Harness<'a, ()> {
+        let mut file_loader = FileLoader::new(yinhe_editor_core::progress::new_shared());
+        let mut follow_mode = FollowMode::None;
+        let mut active_tool = Tool::Select;
+        let mut status_hint: Option<String> = None;
+        let mut settings = AudioSettings::default();
+
+        let mut first_frame = true;
+        Harness::builder()
+            .with_size(egui::vec2(1200.0, 60.0))
+            .build_ui_state(
+                move |ui, _| {
+                    // 第一帧只注册 material-icons 字体（add_font 下一 pass 才生效，
+                    // 若同帧渲染图标按钮会 panic），后续帧才渲染 transport bar。
+                    if first_frame {
+                        first_frame = false;
+                        ui.ctx().add_font(egui_material_icons::font_insert());
+                        return;
+                    }
+                    let mut ctx = TransportContext {
+                        file_loader: &mut file_loader,
+                        doc,
+                        follow_mode: &mut follow_mode,
+                        active_tool: &mut active_tool,
+                        status_hint: &mut status_hint,
+                        settings: &mut settings,
+                    };
+                    show(ui, &mut ctx);
+                },
+                (),
+            )
+    }
+
+    /// 在给定时间注入一个指针事件并渲染一帧。
+    fn event_at(h: &mut Harness<'_, ()>, time: f64, event: egui::Event) {
+        h.input_mut().time = Some(time);
+        h.event(event);
+        h.step();
+    }
+
+    fn press_at(h: &mut Harness<'_, ()>, pos: egui::Pos2, time: f64) {
+        event_at(h, time, egui::Event::PointerMoved(pos));
+        event_at(
+            h,
+            time + 0.001,
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::default(),
+            },
+        );
+    }
+
+    fn release_at(h: &mut Harness<'_, ()>, pos: egui::Pos2, time: f64) {
+        event_at(
+            h,
+            time,
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::default(),
+            },
+        );
+    }
+
+    fn click_at(h: &mut Harness<'_, ()>, pos: egui::Pos2, time: f64) {
+        press_at(h, pos, time);
+        release_at(h, pos, time + 0.05);
+    }
+
+    /// 两次单击，间隔 0.15s（小于 400ms 双击窗口）。
+    fn double_click_at(h: &mut Harness<'_, ()>, pos: egui::Pos2, time: f64) {
+        click_at(h, pos, time);
+        click_at(h, pos, time + 0.15);
+    }
+
+    fn has_command(h: &Harness<'_, ()>, cmd: &egui::ViewportCommand) -> bool {
+        h.output()
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .is_some_and(|o| o.commands.iter().any(|c| c == cmd))
+    }
+
+    /// 回归测试：双击 transport bar 空白区域应发送最大化命令（此前 macOS 上失效）。
+    #[test]
+    fn double_click_blank_area_toggles_maximize() {
+        let doc = yinhe_test_helpers::make_test_document();
+        let mut h = make_transport_harness(Some(&doc));
+        double_click_at(&mut h, egui::pos2(1150.0, 20.0), 1.0);
+        assert!(
+            has_command(&h, &egui::ViewportCommand::Maximized(true)),
+            "双击空白区应发送 Maximized 命令，实际命令: {:?}",
+            h.output()
+                .viewport_output
+                .get(&egui::ViewportId::ROOT)
+                .map(|o| &o.commands)
+        );
+    }
+
+    /// 回归测试：双击按钮区域不得触发最大化。
+    #[test]
+    fn double_click_on_button_does_not_maximize() {
+        let doc = yinhe_test_helpers::make_test_document();
+        let mut h = make_transport_harness(Some(&doc));
+        // 最左侧按钮（文件菜单按钮）中心
+        double_click_at(&mut h, egui::pos2(24.0, 20.0), 1.0);
+        assert!(
+            !has_command(&h, &egui::ViewportCommand::Maximized(true)),
+            "双击按钮不应触发最大化"
+        );
+    }
+
+    /// 无文档时双击按钮同样不得触发最大化（按钮区排除不依赖文档）。
+    #[test]
+    fn double_click_button_without_doc_does_not_maximize() {
+        let no_doc: Option<&Document> = None;
+        let mut h = make_transport_harness(no_doc);
+        double_click_at(&mut h, egui::pos2(24.0, 20.0), 1.0);
+        assert!(
+            !has_command(&h, &egui::ViewportCommand::Maximized(true)),
+            "无文档时双击按钮也不应触发最大化"
+        );
+    }
+
+    /// 单击空白区不应触发最大化（防止单次点击误触发）。
+    #[test]
+    fn single_click_blank_area_does_not_maximize() {
+        let doc = yinhe_test_helpers::make_test_document();
+        let mut h = make_transport_harness(Some(&doc));
+        click_at(&mut h, egui::pos2(1150.0, 20.0), 1.0);
+        assert!(!has_command(&h, &egui::ViewportCommand::Maximized(true)));
+    }
+
+    /// 回归测试：空白区按住并移动超过点击阈值应启动窗口拖动。
+    #[test]
+    fn drag_blank_area_starts_window_drag() {
+        let doc = yinhe_test_helpers::make_test_document();
+        let mut h = make_transport_harness(Some(&doc));
+        let start = egui::pos2(1150.0, 20.0);
+        press_at(&mut h, start, 2.0);
+        // 未移动前不得启动窗口拖动（否则单击会被系统拖拽吞掉）
+        assert!(
+            !has_command(&h, &egui::ViewportCommand::StartDrag),
+            "按下未移动时不应 StartDrag"
+        );
+        // 移动 10px（超过 max_click_dist 默认 6px）→ 启动窗口拖动
+        event_at(
+            &mut h,
+            2.1,
+            egui::Event::PointerMoved(start + egui::vec2(10.0, 0.0)),
+        );
+        assert!(
+            has_command(&h, &egui::ViewportCommand::StartDrag),
+            "空白区拖动应发送 StartDrag"
+        );
+        release_at(&mut h, start + egui::vec2(10.0, 0.0), 2.15);
+    }
+
+    /// 单击空白区（无位移）不应启动窗口拖动。
+    /// 注意：必须在 press 后立即断言——kittest 只保留最后一帧的 commands，
+    /// 旧行为（press 立即 StartDrag）会在按下帧发出命令、release 帧覆盖 output，
+    /// 晚一步检查会漏掉回归。
+    #[test]
+    fn click_blank_area_does_not_start_drag() {
+        let doc = yinhe_test_helpers::make_test_document();
+        let mut h = make_transport_harness(Some(&doc));
+        let pos = egui::pos2(1150.0, 20.0);
+        press_at(&mut h, pos, 3.0);
+        assert!(
+            !has_command(&h, &egui::ViewportCommand::StartDrag),
+            "单击按下时不应启动窗口拖动（否则 macOS 上 click 被系统拖拽吞掉）"
+        );
+        release_at(&mut h, pos, 3.05);
+        assert!(!has_command(&h, &egui::ViewportCommand::StartDrag));
     }
 }

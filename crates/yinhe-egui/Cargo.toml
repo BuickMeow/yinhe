@@ -44,6 +44,8 @@ deunicode = "1.6.2"
 [dev-dependencies]
 yinhe-test-helpers = { path = "../yinhe-test-helpers" }
 pollster = { workspace = true }
+# UI 回归测试（无头模拟鼠标事件）：transport bar 双击最大化等交互
+egui_kittest = "0.36.1"
 
 [build-dependencies]
 embed-resource = "3"
