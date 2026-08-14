@@ -447,6 +447,7 @@ impl eframe::App for App {
                 active_tool: &mut self.active_tool,
                 status_hint: &mut self.status_hint,
                 settings: &mut self.audio_settings,
+                is_recording: self.recording.is_some(),
             },
         );
 
@@ -464,6 +465,15 @@ impl eframe::App for App {
             kb.pause_return || transport_response.pause_return || menu_pause_return,
             kb.stop_play || transport_response.stop_play || menu_stop,
         );
+
+        // ── MIDI 录音切换（REC 按钮）──
+        if transport_response.record_toggle {
+            if self.recording.is_some() {
+                self.stop_recording();
+            } else {
+                self.start_recording();
+            }
+        }
 
         // ── Smooth cursor interpolation between audio callback updates ──
         self.interpolate_playback_cursor();

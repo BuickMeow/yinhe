@@ -137,6 +137,8 @@ pub struct App {
     pub(crate) midi_connected_device: Option<String>,
     /// 直通模式按住的键 → 力度（NoteOff 后重发仍按住的键用）。
     pub(crate) midi_thru_keys: std::collections::HashMap<u8, u8>,
+    /// MIDI 录音状态（None = 未录音）。
+    pub(crate) recording: Option<crate::app::midi_input::RecordingState>,
     /// 布局拖拽结束帧置位，帧末统一写盘（拖拽中不写，避免每帧刷盘）。
     pub(crate) layout_needs_save: bool,
     /// Tracks the last applied MIDI encoding to detect changes.
@@ -359,6 +361,7 @@ impl App {
             midi_input: None,
             midi_connected_device: None,
             midi_thru_keys: std::collections::HashMap::new(),
+            recording: None,
             layout_needs_save: false,
             last_midi_encoding: yinhe_midi::MidiImportEncoding::Utf8,
             last_automation_density,

@@ -249,6 +249,8 @@ pub struct TransportContext<'a> {
     pub doc: Option<&'a Document>,
     pub follow_mode: &'a mut FollowMode,
     pub active_tool: &'a mut Tool,
+    /// MIDI 录音进行中（REC 按钮高亮）。
+    pub is_recording: bool,
     /// 状态栏讲解行：控件 hover 时写入提示，空白处清空；鼠标不在传输栏时不动。
     pub status_hint: &'a mut Option<String>,
     /// 应用设置（快捷键表 + 图钉状态，图钉变化时在此 save）。
@@ -260,6 +262,8 @@ pub struct TransportResponse {
     pub toggle_play: bool,
     pub pause_return: bool,
     pub stop_play: bool,
+    /// REC 按钮点击：请求切换录音状态。
+    pub record_toggle: bool,
     pub pending_file_action: Option<FileAction>,
     pub pending_edit_action: Option<EditAction>,
 }
@@ -450,6 +454,31 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     }
                 }
 
+                // ── MIDI 录音（REC）：紧跟在停止按钮右侧，录音中红色高亮 ──
+                {
+                    let rec_color = if ctx.is_recording {
+                        egui::Color32::from_rgb(255, 60, 60)
+                    } else {
+                        crate::theme::text_primary()
+                    };
+                    let rec_resp = ui.add(
+                        egui::Button::new(
+                            ICON_FIBER_MANUAL_RECORD
+                                .rich_text()
+                                .size(crate::theme::TRANSPORT_BTN_FONT)
+                                .color(rec_color),
+                        )
+                        .min_size(btn_size)
+                        .corner_radius(btn_rounding),
+                    );
+                    if rec_resp.clicked() {
+                        play_actions.record = true;
+                    }
+                    if rec_resp.hovered() {
+                        hovered_hint = Some(t!("hint.record").to_string());
+                    }
+                }
+
                 if let Some(doc) = ctx.doc {
                     timecode_rect = Some(show_timecode_display(ui, doc));
 
@@ -583,6 +612,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
         toggle_play: play_actions.toggle_play,
         pause_return: play_actions.pause_return,
         stop_play: play_actions.stop_play,
+        record_toggle: play_actions.record,
         pending_file_action,
         pending_edit_action,
     }
@@ -843,6 +873,7 @@ struct PlayActions {
     toggle_play: bool,
     pause_return: bool,
     stop_play: bool,
+    record: bool,
 }
 
 /// 播放菜单动作（含跟随档位）。

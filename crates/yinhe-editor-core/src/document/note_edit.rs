@@ -70,6 +70,34 @@ impl Document {
         }))
     }
 
+    /// 修改指定音符的 `end_tick`（MIDI 录音 NoteOff 时闭合 gate）。
+    ///
+    /// 按 (key, note_id) 寻址；音符不存在返回 `None`。
+    /// 新 end_tick 会被钳制为至少 `start_tick + 1`（保证 gate >= 1 tick）。
+    pub fn set_note_end_tick(
+        &mut self,
+        key: u8,
+        note_id: u32,
+        end_tick: u32,
+    ) -> Option<UndoAction> {
+        let model = Arc::make_mut(&mut self.data.model);
+        let bucket = Arc::make_mut(&mut model.notes[key as usize]);
+        let orig = *bucket.find_mut(note_id)?;
+        let new_end = end_tick.max(orig.start_tick + 1);
+        if orig.end_tick == new_end {
+            return None;
+        }
+        let mut new_note = orig;
+        new_note.end_tick = new_end;
+        *bucket.find_mut(note_id)? = new_note;
+        model.mark_dirty(key);
+        self.data.rebuild_model_dirty();
+        Some(UndoAction::Notes(NoteDelta {
+            before: vec![(orig, key)],
+            after: vec![(new_note, key)],
+        }))
+    }
+
     /// Delete all selected notes. Returns an `UndoAction` if any notes were deleted.
     pub fn delete_selected(&mut self) -> Option<UndoAction> {
         if self.edit.selected.is_empty() {
@@ -1226,5 +1254,65 @@ mod tests {
         );
         // 记录时间最晚（t200）的 60
         assert_eq!(doc.edit.default_velocity(0), 60);
+    }
+
+    #[test]
+    fn set_note_end_tick_updates_gate_and_undo() {
+        let mut doc = make_doc_with_note();
+        let action = doc
+            .add_note(
+                0,
+                yinhe_core::NoteEvent {
+                    id: 0,
+                    start_tick: 1000,
+                    end_tick: 1001,
+                    key: 62,
+                    velocity: 80,
+                },
+            )
+            .expect("add_note 应成功");
+        let note_id = match &action {
+            crate::history::UndoAction::Notes(d) => d.after[0].0.id,
+            other => panic!("unexpected action {other:?}"),
+        };
+
+        // NoteOff 闭合 gate
+        let before = doc.capture_snapshot();
+        let update = doc
+            .set_note_end_tick(62, note_id, 1480)
+            .expect("set_note_end_tick 应成功");
+        doc.push_undo(update, "record", before);
+        let n = doc.data.model.notes[62][0];
+        assert_eq!(n.end_tick, 1480);
+
+        // undo 恢复原 gate
+        assert!(doc.undo(), "undo 应成功");
+        let n = doc.data.model.notes[62][0];
+        assert_eq!(n.end_tick, 1001);
+    }
+
+    #[test]
+    fn set_note_end_tick_clamps_below_start() {
+        let mut doc = make_doc_with_note();
+        let action = doc
+            .add_note(
+                0,
+                yinhe_core::NoteEvent {
+                    id: 0,
+                    start_tick: 1000,
+                    end_tick: 2000,
+                    key: 62,
+                    velocity: 80,
+                },
+            )
+            .expect("add_note 应成功");
+        let note_id = match &action {
+            crate::history::UndoAction::Notes(d) => d.after[0].0.id,
+            other => panic!("unexpected action {other:?}"),
+        };
+        // 快速弹放：end_tick == start_tick → 钳制为 start+1（仍返回 Some）
+        assert!(doc.set_note_end_tick(62, note_id, 1000).is_some());
+        let n = doc.data.model.notes[62][0];
+        assert_eq!(n.end_tick, 1001);
     }
 }
