@@ -292,6 +292,9 @@ impl ArView {
             } else if tool == crate::app::Tool::Select {
                 // 选择工具：AR 框选（tick × track 范围，按 AR 量化吸附）。
                 if self.marquee_drag.is_none() {
+                    // 开始新选框：旧选框立即消失（桌面端行为：新选框
+                    // 创建时旧选框清除，不等松手）。
+                    events.push(ArEvent::ClearArrSel);
                     let (t, tr) = self.music_pos(pos, rect, quantize, model_ppq);
                     self.marquee_drag = Some((t, tr));
                 }

@@ -202,12 +202,20 @@ impl YinheApp {
                 };
                 // 与桌面端 project_info 相同的编辑模式：gained_focus 记录旧值，
                 // changed 实时写 model，lost_focus 时 commit（变才 push undo）。
+                // 触屏容错：egui 的 touch 点击判定严格（手指微动即判拖动），
+                // 按下位置在输入框内就直接聚焦，不依赖 clicked 事件。
+                let focus_on_press = |ui: &egui::Ui, resp: &egui::Response| {
+                    if resp.hovered() && ui.input(|i| i.pointer.primary_pressed()) {
+                        resp.request_focus();
+                    }
+                };
                 label(ui, "工程名");
                 let mut name = doc.data.model.meta.name.clone();
                 let resp = ui.add_sized(
                     egui::vec2(ui.available_width(), 24.0),
                     egui::TextEdit::singleline(&mut name).hint_text("未命名工程"),
                 );
+                focus_on_press(ui, &resp);
                 if resp.gained_focus() {
                     begin_edit(
                         &mut doc.edit.pending_edits,
@@ -237,6 +245,7 @@ impl YinheApp {
                     egui::vec2(ui.available_width(), 24.0),
                     egui::TextEdit::singleline(&mut artist),
                 );
+                focus_on_press(ui, &resp);
                 if resp.gained_focus() {
                     begin_edit(
                         &mut doc.edit.pending_edits,
@@ -260,6 +269,7 @@ impl YinheApp {
                     egui::vec2(ui.available_width(), 56.0),
                     egui::TextEdit::multiline(&mut desc),
                 );
+                focus_on_press(ui, &resp);
                 if resp.gained_focus() {
                     begin_edit(
                         &mut doc.edit.pending_edits,

@@ -381,6 +381,10 @@ impl PrView {
         );
         self.draw_ruler(ui, rect, content_rect, ruler_h);
         self.draw_cursor(ui, rect, ruler_h);
+        // 持久选框（doc.edit.selected）：边框+半透明填充，与 AR 的选框一致。
+        // GPU selection 高亮只是让选中音符变色，没有边框；拖动中的预览
+        // 矩形松手后消失，没有这层绘制选框就完全看不见（"松手即消失"）。
+        self.draw_selection_boxes(ui, rect, content_rect);
         // 编辑手势预览（画音符/选框），叠在音符层之上。
         self.draw_gesture_preview(ui, rect, content_rect);
 
@@ -549,6 +553,9 @@ impl PrView {
                             cur_k: key as f64,
                         });
                     } else {
+                        // 开始新选框：旧选区立即清除（桌面端行为，不等松手）。
+                        self.selected = Selection::default();
+                        events.push(PrEvent::ClearSelection);
                         self.gesture = Some(EditGesture::Marquee {
                             t0: tick as f64,
                             k0: key as f64,
@@ -779,6 +786,27 @@ impl PrView {
                 self.notes_uploaded = false;
                 return;
             }
+        }
+    }
+
+    /// 持久选框（self.selected 的所有 rect）：边框 + 半透明填充。
+    /// 坐标换算与手势预览一致（tick/key → 屏幕，clamp 内容区）。
+    fn draw_selection_boxes(&self, ui: &egui::Ui, rect: egui::Rect, content_rect: egui::Rect) {
+        if self.selected.is_empty() {
+            return;
+        }
+        let painter = ui.painter();
+        let fill = self.theme.accent_active.gamma_multiply(0.18);
+        let stroke = egui::Stroke::new(1.5, self.theme.accent_active);
+        for &(ts, te, kl, kh, _, _) in &self.selected.rects {
+            let x0 = rect.min.x + self.view.tick_to_x(ts as f64);
+            let x1 = rect.min.x + self.view.tick_to_x(te as f64);
+            let y0 = content_rect.min.y + self.view.key_to_y(kl);
+            let y1 = content_rect.min.y + self.view.key_to_y(kh + 1);
+            let r = egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1))
+                .intersect(content_rect);
+            painter.rect_filled(r, 1.0, fill);
+            painter.rect_stroke(r, 1.0, stroke, egui::StrokeKind::Inside);
         }
     }
 
