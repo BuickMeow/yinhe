@@ -80,6 +80,8 @@ pub struct AudioSettings {
     pub pinned_file_actions: [bool; 9],
     /// 编辑菜单里被图钉固定的动作（顺序对应 `EditAction::ALL`，10 项）。
     pub pinned_edit_actions: [bool; 10],
+    /// 播放菜单里被图钉固定的"播放/暂停"动作（单个）。
+    pub pinned_play_pause: bool,
     #[serde(skip)]
     pub show_settings: bool,
     /// 设置页当前选中的分类（左侧导航）。
@@ -122,6 +124,7 @@ impl Default for AudioSettings {
             keybindings: Keybindings::default(),
             pinned_file_actions: [false; 9],
             pinned_edit_actions: [false; 10],
+            pinned_play_pause: false,
             show_settings: false,
             settings_tab: 0,
             settings_search: String::new(),
