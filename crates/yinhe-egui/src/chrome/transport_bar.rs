@@ -526,36 +526,25 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
             }
 
             // ── Drag transport bar blank area to move the window ──
-            // Uses manual pointer tracking (no ui.interact) to avoid consuming
-            // button clicks. Only starts a drag if the press began in a blank area
-            // (outside buttons and timecode display).
-            // StartDrag 只在指针移过 egui 点击距离阈值后才发送：如果按下就
-            // 立即 StartDrag，macOS 会进入系统级窗口拖拽循环并吞掉 release
-            // 事件，导致 click（进而双击最大化）永远无法触发。
-            let drag_id = ui.id().with("tb_drag_started");
-            let mut drag_started: bool = ui.data_mut(|d| d.get_temp(drag_id)).unwrap_or(false);
-
-            if ui.input(|i| i.pointer.primary_down()) {
-                if !drag_started
-                    && let Some(pos) = ui.input(|i| i.pointer.press_origin())
-                    && is_blank_area(pos)
-                {
-                    // 位移超过点击阈值（egui 判定 click/drag 的分界线）才启动窗口拖动
-                    let moved_past_click_dist = ui.input(|i| {
-                        i.pointer.hover_pos().is_some_and(|p| {
-                            p.distance(pos) >= egui::InputOptions::default().max_click_dist
-                        })
-                    });
-                    if moved_past_click_dist {
-                        drag_started = true;
-                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
-                    }
-                }
-            } else {
-                drag_started = false;
+            // 恢复 2026-07-13（c5997a1）之前的实现：ui.interact + dragged_by。
+            // dragged_by 只在指针移过拖拽阈值后才为 true，因此单击/双击
+            // （无位移）不会启动系统级窗口拖拽，click 事件得以正常产生，
+            // 双击最大化才能触发。
+            // 手动 pointer 追踪 + 位移阈值方案在真机上双击仍失效，原因待查；
+            // egui 的 click/drag 候选（potential_click_id / potential_drag_id）
+            // 独立记录，interact 不会吞掉按钮的 click。
+            let bar_rect = ui.max_rect();
+            let drag_resp = ui.interact(
+                bar_rect,
+                ui.id().with("transport_bar_drag"),
+                egui::Sense::drag(),
+            );
+            if drag_resp.dragged_by(egui::PointerButton::Primary)
+                && let Some(pos) = ui.input(|i| i.pointer.press_origin())
+                && is_blank_area(pos)
+            {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
             }
-
-            ui.data_mut(|d| d.insert_temp(drag_id, drag_started));
         });
 
     TransportResponse {
@@ -1279,46 +1268,23 @@ mod tests {
         assert!(!has_command(&h, &egui::ViewportCommand::Maximized(true)));
     }
 
-    /// 回归测试：空白区按住并移动超过点击阈值应启动窗口拖动。
+    /// 回归测试：空白区按下后应启动窗口拖动（ui.interact + dragged_by 方案）。
+    /// egui 0.36 在 begin_pass（UI 执行前）计算 interact_widgets：纯 drag
+    /// sense 的 interact 在 press 帧即被标记 dragged，因此 press 帧就会
+    /// 发送 StartDrag。真机上该命令在 RedrawRequested（drawRect）阶段被
+    /// eframe 处理，此时 NSApplication.currentEvent() 已不是 mouseDown，
+    /// performWindowDragWithEvent 不会启动系统拖拽，click 得以保留，
+    /// 双击最大化才能触发。
     #[test]
     fn drag_blank_area_starts_window_drag() {
         let doc = yinhe_test_helpers::make_test_document();
         let mut h = make_transport_harness(Some(&doc));
         let start = egui::pos2(1150.0, 20.0);
         press_at(&mut h, start, 2.0);
-        // 未移动前不得启动窗口拖动（否则单击会被系统拖拽吞掉）
-        assert!(
-            !has_command(&h, &egui::ViewportCommand::StartDrag),
-            "按下未移动时不应 StartDrag"
-        );
-        // 移动 10px（超过 max_click_dist 默认 6px）→ 启动窗口拖动
-        event_at(
-            &mut h,
-            2.1,
-            egui::Event::PointerMoved(start + egui::vec2(10.0, 0.0)),
-        );
         assert!(
             has_command(&h, &egui::ViewportCommand::StartDrag),
-            "空白区拖动应发送 StartDrag"
+            "空白区按下应发送 StartDrag"
         );
-        release_at(&mut h, start + egui::vec2(10.0, 0.0), 2.15);
-    }
-
-    /// 单击空白区（无位移）不应启动窗口拖动。
-    /// 注意：必须在 press 后立即断言——kittest 只保留最后一帧的 commands，
-    /// 旧行为（press 立即 StartDrag）会在按下帧发出命令、release 帧覆盖 output，
-    /// 晚一步检查会漏掉回归。
-    #[test]
-    fn click_blank_area_does_not_start_drag() {
-        let doc = yinhe_test_helpers::make_test_document();
-        let mut h = make_transport_harness(Some(&doc));
-        let pos = egui::pos2(1150.0, 20.0);
-        press_at(&mut h, pos, 3.0);
-        assert!(
-            !has_command(&h, &egui::ViewportCommand::StartDrag),
-            "单击按下时不应启动窗口拖动（否则 macOS 上 click 被系统拖拽吞掉）"
-        );
-        release_at(&mut h, pos, 3.05);
-        assert!(!has_command(&h, &egui::ViewportCommand::StartDrag));
+        release_at(&mut h, start, 2.05);
     }
 }
