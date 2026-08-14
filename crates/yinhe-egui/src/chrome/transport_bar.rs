@@ -426,6 +426,31 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     }
                 }
 
+                // ── 图钉固定的"停止"：紧跟在播放/暂停图钉按钮右侧 ──
+                if ctx.settings.pinned_stop {
+                    let stop_resp = ui.add_enabled(
+                        has_active,
+                        egui::Button::new(
+                            ICON_STOP
+                                .rich_text()
+                                .size(crate::theme::TRANSPORT_BTN_FONT)
+                                .color(if has_active {
+                                    crate::theme::text_primary()
+                                } else {
+                                    crate::theme::text_disabled()
+                                }),
+                        )
+                        .min_size(btn_size)
+                        .corner_radius(btn_rounding),
+                    );
+                    if stop_resp.clicked() {
+                        play_actions.stop_play = true;
+                    }
+                    if stop_resp.hovered() {
+                        hovered_hint = Some(t!("hint.stop").to_string());
+                    }
+                }
+
                 if let Some(doc) = ctx.doc {
                     timecode_rect = Some(show_timecode_display(ui, doc));
 
@@ -808,12 +833,20 @@ enum PlayMenuAction {
 
 impl PopupRow for PlayMenuAction {
     fn pinned_index(self) -> usize {
-        0 // 仅"播放/暂停"可钉，索引恒为 0
+        match self {
+            PlayMenuAction::PlayPause { .. } => 0,
+            PlayMenuAction::Stop => 1,
+            // 跟随档无图钉，索引仅占位
+            PlayMenuAction::Follow(..) => 0,
+        }
     }
 
     fn has_pin(self) -> bool {
-        // 只给"播放/暂停"提供图钉；停止与跟随档无图钉
-        matches!(self, PlayMenuAction::PlayPause { .. })
+        // 播放/暂停与停止提供图钉；跟随档无图钉
+        matches!(
+            self,
+            PlayMenuAction::PlayPause { .. } | PlayMenuAction::Stop
+        )
     }
 
     fn action_id(self) -> &'static str {
@@ -893,17 +926,19 @@ fn show_play_menu(
         ],
     ];
     let mut pending = None;
-    // 仅"播放/暂停"可钉（单元素切片）；图钉变化时保存
-    let pinned = std::slice::from_mut(&mut settings.pinned_play_pause);
+    // 播放/暂停与停止可钉（局部数组，popup 内修改，结束后写回保存）
+    let mut pinned = [settings.pinned_play_pause, settings.pinned_stop];
     if show_action_menu(
         button,
         &groups,
         has_active,
         false,
         &settings.keybindings,
-        Some(pinned),
+        Some(&mut pinned),
         &mut pending,
     ) {
+        settings.pinned_play_pause = pinned[0];
+        settings.pinned_stop = pinned[1];
         settings.save();
     }
     if let Some(action) = pending {
