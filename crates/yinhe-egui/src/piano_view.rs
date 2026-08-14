@@ -95,6 +95,65 @@ pub struct PianoViewFeedback<'a> {
 use crate::theme;
 const RULER_H: f32 = theme::RULER_H;
 
+/// 按住 Alt（Option）时的有效工具（Cubase 风格临时切换）：
+/// - Select/SelectVertical + Alt：悬停在音符或选框上 = 保持选择（Alt 拖拽复制）；
+///   悬停空白 = 临时铅笔（画音符）。
+/// - Pencil + Alt = 临时选择（框选/移动）。
+/// - 其余工具不受影响。
+///
+/// 自动化面板不使用该映射（Alt 在那里是"复制锚点"）。
+#[allow(clippy::too_many_arguments)]
+fn effective_tool(
+    ui: &egui::Ui,
+    active: Tool,
+    midi: Option<&dyn yinhe_types::NoteSource>,
+    view: &yinhe_types::PianoRollView,
+    content_rect: egui::Rect,
+    music_rect: egui::Rect,
+    track_visible: &[bool],
+    track_selected: &std::collections::HashSet<u16>,
+    editing_track: Option<u16>,
+    sel_rect: &yinhe_editor_core::edit_state::SelRectState,
+) -> Tool {
+    if !ui.input(|i| i.modifiers.alt) {
+        return active;
+    }
+    match active {
+        Tool::Pencil => Tool::Select,
+        Tool::Select | Tool::SelectVertical => {
+            // 悬停音符或选框 = 保留选择（Alt 拖拽复制）；空白 = 临时铅笔。
+            let hit = ui.input(|i| i.pointer.hover_pos()).is_some_and(|pos| {
+                if !music_rect.contains(pos) {
+                    return false;
+                }
+                let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+                drag::hit_test_note(
+                    midi,
+                    view,
+                    local,
+                    track_visible,
+                    track_selected,
+                    editing_track,
+                )
+                .is_some()
+                    || sel_rect.effective_rects().iter().any(|&(t0, t1, k0, k1)| {
+                        crate::selection::drag::music_sel_to_pixel_rect(
+                            &view.base,
+                            view.key_height,
+                            t0,
+                            t1,
+                            k0,
+                            k1,
+                        )
+                        .contains(local)
+                    })
+            });
+            if hit { active } else { Tool::Pencil }
+        }
+        t => t,
+    }
+}
+
 /// Display the pianoroll texture with zoom/pan interaction.
 ///
 /// When `auto_*` parameters are `Some`, automation panels are rendered between
@@ -248,8 +307,21 @@ pub fn show(
     let mut ghost_notes: Vec<(u32, u32, u8, u16)> = Vec::new();
     let mut hidden_notes: std::collections::HashSet<(u16, u32, u8)> =
         std::collections::HashSet::new();
-    if *active_tool == Tool::Select || *active_tool == Tool::SelectVertical {
-        let vertical = *active_tool == Tool::SelectVertical;
+    // 按住 Alt 时 Select↔Pencil 双向临时切换（详见 effective_tool）。
+    let effective_tool = effective_tool(
+        ui,
+        *active_tool,
+        midi,
+        view,
+        content_rect,
+        music_rect,
+        track_visible,
+        track_selected,
+        editing_track,
+        sel_rect,
+    );
+    if effective_tool == Tool::Select || effective_tool == Tool::SelectVertical {
+        let vertical = effective_tool == Tool::SelectVertical;
         let (sel_ghosts, sel_hidden, sel_previews, sel_note_event, sel_pencil_drag) =
             drag::sel_drag_frame(
                 ui,
@@ -282,7 +354,7 @@ pub fn show(
         }
         // 单音符边缘伸缩（选择工具，不用先选中）：复用铅笔的提交通道。
         *feedback.pencil_note_drag = sel_pencil_drag;
-    } else if *active_tool == Tool::Pencil {
+    } else if effective_tool == Tool::Pencil {
         let (note_event, ghost, hidden, pencil_drag, preview) = pencil::pencil_frame(
             ui,
             content_rect,
@@ -310,7 +382,7 @@ pub fn show(
         {
             pencil_event = Some(PianoViewEvent::AddNote { track, note });
         }
-    } else if *active_tool == Tool::Eraser {
+    } else if effective_tool == Tool::Eraser {
         eraser_event = marquee::eraser_drag_frame(
             ui,
             content_rect,
@@ -326,7 +398,7 @@ pub fn show(
     }
 
     // ── Hover cursor: show Move/ResizeWest/ResizeEast when over selection rect ──
-    if (*active_tool == Tool::Select || *active_tool == Tool::SelectVertical)
+    if (effective_tool == Tool::Select || effective_tool == Tool::SelectVertical)
         && !crate::view_interaction::pointer_over_popup(ui.ctx())
         && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
         && music_rect.contains(pos)
@@ -375,7 +447,7 @@ pub fn show(
             if in_sel_rect {
                 // 垂直选框工具：只能水平拖动 → 左右双向指针；
                 // 普通选框工具：四向移动指针。
-                let icon = if *active_tool == Tool::SelectVertical {
+                let icon = if effective_tool == Tool::SelectVertical {
                     egui::CursorIcon::ResizeHorizontal
                 } else {
                     egui::CursorIcon::Move
@@ -689,8 +761,8 @@ pub fn show(
     // ── Draw selection box on TOP of GPU content ──
     // State was already updated by sel_drag_frame above; this just draws the box
     // after the GPU paint so it's not covered by the texture.
-    if *active_tool == Tool::Select || *active_tool == Tool::SelectVertical {
-        let vertical = *active_tool == Tool::SelectVertical;
+    if effective_tool == Tool::Select || effective_tool == Tool::SelectVertical {
+        let vertical = effective_tool == Tool::SelectVertical;
 
         // Draw active drag box (if any)
         marquee::draw_marquee_box(
@@ -755,7 +827,7 @@ pub fn show(
         ) {
             sel_action = Some(action);
         }
-    } else if *active_tool == Tool::Eraser {
+    } else if effective_tool == Tool::Eraser {
         // Draw eraser marquee box in red
         marquee::draw_marquee_box(
             ui,
