@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use eframe::egui;
-use egui_material_icons::icons::{ICON_HEADPHONES, ICON_VOLUME_OFF};
+use egui_material_icons::icons::{ICON_FORMAT_COLOR_RESET, ICON_HEADPHONES, ICON_VOLUME_OFF};
 
 use yinhe_editor_core::document::Document;
 
@@ -335,6 +335,19 @@ pub(super) fn show_track_info(
         let mut srgba = crate::theme::rgba_to_color32((cur[0], cur[1], cur[2], cur[3]));
         let mut changed = false;
         changed |= crate::widgets::color_picker::color_edit_button(ui, &mut srgba).changed();
+        // 重置为默认颜色：清除显式颜色事件（写入占位色），
+        // 显示回落到调色板；轨道已是默认色时禁用。
+        let stored_color = doc.data.model.tracks[track_idx].color;
+        let reset_btn = ui.add_enabled(
+            stored_color != yinhe_core::DEFAULT_TRACK_COLOR,
+            egui::Button::new(crate::widgets::icon_text::icon_text(
+                ICON_FORMAT_COLOR_RESET,
+                t!("track.reset_color").as_ref(),
+                12.0,
+                crate::theme::text_label(),
+            ))
+            .min_size(egui::vec2(68.0, 22.0)),
+        );
         let editing = changed;
         if editing && !was_editing {
             // 会话开始：记录编辑前颜色
@@ -358,6 +371,25 @@ pub(super) fn show_track_info(
                 *c = new;
             }
             doc.data.bump_revision();
+        }
+        if reset_btn.clicked() {
+            let old = cur;
+            {
+                let model = Arc::make_mut(&mut doc.data.model);
+                if track_idx < model.tracks.len() {
+                    let td = Arc::make_mut(&mut model.tracks[track_idx]);
+                    td.color = yinhe_core::DEFAULT_TRACK_COLOR;
+                }
+            }
+            if let Some(c) = doc.edit.track_colors_cache.get_mut(track_idx) {
+                *c = yinhe_editor_core::document::track_color(
+                    &doc.data.model.tracks[track_idx],
+                    track_idx,
+                    doc.edit.conductor_track_idx,
+                );
+            }
+            doc.data.bump_revision();
+            undo_color = Some((old, yinhe_core::DEFAULT_TRACK_COLOR));
         }
         if !editing && was_editing {
             // 会话结束：颜色有变则提交一条 undo

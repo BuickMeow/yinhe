@@ -3,8 +3,8 @@ use std::sync::Arc;
 use yinhe_core::{ConductorData, NoteEvent, TrackData, YinModel};
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent};
 
-use crate::document::Document;
 use crate::document::note_edit::FlipAxis;
+use crate::document::{track_color, Document};
 
 use super::*;
 use yinhe_core::Selection;
@@ -151,6 +151,51 @@ fn track_color_undo_redo() {
     assert_eq!(doc.data.model.tracks[0].color, [0.4, 0.5, 0.6, 0.5]);
     assert_eq!(doc.edit.track_colors_cache[0], [0.4, 0.5, 0.6, 0.5]);
     assert!(doc.history.can_undo());
+}
+
+#[test]
+fn track_color_reset_to_default_falls_back_to_palette() {
+    let mut doc = make_doc("t");
+    doc.edit.track_colors_cache = vec![[0.4, 0.5, 0.6, 1.0]];
+    // 模拟用户设置显式颜色
+    {
+        let model = Arc::make_mut(&mut doc.data.model);
+        let track = Arc::make_mut(&mut model.tracks[0]);
+        track.color = [0.4, 0.5, 0.6, 1.0];
+    }
+    // 模拟用户点击"重置为默认颜色"：写入占位色并提交 undo
+    {
+        let model = Arc::make_mut(&mut doc.data.model);
+        let track = Arc::make_mut(&mut model.tracks[0]);
+        track.color = yinhe_core::DEFAULT_TRACK_COLOR;
+    }
+    doc.edit.track_colors_cache[0] = track_color(&doc.data.model.tracks[0], 0, None);
+    doc.history.push(UndoEntry {
+        action: UndoAction::TrackColor {
+            track_idx: 0,
+            old: [0.4, 0.5, 0.6, 1.0],
+            new: yinhe_core::DEFAULT_TRACK_COLOR,
+        },
+        label: "reset color".to_string(),
+        snapshot: EditSnapshot::default(),
+    });
+    // 显示回落到调色板（而非灰色占位色）
+    let palette = track_color(&doc.data.model.tracks[0], 0, None);
+    assert_ne!(palette, yinhe_core::DEFAULT_TRACK_COLOR);
+    assert_eq!(doc.edit.track_colors_cache[0], palette);
+
+    // Undo：恢复显式颜色，缓存同步
+    assert!(doc.undo());
+    assert_eq!(doc.data.model.tracks[0].color, [0.4, 0.5, 0.6, 1.0]);
+    assert_eq!(doc.edit.track_colors_cache[0], [0.4, 0.5, 0.6, 1.0]);
+
+    // Redo：再次重置，缓存仍回落调色板
+    assert!(doc.redo());
+    assert_eq!(
+        doc.data.model.tracks[0].color,
+        yinhe_core::DEFAULT_TRACK_COLOR
+    );
+    assert_eq!(doc.edit.track_colors_cache[0], palette);
 }
 
 #[test]

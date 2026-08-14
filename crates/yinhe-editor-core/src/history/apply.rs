@@ -6,7 +6,7 @@ use std::sync::Arc;
 use yinhe_core::Selection;
 use yinhe_types::{AutomationEvent, Note};
 
-use crate::document::Document;
+use crate::document::{track_color, Document};
 
 use super::UndoAction;
 
@@ -65,10 +65,13 @@ impl UndoAction {
             } => {
                 let model = Arc::make_mut(&mut doc.data.model);
                 if let Some(track) = model.tracks.get_mut(*track_idx) {
-                    Arc::make_mut(track).color = *new;
-                }
-                if let Some(c) = doc.edit.track_colors_cache.get_mut(*track_idx) {
-                    *c = *new;
+                    let track = Arc::make_mut(track);
+                    track.color = *new;
+                    // 显示缓存：显式颜色优先，默认占位色回落调色板
+                    // （与 document::track_color 一致，重置颜色后 undo/redo 也正确）。
+                    if let Some(c) = doc.edit.track_colors_cache.get_mut(*track_idx) {
+                        *c = track_color(track, *track_idx, doc.edit.conductor_track_idx);
+                    }
                 }
                 doc.data.bump_revision();
             }

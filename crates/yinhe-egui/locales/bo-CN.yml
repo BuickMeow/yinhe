@@ -327,6 +327,7 @@ track.total_notes: "དབྱངས་རྟགས་ཡོངས་གྲངས
 track.total_events: "བྱུང་རིམ་ཡོངས་གྲངས།:"
 track.multi_select_hint: "(དུ་མ་གདམ་ང།: གློ་བུར་མཐོང་ངོས་ཀྱིས་གདམ་ང་བྱས་པའི་ཁྲ་ཐིག་ཡོངས་ཀྱི་དབྱངས་རྟགས་སྟོན་པ།)"
 track.clear_selection: "གདམ་ང་གསལ་བཤིག།"
+track.reset_color: "ཚོས་གཞི་ཕྱིར་སྒྲིག"
 track.conductor: "Conductor"
 track.conductor_hint: "(Conductor ཁྲ་ཐིག།: Tempo / Time-sig དང་སྤྱི་ཁྱབ་མེ་ཊ་བྱུང་རིམ་གཞན་པ།)"
 track.song_title: "གླུ་དབྱངས་མིང་།:"
