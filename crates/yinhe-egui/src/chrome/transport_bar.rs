@@ -97,14 +97,24 @@ impl EditAction {
     }
 }
 
-/// 菜单 popup 行的统一接口：文件/编辑动作共用同一套渲染逻辑
-/// （图标 + 名称 + 快捷键 + 图钉），保证两处 popup 行为一致。
+/// 菜单 popup 行的统一接口：文件/编辑/播放动作共用同一套渲染逻辑
+/// （图标 + 名称 + 快捷键 + 可选图钉 + 可选选中态），保证三个 popup 行为一致。
 pub trait PopupRow: Copy {
     fn pinned_index(self) -> usize;
     fn action_id(self) -> &'static str;
     fn icon(self) -> egui_material_icons::MaterialIcon;
     fn label_key(self) -> &'static str;
     fn is_enabled(self, has_active: bool, loading: bool) -> bool;
+
+    /// 该行是否渲染右侧图钉按钮（默认 true；播放菜单等无图钉动作返回 false）。
+    fn has_pin(self) -> bool {
+        true
+    }
+
+    /// 该行是否处于选中态（单选菜单的当前项，如播放跟随档）。
+    fn is_selected(self) -> bool {
+        false
+    }
 }
 
 impl PopupRow for FileAction {
@@ -634,10 +644,11 @@ fn show_action_menu<T: PopupRow>(
     has_active: bool,
     loading: bool,
     keybindings: &yinhe_editor_core::shortcuts::Keybindings,
-    pinned: &mut [bool],
+    pinned: Option<&mut [bool]>,
     pending_action: &mut Option<T>,
 ) -> bool {
     let mut pinned_changed = false;
+    let mut pin_toggled: Option<usize> = None;
     egui::Popup::from_toggle_button_response(button)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .width(crate::theme::FILE_MENU_WIDTH)
@@ -653,7 +664,8 @@ fn show_action_menu<T: PopupRow>(
                 }
                 for &action in *group {
                     let enabled = action.is_enabled(has_active, loading);
-                    let is_pinned = pinned[action.pinned_index()];
+                    // 无图钉的动作不触碰 pinned 数组（播放菜单传 None）
+                    let is_pinned = pinned.as_ref().is_some_and(|p| p[action.pinned_index()]);
                     let shortcut = keybindings
                         .get(action.action_id())
                         .first()
@@ -665,8 +677,12 @@ fn show_action_menu<T: PopupRow>(
                             label: &t!(action.label_key()),
                             shortcut: shortcut.as_deref(),
                             enabled,
-                            selected: false,
-                            pin: Some(is_pinned),
+                            selected: action.is_selected(),
+                            pin: if action.has_pin() {
+                                Some(is_pinned)
+                            } else {
+                                None
+                            },
                         },
                     );
 
@@ -675,14 +691,18 @@ fn show_action_menu<T: PopupRow>(
                         ui.close();
                     }
                     if pin_resp.is_some_and(|r| r.clicked()) {
-                        // 图钉只切换固定状态，不关闭菜单
-                        let idx = action.pinned_index();
-                        pinned[idx] = !pinned[idx];
-                        pinned_changed = true;
+                        // 图钉只切换固定状态，不关闭菜单；切换到闭包外统一执行
+                        pin_toggled = Some(action.pinned_index());
                     }
                 }
             }
         });
+    if let Some(idx) = pin_toggled
+        && let Some(p) = pinned
+    {
+        p[idx] = !p[idx];
+        pinned_changed = true;
+    }
     pinned_changed
 }
 
@@ -703,7 +723,7 @@ fn show_file_menu(
         has_active,
         file_loader.is_loading(),
         keybindings,
-        pinned,
+        Some(pinned),
         pending_action,
     ) {
         settings.save();
@@ -725,7 +745,7 @@ fn show_edit_menu(
         has_active,
         false,
         keybindings,
-        pinned,
+        Some(pinned),
         pending_action,
     ) {
         settings.save();
@@ -740,9 +760,76 @@ struct PlayActions {
     stop_play: bool,
 }
 
-/// 播放菜单 popup：与文件/编辑菜单同款行样式（图标 + 名称 + 右侧快捷键），
-/// 播放/暂停与停止无选中态；播放跟随为四档单选（当前档 selected 高亮）。
-/// 无图钉；点击项后关闭菜单。
+/// 播放菜单动作（含跟随档位）。
+/// 走与文件/编辑相同的 PopupRow 模板：无图钉（has_pin=false），
+/// 跟随档携带选中态（is_selected），播放/暂停携带播放状态（动态图标）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PlayMenuAction {
+    PlayPause { playing: bool },
+    Stop,
+    Follow(FollowMode, bool),
+}
+
+impl PopupRow for PlayMenuAction {
+    fn pinned_index(self) -> usize {
+        0 // 无图钉，仅占位
+    }
+
+    fn has_pin(self) -> bool {
+        false
+    }
+
+    fn action_id(self) -> &'static str {
+        match self {
+            PlayMenuAction::PlayPause { .. } => shortcuts::ACTION_TOGGLE_PLAY,
+            PlayMenuAction::Stop => shortcuts::ACTION_STOP,
+            // 跟随档没有快捷键
+            PlayMenuAction::Follow(..) => "",
+        }
+    }
+
+    fn icon(self) -> egui_material_icons::MaterialIcon {
+        use crate::view_interaction::FollowModeExt;
+        match self {
+            PlayMenuAction::PlayPause { playing } => {
+                if playing {
+                    ICON_PAUSE
+                } else {
+                    ICON_PLAY_ARROW
+                }
+            }
+            PlayMenuAction::Stop => ICON_STOP,
+            PlayMenuAction::Follow(mode, _) => mode.icon(),
+        }
+    }
+
+    fn label_key(self) -> &'static str {
+        match self {
+            PlayMenuAction::PlayPause { .. } => "shortcuts.play_toggle",
+            PlayMenuAction::Stop => "shortcuts.stop",
+            PlayMenuAction::Follow(mode, _) => match mode {
+                FollowMode::None => "follow.none",
+                FollowMode::Centered => "follow.centered",
+                FollowMode::Page => "follow.page",
+                FollowMode::Continuous => "follow.continuous",
+            },
+        }
+    }
+
+    fn is_enabled(self, has_active: bool, _loading: bool) -> bool {
+        has_active
+    }
+
+    fn is_selected(self) -> bool {
+        match self {
+            PlayMenuAction::Follow(_, selected) => selected,
+            _ => false,
+        }
+    }
+}
+
+/// 播放按钮 popup：播放/暂停、停止 + 播放跟随四档单选。
+/// 与文件/编辑共用 show_action_menu 模板（无图钉，跟随档选中高亮）。
 fn show_play_menu(
     button: &egui::Response,
     has_active: bool,
@@ -751,95 +838,47 @@ fn show_play_menu(
     settings: &AudioSettings,
     actions: &mut PlayActions,
 ) {
-    use crate::view_interaction::FollowModeExt;
-    let play_shortcut = settings
-        .keybindings
-        .get(shortcuts::ACTION_TOGGLE_PLAY)
-        .first()
-        .map(crate::shortcuts::display_combo);
-    let stop_shortcut = settings
-        .keybindings
-        .get(shortcuts::ACTION_STOP)
-        .first()
-        .map(crate::shortcuts::display_combo);
-
-    egui::Popup::from_toggle_button_response(button)
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .width(crate::theme::FILE_MENU_WIDTH)
-        .show(|ui| {
-            // 锁死内容宽度（min == max），与文件/编辑菜单一致
-            ui.set_min_width(crate::theme::FILE_MENU_WIDTH);
-            ui.set_max_width(crate::theme::FILE_MENU_WIDTH);
-
-            // 播放/暂停（图标随播放状态切换，右侧显示快捷键）
-            let play_icon = if is_playing {
-                ICON_PAUSE
-            } else {
-                ICON_PLAY_ARROW
-            };
-            let (main_resp, _) = popup_menu_row(
-                ui,
-                PopupRowSpec {
-                    icon: play_icon,
-                    label: &t!("shortcuts.play_toggle"),
-                    shortcut: play_shortcut.as_deref(),
-                    enabled: has_active,
-                    selected: false,
-                    pin: None,
-                },
-            );
-            if main_resp.clicked() {
-                if is_playing {
+    let groups: [&[PlayMenuAction]; 2] = [
+        &[
+            PlayMenuAction::PlayPause {
+                playing: is_playing,
+            },
+            PlayMenuAction::Stop,
+        ],
+        &[
+            PlayMenuAction::Follow(FollowMode::None, *follow_mode == FollowMode::None),
+            PlayMenuAction::Follow(FollowMode::Centered, *follow_mode == FollowMode::Centered),
+            PlayMenuAction::Follow(FollowMode::Page, *follow_mode == FollowMode::Page),
+            PlayMenuAction::Follow(
+                FollowMode::Continuous,
+                *follow_mode == FollowMode::Continuous,
+            ),
+        ],
+    ];
+    let mut pending = None;
+    // 播放菜单无图钉，pinned 传 None
+    let _ = show_action_menu(
+        button,
+        &groups,
+        has_active,
+        false,
+        &settings.keybindings,
+        None,
+        &mut pending,
+    );
+    if let Some(action) = pending {
+        match action {
+            PlayMenuAction::PlayPause { playing } => {
+                if playing {
                     actions.pause_return = true;
                 } else {
                     actions.toggle_play = true;
                 }
-                ui.close();
             }
-
-            let (main_resp, _) = popup_menu_row(
-                ui,
-                PopupRowSpec {
-                    icon: ICON_STOP,
-                    label: &t!("shortcuts.stop"),
-                    shortcut: stop_shortcut.as_deref(),
-                    enabled: has_active,
-                    selected: false,
-                    pin: None,
-                },
-            );
-            if main_resp.clicked() {
-                actions.stop_play = true;
-                ui.close();
-            }
-
-            // ── 播放跟随（四档单选，当前档 selected 高亮）──
-            ui.separator();
-            let modes: [(FollowMode, &str); 4] = [
-                (FollowMode::None, "follow.none"),
-                (FollowMode::Centered, "follow.centered"),
-                (FollowMode::Page, "follow.page"),
-                (FollowMode::Continuous, "follow.continuous"),
-            ];
-            for (mode, key) in modes {
-                let selected = *follow_mode == mode;
-                let (main_resp, _) = popup_menu_row(
-                    ui,
-                    PopupRowSpec {
-                        icon: mode.icon(),
-                        label: &t!(key),
-                        shortcut: None,
-                        enabled: has_active,
-                        selected,
-                        pin: None,
-                    },
-                );
-                if main_resp.clicked() {
-                    *follow_mode = mode;
-                    ui.close();
-                }
-            }
-        });
+            PlayMenuAction::Stop => actions.stop_play = true,
+            PlayMenuAction::Follow(mode, _) => *follow_mode = mode,
+        }
+    }
 }
 
 /// 图钉固定的动作按钮行：作为独立按钮紧跟在菜单按钮右侧，
