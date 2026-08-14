@@ -106,12 +106,53 @@ impl YinheApp {
                         } => {
                             if let Some(doc) = &mut self.doc {
                                 doc.edit.arr_sel_rect = vec![(t0, t1, track0, track1)];
+                                // 选框同步到音符级选区（key 全范围）：长按选框
+                                // 移动时收集音符用（桌面端行为）。
+                                let mut sel = yinhe_editor_core::Selection::default();
+                                sel.add_rect_track(
+                                    t0.min(t1) as u32,
+                                    t0.max(t1) as u32 + 1,
+                                    0,
+                                    127,
+                                    track0.min(track1) as u16,
+                                    track0.max(track1) as u16,
+                                );
+                                doc.edit.selected = sel;
                             }
                         }
                         crate::ar_view::ArEvent::ClearArrSel => {
                             if let Some(doc) = &mut self.doc {
                                 doc.edit.arr_sel_rect.clear();
                             }
+                        }
+                        crate::ar_view::ArEvent::MoveArr {
+                            delta_ticks,
+                            delta_tracks,
+                            new_sel,
+                        } => {
+                            // 跨轨移动选中音符 + 选框/选区跟随偏移（桌面端 handle_arr_drag）。
+                            self.with_undo("移动选区", |doc| {
+                                let moved = doc.move_selected_arrange(delta_ticks, delta_tracks);
+                                doc.edit.arr_sel_rect = new_sel.clone();
+                                // 选区矩形同步偏移（track 半开 → 闭区间换算）。
+                                doc.edit.selected.rects = doc
+                                    .edit
+                                    .selected
+                                    .rects
+                                    .iter()
+                                    .map(|&(ts, te, kl, kh, tl, th)| {
+                                        (
+                                            (ts as i64 + delta_ticks).max(0) as u32,
+                                            (te as i64 + delta_ticks).max(0) as u32,
+                                            kl,
+                                            kh,
+                                            (tl as i32 + delta_tracks).max(0) as u16,
+                                            (th as i32 + delta_tracks).max(0) as u16,
+                                        )
+                                    })
+                                    .collect();
+                                moved
+                            });
                         }
                     }
                 }

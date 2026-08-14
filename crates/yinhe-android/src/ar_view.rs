@@ -4,7 +4,6 @@
 //! 纹理后贴图）。与 PR 相同的"纹理全宽、面板列透明"模式：音符 x 坐标从
 //! 面板列宽起步（shader keyboard_width），面板列由 egui 层绘制。
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use eframe::egui;
@@ -12,7 +11,9 @@ use yinhe_core::YinModel;
 use yinhe_theme::base::BaseColors;
 use yinhe_theme::egui_colors::{Theme, derive_theme};
 use yinhe_types::ArrangementView;
-use yinhe_wgpu::{InstanceRenderer, Uniforms, build_arr_notes, layer_cache_key};
+use yinhe_wgpu::{
+    InstanceRenderer, Uniforms, build_arr_notes, build_ghost_notes, hash_hidden, layer_cache_key,
+};
 
 /// 音轨面板列宽（逻辑像素）。音符 lane 区域从该宽度起步。
 const PANEL_W: f32 = 168.0;
@@ -35,6 +36,13 @@ pub enum ArEvent {
     },
     /// 单击空白（Select 工具）：清除全部选框。
     ClearArrSel,
+    /// 长按选框拖动：跨轨移动选中音符（tick + track 偏移）。
+    /// new_sel 为偏移后的选框（移动完成时写入 doc.edit.arr_sel_rect）。
+    MoveArr {
+        delta_ticks: i64,
+        delta_tracks: i32,
+        new_sel: Vec<(f64, f64, usize, usize)>,
+    },
 }
 
 /// AR 视图：视口状态 + GPU 渲染 + 音轨面板 + 触摸交互。
@@ -65,6 +73,23 @@ pub struct ArView {
     marquee_cur: Option<(f64, f64)>,
     /// 选框释放帧标记：保留预览画到本帧结束（防松手闪烁），下一帧开头清。
     marquee_done: bool,
+    /// 长按选框移动（Select 工具）：起点/当前点 (tick, track) 音乐坐标。
+    marquee_move: Option<((f64, f64), (f64, f64))>,
+    /// 移动释放帧标记：状态保留到下一帧（抑制释放帧的 clicked 清除），
+    /// 下一帧开头清 marquee_move（与 marquee_done 同模式）。
+    move_done: bool,
+    /// 移动开始时选框快照（移动中选框 = 快照 + 偏移，释放提交）。
+    move_orig_sel: Vec<(f64, f64, usize, usize)>,
+    /// 移动的选中音符 (start, end, key, track)（ghost 偏移基准）。
+    move_notes: Vec<(u32, u32, u8, u16)>,
+    /// 移动中隐藏的原音符（(track, start_tick, key)，GPU 音符构建时过滤）。
+    hidden_notes: std::collections::HashSet<(u16, u32, u8)>,
+    /// 当前 ghost 音符（新位置，GPU Layer 1 上传）。
+    ghost_notes: Vec<(u32, u32, u8, u16)>,
+    /// ghost 层需要重传。
+    ghost_dirty: bool,
+    /// 长按判定时长（秒）：长按选框进入移动模式（Android 长按标准 ~0.4s）。
+    long_press_secs: f64,
     /// 上一次内容矩形（诊断日志用：变化时打印坐标）。
     last_rect: egui::Rect,
     /// 主题色（与桌面端同源：BaseColors 7 色派生）。
@@ -121,6 +146,14 @@ impl ArView {
             marquee_drag: None,
             marquee_cur: None,
             marquee_done: false,
+            marquee_move: None,
+            move_done: false,
+            move_orig_sel: Vec::new(),
+            move_notes: Vec::new(),
+            hidden_notes: std::collections::HashSet::new(),
+            ghost_notes: Vec::new(),
+            ghost_dirty: true,
+            long_press_secs: 0.4,
             last_rect: egui::Rect::NOTHING,
             theme: derive_theme(BaseColors::DARK),
         }
@@ -140,6 +173,13 @@ impl ArView {
         self.marquee_drag = None;
         self.marquee_cur = None;
         self.marquee_done = false;
+        self.marquee_move = None;
+        self.move_done = false;
+        self.move_orig_sel.clear();
+        self.move_notes.clear();
+        self.hidden_notes.clear();
+        self.ghost_notes.clear();
+        self.ghost_dirty = true;
     }
 
     /// 设置播放光标位置（tick），None 隐藏。lib.rs 每帧从音频位置换算后调用。
@@ -213,6 +253,16 @@ impl ArView {
             self.marquee_drag = None;
             self.marquee_cur = None;
             self.marquee_done = false;
+        }
+        // 移动释放帧标记：状态保留到上一帧结束（抑制 clicked 清除），本帧清理。
+        if self.move_done {
+            self.marquee_move = None;
+            self.move_orig_sel.clear();
+            self.move_notes.clear();
+            self.hidden_notes.clear();
+            self.ghost_notes.clear();
+            self.ghost_dirty = true;
+            self.move_done = false;
         }
 
         // ── 触摸：双指永远导航（平移+缩放），单指滚动仅抓手工具。──
@@ -289,7 +339,7 @@ impl ArView {
                 self.view.base.scroll_x = (self.view.base.scroll_x - d.x).max(0.0);
                 self.view.base.scroll_y = (self.view.base.scroll_y - d.y).clamp(0.0, max_scroll_y);
                 self.view.base.dirty = true;
-            } else if tool == crate::app::Tool::Select {
+            } else if tool == crate::app::Tool::Select && self.marquee_move.is_none() {
                 // 选择工具：AR 框选（tick × track 范围，按 AR 量化吸附）。
                 if self.marquee_drag.is_none() {
                     // 开始新选框：旧选框立即消失（桌面端行为：新选框
@@ -305,6 +355,7 @@ impl ArView {
         // 选框拖拽结束：提交事件。marquee_cur 不 take——本帧预览还要用它画
         //（下一帧 marquee_done 清掉时 doc 已更新，持久选框无缝接管，防闪烁）。
         if resp.drag_stopped()
+            && self.marquee_move.is_none()
             && let Some((t0, tr0)) = self.marquee_drag
         {
             let (t1, tr1) = self.marquee_cur.unwrap_or((t0, tr0));
@@ -317,16 +368,117 @@ impl ArView {
             });
         }
         // Select 工具单击空白（音符区）：清除全部选框（桌面端行为）。
+        // 移动模式（含释放帧）不参与：长按选框松手未拖动时选框保留。
         if resp.clicked()
             && tool == crate::app::Tool::Select
+            && self.marquee_move.is_none()
             && let Some(pos) = resp.interact_pointer_pos()
             && pos.x >= rect.min.x + PANEL_W
         {
             events.push(ArEvent::ClearArrSel);
         }
 
+        // ── 长按选框 → 移动选中音符（Android 无 hover，长按区分点击/移动）──
+        if tool == crate::app::Tool::Select
+            && self.marquee_move.is_none()
+            && self.marquee_drag.is_none()
+            && !arr_sel.is_empty()
+            && let Some(pos) = resp.interact_pointer_pos()
+            && pos.x >= rect.min.x + PANEL_W
+        {
+            let local = egui::pos2(pos.x - rect.min.x, pos.y - rect.min.y);
+            let tick = self.view.x_to_tick(local.x);
+            let track = ((local.y + self.view.base.scroll_y) / self.view.lane_height()) as f64;
+            if self.press_in_sel(arr_sel, tick, track) {
+                let long_pressed = ui.ctx().input(|i| {
+                    i.pointer
+                        .press_start_time()
+                        .is_some_and(|t| i.time - t >= self.long_press_secs)
+                });
+                if long_pressed {
+                    // 进入移动：快照选框 + 收集选中音符（全 key 范围）+ hidden。
+                    self.move_orig_sel = arr_sel.to_vec();
+                    self.marquee_move = Some(((tick, track), (tick, track)));
+                    let mut sel = yinhe_core::Selection::default();
+                    for &(t0, t1, tr0, tr1) in arr_sel {
+                        sel.add_rect_track(
+                            t0.min(t1) as u32,
+                            t0.max(t1) as u32 + 1,
+                            0,
+                            127,
+                            tr0.min(tr1) as u16,
+                            tr0.max(tr1) as u16,
+                        );
+                    }
+                    if let Some(m) = self.model.clone() {
+                        self.move_notes = self.collect_selected_notes(&m, &sel);
+                        self.hidden_notes = self
+                            .move_notes
+                            .iter()
+                            .map(|&(s, _, k, tr)| (tr, s, k))
+                            .collect();
+                        self.ghost_dirty = true;
+                    }
+                }
+            }
+        }
+        // 移动中：更新 ghost（新位置音符）+ 释放提交。
+        if self.marquee_move.is_some() {
+            let pointer_released = ui.ctx().input(|i| i.pointer.primary_released());
+            if resp.dragged()
+                && let Some(pos) = resp.interact_pointer_pos()
+            {
+                let (t, tr) = self.music_pos(pos, rect, quantize, model_ppq);
+                if let Some(((ot, otr), _)) = self.marquee_move {
+                    let dt = (t - ot).round() as i64;
+                    let dtr = (tr - otr).round() as i32;
+                    self.marquee_move = Some(((ot, otr), (t, tr)));
+                    self.ghost_notes = self
+                        .move_notes
+                        .iter()
+                        .map(|&(s, e, k, trk)| {
+                            (
+                                (s as i64 + dt).max(0) as u32,
+                                (e as i64 + dt).max(0) as u32,
+                                k,
+                                ((trk as i32 + dtr).clamp(0, u16::MAX as i32)) as u16,
+                            )
+                        })
+                        .collect();
+                    self.ghost_dirty = true;
+                }
+            }
+            if pointer_released && let Some(((ot, otr), (ct, ctr))) = self.marquee_move {
+                let dt = (ct - ot).round() as i64;
+                let dtr = (ctr - otr).round() as i32;
+                if dt != 0 || dtr != 0 {
+                    let new_sel = self
+                        .move_orig_sel
+                        .iter()
+                        .map(|&(t0, t1, tr0, tr1)| {
+                            (
+                                t0 + dt as f64,
+                                t1 + dt as f64,
+                                (tr0 as i32 + dtr).max(0) as usize,
+                                (tr1 as i32 + dtr).max(0) as usize,
+                            )
+                        })
+                        .collect();
+                    events.push(ArEvent::MoveArr {
+                        delta_ticks: dt,
+                        delta_tracks: dtr,
+                        new_sel,
+                    });
+                }
+                // 释放帧状态保留到下一帧（抑制本帧 clicked 清除），move_done 清理。
+                self.move_done = true;
+            }
+        }
+
         // ── 点击命中：M/S 按钮 → 静音/独奏；轨道行 → 进入 PR ──
+        // 移动模式（含释放帧）不参与点击命中。
         if resp.clicked()
+            && self.marquee_move.is_none()
             && let Some(pos) = resp.interact_pointer_pos()
         {
             events.extend(self.handle_tap(pos, rect));
@@ -377,7 +529,10 @@ impl ArView {
             renderer.upload_track_colors(&tc);
             renderer.ensure_layers(2);
             let vh = self.view.render_hash();
-            let notes_key = layer_cache_key(&[vh, rect.width() as u64, rect.height() as u64]);
+            // hidden（移动中隐藏的原音符）参与 cache key：变化时 Layer 0 重建。
+            let hidden_hash = hash_hidden(&self.hidden_notes);
+            let notes_key =
+                layer_cache_key(&[vh, rect.width() as u64, rect.height() as u64, hidden_hash]);
             renderer.upload_note_layer(0, notes_key, |out| {
                 build_arr_notes(
                     out,
@@ -386,9 +541,23 @@ impl ArView {
                     model.as_ref(),
                     &self.view,
                     &track_visible,
-                    &HashSet::new(),
+                    &self.hidden_notes,
                 );
             });
+            // ghost 层（Layer 1，Z 序最上）：移动选中音符时上传新位置音符。
+            if self.ghost_dirty {
+                self.ghost_dirty = false;
+                renderer.upload_note_layer(1, 0, |out| {
+                    build_ghost_notes(
+                        out,
+                        &mut self.ghost_notes.clone(),
+                        rect.width(),
+                        rect.height(),
+                        &self.view,
+                        &track_visible,
+                    );
+                });
+            }
             let mut encoder = self
                 .wgpu_state
                 .device
@@ -410,11 +579,30 @@ impl ArView {
         self.draw_track_panel(&painter, rect, &model, &tc, overrides);
 
         // ── AR 选框（持久 + 拖拽预览）──
+        // 移动中选框 = 快照 + 偏移（桌面端行为：选框跟随音符移动）。
+        let display_sel: Vec<(f64, f64, usize, usize)> =
+            if let Some(((ot, otr), (ct, ctr))) = self.marquee_move {
+                let dt = (ct - ot).round() as i64;
+                let dtr = (ctr - otr).round() as i32;
+                self.move_orig_sel
+                    .iter()
+                    .map(|&(t0, t1, tr0, tr1)| {
+                        (
+                            t0 + dt as f64,
+                            t1 + dt as f64,
+                            (tr0 as i32 + dtr).max(0) as usize,
+                            (tr1 as i32 + dtr).max(0) as usize,
+                        )
+                    })
+                    .collect()
+            } else {
+                arr_sel.to_vec()
+            };
         let preview = match (self.marquee_drag, self.marquee_cur) {
             (Some(a), Some(b)) => Some((a, b)),
             _ => None,
         };
-        self.draw_arr_sel(&painter, rect, &model, arr_sel, preview);
+        self.draw_arr_sel(&painter, rect, &model, &display_sel, preview);
 
         // ── 播放线 ──
         if let Some(tick) = self.cursor_tick {
@@ -531,6 +719,35 @@ impl ArView {
 
     /// 绘制 AR 选框：持久选框（doc.edit.arr_sel_rect）+ 拖拽预览。
     /// 选框覆盖 tick 半开范围 [t0, t1) 与 track 闭区间 [track0, track1]。
+    /// 收集选中矩形覆盖的音符：(start, end, key, track)。range 查询只扫命中桶。
+    fn collect_selected_notes(
+        &self,
+        model: &Arc<YinModel>,
+        sel: &yinhe_core::Selection,
+    ) -> Vec<(u32, u32, u8, u16)> {
+        let mut out = Vec::new();
+        for &(ts, te, kl, kh, tl, th) in &sel.rects {
+            for key in kl..=kh {
+                for n in model.notes[key as usize].range(ts, te) {
+                    if n.track >= tl && n.track <= th && n.start_tick >= ts && n.start_tick < te {
+                        out.push((n.start_tick, n.end_tick, key, n.track));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// 按下点 (tick, track) 是否在任一选框矩形内（track 为浮点轨道位置）。
+    fn press_in_sel(&self, sel: &[(f64, f64, usize, usize)], tick: f64, track: f64) -> bool {
+        sel.iter().any(|&(t0, t1, tr0, tr1)| {
+            tick >= t0.min(t1)
+                && tick < t0.max(t1)
+                && track >= tr0.min(tr1) as f64
+                && track <= tr0.max(tr1) as f64
+        })
+    }
+
     fn draw_arr_sel(
         &self,
         painter: &egui::Painter,

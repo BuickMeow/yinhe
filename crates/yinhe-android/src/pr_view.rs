@@ -70,14 +70,17 @@ enum EditGesture {
         length: u32,
         cur_key: u8,
     },
-    /// 选择框选/移动：起点 (tick, key) 浮点 + 拖动中当前点。
+    /// 选择框选：起点 (tick, key) 浮点 + 拖动中当前点。
     /// 释放帧 interact_pos 可能已为 None，必须用拖动中保存的值，
     /// 否则选框退化成单击清除——"松手即消失"的根因。
+    /// cleared：拖动确认标志（位置离开起点）——确认前旧选区保留
+    /// （单击松手才清除，与 AR 一致），确认时清旧选区（拖拽中单选）。
     Marquee {
         t0: f64,
         k0: f64,
         cur_t: f64,
         cur_k: f64,
+        cleared: bool,
     },
     /// 选择移动音符：起点（吸附后）+ 当前点。
     MoveNotes {
@@ -141,6 +144,18 @@ pub struct PrView {
     selected: Selection,
     /// 主题色（与桌面端同源：BaseColors 7 色派生）。
     theme: Theme,
+    /// 移动选中音符：原位置音符 (start, end, key, track)（ghost 偏移基准）。
+    move_notes: Vec<(u32, u32, u8, u16)>,
+    /// 移动中隐藏的原音符（(track, start_tick, key)，GPU 音符构建时过滤）。
+    hidden_notes: std::collections::HashSet<(u16, u32, u8)>,
+    /// 已上传的 hidden 集（变化才重建受影响 key 桶）。
+    hidden_uploaded: std::collections::HashSet<(u16, u32, u8)>,
+    /// 当前 ghost 音符（新位置，GPU ghost 层每帧上传）。
+    ghost_notes: Vec<(u32, u32, u8, u16)>,
+    /// ghost 层需要重传（手势变化时置位，避免每帧空上传）。
+    ghost_dirty: bool,
+    /// 长按判定时长（秒）：长按选框进入移动模式（Android 长按标准 ~0.4s）。
+    long_press_secs: f64,
 }
 
 impl PrView {
@@ -193,6 +208,12 @@ impl PrView {
             gesture: None,
             selected: Selection::default(),
             theme: derive_theme(BaseColors::DARK),
+            move_notes: Vec::new(),
+            hidden_notes: std::collections::HashSet::new(),
+            hidden_uploaded: std::collections::HashSet::new(),
+            ghost_notes: Vec::new(),
+            ghost_dirty: true,
+            long_press_secs: 0.4,
         }
     }
 
@@ -211,6 +232,11 @@ impl PrView {
         self.last_mask.clear();
         self.gesture = None;
         self.selected = Selection::default();
+        self.move_notes.clear();
+        self.hidden_notes.clear();
+        self.hidden_uploaded.clear();
+        self.ghost_notes.clear();
+        self.ghost_dirty = true;
         self.status = "正在构建音符数据...".to_string();
     }
 
@@ -358,6 +384,8 @@ impl PrView {
             renderer.draw(&mut encoder, &self.texture_view, self.tex_w, self.tex_h);
             self.wgpu_state.queue.submit([encoder.finish()]);
         }
+        // 移动选中音符的覆盖层：ghost（新位置音符）+ hidden（原音符隐藏）。
+        self.upload_overlays();
 
         // egui 层绘制（键盘列/标尺/网格/纹理贴图）。
         self.draw_scale_bands(ui, content_rect);
@@ -384,7 +412,10 @@ impl PrView {
         // 持久选框（doc.edit.selected）：边框+半透明填充，与 AR 的选框一致。
         // GPU selection 高亮只是让选中音符变色，没有边框；拖动中的预览
         // 矩形松手后消失，没有这层绘制选框就完全看不见（"松手即消失"）。
-        self.draw_selection_boxes(ui, rect, content_rect);
+        // 移动音符时跳过：预览画偏移后的选框（桌面端行为：选框跟随，原框消失）。
+        if !matches!(self.gesture, Some(EditGesture::MoveNotes { .. })) {
+            self.draw_selection_boxes(ui, rect, content_rect);
+        }
         // 编辑手势预览（画音符/选框），叠在音符层之上。
         self.draw_gesture_preview(ui, rect, content_rect);
 
@@ -540,27 +571,29 @@ impl PrView {
                     }
                 }
                 Tool::Select => {
-                    if self.hit_note(model, editing, tick, key).is_some() {
-                        events.push(PrEvent::SelectNote {
-                            track: editing,
-                            tick,
-                            key,
-                        });
-                        self.gesture = Some(EditGesture::MoveNotes {
-                            t0: tick as f64,
-                            k0: key as f64,
-                            cur_t: tick as f64,
-                            cur_k: key as f64,
-                        });
+                    if let Some((nt, ne, nk)) = self.hit_note(model, editing, tick, key) {
+                        // 按下音符：未选中则单音符选中（本地立即生效，事件同步 doc），
+                        // 已选中则保留整组——移动的是整个选中组（桌面端行为）。
+                        if !self.selected.contains(editing, nt, nk) {
+                            let mut sel = Selection::default();
+                            sel.add_rect_track(nt, ne, nk, nk, editing, editing);
+                            self.selected = sel;
+                            events.push(PrEvent::SelectNote {
+                                track: editing,
+                                tick: nt,
+                                key: nk,
+                            });
+                        }
+                        self.start_move_notes(nt as f64, nk as f64);
                     } else {
-                        // 开始新选框：旧选区立即清除（桌面端行为，不等松手）。
-                        self.selected = Selection::default();
-                        events.push(PrEvent::ClearSelection);
+                        // 按下空白：旧选区保留（与 AR 一致）——拖动确认后才清，
+                        // 单击松手才清除；起点命中音符的拖动确认时转移动分支。
                         self.gesture = Some(EditGesture::Marquee {
                             t0: tick as f64,
                             k0: key as f64,
                             cur_t: tick as f64,
                             cur_k: key as f64,
+                            cleared: false,
                         });
                     }
                 }
@@ -576,13 +609,37 @@ impl PrView {
             }
         }
 
+        // 长按选框（尚未确认拖动、按下点在选框内）→ 移动选中音符。
+        // 安卓触摸没有 hover，长按区分"点击/框选"与"移动选框"（桌面端是按下即移）。
+        if down
+            && let Some(EditGesture::Marquee {
+                t0,
+                k0,
+                cleared: false,
+                ..
+            }) = self.gesture
+            && !self.selected.is_empty()
+            && self.press_in_selection(t0, k0)
+        {
+            let long_pressed = ui.input(|i| {
+                i.pointer
+                    .press_start_time()
+                    .is_some_and(|t| i.time - t >= self.long_press_secs)
+            });
+            if long_pressed {
+                self.start_move_notes(t0, k0);
+            }
+        }
+
         // 拖动中：先边缘自动滚动视口，再更新手势（tick/key 跟随手指）。
         if down && let Some(pos) = pos {
             // 拖到内容区边缘 20px 内自动滚动（桌面端同款），选区/音符坐标
             // 是音乐坐标（tick/key），滚动后预览自动跟随。
             self.auto_scroll(ui, content_rect, pos);
+            let (tick, key) = local(&self.view, pos);
+            let mut marquee_confirmed = false;
+            let mut ghost_delta: Option<(f64, f64, f64, f64)> = None;
             if let Some(g) = &mut self.gesture {
-                let (tick, key) = local(&self.view, pos);
                 match g {
                     EditGesture::PencilDraw {
                         start_tick,
@@ -594,12 +651,80 @@ impl PrView {
                     EditGesture::PencilRetune { cur_key, .. } => {
                         *cur_key = key;
                     }
-                    EditGesture::Marquee { cur_t, cur_k, .. }
-                    | EditGesture::MoveNotes { cur_t, cur_k, .. }
-                    | EditGesture::EraseMarquee { cur_t, cur_k, .. } => {
+                    EditGesture::Marquee {
+                        t0,
+                        k0,
+                        cur_t,
+                        cur_k,
+                        cleared,
+                    } => {
+                        *cur_t = tick as f64;
+                        *cur_k = key as f64;
+                        // 拖动确认（位置离开起点，与释放判定一致）：首次离开
+                        // 起点时清旧选区，拖拽中只有一个新选框（不叠）。
+                        if !*cleared && (*cur_t != *t0 || *cur_k != *k0) {
+                            *cleared = true;
+                            marquee_confirmed = true;
+                        }
+                    }
+                    EditGesture::MoveNotes {
+                        t0,
+                        k0,
+                        cur_t,
+                        cur_k,
+                        ..
+                    } => {
+                        *cur_t = tick as f64;
+                        *cur_k = key as f64;
+                        ghost_delta = Some((*t0, *k0, *cur_t, *cur_k));
+                    }
+                    EditGesture::EraseMarquee { cur_t, cur_k, .. } => {
                         *cur_t = tick as f64;
                         *cur_k = key as f64;
                     }
+                }
+            }
+            // 移动音符：按偏移更新 ghost（新位置音符，GPU ghost 层绘制）。
+            if let Some((t0, k0, cur_t, cur_k)) = ghost_delta {
+                let dt = (cur_t - t0).round() as i64;
+                let dk = (cur_k - k0).round() as i32;
+                self.ghost_notes = self
+                    .move_notes
+                    .iter()
+                    .map(|&(s, e, k, tr)| {
+                        (
+                            (s as i64 + dt).max(0) as u32,
+                            (e as i64 + dt).max(0) as u32,
+                            ((k as i32 + dk).clamp(0, 127)) as u8,
+                            tr,
+                        )
+                    })
+                    .collect();
+                self.ghost_dirty = true;
+            }
+            if marquee_confirmed
+                && let Some(EditGesture::Marquee {
+                    t0,
+                    k0,
+                    cur_t,
+                    cur_k,
+                    ..
+                }) = self.gesture
+            {
+                let (t0, k0, cur_t, cur_k) = (t0, k0, cur_t, cur_k);
+                if self.hit_note(model, editing, t0 as u32, k0 as u8).is_some() {
+                    // 起点命中音符：这是"移动音符"不是框选——转移动分支，
+                    // 原选区（选中音符）保留，画偏移预览（不会叠两个选框）。
+                    self.gesture = Some(EditGesture::MoveNotes {
+                        t0,
+                        k0,
+                        cur_t,
+                        cur_k,
+                    });
+                } else {
+                    // 确认是新选框：旧选区立即清（桌面端行为，不等松手）。
+                    self.selected = Selection::default();
+                    events.push(PrEvent::ClearSelection);
                 }
             }
         }
@@ -653,15 +778,20 @@ impl PrView {
                         });
                     }
                     // dt==0 && dk==0：纯单击选中（SelectNote 已选，无 undo）。
+                    // 移动结束：清 ghost/hidden（模型更新后 revision 变化重建原音符）。
+                    self.ghost_notes.clear();
+                    self.ghost_dirty = true;
+                    self.hidden_notes.clear();
+                    self.move_notes.clear();
                 }
                 EditGesture::Marquee {
                     t0,
                     k0,
                     cur_t,
                     cur_k,
-                    ..
+                    cleared,
                 } => {
-                    if cur_t != t0 || cur_k != k0 {
+                    if cleared {
                         let (a, b) = (t0.min(cur_t), t0.max(cur_t));
                         let (ka, kb) = (k0.min(cur_k), k0.max(cur_k));
                         // 释放帧直接更新本地渲染选区：事件处理在绘制后才写 doc，
@@ -683,7 +813,7 @@ impl PrView {
                             k1: kb as u8,
                         });
                     } else {
-                        // 单击空白：清选区（同步本地，防闪烁）。
+                        // 单击空白：松手才清选区（与 AR 一致，按下不清）。
                         self.selected = Selection::default();
                         events.push(PrEvent::ClearSelection);
                     }
@@ -779,13 +909,101 @@ impl PrView {
             if uploaded[key as usize] == rev {
                 continue;
             }
-            let notes = build_key_notes(model.as_ref(), key, &HashSet::new(), &vec![true; n]);
+            let notes = build_key_notes(model.as_ref(), key, &self.hidden_notes, &vec![true; n]);
             if !renderer.try_incremental_key_upload(key, &notes, rev) {
                 // 该 key 从未上传（异常路径）：退化为全量重建。
                 self.notes_build = None;
                 self.notes_uploaded = false;
                 return;
             }
+        }
+    }
+
+    /// 收集选中矩形覆盖的音符：(start, end, key, track)。range 查询只扫命中桶。
+    fn collect_selected_notes(&self, model: &YinModel) -> Vec<(u32, u32, u8, u16)> {
+        let mut out = Vec::new();
+        for &(ts, te, kl, kh, tl, th) in &self.selected.rects {
+            for key in kl..=kh {
+                for n in model.notes[key as usize].range(ts, te) {
+                    if n.track >= tl && n.track <= th && n.start_tick >= ts && n.start_tick < te {
+                        out.push((n.start_tick, n.end_tick, key, n.track));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// 按下点 (tick, key) 是否在任一选框矩形内。
+    fn press_in_selection(&self, tick: f64, key: f64) -> bool {
+        self.selected.rects.iter().any(|&(ts, te, kl, kh, ..)| {
+            tick >= ts as f64 && tick < te as f64 && key >= kl as f64 && key <= kh as f64
+        })
+    }
+
+    /// 进入"移动选中音符"：收集音符、构建 hidden（原位置隐藏）、建 MoveNotes 手势。
+    /// t0/k0 为按下位置（tick/key，音乐坐标，ghost 偏移基准）。
+    fn start_move_notes(&mut self, t0: f64, k0: f64) {
+        let Some(model) = self.model.clone() else {
+            return;
+        };
+        self.move_notes = self.collect_selected_notes(&model);
+        if self.move_notes.is_empty() {
+            return; // 选框内无音符：不进入移动（保持 Marquee 语义）。
+        }
+        self.hidden_notes = self
+            .move_notes
+            .iter()
+            .map(|&(s, _, k, tr)| (tr, s, k))
+            .collect();
+        self.gesture = Some(EditGesture::MoveNotes {
+            t0,
+            k0,
+            cur_t: t0,
+            cur_k: k0,
+        });
+        self.ghost_dirty = true;
+    }
+
+    /// 上传移动覆盖层：ghost（变化才上传）+ hidden（变化才重建受影响 key 桶）。
+    /// hidden 只在使用期变化（开始/结束），中间固定——重建成本可控。
+    fn upload_overlays(&mut self) {
+        let Some(model) = self.model.clone() else {
+            return;
+        };
+        let Some(renderer) = &mut self.renderer else {
+            return;
+        };
+        if self.ghost_dirty {
+            self.ghost_dirty = false;
+            // ghost 层（draw 的 Z 序最上层 Note 层）：CPU 直传 NoteInstance。
+            renderer.upload_note_layer(0, 0, |out| {
+                for &(s, e, k, tr) in &self.ghost_notes {
+                    out.push(NoteInstance {
+                        start_tick: s,
+                        end_tick: e,
+                        packed: NoteInstance::pack(k, tr, 0),
+                    });
+                }
+            });
+        }
+        if self.hidden_notes != self.hidden_uploaded {
+            let affected: std::collections::HashSet<u8> = self
+                .hidden_notes
+                .iter()
+                .map(|&(_, _, k)| k)
+                .chain(self.hidden_uploaded.iter().map(|&(_, _, k)| k))
+                .collect();
+            let n = model.tracks.len();
+            for key in affected {
+                let notes =
+                    build_key_notes(model.as_ref(), key, &self.hidden_notes, &vec![true; n]);
+                // rev 用 model 的 per-key revision：hidden 重建不干扰
+                // sync_edited_keys 的"已同步"判断（编辑后 revision 变化照常重建）。
+                let rev = model.note_revisions[key as usize];
+                let _ = renderer.try_incremental_key_upload(key, &notes, rev);
+            }
+            self.hidden_uploaded = self.hidden_notes.clone();
         }
     }
 
@@ -803,8 +1021,13 @@ impl PrView {
             let x1 = rect.min.x + self.view.tick_to_x(te as f64);
             let y0 = content_rect.min.y + self.view.key_to_y(kl);
             let y1 = content_rect.min.y + self.view.key_to_y(kh + 1);
-            let r = egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1))
-                .intersect(content_rect);
+            // key 轴 y 随 key 增大而减小，kl<kh 时 y0>y1；归一化后才是合法 Rect
+            //（倒置矩形 intersect 后画不出来——"松手即消失"的真根因）。
+            let r = egui::Rect::from_min_max(
+                egui::pos2(x0.min(x1), y0.min(y1)),
+                egui::pos2(x0.max(x1), y0.max(y1)),
+            )
+            .intersect(content_rect);
             painter.rect_filled(r, 1.0, fill);
             painter.rect_stroke(r, 1.0, stroke, egui::StrokeKind::Inside);
         }
@@ -826,8 +1049,12 @@ impl PrView {
             let x1 = rect.min.x + self.view.tick_to_x(t1);
             let y0 = content_rect.min.y + self.view.key_to_y(key);
             let y1 = content_rect.min.y + self.view.key_to_y(key + 1);
-            let r = egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1))
-                .intersect(content_rect);
+            // key 轴 y 向下增大，y0>y1，需归一化（倒置矩形画不出来）。
+            let r = egui::Rect::from_min_max(
+                egui::pos2(x0.min(x1), y0.min(y1)),
+                egui::pos2(x0.max(x1), y0.max(y1)),
+            )
+            .intersect(content_rect);
             painter.rect_filled(r, 2.0, preview_color);
             painter.rect_stroke(r, 2.0, preview_stroke, egui::StrokeKind::Inside);
         };
@@ -880,7 +1107,10 @@ impl PrView {
                     egui::pos2(x0.max(x1), y0.max(y1)),
                 )
                 .intersect(content_rect);
-                painter.rect_filled(r, 1.0, preview_color);
+                // 与驻留选框同色（AR 一致：预览=驻留），避免松手瞬间
+                // 从浓变淡的观感差异（看起来像叠了两个选框）。
+                let fill = self.theme.accent_active.gamma_multiply(0.18);
+                painter.rect_filled(r, 1.0, fill);
                 painter.rect_stroke(r, 1.0, preview_stroke, egui::StrokeKind::Inside);
             }
             EditGesture::MoveNotes {
@@ -900,8 +1130,12 @@ impl PrView {
                         content_rect.min.y + self.view.key_to_y((kl as f64 + dk).max(0.0) as u8);
                     let y1 = content_rect.min.y
                         + self.view.key_to_y((kh as f64 + dk).max(0.0) as u8 + 1);
-                    let r = egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1))
-                        .intersect(content_rect);
+                    // 与持久选框一致：y 归一化（倒置矩形画不出来）。
+                    let r = egui::Rect::from_min_max(
+                        egui::pos2(x0.min(x1), y0.min(y1)),
+                        egui::pos2(x0.max(x1), y0.max(y1)),
+                    )
+                    .intersect(content_rect);
                     painter.rect_filled(r, 2.0, preview_color);
                     painter.rect_stroke(r, 2.0, preview_stroke, egui::StrokeKind::Inside);
                 }
