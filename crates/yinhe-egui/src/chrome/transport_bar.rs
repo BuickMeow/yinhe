@@ -528,39 +528,52 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
             // Uses manual pointer tracking (no ui.interact) to avoid consuming
             // button clicks. Only starts a drag if the press began in a blank area
             // (outside buttons and timecode display).
-            // 空白区判定用 egui 的 hit test：press 帧指针下没有任何可交互
-            // widget（interaction_snapshot().hovered 为空）才算空白，隐藏按钮
-            // 也是 widget，press 它们时 hovered 非空，不会被误判为空白区。
+            // 空白区判定：press 帧（刚按下时）egui_wants_pointer_input() 为 false
+            // 才算空白——它只看 potential_click/drag_id（press 落在任何
+            // click-sense widget——包括透明隐藏按钮——上才有值），egui 的 Ui
+            // 容器注册的非交互 widget 不参与。
+            // 判定结果跨帧缓存：指针移过点击阈值后 egui 会清除
+            // potential_click_id（could_any_button_be_click 变 false），
+            // 移动帧再查 wants_pointer_input 会误报 false。
             // StartDrag 只在指针移过点击距离阈值后才发送：按下就 StartDrag
             // 会在 macOS 启动系统级窗口拖拽并吞掉 release 事件，click（进而
             // 双击最大化）无法产生。
             let bar_rect = ui.max_rect();
             let drag_id = ui.id().with("tb_drag_started");
+            let blank_id = ui.id().with("tb_drag_blank");
             let mut drag_started: bool = ui.data_mut(|d| d.get_temp(drag_id)).unwrap_or(false);
 
+            // press 帧：判定 press 起点是否空白区并缓存
+            if ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary))
+                && let Some(pos) = ui.input(|i| i.pointer.press_origin())
+            {
+                let in_bar = bar_rect.contains(pos);
+                let in_timecode = timecode_rect
+                    .map(|r: egui::Rect| r.contains(pos))
+                    .unwrap_or(false);
+                let pressed_blank = in_bar && !in_timecode && !ui.ctx().egui_wants_pointer_input();
+                ui.data_mut(|d| d.insert_temp(blank_id, pressed_blank));
+            }
+
             if ui.input(|i| i.pointer.primary_down()) {
-                if !drag_started && let Some(pos) = ui.input(|i| i.pointer.press_origin()) {
-                    let in_bar = bar_rect.contains(pos);
-                    let in_timecode = timecode_rect
-                        .map(|r: egui::Rect| r.contains(pos))
-                        .unwrap_or(false);
-                    // press 帧指针下无任何可交互 widget = 空白区
-                    let pressed_blank = ui.ctx().interaction_snapshot(|w| w.hovered.is_empty());
-                    if in_bar && !in_timecode && pressed_blank {
-                        // 位移超过点击阈值（egui 判定 click/drag 的分界线）才启动窗口拖动
-                        let moved_past_click_dist = ui.input(|i| {
-                            i.pointer.hover_pos().is_some_and(|p| {
-                                p.distance(pos) >= egui::InputOptions::default().max_click_dist
+                if !drag_started && ui.data_mut(|d| d.get_temp(blank_id)).unwrap_or(false) {
+                    // 位移超过点击阈值（egui 判定 click/drag 的分界线）才启动窗口拖动
+                    let moved_past_click_dist = ui.input(|i| {
+                        let (hover, origin) = (i.pointer.hover_pos(), i.pointer.press_origin());
+                        hover.is_some_and(|p| {
+                            origin.is_some_and(|o| {
+                                p.distance(o) >= egui::InputOptions::default().max_click_dist
                             })
-                        });
-                        if moved_past_click_dist {
-                            drag_started = true;
-                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
-                        }
+                        })
+                    });
+                    if moved_past_click_dist {
+                        drag_started = true;
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
                     }
                 }
             } else {
                 drag_started = false;
+                ui.data_mut(|d| d.insert_temp(blank_id, false));
             }
 
             ui.data_mut(|d| d.insert_temp(drag_id, drag_started));
@@ -1091,7 +1104,6 @@ fn show_timecode_display(ui: &mut egui::Ui, doc: &Document) -> egui::Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::view_interaction::FollowModeExt;
 
     /// 回归测试：播放菜单各行的垂直间距必须一致。
     /// 此前出现过"播放/暂停"与"停止"之间间距异常的问题。
