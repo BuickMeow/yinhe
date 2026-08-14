@@ -14,6 +14,8 @@ pub enum MenuAction {
     Save,
     SaveAs,
     CloseDocument,
+    ExportAudio,
+    ExportMidi,
     Undo,
     Redo,
     Cut,
@@ -24,6 +26,10 @@ pub enum MenuAction {
     Delete,
     TransposeUp,
     TransposeDown,
+    /// 播放菜单「播放/暂停」（Space）。
+    TogglePlay,
+    /// 播放菜单「停止」（Esc）。
+    Stop,
     /// App 菜单「设置…」（⌘,），打开应用设置对话框。
     Settings,
     /// App 菜单「退出」（⌘Q），走未保存检查流程。

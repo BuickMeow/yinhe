@@ -295,6 +295,49 @@ impl App {
 }
 
 impl App {
+    /// 处理编辑动作（transport bar 编辑 popup / 图钉与 macOS 菜单共用）。
+    /// 复制/粘贴/复制/删除在自动化锚点选中时作用于锚点（与键盘快捷键一致）。
+    pub(crate) fn handle_edit_action(&mut self, action: transport_bar::EditAction) {
+        use transport_bar::EditAction as A;
+        let route_to_automation = self.has_selected_automation_anchors();
+        match action {
+            A::Undo => self.undo(),
+            A::Redo => self.redo(),
+            A::Cut => self.cut_selection(),
+            A::Copy => {
+                if route_to_automation {
+                    self.copy_automation_anchors();
+                } else {
+                    self.copy_selection();
+                }
+            }
+            A::Paste => {
+                if route_to_automation {
+                    self.paste_automation_anchors();
+                } else {
+                    self.paste_clipboard();
+                }
+            }
+            A::SelectAll => self.select_all(),
+            A::Duplicate => {
+                if route_to_automation {
+                    self.duplicate_automation_anchors();
+                } else {
+                    self.duplicate_selected_notes();
+                }
+            }
+            A::Delete => {
+                if route_to_automation {
+                    self.delete_automation_anchors();
+                } else {
+                    self.delete_selected_notes();
+                }
+            }
+            A::TransposeUp => self.transpose_selected_notes(12),
+            A::TransposeDown => self.transpose_selected_notes(-12),
+        }
+    }
+
     /// Handle file menu actions from the transport bar.
     /// Checks for unsaved changes before destructive actions (New, Open, Close, Exit).
     pub(crate) fn handle_file_action(

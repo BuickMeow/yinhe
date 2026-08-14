@@ -10,6 +10,139 @@ use yinhe_editor_core::document::Document;
 use yinhe_editor_core::shortcuts;
 use yinhe_types::time_format;
 
+/// Actions triggered from the edit menu dropdown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditAction {
+    Undo,
+    Redo,
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
+    Duplicate,
+    Delete,
+    TransposeUp,
+    TransposeDown,
+}
+
+impl EditAction {
+    /// 全部编辑动作。**顺序即 `AudioSettings::pinned_edit_actions` 数组索引**。
+    pub const ALL: [EditAction; 10] = [
+        EditAction::Undo,
+        EditAction::Redo,
+        EditAction::Cut,
+        EditAction::Copy,
+        EditAction::Paste,
+        EditAction::SelectAll,
+        EditAction::Duplicate,
+        EditAction::Delete,
+        EditAction::TransposeUp,
+        EditAction::TransposeDown,
+    ];
+
+    pub const fn pinned_index(self) -> usize {
+        match self {
+            EditAction::Undo => 0,
+            EditAction::Redo => 1,
+            EditAction::Cut => 2,
+            EditAction::Copy => 3,
+            EditAction::Paste => 4,
+            EditAction::SelectAll => 5,
+            EditAction::Duplicate => 6,
+            EditAction::Delete => 7,
+            EditAction::TransposeUp => 8,
+            EditAction::TransposeDown => 9,
+        }
+    }
+
+    /// 快捷键表（`Keybindings`）中的动作 id。
+    pub const fn action_id(self) -> &'static str {
+        match self {
+            EditAction::Undo => shortcuts::ACTION_UNDO,
+            EditAction::Redo => shortcuts::ACTION_REDO,
+            EditAction::Cut => shortcuts::ACTION_CUT,
+            EditAction::Copy => shortcuts::ACTION_COPY,
+            EditAction::Paste => shortcuts::ACTION_PASTE,
+            EditAction::SelectAll => shortcuts::ACTION_SELECT_ALL,
+            EditAction::Duplicate => shortcuts::ACTION_DUPLICATE,
+            EditAction::Delete => shortcuts::ACTION_DELETE,
+            EditAction::TransposeUp => shortcuts::ACTION_TRANSPOSE_UP,
+            EditAction::TransposeDown => shortcuts::ACTION_TRANSPOSE_DOWN,
+        }
+    }
+
+    pub const fn icon(self) -> egui_material_icons::MaterialIcon {
+        match self {
+            EditAction::Undo => ICON_UNDO,
+            EditAction::Redo => ICON_REDO,
+            EditAction::Cut => ICON_CONTENT_CUT,
+            EditAction::Copy => ICON_CONTENT_COPY,
+            EditAction::Paste => ICON_CONTENT_PASTE,
+            EditAction::SelectAll => ICON_SELECT_ALL,
+            EditAction::Duplicate => ICON_COPY_ALL,
+            EditAction::Delete => ICON_DELETE,
+            EditAction::TransposeUp => ICON_ARROW_UPWARD,
+            EditAction::TransposeDown => ICON_ARROW_DOWNWARD,
+        }
+    }
+
+    /// 动作名的 i18n key（由 `crate::shortcuts::action_label_key` 统一维护）。
+    pub fn label_key(self) -> &'static str {
+        crate::shortcuts::action_label_key(self.action_id())
+    }
+
+    /// 该动作是否可用（菜单中置灰；无活动文档时编辑无意义）。
+    fn is_enabled(self, has_active: bool) -> bool {
+        has_active
+    }
+}
+
+/// 菜单 popup 行的统一接口：文件/编辑动作共用同一套渲染逻辑
+/// （图标 + 名称 + 快捷键 + 图钉），保证两处 popup 行为一致。
+pub trait PopupRow: Copy {
+    fn pinned_index(self) -> usize;
+    fn action_id(self) -> &'static str;
+    fn icon(self) -> egui_material_icons::MaterialIcon;
+    fn label_key(self) -> &'static str;
+    fn is_enabled(self, has_active: bool, loading: bool) -> bool;
+}
+
+impl PopupRow for FileAction {
+    fn pinned_index(self) -> usize {
+        self.pinned_index()
+    }
+    fn action_id(self) -> &'static str {
+        self.action_id()
+    }
+    fn icon(self) -> egui_material_icons::MaterialIcon {
+        self.icon()
+    }
+    fn label_key(self) -> &'static str {
+        self.label_key()
+    }
+    fn is_enabled(self, has_active: bool, loading: bool) -> bool {
+        self.is_enabled(has_active, loading)
+    }
+}
+
+impl PopupRow for EditAction {
+    fn pinned_index(self) -> usize {
+        self.pinned_index()
+    }
+    fn action_id(self) -> &'static str {
+        self.action_id()
+    }
+    fn icon(self) -> egui_material_icons::MaterialIcon {
+        self.icon()
+    }
+    fn label_key(self) -> &'static str {
+        self.label_key()
+    }
+    fn is_enabled(self, has_active: bool, _loading: bool) -> bool {
+        self.is_enabled(has_active)
+    }
+}
+
 /// Actions triggered from the file menu dropdown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileAction {
@@ -118,6 +251,7 @@ pub struct TransportResponse {
     pub pause_return: bool,
     pub stop_play: bool,
     pub pending_file_action: Option<FileAction>,
+    pub pending_edit_action: Option<EditAction>,
 }
 
 pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportResponse {
@@ -127,6 +261,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
     let mut pause_return = false;
     let mut stop_play = false;
     let mut pending_file_action = None;
+    let mut pending_edit_action = None;
 
     egui::Panel::top("transport_bar")
         .frame(egui::Frame {
@@ -181,33 +316,47 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 
                 // ── 图钉固定的文件动作（顺序 = 菜单顺序）：作为独立按钮
                 //    紧跟在文件按钮右侧，全部钉上时就是一整行图标 ──
-                for (i, action) in FileAction::ALL.iter().enumerate() {
-                    if !ctx.settings.pinned_file_actions[i] {
-                        continue;
-                    }
-                    let enabled = action.is_enabled(has_active, ctx.file_loader.is_loading());
-                    let icon = action.icon();
-                    let pin_resp = ui.add_enabled(
-                        enabled,
-                        egui::Button::new(
-                            icon.rich_text()
-                                .size(crate::theme::TRANSPORT_BTN_FONT)
-                                .color(if enabled {
-                                    crate::theme::text_primary()
-                                } else {
-                                    crate::theme::text_disabled()
-                                }),
-                        )
-                        .min_size(btn_size)
-                        .corner_radius(btn_rounding),
-                    );
-                    if pin_resp.clicked() {
-                        pending_file_action = Some(*action);
-                    }
-                    if pin_resp.hovered() {
-                        hovered_hint = Some(t!(action.label_key()).to_string());
-                    }
+                pinned_action_buttons(
+                    ui,
+                    &FileAction::ALL,
+                    &mut ctx.settings.pinned_file_actions,
+                    has_active,
+                    ctx.file_loader.is_loading(),
+                    &mut hovered_hint,
+                    &mut pending_file_action,
+                );
+
+                // ── 编辑按钮 + 编辑菜单 popup（与文件按钮同款）──
+                let edit_btn = ui.add(
+                    egui::Button::new(
+                        ICON_EDIT
+                            .rich_text()
+                            .size(crate::theme::TRANSPORT_BTN_FONT)
+                            .color(crate::theme::text_primary()),
+                    )
+                    .min_size(btn_size)
+                    .corner_radius(btn_rounding),
+                );
+                if edit_btn.hovered() {
+                    hovered_hint = Some(t!("hint.edit_menu").to_string());
                 }
+                show_edit_menu(
+                    &edit_btn,
+                    has_active,
+                    ctx.settings,
+                    &mut pending_edit_action,
+                );
+
+                // ── 图钉固定的编辑动作 ──
+                pinned_action_buttons(
+                    ui,
+                    &EditAction::ALL,
+                    &mut ctx.settings.pinned_edit_actions,
+                    has_active,
+                    false,
+                    &mut hovered_hint,
+                    &mut pending_edit_action,
+                );
 
                 if has_active {
                     let is_playing = ctx
@@ -386,6 +535,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
         pause_return,
         stop_play,
         pending_file_action,
+        pending_edit_action,
     }
 }
 
@@ -402,16 +552,45 @@ fn tool_hint(tool: Tool) -> String {
     }
 }
 
-/// Show the file menu popup. Extracted from `show` for readability.
-/// 容器与量化弹框同款：Popup::from_toggle_button_response + CloseOnClickOutside。
+/// 文件菜单 popup 分组（顺序即菜单展示顺序；macOS 原生文件菜单共用，缺"设置/退出"组）。
+pub const FILE_GROUPS: [&[FileAction]; 4] = [
+    &[FileAction::NewProject, FileAction::Open],
+    &[
+        FileAction::Save,
+        FileAction::SaveAs,
+        FileAction::CloseDocument,
+    ],
+    &[FileAction::ExportAudio, FileAction::ExportMidi],
+    &[FileAction::Settings, FileAction::Exit],
+];
+
+/// 编辑菜单 popup 分组（macOS 原生编辑菜单共用）。
+pub const EDIT_GROUPS: [&[EditAction]; 4] = [
+    &[EditAction::Undo, EditAction::Redo],
+    &[EditAction::Cut, EditAction::Copy, EditAction::Paste],
+    &[
+        EditAction::SelectAll,
+        EditAction::Duplicate,
+        EditAction::Delete,
+    ],
+    &[EditAction::TransposeUp, EditAction::TransposeDown],
+];
+
+/// 动作菜单 popup 通用渲染：容器与量化弹框同款
+/// （Popup::from_toggle_button_response + CloseOnClickOutside），
 /// 固定宽度（快捷键 + 图钉需要稳定的行宽）；每项右侧显示快捷键与图钉按钮。
-fn show_file_menu(
+/// 文件/编辑 popup 共用，保证行为一致。
+/// 返回 true 表示图钉状态发生变化（调用方需 save）。
+fn show_action_menu<T: PopupRow>(
     button: &egui::Response,
-    file_loader: &FileLoader,
+    groups: &[&[T]],
     has_active: bool,
-    settings: &mut AudioSettings,
-    pending_action: &mut Option<FileAction>,
-) {
+    loading: bool,
+    keybindings: &yinhe_editor_core::shortcuts::Keybindings,
+    pinned: &mut [bool],
+    pending_action: &mut Option<T>,
+) -> bool {
+    let mut pinned_changed = false;
     egui::Popup::from_toggle_button_response(button)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .width(crate::theme::FILE_MENU_WIDTH)
@@ -421,30 +600,25 @@ fn show_file_menu(
             // 宽度恒定后 Area 尺寸与对齐计算全部稳定。
             ui.set_min_width(crate::theme::FILE_MENU_WIDTH);
             ui.set_max_width(crate::theme::FILE_MENU_WIDTH);
-            fn menu_items(
-                ui: &mut egui::Ui,
-                actions: &[FileAction],
-                has_active: bool,
-                loading: bool,
-                settings: &mut AudioSettings,
-                pending_action: &mut Option<FileAction>,
-            ) {
-                // 每行绝对定位（ui.put）固定尺寸：主按钮 + 右侧图钉，
-                // 行宽恰好等于菜单内容宽，不参与 popup 宽度反馈；
-                // 无快捷键的项用空 shortcut_text 保持左对齐（grow 占中间）。
-                const PIN_W: f32 = 26.0;
-                const MAIN_PIN_GAP: f32 = 2.0;
-                let row_h = ui.spacing().interact_size.y;
-                for &action in actions {
+            // 每行绝对定位（ui.put）固定尺寸：主按钮 + 右侧图钉，
+            // 行宽恰好等于菜单内容宽，不参与 popup 宽度反馈；
+            // 无快捷键的项用空 shortcut_text 保持左对齐（grow 占中间）。
+            const PIN_W: f32 = 26.0;
+            const MAIN_PIN_GAP: f32 = 2.0;
+            let row_h = ui.spacing().interact_size.y;
+            for (gi, group) in groups.iter().enumerate() {
+                if gi > 0 {
+                    ui.separator();
+                }
+                for &action in *group {
                     let enabled = action.is_enabled(has_active, loading);
-                    let pinned = settings.pinned_file_actions[action.pinned_index()];
+                    let is_pinned = pinned[action.pinned_index()];
                     let icon_color = if enabled {
                         crate::theme::text_bright()
                     } else {
                         crate::theme::text_disabled()
                     };
-                    let shortcut = settings
-                        .keybindings
+                    let shortcut = keybindings
                         .get(action.action_id())
                         .first()
                         .map(crate::shortcuts::display_combo);
@@ -479,7 +653,7 @@ fn show_file_menu(
                         .add_enabled_ui(enabled, |ui| ui.put(main_rect, main_btn))
                         .inner;
 
-                    let pin_color = if pinned {
+                    let pin_color = if is_pinned {
                         crate::theme::accent_active()
                     } else {
                         crate::theme::text_disabled()
@@ -508,31 +682,105 @@ fn show_file_menu(
                     if pin_resp.clicked() {
                         // 图钉只切换固定状态，不关闭菜单
                         let idx = action.pinned_index();
-                        settings.pinned_file_actions[idx] = !settings.pinned_file_actions[idx];
-                        settings.save();
+                        pinned[idx] = !pinned[idx];
+                        pinned_changed = true;
                     }
                 }
             }
-
-            // 分组：新建/打开 | 保存/另存/关闭 | 导出音频/导出MIDI | 设置/退出
-            let groups: [&[FileAction]; 4] = [
-                &[FileAction::NewProject, FileAction::Open],
-                &[
-                    FileAction::Save,
-                    FileAction::SaveAs,
-                    FileAction::CloseDocument,
-                ],
-                &[FileAction::ExportAudio, FileAction::ExportMidi],
-                &[FileAction::Settings, FileAction::Exit],
-            ];
-            let loading = file_loader.is_loading();
-            for (i, group) in groups.iter().enumerate() {
-                if i > 0 {
-                    ui.separator();
-                }
-                menu_items(ui, group, has_active, loading, settings, pending_action);
-            }
         });
+    pinned_changed
+}
+
+/// 文件按钮 popup（文件动作分组 + 图钉）。
+fn show_file_menu(
+    button: &egui::Response,
+    file_loader: &FileLoader,
+    has_active: bool,
+    settings: &mut AudioSettings,
+    pending_action: &mut Option<FileAction>,
+) {
+    // 字段级拆分借用：keybindings 只读 + pinned 可变 + 图钉变化后 save
+    let keybindings = &settings.keybindings;
+    let pinned = &mut settings.pinned_file_actions;
+    if show_action_menu(
+        button,
+        &FILE_GROUPS,
+        has_active,
+        file_loader.is_loading(),
+        keybindings,
+        pinned,
+        pending_action,
+    ) {
+        settings.save();
+    }
+}
+
+/// 编辑按钮 popup（编辑动作分组 + 图钉）。
+fn show_edit_menu(
+    button: &egui::Response,
+    has_active: bool,
+    settings: &mut AudioSettings,
+    pending_action: &mut Option<EditAction>,
+) {
+    let keybindings = &settings.keybindings;
+    let pinned = &mut settings.pinned_edit_actions;
+    if show_action_menu(
+        button,
+        &EDIT_GROUPS,
+        has_active,
+        false,
+        keybindings,
+        pinned,
+        pending_action,
+    ) {
+        settings.save();
+    }
+}
+
+/// 图钉固定的动作按钮行：作为独立按钮紧跟在菜单按钮右侧，
+/// 全部钉上时就是一整行图标。文件/编辑共用。
+fn pinned_action_buttons<T: PopupRow>(
+    ui: &mut egui::Ui,
+    actions: &[T],
+    pinned: &mut [bool],
+    has_active: bool,
+    loading: bool,
+    hovered_hint: &mut Option<String>,
+    pending: &mut Option<T>,
+) {
+    // 按钮样式与 transport bar 其他按钮一致
+    let btn_size = egui::vec2(
+        crate::theme::TRANSPORT_BTN_SIZE,
+        crate::theme::TRANSPORT_BTN_SIZE,
+    );
+    let btn_rounding = egui::CornerRadius::same(2);
+    for (i, action) in actions.iter().enumerate() {
+        if !pinned[i] {
+            continue;
+        }
+        let enabled = action.is_enabled(has_active, loading);
+        let icon = action.icon();
+        let pin_resp = ui.add_enabled(
+            enabled,
+            egui::Button::new(
+                icon.rich_text()
+                    .size(crate::theme::TRANSPORT_BTN_FONT)
+                    .color(if enabled {
+                        crate::theme::text_primary()
+                    } else {
+                        crate::theme::text_disabled()
+                    }),
+            )
+            .min_size(btn_size)
+            .corner_radius(btn_rounding),
+        );
+        if pin_resp.clicked() {
+            *pending = Some(*action);
+        }
+        if pin_resp.hovered() {
+            *hovered_hint = Some(t!(action.label_key()).to_string());
+        }
+    }
 }
 
 /// Show the timecode display panel. Returns the allocated rect.

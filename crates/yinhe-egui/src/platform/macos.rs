@@ -17,26 +17,25 @@ use super::MenuAction;
 use yinhe_editor_core::shortcuts::{self, Keybindings};
 
 /// 原生菜单项（按 i18n key 标识）与快捷键配置动作的对应关系，
-/// 供 `refresh_native_menu_accelerators` 把用户自定义快捷键同步到 macOS 菜单栏。
-const MENU_ACCEL_MAP: &[(&str, &str)] = &[
-    ("menu.new", shortcuts::ACTION_NEW_PROJECT),
-    ("menu.open", shortcuts::ACTION_OPEN),
-    ("menu.save", shortcuts::ACTION_SAVE),
-    ("menu.save_as", shortcuts::ACTION_SAVE_AS),
-    ("menu.close", shortcuts::ACTION_CLOSE_DOCUMENT),
-    ("menu.undo", shortcuts::ACTION_UNDO),
-    ("menu.redo", shortcuts::ACTION_REDO),
-    ("menu.cut", shortcuts::ACTION_CUT),
-    ("menu.copy", shortcuts::ACTION_COPY),
-    ("menu.paste", shortcuts::ACTION_PASTE),
-    ("menu.select_all", shortcuts::ACTION_SELECT_ALL),
-    ("menu.duplicate", shortcuts::ACTION_DUPLICATE),
-    ("menu.delete", shortcuts::ACTION_DELETE),
-    ("menu.octave_up", shortcuts::ACTION_TRANSPOSE_UP),
-    ("menu.octave_down", shortcuts::ACTION_TRANSPOSE_DOWN),
-    ("menu.settings", shortcuts::ACTION_SETTINGS),
-    ("menu.quit", shortcuts::ACTION_EXIT),
-];
+/// 菜单项翻译 key → 快捷键动作 id。
+/// 文件/编辑菜单由 `FileAction`/`EditAction` 驱动（单一来源），
+/// 播放菜单与 App 菜单的系统项单独列出。
+fn menu_action_id(label_key: &str) -> Option<&'static str> {
+    use crate::chrome::transport_bar::{EditAction, FileAction};
+    if let Some(a) = FileAction::ALL.iter().find(|a| a.label_key() == label_key) {
+        return Some(a.action_id());
+    }
+    if let Some(a) = EditAction::ALL.iter().find(|a| a.label_key() == label_key) {
+        return Some(a.action_id());
+    }
+    match label_key {
+        "shortcuts.play_toggle" => Some(shortcuts::ACTION_TOGGLE_PLAY),
+        "shortcuts.stop" => Some(shortcuts::ACTION_STOP),
+        "menu.settings" => Some(shortcuts::ACTION_SETTINGS),
+        "menu.quit" => Some(shortcuts::ACTION_EXIT),
+        _ => None,
+    }
+}
 
 /// 键名（`Keybindings` 中 `KeyCombo.key`）→ macOS 加速键码。
 fn str_to_muda_code(s: &str) -> Option<Code> {
@@ -476,6 +475,16 @@ impl MenuText for Submenu {
     }
 }
 
+impl MenuText for PredefinedMenuItem {
+    fn set_text(&self, _text: &str) {
+        // 分隔符无文本
+    }
+
+    fn update_accelerator(&self, _accelerator: Option<Accelerator>) {
+        // 分隔符无加速键
+    }
+}
+
 /// 持有菜单栏所有 Rust 对象，保持底层 NSMenu/NSMenuItem 存活。
 struct NativeMenu {
     _menu: Menu,
@@ -484,12 +493,92 @@ struct NativeMenu {
     _items: Vec<(&'static str, Box<dyn MenuText>)>,
 }
 
-/// 初始化原生 macOS 菜单栏，使用 `muda` crate。
-/// 在 `MenuBarInner::new()` 中调用，此时 NSApplication 已就绪。
+/// FileAction/EditAction → 原生菜单动作的桥接。
+trait MenuActionFrom {
+    fn to_menu_action(self) -> MenuAction;
+}
+
+impl MenuActionFrom for crate::chrome::transport_bar::FileAction {
+    fn to_menu_action(self) -> MenuAction {
+        use crate::chrome::transport_bar::FileAction;
+        match self {
+            FileAction::NewProject => MenuAction::NewProject,
+            FileAction::Open => MenuAction::Open,
+            FileAction::Save => MenuAction::Save,
+            FileAction::SaveAs => MenuAction::SaveAs,
+            FileAction::CloseDocument => MenuAction::CloseDocument,
+            FileAction::ExportAudio => MenuAction::ExportAudio,
+            FileAction::ExportMidi => MenuAction::ExportMidi,
+            FileAction::Settings => MenuAction::Settings,
+            FileAction::Exit => MenuAction::Exit,
+        }
+    }
+}
+
+impl MenuActionFrom for crate::chrome::transport_bar::EditAction {
+    fn to_menu_action(self) -> MenuAction {
+        use crate::chrome::transport_bar::EditAction;
+        match self {
+            EditAction::Undo => MenuAction::Undo,
+            EditAction::Redo => MenuAction::Redo,
+            EditAction::Cut => MenuAction::Cut,
+            EditAction::Copy => MenuAction::Copy,
+            EditAction::Paste => MenuAction::Paste,
+            EditAction::SelectAll => MenuAction::SelectAll,
+            EditAction::Duplicate => MenuAction::Duplicate,
+            EditAction::Delete => MenuAction::Delete,
+            EditAction::TransposeUp => MenuAction::TransposeUp,
+            EditAction::TransposeDown => MenuAction::TransposeDown,
+        }
+    }
+}
+
+/// 按动作分组构建原生菜单子菜单。
+/// 菜单项文本与 transport bar popup 共用 label_key（单一来源），
+/// 加速键取自默认快捷键表（后续由 poll 按用户配置刷新），
+/// 保证 macOS 菜单栏与弹窗的动作集合、快捷键始终同步。
+fn build_action_submenu<A>(
+    map: &mut HashMap<muda::MenuId, MenuAction>,
+    items: &mut Vec<(&'static str, Box<dyn MenuText>)>,
+    title_key: &'static str,
+    groups: &[&[A]],
+    default_kb: &Keybindings,
+) -> muda::Result<Submenu>
+where
+    A: Copy + MenuActionFrom + crate::chrome::transport_bar::PopupRow,
+{
+    let mut rows: Vec<(&'static str, Box<dyn MenuText>)> = Vec::new();
+    for (gi, group) in groups.iter().enumerate() {
+        if gi > 0 {
+            rows.push((title_key, Box::new(PredefinedMenuItem::separator())));
+        }
+        for &action in *group {
+            let accel = default_kb
+                .get(action.action_id())
+                .first()
+                .and_then(combo_to_accelerator);
+            let item = Box::new(MenuItem::new(t!(action.label_key()), true, accel));
+            map.insert(item.id().clone(), action.to_menu_action());
+            rows.push((action.label_key(), item));
+        }
+    }
+    // &dyn MenuText 通过 trait upcasting 协变到 &dyn IsMenuItem（rustc 1.86+）
+    let refs: Vec<&dyn IsMenuItem> = rows
+        .iter()
+        .map(|(_, b)| b.as_ref() as &dyn IsMenuItem)
+        .collect();
+    let submenu = Submenu::with_items(t!(title_key), true, &refs)?;
+    items.extend(rows);
+    Ok(submenu)
+}
+
+/// 初始化原生 macOS 菜单栏，使用 muda crate。
+/// 在 MenuBarInner::new() 中调用，此时 NSApplication 已就绪。
 fn init_native_menu() -> muda::Result<()> {
     let mut map = HashMap::new();
     let mut items: Vec<(&'static str, Box<dyn MenuText>)> = Vec::new();
     let cmd = Modifiers::SUPER;
+    let default_kb = Keybindings::default();
 
     // ── App 菜单（第一个菜单，标题由系统显示为应用名）──
     // macOS 惯例：About / 设置… / 隐藏类 / 退出 都放在这里。
@@ -542,164 +631,56 @@ fn init_native_menu() -> muda::Result<()> {
     ];
     let app_menu = Submenu::with_items("Yinhe", true, &app_items)?;
 
-    // ── 文件菜单 ──
-    let new_item = Box::new(MenuItem::new(
-        t!("menu.new"),
+    // ── 文件菜单（动作/分组与 transport bar 文件 popup 同步；
+    //    设置/退出在 App 菜单，故取前 3 组）──
+    let file_menu = build_action_submenu(
+        &mut map,
+        &mut items,
+        "menu.file",
+        &crate::chrome::transport_bar::FILE_GROUPS[..3],
+        &default_kb,
+    )?;
+
+    // ── 编辑菜单（与 transport bar 编辑 popup 同步）──
+    let edit_menu = build_action_submenu(
+        &mut map,
+        &mut items,
+        "menu.edit",
+        &crate::chrome::transport_bar::EDIT_GROUPS,
+        &default_kb,
+    )?;
+
+    // ── 播放菜单 ──
+    let play_item = Box::new(MenuItem::new(
+        t!("shortcuts.play_toggle"),
         true,
-        Some(Accelerator::new(Some(cmd), Code::KeyN)),
+        default_kb
+            .get(shortcuts::ACTION_TOGGLE_PLAY)
+            .first()
+            .and_then(combo_to_accelerator),
     ));
-    map.insert(new_item.id().clone(), MenuAction::NewProject);
+    map.insert(play_item.id().clone(), MenuAction::TogglePlay);
 
-    let open_item = Box::new(MenuItem::new(
-        t!("menu.open"),
+    let stop_item = Box::new(MenuItem::new(
+        t!("shortcuts.stop"),
         true,
-        Some(Accelerator::new(Some(cmd), Code::KeyO)),
+        default_kb
+            .get(shortcuts::ACTION_STOP)
+            .first()
+            .and_then(combo_to_accelerator),
     ));
-    map.insert(open_item.id().clone(), MenuAction::Open);
+    map.insert(stop_item.id().clone(), MenuAction::Stop);
 
-    let save_item = Box::new(MenuItem::new(
-        t!("menu.save"),
-        true,
-        Some(Accelerator::new(Some(cmd), Code::KeyS)),
-    ));
-    map.insert(save_item.id().clone(), MenuAction::Save);
+    let play_items: Vec<&dyn IsMenuItem> = vec![play_item.as_ref(), stop_item.as_ref()];
+    let play_menu = Submenu::with_items(t!("menu.playback"), true, &play_items)?;
 
-    let save_as_item = Box::new(MenuItem::new(
-        t!("menu.save_as"),
-        true,
-        Some(Accelerator::new(Some(cmd | Modifiers::SHIFT), Code::KeyS)),
-    ));
-    map.insert(save_as_item.id().clone(), MenuAction::SaveAs);
-
-    let close_item = Box::new(MenuItem::new(
-        t!("menu.close"),
-        true,
-        Some(Accelerator::new(Some(cmd), Code::KeyW)),
-    ));
-    map.insert(close_item.id().clone(), MenuAction::CloseDocument);
-
-    // `&dyn MenuText` 通过 trait upcasting 协变到 `&dyn IsMenuItem`（rustc 1.86+）
-    let sep = PredefinedMenuItem::separator();
-    let file_items: Vec<&dyn IsMenuItem> = vec![
-        new_item.as_ref(),
-        open_item.as_ref(),
-        &sep,
-        save_item.as_ref(),
-        save_as_item.as_ref(),
-        &sep,
-        close_item.as_ref(),
-    ];
-    let file_menu = Submenu::with_items(t!("menu.file"), true, &file_items)?;
-
-    // ── 编辑菜单 ──
-    let undo_item = Box::new(MenuItem::new(
-        t!("menu.undo"),
-        true,
-        Some(Accelerator::new(Some(cmd), Code::KeyZ)),
-    ));
-    map.insert(undo_item.id().clone(), MenuAction::Undo);
-
-    let redo_item = Box::new(MenuItem::new(
-        t!("menu.redo"),
-        true,
-        Some(Accelerator::new(Some(cmd | Modifiers::SHIFT), Code::KeyZ)),
-    ));
-    map.insert(redo_item.id().clone(), MenuAction::Redo);
-
-    let cut_item = Box::new(MenuItem::new(
-        t!("menu.cut"),
-        true,
-        Some(Accelerator::new(Some(cmd), Code::KeyX)),
-    ));
-    map.insert(cut_item.id().clone(), MenuAction::Cut);
-
-    let copy_item = Box::new(MenuItem::new(
-        t!("menu.copy"),
-        true,
-        Some(Accelerator::new(Some(cmd), Code::KeyC)),
-    ));
-    map.insert(copy_item.id().clone(), MenuAction::Copy);
-
-    let paste_item = Box::new(MenuItem::new(
-        t!("menu.paste"),
-        true,
-        Some(Accelerator::new(Some(cmd), Code::KeyV)),
-    ));
-    map.insert(paste_item.id().clone(), MenuAction::Paste);
-
-    let select_all_item = Box::new(MenuItem::new(
-        t!("menu.select_all"),
-        true,
-        Some(Accelerator::new(Some(cmd), Code::KeyA)),
-    ));
-    map.insert(select_all_item.id().clone(), MenuAction::SelectAll);
-
-    let duplicate_item = Box::new(MenuItem::new(
-        t!("menu.duplicate"),
-        true,
-        Some(Accelerator::new(Some(cmd), Code::KeyD)),
-    ));
-    map.insert(duplicate_item.id().clone(), MenuAction::Duplicate);
-
-    let delete_item = Box::new(MenuItem::new(
-        t!("menu.delete"),
-        true,
-        Some(Accelerator::new(None, Code::Delete)),
-    ));
-    map.insert(delete_item.id().clone(), MenuAction::Delete);
-
-    let transpose_up_item = Box::new(MenuItem::new(
-        t!("menu.octave_up"),
-        true,
-        Some(Accelerator::new(Some(Modifiers::SHIFT), Code::ArrowUp)),
-    ));
-    map.insert(transpose_up_item.id().clone(), MenuAction::TransposeUp);
-
-    let transpose_down_item = Box::new(MenuItem::new(
-        t!("menu.octave_down"),
-        true,
-        Some(Accelerator::new(Some(Modifiers::SHIFT), Code::ArrowDown)),
-    ));
-    map.insert(transpose_down_item.id().clone(), MenuAction::TransposeDown);
-
-    let sep = PredefinedMenuItem::separator();
-    let edit_items: Vec<&dyn IsMenuItem> = vec![
-        undo_item.as_ref(),
-        redo_item.as_ref(),
-        &sep,
-        cut_item.as_ref(),
-        copy_item.as_ref(),
-        paste_item.as_ref(),
-        &sep,
-        select_all_item.as_ref(),
-        duplicate_item.as_ref(),
-        delete_item.as_ref(),
-        &sep,
-        transpose_up_item.as_ref(),
-        transpose_down_item.as_ref(),
-    ];
-    let edit_menu = Submenu::with_items(t!("menu.edit"), true, &edit_items)?;
-
-    let menu_items: Vec<&dyn IsMenuItem> = vec![&app_menu, &file_menu, &edit_menu];
+    let menu_items: Vec<&dyn IsMenuItem> = vec![&app_menu, &file_menu, &edit_menu, &play_menu];
     let menu = Menu::with_items(&menu_items)?;
     menu.init_for_nsapp();
 
     // 收集所有 items 保持存活（翻译 key 用于语言切换时刷新文本）
-    items.push(("menu.new", new_item));
-    items.push(("menu.open", open_item));
-    items.push(("menu.save", save_item));
-    items.push(("menu.save_as", save_as_item));
-    items.push(("menu.close", close_item));
-    items.push(("menu.undo", undo_item));
-    items.push(("menu.redo", redo_item));
-    items.push(("menu.cut", cut_item));
-    items.push(("menu.copy", copy_item));
-    items.push(("menu.paste", paste_item));
-    items.push(("menu.select_all", select_all_item));
-    items.push(("menu.duplicate", duplicate_item));
-    items.push(("menu.delete", delete_item));
-    items.push(("menu.octave_up", transpose_up_item));
-    items.push(("menu.octave_down", transpose_down_item));
+    items.push(("shortcuts.play_toggle", play_item));
+    items.push(("shortcuts.stop", stop_item));
     items.push(("menu.about", about_item));
     items.push(("menu.settings", settings_item));
     items.push(("menu.hide", hide_item));
@@ -765,7 +746,7 @@ fn refresh_native_menu_accelerators(keybindings: &Keybindings) {
         if let Some(native) = cell.get() {
             for (key, item) in &native._items {
                 let key = *key;
-                if let Some((_, action_id)) = MENU_ACCEL_MAP.iter().find(|(k, _)| *k == key) {
+                if let Some(action_id) = menu_action_id(key) {
                     // 原生菜单一个条目只能显示一个加速键，取第一个快捷键
                     let acc = keybindings
                         .get(action_id)
@@ -787,7 +768,7 @@ fn clear_native_menu_accelerators() {
         if let Some(native) = cell.get() {
             for (key, item) in &native._items {
                 let key = *key;
-                if MENU_ACCEL_MAP.iter().any(|(k, _)| *k == key) {
+                if menu_action_id(key).is_some() {
                     item.update_accelerator(None);
                 }
             }

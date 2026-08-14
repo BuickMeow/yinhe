@@ -125,13 +125,15 @@ impl eframe::App for App {
         }
 
         // ── macOS: poll native menu bar actions ──
-        // 路由：Select/SelectVertical 工具且有锚点选中时，copy/paste/duplicate/delete 作用于自动化锚点
-        let route_to_automation = self.has_selected_automation_anchors();
         // 设置窗口打开或快捷键录制期间暂停原生菜单加速键：macOS 的菜单加速键由
         // AppKit 在系统层面拦截（不经过 egui），不暂停会导致设置页内按 Cmd+S 等
         // 组合直接触发菜单动作、录制器收不到按键。
         let suspend_menu_accels =
             self.audio_settings.show_settings || self.audio_settings.shortcut_recording;
+        // 播放菜单触发的播放/暂停/停止（与键盘、transport bar 合并处理）
+        let mut menu_toggle_play = false;
+        let mut menu_pause_return = false;
+        let mut menu_stop = false;
         for action in self
             .menu_bar
             .poll(&self.audio_settings.keybindings, suspend_menu_accels)
@@ -143,60 +145,64 @@ impl eframe::App for App {
                 MenuAction::Save => transport_bar::FileAction::Save,
                 MenuAction::SaveAs => transport_bar::FileAction::SaveAs,
                 MenuAction::CloseDocument => transport_bar::FileAction::CloseDocument,
+                MenuAction::ExportAudio => transport_bar::FileAction::ExportAudio,
+                MenuAction::ExportMidi => transport_bar::FileAction::ExportMidi,
                 MenuAction::Undo => {
-                    self.undo();
+                    self.handle_edit_action(transport_bar::EditAction::Undo);
                     continue;
                 }
                 MenuAction::Redo => {
-                    self.redo();
+                    self.handle_edit_action(transport_bar::EditAction::Redo);
                     continue;
                 }
                 MenuAction::Cut => {
-                    self.cut_selection();
+                    self.handle_edit_action(transport_bar::EditAction::Cut);
                     continue;
                 }
                 MenuAction::Copy => {
-                    if route_to_automation {
-                        self.copy_automation_anchors();
-                    } else {
-                        self.copy_selection();
-                    }
+                    self.handle_edit_action(transport_bar::EditAction::Copy);
                     continue;
                 }
                 MenuAction::Paste => {
-                    if route_to_automation {
-                        self.paste_automation_anchors();
-                    } else {
-                        self.paste_clipboard();
-                    }
+                    self.handle_edit_action(transport_bar::EditAction::Paste);
                     continue;
                 }
                 MenuAction::SelectAll => {
-                    self.select_all();
+                    self.handle_edit_action(transport_bar::EditAction::SelectAll);
                     continue;
                 }
                 MenuAction::Duplicate => {
-                    if route_to_automation {
-                        self.duplicate_automation_anchors();
-                    } else {
-                        self.duplicate_selected_notes();
-                    }
+                    self.handle_edit_action(transport_bar::EditAction::Duplicate);
                     continue;
                 }
                 MenuAction::Delete => {
-                    if route_to_automation {
-                        self.delete_automation_anchors();
-                    } else {
-                        self.delete_selected_notes();
-                    }
+                    self.handle_edit_action(transport_bar::EditAction::Delete);
                     continue;
                 }
                 MenuAction::TransposeUp => {
-                    self.transpose_selected_notes(12);
+                    self.handle_edit_action(transport_bar::EditAction::TransposeUp);
                     continue;
                 }
                 MenuAction::TransposeDown => {
-                    self.transpose_selected_notes(-12);
+                    self.handle_edit_action(transport_bar::EditAction::TransposeDown);
+                    continue;
+                }
+                MenuAction::TogglePlay => {
+                    let is_playing = self
+                        .audio_state
+                        .handle
+                        .as_ref()
+                        .map(|a| a.handle.is_playing())
+                        .unwrap_or(false);
+                    if is_playing {
+                        menu_pause_return = true;
+                    } else {
+                        menu_toggle_play = true;
+                    }
+                    continue;
+                }
+                MenuAction::Stop => {
+                    menu_stop = true;
                     continue;
                 }
                 MenuAction::Settings => {
@@ -448,13 +454,18 @@ impl eframe::App for App {
 
         // ── Handle playback actions ──
         self.handle_playback(
-            kb.toggle_play || transport_response.toggle_play,
-            kb.pause_return || transport_response.pause_return,
-            kb.stop_play || transport_response.stop_play,
+            kb.toggle_play || transport_response.toggle_play || menu_toggle_play,
+            kb.pause_return || transport_response.pause_return || menu_pause_return,
+            kb.stop_play || transport_response.stop_play || menu_stop,
         );
 
         // ── Smooth cursor interpolation between audio callback updates ──
         self.interpolate_playback_cursor();
+
+        // ── Handle edit menu actions（传输栏编辑 popup / 图钉）──
+        if let Some(action) = transport_response.pending_edit_action {
+            self.handle_edit_action(action);
+        }
 
         // ── Handle file menu actions ──
         // 键盘触发的文件动作（非 macOS）与传输栏菜单触发的合并处理

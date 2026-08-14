@@ -78,6 +78,8 @@ pub struct AudioSettings {
     /// 文件菜单里被图钉固定的动作（顺序对应 `FileAction::ALL`，9 项）。
     /// 被固定的动作会显示在标题栏上，属于用户自定义工作区，跨会话保存。
     pub pinned_file_actions: [bool; 9],
+    /// 编辑菜单里被图钉固定的动作（顺序对应 `EditAction::ALL`，10 项）。
+    pub pinned_edit_actions: [bool; 10],
     #[serde(skip)]
     pub show_settings: bool,
     /// 设置页当前选中的分类（左侧导航）。
@@ -119,6 +121,7 @@ impl Default for AudioSettings {
             layout: LayoutSettings::default(),
             keybindings: Keybindings::default(),
             pinned_file_actions: [false; 9],
+            pinned_edit_actions: [false; 10],
             show_settings: false,
             settings_tab: 0,
             settings_search: String::new(),
