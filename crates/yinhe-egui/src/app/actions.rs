@@ -25,6 +25,8 @@ pub(crate) struct KeyboardActions {
     pub cut: bool,
     pub paste: bool,
     pub select_all: bool,
+    /// 工具切换快捷键触发的目标工具（None = 本帧未触发）。
+    pub tool_to_activate: Option<crate::widgets::tools_panel::Tool>,
     /// 文件菜单动作（非 macOS 平台由键盘触发；macOS 走原生菜单栏）。
     pub file_action: Option<FileAction>,
 }
@@ -135,6 +137,20 @@ impl App {
             }
             if matches(shortcuts::ACTION_SELECT_ALL, key, modifiers) {
                 actions.select_all = true;
+            }
+
+            // ── 工具切换 ──
+            // 工具动作不在 macOS 原生菜单中，egui 一定能收到按键，
+            // 因此这里不跳过第一个快捷键（与文件/编辑动作的 macOS 处理不同）。
+            for tool in crate::widgets::tools_panel::ALL_TOOLS {
+                if kb
+                    .get(tool.action_id())
+                    .iter()
+                    .any(|c| crate::shortcuts::matches_combo(c, modifiers, key))
+                {
+                    actions.tool_to_activate = Some(tool);
+                    break;
+                }
             }
         }
 

@@ -351,6 +351,13 @@ pub fn action_label_key(action_id: &str) -> &'static str {
         sc::ACTION_TRANSPOSE_DOWN => "menu.octave_down",
         sc::ACTION_TOGGLE_PLAY => "shortcuts.play_toggle",
         sc::ACTION_STOP => "shortcuts.stop",
+        sc::ACTION_TOOL_SELECT => "shortcuts.tool_select",
+        sc::ACTION_TOOL_SELECT_VERTICAL => "shortcuts.tool_select_vertical",
+        sc::ACTION_TOOL_PAN => "shortcuts.tool_pan",
+        sc::ACTION_TOOL_PENCIL => "shortcuts.tool_pencil",
+        sc::ACTION_TOOL_CURVE => "shortcuts.tool_curve",
+        sc::ACTION_TOOL_SCISSORS => "shortcuts.tool_scissors",
+        sc::ACTION_TOOL_ERASER => "shortcuts.tool_eraser",
         _ => "shortcuts.unknown",
     }
 }

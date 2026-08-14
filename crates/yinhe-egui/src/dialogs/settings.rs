@@ -762,7 +762,7 @@ fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     ui.add_space(6.0);
 
     // ── 分组列表 ──
-    let groups: [(&str, &[&str]); 3] = [
+    let groups: [(&str, &[&str]); 4] = [
         (
             "settings.shortcuts.group_file",
             &[
@@ -795,6 +795,18 @@ fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         (
             "settings.shortcuts.group_play",
             &[shortcuts::ACTION_TOGGLE_PLAY, shortcuts::ACTION_STOP],
+        ),
+        (
+            "settings.shortcuts.group_tools",
+            &[
+                shortcuts::ACTION_TOOL_SELECT,
+                shortcuts::ACTION_TOOL_SELECT_VERTICAL,
+                shortcuts::ACTION_TOOL_PAN,
+                shortcuts::ACTION_TOOL_PENCIL,
+                shortcuts::ACTION_TOOL_CURVE,
+                shortcuts::ACTION_TOOL_SCISSORS,
+                shortcuts::ACTION_TOOL_ERASER,
+            ],
         ),
     ];
 

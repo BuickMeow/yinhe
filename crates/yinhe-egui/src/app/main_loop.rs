@@ -390,6 +390,9 @@ impl eframe::App for App {
         if kb.select_all {
             self.select_all();
         }
+        if let Some(tool) = kb.tool_to_activate {
+            self.active_tool = tool;
+        }
 
         // ── Live FPS (real, EMA-smoothed from egui frame delta) ──
         let dt = ui.input(|i| i.stable_dt);

@@ -34,4 +34,18 @@ impl Tool {
             Tool::Eraser => ICON_INK_ERASER,
         }
     }
+
+    /// 工具切换快捷键的动作 id（与 `shortcuts::ACTION_TOOL_*` 对应）。
+    pub fn action_id(self) -> &'static str {
+        use yinhe_editor_core::shortcuts as sc;
+        match self {
+            Tool::Select => sc::ACTION_TOOL_SELECT,
+            Tool::SelectVertical => sc::ACTION_TOOL_SELECT_VERTICAL,
+            Tool::Pan => sc::ACTION_TOOL_PAN,
+            Tool::Pencil => sc::ACTION_TOOL_PENCIL,
+            Tool::Curve => sc::ACTION_TOOL_CURVE,
+            Tool::Scissors => sc::ACTION_TOOL_SCISSORS,
+            Tool::Eraser => sc::ACTION_TOOL_ERASER,
+        }
+    }
 }
