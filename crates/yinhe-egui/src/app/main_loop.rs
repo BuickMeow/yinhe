@@ -96,6 +96,9 @@ impl eframe::App for App {
             None
         };
 
+        // ── MIDI 输入（直通试听/录音），每帧消费 ──
+        self.poll_midi_input();
+
         // ── Close interception ──
         let close_requested = ui.ctx().input(|i| i.viewport().close_requested());
         if close_requested && !self.should_exit {

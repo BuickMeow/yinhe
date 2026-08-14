@@ -8,6 +8,7 @@ pub(crate) mod dialog_dispatch;
 pub(crate) mod export_state;
 pub(crate) mod layout;
 pub(crate) mod main_loop;
+pub(crate) mod midi_input;
 pub(crate) mod poll;
 pub(crate) mod rescale_state;
 
@@ -128,6 +129,14 @@ pub struct App {
 
     // ── Settings ──
     pub(crate) audio_settings: crate::audio_settings::AudioSettings,
+
+    // ── MIDI 输入 ──
+    /// 当前打开的 MIDI 输入流（设置里选中设备且直通开启时存活）。
+    pub(crate) midi_input: Option<yinhe_midi_io::MidiInputStream>,
+    /// 当前连接的设备名（检测设备切换/重连）。
+    pub(crate) midi_connected_device: Option<String>,
+    /// 直通模式按住的键 → 力度（NoteOff 后重发仍按住的键用）。
+    pub(crate) midi_thru_keys: std::collections::HashMap<u8, u8>,
     /// 布局拖拽结束帧置位，帧末统一写盘（拖拽中不写，避免每帧刷盘）。
     pub(crate) layout_needs_save: bool,
     /// Tracks the last applied MIDI encoding to detect changes.
@@ -347,6 +356,9 @@ impl App {
             audio_state: audio_state::AudioState::new(),
 
             audio_settings,
+            midi_input: None,
+            midi_connected_device: None,
+            midi_thru_keys: std::collections::HashMap::new(),
             layout_needs_save: false,
             last_midi_encoding: yinhe_midi::MidiImportEncoding::Utf8,
             last_automation_density,
