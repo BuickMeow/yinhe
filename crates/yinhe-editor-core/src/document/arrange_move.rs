@@ -9,6 +9,26 @@ use crate::history::{AutomationDelta, NoteDelta, UndoAction};
 
 use super::Document;
 
+/// 把轨道索引偏移 `delta`（clamp 到合法范围），并跳过 conductor 轨
+/// （音符/自动化事件不能落在它上面：向上移动时夹到第一条普通轨，向下时夹回前一条）。
+fn offset_track_skip_conductor(
+    raw: i32,
+    delta: i32,
+    num_tracks: i32,
+    conductor_track_idx: Option<u16>,
+) -> u16 {
+    let raw_track = raw.clamp(0, num_tracks - 1);
+    if Some(raw_track as u16) == conductor_track_idx {
+        if delta < 0 {
+            (raw_track + 1).min(num_tracks - 1) as u16
+        } else {
+            (raw_track - 1).max(0) as u16
+        }
+    } else {
+        raw_track as u16
+    }
+}
+
 impl Document {
     /// Move all selected notes and automation events by `(delta_ticks, delta_tracks)`.
     ///
@@ -45,19 +65,13 @@ impl Document {
                 std::collections::HashMap::new();
             for (note, old_key) in &originals {
                 let new_tick = (note.start_tick as i64 + delta_ticks).max(0) as u32;
-                let raw_track = (note.track as i32 + delta_tracks).clamp(0, num_tracks - 1);
                 // Skip over conductor track: notes cannot land on it.
-                let new_track = if Some(raw_track as u16) == self.edit.conductor_track_idx {
-                    if delta_tracks < 0 {
-                        // Moving up: clamp to first non-conductor track
-                        (raw_track + 1).min(num_tracks - 1) as u16
-                    } else {
-                        // Moving down: clamp to last track before conductor (or stay)
-                        (raw_track - 1).max(0) as u16
-                    }
-                } else {
-                    raw_track as u16
-                };
+                let new_track = offset_track_skip_conductor(
+                    note.track as i32 + delta_tracks,
+                    delta_tracks,
+                    num_tracks,
+                    self.edit.conductor_track_idx,
+                );
                 let length = note.end_tick - note.start_tick;
                 let moved = yinhe_types::Note {
                     id: note.id,
@@ -147,17 +161,13 @@ impl Document {
         if delta_tracks != 0 {
             // Cross-track: add moved events to destination tracks
             for lm in &lane_moves {
-                let raw_dst = (lm.src_track as i32 + delta_tracks).clamp(0, num_tracks - 1);
                 // Skip over conductor track: automation cannot land on it.
-                let dst_track_idx = if Some(raw_dst as u16) == self.edit.conductor_track_idx {
-                    if delta_tracks < 0 {
-                        (raw_dst + 1).min(num_tracks - 1) as usize
-                    } else {
-                        (raw_dst - 1).max(0) as usize
-                    }
-                } else {
-                    raw_dst as usize
-                };
+                let dst_track_idx = offset_track_skip_conductor(
+                    lm.src_track as i32 + delta_tracks,
+                    delta_tracks,
+                    num_tracks,
+                    self.edit.conductor_track_idx,
+                ) as usize;
                 if dst_track_idx == lm.src_track {
                     // 被夹回原轨：phase 1 已把被拖事件从源 lane 剔除（换成 remaining），
                     // 必须把它们加回源 lane，否则事件蒸发。补一个 AutomationDelta
@@ -202,6 +212,182 @@ impl Document {
                     track_idx: dst_track_idx,
                     lane_idx: dst_lane_idx,
                     target: lm.target.clone(),
+                    before: before_dst,
+                    after: dst_lane.events.clone(),
+                }));
+            }
+        }
+
+        // ── 3. Offset selection rects to follow ──
+        self.edit.selected.offset_ticks(delta_ticks);
+        if delta_tracks != 0 {
+            self.edit.selected.offset_tracks(delta_tracks);
+        }
+
+        model.rebuild_dirty();
+        self.data.bump_revision();
+
+        if sub_actions.is_empty() {
+            None
+        } else if sub_actions.len() == 1 {
+            sub_actions.into_iter().next()
+        } else {
+            Some(UndoAction::Composite(sub_actions))
+        }
+    }
+
+    /// Duplicate all selected notes and automation events, offsetting the copies
+    /// by `(delta_ticks, delta_tracks)`. Originals stay untouched.
+    ///
+    /// AR Alt+拖动复制：原音符/原自动化事件保留，副本平移到新位置；
+    /// 选区同步移到副本范围，便于连续 Alt+拖动。一步操作，一个 undo entry。
+    pub fn duplicate_selected_arrange(
+        &mut self,
+        delta_ticks: i64,
+        delta_tracks: i32,
+    ) -> Option<UndoAction> {
+        if self.edit.selected.is_empty() {
+            return None;
+        }
+        if delta_ticks == 0 && delta_tracks == 0 {
+            return None;
+        }
+
+        let mut sub_actions: Vec<UndoAction> = Vec::new();
+        let model = Arc::make_mut(&mut self.data.model);
+        let num_tracks = model.tracks.len() as i32;
+        let rects = self.edit.selected.rects.clone();
+
+        // ── 1. 复制音符（原音符保留，副本平移到新 tick/新轨）──
+        let selected_data = batch_ops::collect_selected(model, &self.edit.selected);
+        if !selected_data.is_empty() {
+            let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
+                std::collections::HashMap::new();
+            for (note, old_key) in &selected_data {
+                let new_tick = (note.start_tick as i64 + delta_ticks).max(0) as u32;
+                // Skip over conductor track: notes cannot land on it.
+                let new_track = offset_track_skip_conductor(
+                    note.track as i32 + delta_tracks,
+                    delta_tracks,
+                    num_tracks,
+                    self.edit.conductor_track_idx,
+                );
+                let length = note.end_tick - note.start_tick;
+                new_by_key
+                    .entry(*old_key)
+                    .or_default()
+                    .push(yinhe_types::Note {
+                        id: model.alloc_note_id(),
+                        start_tick: new_tick,
+                        end_tick: new_tick + length,
+                        velocity: note.velocity,
+                        track: new_track,
+                    });
+            }
+            let after: Vec<(yinhe_types::Note, u8)> = new_by_key
+                .iter()
+                .flat_map(|(key, notes)| notes.iter().map(|n| (*n, *key)))
+                .collect();
+            batch_ops::insert_batch(model, new_by_key);
+            sub_actions.push(UndoAction::Notes(NoteDelta {
+                before: vec![],
+                after,
+            }));
+        }
+
+        // ── 2. 复制自动化事件（原事件保留，副本平移到新 tick/新轨）──
+        // 收集每个 lane 在选区内的原始事件（只读）。
+        struct LaneCollect {
+            src_track: usize,
+            lane_idx: usize,
+            target: yinhe_types::AutomationTarget,
+            events: Vec<AutomationEvent>,
+        }
+        let mut lane_collects: Vec<LaneCollect> = Vec::new();
+        for &(tick_start, tick_end, _key_lo, _key_hi, track_lo, track_hi) in &rects {
+            for track_idx in track_lo..=track_hi {
+                let track_idx = track_idx as usize;
+                if track_idx >= model.tracks.len() {
+                    continue;
+                }
+                let track = &model.tracks[track_idx];
+                for lane_idx in 0..track.automation_lanes.len() {
+                    let lane = &track.automation_lanes[lane_idx];
+                    let in_range: Vec<AutomationEvent> = lane
+                        .events
+                        .iter()
+                        .filter(|evt| evt.tick >= tick_start && evt.tick < tick_end)
+                        .copied()
+                        .collect();
+                    if !in_range.is_empty() {
+                        lane_collects.push(LaneCollect {
+                            src_track: track_idx,
+                            lane_idx,
+                            target: lane.target.clone(),
+                            events: in_range,
+                        });
+                    }
+                }
+            }
+        }
+
+        for lc in &lane_collects {
+            let copies: Vec<AutomationEvent> = lc
+                .events
+                .iter()
+                .map(|e| AutomationEvent {
+                    tick: (e.tick as i64 + delta_ticks).max(0) as u32,
+                    ..*e
+                })
+                .collect();
+            if delta_tracks == 0 {
+                // Same track: append copies to the source lane.
+                let src_track = Arc::make_mut(&mut model.tracks[lc.src_track]);
+                let lane = &mut src_track.automation_lanes[lc.lane_idx];
+                let before = lane.events.clone();
+                lane.events.extend(copies.iter().copied());
+                lane.events.sort_by_key(|e| e.tick);
+                sub_actions.push(UndoAction::Automation(AutomationDelta {
+                    track_idx: lc.src_track,
+                    lane_idx: lc.lane_idx,
+                    target: lc.target.clone(),
+                    before,
+                    after: lane.events.clone(),
+                }));
+            } else {
+                // Cross-track: append copies to the destination lane (create if missing).
+                let dst_track_idx = offset_track_skip_conductor(
+                    lc.src_track as i32 + delta_tracks,
+                    delta_tracks,
+                    num_tracks,
+                    self.edit.conductor_track_idx,
+                ) as usize;
+                let dst_track = Arc::make_mut(&mut model.tracks[dst_track_idx]);
+                let dst_lane_idx = match dst_track
+                    .automation_lanes
+                    .iter()
+                    .position(|l| l.target == lc.target)
+                {
+                    Some(idx) => idx,
+                    None => {
+                        dst_track
+                            .automation_lanes
+                            .push(yinhe_types::AutomationLane {
+                                target: lc.target.clone(),
+                                track: dst_track_idx as u16,
+                                events: Vec::new(),
+                            });
+                        dst_track.automation_lanes.len() - 1
+                    }
+                };
+                let dst_lane = &mut dst_track.automation_lanes[dst_lane_idx];
+                let before_dst = dst_lane.events.clone();
+                dst_lane.events.extend(copies.iter().copied());
+                dst_lane.events.sort_by_key(|e| e.tick);
+                sub_actions.push(UndoAction::Automation(AutomationDelta {
+                    track_idx: dst_track_idx,
+                    lane_idx: dst_lane_idx,
+                    target: lc.target.clone(),
                     before: before_dst,
                     after: dst_lane.events.clone(),
                 }));

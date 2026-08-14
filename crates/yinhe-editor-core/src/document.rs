@@ -705,4 +705,127 @@ mod tests {
         assert_eq!(lane.events[0].tick, 100);
         assert_eq!(lane.events[1].tick, 580);
     }
+
+    /// AR Alt+拖动复制：原音符/原自动化事件保留，副本平移到新位置，选区跟随副本。
+    #[test]
+    fn arrange_duplicate_preserves_originals_and_offsets_copy() {
+        use crate::history::{EditSnapshot, UndoEntry};
+        use yinhe_core::Selection;
+        use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
+
+        let mut doc = Document::empty();
+        // track 1 放一个音符 + 一条 CC7 lane（2 个事件）
+        doc.add_note(
+            1,
+            yinhe_core::NoteEvent {
+                id: 0,
+                start_tick: 0,
+                end_tick: 480,
+                key: 60,
+                velocity: 100,
+            },
+        );
+        {
+            let model = Arc::make_mut(&mut doc.data.model);
+            let track = Arc::make_mut(&mut model.tracks[1]);
+            track.automation_lanes.push(AutomationLane {
+                target: AutomationTarget::CC { controller: 7 },
+                track: 1,
+                events: vec![
+                    AutomationEvent {
+                        tick: 0,
+                        value: 64.0,
+                        shape: SegmentShape::Step,
+                    },
+                    AutomationEvent {
+                        tick: 480,
+                        value: 80.0,
+                        shape: SegmentShape::Step,
+                    },
+                ],
+            });
+        }
+        doc.edit.selected = Selection::default();
+        doc.edit.selected.add_rect_track(0, 481, 60, 60, 1, 1);
+        let before = doc.capture_snapshot();
+
+        let action = doc
+            .duplicate_selected_arrange(480, 0)
+            .expect("duplicate_selected_arrange should return an action");
+        doc.history.push(UndoEntry {
+            action,
+            label: "duplicate_arrange".to_string(),
+            snapshot: before,
+        });
+
+        // 原音符保留（[0,480) 只含原件），副本偏移 +480
+        let orig: Vec<_> = doc.model().notes[60].range(0, 480).collect();
+        assert_eq!(orig.len(), 1, "原音符应保留");
+        let copy: Vec<_> = doc.model().notes[60].range(480, 961).collect();
+        assert_eq!(copy.len(), 1, "副本应平移到 +480");
+        assert_eq!(copy[0].start_tick, 480);
+        assert_eq!(copy[0].end_tick, 960);
+        assert_ne!(copy[0].id, orig[0].id, "副本应分配新 id");
+
+        // 原自动化事件保留，副本偏移 +480（同轨追加到同一 lane）
+        let lane = &doc.model().tracks[1].automation_lanes[0];
+        assert_eq!(lane.events.len(), 4, "原 2 个 + 副本 2 个");
+        assert_eq!(lane.events[0].tick, 0);
+        assert_eq!(lane.events[1].tick, 480);
+        assert_eq!(
+            lane.events[2].tick, 480,
+            "副本第一个事件（与原件同 tick 边界）"
+        );
+        assert_eq!(lane.events[3].tick, 960, "副本第二个事件");
+
+        // 选区跟随副本
+        assert_eq!(doc.edit.selected.rects.len(), 1);
+        let (ts, te, ..) = doc.edit.selected.rects[0];
+        assert_eq!((ts as u32, te as u32), (480, 961), "选区应平移到副本范围");
+
+        // Undo：音符和事件全部回到复制前
+        assert!(doc.undo());
+        let copy: Vec<_> = doc.model().notes[60].range(480, 961).collect();
+        assert_eq!(copy.len(), 0, "undo 后副本音符应消失");
+        let lane = &doc.model().tracks[1].automation_lanes[0];
+        assert_eq!(lane.events.len(), 2, "undo 后事件回到 2 个");
+        assert_eq!(lane.events[0].tick, 0);
+        assert_eq!(lane.events[1].tick, 480);
+    }
+
+    /// 跨轨复制被 clamp 回原轨时副本不能蒸发（与 move 的回归点对称）。
+    #[test]
+    fn arrange_duplicate_clamped_to_source_preserves_copy() {
+        use yinhe_core::Selection;
+        use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
+
+        let mut doc = Document::empty();
+        // track 1 的 CC7 lane 含 1 个事件，向上跨轨复制（raw_dst=0 是 conductor）
+        {
+            let model = Arc::make_mut(&mut doc.data.model);
+            let track = Arc::make_mut(&mut model.tracks[1]);
+            track.automation_lanes.push(AutomationLane {
+                target: AutomationTarget::CC { controller: 7 },
+                track: 1,
+                events: vec![AutomationEvent {
+                    tick: 0,
+                    value: 64.0,
+                    shape: SegmentShape::Step,
+                }],
+            });
+        }
+        doc.edit.selected = Selection::default();
+        doc.edit.selected.add_rect_track(0, 100, 0, 127, 1, 1);
+
+        let action = doc
+            .duplicate_selected_arrange(100, -1)
+            .expect("duplicate_selected_arrange should return an action");
+        assert!(matches!(action, crate::history::UndoAction::Automation(_)));
+
+        // 原件 + 被夹回的副本都在 track 1（事件不能蒸发）
+        let lane = &doc.model().tracks[1].automation_lanes[0];
+        assert_eq!(lane.events.len(), 2, "原件 1 个 + 副本 1 个");
+        assert_eq!(lane.events[0].tick, 0, "原件不动");
+        assert_eq!(lane.events[1].tick, 100, "副本偏移 +100");
+    }
 }

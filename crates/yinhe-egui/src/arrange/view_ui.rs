@@ -371,10 +371,12 @@ fn sel_drag_frame_arrange(
     let mut drag: Option<((f64, f32), egui::Pos2)> =
         ui.data_mut(|d| d.get_persisted(sel_id)).unwrap_or(None);
 
-    // Move-drag state: ((origin_tick, origin_track_f), (current_tick, current_track_f))
+    // Move-drag state: ((origin_tick, origin_track_f), (current_tick, current_track_f), alt)
     // Stores both tick (horizontal) and track-float (vertical) music coordinates.
+    // alt = 按住 Option 拖拽：复制而非移动（press 时锁定）。
+    type ArrMoveDrag = ((f64, f32), (f64, f32), bool);
     let move_drag_id = ui.id().with("arr_move_drag");
-    let mut move_drag: Option<((f64, f32), (f64, f32))> = ui
+    let mut move_drag: Option<ArrMoveDrag> = ui
         .data_mut(|d| d.get_persisted(move_drag_id))
         .unwrap_or(None);
     // 拖拽开始时保存原选框快照（多选框，所以是 Vec）
@@ -446,7 +448,9 @@ fn sel_drag_frame_arrange(
             move_orig_sel = edit.arr_sel_rect.clone();
             edit.arr_sel_rect.clear();
             let origin = (click_tick, click_track_f);
-            move_drag = Some((origin, origin));
+            // press 时锁定 alt（复制模式），拖拽中切换不影响本次操作。
+            let alt = ui.input(|i| i.modifiers.alt);
+            move_drag = Some((origin, origin, alt));
             drag = None;
         } else {
             // Start new selection marquee
@@ -461,7 +465,7 @@ fn sel_drag_frame_arrange(
     }
 
     // ── Move-drag: update current position ──
-    if let Some((origin, _)) = move_drag
+    if let Some((origin, _, alt)) = move_drag
         && pointer.primary_down()
         && !pointer.primary_pressed()
         && let Some(pos) = pointer.hover_pos()
@@ -469,7 +473,7 @@ fn sel_drag_frame_arrange(
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
         let current_tick = view.x_to_tick(local.x);
         let current_track_f = (local.y + view.base.scroll_y) / view.lane_height();
-        move_drag = Some((origin, (current_tick, current_track_f)));
+        move_drag = Some((origin, (current_tick, current_track_f), alt));
 
         // Auto-scroll when dragging near the edge
         let lh = view.lane_height();
@@ -490,7 +494,7 @@ fn sel_drag_frame_arrange(
     // ── Generate ghost notes + offset sel_rect from current move_drag (BEFORE release) ──
     // Ghost notes must be generated before release clears move_drag, so the ghost
     // stays visible on the release frame (preventing flicker before model update).
-    if let Some(((origin_t, origin_tr), (current_t, current_tr))) = move_drag
+    if let Some(((origin_t, origin_tr), (current_t, current_tr), alt)) = move_drag
         && !move_orig_sel.is_empty()
     {
         let snapped_origin = crate::view_interaction::snap_tick(
@@ -545,14 +549,17 @@ fn sel_drag_frame_arrange(
                 let length = note.end_tick - note.start_tick;
                 let new_track = (note.track as i32 + dtr).max(0).min(max_track as i32) as u16;
                 ghost_notes.push((new_tick, new_tick + length, note.key, new_track));
-                hidden_notes.insert((note.track, note.start_tick, note.key));
+                // Alt（复制模式）：原音符保留可见，不隐藏。
+                if !alt {
+                    hidden_notes.insert((note.track, note.start_tick, note.key));
+                }
             }
         }
     }
 
     // ── Move-drag: release handling ──
     if move_drag.is_some() && pointer.primary_released() {
-        if let Some(((origin_t, origin_tr), (current_t, current_tr))) = move_drag {
+        if let Some(((origin_t, origin_tr), (current_t, current_tr), alt)) = move_drag {
             let snapped_origin = crate::view_interaction::snap_tick(
                 origin_t,
                 data.quantize,
@@ -576,7 +583,7 @@ fn sel_drag_frame_arrange(
             let has_moved = delta_ticks != 0 || delta_tracks != 0;
 
             if has_moved {
-                *edit.arr_drag_delta = Some((delta_ticks, delta_tracks));
+                *edit.arr_drag_delta = Some((delta_ticks, delta_tracks, alt));
 
                 // 多选框：对所有原选框应用偏移
                 *edit.arr_sel_rect = move_orig_sel

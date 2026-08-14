@@ -138,10 +138,11 @@ pub(crate) fn sel_drag_frame(
         .data_mut(|d| d.get_persisted(note_resize_id))
         .unwrap_or(None);
 
-    // 单音符移动状态：(track, orig_start, orig_key, orig_end, press_snapped_tick, last_dk)。
+    // 单音符移动状态：(track, orig_start, orig_key, orig_end, press_snapped_tick, last_dk, alt)。
     // 不需要先选中：press 音符中部（未选中）直接移动该音符，与铅笔一致。
+    // alt = 按住 Option 拖拽：复制该音符（原音符保留，拖出副本）。
     let note_move_id = ui.id().with("sel_note_move_state");
-    let mut sel_note_move: Option<(u16, u32, u8, u32, f64, i32)> = ui
+    let mut sel_note_move: Option<(u16, u32, u8, u32, f64, i32, bool)> = ui
         .data_mut(|d| d.get_persisted(note_move_id))
         .unwrap_or(None);
 
@@ -240,7 +241,9 @@ pub(crate) fn sel_drag_frame(
                                 ppq,
                                 bar_line_data,
                             );
-                            sel_note_move = Some((track, start_tick, key, end_tick, tick, 0));
+                            // press 时锁定 alt（复制模式），拖拽中切换不影响本次操作。
+                            let alt = ui.input(|i| i.modifiers.alt);
+                            sel_note_move = Some((track, start_tick, key, end_tick, tick, 0, alt));
                         }
                     }
                 }
@@ -659,7 +662,7 @@ pub(crate) fn sel_drag_frame(
     }
 
     // ── Single-note move: 直接拖动未选中音符（不用先选中，与铅笔一致）──
-    if let Some((trk, orig_start, orig_key, orig_end, press_tick, last_dk)) = sel_note_move {
+    if let Some((trk, orig_start, orig_key, orig_end, press_tick, last_dk, alt)) = sel_note_move {
         // Drag：实时显示 ghost + hidden + tooltip
         if pointer.primary_down()
             && !pointer.primary_pressed()
@@ -695,12 +698,15 @@ pub(crate) fn sel_drag_frame(
             let new_start = (orig_start as i64 + dt).max(0) as u32;
             let new_key = (orig_key as i32 + dk).clamp(0, 127) as u8;
             ghost_notes.push((new_start, new_start + (orig_end - orig_start), new_key, trk));
-            hidden_notes.push((trk, orig_start, orig_key));
+            // Alt（复制模式）：原音符保留可见，不 push hidden_notes。
+            if !alt {
+                hidden_notes.push((trk, orig_start, orig_key));
+            }
 
             // 音符预览：每变化 1 key 触发一次（gate 长度，原力度）。
             // vel <= 1 的音符（黑乐谱隐藏音符）不预览，与播放筛除一致。
             if dk != last_dk {
-                sel_note_move = Some((trk, orig_start, orig_key, orig_end, press_tick, dk));
+                sel_note_move = Some((trk, orig_start, orig_key, orig_end, press_tick, dk, alt));
                 if let Some(vel) = note_velocity(midi, trk, orig_start, orig_key)
                     && vel > 1
                 {
@@ -737,18 +743,28 @@ pub(crate) fn sel_drag_frame(
                 } else {
                     view.y_to_key(local_y) as i32 - orig_key as i32
                 };
-                pencil_note_drag = Some(yinhe_types::PencilNoteDrag::Move {
-                    track: trk,
-                    start_tick: orig_start,
-                    key: orig_key,
-                    delta_ticks: dt,
-                    delta_keys: dk,
-                });
+                if alt {
+                    // Alt = 复制：先把该音符置为唯一选中，再走选区复制通道
+                    // （duplicate_selected_to 复制后选区跟随副本，便于连续 Alt+拖动）。
+                    selected.clear();
+                    selected.add_rect_track(orig_start, orig_end, orig_key, orig_key, trk, trk);
+                    *note_drag_delta = Some((dt, dk, true));
+                } else {
+                    pencil_note_drag = Some(yinhe_types::PencilNoteDrag::Move {
+                        track: trk,
+                        start_tick: orig_start,
+                        key: orig_key,
+                        delta_ticks: dt,
+                        delta_keys: dk,
+                    });
+                }
                 // Keep ghost/hidden alive on the release frame
                 let new_start = (orig_start as i64 + dt).max(0) as u32;
                 let new_key = (orig_key as i32 + dk).clamp(0, 127) as u8;
                 ghost_notes.push((new_start, new_start + (orig_end - orig_start), new_key, trk));
-                hidden_notes.push((trk, orig_start, orig_key));
+                if !alt {
+                    hidden_notes.push((trk, orig_start, orig_key));
+                }
             }
             preview_reqs.push(super::PreviewReq::Stop);
             sel_note_move = None;

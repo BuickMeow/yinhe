@@ -17,8 +17,8 @@ use yinhe_editor_core::quantize::QuantizePreset;
 use crate::theme;
 const RULER_H: f32 = theme::RULER_H;
 
-/// Arrange 拖拽偏移量：(tick delta, track 行 delta)。
-pub(crate) type ArrDragDelta = (i64, i32);
+/// Arrange 拖拽偏移量：(tick delta, track 行 delta, alt 复制标志)。
+pub(crate) type ArrDragDelta = (i64, i32, bool);
 /// Arrange 选框/橡皮擦矩形：(t_start, t_end, track_lo, track_hi)。
 pub(crate) type ArrSelRect = (f64, f64, usize, usize);
 

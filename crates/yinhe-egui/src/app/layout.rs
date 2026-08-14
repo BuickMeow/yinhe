@@ -246,8 +246,8 @@ impl App {
         }
 
         // Handle AR drag after guard is dropped (no outstanding borrow on self.documents)
-        if let Some((delta_ticks, delta_tracks)) = arr_drag_delta {
-            self.handle_arr_drag(delta_ticks, delta_tracks);
+        if let Some((delta_ticks, delta_tracks, alt)) = arr_drag_delta {
+            self.handle_arr_drag(delta_ticks, delta_tracks, alt);
         }
 
         // Handle AR quantize preset change from corner button
@@ -780,9 +780,9 @@ impl App {
         }
     }
 
-    /// Handle AR drag: move selected notes + automation events by `(delta_ticks, delta_tracks)`.
-    /// Single atomic operation = single undo step.
-    fn handle_arr_drag(&mut self, delta_ticks: i64, delta_tracks: i32) {
+    /// Handle AR drag: move (or Alt-copy) selected notes + automation events
+    /// by `(delta_ticks, delta_tracks)`. Single atomic operation = single undo step.
+    fn handle_arr_drag(&mut self, delta_ticks: i64, delta_tracks: i32, alt: bool) {
         if delta_ticks == 0 && delta_tracks == 0 {
             return;
         }
@@ -790,9 +790,20 @@ impl App {
         let doc = &mut self.documents[idx];
 
         let before = doc.capture_snapshot();
-        if let Some(action) = doc.move_selected_arrange(delta_ticks, delta_tracks) {
+        let (action, label) = if alt {
+            (
+                doc.duplicate_selected_arrange(delta_ticks, delta_tracks),
+                t!("undo.duplicate_in_arrange").to_string(),
+            )
+        } else {
+            (
+                doc.move_selected_arrange(delta_ticks, delta_tracks),
+                t!("undo.move_in_arrange").to_string(),
+            )
+        };
+        if let Some(action) = action {
             self.arrange_view.base.dirty = true;
-            doc.push_undo(action, t!("undo.move_in_arrange").as_ref(), before);
+            doc.push_undo(action, &label, before);
             self.notify_audio_model_changed();
         }
     }
