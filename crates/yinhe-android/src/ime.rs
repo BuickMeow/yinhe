@@ -10,18 +10,20 @@
 /// 显示软键盘。
 #[cfg(target_os = "android")]
 pub fn show() {
+    log::info!("ime: show");
     call_activity("showIme");
 }
 
 /// 隐藏软键盘。
 #[cfg(target_os = "android")]
 pub fn hide() {
+    log::info!("ime: hide");
     call_activity("hideIme");
 }
 
 /// 通过 JNI 调 MainActivity 的无参方法（UI 线程执行）。
 #[cfg(target_os = "android")]
-fn call_activity(method: &str) {
+fn call_activity(method: &'static str) {
     let Some(app) = crate::file_picker::android_app() else {
         log::warn!("ime: AndroidApp 未初始化");
         return;

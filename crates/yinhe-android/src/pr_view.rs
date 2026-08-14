@@ -70,12 +70,29 @@ enum EditGesture {
         length: u32,
         cur_key: u8,
     },
-    /// 选择框选/移动：起点 (tick, key) 浮点（框选显示用）。
-    Marquee { t0: f64, k0: f64 },
-    /// 选择移动音符：起点（吸附后）。
-    MoveNotes { t0: f64, k0: f64 },
-    /// 橡皮框选擦除：起点。
-    EraseMarquee { t0: f64, k0: f64 },
+    /// 选择框选/移动：起点 (tick, key) 浮点 + 拖动中当前点。
+    /// 释放帧 interact_pos 可能已为 None，必须用拖动中保存的值，
+    /// 否则选框退化成单击清除——"松手即消失"的根因。
+    Marquee {
+        t0: f64,
+        k0: f64,
+        cur_t: f64,
+        cur_k: f64,
+    },
+    /// 选择移动音符：起点（吸附后）+ 当前点。
+    MoveNotes {
+        t0: f64,
+        k0: f64,
+        cur_t: f64,
+        cur_k: f64,
+    },
+    /// 橡皮框选擦除：起点 + 当前点。
+    EraseMarquee {
+        t0: f64,
+        k0: f64,
+        cur_t: f64,
+        cur_k: f64,
+    },
 }
 
 /// 后台构建的音符实例数据（加载后一次性构建 + 上传）。
@@ -365,7 +382,7 @@ impl PrView {
         self.draw_ruler(ui, rect, content_rect, ruler_h);
         self.draw_cursor(ui, rect, ruler_h);
         // 编辑手势预览（画音符/选框），叠在音符层之上。
-        self.draw_gesture_preview(ui, rect, content_rect, quantize, model.meta.ppq);
+        self.draw_gesture_preview(ui, rect, content_rect);
 
         let notes: u64 = model.track_note_count.iter().sum();
         let status = format!(
@@ -528,11 +545,15 @@ impl PrView {
                         self.gesture = Some(EditGesture::MoveNotes {
                             t0: tick as f64,
                             k0: key as f64,
+                            cur_t: tick as f64,
+                            cur_k: key as f64,
                         });
                     } else {
                         self.gesture = Some(EditGesture::Marquee {
                             t0: tick as f64,
                             k0: key as f64,
+                            cur_t: tick as f64,
+                            cur_k: key as f64,
                         });
                     }
                 }
@@ -540,6 +561,8 @@ impl PrView {
                     self.gesture = Some(EditGesture::EraseMarquee {
                         t0: tick as f64,
                         k0: key as f64,
+                        cur_t: tick as f64,
+                        cur_k: key as f64,
                     });
                 }
                 Tool::Hand => {}
@@ -564,14 +587,20 @@ impl PrView {
                     EditGesture::PencilRetune { cur_key, .. } => {
                         *cur_key = key;
                     }
-                    _ => {}
+                    EditGesture::Marquee { cur_t, cur_k, .. }
+                    | EditGesture::MoveNotes { cur_t, cur_k, .. }
+                    | EditGesture::EraseMarquee { cur_t, cur_k, .. } => {
+                        *cur_t = tick as f64;
+                        *cur_k = key as f64;
+                    }
                 }
             }
         }
 
         // 释放：提交事件（一次 undo entry 的原材料）。
+        // 注意：不能依赖释放帧的 interact_pos（可能已为 None），
+        // 一律用拖动中保存在手势里的当前点，否则选框退化成单击清除。
         if released && let Some(g) = self.gesture.take() {
-            let cur = pos.map(|p| local(&self.view, p));
             match g {
                 EditGesture::PencilDraw {
                     start_tick,
@@ -601,10 +630,15 @@ impl PrView {
                         });
                     }
                 }
-                EditGesture::MoveNotes { t0, k0 } => {
-                    let (tick, key) = cur.unwrap_or((t0 as u32, k0 as u8));
-                    let dt = tick as i64 - t0 as i64;
-                    let dk = key as i64 - k0 as i64;
+                EditGesture::MoveNotes {
+                    t0,
+                    k0,
+                    cur_t,
+                    cur_k,
+                    ..
+                } => {
+                    let dt = cur_t as i64 - t0 as i64;
+                    let dk = cur_k as i64 - k0 as i64;
                     if dt != 0 || dk != 0 {
                         events.push(PrEvent::MoveNotes {
                             delta_ticks: dt,
@@ -613,11 +647,16 @@ impl PrView {
                     }
                     // dt==0 && dk==0：纯单击选中（SelectNote 已选，无 undo）。
                 }
-                EditGesture::Marquee { t0, k0 } => {
-                    let (tick, key) = cur.unwrap_or((t0 as u32, k0 as u8));
-                    if tick != t0 as u32 || key != k0 as u8 {
-                        let (a, b) = (t0.min(tick as f64), t0.max(tick as f64));
-                        let (ka, kb) = (k0.min(key as f64), k0.max(key as f64));
+                EditGesture::Marquee {
+                    t0,
+                    k0,
+                    cur_t,
+                    cur_k,
+                    ..
+                } => {
+                    if cur_t != t0 || cur_k != k0 {
+                        let (a, b) = (t0.min(cur_t), t0.max(cur_t));
+                        let (ka, kb) = (k0.min(cur_k), k0.max(cur_k));
                         // 释放帧直接更新本地渲染选区：事件处理在绘制后才写 doc，
                         // 否则这一帧预览消失、持久选框未到，会闪一帧空白。
                         let mut sel = Selection::default();
@@ -642,11 +681,16 @@ impl PrView {
                         events.push(PrEvent::ClearSelection);
                     }
                 }
-                EditGesture::EraseMarquee { t0, k0 } => {
-                    let (tick, key) = cur.unwrap_or((t0 as u32, k0 as u8));
-                    if tick != t0 as u32 || key != k0 as u8 {
-                        let (a, b) = (t0.min(tick as f64), t0.max(tick as f64));
-                        let (ka, kb) = (k0.min(key as f64), k0.max(key as f64));
+                EditGesture::EraseMarquee {
+                    t0,
+                    k0,
+                    cur_t,
+                    cur_k,
+                    ..
+                } => {
+                    if cur_t != t0 || cur_k != k0 {
+                        let (a, b) = (t0.min(cur_t), t0.max(cur_t));
+                        let (ka, kb) = (k0.min(cur_k), k0.max(cur_k));
                         events.push(PrEvent::EraseRect {
                             t0: a as u32,
                             t1: b as u32 + 1,
@@ -656,8 +700,8 @@ impl PrView {
                     } else {
                         events.push(PrEvent::EraseNote {
                             track: editing,
-                            tick,
-                            key,
+                            tick: cur_t as u32,
+                            key: cur_k as u8,
                         });
                     }
                 }
@@ -741,14 +785,7 @@ impl PrView {
     /// 编辑手势预览：铅笔音符/改音高/移动选区/选框，叠在音符层之上。
     /// 选框/移动预览的 tick 与提交一致（按当前量化吸附），避免"预览没吸附、
     /// 松手跳一格"的错位感。
-    fn draw_gesture_preview(
-        &self,
-        ui: &egui::Ui,
-        rect: egui::Rect,
-        content_rect: egui::Rect,
-        quantize: QuantizePreset,
-        ppq: u32,
-    ) {
+    fn draw_gesture_preview(&self, ui: &egui::Ui, rect: egui::Rect, content_rect: egui::Rect) {
         let Some(g) = &self.gesture else {
             return;
         };
@@ -792,16 +829,24 @@ impl PrView {
                     *cur_key,
                 );
             }
-            EditGesture::Marquee { t0, k0 } | EditGesture::EraseMarquee { t0, k0 } => {
-                let pos = ui.ctx().input(|i| i.pointer.interact_pos());
-                let Some(pos) = pos else { return };
-                let raw_tick = self.view.x_to_tick(pos.x - rect.min.x);
-                let tick = quantize.snap_tick(raw_tick, ppq).max(0.0);
-                let key = self.view.y_to_key(pos.y - content_rect.min.y);
+            EditGesture::Marquee {
+                t0,
+                k0,
+                cur_t,
+                cur_k,
+                ..
+            }
+            | EditGesture::EraseMarquee {
+                t0,
+                k0,
+                cur_t,
+                cur_k,
+                ..
+            } => {
                 let x0 = rect.min.x + self.view.tick_to_x(*t0);
-                let x1 = rect.min.x + self.view.tick_to_x(tick);
-                let y0 = content_rect.min.y + self.view.key_to_y((*k0).min(key as f64) as u8);
-                let y1 = content_rect.min.y + self.view.key_to_y((*k0).max(key as f64) as u8 + 1);
+                let x1 = rect.min.x + self.view.tick_to_x(*cur_t);
+                let y0 = content_rect.min.y + self.view.key_to_y((*k0).min(*cur_k) as u8);
+                let y1 = content_rect.min.y + self.view.key_to_y((*k0).max(*cur_k) as u8 + 1);
                 let r = egui::Rect::from_min_max(
                     egui::pos2(x0.min(x1), y0.min(y1)),
                     egui::pos2(x0.max(x1), y0.max(y1)),
@@ -810,15 +855,16 @@ impl PrView {
                 painter.rect_filled(r, 1.0, preview_color);
                 painter.rect_stroke(r, 1.0, preview_stroke, egui::StrokeKind::Inside);
             }
-            EditGesture::MoveNotes { t0, k0 } => {
+            EditGesture::MoveNotes {
+                t0,
+                k0,
+                cur_t,
+                cur_k,
+                ..
+            } => {
                 // 拖动中把选中音符的矩形偏移画预览（选区矩形偏移显示）。
-                let pos = ui.ctx().input(|i| i.pointer.interact_pos());
-                let Some(pos) = pos else { return };
-                let raw_tick = self.view.x_to_tick(pos.x - rect.min.x);
-                let tick = quantize.snap_tick(raw_tick, ppq).max(0.0);
-                let key = self.view.y_to_key(pos.y - content_rect.min.y);
-                let dt = tick - *t0;
-                let dk = key as f64 - *k0;
+                let dt = *cur_t - *t0;
+                let dk = *cur_k - *k0;
                 for &(ts, te, kl, kh, _, _) in &self.selected.rects {
                     let x0 = rect.min.x + self.view.tick_to_x(ts as f64 + dt);
                     let x1 = rect.min.x + self.view.tick_to_x(te as f64 + dt);

@@ -87,6 +87,10 @@ pub(crate) fn quantize_popup(
         .resizable(false)
         .default_width(220.0)
         .show(ctx, |ui| {
+            // 自画标题（title_bar(false) 隐藏了系统标题栏和 X，外部点击仍可关闭）。
+            ui.label(egui::RichText::new("量化").strong().size(15.0));
+            ui.add_space(4.0);
+            ui.separator();
             for preset in QuantizePreset::ALL {
                 if ui
                     .selectable_label(*preset == current, preset.display_item(ppq))
@@ -182,10 +186,13 @@ pub(crate) fn right_edit_area(
     {
         app.tool_picker_open = !app.tool_picker_open;
     }
-    // 量化按钮：显示当前量化（AR/PR 各自独立）。
+    // 量化按钮：显示当前量化（AR/PR 各自独立），高度与其他按钮统一。
     let mut quantize_clicked = false;
     if ui
-        .button(egui::RichText::new(quantize.label()).size(13.0))
+        .add_sized(
+            egui::vec2(48.0, 24.0),
+            egui::Button::new(egui::RichText::new(quantize.label()).size(13.0)),
+        )
         .on_hover_text("量化")
         .clicked()
     {

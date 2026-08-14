@@ -299,11 +299,12 @@ impl ArView {
                 self.marquee_cur = Some((t, tr));
             }
         }
-        // 选框拖拽结束：提交事件（释放帧保留预览数据到本帧绘制结束）。
+        // 选框拖拽结束：提交事件。marquee_cur 不 take——本帧预览还要用它画
+        //（下一帧 marquee_done 清掉时 doc 已更新，持久选框无缝接管，防闪烁）。
         if resp.drag_stopped()
             && let Some((t0, tr0)) = self.marquee_drag
         {
-            let (t1, tr1) = self.marquee_cur.take().unwrap_or((t0, tr0));
+            let (t1, tr1) = self.marquee_cur.unwrap_or((t0, tr0));
             self.marquee_done = true;
             events.push(ArEvent::SelectRect {
                 t0: t0.min(t1),

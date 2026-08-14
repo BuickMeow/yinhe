@@ -122,10 +122,13 @@ class MainActivity : GameActivity() {
         val imm = getSystemService(
             android.content.Context.INPUT_METHOD_SERVICE
         ) as android.view.inputmethod.InputMethodManager
-        imm.showSoftInput(
-            window.decorView,
+        val view = window.decorView
+        view.requestFocus()
+        val ok = imm.showSoftInput(
+            view,
             android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT
         )
+        android.util.Log.i("yinhe", "showIme: result=$ok")
     }
 
     /** Rust 侧（ime 模块）调用：隐藏软键盘。 */
@@ -134,6 +137,7 @@ class MainActivity : GameActivity() {
             android.content.Context.INPUT_METHOD_SERVICE
         ) as android.view.inputmethod.InputMethodManager
         imm.hideSoftInputFromWindow(window.decorView.windowToken, 0)
+        android.util.Log.i("yinhe", "hideIme")
     }
 
     /** Rust 侧（file_picker 模块）在菜单"本地打开"时通过 JNI 调用。 */

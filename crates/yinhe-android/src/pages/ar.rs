@@ -183,10 +183,11 @@ impl YinheApp {
             begin_edit, commit_artist, commit_description, commit_project_name,
         };
 
-        // 标题栏 X / 点击外部关闭（open 同步回 project_settings_open）。
+        // title_bar(false)：无系统标题栏和 X；open 保留外部点击关闭。
         let mut open = self.project_settings_open;
         egui::Window::new("工程设置")
             .open(&mut open)
+            .title_bar(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .collapsible(false)
             .resizable(false)
@@ -196,6 +197,10 @@ impl YinheApp {
                     ui.label("未加载工程");
                     return;
                 };
+                // 自画标题。
+                ui.label(egui::RichText::new("工程设置").strong().size(15.0));
+                ui.add_space(4.0);
+                ui.separator();
                 let label = |ui: &mut egui::Ui, s: &str| {
                     ui.label(
                         egui::RichText::new(s)
