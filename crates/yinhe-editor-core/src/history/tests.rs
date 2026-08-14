@@ -4,7 +4,7 @@ use yinhe_core::{ConductorData, NoteEvent, TrackData, YinModel};
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent};
 
 use crate::document::note_edit::FlipAxis;
-use crate::document::{track_color, Document};
+use crate::document::{Document, track_color};
 
 use super::*;
 use yinhe_core::Selection;

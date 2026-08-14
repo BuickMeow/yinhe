@@ -6,7 +6,7 @@ use std::sync::Arc;
 use yinhe_core::Selection;
 use yinhe_types::{AutomationEvent, Note};
 
-use crate::document::{track_color, Document};
+use crate::document::{Document, track_color};
 
 use super::UndoAction;
 
