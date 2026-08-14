@@ -77,20 +77,13 @@ pub(crate) fn quantize_popup(
 ) -> Option<yinhe_editor_core::quantize::QuantizePreset> {
     use yinhe_editor_core::quantize::QuantizePreset;
     let mut pending: Option<QuantizePreset> = None;
-    let mut open = true;
     egui::Window::new("量化")
         .id(egui::Id::new(id))
-        .open(&mut open)
-        .title_bar(false)
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .collapsible(false)
         .resizable(false)
         .default_width(220.0)
         .show(ctx, |ui| {
-            // 自画标题（title_bar(false) 隐藏了系统标题栏和 X，外部点击仍可关闭）。
-            ui.label(egui::RichText::new("量化").strong().size(15.0));
-            ui.add_space(4.0);
-            ui.separator();
             for preset in QuantizePreset::ALL {
                 if ui
                     .selectable_label(*preset == current, preset.display_item(ppq))
@@ -139,11 +132,6 @@ pub(crate) fn quantize_popup(
                 pending = Some(QuantizePreset::Absolute(1));
             }
         });
-    if !open {
-        // 用户点外部关闭：不返回 pending（本次调整不应用？桌面端是即时应用，
-        // 拖动即改；点外部关闭不额外应用未完成的拖动值）。
-        return None;
-    }
     pending
 }
 
