@@ -900,49 +900,56 @@ pub fn show_content(
 ) -> bool {
     let mut changed = false;
 
+    // 左右侧栏等高，以整个窗口高度为基准
+    let full_height = ui.available_height();
     ui.horizontal(|ui| {
-        // ── 左侧：搜索框 + 分类导航（窄，固定不滚动） ──
+        // ── 左侧：搜索框 + 分类导航（窄，独立滚动，撑满窗口高度） ──
         ui.vertical(|ui| {
             ui.set_width(132.0);
+            ui.set_height(full_height);
+            egui::ScrollArea::vertical()
+                .auto_shrink([false; 2])
+                .show(ui, |ui| {
+                    // 搜索框（多语言检索设置项）
+                    ui.add(
+                        egui::TextEdit::singleline(&mut settings.settings_search)
+                            .hint_text(t!("settings.search_hint").as_ref())
+                            .id_salt("settings_search")
+                            .desired_width(132.0),
+                    );
+                    if !settings.settings_search.is_empty()
+                        && ui.button(t!("settings.search_clear").as_ref()).clicked()
+                    {
+                        settings.settings_search.clear();
+                    }
+                    ui.add_space(6.0);
 
-            // 搜索框（多语言检索设置项）
-            ui.add(
-                egui::TextEdit::singleline(&mut settings.settings_search)
-                    .hint_text(t!("settings.search_hint").as_ref())
-                    .id_salt("settings_search")
-                    .desired_width(132.0),
-            );
-            if !settings.settings_search.is_empty()
-                && ui.button(t!("settings.search_clear").as_ref()).clicked()
-            {
-                settings.settings_search.clear();
-            }
-            ui.add_space(6.0);
-
-            // 分类导航：与菜单项同款（铺满整行 + 无边框，选中项高亮）
-            for (i, key) in CATEGORY_KEYS.iter().enumerate() {
-                let selected = settings.settings_tab == i;
-                if ui
-                    .add(crate::widgets::menu::menu_item_button(
-                        ui,
-                        selected,
-                        t!(*key),
-                    ))
-                    .clicked()
-                {
-                    settings.settings_tab = i;
-                }
-            }
+                    // 分类导航：与菜单项同款（铺满整行 + 无边框，选中项高亮）
+                    for (i, key) in CATEGORY_KEYS.iter().enumerate() {
+                        let selected = settings.settings_tab == i;
+                        if ui
+                            .add(crate::widgets::menu::menu_item_button(
+                                ui,
+                                selected,
+                                t!(*key),
+                            ))
+                            .clicked()
+                        {
+                            settings.settings_tab = i;
+                        }
+                    }
+                });
         });
 
         ui.add_space(4.0);
         ui.separator();
         ui.add_space(8.0);
 
-        // ── 右侧：搜索结果（搜索中）或当前分类内容（宽，独立滚动） ──
+        // ── 右侧：搜索结果（搜索中）或当前分类内容（宽，独立滚动，撑满窗口高度） ──
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
-            eframe::egui::ScrollArea::vertical()
+            ui.set_height(full_height);
+            egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
                 .show(ui, |ui| {
                     changed |= show_search_results(ui, settings, main_ctx);
