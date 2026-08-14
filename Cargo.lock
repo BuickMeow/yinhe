@@ -7512,6 +7512,7 @@ dependencies = [
  "yinhe-editor-core",
  "yinhe-memtrace",
  "yinhe-midi",
+ "yinhe-midi-io",
  "yinhe-test-helpers",
  "yinhe-theme",
  "yinhe-types",
@@ -7639,6 +7640,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "yinhe-core",
+ "yinhe-midi",
  "yinhe-types",
  "zstd",
 ]

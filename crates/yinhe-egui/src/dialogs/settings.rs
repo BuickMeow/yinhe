@@ -88,6 +88,20 @@ const SETTING_ITEMS: &[SettingItem] = &[
     },
     SettingItem {
         cat: 2,
+        zh: "MIDI 输入设备",
+        en: "MIDI input device",
+        ja: "MIDI入力デバイス",
+        ko: "MIDI 입력 장치",
+    },
+    SettingItem {
+        cat: 2,
+        zh: "MIDI 直通",
+        en: "MIDI thru",
+        ja: "MIDIスルー",
+        ko: "MIDI 스루",
+    },
+    SettingItem {
+        cat: 2,
         zh: "采样率",
         en: "Sample rate",
         ja: "サンプルレート",
@@ -512,6 +526,46 @@ fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                 });
             ui.end_row();
 
+            // ── MIDI 输入 ──
+            ui.label(t!("settings.audio.midi_input_device").as_ref());
+            let no_device = t!("settings.audio.midi_no_device").to_string();
+            let current_midi = settings
+                .midi_input_device
+                .as_deref()
+                .unwrap_or(no_device.as_str());
+            egui::ComboBox::from_id_salt("midi_input_device")
+                .selected_text(current_midi)
+                .show_ui(ui, |ui| {
+                    for device_name in settings.available_midi_inputs.clone() {
+                        let selected = settings.midi_input_device.as_ref() == Some(&device_name);
+                        if ui.selectable_label(selected, &device_name).clicked() {
+                            settings.midi_input_device = Some(device_name);
+                            changed = true;
+                        }
+                    }
+                    let is_none = settings.midi_input_device.is_none();
+                    if ui
+                        .selectable_label(is_none, t!("settings.audio.midi_no_device").as_ref())
+                        .clicked()
+                    {
+                        settings.midi_input_device = None;
+                        changed = true;
+                    }
+                });
+            ui.end_row();
+
+            ui.label(t!("settings.audio.midi_thru").as_ref());
+            if ui
+                .checkbox(
+                    &mut settings.midi_thru,
+                    t!("settings.audio.midi_thru_hint").as_ref(),
+                )
+                .changed()
+            {
+                changed = true;
+            }
+            ui.end_row();
+
             ui.label(t!("settings.audio.sample_rate").as_ref());
             let sr_label = format!("{} Hz", settings.sample_rate);
             egui::ComboBox::from_id_salt("sample_rate")
@@ -616,6 +670,7 @@ fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         let devices = crate::audio_settings::list_output_devices();
         let (default_rate, rates) = crate::audio_settings::discover_sample_rates();
         settings.refresh_devices(devices, rates, default_rate);
+        crate::audio_settings::refresh_midi_inputs(settings);
         changed = true;
     }
     changed

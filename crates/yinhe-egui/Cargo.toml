@@ -15,6 +15,7 @@ yinhe-theme = { path = "../yinhe-theme", features = ["egui"] }
 yinhe-types = { path = "../yinhe-types" }
 yinhe-core = { path = "../yinhe-core" }
 yinhe-midi = { path = "../yinhe-midi" }
+yinhe-midi-io = { path = "../yinhe-midi-io" }
 yinhe-yin = { path = "../yinhe-yin" }
 yinhe-archive = { path = "../yinhe-archive" }
 yinhe-wgpu = { path = "../yinhe-wgpu" }

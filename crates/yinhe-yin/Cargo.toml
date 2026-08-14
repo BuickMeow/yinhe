@@ -14,3 +14,5 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# 实验用：把 .mid 解析成 YinModel 后测 yin 保存压缩率/耗时
+yinhe-midi = { path = "../yinhe-midi" }

@@ -75,5 +75,16 @@ pub(crate) fn load_audio_settings() -> AudioSettings {
         settings.save();
     }
     settings.refresh_devices(devices, rates, default_rate);
+    refresh_midi_inputs(&mut settings);
     settings
+}
+
+/// 枚举系统 MIDI 输入端口并同步到设置；上次选的设备已拔出时清空选择。
+pub(crate) fn refresh_midi_inputs(settings: &mut AudioSettings) {
+    settings.available_midi_inputs = yinhe_midi_io::list_input_ports().unwrap_or_default();
+    if let Some(name) = settings.midi_input_device.as_ref()
+        && !settings.available_midi_inputs.iter().any(|d| d == name)
+    {
+        settings.midi_input_device = None;
+    }
 }

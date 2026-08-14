@@ -36,6 +36,11 @@ impl Default for LayoutSettings {
 #[serde(default)]
 pub struct AudioSettings {
     pub output_device_name: Option<String>,
+    /// MIDI 输入设备名（None = 未选择，禁用 MIDI 输入）。按名字存：
+    /// CoreMIDI 端口 ID 热插拔会变，名字相对稳定。
+    pub midi_input_device: Option<String>,
+    /// MIDI 直通开关：打开后弹琴即通过合成器发声（不写入工程）。
+    pub midi_thru: bool,
     pub sample_rate: u32,
     /// Kept for migration — no longer used directly.
     pub default_sf2_path: String,
@@ -99,12 +104,17 @@ pub struct AudioSettings {
     pub available_devices: Vec<String>,
     #[serde(skip)]
     pub available_sample_rates: Vec<u32>,
+    /// 当前系统 MIDI 输入端口列表（运行时枚举，不持久化）。
+    #[serde(skip)]
+    pub available_midi_inputs: Vec<String>,
 }
 
 impl Default for AudioSettings {
     fn default() -> Self {
         Self {
             output_device_name: None,
+            midi_input_device: None,
+            midi_thru: false,
             sample_rate: 48000,
             default_sf2_path: String::new(),
             global_sf_config: GlobalSfConfig::builtin_default(),
@@ -134,6 +144,7 @@ impl Default for AudioSettings {
             shortcut_recording: false,
             available_devices: Vec::new(),
             available_sample_rates: Vec::new(),
+            available_midi_inputs: Vec::new(),
         }
     }
 }
