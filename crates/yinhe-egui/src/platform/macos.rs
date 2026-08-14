@@ -766,9 +766,11 @@ fn refresh_native_menu_accelerators(keybindings: &Keybindings) {
             for (key, item) in &native._items {
                 let key = *key;
                 if let Some((_, action_id)) = MENU_ACCEL_MAP.iter().find(|(k, _)| *k == key) {
+                    // 原生菜单一个条目只能显示一个加速键，取第一个快捷键
                     let acc = keybindings
                         .get(action_id)
-                        .and_then(|c| combo_to_accelerator(&c));
+                        .first()
+                        .and_then(combo_to_accelerator);
                     item.update_accelerator(acc);
                 }
             }

@@ -446,7 +446,8 @@ fn show_file_menu(
                     let shortcut = settings
                         .keybindings
                         .get(action.action_id())
-                        .map(|c| crate::shortcuts::display_combo(&c));
+                        .first()
+                        .map(crate::shortcuts::display_combo);
 
                     let row_w = ui.available_width();
                     let (row_rect, _) =

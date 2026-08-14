@@ -63,9 +63,11 @@ impl App {
         });
 
         let kb = &self.audio_settings.keybindings;
+        // 一个动作可绑定多个快捷键，任一匹配即触发
         let matches = |id: &str, key: egui::Key, modifiers: egui::Modifiers| {
             kb.get(id)
-                .is_some_and(|c| crate::shortcuts::matches_combo(&c, modifiers, key))
+                .iter()
+                .any(|c| crate::shortcuts::matches_combo(c, modifiers, key))
         };
 
         if let Some((key, modifiers)) = pressed {

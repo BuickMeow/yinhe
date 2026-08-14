@@ -3,7 +3,7 @@ use eframe::egui;
 use pinyin::ToPinyin;
 use rust_i18n::t;
 
-use yinhe_editor_core::shortcuts::{self, KeyCombo, Keybindings};
+use yinhe_editor_core::shortcuts::{self, KeyCombo};
 use yinhe_theme::base::{BaseColors, Rgba};
 
 use crate::audio_settings::AudioSettings;
@@ -698,16 +698,18 @@ fn show_render_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     changed
 }
 
-/// 快捷键配置页：列出全部可配置动作，点击快捷键按钮进入录制。
+/// 快捷键配置页：列出全部可配置动作。
+/// 每个动作可绑定多个快捷键：点击快捷键按钮重新录制，点击 + 追加一个，点击 × 移除。
 /// 录制期间 `settings.shortcut_recording` 置位，让全局快捷键让位给录制器。
 fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     let mut changed = false;
 
     let rec_id = egui::Id::new("kb_recording_action");
-    let recording: Option<String> = ui.data(|d| d.get_temp(rec_id));
+    // 录制目标：(动作 id, 快捷键索引)；索引 == 列表长度表示追加新快捷键
+    let recording: Option<(String, usize)> = ui.data(|d| d.get_temp(rec_id));
 
     // ── 录制：捕获本帧按键（Esc 取消）──
-    if let Some(action_id) = &recording {
+    if let Some((action_id, idx)) = &recording {
         let mut captured: Option<Option<KeyCombo>> = None; // None = 取消
         let events = ui.input(|i| i.events.clone());
         for ev in &events {
@@ -735,10 +737,16 @@ fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         }
         if let Some(combo) = captured {
             if let Some(combo) = combo {
-                settings.keybindings.set(action_id, Some(combo));
+                let mut combos = settings.keybindings.get(action_id);
+                if *idx < combos.len() {
+                    combos[*idx] = combo; // 替换现有快捷键
+                } else {
+                    combos.push(combo); // 追加新快捷键
+                }
+                settings.keybindings.set(action_id, combos);
                 changed = true;
             }
-            ui.data_mut(|d| d.remove::<String>(rec_id));
+            ui.data_mut(|d| d.remove::<(String, usize)>(rec_id));
             settings.shortcut_recording = false;
         }
     }
@@ -805,9 +813,6 @@ fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                 .color(crate::theme::text_secondary()),
         );
         for &id in ids {
-            let is_recording = recording.as_deref() == Some(id);
-            let combo = settings.keybindings.get(id);
-
             ui.horizontal(|ui| {
                 let label_key = crate::shortcuts::action_label_key(id);
                 ui.add_sized(
@@ -815,50 +820,64 @@ fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                     egui::Label::new(t!(label_key).as_ref()).selectable(false),
                 );
 
-                let btn_text = if is_recording {
-                    t!("settings.shortcuts.recording").to_string()
-                } else if let Some(c) = &combo {
-                    crate::shortcuts::display_combo(c)
+                // 每个已绑定的快捷键：点击按钮重新录制，× 移除
+                let combos = settings.keybindings.get(id);
+                for (i, combo) in combos.iter().enumerate() {
+                    let is_recording = recording
+                        .as_ref()
+                        .is_some_and(|(a, idx)| a.as_str() == id && *idx == i);
+                    let btn_text = if is_recording {
+                        t!("settings.shortcuts.recording").to_string()
+                    } else {
+                        crate::shortcuts::display_combo(combo)
+                    };
+                    let kb_btn = egui::Button::new(btn_text).min_size(egui::vec2(140.0, 24.0));
+                    if ui.add(kb_btn).clicked() && !is_recording {
+                        ui.data_mut(|d| d.insert_temp(rec_id, (id.to_string(), i)));
+                        settings.shortcut_recording = true;
+                        ui.ctx().request_repaint();
+                    }
+
+                    if let Some(other) = settings.keybindings.owner_of(id, combo) {
+                        let other_label = crate::shortcuts::action_label_key(other);
+                        ui.colored_label(
+                            crate::theme::warning_gold(),
+                            t!("settings.shortcuts.conflict", other = t!(other_label)).as_ref(),
+                        );
+                    }
+
+                    if !is_recording && ui.button("×").clicked() {
+                        settings.keybindings.remove(id, combo);
+                        changed = true;
+                    }
+                }
+
+                // 追加新快捷键
+                let add_idx = combos.len();
+                let is_adding = recording
+                    .as_ref()
+                    .is_some_and(|(a, idx)| a.as_str() == id && *idx == add_idx);
+                let add_btn = egui::Button::new(if is_adding {
+                    egui::RichText::new(t!("settings.shortcuts.recording").as_ref())
                 } else {
-                    t!("settings.shortcuts.none").to_string()
-                };
-                let kb_btn = egui::Button::new(btn_text).min_size(egui::vec2(140.0, 24.0));
-                if ui.add(kb_btn).clicked() && !is_recording {
-                    ui.data_mut(|d| d.insert_temp(rec_id, id.to_string()));
+                    egui::RichText::new("+").strong()
+                })
+                .min_size(egui::vec2(28.0, 24.0));
+                if ui
+                    .add(add_btn)
+                    .on_hover_text(t!("settings.shortcuts.add").as_ref())
+                    .clicked()
+                    && !is_adding
+                {
+                    ui.data_mut(|d| d.insert_temp(rec_id, (id.to_string(), add_idx)));
                     settings.shortcut_recording = true;
                     ui.ctx().request_repaint();
-                }
-
-                if combo.is_some()
-                    && !is_recording
-                    && ui.button(t!("settings.shortcuts.clear").as_ref()).clicked()
-                {
-                    settings.keybindings.set(id, None);
-                    changed = true;
-                }
-
-                if let Some(c) = &combo
-                    && let Some(other) = find_conflict(&settings.keybindings, id, c)
-                {
-                    let other_label = crate::shortcuts::action_label_key(other);
-                    ui.colored_label(
-                        crate::theme::warning_gold(),
-                        t!("settings.shortcuts.conflict", other = t!(other_label)).as_ref(),
-                    );
                 }
             });
         }
     }
 
     changed
-}
-
-/// 找与 `combo` 冲突的其他动作 id（返回第一个冲突者）。
-fn find_conflict(kb: &Keybindings, action_id: &str, combo: &KeyCombo) -> Option<&'static str> {
-    shortcuts::ALL_ACTION_IDS
-        .iter()
-        .copied()
-        .find(|other| *other != action_id && kb.get(other).as_ref() == Some(combo))
 }
 
 fn show_general_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
