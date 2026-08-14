@@ -567,7 +567,9 @@ fn popup_menu_row(
     // 无快捷键的项用空 shortcut_text 保持左对齐（grow 占中间）。
     const PIN_W: f32 = 26.0;
     const MAIN_PIN_GAP: f32 = 2.0;
-    let row_h = ui.spacing().interact_size.y;
+    // 行高取紧凑值：transport bar 的 interact_size（32）是为大按钮设计的，
+    // 下拉菜单行用 24 更紧凑，避免行内上下留白造成"行间距过大"的观感。
+    let row_h = ui.spacing().interact_size.y.min(24.0);
     let row_w = ui.available_width();
     let (row_rect, _) = ui.allocate_exact_size(egui::vec2(row_w, row_h), egui::Sense::hover());
 
@@ -597,9 +599,10 @@ fn popup_menu_row(
     .stroke(egui::Stroke::NONE)
     .wrap_mode(egui::TextWrapMode::Truncate)
     .shortcut_text(spec.shortcut.unwrap_or(""));
-    let main_resp = ui
-        .add_enabled_ui(spec.enabled, |ui| ui.put(main_rect, main_btn))
-        .inner;
+    // 直接 put（不用 add_enabled_ui 包裹）：scope 嵌套 put 会把已含
+    // item_spacing 的 cursor 起点并入 min_rect，导致每行多推进一次 spacing。
+    // disabled 状态由调用方过滤点击 + 灰色文本表达。
+    let main_resp = ui.put(main_rect, main_btn);
 
     let mut pin_resp = None;
     if let Some(is_pinned) = spec.pin {
@@ -686,7 +689,7 @@ fn show_action_menu<T: PopupRow>(
                         },
                     );
 
-                    if main_resp.clicked() {
+                    if enabled && main_resp.clicked() {
                         *pending_action = Some(action);
                         ui.close();
                     }
@@ -1000,4 +1003,62 @@ fn show_timecode_display(ui: &mut egui::Ui, doc: &Document) -> egui::Rect {
     }
 
     rect
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::view_interaction::FollowModeExt;
+
+    /// 回归测试：播放菜单各行的垂直间距必须一致。
+    /// 此前出现过"播放/暂停"与"停止"之间间距异常的问题。
+    #[test]
+    fn play_menu_rows_have_consistent_spacing() {
+        let mut ys: Vec<f32> = Vec::new();
+        let mut spacing_y = 0.0f32;
+        let mut interact_y = 0.0f32;
+        let ctx = egui::Context::default();
+        // 注册 material icons 字体（popup_menu_row 用图标字体渲染）
+        ctx.add_font(egui_material_icons::font_insert());
+        let output = ctx.run_ui(Default::default(), |ui| {
+            spacing_y = ui.spacing().item_spacing.y;
+            interact_y = ui.spacing().interact_size.y;
+            ui.set_min_width(200.0);
+            ui.set_max_width(200.0);
+            // 带 shortcut（与真实 popup 一致：播放/暂停 Space、停止 Esc）
+            let rows: [(PlayMenuAction, Option<&str>); 4] = [
+                (PlayMenuAction::PlayPause { playing: false }, Some("Space")),
+                (PlayMenuAction::Stop, Some("Esc")),
+                (PlayMenuAction::Follow(FollowMode::None, true), None),
+                (PlayMenuAction::Follow(FollowMode::Page, false), None),
+            ];
+            for (r, shortcut) in rows {
+                let (resp, _) = popup_menu_row(
+                    ui,
+                    PopupRowSpec {
+                        icon: r.icon(),
+                        label: &t!(r.label_key()),
+                        shortcut,
+                        enabled: true,
+                        selected: r.is_selected(),
+                        pin: None,
+                    },
+                );
+                ys.push(resp.rect.min.y);
+            }
+        });
+        output.drop_without_applying_deltas();
+        let gaps: Vec<f32> = ys.windows(2).map(|w| w[1] - w[0]).collect();
+        assert!(
+            gaps.iter().all(|g| (g - gaps[0]).abs() < 0.5),
+            "播放菜单行间距不一致: {gaps:?}，ys={ys:?}"
+        );
+        // 行间距 = 行高 + item_spacing（±1.5 容忍按钮内容高度的取整误差），
+        // 不应出现额外的大空隙（曾因 scope 嵌套 put 双推进 spacing 导致每行多 3px）
+        let expected = interact_y.min(24.0) + spacing_y;
+        assert!(
+            gaps.iter().all(|g| (g - expected).abs() < 1.5),
+            "行间距异常: {gaps:?}（期望约 {expected}）"
+        );
+    }
 }
