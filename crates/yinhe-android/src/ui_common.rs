@@ -77,61 +77,55 @@ pub(crate) fn quantize_popup(
 ) -> Option<yinhe_editor_core::quantize::QuantizePreset> {
     use yinhe_editor_core::quantize::QuantizePreset;
     let mut pending: Option<QuantizePreset> = None;
-    egui::Window::new("量化")
-        .id(egui::Id::new(id))
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .collapsible(false)
-        .resizable(false)
-        .default_width(220.0)
-        .show(ctx, |ui| {
-            for preset in QuantizePreset::ALL {
-                if ui
-                    .selectable_label(*preset == current, preset.display_item(ppq))
-                    .clicked()
-                {
-                    pending = Some(*preset);
-                }
+    drag_window(ctx, id, "量化", |ui| {
+        for preset in QuantizePreset::ALL {
+            if ui
+                .selectable_label(*preset == current, preset.display_item(ppq))
+                .clicked()
+            {
+                pending = Some(*preset);
             }
-            ui.separator();
-            // ── 自定义时值 ──
-            if let QuantizePreset::Fraction(num, den) = current {
-                ui.label("自定义分数");
-                ui.horizontal(|ui| {
-                    ui.label("分子");
-                    let mut n = num;
-                    if ui
-                        .add(egui::DragValue::new(&mut n).range(1..=9999))
-                        .changed()
-                    {
-                        pending = Some(QuantizePreset::Fraction(n, den));
-                    }
-                    ui.label("分母");
-                    let mut d = den;
-                    if ui
-                        .add(egui::DragValue::new(&mut d).range(1..=9999))
-                        .changed()
-                    {
-                        pending = Some(QuantizePreset::Fraction(num, d.max(1)));
-                    }
-                });
-            } else if ui.selectable_label(false, "自定义分数").clicked() {
-                pending = Some(QuantizePreset::Fraction(1, 1));
-            }
-            ui.separator();
-            // ── 自定义 tick ──
-            if let QuantizePreset::Absolute(n) = current {
-                ui.label("自定义 tick");
-                let mut val = n;
+        }
+        ui.separator();
+        // ── 自定义时值 ──
+        if let QuantizePreset::Fraction(num, den) = current {
+            ui.label("自定义分数");
+            ui.horizontal(|ui| {
+                ui.label("分子");
+                let mut n = num;
                 if ui
-                    .add(egui::DragValue::new(&mut val).range(1..=99999))
+                    .add(egui::DragValue::new(&mut n).range(1..=9999))
                     .changed()
                 {
-                    pending = Some(QuantizePreset::Absolute(val));
+                    pending = Some(QuantizePreset::Fraction(n, den));
                 }
-            } else if ui.selectable_label(false, "自定义 tick").clicked() {
-                pending = Some(QuantizePreset::Absolute(1));
+                ui.label("分母");
+                let mut d = den;
+                if ui
+                    .add(egui::DragValue::new(&mut d).range(1..=9999))
+                    .changed()
+                {
+                    pending = Some(QuantizePreset::Fraction(num, d.max(1)));
+                }
+            });
+        } else if ui.selectable_label(false, "自定义分数").clicked() {
+            pending = Some(QuantizePreset::Fraction(1, 1));
+        }
+        ui.separator();
+        // ── 自定义 tick ──
+        if let QuantizePreset::Absolute(n) = current {
+            ui.label("自定义 tick");
+            let mut val = n;
+            if ui
+                .add(egui::DragValue::new(&mut val).range(1..=99999))
+                .changed()
+            {
+                pending = Some(QuantizePreset::Absolute(val));
             }
-        });
+        } else if ui.selectable_label(false, "自定义 tick").clicked() {
+            pending = Some(QuantizePreset::Absolute(1));
+        }
+    });
     pending
 }
 
@@ -197,25 +191,76 @@ pub(crate) fn tool_picker(
     current: crate::app::Tool,
 ) -> Option<crate::app::Tool> {
     let mut picked = None;
-    egui::Window::new("工具")
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .collapsible(false)
-        .resizable(false)
-        .show(ui.ctx(), |ui| {
-            ui.horizontal(|ui| {
-                for &t in tools {
-                    let icon = t.icon();
-                    let text = egui::RichText::new(format!("{}\n{}", icon.codepoint, t.name()))
-                        .family(icon.font_family())
-                        .size(26.0)
-                        .text_style(egui::TextStyle::Body);
-                    if ui.selectable_label(t == current, text).clicked() {
-                        picked = Some(t);
-                    }
+    drag_window(ui.ctx(), "tool_picker", "工具", |ui| {
+        ui.horizontal(|ui| {
+            for &t in tools {
+                let icon = t.icon();
+                let text = egui::RichText::new(format!("{}\n{}", icon.codepoint, t.name()))
+                    .family(icon.font_family())
+                    .size(26.0)
+                    .text_style(egui::TextStyle::Body);
+                if ui.selectable_label(t == current, text).clicked() {
+                    picked = Some(t);
                 }
-            });
+            }
         });
+    });
     picked
+}
+
+/// 可拖动弹窗（替代 egui::Window：系统标题栏在触屏上拖动不生效，
+/// 自绘标题栏 + 自己处理 drag，所有弹窗统一复用）。
+/// 位置跨帧记忆（data 存储）；首次出现居中；手指按住标题栏可拖到任意位置。
+pub(crate) fn drag_window(
+    ctx: &egui::Context,
+    id: &'static str,
+    title: &str,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) {
+    let mem_id = egui::Id::new(id);
+    let pos: Option<egui::Pos2> = ctx.data(|d| d.get_temp(mem_id));
+    let mut area = egui::Area::new(mem_id)
+        .order(egui::Order::Foreground)
+        .constrain(true);
+    if let Some(p) = pos {
+        area = area.fixed_pos(p);
+    } else {
+        area = area.anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO);
+    }
+    area.show(ctx, |ui| {
+        let style = ui.ctx().style_of(ui.ctx().theme());
+        egui::Frame::window(&style).show(ui, |ui| {
+            // 标题栏：整个横条可拖动。
+            let bar = ui
+                .horizontal(|ui| {
+                    ui.label(egui::RichText::new(title).strong().size(15.0));
+                })
+                .response;
+            if bar.drag_started() {
+                // 记录拖动起点（按下时的窗口位置）。
+                let start = pos.unwrap_or_else(|| {
+                    ui.ctx()
+                        .input(|i| i.raw.screen_rect)
+                        .map_or(egui::Pos2::ZERO, |r| {
+                            r.center() - ui.min_rect().size() / 2.0
+                        })
+                });
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp(mem_id.with("start"), start));
+            }
+            if bar.dragged() {
+                let start: egui::Pos2 = ui
+                    .ctx()
+                    .data(|d| d.get_temp(mem_id.with("start")))
+                    .unwrap_or_default();
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp(mem_id, start + bar.drag_delta()));
+            }
+            ui.add_space(2.0);
+            ui.separator();
+            add_contents(ui);
+        });
+    });
 }
 
 /// 页面背景：整个可用区域（含挖孔区域）铺默认面板背景色。

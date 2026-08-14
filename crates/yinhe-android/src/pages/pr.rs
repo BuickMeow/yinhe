@@ -117,48 +117,43 @@ impl YinheApp {
         let n = names.len();
         // 弹窗内只借用 doc 字段（track 名已预取），避免闭包捕获整 self。
         let mut new_visible: Option<Vec<bool>> = None;
-        egui::Window::new("显示轨道")
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .collapsible(false)
-            .resizable(false)
-            .default_width(300.0)
-            .show(ui.ctx(), |ui| {
-                let visible = self.doc.as_ref().map_or(&[][..], |d| &d.edit.track_visible);
-                let mut all = visible.iter().all(|&v| v);
-                if ui.checkbox(&mut all, format!("全选（{n} 轨）")).changed() {
-                    new_visible = Some(vec![true; n]);
-                }
-                ui.separator();
-                let max_h = ui
-                    .ctx()
-                    .input(|i| i.raw.screen_rect.map_or(600.0, |r| r.height() * 0.5))
-                    .max(120.0);
-                egui::ScrollArea::vertical()
-                    .max_height(max_h)
-                    .show(ui, |ui| {
-                        for (i, name) in names.iter().enumerate() {
-                            let is_editing = Some(i as u16) == editing;
-                            let mut vis = visible.get(i).copied().unwrap_or(true);
-                            let label = if is_editing {
-                                format!("{name}（编辑中，不可隐藏）")
-                            } else {
-                                (*name).to_string()
-                            };
-                            let changed = if is_editing {
-                                // 编辑轨：勾选态固定为可见，控件禁用防误触。
-                                ui.add_enabled(false, egui::Checkbox::new(&mut vis, label))
-                                    .changed()
-                            } else {
-                                ui.checkbox(&mut vis, label).changed()
-                            };
-                            if changed && !is_editing {
-                                let mut v = new_visible.take().unwrap_or_else(|| visible.to_vec());
-                                v[i] = vis;
-                                new_visible = Some(v);
-                            }
+        crate::ui_common::drag_window(ui.ctx(), "track_list", "显示轨道", |ui| {
+            let visible = self.doc.as_ref().map_or(&[][..], |d| &d.edit.track_visible);
+            let mut all = visible.iter().all(|&v| v);
+            if ui.checkbox(&mut all, format!("全选（{n} 轨）")).changed() {
+                new_visible = Some(vec![true; n]);
+            }
+            ui.separator();
+            let max_h = ui
+                .ctx()
+                .input(|i| i.raw.screen_rect.map_or(600.0, |r| r.height() * 0.5))
+                .max(120.0);
+            egui::ScrollArea::vertical()
+                .max_height(max_h)
+                .show(ui, |ui| {
+                    for (i, name) in names.iter().enumerate() {
+                        let is_editing = Some(i as u16) == editing;
+                        let mut vis = visible.get(i).copied().unwrap_or(true);
+                        let label = if is_editing {
+                            format!("{name}（编辑中，不可隐藏）")
+                        } else {
+                            (*name).to_string()
+                        };
+                        let changed = if is_editing {
+                            // 编辑轨：勾选态固定为可见，控件禁用防误触。
+                            ui.add_enabled(false, egui::Checkbox::new(&mut vis, label))
+                                .changed()
+                        } else {
+                            ui.checkbox(&mut vis, label).changed()
+                        };
+                        if changed && !is_editing {
+                            let mut v = new_visible.take().unwrap_or_else(|| visible.to_vec());
+                            v[i] = vis;
+                            new_visible = Some(v);
                         }
-                    });
-            });
+                    }
+                });
+        });
         if let Some(v) = new_visible
             && let Some(doc) = &mut self.doc
         {

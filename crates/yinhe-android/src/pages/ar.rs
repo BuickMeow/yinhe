@@ -183,104 +183,99 @@ impl YinheApp {
             begin_edit, commit_artist, commit_description, commit_project_name,
         };
 
-        egui::Window::new("工程设置")
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .collapsible(false)
-            .resizable(false)
-            .default_width(320.0)
-            .show(ui.ctx(), |ui| {
-                let Some(doc) = &mut self.doc else {
-                    ui.label("未加载工程");
-                    return;
-                };
-                let label = |ui: &mut egui::Ui, s: &str| {
-                    ui.label(
-                        egui::RichText::new(s)
-                            .small()
-                            .color(ui.visuals().weak_text_color()),
-                    );
-                };
-                // 与桌面端 project_info 相同的编辑模式：gained_focus 记录旧值，
-                // changed 实时写 model，lost_focus 时 commit（变才 push undo）。
-                label(ui, "工程名");
-                let mut name = doc.data.model.meta.name.clone();
-                let resp = ui.add_sized(
-                    egui::vec2(ui.available_width(), 24.0),
-                    egui::TextEdit::singleline(&mut name).hint_text("未命名工程"),
+        crate::ui_common::drag_window(ui.ctx(), "project_settings", "工程设置", |ui| {
+            let Some(doc) = &mut self.doc else {
+                ui.label("未加载工程");
+                return;
+            };
+            let label = |ui: &mut egui::Ui, s: &str| {
+                ui.label(
+                    egui::RichText::new(s)
+                        .small()
+                        .color(ui.visuals().weak_text_color()),
                 );
-                if resp.gained_focus() {
-                    begin_edit(
-                        &mut doc.edit.pending_edits,
-                        resp.id.value(),
-                        &doc.data.model.meta.name,
-                    );
-                    // 输入法：聚焦弹键盘（android-activity 的自动弹不工作，走 JNI 桥）。
-                    crate::ime::show();
-                }
-                if resp.changed() {
-                    let model = Arc::make_mut(&mut doc.data.model);
-                    model.meta.name = name.clone();
-                    // SMF 标准：track 0 name = song title，同步更新。
-                    if let Some(track) = model.tracks.get_mut(0) {
-                        Arc::make_mut(track).name = name.clone();
-                    }
-                }
-                if resp.lost_focus() {
-                    crate::ime::hide();
-                    let name = doc.data.model.meta.name.clone();
-                    commit_project_name(doc, resp.id.value(), &name);
-                }
-                ui.add_space(6.0);
-                label(ui, "艺术家");
-                let mut artist = doc.data.model.meta.artist.clone();
-                let resp = ui.add_sized(
-                    egui::vec2(ui.available_width(), 24.0),
-                    egui::TextEdit::singleline(&mut artist),
+            };
+            // 与桌面端 project_info 相同的编辑模式：gained_focus 记录旧值，
+            // changed 实时写 model，lost_focus 时 commit（变才 push undo）。
+            label(ui, "工程名");
+            let mut name = doc.data.model.meta.name.clone();
+            let resp = ui.add_sized(
+                egui::vec2(ui.available_width(), 24.0),
+                egui::TextEdit::singleline(&mut name).hint_text("未命名工程"),
+            );
+            if resp.gained_focus() {
+                begin_edit(
+                    &mut doc.edit.pending_edits,
+                    resp.id.value(),
+                    &doc.data.model.meta.name,
                 );
-                if resp.gained_focus() {
-                    begin_edit(
-                        &mut doc.edit.pending_edits,
-                        resp.id.value(),
-                        &doc.data.model.meta.artist,
-                    );
-                    crate::ime::show();
+                // 输入法：聚焦弹键盘（android-activity 的自动弹不工作，走 JNI 桥）。
+                crate::ime::show();
+            }
+            if resp.changed() {
+                let model = Arc::make_mut(&mut doc.data.model);
+                model.meta.name = name.clone();
+                // SMF 标准：track 0 name = song title，同步更新。
+                if let Some(track) = model.tracks.get_mut(0) {
+                    Arc::make_mut(track).name = name.clone();
                 }
-                if resp.changed() {
-                    Arc::make_mut(&mut doc.data.model).meta.artist = artist;
-                }
-                if resp.lost_focus() {
-                    crate::ime::hide();
-                    let artist = doc.data.model.meta.artist.clone();
-                    commit_artist(doc, resp.id.value(), &artist);
-                }
-                ui.add_space(6.0);
-                label(ui, "描述");
-                let mut desc = doc.data.model.meta.description.clone();
-                let resp = ui.add_sized(
-                    egui::vec2(ui.available_width(), 56.0),
-                    egui::TextEdit::multiline(&mut desc),
+            }
+            if resp.lost_focus() {
+                crate::ime::hide();
+                let name = doc.data.model.meta.name.clone();
+                commit_project_name(doc, resp.id.value(), &name);
+            }
+            ui.add_space(6.0);
+            label(ui, "艺术家");
+            let mut artist = doc.data.model.meta.artist.clone();
+            let resp = ui.add_sized(
+                egui::vec2(ui.available_width(), 24.0),
+                egui::TextEdit::singleline(&mut artist),
+            );
+            if resp.gained_focus() {
+                begin_edit(
+                    &mut doc.edit.pending_edits,
+                    resp.id.value(),
+                    &doc.data.model.meta.artist,
                 );
-                if resp.gained_focus() {
-                    begin_edit(
-                        &mut doc.edit.pending_edits,
-                        resp.id.value(),
-                        &doc.data.model.meta.description,
-                    );
-                    crate::ime::show();
-                }
-                if resp.changed() {
-                    Arc::make_mut(&mut doc.data.model).meta.description = desc;
-                }
-                if resp.lost_focus() {
-                    crate::ime::hide();
-                    let desc = doc.data.model.meta.description.clone();
-                    commit_description(doc, resp.id.value(), &desc);
-                }
-                ui.add_space(6.0);
-                ui.separator();
-                let meta = &doc.data.model.meta;
-                ui.label(format!("PPQ：{}（修改需重排音符，暂不支持）", meta.ppq));
-                ui.label(format!("压缩等级：{}", meta.compression_level));
-            });
+                crate::ime::show();
+            }
+            if resp.changed() {
+                Arc::make_mut(&mut doc.data.model).meta.artist = artist;
+            }
+            if resp.lost_focus() {
+                crate::ime::hide();
+                let artist = doc.data.model.meta.artist.clone();
+                commit_artist(doc, resp.id.value(), &artist);
+            }
+            ui.add_space(6.0);
+            label(ui, "描述");
+            let mut desc = doc.data.model.meta.description.clone();
+            let resp = ui.add_sized(
+                egui::vec2(ui.available_width(), 56.0),
+                egui::TextEdit::multiline(&mut desc),
+            );
+            if resp.gained_focus() {
+                begin_edit(
+                    &mut doc.edit.pending_edits,
+                    resp.id.value(),
+                    &doc.data.model.meta.description,
+                );
+                crate::ime::show();
+            }
+            if resp.changed() {
+                Arc::make_mut(&mut doc.data.model).meta.description = desc;
+            }
+            if resp.lost_focus() {
+                crate::ime::hide();
+                let desc = doc.data.model.meta.description.clone();
+                commit_description(doc, resp.id.value(), &desc);
+            }
+            ui.add_space(6.0);
+            ui.separator();
+            let meta = &doc.data.model.meta;
+            ui.label(format!("PPQ：{}（修改需重排音符，暂不支持）", meta.ppq));
+            ui.label(format!("压缩等级：{}", meta.compression_level));
+        });
     }
 }
