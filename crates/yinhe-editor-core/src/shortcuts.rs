@@ -73,11 +73,42 @@ pub const ALL_ACTION_IDS: &[&str] = &[
     ACTION_STOP,
 ];
 
-/// 快捷键表：动作 id → 快捷键（`None` = 显式禁用该动作的快捷键）。
+/// 快捷键表：动作 id → 快捷键列表（空列表 = 无快捷键）。
+///
+/// 一个动作可绑定多个快捷键；列表顺序即 UI 展示顺序。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Keybindings {
-    pub map: BTreeMap<String, Option<KeyCombo>>,
+    #[serde(deserialize_with = "de_combo_list")]
+    pub map: BTreeMap<String, Vec<KeyCombo>>,
+}
+
+/// 反序列化兼容：新格式为数组 [combo, ...]；旧配置为单个 combo 或 null。
+fn de_combo_list<'de, D>(d: D) -> Result<BTreeMap<String, Vec<KeyCombo>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Combos {
+        List(Vec<KeyCombo>),
+        Single(Option<KeyCombo>),
+    }
+    use serde::Deserialize as _;
+    let raw = BTreeMap::<String, Combos>::deserialize(d)?;
+    Ok(raw
+        .into_iter()
+        .map(|(k, v)| {
+            (
+                k,
+                match v {
+                    Combos::List(list) => list,
+                    Combos::Single(Some(c)) => vec![c],
+                    Combos::Single(None) => Vec::new(),
+                },
+            )
+        })
+        .collect())
 }
 
 /// 某个动作的默认快捷键。`None` 表示该动作默认没有快捷键。
@@ -121,25 +152,51 @@ impl Default for Keybindings {
         Self {
             map: ALL_ACTION_IDS
                 .iter()
-                .map(|&id| (id.to_string(), default_combo(id)))
+                .map(|&id| (id.to_string(), default_combo(id).into_iter().collect()))
                 .collect(),
         }
     }
 }
 
 impl Keybindings {
-    /// 查询动作的快捷键。表中有显式条目（含 `None`）用条目值；
+    /// 查询动作的快捷键列表。表中有显式条目（含空列表）用条目值；
     /// 缺失（如旧配置升级）回退到该动作的默认值。
-    pub fn get(&self, action_id: &str) -> Option<KeyCombo> {
+    pub fn get(&self, action_id: &str) -> Vec<KeyCombo> {
         match self.map.get(action_id) {
-            Some(combo) => combo.clone(),
-            None => default_combo(action_id),
+            Some(combos) => combos.clone(),
+            None => default_combo(action_id).into_iter().collect(),
         }
     }
 
-    /// 设置动作的快捷键（`None` 表示禁用）。
-    pub fn set(&mut self, action_id: &str, combo: Option<KeyCombo>) {
-        self.map.insert(action_id.to_string(), combo);
+    /// 设置动作的快捷键列表（空列表 = 禁用该动作的快捷键）。
+    pub fn set(&mut self, action_id: &str, combos: Vec<KeyCombo>) {
+        self.map.insert(action_id.to_string(), combos);
+    }
+
+    /// 追加一个快捷键（若该动作已有相同组合则忽略）。
+    pub fn add(&mut self, action_id: &str, combo: KeyCombo) {
+        let combos = self.get(action_id);
+        if combos.contains(&combo) {
+            return;
+        }
+        let mut combos = combos;
+        combos.push(combo);
+        self.set(action_id, combos);
+    }
+
+    /// 移除指定快捷键；列表清空等价于禁用。
+    pub fn remove(&mut self, action_id: &str, combo: &KeyCombo) {
+        let combos = self.get(action_id);
+        let combos: Vec<_> = combos.into_iter().filter(|c| c != combo).collect();
+        self.set(action_id, combos);
+    }
+
+    /// 该组合键当前属于哪个动作（冲突检测用；不包含 `action_id` 自身）。
+    pub fn owner_of(&self, action_id: &str, combo: &KeyCombo) -> Option<&'static str> {
+        ALL_ACTION_IDS
+            .iter()
+            .copied()
+            .find(|other| *other != action_id && self.get(other).contains(combo))
     }
 
     /// 恢复全部动作到平台默认值。
@@ -152,6 +209,15 @@ impl Keybindings {
 mod tests {
     use super::*;
 
+    fn combo(command: bool, shift: bool, key: &str) -> KeyCombo {
+        KeyCombo {
+            command,
+            shift,
+            alt: false,
+            key: key.to_string(),
+        }
+    }
+
     #[test]
     fn serde_roundtrip() {
         let kb = Keybindings::default();
@@ -161,17 +227,28 @@ mod tests {
     }
 
     #[test]
+    fn serde_reads_old_single_combo_config() {
+        // 旧格式：单个 combo 对象（非数组）
+        let json = r#"{"map":{"save":{"command":true,"shift":false,"alt":false,"key":"S"}}}"#;
+        let kb: Keybindings = serde_json::from_str(json).unwrap();
+        assert_eq!(kb.get(ACTION_SAVE), vec![combo(true, false, "S")]);
+
+        // 旧格式：null = 禁用
+        let json = r#"{"map":{"save":null}}"#;
+        let kb: Keybindings = serde_json::from_str(json).unwrap();
+        assert_eq!(kb.get(ACTION_SAVE), Vec::<KeyCombo>::new());
+    }
+
+    #[test]
     fn defaults_cover_all_actions() {
         // 每个动作要么有默认快捷键、要么显式默认禁用；
         // 缺失的 id 必须能从 default_combo 回退。
         for &id in ALL_ACTION_IDS {
             let kb = Keybindings::default();
             assert!(kb.map.contains_key(id), "默认表缺少动作 {id}");
-            let combo = kb.get(id);
             assert_eq!(
-                combo,
-                default_combo(id),
-                "get() 回退逻辑与默认表不一致: {id}"
+                kb.get(id),
+                default_combo(id).into_iter().collect::<Vec<_>>()
             );
         }
     }
@@ -179,17 +256,69 @@ mod tests {
     #[test]
     fn get_falls_back_for_missing_id() {
         let kb = Keybindings::default();
-        assert_eq!(kb.get(ACTION_SAVE), default_combo(ACTION_SAVE));
+        assert_eq!(
+            kb.get(ACTION_SAVE),
+            default_combo(ACTION_SAVE).into_iter().collect::<Vec<_>>()
+        );
         // 从 map 删除后仍回退默认
         let mut kb2 = kb.clone();
         kb2.map.remove(ACTION_SAVE);
-        assert_eq!(kb2.get(ACTION_SAVE), default_combo(ACTION_SAVE));
+        assert_eq!(
+            kb2.get(ACTION_SAVE),
+            default_combo(ACTION_SAVE).into_iter().collect::<Vec<_>>()
+        );
     }
 
     #[test]
-    fn explicit_none_disables_shortcut() {
+    fn empty_list_disables_shortcut() {
         let mut kb = Keybindings::default();
-        kb.set(ACTION_SAVE, None);
-        assert_eq!(kb.get(ACTION_SAVE), None);
+        kb.set(ACTION_SAVE, Vec::new());
+        assert!(kb.get(ACTION_SAVE).is_empty());
+    }
+
+    #[test]
+    fn multiple_combos_per_action() {
+        let mut kb = Keybindings::default();
+        kb.add(ACTION_SAVE, combo(true, false, "S"));
+        kb.add(ACTION_SAVE, combo(false, true, "F2"));
+        assert_eq!(
+            kb.get(ACTION_SAVE),
+            vec![combo(true, false, "S"), combo(false, true, "F2")]
+        );
+
+        // 重复添加被忽略
+        kb.add(ACTION_SAVE, combo(true, false, "S"));
+        assert_eq!(kb.get(ACTION_SAVE).len(), 2);
+
+        // 移除其中一个，另一个保留
+        kb.remove(ACTION_SAVE, &combo(true, false, "S"));
+        assert_eq!(kb.get(ACTION_SAVE), vec![combo(false, true, "F2")]);
+    }
+
+    #[test]
+    fn owner_of_detects_conflict_across_all_combos() {
+        let mut kb = Keybindings::default();
+        kb.add(ACTION_COPY, combo(false, true, "F2"));
+        // 自身不构成冲突
+        assert!(
+            kb.owner_of(ACTION_COPY, &combo(false, true, "F2"))
+                .is_none()
+        );
+        // PASTE 查 F2：持有者是 COPY
+        assert_eq!(
+            kb.owner_of(ACTION_PASTE, &combo(false, true, "F2")),
+            Some(ACTION_COPY)
+        );
+        // 把 F2 也绑到 SAVE：按 ALL_ACTION_IDS 顺序 save 先于 copy，报第一个持有者 SAVE
+        kb.add(ACTION_SAVE, combo(false, true, "F2"));
+        assert_eq!(
+            kb.owner_of(ACTION_PASTE, &combo(false, true, "F2")),
+            Some(ACTION_SAVE)
+        );
+        // 对 SAVE 而言 F2 的持有者是 COPY
+        assert_eq!(
+            kb.owner_of(ACTION_SAVE, &combo(false, true, "F2")),
+            Some(ACTION_COPY)
+        );
     }
 }
