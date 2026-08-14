@@ -134,7 +134,7 @@ impl YinheApp {
         // 固定 2048 帧缓冲：AAudio 动态调优在 MIUI 上收敛慢，固定值更稳；
         // 蓝牙 A2DP 路径需要更大缓冲（编码/传输延迟高，1024 会周期性欠载
         // → 平均断续），cpal 的 Fixed(n) 实际 capacity 是 2n，2048≈85ms。
-        match yinhe_audio::spawn_cpal_audio(48000, layout, cpal::BufferSize::Fixed(2048), None) {
+        match yinhe_audio::spawn_cpal_audio(48000, layout, cpal::BufferSize::Fixed(2048), None, false) {
             Ok(handle) => {
                 log::info!(
                     "audio: 引擎初始化成功 @ {}Hz (sample_rate={})",
@@ -258,7 +258,7 @@ impl YinheApp {
             self.midi_stats = "已在加载中，请等待".to_string();
             return;
         }
-        loader.load_path(path.to_string(), yinhe_mid2::MidiImportEncoding::Utf8);
+        loader.load_path(path.to_string(), yinhe_midi::MidiImportEncoding::Utf8);
         self.midi_load_start = Some(std::time::Instant::now());
         self.midi_stats = format!("加载中: {path}");
     }

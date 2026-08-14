@@ -17,9 +17,9 @@ path = "src/bin/desktop.rs"
 [dependencies]
 eframe = { workspace = true, features = ["android-game-activity"] }
 egui = { workspace = true }
-yinhe-audio = { path = "../yinhe-audio" }
+yinhe-audio = { path = "../yinhe-audio", features = ["gpu"] }
 yinhe-editor-core = { path = "../yinhe-editor-core" }
-yinhe-mid2 = { path = "../yinhe-mid2" }
+yinhe-midi = { path = "../yinhe-midi" }
 yinhe-wgpu = { path = "../yinhe-wgpu" }
 yinhe-yin = { path = "../yinhe-yin" }
 yinhe-core = { path = "../yinhe-core" }
