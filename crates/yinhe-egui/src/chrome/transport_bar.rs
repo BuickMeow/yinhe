@@ -4,7 +4,7 @@ use rust_i18n::t;
 
 use crate::audio_settings::AudioSettings;
 use crate::file_loader::FileLoader;
-use crate::view_interaction::{FollowMode, FollowModeExt};
+use crate::view_interaction::FollowMode;
 use crate::widgets::tools_panel::{ALL_TOOLS, Tool};
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::shortcuts;
@@ -358,73 +358,33 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     &mut pending_edit_action,
                 );
 
-                if has_active {
-                    let is_playing = ctx
-                        .doc
-                        .map(|d| d.edit.playback.is_playing())
-                        .unwrap_or(false);
-
-                    let play_resp = ui.add(
-                        egui::Button::new(
-                            (if is_playing {
-                                ICON_PAUSE
-                            } else {
-                                ICON_PLAY_ARROW
-                            })
+                // ── 播放菜单按钮（播放/停止/跟随并入 popup）──
+                let is_playing = ctx
+                    .doc
+                    .map(|d| d.edit.playback.is_playing())
+                    .unwrap_or(false);
+                let play_menu_btn = ui.add(
+                    egui::Button::new(
+                        ICON_PLAY_CIRCLE
                             .rich_text()
                             .size(crate::theme::TRANSPORT_BTN_FONT)
                             .color(crate::theme::text_primary()),
-                        )
-                        .min_size(btn_size)
-                        .corner_radius(btn_rounding),
-                    );
-                    if play_resp.clicked() {
-                        if is_playing {
-                            pause_return = true;
-                        } else {
-                            toggle_play = true;
-                        }
-                    }
-                    if play_resp.hovered() {
-                        hovered_hint = Some(t!("hint.play").to_string());
-                    }
-
-                    let stop_resp = ui.add(
-                        egui::Button::new(
-                            ICON_STOP
-                                .rich_text()
-                                .size(crate::theme::TRANSPORT_BTN_FONT)
-                                .color(crate::theme::text_primary()),
-                        )
-                        .min_size(btn_size)
-                        .corner_radius(btn_rounding),
-                    );
-                    if stop_resp.clicked() {
-                        stop_play = true;
-                    }
-                    if stop_resp.hovered() {
-                        hovered_hint = Some(t!("hint.stop").to_string());
-                    }
-
-                    // ── Follow-mode button (cycle: None → Page → Continuous) ──
-                    let follow_resp = ui.add(
-                        egui::Button::new(
-                            ctx.follow_mode
-                                .icon()
-                                .rich_text()
-                                .size(crate::theme::TRANSPORT_BTN_FONT)
-                                .color(crate::theme::text_primary()),
-                        )
-                        .min_size(btn_size)
-                        .corner_radius(btn_rounding),
-                    );
-                    if follow_resp.clicked() {
-                        *ctx.follow_mode = ctx.follow_mode.next();
-                    }
-                    if follow_resp.hovered() {
-                        hovered_hint = Some(t!("hint.follow").to_string());
-                    }
+                    )
+                    .min_size(btn_size)
+                    .corner_radius(btn_rounding),
+                );
+                if play_menu_btn.hovered() {
+                    hovered_hint = Some(t!("hint.play_menu").to_string());
                 }
+                show_play_menu(
+                    &play_menu_btn,
+                    has_active,
+                    is_playing,
+                    ctx.follow_mode,
+                    &mut toggle_play,
+                    &mut pause_return,
+                    &mut stop_play,
+                );
 
                 if let Some(doc) = ctx.doc {
                     timecode_rect = Some(show_timecode_display(ui, doc));
@@ -735,6 +695,94 @@ fn show_edit_menu(
     ) {
         settings.save();
     }
+}
+
+/// 播放菜单 popup：播放/暂停、停止、播放跟随（三档单选）。
+/// 无图钉（播放动作不参与图钉固定）；点击项后关闭菜单。
+fn show_play_menu(
+    button: &egui::Response,
+    has_active: bool,
+    is_playing: bool,
+    follow_mode: &mut FollowMode,
+    toggle_play: &mut bool,
+    pause_return: &mut bool,
+    stop_play: &mut bool,
+) {
+    use crate::view_interaction::FollowModeExt;
+    egui::Popup::from_toggle_button_response(button)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .width(crate::theme::FILE_MENU_WIDTH)
+        .show(|ui| {
+            ui.set_min_width(crate::theme::FILE_MENU_WIDTH);
+            ui.set_max_width(crate::theme::FILE_MENU_WIDTH);
+
+            // 播放/暂停（图标随播放状态切换）
+            let play_icon = if is_playing {
+                ICON_PAUSE
+            } else {
+                ICON_PLAY_ARROW
+            };
+            if play_menu_row(
+                ui,
+                play_icon,
+                &t!("shortcuts.play_toggle"),
+                has_active,
+                false,
+            )
+            .clicked()
+            {
+                if is_playing {
+                    *pause_return = true;
+                } else {
+                    *toggle_play = true;
+                }
+                ui.close();
+            }
+            if play_menu_row(ui, ICON_STOP, &t!("shortcuts.stop"), has_active, false).clicked() {
+                *stop_play = true;
+                ui.close();
+            }
+
+            // ── 播放跟随（三档单选，与主栏按钮循环切换等价）──
+            ui.separator();
+            let modes: [(FollowMode, &str); 3] = [
+                (FollowMode::None, "follow.none"),
+                (FollowMode::Page, "follow.page"),
+                (FollowMode::Continuous, "follow.continuous"),
+            ];
+            for (mode, key) in modes {
+                let selected = *follow_mode == mode;
+                if play_menu_row(ui, mode.icon(), &t!(key), has_active, selected).clicked() {
+                    *follow_mode = mode;
+                    ui.close();
+                }
+            }
+        });
+}
+
+/// 播放菜单的简单行（图标 + 文本，无图钉；selected 高亮当前跟随模式）。
+fn play_menu_row(
+    ui: &mut egui::Ui,
+    icon: egui_material_icons::MaterialIcon,
+    label: &str,
+    enabled: bool,
+    selected: bool,
+) -> egui::Response {
+    let row_h = ui.spacing().interact_size.y;
+    let row_w = ui.available_width();
+    let (row_rect, _) = ui.allocate_exact_size(egui::vec2(row_w, row_h), egui::Sense::hover());
+    let color = if enabled {
+        crate::theme::text_bright()
+    } else {
+        crate::theme::text_disabled()
+    };
+    let btn = egui::Button::selectable(
+        selected,
+        crate::widgets::icon_text::icon_text(icon, label, crate::theme::FILE_MENU_FONT, color),
+    )
+    .stroke(egui::Stroke::NONE)
+    .wrap_mode(egui::TextWrapMode::Truncate);
+    ui.add_enabled_ui(enabled, |ui| ui.put(row_rect, btn)).inner
 }
 
 /// 图钉固定的动作按钮行：作为独立按钮紧跟在菜单按钮右侧，
