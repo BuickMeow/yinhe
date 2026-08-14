@@ -448,6 +448,7 @@ impl eframe::App for App {
                 status_hint: &mut self.status_hint,
                 settings: &mut self.audio_settings,
                 is_recording: self.recording.is_some(),
+                step_input: self.step_input,
             },
         );
 
@@ -465,6 +466,11 @@ impl eframe::App for App {
             kb.pause_return || transport_response.pause_return || menu_pause_return,
             kb.stop_play || transport_response.stop_play || menu_stop,
         );
+
+        // ── 步进输入模式切换 ──
+        if transport_response.step_toggle {
+            self.step_input = !self.step_input;
+        }
 
         // ── MIDI 录音切换（REC 按钮）──
         if transport_response.record_toggle {

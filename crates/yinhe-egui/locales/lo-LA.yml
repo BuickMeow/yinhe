@@ -27,6 +27,7 @@ hint.right_event_browser: "ຕົວທ່ອງເຫດການ · ເຫດ�
 hint.mem: "ລາຍລະອຽດຫນ່ວຍຄວາມຈຳ · ກົດເພື່ອເບິ່ງ"
 hint.file_menu: "ເມນູໄຟລ໌ · ໃໝ່/ເປີດ/ບັນທຶກ/ສົ່ງອອກ"
 hint.play: "ຫຼິ້ນ/ຢຸດຊົ່ວຄາວ · Space"
+hint.step_input: "Step Input (write one note per key press and advance)"
 hint.record: "Record (write MIDI input to current track)"
 hint.stop: "ຢຸດ · Esc"
 hint.follow: "ຕິດຕາມການຫຼິ້ນ · ລັອກ/ໜ້າ/ຕໍ່ເນື່ອງ (ກົດເພື່ອປ່ຽນ)"

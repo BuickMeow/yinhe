@@ -145,8 +145,12 @@ impl App {
             };
             match ev {
                 MidiEvent::NoteOn { key, velocity, .. } => {
-                    // 录音：立即写入（gate=1 占位，NoteOff 闭合）
-                    self.handle_recording_note_on(key, velocity);
+                    // 写入路径：录音优先（实时），否则步进输入（逐键写入）
+                    if self.recording.is_some() {
+                        self.handle_recording_note_on(key, velocity);
+                    } else if self.step_input {
+                        self.handle_step_input_note_on(key, velocity);
+                    }
                     // 直通发声
                     if let std::collections::hash_map::Entry::Vacant(e) =
                         self.midi_thru_keys.entry(key)
@@ -162,7 +166,9 @@ impl App {
                     }
                 }
                 MidiEvent::NoteOff { key, .. } => {
-                    self.handle_recording_note_off(key);
+                    if self.recording.is_some() {
+                        self.handle_recording_note_off(key);
+                    }
                     if self.midi_thru_keys.remove(&key).is_some() {
                         any_note_off = true;
                     }
@@ -263,6 +269,31 @@ impl App {
         self.pianoroll_view.base.dirty = true;
         self.arrange_view.base.dirty = true;
         self.notify_notes_changed();
+    }
+
+    /// 步进输入 NoteOn：在光标处写入一个默认长度（四分音符）音符并前进一个步长。
+    fn handle_step_input_note_on(&mut self, key: u8, velocity: u8) {
+        let Some(idx) = self.active_doc else {
+            return;
+        };
+        let Some(cursor) = self.documents[idx].edit.cursor_tick else {
+            return;
+        };
+        let track = self.current_editing_track();
+        let step = self.documents[idx].data.model.meta.ppq.max(1);
+        let start = cursor.max(0.0) as u32;
+        let note = yinhe_core::NoteEvent {
+            id: 0,
+            start_tick: start,
+            end_tick: start + step,
+            key,
+            velocity,
+        };
+        self.add_note_with_undo(track, note);
+        // 前进一个步长（光标与跨视图同步 tick）
+        let next = (start + step) as f64;
+        self.documents[idx].edit.cursor_tick = Some(next);
+        self.last_cursor_tick = Some(next);
     }
 
     /// 录音中当前 tick：录音起点 + 墙钟流逝，经 tempo map 换算（变速正确）。

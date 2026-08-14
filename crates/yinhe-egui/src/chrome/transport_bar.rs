@@ -251,6 +251,8 @@ pub struct TransportContext<'a> {
     pub active_tool: &'a mut Tool,
     /// MIDI 录音进行中（REC 按钮高亮）。
     pub is_recording: bool,
+    /// 步进输入模式激活（按钮高亮）。
+    pub step_input: bool,
     /// 状态栏讲解行：控件 hover 时写入提示，空白处清空；鼠标不在传输栏时不动。
     pub status_hint: &'a mut Option<String>,
     /// 应用设置（快捷键表 + 图钉状态，图钉变化时在此 save）。
@@ -264,6 +266,8 @@ pub struct TransportResponse {
     pub stop_play: bool,
     /// REC 按钮点击：请求切换录音状态。
     pub record_toggle: bool,
+    /// 步进输入按钮点击：请求切换模式。
+    pub step_toggle: bool,
     pub pending_file_action: Option<FileAction>,
     pub pending_edit_action: Option<EditAction>,
 }
@@ -479,6 +483,31 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     }
                 }
 
+                // ── 步进输入：每按一键写入一个默认长度音符并前进一个步长 ──
+                {
+                    let step_color = if ctx.step_input {
+                        crate::theme::accent_active()
+                    } else {
+                        crate::theme::text_primary()
+                    };
+                    let step_resp = ui.add(
+                        egui::Button::new(
+                            ICON_GRID_ON
+                                .rich_text()
+                                .size(crate::theme::TRANSPORT_BTN_FONT)
+                                .color(step_color),
+                        )
+                        .min_size(btn_size)
+                        .corner_radius(btn_rounding),
+                    );
+                    if step_resp.clicked() {
+                        play_actions.step = true;
+                    }
+                    if step_resp.hovered() {
+                        hovered_hint = Some(t!("hint.step_input").to_string());
+                    }
+                }
+
                 if let Some(doc) = ctx.doc {
                     timecode_rect = Some(show_timecode_display(ui, doc));
 
@@ -613,6 +642,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
         pause_return: play_actions.pause_return,
         stop_play: play_actions.stop_play,
         record_toggle: play_actions.record,
+        step_toggle: play_actions.step,
         pending_file_action,
         pending_edit_action,
     }
@@ -874,6 +904,7 @@ struct PlayActions {
     pause_return: bool,
     stop_play: bool,
     record: bool,
+    step: bool,
 }
 
 /// 播放菜单动作（含跟随档位）。
@@ -1229,6 +1260,8 @@ mod tests {
                         active_tool: &mut active_tool,
                         status_hint: &mut status_hint,
                         settings: &mut settings,
+                        is_recording: false,
+                        step_input: false,
                     };
                     show(ui, &mut ctx);
                 },
@@ -1263,6 +1296,8 @@ mod tests {
                         active_tool: &mut active_tool,
                         status_hint: &mut status_hint,
                         settings: &mut settings,
+                        is_recording: false,
+                        step_input: false,
                     };
                     show(ui, &mut ctx);
                     // 透明隐藏按钮：位于 x 1150..1174、y 8..32

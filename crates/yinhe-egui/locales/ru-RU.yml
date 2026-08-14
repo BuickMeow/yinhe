@@ -27,6 +27,7 @@ hint.right_event_browser: "Обозреватель событий · все MID
 hint.mem: "Сведения о памяти · нажмите, чтобы посмотреть"
 hint.file_menu: "Меню файла · Создать/Открыть/Сохранить/Экспорт"
 hint.play: "Воспроизвести/Пауза · Пробел"
+hint.step_input: "Step Input (write one note per key press and advance)"
 hint.record: "Record (write MIDI input to current track)"
 hint.stop: "Стоп · Esc"
 hint.follow: "Следование за воспроизведением · Блокировка/Страница/Непрерывно (клик для переключения)"

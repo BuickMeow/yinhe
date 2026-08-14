@@ -27,6 +27,7 @@ hint.right_event_browser: "កម្មវិធីរុករកព្រឹ�
 hint.mem: "ព័ត៌មានលម្អិតអង្គចងចាំ · ចុចដើម្បីមើល"
 hint.file_menu: "ម៉ឺនុយឯកសារ · ថ្មី/បើក/រក្សាទុក/នាំចេញ"
 hint.play: "លេង/ផ្អាក · Space"
+hint.step_input: "Step Input (write one note per key press and advance)"
 hint.record: "Record (write MIDI input to current track)"
 hint.stop: "បញ្ឈប់ · Esc"
 hint.follow: "តាមដានការចាក់ · ចាក់សោ/ទំព័រ/បន្ត (ចុចដើម្បីប្ដូរ)"

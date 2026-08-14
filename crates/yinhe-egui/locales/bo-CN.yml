@@ -27,6 +27,7 @@ hint.right_event_browser: "བྱུང་རིམ་ལྟ་ཡིག། · M
 hint.mem: "བློ་གཟིགས་ཞིབ་ཕྲ། · མནན་ནས་ལྟ་བ།"
 hint.file_menu: "ཡིག་ཆའི་ཐོ། · གསར་འཛུགས།/ཁ་ཕྱེ།/ཉར་ཚགས།/ཕྱིར་འདོན།"
 hint.play: "སྒྲ་འཁོལ།/རེ་བ་བཅད། · བར་སྟོང།"
+hint.step_input: "Step Input (write one note per key press and advance)"
 hint.record: "Record (write MIDI input to current track)"
 hint.stop: "འགག་སྡོད། · Esc"
 hint.follow: "འཁོལ་རྗེས་འབྲང་སྟོན། · ལྕགས་ཁྱོར།/ཤོག་ངོས།/རྒྱུན་མཐུད། (མནན་ནས་རིམ་བསྐོར།)"

@@ -27,6 +27,7 @@ hint.right_event_browser: "Navigateur d'événements · tous les événements MI
 hint.mem: "Détails mémoire · cliquer pour afficher"
 hint.file_menu: "Menu Fichier · Nouveau/Ouvrir/Enregistrer/Exporter"
 hint.play: "Lecture/Pause · Espace"
+hint.step_input: "Step Input (write one note per key press and advance)"
 hint.record: "Record (write MIDI input to current track)"
 hint.stop: "Arrêt · Échap"
 hint.follow: "Suivi de lecture · Verrouillée/Page/Continu (clic pour changer)"

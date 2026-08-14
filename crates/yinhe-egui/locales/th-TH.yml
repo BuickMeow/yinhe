@@ -27,6 +27,7 @@ hint.right_event_browser: "เบราว์เซอร์เหตุกา�
 hint.mem: "รายละเอียดหน่วยความจำ · คลิกเพื่อดู"
 hint.file_menu: "เมนูไฟล์ · ใหม่/เปิด/บันทึก/ส่งออก"
 hint.play: "เล่น/หยุดชั่วคราว · Space"
+hint.step_input: "Step Input (write one note per key press and advance)"
 hint.record: "Record (write MIDI input to current track)"
 hint.stop: "หยุด · Esc"
 hint.follow: "ติดตามการเล่น · ล็อก/หน้า/ต่อเนื่อง (คลิกเพื่อสลับ)"

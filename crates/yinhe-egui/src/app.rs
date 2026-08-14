@@ -139,6 +139,8 @@ pub struct App {
     pub(crate) midi_thru_keys: std::collections::HashMap<u8, u8>,
     /// MIDI 录音状态（None = 未录音）。
     pub(crate) recording: Option<crate::app::midi_input::RecordingState>,
+    /// 步进输入模式：每按一键在光标处写入一个默认长度音符并前进一步。
+    pub(crate) step_input: bool,
     /// 布局拖拽结束帧置位，帧末统一写盘（拖拽中不写，避免每帧刷盘）。
     pub(crate) layout_needs_save: bool,
     /// Tracks the last applied MIDI encoding to detect changes.
@@ -362,6 +364,7 @@ impl App {
             midi_connected_device: None,
             midi_thru_keys: std::collections::HashMap::new(),
             recording: None,
+            step_input: false,
             layout_needs_save: false,
             last_midi_encoding: yinhe_midi::MidiImportEncoding::Utf8,
             last_automation_density,

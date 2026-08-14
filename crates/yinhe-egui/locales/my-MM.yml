@@ -27,6 +27,7 @@ hint.right_event_browser: "Event browser · MIDI ဖြစ်ရပ်အား�
 hint.mem: "မမ်မိုရီအသေးစိတ် · ကြည့်ရန် နှိပ်ပါ"
 hint.file_menu: "File menu · အသစ်/ဖွင့်/သိမ်း/ထုတ်ယူ"
 hint.play: "ဖွင့်/ခေတ္တရပ် · Space"
+hint.step_input: "Step Input (write one note per key press and advance)"
 hint.record: "Record (write MIDI input to current track)"
 hint.stop: "ရပ် · Esc"
 hint.follow: "ပြန်ဖွင့်ခြင်း လိုက်ပါမှု · Lock/Page/Continuous (နှိပ်၍လှည့်ပါ)"

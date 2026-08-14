@@ -27,6 +27,7 @@ hint.right_event_browser: "इवेंट ब्राउज़र · सभी
 hint.mem: "मेमोरी विवरण · देखने के लिए क्लिक करें"
 hint.file_menu: "फ़ाइल मेनू · नया/खोलें/सहेजें/निर्यात"
 hint.play: "चलाएं/रोकें · Space"
+hint.step_input: "Step Input (write one note per key press and advance)"
 hint.record: "Record (write MIDI input to current track)"
 hint.stop: "रोकें · Esc"
 hint.follow: "प्लेबैक फ़ॉलो · लॉक/पेज/निरंतर (बदलने के लिए क्लिक करें)"
