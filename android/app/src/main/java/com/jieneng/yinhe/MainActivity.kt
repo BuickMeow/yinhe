@@ -1,13 +1,18 @@
 package com.jieneng.yinhe
 
 import android.content.Intent
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
+import android.widget.EditText
+import android.widget.FrameLayout
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -117,17 +122,53 @@ class MainActivity : GameActivity() {
         pushInsets(WindowInsetsCompat.toWindowInsetsCompat(root, window.decorView))
     }
 
+    /**
+     * IME 输入目标：decorView 不是文本控件（无 InputConnection），
+     * InputMethodManager 会拒绝为其弹键盘，必须有一个真正的 EditText
+     * （1x1 透明、无光标）接收输入法文本，经 TextWatcher 回流给 Rust。
+     */
+    private var imeEdit: EditText? = null
+
+    /** setImeSelection 同步光标时置位，跳过 TextWatcher 回调（防回环）。 */
+    private var syncingSelection = false
+
+    private fun imeEditText(): EditText {
+        imeEdit?.let { return it }
+        return EditText(this).also { et ->
+            imeEdit = et
+            et.setBackgroundColor(Color.TRANSPARENT)
+            et.setTextColor(Color.TRANSPARENT)
+            et.setHighlightColor(Color.TRANSPARENT)
+            et.setCursorVisible(false)
+            et.isFocusableInTouchMode = true
+            et.addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: Editable?) {
+                    if (syncingSelection) {
+                        syncingSelection = false
+                        return
+                    }
+                    val et = imeEdit ?: return
+                    val text = s?.toString() ?: ""
+                    // selectionStart 是 UTF-16 偏移，egui 光标按 Unicode 码点计，换算一下。
+                    val cursor = text.codePointCount(0, et.selectionStart.coerceIn(0, text.length))
+                    onImeText(text, cursor)
+                }
+            })
+            window.addContentView(et, FrameLayout.LayoutParams(1, 1))
+        }
+    }
+
     /** Rust 侧（ime 模块）调用：显示软键盘（输入法）。 */
     fun showIme() {
         val imm = getSystemService(
             android.content.Context.INPUT_METHOD_SERVICE
         ) as android.view.inputmethod.InputMethodManager
-        val view = window.decorView
-        view.requestFocus()
-        val ok = imm.showSoftInput(
-            view,
-            android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT
-        )
+        val et = imeEditText()
+        et.requestFocus()
+        // flags=0 为显式请求（SHOW_IMPLICIT 会被 Android 12+ 的 IME 政策忽略）。
+        val ok = imm.showSoftInput(et, 0)
         android.util.Log.i("yinhe", "showIme: result=$ok")
     }
 
@@ -138,6 +179,15 @@ class MainActivity : GameActivity() {
         ) as android.view.inputmethod.InputMethodManager
         imm.hideSoftInputFromWindow(window.decorView.windowToken, 0)
         android.util.Log.i("yinhe", "hideIme")
+    }
+
+    /** Rust 侧（ime 模块）调用：egui 光标变化时同步 EditText 选区（UTF-16 偏移）。 */
+    fun setImeSelection(pos: Int) {
+        val et = imeEdit ?: return
+        syncingSelection = true
+        val max = et.text.toString().codePointCount(0, et.text.length)
+        val utf16 = et.text.toString().offsetByCodePoints(0, pos.coerceIn(0, max))
+        et.setSelection(utf16)
     }
 
     /** Rust 侧（file_picker 模块）在菜单"本地打开"时通过 JNI 调用。 */
@@ -179,6 +229,9 @@ class MainActivity : GameActivity() {
 
     /** Rust 侧（file_picker 模块）的回调：文件已复制到私有目录。 */
     private external fun onFilePicked(path: String)
+
+    /** Rust 侧（ime 模块）的回调：输入法文本变化（全量文本 + 光标按码点计）。 */
+    private external fun onImeText(text: String, cursor: Int)
 
     /** Rust 侧（insets 模块）的 JNI 回调，写入全局安全区状态（px）。 */
     private external fun onSystemInsetsChanged(left: Int, top: Int, right: Int, bottom: Int)

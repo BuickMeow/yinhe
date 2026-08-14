@@ -57,6 +57,8 @@ fn setup_fonts(ctx: &egui::Context) {
 impl eframe::App for YinheApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // 输入法文本注入 / egui 光标回推（工程设置等 TextEdit 输入用）。
+        ime::pump_into(&ctx);
         // 安卓上无触摸事件时 egui 不重绘（桌面有鼠标移动持续触发）——
         // 请求周期重绘让计时/状态文字持续刷新。
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
