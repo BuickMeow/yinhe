@@ -4,7 +4,7 @@ use yinhe_types::AutomationTarget;
 
 fn main() {
     for path in std::env::args().skip(1) {
-        let m = match yinhe_mid2::parse_path(&path) {
+        let m = match yinhe_midi::parse_path(&path) {
             Ok(m) => m,
             Err(e) => {
                 println!("{path} -> ERR {e}");

@@ -330,7 +330,7 @@ mod tests {
     fn dedup_real_midi_stats() {
         let path = std::env::var("YIN_BENCH_MIDI")
             .unwrap_or_else(|_| "/Users/jieneng/Music/MIDIs/start.mid".to_string());
-        let model = yinhe_mid2::parse_path(&path).expect("parse 失败");
+        let model = yinhe_midi::parse_path(&path).expect("parse 失败");
         // 全曲视口：ppu=0.01 → 31000px 覆盖 309 万 tick。
         let (ppu, w) = (0.01f32, 31000.0f32);
         let view = AutomationPanelView {

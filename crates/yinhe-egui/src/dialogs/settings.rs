@@ -463,7 +463,7 @@ fn show_language_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             egui::ComboBox::from_id_salt("midi_import_encoding")
                 .selected_text(settings.midi_import_encoding.label())
                 .show_ui(ui, |ui| {
-                    for &enc in yinhe_mid2::MidiImportEncoding::ALL {
+                    for &enc in yinhe_midi::MidiImportEncoding::ALL {
                         let selected = settings.midi_import_encoding == enc;
                         if ui.selectable_label(selected, enc.label()).clicked() {
                             settings.midi_import_encoding = enc;

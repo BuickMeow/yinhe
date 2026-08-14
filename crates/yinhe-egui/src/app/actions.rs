@@ -571,7 +571,7 @@ impl App {
             let path_str = path.to_string_lossy().to_string();
             if let Some(idx) = self.active_doc {
                 let doc = &self.documents[idx];
-                match yinhe_mid2::write_to_bytes(&doc.data.model) {
+                match yinhe_midi::write_to_bytes(&doc.data.model) {
                     Ok(bytes) => {
                         if let Err(e) = std::fs::write(&path_str, &bytes) {
                             tracing::error!("Failed to export MIDI: {}", e);

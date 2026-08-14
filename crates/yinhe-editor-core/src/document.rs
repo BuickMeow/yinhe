@@ -222,7 +222,7 @@ impl Document {
         Ok((doc, sf.mode))
     }
 
-    pub fn recode_track_names(&mut self, _encoding: yinhe_mid2::MidiImportEncoding) {
+    pub fn recode_track_names(&mut self, _encoding: yinhe_midi::MidiImportEncoding) {
         // TODO: implement track name re-encoding for YinModel
         self.data.bump_revision();
     }

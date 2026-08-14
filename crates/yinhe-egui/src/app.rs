@@ -131,7 +131,7 @@ pub struct App {
     /// 布局拖拽结束帧置位，帧末统一写盘（拖拽中不写，避免每帧刷盘）。
     pub(crate) layout_needs_save: bool,
     /// Tracks the last applied MIDI encoding to detect changes.
-    pub(crate) last_midi_encoding: yinhe_mid2::MidiImportEncoding,
+    pub(crate) last_midi_encoding: yinhe_midi::MidiImportEncoding,
     /// Tracks the last applied automation density to detect changes.
     pub(crate) last_automation_density: u32,
 
@@ -348,7 +348,7 @@ impl App {
 
             audio_settings,
             layout_needs_save: false,
-            last_midi_encoding: yinhe_mid2::MidiImportEncoding::Utf8,
+            last_midi_encoding: yinhe_midi::MidiImportEncoding::Utf8,
             last_automation_density,
 
             sys_monitor: SystemMonitor::new(),

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
-use yinhe_mid2::{parse_bytes, write_to_bytes};
+use yinhe_midi::{parse_bytes, write_to_bytes};
 use yinhe_types::TimeSigEvent;
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
 

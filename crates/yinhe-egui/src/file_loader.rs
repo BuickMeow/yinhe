@@ -2,7 +2,7 @@ use rust_i18n::t;
 // re-export，让 app/poll.rs 的 use 不变
 pub(crate) use yinhe_editor_core::file_loading::LoadResult;
 use yinhe_editor_core::progress::SharedProgress;
-use yinhe_mid2::MidiImportEncoding;
+use yinhe_midi::MidiImportEncoding;
 
 use crate::dialogs::archive_picker::{ArchivePickerState, PasswordPrompt};
 

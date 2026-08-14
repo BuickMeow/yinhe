@@ -12,7 +12,7 @@ memtrace = ["yinhe-memtrace/memtrace"]
 [dev-dependencies]
 yinhe-types = { path = "../yinhe-types" }
 yinhe-core = { path = "../yinhe-core" }
-yinhe-mid2 = { path = "../yinhe-mid2" }
+yinhe-midi = { path = "../yinhe-midi" }
 yinhe-editor-core = { path = "../yinhe-editor-core" }
 yinhe-yin = { path = "../yinhe-yin" }
 yinhe-wgpu = { path = "../yinhe-wgpu" }

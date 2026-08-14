@@ -138,9 +138,9 @@ fn real_midi_save_and_reopen_roundtrip() {
             continue;
         }
         let data = std::fs::read(&midi_path).unwrap();
-        let model = yinhe_mid2::parse_bytes_with_encoding(
+        let model = yinhe_midi::parse_bytes_with_encoding(
             &data,
-            yinhe_mid2::MidiImportEncoding::Utf8,
+            yinhe_midi::MidiImportEncoding::Utf8,
             |_| {},
         )
         .expect("MIDI 解析失败");

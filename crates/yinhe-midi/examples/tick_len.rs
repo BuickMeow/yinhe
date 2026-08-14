@@ -1,6 +1,6 @@
 fn main() {
     for path in std::env::args().skip(1) {
-        match yinhe_mid2::parse_path(&path) {
+        match yinhe_midi::parse_path(&path) {
             Ok(m) => println!(
                 "{} -> ppq={} tick_length={} notes={}",
                 path,

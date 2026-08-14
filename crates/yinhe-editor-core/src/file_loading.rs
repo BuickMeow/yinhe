@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 
 use yinhe_core::YinModel;
-use yinhe_mid2::{LoadProgress, MidiImportEncoding};
+use yinhe_midi::{LoadProgress, MidiImportEncoding};
 use yinhe_yin::{MappingFile, ProjectSoundFonts};
 
 use crate::progress::{self, SharedProgress, StageStatus};
@@ -17,7 +17,7 @@ use crate::progress::{self, SharedProgress, StageStatus};
 /// Events sent from the background loading thread to the UI thread.
 pub enum MidiLoadEvent {
     Progress(LoadProgress),
-    Complete(Box<Result<YinModel, yinhe_mid2::MidiError>>),
+    Complete(Box<Result<YinModel, yinhe_midi::MidiError>>),
 }
 
 /// Events for .yin project loading.
@@ -239,7 +239,7 @@ impl FileLoader {
                 Ok(d) => d,
                 Err(e) => {
                     let _ = tx.send(MidiLoadEvent::Complete(Box::new(Err(
-                        yinhe_mid2::MidiError::Io(e),
+                        yinhe_midi::MidiError::Io(e),
                     ))));
                     return;
                 }
@@ -265,7 +265,7 @@ impl FileLoader {
         progress::set_stage(&progress, 0, StageStatus::Active);
         let tx_inner = tx.clone();
         let result = yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Midi, || {
-            yinhe_mid2::parse_bytes_with_encoding(&data, encoding, |p| {
+            yinhe_midi::parse_bytes_with_encoding(&data, encoding, |p| {
                 if cancel.load(Ordering::Relaxed) {
                     return;
                 }
@@ -420,7 +420,7 @@ impl FileLoader {
                 Ok(d) => d,
                 Err(e) => {
                     let _ = tx.send(MidiLoadEvent::Complete(Box::new(Err(
-                        yinhe_mid2::MidiError::Io(std::io::Error::other(e.to_string())),
+                        yinhe_midi::MidiError::Io(std::io::Error::other(e.to_string())),
                     ))));
                     return;
                 }

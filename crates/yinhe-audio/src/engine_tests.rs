@@ -705,7 +705,7 @@ fn prof_night_voyager_parallelism() {
 
     use std::time::Instant;
 
-    let model = std::sync::Arc::new(yinhe_mid2::parse_path(midi_path).unwrap());
+    let model = std::sync::Arc::new(yinhe_midi::parse_path(midi_path).unwrap());
     let active_mask = crate::spawn::channels_for_model(&model)
         .active_mask()
         .to_vec();

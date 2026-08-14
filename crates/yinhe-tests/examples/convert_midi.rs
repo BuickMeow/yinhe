@@ -12,7 +12,7 @@ fn main() {
         .cloned()
         .unwrap_or_else(|| "/Users/jieneng/Music/MIDIs/start_v4.yin".to_string());
 
-    let model = yinhe_mid2::parse_path(&mid).expect("parse mid");
+    let model = yinhe_midi::parse_path(&mid).expect("parse mid");
     yinhe_yin::save_yin(&model, &out).expect("save yin");
     println!("saved {out}");
 }

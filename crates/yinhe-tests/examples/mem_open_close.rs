@@ -14,7 +14,7 @@
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_memtrace::{AllocTag, Snapshot, TaggedAlloc};
-use yinhe_mid2::MidiImportEncoding;
+use yinhe_midi::MidiImportEncoding;
 
 #[global_allocator]
 static GLOBAL_ALLOC: TaggedAlloc = TaggedAlloc;
@@ -46,7 +46,7 @@ fn main() {
     // ── 打开（与 GUI 相同路径）──
     let data = std::fs::read(&path).expect("read midi");
     let model = yinhe_memtrace::with_tag(AllocTag::Midi, || {
-        yinhe_mid2::parse_bytes_with_encoding(&data, MidiImportEncoding::Utf8, |_| {})
+        yinhe_midi::parse_bytes_with_encoding(&data, MidiImportEncoding::Utf8, |_| {})
             .expect("parse midi")
     });
     let doc = Document::from_model(

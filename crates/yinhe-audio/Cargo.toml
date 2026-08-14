@@ -24,5 +24,5 @@ yinhe-memtrace = { path = "../yinhe-memtrace" }
 [dev-dependencies]
 pollster = { workspace = true }
 tempfile = { workspace = true }
-yinhe-mid2 = { path = "../yinhe-mid2" }
+yinhe-midi = { path = "../yinhe-midi" }
 yinhe-editor-core = { path = "../yinhe-editor-core" }

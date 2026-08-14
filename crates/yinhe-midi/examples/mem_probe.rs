@@ -25,7 +25,7 @@ fn main() {
 
     // Phase 1: parse
     let t0 = std::time::Instant::now();
-    let model = yinhe_mid2::parse_path(&path);
+    let model = yinhe_midi::parse_path(&path);
     let parse_dur = t0.elapsed();
     match &model {
         Ok(m) => {

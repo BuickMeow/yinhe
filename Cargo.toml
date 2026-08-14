@@ -3,7 +3,7 @@ default-members = ["crates/yinhe-egui"]
 members = [
     "crates/yinhe-types",
     "crates/yinhe-core",
-    "crates/yinhe-mid2",
+    "crates/yinhe-midi",
     "crates/yinhe-yin",
     "crates/yinhe-archive",
     "crates/yinhe-wgpu",

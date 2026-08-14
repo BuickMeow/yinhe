@@ -1,7 +1,7 @@
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::history::{EditSnapshot, UndoAction, UndoEntry};
 use yinhe_editor_core::quantize::QuantizePreset;
-use yinhe_mid2::MidiImportEncoding;
+use yinhe_midi::MidiImportEncoding;
 use yinhe_test_helpers::*;
 
 fn doc_with_notes() -> Document {

@@ -16,7 +16,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use yinhe_audio::export::{WavBitDepth, export_wav, export_wav_gpu};
-use yinhe_mid2::parse_path;
+use yinhe_midi::parse_path;
 
 const SR: u32 = 44100;
 const SEG_SECS: u64 = 10;

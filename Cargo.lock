@@ -7214,7 +7214,7 @@ dependencies = [
  "yinhe-audio",
  "yinhe-core",
  "yinhe-editor-core",
- "yinhe-mid2",
+ "yinhe-midi",
  "yinhe-theme",
  "yinhe-types",
  "yinhe-wgpu",
@@ -7247,7 +7247,7 @@ dependencies = [
  "yinhe-core",
  "yinhe-editor-core",
  "yinhe-memtrace",
- "yinhe-mid2",
+ "yinhe-midi",
  "yinhe-synth",
  "yinhe-types",
 ]
@@ -7276,7 +7276,7 @@ dependencies = [
  "yinhe-archive",
  "yinhe-core",
  "yinhe-memtrace",
- "yinhe-mid2",
+ "yinhe-midi",
  "yinhe-theme",
  "yinhe-types",
  "yinhe-yin",
@@ -7316,7 +7316,7 @@ dependencies = [
  "yinhe-core",
  "yinhe-editor-core",
  "yinhe-memtrace",
- "yinhe-mid2",
+ "yinhe-midi",
  "yinhe-test-helpers",
  "yinhe-theme",
  "yinhe-types",
@@ -7335,7 +7335,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "yinhe-mid2"
+name = "yinhe-midi"
 version = "0.1.0"
 dependencies = [
  "encoding_rs",
@@ -7381,7 +7381,7 @@ dependencies = [
  "yinhe-core",
  "yinhe-editor-core",
  "yinhe-memtrace",
- "yinhe-mid2",
+ "yinhe-midi",
  "yinhe-test-helpers",
  "yinhe-theme",
  "yinhe-types",
@@ -7419,7 +7419,7 @@ dependencies = [
  "wgpu",
  "yinhe-core",
  "yinhe-memtrace",
- "yinhe-mid2",
+ "yinhe-midi",
  "yinhe-test-helpers",
  "yinhe-theme",
  "yinhe-types",

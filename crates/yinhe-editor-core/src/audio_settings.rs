@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::GlobalSfConfig;
 use crate::shortcuts::Keybindings;
-use yinhe_mid2::MidiImportEncoding;
+use yinhe_midi::MidiImportEncoding;
 
 /// 用户可拖拽调整的布局状态（跨会话持久化）。
 /// 默认值与 yinhe-egui 的渲染逻辑一致（clamp 由渲染侧 theme 常量负责）。

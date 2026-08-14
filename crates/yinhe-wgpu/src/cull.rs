@@ -1578,7 +1578,7 @@ mod tests {
         let mut bad_ratios: Vec<(&str, u32, u64, f64)> = Vec::new();
         for path in paths {
             // `parser` 是 yinhe-mid2 的私有模块，解析入口在 crate 根：
-            let Ok(model) = yinhe_mid2::parse_path(path) else {
+            let Ok(model) = yinhe_midi::parse_path(path) else {
                 continue; // 文件不存在或解析失败 → 跳过
             };
             tested_any = true;
@@ -1869,7 +1869,7 @@ mod tests {
         ];
         let mut tested_any = false;
         for path in paths {
-            let Ok(model) = yinhe_mid2::parse_path(path) else {
+            let Ok(model) = yinhe_midi::parse_path(path) else {
                 continue; // 文件不存在或解析失败 → 跳过
             };
             tested_any = true;
@@ -2216,7 +2216,7 @@ mod tests {
         let mut tested_any = false;
         for path in paths {
             let t0 = std::time::Instant::now();
-            let Ok(model) = yinhe_mid2::parse_path(path) else {
+            let Ok(model) = yinhe_midi::parse_path(path) else {
                 println!("{path}: 不存在或解析失败，跳过");
                 continue;
             };
@@ -2393,7 +2393,7 @@ mod tests {
             return;
         };
         let t0 = std::time::Instant::now();
-        let mut model = yinhe_mid2::parse_path(path).expect("parse test.mid 失败");
+        let mut model = yinhe_midi::parse_path(path).expect("parse test.mid 失败");
         println!(
             "parse {:?} note_count={} tick_length={}",
             t0.elapsed(),
@@ -2751,7 +2751,7 @@ mod tests {
             return;
         };
         let t0 = std::time::Instant::now();
-        let model = yinhe_mid2::parse_path(path).expect("parse 失败");
+        let model = yinhe_midi::parse_path(path).expect("parse 失败");
         println!(
             "parse {:?} note_count={} tick_length={} tracks={}",
             t0.elapsed(),
@@ -3064,7 +3064,7 @@ mod tests {
         let Some((device, queue)) = headless_device() else {
             return;
         };
-        let model = yinhe_mid2::parse_path(path).expect("parse 失败");
+        let model = yinhe_midi::parse_path(path).expect("parse 失败");
 
         // 选 key60 音符最多的轨道（保证视口内 key60 一定有可见音符），
         // 探针 tick 对准该轨道 key60 的第一个音符。
@@ -3716,7 +3716,7 @@ mod tests {
         let path = std::env::var("YIN_BENCH_MIDI")
             .unwrap_or_else(|_| "/Users/jieneng/Music/MIDIs/start.mid".to_string());
         let t0 = std::time::Instant::now();
-        let model = yinhe_mid2::parse_path(path).expect("解析 start.mid");
+        let model = yinhe_midi::parse_path(path).expect("解析 start.mid");
         let parse_ms = t0.elapsed().as_secs_f64() * 1e3;
 
         let mut total = 0u64;
@@ -3972,7 +3972,7 @@ mod tests {
         let Some((device, queue)) = headless_device() else {
             return;
         };
-        let model = yinhe_mid2::parse_path(path).expect("parse 失败");
+        let model = yinhe_midi::parse_path(path).expect("parse 失败");
         let hidden = std::collections::HashSet::new();
         let tv: Vec<bool> = vec![true; model.tracks.len()];
         let (all_notes, offsets) = crate::pianoroll::build_all_notes(&model, &hidden, &tv);
