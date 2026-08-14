@@ -4,6 +4,7 @@ members = [
     "crates/yinhe-types",
     "crates/yinhe-core",
     "crates/yinhe-midi",
+    "crates/yinhe-midi-io",
     "crates/yinhe-yin",
     "crates/yinhe-archive",
     "crates/yinhe-wgpu",

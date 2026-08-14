@@ -1,0 +1,9 @@
+[package]
+name = "yinhe-midi-io"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+midir = "0.11"
+thiserror = { workspace = true }
+tracing = { workspace = true }
