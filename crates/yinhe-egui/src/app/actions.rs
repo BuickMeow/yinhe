@@ -37,8 +37,12 @@ impl App {
 
         // 文本输入焦点（TextEdit/DragValue 等）优先：全局快捷键让位给输入框，
         // 与成熟 DAW 一致（Backspace/Delete/Cmd+C/V/Z 等作用于文本而非选区）。
-        // 设置页快捷键录制期间同样让位（录制器自己消费按键）。
-        if ui.ctx().egui_wants_keyboard_input() || self.audio_settings.shortcut_recording {
+        // 设置窗口打开或快捷键录制期间同样让位：设置页里不允许任何快捷键触发动作
+        // （Esc 例外：由设置页录制器消费用于取消录制）。
+        if ui.ctx().egui_wants_keyboard_input()
+            || self.audio_settings.show_settings
+            || self.audio_settings.shortcut_recording
+        {
             return actions;
         }
 
@@ -63,24 +67,29 @@ impl App {
         });
 
         let kb = &self.audio_settings.keybindings;
-        // 一个动作可绑定多个快捷键，任一匹配即触发
+        // 一个动作可绑定多个快捷键，任一匹配即触发。
+        // macOS：第一个快捷键由原生菜单加速键在系统层面处理（菜单项只能绑定一个
+        // 加速键），egui 收不到那个键；这里只匹配其余快捷键，避免双触发，
+        // 同时让第二、第三个快捷键也能生效。
         let matches = |id: &str, key: egui::Key, modifiers: egui::Modifiers| {
-            kb.get(id)
-                .iter()
-                .any(|c| crate::shortcuts::matches_combo(c, modifiers, key))
+            kb.get(id).iter().enumerate().any(|(i, c)| {
+                #[cfg(target_os = "macos")]
+                {
+                    if i == 0 {
+                        return false;
+                    }
+                }
+                crate::shortcuts::matches_combo(c, modifiers, key)
+            })
         };
 
         if let Some((key, modifiers)) = pressed {
             // ── 文件动作 ──
-            // macOS 由原生菜单栏（加速键）触发，这里只处理其他平台，
-            // 避免与系统菜单栏双触发。
-            #[cfg(not(target_os = "macos"))]
-            {
-                for action in FileAction::ALL {
-                    if matches(action.action_id(), key, modifiers) {
-                        actions.file_action = Some(action);
-                        break;
-                    }
+            // macOS：第一个快捷键走原生菜单；其余快捷键在这里分发。
+            for action in FileAction::ALL {
+                if matches(action.action_id(), key, modifiers) {
+                    actions.file_action = Some(action);
+                    break;
                 }
             }
 

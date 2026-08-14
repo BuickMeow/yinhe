@@ -807,13 +807,21 @@ fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         );
         for &id in ids {
             let combos = settings.keybindings.get(id);
+            let add_idx = combos.len();
+            // 是否正在为该动作追加新快捷键（录制中）
+            let is_adding = recording
+                .as_ref()
+                .is_some_and(|(a, idx)| a.as_str() == id && *idx == add_idx);
 
             // 第一行：动作名 + 第一个快捷键 + ×（+ 追加按钮）
+            // 动作名标签用 Extend 撑满 150 宽，保证与后续缩进行精确对齐
             ui.horizontal(|ui| {
                 let label_key = crate::shortcuts::action_label_key(id);
                 ui.add_sized(
                     [150.0, 24.0],
-                    egui::Label::new(t!(label_key).as_ref()).selectable(false),
+                    egui::Label::new(egui::RichText::new(t!(label_key).as_ref()))
+                        .selectable(false)
+                        .wrap_mode(egui::TextWrapMode::Extend),
                 );
 
                 if let Some(first) = combos.first() {
@@ -821,10 +829,6 @@ fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                 }
 
                 // 追加新快捷键
-                let add_idx = combos.len();
-                let is_adding = recording
-                    .as_ref()
-                    .is_some_and(|(a, idx)| a.as_str() == id && *idx == add_idx);
                 let add_btn = egui::Button::new(if is_adding {
                     egui::RichText::new(t!("settings.shortcuts.recording").as_ref())
                 } else {
@@ -843,11 +847,23 @@ fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                 }
             });
 
-            // 其余快捷键各占一行（缩进对齐）
+            // 其余快捷键各占一行（缩进对齐）。
+            // 用 allocate_exact_size 而非 add_space：add_space 推进后不再加
+            // item_spacing，会导致比第一行动作名标签（add_sized）少 8px 而错位。
             for (i, combo) in combos.iter().enumerate().skip(1) {
                 ui.horizontal(|ui| {
-                    ui.add_space(150.0);
+                    ui.allocate_exact_size(egui::vec2(150.0, 24.0), egui::Sense::hover());
                     changed |= shortcut_combo_ui(ui, rec_id, id, i, combo, &recording, settings);
+                });
+            }
+
+            // 追加录制中：立即在下一行显示录制占位框（按完键后变为新快捷键）
+            if is_adding {
+                ui.horizontal(|ui| {
+                    ui.allocate_exact_size(egui::vec2(150.0, 24.0), egui::Sense::hover());
+                    let place_btn = egui::Button::new(t!("settings.shortcuts.recording").as_ref())
+                        .min_size(egui::vec2(140.0, 24.0));
+                    ui.add(place_btn);
                 });
             }
         }
@@ -872,7 +888,8 @@ fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     changed
 }
 
-/// 单个快捷键行：录制按钮（点击重新录制）+ 冲突提示 + × 移除。
+/// 单个快捷键行：录制按钮（点击重新录制）+ × 移除。
+/// 同一快捷键允许被多个动作绑定，不做冲突限制。
 /// 返回是否修改了设置。
 fn shortcut_combo_ui(
     ui: &mut egui::Ui,
@@ -898,14 +915,6 @@ fn shortcut_combo_ui(
         ui.data_mut(|d| d.insert_temp(rec_id, (action_id.to_string(), idx)));
         settings.shortcut_recording = true;
         ui.ctx().request_repaint();
-    }
-
-    if let Some(other) = settings.keybindings.owner_of(action_id, combo) {
-        let other_label = crate::shortcuts::action_label_key(other);
-        ui.colored_label(
-            crate::theme::warning_gold(),
-            t!("settings.shortcuts.conflict", other = t!(other_label)).as_ref(),
-        );
     }
 
     if !is_recording
@@ -1144,5 +1153,37 @@ mod tests {
     fn search_is_case_insensitive() {
         assert!(item_matches(item("采样率"), "SAMPLE"));
         assert!(item_matches(item("采样率"), "caiyanglv"));
+    }
+
+    /// 回归测试：快捷键第一行（动作名 150 宽标签）与后续缩进行（add_space 150）
+    /// 的快捷键按钮必须水平对齐。此前 add_sized 按标签文本宽度推进导致错位。
+    #[test]
+    fn shortcut_rows_align() {
+        let mut first_x = 0.0f32;
+        let mut second_x = 0.0f32;
+        let ctx = egui::Context::default();
+        ctx.set_fonts(egui::FontDefinitions::empty()); // 免加载字体，节省测试时间
+        let output = ctx.run_ui(Default::default(), |ui| {
+            ui.horizontal(|ui| {
+                ui.add_sized(
+                    [150.0, 24.0],
+                    egui::Label::new(egui::RichText::new("保存"))
+                        .selectable(false)
+                        .wrap_mode(egui::TextWrapMode::Extend),
+                );
+                let resp = ui.add(egui::Button::new("⌘S").min_size(egui::vec2(140.0, 24.0)));
+                first_x = resp.rect.min.x;
+            });
+            ui.horizontal(|ui| {
+                ui.allocate_exact_size(egui::vec2(150.0, 24.0), egui::Sense::hover());
+                let resp = ui.add(egui::Button::new("⌘S").min_size(egui::vec2(140.0, 24.0)));
+                second_x = resp.rect.min.x;
+            });
+        });
+        output.drop_without_applying_deltas();
+        assert!(
+            (first_x - second_x).abs() < 0.5,
+            "快捷键两行未对齐：第一行 x={first_x}，第二行 x={second_x}"
+        );
     }
 }

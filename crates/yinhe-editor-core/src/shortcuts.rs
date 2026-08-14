@@ -191,14 +191,6 @@ impl Keybindings {
         self.set(action_id, combos);
     }
 
-    /// 该组合键当前属于哪个动作（冲突检测用；不包含 `action_id` 自身）。
-    pub fn owner_of(&self, action_id: &str, combo: &KeyCombo) -> Option<&'static str> {
-        ALL_ACTION_IDS
-            .iter()
-            .copied()
-            .find(|other| *other != action_id && self.get(other).contains(combo))
-    }
-
     /// 恢复全部动作到平台默认值。
     pub fn reset_to_defaults(&mut self) {
         *self = Self::default();
@@ -293,32 +285,5 @@ mod tests {
         // 移除其中一个，另一个保留
         kb.remove(ACTION_SAVE, &combo(true, false, "S"));
         assert_eq!(kb.get(ACTION_SAVE), vec![combo(false, true, "F2")]);
-    }
-
-    #[test]
-    fn owner_of_detects_conflict_across_all_combos() {
-        let mut kb = Keybindings::default();
-        kb.add(ACTION_COPY, combo(false, true, "F2"));
-        // 自身不构成冲突
-        assert!(
-            kb.owner_of(ACTION_COPY, &combo(false, true, "F2"))
-                .is_none()
-        );
-        // PASTE 查 F2：持有者是 COPY
-        assert_eq!(
-            kb.owner_of(ACTION_PASTE, &combo(false, true, "F2")),
-            Some(ACTION_COPY)
-        );
-        // 把 F2 也绑到 SAVE：按 ALL_ACTION_IDS 顺序 save 先于 copy，报第一个持有者 SAVE
-        kb.add(ACTION_SAVE, combo(false, true, "F2"));
-        assert_eq!(
-            kb.owner_of(ACTION_PASTE, &combo(false, true, "F2")),
-            Some(ACTION_SAVE)
-        );
-        // 对 SAVE 而言 F2 的持有者是 COPY
-        assert_eq!(
-            kb.owner_of(ACTION_SAVE, &combo(false, true, "F2")),
-            Some(ACTION_COPY)
-        );
     }
 }
