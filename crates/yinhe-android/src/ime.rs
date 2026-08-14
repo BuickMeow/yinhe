@@ -1,18 +1,21 @@
 //! 软键盘（IME）显示/隐藏桥 + 输入法文本回流。
 //!
-//! egui 的 TextEdit 聚焦时本应经 egui-winit → winit → android-activity 自动弹出
-//! 软键盘，但 android-activity 0.6 的 showSoftInput 在 Android 11+ 上不可靠
-//!（GameActivity 无 EditText 焦点，InputMethodManager 拒绝弹出）。且
-//! `showSoftInput(decorView)` 同样会被拒绝——decorView 不是文本输入控件。
-//! 因此 Kotlin 侧放一个 1x1 透明 EditText 作为 IME 目标：
+//! 输入目标：GameActivity 的 mSurfaceView（YinheInputSurfaceView，定制为始终
+//! 返回 GameTextInput InputConnection，见 YinheActivity.java）。键盘显示/隐藏
+//! 由本模块经 JNI 调 `MainActivity.showIme/hideIme`（InputMethodManager 显式
+//! 调用，SHOW_IMPLICIT 会被 Android 12+ 的 IME 政策忽略）。
 //!
-//! - 显示/隐藏：JNI 调 `MainActivity.showIme/hideIme`（InputMethodManager 显式调用）。
-//! - 文本回流：EditText 的 TextWatcher 经 `onImeText` 回调把全量文本 + 光标
-//!   写入 [`PENDING_EDIT`]，egui 每帧经 [`pump_into`] 消费：注入 Ctrl+A 全选 +
-//!   `Event::Text` 全量替换（不依赖增量 diff，中文组合输入也稳），再把光标
-//!   写回 `TextEditState`。
+//! 文本回流：winit 0.30 的安卓后端不转发输入法事件（InputEvent::TextEvent
+//! 被静默丢弃，文本到不了 egui），所以不走原生链路，而是由 MainActivity
+//! 覆写 GameTextInput 的 `stateChanged` 回调，经 `onImeText` JNI 把全量文本
+//! 与光标写入 `[PENDING_EDIT]`，egui 每帧经 `[pump_into]` 消费：注入 Ctrl+A
+//! 全选 + `Event::Text` 全量替换（不依赖增量 diff，中文组合输入也稳），再
+//! 把光标写回 `TextEditState`。
+//!
 //! - 光标回推：用户点击输入框改动 egui 光标时，经 `set_selection` 同步
-//!   EditText 选区，保证输入法在正确位置插入。
+//!   InputConnection 选区，保证输入法在正确位置插入。
+//! - 防残留：焦点切换时经 `set_text` 把当前输入框文本同步给 InputConnection
+//!   （切换输入框时 stateChanged 也会被触发，Kotlin 侧用标志防回环）。
 //!
 //! 触发时机：工程设置弹窗的 TextEdit `gained_focus → show`、`lost_focus → hide`。
 //! 非安卓平台（桌面调试）为空操作。
@@ -33,7 +36,7 @@ pub fn take_pending_edit() -> Option<(String, usize)> {
         .take()
 }
 
-/// 最近一次与 EditText 对齐的光标位置；焦点输入框共用（切换时自然更新）。
+/// 最近一次与 InputConnection 对齐的光标位置；焦点输入框共用（切换时自然更新）。
 #[cfg(target_os = "android")]
 static LAST_PUSHED: Mutex<Option<usize>> = Mutex::new(None);
 
@@ -50,14 +53,14 @@ pub fn show() {
     call_activity("showIme", "()V", ImeArgs::None);
 }
 
-/// 隐藏软键盘（延迟到下一帧确认无焦点才真正隐藏，见 [`PENDING_HIDE`]）。
+/// 隐藏软键盘（延迟到下一帧确认无焦点才真正隐藏，见 `[PENDING_HIDE]`）。
 #[cfg(target_os = "android")]
 pub fn hide() {
     log::info!("ime: hide(待定)");
     PENDING_HIDE.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// 把 egui 光标（码点位置）同步给 EditText 选区。
+/// 把 egui 光标（码点位置）同步给 InputConnection 选区。
 #[cfg(target_os = "android")]
 pub fn set_selection(pos: usize) {
     log::debug!("ime: 光标同步 {pos}");
@@ -68,7 +71,7 @@ pub fn set_selection(pos: usize) {
     );
 }
 
-/// 焦点切换时把当前 TextEdit 的文本同步给 EditText（防残留上个输入框内容）。
+/// 焦点切换时把当前 TextEdit 的文本同步给 InputConnection（防残留上个输入框内容）。
 #[cfg(target_os = "android")]
 pub fn set_text(text: &str) {
     call_activity(
@@ -78,7 +81,7 @@ pub fn set_text(text: &str) {
     );
 }
 
-/// 每帧调用：消费输入法文本注入 egui，并把 egui 光标变化回推 EditText。
+/// 每帧调用：消费输入法文本注入 egui，并把 egui 光标变化回推 InputConnection。
 /// 注入只在有 TextEdit 聚焦时进行（无焦点说明输入框已失焦，文本丢弃）。
 #[cfg(target_os = "android")]
 pub fn pump_into(ctx: &egui::Context) {
@@ -107,7 +110,7 @@ pub fn pump_into(ctx: &egui::Context) {
             log::debug!("ime: 焦点不在输入框，丢弃输入法文本");
             return;
         }
-        // Ctrl+A 全选 + 文本全量替换：不依赖 egui 与 EditText 的增量对齐。
+        // Ctrl+A 全选 + 文本全量替换：不依赖 egui 与 InputConnection 的增量对齐。
         let cmd = egui::Modifiers::COMMAND;
         ctx.input_mut(|i| {
             for pressed in [true, false] {
@@ -134,7 +137,7 @@ pub fn pump_into(ctx: &egui::Context) {
         && let Some(state) = egui::TextEdit::load_state(ctx, id)
         && let Some(range) = state.cursor.char_range()
     {
-        // 用户点击输入框改动了光标 → 回推给 EditText（UTF-16 换算在 Kotlin 侧）。
+        // 用户点击输入框改动了光标 → 回推给 InputConnection（UTF-16 换算在 Kotlin 侧）。
         let pos = usize::from(range.primary.index);
         if *last != Some(pos) {
             set_selection(pos);
@@ -153,6 +156,9 @@ pub fn hide() {}
 // 桌面 pump_into 为空操作，此实现无人调用（仅保持 API 对称）。
 #[allow(dead_code)]
 pub fn set_selection(_pos: usize) {}
+
+#[cfg(not(target_os = "android"))]
+pub fn set_text(_text: &str) {}
 
 #[cfg(not(target_os = "android"))]
 pub fn pump_into(_ctx: &egui::Context) {}
@@ -198,7 +204,7 @@ fn call_activity(method: &'static str, sig: &'static str, args: ImeArgs) {
     }));
 }
 
-/// JNI 回调：`MainActivity.onImeText`，输入法文本变化时由 TextWatcher 调用。
+/// JNI 回调：`MainActivity.onImeText`，输入法文本变化时由 stateChanged 调用。
 /// cursor 为 Unicode 码点位置（Kotlin 侧已从 UTF-16 换算）。
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]

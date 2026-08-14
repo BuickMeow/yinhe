@@ -1,29 +1,24 @@
 package com.jieneng.yinhe
 
 import android.content.Intent
-import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
-import android.text.Editable
-import android.text.TextWatcher
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
-import android.widget.EditText
-import android.widget.FrameLayout
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import com.google.androidgamesdk.GameActivity
+import com.google.androidgamesdk.gametextinput.State
 import java.io.File
 
 /**
  * GameActivity 外壳：加载 libyinhe_android.so 并转发生命周期。
  * 所有 UI 逻辑都在 Rust 侧（yinhe-android crate）。
  */
-class MainActivity : GameActivity() {
+class MainActivity : YinheActivity() {
 
     companion object {
         private const val REQ_OPEN_FILE = 1001
@@ -32,6 +27,12 @@ class MainActivity : GameActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         allowDrawingIntoCutout()
+        // IME 配置：多行输入（描述框换行）+ 完成键 + 关闭提取模式（白色放大编辑区）。
+        setImeEditorInfoFields(
+            android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE,
+            android.view.inputmethod.EditorInfo.IME_ACTION_DONE,
+            android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI
+        )
         // WindowInsets 变化（挖孔/系统栏/圆角）时推送给 Rust 侧做安全区布局。
         ViewCompat.setOnApplyWindowInsetsListener(window.decorView) { _, insets ->
             pushInsets(insets)
@@ -123,53 +124,28 @@ class MainActivity : GameActivity() {
     }
 
     /**
-     * IME 输入目标：decorView 不是文本控件（无 InputConnection），
-     * InputMethodManager 会拒绝为其弹键盘，必须有一个真正的 EditText
-     * （1x1 透明、无光标）接收输入法文本，经 TextWatcher 回流给 Rust。
+     * IME：输入目标为 GameActivity 的 mSurfaceView（YinheInputSurfaceView，
+     * 始终返回 GameTextInput InputConnection）。键盘显示/隐藏经
+     * InputMethodManager 显式调用（SHOW_IMPLICIT 会被 Android 12+ 忽略）；
+     * 输入法文本由本类覆写 stateChanged 回调（每帧全量文本+选区）经 JNI
+     * 回流 Rust，绕开 winit 0.30 安卓后端不转发输入法事件的断链。
      */
-    private var imeEdit: EditText? = null
 
-    /** setImeText 同步文本时置位，跳过 TextWatcher 回调（setText 必触发回调，标志必被清除）。 */
-    private var syncingImeText = false
+    /**
+     * GameTextInput 文本状态变化回调（输入目标绑定后每帧全量文本+选区）。
+     * 不调 super：native 侧 TextEvent 无消费者（winit 丢弃），只走 JNI 回流。
+     */
+    override fun stateChanged(state: State, dismissed: Boolean) {
+        // selectionStart 是 UTF-16 偏移，egui 光标按 Unicode 码点计，换算一下。
+        val cursor = state.text.codePointCount(
+            0, state.selectionStart.coerceIn(0, state.text.length)
+        )
+        onImeText(state.text, cursor)
+    }
 
-    private fun imeEditText(): EditText {
-        imeEdit?.let { return it }
-        return EditText(this).also { et ->
-            imeEdit = et
-            et.setBackgroundColor(Color.TRANSPARENT)
-            et.setTextColor(Color.TRANSPARENT)
-            et.setHighlightColor(Color.TRANSPARENT)
-            et.setCursorVisible(false)
-            et.isFocusableInTouchMode = true
-            // 多行：描述框需要换行；工程名/艺术家里 egui singleline 会过滤 \n。
-            et.inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
-            // NO_EXTRACT_UI：横屏下输入法默认显示提取模式（白色放大编辑区），
-            // 请求不显示，键盘直接悬浮（egui 输入框就在下方，无需放大区）。
-            et.imeOptions =
-                android.view.inputmethod.EditorInfo.IME_ACTION_DONE or android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI
-            // 输入法 action 键（完成/前往/换行等）一律收键盘；多行时换行键
-            // 走 commitText 插入 \n，不触发此回调，所以换行不受影响。
-            et.setOnEditorActionListener { _, _, _ ->
-                hideIme()
-                true
-            }
-            et.addTextChangedListener(object : TextWatcher {
-                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-                override fun afterTextChanged(s: Editable?) {
-                    if (syncingImeText) {
-                        syncingImeText = false
-                        return
-                    }
-                    val et = imeEdit ?: return
-                    val text = s?.toString() ?: ""
-                    // selectionStart 是 UTF-16 偏移，egui 光标按 Unicode 码点计，换算一下。
-                    val cursor = text.codePointCount(0, et.selectionStart.coerceIn(0, text.length))
-                    onImeText(text, cursor)
-                }
-            })
-            window.addContentView(et, FrameLayout.LayoutParams(1, 1))
-        }
+    /** 输入法 action 键（完成）触发：收键盘；多行换行键走 commitText 不受影响。 */
+    override fun onEditorAction(action: Int) {
+        hideIme()
     }
 
     /** Rust 侧（ime 模块）调用：显示软键盘（输入法）。 */
@@ -177,10 +153,18 @@ class MainActivity : GameActivity() {
         val imm = getSystemService(
             android.content.Context.INPUT_METHOD_SERVICE
         ) as android.view.inputmethod.InputMethodManager
-        val et = imeEditText()
-        et.requestFocus()
+        val surface = mSurfaceView
+        if (surface == null) {
+            android.util.Log.w("yinhe", "showIme: mSurfaceView 未初始化")
+            return
+        }
+        // SurfaceView 默认不可聚焦，IMM 需要焦点 view 绑定 InputConnection；
+        // 显式开启（GameTextInput 激活时也会设置，这里提前保证 requestFocus 有效）。
+        surface.isFocusableInTouchMode = true
+        surface.isFocusable = true
+        surface.requestFocus()
         // flags=0 为显式请求（SHOW_IMPLICIT 会被 Android 12+ 的 IME 政策忽略）。
-        val ok = imm.showSoftInput(et, 0)
+        val ok = imm.showSoftInput(surface, 0)
         android.util.Log.i("yinhe", "showIme: result=$ok")
     }
 
@@ -193,22 +177,26 @@ class MainActivity : GameActivity() {
         android.util.Log.i("yinhe", "hideIme")
     }
 
-    /** Rust 侧（ime 模块）调用：egui 焦点切换时同步 EditText 文本，
-     *  防止残留上一个输入框的内容（setText 触发 TextWatcher，用标志防回环）。 */
+    /** Rust 侧（ime 模块）调用：焦点切换时同步 InputConnection 文本（防残留）。
+     *  setState 内部不触发 stateChanged（只更新 mEditable + 选区 + restartInput），
+     *  无回环。 */
     fun setImeText(text: String) {
-        val et = imeEdit ?: return
-        syncingImeText = true
-        et.setText(text)
-        et.setSelection(et.text.length)
+        val conn = imeConnection() ?: return
+        conn.setState(State(text, text.length, text.length, -1, -1))
     }
 
-    /** Rust 侧（ime 模块）调用：egui 光标变化时同步 EditText 选区（UTF-16 偏移）。
-     *  setSelection 只移动光标，不触发 TextWatcher，无需防回环。 */
+    /** Rust 侧（ime 模块）调用：egui 光标变化时同步 InputConnection 选区（UTF-16 偏移）。
+     *  setSelection 只移动光标，不触发 stateChanged，无回环。 */
     fun setImeSelection(pos: Int) {
-        val et = imeEdit ?: return
-        val max = et.text.toString().codePointCount(0, et.text.length)
-        val utf16 = et.text.toString().offsetByCodePoints(0, pos.coerceIn(0, max))
-        et.setSelection(utf16)
+        val conn = imeConnection() ?: return
+        val text = conn.getEditable()?.toString() ?: return
+        val max = text.codePointCount(0, text.length)
+        val utf16 = text.offsetByCodePoints(0, pos.coerceIn(0, max))
+        conn.setSelection(utf16, utf16)
+    }
+
+    private fun imeConnection(): com.google.androidgamesdk.gametextinput.InputConnection? {
+        return (mSurfaceView as? YinheInputSurfaceView)?.getConnection()
     }
 
     /** Rust 侧（file_picker 模块）在菜单"本地打开"时通过 JNI 调用。 */
@@ -251,9 +239,9 @@ class MainActivity : GameActivity() {
     /** Rust 侧（file_picker 模块）的回调：文件已复制到私有目录。 */
     private external fun onFilePicked(path: String)
 
-    /** Rust 侧（ime 模块）的回调：输入法文本变化（全量文本 + 光标按码点计）。 */
-    private external fun onImeText(text: String, cursor: Int)
-
     /** Rust 侧（insets 模块）的 JNI 回调，写入全局安全区状态（px）。 */
     private external fun onSystemInsetsChanged(left: Int, top: Int, right: Int, bottom: Int)
+
+    /** Rust 侧（ime 模块）的回调：输入法文本变化（全量文本 + 光标按码点计）。 */
+    private external fun onImeText(text: String, cursor: Int)
 }

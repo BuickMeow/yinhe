@@ -226,7 +226,7 @@ impl YinheApp {
                     );
                     // 输入法：聚焦弹键盘（android-activity 的自动弹不工作，走 JNI 桥）。
                     crate::ime::show();
-                    // 同步 EditText 文本，防止残留上一个输入框的内容。
+                    // 同步 InputConnection 文本，防止残留上一个输入框的内容。
                     crate::ime::set_text(&name);
                 }
                 if resp.changed() {
