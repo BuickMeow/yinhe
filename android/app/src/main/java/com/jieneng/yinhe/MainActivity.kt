@@ -129,8 +129,8 @@ class MainActivity : GameActivity() {
      */
     private var imeEdit: EditText? = null
 
-    /** setImeSelection 同步光标时置位，跳过 TextWatcher 回调（防回环）。 */
-    private var syncingSelection = false
+    /** setImeText 同步文本时置位，跳过 TextWatcher 回调（setText 必触发回调，标志必被清除）。 */
+    private var syncingImeText = false
 
     private fun imeEditText(): EditText {
         imeEdit?.let { return it }
@@ -141,12 +141,21 @@ class MainActivity : GameActivity() {
             et.setHighlightColor(Color.TRANSPARENT)
             et.setCursorVisible(false)
             et.isFocusableInTouchMode = true
+            // 多行：描述框需要换行；工程名/艺术家里 egui singleline 会过滤 \n。
+            et.inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            et.imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+            // 输入法 action 键（完成/前往/换行等）一律收键盘；多行时换行键
+            // 走 commitText 插入 \n，不触发此回调，所以换行不受影响。
+            et.setOnEditorActionListener { _, _, _ ->
+                hideIme()
+                true
+            }
             et.addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
                 override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
                 override fun afterTextChanged(s: Editable?) {
-                    if (syncingSelection) {
-                        syncingSelection = false
+                    if (syncingImeText) {
+                        syncingImeText = false
                         return
                     }
                     val et = imeEdit ?: return
@@ -181,10 +190,19 @@ class MainActivity : GameActivity() {
         android.util.Log.i("yinhe", "hideIme")
     }
 
-    /** Rust 侧（ime 模块）调用：egui 光标变化时同步 EditText 选区（UTF-16 偏移）。 */
+    /** Rust 侧（ime 模块）调用：egui 焦点切换时同步 EditText 文本，
+     *  防止残留上一个输入框的内容（setText 触发 TextWatcher，用标志防回环）。 */
+    fun setImeText(text: String) {
+        val et = imeEdit ?: return
+        syncingImeText = true
+        et.setText(text)
+        et.setSelection(et.text.length)
+    }
+
+    /** Rust 侧（ime 模块）调用：egui 光标变化时同步 EditText 选区（UTF-16 偏移）。
+     *  setSelection 只移动光标，不触发 TextWatcher，无需防回环。 */
     fun setImeSelection(pos: Int) {
         val et = imeEdit ?: return
-        syncingSelection = true
         val max = et.text.toString().codePointCount(0, et.text.length)
         val utf16 = et.text.toString().offsetByCodePoints(0, pos.coerceIn(0, max))
         et.setSelection(utf16)

@@ -37,6 +37,12 @@ pub fn take_pending_edit() -> Option<(String, usize)> {
 #[cfg(target_os = "android")]
 static LAST_PUSHED: Mutex<Option<usize>> = Mutex::new(None);
 
+/// 待执行的隐藏请求：输入框间切换时 lost_focus 与 gained_focus 跨帧交叉
+/// 触发，立即 hide 会打断键盘弹出动画（弹一下缩回去）。标记后由 pump_into
+/// 在下一帧确认焦点真没了才执行，焦点还在（切到另一输入框）则取消。
+#[cfg(target_os = "android")]
+static PENDING_HIDE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// 显示软键盘。
 #[cfg(target_os = "android")]
 pub fn show() {
@@ -44,11 +50,11 @@ pub fn show() {
     call_activity("showIme", "()V", ImeArgs::None);
 }
 
-/// 隐藏软键盘。
+/// 隐藏软键盘（延迟到下一帧确认无焦点才真正隐藏，见 [`PENDING_HIDE`]）。
 #[cfg(target_os = "android")]
 pub fn hide() {
-    log::info!("ime: hide");
-    call_activity("hideIme", "()V", ImeArgs::None);
+    log::info!("ime: hide(待定)");
+    PENDING_HIDE.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// 把 egui 光标（码点位置）同步给 EditText 选区。
@@ -62,6 +68,16 @@ pub fn set_selection(pos: usize) {
     );
 }
 
+/// 焦点切换时把当前 TextEdit 的文本同步给 EditText（防残留上个输入框内容）。
+#[cfg(target_os = "android")]
+pub fn set_text(text: &str) {
+    call_activity(
+        "setImeText",
+        "(Ljava/lang/String;)V",
+        ImeArgs::Str(text.to_owned()),
+    );
+}
+
 /// 每帧调用：消费输入法文本注入 egui，并把 egui 光标变化回推 EditText。
 /// 注入只在有 TextEdit 聚焦时进行（无焦点说明输入框已失焦，文本丢弃）。
 #[cfg(target_os = "android")]
@@ -71,6 +87,16 @@ pub fn pump_into(ctx: &egui::Context) {
     let mut last = LAST_PUSHED.lock().unwrap_or_else(|e| e.into_inner());
 
     let focused = ctx.memory(|m| m.focused());
+    // 延迟隐藏：本帧仍聚焦 TextEdit（如刚切到另一输入框）则取消，
+    // 焦点真没了才执行 hideIme。
+    let text_edit_focused = focused.is_some_and(|id| egui::TextEdit::load_state(ctx, id).is_some());
+    if text_edit_focused {
+        PENDING_HIDE.store(false, std::sync::atomic::Ordering::Relaxed);
+    } else if PENDING_HIDE.swap(false, std::sync::atomic::Ordering::Relaxed) {
+        log::info!("ime: hide");
+        call_activity("hideIme", "()V", ImeArgs::None);
+    }
+
     if let Some((text, cursor)) = take_pending_edit() {
         let Some(id) = focused else {
             log::warn!("ime: 输入法文本到达但无焦点，丢弃");
@@ -136,6 +162,7 @@ pub fn pump_into(_ctx: &egui::Context) {}
 enum ImeArgs {
     None,
     Int(jni::sys::jint),
+    Str(String),
 }
 
 /// 通过 JNI 调 MainActivity 的方法（UI 线程执行）。
@@ -153,9 +180,15 @@ fn call_activity(method: &'static str, sig: &'static str, args: ImeArgs) {
             let activity = unsafe { jni::objects::JObject::from_raw(env, raw) };
             let name = jni::strings::JNIString::from(method);
             let signature = jni::signature::RuntimeMethodSignature::from_str(sig)?;
-            let arg = match args {
-                ImeArgs::None => None,
-                ImeArgs::Int(v) => Some(jni::objects::JValue::Int(v)),
+            // JObject 在闭包内创建，借用其引用构造 JValue（生命周期覆盖整个调用）。
+            let str_obj: Option<jni::objects::JObject> = match &args {
+                ImeArgs::Str(s) => Some(env.new_string(s.as_str())?.into()),
+                _ => None,
+            };
+            let arg = match (&args, str_obj.as_ref()) {
+                (ImeArgs::None, _) => None,
+                (ImeArgs::Int(v), _) => Some(jni::objects::JValue::Int(*v)),
+                (ImeArgs::Str(_), obj) => obj.map(jni::objects::JValue::Object),
             };
             env.call_method(activity, name, signature.method_signature(), arg.as_slice())?;
             Ok(())

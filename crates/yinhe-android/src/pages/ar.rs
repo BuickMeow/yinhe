@@ -204,9 +204,11 @@ impl YinheApp {
                 // changed 实时写 model，lost_focus 时 commit（变才 push undo）。
                 // 触屏容错：egui 的 touch 点击判定严格（手指微动即判拖动），
                 // 按下位置在输入框内就直接聚焦，不依赖 clicked 事件。
+                // 按下同时弹键盘：已聚焦输入框再次点击时 gained_focus 不会触发。
                 let focus_on_press = |ui: &egui::Ui, resp: &egui::Response| {
                     if resp.hovered() && ui.input(|i| i.pointer.primary_pressed()) {
                         resp.request_focus();
+                        crate::ime::show();
                     }
                 };
                 label(ui, "工程名");
@@ -224,6 +226,8 @@ impl YinheApp {
                     );
                     // 输入法：聚焦弹键盘（android-activity 的自动弹不工作，走 JNI 桥）。
                     crate::ime::show();
+                    // 同步 EditText 文本，防止残留上一个输入框的内容。
+                    crate::ime::set_text(&name);
                 }
                 if resp.changed() {
                     let model = Arc::make_mut(&mut doc.data.model);
@@ -253,6 +257,7 @@ impl YinheApp {
                         &doc.data.model.meta.artist,
                     );
                     crate::ime::show();
+                    crate::ime::set_text(&artist);
                 }
                 if resp.changed() {
                     Arc::make_mut(&mut doc.data.model).meta.artist = artist;
@@ -277,6 +282,7 @@ impl YinheApp {
                         &doc.data.model.meta.description,
                     );
                     crate::ime::show();
+                    crate::ime::set_text(&desc);
                 }
                 if resp.changed() {
                     Arc::make_mut(&mut doc.data.model).meta.description = desc;

@@ -19,6 +19,12 @@ members = [
 ]
 resolver = "2"
 
+# 本地补丁：android-activity 的 GameTextInput（白色原生输入框）与应用自己的
+# IME 桥冲突，winit 经它显示软键盘在 Android 12+ 上也不可靠，改空操作。
+# 见 vendor/android-activity/README.md。
+[patch.crates-io]
+android-activity = { path = "vendor/android-activity" }
+
 [workspace.dependencies]
 wgpu = "30"
 eframe = { version = "0.36", features = ["wgpu"] }
