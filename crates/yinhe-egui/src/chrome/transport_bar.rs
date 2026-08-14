@@ -257,9 +257,7 @@ pub struct TransportResponse {
 pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportResponse {
     let has_active = ctx.doc.is_some();
 
-    let mut toggle_play = false;
-    let mut pause_return = false;
-    let mut stop_play = false;
+    let mut play_actions = PlayActions::default();
     let mut pending_file_action = None;
     let mut pending_edit_action = None;
 
@@ -381,9 +379,8 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     has_active,
                     is_playing,
                     ctx.follow_mode,
-                    &mut toggle_play,
-                    &mut pause_return,
-                    &mut stop_play,
+                    ctx.settings,
+                    &mut play_actions,
                 );
 
                 if let Some(doc) = ctx.doc {
@@ -491,9 +488,9 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
         });
 
     TransportResponse {
-        toggle_play,
-        pause_return,
-        stop_play,
+        toggle_play: play_actions.toggle_play,
+        pause_return: play_actions.pause_return,
+        stop_play: play_actions.stop_play,
         pending_file_action,
         pending_edit_action,
     }
@@ -536,7 +533,97 @@ pub const EDIT_GROUPS: [&[EditAction]; 4] = [
     &[EditAction::TransposeUp, EditAction::TransposeDown],
 ];
 
-/// 动作菜单 popup 通用渲染：容器与量化弹框同款
+/// popup 菜单行的统一渲染（图标 + 文本 + 可选右侧快捷键），
+/// 支持选中高亮（单选模式，如播放菜单的跟随档）与可选图钉按钮。
+/// 文件/编辑/播放菜单共用，保证三个 popup 视觉与交互一致。
+/// 返回 (主按钮响应, 图钉响应)。
+struct PopupRowSpec<'a> {
+    icon: egui_material_icons::MaterialIcon,
+    label: &'a str,
+    shortcut: Option<&'a str>,
+    enabled: bool,
+    /// 选中高亮（单选模式当前项）。
+    selected: bool,
+    /// Some(当前是否钉住) 渲染图钉按钮；None 不渲染（行宽占满）。
+    pin: Option<bool>,
+}
+
+fn popup_menu_row(
+    ui: &mut egui::Ui,
+    spec: PopupRowSpec<'_>,
+) -> (egui::Response, Option<egui::Response>) {
+    // 每行绝对定位（ui.put）固定尺寸：主按钮 + 可选右侧图钉，
+    // 行宽恰好等于菜单内容宽，不参与 popup 宽度反馈；
+    // 无快捷键的项用空 shortcut_text 保持左对齐（grow 占中间）。
+    const PIN_W: f32 = 26.0;
+    const MAIN_PIN_GAP: f32 = 2.0;
+    let row_h = ui.spacing().interact_size.y;
+    let row_w = ui.available_width();
+    let (row_rect, _) = ui.allocate_exact_size(egui::vec2(row_w, row_h), egui::Sense::hover());
+
+    let has_pin = spec.pin.is_some();
+    let main_w = if has_pin {
+        row_w - PIN_W - MAIN_PIN_GAP
+    } else {
+        row_w
+    };
+    let main_rect = egui::Rect::from_min_size(row_rect.min, egui::vec2(main_w, row_h));
+    let icon_color = if spec.enabled {
+        crate::theme::text_bright()
+    } else {
+        crate::theme::text_disabled()
+    };
+    let main_btn = egui::Button::selectable(
+        spec.selected,
+        crate::widgets::icon_text::icon_text(
+            spec.icon,
+            spec.label,
+            crate::theme::FILE_MENU_FONT,
+            icon_color,
+        ),
+    )
+    // 去掉边框：egui 按钮 inactive 无边框、hover 时 1px 边框从无到有，
+    // 视觉上像文字位移；stroke NONE 后 hover 只剩背景色变化
+    .stroke(egui::Stroke::NONE)
+    .wrap_mode(egui::TextWrapMode::Truncate)
+    .shortcut_text(spec.shortcut.unwrap_or(""));
+    let main_resp = ui
+        .add_enabled_ui(spec.enabled, |ui| ui.put(main_rect, main_btn))
+        .inner;
+
+    let mut pin_resp = None;
+    if let Some(is_pinned) = spec.pin {
+        let pin_rect = egui::Rect::from_min_size(
+            egui::pos2(row_rect.max.x - PIN_W, row_rect.min.y),
+            egui::vec2(PIN_W, row_h),
+        );
+        let pin_color = if is_pinned {
+            crate::theme::accent_active()
+        } else {
+            crate::theme::text_disabled()
+        };
+        let pin_btn = egui::Button::new(
+            ICON_KEEP
+                .rich_text()
+                .size(crate::theme::FILE_MENU_FONT)
+                .color(pin_color),
+        )
+        .frame(false);
+        let resp = ui.put(pin_rect, pin_btn);
+        // 无边框按钮 hover 时补背景反馈，提示可点击
+        if resp.hovered() {
+            ui.painter().rect_filled(
+                pin_rect,
+                4.0,
+                crate::theme::hover_color(crate::theme::app_bg()),
+            );
+        }
+        pin_resp = Some(resp);
+    }
+    (main_resp, pin_resp)
+}
+
+/// 动作菜单 popup 通用容器：与量化弹框同款
 /// （Popup::from_toggle_button_response + CloseOnClickOutside），
 /// 固定宽度（快捷键 + 图钉需要稳定的行宽）；每项右侧显示快捷键与图钉按钮。
 /// 文件/编辑 popup 共用，保证行为一致。
@@ -560,12 +647,6 @@ fn show_action_menu<T: PopupRow>(
             // 宽度恒定后 Area 尺寸与对齐计算全部稳定。
             ui.set_min_width(crate::theme::FILE_MENU_WIDTH);
             ui.set_max_width(crate::theme::FILE_MENU_WIDTH);
-            // 每行绝对定位（ui.put）固定尺寸：主按钮 + 右侧图钉，
-            // 行宽恰好等于菜单内容宽，不参与 popup 宽度反馈；
-            // 无快捷键的项用空 shortcut_text 保持左对齐（grow 占中间）。
-            const PIN_W: f32 = 26.0;
-            const MAIN_PIN_GAP: f32 = 2.0;
-            let row_h = ui.spacing().interact_size.y;
             for (gi, group) in groups.iter().enumerate() {
                 if gi > 0 {
                     ui.separator();
@@ -573,73 +654,27 @@ fn show_action_menu<T: PopupRow>(
                 for &action in *group {
                     let enabled = action.is_enabled(has_active, loading);
                     let is_pinned = pinned[action.pinned_index()];
-                    let icon_color = if enabled {
-                        crate::theme::text_bright()
-                    } else {
-                        crate::theme::text_disabled()
-                    };
                     let shortcut = keybindings
                         .get(action.action_id())
                         .first()
                         .map(crate::shortcuts::display_combo);
-
-                    let row_w = ui.available_width();
-                    let (row_rect, _) =
-                        ui.allocate_exact_size(egui::vec2(row_w, row_h), egui::Sense::hover());
-                    let main_rect = egui::Rect::from_min_size(
-                        row_rect.min,
-                        egui::vec2(row_w - PIN_W - MAIN_PIN_GAP, row_h),
+                    let (main_resp, pin_resp) = popup_menu_row(
+                        ui,
+                        PopupRowSpec {
+                            icon: action.icon(),
+                            label: &t!(action.label_key()),
+                            shortcut: shortcut.as_deref(),
+                            enabled,
+                            selected: false,
+                            pin: Some(is_pinned),
+                        },
                     );
-                    let pin_rect = egui::Rect::from_min_size(
-                        egui::pos2(row_rect.max.x - PIN_W, row_rect.min.y),
-                        egui::vec2(PIN_W, row_h),
-                    );
-
-                    let main_btn = egui::Button::selectable(
-                        false,
-                        crate::widgets::icon_text::icon_text(
-                            action.icon(),
-                            &t!(action.label_key()),
-                            crate::theme::FILE_MENU_FONT,
-                            icon_color,
-                        ),
-                    )
-                    // 去掉边框：egui 按钮 inactive 无边框、hover 时 1px 边框从无到有，
-                    // 视觉上像文字位移；stroke NONE 后 hover 只剩背景色变化
-                    .stroke(egui::Stroke::NONE)
-                    .wrap_mode(egui::TextWrapMode::Truncate)
-                    .shortcut_text(shortcut.as_deref().unwrap_or(""));
-                    let main_resp = ui
-                        .add_enabled_ui(enabled, |ui| ui.put(main_rect, main_btn))
-                        .inner;
-
-                    let pin_color = if is_pinned {
-                        crate::theme::accent_active()
-                    } else {
-                        crate::theme::text_disabled()
-                    };
-                    let pin_btn = egui::Button::new(
-                        ICON_KEEP
-                            .rich_text()
-                            .size(crate::theme::FILE_MENU_FONT)
-                            .color(pin_color),
-                    )
-                    .frame(false);
-                    let pin_resp = ui.put(pin_rect, pin_btn);
-                    // 无边框按钮 hover 时补背景反馈，提示可点击
-                    if pin_resp.hovered() {
-                        ui.painter().rect_filled(
-                            pin_rect,
-                            4.0,
-                            crate::theme::hover_color(crate::theme::app_bg()),
-                        );
-                    }
 
                     if main_resp.clicked() {
                         *pending_action = Some(action);
                         ui.close();
                     }
-                    if pin_resp.clicked() {
+                    if pin_resp.is_some_and(|r| r.clicked()) {
                         // 图钉只切换固定状态，不关闭菜单
                         let idx = action.pinned_index();
                         pinned[idx] = !pinned[idx];
@@ -697,92 +732,114 @@ fn show_edit_menu(
     }
 }
 
-/// 播放菜单 popup：播放/暂停、停止、播放跟随（三档单选）。
-/// 无图钉（播放动作不参与图钉固定）；点击项后关闭菜单。
+/// 播放菜单触发的播放动作标志（合并参数，与 KeyboardActions 同风格）。
+#[derive(Default)]
+struct PlayActions {
+    toggle_play: bool,
+    pause_return: bool,
+    stop_play: bool,
+}
+
+/// 播放菜单 popup：与文件/编辑菜单同款行样式（图标 + 名称 + 右侧快捷键），
+/// 播放/暂停与停止无选中态；播放跟随为四档单选（当前档 selected 高亮）。
+/// 无图钉；点击项后关闭菜单。
 fn show_play_menu(
     button: &egui::Response,
     has_active: bool,
     is_playing: bool,
     follow_mode: &mut FollowMode,
-    toggle_play: &mut bool,
-    pause_return: &mut bool,
-    stop_play: &mut bool,
+    settings: &AudioSettings,
+    actions: &mut PlayActions,
 ) {
     use crate::view_interaction::FollowModeExt;
+    let play_shortcut = settings
+        .keybindings
+        .get(shortcuts::ACTION_TOGGLE_PLAY)
+        .first()
+        .map(crate::shortcuts::display_combo);
+    let stop_shortcut = settings
+        .keybindings
+        .get(shortcuts::ACTION_STOP)
+        .first()
+        .map(crate::shortcuts::display_combo);
+
     egui::Popup::from_toggle_button_response(button)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .width(crate::theme::FILE_MENU_WIDTH)
         .show(|ui| {
+            // 锁死内容宽度（min == max），与文件/编辑菜单一致
             ui.set_min_width(crate::theme::FILE_MENU_WIDTH);
             ui.set_max_width(crate::theme::FILE_MENU_WIDTH);
 
-            // 播放/暂停（图标随播放状态切换）
+            // 播放/暂停（图标随播放状态切换，右侧显示快捷键）
             let play_icon = if is_playing {
                 ICON_PAUSE
             } else {
                 ICON_PLAY_ARROW
             };
-            if play_menu_row(
+            let (main_resp, _) = popup_menu_row(
                 ui,
-                play_icon,
-                &t!("shortcuts.play_toggle"),
-                has_active,
-                false,
-            )
-            .clicked()
-            {
+                PopupRowSpec {
+                    icon: play_icon,
+                    label: &t!("shortcuts.play_toggle"),
+                    shortcut: play_shortcut.as_deref(),
+                    enabled: has_active,
+                    selected: false,
+                    pin: None,
+                },
+            );
+            if main_resp.clicked() {
                 if is_playing {
-                    *pause_return = true;
+                    actions.pause_return = true;
                 } else {
-                    *toggle_play = true;
+                    actions.toggle_play = true;
                 }
                 ui.close();
             }
-            if play_menu_row(ui, ICON_STOP, &t!("shortcuts.stop"), has_active, false).clicked() {
-                *stop_play = true;
+
+            let (main_resp, _) = popup_menu_row(
+                ui,
+                PopupRowSpec {
+                    icon: ICON_STOP,
+                    label: &t!("shortcuts.stop"),
+                    shortcut: stop_shortcut.as_deref(),
+                    enabled: has_active,
+                    selected: false,
+                    pin: None,
+                },
+            );
+            if main_resp.clicked() {
+                actions.stop_play = true;
                 ui.close();
             }
 
-            // ── 播放跟随（三档单选，与主栏按钮循环切换等价）──
+            // ── 播放跟随（四档单选，当前档 selected 高亮）──
             ui.separator();
-            let modes: [(FollowMode, &str); 3] = [
+            let modes: [(FollowMode, &str); 4] = [
                 (FollowMode::None, "follow.none"),
+                (FollowMode::Centered, "follow.centered"),
                 (FollowMode::Page, "follow.page"),
                 (FollowMode::Continuous, "follow.continuous"),
             ];
             for (mode, key) in modes {
                 let selected = *follow_mode == mode;
-                if play_menu_row(ui, mode.icon(), &t!(key), has_active, selected).clicked() {
+                let (main_resp, _) = popup_menu_row(
+                    ui,
+                    PopupRowSpec {
+                        icon: mode.icon(),
+                        label: &t!(key),
+                        shortcut: None,
+                        enabled: has_active,
+                        selected,
+                        pin: None,
+                    },
+                );
+                if main_resp.clicked() {
                     *follow_mode = mode;
                     ui.close();
                 }
             }
         });
-}
-
-/// 播放菜单的简单行（图标 + 文本，无图钉；selected 高亮当前跟随模式）。
-fn play_menu_row(
-    ui: &mut egui::Ui,
-    icon: egui_material_icons::MaterialIcon,
-    label: &str,
-    enabled: bool,
-    selected: bool,
-) -> egui::Response {
-    let row_h = ui.spacing().interact_size.y;
-    let row_w = ui.available_width();
-    let (row_rect, _) = ui.allocate_exact_size(egui::vec2(row_w, row_h), egui::Sense::hover());
-    let color = if enabled {
-        crate::theme::text_bright()
-    } else {
-        crate::theme::text_disabled()
-    };
-    let btn = egui::Button::selectable(
-        selected,
-        crate::widgets::icon_text::icon_text(icon, label, crate::theme::FILE_MENU_FONT, color),
-    )
-    .stroke(egui::Stroke::NONE)
-    .wrap_mode(egui::TextWrapMode::Truncate);
-    ui.add_enabled_ui(enabled, |ui| ui.put(row_rect, btn)).inner
 }
 
 /// 图钉固定的动作按钮行：作为独立按钮紧跟在菜单按钮右侧，

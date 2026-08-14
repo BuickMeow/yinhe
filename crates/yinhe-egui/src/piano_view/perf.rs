@@ -66,6 +66,7 @@ pub fn submit(ctx: PerfCtx) {
         instance_count: 0,
         follow_mode: match follow_mode {
             FollowMode::None => "None",
+            FollowMode::Centered => "Centered",
             FollowMode::Page => "Page",
             FollowMode::Continuous => "Continuous",
         },

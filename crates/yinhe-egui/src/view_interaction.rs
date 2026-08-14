@@ -18,6 +18,7 @@ impl FollowModeExt for FollowMode {
         use egui_material_icons::icons::*;
         match self {
             FollowMode::None => ICON_LOCK,
+            FollowMode::Centered => ICON_CENTER_FOCUS_WEAK,
             FollowMode::Page => ICON_AUTO_STORIES,
             FollowMode::Continuous => ICON_CENTER_FOCUS_STRONG,
         }

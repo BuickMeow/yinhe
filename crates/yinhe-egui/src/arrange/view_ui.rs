@@ -74,6 +74,7 @@ pub fn show(
             0.0,
             *cfg.follow_mode,
             0.01,
+            view.base.scroll_x,
         )
     {
         view.base.scroll_x = new_scroll_x;

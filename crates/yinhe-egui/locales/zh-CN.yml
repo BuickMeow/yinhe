@@ -54,6 +54,7 @@ tool.eraser: "橡皮擦"
 
 # ── 跟随模式 ──
 follow.none: "不滚动"
+follow.centered: "居中跟随"
 follow.page: "翻页跟随"
 follow.continuous: "实时跟随"
 

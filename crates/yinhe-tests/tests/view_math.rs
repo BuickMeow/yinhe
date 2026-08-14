@@ -171,7 +171,8 @@ fn arrangement_zoom_around_x() {
 
 #[test]
 fn follow_mode_next_cycles() {
-    assert_eq!(FollowMode::None.next(), FollowMode::Page);
+    assert_eq!(FollowMode::None.next(), FollowMode::Centered);
+    assert_eq!(FollowMode::Centered.next(), FollowMode::Page);
     assert_eq!(FollowMode::Page.next(), FollowMode::Continuous);
     assert_eq!(FollowMode::Continuous.next(), FollowMode::None);
 }
@@ -179,27 +180,27 @@ fn follow_mode_next_cycles() {
 #[test]
 fn compute_follow_scroll_none_mode() {
     assert_eq!(
-        compute_follow_scroll(100.0, 1.0, 800.0, 0.0, FollowMode::None, 1.0),
+        compute_follow_scroll(100.0, 1.0, 800.0, 0.0, FollowMode::None, 1.0, 0.0),
         None
     );
 }
 
 #[test]
 fn compute_follow_scroll_continuous_mode() {
-    let result = compute_follow_scroll(100.0, 2.0, 800.0, 0.0, FollowMode::Continuous, 50.0);
+    let result = compute_follow_scroll(100.0, 2.0, 800.0, 0.0, FollowMode::Continuous, 50.0, 0.0);
     assert_eq!(result, Some(150.0));
 }
 
 #[test]
-fn compute_follow_scroll_page_mode_scrolls_at_edge() {
-    let result = compute_follow_scroll(900.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0);
-    assert!(result.is_some(), "should scroll when near right edge");
+fn compute_follow_scroll_page_mode_turns_page_at_edge() {
+    let result = compute_follow_scroll(900.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0, 0.0);
+    assert_eq!(result, Some(800.0), "cursor past right edge turns a page");
 }
 
 #[test]
 fn compute_follow_scroll_page_mode_no_scroll_in_center() {
     assert_eq!(
-        compute_follow_scroll(400.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0),
+        compute_follow_scroll(400.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0, 0.0),
         None
     );
 }

@@ -293,6 +293,7 @@ pub fn show(
             view.keyboard_width(),
             *follow_mode,
             1.0,
+            view.base.scroll_x,
         )
     {
         view.base.scroll_x = new_scroll_x;

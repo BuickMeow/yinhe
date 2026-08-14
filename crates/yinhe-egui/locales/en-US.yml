@@ -54,6 +54,7 @@ tool.eraser: "Eraser"
 
 # ── Follow mode ──
 follow.none: "No Scroll"
+follow.centered: "Centered Follow"
 follow.page: "Page Follow"
 follow.continuous: "Real-time Follow"
 
