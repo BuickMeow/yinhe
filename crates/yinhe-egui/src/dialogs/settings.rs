@@ -907,7 +907,9 @@ pub fn show_content(
         ui.vertical(|ui| {
             ui.set_width(132.0);
             ui.set_height(full_height);
+            // 显式 id_salt：与右侧滚动区区分，避免两个 ScrollArea 的 id 冲突导致滚动串扰
             egui::ScrollArea::vertical()
+                .id_salt("settings_left_scroll")
                 .auto_shrink([false; 2])
                 .show(ui, |ui| {
                     // 搜索框（多语言检索设置项）
@@ -950,6 +952,7 @@ pub fn show_content(
             ui.set_width(ui.available_width());
             ui.set_height(full_height);
             egui::ScrollArea::vertical()
+                .id_salt("settings_right_scroll")
                 .auto_shrink([false; 2])
                 .show(ui, |ui| {
                     changed |= show_search_results(ui, settings, main_ctx);
