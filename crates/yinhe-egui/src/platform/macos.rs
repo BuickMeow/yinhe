@@ -135,8 +135,15 @@ fn str_to_muda_code(s: &str) -> Option<Code> {
     })
 }
 
-/// `KeyCombo` → 原生加速键；键名无法映射时返回 None（不设置加速键）。
+/// `KeyCombo` → 原生加速键；无修饰键或键名无法映射时返回 None（不设置加速键）。
+///
+/// AppKit 的菜单加速键只对带修饰键的组合可靠拦截；无修饰键的快捷键
+/// （如 Space/Esc）由 egui 统一处理（见 `shortcuts::native_menu_handles`），
+/// 不设原生加速键，否则按键会两头落空。
 fn combo_to_accelerator(combo: &yinhe_editor_core::shortcuts::KeyCombo) -> Option<Accelerator> {
+    if !crate::shortcuts::native_menu_handles(combo) {
+        return None;
+    }
     let mut mods = Modifiers::empty();
     if combo.command {
         mods |= Modifiers::SUPER;
@@ -148,6 +155,45 @@ fn combo_to_accelerator(combo: &yinhe_editor_core::shortcuts::KeyCombo) -> Optio
         mods |= Modifiers::ALT;
     }
     Some(Accelerator::new(Some(mods), str_to_muda_code(&combo.key)?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yinhe_editor_core::shortcuts::KeyCombo;
+
+    /// 无修饰键的快捷键不设原生加速键（AppKit 拦不住，由 egui 处理），
+    /// 否则按空格等会两头落空。
+    #[test]
+    fn bare_key_combo_gets_no_accelerator() {
+        let bare = KeyCombo {
+            command: false,
+            shift: false,
+            alt: false,
+            key: "Space".to_string(),
+        };
+        assert!(combo_to_accelerator(&bare).is_none());
+
+        let esc = KeyCombo {
+            command: false,
+            shift: false,
+            alt: false,
+            key: "Escape".to_string(),
+        };
+        assert!(combo_to_accelerator(&esc).is_none());
+    }
+
+    /// 带修饰键的快捷键设置原生加速键。
+    #[test]
+    fn modified_combo_gets_accelerator() {
+        let with_cmd = KeyCombo {
+            command: true,
+            shift: false,
+            alt: false,
+            key: "S".to_string(),
+        };
+        assert!(combo_to_accelerator(&with_cmd).is_some());
+    }
 }
 
 /// Helper to look up an Objective-C class by name at runtime.

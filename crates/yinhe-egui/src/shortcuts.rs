@@ -321,6 +321,15 @@ pub fn matches_combo(combo: &KeyCombo, modifiers: Modifiers, key: Key) -> bool {
     command == combo.command && modifiers.shift == combo.shift && modifiers.alt == combo.alt
 }
 
+/// macOS 原生菜单是否负责处理该快捷键组合。
+///
+/// AppKit 的菜单加速键只对带修饰键的组合可靠拦截（⌘/⇧/⌥）；无修饰键的
+/// 组合（如 Space、Esc）对可打印字符不会触发菜单项，必须由 egui 自己处理，
+/// 否则按键会两头落空（原生菜单收不到、egui 又跳过）。
+pub fn native_menu_handles(combo: &KeyCombo) -> bool {
+    combo.command || combo.shift || combo.alt
+}
+
 /// 是否是可录制的主键（非纯修饰键）。
 pub fn is_recordable_key(key: Key) -> bool {
     RECORDABLE_KEYS.contains(&key)
@@ -359,5 +368,37 @@ pub fn action_label_key(action_id: &str) -> &'static str {
         sc::ACTION_TOOL_SCISSORS => "shortcuts.tool_scissors",
         sc::ACTION_TOOL_ERASER => "shortcuts.tool_eraser",
         _ => "shortcuts.unknown",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_menu_handles_requires_modifier() {
+        let bare = KeyCombo {
+            command: false,
+            shift: false,
+            alt: false,
+            key: "Space".to_string(),
+        };
+        assert!(!native_menu_handles(&bare), "无修饰键快捷键应由 egui 处理");
+
+        let with_cmd = KeyCombo {
+            command: true,
+            shift: false,
+            alt: false,
+            key: "S".to_string(),
+        };
+        assert!(native_menu_handles(&with_cmd), "⌘ 组合应由原生菜单处理");
+
+        let with_shift = KeyCombo {
+            command: false,
+            shift: true,
+            alt: false,
+            key: "ArrowUp".to_string(),
+        };
+        assert!(native_menu_handles(&with_shift), "⇧ 组合应由原生菜单处理");
     }
 }

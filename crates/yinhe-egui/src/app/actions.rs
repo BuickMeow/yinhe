@@ -70,14 +70,15 @@ impl App {
 
         let kb = &self.audio_settings.keybindings;
         // 一个动作可绑定多个快捷键，任一匹配即触发。
-        // macOS：第一个快捷键由原生菜单加速键在系统层面处理（菜单项只能绑定一个
-        // 加速键），egui 收不到那个键；这里只匹配其余快捷键，避免双触发，
-        // 同时让第二、第三个快捷键也能生效。
+        // macOS：第一个快捷键若带修饰键（⌘/⇧/⌥），由原生菜单加速键在系统层面
+        // 处理（AppKit 拦截，egui 收不到那个键），这里跳过它避免双触发；
+        // 无修饰键的快捷键（如 Space）AppKit 不会拦截菜单加速键，必须由 egui
+        // 处理，否则按键会失效。其余快捷键（第二个及以后）同样由 egui 处理。
         let matches = |id: &str, key: egui::Key, modifiers: egui::Modifiers| {
             kb.get(id).iter().enumerate().any(|(i, c)| {
                 #[cfg(target_os = "macos")]
                 {
-                    if i == 0 {
+                    if i == 0 && crate::shortcuts::native_menu_handles(c) {
                         return false;
                     }
                 }
