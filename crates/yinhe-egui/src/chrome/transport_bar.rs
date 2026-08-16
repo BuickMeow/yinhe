@@ -111,6 +111,11 @@ pub trait PopupRow: Copy {
         true
     }
 
+    /// 图标状态色（如录音中红色、激活中 accent）；None 用默认 enabled/disabled 色。
+    fn icon_accent(self) -> Option<egui::Color32> {
+        None
+    }
+
     /// 该行是否处于选中态（单选菜单的当前项，如播放跟随档）。
     fn is_selected(self) -> bool {
         false
@@ -391,120 +396,72 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 if play_menu_btn.hovered() {
                     hovered_hint = Some(t!("hint.play_menu").to_string());
                 }
-                show_play_menu(
-                    &play_menu_btn,
-                    has_active,
-                    is_playing,
-                    ctx.follow_mode,
-                    ctx.settings,
-                    &mut play_actions,
-                );
+                show_play_menu(&play_menu_btn, ctx, is_playing, &mut play_actions);
 
-                // ── 图钉固定的"播放/暂停"：作为独立按钮紧跟在播放菜单按钮右侧 ──
-                if ctx.settings.pinned_play_pause {
-                    let play_resp = ui.add_enabled(
-                        has_active,
+                // ── 图钉固定的播放动作：播放/暂停、停止、录音、步进（顺序 = pinned 索引）──
+                // 未钉住的动作只在播放菜单 popup 里出现。
+                let play_pins: [(PlayMenuAction, bool); 4] = [
+                    (
+                        PlayMenuAction::PlayPause {
+                            playing: is_playing,
+                        },
+                        ctx.settings.pinned_play_pause,
+                    ),
+                    (PlayMenuAction::Stop, ctx.settings.pinned_stop),
+                    (
+                        PlayMenuAction::Record {
+                            recording: ctx.is_recording,
+                        },
+                        ctx.settings.pinned_record,
+                    ),
+                    (
+                        PlayMenuAction::StepInput {
+                            active: ctx.step_input,
+                        },
+                        ctx.settings.pinned_step_input,
+                    ),
+                ];
+                for (action, pinned) in play_pins {
+                    if !pinned {
+                        continue;
+                    }
+                    let enabled = action.is_enabled(has_active, false);
+                    let color = action.icon_accent().unwrap_or_else(|| {
+                        if enabled {
+                            crate::theme::text_primary()
+                        } else {
+                            crate::theme::text_disabled()
+                        }
+                    });
+                    let resp = ui.add_enabled(
+                        enabled,
                         egui::Button::new(
-                            (if is_playing {
-                                ICON_PAUSE
-                            } else {
-                                ICON_PLAY_ARROW
-                            })
-                            .rich_text()
-                            .size(crate::theme::TRANSPORT_BTN_FONT)
-                            .color(if has_active {
-                                crate::theme::text_primary()
-                            } else {
-                                crate::theme::text_disabled()
-                            }),
+                            action
+                                .icon()
+                                .rich_text()
+                                .size(crate::theme::TRANSPORT_BTN_FONT)
+                                .color(color),
                         )
                         .min_size(btn_size)
                         .corner_radius(btn_rounding),
                     );
-                    if play_resp.clicked() {
-                        if is_playing {
-                            play_actions.pause_return = true;
-                        } else {
-                            play_actions.toggle_play = true;
+                    if resp.clicked() {
+                        match action {
+                            PlayMenuAction::PlayPause { playing } => {
+                                if playing {
+                                    play_actions.pause_return = true;
+                                } else {
+                                    play_actions.toggle_play = true;
+                                }
+                            }
+                            PlayMenuAction::Stop => play_actions.stop_play = true,
+                            PlayMenuAction::Record { .. } => play_actions.record = true,
+                            PlayMenuAction::StepInput { .. } => play_actions.step = true,
+                            PlayMenuAction::Follow(..) => unreachable!("跟随档无图钉"),
                         }
                     }
-                    if play_resp.hovered() {
-                        hovered_hint = Some(t!("hint.play").to_string());
-                    }
-                }
-
-                // ── 图钉固定的"停止"：紧跟在播放/暂停图钉按钮右侧 ──
-                if ctx.settings.pinned_stop {
-                    let stop_resp = ui.add_enabled(
-                        has_active,
-                        egui::Button::new(
-                            ICON_STOP
-                                .rich_text()
-                                .size(crate::theme::TRANSPORT_BTN_FONT)
-                                .color(if has_active {
-                                    crate::theme::text_primary()
-                                } else {
-                                    crate::theme::text_disabled()
-                                }),
-                        )
-                        .min_size(btn_size)
-                        .corner_radius(btn_rounding),
-                    );
-                    if stop_resp.clicked() {
-                        play_actions.stop_play = true;
-                    }
-                    if stop_resp.hovered() {
-                        hovered_hint = Some(t!("hint.stop").to_string());
-                    }
-                }
-
-                // ── MIDI 录音（REC）：紧跟在停止按钮右侧，录音中红色高亮 ──
-                {
-                    let rec_color = if ctx.is_recording {
-                        egui::Color32::from_rgb(255, 60, 60)
-                    } else {
-                        crate::theme::text_primary()
-                    };
-                    let rec_resp = ui.add(
-                        egui::Button::new(
-                            ICON_FIBER_MANUAL_RECORD
-                                .rich_text()
-                                .size(crate::theme::TRANSPORT_BTN_FONT)
-                                .color(rec_color),
-                        )
-                        .min_size(btn_size)
-                        .corner_radius(btn_rounding),
-                    );
-                    if rec_resp.clicked() {
-                        play_actions.record = true;
-                    }
-                    if rec_resp.hovered() {
-                        hovered_hint = Some(t!("hint.record").to_string());
-                    }
-                }
-
-                // ── 步进输入：每按一键写入一个默认长度音符并前进一个步长 ──
-                {
-                    let step_color = if ctx.step_input {
-                        crate::theme::accent_active()
-                    } else {
-                        crate::theme::text_primary()
-                    };
-                    let step_resp = ui.add(
-                        egui::Button::new(
-                            ICON_GRID_ON
-                                .rich_text()
-                                .size(crate::theme::TRANSPORT_BTN_FONT)
-                                .color(step_color),
-                        )
-                        .min_size(btn_size)
-                        .corner_radius(btn_rounding),
-                    );
-                    if step_resp.clicked() {
-                        play_actions.step = true;
-                    }
-                    if step_resp.hovered() {
-                        hovered_hint = Some(t!("hint.step_input").to_string());
+                    if resp.hovered() {
+                        hovered_hint = Some(t!(action.label_key()).to_string());
                     }
                 }
 
@@ -696,6 +653,8 @@ struct PopupRowSpec<'a> {
     enabled: bool,
     /// 选中高亮（单选模式当前项）。
     selected: bool,
+    /// 图标状态色（录音中红色等）；None 用默认 enabled/disabled 色。
+    accent: Option<egui::Color32>,
     /// Some(当前是否钉住) 渲染图钉按钮；None 不渲染（行宽占满）。
     pin: Option<bool>,
 }
@@ -722,11 +681,13 @@ fn popup_menu_row(
         row_w
     };
     let main_rect = egui::Rect::from_min_size(row_rect.min, egui::vec2(main_w, row_h));
-    let icon_color = if spec.enabled {
-        crate::theme::text_bright()
-    } else {
-        crate::theme::text_disabled()
-    };
+    let icon_color = spec.accent.unwrap_or_else(|| {
+        if spec.enabled {
+            crate::theme::text_bright()
+        } else {
+            crate::theme::text_disabled()
+        }
+    });
     let main_btn = egui::Button::selectable(
         spec.selected,
         crate::widgets::icon_text::icon_text(
@@ -823,6 +784,7 @@ fn show_action_menu<T: PopupRow>(
                             shortcut: shortcut.as_deref(),
                             enabled,
                             selected: action.is_selected(),
+                            accent: action.icon_accent(),
                             pin: if action.has_pin() {
                                 Some(is_pinned)
                             } else {
@@ -914,6 +876,8 @@ struct PlayActions {
 enum PlayMenuAction {
     PlayPause { playing: bool },
     Stop,
+    Record { recording: bool },
+    StepInput { active: bool },
     Follow(FollowMode, bool),
 }
 
@@ -922,16 +886,21 @@ impl PopupRow for PlayMenuAction {
         match self {
             PlayMenuAction::PlayPause { .. } => 0,
             PlayMenuAction::Stop => 1,
+            PlayMenuAction::Record { .. } => 2,
+            PlayMenuAction::StepInput { .. } => 3,
             // 跟随档无图钉，索引仅占位
             PlayMenuAction::Follow(..) => 0,
         }
     }
 
     fn has_pin(self) -> bool {
-        // 播放/暂停与停止提供图钉；跟随档无图钉
+        // 播放/暂停、停止、录音、步进提供图钉；跟随档无图钉
         matches!(
             self,
-            PlayMenuAction::PlayPause { .. } | PlayMenuAction::Stop
+            PlayMenuAction::PlayPause { .. }
+                | PlayMenuAction::Stop
+                | PlayMenuAction::Record { .. }
+                | PlayMenuAction::StepInput { .. }
         )
     }
 
@@ -939,8 +908,8 @@ impl PopupRow for PlayMenuAction {
         match self {
             PlayMenuAction::PlayPause { .. } => shortcuts::ACTION_TOGGLE_PLAY,
             PlayMenuAction::Stop => shortcuts::ACTION_STOP,
-            // 跟随档没有快捷键
-            PlayMenuAction::Follow(..) => "",
+            // 录音/步进/跟随档没有快捷键
+            _ => "",
         }
     }
 
@@ -955,6 +924,8 @@ impl PopupRow for PlayMenuAction {
                 }
             }
             PlayMenuAction::Stop => ICON_STOP,
+            PlayMenuAction::Record { .. } => ICON_FIBER_MANUAL_RECORD,
+            PlayMenuAction::StepInput { .. } => ICON_STEP,
             PlayMenuAction::Follow(mode, _) => mode.icon(),
         }
     }
@@ -963,12 +934,25 @@ impl PopupRow for PlayMenuAction {
         match self {
             PlayMenuAction::PlayPause { .. } => "shortcuts.play_toggle",
             PlayMenuAction::Stop => "shortcuts.stop",
+            PlayMenuAction::Record { .. } => "menu.record",
+            PlayMenuAction::StepInput { .. } => "menu.step_input",
             PlayMenuAction::Follow(mode, _) => match mode {
                 FollowMode::None => "follow.none",
                 FollowMode::Centered => "follow.centered",
                 FollowMode::Page => "follow.page",
                 FollowMode::Continuous => "follow.continuous",
             },
+        }
+    }
+
+    fn icon_accent(self) -> Option<egui::Color32> {
+        match self {
+            // 录音中红色、步进激活时 accent 高亮（与旧独立按钮一致）
+            PlayMenuAction::Record { recording: true } => {
+                Some(egui::Color32::from_rgb(255, 60, 60))
+            }
+            PlayMenuAction::StepInput { active: true } => Some(crate::theme::accent_active()),
+            _ => None,
         }
     }
 
@@ -988,32 +972,44 @@ impl PopupRow for PlayMenuAction {
 /// 与文件/编辑共用 show_action_menu 模板（无图钉，跟随档选中高亮）。
 fn show_play_menu(
     button: &egui::Response,
-    has_active: bool,
+    ctx: &mut TransportContext<'_>,
     is_playing: bool,
-    follow_mode: &mut FollowMode,
-    settings: &mut AudioSettings,
     actions: &mut PlayActions,
 ) {
+    let has_active = ctx.doc.is_some();
+    let follow_mode = &mut ctx.follow_mode;
+    let settings = &mut ctx.settings;
     let groups: [&[PlayMenuAction]; 2] = [
         &[
             PlayMenuAction::PlayPause {
                 playing: is_playing,
             },
             PlayMenuAction::Stop,
+            PlayMenuAction::Record {
+                recording: ctx.is_recording,
+            },
+            PlayMenuAction::StepInput {
+                active: ctx.step_input,
+            },
         ],
         &[
-            PlayMenuAction::Follow(FollowMode::None, *follow_mode == FollowMode::None),
-            PlayMenuAction::Follow(FollowMode::Centered, *follow_mode == FollowMode::Centered),
-            PlayMenuAction::Follow(FollowMode::Page, *follow_mode == FollowMode::Page),
+            PlayMenuAction::Follow(FollowMode::None, **follow_mode == FollowMode::None),
+            PlayMenuAction::Follow(FollowMode::Centered, **follow_mode == FollowMode::Centered),
+            PlayMenuAction::Follow(FollowMode::Page, **follow_mode == FollowMode::Page),
             PlayMenuAction::Follow(
                 FollowMode::Continuous,
-                *follow_mode == FollowMode::Continuous,
+                **follow_mode == FollowMode::Continuous,
             ),
         ],
     ];
     let mut pending = None;
-    // 播放/暂停与停止可钉（局部数组，popup 内修改，结束后写回保存）
-    let mut pinned = [settings.pinned_play_pause, settings.pinned_stop];
+    // 播放/暂停、停止、录音、步进可钉（局部数组，popup 内修改，结束后写回保存）
+    let mut pinned = [
+        settings.pinned_play_pause,
+        settings.pinned_stop,
+        settings.pinned_record,
+        settings.pinned_step_input,
+    ];
     if show_action_menu(
         button,
         &groups,
@@ -1025,6 +1021,8 @@ fn show_play_menu(
     ) {
         settings.pinned_play_pause = pinned[0];
         settings.pinned_stop = pinned[1];
+        settings.pinned_record = pinned[2];
+        settings.pinned_step_input = pinned[3];
         settings.save();
     }
     if let Some(action) = pending {
@@ -1037,7 +1035,9 @@ fn show_play_menu(
                 }
             }
             PlayMenuAction::Stop => actions.stop_play = true,
-            PlayMenuAction::Follow(mode, _) => *follow_mode = mode,
+            PlayMenuAction::Record { .. } => actions.record = true,
+            PlayMenuAction::StepInput { .. } => actions.step = true,
+            PlayMenuAction::Follow(mode, _) => **follow_mode = mode,
         }
     }
 }
@@ -1183,9 +1183,12 @@ mod tests {
             ui.set_min_width(200.0);
             ui.set_max_width(200.0);
             // 带 shortcut（与真实 popup 一致：播放/暂停 Space、停止 Esc）
-            let rows: [(PlayMenuAction, Option<&str>); 4] = [
+            // 含录音/步进行（无快捷键），覆盖全部播放菜单行的间距一致性。
+            let rows: [(PlayMenuAction, Option<&str>); 6] = [
                 (PlayMenuAction::PlayPause { playing: false }, Some("Space")),
                 (PlayMenuAction::Stop, Some("Esc")),
+                (PlayMenuAction::Record { recording: false }, None),
+                (PlayMenuAction::StepInput { active: false }, None),
                 (PlayMenuAction::Follow(FollowMode::None, true), None),
                 (PlayMenuAction::Follow(FollowMode::Page, false), None),
             ];
@@ -1198,6 +1201,7 @@ mod tests {
                         shortcut,
                         enabled: true,
                         selected: r.is_selected(),
+                        accent: r.icon_accent(),
                         pin: None,
                     },
                 );

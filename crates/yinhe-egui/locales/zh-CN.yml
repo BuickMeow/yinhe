@@ -90,6 +90,8 @@ menu.duplicate: "重复"
 menu.delete: "删除"
 menu.octave_up: "升八度"
 menu.octave_down: "降八度"
+menu.record: "录音"
+menu.step_input: "步进输入"
 
 # ── macOS App 菜单 ──
 menu.about: "关于 Yinhe"

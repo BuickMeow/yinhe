@@ -1202,8 +1202,8 @@ fn show_target_combo(
             // ── Target selector button (tools panel style) ──
             let target_resp = crate::widgets::hover::hover_button(
                 ui,
-                ICON_CADENCE.codepoint,
-                egui::FontId::new(crate::theme::ICON_FONT, ICON_CADENCE.font_family()),
+                ICON_TIMELINE.codepoint,
+                egui::FontId::new(crate::theme::ICON_FONT, ICON_TIMELINE.font_family()),
                 crate::theme::text_label(),
                 false,
             );

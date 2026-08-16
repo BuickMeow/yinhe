@@ -90,6 +90,8 @@ menu.duplicate: "Duplicate"
 menu.delete: "Delete"
 menu.octave_up: "Octave Up"
 menu.octave_down: "Octave Down"
+menu.record: "Record"
+menu.step_input: "Step Input"
 
 # ── macOS app menu ──
 menu.about: "About Yinhe"
