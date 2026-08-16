@@ -659,7 +659,12 @@ fn popup_menu_row(
             crate::theme::text_disabled()
         }
     });
-    let main_btn = egui::Button::selectable(
+    // 主按钮复用 menu_item_button（selectable + 无边框 + 全宽）。
+    // 它的 min_size 默认取 popup 全宽（available_width），而有图钉时
+    // put 的 main_rect 窄 PIN_W+GAP，必须显式覆盖为目标宽，否则按钮
+    // 溢出会盖住右侧图钉。无图钉时 main_w == 全宽，行为不变。
+    let main_btn = crate::widgets::menu::menu_item_button(
+        ui,
         spec.selected,
         crate::widgets::icon_text::icon_text(
             spec.icon,
@@ -668,9 +673,7 @@ fn popup_menu_row(
             icon_color,
         ),
     )
-    // 去掉边框：egui 按钮 inactive 无边框、hover 时 1px 边框从无到有，
-    // 视觉上像文字位移；stroke NONE 后 hover 只剩背景色变化
-    .stroke(egui::Stroke::NONE)
+    .min_size(egui::vec2(main_w, 0.0))
     .wrap_mode(egui::TextWrapMode::Truncate)
     .shortcut_text(spec.shortcut.unwrap_or(""));
     // 直接 put（不用 add_enabled_ui 包裹）：scope 嵌套 put 会把已含
