@@ -630,6 +630,10 @@ struct PopupRowSpec<'a> {
     pin: Option<bool>,
 }
 
+/// 图钉按钮列宽 + 与主按钮的间隔（popup_menu_row 与宽度测量共用）。
+const PIN_W: f32 = 26.0;
+const MAIN_PIN_GAP: f32 = 2.0;
+
 fn popup_menu_row(
     ui: &mut egui::Ui,
     spec: PopupRowSpec<'_>,
@@ -637,8 +641,6 @@ fn popup_menu_row(
     // 每行绝对定位（ui.put）固定尺寸：主按钮 + 可选右侧图钉，
     // 行宽恰好等于菜单内容宽，不参与 popup 宽度反馈；
     // 无快捷键的项用空 shortcut_text 保持左对齐（grow 占中间）。
-    const PIN_W: f32 = 26.0;
-    const MAIN_PIN_GAP: f32 = 2.0;
     // 行高取紧凑值：transport bar 的 interact_size（32）是为大按钮设计的，
     // 下拉菜单行用 24 更紧凑，避免行内上下留白造成"行间距过大"的观感。
     let row_h = ui.spacing().interact_size.y.min(24.0);
@@ -713,10 +715,62 @@ fn popup_menu_row(
     (main_resp, pin_resp)
 }
 
+/// 测量动作菜单宽度：最长行的（图标 + label + 快捷键 + 按钮内边距）+ 图钉列宽。
+/// 每个菜单独立测量（文件/编辑/播放各自按自己的最长行定宽），
+/// 中文等短文本自然收窄，德语/英文长标签自动撑宽不截断；
+/// 行宽仍统一（图钉右对齐依赖行宽一致），同一语言下测量值稳定。
+fn measure_menu_width<T: PopupRow>(
+    ctx: &egui::Context,
+    groups: &[&[T]],
+    keybindings: &yinhe_editor_core::shortcuts::Keybindings,
+) -> f32 {
+    // popup 内容 ui 继承当前主题 style，spacing 与此处一致
+    let spacing = &ctx.style_of(ctx.theme()).spacing;
+    let pad_x = spacing.button_padding.x * 2.0;
+    // Button 内主文本与快捷键的间距（宁宽勿窄，避免 Truncate 截断）
+    let shortcut_gap = spacing.item_spacing.x;
+    let mut max_content = 0.0f32;
+    for group in groups {
+        for &action in *group {
+            let label = t!(action.label_key());
+            let shortcut = keybindings
+                .get(action.action_id())
+                .first()
+                .map(crate::shortcuts::display_combo)
+                .unwrap_or_default();
+            // 与 popup_menu_row 相同的 icon_text 构造，测量其实际渲染宽度
+            let job = crate::widgets::icon_text::icon_text(
+                action.icon(),
+                label.as_ref(),
+                crate::theme::FILE_MENU_FONT,
+                egui::Color32::WHITE,
+            );
+            let content_w = ctx.fonts_mut(|f| {
+                let icon_label_w = f.layout_job(job).size().x;
+                let shortcut_w = if shortcut.is_empty() {
+                    0.0
+                } else {
+                    f.layout_no_wrap(
+                        shortcut.clone(),
+                        egui::FontId::proportional(crate::theme::FILE_MENU_FONT),
+                        egui::Color32::WHITE,
+                    )
+                    .size()
+                    .x
+                };
+                icon_label_w + shortcut_w
+            });
+            max_content = max_content.max(content_w + pad_x + shortcut_gap);
+        }
+    }
+    let has_pin = groups.iter().copied().flatten().any(|a| a.has_pin());
+    max_content + if has_pin { PIN_W + MAIN_PIN_GAP } else { 0.0 }
+}
+
 /// 动作菜单 popup 通用容器：与量化弹框同款
 /// （Popup::from_toggle_button_response + CloseOnClickOutside），
-/// 固定宽度（快捷键 + 图钉需要稳定的行宽）；每项右侧显示快捷键与图钉按钮。
-/// 文件/编辑 popup 共用，保证行为一致。
+/// 宽度按内容测量（快捷键 + 图钉需要稳定的行宽，行宽统一 = 测量宽）；
+/// 每项右侧显示快捷键与图钉按钮。文件/编辑 popup 共用，保证行为一致。
 /// 返回 true 表示图钉状态发生变化（调用方需 save）。
 fn show_action_menu<T: PopupRow>(
     button: &egui::Response,
@@ -727,17 +781,19 @@ fn show_action_menu<T: PopupRow>(
     pinned: Option<&mut [bool]>,
     pending_action: &mut Option<T>,
 ) -> bool {
+    // 按当前语言/内容测量宽度：不同菜单各自定宽（中文自然收窄、
+    // 长标签自动撑宽），行宽统一 = 测量值，图钉右对齐保持。
+    let menu_w = measure_menu_width(&button.ctx, groups, keybindings);
     let mut pinned_changed = false;
     let mut pin_toggled: Option<usize> = None;
     egui::Popup::from_toggle_button_response(button)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .width(crate::theme::FILE_MENU_WIDTH)
+        .width(menu_w)
         .show(|ui| {
-            // 锁死内容宽度（min == max）：popup 实际宽度由内容决定，
-            // 亚像素抖动会让 get_best_align 在候选位置间翻转、整体文字微跳；
-            // 宽度恒定后 Area 尺寸与对齐计算全部稳定。
-            ui.set_min_width(crate::theme::FILE_MENU_WIDTH);
-            ui.set_max_width(crate::theme::FILE_MENU_WIDTH);
+            // 锁死内容宽度（min == max）：宽度恒定保证 Area 尺寸与对齐计算
+            // 稳定（亚像素抖动此前已由删除高亮框描边根治）。
+            ui.set_min_width(menu_w);
+            ui.set_max_width(menu_w);
             for (gi, group) in groups.iter().enumerate() {
                 if gi > 0 {
                     ui.separator();
@@ -1144,6 +1200,38 @@ fn show_timecode_display(ui: &mut egui::Ui, doc: &Document) -> egui::Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 回归测试：三个动作菜单宽度按内容测量（不同菜单各自定宽），
+    /// 中文环境实测 文件≈141 / 编辑≈133 / 播放≈160（旧固定值 220），
+    /// 长标签语言会自动撑宽。断言落在合理范围，防止测量逻辑回归
+    /// （如宽度退回常量、测量崩坏产生极端值）。
+    #[test]
+    fn menu_widths_are_content_aware() {
+        let ctx = egui::Context::default();
+        ctx.add_font(egui_material_icons::font_insert());
+        // 先跑两帧：add_font 下一 pass 才生效，且 fonts 需 run() 初始化
+        ctx.run_ui(Default::default(), |_| {})
+            .drop_without_applying_deltas();
+        ctx.run_ui(Default::default(), |_| {})
+            .drop_without_applying_deltas();
+        let settings = AudioSettings::default();
+        let kbs = &settings.keybindings;
+        let w_file = measure_menu_width(&ctx, &FILE_GROUPS, kbs);
+        let w_edit = measure_menu_width(&ctx, &EDIT_GROUPS, kbs);
+        let play: [&[PlayMenuAction]; 2] = [
+            &[
+                PlayMenuAction::PlayPause { playing: false },
+                PlayMenuAction::Stop,
+                PlayMenuAction::Record { recording: false },
+                PlayMenuAction::StepInput { active: false },
+            ],
+            &[PlayMenuAction::Follow(FollowMode::None, true)],
+        ];
+        let w_play = measure_menu_width(&ctx, &play, kbs);
+        for (name, w) in [("file", w_file), ("edit", w_edit), ("play", w_play)] {
+            assert!((100.0..=500.0).contains(&w), "{name} 菜单宽度异常: {w}");
+        }
+    }
 
     /// 回归测试：播放菜单各行的垂直间距必须一致。
     /// 此前出现过"播放/暂停"与"停止"之间间距异常的问题。

@@ -10,7 +10,7 @@ use yinhe_editor_core::config::SfEntry;
 /// 构造带 Material Icon 的 "添加" 按钮文本。
 /// 图标码点用 material-icons 家族渲染（否则被 Pretendard/MiSans 的
 /// PUA 私有字形抢占，显示成奇怪的方框/数字），文字走 Proportional。
-fn add_button_text() -> egui::WidgetText {
+fn add_button_text() -> eframe::egui::text::LayoutJob {
     let label = t!("common.add");
     crate::widgets::icon_text::icon_text(ICON_ADD, label.as_ref(), 12.0, egui::Color32::PLACEHOLDER)
 }
