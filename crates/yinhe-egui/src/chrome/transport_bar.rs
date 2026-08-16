@@ -312,16 +312,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 );
                 let btn_rounding = egui::CornerRadius::same(2);
 
-                let file_btn = ui.add(
-                    egui::Button::new(
-                        ICON_DESCRIPTION
-                            .rich_text()
-                            .size(crate::theme::TRANSPORT_BTN_FONT)
-                            .color(crate::theme::text_primary()),
-                    )
-                    .min_size(btn_size)
-                    .corner_radius(btn_rounding),
-                );
+                let file_btn = menu_button(ui, ICON_DESCRIPTION, btn_size, btn_rounding);
                 if file_btn.hovered() {
                     let m = crate::chrome::mode_bar::mod_key();
                     hovered_hint = Some(format!("{} ({}N/{}O/{}S)", t!("hint.file_menu"), m, m, m));
@@ -339,7 +330,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 pinned_action_buttons(
                     ui,
                     &FileAction::ALL,
-                    &mut ctx.settings.pinned_file_actions,
+                    &ctx.settings.pinned_file_actions,
                     has_active,
                     ctx.file_loader.is_loading(),
                     &mut hovered_hint,
@@ -347,16 +338,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 );
 
                 // ── 编辑按钮 + 编辑菜单 popup（与文件按钮同款）──
-                let edit_btn = ui.add(
-                    egui::Button::new(
-                        ICON_EDIT
-                            .rich_text()
-                            .size(crate::theme::TRANSPORT_BTN_FONT)
-                            .color(crate::theme::text_primary()),
-                    )
-                    .min_size(btn_size)
-                    .corner_radius(btn_rounding),
-                );
+                let edit_btn = menu_button(ui, ICON_EDIT, btn_size, btn_rounding);
                 if edit_btn.hovered() {
                     hovered_hint = Some(t!("hint.edit_menu").to_string());
                 }
@@ -371,7 +353,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 pinned_action_buttons(
                     ui,
                     &EditAction::ALL,
-                    &mut ctx.settings.pinned_edit_actions,
+                    &ctx.settings.pinned_edit_actions,
                     has_active,
                     false,
                     &mut hovered_hint,
@@ -383,16 +365,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     .doc
                     .map(|d| d.edit.playback.is_playing())
                     .unwrap_or(false);
-                let play_menu_btn = ui.add(
-                    egui::Button::new(
-                        ICON_PLAY_CIRCLE
-                            .rich_text()
-                            .size(crate::theme::TRANSPORT_BTN_FONT)
-                            .color(crate::theme::text_primary()),
-                    )
-                    .min_size(btn_size)
-                    .corner_radius(btn_rounding),
-                );
+                let play_menu_btn = menu_button(ui, ICON_PLAY_CIRCLE, btn_size, btn_rounding);
                 if play_menu_btn.hovered() {
                     hovered_hint = Some(t!("hint.play_menu").to_string());
                 }
@@ -400,68 +373,48 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 
                 // ── 图钉固定的播放动作：播放/暂停、停止、录音、步进（顺序 = pinned 索引）──
                 // 未钉住的动作只在播放菜单 popup 里出现。
-                let play_pins: [(PlayMenuAction, bool); 4] = [
-                    (
-                        PlayMenuAction::PlayPause {
-                            playing: is_playing,
-                        },
-                        ctx.settings.pinned_play_pause,
-                    ),
-                    (PlayMenuAction::Stop, ctx.settings.pinned_stop),
-                    (
-                        PlayMenuAction::Record {
-                            recording: ctx.is_recording,
-                        },
-                        ctx.settings.pinned_record,
-                    ),
-                    (
-                        PlayMenuAction::StepInput {
-                            active: ctx.step_input,
-                        },
-                        ctx.settings.pinned_step_input,
-                    ),
+                // 与文件/编辑共用 pinned_action_buttons（icon_accent 提供录音红/步进高亮）。
+                let play_btn_actions: [PlayMenuAction; 4] = [
+                    PlayMenuAction::PlayPause {
+                        playing: is_playing,
+                    },
+                    PlayMenuAction::Stop,
+                    PlayMenuAction::Record {
+                        recording: ctx.is_recording,
+                    },
+                    PlayMenuAction::StepInput {
+                        active: ctx.step_input,
+                    },
                 ];
-                for (action, pinned) in play_pins {
-                    if !pinned {
-                        continue;
-                    }
-                    let enabled = action.is_enabled(has_active, false);
-                    let color = action.icon_accent().unwrap_or_else(|| {
-                        if enabled {
-                            crate::theme::text_primary()
-                        } else {
-                            crate::theme::text_disabled()
-                        }
-                    });
-                    let resp = ui.add_enabled(
-                        enabled,
-                        egui::Button::new(
-                            action
-                                .icon()
-                                .rich_text()
-                                .size(crate::theme::TRANSPORT_BTN_FONT)
-                                .color(color),
-                        )
-                        .min_size(btn_size)
-                        .corner_radius(btn_rounding),
-                    );
-                    if resp.clicked() {
-                        match action {
-                            PlayMenuAction::PlayPause { playing } => {
-                                if playing {
-                                    play_actions.pause_return = true;
-                                } else {
-                                    play_actions.toggle_play = true;
-                                }
+                let play_btn_pins = [
+                    ctx.settings.pinned_play_pause,
+                    ctx.settings.pinned_stop,
+                    ctx.settings.pinned_record,
+                    ctx.settings.pinned_step_input,
+                ];
+                let mut pending_play: Option<PlayMenuAction> = None;
+                pinned_action_buttons(
+                    ui,
+                    &play_btn_actions,
+                    &play_btn_pins,
+                    has_active,
+                    false,
+                    &mut hovered_hint,
+                    &mut pending_play,
+                );
+                if let Some(action) = pending_play {
+                    match action {
+                        PlayMenuAction::PlayPause { playing } => {
+                            if playing {
+                                play_actions.pause_return = true;
+                            } else {
+                                play_actions.toggle_play = true;
                             }
-                            PlayMenuAction::Stop => play_actions.stop_play = true,
-                            PlayMenuAction::Record { .. } => play_actions.record = true,
-                            PlayMenuAction::StepInput { .. } => play_actions.step = true,
-                            PlayMenuAction::Follow(..) => unreachable!("跟随档无图钉"),
                         }
-                    }
-                    if resp.hovered() {
-                        hovered_hint = Some(t!(action.label_key()).to_string());
+                        PlayMenuAction::Stop => play_actions.stop_play = true,
+                        PlayMenuAction::Record { .. } => play_actions.record = true,
+                        PlayMenuAction::StepInput { .. } => play_actions.step = true,
+                        PlayMenuAction::Follow(..) => unreachable!("跟随档无图钉"),
                     }
                 }
 
@@ -603,6 +556,24 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
         pending_file_action,
         pending_edit_action,
     }
+}
+
+/// 菜单按钮（文件/编辑/播放）：统一样式（图标 + transport 尺寸）。
+fn menu_button(
+    ui: &mut egui::Ui,
+    icon: egui_material_icons::MaterialIcon,
+    btn_size: egui::Vec2,
+    btn_rounding: egui::CornerRadius,
+) -> egui::Response {
+    ui.add(
+        egui::Button::new(
+            icon.rich_text()
+                .size(crate::theme::TRANSPORT_BTN_FONT)
+                .color(crate::theme::text_primary()),
+        )
+        .min_size(btn_size)
+        .corner_radius(btn_rounding),
+    )
 }
 
 /// 状态栏讲解行：工具的短说明（与 tool.label() 的悬停 tooltip 互补）。
@@ -1047,7 +1018,7 @@ fn show_play_menu(
 fn pinned_action_buttons<T: PopupRow>(
     ui: &mut egui::Ui,
     actions: &[T],
-    pinned: &mut [bool],
+    pinned: &[bool],
     has_active: bool,
     loading: bool,
     hovered_hint: &mut Option<String>,
@@ -1065,16 +1036,20 @@ fn pinned_action_buttons<T: PopupRow>(
         }
         let enabled = action.is_enabled(has_active, loading);
         let icon = action.icon();
+        // icon_accent：录音中红色、步进激活高亮（文件/编辑动作返回 None）
+        let color = action.icon_accent().unwrap_or_else(|| {
+            if enabled {
+                crate::theme::text_primary()
+            } else {
+                crate::theme::text_disabled()
+            }
+        });
         let pin_resp = ui.add_enabled(
             enabled,
             egui::Button::new(
                 icon.rich_text()
                     .size(crate::theme::TRANSPORT_BTN_FONT)
-                    .color(if enabled {
-                        crate::theme::text_primary()
-                    } else {
-                        crate::theme::text_disabled()
-                    }),
+                    .color(color),
             )
             .min_size(btn_size)
             .corner_radius(btn_rounding),
