@@ -1,4 +1,3 @@
-
 use super::*;
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_test_helpers::make_midi;
