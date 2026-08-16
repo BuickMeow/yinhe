@@ -16,6 +16,11 @@ pub struct SelRectState {
     /// Committed selection rects: (t_start, t_end, key_lo, key_hi).
     /// 多选框时按 shift+框选顺序累加。
     pub rects: Vec<(f64, f64, u8, u8)>,
+    /// 与`rects`平行的标记：该选框是否为空区域框选自动生成的垂直选框
+    /// （普通 Select 工具框选无音符区域时自动切换为全键 0..127）。
+    /// 这类选框拖动时锁定上下移动（保持全键语义）；用户手动框选出的
+    /// 全键选框不受影响，仍可上下移动。
+    pub auto_vertical: Vec<bool>,
     /// Saved rects at drag start; never modified during drag.
     drag_origins: Vec<(f64, f64, u8, u8)>,
     /// Current drag delta in (tick, key) units.
@@ -95,6 +100,18 @@ impl SelRectState {
     /// 清空所有选框。
     pub fn clear(&mut self) {
         self.rects.clear();
+        self.auto_vertical.clear();
+    }
+
+    /// 添加一个选框。`auto_vertical=true` 表示空区域框选自动生成的垂直选框（拖动时锁定上下移动）。
+    pub fn push_rect(&mut self, rect: (f64, f64, u8, u8), auto_vertical: bool) {
+        self.rects.push(rect);
+        self.auto_vertical.push(auto_vertical);
+    }
+
+    /// 选区中是否包含自动生成的垂直选框（拖动时锁定上下移动）。
+    pub fn has_auto_vertical(&self) -> bool {
+        self.auto_vertical.iter().any(|&b| b)
     }
 
     /// Begin dragging: save current rects as origins, clear delta.
@@ -274,10 +291,24 @@ impl EditState {
     /// 音符选框整体 key 平移（selected + sel_rect；AR 选框无 key 概念）。
     pub fn offset_sel_keys(&mut self, dk: i32) {
         self.selected.offset(0, dk);
+        // 先算好平移后是否仍为全键（0..127），再同步解除失效的自动垂直标记：
+        // 自动垂直选框移出全键范围后不再有"全键"语义，拖动锁定随之解除。
+        let still_vertical: Vec<bool> = self
+            .sel_rect
+            .rects
+            .iter()
+            .zip(&self.sel_rect.auto_vertical)
+            .map(|(r, &auto)| {
+                let kl = (r.2 as i32 + dk).clamp(0, 127) as u8;
+                let kh = (r.3 as i32 + dk).clamp(0, 127) as u8;
+                auto && kl == 0 && kh == 127
+            })
+            .collect();
         for r in &mut self.sel_rect.rects {
             r.2 = (r.2 as i32 + dk).clamp(0, 127) as u8;
             r.3 = (r.3 as i32 + dk).clamp(0, 127) as u8;
         }
+        self.sel_rect.auto_vertical = still_vertical;
     }
 
     /// 音符选框 tick 终点统一平移（gate 加减用，起点不动）。保证 te > ts。

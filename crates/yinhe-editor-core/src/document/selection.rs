@@ -44,7 +44,10 @@ impl Document {
         }
 
         // Update visual sel_rect to show full range (PR uses f64 ticks).
+        // 全选是全键选框，但属于用户主动选择（非空区域框选自动切换），
+        // 不标记 auto_vertical —— 拖动时仍可上下移动。
         self.edit.sel_rect.rects = vec![(0.0, max_end as f64 + 1.0, 0, 127)];
+        self.edit.sel_rect.auto_vertical = vec![false];
     }
 
     /// Select all notes across all tracks for Arrange.

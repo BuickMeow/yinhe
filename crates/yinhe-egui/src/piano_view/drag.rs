@@ -359,8 +359,8 @@ pub(crate) fn sel_drag_frame(
                 crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
             let current_key = view.y_to_key(local_y) as f64;
             let dt = (snapped_tick - origin_tick).round() as i64;
-            // 垂直选框工具：只能水平移动，dk 强制为 0
-            let dk = if vertical {
+            // 垂直选框（垂直工具或空区域框选自动生成的全键选框）：只能水平移动，dk 强制为 0
+            let dk = if vertical || sel_rect.has_auto_vertical() {
                 0
             } else {
                 (current_key - origin_key).round() as i32
@@ -419,8 +419,8 @@ pub(crate) fn sel_drag_frame(
                     crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
                 let current_key = view.y_to_key(local_y) as f64;
                 let dt = (snapped_tick - origin_tick).round() as i64;
-                // 垂直选框工具：只能水平移动，dk 强制为 0
-                let dk = if vertical {
+                // 垂直选框（垂直工具或空区域框选自动生成的全键选框）：只能水平移动，dk 强制为 0
+                let dk = if vertical || sel_rect.has_auto_vertical() {
                     0
                 } else {
                     (current_key - origin_key).round() as i32
@@ -848,8 +848,10 @@ pub(crate) fn sel_drag_frame(
                 crate::selection::drag::pr_track_range(editing_track, track_selected);
             // 垂直全选模式 key 固定 0..127；普通选框在框选区域无音符时
             // 也自动变成垂直选框（全 128 键）。
-            let (key_lo, key_hi) = if vertical
-                || !rect_has_notes(
+            // 自动切换的垂直选框打标记（拖动时锁定上下）；
+            // 用户手动框选出的全键选框不打标记，仍可上下移动。
+            let auto_vertical = !vertical
+                && !rect_has_notes(
                     midi,
                     result.t_start as u32,
                     result.t_end as u32,
@@ -857,7 +859,8 @@ pub(crate) fn sel_drag_frame(
                     result.key_hi,
                     track_lo,
                     track_hi,
-                ) {
+                );
+            let (key_lo, key_hi) = if vertical || auto_vertical {
                 (0, 127)
             } else {
                 (result.key_lo, result.key_hi)
@@ -871,9 +874,10 @@ pub(crate) fn sel_drag_frame(
                 editing_track,
                 track_selected,
             );
-            sel_rect
-                .rects
-                .push((result.t_start, result.t_end, key_lo, key_hi));
+            sel_rect.push_rect(
+                (result.t_start, result.t_end, key_lo, key_hi),
+                auto_vertical,
+            );
         } else if ui.input(|i| i.pointer.primary_released()) && !release_was_drag {
             // Simple click (no marquee) - set cursor to click position for paste.
             // 选框清空已在 press 时完成（非加选模式），此处仅设置 cursor。
@@ -1241,7 +1245,7 @@ mod tests {
         let mut selected = yinhe_core::Selection::default();
         selected.add_rect_track(0, 480, 100, 100, 0, 0);
         let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
-        sel_rect.rects.push((0.0, 480.0, 100, 100));
+        sel_rect.push_rect((0.0, 480.0, 100, 100), false);
         let mut cursor_tick: Option<f64> = None;
         let mut note_drag_delta: Option<(i64, i32, bool)> = None;
         let mut note_resize_delta: Option<(yinhe_editor_core::ResizeSide, i64)> = None;
@@ -1566,10 +1570,150 @@ mod tests {
         let (t0, t1, kl, kh) = sel_rect.rects[0];
         assert_eq!((kl, kh), (0, 127), "空区域框选应变为全 128 键垂直选框");
         assert!(t0 < t1);
+        assert!(
+            sel_rect.has_auto_vertical(),
+            "自动切换的垂直选框应打标记（拖动锁定上下）"
+        );
         // 选中范围也应覆盖全键。
         assert!(
             selected.rects.iter().any(|r| r.2 == 0 && r.3 == 127),
             "selected 应包含全键范围"
+        );
+    }
+
+    /// 回归测试：空区域框选自动生成的垂直选框拖动时上下锁定（与 SelectVertical 一致）。
+    /// （曾 bug：普通 Select 的垂直选框仍可上下移动，破坏全键 0..127 语义。）
+    #[test]
+    fn vertical_marquee_drag_locks_key() {
+        let ctx = egui::Context::default();
+        let mut view = test_view();
+        view.viewport_h = 600.0;
+        let midi = make_midi(vec![]);
+        let mut selected = yinhe_core::Selection::default();
+        let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+        // 自动生成的垂直选框（全键 0..127，tick 0..480）——空区域框选场景。
+        sel_rect.push_rect((0.0, 480.0, 0, 127), true);
+        let mut cursor_tick: Option<f64> = None;
+        let mut note_drag_delta: Option<(i64, i32, bool)> = None;
+        let mut note_resize_delta: Option<(yinhe_editor_core::ResizeSide, i64)> = None;
+
+        // key 89 → y=(127-89)*10=380：选框内按下，拖到 y=480（key 79，即向下 10 键）。
+        let press = egui::pos2(300.0, 380.0);
+        let end = egui::pos2(420.0, 480.0);
+        let _ = run_sel_frame(
+            &ctx,
+            press_event(press),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            None,
+        );
+        let _ = run_sel_frame(
+            &ctx,
+            drag_event(end),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            None,
+        );
+        let _ = run_sel_frame(
+            &ctx,
+            release_event(end),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            None,
+        );
+
+        assert_eq!(
+            note_drag_delta,
+            Some((120, 0, false)),
+            "垂直选框只能水平移动，dk 必须为 0"
+        );
+        assert_eq!(
+            sel_rect.rects,
+            vec![(120.0, 600.0, 0, 127)],
+            "垂直选框移动后仍须保持全键 0..127"
+        );
+    }
+
+    /// 回归测试：用户手动框选出的全键选框（0..127）仍可上下移动——
+    /// 只有空区域框选自动切换的垂直选框才锁定上下。
+    #[test]
+    fn manual_full_key_marquee_can_move_vertically() {
+        let ctx = egui::Context::default();
+        let mut view = test_view();
+        view.viewport_h = 600.0;
+        let midi = make_midi(vec![]);
+        let mut selected = yinhe_core::Selection::default();
+        let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+        // 手动全键选框（0..127，无自动垂直标记）。
+        sel_rect.push_rect((0.0, 480.0, 0, 127), false);
+        let mut cursor_tick: Option<f64> = None;
+        let mut note_drag_delta: Option<(i64, i32, bool)> = None;
+        let mut note_resize_delta: Option<(yinhe_editor_core::ResizeSide, i64)> = None;
+
+        // key 89 → y=(127-89)*10=380：选框内按下，拖到 y=480（key 79，向下 10 键）。
+        let press = egui::pos2(300.0, 380.0);
+        let end = egui::pos2(420.0, 480.0);
+        let _ = run_sel_frame(
+            &ctx,
+            press_event(press),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            None,
+        );
+        let _ = run_sel_frame(
+            &ctx,
+            drag_event(end),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            None,
+        );
+        let _ = run_sel_frame(
+            &ctx,
+            release_event(end),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            None,
+        );
+
+        assert_eq!(
+            note_drag_delta,
+            Some((120, -10, false)),
+            "手动全键选框应保留上下移动权利"
+        );
+        assert_eq!(
+            sel_rect.rects,
+            vec![(120.0, 600.0, 0, 117)],
+            "手动全键选框上下移动后 key 范围随之偏移"
         );
     }
 

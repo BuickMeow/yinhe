@@ -446,9 +446,10 @@ pub fn show(
                 pixel_rect.contains(local)
             });
             if in_sel_rect {
-                // 垂直选框工具：只能水平拖动 → 左右双向指针；
-                // 普通选框工具：四向移动指针。
-                let icon = if effective_tool == Tool::SelectVertical {
+                // 垂直选框（垂直工具或空区域框选自动生成的全键选框）：只能水平拖动
+                // → 左右双向指针；普通选框工具：四向移动指针。
+                let icon = if effective_tool == Tool::SelectVertical || sel_rect.has_auto_vertical()
+                {
                     egui::CursorIcon::ResizeHorizontal
                 } else {
                     egui::CursorIcon::Move
