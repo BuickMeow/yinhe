@@ -18,6 +18,10 @@ const STEREO_CHANNELS: usize = 2;
 /// 为同一 channel 的一组目标位置增量 chase：`targets` 必须升序，只扫一遍 cc_events。
 /// 返回与 `targets` 一一对应的状态快照（用于预览整组音符的目标位置自动化）。
 /// 事件比较在 tick 域（cc_events 已按 tick 排序）。
+///
+/// 边界说明（Bug 8）：预览路径没有播放那样的 dispatch 兜底（seek 后 target 处事件
+/// 由 dispatch 补发），因此 `tick == target` 的自动化跳变事件必须包含进来（含等号），
+/// 否则恰好在音符起点的跳变永远到不了预览通道，预听听到的会是跳变前的旧值。
 pub(crate) fn chase_channel_states(
     cc_events: &[SortedCC],
     channel: u32,
@@ -27,7 +31,7 @@ pub(crate) fn chase_channel_states(
     let mut state = ChannelState::default();
     let mut cursor = 0usize;
     for &target in targets {
-        while cursor < cc_events.len() && cc_events[cursor].tick < target {
+        while cursor < cc_events.len() && cc_events[cursor].tick <= target {
             if cc_events[cursor].channel == channel {
                 state.apply(&cc_events[cursor].event);
             }

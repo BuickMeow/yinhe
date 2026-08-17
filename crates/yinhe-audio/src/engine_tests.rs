@@ -1326,7 +1326,7 @@ fn test_chase_channel_states_incremental() {
             track: 0,
             event: ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(48.0)),
         },
-        // 边界：tick == target 不参与
+        // 边界：tick == target 参与（预览无 dispatch 兜底，Bug 8 回归）
         SortedCC {
             tick: 50,
             channel: 0,
@@ -1340,19 +1340,45 @@ fn test_chase_channel_states_incremental() {
     assert_eq!(states[0].volume, 100, "target 25：只有 CC7=100");
     assert_eq!(states[0].pan, 64);
     assert_eq!(
-        states[1].volume, 100,
-        "target 40：CC7=90 在 target 处不参与"
+        states[1].volume, 90,
+        "target 40：tick==target 的 CC7=90 参与"
     );
     assert_eq!(states[1].pan, 80, "CC10 已累积");
     assert_eq!(
-        states[2].volume, 90,
-        "target 50：CC7=90 参与，边界事件不参与"
+        states[2].volume, 10,
+        "target 50：tick==target 的 CC7=10 参与，听到跳变后的值"
     );
     assert_eq!(states[2].pitch_bend_sensitivity, 48.0, "PBS 累积");
 
     // 其他 channel 不受影响
     let other = chase_channel_states(&cc_events, 1, &[50]);
     assert_eq!(other[0].volume, 50);
+}
+
+/// Bug 8 回归：预听恰好在自动化跳变点（tick 1920 从 0 跳到 127）的音符，
+/// 必须听到跳变后的值 127，而不是跳变前的旧值。
+#[test]
+fn test_preview_chase_includes_jump_at_target_tick() {
+    use crate::preview_engine::chase_channel_states;
+
+    let jump = vec![
+        SortedCC {
+            tick: 1000,
+            channel: 0,
+            track: 0,
+            event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 0)),
+        },
+        SortedCC {
+            tick: 1920,
+            channel: 0,
+            track: 0,
+            event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 127)),
+        },
+    ];
+    let before = chase_channel_states(&jump, 0, &[1919]);
+    let at = chase_channel_states(&jump, 0, &[1920]);
+    assert_eq!(before[0].volume, 0, "跳变前：听到旧值 0");
+    assert_eq!(at[0].volume, 127, "跳变点：必须听到跳变后的值 127");
 }
 
 // ---------------------------------------------------------------------------
