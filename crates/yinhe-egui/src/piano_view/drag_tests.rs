@@ -1083,3 +1083,57 @@ fn select_tool_alt_copies_single_note() {
     );
     assert!(pencil_drag.is_none(), "Alt 复制不得走铅笔移动通道");
 }
+
+/// 回归测试：选框拖拽状态机进行中（含 Alt 克隆）时 sel_drag_in_progress 必须为 true。
+/// effective_tool 据此锁定选择工具——否则 Alt 克隆拖出音符原位后 hover 命中失败，
+/// 会被临时切成铅笔工具、中断本次拖拽。
+#[test]
+fn sel_drag_in_progress_reflects_persisted_state() {
+    let ctx = egui::Context::default();
+    let raw = egui::RawInput::default();
+
+    // run_ui 返回的 FullOutput 含字体纹理 delta，丢弃前必须 clear（epaint 断言）。
+    let mut run = |raw: egui::RawInput, f: &mut dyn FnMut(&egui::Ui)| {
+        let mut out = ctx.run_ui(raw, |ui| f(ui));
+        out.textures_delta.clear();
+    };
+
+    // 无拖拽状态 → false
+    let mut result = true;
+    run(raw.clone(), &mut |ui| {
+        result = sel_drag_in_progress(ui);
+    });
+    assert!(!result, "无拖拽状态时应为 false");
+
+    // 写入"单音符移动（Alt 克隆）"持久化状态（跨帧保持）→ true
+    run(raw.clone(), &mut |ui| {
+        ui.data_mut(|d| {
+            d.insert_persisted(
+                ui.id().with("sel_note_move_state"),
+                Some((0u16, 300u32, 90u8, 330u32, 300.0f64, 0i32, true)),
+            )
+        });
+    });
+    run(raw.clone(), &mut |ui| {
+        result = sel_drag_in_progress(ui);
+    });
+    assert!(result, "Alt 克隆拖拽进行中应为 true");
+
+    // 写入"选区整体移动（Alt 克隆）"持久化状态 → 同样为 true
+    run(raw.clone(), &mut |ui| {
+        ui.data_mut(|d| {
+            d.insert_persisted(
+                ui.id().with("sel_note_move_state"),
+                Option::<(u16, u32, u8, u32, f64, i32, bool)>::None,
+            );
+            d.insert_persisted(
+                ui.id().with("note_drag_origin"),
+                Some((300.0f64, 90.0f64, true)),
+            );
+        });
+    });
+    run(raw, &mut |ui| {
+        result = sel_drag_in_progress(ui);
+    });
+    assert!(result, "选区 Alt 克隆拖拽进行中应为 true");
+}

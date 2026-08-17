@@ -98,6 +98,8 @@ const RULER_H: f32 = theme::RULER_H;
 /// 按住 Alt（Option）时的有效工具（Cubase 风格临时切换）：
 /// - Select/SelectVertical + Alt：悬停在音符或选框上 = 保持选择（Alt 拖拽复制）；
 ///   悬停空白 = 临时铅笔（画音符）。
+///   例外：选框拖拽状态机进行中（含 Alt 克隆）时锁定选择工具——
+///   拖拽中鼠标移出音符原位后 hover 命中会失败，不得据此切成铅笔。
 /// - Pencil + Alt = 临时选择（框选/移动）。
 /// - 其余工具不受影响。
 ///
@@ -121,6 +123,10 @@ fn effective_tool(
     match active {
         Tool::Pencil => Tool::Select,
         Tool::Select | Tool::SelectVertical => {
+            // 拖拽进行中（含 Alt 克隆）→ 锁定选择工具，不得切成铅笔。
+            if drag::sel_drag_in_progress(ui) {
+                return active;
+            }
             // 悬停音符或选框 = 保留选择（Alt 拖拽复制）；空白 = 临时铅笔。
             let hit = ui.input(|i| i.pointer.hover_pos()).is_some_and(|pos| {
                 if !music_rect.contains(pos) {
