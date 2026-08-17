@@ -49,6 +49,32 @@ mod tests {
         out
     }
 
+    /// 跑一帧值空间滚动条（show_vertical_value），无返回值。
+    fn run_frame_value(
+        ctx: &egui::Context,
+        raw: egui::RawInput,
+        rect: egui::Rect,
+        value_scroll: &mut f32,
+        value_zoom: &mut f32,
+        dirty: &mut bool,
+    ) {
+        ctx.run_ui(raw, |ui| {
+            show_vertical_value(
+                ui,
+                rect,
+                200.0,
+                value_scroll,
+                value_zoom,
+                127.0,
+                1.0,
+                8.0,
+                dirty,
+            );
+        })
+        .textures_delta
+        .clear();
+    }
+
     fn press_event(pos: egui::Pos2) -> egui::RawInput {
         let mut raw = egui::RawInput::default();
         raw.events.push(egui::Event::PointerMoved(pos));
@@ -195,6 +221,107 @@ mod tests {
         );
         assert!(dy > 0.0, "thumb 上垂直拖应返回非零 dy，实际 {dy}");
         assert_eq!(scroll_x, 0.0, "纯垂直拖不得平移");
+    }
+
+    /// 鼠标在滚动条 band 外按下拖动（interact_radius 范围内）→ 不应触发平移/缩放。
+    /// 回归：拖动自动化锚点时鼠标靠近滚动条 band，egui 的 interact_radius 会让
+    /// band 附近的指针命中滚动条 widget，导致误触发滚动条操作。
+    #[test]
+    fn value_scrollbar_ignores_drag_outside_band() {
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(24.0, 200.0));
+        let mut value_scroll = 0.0f32;
+        let mut value_zoom = 2.0f32; // visible_range=63.5，max_scroll>0，middle 拖动可平移
+        let mut dirty = false;
+
+        // 鼠标在 band 外（x=-3，距 band 左边缘 3px < interact_radius=5），y 在 thumb 中间
+        let start = egui::pos2(-3.0, 100.0);
+        let end = egui::pos2(-3.0, 130.0);
+        // 帧1：hover 注册 widget
+        run_frame_value(
+            &ctx,
+            drag_event(start),
+            rect,
+            &mut value_scroll,
+            &mut value_zoom,
+            &mut dirty,
+        );
+        // 帧2：press
+        run_frame_value(
+            &ctx,
+            press_event(start),
+            rect,
+            &mut value_scroll,
+            &mut value_zoom,
+            &mut dirty,
+        );
+        // 帧3：drag（垂直移动 30px）→ 不应平移 value_scroll
+        run_frame_value(
+            &ctx,
+            drag_event(end),
+            rect,
+            &mut value_scroll,
+            &mut value_zoom,
+            &mut dirty,
+        );
+        assert_eq!(
+            value_scroll, 0.0,
+            "band 外拖动不应平移 value_scroll，实际 {value_scroll}"
+        );
+        assert_eq!(
+            value_zoom, 2.0,
+            "band 外拖动不应缩放 value_zoom，实际 {value_zoom}"
+        );
+    }
+
+    /// 鼠标在 band 外按下、拖动过程中划过 band → 仍不应触发滚动条操作。
+    /// 回归：拖动自动化锚点时鼠标按下在 band 外，但拖动路径经过 band。
+    #[test]
+    fn value_scrollbar_ignores_drag_crossing_band() {
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(24.0, 200.0));
+        let mut value_scroll = 0.0f32;
+        let mut value_zoom = 2.0f32;
+        let mut dirty = false;
+
+        // 按下在 band 外（x=-3），拖动到 band 内（x=12）
+        let start = egui::pos2(-3.0, 100.0);
+        let end = egui::pos2(12.0, 130.0);
+        // 帧1：hover 注册 widget
+        run_frame_value(
+            &ctx,
+            drag_event(start),
+            rect,
+            &mut value_scroll,
+            &mut value_zoom,
+            &mut dirty,
+        );
+        // 帧2：press（band 外）
+        run_frame_value(
+            &ctx,
+            press_event(start),
+            rect,
+            &mut value_scroll,
+            &mut value_zoom,
+            &mut dirty,
+        );
+        // 帧3：drag（进入 band 内）→ 仍不应触发
+        run_frame_value(
+            &ctx,
+            drag_event(end),
+            rect,
+            &mut value_scroll,
+            &mut value_zoom,
+            &mut dirty,
+        );
+        assert_eq!(
+            value_scroll, 0.0,
+            "band 外按下后划过 band 不应平移，实际 {value_scroll}"
+        );
+        assert_eq!(
+            value_zoom, 2.0,
+            "band 外按下后划过 band 不应缩放，实际 {value_zoom}"
+        );
     }
 }
 
@@ -653,31 +780,44 @@ pub(crate) fn show_vertical_value(
     );
     let middle_resp = ui.interact(middle_rect, middle_id, egui::Sense::click_and_drag());
 
-    let top_hovered = top_resp.hovered() || top_resp.dragged();
-    let bottom_hovered = bottom_resp.hovered() || bottom_resp.dragged();
-    let middle_hovered = middle_resp.hovered() || middle_resp.dragged();
+    // 只有鼠标指针在滚动条 band 上时才允许交互，避免 egui 的
+    // interact_radius（5px）导致 band 附近的指针误触发平移/缩放。
+    // hover 用当前指针位置；drag 用按下位置（press_origin），否则拖动锚点时
+    // 鼠标划过 band 仍会误触发滚动条操作。
+    // 参见 value_scrollbar_ignores_drag_outside_band 测试。
+    let on_sb = ui
+        .input(|i| i.pointer.interact_pos())
+        .is_some_and(|p| rect.contains(p));
+    let press_on_sb = ui
+        .input(|i| i.pointer.press_origin())
+        .is_some_and(|p| rect.contains(p));
 
-    let thumb_color = if top_resp.dragged() || bottom_resp.dragged() || middle_resp.dragged() {
-        rect_drag_color
-    } else if middle_hovered || top_hovered || bottom_hovered {
-        rect_hover_color
-    } else {
-        rect_color
-    };
+    let top_hovered = on_sb && (top_resp.hovered() || top_resp.dragged());
+    let bottom_hovered = on_sb && (bottom_resp.hovered() || bottom_resp.dragged());
+    let middle_hovered = on_sb && (middle_resp.hovered() || middle_resp.dragged());
+
+    let thumb_color =
+        if on_sb && (top_resp.dragged() || bottom_resp.dragged() || middle_resp.dragged()) {
+            rect_drag_color
+        } else if middle_hovered || top_hovered || bottom_hovered {
+            rect_hover_color
+        } else {
+            rect_color
+        };
     ui.painter().rect_filled(rect_rect, 0.0, thumb_color);
 
     if top_hovered {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNorth);
     } else if bottom_hovered {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeSouth);
-    } else if middle_hovered || middle_resp.dragged() {
+    } else if middle_hovered || (on_sb && middle_resp.dragged()) {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     }
 
-    // ── Interaction ──
+    // ── Interaction（仅当鼠标按下时在滚动条 band 上才有效）──
 
     // Drag middle → pan value_scroll（仅当 max_scroll > 0 时有效）
-    if middle_resp.dragged() && max_scroll > 0.0 {
+    if press_on_sb && middle_resp.dragged() && max_scroll > 0.0 {
         let delta = middle_resp.drag_delta().y;
         // y 增加 = 向下滚 = value_scroll 减小
         *value_scroll = (*value_scroll - delta / scale).clamp(0.0, max_scroll);
@@ -687,7 +827,7 @@ pub(crate) fn show_vertical_value(
     }
 
     // Drag top edge → zoom, anchoring at bottom edge (固定 bottom_value)
-    if top_resp.dragged() {
+    if press_on_sb && top_resp.dragged() {
         let new_top_pixel =
             (rect_top + top_resp.drag_delta().y).clamp(0.0, rect_bottom - 2.0 * EDGE_WIDTH);
         let new_top_value = total_value - new_top_pixel / scale;
@@ -704,7 +844,7 @@ pub(crate) fn show_vertical_value(
     }
 
     // Drag bottom edge → zoom, anchoring at top edge (固定 top_value)
-    if bottom_resp.dragged() {
+    if press_on_sb && bottom_resp.dragged() {
         let new_bottom_pixel =
             (rect_bottom + bottom_resp.drag_delta().y).clamp(rect_top + 2.0 * EDGE_WIDTH, sb_h);
         let new_bottom_value = total_value - new_bottom_pixel / scale;
