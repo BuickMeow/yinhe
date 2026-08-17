@@ -448,6 +448,20 @@ mod tests {
         assert_eq!(doc.model().tracks[16].channel, 15);
     }
 
+    /// 回归测试：每个新文档的初始 revision 必须全局唯一。
+    /// GPU layer 缓存键（AR notes / PR notes / AM curve）以 revision 为成分
+    /// 且不含文档身份；若两个文档 revision 相同（如都恒为 0），打开 .yin 后
+    /// 缓存键与上一文档逐位相同，渲染器跳过重建，必须滚动视口才能刷新。
+    #[test]
+    fn new_documents_have_unique_revisions() {
+        let a = Document::empty();
+        let b = Document::empty();
+        assert_ne!(
+            a.data.revision, b.data.revision,
+            "新文档初始 revision 必须全局唯一，否则跨文档 GPU 缓存键碰撞"
+        );
+    }
+
     #[test]
     fn detect_conductor_none_when_track0_has_notes() {
         let t = TrackData::new(0, 0);

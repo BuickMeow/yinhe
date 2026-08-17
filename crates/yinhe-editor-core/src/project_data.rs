@@ -1,8 +1,18 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use yinhe_core::{TrackInfo, YinModel};
 use yinhe_yin::{MappingFile, ProjectFile};
+
+/// 全局文档代次：每个 `ProjectData` 拿到全局唯一的初始 `revision`。
+///
+/// 所有 GPU layer 缓存键（AR notes、PR notes、AM curve）都以 revision 为成分，
+/// 但缓存键里没有文档身份。此前新文档恒为 0：打开 .yin 替换空 Untitled、或
+/// 先后打开两个同轨道数的工程时，缓存键与上一文档逐位相同，渲染器跳过重建，
+/// 显示上一文档（或空）纹理，必须滚动改变视口 hash 才能刷新（AR 加载不刷新 bug）。
+/// 全局唯一初始值让跨文档碰撞在构造层面不可能发生。
+static NEXT_DOC_REVISION: AtomicU64 = AtomicU64::new(1);
 
 /// Persistent project data. This is the source of truth for saving,
 /// and the content of undo/redo snapshots.
@@ -122,12 +132,15 @@ impl ProjectData {
     }
 
     /// Construct a `ProjectData` with a given model and file structures.
+    ///
+    /// 初始 `revision` 取全局唯一值（见 `NEXT_DOC_REVISION` 注释）：
+    /// 新文档绝不能与任何已存在文档共享缓存键。
     pub fn new(model: Arc<YinModel>, project_file: ProjectFile, mapping_file: MappingFile) -> Self {
         Self {
             model,
             project_file,
             mapping_file,
-            revision: 0,
+            revision: NEXT_DOC_REVISION.fetch_add(1, Ordering::Relaxed),
         }
     }
 }
