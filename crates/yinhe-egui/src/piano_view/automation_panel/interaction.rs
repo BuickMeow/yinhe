@@ -322,6 +322,92 @@ fn compute_ctrl_from_mouse(
     Some((new_x, new_y))
 }
 
+/// Pencil 与 Select 工具共用的拖拽释放提交：单锚点移动（MoveAnchor）+ 控制点拖拽（DragControlPoint）。
+/// 返回本帧需要显示的 ghost（防止松手瞬间旧曲线闪现）；无提交时返回 None。
+/// Bug 10：Select 工具也要能像铅笔一样直接编辑锚点/控制点，提交逻辑与 Pencil 完全一致。
+#[allow(clippy::too_many_arguments)]
+fn commit_anchor_or_ctrl_release(
+    drag: Option<AutoDrag>,
+    lane: Option<&AutomationLane>,
+    lane_idx: Option<usize>,
+    track_idx: u16,
+    target: &AutomationTarget,
+    mouse_info: Option<(egui::Pos2, u32, f32)>,
+    ppu: f32,
+    scroll_x: f32,
+    grid_area: egui::Rect,
+    panel_rect: egui::Rect,
+    panel: &AutomationPanelView,
+    max_val: f32,
+    edits: &mut Vec<yinhe_types::AutomationEdit>,
+    track_color: [f32; 3],
+) -> Option<AutomationGhost> {
+    match drag {
+        Some(AutoDrag::MoveAnchor {
+            old_tick,
+            start_tick,
+            start_value,
+        }) => {
+            if let Some((_, new_tick, new_value)) = mouse_info {
+                // 只有实际移动过才提交 Move（避免单击时锚点偏移到鼠标位置）
+                if new_tick != start_tick || new_value != start_value {
+                    if let Some(lidx) = lane_idx {
+                        edits.push(yinhe_types::AutomationEdit::Move {
+                            track_idx,
+                            lane_idx: lidx,
+                            target: target.clone(),
+                            old_tick,
+                            new_tick,
+                            new_value,
+                        });
+                    }
+                    // 构造 ghost 用于本帧渲染（防止松手瞬间旧线段闪现）
+                    if let Some(l) = lane {
+                        let override_lane = build_lane_override(l, old_tick, new_tick, new_value);
+                        return Some(AutomationGhost::Move {
+                            lane: override_lane,
+                            color: track_color,
+                        });
+                    }
+                }
+            }
+        }
+        Some(AutoDrag::DragControlPoint {
+            prev_tick,
+            which,
+            start_x,
+            start_y,
+        }) => {
+            // 提交控制点拖拽：从鼠标位置反推新 (x, y)，并按端别合并到 shape
+            if let Some(l) = lane
+                && let Some((p, _, _)) = mouse_info
+                && let Some(lidx) = lane_idx
+                && let Some(new_ctrl) = compute_ctrl_from_mouse(
+                    l, prev_tick, which, p, ppu, scroll_x, grid_area, panel_rect, panel, max_val,
+                )
+                && (new_ctrl.0 != start_x || new_ctrl.1 != start_y)
+            {
+                // 读取当前 shape，按端别更新对应分量
+                let new_shape = merge_ctrl_shape(l, prev_tick, which, new_ctrl);
+                edits.push(yinhe_types::AutomationEdit::SetShape {
+                    track_idx,
+                    lane_idx: lidx,
+                    target: target.clone(),
+                    tick: prev_tick,
+                    shape: new_shape,
+                });
+                let override_lane = build_lane_shape_override(l, prev_tick, new_shape);
+                return Some(AutomationGhost::Move {
+                    lane: override_lane,
+                    color: track_color,
+                });
+            }
+        }
+        _ => {}
+    }
+    None
+}
+
 /// 把拖拽出的控制点 (x, y) 按端别合并进 `prev_tick` 事件的 shape。
 /// 释放提交与 ghost 预览共用，保证两者生成的 shape 完全一致。
 fn merge_ctrl_shape(
@@ -485,9 +571,12 @@ pub(crate) fn handle_automation_interaction(
             })
     });
 
-    // 命中检测：Curve 段中间的空心圆控制点（仅 Pencil 工具下，未拖拽时）
-    let hit_ctrl = if ctx.active_tool == Tool::Pencil
-        && drag_state.is_none()
+    // 命中检测：Curve 段中间的空心圆控制点（Pencil / Select 工具下，未拖拽时）。
+    // Bug 10：Select 也能编辑控制点，命中门控放开到 Select 系。
+    let hit_ctrl = if matches!(
+        ctx.active_tool,
+        Tool::Pencil | Tool::Select | Tool::SelectVertical
+    ) && drag_state.is_none()
         && hit_anchor.is_none()
         && in_grid
     {
@@ -655,89 +744,23 @@ pub(crate) fn handle_automation_interaction(
             if pointer_released {
                 let drag = ui.ctx().data(|d| d.get_temp::<AutoDrag>(drag_id));
                 ui.ctx().data_mut(|d| d.remove::<AutoDrag>(drag_id));
-                match drag {
-                    Some(AutoDrag::MoveAnchor {
-                        old_tick,
-                        start_tick,
-                        start_value,
-                    }) => {
-                        if let Some((_, new_tick, new_value)) = mouse_info {
-                            // 只有实际移动过才提交 Move（避免单击时锚点偏移到鼠标位置）
-                            if new_tick != start_tick || new_value != start_value {
-                                if let Some(lidx) = lane_idx {
-                                    edits.push(yinhe_types::AutomationEdit::Move {
-                                        track_idx,
-                                        lane_idx: lidx,
-                                        target: target.clone(),
-                                        old_tick,
-                                        new_tick,
-                                        new_value,
-                                    });
-                                }
-                                // 构造 ghost 用于本帧渲染（防止松手瞬间旧线段闪现）
-                                if let Some(l) = lane {
-                                    let override_lane =
-                                        build_lane_override(l, old_tick, new_tick, new_value);
-                                    return (
-                                        edits,
-                                        Some(AutomationGhost::Move {
-                                            lane: override_lane,
-                                            color: track_color,
-                                        }),
-                                        None,
-                                        None,
-                                        None,
-                                        None,
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    Some(AutoDrag::DragControlPoint {
-                        prev_tick,
-                        which,
-                        start_x,
-                        start_y,
-                    }) => {
-                        // 提交控制点拖拽：从鼠标位置反推新 (x, y)，并按端别合并到 shape
-                        if let Some(l) = lane
-                            && let Some((p, _, _)) = mouse_info
-                            && let Some(lidx) = lane_idx
-                            && let Some(new_ctrl) = compute_ctrl_from_mouse(
-                                l, prev_tick, which, p, ppu, scroll_x, grid_area, panel_rect,
-                                panel, max_val,
-                            )
-                            && (new_ctrl.0 != start_x || new_ctrl.1 != start_y)
-                        {
-                            // 读取当前 shape，按端别更新对应分量
-                            let new_shape = merge_ctrl_shape(l, prev_tick, which, new_ctrl);
-                            edits.push(yinhe_types::AutomationEdit::SetShape {
-                                track_idx,
-                                lane_idx: lidx,
-                                target: target.clone(),
-                                tick: prev_tick,
-                                shape: new_shape,
-                            });
-                            // 构造 ghost 用于本帧渲染（防止松手瞬间旧曲线闪现）
-                            // 与 MoveAnchor 同样的修复模式：release 这一帧 Layer 1 还未
-                            // 用新 shape 重建，需用 ghost 覆盖该 lane 一帧。
-                            let override_lane = build_lane_shape_override(l, prev_tick, new_shape);
-                            return (
-                                edits,
-                                Some(AutomationGhost::Move {
-                                    lane: override_lane,
-                                    color: track_color,
-                                }),
-                                None,
-                                None,
-                                None,
-                                None,
-                            );
-                        }
-                    }
-                    _ => {}
-                }
-                return (edits, None, None, None, None, None);
+                let ghost = commit_anchor_or_ctrl_release(
+                    drag,
+                    lane,
+                    lane_idx,
+                    track_idx,
+                    &target,
+                    mouse_info,
+                    ppu,
+                    scroll_x,
+                    grid_area,
+                    panel_rect,
+                    panel,
+                    max_val,
+                    &mut edits,
+                    track_color,
+                );
+                return (edits, ghost, None, None, None, None);
             }
 
             // 点击空白（非拖拽，非控制点）：添加新锚点（shape = Step）
@@ -829,6 +852,34 @@ pub(crate) fn handle_automation_interaction(
                 r.contains(tick, value)
             });
 
+            // Bug 10：Select 具备铅笔的锚点编辑能力——双击锚点删除、双击空白新建。
+            if pointer_double_clicked && in_grid {
+                if let Some((_, tick)) = hit_anchor {
+                    if let Some(lidx) = lane_idx {
+                        edits.push(yinhe_types::AutomationEdit::Delete {
+                            track_idx,
+                            lane_idx: lidx,
+                            target: target.clone(),
+                            tick,
+                        });
+                    }
+                    // 清除可能残留的 drag_state（双击时 pointer_pressed 也会触发）
+                    ui.ctx().data_mut(|d| d.remove::<AutoDrag>(drag_id));
+                } else if hit_ctrl.is_none()
+                    && let Some((_, tick, value)) = mouse_info
+                {
+                    // 双击空白处：新建锚点（控制点上双击不新建）
+                    edits.push(yinhe_types::AutomationEdit::Add {
+                        track_idx,
+                        target: target.clone(),
+                        tick,
+                        value,
+                        shape: SegmentShape::Step,
+                    });
+                }
+                return (edits, None, None, None, None, None);
+            }
+
             // ── 按下：点击锚点 / 点击选框内拖拽 / 开始框选 ──
             if pointer_pressed && in_grid {
                 if let Some((event_idx, tick)) = hit_anchor {
@@ -900,6 +951,56 @@ pub(crate) fn handle_automation_interaction(
                             );
                         });
                     }
+                } else if let Some(hit) = hit_ctrl {
+                    // Bug 10：控制点上按下 → 拖拽该端控制点（与铅笔一致）
+                    let (start_x, start_y) = match hit.which {
+                        CtrlEnd::Out => (hit.x1, hit.y1),
+                        CtrlEnd::In => (hit.x2, hit.y2),
+                    };
+                    ui.ctx().data_mut(|d| {
+                        d.insert_temp(
+                            drag_id,
+                            AutoDrag::DragControlPoint {
+                                prev_tick: hit.prev_tick,
+                                which: hit.which,
+                                start_x,
+                                start_y,
+                            },
+                        );
+                    });
+                } else if !(cmd || shift)
+                    && let Some(l) = lane
+                    && let Some((_, tick, value)) = mouse_info
+                    && hit_line_on_lane(
+                        l,
+                        tick,
+                        value,
+                        ppu,
+                        scroll_x,
+                        grid_area.min.x,
+                        panel_rect.min.y,
+                        panel,
+                        max_val,
+                    )
+                {
+                    // Bug 10：线段上按下 → 添加锚点并直接拖拽（与铅笔一致）
+                    edits.push(yinhe_types::AutomationEdit::Add {
+                        track_idx,
+                        target: target.clone(),
+                        tick,
+                        value,
+                        shape: SegmentShape::Step,
+                    });
+                    ui.ctx().data_mut(|d| {
+                        d.insert_temp(
+                            drag_id,
+                            AutoDrag::MoveAnchor {
+                                old_tick: tick,
+                                start_tick: tick,
+                                start_value: value,
+                            },
+                        );
+                    });
                 } else if let Some((p, _tick, _value)) = mouse_info {
                     // 不在选框内 → 开始框选（3px 阈值在拖拽中判断）
                     ui.ctx().data_mut(|d| {
@@ -919,19 +1020,13 @@ pub(crate) fn handle_automation_interaction(
             {
                 let dist = (p - start_pos).length();
                 if dist >= MARQUEE_THRESHOLD {
-                    // 计算框选矩形（屏幕坐标，clamp 到 grid_area）
-                    let rect = if vertical {
-                        // 垂直选择：y 范围扩展到整个 grid_area，x 范围按鼠标
-                        egui::Rect::from_min_max(
-                            egui::pos2(start_pos.x.min(p.x), grid_area.min.y),
-                            egui::pos2(start_pos.x.max(p.x), grid_area.max.y),
-                        )
-                        .intersect(grid_area)
-                    } else {
-                        let min = egui::pos2(start_pos.x.min(p.x), start_pos.y.min(p.y));
-                        let max = egui::pos2(start_pos.x.max(p.x), start_pos.y.max(p.y));
-                        egui::Rect::from_min_max(min, max).intersect(grid_area)
-                    };
+                    // Bug 10：AM 选择工具的选框 = 垂直全选（y 范围扩展到整个 grid_area，
+                    // x 范围按鼠标），Select 与 SelectVertical 行为一致。
+                    let rect = egui::Rect::from_min_max(
+                        egui::pos2(start_pos.x.min(p.x), grid_area.min.y),
+                        egui::pos2(start_pos.x.max(p.x), grid_area.max.y),
+                    )
+                    .intersect(grid_area);
                     marquee_rect = Some(rect);
                     // 无修饰键时清空选区（让用户看到选区被清空）
                     if !cmd && !shift {
@@ -953,33 +1048,19 @@ pub(crate) fn handle_automation_interaction(
                     Some(AutoDrag::MarqueeSelect { start_pos, .. }) => {
                         let dist = pos.map(|p| (p - start_pos).length()).unwrap_or(0.0);
                         if dist >= MARQUEE_THRESHOLD {
-                            // 框选完成：计算持续化选框（音乐坐标）
+                            // 框选完成：计算持续化选框（音乐坐标）。
+                            // Bug 10：AM 选择工具的选框 = 垂直全选（value_range = None），
+                            // Select 与 SelectVertical 行为一致，Select 框选不再按 y 取值。
                             if let Some((p, _, _)) = mouse_info {
                                 let min_x = start_pos.x.min(p.x);
                                 let max_x = start_pos.x.max(p.x);
-                                let min_y = start_pos.y.min(p.y);
-                                let max_y = start_pos.y.max(p.y);
                                 let tick_from_x = |x: f32| -> f64 {
                                     ((x - grid_area.min.x + scroll_x) / ppu).max(0.0) as f64
                                 };
                                 let new_rect = AnchorSelRect {
                                     tick_start: tick_from_x(min_x),
                                     tick_end: tick_from_x(max_x),
-                                    value_range: if vertical {
-                                        None
-                                    } else {
-                                        let v1 = panel.y_to_value(
-                                            (max_y - panel_rect.min.y)
-                                                .clamp(0.0, panel_rect.height()),
-                                            max_val,
-                                        );
-                                        let v2 = panel.y_to_value(
-                                            (min_y - panel_rect.min.y)
-                                                .clamp(0.0, panel_rect.height()),
-                                            max_val,
-                                        );
-                                        Some((v1.min(v2), v1.max(v2)))
-                                    },
+                                    value_range: None,
                                 };
                                 // Shift/Cmd+框选：追加新选框（多选框）；否则替换所有
                                 if cmd || shift {
@@ -1008,8 +1089,13 @@ pub(crate) fn handle_automation_interaction(
                             && !panel.anchor_sel_rects.is_empty()
                         {
                             let d_tick = cur_tick as i64 - start_tick as i64;
-                            // 垂直工具：只能水平移动，d_value 强制为 0
-                            let d_value = if vertical {
+                            // 垂直工具或垂直全选框（value_range=None）：只能水平移动，d_value 强制为 0
+                            let d_value = if vertical
+                                || panel
+                                    .anchor_sel_rects
+                                    .iter()
+                                    .any(|r| r.value_range.is_none())
+                            {
                                 0.0
                             } else {
                                 cur_value - start_value
@@ -1098,6 +1184,27 @@ pub(crate) fn handle_automation_interaction(
                             }
                             // delta == 0：视为点击，不提交编辑
                         }
+                    }
+                    // Bug 10：Select 工具直接拖拽单锚点/控制点（与铅笔一致），
+                    // 走与 Pencil 相同的提交逻辑（MoveAnchor / DragControlPoint）。
+                    drag @ (Some(AutoDrag::MoveAnchor { .. })
+                    | Some(AutoDrag::DragControlPoint { .. })) => {
+                        release_ghost = commit_anchor_or_ctrl_release(
+                            drag,
+                            lane,
+                            lane_idx,
+                            track_idx,
+                            &target,
+                            mouse_info,
+                            ppu,
+                            scroll_x,
+                            grid_area,
+                            panel_rect,
+                            panel,
+                            max_val,
+                            &mut edits,
+                            track_color,
+                        );
                     }
                     _ => {}
                 }
@@ -1204,8 +1311,12 @@ pub(crate) fn handle_automation_interaction(
                 // Select 工具拖拽多个选中锚点：构建 multi-move 或 multi-copy ghost lane。
                 // 选中锚点的原始 (tick, value) 从 lane.events 读取（拖拽中模型不变）。
                 let d_tick = cur_tick as i64 - start_tick as i64;
-                // 垂直工具：只能水平移动，d_value 强制为 0
-                let vertical_now = matches!(ctx.active_tool, Tool::SelectVertical);
+                // 垂直工具或垂直全选框（value_range=None）：只能水平移动，d_value 强制为 0
+                let vertical_now = matches!(ctx.active_tool, Tool::SelectVertical)
+                    || panel
+                        .anchor_sel_rects
+                        .iter()
+                        .any(|r| r.value_range.is_none());
                 let d_value = if vertical_now {
                     0.0
                 } else {
@@ -1497,6 +1608,52 @@ mod tests {
         raw
     }
 
+    /// 指定工具的 edit ctx（默认 edit_ctx() 是 Pencil）。
+    fn edit_ctx_tool(tool: Tool) -> AutomationEditCtx<'static> {
+        AutomationEditCtx {
+            active_tool: tool,
+            active_track: Some(0),
+            quantize: QuantizePreset::Fraction(1, 16),
+            ppq: 480,
+            bar_line_data: None,
+        }
+    }
+
+    /// 跑一帧并返回完整输出（edits + marquee_rect + sel_op），供 Select 工具测试断言。
+    fn run_frame_full(
+        ctx: &egui::Context,
+        raw: egui::RawInput,
+        panel: &AutomationPanelView,
+        lane: &AutomationLane,
+        tool: Tool,
+    ) -> (Vec<AutomationEdit>, Option<egui::Rect>, Option<SelOp>) {
+        let (mut edits, mut marquee, mut sel_op) = (Vec::new(), None, None);
+        ctx.run_ui(raw, |ui| {
+            let mut info: Option<InfoContent> = None;
+            let mut right_tab: Option<RightTab> = None;
+            let (e, _g, _di, _hi, m, so) = handle_automation_interaction(
+                ui,
+                panel_rect(),
+                panel_rect(),
+                panel,
+                &[],
+                lane,
+                0,
+                &edit_ctx_tool(tool),
+                0,
+                &[[0.8, 0.8, 0.8, 1.0]],
+                &mut info,
+                &mut right_tab,
+            );
+            edits = e;
+            marquee = m;
+            sel_op = so;
+        })
+        .textures_delta
+        .clear();
+        (edits, marquee, sel_op)
+    }
+
     fn drag_event(pos: egui::Pos2) -> egui::RawInput {
         let mut raw = egui::RawInput::default();
         raw.events.push(egui::Event::PointerMoved(pos));
@@ -1552,5 +1709,58 @@ mod tests {
             }
             _ => unreachable!(),
         }
+    }
+
+    /// Bug 10 回归：AM 选择工具的选框 = 垂直全选（value_range = None），
+    /// 与 SelectVertical 一致，不再按鼠标 y 限制值范围。
+    #[test]
+    fn select_tool_marquee_is_vertical() {
+        let ctx = egui::Context::default();
+        let panel = tempo_panel();
+        let lane = tempo_lane(vec![(0, 120.0)]);
+        // 普通 Select 工具框选 (100,10) → (300,70)。
+        let start = egui::pos2(100.0, 10.0);
+        let end = egui::pos2(300.0, 70.0);
+        let _ = run_frame_full(&ctx, press_event(start), &panel, &lane, Tool::Select);
+        let (_, marquee, _) = run_frame_full(&ctx, drag_event(end), &panel, &lane, Tool::Select);
+        let (_, _, sel_op) = run_frame_full(&ctx, release_event(end), &panel, &lane, Tool::Select);
+
+        // 拖拽中的临时选框矩形应满高（垂直全选）
+        let rect = marquee.expect("拖拽中应产生 marquee_rect");
+        assert_eq!(rect.min.y, 0.0, "选框顶部 = grid 顶部");
+        assert_eq!(rect.max.y, 80.0, "选框底部 = grid 底部（面板高 80）");
+        assert_eq!(rect.min.x, 100.0);
+        assert_eq!(rect.max.x, 300.0);
+
+        // 释放后提交的持续化选框：value_range = None（垂直全选）
+        match sel_op {
+            Some(SelOp::Set(SelRectOp::Set(r))) => {
+                assert_eq!(r.tick_start, 100.0, "tick 起点按鼠标 x");
+                assert_eq!(r.tick_end, 300.0, "tick 终点按鼠标 x");
+                assert!(r.value_range.is_none(), "普通 Select 框选应为垂直全选");
+            }
+            other => panic!("期望 Set(Set(vertical rect))，实际 {other:?}"),
+        }
+    }
+
+    /// Bug 10 回归：选择工具双击锚点 = 删除（与铅笔一致）。
+    #[test]
+    fn select_tool_double_click_anchor_deletes() {
+        let ctx = egui::Context::default();
+        let panel = tempo_panel();
+        // 锚点 tick 120、value 120（面板顶 y=0）。
+        let lane = tempo_lane(vec![(120, 120.0)]);
+        let pos = egui::pos2(120.0, 0.0);
+        let _ = run_frame_full(&ctx, press_event(pos), &panel, &lane, Tool::Select);
+        let _ = run_frame_full(&ctx, release_event(pos), &panel, &lane, Tool::Select);
+        let _ = run_frame_full(&ctx, press_event(pos), &panel, &lane, Tool::Select);
+        let (edits, _, _) = run_frame_full(&ctx, release_event(pos), &panel, &lane, Tool::Select);
+
+        assert!(
+            edits
+                .iter()
+                .any(|e| matches!(e, AutomationEdit::Delete { tick: 120, .. })),
+            "选择工具双击锚点应删除，实际 {edits:?}"
+        );
     }
 }
