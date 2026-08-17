@@ -168,6 +168,9 @@ impl Document {
             after
         };
         self.data.rebuild_model_dirty();
+        // 复制会改变音符数据但 per-key revision 的变化不足以让 GPU 层缓存
+        // 失效（gpu_upload 先查 data.revision），必须同步 bump 文档 revision。
+        self.data.bump_revision();
         Some(UndoAction::Notes(NoteDelta {
             before: vec![],
             after,
@@ -222,6 +225,9 @@ impl Document {
             after
         };
         self.data.rebuild_model_dirty();
+        // Bug 修复：缺少 bump_revision 导致框选 Alt+拖动复制后 GPU 层缓存
+        // 不失效（note_key 不变），画面不更新。与 move_selected_notes 保持一致。
+        self.data.bump_revision();
         Some(UndoAction::Notes(NoteDelta {
             before: vec![],
             after,
@@ -900,6 +906,23 @@ mod tests {
         // key 60 + 100 半音 = 160, 应 clamp 到 127
         let _ = doc.duplicate_selected_to(0, 100);
         assert_eq!(doc.data.model.notes[127].len(), 1, "应 clamp 到 key 127");
+    }
+
+    /// Bug 7 回归：Alt 拖动复制后必须 bump 文档 revision，否则 GPU 层缓存不失效、画面不更新。
+    #[test]
+    fn duplicate_selected_to_bumps_revision() {
+        let mut doc = make_doc_with_note();
+        let rev_before = doc.data.revision;
+        assert!(doc.duplicate_selected_to(50, 12).is_some(), "复制应成功");
+        assert!(
+            doc.data.revision > rev_before,
+            "复制后文档 revision 必须前进（GPU 缓存失效依据）"
+        );
+        // per-key revision 也应前进（GPU cull 增量上传依据）
+        assert!(
+            doc.data.note_revisions()[72] > 0,
+            "副本所在 key 的 revision 应前进"
+        );
     }
 
     #[test]

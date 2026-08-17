@@ -1004,3 +1004,82 @@ fn marquee_respects_editing_track() {
     assert!(selected.contains(5, 100, 90), "编辑音轨音符应被选中");
     assert!(!selected.contains(0, 100, 90), "非编辑音轨的音符不得被选中");
 }
+
+/// 回归测试：按住 Alt 拖动未选中的单音符 → 走复制通道（note_drag_delta.alt == true），
+/// 而不是普通移动。配合 document.duplicate_selected_to 的 revision bump（Bug 7）
+/// 保证副本可见（Bug 9 的根因是复制后 GPU 缓存不失效，导致看起来'拖不动'）。
+#[test]
+fn select_tool_alt_copies_single_note() {
+    let ctx = egui::Context::default();
+    let mut view = test_view();
+    view.viewport_h = 600.0;
+    let midi = make_midi(vec![(90, 300, 330, 0, 100)]);
+    let mut selected = yinhe_core::Selection::default();
+    let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+    let mut cursor_tick: Option<f64> = None;
+    let mut note_drag_delta: Option<(i64, i32, bool)> = None;
+    let mut note_resize_delta: Option<(yinhe_editor_core::ResizeSide, i64)> = None;
+
+    let mut mods = egui::Modifiers::default();
+    mods.alt = true;
+    let press_evt = |pos: egui::Pos2| {
+        let mut raw = egui::RawInput::default();
+        raw.events.push(egui::Event::ModifiersChanged(mods));
+        raw.events.push(egui::Event::PointerMoved(pos));
+        raw.events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: mods,
+        });
+        raw
+    };
+
+    let press = egui::pos2(315.0, 375.0);
+    let release = egui::pos2(435.0, 375.0);
+    let _ = run_sel_frame(
+        &ctx,
+        press_evt(press),
+        &mut view,
+        &midi,
+        &mut selected,
+        &mut cursor_tick,
+        &mut note_drag_delta,
+        &mut note_resize_delta,
+        &mut sel_rect,
+        None,
+    );
+    let _ = run_sel_frame(
+        &ctx,
+        drag_event(release),
+        &mut view,
+        &midi,
+        &mut selected,
+        &mut cursor_tick,
+        &mut note_drag_delta,
+        &mut note_resize_delta,
+        &mut sel_rect,
+        None,
+    );
+    let (_, _, pencil_drag) = run_sel_frame(
+        &ctx,
+        release_event(release),
+        &mut view,
+        &midi,
+        &mut selected,
+        &mut cursor_tick,
+        &mut note_drag_delta,
+        &mut note_resize_delta,
+        &mut sel_rect,
+        None,
+    );
+
+    // Alt+单音符拖动 → 复制通道（alt=true），并清除原选区、把该音符置为唯一选中；
+    // 不得走铅笔移动通道（PencilNoteDrag）。
+    assert_eq!(
+        note_drag_delta,
+        Some((120, 0, true)),
+        "Alt 单音符拖动应走复制通道 (dt=120, dk=0, alt=true)"
+    );
+    assert!(pencil_drag.is_none(), "Alt 复制不得走铅笔移动通道");
+}
