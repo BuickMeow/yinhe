@@ -128,11 +128,15 @@ impl eframe::App for App {
         }
 
         // ── macOS: poll native menu bar actions ──
-        // 设置窗口打开或快捷键录制期间暂停原生菜单加速键：macOS 的菜单加速键由
-        // AppKit 在系统层面拦截（不经过 egui），不暂停会导致设置页内按 Cmd+S 等
-        // 组合直接触发菜单动作、录制器收不到按键。
-        let suspend_menu_accels =
-            self.audio_settings.show_settings || self.audio_settings.shortcut_recording;
+        // 设置窗口打开、快捷键录制或输入框聚焦期间暂停原生菜单加速键：
+        // - 设置/录制：macOS 的菜单加速键由 AppKit 在系统层面拦截（不经过 egui），
+        //   不暂停会导致设置页内按 Cmd+S 等组合直接触发菜单动作、录制器收不到按键；
+        // - 输入框聚焦：同样会被 AppKit 拦截（TextEdit 收不到 Cmd+A/C/V 等），
+        //   必须清空加速键让按键直达 egui，由输入框自身消费（全选/复制/粘贴文本）。
+        let wants_keyboard_input = ui.ctx().egui_wants_keyboard_input();
+        let suspend_menu_accels = self.audio_settings.show_settings
+            || self.audio_settings.shortcut_recording
+            || wants_keyboard_input;
         // 播放菜单触发的播放/暂停/停止（与键盘、transport bar 合并处理）
         let mut menu_toggle_play = false;
         let mut menu_pause_return = false;
@@ -142,6 +146,26 @@ impl eframe::App for App {
             .poll(&self.audio_settings.keybindings, suspend_menu_accels)
         {
             use crate::platform::MenuAction;
+            // 输入框聚焦时编辑类菜单动作让位给文本编辑（与 handle_keyboard_shortcuts
+            // 的 egui_wants_keyboard_input 保护一致）。双保险：加速键暂停是上一帧
+            // 的焦点状态，菜单动作仍可能在本帧到达。
+            if wants_keyboard_input
+                && matches!(
+                    action,
+                    MenuAction::Undo
+                        | MenuAction::Redo
+                        | MenuAction::Cut
+                        | MenuAction::Copy
+                        | MenuAction::Paste
+                        | MenuAction::SelectAll
+                        | MenuAction::Duplicate
+                        | MenuAction::Delete
+                        | MenuAction::TransposeUp
+                        | MenuAction::TransposeDown
+                )
+            {
+                continue;
+            }
             let file_action = match action {
                 MenuAction::NewProject => transport_bar::FileAction::NewProject,
                 MenuAction::Open => transport_bar::FileAction::Open,

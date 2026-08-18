@@ -339,7 +339,9 @@ pub(super) fn empty_state_add_button(ui: &mut egui::Ui, id_salt: &str) -> bool {
 ///
 /// 返回 true 表示触发了删除。
 pub(super) fn handle_delete_key(ui: &egui::Ui, id_salt: &str, has_selection: bool) -> bool {
-    if !has_selection {
+    // 输入框聚焦（编辑 popup 的 DragValue/TextEdit）时按键应作用于文本，
+    // 不应触发表格删除（与全局快捷键的 egui_wants_keyboard_input 保护一致）。
+    if !has_selection || ui.ctx().egui_wants_keyboard_input() {
         return false;
     }
     let delete_pressed = ui
