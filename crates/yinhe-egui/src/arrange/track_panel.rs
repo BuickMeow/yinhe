@@ -141,7 +141,8 @@ pub(crate) fn show(
             continue;
         }
 
-        // ── AM 子行：色条缩进 + lane 名；斑纹按行号奇偶，可被选中高亮 ──
+        // ── AM 行：复用普通轨的行样式（两条文本：第一行 = 自动化名，第二行 = 所属音轨）。
+        // 色条同宽、M/S 按钮同位置；无 chevron（像 tempo 一样）。
         if let ArRow::Automation(track, sub) = row_hit {
             let Some(lane) = tracks.get(track).and_then(|t| t.automation_lanes.get(sub)) else {
                 continue;
@@ -164,33 +165,43 @@ pub(crate) fn show(
                 .copied()
                 .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
             let color32 = crate::theme::rgba_to_color32((color[0], color[1], color[2], color[3]));
-            // 与主行色条对齐的 8px 色块
-            painter.rect_filled(
-                egui::Rect::from_min_size(row_rect.min, egui::vec2(8.0, lh)),
-                0.0,
-                color32,
-            );
+            let badge_w = 14.0_f32;
+            let badge_rect = egui::Rect::from_min_size(row_rect.min, egui::vec2(badge_w, lh));
+            painter.rect_filled(badge_rect, 0.0, color32);
+
+            let name_font = egui::FontId::proportional((lh * 0.35).clamp(9.0, 13.0));
+            let text_x = badge_rect.max.x + 6.0;
+            // 第一行：自动化名（复用 lane_label 的显示格式）。
             let label = super::am_lanes::lane_label(&lane.target);
             painter.text(
-                egui::pos2(row_rect.min.x + 14.0, row_rect.center().y),
+                egui::pos2(text_x, badge_rect.min.y + lh * 0.35),
                 egui::Align2::LEFT_CENTER,
                 label,
-                egui::FontId::proportional((lh * 0.35).clamp(9.0, 13.0)),
+                name_font.clone(),
+                crate::theme::text_primary(),
+            );
+            // 第二行：所属音轨（如「Track 001」）。
+            let owner = t!("hint.track", n = format!("{:03}", track_info[track].index));
+            painter.text(
+                egui::pos2(text_x, badge_rect.min.y + lh * 0.72),
+                egui::Align2::LEFT_CENTER,
+                owner,
+                name_font.clone(),
                 crate::theme::text_secondary(),
             );
 
-            // AM lane 的 M/S 试听按钮：M = 该 lane 效果静音，S = 音轨内独奏该 lane
-            //（同轨其他 lane 静音，主音轨音符与其他音轨不受影响）。
+            // M/S 试听按钮：位置与普通轨同款（18px 大按钮，右缘对齐）。
             let key = (track_info[track].index, lane.target.clone());
             let st = am_ms.get(&key).copied().unwrap_or_default();
-            let bsize = egui::vec2(16.0, 16.0);
             let gap = 2.0;
-            let total_w = 2.0 * bsize.x + gap;
-            let btn_x_start = row_rect.max.x - total_w - 4.0;
-            let btn_y = row_rect.center().y - bsize.y * 0.5;
-            let m_rect = egui::Rect::from_min_size(egui::pos2(btn_x_start, btn_y), bsize);
-            let s_rect =
-                egui::Rect::from_min_size(egui::pos2(btn_x_start + bsize.x + gap, btn_y), bsize);
+            let total_btn_w = 2.0 * btn_size.x + gap;
+            let btn_x_start = row_rect.max.x - total_btn_w - 6.0;
+            let btn_y = badge_rect.center().y - btn_size.y * 0.5;
+            let m_rect = egui::Rect::from_min_size(egui::pos2(btn_x_start, btn_y), btn_size);
+            let s_rect = egui::Rect::from_min_size(
+                egui::pos2(btn_x_start + btn_size.x + gap, btn_y),
+                btn_size,
+            );
             let m_resp = draw_inline_button(
                 ui,
                 &painter,
@@ -218,7 +229,7 @@ pub(crate) fn show(
                     next.solo = !next.solo;
                 }
                 if next == yinhe_types::AmMsState::default() {
-                    am_ms.remove(&key); // 都关掉时清掉条目（与主行 M/S 语义一致）
+                    am_ms.remove(&key);
                 } else {
                     am_ms.insert(key, next);
                 }
@@ -251,8 +262,8 @@ pub(crate) fn show(
             .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
         let color32 = crate::theme::rgba_to_color32((color[0], color[1], color[2], color[3]));
 
-        // 色条统一为宽版（conductor 也宽，只是不放 chevron）。
-        let badge_w = 20.0_f32;
+        // 色条统一为窄版（conductor 同宽，只是不放 chevron）。
+        let badge_w = 14.0_f32;
         let badge_rect = egui::Rect::from_min_size(row_rect.min, egui::vec2(badge_w, lh));
         painter.rect_filled(badge_rect, 0.0, color32);
 
@@ -263,29 +274,34 @@ pub(crate) fn show(
             } else {
                 ICON_KEYBOARD_ARROW_RIGHT
             };
-            // chevron 水平居中于色带（左右边距一致），垂直靠下（62% 行高处）。
+            // chevron 仅在该行被悬浮时显示；颜色按音轨颜色亮度选黑/白保证对比度。
+            let row_hovered =
+                row_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default()));
             let icon_rect = egui::Rect::from_center_size(
                 egui::pos2(badge_rect.center().x, badge_rect.min.y + lh * 0.62),
-                egui::vec2(14.0, lh.min(18.0)),
+                egui::vec2(12.0, lh.min(16.0)),
             );
             let chev_resp = ui.interact(
                 icon_rect,
                 egui::Id::new(("am_chevron", idx)),
                 egui::Sense::click(),
             );
-            chevron_rects.push(icon_rect);
-            let icon_color = if chev_resp.hovered() {
-                egui::Color32::BLACK
-            } else {
-                egui::Color32::BLACK.gamma_multiply(0.6)
-            };
-            painter.text(
-                icon_rect.center(),
-                egui::Align2::CENTER_CENTER,
-                icon.codepoint,
-                egui::FontId::new(crate::theme::ICON_BTN_FONT, icon.font_family()),
-                icon_color,
-            );
+            if row_hovered {
+                chevron_rects.push(icon_rect);
+                let lum = color[0] * 0.299 + color[1] * 0.587 + color[2] * 0.114;
+                let icon_color = if lum > 0.55 {
+                    egui::Color32::BLACK
+                } else {
+                    egui::Color32::WHITE
+                };
+                painter.text(
+                    icon_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    icon.codepoint,
+                    egui::FontId::new(crate::theme::ICON_BTN_FONT, icon.font_family()),
+                    icon_color,
+                );
+            }
             if chev_resp.clicked()
                 && let Some(e) = arr_am_expanded.get_mut(idx)
             {
