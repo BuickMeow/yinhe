@@ -120,6 +120,8 @@ pub(crate) enum AutoDrag {
     /// Select 工具框选锚点。
     /// `start_pos`：按下时的屏幕位置，用于 3px 阈值判断 + 框选矩形计算。
     MarqueeSelect { start_pos: egui::Pos2 },
+    /// Eraser 工具框选删除锚点（矩形内锚点在释放时删除）。
+    EraserMarquee { start_pos: egui::Pos2 },
 }
 
 /// 持续化选框变更操作。
@@ -444,7 +446,11 @@ fn merge_ctrl_shape(
 /// **Ghost 模式**：拖拽中不写模型，只返回 ghost 几何（由 wgpu Layer 3 绘制），
 /// 释放时才提交编辑。
 ///
-/// `tempo_lane`：`conductor.tempo`。当 `selected_target == Tempo` 时用作编辑目标。
+/// `tempo_lane`：`conductor.tempo`。当 `selected_target == Tempo` 时用作编辑目标；
+/// 非 Tempo target 可传 None。Tempo target 且 None 时不产生任何编辑（防御）。
+///
+/// `id_base`：egui 跨帧状态（拖拽/hover 计时/右键锚点）的 id 前缀。
+/// PR 传面板 id（ui.id().with(panel_index)），AR 传 per-lane id。
 ///
 /// 返回值：
 /// - `edits`：提交到 Document 的 AutomationEdit 列表。
@@ -459,10 +465,10 @@ pub(crate) fn handle_automation_interaction(
     panel_rect: egui::Rect,
     panel: &AutomationPanelView,
     automation_lanes: &[AutomationLane],
-    tempo_lane: &AutomationLane,
+    tempo_lane: Option<&AutomationLane>,
     track_idx: u16,
     ctx: &AutomationEditCtx<'_>,
-    panel_index: usize,
+    id_base: egui::Id,
     track_colors: &[[f32; 4]],
     info_content: &mut Option<InfoContent>,
     right_tab: &mut Option<RightTab>,
@@ -477,8 +483,15 @@ pub(crate) fn handle_automation_interaction(
     let mut edits = Vec::new();
     // target 直接来自 selected_target（Tempo 也是 selected_target 的一种）。
     let target = panel.selected_target.clone();
+    // Tempo 没有 tempo_lane 时无法编辑（防御：正常调用方必传）。
+    if target == AutomationTarget::Tempo && tempo_lane.is_none() {
+        return (edits, None, None, None, None, None);
+    }
     // max_val 与 show_panels 共用同一计算（Tempo 由实际事件动态计算）。
-    let max_val = panel_max_val(panel, tempo_lane);
+    let max_val = match tempo_lane {
+        Some(tl) => panel_max_val(panel, tl),
+        None => panel.selected_target.max_value(),
+    };
     if max_val == 0.0 {
         return (edits, None, None, None, None, None);
     }
@@ -492,9 +505,9 @@ pub(crate) fn handle_automation_interaction(
 
     let ppu = panel.base.pixels_per_tick;
     let scroll_x = panel.base.scroll_x;
-    let drag_id = ui.id().with("auto_drag").with(panel_index);
+    let drag_id = ui.id().with("auto_drag").with(id_base);
     // MoveAnchors 拖拽偏移量写入此 id，供 automation_panel.rs 偏移持续化选框
-    let move_offset_id = ui.id().with("auto_move_offset").with(panel_index);
+    let move_offset_id = ui.id().with("auto_move_offset").with(id_base);
     // ghost 用 track color 而非黄色（ghost 自身有固定透明度）
     let track_color4 = track_colors
         .get(track_idx as usize)
@@ -545,7 +558,8 @@ pub(crate) fn handle_automation_interaction(
     // 找当前 lane：Tempo 模式直接用 tempo_lane；其他模式从 automation_lanes 查。
     let (lane_idx, lane): (Option<usize>, Option<&AutomationLane>) =
         if target == yinhe_types::AutomationTarget::Tempo {
-            (Some(0), Some(tempo_lane))
+            // 上方已防御 None，这里 tempo_lane 必为 Some
+            (Some(0), tempo_lane)
         } else {
             let idx = automation_lanes.iter().position(|l| l.target == target);
             (idx, idx.and_then(|i| automation_lanes.get(i)))
@@ -595,7 +609,7 @@ pub(crate) fn handle_automation_interaction(
                 // 多锚点拖拽：显示移动光标（上下左右箭头）
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
             }
-            AutoDrag::MarqueeSelect { .. } => {
+            AutoDrag::MarqueeSelect { .. } | AutoDrag::EraserMarquee { .. } => {
                 // 框选：保持默认光标
             }
             _ => {
@@ -1211,11 +1225,75 @@ pub(crate) fn handle_automation_interaction(
                 return (edits, release_ghost, None, None, marquee_rect, sel_op);
             }
         }
+        Tool::Eraser => {
+            // 按下命中锚点：立即删除（橡皮擦语义）；空白按下：开始框选删除。
+            if pointer_pressed && in_grid {
+                if let Some((_, tick)) = hit_anchor {
+                    if let Some(lidx) = lane_idx {
+                        edits.push(yinhe_types::AutomationEdit::Delete {
+                            track_idx,
+                            lane_idx: lidx,
+                            target: target.clone(),
+                            tick,
+                        });
+                    }
+                } else if let Some((p, _, _)) = mouse_info {
+                    ui.ctx().data_mut(|d| {
+                        d.insert_temp(drag_id, AutoDrag::EraserMarquee { start_pos: p });
+                    });
+                }
+            }
+
+            // 拖拽中：更新 marquee_rect（红色删除框由 caller 绘制）。
+            if let Some(AutoDrag::EraserMarquee { start_pos, .. }) = drag_state
+                && let Some(p) = pos
+                && (p - start_pos).length() >= MARQUEE_THRESHOLD
+            {
+                marquee_rect = Some(egui::Rect::from_two_pos(start_pos, p).intersect(grid_area));
+            }
+
+            // 释放：删除矩形内（tick + value 双范围）的所有锚点。
+            if pointer_released {
+                let drag = ui.ctx().data(|d| d.get_temp::<AutoDrag>(drag_id));
+                ui.ctx().data_mut(|d| d.remove::<AutoDrag>(drag_id));
+                if let Some(AutoDrag::EraserMarquee { start_pos }) = drag
+                    && let Some(l) = lane
+                    && let Some(lidx) = lane_idx
+                    && let Some(p) = pos
+                    && (p - start_pos).length() >= MARQUEE_THRESHOLD
+                {
+                    let rect = egui::Rect::from_two_pos(start_pos, p);
+                    let tick_from_x = |x: f32| -> f64 {
+                        ((x - grid_area.min.x + scroll_x) / ppu).max(0.0) as f64
+                    };
+                    let t0 = tick_from_x(rect.min.x);
+                    let t1 = tick_from_x(rect.max.x);
+                    // rect 顶部 = 高 value，底部 = 低 value
+                    let v_hi = panel.y_to_value(rect.min.y - panel_rect.min.y, max_val);
+                    let v_lo = panel.y_to_value(rect.max.y - panel_rect.min.y, max_val);
+                    for e in &l.events {
+                        if (e.tick as f64) >= t0
+                            && (e.tick as f64) <= t1
+                            && e.value >= v_lo
+                            && e.value <= v_hi
+                        {
+                            edits.push(yinhe_types::AutomationEdit::Delete {
+                                track_idx,
+                                lane_idx: lidx,
+                                target: target.clone(),
+                                tick: e.tick,
+                            });
+                        }
+                    }
+                }
+                return (edits, None, None, None, marquee_rect, None);
+            }
+        }
         _ => {}
     }
 
     // 右键点击锚点 → 记录编辑信息，供 show_panels 弹窗
-    let right_click_id = ui.id().with("auto_right_click").with(panel_index);
+    let right_click_id = ui.id().with("auto_right_click").with(id_base);
     if pointer_secondary_clicked
         && in_grid
         && let Some((_, tick)) = hit_anchor
@@ -1224,9 +1302,9 @@ pub(crate) fn handle_automation_interaction(
         && let Some(_evt) = l.events.iter().find(|e| e.tick == tick)
     {
         // 清除旧编辑值，确保新锚点使用自己的初始值
-        let edit_tick_id = ui.id().with("auto_right_tick").with(panel_index);
-        let edit_value_id = ui.id().with("auto_right_value").with(panel_index);
-        let was_open_id = ui.id().with("auto_right_was_open").with(panel_index);
+        let edit_tick_id = ui.id().with("auto_right_tick").with(id_base);
+        let edit_value_id = ui.id().with("auto_right_value").with(id_base);
+        let was_open_id = ui.id().with("auto_right_was_open").with(id_base);
         ui.ctx().data_mut(|d| {
             d.remove::<f64>(edit_tick_id);
             d.remove::<f64>(edit_value_id);
@@ -1367,7 +1445,7 @@ pub(crate) fn handle_automation_interaction(
                     })
                 }
             }
-            AutoDrag::MarqueeSelect { .. } => {
+            AutoDrag::MarqueeSelect { .. } | AutoDrag::EraserMarquee { .. } => {
                 // 框选不产生 ghost（marquee_rect 由 egui painter 绘制）
                 None
             }
@@ -1426,8 +1504,8 @@ pub(crate) fn handle_automation_interaction(
     // ── Hover tooltip：悬停在锚点/控制点上 HOVER_DELAY 秒后显示 tooltip ──
     // 仅在非拖拽时触发（拖拽时 drag_info 已覆盖）。
     let hover_info: Option<HoverTooltip> = if drag_info.is_none() && in_grid {
-        let hover_anchor_id = ui.id().with("auto_hover_anchor").with(panel_index);
-        let hover_ctrl_id = ui.id().with("auto_hover_ctrl").with(panel_index);
+        let hover_anchor_id = ui.id().with("auto_hover_anchor").with(id_base);
+        let hover_ctrl_id = ui.id().with("auto_hover_ctrl").with(id_base);
         let now = ui.input(|i| i.time);
         if let Some((_, anchor_tick)) = hit_anchor {
             // 锚点 hover：清除控制点计时
@@ -1581,10 +1659,10 @@ mod tests {
                 panel_rect(),
                 panel,
                 &[],
-                lane,
+                Some(lane),
                 0,
                 &edit_ctx(),
-                0,
+                ui.id().with(0),
                 &[[0.8, 0.8, 0.8, 1.0]],
                 &mut info,
                 &mut right_tab,
@@ -1637,10 +1715,10 @@ mod tests {
                 panel_rect(),
                 panel,
                 &[],
-                lane,
+                Some(lane),
                 0,
                 &edit_ctx_tool(tool),
-                0,
+                ui.id().with(0),
                 &[[0.8, 0.8, 0.8, 1.0]],
                 &mut info,
                 &mut right_tab,

@@ -153,14 +153,21 @@ pub fn show(
 
     // Layer 0: notes (16B NoteInstance — shader computes pixel positions from uniforms)
     let notes_key = layer_cache_key(&[vh, wh, tv_hash, cfg.revision, hidden_notes.len() as u64]);
+    // TODO(am-lanes): 下一步改为 ArRowLayout 计算的可视范围
+    let track_range = ArrangementView::visible_track_range_static(
+        view.base.scroll_y,
+        h as f32,
+        view.lane_height(),
+        data.num_tracks,
+    );
     renderer.upload_note_layer(0, notes_key, |out| {
         if let Some(midi) = data.midi {
             build_arr_notes(
                 out,
                 w as f32,
-                h as f32,
                 midi,
                 view,
+                track_range,
                 data.track_visible,
                 &hidden_notes,
             );
@@ -173,8 +180,8 @@ pub fn show(
             out,
             &mut ghost_notes,
             w as f32,
-            h as f32,
             view,
+            track_range,
             data.track_visible,
         );
     });
