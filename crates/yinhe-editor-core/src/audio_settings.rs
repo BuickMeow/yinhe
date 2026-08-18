@@ -93,6 +93,9 @@ pub struct AudioSettings {
     pub pinned_record: bool,
     /// 播放菜单里被图钉固定的"步进输入"动作（单个）。
     pub pinned_step_input: bool,
+    /// 最近打开/保存过的文件路径（最新在前，去重，上限 `RECENT_FILES_LIMIT` 条）。
+    /// 驱动文件菜单的"最近修改的文件"子菜单（transport bar popup 与 macOS 菜单栏共用）。
+    pub recent_files: Vec<String>,
     #[serde(skip)]
     pub show_settings: bool,
     /// 设置页当前选中的分类（左侧导航）。
@@ -144,6 +147,7 @@ impl Default for AudioSettings {
             pinned_stop: false,
             pinned_record: false,
             pinned_step_input: false,
+            recent_files: Vec::new(),
             show_settings: false,
             settings_tab: 0,
             settings_search: String::new(),
@@ -154,6 +158,9 @@ impl Default for AudioSettings {
         }
     }
 }
+
+/// "最近修改的文件"列表上限。
+pub const RECENT_FILES_LIMIT: usize = 10;
 
 fn config_path() -> PathBuf {
     crate::paths::app_config_file()
@@ -202,6 +209,21 @@ impl AudioSettings {
                 tracing::error!("Failed to serialize settings: {}", e);
             }
         }
+    }
+
+    /// 记录一个最近打开/保存的文件：去重置顶，超长截断。
+    /// 返回列表是否发生变化（调用方决定是否立即 save）。
+    pub fn push_recent_file(&mut self, path: &str) -> bool {
+        let before = self.recent_files.clone();
+        self.recent_files.retain(|p| p != path);
+        self.recent_files.insert(0, path.to_string());
+        self.recent_files.truncate(RECENT_FILES_LIMIT);
+        self.recent_files != before
+    }
+
+    /// 从最近文件列表移除（如文件已不存在）。
+    pub fn remove_recent_file(&mut self, path: &str) {
+        self.recent_files.retain(|p| p != path);
     }
 
     pub fn available_devices(&self) -> &[String] {
