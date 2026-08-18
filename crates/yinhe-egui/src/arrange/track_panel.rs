@@ -173,7 +173,7 @@ pub(crate) fn show(
             // 紧凑模式单行（×0.45 居中）；唯一差异是文本内容（自动化名 / 所属音轨）。
             let text_x = badge_rect.max.x + 6.0;
             let label = super::am_lanes::lane_label(&lane.target);
-            let owner = t!("hint.track", n = format!("{:03}", track_info[track].index));
+            let owner = track_info[track].name.clone();
             if show_details {
                 let font = egui::FontId::proportional((lh * 0.25).clamp(9.0, 13.0));
                 painter.text(
