@@ -276,20 +276,20 @@ pub(crate) fn show(
             let badge_rect = egui::Rect::from_min_size(row_rect.min, egui::vec2(badge_w, lh));
             painter.rect_filled(badge_rect, 0.0, color32);
 
-            // 加号（色带中央，对比度取色）+ 点击弹出创建自动化菜单。
+            // 加号：与 chevron 同位置（色带中央偏下 lh*0.62），无边框图标，
+            // 点击弹出创建自动化菜单。
             let lum = color[0] * 0.299 + color[1] * 0.587 + color[2] * 0.114;
             let plus_color = if lum > 0.55 {
                 egui::Color32::BLACK
             } else {
                 egui::Color32::WHITE
             };
-            ui.menu_button(
-                egui::RichText::new(ICON_ADD.codepoint)
-                    .font(egui::FontId::new(
-                        crate::theme::ICON_BTN_FONT,
-                        ICON_ADD.font_family(),
-                    ))
-                    .color(plus_color),
+            badge_icon_menu(
+                ui,
+                egui::pos2(badge_rect.center().x, badge_rect.min.y + lh * 0.62),
+                ICON_ADD.codepoint,
+                ICON_ADD.font_family(),
+                plus_color,
                 |ui| {
                     ui.set_min_width(160.0);
                     ui.set_max_width(160.0);
@@ -344,13 +344,13 @@ pub(crate) fn show(
             let row_hovered =
                 row_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default()));
             if !expanded && !has_any_lane {
-                ui.menu_button(
-                    egui::RichText::new(ICON_ADD.codepoint)
-                        .font(egui::FontId::new(
-                            crate::theme::ICON_BTN_FONT,
-                            ICON_ADD.font_family(),
-                        ))
-                        .color(icon_color),
+                // 无自动化未展开：色带同一图标位给无边框「+」，点弹创建自动化菜单。
+                badge_icon_menu(
+                    ui,
+                    egui::pos2(badge_rect.center().x, badge_rect.min.y + lh * 0.62),
+                    ICON_ADD.codepoint,
+                    ICON_ADD.font_family(),
+                    icon_color,
                     |ui| {
                         ui.set_min_width(160.0);
                         ui.set_max_width(160.0);
@@ -945,6 +945,28 @@ fn create_automation_menu(
             ui.close();
         }
     });
+}
+
+/// 在色带图标位置（与 chevron 同坐标）画一个无边框图标菜单按钮。
+/// 复用于 chevron 同位置的「+」（创建自动化）等图标触发的菜单。
+fn badge_icon_menu(
+    ui: &mut egui::Ui,
+    center: egui::Pos2,
+    codepoint: &str,
+    family: egui::FontFamily,
+    color: egui::Color32,
+    body: impl FnOnce(&mut egui::Ui),
+) {
+    let size = egui::vec2(14.0, 16.0);
+    let rect = egui::Rect::from_center_size(center, size);
+    let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+    let button = egui::Button::new(
+        egui::RichText::new(codepoint)
+            .font(egui::FontId::new(crate::theme::ICON_BTN_FONT, family))
+            .color(color),
+    )
+    .frame(false);
+    egui::menu::MenuButton::from_button(button).ui(&mut inner, body);
 }
 
 /// Paint an 18x18 inline button with a one-letter label and click handling.
