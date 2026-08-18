@@ -329,13 +329,16 @@ const TREE_ROW_H: f32 = 22.0;
 /// —— 那是光标位置到容器底部的整个剩余区域，会把鼠标所在行之前的
 /// 所有行（1..N）同时判为 hover，导致多行同亮。
 fn tree_row_background(ui: &mut egui::Ui, selected: bool) -> egui::Rect {
-    let (row_rect, resp) = ui.allocate_exact_size(
+    let (row_rect, _resp) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), TREE_ROW_H),
         egui::Sense::hover(),
     );
+    // 几何判定 hover：不依赖 egui 的 hover 抢占机制（行内 chevron/label 的
+    // interact 会顶掉行级 hovered()），鼠标在行内即高亮，与选中态并存。
+    let hovered = ui.rect_contains_pointer(row_rect);
     let row_bg = if selected {
         crate::theme::selected_bg()
-    } else if resp.hovered() {
+    } else if hovered {
         crate::theme::hover_color(crate::theme::app_bg())
     } else {
         egui::Color32::TRANSPARENT
