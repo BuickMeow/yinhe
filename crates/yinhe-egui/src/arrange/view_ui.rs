@@ -173,9 +173,23 @@ pub fn show(
     let track_range = row_layout.visible_track_range(scroll_y, h as f32, lh);
     // 每轨主行 y 偏移表：展开自动化 lane 后行布局不再均匀，shader 查表定位。
     renderer.upload_track_offsets(&row_layout.track_offsets(lh));
+    // 布局 hash：折叠/展开会改变可见音轨范围与行位置，音符层与 AM 层都依赖它。
+    let offsets_hash = row_layout.track_offsets(lh).iter().fold(0u64, |acc, &o| {
+        acc.wrapping_mul(0x9e3779b97f4a7c15)
+            .wrapping_add(o.to_bits() as u64)
+    });
 
     // Layer 0: notes (16B NoteInstance — shader computes pixel positions from uniforms)
-    let notes_key = layer_cache_key(&[vh, wh, tv_hash, cfg.revision, hidden_notes.len() as u64]);
+    // key 含 offsets_hash：布局变化（chevron 折叠/展开）时强制重建，
+    // 否则可见音轨范围变了而 layer 0 缓存不失效，会残留旧行位置的音符。
+    let notes_key = layer_cache_key(&[
+        vh,
+        wh,
+        tv_hash,
+        offsets_hash,
+        cfg.revision,
+        hidden_notes.len() as u64,
+    ]);
     renderer.upload_note_layer(0, notes_key, |out| {
         if let Some(midi) = data.midi {
             build_arr_notes(
@@ -278,12 +292,7 @@ pub fn show(
         for (i, l) in am_render.iter_mut().enumerate() {
             l.highlight_ticks = &am_highlights[i];
         }
-        // 缓存 key：布局（展开状态/行数/行高/滚动都在 vh 或 offsets 里）+
-        // revision（任何编辑都 bump）+ 高亮锚点。
-        let offsets_hash = row_layout.track_offsets(lh).iter().fold(0u64, |acc, &o| {
-            acc.wrapping_mul(0x9e3779b97f4a7c15)
-                .wrapping_add(o.to_bits() as u64)
-        });
+        // 缓存 key：布局 hash（上面已算）+ revision（任何编辑都 bump）+ 高亮锚点。
         let hl_hash = am_highlights.iter().fold(0u64, |acc, hl| {
             hl.iter()
                 .fold(acc, |a, &tk| a.wrapping_mul(31).wrapping_add(tk as u64))
