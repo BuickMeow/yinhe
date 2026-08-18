@@ -2,7 +2,9 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use eframe::egui;
-use egui_material_icons::icons::{ICON_EDIT, ICON_KEYBOARD_ARROW_DOWN, ICON_KEYBOARD_ARROW_RIGHT};
+use egui_material_icons::icons::{
+    ICON_ADD, ICON_EDIT, ICON_KEYBOARD_ARROW_DOWN, ICON_KEYBOARD_ARROW_RIGHT,
+};
 use rust_i18n::t;
 
 use yinhe_core::TrackInfo;
@@ -253,6 +255,50 @@ pub(crate) fn show(
             continue;
         }
 
+        // ── 展开态末尾的「+」占位行：点击打开创建自动化菜单 ──
+        if let ArRow::AddLane(track) = row_hit {
+            if row % 2 == 0 {
+                painter.rect_filled(row_rect, 0.0, lane_even);
+            }
+            if row_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default())) {
+                painter.rect_filled(
+                    row_rect,
+                    0.0,
+                    crate::theme::hover_color(crate::theme::app_bg()),
+                );
+            }
+            let color = track_colors
+                .get(track)
+                .copied()
+                .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
+            let color32 = crate::theme::rgba_to_color32((color[0], color[1], color[2], color[3]));
+            let badge_w = 14.0_f32;
+            let badge_rect = egui::Rect::from_min_size(row_rect.min, egui::vec2(badge_w, lh));
+            painter.rect_filled(badge_rect, 0.0, color32);
+
+            // 加号（色带中央，对比度取色）+ 点击弹出创建自动化菜单。
+            let lum = color[0] * 0.299 + color[1] * 0.587 + color[2] * 0.114;
+            let plus_color = if lum > 0.55 {
+                egui::Color32::BLACK
+            } else {
+                egui::Color32::WHITE
+            };
+            ui.menu_button(
+                egui::RichText::new(ICON_ADD.codepoint)
+                    .font(egui::FontId::new(
+                        crate::theme::ICON_BTN_FONT,
+                        ICON_ADD.font_family(),
+                    ))
+                    .color(plus_color),
+                |ui| {
+                    ui.set_min_width(160.0);
+                    ui.set_max_width(160.0);
+                    create_automation_menu(ui, track, tracks, &mut actions);
+                },
+            );
+            continue;
+        }
+
         let ti = &track_info[idx];
 
         let is_conductor = Some(ti.index) == conductor_track_idx;
@@ -284,43 +330,64 @@ pub(crate) fn show(
 
         if !is_conductor {
             let expanded = arr_am_expanded.get(idx).copied().unwrap_or(false);
-            let icon = if expanded {
-                ICON_KEYBOARD_ARROW_DOWN
+            // 未展开且完全没有任何自动化 → 直接在色带上给「+」，点击弹创建自动化菜单
+            //（无需先展开）；否则照常显示展开/收起 chevron。
+            let has_any_lane = tracks
+                .get(idx)
+                .is_some_and(|t| !t.automation_lanes.is_empty());
+            let lum = color[0] * 0.299 + color[1] * 0.587 + color[2] * 0.114;
+            let icon_color = if lum > 0.55 {
+                egui::Color32::BLACK
             } else {
-                ICON_KEYBOARD_ARROW_RIGHT
+                egui::Color32::WHITE
             };
-            // chevron 仅在该行被悬浮时显示；颜色按音轨颜色亮度选黑/白保证对比度。
             let row_hovered =
                 row_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default()));
-            let icon_rect = egui::Rect::from_center_size(
-                egui::pos2(badge_rect.center().x, badge_rect.min.y + lh * 0.62),
-                egui::vec2(12.0, lh.min(16.0)),
-            );
-            let chev_resp = ui.interact(
-                icon_rect,
-                egui::Id::new(("am_chevron", idx)),
-                egui::Sense::click(),
-            );
-            if row_hovered {
-                chevron_rects.push(icon_rect);
-                let lum = color[0] * 0.299 + color[1] * 0.587 + color[2] * 0.114;
-                let icon_color = if lum > 0.55 {
-                    egui::Color32::BLACK
-                } else {
-                    egui::Color32::WHITE
-                };
-                painter.text(
-                    icon_rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    icon.codepoint,
-                    egui::FontId::new(crate::theme::ICON_BTN_FONT, icon.font_family()),
-                    icon_color,
+            if !expanded && !has_any_lane {
+                ui.menu_button(
+                    egui::RichText::new(ICON_ADD.codepoint)
+                        .font(egui::FontId::new(
+                            crate::theme::ICON_BTN_FONT,
+                            ICON_ADD.font_family(),
+                        ))
+                        .color(icon_color),
+                    |ui| {
+                        ui.set_min_width(160.0);
+                        ui.set_max_width(160.0);
+                        create_automation_menu(ui, idx, tracks, &mut actions);
+                    },
                 );
-            }
-            if chev_resp.clicked()
-                && let Some(e) = arr_am_expanded.get_mut(idx)
-            {
-                *e = !*e;
+            } else {
+                let icon = if expanded {
+                    ICON_KEYBOARD_ARROW_DOWN
+                } else {
+                    ICON_KEYBOARD_ARROW_RIGHT
+                };
+                // chevron 仅在该行被悬浮时显示；颜色按音轨颜色亮度选黑/白保证对比度。
+                let icon_rect = egui::Rect::from_center_size(
+                    egui::pos2(badge_rect.center().x, badge_rect.min.y + lh * 0.62),
+                    egui::vec2(12.0, lh.min(16.0)),
+                );
+                let chev_resp = ui.interact(
+                    icon_rect,
+                    egui::Id::new(("am_chevron", idx)),
+                    egui::Sense::click(),
+                );
+                if row_hovered {
+                    chevron_rects.push(icon_rect);
+                    painter.text(
+                        icon_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        icon.codepoint,
+                        egui::FontId::new(crate::theme::ICON_BTN_FONT, icon.font_family()),
+                        icon_color,
+                    );
+                }
+                if chev_resp.clicked()
+                    && let Some(e) = arr_am_expanded.get_mut(idx)
+                {
+                    *e = !*e;
+                }
             }
         }
 
@@ -563,9 +630,11 @@ pub(crate) fn show(
         && let Some(row_hit) = row_layout.hit_at_music_y(pos.y - panel_rect.min.y + *scroll_y, lh)
     {
         // AM 子行右键：额外记录 lane 下标，菜单只给「删除自动化」；并选中该 lane。
+        // 加号行右键等同主行（含创建自动化）。
         let (idx, sub) = match row_hit {
             ArRow::Track(t) => (t, None),
             ArRow::Automation(t, s) => (t, Some(s)),
+            ArRow::AddLane(t) => (t, None),
         };
         let track_idx = track_info[idx].index;
         if let Some(s) = sub {
@@ -681,52 +750,7 @@ pub(crate) fn show(
                 ui.close();
             }
             ui.separator();
-            // 「创建自动化」子菜单：复用 PR AM 面板的 target 列表（跳过 Tempo；
-            // 已有 lane 的 target 不重复显示），自定义 CC 用 DragValue 选控制器号。
-            ui.menu_button(t!("arrange.create_automation"), |ui| {
-                let existing: Vec<AutomationTarget> = tracks
-                    .get(idx)
-                    .map(|t| {
-                        t.automation_lanes
-                            .iter()
-                            .map(|l| l.target.clone())
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                for target in crate::piano_view::automation_panel::AUTOMATION_TARGETS {
-                    if matches!(target, AutomationTarget::Tempo) || existing.contains(target) {
-                        continue;
-                    }
-                    let label = super::am_lanes::lane_label(target);
-                    if ui.button(label).clicked() {
-                        actions.push(TrackAction::CreateAutomation {
-                            idx,
-                            target: target.clone(),
-                        });
-                        ui.close();
-                    }
-                }
-                ui.separator();
-                // 自定义 CC：菜单内 DragValue（0..=127）+ 确认按钮。
-                let cc_id = egui::Id::new(("arr_custom_cc", idx));
-                let mut cc = ui.ctx().data_mut(|d| d.get_temp::<u8>(cc_id)).unwrap_or(7);
-                ui.horizontal(|ui| {
-                    ui.label(t!("arrange.custom_cc"));
-                    if ui
-                        .add(egui::DragValue::new(&mut cc).range(0..=127))
-                        .changed()
-                    {
-                        ui.ctx().data_mut(|d| d.insert_temp(cc_id, cc));
-                    }
-                    if ui.button(t!("arrange.create")).clicked() {
-                        let target = AutomationTarget::CC { controller: cc };
-                        if !existing.contains(&target) {
-                            actions.push(TrackAction::CreateAutomation { idx, target });
-                        }
-                        ui.close();
-                    }
-                });
-            });
+            create_automation_menu(ui, idx, tracks, &mut actions);
         } else {
             // Conductor track: only allow adding after
             if ui
@@ -868,6 +892,59 @@ pub(crate) fn show(
     ui.data_mut(|d| d.insert_temp(drag_id, drag));
 
     (audio_dirty, am_ms_dirty, actions)
+}
+
+/// 「创建自动化」子菜单（主行右键 + 加号占位行共用）：复用 PR AM 面板的
+/// target 列表（跳过 Tempo；已有 lane 的 target 不重复显示），自定义 CC 用
+/// DragValue 选控制器号。选择后 push CreateAutomation 交给 arrange.rs 落模型。
+fn create_automation_menu(
+    ui: &mut egui::Ui,
+    idx: usize,
+    tracks: &[Arc<yinhe_core::TrackData>],
+    actions: &mut Vec<TrackAction>,
+) {
+    let existing: Vec<AutomationTarget> = tracks
+        .get(idx)
+        .map(|t| {
+            t.automation_lanes
+                .iter()
+                .map(|l| l.target.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    for target in crate::piano_view::automation_panel::AUTOMATION_TARGETS {
+        if matches!(target, AutomationTarget::Tempo) || existing.contains(target) {
+            continue;
+        }
+        let label = super::am_lanes::lane_label(target);
+        if ui.button(label).clicked() {
+            actions.push(TrackAction::CreateAutomation {
+                idx,
+                target: target.clone(),
+            });
+            ui.close();
+        }
+    }
+    ui.separator();
+    // 自定义 CC：菜单内 DragValue（0..=127）+ 确认按钮。
+    let cc_id = egui::Id::new(("arr_custom_cc", idx));
+    let mut cc = ui.ctx().data_mut(|d| d.get_temp::<u8>(cc_id)).unwrap_or(7);
+    ui.horizontal(|ui| {
+        ui.label(t!("arrange.custom_cc"));
+        if ui
+            .add(egui::DragValue::new(&mut cc).range(0..=127))
+            .changed()
+        {
+            ui.ctx().data_mut(|d| d.insert_temp(cc_id, cc));
+        }
+        if ui.button(t!("arrange.create")).clicked() {
+            let target = AutomationTarget::CC { controller: cc };
+            if !existing.contains(&target) {
+                actions.push(TrackAction::CreateAutomation { idx, target });
+            }
+            ui.close();
+        }
+    });
 }
 
 /// Paint an 18x18 inline button with a one-letter label and click handling.

@@ -5,13 +5,15 @@
 //! y = row * lane_height - scroll_y；只有“行号 → (音轨, 子 lane)”的映射
 //! 是不均匀的，由本结构的前缀和提供 O(log n) 查询。
 
-/// 一行的命中结果：所属音轨 + 是否为自动化子行（子 lane 索引）。
+/// 一行的命中结果：所属音轨 + 是否自动化子行（子 lane 索引）/ 末尾加号行。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ArRow {
     /// 音轨主行（音符行）。
     Track(usize),
     /// 音轨的自动化子行，usize 是该轨 automation_lanes 的下标。
     Automation(usize, usize),
+    /// 展开态末尾的「+」（添加自动化）占位行，usize 是该音轨索引。
+    AddLane(usize),
 }
 
 /// 每帧由“各轨展开的 lane 数”构建的行布局。
@@ -27,13 +29,16 @@ pub struct ArRowLayout {
 
 impl ArRowLayout {
     /// 从每轨展开的 lane 数构建（未展开的轨传 0）。
+    ///
+    /// **展开轨的行数 = 2 + lane 数**（主行 + 各 lane + 末尾一条「+」占位行），
+    /// 未展开轨 = 1 行（无加号行）。
     pub fn new(expanded_lane_counts: impl IntoIterator<Item = u32>) -> Self {
         let mut row_starts = Vec::new();
         let mut row_counts = Vec::new();
         let mut acc = 0u32;
         for lanes in expanded_lane_counts {
             row_starts.push(acc);
-            let rows = 1 + lanes;
+            let rows = if lanes > 0 { 2 + lanes } else { 1 };
             row_counts.push(rows);
             acc += rows;
         }
@@ -56,16 +61,32 @@ impl ArRowLayout {
         self.row_starts.get(track).copied().unwrap_or(0) as usize
     }
 
-    /// 音轨占据的行数（1 + 展开的 lane 数）。
+    /// 音轨占据的行数（主行 + 展开的 lane + 加号行）。
     #[inline]
     pub fn track_rows(&self, track: usize) -> usize {
         self.row_counts.get(track).copied().unwrap_or(1) as usize
+    }
+
+    /// 音轨展开的 lane 数（`track_rows - 2`，未展开时 0）。
+    #[inline]
+    pub fn lane_count(&self, track: usize) -> usize {
+        self.row_counts
+            .get(track)
+            .copied()
+            .map(|c| c.saturating_sub(2) as usize)
+            .unwrap_or(0)
     }
 
     /// 音轨的自动化子行 sub 的行号。
     #[inline]
     pub fn lane_row(&self, track: usize, sub: usize) -> usize {
         self.track_row(track) + 1 + sub
+    }
+
+    /// 音轨展开态末尾「+」占位行的行号。
+    #[inline]
+    pub fn add_lane_row(&self, track: usize) -> usize {
+        self.track_row(track) + 1 + self.lane_count(track)
     }
 
     /// 行号 → 命中结果。越界行号返回 None。
@@ -78,6 +99,9 @@ impl ArRowLayout {
         let sub = row - self.row_starts[track] as usize;
         if sub == 0 {
             Some(ArRow::Track(track))
+        } else if sub > (self.row_counts[track] - 2) as usize {
+            // 展开态的末尾：+ 占位行
+            Some(ArRow::AddLane(track))
         } else {
             Some(ArRow::Automation(track, sub - 1))
         }
@@ -146,7 +170,7 @@ impl ArRow {
     #[inline]
     pub fn track(self) -> usize {
         match self {
-            ArRow::Track(t) | ArRow::Automation(t, _) => t,
+            ArRow::Track(t) | ArRow::Automation(t, _) | ArRow::AddLane(t) => t,
         }
     }
 }
@@ -156,8 +180,9 @@ mod tests {
     use super::*;
 
     /// 3 轨：轨 0 未展开，轨 1 展开 2 条 lane，轨 2 展开 1 条 lane。
+    /// 展开轨 row = 2 + lanes（主行 + lanes + 末尾加号行）。
     /// 行分布：row0=轨0主行, row1=轨1主行, row2=轨1.lane0, row3=轨1.lane1,
-    ///         row4=轨2主行, row5=轨2.lane0
+    ///         row4=轨1.加号行, row5=轨2主行, row6=轨2.lane0, row7=轨2.加号行
     fn layout() -> ArRowLayout {
         ArRowLayout::new([0, 2, 1])
     }
@@ -165,16 +190,20 @@ mod tests {
     #[test]
     fn totals_and_track_rows() {
         let l = layout();
-        assert_eq!(l.total_rows(), 6);
+        assert_eq!(l.total_rows(), 8);
         assert_eq!(l.track_row(0), 0);
         assert_eq!(l.track_row(1), 1);
-        assert_eq!(l.track_row(2), 4);
+        assert_eq!(l.track_row(2), 5);
         assert_eq!(l.track_rows(0), 1);
-        assert_eq!(l.track_rows(1), 3);
-        assert_eq!(l.track_rows(2), 2);
+        assert_eq!(l.track_rows(1), 4);
+        assert_eq!(l.track_rows(2), 3);
         assert_eq!(l.lane_row(1, 0), 2);
         assert_eq!(l.lane_row(1, 1), 3);
-        assert_eq!(l.lane_row(2, 0), 5);
+        assert_eq!(l.lane_row(2, 0), 6);
+        assert_eq!(l.add_lane_row(1), 4);
+        assert_eq!(l.add_lane_row(2), 7);
+        assert_eq!(l.lane_count(1), 2);
+        assert_eq!(l.lane_count(0), 0);
     }
 
     #[test]
@@ -184,9 +213,11 @@ mod tests {
         assert_eq!(l.row_hit(1), Some(ArRow::Track(1)));
         assert_eq!(l.row_hit(2), Some(ArRow::Automation(1, 0)));
         assert_eq!(l.row_hit(3), Some(ArRow::Automation(1, 1)));
-        assert_eq!(l.row_hit(4), Some(ArRow::Track(2)));
-        assert_eq!(l.row_hit(5), Some(ArRow::Automation(2, 0)));
-        assert_eq!(l.row_hit(6), None);
+        assert_eq!(l.row_hit(4), Some(ArRow::AddLane(1)));
+        assert_eq!(l.row_hit(5), Some(ArRow::Track(2)));
+        assert_eq!(l.row_hit(6), Some(ArRow::Automation(2, 0)));
+        assert_eq!(l.row_hit(7), Some(ArRow::AddLane(2)));
+        assert_eq!(l.row_hit(8), None);
     }
 
     #[test]
@@ -197,27 +228,30 @@ mod tests {
         assert_eq!(l.hit_at_music_y(79.9, lh), Some(ArRow::Track(1)));
         assert_eq!(l.hit_at_music_y(80.0, lh), Some(ArRow::Automation(1, 0)));
         assert_eq!(l.hit_at_music_y(-1.0, lh), None);
-        assert_eq!(l.hit_at_music_y(240.0, lh), None);
+        assert_eq!(l.hit_at_music_y(240.0, lh), Some(ArRow::Automation(2, 0)));
+        assert_eq!(l.hit_at_music_y(315.0, lh), Some(ArRow::AddLane(2)));
+        assert_eq!(l.hit_at_music_y(325.0, lh), None);
     }
 
     #[test]
     fn offsets_and_heights() {
         let l = layout();
-        assert_eq!(l.track_offsets(40.0), vec![0.0, 40.0, 160.0]);
-        assert_eq!(l.track_height(1, 40.0), 120.0);
-        assert_eq!(l.total_height(40.0), 240.0);
+        // 轨2 主行在 row5（加号行算在轨2内，但 offset 仍是主行位置）。
+        assert_eq!(l.track_offsets(40.0), vec![0.0, 40.0, 200.0]);
+        assert_eq!(l.track_height(1, 40.0), 160.0);
+        assert_eq!(l.total_height(40.0), 320.0);
     }
 
     #[test]
     fn visible_track_range_covers_partial_rows() {
         let l = layout();
         let lh = 40.0;
-        // 视口 y ∈ [40, 120)：覆盖 row1..row3 → 轨 1（含其 lane）。
+        // 视口 y ∈ [40, 120)：覆盖 row1..row3 → 轨 1（含 lane）。
         assert_eq!(l.visible_track_range(40.0, 80.0, lh), (1, 2));
-        // 视口 y ∈ [0, 240]：全部。
-        assert_eq!(l.visible_track_range(0.0, 240.0, lh), (0, 3));
-        // 视口只盖住 row2（轨 1 的 lane0）。
-        assert_eq!(l.visible_track_range(81.0, 30.0, lh), (1, 2));
+        // 视口仅盖住加号行 row4（y∈[160,200)）。
+        assert_eq!(l.visible_track_range(160.0, 40.0, lh), (1, 2));
+        // 视口 y ∈ [0, 320]：全部。
+        assert_eq!(l.visible_track_range(0.0, 320.0, lh), (0, 3));
         // 空布局。
         let empty = ArRowLayout::new([]);
         assert_eq!(empty.visible_track_range(0.0, 100.0, lh), (0, 0));
