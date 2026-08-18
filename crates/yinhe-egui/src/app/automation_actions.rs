@@ -375,7 +375,8 @@ impl App {
     }
 
     /// 获取 target 对应的 track_idx。
-    /// Tempo → conductor_track_idx；其他 → 主音轨（需可见且非 conductor）。
+    /// Tempo → conductor_track_idx；其他 → 主音轨（非 conductor）。
+    /// 主音轨在 PR 强制可见（layout pr_visible），不要求 track_visible 勾选。
     fn track_idx_for(
         doc: &yinhe_editor_core::document::Document,
         target: &AutomationTarget,
@@ -385,13 +386,6 @@ impl App {
         } else {
             doc.edit
                 .main_track()
-                .filter(|&t| {
-                    doc.edit
-                        .track_visible
-                        .get(t as usize)
-                        .copied()
-                        .unwrap_or(false)
-                })
                 .filter(|&t| Some(t) != doc.edit.conductor_track_idx)
         }
     }

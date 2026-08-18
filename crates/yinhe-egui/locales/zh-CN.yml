@@ -500,3 +500,9 @@ file_dialog.open_failed: "无法打开「%{name}」：可能不是有效的 .yin
 # ── 工作区占位面板 ──
 workspace.placeholder_hint: "新建或打开一个工程开始编辑"
 workspace.placeholder_shortcuts: "点击标题栏 / 菜单栏新建或打开工程"
+
+# ── PR 控制栏（时间标尺下方一栏）──
+pr_bar.main_track: "主音轨"
+pr_bar.show_tracks: "显示音轨"
+pr_bar.select_all: "全选"
+pr_bar.no_track: "（无音轨）"

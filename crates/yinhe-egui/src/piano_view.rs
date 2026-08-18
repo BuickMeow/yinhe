@@ -12,6 +12,7 @@ pub use yinhe_types::PencilNoteDrag;
 
 pub mod automation_panel;
 mod bg;
+pub mod control_bar;
 pub(crate) mod drag;
 pub(crate) mod gpu_upload;
 mod keyboard;
@@ -34,7 +35,6 @@ pub enum PianoViewEvent {
         track_lo: u16,
         track_hi: u16,
     },
-    QuantizePreset(QuantizePreset),
 }
 
 /// Automation panel 上下文（all-or-nothing：要么全 Some 要么全 None）。
@@ -89,6 +89,8 @@ pub struct PianoViewFeedback<'a> {
     pub preview_reqs: &'a mut Vec<PreviewReq>,
     /// 状态栏讲解行：钢琴卷帘悬停提示（位置 + 音高）。
     pub status_hint: &'a mut Option<String>,
+    /// 控制栏事件（量化/切换主音轨/显示音轨勾选），由 layout 应用。
+    pub bar_events: &'a mut Vec<control_bar::PrBarEvent>,
 }
 
 /// Height of the time ruler band at the top of the pianoroll view.
@@ -201,6 +203,8 @@ pub fn show(
     conductor_idx: Option<u16>,
     // 写入目标轨 = 主音轨或回退轨（无选中时第一个非 Conductor 轨），由 layout 计算。
     write_track: Option<u16>,
+    // 控制栏输入（标尺下方一栏：量化/音轨名称/和弦指示器）。
+    bar: control_bar::PrBarData<'_>,
     revision: u64,
     note_revisions: &[u64; 128],
     feedback: &mut PianoViewFeedback<'_>,
@@ -224,7 +228,8 @@ pub fn show(
     // Cap panels area to prevent overflow when too many panels.
     // Reserve at least 35% of available height for the pianoroll content;
     // excess panels become scrollable.
-    let avail_h = rect.height() - RULER_H - crate::widgets::scrollbar::SCROLLBAR_H;
+    let avail_h =
+        rect.height() - RULER_H - theme::PR_BAR_H - crate::widgets::scrollbar::SCROLLBAR_H;
     let panels_max_h = (avail_h * 0.65).max(0.0);
     let panels_total_h = panels_natural_h.min(panels_max_h);
 
@@ -233,7 +238,7 @@ pub fn show(
 
     // Layout: ruler | pianoroll content | automation panels | scrollbar
     let ruler_band_y = rect.min.y;
-    let content_y = rect.min.y + RULER_H;
+    let content_y = rect.min.y + RULER_H + theme::PR_BAR_H;
     let content_h = (avail_h - panels_total_h).max(0.0);
     let content_rect = egui::Rect::from_min_max(
         egui::pos2(rect.min.x, content_y),
@@ -850,6 +855,14 @@ pub fn show(
     if let Some(midi) = midi
         && let Some(tpb) = midi.ticks_per_beat()
     {
+        // 左上角角落（键盘列上方）：量化按钮已移至标尺下方控制栏，此处只补背景。
+        let left_corner = egui::Rect::from_min_max(
+            rect.min,
+            egui::pos2(rect.min.x + view.keyboard_width(), ruler_band_y + RULER_H),
+        );
+        ui.painter()
+            .rect_filled(left_corner, 0.0, crate::theme::track_bg());
+
         // 右上角角落：标尺右缘到垂直滚动条之间（SCROLLBAR_W × RULER_H）
         let corner_rect = egui::Rect::from_min_max(
             egui::pos2(content_right_x, ruler_band_y),
@@ -881,6 +894,15 @@ pub fn show(
             selected.clear();
             sel_rect.clear();
         }
+    }
+
+    // ── PR 控制栏（标尺下方、GPU 画布上方：量化/音轨名称/和弦指示器）──
+    {
+        let bar_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.min.x, ruler_band_y + RULER_H),
+            egui::pos2(rect.max.x, ruler_band_y + RULER_H + theme::PR_BAR_H),
+        );
+        control_bar::show(ui, bar_rect, &bar, feedback.bar_events);
     }
 
     // ── Automation panels ──
@@ -1114,21 +1136,6 @@ pub fn show(
         width: w as f32,
     });
 
-    // ── PR quantize button in the top-left corner (left of ruler, above keyboard) ──
-    let pr_quantize_event = crate::widgets::quantize_button::show(
-        ui,
-        crate::widgets::quantize_button::QuantizeBtnCtx {
-            corner_rect: egui::Rect::from_min_size(
-                egui::pos2(rect.min.x, ruler_band_y),
-                egui::vec2(kb_w, crate::theme::RULER_H),
-            ),
-            id_salt: "pr_quantize_btn",
-            ppq,
-            quantize,
-        },
-    )
-    .map(PianoViewEvent::QuantizePreset);
-
     // ── 状态栏讲解行：钢琴卷帘悬停提示（位置 + 音高）──
     // 自动化面板的提示（grid_area 内）优先于 PR 内容区提示；
     // 鼠标在视图内但不在任何可讲解区域（标尺/滚动条/面板空白）→ 清空。
@@ -1174,5 +1181,4 @@ pub fn show(
         .map(PianoViewEvent::SelectionAction)
         .or(pencil_event)
         .or(eraser_event)
-        .or(pr_quantize_event)
 }

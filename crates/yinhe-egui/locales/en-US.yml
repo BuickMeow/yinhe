@@ -500,3 +500,9 @@ file_dialog.open_failed: "Cannot open \"%{name}\": may not be a valid .yin file,
 # ── Workspace placeholder ──
 workspace.placeholder_hint: "Create or open a project to start editing"
 workspace.placeholder_shortcuts: "Use the File menu or title bar to create or open a project"
+
+# ── PR control bar (below the time ruler) ──
+pr_bar.main_track: "Main track"
+pr_bar.show_tracks: "Visible tracks"
+pr_bar.select_all: "All"
+pr_bar.no_track: "(no track)"

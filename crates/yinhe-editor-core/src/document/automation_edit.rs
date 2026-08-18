@@ -513,16 +513,10 @@ impl Document {
         let (track_idx, lane_idx) = if matches!(target, AutomationTarget::Tempo) {
             (0u16, 0usize)
         } else {
+            // 主音轨在 PR 强制可见（layout pr_visible），不要求 track_visible 勾选。
             let track_idx = self
                 .edit
                 .main_track()
-                .filter(|&t| {
-                    self.edit
-                        .track_visible
-                        .get(t as usize)
-                        .copied()
-                        .unwrap_or(false)
-                })
                 .filter(|&t| Some(t) != self.edit.conductor_track_idx)?;
             let lane_idx = self
                 .data
@@ -624,16 +618,10 @@ impl Document {
         let (track_idx, lane_idx) = if matches!(target, AutomationTarget::Tempo) {
             (0u16, 0usize)
         } else {
+            // 主音轨在 PR 强制可见（layout pr_visible），不要求 track_visible 勾选。
             let track_idx = self
                 .edit
                 .main_track()
-                .filter(|&t| {
-                    self.edit
-                        .track_visible
-                        .get(t as usize)
-                        .copied()
-                        .unwrap_or(false)
-                })
                 .filter(|&t| Some(t) != self.edit.conductor_track_idx)?;
             let lane_idx = self
                 .data

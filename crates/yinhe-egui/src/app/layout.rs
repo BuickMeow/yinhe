@@ -476,7 +476,14 @@ impl App {
             Vec::new();
         let mut velocity_edits: Vec<yinhe_types::VelocityEdit> = Vec::new();
 
-        let (piano_event, note_drag_delta, pencil_note_drag, note_resize_delta, preview_reqs) = {
+        let (
+            piano_event,
+            note_drag_delta,
+            pencil_note_drag,
+            note_resize_delta,
+            preview_reqs,
+            bar_events,
+        ) = {
             let mut guard = crate::app::main_loop::ReplaceGuard::new(&mut self.documents[idx]);
             let doc = guard.as_mut();
             let midi_source: Option<&dyn yinhe_types::NoteSource> = Some(doc.data.model.as_ref());
@@ -490,6 +497,7 @@ impl App {
             let mut pencil_note_drag: Option<crate::piano_view::PencilNoteDrag> = None;
             let mut note_resize_delta: Option<(crate::piano_view::ResizeSide, i64)> = None;
             let mut preview_reqs: Vec<crate::piano_view::PreviewReq> = Vec::new();
+            let mut bar_events: Vec<crate::piano_view::control_bar::PrBarEvent> = Vec::new();
             ui.scope_builder(egui::UiBuilder::new().max_rect(piano_rect), |ui| {
                 let _piano_total_start = if yinhe_memtrace::perf_probe::enabled() {
                     Some(std::time::Instant::now())
@@ -540,13 +548,9 @@ impl App {
                     let edit_trk = doc
                         .edit
                         .main_track()
-                        .filter(|&t| {
-                            doc.edit
-                                .track_visible
-                                .get(t as usize)
-                                .copied()
-                                .unwrap_or(true)
-                        })
+                        // 用 pr_visible 而非原始 track_visible：主音轨强制可见，
+                        // 取消勾选显示不应使 automation 编辑静默失效。
+                        .filter(|&t| pr_visible.get(t as usize).copied().unwrap_or(false))
                         .filter(|&t| Some(t) != doc.edit.conductor_track_idx);
                     match edit_trk {
                         Some(trk_idx) => doc
@@ -570,6 +574,21 @@ impl App {
                     .filter(|(i, _)| pr_visible.get(*i).copied().unwrap_or(false))
                     .flat_map(|(_, t)| t.automation_lanes.iter())
                     .collect();
+                // 和弦指示器文本：实时 MIDI 按键优先；无按键且播放中 → 播放头和弦。
+                let chord_text = chord_indicator_text(
+                    &self.midi_thru_keys,
+                    is_playing,
+                    doc.edit.cursor_tick,
+                    midi_source,
+                );
+                let bar_data = piano_view::control_bar::PrBarData {
+                    ppq: tpb,
+                    quantize: doc.edit.quantize_pianoroll,
+                    track_infos: &doc.edit.track_info_cache,
+                    track_visible: &doc.edit.track_visible,
+                    main_track: write_track,
+                    chord: chord_text.as_deref(),
+                };
                 let auto_ctx = Some(piano_view::AutomationPanelsCtx {
                     panels: &mut doc.edit.controller_panels,
                     renderers: &mut self.controller_renderers[idx],
@@ -589,6 +608,7 @@ impl App {
                     velocity_edits: &mut velocity_edits,
                     preview_reqs: &mut preview_reqs,
                     status_hint: &mut self.status_hint,
+                    bar_events: &mut bar_events,
                 };
                 event = piano_view::show(
                     ui,
@@ -628,6 +648,7 @@ impl App {
                     &doc.edit.track_selected,
                     doc.edit.conductor_track_idx,
                     write_track,
+                    bar_data,
                     doc.data.revision,
                     doc.data.note_revisions(),
                     &mut feedback,
@@ -643,6 +664,7 @@ impl App {
                 pencil_note_drag,
                 note_resize_delta,
                 preview_reqs,
+                bar_events,
             )
         };
 
@@ -692,10 +714,26 @@ impl App {
                         doc.delete_selected()
                     });
                 }
-                PianoViewEvent::QuantizePreset(preset) => {
-                    let Some(idx) = self.active_doc else { return };
-                    self.documents[idx].edit.quantize_pianoroll = preset;
+            }
+        }
+
+        // PR 控制栏事件：量化 / 切换主音轨（track_selected 替换）/ 显示音轨勾选。
+        for ev in bar_events {
+            use crate::piano_view::control_bar::PrBarEvent;
+            let Some(idx) = self.active_doc else { break };
+            let edit = &mut self.documents[idx].edit;
+            match ev {
+                PrBarEvent::Quantize(preset) => edit.quantize_pianoroll = preset,
+                PrBarEvent::SwitchMainTrack(t) => {
+                    edit.track_selected.clear();
+                    edit.track_selected.insert(t);
                 }
+                PrBarEvent::SetTrackVisible(t, v) => {
+                    if let Some(slot) = edit.track_visible.get_mut(t as usize) {
+                        *slot = v;
+                    }
+                }
+                PrBarEvent::SetAllVisible(v) => edit.track_visible.fill(v),
             }
         }
 
@@ -951,6 +989,40 @@ impl App {
             self.layout_needs_save = false;
         }
     }
+}
+
+/// 和弦指示器文本：实时 MIDI 直通按键优先；无按键且播放中 → 播放头处发声音符的和弦。
+///
+/// 播放路径逐 key 二分查询覆盖播放头的音符（128 key × O(log n)），
+/// 配合 chord::recognize 的防乱按规则（音级 > 7 或跨度 > 2 八度不识别）。
+fn chord_indicator_text(
+    thru_keys: &std::collections::HashMap<u8, u8>,
+    is_playing: bool,
+    cursor_tick: Option<f64>,
+    midi: Option<&dyn yinhe_types::NoteSource>,
+) -> Option<String> {
+    if !thru_keys.is_empty() {
+        let mut keys: Vec<u8> = thru_keys.keys().copied().collect();
+        keys.sort_unstable();
+        return yinhe_editor_core::chord::recognize(&keys);
+    }
+    if !is_playing {
+        return None;
+    }
+    let tick = cursor_tick?.max(0.0) as u32;
+    let midi = midi?;
+    let mut keys = Vec::new();
+    for key in 0u8..128 {
+        // key_notes_in_range 左边界保守（tick - max_note_len），右边界精确，
+        // 需自行判定覆盖（start <= tick < end）。
+        let sounding = midi
+            .key_notes_in_range(key, tick, tick.saturating_add(1))
+            .any(|n| n.start_tick <= tick && tick < n.end_tick);
+        if sounding {
+            keys.push(key);
+        }
+    }
+    yinhe_editor_core::chord::recognize(&keys)
 }
 
 #[cfg(test)]

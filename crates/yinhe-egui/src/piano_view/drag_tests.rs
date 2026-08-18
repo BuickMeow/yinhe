@@ -125,34 +125,34 @@ fn run_sel_frame(
         Vec<crate::piano_view::PreviewReq>,
         Option<yinhe_types::PencilNoteDrag>,
     ) = (None, Vec::new(), None);
-    let _ = ctx
-        .run_ui(raw, |ui| {
-            let (_, _, previews, note_event, pencil_drag) = sel_drag_frame(
-                ui,
-                content(),
-                content(),
-                view,
-                Some(midi),
-                selected,
-                QuantizePreset::Fraction(1, 16),
-                480,
-                None,
-                10000.0,
-                cursor_tick,
-                note_drag_delta,
-                note_resize_delta,
-                sel_rect,
-                &[[0.5, 0.5, 0.5, 1.0]],
-                &[true],
-                track_selected,
-                write_track,
-                None,
-                false,
-            );
-            out = (note_event, previews, pencil_drag);
-        })
-        .textures_delta
-        .clear();
+    // run_ui 返回的 FullOutput 含字体纹理 delta，丢弃前必须 clear（epaint 断言）。
+    ctx.run_ui(raw, |ui| {
+        let (_, _, previews, note_event, pencil_drag) = sel_drag_frame(
+            ui,
+            content(),
+            content(),
+            view,
+            Some(midi),
+            selected,
+            QuantizePreset::Fraction(1, 16),
+            480,
+            None,
+            10000.0,
+            cursor_tick,
+            note_drag_delta,
+            note_resize_delta,
+            sel_rect,
+            &[[0.5, 0.5, 0.5, 1.0]],
+            &[true],
+            track_selected,
+            write_track,
+            None,
+            false,
+        );
+        out = (note_event, previews, pencil_drag);
+    })
+    .textures_delta
+    .clear();
     out
 }
 
@@ -1062,8 +1062,10 @@ fn select_tool_alt_copies_single_note() {
     let mut note_drag_delta: Option<(i64, i32, bool)> = None;
     let mut note_resize_delta: Option<(yinhe_editor_core::ResizeSide, i64)> = None;
 
-    let mut mods = egui::Modifiers::default();
-    mods.alt = true;
+    let mods = egui::Modifiers {
+        alt: true,
+        ..Default::default()
+    };
     let press_evt = |pos: egui::Pos2| {
         let mut raw = egui::RawInput::default();
         raw.events.push(egui::Event::ModifiersChanged(mods));
@@ -1138,7 +1140,7 @@ fn sel_drag_in_progress_reflects_persisted_state() {
     let raw = egui::RawInput::default();
 
     // run_ui 返回的 FullOutput 含字体纹理 delta，丢弃前必须 clear（epaint 断言）。
-    let mut run = |raw: egui::RawInput, f: &mut dyn FnMut(&egui::Ui)| {
+    let run = |raw: egui::RawInput, f: &mut dyn FnMut(&egui::Ui)| {
         let mut out = ctx.run_ui(raw, |ui| f(ui));
         out.textures_delta.clear();
     };
