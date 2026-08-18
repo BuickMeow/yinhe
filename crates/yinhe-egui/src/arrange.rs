@@ -304,7 +304,7 @@ pub fn show(
             }
         }
 
-        let (audio_dirty, track_actions) = track_panel::show(
+        let (audio_dirty, am_ms_dirty, track_actions) = track_panel::show(
             ui,
             &doc.edit.track_info_cache,
             &doc.edit.track_visible,
@@ -322,10 +322,15 @@ pub fn show(
             &doc.data.model.tracks,
             &mut doc.edit.arr_am_expanded,
             &mut doc.edit.arr_am_selected,
+            &mut doc.edit.arr_am_ms,
         );
 
         if audio_dirty {
             crate::right_panel::info_panel::send_skip_tracks(doc, audio);
+        }
+        // AM lane M/S 试听开关：触发模型重载（App::notify_audio_model_changed 会带上 arr_am_ms）。
+        if am_ms_dirty {
+            *needs_audio_notify = true;
         }
 
         // Handle track management actions (add/remove/move/AM lane)
