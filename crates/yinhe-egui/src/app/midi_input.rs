@@ -158,7 +158,7 @@ impl App {
                     {
                         e.insert(velocity);
                         previews.push(PreviewReq::Note(NotePreview {
-                            track: self.current_editing_track(),
+                            track: self.current_write_track(),
                             key,
                             velocity: Some(velocity),
                             target_tick: self.current_preview_tick(),
@@ -183,7 +183,7 @@ impl App {
             previews.push(PreviewReq::Stop);
             for (&key, &velocity) in &self.midi_thru_keys {
                 previews.push(PreviewReq::Note(NotePreview {
-                    track: self.current_editing_track(),
+                    track: self.current_write_track(),
                     key,
                     velocity: Some(velocity),
                     target_tick: self.current_preview_tick(),
@@ -207,7 +207,7 @@ impl App {
         let Some(idx) = self.active_doc else {
             return;
         };
-        let track = self.current_editing_track();
+        let track = self.current_write_track();
         let start_tick = self.recording_current_tick(idx);
         let note = yinhe_core::NoteEvent {
             id: 0,
@@ -280,7 +280,7 @@ impl App {
         let Some(cursor) = self.documents[idx].edit.cursor_tick else {
             return;
         };
-        let track = self.current_editing_track();
+        let track = self.current_write_track();
         let step = self.documents[idx].data.model.meta.ppq.max(1);
         let start = cursor.max(0.0) as u32;
         let note = yinhe_core::NoteEvent {
@@ -312,11 +312,11 @@ impl App {
         tempo_map.tick_at_time(secs).max(0.0) as u32
     }
 
-    /// 当前编辑音轨（无文档/无编辑轨时回退 0）。
-    fn current_editing_track(&self) -> u16 {
+    /// 当前写入目标轨（主音轨；无选中时回退第一个非 Conductor 轨；无文档时回退 0）。
+    fn current_write_track(&self) -> u16 {
         self.active_doc
             .and_then(|i| self.documents.get(i))
-            .and_then(|d| d.edit.editing_track)
+            .and_then(|d| d.edit.write_track())
             .unwrap_or(0)
     }
 

@@ -225,7 +225,7 @@ pub fn show(
     if !am_rows.is_empty() {
         let am_ctx = crate::piano_view::automation_panel::AutomationEditCtx {
             active_tool: *cfg.active_tool,
-            active_track: None, // AR 无 editing_track；lane 交互自带 track
+            active_track: None, // AR 无写入目标轨概念；lane 交互自带 track
             quantize: data.quantize,
             ppq: data.ppq,
             bar_line_data: data.bar_line_data,
@@ -722,15 +722,13 @@ fn sel_drag_frame_arrange(
         if dt != 0 || dtr != 0 {
             let max_track = (data.num_tracks as i32 - 1).max(0) as u16;
 
-            // 与 PR 共用的选中音符收集（edit.track_selected 传空集合 = 不过滤轨道）。
+            // 与 PR 共用的选中音符收集（track_selected 传空集合 = 不过滤轨道）。
             // edit.selected.rects 在拖拽中保持原快照，与 move_orig_sel 语义一致。
-            // AR 无 editing_track 概念，传 None。
             let notes = crate::selection::drag::collect_selected_notes(
                 edit.selected,
                 data.midi,
                 data.track_visible,
                 &HashSet::new(),
-                None,
             );
             for note in notes {
                 let new_tick = (note.start_tick as i64 + dt).max(0) as u32;

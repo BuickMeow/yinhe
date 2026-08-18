@@ -509,13 +509,13 @@ impl Document {
         let rects = panel.anchor_sel_rects.clone();
 
         // 定位 lane（与 app 层 collect_anchor_ctx 同规则）：
-        // Tempo → conductor.tempo；其他 → editing_track 的 target 匹配 lane。
+        // Tempo → conductor.tempo；其他 → 主音轨的 target 匹配 lane。
         let (track_idx, lane_idx) = if matches!(target, AutomationTarget::Tempo) {
             (0u16, 0usize)
         } else {
             let track_idx = self
                 .edit
-                .editing_track
+                .main_track()
                 .filter(|&t| {
                     self.edit
                         .track_visible
@@ -626,7 +626,7 @@ impl Document {
         } else {
             let track_idx = self
                 .edit
-                .editing_track
+                .main_track()
                 .filter(|&t| {
                     self.edit
                         .track_visible
@@ -748,7 +748,7 @@ mod tests {
             edit: crate::edit_state::EditState {
                 track_visible: vec![true],
                 track_pianoroll_visible: vec![true],
-                editing_track: Some(0),
+                track_selected: [0u16].into_iter().collect(),
                 controller_panels: vec![AutomationPanelView {
                     show_velocity: false,
                     selected_target: AutomationTarget::CC { controller: 7 },

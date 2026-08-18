@@ -206,9 +206,8 @@ pub struct EditState {
     pub pc_map_cache: HashMap<u8, u8>,
     /// Index of the conductor track, if detected.
     pub conductor_track_idx: Option<u16>,
-    /// 当前被铅笔工具编辑的轨道（双击 track 设置）。
-    /// 同时只能有一个；可见且被选择时才允许编辑。
-    /// Conductor 也可被设为 editing_track（仅用于 Tempo automation）。
+    /// 仅安卓端使用；桌面端已改用 main_track()/write_track() 派生，
+    /// 不再读取本字段。track_ops.rs 中对它的维护保留（供安卓端使用）。
     pub editing_track: Option<u16>,
     /// Selection rectangle state.
     pub sel_rect: SelRectState,
@@ -270,6 +269,22 @@ impl Default for EditState {
 }
 
 impl EditState {
+    /// 主音轨 = 所有选中音轨中索引最小者。
+    /// 「编辑目标轨道」概念已删除（桌面端），写入目标由选中集合派生；
+    /// Conductor 被选中时主音轨 = Conductor（Tempo 编辑用）。
+    pub fn main_track(&self) -> Option<u16> {
+        self.track_selected.iter().min().copied()
+    }
+
+    /// 写入目标轨（铅笔/双击/录音/步进/自动化）= 主音轨；
+    /// 无选中时回退到第一个非 Conductor 轨道，绝不回退到 Conductor
+    /// （极端情况：全部轨道都是 Conductor 时返回 None）。
+    pub fn write_track(&self) -> Option<u16> {
+        self.main_track().or_else(|| {
+            (0..self.track_visible.len() as u16).find(|&i| Some(i) != self.conductor_track_idx)
+        })
+    }
+
     /// 新建音符的默认力度：该音轨最近一次 velocity 修改值，无记录时 100。
     pub fn default_velocity(&self, track: u16) -> u8 {
         self.recent_velocity

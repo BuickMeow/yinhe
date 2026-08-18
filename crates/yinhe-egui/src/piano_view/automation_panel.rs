@@ -1524,8 +1524,8 @@ mod tests {
         edits
     }
 
-    /// 回归测试：Tempo 编辑不依赖 active_track——没有任何编辑目标
-    /// （editing_track=None）时 Tempo 锚点依然可拖拽（Conductor 下编辑的前提）。
+    /// 回归测试：Tempo 编辑不依赖 active_track——没有任何写入目标轨
+    /// （write_track=None）时 Tempo 锚点依然可拖拽（Conductor 下编辑的前提）。
     #[test]
     fn tempo_editable_without_active_track() {
         let ctx = egui::Context::default();

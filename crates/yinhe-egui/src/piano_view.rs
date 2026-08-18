@@ -47,7 +47,7 @@ pub struct AutomationPanelsCtx<'a> {
     )>,
     pub lanes: &'a [yinhe_types::AutomationLane],
     /// 渲染用 lanes：所有 PR 可见音轨的 lanes（与音符显示逻辑一致）。
-    /// `lanes` 仅为 editing_track 的编辑目标，渲染不受其限制。
+    /// `lanes` 仅为主音轨的编辑目标，渲染不受其限制。
     pub render_lanes: &'a [&'a yinhe_types::AutomationLane],
     pub show: &'a mut bool,
     pub wgpu_state: &'a std::sync::Arc<eframe::egui_wgpu::RenderState>,
@@ -114,7 +114,6 @@ fn effective_tool(
     music_rect: egui::Rect,
     track_visible: &[bool],
     track_selected: &std::collections::HashSet<u16>,
-    editing_track: Option<u16>,
     sel_rect: &yinhe_editor_core::edit_state::SelRectState,
 ) -> Tool {
     if !ui.input(|i| i.modifiers.alt) {
@@ -133,15 +132,7 @@ fn effective_tool(
                     return false;
                 }
                 let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-                drag::hit_test_note(
-                    midi,
-                    view,
-                    local,
-                    track_visible,
-                    track_selected,
-                    editing_track,
-                )
-                .is_some()
+                drag::hit_test_note(midi, view, local, track_visible, track_selected).is_some()
                     || sel_rect.effective_rects().iter().any(|&(t0, t1, k0, k1)| {
                         crate::selection::drag::music_sel_to_pixel_rect(
                             &view.base,
@@ -208,7 +199,8 @@ pub fn show(
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
     track_selected: &std::collections::HashSet<u16>,
     conductor_idx: Option<u16>,
-    editing_track: Option<u16>,
+    // 写入目标轨 = 主音轨或回退轨（无选中时第一个非 Conductor 轨），由 layout 计算。
+    write_track: Option<u16>,
     revision: u64,
     note_revisions: &[u64; 128],
     feedback: &mut PianoViewFeedback<'_>,
@@ -324,7 +316,6 @@ pub fn show(
         music_rect,
         track_visible,
         track_selected,
-        editing_track,
         sel_rect,
     );
     if effective_tool == Tool::Select || effective_tool == Tool::SelectVertical {
@@ -348,14 +339,14 @@ pub fn show(
                 track_colors,
                 track_visible,
                 track_selected,
-                editing_track,
+                write_track,
                 conductor_idx,
                 vertical,
             );
         ghost_notes = sel_ghosts;
         hidden_notes = sel_hidden.into_iter().collect();
         feedback.preview_reqs.extend(sel_previews);
-        // 双击写音符（选择工具）：与铅笔一致，目标轨 = editing_track。
+        // 双击写音符（选择工具）：与铅笔一致，目标轨 = write_track。
         if let Some((note, track)) = sel_note_event {
             pencil_event = Some(PianoViewEvent::AddNote { track, note });
         }
@@ -370,7 +361,7 @@ pub fn show(
             quantize,
             ppq,
             bar_line_data,
-            editing_track,
+            write_track,
             track_visible,
             conductor_idx,
             midi,
@@ -385,7 +376,7 @@ pub fn show(
         }
         if let Some(note) = note_event
             && let Some(track) =
-                pencil::valid_pencil_track(editing_track, track_visible, conductor_idx)
+                pencil::valid_pencil_track(write_track, track_visible, conductor_idx)
         {
             pencil_event = Some(PianoViewEvent::AddNote { track, note });
         }
@@ -400,7 +391,6 @@ pub fn show(
             bar_line_data,
             total_ticks,
             track_selected,
-            editing_track,
         );
     }
 
@@ -414,14 +404,9 @@ pub fn show(
         let eff_rects = sel_rect.effective_rects();
         // 音符 hit-test 优先（不用先选中，与铅笔一致）：
         // 边缘 → 伸缩光标；中部 → 移动光标。
-        if let Some((mode, _, _, _, _)) = drag::hit_test_note(
-            midi,
-            view,
-            local,
-            track_visible,
-            track_selected,
-            editing_track,
-        ) {
+        if let Some((mode, _, _, _, _)) =
+            drag::hit_test_note(midi, view, local, track_visible, track_selected)
+        {
             use crate::piano_view::pencil::HitMode;
             match mode {
                 HitMode::ResizeLeft => ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest),
@@ -907,11 +892,10 @@ pub fn show(
         let combo_w = kb_w * theme::AUTO_PANEL_COMBO_WIDTH_RATIO;
 
         // automation 编辑上下文：Pencil/Curve/Select/SelectVertical 工具时启用。
-        // active_track 由 editing_track 决定（与 pencil 一致），但 Conductor 除外：
+        // active_track 由 write_track 决定（与 pencil 一致），但 Conductor 除外：
         // Conductor 不能作为非 Tempo 自动化编辑目标（Tempo 编辑不依赖 active_track，
-        // 见 dispatch_edit_interaction）。只需可见即可
-        // （editing_track 已常驻 PR 显示，不再要求 track_selected）。
-        let active_track = editing_track
+        // 见 dispatch_edit_interaction）。
+        let active_track = write_track
             .filter(|&t| track_visible.get(t as usize).copied().unwrap_or(false))
             .filter(|&t| Some(t) != conductor_idx);
         let edit_ctx = if matches!(
@@ -957,7 +941,9 @@ pub fn show(
             revision,
             bar_line_data,
             sel_hint,
-            editing_is_conductor: editing_track == conductor_idx,
+            // write_track 只在主音轨 = Conductor 时才等于 conductor_idx
+            // （无选中时回退到非 Conductor 轨），因此可据此判断。
+            editing_is_conductor: write_track == conductor_idx,
         };
         let mut panels_edit = automation_panel::PanelsEdit {
             selected,

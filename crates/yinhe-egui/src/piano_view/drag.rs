@@ -237,7 +237,6 @@ fn sel_press(
     eff_rects: &[(f64, f64, u8, u8)],
     track_visible: &[bool],
     track_selected: &std::collections::HashSet<u16>,
-    editing_track: Option<u16>,
     additive: bool,
     press_on_bar: bool,
     pointer: &egui::PointerState,
@@ -267,16 +266,11 @@ fn sel_press(
             });
 
             // ── 音符 hit-test（不用先选中，与铅笔一致）──
-            // 轨道作用域 = editing_track（存在时）∪ track_selected ∩ track_visible。
+            // 轨道作用域 = track_selected（空 = 全部）∩ track_visible。
             // 边缘 → 单音符伸缩；中部（未选中）→ 单音符移动。
-            if let Some((mode, track, start_tick, end_tick, key)) = hit_test_note(
-                midi,
-                view,
-                local,
-                track_visible,
-                track_selected,
-                editing_track,
-            ) {
+            if let Some((mode, track, start_tick, end_tick, key)) =
+                hit_test_note(midi, view, local, track_visible, track_selected)
+            {
                 match mode {
                     super::pencil::HitMode::ResizeLeft | super::pencil::HitMode::ResizeRight => {
                         let side = match mode {
@@ -335,7 +329,6 @@ fn sel_press(
                     midi,
                     track_visible,
                     track_selected,
-                    editing_track,
                 ));
             } else if state.sel_note_resize.is_none() && state.sel_note_move.is_none() {
                 if in_sel_rect {
@@ -353,7 +346,6 @@ fn sel_press(
                         midi,
                         track_visible,
                         track_selected,
-                        editing_track,
                     ));
                     state.preview_last_dk = 0;
                     ui.data_mut(|d| {
@@ -921,7 +913,7 @@ pub(crate) fn sel_drag_frame(
     _track_colors: &[[f32; 4]],
     track_visible: &[bool],
     track_selected: &std::collections::HashSet<u16>,
-    editing_track: Option<u16>,
+    write_track: Option<u16>,
     conductor_idx: Option<u16>,
     vertical: bool,
 ) -> SelFrameOut {
@@ -991,7 +983,6 @@ pub(crate) fn sel_drag_frame(
         &eff_rects,
         track_visible,
         track_selected,
-        editing_track,
         additive,
         press_on_bar,
         &pointer,
@@ -1062,7 +1053,7 @@ pub(crate) fn sel_drag_frame(
     // egui 在第二击 release 时判定 double-click。条件：
     // - 无 note drag / resize 进行中（排除双击选框内音符/边缘的情况）
     // - 不在浮动工具条上（防事件穿透）
-    // - editing_track 有效且点击位置无音符 → 创建，长度 = 一个量化间隔。
+    // - write_track 有效且点击位置无音符 → 创建，长度 = 一个量化间隔。
     // 双击命中音符时 double_click_note 返回 None，保持选中/拖拽行为。
     if ui.input(|i| {
         i.pointer
@@ -1078,7 +1069,7 @@ pub(crate) fn sel_drag_frame(
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
         if let Some((note, track)) = double_click_note(
             midi,
-            editing_track,
+            write_track,
             track_visible,
             conductor_idx,
             view,
@@ -1131,10 +1122,8 @@ pub(crate) fn sel_drag_frame(
             "sel_drag",
             press_on_bar,
         ) {
-            // 轨道作用域：editing_track 存在时框选只作用于编辑音轨；
-            // 否则 track_selected（空 = 全部轨道）。
-            let (track_lo, track_hi) =
-                crate::selection::drag::pr_track_range(editing_track, track_selected);
+            // 轨道作用域：track_selected（空 = 全部轨道）。
+            let (track_lo, track_hi) = crate::selection::drag::pr_track_range(track_selected);
             // 垂直全选模式 key 固定 0..127；普通选框在框选区域无音符时
             // 也自动变成垂直选框（全 128 键）。
             // 自动切换的垂直选框打标记（拖动时锁定上下）；
@@ -1160,7 +1149,6 @@ pub(crate) fn sel_drag_frame(
                 result.t_end as u32,
                 key_lo,
                 key_hi,
-                editing_track,
                 track_selected,
             );
             sel_rect.push_rect(
@@ -1207,14 +1195,14 @@ pub(crate) use crate::selection::drag::{
     collect_selected_notes, compute_resize_dt, hit_test_sel_edge,
 };
 
-/// 双击写音符：editing_track 有效且点击位置无音符时创建新音符。
+/// 双击写音符：write_track 有效且点击位置无音符时创建新音符。
 ///
 /// 音符长度 = 一个量化间隔（与铅笔点击一致）。返回 `(note, track)`。
-/// 命中已有音符（editing_track 上）时返回 `None`——双击保持选中/拖拽行为。
+/// 命中已有音符（write_track 上）时返回 `None`——双击保持选中/拖拽行为。
 #[allow(clippy::too_many_arguments)]
 fn double_click_note(
     midi: Option<&dyn yinhe_types::NoteSource>,
-    editing_track: Option<u16>,
+    write_track: Option<u16>,
     track_visible: &[bool],
     conductor_idx: Option<u16>,
     view: &yinhe_types::PianoRollView,
@@ -1223,10 +1211,10 @@ fn double_click_note(
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
 ) -> Option<(yinhe_core::NoteEvent, u16)> {
-    let track = super::pencil::valid_pencil_track(editing_track, track_visible, conductor_idx)?;
+    let track = super::pencil::valid_pencil_track(write_track, track_visible, conductor_idx)?;
     let raw_tick = view.x_to_tick(local.x);
     let key = view.y_to_key(local.y);
-    // 点击位置已有音符（editing_track 上）→ 不创建。
+    // 点击位置已有音符（write_track 上）→ 不创建。
     // key_notes_in_range 左边界保守（tick - max_note_len），右边界精确，
     // 任何覆盖该像素点的音符都会被包含；像素判定过滤跨边界长音符。
     if let Some(midi) = midi {
@@ -1258,8 +1246,7 @@ fn double_click_note(
 /// 音符 hit-test：返回 `(mode, track, start_tick, end_tick, key)`。
 ///
 /// 不需要先选中：边缘 → 单音符伸缩；中部 → 单音符移动（与铅笔一致）。
-/// 轨道作用域 = editing_track（存在时只查编辑音轨），否则 track_selected
-/// （空 = 全部）∩ track_visible。
+/// 轨道作用域 = track_selected（空 = 全部）∩ track_visible。
 /// 只查可能覆盖鼠标点的音符：key_notes_in_range 左边界保守（tick - max_note_len），
 /// 右边界精确，每帧 hover 开销与铅笔 hit-test 同级。
 pub(crate) fn hit_test_note(
@@ -1268,24 +1255,18 @@ pub(crate) fn hit_test_note(
     local: egui::Pos2,
     track_visible: &[bool],
     track_selected: &std::collections::HashSet<u16>,
-    editing_track: Option<u16>,
 ) -> Option<(super::pencil::HitMode, u16, u32, u32, u8)> {
     const EDGE_THRESHOLD_PX: f32 = 6.0;
     let (midi, key) = (midi?, view.y_to_key(local.y));
     let raw_tick = view.x_to_tick(local.x);
     let notes = midi.key_notes_in_range(key, raw_tick as u32, (raw_tick + 1.0) as u32);
     for note in notes {
-        // 轨道作用域：editing_track 优先，其次 track_selected（空 = 全部）∩ track_visible。
-        let in_scope = match editing_track {
-            Some(t) => note.track == t,
-            None => {
-                (track_selected.is_empty() || track_selected.contains(&note.track))
-                    && track_visible
-                        .get(note.track as usize)
-                        .copied()
-                        .unwrap_or(true)
-            }
-        };
+        // 轨道作用域：track_selected（空 = 全部）∩ track_visible。
+        let in_scope = (track_selected.is_empty() || track_selected.contains(&note.track))
+            && track_visible
+                .get(note.track as usize)
+                .copied()
+                .unwrap_or(true);
         if !in_scope {
             continue;
         }

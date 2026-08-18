@@ -496,20 +496,13 @@ impl App {
                 } else {
                     None
                 };
-                let show_all = doc
-                    .edit
-                    .conductor_track_idx
-                    .map(|c| doc.edit.track_selected.contains(&c))
-                    .unwrap_or(false);
-                // PR 显示音轨 = 选中音轨（含 Conductor 意为全选）∪ editing_track。
-                // 有铅笔图标的音轨就像被选择了一样，一直显示在 PR 上。
-                let editing = doc.edit.editing_track;
+                // PR 显示 = 显示音轨勾选集合（track_visible），主音轨强制可见。
+                let main = doc.edit.main_track();
+                // 写入目标轨（铅笔/双击/录音/步进/自动化）= 主音轨，
+                // 无选中时回退第一个非 Conductor 轨。提前计算避开后面的可变借用。
+                let write_track = doc.edit.write_track();
                 let pr_visible: Vec<bool> = (0..doc.edit.track_visible.len())
-                    .map(|i| {
-                        let selected = show_all || doc.edit.track_selected.contains(&(i as u16));
-                        let is_editing = editing == Some(i as u16);
-                        doc.edit.track_visible[i] && (selected || is_editing)
-                    })
+                    .map(|i| doc.edit.track_visible[i] || main == Some(i as u16))
                     .collect();
                 let tpb = doc.data.model.meta.ppq;
                 let ts_num = doc
@@ -540,14 +533,13 @@ impl App {
                         denominator: t.denominator,
                     })
                     .collect();
-                // Get automation lanes：以 editing_track 为唯一编辑目标。
+                // Get automation lanes：以主音轨为唯一编辑目标。
                 // Conductor 不在此处提供 lanes（Tempo 由单独的 tempo_lane 传入）。
-                // editing_track 缺失/不可见/是 conductor 时返回空 Vec。
-                // （editing_track 已常驻 PR 显示，不再要求 track_selected。）
+                // 主音轨缺失/不可见/是 conductor 时返回空 Vec。
                 let automation_lanes: Vec<yinhe_types::AutomationLane> = {
                     let edit_trk = doc
                         .edit
-                        .editing_track
+                        .main_track()
                         .filter(|&t| {
                             doc.edit
                                 .track_visible
@@ -568,7 +560,7 @@ impl App {
                     }
                 };
                 // 渲染 lanes：所有 PR 可见音轨的 lanes（引用，零拷贝）。
-                // 与音符显示逻辑一致（选中音轨 ∪ editing_track，Conductor 选中 = 全部）。
+                // 与音符显示逻辑一致（track_visible ∪ 主音轨）。
                 let automation_render_lanes: Vec<&yinhe_types::AutomationLane> = doc
                     .data
                     .model
@@ -635,7 +627,7 @@ impl App {
                     &mut doc.edit.sel_rect,
                     &doc.edit.track_selected,
                     doc.edit.conductor_track_idx,
-                    doc.edit.editing_track,
+                    write_track,
                     doc.data.revision,
                     doc.data.note_revisions(),
                     &mut feedback,
@@ -759,7 +751,7 @@ impl App {
 
     /// Handle note drag — called once on release.
     /// 处理事件浏览器的跳转请求：设置 cursor_tick、切到 piano roll 视图、
-    /// 切 editing_track（音符/automation 事件）、滚动到中心。
+    /// 选中目标音轨（音符/automation 事件）、滚动到中心。
     fn handle_jump_request(
         &mut self,
         req: crate::right_panel::event_browser::JumpRequest,
@@ -773,13 +765,15 @@ impl App {
             self.view_mode = crate::chrome::mode_bar::ViewMode::Edit;
         }
 
-        // 2. 切 editing_track（音符/CC/PB/PC 事件需要）。
-        // Conductor 不可作为编辑目标（无铅笔图标）；Tempo 编辑不依赖它。
+        // 2. 选中目标音轨（音符/CC/PB/PC 事件需要）。
+        // Conductor 跳过（不作为写入目标）；Tempo 编辑不依赖选中。
         if let Some((track, _key)) = req.note
             && let Some(idx) = self.active_doc
             && self.documents[idx].edit.conductor_track_idx != Some(track)
         {
-            self.documents[idx].edit.editing_track = Some(track);
+            let sel = &mut self.documents[idx].edit.track_selected;
+            sel.clear();
+            sel.insert(track);
         }
 
         // 3. 设置 cursor_tick
@@ -999,7 +993,7 @@ mod tests {
     #[test]
     fn sel_hint_am_selection() {
         let mut doc = make_test_document();
-        doc.edit.editing_track = Some(1);
+        doc.edit.track_selected = [1u16].into_iter().collect();
         doc.edit.controller_panels.clear();
         doc.edit.controller_panels.push(AutomationPanelView {
             show_velocity: false,

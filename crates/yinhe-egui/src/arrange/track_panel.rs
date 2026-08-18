@@ -2,9 +2,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use eframe::egui;
-use egui_material_icons::icons::{
-    ICON_ADD, ICON_EDIT, ICON_KEYBOARD_ARROW_DOWN, ICON_KEYBOARD_ARROW_RIGHT,
-};
+use egui_material_icons::icons::{ICON_ADD, ICON_KEYBOARD_ARROW_DOWN, ICON_KEYBOARD_ARROW_RIGHT};
 use rust_i18n::t;
 
 use yinhe_core::TrackInfo;
@@ -58,7 +56,6 @@ pub(crate) fn show(
     row_height: &mut f32,
     scroll_y: &mut f32,
     request_pianoroll: &mut bool,
-    editing_track: &mut Option<u16>,
     info_content: &mut Option<crate::right_panel::InfoContent>,
     // 行布局（含展开的 AM 子行；与 GPU 区共用同一 ArRowLayout）。
     row_layout: &ArRowLayout,
@@ -480,24 +477,6 @@ pub(crate) fn show(
                     audio_dirty = true;
                 }
             }
-
-            // 铅笔 ICON：双击 track 后显示，表示该 track 是 pencil/automation 的编辑目标。
-            // 非 conductor：在 M/S 按钮左侧；conductor：不出铅笔图标
-            // （Tempo 编辑不依赖编辑目标，conductor 仅作 PR 打开/定位用）。
-            if *editing_track == Some(ti.index) && !is_conductor {
-                let gap = 2.0;
-                let total_btn_w = 2.0 * btn_size.x + gap;
-                let icon_x = row_rect.max.x - total_btn_w - 6.0 - gap - btn_size.x;
-                let icon_y = badge_rect.center().y - btn_size.y * 0.5;
-                let icon_rect = egui::Rect::from_min_size(egui::pos2(icon_x, icon_y), btn_size);
-                painter.text(
-                    icon_rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    ICON_EDIT.codepoint,
-                    egui::FontId::new(crate::theme::ICON_FONT, ICON_EDIT.font_family()),
-                    crate::theme::text_bright(),
-                );
-            }
         } else {
             let font = egui::FontId::proportional((*row_height * 0.45).clamp(8.0, 14.0));
             painter.text(
@@ -531,16 +510,13 @@ pub(crate) fn show(
         if let Some(pos) = resp.interact_pointer_pos()
             && let Some(idx) = hit(pos)
         {
-            // 双击 toggle：已经是 editing_track 则清除（关闭编辑），
-            // 否则设为新 editing_track（打开 PR 并切换编辑目标）。
-            // Conductor 也可作为编辑目标（仅用于 Tempo automation，不出铅笔图标）。
+            // 双击：选中该行（track_selected = {该行}，即成为主音轨）并打开 PR。
+            // Conductor 双击同样选中（Tempo automation 编辑照旧，主音轨 = Conductor）。
             let track_idx = track_info[idx].index;
-            if *editing_track == Some(track_idx) {
-                *editing_track = None;
-            } else {
-                *editing_track = Some(track_idx);
-                *request_pianoroll = true;
-            }
+            track_selected.clear();
+            track_selected.insert(track_idx);
+            *selection_anchor = Some(track_idx);
+            *request_pianoroll = true;
             // 双击 = 编辑主轨：清除 AM lane 选择。
             am_lane_selected.clear();
         }
@@ -567,11 +543,12 @@ pub(crate) fn show(
                     am_lane_selected.insert(key);
                 }
             }
+            // 点子行：把主轨写入 track_selected（与主行点击互斥：
+            // 点主行清 arr_am_selected，点子行选中主轨并保留 lane 选中）。
+            // 选中的 AM lane 对应卷帘显示主轨音符（主音轨强制可见，不强制切换当前视图）。
             track_selected.clear();
+            track_selected.insert(track_info[t].index);
             *selection_anchor = None;
-            // 选中的 AM lane 对应卷帘显示主轨音符（PR 常驻 editing_track，
-            // 打开/可见时即显示主轨；不强制切换当前视图）。
-            *editing_track = Some(track_info[t].index);
         } else {
             let idx = row_hit.track();
             let track_idx = track_info[idx].index;

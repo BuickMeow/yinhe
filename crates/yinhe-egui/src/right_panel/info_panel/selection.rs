@@ -596,7 +596,7 @@ struct AmAnchors {
 }
 
 /// 面板选框覆盖的锚点事件列表（讲解行统计与 info panel 共用事件来源逻辑）。
-/// Tempo 面板读 conductor.tempo，其他面板读 editing_track 的匹配 lane。
+/// Tempo 面板读 conductor.tempo，其他面板读主音轨的匹配 lane。
 pub(crate) fn selected_am_events(
     doc: &Document,
     panel: &yinhe_types::AutomationPanelView,
@@ -615,7 +615,7 @@ pub(crate) fn selected_am_events(
     } else {
         let Some(track) = doc
             .edit
-            .editing_track
+            .main_track()
             .and_then(|i| doc.data.model.tracks.get(i as usize))
         else {
             return Vec::new();

@@ -375,7 +375,7 @@ impl App {
     }
 
     /// 获取 target 对应的 track_idx。
-    /// Tempo → conductor_track_idx；其他 → editing_track（需可见且非 conductor）。
+    /// Tempo → conductor_track_idx；其他 → 主音轨（需可见且非 conductor）。
     fn track_idx_for(
         doc: &yinhe_editor_core::document::Document,
         target: &AutomationTarget,
@@ -384,7 +384,7 @@ impl App {
             doc.edit.conductor_track_idx
         } else {
             doc.edit
-                .editing_track
+                .main_track()
                 .filter(|&t| {
                     doc.edit
                         .track_visible

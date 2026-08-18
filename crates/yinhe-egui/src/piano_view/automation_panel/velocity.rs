@@ -1,7 +1,7 @@
 //! automation 面板 velocity 模式的铅笔笔划交互。
 //!
 //! 笔迹扫过的力度条（按 noteon / start_tick 判定）被设为笔迹在该处的插值高度。
-//! 与钢琴卷帘铅笔工具一致：只作用于 `active_track`（editing_track 且可见）。
+//! 与钢琴卷帘铅笔工具一致：只作用于 `active_track`（write_track 且可见且非 Conductor）。
 //! 拖拽中只画 egui 预览，松开时一次性提交（一笔 = 一个 undo entry）。
 
 use std::collections::HashMap;
