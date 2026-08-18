@@ -31,9 +31,10 @@ pub struct PrBarData<'a> {
     pub quantize: QuantizePreset,
     /// 轨道显示信息缓存（edit.track_info_cache，含 Conductor 行）。
     pub track_infos: &'a [yinhe_core::TrackInfo],
-    /// 显示音轨勾选状态（edit.track_visible，popup 右半写它）。
-    pub track_visible: &'a [bool],
-    /// 主音轨（= 选中轨索引最小者，无选中时为回退轨，由 layout 计算）。
+    /// PR 显示音轨勾选状态（edit.track_pianoroll_visible，popup 右半写它）。
+    /// 与 AR 显隐（track_visible）分离，互不影响。
+    pub pr_track_visible: &'a [bool],
+    /// 主音轨（= 选中轨索引最小者；无选中 = None，不显示回退轨）。
     pub main_track: Option<u16>,
     /// 和弦指示器文本（实时 MIDI 按键优先，其次播放中光标处和弦）。
     pub chord: Option<&'a str>,
@@ -86,16 +87,27 @@ pub fn show(ui: &mut egui::Ui, bar: egui::Rect, ctx: &PrBarData<'_>, events: &mu
         .and_then(|t| ctx.track_infos.iter().find(|i| i.index == t))
         .map(track_label)
         .unwrap_or_else(|| t!("pr_bar.no_track").to_string());
-    let text = format!("{name} ▾");
+    // 名称 + 下拉箭头（material 图标，不用 Unicode 字符，避免字体缺字显示方框）。
     let font = egui::FontId::proportional(crate::theme::SMALL_FONT);
+    let icon = egui_material_icons::icons::ICON_KEYBOARD_ARROW_DOWN;
+    let icon_font = egui::FontId::new(crate::theme::ICON_FONT, icon.font_family());
     let text_w = ui
         .painter()
-        .layout_no_wrap(text.clone(), font.clone(), crate::theme::text_primary())
+        .layout_no_wrap(name.clone(), font.clone(), crate::theme::text_primary())
+        .size()
+        .x;
+    let icon_w = ui
+        .painter()
+        .layout_no_wrap(
+            icon.codepoint.to_string(),
+            icon_font.clone(),
+            crate::theme::text_primary(),
+        )
         .size()
         .x;
     let btn_rect = egui::Rect::from_min_size(
         egui::pos2(quantize_rect.max.x + 4.0, bar.min.y + 2.0),
-        egui::vec2(text_w + 16.0, bar.height() - 4.0),
+        egui::vec2(text_w + 6.0 + icon_w + 16.0, bar.height() - 4.0),
     );
     let btn_resp = ui.interact(
         btn_rect,
@@ -115,11 +127,20 @@ pub fn show(ui: &mut egui::Ui, bar: egui::Rect, ctx: &PrBarData<'_>, events: &mu
     } else {
         crate::theme::text_primary()
     };
+    let text_x = btn_rect.min.x + 8.0;
+    let cy = btn_rect.center().y;
     ui.painter().text(
-        btn_rect.center(),
-        egui::Align2::CENTER_CENTER,
-        text,
+        egui::pos2(text_x, cy),
+        egui::Align2::LEFT_CENTER,
+        name,
         font,
+        icon_color,
+    );
+    ui.painter().text(
+        egui::pos2(text_x + text_w + 6.0, cy),
+        egui::Align2::LEFT_CENTER,
+        icon.codepoint,
+        icon_font,
         icon_color,
     );
 
@@ -145,7 +166,7 @@ pub fn show(ui: &mut egui::Ui, bar: egui::Rect, ctx: &PrBarData<'_>, events: &mu
 /// available_width（铺满整行），popup 又是内容自适应宽度，只设 min 会形成
 /// 「按钮请求可用宽度 → popup 变宽 → 可用宽度更大」的每帧正反馈，popup 向右飞出去。
 fn track_popup(ui: &mut egui::Ui, ctx: &PrBarData<'_>, events: &mut Vec<PrBarEvent>) {
-    ui.set_max_height(360.0);
+    ui.set_max_height(560.0);
     ui.horizontal(|ui| {
         // ── 左半：切换主音轨（单击 = 选中仅此轨）──
         ui.vertical(|ui| {
@@ -155,7 +176,7 @@ fn track_popup(ui: &mut egui::Ui, ctx: &PrBarData<'_>, events: &mut Vec<PrBarEve
             ui.separator();
             egui::ScrollArea::vertical()
                 .id_salt("pr_bar_main_list")
-                .max_height(320.0)
+                .max_height(500.0)
                 .show(ui, |ui| {
                     for info in ctx.track_infos {
                         let is_main = ctx.main_track == Some(info.index);
@@ -182,10 +203,10 @@ fn track_popup(ui: &mut egui::Ui, ctx: &PrBarData<'_>, events: &mut Vec<PrBarEve
             ui.separator();
             egui::ScrollArea::vertical()
                 .id_salt("pr_bar_visible_list")
-                .max_height(320.0)
+                .max_height(500.0)
                 .show(ui, |ui| {
-                    let n = ctx.track_visible.len();
-                    let all = n > 0 && ctx.track_visible.iter().all(|&v| v);
+                    let n = ctx.pr_track_visible.len();
+                    let all = n > 0 && ctx.pr_track_visible.iter().all(|&v| v);
                     let mut checked = all;
                     if crate::widgets::checkbox::check_scope(ui, |ui| {
                         ui.checkbox(&mut checked, t!("pr_bar.select_all"))
@@ -198,7 +219,7 @@ fn track_popup(ui: &mut egui::Ui, ctx: &PrBarData<'_>, events: &mut Vec<PrBarEve
                     ui.separator();
                     for info in ctx.track_infos {
                         let mut vis = ctx
-                            .track_visible
+                            .pr_track_visible
                             .get(info.index as usize)
                             .copied()
                             .unwrap_or(false);

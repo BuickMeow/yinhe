@@ -504,13 +504,14 @@ impl App {
                 } else {
                     None
                 };
-                // PR 显示 = 显示音轨勾选集合（track_visible），主音轨强制可见。
+                // PR 显示 = PR 显示音轨勾选集合（track_pianoroll_visible），
+                // 主音轨强制可见。与 AR 显隐（track_visible）分离，互不影响。
                 let main = doc.edit.main_track();
                 // 写入目标轨（铅笔/双击/录音/步进/自动化）= 主音轨，
                 // 无选中时回退第一个非 Conductor 轨。提前计算避开后面的可变借用。
                 let write_track = doc.edit.write_track();
-                let pr_visible: Vec<bool> = (0..doc.edit.track_visible.len())
-                    .map(|i| doc.edit.track_visible[i] || main == Some(i as u16))
+                let pr_visible: Vec<bool> = (0..doc.edit.track_pianoroll_visible.len())
+                    .map(|i| doc.edit.track_pianoroll_visible[i] || main == Some(i as u16))
                     .collect();
                 let tpb = doc.data.model.meta.ppq;
                 let ts_num = doc
@@ -564,7 +565,7 @@ impl App {
                     }
                 };
                 // 渲染 lanes：所有 PR 可见音轨的 lanes（引用，零拷贝）。
-                // 与音符显示逻辑一致（track_visible ∪ 主音轨）。
+                // 与音符显示逻辑一致（track_pianoroll_visible ∪ 主音轨）。
                 let automation_render_lanes: Vec<&yinhe_types::AutomationLane> = doc
                     .data
                     .model
@@ -585,8 +586,9 @@ impl App {
                     ppq: tpb,
                     quantize: doc.edit.quantize_pianoroll,
                     track_infos: &doc.edit.track_info_cache,
-                    track_visible: &doc.edit.track_visible,
-                    main_track: write_track,
+                    pr_track_visible: &doc.edit.track_pianoroll_visible,
+                    // 主音轨纯派生自选中集合：无选中时为空，不显示回退轨。
+                    main_track: main,
                     chord: chord_text.as_deref(),
                 };
                 let auto_ctx = Some(piano_view::AutomationPanelsCtx {
@@ -728,12 +730,13 @@ impl App {
                     edit.track_selected.clear();
                     edit.track_selected.insert(t);
                 }
+                // PR 显示开关只写 track_pianoroll_visible，不影响 AR（track_visible）。
                 PrBarEvent::SetTrackVisible(t, v) => {
-                    if let Some(slot) = edit.track_visible.get_mut(t as usize) {
+                    if let Some(slot) = edit.track_pianoroll_visible.get_mut(t as usize) {
                         *slot = v;
                     }
                 }
-                PrBarEvent::SetAllVisible(v) => edit.track_visible.fill(v),
+                PrBarEvent::SetAllVisible(v) => edit.track_pianoroll_visible.fill(v),
             }
         }
 

@@ -191,8 +191,9 @@ pub struct EditState {
     pub playback: PlaybackState,
     pub track_overrides: Vec<TrackOverride>,
     pub track_visible: Vec<bool>,
+    /// PR 专用显示开关（PR 控制栏右侧勾选）。与 track_visible 分离：
+    /// AR 显隐用 track_visible，PR 栏不影响 AR。
     pub track_pianoroll_visible: Vec<bool>,
-    pub track_pianoroll_visible_snapshot: Option<Vec<bool>>,
     pub controller_panels: Vec<yinhe_types::AutomationPanelView>,
     pub show_controller_panels: bool,
     pub soundfont_selected_port: u8,
@@ -246,7 +247,6 @@ impl Default for EditState {
             track_overrides: vec![TrackOverride::default()],
             track_visible: Vec::new(),
             track_pianoroll_visible: Vec::new(),
-            track_pianoroll_visible_snapshot: None,
             controller_panels: vec![yinhe_types::AutomationPanelView::default()],
             show_controller_panels: true,
             soundfont_selected_port: 0,
