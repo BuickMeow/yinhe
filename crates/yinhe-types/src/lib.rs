@@ -38,3 +38,16 @@ pub use view_base::TimelineViewBase;
 pub fn is_black_key(key: u8) -> bool {
     matches!(key % 12, 1 | 3 | 6 | 8 | 10)
 }
+
+/// 升号音名表：`NOTE_NAMES[i]` 是音级 i 的名字。
+pub const NOTE_NAMES: [&str; 12] = [
+    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+];
+
+/// 把 MIDI key（0..=127）格式化为 "C5" 式音名。
+///
+/// 八度约定与 PR 键盘（piano_view/keyboard.rs）一致：octave = key / 12，
+/// 即 key 60 标注为 "C5"。
+pub fn key_name(key: u8) -> String {
+    format!("{}{}", NOTE_NAMES[(key % 12) as usize], key / 12)
+}
