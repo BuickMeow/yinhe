@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use eframe::egui;
 
-use yinhe_types::ArrangementView;
+use yinhe_types::{ArRow, ArRowLayout, ArrangementView};
 use yinhe_wgpu::layer_cache_key;
 use yinhe_wgpu::{InstanceRenderer, MAX_TRACKS, Uniforms};
 use yinhe_wgpu::{build_arr_notes, build_ghost_notes};
@@ -27,6 +27,7 @@ pub fn show(
     renderer: &mut InstanceRenderer,
     render_ctx: &mut RenderContext,
     view: &mut ArrangementView,
+    row_layout: &ArRowLayout,
     data: super::ArrangeData<'_>,
     edit: &mut super::ArrangeEdit<'_>,
     cfg: &mut super::ArrangeViewCfg<'_>,
@@ -62,7 +63,12 @@ pub fn show(
 
     render_ctx.ensure_size(pw, ph);
 
-    view.clamp_scroll(w as f32, h as f32, data.total_ticks, data.num_tracks);
+    view.clamp_scroll(
+        w as f32,
+        h as f32,
+        data.total_ticks,
+        row_layout.total_rows(),
+    );
 
     if let Some(ct) = *edit.cursor_tick
         && cfg.is_playing
@@ -78,7 +84,12 @@ pub fn show(
         )
     {
         view.base.scroll_x = new_scroll_x;
-        view.clamp_scroll(w as f32, h as f32, data.total_ticks, data.num_tracks);
+        view.clamp_scroll(
+            w as f32,
+            h as f32,
+            data.total_ticks,
+            row_layout.total_rows(),
+        );
     }
 
     let scroll_x = view.base.scroll_x;
@@ -127,7 +138,9 @@ pub fn show(
     let (mut ghost_notes, hidden_notes, drag_rect) =
         if *cfg.active_tool == Tool::Select || *cfg.active_tool == Tool::SelectVertical {
             let vertical = *cfg.active_tool == Tool::SelectVertical;
-            sel_drag_frame_arrange(ui, rect, music_rect, view, &data, edit, vertical)
+            sel_drag_frame_arrange(
+                ui, rect, music_rect, view, row_layout, &data, edit, vertical,
+            )
         } else {
             (Vec::new(), HashSet::new(), None)
         };
@@ -151,15 +164,18 @@ pub fn show(
 
     // Grid lines 已迁移到 egui（见下方 paint_grid_lines 调用），wgpu 不再构建 grid layer。
 
+    // 行几何：行高 / 滚动 / 可见行范围（含展开的自动化 lane 子行）。
+    let lh = view.lane_height();
+    let scroll_y = view.base.scroll_y;
+    let first_row = ((scroll_y / lh).floor().max(0.0) as usize).min(row_layout.total_rows());
+    let last_row =
+        (((scroll_y + h as f32) / lh).ceil().max(0.0) as usize).min(row_layout.total_rows());
+    let track_range = row_layout.visible_track_range(scroll_y, h as f32, lh);
+    // 每轨主行 y 偏移表：展开自动化 lane 后行布局不再均匀，shader 查表定位。
+    renderer.upload_track_offsets(&row_layout.track_offsets(lh));
+
     // Layer 0: notes (16B NoteInstance — shader computes pixel positions from uniforms)
     let notes_key = layer_cache_key(&[vh, wh, tv_hash, cfg.revision, hidden_notes.len() as u64]);
-    // TODO(am-lanes): 下一步改为 ArRowLayout 计算的可视范围
-    let track_range = ArrangementView::visible_track_range_static(
-        view.base.scroll_y,
-        h as f32,
-        view.lane_height(),
-        data.num_tracks,
-    );
     renderer.upload_note_layer(0, notes_key, |out| {
         if let Some(midi) = data.midi {
             build_arr_notes(
@@ -186,35 +202,143 @@ pub fn show(
         );
     });
 
+    // ── 自动化 lane 交互（展开的音轨子行 + Conductor 主行 Tempo 直显）──
+    // 先于曲线渲染层调用，本帧 ghost 当帧可见；edits 由 arrange.rs 应用到 Document。
+    let am_rows =
+        super::am_lanes::visible_am_rows(row_layout, first_row, last_row, data.conductor_track_idx);
+    let mut am_ghost: Option<(yinhe_wgpu::AutomationGhost, f32, f32, f32)> = None;
+    let mut am_marquee: Option<egui::Rect> = None;
+    if !am_rows.is_empty() {
+        let am_ctx = crate::piano_view::automation_panel::AutomationEditCtx {
+            active_tool: *cfg.active_tool,
+            active_track: None, // AR 无 editing_track；lane 交互自带 track
+            quantize: data.quantize,
+            ppq: data.ppq,
+            bar_line_data: data.bar_line_data,
+        };
+        let mut io = super::am_lanes::AmLanesIo {
+            tracks: data.tracks,
+            tempo_lane: data.tempo_lane,
+            track_colors: data.track_colors,
+            selected: &mut *edit.selected,
+            info_content: &mut *edit.info_content,
+            right_tab: &mut *edit.right_tab,
+            am_views: &mut *edit.arr_am_views,
+            edits: &mut *edit.am_edits,
+        };
+        let out =
+            super::am_lanes::interact_all(ui, &am_rows, view, rect, music_rect, &am_ctx, &mut io);
+        am_ghost = out.ghost;
+        am_marquee = out.marquee;
+    }
+
+    // ── 自动化曲线渲染层（layer 2 数据 + layer 3 ghost，画在共享走带纹理上）──
+    {
+        let show_anchors = matches!(
+            *cfg.active_tool,
+            Tool::Pencil | Tool::Curve | Tool::Select | Tool::SelectVertical
+        );
+        let mut am_render: Vec<yinhe_wgpu::ArrAutomationLane> = Vec::new();
+        let mut am_highlights: Vec<Box<[u32]>> = Vec::new();
+        for r in &am_rows {
+            let (lane, track) = match r.sub {
+                Some(sub) => {
+                    match data
+                        .tracks
+                        .get(r.track)
+                        .and_then(|t| t.automation_lanes.get(sub))
+                    {
+                        Some(l) => (l, r.track as u16),
+                        None => continue,
+                    }
+                }
+                None => (data.tempo_lane, r.track as u16),
+            };
+            let key = (track, lane.target.clone());
+            let sel_rects = edit
+                .arr_am_views
+                .get(&key)
+                .map(|v| v.anchor_sel_rects.as_slice())
+                .unwrap_or(&[]);
+            am_highlights.push(super::am_lanes::lane_highlight_ticks(
+                lane,
+                track,
+                sel_rects,
+                edit.info_content,
+            ));
+            am_render.push(yinhe_wgpu::ArrAutomationLane {
+                lane,
+                y_top: r.row as f32 * lh - scroll_y,
+                height: lh,
+                max_val: super::am_lanes::lane_max_val(lane),
+                highlight_ticks: &[],
+            });
+        }
+        // 二阶段回填：highlights 定稿后再借给 render lanes。
+        for (i, l) in am_render.iter_mut().enumerate() {
+            l.highlight_ticks = &am_highlights[i];
+        }
+        // 缓存 key：布局（展开状态/行数/行高/滚动都在 vh 或 offsets 里）+
+        // revision（任何编辑都 bump）+ 高亮锚点。
+        let offsets_hash = row_layout.track_offsets(lh).iter().fold(0u64, |acc, &o| {
+            acc.wrapping_mul(0x9e3779b97f4a7c15)
+                .wrapping_add(o.to_bits() as u64)
+        });
+        let hl_hash = am_highlights.iter().fold(0u64, |acc, hl| {
+            hl.iter()
+                .fold(acc, |a, &tk| a.wrapping_mul(31).wrapping_add(tk as u64))
+        });
+        let am_key = layer_cache_key(&[
+            vh,
+            wh,
+            tv_hash,
+            offsets_hash,
+            show_anchors as u64,
+            cfg.revision,
+            hl_hash,
+        ]);
+        yinhe_wgpu::prepare_arr_automation(
+            renderer,
+            w as f32,
+            h as f32,
+            &view.base,
+            &am_render,
+            data.track_visible,
+            data.track_colors,
+            show_anchors,
+            am_ghost,
+            am_key,
+        );
+    }
+
     let content_changed = true;
 
     // ── Track lanes ──
-    // 普通行 = app_bg（打底一层，不透明）；着色行（偶数行）叠更黑条纹。
+    // 普通行 = app_bg（打底一层，不透明）；着色行（偶数音轨）叠更黑条纹。
+    // AM 子行与所属音轨同色（按音轨奇偶，不按行号）。
     painter.rect_filled(rect, 0.0, crate::theme::app_bg());
     let lb_w = view.base.left_panel_width;
-    let lh = view.lane_height();
-    let scroll_y = view.base.scroll_y;
-    if data.num_tracks > 0 {
-        let (trk_first, trk_last) =
-            ArrangementView::visible_track_range_static(scroll_y, h as f32, lh, data.num_tracks);
-        for idx in trk_first..trk_last {
-            if !data.track_visible.get(idx).copied().unwrap_or(true) {
-                continue;
-            }
-            if idx % 2 != 0 {
-                continue; // 奇数行 = 普通行（app_bg）
-            }
-            let y = rect.min.y + ArrangementView::lane_y_static(idx, scroll_y, lh);
-            let col = crate::theme::stripe_bg();
-            painter.rect_filled(
-                egui::Rect::from_min_size(
-                    egui::pos2(rect.min.x + lb_w, y),
-                    egui::vec2(w as f32 - lb_w, lh),
-                ),
-                0.0,
-                col,
-            );
+    for row in first_row..last_row {
+        let Some(hit) = row_layout.row_hit(row) else {
+            continue;
+        };
+        let track = hit.track();
+        if !data.track_visible.get(track).copied().unwrap_or(true) {
+            continue;
         }
+        if track % 2 != 0 {
+            continue; // 奇数音轨 = 普通行（app_bg）
+        }
+        let y = rect.min.y + row as f32 * lh - scroll_y;
+        let col = crate::theme::stripe_bg();
+        painter.rect_filled(
+            egui::Rect::from_min_size(
+                egui::pos2(rect.min.x + lb_w, y),
+                egui::vec2(w as f32 - lb_w, lh),
+            ),
+            0.0,
+            col,
+        );
     }
 
     // ── Grid lines (drawn by egui before wgpu texture) ──
@@ -276,15 +400,15 @@ pub fn show(
 
     // ── Eraser tool dispatch (after GPU texture, before eraser marquee drawing) ──
     if *cfg.active_tool == Tool::Eraser {
-        eraser_drag_frame_arrange(ui, rect, music_rect, view, &data, edit);
+        eraser_drag_frame_arrange(ui, rect, music_rect, view, row_layout, &data, edit);
     }
 
     // Draw persisted selection rects (remains after mouse release, 支持多选框).
+    // y 范围用行布局：覆盖展开的 AM 子行（选区内 automation 事件也随拖拽移动）。
     for &(t_start, t_end, track_lo, track_hi) in edit.arr_sel_rect.iter() {
-        let lh = view.lane_height();
-        let scroll_y = view.base.scroll_y;
-        let view_sy = track_lo as f32 * lh - scroll_y;
-        let view_ey = (track_hi as f32 + 1.0) * lh - scroll_y;
+        let view_sy = row_layout.track_y(track_lo, lh) - scroll_y;
+        let view_ey =
+            row_layout.track_y(track_hi, lh) + row_layout.track_height(track_hi, lh) - scroll_y;
         let view_sx = view.tick_to_x(t_start);
         let view_ex = view.tick_to_x(t_end);
         let snapped = egui::Rect::from_min_max(
@@ -311,7 +435,8 @@ pub fn show(
                 start_music.1 * view.lane_height() - view.base.scroll_y,
             );
             if (end - start_pixel).length() >= 3.0
-                && let Some(b) = arrange_snapped_bounds(start_pixel, end, view, &data, false)
+                && let Some(b) =
+                    arrange_snapped_bounds(start_pixel, end, view, row_layout, &data, false)
             {
                 let snapped = egui::Rect::from_min_max(
                     egui::pos2(b.view_sx.min(b.view_ex), b.view_sy.min(b.view_ey)),
@@ -326,6 +451,22 @@ pub fn show(
                 );
             }
         }
+    }
+
+    // AM lane 的 Select/Eraser 框选矩形（draw 接受 content 局部坐标，需平移）
+    if let Some(mr) = am_marquee {
+        let col = if *cfg.active_tool == Tool::Eraser {
+            crate::theme::danger_text_bright()
+        } else {
+            crate::theme::contrast_fg()
+        };
+        crate::selection::draw::draw(
+            ui.painter(),
+            rect,
+            mr.translate(-rect.min.to_vec2()),
+            col,
+            col,
+        );
     }
 
     crate::view_interaction::handle_input(
@@ -345,7 +486,12 @@ pub fn show(
     );
 
     // Clamp scroll after input
-    view.clamp_scroll(w as f32, h as f32, data.total_ticks, data.num_tracks);
+    view.clamp_scroll(
+        w as f32,
+        h as f32,
+        data.total_ticks,
+        row_layout.total_rows(),
+    );
 
     if let Some(t0) = _arrange_total_start {
         yinhe_memtrace::perf_probe::record_arrange_total(t0.elapsed());
@@ -360,11 +506,13 @@ pub fn show(
 /// `hidden_notes`: `(track, start_tick, key)` — original notes to hide during drag.
 /// `drag_rect`: the selection rect to draw on top of the GPU texture (move-drag offset
 ///   rect or marquee rect). `None` on release (arr_sel_rect takes over).
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 fn sel_drag_frame_arrange(
     ui: &mut egui::Ui,
     content_rect: egui::Rect,
     hit_rect: egui::Rect,
     view: &mut ArrangementView,
+    row_layout: &ArRowLayout,
     data: &super::ArrangeData<'_>,
     edit: &mut super::ArrangeEdit<'_>,
     vertical: bool,
@@ -424,8 +572,9 @@ fn sel_drag_frame_arrange(
                 let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
                 let lh = view.lane_height();
                 let scroll_y = view.base.scroll_y;
-                let sy = track_lo as f32 * lh - scroll_y;
-                let ey = (track_hi as f32 + 1.0) * lh - scroll_y;
+                let sy = row_layout.track_y(track_lo, lh) - scroll_y;
+                let ey = row_layout.track_y(track_hi, lh) + row_layout.track_height(track_hi, lh)
+                    - scroll_y;
                 let sx = view.tick_to_x(t_start);
                 let ex = view.tick_to_x(t_end);
                 let rect = egui::Rect::from_min_max(
@@ -441,14 +590,33 @@ fn sel_drag_frame_arrange(
         ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
     }
 
+    // 命中 AM 子行或 Conductor 主行（Tempo 直显）→ 交给自动化 lane 交互，
+    // 此处不起音符框选/移动拖拽。
+    let on_am_row = pointer.hover_pos().is_some_and(|pos| {
+        hit_rect.contains(pos)
+            && match row_layout.hit_at_music_y(
+                pos.y - content_rect.min.y + view.base.scroll_y,
+                view.lane_height(),
+            ) {
+                Some(ArRow::Automation(..)) => true,
+                Some(ArRow::Track(t)) => data.conductor_track_idx == Some(t as u16),
+                None => false,
+            }
+    });
+
     // ── Primary press handling ──
     if pointer.primary_pressed()
+        && !on_am_row
         && let Some(pos) = pointer.hover_pos()
         && hit_rect.contains(pos)
     {
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
         let click_tick = view.x_to_tick(local.x);
-        let click_track_f = (local.y + view.base.scroll_y) / view.lane_height();
+        // 行命中 → 音轨索引（展开后行号与音轨不再一一对应，AM 行归到所属音轨）
+        let click_track_f = row_layout
+            .hit_at_music_y(local.y + view.base.scroll_y, view.lane_height())
+            .map(|h| h.track() as f32)
+            .unwrap_or(0.0);
 
         if inside_sel_rect && !additive {
             // Start move-drag of existing selection
@@ -480,7 +648,10 @@ fn sel_drag_frame_arrange(
     {
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
         let current_tick = view.x_to_tick(local.x);
-        let current_track_f = (local.y + view.base.scroll_y) / view.lane_height();
+        let current_track_f = row_layout
+            .hit_at_music_y(local.y + view.base.scroll_y, view.lane_height())
+            .map(|h| h.track() as f32)
+            .unwrap_or(0.0);
         move_drag = Some((origin, (current_tick, current_track_f), alt));
 
         // Auto-scroll when dragging near the edge
@@ -493,7 +664,7 @@ fn sel_drag_frame_arrange(
             pos,
             |base, _, h| {
                 base.clamp_scroll_x(full_w, data.total_ticks);
-                let max_scroll_y = (data.num_tracks as f32 * lh - h).max(0.0);
+                let max_scroll_y = (row_layout.total_rows() as f32 * lh - h).max(0.0);
                 base.scroll_y = base.scroll_y.clamp(0.0, max_scroll_y);
             },
         );
@@ -637,7 +808,7 @@ fn sel_drag_frame_arrange(
                 pos,
                 |base, _, h| {
                     base.clamp_scroll_x(full_w, data.total_ticks);
-                    let max_scroll_y = (data.num_tracks as f32 * lh - h).max(0.0);
+                    let max_scroll_y = (row_layout.total_rows() as f32 * lh - h).max(0.0);
                     base.scroll_y = base.scroll_y.clamp(0.0, max_scroll_y);
                 },
             );
@@ -651,7 +822,8 @@ fn sel_drag_frame_arrange(
         // Compute marquee drag_rect (BEFORE release, same pattern as move-drag)
         if let Some((_, end)) = drag
             && (end - start_pixel).length() >= 3.0
-            && let Some(b) = arrange_snapped_bounds(start_pixel, end, view, data, vertical)
+            && let Some(b) =
+                arrange_snapped_bounds(start_pixel, end, view, row_layout, data, vertical)
         {
             drag_rect = Some(egui::Rect::from_min_max(
                 egui::pos2(b.view_sx.min(b.view_ex), b.view_sy.min(b.view_ey)),
@@ -685,7 +857,8 @@ fn sel_drag_frame_arrange(
                         *edit.info_content = Some(crate::right_panel::InfoContent::Track);
                     }
                 } else {
-                    if let Some(b) = arrange_snapped_bounds(start_pixel, end, view, data, vertical)
+                    if let Some(b) =
+                        arrange_snapped_bounds(start_pixel, end, view, row_layout, data, vertical)
                     {
                         // shift 或 cmd/ctrl 累加模式：保留已有选框；否则清空
                         if !additive {
@@ -731,6 +904,7 @@ fn eraser_drag_frame_arrange(
     content_rect: egui::Rect,
     hit_rect: egui::Rect,
     view: &mut ArrangementView,
+    row_layout: &ArRowLayout,
     data: &super::ArrangeData<'_>,
     edit: &mut super::ArrangeEdit<'_>,
 ) {
@@ -750,10 +924,19 @@ fn eraser_drag_frame_arrange(
         return;
     }
 
-    // Press → start drag (store music coordinates: (tick, track_f))
+    // Press → start drag (store music coordinates: (tick, 行号浮点))
+    // 命中 AM 子行 / Conductor 主行 → 交给自动化 lane 的橡皮擦交互。
     if pointer.primary_pressed()
         && let Some(pos) = pointer.hover_pos()
         && hit_rect.contains(pos)
+        && !match row_layout.hit_at_music_y(
+            pos.y - content_rect.min.y + view.base.scroll_y,
+            view.lane_height(),
+        ) {
+            Some(ArRow::Automation(..)) => true,
+            Some(ArRow::Track(t)) => data.conductor_track_idx == Some(t as u16),
+            None => false,
+        }
     {
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
         let start_tick = view.x_to_tick(local.x);
@@ -784,7 +967,7 @@ fn eraser_drag_frame_arrange(
                 pos,
                 |base, _, h| {
                     base.clamp_scroll_x(full_w, data.total_ticks);
-                    let max_scroll_y = (data.num_tracks as f32 * lh - h).max(0.0);
+                    let max_scroll_y = (row_layout.total_rows() as f32 * lh - h).max(0.0);
                     base.scroll_y = base.scroll_y.clamp(0.0, max_scroll_y);
                 },
             );
@@ -799,7 +982,8 @@ fn eraser_drag_frame_arrange(
         if pointer.primary_released() {
             if let Some((_, end)) = drag {
                 if (end - start_pixel).length() >= 3.0
-                    && let Some(b) = arrange_snapped_bounds(start_pixel, end, view, data, false)
+                    && let Some(b) =
+                        arrange_snapped_bounds(start_pixel, end, view, row_layout, data, false)
                 {
                     *edit.arr_eraser_rect = Some((b.t_start, b.t_end, b.track_lo, b.track_hi));
                 }
@@ -825,10 +1009,12 @@ struct ArrSnappedBounds {
 }
 
 /// Compute snapped selection bounds for arrangement.
+/// 行号（均匀行空间）→ 音轨索引用 ArRowLayout 换算：AM 子行归到所属音轨。
 fn arrange_snapped_bounds(
     start: egui::Pos2,
     end: egui::Pos2,
     view: &ArrangementView,
+    row_layout: &ArRowLayout,
     data: &super::ArrangeData<'_>,
     vertical: bool,
 ) -> Option<ArrSnappedBounds> {
@@ -864,16 +1050,21 @@ fn arrange_snapped_bounds(
     } else {
         let sy = start.y.min(end.y);
         let ey = start.y.max(end.y);
-        let track_lo_raw = ((scroll_y + sy) / lh).floor().max(0.0) as usize;
-        let track_hi_raw = ((scroll_y + ey) / lh).floor().max(0.0) as usize;
-        // 边界判断：选框必须与实际音轨区域有重叠，否则不纳入选择范围。
-        if track_lo_raw >= data.num_tracks {
+        let row_lo = ((scroll_y + sy) / lh).floor().max(0.0) as usize;
+        let row_hi = ((scroll_y + ey) / lh).floor().max(0.0) as usize;
+        // 边界判断：选框必须与实际内容区域有重叠，否则不纳入选择范围。
+        if row_lo >= row_layout.total_rows() {
             return None;
         }
-        let track_lo = track_lo_raw;
-        let track_hi = track_hi_raw.min(data.num_tracks - 1);
-        let view_sy = track_lo as f32 * lh - scroll_y;
-        let view_ey = (track_hi as f32 + 1.0) * lh - scroll_y;
+        // 行 → 音轨：AM 子行归到所属音轨（选框自然覆盖该轨全部展开行）。
+        let track_lo = row_layout.row_hit(row_lo).map(|h| h.track()).unwrap_or(0);
+        let track_hi = row_layout
+            .row_hit(row_hi.min(row_layout.total_rows().saturating_sub(1)))
+            .map(|h| h.track())
+            .unwrap_or(0);
+        let view_sy = row_layout.track_y(track_lo, lh) - scroll_y;
+        let view_ey =
+            row_layout.track_y(track_hi, lh) + row_layout.track_height(track_hi, lh) - scroll_y;
         (track_lo, track_hi, view_sy, view_ey)
     };
 

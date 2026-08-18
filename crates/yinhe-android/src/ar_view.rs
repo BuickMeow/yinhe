@@ -527,8 +527,13 @@ impl ArView {
             renderer.upload_uniforms(uniforms);
             let tc = crate::track_colors_for(&model);
             renderer.upload_track_colors(&tc);
+            // 安卓 AR 无 AM 展开：均匀行布局，每轨主行 y = idx * 行高。
+            let lane_h = self.view.lane_height();
+            let offsets: Vec<f32> = (0..num_tracks).map(|i| i as f32 * lane_h).collect();
+            renderer.upload_track_offsets(&offsets);
             renderer.ensure_layers(2);
             let vh = self.view.render_hash();
+            let track_range = self.view.visible_track_range(rect.height(), num_tracks);
             // hidden（移动中隐藏的原音符）参与 cache key：变化时 Layer 0 重建。
             let hidden_hash = hash_hidden(&self.hidden_notes);
             let notes_key =
@@ -537,9 +542,9 @@ impl ArView {
                 build_arr_notes(
                     out,
                     rect.width(),
-                    rect.height(),
                     model.as_ref(),
                     &self.view,
+                    track_range,
                     &track_visible,
                     &self.hidden_notes,
                 );
@@ -552,8 +557,8 @@ impl ArView {
                         out,
                         &mut self.ghost_notes.clone(),
                         rect.width(),
-                        rect.height(),
                         &self.view,
+                        track_range,
                         &track_visible,
                     );
                 });

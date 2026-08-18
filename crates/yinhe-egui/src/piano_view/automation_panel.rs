@@ -21,7 +21,8 @@ mod velocity;
 use velocity::VelocityPreview;
 
 /// Curated list of known automation targets shown in the dropdown.
-const AUTOMATION_TARGETS: &[AutomationTarget] = &[
+/// AR 音轨面板「创建自动化」右键菜单也复用此列表（跳过 Tempo）。
+pub(crate) const AUTOMATION_TARGETS: &[AutomationTarget] = &[
     AutomationTarget::Tempo,
     AutomationTarget::PitchBend,
     AutomationTarget::CC { controller: 7 },  // Volume

@@ -170,6 +170,8 @@ impl App {
 
         // Arrangement view
         let mut needs_audio_rebuild = false;
+        // AR 自动化 lane 增删/编辑 → notify_audio_model_changed（不重建引擎）。
+        let mut needs_audio_notify = false;
         let (arr_drag_delta, arr_eraser_rect, arr_quantize): (
             Option<crate::arrange::ArrDragDelta>,
             Option<crate::arrange::ArrSelRect>,
@@ -207,7 +209,9 @@ impl App {
                 &mut arr_drag_delta,
                 &mut arr_eraser_rect,
                 &mut self.info_content,
+                &mut self.right_tab,
                 &mut needs_audio_rebuild,
+                &mut needs_audio_notify,
                 &mut self.status_hint,
                 sel_hint.as_ref(),
             );
@@ -225,6 +229,11 @@ impl App {
         // 下一帧 rebuild_audio_if_needed 会用新 model 重新 spawn 引擎和 ChannelLayout。
         if needs_audio_rebuild {
             self.teardown_audio();
+        }
+        // 自动化内容变化（AR lane 增删 / AM 事件编辑）：与 PR 的
+        // handle_automation_edits 同路径，通知音频引擎 model 已变。
+        if needs_audio_notify {
+            self.notify_audio_model_changed();
         }
 
         // Handle AR eraser (guard is dropped, no outstanding borrow on self.documents)
@@ -304,12 +313,19 @@ impl App {
 
         let arr_count = doc.edit.arr_sel_rect.len();
         let pr_count = doc.edit.sel_rect.rects.len();
+        // AM 选框计数 = PR 自动化面板 + AR 展开 lane（三视图互斥一体）。
         let am_count: usize = doc
             .edit
             .controller_panels
             .iter()
             .map(|p| p.anchor_sel_rects.len())
-            .sum();
+            .sum::<usize>()
+            + doc
+                .edit
+                .arr_am_views
+                .values()
+                .map(|v| v.anchor_sel_rects.len())
+                .sum::<usize>();
 
         let arr_gained = arr_count > self.prev_arr_count;
         let pr_gained = pr_count > self.prev_pr_count;
@@ -334,6 +350,9 @@ impl App {
             for panel in &mut doc.edit.controller_panels {
                 panel.anchor_sel_rects.clear();
             }
+            for v in doc.edit.arr_am_views.values_mut() {
+                v.anchor_sel_rects.clear();
+            }
         }
 
         // 以清除后的状态更新 prev，供下一帧比较。
@@ -344,7 +363,13 @@ impl App {
             .controller_panels
             .iter()
             .map(|p| p.anchor_sel_rects.len())
-            .sum();
+            .sum::<usize>()
+            + doc
+                .edit
+                .arr_am_views
+                .values()
+                .map(|v| v.anchor_sel_rects.len())
+                .sum::<usize>();
         self.prev_selected_nonempty = !doc.edit.selected.is_empty();
     }
 
