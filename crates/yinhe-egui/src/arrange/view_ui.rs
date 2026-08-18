@@ -607,7 +607,7 @@ fn sel_drag_frame_arrange(
                 pos.y - content_rect.min.y + view.base.scroll_y,
                 view.lane_height(),
             ) {
-                Some(ArRow::Automation(..)) | Some(ArRow::AddLane(_)) => true,
+                Some(ArRow::Automation(..)) => true,
                 Some(ArRow::Track(t)) => data.conductor_track_idx == Some(t as u16),
                 None => false,
             }
@@ -942,7 +942,7 @@ fn eraser_drag_frame_arrange(
             pos.y - content_rect.min.y + view.base.scroll_y,
             view.lane_height(),
         ) {
-            Some(ArRow::Automation(..)) | Some(ArRow::AddLane(_)) => true,
+            Some(ArRow::Automation(..)) => true,
             Some(ArRow::Track(t)) => data.conductor_track_idx == Some(t as u16),
             None => false,
         }

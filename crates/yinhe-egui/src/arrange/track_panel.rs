@@ -260,50 +260,36 @@ pub(crate) fn show(
                     am_ms_dirty = true;
                 }
             }
-            continue;
-        }
 
-        // ── 展开态末尾的「+」占位行：点击打开创建自动化菜单 ──
-        if let ArRow::AddLane(track) = row_hit {
-            if row % 2 == 0 {
-                painter.rect_filled(row_rect, 0.0, lane_even);
-            }
-            if row_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default())) {
-                painter.rect_filled(
-                    row_rect,
-                    0.0,
-                    crate::theme::hover_color(crate::theme::app_bg()),
-                );
-            }
-            let color = track_colors
+            // 最后一条自动化行：在该行右侧（M/S 旁）显示加号，点击再次添加自动化。
+            let is_last_lane = tracks
                 .get(track)
-                .copied()
-                .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
-            let color32 = crate::theme::rgba_to_color32((color[0], color[1], color[2], color[3]));
-            let badge_w = 14.0_f32;
-            let badge_rect = egui::Rect::from_min_size(row_rect.min, egui::vec2(badge_w, lh));
-            painter.rect_filled(badge_rect, 0.0, color32);
-
-            // 加号：与 chevron 同位置（色带中央偏下 lh*0.62）、同尺寸、无边框图标，
-            // 点击弹出创建自动化菜单；与 chevron 一样仅当该轨家族被悬停时显示。
-            // popup 打开期间持续渲染加号（否则鼠标移向菜单时加号消失→popup 漂移）。
-            let add_open = egui::Popup::is_id_open(ui.ctx(), egui::Id::new(("arr_add_pop", track)));
-            if hover_track == Some(track) || add_open {
-                let lum = color[0] * 0.299 + color[1] * 0.587 + color[2] * 0.114;
-                let plus_color = if lum > 0.55 {
-                    egui::Color32::BLACK
-                } else {
-                    egui::Color32::WHITE
-                };
-                badge_icon_menu(
-                    ui,
-                    egui::pos2(badge_rect.center().x, badge_rect.min.y + lh * 0.62),
-                    ICON_ADD.codepoint,
-                    ICON_ADD.font_family(),
-                    plus_color,
-                    track,
-                    |ui| create_automation_menu(ui, track, tracks, &mut actions),
-                );
+                .is_some_and(|t| sub + 1 == t.automation_lanes.len());
+            if is_last_lane {
+                let add_open =
+                    egui::Popup::is_id_open(ui.ctx(), egui::Id::new(("arr_add_pop", track)));
+                if hover_track == Some(track) || add_open {
+                    let lum = color[0] * 0.299 + color[1] * 0.587 + color[2] * 0.114;
+                    let plus_color = if lum > 0.55 {
+                        egui::Color32::BLACK
+                    } else {
+                        egui::Color32::WHITE
+                    };
+                    let gap = 2.0;
+                    badge_icon_menu(
+                        ui,
+                        // M/S 按钮左侧、行垂直居中。
+                        egui::pos2(
+                            row_rect.max.x - 6.0 - 2.0 * (btn_size.x + gap) - btn_size.x,
+                            row_rect.center().y,
+                        ),
+                        ICON_ADD.codepoint,
+                        ICON_ADD.font_family(),
+                        plus_color,
+                        track,
+                        |ui| create_automation_menu(ui, track, tracks, &mut actions),
+                    );
+                }
             }
             continue;
         }
@@ -645,7 +631,6 @@ pub(crate) fn show(
         let (idx, sub) = match row_hit {
             ArRow::Track(t) => (t, None),
             ArRow::Automation(t, s) => (t, Some(s)),
-            ArRow::AddLane(t) => (t, None),
         };
         let track_idx = track_info[idx].index;
         if let Some(s) = sub {
@@ -914,47 +899,62 @@ fn create_automation_menu(
     tracks: &[Arc<yinhe_core::TrackData>],
     actions: &mut Vec<TrackAction>,
 ) {
-    let existing: Vec<AutomationTarget> = tracks
-        .get(idx)
-        .map(|t| {
-            t.automation_lanes
-                .iter()
-                .map(|l| l.target.clone())
-                .collect()
-        })
-        .unwrap_or_default();
-    for target in crate::piano_view::automation_panel::AUTOMATION_TARGETS {
-        if matches!(target, AutomationTarget::Tempo) || existing.contains(target) {
-            continue;
-        }
-        let label = super::am_lanes::lane_label(target);
-        if ui.button(label).clicked() {
-            actions.push(TrackAction::CreateAutomation {
-                idx,
-                target: target.clone(),
-            });
-            ui.close();
-        }
-    }
-    ui.separator();
-    // 自定义 CC：菜单内 DragValue（0..=127）+ 确认按钮。
-    let cc_id = egui::Id::new(("arr_custom_cc", idx));
-    let mut cc = ui.ctx().data_mut(|d| d.get_temp::<u8>(cc_id)).unwrap_or(7);
-    ui.horizontal(|ui| {
-        ui.label(t!("arrange.custom_cc"));
-        if ui
-            .add(egui::DragValue::new(&mut cc).range(0..=127))
-            .changed()
-        {
-            ui.ctx().data_mut(|d| d.insert_temp(cc_id, cc));
-        }
-        if ui.button(t!("arrange.create")).clicked() {
-            let target = AutomationTarget::CC { controller: cc };
-            if !existing.contains(&target) {
-                actions.push(TrackAction::CreateAutomation { idx, target });
+    // 菜单面板样式（无边框、等宽菜单项）：与 PR 的 target 选择 popup 一致。
+    egui::Frame::menu(ui.style()).show(ui, |ui| {
+        ui.set_min_width(160.0);
+        ui.set_max_width(160.0);
+        let existing: Vec<AutomationTarget> = tracks
+            .get(idx)
+            .map(|t| {
+                t.automation_lanes
+                    .iter()
+                    .map(|l| l.target.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        for target in crate::piano_view::automation_panel::AUTOMATION_TARGETS {
+            if matches!(target, AutomationTarget::Tempo) || existing.contains(target) {
+                continue;
             }
-            ui.close();
+            let label = super::am_lanes::lane_label(target);
+            if ui
+                .add(crate::widgets::menu::menu_item_button(ui, false, label))
+                .clicked()
+            {
+                actions.push(TrackAction::CreateAutomation {
+                    idx,
+                    target: target.clone(),
+                });
+                ui.close();
+            }
         }
+        ui.separator();
+        // 自定义 CC：菜单内 DragValue（0..=127）+ 无边框「创建」按钮。
+        let cc_id = egui::Id::new(("arr_custom_cc", idx));
+        let mut cc = ui.ctx().data_mut(|d| d.get_temp::<u8>(cc_id)).unwrap_or(7);
+        ui.horizontal(|ui| {
+            ui.label(t!("arrange.custom_cc"));
+            if ui
+                .add(egui::DragValue::new(&mut cc).range(0..=127))
+                .changed()
+            {
+                ui.ctx().data_mut(|d| d.insert_temp(cc_id, cc));
+            }
+            if ui
+                .add(crate::widgets::menu::menu_item_button(
+                    ui,
+                    false,
+                    t!("arrange.create"),
+                ))
+                .clicked()
+            {
+                let target = AutomationTarget::CC { controller: cc };
+                if !existing.contains(&target) {
+                    actions.push(TrackAction::CreateAutomation { idx, target });
+                }
+                ui.close();
+            }
+        });
     });
 }
 
