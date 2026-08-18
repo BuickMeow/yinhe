@@ -275,6 +275,8 @@ pub struct TransportResponse {
     pub step_toggle: bool,
     pub pending_file_action: Option<FileAction>,
     pub pending_edit_action: Option<EditAction>,
+    /// 文件菜单「最近修改的文件」子菜单点击的路径（请求打开该文件）。
+    pub pending_open_path: Option<String>,
 }
 
 pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportResponse {
@@ -283,6 +285,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
     let mut play_actions = PlayActions::default();
     let mut pending_file_action = None;
     let mut pending_edit_action = None;
+    let mut pending_open_path = None;
 
     egui::Panel::top("transport_bar")
         .frame(egui::Frame {
@@ -323,6 +326,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     has_active,
                     ctx.settings,
                     &mut pending_file_action,
+                    &mut pending_open_path,
                 );
 
                 // ── 图钉固定的文件动作（顺序 = 菜单顺序）：作为独立按钮
@@ -556,6 +560,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
         step_toggle: play_actions.step,
         pending_file_action,
         pending_edit_action,
+        pending_open_path,
     }
 }
 
@@ -629,6 +634,8 @@ struct PopupRowSpec<'a> {
     accent: Option<egui::Color32>,
     /// Some(当前是否钉住) 渲染图钉按钮；None 不渲染（行宽占满）。
     pin: Option<bool>,
+    /// true 时在右侧绘制子菜单箭头（与图钉位互斥；用于"最近修改的文件"父行）。
+    chevron: bool,
 }
 
 /// 图钉按钮列宽 + 与主按钮的间隔（popup_menu_row 与宽度测量共用）。
@@ -678,7 +685,14 @@ fn popup_menu_row(
     )
     .min_size(egui::vec2(main_w, 0.0))
     .wrap_mode(egui::TextWrapMode::Truncate)
-    .shortcut_text(spec.shortcut.unwrap_or(""));
+    .shortcut_text(if spec.chevron {
+        // 子菜单箭头（图标字体；shortcut_text 的弱化着色正好做次要色）
+        ICON_CHEVRON_RIGHT
+            .rich_text()
+            .size(crate::theme::FILE_MENU_FONT)
+    } else {
+        egui::RichText::new(spec.shortcut.unwrap_or(""))
+    });
     // 直接 put（不用 add_enabled_ui 包裹）：scope 嵌套 put 会把已含
     // item_spacing 的 cursor 起点并入 min_rect，导致每行多推进一次 spacing。
     // disabled 状态由调用方过滤点击 + 灰色文本表达。
@@ -768,11 +782,27 @@ fn measure_menu_width<T: PopupRow>(
     max_content + if has_pin { PIN_W + MAIN_PIN_GAP } else { 0.0 }
 }
 
+/// show_action_menu 的返回：图钉变化（调用方需 save）+ popup 是否打开
+/// （关闭时调用方清理附加区块的临时状态，如最近文件子菜单的展开标记）。
+struct ActionMenuOutcome {
+    pinned_changed: bool,
+    popup_open: bool,
+}
+
 /// 动作菜单 popup 通用容器：与量化弹框同款
 /// （Popup::from_toggle_button_response + CloseOnClickOutside），
 /// 宽度按内容测量（快捷键 + 图钉需要稳定的行宽，行宽统一 = 测量宽）；
 /// 每项右侧显示快捷键与图钉按钮。文件/编辑 popup 共用，保证行为一致。
-/// 返回 true 表示图钉状态发生变化（调用方需 save）。
+/// extra 是附加在动作组之后的自定义区块（如最近文件子菜单父行）。
+struct ActionMenuExtra<'a> {
+    /// 区块行所需最小宽度（与动作行测量宽取大者定菜单宽）。
+    min_width: f32,
+    /// 渲染回调；参数：popup 内容 ui + 本帧是否有动作行被 hover
+    ///（附加区块用它收起展开的子菜单）。
+    render: &'a mut dyn FnMut(&mut egui::Ui, bool),
+}
+
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 fn show_action_menu<T: PopupRow>(
     button: &egui::Response,
     groups: &[&[T]],
@@ -781,13 +811,15 @@ fn show_action_menu<T: PopupRow>(
     keybindings: &yinhe_editor_core::shortcuts::Keybindings,
     pinned: Option<&mut [bool]>,
     pending_action: &mut Option<T>,
-) -> bool {
+    extra: Option<ActionMenuExtra<'_>>,
+) -> ActionMenuOutcome {
     // 按当前语言/内容测量宽度：不同菜单各自定宽（中文自然收窄、
     // 长标签自动撑宽），行宽统一 = 测量值，图钉右对齐保持。
-    let menu_w = measure_menu_width(&button.ctx, groups, keybindings);
+    let extra_min_width = extra.as_ref().map(|e| e.min_width).unwrap_or(0.0);
+    let menu_w = measure_menu_width(&button.ctx, groups, keybindings).max(extra_min_width);
     let mut pinned_changed = false;
     let mut pin_toggled: Option<usize> = None;
-    egui::Popup::from_toggle_button_response(button)
+    let popup_response = egui::Popup::from_toggle_button_response(button)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .width(menu_w)
         .show(|ui| {
@@ -795,6 +827,8 @@ fn show_action_menu<T: PopupRow>(
             // 稳定（亚像素抖动此前已由删除高亮框描边根治）。
             ui.set_min_width(menu_w);
             ui.set_max_width(menu_w);
+            // 本帧是否有动作行被 hover（附加区块据此收起子菜单）
+            let mut any_row_hovered = false;
             for (gi, group) in groups.iter().enumerate() {
                 if gi > 0 {
                     ui.separator();
@@ -821,8 +855,12 @@ fn show_action_menu<T: PopupRow>(
                             } else {
                                 None
                             },
+                            chevron: false,
                         },
                     );
+                    if main_resp.hovered() || pin_resp.as_ref().is_some_and(|r| r.hovered()) {
+                        any_row_hovered = true;
+                    }
 
                     if enabled && main_resp.clicked() {
                         *pending_action = Some(action);
@@ -834,6 +872,9 @@ fn show_action_menu<T: PopupRow>(
                     }
                 }
             }
+            if let Some(extra) = extra {
+                (extra.render)(ui, any_row_hovered);
+            }
         });
     if let Some(idx) = pin_toggled
         && let Some(p) = pinned
@@ -841,21 +882,157 @@ fn show_action_menu<T: PopupRow>(
         p[idx] = !p[idx];
         pinned_changed = true;
     }
-    pinned_changed
+    ActionMenuOutcome {
+        pinned_changed,
+        popup_open: popup_response.is_some(),
+    }
 }
 
-/// 文件按钮 popup（文件动作分组 + 图钉）。
+/// 最近修改的文件子菜单展开标记 id（temp；父 popup 关闭时清除）。
+const RECENT_SUBMENU_OPEN_ID: &str = "recent_files_submenu_open";
+
+/// 最近文件的行显示名（basename；取不到时用完整路径）。
+fn recent_display_name(path: &str) -> &str {
+    std::path::Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(path)
+}
+
+/// 子菜单父行所需宽度：icon_text（图标 + 标题）+ 箭头 + 按钮内边距。
+fn measure_recent_parent_row_width(ctx: &egui::Context) -> f32 {
+    let spacing = &ctx.style_of(ctx.theme()).spacing;
+    let pad_x = spacing.button_padding.x * 2.0;
+    // 箭头前自动有 grow 间隔，近似取 item_spacing
+    let arrow_w = crate::theme::FILE_MENU_FONT + spacing.item_spacing.x;
+    let job = crate::widgets::icon_text::icon_text(
+        ICON_HISTORY,
+        &t!("menu.recent_files"),
+        crate::theme::FILE_MENU_FONT,
+        egui::Color32::WHITE,
+    );
+    ctx.fonts_mut(|f| f.layout_job(job).size().x) + arrow_w + pad_x
+}
+
+/// 子菜单宽度：最长文件名行（图标 + basename + 内边距），无图钉列。
+fn measure_recent_submenu_width(ctx: &egui::Context, recent: &[String]) -> f32 {
+    let spacing = &ctx.style_of(ctx.theme()).spacing;
+    let pad_x = spacing.button_padding.x * 2.0;
+    ctx.fonts_mut(|f| {
+        recent
+            .iter()
+            .map(|path| {
+                let job = crate::widgets::icon_text::icon_text(
+                    ICON_DESCRIPTION,
+                    recent_display_name(path),
+                    crate::theme::FILE_MENU_FONT,
+                    egui::Color32::WHITE,
+                );
+                f.layout_job(job).size().x
+            })
+            .fold(0.0f32, f32::max)
+            + pad_x
+    })
+}
+
+/// 最近修改的文件区块：子菜单父行（图标 + 标题 + 箭头），
+/// hover/点击展开右侧子菜单（嵌套 Popup，与行右缘对齐）。
+/// any_row_hovered：本帧有动作行被 hover 时收起子菜单（与系统菜单行为一致）。
+fn recent_files_section(
+    ui: &mut egui::Ui,
+    recent: &[String],
+    any_row_hovered: bool,
+    pending_open_path: &mut Option<String>,
+) {
+    let open_id = egui::Id::new(RECENT_SUBMENU_OPEN_ID);
+    let mut open: bool = ui.ctx().data_mut(|d| d.get_temp(open_id)).unwrap_or(false);
+    if any_row_hovered {
+        open = false;
+    }
+
+    ui.separator();
+    let (row_resp, _) = popup_menu_row(
+        ui,
+        PopupRowSpec {
+            icon: ICON_HISTORY,
+            label: &t!("menu.recent_files"),
+            shortcut: None,
+            enabled: true,
+            selected: open, // 子菜单展开时父行保持高亮
+            accent: None,
+            pin: None,
+            chevron: true,
+        },
+    );
+    if row_resp.hovered() {
+        open = true;
+    }
+    if row_resp.clicked() {
+        open = !open; // 点击切换（触屏无 hover）
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(open_id, open));
+    if !open {
+        return;
+    }
+
+    let sub_w = measure_recent_submenu_width(ui.ctx(), recent);
+    egui::Popup::from_response(&row_resp)
+        .id(egui::Id::new("recent_files_submenu"))
+        .open(true)
+        .align(egui::RectAlign::RIGHT_START)
+        .layout(egui::Layout::top_down_justified(egui::Align::Min))
+        .gap(2.0)
+        .width(sub_w)
+        // 展开/收起由上面的 hover/点击逻辑管理，popup 自身不响应点击关闭
+        .close_behavior(egui::PopupCloseBehavior::IgnoreClicks)
+        .show(|ui| {
+            ui.set_min_width(sub_w);
+            ui.set_max_width(sub_w);
+            for path in recent {
+                let (resp, _) = popup_menu_row(
+                    ui,
+                    PopupRowSpec {
+                        icon: ICON_DESCRIPTION,
+                        label: recent_display_name(path),
+                        shortcut: None,
+                        enabled: true,
+                        selected: false,
+                        accent: None,
+                        pin: None,
+                        chevron: false,
+                    },
+                );
+                if resp.clicked() {
+                    *pending_open_path = Some(path.clone());
+                    // 关闭整个菜单（含父 popup），时序显式确定
+                    egui::Popup::close_all(ui.ctx());
+                } else if resp.hovered() {
+                    // basename 可能重名，hover 显示完整路径
+                    resp.on_hover_text(path);
+                }
+            }
+        });
+}
+
+/// 文件按钮 popup（文件动作分组 + 图钉 + 最近修改的文件子菜单）。
 fn show_file_menu(
     button: &egui::Response,
     file_loader: &FileLoader,
     has_active: bool,
     settings: &mut AudioSettings,
     pending_action: &mut Option<FileAction>,
+    pending_open_path: &mut Option<String>,
 ) {
-    // 字段级拆分借用：keybindings 只读 + pinned 可变 + 图钉变化后 save
+    // 字段级拆分借用：keybindings/recent 只读 + pinned 可变 + 图钉变化后 save
     let keybindings = &settings.keybindings;
     let pinned = &mut settings.pinned_file_actions;
-    if show_action_menu(
+    let recent = &settings.recent_files;
+
+    let mut render = |ui: &mut egui::Ui, any_row_hovered: bool| {
+        recent_files_section(ui, recent, any_row_hovered, pending_open_path);
+    };
+    let has_recent = !recent.is_empty();
+    let outcome = show_action_menu(
         button,
         &FILE_GROUPS,
         has_active,
@@ -863,7 +1040,18 @@ fn show_file_menu(
         keybindings,
         Some(pinned),
         pending_action,
-    ) {
+        has_recent.then(|| ActionMenuExtra {
+            min_width: measure_recent_parent_row_width(&button.ctx),
+            render: &mut render,
+        }),
+    );
+    // 父 popup 关闭后清掉展开标记，避免下次打开菜单时子菜单直接展开
+    if !outcome.popup_open {
+        button
+            .ctx
+            .data_mut(|d| d.remove::<bool>(egui::Id::new(RECENT_SUBMENU_OPEN_ID)));
+    }
+    if outcome.pinned_changed {
         settings.save();
     }
 }
@@ -885,7 +1073,10 @@ fn show_edit_menu(
         keybindings,
         Some(pinned),
         pending_action,
-    ) {
+        None,
+    )
+    .pinned_changed
+    {
         settings.save();
     }
 }
@@ -1049,7 +1240,10 @@ fn show_play_menu(
         &settings.keybindings,
         Some(&mut pinned),
         &mut pending,
-    ) {
+        None,
+    )
+    .pinned_changed
+    {
         settings.pinned_play_pause = pinned[0];
         settings.pinned_stop = pinned[1];
         settings.pinned_record = pinned[2];
@@ -1270,6 +1464,7 @@ mod tests {
                         selected: r.is_selected(),
                         accent: r.icon_accent(),
                         pin: None,
+                        chevron: false,
                     },
                 );
                 ys.push(resp.rect.min.y);

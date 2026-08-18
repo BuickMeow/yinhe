@@ -44,6 +44,10 @@ impl App {
                         // 必须主动清空 cull，否则旧 Untitled 的空 buffer 状态会让
                         // 新工程首帧走错路径。
                         self.invalidate_cull_state();
+                        // 打开成功 → 记录到「最近修改的文件」
+                        if self.audio_settings.push_recent_file(&path) {
+                            self.audio_settings.save();
+                        }
                     }
                     Err(msg) => {
                         self.load_error = Some(msg);
@@ -114,6 +118,10 @@ impl App {
                     }
                     self.teardown_audio();
                     self.invalidate_cull_state();
+                    // 打开成功 → 记录到「最近修改的文件」
+                    if self.audio_settings.push_recent_file(&path) {
+                        self.audio_settings.save();
+                    }
                 } else {
                     self.load_error =
                         Some(t!("file_dialog.open_failed", name = file_name).to_string());
@@ -138,6 +146,12 @@ impl App {
             // Mark the active document as saved
             if let Some(idx) = self.active_doc {
                 self.documents[idx].mark_saved();
+                // 保存成功 → 记录到「最近修改的文件」
+                if let Some(path) = self.documents[idx].file_path.clone()
+                    && self.audio_settings.push_recent_file(&path)
+                {
+                    self.audio_settings.save();
+                }
             }
             // If there's a deferred action, execute it now
             if self.pending_unsaved.is_some() {

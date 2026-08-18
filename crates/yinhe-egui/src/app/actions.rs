@@ -400,6 +400,34 @@ impl App {
         self.execute_file_action(action, ctx);
     }
 
+    /// 打开「最近修改的文件」（transport bar 子菜单 / macOS 菜单栏共用）。
+    /// 文件已被移动/删除时从列表移除并报错；有未保存修改时先走确认流程。
+    pub(crate) fn open_recent_file(&mut self, path: &str, ctx: &egui::Context) {
+        if !std::path::Path::new(path).exists() {
+            self.audio_settings.remove_recent_file(path);
+            self.audio_settings.save();
+            let name = std::path::Path::new(path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(path);
+            self.load_error = Some(t!("file_dialog.open_failed", name = name).to_string());
+            return;
+        }
+        if let Some(idx) = self.active_doc
+            && self.documents[idx].is_dirty()
+        {
+            self.pending_unsaved = Some(PendingFileAction::OpenRecent(path.to_string()));
+            // 与 handle_file_action 一致：主动触发的操作立刻把 unsaved 弹窗拉到前台
+            crate::chrome::dialog::raise_viewport(
+                ctx,
+                egui::ViewportId::from_hash_of("unsaved_dialog"),
+            );
+            return;
+        }
+        self.file_loader
+            .load_path(path.to_string(), self.audio_settings.midi_import_encoding);
+    }
+
     /// Execute a file action immediately without checking for unsaved changes.
     fn execute_file_action(&mut self, action: transport_bar::FileAction, ctx: &egui::Context) {
         match action {
@@ -459,6 +487,10 @@ impl App {
             PendingFileAction::Open => {
                 self.file_loader
                     .pick_file(self.audio_settings.midi_import_encoding);
+            }
+            PendingFileAction::OpenRecent(path) => {
+                self.file_loader
+                    .load_path(path, self.audio_settings.midi_import_encoding);
             }
             PendingFileAction::CloseDocument(idx) => {
                 self.close_document(idx);

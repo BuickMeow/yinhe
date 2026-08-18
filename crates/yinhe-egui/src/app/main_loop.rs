@@ -521,6 +521,10 @@ impl eframe::App for App {
         if let Some(action) = transport_response.pending_file_action {
             self.handle_file_action(action, ui.ctx());
         }
+        // 文件菜单「最近修改的文件」子菜单点击
+        if let Some(path) = transport_response.pending_open_path {
+            self.open_recent_file(&path, ui.ctx());
+        }
 
         // ── MIDI encoding change ──
         let new_enc = self.audio_settings.midi_import_encoding;
