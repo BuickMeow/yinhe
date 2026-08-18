@@ -960,8 +960,9 @@ fn create_automation_menu(
     });
 }
 
-/// 在色带图标位置（与 chevron 同坐标）画一个无边框图标菜单按钮。
-/// 复用于 chevron 同位置的「+」（创建自动化）等图标触发的菜单。
+/// 在色带图标位置（与 chevron 同坐标、同尺寸、同绘制方式）画一个图标，点击弹菜单。
+/// 图标用 `painter.text` 严格 `CENTER_CENTER` 居中（同 chevron），复用 chevron 的
+/// `ui.interact` + egui `Popup::menu` 弹菜单，避免 Button 自带 padding 导致图标右偏出界。
 fn badge_icon_menu(
     ui: &mut egui::Ui,
     center: egui::Pos2,
@@ -970,17 +971,25 @@ fn badge_icon_menu(
     color: egui::Color32,
     body: impl FnOnce(&mut egui::Ui),
 ) {
-    // 与 chevron 同尺寸（12x16），保持图标视觉一致。
     let size = egui::vec2(12.0, 16.0);
     let rect = egui::Rect::from_center_size(center, size);
-    let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(rect));
-    let button = egui::Button::new(
-        egui::RichText::new(codepoint)
-            .font(egui::FontId::new(crate::theme::ICON_BTN_FONT, family))
-            .color(color),
-    )
-    .frame(false);
-    egui::menu::MenuButton::from_button(button).ui(&mut inner, body);
+    let resp = ui.interact(
+        rect,
+        egui::Id::new(("badge_icon", codepoint)),
+        egui::Sense::click(),
+    );
+    // 图标严格水平+垂直居中对齐（同 chevron），不会因按钮 padding 右偏。
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        codepoint,
+        egui::FontId::new(crate::theme::ICON_BTN_FONT, family),
+        color,
+    );
+    egui::Popup::menu(&resp).show(|ui| {
+        ui.set_min_width(160.0);
+        body(ui);
+    });
 }
 
 /// Paint an 18x18 inline button with a one-letter label and click handling.
