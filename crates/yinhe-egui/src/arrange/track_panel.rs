@@ -128,6 +128,14 @@ pub(crate) fn show(
     // chevron 命中区：按下在 chevron 上不触发排序/选择（只翻转展开状态）。
     let mut chevron_rects: Vec<egui::Rect> = Vec::new();
 
+    // 兄弟轨道联动：鼠标落在某音轨的主行/任意自动化行上，视为悬停整个
+    // 「兄弟轨道」（该音轨及其全部自动化轨），它们的 chevron/加号一并显示。
+    let hover_track = ui
+        .input(|i| i.pointer.hover_pos())
+        .filter(|&pos| panel_rect.contains(pos))
+        .and_then(|pos| row_layout.hit_at_music_y(pos.y - panel_rect.min.y + *scroll_y, lh))
+        .map(|h| h.track());
+
     for row in first_row..last_row {
         let y = panel_rect.min.y + row as f32 * lh - *scroll_y;
         let row_rect =
@@ -276,26 +284,28 @@ pub(crate) fn show(
             let badge_rect = egui::Rect::from_min_size(row_rect.min, egui::vec2(badge_w, lh));
             painter.rect_filled(badge_rect, 0.0, color32);
 
-            // 加号：与 chevron 同位置（色带中央偏下 lh*0.62），无边框图标，
-            // 点击弹出创建自动化菜单。
-            let lum = color[0] * 0.299 + color[1] * 0.587 + color[2] * 0.114;
-            let plus_color = if lum > 0.55 {
-                egui::Color32::BLACK
-            } else {
-                egui::Color32::WHITE
-            };
-            badge_icon_menu(
-                ui,
-                egui::pos2(badge_rect.center().x, badge_rect.min.y + lh * 0.62),
-                ICON_ADD.codepoint,
-                ICON_ADD.font_family(),
-                plus_color,
-                |ui| {
-                    ui.set_min_width(160.0);
-                    ui.set_max_width(160.0);
-                    create_automation_menu(ui, track, tracks, &mut actions);
-                },
-            );
+            // 加号：与 chevron 同位置（色带中央偏下 lh*0.62）、同尺寸、无边框图标，
+            // 点击弹出创建自动化菜单；与 chevron 一样仅当该轨家族被悬停时显示。
+            if hover_track == Some(track) {
+                let lum = color[0] * 0.299 + color[1] * 0.587 + color[2] * 0.114;
+                let plus_color = if lum > 0.55 {
+                    egui::Color32::BLACK
+                } else {
+                    egui::Color32::WHITE
+                };
+                badge_icon_menu(
+                    ui,
+                    egui::pos2(badge_rect.center().x, badge_rect.min.y + lh * 0.62),
+                    ICON_ADD.codepoint,
+                    ICON_ADD.font_family(),
+                    plus_color,
+                    |ui| {
+                        ui.set_min_width(160.0);
+                        ui.set_max_width(160.0);
+                        create_automation_menu(ui, track, tracks, &mut actions);
+                    },
+                );
+            }
             continue;
         }
 
@@ -341,29 +351,32 @@ pub(crate) fn show(
             } else {
                 egui::Color32::WHITE
             };
-            let row_hovered =
-                row_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default()));
+            // 兄弟轨道联动：本轨任意行（主/自动化）被悬停时，图标一并显示。
+            let family_hovered = hover_track == Some(idx);
             if !expanded && !has_any_lane {
-                // 无自动化未展开：色带同一图标位给无边框「+」，点弹创建自动化菜单。
-                badge_icon_menu(
-                    ui,
-                    egui::pos2(badge_rect.center().x, badge_rect.min.y + lh * 0.62),
-                    ICON_ADD.codepoint,
-                    ICON_ADD.font_family(),
-                    icon_color,
-                    |ui| {
-                        ui.set_min_width(160.0);
-                        ui.set_max_width(160.0);
-                        create_automation_menu(ui, idx, tracks, &mut actions);
-                    },
-                );
+                // 无自动化未展开：色带同一图标位给无边框「+」，点弹创建自动化菜单；
+                // 与 chevron 一样仅悬浮显示。
+                if family_hovered {
+                    badge_icon_menu(
+                        ui,
+                        egui::pos2(badge_rect.center().x, badge_rect.min.y + lh * 0.62),
+                        ICON_ADD.codepoint,
+                        ICON_ADD.font_family(),
+                        icon_color,
+                        |ui| {
+                            ui.set_min_width(160.0);
+                            ui.set_max_width(160.0);
+                            create_automation_menu(ui, idx, tracks, &mut actions);
+                        },
+                    );
+                }
             } else {
                 let icon = if expanded {
                     ICON_KEYBOARD_ARROW_DOWN
                 } else {
                     ICON_KEYBOARD_ARROW_RIGHT
                 };
-                // chevron 仅在该行被悬浮时显示；颜色按音轨颜色亮度选黑/白保证对比度。
+                // chevron 仅在该轨家族被悬浮时显示；颜色按音轨颜色亮度选黑/白保证对比度。
                 let icon_rect = egui::Rect::from_center_size(
                     egui::pos2(badge_rect.center().x, badge_rect.min.y + lh * 0.62),
                     egui::vec2(12.0, lh.min(16.0)),
@@ -373,7 +386,7 @@ pub(crate) fn show(
                     egui::Id::new(("am_chevron", idx)),
                     egui::Sense::click(),
                 );
-                if row_hovered {
+                if family_hovered {
                     chevron_rects.push(icon_rect);
                     painter.text(
                         icon_rect.center(),
@@ -957,7 +970,8 @@ fn badge_icon_menu(
     color: egui::Color32,
     body: impl FnOnce(&mut egui::Ui),
 ) {
-    let size = egui::vec2(14.0, 16.0);
+    // 与 chevron 同尺寸（12x16），保持图标视觉一致。
+    let size = egui::vec2(12.0, 16.0);
     let rect = egui::Rect::from_center_size(center, size);
     let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(rect));
     let button = egui::Button::new(
