@@ -226,6 +226,10 @@ pub struct EditState {
     /// AR 视图同步覆盖，只有 anchor_sel_rects 等持久状态有效。
     pub arr_am_views:
         HashMap<(u16, yinhe_types::AutomationTarget), yinhe_types::AutomationPanelView>,
+    /// AR：被选中的 AM lane（(音轨索引, target)）。选中 AM lane 时
+    /// 高亮其子行；卷帘（PR）显示该轨主音轨的音符。
+    /// 与 track_selected 互斥（点主行清空本集合，点子行清空 track_selected）。
+    pub arr_am_selected: HashSet<(u16, yinhe_types::AutomationTarget)>,
 }
 
 impl Default for EditState {
@@ -256,6 +260,7 @@ impl Default for EditState {
             recent_velocity: Vec::new(),
             arr_am_expanded: Vec::new(),
             arr_am_views: HashMap::new(),
+            arr_am_selected: HashSet::new(),
         }
     }
 }

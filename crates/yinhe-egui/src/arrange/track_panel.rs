@@ -64,6 +64,8 @@ pub(crate) fn show(
     tracks: &[Arc<yinhe_core::TrackData>],
     // 每轨 AM 展开状态（chevron 点击直接翻转，纯视图状态不进 undo）。
     arr_am_expanded: &mut [bool],
+    // 被选中的 AM lane（(音轨索引, target)）；点主行清空。
+    am_lane_selected: &mut HashSet<(u16, AutomationTarget)>,
 ) -> (bool, Vec<TrackAction>) {
     let panel_rect = ui.max_rect();
     let panel_w = panel_rect.width();
@@ -97,7 +99,8 @@ pub(crate) fn show(
     let painter = ui.painter().clone();
     let mut audio_dirty = false;
 
-    // 交替行条纹：着色行（偶数音轨）与 GPU 区同源颜色，不透明；奇数音轨用 app_bg 打底
+    // 交替行条纹：着色行（偶数行号）与 GPU 区同源颜色，不透明；奇数行用 app_bg 打底。
+    // 按全局行号奇偶（AM 子行也参与）：展开奇数条 lane 会错位后续音轨的斑纹。
     let lane_even = crate::theme::stripe_bg();
 
     let interact_id = egui::Id::new("track_panel_area");
@@ -134,15 +137,18 @@ pub(crate) fn show(
             continue;
         }
 
-        // ── AM 子行：色条缩进 + lane 名（无按钮/选择态）──
+        // ── AM 子行：色条缩进 + lane 名；斑纹按行号奇偶，可被选中高亮 ──
         if let ArRow::Automation(track, sub) = row_hit {
             let Some(lane) = tracks.get(track).and_then(|t| t.automation_lanes.get(sub)) else {
                 continue;
             };
-            if track % 2 == 0 {
+            if row % 2 == 0 {
                 painter.rect_filled(row_rect, 0.0, lane_even);
             }
-            if row_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default())) {
+            let lane_key = (track_info[track].index, lane.target.clone());
+            if am_lane_selected.contains(&lane_key) {
+                painter.rect_filled(row_rect, 0.0, ui.visuals().selection.bg_fill);
+            } else if row_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default())) {
                 painter.rect_filled(
                     row_rect,
                     0.0,
@@ -176,7 +182,7 @@ pub(crate) fn show(
         let is_conductor = Some(ti.index) == conductor_track_idx;
         let selected = track_selected.contains(&ti.index);
         // 着色行条纹（奇数行 = app_bg 普通行，不画；选中/悬停 tint 在条纹之上）
-        if idx % 2 == 0 {
+        if row % 2 == 0 {
             painter.rect_filled(row_rect, 0.0, lane_even);
         }
         if selected {
@@ -195,8 +201,8 @@ pub(crate) fn show(
             .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
         let color32 = crate::theme::rgba_to_color32((color[0], color[1], color[2], color[3]));
 
-        // 色条加宽以容纳 AM 展开/收起 chevron（conductor 无：主行直显 Tempo）。
-        let badge_w = if is_conductor { 8.0_f32 } else { 20.0 };
+        // 色条统一为宽版（conductor 也宽，只是不放 chevron）。
+        let badge_w = 20.0_f32;
         let badge_rect = egui::Rect::from_min_size(row_rect.min, egui::vec2(badge_w, lh));
         painter.rect_filled(badge_rect, 0.0, color32);
 
@@ -207,8 +213,9 @@ pub(crate) fn show(
             } else {
                 ICON_KEYBOARD_ARROW_RIGHT
             };
+            // chevron 水平居中于色带（左右边距一致），垂直靠下（62% 行高处）。
             let icon_rect = egui::Rect::from_center_size(
-                egui::pos2(badge_rect.max.x - 8.0, badge_rect.center().y),
+                egui::pos2(badge_rect.center().x, badge_rect.min.y + lh * 0.62),
                 egui::vec2(14.0, lh.min(18.0)),
             );
             let chev_resp = ui.interact(
@@ -392,49 +399,76 @@ pub(crate) fn show(
                 *editing_track = Some(track_idx);
                 *request_pianoroll = true;
             }
+            // 双击 = 编辑主轨：清除 AM lane 选择。
+            am_lane_selected.clear();
         }
     } else if resp.clicked()
         && !dragging
         && let Some(pos) = resp.interact_pointer_pos()
-        && let Some(idx) = hit(pos)
+        && let Some(row_hit) = row_layout.hit_at_music_y(pos.y - panel_rect.min.y + *scroll_y, lh)
     {
-        let track_idx = track_info[idx].index;
         let shift = ui.input(|i| i.modifiers.shift);
         let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
 
-        if shift {
-            // Range-select from anchor to this track.
-            if let Some(anchor) = *selection_anchor {
-                let a = anchor as usize;
-                let b = track_idx as usize;
-                let lo = a.min(b);
-                let hi = a.max(b);
-                for i in lo..=hi {
-                    track_selected.insert(i as u16);
+        // AM 子行点击：选择 lane 本身（选中高亮子行；PR 仍显示主轨音符）。
+        if let ArRow::Automation(t, s) = row_hit {
+            if let Some(lane) = tracks.get(t).and_then(|tr| tr.automation_lanes.get(s)) {
+                let key = (track_info[t].index, lane.target.clone());
+                if cmd {
+                    // Toggle this lane.
+                    if !am_lane_selected.remove(&key) {
+                        am_lane_selected.insert(key);
+                    }
+                } else {
+                    // Plain/shift：替换为唯一选中（shift 简化同 plain）。
+                    am_lane_selected.clear();
+                    am_lane_selected.insert(key);
                 }
+            }
+            track_selected.clear();
+            *selection_anchor = None;
+            // 选中的 AM lane 对应卷帘显示主轨音符（PR 常驻 editing_track，
+            // 打开/可见时即显示主轨；不强制切换当前视图）。
+            *editing_track = Some(track_info[t].index);
+        } else {
+            let idx = row_hit.track();
+            let track_idx = track_info[idx].index;
+            // 选中主行：清除 AM lane 选择（互斥）。
+            am_lane_selected.clear();
+            if shift {
+                // Range-select from anchor to this track.
+                if let Some(anchor) = *selection_anchor {
+                    let a = anchor as usize;
+                    let b = track_idx as usize;
+                    let lo = a.min(b);
+                    let hi = a.max(b);
+                    for i in lo..=hi {
+                        track_selected.insert(i as u16);
+                    }
+                } else {
+                    track_selected.clear();
+                    track_selected.insert(track_idx);
+                    *selection_anchor = Some(track_idx);
+                }
+            } else if cmd {
+                // Toggle this track.
+                if track_selected.contains(&track_idx) {
+                    track_selected.remove(&track_idx);
+                } else {
+                    track_selected.insert(track_idx);
+                }
+                *selection_anchor = Some(track_idx);
             } else {
-                track_selected.clear();
-                track_selected.insert(track_idx);
+                // Plain click: 如果点击的音轨已是唯一选中的，则取消选择；
+                // 否则替换选择（清除旧选择，选中此音轨）。
+                if track_selected.len() == 1 && track_selected.contains(&track_idx) {
+                    track_selected.clear();
+                } else {
+                    track_selected.clear();
+                    track_selected.insert(track_idx);
+                }
                 *selection_anchor = Some(track_idx);
             }
-        } else if cmd {
-            // Toggle this track.
-            if track_selected.contains(&track_idx) {
-                track_selected.remove(&track_idx);
-            } else {
-                track_selected.insert(track_idx);
-            }
-            *selection_anchor = Some(track_idx);
-        } else {
-            // Plain click: 如果点击的音轨已是唯一选中的，则取消选择；
-            // 否则替换选择（清除旧选择，选中此音轨）。
-            if track_selected.len() == 1 && track_selected.contains(&track_idx) {
-                track_selected.clear();
-            } else {
-                track_selected.clear();
-                track_selected.insert(track_idx);
-            }
-            *selection_anchor = Some(track_idx);
         }
         *info_content = Some(crate::right_panel::InfoContent::Track);
     }
@@ -447,13 +481,24 @@ pub(crate) fn show(
         && let Some(pos) = resp.interact_pointer_pos()
         && let Some(row_hit) = row_layout.hit_at_music_y(pos.y - panel_rect.min.y + *scroll_y, lh)
     {
-        // AM 子行右键：额外记录 lane 下标，菜单只给「删除自动化」。
+        // AM 子行右键：额外记录 lane 下标，菜单只给「删除自动化」；并选中该 lane。
         let (idx, sub) = match row_hit {
             ArRow::Track(t) => (t, None),
             ArRow::Automation(t, s) => (t, Some(s)),
         };
         let track_idx = track_info[idx].index;
-        if !track_selected.contains(&track_idx) {
+        if let Some(s) = sub {
+            am_lane_selected.clear();
+            if let Some(lane) = tracks.get(idx).and_then(|tr| tr.automation_lanes.get(s)) {
+                let key = (track_idx, lane.target.clone());
+                if !am_lane_selected.contains(&key) {
+                    am_lane_selected.insert(key);
+                }
+            }
+            track_selected.clear();
+            *selection_anchor = None;
+        } else if !track_selected.contains(&track_idx) {
+            am_lane_selected.clear();
             track_selected.clear();
             track_selected.insert(track_idx);
             *selection_anchor = Some(track_idx);
@@ -625,6 +670,11 @@ pub(crate) fn show(
         && !dragging
         && let Some(pos) = resp.interact_pointer_pos()
         && !chevron_rects.iter().any(|r| r.contains(pos))
+        // 只有主行能拖动排序，AM 子行不起排序。
+        && matches!(
+            row_layout.hit_at_music_y(pos.y - panel_rect.min.y + *scroll_y, lh),
+            Some(ArRow::Track(_))
+        )
         && let Some(idx) = hit(pos)
         && Some(track_info[idx].index) != conductor_track_idx
     {

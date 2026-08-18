@@ -314,8 +314,8 @@ pub fn show(
     let content_changed = true;
 
     // ── Track lanes ──
-    // 普通行 = app_bg（打底一层，不透明）；着色行（偶数音轨）叠更黑条纹。
-    // AM 子行与所属音轨同色（按音轨奇偶，不按行号）。
+    // 普通行 = app_bg（打底一层，不透明）；着色行（偶数行号）叠更黑条纹。
+    // 按全局行号奇偶（AM 子行也参与，展开奇数条 lane 会错位后续音轨斑纹）。
     painter.rect_filled(rect, 0.0, crate::theme::app_bg());
     let lb_w = view.base.left_panel_width;
     for row in first_row..last_row {
@@ -326,8 +326,8 @@ pub fn show(
         if !data.track_visible.get(track).copied().unwrap_or(true) {
             continue;
         }
-        if track % 2 != 0 {
-            continue; // 奇数音轨 = 普通行（app_bg）
+        if row % 2 != 0 {
+            continue; // 奇数行 = 普通行（app_bg）
         }
         let y = rect.min.y + row as f32 * lh - scroll_y;
         let col = crate::theme::stripe_bg();

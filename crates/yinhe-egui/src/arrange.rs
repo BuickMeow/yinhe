@@ -321,6 +321,7 @@ pub fn show(
             &row_layout,
             &doc.data.model.tracks,
             &mut doc.edit.arr_am_expanded,
+            &mut doc.edit.arr_am_selected,
         );
 
         if audio_dirty {
