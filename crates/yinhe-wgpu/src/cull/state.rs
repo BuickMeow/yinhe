@@ -3,6 +3,7 @@
 
 use wgpu::*;
 
+use crate::resource::TrackedBuffer;
 use crate::vertex::{NoteInstance, Uniforms};
 
 use super::KeyBucketIndex;
@@ -52,7 +53,7 @@ pub(crate) struct CullState {
     /// Per-key vertex-stage bind groups（只含 all_instances）。
     per_key_all_bind_groups: Vec<Option<BindGroup>>,
     /// Per-key all-notes storage buffers (cull input), grown on demand.
-    pub(crate) per_key_buffers: Vec<Option<Buffer>>,
+    pub(crate) per_key_buffers: Vec<Option<TrackedBuffer>>,
     /// Per-key visible-index buffers (cull output: 4B u32 indices into the
     /// key's `all_instances`; draw vertex source). 256-aligned so every
     /// chunk's sparse slots [chunk*256, chunk*256+256) fit; visible slots
@@ -60,7 +61,7 @@ pub(crate) struct CullState {
     /// bound instance_count to the culled count).
     /// 索引化（12B → 4B/槽）使全曲稀疏槽位显存降到 1/3；顶点阶段经
     /// shader.wgsl 的 @group(1) 从 all_instances 间接读回完整数据。
-    pub(crate) per_key_visible_buffers: Vec<Option<Buffer>>,
+    pub(crate) per_key_visible_buffers: Vec<Option<TrackedBuffer>>,
     /// Per-key draw args buffer（每 chunk 一个 DrawIndexedIndirectArgs，20B）。
     /// 由 cull shader 每 chunk 的线程 0 写入（chunk 顺序 = 输入顺序）；
     /// 每帧读回 CPU 缓存（`per_key_draw_args_cpu`）供直接 draw。
@@ -68,7 +69,7 @@ pub(crate) struct CullState {
     /// **注意**：Adreno 730 驱动的 draw_indexed_indirect 整体失效
     /// （CPU 手写 args 依然 0 像素，真机实测），因此
     /// 不走 indirect draw，args 读回 CPU 后循环直接 `draw_indexed`。
-    pub(crate) per_key_draw_args_buffers: Vec<Option<Buffer>>,
+    pub(crate) per_key_draw_args_buffers: Vec<Option<TrackedBuffer>>,
     /// Per-key 本帧 chunk args 的 CPU 缓存：每 chunk
     /// `(instance_count, first_instance)`，由 `readback_args_to_cpu` 填充，
     /// `draw_visible_notes` 直接 draw 用。skip 帧保持上次值（args 未变）。
@@ -77,7 +78,7 @@ pub(crate) struct CullState {
     /// Written by `upload_track_mask`; read by cull.wgsl (binding 5).
     /// Fixed-size (MAX_TRACKS/8 bytes) so per-key bind groups never need
     /// recreating on track-count growth.
-    track_mask_buffer: Buffer,
+    track_mask_buffer: TrackedBuffer,
     /// Chunk count dispatched for each key in the current frame (0 = none).
     /// Filled by `dispatch_cull`, read by `draw_visible_notes`.
     pub(crate) frame_chunk_counts: [u32; 128],
@@ -101,7 +102,7 @@ pub(crate) struct CullState {
     ///     stale/uninitialized data that would be culled as ghost notes.
     ///   - [16..20) c_lo (first dispatched chunk of the frame, host-written
     ///     every frame).
-    dispatch_args_buffer: Buffer,
+    dispatch_args_buffer: TrackedBuffer,
 
     /// Per-key revision at last upload (full or incremental).
     /// Compared with model.note_revisions to detect incremental re-upload needs.
@@ -230,25 +231,29 @@ impl CullState {
         // (typically 256). wg_x/wg_y/c_lo are host-written every frame by
         // `dispatch_cull`; `count` bounds the cull scan in cull.wgsl (index < count).
         let dispatch_args_size = 128 * 256;
-        let dispatch_args_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("cull_dispatch_args"),
-            size: dispatch_args_size,
-            usage: BufferUsages::STORAGE | BufferUsages::INDIRECT | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        yinhe_memtrace::add_gpu_resource(dispatch_args_size);
+        let dispatch_args_buffer = TrackedBuffer::new(
+            device,
+            &BufferDescriptor {
+                label: Some("cull_dispatch_args"),
+                size: dispatch_args_size,
+                usage: BufferUsages::STORAGE | BufferUsages::INDIRECT | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
 
         // Track visibility bitmask: fixed size = MAX_TRACKS bits (8 KB), so
         // per-key bind groups bind a stable buffer and never need recreating
         // when the track count grows. Initialized to all-visible.
         let track_mask_size = crate::vertex::MAX_TRACKS as u64 / 8;
-        let track_mask_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("cull_track_mask"),
-            size: track_mask_size,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        yinhe_memtrace::add_gpu_resource(track_mask_size);
+        let track_mask_buffer = TrackedBuffer::new(
+            device,
+            &BufferDescriptor {
+                label: Some("cull_track_mask"),
+                size: track_mask_size,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: true,
+            },
+        );
         {
             let words = vec![u32::MAX; crate::vertex::MAX_TRACKS / 32];
             let Ok(mut mapped) = track_mask_buffer.slice(..).get_mapped_range_mut() else {
@@ -366,49 +371,54 @@ impl CullState {
             // （可先统一释放旧的三个，再统一创建新的三个）。
             // 只释放当前 key 的三个 buffer——不能遍历全部 keys，那会销毁
             // 其他 key 的 buffer，全量上传后只剩最后一个 key 存活。
+            // 旧 buffer 随 take 立即 drop，TrackedBuffer 自动 sub_gpu_resource。
             for buf in [
                 &mut self.per_key_buffers[key as usize],
                 &mut self.per_key_visible_buffers[key as usize],
                 &mut self.per_key_draw_args_buffers[key as usize],
             ] {
-                if let Some(b) = buf.take() {
-                    yinhe_memtrace::sub_gpu_resource(b.size());
-                }
+                buf.take();
             }
 
             let all_size = needed.max(4096);
-            let all_buf = device.create_buffer(&BufferDescriptor {
-                label: Some("all_notes_key"),
-                size: all_size,
-                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            yinhe_memtrace::add_gpu_resource(all_size);
+            let all_buf = TrackedBuffer::new(
+                device,
+                &BufferDescriptor {
+                    label: Some("all_notes_key"),
+                    size: all_size,
+                    usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            );
             self.per_key_buffers[key as usize] = Some(all_buf);
 
-            let vis_buf = device.create_buffer(&BufferDescriptor {
-                label: Some("visible_indices_key"),
-                size: vis_size,
-                // COPY_SRC so tests can read back the culled output;
-                // COPY_DST so tests can overwrite slots directly.
-                usage: BufferUsages::STORAGE
-                    | BufferUsages::VERTEX
-                    | BufferUsages::COPY_SRC
-                    | BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            yinhe_memtrace::add_gpu_resource(vis_size);
+            let vis_buf = TrackedBuffer::new(
+                device,
+                &BufferDescriptor {
+                    label: Some("visible_indices_key"),
+                    size: vis_size,
+                    // COPY_SRC so tests can read back the culled output;
+                    // COPY_DST so tests can overwrite slots directly.
+                    usage: BufferUsages::STORAGE
+                        | BufferUsages::VERTEX
+                        | BufferUsages::COPY_SRC
+                        | BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            );
             self.per_key_visible_buffers[key as usize] = Some(vis_buf);
 
-            let args_buf = device.create_buffer(&BufferDescriptor {
-                label: Some("draw_args_key"),
-                size: args_size,
-                // COPY_SRC 供每帧读回 CPU（draw 用）+ 诊断；
-                // COPY_DST so tests can overwrite draw args directly.
-                usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            yinhe_memtrace::add_gpu_resource(args_size);
+            let args_buf = TrackedBuffer::new(
+                device,
+                &BufferDescriptor {
+                    label: Some("draw_args_key"),
+                    size: args_size,
+                    // COPY_SRC 供每帧读回 CPU（draw 用）+ 诊断；
+                    // COPY_DST so tests can overwrite draw args directly.
+                    usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            );
             self.per_key_draw_args_buffers[key as usize] = Some(args_buf);
 
             self.recreate_cull_bind_group(device, uniform_buffer, key);
@@ -452,16 +462,17 @@ impl CullState {
     /// Binds: uniform, all_notes[k], visible_notes[k], per-key draw_args[k],
     /// and the dispatch-args slot k (256-byte slice at offset k*256).
     fn recreate_cull_bind_group(&mut self, device: &Device, uniform_buffer: &Buffer, key: u8) {
+        // TrackedBuffer 有意不实现 Clone，bind group 只需借用引用。
         let all_buf = match &self.per_key_buffers[key as usize] {
-            Some(b) => b.clone(),
+            Some(b) => b,
             None => return,
         };
         let vis_buf = match &self.per_key_visible_buffers[key as usize] {
-            Some(b) => b.clone(),
+            Some(b) => b,
             None => return,
         };
         let args_buf = match &self.per_key_draw_args_buffers[key as usize] {
-            Some(b) => b.clone(),
+            Some(b) => b,
             None => return,
         };
         self.per_key_bind_groups[key as usize] =
@@ -529,9 +540,8 @@ impl CullState {
             .chain(self.per_key_visible_buffers.iter_mut())
             .chain(self.per_key_draw_args_buffers.iter_mut())
         {
-            if let Some(b) = buf.take() {
-                yinhe_memtrace::sub_gpu_resource(b.size());
-            }
+            // take 即 drop，TrackedBuffer 自动 sub_gpu_resource。
+            buf.take();
         }
         self.per_key_bind_groups.fill(None);
         self.per_key_all_bind_groups.fill(None);
@@ -661,7 +671,7 @@ impl CullState {
     /// 同步读回开销可忽略；skip 帧不调用（args 未变，缓存仍有效）。
     pub(crate) fn readback_args_to_cpu(&mut self, device: &Device, queue: &Queue) {
         // 每 key 一个 readback buffer + 一个 copy 命令，合并为一次提交。
-        let mut readbacks: Vec<Option<Buffer>> = Vec::with_capacity(128);
+        let mut readbacks: Vec<Option<TrackedBuffer>> = Vec::with_capacity(128);
         let mut enc = device.create_command_encoder(&CommandEncoderDescriptor::default());
         for key in 0..128u8 {
             let chunk_count = self.frame_chunk_counts[key as usize] as usize;
@@ -677,12 +687,15 @@ impl CullState {
                 continue;
             };
             let bytes = 20 * chunk_count as u64;
-            let readback = device.create_buffer(&BufferDescriptor {
-                label: Some("args_sync_readback"),
-                size: bytes,
-                usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            });
+            let readback = TrackedBuffer::new(
+                device,
+                &BufferDescriptor {
+                    label: Some("args_sync_readback"),
+                    size: bytes,
+                    usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                },
+            );
             enc.copy_buffer_to_buffer(src, 0, &readback, 0, bytes);
             readbacks.push(Some(readback));
         }

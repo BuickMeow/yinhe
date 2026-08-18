@@ -1,5 +1,6 @@
 use wgpu::*;
 
+use crate::resource::TrackedBuffer;
 use crate::vertex::{
     CurveInstance, DrawInstance, NoteInstance, SelectionUniform, Uniforms, VelocityBarInstance,
 };
@@ -23,20 +24,20 @@ pub struct RenderPipelineState {
     pub note_direct_pipeline: RenderPipeline,
     pub velocity_pipeline: RenderPipeline,
     pub curve_pipeline: RenderPipeline,
-    pub uniform_buffer: Buffer,
-    pub track_colors_buffer: Buffer,
+    pub uniform_buffer: TrackedBuffer,
+    pub track_colors_buffer: TrackedBuffer,
     /// Current capacity (in vec4 entries) of `track_colors_buffer`.
     pub track_colors_capacity: u32,
     /// AR 模式下每个音轨主行的 y 偏移表（f32 数组，shader binding 3）。
-    pub track_offsets_buffer: Buffer,
+    pub track_offsets_buffer: TrackedBuffer,
     /// Current capacity (in f32 entries) of `track_offsets_buffer`.
     pub track_offsets_capacity: u32,
-    pub selection_buffer: Buffer,
+    pub selection_buffer: TrackedBuffer,
     pub bind_group: BindGroup,
     pub bind_group_layout: BindGroupLayout,
     /// 共享 index buffer：矩形四角 [0,1,2, 1,3,2]（0=TL,1=TR,2=BL,3=BR）。
     /// note / velocity pipeline 以 4 顶点 + 此 index 绘制（顶点 -33%）。
-    pub index_buffer: Buffer,
+    pub index_buffer: TrackedBuffer,
 }
 
 impl RenderPipelineState {
@@ -48,46 +49,54 @@ impl RenderPipelineState {
     ) -> Self {
         // Main uniforms buffer
         let uniform_size = std::mem::size_of::<Uniforms>() as u64;
-        let uniform_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("uniforms"),
-            size: uniform_size,
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        yinhe_memtrace::add_gpu_resource(uniform_size);
+        let uniform_buffer = TrackedBuffer::new(
+            device,
+            &BufferDescriptor {
+                label: Some("uniforms"),
+                size: uniform_size,
+                usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
 
         // Track colors buffer — dynamically sized to actual track count.
         // Start with 1 entry (16B); grows on demand via `ensure_track_colors_capacity`.
         // Bound as a read-only storage buffer (runtime-sized array in WGSL).
         let track_colors_size = 16; // 1 × vec4<f32>
-        let track_colors_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("track_colors"),
-            size: track_colors_size,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        yinhe_memtrace::add_gpu_resource(track_colors_size);
+        let track_colors_buffer = TrackedBuffer::new(
+            device,
+            &BufferDescriptor {
+                label: Some("track_colors"),
+                size: track_colors_size,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
 
         // Track offsets buffer（AR 每轨主行 y 偏移）——初始 4 个 f32（16B），
         // 随轨道数按需增长，见 renderer.rs ensure_track_offsets_capacity。
         let track_offsets_size = 16; // 4 × f32
-        let track_offsets_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("track_offsets"),
-            size: track_offsets_size,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        yinhe_memtrace::add_gpu_resource(track_offsets_size);
+        let track_offsets_buffer = TrackedBuffer::new(
+            device,
+            &BufferDescriptor {
+                label: Some("track_offsets"),
+                size: track_offsets_size,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
 
         // Selection rects buffer
         let selection_size = std::mem::size_of::<SelectionUniform>() as u64;
-        let selection_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("selection"),
-            size: selection_size,
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        yinhe_memtrace::add_gpu_resource(selection_size);
+        let selection_buffer = TrackedBuffer::new(
+            device,
+            &BufferDescriptor {
+                label: Some("selection"),
+                size: selection_size,
+                usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
 
         let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("render_bind_group_layout"),
@@ -160,13 +169,15 @@ impl RenderPipelineState {
 
         // 共享 index buffer：两个三角形共享矩形四角。
         // 顶点顺序与 shader 的 pos/uv 数组一致（0=TL, 1=TR, 2=BL, 3=BR）。
-        let index_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("shared_index_buffer"),
-            size: 6 * std::mem::size_of::<u32>() as u64,
-            usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        yinhe_memtrace::add_gpu_resource(6 * std::mem::size_of::<u32>() as u64);
+        let index_buffer = TrackedBuffer::new(
+            device,
+            &BufferDescriptor {
+                label: Some("shared_index_buffer"),
+                size: 6 * std::mem::size_of::<u32>() as u64,
+                usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
+                mapped_at_creation: true,
+            },
+        );
         {
             let idx: [u32; 6] = [0, 1, 2, 1, 3, 2];
             let Ok(mut mapped) = index_buffer.slice(..).get_mapped_range_mut() else {

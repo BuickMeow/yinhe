@@ -1,6 +1,7 @@
 use bytemuck::Pod;
 use wgpu::*;
 
+use crate::resource::TrackedBuffer;
 use crate::vertex::{CurveInstance, DrawInstance, NoteInstance, VelocityBarInstance};
 
 const MIN_CAPACITY: usize = 4096;
@@ -13,15 +14,9 @@ fn grow_capacity(required: usize) -> usize {
 }
 
 struct BufferChunk {
-    buffer: Buffer,
+    /// RAII 记账：创建计入显存统计，Drop（含扩容替换旧块）自动注销。
+    buffer: TrackedBuffer,
     capacity: usize,
-    size_bytes: u64,
-}
-
-impl Drop for BufferChunk {
-    fn drop(&mut self) {
-        yinhe_memtrace::sub_gpu_resource(self.size_bytes);
-    }
 }
 
 impl BufferChunk {
@@ -32,10 +27,9 @@ impl BufferChunk {
         let new_cap = grow_capacity(required).min(MAX_PER_CHUNK);
         let new_size = instance_size * new_cap as u64;
         let new_buffer = crate::util::create_vertex_buffer(device, "layer_buffer", new_size);
-        yinhe_memtrace::sub_gpu_resource(self.size_bytes);
+        // 旧 buffer 随赋值 drop，自动 sub_gpu_resource，无需手动记账。
         self.buffer = new_buffer;
         self.capacity = new_cap;
-        self.size_bytes = new_size;
     }
 }
 
@@ -66,7 +60,6 @@ impl<T: Pod> LayerSlot<T> {
             chunks: vec![BufferChunk {
                 buffer,
                 capacity: cap,
-                size_bytes: size,
             }],
             scratch: Vec::new(),
             cache_key: 0,
@@ -120,7 +113,6 @@ impl<T: Pod> LayerSlot<T> {
             self.chunks.push(BufferChunk {
                 buffer,
                 capacity: cap,
-                size_bytes: size,
             });
         }
     }

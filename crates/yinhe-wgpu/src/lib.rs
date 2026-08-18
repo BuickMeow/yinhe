@@ -7,6 +7,7 @@ pub mod pianoroll;
 pub mod pipeline;
 pub mod render_thread;
 mod renderer;
+pub mod resource;
 mod util;
 pub mod vertex;
 

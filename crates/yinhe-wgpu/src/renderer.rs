@@ -14,6 +14,7 @@
 use wgpu::*;
 
 use crate::cull::CullState;
+use crate::resource::TrackedBuffer;
 use crate::layer::{AnyLayer, LayerKind};
 use crate::pipeline::RenderPipelineState;
 use crate::vertex::{CurveInstance, NoteInstance, SelectionUniform, Uniforms, VelocityBarInstance};
@@ -127,13 +128,16 @@ impl InstanceRenderer {
         }
         let new_capacity = count.max(1) as u32;
         let new_size = new_capacity as u64 * 16;
-        let new_buffer = self.device.create_buffer(&BufferDescriptor {
-            label: Some("track_colors"),
-            size: new_size,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        yinhe_memtrace::add_gpu_resource(new_size);
+        let new_buffer = TrackedBuffer::new(
+            &self.device,
+            &BufferDescriptor {
+                label: Some("track_colors"),
+                size: new_size,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
+        // 旧 buffer 随赋值 drop 自动 sub_gpu_resource（旧代码漏 sub，统计会漂移）。
         self.render.track_colors_buffer = new_buffer;
         self.render.track_colors_capacity = new_capacity;
         // Recreate bind group with the new buffer.
@@ -188,13 +192,16 @@ impl InstanceRenderer {
         }
         let new_capacity = count.max(4) as u32;
         let new_size = new_capacity as u64 * 4;
-        let new_buffer = self.device.create_buffer(&BufferDescriptor {
-            label: Some("track_offsets"),
-            size: new_size,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        yinhe_memtrace::add_gpu_resource(new_size);
+        let new_buffer = TrackedBuffer::new(
+            &self.device,
+            &BufferDescriptor {
+                label: Some("track_offsets"),
+                size: new_size,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
+        // 旧 buffer 随赋值 drop 自动 sub_gpu_resource（同上，修复统计泄漏）。
         self.render.track_offsets_buffer = new_buffer;
         self.render.track_offsets_capacity = new_capacity;
         // Recreate bind group with the new buffer.
