@@ -141,7 +141,8 @@ impl App {
 
     /// Show the main content area: arrangement view, pianoroll, and note drag handling.
     pub(in crate::app) fn show_main_content(&mut self, ui: &mut egui::Ui, layout: &LayoutInfo) {
-        // MIX 模式（无 AR/PR 视图）主区域空荡荡：铺一张轨道底色背景
+        // MIX 模式与（无视图但已判断文档分支更下面的）无工程状态都铺背景：
+        // 主区域绝不能是全透明（clear_color 为全透明，透明模式下会露出桌面）。
         let has_view = self.view_mode.show_transport()
             || self
                 .view_mode
@@ -152,6 +153,8 @@ impl App {
             return;
         }
         let Some(idx) = self.active_doc else {
+            // 有视图控件（AR/PR 模式）但未打开工程：铺占位面板而非透明。
+            self.show_workspace_placeholder(ui, layout);
             return;
         };
         // 三视图选框互斥：先于任何渲染执行，保证同一时刻只有一个视图拥有选框。
@@ -284,7 +287,56 @@ impl App {
         self.follow_mode = follow_mode;
     }
 
-    /// PR/AR/AM 三视图选框互斥。
+    /// 未打开工程时的占位面板：铺满背景 + 居中卡片（与 MIX 模式同思路，
+    /// 主区域始终有画面控件；否则 clear_color 为全透明，没有工程时会露出桌面）。
+    fn show_workspace_placeholder(&self, ui: &mut egui::Ui, layout: &LayoutInfo) {
+        let area = layout.remaining;
+        ui.painter().rect_filled(area, 0.0, crate::theme::app_bg());
+
+        let card_size = egui::vec2(340.0, 150.0);
+        let card_rect = egui::Rect::from_center_size(area.center(), card_size);
+        ui.painter()
+            .rect_filled(card_rect, 10.0, crate::theme::control_bg());
+        ui.painter().rect_stroke(
+            card_rect,
+            10.0,
+            egui::Stroke::new(1.0, crate::theme::line_fg()),
+            egui::StrokeKind::Inside,
+        );
+
+        let icon = egui_material_icons::icons::ICON_MUSIC_NOTE;
+        ui.scope_builder(egui::UiBuilder::new().max_rect(card_rect), |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(16.0);
+                ui.add(
+                    egui::Label::new(
+                        icon.rich_text()
+                            .size(crate::theme::ICON_FONT_XL)
+                            .color(crate::theme::text_muted()),
+                    )
+                    .selectable(false),
+                );
+                ui.add_space(10.0);
+                ui.label(
+                    egui::RichText::new(t!("common.no_document"))
+                        .size(crate::theme::SUB_TITLE_FONT)
+                        .color(crate::theme::text_primary()),
+                );
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new(t!("workspace.placeholder_hint"))
+                        .size(crate::theme::SMALL_FONT)
+                        .color(crate::theme::text_disabled()),
+                );
+                ui.add_space(10.0);
+                ui.label(
+                    egui::RichText::new(t!("workspace.placeholder_shortcuts"))
+                        .size(crate::theme::SMALL_LABEL_FONT)
+                        .color(crate::theme::text_label()),
+                );
+            });
+        });
+    }
     ///
     /// 每帧渲染前检查各视图的选框数量与共享选区状态：
     /// - 某视图**新增**了选框（框选提交，含 shift/cmd 加选追加）→ 清除其他视图的选框；

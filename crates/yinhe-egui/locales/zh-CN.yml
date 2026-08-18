@@ -495,3 +495,7 @@ file_dialog.soundfont: "SoundFont"
 file_dialog.untitled: "未命名.yin"
 file_dialog.export_mid: "导出.mid"
 file_dialog.open_failed: "无法打开「%{name}」：可能不是有效的 .yin 文件，或其内嵌 MIDI 缺少 Conductor 轨道。"
+
+# ── 工作区占位面板 ──
+workspace.placeholder_hint: "新建或打开一个工程开始编辑"
+workspace.placeholder_shortcuts: "点击标题栏 / 菜单栏新建或打开工程"
