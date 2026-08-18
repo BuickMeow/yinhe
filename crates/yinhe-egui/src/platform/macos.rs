@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock, mpsc};
 
 use muda::{
-    IsMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
+    CheckMenuItem, IsMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
     accelerator::{Accelerator, Code, Modifiers},
 };
 use objc2::runtime::{AnyClass, AnyObject, Sel};
@@ -14,6 +14,7 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use rust_i18n::t;
 
 use super::MenuAction;
+use yinhe_editor_core::follow::FollowMode;
 use yinhe_editor_core::shortcuts::{self, Keybindings};
 
 /// 原生菜单项（按 i18n key 标识）与快捷键配置动作的对应关系，
@@ -481,7 +482,8 @@ fn show_all_apps() {
 static MENU_SENDER: Mutex<Option<mpsc::Sender<MenuAction>>> = Mutex::new(None);
 
 /// Maps `muda::MenuId` to `MenuAction` for dispatching menu events.
-static MENU_MAP: OnceLock<HashMap<MenuId, MenuAction>> = OnceLock::new();
+/// Mutex：「最近修改的文件」子菜单在运行时重建内容，需要增删映射。
+static MENU_MAP: OnceLock<Mutex<HashMap<MenuId, MenuAction>>> = OnceLock::new();
 
 // 持有 `Menu` 及所有子菜单/菜单项，防止它们被 drop 后底层 NSMenuItem 被释放。
 // 菜单栏生命周期与应用相同，永不释放。
@@ -537,6 +539,12 @@ struct NativeMenu {
     /// 按创建顺序保存 (翻译 key, 菜单项)：key 用于语言切换时重新取文本，
     /// 对象本身同时承担保活职责（drop 会导致底层 NSMenuItem 被释放）。
     _items: Vec<(&'static str, Box<dyn MenuText>)>,
+    /// 「最近修改的文件」子菜单（内容随 recent_files 在运行时重建）。
+    recent_submenu: Submenu,
+    /// 子菜单项保活 + 重建时移除（thread_local OnceLock 内只能不可变访问，用 RefCell）。
+    recent_items: std::cell::RefCell<Vec<MenuItem>>,
+    /// 播放跟随四档勾选项（模式, 翻译 key, 句柄）：勾选态/文本的运行时刷新入口。
+    follow_checks: Vec<(FollowMode, &'static str, CheckMenuItem)>,
 }
 
 /// FileAction/EditAction → 原生菜单动作的桥接。
@@ -687,6 +695,11 @@ fn init_native_menu() -> muda::Result<()> {
         &default_kb,
     )?;
 
+    // ── 「最近修改的文件」子菜单（跟在「打开」之后，即 popup 里的位置；
+    //    初始为空禁用，由 poll 按 recent_files 重建内容）──
+    let recent_submenu = Submenu::new(t!("menu.recent_files"), false);
+    file_menu.insert(&recent_submenu, 2)?;
+
     // ── 编辑菜单（与 transport bar 编辑 popup 同步）──
     let edit_menu = build_action_submenu(
         &mut map,
@@ -717,7 +730,39 @@ fn init_native_menu() -> muda::Result<()> {
     ));
     map.insert(stop_item.id().clone(), MenuAction::Stop);
 
-    let play_items: Vec<&dyn IsMenuItem> = vec![play_item.as_ref(), stop_item.as_ref()];
+    // 录音 / 步进输入（与播放 popup 同步的普通动作项）
+    let record_item = Box::new(MenuItem::new(t!("menu.record"), true, None));
+    map.insert(record_item.id().clone(), MenuAction::ToggleRecord);
+    let step_item = Box::new(MenuItem::new(t!("menu.step_input"), true, None));
+    map.insert(step_item.id().clone(), MenuAction::ToggleStepInput);
+
+    // 播放跟随四档（CheckMenuItem 单选勾选；勾选态由 poll 按当前 follow_mode 同步）
+    const FOLLOW_MODES: [(FollowMode, &str); 4] = [
+        (FollowMode::None, "follow.none"),
+        (FollowMode::Centered, "follow.centered"),
+        (FollowMode::Page, "follow.page"),
+        (FollowMode::Continuous, "follow.continuous"),
+    ];
+    let mut follow_checks: Vec<(FollowMode, &'static str, CheckMenuItem)> = Vec::new();
+    for (mode, key) in FOLLOW_MODES {
+        let item = CheckMenuItem::new(t!(key), true, false, None);
+        map.insert(item.id().clone(), MenuAction::SetFollowMode(mode));
+        follow_checks.push((mode, key, item));
+    }
+
+    let sep_play = PredefinedMenuItem::separator();
+    let sep_follow = PredefinedMenuItem::separator();
+    let mut play_items: Vec<&dyn IsMenuItem> = vec![
+        play_item.as_ref(),
+        stop_item.as_ref(),
+        &sep_play,
+        record_item.as_ref(),
+        step_item.as_ref(),
+        &sep_follow,
+    ];
+    for (_, _, item) in &follow_checks {
+        play_items.push(item);
+    }
     let play_menu = Submenu::with_items(t!("menu.playback"), true, &play_items)?;
 
     let menu_items: Vec<&dyn IsMenuItem> = vec![&app_menu, &file_menu, &edit_menu, &play_menu];
@@ -727,6 +772,8 @@ fn init_native_menu() -> muda::Result<()> {
     // 收集所有 items 保持存活（翻译 key 用于语言切换时刷新文本）
     items.push(("shortcuts.play_toggle", play_item));
     items.push(("shortcuts.stop", stop_item));
+    items.push(("menu.record", record_item));
+    items.push(("menu.step_input", step_item));
     items.push(("menu.about", about_item));
     items.push(("menu.settings", settings_item));
     items.push(("menu.hide", hide_item));
@@ -735,20 +782,26 @@ fn init_native_menu() -> muda::Result<()> {
     items.push(("menu.quit", quit_item));
     items.push(("menu.file", Box::new(file_menu)));
     items.push(("menu.edit", Box::new(edit_menu)));
+    // 此前遗漏：播放菜单标题也要随语言切换刷新
+    items.push(("menu.playback", Box::new(play_menu)));
     items.push(("menu.app", Box::new(app_menu)));
 
-    let _ = MENU_MAP.set(map);
+    let _ = MENU_MAP.set(Mutex::new(map));
 
     NATIVE_MENU.with(|cell| {
         let _ = cell.set(NativeMenu {
             _menu: menu,
             _items: items,
+            recent_submenu,
+            recent_items: std::cell::RefCell::new(Vec::new()),
+            follow_checks,
         });
     });
 
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            if let Some(map) = MENU_MAP.get()
+            if let Some(map_lock) = MENU_MAP.get()
+                && let Ok(map) = map_lock.lock()
                 && let Some(action) = map.get(event.id())
             {
                 // App 菜单的系统级动作就地执行（主线程回调，无需经过通道）
@@ -780,6 +833,56 @@ fn refresh_native_menu_texts() {
             for (key, item) in &native._items {
                 let key = *key;
                 item.set_text(&t!(key));
+            }
+            // recent 子菜单标题与跟随四档由专门字段持有（不进 _items），单独刷新
+            native.recent_submenu.set_text(&t!("menu.recent_files"));
+            for (_, key, item) in &native.follow_checks {
+                item.set_text(&t!(*key));
+            }
+        }
+    });
+}
+
+/// 重建「最近修改的文件」子菜单内容（recent_files 变化时由 poll 调用）。
+/// 与 transport bar 文件 popup 的子菜单保持同一数据源（AudioSettings::recent_files）。
+fn refresh_recent_submenu(files: &[String]) {
+    NATIVE_MENU.with(|cell| {
+        let Some(native) = cell.get() else { return };
+        let mut items = native.recent_items.borrow_mut();
+        // 移除旧项并清掉事件映射（handle drop 前先从菜单摘除）
+        for item in items.drain(..) {
+            let _ = native.recent_submenu.remove(&item);
+            if let Some(lock) = MENU_MAP.get()
+                && let Ok(mut map) = lock.lock()
+            {
+                map.remove(item.id());
+            }
+        }
+        // 空列表时禁用子菜单（macOS 惯例）
+        native.recent_submenu.set_enabled(!files.is_empty());
+        for path in files {
+            let item = MenuItem::new(
+                crate::chrome::transport_bar::recent_display_name(path),
+                true,
+                None,
+            );
+            if let Some(lock) = MENU_MAP.get()
+                && let Ok(mut map) = lock.lock()
+            {
+                map.insert(item.id().clone(), MenuAction::OpenRecent(path.clone()));
+            }
+            let _ = native.recent_submenu.append(&item);
+            items.push(item);
+        }
+    });
+}
+
+/// 按当前跟随模式刷新播放菜单四档勾选（popup 内切换后原生菜单同步）。
+fn refresh_follow_checks(mode: FollowMode) {
+    NATIVE_MENU.with(|cell| {
+        if let Some(native) = cell.get() {
+            for (m, _, item) in &native.follow_checks {
+                item.set_checked(*m == mode);
             }
         }
     });
@@ -832,6 +935,10 @@ pub(crate) struct MenuBarInner {
     /// 加速键是否处于暂停（设置窗口打开/录制中）。暂停期间全部清空，
     /// 避免 AppKit 系统级拦截按键导致设置页录不到组合键。
     accelerators_suspended: bool,
+    /// 上次同步到原生菜单的最近文件列表，变化时重建子菜单。
+    last_recent_files: Vec<String>,
+    /// 上次同步到原生菜单的跟随模式（None = 未同步，首次强制刷新勾选）。
+    last_follow_mode: Option<FollowMode>,
 }
 
 impl MenuBarInner {
@@ -848,12 +955,29 @@ impl MenuBarInner {
             last_locale: rust_i18n::locale().to_string(),
             last_keybindings: Keybindings::default(),
             accelerators_suspended: false,
+            last_recent_files: Vec::new(),
+            last_follow_mode: None,
         }
     }
 
     /// suspend 为 true 时清空全部菜单加速键（设置窗口打开或快捷键录制中），
     /// 防止系统在应用层面前拦截组合键；恢复 false 后按最新配置刷新。
-    pub fn poll(&mut self, keybindings: &Keybindings, suspend: bool) -> Vec<MenuAction> {
+    pub fn poll(
+        &mut self,
+        keybindings: &Keybindings,
+        suspend: bool,
+        recent_files: &[String],
+        follow_mode: FollowMode,
+    ) -> Vec<MenuAction> {
+        // 动态内容与 transport bar popup 同步：最近文件子菜单、跟随档勾选
+        if recent_files != self.last_recent_files {
+            self.last_recent_files = recent_files.to_vec();
+            refresh_recent_submenu(recent_files);
+        }
+        if self.last_follow_mode != Some(follow_mode) {
+            self.last_follow_mode = Some(follow_mode);
+            refresh_follow_checks(follow_mode);
+        }
         // 应用内语言切换（设置对话框）时原生菜单文本不会自动更新，
         // 检测 locale 变化后逐个刷新标题（setText 走主线程，poll 在 UI 帧内调用）。
         let locale = rust_i18n::locale();

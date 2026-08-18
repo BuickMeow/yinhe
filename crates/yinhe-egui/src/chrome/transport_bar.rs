@@ -892,7 +892,8 @@ fn show_action_menu<T: PopupRow>(
 const RECENT_SUBMENU_OPEN_ID: &str = "recent_files_submenu_open";
 
 /// 最近文件的行显示名（basename；取不到时用完整路径）。
-fn recent_display_name(path: &str) -> &str {
+/// transport bar 子菜单与 macOS 原生菜单共用。
+pub(crate) fn recent_display_name(path: &str) -> &str {
     std::path::Path::new(path)
         .file_name()
         .and_then(|n| n.to_str())

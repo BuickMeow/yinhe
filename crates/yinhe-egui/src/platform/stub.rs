@@ -13,7 +13,13 @@ impl MenuBarInner {
         Self { _rx: rx }
     }
 
-    pub fn poll(&mut self, _keybindings: &Keybindings, _suspend: bool) -> Vec<MenuAction> {
+    pub fn poll(
+        &mut self,
+        _keybindings: &Keybindings,
+        _suspend: bool,
+        _recent_files: &[String],
+        _follow_mode: yinhe_editor_core::follow::FollowMode,
+    ) -> Vec<MenuAction> {
         Vec::new()
     }
 

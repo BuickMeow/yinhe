@@ -141,10 +141,14 @@ impl eframe::App for App {
         let mut menu_toggle_play = false;
         let mut menu_pause_return = false;
         let mut menu_stop = false;
-        for action in self
-            .menu_bar
-            .poll(&self.audio_settings.keybindings, suspend_menu_accels)
-        {
+        let mut menu_record = false;
+        let mut menu_step = false;
+        for action in self.menu_bar.poll(
+            &self.audio_settings.keybindings,
+            suspend_menu_accels,
+            &self.audio_settings.recent_files,
+            self.follow_mode,
+        ) {
             use crate::platform::MenuAction;
             // 输入框聚焦时编辑类菜单动作让位给文本编辑（与 handle_keyboard_shortcuts
             // 的 egui_wants_keyboard_input 保护一致）。双保险：加速键暂停是上一帧
@@ -230,6 +234,22 @@ impl eframe::App for App {
                 }
                 MenuAction::Stop => {
                     menu_stop = true;
+                    continue;
+                }
+                MenuAction::ToggleRecord => {
+                    menu_record = true;
+                    continue;
+                }
+                MenuAction::ToggleStepInput => {
+                    menu_step = true;
+                    continue;
+                }
+                MenuAction::SetFollowMode(mode) => {
+                    self.follow_mode = mode;
+                    continue;
+                }
+                MenuAction::OpenRecent(path) => {
+                    self.open_recent_file(&path, ui.ctx());
                     continue;
                 }
                 MenuAction::Settings => {
@@ -492,12 +512,12 @@ impl eframe::App for App {
         );
 
         // ── 步进输入模式切换 ──
-        if transport_response.step_toggle {
+        if transport_response.step_toggle || menu_step {
             self.step_input = !self.step_input;
         }
 
-        // ── MIDI 录音切换（REC 按钮）──
-        if transport_response.record_toggle {
+        // ── MIDI 录音切换（REC 按钮 / macOS 播放菜单）──
+        if transport_response.record_toggle || menu_record {
             if self.recording.is_some() {
                 self.stop_recording();
             } else {

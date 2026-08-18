@@ -30,6 +30,14 @@ pub enum MenuAction {
     TogglePlay,
     /// 播放菜单「停止」（Esc）。
     Stop,
+    /// 播放菜单「录音」切换。
+    ToggleRecord,
+    /// 播放菜单「步进输入」切换。
+    ToggleStepInput,
+    /// 播放菜单「播放跟随」四档单选。
+    SetFollowMode(yinhe_editor_core::follow::FollowMode),
+    /// 文件菜单「最近修改的文件」子菜单选中的路径。
+    OpenRecent(String),
     /// App 菜单「设置…」（⌘,），打开应用设置对话框。
     Settings,
     /// App 菜单「退出」（⌘Q），走未保存检查流程。
@@ -57,12 +65,17 @@ impl MenuBar {
     /// keybindings 用于检测快捷键配置变化并同步原生菜单加速键（macOS）；
     /// suspend 为 true（设置窗口打开/快捷键录制中）时暂停原生菜单加速键，
     /// 避免系统级拦截组合键。
+    /// recent_files / follow_mode 用于同步原生菜单的动态内容
+    /// （最近文件子菜单、跟随档勾选），与 transport bar popup 保持一致。
     pub fn poll(
         &mut self,
         keybindings: &yinhe_editor_core::shortcuts::Keybindings,
         suspend: bool,
+        recent_files: &[String],
+        follow_mode: yinhe_editor_core::follow::FollowMode,
     ) -> Vec<MenuAction> {
-        self.inner.poll(keybindings, suspend)
+        self.inner
+            .poll(keybindings, suspend, recent_files, follow_mode)
     }
 
     /// Poll for file paths passed in by the OS (Finder "Open With" on macOS).
