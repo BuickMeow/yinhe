@@ -93,6 +93,67 @@ impl Document {
         ))
     }
 
+    /// 创建空的 automation lane（同 target 已存在时返回 None）。
+    /// 返回 (lane_idx, UndoAction)。lane 插入到该轨 lanes 末尾。
+    ///
+    /// 不支持 Tempo：Tempo lane 由 conductor 持有（conductor.tempo），
+    /// 不在 track.automation_lanes，传 Tempo 返回 None。
+    pub fn add_automation_lane(
+        &mut self,
+        track_idx: usize,
+        target: AutomationTarget,
+    ) -> Option<(usize, UndoAction)> {
+        if matches!(target, AutomationTarget::Tempo) {
+            return None;
+        }
+        let model = Arc::make_mut(&mut self.data.model);
+        let track = model.tracks.get_mut(track_idx)?;
+        let track = Arc::make_mut(track);
+        // 同 target 的 lane 每轨至多一条（与 add_automation_event 的懒创建一致）。
+        if track.automation_lanes.iter().any(|l| l.target == target) {
+            return None;
+        }
+        let lane = yinhe_types::AutomationLane {
+            target,
+            track: track_idx as u16,
+            events: Vec::new(),
+        };
+        track.automation_lanes.push(lane.clone());
+        let lane_idx = track.automation_lanes.len() - 1;
+        self.data.bump_revision();
+        Some((
+            lane_idx,
+            UndoAction::AutomationLane {
+                track_idx,
+                lane_idx,
+                before: None,
+                after: Some(lane),
+            },
+        ))
+    }
+
+    /// 删除整条 automation lane。返回 UndoAction（before 含完整 lane 供 undo 恢复）。
+    pub fn remove_automation_lane(
+        &mut self,
+        track_idx: usize,
+        lane_idx: usize,
+    ) -> Option<UndoAction> {
+        let model = Arc::make_mut(&mut self.data.model);
+        let track = model.tracks.get_mut(track_idx)?;
+        let track = Arc::make_mut(track);
+        if lane_idx >= track.automation_lanes.len() {
+            return None;
+        }
+        let lane = track.automation_lanes.remove(lane_idx);
+        self.data.bump_revision();
+        Some(UndoAction::AutomationLane {
+            track_idx,
+            lane_idx,
+            before: Some(lane),
+            after: None,
+        })
+    }
+
     /// 移动指定 lane 上 tick=`old_tick` 的事件到 `(new_tick, new_value)`。
     /// 如果 `new_tick` 与同 lane 已有事件冲突，会先移除冲突项。
     ///

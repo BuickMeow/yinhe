@@ -38,6 +38,12 @@ impl UndoAction {
                 &delta.before,
                 &delta.after,
             ),
+            UndoAction::AutomationLane {
+                track_idx,
+                lane_idx,
+                before: _,
+                after,
+            } => apply_automation_lane_delta(doc, *track_idx, *lane_idx, after.as_ref()),
             UndoAction::TrackName {
                 track_idx,
                 old: _,
@@ -314,6 +320,43 @@ pub(crate) fn apply_automation_delta(
     // Tempo 改了要重建 tempo_map（否则音频引擎和播放光标都用旧 tempo）
     if matches!(target, yinhe_types::AutomationTarget::Tempo) {
         doc.data.rebuild_tempo_map();
+    }
+    doc.data.bump_revision();
+}
+
+/// 应用 automation lane 结构变化（创建/删除整条 lane）。
+///
+/// after = Some(lane)：在 lane_idx 处插入 lane（越界时 clamp 到末尾），
+/// lane.track 校正为 track_idx。after = None：移除 lane_idx 处的 lane
+/// （越界时静默忽略，不 panic——规则 17）。
+///
+/// 不支持 Tempo lane：conductor 的 Tempo 存于 conductor.tempo，不在
+/// track.automation_lanes，调用方不会传 Tempo 进来。非 Tempo lane 变化
+/// 不影响 tempo_map / 音频，与 apply_automation_delta 的非 Tempo 路径
+/// 一致，只需 bump_revision。
+fn apply_automation_lane_delta(
+    doc: &mut Document,
+    track_idx: usize,
+    lane_idx: usize,
+    after: Option<&yinhe_types::AutomationLane>,
+) {
+    let model = Arc::make_mut(&mut doc.data.model);
+    if let Some(track) = model.tracks.get_mut(track_idx) {
+        let track = Arc::make_mut(track);
+        match after {
+            Some(lane) => {
+                let mut lane = lane.clone();
+                lane.track = track_idx as u16;
+                // 越界防御：clamp 到末尾（调用方保证语义，这里只保证不 panic）。
+                let idx = lane_idx.min(track.automation_lanes.len());
+                track.automation_lanes.insert(idx, lane);
+            }
+            None => {
+                if lane_idx < track.automation_lanes.len() {
+                    track.automation_lanes.remove(lane_idx);
+                }
+            }
+        }
     }
     doc.data.bump_revision();
 }

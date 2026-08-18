@@ -466,6 +466,67 @@ fn automation_add_tempo_roundtrips() {
 }
 
 #[test]
+fn automation_add_lane_roundtrips() {
+    let mut doc = make_doc_with_cc_lane();
+    let target = AutomationTarget::CC { controller: 1 };
+    // 空 lane 不产生事件，model_snapshot 看不出差异，手动驱动 undo/redo。
+    let snapshot = doc.capture_snapshot();
+    let (lane_idx, action) = doc
+        .add_automation_lane(0, target.clone())
+        .expect("add_automation_lane 应成功");
+    assert_eq!(lane_idx, 1, "新 lane 追加到该轨 lanes 末尾");
+    assert_eq!(doc.data.model.tracks[0].automation_lanes.len(), 2);
+    assert_eq!(doc.data.model.tracks[0].automation_lanes[1].target, target);
+    assert!(
+        doc.data.model.tracks[0].automation_lanes[1]
+            .events
+            .is_empty()
+    );
+    doc.push_undo(action, "add-lane", snapshot);
+    assert!(doc.undo(), "undo 应成功");
+    assert_eq!(
+        doc.data.model.tracks[0].automation_lanes.len(),
+        1,
+        "undo 后 lane 消失"
+    );
+    assert!(doc.redo(), "redo 应成功");
+    let lanes = &doc.data.model.tracks[0].automation_lanes;
+    assert_eq!(lanes.len(), 2, "redo 后 lane 回来");
+    assert_eq!(lanes[1].target, target);
+    assert_eq!(lanes[1].track, 0, "lane.track 校正为 track_idx");
+}
+
+#[test]
+fn automation_remove_lane_roundtrips_with_events() {
+    let mut doc = make_doc_with_cc_lane();
+    // lane 里有 3 个事件：undo 必须连 lane 带事件完整恢复，redo 又删掉。
+    assert_roundtrip(&mut doc, "remove-lane", |doc| {
+        doc.remove_automation_lane(0, 0)
+    });
+}
+
+#[test]
+fn automation_add_lane_duplicate_target_returns_none() {
+    let mut doc = make_doc_with_cc_lane();
+    assert!(
+        doc.add_automation_lane(0, AutomationTarget::CC { controller: 7 })
+            .is_none(),
+        "同 target lane 已存在时返回 None"
+    );
+    assert_eq!(doc.data.model.tracks[0].automation_lanes.len(), 1);
+}
+
+#[test]
+fn automation_add_lane_tempo_returns_none() {
+    let mut doc = make_doc("tempo-lane");
+    // Tempo lane 由 conductor 持有，不走 track.automation_lanes。
+    assert!(
+        doc.add_automation_lane(0, AutomationTarget::Tempo)
+            .is_none()
+    );
+}
+
+#[test]
 fn automation_move_roundtrips_including_conflict() {
     let mut doc = make_doc_with_cc_lane();
     // tick 200 → 300：tick 300 处已有事件（冲突项）会被移除，undo 必须恢复它。

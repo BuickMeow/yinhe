@@ -105,6 +105,14 @@ pub enum UndoAction {
     Notes(NoteDelta),
     /// Automation lane event changes (add/move/delete/shape).
     Automation(AutomationDelta),
+    /// Automation lane 结构变化（创建/删除整条 lane）。
+    /// before/after 为 None 表示该侧 lane 不存在。
+    AutomationLane {
+        track_idx: usize,
+        lane_idx: usize,
+        before: Option<yinhe_types::AutomationLane>,
+        after: Option<yinhe_types::AutomationLane>,
+    },
     /// A track name was edited.
     TrackName {
         track_idx: usize,
@@ -200,6 +208,20 @@ impl UndoAction {
             UndoAction::Automation(mut delta) => {
                 std::mem::swap(&mut delta.before, &mut delta.after);
                 UndoAction::Automation(delta)
+            }
+            UndoAction::AutomationLane {
+                track_idx,
+                lane_idx,
+                mut before,
+                mut after,
+            } => {
+                std::mem::swap(&mut before, &mut after);
+                UndoAction::AutomationLane {
+                    track_idx,
+                    lane_idx,
+                    before,
+                    after,
+                }
             }
             UndoAction::TrackName {
                 track_idx,
