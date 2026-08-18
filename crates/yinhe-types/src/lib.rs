@@ -1,5 +1,6 @@
 //! Core MIDI data types shared across the yinhe workspace.
 
+pub mod arr_row_layout;
 pub mod arrangement_view;
 pub mod automation;
 pub mod automation_panel_view;
@@ -14,6 +15,7 @@ mod source;
 pub mod time_format;
 pub mod view_base;
 
+pub use arr_row_layout::{ArRow, ArRowLayout};
 pub use arrangement_view::ArrangementView;
 pub use automation::{
     AutomationEdit, AutomationEvent, AutomationLane, AutomationTarget, SegmentShape,

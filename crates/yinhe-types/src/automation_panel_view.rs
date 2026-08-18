@@ -63,6 +63,10 @@ pub struct AutomationPanelView {
     /// 垂直滚动偏移（值空间单位，如 CC 的 0~127）。
     /// 面板顶部对应的值 = `value_scroll`。
     pub value_scroll: f32,
+    /// 面板内容在宿主纹理中的 y 偏移（像素）。
+    /// PR 的独立面板为 0；AR 的自动化 lane 画在共享走带纹理里，
+    /// 用此字段把曲线平移到所属子行的顶部。
+    pub y_offset: f32,
     /// 持久化的锚点选框列表（音乐坐标）。支持多选框：shift+框选时累加。
     /// 选中状态由锚点是否在任一选框范围内决定（类似 PR/AR 的 sel_rect）。
     /// 框选完成后追加，点击选框外或清空选区时清空全部。
@@ -88,6 +92,7 @@ impl Default for AutomationPanelView {
             dirty: true,
             value_zoom: 1.0,
             value_scroll: 0.0,
+            y_offset: 0.0,
             anchor_sel_rects: Vec::new(),
         }
     }
@@ -128,22 +133,23 @@ impl AutomationPanelView {
             self.panel_height,
             self.value_zoom,
             self.value_scroll,
+            self.y_offset,
         ])
     }
 
-    /// 将自动化值转换为面板局部 Y 坐标（像素，0=顶部）。
+    /// 将自动化值转换为宿主纹理 Y 坐标（像素，含 y_offset）。
     /// `max_val` = 当前 target 的最大值（如 CC 的 127）。
     #[inline]
     pub fn value_to_y(&self, value: f32, max_val: f32) -> f32 {
         let visible_range = max_val / self.value_zoom;
         if visible_range <= 0.0 {
-            return 0.0;
+            return self.y_offset;
         }
         let h = self.panel_height;
-        h - ((value - self.value_scroll) / visible_range) * h
+        self.y_offset + h - ((value - self.value_scroll) / visible_range) * h
     }
 
-    /// 将面板局部 Y 坐标（像素，0=顶部）转换回自动化值。
+    /// 将宿主纹理 Y 坐标（像素，含 y_offset）转换回自动化值。
     /// `max_val` = 当前 target 的最大值。
     #[inline]
     pub fn y_to_value(&self, y: f32, max_val: f32) -> f32 {
@@ -152,7 +158,7 @@ impl AutomationPanelView {
             return 0.0;
         }
         let h = self.panel_height;
-        self.value_scroll + (1.0 - y / h) * visible_range
+        self.value_scroll + (1.0 - (y - self.y_offset) / h) * visible_range
     }
 
     /// 根据 max_val 限制 value_scroll 的范围，防止滚出有效区间。

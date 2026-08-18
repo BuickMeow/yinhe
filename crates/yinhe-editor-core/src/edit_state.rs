@@ -219,6 +219,13 @@ pub struct EditState {
     /// 新建音符默认力度取此值（同轨多音符修改时记时间最晚的），无记录回退 100。
     /// UI 状态，不参与 undo 快照，不持久化。
     pub recent_velocity: Vec<Option<(u32, u8)>>,
+    /// AR：各音轨自动化 lane 是否展开（按音轨位置，与 track_visible 同语义）。
+    pub arr_am_expanded: Vec<bool>,
+    /// AR：每条展开的自动化 lane 的视图状态（锚点选框等），
+    /// key = (音轨索引, lane target)。base/panel_height/y_offset 每帧由
+    /// AR 视图同步覆盖，只有 anchor_sel_rects 等持久状态有效。
+    pub arr_am_views:
+        HashMap<(u16, yinhe_types::AutomationTarget), yinhe_types::AutomationPanelView>,
 }
 
 impl Default for EditState {
@@ -247,6 +254,8 @@ impl Default for EditState {
             sel_rect: SelRectState::default(),
             arr_sel_rect: Vec::new(),
             recent_velocity: Vec::new(),
+            arr_am_expanded: Vec::new(),
+            arr_am_views: HashMap::new(),
         }
     }
 }
