@@ -275,14 +275,11 @@ pub(crate) fn show(
                     } else {
                         egui::Color32::WHITE
                     };
-                    let gap = 2.0;
+                    // 加号放在色带列底部（与主行 chevron 同位置 lh*0.62）。
+                    let badge_center_x = row_rect.min.x + 14.0 * 0.5;
                     badge_icon_menu(
                         ui,
-                        // M/S 按钮左侧、行垂直居中。
-                        egui::pos2(
-                            row_rect.max.x - 6.0 - 2.0 * (btn_size.x + gap) - btn_size.x,
-                            row_rect.center().y,
-                        ),
+                        egui::pos2(badge_center_x, row_rect.min.y + lh * 0.62),
                         ICON_ADD.codepoint,
                         ICON_ADD.font_family(),
                         plus_color,
@@ -899,62 +896,61 @@ fn create_automation_menu(
     tracks: &[Arc<yinhe_core::TrackData>],
     actions: &mut Vec<TrackAction>,
 ) {
-    // 菜单面板样式（无边框、等宽菜单项）：与 PR 的 target 选择 popup 一致。
-    egui::Frame::menu(ui.style()).show(ui, |ui| {
-        ui.set_min_width(160.0);
-        ui.set_max_width(160.0);
-        let existing: Vec<AutomationTarget> = tracks
-            .get(idx)
-            .map(|t| {
-                t.automation_lanes
-                    .iter()
-                    .map(|l| l.target.clone())
-                    .collect()
-            })
-            .unwrap_or_default();
-        for target in crate::piano_view::automation_panel::AUTOMATION_TARGETS {
-            if matches!(target, AutomationTarget::Tempo) || existing.contains(target) {
-                continue;
-            }
-            let label = super::am_lanes::lane_label(target);
-            if ui
-                .add(crate::widgets::menu::menu_item_button(ui, false, label))
-                .clicked()
-            {
-                actions.push(TrackAction::CreateAutomation {
-                    idx,
-                    target: target.clone(),
-                });
-                ui.close();
-            }
+    // 面板轮廓由调用方提供（badge popup 用 Popup::new 的 Frame::menu；
+    // 右键菜单自带 context_menu 面板），这里只渲染无边框等宽的菜单项。
+    ui.set_min_width(160.0);
+    ui.set_max_width(160.0);
+    let existing: Vec<AutomationTarget> = tracks
+        .get(idx)
+        .map(|t| {
+            t.automation_lanes
+                .iter()
+                .map(|l| l.target.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    for target in crate::piano_view::automation_panel::AUTOMATION_TARGETS {
+        if matches!(target, AutomationTarget::Tempo) || existing.contains(target) {
+            continue;
         }
-        ui.separator();
-        // 自定义 CC：菜单内 DragValue（0..=127）+ 无边框「创建」按钮。
-        let cc_id = egui::Id::new(("arr_custom_cc", idx));
-        let mut cc = ui.ctx().data_mut(|d| d.get_temp::<u8>(cc_id)).unwrap_or(7);
-        ui.horizontal(|ui| {
-            ui.label(t!("arrange.custom_cc"));
-            if ui
-                .add(egui::DragValue::new(&mut cc).range(0..=127))
-                .changed()
-            {
-                ui.ctx().data_mut(|d| d.insert_temp(cc_id, cc));
+        let label = super::am_lanes::lane_label(target);
+        if ui
+            .add(crate::widgets::menu::menu_item_button(ui, false, label))
+            .clicked()
+        {
+            actions.push(TrackAction::CreateAutomation {
+                idx,
+                target: target.clone(),
+            });
+            ui.close();
+        }
+    }
+    ui.separator();
+    // 自定义 CC：菜单内 DragValue（0..=127）+ 无边框「创建」按钮。
+    let cc_id = egui::Id::new(("arr_custom_cc", idx));
+    let mut cc = ui.ctx().data_mut(|d| d.get_temp::<u8>(cc_id)).unwrap_or(7);
+    ui.horizontal(|ui| {
+        ui.label(t!("arrange.custom_cc"));
+        if ui
+            .add(egui::DragValue::new(&mut cc).range(0..=127))
+            .changed()
+        {
+            ui.ctx().data_mut(|d| d.insert_temp(cc_id, cc));
+        }
+        if ui
+            .add(crate::widgets::menu::menu_item_button(
+                ui,
+                false,
+                t!("arrange.create"),
+            ))
+            .clicked()
+        {
+            let target = AutomationTarget::CC { controller: cc };
+            if !existing.contains(&target) {
+                actions.push(TrackAction::CreateAutomation { idx, target });
             }
-            if ui
-                .add(crate::widgets::menu::menu_item_button(
-                    ui,
-                    false,
-                    t!("arrange.create"),
-                ))
-                .clicked()
-            {
-                let target = AutomationTarget::CC { controller: cc };
-                if !existing.contains(&target) {
-                    actions.push(TrackAction::CreateAutomation { idx, target });
-                }
-                ui.close();
-            }
-        });
+            ui.close();
+        }
     });
 }
 
@@ -1020,6 +1016,7 @@ fn badge_icon_menu(
             anchor.pos, // impl From<Pos2> → PopupAnchor::Position
             egui::LayerId::new(egui::Order::Middle, egui::Id::new("arr_add_popup_layer")),
         )
+        .frame(egui::Frame::menu(ui.style())) // 只一层菜单轮廓，不再由 body 内部再套
         .open_memory(None)
         .show(|ui| {
             ui.set_min_width(160.0);
