@@ -367,7 +367,17 @@ pub(crate) fn draw_hover_tooltip(ctx: &egui::Context, lines: &[String], x: f32, 
         egui::pos2(tooltip_x - pad, tooltip_y - pad),
         egui::vec2(max_w + pad * 2.0, total_h + pad * 2.0),
     );
-    painter.rect_filled(bg_rect, 4.0, egui::Color32::from_black_alpha(180));
+    // 背景跟随主题：取 app_bg 再提高不透明度（暗色=近黑、亮色=近白），
+    // 避免固定半透明黑在亮色主题下变成脏块；文字用 contrast_fg 已随主题反转。
+    let base = crate::theme::app_bg();
+    let bg = egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), 235);
+    painter.rect_filled(bg_rect, 4.0, bg);
+    painter.rect_stroke(
+        bg_rect,
+        4.0,
+        egui::Stroke::new(1.0, crate::theme::line_fg()),
+        egui::StrokeKind::Inside,
+    );
     let mut ly = tooltip_y;
     for line in lines {
         painter.text(
