@@ -338,7 +338,8 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 );
 
                 // ── 编辑按钮 + 编辑菜单 popup（与文件按钮同款）──
-                let edit_btn = menu_button(ui, ICON_EDIT, btn_size, btn_rounding);
+                // 图标用 edit_square（方框+铅笔），与铅笔工具图标区分。
+                let edit_btn = menu_button(ui, ICON_EDIT_SQUARE, btn_size, btn_rounding);
                 if edit_btn.hovered() {
                     hovered_hint = Some(t!("hint.edit_menu").to_string());
                 }
