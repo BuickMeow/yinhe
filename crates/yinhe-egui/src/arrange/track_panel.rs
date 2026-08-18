@@ -169,71 +169,86 @@ pub(crate) fn show(
             let badge_rect = egui::Rect::from_min_size(row_rect.min, egui::vec2(badge_w, lh));
             painter.rect_filled(badge_rect, 0.0, color32);
 
-            let name_font = egui::FontId::proportional((lh * 0.35).clamp(9.0, 13.0));
+            // 完全复刻普通轨的字号与几何：详情模式两行（×0.25，y 0.30/0.70，均 primary），
+            // 紧凑模式单行（×0.45 居中）；唯一差异是文本内容（自动化名 / 所属音轨）。
             let text_x = badge_rect.max.x + 6.0;
-            // 第一行：自动化名（复用 lane_label 的显示格式）。
             let label = super::am_lanes::lane_label(&lane.target);
-            painter.text(
-                egui::pos2(text_x, badge_rect.min.y + lh * 0.35),
-                egui::Align2::LEFT_CENTER,
-                label,
-                name_font.clone(),
-                crate::theme::text_primary(),
-            );
-            // 第二行：所属音轨（如「Track 001」）。
             let owner = t!("hint.track", n = format!("{:03}", track_info[track].index));
-            painter.text(
-                egui::pos2(text_x, badge_rect.min.y + lh * 0.72),
-                egui::Align2::LEFT_CENTER,
-                owner,
-                name_font.clone(),
-                crate::theme::text_secondary(),
-            );
+            if show_details {
+                let font = egui::FontId::proportional((lh * 0.25).clamp(9.0, 13.0));
+                painter.text(
+                    egui::pos2(text_x, badge_rect.min.y + lh * 0.30),
+                    egui::Align2::LEFT_CENTER,
+                    label,
+                    font.clone(),
+                    crate::theme::text_primary(),
+                );
+                painter.text(
+                    egui::pos2(text_x, badge_rect.min.y + lh * 0.70),
+                    egui::Align2::LEFT_CENTER,
+                    owner,
+                    font.clone(),
+                    crate::theme::text_primary(),
+                );
+            } else {
+                // 紧凑模式：自动化名 + 所属音轨拼成单行（与普通轨单行对齐）。
+                let font = egui::FontId::proportional((lh * 0.45).clamp(8.0, 14.0));
+                painter.text(
+                    egui::pos2(text_x, badge_rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    format!("{} · {}", label, owner),
+                    font,
+                    crate::theme::text_primary(),
+                );
+            }
 
-            // M/S 试听按钮：位置与普通轨同款（18px 大按钮，右缘对齐）。
-            let key = (track_info[track].index, lane.target.clone());
-            let st = am_ms.get(&key).copied().unwrap_or_default();
-            let gap = 2.0;
-            let total_btn_w = 2.0 * btn_size.x + gap;
-            let btn_x_start = row_rect.max.x - total_btn_w - 6.0;
-            let btn_y = badge_rect.center().y - btn_size.y * 0.5;
-            let m_rect = egui::Rect::from_min_size(egui::pos2(btn_x_start, btn_y), btn_size);
-            let s_rect = egui::Rect::from_min_size(
-                egui::pos2(btn_x_start + btn_size.x + gap, btn_y),
-                btn_size,
-            );
-            let m_resp = draw_inline_button(
-                ui,
-                &painter,
-                m_rect,
-                "M",
-                st.mute,
-                crate::theme::mute_active(),
-                egui::Id::new(("am_btn_m", track, sub)),
-            );
-            let s_resp = draw_inline_button(
-                ui,
-                &painter,
-                s_rect,
-                "S",
-                st.solo,
-                crate::theme::solo_active(),
-                egui::Id::new(("am_btn_s", track, sub)),
-            );
-            if m_resp.clicked() || s_resp.clicked() {
-                let mut next = st;
-                if m_resp.clicked() {
-                    next.mute = !next.mute;
+            // M/S 试听按钮：位置与普通轨同款（18px 大按钮，右缘对齐）；
+            // 与普通轨一致，紧凑模式（!show_details）不显示。
+            if show_details {
+                let key = (track_info[track].index, lane.target.clone());
+                let st = am_ms.get(&key).copied().unwrap_or_default();
+                let gap = 2.0;
+                let total_btn_w = 2.0 * btn_size.x + gap;
+                let btn_x_start = row_rect.max.x - total_btn_w - 6.0;
+                let btn_y = badge_rect.center().y - btn_size.y * 0.5;
+                let m_rect = egui::Rect::from_min_size(egui::pos2(btn_x_start, btn_y), btn_size);
+                let s_rect = egui::Rect::from_min_size(
+                    egui::pos2(btn_x_start + btn_size.x + gap, btn_y),
+                    btn_size,
+                );
+                let m_resp = draw_inline_button(
+                    ui,
+                    &painter,
+                    m_rect,
+                    "M",
+                    st.mute,
+                    crate::theme::mute_active(),
+                    egui::Id::new(("am_btn_m", track, sub)),
+                );
+                let s_resp = draw_inline_button(
+                    ui,
+                    &painter,
+                    s_rect,
+                    "S",
+                    st.solo,
+                    crate::theme::solo_active(),
+                    egui::Id::new(("am_btn_s", track, sub)),
+                );
+                if m_resp.clicked() || s_resp.clicked() {
+                    let mut next = st;
+                    if m_resp.clicked() {
+                        next.mute = !next.mute;
+                    }
+                    if s_resp.clicked() {
+                        next.solo = !next.solo;
+                    }
+                    if next == yinhe_types::AmMsState::default() {
+                        am_ms.remove(&key);
+                    } else {
+                        am_ms.insert(key, next);
+                    }
+                    am_ms_dirty = true;
                 }
-                if s_resp.clicked() {
-                    next.solo = !next.solo;
-                }
-                if next == yinhe_types::AmMsState::default() {
-                    am_ms.remove(&key);
-                } else {
-                    am_ms.insert(key, next);
-                }
-                am_ms_dirty = true;
             }
             continue;
         }
