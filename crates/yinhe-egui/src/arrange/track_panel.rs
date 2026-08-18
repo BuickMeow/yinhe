@@ -287,7 +287,7 @@ pub(crate) fn show(
             // 加号：与 chevron 同位置（色带中央偏下 lh*0.62）、同尺寸、无边框图标，
             // 点击弹出创建自动化菜单；与 chevron 一样仅当该轨家族被悬停时显示。
             // popup 打开期间持续渲染加号（否则鼠标移向菜单时加号消失→popup 漂移）。
-            let add_open = egui::Popup::is_id_open(ui.ctx(), egui::Id::new(("badge_icon", track)));
+            let add_open = egui::Popup::is_id_open(ui.ctx(), egui::Id::new(("arr_add_pop", track)));
             if hover_track == Some(track) || add_open {
                 let lum = color[0] * 0.299 + color[1] * 0.587 + color[2] * 0.114;
                 let plus_color = if lum > 0.55 {
@@ -356,7 +356,7 @@ pub(crate) fn show(
                 // 无自动化未展开：色带同一图标位给无边框「+」，点弹创建自动化菜单；
                 // 与 chevron 一样仅悬浮显示；popup 打开期间持续渲染加号防漂移。
                 let add_open =
-                    egui::Popup::is_id_open(ui.ctx(), egui::Id::new(("badge_icon", idx)));
+                    egui::Popup::is_id_open(ui.ctx(), egui::Id::new(("arr_add_pop", idx)));
                 if family_hovered || add_open {
                     badge_icon_menu(
                         ui,
@@ -960,10 +960,11 @@ fn create_automation_menu(
 
 /// 在色带图标位置（与 chevron 同坐标、同尺寸、同绘制方式）画一个图标，点击弹菜单。
 ///
-/// 图标用 `painter.text` 严格 `CENTER_CENTER` 居中（同 chevron）；点击时把要弹出的
-/// 创建自动化菜单记入 egui memory（`active_add_popup`）并 `open_id` 打开它，
-/// 真正的 `Popup` 渲染由主循环末尾的 `show_add_automation_popup` 无条件执行——
-/// 锚点为点击时的固定屏幕位置，不与 hover 行绑定，鼠标移向菜单时 popup 不会漂移。
+/// 图标用 `painter.text` 严格 `CENTER_CENTER` 居中（同 chevron）。点击时用固定的
+/// popup id（`arr_add_pop_{track}`）打开，并把加号中心的**屏幕坐标**存为锚点；
+/// popup 用 `Popup::new(id, ?, Position(固定锚点), ...)` 渲染——锚点不与 hover 行绑定，
+/// 只要该加号在 popup 打开期间持续渲染（调用方用 `add_open` 保证），popup 就会稳定
+/// 落在加号旁固定位置，鼠标移向菜单不会漂移或消失。
 fn badge_icon_menu(
     ui: &mut egui::Ui,
     center: egui::Pos2,
@@ -975,7 +976,7 @@ fn badge_icon_menu(
 ) {
     let size = egui::vec2(12.0, 16.0);
     let rect = egui::Rect::from_center_size(center, size);
-    // id 唯一（含 track），popup 的打开状态/锚点都以它为 key 持久化。
+    let popup_id = egui::Id::new(("arr_add_pop", track));
     let resp = ui.interact(
         rect,
         egui::Id::new(("badge_icon", track)),
@@ -989,14 +990,55 @@ fn badge_icon_menu(
         egui::FontId::new(crate::theme::ICON_BTN_FONT, family),
         color,
     );
-    // Popup::menu 用 response 的 id 持久化打开状态与锚点（固定屏幕位置，
-    // 不随 hover 行变化）；唯一条件是该加号在 popup 打开期间继续渲染
-    //（由调用方把「popup 是否打开」纳入 hover 判定）。
-    egui::Popup::menu(&resp).show(|ui| {
-        ui.set_min_width(160.0);
-        ui.set_max_width(160.0);
-        body(ui);
-    });
+    // 点击：打开 popup 并在 memory 记下加号中心屏幕坐标作为固定锚点。
+    if resp.clicked() {
+        // rect 是 ui 局部坐标，转成全局屏幕坐标。
+        let screen_center = ui
+            .ctx()
+            .layer_transform_to_global(resp.layer_id)
+            .map(|t| t * rect.center())
+            .unwrap_or(rect.center());
+        ui.ctx().data_mut(|d| {
+            d.insert_temp(
+                Anchor::key(),
+                Anchor {
+                    track,
+                    pos: screen_center,
+                },
+            )
+        });
+        egui::Popup::open_id(ui.ctx(), popup_id);
+    }
+    // 打开状态下渲染 popup（open_memory(None)：不干预 memory 的开关）。
+    if egui::Popup::is_id_open(ui.ctx(), popup_id)
+        && let Some(anchor) = ui.ctx().data_mut(|d| d.get_temp::<Anchor>(Anchor::key()))
+        && anchor.track == track
+    {
+        egui::Popup::new(
+            popup_id,
+            ui.ctx().clone(),
+            anchor.pos, // impl From<Pos2> → PopupAnchor::Position
+            egui::LayerId::new(egui::Order::Middle, egui::Id::new("arr_add_popup_layer")),
+        )
+        .open_memory(None)
+        .show(|ui| {
+            ui.set_min_width(160.0);
+            ui.set_max_width(160.0);
+            body(ui);
+        });
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Anchor {
+    track: usize,
+    pos: egui::Pos2,
+}
+
+impl Anchor {
+    fn key() -> egui::Id {
+        egui::Id::new("add_popup_anchor")
+    }
 }
 
 /// Paint an 18x18 inline button with a one-letter label and click handling.
