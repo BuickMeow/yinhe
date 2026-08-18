@@ -52,6 +52,8 @@ pub(crate) struct AudioEngine {
     pub(crate) ended_notes: Vec<ActiveNote>,
     pub(crate) model: Option<AudioModel>,
     pub(crate) skip_track: Vec<bool>,
+    /// AR 自动化 lane 的 M/S 试听旁通集（随 ReloadNotes 更新，chase 同步过滤）。
+    pub(crate) am_ms: Arc<crate::spawn::AmMsMap>,
     /// Set when Play arrives during async model loading.
     pub(crate) pending_play_from_sample: Option<u64>,
     /// Linear/Curve 自动化段播放时的中间事件 tick 间隔（默认 1）。
@@ -113,6 +115,7 @@ impl AudioEngine {
                 ended_notes: Vec::new(),
                 model: None,
                 skip_track: Vec::new(),
+                am_ms: Arc::new(crate::spawn::AmMsMap::new()),
                 pending_play_from_sample: None,
                 automation_density: 1,
                 chase_generation: 0,
@@ -211,7 +214,8 @@ impl AudioEngine {
                 self.playing = false;
                 self.load_model(&model);
             }
-            AudioCommand::ReloadNotes { model } => {
+            AudioCommand::ReloadNotes { model, .. } => {
+                // am_ms 在 renderer 侧随模型重载生效（engine 只做模型重载）。
                 self.send_all_notes_off();
                 self.active_notes.clear();
                 self.load_model(&model);

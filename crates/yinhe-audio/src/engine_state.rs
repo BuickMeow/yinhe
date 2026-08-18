@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use xsynth_core::channel::{ChannelAudioEvent, ChannelConfigEvent, ChannelEvent};
@@ -16,7 +17,8 @@ impl AudioEngine {
         let audio_model = AudioModel::from_model(model);
         self.setup_percussion(&audio_model);
 
-        self.cc_events = flatten_automation_to_cc_events(model, self.automation_density);
+        self.cc_events =
+            flatten_automation_to_cc_events(model, self.automation_density, &HashMap::new());
         self.chase_generation = self.chase_generation.wrapping_add(1);
         self.cc_cursor = 0;
         self.chase_cc_base = 0;

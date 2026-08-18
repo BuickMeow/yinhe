@@ -230,6 +230,9 @@ pub struct EditState {
     /// 高亮其子行；卷帘（PR）显示该轨主音轨的音符。
     /// 与 track_selected 互斥（点主行清空本集合，点子行清空 track_selected）。
     pub arr_am_selected: HashSet<(u16, yinhe_types::AutomationTarget)>,
+    /// AR：每条自动化 lane 的 M/S 试听状态（Mute/Solo 某个效果来试听）。
+    /// 纯试听状态：不进 undo、不持久化；发给音频引擎做自动化旁通。
+    pub arr_am_ms: HashMap<(u16, yinhe_types::AutomationTarget), yinhe_types::AmMsState>,
 }
 
 impl Default for EditState {
@@ -261,6 +264,7 @@ impl Default for EditState {
             arr_am_expanded: Vec::new(),
             arr_am_views: HashMap::new(),
             arr_am_selected: HashSet::new(),
+            arr_am_ms: HashMap::new(),
         }
     }
 }

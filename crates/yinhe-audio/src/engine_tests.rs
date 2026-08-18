@@ -475,7 +475,10 @@ fn test_engine_load_model_and_reload() {
     });
     assert!(!engine.playing());
 
-    engine.handle_command(AudioCommand::ReloadNotes { model });
+    engine.handle_command(AudioCommand::ReloadNotes {
+        model,
+        am_ms: Arc::new(crate::spawn::AmMsMap::new()),
+    });
 }
 
 /// Regression test: the MIMO refactor originally forgot to call
@@ -507,7 +510,10 @@ fn test_reload_notes_rebuilds_cc_pb_pc_rpn() {
         vec![(0, 1), (480, 2)],
         vec![(0x0000, 240, 0x0200 as f32)],
     ));
-    engine.handle_command(AudioCommand::ReloadNotes { model: model_b });
+    engine.handle_command(AudioCommand::ReloadNotes {
+        model: model_b,
+        am_ms: Arc::new(crate::spawn::AmMsMap::new()),
+    });
 
     // 3 CC + 2 PB + 2 PC (each with bank_msb=0 + bank_lsb=0 → 2 extra) + 1 RPN (high-level) = 12
     assert_eq!(
@@ -524,7 +530,10 @@ fn test_reload_notes_rebuilds_cc_pb_pc_rpn() {
 
     // Reload again with an empty model — cc_events must drain to zero.
     let model_c = Arc::new(make_model_with_controls(vec![], vec![], vec![], vec![]));
-    engine.handle_command(AudioCommand::ReloadNotes { model: model_c });
+    engine.handle_command(AudioCommand::ReloadNotes {
+        model: model_c,
+        am_ms: Arc::new(crate::spawn::AmMsMap::new()),
+    });
     assert_eq!(
         engine.cc_events.len(),
         0,
@@ -1758,7 +1767,11 @@ fn test_chase_query_matches_flattened_scan() {
 
     for target in [200u32, 480, 768, 1000, 1536, 2000] {
         // 旧式：flatten 事件流从曲首累计（density=1 的离散近似）
-        let cc = crate::audio_model::flatten_automation_to_cc_events(&model, 1);
+        let cc = crate::audio_model::flatten_automation_to_cc_events(
+            &model,
+            1,
+            &std::collections::HashMap::new(),
+        );
         let mut old = [crate::channel::ChannelState::default(); 256];
         for e in cc.iter() {
             if e.tick >= target {

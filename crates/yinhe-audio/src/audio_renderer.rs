@@ -11,6 +11,7 @@ use xsynth_core::effects::VolumeLimiter;
 use crate::audio_ring::AudioRingProducer;
 use crate::engine::AudioEngine;
 use crate::preview_engine::PreviewEngine;
+use crate::spawn::AmMsMap;
 use crate::spawn::{AudioCommand, WorkerCmd, WorkerResult};
 
 const STEREO_CHANNELS: usize = 2;
@@ -143,7 +144,7 @@ impl AudioRenderer {
 
     fn process_commands(&mut self) -> bool {
         let mut did_work = false;
-        let mut pending_reload: Option<Arc<yinhe_core::YinModel>> = None;
+        let mut pending_reload: Option<(Arc<yinhe_core::YinModel>, Arc<AmMsMap>)> = None;
         let mut pending_update_notes: Option<Arc<yinhe_core::YinModel>> = None;
         let mut pending_density_rebuild: bool = false;
 
@@ -158,12 +159,16 @@ impl AudioRenderer {
                             self.engine.handle_command(AudioCommand::Stop);
                             self.clear_buffered_audio();
                             let density = self.engine.automation_density;
-                            let _ = self.worker_tx.send(WorkerCmd::PrepareModel(model, density));
+                            let _ = self.worker_tx.send(WorkerCmd::PrepareModel(
+                                model,
+                                density,
+                                Arc::new(AmMsMap::new()),
+                            ));
                         }
-                        AudioCommand::ReloadNotes { model } => {
+                        AudioCommand::ReloadNotes { model, am_ms } => {
                             // 全量重建优先于只更新音符 —— 丢弃 pending UpdateNotes
                             pending_update_notes = None;
-                            pending_reload = Some(model);
+                            pending_reload = Some((model, am_ms));
                         }
                         AudioCommand::UpdateNotes { model } => {
                             // 只在没有 pending ReloadNotes 时记录（ReloadNotes 包含 audible_notes）
@@ -312,12 +317,16 @@ impl AudioRenderer {
             }
         }
 
-        if let Some(model) = pending_reload {
+        if let Some((model, am_ms)) = pending_reload {
+            // M/S 旁通随模型重载生效（chase 也用它过滤）。
+            self.engine.am_ms = am_ms.clone();
             self.engine.send_all_notes_off();
             self.engine.clear_active_notes();
             self.clear_buffered_audio();
             let density = self.engine.automation_density;
-            let _ = self.worker_tx.send(WorkerCmd::PrepareModel(model, density));
+            let _ = self
+                .worker_tx
+                .send(WorkerCmd::PrepareModel(model, density, am_ms));
             did_work = true;
         } else if let Some(model) = pending_update_notes {
             // 只更新音符，不重建 cc_events，不 chase
@@ -327,7 +336,10 @@ impl AudioRenderer {
             // density 改变后用当前模型重建 cc_events
             if let Some(model) = self.engine.yin_model.clone() {
                 let density = self.engine.automation_density;
-                let _ = self.worker_tx.send(WorkerCmd::PrepareModel(model, density));
+                let am_ms = self.engine.am_ms.clone();
+                let _ = self
+                    .worker_tx
+                    .send(WorkerCmd::PrepareModel(model, density, am_ms));
                 did_work = true;
             }
         }
@@ -344,11 +356,13 @@ impl AudioRenderer {
         };
         let generation = self.engine.chase_generation;
         let skip_mask = self.engine.skip_track.clone();
+        let am_ms = self.engine.am_ms.clone();
         let _ = self.worker_tx.send(WorkerCmd::PrepareChase {
             model,
             target_tick,
             generation,
             skip_mask,
+            am_ms,
         });
     }
 

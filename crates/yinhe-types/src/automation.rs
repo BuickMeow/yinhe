@@ -1,5 +1,19 @@
 use serde::{Deserialize, Serialize};
 
+/// AR 自动化 lane 的 M/S（静音/独奏）试听状态。
+///
+/// 只影响该 lane 自动化效果是否发送：
+/// - mute：该 lane 的效果不发送（试听时旁通）。
+/// - solo：该音轨内有任意 lane solo 时，只有被 solo 的 lane 发送，
+///   同轨其他 lane 静音；主音轨（音符发声）与其他音轨不受影响。
+///
+/// 纯试听状态：不进模型、不进 undo（与 track M/S 同语义层级）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct AmMsState {
+    pub mute: bool,
+    pub solo: bool,
+}
+
 /// How to interpolate from one automation event to the next.
 ///
 /// Stored per-event on `AutomationEvent::shape`, describing the segment

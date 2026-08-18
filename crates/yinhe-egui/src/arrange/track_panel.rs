@@ -66,14 +66,16 @@ pub(crate) fn show(
     arr_am_expanded: &mut [bool],
     // 被选中的 AM lane（(音轨索引, target)）；点主行清空。
     am_lane_selected: &mut HashSet<(u16, AutomationTarget)>,
-) -> (bool, Vec<TrackAction>) {
+    // AR 自动化 lane 的 M/S 试听状态（子行按钮切换，切后需重载音频）。
+    am_ms: &mut std::collections::HashMap<(u16, AutomationTarget), yinhe_types::AmMsState>,
+) -> (bool, bool, Vec<TrackAction>) {
     let panel_rect = ui.max_rect();
     let panel_w = panel_rect.width();
     let panel_h = panel_rect.height();
     let num_tracks = track_info.len();
 
     if num_tracks == 0 || panel_w < 1.0 || panel_h < 1.0 {
-        return (false, Vec::new());
+        return (false, false, Vec::new());
     }
 
     let mut actions = Vec::new();
@@ -98,6 +100,8 @@ pub(crate) fn show(
 
     let painter = ui.painter().clone();
     let mut audio_dirty = false;
+    // AM lane M/S 试听状态变化 → 调用方重载音频（带 am_ms 旁通）。
+    let mut am_ms_dirty = false;
 
     // 交替行条纹：着色行（偶数行号）与 GPU 区同源颜色，不透明；奇数行用 app_bg 打底。
     // 按全局行号奇偶（AM 子行也参与）：展开奇数条 lane 会错位后续音轨的斑纹。
@@ -174,6 +178,52 @@ pub(crate) fn show(
                 egui::FontId::proportional((lh * 0.35).clamp(9.0, 13.0)),
                 crate::theme::text_secondary(),
             );
+
+            // AM lane 的 M/S 试听按钮：M = 该 lane 效果静音，S = 音轨内独奏该 lane
+            //（同轨其他 lane 静音，主音轨音符与其他音轨不受影响）。
+            let key = (track_info[track].index, lane.target.clone());
+            let st = am_ms.get(&key).copied().unwrap_or_default();
+            let bsize = egui::vec2(16.0, 16.0);
+            let gap = 2.0;
+            let total_w = 2.0 * bsize.x + gap;
+            let btn_x_start = row_rect.max.x - total_w - 4.0;
+            let btn_y = row_rect.center().y - bsize.y * 0.5;
+            let m_rect = egui::Rect::from_min_size(egui::pos2(btn_x_start, btn_y), bsize);
+            let s_rect =
+                egui::Rect::from_min_size(egui::pos2(btn_x_start + bsize.x + gap, btn_y), bsize);
+            let m_resp = draw_inline_button(
+                ui,
+                &painter,
+                m_rect,
+                "M",
+                st.mute,
+                crate::theme::mute_active(),
+                egui::Id::new(("am_btn_m", track, sub)),
+            );
+            let s_resp = draw_inline_button(
+                ui,
+                &painter,
+                s_rect,
+                "S",
+                st.solo,
+                crate::theme::solo_active(),
+                egui::Id::new(("am_btn_s", track, sub)),
+            );
+            if m_resp.clicked() || s_resp.clicked() {
+                let mut next = st;
+                if m_resp.clicked() {
+                    next.mute = !next.mute;
+                }
+                if s_resp.clicked() {
+                    next.solo = !next.solo;
+                }
+                if next == yinhe_types::AmMsState::default() {
+                    am_ms.remove(&key); // 都关掉时清掉条目（与主行 M/S 语义一致）
+                } else {
+                    am_ms.insert(key, next);
+                }
+                am_ms_dirty = true;
+            }
             continue;
         }
 
@@ -786,7 +836,7 @@ pub(crate) fn show(
 
     ui.data_mut(|d| d.insert_temp(drag_id, drag));
 
-    (audio_dirty, actions)
+    (audio_dirty, am_ms_dirty, actions)
 }
 
 /// Paint an 18x18 inline button with a one-letter label and click handling.

@@ -227,7 +227,10 @@ impl YinheApp {
         if doc.undo() {
             doc.data.bump_revision();
             if let Some(audio) = &self.audio {
-                audio.reload_notes(doc.data.model.clone());
+                audio.reload_notes(
+                    doc.data.model.clone(),
+                    std::sync::Arc::new(std::collections::HashMap::new()),
+                );
             }
         }
     }
@@ -240,7 +243,10 @@ impl YinheApp {
         if doc.redo() {
             doc.data.bump_revision();
             if let Some(audio) = &self.audio {
-                audio.reload_notes(doc.data.model.clone());
+                audio.reload_notes(
+                    doc.data.model.clone(),
+                    std::sync::Arc::new(std::collections::HashMap::new()),
+                );
             }
         }
     }

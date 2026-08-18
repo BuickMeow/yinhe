@@ -1,9 +1,11 @@
 use std::cmp::Ordering;
 use std::sync::Arc;
 
+use std::collections::HashMap;
 use xsynth_core::channel::{ChannelAudioEvent, ControlEvent};
 use yinhe_core::YinModel;
-use yinhe_types::{AutomationTarget, SegmentShape};
+
+use yinhe_types::{AutomationLane, AutomationTarget, SegmentShape};
 
 pub(crate) struct SortedCC {
     /// 事件时刻（tick 域，u32——模型 NoteEvent/AutomationEvent 的 tick 上限）。
@@ -207,11 +209,39 @@ pub(crate) fn sample_to_tick(
 /// `density`: Linear/Curve 段在播放时按多少 tick 间隔展开中间事件。1 = 每 tick 一个事件
 /// （最平滑），值越大中间事件越少。Step 段不受影响（保持值到下一点）。
 ///
+/// 判断 lane 是否被 AM M/S 试听状态旁通。
+///
+/// - mute：该 lane 直接不发送；
+/// - solo：音轨内有任意 lane solo 时，未 solo 的 lane 不发送
+///   （主音轨音符发声与其他音轨不受影响）。
+pub(crate) fn automation_lane_skipped(
+    am_ms: &HashMap<(u16, yinhe_types::AutomationTarget), yinhe_types::AmMsState>,
+    track_idx: u16,
+    lane: &AutomationLane,
+    track_has_solo: bool,
+) -> bool {
+    let st = am_ms.get(&(track_idx, lane.target.clone()));
+    let muted = st.is_some_and(|s| s.mute);
+    let soloed = st.is_some_and(|s| s.solo);
+    muted || (track_has_solo && !soloed)
+}
+
+/// Flatten automation lanes + program changes into sorted, deduped SortedCC events.
+///
+/// Standard RPN 0/1/2 are sent as high-level xsynth events (PitchBendSensitivity,
+/// FineTune, CoarseTune). Non-standard RPN and NRPN use the raw CC sequence.
+///
+/// `density`: Linear/Curve 段在播放时按多少 tick 间隔展开中间事件。1 = 每 tick 一个事件
+/// （最平滑），值越大中间事件越少。Step 段不受影响（保持值到下一点）。
+///
+/// `am_ms`：AR 自动化 lane 的 M/S 试听旁通集（空 = 全部生效）。
+///
 /// Returns `Arc<Vec>` so the same events can be shared between the renderer and
 /// the worker thread (for chase computation) without cloning.
 pub(crate) fn flatten_automation_to_cc_events(
     model: &YinModel,
     density: u32,
+    am_ms: &HashMap<(u16, yinhe_types::AutomationTarget), yinhe_types::AmMsState>,
 ) -> Arc<Vec<SortedCC>> {
     let density = density.max(1);
     let mut cc_events = Vec::new();
@@ -219,8 +249,17 @@ pub(crate) fn flatten_automation_to_cc_events(
     for (track_idx, track) in model.tracks.iter().enumerate() {
         let track_idx_u16 = track_idx as u16;
         let channel = track.global_channel() as u32;
+        // 该音轨是否有任意 lane 处于 solo（S 的作用域 = 音轨内）。
+        let track_has_solo = track.automation_lanes.iter().any(|l| {
+            am_ms
+                .get(&(track_idx_u16, l.target.clone()))
+                .is_some_and(|s| s.solo)
+        });
 
         for lane in &track.automation_lanes {
+            if automation_lane_skipped(am_ms, track_idx_u16, lane, track_has_solo) {
+                continue;
+            }
             let n = lane.events.len();
             for (i, e) in lane.events.iter().enumerate() {
                 // tick 域：事件时刻直接存模型的 tick（u32），不再转 sample。
@@ -574,7 +613,7 @@ mod tests {
             },
         ];
         let model = model_with_lanes(lanes);
-        let events = flatten_automation_to_cc_events(&model, 1);
+        let events = flatten_automation_to_cc_events(&model, 1, &HashMap::new());
 
         let pbs_idx = index_of(&events, |e| {
             matches!(
@@ -598,6 +637,71 @@ mod tests {
             pbs_idx,
             pb_idx
         );
+    }
+
+    /// AR 自动化 lane 的 M/S 试听旁通：mute 的 lane 不产生事件；
+    /// 有 solo 时音轨内只有被 solo 的 lane 生效（主音轨音符与其他音轨不受影响）。
+    #[test]
+    fn am_ms_bypass_filters_lanes() {
+        let lanes = vec![
+            AutomationLane {
+                target: AutomationTarget::CC { controller: 7 },
+                track: 0,
+                events: vec![AutomationEvent {
+                    tick: 0,
+                    value: 100.0,
+                    shape: SegmentShape::Step,
+                }],
+            },
+            AutomationLane {
+                target: AutomationTarget::CC { controller: 10 },
+                track: 0,
+                events: vec![AutomationEvent {
+                    tick: 0,
+                    value: 64.0,
+                    shape: SegmentShape::Step,
+                }],
+            },
+        ];
+        let model = model_with_lanes(lanes);
+        let cc7 = AutomationTarget::CC { controller: 7 };
+        let cc10 = AutomationTarget::CC { controller: 10 };
+        let has_cc = |events: &[SortedCC], cc: u8| {
+            events.iter().any(|e| {
+                matches!(
+                    e.event,
+                    ChannelAudioEvent::Control(ControlEvent::Raw(c, _)) if c == cc
+                )
+            })
+        };
+
+        // 无旁通：两条 lane 都生效。
+        let all = flatten_automation_to_cc_events(&model, 1, &HashMap::new());
+        assert!(has_cc(&all, 7) && has_cc(&all, 10));
+
+        // mute CC7：CC7 不出事件，CC10 保留。
+        let mut mutes = HashMap::new();
+        mutes.insert(
+            (0u16, cc7.clone()),
+            yinhe_types::AmMsState {
+                mute: true,
+                solo: false,
+            },
+        );
+        let muted = flatten_automation_to_cc_events(&model, 1, &mutes);
+        assert!(!has_cc(&muted, 7) && has_cc(&muted, 10));
+
+        // solo CC10：同轨未 solo 的 CC7 被静音，CC10 保留。
+        let mut solos = HashMap::new();
+        solos.insert(
+            (0u16, cc10.clone()),
+            yinhe_types::AmMsState {
+                mute: false,
+                solo: true,
+            },
+        );
+        let soloed = flatten_automation_to_cc_events(&model, 1, &solos);
+        assert!(has_cc(&soloed, 10) && !has_cc(&soloed, 7));
     }
 
     /// 覆盖非标准 RPN（走 raw CC101/100/6 序列）：同 tick 上 RPN 选择 + DataEntry
@@ -626,7 +730,7 @@ mod tests {
             },
         ];
         let model = model_with_lanes(lanes);
-        let events = flatten_automation_to_cc_events(&model, 1);
+        let events = flatten_automation_to_cc_events(&model, 1, &HashMap::new());
 
         let rpn_cc101_idx = index_of(&events, |e| {
             matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(101, _)))
@@ -672,7 +776,7 @@ mod tests {
             },
         ];
         let model = model_with_lanes(lanes);
-        let events = flatten_automation_to_cc_events(&model, 1);
+        let events = flatten_automation_to_cc_events(&model, 1, &HashMap::new());
 
         let nrpn_cc99_idx = index_of(&events, |e| {
             matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(99, _)))
@@ -727,7 +831,7 @@ mod tests {
             },
         ];
         let model = model_with_lanes(lanes);
-        let events = flatten_automation_to_cc_events(&model, 1);
+        let events = flatten_automation_to_cc_events(&model, 1, &HashMap::new());
 
         let fine_idx = index_of(&events, |e| {
             matches!(e, ChannelAudioEvent::Control(ControlEvent::FineTune(_)))

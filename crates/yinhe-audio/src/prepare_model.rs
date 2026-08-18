@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use std::collections::HashMap;
+
 use yinhe_core::YinModel;
 
 use crate::audio_model::{
@@ -14,8 +16,9 @@ pub(crate) fn prepare_model(
     model: &Arc<YinModel>,
     sample_rate: u32,
     density: u32,
+    am_ms: &HashMap<(u16, yinhe_types::AutomationTarget), yinhe_types::AmMsState>,
 ) -> PreparedModel {
-    let cc_events = flatten_automation_to_cc_events(model, density);
+    let cc_events = flatten_automation_to_cc_events(model, density, am_ms);
 
     let duration_samples =
         (model.tempo_map.tick_to_seconds(model.tick_length) * sample_rate as f64) as u64;

@@ -18,7 +18,7 @@ pub mod view_base;
 pub use arr_row_layout::{ArRow, ArRowLayout};
 pub use arrangement_view::ArrangementView;
 pub use automation::{
-    AutomationEdit, AutomationEvent, AutomationLane, AutomationTarget, SegmentShape,
+    AmMsState, AutomationEdit, AutomationEvent, AutomationLane, AutomationTarget, SegmentShape,
 };
 pub use automation_panel_view::{AnchorSelRect, AutomationPanelView};
 pub use hash::*;

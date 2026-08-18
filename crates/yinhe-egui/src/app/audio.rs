@@ -17,7 +17,11 @@ impl App {
         if self.channel_layout_flipped_for_doc(idx) {
             self.teardown_audio();
         } else if let Some(audio) = &self.audio_state.handle {
-            audio.reload_notes(self.documents[idx].data.model.clone());
+            // AR 自动化 lane 的 M/S 试听状态随模型重载一同生效。
+            audio.reload_notes(
+                self.documents[idx].data.model.clone(),
+                std::sync::Arc::new(self.documents[idx].edit.arr_am_ms.clone()),
+            );
         }
     }
 

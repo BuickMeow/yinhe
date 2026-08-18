@@ -9,6 +9,10 @@ use xsynth_core::soundfont::SoundfontBase;
 use yinhe_core::YinModel;
 use yinhe_types::SegmentShape;
 
+/// AR 自动化 lane 的 M/S 试听旁通集（跨线程共享，Empty 由 default 提供）。
+pub type AmMsMap =
+    std::collections::HashMap<(u16, yinhe_types::AutomationTarget), yinhe_types::AmMsState>;
+
 use crate::audio_model::{PreparedModel, SortedCC};
 use crate::audio_renderer::{RendererSharedState, spawn_renderer};
 use crate::audio_ring::AudioRing;
@@ -57,6 +61,7 @@ pub enum AudioCommand {
     /// Used for automation edits / undo / redo / arrange drag (notes+automation).
     ReloadNotes {
         model: Arc<YinModel>,
+        am_ms: Arc<AmMsMap>,
     },
     /// Only rebuild `audible_notes` — no CC rebuild, no chase.
     /// Used for pure note edits (move/drag/add/delete/paste/duplicate/transpose)
@@ -232,8 +237,10 @@ impl Drop for CpalAudioHandle {
 impl CpalAudioHandle {
     /// Notify the audio thread that the MIDI model has changed (full rebuild:
     /// cc_events + audible_notes + chase). Use for automation edits / undo / redo.
-    pub fn reload_notes(&self, model: Arc<YinModel>) {
-        self.handle.send(AudioCommand::ReloadNotes { model });
+    ///
+    /// `am_ms`：AR 自动化 lane 的 M/S 试听旁通集（本帧生效，随事件流应用）。
+    pub fn reload_notes(&self, model: Arc<YinModel>, am_ms: Arc<AmMsMap>) {
+        self.handle.send(AudioCommand::ReloadNotes { model, am_ms });
     }
 
     /// Notify the audio thread that only notes have changed (no automation, no
@@ -257,7 +264,7 @@ pub fn channels_for_model(model: &YinModel) -> ChannelLayout {
 /// Internal command sent from the renderer thread to the worker thread.
 pub(crate) enum WorkerCmd {
     /// Full prepare: cc_events + audible_notes + duration (LoadModel / ReloadNotes).
-    PrepareModel(Arc<YinModel>, u32),
+    PrepareModel(Arc<YinModel>, u32, Arc<AmMsMap>),
     /// Notes-only prepare: audible_notes + duration (UpdateNotes). No cc_events rebuild.
     PrepareNotes(Arc<YinModel>),
     /// Compute channel-state snapshot at `target_tick` by **querying the model
@@ -270,6 +277,8 @@ pub(crate) enum WorkerCmd {
         generation: u64,
         /// 当前 skip_track 快照，chase 时跳过 mute 轨道的 CC。
         skip_mask: Vec<bool>,
+        /// AR 自动化 lane 的 M/S 试听旁通，chase 时同步过滤。
+        am_ms: Arc<AmMsMap>,
     },
     LoadSoundFont {
         port: u8,
@@ -333,15 +342,17 @@ pub(crate) fn spawn_worker(
                     },
                 };
                 match cmd {
-                    WorkerCmd::PrepareModel(model, density) => {
+                    WorkerCmd::PrepareModel(model, density, am_ms) => {
                         // 合并连续 PrepareModel，只保留最新
                         let mut latest = model;
                         let mut latest_density = density;
+                        let mut latest_am_ms = am_ms;
                         while let Ok(next) = cmd_rx.try_recv() {
                             match next {
-                                WorkerCmd::PrepareModel(m, d) => {
+                                WorkerCmd::PrepareModel(m, d, am) => {
                                     latest = m;
                                     latest_density = d;
+                                    latest_am_ms = am;
                                 }
                                 other => {
                                     pending.push_back(other);
@@ -352,6 +363,7 @@ pub(crate) fn spawn_worker(
                             &latest,
                             sample_rate,
                             latest_density,
+                            &latest_am_ms,
                         );
                         last_synced_revisions = Some(latest.note_revisions);
                         let _ = result_tx.send(WorkerResult::PreparedModel(prepared));
@@ -397,12 +409,14 @@ pub(crate) fn spawn_worker(
                         target_tick,
                         generation,
                         skip_mask,
+                        am_ms,
                     } => {
                         // 合并连续 PrepareChase，只保留最新（同 generation 或不同 generation 都只留最新）
                         let mut latest_model = model;
                         let mut latest_target = target_tick;
                         let mut latest_gen = generation;
                         let mut latest_mask = skip_mask;
+                        let mut latest_am_ms = am_ms;
                         while let Ok(next) = cmd_rx.try_recv() {
                             match next {
                                 WorkerCmd::PrepareChase {
@@ -410,19 +424,25 @@ pub(crate) fn spawn_worker(
                                     target_tick,
                                     generation,
                                     skip_mask,
+                                    am_ms,
                                 } => {
                                     latest_model = model;
                                     latest_target = target_tick;
                                     latest_gen = generation;
                                     latest_mask = skip_mask;
+                                    latest_am_ms = am_ms;
                                 }
                                 other => {
                                     pending.push_back(other);
                                 }
                             }
                         }
-                        let states =
-                            compute_chase_states(&latest_model, latest_target, &latest_mask);
+                        let states = compute_chase_states(
+                            &latest_model,
+                            latest_target,
+                            &latest_mask,
+                            &latest_am_ms,
+                        );
                         let _ = result_tx.send(WorkerResult::ChaseResult {
                             states,
                             generation: latest_gen,
@@ -465,12 +485,14 @@ pub(crate) fn spawn_worker(
 ///
 /// 结果由 renderer 的 `apply_chase_result` 直接 `send_to`。
 /// `skip_mask`：mute 的音轨的 lane/PC 不参与 chase，不影响同 channel 其他轨道。
+/// `am_ms`：AR 自动化 lane 的 M/S 试听旁通（与播放事件流同规则过滤）。
 ///
 /// 复杂度：O(所有未 mute 音轨的 lane 数 × log(lane 事件数))，与曲长无关。
 fn compute_chase_states(
     model: &YinModel,
     target_tick: u32,
     skip_mask: &[bool],
+    am_ms: &crate::spawn::AmMsMap,
 ) -> Box<[ChannelState; 256]> {
     use crate::audio_model::{emit_automation_event, push_program_change};
 
@@ -486,7 +508,21 @@ fn compute_chase_states(
             continue;
         }
         let out = &mut events[ch];
+        // 与播放事件流一致：该音轨是否有任意 lane solo（S 作用域 = 音轨内）。
+        let track_has_solo = track.automation_lanes.iter().any(|l| {
+            am_ms
+                .get(&(track_idx as u16, l.target.clone()))
+                .is_some_and(|s| s.solo)
+        });
         for lane in &track.automation_lanes {
+            if crate::audio_model::automation_lane_skipped(
+                am_ms,
+                track_idx as u16,
+                lane,
+                track_has_solo,
+            ) {
+                continue;
+            }
             if let Some((value, tick)) = lane_value_at(lane, target_tick) {
                 emit_automation_event(&lane.target, value, tick, ch as u32, track_idx as u16, out);
             }
@@ -551,7 +587,7 @@ pub(crate) fn compute_chase_states_for_test(
     target_tick: u32,
     skip_mask: &[bool],
 ) -> Box<[ChannelState; 256]> {
-    compute_chase_states(model, target_tick, skip_mask)
+    compute_chase_states(model, target_tick, skip_mask, &crate::spawn::AmMsMap::new())
 }
 
 /// 列出系统所有可用输出设备的描述名（cpal `Device::description()`）。
