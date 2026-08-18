@@ -244,3 +244,32 @@ impl AudioSettings {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 最近文件列表：去重、置顶、超长截断、已在首位时不上报变化、移除。
+    #[test]
+    fn recent_files_dedup_cap_and_remove() {
+        let mut s = AudioSettings::default();
+        for i in 0..12 {
+            assert!(s.push_recent_file(&format!("/tmp/{i}.yin")));
+        }
+        assert_eq!(s.recent_files.len(), RECENT_FILES_LIMIT);
+        assert_eq!(s.recent_files[0], "/tmp/11.yin");
+
+        // 重复路径：置顶且去重
+        assert!(s.push_recent_file("/tmp/5.yin"));
+        assert_eq!(s.recent_files[0], "/tmp/5.yin");
+        assert_eq!(
+            s.recent_files.iter().filter(|p| *p == "/tmp/5.yin").count(),
+            1
+        );
+        // 已在首位：列表不变，不上报变化（避免多余 save）
+        assert!(!s.push_recent_file("/tmp/5.yin"));
+
+        s.remove_recent_file("/tmp/5.yin");
+        assert!(!s.recent_files.iter().any(|p| p == "/tmp/5.yin"));
+    }
+}
