@@ -1,3 +1,4 @@
+mod am_lanes;
 mod track_panel;
 mod view_ui;
 
@@ -33,6 +34,11 @@ pub(crate) struct ArrangeData<'a> {
     pub bar_line_data: Option<(u32, u8, u8, &'a [yinhe_types::TimeSigEvent])>,
     pub total_ticks: f64,
     pub num_tracks: usize,
+    /// 音轨数据（AM lane 渲染/交互读取 automation_lanes）。
+    pub tracks: &'a [std::sync::Arc<yinhe_core::TrackData>],
+    /// Conductor 的 Tempo lane（Conductor 主行直显/直编）。
+    pub tempo_lane: &'a yinhe_types::AutomationLane,
+    pub conductor_track_idx: Option<u16>,
 }
 
 /// Arrange 交互产生的可变编辑状态（out-params 聚合）。
@@ -45,6 +51,15 @@ pub(crate) struct ArrangeEdit<'a> {
     pub track_selected: &'a mut std::collections::HashSet<u16>,
     pub selection_anchor: &'a mut Option<u16>,
     pub info_content: &'a mut Option<crate::right_panel::InfoContent>,
+    /// 每条 AM lane 的持久视图状态（锚点选框等），key = (音轨, target)。
+    pub arr_am_views: &'a mut std::collections::HashMap<
+        (u16, yinhe_types::AutomationTarget),
+        yinhe_types::AutomationPanelView,
+    >,
+    /// AR 自动化 lane 交互产生的编辑（arrange.rs 在 GPU scope 后统一应用）。
+    pub am_edits: &'a mut Vec<yinhe_types::AutomationEdit>,
+    /// AM 锚点右键打开信息面板用。
+    pub right_tab: &'a mut Option<crate::right_panel::RightTab>,
 }
 
 /// Arrange 视图/播放/渲染配置（layout.rs 每帧构造）。
@@ -87,10 +102,14 @@ pub fn show(
     arr_drag_delta: &mut Option<ArrDragDelta>,
     arr_eraser_rect: &mut Option<ArrSelRect>,
     info_content: &mut Option<crate::right_panel::InfoContent>,
+    // AM 锚点右键打开信息面板（与 PR 自动化面板一致）。
+    right_tab: &mut Option<crate::right_panel::RightTab>,
     // 音轨结构变化（add/remove track）需要 teardown + 重建音频引擎。
     // 由调用方 layout.rs 读取后调 `App::teardown_audio()`，下一帧
     // `rebuild_audio_if_needed` 会用新 model 重新 spawn 引擎和 ChannelLayout。
     needs_audio_rebuild: &mut bool,
+    // 自动化内容变化（AM lane 增删 / 事件编辑）需要 notify_audio_model_changed。
+    needs_audio_notify: &mut bool,
     status_hint: &mut Option<String>,
     sel_hint: Option<&crate::app::layout::SelHintInfo>,
 ) -> Option<QuantizePreset> {
@@ -154,7 +173,42 @@ pub fn show(
         doc.data.model.meta.ppq,
     );
     let num_tracks = doc.edit.track_visible.len();
-    arr_view.clamp_scroll(gpu_rect.width(), gpu_rect.height(), total_ticks, num_tracks);
+
+    // ── AM 展开状态与行布局：音轨面板与 GPU 视图共用（子行高 = 音轨行高）──
+    // Conductor 不展开（主行直显 Tempo）。
+    doc.edit.arr_am_expanded.resize(num_tracks, false);
+    let conductor_idx = doc.edit.conductor_track_idx;
+    let build_row_layout = |edit: &yinhe_editor_core::edit_state::EditState,
+                            model: &yinhe_core::YinModel| {
+        yinhe_types::ArRowLayout::new((0..num_tracks).map(|i| {
+            if edit.arr_am_expanded.get(i).copied().unwrap_or(false)
+                && Some(i as u16) != conductor_idx
+            {
+                model
+                    .tracks
+                    .get(i)
+                    .map(|t| t.automation_lanes.len())
+                    .unwrap_or(0) as u32
+            } else {
+                0
+            }
+        }))
+    };
+    let mut row_layout = build_row_layout(&doc.edit, &doc.data.model);
+    // 清理已删除 lane 的残留视图状态（undo 删除 lane 后）
+    doc.edit.arr_am_views.retain(|&(t, ref target), _| {
+        doc.data
+            .model
+            .tracks
+            .get(t as usize)
+            .is_some_and(|tr| tr.automation_lanes.iter().any(|l| &l.target == target))
+    });
+    arr_view.clamp_scroll(
+        gpu_rect.width(),
+        gpu_rect.height(),
+        total_ticks,
+        row_layout.total_rows(),
+    );
 
     // ── Ruler: top-right band, drawn with parent painter ──
     //    ruler 右边界对齐 gpu_rect.max.x，让出垂直滚动条空间
@@ -264,16 +318,39 @@ pub fn show(
             request_pianoroll,
             &mut doc.edit.editing_track,
             info_content,
+            &row_layout,
+            &doc.data.model.tracks,
+            &mut doc.edit.arr_am_expanded,
         );
 
         if audio_dirty {
             crate::right_panel::info_panel::send_skip_tracks(doc, audio);
         }
 
-        // Handle track management actions (add/remove/move)
+        // Handle track management actions (add/remove/move/AM lane)
         for action in track_actions {
             let before = doc.capture_snapshot();
+            // 结构变化（增删移动音轨）→ 重建引擎；AM 内容变化 → 仅 notify。
+            let mut structural = true;
             let (undo_action, label) = match &action {
+                track_panel::TrackAction::CreateAutomation { idx, target } => {
+                    structural = false;
+                    let r = doc.add_automation_lane(*idx, target.clone());
+                    if r.is_some()
+                        && let Some(e) = doc.edit.arr_am_expanded.get_mut(*idx)
+                    {
+                        // 创建后自动展开该轨
+                        *e = true;
+                    }
+                    (r.map(|(_, a)| a), t!("undo.create_automation").to_string())
+                }
+                track_panel::TrackAction::DeleteAutomation { idx, lane_idx } => {
+                    structural = false;
+                    (
+                        doc.remove_automation_lane(*idx, *lane_idx),
+                        t!("undo.delete_automation_lane").to_string(),
+                    )
+                }
                 track_panel::TrackAction::AddTrack { after_idx } => {
                     let idx = after_idx.unwrap_or(doc.data.model.tracks.len() - 1);
                     (doc.add_track(idx), t!("undo.add_track").to_string())
@@ -328,18 +405,33 @@ pub fn show(
             };
             if let Some(action) = undo_action {
                 doc.push_undo(action, &label, before);
-                // 方案 A：音轨结构变化（add/remove/move）→ teardown + 下帧重建。
-                // 不再调 audio.reload_notes —— ChannelLayout 在引擎创建时冻结，
-                // reload_notes 不会更新 active_mask/channel_map，旧引擎无法 dispatch 新通道。
-                *needs_audio_rebuild = true;
+                if structural {
+                    // 方案 A：音轨结构变化（add/remove/move）→ teardown + 下帧重建。
+                    // 不再调 audio.reload_notes —— ChannelLayout 在引擎创建时冻结，
+                    // reload_notes 不会更新 active_mask/channel_map，旧引擎无法 dispatch 新通道。
+                    *needs_audio_rebuild = true;
+                } else {
+                    *needs_audio_notify = true;
+                }
             }
         }
+
+        // 展开状态 / lane 数可能刚变：重建行布局并重新 clamp。
+        row_layout = build_row_layout(&doc.edit, &doc.data.model);
+        arr_view.clamp_scroll(
+            gpu_rect.width(),
+            gpu_rect.height(),
+            total_ticks,
+            row_layout.total_rows(),
+        );
 
         arr_view.base.scroll_y = arr_view.base.track_panel_scroll_y;
     });
 
     // ── Arrangement GPU view (below ruler) ──
     let gpu_size = gpu_rect.size();
+    // AM lane 交互产生的编辑：GPU scope 内借用 doc.edit/model，出 scope 后统一应用。
+    let mut am_edits: Vec<yinhe_types::AutomationEdit> = Vec::new();
     ui.scope_builder(egui::UiBuilder::new().max_rect(gpu_rect), |ui| {
         let model = &*doc.data.model;
         let (def_num, def_den) = model.tempo_map.time_sig_default;
@@ -358,6 +450,9 @@ pub fn show(
             )),
             total_ticks,
             num_tracks,
+            tracks: &model.tracks,
+            tempo_lane: &model.conductor.tempo,
+            conductor_track_idx: doc.edit.conductor_track_idx,
         };
         let mut edit = ArrangeEdit {
             selected: &mut doc.edit.selected,
@@ -368,6 +463,9 @@ pub fn show(
             track_selected: &mut doc.edit.track_selected,
             selection_anchor,
             info_content,
+            arr_am_views: &mut doc.edit.arr_am_views,
+            am_edits: &mut am_edits,
+            right_tab,
         };
         view_ui::show(
             ui,
@@ -375,11 +473,25 @@ pub fn show(
             arr_renderer,
             arr_render_ctx,
             arr_view,
+            &row_layout,
             data,
             &mut edit,
             &mut cfg,
         );
     });
+
+    // 应用 AR 自动化 lane 的编辑（与 PR 的 handle_automation_edits 同一路径）
+    if !am_edits.is_empty() {
+        let before = doc.capture_snapshot();
+        let actions = doc.apply_automation_edits(std::mem::take(&mut am_edits));
+        crate::right_panel::automation_undo::push_automation_actions(
+            doc,
+            actions,
+            t!("undo.edit_automation").as_ref(),
+            before,
+        );
+        *needs_audio_notify = true;
+    }
 
     // ── Horizontal scrollbar (right of track panel, below GPU content) ──
     //    让出右下角 SCROLLBAR_W × SCROLLBAR_H 给垂直滚动条+水平滚动条的交叠区
@@ -445,7 +557,7 @@ pub fn show(
                     gpu_rect.height(),
                     &mut arr_view.base.scroll_y,
                     &mut arr_view.base.track_panel_row_height,
-                    num_tracks,
+                    row_layout.total_rows(),
                     16.0,
                     120.0,
                     &mut arr_view.base.dirty,
@@ -570,11 +682,29 @@ pub fn show(
         let scroll_y = arr_view.base.scroll_y;
         // hover_pos 是全局坐标，需先减去 tp_rect.min.y（title bar + transport
         // bar + ruler 的高度），否则音轨号会整体偏大。
-        let hover_track = |y: f32| {
-            (((y - tp_rect.min.y + scroll_y) / lh).floor() as usize)
-                .min(num_tracks.saturating_sub(1))
-        };
+        // 行布局命中：AM 子行附带 target 名（如「CC 007」）。
         let track_str = |track: usize| t!("hint.track", n = format!("{:03}", track)).to_string();
+        let hover_desc = |y: f32| {
+            let my = y - tp_rect.min.y + scroll_y;
+            match row_layout.hit_at_music_y(my, lh) {
+                Some(yinhe_types::ArRow::Automation(t, sub)) => {
+                    match doc
+                        .data
+                        .model
+                        .tracks
+                        .get(t)
+                        .and_then(|tr| tr.automation_lanes.get(sub))
+                    {
+                        Some(lane) => {
+                            format!("{} · {}", track_str(t), am_lanes::lane_label(&lane.target))
+                        }
+                        None => track_str(t),
+                    }
+                }
+                Some(yinhe_types::ArRow::Track(t)) => track_str(t),
+                None => track_str(num_tracks.saturating_sub(1)),
+            }
+        };
         // 本视图有选框 → 讲解行显示选框统计（参考 info panel）
         let sel_text = if !doc.edit.arr_sel_rect.is_empty()
             && let Some(sh) = sel_hint
@@ -585,19 +715,18 @@ pub fn show(
         };
         if music_rect.contains(pos) {
             let tick = arr_view.x_to_tick(pos.x - gpu_rect.min.x).max(0.0);
-            let track = hover_track(pos.y);
             let pos_str =
                 format_tick_bar_beat_with_time_sig(tick, tpb, sig_events, def_num, def_den);
             *status_hint = Some(if let Some(s) = sel_text {
                 s
             } else {
-                format!("{} {}", pos_str, track_str(track))
+                format!("{} {}", pos_str, hover_desc(pos.y))
             });
         } else if tp_rect.contains(pos) {
             *status_hint = Some(if let Some(s) = sel_text {
                 s
             } else {
-                track_str(hover_track(pos.y))
+                hover_desc(pos.y)
             });
         } else if arr_rect.contains(pos) {
             // 走带视图内但不在内容区（标尺/滚动条）→ 清空
