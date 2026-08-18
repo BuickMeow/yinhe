@@ -16,7 +16,7 @@ use yinhe_wgpu::{AutomationGhost, prepare_automation};
 use crate::right_panel::{InfoContent, RightTab};
 use crate::widgets::tools_panel::Tool;
 
-mod interaction;
+pub(crate) mod interaction;
 mod velocity;
 use velocity::VelocityPreview;
 
@@ -748,7 +748,13 @@ fn handle_split_drag(
 ) {
     let handle_resp =
         crate::widgets::split_handle::horizontal(ui, format!("auto_handle_{}", index), handle_rect);
-    if handle_resp.dragged() {
+    // 只有按下位置真的在分割线 handle 内才响应拖拽：egui 的 interact_radius
+    // 会把 handle 附近 ~5px 的按下判为命中，此时若正在拖动自动化锚点，
+    // 会出现"自动化 + 分割线一起拖动"的误操作。
+    let press_on_handle = ui
+        .input(|i| i.pointer.press_origin())
+        .is_some_and(|p| handle_rect.contains(p));
+    if press_on_handle && handle_resp.dragged() {
         let delta = handle_resp.drag_delta().y;
         panel.panel_height = (panel.panel_height - delta).clamp(
             yinhe_types::automation_panel_view::MIN_PANEL_HEIGHT,

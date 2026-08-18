@@ -492,10 +492,19 @@ pub fn show(
             egui::pos2(handle_x + 2.0, content_rect.max.y),
         );
         let handle_resp = ui.interact(handle_rect, ui.id(), egui::Sense::click_and_drag());
-        if handle_resp.hovered() || handle_resp.dragged() {
+        // 只有按下位置真的在把手矩形内才响应拖动：egui 的 interact_radius
+        // 会把把手附近 ~5px 的按下判为命中，导致拖动自动化锚点/分割线时
+        // 误拖键盘宽度（一次只能按一个物品）。
+        let on_handle = ui
+            .input(|i| i.pointer.interact_pos())
+            .is_some_and(|p| handle_rect.contains(p));
+        let press_on_handle = ui
+            .input(|i| i.pointer.press_origin())
+            .is_some_and(|p| handle_rect.contains(p));
+        if on_handle && (handle_resp.hovered() || handle_resp.dragged()) {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
         }
-        if handle_resp.dragged() {
+        if press_on_handle && handle_resp.dragged() {
             let delta = handle_resp.drag_delta().x;
             let old_kb = view.keyboard_width();
             let new_kb = (old_kb + delta).clamp(

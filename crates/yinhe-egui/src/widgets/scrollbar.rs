@@ -93,12 +93,14 @@ mod tests {
         raw
     }
 
-    /// 背景拖拽（thumb 之外）→ 返回垂直位移 dy，供调用处缩放对面轴。
+    /// 背景拖拽（thumb 之外的 band 区域）→ 不返回 dy、不平移。
+    /// 回归：拖动自动化锚点时鼠标靠近滚动条 band，绝不能和滚动条一起拖动、
+    /// 绝不能在没按到移动组件（thumb）时触发缩放。
     /// 配置：total=1000 tick，view_width=300，ppt=1 → thumb 占 [0, 90]，
     /// x=200 是背景区。
     /// egui 的 hit test 基于上一帧注册的 widgets：先 hover 注册一帧再 press。
     #[test]
-    fn background_drag_returns_dy() {
+    fn background_drag_does_not_zoom() {
         let ctx = egui::Context::default();
         let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(300.0, 16.0));
         let mut scroll_x = 0.0f32;
@@ -125,7 +127,7 @@ mod tests {
             &mut ppt,
             &mut dirty,
         );
-        // 帧3：drag（本帧垂直移动 20px）→ 应返回 dy
+        // 帧3：drag（本帧垂直移动 20px）→ 背景拖拽不返回 dy
         let dy = run_frame(
             &ctx,
             drag_event(end),
@@ -134,8 +136,57 @@ mod tests {
             &mut ppt,
             &mut dirty,
         );
-        assert!(dy > 0.0, "背景拖拽应返回非零 dy，实际 {dy}");
+        assert_eq!(dy, 0.0, "背景拖拽不应返回 dy（不得触发缩放），实际 {dy}");
         assert_eq!(scroll_x, 0.0, "背景拖拽不应平移");
+    }
+
+    /// 水平滚动条：鼠标在 band 外按下拖动（interact_radius 范围内）→ 不应平移/缩放。
+    /// 回归：拖动自动化锚点时鼠标靠近水平滚动条 band，egui 的 interact_radius
+    /// 会让 band 附近的指针命中滚动条 widget，导致误触发滚动条操作。
+    #[test]
+    fn horizontal_scrollbar_ignores_drag_outside_band() {
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(300.0, 16.0));
+        let mut scroll_x = 0.0f32;
+        let mut ppt = 1.0f32;
+        let mut dirty = false;
+
+        // 鼠标在 band 外（y=-3，距 band 上边缘 3px < interact_radius=5），x 在 thumb 中间
+        let start = egui::pos2(45.0, -3.0);
+        let end = egui::pos2(95.0, -3.0);
+        // 帧1：hover 注册 widget
+        let _ = run_frame(
+            &ctx,
+            drag_event(start),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        // 帧2：press（band 外）
+        let _ = run_frame(
+            &ctx,
+            press_event(start),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        // 帧3：drag（水平移动 50px）→ 不应平移、不应缩放
+        let dy = run_frame(
+            &ctx,
+            drag_event(end),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        assert_eq!(
+            scroll_x, 0.0,
+            "band 外拖动不应平移 scroll_x，实际 {scroll_x}"
+        );
+        assert_eq!(ppt, 1.0, "band 外拖动不应缩放 ppt，实际 {ppt}");
+        assert_eq!(dy, 0.0, "band 外拖动不应返回 dy，实际 {dy}");
     }
 
     /// thumb 中间拖拽 = 平移，返回 0（不触发对面轴缩放）。
@@ -323,6 +374,119 @@ mod tests {
             "band 外按下后划过 band 不应缩放，实际 {value_zoom}"
         );
     }
+
+    /// 跑一帧像素空间垂直滚动条（show_vertical），返回背景/边缘拖拽返回值。
+    fn run_frame_vertical(
+        ctx: &egui::Context,
+        raw: egui::RawInput,
+        rect: egui::Rect,
+        scroll_y: &mut f32,
+        cell_size: &mut f32,
+        dirty: &mut bool,
+    ) -> f32 {
+        let mut out = 0.0f32;
+        ctx.run_ui(raw, |ui| {
+            out = show_vertical(ui, rect, 100.0, scroll_y, cell_size, 200, 0.5, 8.0, dirty);
+        })
+        .textures_delta
+        .clear();
+        out
+    }
+
+    /// 背景拖拽（thumb 之外的 band 区域）→ 不返回 dx、不平移（与水平滚动条一致）。
+    /// 配置：total=200×2=400px，view=100px，thumb 占 [0, 25]，y=60 是背景区。
+    #[test]
+    fn vertical_background_drag_does_not_zoom() {
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(16.0, 100.0));
+        let mut scroll_y = 0.0f32;
+        let mut cell_size = 2.0f32;
+        let mut dirty = false;
+
+        let start = egui::pos2(8.0, 60.0);
+        let end = egui::pos2(28.0, 60.0);
+        // 帧1：hover 注册 widget
+        let _ = run_frame_vertical(
+            &ctx,
+            drag_event(start),
+            rect,
+            &mut scroll_y,
+            &mut cell_size,
+            &mut dirty,
+        );
+        // 帧2：press
+        let _ = run_frame_vertical(
+            &ctx,
+            press_event(start),
+            rect,
+            &mut scroll_y,
+            &mut cell_size,
+            &mut dirty,
+        );
+        // 帧3：drag（水平移动 20px）→ 背景拖拽不返回 dx
+        let dx = run_frame_vertical(
+            &ctx,
+            drag_event(end),
+            rect,
+            &mut scroll_y,
+            &mut cell_size,
+            &mut dirty,
+        );
+        assert_eq!(dx, 0.0, "背景拖拽不应返回 dx（不得触发缩放），实际 {dx}");
+        assert_eq!(scroll_y, 0.0, "背景拖拽不应平移 scroll_y");
+        assert_eq!(cell_size, 2.0, "背景拖拽不应缩放 cell_size");
+    }
+
+    /// 垂直滚动条：鼠标在 band 外按下拖动（interact_radius 范围内）→ 不应平移/缩放。
+    /// 回归：拖动自动化锚点时鼠标靠近垂直滚动条 band。
+    #[test]
+    fn vertical_scrollbar_ignores_drag_outside_band() {
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(16.0, 100.0));
+        let mut scroll_y = 0.0f32;
+        let mut cell_size = 2.0f32;
+        let mut dirty = false;
+
+        // 鼠标在 band 外（x=-3，距 band 左边缘 3px < interact_radius=5），y 在 thumb 中间
+        let start = egui::pos2(-3.0, 12.0);
+        let end = egui::pos2(-3.0, 42.0);
+        // 帧1：hover 注册 widget
+        let _ = run_frame_vertical(
+            &ctx,
+            drag_event(start),
+            rect,
+            &mut scroll_y,
+            &mut cell_size,
+            &mut dirty,
+        );
+        // 帧2：press（band 外）
+        let _ = run_frame_vertical(
+            &ctx,
+            press_event(start),
+            rect,
+            &mut scroll_y,
+            &mut cell_size,
+            &mut dirty,
+        );
+        // 帧3：drag（垂直移动 30px）→ 不应平移、不应缩放
+        let dx = run_frame_vertical(
+            &ctx,
+            drag_event(end),
+            rect,
+            &mut scroll_y,
+            &mut cell_size,
+            &mut dirty,
+        );
+        assert_eq!(
+            scroll_y, 0.0,
+            "band 外拖动不应平移 scroll_y，实际 {scroll_y}"
+        );
+        assert_eq!(
+            cell_size, 2.0,
+            "band 外拖动不应缩放 cell_size，实际 {cell_size}"
+        );
+        assert_eq!(dx, 0.0, "band 外拖动不应返回 dx，实际 {dx}");
+    }
 }
 
 // ── Horizontal scrollbar ──
@@ -380,11 +544,6 @@ pub(crate) fn show(
         egui::pos2((rect.min.x + rect_right).min(rect.max.x), rect.max.y),
     );
 
-    // 背景拖拽（thumb 之外的区域）→ 返回垂直位移 dy 供调用处缩放对面轴。
-    // 注册在 thumb 交互之前：thumb 区域优先，背景兜底。
-    let bg_id = ui.id().with("__sb_bg__");
-    let bg_resp = ui.interact(rect, bg_id, egui::Sense::drag());
-
     // Three interaction zones
     let left_edge_rect = egui::Rect::from_min_max(
         rect_rect.min,
@@ -417,18 +576,30 @@ pub(crate) fn show(
     );
     let middle_resp = ui.interact(middle_rect, middle_id, egui::Sense::click_and_drag());
 
-    let left_hovered = left_resp.hovered() || left_resp.dragged();
-    let right_hovered = right_resp.hovered() || right_resp.dragged();
-    let middle_hovered = middle_resp.hovered() || middle_resp.dragged();
+    // 只有鼠标指针真的在滚动条 band 上时才允许交互，避免 egui 的
+    // interact_radius（5px）导致 band 附近的指针误触发平移/缩放——
+    // 例如拖动自动化锚点时鼠标靠近滚动条，绝不能和滚动条一起拖动。
+    // hover 用当前指针位置；drag 用按下位置（press_origin）。
+    let on_sb = ui
+        .input(|i| i.pointer.interact_pos())
+        .is_some_and(|p| rect.contains(p));
+    let press_on_sb = ui
+        .input(|i| i.pointer.press_origin())
+        .is_some_and(|p| rect.contains(p));
+
+    let left_hovered = on_sb && (left_resp.hovered() || left_resp.dragged());
+    let right_hovered = on_sb && (right_resp.hovered() || right_resp.dragged());
+    let middle_hovered = on_sb && (middle_resp.hovered() || middle_resp.dragged());
 
     // Paint rectangle with appropriate color
-    let thumb_color = if left_resp.dragged() || right_resp.dragged() || middle_resp.dragged() {
-        rect_drag_color
-    } else if middle_hovered || left_hovered || right_hovered {
-        rect_hover_color
-    } else {
-        rect_color
-    };
+    let thumb_color =
+        if on_sb && (left_resp.dragged() || right_resp.dragged() || middle_resp.dragged()) {
+            rect_drag_color
+        } else if middle_hovered || left_hovered || right_hovered {
+            rect_hover_color
+        } else {
+            rect_color
+        };
     ui.painter().rect_filled(rect_rect, 0.0, thumb_color);
 
     // ── Cursor ──
@@ -436,15 +607,17 @@ pub(crate) fn show(
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest);
     } else if right_hovered {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeEast);
-    } else if middle_hovered || middle_resp.dragged() {
+    } else if middle_hovered || (on_sb && middle_resp.dragged()) {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     }
 
-    // ── Interaction ──
+    // ── Interaction（仅当鼠标按下时真的在滚动条 band 上才有效）──
+    // 缩放/平移一律从 thumb（或边缘）按下开始；背景区域（thumb 之外）
+    // 拖拽不触发任何操作——确保"移动组件被按下才能开始缩放"。
 
     // Drag middle → pan（x 方向）；垂直位移 → 返回 dy 供调用处缩放对面轴。
     // 斜拖 = 平移 + 缩放同时进行。
-    if middle_resp.dragged() {
+    if press_on_sb && middle_resp.dragged() {
         let delta = middle_resp.drag_delta().x;
         let delta_ticks = delta as f64 / scale;
         *scroll_x = (*scroll_x as f64 + delta_ticks * *pixels_per_tick as f64) as f32;
@@ -468,7 +641,7 @@ pub(crate) fn show(
         };
 
     // Drag left edge → zoom, anchoring at right edge
-    if left_resp.dragged() {
+    if press_on_sb && left_resp.dragged() {
         let new_left =
             (rect_left + left_resp.drag_delta().x).clamp(0.0, rect_right - 2.0 * EDGE_WIDTH);
         let new_start_tick = new_left as f64 / scale;
@@ -485,7 +658,7 @@ pub(crate) fn show(
     }
 
     // Drag right edge → zoom, anchoring at left edge
-    if right_resp.dragged() {
+    if press_on_sb && right_resp.dragged() {
         let new_right =
             (rect_right + right_resp.drag_delta().x).clamp(rect_left + 2.0 * EDGE_WIDTH, sb_w);
         let new_right_tick = new_right as f64 / scale;
@@ -494,12 +667,9 @@ pub(crate) fn show(
         ui.ctx().request_repaint();
     }
 
-    // 垂直位移 dy（thumb 中间或背景拖拽时）→ 调用处缩放对面轴（key 行高）
-    if bg_resp.dragged() {
-        bg_resp.drag_delta().y
-    } else {
-        0.0
-    }
+    // 背景区域 / 未按下：返回 0，不触发任何缩放/平移。
+    // （缩放对面轴的 dy 已由 thumb 中间拖拽的垂直位移提供。）
+    0.0
 }
 
 // ── Vertical scrollbar (pixel-space) ──
@@ -562,11 +732,6 @@ pub(crate) fn show_vertical(
         egui::pos2(rect.max.x, (rect.min.y + rect_bottom).min(rect.max.y)),
     );
 
-    // 背景拖拽（thumb 之外的区域）→ 返回水平位移 dx 供调用处缩放对面轴。
-    // 注册在 thumb 交互之前：thumb 区域优先，背景兜底。
-    let bg_id = ui.id().with("__vsb_bg__");
-    let bg_resp = ui.interact(rect, bg_id, egui::Sense::drag());
-
     // Three interaction zones (top edge / middle / bottom edge)
     let top_edge_rect = egui::Rect::from_min_max(
         rect_rect.min,
@@ -599,18 +764,29 @@ pub(crate) fn show_vertical(
     );
     let middle_resp = ui.interact(middle_rect, middle_id, egui::Sense::click_and_drag());
 
-    let top_hovered = top_resp.hovered() || top_resp.dragged();
-    let bottom_hovered = bottom_resp.hovered() || bottom_resp.dragged();
-    let middle_hovered = middle_resp.hovered() || middle_resp.dragged();
+    // 只有鼠标指针真的在滚动条 band 上时才允许交互（同水平滚动条），
+    // 避免 interact_radius 导致 band 附近的指针（如拖动自动化锚点时）误触发
+    // 平移/缩放，绝不允许和自动化一起拖动。
+    let on_sb = ui
+        .input(|i| i.pointer.interact_pos())
+        .is_some_and(|p| rect.contains(p));
+    let press_on_sb = ui
+        .input(|i| i.pointer.press_origin())
+        .is_some_and(|p| rect.contains(p));
+
+    let top_hovered = on_sb && (top_resp.hovered() || top_resp.dragged());
+    let bottom_hovered = on_sb && (bottom_resp.hovered() || bottom_resp.dragged());
+    let middle_hovered = on_sb && (middle_resp.hovered() || middle_resp.dragged());
 
     // Paint rectangle with appropriate color
-    let thumb_color = if top_resp.dragged() || bottom_resp.dragged() || middle_resp.dragged() {
-        rect_drag_color
-    } else if middle_hovered || top_hovered || bottom_hovered {
-        rect_hover_color
-    } else {
-        rect_color
-    };
+    let thumb_color =
+        if on_sb && (top_resp.dragged() || bottom_resp.dragged() || middle_resp.dragged()) {
+            rect_drag_color
+        } else if middle_hovered || top_hovered || bottom_hovered {
+            rect_hover_color
+        } else {
+            rect_color
+        };
     ui.painter().rect_filled(rect_rect, 0.0, thumb_color);
 
     // ── Cursor ──
@@ -618,7 +794,7 @@ pub(crate) fn show_vertical(
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNorth);
     } else if bottom_hovered {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeSouth);
-    } else if middle_hovered || middle_resp.dragged() {
+    } else if middle_hovered || (on_sb && middle_resp.dragged()) {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     }
 
@@ -633,9 +809,12 @@ pub(crate) fn show_vertical(
     // 避免把 thumb 像素变化等同于 viewport_pixels 变化（那是 bug）。
     let k_constant = view_height * sb_h / num_cells_f;
 
+    // ── Interaction（仅当鼠标按下时真的在滚动条 band 上才有效）──
+    // 缩放/平移一律从 thumb（或边缘）按下开始；背景区域拖拽不触发任何操作。
+
     // Drag middle → pan（y 方向）；水平位移 → 返回 dx 供调用处缩放对面轴。
     // 斜拖 = 平移 + 缩放同时进行。
-    if middle_resp.dragged() {
+    if press_on_sb && middle_resp.dragged() {
         if max_scroll_y > 0.0 {
             let delta = middle_resp.drag_delta().y;
             *scroll_y = (*scroll_y + delta / scale).clamp(0.0, max_scroll_y);
@@ -646,7 +825,7 @@ pub(crate) fn show_vertical(
     }
 
     // Drag top edge → zoom，锚定 thumb 底边 sb 位置（rect_bottom 不动）
-    if top_resp.dragged() {
+    if press_on_sb && top_resp.dragged() {
         let new_thumb_top_sb =
             (rect_top + top_resp.drag_delta().y).clamp(0.0, rect_bottom - 2.0 * EDGE_WIDTH);
         let new_thumb_height_sb = (rect_bottom - new_thumb_top_sb).max(2.0 * EDGE_WIDTH);
@@ -666,7 +845,7 @@ pub(crate) fn show_vertical(
     }
 
     // Drag bottom edge → zoom，锚定 thumb 顶边 sb 位置（rect_top 不动）
-    if bottom_resp.dragged() {
+    if press_on_sb && bottom_resp.dragged() {
         let new_thumb_bottom_sb =
             (rect_bottom + bottom_resp.drag_delta().y).clamp(rect_top + 2.0 * EDGE_WIDTH, sb_h);
         let new_thumb_height_sb = (new_thumb_bottom_sb - rect_top).max(2.0 * EDGE_WIDTH);
@@ -683,12 +862,9 @@ pub(crate) fn show_vertical(
         ui.ctx().request_repaint();
     }
 
-    // 水平位移 dx（thumb 中间或背景拖拽时）→ 调用处缩放对面轴（tick 宽度）
-    if bg_resp.dragged() {
-        bg_resp.drag_delta().x
-    } else {
-        0.0
-    }
+    // 背景区域 / 未按下：返回 0，不触发任何缩放/平移。
+    // （缩放对面轴的 dx 已由 thumb 中间拖拽的水平位移提供。）
+    0.0
 }
 
 // ── Vertical scrollbar (value-space, for automation panels) ──
