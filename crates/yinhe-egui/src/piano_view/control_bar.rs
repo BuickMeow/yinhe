@@ -140,12 +140,17 @@ pub fn show(ui: &mut egui::Ui, bar: egui::Rect, ctx: &PrBarData<'_>, events: &mu
 }
 
 /// 音轨 popup：左半切换主音轨，右半勾选显示音轨（首项「全选」）。
+///
+/// 注意：两栏宽度必须 min/max 同时锁死——menu_item_button 的宽度 =
+/// available_width（铺满整行），popup 又是内容自适应宽度，只设 min 会形成
+/// 「按钮请求可用宽度 → popup 变宽 → 可用宽度更大」的每帧正反馈，popup 向右飞出去。
 fn track_popup(ui: &mut egui::Ui, ctx: &PrBarData<'_>, events: &mut Vec<PrBarEvent>) {
     ui.set_max_height(360.0);
     ui.horizontal(|ui| {
         // ── 左半：切换主音轨（单击 = 选中仅此轨）──
         ui.vertical(|ui| {
             ui.set_min_width(170.0);
+            ui.set_max_width(170.0);
             ui.label(t!("pr_bar.main_track"));
             ui.separator();
             egui::ScrollArea::vertical()
@@ -172,6 +177,7 @@ fn track_popup(ui: &mut egui::Ui, ctx: &PrBarData<'_>, events: &mut Vec<PrBarEve
         // ── 右半：显示音轨（首项「全选」+ 各轨勾选）──
         ui.vertical(|ui| {
             ui.set_min_width(170.0);
+            ui.set_max_width(170.0);
             ui.label(t!("pr_bar.show_tracks"));
             ui.separator();
             egui::ScrollArea::vertical()
