@@ -793,8 +793,10 @@ struct ActionMenuOutcome {
 /// （Popup::from_toggle_button_response + CloseOnClickOutside），
 /// 宽度按内容测量（快捷键 + 图钉需要稳定的行宽，行宽统一 = 测量宽）；
 /// 每项右侧显示快捷键与图钉按钮。文件/编辑 popup 共用，保证行为一致。
-/// extra 是附加在动作组之后的自定义区块（如最近文件子菜单父行）。
+/// extra 是附加在指定动作组之后的自定义区块（如最近文件子菜单父行）。
 struct ActionMenuExtra<'a> {
+    /// 在该组索引之后渲染（0 = 第一组之后，与 macOS 菜单「打开」后的位置一致）。
+    after_group: usize,
     /// 区块行所需最小宽度（与动作行测量宽取大者定菜单宽）。
     min_width: f32,
     /// 渲染回调；参数：popup 内容 ui + 本帧是否有动作行被 hover
@@ -827,8 +829,14 @@ fn show_action_menu<T: PopupRow>(
             // 稳定（亚像素抖动此前已由删除高亮框描边根治）。
             ui.set_min_width(menu_w);
             ui.set_max_width(menu_w);
-            // 本帧是否有动作行被 hover（附加区块据此收起子菜单）
+            // 附加区块渲染在组循环中间（after_group），拿不到本帧后续组的
+            // hover 结果，因此给它传上一帧的完整值（存 temp）；hover 移到
+            // 其他行后子菜单延迟一帧收起，无感知差异。
+            let hover_id = button.id.with("menu_extra_hover");
+            let prev_row_hovered: bool =
+                ui.ctx().data_mut(|d| d.get_temp(hover_id)).unwrap_or(false);
             let mut any_row_hovered = false;
+            let mut extra = extra;
             for (gi, group) in groups.iter().enumerate() {
                 if gi > 0 {
                     ui.separator();
@@ -871,10 +879,14 @@ fn show_action_menu<T: PopupRow>(
                         pin_toggled = Some(action.pinned_index());
                     }
                 }
+                if let Some(extra) = extra.take()
+                    && gi == extra.after_group
+                {
+                    (extra.render)(ui, prev_row_hovered);
+                }
             }
-            if let Some(extra) = extra {
-                (extra.render)(ui, any_row_hovered);
-            }
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(hover_id, any_row_hovered));
         });
     if let Some(idx) = pin_toggled
         && let Some(p) = pinned
@@ -1042,6 +1054,7 @@ fn show_file_menu(
         Some(pinned),
         pending_action,
         has_recent.then(|| ActionMenuExtra {
+            after_group: 0, // 「新建/打开」组之后，与 macOS 菜单位置一致
             min_width: measure_recent_parent_row_width(&button.ctx),
             render: &mut render,
         }),
