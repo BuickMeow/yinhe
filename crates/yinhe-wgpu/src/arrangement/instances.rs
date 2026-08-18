@@ -73,7 +73,11 @@ fn flush_track_bucket(
 }
 
 /// Build note rectangle instances with sub-pixel merging (layer 2).
-/// Dependencies: track_visible, tick range (scroll_x), track range (scroll_y)
+/// Dependencies: track_visible, tick range (scroll_x), track range
+///
+/// track_range：可见音轨范围 [first, last)，由调用方按当前行布局
+/// （含展开的自动化 lane）计算——均匀行假设下可用
+/// ArrangementView::visible_track_range，展开后须用 ArRowLayout。
 ///
 /// Output is 16B `NoteInstance` (semantic data only: ticks, key, track, vel).
 /// All pixel positions and colors are computed in the GPU vertex shader:
@@ -89,16 +93,16 @@ fn flush_track_bucket(
 pub fn build_notes(
     out: &mut Vec<NoteInstance>,
     w: f32,
-    h: f32,
     midi: &dyn NoteSource,
     view: &ArrangementView,
+    track_range: (usize, usize),
     track_visible: &[bool],
     hidden_notes: &HashSet<(u16, u32, u8)>,
 ) {
     let ppu = view.base.pixels_per_tick;
     let num_tracks = track_visible.len();
     let (tick_start, tick_end) = view.visible_tick_range(w);
-    let (trk_first, trk_last) = view.visible_track_range(h, num_tracks);
+    let (trk_first, trk_last) = track_range;
 
     let note_instances: Vec<Vec<NoteInstance>> = (0u8..128)
         .into_par_iter()
@@ -171,8 +175,8 @@ pub fn build_ghost_notes(
     out: &mut Vec<NoteInstance>,
     ghost_notes: &mut [(u32, u32, u8, u16)],
     w: f32,
-    h: f32,
     view: &ArrangementView,
+    track_range: (usize, usize),
     track_visible: &[bool],
 ) {
     if ghost_notes.is_empty() {
@@ -180,8 +184,7 @@ pub fn build_ghost_notes(
     }
     let ppu = view.base.pixels_per_tick;
     let (tick_start, tick_end) = view.visible_tick_range(w);
-    let num_tracks = track_visible.len();
-    let (trk_first, trk_last) = view.visible_track_range(h, num_tracks);
+    let (trk_first, trk_last) = track_range;
     let merge_gap_ticks = (1.0 / ppu).ceil() as u32;
 
     // 原地按 (key, track, start_tick) 排序，使同一 (key, track) 连续且升序。
@@ -234,9 +237,9 @@ mod tests {
         build_notes(
             &mut out,
             2000.0,
-            400.0,
             &midi,
             &view,
+            (0, 1),
             &[true],
             &HashSet::new(),
         );

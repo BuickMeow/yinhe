@@ -23,8 +23,8 @@ pub use yinhe_theme::GpuTheme;
 // Re-export types that were previously provided by the separate crates
 pub use arrangement::{build_ghost_notes, build_notes as build_arr_notes};
 pub use automation::{
-    AutomationGhost, build_lane_multi_copy, build_lane_multi_move, build_lane_override,
-    build_lane_shape_override, prepare_automation,
+    ArrAutomationLane, AutomationGhost, build_lane_multi_copy, build_lane_multi_move,
+    build_lane_override, build_lane_shape_override, prepare_arr_automation, prepare_automation,
 };
 pub use pianoroll::{
     PianorollRenderJob, build_all_notes, build_ghost_note, build_key_notes, build_notes,

@@ -1,4 +1,4 @@
-use yinhe_types::{AutomationLane, AutomationTarget, NoteSource, SegmentShape};
+use yinhe_types::{AutomationLane, AutomationTarget, NoteSource, SegmentShape, TimelineViewBase};
 
 use super::data_lines;
 use super::ghost;
@@ -224,4 +224,112 @@ pub fn prepare(
     });
 
     true
+}
+
+/// AR 共享纹理中一条可见的自动化 lane。
+pub struct ArrAutomationLane<'a> {
+    pub lane: &'a AutomationLane,
+    /// 子行顶部在 AR 纹理中的 y（像素）。
+    pub y_top: f32,
+    /// 子行高（= 音轨行高）。
+    pub height: f32,
+    /// 值域上限（Tempo 由调用方按事件动态算，其他 target.max_value()）。
+    pub max_val: f32,
+    /// 需要白色高亮的锚点 tick（选中的锚点）。
+    pub highlight_ticks: &'a [u32],
+}
+
+/// Prepare AR 展开自动化 lane 的曲线渲染（画在 AR 共享走带纹理上）。
+///
+/// Layers:
+///   2 = 数据层（各展开 lane 的线段 + 锚点，按 cache_key 缓存）
+///   3 = ghost（拖拽预览，无缓存，每帧重建）
+///
+/// 不碰 uniforms / track_colors：AR 的 view_ui 已上传；curve shader 只用
+/// width/height/scroll_frac/scroll_mode，与 AR 的 uniforms 兼容。
+///
+/// cache_key：调用方算（含 render 相关 hash + revision——任何编辑都 bump
+/// revision，展开/布局变化进布局 hash）。ghost 覆盖 lane 的内容 hash 在本函数
+/// 内部额外混入数据层 key（拖拽不 bump revision，见 prepare 的 ghost_lane_hash）。
+///
+/// ghost：(ghost, y_top, height, max_val)——ghost lane 画在哪个子行。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
+pub fn prepare_arr_automation(
+    renderer: &mut InstanceRenderer,
+    width: f32,
+    height: f32,
+    base: &TimelineViewBase,
+    lanes: &[ArrAutomationLane],
+    track_visible: &[bool],
+    track_colors: &[[f32; 4]],
+    show_anchors: bool,
+    ghost: Option<(AutomationGhost, f32, f32, f32)>,
+    cache_key: u64,
+) {
+    // ghost_lane_hash：拖拽 ghost 不经 Document 编辑、revision 不 bump，
+    // 需单独 hash ghost lane 内容以触发数据层重建（逻辑同 prepare）。
+    let ghost_lane_hash = ghost
+        .as_ref()
+        .map(|(g, ..)| match g {
+            AutomationGhost::Move { lane, .. } => hash_lane(lane),
+            AutomationGhost::Curve { .. } => 1,
+        })
+        .unwrap_or(0);
+    let data_key = layer_cache_key(&[cache_key, ghost_lane_hash]);
+
+    // 数据层 skip_lane：ghost 为 Move 时被覆盖的 lane 由 ghost 层完整重画。
+    let skip_lane = ghost.as_ref().and_then(|(g, ..)| match g {
+        AutomationGhost::Move { lane, .. } => Some(lane),
+        AutomationGhost::Curve { .. } => None,
+    });
+
+    let theme = renderer.theme();
+
+    // Layer 2: 数据层——每条可见 lane 构造一个临时 panel view，
+    // y_offset 把曲线平移到所属子行顶部（upload_curve_layer 内部已
+    // ensure_layer(2, Curve)，无需显式调用）。
+    renderer.upload_curve_layer(2, data_key, |out| {
+        for l in lanes {
+            let view = AutomationPanelView {
+                base: base.clone(),
+                panel_height: l.height,
+                y_offset: l.y_top,
+                selected_target: l.lane.target.clone(),
+                show_velocity: false,
+                value_zoom: 1.0,
+                value_scroll: 0.0,
+                ..Default::default()
+            };
+            data_lines::build_data_lines(
+                out,
+                width,
+                height,
+                &view,
+                &[l.lane],
+                l.max_val,
+                track_visible,
+                track_colors,
+                show_anchors,
+                skip_lane,
+                l.highlight_ticks,
+                &theme,
+            );
+        }
+    });
+
+    // Layer 3: ghost（拖拽预览，无缓存，每帧重建）。
+    renderer.upload_curve_layer(3, 0, |out| {
+        if let Some((g, y_top, h, max_val)) = ghost {
+            let view = AutomationPanelView {
+                base: base.clone(),
+                panel_height: h,
+                y_offset: y_top,
+                show_velocity: false,
+                value_zoom: 1.0,
+                value_scroll: 0.0,
+                ..Default::default()
+            };
+            ghost::build_ghost(out, g, width, &view, max_val, show_anchors, &theme);
+        }
+    });
 }

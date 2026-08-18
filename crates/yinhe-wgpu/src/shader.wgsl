@@ -27,6 +27,11 @@ struct Uniforms {
 @group(0) @binding(1)
 var<storage> tc: array<vec4<f32>>;
 
+// Track offsets: AR 模式下每个音轨主行的音乐坐标 y（像素），由展开状态决定；
+// 未展开时等于 track * lane_height。PR 模式下不使用。
+@group(0) @binding(3)
+var<storage, read> track_offsets: array<f32>;
+
 struct SelectionUniform {
     rects: array<vec4<u32>, MAX_SEL_RECTS * 2u>, // 2 vec4 per rect: (tick_start, tick_end, key_lo, key_hi) + (track_lo, track_hi, 0, 0)
 }
@@ -271,7 +276,10 @@ fn note_geometry(
         // across vertical scrolling — same optimization as PR notes.
         let lh = u.lane_height;
         let lh_per_key = lh / 128.0;
-        pixel_y = -u.scroll_y + lh - (f32(key) + 1.0) * lh_per_key + f32(track) * lh;
+        // 每轨主行 y 查表（展开自动化 lane 后行布局不再均匀）；
+        // clamp 到表末防止 track 超出表长时越界。
+        let track_y = track_offsets[min(track, arrayLength(&track_offsets) - 1u)];
+        pixel_y = -u.scroll_y + track_y + lh - (f32(key) + 1.0) * lh_per_key;
         pixel_h = max(lh_per_key, 1.0);
     }
 

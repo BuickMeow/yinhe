@@ -27,6 +27,10 @@ pub struct RenderPipelineState {
     pub track_colors_buffer: Buffer,
     /// Current capacity (in vec4 entries) of `track_colors_buffer`.
     pub track_colors_capacity: u32,
+    /// AR 模式下每个音轨主行的 y 偏移表（f32 数组，shader binding 3）。
+    pub track_offsets_buffer: Buffer,
+    /// Current capacity (in f32 entries) of `track_offsets_buffer`.
+    pub track_offsets_capacity: u32,
     pub selection_buffer: Buffer,
     pub bind_group: BindGroup,
     pub bind_group_layout: BindGroupLayout,
@@ -63,6 +67,17 @@ impl RenderPipelineState {
             mapped_at_creation: false,
         });
         yinhe_memtrace::add_gpu_resource(track_colors_size);
+
+        // Track offsets buffer（AR 每轨主行 y 偏移）——初始 4 个 f32（16B），
+        // 随轨道数按需增长，见 renderer.rs ensure_track_offsets_capacity。
+        let track_offsets_size = 16; // 4 × f32
+        let track_offsets_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("track_offsets"),
+            size: track_offsets_size,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        yinhe_memtrace::add_gpu_resource(track_offsets_size);
 
         // Selection rects buffer
         let selection_size = std::mem::size_of::<SelectionUniform>() as u64;
@@ -107,6 +122,16 @@ impl RenderPipelineState {
                     },
                     count: None,
                 },
+                BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -125,6 +150,10 @@ impl RenderPipelineState {
                 BindGroupEntry {
                     binding: 2,
                     resource: selection_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: track_offsets_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -360,6 +389,8 @@ impl RenderPipelineState {
             uniform_buffer,
             track_colors_buffer,
             track_colors_capacity: 1,
+            track_offsets_buffer,
+            track_offsets_capacity: 4,
             selection_buffer,
             bind_group,
             bind_group_layout,
