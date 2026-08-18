@@ -101,3 +101,86 @@ impl Drop for TrackedTexture {
         yinhe_memtrace::sub_gpu_resource(self.size);
     }
 }
+
+/// 显存预算守卫：分配前检查，超限返回错误而非让 wgpu panic。
+///
+/// wgpu 的 `create_buffer` 在 size 超过 `max_buffer_size` 时会直接 panic
+/// （例如单 key 音符 buffer 超过设备上限），且累计显存没有查询 API——
+/// 只能靠预算登记。此处做两道硬检查（无阈值分级）：
+///   1. 单次分配不超过设备 `max_buffer_size`（wgpu panic 阈值）。
+///   2. 全局已分配（memtrace 统计）+ 本次分配不超过总预算。
+pub struct GpuBudget {
+    /// 单次分配硬上限（wgpu 单 buffer 上限）。
+    per_alloc_limit: u64,
+    /// 累计显存硬上限（总预算）。
+    total_limit: u64,
+}
+
+/// 默认总预算：8 GiB。100M 音符全量 all_notes + visible_notes ≈ 3.2GB，
+/// 留出编辑/多视图余量。
+const DEFAULT_TOTAL_LIMIT: u64 = 8 * 1024 * 1024 * 1024;
+
+impl GpuBudget {
+    /// 从设备 limits 构造预算。
+    pub fn new(device: &Device) -> Self {
+        Self {
+            per_alloc_limit: device.limits().max_buffer_size,
+            total_limit: DEFAULT_TOTAL_LIMIT,
+        }
+    }
+
+    /// 检查分配 `size` 字节是否安全。
+    ///
+    /// - 单次超过 `max_buffer_size` → `AllocationTooLarge`（wgpu 会 panic 的点）。
+    /// - 累计超过总预算 → `OutOfMemory`。
+    pub fn reserve(&self, size: u64) -> Result<(), GpuBudgetError> {
+        if size > self.per_alloc_limit {
+            return Err(GpuBudgetError::AllocationTooLarge {
+                requested: size,
+                limit: self.per_alloc_limit,
+            });
+        }
+        let used = yinhe_memtrace::gpu_resource_bytes().max(0) as u64;
+        if used.saturating_add(size) > self.total_limit {
+            return Err(GpuBudgetError::OutOfMemory {
+                requested: size,
+                used,
+                limit: self.total_limit,
+            });
+        }
+        Ok(())
+    }
+}
+
+/// GPU 分配预算错误。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GpuBudgetError {
+    /// 单次分配超过设备单 buffer 上限（wgpu 会 panic 的点）。
+    AllocationTooLarge { requested: u64, limit: u64 },
+    /// 累计显存超出总预算。
+    OutOfMemory {
+        requested: u64,
+        used: u64,
+        limit: u64,
+    },
+}
+
+impl std::fmt::Display for GpuBudgetError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GpuBudgetError::AllocationTooLarge { requested, limit } => {
+                write!(f, "GPU 单次分配 {requested} 字节超过设备上限 {limit} 字节")
+            }
+            GpuBudgetError::OutOfMemory {
+                requested,
+                used,
+                limit,
+            } => write!(
+                f,
+                "GPU 显存不足：需要 {requested} 字节，已用 {used} 字节，预算 {limit} 字节"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for GpuBudgetError {}

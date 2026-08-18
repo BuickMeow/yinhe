@@ -14,9 +14,9 @@
 use wgpu::*;
 
 use crate::cull::CullState;
-use crate::resource::TrackedBuffer;
 use crate::layer::{AnyLayer, LayerKind};
 use crate::pipeline::RenderPipelineState;
+use crate::resource::TrackedBuffer;
 use crate::vertex::{CurveInstance, NoteInstance, SelectionUniform, Uniforms, VelocityBarInstance};
 
 /// Per-frame timing breakdown returned by `prepare`.
@@ -266,14 +266,16 @@ impl InstanceRenderer {
         per_key_offsets: &[u32; 129],
         key_revisions: &[u64; 128],
     ) {
-        self.cull.upload_all_notes(
+        if let Err(e) = self.cull.upload_all_notes(
             &self.device,
             &self.queue,
             &self.render.uniform_buffer,
             notes,
             per_key_offsets,
             key_revisions,
-        );
+        ) {
+            tracing::error!("[cull] 全量上传音符失败（显存预算不足，已降级跳过）：{e}");
+        }
     }
 
     /// Incrementally upload a single key's notes. Grows the key's buffer and
@@ -289,13 +291,16 @@ impl InstanceRenderer {
         if !self.cull.has_key_buffer(key) {
             return false;
         }
-        self.cull.upload_one_key(
+        if let Err(e) = self.cull.upload_one_key(
             &self.device,
             &self.queue,
             &self.render.uniform_buffer,
             key,
             notes,
-        );
+        ) {
+            tracing::error!("[cull] 单 key 上传失败（显存预算不足，已降级跳过）：{e}");
+            return false;
+        }
         self.cull.uploaded_key_revisions[key as usize] = revision;
         true
     }

@@ -65,9 +65,11 @@ fn cull_ignores_stale_notes_beyond_count() {
         mapped_at_creation: false,
     });
 
-    cull.upload_one_key(&device, &queue, &uniform_buffer, 0, &test_notes(100));
+    cull.upload_one_key(&device, &queue, &uniform_buffer, 0, &test_notes(100))
+        .unwrap();
     // Shrunk upload: same key, fewer notes, buffer NOT recreated.
-    cull.upload_one_key(&device, &queue, &uniform_buffer, 0, &test_notes(50));
+    cull.upload_one_key(&device, &queue, &uniform_buffer, 0, &test_notes(50))
+        .unwrap();
 
     let mut encoder = device.create_command_encoder(&Default::default());
     cull.dispatch_cull(&mut encoder, &queue, 0, 0, &visible_uniforms());
@@ -150,7 +152,8 @@ fn cull_track_mask_filters_hidden_tracks() {
             });
         }
     }
-    cull.upload_one_key(&device, &queue, &uniform_buffer, 60, &all);
+    cull.upload_one_key(&device, &queue, &uniform_buffer, 60, &all)
+        .unwrap();
 
     let run = |cull: &mut CullState, u: &Uniforms| -> Vec<u32> {
         let mut encoder = device.create_command_encoder(&Default::default());
@@ -237,7 +240,8 @@ fn cull_output_order_is_deterministic() {
             packed: NoteInstance::pack(60, i as u16, 100),
         })
         .collect();
-    cull.upload_one_key(&device, &queue, &uniform_buffer, 0, &notes);
+    cull.upload_one_key(&device, &queue, &uniform_buffer, 0, &notes)
+        .unwrap();
 
     let run = |cull: &mut CullState, scroll_x: f32| -> Vec<u32> {
         let mut u = visible_uniforms();
@@ -546,7 +550,8 @@ fn cull_end_to_end_multi_key() {
         &all_notes,
         &offsets,
         &[0; 128],
-    );
+    )
+    .unwrap();
 
     // PR 默认视口：scroll=0, ppu=0.1, kh=12, height=600 → 可见 key 77..127
     // （key 76 的行在 y∈[612, 624)，完全在视口外）
@@ -686,7 +691,8 @@ fn cull_real_midi_vs_cpu() {
             &all_notes,
             &offsets,
             &[0; 128],
-        );
+        )
+        .unwrap();
 
         let u = Uniforms {
             width,
@@ -833,7 +839,8 @@ fn cull_scroll_sequence_updates() {
         &all_notes,
         &offsets,
         &[0; 128],
-    );
+    )
+    .unwrap();
 
     let run = |cull: &mut CullState, scroll_x: f32| -> u64 {
         let u = Uniforms {
@@ -968,7 +975,8 @@ fn cull_real_midi_sequence() {
                     &all_notes,
                     &offsets,
                     note_revisions,
-                );
+                )
+                .unwrap();
                 *last_key = nk;
                 *last_rev = revision;
                 *last_hidden = crate::hash_hidden(hidden);
@@ -1129,7 +1137,8 @@ fn cull_mid_song_exact_per_key() {
         &all_notes,
         &offsets,
         &[0; 128],
-    );
+    )
+    .unwrap();
 
     let (w, h, kh, kb_w) = (800.0f32, 600.0f32, 12.0f32, 60.0f32);
     let mut any_bad = false;
@@ -1296,7 +1305,8 @@ fn cull_real_large_midi_relative_viewport() {
             &all_notes,
             &offsets,
             &[0; 128],
-        );
+        )
+        .unwrap();
         println!("upload_all_notes {:?}", t2.elapsed());
 
         let total_ticks = model.tick_length;
@@ -1492,7 +1502,8 @@ fn cull_multi_frame_interaction_sequence() {
                     &all_notes,
                     &offsets,
                     &model.note_revisions,
-                );
+                )
+                .unwrap();
                 uploaded_kind = "full";
             } else {
                 let revision_changed = revision != last_rev;
@@ -1506,7 +1517,8 @@ fn cull_multi_frame_interaction_sequence() {
                         &all_notes,
                         &offsets,
                         &model.note_revisions,
-                    );
+                    )
+                    .unwrap();
                     uploaded_kind = "full(hidden)";
                 } else if revision_changed {
                     let dirty: Vec<u8> = (0u8..128)
@@ -1525,7 +1537,8 @@ fn cull_multi_frame_interaction_sequence() {
                                 all_ok = false;
                                 break;
                             }
-                            cull.upload_one_key(&device, &queue, &uniform_buffer, k, &key_notes);
+                            cull.upload_one_key(&device, &queue, &uniform_buffer, k, &key_notes)
+                                .unwrap();
                             cull.uploaded_key_revisions[k as usize] =
                                 model.note_revisions[k as usize];
                         }
@@ -1541,7 +1554,8 @@ fn cull_multi_frame_interaction_sequence() {
                                 &all_notes,
                                 &offsets,
                                 &model.note_revisions,
-                            );
+                            )
+                            .unwrap();
                             uploaded_kind = "full(fallback)";
                         }
                     }
@@ -1554,7 +1568,8 @@ fn cull_multi_frame_interaction_sequence() {
                         &all_notes,
                         &offsets,
                         &model.note_revisions,
-                    );
+                    )
+                    .unwrap();
                     uploaded_kind = "full(tv)";
                 }
             }
@@ -2130,7 +2145,8 @@ fn cull_visible_buffer_content_check() {
         &all_notes,
         &offsets,
         &model.note_revisions,
-    );
+    )
+    .unwrap();
 
     let (w, h, kh, kb_w) = (1376.0f32, 419.0f32, 3.2734375, 60.0f32);
     let ppu = 0.026372144f32;
@@ -2786,7 +2802,8 @@ fn cull_bench_vs_cpu_start_mid() {
         &all_notes,
         &offsets,
         &[0; 128],
-    );
+    )
+    .unwrap();
     let upload_ms = t.elapsed().as_secs_f64() * 1e3;
     println!("\n== GPU cull 一次性成本（加载 / 轨道显隐切换） ==");
     println!(
@@ -3013,7 +3030,8 @@ fn cull_arr_mode_lane_height_vs_cpu() {
         &all_notes,
         &offsets,
         &model.note_revisions,
-    );
+    )
+    .unwrap();
 
     // AR 视口：部分轨道可见（lane_height=20），tick 滚动到歌曲中部。
     let (w, h, lh, kb_w) = (1376.0f32, 800.0f32, 20.0f32, 60.0f32);

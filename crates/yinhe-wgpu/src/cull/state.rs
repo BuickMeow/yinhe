@@ -3,7 +3,7 @@
 
 use wgpu::*;
 
-use crate::resource::TrackedBuffer;
+use crate::resource::{GpuBudget, GpuBudgetError, TrackedBuffer};
 use crate::vertex::{NoteInstance, Uniforms};
 
 use super::KeyBucketIndex;
@@ -103,6 +103,8 @@ pub(crate) struct CullState {
     ///   - [16..20) c_lo (first dispatched chunk of the frame, host-written
     ///     every frame).
     dispatch_args_buffer: TrackedBuffer,
+    /// 显存预算守卫：per-key buffer 增长前检查，超限返回错误而非 wgpu panic。
+    budget: GpuBudget,
 
     /// Per-key revision at last upload (full or incremental).
     /// Compared with model.note_revisions to detect incremental re-upload needs.
@@ -279,6 +281,7 @@ impl CullState {
             per_key_counts: [0; 128],
             bucket_indexes: (0..128).map(|_| None).collect(),
             dispatch_args_buffer,
+            budget: GpuBudget::new(device),
             uploaded_key_revisions: [0; 128],
             last_cull_uniforms: None,
             notes_dirty: false,
@@ -321,15 +324,16 @@ impl CullState {
         notes: &[NoteInstance],
         per_key_offsets: &[u32; 129],
         key_revisions: &[u64; 128],
-    ) {
+    ) -> Result<(), GpuBudgetError> {
         for key in 0u8..128 {
             let start = per_key_offsets[key as usize] as usize;
             let end = per_key_offsets[key as usize + 1] as usize;
             let key_notes = &notes[start..end];
-            self.upload_one_key(device, queue, uniform_buffer, key, key_notes);
+            self.upload_one_key(device, queue, uniform_buffer, key, key_notes)?;
             self.uploaded_key_revisions[key as usize] = key_revisions[key as usize];
         }
         self.notes_dirty = true;
+        Ok(())
     }
 
     /// Grow (if needed) + write + bind-group-recreate (if any buffer grew) for
@@ -343,7 +347,7 @@ impl CullState {
         uniform_buffer: &Buffer,
         key: u8,
         notes: &[NoteInstance],
-    ) {
+    ) -> Result<(), GpuBudgetError> {
         let needed = notes.len() as u64 * std::mem::size_of::<NoteInstance>() as u64;
         let chunk_total = (notes.len() as u64).div_ceil(256).max(1);
         // Visible buffer is 256-aligned so every chunk's sparse slots
@@ -367,8 +371,6 @@ impl CullState {
             //   all_notes: 大小 needed.max(4096)，usage STORAGE | COPY_DST
             //   visible:   大小 vis_size（4B 索引），usage STORAGE | VERTEX
             //   draw_args: 大小 args_size，usage STORAGE | COPY_SRC | COPY_DST
-            // 全部走 yinhe_memtrace::sub_gpu_resource / add_gpu_resource
-            // （可先统一释放旧的三个，再统一创建新的三个）。
             // 只释放当前 key 的三个 buffer——不能遍历全部 keys，那会销毁
             // 其他 key 的 buffer，全量上传后只剩最后一个 key 存活。
             // 旧 buffer 随 take 立即 drop，TrackedBuffer 自动 sub_gpu_resource。
@@ -380,7 +382,10 @@ impl CullState {
                 buf.take();
             }
 
+            // 显存预算检查（在旧 buffer 释放后检查：used 已减掉旧 buffer 占用量）。
+            // 超限时返回错误，上层记录日志并降级（不 panic、不创建超限 buffer）。
             let all_size = needed.max(4096);
+            self.budget.reserve(all_size + vis_size + args_size)?;
             let all_buf = TrackedBuffer::new(
                 device,
                 &BufferDescriptor {
@@ -444,6 +449,7 @@ impl CullState {
         self.bucket_indexes[key as usize] = Some(index);
 
         self.notes_dirty = true;
+        Ok(())
     }
 
     /// Whether a per-key buffer exists for `key` (incremental upload precondition).
