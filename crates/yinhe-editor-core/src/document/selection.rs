@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use yinhe_types::MAX_KEY;
+
 use crate::batch_ops;
 use crate::history::{NoteDelta, UndoAction};
 
@@ -9,11 +11,11 @@ use super::Document;
 
 impl Document {
     /// Select all notes in the currently selected track(s) for Piano Roll.
-    /// Range: tick 0 → last note end (global), keys 0–127.
+    /// Range: tick 0 → last note end (global), keys 0–MAX_KEY.
     ///
     /// Uses `model.tick_length` (O(1)) instead of scanning all key buckets (O(N)).
     /// Sets `sel_rect.rect` to the full global range so the visual selection box
-    /// covers 0 → tick_length, keys 0–127.
+    /// covers 0 → tick_length, keys 0–MAX_KEY.
     pub fn select_all_pr(&mut self) {
         let model = &self.data.model;
         let max_end = model.tick_length as u32;
@@ -40,18 +42,18 @@ impl Document {
             }
             self.edit
                 .selected
-                .add_rect_track(0, max_end + 1, 0, 127, track_idx, track_idx);
+                .add_rect_track(0, max_end + 1, 0, MAX_KEY, track_idx, track_idx);
         }
 
         // Update visual sel_rect to show full range (PR uses f64 ticks).
         // 全选是全键选框，但属于用户主动选择（非空区域框选自动切换），
         // 不标记 auto_vertical —— 拖动时仍可上下移动。
-        self.edit.sel_rect.rects = vec![(0.0, max_end as f64 + 1.0, 0, 127)];
+        self.edit.sel_rect.rects = vec![(0.0, max_end as f64 + 1.0, 0, MAX_KEY)];
         self.edit.sel_rect.auto_vertical = vec![false];
     }
 
     /// Select all notes across all tracks for Arrange.
-    /// Range: tick 0 → global last note end, keys 0–127, all tracks except conductor.
+    /// Range: tick 0 → global last note end, keys 0–MAX_KEY, all tracks except conductor.
     pub fn select_all_ar(&mut self) {
         let model = &self.data.model;
         let max_end = model.tick_length as u32;
@@ -69,7 +71,7 @@ impl Document {
             Some(c) if c > 0 => {
                 self.edit
                     .selected
-                    .add_rect_track(0, max_end + 1, 0, 127, 0, c - 1);
+                    .add_rect_track(0, max_end + 1, 0, MAX_KEY, 0, c - 1);
             }
             _ => {}
         }
@@ -77,7 +79,7 @@ impl Document {
         if after < num_tracks {
             self.edit
                 .selected
-                .add_rect_track(0, max_end + 1, 0, 127, after, num_tracks - 1);
+                .add_rect_track(0, max_end + 1, 0, MAX_KEY, after, num_tracks - 1);
         }
         // AR 选框：全范围单矩形（含 conductor track），供 AR 视图绘制。
         self.edit.arr_sel_rect = vec![(0.0, (max_end + 1) as f64, 0, num_tracks as usize - 1)];
@@ -187,7 +189,7 @@ impl Document {
         }
         self.edit
             .selected
-            .add_rect_track(min_tick, max_end + 1, 0, 127, track_lo, track_hi);
+            .add_rect_track(min_tick, max_end + 1, 0, MAX_KEY, track_lo, track_hi);
 
         self.data.rebuild_model_dirty();
         Some(UndoAction::Notes(NoteDelta {

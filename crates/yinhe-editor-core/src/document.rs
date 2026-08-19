@@ -704,7 +704,9 @@ mod tests {
 
         // 选区覆盖 track 1 的 tick 0..481（半开区间，包含 tick 0 和 480 两个事件）
         doc.edit.selected = Selection::default();
-        doc.edit.selected.add_rect_track(0, 481, 0, 127, 1, 1);
+        doc.edit
+            .selected
+            .add_rect_track(0, 481, 0, yinhe_types::MAX_KEY, 1, 1);
 
         // 跨轨上移 1：raw_dst=0 是 conductor，被 clamp 回 track 1
         let action = doc
@@ -851,7 +853,9 @@ mod tests {
             });
         }
         doc.edit.selected = Selection::default();
-        doc.edit.selected.add_rect_track(0, 100, 0, 127, 1, 1);
+        doc.edit
+            .selected
+            .add_rect_track(0, 100, 0, yinhe_types::MAX_KEY, 1, 1);
 
         let action = doc
             .duplicate_selected_arrange(100, -1)

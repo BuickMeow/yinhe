@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use yinhe_core::{TrackInfo, YinModel};
+use yinhe_types::KEY_COUNT;
 use yinhe_yin::{MappingFile, ProjectFile};
 
 /// 全局文档代次：每个 `ProjectData` 拿到全局唯一的初始 `revision`。
@@ -46,7 +47,7 @@ impl ProjectData {
 
     /// Per-key note revision counters from the model. Consumers compare these
     /// to detect which key buckets need incremental GPU re-upload.
-    pub fn note_revisions(&self) -> &[u64; 128] {
+    pub fn note_revisions(&self) -> &[u64; KEY_COUNT] {
         &self.model.note_revisions
     }
 

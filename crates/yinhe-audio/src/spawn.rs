@@ -8,7 +8,7 @@ use xsynth_core::soundfont::SoundfontBase;
 
 use yinhe_core::YinModel;
 use yinhe_mixer::{InsertProcessor, MasterParams, MeterReading, MixerParams, StripParams};
-use yinhe_types::SegmentShape;
+use yinhe_types::{KEY_COUNT, SegmentShape};
 
 /// AR 自动化 lane 的 M/S 试听旁通集（跨线程共享，Empty 由 default 提供）。
 pub type AmMsMap =
@@ -401,7 +401,7 @@ pub(crate) fn spawn_worker(
             // 上次 prepare 时的 note_revisions 快照：对比当前 model 得出 dirty 桶，
             // 使 PrepareNotes 只重建变化的 key 桶（1 亿音符工程编辑不再全量扫描）。
             // None = 尚未同步过（首次 PrepareNotes 全量）。
-            let mut last_synced_revisions: Option<[u64; 128]> = None;
+            let mut last_synced_revisions: Option<[u64; KEY_COUNT]> = None;
             loop {
                 let cmd = match pending.pop_front() {
                     Some(c) => c,
@@ -454,13 +454,13 @@ pub(crate) fn spawn_worker(
                             }
                         }
                         // 对比 note_revisions 算 dirty 桶：只重建变化的 key 桶。
-                        // rebuild() 会 bump 全部 128 个 revision（全量变化），
+                        // rebuild() 会 bump 全部 KEY_COUNT 个 revision（全量变化），
                         // 与模型侧 dirty 语义一致。
-                        let dirty: [bool; 128] = match &last_synced_revisions {
+                        let dirty: [bool; KEY_COUNT] = match &last_synced_revisions {
                             Some(prev) => {
                                 core::array::from_fn(|k| prev[k] != latest.note_revisions[k])
                             }
-                            None => [true; 128], // 首次同步：全量
+                            None => [true; KEY_COUNT], // 首次同步：全量
                         };
                         let (audio_model, yin_model, audible_delta, duration_samples) =
                             crate::prepare_model::prepare_notes_dirty(&latest, sample_rate, &dirty);

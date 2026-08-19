@@ -4,7 +4,7 @@ use xsynth_core::channel::ControlEvent;
 use xsynth_core::channel_group::ParallelismOptions;
 use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
 use yinhe_editor_core::document::Document;
-use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
+use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, KEY_COUNT, SegmentShape};
 
 use crate::channel_layout::ChannelLayout;
 
@@ -920,7 +920,7 @@ fn test_notes_delta_incremental_apply_keeps_clean_bucket_cursor() {
     assert_eq!(revs_before[64], revs_after[64], "干净桶 revision 不变");
 
     // worker 语义：dirty = revisions 对比 → 只有 key 60
-    let dirty: [bool; 128] = core::array::from_fn(|k| revs_before[k] != revs_after[k]);
+    let dirty: [bool; KEY_COUNT] = core::array::from_fn(|k| revs_before[k] != revs_after[k]);
     assert!(dirty[60]);
     assert!(!dirty[64]);
 
@@ -931,7 +931,7 @@ fn test_notes_delta_incremental_apply_keeps_clean_bucket_cursor() {
         Some(2),
         "dirty 桶含新旧音符"
     );
-    for key in 0..128usize {
+    for key in 0..KEY_COUNT {
         if key != 60 {
             assert!(delta[key].is_none(), "非 dirty 桶不应重建");
         }

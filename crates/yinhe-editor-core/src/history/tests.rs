@@ -750,9 +750,9 @@ fn transpose_clamp_falls_back_to_snapshot() {
     doc.edit
         .selected
         .add_rect_track(100, 501, 60, 64, 0, u16::MAX);
-    // key 60 音符上移 12 → 72 安全；key 64 下移 100 超出范围？不，transpose 是统一方向：
-    // 用 +120 超出 127 → clamp → 回退副本制。
-    let action = doc.transpose_selected(120).expect("transpose 应成功");
+    // transpose 接口是 i8 半音（±127），够不到 MAX_KEY=255 上界，
+    // 改走下边界：key 60 下移 127 → -67 超出 0 → clamp → 回退副本制。
+    let action = doc.transpose_selected(-127).expect("transpose 应成功");
     assert!(
         matches!(action, UndoAction::Notes(_)),
         "clamp transpose 必须回退副本制"

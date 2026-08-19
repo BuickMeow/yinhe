@@ -20,7 +20,7 @@ pub enum NoteField {
     Velocity,
     /// 音符长度 gate（end - start，tick）。
     Gate,
-    /// 琴键（0-127）。
+    /// 琴键（0-MAX_KEY）。
     Key,
     /// 起始 tick。
     Tick,
@@ -200,7 +200,8 @@ impl Document {
             let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
                 std::collections::HashMap::new();
             for (note, old_key) in &selected_data {
-                let new_key = ((*old_key as i32) + delta_keys).clamp(0, 127) as u8;
+                let new_key =
+                    ((*old_key as i32) + delta_keys).clamp(0, yinhe_types::MAX_KEY as i32) as u8;
                 let new_start = (note.start_tick as i64 + delta_ticks).max(0) as u32;
                 let length = note.end_tick - note.start_tick;
                 let new_note = yinhe_types::Note {
@@ -255,7 +256,8 @@ impl Document {
             let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
                 std::collections::HashMap::new();
             for (note, old_key) in &moved_data {
-                let new_key = ((*old_key as i16) + (semitones as i16)).clamp(0, 127) as u8;
+                let new_key = ((*old_key as i16) + (semitones as i16))
+                    .clamp(0, yinhe_types::MAX_KEY as i16) as u8;
                 let new_note = yinhe_types::Note {
                     id: note.id,
                     start_tick: note.start_tick,
@@ -280,9 +282,10 @@ impl Document {
         };
         self.data.rebuild_model_dirty();
         // 操作式 undo 前提：无音符触发 key clamp（undo 反向移动回原 key，
-        // 原 key ∈ [0,127]，不触发新 clamp，对称性成立）。
+        // 原 key ∈ [0,MAX_KEY]，不触发新 clamp，对称性成立）。
         let clamp_free = before.iter().all(|(_, k)| {
-            (*k as i16 + semitones as i16) >= 0 && (*k as i16 + semitones as i16) <= 127
+            (*k as i16 + semitones as i16) >= 0
+                && (*k as i16 + semitones as i16) <= yinhe_types::MAX_KEY as i16
         });
         if clamp_free {
             Some(UndoAction::MoveNotes {
@@ -320,7 +323,8 @@ impl Document {
         let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
             std::collections::HashMap::new();
         for (note, old_key) in &originals {
-            let new_key = ((*old_key as i32) + delta_keys).clamp(0, 127) as u8;
+            let new_key =
+                ((*old_key as i32) + delta_keys).clamp(0, yinhe_types::MAX_KEY as i32) as u8;
             let new_tick = (note.start_tick as i64 + delta_ticks).max(0) as u32;
             let length = note.end_tick - note.start_tick;
             let moved = yinhe_types::Note {
@@ -348,7 +352,7 @@ impl Document {
         let clamp_free = originals.iter().all(|(n, k)| {
             (n.start_tick as i64 + delta_ticks) >= 0
                 && (*k as i32 + delta_keys) >= 0
-                && (*k as i32 + delta_keys) <= 127
+                && (*k as i32 + delta_keys) <= yinhe_types::MAX_KEY as i32
         });
         if clamp_free {
             Some(UndoAction::MoveNotes {
@@ -567,7 +571,9 @@ impl Document {
         for (note, old_key) in &originals {
             match field {
                 NoteField::Key => {
-                    let new_key = apply_ops_round(ops, *old_key as f64).clamp(0.0, 127.0) as u8;
+                    let new_key = apply_ops_round(ops, *old_key as f64)
+                        .clamp(0.0, yinhe_types::MAX_KEY as f64)
+                        as u8;
                     if new_key != *old_key {
                         changed = true;
                         let d = new_key as i32 - *old_key as i32;
@@ -749,7 +755,9 @@ impl Document {
                         });
                 }
                 FlipAxis::Vertical => {
-                    let new_key = (kl as i32 + kh as i32 - *old_key as i32).clamp(0, 127) as u8;
+                    let new_key = (kl as i32 + kh as i32 - *old_key as i32)
+                        .clamp(0, yinhe_types::MAX_KEY as i32)
+                        as u8;
                     new_by_key.entry(new_key).or_default().push(*note);
                 }
             }
@@ -905,9 +913,13 @@ mod tests {
     #[test]
     fn duplicate_selected_to_clamps_key_boundary() {
         let mut doc = make_doc_with_note();
-        // key 60 + 100 半音 = 160, 应 clamp 到 127
-        let _ = doc.duplicate_selected_to(0, 100);
-        assert_eq!(doc.data.model.notes[127].len(), 1, "应 clamp 到 key 127");
+        // key 60 + 200 半音 = 260, 应 clamp 到 MAX_KEY(255)
+        let _ = doc.duplicate_selected_to(0, 200);
+        assert_eq!(
+            doc.data.model.notes[yinhe_types::MAX_KEY as usize].len(),
+            1,
+            "应 clamp 到 key MAX_KEY"
+        );
     }
 
     /// Bug 7 回归：Alt 拖动复制后必须 bump 文档 revision，否则 GPU 层缓存不失效、画面不更新。

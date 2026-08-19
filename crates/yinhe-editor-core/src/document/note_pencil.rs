@@ -33,7 +33,8 @@ impl Document {
                     .range(*start_tick, start_tick.saturating_add(1))
                     .find(|n| n.track == *track && n.start_tick == *start_tick)?;
                 let orig_note = *note;
-                let new_key = ((*key as i32) + delta_keys).clamp(0, 127) as u8;
+                let new_key =
+                    ((*key as i32) + delta_keys).clamp(0, yinhe_types::MAX_KEY as i32) as u8;
                 let new_tick = (orig_note.start_tick as i64 + delta_ticks).max(0) as u32;
 
                 if *delta_ticks != 0 || *delta_keys != 0 {

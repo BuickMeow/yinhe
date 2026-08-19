@@ -98,7 +98,7 @@ impl AudioEngine {
     }
 
     /// 合并了原来 `next_event_sample`、`dispatch_cc_until`、`dispatch_notes_at`
-    /// 三个函数的职责，128 桶只扫描一次。所有比较都在 tick 域，无需转换。
+    /// 三个函数的职责，KEY_COUNT 桶只扫描一次。所有比较都在 tick 域，无需转换。
     pub(crate) fn dispatch_and_find_next(&mut self, tick: u32, block_end_tick: u32) -> Option<u32> {
         let mut next: Option<u32> = None;
 
@@ -128,10 +128,10 @@ impl AudioEngine {
             }
         }
 
-        // ── NoteOn + 找下一个 NoteOn 边界（单次 128 桶扫描）──
+        // ── NoteOn + 找下一个 NoteOn 边界（单次 KEY_COUNT 桶扫描）──
         // audible_notes 桶内 start_tick 升序（模型桶有序，无需 sort），
         // 桶里只有 vel>1 的音符，无需运行时过滤。
-        for key in 0..128usize {
+        for key in 0..yinhe_types::KEY_COUNT {
             let notes = self.audible_notes[key].as_slice();
             let mut cursor = self.note_cursor[key];
 

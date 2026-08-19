@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 
 use yinhe_core::YinModel;
+use yinhe_types::KEY_COUNT;
 
 use crate::audio_model::{
     AudibleDelta, AudibleNote, AudioModel, PreparedModel, flatten_automation_to_cc_events,
@@ -37,18 +38,18 @@ pub(crate) fn prepare_model(
 /// Notes-only 增量准备：只重建 `dirty` 掩码标记的 key 桶，其余桶保持不动。
 ///
 /// 用于 `UpdateNotes` 纯音符编辑：1 亿音符工程每次编辑只扫变化的桶，
-/// 而不是全量重扫 128 桶 × 全部音符。`dirty` 由 worker 对比前后
+/// 而不是全量重扫 KEY_COUNT 桶 × 全部音符。`dirty` 由 worker 对比前后
 /// `note_revisions` 得出（全 true = 全量，首次同步/全量 rebuild 后）。
 pub(crate) fn prepare_notes_dirty(
     model: &Arc<YinModel>,
     sample_rate: u32,
-    dirty: &[bool; 128],
+    dirty: &[bool; KEY_COUNT],
 ) -> (AudioModel, Arc<YinModel>, AudibleDelta, u64) {
     let duration_samples =
         (model.tempo_map.tick_to_seconds(model.tick_length) * sample_rate as f64) as u64;
 
     let mut delta: AudibleDelta = Box::new(core::array::from_fn(|_| None));
-    for key in 0..128usize {
+    for key in 0..KEY_COUNT {
         if dirty[key] {
             delta[key] = Some(build_bucket(model, key));
         }
@@ -81,11 +82,12 @@ fn build_bucket(model: &YinModel, key: usize) -> Vec<AudibleNote> {
     dst
 }
 
-/// 遍历 YinModel 128 个 key 桶，过滤 vel > 1 的音符（时刻存 tick）。
+/// 遍历 YinModel KEY_COUNT 个 key 桶，过滤 vel > 1 的音符（时刻存 tick）。
 /// 桶内天然升序（YinModel.notes[key] 按 start_tick 升序）。
-pub(crate) fn build_audible_notes(model: &YinModel) -> Box<[Vec<AudibleNote>; 128]> {
-    let mut buckets: Box<[Vec<AudibleNote>; 128]> = Box::new(std::array::from_fn(|_| Vec::new()));
-    for key in 0..128usize {
+pub(crate) fn build_audible_notes(model: &YinModel) -> Box<[Vec<AudibleNote>; KEY_COUNT]> {
+    let mut buckets: Box<[Vec<AudibleNote>; KEY_COUNT]> =
+        Box::new(std::array::from_fn(|_| Vec::new()));
+    for key in 0..KEY_COUNT {
         buckets[key] = build_bucket(model, key);
     }
     buckets

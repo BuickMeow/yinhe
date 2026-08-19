@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use yinhe_core::{Selection, YinModel};
-use yinhe_types::{Note, NoteBucket};
+use yinhe_types::{MAX_KEY, Note, NoteBucket};
 
 /// Remove all notes matching `selection` from the model.
 ///
@@ -116,7 +116,7 @@ pub fn summarize_selected(model: &YinModel, selection: &Selection) -> SelectedNo
     // 全选快路径：单个 rect 覆盖全部 key/track 与全部 tick
     let full = selection.rects.iter().any(|&(ts, te, kl, kh, tl, th)| {
         kl == 0
-            && kh == 127
+            && kh == MAX_KEY
             && tl == 0
             && th == u16::MAX
             && ts == 0
@@ -340,7 +340,7 @@ mod tests {
     fn summarize_full_selection_uses_fast_path_and_mixed() {
         let m = model_with_notes();
         let mut sel = Selection::default();
-        sel.add_rect(0, u32::MAX, 0, 127);
+        sel.add_rect(0, u32::MAX, 0, MAX_KEY);
         let s = summarize_selected(&m, &sel);
         assert_eq!(s.count, 3, "全选快路径应返回 note_count");
         assert_eq!(s.velocity, None, "velocity 100/80 混合");

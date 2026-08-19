@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use yinhe_types::{AutomationEvent, Note};
+use yinhe_types::{AutomationEvent, MAX_KEY, Note};
 
 pub mod apply;
 pub mod commit;
@@ -304,8 +304,8 @@ impl UndoAction {
                         (
                             (ts as i64 + delta_ticks).max(0) as u32,
                             (te as i64 + delta_ticks).max(0) as u32,
-                            (kl as i32 + delta_keys).clamp(0, 127) as u8,
-                            (kh as i32 + delta_keys).clamp(0, 127) as u8,
+                            (kl as i32 + delta_keys).clamp(0, MAX_KEY as i32) as u8,
+                            (kh as i32 + delta_keys).clamp(0, MAX_KEY as i32) as u8,
                             tl,
                             th,
                         )

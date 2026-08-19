@@ -10,6 +10,7 @@ use xsynth_core::{AudioStreamParams, ChannelCount};
 
 use yinhe_core::YinModel;
 use yinhe_mixer::{InsertProcessor, MixerGraph, MixerParams};
+use yinhe_types::KEY_COUNT;
 
 use crate::audio_model::{ActiveNote, AudibleNote, AudioModel, SortedCC};
 use crate::channel_layout::ChannelLayout;
@@ -44,13 +45,13 @@ pub(crate) struct AudioEngine {
     pub(crate) playing: bool,
     pub(crate) duration_samples: u64,
 
-    pub(crate) note_cursor: [usize; 128],
+    pub(crate) note_cursor: [usize; KEY_COUNT],
     /// Reference to the full YinModel. 保留供 GPU 路径和 PrepareModel 命令合并使用；
     /// 音频 dispatch/seek 改读 `audible_notes`（已过滤 vel≤1 + tick→sample 预转换）。
     pub(crate) yin_model: Option<Arc<YinModel>>,
-    /// 128 个 key 桶的可听音事件（vel > 1），由 worker 线程预构建。
+    /// KEY_COUNT 个 key 桶的可听音事件（vel > 1），由 worker 线程预构建。
     /// 音频线程的 seek / dispatch 只读这份列表。
-    pub(crate) audible_notes: Box<[Vec<AudibleNote>; 128]>,
+    pub(crate) audible_notes: Box<[Vec<AudibleNote>; KEY_COUNT]>,
 
     /// `Arc` 共享给 worker 线程做 chase 计算，避免每次 Seek clone 几十万条 CC。
     pub(crate) cc_events: Arc<Vec<SortedCC>>,
@@ -123,7 +124,7 @@ impl AudioEngine {
                 current_tick: 0,
                 playing: false,
                 duration_samples: 0,
-                note_cursor: [0; 128],
+                note_cursor: [0; KEY_COUNT],
                 yin_model: None,
                 audible_notes: Box::new(core::array::from_fn(|_| Vec::new())),
                 cc_events: Arc::new(Vec::new()),

@@ -6,6 +6,7 @@ use xsynth_core::channel_group::SynthEvent;
 use xsynth_core::soundfont::SoundfontBase;
 
 use yinhe_core::YinModel;
+use yinhe_types::KEY_COUNT;
 
 use crate::audio_model::{ActiveNote, AudioModel, PreparedModel, flatten_automation_to_cc_events};
 use crate::channel::{ChannelState, ChaseSkip};
@@ -29,7 +30,7 @@ impl AudioEngine {
 
         self.skip_track = model.track_audible_count.iter().map(|&c| c == 0).collect();
 
-        self.note_cursor = [0; 128];
+        self.note_cursor = [0; KEY_COUNT];
         self.current_tick = 0;
         self.yin_model = Some(Arc::clone(model));
         self.audible_notes = build_audible_notes(model);
@@ -207,7 +208,7 @@ impl AudioEngine {
 
         self.sample_position = sample;
         self.current_tick = self.sample_to_tick(sample);
-        self.note_cursor = [0; 128];
+        self.note_cursor = [0; KEY_COUNT];
         self.cc_cursor = 0;
         self.active_notes.clear();
 
@@ -220,7 +221,7 @@ impl AudioEngine {
         // Reset note cursors to the correct position based on pre-built audible_notes.
         // 桶内 start_tick 严格升序，partition_point 谓词单调，结果正确（修 P0-2）。
         let tick = self.current_tick;
-        for key in 0..128usize {
+        for key in 0..KEY_COUNT {
             let notes = self.audible_notes[key].as_slice();
             let cursor = notes.partition_point(|n| n.start_tick < tick);
             self.note_cursor[key] = cursor;

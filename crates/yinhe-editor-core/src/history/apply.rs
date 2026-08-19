@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use yinhe_core::Selection;
-use yinhe_types::{AutomationEvent, Note};
+use yinhe_types::{AutomationEvent, MAX_KEY, Note};
 
 use crate::document::{Document, track_color};
 
@@ -232,7 +232,7 @@ pub(crate) fn apply_note_shift(
     }
     let mut new_by_key: HashMap<u8, Vec<Note>> = HashMap::new();
     for (note, old_key) in &originals {
-        let new_key = ((*old_key as i32) + delta_keys).clamp(0, 127) as u8;
+        let new_key = ((*old_key as i32) + delta_keys).clamp(0, MAX_KEY as i32) as u8;
         let new_start = (note.start_tick as i64 + delta_ticks).max(0) as u32;
         let length = note.end_tick - note.start_tick;
         let moved = Note {
@@ -281,7 +281,8 @@ pub(crate) fn apply_note_flip(
                 });
             }
             crate::document::note_edit::FlipAxis::Vertical => {
-                let new_key = (kl as i32 + kh as i32 - *old_key as i32).clamp(0, 127) as u8;
+                let new_key =
+                    (kl as i32 + kh as i32 - *old_key as i32).clamp(0, MAX_KEY as i32) as u8;
                 new_by_key.entry(new_key).or_default().push(*note);
             }
         }

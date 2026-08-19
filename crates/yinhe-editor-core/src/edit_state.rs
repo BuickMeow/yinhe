@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
+use yinhe_types::MAX_KEY;
+
 use crate::config::ProjectSfConfig;
 use crate::document::TrackOverride;
 use crate::history::PendingEdits;
@@ -17,7 +19,7 @@ pub struct SelRectState {
     /// 多选框时按 shift+框选顺序累加。
     pub rects: Vec<(f64, f64, u8, u8)>,
     /// 与`rects`平行的标记：该选框是否为空区域框选自动生成的垂直选框
-    /// （普通 Select 工具框选无音符区域时自动切换为全键 0..127）。
+    /// （普通 Select 工具框选无音符区域时自动切换为全键 0..MAX_KEY）。
     /// 这类选框拖动时锁定上下移动（保持全键语义）；用户手动框选出的
     /// 全键选框不受影响，仍可上下移动。
     pub auto_vertical: Vec<bool>,
@@ -46,8 +48,8 @@ impl SelRectState {
         (
             t0 + dt as f64,
             t1 + dt as f64,
-            (kl as i32 + dk).clamp(0, 127) as u8,
-            (kh as i32 + dk).clamp(0, 127) as u8,
+            (kl as i32 + dk).clamp(0, MAX_KEY as i32) as u8,
+            (kh as i32 + dk).clamp(0, MAX_KEY as i32) as u8,
         )
     }
 
@@ -324,7 +326,7 @@ impl EditState {
     /// 音符选框整体 key 平移（selected + sel_rect；AR 选框无 key 概念）。
     pub fn offset_sel_keys(&mut self, dk: i32) {
         self.selected.offset(0, dk);
-        // 先算好平移后是否仍为全键（0..127），再同步解除失效的自动垂直标记：
+        // 先算好平移后是否仍为全键（0..MAX_KEY），再同步解除失效的自动垂直标记：
         // 自动垂直选框移出全键范围后不再有"全键"语义，拖动锁定随之解除。
         let still_vertical: Vec<bool> = self
             .sel_rect
@@ -332,14 +334,14 @@ impl EditState {
             .iter()
             .zip(&self.sel_rect.auto_vertical)
             .map(|(r, &auto)| {
-                let kl = (r.2 as i32 + dk).clamp(0, 127) as u8;
-                let kh = (r.3 as i32 + dk).clamp(0, 127) as u8;
-                auto && kl == 0 && kh == 127
+                let kl = (r.2 as i32 + dk).clamp(0, MAX_KEY as i32) as u8;
+                let kh = (r.3 as i32 + dk).clamp(0, MAX_KEY as i32) as u8;
+                auto && kl == 0 && kh == MAX_KEY
             })
             .collect();
         for r in &mut self.sel_rect.rects {
-            r.2 = (r.2 as i32 + dk).clamp(0, 127) as u8;
-            r.3 = (r.3 as i32 + dk).clamp(0, 127) as u8;
+            r.2 = (r.2 as i32 + dk).clamp(0, MAX_KEY as i32) as u8;
+            r.3 = (r.3 as i32 + dk).clamp(0, MAX_KEY as i32) as u8;
         }
         self.sel_rect.auto_vertical = still_vertical;
     }
