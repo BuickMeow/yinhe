@@ -75,6 +75,16 @@ impl RenderContext {
         let device = &wgpu_state.device;
         let format = wgpu_state.target_format;
 
+        // wgpu 默认把未捕获错误当 fatal 直接 panic，而这个 panic 发生在
+        // winit 的 macOS 事件回调（extern "C" 边界）里无法 unwind，整个进程
+        // 会 abort。睡眠唤醒后 Metal device 失效时，eframe 内部
+        // Surface::configure 的 "wait for GPU idle" 失败就会走这条路。
+        // 注册自定义 handler 把错误降级为日志：configure 返回 () 不中断执行，
+        // 下一帧 SurfaceError::Lost/Outdated 会由 eframe 自动 reconfigure 恢复。
+        device.on_uncaptured_error(Arc::new(|err| {
+            tracing::error!("wgpu uncaptured error: {err}");
+        }));
+
         // Register a device-lost callback so we can skip GPU operations if the
         // device is lost (e.g. after a failed texture creation during resize).
         let device_lost = Arc::new(AtomicBool::new(false));
