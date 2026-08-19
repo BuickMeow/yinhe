@@ -513,9 +513,10 @@ impl App {
                 // PR 显示 = PR 显示音轨勾选集合（track_pianoroll_visible），
                 // 主音轨强制可见。与 AR 显隐（track_visible）分离，互不影响。
                 let main = doc.edit.main_track();
-                // 写入目标轨（铅笔/双击/录音/步进/自动化）= 主音轨，
-                // 无选中时回退第一个非 Conductor 轨。提前计算避开后面的可变借用。
-                let write_track = doc.edit.write_track();
+                // PR 编辑目标轨 = 主音轨（= 选中集合最小者）。无选中 = None：
+                // 铅笔/选框/自动化一律不响应操作（不再回退到第一个非 Conductor 轨）。
+                // 提前计算避开后面的可变借用。
+                let write_track = main;
                 let pr_visible: Vec<bool> = (0..doc.edit.track_pianoroll_visible.len())
                     .map(|i| doc.edit.track_pianoroll_visible[i] || main == Some(i as u16))
                     .collect();

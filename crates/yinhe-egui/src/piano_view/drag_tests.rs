@@ -220,7 +220,7 @@ fn release_after_note_move_does_not_move_playhead() {
         &mut note_resize_delta,
         &mut sel_rect,
         &std::collections::HashSet::new(),
-        None,
+        Some(0),
     );
     let _ = run_sel_frame(
         &ctx,
@@ -233,7 +233,7 @@ fn release_after_note_move_does_not_move_playhead() {
         &mut note_resize_delta,
         &mut sel_rect,
         &std::collections::HashSet::new(),
-        None,
+        Some(0),
     );
     let _ = run_sel_frame(
         &ctx,
@@ -246,7 +246,7 @@ fn release_after_note_move_does_not_move_playhead() {
         &mut note_resize_delta,
         &mut sel_rect,
         &std::collections::HashSet::new(),
-        None,
+        Some(0),
     );
 
     assert_eq!(
@@ -412,10 +412,10 @@ fn double_click_on_existing_note_does_not_create() {
     assert!(note_event.is_none(), "双击已有音符不得创建新音符");
 }
 
-/// 无选中时双击：layout 回退 write_track = 第一个非 Conductor 轨 → 照常创建。
-/// （回退逻辑本身由 EditState::write_track 保证，这里模拟其输出。）
+/// 无选中音轨时双击：PR 编辑目标 = None（不再回退到第一个非 Conductor 轨），
+/// 不得创建音符。
 #[test]
-fn double_click_without_selection_writes_to_fallback_track() {
+fn double_click_without_selection_creates_nothing() {
     let ctx = egui::Context::default();
     let mut view = test_view();
     view.viewport_h = 600.0;
@@ -478,11 +478,10 @@ fn double_click_without_selection_writes_to_fallback_track() {
         &mut note_resize_delta,
         &mut sel_rect,
         &std::collections::HashSet::new(),
-        Some(0),
+        None,
     );
 
-    let (_, track) = note_event.expect("无选中时双击应创建到回退轨");
-    assert_eq!(track, 0, "回退轨 = 第一个非 Conductor 轨");
+    assert!(note_event.is_none(), "无选中音轨时双击不得创建音符");
 }
 
 /// 框选到音符 → 普通选框；框选空区域 → 自动变垂直选框（全 128 键）。
@@ -587,7 +586,7 @@ fn vertical_marquee_drag_locks_key() {
         &mut note_resize_delta,
         &mut sel_rect,
         &std::collections::HashSet::new(),
-        None,
+        Some(0),
     );
     let _ = run_sel_frame(
         &ctx,
@@ -600,7 +599,7 @@ fn vertical_marquee_drag_locks_key() {
         &mut note_resize_delta,
         &mut sel_rect,
         &std::collections::HashSet::new(),
-        None,
+        Some(0),
     );
     let _ = run_sel_frame(
         &ctx,
@@ -613,7 +612,7 @@ fn vertical_marquee_drag_locks_key() {
         &mut note_resize_delta,
         &mut sel_rect,
         &std::collections::HashSet::new(),
-        None,
+        Some(0),
     );
 
     assert_eq!(
@@ -658,7 +657,7 @@ fn manual_full_key_marquee_can_move_vertically() {
         &mut note_resize_delta,
         &mut sel_rect,
         &std::collections::HashSet::new(),
-        None,
+        Some(0),
     );
     let _ = run_sel_frame(
         &ctx,
@@ -671,7 +670,7 @@ fn manual_full_key_marquee_can_move_vertically() {
         &mut note_resize_delta,
         &mut sel_rect,
         &std::collections::HashSet::new(),
-        None,
+        Some(0),
     );
     let _ = run_sel_frame(
         &ctx,
@@ -684,7 +683,7 @@ fn manual_full_key_marquee_can_move_vertically() {
         &mut note_resize_delta,
         &mut sel_rect,
         &std::collections::HashSet::new(),
-        None,
+        Some(0),
     );
 
     assert_eq!(
@@ -791,7 +790,7 @@ fn select_tool_resizes_single_note_without_selection() {
         &mut note_resize_delta,
         &mut sel_rect,
         &std::collections::HashSet::new(),
-        None,
+        Some(0),
     );
     let _ = run_sel_frame(
         &ctx,
@@ -804,7 +803,7 @@ fn select_tool_resizes_single_note_without_selection() {
         &mut note_resize_delta,
         &mut sel_rect,
         &std::collections::HashSet::new(),
-        None,
+        Some(0),
     );
     let (_, _, pencil_drag) = run_sel_frame(
         &ctx,
@@ -817,7 +816,7 @@ fn select_tool_resizes_single_note_without_selection() {
         &mut note_resize_delta,
         &mut sel_rect,
         &std::collections::HashSet::new(),
-        None,
+        Some(0),
     );
 
     assert!(
@@ -864,7 +863,7 @@ fn select_tool_resizes_single_note_left_edge() {
         &mut note_resize_delta,
         &mut sel_rect,
         &std::collections::HashSet::new(),
-        None,
+        Some(0),
     );
     let _ = run_sel_frame(
         &ctx,
@@ -877,7 +876,7 @@ fn select_tool_resizes_single_note_left_edge() {
         &mut note_resize_delta,
         &mut sel_rect,
         &std::collections::HashSet::new(),
-        None,
+        Some(0),
     );
     let (_, _, pencil_drag) = run_sel_frame(
         &ctx,
@@ -890,7 +889,7 @@ fn select_tool_resizes_single_note_left_edge() {
         &mut note_resize_delta,
         &mut sel_rect,
         &std::collections::HashSet::new(),
-        None,
+        Some(0),
     );
 
     assert!(
@@ -908,13 +907,13 @@ fn select_tool_resizes_single_note_left_edge() {
     assert_eq!(cursor_tick, None, "伸缩后松开不得把 playhead 跳到释放位置");
 }
 
-/// 单音符移动（不用先选中）：press 音符中部 → 拖 → release 提交。
+/// 回归：未选中音轨（write_track=None）时，选框工具不得移动音符。
+/// （之前 write_track 无选中时回退到第一个非 Conductor 轨，单音符移动仍可用。）
 #[test]
-fn select_tool_moves_single_note_without_selection() {
+fn select_tool_moves_nothing_without_selected_track() {
     let ctx = egui::Context::default();
     let mut view = test_view();
     view.viewport_h = 600.0;
-    // 音符 (tick 300..330, key 90)：中心 (315, 375)，无任何选框。
     let midi = make_midi(vec![(90, 300, 330, 0, 100)]);
     let mut selected = yinhe_core::Selection::default();
     let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
@@ -922,7 +921,6 @@ fn select_tool_moves_single_note_without_selection() {
     let mut note_drag_delta: Option<(i64, i32, bool)> = None;
     let mut note_resize_delta: Option<(yinhe_editor_core::ResizeSide, i64)> = None;
 
-    // press tick 315 → snap 360；release tick 435 → snap 480：dt = +120。
     let press = egui::pos2(315.0, 375.0);
     let release = egui::pos2(435.0, 375.0);
     let _ = run_sel_frame(
@@ -963,6 +961,70 @@ fn select_tool_moves_single_note_without_selection() {
         &mut sel_rect,
         &std::collections::HashSet::new(),
         None,
+    );
+
+    assert!(
+        pencil_drag.is_none(),
+        "未选中音轨时不得移动音符，实际 {pencil_drag:?}"
+    );
+    assert_eq!(note_drag_delta, None, "未选中音轨时不得启动选区移动");
+}
+
+/// 单音符移动（有选中音轨，不用先选中音符）：press 音符中部 → 拖 → release 提交。
+#[test]
+fn select_tool_moves_single_note_without_selection() {
+    let ctx = egui::Context::default();
+    let mut view = test_view();
+    view.viewport_h = 600.0;
+    // 音符 (tick 300..330, key 90)：中心 (315, 375)，无任何选框。
+    let midi = make_midi(vec![(90, 300, 330, 0, 100)]);
+    let mut selected = yinhe_core::Selection::default();
+    let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+    let mut cursor_tick: Option<f64> = None;
+    let mut note_drag_delta: Option<(i64, i32, bool)> = None;
+    let mut note_resize_delta: Option<(yinhe_editor_core::ResizeSide, i64)> = None;
+
+    // press tick 315 → snap 360；release tick 435 → snap 480：dt = +120。
+    let press = egui::pos2(315.0, 375.0);
+    let release = egui::pos2(435.0, 375.0);
+    let _ = run_sel_frame(
+        &ctx,
+        press_event(press),
+        &mut view,
+        &midi,
+        &mut selected,
+        &mut cursor_tick,
+        &mut note_drag_delta,
+        &mut note_resize_delta,
+        &mut sel_rect,
+        &std::collections::HashSet::new(),
+        Some(0),
+    );
+    let _ = run_sel_frame(
+        &ctx,
+        drag_event(release),
+        &mut view,
+        &midi,
+        &mut selected,
+        &mut cursor_tick,
+        &mut note_drag_delta,
+        &mut note_resize_delta,
+        &mut sel_rect,
+        &std::collections::HashSet::new(),
+        Some(0),
+    );
+    let (_, _, pencil_drag) = run_sel_frame(
+        &ctx,
+        release_event(release),
+        &mut view,
+        &midi,
+        &mut selected,
+        &mut cursor_tick,
+        &mut note_drag_delta,
+        &mut note_resize_delta,
+        &mut sel_rect,
+        &std::collections::HashSet::new(),
+        Some(0),
     );
 
     assert!(
@@ -1092,7 +1154,7 @@ fn select_tool_alt_copies_single_note() {
         &mut note_resize_delta,
         &mut sel_rect,
         &std::collections::HashSet::new(),
-        None,
+        Some(0),
     );
     let _ = run_sel_frame(
         &ctx,
@@ -1105,7 +1167,7 @@ fn select_tool_alt_copies_single_note() {
         &mut note_resize_delta,
         &mut sel_rect,
         &std::collections::HashSet::new(),
-        None,
+        Some(0),
     );
     let (_, _, pencil_drag) = run_sel_frame(
         &ctx,
@@ -1118,7 +1180,7 @@ fn select_tool_alt_copies_single_note() {
         &mut note_resize_delta,
         &mut sel_rect,
         &std::collections::HashSet::new(),
-        None,
+        Some(0),
     );
 
     // Alt+单音符拖动 → 复制通道（alt=true），并清除原选区、把该音符置为唯一选中；

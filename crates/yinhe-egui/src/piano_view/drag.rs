@@ -988,66 +988,72 @@ pub(crate) fn sel_drag_frame(
         &pointer,
     );
 
-    // ── 四个互斥拖拽状态机（同一时刻至多一个激活）──
-    note_drag_frame(
-        ui,
-        &mut state,
-        view,
-        content_rect,
-        music_rect,
-        quantize,
-        ppq,
-        bar_line_data,
-        total_ticks,
-        vertical,
-        sel_rect,
-        note_drag_delta,
-        &pointer,
-    );
-    sel_resize_frame(
-        ui,
-        &mut state,
-        view,
-        content_rect,
-        music_rect,
-        quantize,
-        ppq,
-        bar_line_data,
-        total_ticks,
-        sel_rect,
-        note_resize_delta,
-        &pointer,
-    );
-    single_note_resize_frame(
-        ui,
-        &mut state,
-        view,
-        content_rect,
-        music_rect,
-        quantize,
-        ppq,
-        bar_line_data,
-        total_ticks,
-        &mut pencil_note_drag,
-        &pointer,
-    );
-    single_note_move_frame(
-        ui,
-        &mut state,
-        view,
-        content_rect,
-        music_rect,
-        quantize,
-        ppq,
-        bar_line_data,
-        total_ticks,
-        midi,
-        selected,
-        vertical,
-        note_drag_delta,
-        &mut pencil_note_drag,
-        &pointer,
-    );
+    // 无编辑目标（未选中音轨 / 主音轨不可见 / 主音轨是 Conductor）时，
+    // 禁止音符移动/缩放（选框工具也不允许这些操作），但框选与点选仍可用。
+    let can_edit =
+        super::pencil::valid_pencil_track(write_track, track_visible, conductor_idx).is_some();
+    if can_edit {
+        // ── 四个互斥拖拽状态机（同一时刻至多一个激活）──
+        note_drag_frame(
+            ui,
+            &mut state,
+            view,
+            content_rect,
+            music_rect,
+            quantize,
+            ppq,
+            bar_line_data,
+            total_ticks,
+            vertical,
+            sel_rect,
+            note_drag_delta,
+            &pointer,
+        );
+        sel_resize_frame(
+            ui,
+            &mut state,
+            view,
+            content_rect,
+            music_rect,
+            quantize,
+            ppq,
+            bar_line_data,
+            total_ticks,
+            sel_rect,
+            note_resize_delta,
+            &pointer,
+        );
+        single_note_resize_frame(
+            ui,
+            &mut state,
+            view,
+            content_rect,
+            music_rect,
+            quantize,
+            ppq,
+            bar_line_data,
+            total_ticks,
+            &mut pencil_note_drag,
+            &pointer,
+        );
+        single_note_move_frame(
+            ui,
+            &mut state,
+            view,
+            content_rect,
+            music_rect,
+            quantize,
+            ppq,
+            bar_line_data,
+            total_ticks,
+            midi,
+            selected,
+            vertical,
+            note_drag_delta,
+            &mut pencil_note_drag,
+            &pointer,
+        );
+    }
 
     // ── 双击写音符（第二击 release 帧触发）──
     // egui 在第二击 release 时判定 double-click。条件：

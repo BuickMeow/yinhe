@@ -40,7 +40,7 @@ pub(crate) enum HitMode {
 ///
 /// 规则：write_track 必须存在、可见，且不能是 conductor
 /// （conductor 不能放音符，只能编辑 Tempo automation）。
-/// write_track 由 layout 计算（主音轨；无选中时回退到第一个非 Conductor 轨）。
+/// write_track 由 layout 计算（= 主音轨，无选中时即 None：未选音轨一律不操作）。
 pub(crate) fn valid_pencil_track(
     write_track: Option<u16>,
     track_visible: &[bool],
