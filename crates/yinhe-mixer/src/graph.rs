@@ -9,7 +9,7 @@
 //! 内部按「平行数组」组织（buffers/strips/inserts/meters 四个等长 Vec），
 //! 以便渲染线程把 buffers 整体借出做跨通道并行渲染（rayon）。
 
-use crate::meter::MeterTap;
+use crate::meter::{MeterReading, MeterTap};
 use crate::params::{MasterParams, StripParams};
 use crate::strip::StripState;
 
@@ -20,6 +20,12 @@ use crate::strip::StripState;
 /// - 原地处理 `left`/`right`（长度相等，等于块长）。
 pub trait InsertProcessor: Send {
     fn process(&mut self, left: &mut [f32], right: &mut [f32]);
+
+    /// 清空内部处理状态（envelope、delay 尾音等）。seek 后调用。
+    fn reset(&mut self) {}
+
+    /// 回收时还原为具体类型（如 CLAP 处理器需要 deactivate 回实例）。
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
 }
 
 /// 一条通道的立体声缓冲（planar），供上层音源渲染写入。
@@ -34,29 +40,35 @@ pub struct MixerGraph {
     strips: Vec<StripState>,
     inserts: Vec<Vec<Box<dyn InsertProcessor>>>,
     meters: Vec<MeterTap>,
+    /// 与 meters 一一对应的 UI 侧读数端（引擎创建时被上层取走克隆）。
+    meter_readings: Vec<MeterReading>,
     master_l: Vec<f32>,
     master_r: Vec<f32>,
     master_gain: f32,
     master_prev_gain: f32,
     master_inserts: Vec<Box<dyn InsertProcessor>>,
     master_meter: MeterTap,
+    master_reading: MeterReading,
     frames: usize,
 }
 
 impl MixerGraph {
     /// 创建空图（0 通道）。通道数/块长变化走 [`resize`](Self::resize)。
     pub fn new(frames: usize) -> Self {
+        let (master_meter, master_reading) = MeterTap::new();
         Self {
             buffers: Vec::new(),
             strips: Vec::new(),
             inserts: Vec::new(),
             meters: Vec::new(),
+            meter_readings: Vec::new(),
             master_l: vec![0.0; frames],
             master_r: vec![0.0; frames],
             master_gain: 1.0,
             master_prev_gain: 1.0,
             master_inserts: Vec::new(),
-            master_meter: MeterTap::new().0,
+            master_meter,
+            master_reading,
             frames,
         }
     }
@@ -81,6 +93,7 @@ impl MixerGraph {
         self.strips.truncate(n_old);
         self.inserts.truncate(n_old);
         self.meters.truncate(n_old);
+        self.meter_readings.truncate(n_old);
         for i in n_old..channel_count {
             buffers.push(ChannelBuffers {
                 left: vec![0.0; frames],
@@ -88,7 +101,9 @@ impl MixerGraph {
             });
             self.strips.push(StripState::new(strips.get(i).copied().unwrap_or_default()));
             self.inserts.push(Vec::new());
-            self.meters.push(MeterTap::new().0);
+            let (tap, reading) = MeterTap::new();
+            self.meters.push(tap);
+            self.meter_readings.push(reading);
         }
         self.buffers = buffers;
     }
@@ -147,6 +162,61 @@ impl MixerGraph {
         std::mem::replace(&mut self.master_inserts, inserts)
     }
 
+    /// 在槽位 `slot` 处插入一个处理器（链尾之后则追加）。
+    pub fn insert_insert(&mut self, channel: usize, slot: usize, p: Box<dyn InsertProcessor>) {
+        if let Some(chain) = self.inserts.get_mut(channel) {
+            chain.insert(slot.min(chain.len()), p);
+        }
+    }
+
+    /// 移除并返回槽位 `slot` 的处理器（上层回收 deactivate）。
+    pub fn remove_insert(&mut self, channel: usize, slot: usize) -> Option<Box<dyn InsertProcessor>> {
+        let chain = self.inserts.get_mut(channel)?;
+        (slot < chain.len()).then(|| chain.remove(slot))
+    }
+
+    /// 替换槽位 `slot` 的处理器，返回旧的（插件请求 restart 时用）。
+    pub fn replace_insert(
+        &mut self,
+        channel: usize,
+        slot: usize,
+        p: Box<dyn InsertProcessor>,
+    ) -> Option<Box<dyn InsertProcessor>> {
+        let chain = self.inserts.get_mut(channel)?;
+        chain.get_mut(slot).map(|old| std::mem::replace(old, p))
+    }
+
+    /// 在 master 链槽位 `slot` 处插入处理器（越界则追加）。
+    pub fn insert_master_insert(&mut self, slot: usize, p: Box<dyn InsertProcessor>) {
+        self.master_inserts
+            .insert(slot.min(self.master_inserts.len()), p);
+    }
+
+    /// 移除并返回 master 链槽位 `slot` 的处理器。
+    pub fn remove_master_insert(&mut self, slot: usize) -> Option<Box<dyn InsertProcessor>> {
+        (slot < self.master_inserts.len()).then(|| self.master_inserts.remove(slot))
+    }
+
+    /// 替换 master 链槽位 `slot` 的处理器，返回旧的。
+    pub fn replace_master_insert(
+        &mut self,
+        slot: usize,
+        p: Box<dyn InsertProcessor>,
+    ) -> Option<Box<dyn InsertProcessor>> {
+        self.master_inserts
+            .get_mut(slot)
+            .map(|old| std::mem::replace(old, p))
+    }
+
+    /// 通道电平表读数端（UI 线程持有克隆，Arc 共享）。
+    pub fn channel_meter_reading(&self, channel: usize) -> Option<MeterReading> {
+        self.meter_readings.get(channel).cloned()
+    }
+
+    pub fn master_meter_reading(&self) -> MeterReading {
+        self.master_reading.clone()
+    }
+
     /// 取所有 insert（引擎拆除时整体回收，所有权交还上层）。
     pub fn take_all_inserts(&mut self) -> Vec<Box<dyn InsertProcessor>> {
         let mut out = Vec::new();
@@ -164,6 +234,18 @@ impl MixerGraph {
 
     pub fn master_meter(&self) -> MeterTap {
         self.master_meter.clone()
+    }
+
+    /// seek 后清空所有 insert 的处理状态（delay 尾音/envelope 等）。
+    pub fn reset_inserts(&mut self) {
+        for chain in &mut self.inserts {
+            for insert in chain {
+                insert.reset();
+            }
+        }
+        for insert in &mut self.master_inserts {
+            insert.reset();
+        }
     }
 
     /// 处理一块：返回主输出 (left, right)。
@@ -232,6 +314,10 @@ mod tests {
         fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
             left.iter_mut().for_each(|v| *v *= 2.0);
             right.iter_mut().for_each(|v| *v *= 2.0);
+        }
+
+        fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+            self
         }
     }
 

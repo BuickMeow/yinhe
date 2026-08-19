@@ -4,22 +4,34 @@ use std::sync::Arc;
 
 use xsynth_core::channel::ChannelInitOptions;
 use xsynth_core::channel::{ChannelAudioEvent, ChannelEvent};
-use xsynth_core::channel_group::{
-    ChannelGroup, ChannelGroupConfig, ParallelismOptions, SynthEvent, SynthFormat,
-};
+use xsynth_core::channel_group::{ChannelGroupConfig, ParallelismOptions, SynthEvent, SynthFormat};
 use xsynth_core::soundfont::SoundfontBase;
 use xsynth_core::{AudioStreamParams, ChannelCount};
 
 use yinhe_core::YinModel;
+use yinhe_mixer::{InsertProcessor, MixerGraph, MixerParams};
 
 use crate::audio_model::{ActiveNote, AudibleNote, AudioModel, SortedCC};
 use crate::channel_layout::ChannelLayout;
+use crate::channel_set::ChannelSet;
 use crate::soundfont::SoundFontManager;
 use crate::spawn::AudioCommand;
 
+/// 引擎渲染块长（帧）。实时渲染块（audio_renderer 的 scratch）与之对齐；
+/// 导出用更大的块，首次 render 时 mixer/暂存按实际块长 resize（每引擎至多一次）。
+pub(crate) const ENGINE_BLOCK_FRAMES: usize = 512;
+
 /// Core MIDI synthesis engine.  Owned by the renderer thread.
 pub(crate) struct AudioEngine {
-    pub(crate) channel_group: ChannelGroup,
+    pub(crate) channel_set: ChannelSet,
+    /// 混音处理图：通道数 = compacted 通道数，dense 索引与 channel_set 对齐。
+    pub(crate) mixer: MixerGraph,
+    /// 混音台持久化参数的引擎侧副本（按源通道索引）：resize 重建 strip 用，
+    /// 由 SetMixerParams / SetChannelStrip / SetMasterParams 命令维护。
+    pub(crate) mixer_params: MixerParams,
+    /// 被替换/移除的 insert 处理器：渲染线程不能 deactivate 插件，
+    /// 攒在这里由 renderer 送回 UI 线程回收。
+    pub(crate) insert_returns: Vec<Box<dyn InsertProcessor>>,
     /// 不可变通道布局：active_mask + channel_map + num_channels。
     /// 创建后定型，若 model 结构变化必须 teardown + 重建引擎。
     pub(crate) channel_layout: ChannelLayout,
@@ -96,8 +108,14 @@ impl AudioEngine {
                 parallelism,
             };
 
+            let compacted = layout.compacted_channels() as usize;
+            let mut mixer = MixerGraph::new(ENGINE_BLOCK_FRAMES);
+            mixer.resize(compacted, ENGINE_BLOCK_FRAMES, &[]);
             Self {
-                channel_group: ChannelGroup::new(config),
+                channel_set: ChannelSet::new(config, ENGINE_BLOCK_FRAMES),
+                mixer,
+                mixer_params: MixerParams::default(),
+                insert_returns: Vec::new(),
                 channel_layout: layout,
                 sf_manager: SoundFontManager::new(sample_rate),
                 sample_rate,
@@ -166,7 +184,7 @@ impl AudioEngine {
     }
 
     pub(crate) fn voice_count(&self) -> u64 {
-        self.channel_group.voice_count()
+        self.channel_set.voice_count()
     }
 
     pub(crate) fn model_loaded(&self) -> bool {
@@ -178,7 +196,7 @@ impl AudioEngine {
     }
 
     pub(crate) fn send_all_notes_off(&mut self) {
-        self.channel_group
+        self.channel_set
             .send_event(SynthEvent::AllChannels(ChannelEvent::Audio(
                 ChannelAudioEvent::AllNotesOff,
             )));
@@ -191,7 +209,7 @@ impl AudioEngine {
     pub(crate) fn set_layer_count(&mut self, count: Option<usize>) {
         use xsynth_core::channel::{ChannelConfigEvent, ChannelEvent};
         use xsynth_core::channel_group::SynthEvent;
-        self.channel_group
+        self.channel_set
             .send_event(SynthEvent::AllChannels(ChannelEvent::Config(
                 ChannelConfigEvent::SetLayerCount(count),
             )));
@@ -238,6 +256,22 @@ impl AudioEngine {
             AudioCommand::SetAutomationDensity { density } => {
                 self.automation_density = density.max(1);
             }
+            AudioCommand::SetMixerParams { params } => self.set_mixer_params(*params),
+            AudioCommand::SetChannelStrip { channel, params } => {
+                self.set_channel_strip(channel, params);
+            }
+            AudioCommand::SetMasterParams { params } => self.set_master_params(params),
+            AudioCommand::InsertAdd {
+                channel,
+                slot,
+                processor,
+            } => self.insert_add(channel, slot, processor),
+            AudioCommand::InsertRemove { channel, slot } => self.insert_remove(channel, slot),
+            AudioCommand::InsertReplace {
+                channel,
+                slot,
+                processor,
+            } => self.insert_replace(channel, slot, processor),
             // 预览命令由渲染器处理（独立预览合成器 + 渲染时钟），引擎层忽略。
             AudioCommand::PreviewNotes { .. } | AudioCommand::PreviewStop => {}
         }

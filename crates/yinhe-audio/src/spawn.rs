@@ -7,6 +7,7 @@ use crossbeam_channel::{Sender, bounded, unbounded};
 use xsynth_core::soundfont::SoundfontBase;
 
 use yinhe_core::YinModel;
+use yinhe_mixer::{InsertProcessor, MasterParams, MeterReading, MixerParams, StripParams};
 use yinhe_types::SegmentShape;
 
 /// AR 自动化 lane 的 M/S 试听旁通集（跨线程共享，Empty 由 default 提供）。
@@ -96,6 +97,26 @@ pub enum AudioCommand {
     },
     /// 停止全部预览音（余音自然衰减完才停）。
     PreviewStop,
+    /// 全量同步混音台参数（引擎 spawn / 工程加载后由 UI 推一次；Box 避免命令枚举过大）。
+    SetMixerParams { params: Box<MixerParams> },
+    /// 更新某源通道（0..=255，A01..P16）的 strip 参数（推子拖动高频路径，幂等）。
+    SetChannelStrip { channel: u8, params: StripParams },
+    /// 更新主输出参数。
+    SetMasterParams { params: MasterParams },
+    /// 在 channel（None = master）insert 链的 slot 处插入处理器。
+    InsertAdd {
+        channel: Option<u8>,
+        slot: usize,
+        processor: Box<dyn InsertProcessor>,
+    },
+    /// 移除 channel（None = master）insert 链 slot 处的处理器（经 return 通道送回 UI 回收）。
+    InsertRemove { channel: Option<u8>, slot: usize },
+    /// 替换 channel（None = master）insert 链 slot 处的处理器（插件 restart 用）。
+    InsertReplace {
+        channel: Option<u8>,
+        slot: usize,
+        processor: Box<dyn InsertProcessor>,
+    },
 }
 
 /// 单个预览音符的参数（tick 域，与编辑层一致；渲染线程转 sample 差喂预览引擎）。
@@ -126,6 +147,12 @@ pub struct AudioHandle {
     preview_stop_flag: Arc<AtomicBool>,
     /// 已完成加载的音色库 port 数（worker 每完成一 port +1）。
     sf_loaded: Arc<AtomicUsize>,
+    /// 混音台各 dense 通道的电平表读数端（引擎创建时收集，Arc 共享、随引擎重建换新）。
+    mixer_channel_readings: Vec<MeterReading>,
+    /// 主输出电平表读数端。
+    mixer_master_reading: MeterReading,
+    /// 渲染线程退回的 insert 处理器（插件 deactivate 必须在 UI/管理线程做）。
+    insert_return_rx: crossbeam_channel::Receiver<Vec<Box<dyn InsertProcessor>>>,
 }
 
 impl AudioHandle {
@@ -199,6 +226,30 @@ impl AudioHandle {
     /// 已完成加载的音色库 port 数（`LoadSoundFont` 结果回传时 +1）。
     pub fn sf_loaded_count(&self) -> usize {
         self.sf_loaded.load(Ordering::Relaxed)
+    }
+
+    /// 混音台 dense 通道数（= 引擎 compacted 通道数）。
+    pub fn mixer_channel_count(&self) -> usize {
+        self.mixer_channel_readings.len()
+    }
+
+    /// 读某 dense 通道的电平（L, R 峰值，0 起）。
+    pub fn channel_meter_read(&self, dense: usize) -> Option<(f32, f32)> {
+        self.mixer_channel_readings.get(dense).map(|r| r.read())
+    }
+
+    /// 读主输出电平。
+    pub fn master_meter_read(&self) -> (f32, f32) {
+        self.mixer_master_reading.read()
+    }
+
+    /// 取回渲染线程退回的 insert 处理器（每帧轮询；插件 deactivate 在 UI 线程做）。
+    pub fn drain_insert_returns(&self) -> Vec<Box<dyn InsertProcessor>> {
+        let mut out = Vec::new();
+        while let Ok(mut batch) = self.insert_return_rx.try_recv() {
+            out.append(&mut batch);
+        }
+        out
     }
 }
 
@@ -734,6 +785,17 @@ pub fn spawn_cpal_audio(
                 return Err(format!("Audio engine initialization failed: {msg}"));
             }
         };
+    // 混音台电平表读数端：引擎即将 move 进渲染线程，先把 Arc 读数端收集给 UI。
+    // 引擎生命周期内通道数不变（layout 冻结），resize 只重建缓冲不换 meter，
+    // 这些读数端在整个引擎生命周期内有效。
+    let mixer_channel_readings: Vec<MeterReading> = (0..engine.mixer.channel_count())
+        .filter_map(|i| engine.mixer.channel_meter_reading(i))
+        .collect();
+    let mixer_master_reading = engine.mixer.master_meter_reading();
+    // 渲染线程 → UI 的 insert 处理器退回通道（替换/移除/拆除时回收 deactivate）。
+    let (insert_return_tx, insert_return_rx) =
+        unbounded::<Vec<Box<dyn InsertProcessor>>>();
+
     let (worker_tx, prepared_rx) = spawn_worker(sample_rate)
         .map_err(|e| format!("Failed to spawn audio worker thread: {e}"))?;
 
@@ -764,6 +826,7 @@ pub fn spawn_cpal_audio(
         Arc::clone(&shutdown),
         Arc::clone(&preview_stop_flag),
         callback_frames,
+        insert_return_tx,
         #[cfg(feature = "gpu")]
         use_gpu_synth,
     )
@@ -874,6 +937,9 @@ pub fn spawn_cpal_audio(
             stream_error,
             preview_stop_flag,
             sf_loaded: handle_sf_loaded,
+            mixer_channel_readings,
+            mixer_master_reading,
+            insert_return_rx,
         },
         sample_rate,
         _stream: stream_holder,

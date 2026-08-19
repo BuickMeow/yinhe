@@ -38,6 +38,7 @@ impl MeterTap {
 }
 
 /// UI 线程侧的读数端。
+#[derive(Clone)]
 pub struct MeterReading {
     peak_l: Arc<AtomicU32>,
     peak_r: Arc<AtomicU32>,

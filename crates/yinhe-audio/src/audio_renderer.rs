@@ -81,6 +81,8 @@ struct AudioRenderer {
     preview_stop_flag: Arc<AtomicBool>,
     /// 预览激活时的 ring 目标（帧数）：≥ cpal 回调帧数，避免回调欠载静音卡顿。
     preview_target_frames: usize,
+    /// 被替换/移除的 insert 处理器退回 UI 线程（渲染线程不做 deactivate）。
+    insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
     /// 是否启用 GPU 合成器。启用后加载音色库时初始化 GpuSynth，渲染走 engine.gpu_synth。
     #[cfg(feature = "gpu")]
     use_gpu_synth: bool,
@@ -101,6 +103,7 @@ impl AudioRenderer {
         preview_stop_flag: Arc<AtomicBool>,
         // cpal 回调每次请求的帧数（预览时 ring 目标下限，避免回调欠载静音）。
         callback_frames: usize,
+        insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
         #[cfg(feature = "gpu")] use_gpu_synth: bool,
     ) -> Self {
         Self {
@@ -117,14 +120,24 @@ impl AudioRenderer {
             preview_scratch: vec![0.0; RENDER_CHUNK_FRAMES * STEREO_CHANNELS],
             preview_stop_flag,
             preview_target_frames: PREVIEW_TARGET_FRAMES.max(callback_frames),
+            insert_return_tx,
             #[cfg(feature = "gpu")]
             use_gpu_synth,
+        }
+    }
+
+    /// 把引擎攒下的退回 insert 处理器送回 UI 线程。
+    fn flush_insert_returns(&mut self) {
+        let returns = self.engine.drain_insert_returns();
+        if !returns.is_empty() {
+            let _ = self.insert_return_tx.send(returns);
         }
     }
 
     fn run(&mut self) {
         while !self.shutdown.load(Ordering::Relaxed) {
             let mut did_work = self.process_commands() | self.process_worker_results();
+            self.flush_insert_returns();
             // 预览 Stop 快速路径：命令通道满（渲染忙时 PreviewStop 可能被丢弃）也保证
             // 松手即停。必须在 process_commands 之后消费：处理命令期间 flag 保持置位，
             // PreviewNotes 分支借此跳过堆积的旧预览组（松手后不再触发）。
@@ -753,6 +766,7 @@ pub(crate) fn spawn_renderer(
     preview_stop_flag: Arc<AtomicBool>,
     // cpal 回调每次请求的帧数（预览时 ring 目标下限）。
     callback_frames: usize,
+    insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
     #[cfg(feature = "gpu")] use_gpu_synth: bool,
 ) -> Result<JoinHandle<()>, std::io::Error> {
     thread::Builder::new()
@@ -770,10 +784,17 @@ pub(crate) fn spawn_renderer(
                 shutdown,
                 preview_stop_flag,
                 callback_frames,
+                insert_return_tx.clone(),
                 #[cfg(feature = "gpu")]
                 use_gpu_synth,
             );
             renderer.run();
+            // 引擎拆除：mixer 里的 insert 处理器全部退回 UI 线程回收
+            //（CLAP deactivate 必须在管理线程做，不能在渲染线程 drop）。
+            let leftovers = renderer.engine.mixer.take_all_inserts();
+            if !leftovers.is_empty() {
+                let _ = insert_return_tx.send(leftovers);
+            }
             // 显式 drop AudioRenderer，释放 AudioEngine（含 Arc<YinModel> 和 SoundFont），
             // 然后 purge jemalloc arena 归还内存给 OS。
             drop(renderer);

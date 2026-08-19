@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, RwLock};
 
 use xsynth_core::channel::{ChannelConfigEvent, ChannelEvent};
-use xsynth_core::channel_group::{ChannelGroup, SynthEvent};
+use xsynth_core::channel_group::SynthEvent;
+
+use crate::channel_set::ChannelSet;
 use xsynth_core::soundfont::{SampleSoundfont, SoundfontBase, SoundfontInitOptions};
 use xsynth_core::{AudioStreamParams, ChannelCount};
 
@@ -51,11 +53,11 @@ impl SoundFontManager {
         Ok(arc)
     }
 
-    pub fn load_for_port_with_dense(
+    pub(crate) fn load_for_port_with_dense(
         &mut self,
         port: u8,
         paths: &[String],
-        cg: &mut ChannelGroup,
+        cg: &mut ChannelSet,
         dense_channels: &[u32],
     ) -> Result<(), String> {
         let soundfonts = self.load_paths(paths)?;
@@ -73,11 +75,11 @@ impl SoundFontManager {
         Ok(soundfonts)
     }
 
-    pub fn apply_loaded_for_port_with_dense(
+    pub(crate) fn apply_loaded_for_port_with_dense(
         &mut self,
         port: u8,
         soundfonts: Vec<Arc<dyn SoundfontBase>>,
-        cg: &mut ChannelGroup,
+        cg: &mut ChannelSet,
         dense_channels: &[u32],
     ) {
         self.port_sfs[port as usize] = soundfonts;

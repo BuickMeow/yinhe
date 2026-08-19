@@ -1,6 +1,5 @@
 use std::cmp::Reverse;
 
-use xsynth_core::AudioPipe;
 use xsynth_core::channel::{ChannelAudioEvent, ChannelEvent};
 use xsynth_core::channel_group::SynthEvent;
 
@@ -19,6 +18,7 @@ impl AudioEngine {
         }
 
         // GPU 路径：GpuSynth 管理自己的事件列表和 voice 状态
+        //（暂不经过混音台：GPU 合成器内部直接混成立体声）
         #[cfg(feature = "gpu")]
         if let Some(ref mut synth) = self.gpu_synth {
             synth.render(output);
@@ -26,9 +26,20 @@ impl AudioEngine {
             return;
         }
 
+        // 块长变化（导出用 1024、实时 512）：mixer 缓冲与通道暂存按实际块长
+        // 重建一次。引擎生命周期内块长固定，之后不再进入此分支。
+        if self.mixer.frames() != frames {
+            let strips = self.dense_strip_params();
+            let count = self.mixer.channel_count();
+            self.mixer.resize(count, frames, &strips);
+            self.channel_set.resize_scratches(frames);
+        }
+
         // CPU 路径：xsynth 逐段分发+渲染。事件比较全在 tick 域
         // （dispatch 基准 = current_tick，块边界 = sample→tick 反查），
         // 只有"渲染段边界"才转一次 sample（每块事件数量级）。
+        // 与旧路径的差异：各通道渲染进混音台的 planar 通道缓冲（而非直接
+        // 混成立体声），块末由 mixer 统一做增益/声像/mute/solo/insert。
         let block_start_sample = self.sample_position;
         let block_end_sample = block_start_sample + frames as u64;
         let block_end_tick = self.sample_to_tick(block_end_sample);
@@ -53,9 +64,11 @@ impl AudioEngine {
             };
             let segment_frames = (next_sample - rendered_until_sample) as usize;
             if segment_frames > 0 {
-                let start = offset_frames * STEREO_CHANNELS;
-                let end = (offset_frames + segment_frames) * STEREO_CHANNELS;
-                self.channel_group.read_samples(&mut output[start..end]);
+                self.channel_set.render_segment(
+                    self.mixer.buffers_mut(),
+                    offset_frames,
+                    segment_frames,
+                );
                 rendered_until_sample = next_sample;
                 offset_frames += segment_frames;
             }
@@ -66,18 +79,24 @@ impl AudioEngine {
         // block_end_sample，剩余段无事件）。
         let remaining = block_end_sample - rendered_until_sample;
         if remaining > 0 {
-            let start = offset_frames * STEREO_CHANNELS;
-            let end = (offset_frames + remaining as usize) * STEREO_CHANNELS;
-            self.channel_group.read_samples(&mut output[start..end]);
+            self.channel_set.render_segment(
+                self.mixer.buffers_mut(),
+                offset_frames,
+                remaining as usize,
+            );
+        }
+
+        // 混音：insert → 增益/声像斜坡 → mute/solo → master，然后交错输出。
+        let (master_l, master_r) = self.mixer.process();
+        for (i, chunk) in output.chunks_exact_mut(STEREO_CHANNELS).enumerate() {
+            chunk[0] = master_l[i];
+            chunk[1] = master_r[i];
         }
 
         self.sample_position = block_end_sample;
         self.current_tick = block_end_tick;
     }
 
-    /// 在 `tick` 位置分发所有事件（CC + NoteOn + NoteOff），
-    /// 同时返回 `(tick, block_end_tick)` 范围内下一个事件的位置（tick 域）。
-    ///
     /// 合并了原来 `next_event_sample`、`dispatch_cc_until`、`dispatch_notes_at`
     /// 三个函数的职责，128 桶只扫描一次。所有比较都在 tick 域，无需转换。
     pub(crate) fn dispatch_and_find_next(&mut self, tick: u32, block_end_tick: u32) -> Option<u32> {
@@ -96,7 +115,7 @@ impl AudioEngine {
             {
                 let dense = self.channel_layout.dense_for(cc.channel as usize);
                 if dense != u32::MAX {
-                    self.channel_group
+                    self.channel_set
                         .send_event(SynthEvent::Channel(dense, ChannelEvent::Audio(cc.event)));
                 }
             }
@@ -135,7 +154,7 @@ impl AudioEngine {
                 if !self.skip_track.get(track).copied().unwrap_or(false) {
                     let dense = self.channel_layout.dense_for(ch);
                     if dense != u32::MAX {
-                        self.channel_group.send_event(SynthEvent::Channel(
+                        self.channel_set.send_event(SynthEvent::Channel(
                             dense,
                             ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
                                 key: key as u8,
@@ -175,7 +194,7 @@ impl AudioEngine {
         for an in &self.ended_notes {
             let dense = self.channel_layout.dense_for(an.channel as usize);
             if dense != u32::MAX {
-                self.channel_group.send_event(SynthEvent::Channel(
+                self.channel_set.send_event(SynthEvent::Channel(
                     dense,
                     ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: an.key }),
                 ));

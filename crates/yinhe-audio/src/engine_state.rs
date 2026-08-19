@@ -118,7 +118,7 @@ impl AudioEngine {
             if dense == u32::MAX {
                 continue;
             }
-            states[ch as usize].send_to(dense, &mut self.channel_group, &skip);
+            states[ch as usize].send_to(dense, &mut self.channel_set, &skip);
         }
     }
 
@@ -129,7 +129,7 @@ impl AudioEngine {
             if dense == u32::MAX {
                 continue;
             }
-            self.channel_group.send_event(SynthEvent::Channel(
+            self.channel_set.send_event(SynthEvent::Channel(
                 dense,
                 ChannelEvent::Config(ChannelConfigEvent::SetPercussionMode(true)),
             ));
@@ -151,7 +151,7 @@ impl AudioEngine {
                 continue;
             }
             for &(_, value) in banks {
-                self.channel_group.send_event(SynthEvent::Channel(
+                self.channel_set.send_event(SynthEvent::Channel(
                     dense,
                     ChannelEvent::Config(ChannelConfigEvent::SetPercussionMode(value >= 120)),
                 ));
@@ -167,7 +167,7 @@ impl AudioEngine {
         let _ = self.sf_manager.load_for_port_with_dense(
             port,
             paths,
-            &mut self.channel_group,
+            &mut self.channel_set,
             &dense_channels,
         );
     }
@@ -188,20 +188,22 @@ impl AudioEngine {
         self.sf_manager.apply_loaded_for_port_with_dense(
             port,
             soundfonts,
-            &mut self.channel_group,
+            &mut self.channel_set,
             dense_channels,
         );
     }
 
     pub(crate) fn seek_to(&mut self, sample: u64) {
-        self.channel_group
+        self.channel_set
             .send_event(SynthEvent::AllChannels(ChannelEvent::Audio(
                 ChannelAudioEvent::AllNotesOff,
             )));
-        self.channel_group
+        self.channel_set
             .send_event(SynthEvent::AllChannels(ChannelEvent::Audio(
                 ChannelAudioEvent::ResetControl,
             )));
+        // insert 效果器（delay 尾音/envelope 等）随 seek 清空内部状态
+        self.mixer.reset_inserts();
 
         self.sample_position = sample;
         self.current_tick = self.sample_to_tick(sample);
@@ -243,7 +245,7 @@ impl AudioEngine {
                 if dense == u32::MAX {
                     continue;
                 }
-                self.channel_group.send_event(SynthEvent::Channel(
+                self.channel_set.send_event(SynthEvent::Channel(
                     dense,
                     ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
                         key: key as u8,
