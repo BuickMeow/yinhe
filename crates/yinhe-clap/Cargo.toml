@@ -1,0 +1,16 @@
+[package]
+name = "yinhe-clap"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clack-host = "0.1"
+clack-extensions = { version = "0.1", features = [
+    "clack-host",
+    "log",
+    "latency",
+    "params",
+    "state",
+] }
+thiserror = { workspace = true }
+tracing = { workspace = true }

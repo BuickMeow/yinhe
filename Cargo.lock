@@ -1031,6 +1031,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "clack-common"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f6a27523c0b3563da8286628d3f3a54fde73de3190d28586c2c314c3bdad1e6"
+dependencies = [
+ "bitflags 2.13.0",
+ "clap-sys",
+]
+
+[[package]]
+name = "clack-extensions"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d97d8b4cab1975314c053b9ec35575c5cccd8c7b3db37b21cbe435be6174416"
+dependencies = [
+ "bitflags 2.13.0",
+ "clack-common",
+ "clack-host",
+ "clap-sys",
+]
+
+[[package]]
+name = "clack-host"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f0d9f10d8ea9b1b79863aefb41fb8eae144db8491557cc58f91e16c8be32e55"
+dependencies = [
+ "clack-common",
+ "clap-sys",
+ "libloading 0.8.9",
+ "objc2-foundation 0.3.2",
+]
+
+[[package]]
+name = "clap-sys"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a76abbdb2907f6fd97fb6bc0b7be96b77d328f2dd9669d1075cc03369ed22154"
+
+[[package]]
 name = "clipboard-win"
 version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7448,6 +7488,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "yinhe-clap"
+version = "0.1.0"
+dependencies = [
+ "clack-extensions",
+ "clack-host",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "yinhe-core"
 version = "0.1.0"
 dependencies = [
@@ -7552,6 +7602,13 @@ dependencies = [
  "midir",
  "thiserror 2.0.18",
  "tracing",
+]
+
+[[package]]
+name = "yinhe-mixer"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

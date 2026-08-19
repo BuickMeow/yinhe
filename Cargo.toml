@@ -13,6 +13,8 @@ members = [
     "crates/yinhe-editor-core",
     "crates/yinhe-egui",
     "crates/yinhe-android",
+    "crates/yinhe-clap",
+    "crates/yinhe-mixer",
     "crates/yinhe-memtrace",
     "crates/yinhe-tests",
     "crates/yinhe-test-helpers",
