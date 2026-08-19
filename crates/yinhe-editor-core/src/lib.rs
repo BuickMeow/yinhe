@@ -1,5 +1,6 @@
 pub mod audio_settings;
 pub mod batch_ops;
+pub mod channel_alloc;
 pub mod chord;
 pub mod config;
 pub mod document;
@@ -19,6 +20,7 @@ pub use config::{ProjectSfConfig, SfEntry};
 pub use document::automation_edit::AnchorField;
 pub use document::note_edit::FlipAxis;
 pub use document::note_edit::NoteField;
+pub use document::track_ops::NewTrackSpec;
 pub use document::{Document, TrackOverride};
 pub use edit_state::{EditState, ResizeSide, SelRectState};
 pub use file_loading::{FileLoader, LoadResult, LoadStageLabels};

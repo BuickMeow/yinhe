@@ -6,6 +6,40 @@ use crate::history::UndoAction;
 
 use super::Document;
 
+/// 新建音轨的规格（新建音轨对话框 → Document::add_tracks_batch）。
+#[derive(Clone, Copy, Debug)]
+pub struct NewTrackSpec {
+    /// 音轨种类（MIDI / 乐器；音频轨为预留，暂不能创建）。
+    pub kind: yinhe_core::TrackKind,
+    /// MIDI port（0 起，UI 显示 A..P）。仅 MIDI 轨有意义。
+    pub port: u8,
+    /// MIDI channel（0 起，UI 显示 1..16）。仅 MIDI 轨有意义。
+    pub channel: u8,
+    /// 乐器通道（0 起，UI 显示 1 起）。仅乐器轨有值；
+    /// 多条乐器轨同号 = 共享同一个 CLAP 插件实例。
+    pub instrument_channel: Option<u16>,
+}
+
+/// 现有轨道中自动命名 "Track N" 的最大 N（Conductor/导入的真实轨名如
+/// "Piano" 不参与）。新音轨编号 = 最大 N + 1 递增，不随插入位置变化：
+/// 已有 16 条音轨时在 Track 2 下方插入，新音轨应为 Track 17 而非 Track 3。
+/// 不能按 tracks.len() 取名——删除中间音轨后数量会撞上仍存在的编号
+/// （删掉 Track 3 后剩 16 轨，但 Track 16 还在）。
+/// 不按通道命名：通道经常被改，轨道号相对固定。
+/// MIDI 轨与乐器轨共用同一编号序列，避免重名（编号只是名字，与通道无关）。
+fn max_track_number(model: &yinhe_core::YinModel) -> u32 {
+    model
+        .tracks
+        .iter()
+        .filter_map(|t| {
+            t.name
+                .strip_prefix("Track ")
+                .and_then(|s| s.parse::<u32>().ok())
+        })
+        .max()
+        .unwrap_or(0)
+}
+
 impl Document {
     /// Insert a new MIDI track after `after_idx`. Returns UndoAction.
     /// The new track gets port 0, channel = first unused channel on port 0.
@@ -28,23 +62,8 @@ impl Document {
         let channel = (0..16u8).find(|c| !used_channels.contains(c)).unwrap_or(0);
 
         let mut new_track = yinhe_core::TrackData::new(0, channel);
-        // 新音轨编号 = 现有最大 "Track N" 编号 + 1（N 来自项目自动生成的轨道名，
-        // Conductor/导入的真实轨名如 "Piano" 不参与）。不随插入位置变化：
-        // 已有 16 条音轨时在 Track 2 下方插入，新音轨应为 Track 17 而非 Track 3。
-        // 不能按 tracks.len() 取名——删除中间音轨后数量会撞上仍存在的编号
-        // （删掉 Track 3 后剩 16 轨，但 Track 16 还在）。
-        // 不按通道命名：通道经常被改，轨道号相对固定。
-        let max_track_num = model
-            .tracks
-            .iter()
-            .filter_map(|t| {
-                t.name
-                    .strip_prefix("Track ")
-                    .and_then(|s| s.parse::<u32>().ok())
-            })
-            .max()
-            .unwrap_or(0);
-        new_track.name = format!("Track {}", max_track_num + 1);
+        // 命名规则说明见 max_track_number。
+        new_track.name = format!("Track {}", max_track_number(model) + 1);
 
         let tracks_before: Vec<Arc<yinhe_core::TrackData>> = model.tracks.clone();
 
@@ -99,6 +118,56 @@ impl Document {
             && (t as usize) >= insert_idx
         {
             self.edit.editing_track = Some(t + 1);
+        }
+
+        Some(UndoAction::TrackStructure {
+            tracks_before,
+            tracks_after,
+            note_remap,
+            note_remap_inverse,
+            deleted_notes: Vec::new(),
+        })
+    }
+
+    /// 批量新建音轨：按 `specs` 追加到最后一条轨之后，整个批次只产生
+    /// 一个 UndoAction（撤销一次全撤）。命名沿用「Track N = 现有最大编号 + 1」
+    /// 递增（见 max_track_number）。通道分配规则（自动/手动顺延）由调用方用
+    /// channel_alloc 的纯函数算好后写进 specs，这里只负责落地。
+    pub fn add_tracks_batch(&mut self, specs: &[NewTrackSpec]) -> Option<UndoAction> {
+        if specs.is_empty() {
+            return None;
+        }
+        let insert_idx = self.data.model.tracks.len();
+        let next_num = max_track_number(&self.data.model) + 1;
+
+        let tracks_before: Vec<Arc<yinhe_core::TrackData>> = self.data.model.tracks.clone();
+
+        let model = Arc::make_mut(&mut self.data.model);
+        for (num, spec) in (next_num..).zip(specs.iter()) {
+            let mut new_track = yinhe_core::TrackData::new(spec.port, spec.channel);
+            new_track.kind = spec.kind;
+            new_track.instrument_channel = spec.instrument_channel;
+            new_track.name = format!("Track {}", num);
+            model.tracks.push(Arc::new(new_track));
+        }
+
+        // 末尾追加：既有音符的轨号不变（恒等 remap），新轨还没有音符。
+        let note_remap: Vec<u16> = (0..tracks_before.len()).map(|i| i as u16).collect();
+        let note_remap_inverse: Vec<u16> = (0..model.tracks.len())
+            .map(|i| if i < insert_idx { i as u16 } else { u16::MAX })
+            .collect();
+        let tracks_after: Vec<Arc<yinhe_core::TrackData>> = model.tracks.clone();
+        let total_tracks = model.tracks.len();
+
+        model.rebuild();
+        self.data.bump_revision();
+
+        // Update edit state：选中本批新建的全部音轨。
+        // 追加在末尾，editing_track 无需调整。
+        self.sync_track_caches();
+        self.edit.track_selected.clear();
+        for i in insert_idx..total_tracks {
+            self.edit.track_selected.insert(i as u16);
         }
 
         Some(UndoAction::TrackStructure {
@@ -308,7 +377,7 @@ impl Document {
 
 #[cfg(test)]
 mod tests {
-    use super::Document;
+    use super::{Document, NewTrackSpec};
 
     /// 新音轨编号 = 已有音轨数 + 1，而不是插入位置：
     /// 在 16 条音轨的工程里于 Track 2 下方插入，新音轨应为 Track 17（而非 Track 3），
@@ -346,5 +415,80 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), model.tracks.len(), "新音轨名与既有音轨重名");
+    }
+
+    /// 批量创建：追加到末尾、按 spec 设置 kind/通道、命名从最大编号 + 1 递增
+    /// （MIDI 轨与乐器轨统一编号），新建的整批被选中。
+    #[test]
+    fn add_tracks_batch_appends_with_specs() {
+        let mut doc = Document::empty(); // Conductor + Track 1..16（17 条）
+        let specs = vec![
+            NewTrackSpec {
+                kind: yinhe_core::TrackKind::Midi,
+                port: 1,
+                channel: 0,
+                instrument_channel: None,
+            },
+            NewTrackSpec {
+                kind: yinhe_core::TrackKind::Midi,
+                port: 1,
+                channel: 1,
+                instrument_channel: None,
+            },
+            NewTrackSpec {
+                kind: yinhe_core::TrackKind::Instrument,
+                port: 0,
+                channel: 0,
+                instrument_channel: Some(0),
+            },
+        ];
+        assert!(doc.add_tracks_batch(&specs).is_some());
+
+        let model = doc.model();
+        assert_eq!(model.tracks.len(), 20);
+        assert_eq!(model.tracks[17].name, "Track 17");
+        assert_eq!(model.tracks[18].name, "Track 18");
+        assert_eq!(model.tracks[19].name, "Track 19");
+        assert_eq!((model.tracks[17].port, model.tracks[17].channel), (1, 0));
+        assert_eq!(model.tracks[19].kind, yinhe_core::TrackKind::Instrument);
+        assert_eq!(model.tracks[19].instrument_channel, Some(0));
+        // 新建的 3 条全部被选中
+        assert_eq!(doc.edit.track_selected.len(), 3);
+        assert!(doc.edit.track_selected.contains(&19));
+    }
+
+    /// 批量创建只产生一个 UndoAction：undo 一次（reversed + redo，即
+    /// UndoStack 内部的 undo 路径）整批全撤。
+    #[test]
+    fn add_tracks_batch_undoes_all_at_once() {
+        let mut doc = Document::empty(); // 17 条
+        let specs = vec![
+            NewTrackSpec {
+                kind: yinhe_core::TrackKind::Midi,
+                port: 0,
+                channel: 15,
+                instrument_channel: None,
+            },
+            NewTrackSpec {
+                kind: yinhe_core::TrackKind::Midi,
+                port: 1,
+                channel: 0,
+                instrument_channel: None,
+            },
+        ];
+        let action = doc.add_tracks_batch(&specs).expect("批量创建应成功");
+        assert_eq!(doc.model().tracks.len(), 19);
+
+        action.reversed().redo(&mut doc);
+        assert_eq!(doc.model().tracks.len(), 17);
+        assert_eq!(doc.model().tracks[16].name, "Track 16");
+    }
+
+    /// 空批次是 no-op，不产生 undo。
+    #[test]
+    fn add_tracks_batch_empty_is_noop() {
+        let mut doc = Document::empty();
+        assert!(doc.add_tracks_batch(&[]).is_none());
+        assert_eq!(doc.model().tracks.len(), 17);
     }
 }
