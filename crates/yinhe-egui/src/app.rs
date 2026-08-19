@@ -176,6 +176,9 @@ pub struct App {
     // ── Async PPQ rescale ──
     pub(crate) rescale: rescale_state::RescaleState,
 
+    // ── 新建音轨对话框状态（AR「+」按钮触发）──
+    pub(crate) new_track_dialog: crate::dialogs::new_track::NewTrackDialogState,
+
     // ── macOS platform integrations ──
     pub(crate) menu_bar: crate::platform::MenuBar,
     /// Tracks the last `is_dirty` state to avoid redundant `setDocumentEdited` calls.
@@ -341,6 +344,7 @@ impl App {
             should_exit: false,
             export: export_state::ExportState::new(),
             rescale: rescale_state::RescaleState::new(),
+            new_track_dialog: crate::dialogs::new_track::NewTrackDialogState::default(),
 
             view_mode: ViewMode::Arrange,
             show_pianoroll_in_arrange: audio_settings.layout.show_pianoroll_in_arrange,

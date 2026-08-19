@@ -642,13 +642,15 @@ pub fn show(
         );
 
         if btn_resp.clicked() {
-            let idx = doc.data.model.tracks.len() - 1;
-            let before = doc.capture_snapshot();
-            if let Some(action) = doc.add_track(idx) {
-                doc.push_undo(action, t!("undo.add_track").as_ref(), before);
-                // 方案 A：add_track → teardown + 下帧重建（同 track_actions 分支）。
-                *needs_audio_rebuild = true;
-            }
+            // 弹出新建音轨对话框：写 ctx memory 标志，由 dialog_dispatch
+            // 每帧检测并打开独立 viewport；确认后批量创建并 teardown 音频
+            // （方案 A 同原 add_track 路径，在 dialog_dispatch 内完成）。
+            ui.ctx().data_mut(|d| {
+                d.insert_temp(
+                    egui::Id::new(crate::dialogs::new_track::OPEN_REQUEST_ID),
+                    true,
+                )
+            });
         }
     }
 

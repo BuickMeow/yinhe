@@ -232,6 +232,23 @@ dialog.ppq_rescale.hint: "• 是：所有 tick 按比例缩放（推荐）\n•
 dialog.ppq_rescale.yes: "是（缩放音符）"
 dialog.ppq_rescale.no: "否（保持音符）"
 
+# ── 新建音轨 ──
+dialog.new_track.title: "新建音轨"
+dialog.new_track.kind: "种类"
+dialog.new_track.kind.midi: "MIDI 轨"
+dialog.new_track.kind.instrument: "乐器轨"
+dialog.new_track.kind.audio: "音频轨（预留）"
+dialog.new_track.count: "数量"
+dialog.new_track.assign: "通道分配"
+dialog.new_track.assign.auto: "自动"
+dialog.new_track.assign.manual: "指定起点"
+dialog.new_track.port: "端口"
+dialog.new_track.channel: "通道"
+dialog.new_track.instrument_start: "起始乐器通道"
+dialog.new_track.preview: "预览：%{channels}"
+dialog.new_track.truncated: "超出 P16 的部分将被截断，实际创建 %{n} 条"
+dialog.new_track.full: "256 个 MIDI 通道（A1–P16）已全部占用，无法新建"
+
 # ── PPQ 缩放进度 ──
 dialog.rescale.title: "PPQ 缩放中"
 

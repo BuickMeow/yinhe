@@ -232,6 +232,23 @@ dialog.ppq_rescale.hint: "• Yes: All ticks scaled proportionally (recommended)
 dialog.ppq_rescale.yes: "Yes (Rescale Notes)"
 dialog.ppq_rescale.no: "No (Keep Notes)"
 
+# ── New track ──
+dialog.new_track.title: "New Track"
+dialog.new_track.kind: "Kind"
+dialog.new_track.kind.midi: "MIDI Track"
+dialog.new_track.kind.instrument: "Instrument Track"
+dialog.new_track.kind.audio: "Audio Track (reserved)"
+dialog.new_track.count: "Count"
+dialog.new_track.assign: "Channel Assignment"
+dialog.new_track.assign.auto: "Auto"
+dialog.new_track.assign.manual: "From start"
+dialog.new_track.port: "Port"
+dialog.new_track.channel: "Channel"
+dialog.new_track.instrument_start: "Start instrument channel"
+dialog.new_track.preview: "Preview: %{channels}"
+dialog.new_track.truncated: "Channels beyond P16 are dropped; only %{n} will be created"
+dialog.new_track.full: "All 256 MIDI channels (A1-P16) are in use; cannot create"
+
 # ── PPQ rescale progress ──
 dialog.rescale.title: "Rescaling PPQ"
 

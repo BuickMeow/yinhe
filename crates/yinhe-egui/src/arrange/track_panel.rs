@@ -399,18 +399,18 @@ pub(crate) fn show(
             let badge_text = if is_conductor {
                 "Master".to_string()
             } else {
-                let port_letter = match ti.port {
-                    0 => 'A',
-                    1 => 'B',
-                    2 => 'C',
-                    3 => 'D',
-                    4 => 'E',
-                    5 => 'F',
-                    6 => 'G',
-                    7 => 'H',
-                    _ => '?',
-                };
-                format!("{}{:02}", port_letter, ti.channel + 1)
+                match tracks.get(idx) {
+                    // 乐器轨显示乐器通道（与 MIDI 通道是两套独立命名空间）。
+                    Some(t) if t.kind == yinhe_core::TrackKind::Instrument => t
+                        .instrument_channel
+                        // u32 转换避免 u16 上限（65535）+1 溢出 panic。
+                        .map(|c| format!("I{:02}", u32::from(c) + 1))
+                        .unwrap_or_else(|| "I--".to_string()),
+                    // 音频轨（预留）显示 AU。
+                    Some(t) if t.kind == yinhe_core::TrackKind::Audio => "AU".to_string(),
+                    // MIDI 轨：port 字母（A..P）+ 通道号。
+                    _ => format!("{}{:02}", (b'A' + ti.port.min(15)) as char, ti.channel + 1),
+                }
             };
             painter.text(
                 egui::pos2(text_x + 32.0, badge_rect.min.y + *row_height * 0.30),

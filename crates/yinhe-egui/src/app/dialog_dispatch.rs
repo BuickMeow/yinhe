@@ -217,6 +217,9 @@ impl App {
         // 这里每帧检测 pending，弹出独立 viewport 确认框，用户选择后执行操作。
         self.show_ppq_rescale_confirm(&ctx);
 
+        // ── 新建音轨对话框 ──
+        self.show_new_track_dialog(&ctx);
+
         // ── Export completed ──
         crate::dialogs::export::show_completed_viewport(&ctx, &mut self.export.completed);
 
@@ -332,5 +335,56 @@ impl App {
                 crate::right_panel::project_info::PPQ_RESCALE_PENDING_ID,
             ))
         });
+    }
+
+    /// 新建音轨对话框：AR 走带面板「+」按钮把 OPEN_REQUEST_ID 写进 ctx memory
+    /// 触发，这里每帧检测并弹独立 viewport。确认后批量创建音轨并 teardown
+    /// 音频引擎（音轨结构变化 → ChannelLayout 需按新 model 重建，
+    /// 同 arrange.rs 里 add_track 的方案 A，下一帧 rebuild_audio_if_needed 重建）。
+    fn show_new_track_dialog(&mut self, ctx: &egui::Context) {
+        let open_req = ctx.data_mut(|d| {
+            let id = egui::Id::new(crate::dialogs::new_track::OPEN_REQUEST_ID);
+            let v = d.get_temp::<bool>(id).unwrap_or(false);
+            d.remove::<bool>(id);
+            v
+        });
+        if open_req {
+            self.new_track_dialog.open();
+        }
+        if !self.new_track_dialog.open {
+            return;
+        }
+        // 没有活动文档时不应被触发（「+」按钮在有文档时才渲染），防御性关闭。
+        let Some(doc_idx) = self.active_doc else {
+            self.new_track_dialog.open = false;
+            return;
+        };
+
+        let mut created = false;
+        if let Some(doc) = self.documents.get_mut(doc_idx) {
+            let action = crate::dialogs::new_track::show_viewport(
+                ctx,
+                &mut self.new_track_dialog,
+                &doc.data.model.tracks,
+            );
+            match action {
+                crate::dialogs::new_track::NewTrackAction::Confirm(specs) => {
+                    let before = doc.capture_snapshot();
+                    if let Some(a) = doc.add_tracks_batch(&specs) {
+                        doc.push_undo(a, rust_i18n::t!("undo.add_track").as_ref(), before);
+                        created = true;
+                    }
+                    self.new_track_dialog.open = false;
+                }
+                crate::dialogs::new_track::NewTrackAction::Cancel => {
+                    self.new_track_dialog.open = false;
+                }
+                crate::dialogs::new_track::NewTrackAction::None => {}
+            }
+        }
+        // teardown 借 &mut self，必须在 doc 借用的作用域外调用。
+        if created {
+            self.teardown_audio();
+        }
     }
 }
