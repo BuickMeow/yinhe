@@ -6,20 +6,30 @@
 //! `ChannelLayout` 在 `AudioEngine` 创建时一次性定型，生命周期内不可变。
 //! 若 model 结构变化（增减音轨、改 channel/port），必须 teardown + 重建引擎。
 
-use yinhe_core::YinModel;
+use yinhe_core::{TrackKind, YinModel};
 
 /// 不可变的通道布局，`AudioEngine` 创建时定型。
+///
+/// dense 通道空间如下（引擎/混音台/预览合成器按 `compacted_channels()` 分配）：
+/// - `[0, midi_compacted)`：MIDI 源通道（`global_channel`）压缩后的 xsynth 通道；
+/// - `[midi_compacted, compacted)`：**乐器通道**（`TrackData::instrument_channel`），
+///   每个用到的乐器通道独占一条 dense 通道（CLAP 乐器输出在此混入混音台）。
 #[derive(Clone)]
 pub struct ChannelLayout {
-    /// `active_mask[i] == true` 表示源通道 `i` 被某条音轨使用（存在即激活）。
+    /// `active_mask[i] == true` 表示源 MIDI 通道 `i` 被某条音轨使用（存在即激活）。
     /// 长度 = `num_channels`，超出部分视为未激活。
     active_mask: Vec<bool>,
     /// `channel_map[src] = dense`（激活）或 `u32::MAX`（未激活）。
     /// `dense` 是 xsynth `ChannelGroup` 压缩后的通道索引。
     channel_map: Box<[u32; 256]>,
-    /// `active_mask` 覆盖的源通道数（= `active_mask.len()`）。
+    /// `active_mask` 覆盖的源 MIDI 通道数（= `active_mask.len()`）。
     num_channels: u32,
-    /// 激活通道数 = xsynth `ChannelGroup` 的通道数。
+    /// 用到的乐器通道（升序去重，来自乐器轨的 `instrument_channel`）。
+    /// 第 `i` 个的 dense = `midi_compacted + i`。
+    instrument_channels: Vec<u16>,
+    /// MIDI 通道的激活数（= xsynth `ChannelGroup` 的通道数）。
+    midi_compacted: u32,
+    /// 总激活通道数 = `midi_compacted + instrument_channels.len()`。
     compacted_channels: u32,
 }
 
@@ -32,23 +42,37 @@ impl ChannelLayout {
     pub fn from_model(model: &YinModel) -> Self {
         let mut ch_active = [false; 256];
 
+        // 乐器通道独立于 MIDI 源通道：收集用到的乐器通道（升序去重）。
+        let mut inst_channels: Vec<u16> = Vec::new();
         for track in model.tracks.iter() {
             let ch = track.global_channel() as usize;
             if ch < 256 {
                 ch_active[ch] = true;
             }
+            if track.kind == TrackKind::Instrument
+                && let Some(ich) = track.instrument_channel
+                && !inst_channels.contains(&ich)
+            {
+                inst_channels.push(ich);
+            }
         }
+        inst_channels.sort_unstable();
 
         let max_active_ch = ch_active.iter().rposition(|&c| c).unwrap_or(0);
         let num_channels = (max_active_ch + 1).max(1) as u32;
 
         let active_mask: Vec<bool> = ch_active[..num_channels as usize].to_vec();
 
-        Self::from_mask(active_mask)
+        Self::from_mask_full(active_mask, inst_channels)
     }
 
-    /// 从 `active_mask` 构建压缩后的 `channel_map`。
+    /// 从 `active_mask` 构建压缩后的 `channel_map`（无乐器通道）。
     pub fn from_mask(active_mask: Vec<bool>) -> Self {
+        Self::from_mask_full(active_mask, Vec::new())
+    }
+
+    /// 从 `active_mask` + `inst_channels` 构建完整布局。
+    fn from_mask_full(active_mask: Vec<bool>, instrument_channels: Vec<u16>) -> Self {
         let mut channel_map = Box::new([u32::MAX; 256]);
         let mut next_dense: u32 = 0;
         for (src, &alive) in active_mask.iter().enumerate().take(256) {
@@ -57,12 +81,15 @@ impl ChannelLayout {
                 next_dense += 1;
             }
         }
-        let compacted_channels = next_dense.max(1);
+        let midi_compacted = next_dense.max(1);
+        let compacted_channels = midi_compacted + instrument_channels.len() as u32;
         let num_channels = active_mask.len() as u32;
         Self {
             active_mask,
             channel_map,
             num_channels,
+            instrument_channels,
+            midi_compacted,
             compacted_channels,
         }
     }
@@ -81,6 +108,32 @@ impl ChannelLayout {
 
     pub fn compacted_channels(&self) -> u32 {
         self.compacted_channels
+    }
+
+    /// MIDI 通道的激活数（instrument dense 通道从该值起）。
+    pub fn midi_compacted(&self) -> u32 {
+        self.midi_compacted
+    }
+
+    /// 用到的乐器通道列表（升序去重）。
+    pub fn instrument_channels(&self) -> &[u16] {
+        &self.instrument_channels
+    }
+
+    /// 乐器通道 `ich` 的 dense 索引（= midi_compacted + 排序位置），
+    /// 未用到返回 `u32::MAX`。
+    #[inline]
+    pub fn instrument_dense_for(&self, ich: u16) -> u32 {
+        match self.instrument_channels.binary_search(&ich) {
+            Ok(i) => self.midi_compacted + i as u32,
+            Err(_) => u32::MAX,
+        }
+    }
+
+    /// dense 通道是不是乐器通道（dense >= midi_compacted）。
+    #[inline]
+    pub fn is_instrument_dense(&self, dense: usize) -> bool {
+        dense as u32 >= self.midi_compacted && (dense as u32) < self.compacted_channels
     }
 
     /// 源通道 `ch` 是否激活。
@@ -121,11 +174,22 @@ impl ChannelLayout {
     /// 走便宜的 `UpdateNotes` 路径即可。成本 O(tracks)，与音符总数无关。
     pub fn differs_from_model(&self, model: &YinModel) -> bool {
         let mut now_active = [false; 256];
+        let mut now_inst: Vec<u16> = Vec::new();
         for track in model.tracks.iter() {
             let ch = track.global_channel() as usize;
             if ch < 256 {
                 now_active[ch] = true;
             }
+            if track.kind == TrackKind::Instrument
+                && let Some(ich) = track.instrument_channel
+                && !now_inst.contains(&ich)
+            {
+                now_inst.push(ich);
+            }
+        }
+        now_inst.sort_unstable();
+        if now_inst != self.instrument_channels {
+            return true;
         }
         for (ch, &now) in now_active.iter().enumerate() {
             if self.is_active(ch) != now {
@@ -529,5 +593,107 @@ mod tests {
             "新 layout 一致"
         );
         assert!(new_layout.is_active(0), "空音轨通道已激活");
+    }
+
+    /// 构建一个含两条乐器轨（乐器通道 2、5）和两条 MIDI 轨（源通道 0、3）的 model。
+    fn make_instrument_model() -> YinModel {
+        let conductor = ConductorData::default();
+        let midi0 = TrackData::new(0, 0); // 源通道 0
+        let midi3 = TrackData::new(0, 3); // 源通道 3
+        let mut inst2 = TrackData::new(0, 1); // MIDI 源通道 1
+        inst2.kind = TrackKind::Instrument;
+        inst2.instrument_channel = Some(2);
+        let mut inst5 = TrackData::new(0, 2); // MIDI 源通道 2
+        inst5.kind = TrackKind::Instrument;
+        inst5.instrument_channel = Some(5);
+        let mut model = YinModel {
+            conductor: Arc::new(conductor),
+            tracks: vec![
+                Arc::new(midi0),
+                Arc::new(inst2),
+                Arc::new(inst5),
+                Arc::new(midi3),
+            ],
+            meta: ProjectMeta {
+                ppq: 480,
+                ..ProjectMeta::default()
+            },
+            ..Default::default()
+        };
+        model.rebuild();
+        model
+    }
+
+    #[test]
+    fn instrument_channels_get_dedicated_dense() {
+        // MIDI 源通道 {0,1,2,3} 压缩为 dense 0..4；乐器通道 {2,5} 跟在后面。
+        let layout = ChannelLayout::from_model(&make_instrument_model());
+        assert_eq!(layout.midi_compacted(), 4);
+        assert_eq!(layout.instrument_channels(), &[2, 5]);
+        assert_eq!(layout.compacted_channels(), 6);
+        // 乐器通道 dense = midi_compacted + 排序位置
+        assert_eq!(layout.instrument_dense_for(2), 4);
+        assert_eq!(layout.instrument_dense_for(5), 5);
+        assert_eq!(layout.instrument_dense_for(0), u32::MAX);
+        // MIDI dense 不受影响
+        assert_eq!(layout.dense_for(0), 0);
+        assert_eq!(layout.dense_for(3), 3);
+        assert!(layout.is_instrument_dense(4));
+        assert!(layout.is_instrument_dense(5));
+        assert!(!layout.is_instrument_dense(3));
+    }
+
+    #[test]
+    fn instrument_layout_deduplicates_shared_channel() {
+        // 两条乐器轨共享同一乐器通道 → 只占一条 dense（MIDI 源通道复用 ch0 不新增）。
+        let mut model = make_instrument_model();
+        let mut extra = TrackData::new(0, 0);
+        extra.kind = TrackKind::Instrument;
+        extra.instrument_channel = Some(2);
+        model.tracks.push(Arc::new(extra));
+        model.rebuild();
+        let layout = ChannelLayout::from_model(&model);
+        assert_eq!(layout.instrument_channels(), &[2, 5]);
+        assert_eq!(layout.compacted_channels(), 6);
+    }
+
+    #[test]
+    fn differs_from_model_flip_on_instrument_added() {
+        let model = make_instrument_model();
+        let layout = ChannelLayout::from_model(&model);
+        assert!(!layout.differs_from_model(&model), "同 model 无翻转");
+
+        // 新增一条乐器通道 9 的乐器轨 → 乐器通道集合变化 → 翻转
+        let mut extended = model.clone();
+        let mut inst9 = TrackData::new(0, 5);
+        inst9.kind = TrackKind::Instrument;
+        inst9.instrument_channel = Some(9);
+        extended.tracks.push(Arc::new(inst9));
+        assert!(layout.differs_from_model(&extended), "新增乐器通道应翻转");
+    }
+
+    #[test]
+    fn differs_from_model_flip_on_track_kind_to_instrument() {
+        // layout 无乐器；把一条 MIDI 轨改成乐器轨（带 instrument_channel）→ 翻转
+        let conductor = ConductorData::default();
+        let mut t = TrackData::new(0, 0);
+        let mut model = YinModel {
+            conductor: Arc::new(conductor),
+            tracks: vec![Arc::new(t.clone())],
+            meta: ProjectMeta {
+                ppq: 480,
+                ..ProjectMeta::default()
+            },
+            ..Default::default()
+        };
+        model.rebuild();
+        let layout = ChannelLayout::from_model(&model);
+        assert_eq!(layout.instrument_channels(), &[] as &[u16]);
+
+        let mut edited = model.clone();
+        let tt = Arc::make_mut(&mut edited.tracks[0]);
+        tt.kind = TrackKind::Instrument;
+        tt.instrument_channel = Some(0);
+        assert!(layout.differs_from_model(&edited), "改乐器轨应翻转");
     }
 }
