@@ -64,13 +64,18 @@ pub fn compute_follow_scroll(
         FollowMode::Page => {
             // 真正的翻页：光标越过视口右缘（左缘）时整页滚动，
             // 翻页后光标落在页首（页尾）附近，持续播放会逐页前进。
+            // 页宽 = 视口宽 - 左边界（PR 键盘宽）：翻页后光标落在新页左缘右侧，
+            // 不会立刻命中向左翻页判定。若按完整视口宽翻页，光标会卡在
+            // 新页的键盘遮挡区（cursor_x < 新左缘），下一帧又往回翻，
+            // 再下一帧光标仍越右缘又往前翻——每帧来回振荡（翻页抖动）。
             let cursor_x = cursor_tick as f32 * pixels_per_tick;
+            let page = (viewport_width - left_boundary).max(1.0);
             let right_edge = current_scroll_x + viewport_width;
             let left_edge = current_scroll_x + left_boundary;
             if cursor_x > right_edge {
-                Some(current_scroll_x + viewport_width)
+                Some(current_scroll_x + page)
             } else if cursor_x < left_edge {
-                Some(current_scroll_x - viewport_width)
+                Some(current_scroll_x - page)
             } else {
                 None
             }
@@ -167,9 +172,31 @@ mod tests {
 
     #[test]
     fn page_mode_with_nonzero_left_boundary() {
-        // 左边界 100（钢琴键盘宽）：光标 50 越过左缘 → 向左翻一页
+        // 左边界 100（钢琴键盘宽）：光标 50 越过左缘 → 向左翻一页（页宽 700）
         let result = compute_follow_scroll(50.0, 1.0, 800.0, 100.0, FollowMode::Page, 1.0, 500.0);
-        assert_eq!(result, Some(-300.0));
+        assert_eq!(result, Some(-200.0));
+    }
+
+    #[test]
+    fn page_mode_forward_turn_does_not_oscillate() {
+        // 回归：键盘宽 100、视口 800。光标刚过右缘（805）→ 向前翻一页，
+        // 页宽 700 → scroll = 700。新页左缘 = 700 + 100 = 800，光标 805 在其右侧，
+        // 下一帧不得再触发向左翻页（旧实现按整视口宽翻页，scroll = 800，
+        // 光标 805 < 新左缘 900 → 每帧来回翻页 = 翻页抖动）。
+        let turned = compute_follow_scroll(805.0, 1.0, 800.0, 100.0, FollowMode::Page, 1.0, 0.0);
+        assert_eq!(turned, Some(700.0));
+        let next = compute_follow_scroll(805.0, 1.0, 800.0, 100.0, FollowMode::Page, 1.0, 700.0);
+        assert_eq!(next, None, "翻页后光标在新页内，不得来回振荡");
+    }
+
+    #[test]
+    fn page_mode_backward_turn_does_not_oscillate() {
+        // 回归：反向同理。scroll = 700、光标 795 越过左缘 800 → 向左翻一页（页宽 700）
+        // → scroll = 0。新右缘 = 800 > 光标 795，下一帧不得再触发向前翻页。
+        let turned = compute_follow_scroll(795.0, 1.0, 800.0, 100.0, FollowMode::Page, 1.0, 700.0);
+        assert_eq!(turned, Some(0.0));
+        let next = compute_follow_scroll(795.0, 1.0, 800.0, 100.0, FollowMode::Page, 1.0, 0.0);
+        assert_eq!(next, None, "回翻后光标在新页内，不得来回振荡");
     }
 
     #[test]
