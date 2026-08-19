@@ -590,6 +590,8 @@ fn load_yin_bytes_inner(
             channel_prefix: tm.channel_prefix,
             muted: tm.muted,
             soloed: tm.soloed,
+            kind: tm.kind,
+            instrument_channel: tm.instrument_channel,
             notes: Vec::new(), // notes loaded via load_bucket_notes
             automation_lanes: payload.automation_lanes,
             program_change: payload.program_change,

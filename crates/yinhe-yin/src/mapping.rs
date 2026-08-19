@@ -46,6 +46,12 @@ pub struct TrackMap {
     pub muted: bool,
     #[serde(default)]
     pub soloed: bool,
+    /// 音轨种类（旧存档无此字段，默认 Midi）。
+    #[serde(default)]
+    pub kind: yinhe_core::TrackKind,
+    /// 乐器通道号（仅乐器轨有意义）。
+    #[serde(default)]
+    pub instrument_channel: Option<u16>,
 }
 
 fn default_track_color() -> [f32; 4] {
@@ -103,6 +109,8 @@ impl MappingFile {
                 channel_prefix: t.channel_prefix,
                 muted: t.muted,
                 soloed: t.soloed,
+                kind: t.kind,
+                instrument_channel: t.instrument_channel,
             });
         }
 

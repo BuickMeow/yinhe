@@ -19,7 +19,7 @@ mod tempo_map;
 
 pub use events::{BucketNote, NoteEvent};
 pub use model::DEFAULT_TRACK_COLOR;
-pub use model::{ConductorData, ProjectMeta, TrackData, TrackInfo, YinModel};
+pub use model::{ConductorData, ProjectMeta, TrackData, TrackInfo, TrackKind, YinModel};
 pub use model_stats::RescaleProgress;
 pub use selection::Selection;
 pub use tempo_map::{

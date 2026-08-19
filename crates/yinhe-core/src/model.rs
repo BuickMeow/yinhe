@@ -63,6 +63,18 @@ impl Default for ConductorData {
 /// RGBA，alpha 默认不透明。
 pub const DEFAULT_TRACK_COLOR: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
 
+/// 音轨种类。MIDI 轨走 xsynth 音色库（按 port/channel 路由）；
+/// 乐器轨走 CLAP 乐器插件（按 instrument_channel 路由，与 MIDI 通道是
+/// 两套独立命名空间）；音频轨为预留，本期未实现。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TrackKind {
+    #[default]
+    Midi,
+    Instrument,
+    /// 预留：音频轨（音频剪辑回放，本期未实现）。
+    Audio,
+}
+
 /// One MIDI track's complete data.
 ///
 /// Channel/track are held here, not in individual events. NoteEvent is
@@ -85,6 +97,14 @@ pub struct TrackData {
     pub channel_prefix: Option<u8>,
     pub muted: bool,
     pub soloed: bool,
+    /// 音轨种类（旧存档无此字段，默认 Midi）。
+    #[serde(default)]
+    pub kind: TrackKind,
+    /// 乐器通道号（0 起，UI 显示 1 起）。仅乐器轨有意义；
+    /// 与 MIDI port/channel 无关，是 CLAP 乐器插件的路由命名空间。
+    /// 多条乐器轨共享同一乐器通道 = 共享同一个插件实例。
+    #[serde(default)]
+    pub instrument_channel: Option<u16>,
 
     /// Notes are stored in `YinModel.notes` (by-key store).
     /// This field is only used during parsing and is moved out
@@ -114,6 +134,8 @@ impl TrackData {
             channel_prefix: None,
             muted: false,
             soloed: false,
+            kind: TrackKind::Midi,
+            instrument_channel: None,
             notes: Vec::new(),
             automation_lanes: Vec::new(),
             program_change: Vec::new(),
