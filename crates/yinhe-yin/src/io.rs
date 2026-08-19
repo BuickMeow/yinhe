@@ -22,7 +22,19 @@ use crate::project_meta::{ProjectFile, SfPortOverride};
 
 /// 混音段格式版本（段内前 4 字节）。MixerParams 字段演进时递增，
 /// 加载侧版本不符则忽略混音段（工程本体照常打开）。
-const MIXER_SECTION_VERSION: u32 = 1;
+///
+/// v2：新增 instruments（乐器通道 → 插件引用）。加载 v1（无该字段）时按旧结构
+/// 解码并补上空乐器表，避免既有工程丢失混音设置。
+const MIXER_SECTION_VERSION: u32 = 2;
+
+/// v1 混音段结构（无 instruments 字段），供旧版工程迁移解码。
+#[derive(serde::Deserialize)]
+struct MixerParamsV1 {
+    pub channels: Vec<yinhe_mixer::StripParams>,
+    pub master: yinhe_mixer::MasterParams,
+    pub channel_inserts: Vec<Vec<yinhe_mixer::InsertRef>>,
+    pub master_inserts: Vec<yinhe_mixer::InsertRef>,
+}
 
 /// 编码混音段：version u32 LE + zstd(bincode varint MixerParams)。
 fn encode_mixer_section(mixer: &MixerParams, level: i32) -> Result<Vec<u8>, YinError> {
@@ -40,14 +52,31 @@ fn decode_mixer_section(section: &[u8]) -> Option<MixerParams> {
         return None;
     }
     let version = u32::from_le_bytes(section[..4].try_into().ok()?);
-    if version != MIXER_SECTION_VERSION {
-        tracing::warn!("混音段版本 {version} 不受支持，忽略混音设置");
-        return None;
-    }
     let payload = zstd::decode_all(Cursor::new(&section[4..])).ok()?;
-    let mut params: MixerParams = deserialize_with_varint(&payload)
-        .map_err(|e| tracing::warn!("混音段解析失败，忽略混音设置: {e}"))
-        .ok()?;
+    let mut params: MixerParams = match version {
+        // 当前版本：完整结构（含 instruments）。
+        MIXER_SECTION_VERSION => deserialize_with_varint(&payload)
+            .map_err(|e| tracing::warn!("混音段解析失败，忽略混音设置: {e}"))
+            .ok()?,
+        // 旧版 v1：按旧结构解码，乐器表留空（不丢其它混音设置）
+        //（与 bincode 必须整段对齐、不能跳过未知字段相关）。
+        1 => {
+            let v1: MixerParamsV1 = deserialize_with_varint(&payload)
+                .map_err(|e| tracing::warn!("旧版混音段解析失败，忽略混音设置: {e}"))
+                .ok()?;
+            MixerParams {
+                channels: v1.channels,
+                master: v1.master,
+                channel_inserts: v1.channel_inserts,
+                master_inserts: v1.master_inserts,
+                instruments: Vec::new(),
+            }
+        }
+        other => {
+            tracing::warn!("混音段版本 {other} 不受支持，忽略混音设置");
+            return None;
+        }
+    };
     params.ensure_len();
     Some(params)
 }

@@ -94,6 +94,11 @@ pub struct MixerParams {
     /// 主输出 insert 链。
     #[serde(default)]
     pub master_inserts: Vec<InsertRef>,
+    /// 乐器通道（0 起，与 `TrackData::instrument_channel` 对齐）→ 插件引用。
+    /// 索引 = 乐器通道号；未用到的通道为 `None`。仅工程用到乐器轨时非空。
+    /// 与 MIDI 源通道命名空间独立（乐器通道是另一套）。
+    #[serde(default)]
+    pub instruments: Vec<Option<InsertRef>>,
 }
 
 impl Default for MixerParams {
@@ -103,6 +108,7 @@ impl Default for MixerParams {
             master: MasterParams::default(),
             channel_inserts: vec![Vec::new(); CHANNEL_COUNT],
             master_inserts: Vec::new(),
+            instruments: Vec::new(),
         }
     }
 }
