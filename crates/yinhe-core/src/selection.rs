@@ -6,6 +6,8 @@
 //!
 //! Memory: 1000 万音符的矩形选择 = 1 个 rect (~40 bytes) vs 800MB HashSet.
 
+use yinhe_types::MAX_KEY;
+
 /// Unified selection model for notes.
 #[derive(Clone, Default)]
 pub struct Selection {
@@ -63,14 +65,14 @@ impl Selection {
     }
 
     /// Offset all rects by (delta_ticks, delta_keys).
-    /// Clamps key to [0, 127], tick to >= 0. Track range unchanged.
+    /// Clamps key to [0, MAX_KEY], tick to >= 0. Track range unchanged.
     pub fn offset(&mut self, delta_ticks: i64, delta_keys: i32) {
         for rect in &mut self.rects {
             let (ts, te, kl, kh, tl, th) = *rect;
             let new_ts = (ts as i64 + delta_ticks).max(0) as u32;
             let new_te = (te as i64 + delta_ticks).max(0) as u32;
-            let new_kl = (kl as i32 + delta_keys).clamp(0, 127) as u8;
-            let new_kh = (kh as i32 + delta_keys).clamp(0, 127) as u8;
+            let new_kl = (kl as i32 + delta_keys).clamp(0, MAX_KEY as i32) as u8;
+            let new_kh = (kh as i32 + delta_keys).clamp(0, MAX_KEY as i32) as u8;
             if new_te > new_ts {
                 *rect = (new_ts, new_te, new_kl, new_kh, tl, th);
             }
@@ -113,11 +115,11 @@ impl Selection {
     /// Remove rects matching the given AR selection-box rects
     /// `(tick_start, tick_end, track_lo, track_hi)`.
     ///
-    /// AR 的 rect 在 Selection 中总是 key 全范围 (kl=0, kh=127)，据此匹配避免误伤 PR 的 rect。
+    /// AR 的 rect 在 Selection 中总是 key 全范围 (kl=0, kh=MAX_KEY)，据此匹配避免误伤 PR 的 rect。
     pub fn remove_rects_track(&mut self, rects: &[(u32, u32, u16, u16)]) {
         self.rects.retain(|r| {
             !(r.2 == 0
-                && r.3 == 127
+                && r.3 == MAX_KEY
                 && rects
                     .iter()
                     .any(|q| q.0 == r.0 && q.1 == r.1 && q.2 == r.4 && q.3 == r.5))
@@ -149,7 +151,7 @@ mod tests {
         // 两个 PR 矩形（key 局部范围）+ 一个 AR 矩形（key 全范围）
         sel.add_rect(0, 100, 60, 70); // PR
         sel.add_rect(200, 300, 40, 50); // PR
-        sel.add_rect_track(0, 100, 0, 127, 3, 5); // AR
+        sel.add_rect_track(0, 100, 0, MAX_KEY, 3, 5); // AR
 
         sel.remove_rects(&[(0, 100, 60, 70)]);
 
@@ -164,8 +166,8 @@ mod tests {
     fn remove_rects_track_removes_ar_rects_not_pr() {
         let mut sel = Selection::default();
         sel.add_rect(0, 100, 60, 70); // PR：key 局部范围，必须保留
-        sel.add_rect_track(0, 100, 0, 127, 3, 5); // AR：命中 track 3..=5
-        sel.add_rect_track(0, 100, 0, 127, 7, 9); // AR：不命中 track，保留
+        sel.add_rect_track(0, 100, 0, MAX_KEY, 3, 5); // AR：命中 track 3..=5
+        sel.add_rect_track(0, 100, 0, MAX_KEY, 7, 9); // AR：不命中 track，保留
 
         sel.remove_rects_track(&[(0, 100, 3, 5)]);
 
@@ -178,8 +180,8 @@ mod tests {
     #[test]
     fn remove_rects_track_matches_full_tick_range_only() {
         let mut sel = Selection::default();
-        sel.add_rect_track(0, 100, 0, 127, 0, 0); // tick 范围相同
-        sel.add_rect_track(50, 150, 0, 127, 0, 0); // tick 不同，保留
+        sel.add_rect_track(0, 100, 0, MAX_KEY, 0, 0); // tick 范围相同
+        sel.add_rect_track(50, 150, 0, MAX_KEY, 0, 0); // tick 不同，保留
 
         sel.remove_rects_track(&[(0, 100, 0, 0)]);
 

@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use yinhe_types::{Note, NoteBucket};
+use yinhe_types::{KEY_COUNT, Note, NoteBucket};
 
 use crate::events::{BucketNote, NoteEvent};
 
@@ -25,7 +25,7 @@ impl YinModel {
     /// 保留原 id 并推进 `next_note_id` 到 max+1。
     pub fn load_track_notes(&mut self, per_track_notes: Vec<Vec<NoteEvent>>) {
         // Count per key for exact allocation.
-        let mut per_key_count = [0u32; 128];
+        let mut per_key_count = [0u32; KEY_COUNT];
         for notes in per_track_notes.iter() {
             for note in notes {
                 per_key_count[note.key as usize] += 1;
@@ -50,7 +50,7 @@ impl YinModel {
 
     /// `.yin` 加载路径：直接按 key 桶填（桶内已按 start_tick 排序）。
     ///
-    /// 与 `load_track_notes` 的区别：输入是 128 个 key 桶而非 per-track 列表，
+    /// 与 `load_track_notes` 的区别：输入是 KEY_COUNT 个 key 桶而非 per-track 列表，
     /// 省去“按 track 分组存 → 加载再分桶”的多余转换（`.yin` 新格式直接按桶存）。
     /// 每个音符的 `track` 取自 `BucketNote.track`；id 一律重新分配（`id` 不落盘）。
     pub fn load_bucket_notes(&mut self, bucket_notes: Vec<Vec<BucketNote>>) {
@@ -98,7 +98,7 @@ impl YinModel {
     /// `load_track_notes` and by edit operations. `rebuild()` only
     /// sorts buckets and rebuilds indices.
     pub fn rebuild(&mut self) {
-        // Sort + re-chunk all 128 buckets in parallel.
+        // Sort + re-chunk all KEY_COUNT buckets in parallel.
         use rayon::prelude::*;
         self.notes.par_iter_mut().for_each(|bucket| {
             Arc::make_mut(bucket).sort();
@@ -118,9 +118,9 @@ impl YinModel {
         let mut track_audible: Vec<u64> = vec![0u64; self.tracks.len()];
         // Per-bucket per-track stats — recomputed in the same pass so
         // rebuild_dirty() can do incremental updates later.
-        let mut bucket_stats: [HashMap<u16, (u64, u64)>; 128] =
+        let mut bucket_stats: [HashMap<u16, (u64, u64)>; KEY_COUNT] =
             core::array::from_fn(|_| HashMap::new());
-        let mut bucket_max_end: [u64; 128] = [0; 128];
+        let mut bucket_max_end: [u64; KEY_COUNT] = [0; KEY_COUNT];
         for (k, bucket) in self.notes.iter().enumerate() {
             note_count += bucket.len() as u64;
             for n in bucket.iter() {
@@ -150,7 +150,7 @@ impl YinModel {
         self.max_note_len = max_len;
         self.track_note_count = track_counts;
         self.track_audible_count = track_audible;
-        for k in 0..128 {
+        for k in 0..KEY_COUNT {
             self.bucket_note_count[k] = self.notes[k].len() as u64;
             self.bucket_max_end_tick[k] = bucket_max_end[k];
             self.bucket_track_stats[k] = std::mem::take(&mut bucket_stats[k]);
@@ -164,7 +164,7 @@ impl YinModel {
     ///
     /// Cost: O(sum of dirty bucket sizes) for stats + O(D) bookkeeping.
     /// For a 30M-note song where only 10 buckets were touched, this is
-    /// ~O(10 bucket scans) instead of O(128 bucket sorts + clones).
+    /// ~O(10 bucket scans) instead of O(KEY_COUNT bucket sorts + clones).
     ///
     /// **No sorting happens here.** All write paths guarantee the
     /// per-key bucket stays sorted by `start_tick` themselves:
@@ -187,13 +187,13 @@ impl YinModel {
     /// 所以 rebuild_dirty 路径只需关心 tick_length 是否变了——tempo_map
     /// 内部缓存了 tick_length 字段，需要同步。
     pub fn rebuild_dirty(&mut self) {
-        let dirty_indices: Vec<usize> = (0..128).filter(|&k| self.dirty_keys[k]).collect();
+        let dirty_indices: Vec<usize> = (0..KEY_COUNT).filter(|&k| self.dirty_keys[k]).collect();
         if dirty_indices.is_empty() {
             return;
         }
 
         let prev_tick_length = self.tick_length;
-        self.dirty_keys = [false; 128];
+        self.dirty_keys = [false; KEY_COUNT];
         let mut delta_note_count: i64 = 0;
         for &k in &dirty_indices {
             let old = self.bucket_note_count[k] as i64;
@@ -217,8 +217,8 @@ impl YinModel {
             self.bucket_max_end_tick[k] = bucket_max;
         }
         self.note_count = (self.note_count as i64 + delta_note_count) as u64;
-        // tick_length = max over all 128 buckets of bucket_max_end_tick.
-        // O(128) scan — cheap, and correctly handles shrinkage when the
+        // tick_length = max over all KEY_COUNT buckets of bucket_max_end_tick.
+        // O(KEY_COUNT) scan — cheap, and correctly handles shrinkage when the
         // last note was deleted/shortened in a dirty bucket.
         let new_tick_length = self.bucket_max_end_tick.iter().copied().max().unwrap_or(0);
         self.tick_length = new_tick_length;
@@ -300,7 +300,7 @@ impl YinModel {
             }
         };
 
-        // 1. Notes (128 buckets, parallel)
+        // 1. Notes (KEY_COUNT buckets, parallel)
         use rayon::prelude::*;
         self.notes.par_iter_mut().for_each(|bucket| {
             let bucket = Arc::make_mut(bucket);
@@ -353,7 +353,7 @@ impl YinModel {
     /// 若 `cancel` 在处理过程中被设为 true，提前返回 `Err("已取消")`。
     ///
     /// 进度报告：
-    /// - 阶段 1（0..90%）：缩放 128 个音符 bucket，每个 bucket 完成后更新进度
+    /// - 阶段 1（0..90%）：缩放 KEY_COUNT 个音符 bucket，每个 bucket 完成后更新进度
     /// - 阶段 2（90..95%）：缩放 conductor（tempo + time_sig）
     /// - 阶段 3（95..100%）：缩放 track automation + PC + rebuild
     ///
@@ -403,8 +403,8 @@ impl YinModel {
             bucket.sort();
             let d = done.fetch_add(1, Ordering::Relaxed) + 1;
             if let Ok(mut p) = progress_clone.lock() {
-                p.progress = d as f32 / 128.0 * 0.9;
-                p.label = format!("缩放音符 {}/128", d);
+                p.progress = d as f32 / KEY_COUNT as f32 * 0.9;
+                p.label = format!("缩放音符 {}/{KEY_COUNT}", d);
             }
         });
         if cancel.load(Ordering::Relaxed) {
@@ -466,28 +466,28 @@ impl YinModel {
 pub struct RescaleProgress {
     /// 0.0..1.0
     pub progress: f32,
-    /// 当前阶段标签（如 "缩放音符 42/128"）。
+    /// 当前阶段标签（如 "缩放音符 42/{KEY_COUNT}"）。
     pub label: String,
 }
 
 /// `load_track_notes` / `load_bucket_notes` 的共享装载状态：
 /// 分配 id、入桶、统计（单趟，避免 rebuild 二次扫描）。
 struct NoteLoader {
-    key_notes: [Vec<Note>; 128],
+    key_notes: [Vec<Note>; KEY_COUNT],
     note_count: u64,
     max_tick: u64,
     max_len: u32,
     track_counts: Vec<u64>,
     track_audible: Vec<u64>,
-    bucket_stats: [HashMap<u16, (u64, u64)>; 128],
-    bucket_max_end: [u64; 128],
+    bucket_stats: [HashMap<u16, (u64, u64)>; KEY_COUNT],
+    bucket_max_end: [u64; KEY_COUNT],
     max_id_seen: u32,
     next_note_id: u32,
 }
 
 impl NoteLoader {
     /// 按每 key 预估容量精确分配（MIDI 解析路径，先扫一遍数数）。
-    fn new(track_count: usize, next_note_id: u32, per_key_count: [u32; 128]) -> Self {
+    fn new(track_count: usize, next_note_id: u32, per_key_count: [u32; KEY_COUNT]) -> Self {
         Self {
             key_notes: core::array::from_fn(|k| Vec::with_capacity(per_key_count[k] as usize)),
             note_count: 0,
@@ -496,7 +496,7 @@ impl NoteLoader {
             track_counts: vec![0u64; track_count],
             track_audible: vec![0u64; track_count],
             bucket_stats: core::array::from_fn(|_| HashMap::new()),
-            bucket_max_end: [0; 128],
+            bucket_max_end: [0; KEY_COUNT],
             max_id_seen: 0,
             next_note_id,
         }
@@ -518,7 +518,7 @@ impl NoteLoader {
             track_counts: vec![0u64; track_count],
             track_audible: vec![0u64; track_count],
             bucket_stats: core::array::from_fn(|_| HashMap::new()),
-            bucket_max_end: [0; 128],
+            bucket_max_end: [0; KEY_COUNT],
             max_id_seen: 0,
             next_note_id,
         }

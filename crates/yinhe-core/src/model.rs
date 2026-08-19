@@ -9,7 +9,7 @@ use crate::events::NoteEvent;
 use crate::tempo_map::{
     DEFAULT_MPQ, TempoMap, TempoSegment, mpq_from_bpm, recompute_tempo_start_times,
 };
-use yinhe_types::{AutomationLane, AutomationTarget, NoteBucket, PcEvent};
+use yinhe_types::{AutomationLane, AutomationTarget, KEY_COUNT, NoteBucket, PcEvent};
 
 // =========================================================
 //  Conductor
@@ -177,14 +177,14 @@ pub struct YinModel {
     /// sorted by start_tick (chunked, 65536 notes/chunk). Each note carries
     /// its track index and全局唯一 id。
     /// Compatible with `yinhe_types::NoteSource`.
-    pub notes: Box<[Arc<NoteBucket>; 128]>,
+    pub notes: Box<[Arc<NoteBucket>; KEY_COUNT]>,
     pub note_count: u64,
     pub tick_length: u64,
     /// 全曲最长音符长度（tick），只增不减：删除最长音符后保留旧值只会让
     /// 视口查询左边界略偏左，绝不漏音符。由 `load_track_notes` / `rebuild` /
     /// `rebuild_dirty` / `rescale_ppq` 维护；供 `NoteSource::max_note_len` 返回。
     pub max_note_len: u32,
-    /// Per-track note count cache (avoids scanning 128 buckets for stats).
+    /// Per-track note count cache (avoids scanning KEY_COUNT buckets for stats).
     pub track_note_count: Vec<u64>,
     /// Per-track audible note count (velocity > 1). `> 0` means the track
     /// has at least one audible note. Replaces the old `track_has_audio_cache: Vec<bool>`.
@@ -195,29 +195,29 @@ pub struct YinModel {
     /// write paths themselves (`rebuild_dirty` no longer sorts). Use
     /// `mark_dirty()` to set, `rebuild_dirty()` to clear. Public for struct
     /// construction via `..Default::default()`.
-    pub dirty_keys: [bool; 128],
+    pub dirty_keys: [bool; KEY_COUNT],
 
     /// Per-key note revision counter. Bumped every time `mark_dirty(k)` is
     /// called, **not** cleared by `rebuild_dirty()`. Consumers (e.g. GPU cull
     /// buffer upload) compare these to detect which keys need incremental
-    /// re-upload without rescanning all 128 buckets.
-    pub note_revisions: [u64; 128],
+    /// re-upload without rescanning all KEY_COUNT buckets.
+    pub note_revisions: [u64; KEY_COUNT],
 
     /// Per-bucket note count cache for O(D) incremental stats in `rebuild_dirty()`.
     /// Updated by `rebuild()`, `load_track_notes()`, and `rebuild_dirty()`.
-    pub bucket_note_count: [u64; 128],
+    pub bucket_note_count: [u64; KEY_COUNT],
 
     /// Per-bucket max end_tick cache. Enables correct incremental `tick_length`
-    /// in `rebuild_dirty()`: shrink-aware (max over all 128 buckets) without
+    /// in `rebuild_dirty()`: shrink-aware (max over all KEY_COUNT buckets) without
     /// O(N) full scan. Updated by `rebuild()`, `load_track_notes()`, and `rebuild_dirty()`.
-    pub bucket_max_end_tick: [u64; 128],
+    pub bucket_max_end_tick: [u64; KEY_COUNT],
 
     /// Per-bucket per-track (total, audible) counts. Sparse: each bucket
     /// only stores tracks that actually have notes in it. Enables
     /// O(dirty bucket size) incremental `track_note_count` /
     /// `track_audible_count` updates in `rebuild_dirty()` instead of
-    /// rescanning all 128 buckets.
-    pub bucket_track_stats: [HashMap<u16, (u64, u64)>; 128],
+    /// rescanning all KEY_COUNT buckets.
+    pub bucket_track_stats: [HashMap<u16, (u64, u64)>; KEY_COUNT],
 
     /// 全局音符 id 发号器（下一个待分配的 id）。
     /// 0 保留为"未分配"哨兵，实际 id 从 1 开始。
@@ -238,10 +238,10 @@ impl Default for YinModel {
             max_note_len: 0,
             track_note_count: Vec::new(),
             track_audible_count: Vec::new(),
-            dirty_keys: [false; 128],
-            note_revisions: [0; 128],
-            bucket_note_count: [0; 128],
-            bucket_max_end_tick: [0; 128],
+            dirty_keys: [false; KEY_COUNT],
+            note_revisions: [0; KEY_COUNT],
+            bucket_note_count: [0; KEY_COUNT],
+            bucket_max_end_tick: [0; KEY_COUNT],
             bucket_track_stats: core::array::from_fn(|_| HashMap::new()),
             next_note_id: 1,
         }
@@ -365,7 +365,7 @@ impl YinModel {
 
     /// Iterate all notes belonging to a specific track.
     ///
-    /// Scans all 128 key buckets and yields notes where `note.track == track_idx`.
+    /// Scans all KEY_COUNT key buckets and yields notes where `note.track == track_idx`.
     /// O(N) in total notes. For statistics use `track_note_count[track_idx]`.
     pub fn notes_for_track(&self, track_idx: u16) -> impl Iterator<Item = &yinhe_types::Note> {
         self.notes
@@ -433,7 +433,7 @@ mod tests {
     #[test]
     fn load_bucket_notes_fills_buckets_and_assigns_ids() {
         // .yin v3 加载路径：直接按 key 桶填，track 取自 BucketNote，id 一律重新分配
-        let mut all: Vec<Vec<BucketNote>> = Vec::with_capacity(128);
+        let mut all: Vec<Vec<BucketNote>> = Vec::with_capacity(KEY_COUNT);
         all.push(vec![BucketNote {
             track: 1,
             start_tick: 0,
@@ -454,7 +454,7 @@ mod tests {
                 velocity: 80,
             },
         ]);
-        all.resize(128, Vec::new());
+        all.resize(KEY_COUNT, Vec::new());
 
         let mut m = YinModel {
             tracks: vec![
