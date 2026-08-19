@@ -750,3 +750,41 @@ fn v5_file_without_mixer_section_loads_with_none() {
     let (_m2, _sf, _mapping, mixer) = yinhe_yin::load_yin_with_sf(&path).unwrap();
     assert!(mixer.is_none());
 }
+
+#[test]
+fn extended_keys_roundtrip() {
+    // 256 键数据回归：边界键 0/127/128/200/255 的音符在保存→重开后逐条一致。
+    let t0 = TrackData::new(0, 0);
+    let mut t1 = TrackData::new(0, 1);
+    t1.name = "Wide".to_string();
+    let notes: Vec<NoteEvent> = [0u8, 127, 128, 200, 255]
+        .into_iter()
+        .map(|key| NoteEvent {
+            id: 0,
+            start_tick: key as u32 * 10,
+            end_tick: key as u32 * 10 + 480,
+            key,
+            velocity: 100,
+        })
+        .collect();
+    let mut model = YinModel {
+        conductor: Arc::new(ConductorData::default()),
+        tracks: vec![Arc::new(t0), Arc::new(t1)],
+        meta: ProjectMeta::default(),
+        ..Default::default()
+    };
+    model.load_track_notes(vec![vec![], notes]);
+    model.rebuild();
+
+    let bytes = save_yin_bytes(&model).unwrap();
+    let m2 = load_yin_bytes(&bytes).unwrap();
+
+    assert_eq!(m2.note_count, 5);
+    for key in [0u8, 127, 128, 200, 255] {
+        assert_eq!(
+            m2.notes[key as usize].len(),
+            1,
+            "key {key} 的音符必须跨保存/重开保持"
+        );
+    }
+}

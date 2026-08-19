@@ -584,7 +584,7 @@ mod tests {
 
     /// 空音符源（点击创建测试用）。
     struct MockNotes {
-        buckets: [yinhe_types::NoteBucket; 128],
+        buckets: [yinhe_types::NoteBucket; yinhe_types::KEY_COUNT],
     }
     impl MockNotes {
         fn new() -> Self {
