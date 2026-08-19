@@ -11,7 +11,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use yinhe_core::{BucketNote, ConductorData, PcEvent, ProjectMeta, TrackData, YinModel};
-use yinhe_types::AutomationLane;
+use yinhe_types::{AutomationLane, KEY_COUNT};
 
 use yinhe_mixer::MixerParams;
 
@@ -57,7 +57,7 @@ fn decode_mixer_section(section: &[u8]) -> Option<MixerParams> {
 pub enum YinProgressStage {
     /// 保存：检查桶序（乱序桶兜底排序）
     Collect,
-    /// 保存：128 路归并 + 列编码（可连续汇报）
+    /// 保存：KEY_COUNT 路归并 + 列编码（可连续汇报）
     Sort,
     /// 保存：zstd 压缩（6 个流）
     Compress,
@@ -143,7 +143,7 @@ struct NoteStreams {
 }
 
 /// 归并堆元素：堆顶 = 当前 (start, track, key) 最小的桶游标。
-/// `key` 即桶号（0-127），同 (start, track) 的不同桶 key 必不同，全序无歧义。
+/// `key` 即桶号（0-255），同 (start, track) 的不同桶 key 必不同，全序无歧义。
 /// `note` 携带游标指向的音符本体（元素已被 `next()` 消费，避免二次取）。
 /// 比较只按 (start, track, key)（`Note` 无 Eq/Ord，不参与排序）。
 #[derive(Clone, Copy)]
@@ -178,9 +178,9 @@ fn progress(on_progress: &mut dyn FnMut(YinProgress), stage: YinProgressStage, f
     on_progress(YinProgress { stage, fraction });
 }
 
-/// 保存侧：128 路归并（桶内已按 start 有序）输出列式流。
+/// 保存侧：KEY_COUNT 路归并（桶内已按 start 有序）输出列式流。
 ///
-/// 全局 (start, track, key) 序 = 128 个有序桶的归并：O(N log 128)，
+/// 全局 (start, track, key) 序 = KEY_COUNT 个有序桶的归并：O(N log KEY_COUNT)，
 /// 比全量排序 O(N log N) 快 3-4 倍，且不需要 12B/音符的临时数组
 /// （1.64 亿音符省 ~2.6GB 内存）；归并边输出边汇报，UI 进度条连续动，
 /// 不再卡在 0%。乱序桶兜底本地排序（模型不变量，正常不触发）。
@@ -191,7 +191,7 @@ fn encode_note_streams(
     let total: usize = model.notes.iter().map(|b| b.len()).sum();
 
     // 兜底：乱序桶先本地排（不写回模型，只影响本次归并源）。
-    let mut sorted_copies: Vec<Option<Vec<yinhe_types::Note>>> = Vec::with_capacity(128);
+    let mut sorted_copies: Vec<Option<Vec<yinhe_types::Note>>> = Vec::with_capacity(KEY_COUNT);
     for (key, bucket) in model.notes.iter().enumerate() {
         if bucket.is_sorted() {
             sorted_copies.push(None);
@@ -203,11 +203,11 @@ fn encode_note_streams(
         progress(
             on_progress,
             YinProgressStage::Collect,
-            (key as f32 + 1.0) / 128.0,
+            (key as f32 + 1.0) / KEY_COUNT as f32,
         );
     }
     let mut sources: Vec<Box<dyn Iterator<Item = &yinhe_types::Note> + '_>> =
-        Vec::with_capacity(128);
+        Vec::with_capacity(KEY_COUNT);
     for (key, bucket) in model.notes.iter().enumerate() {
         match &sorted_copies[key] {
             Some(c) => sources.push(Box::new(c.iter())),
@@ -215,10 +215,10 @@ fn encode_note_streams(
         }
     }
 
-    // 128 路归并：每桶一个游标在堆里，pop 最小 (start, track, key) 后
+    // KEY_COUNT 路归并：每桶一个游标在堆里，pop 最小 (start, track, key) 后
     // 推进该桶下一个。桶内按 start 有序（兜底已排），输出即全局序。
     let mut heap: std::collections::BinaryHeap<std::cmp::Reverse<HeapEntry>> =
-        std::collections::BinaryHeap::with_capacity(128);
+        std::collections::BinaryHeap::with_capacity(KEY_COUNT);
     for (key, src) in sources.iter_mut().enumerate() {
         if let Some(n) = src.next() {
             heap.push(std::cmp::Reverse(HeapEntry {
@@ -369,14 +369,14 @@ fn decompress_data(
     Ok((meta, s))
 }
 
-/// 加载侧：5 个音符流 → 128 个 key 桶（桶内按 start 排序）。
+/// 加载侧：5 个音符流 → KEY_COUNT 个 key 桶（桶内按 start 排序）。
 fn bucket_from_streams(
     s: &NoteStreams,
     on_progress: &mut dyn FnMut(YinProgress),
 ) -> Result<Vec<Vec<BucketNote>>, YinError> {
     let n = s.key.len();
-    let mut buckets: Vec<Vec<BucketNote>> = Vec::with_capacity(128);
-    for _ in 0..128 {
+    let mut buckets: Vec<Vec<BucketNote>> = Vec::with_capacity(KEY_COUNT);
+    for _ in 0..KEY_COUNT {
         buckets.push(Vec::new());
     }
     let mut prev_start: u32 = 0;
@@ -403,7 +403,7 @@ fn bucket_from_streams(
         progress(
             on_progress,
             YinProgressStage::Resort,
-            (i as f32 + 1.0) / 128.0,
+            (i as f32 + 1.0) / KEY_COUNT as f32,
         );
     }
     Ok(buckets)
@@ -599,7 +599,7 @@ fn load_yin_bytes_inner(
         tracks.push(Arc::new(td));
     }
 
-    // 列式流 → 128 桶（桶内按 start 排序），再由 load_bucket_notes 入模型并分配 id。
+    // 列式流 → KEY_COUNT 桶（桶内按 start 排序），再由 load_bucket_notes 入模型并分配 id。
     let bucket_notes = bucket_from_streams(&note_streams, on_progress)?;
 
     let mut model = YinModel {

@@ -314,7 +314,7 @@ fn roundtrip_in_memory() {
 
     assert_eq!(m2.note_count, 7);
     assert_eq!(m2.tick_length, 1920);
-    assert_eq!(m2.notes.len(), 128);
+    assert_eq!(m2.notes.len(), yinhe_types::KEY_COUNT);
 }
 
 #[test]
