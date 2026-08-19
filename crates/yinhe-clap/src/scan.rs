@@ -82,25 +82,31 @@ pub enum ScanOutcome {
     Failed { path: PathBuf, error: PluginError },
 }
 
-/// 扫描一个目录（含一层子目录，macOS bundle 是目录）。
+/// 扫描一个目录（递归子目录；.clap bundle 本身是目录，不再深入其内部）。
 /// 单个包失败不影响其他包。
 pub fn scan_dir(dir: &Path) -> Vec<ScanOutcome> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
     let mut outcomes = Vec::new();
+    scan_dir_into(dir, &mut outcomes);
+    outcomes
+}
+
+fn scan_dir_into(dir: &Path, outcomes: &mut Vec<ScanOutcome>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension() != Some(OsStr::new("clap")) {
-            continue;
+        if path.extension() == Some(OsStr::new("clap")) {
+            let outcome = match scan_path(&path) {
+                Ok(infos) => ScanOutcome::Loaded(infos),
+                Err(error) => ScanOutcome::Failed { path, error },
+            };
+            outcomes.push(outcome);
+        } else if path.is_dir() {
+            // 普通子目录递归（用户可能按厂商分类存放）。
+            scan_dir_into(&path, outcomes);
         }
-        let outcome = match scan_path(&path) {
-            Ok(infos) => ScanOutcome::Loaded(infos),
-            Err(error) => ScanOutcome::Failed { path, error },
-        };
-        outcomes.push(outcome);
     }
-    outcomes
 }
 
 /// 扫描全部给定目录并汇总。
@@ -115,6 +121,19 @@ mod tests {
     #[test]
     fn scan_missing_dir_returns_empty() {
         assert!(scan_dir(Path::new("/nonexistent-yinhe-dir")).is_empty());
+    }
+
+    #[test]
+    fn scan_nested_dir_recurses() {
+        let dir = std::env::temp_dir().join("yinhe-clap-scan-nested-test");
+        let nested = dir.join("VendorA").join("Subdir");
+        std::fs::create_dir_all(&nested).expect("create nested temp dir");
+        // 伪造一个 .clap 文件（内容非法 → Failed，但证明递归触达了它）
+        std::fs::write(nested.join("fake.clap"), b"x").expect("write");
+        let outcomes = scan_dir(&dir);
+        assert_eq!(outcomes.len(), 1);
+        assert!(matches!(outcomes[0], ScanOutcome::Failed { .. }));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -72,6 +72,16 @@ pub(crate) fn channel_strip(
         .iter()
         .map(|r| r.bypassed)
         .collect();
+    let gui_open: Vec<bool> = app
+        .mixer_racks
+        .get(idx)
+        .map(|rack| {
+            rack.chain(Some(channel))
+                .iter()
+                .map(|rt| rt.gui_open)
+                .collect()
+        })
+        .unwrap_or_default();
 
     strip_frame(ui, |ui| {
         // 通道标签 + 轨道名。
@@ -90,7 +100,14 @@ pub(crate) fn channel_strip(
         )
         .on_hover_text(&names);
 
-        insert_area(ui, Some(channel), &insert_names, &bypassed, actions);
+        insert_area(
+            ui,
+            Some(channel),
+            &insert_names,
+            &bypassed,
+            &gui_open,
+            actions,
+        );
         strip_controls(ui, &params, |new_params| {
             actions.push(MixAction::SetStrip {
                 channel,
@@ -126,6 +143,11 @@ pub(crate) fn master_strip(
         .iter()
         .map(|r| r.bypassed)
         .collect();
+    let gui_open: Vec<bool> = app
+        .mixer_racks
+        .get(idx)
+        .map(|rack| rack.chain(None).iter().map(|rt| rt.gui_open).collect())
+        .unwrap_or_default();
 
     strip_frame(ui, |ui| {
         ui.label(
@@ -139,7 +161,7 @@ pub(crate) fn master_strip(
                 .color(crate::theme::text_secondary()),
         );
 
-        insert_area(ui, None, &insert_names, &bypassed, actions);
+        insert_area(ui, None, &insert_names, &bypassed, &gui_open, actions);
         // master 无 M/S/声像：占位保持与通道条等高对齐。
         ui.allocate_space(egui::vec2(STRIP_WIDTH - 12.0, 24.0));
         fader_and_meter(ui, params.gain, peak, |gain| {
@@ -163,11 +185,13 @@ fn strip_frame(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
 }
 
 /// insert 槽位区：已有槽位（旁通/名称/移除）+ 添加按钮。
+#[allow(clippy::too_many_arguments)] // 通道条渲染上下文透传
 fn insert_area(
     ui: &mut egui::Ui,
     channel: Option<u8>,
     names: &[String],
     bypassed: &[bool],
+    gui_open: &[bool],
     actions: &mut Vec<MixAction>,
 ) {
     egui::Frame::new()
@@ -203,6 +227,23 @@ fn insert_area(
                             crate::theme::text_primary()
                         });
                         ui.add(egui::Label::new(text).truncate());
+                        // 原生界面开关（浮动窗口，插件自管理）。
+                        let is_open = gui_open.get(slot).copied().unwrap_or(false);
+                        let g = egui::Button::new(egui::RichText::new("UI").small().color(
+                            if is_open {
+                                crate::theme::contrast_fg()
+                            } else {
+                                crate::theme::text_muted()
+                            },
+                        ))
+                        .fill(if is_open {
+                            crate::theme::accent_active()
+                        } else {
+                            crate::theme::btn_bg()
+                        });
+                        if ui.add(g).on_hover_text(t!("mix.toggle_gui")).clicked() {
+                            actions.push(MixAction::ToggleGui { channel, slot });
+                        }
                         if ui
                             .small_button("✕")
                             .on_hover_text(t!("mix.remove_insert"))

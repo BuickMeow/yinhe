@@ -25,4 +25,19 @@ pub enum PluginError {
 
     #[error("音频处理失败")]
     Process,
+
+    #[error("插件不支持 GUI 扩展")]
+    GuiNoExtension,
+
+    #[error("插件不支持本平台的 GUI（浮动窗口）")]
+    GuiUnsupported,
+
+    #[error("创建插件界面失败")]
+    GuiCreate,
+
+    #[error("插件界面嵌入宿主窗口失败")]
+    GuiAttach,
+
+    #[error("显示插件界面失败")]
+    GuiShow,
 }

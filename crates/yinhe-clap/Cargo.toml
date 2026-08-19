@@ -9,6 +9,7 @@ clack-extensions = { version = "0.1", features = [
     "clack-host",
     "audio-ports",
     "note-ports",
+    "gui",
     "log",
     "latency",
     "params",

@@ -38,6 +38,13 @@ pub(crate) struct SlotRuntime {
     pub sent: bool,
     /// 激活失败过：不再每帧重试（用户移除槽位后重加才会再试）。
     pub activate_failed: bool,
+    /// 插件原生 GUI 窗口当前打开中（host 自建窗口嵌入插件 view）。
+    pub gui_open: bool,
+    /// 宿主侧 GUI 窗口（macOS NSWindow）。必须在 `instance` 之后声明：
+    /// 字段按声明顺序 drop，instance 的 Drop 先执行 close_gui（插件 view
+    /// 从父 view 移除），之后窗口对象才能释放。
+    #[cfg(target_os = "macos")]
+    pub gui_window: Option<super::gui_window::PluginGuiWindow>,
     /// 已发 InsertRemove，等待处理器退回后 drop 实例。
     pub pending_remove: bool,
 }
@@ -136,6 +143,9 @@ impl MixerRack {
             bypass,
             sent: false,
             activate_failed: false,
+            gui_open: false,
+            #[cfg(target_os = "macos")]
+            gui_window: None,
             pending_remove: false,
         });
         match error {
@@ -192,6 +202,49 @@ impl MixerRack {
         }
     }
 
+    /// 插件 GUI 状态轮询：插件主动关窗 / 用户关宿主窗口 / 尺寸请求。
+    #[cfg(target_os = "macos")]
+    fn poll_gui(rt: &mut SlotRuntime) {
+        if !rt.gui_open {
+            return;
+        }
+        let SlotRuntime {
+            instance,
+            gui_open,
+            gui_window,
+            ..
+        } = rt;
+        let Some(instance) = instance.as_mut() else {
+            return;
+        };
+        // 插件侧主动断开（closed 回调）：host destroy 确认 + 释放窗口。
+        if instance.take_gui_closed() {
+            instance.on_gui_closed();
+            *gui_window = None;
+            *gui_open = false;
+            return;
+        }
+        if let Some(win) = gui_window.as_ref() {
+            // 用户点了宿主窗口的关闭按钮：窗口不可见 → 关闭插件 GUI。
+            if !win.is_visible() {
+                instance.close_gui();
+                *gui_window = None;
+                *gui_open = false;
+                return;
+            }
+        }
+        // 插件请求调整尺寸（如编辑器内部布局变化）。
+        if let Some((w, h)) = instance.take_gui_resize()
+            && let Some(win) = gui_window.as_ref()
+        {
+            win.set_content_size(w, h);
+        }
+    }
+
+    /// 非 macOS：GUI 未实现，无轮询。
+    #[cfg(not(target_os = "macos"))]
+    fn poll_gui(_rt: &mut SlotRuntime) {}
+
     /// 移除槽位（MIX 界面 ✕）：发 InsertRemove 并把槽位标记为待回收
     /// （处理器退回后 drop 实例）；处理器从未进引擎时直接 drop。
     pub fn remove_slot(&mut self, channel: Option<u8>, slot: usize, handle: Option<&AudioHandle>) {
@@ -213,6 +266,55 @@ impl MixerRack {
         if let Some(rt) = self.chain_mut(channel).get_mut(slot) {
             rt.bypass.store(bypassed, Ordering::Relaxed);
         }
+    }
+
+    /// 打开/关闭插件原生界面（host 自建窗口 + 插件 view 嵌入）。
+    /// 返回切换后的打开状态。
+    #[cfg(target_os = "macos")]
+    pub fn toggle_gui(
+        &mut self,
+        channel: Option<u8>,
+        slot: usize,
+    ) -> Result<bool, PluginLoadError> {
+        let Some(rt) = self.chain_mut(channel).get_mut(slot) else {
+            return Ok(false);
+        };
+        let Some(instance) = rt.instance.as_mut() else {
+            return Err(PluginLoadError("插件未加载成功，无法打开界面".into()));
+        };
+        if rt.gui_open {
+            // 先 close_gui（插件 view 脱离父 view），再释放窗口对象。
+            instance.close_gui();
+            rt.gui_window = None;
+            rt.gui_open = false;
+            return Ok(false);
+        }
+        let name = instance.info().name.clone();
+        let (w, h) = instance
+            .create_gui()
+            .map_err(|e| PluginLoadError(format!("{e}")))?;
+        let Some(win) = super::gui_window::PluginGuiWindow::new(&name, w, h) else {
+            instance.close_gui();
+            return Err(PluginLoadError("创建插件窗口失败".into()));
+        };
+        if let Err(e) = instance.attach_and_show_gui(win.view_ptr()) {
+            instance.close_gui();
+            return Err(PluginLoadError(format!("{e}")));
+        }
+        win.show();
+        rt.gui_window = Some(win);
+        rt.gui_open = true;
+        Ok(true)
+    }
+
+    /// 非 macOS：原生 GUI 尚未实现。
+    #[cfg(not(target_os = "macos"))]
+    pub fn toggle_gui(
+        &mut self,
+        _channel: Option<u8>,
+        _slot: usize,
+    ) -> Result<bool, PluginLoadError> {
+        Err(PluginLoadError("当前平台暂不支持插件界面".into()))
     }
 
     /// 处理渲染线程退回的处理器：downcast → 按 owner 匹配 → deactivate。
@@ -267,7 +369,11 @@ impl MixerRack {
         let mut restarts: Vec<(Option<u8>, usize)> = Vec::new();
         for (ch, chain) in self.channels.iter_mut() {
             for (slot, rt) in chain.iter_mut().enumerate() {
-                if rt.pending_remove || !rt.sent {
+                if rt.pending_remove {
+                    continue;
+                }
+                Self::poll_gui(rt);
+                if !rt.sent {
                     continue;
                 }
                 let Some(instance) = rt.instance.as_mut() else {
@@ -280,7 +386,11 @@ impl MixerRack {
             }
         }
         for (slot, rt) in self.master.iter_mut().enumerate() {
-            if rt.pending_remove || !rt.sent {
+            if rt.pending_remove {
+                continue;
+            }
+            Self::poll_gui(rt);
+            if !rt.sent {
                 continue;
             }
             let Some(instance) = rt.instance.as_mut() else {

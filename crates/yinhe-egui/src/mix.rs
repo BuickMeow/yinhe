@@ -9,6 +9,8 @@
 //! - 电平表：渲染线程 → `AudioHandle` 的 MeterReading → 这里做 UI 侧峰值衰减；
 //! - insert 生命周期：`MixerRack`（见 rack.rs）。
 
+#[cfg(target_os = "macos")]
+pub(crate) mod gui_window;
 pub(crate) mod rack;
 mod strip;
 
@@ -94,6 +96,10 @@ pub(crate) enum MixAction {
         channel: Option<u8>,
         slot: usize,
         bypassed: bool,
+    },
+    ToggleGui {
+        channel: Option<u8>,
+        slot: usize,
     },
     RemoveInsert {
         channel: Option<u8>,
@@ -455,6 +461,15 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
             let handle = app.audio_state.handle.as_ref().map(|a| &a.handle);
             if idx < app.mixer_racks.len() {
                 app.mixer_racks[idx].remove_slot(channel, slot, handle);
+            }
+        }
+        MixAction::ToggleGui { channel, slot } => {
+            match app.mixer_rack_mut(idx).toggle_gui(channel, slot) {
+                Ok(_) => {}
+                Err(e) => {
+                    let msg = e.0.clone();
+                    app.mixer_rack_mut(idx).last_error = Some(msg);
+                }
             }
         }
         MixAction::RescanPlugins => rescan(app),

@@ -37,6 +37,8 @@ pub struct ParamDescriptor {
 pub struct ClapPluginInstance {
     instance: PluginInstance<YinheHost>,
     info: PluginInfo,
+    /// 插件 GUI 已 create（浮动窗口模型；drop 前必须 destroy，否则插件进程内资源泄漏/崩溃）。
+    gui_created: bool,
 }
 
 impl ClapPluginInstance {
@@ -60,6 +62,7 @@ impl ClapPluginInstance {
         Ok(Self {
             instance,
             info: info.clone(),
+            gui_created: false,
         })
     }
 
@@ -250,5 +253,108 @@ impl ClapPluginInstance {
             main_thread.state_dirty = false;
             dirty
         })
+    }
+
+    // ── 插件原生 GUI（浮动窗口：插件自己开/管理原生窗口）──
+
+    /// 创建插件 GUI 资源（embedded 模式），返回插件首选尺寸（供 host 建窗）。
+    ///
+    /// 为什么不用浮动窗口：JUCE 系插件（Element FX 等）的 CLAP 包装层
+    /// 明确拒绝 is_floating=true，只支持 set_parent 嵌入。host 自建
+    /// 顶层窗口、把 content view 交给插件嵌入，是这类插件唯一的 GUI 路径。
+    /// 重复调用幂等（已创建则直接返回尺寸）。
+    pub fn create_gui(&mut self) -> Result<(u32, u32), PluginError> {
+        use clack_extensions::gui::{GuiApiType, GuiConfiguration, PluginGui};
+        let mut handle = self.instance.plugin_handle();
+        let Some(gui) = handle.get_extension::<PluginGui>() else {
+            return Err(PluginError::GuiNoExtension);
+        };
+        let Some(api_type) = GuiApiType::default_for_current_platform() else {
+            return Err(PluginError::GuiUnsupported);
+        };
+        let config = GuiConfiguration {
+            api_type,
+            is_floating: false,
+        };
+        if !self.gui_created {
+            if !gui.is_api_supported(&mut handle, config) {
+                return Err(PluginError::GuiUnsupported);
+            }
+            gui.create(&mut handle, config)
+                .map_err(|_| PluginError::GuiCreate)?;
+            self.gui_created = true;
+        }
+        let size = gui
+            .get_size(&mut handle)
+            .map(|s| (s.width, s.height))
+            .unwrap_or((800, 600));
+        Ok(size)
+    }
+
+    /// 把插件 GUI 挂到宿主窗口的 view（macOS: NSView 指针）并显示。
+    /// 调用顺序：create_gui → host 建窗 → attach_and_show_gui。
+    pub fn attach_and_show_gui(
+        &mut self,
+        parent_view: *mut std::ffi::c_void,
+    ) -> Result<(), PluginError> {
+        use clack_extensions::gui::{PluginGui, Window};
+        let mut handle = self.instance.plugin_handle();
+        let Some(gui) = handle.get_extension::<PluginGui>() else {
+            return Err(PluginError::GuiNoExtension);
+        };
+        if !self.gui_created {
+            return Err(PluginError::GuiCreate);
+        }
+        // SAFETY: parent_view 必须存活到 GUI destroy。约定由调用方（机架
+        // SlotRuntime 字段顺序）保证：实例先于窗口对象 drop，close_gui
+        // （destroy）发生时 view 仍然有效。
+        unsafe { gui.set_parent(&mut handle, Window::from_cocoa_nsview(parent_view)) }
+            .map_err(|_| PluginError::GuiAttach)?;
+        gui.show(&mut handle).map_err(|_| PluginError::GuiShow)?;
+        Ok(())
+    }
+
+    /// 关闭并销毁插件界面（hide + destroy）。
+    pub fn close_gui(&mut self) {
+        if !self.gui_created {
+            return;
+        }
+        let mut handle = self.instance.plugin_handle();
+        if let Some(gui) = handle.get_extension::<clack_extensions::gui::PluginGui>() {
+            let _ = gui.hide(&mut handle);
+            gui.destroy(&mut handle);
+        }
+        self.gui_created = false;
+    }
+
+    /// 插件报告浮动窗口被用户关闭：按 CLAP 规范 host 须 destroy 一次确认。
+    pub fn on_gui_closed(&mut self) {
+        if !self.gui_created {
+            return;
+        }
+        let mut handle = self.instance.plugin_handle();
+        if let Some(gui) = handle.get_extension::<clack_extensions::gui::PluginGui>() {
+            gui.destroy(&mut handle);
+        }
+        self.gui_created = false;
+    }
+
+    /// 插件侧报告过窗口关闭（取出即清除）。
+    pub fn take_gui_closed(&mut self) -> bool {
+        self.instance
+            .access_shared_handler(|shared| shared.take_gui_closed())
+    }
+
+    /// 插件请求调整窗口尺寸（取出即清除）。
+    pub fn take_gui_resize(&mut self) -> Option<(u32, u32)> {
+        self.instance
+            .access_shared_handler(|shared| shared.take_gui_resize())
+    }
+}
+
+impl Drop for ClapPluginInstance {
+    fn drop(&mut self) {
+        // GUI 必须先于插件实例销毁（JUCE 等插件不 destroy GUI 直接 drop 会崩）。
+        self.close_gui();
     }
 }

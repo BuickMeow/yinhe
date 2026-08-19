@@ -26,6 +26,10 @@ pub struct YinheShared {
     pub(crate) callback_requested: AtomicBool,
     /// 插件请求参数 flush。
     pub(crate) flush_requested: AtomicBool,
+    /// 插件报告浮动窗口被用户关闭（host 须 destroy 一次 GUI）。
+    pub(crate) gui_closed: AtomicBool,
+    /// 插件请求 host 窗口调整尺寸（GuiSize::pack_to_u64；0 = 无请求）。
+    pub(crate) gui_resize_requested: std::sync::atomic::AtomicU64,
 }
 
 impl YinheShared {
@@ -35,6 +39,8 @@ impl YinheShared {
             process_requested: AtomicBool::new(false),
             callback_requested: AtomicBool::new(false),
             flush_requested: AtomicBool::new(false),
+            gui_closed: AtomicBool::new(false),
+            gui_resize_requested: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -57,6 +63,47 @@ impl YinheShared {
 
     pub(crate) fn take_flush(&self) -> bool {
         Self::take(&self.flush_requested)
+    }
+
+    pub(crate) fn take_gui_closed(&self) -> bool {
+        Self::take(&self.gui_closed)
+    }
+
+    /// 取出插件的尺寸调整请求（宽, 高），无则 None。
+    pub(crate) fn take_gui_resize(&self) -> Option<(u32, u32)> {
+        let raw = self.gui_resize_requested.swap(0, Ordering::SeqCst);
+        if raw == 0 {
+            return None;
+        }
+        let size = clack_extensions::gui::GuiSize::unpack_from_u64(raw);
+        Some((size.width, size.height))
+    }
+}
+
+/// GUI 反向回调（浮动窗口模型：窗口由插件自己管理，host 只被动确认）。
+impl clack_extensions::gui::HostGuiImpl for YinheShared {
+    fn resize_hints_changed(&self) {}
+
+    fn request_resize(
+        &self,
+        new_size: clack_extensions::gui::GuiSize,
+    ) -> Result<(), clack_host::host::HostError> {
+        // host 自建窗口嵌入模型：记下尺寸，主线程轮询后调整窗口。
+        self.gui_resize_requested
+            .store(new_size.pack_to_u64(), Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn request_show(&self) -> Result<(), clack_host::host::HostError> {
+        Ok(())
+    }
+
+    fn request_hide(&self) -> Result<(), clack_host::host::HostError> {
+        Ok(())
+    }
+
+    fn closed(&self, _was_destroyed: bool) {
+        self.gui_closed.store(true, Ordering::SeqCst);
     }
 }
 
@@ -157,6 +204,7 @@ impl HostHandlers for YinheHost {
 
     fn declare_extensions(builder: &mut HostExtensions<Self>, _shared: &Self::Shared<'_>) {
         builder
+            .register::<clack_extensions::gui::HostGui>()
             .register::<clack_extensions::log::HostLog>()
             .register::<clack_extensions::latency::HostLatency>()
             .register::<clack_extensions::params::HostParams>()
