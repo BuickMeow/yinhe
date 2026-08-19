@@ -36,6 +36,8 @@ pub(crate) struct SlotRuntime {
     pub bypass: Arc<AtomicBool>,
     /// 处理器当前在渲染线程（已 InsertAdd 且未退回）。
     pub sent: bool,
+    /// 激活失败过：不再每帧重试（用户移除槽位后重加才会再试）。
+    pub activate_failed: bool,
     /// 已发 InsertRemove，等待处理器退回后 drop 实例。
     pub pending_remove: bool,
 }
@@ -133,6 +135,7 @@ impl MixerRack {
             instance,
             bypass,
             sent: false,
+            activate_failed: false,
             pending_remove: false,
         });
         match error {
@@ -171,19 +174,20 @@ impl MixerRack {
         let mut targets: Vec<(Option<u8>, usize)> = Vec::new();
         for (ch, chain) in &self.channels {
             for (slot, rt) in chain.iter().enumerate() {
-                if !rt.sent && !rt.pending_remove {
+                if !rt.sent && !rt.pending_remove && !rt.activate_failed {
                     targets.push((Some(*ch), slot));
                 }
             }
         }
         for (slot, rt) in self.master.iter().enumerate() {
-            if !rt.sent && !rt.pending_remove {
+            if !rt.sent && !rt.pending_remove && !rt.activate_failed {
                 targets.push((None, slot));
             }
         }
         for (channel, slot) in targets {
             if let Err(e) = self.activate_slot(channel, slot, handle, sample_rate) {
                 self.last_error = Some(e.0);
+                self.chain_mut(channel)[slot].activate_failed = true;
             }
         }
     }
