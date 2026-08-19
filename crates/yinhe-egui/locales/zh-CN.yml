@@ -523,6 +523,8 @@ pr_bar.main_track: "主音轨"
 pr_bar.show_tracks: "显示音轨"
 pr_bar.select_all: "全选"
 pr_bar.no_track: "（无音轨）"
+pr_bar.allow_overlap_on: "允许新重叠音符：开（点击关闭）"
+pr_bar.allow_overlap_off: "允许新重叠音符：关（点击开启）"
 # ── MIX 混音台 ──
 mix.scan_plugins: "扫描插件"
 mix.scan_status: "%{count} 个效果器"

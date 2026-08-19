@@ -92,6 +92,25 @@ pub fn collect_selected(model: &YinModel, selection: &Selection) -> Vec<(Note, u
     result
 }
 
+/// 「新音符是否与已有音符重叠」判定：同 track && [start, end) 区间相交。
+///
+/// 候选窗口用 `model.max_note_len` 保守左扩（与 PR 悬停 hit-test 同思路）：
+/// 任何重叠音符必满足 `start_tick ∈ [start - max_note_len, end)`（相交要求
+/// `ns < end && ne > start`，而 `gate ≤ max_note_len` ⟹ `ns > start - max_note_len`），
+/// 再用精确条件 `n.end_tick > start` 过滤。`max_note_len` 只增不减，
+/// 过期偏大只会放宽窗口、绝不漏候选。左闭右开区间：首尾相接不算重叠。
+///
+/// 复杂度 O(log 块数 + 窗口内候选数)，不做全桶线性扫描。
+pub fn has_overlapping_note(model: &YinModel, track: u16, key: u8, start: u32, end: u32) -> bool {
+    if end <= start {
+        return false; // 零长/反向区间不与任何音符相交（编辑入口保证 gate >= 1，防御用）
+    }
+    let lo = start.saturating_sub(model.max_note_len);
+    model.notes[key as usize]
+        .range(lo, end)
+        .any(|n| n.track == track && n.end_tick > start)
+}
+
 /// 选中音符的统计信息（Info 面板选框信息显示）。
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SelectedNoteSummary {
@@ -357,5 +376,64 @@ mod tests {
         let s = summarize_selected(&m, &sel);
         assert_eq!(s.count, 1);
         assert_eq!(s.velocity, Some(100));
+    }
+
+    /// 重叠判定：相交/相接/跨轨/跨 key/长音符起点远早于窗口（靠 max_note_len 左扩命中）。
+    #[test]
+    fn has_overlapping_note_cases() {
+        let mut m = YinModel {
+            tracks: vec![
+                Arc::new(TrackData::new(0, 0)),
+                Arc::new(TrackData::new(1, 1)),
+            ],
+            ..Default::default()
+        };
+        m.load_track_notes(vec![
+            vec![
+                // track 0：普通音符 + 跨轨参照
+                NoteEvent {
+                    id: 0,
+                    start_tick: 100,
+                    end_tick: 200,
+                    key: 60,
+                    velocity: 100,
+                },
+                // track 0：k61 长音符（起点远早于查询窗口）
+                NoteEvent {
+                    id: 0,
+                    start_tick: 0,
+                    end_tick: 1000,
+                    key: 61,
+                    velocity: 100,
+                },
+            ],
+            vec![NoteEvent {
+                id: 0,
+                start_tick: 150,
+                end_tick: 250,
+                key: 60,
+                velocity: 100,
+            }],
+        ]);
+        m.rebuild();
+
+        // 同轨同 key 相交（右交/左交/包住/被包）
+        assert!(has_overlapping_note(&m, 0, 60, 150, 180));
+        assert!(has_overlapping_note(&m, 0, 60, 50, 150));
+        assert!(has_overlapping_note(&m, 0, 60, 50, 250));
+        assert!(has_overlapping_note(&m, 0, 60, 120, 130));
+        // 首尾相接（左闭右开）不算重叠
+        assert!(!has_overlapping_note(&m, 0, 60, 200, 300));
+        assert!(!has_overlapping_note(&m, 0, 60, 0, 100));
+        // 跨轨不算（track 1 的 [150,250) 与查询区间相交但轨道不同）
+        assert!(!has_overlapping_note(&m, 1, 60, 500, 600));
+        // 跨 key 不算
+        assert!(!has_overlapping_note(&m, 0, 62, 150, 250));
+        // 长音符起点远早于 start：靠 max_note_len 左扩窗口命中
+        assert!(has_overlapping_note(&m, 0, 61, 900, 950));
+        // 长音符结束之后的空区
+        assert!(!has_overlapping_note(&m, 0, 61, 1000, 1100));
+        // 零长区间防御
+        assert!(!has_overlapping_note(&m, 0, 60, 150, 150));
     }
 }

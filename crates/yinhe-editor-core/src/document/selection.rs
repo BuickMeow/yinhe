@@ -148,6 +148,7 @@ impl Document {
         };
 
         let conductor = self.edit.conductor_track_idx;
+        let allow_overlap = self.edit.allow_overlapping_notes;
         let model = Arc::make_mut(&mut self.data.model);
 
         let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
@@ -156,12 +157,22 @@ impl Document {
             if Some(note.track) == conductor {
                 continue;
             }
+            let new_start = (note.start_tick as i64 + offset).max(0) as u32;
+            let new_end = (note.end_tick as i64 + offset).max(0) as u32;
+            let new_track = (note.track as i32 + track_offset).clamp(0, u16::MAX as i32) as u16;
+            // 「允许新重叠音符」关闭：粘贴副本与已有音符重叠 → 跳过该副本。
+            // 检查在批量插入前进行，批次内部互不影响（含剪贴板源音符）。
+            if !allow_overlap
+                && batch_ops::has_overlapping_note(model, new_track, *key, new_start, new_end)
+            {
+                continue;
+            }
             let new_note = yinhe_types::Note {
                 id: model.alloc_note_id(),
-                start_tick: (note.start_tick as i64 + offset).max(0) as u32,
-                end_tick: (note.end_tick as i64 + offset).max(0) as u32,
+                start_tick: new_start,
+                end_tick: new_end,
                 velocity: note.velocity,
-                track: ((note.track as i32 + track_offset).clamp(0, u16::MAX as i32) as u16),
+                track: new_track,
             };
             new_by_key.entry(*key).or_default().push(new_note);
         }
@@ -196,5 +207,111 @@ impl Document {
             before: vec![],
             after,
         }))
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::document::Document;
+    use yinhe_core::{ConductorData, NoteEvent, TrackData, YinModel};
+
+    fn make_doc() -> Document {
+        let model = YinModel {
+            conductor: Arc::new(ConductorData::default()),
+            tracks: vec![Arc::new(TrackData::new(0, 0))],
+            ..Default::default()
+        };
+        Document {
+            data: crate::project_data::ProjectData::new(
+                Arc::new(model),
+                Default::default(),
+                Default::default(),
+            ),
+            edit: crate::edit_state::EditState {
+                track_visible: vec![true],
+                track_pianoroll_visible: vec![true],
+                ..Default::default()
+            },
+            history: crate::history::UndoStack::new(),
+            file_name: "test".into(),
+            file_path: None,
+            mixer: Default::default(),
+            mixer_dirty: false,
+        }
+    }
+
+    fn add(doc: &mut Document, start: u32, end: u32, key: u8) {
+        doc.add_note(
+            0,
+            NoteEvent {
+                id: 0,
+                start_tick: start,
+                end_tick: end,
+                key,
+                velocity: 100,
+            },
+        );
+    }
+
+    /// paste_from_selection：与已有音符重叠的粘贴副本跳过，其余正常插入。
+    #[test]
+    fn paste_skips_overlapping_notes_when_disallowed() {
+        let mut doc = make_doc();
+        add(&mut doc, 100, 200, 60); // 源 A
+        add(&mut doc, 100, 150, 62); // 源 B
+        add(&mut doc, 450, 550, 60); // 占位 C（粘贴目标区）
+        doc.edit.allow_overlapping_notes = false;
+
+        // 剪贴板 = 源音符所在选框（只含 A、B）
+        let mut clipboard = yinhe_core::Selection::default();
+        clipboard.add_rect_track(100, 201, 60, 62, 0, 0);
+
+        // 粘贴到 400：A 副本 [400,500) 与 C 相交 → 跳过；B 副本 k62 [400,450) → 插入
+        let action = doc
+            .paste_from_selection(&clipboard, 400.0, None, &std::collections::HashSet::new())
+            .expect("应有部分副本插入");
+        match action {
+            UndoAction::Notes(delta) => {
+                assert_eq!(delta.after.len(), 1, "只有 B 的副本被插入");
+                assert_eq!(delta.after[0].1, 62);
+            }
+            other => panic!("期望 UndoAction::Notes，实际 {other:?}"),
+        }
+        assert_eq!(doc.data.model.notes[60].len(), 2, "k60 只有 A 和 C");
+        assert_eq!(doc.data.model.notes[62].len(), 2, "B 及其副本");
+    }
+
+    /// paste_from_selection：副本全被拦时返回 None，模型不变。
+    #[test]
+    fn paste_all_blocked_returns_none() {
+        let mut doc = make_doc();
+        add(&mut doc, 100, 200, 60); // 源 A
+        add(&mut doc, 450, 550, 60); // 占位 C（与 A 的副本 [400,500) 相交）
+        doc.edit.allow_overlapping_notes = false;
+
+        let mut clipboard = yinhe_core::Selection::default();
+        clipboard.add_rect_track(100, 201, 60, 60, 0, 0);
+        assert!(
+            doc.paste_from_selection(&clipboard, 400.0, None, &std::collections::HashSet::new())
+                .is_none(),
+            "副本全被拦时应返回 None"
+        );
+        assert_eq!(doc.data.model.notes[60].len(), 2, "模型不应变化");
+    }
+
+    /// 默认允许重叠：粘贴照常（现状行为）。
+    #[test]
+    fn paste_allows_overlap_by_default() {
+        let mut doc = make_doc();
+        add(&mut doc, 100, 200, 60);
+        add(&mut doc, 450, 550, 60);
+        let mut clipboard = yinhe_core::Selection::default();
+        clipboard.add_rect_track(100, 201, 60, 60, 0, 0);
+        assert!(
+            doc.paste_from_selection(&clipboard, 400.0, None, &std::collections::HashSet::new())
+                .is_some(),
+            "默认应允许重叠粘贴"
+        );
+        assert_eq!(doc.data.model.notes[60].len(), 3);
     }
 }

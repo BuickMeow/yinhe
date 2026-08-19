@@ -23,6 +23,8 @@ pub enum PrBarEvent {
     SetTrackVisible(u16, bool),
     /// 全选/清空显示音轨（track_visible 全部置为同一值）。
     SetAllVisible(bool),
+    /// 切换「允许新重叠音符」开关（全局持久化，见 AudioSettings）。
+    SetAllowOverlap(bool),
 }
 
 /// 控制栏输入（全部只读；状态修改走事件）。
@@ -36,6 +38,8 @@ pub struct PrBarData<'a> {
     pub pr_track_visible: &'a [bool],
     /// 主音轨（= 选中轨索引最小者；无选中 = None，不显示回退轨）。
     pub main_track: Option<u16>,
+    /// 「允许新重叠音符」开关当前状态（doc.edit.allow_overlapping_notes）。
+    pub allow_overlap: bool,
     /// 和弦指示器文本（实时 MIDI 按键优先，其次播放中光标处和弦）。
     pub chord: Option<&'a str>,
 }
@@ -81,6 +85,57 @@ pub fn show(ui: &mut egui::Ui, bar: egui::Rect, ctx: &PrBarData<'_>, events: &mu
         events.push(PrBarEvent::Quantize(q));
     }
 
+    // ── 「允许重叠音符」开关（量化按钮右侧）──
+    let ov_rect = egui::Rect::from_min_size(
+        egui::pos2(quantize_rect.max.x + 2.0, bar.min.y),
+        egui::vec2(18.0, bar.height()),
+    );
+    let ov_resp = ui.interact(
+        ov_rect,
+        egui::Id::new("pr_bar_allow_overlap_btn"),
+        egui::Sense::click(),
+    );
+    let ov_hovered = ov_resp.hovered();
+    if ov_hovered {
+        let bg = if ov_resp.is_pointer_button_down_on() {
+            crate::theme::pressed_color(crate::theme::app_bg())
+        } else {
+            crate::theme::hover_color(crate::theme::app_bg())
+        };
+        ui.painter().rect_filled(ov_rect, 4.0, bg);
+    }
+    // 开启时高亮图标（表示当前允许新重叠音符）；关闭时灰显并带删除线暗示禁用。
+    let ov_icon = egui_material_icons::icons::ICON_DISCOVER_TUNE;
+    let ov_color = if ctx.allow_overlap {
+        if ov_hovered {
+            crate::theme::contrast_fg()
+        } else {
+            crate::theme::accent_active()
+        }
+    } else if ov_hovered {
+        crate::theme::contrast_fg()
+    } else {
+        crate::theme::text_muted()
+    };
+    ui.painter().text(
+        ov_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        ov_icon.codepoint,
+        egui::FontId::new(crate::theme::ICON_FONT, ov_icon.font_family()),
+        ov_color,
+    );
+    if ov_resp.clicked() {
+        events.push(PrBarEvent::SetAllowOverlap(!ctx.allow_overlap));
+    }
+    if ov_hovered {
+        let tip = if ctx.allow_overlap {
+            t!("pr_bar.allow_overlap_on")
+        } else {
+            t!("pr_bar.allow_overlap_off")
+        };
+        ov_resp.on_hover_text(tip);
+    }
+
     // ── 音轨名称按钮（点击弹出左右两栏 popup）──
     let name = ctx
         .main_track
@@ -106,7 +161,7 @@ pub fn show(ui: &mut egui::Ui, bar: egui::Rect, ctx: &PrBarData<'_>, events: &mu
         .size()
         .x;
     let btn_rect = egui::Rect::from_min_size(
-        egui::pos2(quantize_rect.max.x + 4.0, bar.min.y + 2.0),
+        egui::pos2(quantize_rect.max.x + 2.0 + 18.0 + 4.0, bar.min.y + 2.0),
         egui::vec2(text_w + 6.0 + icon_w + 16.0, bar.height() - 4.0),
     );
     let btn_resp = ui.interact(

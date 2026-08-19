@@ -53,6 +53,10 @@ pub struct AudioSettings {
     pub automation_event_density: u32,
     /// 音符描边开关（关闭可减少 GPU fill rate，提高性能）
     pub note_outline: bool,
+    /// 「允许新重叠音符」开关（PR 控制栏）。关闭后，新建/移动/复制/粘贴
+    /// 产生的新音符若与已有音符重叠（同轨同键、区间相交）则被无视。
+    /// 默认开（保持现状行为）。
+    pub allow_overlapping_notes: bool,
     pub scroll_mode: u32,
     /// 最小边框宽度(像素), 0=不设下限
     pub min_border_width: f32,
@@ -132,6 +136,7 @@ impl Default for AudioSettings {
             midi_import_encoding: MidiImportEncoding::Utf8,
             automation_event_density: 1,
             note_outline: true, // outline on by default (existing behavior)
+            allow_overlapping_notes: true, // 默认允许重叠（保持现状行为）
             use_gpu_synth: false,
             use_gpu_cull: false, // 默认 CPU 构建
             locale: "zh-CN".to_string(),

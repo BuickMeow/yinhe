@@ -46,6 +46,18 @@ impl Document {
             return None;
         }
         let key = note.key;
+        // 「允许新重叠音符」关闭：与已有音符重叠的新音符整个无视（不分配 id）。
+        if !self.edit.allow_overlapping_notes
+            && batch_ops::has_overlapping_note(
+                &self.data.model,
+                track_idx,
+                key,
+                note.start_tick,
+                note.end_tick,
+            )
+        {
+            return None;
+        }
         let typed_note = {
             let model = Arc::make_mut(&mut self.data.model);
             let id = model.alloc_note_id();
@@ -126,6 +138,7 @@ impl Document {
         if self.edit.selected.is_empty() {
             return None;
         }
+        let allow_overlap = self.edit.allow_overlapping_notes;
         let after = {
             let model = Arc::make_mut(&mut self.data.model);
 
@@ -145,14 +158,28 @@ impl Document {
             let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
                 std::collections::HashMap::new();
             for (note, key) in &selected_data {
+                let new_start = note.start_tick + offset;
+                let new_end = note.end_tick + offset;
+                // 「允许新重叠音符」关闭：副本与操作前已有音符重叠 → 跳过该副本。
+                // 检查在批量插入前进行，批次内部互不影响（含各副本的原音符）。
+                if !allow_overlap
+                    && batch_ops::has_overlapping_note(model, note.track, *key, new_start, new_end)
+                {
+                    continue;
+                }
                 let new_note = yinhe_types::Note {
                     id: model.alloc_note_id(),
-                    start_tick: note.start_tick + offset,
-                    end_tick: note.end_tick + offset,
+                    start_tick: new_start,
+                    end_tick: new_end,
                     velocity: note.velocity,
                     track: note.track,
                 };
                 new_by_key.entry(*key).or_default().push(new_note);
+            }
+
+            // 全部被跳过：不动选区、不产生 undo。
+            if new_by_key.is_empty() {
+                return None;
             }
 
             // Build after vec before moving new_by_key.
@@ -189,6 +216,7 @@ impl Document {
         if self.edit.selected.is_empty() {
             return None;
         }
+        let allow_overlap = self.edit.allow_overlapping_notes;
         let after = {
             let model = Arc::make_mut(&mut self.data.model);
 
@@ -204,6 +232,19 @@ impl Document {
                     ((*old_key as i32) + delta_keys).clamp(0, yinhe_types::MAX_KEY as i32) as u8;
                 let new_start = (note.start_tick as i64 + delta_ticks).max(0) as u32;
                 let length = note.end_tick - note.start_tick;
+                // 「允许新重叠音符」关闭：副本与操作前已有音符重叠 → 跳过该副本。
+                // 检查在批量插入前进行，批次内部互不影响（含各副本的原音符）。
+                if !allow_overlap
+                    && batch_ops::has_overlapping_note(
+                        model,
+                        note.track,
+                        new_key,
+                        new_start,
+                        new_start + length,
+                    )
+                {
+                    continue;
+                }
                 let new_note = yinhe_types::Note {
                     id: model.alloc_note_id(),
                     start_tick: new_start,
@@ -212,6 +253,11 @@ impl Document {
                     track: note.track,
                 };
                 new_by_key.entry(new_key).or_default().push(new_note);
+            }
+
+            // 全部被跳过：不动选区、不产生 undo。
+            if new_by_key.is_empty() {
+                return None;
             }
 
             let after: Vec<(yinhe_types::Note, u8)> = new_by_key
@@ -320,13 +366,34 @@ impl Document {
         let originals = batch_ops::remove_selected(model, &self.edit.selected);
         // 操作式 undo 需要操作**前**的选区矩形（offset 之前捕获）。
         let rects_before = self.edit.selected.rects.clone();
+        let allow_overlap = self.edit.allow_overlapping_notes;
         let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
             std::collections::HashMap::new();
+        // 被「禁止重叠」拦下而留在原处的音符不进 undo delta（位置没变），
+        // before/after 只含真正移动的音符。
+        let mut moved_before: Vec<(yinhe_types::Note, u8)> = Vec::new();
+        let mut moved_after: Vec<(yinhe_types::Note, u8)> = Vec::new();
+        let mut blocked_any = false;
         for (note, old_key) in &originals {
             let new_key =
                 ((*old_key as i32) + delta_keys).clamp(0, yinhe_types::MAX_KEY as i32) as u8;
             let new_tick = (note.start_tick as i64 + delta_ticks).max(0) as u32;
             let length = note.end_tick - note.start_tick;
+            // 「允许新重叠音符」关闭：目标位置与非本次移动的已有音符重叠
+            // （移动集合已先移除，检查看不到它们）→ 该音符留在原处。
+            if !allow_overlap
+                && batch_ops::has_overlapping_note(
+                    model,
+                    note.track,
+                    new_key,
+                    new_tick,
+                    new_tick + length,
+                )
+            {
+                blocked_any = true;
+                new_by_key.entry(*old_key).or_default().push(*note);
+                continue;
+            }
             let moved = yinhe_types::Note {
                 id: note.id,
                 start_tick: new_tick,
@@ -334,6 +401,8 @@ impl Document {
                 velocity: note.velocity,
                 track: note.track,
             };
+            moved_before.push((*note, *old_key));
+            moved_after.push((moved, new_key));
             new_by_key.entry(new_key).or_default().push(moved);
         }
         let after: Vec<(yinhe_types::Note, u8)> = new_by_key
@@ -342,7 +411,14 @@ impl Document {
             .collect();
         batch_ops::insert_batch(model, new_by_key);
 
+        // 全部被拦：音符已原样插回，选区不动，不产生 undo。
+        if blocked_any && moved_before.is_empty() {
+            model.rebuild_dirty();
+            return None;
+        }
+
         // Offset selection rects to follow the moved notes.
+        // 部分被拦时选区仍整体跟随移动手势（留在原处的音符可能脱出选区）。
         self.edit.selected.offset(delta_ticks, delta_keys);
         model.rebuild_dirty();
         self.data.bump_revision();
@@ -354,12 +430,19 @@ impl Document {
                 && (*k as i32 + delta_keys) >= 0
                 && (*k as i32 + delta_keys) <= yinhe_types::MAX_KEY as i32
         });
-        if clamp_free {
+        if clamp_free && !blocked_any {
             Some(UndoAction::MoveNotes {
                 rects: rects_before,
                 delta_ticks,
                 delta_keys,
             })
+        } else if blocked_any {
+            // 有被拦音符时操作式 undo（选区整组平移）不再对称，回退副本制，
+            // 且 delta 只含真正移动的音符。
+            Some(UndoAction::Notes(NoteDelta {
+                before: moved_before,
+                after: moved_after,
+            }))
         } else {
             Some(UndoAction::Notes(NoteDelta {
                 before: originals,
@@ -1351,5 +1434,201 @@ mod tests {
         assert!(doc.set_note_end_tick(62, note_id, 1000).is_some());
         let n = doc.data.model.notes[62][0];
         assert_eq!(n.end_tick, 1001);
+    }
+
+    fn ev(start: u32, end: u32, key: u8) -> NoteEvent {
+        NoteEvent {
+            id: 0,
+            start_tick: start,
+            end_tick: end,
+            key,
+            velocity: 100,
+        }
+    }
+
+    /// 「允许新重叠音符」默认开：重叠新音符照常添加（保持现状行为）。
+    #[test]
+    fn add_note_allows_overlap_by_default() {
+        let mut doc = make_doc_with_note(); // 已有 [100,200) k60
+        assert!(
+            doc.add_note(0, ev(150, 250, 60)).is_some(),
+            "默认应允许重叠"
+        );
+        assert_eq!(doc.data.model.notes[60].len(), 2);
+    }
+
+    /// 开关关闭时 add_note 整个拒绝重叠新音符；相接/跨 key 不算重叠。
+    #[test]
+    fn add_note_rejects_overlap_when_disallowed() {
+        let mut doc = make_doc_with_note(); // 已有 [100,200) k60
+        doc.edit.allow_overlapping_notes = false;
+
+        // 相交 → 无视（返回 None，模型不变，也不消耗 id）
+        assert!(
+            doc.add_note(0, ev(150, 250, 60)).is_none(),
+            "重叠新音符应被无视"
+        );
+        assert_eq!(doc.data.model.notes[60].len(), 1);
+
+        // 首尾相接（左闭右开区间）→ 不算重叠，放行
+        assert!(doc.add_note(0, ev(200, 300, 60)).is_some(), "相接不算重叠");
+        // 跨 key → 不同桶，放行
+        assert!(
+            doc.add_note(0, ev(150, 250, 61)).is_some(),
+            "跨 key 不算重叠"
+        );
+        // 不重叠 → 放行
+        assert!(doc.add_note(0, ev(400, 500, 60)).is_some());
+    }
+
+    /// move_selected_notes：目标被非移动集合的已有音符占据的音符留在原处，
+    /// 其余正常移动；undo 回退副本制且只含真正移动的音符。
+    #[test]
+    fn move_selected_notes_partially_blocked_when_disallowed() {
+        let mut doc = make_doc_with_note(); // A [100,200) k60（选中）
+        doc.add_note(0, ev(100, 150, 62)); // B k62（待选中）
+        doc.add_note(0, ev(500, 600, 60)); // C k60 占位（不选中）
+        doc.edit.selected.clear();
+        doc.edit.selected.add_rect_track(100, 201, 60, 62, 0, 0); // 选中 A、B
+        doc.edit.allow_overlapping_notes = false;
+
+        // +400 tick：A 目标 [500,600) 与 C 重叠 → 留原处；B 目标 k62 [500,550) 无阻挡 → 移动
+        let before_snap = doc.capture_snapshot();
+        let action = doc
+            .move_selected_notes(400, 0)
+            .expect("部分移动应产生 undo");
+        match &action {
+            UndoAction::Notes(delta) => {
+                assert_eq!(delta.before.len(), 1, "delta 只含真正移动的 B");
+                assert_eq!(delta.after.len(), 1);
+                assert_eq!(delta.after[0].1, 62);
+                assert_eq!(delta.after[0].0.start_tick, 500);
+            }
+            other => panic!("有被拦音符时应回退副本制 Notes，实际 {other:?}"),
+        }
+        // A 留原处、C 不动
+        assert_eq!(doc.data.model.notes[60].len(), 2);
+        assert!(
+            doc.data.model.notes[60]
+                .iter()
+                .any(|n| n.start_tick == 100 && n.end_tick == 200),
+            "A 应留在原处"
+        );
+        // B 已移动
+        let b = doc.data.model.notes[62]
+            .iter()
+            .find(|n| n.start_tick == 500)
+            .copied();
+        assert_eq!(b.map(|n| n.end_tick), Some(550), "B 应移到 [500,550)");
+
+        // undo 回放不受开关拦截：B 回到原位置
+        doc.push_undo(action, "move", before_snap);
+        assert!(doc.undo(), "undo 应成功");
+        assert!(
+            doc.data.model.notes[62]
+                .iter()
+                .any(|n| n.start_tick == 100 && n.end_tick == 150),
+            "undo 后 B 应回到 [100,150)"
+        );
+        // redo 同样不受拦截
+        assert!(doc.redo(), "redo 应成功");
+        assert!(
+            doc.data.model.notes[62]
+                .iter()
+                .any(|n| n.start_tick == 500 && n.end_tick == 550),
+            "redo 后 B 应再次位于 [500,550)"
+        );
+    }
+
+    /// move_selected_notes：全部被拦时整体无视（None，选区与模型不变）。
+    #[test]
+    fn move_selected_notes_all_blocked_returns_none() {
+        let mut doc = make_doc_with_note(); // A [100,200) k60（选中）
+        doc.add_note(0, ev(500, 600, 60)); // C 占位
+        doc.edit.allow_overlapping_notes = false;
+
+        assert!(
+            doc.move_selected_notes(400, 0).is_none(),
+            "目标全被占据时应整体无视"
+        );
+        assert_eq!(doc.data.model.notes[60].len(), 2);
+        assert!(
+            doc.data.model.notes[60]
+                .iter()
+                .any(|n| n.start_tick == 100 && n.end_tick == 200),
+            "A 应留在原处"
+        );
+        // 选区未偏移
+        assert_eq!(doc.edit.selected.rects[0].0, 100);
+    }
+
+    /// duplicate_selected：与已有音符重叠的副本跳过，其余正常插入。
+    #[test]
+    fn duplicate_selected_skips_overlapping_copy() {
+        let mut doc = make_doc_with_note(); // A [100,200) k60（选中）
+        doc.add_note(0, ev(100, 150, 62)); // B k62（待选中）
+        // C k60 [250,350)：在选区外，但与 A 的副本目标 [200,300) 相交
+        doc.add_note(0, ev(250, 350, 60));
+        doc.edit.selected.clear();
+        doc.edit.selected.add_rect_track(100, 201, 60, 62, 0, 0); // 选中 A、B
+        doc.edit.allow_overlapping_notes = false;
+
+        // offset = 100：A 副本 [200,300) 被 C 拦下；B 副本 k62 [200,250) 插入
+        let action = doc.duplicate_selected().expect("应有部分副本插入");
+        match action {
+            UndoAction::Notes(delta) => {
+                assert_eq!(delta.after.len(), 1, "只有 B 的副本被插入");
+                assert_eq!(delta.after[0].1, 62);
+            }
+            other => panic!("期望 UndoAction::Notes，实际 {other:?}"),
+        }
+        assert_eq!(doc.data.model.notes[60].len(), 2, "k60 只有 A 和 C");
+        assert_eq!(doc.data.model.notes[62].len(), 2, "B 及其副本");
+    }
+
+    /// duplicate_selected：副本全被拦时返回 None。
+    #[test]
+    fn duplicate_selected_all_blocked_returns_none() {
+        let mut doc = make_doc_with_note(); // A [100,200) k60（选中）
+        doc.add_note(0, ev(250, 350, 60)); // C 拦下副本目标 [200,300)
+        doc.edit.allow_overlapping_notes = false;
+        assert!(
+            doc.duplicate_selected().is_none(),
+            "副本全被拦时应返回 None"
+        );
+        assert_eq!(doc.data.model.notes[60].len(), 2);
+    }
+
+    /// duplicate_selected_to：与已有音符重叠的副本跳过。
+    #[test]
+    fn duplicate_selected_to_skips_overlapping_copy() {
+        let mut doc = make_doc_with_note(); // A [100,200) k60（选中）
+        doc.add_note(0, ev(500, 600, 60)); // C k60 占位
+        doc.edit.allow_overlapping_notes = false;
+
+        // 副本目标 [500,600) 与 C 重叠 → 全部跳过
+        assert!(doc.duplicate_selected_to(400, 0).is_none());
+        assert_eq!(doc.data.model.notes[60].len(), 2);
+
+        // 换 key 方向（k62）无阻挡 → 正常插入
+        assert!(doc.duplicate_selected_to(400, 2).is_some());
+        assert_eq!(doc.data.model.notes[62].len(), 1);
+    }
+
+    /// undo/redo 回放路径（apply NoteDelta）绝不被重叠检查拦截：
+    /// 开关开着时制造重叠，关掉后 undo/redo 照常重放。
+    #[test]
+    fn undo_redo_replay_not_blocked_by_overlap_check() {
+        let mut doc = make_doc_with_note(); // A [100,200) k60，默认允许重叠
+        let before_snap = doc.capture_snapshot();
+        let action = doc.add_note(0, ev(150, 250, 60)).expect("允许重叠时应成功");
+        doc.push_undo(action, "add", before_snap);
+        assert_eq!(doc.data.model.notes[60].len(), 2);
+
+        doc.edit.allow_overlapping_notes = false;
+        assert!(doc.undo(), "undo 应成功");
+        assert_eq!(doc.data.model.notes[60].len(), 1);
+        assert!(doc.redo(), "redo 应成功（即使重新制造重叠）");
+        assert_eq!(doc.data.model.notes[60].len(), 2);
     }
 }

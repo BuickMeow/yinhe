@@ -511,8 +511,12 @@ impl App {
     /// 共用此实现，避免两处重复 push + setup 代码。
     fn new_project(&mut self) {
         self.documents.push(Document::empty());
+        let idx = self.documents.len() - 1;
+        // 重叠开关是全局设置：新文档沿用当前持久化值。
+        self.documents[idx].edit.allow_overlapping_notes =
+            self.audio_settings.allow_overlapping_notes;
         self.mixer_racks.push(crate::mix::MixerRack::default());
-        self.active_doc = Some(self.documents.len() - 1);
+        self.active_doc = Some(idx);
         self.teardown_audio();
     }
 }

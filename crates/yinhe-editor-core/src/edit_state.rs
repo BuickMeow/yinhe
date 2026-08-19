@@ -190,6 +190,9 @@ pub struct EditState {
     pub cursor_tick: Option<f64>,
     pub quantize_arrange: QuantizePreset,
     pub quantize_pianoroll: QuantizePreset,
+    /// 「允许新重叠音符」运行时副本（全局持久化在 AudioSettings，
+    /// 新建文档/切换开关时由 app 同步进来；undo 快照不含它）。
+    pub allow_overlapping_notes: bool,
     pub playback: PlaybackState,
     pub track_overrides: Vec<TrackOverride>,
     pub track_visible: Vec<bool>,
@@ -245,6 +248,7 @@ impl Default for EditState {
             cursor_tick: Some(0.0),
             quantize_arrange: QuantizePreset::Fraction(1, 4),
             quantize_pianoroll: QuantizePreset::Fraction(1, 16),
+            allow_overlapping_notes: true,
             playback: PlaybackState::default(),
             track_overrides: vec![TrackOverride::default()],
             track_visible: Vec::new(),

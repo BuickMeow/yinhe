@@ -61,8 +61,13 @@ impl Document {
         // Collect originals, remove from model, re-insert at new positions.
         let originals = batch_ops::remove_selected(model, &self.edit.selected);
         if !originals.is_empty() {
+            let allow_overlap = self.edit.allow_overlapping_notes;
             let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
                 std::collections::HashMap::new();
+            // 被「禁止重叠」拦下而留在原处的音符不进 undo delta（位置没变），
+            // before/after 只含真正移动的音符。
+            let mut moved_before: Vec<(yinhe_types::Note, u8)> = Vec::new();
+            let mut moved_after: Vec<(yinhe_types::Note, u8)> = Vec::new();
             for (note, old_key) in &originals {
                 let new_tick = (note.start_tick as i64 + delta_ticks).max(0) as u32;
                 // Skip over conductor track: notes cannot land on it.
@@ -73,6 +78,20 @@ impl Document {
                     self.edit.conductor_track_idx,
                 );
                 let length = note.end_tick - note.start_tick;
+                // 「允许新重叠音符」关闭：目标位置与非本次移动的已有音符重叠
+                // （移动集合已先移除，检查看不到它们）→ 该音符留在原处。
+                if !allow_overlap
+                    && batch_ops::has_overlapping_note(
+                        model,
+                        new_track,
+                        *old_key,
+                        new_tick,
+                        new_tick + length,
+                    )
+                {
+                    new_by_key.entry(*old_key).or_default().push(*note);
+                    continue;
+                }
                 let moved = yinhe_types::Note {
                     id: note.id,
                     start_tick: new_tick,
@@ -80,17 +99,17 @@ impl Document {
                     velocity: note.velocity,
                     track: new_track,
                 };
+                moved_before.push((*note, *old_key));
+                moved_after.push((moved, *old_key));
                 new_by_key.entry(*old_key).or_default().push(moved);
             }
-            let after: Vec<(yinhe_types::Note, u8)> = new_by_key
-                .iter()
-                .flat_map(|(key, notes)| notes.iter().map(|n| (*n, *key)))
-                .collect();
             batch_ops::insert_batch(model, new_by_key);
-            sub_actions.push(UndoAction::Notes(NoteDelta {
-                before: originals,
-                after,
-            }));
+            if !moved_before.is_empty() {
+                sub_actions.push(UndoAction::Notes(NoteDelta {
+                    before: moved_before,
+                    after: moved_after,
+                }));
+            }
         }
 
         // ── 2. Move automation events (tick + track in one pass) ──
@@ -410,5 +429,137 @@ impl Document {
         } else {
             Some(UndoAction::Composite(sub_actions))
         }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yinhe_core::{ConductorData, NoteEvent, TrackData, YinModel};
+
+    fn make_doc() -> Document {
+        let model = YinModel {
+            conductor: Arc::new(ConductorData::default()),
+            tracks: vec![Arc::new(TrackData::new(0, 0))],
+            ..Default::default()
+        };
+        Document {
+            data: crate::project_data::ProjectData::new(
+                Arc::new(model),
+                Default::default(),
+                Default::default(),
+            ),
+            edit: crate::edit_state::EditState {
+                track_visible: vec![true],
+                track_pianoroll_visible: vec![true],
+                ..Default::default()
+            },
+            history: crate::history::UndoStack::new(),
+            file_name: "test".into(),
+            file_path: None,
+            mixer: Default::default(),
+            mixer_dirty: false,
+        }
+    }
+
+    fn add(doc: &mut Document, start: u32, end: u32, key: u8) {
+        doc.add_note(
+            0,
+            NoteEvent {
+                id: 0,
+                start_tick: start,
+                end_tick: end,
+                key,
+                velocity: 100,
+            },
+        );
+    }
+
+    /// move_selected_arrange：目标被非移动集合的已有音符占据的音符留在原处，
+    /// 其余正常移动；undo delta 只含真正移动的音符。
+    #[test]
+    fn move_selected_arrange_partially_blocked_when_disallowed() {
+        let mut doc = make_doc();
+        add(&mut doc, 100, 200, 60); // A（选中）
+        add(&mut doc, 100, 150, 62); // B（选中）
+        add(&mut doc, 500, 600, 60); // C k60 占位（不选中）
+        doc.edit.selected.add_rect_track(100, 201, 60, 62, 0, 0);
+        doc.edit.allow_overlapping_notes = false;
+
+        // +400 tick：A 目标 [500,600) 与 C 重叠 → 留原处；B 目标 k62 [500,550) → 移动
+        let before_snap = doc.capture_snapshot();
+        let action = doc
+            .move_selected_arrange(400, 0)
+            .expect("部分移动应产生 undo");
+        match &action {
+            UndoAction::Notes(delta) => {
+                assert_eq!(delta.before.len(), 1, "delta 只含真正移动的 B");
+                assert_eq!(delta.after.len(), 1);
+                assert_eq!(delta.after[0].0.start_tick, 500);
+            }
+            other => panic!("期望 UndoAction::Notes，实际 {other:?}"),
+        }
+        assert_eq!(doc.data.model.notes[60].len(), 2, "A 留原处、C 不动");
+        assert!(
+            doc.data.model.notes[60]
+                .iter()
+                .any(|n| n.start_tick == 100 && n.end_tick == 200),
+            "A 应留在原处"
+        );
+        assert!(
+            doc.data.model.notes[62]
+                .iter()
+                .any(|n| n.start_tick == 500 && n.end_tick == 550),
+            "B 应移到 [500,550)"
+        );
+
+        // undo/redo 回放不受开关拦截
+        doc.push_undo(action, "move", before_snap);
+        assert!(doc.undo(), "undo 应成功");
+        assert!(
+            doc.data.model.notes[62]
+                .iter()
+                .any(|n| n.start_tick == 100 && n.end_tick == 150),
+            "undo 后 B 应回到 [100,150)"
+        );
+    }
+
+    /// move_selected_arrange：全部被拦时音符不动、不产生 undo。
+    #[test]
+    fn move_selected_arrange_all_blocked() {
+        let mut doc = make_doc();
+        add(&mut doc, 100, 200, 60); // A（选中）
+        add(&mut doc, 500, 600, 60); // C 占位
+        doc.edit.selected.add_rect_track(100, 201, 60, 60, 0, 0);
+        doc.edit.allow_overlapping_notes = false;
+
+        assert!(
+            doc.move_selected_arrange(400, 0).is_none(),
+            "目标全被占据且无自动化移动时应返回 None",
+        );
+        assert_eq!(doc.data.model.notes[60].len(), 2);
+        assert!(
+            doc.data.model.notes[60]
+                .iter()
+                .any(|n| n.start_tick == 100 && n.end_tick == 200),
+            "A 应留在原处",
+        );
+    }
+
+    /// 默认允许重叠：AR 移动照常（现状行为）。
+    #[test]
+    fn move_selected_arrange_allows_overlap_by_default() {
+        let mut doc = make_doc();
+        add(&mut doc, 100, 200, 60);
+        add(&mut doc, 500, 600, 60);
+        doc.edit.selected.add_rect_track(100, 201, 60, 60, 0, 0);
+        assert!(
+            doc.move_selected_arrange(400, 0).is_some(),
+            "默认应允许重叠移动"
+        );
+        assert!(
+            doc.data.model.notes[60]
+                .iter()
+                .any(|n| n.start_tick == 500 && n.end_tick == 600),
+        );
     }
 }
