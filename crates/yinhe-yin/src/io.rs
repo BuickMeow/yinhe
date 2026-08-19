@@ -13,10 +13,44 @@ use serde::{Deserialize, Serialize};
 use yinhe_core::{BucketNote, ConductorData, PcEvent, ProjectMeta, TrackData, YinModel};
 use yinhe_types::AutomationLane;
 
+use yinhe_mixer::MixerParams;
+
 use crate::container::{Sections, pack, unpack};
 use crate::error::YinError;
 use crate::mapping::MappingFile;
 use crate::project_meta::{ProjectFile, SfPortOverride};
+
+/// 混音段格式版本（段内前 4 字节）。MixerParams 字段演进时递增，
+/// 加载侧版本不符则忽略混音段（工程本体照常打开）。
+const MIXER_SECTION_VERSION: u32 = 1;
+
+/// 编码混音段：version u32 LE + zstd(bincode varint MixerParams)。
+fn encode_mixer_section(mixer: &MixerParams, level: i32) -> Result<Vec<u8>, YinError> {
+    let payload = serialize_with_varint(mixer)?;
+    let comp = zstd::encode_all(Cursor::new(&payload), level.clamp(0, 22))?;
+    let mut out = Vec::with_capacity(4 + comp.len());
+    out.extend_from_slice(&MIXER_SECTION_VERSION.to_le_bytes());
+    out.extend_from_slice(&comp);
+    Ok(out)
+}
+
+/// 解码混音段。版本不符或损坏时记日志并返回 None（不阻断工程加载）。
+fn decode_mixer_section(section: &[u8]) -> Option<MixerParams> {
+    if section.len() < 4 {
+        return None;
+    }
+    let version = u32::from_le_bytes(section[..4].try_into().ok()?);
+    if version != MIXER_SECTION_VERSION {
+        tracing::warn!("混音段版本 {version} 不受支持，忽略混音设置");
+        return None;
+    }
+    let payload = zstd::decode_all(Cursor::new(&section[4..])).ok()?;
+    let mut params: MixerParams = deserialize_with_varint(&payload)
+        .map_err(|e| tracing::warn!("混音段解析失败，忽略混音设置: {e}"))
+        .ok()?;
+    params.ensure_len();
+    Some(params)
+}
 
 /// 保存/加载的进度阶段。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -391,7 +425,7 @@ fn save_yin_bytes_inner(
         None => ProjectFile::from_meta(&model.meta),
     };
     let mapping = MappingFile::from_tracks(&model.tracks);
-    save_yin_bytes_with_files_inner(model, &project, &mapping, on_progress)
+    save_yin_bytes_with_files_inner(model, &project, &mapping, None, on_progress)
 }
 
 /// Internal: serialize with pre-built ProjectFile and MappingFile.
@@ -399,6 +433,7 @@ fn save_yin_bytes_with_files_inner(
     model: &YinModel,
     project: &ProjectFile,
     mapping: &MappingFile,
+    mixer: Option<&MixerParams>,
     on_progress: &mut dyn FnMut(YinProgress),
 ) -> Result<Vec<u8>, YinError> {
     let project_json = serde_json::to_vec_pretty(project)?;
@@ -428,10 +463,14 @@ fn save_yin_bytes_with_files_inner(
     };
     let data = compress_data(&meta, &notes, model.meta.compression_level, on_progress)?;
 
+    let mixer = mixer
+        .map(|m| encode_mixer_section(m, model.meta.compression_level))
+        .transpose()?;
     let bytes = pack(Sections {
         project_json,
         mapping_json,
         data,
+        mixer,
     });
     Ok(bytes)
 }
@@ -473,8 +512,9 @@ pub fn save_yin_with_files(
     path: impl AsRef<Path>,
     project: &ProjectFile,
     mapping: &MappingFile,
+    mixer: Option<&MixerParams>,
 ) -> Result<(), YinError> {
-    save_yin_with_files_progress(model, path, project, mapping, |_| {})
+    save_yin_with_files_progress(model, path, project, mapping, mixer, |_| {})
 }
 
 /// `save_yin_with_files` + 进度回调（后台线程保存时用于驱动 UI 进度条）。
@@ -483,9 +523,10 @@ pub fn save_yin_with_files_progress(
     path: impl AsRef<Path>,
     project: &ProjectFile,
     mapping: &MappingFile,
+    mixer: Option<&MixerParams>,
     mut on_progress: impl FnMut(YinProgress) + Send,
 ) -> Result<(), YinError> {
-    let bytes = save_yin_bytes_with_files_inner(model, project, mapping, &mut on_progress)?;
+    let bytes = save_yin_bytes_with_files_inner(model, project, mapping, mixer, &mut on_progress)?;
     std::fs::write(path.as_ref(), &bytes)?;
     Ok(())
 }
@@ -499,8 +540,9 @@ pub fn save_yin_with_files_progress(
 fn load_yin_bytes_inner(
     bytes: &[u8],
     on_progress: &mut dyn FnMut(YinProgress),
-) -> Result<(YinModel, ProjectFile, MappingFile), YinError> {
+) -> Result<(YinModel, ProjectFile, MappingFile, Option<MixerParams>), YinError> {
     let sections = unpack(bytes)?;
+    let mixer = sections.mixer.as_deref().and_then(decode_mixer_section);
 
     let project: ProjectFile = serde_json::from_slice(&sections.project_json)?;
     let mapping: MappingFile = serde_json::from_slice(&sections.mapping_json)?;
@@ -574,12 +616,12 @@ fn load_yin_bytes_inner(
     };
     model.load_bucket_notes(bucket_notes);
     model.rebuild();
-    Ok((model, project, mapping))
+    Ok((model, project, mapping, mixer))
 }
 
 /// Parse `.yin` bytes into a `YinModel` (SoundFont state, if any, is dropped).
 pub fn load_yin_bytes(bytes: &[u8]) -> Result<YinModel, YinError> {
-    let (model, _project, _mapping) = load_yin_bytes_inner(bytes, &mut |_| {})?;
+    let (model, _project, _mapping, _mixer) = load_yin_bytes_inner(bytes, &mut |_| {})?;
     Ok(model)
 }
 
@@ -590,7 +632,7 @@ pub fn load_yin_bytes(bytes: &[u8]) -> Result<YinModel, YinError> {
 pub fn load_yin_bytes_with_sf(
     bytes: &[u8],
 ) -> Result<(YinModel, ProjectSoundFonts, MappingFile), YinError> {
-    let (model, project, mapping) = load_yin_bytes_inner(bytes, &mut |_| {})?;
+    let (model, project, mapping, _mixer) = load_yin_bytes_inner(bytes, &mut |_| {})?;
     let sf = ProjectSoundFonts {
         mode: project.soundfont_project_mode,
         overrides: project.soundfont_overrides,
@@ -607,7 +649,7 @@ pub fn load_yin(path: impl AsRef<Path>) -> Result<YinModel, YinError> {
 /// Load a `.yin` file from `path`, returning the model and its SoundFont state.
 pub fn load_yin_with_sf(
     path: impl AsRef<Path>,
-) -> Result<(YinModel, ProjectSoundFonts, MappingFile), YinError> {
+) -> Result<(YinModel, ProjectSoundFonts, MappingFile, Option<MixerParams>), YinError> {
     load_yin_with_sf_progress(path, |_| {})
 }
 
@@ -615,12 +657,12 @@ pub fn load_yin_with_sf(
 pub fn load_yin_with_sf_progress(
     path: impl AsRef<Path>,
     mut on_progress: impl FnMut(YinProgress) + Send,
-) -> Result<(YinModel, ProjectSoundFonts, MappingFile), YinError> {
+) -> Result<(YinModel, ProjectSoundFonts, MappingFile, Option<MixerParams>), YinError> {
     let bytes = std::fs::read(path.as_ref())?;
-    let (model, project, mapping) = load_yin_bytes_inner(&bytes, &mut on_progress)?;
+    let (model, project, mapping, mixer) = load_yin_bytes_inner(&bytes, &mut on_progress)?;
     let sf = ProjectSoundFonts {
         mode: project.soundfont_project_mode,
         overrides: project.soundfont_overrides,
     };
-    Ok((model, sf, mapping))
+    Ok((model, sf, mapping, mixer))
 }

@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use yinhe_core::{TrackData, YinModel};
+use yinhe_mixer::MixerParams;
 use yinhe_types::TRACK_PALETTE;
 use yinhe_yin::{MappingFile, ProjectFile};
 
@@ -34,6 +35,11 @@ pub struct Document {
     pub history: UndoStack,
     pub file_name: String,
     pub file_path: Option<String>,
+    /// 混音台参数（按源 MIDI 通道索引）。持久化进 .yin，但不进 undo 历史
+    /// （DAW 惯例：推子移动不可撤销），脏标记由 `mixer_dirty` 单独跟踪。
+    pub mixer: MixerParams,
+    /// 混音参数自上次保存以来是否被修改（并进 is_dirty）。
+    pub mixer_dirty: bool,
 }
 
 impl Default for Document {
@@ -60,11 +66,18 @@ impl Document {
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.history.is_dirty()
+        self.history.is_dirty() || self.mixer_dirty
     }
 
     pub fn mark_saved(&mut self) {
         self.history.mark_saved();
+        self.mixer_dirty = false;
+    }
+
+    /// 修改混音台参数的入口（MIX 界面）：写入并标脏，同时由调用方同步音频引擎。
+    pub fn mixer_mut(&mut self) -> &mut MixerParams {
+        self.mixer_dirty = true;
+        &mut self.mixer
     }
 
     /// Mark that this document was loaded from a file.
@@ -110,6 +123,8 @@ impl Document {
             history: UndoStack::new(),
             file_name: "Untitled".into(),
             file_path: None,
+            mixer: MixerParams::default(),
+            mixer_dirty: false,
         }
     }
 
@@ -123,6 +138,7 @@ impl Document {
         quantize_pianoroll: QuantizePreset,
         project_file: ProjectFile,
         mapping_file: MappingFile,
+        mixer: Option<MixerParams>,
     ) -> Result<Self, String> {
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Ui, || {
             let file_name = std::path::Path::new(path)
@@ -161,6 +177,8 @@ impl Document {
                 .map(|i| track_color(&model.tracks[i], i, conductor_track_idx))
                 .collect();
 
+            let mut mixer = mixer.unwrap_or_default();
+            mixer.ensure_len();
             let mut data = ProjectData::new(Arc::new(model), project_file, mapping_file);
             data.rebuild_model();
 
@@ -193,6 +211,8 @@ impl Document {
                 history: UndoStack::new(),
                 file_name,
                 file_path: None,
+                mixer,
+                mixer_dirty: false,
             })
         })
     }
@@ -203,7 +223,7 @@ impl Document {
         quantize_arrange: QuantizePreset,
         quantize_pianoroll: QuantizePreset,
     ) -> std::io::Result<(Self, bool)> {
-        let (model, sf, mapping) = yinhe_yin::load_yin_with_sf(path).map_err(|e| match e {
+        let (model, sf, mapping, mixer) = yinhe_yin::load_yin_with_sf(path).map_err(|e| match e {
             yinhe_yin::YinError::Io(io) => io,
             other => std::io::Error::new(std::io::ErrorKind::InvalidData, other.to_string()),
         })?;
@@ -216,6 +236,7 @@ impl Document {
             quantize_pianoroll,
             project_file,
             mapping,
+            mixer,
         )
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         doc.file_path = Some(path.to_string());
@@ -723,7 +744,7 @@ mod tests {
     /// AR Alt+拖动复制：原音符/原自动化事件保留，副本平移到新位置，选区跟随副本。
     #[test]
     fn arrange_duplicate_preserves_originals_and_offsets_copy() {
-        use crate::history::{EditSnapshot, UndoEntry};
+        use crate::history::UndoEntry;
         use yinhe_core::Selection;
         use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
 
@@ -795,7 +816,7 @@ mod tests {
         // 选区跟随副本
         assert_eq!(doc.edit.selected.rects.len(), 1);
         let (ts, te, ..) = doc.edit.selected.rects[0];
-        assert_eq!((ts as u32, te as u32), (480, 961), "选区应平移到副本范围");
+        assert_eq!((ts, te), (480, 961), "选区应平移到副本范围");
 
         // Undo：音符和事件全部回到复制前
         assert!(doc.undo());

@@ -52,6 +52,8 @@ fn make_doc(name: &str) -> Document {
         history: UndoStack::new(),
         file_name: "test".into(),
         file_path: None,
+        mixer: Default::default(),
+        mixer_dirty: false,
     }
 }
 

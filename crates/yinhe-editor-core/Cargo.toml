@@ -9,6 +9,7 @@ yinhe-types = { path = "../yinhe-types" }
 yinhe-core = { path = "../yinhe-core" }
 yinhe-midi = { path = "../yinhe-midi" }
 yinhe-yin = { path = "../yinhe-yin" }
+yinhe-mixer = { path = "../yinhe-mixer" }
 yinhe-memtrace = { path = "../yinhe-memtrace" }
 yinhe-theme = { path = "../yinhe-theme" }
 dirs = { workspace = true }

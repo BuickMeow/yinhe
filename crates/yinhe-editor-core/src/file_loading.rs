@@ -10,6 +10,7 @@ use std::sync::{Arc, mpsc};
 
 use yinhe_core::YinModel;
 use yinhe_midi::{LoadProgress, MidiImportEncoding};
+use yinhe_mixer::MixerParams;
 use yinhe_yin::{MappingFile, ProjectSoundFonts};
 
 use crate::progress::{self, SharedProgress, StageStatus};
@@ -22,7 +23,9 @@ pub enum MidiLoadEvent {
 
 /// Events for .yin project loading.
 pub enum YinLoadEvent {
-    Complete(Result<(YinModel, ProjectSoundFonts, MappingFile, String), String>),
+    Complete(
+        Result<(YinModel, ProjectSoundFonts, MappingFile, Option<MixerParams>, String), String>,
+    ),
 }
 
 /// Events for archive opening.
@@ -64,6 +67,7 @@ pub enum LoadResult {
         file_name: String,
         sf: ProjectSoundFonts,
         mapping: MappingFile,
+        mixer: Option<MixerParams>,
     },
     /// 压缩包含多个 MIDI 文件，需要 UI 层弹选择器。rx 已就绪
     /// （channel 中已 send `Ok((archive, entries))`）。
@@ -187,7 +191,7 @@ impl FileLoader {
                 progress::set_stage_progress(&progress, 0, p.fraction, detail);
             });
             match result {
-                Ok((model, sf, mapping)) => {
+                Ok((model, sf, mapping, mixer)) => {
                     let file_name = std::path::Path::new(&path_for_thread)
                         .file_stem()
                         .and_then(|n| n.to_str())
@@ -195,7 +199,7 @@ impl FileLoader {
                         .unwrap_or_default();
                     progress::set_stage(&progress, 0, StageStatus::Done);
                     progress::set_visible(&progress, false);
-                    let _ = tx.send(YinLoadEvent::Complete(Ok((model, sf, mapping, file_name))));
+                    let _ = tx.send(YinLoadEvent::Complete(Ok((model, sf, mapping, mixer, file_name))));
                 }
                 Err(e) => {
                     progress::set_visible(&progress, false);
@@ -317,7 +321,7 @@ impl FileLoader {
             if let Ok(event) = loader.rx.try_recv() {
                 match event {
                     YinLoadEvent::Complete(result) => match result {
-                        Ok((model, sf, mapping, file_name)) => {
+                        Ok((model, sf, mapping, mixer, file_name)) => {
                             let path = loader.path.clone();
                             progress::set_visible(&self.load_progress, false);
                             return LoadResult::ModelFromYin {
@@ -326,6 +330,7 @@ impl FileLoader {
                                 file_name,
                                 sf,
                                 mapping,
+                                mixer,
                             };
                         }
                         Err(e) => {

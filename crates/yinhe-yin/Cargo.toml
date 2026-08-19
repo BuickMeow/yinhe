@@ -6,7 +6,9 @@ edition = "2024"
 [dependencies]
 yinhe-core = { path = "../yinhe-core" }
 yinhe-types = { path = "../yinhe-types" }
+yinhe-mixer = { path = "../yinhe-mixer" }
 serde = { workspace = true }
+tracing = { workspace = true }
 serde_json = { workspace = true }
 bincode = "1.3"
 zstd = { version = "0.13", default-features = false }

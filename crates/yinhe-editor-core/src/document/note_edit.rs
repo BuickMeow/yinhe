@@ -837,6 +837,8 @@ mod tests {
             history: crate::history::UndoStack::new(),
             file_name: "test".into(),
             file_path: None,
+            mixer: Default::default(),
+            mixer_dirty: false,
         };
         // 加一个音符 (tick 100~200, key 60)
         doc.add_note(

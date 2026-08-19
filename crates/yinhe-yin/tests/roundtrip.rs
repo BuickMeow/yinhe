@@ -693,3 +693,58 @@ fn sf_global_mode_preserves_overrides_list() {
     assert_eq!(sf2.overrides.len(), 2);
     assert_eq!(sf2.overrides[0].entries[0].path, "/sf2/piano.sf2");
 }
+// ---------------------------------------------------------------------------
+//  混音段（可选第 4 段）roundtrip
+// ---------------------------------------------------------------------------
+
+#[test]
+fn mixer_section_roundtrips() {
+    use yinhe_mixer::{InsertRef, MixerParams, StripParams};
+
+    let m = build_complex_model();
+    let mut mixer = MixerParams::default();
+    mixer.channels[3] = StripParams {
+        gain: 0.7,
+        pan: -0.5,
+        mute: true,
+        solo: false,
+    };
+    mixer.master.gain = 0.8;
+    mixer.channel_inserts[3].push(InsertRef {
+        plugin_path: "/Library/Audio/Plug-Ins/CLAP/Example.clap".into(),
+        plugin_id: "com.example.effect".into(),
+        bypassed: true,
+        state: Some(vec![1, 2, 3, 4, 5]),
+    });
+    mixer.master_inserts.push(InsertRef {
+        plugin_path: "/x.clap".into(),
+        plugin_id: "com.example.limiter".into(),
+        bypassed: false,
+        state: None,
+    });
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mixer.yin");
+    let project = yinhe_yin::ProjectFile::from_meta(&m.meta);
+    let mapping = yinhe_yin::MappingFile::from_tracks(&m.tracks);
+    yinhe_yin::save_yin_with_files(&m, &path, &project, &mapping, Some(&mixer)).unwrap();
+
+    let (_m2, _sf, _mapping, mixer2) = yinhe_yin::load_yin_with_sf(&path).unwrap();
+    let mixer2 = mixer2.expect("mixer section should round-trip");
+    assert_eq!(mixer2.channels[3], mixer.channels[3]);
+    assert_eq!(mixer2.master, mixer.master);
+    assert_eq!(mixer2.channel_inserts[3], mixer.channel_inserts[3]);
+    assert_eq!(mixer2.master_inserts, mixer.master_inserts);
+}
+
+#[test]
+fn v5_file_without_mixer_section_loads_with_none() {
+    // 无混音段的文件（旧保存路径）加载后 mixer 为 None，不报错。
+    let m = build_complex_model();
+    let bytes = save_yin_bytes(&m).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("old.yin");
+    std::fs::write(&path, &bytes).unwrap();
+    let (_m2, _sf, _mapping, mixer) = yinhe_yin::load_yin_with_sf(&path).unwrap();
+    assert!(mixer.is_none());
+}

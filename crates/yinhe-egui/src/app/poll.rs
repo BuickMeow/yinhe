@@ -25,6 +25,7 @@ impl App {
                     quantize_pianoroll,
                     yinhe_yin::ProjectFile::default(),
                     yinhe_yin::MappingFile::default(),
+                    None,
                 ) {
                     Ok(mut doc) => {
                         doc.mark_loaded(); // Loaded from file, not a fresh empty doc
@@ -60,6 +61,7 @@ impl App {
                 file_name,
                 sf,
                 mapping,
+                mixer,
             } => {
                 let (quantize_arrange, quantize_pianoroll) = self
                     .active_doc
@@ -81,6 +83,7 @@ impl App {
                     quantize_pianoroll,
                     project_file,
                     mapping,
+                    mixer,
                 )
                 .ok()
                 .map(|mut d| {

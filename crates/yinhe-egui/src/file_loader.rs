@@ -102,12 +102,14 @@ impl FileLoader {
                 file_name,
                 sf,
                 mapping,
+                mixer,
             } => LoadResult::ModelFromYin {
                 path,
                 model,
                 file_name,
                 sf,
                 mapping,
+                mixer,
             },
             Core::ArchivePickerNeeded { path, rx } => {
                 self.archive_picker = Some(ArchivePickerState::Opening { path, rx });

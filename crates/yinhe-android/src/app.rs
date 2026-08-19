@@ -304,6 +304,7 @@ impl YinheApp {
                     QuantizePreset::Fraction(1, 16),
                     project_file,
                     mapping_file,
+                    None,
                 ) {
                     Ok(doc) => doc,
                     Err(e) => {

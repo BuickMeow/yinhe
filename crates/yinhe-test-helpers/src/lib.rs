@@ -193,6 +193,7 @@ pub fn make_test_document() -> Document {
         QuantizePreset::Fraction(1, 16),
         Default::default(),
         Default::default(),
+        None,
     )
     .expect("from_model failed")
 }

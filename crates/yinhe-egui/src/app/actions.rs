@@ -532,6 +532,7 @@ impl App {
         let model = doc.data.model.clone();
         let project_file = doc.data.project_file.clone();
         let mapping_file = doc.data.mapping_file.clone();
+        let mixer = doc.mixer.clone();
         let path_for_thread = path.clone();
 
         let (tx, rx) = mpsc::channel();
@@ -542,6 +543,7 @@ impl App {
                 &path_for_thread,
                 &project_file,
                 &mapping_file,
+                Some(&mixer),
                 |p| {
                     let _ = progress_tx.send(p);
                 },
