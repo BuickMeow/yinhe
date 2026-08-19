@@ -13,6 +13,8 @@
 
 use wgpu::*;
 
+use yinhe_types::KEY_COUNT;
+
 use crate::cull::CullState;
 use crate::layer::{AnyLayer, LayerKind};
 use crate::pipeline::RenderPipelineState;
@@ -263,8 +265,8 @@ impl InstanceRenderer {
     pub fn upload_all_notes_for_cull(
         &mut self,
         notes: &[NoteInstance],
-        per_key_offsets: &[u32; 129],
-        key_revisions: &[u64; 128],
+        per_key_offsets: &[u32; KEY_COUNT + 1],
+        key_revisions: &[u64; KEY_COUNT],
     ) {
         if let Err(e) = self.cull.upload_all_notes(
             &self.device,
@@ -306,7 +308,7 @@ impl InstanceRenderer {
     }
 
     /// Get the uploaded key revisions for comparison with model.
-    pub fn uploaded_key_revisions(&self) -> &[u64; 128] {
+    pub fn uploaded_key_revisions(&self) -> &[u64; KEY_COUNT] {
         &self.cull.uploaded_key_revisions
     }
 

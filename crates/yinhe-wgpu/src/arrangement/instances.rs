@@ -104,7 +104,7 @@ pub fn build_notes(
     let (tick_start, tick_end) = view.visible_tick_range(w);
     let (trk_first, trk_last) = track_range;
 
-    let note_instances: Vec<Vec<NoteInstance>> = (0u8..128)
+    let note_instances: Vec<Vec<NoteInstance>> = (0u8..=yinhe_types::MAX_KEY)
         .into_par_iter()
         .filter_map(|key| {
             // Wrap key processing in stacker to get fresh stack segments on demand.

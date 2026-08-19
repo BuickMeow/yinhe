@@ -4,13 +4,13 @@ use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinM
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::{
-    AutomationEvent, AutomationLane, AutomationTarget, Note, NoteBucket, NoteSource, SegmentShape,
-    TimeSigEvent,
+    AutomationEvent, AutomationLane, AutomationTarget, KEY_COUNT, Note, NoteBucket, NoteSource,
+    SegmentShape, TimeSigEvent,
 };
 
 /// Mock MIDI data for testing.
 pub struct MockMidi {
-    pub notes: [NoteBucket; 128],
+    pub notes: [NoteBucket; KEY_COUNT],
     pub tpb: u32,
     pub tick_len: u64,
 }
@@ -31,7 +31,7 @@ impl NoteSource for MockMidi {
 }
 
 pub fn make_midi(notes: Vec<(u8, u32, u32, u16, u8)>) -> MockMidi {
-    let mut key_notes: [Vec<Note>; 128] = core::array::from_fn(|_| Vec::new());
+    let mut key_notes: [Vec<Note>; KEY_COUNT] = core::array::from_fn(|_| Vec::new());
     let mut max_tick: u64 = 0;
     let mut next_id: u32 = 1;
     for (key, start_tick, end_tick, track, vel) in notes {

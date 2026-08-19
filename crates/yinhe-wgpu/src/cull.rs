@@ -1,6 +1,6 @@
 //! GPU compute cull state: per-key note buffers + indirect dispatch.
 //!
-//! Architecture: each MIDI key (0..127) owns its own `all_notes` (input),
+//! Architecture: each key (0..KEY_COUNT) owns its own `all_notes` (input),
 //! `visible_notes` (output), and a per-key draw-args buffer. The cull
 //! dispatch loops over keys; each key's visible capacity equals its all-notes
 //! capacity, so there is no global visible-note cap.

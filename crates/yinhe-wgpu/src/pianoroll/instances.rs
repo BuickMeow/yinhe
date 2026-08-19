@@ -1,6 +1,6 @@
 use rayon::prelude::*;
 use yinhe_theme::GpuTheme;
-use yinhe_types::NoteSource;
+use yinhe_types::{KEY_COUNT, MAX_KEY, NoteSource};
 
 use crate::vertex::NoteInstance;
 use yinhe_types::PianoRollView;
@@ -115,14 +115,14 @@ pub fn build_notes(
 /// When `track_visible`/`hidden_notes` change, call this again to re-upload.
 ///
 /// Returns `(notes, per_key_offsets)` where `per_key_offsets[k]` is the
-/// start index of key k's notes in the flat buffer, and `per_key_offsets[128]`
+/// start index of key k's notes in the flat buffer, and `per_key_offsets[KEY_COUNT]`
 /// is the total count.
 pub fn build_all_notes(
     midi: &dyn NoteSource,
     hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
-) -> (Vec<NoteInstance>, [u32; 129]) {
-    let results: Vec<Vec<NoteInstance>> = (0u8..=127)
+) -> (Vec<NoteInstance>, [u32; KEY_COUNT + 1]) {
+    let results: Vec<Vec<NoteInstance>> = (0u8..=MAX_KEY)
         .into_par_iter()
         .map(|key| {
             stacker::maybe_grow(STACK_RED_ZONE, STACK_SIZE, || {
@@ -133,7 +133,7 @@ pub fn build_all_notes(
         })
         .collect();
 
-    let mut offsets = [0u32; 129];
+    let mut offsets = [0u32; KEY_COUNT + 1];
     let mut total = 0u32;
     let mut all = Vec::new();
     for (k, bucket) in results.into_iter().enumerate() {
@@ -141,7 +141,7 @@ pub fn build_all_notes(
         total += bucket.len() as u32;
         all.extend(bucket);
     }
-    offsets[128] = total;
+    offsets[KEY_COUNT] = total;
     (all, offsets)
 }
 

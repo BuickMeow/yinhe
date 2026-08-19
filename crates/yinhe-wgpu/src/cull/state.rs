@@ -3,6 +3,8 @@
 
 use wgpu::*;
 
+use yinhe_types::{KEY_COUNT, MAX_KEY};
+
 use crate::resource::{GpuBudget, GpuBudgetError, TrackedBuffer};
 use crate::vertex::{NoteInstance, Uniforms};
 
@@ -48,7 +50,7 @@ pub(crate) struct CullState {
     /// （STORAGE_READ_WRITE，exclusive usage）带进 render scope 与 vertex
     /// buffer 冲突。
     pub(crate) all_bind_group_layout: BindGroupLayout,
-    /// Per-key bind groups (128 slots). `None` until the key is first uploaded.
+    /// Per-key bind groups (KEY_COUNT slots). `None` until the key is first uploaded.
     pub(crate) per_key_bind_groups: Vec<Option<BindGroup>>,
     /// Per-key vertex-stage bind groups（只含 all_instances）。
     per_key_all_bind_groups: Vec<Option<BindGroup>>,
@@ -81,17 +83,17 @@ pub(crate) struct CullState {
     track_mask_buffer: TrackedBuffer,
     /// Chunk count dispatched for each key in the current frame (0 = none).
     /// Filled by `dispatch_cull`, read by `draw_visible_notes`.
-    pub(crate) frame_chunk_counts: [u32; 128],
+    pub(crate) frame_chunk_counts: [u32; KEY_COUNT],
 
     /// Per-key note count at last upload (in NoteInstance units).
-    per_key_counts: [u32; 128],
+    per_key_counts: [u32; KEY_COUNT],
 
     /// Per-key tick-bucket index (CPU side), built at upload time. Used each
     /// frame to dispatch only the chunks whose tick range can intersect the
     /// viewport — GPU traffic per frame drops from O(all notes) to O(visible).
     pub(crate) bucket_indexes: Vec<Option<KeyBucketIndex>>,
 
-    /// Per-key dispatch args buffer: 128 slots × 256 bytes each.
+    /// Per-key dispatch args buffer: KEY_COUNT slots × 256 bytes each.
     /// Slot k is at byte offset k * 256 (satisfies
     /// `min_storage_buffer_offset_alignment`, typically 256):
     ///   - [0..12)  `DispatchIndirectArgs` (wg_x, wg_y, wg_z=1), host-written
@@ -108,7 +110,7 @@ pub(crate) struct CullState {
 
     /// Per-key revision at last upload (full or incremental).
     /// Compared with model.note_revisions to detect incremental re-upload needs.
-    pub(crate) uploaded_key_revisions: [u64; 128],
+    pub(crate) uploaded_key_revisions: [u64; KEY_COUNT],
 
     /// Uniforms snapshot from the last cull dispatch. When the culling-relevant
     /// fields match and `notes_dirty` is false, the previous frame's
@@ -227,12 +229,12 @@ impl CullState {
             cache: None,
         });
 
-        // Dispatch args + per-key note count + c_lo, 128 slots × 256 bytes each.
+        // Dispatch args + per-key note count + c_lo, KEY_COUNT slots × 256 bytes each.
         // Slot layout: [wg_x, wg_y, wg_z, count, c_lo] (20 bytes) + padding.
         // The 256-byte stride satisfies min_storage_buffer_offset_alignment
         // (typically 256). wg_x/wg_y/c_lo are host-written every frame by
         // `dispatch_cull`; `count` bounds the cull scan in cull.wgsl (index < count).
-        let dispatch_args_size = 128 * 256;
+        let dispatch_args_size = (KEY_COUNT * 256) as u64;
         let dispatch_args_buffer = TrackedBuffer::new(
             device,
             &BufferDescriptor {
@@ -270,19 +272,19 @@ impl CullState {
             pipeline,
             bind_group_layout,
             all_bind_group_layout,
-            per_key_bind_groups: (0..128).map(|_| None).collect(),
-            per_key_all_bind_groups: (0..128).map(|_| None).collect(),
-            per_key_buffers: (0..128).map(|_| None).collect(),
-            per_key_visible_buffers: (0..128).map(|_| None).collect(),
-            per_key_draw_args_buffers: (0..128).map(|_| None).collect(),
-            per_key_draw_args_cpu: (0..128).map(|_| Vec::new()).collect(),
+            per_key_bind_groups: (0..KEY_COUNT).map(|_| None).collect(),
+            per_key_all_bind_groups: (0..KEY_COUNT).map(|_| None).collect(),
+            per_key_buffers: (0..KEY_COUNT).map(|_| None).collect(),
+            per_key_visible_buffers: (0..KEY_COUNT).map(|_| None).collect(),
+            per_key_draw_args_buffers: (0..KEY_COUNT).map(|_| None).collect(),
+            per_key_draw_args_cpu: (0..KEY_COUNT).map(|_| Vec::new()).collect(),
             track_mask_buffer,
-            frame_chunk_counts: [0; 128],
-            per_key_counts: [0; 128],
-            bucket_indexes: (0..128).map(|_| None).collect(),
+            frame_chunk_counts: [0; KEY_COUNT],
+            per_key_counts: [0; KEY_COUNT],
+            bucket_indexes: (0..KEY_COUNT).map(|_| None).collect(),
             dispatch_args_buffer,
             budget: GpuBudget::new(device),
-            uploaded_key_revisions: [0; 128],
+            uploaded_key_revisions: [0; KEY_COUNT],
             last_cull_uniforms: None,
             notes_dirty: false,
         }
@@ -312,7 +314,7 @@ impl CullState {
         self.notes_dirty = true;
     }
 
-    /// Upload notes for all 128 keys. `notes` is a flat buffer; `per_key_offsets`
+    /// Upload notes for all KEY_COUNT keys. `notes` is a flat buffer; `per_key_offsets`
     /// slices it into per-key segments. Each key gets its own storage buffer
     /// (grown on demand) and bind group, keeping every binding under the
     /// `max_storage_buffer_binding_size` limit regardless of total note count.
@@ -322,10 +324,10 @@ impl CullState {
         queue: &Queue,
         uniform_buffer: &Buffer,
         notes: &[NoteInstance],
-        per_key_offsets: &[u32; 129],
-        key_revisions: &[u64; 128],
+        per_key_offsets: &[u32; KEY_COUNT + 1],
+        key_revisions: &[u64; KEY_COUNT],
     ) -> Result<(), GpuBudgetError> {
-        for key in 0u8..128 {
+        for key in 0u8..=MAX_KEY {
             let start = per_key_offsets[key as usize] as usize;
             let end = per_key_offsets[key as usize + 1] as usize;
             let key_notes = &notes[start..end];
@@ -571,7 +573,7 @@ impl CullState {
     /// conservative margin) is binary-searched against the key's bucket index
     /// to find the chunk range [c_lo, c_lo + chunk_count) that can possibly be
     /// visible. Only those chunks are dispatched; wg_x/wg_y/c_lo are written
-    /// into the dispatch-args slot every frame (one 32KB blob for all 128
+    /// into the dispatch-args slot every frame (one blob for all KEY_COUNT
     /// keys). `count` stays cached on the CPU.
     ///
     /// **Skip optimization**: if no notes were re-uploaded (`!notes_dirty`) and
@@ -605,9 +607,9 @@ impl CullState {
 
         // Per-key dispatch info: (wg_x, wg_y, wg_z=1, count, c_lo). wg_x/wg_y
         // and c_lo change every frame; count is cached on the CPU. Written as
-        // one 32KB blob per frame instead of 128 small writes.
-        let mut info = [0u32; 128 * 64];
-        for key in 0..128 {
+        // one blob per frame instead of KEY_COUNT small writes.
+        let mut info = [0u32; KEY_COUNT * 64];
+        for key in 0..KEY_COUNT {
             let slot = key * 64;
             // visible_chunk_range 返回 (c_lo, c_hi) 区间，chunk 数 = c_hi - c_lo。
             let (c_lo, c_hi) = self.bucket_indexes[key]
@@ -624,7 +626,7 @@ impl CullState {
         }
         let mut dispatched_keys = 0u32;
         let mut total_chunks = 0u32;
-        for key in 0..128 {
+        for key in 0..KEY_COUNT {
             if info[key * 64] > 0 {
                 dispatched_keys += 1;
                 total_chunks += info[key * 64];
@@ -677,9 +679,9 @@ impl CullState {
     /// 同步读回开销可忽略；skip 帧不调用（args 未变，缓存仍有效）。
     pub(crate) fn readback_args_to_cpu(&mut self, device: &Device, queue: &Queue) {
         // 每 key 一个 readback buffer + 一个 copy 命令，合并为一次提交。
-        let mut readbacks: Vec<Option<TrackedBuffer>> = Vec::with_capacity(128);
+        let mut readbacks: Vec<Option<TrackedBuffer>> = Vec::with_capacity(KEY_COUNT);
         let mut enc = device.create_command_encoder(&CommandEncoderDescriptor::default());
-        for key in 0..128u8 {
+        for key in 0u8..=MAX_KEY {
             let chunk_count = self.frame_chunk_counts[key as usize] as usize;
             if chunk_count == 0 {
                 // 本帧不可见的 key：清空 CPU 缓存，防止 draw 画旧 args。
@@ -713,7 +715,7 @@ impl CullState {
         // 先全部 map_async，再 poll 一次等全部完成：逐个 poll 会让每个 key
         // 都等一次 GPU 全队列，真机上每帧几十次同步等待 → 帧率骤降。
         let mut pending: Vec<(u8, std::sync::Arc<std::sync::atomic::AtomicBool>)> = Vec::new();
-        for key in 0..128u8 {
+        for key in 0u8..=MAX_KEY {
             let Some(readback) = &readbacks[key as usize] else {
                 continue;
             };

@@ -2,7 +2,7 @@ use super::*;
 use crate::vertex::{NoteInstance, Uniforms};
 use std::sync::atomic::Ordering;
 use wgpu::*;
-use yinhe_types::NoteSource;
+use yinhe_types::{KEY_COUNT, NoteSource};
 
 /// Headless GPU device for cull integration tests.
 /// Returns None when no adapter is available (e.g. CI without a GPU),
@@ -522,7 +522,7 @@ fn cull_end_to_end_multi_key() {
     });
 
     let mut all_notes = Vec::new();
-    let mut offsets = [0u32; 129];
+    let mut offsets = [0u32; KEY_COUNT + 1];
     for key in 0..128u8 {
         let mut notes = Vec::new();
         // 长音符（覆盖到 tick 10M，start=0）
@@ -542,14 +542,17 @@ fn cull_end_to_end_multi_key() {
         offsets[key as usize] = all_notes.len() as u32;
         all_notes.extend(notes);
     }
-    offsets[128] = all_notes.len() as u32;
+    // 128 及以上未使用的 key：offsets 全部填充 total，保持 start==end（空桶）
+    for o in offsets.iter_mut().skip(128) {
+        *o = all_notes.len() as u32;
+    }
     cull.upload_all_notes(
         &device,
         &queue,
         &uniform_buffer,
         &all_notes,
         &offsets,
-        &[0; 128],
+        &[0; KEY_COUNT],
     )
     .unwrap();
 
@@ -690,7 +693,7 @@ fn cull_real_midi_vs_cpu() {
             &uniform_buffer,
             &all_notes,
             &offsets,
-            &[0; 128],
+            &[0; KEY_COUNT],
         )
         .unwrap();
 
@@ -719,7 +722,7 @@ fn cull_real_midi_vs_cpu() {
         // （frame_chunk_counts）：未派发的 key 的 draw_args 从未被 shader
         // 写入（内容未定义，读了是垃圾），按 0 计。
         let mut gpu_total: u64 = 0;
-        let mut gpu_by_key = [0u64; 128];
+        let mut gpu_by_key = [0u64; KEY_COUNT];
         for (key, gpu_key_total) in gpu_by_key.iter_mut().enumerate() {
             let chunk_count = cull.frame_chunk_counts[key];
             if chunk_count == 0 {
@@ -811,7 +814,7 @@ fn cull_scroll_sequence_updates() {
         mapped_at_creation: false,
     });
     let mut all_notes = Vec::new();
-    let mut offsets = [0u32; 129];
+    let mut offsets = [0u32; KEY_COUNT + 1];
     for key in 0..128u8 {
         let mut notes = Vec::new();
         for i in 0..20_000 {
@@ -831,14 +834,17 @@ fn cull_scroll_sequence_updates() {
         offsets[key as usize] = all_notes.len() as u32;
         all_notes.extend(notes);
     }
-    offsets[128] = all_notes.len() as u32;
+    // 128 及以上未使用的 key：offsets 全部填充 total，保持 start==end（空桶）
+    for o in offsets.iter_mut().skip(128) {
+        *o = all_notes.len() as u32;
+    }
     cull.upload_all_notes(
         &device,
         &queue,
         &uniform_buffer,
         &all_notes,
         &offsets,
-        &[0; 128],
+        &[0; KEY_COUNT],
     )
     .unwrap();
 
@@ -952,7 +958,7 @@ fn cull_real_midi_sequence() {
             |cull: &mut CullState,
              model: &yinhe_core::YinModel,
              tv: &[bool],
-             note_revisions: &[u64; 128],
+             note_revisions: &[u64; KEY_COUNT],
              last_key: &mut u64,
              last_rev: &mut u64,
              last_hidden: &mut u64,
@@ -983,7 +989,7 @@ fn cull_real_midi_sequence() {
             };
 
         let revision: u64 = 1;
-        let note_revisions = [revision; 128];
+        let note_revisions = [revision; KEY_COUNT];
 
         // 步骤 1：首次全量上传（全轨道可见）
         upload_once(
@@ -1117,7 +1123,7 @@ fn cull_mid_song_exact_per_key() {
     // 每 key 50000 音符：start = i*20, end = start+10 → 覆盖 [0, 1M) ticks，
     // 13 个 bucket / 196 chunks。
     let mut all_notes = Vec::new();
-    let mut offsets = [0u32; 129];
+    let mut offsets = [0u32; KEY_COUNT + 1];
     for key in 0..128u8 {
         let notes: Vec<NoteInstance> = (0..50_000u32)
             .map(|i| NoteInstance {
@@ -1129,14 +1135,17 @@ fn cull_mid_song_exact_per_key() {
         offsets[key as usize] = all_notes.len() as u32;
         all_notes.extend(notes);
     }
-    offsets[128] = all_notes.len() as u32;
+    // 128 及以上未使用的 key：offsets 全部填充 total，保持 start==end（空桶）
+    for o in offsets.iter_mut().skip(128) {
+        *o = all_notes.len() as u32;
+    }
     cull.upload_all_notes(
         &device,
         &queue,
         &uniform_buffer,
         &all_notes,
         &offsets,
-        &[0; 128],
+        &[0; KEY_COUNT],
     )
     .unwrap();
 
@@ -1304,7 +1313,7 @@ fn cull_real_large_midi_relative_viewport() {
             &uniform_buffer,
             &all_notes,
             &offsets,
-            &[0; 128],
+            &[0; KEY_COUNT],
         )
         .unwrap();
         println!("upload_all_notes {:?}", t2.elapsed());
@@ -2349,13 +2358,13 @@ fn cull_draw_c_lo_nonzero_minimal() {
             packed: NoteInstance::pack(60, 0, 100),
         });
     }
-    let mut offsets = [0u32; 129];
+    let mut offsets = [0u32; KEY_COUNT + 1];
     offsets[60] = 0;
-    for o in offsets.iter_mut().take(129).skip(61) {
+    for o in offsets.iter_mut().take(KEY_COUNT + 1).skip(61) {
         *o = 2560;
     }
-    offsets[128] = 2560;
-    renderer.upload_all_notes_for_cull(&notes, &offsets, &[0; 128]);
+    offsets[KEY_COUNT] = 2560;
+    renderer.upload_all_notes_for_cull(&notes, &offsets, &[0; KEY_COUNT]);
 
     let (w, h, kh, kb_w) = (1376.0f32, 419.0f32, 3.2734375, 60.0f32);
     let ppu = 0.026372144f32;
@@ -2801,7 +2810,7 @@ fn cull_bench_vs_cpu_start_mid() {
         &uniform_buffer,
         &all_notes,
         &offsets,
-        &[0; 128],
+        &[0; KEY_COUNT],
     )
     .unwrap();
     let upload_ms = t.elapsed().as_secs_f64() * 1e3;

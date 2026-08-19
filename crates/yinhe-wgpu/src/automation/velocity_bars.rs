@@ -39,7 +39,7 @@ pub fn build_velocity_bars(
     let pad_start = tick_start.max(0.0) as u32;
     let pad_end = tick_end.max(0.0) as u32;
 
-    let mut bars: Vec<VelocityBarInstance> = (0u8..128)
+    let mut bars: Vec<VelocityBarInstance> = (0u8..=yinhe_types::MAX_KEY)
         .into_par_iter()
         .flat_map_iter(|key| {
             stacker::maybe_grow(STACK_RED_ZONE, STACK_SIZE, || {
