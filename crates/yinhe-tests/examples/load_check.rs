@@ -9,7 +9,7 @@ fn main() {
         .unwrap_or_else(|| "/Users/jieneng/Music/MIDIs/start_v5.yin".to_string());
 
     let start = std::time::Instant::now();
-    let (model, _sf, _mapping) = yinhe_yin::load_yin_with_sf(&path).expect("load yin");
+    let (model, _sf, _mapping, _mixer) = yinhe_yin::load_yin_with_sf(&path).expect("load yin");
     println!(
         "loaded: {} notes, {} tracks, {:.1}s",
         model.note_count,

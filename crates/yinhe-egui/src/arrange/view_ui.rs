@@ -876,7 +876,7 @@ fn sel_drag_frame_arrange(
                             b.t_start as u32,
                             b.t_end as u32,
                             0,
-                            127,
+                            yinhe_types::MAX_KEY,
                             b.track_lo as u16,
                             b.track_hi as u16,
                         );

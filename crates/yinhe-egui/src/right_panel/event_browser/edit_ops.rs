@@ -415,9 +415,14 @@ pub fn apply_notes_ops(
                 doc.edit.selected.clear();
                 for &tick in &state.selected_ticks {
                     // tick 到 tick+1 的窄矩形，覆盖全 key 范围，限定 track
-                    doc.edit
-                        .selected
-                        .add_rect_track(tick, tick + 1, 0, 127, track, track);
+                    doc.edit.selected.add_rect_track(
+                        tick,
+                        tick + 1,
+                        0,
+                        yinhe_types::MAX_KEY,
+                        track,
+                        track,
+                    );
                 }
                 if let Some(action) = doc.delete_selected() {
                     doc.push_undo(action, "删除音符", before);

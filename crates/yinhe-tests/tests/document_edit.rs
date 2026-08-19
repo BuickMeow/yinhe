@@ -50,6 +50,7 @@ fn document_from_model() {
         QuantizePreset::Fraction(1, 16),
         Default::default(),
         Default::default(),
+        None,
     )
     .expect("from_model failed");
     assert_eq!(doc.data.model.note_count, 4);
@@ -261,6 +262,7 @@ fn document_recode_track_names() {
         QuantizePreset::Fraction(1, 16),
         Default::default(),
         Default::default(),
+        None,
     )
     .expect("from_model failed");
     let original_names: Vec<String> = doc
@@ -361,8 +363,9 @@ fn transpose_clamps_upper_bound() {
         .selected
         .add_rect_track(start_tick, end_tick, key, key, track, track);
     doc.transpose_selected(100);
-    // Should clamp to key 127
-    assert_eq!(doc.data.model.notes[127].len(), 1);
+    // 256 键空间：60+100=160 不再触发 clamp，直接落在 key 160
+    // （i8 transpose 上限 ±127，永远够不到 MAX_KEY=255 上界）
+    assert_eq!(doc.data.model.notes[160].len(), 1);
 }
 
 #[test]

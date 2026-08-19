@@ -427,7 +427,7 @@ fn note_drag_frame(
             // Alt（复制模式）：原音符保留可见，不 push hidden_notes。
             for info in notes {
                 let new_tick = (info.start_tick as i64 + dt).max(0) as u32;
-                let new_key = ((info.key as i32) + dk).clamp(0, 127) as u8;
+                let new_key = ((info.key as i32) + dk).clamp(0, yinhe_types::MAX_KEY as i32) as u8;
                 let length = info.end_tick - info.start_tick;
                 state
                     .ghost_notes
@@ -452,7 +452,8 @@ fn note_drag_frame(
                     .map(|info| {
                         super::PreviewReq::Note(super::NotePreview {
                             track: info.track,
-                            key: ((info.key as i32) + dk).clamp(0, 127) as u8,
+                            key: ((info.key as i32) + dk).clamp(0, yinhe_types::MAX_KEY as i32)
+                                as u8,
                             velocity: Some(info.velocity),
                             target_tick: (info.start_tick as i64 + dt).max(0) as u32,
                             duration_ticks: info.end_tick - info.start_tick,
@@ -493,7 +494,8 @@ fn note_drag_frame(
                 // notes don't flash back before the model is updated.
                 for info in notes {
                     let new_tick = (info.start_tick as i64 + dt).max(0) as u32;
-                    let new_key = ((info.key as i32) + dk).clamp(0, 127) as u8;
+                    let new_key =
+                        ((info.key as i32) + dk).clamp(0, yinhe_types::MAX_KEY as i32) as u8;
                     let length = info.end_tick - info.start_tick;
                     state
                         .ghost_notes
@@ -810,7 +812,7 @@ fn single_note_move_frame(
             };
 
             let new_start = (orig_start as i64 + dt).max(0) as u32;
-            let new_key = (orig_key as i32 + dk).clamp(0, 127) as u8;
+            let new_key = (orig_key as i32 + dk).clamp(0, yinhe_types::MAX_KEY as i32) as u8;
             state
                 .ghost_notes
                 .push((new_start, new_start + (orig_end - orig_start), new_key, trk));
@@ -877,7 +879,7 @@ fn single_note_move_frame(
                 }
                 // Keep ghost/hidden alive on the release frame
                 let new_start = (orig_start as i64 + dt).max(0) as u32;
-                let new_key = (orig_key as i32 + dk).clamp(0, 127) as u8;
+                let new_key = (orig_key as i32 + dk).clamp(0, yinhe_types::MAX_KEY as i32) as u8;
                 state.ghost_notes.push((
                     new_start,
                     new_start + (orig_end - orig_start),

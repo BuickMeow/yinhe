@@ -174,8 +174,10 @@ pub fn select_key_info_multi(
 
 /// 根据 key 和 velocity 选择对应的 KeyInfo（力度分层）。
 /// 展开后每个 vel 恰好一层，正常情况精确命中；兜底选距离最近的层。
+///
+/// key ≥ 128（256 键扩展音域）时音色库无对应区域：返回 None（静音），不越界。
 pub fn select_key_info(key_map: &[Vec<KeyInfo>], key: u8, velocity: u8) -> Option<&KeyInfo> {
-    let layers = &key_map[key as usize];
+    let layers = key_map.get(key as usize)?;
     if layers.is_empty() {
         return None;
     }

@@ -252,7 +252,7 @@ impl App {
                 t_start as u32,
                 t_end as u32,
                 0,
-                127,
+                yinhe_types::MAX_KEY,
                 track_lo as u16,
                 track_hi as u16,
             );

@@ -405,7 +405,7 @@ impl ArView {
                             t0.min(t1) as u32,
                             t0.max(t1) as u32 + 1,
                             0,
-                            127,
+                            yinhe_types::MAX_KEY,
                             tr0.min(tr1) as u16,
                             tr0.max(tr1) as u16,
                         );

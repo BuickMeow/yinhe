@@ -113,7 +113,7 @@ impl YinheApp {
                                     t0.min(t1) as u32,
                                     t0.max(t1) as u32 + 1,
                                     0,
-                                    127,
+                                    yinhe_types::MAX_KEY,
                                     track0.min(track1) as u16,
                                     track0.max(track1) as u16,
                                 );

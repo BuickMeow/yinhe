@@ -101,7 +101,7 @@ enum EditGesture {
 /// 后台构建的音符实例数据（加载后一次性构建 + 上传）。
 struct NoteBuildResult {
     notes: Vec<NoteInstance>,
-    offsets: [u32; 129],
+    offsets: [u32; yinhe_types::KEY_COUNT + 1],
 }
 
 /// 顶部小节标尺高度（px）：内容区整体下移该距离给标尺让位。
@@ -695,7 +695,7 @@ impl PrView {
                         (
                             (s as i64 + dt).max(0) as u32,
                             (e as i64 + dt).max(0) as u32,
-                            ((k as i32 + dk).clamp(0, 127)) as u8,
+                            ((k as i32 + dk).clamp(0, yinhe_types::MAX_KEY as i32)) as u8,
                             tr,
                         )
                     })
@@ -1205,7 +1205,7 @@ impl PrView {
                             *state2.lock().unwrap_or_else(|e| e.into_inner()) =
                                 Some(NoteBuildResult {
                                     notes: Vec::new(),
-                                    offsets: [0; 129],
+                                    offsets: [0; yinhe_types::KEY_COUNT + 1],
                                 });
                         }
                     }
@@ -1223,7 +1223,11 @@ impl PrView {
                     self.notes_uploaded = true; // 不再重试
                     return;
                 }
-                renderer.upload_all_notes_for_cull(&result.notes, &result.offsets, &[0u64; 128]);
+                renderer.upload_all_notes_for_cull(
+                    &result.notes,
+                    &result.offsets,
+                    &[0u64; yinhe_types::KEY_COUNT],
+                );
                 self.notes_uploaded = true;
                 let notes: u64 = model.track_note_count.iter().sum();
                 self.status = format!("{notes} 音符已上传 GPU");

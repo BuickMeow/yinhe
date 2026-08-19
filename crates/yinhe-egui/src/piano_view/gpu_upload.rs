@@ -14,14 +14,14 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
 
 use yinhe_core::YinModel;
-use yinhe_types::NoteSource;
+use yinhe_types::{KEY_COUNT, NoteSource};
 use yinhe_wgpu::{InstanceRenderer, NoteInstance};
 
 /// 后台构建的产物：全量过滤后的音符 + per-key offsets + 构建时的 key revisions。
 pub(crate) struct BuildResult {
     pub notes: Vec<NoteInstance>,
-    pub offsets: [u32; 129],
-    pub revisions: [u64; 128],
+    pub offsets: [u32; KEY_COUNT + 1],
+    pub revisions: [u64; KEY_COUNT],
 }
 
 /// Track 显隐后台重建状态机。
@@ -53,8 +53,8 @@ pub(crate) enum CullRebuild {
 /// 分帧上传阶段持有的载荷。
 pub(crate) struct UploadData {
     pub notes: Vec<NoteInstance>,
-    pub offsets: [u32; 129],
-    pub revisions: [u64; 128],
+    pub offsets: [u32; KEY_COUNT + 1],
+    pub revisions: [u64; KEY_COUNT],
 }
 
 /// 每帧上传的 key 数量。1.64 亿音符全量约 2GB，128 key 分 32 帧传完，
@@ -94,7 +94,7 @@ pub(crate) fn start_rebuild(
     model: Arc<YinModel>,
     hidden_notes: HashSet<(u16, u32, u8)>,
     track_visible: Vec<bool>,
-    note_revisions: [u64; 128],
+    note_revisions: [u64; KEY_COUNT],
     revision: u64,
     hidden_hash: u64,
     tv_hash: u64,
@@ -204,7 +204,7 @@ pub struct GpuUploadState<'a> {
     /// 与 `midi` 同源的 `Arc<YinModel>`，供后台重建线程 clone。
     pub midi_arc: Option<&'a Arc<YinModel>>,
     pub revision: u64,
-    pub note_revisions: &'a [u64; 128],
+    pub note_revisions: &'a [u64; KEY_COUNT],
     pub track_visible: &'a [bool],
     pub hidden_notes: &'a HashSet<(u16, u32, u8)>,
     /// 跨帧缓存：上次完整上传的 note_key.value()。变化时触发上传。
@@ -217,7 +217,7 @@ pub struct GpuUploadState<'a> {
     pub last_tv_hash: &'a mut u64,
     /// 跨帧缓存：上次上传时 hidden_notes 的 key 位图（hidden 增量重建的
     /// 受影响 key 判定：当前 ∪ 上次 = 需重建的 key 并集）。
-    pub last_hidden_keys: &'a mut u128,
+    pub last_hidden_keys: &'a mut HiddenKeyMask,
     /// 跨帧：track 显隐后台重建状态机（None = 无进行中的重建）。
     pub rebuild: &'a mut Option<CullRebuild>,
 }
@@ -328,10 +328,11 @@ pub fn upload(state: GpuUploadState) {
             // key 在两种 hidden 下的过滤输出逐字节相同，无需重建。
             // （拖拽按下/取消时 hidden 变化但 revision 不动，旧实现会同步
             // 全量重建——亿级音符下数百 ms 冻结；这里降到 O(受影响 key)。）
-            let affected = hidden_key_mask(hidden_notes) | *last_hidden_keys;
+            let cur_mask = hidden_key_mask(hidden_notes);
+            let affected = mask_union(&cur_mask, last_hidden_keys);
             let mut all_ok = true;
-            for key in 0u8..128 {
-                if affected & (1u128 << key) == 0 {
+            for key in 0u8..=yinhe_types::MAX_KEY {
+                if !mask_contains(&affected, key) {
                     continue;
                 }
                 let key_notes =
@@ -416,13 +417,28 @@ pub fn upload(state: GpuUploadState) {
 }
 
 /// hidden_notes 集合的 key 位图（bit k = key k 有 hidden 音符）。
-/// 用于 hidden 增量重建的受影响 key 判定；u128 覆盖 128 个 key，零堆分配。
-fn hidden_key_mask(hidden_notes: &std::collections::HashSet<(u16, u32, u8)>) -> u128 {
-    let mut mask = 0u128;
+/// 固定 4×u64 覆盖 KEY_COUNT 个 key，零堆分配。
+pub(crate) type HiddenKeyMask = [u64; KEY_COUNT / 64];
+
+/// 用于 hidden 增量重建的受影响 key 判定。
+fn hidden_key_mask(hidden_notes: &std::collections::HashSet<(u16, u32, u8)>) -> HiddenKeyMask {
+    let mut mask = [0u64; KEY_COUNT / 64];
     for &(_, _, key) in hidden_notes {
-        mask |= 1u128 << key;
+        let k = key as usize;
+        mask[k / 64] |= 1u64 << (k % 64);
     }
     mask
+}
+
+/// 位图按位或（a ∪ b）。
+fn mask_union(a: &HiddenKeyMask, b: &HiddenKeyMask) -> HiddenKeyMask {
+    core::array::from_fn(|i| a[i] | b[i])
+}
+
+/// bit k 是否置位。
+fn mask_contains(mask: &HiddenKeyMask, key: u8) -> bool {
+    let k = key as usize;
+    mask[k / 64] & (1u64 << (k % 64)) != 0
 }
 
 #[cfg(test)]
@@ -596,7 +612,7 @@ mod tests {
         let mut last_cull_revision_only = 0u64;
         let mut last_hidden_hash = 0u64;
         let mut last_tv_hash = 0u64;
-        let mut last_hidden_keys = 0u128;
+        let mut last_hidden_keys: HiddenKeyMask = [0; KEY_COUNT / 64];
         let mut rebuild: Option<CullRebuild> = None;
 
         // 首帧：只显示 track 0（模拟打开 Master 轨）。
@@ -789,7 +805,7 @@ mod tests {
         let model = Arc::new(make_stress_model(4, 2000));
         let hidden = HashSet::new();
         let tv = vec![true, false, true, true]; // 隐藏轨道 1
-        let mut revisions = [0u64; 128];
+        let mut revisions = [0u64; KEY_COUNT];
         for (i, r) in revisions.iter_mut().enumerate() {
             *r = i as u64 + 1;
         }
@@ -818,7 +834,7 @@ mod tests {
         let model = Arc::new(make_stress_model(4, 2000));
         let hidden = HashSet::new();
         let tv = vec![true, false, true, true];
-        let mut revisions = [0u64; 128];
+        let mut revisions = [0u64; KEY_COUNT];
         for (i, r) in revisions.iter_mut().enumerate() {
             *r = i as u64 + 1;
         }
@@ -895,7 +911,7 @@ mod tests {
         let mut last_cull_revision_only = 0u64;
         let mut last_hidden_hash = 0u64;
         let mut last_tv_hash = 0u64;
-        let mut last_hidden_keys = 0u128;
+        let mut last_hidden_keys: HiddenKeyMask = [0; KEY_COUNT / 64];
         let mut rebuild: Option<CullRebuild> = None;
 
         // 首帧：hidden 为空 → 全量上传，全部音符可见。
@@ -1004,10 +1020,9 @@ mod tests {
             .collect();
 
         // hidden 的 key 位图 = {1, 5, 7}。
-        assert_eq!(
-            hidden_key_mask(&hidden),
-            (1u128 << 1) | (1u128 << 5) | (1u128 << 7)
-        );
+        let mut expect = [0u64; KEY_COUNT / 64];
+        expect[0] |= (1u64 << 1) | (1u64 << 5) | (1u64 << 7);
+        assert_eq!(hidden_key_mask(&hidden), expect);
 
         let (full, offsets) = yinhe_wgpu::build_all_notes(model.as_ref(), &hidden, &tv);
         for &key in &[1u8, 5, 7] {

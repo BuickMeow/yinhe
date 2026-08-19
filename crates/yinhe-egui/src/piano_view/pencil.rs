@@ -378,7 +378,8 @@ pub(crate) fn pencil_frame(
                     {
                         preview_req = Some(super::PreviewReq::Note(super::NotePreview {
                             track: *trk,
-                            key: (*orig_key as i32 + dk).clamp(0, 127) as u8,
+                            key: (*orig_key as i32 + dk).clamp(0, yinhe_types::MAX_KEY as i32)
+                                as u8,
                             velocity: Some(vel),
                             target_tick: (*orig_tick as i64 + dt).max(0) as u32,
                             duration_ticks: *orig_end - *orig_tick,

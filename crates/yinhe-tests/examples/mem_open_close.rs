@@ -56,6 +56,7 @@ fn main() {
         QuantizePreset::Fraction(1, 16),
         Default::default(),
         Default::default(),
+        None,
     )
     .expect("build document");
     drop(data);

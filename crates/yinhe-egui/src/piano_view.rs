@@ -174,7 +174,7 @@ pub fn show(
     last_cull_revision_only: &mut u64, // last revision for incremental detection
     last_hidden_hash: &mut u64,   // last hidden_hash for incremental detection
     last_tv_hash: &mut u64,       // last track_visible hash (track_mask 变化检测)
-    last_hidden_keys: &mut u128,  // last hidden_notes key 位图（hidden 增量重建判定）
+    last_hidden_keys: &mut crate::piano_view::gpu_upload::HiddenKeyMask, // last hidden_notes key 位图（hidden 增量重建判定）
     cull_rebuild: &mut Option<crate::piano_view::gpu_upload::CullRebuild>, // 后台重建状态机
     midi: Option<&dyn yinhe_types::NoteSource>,
     midi_arc: Option<&std::sync::Arc<yinhe_core::YinModel>>,
@@ -206,7 +206,7 @@ pub fn show(
     // 控制栏输入（标尺下方一栏：量化/音轨名称/和弦指示器）。
     bar: control_bar::PrBarData<'_>,
     revision: u64,
-    note_revisions: &[u64; 128],
+    note_revisions: &[u64; yinhe_types::KEY_COUNT],
     feedback: &mut PianoViewFeedback<'_>,
     sel_hint: Option<&crate::app::layout::SelHintInfo>,
 ) -> Option<PianoViewEvent> {

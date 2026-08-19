@@ -15,11 +15,11 @@ fn save_and_reopen(doc: &mut Document, path: &str) -> Result<Document, String> {
     let model = doc.data.model.clone();
     let project_file = doc.data.project_file.clone();
     let mapping_file = doc.data.mapping_file.clone();
-    yinhe_yin::save_yin_with_files(&model, path, &project_file, &mapping_file)
+    yinhe_yin::save_yin_with_files(&model, path, &project_file, &mapping_file, None)
         .map_err(|e| format!("save failed: {e}"))?;
 
     // 模拟 FileLoader::start_yin + poll
-    let (model2, sf, mapping2) =
+    let (model2, sf, mapping2, _mixer) =
         yinhe_yin::load_yin_with_sf(path).map_err(|e| format!("load failed: {e}"))?;
     let project_file2 =
         yinhe_yin::ProjectFile::from_meta_with_sf(&model2.meta, sf.mode, sf.overrides.clone());
@@ -30,6 +30,7 @@ fn save_and_reopen(doc: &mut Document, path: &str) -> Result<Document, String> {
         QuantizePreset::Fraction(1, 16),
         project_file2,
         mapping2,
+        None,
     )
     .map_err(|e| format!("from_model failed: {e}"))?;
     Ok(doc2)
@@ -151,6 +152,7 @@ fn real_midi_save_and_reopen_roundtrip() {
             QuantizePreset::Fraction(1, 16),
             Default::default(),
             Default::default(),
+            None,
         )
         .expect("from_model 失败");
 
