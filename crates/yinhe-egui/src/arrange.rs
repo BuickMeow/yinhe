@@ -534,9 +534,7 @@ pub fn show(
 
         // 滚动条滚轮缩放：水平滚动条上滚轮 = x 轴缩放（锚定滚动条中心 x）
         // 方向：上滚 = 放大，下滚 = 缩小
-        if let Some(pos) = ui.input(|i| i.pointer.hover_pos())
-            && sb_rect.contains(pos)
-        {
+        if crate::view_interaction::pointer_hits(ui, sb_rect) {
             let scroll_y = ui.input(|i| i.smooth_scroll_delta.y);
             if scroll_y.abs() > 0.5 {
                 let factor = if scroll_y > 0.0 { 1.0 / 1.1 } else { 1.1 };
@@ -580,9 +578,7 @@ pub fn show(
 
         // 滚动条滚轮缩放：垂直滚动条上滚轮 = y 轴缩放（锚定滚动条中心 y）
         // 方向：上滚 = 放大，下滚 = 缩小
-        if let Some(pos) = ui.input(|i| i.pointer.hover_pos())
-            && vsb_rect.contains(pos)
-        {
+        if crate::view_interaction::pointer_hits(ui, vsb_rect) {
             let scroll_y = ui.input(|i| i.smooth_scroll_delta.y);
             if scroll_y.abs() > 0.5 {
                 let factor = if scroll_y > 0.0 { 1.0 / 1.1 } else { 1.1 };

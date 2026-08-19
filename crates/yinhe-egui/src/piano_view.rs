@@ -1105,7 +1105,9 @@ pub fn show(
 
         // ── 滚动条滚轮缩放：水平滚动条滚轮 = x 轴缩放；垂直滚动条滚轮 = y 轴缩放 ──
         // 方向：上滚 = 放大，下滚 = 缩小
-        if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
+        if let Some(pos) = ui.input(|i| i.pointer.hover_pos())
+            && !super::view_interaction::pointer_over_popup(ui.ctx())
+        {
             let scroll_y = ui.input(|i| i.smooth_scroll_delta.y);
             if scroll_y.abs() > 0.5 {
                 let factor = if scroll_y > 0.0 { 1.0 / 1.1 } else { 1.1 };

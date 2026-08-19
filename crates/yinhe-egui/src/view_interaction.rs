@@ -135,7 +135,8 @@ pub(crate) fn handle_input(
     // blocks egui-level hover for child interacts, so we test containment
     // directly.  Drag/click/double-click go through content_resp and are
     // unaffected.
-    let pointer_in_rect = ui.input(|i| i.pointer.hover_pos().is_some_and(|p| hit_rect.contains(p)));
+    // popup/菜单（Foreground 层）挡在画布上时不响应底层交互，防滚动/点击透传。
+    let pointer_in_rect = pointer_hits(ui, hit_rect);
 
     if pointer_in_rect {
         let pointer_pos = ui.input(|i| i.pointer.hover_pos().unwrap_or_default());
@@ -251,6 +252,14 @@ pub(crate) fn handle_input(
 }
 
 // ── Shared helpers ──
+
+/// 滚动/缩放的统一命中判断：指针在 rect 内且未被上层 popup/菜单（Foreground
+/// 层）遮挡。各处自读 `smooth_scroll_delta` 的滚动/缩放处理都应走这里——
+/// 只做矩形包含判断会被盖在上方的 popup 透传（popup 内滚动时底层跟着滚）。
+pub(crate) fn pointer_hits(ui: &egui::Ui, rect: egui::Rect) -> bool {
+    ui.input(|i| i.pointer.hover_pos().is_some_and(|p| rect.contains(p)))
+        && !pointer_over_popup(ui.ctx())
+}
 
 /// Returns true if the pointer is currently over a foreground layer (popup/menu).
 /// When true, lower layers should not process pointer events to avoid click-through.

@@ -271,11 +271,7 @@ pub fn show_panels(
     );
 
     // Handle mouse wheel / trackpad scroll in the state.panels area
-    let pointer_in_panels = ui.input(|i| {
-        i.pointer
-            .hover_pos()
-            .is_some_and(|p| panels_area_rect.contains(p))
-    });
+    let pointer_in_panels = crate::view_interaction::pointer_hits(ui, panels_area_rect);
     if pointer_in_panels && max_scroll > 0.0 {
         let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
         scroll_y = (scroll_y - scroll_delta.y).clamp(0.0, max_scroll);
@@ -808,6 +804,10 @@ fn handle_panel_scroll_zoom(
     };
 
     let Some(p) = pointer_pos else { return };
+    // popup/菜单盖在面板上时不响应底层缩放/滚动，防透传。
+    if crate::view_interaction::pointer_over_popup(ui.ctx()) {
+        return;
+    }
     if grid_area.contains(p) {
         // 触控板捏合 → 水平缩放（联动 pianoroll）
         if (zoom_delta - 1.0).abs() > 0.001 {

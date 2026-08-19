@@ -167,6 +167,8 @@ pub fn show(ui: &mut egui::Ui, bar: egui::Rect, ctx: &PrBarData<'_>, events: &mu
 /// 「按钮请求可用宽度 → popup 变宽 → 可用宽度更大」的每帧正反馈，popup 向右飞出去。
 fn track_popup(ui: &mut egui::Ui, ctx: &PrBarData<'_>, events: &mut Vec<PrBarEvent>) {
     ui.set_max_height(560.0);
+    // 列表最小高度：音轨少时 popup 也不会缩成一小条（内容自适应高度的副作用）。
+    const LIST_MIN_H: f32 = 280.0;
     ui.horizontal(|ui| {
         // ── 左半：切换主音轨（单击 = 选中仅此轨）──
         ui.vertical(|ui| {
@@ -176,6 +178,7 @@ fn track_popup(ui: &mut egui::Ui, ctx: &PrBarData<'_>, events: &mut Vec<PrBarEve
             ui.separator();
             egui::ScrollArea::vertical()
                 .id_salt("pr_bar_main_list")
+                .min_scrolled_height(LIST_MIN_H)
                 .max_height(500.0)
                 .show(ui, |ui| {
                     for info in ctx.track_infos {
@@ -203,6 +206,7 @@ fn track_popup(ui: &mut egui::Ui, ctx: &PrBarData<'_>, events: &mut Vec<PrBarEve
             ui.separator();
             egui::ScrollArea::vertical()
                 .id_salt("pr_bar_visible_list")
+                .min_scrolled_height(LIST_MIN_H)
                 .max_height(500.0)
                 .show(ui, |ui| {
                     let n = ctx.pr_track_visible.len();

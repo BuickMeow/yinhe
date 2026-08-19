@@ -134,9 +134,7 @@ pub(crate) fn interactive_ruler(
     // 时间标尺专属：纯滚轮即可触发水平缩放（无需 Cmd 修饰键），
     // 与内容区的 Cmd+滚轮 缩放语义分离，避免冲突。
     // pinch（zoom_delta）也联动水平缩放。
-    let pointer_in_ruler = ui
-        .input(|i| i.pointer.hover_pos())
-        .is_some_and(|p| ruler_rect.contains(p));
+    let pointer_in_ruler = crate::view_interaction::pointer_hits(ui, ruler_rect);
     if pointer_in_ruler {
         let pointer_x_view = ui.input(|i| i.pointer.hover_pos().unwrap_or_default()).x
             - (ruler_rect.min.x - view.content_left());
