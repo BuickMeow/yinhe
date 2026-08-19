@@ -98,11 +98,18 @@ pub enum AudioCommand {
     /// 停止全部预览音（余音自然衰减完才停）。
     PreviewStop,
     /// 全量同步混音台参数（引擎 spawn / 工程加载后由 UI 推一次；Box 避免命令枚举过大）。
-    SetMixerParams { params: Box<MixerParams> },
+    SetMixerParams {
+        params: Box<MixerParams>,
+    },
     /// 更新某源通道（0..=255，A01..P16）的 strip 参数（推子拖动高频路径，幂等）。
-    SetChannelStrip { channel: u8, params: StripParams },
+    SetChannelStrip {
+        channel: u8,
+        params: StripParams,
+    },
     /// 更新主输出参数。
-    SetMasterParams { params: MasterParams },
+    SetMasterParams {
+        params: MasterParams,
+    },
     /// 在 channel（None = master）insert 链的 slot 处插入处理器。
     InsertAdd {
         channel: Option<u8>,
@@ -110,7 +117,10 @@ pub enum AudioCommand {
         processor: Box<dyn InsertProcessor>,
     },
     /// 移除 channel（None = master）insert 链 slot 处的处理器（经 return 通道送回 UI 回收）。
-    InsertRemove { channel: Option<u8>, slot: usize },
+    InsertRemove {
+        channel: Option<u8>,
+        slot: usize,
+    },
     /// 替换 channel（None = master）insert 链 slot 处的处理器（插件 restart 用）。
     InsertReplace {
         channel: Option<u8>,
@@ -250,6 +260,14 @@ impl AudioHandle {
             out.append(&mut batch);
         }
         out
+    }
+
+    /// 克隆退回通道的接收端：teardown 时先克隆、再 drop 句柄（join 渲染线程），
+    /// 之后仍能从克隆的接收端取回渲染线程关机时退回的全部处理器。
+    pub fn clone_insert_return_rx(
+        &self,
+    ) -> crossbeam_channel::Receiver<Vec<Box<dyn InsertProcessor>>> {
+        self.insert_return_rx.clone()
     }
 }
 
@@ -793,8 +811,7 @@ pub fn spawn_cpal_audio(
         .collect();
     let mixer_master_reading = engine.mixer.master_meter_reading();
     // 渲染线程 → UI 的 insert 处理器退回通道（替换/移除/拆除时回收 deactivate）。
-    let (insert_return_tx, insert_return_rx) =
-        unbounded::<Vec<Box<dyn InsertProcessor>>>();
+    let (insert_return_tx, insert_return_rx) = unbounded::<Vec<Box<dyn InsertProcessor>>>();
 
     let (worker_tx, prepared_rx) = spawn_worker(sample_rate)
         .map_err(|e| format!("Failed to spawn audio worker thread: {e}"))?;

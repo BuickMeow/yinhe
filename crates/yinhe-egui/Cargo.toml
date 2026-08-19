@@ -22,6 +22,8 @@ yinhe-wgpu = { path = "../yinhe-wgpu" }
 yinhe-audio = { path = "../yinhe-audio", features = ["gpu"] }
 yinhe-memtrace = { path = "../yinhe-memtrace" }
 yinhe-editor-core = { path = "../yinhe-editor-core" }
+yinhe-mixer = { path = "../yinhe-mixer" }
+yinhe-clap = { path = "../yinhe-clap" }
 cpal = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

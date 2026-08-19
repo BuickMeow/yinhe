@@ -713,12 +713,14 @@ fn mixer_section_roundtrips() {
     mixer.channel_inserts[3].push(InsertRef {
         plugin_path: "/Library/Audio/Plug-Ins/CLAP/Example.clap".into(),
         plugin_id: "com.example.effect".into(),
+        name: "Example FX".into(),
         bypassed: true,
         state: Some(vec![1, 2, 3, 4, 5]),
     });
     mixer.master_inserts.push(InsertRef {
         plugin_path: "/x.clap".into(),
         plugin_id: "com.example.limiter".into(),
+        name: "Limiter".into(),
         bypassed: false,
         state: None,
     });

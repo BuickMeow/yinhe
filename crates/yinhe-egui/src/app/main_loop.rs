@@ -480,6 +480,9 @@ impl eframe::App for App {
         // ── 音色库异步加载进度（完成计数驱动 stage 2）──
         self.poll_audio_progress();
 
+        // ── 混音台 insert：回收退回处理器 + 插件反向请求（restart 等）──
+        self.poll_mixer_plugins();
+
         // ── Transport bar ──
         let active_doc = self.active_doc.and_then(|idx| self.documents.get(idx));
         let transport_response = transport_bar::show(

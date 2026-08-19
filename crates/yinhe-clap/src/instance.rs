@@ -5,12 +5,12 @@
 
 use std::ffi::CString;
 
+use clack_extensions::params::{ParamInfoBuffer, PluginParams};
+use clack_extensions::state::PluginState;
 use clack_host::entry::PluginEntry;
 use clack_host::host::HostInfo;
 use clack_host::plugin::PluginInstance;
 use clack_host::process::{PluginAudioConfiguration, StoppedPluginAudioProcessor};
-use clack_extensions::params::{ParamInfoBuffer, PluginParams};
-use clack_extensions::state::PluginState;
 
 use crate::describe::PluginInfo;
 use crate::error::PluginError;

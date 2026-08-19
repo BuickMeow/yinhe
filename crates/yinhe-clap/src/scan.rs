@@ -46,9 +46,9 @@ pub fn default_plugin_dirs() -> Vec<PathBuf> {
 pub fn scan_path(path: &Path) -> Result<Vec<PluginInfo>, PluginError> {
     // SAFETY: 加载外部动态库本身是 unsafe 的（见模块文档安全性说明）。
     let entry = unsafe { PluginEntry::load(path.as_os_str())? };
-    let factory = entry
-        .get_plugin_factory()
-        .ok_or_else(|| PluginError::PluginIdNotFound(format!("{}: 无 plugin factory", path.display())))?;
+    let factory = entry.get_plugin_factory().ok_or_else(|| {
+        PluginError::PluginIdNotFound(format!("{}: 无 plugin factory", path.display()))
+    })?;
 
     let mut infos = Vec::new();
     for descriptor in factory.plugin_descriptors() {
@@ -60,8 +60,12 @@ pub fn scan_path(path: &Path) -> Result<Vec<PluginInfo>, PluginError> {
             path: path.to_path_buf(),
             id: id.to_string_lossy().into_owned(),
             name: name.to_string_lossy().into_owned(),
-            vendor: descriptor.vendor().map(|v| v.to_string_lossy().into_owned()),
-            version: descriptor.version().map(|v| v.to_string_lossy().into_owned()),
+            vendor: descriptor
+                .vendor()
+                .map(|v| v.to_string_lossy().into_owned()),
+            version: descriptor
+                .version()
+                .map(|v| v.to_string_lossy().into_owned()),
             features: descriptor
                 .features()
                 .map(|f| f.to_string_lossy().into_owned())

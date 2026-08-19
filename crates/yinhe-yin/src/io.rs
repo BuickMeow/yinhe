@@ -649,7 +649,15 @@ pub fn load_yin(path: impl AsRef<Path>) -> Result<YinModel, YinError> {
 /// Load a `.yin` file from `path`, returning the model and its SoundFont state.
 pub fn load_yin_with_sf(
     path: impl AsRef<Path>,
-) -> Result<(YinModel, ProjectSoundFonts, MappingFile, Option<MixerParams>), YinError> {
+) -> Result<
+    (
+        YinModel,
+        ProjectSoundFonts,
+        MappingFile,
+        Option<MixerParams>,
+    ),
+    YinError,
+> {
     load_yin_with_sf_progress(path, |_| {})
 }
 
@@ -657,7 +665,15 @@ pub fn load_yin_with_sf(
 pub fn load_yin_with_sf_progress(
     path: impl AsRef<Path>,
     mut on_progress: impl FnMut(YinProgress) + Send,
-) -> Result<(YinModel, ProjectSoundFonts, MappingFile, Option<MixerParams>), YinError> {
+) -> Result<
+    (
+        YinModel,
+        ProjectSoundFonts,
+        MappingFile,
+        Option<MixerParams>,
+    ),
+    YinError,
+> {
     let bytes = std::fs::read(path.as_ref())?;
     let (model, project, mapping, mixer) = load_yin_bytes_inner(&bytes, &mut on_progress)?;
     let sf = ProjectSoundFonts {

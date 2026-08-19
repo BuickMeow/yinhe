@@ -78,6 +78,7 @@ fn main() {
         |_, _| {},
         None,
         None,
+        None,
     )
     .expect("cpu export failed");
     let cpu_elapsed = t0.elapsed();

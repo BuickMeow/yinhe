@@ -64,6 +64,9 @@ pub struct InsertRef {
     pub plugin_path: PathBuf,
     /// 包内插件 id（如 "com.u-he.diva"）。
     pub plugin_id: String,
+    /// 显示名（持久化：恢复时扫描结果可能不含该插件，仍能显示原名）。
+    #[serde(default)]
+    pub name: String,
     /// 旁通：链上保留槽位但不参与处理。
     #[serde(default)]
     pub bypassed: bool,

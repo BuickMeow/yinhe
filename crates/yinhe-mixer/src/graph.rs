@@ -99,7 +99,8 @@ impl MixerGraph {
                 left: vec![0.0; frames],
                 right: vec![0.0; frames],
             });
-            self.strips.push(StripState::new(strips.get(i).copied().unwrap_or_default()));
+            self.strips
+                .push(StripState::new(strips.get(i).copied().unwrap_or_default()));
             self.inserts.push(Vec::new());
             let (tap, reading) = MeterTap::new();
             self.meters.push(tap);
@@ -170,7 +171,11 @@ impl MixerGraph {
     }
 
     /// 移除并返回槽位 `slot` 的处理器（上层回收 deactivate）。
-    pub fn remove_insert(&mut self, channel: usize, slot: usize) -> Option<Box<dyn InsertProcessor>> {
+    pub fn remove_insert(
+        &mut self,
+        channel: usize,
+        slot: usize,
+    ) -> Option<Box<dyn InsertProcessor>> {
         let chain = self.inserts.get_mut(channel)?;
         (slot < chain.len()).then(|| chain.remove(slot))
     }
@@ -270,13 +275,7 @@ impl MixerGraph {
             let strip = &mut self.strips[i];
             let p = strip.params;
             let audible = !p.mute && (!any_solo || p.solo);
-            strip.accumulate(
-                &buffers.left,
-                &buffers.right,
-                master_l,
-                master_r,
-                audible,
-            );
+            strip.accumulate(&buffers.left, &buffers.right, master_l, master_r, audible);
             // 电平表取 post-insert、pre-fader；静音/被独奏排除的通道读数为 0，
             // 符合「这路现在出没出声」的直觉。
             if audible {

@@ -7,7 +7,9 @@
 //!   由插件的 note ports MIDI dialect 接收）；
 //! - 插件参数变化走 ParamValue 事件。
 
-use clack_host::events::event_types::{MidiEvent, NoteChokeEvent, NoteOffEvent, NoteOnEvent, ParamValueEvent};
+use clack_host::events::event_types::{
+    MidiEvent, NoteChokeEvent, NoteOffEvent, NoteOnEvent, ParamValueEvent,
+};
 use clack_host::events::io::EventBuffer;
 use clack_host::events::{Match, Pckn};
 use clack_host::prelude::ClapId;
@@ -34,7 +36,11 @@ pub enum ClapInputEvent {
     /// 原始 MIDI 1.0 消息（CC、弯音、ProgramChange 等），最多 3 字节。
     Midi { time: u32, data: [u8; 3] },
     /// 插件参数变化。
-    ParamValue { time: u32, param_id: u32, value: f64 },
+    ParamValue {
+        time: u32,
+        param_id: u32,
+        value: f64,
+    },
 }
 
 /// 推入事件缓冲。非法 param_id（u32::MAX）直接丢弃并记日志，不 panic。
@@ -46,12 +52,7 @@ pub(crate) fn push_event(buffer: &mut EventBuffer, event: &ClapInputEvent) {
             key,
             velocity,
         } => {
-            let pckn = Pckn::new(
-                0u16,
-                u16::from(channel),
-                u16::from(key),
-                Match::<u32>::All,
-            );
+            let pckn = Pckn::new(0u16, u16::from(channel), u16::from(key), Match::<u32>::All);
             buffer.push(&NoteOnEvent::new(time, pckn, velocity));
         }
         ClapInputEvent::NoteOff {
@@ -60,21 +61,11 @@ pub(crate) fn push_event(buffer: &mut EventBuffer, event: &ClapInputEvent) {
             key,
             velocity,
         } => {
-            let pckn = Pckn::new(
-                0u16,
-                u16::from(channel),
-                u16::from(key),
-                Match::<u32>::All,
-            );
+            let pckn = Pckn::new(0u16, u16::from(channel), u16::from(key), Match::<u32>::All);
             buffer.push(&NoteOffEvent::new(time, pckn, velocity));
         }
         ClapInputEvent::NoteChoke { time, channel, key } => {
-            let pckn = Pckn::new(
-                0u16,
-                u16::from(channel),
-                u16::from(key),
-                Match::<u32>::All,
-            );
+            let pckn = Pckn::new(0u16, u16::from(channel), u16::from(key), Match::<u32>::All);
             buffer.push(&NoteChokeEvent::new(time, pckn));
         }
         ClapInputEvent::Midi { time, data } => {

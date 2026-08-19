@@ -4,6 +4,7 @@ mod audio_ring;
 mod channel;
 pub mod channel_layout;
 mod channel_set;
+pub mod clap_insert;
 pub mod engine;
 mod engine_mixer;
 mod engine_render;
@@ -18,6 +19,7 @@ pub mod spawn;
 #[cfg(feature = "gpu")]
 pub use yinhe_synth as synth;
 
+pub use clap_insert::ClapInsert;
 pub use spawn::{
     AudioCommand, AudioHandle, CpalAudioHandle, PreviewNoteParams, channels_for_model,
     list_output_devices, spawn_cpal_audio,

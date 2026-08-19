@@ -223,10 +223,11 @@ impl Document {
         quantize_arrange: QuantizePreset,
         quantize_pianoroll: QuantizePreset,
     ) -> std::io::Result<(Self, bool)> {
-        let (model, sf, mapping, mixer) = yinhe_yin::load_yin_with_sf(path).map_err(|e| match e {
-            yinhe_yin::YinError::Io(io) => io,
-            other => std::io::Error::new(std::io::ErrorKind::InvalidData, other.to_string()),
-        })?;
+        let (model, sf, mapping, mixer) =
+            yinhe_yin::load_yin_with_sf(path).map_err(|e| match e {
+                yinhe_yin::YinError::Io(io) => io,
+                other => std::io::Error::new(std::io::ErrorKind::InvalidData, other.to_string()),
+            })?;
         let project_file =
             yinhe_yin::ProjectFile::from_meta_with_sf(&model.meta, sf.mode, sf.overrides.clone());
         let mut doc = Self::from_model(

@@ -17,9 +17,10 @@ mod instance;
 mod processor;
 pub mod scan;
 
+pub use clack_host::host::HostInfo;
 pub use describe::PluginInfo;
 pub use error::PluginError;
-pub use host::YinheHost;
 pub use events::ClapInputEvent;
+pub use host::YinheHost;
 pub use instance::{ClapPluginInstance, ParamDescriptor};
 pub use processor::ClapProcessor;

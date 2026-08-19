@@ -105,6 +105,9 @@ pub fn export_wav(
     progress: impl Fn(f32, &str),
     export_progress: Option<Arc<Mutex<ExportProgress>>>,
     cancel: Option<Arc<AtomicBool>>,
+    // 混音台 strip 参数（增益/声像/静音/独奏）。insert 效果器不参与导出：
+    // 插件实例属于 UI 线程的引擎会话，导出线程无法复用。
+    mixer_params: Option<&yinhe_mixer::MixerParams>,
 ) -> Result<(), ExportError> {
     let t_start = Instant::now();
     let layout = channels_for_model(&model);
@@ -142,6 +145,13 @@ pub fn export_wav(
     engine.handle_command(crate::spawn::AudioCommand::SkipTracks {
         skip: skip_tracks.to_vec(),
     });
+
+    // 混音台 strip 参数（在 strip 应用后渲染即生效；insert 不进导出）。
+    if let Some(m) = mixer_params {
+        engine.handle_command(crate::spawn::AudioCommand::SetMixerParams {
+            params: Box::new(m.clone()),
+        });
+    }
 
     let main_duration = engine.duration_samples();
     if main_duration == 0 {

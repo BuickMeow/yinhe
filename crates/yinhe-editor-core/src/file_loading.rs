@@ -24,7 +24,16 @@ pub enum MidiLoadEvent {
 /// Events for .yin project loading.
 pub enum YinLoadEvent {
     Complete(
-        Result<(YinModel, ProjectSoundFonts, MappingFile, Option<MixerParams>, String), String>,
+        Result<
+            (
+                YinModel,
+                ProjectSoundFonts,
+                MappingFile,
+                Option<MixerParams>,
+                String,
+            ),
+            String,
+        >,
     ),
 }
 
@@ -199,7 +208,9 @@ impl FileLoader {
                         .unwrap_or_default();
                     progress::set_stage(&progress, 0, StageStatus::Done);
                     progress::set_visible(&progress, false);
-                    let _ = tx.send(YinLoadEvent::Complete(Ok((model, sf, mapping, mixer, file_name))));
+                    let _ = tx.send(YinLoadEvent::Complete(Ok((
+                        model, sf, mapping, mixer, file_name,
+                    ))));
                 }
                 Err(e) => {
                     progress::set_visible(&progress, false);

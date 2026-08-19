@@ -151,7 +151,9 @@ impl App {
         progress::set_stage_progress(&self.load_progress, 1, 0.0, "初始化音频引擎".into());
 
         // Drop old audio (stops cpal stream, frees engine)
-        self.audio_state.handle = None;
+        // 走 teardown_audio：渲染线程关机退回的 insert 处理器要交还机架
+        // deactivate，不能直接丢句柄。
+        self.teardown_audio();
         // 旧引擎的 audible_notes/cc_events 已释放：归还空闲页，切文档后 RSS 不累积。
         yinhe_memtrace::purge_free_pages();
 
@@ -261,6 +263,10 @@ impl App {
                 self.audio_state.handle = Some(audio);
                 self.audio_state.active_doc = Some(idx);
                 self.audio_state.last_channel_layout = pending_layout;
+
+                // 混音台：全量参数 + 各 insert 处理器激活补发（引擎是全新 spawn，
+                // 机架里所有槽位此时都是未发送状态）。
+                self.push_mixer_state_to_engine(idx);
 
                 // 进度条保持可见：音色库异步加载的完成计数由
                 // `poll_audio_progress` 驱动，全部完成才隐藏。
@@ -387,8 +393,9 @@ impl App {
         self.audio_settings.output_device_name = Some(device_name);
         self.audio_settings.save();
 
-        // drop 旧 handle（Drop trait 会通知 renderer 线程退出），强制 rebuild
-        self.audio_state.handle = None;
+        // drop 旧 handle（teardown 会 join 渲染线程并把退回的 insert 处理器
+        // 交还机架 deactivate），强制 rebuild
+        self.teardown_audio();
 
         // 用新设备名重建（rebuild_audio_if_needed 会读 output_device_name，
         // 后台 spawn，结果由每帧 poll_audio_spawn 收取）
@@ -583,9 +590,27 @@ impl App {
 
     /// Tear down audio (e.g. on new project or settings change).
     pub(crate) fn teardown_audio(&mut self) {
+        // 渲染线程关机时会把全部 insert 处理器经 return 通道退回；
+        // 先克隆接收端再 drop 句柄，之后 drain 交回绑定文档的机架 deactivate，
+        // 避免处理器在渲染线程上裸 drop（CLAP deactivate 必须在管理线程做）。
+        let return_rx = self
+            .audio_state
+            .handle
+            .as_ref()
+            .map(|a| a.handle.clone_insert_return_rx());
+        let bound_doc = self.audio_state.active_doc;
         self.audio_state.handle = None;
         self.audio_state.active_doc = None;
         self.audio_state.last_channel_layout = None;
         self.audio_state.spawn_error = None;
+        if let (Some(rx), Some(idx)) = (return_rx, bound_doc) {
+            let mut returned: Vec<Box<dyn yinhe_mixer::InsertProcessor>> = Vec::new();
+            while let Ok(mut batch) = rx.try_recv() {
+                returned.append(&mut batch);
+            }
+            if !returned.is_empty() && idx < self.mixer_racks.len() {
+                self.mixer_racks[idx].on_returns(returned);
+            }
+        }
     }
 }

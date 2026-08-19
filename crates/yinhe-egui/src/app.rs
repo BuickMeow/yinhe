@@ -58,6 +58,12 @@ pub struct App {
     pub(crate) documents: Vec<Document>,
     pub(crate) active_doc: Option<usize>,
 
+    // ── MIX 混音台 ──
+    /// MIX 界面 UI 状态（扫描结果/选择器/电平衰减，全局一份）。
+    pub(crate) mix: crate::mix::MixUiState,
+    /// 每文档的 CLAP insert 插件机架，与 `documents` 平行（同索引同生命周期）。
+    pub(crate) mixer_racks: Vec<crate::mix::MixerRack>,
+
     // ── Shared state ──
     pub(crate) transport_panel_width: f32,
     pub(crate) file_loader: FileLoader,
@@ -321,6 +327,8 @@ impl App {
             documents: vec![Document::empty()],
             active_doc: Some(0),
             prev_active_doc: Some(0),
+            mix: crate::mix::MixUiState::default(),
+            mixer_racks: vec![crate::mix::MixerRack::default()],
 
             transport_panel_width: audio_settings.layout.transport_panel_width,
             load_progress: load_progress.clone(),
@@ -424,6 +432,15 @@ impl App {
             return;
         }
         let was_active = self.active_doc == Some(index);
+        // 音频绑定本文档时先 teardown：渲染线程退回的 insert 处理器需要
+        // 交还本文档机架 deactivate（teardown_audio 内部完成回收），
+        // 之后才移除机架与文档。
+        if self.audio_state.active_doc == Some(index) {
+            self.teardown_audio();
+        }
+        if index < self.mixer_racks.len() {
+            self.mixer_racks.remove(index);
+        }
         self.documents.remove(index);
         if index < self.controller_renderers.len() {
             self.controller_renderers.remove(index);
@@ -438,13 +455,11 @@ impl App {
             }
         }
 
-        // 同步 audio_state：关闭音频绑定的文档时释放引擎，否则修正索引
-        match self.audio_state.active_doc {
-            Some(audio_idx) if audio_idx == index => self.teardown_audio(),
-            Some(audio_idx) if audio_idx > index => {
-                self.audio_state.active_doc = Some(audio_idx - 1);
-            }
-            _ => {}
+        // 同步 audio_state：音频绑定的文档已在上方 teardown，这里只修正索引
+        if let Some(audio_idx) = self.audio_state.active_doc
+            && audio_idx > index
+        {
+            self.audio_state.active_doc = Some(audio_idx - 1);
         }
 
         // 归还 jemalloc arena 中已释放的内存给 OS，防止 RSS 不下降
@@ -492,6 +507,7 @@ impl App {
     /// 共用此实现，避免两处重复 push + setup 代码。
     fn new_project(&mut self) {
         self.documents.push(Document::empty());
+        self.mixer_racks.push(crate::mix::MixerRack::default());
         self.active_doc = Some(self.documents.len() - 1);
         self.teardown_audio();
     }

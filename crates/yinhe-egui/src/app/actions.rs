@@ -529,6 +529,11 @@ impl App {
             })
             .collect();
 
+        // 混音台插件：保存前把实例的 CLAP state 写回 InsertRef（旁通标志同步）。
+        if let Some(rack) = self.mixer_racks.get_mut(idx) {
+            rack.sync_states_to(&mut self.documents[idx].mixer);
+        }
+        let doc = &self.documents[idx];
         let model = doc.data.model.clone();
         let project_file = doc.data.project_file.clone();
         let mapping_file = doc.data.mapping_file.clone();
@@ -680,6 +685,8 @@ impl App {
         };
         let export_progress = self.export.progress.clone();
         let cancel_flag = self.export.cancel.clone();
+        // 混音台 strip 参数随导出（insert 效果器不导出，见 export_wav 文档）。
+        let mixer = doc.mixer.clone();
         let use_gpu_synth = self.audio_settings.use_gpu_synth;
         cancel_flag.store(false, std::sync::atomic::Ordering::Relaxed);
 
@@ -749,6 +756,7 @@ impl App {
                         },
                         Some(export_progress.clone()),
                         Some(cancel_flag),
+                        Some(&mixer),
                     )
                 }
             } else {
@@ -772,6 +780,7 @@ impl App {
                     },
                     Some(export_progress.clone()),
                     Some(cancel_flag),
+                    Some(&mixer),
                 )
             };
 
@@ -794,6 +803,7 @@ impl App {
                 },
                 Some(export_progress.clone()),
                 Some(cancel_flag),
+                Some(&mixer),
             );
             // Capture final stats before hiding the progress window.
             let (elapsed, speed) = {

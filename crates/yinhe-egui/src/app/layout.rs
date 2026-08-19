@@ -148,8 +148,14 @@ impl App {
                 .view_mode
                 .show_pianoroll(self.show_pianoroll_in_arrange);
         if !has_view {
-            ui.painter()
-                .rect_filled(layout.remaining, 0.0, crate::theme::track_bg());
+            // MIX 模式：有工程时进混音台，否则只铺背景。
+            if self.view_mode == crate::chrome::mode_bar::ViewMode::Mix && self.active_doc.is_some()
+            {
+                crate::mix::show(self, ui, layout.remaining);
+            } else {
+                ui.painter()
+                    .rect_filled(layout.remaining, 0.0, crate::theme::track_bg());
+            }
             return;
         }
         let Some(idx) = self.active_doc else {

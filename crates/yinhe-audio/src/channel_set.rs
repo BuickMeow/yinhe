@@ -144,12 +144,11 @@ impl ChannelSet {
                 let channels = &mut self.channels;
                 let caches = &mut self.channel_events_cache;
                 pool.install(move || {
-                    channels
-                        .par_iter_mut()
-                        .zip(caches.par_iter_mut())
-                        .for_each(|(channel, events)| {
+                    channels.par_iter_mut().zip(caches.par_iter_mut()).for_each(
+                        |(channel, events)| {
                             channel.push_events_iter(events.drain(..).map(ChannelEvent::Audio));
-                        });
+                        },
+                    );
                 });
             }
             None => {
@@ -191,14 +190,15 @@ impl ChannelSet {
         // 并行/串行两路共用的单通道渲染闭包（参数类型抽别名，过 clippy type_complexity）。
         type ChannelItem<'a> = (&'a mut VoiceChannel, &'a mut Vec<ChannelAudioEvent>);
         type OutputItem<'a> = (&'a mut Vec<f32>, &'a mut ChannelBuffers);
-        let render_one = move |((channel, events), (scratch, buf)): (ChannelItem<'_>, OutputItem<'_>)| {
-            channel.push_events_iter(events.drain(..).map(ChannelEvent::Audio));
-            channel.read_samples(&mut scratch[..interleaved_len]);
-            for (i, s) in scratch[..interleaved_len].chunks_exact(2).enumerate() {
-                buf.left[offset_frames + i] = s[0];
-                buf.right[offset_frames + i] = s[1];
-            }
-        };
+        let render_one =
+            move |((channel, events), (scratch, buf)): (ChannelItem<'_>, OutputItem<'_>)| {
+                channel.push_events_iter(events.drain(..).map(ChannelEvent::Audio));
+                channel.read_samples(&mut scratch[..interleaved_len]);
+                for (i, s) in scratch[..interleaved_len].chunks_exact(2).enumerate() {
+                    buf.left[offset_frames + i] = s[0];
+                    buf.right[offset_frames + i] = s[1];
+                }
+            };
 
         match self.thread_pool.as_ref() {
             Some(pool) => {

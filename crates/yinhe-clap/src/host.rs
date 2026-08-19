@@ -7,15 +7,15 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use clack_extensions::latency::HostLatencyImpl;
+use clack_extensions::log::{HostLogImpl, LogSeverity};
+use clack_extensions::params::{HostParamsImplMainThread, ParamClearFlags, ParamRescanFlags};
+use clack_extensions::state::HostStateImpl;
 use clack_host::host::{
     AudioProcessorHandler, HostExtensions, HostHandlers, MainThreadHandler, SharedHandler,
 };
 use clack_host::plugin::{InitializedPluginHandle, InitializingPluginHandle};
 use clack_host::prelude::ClapId;
-use clack_extensions::latency::HostLatencyImpl;
-use clack_extensions::log::{HostLogImpl, LogSeverity};
-use clack_extensions::params::{HostParamsImplMainThread, ParamClearFlags, ParamRescanFlags};
-use clack_extensions::state::HostStateImpl;
 
 pub struct YinheShared {
     /// 插件请求重启处理（activate/deactivate 循环）。

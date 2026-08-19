@@ -13,6 +13,7 @@ mod audio_settings;
 mod chrome;
 mod dialogs;
 mod file_loader;
+mod mix;
 mod piano_view;
 mod platform;
 mod render_context;
