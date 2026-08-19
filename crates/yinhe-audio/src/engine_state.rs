@@ -5,6 +5,7 @@ use xsynth_core::channel::{ChannelAudioEvent, ChannelConfigEvent, ChannelEvent};
 use xsynth_core::channel_group::SynthEvent;
 use xsynth_core::soundfont::SoundfontBase;
 
+use yinhe_clap::ClapInputEvent;
 use yinhe_core::YinModel;
 use yinhe_types::KEY_COUNT;
 
@@ -205,6 +206,11 @@ impl AudioEngine {
             )));
         // insert 效果器（delay 尾音/envelope 等）随 seek 清空内部状态
         self.mixer.reset_inserts();
+        // 乐器实例随 seek 清空内部状态（尾音/envelope/挂音）与事件累积。
+        for inst in self.instruments.iter_mut().flatten() {
+            inst.processor.reset();
+            inst.events.clear();
+        }
 
         self.sample_position = sample;
         self.current_tick = self.sample_to_tick(sample);
@@ -242,6 +248,27 @@ impl AudioEngine {
                 if self.skip_track.get(track).copied().unwrap_or(false) {
                     continue;
                 }
+                if let Some(inst_ch) = self.model.as_ref().and_then(|m| m.track_instrument(track)) {
+                    // 乐器轨：chase 重启的音符喂 CLAP 实例（time 0 = 下一块开头）。
+                    if let Some(dense) = self.instrument_dense(inst_ch)
+                        && let Some(Some(slot)) = self.instruments.get_mut(dense)
+                    {
+                        slot.events.push(ClapInputEvent::NoteOn {
+                            time: 0,
+                            channel: (ch & 0x0F) as u8,
+                            key: key as u8,
+                            velocity: n.velocity as f64 / 127.0,
+                        });
+                        self.active_notes.push(std::cmp::Reverse(ActiveNote {
+                            key: key as u8,
+                            dense: dense as u32,
+                            clap_channel: (ch & 0x0F) as u8,
+                            is_instrument: true,
+                            end_tick: n.end_tick,
+                        }));
+                    }
+                    continue;
+                }
                 let dense = self.channel_layout.dense_for(ch);
                 if dense == u32::MAX {
                     continue;
@@ -255,7 +282,9 @@ impl AudioEngine {
                 ));
                 self.active_notes.push(std::cmp::Reverse(ActiveNote {
                     key: key as u8,
-                    channel: ch as u8,
+                    dense,
+                    clap_channel: 0,
+                    is_instrument: false,
                     end_tick: n.end_tick,
                 }));
             }

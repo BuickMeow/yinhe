@@ -104,4 +104,42 @@ impl AudioEngine {
     pub(crate) fn drain_insert_returns(&mut self) -> Vec<Box<dyn InsertProcessor>> {
         std::mem::take(&mut self.insert_returns)
     }
+
+    /// 安装/替换/移除某乐器通道上的 CLAP 乐器实例。
+    ///
+    /// 由 `AudioCommand::SetInstrument` 触发，渲染线程调用。被替换/移除的旧
+    /// 处理器（以及无乐器轨却收到安装命令的多余处理器）攒进 `instrument_returns`
+    /// 送回 UI 线程 deactivate——渲染线程不能 deactivate 插件。
+    pub(crate) fn set_instrument(
+        &mut self,
+        channel: u16,
+        processor: Option<yinhe_clap::ClapProcessor>,
+    ) {
+        let dense = self.channel_layout.instrument_dense_for(channel);
+        let Some(dense) = (dense != u32::MAX).then_some(dense as usize) else {
+            if let Some(p) = processor {
+                self.instrument_returns.push(p);
+            }
+            return;
+        };
+        if dense >= self.instruments.len() {
+            // 命令与模型不同步（dense 越界）：直接退回，不越界写。
+            if let Some(p) = processor {
+                self.instrument_returns.push(p);
+            }
+            return;
+        }
+        let old = std::mem::replace(
+            &mut self.instruments[dense],
+            processor.map(crate::instrument::InstrumentSource::new),
+        );
+        if let Some(old) = old {
+            self.instrument_returns.push(old.processor);
+        }
+    }
+
+    /// 取出待回收的乐器处理器（renderer 每轮命令处理后调用，送回 UI 线程）。
+    pub(crate) fn drain_instrument_returns(&mut self) -> Vec<yinhe_clap::ClapProcessor> {
+        std::mem::take(&mut self.instrument_returns)
+    }
 }

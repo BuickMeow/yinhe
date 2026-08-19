@@ -1,7 +1,8 @@
 use std::cmp::Reverse;
 
-use xsynth_core::channel::{ChannelAudioEvent, ChannelEvent};
+use xsynth_core::channel::{ChannelAudioEvent, ChannelEvent, ControlEvent};
 use xsynth_core::channel_group::SynthEvent;
+use yinhe_clap::ClapInputEvent;
 
 use crate::audio_model::ActiveNote;
 use crate::engine::AudioEngine;
@@ -43,6 +44,7 @@ impl AudioEngine {
         let block_start_sample = self.sample_position;
         let block_end_sample = block_start_sample + frames as u64;
         let block_end_tick = self.sample_to_tick(block_end_sample);
+        self.block_start_sample = block_start_sample;
         let mut rendered_until_sample = block_start_sample;
         let mut rendered_until_tick = self.current_tick;
         let mut offset_frames = 0usize;
@@ -86,6 +88,9 @@ impl AudioEngine {
             );
         }
 
+        // CLAP 乐器：把每块累积的事件喂给各自实例，输出混入对应乐器 dense 通道。
+        self.render_instruments(block_start_sample, frames);
+
         // 混音：insert → 增益/声像斜坡 → mute/solo → master，然后交错输出。
         let (master_l, master_r) = self.mixer.process();
         for (i, chunk) in output.chunks_exact_mut(STEREO_CHANNELS).enumerate() {
@@ -99,6 +104,7 @@ impl AudioEngine {
 
     /// 合并了原来 `next_event_sample`、`dispatch_cc_until`、`dispatch_notes_at`
     /// 三个函数的职责，KEY_COUNT 桶只扫描一次。所有比较都在 tick 域，无需转换。
+    ///
     pub(crate) fn dispatch_and_find_next(&mut self, tick: u32, block_end_tick: u32) -> Option<u32> {
         let mut next: Option<u32> = None;
 
@@ -113,10 +119,30 @@ impl AudioEngine {
                 .copied()
                 .unwrap_or(false)
             {
-                let dense = self.channel_layout.dense_for(cc.channel as usize);
-                if dense != u32::MAX {
-                    self.channel_set
-                        .send_event(SynthEvent::Channel(dense, ChannelEvent::Audio(cc.event)));
+                // 乐器轨的自动化 → 喂对应乐器实例；否则走 xsynth。
+                if let Some(inst_ch) = self
+                    .model
+                    .as_ref()
+                    .and_then(|m| m.track_instrument(cc.track as usize))
+                {
+                    if let Some(dense) = self.instrument_dense(inst_ch) {
+                        // 先算 frame offset（只读），再取可变实例引用，避免整机借用冲突。
+                        let time = self
+                            .tick_to_sample(cc.tick)
+                            .saturating_sub(self.block_start_sample)
+                            as u32;
+                        if let Some(data) = cc_to_clap_midi(&cc.event, cc.channel as u8)
+                            && let Some(Some(slot)) = self.instruments.get_mut(dense)
+                        {
+                            slot.events.push(ClapInputEvent::Midi { time, data });
+                        }
+                    }
+                } else {
+                    let dense = self.channel_layout.dense_for(cc.channel as usize);
+                    if dense != u32::MAX {
+                        self.channel_set
+                            .send_event(SynthEvent::Channel(dense, ChannelEvent::Audio(cc.event)));
+                    }
                 }
             }
             self.cc_cursor += 1;
@@ -152,20 +178,51 @@ impl AudioEngine {
                     .map(|m| m.track_channel(track) as usize)
                     .unwrap_or(0);
                 if !self.skip_track.get(track).copied().unwrap_or(false) {
-                    let dense = self.channel_layout.dense_for(ch);
-                    if dense != u32::MAX {
-                        self.channel_set.send_event(SynthEvent::Channel(
-                            dense,
-                            ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
+                    if let Some(inst_ch) =
+                        self.model.as_ref().and_then(|m| m.track_instrument(track))
+                    {
+                        // 乐器轨：音符喂 CLAP 乐器实例（CLAP 通道 = 音轨 MIDI 通道低 4 位）。
+                        if let Some(dense) = self.instrument_dense(inst_ch) {
+                            // 先算 frame offset 与 CLAP 通道（只读），再取可变实例引用。
+                            let time = self
+                                .tick_to_sample(note.start_tick)
+                                .saturating_sub(self.block_start_sample)
+                                as u32;
+                            let clap_ch = (ch & 0x0F) as u8;
+                            if let Some(Some(slot)) = self.instruments.get_mut(dense) {
+                                slot.events.push(ClapInputEvent::NoteOn {
+                                    time,
+                                    channel: clap_ch,
+                                    key: key as u8,
+                                    velocity: note.velocity as f64 / 127.0,
+                                });
+                                self.active_notes.push(Reverse(ActiveNote {
+                                    key: key as u8,
+                                    dense: dense as u32,
+                                    clap_channel: clap_ch,
+                                    is_instrument: true,
+                                    end_tick: note.end_tick,
+                                }));
+                            }
+                        }
+                    } else {
+                        let dense = self.channel_layout.dense_for(ch);
+                        if dense != u32::MAX {
+                            self.channel_set.send_event(SynthEvent::Channel(
+                                dense,
+                                ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
+                                    key: key as u8,
+                                    vel: note.velocity,
+                                }),
+                            ));
+                            self.active_notes.push(Reverse(ActiveNote {
                                 key: key as u8,
-                                vel: note.velocity,
-                            }),
-                        ));
-                        self.active_notes.push(Reverse(ActiveNote {
-                            key: key as u8,
-                            channel: ch as u8,
-                            end_tick: note.end_tick,
-                        }));
+                                dense,
+                                clap_channel: 0,
+                                is_instrument: false,
+                                end_tick: note.end_tick,
+                            }));
+                        }
                     }
                 }
                 cursor += 1;
@@ -192,15 +249,126 @@ impl AudioEngine {
             next = Some(next.map_or(an.end_tick, |t| t.min(an.end_tick)));
         }
         for an in &self.ended_notes {
-            let dense = self.channel_layout.dense_for(an.channel as usize);
-            if dense != u32::MAX {
-                self.channel_set.send_event(SynthEvent::Channel(
-                    dense,
-                    ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: an.key }),
-                ));
+            if an.is_instrument {
+                // 乐器音符 NoteOff → 喂乐器实例（含挂音恢复）。
+                let time = self
+                    .tick_to_sample(an.end_tick)
+                    .saturating_sub(self.block_start_sample) as u32;
+                if let Some(Some(slot)) = self.instruments.get_mut(an.dense as usize) {
+                    slot.events.push(ClapInputEvent::NoteOff {
+                        time,
+                        channel: an.clap_channel,
+                        key: an.key,
+                        velocity: 0.0,
+                    });
+                }
+            } else {
+                let dense = an.dense;
+                if dense != u32::MAX {
+                    self.channel_set.send_event(SynthEvent::Channel(
+                        dense,
+                        ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: an.key }),
+                    ));
+                }
             }
         }
 
         next
+    }
+
+    /// 乐器通道 → 乐器 dense 索引（无对应乐器轨 = 未激活，返回 None）。
+    pub(crate) fn instrument_dense(&self, inst_ch: u16) -> Option<usize> {
+        let dense = self.channel_layout.instrument_dense_for(inst_ch);
+        (dense != u32::MAX).then_some(dense as usize)
+    }
+
+    /// 把本块累积的乐器事件喂给各 CLAP 实例，输出混入对应乐器 dense 通道。
+    /// 在 xsynth 段渲染之后、mixer.process() 之前调用。
+    fn render_instruments(&mut self, block_start_sample: u64, frames: usize) {
+        let n = self.instruments.len();
+        for dense in 0..n {
+            let Some(slot) = &mut self.instruments[dense] else {
+                continue;
+            };
+            let events = std::mem::take(&mut slot.events);
+            let (l, r) = match slot
+                .processor
+                .process_instrument(&events, Some(block_start_sample))
+            {
+                Ok(pair) => pair,
+                Err(e) => {
+                    tracing::warn!(target: "clap-instrument", "乐器处理失败，本块静音: {e}");
+                    continue;
+                }
+            };
+            let f = frames.min(l.len()).min(r.len());
+            if f == 0 {
+                continue;
+            }
+            if let Some(cb) = self.mixer.channel_buffers_mut(dense) {
+                for i in 0..f {
+                    cb.left[i] += l[i];
+                    cb.right[i] += r[i];
+                }
+            }
+        }
+    }
+}
+
+/// 把 xsynth 风格的通道事件转成 CLAP 原始 MIDI 报文（CC/弯音/ProgramChange），
+/// status 字节带上音轨的 MIDI 通道（0..15）。仅用于乐器轨的自动化路由。
+fn cc_to_clap_midi(event: &ChannelAudioEvent, channel: u8) -> Option<[u8; 3]> {
+    let ch = 0x0F & channel;
+    match event {
+        ChannelAudioEvent::Control(ControlEvent::Raw(cc, val)) => Some([0xB0 | ch, *cc, *val]),
+        ChannelAudioEvent::Control(ControlEvent::PitchBendValue(v)) => {
+            // v ∈ [-1, 1] → 14 bit 弯音值
+            let raw = ((v.clamp(-1.0, 1.0) + 1.0) * 8191.5) as u32;
+            Some([0xE0 | ch, (raw & 0x7F) as u8, ((raw >> 7) & 0x7F) as u8])
+        }
+        ChannelAudioEvent::ProgramChange(p) => Some([0xC0 | ch, *p, 0]),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xsynth_core::channel::ControlEvent;
+
+    #[test]
+    fn cc_to_midi_status_uses_channel_nibble() {
+        let msg =
+            cc_to_clap_midi(&ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)), 0x0A).unwrap();
+        // 0xB0 | 通道低 4 位（0x0A）= 0xBA
+        assert_eq!(msg, [0xBA, 7, 100]);
+    }
+
+    #[test]
+    fn cc_to_midi_pitchbend_14bit() {
+        let msg = cc_to_clap_midi(
+            &ChannelAudioEvent::Control(ControlEvent::PitchBendValue(0.0)),
+            0,
+        )
+        .unwrap();
+        assert_eq!(msg[0] & 0xF0, 0xE0);
+        let raw = ((msg[2] as u32) << 7) | (msg[1] as u32);
+        assert!(
+            (8190..=8192).contains(&raw),
+            "中部弯音值应在中点附近, got {raw}"
+        );
+    }
+
+    #[test]
+    fn cc_to_midi_program_change() {
+        let msg = cc_to_clap_midi(&ChannelAudioEvent::ProgramChange(42), 3).unwrap();
+        assert_eq!(msg, [0xC3, 42, 0]);
+    }
+
+    #[test]
+    fn cc_to_midi_unhandled_returns_none() {
+        // NoteOn 类事件不是控制器/ProgramChange，不应转 MIDI 报文。
+        let r = cc_to_clap_midi(&ChannelAudioEvent::NoteOn { key: 60, vel: 100 }, 0);
+        assert!(r.is_none());
     }
 }

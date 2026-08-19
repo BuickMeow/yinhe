@@ -25,13 +25,22 @@ pub(crate) struct SortedCC {
 #[derive(Clone, Copy)]
 pub(crate) struct ActiveNote {
     pub(crate) key: u8,
-    pub(crate) channel: u8,
+    /// 目标 dense 通道：MIDI 音符 = xsynth dense；乐器音符 = 乐器 dense。
+    pub(crate) dense: u32,
+    /// 乐器音符的 CLAP 内部 MIDI 通道（= 音轨 global_channel 低 4 位）。MIDI 音符忽略。
+    pub(crate) clap_channel: u8,
+    /// 是否为乐器音符（true → NoteOff 喂乐器实例）。
+    pub(crate) is_instrument: bool,
     pub(crate) end_tick: u32,
 }
 
 impl PartialEq for ActiveNote {
     fn eq(&self, other: &Self) -> bool {
-        self.end_tick == other.end_tick && self.key == other.key && self.channel == other.channel
+        self.end_tick == other.end_tick
+            && self.key == other.key
+            && self.dense == other.dense
+            && self.is_instrument == other.is_instrument
+            && self.clap_channel == other.clap_channel
     }
 }
 impl Eq for ActiveNote {}
@@ -45,7 +54,9 @@ impl Ord for ActiveNote {
         self.end_tick
             .cmp(&other.end_tick)
             .then(self.key.cmp(&other.key))
-            .then(self.channel.cmp(&other.channel))
+            .then(self.dense.cmp(&other.dense))
+            .then(self.is_instrument.cmp(&other.is_instrument))
+            .then(self.clap_channel.cmp(&other.clap_channel))
     }
 }
 
@@ -94,6 +105,10 @@ pub(crate) struct PreparedModel {
 pub(crate) struct AudioModel {
     /// `track_channels[i]` = global channel `(port<<4)|channel` for track `i`.
     pub track_channels: Vec<u8>,
+    /// 每条音轨的路由：`Some(instrument_channel)` 表示该轨是**乐器轨**，音符/CC
+    /// 走 CLAP 乐器实例（按 instrument_channel 路由，独立于 MIDI 源通道）；
+    /// `None` 表示普通 MIDI 轨（走 xsynth）。与 `track_channels` 对齐。
+    pub track_instrument: Vec<Option<u16>>,
     /// Bank Select MSB declarations per track, for percussion-mode detection.
     /// `(tick, value)` pairs merged from standalone CC0 automation lanes and
     /// CC0 values folded into `PcEvent.bank_msb` (same-tick CC0+PC), sorted by
@@ -105,6 +120,15 @@ pub(crate) struct AudioModel {
 impl AudioModel {
     pub(crate) fn from_model(model: &YinModel) -> Self {
         let track_channels: Vec<u8> = model.tracks.iter().map(|t| t.global_channel()).collect();
+        let track_instrument: Vec<Option<u16>> = model
+            .tracks
+            .iter()
+            .map(|t| {
+                (t.kind == yinhe_core::TrackKind::Instrument)
+                    .then_some(t.instrument_channel)
+                    .flatten()
+            })
+            .collect();
         let track_banks: Vec<Vec<(u32, u8)>> = model
             .tracks
             .iter()
@@ -135,6 +159,7 @@ impl AudioModel {
             .collect();
         Self {
             track_channels,
+            track_instrument,
             track_banks,
         }
     }
@@ -142,6 +167,11 @@ impl AudioModel {
     /// Global channel for a track index, or 0 if out of range.
     pub(crate) fn track_channel(&self, track_idx: usize) -> u8 {
         self.track_channels.get(track_idx).copied().unwrap_or(0)
+    }
+
+    /// 音轨是否为乐器轨（走 CLAP 实例）；返回其 instrument_channel。
+    pub(crate) fn track_instrument(&self, track_idx: usize) -> Option<u16> {
+        self.track_instrument.get(track_idx).copied().flatten()
     }
 }
 

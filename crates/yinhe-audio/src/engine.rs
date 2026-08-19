@@ -33,6 +33,15 @@ pub(crate) struct AudioEngine {
     /// 被替换/移除的 insert 处理器：渲染线程不能 deactivate 插件，
     /// 攒在这里由 renderer 送回 UI 线程回收。
     pub(crate) insert_returns: Vec<Box<dyn InsertProcessor>>,
+    /// 被替换/移除的乐器处理器：同样不能在渲染线程 deactivate，攒在
+    /// 这里由 renderer 送回 UI 线程回收（与 insert 同通道回流）。
+    pub(crate) instrument_returns: Vec<yinhe_clap::ClapProcessor>,
+    /// CLAP 乐器实例，长度 = `compacted_channels`，只有乐器 dense 槽位非空。
+    /// 索引 = 全局 dense（= midi_compacted + 乐器通道排序位置）。
+    pub(crate) instruments: Vec<Option<crate::instrument::InstrumentSource>>,
+    /// 当前渲染块的起始 sample：dispatch 时把 tick 域事件换算成块内 frame offset
+    /// 喂 CLAP 乐器（`ClapInputEvent::time`）。render() 每块开头设置。
+    pub(crate) block_start_sample: u64,
     /// 不可变通道布局：active_mask + channel_map + num_channels。
     /// 创建后定型，若 model 结构变化必须 teardown + 重建引擎。
     pub(crate) channel_layout: ChannelLayout,
@@ -117,6 +126,9 @@ impl AudioEngine {
                 mixer,
                 mixer_params: MixerParams::default(),
                 insert_returns: Vec::new(),
+                instrument_returns: Vec::new(),
+                instruments: (0..compacted).map(|_| None).collect(),
+                block_start_sample: 0,
                 channel_layout: layout,
                 sf_manager: SoundFontManager::new(sample_rate),
                 sample_rate,
@@ -273,6 +285,9 @@ impl AudioEngine {
                 slot,
                 processor,
             } => self.insert_replace(channel, slot, processor),
+            AudioCommand::SetInstrument { channel, processor } => {
+                self.set_instrument(channel, processor.map(|p| *p))
+            }
             // 预览命令由渲染器处理（独立预览合成器 + 渲染时钟），引擎层忽略。
             AudioCommand::PreviewNotes { .. } | AudioCommand::PreviewStop => {}
         }

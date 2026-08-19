@@ -10,6 +10,7 @@ mod engine_mixer;
 mod engine_render;
 mod engine_state;
 pub mod export;
+mod instrument;
 mod prepare_model;
 mod preview_engine;
 pub mod soundfont;

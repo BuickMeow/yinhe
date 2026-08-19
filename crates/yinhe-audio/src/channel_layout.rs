@@ -676,10 +676,10 @@ mod tests {
     fn differs_from_model_flip_on_track_kind_to_instrument() {
         // layout 无乐器；把一条 MIDI 轨改成乐器轨（带 instrument_channel）→ 翻转
         let conductor = ConductorData::default();
-        let mut t = TrackData::new(0, 0);
+        let t = TrackData::new(0, 0);
         let mut model = YinModel {
             conductor: Arc::new(conductor),
-            tracks: vec![Arc::new(t.clone())],
+            tracks: vec![Arc::new(t)],
             meta: ProjectMeta {
                 ppq: 480,
                 ..ProjectMeta::default()

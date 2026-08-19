@@ -83,6 +83,8 @@ struct AudioRenderer {
     preview_target_frames: usize,
     /// 被替换/移除的 insert 处理器退回 UI 线程（渲染线程不做 deactivate）。
     insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
+    /// 被替换/移除的乐器处理器退回 UI 线程（渲染线程不做 deactivate）。
+    instrument_return_tx: Sender<yinhe_clap::ClapProcessor>,
     /// 是否启用 GPU 合成器。启用后加载音色库时初始化 GpuSynth，渲染走 engine.gpu_synth。
     #[cfg(feature = "gpu")]
     use_gpu_synth: bool,
@@ -104,6 +106,7 @@ impl AudioRenderer {
         // cpal 回调每次请求的帧数（预览时 ring 目标下限，避免回调欠载静音）。
         callback_frames: usize,
         insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
+        instrument_return_tx: Sender<yinhe_clap::ClapProcessor>,
         #[cfg(feature = "gpu")] use_gpu_synth: bool,
     ) -> Self {
         Self {
@@ -121,6 +124,7 @@ impl AudioRenderer {
             preview_stop_flag,
             preview_target_frames: PREVIEW_TARGET_FRAMES.max(callback_frames),
             insert_return_tx,
+            instrument_return_tx,
             #[cfg(feature = "gpu")]
             use_gpu_synth,
         }
@@ -134,10 +138,19 @@ impl AudioRenderer {
         }
     }
 
+    /// 把引擎攒下的退回乐器处理器送回 UI 线程。
+    fn flush_instrument_returns(&mut self) {
+        let returns = self.engine.drain_instrument_returns();
+        for p in returns {
+            let _ = self.instrument_return_tx.send(p);
+        }
+    }
+
     fn run(&mut self) {
         while !self.shutdown.load(Ordering::Relaxed) {
             let mut did_work = self.process_commands() | self.process_worker_results();
             self.flush_insert_returns();
+            self.flush_instrument_returns();
             // 预览 Stop 快速路径：命令通道满（渲染忙时 PreviewStop 可能被丢弃）也保证
             // 松手即停。必须在 process_commands 之后消费：处理命令期间 flag 保持置位，
             // PreviewNotes 分支借此跳过堆积的旧预览组（松手后不再触发）。
@@ -767,6 +780,7 @@ pub(crate) fn spawn_renderer(
     // cpal 回调每次请求的帧数（预览时 ring 目标下限）。
     callback_frames: usize,
     insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
+    instrument_return_tx: Sender<yinhe_clap::ClapProcessor>,
     #[cfg(feature = "gpu")] use_gpu_synth: bool,
 ) -> Result<JoinHandle<()>, std::io::Error> {
     thread::Builder::new()
@@ -785,6 +799,7 @@ pub(crate) fn spawn_renderer(
                 preview_stop_flag,
                 callback_frames,
                 insert_return_tx.clone(),
+                instrument_return_tx.clone(),
                 #[cfg(feature = "gpu")]
                 use_gpu_synth,
             );
@@ -794,6 +809,16 @@ pub(crate) fn spawn_renderer(
             let leftovers = renderer.engine.mixer.take_all_inserts();
             if !leftovers.is_empty() {
                 let _ = insert_return_tx.send(leftovers);
+            }
+            // 引擎里仍在位的乐器处理器也退回 UI 线程回收。
+            let inst_leftovers: Vec<yinhe_clap::ClapProcessor> = renderer
+                .engine
+                .instruments
+                .iter_mut()
+                .filter_map(|slot| slot.take().map(|s| s.processor))
+                .collect();
+            for p in inst_leftovers {
+                let _ = instrument_return_tx.send(p);
             }
             // 显式 drop AudioRenderer，释放 AudioEngine（含 Arc<YinModel> 和 SoundFont），
             // 然后 purge jemalloc arena 归还内存给 OS。
