@@ -141,6 +141,9 @@ impl ClapPluginInstance {
         sample_rate: f64,
         max_frames: u32,
     ) -> Result<ClapProcessor, PluginError> {
+        // 查询插件声明的端口布局：必须给全所有端口（含 Aux），只给主端口
+        // 会让按声明端口数读 audio_inputs[i] 的包装层越界（Element FX 实测崩）。
+        let layout = self.query_port_layout();
         let stopped = self.instance.activate(
             |_, _| crate::host::YinheAudioProcessor,
             PluginAudioConfiguration {
@@ -149,7 +152,39 @@ impl ClapPluginInstance {
                 max_frames_count: max_frames,
             },
         )?;
-        Ok(ClapProcessor::new(stopped, max_frames as usize))
+        Ok(ClapProcessor::new(stopped, max_frames as usize, &layout))
+    }
+
+    /// 查询插件声明的 audio ports 布局；插件不支持 audio-ports 扩展时
+    /// 回退到「一进一出各立体声」的最小布局。
+    fn query_port_layout(&mut self) -> crate::processor::PortLayout {
+        use clack_extensions::audio_ports::{AudioPortInfoBuffer, PluginAudioPorts};
+        let mut handle = self.instance.plugin_handle();
+        let Some(ports) = handle.get_extension::<PluginAudioPorts>() else {
+            return crate::processor::PortLayout {
+                in_channels: vec![2],
+                out_channels: vec![2],
+            };
+        };
+        let query =
+            |is_input: bool, handle: &mut clack_host::plugin::PluginMainThreadHandle<'_>| {
+                let count = ports.count(handle, is_input);
+                let mut buf = AudioPortInfoBuffer::new();
+                (0..count)
+                    .map(|i| {
+                        ports
+                            .get(handle, i, is_input, &mut buf)
+                            .map(|info| info.channel_count)
+                            .unwrap_or(2)
+                    })
+                    .collect::<Vec<u32>>()
+            };
+        let in_channels = query(true, &mut handle);
+        let out_channels = query(false, &mut handle);
+        crate::processor::PortLayout {
+            in_channels,
+            out_channels,
+        }
     }
 
     /// 回收处理器并反激活。处理器应先移到本线程再调用（渲染线程 drop 后传回）。
@@ -173,6 +208,39 @@ impl ClapPluginInstance {
             self.instance.call_on_main_thread_callback();
         }
         result
+    }
+
+    /// 诊断：dump 插件声明的 audio ports（临时调试用）。
+    pub fn debug_dump_ports(&mut self) -> Vec<String> {
+        use clack_extensions::audio_ports::{AudioPortInfoBuffer, PluginAudioPorts};
+        let mut handle = self.instance.plugin_handle();
+        let Some(ports) = handle.get_extension::<PluginAudioPorts>() else {
+            return vec!["(no audio-ports extension)".into()];
+        };
+        let mut out = Vec::new();
+        for is_input in [true, false] {
+            let count = ports.count(&mut handle, is_input);
+            for i in 0..count {
+                let mut buf = AudioPortInfoBuffer::new();
+                match ports.get(&mut handle, i, is_input, &mut buf) {
+                    Some(info) => out.push(format!(
+                        "{}[{}]: channels={} flags={:?} type={:?} name={}",
+                        if is_input { "in" } else { "out" },
+                        i,
+                        info.channel_count,
+                        info.flags,
+                        info.port_type.map(|t| format!("{:?}", t)),
+                        String::from_utf8_lossy(info.name),
+                    )),
+                    None => out.push(format!(
+                        "{}[{}]: (get failed)",
+                        if is_input { "in" } else { "out" },
+                        i
+                    )),
+                }
+            }
+        }
+        out
     }
 
     /// 插件状态脏标记（需要重新 save_state），取出即清除。

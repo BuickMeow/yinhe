@@ -7,10 +7,14 @@ edition = "2024"
 clack-host = "0.1"
 clack-extensions = { version = "0.1", features = [
     "clack-host",
+    "audio-ports",
+    "note-ports",
     "log",
     "latency",
     "params",
     "state",
+    "state-context",
+    "thread-check",
 ] }
 thiserror = { workspace = true }
 tracing = { workspace = true }
