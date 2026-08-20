@@ -1109,6 +1109,69 @@ fn test_muted_track_cc_skipped_in_dispatch() {
     assert_eq!(engine.cc_cursor, 2);
 }
 
+/// 回归测试：mute 期间被 cc_cursor 越过但未 dispatch 的自动化事件，
+/// chase_skip 不得标记——否则 unmute 后 chase 跳过这些控制器，
+/// 该轨道的自动化状态永远丢失（卡在 mute 前的旧值），直到下次 seek。
+#[test]
+fn test_unmute_chase_skip_excludes_events_missed_while_muted() {
+    use crate::audio_model::SortedCC;
+    use xsynth_core::channel::{ChannelAudioEvent, ControlEvent};
+
+    let sample_rate = 44100u32;
+    let mut doc = Document::empty();
+    doc.add_note(
+        0,
+        NoteEvent {
+            start_tick: 0,
+            end_tick: 480,
+            key: 60,
+            velocity: 100,
+            id: 0,
+        },
+    );
+    doc.data.bump_revision();
+    let mut engine = spawn_engine_for_doc(&doc, sample_rate);
+    engine.playing = true;
+
+    // track 0 的两条 CC7：tick 100 = 40，tick 300 = 80
+    engine.cc_events = Arc::new(vec![
+        SortedCC {
+            tick: 100,
+            channel: 0,
+            track: 0,
+            event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 40)),
+        },
+        SortedCC {
+            tick: 300,
+            channel: 0,
+            track: 0,
+            event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 80)),
+        },
+    ]);
+
+    // 从 0 播放，越过 tick 100：CC7=40 已 dispatch
+    engine.seek_to(0);
+    engine.dispatch_and_find_next(200, 100000);
+    assert_eq!(engine.cc_cursor, 1, "tick 100 的事件应已 dispatch");
+
+    // mute 轨道 0，继续播放越过 tick 300：CC7=80 被 cursor 越过但未 dispatch
+    engine.skip_track = vec![true];
+    engine.dispatch_and_find_next(400, 100000);
+    assert_eq!(
+        engine.cc_cursor, 2,
+        "tick 300 的事件应被越过（未 dispatch）"
+    );
+
+    // unmute：chase 要恢复 CC7=80，chase_skip 不得标记 CC7
+    engine.skip_track = vec![false];
+    let skip = engine.chase_skip();
+    assert_eq!(
+        skip.cc_mask[0] & (1u128 << 7),
+        0,
+        "mute 期间越过但未 dispatch 的 CC7 被误标记，unmute 后 chase 会跳过它 → 自动化状态丢失"
+    );
+}
+
 /// chase 计算时跳过 mute 轨道的 CC：
 /// mute 轨道的 CC 不参与 channel state 快照构建。
 #[test]
