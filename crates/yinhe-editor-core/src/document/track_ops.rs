@@ -119,6 +119,13 @@ impl Document {
         {
             self.edit.editing_track = Some(t + 1);
         }
+        // AM 试听键随轨道索引 +1 重映射（insert_idx 之后的轨）。
+        self.edit.remap_am_track_keys(|t| {
+            note_remap
+                .get(t as usize)
+                .copied()
+                .filter(|&v| v != u16::MAX)
+        });
 
         Some(UndoAction::TrackStructure {
             tracks_before,
@@ -271,6 +278,13 @@ impl Document {
             Some(t) if (t as usize) > idx => self.edit.editing_track = Some(t - 1),
             _ => {}
         }
+        // AM 试听键重映射：被删轨丢弃，其后轨索引 -1。
+        self.edit.remap_am_track_keys(|t| {
+            note_remap
+                .get(t as usize)
+                .copied()
+                .filter(|&v| v != u16::MAX)
+        });
 
         Some(UndoAction::TrackStructure {
             tracks_before,
@@ -364,6 +378,13 @@ impl Document {
             };
             self.edit.editing_track = Some(new_t as u16);
         }
+        // AM 试听键按移动重映射（与音符 remap 同表）。
+        self.edit.remap_am_track_keys(|t| {
+            note_remap
+                .get(t as usize)
+                .copied()
+                .filter(|&v| v != u16::MAX)
+        });
 
         Some(UndoAction::TrackStructure {
             tracks_before,

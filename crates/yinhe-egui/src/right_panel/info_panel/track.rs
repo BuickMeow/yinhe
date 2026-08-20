@@ -469,8 +469,6 @@ pub(crate) fn show_track_info(
 pub(crate) fn send_skip_tracks(doc: &Document, audio: Option<&yinhe_audio::CpalAudioHandle>) {
     let skip = doc.compute_skip_mask();
     if let Some(audio) = audio {
-        audio
-            .handle
-            .send(yinhe_audio::AudioCommand::SkipTracks { skip });
+        audio.handle.set_skip_tracks(skip);
     }
 }

@@ -205,6 +205,21 @@ pub fn show(
             .get(t as usize)
             .is_some_and(|tr| tr.automation_lanes.iter().any(|l| &l.target == target))
     });
+    // AM M/S 试听/选中键同样只保留仍存在的 lane（删除 lane / undo 后兜底）。
+    doc.edit.arr_am_ms.retain(|&(t, ref target), _| {
+        doc.data
+            .model
+            .tracks
+            .get(t as usize)
+            .is_some_and(|tr| tr.automation_lanes.iter().any(|l| &l.target == target))
+    });
+    doc.edit.arr_am_selected.retain(|&(t, ref target)| {
+        doc.data
+            .model
+            .tracks
+            .get(t as usize)
+            .is_some_and(|tr| tr.automation_lanes.iter().any(|l| &l.target == target))
+    });
     arr_view.clamp_scroll(
         gpu_rect.width(),
         gpu_rect.height(),

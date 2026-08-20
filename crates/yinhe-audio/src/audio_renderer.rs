@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -11,7 +12,7 @@ use xsynth_core::effects::VolumeLimiter;
 use crate::audio_ring::AudioRingProducer;
 use crate::engine::AudioEngine;
 use crate::preview_engine::PreviewEngine;
-use crate::spawn::{AudioCommand, WorkerCmd, WorkerResult};
+use crate::spawn::{AmMsMap, AudioCommand, WorkerCmd, WorkerResult};
 
 const STEREO_CHANNELS: usize = 2;
 const RENDER_CHUNK_FRAMES: usize = 512;
@@ -82,6 +83,11 @@ struct AudioRenderer {
     /// 非显式 reload / 掩码切换 / 音色加载完成时，seek 与 ring 清空都锚定它，
     /// 保证播放中的编辑/切换**不移动**听音位置（只有 Play/Seek/Stop 才动）。
     consumer_position: Arc<AtomicU64>,
+    /// latest-wins 槽：轨道 mute/solo 掩码（UI 写，每轮消费最新值——
+    /// 命令通道满合并时 `SkipTracks` 命令可能被丢，本槽保证必达）。
+    pending_skip: Arc<Mutex<Option<Vec<bool>>>>,
+    /// latest-wins 槽：AM lane M/S 试听旁通集（见 `pending_skip`）。
+    pending_am_ms: Arc<Mutex<Option<Arc<AmMsMap>>>>,
     /// 预览激活时的 ring 目标（帧数）：≥ cpal 回调帧数，避免回调欠载静音卡顿。
     preview_target_frames: usize,
     /// 被替换/移除的 insert 处理器退回 UI 线程（渲染线程不做 deactivate）。
@@ -107,6 +113,8 @@ impl AudioRenderer {
         shutdown: Arc<AtomicBool>,
         preview_stop_flag: Arc<AtomicBool>,
         consumer_position: Arc<AtomicU64>,
+        pending_skip: Arc<Mutex<Option<Vec<bool>>>>,
+        pending_am_ms: Arc<Mutex<Option<Arc<AmMsMap>>>>,
         // cpal 回调每次请求的帧数（预览时 ring 目标下限，避免回调欠载静音）。
         callback_frames: usize,
         insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
@@ -127,6 +135,8 @@ impl AudioRenderer {
             preview_scratch: vec![0.0; RENDER_CHUNK_FRAMES * STEREO_CHANNELS],
             preview_stop_flag,
             consumer_position,
+            pending_skip,
+            pending_am_ms,
             preview_target_frames: PREVIEW_TARGET_FRAMES.max(callback_frames),
             insert_return_tx,
             instrument_return_tx,
@@ -178,6 +188,27 @@ impl AudioRenderer {
         let mut pending_reload: Option<Arc<yinhe_core::YinModel>> = None;
         let mut pending_update_notes: Option<Arc<yinhe_core::YinModel>> = None;
         let mut pending_density_rebuild: bool = false;
+
+        // latest-wins 槽：M/S 掩码必达（命令通道满合并时不丢最新值）。
+        // 先取值、放锁，再应用（避免临时 guard 借用贯穿 &mut self 调用）。
+        let pending_skip = self
+            .pending_skip
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(skip) = pending_skip {
+            self.apply_skip_tracks(skip);
+            did_work = true;
+        }
+        let pending_am_ms = self
+            .pending_am_ms
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(am_ms) = pending_am_ms {
+            self.apply_set_am_ms(am_ms);
+            did_work = true;
+        }
 
         loop {
             match self.cmd_rx.try_recv() {
@@ -264,45 +295,10 @@ impl AudioRenderer {
                             }
                         }
                         AudioCommand::SkipTracks { skip } => {
-                            // 即时派：diff 旧掩码，新 mute 的轨立即停发 NoteOff，
-                            // 新 unmute 的轨立即重启跨点音符（CPU/GPU 统一语义）。
-                            let old = self.engine.skip_track.clone();
-                            self.engine.apply_skip_mask(&old, &skip);
-                            // mute/solo 状态变了：旧 skip mask 的异步 chase 结果必须作废
-                            //（递增 generation），否则快速连续切换时旧结果可能晚到并
-                            // 覆盖新状态——GPU 路径的通道状态依赖 chase 恢复，影响更大。
-                            self.engine.chase_generation =
-                                self.engine.chase_generation.wrapping_add(1);
-                            // GPU 路径：事件列表按新 skip mask 重建（mute/solo 即时生效，
-                            // 不再需要重启引擎）；重建 seek 到听音位置并清掉旧 voice，
-                            // 位置不移动（与 CPU 路径第 4 层语义一致）。
-                            #[cfg(feature = "gpu")]
-                            if self.engine.gpu_synth.is_some() && self.engine.model_loaded() {
-                                self.sync_gpu_synth_events();
-                                let anchor = self.consumer_position.load(Ordering::Acquire);
-                                self.clear_buffered_audio(anchor);
-                            }
-                            // mute 状态变了，chase 结果需要更新：
-                            // unmute 的轨道的 CC 需要恢复，mute 的轨道的 CC 不再参与。
-                            if self.engine.model_loaded() {
-                                self.request_chase(self.engine.current_tick());
-                            }
+                            self.apply_skip_tracks(skip);
                         }
                         AudioCommand::SetAmMs { am_ms } => {
-                            // 只换动态掩码 + 异步 chase，不重建模型、不 seek（与 SkipTracks 同机制）。
-                            self.engine.am_ms = am_ms;
-                            if let Some(model) = self.engine.yin_model.clone() {
-                                self.engine.am_lane_skip = crate::audio_model::build_am_lane_skip(
-                                    &model,
-                                    &self.engine.am_ms,
-                                );
-                            }
-                            // 掩码变了：旧 chase 结果作废，重算 channel state。
-                            self.engine.chase_generation =
-                                self.engine.chase_generation.wrapping_add(1);
-                            if self.engine.model_loaded() {
-                                self.request_chase(self.engine.current_tick());
-                            }
+                            self.apply_set_am_ms(am_ms);
                         }
                         AudioCommand::PreviewNotes { notes } => {
                             // 用户已松手（Stop 请求尚未消费）：跳过堆积的旧预览组，
@@ -389,6 +385,46 @@ impl AudioRenderer {
         }
 
         did_work
+    }
+
+    /// 应用轨道 mute/solo 掩码（即时派）：diff 旧掩码，新 mute 的轨立即停发 NoteOff，
+    /// 新 unmute 的轨立即重启跨点音符（CPU/GPU 统一语义），随后异步 chase 恢复 CC。
+    fn apply_skip_tracks(&mut self, skip: Vec<bool>) {
+        let old = self.engine.skip_track.clone();
+        self.engine.apply_skip_mask(&old, &skip);
+        // mute/solo 状态变了：旧 skip mask 的异步 chase 结果必须作废
+        //（递增 generation），否则快速连续切换时旧结果可能晚到并
+        // 覆盖新状态——GPU 路径的通道状态依赖 chase 恢复，影响更大。
+        self.engine.chase_generation = self.engine.chase_generation.wrapping_add(1);
+        // GPU 路径：事件列表按新 skip mask 重建（mute/solo 即时生效，
+        // 不再需要重启引擎）；重建 seek 到听音位置并清掉旧 voice，
+        // 位置不移动（与 CPU 路径第 4 层语义一致）。
+        #[cfg(feature = "gpu")]
+        if self.engine.gpu_synth.is_some() && self.engine.model_loaded() {
+            self.sync_gpu_synth_events();
+            let anchor = self.consumer_position.load(Ordering::Acquire);
+            self.clear_buffered_audio(anchor);
+        }
+        // mute 状态变了，chase 结果需要更新：unmute 的轨道的 CC 需要恢复，
+        // mute 的轨道的 CC 不再参与。
+        if self.engine.model_loaded() {
+            self.request_chase(self.engine.current_tick());
+        }
+    }
+
+    /// 应用 AM lane M/S 试听旁通集：只换动态掩码 + 异步 chase，
+    /// 不重建模型、不 seek（与 SkipTracks 同机制）。
+    fn apply_set_am_ms(&mut self, am_ms: Arc<AmMsMap>) {
+        self.engine.am_ms = am_ms;
+        if let Some(model) = self.engine.yin_model.clone() {
+            self.engine.am_lane_skip =
+                crate::audio_model::build_am_lane_skip(&model, &self.engine.am_ms);
+        }
+        // 掩码变了：旧 chase 结果作废，重算 channel state。
+        self.engine.chase_generation = self.engine.chase_generation.wrapping_add(1);
+        if self.engine.model_loaded() {
+            self.request_chase(self.engine.current_tick());
+        }
     }
 
     /// 方案 B：发 `PrepareChase` 给 worker 线程异步计算 256 通道状态快照。
@@ -817,6 +853,8 @@ pub(crate) fn spawn_renderer(
     shutdown: Arc<AtomicBool>,
     preview_stop_flag: Arc<AtomicBool>,
     consumer_position: Arc<AtomicU64>,
+    pending_skip: Arc<Mutex<Option<Vec<bool>>>>,
+    pending_am_ms: Arc<Mutex<Option<Arc<AmMsMap>>>>,
     // cpal 回调每次请求的帧数（预览时 ring 目标下限）。
     callback_frames: usize,
     insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
@@ -838,6 +876,8 @@ pub(crate) fn spawn_renderer(
                 shutdown,
                 preview_stop_flag,
                 consumer_position,
+                pending_skip,
+                pending_am_ms,
                 callback_frames,
                 insert_return_tx.clone(),
                 instrument_return_tx.clone(),

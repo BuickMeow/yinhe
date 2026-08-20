@@ -160,6 +160,14 @@ impl UndoAction {
                 model.rebuild();
                 doc.data.bump_revision();
                 doc.sync_track_caches();
+                // AM 试听/选中键随轨道结构同步重映射（undo/redo 方向由
+                // `reversed()` swap 后的 note_remap 方向决定）。
+                doc.edit.remap_am_track_keys(|t| {
+                    note_remap
+                        .get(t as usize)
+                        .copied()
+                        .filter(|&v| v != u16::MAX)
+                });
             }
             UndoAction::Composite(actions) => {
                 for action in actions {

@@ -328,16 +328,12 @@ impl App {
             });
         }
 
-        // Send initial mute/solo state
+        // Send initial mute/solo state (latest-wins 槽，必达)
         let skip = doc.compute_skip_mask();
-        audio
-            .handle
-            .send(yinhe_audio::AudioCommand::SkipTracks { skip });
+        audio.handle.set_skip_tracks(skip);
 
         // AM lane M/S 试听旁通：引擎重建后必须重发，否则 UI 按钮点亮但旁通静默丢失。
-        audio.handle.send(yinhe_audio::AudioCommand::SetAmMs {
-            am_ms: std::sync::Arc::new(doc.edit.arr_am_ms.clone()),
-        });
+        audio.set_am_ms(std::sync::Arc::new(doc.edit.arr_am_ms.clone()));
     }
 
     /// 每帧轮询音色库加载进度：`sf_loaded_count() / sf_total` 驱动

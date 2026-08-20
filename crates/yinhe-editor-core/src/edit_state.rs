@@ -313,6 +313,26 @@ impl EditState {
         }
     }
 
+    /// 音轨结构变化（增/删/移轨，含 undo/redo）后重映射所有 `(track_idx, target)` 键
+    /// （`arr_am_ms` / `arr_am_views` / `arr_am_selected`）：防止 M/S 试听、lane 选中
+    /// 状态残留指向错误的轨道/lane。`remap(track) -> None` 表示该轨已删除（键丢弃）。
+    pub fn remap_am_track_keys(&mut self, remap: impl Fn(u16) -> Option<u16> + Copy) {
+        let remap_entry =
+            |(t, target): (u16, yinhe_types::AutomationTarget)| remap(t).map(|nt| (nt, target));
+        self.arr_am_ms = std::mem::take(&mut self.arr_am_ms)
+            .into_iter()
+            .filter_map(|(k, v)| remap_entry(k).map(|nk| (nk, v)))
+            .collect();
+        self.arr_am_views = std::mem::take(&mut self.arr_am_views)
+            .into_iter()
+            .filter_map(|(k, v)| remap_entry(k).map(|nk| (nk, v)))
+            .collect();
+        self.arr_am_selected = std::mem::take(&mut self.arr_am_selected)
+            .into_iter()
+            .filter_map(remap_entry)
+            .collect();
+    }
+
     /// 音符选框整体 tick 平移（selected + sel_rect + arr_sel_rect）。
     /// 用于 tick 加减/复制的非拖拽编辑（拖拽类由 UI 拖拽状态机负责，不要调用）。
     pub fn offset_sel_ticks(&mut self, dt: i64) {

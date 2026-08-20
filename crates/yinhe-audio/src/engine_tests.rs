@@ -1,6 +1,6 @@
 use super::*;
 use std::collections::BTreeMap;
-use xsynth_core::channel::ControlEvent;
+use xsynth_core::channel::{ChannelAudioEvent, ControlEvent};
 use xsynth_core::channel_group::ParallelismOptions;
 use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
 use yinhe_editor_core::document::Document;
@@ -478,7 +478,8 @@ fn test_engine_load_model_and_reload() {
     });
     assert!(!engine.playing());
 
-    engine.handle_command(AudioCommand::ReloadNotes { model });
+    // ReloadNotes 在 renderer 层重建——引擎级等价路径直接 load_model。
+    engine.load_model(&model);
 }
 
 /// Regression test: the MIMO refactor originally forgot to call
@@ -510,7 +511,8 @@ fn test_reload_notes_rebuilds_cc_pb_pc_rpn() {
         vec![(0, 1), (480, 2)],
         vec![(0x0000, 240, 0x0200 as f32)],
     ));
-    engine.handle_command(AudioCommand::ReloadNotes { model: model_b });
+    // ReloadNotes 在 renderer 层重建——引擎级等价路径直接 load_model。
+    engine.load_model(&model_b);
 
     // 3 CC + 2 PB + 2 PC (each with bank_msb=0 + bank_lsb=0 → 2 extra) + 1 RPN (high-level) = 12
     assert_eq!(
@@ -527,7 +529,7 @@ fn test_reload_notes_rebuilds_cc_pb_pc_rpn() {
 
     // Reload again with an empty model — cc_events must drain to zero.
     let model_c = Arc::new(make_model_with_controls(vec![], vec![], vec![], vec![]));
-    engine.handle_command(AudioCommand::ReloadNotes { model: model_c });
+    engine.load_model(&model_c);
     assert_eq!(
         engine.cc_events.len(),
         0,

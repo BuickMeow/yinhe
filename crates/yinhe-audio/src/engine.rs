@@ -3,8 +3,7 @@ use std::collections::BinaryHeap;
 use std::sync::Arc;
 
 use xsynth_core::channel::ChannelInitOptions;
-use xsynth_core::channel::{ChannelAudioEvent, ChannelEvent};
-use xsynth_core::channel_group::{ChannelGroupConfig, ParallelismOptions, SynthEvent, SynthFormat};
+use xsynth_core::channel_group::{ChannelGroupConfig, ParallelismOptions, SynthFormat};
 use xsynth_core::soundfont::SoundfontBase;
 use xsynth_core::{AudioStreamParams, ChannelCount};
 
@@ -218,13 +217,6 @@ impl AudioEngine {
         self.pending_play_from_sample = Some(from_sample);
     }
 
-    pub(crate) fn send_all_notes_off(&mut self) {
-        self.channel_set
-            .send_event(SynthEvent::AllChannels(ChannelEvent::Audio(
-                ChannelAudioEvent::AllNotesOff,
-            )));
-    }
-
     pub(crate) fn set_layer_count(&mut self, count: Option<usize>) {
         use xsynth_core::channel::{ChannelConfigEvent, ChannelEvent};
         use xsynth_core::channel_group::SynthEvent;
@@ -251,11 +243,10 @@ impl AudioEngine {
                 self.playing = false;
                 self.load_model(&model);
             }
-            AudioCommand::ReloadNotes { model } => {
-                // am_ms 掩码在 renderer 侧随 SetAmMs 命令维护（engine 只做模型重载）。
-                self.send_all_notes_off();
-                self.active_notes.clear();
-                self.load_model(&model);
+            AudioCommand::ReloadNotes { .. } => {
+                // renderer 在命令层处理（pending_reload → PrepareModel 全量重建），
+                // 引擎不接受该命令——旧版直接 load_model 的路径已废弃，
+                // 避免绕过 renderer 的掩码/位置管理造成语义分裂。
             }
             AudioCommand::UpdateNotes { model } => {
                 // 只更新音符，不重建 cc_events，不 chase。

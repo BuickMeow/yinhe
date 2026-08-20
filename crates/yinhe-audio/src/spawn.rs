@@ -169,6 +169,10 @@ pub struct AudioHandle {
     preview_stop_flag: Arc<AtomicBool>,
     /// 已完成加载的音色库 port 数（worker 每完成一 port +1）。
     sf_loaded: Arc<AtomicUsize>,
+    /// latest-wins：轨道 mute/solo 掩码必达（命令通道满合并时不丢最新值）。
+    pending_skip: Arc<Mutex<Option<Vec<bool>>>>,
+    /// latest-wins：AM lane M/S 试听旁通集必达。
+    pending_am_ms: Arc<Mutex<Option<Arc<AmMsMap>>>>,
     /// 混音台各 dense 通道的电平表读数端（引擎创建时收集，Arc 共享、随引擎重建换新）。
     mixer_channel_readings: Vec<MeterReading>,
     /// 主输出电平表读数端。
@@ -205,6 +209,17 @@ impl AudioHandle {
     /// 由渲染线程每轮消费标志，保证松手即停。
     pub fn request_preview_stop(&self) {
         self.preview_stop_flag.store(true, Ordering::Release);
+    }
+
+    /// latest-wins：轨道 mute/solo 掩码必达。命令通道满合并时 `SkipTracks`
+    /// 命令可能被丢弃，本槽保证 renderer 每轮总能拿到**最新**掩码。
+    pub fn set_skip_tracks(&self, skip: Vec<bool>) {
+        *self.pending_skip.lock().unwrap_or_else(|e| e.into_inner()) = Some(skip);
+    }
+
+    /// latest-wins：AM lane M/S 旁通集必达（见 [`Self::set_skip_tracks`]）。
+    pub fn set_am_ms(&self, am_ms: Arc<AmMsMap>) {
+        *self.pending_am_ms.lock().unwrap_or_else(|e| e.into_inner()) = Some(am_ms);
     }
 
     /// 开始新预览组时清除待消费的停止请求，避免新组被渲染器当作
@@ -343,8 +358,14 @@ impl CpalAudioHandle {
 
     /// 更新 AR 自动化 lane 的 M/S 试听旁通集：只换动态掩码 + 异步 chase，
     /// 不重建模型、不 seek——与 SkipTracks 对轨道 mute 的处理同机制。
+    /// 走 latest-wins 槽（通道满也不丢最新状态）。
     pub fn set_am_ms(&self, am_ms: Arc<AmMsMap>) {
-        self.handle.send(AudioCommand::SetAmMs { am_ms });
+        self.handle.set_am_ms(am_ms);
+    }
+
+    /// 轨道 mute/solo 掩码（latest-wins 槽，见 [`Self::set_am_ms`]）。
+    pub fn set_skip_tracks(&self, skip: Vec<bool>) {
+        self.handle.set_skip_tracks(skip);
     }
 
     /// Notify the audio thread that only notes have changed (no automation, no
@@ -877,6 +898,9 @@ pub fn spawn_cpal_audio(
     let handle_sf_loaded = Arc::clone(&renderer_state.sf_loaded);
 
     let shutdown = Arc::new(AtomicBool::new(false));
+    // latest-wins 槽：M/S 掩码必达（UI 写、renderer 每轮消费最新值）。
+    let pending_skip: Arc<Mutex<Option<Vec<bool>>>> = Arc::new(Mutex::new(None));
+    let pending_am_ms: Arc<Mutex<Option<Arc<AmMsMap>>>> = Arc::new(Mutex::new(None));
     let renderer_handle = spawn_renderer(
         engine,
         preview_engine,
@@ -889,6 +913,8 @@ pub fn spawn_cpal_audio(
         Arc::clone(&shutdown),
         Arc::clone(&preview_stop_flag),
         Arc::clone(&sample_position),
+        Arc::clone(&pending_skip),
+        Arc::clone(&pending_am_ms),
         callback_frames,
         insert_return_tx,
         instrument_return_tx,
@@ -1002,6 +1028,8 @@ pub fn spawn_cpal_audio(
             stream_error,
             preview_stop_flag,
             sf_loaded: handle_sf_loaded,
+            pending_skip,
+            pending_am_ms,
             mixer_channel_readings,
             mixer_master_reading,
             insert_return_rx,

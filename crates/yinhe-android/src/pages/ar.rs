@@ -206,13 +206,13 @@ impl YinheApp {
         self.send_skip_mask();
     }
 
-    /// 把当前 M/S 状态（compute_skip_mask）发送给音频引擎。
+    /// 把当前 M/S 状态（compute_skip_mask）发送给音频引擎（latest-wins 槽，必达）。
     fn send_skip_mask(&self) {
         let (Some(doc), Some(audio)) = (&self.doc, &self.audio) else {
             return;
         };
         let skip = doc.compute_skip_mask();
-        audio.handle.send(AudioCommand::SkipTracks { skip });
+        audio.handle.set_skip_tracks(skip);
     }
 
     /// 工程设置弹窗：与桌面端 project_info 面板对齐（工程名/艺术家/描述可编辑，
