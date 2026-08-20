@@ -1,5 +1,7 @@
 use eframe::egui;
-use yinhe_types::{TimeSigEvent, build_time_sig_segments, compute_measure_divisor, measure_ticks};
+use yinhe_types::{
+    Orientation, TimeSigEvent, build_time_sig_segments, compute_measure_divisor, measure_ticks,
+};
 
 // ── Constants ──
 
@@ -21,6 +23,30 @@ pub(crate) trait TimeRulerView {
     fn zoom_around_x(&mut self, pointer_x: f32, factor: f32);
     /// 标记 view 为 dirty，触发重绘。
     fn mark_dirty(&mut self);
+
+    // ── 主轴（时间轴）语义访问器 ──
+    // 默认实现 = 横向（AR 不覆写，行为完全不变）；PianoRollView 覆写以支持纵向瀑布流。
+    // 主轴像素均相对 ruler 起点：横向 = X 偏移、纵向 = Y 偏移。
+
+    /// 时间轴方向。
+    fn orientation(&self) -> Orientation {
+        Orientation::Horizontal
+    }
+
+    /// 主轴像素 → tick。
+    fn main_px_to_tick(&self, px: f32) -> f64 {
+        self.x_to_tick(px + self.content_left())
+    }
+
+    /// tick → 主轴像素（相对内容区左缘 / 顶部）。
+    fn tick_to_main_px(&self, tick: f64) -> f32 {
+        self.tick_to_x(tick) - self.content_left()
+    }
+
+    /// 沿主轴（时间轴）缩放，main_px 相对 ruler 起点；view_size = 主轴视口长度。
+    fn zoom_main_around(&mut self, main_px: f32, factor: f32, _view_size: f32) {
+        self.zoom_around_x(main_px + self.content_left(), factor);
+    }
 }
 
 impl TimeRulerView for yinhe_types::PianoRollView {
@@ -41,6 +67,29 @@ impl TimeRulerView for yinhe_types::PianoRollView {
     }
     fn mark_dirty(&mut self) {
         self.base.dirty = true;
+    }
+
+    // 覆写主轴语义：委托给 PianoRollView 固有访问器（横向 = X / 纵向 = Y）。
+    fn orientation(&self) -> Orientation {
+        self.orientation
+    }
+
+    fn main_px_to_tick(&self, px: f32) -> f64 {
+        self.main_px_to_tick(px)
+    }
+
+    fn tick_to_main_px(&self, tick: f64) -> f32 {
+        self.tick_to_main_px(tick)
+    }
+
+    fn zoom_main_around(&mut self, main_px: f32, factor: f32, view_size: f32) {
+        if self.is_vertical() {
+            // 纵向：时间沿 Y，沿 Y 缩放（zoom_around_y 纵向 = 主轴时间缩放）。
+            self.zoom_around_y(main_px, factor, view_size);
+        } else {
+            // 横向：时间沿 X（与默认实现一致，main_px 换算回全局 x）。
+            self.zoom_around_x(main_px + self.content_left(), factor);
+        }
     }
 }
 
@@ -114,6 +163,17 @@ pub(crate) fn interactive_ruler(
         time_sig_events,
     );
 
+    // 相对 ruler 起点的主轴像素：横向 = X 偏移；纵向 = Y 偏移。
+    let orientation = view.orientation();
+    let main_px = |pos: egui::Pos2| -> f32 {
+        match orientation {
+            Orientation::Horizontal => pos.x - ruler_rect.min.x,
+            Orientation::Vertical => pos.y - ruler_rect.min.y,
+        }
+    };
+    // 主轴视口长度（横向沿用现行为：ruler 矩形高度）。
+    let view_size = ruler_rect.height();
+
     let ruler_resp = ui.interact(
         ruler_rect,
         ui.id().with(id_salt),
@@ -123,36 +183,35 @@ pub(crate) fn interactive_ruler(
     if (ruler_resp.clicked() || ruler_resp.dragged())
         && let Some(pos) = ruler_resp.interact_pointer_pos()
     {
-        let view_x = pos.x - (ruler_rect.min.x - view.content_left());
-        let tick = view.x_to_tick(view_x);
+        let tick = view.main_px_to_tick(main_px(pos));
         *cursor_tick = Some(snap(tick).max(0.0));
         ui.ctx().request_repaint();
         jumped = true;
     }
 
-    // ── 滚轮 / 触摸板上下滑动 → 水平缩放 ──
-    // 时间标尺专属：纯滚轮即可触发水平缩放（无需 Cmd 修饰键），
+    // ── 滚轮 / 触摸板上下滑动 → 沿主轴缩放 ──
+    // 时间标尺专属：纯滚轮即可触发时间缩放（无需 Cmd 修饰键），
     // 与内容区的 Cmd+滚轮 缩放语义分离，避免冲突。
-    // pinch（zoom_delta）也联动水平缩放。
+    // pinch（zoom_delta）也联动时间缩放。
     let pointer_in_ruler = crate::view_interaction::pointer_hits(ui, ruler_rect);
     if pointer_in_ruler {
-        let pointer_x_view = ui.input(|i| i.pointer.hover_pos().unwrap_or_default()).x
-            - (ruler_rect.min.x - view.content_left());
+        let hover = ui.input(|i| i.pointer.hover_pos().unwrap_or_default());
+        let pointer_main = main_px(hover);
 
-        // pinch → 水平缩放
+        // pinch → 时间缩放
         let zoom_delta = ui.input(|i| i.zoom_delta());
         if (zoom_delta - 1.0).abs() > 0.001 {
-            view.zoom_around_x(pointer_x_view, zoom_delta);
+            view.zoom_main_around(pointer_main, zoom_delta, view_size);
             view.mark_dirty();
             ui.ctx().request_repaint();
         }
 
-        // 滚轮 / 触摸板上下滑动 → 水平缩放（无需 Cmd）
+        // 滚轮 / 触摸板上下滑动 → 时间缩放（无需 Cmd）
         // 方向：上滚 = 放大，下滚 = 缩小（与内容区一致）
         let scroll = ui.input(|i| i.smooth_scroll_delta);
         if scroll.y.abs() > 0.5 {
             let factor = if scroll.y > 0.0 { 1.0 / 1.1 } else { 1.1 };
-            view.zoom_around_x(pointer_x_view, factor);
+            view.zoom_main_around(pointer_main, factor, view_size);
             view.mark_dirty();
             ui.ctx().request_repaint();
         }
@@ -172,25 +231,28 @@ fn paint_labels(
     default_den: u8,
     time_sig_events: &[TimeSigEvent],
 ) {
+    let orientation = view.orientation();
     let ppu = view.pixels_per_tick();
     if ppu <= 0.001 {
         return;
     }
 
-    // `rect` lives in the painter's coordinate system.  For pianoroll the
-    // painter is from allocate_painter (origin = content left), for
-    // arrangement the painter is ui.painter() (origin = window top-left).
-    //
-    // `tick_to_x` returns coordinates relative to `view.content_left()`.
-    // We bridge the two via an offset so labels always land on screen
-    // right where the wgpu grid lines appear.
-    let offset_x = rect.min.x - view.content_left();
-    let left = rect.min.x;
-    let right = rect.max.x;
-
-    // Convert painter-space edges back to view-space ticks
-    let tick_start = view.x_to_tick((left - offset_x).max(0.0)).max(0.0);
-    let tick_end = view.x_to_tick(right - offset_x);
+    // 主轴参数按方向取：横向 = X（rect 宽）、纵向 = Y（rect 高）。
+    // 标签位置统一换算为「相对 ruler 起点」的主轴像素 main_px：
+    // - 横向：屏幕 x = rect.min.x + main_px（与原 offset_x + tick_to_x 严格等价：
+    //   offset_x + tick_to_x = rect.min.x - content_left + tick_to_x = rect.min.x + tick_to_main_px）
+    // - 纵向：屏幕 y = rect.min.y + main_px（main_px = tick*ppu - scroll_y）。
+    let main_size = match orientation {
+        Orientation::Horizontal => rect.width(),
+        Orientation::Vertical => rect.height(),
+    };
+    let tick_start = view.main_px_to_tick(0.0).max(0.0);
+    let tick_end = view.main_px_to_tick(main_size);
+    // 文字中线：横向 = 竖直居中、纵向 = 水平居中。
+    let text_cross_center = match orientation {
+        Orientation::Horizontal => rect.min.y + rect.height() / 2.0,
+        Orientation::Vertical => rect.min.x + rect.width() / 2.0,
+    };
 
     let ticks_per_sub = (tpb / SUB_BEAT_DIV).max(1);
 
@@ -213,7 +275,6 @@ fn paint_labels(
     };
 
     let font_id = egui::FontId::new(crate::theme::SMALL_LABEL_FONT, egui::FontFamily::Monospace);
-    let text_y_center = rect.min.y + rect.height() / 2.0;
 
     for i in 0..segments.len() {
         let (seg_start, num, den) = segments[i];
@@ -253,9 +314,9 @@ fn paint_labels(
         let mut tick = first;
         while (tick as f64) <= tick_end && tick < seg_end {
             let local = tick - seg_start;
-            let x = offset_x + view.tick_to_x(tick as f64);
+            let main_px = view.tick_to_main_px(tick as f64);
 
-            if x >= left && x <= right {
+            if main_px >= 0.0 && main_px <= main_size {
                 let is_measure = local % merged_measure_ticks == 0;
                 let is_beat = if !is_measure {
                     (local % ticks_per_measure).is_multiple_of(ticks_per_beat)
@@ -288,7 +349,11 @@ fn paint_labels(
                     continue;
                 };
 
-                draw_label(painter, &font_id, x, text_y_center, &label, color);
+                let label_pos = match orientation {
+                    Orientation::Horizontal => egui::pos2(rect.min.x + main_px, text_cross_center),
+                    Orientation::Vertical => egui::pos2(text_cross_center, rect.min.y + main_px),
+                };
+                draw_label(painter, &font_id, label_pos, &label, color, orientation);
             }
 
             tick += main_step;
@@ -316,19 +381,27 @@ fn paint_labels(
                 let is_sub_line = local % ticks_per_sub == 0;
 
                 if !is_measure && !is_beat_line && !is_sub_line {
-                    let x = offset_x + view.tick_to_x(ft as f64);
-                    if x >= left && x <= right {
+                    let main_px = view.tick_to_main_px(ft as f64);
+                    if main_px >= 0.0 && main_px <= main_size {
                         let bar = bar_offset + (local / ticks_per_measure) + 1;
                         let beat = (local % ticks_per_measure) / ticks_per_beat + 1;
                         let tick_in_beat = (ft as f64 % tpb as f64) as u32;
                         let label = format!("{}.{}.{:03}", bar, beat, tick_in_beat);
+                        let label_pos = match orientation {
+                            Orientation::Horizontal => {
+                                egui::pos2(rect.min.x + main_px, text_cross_center)
+                            }
+                            Orientation::Vertical => {
+                                egui::pos2(text_cross_center, rect.min.y + main_px)
+                            }
+                        };
                         draw_label(
                             painter,
                             &font_id,
-                            x,
-                            text_y_center,
+                            label_pos,
                             &label,
                             theme::tick_label(),
+                            orientation,
                         );
                     }
                 }
@@ -344,18 +417,37 @@ fn paint_labels(
 fn draw_label(
     painter: &egui::Painter,
     font_id: &egui::FontId,
-    x: f32,
-    y_center: f32,
+    pos: egui::Pos2,
     text: &str,
     color: egui::Color32,
+    orientation: Orientation,
 ) {
-    painter.text(
-        egui::pos2(x + 2.0, y_center),
-        egui::Align2::LEFT_CENTER,
-        text,
-        font_id.clone(),
-        color,
-    );
+    match orientation {
+        // 横向：横排标签（保持原逐像素行为：右偏 2px、LEFT_CENTER、无旋转）。
+        Orientation::Horizontal => {
+            painter.text(
+                egui::pos2(pos.x + 2.0, pos.y),
+                egui::Align2::LEFT_CENTER,
+                text,
+                font_id.clone(),
+                color,
+            );
+        }
+        // 纵向：竖排标签（顺时针 90°，时间向下递增时字形头朝上），
+        // 与 hover.rs 同款的旋转写法。
+        Orientation::Vertical => {
+            let galley = painter.layout_no_wrap(text.to_owned(), font_id.clone(), color);
+            let anchor_pos = egui::Align2::CENTER_CENTER
+                .anchor_size(pos, galley.size())
+                .min;
+            painter.add(
+                egui::epaint::TextShape::new(anchor_pos, galley, color).with_angle_and_anchor(
+                    std::f32::consts::FRAC_PI_2,
+                    egui::Align2::CENTER_CENTER,
+                ),
+            );
+        }
+    }
 }
 
 // ── Bar offset computation ──

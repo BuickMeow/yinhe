@@ -6,7 +6,8 @@
 use crate::theme;
 use eframe::egui;
 use yinhe_types::{
-    TimeSigEvent, TimelineViewBase, build_time_sig_segments, compute_measure_divisor, measure_ticks,
+    Orientation, TimeSigEvent, TimelineViewBase, build_time_sig_segments, compute_measure_divisor,
+    measure_ticks,
 };
 
 /// 线和标签共用的最小像素间距。与 `time_ruler::MIN_LABEL_SPACING` 保持一致。
@@ -62,22 +63,45 @@ pub fn paint_grid_lines(
     default_den: u8,
     time_sig_events: &[TimeSigEvent],
     colors: &GridColors,
+    orientation: Orientation,
 ) {
     let ppu = base.pixels_per_tick;
     if ppu <= 0.001 {
         return;
     }
 
-    // `tick_to_x` 返回相对 `content_left` 的坐标；painter 原点是 painter_rect.min。
-    // 用 offset_x 把 tick 坐标桥接到 painter 坐标。
+    // `tick_to_x` 返回相对内容区左缘（含 `left_panel_width` 偏移）的坐标；
+    // painter 原点是 painter_rect.min，用 offset_x 桥接（仅横向使用）。
     let offset_x = painter_rect.min.x - base.left_panel_width;
     let top = painter_rect.min.y;
     let bottom = painter_rect.max.y;
     let left = painter_rect.min.x;
     let right = painter_rect.max.x;
 
-    let tick_start = base.x_to_tick((left - offset_x).max(0.0)).max(0.0);
-    let tick_end = base.x_to_tick(right - offset_x);
+    // 时间轴（主轴）可见 tick 范围：
+    // - 横向：屏左缘 = x_to_tick(left - offset_x)（键盘列右缘的 tick）
+    // - 纵向：屏顶缘 = scroll_y / ppu
+    let (tick_start, tick_end) = match orientation {
+        Orientation::Horizontal => (
+            base.x_to_tick((left - offset_x).max(0.0)).max(0.0),
+            base.x_to_tick(right - offset_x),
+        ),
+        Orientation::Vertical => (
+            (base.scroll_y / ppu).max(0.0) as f64,
+            ((base.scroll_y + painter_rect.height()) / ppu) as f64,
+        ),
+    };
+
+    // 线的延伸跨度（副轴）：横向 = 竖线跨 top..bottom；纵向 = 横线跨 left..right。
+    let (cross_start, cross_end) = match orientation {
+        Orientation::Horizontal => (top, bottom),
+        Orientation::Vertical => (left, right),
+    };
+    // 可见性区间（主轴）：横向 = x in [left, right]；纵向 = y in [top, bottom]。
+    let (main_lo, main_hi) = match orientation {
+        Orientation::Horizontal => (left, right),
+        Orientation::Vertical => (top, bottom),
+    };
 
     let ticks_per_sub = (tpb / SUB_BEAT_DIV).max(1);
     let segments = build_time_sig_segments(time_sig_events, default_num, default_den);
@@ -145,9 +169,13 @@ pub fn paint_grid_lines(
         let mut tick = first;
         while (tick as f64) <= tick_end && tick < seg_end {
             let local = tick - seg_start;
-            let x = offset_x + base.tick_to_x(tick as f64);
+            // 主轴位置：横向 = 屏幕 x（offset_x + tick_to_x）；纵向 = 屏幕 y（相对内容区顶部）。
+            let main_pos = match orientation {
+                Orientation::Horizontal => offset_x + base.tick_to_x(tick as f64),
+                Orientation::Vertical => painter_rect.min.y + (tick as f32 * ppu - base.scroll_y),
+            };
 
-            if x >= left && x <= right {
+            if main_pos >= main_lo && main_pos <= main_hi {
                 let is_measure = local % ticks_per_measure == 0;
                 let beat_local = local % ticks_per_measure;
                 let is_beat_pos = beat_local.is_multiple_of(ticks_per_beat) && beat_local > 0;
@@ -156,13 +184,45 @@ pub fn paint_grid_lines(
                 if is_measure {
                     // 小节线统一粗线（2px）。合并时合并/2 恒为小节边界（divisor 为 2 的幂），
                     // 因此合并网格密度自动是标签的 2 倍（如 4 小节标签 → 每 2 小节一条线）。
-                    paint_line(painter, x, top, bottom, 2.0, colors.measure);
+                    paint_line(
+                        painter,
+                        orientation,
+                        main_pos,
+                        cross_start,
+                        cross_end,
+                        2.0,
+                        colors.measure,
+                    );
                 } else if show_beat && is_beat_pos {
-                    paint_line(painter, x, top, bottom, 1.0, colors.beat);
+                    paint_line(
+                        painter,
+                        orientation,
+                        main_pos,
+                        cross_start,
+                        cross_end,
+                        1.0,
+                        colors.beat,
+                    );
                 } else if show_sub && is_sub_pos {
-                    paint_line(painter, x, top, bottom, 1.0, colors.sub_beat.unwrap());
+                    paint_line(
+                        painter,
+                        orientation,
+                        main_pos,
+                        cross_start,
+                        cross_end,
+                        1.0,
+                        colors.sub_beat.unwrap(),
+                    );
                 } else if show_tick {
-                    paint_line(painter, x, top, bottom, 1.0, colors.tick.unwrap());
+                    paint_line(
+                        painter,
+                        orientation,
+                        main_pos,
+                        cross_start,
+                        cross_end,
+                        1.0,
+                        colors.tick.unwrap(),
+                    );
                 }
             }
             tick += step;
@@ -170,20 +230,27 @@ pub fn paint_grid_lines(
     }
 }
 
-/// 画一条竖线（宽度像素的填充矩形）。
+/// 画一条网格线：横向 = 竖线、纵向 = 横线（宽度像素的填充矩形）。
 fn paint_line(
     painter: &egui::Painter,
-    x: f32,
-    top: f32,
-    bottom: f32,
+    orientation: Orientation,
+    main_pos: f32,
+    cross_start: f32,
+    cross_end: f32,
     width: f32,
     color: egui::Color32,
 ) {
-    let rect = egui::Rect::from_min_size(
-        egui::pos2(x - width / 2.0, top),
-        egui::vec2(width, bottom - top),
-    );
-    painter.rect_filled(rect, 0.0, color);
+    let (origin, size) = match orientation {
+        Orientation::Horizontal => (
+            egui::pos2(main_pos - width / 2.0, cross_start),
+            egui::vec2(width, cross_end - cross_start),
+        ),
+        Orientation::Vertical => (
+            egui::pos2(cross_start, main_pos - width / 2.0),
+            egui::vec2(cross_end - cross_start, width),
+        ),
+    };
+    painter.rect_filled(egui::Rect::from_min_size(origin, size), 0.0, color);
 }
 
 #[cfg(test)]
@@ -227,6 +294,7 @@ mod tests {
             default_den,
             events,
             colors,
+            Orientation::Horizontal,
         );
         let offset_x = rect.min.x - base.left_panel_width;
         let mut xs = Vec::new();
@@ -385,5 +453,51 @@ mod tests {
         assert_ne!(pr.sub_beat.unwrap(), pr.tick.unwrap());
         assert!(ar.sub_beat.is_none());
         assert!(ar.tick.is_none());
+    }
+
+    /// 纵向（瀑布流）：网格线转置为横线，
+    /// y = rect.min.y + (tick*ppu - scroll_y)，可见 tick 范围 [scroll_y/ppu, (scroll_y+h)/ppu]。
+    #[test]
+    fn test_grid_vertical_transposed() {
+        let base = TimelineViewBase {
+            pixels_per_tick: 0.1,
+            scroll_y: 500.0, // 纵向主轴滚动 = scroll_y
+            ..make_base(0.1)
+        };
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(200.0, 100.0));
+        let ctx = egui::Context::default();
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Background,
+            egui::Id::new("grid_vertical_test"),
+        ));
+        paint_grid_lines(
+            &painter,
+            rect,
+            &base,
+            480,
+            4,
+            2,
+            &[],
+            &GridColors::pianoroll(),
+            Orientation::Vertical,
+        );
+        // 收集横线中心 y（横线矩形高度 = 线宽 1/2px）。
+        let mut ys: Vec<f32> = Vec::new();
+        painter.for_each_shape(|cs| {
+            if let egui::Shape::Rect(r) = &cs.shape {
+                ys.push(r.rect.center().y);
+            }
+        });
+        ys.sort_by(|a, b| a.total_cmp(b));
+        assert!(!ys.is_empty(), "纵向网格线不应为空");
+        // 可见 tick 范围 [5000, 6000]：y = tick*0.1 - 500 应落在 [0, 100] 屏幕内。
+        assert!(*ys.first().unwrap() >= 0.0);
+        assert!(*ys.last().unwrap() <= 100.0);
+        // 每小节 192px ≥ MIN_SPACING 不合并、每拍 48px ≥ MIN_SPACING → beat 线每 480 tick = 48px。
+        let gaps: Vec<f32> = ys.windows(2).map(|w| w[1] - w[0]).collect();
+        assert!(
+            gaps.iter().all(|&g| (g - 48.0).abs() < 0.01),
+            "纵向网格线间距应为 48px: gaps={gaps:?}"
+        );
     }
 }
