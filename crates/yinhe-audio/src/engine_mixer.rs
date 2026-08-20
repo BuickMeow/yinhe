@@ -118,28 +118,28 @@ impl AudioEngine {
         let dense = self.channel_layout.instrument_dense_for(channel);
         let Some(dense) = (dense != u32::MAX).then_some(dense as usize) else {
             if let Some(p) = processor {
-                self.instrument_returns.push(p);
+                self.instrument_returns.push((channel, p));
             }
             return;
         };
         if dense >= self.instruments.len() {
             // 命令与模型不同步（dense 越界）：直接退回，不越界写。
             if let Some(p) = processor {
-                self.instrument_returns.push(p);
+                self.instrument_returns.push((channel, p));
             }
             return;
         }
         let old = std::mem::replace(
             &mut self.instruments[dense],
-            processor.map(crate::instrument::InstrumentSource::new),
+            processor.map(|p| crate::instrument::InstrumentSource::new(channel, p)),
         );
         if let Some(old) = old {
-            self.instrument_returns.push(old.processor);
+            self.instrument_returns.push((old.channel, old.processor));
         }
     }
 
     /// 取出待回收的乐器处理器（renderer 每轮命令处理后调用，送回 UI 线程）。
-    pub(crate) fn drain_instrument_returns(&mut self) -> Vec<yinhe_clap::ClapProcessor> {
+    pub(crate) fn drain_instrument_returns(&mut self) -> Vec<(u16, yinhe_clap::ClapProcessor)> {
         std::mem::take(&mut self.instrument_returns)
     }
 }

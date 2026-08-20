@@ -84,7 +84,7 @@ struct AudioRenderer {
     /// 被替换/移除的 insert 处理器退回 UI 线程（渲染线程不做 deactivate）。
     insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
     /// 被替换/移除的乐器处理器退回 UI 线程（渲染线程不做 deactivate）。
-    instrument_return_tx: Sender<yinhe_clap::ClapProcessor>,
+    instrument_return_tx: Sender<(u16, yinhe_clap::ClapProcessor)>,
     /// 是否启用 GPU 合成器。启用后加载音色库时初始化 GpuSynth，渲染走 engine.gpu_synth。
     #[cfg(feature = "gpu")]
     use_gpu_synth: bool,
@@ -106,7 +106,7 @@ impl AudioRenderer {
         // cpal 回调每次请求的帧数（预览时 ring 目标下限，避免回调欠载静音）。
         callback_frames: usize,
         insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
-        instrument_return_tx: Sender<yinhe_clap::ClapProcessor>,
+        instrument_return_tx: Sender<(u16, yinhe_clap::ClapProcessor)>,
         #[cfg(feature = "gpu")] use_gpu_synth: bool,
     ) -> Self {
         Self {
@@ -780,7 +780,7 @@ pub(crate) fn spawn_renderer(
     // cpal 回调每次请求的帧数（预览时 ring 目标下限）。
     callback_frames: usize,
     insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
-    instrument_return_tx: Sender<yinhe_clap::ClapProcessor>,
+    instrument_return_tx: Sender<(u16, yinhe_clap::ClapProcessor)>,
     #[cfg(feature = "gpu")] use_gpu_synth: bool,
 ) -> Result<JoinHandle<()>, std::io::Error> {
     thread::Builder::new()
@@ -811,11 +811,11 @@ pub(crate) fn spawn_renderer(
                 let _ = insert_return_tx.send(leftovers);
             }
             // 引擎里仍在位的乐器处理器也退回 UI 线程回收。
-            let inst_leftovers: Vec<yinhe_clap::ClapProcessor> = renderer
+            let inst_leftovers: Vec<(u16, yinhe_clap::ClapProcessor)> = renderer
                 .engine
                 .instruments
                 .iter_mut()
-                .filter_map(|slot| slot.take().map(|s| s.processor))
+                .filter_map(|slot| slot.take().map(|s| (s.channel, s.processor)))
                 .collect();
             for p in inst_leftovers {
                 let _ = instrument_return_tx.send(p);

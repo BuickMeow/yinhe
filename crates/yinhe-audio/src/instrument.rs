@@ -13,6 +13,8 @@ use yinhe_clap::{ClapInputEvent, ClapProcessor};
 
 /// 渲染线程侧的乐器实例 + 当前块事件累积器。
 pub(crate) struct InstrumentSource {
+    /// 乐器通道号（0 起，与 `TrackData::instrument_channel` 对齐）。回收退回 UI 时携带。
+    pub channel: u16,
     /// activate 后 move 进来的处理器（`Send`，渲染线程独占）。
     pub processor: ClapProcessor,
     /// 当前块累积的输入事件（带块内 sample offset）。`process_instrument` 前填充、
@@ -21,8 +23,9 @@ pub(crate) struct InstrumentSource {
 }
 
 impl InstrumentSource {
-    pub fn new(processor: ClapProcessor) -> Self {
+    pub fn new(channel: u16, processor: ClapProcessor) -> Self {
         Self {
+            channel,
             processor,
             events: Vec::new(),
         }
