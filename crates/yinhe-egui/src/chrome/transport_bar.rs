@@ -174,7 +174,8 @@ pub enum FileAction {
 }
 
 impl FileAction {
-    /// 全部文件动作。**顺序即 `AudioSettings::pinned_file_actions` 数组索引**。
+    /// 全部文件动作。**顺序即 `AudioSettings::pinned_file_actions` 的索引位置（与 ALL 同序）**。
+    /// `pinned_file_actions` 为 `Vec<bool>`，旧配置（9 项）升级时长度不足，访问须用 `get` 兜底。
     pub const ALL: [FileAction; 10] = [
         FileAction::NewProject,
         FileAction::Open,
@@ -1311,7 +1312,8 @@ fn pinned_action_buttons<T: PopupRow>(
     );
     let btn_rounding = egui::CornerRadius::same(2);
     for (i, action) in actions.iter().enumerate() {
-        if !pinned[i] {
+        // pinned 可能来自旧配置（长度不足），用 get 兜底避免越界 panic
+        if !pinned.get(i).copied().unwrap_or(false) {
             continue;
         }
         let enabled = action.is_enabled(has_active, loading);
