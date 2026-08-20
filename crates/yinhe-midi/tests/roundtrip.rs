@@ -505,3 +505,35 @@ fn port_and_channel_prefix_captured() {
     // First MIDI event uses channel 3 (raw); td.channel reflects that
     assert_eq!(t.channel, 3);
 }
+
+/// 回归测试：同一 tick 多个 tempo 事件时后者覆盖前者（tan90.mid 的
+/// tick 0 处连续写了 60 / 50 / 50 BPM，最终生效的是 50）。
+#[test]
+fn same_tick_tempo_last_one_wins() {
+    let mut data = Vec::new();
+    data.extend_from_slice(b"MThd");
+    data.extend_from_slice(&6u32.to_be_bytes());
+    data.extend_from_slice(&[0, 0, 0, 1, 1, 0x80]); // format 0, 1 track, 384 tpb
+    data.extend_from_slice(b"MTrk");
+    let track: &[u8] = &[
+        0x00, 0xFF, 0x51, 0x03, 0x0F, 0x42, 0x40, // tick 0: 60 BPM
+        0x00, 0xFF, 0x51, 0x03, 0x12, 0x4F, 0x80, // tick 0: 50 BPM
+        0x00, 0xFF, 0x51, 0x03, 0x12, 0x4F, 0x80, // tick 0: 50 BPM
+        0xBC, 0x00, 0xFF, 0x51, 0x03, 0x04, 0x93, 0xE0, // delta=7680: 200 BPM
+        0x00, 0xFF, 0x2F, 0x00,
+    ];
+    data.extend_from_slice(&(track.len() as u32).to_be_bytes());
+    data.extend_from_slice(track);
+
+    let model = parse_bytes(&data).expect("parse failed");
+    let events = &model.conductor.tempo.events;
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].tick, 0);
+    assert!(
+        (events[0].value - 50.0).abs() < 0.01,
+        "tick 0 应为 50 BPM，实际 {}",
+        events[0].value
+    );
+    assert_eq!(events[1].tick, 7680);
+    assert!((events[1].value - 200.0).abs() < 0.01);
+}

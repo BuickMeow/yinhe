@@ -178,6 +178,17 @@ fn ensure_conductor_track(model: &mut YinModel) {
 //  Conductor pass (across all tracks)
 // =========================================================
 
+/// 按 tick 稳定排序并去重。同一 tick 出现多个 conductor 事件时，
+/// MIDI 语义是按顺序依次生效、后者覆盖前者（如 tan90.mid 的 tick 0
+/// 处有连续三个 tempo 事件），因此保留每个 tick 的**最后一个**。
+/// 稳定排序保序后反转，让"最后一个"变成去重保留的"第一个"，再反转还原。
+fn dedup_conductor_keep_last<T>(events: &mut Vec<T>, mut tick_of: impl FnMut(&T) -> u32) {
+    events.sort_by_key(|e| tick_of(e));
+    events.reverse();
+    events.dedup_by_key(|e| tick_of(e));
+    events.reverse();
+}
+
 fn collect_conductor(
     track_iter: midly::TrackIter,
     encoding: MidiImportEncoding,
@@ -256,12 +267,9 @@ fn collect_conductor(
         }
     }
 
-    tempo_events.sort_by_key(|e| e.tick);
-    tempo_events.dedup_by_key(|e| e.tick);
-    time_sig.sort_by_key(|e| e.tick);
-    time_sig.dedup_by_key(|e| e.tick);
-    key_sig.sort_by_key(|e| e.tick);
-    key_sig.dedup_by_key(|e| e.tick);
+    dedup_conductor_keep_last(&mut tempo_events, |e| e.tick);
+    dedup_conductor_keep_last(&mut time_sig, |e| e.tick);
+    dedup_conductor_keep_last(&mut key_sig, |e| e.tick);
     markers.sort_by_key(|e| e.tick);
     lyrics.sort_by_key(|e| e.tick);
 
