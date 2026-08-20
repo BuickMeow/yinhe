@@ -476,6 +476,7 @@ mod tests {
         let view_data = yinhe_types::PianoRollView {
             key_height: 20.0,
             viewport_h: ph as f32,
+            orientation: yinhe_types::Orientation::Horizontal,
             base: yinhe_types::TimelineViewBase {
                 pixels_per_tick: 0.1,
                 scroll_x: 0.0,

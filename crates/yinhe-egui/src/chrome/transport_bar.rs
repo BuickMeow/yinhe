@@ -269,6 +269,8 @@ pub struct TransportContext<'a> {
     pub status_hint: &'a mut Option<String>,
     /// 应用设置（快捷键表 + 图钉状态，图钉变化时在此 save）。
     pub settings: &'a mut AudioSettings,
+    /// 钢琴卷帘视图方向（横向/纵向瀑布流二选一）。按钮读取并切换。
+    pub orientation: &'a mut yinhe_types::Orientation,
 }
 
 /// Output from the transport bar — replaces `&mut bool` out-parameters.
@@ -280,6 +282,8 @@ pub struct TransportResponse {
     pub record_toggle: bool,
     /// 步进输入按钮点击：请求切换模式。
     pub step_toggle: bool,
+    /// 横向/纵向视角切换按钮点击：请求切换钢琴卷帘方向。
+    pub toggle_orientation: bool,
     pub pending_file_action: Option<FileAction>,
     pub pending_edit_action: Option<EditAction>,
     /// 文件菜单「最近修改的文件」子菜单点击的路径（请求打开该文件）。
@@ -293,6 +297,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
     let mut pending_file_action = None;
     let mut pending_edit_action = None;
     let mut pending_open_path = None;
+    let mut toggle_orientation = false;
 
     egui::Panel::top("transport_bar")
         .frame(egui::Frame {
@@ -455,6 +460,46 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                         }
                         ui.add_space(2.0);
                     }
+
+                    // ── 视角方向切换（最右侧）：横向 = ☰，纵向 = ☰ 旋转 90° ──
+                    // 与工具按钮同款式（hover_button），当前方向高亮，点击二选一切换。
+                    ui.add_space(4.0);
+                    use egui_material_icons::icons::ICON_DEHAZE;
+                    let orientation_icon = ICON_DEHAZE;
+                    let ori_font = egui::FontId::new(
+                        crate::theme::TRANSPORT_BTN_FONT,
+                        orientation_icon.font_family(),
+                    );
+                    let is_vertical = *ctx.orientation == yinhe_types::Orientation::Vertical;
+                    let ori_resp = if is_vertical {
+                        crate::widgets::hover::hover_button_rotated(
+                            ui,
+                            orientation_icon.codepoint,
+                            ori_font,
+                            crate::theme::text_label(),
+                            true,
+                            std::f32::consts::FRAC_PI_2,
+                        )
+                    } else {
+                        crate::widgets::hover::hover_button(
+                            ui,
+                            orientation_icon.codepoint,
+                            ori_font,
+                            crate::theme::text_label(),
+                            true,
+                        )
+                    };
+                    if ori_resp.clicked() {
+                        toggle_orientation = true;
+                    }
+                    if ori_resp.hovered() {
+                        hovered_hint = Some(if is_vertical {
+                            t!("hint.orientation.vertical").to_string()
+                        } else {
+                            t!("hint.orientation.horizontal").to_string()
+                        });
+                    }
+                    ui.add_space(2.0);
                 }
             });
 
@@ -565,6 +610,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
         stop_play: play_actions.stop_play,
         record_toggle: play_actions.record,
         step_toggle: play_actions.step,
+        toggle_orientation,
         pending_file_action,
         pending_edit_action,
         pending_open_path,
@@ -1547,6 +1593,7 @@ mod tests {
                         ui.ctx().add_font(egui_material_icons::font_insert());
                         return;
                     }
+                    let mut ori = yinhe_types::Orientation::Horizontal;
                     let mut ctx = TransportContext {
                         file_loader: &mut file_loader,
                         doc,
@@ -1556,6 +1603,7 @@ mod tests {
                         settings: &mut settings,
                         is_recording: false,
                         step_input: false,
+                        orientation: &mut ori,
                     };
                     show(ui, &mut ctx);
                 },
@@ -1583,6 +1631,7 @@ mod tests {
                         ui.ctx().add_font(egui_material_icons::font_insert());
                         return;
                     }
+                    let mut ori = yinhe_types::Orientation::Horizontal;
                     let mut ctx = TransportContext {
                         file_loader: &mut file_loader,
                         doc,
@@ -1592,6 +1641,7 @@ mod tests {
                         settings: &mut settings,
                         is_recording: false,
                         step_input: false,
+                        orientation: &mut ori,
                     };
                     show(ui, &mut ctx);
                     // 透明隐藏按钮：位于 x 1150..1174、y 8..32

@@ -42,7 +42,16 @@ mod tests {
     ) -> f32 {
         let mut out = 0.0f32;
         ctx.run_ui(raw, |ui| {
-            out = show(ui, rect, 300.0, scroll_x, ppt, 1000.0, dirty);
+            out = show(
+                ui,
+                rect,
+                300.0,
+                scroll_x,
+                ppt,
+                1000.0,
+                dirty,
+                yinhe_types::Orientation::Horizontal,
+            );
         })
         .textures_delta
         .clear();
@@ -386,7 +395,18 @@ mod tests {
     ) -> f32 {
         let mut out = 0.0f32;
         ctx.run_ui(raw, |ui| {
-            out = show_vertical(ui, rect, 100.0, scroll_y, cell_size, 200, 0.5, 8.0, dirty);
+            out = show_vertical(
+                ui,
+                rect,
+                100.0,
+                scroll_y,
+                cell_size,
+                200,
+                0.5,
+                8.0,
+                dirty,
+                yinhe_types::Orientation::Horizontal,
+            );
         })
         .textures_delta
         .clear();

@@ -497,6 +497,7 @@ impl eframe::App for App {
                 settings: &mut self.audio_settings,
                 is_recording: self.recording.is_some(),
                 step_input: self.step_input,
+                orientation: &mut self.pianoroll_view.orientation,
             },
         );
 
@@ -518,6 +519,12 @@ impl eframe::App for App {
         // ── 步进输入模式切换 ──
         if transport_response.step_toggle || menu_step {
             self.step_input = !self.step_input;
+        }
+
+        // ── 钢琴卷帘方向切换（横向 / 纵向瀑布流二选一）──
+        if transport_response.toggle_orientation {
+            self.pianoroll_view
+                .set_orientation(self.pianoroll_view.orientation().toggled());
         }
 
         // ── MIDI 录音切换（REC 按钮 / macOS 播放菜单）──

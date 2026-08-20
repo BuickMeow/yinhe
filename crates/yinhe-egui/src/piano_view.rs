@@ -730,9 +730,6 @@ pub fn show(
 
     // ── Scale background + 八度横线（调号驱动的调内/调外/根音条带）──
     let kh = view.key_height;
-    let scroll_y = view.base.scroll_y;
-    let h_f32 = h as f32;
-    let bottom = 128.0 * kh - scroll_y;
     let kb_w = view.keyboard_width();
     bg::paint(
         &painter,
@@ -751,13 +748,18 @@ pub fn show(
     {
         let (def_num, def_den) = midi.time_sig_default();
         let sig_events = midi.time_sig_events();
-        let grid_rect = egui::Rect::from_min_max(
-            egui::pos2(
-                content_rect.min.x + view.keyboard_width(),
-                content_rect.min.y,
-            ),
-            content_rect.max,
-        );
+        // 横向：从键盘列右缘开始；纵向：整块音乐区（时间轴沿 Y，线横着）。
+        let grid_rect = if view.is_vertical() {
+            content_rect
+        } else {
+            egui::Rect::from_min_max(
+                egui::pos2(
+                    content_rect.min.x + view.keyboard_width(),
+                    content_rect.min.y,
+                ),
+                content_rect.max,
+            )
+        };
         crate::widgets::grid_lines::paint_grid_lines(
             &painter,
             grid_rect,
@@ -767,6 +769,7 @@ pub fn show(
             def_den,
             sig_events,
             &crate::widgets::grid_lines::GridColors::pianoroll(),
+            view.orientation(),
         );
     }
 
@@ -794,23 +797,51 @@ pub fn show(
     };
 
     // ── Keyboard (drawn by egui on top of the wgpu texture) ──
-    keyboard::paint(&painter, content_rect, kb_w, kh, bottom, h_f32, &theme);
+    // 横向 = 左侧键盘列；纵向 = 底部横键盘条（高 = kb_w）。
+    let keyboard_rect = if view.is_vertical() {
+        let kb_bottom = rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H;
+        egui::Rect::from_min_max(
+            egui::pos2(content_rect.min.x, kb_bottom - kb_w),
+            egui::pos2(content_right_x, kb_bottom),
+        )
+    } else {
+        egui::Rect::from_min_max(
+            egui::pos2(content_rect.min.x, content_rect.min.y),
+            egui::pos2(content_rect.min.x + kb_w, content_rect.max.y),
+        )
+    };
+    keyboard::paint(&painter, keyboard_rect, kb_w, kh, view, &theme);
 
     // ── Playback cursor (drawn by egui on top of the wgpu texture) ──
     // Decoupled from the wgpu pipeline so cursor movement during playback
     // does NOT invalidate the static instance cache.
     if let Some(ct) = *cursor_tick {
         let kb_w = view.keyboard_width();
-        let cx_local = view.tick_to_x(ct);
-        if cx_local >= kb_w && cx_local <= w as f32 {
-            let cx = content_rect.min.x + cx_local;
-            painter.line_segment(
-                [
-                    egui::pos2(cx, content_rect.min.y),
-                    egui::pos2(cx, content_rect.max.y),
-                ],
-                egui::Stroke::new(crate::theme::CURSOR_WIDTH, crate::theme::contrast_fg()),
-            );
+        if view.is_vertical() {
+            // 纵向瀑布流：时间沿 Y，游标横线。
+            let cy_local = view.tick_to_main_px(ct);
+            if cy_local >= 0.0 && cy_local <= h as f32 {
+                let cy = content_rect.min.y + cy_local;
+                painter.line_segment(
+                    [
+                        egui::pos2(content_rect.min.x, cy),
+                        egui::pos2(content_rect.max.x, cy),
+                    ],
+                    egui::Stroke::new(crate::theme::CURSOR_WIDTH, crate::theme::contrast_fg()),
+                );
+            }
+        } else {
+            let cx_local = view.tick_to_x(ct);
+            if cx_local >= kb_w && cx_local <= w as f32 {
+                let cx = content_rect.min.x + cx_local;
+                painter.line_segment(
+                    [
+                        egui::pos2(cx, content_rect.min.y),
+                        egui::pos2(cx, content_rect.max.y),
+                    ],
+                    egui::Stroke::new(crate::theme::CURSOR_WIDTH, crate::theme::contrast_fg()),
+                );
+            }
         }
     }
 
@@ -848,7 +879,13 @@ pub fn show(
             })
             .collect();
         {
-            let kb_w = music_rect.min.x - content_rect.min.x;
+            // 横向：像素 rect 相对 content（含键盘列），转成 music-relative 再相对 music_rect 画；
+            // 纵向：music_rect == content_rect，无偏移。
+            let kb_w = if view.is_vertical() {
+                0.0
+            } else {
+                music_rect.min.x - content_rect.min.x
+            };
             let music_rect_local = egui::Rect::from_min_max(
                 egui::pos2(0.0, 0.0),
                 egui::pos2(music_rect.width(), music_rect.height()),
@@ -896,31 +933,41 @@ pub fn show(
     }
 
     // ── Time ruler ──
+    // 横向 = 顶部横条；纵向 = 左侧竖条（时间沿 Y）。
     if let Some(midi) = midi
         && let Some(tpb) = midi.ticks_per_beat()
     {
-        // 左上角角落（键盘列上方）：量化按钮已移至标尺下方控制栏，此处只补背景。
-        let left_corner = egui::Rect::from_min_max(
-            rect.min,
-            egui::pos2(rect.min.x + view.keyboard_width(), ruler_band_y + RULER_H),
-        );
-        ui.painter()
-            .rect_filled(left_corner, 0.0, crate::theme::track_bg());
-
-        // 右上角角落：标尺右缘到垂直滚动条之间（SCROLLBAR_W × RULER_H）
-        let corner_rect = egui::Rect::from_min_max(
-            egui::pos2(content_right_x, ruler_band_y),
-            egui::pos2(rect.max.x, ruler_band_y + RULER_H),
-        );
-        ui.painter()
-            .rect_filled(corner_rect, 0.0, crate::theme::track_bg());
-
-        let ruler_rect = egui::Rect::from_min_max(
-            egui::pos2(rect.min.x + view.keyboard_width(), ruler_band_y),
-            egui::pos2(content_right_x, ruler_band_y + RULER_H),
-        );
         let (def_num, def_den) = midi.time_sig_default();
         let sig_events = midi.time_sig_events();
+
+        let ruler_rect = if view.is_vertical() {
+            egui::Rect::from_min_max(
+                egui::pos2(rect.min.x, content_y),
+                egui::pos2(rect.min.x + RULER_H, content_bottom),
+            )
+        } else {
+            // 左上角角落（键盘列上方）：量化按钮已移至标尺下方控制栏，此处只补背景。
+            let left_corner = egui::Rect::from_min_max(
+                rect.min,
+                egui::pos2(rect.min.x + view.keyboard_width(), ruler_band_y + RULER_H),
+            );
+            ui.painter()
+                .rect_filled(left_corner, 0.0, crate::theme::track_bg());
+
+            // 右上角角落：标尺右缘到垂直滚动条之间（SCROLLBAR_W × RULER_H）
+            let corner_rect = egui::Rect::from_min_max(
+                egui::pos2(content_right_x, ruler_band_y),
+                egui::pos2(rect.max.x, ruler_band_y + RULER_H),
+            );
+            ui.painter()
+                .rect_filled(corner_rect, 0.0, crate::theme::track_bg());
+
+            egui::Rect::from_min_max(
+                egui::pos2(rect.min.x + view.keyboard_width(), ruler_band_y),
+                egui::pos2(content_right_x, ruler_band_y + RULER_H),
+            )
+        };
+
         let ruler_jumped = crate::widgets::time_ruler::interactive_ruler(
             ui,
             ruler_rect,
@@ -1070,9 +1117,9 @@ pub fn show(
         }
     }
 
-    // ── Horizontal scrollbar ──
-    let kb_w = view.keyboard_width();
+    // ── 滚动条（时间轴 + 音高轴）──
     let sb_y = rect.min.y + rect.height() - crate::widgets::scrollbar::SCROLLBAR_H;
+    let pr_orientation = view.orientation();
 
     // 右下角角落：横纵滚动条交叠区（SCROLLBAR_W × SCROLLBAR_H）
     let corner_rect = egui::Rect::from_min_max(
@@ -1082,53 +1129,121 @@ pub fn show(
     ui.painter()
         .rect_filled(corner_rect, 0.0, crate::theme::track_bg());
 
-    let sb_rect = egui::Rect::from_min_max(
-        egui::pos2(rect.min.x + kb_w, sb_y),
-        egui::pos2(
-            content_right_x,
-            sb_y + crate::widgets::scrollbar::SCROLLBAR_H,
-        ),
-    );
+    if view.is_vertical() {
+        // ── 纵向瀑布流：时间滚动条竖在右侧（绑 scroll_y / ppt），音高滚动条横在底部（绑 scroll_x / key_height）──
+        // 时间竖条
+        let tick_sb_rect = egui::Rect::from_min_max(
+            egui::pos2(content_right_x, content_y),
+            egui::pos2(rect.max.x, content_bottom),
+        );
+        let main_len = content_rect.height();
+        let tick_sb_drag = ui
+            .push_id("piano_scrollbar", |ui| {
+                crate::widgets::scrollbar::show(
+                    ui,
+                    tick_sb_rect,
+                    main_len,
+                    &mut view.base.scroll_y,
+                    &mut view.base.pixels_per_tick,
+                    total_ticks,
+                    &mut view.base.dirty,
+                    pr_orientation,
+                )
+            })
+            .inner;
+        if tick_sb_drag != 0.0 {
+            let factor = 1.0 - tick_sb_drag * 0.005;
+            let anchor_y = tick_sb_rect.center().y - content_rect.min.y;
+            view.zoom_around_y(anchor_y, factor, main_len);
+            ui.ctx().request_repaint();
+        }
 
-    // 水平滚动条：thumb 拖 = 平移（x）+ 垂直位移 → x 轴缩放（tick 宽度）
-    // 方向：上拖 = 放大，下拖 = 缩小
-    // 水平滚动条：thumb 拖 = 平移（主轴）+ 副轴位移 → 主轴缩放
-    // 方向：上拖 = 放大，下拖 = 缩小
-    let pr_orientation = view.orientation();
-    let sb_drag_dy = ui
-        .push_id("piano_scrollbar", |ui| {
-            crate::widgets::scrollbar::show(
-                ui,
-                sb_rect,
-                w as f32 - kb_w,
-                &mut view.base.scroll_x,
-                &mut view.base.pixels_per_tick,
-                total_ticks,
-                &mut view.base.dirty,
-                pr_orientation,
-            )
-        })
-        .inner;
-    if sb_drag_dy != 0.0 {
-        let factor = 1.0 - sb_drag_dy * 0.005;
-        let anchor_x = sb_rect.center().x - content_rect.min.x;
-        view.zoom_around_x(anchor_x, factor);
-        ui.ctx().request_repaint();
-    }
+        // 音高横条
+        let key_sb_rect = egui::Rect::from_min_max(
+            egui::pos2(content_rect.min.x, sb_y),
+            egui::pos2(content_right_x, rect.max.y),
+        );
+        let cross_len = content_rect.width();
+        let cell_min = cross_len / 128.0;
+        let cell_max = cross_len / 12.0;
+        let key_sb_drag = ui
+            .push_id("piano_vscroll", |ui| {
+                crate::widgets::scrollbar::show_vertical(
+                    ui,
+                    key_sb_rect,
+                    cross_len,
+                    &mut view.base.scroll_x,
+                    &mut view.key_height,
+                    128,
+                    cell_min,
+                    cell_max,
+                    &mut view.base.dirty,
+                    pr_orientation,
+                )
+            })
+            .inner;
+        if key_sb_drag != 0.0 {
+            let factor = 1.0 - key_sb_drag * 0.005;
+            let anchor_x = key_sb_rect.center().x - content_rect.min.x;
+            view.zoom_around_x(anchor_x, factor);
+            ui.ctx().request_repaint();
+        }
 
-    // ── Vertical scrollbar ──
-    // PR 像素空间：num_cells = 128，cell_size = key_height。
-    // 滚动条范围 = PR 内容区 [content_y, content_y + content_h]，不超过 PR/AM 分割线。
-    // 相对缩放：最小 = 128 键一屏（cell_min），最大 = 12 键一屏（cell_max），随窗口变化。
-    {
+        // 滚动条滚轮缩放：时间条上滚 = 时间缩放（沿 Y）；音高条上滚 = 音高缩放（沿 X）
+        if let Some(pos) = ui.input(|i| i.pointer.hover_pos())
+            && !super::view_interaction::pointer_over_popup(ui.ctx())
+        {
+            let scroll_y = ui.input(|i| i.smooth_scroll_delta.y);
+            if scroll_y.abs() > 0.5 {
+                let factor = if scroll_y > 0.0 { 1.0 / 1.1 } else { 1.1 };
+                if tick_sb_rect.contains(pos) {
+                    let anchor_y = tick_sb_rect.center().y - content_rect.min.y;
+                    view.zoom_around_y(anchor_y, factor, main_len);
+                    ui.ctx().request_repaint();
+                } else if key_sb_rect.contains(pos) {
+                    let anchor_x = key_sb_rect.center().x - content_rect.min.x;
+                    view.zoom_around_x(anchor_x, factor);
+                    ui.ctx().request_repaint();
+                }
+            }
+        }
+    } else {
+        // ── 横向（现状）：时间横条（绑 scroll_x / ppt）+ 音高竖条（绑 scroll_y / key_height）──
+        let sb_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.min.x + kb_w, sb_y),
+            egui::pos2(
+                content_right_x,
+                sb_y + crate::widgets::scrollbar::SCROLLBAR_H,
+            ),
+        );
+        let sb_drag_dy = ui
+            .push_id("piano_scrollbar", |ui| {
+                crate::widgets::scrollbar::show(
+                    ui,
+                    sb_rect,
+                    w as f32 - kb_w,
+                    &mut view.base.scroll_x,
+                    &mut view.base.pixels_per_tick,
+                    total_ticks,
+                    &mut view.base.dirty,
+                    pr_orientation,
+                )
+            })
+            .inner;
+        if sb_drag_dy != 0.0 {
+            let factor = 1.0 - sb_drag_dy * 0.005;
+            let anchor_x = sb_rect.center().x - content_rect.min.x;
+            view.zoom_around_x(anchor_x, factor);
+            ui.ctx().request_repaint();
+        }
+
+        // 音高竖条
         let vsb_rect = egui::Rect::from_min_max(
             egui::pos2(content_right_x, content_y),
             egui::pos2(rect.max.x, content_y + content_h),
         );
         let cell_min = content_rect.height() / 128.0;
         let cell_max = content_rect.height() / 12.0;
-        // 垂直滚动条：thumb 拖 = 平移（y）+ 水平位移 → y 轴缩放（key 行高）
-        // 方向：左拖 = 放大，右拖 = 缩小
         let vsb_drag_dx = ui
             .push_id("piano_vscroll", |ui| {
                 crate::widgets::scrollbar::show_vertical(
@@ -1152,8 +1267,7 @@ pub fn show(
             ui.ctx().request_repaint();
         }
 
-        // ── 滚动条滚轮缩放：水平滚动条滚轮 = x 轴缩放；垂直滚动条滚轮 = y 轴缩放 ──
-        // 方向：上滚 = 放大，下滚 = 缩小
+        // 滚动条滚轮缩放：水平滚动条滚轮 = x 轴缩放；垂直滚动条滚轮 = y 轴缩放
         if let Some(pos) = ui.input(|i| i.pointer.hover_pos())
             && !super::view_interaction::pointer_over_popup(ui.ctx())
         {
@@ -1161,12 +1275,10 @@ pub fn show(
             if scroll_y.abs() > 0.5 {
                 let factor = if scroll_y > 0.0 { 1.0 / 1.1 } else { 1.1 };
                 if vsb_rect.contains(pos) {
-                    // 垂直滚动条 → y 轴缩放（锚定滚动条中心 y）
                     let anchor_y = vsb_rect.center().y - content_rect.min.y;
                     view.zoom_around_y(anchor_y, factor, content_rect.height());
                     ui.ctx().request_repaint();
                 } else if sb_rect.contains(pos) {
-                    // 水平滚动条 → x 轴缩放（锚定滚动条中心 x）
                     let anchor_x = sb_rect.center().x - content_rect.min.x;
                     view.zoom_around_x(anchor_x, factor);
                     ui.ctx().request_repaint();
@@ -1197,8 +1309,11 @@ pub fn show(
             Some(h)
         } else if music_rect.contains(pos) {
             let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-            let tick = view.x_to_tick(local.x).max(0.0);
-            let key = view.y_to_key(local.y);
+            // 主轴/副轴按方向取 local 分量（横向：主轴=x、副轴=y；纵向反之）
+            let (main_px, cross_px) =
+                crate::selection::drag::main_cross_x_y(view, (local.x, local.y));
+            let tick = crate::selection::drag::main_px_to_tick_dir(view, main_px).max(0.0);
+            let key = view.cross_px_to_key(cross_px);
             // 本视图有选框 → 讲解行显示选框统计（参考 info panel）
             let sel_text = if !sel_rect.effective_rects().is_empty()
                 && let Some(sh) = sel_hint
@@ -1218,10 +1333,18 @@ pub fn show(
                 };
                 Some(format!("{} {}", pos_str, key))
             }
-        } else if content_rect.contains(pos) {
-            // 键盘列：只显示音高数字
-            let local_y = pos.y - content_rect.min.y;
-            Some(format!("{}", view.y_to_key(local_y)))
+        } else if if view.is_vertical() {
+            keyboard_rect.contains(pos) // 纵向底部键盘条
+        } else {
+            content_rect.contains(pos) // 横向键盘列
+        } {
+            // 键盘区：只显示音高数字（纵向时键盘在底部，音高沿 x）
+            let key = if view.is_vertical() {
+                view.cross_px_to_key(pos.x - content_rect.min.x)
+            } else {
+                view.y_to_key(pos.y - content_rect.min.y)
+            };
+            Some(format!("{}", key))
         } else {
             None
         };

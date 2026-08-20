@@ -1175,6 +1175,7 @@ fn render_panel_content(
             def_den,
             sig_events,
             &crate::widgets::grid_lines::GridColors::pianoroll(),
+            yinhe_types::Orientation::Horizontal,
         );
     }
 

@@ -390,6 +390,7 @@ pub fn show(
             def_den,
             sig_events,
             &crate::widgets::grid_lines::GridColors::arrangement(),
+            yinhe_types::Orientation::Horizontal,
         );
     }
 
