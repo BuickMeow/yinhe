@@ -12,6 +12,7 @@ fn make_base() -> TimelineViewBase {
         dirty: false,
         track_panel_row_height: 40.0,
         track_panel_scroll_y: 0.0,
+        follow_target: None,
     }
 }
 

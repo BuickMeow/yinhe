@@ -342,6 +342,7 @@ mod tests {
                 dirty: true,
                 track_panel_row_height: 40.0,
                 track_panel_scroll_y: 0.0,
+                follow_target: None,
             },
             ..Default::default()
         };
@@ -381,6 +382,7 @@ mod tests {
                 dirty: true,
                 track_panel_row_height: 40.0,
                 track_panel_scroll_y: 0.0,
+                follow_target: None,
             },
             ..Default::default()
         };

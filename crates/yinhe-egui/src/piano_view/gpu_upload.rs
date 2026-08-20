@@ -484,6 +484,7 @@ mod tests {
                 dirty: true,
                 track_panel_row_height: 40.0,
                 track_panel_scroll_y: 0.0,
+                follow_target: None,
             },
         };
         let track_colors: [[f32; 4]; 2] = [[0.2, 0.7, 1.0, 1.0], [0.9, 0.3, 0.3, 1.0]];

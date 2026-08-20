@@ -661,6 +661,7 @@ fn cull_real_midi_vs_cpu() {
                 dirty: true,
                 track_panel_row_height: 40.0,
                 track_panel_scroll_y: 0.0,
+                follow_target: None,
             },
         };
         let hidden = std::collections::HashSet::new();
@@ -1950,6 +1951,7 @@ fn cull_render_pixel_check() {
                 dirty: true,
                 track_panel_row_height: 40.0,
                 track_panel_scroll_y: 0.0,
+                follow_target: None,
             },
         };
         let job = crate::pianoroll::build_render_job(
@@ -2191,6 +2193,7 @@ fn cull_visible_buffer_content_check() {
             dirty: true,
             track_panel_row_height: 40.0,
             track_panel_scroll_y: 0.0,
+            follow_target: None,
         },
     };
     let mut cpu_instances = Vec::new();
@@ -2402,6 +2405,7 @@ fn cull_draw_c_lo_nonzero_minimal() {
                 dirty: true,
                 track_panel_row_height: 40.0,
                 track_panel_scroll_y: 0.0,
+                follow_target: None,
             },
         };
         let job = crate::pianoroll::build_render_job(
@@ -2655,6 +2659,7 @@ fn note_boundary_no_gap_large_tick() {
                 dirty: true,
                 track_panel_row_height: 40.0,
                 track_panel_scroll_y: 0.0,
+                follow_target: None,
             },
         };
         let job = crate::pianoroll::build_render_job(
@@ -2874,6 +2879,7 @@ fn cull_bench_vs_cpu_start_mid() {
                     dirty: true,
                     track_panel_row_height: 40.0,
                     track_panel_scroll_y: 0.0,
+                    follow_target: None,
                 },
             };
 

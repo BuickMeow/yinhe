@@ -70,10 +70,16 @@ pub fn show(
         row_layout.total_rows(),
     );
 
-    if let Some(ct) = *edit.cursor_tick
-        && cfg.is_playing
-        && *cfg.follow_mode != crate::view_interaction::FollowMode::None
-        && let Some(new_scroll_x) = crate::view_interaction::compute_follow_scroll(
+    // Auto-follow：触发（居中/翻页/连续）后向目标 scroll_x 帧间指数插值，
+    // 跳变变成平滑滑动（原实现逐帧硬设置，看起来像高速翻页）。
+    // 非播放时清空插值目标，避免恢复播放后画面自行滚向旧目标。
+    let follow_active =
+        cfg.is_playing && *cfg.follow_mode != crate::view_interaction::FollowMode::None;
+    if !follow_active {
+        view.base.follow_target = None;
+    } else if let Some(ct) = *edit.cursor_tick {
+        let dt = ui.input(|i| i.stable_dt).max(1e-4);
+        if let Some(t) = crate::view_interaction::compute_follow_scroll(
             ct,
             view.base.pixels_per_tick,
             w as f32,
@@ -81,15 +87,28 @@ pub fn show(
             *cfg.follow_mode,
             0.01,
             view.base.scroll_x,
-        )
-    {
-        view.base.scroll_x = new_scroll_x;
-        view.clamp_scroll(
-            w as f32,
-            h as f32,
-            data.total_ticks,
-            row_layout.total_rows(),
-        );
+        ) {
+            view.base.follow_target = Some(t);
+        }
+        if let Some(t) = view.base.follow_target {
+            let before = view.base.scroll_x;
+            view.base.scroll_x = crate::view_interaction::follow_interpolate(
+                before,
+                t,
+                dt,
+                crate::view_interaction::FOLLOW_TAU,
+            );
+            view.clamp_scroll(
+                w as f32,
+                h as f32,
+                data.total_ticks,
+                row_layout.total_rows(),
+            );
+            // 已到达目标（1px 数值容差）或滚动被 clamp 卡在边界：结束插值。
+            if (t - view.base.scroll_x).abs() <= 1.0 || view.base.scroll_x == before {
+                view.base.follow_target = None;
+            }
+        }
     }
 
     let scroll_x = view.base.scroll_x;

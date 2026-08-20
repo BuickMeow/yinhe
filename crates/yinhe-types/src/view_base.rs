@@ -18,6 +18,10 @@ pub struct TimelineViewBase {
     pub track_panel_row_height: f32,
     /// Vertical scroll offset for the track panel.
     pub track_panel_scroll_y: f32,
+    /// 跟随播放的插值目标 scroll_x：Some = 正在向该位置平滑滚动。
+    /// 由跟随逻辑（editor-core follow）维护：触发跟随后锁定目标，
+    /// 每帧指数插值靠近，到达（或被 clamp 卡住）后清回 None。
+    pub follow_target: Option<f32>,
 }
 
 impl TimelineViewBase {
@@ -72,6 +76,7 @@ mod tests {
             dirty: false,
             track_panel_row_height: 40.0,
             track_panel_scroll_y: 0.0,
+            follow_target: None,
         }
     }
 

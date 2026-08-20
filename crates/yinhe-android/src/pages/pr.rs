@@ -9,7 +9,7 @@ use crate::ui_common::{fill_page_background, icon_text, show_toolbar};
 impl YinheApp {
     /// PR 钢琴卷帘页：顶部工具条（返回 + 走带控制 + 轨道名）+ 视图。
     pub(crate) fn ui_pr(&mut self, ui: &mut egui::Ui) {
-        transport::update(self);
+        transport::update(self, ui.ctx().input(|i| i.stable_dt).max(1e-4));
         show_toolbar(ui, "pr_toolbar", self.safe_insets, |ui| {
             use egui_material_icons::icons::ICON_ARROW_BACK;
             if ui

@@ -6,7 +6,9 @@ use yinhe_editor_core::quantize::QuantizePreset;
 
 use crate::widgets::tools_panel::Tool;
 
-pub use yinhe_editor_core::follow::{FollowMode, compute_follow_scroll, total_ticks_padded};
+pub use yinhe_editor_core::follow::{
+    FOLLOW_TAU, FollowMode, compute_follow_scroll, follow_interpolate, total_ticks_padded,
+};
 
 /// Extension trait adding egui-specific methods to [`FollowMode`].
 pub(crate) trait FollowModeExt {

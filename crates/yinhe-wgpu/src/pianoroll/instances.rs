@@ -193,6 +193,7 @@ mod tests {
                 dirty: true,
                 track_panel_row_height: 40.0,
                 track_panel_scroll_y: 0.0,
+                follow_target: None,
             },
             key_height: 12.0,
             viewport_h: 0.0,

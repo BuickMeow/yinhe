@@ -16,7 +16,7 @@ impl YinheApp {
         if !Tool::AR_TOOLS.contains(&self.tool) {
             self.tool = Tool::Hand;
         }
-        transport::update(self);
+        transport::update(self, ui.ctx().input(|i| i.stable_dt).max(1e-4));
         // 每帧轮询后台加载结果（模型加载完成后留在 AR 页展示）。
         self.poll_midi_load();
         show_toolbar(ui, "ar_toolbar", self.safe_insets, |ui| {

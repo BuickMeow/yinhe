@@ -108,7 +108,8 @@ pub(crate) fn bar(app: &mut YinheApp, ui: &mut egui::Ui) {
 }
 
 /// 每帧从音频引擎同步播放位置：换算 tick 更新播放光标，跟随模式时滚动视口。
-pub(crate) fn update(app: &mut YinheApp) {
+/// `dt` 为帧间隔（秒），传给跟随插值（指数平滑收敛速度与帧率无关）。
+pub(crate) fn update(app: &mut YinheApp, dt: f32) {
     let Some(audio) = &app.audio else {
         return;
     };
@@ -124,7 +125,7 @@ pub(crate) fn update(app: &mut YinheApp) {
     app.pr_view.set_cursor(Some(tick));
     app.ar_view.set_cursor(Some(tick));
     if app.follow_play {
-        app.pr_view.follow_cursor();
-        app.ar_view.follow_cursor();
+        app.pr_view.follow_cursor(dt);
+        app.ar_view.follow_cursor(dt);
     }
 }

@@ -87,6 +87,20 @@ pub fn compute_follow_scroll(
     }
 }
 
+/// 跟随平滑时间常数（秒）：指数插值的收敛速度。越小越跟手（硬）、越大越柔和（滞后）。
+pub const FOLLOW_TAU: f32 = 0.1;
+
+/// 帧间插值：向目标滚动位置平滑收敛（帧率无关的指数平滑）。
+/// `dt` 为帧间隔（秒，<= 0 时原样返回 current），`tau` 为时间常数（秒）。
+/// 每帧调用一次，把居中/翻页触发产生的硬跳变变成可见的减速滑动。
+pub fn follow_interpolate(current: f32, target: f32, dt: f32, tau: f32) -> f32 {
+    if dt <= 0.0 {
+        return current;
+    }
+    let k = 1.0 - (-dt / tau).exp();
+    current + (target - current) * k
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,6 +241,36 @@ mod tests {
         let result =
             compute_follow_scroll(100.0, 1.0, 800.0, 60.0, FollowMode::Continuous, 60.0, 0.0);
         assert_eq!(result, Some(40.0));
+    }
+
+    #[test]
+    fn interpolate_moves_toward_target() {
+        let v = follow_interpolate(0.0, 100.0, 1.0 / 60.0, FOLLOW_TAU);
+        assert!(v > 0.0 && v < 100.0);
+    }
+
+    #[test]
+    fn interpolate_reaches_target_over_time() {
+        // 指数平滑的收敛性：以 60fps 插值 100 帧（约 1.7s）应基本到达。
+        let mut v = 0.0;
+        for _ in 0..100 {
+            v = follow_interpolate(v, 100.0, 1.0 / 60.0, FOLLOW_TAU);
+        }
+        assert!((100.0 - v).abs() < 0.01);
+    }
+
+    #[test]
+    fn interpolate_is_framerate_independent() {
+        // 相同累计时间下，30fps 与 60fps 的收敛程度应一致（帧率无关）。
+        let mut a = 0.0;
+        let mut b = 0.0;
+        for _ in 0..60 {
+            a = follow_interpolate(a, 100.0, 1.0 / 60.0, FOLLOW_TAU);
+        }
+        for _ in 0..30 {
+            b = follow_interpolate(b, 100.0, 1.0 / 30.0, FOLLOW_TAU);
+        }
+        assert!((a - b).abs() < 0.01);
     }
 
     #[test]

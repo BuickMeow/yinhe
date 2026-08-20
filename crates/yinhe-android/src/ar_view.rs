@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use eframe::egui;
 use yinhe_core::YinModel;
+use yinhe_editor_core::follow::{FOLLOW_TAU, follow_interpolate};
 use yinhe_theme::base::BaseColors;
 use yinhe_theme::egui_colors::{Theme, derive_theme};
 use yinhe_types::ArrangementView;
@@ -137,6 +138,7 @@ impl ArView {
                     dirty: true,
                     track_panel_row_height: 56.0,
                     track_panel_scroll_y: 0.0,
+                    follow_target: None,
                 },
             },
             model: None,
@@ -187,14 +189,17 @@ impl ArView {
         self.cursor_tick = tick;
     }
 
-    /// 播放跟随：水平滚动让光标位于内容区中央（跟随播放开启时每帧调用）。
-    pub fn follow_cursor(&mut self) {
+    /// 播放跟随：平滑滚动让光标位于内容区中央（跟随播放开启时每帧调用）。
+    /// 帧间指数插值：从"每帧硬设置 scroll_x"（看起来像高速翻页）改为平滑滑动。
+    pub fn follow_cursor(&mut self, dt: f32) {
         let Some(tick) = self.cursor_tick else {
             return;
         };
         let content_w = (self.width as f32 - PANEL_W).max(1.0);
         let target = tick as f32 * self.view.base.pixels_per_tick - content_w / 2.0;
-        self.view.base.scroll_x = target.max(0.0);
+        let t = target.max(0.0);
+        let before = self.view.base.scroll_x;
+        self.view.base.scroll_x = follow_interpolate(before, t, dt, FOLLOW_TAU);
         self.view.base.dirty = true;
     }
 
