@@ -520,6 +520,7 @@ mod tests {
 /// `orientation` 决定条形走向：横向 = 底部横条（X）；纵向瀑布流 = 右侧竖条（Y）。
 /// `view_width` is the pixel-length of the content area along the main axis
 /// (right of the keyboard / track-panel, or below the keyboard in vertical).
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub(crate) fn show(
     ui: &mut egui::Ui,
     rect: egui::Rect,

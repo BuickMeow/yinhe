@@ -459,10 +459,11 @@ mod tests {
     /// y = rect.min.y + (tick*ppu - scroll_y)，可见 tick 范围 [scroll_y/ppu, (scroll_y+h)/ppu]。
     #[test]
     fn test_grid_vertical_transposed() {
+        // ppu=0.05：每拍 24px < MIN_SPACING → 无 sub 线，只有 beat 线（每 480 tick = 24px）。
         let base = TimelineViewBase {
-            pixels_per_tick: 0.1,
-            scroll_y: 500.0, // 纵向主轴滚动 = scroll_y
-            ..make_base(0.1)
+            pixels_per_tick: 0.05,
+            scroll_y: 250.0, // 主轴可见 tick 范围 ≈ [5000, 7000]
+            ..make_base(0.05)
         };
         let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(200.0, 100.0));
         let ctx = egui::Context::default();
@@ -490,14 +491,14 @@ mod tests {
         });
         ys.sort_by(|a, b| a.total_cmp(b));
         assert!(!ys.is_empty(), "纵向网格线不应为空");
-        // 可见 tick 范围 [5000, 6000]：y = tick*0.1 - 500 应落在 [0, 100] 屏幕内。
+        // 可见 tick 范围 [5000, 7000]：y = tick*0.05 - 250 应落在 [0, 100] 屏幕内。
         assert!(*ys.first().unwrap() >= 0.0);
         assert!(*ys.last().unwrap() <= 100.0);
-        // 每小节 192px ≥ MIN_SPACING 不合并、每拍 48px ≥ MIN_SPACING → beat 线每 480 tick = 48px。
+        // 不合并 + 每拍 < MIN_SPACING → beat 线每 480 tick = 24px。
         let gaps: Vec<f32> = ys.windows(2).map(|w| w[1] - w[0]).collect();
         assert!(
-            gaps.iter().all(|&g| (g - 48.0).abs() < 0.01),
-            "纵向网格线间距应为 48px: gaps={gaps:?}"
+            gaps.iter().all(|&g| (g - 24.0).abs() < 0.01),
+            "纵向网格线间距应为 24px: gaps={gaps:?}"
         );
     }
 }

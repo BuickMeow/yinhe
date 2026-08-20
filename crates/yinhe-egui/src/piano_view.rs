@@ -1047,7 +1047,13 @@ pub fn show(
             panels_visible_h: panels_total_h,
         };
         let panels_cfg = automation_panel::PanelsCfg {
-            pianoroll_scroll_x: view.base.scroll_x,
+            // AM 面板时间轴始终与 PR 的「时间滚动」同步：横向 = scroll_x，
+            // 纵向瀑布流 = scroll_y（面板内部仍横向绘制，时间=X）。
+            pianoroll_scroll_x: if view.is_vertical() {
+                view.base.scroll_y
+            } else {
+                view.base.scroll_x
+            },
             pianoroll_ppt: view.base.pixels_per_tick,
             scroll_mode,
             min_border_width,
@@ -1079,13 +1085,25 @@ pub fn show(
         }
         feedback.velocity_edits.extend(velocity_edits);
 
-        // 应用 automation 面板的 pianoroll 联动反馈（水平滚动/缩放）
+        // 应用 automation 面板的 pianoroll 联动反馈（主轴滚动/缩放）
         if auto_feedback.scroll_x_delta != 0.0 {
-            view.base.scroll_x -= auto_feedback.scroll_x_delta;
+            if view.is_vertical() {
+                view.base.scroll_y -= auto_feedback.scroll_x_delta;
+            } else {
+                view.base.scroll_x -= auto_feedback.scroll_x_delta;
+            }
             view.base.dirty = true;
         }
         if (auto_feedback.zoom_factor - 1.0).abs() > 0.001 {
-            view.zoom_around_x(auto_feedback.zoom_center_x, auto_feedback.zoom_factor);
+            if view.is_vertical() {
+                view.zoom_around_y(
+                    auto_feedback.zoom_center_x,
+                    auto_feedback.zoom_factor,
+                    content_rect.height(),
+                );
+            } else {
+                view.zoom_around_x(auto_feedback.zoom_center_x, auto_feedback.zoom_factor);
+            }
         }
 
         // 存储 ghost drag info 供信息面板实时显示
