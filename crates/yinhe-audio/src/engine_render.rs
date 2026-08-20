@@ -135,6 +135,8 @@ impl AudioEngine {
                             && let Some(Some(slot)) = self.instruments.get_mut(dense)
                         {
                             slot.events.push(ClapInputEvent::Midi { time, data });
+                            // 实际发送 → 打点（chase 应用时跳过，避免旧值覆盖新值）。
+                            self.dispatched_skip.mark(&cc.event, cc.channel as usize);
                         }
                     }
                 } else {
@@ -142,6 +144,8 @@ impl AudioEngine {
                     if dense != u32::MAX {
                         self.channel_set
                             .send_event(SynthEvent::Channel(dense, ChannelEvent::Audio(cc.event)));
+                        // 实际发送 → 打点（chase 应用时跳过，避免旧值覆盖新值）。
+                        self.dispatched_skip.mark(&cc.event, cc.channel as usize);
                     }
                 }
             }

@@ -23,7 +23,7 @@ impl AudioEngine {
             flatten_automation_to_cc_events(model, self.automation_density, &HashMap::new());
         self.chase_generation = self.chase_generation.wrapping_add(1);
         self.cc_cursor = 0;
-        self.chase_cc_base = 0;
+        self.dispatched_skip = ChaseSkip::default();
         self.active_notes.clear();
 
         self.duration_samples =
@@ -103,14 +103,12 @@ impl AudioEngine {
     /// 打回 seek 前的旧值（从中间小节开始播放时 PBS/PitchBend 被覆盖的根因）。
     /// 因此对 `[chase_cc_base, cc_cursor)` 区间内已 dispatch 的控制器跳过，
     /// 只补齐尚未被实时事件覆盖的状态。
-    /// 构建 chase 跳过掩码：`[chase_cc_base, cc_cursor)` 区间内已 dispatch 的控制器。
-    /// 独立为 pub(crate) 方法，便于测试直接观察跳过行为。
+    /// 构建 chase 跳过掩码：`dispatched_skip` 中自 seek 以来实际发送的控制器。
+    /// dispatch 在发送每个 CC/PB/RPN/PC 事件时打点，`seek_to` 清零；
+    /// 与旧实现（按 `[chase_cc_base, cc_cursor)` 区间扫描）不同，mute 期间
+    /// 被越过但未发送的事件不会被误标——unmute 后 chase 能恢复这些控制器。
     pub(crate) fn chase_skip(&self) -> ChaseSkip {
-        let mut skip = ChaseSkip::default();
-        for cc in &self.cc_events[self.chase_cc_base..self.cc_cursor] {
-            skip.mark(&cc.event, cc.channel as usize);
-        }
-        skip
+        self.dispatched_skip
     }
 
     pub(crate) fn apply_chase_result(&mut self, states: &[ChannelState; 256]) {
@@ -221,8 +219,9 @@ impl AudioEngine {
         self.cc_cursor = self
             .cc_events
             .partition_point(|cc| cc.tick < self.current_tick);
-        // 记录 seek 点，供 apply_chase_result 计算"已 dispatch 事件区间"。
-        self.chase_cc_base = self.cc_cursor;
+        // 自 seek 点起重新打点：之前 dispatch 的控制器全部作废，chase 恢复全量生效
+        //（跳过掩码为空，应用 chase 时不跳过任何控制器）。
+        self.dispatched_skip = ChaseSkip::default();
 
         // Reset note cursors to the correct position based on pre-built audible_notes.
         // 桶内 start_tick 严格升序，partition_point 谓词单调，结果正确（修 P0-2）。
