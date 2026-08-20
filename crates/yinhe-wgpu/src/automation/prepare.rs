@@ -138,6 +138,7 @@ pub fn prepare(
         lane_height: 0.0,  // unused in pixel mode
         value_zoom: view.value_zoom,
         value_scroll: view.value_scroll,
+        orientation: 0, // automation 面板恒为横向像素模式
     };
 
     renderer.upload_uniforms(uniforms);

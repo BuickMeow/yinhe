@@ -20,18 +20,30 @@ pub(crate) fn culling_relevant_eq(a: &Uniforms, b: &Uniforms) -> bool {
         && a.scroll_y == b.scroll_y
         && a.mode == b.mode
         && a.lane_height == b.lane_height
+        && a.orientation == b.orientation
 }
 /// Viewport tick range the cull shader may consider visible, computed with
-/// the same f32 math as `cull.wgsl` (x_offset + tick * ppu) plus a margin of
-/// one pixel + 2 ticks, so f32 rounding near the viewport edges never drops
-/// a bucket that the exact shader test could still pass.
+/// the same f32 math as `cull.wgsl` plus a margin of one pixel + 2 ticks, so
+/// f32 rounding near the viewport edges never drops a bucket that the exact
+/// shader test could still pass.
 ///
-/// 左边界 = keyboard_width 像素（cull.wgsl 的 `pixel_right >= keyboard_width`），
-/// 即键盘列/轨道面板列之下的音符不参与渲染，chunk 调度范围随之左移。
+/// 横向（默认）：左边界 = keyboard_width 像素（cull.wgsl 的
+/// `pixel_right >= keyboard_width`），即键盘列/轨道面板列之下的音符不参与
+/// 渲染，chunk 调度范围随之左移。
+/// 纵向：时间轴沿 Y，可见 tick 范围由 scroll_y / height 决定。
 pub(crate) fn visible_tick_range(uniforms: &Uniforms) -> (u32, u32) {
     let ppu = uniforms.pixels_per_tick;
-    let x_offset = uniforms.keyboard_width - uniforms.scroll_x;
     let pad = (1.0 / ppu).ceil() as i64 + 2;
+    if uniforms.orientation == 1 {
+        let ts = (((uniforms.scroll_y) / ppu).floor() as i64 - pad)
+            .max(0)
+            .min(u32::MAX as i64);
+        let te = (((uniforms.scroll_y + uniforms.height) / ppu).ceil() as i64 + pad)
+            .max(0)
+            .min(u32::MAX as i64);
+        return (ts as u32, te as u32);
+    }
+    let x_offset = uniforms.keyboard_width - uniforms.scroll_x;
     let ts = (((uniforms.keyboard_width - x_offset) / ppu).floor() as i64 - pad)
         .max(0)
         .min(u32::MAX as i64);

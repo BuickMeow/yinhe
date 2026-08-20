@@ -21,6 +21,9 @@ pub struct Uniforms {
     pub value_zoom: f32,
     /// Automation panel: vertical scroll offset in value space.
     pub value_scroll: f32,
+    /// PR 视图方向：0=横向（时间轴=X，音高=Y），1=纵向瀑布流（时间轴=Y，音高=X）。
+    /// 仅 PR 音符（mode==1）使用；AR / AM / pixel 模式应保持 0。
+    pub orientation: u32,
 }
 
 /// Maximum number of tracks supported. Track indices are u16, so 65536 is the

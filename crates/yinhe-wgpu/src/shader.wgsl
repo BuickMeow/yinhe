@@ -20,6 +20,7 @@ struct Uniforms {
     lane_height: f32, // AR: per-track lane height (PR unused)
     value_zoom: f32, // Automation panel: vertical zoom
     value_scroll: f32, // Automation panel: vertical scroll in value space
+    orientation: u32, // PR 视图方向：0=横向（时间轴=X，音高=Y），1=纵向瀑布流（时间轴=Y，音高=X）
 }
 
 // Track colors: runtime-sized storage buffer (allocated dynamically to actual
@@ -239,6 +240,10 @@ fn vs_main(
 var<storage, read> all_instances: array<NoteData>;
 
 // 共享的几何计算：tick/key/track → 像素矩形 → NDC。
+// 方向分支见 u.orientation：
+// - 0 横向（默认）：时间轴沿 X（起点 keyboard_width），音高沿 Y。
+//   视口左边界 = keyboard_width（键盘列/轨道面板列由 egui 层绘制）。
+// - 1 纵向瀑布流：时间轴沿 Y（tick 0 在顶部，向下增长），音高沿 X（key 0 在左）。
 fn note_geometry(
     vertex_index: u32,
     start_tick: u32,
@@ -251,41 +256,49 @@ fn note_geometry(
     let track = (packed >> 8u) & 0xFFFFu;
 
     let ppu = u.pixels_per_tick;
-    let x_offset = u.keyboard_width - u.scroll_x;
 
-    // 右边界直接算（与相邻音符的左边界完全相同的表达式），杜绝 1px 缝隙：
-    // 链式 pixel_x + pixel_w 会叠加取整偏移与 f32 舍入误差，在 .5 临界处
-    // 与相邻音符的边界岔开 1px（tick 越大 pixel_w 的 ULP 越大越容易触发）。
-    var pixel_x = x_offset + f32(start_tick) * ppu;
-    var right = x_offset + f32(end_tick) * ppu;
-    // 视口左边界 = keyboard_width（键盘列/轨道面板列由 egui 层绘制，
-    // 音符左端 clamp 到其右缘，长音符从左侧进入时显示为被左列"切"掉）。
-    pixel_x = max(pixel_x, u.keyboard_width);
-    var pixel_w = max(right - pixel_x, 2.0);
+    var pixel_x: f32;
+    var right: f32;
     var pixel_y: f32;
     var pixel_h: f32;
+    var pixel_w: f32;
 
-    if u.mode == 1u {
-        // PR: key_height based vertical layout
-        let bottom = 128.0 * u.key_height - u.scroll_y;
-        pixel_y = bottom - (f32(key) + 1.0) * u.key_height;
-        pixel_h = u.key_height;
+    if u.orientation == 1u {
+        // 纵向瀑布流：音高沿 X（key * key_height - scroll_x，从 0 开始），
+        // 时间沿 Y（tick * ppu - scroll_y，tick 0 在顶部）。
+        pixel_x = f32(key) * u.key_height - u.scroll_x;
+        right = pixel_x + u.key_height;
+        pixel_w = u.key_height;
+        pixel_y = f32(start_tick) * ppu - u.scroll_y;
+        let y_bottom = f32(end_tick) * ppu - u.scroll_y;
+        pixel_h = max(y_bottom - pixel_y, 2.0);
     } else {
-        // AR (mode == 2u): lane_height based vertical layout
-        // scroll_y is handled here (GPU-side), so AR notes cache is stable
-        // across vertical scrolling — same optimization as PR notes.
-        let lh = u.lane_height;
-        let lh_per_key = lh / 128.0;
-        // 每轨主行 y 查表（展开自动化 lane 后行布局不再均匀）；
-        // clamp 到表末防止 track 超出表长时越界。
-        let track_y = track_offsets[min(track, arrayLength(&track_offsets) - 1u)];
-        pixel_y = -u.scroll_y + track_y + lh - (f32(key) + 1.0) * lh_per_key;
-        pixel_h = max(lh_per_key, 1.0);
+        let x_offset = u.keyboard_width - u.scroll_x;
+
+        // 右边界直接算（与相邻音符的左边界完全相同的表达式），杜绝 1px 缝隙。
+        pixel_x = x_offset + f32(start_tick) * ppu;
+        right = x_offset + f32(end_tick) * ppu;
+        // 视口左边界 = keyboard_width（键盘列/轨道面板列由 egui 层绘制，
+        // 音符左端 clamp 到其右缘，长音符从左侧进入时显示为被左列"切"掉）。
+        pixel_x = max(pixel_x, u.keyboard_width);
+        pixel_w = max(right - pixel_x, 2.0);
+
+        if u.mode == 1u {
+            // PR: key_height based vertical layout
+            let bottom = 128.0 * u.key_height - u.scroll_y;
+            pixel_y = bottom - (f32(key) + 1.0) * u.key_height;
+            pixel_h = u.key_height;
+        } else {
+            // AR (mode == 2u): lane_height based vertical layout
+            let lh = u.lane_height;
+            let lh_per_key = lh / 128.0;
+            let track_y = track_offsets[min(track, arrayLength(&track_offsets) - 1u)];
+            pixel_y = -u.scroll_y + track_y + lh - (f32(key) + 1.0) * lh_per_key;
+            pixel_h = max(lh_per_key, 1.0);
+        }
     }
 
     // Snap to integer pixels to prevent sub-pixel jitter.
-    // 取整基于直接值（raw_x / raw_right），pixel_w 由取整后的差得出，
-    // 保证 A 的右边界 == 相邻音符 B 的左边界（同 tick 同表达式同结果）。
     if u.scroll_mode != 0u {
         let raw_x = pixel_x;
         let raw_right = right;
@@ -302,7 +315,6 @@ fn note_geometry(
     }
 
     // 4 顶点 + 共享 index buffer（[0,1,2, 1,3,2]）：0=TL, 1=TR, 2=BL, 3=BR。
-    // 相比 6 顶点/实例，顶点数 -33%（黑乐谱级实例数下显著省顶点处理）。
     var pos = array<vec2<f32>, 4>(
         vec2<f32>(pixel_x, pixel_y),
         vec2<f32>(right,   pixel_y),
@@ -318,10 +330,17 @@ fn note_geometry(
     );
 
     let pixel_pos = pos[vertex_index];
+    // 子像素滚动偏移沿时间轴：横向 = X，纵向 = Y。
     let ndc_offset = select(0.0, u.scroll_frac, u.scroll_mode == 2u);
-    let ndc_x = ((pixel_pos.x - ndc_offset) / u.width) * 2.0 - 1.0;
-    let ndc_y = 1.0 - (pixel_pos.y / u.height) * 2.0;
-
+    var ndc_x: f32;
+    var ndc_y: f32;
+    if u.orientation == 1u {
+        ndc_x = (pixel_pos.x / u.width) * 2.0 - 1.0;
+        ndc_y = 1.0 - ((pixel_pos.y - ndc_offset) / u.height) * 2.0;
+    } else {
+        ndc_x = ((pixel_pos.x - ndc_offset) / u.width) * 2.0 - 1.0;
+        ndc_y = 1.0 - (pixel_pos.y / u.height) * 2.0;
+    }
     out.clip_position = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
 
     // Color: from track_colors storage buffer
@@ -336,9 +355,12 @@ fn note_geometry(
     // No rounded corners; border based on vertical dimension (key/lane height).
     // PR (mode==1): border = 0.05 * pixel_h (narrowed from 0.1).
     // AR (mode==2): border = 0.1 * pixel_h (unchanged).
+    // 纵向瀑布流：音符高度是时间长度，border 改基于宽度（key_height 方向），
+    // 避免长音符的竖直边缘过宽。
     out.radius = 0.0;
+    let border_dim = select(pixel_h, pixel_w, u.orientation == 1u);
     let border_factor = select(0.1, 0.05, u.mode == 1u);
-    out.border_width = select(0.0, max(border_factor * pixel_h, u.min_border_width), u.note_outline != 0u);
+    out.border_width = select(0.0, max(border_factor * border_dim, u.min_border_width), u.note_outline != 0u);
 
     out.uv = uv[vertex_index];
     out.half_size = vec2<f32>(pixel_w, pixel_h) * 0.5;

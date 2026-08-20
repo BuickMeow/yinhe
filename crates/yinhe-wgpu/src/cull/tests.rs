@@ -653,6 +653,8 @@ fn cull_real_midi_vs_cpu() {
         let view = yinhe_types::PianoRollView {
             key_height: kh,
             viewport_h: height,
+
+            orientation: yinhe_types::Orientation::Horizontal,
             base: yinhe_types::TimelineViewBase {
                 pixels_per_tick: ppu,
                 scroll_x: 0.0,
@@ -1943,6 +1945,8 @@ fn cull_render_pixel_check() {
         let view = yinhe_types::PianoRollView {
             key_height: kh,
             viewport_h: h,
+
+            orientation: yinhe_types::Orientation::Horizontal,
             base: yinhe_types::TimelineViewBase {
                 pixels_per_tick: ppu,
                 scroll_x,
@@ -2185,6 +2189,8 @@ fn cull_visible_buffer_content_check() {
     let view = yinhe_types::PianoRollView {
         key_height: kh,
         viewport_h: h,
+
+        orientation: yinhe_types::Orientation::Horizontal,
         base: yinhe_types::TimelineViewBase {
             pixels_per_tick: ppu,
             scroll_x,
@@ -2397,6 +2403,8 @@ fn cull_draw_c_lo_nonzero_minimal() {
         let view = yinhe_types::PianoRollView {
             key_height: kh,
             viewport_h: h,
+
+            orientation: yinhe_types::Orientation::Horizontal,
             base: yinhe_types::TimelineViewBase {
                 pixels_per_tick: ppu,
                 scroll_x,
@@ -2651,6 +2659,8 @@ fn note_boundary_no_gap_large_tick() {
         let view = yinhe_types::PianoRollView {
             key_height: kh,
             viewport_h: h,
+
+            orientation: yinhe_types::Orientation::Horizontal,
             base: yinhe_types::TimelineViewBase {
                 pixels_per_tick: ppu,
                 scroll_x: scroll_x.max(0.0),
@@ -2871,6 +2881,8 @@ fn cull_bench_vs_cpu_start_mid() {
             let view = yinhe_types::PianoRollView {
                 key_height: kh,
                 viewport_h: height,
+
+                orientation: yinhe_types::Orientation::Horizontal,
                 base: yinhe_types::TimelineViewBase {
                     pixels_per_tick: ppu,
                     scroll_x: scroll_x0,

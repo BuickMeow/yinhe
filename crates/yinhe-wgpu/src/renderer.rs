@@ -421,6 +421,17 @@ impl InstanceRenderer {
         if u.mode != 1 || u.key_height <= 0.0 {
             return (0, 127);
         }
+        if u.orientation == 1 {
+            // 纵向瀑布流：音高轴沿 X（key * key_height - scroll_x）。
+            // 可见 key 范围按横向方位计算，padding 1 键防子像素抖动。
+            let lo = (u.scroll_x / u.key_height).floor() as i32;
+            let hi = ((u.scroll_x + u.width) / u.key_height).ceil() as i32;
+            let lo = lo.clamp(0, 127);
+            let hi = hi.saturating_sub(1).clamp(0, 127);
+            let lo = lo.saturating_sub(1).clamp(0, 127);
+            let hi = hi.saturating_add(1).clamp(0, 127);
+            return (lo as u8, hi as u8);
+        }
         // PR: bottom = 128 * key_height - scroll_y
         // y_to_key(y) = ceil((bottom - y) / key_height) - 1, clamped to 0..127
         let bottom = 128.0 * u.key_height - u.scroll_y;

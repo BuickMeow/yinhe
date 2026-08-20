@@ -42,6 +42,13 @@ pub fn build_render_job(
     let ppu = view.base.pixels_per_tick;
     let scroll_x = view.base.scroll_x;
     let (scroll_x_pos, scroll_frac) = crate::compute_scroll_frac(scroll_x, scroll_mode);
+    // 纵向瀑布流时，子像素滚动偏移沿时间轴（Y）而非音高轴（X）。
+    // shader 的 note_geometry 据此把 scroll_frac 施加到 ndc_y。
+    let scroll_frac = if view.is_vertical() {
+        crate::compute_scroll_frac(scroll_y, scroll_mode).1
+    } else {
+        scroll_frac
+    };
 
     // Build track colors — dynamic Vec, no fixed 1MB allocation.
     let track_count = track_colors.len().min(MAX_TRACKS) as u32;
@@ -76,6 +83,7 @@ pub fn build_render_job(
         lane_height: 0.0,  // PR unused (shader uses key_height)
         value_zoom: 0.0,   // PR unused (automation panel only)
         value_scroll: 0.0, // PR unused (automation panel only)
+        orientation: u32::from(view.is_vertical()),
     };
 
     // Grid lines 已迁移到 egui（widgets::grid_lines），wgpu 只负责 notes 层。

@@ -84,8 +84,8 @@ pub fn build_notes(
     hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
 ) {
-    let (tick_start, tick_end) = view.visible_tick_range(w);
-    let (key_lo, key_hi) = view.visible_key_range(h);
+    let (tick_start, tick_end) = view.visible_main_range(view.main_axis_len(w, h));
+    let (key_lo, key_hi) = view.visible_cross_range(view.cross_axis_len(w, h));
     // Only build notes whose visible interval overlaps the current viewport.
     // key_notes_in_range looks back via the max_end index, so any note that
     // starts off-screen-left but extends into view is still included — no
@@ -197,6 +197,8 @@ mod tests {
             },
             key_height: 12.0,
             viewport_h: 0.0,
+
+            orientation: yinhe_types::Orientation::Horizontal,
         }
     }
 

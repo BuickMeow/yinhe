@@ -44,6 +44,7 @@ struct Uniforms {
     lane_height: f32,
     value_zoom: f32,
     value_scroll: f32,
+    orientation: u32,
 };
 
 struct NoteInstance {
@@ -120,34 +121,47 @@ fn main(
 
         // Skip zero-length notes (deleted/placeholder)
         if track_visible && end_tick > start_tick {
-            let ppu = u.pixels_per_tick;
-            let x_offset = u.keyboard_width - u.scroll_x;
-
-            // X bounds in pixels. 视口左边界 = keyboard_width（键盘列/轨道面板列
-            // 由 egui 层绘制，音符不画到其下方，避免浪费填充率）。
-            let pixel_x = x_offset + f32(start_tick) * ppu;
-            let pixel_right = x_offset + f32(end_tick) * ppu;
-
-            if pixel_right >= u.keyboard_width && pixel_x <= u.width {
-                // Y bounds in pixels
-                var pixel_y: f32;
-                var pixel_bottom: f32;
-
-                if u.mode == 1u {
-                    // PR: key_height based
-                    let bottom = 128.0 * u.key_height - u.scroll_y;
-                    pixel_bottom = bottom - f32(key) * u.key_height;
-                    pixel_y = bottom - (f32(key) + 1.0) * u.key_height;
-                } else {
-                    // AR: lane_height based
-                    let lh = u.lane_height;
-                    let lh_per_key = lh / 128.0;
-                    pixel_bottom = -u.scroll_y + lh - f32(key) * lh_per_key + f32(track) * lh;
-                    pixel_y = -u.scroll_y + lh - (f32(key) + 1.0) * lh_per_key + f32(track) * lh;
-                }
-
-                if pixel_bottom >= 0.0 && pixel_y <= u.height {
+            if u.orientation == 1u {
+                // 纵向瀑布流：音高沿 X（key * key_height - scroll_x），
+                // 时间沿 Y（tick * ppu - scroll_y，tick 0 在顶部）。
+                let key_x = f32(key) * u.key_height - u.scroll_x;
+                let key_x_right = key_x + u.key_height;
+                let tick_y = f32(start_tick) * u.pixels_per_tick - u.scroll_y;
+                let tick_y_bottom = f32(end_tick) * u.pixels_per_tick - u.scroll_y;
+                if key_x_right >= 0.0 && key_x <= u.width && tick_y_bottom >= 0.0 && tick_y <= u.height
+                {
                     visible = 1u;
+                }
+            } else {
+                let ppu = u.pixels_per_tick;
+                let x_offset = u.keyboard_width - u.scroll_x;
+
+                // X bounds in pixels. 视口左边界 = keyboard_width（键盘列/轨道面板列
+                // 由 egui 层绘制，音符不画到其下方，避免浪费填充率）。
+                let pixel_x = x_offset + f32(start_tick) * ppu;
+                let pixel_right = x_offset + f32(end_tick) * ppu;
+
+                if pixel_right >= u.keyboard_width && pixel_x <= u.width {
+                    // Y bounds in pixels
+                    var pixel_y: f32;
+                    var pixel_bottom: f32;
+
+                    if u.mode == 1u {
+                        // PR: key_height based
+                        let bottom = 128.0 * u.key_height - u.scroll_y;
+                        pixel_bottom = bottom - f32(key) * u.key_height;
+                        pixel_y = bottom - (f32(key) + 1.0) * u.key_height;
+                    } else {
+                        // AR: lane_height based
+                        let lh = u.lane_height;
+                        let lh_per_key = lh / 128.0;
+                        pixel_bottom = -u.scroll_y + lh - f32(key) * lh_per_key + f32(track) * lh;
+                        pixel_y = -u.scroll_y + lh - (f32(key) + 1.0) * lh_per_key + f32(track) * lh;
+                    }
+
+                    if pixel_bottom >= 0.0 && pixel_y <= u.height {
+                        visible = 1u;
+                    }
                 }
             }
         }
