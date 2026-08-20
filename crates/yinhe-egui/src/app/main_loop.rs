@@ -178,6 +178,7 @@ impl eframe::App for App {
                 MenuAction::CloseDocument => transport_bar::FileAction::CloseDocument,
                 MenuAction::ExportAudio => transport_bar::FileAction::ExportAudio,
                 MenuAction::ExportMidi => transport_bar::FileAction::ExportMidi,
+                MenuAction::ProjectSettings => transport_bar::FileAction::ProjectSettings,
                 MenuAction::Undo => {
                     self.handle_edit_action(transport_bar::EditAction::Undo);
                     continue;

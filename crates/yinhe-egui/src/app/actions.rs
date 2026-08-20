@@ -369,6 +369,7 @@ impl App {
             | transport_bar::FileAction::ExportMidi
             | transport_bar::FileAction::ExportAudio
             | transport_bar::FileAction::Settings
+            | transport_bar::FileAction::ProjectSettings
             | transport_bar::FileAction::Open => {
                 self.execute_file_action(action, ctx);
                 return;
@@ -471,6 +472,9 @@ impl App {
                     ctx,
                     egui::ViewportId::from_hash_of("settings_dialog"),
                 );
+            }
+            transport_bar::FileAction::ProjectSettings => {
+                self.set_float_panel(Some(crate::right_panel::FloatPanel::ProjectSettings));
             }
         }
     }

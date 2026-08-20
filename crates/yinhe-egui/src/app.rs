@@ -91,6 +91,8 @@ pub struct App {
     pub(crate) right_panel_width: f32,
     pub(crate) right_tab: Option<crate::right_panel::RightTab>,
     pub(crate) info_content: Option<crate::right_panel::InfoContent>,
+    // 浮动属性面板（独立视口子窗口）。与侧栏 Info 内容互斥切换，见 set_float_panel。
+    pub(crate) float_panel: Option<crate::right_panel::FloatPanel>,
     /// 拖拽锚点时的 ghost 值（tick, value），供信息面板实时显示
     pub(crate) automation_drag_ghost: Option<(u32, f32)>,
 
@@ -356,6 +358,7 @@ impl App {
             right_panel_width: audio_settings.layout.right_panel_width,
             right_tab: None,
             info_content: None,
+            float_panel: None,
             automation_drag_ghost: None,
 
             active_tool: crate::widgets::tools_panel::Tool::Select,
@@ -434,6 +437,35 @@ impl App {
 
     // ── macOS: reserve_render_targets_for_window_anim has been removed ──
 
+    /// 打开属性浮窗（与侧栏 Info 内容互斥：弹窗打开时收起右侧栏 Info tab，
+    /// 避免同一内容两边同时显示互相拉扯状态）。
+    pub(crate) fn set_float_panel(&mut self, panel: Option<crate::right_panel::FloatPanel>) {
+        if panel.is_some() && self.right_tab == Some(crate::right_panel::RightTab::Info) {
+            self.right_tab = None;
+        }
+        self.float_panel = panel;
+    }
+
+    /// 把浮窗内容停靠回右侧栏：关弹窗、开 Info tab、并按内容恢复 info_content。
+    pub(crate) fn dock_float_panel(&mut self, panel: crate::right_panel::FloatPanel) {
+        use crate::right_panel::{FloatPanel, InfoContent, RightTab};
+        self.float_panel = None;
+        self.right_tab = Some(RightTab::Info);
+        match panel {
+            FloatPanel::TrackProps { track_idx } => {
+                // 弹窗内下拉选择器已跟踪 track_selected，这里兜底选中目标轨。
+                if let Some(idx) = self.active_doc {
+                    self.documents[idx].edit.track_selected.clear();
+                    self.documents[idx].edit.track_selected.insert(track_idx);
+                }
+                self.info_content = Some(InfoContent::Track);
+            }
+            FloatPanel::ProjectSettings => {
+                self.info_content = None;
+            }
+        }
+    }
+
     pub(crate) fn close_document(&mut self, index: usize) {
         if index >= self.documents.len() {
             return;
@@ -470,6 +502,11 @@ impl App {
             && audio_idx > index
         {
             self.audio_state.active_doc = Some(audio_idx - 1);
+        }
+
+        // 关闭的是活跃工程时，浮动面板内容失效，一并关闭。
+        if was_active {
+            self.float_panel = None;
         }
 
         // 归还 jemalloc arena 中已释放的内存给 OS，防止 RSS 不下降

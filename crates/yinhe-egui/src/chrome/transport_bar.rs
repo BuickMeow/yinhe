@@ -168,13 +168,14 @@ pub enum FileAction {
     CloseDocument,
     ExportAudio,
     ExportMidi,
+    ProjectSettings,
     Settings,
     Exit,
 }
 
 impl FileAction {
     /// 全部文件动作。**顺序即 `AudioSettings::pinned_file_actions` 数组索引**。
-    pub const ALL: [FileAction; 9] = [
+    pub const ALL: [FileAction; 10] = [
         FileAction::NewProject,
         FileAction::Open,
         FileAction::Save,
@@ -182,6 +183,7 @@ impl FileAction {
         FileAction::CloseDocument,
         FileAction::ExportAudio,
         FileAction::ExportMidi,
+        FileAction::ProjectSettings,
         FileAction::Settings,
         FileAction::Exit,
     ];
@@ -195,8 +197,9 @@ impl FileAction {
             FileAction::CloseDocument => 4,
             FileAction::ExportAudio => 5,
             FileAction::ExportMidi => 6,
-            FileAction::Settings => 7,
-            FileAction::Exit => 8,
+            FileAction::ProjectSettings => 7,
+            FileAction::Settings => 8,
+            FileAction::Exit => 9,
         }
     }
 
@@ -210,6 +213,7 @@ impl FileAction {
             FileAction::CloseDocument => shortcuts::ACTION_CLOSE_DOCUMENT,
             FileAction::ExportAudio => shortcuts::ACTION_EXPORT_AUDIO,
             FileAction::ExportMidi => shortcuts::ACTION_EXPORT_MIDI,
+            FileAction::ProjectSettings => shortcuts::ACTION_PROJECT_SETTINGS,
             FileAction::Settings => shortcuts::ACTION_SETTINGS,
             FileAction::Exit => shortcuts::ACTION_EXIT,
         }
@@ -224,6 +228,7 @@ impl FileAction {
             FileAction::CloseDocument => ICON_CLOSE,
             FileAction::ExportAudio => ICON_AUDIO_FILE,
             FileAction::ExportMidi => ICON_MUSIC_NOTE,
+            FileAction::ProjectSettings => ICON_TUNE,
             FileAction::Settings => ICON_SETTINGS,
             FileAction::Exit => ICON_EXIT_TO_APP,
         }
@@ -242,7 +247,8 @@ impl FileAction {
             | FileAction::SaveAs
             | FileAction::CloseDocument
             | FileAction::ExportAudio
-            | FileAction::ExportMidi => has_active,
+            | FileAction::ExportMidi
+            | FileAction::ProjectSettings => has_active,
             FileAction::Settings | FileAction::Exit => true,
         }
     }
@@ -596,13 +602,15 @@ fn tool_hint(tool: Tool) -> String {
 }
 
 /// 文件菜单 popup 分组（顺序即菜单展示顺序；macOS 原生文件菜单共用，缺"设置/退出"组）。
-pub const FILE_GROUPS: [&[FileAction]; 4] = [
+/// 工程设置放在导出组之后、设置组之前，形成"文档级操作"分组。
+pub const FILE_GROUPS: [&[FileAction]; 5] = [
     &[FileAction::NewProject, FileAction::Open],
     &[
         FileAction::Save,
         FileAction::SaveAs,
         FileAction::CloseDocument,
     ],
+    &[FileAction::ProjectSettings],
     &[FileAction::ExportAudio, FileAction::ExportMidi],
     &[FileAction::Settings, FileAction::Exit],
 ];
@@ -844,7 +852,9 @@ fn show_action_menu<T: PopupRow>(
                 for &action in *group {
                     let enabled = action.is_enabled(has_active, loading);
                     // 无图钉的动作不触碰 pinned 数组（播放菜单传 None）
-                    let is_pinned = pinned.as_ref().is_some_and(|p| p[action.pinned_index()]);
+                    let is_pinned = pinned
+                        .as_ref()
+                        .is_some_and(|p| p.get(action.pinned_index()).copied().unwrap_or(false));
                     let shortcut = keybindings
                         .get(action.action_id())
                         .first()
@@ -891,7 +901,9 @@ fn show_action_menu<T: PopupRow>(
     if let Some(idx) = pin_toggled
         && let Some(p) = pinned
     {
-        p[idx] = !p[idx];
+        if let Some(v) = p.get_mut(idx) {
+            *v = !*v;
+        }
         pinned_changed = true;
     }
     ActionMenuOutcome {

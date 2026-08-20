@@ -84,9 +84,10 @@ pub struct AudioSettings {
     pub layout: LayoutSettings,
     /// 用户自定义快捷键表（跨会话持久化）。
     pub keybindings: Keybindings,
-    /// 文件菜单里被图钉固定的动作（顺序对应 `FileAction::ALL`，9 项）。
-    /// 被固定的动作会显示在标题栏上，属于用户自定义工作区，跨会话保存。
-    pub pinned_file_actions: [bool; 9],
+    /// 文件菜单里被图钉固定的动作（顺序对应 `FileAction::ALL`，10 项）。
+    /// 用 Vec 而非定长数组：旧配置（9 项）升级时可直接解析为新长度，
+    /// 访问处用 `get(idx).copied().unwrap_or(false)` 兜底，不越界/pнаpanic。
+    pub pinned_file_actions: Vec<bool>,
     /// 编辑菜单里被图钉固定的动作（顺序对应 `EditAction::ALL`，10 项）。
     pub pinned_edit_actions: [bool; 10],
     /// 播放菜单里被图钉固定的"播放/暂停"动作（单个）。
@@ -146,7 +147,7 @@ impl Default for AudioSettings {
             content_opacity: 0.7,
             layout: LayoutSettings::default(),
             keybindings: Keybindings::default(),
-            pinned_file_actions: [false; 9],
+            pinned_file_actions: vec![false; 10],
             pinned_edit_actions: [false; 10],
             pinned_play_pause: false,
             pinned_stop: false,

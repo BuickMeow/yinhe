@@ -112,6 +112,8 @@ pub fn show(
     needs_audio_notify: &mut bool,
     status_hint: &mut Option<String>,
     sel_hint: Option<&crate::app::layout::SelHintInfo>,
+    // 右键「音轨属性」等请求：请求打开属性浮窗（由调用方 set_float_panel 落地）。
+    float_panel_req: &mut Option<crate::right_panel::FloatPanel>,
 ) -> Option<QuantizePreset> {
     *last_cursor_tick = doc.edit.cursor_tick;
 
@@ -338,6 +340,21 @@ pub fn show(
             // 结构变化（增删移动音轨）→ 重建引擎；AM 内容变化 → 仅 notify。
             let mut structural = true;
             let (undo_action, label) = match &action {
+                // 右键「音轨属性」：不产生 undo，选中目标轨后请求打开浮窗。
+                track_panel::TrackAction::ShowProperties { idx } => {
+                    let track_idx = doc
+                        .edit
+                        .track_info_cache
+                        .get(*idx)
+                        .map(|t| t.index)
+                        .unwrap_or(*idx as u16);
+                    doc.edit.track_selected.clear();
+                    doc.edit.track_selected.insert(track_idx);
+                    *info_content = Some(crate::right_panel::InfoContent::Track);
+                    *float_panel_req =
+                        Some(crate::right_panel::FloatPanel::TrackProps { track_idx });
+                    (None, String::new())
+                }
                 track_panel::TrackAction::CreateAutomation { idx, target } => {
                     structural = false;
                     let r = doc.add_automation_lane(*idx, target.clone());

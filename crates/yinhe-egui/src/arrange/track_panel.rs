@@ -34,6 +34,8 @@ pub(crate) enum TrackAction {
     },
     /// AM 子行右键「删除自动化」：删除 idx 轨的第 lane_idx 条 lane。
     DeleteAutomation { idx: usize, lane_idx: usize },
+    /// 右键「音轨属性」：选中该轨并请求打开属性浮窗（不改动模型）。
+    ShowProperties { idx: usize },
 }
 
 /// Render the track list using a painter (unified component for both
@@ -637,6 +639,20 @@ pub(crate) fn show(
             .unwrap_or((0, None));
         let track_idx = track_info.get(idx).map(|t| t.index).unwrap_or(0);
         let is_conductor = conductor_track_idx == Some(track_idx);
+
+        // 任意音轨（含 Conductor）顶部：「音轨属性」→ 选中并打开浮窗。
+        if ui
+            .add(crate::widgets::menu::menu_item_button(
+                ui,
+                false,
+                t!("arrange.track_properties").as_ref(),
+            ))
+            .clicked()
+        {
+            actions.push(TrackAction::ShowProperties { idx });
+            ui.close();
+        }
+        ui.separator();
 
         // AM 子行右键：只给「删除自动化」。
         if let Some(lane_idx) = sub {

@@ -19,6 +19,8 @@ use super::InfoContent;
 
 // re-export：arrange.rs 通过 `crate::right_panel::info_panel::send_skip_tracks` 调用
 pub(crate) use track::send_skip_tracks;
+// re-export：dialogs/prop_panels 浮窗复用同一渲染函数（独立 viewport id 链，不冲突）。
+pub(crate) use track::show_track_info;
 
 /// Show the Info panel.
 ///

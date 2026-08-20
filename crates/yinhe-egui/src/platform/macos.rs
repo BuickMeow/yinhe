@@ -563,6 +563,7 @@ impl MenuActionFrom for crate::chrome::transport_bar::FileAction {
             FileAction::CloseDocument => MenuAction::CloseDocument,
             FileAction::ExportAudio => MenuAction::ExportAudio,
             FileAction::ExportMidi => MenuAction::ExportMidi,
+            FileAction::ProjectSettings => MenuAction::ProjectSettings,
             FileAction::Settings => MenuAction::Settings,
             FileAction::Exit => MenuAction::Exit,
         }
@@ -691,7 +692,7 @@ fn init_native_menu() -> muda::Result<()> {
         &mut map,
         &mut items,
         "menu.file",
-        &crate::chrome::transport_bar::FILE_GROUPS[..3],
+        &crate::chrome::transport_bar::FILE_GROUPS[..4],
         &default_kb,
     )?;
 

@@ -181,14 +181,16 @@ impl App {
         let mut needs_audio_rebuild = false;
         // AR 自动化 lane 增删/编辑 → notify_audio_model_changed（不重建引擎）。
         let mut needs_audio_notify = false;
-        let (arr_drag_delta, arr_eraser_rect, arr_quantize): (
+        let (arr_drag_delta, arr_eraser_rect, arr_quantize, float_panel_req): (
             Option<crate::arrange::ArrDragDelta>,
             Option<crate::arrange::ArrSelRect>,
             Option<yinhe_editor_core::quantize::QuantizePreset>,
+            Option<crate::right_panel::FloatPanel>,
         ) = if self.view_mode.show_transport() {
             let mut request_pianoroll = false;
             let mut arr_drag_delta: Option<crate::arrange::ArrDragDelta> = None;
             let mut arr_eraser_rect: Option<crate::arrange::ArrSelRect> = None;
+            let mut float_panel_req: Option<crate::right_panel::FloatPanel> = None;
             let mut guard = crate::app::main_loop::ReplaceGuard::new(&mut self.documents[idx]);
             let cfg = crate::arrange::ArrangeViewCfg {
                 is_playing,
@@ -223,13 +225,19 @@ impl App {
                 &mut needs_audio_notify,
                 &mut self.status_hint,
                 sel_hint.as_ref(),
+                &mut float_panel_req,
             );
             if request_pianoroll {
                 self.show_pianoroll_in_arrange = true;
             }
-            (arr_drag_delta, arr_eraser_rect, arr_quantize) // guard dropped here
+            (
+                arr_drag_delta,
+                arr_eraser_rect,
+                arr_quantize,
+                float_panel_req,
+            ) // guard dropped here
         } else {
-            (None, None, None)
+            (None, None, None, None)
         };
         // 方案 A：音轨结构变化（add/remove track）→ drop 旧引擎。
         // ChannelLayout 在引擎创建时冻结，旧引擎无法 dispatch 新增通道。
@@ -238,6 +246,10 @@ impl App {
         // 下一帧 rebuild_audio_if_needed 会用新 model 重新 spawn 引擎和 ChannelLayout。
         if needs_audio_rebuild {
             self.teardown_audio();
+        }
+        // 右键「音轨属性」/ 其他浮动面板请求：设浮窗并收起侧栏 Info（互斥）。
+        if let Some(panel) = float_panel_req {
+            self.set_float_panel(Some(panel));
         }
         // 自动化内容变化（AR lane 增删 / AM 事件编辑）：与 PR 的
         // handle_automation_edits 同路径，通知音频引擎 model 已变。
@@ -949,6 +961,11 @@ impl App {
         ui: &mut egui::Ui,
         layout: &LayoutInfo,
     ) {
+        // 互斥切换：用户主动打开右侧栏 Info tab 时收回浮动面板（弹窗内容回到侧栏态）。
+        if self.float_panel.is_some() && self.right_tab == Some(crate::right_panel::RightTab::Info)
+        {
+            self.float_panel = None;
+        }
         // Right panel
         if self.right_tab.is_some() {
             let right_rect = egui::Rect::from_min_size(
@@ -968,6 +985,7 @@ impl App {
                 &mut self.info_content,
                 self.automation_drag_ghost,
                 &mut self.status_hint,
+                &mut self.float_panel,
             );
             if changed {
                 self.teardown_audio();

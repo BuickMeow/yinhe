@@ -40,6 +40,8 @@ pub enum MenuAction {
     OpenRecent(String),
     /// App 菜单「设置…」（⌘,），打开应用设置对话框。
     Settings,
+    /// 文件菜单「工程设置…」，打开工程设置浮窗。
+    ProjectSettings,
     /// App 菜单「退出」（⌘Q），走未保存检查流程。
     Exit,
     /// 系统级动作：由平台层就地执行，不经过主线程通道。

@@ -15,7 +15,9 @@ use rust_i18n::t;
 use super::InfoContent;
 
 /// 显示音轨信息编辑器。返回 `true` 表示端口/通道改变（需重建音频引擎）。
-pub(super) fn show_track_info(
+/// `info_content` 在“无选中音轨”等分支被写为 None（侧栏会回落显示工程设置；
+/// 浮窗调用方传局部占位即可，不接入全局选择状态）。
+pub(crate) fn show_track_info(
     ui: &mut egui::Ui,
     doc: &mut Document,
     audio: Option<&yinhe_audio::CpalAudioHandle>,
@@ -59,86 +61,6 @@ pub(super) fn show_track_info(
         });
 
     ui.add_space(6.0);
-
-    // ── 多选汇总 ──
-    if doc.edit.track_selected.len() > 1 {
-        ui.add_space(4.0);
-        ui.label(
-            egui::RichText::new(
-                t!("track.selected_count", n = doc.edit.track_selected.len()).as_ref(),
-            )
-            .strong()
-            .size(crate::theme::PANEL_TITLE_FONT)
-            .color(crate::theme::text_primary()),
-        );
-        ui.add_space(2.0);
-
-        let total_notes: u64 = doc
-            .edit
-            .track_selected
-            .iter()
-            .map(|&idx| {
-                doc.edit
-                    .track_info_cache
-                    .get(idx as usize)
-                    .map(|ti| ti.note_count)
-                    .unwrap_or(0)
-            })
-            .sum();
-        let total_events: u64 = doc
-            .edit
-            .track_selected
-            .iter()
-            .map(|&idx| {
-                doc.edit
-                    .track_info_cache
-                    .get(idx as usize)
-                    .map(|ti| ti.event_count)
-                    .unwrap_or(0)
-            })
-            .sum();
-
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(t!("track.total_notes").as_ref())
-                    .size(crate::theme::SMALL_FONT)
-                    .color(crate::theme::text_label()),
-            );
-            ui.label(
-                egui::RichText::new(format!("{}", total_notes)).size(crate::theme::SMALL_FONT),
-            );
-        });
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(t!("track.total_events").as_ref())
-                    .size(crate::theme::SMALL_FONT)
-                    .color(crate::theme::text_label()),
-            );
-            ui.label(
-                egui::RichText::new(format!("{}", total_events)).size(crate::theme::SMALL_FONT),
-            );
-        });
-        ui.add_space(4.0);
-        ui.label(
-            egui::RichText::new(t!("track.multi_select_hint").as_ref())
-                .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::text_label()),
-        );
-
-        ui.add_space(8.0);
-        ui.separator();
-        ui.add_space(6.0);
-        if ui
-            .add(egui::Button::new(
-                egui::RichText::new(t!("common.clear_selection").as_ref())
-                    .size(crate::theme::BODY_FONT),
-            ))
-            .clicked()
-        {
-            *info_content = None;
-        }
-        return false;
-    }
 
     let Some(&track_idx) = doc.edit.track_selected.iter().next() else {
         // 未选中音轨 → 回退到项目设置（由父级 None 分支处理）。

@@ -70,6 +70,7 @@ file.export_audio: "导出音频"
 file.export_midi: "导出MIDI"
 file.settings: "设置"
 file.exit: "退出"
+file.project_settings: "工程设置"
 
 # ── macOS 原生菜单 ──
 menu.file: "文件"
@@ -247,6 +248,10 @@ dialog.new_track.channel: "通道"
 dialog.new_track.instrument_start: "起始乐器通道"
 dialog.new_track.preview: "预览：%{channels}"
 dialog.new_track.truncated: "超出 P16 的部分将被截断，实际创建 %{n} 条"
+dialog.track_props.title: "音轨属性"
+dialog.project_settings.title: "工程设置"
+panel.pop_out: "弹出为窗口"
+panel.dock_to_side: "停靠到侧栏"
 dialog.new_track.full: "256 个 MIDI 通道（A1–P16）已全部占用，无法新建"
 
 # ── PPQ 缩放进度 ──
@@ -405,6 +410,7 @@ arrange.create_automation: "创建自动化"
 arrange.delete_automation: "删除自动化"
 arrange.custom_cc: "自定义 CC"
 arrange.create: "创建"
+arrange.track_properties: "音轨属性"
 
 # ── sf_list ──
 sf_list.move_up: "上移"

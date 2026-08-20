@@ -32,6 +32,7 @@ pub const ACTION_CLOSE_DOCUMENT: &str = "close_document";
 pub const ACTION_EXPORT_AUDIO: &str = "export_audio";
 pub const ACTION_EXPORT_MIDI: &str = "export_midi";
 pub const ACTION_SETTINGS: &str = "settings";
+pub const ACTION_PROJECT_SETTINGS: &str = "project_settings";
 pub const ACTION_EXIT: &str = "exit";
 
 pub const ACTION_UNDO: &str = "undo";
@@ -66,6 +67,7 @@ pub const ALL_ACTION_IDS: &[&str] = &[
     ACTION_EXPORT_AUDIO,
     ACTION_EXPORT_MIDI,
     ACTION_SETTINGS,
+    ACTION_PROJECT_SETTINGS,
     ACTION_EXIT,
     ACTION_UNDO,
     ACTION_REDO,
@@ -145,6 +147,7 @@ fn default_combo(action_id: &str) -> Option<KeyCombo> {
         ACTION_EXPORT_AUDIO => None,
         ACTION_EXPORT_MIDI => None,
         ACTION_SETTINGS => combo(true, false, false, "Comma"),
+        ACTION_PROJECT_SETTINGS => None,
         ACTION_EXIT => combo(true, false, false, "Q"),
         ACTION_UNDO => combo(true, false, false, "Z"),
         ACTION_REDO => combo(true, true, false, "Z"),

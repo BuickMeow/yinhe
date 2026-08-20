@@ -220,6 +220,9 @@ impl App {
         // ── 新建音轨对话框 ──
         self.show_new_track_dialog(&ctx);
 
+        // ── 属性浮动面板（音轨属性 / 工程设置；与侧栏 Info 内容互斥切换）──
+        self.show_float_panels(&ctx);
+
         // ── Export completed ──
         crate::dialogs::export::show_completed_viewport(&ctx, &mut self.export.completed);
 
@@ -384,6 +387,46 @@ impl App {
         }
         // teardown 借 &mut self，必须在 doc 借用的作用域外调用。
         if created {
+            self.teardown_audio();
+        }
+    }
+
+    /// 渲染音轨属性 / 工程设置浮动面板（独立视口子窗口）。
+    ///
+    /// 与右侧栏 Info 内容互斥：弹窗打开时右侧栏已收起（set_float_panel 关闭），
+    /// 用户点 X 只关闭弹窗，点「停靠到侧栏」则把内容搬回右侧栏 Info tab。
+    fn show_float_panels(&mut self, ctx: &egui::Context) {
+        let Some(panel) = self.float_panel else {
+            return;
+        };
+        let Some(idx) = self.active_doc else { return };
+        let doc = &mut self.documents[idx];
+        let audio = self.audio_state.handle.as_ref();
+        let mut open = true;
+        let mut dock = false;
+        let mut port_changed = false;
+
+        use crate::right_panel::FloatPanel;
+        match panel {
+            FloatPanel::TrackProps { track_idx } => {
+                port_changed = crate::dialogs::prop_panels::show_track_props_viewport(
+                    ctx, doc, audio, &mut open, track_idx, &mut dock,
+                );
+            }
+            FloatPanel::ProjectSettings => {
+                crate::dialogs::prop_panels::show_project_settings_viewport(
+                    ctx, doc, &mut open, &mut dock,
+                );
+            }
+        }
+
+        if dock {
+            self.dock_float_panel(panel);
+        } else if !open {
+            // 用户点 X：只关闭弹窗，侧栏保持原状。
+            self.float_panel = None;
+        }
+        if port_changed {
             self.teardown_audio();
         }
     }

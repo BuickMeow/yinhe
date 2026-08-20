@@ -347,6 +347,7 @@ pub fn action_label_key(action_id: &str) -> &'static str {
         sc::ACTION_EXPORT_AUDIO => "file.export_audio",
         sc::ACTION_EXPORT_MIDI => "file.export_midi",
         sc::ACTION_SETTINGS => "file.settings",
+        sc::ACTION_PROJECT_SETTINGS => "file.project_settings",
         sc::ACTION_EXIT => "file.exit",
         sc::ACTION_UNDO => "menu.undo",
         sc::ACTION_REDO => "menu.redo",

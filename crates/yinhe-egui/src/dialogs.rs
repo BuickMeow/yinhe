@@ -7,6 +7,7 @@ pub mod loading_overlay;
 pub mod memory_breakdown;
 pub mod new_track;
 pub mod ppq_rescale_confirm;
+pub mod prop_panels;
 pub mod rescale_overlay;
 pub mod save_overlay;
 pub mod settings;

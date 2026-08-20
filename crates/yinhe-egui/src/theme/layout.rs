@@ -51,5 +51,9 @@ pub const AUTO_PANEL_COMBO_WIDTH_RATIO: f32 = 1.0;
 pub const SYS_REFRESH_INTERVAL_SECS: f64 = 0.5;
 pub const MEM_POPUP_SIZE: [f32; 2] = [280.0, 390.0];
 
+// ── 属性浮动面板（音轨属性 / 工程设置浮窗）──
+pub const TRACK_PROPS_POPUP_SIZE: [f32; 2] = [300.0, 460.0];
+pub const PROJECT_SETTINGS_POPUP_SIZE: [f32; 2] = [300.0, 460.0];
+
 // ── Dialog progress bars ──
 pub const PROGRESS_BAR_WIDTH: f32 = 280.0;

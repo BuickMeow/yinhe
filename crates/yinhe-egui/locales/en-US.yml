@@ -70,6 +70,7 @@ file.export_audio: "Export Audio"
 file.export_midi: "Export MIDI"
 file.settings: "Settings"
 file.exit: "Exit"
+file.project_settings: "Project Settings"
 
 # ── macOS native menu ──
 menu.file: "File"
@@ -247,6 +248,10 @@ dialog.new_track.channel: "Channel"
 dialog.new_track.instrument_start: "Start instrument channel"
 dialog.new_track.preview: "Preview: %{channels}"
 dialog.new_track.truncated: "Channels beyond P16 are dropped; only %{n} will be created"
+dialog.track_props.title: "Track Properties"
+dialog.project_settings.title: "Project Settings"
+panel.pop_out: "Pop Out"
+panel.dock_to_side: "Dock to Sidebar"
 dialog.new_track.full: "All 256 MIDI channels (A1-P16) are in use; cannot create"
 
 # ── PPQ rescale progress ──
@@ -405,6 +410,7 @@ arrange.create_automation: "Create Automation"
 arrange.delete_automation: "Delete Automation"
 arrange.custom_cc: "Custom CC"
 arrange.create: "Create"
+arrange.track_properties: "Track Properties"
 
 # ── sf_list ──
 sf_list.move_up: "Move Up"
