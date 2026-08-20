@@ -78,8 +78,13 @@ pub(crate) struct AudioEngine {
     pub(crate) ended_notes: Vec<ActiveNote>,
     pub(crate) model: Option<AudioModel>,
     pub(crate) skip_track: Vec<bool>,
-    /// AR 自动化 lane 的 M/S 试听旁通集（随 ReloadNotes 更新，chase 同步过滤）。
+    /// AR 自动化 lane 的 M/S 试听旁通集：dispatch 用它预计算 `am_lane_skip`
+    ///（chase 计算在 worker 侧直接查本 map）。随 `SetAmMs` 命令更新。
     pub(crate) am_ms: Arc<crate::spawn::AmMsMap>,
+    /// 每条音轨的 lane 跳过掩码：`mask[track][lane_idx] = true` 表示 dispatch 时
+    /// 跳过该 lane 的自动化事件（AM M/S 动态旁通，与 `skip_track` 并列）。
+    /// 加载模型 / `SetAmMs` 时重建（O(轨道 × lane 数)）。
+    pub(crate) am_lane_skip: Vec<Vec<bool>>,
     /// Set when Play arrives during async model loading.
     pub(crate) pending_play_from_sample: Option<u64>,
     /// Linear/Curve 自动化段播放时的中间事件 tick 间隔（默认 1）。
@@ -151,6 +156,7 @@ impl AudioEngine {
                 model: None,
                 skip_track: Vec::new(),
                 am_ms: Arc::new(crate::spawn::AmMsMap::new()),
+                am_lane_skip: Vec::new(),
                 pending_play_from_sample: None,
                 automation_density: 1,
                 chase_generation: 0,
@@ -219,10 +225,6 @@ impl AudioEngine {
             )));
     }
 
-    pub(crate) fn clear_active_notes(&mut self) {
-        self.active_notes.clear();
-    }
-
     pub(crate) fn set_layer_count(&mut self, count: Option<usize>) {
         use xsynth_core::channel::{ChannelConfigEvent, ChannelEvent};
         use xsynth_core::channel_group::SynthEvent;
@@ -249,8 +251,8 @@ impl AudioEngine {
                 self.playing = false;
                 self.load_model(&model);
             }
-            AudioCommand::ReloadNotes { model, .. } => {
-                // am_ms 在 renderer 侧随模型重载生效（engine 只做模型重载）。
+            AudioCommand::ReloadNotes { model } => {
+                // am_ms 掩码在 renderer 侧随 SetAmMs 命令维护（engine 只做模型重载）。
                 self.send_all_notes_off();
                 self.active_notes.clear();
                 self.load_model(&model);
@@ -266,6 +268,14 @@ impl AudioEngine {
             }
             AudioCommand::SkipTracks { skip } => {
                 self.skip_track = skip;
+            }
+            AudioCommand::SetAmMs { am_ms } => {
+                // renderer 在命令层已处理（更新掩码 + 异步 chase）；
+                // 这里兜底同步本字段，保证直接 handle_command（如测试/未来直连）语义一致。
+                self.am_ms = am_ms;
+                if let Some(model) = self.yin_model.clone() {
+                    self.am_lane_skip = crate::audio_model::build_am_lane_skip(&model, &self.am_ms);
+                }
             }
             AudioCommand::SetLayerCount { count } => {
                 self.set_layer_count(count);

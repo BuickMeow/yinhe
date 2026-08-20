@@ -384,11 +384,8 @@ pub fn export_wav_gpu(
 
     // CC 事件（与播放路径一致的自动化展平；density=1 最平滑）。
     // 放在音符事件之前：同 sample 时 CC 先于 note 处理（与 CPU dispatch 一致）。
-    let cc_events = crate::audio_model::flatten_automation_to_cc_events(
-        &model,
-        1,
-        &std::collections::HashMap::new(),
-    );
+    // 导出不含 AM lane M/S 旁通（试听状态，随 skip_tracks 过滤轨道级 mute）。
+    let cc_events = crate::audio_model::flatten_automation_to_cc_events(&model, 1);
     for cc in cc_events.iter() {
         if (cc.track as usize) < skip_tracks.len() && skip_tracks[cc.track as usize] {
             continue;

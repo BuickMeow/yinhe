@@ -62,18 +62,21 @@ fn test_sorted_cc_ordering() {
             tick: 100,
             channel: 0,
             track: 0,
+            lane: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 80)),
         },
         SortedCC {
             tick: 50,
             channel: 0,
             track: 0,
+            lane: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)),
         },
         SortedCC {
             tick: 200,
             channel: 0,
             track: 0,
+            lane: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 60)),
         },
     ];
@@ -475,10 +478,7 @@ fn test_engine_load_model_and_reload() {
     });
     assert!(!engine.playing());
 
-    engine.handle_command(AudioCommand::ReloadNotes {
-        model,
-        am_ms: Arc::new(crate::spawn::AmMsMap::new()),
-    });
+    engine.handle_command(AudioCommand::ReloadNotes { model });
 }
 
 /// Regression test: the MIMO refactor originally forgot to call
@@ -510,10 +510,7 @@ fn test_reload_notes_rebuilds_cc_pb_pc_rpn() {
         vec![(0, 1), (480, 2)],
         vec![(0x0000, 240, 0x0200 as f32)],
     ));
-    engine.handle_command(AudioCommand::ReloadNotes {
-        model: model_b,
-        am_ms: Arc::new(crate::spawn::AmMsMap::new()),
-    });
+    engine.handle_command(AudioCommand::ReloadNotes { model: model_b });
 
     // 3 CC + 2 PB + 2 PC (each with bank_msb=0 + bank_lsb=0 → 2 extra) + 1 RPN (high-level) = 12
     assert_eq!(
@@ -530,10 +527,7 @@ fn test_reload_notes_rebuilds_cc_pb_pc_rpn() {
 
     // Reload again with an empty model — cc_events must drain to zero.
     let model_c = Arc::new(make_model_with_controls(vec![], vec![], vec![], vec![]));
-    engine.handle_command(AudioCommand::ReloadNotes {
-        model: model_c,
-        am_ms: Arc::new(crate::spawn::AmMsMap::new()),
-    });
+    engine.handle_command(AudioCommand::ReloadNotes { model: model_c });
     assert_eq!(
         engine.cc_events.len(),
         0,
@@ -1090,12 +1084,14 @@ fn test_muted_track_cc_skipped_in_dispatch() {
             tick: 0,
             channel: 0,
             track: 0,
+            lane: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 40)),
         },
         SortedCC {
             tick: 0,
             channel: 0,
             track: 1,
+            lane: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)),
         },
     ]);
@@ -1139,12 +1135,14 @@ fn test_unmute_chase_skip_excludes_events_missed_while_muted() {
             tick: 100,
             channel: 0,
             track: 0,
+            lane: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 40)),
         },
         SortedCC {
             tick: 300,
             channel: 0,
             track: 0,
+            lane: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 80)),
         },
     ]);
@@ -1368,6 +1366,7 @@ fn test_chase_channel_states_incremental() {
             tick: 10,
             channel: 0,
             track: 0,
+            lane: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)),
         },
         // ch1 的 CC7=50（不应影响 ch0）
@@ -1375,6 +1374,7 @@ fn test_chase_channel_states_incremental() {
             tick: 20,
             channel: 1,
             track: 1,
+            lane: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 50)),
         },
         // ch0 的 CC10=80（pan）
@@ -1382,6 +1382,7 @@ fn test_chase_channel_states_incremental() {
             tick: 30,
             channel: 0,
             track: 0,
+            lane: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(10, 80)),
         },
         // ch0 的 CC7=90（最新）
@@ -1389,6 +1390,7 @@ fn test_chase_channel_states_incremental() {
             tick: 40,
             channel: 0,
             track: 0,
+            lane: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 90)),
         },
         // ch0 的 PBS=48
@@ -1396,6 +1398,7 @@ fn test_chase_channel_states_incremental() {
             tick: 45,
             channel: 0,
             track: 0,
+            lane: 0,
             event: ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(48.0)),
         },
         // 边界：tick == target 参与（预览无 dispatch 兜底，Bug 8 回归）
@@ -1403,6 +1406,7 @@ fn test_chase_channel_states_incremental() {
             tick: 50,
             channel: 0,
             track: 0,
+            lane: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 10)),
         },
     ];
@@ -1438,12 +1442,14 @@ fn test_preview_chase_includes_jump_at_target_tick() {
             tick: 1000,
             channel: 0,
             track: 0,
+            lane: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 0)),
         },
         SortedCC {
             tick: 1920,
             channel: 0,
             track: 0,
+            lane: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 127)),
         },
     ];
@@ -1830,11 +1836,7 @@ fn test_chase_query_matches_flattened_scan() {
 
     for target in [200u32, 480, 768, 1000, 1536, 2000] {
         // 旧式：flatten 事件流从曲首累计（density=1 的离散近似）
-        let cc = crate::audio_model::flatten_automation_to_cc_events(
-            &model,
-            1,
-            &std::collections::HashMap::new(),
-        );
+        let cc = crate::audio_model::flatten_automation_to_cc_events(&model, 1);
         let mut old = [crate::channel::ChannelState::default(); 256];
         for e in cc.iter() {
             if e.tick >= target {

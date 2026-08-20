@@ -329,9 +329,10 @@ pub fn show(
         if audio_dirty {
             crate::right_panel::info_panel::send_skip_tracks(doc, audio);
         }
-        // AM lane M/S 试听开关：触发模型重载（App::notify_audio_model_changed 会带上 arr_am_ms）。
-        if am_ms_dirty {
-            *needs_audio_notify = true;
+        // AM lane M/S 试听开关：只换动态掩码 + 异步 chase（不重建模型、不 seek），
+        // 与轨道 M/S 的 SkipTracks 同机制——播放中切换不跳跃、不卡顿。
+        if am_ms_dirty && let Some(audio) = audio {
+            audio.set_am_ms(std::sync::Arc::new(doc.edit.arr_am_ms.clone()));
         }
 
         // Handle track management actions (add/remove/move/AM lane)

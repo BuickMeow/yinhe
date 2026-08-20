@@ -62,7 +62,6 @@ pub enum AudioCommand {
     /// Used for automation edits / undo / redo / arrange drag (notes+automation).
     ReloadNotes {
         model: Arc<YinModel>,
-        am_ms: Arc<AmMsMap>,
     },
     /// Only rebuild `audible_notes` — no CC rebuild, no chase.
     /// Used for pure note edits (move/drag/add/delete/paste/duplicate/transpose)
@@ -78,6 +77,11 @@ pub enum AudioCommand {
     /// `skip[i] == true` means track i is hidden (not audible).
     SkipTracks {
         skip: Vec<bool>,
+    },
+    /// AR 自动化 lane 的 M/S 试听旁通集：只更新 dispatch 动态掩码 + 异步 chase，
+    /// 不重建模型、不 seek（与 SkipTracks 同机制）。
+    SetAmMs {
+        am_ms: Arc<AmMsMap>,
     },
     /// Set per-key layer count (None = unlimited).
     SetLayerCount {
@@ -332,10 +336,15 @@ impl Drop for CpalAudioHandle {
 impl CpalAudioHandle {
     /// Notify the audio thread that the MIDI model has changed (full rebuild:
     /// cc_events + audible_notes + chase). Use for automation edits / undo / redo.
-    ///
-    /// `am_ms`：AR 自动化 lane 的 M/S 试听旁通集（本帧生效，随事件流应用）。
-    pub fn reload_notes(&self, model: Arc<YinModel>, am_ms: Arc<AmMsMap>) {
-        self.handle.send(AudioCommand::ReloadNotes { model, am_ms });
+    /// AM lane M/S 旁通独立于模型存在，由 [`Self::set_am_ms`] 维护。
+    pub fn reload_notes(&self, model: Arc<YinModel>) {
+        self.handle.send(AudioCommand::ReloadNotes { model });
+    }
+
+    /// 更新 AR 自动化 lane 的 M/S 试听旁通集：只换动态掩码 + 异步 chase，
+    /// 不重建模型、不 seek——与 SkipTracks 对轨道 mute 的处理同机制。
+    pub fn set_am_ms(&self, am_ms: Arc<AmMsMap>) {
+        self.handle.send(AudioCommand::SetAmMs { am_ms });
     }
 
     /// Notify the audio thread that only notes have changed (no automation, no
@@ -359,7 +368,7 @@ pub fn channels_for_model(model: &YinModel) -> ChannelLayout {
 /// Internal command sent from the renderer thread to the worker thread.
 pub(crate) enum WorkerCmd {
     /// Full prepare: cc_events + audible_notes + duration (LoadModel / ReloadNotes).
-    PrepareModel(Arc<YinModel>, u32, Arc<AmMsMap>),
+    PrepareModel(Arc<YinModel>, u32),
     /// Notes-only prepare: audible_notes + duration (UpdateNotes). No cc_events rebuild.
     PrepareNotes(Arc<YinModel>),
     /// Compute channel-state snapshot at `target_tick` by **querying the model
@@ -437,17 +446,15 @@ pub(crate) fn spawn_worker(
                     },
                 };
                 match cmd {
-                    WorkerCmd::PrepareModel(model, density, am_ms) => {
+                    WorkerCmd::PrepareModel(model, density) => {
                         // 合并连续 PrepareModel，只保留最新
                         let mut latest = model;
                         let mut latest_density = density;
-                        let mut latest_am_ms = am_ms;
                         while let Ok(next) = cmd_rx.try_recv() {
                             match next {
-                                WorkerCmd::PrepareModel(m, d, am) => {
+                                WorkerCmd::PrepareModel(m, d) => {
                                     latest = m;
                                     latest_density = d;
-                                    latest_am_ms = am;
                                 }
                                 other => {
                                     pending.push_back(other);
@@ -458,7 +465,6 @@ pub(crate) fn spawn_worker(
                             &latest,
                             sample_rate,
                             latest_density,
-                            &latest_am_ms,
                         );
                         last_synced_revisions = Some(latest.note_revisions);
                         let _ = result_tx.send(WorkerResult::PreparedModel(prepared));
@@ -609,7 +615,7 @@ fn compute_chase_states(
                 .get(&(track_idx as u16, l.target.clone()))
                 .is_some_and(|s| s.solo)
         });
-        for lane in &track.automation_lanes {
+        for (lane_idx, lane) in track.automation_lanes.iter().enumerate() {
             if crate::audio_model::automation_lane_skipped(
                 am_ms,
                 track_idx as u16,
@@ -619,7 +625,15 @@ fn compute_chase_states(
                 continue;
             }
             if let Some((value, tick)) = lane_value_at(lane, target_tick) {
-                emit_automation_event(&lane.target, value, tick, ch as u32, track_idx as u16, out);
+                emit_automation_event(
+                    &lane.target,
+                    value,
+                    tick,
+                    ch as u32,
+                    track_idx as u16,
+                    lane_idx as u16,
+                    out,
+                );
             }
         }
         for pc in &track.program_change {
@@ -871,6 +885,7 @@ pub fn spawn_cpal_audio(
         prepared_rx,
         Arc::clone(&shutdown),
         Arc::clone(&preview_stop_flag),
+        Arc::clone(&sample_position),
         callback_frames,
         insert_return_tx,
         instrument_return_tx,

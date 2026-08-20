@@ -17,11 +17,8 @@ impl App {
         if self.channel_layout_flipped_for_doc(idx) {
             self.teardown_audio();
         } else if let Some(audio) = &self.audio_state.handle {
-            // AR 自动化 lane 的 M/S 试听状态随模型重载一同生效。
-            audio.reload_notes(
-                self.documents[idx].data.model.clone(),
-                std::sync::Arc::new(self.documents[idx].edit.arr_am_ms.clone()),
-            );
+            // AM lane M/S 试听状态独立于模型，由 `set_am_ms` 动态掩码维护。
+            audio.reload_notes(self.documents[idx].data.model.clone());
         }
     }
 
@@ -336,6 +333,11 @@ impl App {
         audio
             .handle
             .send(yinhe_audio::AudioCommand::SkipTracks { skip });
+
+        // AM lane M/S 试听旁通：引擎重建后必须重发，否则 UI 按钮点亮但旁通静默丢失。
+        audio.handle.send(yinhe_audio::AudioCommand::SetAmMs {
+            am_ms: std::sync::Arc::new(doc.edit.arr_am_ms.clone()),
+        });
     }
 
     /// 每帧轮询音色库加载进度：`sf_loaded_count() / sf_total` 驱动

@@ -46,10 +46,7 @@ pub fn show(
     if rev_after != rev_before
         && let Some(audio) = audio
     {
-        audio.reload_notes(
-            doc.data.model.clone(),
-            std::sync::Arc::new(doc.edit.arr_am_ms.clone()),
-        );
+        audio.reload_notes(doc.data.model.clone());
     }
     port_changed
 }

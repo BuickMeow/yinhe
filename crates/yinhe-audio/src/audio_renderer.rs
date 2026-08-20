@@ -11,7 +11,6 @@ use xsynth_core::effects::VolumeLimiter;
 use crate::audio_ring::AudioRingProducer;
 use crate::engine::AudioEngine;
 use crate::preview_engine::PreviewEngine;
-use crate::spawn::AmMsMap;
 use crate::spawn::{AudioCommand, WorkerCmd, WorkerResult};
 
 const STEREO_CHANNELS: usize = 2;
@@ -79,6 +78,10 @@ struct AudioRenderer {
     preview_scratch: Vec<f32>,
     /// 预览 Stop 快速路径标志（与 AudioHandle 共享）：每轮消费，通道满丢命令也必达。
     preview_stop_flag: Arc<AtomicBool>,
+    /// cpal 回调已消费的采样位置（听音位置，由回调线程更新）。
+    /// 非显式 reload / 掩码切换 / 音色加载完成时，seek 与 ring 清空都锚定它，
+    /// 保证播放中的编辑/切换**不移动**听音位置（只有 Play/Seek/Stop 才动）。
+    consumer_position: Arc<AtomicU64>,
     /// 预览激活时的 ring 目标（帧数）：≥ cpal 回调帧数，避免回调欠载静音卡顿。
     preview_target_frames: usize,
     /// 被替换/移除的 insert 处理器退回 UI 线程（渲染线程不做 deactivate）。
@@ -103,6 +106,7 @@ impl AudioRenderer {
         prepared_rx: Receiver<WorkerResult>,
         shutdown: Arc<AtomicBool>,
         preview_stop_flag: Arc<AtomicBool>,
+        consumer_position: Arc<AtomicU64>,
         // cpal 回调每次请求的帧数（预览时 ring 目标下限，避免回调欠载静音）。
         callback_frames: usize,
         insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
@@ -122,6 +126,7 @@ impl AudioRenderer {
             preview_engine,
             preview_scratch: vec![0.0; RENDER_CHUNK_FRAMES * STEREO_CHANNELS],
             preview_stop_flag,
+            consumer_position,
             preview_target_frames: PREVIEW_TARGET_FRAMES.max(callback_frames),
             insert_return_tx,
             instrument_return_tx,
@@ -170,7 +175,7 @@ impl AudioRenderer {
 
     fn process_commands(&mut self) -> bool {
         let mut did_work = false;
-        let mut pending_reload: Option<(Arc<yinhe_core::YinModel>, Arc<AmMsMap>)> = None;
+        let mut pending_reload: Option<Arc<yinhe_core::YinModel>> = None;
         let mut pending_update_notes: Option<Arc<yinhe_core::YinModel>> = None;
         let mut pending_density_rebuild: bool = false;
 
@@ -183,18 +188,15 @@ impl AudioRenderer {
                             self.preview_engine.stop_all();
                             self.engine.handle_command(AudioCommand::Pause);
                             self.engine.handle_command(AudioCommand::Stop);
-                            self.clear_buffered_audio();
+                            // 首次加载：消费位置 == 前沿 == 0，锚定无差别。
+                            self.clear_buffered_audio(self.engine.sample_position());
                             let density = self.engine.automation_density;
-                            let _ = self.worker_tx.send(WorkerCmd::PrepareModel(
-                                model,
-                                density,
-                                Arc::new(AmMsMap::new()),
-                            ));
+                            let _ = self.worker_tx.send(WorkerCmd::PrepareModel(model, density));
                         }
-                        AudioCommand::ReloadNotes { model, am_ms } => {
+                        AudioCommand::ReloadNotes { model } => {
                             // 全量重建优先于只更新音符 —— 丢弃 pending UpdateNotes
                             pending_update_notes = None;
-                            pending_reload = Some((model, am_ms));
+                            pending_reload = Some(model);
                         }
                         AudioCommand::UpdateNotes { model } => {
                             // 只在没有 pending ReloadNotes 时记录（ReloadNotes 包含 audible_notes）
@@ -222,7 +224,8 @@ impl AudioRenderer {
                                 if self.engine.gpu_synth.is_some() {
                                     self.sync_gpu_synth_events();
                                 }
-                                self.clear_buffered_audio();
+                                // 显式 seek：ring 清空锚定引擎当前（=seek 后）位置。
+                                self.clear_buffered_audio(self.engine.sample_position());
                                 // 方案 B：seek 后异步 chase（current_tick 已由 seek 更新）
                                 self.request_chase(self.engine.current_tick());
                             } else {
@@ -236,7 +239,8 @@ impl AudioRenderer {
                             if self.engine.gpu_synth.is_some() {
                                 self.sync_gpu_synth_events();
                             }
-                            self.clear_buffered_audio();
+                            // 显式 seek：ring 清空锚定引擎当前（=seek 后）位置。
+                            self.clear_buffered_audio(self.engine.sample_position());
                             // 方案 B：seek 后异步 chase（current_tick 已由 seek 更新）
                             self.request_chase(self.engine.current_tick());
                         }
@@ -247,7 +251,8 @@ impl AudioRenderer {
                             if self.engine.gpu_synth.is_some() {
                                 self.sync_gpu_synth_events();
                             }
-                            self.clear_buffered_audio();
+                            // Stop = 显式 seek 到 0。
+                            self.clear_buffered_audio(self.engine.sample_position());
                             // 方案 B：Stop 也 seek 到 0，需要 chase 恢复初始 channel state
                             self.request_chase(0);
                         }
@@ -266,14 +271,32 @@ impl AudioRenderer {
                             self.engine.chase_generation =
                                 self.engine.chase_generation.wrapping_add(1);
                             // GPU 路径：事件列表按新 skip mask 重建（mute/solo 即时生效，
-                            // 不再需要重启引擎）；重建会 seek 到当前位置并清掉旧 voice。
+                            // 不再需要重启引擎）；重建 seek 到听音位置并清掉旧 voice，
+                            // 位置不移动（与 CPU 路径第 4 层语义一致）。
                             #[cfg(feature = "gpu")]
                             if self.engine.gpu_synth.is_some() && self.engine.model_loaded() {
                                 self.sync_gpu_synth_events();
-                                self.clear_buffered_audio();
+                                let anchor = self.consumer_position.load(Ordering::Acquire);
+                                self.clear_buffered_audio(anchor);
                             }
                             // mute 状态变了，chase 结果需要更新：
                             // unmute 的轨道的 CC 需要恢复，mute 的轨道的 CC 不再参与。
+                            if self.engine.model_loaded() {
+                                self.request_chase(self.engine.current_tick());
+                            }
+                        }
+                        AudioCommand::SetAmMs { am_ms } => {
+                            // 只换动态掩码 + 异步 chase，不重建模型、不 seek（与 SkipTracks 同机制）。
+                            self.engine.am_ms = am_ms;
+                            if let Some(model) = self.engine.yin_model.clone() {
+                                self.engine.am_lane_skip = crate::audio_model::build_am_lane_skip(
+                                    &model,
+                                    &self.engine.am_ms,
+                                );
+                            }
+                            // 掩码变了：旧 chase 结果作废，重算 channel state。
+                            self.engine.chase_generation =
+                                self.engine.chase_generation.wrapping_add(1);
                             if self.engine.model_loaded() {
                                 self.request_chase(self.engine.current_tick());
                             }
@@ -343,16 +366,11 @@ impl AudioRenderer {
             }
         }
 
-        if let Some((model, am_ms)) = pending_reload {
-            // M/S 旁通随模型重载生效（chase 也用它过滤）。
-            self.engine.am_ms = am_ms.clone();
-            self.engine.send_all_notes_off();
-            self.engine.clear_active_notes();
-            self.clear_buffered_audio();
+        if let Some(model) = pending_reload {
+            // 不提前清 ring / 不 seek：已渲染（旧模型）音频继续播到 PreparedModel
+            // 应用时，由 apply_prepared_model(consumer) 无缝接新模型——位置不移动。
             let density = self.engine.automation_density;
-            let _ = self
-                .worker_tx
-                .send(WorkerCmd::PrepareModel(model, density, am_ms));
+            let _ = self.worker_tx.send(WorkerCmd::PrepareModel(model, density));
             did_work = true;
         } else if let Some(model) = pending_update_notes {
             // 只更新音符，不重建 cc_events，不 chase
@@ -362,10 +380,7 @@ impl AudioRenderer {
             // density 改变后用当前模型重建 cc_events
             if let Some(model) = self.engine.yin_model.clone() {
                 let density = self.engine.automation_density;
-                let am_ms = self.engine.am_ms.clone();
-                let _ = self
-                    .worker_tx
-                    .send(WorkerCmd::PrepareModel(model, density, am_ms));
+                let _ = self.worker_tx.send(WorkerCmd::PrepareModel(model, density));
                 did_work = true;
             }
         }
@@ -439,11 +454,13 @@ impl AudioRenderer {
                     self.state
                         .duration_samples
                         .store(prepared.duration_samples, Ordering::Relaxed);
-                    self.engine.apply_prepared_model(prepared);
+                    // 锚定听音位置（非显式 reload 不移动播放位置）。
+                    let anchor = self.consumer_position.load(Ordering::Acquire);
+                    self.engine.apply_prepared_model(prepared, anchor);
                     // GPU 路径：模型应用后同步事件到 GpuSynth
                     #[cfg(feature = "gpu")]
                     self.sync_gpu_synth_events();
-                    self.clear_buffered_audio();
+                    self.clear_buffered_audio(anchor);
                     self.state.initialized.store(true, Ordering::Release);
                     // 方案 B：apply_prepared_model 内部 seek_to 不再 chase，
                     // 这里发 PrepareChase 让 worker 异步算 channel state
@@ -535,7 +552,9 @@ impl AudioRenderer {
                     // 非 GPU feature 下 paths 不使用，显式标记避免 warning
                     #[cfg(not(feature = "gpu"))]
                     let _ = paths;
-                    self.clear_buffered_audio();
+                    // 非显式操作：ring 清空锚定听音位置，位置不移动。
+                    let anchor = self.consumer_position.load(Ordering::Acquire);
+                    self.clear_buffered_audio(anchor);
                     did_work = true;
                 }
                 Err(TryRecvError::Empty) => break,
@@ -619,14 +638,22 @@ impl AudioRenderer {
         // ── 通道控制事件（CC/pitch bend/RPN），tick 域转 sample 域 ──
         // 放在音符事件之前：同 sample 时 CC 先于 note 处理（与 CPU dispatch 一致）
         for cc in self.engine.cc_events.iter() {
-            // mute 的音轨：跳过其自动化事件（与 CPU 路径 dispatch 一致）
-            if self
+            // mute 的音轨：跳过其自动化事件（与 CPU 路径 dispatch 一致）；
+            // AM M/S 动态掩码：跳过被旁通的 lane（PC 事件 lane==哨兵，天然不跳过）。
+            let track_skipped = self
                 .engine
                 .skip_track
                 .get(cc.track as usize)
                 .copied()
-                .unwrap_or(false)
-            {
+                .unwrap_or(false);
+            let lane_skipped = self
+                .engine
+                .am_lane_skip
+                .get(cc.track as usize)
+                .and_then(|v| v.get(cc.lane as usize))
+                .copied()
+                .unwrap_or(false);
+            if track_skipped || lane_skipped {
                 continue;
             }
             let dense = self.engine.channel_layout.dense_for(cc.channel as usize);
@@ -737,14 +764,19 @@ impl AudioRenderer {
         true
     }
 
-    fn clear_buffered_audio(&mut self) {
+    /// 清空 ring 缓冲并记录清空边界。
+    ///
+    /// `base` = 清空后听音位置应锚定的采样位置：
+    /// - 显式 seek（Play/Seek/Stop）：引擎刚 seek 过，用 `engine.sample_position()`；
+    /// - 非显式操作（reload / 掩码切换 / 音色加载）：用 `consumer_position`（听音位置），
+    ///   保证播放中的编辑/切换**不移动**听音位置。
+    fn clear_buffered_audio(&mut self, base: u64) {
         // 不直接调 `self.ring.clear()`：它和 cpal 回调的 `pop_into` 并发时会
         // 把 cpal 刚推进的 read 指针覆盖回 write，下次回调会把旧数据当新数据读出 → 杂音。
         // 改为记录"清空边界"并 bump `reset_generation`，由 cpal 回调入口（单线程，
         // 与 pop_into 天然串行）用 `discard_before` 只丢弃边界前的旧音频。
         // 边界之后可能已推入新音频（模型已加载时渲染很快，ack 常晚于新音频入队），
         // 整体 clear 会把新播放位置的开头一起丢掉 —— 第二次播放开头缺失的根因。
-        let base = self.engine.sample_position();
         self.state
             .producer_sample_position
             .store(base, Ordering::Release);
@@ -777,6 +809,7 @@ pub(crate) fn spawn_renderer(
     prepared_rx: Receiver<WorkerResult>,
     shutdown: Arc<AtomicBool>,
     preview_stop_flag: Arc<AtomicBool>,
+    consumer_position: Arc<AtomicU64>,
     // cpal 回调每次请求的帧数（预览时 ring 目标下限）。
     callback_frames: usize,
     insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
@@ -797,6 +830,7 @@ pub(crate) fn spawn_renderer(
                 prepared_rx,
                 shutdown,
                 preview_stop_flag,
+                consumer_position,
                 callback_frames,
                 insert_return_tx.clone(),
                 instrument_return_tx.clone(),

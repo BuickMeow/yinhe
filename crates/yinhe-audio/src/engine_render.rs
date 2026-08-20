@@ -111,14 +111,20 @@ impl AudioEngine {
         // ── CC 事件 ──
         while self.cc_cursor < self.cc_events.len() && self.cc_events[self.cc_cursor].tick <= tick {
             let cc = &self.cc_events[self.cc_cursor];
-            // mute 的音轨：跳过其自动化事件（CC/PB/RPN/NRPN/PC），
-            // 使同 channel 上其他非 mute 轨道不受影响。
-            if !self
+            // mute 的音轨跳过其自动化事件（CC/PB/RPN/NRPN/PC）；
+            // AM M/S 动态掩码再跳过被旁通的 lane（PC 事件 lane==哨兵，天然不跳过）。
+            let track_skipped = self
                 .skip_track
                 .get(cc.track as usize)
                 .copied()
-                .unwrap_or(false)
-            {
+                .unwrap_or(false);
+            let lane_skipped = self
+                .am_lane_skip
+                .get(cc.track as usize)
+                .and_then(|v| v.get(cc.lane as usize))
+                .copied()
+                .unwrap_or(false);
+            if !track_skipped && !lane_skipped {
                 // 乐器轨的自动化 → 喂对应乐器实例；否则走 xsynth。
                 if let Some(inst_ch) = self
                     .model

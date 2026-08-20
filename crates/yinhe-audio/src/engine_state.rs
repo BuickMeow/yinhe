@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use xsynth_core::channel::{ChannelAudioEvent, ChannelConfigEvent, ChannelEvent};
@@ -19,12 +18,14 @@ impl AudioEngine {
         let audio_model = AudioModel::from_model(model);
         self.setup_percussion(&audio_model);
 
-        self.cc_events =
-            flatten_automation_to_cc_events(model, self.automation_density, &HashMap::new());
+        self.cc_events = flatten_automation_to_cc_events(model, self.automation_density);
         self.chase_generation = self.chase_generation.wrapping_add(1);
         self.cc_cursor = 0;
         self.dispatched_skip = ChaseSkip::default();
         self.active_notes.clear();
+
+        // 用当前 AM M/S 旁通集重建 lane 跳过掩码（模型已是新结构）。
+        self.am_lane_skip = crate::audio_model::build_am_lane_skip(model, &self.am_ms);
 
         self.duration_samples =
             (model.tempo_map.tick_to_seconds(model.tick_length) * self.sample_rate as f64) as u64;
@@ -39,7 +40,11 @@ impl AudioEngine {
     }
 
     /// Apply a `PreparedModel` computed on a worker thread.
-    pub(crate) fn apply_prepared_model(&mut self, prepared: PreparedModel) {
+    ///
+    /// `anchor`：seek 目标采样位置。**必须是听音（消费）位置**而非渲染前沿，
+    /// 否则非显式 reload（自动化编辑 / undo / M/S 掩码重建）会前跳播放位置。
+    /// 用户显式 seek（Play/Seek/Stop）在命令层直接 seek，与本方法无关。
+    pub(crate) fn apply_prepared_model(&mut self, prepared: PreparedModel, anchor: u64) {
         self.setup_percussion(&prepared.model);
 
         self.cc_events = prepared.cc_events;
@@ -47,16 +52,19 @@ impl AudioEngine {
         self.chase_generation = self.chase_generation.wrapping_add(1);
         self.duration_samples = prepared.duration_samples;
         // Skip is ignored here — we keep whatever the user set via SkipTracks.
-        self.yin_model = Some(prepared.yin_model);
+        let yin_model = prepared.yin_model;
         self.audible_notes = prepared.audible_notes;
         self.model = Some(prepared.model);
 
-        // Seek to current playback position to avoid triggering all notes
+        // 用当前 AM M/S 旁通集重建 lane 跳过掩码（模型可能是新结构）。
+        self.am_lane_skip = crate::audio_model::build_am_lane_skip(&yin_model, &self.am_ms);
+        self.yin_model = Some(yin_model);
+
+        // Seek to the audible position to avoid triggering all notes
         // before the current position (which would cause voice stealing).
         // 方案 B：seek_to 不再同步 chase —— renderer 在 apply_prepared_model 返回后
         // 发 PrepareChase 给 worker 异步计算 channel state。
-        let current_sample = self.sample_position;
-        self.seek_to(current_sample);
+        self.seek_to(anchor);
 
         // If Play arrived while loading, seek now
         if let Some(from_sample) = self.pending_play_from_sample.take() {

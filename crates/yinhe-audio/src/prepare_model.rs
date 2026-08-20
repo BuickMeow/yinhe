@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use std::collections::HashMap;
-
 use yinhe_core::YinModel;
 use yinhe_types::KEY_COUNT;
 
@@ -13,13 +11,13 @@ use crate::audio_model::{
 /// This is the expensive part; the result is applied cheaply on the audio thread.
 ///
 /// `density`: Linear/Curve 自动化段的中间事件 tick 间隔。
+/// 不接收 AM M/S 旁通：所有 lane 全量展平，旁通由 dispatch 动态掩码负责。
 pub(crate) fn prepare_model(
     model: &Arc<YinModel>,
     sample_rate: u32,
     density: u32,
-    am_ms: &HashMap<(u16, yinhe_types::AutomationTarget), yinhe_types::AmMsState>,
 ) -> PreparedModel {
-    let cc_events = flatten_automation_to_cc_events(model, density, am_ms);
+    let cc_events = flatten_automation_to_cc_events(model, density);
 
     let duration_samples =
         (model.tempo_map.tick_to_seconds(model.tick_length) * sample_rate as f64) as u64;
