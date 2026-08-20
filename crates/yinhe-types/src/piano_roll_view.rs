@@ -348,17 +348,31 @@ impl PianoRollView {
         }
     }
 
-    /// Zoom around a pointer position on the horizontal axis (横向语义)。
-    /// 横向 = 时间缩放；纵向下等价于 `zoom_cross_around`（音高沿 X）。
+    /// Zoom around a pointer position on the horizontal axis (屏幕 X 轴)。
+    /// 横向 = 时间缩放（沿 X）；纵向 = 音高缩放（沿 X，副轴尺寸用视口值）。
     #[inline]
     pub fn zoom_around_x(&mut self, pointer_x: f32, zoom_factor: f32) {
-        self.base.zoom_around_x(pointer_x, zoom_factor);
+        if self.is_vertical() {
+            let cross_size = if self.viewport_h > 0.0 {
+                self.viewport_h
+            } else {
+                self.key_height * 64.0
+            };
+            self.zoom_cross_around(pointer_x, zoom_factor, cross_size);
+        } else {
+            self.base.zoom_around_x(pointer_x, zoom_factor);
+        }
     }
 
-    /// Zoom around a pointer position on the vertical axis (横向语义)。
-    /// 横向 = 音高缩放（沿 Y）。纵向视图请用 `zoom_main_around` / `zoom_cross_around`。
+    /// Zoom around a pointer position on the vertical axis (屏幕 Y 轴)。
+    /// 横向 = 音高缩放（沿 Y）；纵向 = 时间缩放（沿 Y）。
+    /// 因此这两个方法在任意方向下都按「屏幕轴」语义工作。
     pub fn zoom_around_y(&mut self, pointer_y: f32, zoom_factor: f32, viewport_height: f32) {
-        self.zoom_cross_around(pointer_y, zoom_factor, viewport_height);
+        if self.is_vertical() {
+            self.zoom_main_around(pointer_y, zoom_factor);
+        } else {
+            self.zoom_cross_around(pointer_y, zoom_factor, viewport_height);
+        }
     }
 }
 
