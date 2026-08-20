@@ -39,11 +39,13 @@ impl App {
                             self.documents[0] = doc;
                             self.active_doc = Some(0);
                             self.restore_mixer_rack(0);
+                            self.restore_instrument_rack(0);
                         } else {
                             let insert_idx = self.documents.len();
                             self.documents.push(doc);
                             self.active_doc = Some(insert_idx);
                             self.restore_mixer_rack(insert_idx);
+                            self.restore_instrument_rack(insert_idx);
                         }
                         self.teardown_audio();
                         // 替换路径下 active_doc 不变，main_loop 的 switch 检测不到，
@@ -121,11 +123,13 @@ impl App {
                         self.documents[0] = doc;
                         self.active_doc = Some(0);
                         self.restore_mixer_rack(0);
+                        self.restore_instrument_rack(0);
                     } else {
                         let insert_idx = self.documents.len();
                         self.documents.push(doc);
                         self.active_doc = Some(insert_idx);
                         self.restore_mixer_rack(insert_idx);
+                        self.restore_instrument_rack(insert_idx);
                     }
                     self.teardown_audio();
                     self.invalidate_cull_state();

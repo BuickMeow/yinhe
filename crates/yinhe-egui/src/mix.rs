@@ -11,6 +11,7 @@
 
 #[cfg(target_os = "macos")]
 pub(crate) mod gui_window;
+pub(crate) mod instrument_rack;
 pub(crate) mod rack;
 mod strip;
 
@@ -21,6 +22,7 @@ use yinhe_mixer::{MasterParams, StripParams};
 
 use crate::app::App;
 
+pub(crate) use instrument_rack::InstrumentRack;
 pub(crate) use rack::MixerRack;
 
 /// 源通道总数（16 port × 16 通道）。
@@ -60,6 +62,8 @@ pub(crate) struct MixUiState {
     pub(crate) scan_errors: usize,
     /// 插件选择器打开目标：Some(Some(ch)) = 通道 ch，Some(None) = master。
     pub(crate) picker_for: Option<Option<u8>>,
+    /// 乐器插件选择器目标：乐器通道号（0 起）；None = 未打开。
+    pub(crate) instrument_picker_for: Option<u16>,
     pub(crate) picker_filter: String,
 }
 
@@ -71,6 +75,7 @@ impl Default for MixUiState {
             scanned: None,
             scan_errors: 0,
             picker_for: None,
+            instrument_picker_for: None,
             picker_filter: String::new(),
         }
     }
@@ -104,6 +109,19 @@ pub(crate) enum MixAction {
     RemoveInsert {
         channel: Option<u8>,
         slot: usize,
+    },
+    /// 打开乐器插件选择器（channel = 乐器通道，0 起）。
+    OpenInstrumentPicker {
+        channel: u16,
+    },
+    /// 为乐器通道分配插件（InsertRef 入持久化层 + 机架加载 + 安装引擎）。
+    AssignInstrument {
+        channel: u16,
+        plugin: PluginInfo,
+    },
+    /// 移除乐器通道的插件（卸下载机架 + 持久化层置 None）。
+    RemoveInstrument {
+        channel: u16,
     },
     RescanPlugins,
 }
@@ -170,12 +188,37 @@ impl App {
         self.mixer_racks[idx] = rack;
     }
 
-    /// 引擎 spawn 完成后：全量同步混音台（参数 + 各 insert 处理器补发）。
+    /// 工程加载后：按 MixerParams.instruments 重建乐器机架。
+    /// 与 restore_mixer_rack 同理——只加载不激活，引擎重建后由
+    /// push_mixer_state_to_engine → ensure_all_sent 统一激活补发。
+    pub(crate) fn restore_instrument_rack(&mut self, idx: usize) {
+        let mixer = self.documents[idx].mixer.clone();
+        let mut rack = InstrumentRack::default();
+        for (ch, r) in mixer.instruments.iter().enumerate() {
+            if let Some(r) = r {
+                let _ = rack.load(
+                    ch as u16,
+                    &r.plugin_path,
+                    &r.plugin_id,
+                    &r.name,
+                    r.state.as_deref(),
+                );
+            }
+        }
+        if idx >= self.instrument_racks.len() {
+            self.instrument_racks
+                .resize_with(idx + 1, InstrumentRack::default);
+        }
+        self.instrument_racks[idx] = rack;
+    }
+
+    /// 引擎 spawn 完成后：全量同步混音台（参数 + 各 insert 处理器补发 + 乐器安装）。
     pub(crate) fn push_mixer_state_to_engine(&mut self, idx: usize) {
         let Self {
             audio_state,
             documents,
             mixer_racks,
+            instrument_racks,
             ..
         } = self;
         let Some(audio) = audio_state.handle.as_ref() else {
@@ -190,6 +233,10 @@ impl App {
             mixer_racks.resize_with(idx + 1, MixerRack::default);
         }
         mixer_racks[idx].ensure_all_sent(&audio.handle, audio.sample_rate);
+        if idx >= instrument_racks.len() {
+            instrument_racks.resize_with(idx + 1, InstrumentRack::default);
+        }
+        instrument_racks[idx].ensure_all_sent(&audio.handle, audio.sample_rate);
     }
 
     /// 每帧：回收渲染线程退回的 insert 处理器 + 轮询插件反向请求。
@@ -199,12 +246,14 @@ impl App {
         let Self {
             audio_state,
             mixer_racks,
+            instrument_racks,
             ..
         } = self;
         let Some(audio) = audio_state.handle.as_ref() else {
             return;
         };
         let returned = audio.handle.drain_insert_returns();
+        let instrument_returned = audio.handle.drain_instrument_returns();
         let Some(idx) = audio_state.active_doc else {
             if !returned.is_empty() {
                 tracing::warn!(
@@ -212,17 +261,31 @@ impl App {
                     returned.len()
                 );
             }
+            if !instrument_returned.is_empty() {
+                tracing::warn!(
+                    "引擎退回 {} 个乐器处理器，但无绑定文档可回收",
+                    instrument_returned.len()
+                );
+            }
             return;
         };
         if idx >= mixer_racks.len() {
             mixer_racks.resize_with(idx + 1, MixerRack::default);
         }
+        if idx >= instrument_racks.len() {
+            instrument_racks.resize_with(idx + 1, InstrumentRack::default);
+        }
         let rack = &mut mixer_racks[idx];
         if !returned.is_empty() {
             rack.on_returns(returned);
         }
+        let irack = &mut instrument_racks[idx];
+        if !instrument_returned.is_empty() {
+            irack.on_returns(instrument_returned);
+        }
         rack.poll_requests(Some(&audio.handle));
         rack.ensure_all_sent(&audio.handle, audio.sample_rate);
+        irack.ensure_all_sent(&audio.handle, audio.sample_rate);
     }
 }
 
@@ -260,6 +323,8 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
         .filter(|&c| layout.is_active(c))
         .map(|c| c as u8)
         .collect();
+    // 乐器通道（0 起），绘制独立的乐器条。
+    let inst_channels: Vec<u16> = layout.instrument_channels().to_vec();
     // 每通道列出使用该通道的轨道名（共享通道的轨道全部列出）。
     let names: Vec<Vec<String>> = active
         .iter()
@@ -338,6 +403,13 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                                         &mut actions,
                                     );
                                 }
+                                // 乐器条：MIDI 条后分隔 + 每个乐器通道一条。
+                                if !inst_channels.is_empty() {
+                                    ui.separator();
+                                    for &ich in inst_channels.iter() {
+                                        strip::instrument_strip(app, ui, idx, ich, &mut actions);
+                                    }
+                                }
                             });
                         });
                 },
@@ -373,6 +445,10 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
     // 插件选择器（窗口）。
     if let Some(target) = app.mix.picker_for {
         strip::plugin_picker(app, ui.ctx(), target, &mut actions);
+    }
+    // 乐器插件选择器（窗口）。
+    if let Some(ich) = app.mix.instrument_picker_for {
+        strip::instrument_picker(app, ui.ctx(), ich, &mut actions);
     }
 
     // 统一应用本帧动作。
@@ -470,6 +546,49 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
                     let msg = e.0.clone();
                     app.mixer_rack_mut(idx).last_error = Some(msg);
                 }
+            }
+        }
+        MixAction::OpenInstrumentPicker { channel } => {
+            app.mix.instrument_picker_for = Some(channel);
+            app.mix.picker_filter.clear();
+        }
+        MixAction::AssignInstrument { channel, plugin } => {
+            {
+                let doc = &mut app.documents[idx];
+                let c = channel as usize;
+                let m = doc.mixer_mut();
+                if m.instruments.len() <= c {
+                    m.instruments.resize(c + 1, None);
+                }
+                m.instruments[c] = Some(yinhe_mixer::InsertRef {
+                    plugin_path: plugin.path.clone(),
+                    plugin_id: plugin.id.clone(),
+                    name: plugin.name.clone(),
+                    bypassed: false,
+                    state: None,
+                });
+            }
+            if idx < app.instrument_racks.len() {
+                let rack = &mut app.instrument_racks[idx];
+                if let Err(e) = rack.load(channel, &plugin.path, &plugin.id, &plugin.name, None) {
+                    rack.last_error = Some(e.0);
+                }
+            }
+            app.push_mixer_state_to_engine(idx);
+            app.mix.instrument_picker_for = None;
+        }
+        MixAction::RemoveInstrument { channel } => {
+            {
+                let doc = &mut app.documents[idx];
+                let c = channel as usize;
+                if c < doc.mixer_mut().instruments.len() {
+                    doc.mixer_mut().instruments[c] = None;
+                }
+            }
+            if idx < app.instrument_racks.len() {
+                let handle = app.audio_state.handle.as_ref().map(|a| &a.handle);
+                let rack = &mut app.instrument_racks[idx];
+                rack.unload(channel, handle);
             }
         }
         MixAction::RescanPlugins => rescan(app),

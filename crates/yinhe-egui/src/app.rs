@@ -63,6 +63,8 @@ pub struct App {
     pub(crate) mix: crate::mix::MixUiState,
     /// 每文档的 CLAP insert 插件机架，与 `documents` 平行（同索引同生命周期）。
     pub(crate) mixer_racks: Vec<crate::mix::MixerRack>,
+    /// 每文档的 CLAP 乐器机架（乐器通道 → 实例），与 `documents` 平行。
+    pub(crate) instrument_racks: Vec<crate::mix::InstrumentRack>,
 
     // ── Shared state ──
     pub(crate) transport_panel_width: f32,
@@ -332,6 +334,7 @@ impl App {
             prev_active_doc: Some(0),
             mix: crate::mix::MixUiState::default(),
             mixer_racks: vec![crate::mix::MixerRack::default()],
+            instrument_racks: vec![crate::mix::InstrumentRack::default()],
 
             transport_panel_width: audio_settings.layout.transport_panel_width,
             load_progress: load_progress.clone(),
@@ -445,6 +448,9 @@ impl App {
         if index < self.mixer_racks.len() {
             self.mixer_racks.remove(index);
         }
+        if index < self.instrument_racks.len() {
+            self.instrument_racks.remove(index);
+        }
         self.documents.remove(index);
         if index < self.controller_renderers.len() {
             self.controller_renderers.remove(index);
@@ -516,6 +522,8 @@ impl App {
         self.documents[idx].edit.allow_overlapping_notes =
             self.audio_settings.allow_overlapping_notes;
         self.mixer_racks.push(crate::mix::MixerRack::default());
+        self.instrument_racks
+            .push(crate::mix::InstrumentRack::default());
         self.active_doc = Some(idx);
         self.teardown_audio();
     }

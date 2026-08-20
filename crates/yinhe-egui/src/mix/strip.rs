@@ -452,3 +452,108 @@ pub(crate) fn plugin_picker(
         app.mix.picker_for = None;
     }
 }
+
+/// 乐器通道条：标签 + 插件名/选择按钮 + 更换/移除。乐器音频走独立 dense 通道。
+pub(crate) fn instrument_strip(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    idx: usize,
+    channel: u16,
+    actions: &mut Vec<MixAction>,
+) {
+    let name = app.documents[idx]
+        .mixer
+        .instruments
+        .get(channel as usize)
+        .and_then(|o| o.as_ref())
+        .map(|r| r.name.clone());
+    strip_frame(ui, |ui| {
+        ui.label(
+            egui::RichText::new(format!("{} {}", t!("mix.instrument"), channel + 1))
+                .strong()
+                .color(crate::theme::text_bright()),
+        );
+        match &name {
+            Some(n) => {
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(n)
+                            .small()
+                            .color(crate::theme::text_secondary()),
+                    )
+                    .truncate(),
+                )
+                .on_hover_text(n);
+                ui.horizontal(|ui| {
+                    if ui.small_button(t!("mix.change_instrument")).clicked() {
+                        actions.push(MixAction::OpenInstrumentPicker { channel });
+                    }
+                    if ui.small_button(t!("mix.remove_insert")).clicked() {
+                        actions.push(MixAction::RemoveInstrument { channel });
+                    }
+                });
+            }
+            None => {
+                if ui.button(t!("mix.pick_instrument")).clicked() {
+                    actions.push(MixAction::OpenInstrumentPicker { channel });
+                }
+            }
+        }
+    });
+}
+
+/// 乐器插件选择器：只列 is_instrument() 插件。
+pub(crate) fn instrument_picker(
+    app: &mut App,
+    ctx: &egui::Context,
+    channel: u16,
+    actions: &mut Vec<MixAction>,
+) {
+    let mut open = true;
+    egui::Window::new(t!("mix.instrument_picker_title"))
+        .collapsible(false)
+        .resizable(true)
+        .default_width(320.0)
+        .open(&mut open)
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(t!("mix.search"));
+                ui.text_edit_singleline(&mut app.mix.picker_filter);
+            });
+            ui.separator();
+            let filter = app.mix.picker_filter.to_lowercase();
+            let plugins = app.mix.scanned.as_ref();
+            egui::ScrollArea::vertical()
+                .max_height(320.0)
+                .show(ui, |ui| {
+                    let mut any = false;
+                    if let Some(plugins) = plugins {
+                        for p in plugins.iter().filter(|p| p.is_instrument()) {
+                            if !filter.is_empty() && !p.name.to_lowercase().contains(&filter) {
+                                continue;
+                            }
+                            any = true;
+                            if ui
+                                .selectable_label(false, &p.name)
+                                .on_hover_text(&p.id)
+                                .clicked()
+                            {
+                                actions.push(MixAction::AssignInstrument {
+                                    channel,
+                                    plugin: p.clone(),
+                                });
+                            }
+                        }
+                    }
+                    if !any {
+                        ui.label(
+                            egui::RichText::new(t!("mix.no_instruments"))
+                                .color(crate::theme::text_muted()),
+                        );
+                    }
+                });
+        });
+    if !open {
+        app.mix.instrument_picker_for = None;
+    }
+}

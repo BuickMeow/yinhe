@@ -70,7 +70,7 @@ impl Default for MixerRack {
     }
 }
 
-fn host_info() -> HostInfo {
+pub(crate) fn host_info() -> HostInfo {
     // HostInfo::new 只在校验失败（非法字符等）时报错；这些字符串是编译期常量，
     // fallback 也是常量，理论不可达——但生产路径不留 unwrap（AGENTS 17）。
     HostInfo::new("yinhe", "yinhe", "", env!("CARGO_PKG_VERSION"))
