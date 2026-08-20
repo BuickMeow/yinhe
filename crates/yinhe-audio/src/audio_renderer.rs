@@ -264,7 +264,10 @@ impl AudioRenderer {
                             }
                         }
                         AudioCommand::SkipTracks { skip } => {
-                            self.engine.skip_track = skip;
+                            // 即时派：diff 旧掩码，新 mute 的轨立即停发 NoteOff，
+                            // 新 unmute 的轨立即重启跨点音符（CPU/GPU 统一语义）。
+                            let old = self.engine.skip_track.clone();
+                            self.engine.apply_skip_mask(&old, &skip);
                             // mute/solo 状态变了：旧 skip mask 的异步 chase 结果必须作废
                             //（递增 generation），否则快速连续切换时旧结果可能晚到并
                             // 覆盖新状态——GPU 路径的通道状态依赖 chase 恢复，影响更大。
@@ -413,7 +416,7 @@ impl AudioRenderer {
     fn apply_chase_to_gpu(
         layout: &crate::channel_layout::ChannelLayout,
         synth: &mut yinhe_synth::GpuSynth,
-        states: &[crate::channel::ChannelState; 256],
+        states: &[Option<crate::channel::ChannelState>; 256],
     ) {
         let synth_skip = synth.chase_skip();
         let mut skip = crate::channel::ChaseSkip::default();
@@ -435,7 +438,11 @@ impl AudioRenderer {
             if dense == u32::MAX {
                 continue;
             }
-            let events: Vec<yinhe_synth::ControlEvent> = states[ch as usize]
+            // 无事件通道不触碰（与 CPU 路径 apply_chase_result 一致）。
+            let Some(state) = &states[ch as usize] else {
+                continue;
+            };
+            let events: Vec<yinhe_synth::ControlEvent> = state
                 .events_to_send(ch as usize, &skip)
                 .iter()
                 .filter_map(to_gpu_control_event)

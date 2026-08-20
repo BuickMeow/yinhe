@@ -40,6 +40,8 @@ pub(crate) struct ActiveNote {
     /// 是否为乐器音符（true → NoteOff 喂乐器实例）。
     pub(crate) is_instrument: bool,
     pub(crate) end_tick: u32,
+    /// 源音轨索引：即时 mute 时据此精确 kill 该轨在响音符（不误伤共享通道）。
+    pub(crate) track: u16,
 }
 
 impl PartialEq for ActiveNote {
@@ -49,6 +51,7 @@ impl PartialEq for ActiveNote {
             && self.dense == other.dense
             && self.is_instrument == other.is_instrument
             && self.clap_channel == other.clap_channel
+            && self.track == other.track
     }
 }
 impl Eq for ActiveNote {}
@@ -65,6 +68,7 @@ impl Ord for ActiveNote {
             .then(self.dense.cmp(&other.dense))
             .then(self.is_instrument.cmp(&other.is_instrument))
             .then(self.clap_channel.cmp(&other.clap_channel))
+            .then(self.track.cmp(&other.track))
     }
 }
 
@@ -78,6 +82,7 @@ impl Ord for ActiveNote {
 /// tick 域化：1 亿音符下每条约 24→16 字节（-0.8GB），且 dispatch 比较
 /// 不再需要 tick→sample 转换；只有"渲染段边界"才转 sample（每块少量）。
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub(crate) struct AudibleNote {
     pub start_tick: u32,
     pub end_tick: u32,

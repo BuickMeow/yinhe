@@ -212,6 +212,7 @@ impl AudioEngine {
                                     clap_channel: clap_ch,
                                     is_instrument: true,
                                     end_tick: note.end_tick,
+                                    track: track as u16,
                                 }));
                             }
                         }
@@ -231,6 +232,7 @@ impl AudioEngine {
                                 clap_channel: 0,
                                 is_instrument: false,
                                 end_tick: note.end_tick,
+                                track: track as u16,
                             }));
                         }
                     }

@@ -1,3 +1,4 @@
+use std::collections::BinaryHeap;
 use std::sync::Arc;
 
 use xsynth_core::channel::{ChannelAudioEvent, ChannelConfigEvent, ChannelEvent};
@@ -8,7 +9,9 @@ use yinhe_clap::ClapInputEvent;
 use yinhe_core::YinModel;
 use yinhe_types::KEY_COUNT;
 
-use crate::audio_model::{ActiveNote, AudioModel, PreparedModel, flatten_automation_to_cc_events};
+use crate::audio_model::{
+    ActiveNote, AudibleNote, AudioModel, PreparedModel, flatten_automation_to_cc_events,
+};
 use crate::channel::{ChannelState, ChaseSkip};
 use crate::engine::AudioEngine;
 use crate::prepare_model::build_audible_notes;
@@ -119,14 +122,18 @@ impl AudioEngine {
         self.dispatched_skip
     }
 
-    pub(crate) fn apply_chase_result(&mut self, states: &[ChannelState; 256]) {
+    pub(crate) fn apply_chase_result(&mut self, states: &[Option<ChannelState>; 256]) {
         let skip = self.chase_skip();
         for ch in 0..256u32 {
             let dense = self.channel_layout.dense_for(ch as usize);
             if dense == u32::MAX {
                 continue;
             }
-            states[ch as usize].send_to(dense, &mut self.channel_set, &skip);
+            // 无事件通道（如被 mute 轨独占的通道）不触碰：保持当前状态不重置。
+            let Some(state) = &states[ch as usize] else {
+                continue;
+            };
+            state.send_to(dense, &mut self.channel_set, &skip);
         }
     }
 
@@ -201,6 +208,131 @@ impl AudioEngine {
         );
     }
 
+    /// 重启一个跨点音符（seek / unmute 复用）：NoteOn + 记入 active_notes。
+    /// `key`：桶索引。`n`：audible_notes 里的源音符（已是当前 tick 之前的跨点音符，
+    /// 由调用方过滤 end_tick > tick）。同步检查 skip_track（mute 轨跳过不重启）。
+    fn restart_note(&mut self, key: usize, n: &AudibleNote) {
+        let track = n.track as usize;
+        let ch = self
+            .model
+            .as_ref()
+            .map(|m| m.track_channel(track) as usize)
+            .unwrap_or(0);
+        if self.skip_track.get(track).copied().unwrap_or(false) {
+            return;
+        }
+        if let Some(inst_ch) = self.model.as_ref().and_then(|m| m.track_instrument(track)) {
+            // 乐器轨：chase 重启的音符喂 CLAP 实例（time 0 = 下一块开头）。
+            if let Some(dense) = self.instrument_dense(inst_ch)
+                && let Some(Some(slot)) = self.instruments.get_mut(dense)
+            {
+                slot.events.push(ClapInputEvent::NoteOn {
+                    time: 0,
+                    channel: (ch & 0x0F) as u8,
+                    key: key as u8,
+                    velocity: n.velocity as f64 / 127.0,
+                });
+                self.active_notes.push(std::cmp::Reverse(ActiveNote {
+                    key: key as u8,
+                    dense: dense as u32,
+                    clap_channel: (ch & 0x0F) as u8,
+                    is_instrument: true,
+                    end_tick: n.end_tick,
+                    track: track as u16,
+                }));
+            }
+            return;
+        }
+        let dense = self.channel_layout.dense_for(ch);
+        if dense == u32::MAX {
+            return;
+        }
+        self.channel_set.send_event(SynthEvent::Channel(
+            dense,
+            ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
+                key: key as u8,
+                vel: n.velocity,
+            }),
+        ));
+        self.active_notes.push(std::cmp::Reverse(ActiveNote {
+            key: key as u8,
+            dense,
+            clap_channel: 0,
+            is_instrument: false,
+            end_tick: n.end_tick,
+            track: track as u16,
+        }));
+    }
+
+    /// 即时 mute：从 active_notes 精确移除该轨在响音符并发 NoteOff
+    ///（不误伤同通道其他轨道；CPU/GPU 路径统一为即时静音语义）。
+    fn kill_track_notes(&mut self, track: u16) {
+        let all = std::mem::take(&mut self.active_notes);
+        let mut remaining = BinaryHeap::new();
+        for std::cmp::Reverse(an) in all.into_iter() {
+            if an.track != track {
+                remaining.push(std::cmp::Reverse(an));
+                continue;
+            }
+            if an.is_instrument {
+                if let Some(Some(slot)) = self.instruments.get_mut(an.dense as usize) {
+                    slot.events.push(ClapInputEvent::NoteOff {
+                        time: 0,
+                        channel: an.clap_channel,
+                        key: an.key,
+                        velocity: 0.0,
+                    });
+                }
+            } else if an.dense != u32::MAX {
+                self.channel_set.send_event(SynthEvent::Channel(
+                    an.dense,
+                    ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: an.key }),
+                ));
+            }
+        }
+        self.active_notes = remaining;
+    }
+
+    /// 即时 unmute：重启该轨的跨点音符（start < current_tick < end）。
+    /// 代价 O(该轨在各 key 桶 [..cursor] 的音符数)，只扫受影响轨道。
+    fn restart_track_crossing_notes(&mut self, track: u16) {
+        let tick = self.current_tick;
+        for key in 0..KEY_COUNT {
+            let notes = self.audible_notes[key].as_slice();
+            let cursor = notes.partition_point(|n| n.start_tick < tick);
+            let mut to_restart: Vec<AudibleNote> = Vec::new();
+            for n in &notes[..cursor] {
+                if n.track == track && n.end_tick > tick {
+                    to_restart.push(*n);
+                }
+            }
+            for n in to_restart {
+                self.restart_note(key, &n);
+            }
+        }
+    }
+
+    /// 应用新的轨道 skip 掩码，按 diff 即时处理：新 mute 的轨立即停音，
+    /// 新 unmute 的轨立即重启跨点音符。`self.skip_track` 同步更新为 `new`。
+    pub(crate) fn apply_skip_mask(&mut self, old: &[bool], new: &[bool]) {
+        self.skip_track = new.to_vec();
+        let n = old.len().max(new.len());
+        for i in 0..n {
+            let was = old.get(i).copied().unwrap_or(false);
+            let is = new.get(i).copied().unwrap_or(false);
+            if was == is {
+                continue;
+            }
+            if is {
+                // 新 mute：立即停掉该轨在响音符。
+                self.kill_track_notes(i as u16);
+            } else {
+                // 新 unmute：立即重启该轨跨点音符。
+                self.restart_track_crossing_notes(i as u16);
+            }
+        }
+    }
+
     pub(crate) fn seek_to(&mut self, sample: u64) {
         self.channel_set
             .send_event(SynthEvent::AllChannels(ChannelEvent::Audio(
@@ -242,58 +374,15 @@ impl AudioEngine {
             // 扫描 seek 点之前开始、seek 点之后才结束的所有音符，全部重启（修 P2-10）。
             // 桶按 start_tick 升序，但 end_tick 不保证有序，必须线性扫 [..cursor]。
             // 黑乐谱叠层场景下 cursor 前通常有几十个跨点音符，O(cursor) 完全可接受。
+            // 先收集再逐条重启（避免借用冲突，`restart_note` 需 &mut self）。
+            let mut to_restart: Vec<AudibleNote> = Vec::new();
             for n in &notes[..cursor] {
-                if n.end_tick <= tick {
-                    continue;
+                if n.end_tick > tick {
+                    to_restart.push(*n);
                 }
-                let track = n.track as usize;
-                let ch = self
-                    .model
-                    .as_ref()
-                    .map(|m| m.track_channel(track) as usize)
-                    .unwrap_or(0);
-                if self.skip_track.get(track).copied().unwrap_or(false) {
-                    continue;
-                }
-                if let Some(inst_ch) = self.model.as_ref().and_then(|m| m.track_instrument(track)) {
-                    // 乐器轨：chase 重启的音符喂 CLAP 实例（time 0 = 下一块开头）。
-                    if let Some(dense) = self.instrument_dense(inst_ch)
-                        && let Some(Some(slot)) = self.instruments.get_mut(dense)
-                    {
-                        slot.events.push(ClapInputEvent::NoteOn {
-                            time: 0,
-                            channel: (ch & 0x0F) as u8,
-                            key: key as u8,
-                            velocity: n.velocity as f64 / 127.0,
-                        });
-                        self.active_notes.push(std::cmp::Reverse(ActiveNote {
-                            key: key as u8,
-                            dense: dense as u32,
-                            clap_channel: (ch & 0x0F) as u8,
-                            is_instrument: true,
-                            end_tick: n.end_tick,
-                        }));
-                    }
-                    continue;
-                }
-                let dense = self.channel_layout.dense_for(ch);
-                if dense == u32::MAX {
-                    continue;
-                }
-                self.channel_set.send_event(SynthEvent::Channel(
-                    dense,
-                    ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
-                        key: key as u8,
-                        vel: n.velocity,
-                    }),
-                ));
-                self.active_notes.push(std::cmp::Reverse(ActiveNote {
-                    key: key as u8,
-                    dense,
-                    clap_channel: 0,
-                    is_instrument: false,
-                    end_tick: n.end_tick,
-                }));
+            }
+            for n in to_restart {
+                self.restart_note(key, &n);
             }
         }
 

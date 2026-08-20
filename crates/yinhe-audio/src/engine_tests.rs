@@ -1170,6 +1170,51 @@ fn test_unmute_chase_skip_excludes_events_missed_while_muted() {
     );
 }
 
+/// 第 4 层回归：即时派语义——mute 立即停掉该轨在响音符，
+/// unmute 立即重启该轨跨点音符（CPU/GPU 统一，不再等 gate 结束）。
+#[test]
+fn test_skip_mask_immediate_kill_and_restart() {
+    let sample_rate = 44100u32;
+    let mut doc = Document::empty();
+    // track 1（track 0 是 conductor，add_note 会拒绝）：start 0，end 1000，播放到 500 时它在响
+    doc.add_note(
+        1,
+        NoteEvent {
+            start_tick: 0,
+            end_tick: 1000,
+            key: 60,
+            velocity: 100,
+            id: 0,
+        },
+    );
+    doc.data.bump_revision();
+    let mut engine = spawn_engine_for_doc(&doc, sample_rate);
+    engine.playing = true;
+    // Document::empty() 的 track_audible_count 在 add_note 后未重建：显式标记全部可听。
+    let all_audible = vec![false; engine.skip_track.len()];
+    engine.skip_track = all_audible.clone();
+
+    engine.seek_to(0);
+    engine.dispatch_and_find_next(500, 100000);
+    // 模拟播放推进：手动 dispatch 不会更新 current_tick（由 render 推进）。
+    engine.current_tick = 500;
+    assert_eq!(engine.active_notes.len(), 1, "播放中应有一个活跃音符");
+
+    // mute track 1 → 立即从 active_notes 移除（发 NoteOff）
+    let mut muted = all_audible.clone();
+    muted[1] = true;
+    engine.apply_skip_mask(&all_audible, &muted);
+    assert_eq!(
+        engine.active_notes.len(),
+        0,
+        "mute 应立即停掉该轨在响音符，而不是等 gate 结束"
+    );
+
+    // unmute track 1 → 立即重启跨点音符（回到 active_notes）
+    engine.apply_skip_mask(&muted, &all_audible);
+    assert_eq!(engine.active_notes.len(), 1, "unmute 应立即重启跨点音符");
+}
+
 /// chase 计算时跳过 mute 轨道的 CC：
 /// mute 轨道的 CC 不参与 channel state 快照构建。
 #[test]
@@ -1210,7 +1255,8 @@ fn test_muted_track_cc_skipped_in_chase() {
     // track 0 的 CC7=40 被跳过，只有 track 1 的 CC7=100 生效
     // CC7 映射到 ChannelState.volume
     assert_eq!(
-        states[0].volume, 100,
+        states[0].as_ref().unwrap().volume,
+        100,
         "muted track's CC7=40 should be skipped; only track 1's CC7=100 should apply"
     );
 }
@@ -1331,8 +1377,12 @@ fn test_chase_after_seek_skips_dispatched_controllers() {
     // worker 异步算出的 chase 快照：seek 之前的状态
     // worker 异步算出的 chase 快照：seek 之前的状态（查询式：直接查模型 lane）
     let states = crate::spawn::compute_chase_states_for_test(&model, 768, &engine.skip_track);
-    assert_eq!(states[0].pitch_bend_sensitivity, 2.0, "seek 前 PBS=2");
-    assert_eq!(states[0].volume, 100, "seek 前 CC7=100");
+    assert_eq!(
+        states[0].as_ref().unwrap().pitch_bend_sensitivity,
+        2.0,
+        "seek 前 PBS=2"
+    );
+    assert_eq!(states[0].as_ref().unwrap().volume, 100, "seek 前 CC7=100");
 
     // 修复核心：已 dispatch 的控制器必须在 chase 中跳过
     let skip = engine.chase_skip();
@@ -1740,19 +1790,34 @@ fn test_chase_query_linear_interpolation() {
 
     // 段中点：真实值 80（线性插值），CC7 → volume
     let states = crate::spawn::compute_chase_states_for_test(&model, 240, &[false]);
-    assert_eq!(states[0].volume, 80, "曲线段中点应插值到 80");
+    assert_eq!(
+        states[0].as_ref().unwrap().volume,
+        80,
+        "曲线段中点应插值到 80"
+    );
 
     // 段外（最后一条之后）：保持终点值
     let states = crate::spawn::compute_chase_states_for_test(&model, 960, &[false]);
-    assert_eq!(states[0].volume, 60, "曲线结束后保持终点值");
+    assert_eq!(
+        states[0].as_ref().unwrap().volume,
+        60,
+        "曲线结束后保持终点值"
+    );
 
     // 边界：target == 下一事件 tick → 曲线终点值（连续性）
     let states = crate::spawn::compute_chase_states_for_test(&model, 480, &[false]);
-    assert_eq!(states[0].volume, 60, "target == 段末 tick 取曲线终点");
+    assert_eq!(
+        states[0].as_ref().unwrap().volume,
+        60,
+        "target == 段末 tick 取曲线终点"
+    );
 
-    // target 在第一条事件之前：无事件，默认值 127
+    // target 在第一条事件之前：无事件 → None（chase 应用时不触碰通道）
     let states = crate::spawn::compute_chase_states_for_test(&model, 0, &[false]);
-    assert_eq!(states[0].volume, 127, "target 前无事件保持默认");
+    assert!(
+        states[0].is_none(),
+        "target 前无事件应返回 None，应用 chase 时保持通道现状"
+    );
 }
 
 /// Step 段边界：保持最后一条事件值（与播放事件流 `tick < target` 语义一致）。
@@ -1778,15 +1843,19 @@ fn test_chase_query_step_keeps_last_value() {
 
     // 段内：保持 100
     let states = crate::spawn::compute_chase_states_for_test(&model, 240, &[false]);
-    assert_eq!(states[0].pan, 100, "Step 段保持上一值");
+    assert_eq!(states[0].as_ref().unwrap().pan, 100, "Step 段保持上一值");
 
     // 边界：target == 下一事件 tick，Step 语义保持 100（t480 的事件由 dispatch 处理）
     let states = crate::spawn::compute_chase_states_for_test(&model, 480, &[false]);
-    assert_eq!(states[0].pan, 100, "Step 在事件 tick 处仍保持旧值");
+    assert_eq!(
+        states[0].as_ref().unwrap().pan,
+        100,
+        "Step 在事件 tick 处仍保持旧值"
+    );
 
     // 段后：20
     let states = crate::spawn::compute_chase_states_for_test(&model, 960, &[false]);
-    assert_eq!(states[0].pan, 20, "Step 段后取新值");
+    assert_eq!(states[0].as_ref().unwrap().pan, 20, "Step 段后取新值");
 }
 
 /// Program Change：取 target 前最后一条（离散事件，无插值）。
@@ -1818,12 +1887,20 @@ fn test_chase_query_program_change_last_before_target() {
     model.rebuild();
 
     let states = crate::spawn::compute_chase_states_for_test(&model, 240, &[false]);
-    assert_eq!(states[0].program, 5, "target 前最后一条 PC");
+    assert_eq!(
+        states[0].as_ref().unwrap().program,
+        5,
+        "target 前最后一条 PC"
+    );
     let states = crate::spawn::compute_chase_states_for_test(&model, 960, &[false]);
-    assert_eq!(states[0].program, 20);
+    assert_eq!(states[0].as_ref().unwrap().program, 20);
     // target == PC tick：该 PC 由 dispatch 处理，chase 取更早的
     let states = crate::spawn::compute_chase_states_for_test(&model, 480, &[false]);
-    assert_eq!(states[0].program, 5, "t480 的 PC 不参与（== target）");
+    assert_eq!(
+        states[0].as_ref().unwrap().program,
+        5,
+        "t480 的 PC 不参与（== target）"
+    );
 }
 
 /// 查询式 vs flatten 全扫一致性：Step 段 + 各种控制器下，两种 chase 结果必须一致。
@@ -1844,33 +1921,29 @@ fn test_chase_query_matches_flattened_scan() {
             }
             old[e.channel as usize].apply(&e.event);
         }
-        // 新式：查询模型 lane
+        // 新式：查询模型 lane（无事件通道 = None，等价于 default 状态）
         let new = crate::spawn::compute_chase_states_for_test(&model, target, &skip);
+        let default_state = crate::channel::ChannelState::default();
 
         for ch in 0..256usize {
+            let ns = new[ch].as_ref().unwrap_or(&default_state);
+            assert_eq!(ns.volume, old[ch].volume, "target {target} ch{ch} volume");
+            assert_eq!(ns.pan, old[ch].pan, "target {target} ch{ch} pan");
             assert_eq!(
-                new[ch].volume, old[ch].volume,
-                "target {target} ch{ch} volume"
-            );
-            assert_eq!(new[ch].pan, old[ch].pan, "target {target} ch{ch} pan");
-            assert_eq!(
-                new[ch].pitch_bend_sensitivity, old[ch].pitch_bend_sensitivity,
+                ns.pitch_bend_sensitivity, old[ch].pitch_bend_sensitivity,
                 "target {target} ch{ch} PBS"
             );
             assert_eq!(
-                new[ch].pitch_bend, old[ch].pitch_bend,
+                ns.pitch_bend, old[ch].pitch_bend,
                 "target {target} ch{ch} pitch_bend"
             );
             assert_eq!(
-                new[ch].program, old[ch].program,
+                ns.program, old[ch].program,
                 "target {target} ch{ch} program"
             );
-            assert_eq!(new[ch].fine_tune, old[ch].fine_tune);
-            assert_eq!(new[ch].coarse_tune, old[ch].coarse_tune);
-            assert_eq!(
-                new[ch].cc_values, old[ch].cc_values,
-                "target {target} ch{ch} cc"
-            );
+            assert_eq!(ns.fine_tune, old[ch].fine_tune);
+            assert_eq!(ns.coarse_tune, old[ch].coarse_tune);
+            assert_eq!(ns.cc_values, old[ch].cc_values, "target {target} ch{ch} cc");
         }
     }
 }

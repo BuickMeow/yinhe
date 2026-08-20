@@ -402,8 +402,9 @@ pub(crate) enum WorkerResult {
         duration_samples: u64,
     },
     /// Result of `PrepareChase` — 256-channel state snapshot.
+    /// `Some(state)` = 该通道在目标位置有生效事件（无事件通道不触碰）。
     ChaseResult {
-        states: Box<[ChannelState; 256]>,
+        states: Box<[Option<ChannelState>; 256]>,
         generation: u64,
     },
     LoadedSoundFont {
@@ -594,7 +595,7 @@ fn compute_chase_states(
     target_tick: u32,
     skip_mask: &[bool],
     am_ms: &crate::spawn::AmMsMap,
-) -> Box<[ChannelState; 256]> {
+) -> Box<[Option<ChannelState>; 256]> {
     use crate::audio_model::{emit_automation_event, push_program_change};
 
     // 每通道收集目标位置生效事件（tick 排序后顺序 apply，多 track 同 channel 自动合并）。
@@ -643,9 +644,11 @@ fn compute_chase_states(
         }
     }
 
-    let mut states: Box<[ChannelState; 256]> = Box::new([ChannelState::default(); 256]);
+    let mut states: Box<[Option<ChannelState>; 256]> = Box::new(std::array::from_fn(|_| None));
     for (ch, mut evs) in events.into_iter().enumerate() {
         if evs.is_empty() {
+            // 无事件：不触碰该通道（chase 应用时跳过），
+            // 避免把 mute 轨的通道控制器重置回默认值。
             continue;
         }
         // 与播放事件流一致：同 tick 参数类（RPN/CC/PC）先于 PitchBendValue。
@@ -654,7 +657,7 @@ fn compute_chase_states(
         for e in &evs {
             state.apply(&e.event);
         }
-        states[ch] = state;
+        states[ch] = Some(state);
     }
     states
 }
@@ -695,7 +698,7 @@ pub(crate) fn compute_chase_states_for_test(
     model: &YinModel,
     target_tick: u32,
     skip_mask: &[bool],
-) -> Box<[ChannelState; 256]> {
+) -> Box<[Option<ChannelState>; 256]> {
     compute_chase_states(model, target_tick, skip_mask, &crate::spawn::AmMsMap::new())
 }
 
