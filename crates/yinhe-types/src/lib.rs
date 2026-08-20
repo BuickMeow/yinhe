@@ -27,7 +27,7 @@ pub use note::{Note, PencilNoteDrag, TimeSigEvent, VelocityEdit};
 pub use note_bucket::{BUCKET_CHUNK_CAP, NoteBucket, NoteRangeIter};
 pub use palette::TRACK_PALETTE;
 pub use pc_event::PcEvent;
-pub use piano_roll_view::PianoRollView;
+pub use piano_roll_view::{Orientation, PianoRollView};
 pub use source::NoteSource;
 pub use time_format::{
     build_time_sig_segments, compute_measure_divisor, measure_bounds_at_tick, measure_ticks,
