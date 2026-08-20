@@ -9,7 +9,14 @@ use crate::channel_set::ChannelSet;
 use xsynth_core::soundfont::{SampleSoundfont, SoundfontBase, SoundfontInitOptions};
 use xsynth_core::{AudioStreamParams, ChannelCount};
 
-static GLOBAL_SF_CACHE: LazyLock<RwLock<HashMap<PathBuf, Arc<dyn SoundfontBase>>>> =
+/// 音色库缓存条目 key：(路径, 采样率)。
+///
+/// xsynth 在加载时按 `AudioStreamParams.sample_rate` 重采样样本（loop 点/包络
+/// 时间也按采样率换算），同一音色库以不同采样率加载得到的是不同的内部数据。
+/// 若缓存只按路径区分，切换采样率后引擎/导出会命中旧采样率的缓存版本，
+/// 播放音高错误（跑调），必须重启才能恢复。
+type SfCacheKey = (PathBuf, u32);
+static GLOBAL_SF_CACHE: LazyLock<RwLock<HashMap<SfCacheKey, Arc<dyn SoundfontBase>>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
 /// Remove cache entries that are no longer referenced outside the cache.
@@ -35,9 +42,10 @@ impl SoundFontManager {
     }
 
     pub fn load_soundfont(&self, path: &Path) -> Result<Arc<dyn SoundfontBase>, String> {
+        let key = (path.to_path_buf(), self.stream_params.sample_rate);
         {
             let cache = GLOBAL_SF_CACHE.read().unwrap_or_else(|e| e.into_inner());
-            if let Some(sf) = cache.get(path) {
+            if let Some(sf) = cache.get(&key) {
                 return Ok(Arc::clone(sf));
             }
         }
@@ -49,7 +57,7 @@ impl SoundFontManager {
 
         let arc: Arc<dyn SoundfontBase> = Arc::new(sf);
         let mut cache = GLOBAL_SF_CACHE.write().unwrap_or_else(|e| e.into_inner());
-        cache.insert(path.to_path_buf(), Arc::clone(&arc));
+        cache.insert(key, Arc::clone(&arc));
         Ok(arc)
     }
 
