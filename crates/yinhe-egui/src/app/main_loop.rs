@@ -351,6 +351,9 @@ impl eframe::App for App {
                 egui::Stroke::new(1.0, crate::theme::pressed_color(line));
             // 原生控件文字统一用主题主文字色（egui 默认灰与主题不协调）
             visuals.override_text_color = Some(crate::theme::text_primary());
+            // Noninteractive 态（disabled 按钮等）背景也统一为 app_bg：
+            // 缺省会回落到 egui 默认灰，与主题背景不一致（亮色主题下差异明显）
+            visuals.widgets.noninteractive.weak_bg_fill = crate::theme::app_bg();
             visuals
         });
 

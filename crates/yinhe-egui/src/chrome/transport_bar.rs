@@ -327,7 +327,8 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 );
                 let btn_rounding = egui::CornerRadius::same(2);
 
-                let file_btn = menu_button(ui, ICON_DESCRIPTION, btn_size, btn_rounding);
+                let file_btn =
+                    menu_button(ui, "file_menu", ICON_DESCRIPTION, btn_size, btn_rounding);
                 if file_btn.hovered() {
                     let m = crate::chrome::mode_bar::mod_key();
                     hovered_hint = Some(format!("{} ({}N/{}O/{}S)", t!("hint.file_menu"), m, m, m));
@@ -345,6 +346,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 //    紧跟在文件按钮右侧，全部钉上时就是一整行图标 ──
                 pinned_action_buttons(
                     ui,
+                    "pinned_file",
                     &FileAction::ALL,
                     &ctx.settings.pinned_file_actions,
                     has_active,
@@ -355,7 +357,8 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 
                 // ── 编辑按钮 + 编辑菜单 popup（与文件按钮同款）──
                 // 图标用 edit_square（方框+铅笔），与铅笔工具图标区分。
-                let edit_btn = menu_button(ui, ICON_EDIT_SQUARE, btn_size, btn_rounding);
+                let edit_btn =
+                    menu_button(ui, "edit_menu", ICON_EDIT_SQUARE, btn_size, btn_rounding);
                 if edit_btn.hovered() {
                     hovered_hint = Some(t!("hint.edit_menu").to_string());
                 }
@@ -369,6 +372,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 // ── 图钉固定的编辑动作 ──
                 pinned_action_buttons(
                     ui,
+                    "pinned_edit",
                     &EditAction::ALL,
                     &ctx.settings.pinned_edit_actions,
                     has_active,
@@ -382,7 +386,8 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     .doc
                     .map(|d| d.edit.playback.is_playing())
                     .unwrap_or(false);
-                let play_menu_btn = menu_button(ui, ICON_PLAY_CIRCLE, btn_size, btn_rounding);
+                let play_menu_btn =
+                    menu_button(ui, "play_menu", ICON_PLAY_CIRCLE, btn_size, btn_rounding);
                 if play_menu_btn.hovered() {
                     hovered_hint = Some(t!("hint.play_menu").to_string());
                 }
@@ -412,6 +417,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 let mut pending_play: Option<PlayMenuAction> = None;
                 pinned_action_buttons(
                     ui,
+                    "pinned_play",
                     &play_btn_actions,
                     &play_btn_pins,
                     has_active,
@@ -618,21 +624,28 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 }
 
 /// 菜单按钮（文件/编辑/播放）：统一样式（图标 + transport 尺寸）。
+/// 显式 push_id：egui 0.36 的 Button 用 auto id（按兄弟顺序分配）回读上一帧
+/// 同 id 的交互状态定本帧样式；中间插入图钉按钮会让后续按钮错位读到邻居
+/// 状态（甚至读到时间码的 Noninteractive 未主题化颜色），稳定 id 根除闪烁。
 fn menu_button(
     ui: &mut egui::Ui,
+    id: &str,
     icon: egui_material_icons::MaterialIcon,
     btn_size: egui::Vec2,
     btn_rounding: egui::CornerRadius,
 ) -> egui::Response {
-    ui.add(
-        egui::Button::new(
-            icon.rich_text()
-                .size(crate::theme::TRANSPORT_BTN_FONT)
-                .color(crate::theme::text_primary()),
+    ui.push_id(id, |ui| {
+        ui.add(
+            egui::Button::new(
+                icon.rich_text()
+                    .size(crate::theme::TRANSPORT_BTN_FONT)
+                    .color(crate::theme::text_primary()),
+            )
+            .min_size(btn_size)
+            .corner_radius(btn_rounding),
         )
-        .min_size(btn_size)
-        .corner_radius(btn_rounding),
-    )
+    })
+    .inner
 }
 
 /// 状态栏讲解行：工具的短说明（与 tool.label() 的悬停 tooltip 互补）。
@@ -1342,8 +1355,13 @@ fn show_play_menu(
 
 /// 图钉固定的动作按钮行：作为独立按钮紧跟在菜单按钮右侧，
 /// 全部钉上时就是一整行图标。文件/编辑共用。
+/// id_prefix + pinned_index 给每个按钮稳定 id：插入/删除钉钮不打乱其他
+/// 按钮的 auto id（egui 0.36 按上一帧同 id 的交互状态定本帧样式，错位会
+/// 让按钮闪一帧邻居的状态色，如时间码的 Noninteractive 默认灰）。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 fn pinned_action_buttons<T: PopupRow>(
     ui: &mut egui::Ui,
+    id_prefix: &str,
     actions: &[T],
     pinned: &[bool],
     has_active: bool,
@@ -1372,16 +1390,20 @@ fn pinned_action_buttons<T: PopupRow>(
                 crate::theme::text_disabled()
             }
         });
-        let pin_resp = ui.add_enabled(
-            enabled,
-            egui::Button::new(
-                icon.rich_text()
-                    .size(crate::theme::TRANSPORT_BTN_FONT)
-                    .color(color),
-            )
-            .min_size(btn_size)
-            .corner_radius(btn_rounding),
-        );
+        let pin_resp = ui
+            .push_id((id_prefix, action.pinned_index()), |ui| {
+                ui.add_enabled(
+                    enabled,
+                    egui::Button::new(
+                        icon.rich_text()
+                            .size(crate::theme::TRANSPORT_BTN_FONT)
+                            .color(color),
+                    )
+                    .min_size(btn_size)
+                    .corner_radius(btn_rounding),
+                )
+            })
+            .inner;
         if pin_resp.clicked() {
             *pending = Some(*action);
         }
