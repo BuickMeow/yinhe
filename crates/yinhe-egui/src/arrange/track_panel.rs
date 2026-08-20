@@ -88,6 +88,16 @@ pub(crate) fn show(
     let max_scroll = (total_rows as f32 * *row_height - panel_h).max(0.0);
     *scroll_y = scroll_y.clamp(0.0, max_scroll);
 
+    // ── 滚轮垂直滚动 ──
+    // 必须先于行绘制处理：否则本帧面板按旧 scroll_y 绘制、GPU 按写回的新值上传，
+    // egui 面板与 GPU 区差 1 帧（与横向滚动"clamp 后再画标尺"同帧同步同理）。
+    if crate::view_interaction::pointer_hits(ui, panel_rect) {
+        let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
+        if scroll_delta.y.abs() > 0.5 {
+            *scroll_y = (*scroll_y - scroll_delta.y).clamp(0.0, max_scroll);
+        }
+    }
+
     // ── 拖拽排序跨帧状态（算法见 widgets::reorder） ──
     let drag_id = ui.id().with("track_panel_drag");
     let mut drag: Option<crate::widgets::reorder::DragReorder> =
@@ -866,13 +876,6 @@ pub(crate) fn show(
             *selection_anchor = Some(0);
         }
         *info_content = Some(crate::right_panel::InfoContent::Track);
-    }
-
-    if resp.hovered() {
-        let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
-        if scroll_delta.y.abs() > 0.5 {
-            *scroll_y = (*scroll_y - scroll_delta.y).max(0.0);
-        }
     }
 
     ui.data_mut(|d| d.insert_temp(drag_id, drag));
