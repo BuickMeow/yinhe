@@ -491,14 +491,15 @@ mod tests {
 
 // ── Horizontal scrollbar ──
 
-/// Paint a horizontal scrollbar into the given rect.
+/// Paint a scrollbar into the given rect along the **主轴方向**（时间轴）。
 ///
 /// The scrollbar represents the full timeline; a draggable rectangle
 /// shows the current viewport.  Dragging the middle pans, dragging
 /// either edge zooms (anchored on the opposite edge).
 ///
-/// `view_width` is the pixel-width of the content area (right of the
-/// keyboard / track-panel).
+/// `orientation` 决定条形走向：横向 = 底部横条（X）；纵向瀑布流 = 右侧竖条（Y）。
+/// `view_width` is the pixel-length of the content area along the main axis
+/// (right of the keyboard / track-panel, or below the keyboard in vertical).
 pub(crate) fn show(
     ui: &mut egui::Ui,
     rect: egui::Rect,
@@ -507,8 +508,30 @@ pub(crate) fn show(
     pixels_per_tick: &mut f32,
     total_ticks: f64,
     dirty: &mut bool,
+    orientation: yinhe_types::Orientation,
 ) -> f32 {
-    let sb_w = rect.width();
+    let vertical = orientation == yinhe_types::Orientation::Vertical;
+    // 沿主轴的 band 长度 / 厚度方向
+    let along_len = |r: egui::Rect| if vertical { r.height() } else { r.width() };
+    // 构造沿主轴的矩形（a0..a1 为相对 rect 起点的主轴区间）
+    let along_rect = |a0: f32, a1: f32| {
+        if vertical {
+            egui::Rect::from_min_max(
+                egui::pos2(rect.min.x, rect.min.y + a0),
+                egui::pos2(rect.max.x, rect.min.y + a1),
+            )
+        } else {
+            egui::Rect::from_min_max(
+                egui::pos2(rect.min.x + a0, rect.min.y),
+                egui::pos2(rect.min.x + a1, rect.max.y),
+            )
+        }
+    };
+    // 主轴 / 副轴的 drag 分量
+    let drag_main = |v: egui::Vec2| if vertical { v.y } else { v.x };
+    let drag_cross = |v: egui::Vec2| if vertical { v.x } else { v.y };
+
+    let sb_w = along_len(rect);
     if sb_w <= 0.0 || total_ticks <= 0.0 {
         return 0.0;
     }
@@ -539,29 +562,14 @@ pub(crate) fn show(
     ui.painter().rect_filled(rect, 0.0, bg_color);
 
     // ── Rectangle visual ──
-    let rect_rect = egui::Rect::from_min_max(
-        egui::pos2(rect.min.x + rect_left, rect.min.y),
-        egui::pos2((rect.min.x + rect_right).min(rect.max.x), rect.max.y),
-    );
+    let rect_rect = along_rect(rect_left, rect_right.min(sb_w));
 
     // Three interaction zones
-    let left_edge_rect = egui::Rect::from_min_max(
-        rect_rect.min,
-        egui::pos2(
-            (rect_rect.min.x + EDGE_WIDTH).min(rect_rect.max.x),
-            rect_rect.max.y,
-        ),
-    );
-    let right_edge_rect = egui::Rect::from_min_max(
-        egui::pos2(
-            (rect_rect.max.x - EDGE_WIDTH).max(rect_rect.min.x),
-            rect_rect.min.y,
-        ),
-        rect_rect.max,
-    );
-    let middle_rect = egui::Rect::from_min_max(
-        egui::pos2(left_edge_rect.max.x, rect_rect.min.y),
-        egui::pos2(right_edge_rect.min.x, rect_rect.max.y),
+    let left_edge_rect = along_rect(rect_left, (rect_left + EDGE_WIDTH).min(rect_right));
+    let right_edge_rect = along_rect((rect_right - EDGE_WIDTH).max(rect_left), rect_right);
+    let middle_rect = along_rect(
+        (rect_left + EDGE_WIDTH).min(rect_right),
+        (rect_right - EDGE_WIDTH).max(rect_left),
     );
 
     let edge_id_left = ui.id().with("__sb_left__");
@@ -604,9 +612,17 @@ pub(crate) fn show(
 
     // ── Cursor ──
     if left_hovered {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest);
+        ui.ctx().set_cursor_icon(if vertical {
+            egui::CursorIcon::ResizeNorth
+        } else {
+            egui::CursorIcon::ResizeWest
+        });
     } else if right_hovered {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeEast);
+        ui.ctx().set_cursor_icon(if vertical {
+            egui::CursorIcon::ResizeSouth
+        } else {
+            egui::CursorIcon::ResizeEast
+        });
     } else if middle_hovered || (on_sb && middle_resp.dragged()) {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     }
@@ -618,13 +634,13 @@ pub(crate) fn show(
     // Drag middle → pan（x 方向）；垂直位移 → 返回 dy 供调用处缩放对面轴。
     // 斜拖 = 平移 + 缩放同时进行。
     if press_on_sb && middle_resp.dragged() {
-        let delta = middle_resp.drag_delta().x;
+        let delta = drag_main(middle_resp.drag_delta());
         let delta_ticks = delta as f64 / scale;
         *scroll_x = (*scroll_x as f64 + delta_ticks * *pixels_per_tick as f64) as f32;
         *scroll_x = scroll_x.clamp(0.0, max_scroll_x(*pixels_per_tick));
         *dirty = true;
         ui.ctx().request_repaint();
-        return middle_resp.drag_delta().y;
+        return drag_cross(middle_resp.drag_delta());
     }
 
     // Apply zoom, clamping both ppt and scroll_x so the rectangle never
@@ -642,8 +658,8 @@ pub(crate) fn show(
 
     // Drag left edge → zoom, anchoring at right edge
     if press_on_sb && left_resp.dragged() {
-        let new_left =
-            (rect_left + left_resp.drag_delta().x).clamp(0.0, rect_right - 2.0 * EDGE_WIDTH);
+        let new_left = (rect_left + drag_main(left_resp.drag_delta()))
+            .clamp(0.0, rect_right - 2.0 * EDGE_WIDTH);
         let new_start_tick = new_left as f64 / scale;
         let right_tick = start_tick + viewport_ticks;
         let new_viewport_ticks = (right_tick - new_start_tick).max(1.0);
@@ -659,8 +675,8 @@ pub(crate) fn show(
 
     // Drag right edge → zoom, anchoring at left edge
     if press_on_sb && right_resp.dragged() {
-        let new_right =
-            (rect_right + right_resp.drag_delta().x).clamp(rect_left + 2.0 * EDGE_WIDTH, sb_w);
+        let new_right = (rect_right + drag_main(right_resp.drag_delta()))
+            .clamp(rect_left + 2.0 * EDGE_WIDTH, sb_w);
         let new_right_tick = new_right as f64 / scale;
         let new_viewport_ticks = (new_right_tick - start_tick).max(1.0);
         apply_zoom(scroll_x, pixels_per_tick, start_tick, new_viewport_ticks);
@@ -689,6 +705,22 @@ pub(crate) fn show(
 ///
 /// 即使 `total_pixels <= view_height`（内容一屏装下），也会绘制占满滚动条的 thumb，
 /// 用户仍可拖动边缘缩放。只有 `max_scroll_y == 0` 时 pan 无效。
+/// Paint a scrollbar for a discrete-cell axis（音高/轨道）沿其主轴方向。
+///
+/// 总范围 = `num_cells * cell_size`（如 `num_tracks * lane_height` 或 `128 * key_height`）。
+/// 视口 = `view_height` 像素。`cell_size` = 每个单元的像素长度（lane_height / key_height）。
+///
+/// 三区交互（与现状纵向条对称）：
+/// - 中间拖动 → 平移 scroll（主轴方向）
+/// - 起点边拖动 → 缩放 cell_size，锚定 thumb 终点 sb 位置
+/// - 终点边拖动 → 缩放 cell_size，锚定 thumb 起点 sb 位置
+///
+/// `orientation` 决定条形走向：横向视图 = 右侧竖条（主轴 Y）；纵向瀑布流 = 底部横条（主轴 X）。
+/// `cell_min` / `cell_max` = cell_size 的最小/最大值。
+/// `scroll` / `cell_size` 会被原地修改；`dirty` 标记视图为脏。
+///
+/// 即使 `total_pixels <= view_height`（内容一屏装下），也会绘制占满滚动条的 thumb，
+/// 用户仍可拖动边缘缩放。只有 `max_scroll == 0` 时 pan 无效。
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub(crate) fn show_vertical(
     ui: &mut egui::Ui,
@@ -700,8 +732,28 @@ pub(crate) fn show_vertical(
     cell_min: f32,
     cell_max: f32,
     dirty: &mut bool,
+    orientation: yinhe_types::Orientation,
 ) -> f32 {
-    let sb_h = rect.height();
+    // 相对「现状=主轴Y」的转置：纵向瀑布流时 key 条横着（主轴=X）。
+    let transpose = orientation == yinhe_types::Orientation::Vertical;
+    let along_len = |r: egui::Rect| if transpose { r.width() } else { r.height() };
+    let along_rect = |a0: f32, a1: f32| {
+        if transpose {
+            egui::Rect::from_min_max(
+                egui::pos2(rect.min.x + a0, rect.min.y),
+                egui::pos2(rect.min.x + a1, rect.max.y),
+            )
+        } else {
+            egui::Rect::from_min_max(
+                egui::pos2(rect.min.x, rect.min.y + a0),
+                egui::pos2(rect.max.x, rect.min.y + a1),
+            )
+        }
+    };
+    let drag_main = |v: egui::Vec2| if transpose { v.x } else { v.y };
+    let drag_cross = |v: egui::Vec2| if transpose { v.y } else { v.x };
+
+    let sb_h = along_len(rect);
     if sb_h <= 0.0 || view_height <= 0.0 || num_cells == 0 {
         return 0.0;
     }
@@ -709,12 +761,11 @@ pub(crate) fn show_vertical(
     let num_cells_f = num_cells as f32;
     let total_pixels = num_cells_f * *cell_size;
 
-    // max_scroll_y：当 total_pixels <= view_height 时为 0（无滚动空间，但仍然绘制 thumb）
-    let max_scroll_y = (total_pixels - view_height).max(0.0);
-    *scroll_y = scroll_y.clamp(0.0, max_scroll_y);
+    // max_scroll：当 total_pixels <= view_height 时为 0（无滚动空间，但仍然绘制 thumb）
+    let max_scroll = (total_pixels - view_height).max(0.0);
+    *scroll_y = scroll_y.clamp(0.0, max_scroll);
 
     // Scale: scrollbar pixels per content pixel.
-    // 当 total_pixels < view_height 时用 view_height 作为分母，让 thumb 占满整个滚动条。
     let scale = sb_h / total_pixels.max(view_height);
 
     // ── Rectangle position and size (derived from current view state) ──
@@ -727,41 +778,26 @@ pub(crate) fn show_vertical(
     ui.painter().rect_filled(rect, 0.0, bg_color);
 
     // ── Rectangle visual ──
-    let rect_rect = egui::Rect::from_min_max(
-        egui::pos2(rect.min.x, rect.min.y + rect_top),
-        egui::pos2(rect.max.x, (rect.min.y + rect_bottom).min(rect.max.y)),
+    let rect_rect = along_rect(rect_top, rect_bottom.min(sb_h));
+
+    // Three interaction zones (start edge / middle / end edge)
+    let start_edge_rect = along_rect(rect_top, (rect_top + EDGE_WIDTH).min(rect_bottom));
+    let end_edge_rect = along_rect((rect_bottom - EDGE_WIDTH).max(rect_top), rect_bottom);
+    let middle_rect = along_rect(
+        (rect_top + EDGE_WIDTH).min(rect_bottom),
+        (rect_bottom - EDGE_WIDTH).max(rect_top),
     );
 
-    // Three interaction zones (top edge / middle / bottom edge)
-    let top_edge_rect = egui::Rect::from_min_max(
-        rect_rect.min,
-        egui::pos2(
-            rect_rect.max.x,
-            (rect_rect.min.y + EDGE_WIDTH).min(rect_rect.max.y),
-        ),
-    );
-    let bottom_edge_rect = egui::Rect::from_min_max(
-        egui::pos2(
-            rect_rect.min.x,
-            (rect_rect.max.y - EDGE_WIDTH).max(rect_rect.min.y),
-        ),
-        rect_rect.max,
-    );
-    let middle_rect = egui::Rect::from_min_max(
-        egui::pos2(rect_rect.min.x, top_edge_rect.max.y),
-        egui::pos2(rect_rect.max.x, bottom_edge_rect.min.y),
-    );
-
-    let edge_id_top = ui.id().with("__vsb_top__");
-    let edge_id_bottom = ui.id().with("__vsb_bottom__");
+    let edge_id_start = ui.id().with("__vsb_start__");
+    let edge_id_end = ui.id().with("__vsb_end__");
     let middle_id = ui.id().with("__vsb_mid__");
 
-    let top_resp = ui.interact(top_edge_rect, edge_id_top, egui::Sense::click_and_drag());
-    let bottom_resp = ui.interact(
-        bottom_edge_rect,
-        edge_id_bottom,
+    let start_resp = ui.interact(
+        start_edge_rect,
+        edge_id_start,
         egui::Sense::click_and_drag(),
     );
+    let end_resp = ui.interact(end_edge_rect, edge_id_end, egui::Sense::click_and_drag());
     let middle_resp = ui.interact(middle_rect, middle_id, egui::Sense::click_and_drag());
 
     // 只有鼠标指针真的在滚动条 band 上时才允许交互（同水平滚动条），
@@ -774,15 +810,15 @@ pub(crate) fn show_vertical(
         .input(|i| i.pointer.press_origin())
         .is_some_and(|p| rect.contains(p));
 
-    let top_hovered = on_sb && (top_resp.hovered() || top_resp.dragged());
-    let bottom_hovered = on_sb && (bottom_resp.hovered() || bottom_resp.dragged());
+    let start_hovered = on_sb && (start_resp.hovered() || start_resp.dragged());
+    let end_hovered = on_sb && (end_resp.hovered() || end_resp.dragged());
     let middle_hovered = on_sb && (middle_resp.hovered() || middle_resp.dragged());
 
     // Paint rectangle with appropriate color
     let thumb_color =
-        if on_sb && (top_resp.dragged() || bottom_resp.dragged() || middle_resp.dragged()) {
+        if on_sb && (start_resp.dragged() || end_resp.dragged() || middle_resp.dragged()) {
             rect_drag_color
-        } else if middle_hovered || top_hovered || bottom_hovered {
+        } else if middle_hovered || start_hovered || end_hovered {
             rect_hover_color
         } else {
             rect_color
@@ -790,80 +826,73 @@ pub(crate) fn show_vertical(
     ui.painter().rect_filled(rect_rect, 0.0, thumb_color);
 
     // ── Cursor ──
-    if top_hovered {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNorth);
-    } else if bottom_hovered {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeSouth);
+    if start_hovered {
+        ui.ctx().set_cursor_icon(if transpose {
+            egui::CursorIcon::ResizeWest
+        } else {
+            egui::CursorIcon::ResizeNorth
+        });
+    } else if end_hovered {
+        ui.ctx().set_cursor_icon(if transpose {
+            egui::CursorIcon::ResizeEast
+        } else {
+            egui::CursorIcon::ResizeSouth
+        });
     } else if middle_hovered || (on_sb && middle_resp.dragged()) {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     }
 
     // ── Interaction ──
-    //
-    // 像素空间核心公式：thumb_height × cell_size = view_height × sb_h / num_cells = K
-    // 因为 thumb_height = view_height × scale = view_height × sb_h / total_pixels
-    //                  = view_height × sb_h / (num_cells × cell_size) = K / cell_size
-    // 所以 cell_size 变化与 thumb_height 变化成反比。
-    //
-    // 拖边缘时，直接用 thumb_height 反比计算 new_cell_size，
-    // 避免把 thumb 像素变化等同于 viewport_pixels 变化（那是 bug）。
+    // 像素空间核心公式：thumb_len × cell_size = view_height × sb_h / num_cells = K
     let k_constant = view_height * sb_h / num_cells_f;
 
-    // ── Interaction（仅当鼠标按下时真的在滚动条 band 上才有效）──
     // 缩放/平移一律从 thumb（或边缘）按下开始；背景区域拖拽不触发任何操作。
 
-    // Drag middle → pan（y 方向）；水平位移 → 返回 dx 供调用处缩放对面轴。
-    // 斜拖 = 平移 + 缩放同时进行。
+    // Drag middle → pan（主轴方向）；副轴位移 → 返回供调用处缩放对面轴。
     if press_on_sb && middle_resp.dragged() {
-        if max_scroll_y > 0.0 {
-            let delta = middle_resp.drag_delta().y;
-            *scroll_y = (*scroll_y + delta / scale).clamp(0.0, max_scroll_y);
+        if max_scroll > 0.0 {
+            let delta = drag_main(middle_resp.drag_delta());
+            *scroll_y = (*scroll_y + delta / scale).clamp(0.0, max_scroll);
             *dirty = true;
             ui.ctx().request_repaint();
         }
-        return middle_resp.drag_delta().x;
+        return drag_cross(middle_resp.drag_delta());
     }
 
-    // Drag top edge → zoom，锚定 thumb 底边 sb 位置（rect_bottom 不动）
-    if press_on_sb && top_resp.dragged() {
-        let new_thumb_top_sb =
-            (rect_top + top_resp.drag_delta().y).clamp(0.0, rect_bottom - 2.0 * EDGE_WIDTH);
-        let new_thumb_height_sb = (rect_bottom - new_thumb_top_sb).max(2.0 * EDGE_WIDTH);
-        let new_cs = (k_constant / new_thumb_height_sb).clamp(cell_min, cell_max);
-        // 重新计算（clamp 可能调整 cell_size）
+    // Drag start edge → zoom，锚定 thumb 终点 sb 位置（rect_bottom 不动）
+    if press_on_sb && start_resp.dragged() {
+        let new_thumb_start_sb = (rect_top + drag_main(start_resp.drag_delta()))
+            .clamp(0.0, rect_bottom - 2.0 * EDGE_WIDTH);
+        let new_thumb_len_sb = (rect_bottom - new_thumb_start_sb).max(2.0 * EDGE_WIDTH);
+        let new_cs = (k_constant / new_thumb_len_sb).clamp(cell_min, cell_max);
         let new_scale = sb_h / (num_cells_f * new_cs);
-        // 锚定 thumb 底边 sb 位置 = rect_bottom
-        // (new_scroll_y + view_height) × new_scale = rect_bottom
-        let new_scroll_y = rect_bottom / new_scale - view_height;
+        let new_scroll = rect_bottom / new_scale - view_height;
         let new_total_pixels = num_cells_f * new_cs;
         let max_sy = (new_total_pixels - view_height).max(0.0);
         *cell_size = new_cs;
-        *scroll_y = new_scroll_y.clamp(0.0, max_sy);
+        *scroll_y = new_scroll.clamp(0.0, max_sy);
         *dirty = true;
         ui.ctx().request_repaint();
         return 0.0;
     }
 
-    // Drag bottom edge → zoom，锚定 thumb 顶边 sb 位置（rect_top 不动）
-    if press_on_sb && bottom_resp.dragged() {
-        let new_thumb_bottom_sb =
-            (rect_bottom + bottom_resp.drag_delta().y).clamp(rect_top + 2.0 * EDGE_WIDTH, sb_h);
-        let new_thumb_height_sb = (new_thumb_bottom_sb - rect_top).max(2.0 * EDGE_WIDTH);
-        let new_cs = (k_constant / new_thumb_height_sb).clamp(cell_min, cell_max);
+    // Drag end edge → zoom，锚定 thumb 起点 sb 位置（rect_top 不动）
+    if press_on_sb && end_resp.dragged() {
+        let new_thumb_end_sb = (rect_bottom + drag_main(end_resp.drag_delta()))
+            .clamp(rect_top + 2.0 * EDGE_WIDTH, sb_h);
+        let new_thumb_len_sb = (new_thumb_end_sb - rect_top).max(2.0 * EDGE_WIDTH);
+        let new_cs = (k_constant / new_thumb_len_sb).clamp(cell_min, cell_max);
         let new_scale = sb_h / (num_cells_f * new_cs);
-        // 锚定 thumb 顶边 sb 位置 = rect_top
-        // new_scroll_y × new_scale = rect_top
-        let new_scroll_y = rect_top / new_scale;
+        let new_scroll = rect_top / new_scale;
         let new_total_pixels = num_cells_f * new_cs;
         let max_sy = (new_total_pixels - view_height).max(0.0);
         *cell_size = new_cs;
-        *scroll_y = new_scroll_y.clamp(0.0, max_sy);
+        *scroll_y = new_scroll.clamp(0.0, max_sy);
         *dirty = true;
         ui.ctx().request_repaint();
     }
 
     // 背景区域 / 未按下：返回 0，不触发任何缩放/平移。
-    // （缩放对面轴的 dx 已由 thumb 中间拖拽的水平位移提供。）
     0.0
 }
 

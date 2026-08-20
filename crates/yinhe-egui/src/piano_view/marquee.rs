@@ -69,16 +69,25 @@ pub(crate) fn marquee_drag_frame(
         && !on_bar
     {
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-        let raw_tick = view.x_to_tick(local.x);
+        let (main_px, cross_px) = super::drag::main_cross_x_y(view, (local.x, local.y));
+        let raw_tick = super::drag::main_px_to_tick_dir(view, main_px);
         let start_tick = crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
-        let start_content_y = local.y + view.base.scroll_y;
-        drag = Some(((start_tick, start_content_y), local, local));
+        // 副轴起始位置存「未滚动」坐标：横向 = content_y + scroll_y；纵向 = content_x + scroll_x。
+        let start_cross = cross_px + view.cross_scroll_val();
+        drag = Some(((start_tick, start_cross), local, local));
     }
 
     // Recompute start pixel from music coords each frame (immune to scroll/zoom).
     // 用于绘制选框时对齐量化网格。
-    let start_pixel = drag.map(|((tick, content_y), _, _)| {
-        egui::pos2(view.tick_to_x(tick), content_y - view.base.scroll_y)
+    let start_pixel = drag.map(|((tick, cross_unscrolled), _, _)| {
+        if view.is_vertical() {
+            egui::pos2(
+                cross_unscrolled - view.base.scroll_x,
+                view.tick_to_main_px(tick),
+            )
+        } else {
+            egui::pos2(view.tick_to_x(tick), cross_unscrolled - view.base.scroll_y)
+        }
     });
 
     // Move -> update with auto-scroll
@@ -98,26 +107,26 @@ pub(crate) fn marquee_drag_frame(
             // ── Auto-scroll when dragging near the edge ──
             // No scroll compensation needed: start is in music coords, so it
             // automatically follows the content.
-            crate::selection::drag::auto_scroll_on_drag(
+            crate::selection::drag::auto_scroll_on_drag_dir(
                 ui,
-                &mut view.base,
+                view,
                 music_rect,
                 pos,
-                |base, w, _h| {
-                    base.clamp_scroll_x(w, total_ticks);
-                    base.scroll_y = base.scroll_y.max(0.0);
+                |view, w, h| {
+                    view.clamp_scroll(w, h, total_ticks);
                 },
             );
             view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
 
             // ── Tooltip：显示 ±tick / ±key（tick 按量化 snap）──
-            let (s_tick, s_content_y) = start_music;
-            let raw_cur = view.x_to_tick(local.x);
+            let (s_tick, s_cross) = start_music;
+            let (main_px, cross_px) = super::drag::main_cross_x_y(view, (local.x, local.y));
+            let raw_cur = super::drag::main_px_to_tick_dir(view, main_px);
             let snapped_cur =
                 crate::view_interaction::snap_tick(raw_cur, quantize, ppq, bar_line_data);
             let dt = (snapped_cur - s_tick).round() as i64;
-            let s_key = view.y_to_key(s_content_y - view.base.scroll_y);
-            let cur_key = view.y_to_key(local.y);
+            let s_key = view.cross_px_to_key(s_cross - view.cross_scroll_val());
+            let cur_key = view.cross_px_to_key(cross_px);
             let dk = cur_key as i32 - s_key as i32;
             let lines = vec![
                 crate::view_interaction::format_signed("tick", dt),
@@ -132,12 +141,14 @@ pub(crate) fn marquee_drag_frame(
                 // 3px 阈值用 press_pos（按下时的原始像素位置）
                 if (end - press_pos).length() >= 3.0 {
                     // 选区 bounds 用 start_px（量化后）和 end（当前鼠标）计算
-                    let (sx, ex, sy, ey, t_start, t_end, key_lo, key_hi) =
+                    let (x0, x1, y0, y1, t_start, t_end, key_lo, key_hi) =
                         piano_snapped_bounds(start_px, end, view, quantize, ppq, bar_line_data);
                     let kb_w = music_rect.min.x - content_rect.min.x;
+                    // 横向时 x 是含 kb_w 的 content 坐标，需减 kb_w 转 music 区；
+                    // 纵向时 music == content（kb_w == 0），x 即 key 像素。
                     let snapped_view_rect = egui::Rect::from_min_max(
-                        egui::pos2(sx.min(ex) - kb_w, sy.min(ey)),
-                        egui::pos2(sx.max(ex) - kb_w, sy.max(ey)),
+                        egui::pos2(x0 - kb_w, y0),
+                        egui::pos2(x1 - kb_w, y1),
                     );
                     Some(MarqueeDragResult {
                         t_start,
@@ -190,24 +201,28 @@ pub(crate) fn draw_marquee_box(
             return;
         }
         // 绘制用 start_music（量化后）和 end（当前鼠标）计算选区 bounds
-        let start = egui::pos2(
-            view.tick_to_x(start_music.0),
-            start_music.1 - view.base.scroll_y,
-        );
-        let (vx, vy, vw, vh, _, _, _, _) =
+        let start = if view.is_vertical() {
+            egui::pos2(
+                start_music.1 - view.base.scroll_x,
+                view.tick_to_main_px(start_music.0),
+            )
+        } else {
+            egui::pos2(
+                view.tick_to_x(start_music.0),
+                start_music.1 - view.base.scroll_y,
+            )
+        };
+        let (x0, x1, y0, y1, _, _, _, _) =
             piano_snapped_bounds(start, end, view, quantize, ppq, bar_line_data);
         let kb_w = music_rect.min.x - content_rect.min.x;
         // 垂直全选模式：y 范围用 music_rect 全高，x 范围不变
         let snapped = if vertical {
             egui::Rect::from_min_max(
-                egui::pos2(vx.min(vy) - kb_w, 0.0),
-                egui::pos2(vx.max(vy) - kb_w, music_rect.height()),
+                egui::pos2(x0 - kb_w, 0.0),
+                egui::pos2(x1 - kb_w, music_rect.height()),
             )
         } else {
-            egui::Rect::from_min_max(
-                egui::pos2(vx.min(vy) - kb_w, vw.min(vh)),
-                egui::pos2(vx.max(vy) - kb_w, vw.max(vh)),
-            )
+            egui::Rect::from_min_max(egui::pos2(x0 - kb_w, y0), egui::pos2(x1 - kb_w, y1))
         };
         crate::selection::draw::draw(ui.painter(), music_rect, snapped, fill_color, stroke_color);
     }
@@ -255,6 +270,11 @@ pub(crate) fn eraser_drag_frame(
 }
 
 /// Compute snapped selection bounds for piano roll.
+///
+/// 返回 `(x0, x1, y0, y1, t_start, t_end, key_lo, key_hi)`：
+/// `(x0≤x1, y0≤y1)` 是选中框在 content-local 像素里的屏幕范围——
+/// 横向：x = 时间轴（tick）、y = 音高；纵向：x = 音高、y = 时间轴。
+/// 时间轴两端按量化网格对齐；音高范围对齐到整键单元（横向 ≈ 旧行为）。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn piano_snapped_bounds(
     start: egui::Pos2,
@@ -264,13 +284,20 @@ pub(crate) fn piano_snapped_bounds(
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
 ) -> (f32, f32, f32, f32, f64, f64, u8, u8) {
-    let sx = start.x.min(end.x);
-    let ex = start.x.max(end.x);
-    let sy = start.y.min(end.y);
-    let ey = start.y.max(end.y);
+    // 主轴 = 时间轴（横向 X / 纵向 Y），副轴 = 音高（横向 Y / 纵向 X）。
+    let (main0, main1) = if view.is_vertical() {
+        (start.y.min(end.y), start.y.max(end.y))
+    } else {
+        (start.x.min(end.x), start.x.max(end.x))
+    };
+    let (cross0, cross1) = if view.is_vertical() {
+        (start.x.min(end.x), start.x.max(end.x))
+    } else {
+        (start.y.min(end.y), start.y.max(end.y))
+    };
 
-    let tick_s = view.x_to_tick(sx);
-    let tick_e = view.x_to_tick(ex);
+    let tick_s = super::drag::main_px_to_tick_dir(view, main0);
+    let tick_e = super::drag::main_px_to_tick_dir(view, main1);
     let snapped_s = crate::view_interaction::snap_tick(tick_s, quantize, ppq, bar_line_data);
     let snapped_e = crate::view_interaction::snap_tick(tick_e, quantize, ppq, bar_line_data);
     let t_start = snapped_s.min(snapped_e);
@@ -282,20 +309,52 @@ pub(crate) fn piano_snapped_bounds(
         t_end = t_start + interval.max(1.0);
     }
 
-    let kh = view.key_height;
-    let scroll_y = view.base.scroll_y;
+    // 副轴 key 范围 + 对齐整键单元的屏幕边界。横向保持旧数学（key127 在顶）；
+    // 纵向 key0 在左：左 = key_lo 左缘，右 = key_hi 右缘。
+    let (key_lo, key_hi, cross_snap0, cross_snap1) = if view.is_vertical() {
+        let k0 = view.cross_px_to_key(cross0);
+        let k1 = view.cross_px_to_key(cross1);
+        let (lo, hi) = (k0.min(k1), k0.max(k1));
+        (
+            lo,
+            hi,
+            view.key_to_cross_px(lo),
+            view.key_to_cross_px(hi) + view.key_height,
+        )
+    } else {
+        let kh = view.key_height;
+        let scroll_y = view.base.scroll_y;
+        let lo = (127.0 - ((scroll_y + cross1) / kh))
+            .ceil()
+            .clamp(0.0, 127.0) as u8;
+        let hi = (127.0 - ((scroll_y + cross0) / kh))
+            .ceil()
+            .clamp(0.0, 127.0) as u8;
+        let top = (127.0 - hi as f32) * kh - scroll_y;
+        let bottom = (127.0 - lo as f32 + 1.0) * kh - scroll_y;
+        (lo, hi, top, bottom)
+    };
 
-    let key_lo = (127.0 - ((scroll_y + ey) / kh)).ceil().clamp(0.0, 127.0) as u8;
-    let key_hi = (127.0 - ((scroll_y + sy) / kh)).ceil().clamp(0.0, 127.0) as u8;
-    let screen_sy = (127.0 - key_hi as f32) * kh - scroll_y;
-    let screen_ey = (127.0 - key_lo as f32 + 1.0) * kh - scroll_y;
+    // 主轴对齐量化网格后的像素：横向 x / 纵向 y
+    let main_snap0 = super::drag::tick_to_main_px_dir(view, t_start);
+    let main_snap1 = super::drag::tick_to_main_px_dir(view, t_end);
+    let (x0, x1, y0, y1) = if view.is_vertical() {
+        (
+            cross_snap0.min(cross_snap1),
+            cross_snap0.max(cross_snap1),
+            main_snap0.min(main_snap1),
+            main_snap0.max(main_snap1),
+        )
+    } else {
+        (
+            main_snap0.min(main_snap1),
+            main_snap0.max(main_snap1),
+            cross_snap0.min(cross_snap1),
+            cross_snap0.max(cross_snap1),
+        )
+    };
 
-    let screen_sx = view.tick_to_x(t_start);
-    let screen_ex = view.tick_to_x(t_end);
-
-    (
-        screen_sx, screen_ex, screen_sy, screen_ey, t_start, t_end, key_lo, key_hi,
-    )
+    (x0, x1, y0, y1, t_start, t_end, key_lo, key_hi)
 }
 
 #[cfg(test)]
@@ -318,6 +377,7 @@ mod tests {
             },
             key_height: 10.0,
             viewport_h: 0.0,
+            orientation: yinhe_types::Orientation::Horizontal,
         }
     }
 
@@ -328,13 +388,9 @@ mod tests {
     /// 浮动工具条上的一点（用 compute_bar_rect 计算得到，避免硬编码坐标）。
     fn bar_point() -> egui::Pos2 {
         let eff = [(0.0f64, 100.0f64, 60u8, 70u8)];
+        let view = test_view();
         let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
-            &test_view().base,
-            test_view().key_height,
-            eff[0].0,
-            eff[0].1,
-            eff[0].2,
-            eff[0].3,
+            &view, eff[0].0, eff[0].1, eff[0].2, eff[0].3,
         );
         let bar = crate::widgets::selection_actions::compute_bar_rect(content(), pixel_rect)
             .expect("bar 应显示");

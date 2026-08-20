@@ -122,9 +122,10 @@ pub(crate) fn pencil_frame(
             return None;
         };
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-        let raw_tick = view.x_to_tick(local.x);
+        let (main_px, cross_px) = super::drag::main_cross_x_y(view, (local.x, local.y));
+        let raw_tick = super::drag::main_px_to_tick_dir(view, main_px);
         let tick = crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
-        let key = view.y_to_key(local.y);
+        let key = view.cross_px_to_key(cross_px);
         Some((tick.max(0.0), key))
     });
 
@@ -142,9 +143,13 @@ pub(crate) fn pencil_frame(
             if !music_rect.contains(mouse_screen) {
                 return None;
             }
+            // 注意：横向时 x 相对 music 区左缘（content 左缘 + kb_w），y 与 content 相同；
+            // 纵向时 music == content。key 轴：横向 = y、纵向 = x（均由 cross 访问器处理）。
             let mouse_local_x = mouse_screen.x - music_rect.min.x;
             let mouse_local_y = mouse_screen.y - music_rect.min.y;
-            let key = view.y_to_key(mouse_local_y);
+            let (main_px, cross_px) =
+                super::drag::main_cross_x_y(view, (mouse_local_x, mouse_local_y));
+            let key = view.cross_px_to_key(cross_px);
             let midi = midi?;
             let active_track = track?;
             let notes = midi.key_notes_in_range(key, 0, u32::MAX);
@@ -155,33 +160,31 @@ pub(crate) fn pencil_frame(
                 if note.track != active_track {
                     continue;
                 }
-                let note_left = view.tick_to_x(note.start_tick as f64) - kb_w;
-                let note_right = view.tick_to_x(note.end_tick as f64) - kb_w;
-                let note_top = view.key_to_y(key);
-                let note_bottom = note_top + view.key_height;
-
-                if mouse_local_x >= note_left
-                    && mouse_local_x <= note_right
-                    && mouse_local_y >= note_top
-                    && mouse_local_y <= note_bottom
-                {
-                    let dist_left = (mouse_local_x - note_left).abs();
-                    let dist_right = (mouse_local_x - note_right).abs();
-                    let mode = if dist_left < EDGE_THRESHOLD_PX {
-                        HitMode::ResizeLeft
-                    } else if dist_right < EDGE_THRESHOLD_PX {
-                        HitMode::ResizeRight
-                    } else {
-                        HitMode::Move
-                    };
-                    return Some(HitNote {
-                        track: note.track,
-                        start_tick: note.start_tick,
-                        end_tick: note.end_tick,
-                        key,
-                        mode,
-                    });
+                // 主轴向（tick）：横向 = X（减 kb_w 转 music 区坐标）；纵向 = Y（music == content，无需减）。
+                let tick_shift = if view.is_vertical() { 0.0 } else { kb_w };
+                let a = super::drag::tick_to_main_px_dir(view, note.start_tick as f64) - tick_shift;
+                let b = super::drag::tick_to_main_px_dir(view, note.end_tick as f64) - tick_shift;
+                let c = view.key_to_cross_px(key);
+                let note_rect = super::drag::orient_rect(view, a, b, c, c + view.key_height);
+                if !note_rect.contains(egui::pos2(mouse_local_x, mouse_local_y)) {
+                    continue;
                 }
+                let dist_left = (main_px - a).abs();
+                let dist_right = (main_px - b).abs();
+                let mode = if dist_left < EDGE_THRESHOLD_PX {
+                    HitMode::ResizeLeft
+                } else if dist_right < EDGE_THRESHOLD_PX {
+                    HitMode::ResizeRight
+                } else {
+                    HitMode::Move
+                };
+                return Some(HitNote {
+                    track: note.track,
+                    start_tick: note.start_tick,
+                    end_tick: note.end_tick,
+                    key,
+                    mode,
+                });
             }
             None
         })()
@@ -275,14 +278,13 @@ pub(crate) fn pencil_frame(
             if pointer.primary_down() && !pointer.primary_released() {
                 // auto-scroll：让长音符能拖出屏幕（pos 未 clamp）
                 if let Some(pos) = hover_pos {
-                    crate::selection::drag::auto_scroll_on_drag(
+                    crate::selection::drag::auto_scroll_on_drag_dir(
                         ui,
-                        &mut view.base,
+                        view,
                         music_rect,
                         pos,
-                        |base, w, _h| {
-                            base.clamp_scroll_x(w, total_ticks);
-                            base.scroll_y = base.scroll_y.max(0.0);
+                        |view, w, h| {
+                            view.clamp_scroll(w, h, total_ticks);
                         },
                     );
                     view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
@@ -352,14 +354,13 @@ pub(crate) fn pencil_frame(
                 && !pointer.primary_released()
                 && let Some(pos) = hover_pos
             {
-                crate::selection::drag::auto_scroll_on_drag(
+                crate::selection::drag::auto_scroll_on_drag_dir(
                     ui,
-                    &mut view.base,
+                    view,
                     music_rect,
                     pos,
-                    |base, w, _h| {
-                        base.clamp_scroll_x(w, total_ticks);
-                        base.scroll_y = base.scroll_y.max(0.0);
+                    |view, w, h| {
+                        view.clamp_scroll(w, h, total_ticks);
                     },
                 );
                 view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
@@ -428,14 +429,13 @@ pub(crate) fn pencil_frame(
                 && !pointer.primary_released()
                 && let Some(pos) = hover_pos
             {
-                crate::selection::drag::auto_scroll_on_drag(
+                crate::selection::drag::auto_scroll_on_drag_dir(
                     ui,
-                    &mut view.base,
+                    view,
                     music_rect,
                     pos,
-                    |base, w, _h| {
-                        base.clamp_scroll_x(w, total_ticks);
-                        base.scroll_y = base.scroll_y.max(0.0);
+                    |view, w, h| {
+                        view.clamp_scroll(w, h, total_ticks);
                     },
                 );
                 view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
@@ -491,14 +491,13 @@ pub(crate) fn pencil_frame(
                 && !pointer.primary_released()
                 && let Some(pos) = hover_pos
             {
-                crate::selection::drag::auto_scroll_on_drag(
+                crate::selection::drag::auto_scroll_on_drag_dir(
                     ui,
-                    &mut view.base,
+                    view,
                     music_rect,
                     pos,
-                    |base, w, _h| {
-                        base.clamp_scroll_x(w, total_ticks);
-                        base.scroll_y = base.scroll_y.max(0.0);
+                    |view, w, h| {
+                        view.clamp_scroll(w, h, total_ticks);
                     },
                 );
                 view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
@@ -627,6 +626,7 @@ mod tests {
             },
             key_height: 10.0,
             viewport_h: 0.0,
+            orientation: yinhe_types::Orientation::Horizontal,
         }
     }
 

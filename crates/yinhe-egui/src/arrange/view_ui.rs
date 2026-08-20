@@ -142,6 +142,7 @@ pub fn show(
         lane_height: view.lane_height(), // AR: per-track lane height
         value_zoom: 0.0,   // AR unused (automation panel only)
         value_scroll: 0.0, // AR unused (automation panel only)
+        orientation: 0,    // AR 恒横向
     };
 
     view.base.dirty = false;

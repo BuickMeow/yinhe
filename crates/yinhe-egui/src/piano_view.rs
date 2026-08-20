@@ -136,15 +136,8 @@ fn effective_tool(
                 let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
                 drag::hit_test_note(midi, view, local, track_visible, track_selected).is_some()
                     || sel_rect.effective_rects().iter().any(|&(t0, t1, k0, k1)| {
-                        crate::selection::drag::music_sel_to_pixel_rect(
-                            &view.base,
-                            view.key_height,
-                            t0,
-                            t1,
-                            k0,
-                            k1,
-                        )
-                        .contains(local)
+                        crate::selection::drag::music_sel_to_pixel_rect(view, t0, t1, k0, k1)
+                            .contains(local)
                     })
             });
             if hit { active } else { Tool::Pencil }
@@ -225,29 +218,46 @@ pub fn show(
         _ => 0.0,
     };
 
-    // Cap panels area to prevent overflow when too many panels.
-    // Reserve at least 35% of available height for the pianoroll content;
-    // excess panels become scrollable.
-    let avail_h =
-        rect.height() - RULER_H - theme::PR_BAR_H - crate::widgets::scrollbar::SCROLLBAR_H;
+    // ── 布局：方向感知（主轴 = 时间轴）──
+    // 横向：竖 ruler 顶部横条 + 左侧键盘列；底部水平 scrollbar（时间），右侧竖 scrollbar（音高）。
+    // 纵向瀑布流：control bar 顶部、竖 ruler 左侧列、键盘底部横条（高 = keyboard_width）；
+    //   右侧竖 scrollbar（时间），底部横 scrollbar（音高）。
+    let vertical = view.is_vertical();
+    let kb_w = view.keyboard_width();
+    let content_right_x = rect.max.x - crate::widgets::scrollbar::SCROLLBAR_W;
+
+    // AM 面板可用高度（横向：content 之下；纵向：content 之下、键盘之上）
+    let avail_h = if vertical {
+        (rect.height() - theme::PR_BAR_H - crate::widgets::scrollbar::SCROLLBAR_H - kb_w).max(0.0)
+    } else {
+        (rect.height() - RULER_H - theme::PR_BAR_H - crate::widgets::scrollbar::SCROLLBAR_H)
+            .max(0.0)
+    };
     let panels_max_h = (avail_h * 0.65).max(0.0);
     let panels_total_h = panels_natural_h.min(panels_max_h);
 
-    // 内容右边界：让出 SCROLLBAR_W 给垂直滚动条
-    let content_right_x = rect.max.x - crate::widgets::scrollbar::SCROLLBAR_W;
-
-    // Layout: ruler | pianoroll content | automation panels | scrollbar
+    // 音乐区位置：横向顶部从 ruler+control_bar 之下开始；纵向顶部从 control_bar 之下。
     let ruler_band_y = rect.min.y;
-    let content_y = rect.min.y + RULER_H + theme::PR_BAR_H;
-    let content_h = (avail_h - panels_total_h).max(0.0);
+    let (content_y, content_bottom, content_left_x, music_left_x) = if vertical {
+        let top = rect.min.y + theme::PR_BAR_H;
+        // 底部：key 滚动条 + 键盘条（高 kb_w）
+        let keyboard_top = rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H - kb_w;
+        let bottom = keyboard_top - panels_total_h;
+        let left = rect.min.x + RULER_H; // 竖 ruler 列
+        (top, bottom.max(top), left, left)
+    } else {
+        let top = rect.min.y + RULER_H + theme::PR_BAR_H;
+        let bottom = top + (avail_h - panels_total_h).max(0.0);
+        (top, bottom, rect.min.x, rect.min.x + kb_w)
+    };
+    let content_h = (content_bottom - content_y).max(0.0);
     let content_rect = egui::Rect::from_min_max(
-        egui::pos2(rect.min.x, content_y),
-        egui::pos2(content_right_x, content_y + content_h),
+        egui::pos2(content_left_x, content_y),
+        egui::pos2(content_right_x, content_bottom),
     );
-    let kb_w = view.keyboard_width();
     let music_rect = egui::Rect::from_min_max(
-        egui::pos2(rect.min.x + kb_w, content_y),
-        egui::pos2(content_right_x, content_y + content_h),
+        egui::pos2(music_left_x, content_y),
+        egui::pos2(content_right_x, content_bottom),
     );
     let ppp = ui.ctx().pixels_per_point();
     let w = content_rect.width() as u32;
@@ -294,20 +304,27 @@ pub fn show(
         view.base.follow_target = None;
     } else if let Some(ct) = *cursor_tick {
         let dt = ui.input(|i| i.stable_dt).max(1e-4);
+        // 沿主轴跟随：横向滚动目标 = scroll_x（视口宽 w）；纵向 = scroll_y（视口高 h，
+        // 时间轴起点在顶部、无键盘列偏移）。compute_follow_scroll 数学单轴通用。
+        let (main_len, left_boundary, cur_main) = if view.is_vertical() {
+            (h as f32, 0.0, view.base.scroll_y)
+        } else {
+            (w as f32, view.keyboard_width(), view.base.scroll_x)
+        };
         if let Some(t) = super::view_interaction::compute_follow_scroll(
             ct,
             view.base.pixels_per_tick,
-            w as f32,
-            view.keyboard_width(),
+            main_len,
+            left_boundary,
             *follow_mode,
             1.0,
-            view.base.scroll_x,
+            cur_main,
         ) {
             view.base.follow_target = Some(t);
         }
         if let Some(t) = view.base.follow_target {
-            let before = view.base.scroll_x;
-            view.base.scroll_x = super::view_interaction::follow_interpolate(
+            let before = *view.main_scroll();
+            *view.main_scroll() = super::view_interaction::follow_interpolate(
                 before,
                 t,
                 dt,
@@ -315,7 +332,7 @@ pub fn show(
             );
             view.clamp_scroll(w as f32, h as f32, total_ticks);
             // 已到达目标（1px 数值容差）或滚动被 clamp 卡在边界：结束插值。
-            if (t - view.base.scroll_x).abs() <= 1.0 || view.base.scroll_x == before {
+            if (t - *view.main_scroll()).abs() <= 1.0 || *view.main_scroll() == before {
                 view.base.follow_target = None;
             }
         }
@@ -436,9 +453,7 @@ pub fn show(
                 HitMode::ResizeRight => ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeEast),
                 HitMode::Move => ui.ctx().set_cursor_icon(egui::CursorIcon::Move),
             }
-        } else if let Some((side, _, _)) =
-            drag::hit_test_sel_edge(&eff_rects, &view.base, view.key_height, local)
-        {
+        } else if let Some((side, _, _)) = drag::hit_test_sel_edge(&eff_rects, view, local) {
             match side {
                 yinhe_editor_core::ResizeSide::Left => {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest)
@@ -450,12 +465,7 @@ pub fn show(
         } else {
             let in_sel_rect = eff_rects.iter().any(|&(t_start, t_end, key_lo, key_hi)| {
                 let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
-                    &view.base,
-                    view.key_height,
-                    t_start,
-                    t_end,
-                    key_lo,
-                    key_hi,
+                    view, t_start, t_end, key_lo, key_hi,
                 );
                 pixel_rect.contains(local)
             });
@@ -474,15 +484,15 @@ pub fn show(
     }
 
     // ── Content interaction (zoom/pan/cursor/drag/reset) ──
-    // 传 content_rect（含键盘列）+ left_zone_width=kb_w，让 handle_input 统一处理
-    // 键盘区垂直缩放与卷帘区平移/水平缩放。x_to_tick 内部减 left_panel_width，
-    // 所以传入相对 content 的 x 才正确（之前传 music_rect 导致 kb_w 被减两次）。
+    // 横向：左区（键盘列）垂直缩放、右区平移/水平缩放，x_to_tick 内部减 left_panel_width。
+    // 纵向：无左区（键盘在底部），滚轮/缩放直接按主轴（时间轴沿 Y）分发。
+    let left_zone = if view.is_vertical() { 0.0 } else { kb_w };
     crate::view_interaction::handle_input(
         ui,
         content_rect,
         view,
         cursor_tick,
-        kb_w,
+        left_zone,
         Some((quantize, ppq)),
         bar_line_data,
         None,
@@ -493,12 +503,22 @@ pub fn show(
     );
 
     // ── Keyboard resize handle ──
+    // 横向：左侧键盘列的右缘竖线；纵向：底部键盘条的顶部横线。
     ui.push_id("kb_handle", |ui| {
-        let handle_x = rect.min.x + view.keyboard_width();
-        let handle_rect = egui::Rect::from_min_max(
-            egui::pos2(handle_x - 2.0, rect.min.y),
-            egui::pos2(handle_x + 2.0, content_rect.max.y),
-        );
+        let vertical = view.is_vertical();
+        let handle_rect = if vertical {
+            let hy = rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H - view.keyboard_width();
+            egui::Rect::from_min_max(
+                egui::pos2(rect.min.x, hy - 2.0),
+                egui::pos2(content_right_x, hy + 2.0),
+            )
+        } else {
+            let handle_x = rect.min.x + view.keyboard_width();
+            egui::Rect::from_min_max(
+                egui::pos2(handle_x - 2.0, rect.min.y),
+                egui::pos2(handle_x + 2.0, content_rect.max.y),
+            )
+        };
         let handle_resp = ui.interact(handle_rect, ui.id(), egui::Sense::click_and_drag());
         // 只有按下位置真的在把手矩形内才响应拖动：egui 的 interact_radius
         // 会把把手附近 ~5px 的按下判为命中，导致拖动自动化锚点/分割线时
@@ -510,22 +530,32 @@ pub fn show(
             .input(|i| i.pointer.press_origin())
             .is_some_and(|p| handle_rect.contains(p));
         if on_handle && (handle_resp.hovered() || handle_resp.dragged()) {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+            ui.ctx().set_cursor_icon(if vertical {
+                egui::CursorIcon::ResizeVertical
+            } else {
+                egui::CursorIcon::ResizeHorizontal
+            });
         }
         if press_on_handle && handle_resp.dragged() {
-            let delta = handle_resp.drag_delta().x;
+            let delta = if vertical {
+                handle_resp.drag_delta().y
+            } else {
+                handle_resp.drag_delta().x
+            };
             let old_kb = view.keyboard_width();
             let new_kb = (old_kb + delta).clamp(
                 crate::theme::MIN_KEYBOARD_WIDTH,
                 rect.width() * crate::theme::MAX_KEYBOARD_RATIO,
             );
 
-            let old_sb_w = w as f32 - old_kb;
-            let new_sb_w = w as f32 - new_kb;
-            if old_sb_w > 0.0 && new_sb_w > 0.0 {
-                let start_tick = view.base.scroll_x / view.base.pixels_per_tick;
-                let new_start_tick = start_tick * old_sb_w / new_sb_w;
-                view.base.scroll_x = new_start_tick * view.base.pixels_per_tick;
+            // 主视口长度随键盘条尺寸变化，按比例换算保持 start_tick 不变：
+            // 横向 = 音乐区宽 w - kb；纵向 = 音乐区高 h - kb（主轴长度变化）。
+            let old_main = (if vertical { h as f32 } else { w as f32 }) - old_kb;
+            let new_main = (if vertical { h as f32 } else { w as f32 }) - new_kb;
+            if old_main > 0.0 && new_main > 0.0 {
+                let start_tick = view.main_scroll_val() / view.base.pixels_per_tick;
+                let new_start_tick = start_tick * old_main / new_main;
+                *view.main_scroll() = new_start_tick * view.base.pixels_per_tick;
             }
 
             view.base.left_panel_width = new_kb;
@@ -649,8 +679,9 @@ pub fn show(
         // hidden_notes, and track_visible — anything that affects which notes
         // are built. When none of these change (e.g. steady state, no scroll/
         // edit), the render thread skips GPU upload entirely.
-        let (tick_start, tick_end) = view.visible_tick_range(w as f32);
-        let (key_lo, key_hi) = view.visible_key_range(h as f32);
+        let (tick_start, tick_end) =
+            view.visible_main_range(view.main_axis_len(w as f32, h as f32));
+        let (key_lo, key_hi) = view.visible_cross_range(view.cross_axis_len(w as f32, h as f32));
         let tv_hash = yinhe_wgpu::hash_bools(track_visible);
         let hidden_hash = yinhe_wgpu::hash_hidden(&hidden_notes);
         let notes_cache_key = yinhe_wgpu::layer_cache_key(&[
@@ -812,12 +843,7 @@ pub fn show(
             .iter()
             .map(|&(t_start, t_end, key_lo, key_hi)| {
                 crate::selection::drag::music_sel_to_pixel_rect(
-                    &view.base,
-                    view.key_height,
-                    t_start,
-                    t_end,
-                    key_lo,
-                    key_hi,
+                    view, t_start, t_end, key_lo, key_hi,
                 )
             })
             .collect();
@@ -1066,6 +1092,9 @@ pub fn show(
 
     // 水平滚动条：thumb 拖 = 平移（x）+ 垂直位移 → x 轴缩放（tick 宽度）
     // 方向：上拖 = 放大，下拖 = 缩小
+    // 水平滚动条：thumb 拖 = 平移（主轴）+ 副轴位移 → 主轴缩放
+    // 方向：上拖 = 放大，下拖 = 缩小
+    let pr_orientation = view.orientation();
     let sb_drag_dy = ui
         .push_id("piano_scrollbar", |ui| {
             crate::widgets::scrollbar::show(
@@ -1076,6 +1105,7 @@ pub fn show(
                 &mut view.base.pixels_per_tick,
                 total_ticks,
                 &mut view.base.dirty,
+                pr_orientation,
             )
         })
         .inner;
@@ -1111,6 +1141,7 @@ pub fn show(
                     cell_min,
                     cell_max,
                     &mut view.base.dirty,
+                    pr_orientation,
                 )
             })
             .inner;

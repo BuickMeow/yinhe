@@ -35,6 +35,18 @@ pub(crate) trait ViewInteraction {
     fn x_to_tick(&self, x: f32) -> f64;
     fn zoom_around_x(&mut self, pointer_x: f32, factor: f32);
     fn zoom_around_y(&mut self, pointer_y: f32, factor: f32, height: f32);
+
+    /// 视图方向。AR 恒为横向；PR 纵向瀑布流覆写为 `Vertical`。
+    /// 用于 handle_input 中滚轮/缩放/点击的轴语义分发。
+    fn orientation(&self) -> yinhe_types::Orientation {
+        yinhe_types::Orientation::Horizontal
+    }
+
+    /// 主轴像素 → tick（横向下等价 `x_to_tick`；PR 纵向下为沿 Y 的时间）。
+    /// 点击设光标用：横向用 pointer_x，纵向用 pointer_y。
+    fn main_px_to_tick(&self, px: f32) -> f64 {
+        self.x_to_tick(px)
+    }
 }
 
 impl ViewInteraction for yinhe_types::PianoRollView {
@@ -55,6 +67,12 @@ impl ViewInteraction for yinhe_types::PianoRollView {
     }
     fn zoom_around_y(&mut self, pointer_y: f32, factor: f32, height: f32) {
         self.zoom_around_y(pointer_y, factor, height);
+    }
+    fn orientation(&self) -> yinhe_types::Orientation {
+        self.orientation
+    }
+    fn main_px_to_tick(&self, px: f32) -> f64 {
+        self.main_px_to_tick(px)
     }
 }
 
@@ -118,6 +136,7 @@ pub(crate) fn handle_input(
     active_tool: &Tool,
 ) {
     let hit_rect = hit_rect.unwrap_or(rect);
+    let vertical = view.orientation() == yinhe_types::Orientation::Vertical;
     // Use caller-supplied response when painter and interact rect are the
     // same; otherwise create a dedicated click_and_drag interact.
     let owned_resp;
@@ -145,10 +164,11 @@ pub(crate) fn handle_input(
         let pointer_x = pointer_pos.x - rect.min.x;
         let pointer_y = pointer_pos.y - rect.min.y;
 
-        // Trackpad pinch gesture → horizontal zoom, or vertical zoom when in left zone
+        // Trackpad pinch gesture → 横向：右区水平缩放（时间），左区垂直缩放（音高）；
+        // 纵向：默认沿 Y 缩放时间（键盘在底部，无左区）。
         let zoom_delta = ui.input(|i| i.zoom_delta());
         if (zoom_delta - 1.0).abs() > 0.001 {
-            if pointer_x < left_zone_width {
+            if vertical || pointer_x < left_zone_width {
                 view.zoom_around_y(pointer_y, zoom_delta, rect.height());
             } else {
                 view.zoom_around_x(pointer_x, zoom_delta);
@@ -164,7 +184,7 @@ pub(crate) fn handle_input(
         let scroll = ui.input(|i| i.smooth_scroll_delta);
 
         if scroll != egui::Vec2::ZERO {
-            let in_left_zone = pointer_x < left_zone_width;
+            let in_left_zone = !vertical && pointer_x < left_zone_width;
             if in_left_zone {
                 // 左区：滚轮垂直缩放（与原 kb_zoom 一致，cmd 不改变语义）
                 // 方向：上滚 = 放大，下滚 = 缩小（与滚动条缩放一致）
@@ -173,13 +193,19 @@ pub(crate) fn handle_input(
                     view.zoom_around_y(pointer_y, factor, rect.height());
                 }
             } else if cmd {
-                // 右区 cmd+scroll.y: 水平缩放（上滚 = 放大，下滚 = 缩小）
+                // cmd+scroll.y: 沿主轴缩放（上滚 = 放大，下滚 = 缩小）
+                // 横向 = X（时间）；纵向 = Y（时间）
                 if scroll.y.abs() > 0.5 {
                     let factor = if scroll.y > 0.0 { 1.0 / 1.1 } else { 1.1 };
-                    view.zoom_around_x(pointer_x, factor);
+                    if vertical {
+                        view.zoom_around_y(pointer_y, factor, rect.height());
+                    } else {
+                        view.zoom_around_x(pointer_x, factor);
+                    }
                 }
             } else {
-                // 右区纯滚轮: 平移
+                // 右区纯滚轮: 平移。字段语义随方向成立：横向滚轮 x→时间/y→音高；
+                // 纵向滚轮 y→时间（scroll_y）/x→音高（scroll_x）。
                 *view.scroll_x() -= scroll.x;
                 *view.scroll_y() -= scroll.y;
                 *view.dirty() = true;
@@ -213,8 +239,10 @@ pub(crate) fn handle_input(
         && let Some(pos) = content_resp.interact_pointer_pos()
     {
         let pointer_x = pos.x - rect.min.x;
-        if pointer_x >= left_zone_width {
-            let tick = view.x_to_tick(pointer_x);
+        let pointer_y = pos.y - rect.min.y;
+        if vertical || pointer_x >= left_zone_width {
+            let pointer_main = if vertical { pointer_y } else { pointer_x };
+            let tick = view.main_px_to_tick(pointer_main);
             let snapped = if let Some((q, ppq)) = &quantize {
                 let bar_ref = bar_line_data.as_ref().map(|(t, n, d, e)| (*t, *n, *d, *e));
                 snap_tick(tick, *q, *ppq, bar_ref)

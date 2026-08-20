@@ -17,6 +17,7 @@ fn test_view() -> yinhe_types::PianoRollView {
         },
         key_height: 10.0,
         viewport_h: 0.0,
+        orientation: yinhe_types::Orientation::Horizontal,
     }
 }
 
@@ -28,12 +29,7 @@ fn content() -> egui::Rect {
 fn bar_point(view: &yinhe_types::PianoRollView) -> egui::Pos2 {
     let eff = [(0.0f64, 100.0f64, 60u8, 70u8)];
     let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
-        &view.base,
-        view.key_height,
-        eff[0].0,
-        eff[0].1,
-        eff[0].2,
-        eff[0].3,
+        view, eff[0].0, eff[0].1, eff[0].2, eff[0].3,
     );
     let bar = crate::widgets::selection_actions::compute_bar_rect(content(), pixel_rect)
         .expect("bar 应显示");

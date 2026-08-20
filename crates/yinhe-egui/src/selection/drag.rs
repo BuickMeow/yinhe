@@ -2,7 +2,7 @@ use eframe::egui;
 use yinhe_editor_core::ResizeSide;
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::view_base::TimelineViewBase;
-use yinhe_types::{NoteSource, TimeSigEvent};
+use yinhe_types::{NoteSource, PianoRollView, TimeSigEvent};
 
 /// Hit-test 边缘的像素阈值（与铅笔工具一致）。
 const EDGE_THRESHOLD_PX: f32 = 6.0;
@@ -18,13 +18,36 @@ pub struct CollectedNote {
     pub velocity: u8,
 }
 
+/// 纯计算：指针接近 `rect` 边缘时的滚动速度 (dx, dy)。两个 auto-scroll 封装共用。
+fn auto_scroll_delta(ui: &egui::Ui, rect: egui::Rect, pos: egui::Pos2) -> (f32, f32) {
+    const MARGIN: f32 = 20.0;
+    const BASE_SPEED: f32 = 15.0;
+    let dt = ui.input(|i| i.unstable_dt);
+    let mut dx = 0.0f32;
+    let mut dy = 0.0f32;
+
+    if pos.x < rect.min.x + MARGIN {
+        dx = -(rect.min.x + MARGIN - pos.x) * BASE_SPEED * dt;
+    } else if pos.x > rect.max.x - MARGIN {
+        dx = (pos.x - (rect.max.x - MARGIN)) * BASE_SPEED * dt;
+    }
+
+    if pos.y < rect.min.y + MARGIN {
+        dy = -(rect.min.y + MARGIN - pos.y) * BASE_SPEED * dt;
+    } else if pos.y > rect.max.y - MARGIN {
+        dy = (pos.y - (rect.max.y - MARGIN)) * BASE_SPEED * dt;
+    }
+
+    (dx, dy)
+}
+
 /// Auto-scroll the view when the pointer is near the edges of `content_rect`.
 /// Returns the actual (dx, dy) scroll delta applied, so callers can compensate
 /// drag anchors.
 ///
 /// `clamp_fn` is called after modifying scroll to enforce bounds.
 /// It receives `(content_width, content_height)` and should call
-/// `view.base.clamp_scroll_x(...)` etc.
+/// `base.clamp_scroll_x(...)` etc. 基础版（AR 等横向视图使用）。
 pub fn auto_scroll_on_drag(
     ui: &egui::Ui,
     base: &mut TimelineViewBase,
@@ -32,24 +55,7 @@ pub fn auto_scroll_on_drag(
     pos: egui::Pos2,
     clamp_fn: impl FnOnce(&mut TimelineViewBase, f32, f32),
 ) -> (f32, f32) {
-    const MARGIN: f32 = 20.0;
-    const BASE_SPEED: f32 = 15.0;
-    let dt = ui.input(|i| i.unstable_dt);
-    let mut dx = 0.0f32;
-    let mut dy = 0.0f32;
-
-    if pos.x < content_rect.min.x + MARGIN {
-        dx = -(content_rect.min.x + MARGIN - pos.x) * BASE_SPEED * dt;
-    } else if pos.x > content_rect.max.x - MARGIN {
-        dx = (pos.x - (content_rect.max.x - MARGIN)) * BASE_SPEED * dt;
-    }
-
-    if pos.y < content_rect.min.y + MARGIN {
-        dy = -(content_rect.min.y + MARGIN - pos.y) * BASE_SPEED * dt;
-    } else if pos.y > content_rect.max.y - MARGIN {
-        dy = (pos.y - (content_rect.max.y - MARGIN)) * BASE_SPEED * dt;
-    }
-
+    let (dx, dy) = auto_scroll_delta(ui, content_rect, pos);
     if dx != 0.0 || dy != 0.0 {
         let old_x = base.scroll_x;
         let old_y = base.scroll_y;
@@ -67,26 +73,120 @@ pub fn auto_scroll_on_drag(
     (0.0, 0.0)
 }
 
+/// 方向感知版 auto-scroll：把整个 `view` 交给 `clamp_fn`，按主轴/副轴分别 clamp
+/// （PR 拖拽/铅笔/框选共用）。屏幕 dx→scroll_x、dy→scroll_y 的字段语义在任意方向
+/// 下都成立：横向 scroll_x = 时间轴、scroll_y = 音高；纵向相反。
+pub fn auto_scroll_on_drag_dir(
+    ui: &egui::Ui,
+    view: &mut PianoRollView,
+    content_rect: egui::Rect,
+    pos: egui::Pos2,
+    clamp_fn: impl FnOnce(&mut PianoRollView, f32, f32),
+) -> (f32, f32) {
+    let (dx, dy) = auto_scroll_delta(ui, content_rect, pos);
+    if dx != 0.0 || dy != 0.0 {
+        let old_x = view.base.scroll_x;
+        let old_y = view.base.scroll_y;
+        view.base.scroll_x += dx;
+        view.base.scroll_y += dy;
+        clamp_fn(view, content_rect.width(), content_rect.height());
+        let actual_dx = view.base.scroll_x - old_x;
+        let actual_dy = view.base.scroll_y - old_y;
+        if actual_dx != 0.0 || actual_dy != 0.0 {
+            view.base.dirty = true;
+            ui.ctx().request_repaint();
+            return (actual_dx, actual_dy);
+        }
+    }
+    (0.0, 0.0)
+}
+
+// ── 方向感知的坐标访问器 ─────────────────────────────────────────────────────
+// 交互状态机全部工作在 (tick, key) 领域坐标，只在入口/出口做方向化：
+// 主轴 = 时间轴（横向 X / 纵向 Y），副轴 = 音高（横向 Y / 纵向 X）。
+// 访问器返回 content-relative 像素；local = pos - content_rect.min。
+//
+// 注意：横向 tick 的原点在**音乐区左缘**（content 左缘 + keyboard_width，与
+// wgpu shader / cull / 旧 `x_to_tick` 一致），而新 `tick_to_main_px` 以 content
+// 原点为 0 —— 因此横向必须走旧数学（base.x_to_tick / tick_to_x）才能与渲染
+// 逐像素对齐；纵向才用新的 main_px 访问器（tick 0 = 顶部）。
+
+/// 把 content-relative 的 (x, y) 拆成 (主轴 px, 副轴 px)。
+/// 横向：主轴 = x（tick），副轴 = y（key）；纵向：主轴 = y（tick），副轴 = x（key）。
+#[inline]
+pub(crate) fn main_cross_x_y(view: &PianoRollView, (x, y): (f32, f32)) -> (f32, f32) {
+    if view.is_vertical() { (y, x) } else { (x, y) }
+}
+
+/// 主轴像素 → tick（与 `tick_to_main_px_dir` 互逆）。
+/// 纵向用 `main_px_to_tick`；横向保持旧数学 `base.x_to_tick`（tick 0 = 音乐区左缘）。
+#[inline]
+pub(crate) fn main_px_to_tick_dir(view: &PianoRollView, main_px: f32) -> f64 {
+    if view.is_vertical() {
+        view.main_px_to_tick(main_px)
+    } else {
+        view.base.x_to_tick(main_px)
+    }
+}
+
+/// tick → 主轴像素（与 `main_px_to_tick_dir` 互逆）。
+/// 纵向用 `tick_to_main_px`；横向保持旧数学 `tick_to_x`。
+#[inline]
+pub(crate) fn tick_to_main_px_dir(view: &PianoRollView, tick: f64) -> f32 {
+    if view.is_vertical() {
+        view.tick_to_main_px(tick)
+    } else {
+        view.tick_to_x(tick)
+    }
+}
+
+/// 组装方向感知矩形：主轴两端 `(a0, a1)`（tick 像素）× 副轴单元 `(b0, b1)`（key 像素）。
+/// 横向：Rect.x = tick、Rect.y = key；纵向：Rect.x = key、Rect.y = tick。
+#[inline]
+pub(crate) fn orient_rect(view: &PianoRollView, a0: f32, a1: f32, b0: f32, b1: f32) -> egui::Rect {
+    let (x0, y0, x1, y1) = if view.is_vertical() {
+        (b0.min(b1), a0.min(a1), b0.max(b1), a0.max(a1))
+    } else {
+        (a0.min(a1), b0.min(b1), a0.max(a1), b0.max(b1))
+    };
+    egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1))
+}
+
 /// Convert a persisted music selection `(t_start, t_end, key_lo, key_hi)` to
 /// a pixel-space `Rect` in the pianoroll view.
+///
+/// 输出为 content-relative 矩形：横向 (x = tick, y = key)；纵向 (x = key, y = tick)。
 pub fn music_sel_to_pixel_rect(
-    base: &TimelineViewBase,
-    key_height: f32,
+    view: &PianoRollView,
     t_start: f64,
     t_end: f64,
     key_lo: u8,
     key_hi: u8,
 ) -> egui::Rect {
-    let kh = key_height;
-    let scroll_y = base.scroll_y;
-    let sy = (127.0 - key_hi as f32) * kh - scroll_y;
-    let ey = (127.0 - key_lo as f32 + 1.0) * kh - scroll_y;
-    let sx = base.tick_to_x(t_start);
-    let ex = base.tick_to_x(t_end);
-    egui::Rect::from_min_max(
-        egui::pos2(sx.min(ex), sy.min(ey)),
-        egui::pos2(sx.max(ex), sy.max(ey)),
-    )
+    let (sx, ex) = (
+        tick_to_main_px_dir(view, t_start),
+        tick_to_main_px_dir(view, t_end),
+    );
+    if view.is_vertical() {
+        // 纵向瀑布流：key→X（key0 在左、增大向右），tick→Y（tick0 在顶、向下增大）。
+        // 副轴覆盖 key_lo..=key_hi 各含一个小边界：左 = key_lo 左缘，右 = key_hi 右缘。
+        let x0 = view.key_to_cross_px(key_lo);
+        let x1 = view.key_to_cross_px(key_hi) + view.key_height;
+        egui::Rect::from_min_max(
+            egui::pos2(x0.min(x1), sx.min(ex)),
+            egui::pos2(x0.max(x1), sx.max(ex)),
+        )
+    } else {
+        // 横向（必须与旧代码逐像素等价）：tick→X、key→Y（key127 在顶）。
+        let kh = view.key_height;
+        let scroll_y = view.base.scroll_y;
+        let sy = (127.0 - key_hi as f32) * kh - scroll_y;
+        let ey = (127.0 - key_lo as f32 + 1.0) * kh - scroll_y;
+        egui::Rect::from_min_max(
+            egui::pos2(sx.min(ex), sy.min(ey)),
+            egui::pos2(sx.max(ex), sy.max(ey)),
+        )
+    }
 }
 
 /// 预计算选中音符信息（move 和 resize 共用）。
@@ -166,37 +266,54 @@ pub fn add_pr_selection_rect(
     }
 }
 
-/// Hit-test 鼠标是否在某个选框的左右边缘 `EDGE_THRESHOLD_PX` 内。
+/// Hit-test 鼠标是否在某个选框的主轴两端边缘 `EDGE_THRESHOLD_PX` 内。
 ///
 /// 返回 `(side, origin_boundary_tick, other_boundary_tick)`：
 /// - `origin_boundary_tick`：被拖动边缘的原 tick
 /// - `other_boundary_tick`：另一个边缘的原 tick（用于计算最小宽度约束）
 ///
-/// 窄选框（宽度 <= 2×阈值）跳过边缘检测，避免与 move 冲突。
+/// Left = 主轴起始端（t_start 侧），Right = 主轴末端（t_end 侧）。
+/// 横向主轴的屏幕方向是 X，纵向是 Y。副轴范围判定横向用屏幕 Y、纵向用屏幕 X。
+///
+/// 窄选框（主轴方向宽度 <= 2×阈值）跳过边缘检测，避免与 move 冲突。
 pub fn hit_test_sel_edge(
     eff_rects: &[(f64, f64, u8, u8)],
-    base: &TimelineViewBase,
-    key_height: f32,
+    view: &PianoRollView,
     local: egui::Pos2,
 ) -> Option<(ResizeSide, f64, f64)> {
     for &(t_start, t_end, key_lo, key_hi) in eff_rects {
-        let pixel_rect = music_sel_to_pixel_rect(base, key_height, t_start, t_end, key_lo, key_hi);
-        // y 不在选框纵向范围（含阈值）内 → 跳过
-        if local.y < pixel_rect.min.y - EDGE_THRESHOLD_PX
-            || local.y > pixel_rect.max.y + EDGE_THRESHOLD_PX
+        let pixel_rect = music_sel_to_pixel_rect(view, t_start, t_end, key_lo, key_hi);
+        // 副轴不在选框范围（含阈值）内 → 跳过。横向副轴 = 屏幕 Y；纵向副轴 = 屏幕 X。
+        let (cross_local, cross_lo, cross_hi) = if view.is_vertical() {
+            (local.x, pixel_rect.min.x, pixel_rect.max.x)
+        } else {
+            (local.y, pixel_rect.min.y, pixel_rect.max.y)
+        };
+        if cross_local < cross_lo - EDGE_THRESHOLD_PX || cross_local > cross_hi + EDGE_THRESHOLD_PX
         {
             continue;
         }
-        // 窄选框跳过边缘检测，避免与 move 冲突
-        if pixel_rect.width() <= 2.0 * EDGE_THRESHOLD_PX {
+        // 窄选框跳过边缘检测，避免与 move 冲突（主轴方向跨度）。
+        let main_span = if view.is_vertical() {
+            pixel_rect.height()
+        } else {
+            pixel_rect.width()
+        };
+        if main_span <= 2.0 * EDGE_THRESHOLD_PX {
             continue;
         }
-        // 左边缘
-        if (local.x - pixel_rect.min.x).abs() <= EDGE_THRESHOLD_PX {
+        // 主轴边缘距离判定：横向用 local.x 与 min.x/max.x；纵向用 local.y 与 min.y/max.y。
+        let (main_local, main_lo, main_hi) = if view.is_vertical() {
+            (local.y, pixel_rect.min.y, pixel_rect.max.y)
+        } else {
+            (local.x, pixel_rect.min.x, pixel_rect.max.x)
+        };
+        // 起点边缘（主轴起始端 = t_start）
+        if (main_local - main_lo).abs() <= EDGE_THRESHOLD_PX {
             return Some((ResizeSide::Left, t_start, t_end));
         }
-        // 右边缘
-        if (local.x - pixel_rect.max.x).abs() <= EDGE_THRESHOLD_PX {
+        // 终点边缘（主轴末端 = t_end）
+        if (main_local - main_hi).abs() <= EDGE_THRESHOLD_PX {
             return Some((ResizeSide::Right, t_end, t_start));
         }
     }

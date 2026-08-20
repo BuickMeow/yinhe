@@ -45,14 +45,8 @@ fn on_action_bar(
     eff_rects: &[(f64, f64, u8, u8)],
 ) -> bool {
     eff_rects.iter().any(|&(t_start, t_end, key_lo, key_hi)| {
-        let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
-            &view.base,
-            view.key_height,
-            t_start,
-            t_end,
-            key_lo,
-            key_hi,
-        );
+        let pixel_rect =
+            crate::selection::drag::music_sel_to_pixel_rect(view, t_start, t_end, key_lo, key_hi);
         crate::widgets::selection_actions::compute_bar_rect(music_rect, pixel_rect)
             .is_some_and(|bar| bar.contains(pos))
     })
@@ -77,7 +71,8 @@ fn cursor_tick_from_click(
         return None;
     }
     let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-    let tick = view.x_to_tick(local.x);
+    let (main_px, _) = main_cross_x_y(view, (local.x, local.y));
+    let tick = main_px_to_tick_dir(view, main_px);
     let snapped = crate::view_interaction::snap_tick(tick, quantize, ppq, bar_line_data);
     Some(snapped.max(0.0))
 }
@@ -195,17 +190,11 @@ fn drag_scroll_and_clamp(
     total_ticks: f64,
     pos: egui::Pos2,
 ) {
-    // auto-scroll：拖拽能推出屏幕（pos 未 clamp）
-    crate::selection::drag::auto_scroll_on_drag(
-        ui,
-        &mut view.base,
-        music_rect,
-        pos,
-        |base, w, _h| {
-            base.clamp_scroll_x(w, total_ticks);
-            base.scroll_y = base.scroll_y.max(0.0);
-        },
-    );
+    // auto-scroll：拖拽能推出屏幕（pos 未 clamp）。方向感知：clamp 按主轴/副轴
+    // 拆分（纵向 scroll_x = 音高、scroll_y = 时间），由 view.clamp_scroll 统一处理。
+    crate::selection::drag::auto_scroll_on_drag_dir(ui, view, music_rect, pos, |view, w, h| {
+        view.clamp_scroll(w, h, total_ticks);
+    });
     view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
 }
 
@@ -255,12 +244,7 @@ fn sel_press(
             // 点击位置是否在某个选框内（音符 hit-test 与选区移动共用）。
             let in_sel_rect = eff_rects.iter().any(|&(t_start, t_end, key_lo, key_hi)| {
                 let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
-                    &view.base,
-                    view.key_height,
-                    t_start,
-                    t_end,
-                    key_lo,
-                    key_hi,
+                    view, t_start, t_end, key_lo, key_hi,
                 );
                 pixel_rect.contains(local)
             });
@@ -282,7 +266,8 @@ fn sel_press(
                     super::pencil::HitMode::Move => {
                         // 音符中部：未选中时直接移动该音符；已选中交给选区移动。
                         if !in_sel_rect {
-                            let raw_tick = view.x_to_tick(local.x);
+                            let (main_px, _) = main_cross_x_y(view, (local.x, local.y));
+                            let raw_tick = main_px_to_tick_dir(view, main_px);
                             let tick = crate::view_interaction::snap_tick(
                                 raw_tick,
                                 quantize,
@@ -317,7 +302,7 @@ fn sel_press(
             let edge_hit = if state.sel_note_resize.is_some() || state.sel_note_move.is_some() {
                 None
             } else {
-                hit_test_sel_edge(eff_rects, &view.base, view.key_height, local)
+                hit_test_sel_edge(eff_rects, view, local)
             };
 
             if let Some((side, origin_boundary_tick, other_boundary_tick)) = edge_hit {
@@ -332,10 +317,11 @@ fn sel_press(
                 ));
             } else if state.sel_note_resize.is_none() && state.sel_note_move.is_none() {
                 if in_sel_rect {
-                    let raw_tick = view.x_to_tick(local.x);
+                    let (main_px, cross_px) = main_cross_x_y(view, (local.x, local.y));
+                    let raw_tick = main_px_to_tick_dir(view, main_px);
                     let tick =
                         crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
-                    let key = view.y_to_key(local.y) as f64;
+                    let key = view.cross_px_to_key(cross_px) as f64;
                     // Alt（Option）按下时进入复制模式：原音符保留，拖出副本。
                     // press 时锁定 alt 状态，拖拽中切换不影响本次操作。
                     let alt = ui.input(|i| i.modifiers.alt);
@@ -411,10 +397,11 @@ fn note_drag_frame(
             drag_scroll_and_clamp(ui, view, content_rect, music_rect, total_ticks, pos);
 
             let (local_x, local_y) = clamped_local(pos, content_rect, music_rect);
-            let raw_tick = view.x_to_tick(local_x);
+            let (main_px, cross_px) = main_cross_x_y(view, (local_x, local_y));
+            let raw_tick = main_px_to_tick_dir(view, main_px);
             let snapped_tick =
                 crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
-            let current_key = view.y_to_key(local_y) as f64;
+            let current_key = view.cross_px_to_key(cross_px) as f64;
             let dt = (snapped_tick - origin_tick).round() as i64;
             // 垂直选框（垂直工具或空区域框选自动生成的全键选框）：只能水平移动，dk 强制为 0
             let dk = if vertical || sel_rect.has_auto_vertical() {
@@ -476,10 +463,11 @@ fn note_drag_frame(
         if pointer.primary_released() {
             if let Some(pos) = pointer.hover_pos() {
                 let (local_x, local_y) = clamped_local(pos, content_rect, music_rect);
-                let raw_tick = view.x_to_tick(local_x);
+                let (main_px, cross_px) = main_cross_x_y(view, (local_x, local_y));
+                let raw_tick = main_px_to_tick_dir(view, main_px);
                 let snapped_tick =
                     crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
-                let current_key = view.y_to_key(local_y) as f64;
+                let current_key = view.cross_px_to_key(cross_px) as f64;
                 let dt = (snapped_tick - origin_tick).round() as i64;
                 // 垂直选框（垂直工具或空区域框选自动生成的全键选框）：只能水平移动，dk 强制为 0
                 let dk = if vertical || sel_rect.has_auto_vertical() {
@@ -543,8 +531,9 @@ fn sel_resize_frame(
         {
             drag_scroll_and_clamp(ui, view, content_rect, music_rect, total_ticks, pos);
 
-            let (local_x, _) = clamped_local(pos, content_rect, music_rect);
-            let raw_tick = view.x_to_tick(local_x);
+            let (local_x, local_y) = clamped_local(pos, content_rect, music_rect);
+            let (main_px, _) = main_cross_x_y(view, (local_x, local_y));
+            let raw_tick = main_px_to_tick_dir(view, main_px);
             let (_new_boundary, dt) = compute_resize_dt(
                 raw_tick,
                 side,
@@ -597,8 +586,9 @@ fn sel_resize_frame(
         // Release：提交 dt
         if pointer.primary_released() {
             if let Some(pos) = pointer.hover_pos() {
-                let (local_x, _) = clamped_local(pos, content_rect, music_rect);
-                let raw_tick = view.x_to_tick(local_x);
+                let (local_x, local_y) = clamped_local(pos, content_rect, music_rect);
+                let (main_px, _) = main_cross_x_y(view, (local_x, local_y));
+                let raw_tick = main_px_to_tick_dir(view, main_px);
                 let (_new_boundary, dt) = compute_resize_dt(
                     raw_tick,
                     side,
@@ -681,8 +671,9 @@ fn single_note_resize_frame(
         {
             drag_scroll_and_clamp(ui, view, content_rect, music_rect, total_ticks, pos);
 
-            let (local_x, _) = clamped_local(pos, content_rect, music_rect);
-            let raw_tick = view.x_to_tick(local_x);
+            let (local_x, local_y) = clamped_local(pos, content_rect, music_rect);
+            let (main_px, _) = main_cross_x_y(view, (local_x, local_y));
+            let raw_tick = main_px_to_tick_dir(view, main_px);
             let (new_boundary, _dt) = compute_resize_dt(
                 raw_tick,
                 side,
@@ -724,8 +715,9 @@ fn single_note_resize_frame(
         // Release：提交单音符伸缩（复用铅笔的 PencilNoteDrag 通道）
         if pointer.primary_released() {
             if let Some(pos) = pointer.hover_pos() {
-                let (local_x, _) = clamped_local(pos, content_rect, music_rect);
-                let raw_tick = view.x_to_tick(local_x);
+                let (local_x, local_y) = clamped_local(pos, content_rect, music_rect);
+                let (main_px, _) = main_cross_x_y(view, (local_x, local_y));
+                let raw_tick = main_px_to_tick_dir(view, main_px);
                 let (new_boundary, _dt) = compute_resize_dt(
                     raw_tick,
                     side,
@@ -800,7 +792,8 @@ fn single_note_move_frame(
             drag_scroll_and_clamp(ui, view, content_rect, music_rect, total_ticks, pos);
 
             let (local_x, local_y) = clamped_local(pos, content_rect, music_rect);
-            let raw_tick = view.x_to_tick(local_x);
+            let (main_px, cross_px) = main_cross_x_y(view, (local_x, local_y));
+            let raw_tick = main_px_to_tick_dir(view, main_px);
             let snapped_tick =
                 crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
             let dt = (snapped_tick - press_tick).round() as i64;
@@ -808,7 +801,7 @@ fn single_note_move_frame(
             let dk = if vertical {
                 0
             } else {
-                view.y_to_key(local_y) as i32 - orig_key as i32
+                view.cross_px_to_key(cross_px) as i32 - orig_key as i32
             };
 
             let new_start = (orig_start as i64 + dt).max(0) as u32;
@@ -853,14 +846,15 @@ fn single_note_move_frame(
         if pointer.primary_released() {
             if let Some(pos) = pointer.hover_pos() {
                 let (local_x, local_y) = clamped_local(pos, content_rect, music_rect);
-                let raw_tick = view.x_to_tick(local_x);
+                let (main_px, cross_px) = main_cross_x_y(view, (local_x, local_y));
+                let raw_tick = main_px_to_tick_dir(view, main_px);
                 let snapped_tick =
                     crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
                 let dt = (snapped_tick - press_tick).round() as i64;
                 let dk = if vertical {
                     0
                 } else {
-                    view.y_to_key(local_y) as i32 - orig_key as i32
+                    view.cross_px_to_key(cross_px) as i32 - orig_key as i32
                 };
                 if alt {
                     // Alt = 复制：先把该音符置为唯一选中，再走选区复制通道
@@ -1200,7 +1194,8 @@ pub(crate) fn sel_drag_frame(
 // - collect_selected_notes（选中音符预计算）
 // - compute_resize_dt（量化对齐 + 最小宽度约束）
 pub(crate) use crate::selection::drag::{
-    collect_selected_notes, compute_resize_dt, hit_test_sel_edge,
+    collect_selected_notes, compute_resize_dt, hit_test_sel_edge, main_cross_x_y,
+    main_px_to_tick_dir, orient_rect, tick_to_main_px_dir,
 };
 
 /// 双击写音符：write_track 有效且点击位置无音符时创建新音符。
@@ -1220,8 +1215,9 @@ fn double_click_note(
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
 ) -> Option<(yinhe_core::NoteEvent, u16)> {
     let track = super::pencil::valid_pencil_track(write_track, track_visible, conductor_idx)?;
-    let raw_tick = view.x_to_tick(local.x);
-    let key = view.y_to_key(local.y);
+    let (main_px, cross_px) = main_cross_x_y(view, (local.x, local.y));
+    let raw_tick = main_px_to_tick_dir(view, main_px);
+    let key = view.cross_px_to_key(cross_px);
     // 点击位置已有音符（write_track 上）→ 不创建。
     // key_notes_in_range 左边界保守（tick - max_note_len），右边界精确，
     // 任何覆盖该像素点的音符都会被包含；像素判定过滤跨边界长音符。
@@ -1230,8 +1226,8 @@ fn double_click_note(
             .key_notes_in_range(key, raw_tick as u32, (raw_tick + 1.0) as u32)
             .any(|n| {
                 n.track == track
-                    && view.tick_to_x(n.start_tick as f64) <= local.x
-                    && local.x <= view.tick_to_x(n.end_tick as f64)
+                    && tick_to_main_px_dir(view, n.start_tick as f64) <= main_px
+                    && main_px <= tick_to_main_px_dir(view, n.end_tick as f64)
             });
         if hit {
             return None;
@@ -1265,8 +1261,9 @@ pub(crate) fn hit_test_note(
     track_selected: &std::collections::HashSet<u16>,
 ) -> Option<(super::pencil::HitMode, u16, u32, u32, u8)> {
     const EDGE_THRESHOLD_PX: f32 = 6.0;
-    let (midi, key) = (midi?, view.y_to_key(local.y));
-    let raw_tick = view.x_to_tick(local.x);
+    let (main_px, cross_px) = main_cross_x_y(view, (local.x, local.y));
+    let (midi, key) = (midi?, view.cross_px_to_key(cross_px));
+    let raw_tick = main_px_to_tick_dir(view, main_px);
     let notes = midi.key_notes_in_range(key, raw_tick as u32, (raw_tick + 1.0) as u32);
     for note in notes {
         // 轨道作用域：track_selected（空 = 全部）∩ track_visible。
@@ -1278,16 +1275,20 @@ pub(crate) fn hit_test_note(
         if !in_scope {
             continue;
         }
-        let note_left = view.tick_to_x(note.start_tick as f64);
-        let note_right = view.tick_to_x(note.end_tick as f64);
-        if local.x < note_left || local.x > note_right {
+        // 方向感知的像素矩形：横向 x = tick、y = key；纵向 x = key、y = tick。
+        let a = tick_to_main_px_dir(view, note.start_tick as f64);
+        let b = tick_to_main_px_dir(view, note.end_tick as f64);
+        let c = view.key_to_cross_px(key);
+        let note_rect = orient_rect(view, a, b, c, c + view.key_height);
+        if !note_rect.contains(local) {
             continue;
         }
-        let dist_left = (local.x - note_left).abs();
-        let dist_right = (local.x - note_right).abs();
-        let mode = if dist_left <= EDGE_THRESHOLD_PX {
+        // 主轴上到两端距离：起点 = 伸缩左缘，终点 = 伸缩右缘。
+        let dist_start = (main_px - a).abs();
+        let dist_end = (main_px - b).abs();
+        let mode = if dist_start <= EDGE_THRESHOLD_PX {
             super::pencil::HitMode::ResizeLeft
-        } else if dist_right <= EDGE_THRESHOLD_PX {
+        } else if dist_end <= EDGE_THRESHOLD_PX {
             super::pencil::HitMode::ResizeRight
         } else {
             super::pencil::HitMode::Move // 音符中部：直接拖动移动该音符

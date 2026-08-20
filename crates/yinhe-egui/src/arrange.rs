@@ -539,6 +539,7 @@ pub fn show(
             &mut arr_view.base.pixels_per_tick,
             total_ticks,
             &mut arr_view.base.dirty,
+            yinhe_types::Orientation::Horizontal,
         );
         // 水平滚动条：thumb 拖 = 平移（x）+ 垂直位移 → x 轴缩放
         // 方向：上拖 = 放大，下拖 = 缩小
@@ -581,6 +582,7 @@ pub fn show(
                     16.0,
                     120.0,
                     &mut arr_view.base.dirty,
+                    yinhe_types::Orientation::Horizontal,
                 )
             })
             .inner;
