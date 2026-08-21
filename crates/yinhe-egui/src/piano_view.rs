@@ -16,6 +16,7 @@ mod bg;
 pub mod control_bar;
 pub(crate) mod drag;
 mod follow;
+mod gpu;
 pub(crate) mod gpu_upload;
 mod interaction;
 mod keyboard;
@@ -238,148 +239,41 @@ pub fn show(
         None
     };
 
-    // ── Upload all notes to GPU cull buffer ──
-    // Only when GPU cull mode is enabled. CPU build mode skips this entirely.
-    // 增量 per-key 上传 → 失败回退全量上传。详见 gpu_upload 模块。
-    if use_gpu_cull {
-        gpu_upload::upload(gpu_upload::GpuUploadState {
-            pianoroll,
-            midi,
-            midi_arc,
-            revision,
-            note_revisions,
-            track_visible,
-            hidden_notes: &hidden_notes,
-            last_cull_revision,
-            last_cull_revision_only,
-            last_hidden_hash,
-            last_tv_hash,
-            last_hidden_keys,
-            rebuild: cull_rebuild,
-        });
-    }
-
-    // Prepare GPU data (ghost notes are handled separately as a transient overlay)
-    let theme = pianoroll.theme().clone();
-    let cull_ready = use_gpu_cull && pianoroll.cull_ready();
-    tracing::debug!(
-        "[cull-frame] cull_ready={cull_ready} scroll_x={} scroll_y={} ppu={} kh={} w={w} h={h}",
-        view.base.scroll_x,
-        view.base.scroll_y,
-        view.base.pixels_per_tick,
-        view.key_height,
+    let mut t_prepare_end = None;
+    let (cull_ready, theme) = gpu::upload_and_prepare(
+        pianoroll,
+        render_ctx,
+        render_thread,
+        view,
+        midi,
+        midi_arc,
+        &*selected,
+        track_visible,
+        &hidden_notes,
+        track_colors,
+        revision,
+        note_revisions,
+        last_cull_revision,
+        last_cull_revision_only,
+        last_hidden_hash,
+        last_tv_hash,
+        last_hidden_keys,
+        cull_rebuild,
+        &ghost_notes,
+        w,
+        h,
+        scroll_mode,
+        min_border_width,
+        note_outline,
+        use_gpu_cull,
+        perf_on,
+        &mut t_prepare_end,
     );
-    if cull_ready {
-        // GPU cull path: upload ghost layer (GPU cull handles notes)
-        let job = yinhe_wgpu::build_render_job(
-            w,
-            h,
-            view,
-            &*selected,
-            track_colors,
-            scroll_mode,
-            min_border_width,
-            note_outline,
-        );
-        pianoroll.upload_uniforms(job.uniforms);
-        pianoroll.upload_track_colors(&job.track_colors);
-        pianoroll.upload_selection(&job.selection);
-        // Grid 已迁移到 egui，wgpu 只剩 ghost note overlay 一层。
-        pianoroll.ensure_layers(1);
-        // Ghost note overlay: built and uploaded independently.
-        // Always upload (even when empty) to clear stale ghost data from the previous frame.
-        pianoroll.upload_note_layer(0, 0, |out| {
-            for &(start_tick, end_tick, key, track) in &ghost_notes {
-                yinhe_wgpu::build_ghost_note(out, start_tick, end_tick, key, track, &theme);
-            }
-        });
-    } else if let Some(rt) = render_thread {
-        // Async path (no cull): build instances on this thread, send to render thread
-        let job = yinhe_wgpu::build_render_job(
-            w,
-            h,
-            view,
-            &*selected,
-            track_colors,
-            scroll_mode,
-            min_border_width,
-            note_outline,
-        );
-        // Build note instances + ghost overlay as note layers for the render thread.
-        let mut notes_instances = Vec::new();
-        if let Some(midi) = midi {
-            yinhe_wgpu::build_notes(
-                &mut notes_instances,
-                w as f32,
-                h as f32,
-                midi,
-                view,
-                &hidden_notes,
-                track_visible,
-            );
-        }
-        let mut ghost_instances = Vec::new();
-        for &(start_tick, end_tick, key, track) in &ghost_notes {
-            yinhe_wgpu::build_ghost_note(
-                &mut ghost_instances,
-                start_tick,
-                end_tick,
-                key,
-                track,
-                &theme,
-            );
-        }
-        // Cache key for notes: includes viewport tick/key range, revision,
-        // hidden_notes, and track_visible — anything that affects which notes
-        // are built. When none of these change (e.g. steady state, no scroll/
-        // edit), the render thread skips GPU upload entirely.
-        let (tick_start, tick_end) =
-            view.visible_main_range(view.main_axis_len(w as f32, h as f32));
-        let (key_lo, key_hi) = view.visible_cross_range(view.cross_axis_len(w as f32, h as f32));
-        let tv_hash = yinhe_wgpu::hash_bools(track_visible);
-        let hidden_hash = yinhe_wgpu::hash_hidden(&hidden_notes);
-        let notes_cache_key = yinhe_wgpu::layer_cache_key(&[
-            tick_start.to_bits(),
-            tick_end.to_bits(),
-            key_lo as u64,
-            key_hi as u64,
-            tv_hash,
-            revision,
-            hidden_hash,
-        ]);
-        let note_layers = vec![
-            yinhe_wgpu::NoteLayerData {
-                instances: notes_instances,
-                cache_key: notes_cache_key,
-                force: false,
-            },
-            yinhe_wgpu::NoteLayerData {
-                instances: ghost_instances,
-                cache_key: 0,
-                force: true,
-            },
-        ];
-        rt.send_job(yinhe_wgpu::RenderJob {
-            width: job.width,
-            height: job.height,
-            uniforms: job.uniforms,
-            track_colors: job.track_colors,
-            selection: job.selection,
-            note_layers,
-        });
-    }
-
-    let t_prepare_end = if perf_on {
-        Some(std::time::Instant::now())
-    } else {
-        None
-    };
 
     // Static cache was removed — every frame rebuilds + uploads, so always paint.
     view.base.dirty = false;
 
     // ── Background（app_bg 一层，不透明不叠加；条纹/色块自行叠上）──
-    let theme = pianoroll.theme().clone();
     painter.rect_filled(content_rect, 0.0, crate::theme::app_bg());
 
     // ── Scale background + 八度横线（调号驱动的调内/调外/根音条带）──
