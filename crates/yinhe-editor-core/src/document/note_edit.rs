@@ -291,13 +291,35 @@ impl Document {
         }
         // 操作式 undo 需要操作**前**的选区矩形（offset_sel_keys 之前捕获）。
         let rects_before = self.edit.selected.rects.clone();
-        let (before, after) = {
+        let (before, after, has_dest_overlap) = {
             let model = Arc::make_mut(&mut self.data.model);
 
             let moved_data = batch_ops::remove_selected(model, &self.edit.selected);
             if moved_data.is_empty() {
                 return None;
             }
+
+            // 检测目标位置是否已有非选中音符：若目标选框内已有音符，
+            // 操作式 undo 会误搬 B，需回退副本制。
+            let has_dest_overlap = {
+                let dest_rects: Vec<(u32, u32, u8, u8, u16, u16)> = rects_before
+                    .iter()
+                    .map(|&(ts, te, kl, kh, tl, th)| {
+                        (
+                            ts,
+                            te,
+                            (kl as i32 + semitones as i32).clamp(0, yinhe_types::MAX_KEY as i32)
+                                as u8,
+                            (kh as i32 + semitones as i32).clamp(0, yinhe_types::MAX_KEY as i32)
+                                as u8,
+                            tl,
+                            th,
+                        )
+                    })
+                    .collect();
+                let dest_sel = yinhe_core::Selection { rects: dest_rects };
+                !batch_ops::collect_selected(model, &dest_sel).is_empty()
+            };
 
             let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
                 std::collections::HashMap::new();
@@ -324,16 +346,16 @@ impl Document {
 
             // Offset selection rects to follow the transposed notes.
             self.edit.offset_sel_keys(semitones as i32);
-            (moved_data, after)
+            (moved_data, after, has_dest_overlap)
         };
         self.data.rebuild_model_dirty();
         // 操作式 undo 前提：无音符触发 key clamp（undo 反向移动回原 key，
-        // 原 key ∈ [0,MAX_KEY]，不触发新 clamp，对称性成立）。
+        // 原 key ∈ [0,MAX_KEY]，不触发新 clamp，对称性成立），且目标无重叠。
         let clamp_free = before.iter().all(|(_, k)| {
             (*k as i16 + semitones as i16) >= 0
                 && (*k as i16 + semitones as i16) <= yinhe_types::MAX_KEY as i16
         });
-        if clamp_free {
+        if clamp_free && !has_dest_overlap {
             Some(UndoAction::MoveNotes {
                 rects: rects_before,
                 delta_ticks: 0,
@@ -366,6 +388,28 @@ impl Document {
         let originals = batch_ops::remove_selected(model, &self.edit.selected);
         // 操作式 undo 需要操作**前**的选区矩形（offset 之前捕获）。
         let rects_before = self.edit.selected.rects.clone();
+        // 检测目标位置是否已有非选中音符（重叠允许时也会产生）：
+        // 若目标选框内已有音符，操作式 undo（按选框收集）在撤销时会把
+        // 这些原本不在选区的 B 音符也一起平移回 A，造成“B 被搬到 A”的 bug。
+        // 此时必须回退到副本制（NoteDelta），仅精确撤销被移动的音符。
+        // 必须在插入新音符前检测（此时模型仅含 B 等非选中音符）。
+        let has_dest_overlap = {
+            let dest_rects: Vec<(u32, u32, u8, u8, u16, u16)> = rects_before
+                .iter()
+                .map(|&(ts, te, kl, kh, tl, th)| {
+                    (
+                        (ts as i64 + delta_ticks).max(0) as u32,
+                        (te as i64 + delta_ticks).max(0) as u32,
+                        (kl as i32 + delta_keys).clamp(0, yinhe_types::MAX_KEY as i32) as u8,
+                        (kh as i32 + delta_keys).clamp(0, yinhe_types::MAX_KEY as i32) as u8,
+                        tl,
+                        th,
+                    )
+                })
+                .collect();
+            let dest_sel = yinhe_core::Selection { rects: dest_rects };
+            !batch_ops::collect_selected(model, &dest_sel).is_empty()
+        };
         let allow_overlap = self.edit.allow_overlapping_notes;
         let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
             std::collections::HashMap::new();
@@ -424,13 +468,14 @@ impl Document {
         self.data.bump_revision();
 
         // 操作式 undo 前提：无音符触发 tick/key clamp（undo 反向移动回
-        // 原位置，原位置不触发新 clamp，对称性成立）。
+        // 原位置，原位置不触发新 clamp，对称性成立），且目标位置无重叠
+        // 非选中音符（否则撤销会误搬 B）。
         let clamp_free = originals.iter().all(|(n, k)| {
             (n.start_tick as i64 + delta_ticks) >= 0
                 && (*k as i32 + delta_keys) >= 0
                 && (*k as i32 + delta_keys) <= yinhe_types::MAX_KEY as i32
         });
-        if clamp_free && !blocked_any {
+        if clamp_free && !blocked_any && !has_dest_overlap {
             Some(UndoAction::MoveNotes {
                 rects: rects_before,
                 delta_ticks,
@@ -885,18 +930,27 @@ impl Document {
             .iter()
             .flat_map(|(key, notes)| notes.iter().map(|n| (*n, *key)))
             .collect();
+        // 检测选区内是否还有非选中音符：若目标选框内已有音符，
+        // 操作式 Flip 在撤销时会把这些 B 音符也一起翻转，造成误搬。
+        let has_dest_overlap = {
+            let sel = yinhe_core::Selection {
+                rects: self.edit.selected.rects.clone(),
+            };
+            !batch_ops::collect_selected(model, &sel).is_empty()
+        };
         batch_ops::insert_batch(model, new_by_key);
         model.rebuild_dirty();
         self.data.bump_revision();
 
         // 操作式 undo 前提：水平镜像时所有音符的 end_tick 都 <= t1
-        // （跨出选框的 end 镜像后触发 clamp 0，两次镜像不再恒等）。
+        // （跨出选框的 end 镜像后触发 clamp 0，两次镜像不再恒等），
+        // 且目标选框内无重叠非选中音符（否则撤销会误搬 B）。
         // 垂直镜像 key ∈ [kl, kh] 恒对称，无此问题。
         let flip_safe = axis == FlipAxis::Vertical
             || originals
                 .iter()
                 .all(|(n, _)| (n.end_tick as u64) <= t1 && (n.start_tick as u64) >= t0);
-        if flip_safe {
+        if flip_safe && !has_dest_overlap {
             Some(UndoAction::FlipNotes {
                 rects: self.edit.selected.rects.clone(),
                 bounds: (t0, t1, kl, kh),
