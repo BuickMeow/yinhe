@@ -272,9 +272,31 @@ fn sel_press(
             });
 
             if !can_edit {
-                // 无编辑目标：不做任何 hit-test/预览/拖动启动，仅保留清空行为。
-                // 避免每帧遍历音符的性能损耗，且此时任何 Move/Resize 光标都不应出现。
-                if !in_sel_rect && !additive {
+                // 无编辑目标：选框本身仍可拖动/缩放（仅移动选框，不涉及音符预览与音符 hit-test）
+                let edge_hit = hit_test_sel_edge(eff_rects, view, local);
+                if let Some((side, origin, other)) = edge_hit {
+                    state.sel_resize_state = Some((side, origin, other));
+                    sel_rect.start_resize(side);
+                    state.drag_notes = Some(Vec::new());
+                } else if in_sel_rect {
+                    let (main_px, cross_px) = main_cross_x_y(view, (local.x, local.y));
+                    let raw_tick = main_px_to_tick_dir(view, main_px);
+                    let tick =
+                        crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
+                    let key = view.cross_px_to_key(cross_px) as f64;
+                    let alt = ui.input(|i| i.modifiers.alt);
+                    state.note_drag_origin = Some((tick, key, alt));
+                    sel_rect.start_drag();
+                    state.drag_notes = Some(Vec::new());
+                    state.preview_last_dk = 0;
+                    state.note_drag_had_moved = false;
+                    ui.data_mut(|d| {
+                        d.insert_persisted(
+                            ui.id().with("note_drag_preview_dk"),
+                            state.preview_last_dk,
+                        )
+                    });
+                } else if !additive {
                     selected.clear();
                     sel_rect.clear();
                 }
@@ -530,21 +552,24 @@ fn note_drag_frame(
             } else {
                 *note_drag_delta = Some((dt, dk, alt));
                 sel_rect.update_drag(dt, dk);
-                for info in notes {
-                    let new_tick = (info.start_tick as i64 + dt).max(0) as u32;
-                    let new_key =
-                        ((info.key as i32) + dk).clamp(0, yinhe_types::MAX_KEY as i32) as u8;
-                    let length = info.end_tick - info.start_tick;
-                    state
-                        .ghost_notes
-                        .push((new_tick, new_tick + length, new_key, info.track));
-                    if !alt {
+                let has_notes = !notes.is_empty();
+                if has_notes {
+                    for info in notes {
+                        let new_tick = (info.start_tick as i64 + dt).max(0) as u32;
+                        let new_key =
+                            ((info.key as i32) + dk).clamp(0, yinhe_types::MAX_KEY as i32) as u8;
+                        let length = info.end_tick - info.start_tick;
                         state
-                            .hidden_notes
-                            .push((info.track, info.start_tick, info.key));
+                            .ghost_notes
+                            .push((new_tick, new_tick + length, new_key, info.track));
+                        if !alt {
+                            state
+                                .hidden_notes
+                                .push((info.track, info.start_tick, info.key));
+                        }
                     }
+                    state.preview_reqs.push(super::PreviewReq::Stop);
                 }
-                state.preview_reqs.push(super::PreviewReq::Stop);
                 sel_rect.end_drag();
             }
             state.note_drag_origin = None;
@@ -1064,37 +1089,38 @@ pub(crate) fn sel_drag_frame(
         can_edit,
     );
 
+    // 选框整体移动/缩放即使无编辑目标也允许（仅移动选框本身，不涉及音符）
+    note_drag_frame(
+        ui,
+        &mut state,
+        view,
+        content_rect,
+        music_rect,
+        quantize,
+        ppq,
+        bar_line_data,
+        total_ticks,
+        vertical,
+        sel_rect,
+        note_drag_delta,
+        &pointer,
+    );
+    sel_resize_frame(
+        ui,
+        &mut state,
+        view,
+        content_rect,
+        music_rect,
+        quantize,
+        ppq,
+        bar_line_data,
+        total_ticks,
+        sel_rect,
+        note_resize_delta,
+        &pointer,
+    );
     if can_edit {
-        // ── 四个互斥拖拽状态机（同一时刻至多一个激活）──
-        note_drag_frame(
-            ui,
-            &mut state,
-            view,
-            content_rect,
-            music_rect,
-            quantize,
-            ppq,
-            bar_line_data,
-            total_ticks,
-            vertical,
-            sel_rect,
-            note_drag_delta,
-            &pointer,
-        );
-        sel_resize_frame(
-            ui,
-            &mut state,
-            view,
-            content_rect,
-            music_rect,
-            quantize,
-            ppq,
-            bar_line_data,
-            total_ticks,
-            sel_rect,
-            note_resize_delta,
-            &pointer,
-        );
+        // 单音符操作仅在有编辑目标时允许
         single_note_resize_frame(
             ui,
             &mut state,

@@ -446,54 +446,59 @@ pub fn show(
     }
 
     // ── Hover cursor: show Move/ResizeWest/ResizeEast when over selection rect ──
-    // 无编辑目标时不做任何 hit-test，光标保持默认，避免每帧遍历音符的性能损耗。
-    let can_hover_edit =
-        pencil::valid_pencil_track(write_track, track_visible, conductor_idx).is_some();
-    if can_hover_edit
-        && (effective_tool == Tool::Select || effective_tool == Tool::SelectVertical)
+    if (effective_tool == Tool::Select || effective_tool == Tool::SelectVertical)
         && !crate::view_interaction::pointer_over_popup(ui.ctx())
         && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
         && music_rect.contains(pos)
     {
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
         let eff_rects = sel_rect.effective_rects();
-        // 音符 hit-test 优先（不用先选中，与铅笔一致）：
-        // 边缘 → 伸缩光标；中部 → 移动光标。
-        if let Some((mode, _, _, _, _)) =
-            drag::hit_test_note(midi, view, local, track_visible, track_selected)
-        {
-            use crate::piano_view::pencil::HitMode;
-            match mode {
-                HitMode::ResizeLeft => ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest),
-                HitMode::ResizeRight => ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeEast),
-                HitMode::Move => ui.ctx().set_cursor_icon(egui::CursorIcon::Move),
-            }
-        } else if let Some((side, _, _)) = drag::hit_test_sel_edge(&eff_rects, view, local) {
-            match side {
-                yinhe_editor_core::ResizeSide::Left => {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest)
+        let can_hover_edit =
+            pencil::valid_pencil_track(write_track, track_visible, conductor_idx).is_some();
+        let mut hit_note = false;
+        // 音符 hit-test 仅在有编辑目标时进行，避免未选中时每帧遍历音符
+        if can_hover_edit {
+            if let Some((mode, _, _, _, _)) =
+                drag::hit_test_note(midi, view, local, track_visible, track_selected)
+            {
+                use crate::piano_view::pencil::HitMode;
+                match mode {
+                    HitMode::ResizeLeft => ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest),
+                    HitMode::ResizeRight => ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeEast),
+                    HitMode::Move => ui.ctx().set_cursor_icon(egui::CursorIcon::Move),
                 }
-                yinhe_editor_core::ResizeSide::Right => {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeEast)
-                }
+                hit_note = true;
             }
-        } else {
-            let in_sel_rect = eff_rects.iter().any(|&(t_start, t_end, key_lo, key_hi)| {
-                let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
-                    view, t_start, t_end, key_lo, key_hi,
-                );
-                pixel_rect.contains(local)
-            });
-            if in_sel_rect {
-                // 垂直选框（垂直工具或空区域框选自动生成的全键选框）：只能水平拖动
-                // → 左右双向指针；普通选框工具：四向移动指针。
-                let icon = if effective_tool == Tool::SelectVertical || sel_rect.has_auto_vertical()
-                {
-                    egui::CursorIcon::ResizeHorizontal
-                } else {
-                    egui::CursorIcon::Move
-                };
-                ui.ctx().set_cursor_icon(icon);
+        }
+        // 选框边缘与内部命中不受 can_edit 限制：即使未选中音轨，选框本身仍可拖动/缩放
+        if !hit_note {
+            if let Some((side, _, _)) = drag::hit_test_sel_edge(&eff_rects, view, local) {
+                match side {
+                    yinhe_editor_core::ResizeSide::Left => {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest)
+                    }
+                    yinhe_editor_core::ResizeSide::Right => {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeEast)
+                    }
+                }
+            } else {
+                let in_sel_rect = eff_rects.iter().any(|&(t_start, t_end, key_lo, key_hi)| {
+                    let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
+                        view, t_start, t_end, key_lo, key_hi,
+                    );
+                    pixel_rect.contains(local)
+                });
+                if in_sel_rect {
+                    // 垂直选框（垂直工具或空区域框选自动生成的全键选框）：只能水平拖动
+                    // → 左右双向指针；普通选框工具：四向移动指针。
+                    let icon =
+                        if effective_tool == Tool::SelectVertical || sel_rect.has_auto_vertical() {
+                            egui::CursorIcon::ResizeHorizontal
+                        } else {
+                            egui::CursorIcon::Move
+                        };
+                    ui.ctx().set_cursor_icon(icon);
+                }
             }
         }
     }
