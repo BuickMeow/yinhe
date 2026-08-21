@@ -11,227 +11,18 @@ use yinhe_types::TimeSigEvent;
 
 use super::marquee::marquee_drag_frame;
 use super::pencil::note_velocity;
-use crate::selection::drag::CollectedNote;
 
-/// Pre-computed info for each selected note during a selection drag.
-/// Built once at drag start, reused every frame — eliminates O(N×M) midi lookups.
-pub(crate) type SelDragNoteInfo = CollectedNote;
+mod hit;
+mod interact;
+mod state;
+mod types;
 
-/// 拖拽预览的幽灵音符：(start_tick, end_tick, key, track)。
-pub(crate) type GhostNote = (u32, u32, u8, u16);
-/// 拖拽时隐藏的原音符：(track, start_tick, key)。
-pub(crate) type HiddenNote = (u16, u32, u8);
-
-/// 双击写音符的提交：(note, track)。
-pub(crate) type SelNoteEvent = Option<(yinhe_core::NoteEvent, u16)>;
-
-/// 选择工具单音符边缘伸缩：(side, track, start_tick, end_tick, key)。
-/// 与选框整体伸缩（sel_resize_state）互斥，音符边缘优先。
-pub(crate) type SelNoteResize = (ResizeSide, u16, u32, u32, u8);
-
-/// 快速删除的提交：(track, start_tick, key)。
-pub(crate) type QuickDeleteEvent = Option<(u16, u32, u8)>;
-
-/// sel_drag_frame 的帧输出。
-pub(crate) type SelFrameOut = (
-    Vec<GhostNote>,
-    Vec<HiddenNote>,
-    Vec<super::PreviewReq>,
-    SelNoteEvent,
-    Option<yinhe_types::PencilNoteDrag>,
-    QuickDeleteEvent,
-);
-
-/// 指针是否在选框浮动工具条（selection_actions bar）上。
-fn on_action_bar(
-    pos: egui::Pos2,
-    music_rect: egui::Rect,
-    view: &yinhe_types::PianoRollView,
-    eff_rects: &[(f64, f64, u8, u8)],
-) -> bool {
-    eff_rects.iter().any(|&(t_start, t_end, key_lo, key_hi)| {
-        let pixel_rect =
-            crate::selection::drag::music_sel_to_pixel_rect(view, t_start, t_end, key_lo, key_hi);
-        crate::widgets::selection_actions::compute_bar_rect(music_rect, pixel_rect)
-            .is_some_and(|bar| bar.contains(pos))
-    })
-}
-
-/// 简单点击（无 marquee）时的播放指示器定位。
-///
-/// 点在浮动工具条（selection_actions bar）上或 music_rect 外时返回 `None`——
-/// 这是防穿透的关键：点击工具条按钮不能让 playhead 跳转（曾复发两次）。
-#[allow(clippy::too_many_arguments)]
-fn cursor_tick_from_click(
-    pos: egui::Pos2,
-    content_rect: egui::Rect,
-    music_rect: egui::Rect,
-    view: &yinhe_types::PianoRollView,
-    eff_rects: &[(f64, f64, u8, u8)],
-    quantize: QuantizePreset,
-    ppq: u32,
-    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
-) -> Option<f64> {
-    if !music_rect.contains(pos) || on_action_bar(pos, music_rect, view, eff_rects) {
-        return None;
-    }
-    let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-    let (main_px, _) = main_cross_x_y(view, (local.x, local.y));
-    let tick = main_px_to_tick_dir(view, main_px);
-    let snapped = crate::view_interaction::snap_tick(tick, quantize, ppq, bar_line_data);
-    Some(snapped.max(0.0))
-}
-
-/// sel_drag_frame 的帧内可变状态：5 个互斥拖拽状态机 + 帧输出。
-///
-/// 曾全部内联在 sel_drag_frame 一个 800+ 行的函数里；拆分后各状态机
-/// 函数共享本结构，主函数只负责加载 / 分发 / 持久化。
-struct SelDragFrameState {
-    /// 选区整体移动：(origin_tick, origin_key, alt)。None = 未在移动。
-    note_drag_origin: Option<(f64, f64, bool)>,
-    /// 拖拽中预计算的选中音符（选区移动/选区缩放共用，press 时构建一次）。
-    drag_notes: Option<Vec<SelDragNoteInfo>>,
-    /// 拖拽中已触发预览的 key delta（每变化 1 key 触发一次整组预览）。
-    preview_last_dk: i32,
-    /// 选区移动是否曾产生过位移（用于 Alt 复制：点一下不复制，拖动回原位也算移动）。
-    note_drag_had_moved: bool,
-    /// 选区边缘缩放：(side, origin_boundary_tick, other_boundary_tick)。
-    sel_resize_state: Option<(ResizeSide, f64, f64)>,
-    /// 单音符边缘伸缩：(side, track, start_tick, end_tick, key)。
-    sel_note_resize: Option<SelNoteResize>,
-    /// 单音符移动：(track, orig_start, orig_key, orig_end, press_tick, last_dk, alt)。
-    sel_note_move: Option<(u16, u32, u8, u32, f64, i32, bool)>,
-    /// 单音符移动是否曾产生过位移（同上）。
-    single_note_had_moved: bool,
-    /// 帧输出：幽灵音符 / 隐藏音符 / 预览请求。
-    ghost_notes: Vec<GhostNote>,
-    hidden_notes: Vec<HiddenNote>,
-    preview_reqs: Vec<super::PreviewReq>,
-}
-
-/// 是否有选框工具的拖拽状态机正在进行（跨帧持久化状态）。
-///
-/// 供 `effective_tool` 在拖拽期间锁定选择工具：否则 Alt 拖拽克隆时
-/// 鼠标一旦移出音符原位，hover 命中失败就会被误判为"悬停空白"，
-/// 临时切成铅笔工具、中断本次拖拽。
-pub(crate) fn sel_drag_in_progress(ui: &egui::Ui) -> bool {
-    let id = ui.id();
-    ui.data_mut(|d| {
-        d.get_persisted::<Option<(f64, f64, bool)>>(id.with("note_drag_origin"))
-            .is_some_and(|v| v.is_some())
-            || d.get_persisted::<Option<(ResizeSide, f64, f64)>>(id.with("sel_resize_state"))
-                .is_some_and(|v| v.is_some())
-            || d.get_persisted::<Option<SelNoteResize>>(id.with("sel_note_resize_state"))
-                .is_some_and(|v| v.is_some())
-            || d.get_persisted::<Option<(u16, u32, u8, u32, f64, i32, bool)>>(
-                id.with("sel_note_move_state"),
-            )
-            .is_some_and(|v| v.is_some())
-            || d.get_persisted::<Option<((f64, f32), egui::Pos2, egui::Pos2)>>(id.with("sel_drag"))
-                .is_some_and(|v| v.is_some())
-    })
-}
-
-impl SelDragFrameState {
-    /// 从 egui 持久化加载拖拽状态（拖拽跨帧保持）。
-    fn load(ui: &mut egui::Ui) -> Self {
-        Self {
-            note_drag_origin: ui
-                .data_mut(|d| d.get_persisted(ui.id().with("note_drag_origin")))
-                .unwrap_or(None),
-            drag_notes: ui
-                .data_mut(|d| d.get_persisted(ui.id().with("drag_notes")))
-                .unwrap_or(None),
-            preview_last_dk: ui
-                .data_mut(|d| d.get_persisted(ui.id().with("note_drag_preview_dk")))
-                .unwrap_or(0),
-            note_drag_had_moved: ui
-                .data_mut(|d| d.get_persisted(ui.id().with("note_drag_had_moved")))
-                .unwrap_or(false),
-            sel_resize_state: ui
-                .data_mut(|d| d.get_persisted(ui.id().with("sel_resize_state")))
-                .unwrap_or(None),
-            sel_note_resize: ui
-                .data_mut(|d| d.get_persisted(ui.id().with("sel_note_resize_state")))
-                .unwrap_or(None),
-            sel_note_move: ui
-                .data_mut(|d| d.get_persisted(ui.id().with("sel_note_move_state")))
-                .unwrap_or(None),
-            single_note_had_moved: ui
-                .data_mut(|d| d.get_persisted(ui.id().with("single_note_had_moved")))
-                .unwrap_or(false),
-            ghost_notes: Vec::new(),
-            hidden_notes: Vec::new(),
-            preview_reqs: Vec::new(),
-        }
-    }
-
-    /// 持久化拖拽状态（拖拽跨帧保持）。
-    fn save(&mut self, ui: &mut egui::Ui) {
-        // 解构出各状态字段的可变引用，避免闭包整体 move `self`。
-        let Self {
-            note_drag_origin,
-            drag_notes,
-            note_drag_had_moved,
-            sel_resize_state,
-            sel_note_resize,
-            sel_note_move,
-            single_note_had_moved,
-            ..
-        } = self;
-        ui.data_mut(|d| {
-            d.insert_persisted(ui.id().with("note_drag_origin"), note_drag_origin.take())
-        });
-        ui.data_mut(|d| d.insert_persisted(ui.id().with("drag_notes"), drag_notes.take()));
-        ui.data_mut(|d| {
-            d.insert_persisted(ui.id().with("note_drag_had_moved"), *note_drag_had_moved)
-        });
-        ui.data_mut(|d| {
-            d.insert_persisted(ui.id().with("sel_resize_state"), sel_resize_state.take())
-        });
-        ui.data_mut(|d| {
-            d.insert_persisted(
-                ui.id().with("sel_note_resize_state"),
-                sel_note_resize.take(),
-            )
-        });
-        ui.data_mut(|d| {
-            d.insert_persisted(ui.id().with("sel_note_move_state"), sel_note_move.take())
-        });
-        ui.data_mut(|d| {
-            d.insert_persisted(
-                ui.id().with("single_note_had_moved"),
-                *single_note_had_moved,
-            )
-        });
-    }
-}
-
-/// 拖拽推出屏幕时的 auto-scroll + 视口 clamp（4 个状态机共用）。
-fn drag_scroll_and_clamp(
-    ui: &mut egui::Ui,
-    view: &mut yinhe_types::PianoRollView,
-    content_rect: egui::Rect,
-    music_rect: egui::Rect,
-    total_ticks: f64,
-    pos: egui::Pos2,
-) {
-    // auto-scroll：拖拽能推出屏幕（pos 未 clamp）。方向感知：clamp 按主轴/副轴
-    // 拆分（纵向 scroll_x = 音高、scroll_y = 时间），由 view.clamp_scroll 统一处理。
-    crate::selection::drag::auto_scroll_on_drag_dir(ui, view, music_rect, pos, |view, w, h| {
-        view.clamp_scroll(w, h, total_ticks);
-    });
-    view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
-}
-
-/// 位置 clamp 到 music_rect（避免鼠标飞出后产生异常值）并换算 local 坐标。
-fn clamped_local(pos: egui::Pos2, content_rect: egui::Rect, music_rect: egui::Rect) -> (f32, f32) {
-    let clamped = pos.clamp(music_rect.min, music_rect.max);
-    (
-        clamped.x - content_rect.min.x,
-        clamped.y - content_rect.min.y,
-    )
-}
+pub(crate) use hit::{double_click_note, hit_test_note, rect_has_notes};
+pub(crate) use interact::{
+    clamped_local, cursor_tick_from_click, drag_scroll_and_clamp, on_action_bar,
+};
+pub(crate) use state::{SelDragFrameState, sel_drag_in_progress};
+pub(crate) use types::*;
 
 /// Press 帧分发：音符 hit-test → 单音符伸缩/移动；选框边缘 → 选区缩放；
 /// 选框内 → 选区整体移动；选框外（非加选）→ 清空选框与选区。
@@ -1078,8 +869,8 @@ pub(crate) fn sel_drag_frame(
     let can_edit =
         super::pencil::valid_pencil_track(write_track, track_visible, conductor_idx).is_some();
 
-    // ── 右键快速删除（选择工具双击/右键删除音符）──
-    // 不依赖 can_edit / write_track：任意可见音轨的音符均可快速删除
+    // ── 右键快速删除（选择工具）──
+    // 不依赖 can_edit：仅在已选轨道内删除（track_selected 空 = 全部可见轨道）
     if quick_delete.is_none()
         && quick_delete_mode.allows_right_click()
         && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary))
@@ -1088,13 +879,28 @@ pub(crate) fn sel_drag_frame(
         && !on_action_bar(pos, music_rect, view, &eff_rects)
     {
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-        if let Some((_, track, start_tick, _, key)) = hit_test_note(
-            midi,
-            view,
-            local,
-            track_visible,
-            &std::collections::HashSet::new(),
-        ) {
+        if let Some((_, track, start_tick, _, key)) =
+            hit_test_note(midi, view, local, track_visible, track_selected)
+        {
+            quick_delete = Some((track, start_tick, key));
+        }
+    }
+    // ── 双击快速删除（选择工具）──
+    // 提前于 sel_press 检测，避免第二击的 press 已设置 sel_note_move 导致判定被屏蔽
+    if quick_delete.is_none()
+        && quick_delete_mode.allows_double_click()
+        && ui.input(|i| {
+            i.pointer
+                .button_double_clicked(egui::PointerButton::Primary)
+        })
+        && let Some(pos) = pointer.hover_pos()
+        && music_rect.contains(pos)
+        && !on_action_bar(pos, music_rect, view, &eff_rects)
+    {
+        let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+        if let Some((_, track, start_tick, _, key)) =
+            hit_test_note(midi, view, local, track_visible, track_selected)
+        {
             quick_delete = Some((track, start_tick, key));
         }
     }
@@ -1185,17 +991,14 @@ pub(crate) fn sel_drag_frame(
         );
     }
 
-    // ── 双击处理（第二击 release 帧触发）──
-    // egui 在第二击 release 时判定 double-click。条件：
-    // - 无 note drag / resize 进行中（排除双击选框内音符/边缘的情况）
-    // - 不在浮动工具条上（防事件穿透）
-    // - 若命中音符且启用双击快速删除 → 删除音符
-    // - 否则 write_track 有效且点击位置无音符 → 创建，长度 = 一个量化间隔。
-    // 双击命中音符时传统 double_click_note 返回 None，保持选中/拖拽行为（无快速删除时）。
-    if ui.input(|i| {
-        i.pointer
-            .button_double_clicked(egui::PointerButton::Primary)
-    }) && state.note_drag_origin.is_none()
+    // ── 双击写音符（第二击 release 帧触发）──
+    // 已在 early 阶段处理过快速删除，此处仅处理“创建”分支（命中已有音符时 double_click_note 返回 None）
+    if quick_delete.is_none()
+        && ui.input(|i| {
+            i.pointer
+                .button_double_clicked(egui::PointerButton::Primary)
+        })
+        && state.note_drag_origin.is_none()
         && state.sel_resize_state.is_none()
         && state.sel_note_resize.is_none()
         && state.sel_note_move.is_none()
@@ -1204,33 +1007,17 @@ pub(crate) fn sel_drag_frame(
         && !on_action_bar(pos, music_rect, view, &eff_rects)
     {
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-        // 优先尝试快速删除：双击命中音符且设置允许 → 删除（不依赖 can_edit，任意可见音轨均可）
-        let mut handled_as_delete = false;
-        if quick_delete_mode.allows_double_click()
-            && let Some((_, track, start_tick, _, key)) = hit_test_note(
-                midi,
-                view,
-                local,
-                track_visible,
-                &std::collections::HashSet::new(),
-            )
-        {
-            quick_delete = Some((track, start_tick, key));
-            handled_as_delete = true;
-        }
-        if !handled_as_delete
-            && let Some((note, track)) = double_click_note(
-                midi,
-                write_track,
-                track_visible,
-                conductor_idx,
-                view,
-                local,
-                quantize,
-                ppq,
-                bar_line_data,
-            )
-        {
+        if let Some((note, track)) = double_click_note(
+            midi,
+            write_track,
+            track_visible,
+            conductor_idx,
+            view,
+            local,
+            quantize,
+            ppq,
+            bar_line_data,
+        ) {
             note_event = Some((note, track));
             // 听觉预览：一次性播放（gate = 新建音符长度）。
             state
@@ -1349,126 +1136,6 @@ pub(crate) use crate::selection::drag::{
     collect_selected_notes, compute_resize_dt, hit_test_sel_edge, main_cross_x_y,
     main_px_to_tick_dir, orient_rect, tick_to_main_px_dir,
 };
-
-/// 双击写音符：write_track 有效且点击位置无音符时创建新音符。
-///
-/// 音符长度 = 一个量化间隔（与铅笔点击一致）。返回 `(note, track)`。
-/// 命中已有音符（write_track 上）时返回 `None`——双击保持选中/拖拽行为。
-#[allow(clippy::too_many_arguments)]
-fn double_click_note(
-    midi: Option<&dyn yinhe_types::NoteSource>,
-    write_track: Option<u16>,
-    track_visible: &[bool],
-    conductor_idx: Option<u16>,
-    view: &yinhe_types::PianoRollView,
-    local: egui::Pos2,
-    quantize: QuantizePreset,
-    ppq: u32,
-    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
-) -> Option<(yinhe_core::NoteEvent, u16)> {
-    let track = super::pencil::valid_pencil_track(write_track, track_visible, conductor_idx)?;
-    let (main_px, cross_px) = main_cross_x_y(view, (local.x, local.y));
-    let raw_tick = main_px_to_tick_dir(view, main_px);
-    let key = view.cross_px_to_key(cross_px);
-    // 点击位置已有音符（write_track 上）→ 不创建。
-    // key_notes_in_range 左边界保守（tick - max_note_len），右边界精确，
-    // 任何覆盖该像素点的音符都会被包含；像素判定过滤跨边界长音符。
-    if let Some(midi) = midi {
-        let hit = midi
-            .key_notes_in_range(key, raw_tick as u32, (raw_tick + 1.0) as u32)
-            .any(|n| {
-                n.track == track
-                    && tick_to_main_px_dir(view, n.start_tick as f64) <= main_px
-                    && main_px <= tick_to_main_px_dir(view, n.end_tick as f64)
-            });
-        if hit {
-            return None;
-        }
-    }
-    let tick = crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data).max(0.0);
-    let interval = quantize.tick_interval(ppq) as f64;
-    Some((
-        yinhe_core::NoteEvent {
-            id: 0, // 由 Document::add_note 分配
-            start_tick: tick as u32,
-            end_tick: (tick + interval) as u32,
-            key,
-            velocity: 100, // App 层替换为 default_velocity
-        },
-        track,
-    ))
-}
-
-/// 音符 hit-test：返回 `(mode, track, start_tick, end_tick, key)`。
-///
-/// 不需要先选中：边缘 → 单音符伸缩；中部 → 单音符移动（与铅笔一致）。
-/// 轨道作用域 = track_selected（空 = 全部）∩ track_visible。
-/// 只查可能覆盖鼠标点的音符：key_notes_in_range 左边界保守（tick - max_note_len），
-/// 右边界精确，每帧 hover 开销与铅笔 hit-test 同级。
-pub(crate) fn hit_test_note(
-    midi: Option<&dyn yinhe_types::NoteSource>,
-    view: &yinhe_types::PianoRollView,
-    local: egui::Pos2,
-    track_visible: &[bool],
-    track_selected: &std::collections::HashSet<u16>,
-) -> Option<(super::pencil::HitMode, u16, u32, u32, u8)> {
-    const EDGE_THRESHOLD_PX: f32 = 6.0;
-    let (main_px, cross_px) = main_cross_x_y(view, (local.x, local.y));
-    let (midi, key) = (midi?, view.cross_px_to_key(cross_px));
-    let raw_tick = main_px_to_tick_dir(view, main_px);
-    let notes = midi.key_notes_in_range(key, raw_tick as u32, (raw_tick + 1.0) as u32);
-    for note in notes {
-        // 轨道作用域：track_selected（空 = 全部）∩ track_visible。
-        let in_scope = (track_selected.is_empty() || track_selected.contains(&note.track))
-            && track_visible
-                .get(note.track as usize)
-                .copied()
-                .unwrap_or(true);
-        if !in_scope {
-            continue;
-        }
-        // 方向感知的像素矩形：横向 x = tick、y = key；纵向 x = key、y = tick。
-        let a = tick_to_main_px_dir(view, note.start_tick as f64);
-        let b = tick_to_main_px_dir(view, note.end_tick as f64);
-        let c = view.key_to_cross_px(key);
-        let note_rect = orient_rect(view, a, b, c, c + view.key_height);
-        if !note_rect.contains(local) {
-            continue;
-        }
-        // 主轴上到两端距离：起点 = 伸缩左缘，终点 = 伸缩右缘。
-        let dist_start = (main_px - a).abs();
-        let dist_end = (main_px - b).abs();
-        let mode = if dist_start <= EDGE_THRESHOLD_PX {
-            super::pencil::HitMode::ResizeLeft
-        } else if dist_end <= EDGE_THRESHOLD_PX {
-            super::pencil::HitMode::ResizeRight
-        } else {
-            super::pencil::HitMode::Move // 音符中部：直接拖动移动该音符
-        };
-        return Some((mode, note.track, note.start_tick, note.end_tick, key));
-    }
-    None
-}
-
-/// 选框区域内是否至少有一个音符（数据层面，track 范围限定）。
-///
-/// 框选松手时判断：区域内无音符 → 自动变为垂直选框（全 128 键）。
-fn rect_has_notes(
-    midi: Option<&dyn yinhe_types::NoteSource>,
-    t_start: u32,
-    t_end: u32,
-    key_lo: u8,
-    key_hi: u8,
-    track_lo: u16,
-    track_hi: u16,
-) -> bool {
-    let Some(midi) = midi else { return false };
-    (key_lo..=key_hi).any(|key| {
-        midi.key_notes_in_range(key, t_start, t_end)
-            .any(|n| n.track >= track_lo && n.track <= track_hi && n.start_tick >= t_start)
-    })
-}
-
 #[cfg(test)]
 #[path = "drag_tests.rs"]
 mod tests;

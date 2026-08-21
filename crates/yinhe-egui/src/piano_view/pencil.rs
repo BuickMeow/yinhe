@@ -200,9 +200,8 @@ pub(crate) fn pencil_frame(
     };
 
     // ── 快速删除（双击/右键）──
-    // 不依赖 can_write / active_track：任意可见音轨的音符均可快速删除
+    // 仅在 active_track（主音轨）上生效，与铅笔编辑一致，避免误删其他可见轨道
     let mut quick_delete: PencilQuickDelete = None;
-    // 快速删除的 hit-test：任意可见轨道（与铅笔的 active_track 过滤不同）
     let quick_hit: Option<HitNote> = (|| -> Option<HitNote> {
         let mouse_screen = hover_pos?;
         if !music_rect.contains(mouse_screen) {
@@ -213,8 +212,12 @@ pub(crate) fn pencil_frame(
         let (main_px, cross_px) = super::drag::main_cross_x_y(view, (mouse_local_x, mouse_local_y));
         let key = view.cross_px_to_key(cross_px);
         let midi = midi?;
+        let active_track = track?;
         let notes = midi.key_notes_in_range(key, 0, u32::MAX);
         for note in notes {
+            if note.track != active_track {
+                continue;
+            }
             if !track_visible
                 .get(note.track as usize)
                 .copied()
