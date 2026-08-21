@@ -117,6 +117,8 @@ fn effective_tool(
     track_visible: &[bool],
     track_selected: &std::collections::HashSet<u16>,
     sel_rect: &yinhe_editor_core::edit_state::SelRectState,
+    write_track: Option<u16>,
+    conductor_idx: Option<u16>,
 ) -> Tool {
     if !ui.input(|i| i.modifiers.alt) {
         return active;
@@ -127,6 +129,13 @@ fn effective_tool(
             // 拖拽进行中（含 Alt 克隆）→ 锁定选择工具，不得切成铅笔。
             if drag::sel_drag_in_progress(ui) {
                 return active;
+            }
+            // 无编辑目标（未选音轨）时：不做 hit-test，直接视为空白→临时铅笔。
+            // 避免每帧遍历音符的性能损耗，且此时任何编辑光标都不应出现。
+            let can_edit =
+                pencil::valid_pencil_track(write_track, track_visible, conductor_idx).is_some();
+            if !can_edit {
+                return Tool::Pencil;
             }
             // 悬停音符或选框 = 保留选择（Alt 拖拽复制）；空白 = 临时铅笔。
             let hit = ui.input(|i| i.pointer.hover_pos()).is_some_and(|pos| {
@@ -357,6 +366,8 @@ pub fn show(
         track_visible,
         track_selected,
         sel_rect,
+        write_track,
+        conductor_idx,
     );
     if effective_tool == Tool::Select || effective_tool == Tool::SelectVertical {
         let vertical = effective_tool == Tool::SelectVertical;
@@ -435,7 +446,11 @@ pub fn show(
     }
 
     // ── Hover cursor: show Move/ResizeWest/ResizeEast when over selection rect ──
-    if (effective_tool == Tool::Select || effective_tool == Tool::SelectVertical)
+    // 无编辑目标时不做任何 hit-test，光标保持默认，避免每帧遍历音符的性能损耗。
+    let can_hover_edit =
+        pencil::valid_pencil_track(write_track, track_visible, conductor_idx).is_some();
+    if can_hover_edit
+        && (effective_tool == Tool::Select || effective_tool == Tool::SelectVertical)
         && !crate::view_interaction::pointer_over_popup(ui.ctx())
         && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
         && music_rect.contains(pos)

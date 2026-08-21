@@ -250,6 +250,7 @@ fn sel_press(
     additive: bool,
     press_on_bar: bool,
     pointer: &egui::PointerState,
+    can_edit: bool,
 ) {
     // Start drag (note drag only — marquee is handled by shared function below)
     if pointer.primary_pressed()
@@ -270,121 +271,136 @@ fn sel_press(
                 pixel_rect.contains(local)
             });
 
-            // ── 音符 hit-test（不用先选中，与铅笔一致）──
-            // 轨道作用域 = track_selected（空 = 全部）∩ track_visible。
-            // 边缘 → 单音符伸缩；中部（未选中）→ 单音符移动。
-            if let Some((mode, track, start_tick, end_tick, key)) =
-                hit_test_note(midi, view, local, track_visible, track_selected)
-            {
-                match mode {
-                    super::pencil::HitMode::ResizeLeft | super::pencil::HitMode::ResizeRight => {
-                        let side = match mode {
-                            super::pencil::HitMode::ResizeLeft => ResizeSide::Left,
-                            _ => ResizeSide::Right,
-                        };
-                        state.sel_note_resize = Some((side, track, start_tick, end_tick, key));
-                    }
-                    super::pencil::HitMode::Move => {
-                        // 音符中部：未选中时直接移动该音符；已选中交给选区移动。
-                        if !in_sel_rect {
-                            let (main_px, _) = main_cross_x_y(view, (local.x, local.y));
-                            let raw_tick = main_px_to_tick_dir(view, main_px);
-                            let tick = crate::view_interaction::snap_tick(
-                                raw_tick,
-                                quantize,
-                                ppq,
-                                bar_line_data,
-                            );
-                            // press 时锁定 alt（复制模式），拖拽中切换不影响本次操作。
-                            let alt = ui.input(|i| i.modifiers.alt);
-                            state.sel_note_move =
-                                Some((track, start_tick, key, end_tick, tick, 0, alt));
-                            state.single_note_had_moved = false;
+            if !can_edit {
+                // 无编辑目标：不做任何 hit-test/预览/拖动启动，仅保留清空行为。
+                // 避免每帧遍历音符的性能损耗，且此时任何 Move/Resize 光标都不应出现。
+                if !in_sel_rect && !additive {
+                    selected.clear();
+                    sel_rect.clear();
+                }
+            } else {
+                // ── 音符 hit-test（不用先选中，与铅笔一致）──
+                // 轨道作用域 = track_selected（空 = 全部）∩ track_visible。
+                // 边缘 → 单音符伸缩；中部（未选中）→ 单音符移动。
+                if let Some((mode, track, start_tick, end_tick, key)) =
+                    hit_test_note(midi, view, local, track_visible, track_selected)
+                {
+                    match mode {
+                        super::pencil::HitMode::ResizeLeft
+                        | super::pencil::HitMode::ResizeRight => {
+                            let side = match mode {
+                                super::pencil::HitMode::ResizeLeft => ResizeSide::Left,
+                                _ => ResizeSide::Right,
+                            };
+                            state.sel_note_resize = Some((side, track, start_tick, end_tick, key));
+                        }
+                        super::pencil::HitMode::Move => {
+                            // 音符中部：未选中时直接移动该音符；已选中交给选区移动。
+                            if !in_sel_rect {
+                                let (main_px, _) = main_cross_x_y(view, (local.x, local.y));
+                                let raw_tick = main_px_to_tick_dir(view, main_px);
+                                let tick = crate::view_interaction::snap_tick(
+                                    raw_tick,
+                                    quantize,
+                                    ppq,
+                                    bar_line_data,
+                                );
+                                // press 时锁定 alt（复制模式），拖拽中切换不影响本次操作。
+                                let alt = ui.input(|i| i.modifiers.alt);
+                                state.sel_note_move =
+                                    Some((track, start_tick, key, end_tick, tick, 0, alt));
+                                state.single_note_had_moved = false;
+                            }
                         }
                     }
+                    // 点击音符出声（gate 长度，原力度）。vel <= 1 隐藏音符不响。
+                    if let Some(vel) = note_velocity(midi, track, start_tick, key)
+                        && vel > 1
+                    {
+                        state
+                            .preview_reqs
+                            .push(super::PreviewReq::Note(super::NotePreview {
+                                track,
+                                key,
+                                velocity: Some(vel),
+                                target_tick: start_tick,
+                                duration_ticks: end_tick - start_tick,
+                            }));
+                    }
                 }
-                // 点击音符出声（gate 长度，原力度）。vel <= 1 隐藏音符不响。
-                if let Some(vel) = note_velocity(midi, track, start_tick, key)
-                    && vel > 1
-                {
-                    state
-                        .preview_reqs
-                        .push(super::PreviewReq::Note(super::NotePreview {
-                            track,
-                            key,
-                            velocity: Some(vel),
-                            target_tick: start_tick,
-                            duration_ticks: end_tick - start_tick,
-                        }));
-                }
-            }
 
-            // ── 选框边缘 hit-test：优先级大于拖动移动 ──
-            // 已命中音符（伸缩/移动）时跳过——单音符操作优先于选框整体操作。
-            let edge_hit = if state.sel_note_resize.is_some() || state.sel_note_move.is_some() {
-                None
-            } else {
-                hit_test_sel_edge(eff_rects, view, local)
-            };
+                // ── 选框边缘 hit-test：优先级大于拖动移动 ──
+                // 已命中音符（伸缩/移动）时跳过——单音符操作优先于选框整体操作。
+                let edge_hit = if state.sel_note_resize.is_some() || state.sel_note_move.is_some() {
+                    None
+                } else {
+                    hit_test_sel_edge(eff_rects, view, local)
+                };
 
-            if let Some((side, origin_boundary_tick, other_boundary_tick)) = edge_hit {
-                // 启动 resize：记录原边缘 tick + 另一边缘 + 预计算选中音符
-                state.sel_resize_state = Some((side, origin_boundary_tick, other_boundary_tick));
-                sel_rect.start_resize(side);
-                state.drag_notes = Some(collect_selected_notes(
-                    selected,
-                    midi,
-                    track_visible,
-                    track_selected,
-                ));
-            } else if state.sel_note_resize.is_none() && state.sel_note_move.is_none() {
-                if in_sel_rect {
-                    let (main_px, cross_px) = main_cross_x_y(view, (local.x, local.y));
-                    let raw_tick = main_px_to_tick_dir(view, main_px);
-                    let tick =
-                        crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
-                    let key = view.cross_px_to_key(cross_px) as f64;
-                    // Alt（Option）按下时进入复制模式：原音符保留，拖出副本。
-                    // press 时锁定 alt 状态，拖拽中切换不影响本次操作。
-                    let alt = ui.input(|i| i.modifiers.alt);
-                    state.note_drag_origin = Some((tick, key, alt));
-                    sel_rect.start_drag();
+                if let Some((side, origin_boundary_tick, other_boundary_tick)) = edge_hit {
+                    // 启动 resize：记录原边缘 tick + 另一边缘 + 预计算选中音符
+                    state.sel_resize_state =
+                        Some((side, origin_boundary_tick, other_boundary_tick));
+                    sel_rect.start_resize(side);
                     state.drag_notes = Some(collect_selected_notes(
                         selected,
                         midi,
                         track_visible,
                         track_selected,
                     ));
-                    state.preview_last_dk = 0;
-                    state.note_drag_had_moved = false;
-                    ui.data_mut(|d| {
-                        d.insert_persisted(
-                            ui.id().with("note_drag_preview_dk"),
-                            state.preview_last_dk,
-                        )
-                    });
-                    // 点击选中音符出声：立即预览整组（dk=0，与移动时同组预览一致）。
-                    // vel <= 1 的音符（黑乐谱隐藏音符）不响，与播放筛除一致。
-                    if let Some(notes) = state.drag_notes.as_ref() {
-                        state.preview_reqs = notes
-                            .iter()
-                            .filter(|info| info.velocity > 1)
-                            .map(|info| {
-                                super::PreviewReq::Note(super::NotePreview {
-                                    track: info.track,
-                                    key: info.key,
-                                    velocity: Some(info.velocity),
-                                    target_tick: info.start_tick,
-                                    duration_ticks: info.end_tick - info.start_tick,
+                } else if state.sel_note_resize.is_none() && state.sel_note_move.is_none() {
+                    if in_sel_rect {
+                        let (main_px, cross_px) = main_cross_x_y(view, (local.x, local.y));
+                        let raw_tick = main_px_to_tick_dir(view, main_px);
+                        let tick = crate::view_interaction::snap_tick(
+                            raw_tick,
+                            quantize,
+                            ppq,
+                            bar_line_data,
+                        );
+                        let key = view.cross_px_to_key(cross_px) as f64;
+                        // Alt（Option）按下时进入复制模式：原音符保留，拖出副本。
+                        // press 时锁定 alt 状态，拖拽中切换不影响本次操作。
+                        let alt = ui.input(|i| i.modifiers.alt);
+                        state.note_drag_origin = Some((tick, key, alt));
+                        sel_rect.start_drag();
+                        state.drag_notes = Some(collect_selected_notes(
+                            selected,
+                            midi,
+                            track_visible,
+                            track_selected,
+                        ));
+                        state.preview_last_dk = 0;
+                        state.note_drag_had_moved = false;
+                        ui.data_mut(|d| {
+                            d.insert_persisted(
+                                ui.id().with("note_drag_preview_dk"),
+                                state.preview_last_dk,
+                            )
+                        });
+                        // 点击选中音符出声：立即预览整组（dk=0，与移动时同组预览一致）。
+                        // vel <= 1 的音符（黑乐谱隐藏音符）不响，与播放筛除一致。
+                        if let Some(notes) = state.drag_notes.as_ref() {
+                            state.preview_reqs = notes
+                                .iter()
+                                .filter(|info| info.velocity > 1)
+                                .map(|info| {
+                                    super::PreviewReq::Note(super::NotePreview {
+                                        track: info.track,
+                                        key: info.key,
+                                        velocity: Some(info.velocity),
+                                        target_tick: info.start_tick,
+                                        duration_ticks: info.end_tick - info.start_tick,
+                                    })
                                 })
-                            })
-                            .collect();
+                                .collect();
+                        }
+                    } else if !additive {
+                        // 单击选框外（非加选模式）→ 立即清空选框与选区。
+                        // 比 on_press 回调更早触发，覆盖 click（< 3px）的场景。
+                        selected.clear();
+                        sel_rect.clear();
                     }
-                } else if !additive {
-                    // 单击选框外（非加选模式）→ 立即清空选框与选区。
-                    // 比 on_press 回调更早触发，覆盖 click（< 3px）的场景。
-                    selected.clear();
-                    sel_rect.clear();
                 }
             }
         }
@@ -1020,6 +1036,12 @@ pub(crate) fn sel_drag_frame(
         .input(|i| i.pointer.hover_pos())
         .is_some_and(|pos| on_action_bar(pos, music_rect, view, &eff_rects));
 
+    // 无编辑目标（未选中音轨 / 主音轨不可见 / 主音轨是 Conductor）时，
+    // 禁止音符移动/缩放及一切 hit-test/预览（选框工具也不允许这些操作），
+    // 但框选与点选的清空仍可用。提前计算供 sel_press 与后续状态机共用。
+    let can_edit =
+        super::pencil::valid_pencil_track(write_track, track_visible, conductor_idx).is_some();
+
     // ── Press：音符/选框 hit-test 分发 ──
     sel_press(
         ui,
@@ -1039,12 +1061,9 @@ pub(crate) fn sel_drag_frame(
         additive,
         press_on_bar,
         &pointer,
+        can_edit,
     );
 
-    // 无编辑目标（未选中音轨 / 主音轨不可见 / 主音轨是 Conductor）时，
-    // 禁止音符移动/缩放（选框工具也不允许这些操作），但框选与点选仍可用。
-    let can_edit =
-        super::pencil::valid_pencil_track(write_track, track_visible, conductor_idx).is_some();
     if can_edit {
         // ── 四个互斥拖拽状态机（同一时刻至多一个激活）──
         note_drag_frame(
