@@ -4,7 +4,7 @@ use rust_i18n::t;
 use yinhe_types::time_format::format_tick_bar_beat_with_time_sig;
 use yinhe_types::{AutomationLane, TimeSigEvent};
 
-use crate::widgets::selection_actions::SelectionAction;
+use crate::theme;
 use crate::widgets::tools_panel::Tool;
 pub use yinhe_editor_core::ResizeSide;
 use yinhe_editor_core::audio_settings::QuickDeleteMode;
@@ -15,151 +15,20 @@ pub mod automation_panel;
 mod bg;
 pub mod control_bar;
 pub(crate) mod drag;
+mod follow;
 pub(crate) mod gpu_upload;
 mod keyboard;
+mod layout;
 mod marquee;
 mod pencil;
 mod perf;
-
-/// Events emitted by the piano-roll view for the caller to act on.
-pub enum PianoViewEvent {
-    SelectionAction(SelectionAction),
-    AddNote {
-        track: u16,
-        note: yinhe_core::NoteEvent,
-    },
-    EraserDelete {
-        t_start: u32,
-        t_end: u32,
-        key_lo: u8,
-        key_hi: u8,
-        track_lo: u16,
-        track_hi: u16,
-    },
-    QuickDelete {
-        track: u16,
-        start_tick: u32,
-        key: u8,
-    },
-}
-
-/// Automation panel 上下文（all-or-nothing：要么全 Some 要么全 None）。
-/// 合并 5 个 auto_* 参数，减少 piano_view::show 的参数数量。
-pub struct AutomationPanelsCtx<'a> {
-    pub panels: &'a mut Vec<yinhe_types::AutomationPanelView>,
-    pub renderers: &'a mut Vec<(
-        yinhe_wgpu::InstanceRenderer,
-        crate::render_context::RenderContext,
-    )>,
-    pub lanes: &'a [yinhe_types::AutomationLane],
-    /// 渲染用 lanes：所有 PR 可见音轨的 lanes（与音符显示逻辑一致）。
-    /// `lanes` 仅为主音轨的编辑目标，渲染不受其限制。
-    pub render_lanes: &'a [&'a yinhe_types::AutomationLane],
-    pub show: &'a mut bool,
-    pub wgpu_state: &'a std::sync::Arc<eframe::egui_wgpu::RenderState>,
-}
-
-/// 音符听觉预览请求（UI 交互 → App → AudioCommand）。
-/// 预览音从目标音轨的通道发出，通道状态按目标位置（target_tick）的自动化。
-pub(crate) enum PreviewReq {
-    /// 播放/重触发一个音符预览。`duration_ticks == 0` 表示持续音（直到 `Stop`）。
-    Note(NotePreview),
-    /// 停止持续音预览。
-    Stop,
-}
-
-/// 单个音符的预览参数。
-pub(crate) struct NotePreview {
-    pub track: u16,
-    pub key: u8,
-    /// `None` = 用该音轨最近修改力度（default_velocity）。
-    pub velocity: Option<u8>,
-    /// 目标位置 tick：自动化状态采样点（音符起点）。
-    pub target_tick: u32,
-    /// 预览时长（tick），0 = 持续音（配合 `PreviewReq::Stop`）。
-    pub duration_ticks: u32,
-}
-
-/// piano_view 给外部的反馈通道（合并多个 &mut 出参）。
-pub struct PianoViewFeedback<'a> {
-    pub auto_edit_events: &'a mut Vec<crate::piano_view::automation_panel::AutomationEdit>,
-    pub info_content: &'a mut Option<crate::right_panel::InfoContent>,
-    pub right_tab: &'a mut Option<crate::right_panel::RightTab>,
-    pub automation_drag_ghost: &'a mut Option<(u32, f32)>,
-    pub note_drag_delta: &'a mut Option<(i64, i32, bool)>,
-    pub pencil_note_drag: &'a mut Option<PencilNoteDrag>,
-    /// 选框边缘拖动伸缩：(side, delta_ticks)。dt 按量化对齐。
-    pub note_resize_delta: &'a mut Option<(ResizeSide, i64)>,
-    pub velocity_edits: &'a mut Vec<yinhe_types::VelocityEdit>,
-    /// 音符听觉预览请求（铅笔新建/拖拽、选框拖拽触发）。
-    pub preview_reqs: &'a mut Vec<PreviewReq>,
-    /// 状态栏讲解行：钢琴卷帘悬停提示（位置 + 音高）。
-    pub status_hint: &'a mut Option<String>,
-    /// 控制栏事件（量化/切换主音轨/显示音轨勾选），由 layout 应用。
-    pub bar_events: &'a mut Vec<control_bar::PrBarEvent>,
-}
-
-/// Height of the time ruler band at the top of the pianoroll view.
-use crate::theme;
-const RULER_H: f32 = theme::RULER_H;
-
-/// 按住 Alt（Option）时的有效工具（Cubase 风格临时切换）：
-/// - Select/SelectVertical + Alt：悬停在音符或选框上 = 保持选择（Alt 拖拽复制）；
-///   悬停空白 = 临时铅笔（画音符）。
-///   例外：选框拖拽状态机进行中（含 Alt 克隆）时锁定选择工具——
-///   拖拽中鼠标移出音符原位后 hover 命中会失败，不得据此切成铅笔。
-/// - Pencil + Alt = 临时选择（框选/移动）。
-/// - 其余工具不受影响。
-///
-/// 自动化面板不使用该映射（Alt 在那里是"复制锚点"）。
-#[allow(clippy::too_many_arguments)]
-fn effective_tool(
-    ui: &egui::Ui,
-    active: Tool,
-    midi: Option<&dyn yinhe_types::NoteSource>,
-    view: &yinhe_types::PianoRollView,
-    content_rect: egui::Rect,
-    music_rect: egui::Rect,
-    track_visible: &[bool],
-    track_selected: &std::collections::HashSet<u16>,
-    sel_rect: &yinhe_editor_core::edit_state::SelRectState,
-    write_track: Option<u16>,
-    conductor_idx: Option<u16>,
-) -> Tool {
-    if !ui.input(|i| i.modifiers.alt) {
-        return active;
-    }
-    match active {
-        Tool::Pencil => Tool::Select,
-        Tool::Select | Tool::SelectVertical => {
-            // 拖拽进行中（含 Alt 克隆）→ 锁定选择工具，不得切成铅笔。
-            if drag::sel_drag_in_progress(ui) {
-                return active;
-            }
-            // 无编辑目标（未选音轨）时：不做 hit-test，直接视为空白→临时铅笔。
-            // 避免每帧遍历音符的性能损耗，且此时任何编辑光标都不应出现。
-            let can_edit =
-                pencil::valid_pencil_track(write_track, track_visible, conductor_idx).is_some();
-            if !can_edit {
-                return Tool::Pencil;
-            }
-            // 悬停音符或选框 = 保留选择（Alt 拖拽复制）；空白 = 临时铅笔。
-            let hit = ui.input(|i| i.pointer.hover_pos()).is_some_and(|pos| {
-                if !music_rect.contains(pos) {
-                    return false;
-                }
-                let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-                drag::hit_test_note(midi, view, local, track_visible, track_selected).is_some()
-                    || sel_rect.effective_rects().iter().any(|&(t0, t1, k0, k1)| {
-                        crate::selection::drag::music_sel_to_pixel_rect(view, t0, t1, k0, k1)
-                            .contains(local)
-                    })
-            });
-            if hit { active } else { Tool::Pencil }
-        }
-        t => t,
-    }
-}
+mod tool;
+mod types;
+pub(crate) use follow::update_follow;
+pub(crate) use layout::{Layout, compute_layout};
+pub(crate) use tool::effective_tool;
+pub use types::*;
+pub(crate) use types::{NotePreview, PreviewReq};
 
 /// Display the pianoroll texture with zoom/pan interaction.
 ///
@@ -234,56 +103,32 @@ pub fn show(
         _ => 0.0,
     };
 
-    // ── 布局：方向感知（主轴 = 时间轴）──
-    // 横向：竖 ruler 顶部横条 + 左侧键盘列；底部水平 scrollbar（时间），右侧竖 scrollbar（音高）。
-    // 纵向瀑布流：control bar 顶部、竖 ruler 左侧列、键盘底部横条（高 = keyboard_width）；
-    //   右侧竖 scrollbar（时间），底部横 scrollbar（音高）。
-    let vertical = view.is_vertical();
+    let total_ticks = super::view_interaction::total_ticks_padded(
+        midi.and_then(|m| m.tick_length()).unwrap_or(0),
+        ppq,
+    );
+    let layout: Layout = compute_layout(
+        view,
+        rect,
+        panels_natural_h,
+        ui.ctx().pixels_per_point(),
+        total_ticks,
+    )?;
+    let content_rect = layout.content_rect;
+    let music_rect = layout.music_rect;
+    let content_y = layout.content_y;
+    let content_bottom = layout.content_bottom;
+    let w = layout.w;
+    let h = layout.h;
+    let pw = layout.pw;
+    let ph = layout.ph;
+    let total_ticks = layout.total_ticks;
+    let panels_total_h = layout.panels_total_h;
+    // 兼容旧局部变量命名，保持后续代码无需大改。
     let kb_w = view.keyboard_width();
     let content_right_x = rect.max.x - crate::widgets::scrollbar::SCROLLBAR_W;
-
-    // AM 面板可用高度（横向：content 之下；纵向：content 之下、键盘之上）
-    let avail_h = if vertical {
-        (rect.height() - theme::PR_BAR_H - crate::widgets::scrollbar::SCROLLBAR_H - kb_w).max(0.0)
-    } else {
-        (rect.height() - RULER_H - theme::PR_BAR_H - crate::widgets::scrollbar::SCROLLBAR_H)
-            .max(0.0)
-    };
-    let panels_max_h = (avail_h * 0.65).max(0.0);
-    let panels_total_h = panels_natural_h.min(panels_max_h);
-
-    // 音乐区位置：横向顶部从 ruler+control_bar 之下开始；纵向顶部从 control_bar 之下。
-    let ruler_band_y = rect.min.y;
-    let (content_y, content_bottom, content_left_x, music_left_x) = if vertical {
-        let top = rect.min.y + theme::PR_BAR_H;
-        // 底部：key 滚动条 + 键盘条（高 kb_w）
-        let keyboard_top = rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H - kb_w;
-        let bottom = keyboard_top - panels_total_h;
-        let left = rect.min.x + RULER_H; // 竖 ruler 列
-        (top, bottom.max(top), left, left)
-    } else {
-        let top = rect.min.y + RULER_H + theme::PR_BAR_H;
-        let bottom = top + (avail_h - panels_total_h).max(0.0);
-        (top, bottom, rect.min.x, rect.min.x + kb_w)
-    };
     let content_h = (content_bottom - content_y).max(0.0);
-    let content_rect = egui::Rect::from_min_max(
-        egui::pos2(content_left_x, content_y),
-        egui::pos2(content_right_x, content_bottom),
-    );
-    let music_rect = egui::Rect::from_min_max(
-        egui::pos2(music_left_x, content_y),
-        egui::pos2(content_right_x, content_bottom),
-    );
-    let ppp = ui.ctx().pixels_per_point();
-    let w = content_rect.width() as u32;
-    let h = content_rect.height() as u32;
-    let pw = (w as f32 * ppp) as u32;
-    let ph = (h as f32 * ppp) as u32;
-
-    if w == 0 || h == 0 {
-        return None;
-    }
+    let ruler_band_y = rect.min.y;
 
     // ── Perf probe (only when YIN_PERF=1) ──
     let perf_on = yinhe_memtrace::perf_probe::enabled();
@@ -303,56 +148,7 @@ pub fn show(
         rt.update_target(render_ctx.preview_view().clone(), aw, ah);
     }
 
-    // Clamp scroll — add some extra space beyond the last note
-    let total_ticks = super::view_interaction::total_ticks_padded(
-        midi.and_then(|m| m.tick_length()).unwrap_or(0),
-        ppq,
-    );
-    view.clamp_scroll(w as f32, h as f32, total_ticks);
-
-    // Auto-follow: scroll based on follow mode (playback only).
-    // Never auto-follow when paused, so the user can freely scroll around.
-    // 触发（居中/翻页/连续）后向目标 scroll_x 帧间指数插值：跳变变成平滑
-    // 滑动，代替逐帧硬设置（原实现看起来像高速翻页）。非播放时清空插值
-    // 目标，避免恢复播放后画面自行滚向旧目标。
-    let follow_active = is_playing && *follow_mode != super::view_interaction::FollowMode::None;
-    if !follow_active {
-        view.base.follow_target = None;
-    } else if let Some(ct) = *cursor_tick {
-        let dt = ui.input(|i| i.stable_dt).max(1e-4);
-        // 沿主轴跟随：横向滚动目标 = scroll_x（视口宽 w）；纵向 = scroll_y（视口高 h，
-        // 时间轴起点在顶部、无键盘列偏移）。compute_follow_scroll 数学单轴通用。
-        let (main_len, left_boundary, cur_main) = if view.is_vertical() {
-            (h as f32, 0.0, view.base.scroll_y)
-        } else {
-            (w as f32, view.keyboard_width(), view.base.scroll_x)
-        };
-        if let Some(t) = super::view_interaction::compute_follow_scroll(
-            ct,
-            view.base.pixels_per_tick,
-            main_len,
-            left_boundary,
-            *follow_mode,
-            1.0,
-            cur_main,
-        ) {
-            view.base.follow_target = Some(t);
-        }
-        if let Some(t) = view.base.follow_target {
-            let before = *view.main_scroll();
-            *view.main_scroll() = super::view_interaction::follow_interpolate(
-                before,
-                t,
-                dt,
-                super::view_interaction::FOLLOW_TAU,
-            );
-            view.clamp_scroll(w as f32, h as f32, total_ticks);
-            // 已到达目标（1px 数值容差）或滚动被 clamp 卡在边界：结束插值。
-            if (t - *view.main_scroll()).abs() <= 1.0 || *view.main_scroll() == before {
-                view.base.follow_target = None;
-            }
-        }
-    }
+    update_follow(view, *cursor_tick, is_playing, follow_mode, ui, &layout);
 
     // ── Selection drag (Select tool only) ──
     // Update state BEFORE handle_input to avoid egui pointer-capture conflicts.
