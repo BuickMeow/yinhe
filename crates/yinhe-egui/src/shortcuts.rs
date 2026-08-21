@@ -359,6 +359,8 @@ pub fn action_label_key(action_id: &str) -> &'static str {
         sc::ACTION_DELETE => "menu.delete",
         sc::ACTION_TRANSPOSE_UP => "menu.octave_up",
         sc::ACTION_TRANSPOSE_DOWN => "menu.octave_down",
+        sc::ACTION_DEDUP_WITHIN_TRACK => "menu.dedup_within_track",
+        sc::ACTION_DEDUP_ACROSS_TRACKS => "menu.dedup_across_tracks",
         sc::ACTION_TOGGLE_PLAY => "shortcuts.play_toggle",
         sc::ACTION_STOP => "shortcuts.stop",
         sc::ACTION_TOOL_SELECT => "shortcuts.tool_select",

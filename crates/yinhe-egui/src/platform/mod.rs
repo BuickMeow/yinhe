@@ -26,6 +26,8 @@ pub enum MenuAction {
     Delete,
     TransposeUp,
     TransposeDown,
+    DedupWithinTrack,
+    DedupAcrossTracks,
     /// 播放菜单「播放/暂停」（Space）。
     TogglePlay,
     /// 播放菜单「停止」（Esc）。

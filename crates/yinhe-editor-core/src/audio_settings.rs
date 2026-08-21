@@ -88,8 +88,10 @@ pub struct AudioSettings {
     /// 用 Vec 而非定长数组：旧配置（9 项）升级时可直接解析为新长度，
     /// 访问处用 `get(idx).copied().unwrap_or(false)` 兜底，不越界/pнаpanic。
     pub pinned_file_actions: Vec<bool>,
-    /// 编辑菜单里被图钉固定的动作（顺序对应 `EditAction::ALL`，10 项）。
-    pub pinned_edit_actions: [bool; 10],
+    /// 编辑菜单里被图钉固定的动作（顺序对应 `EditAction::ALL`，12 项）。
+    /// 用 Vec 而非定长数组：旧配置（10 项）升级时可直接解析为新长度，
+    /// 访问处用 `get(idx).copied().unwrap_or(false)` 兜底，不越界/panic。
+    pub pinned_edit_actions: Vec<bool>,
     /// 播放菜单里被图钉固定的"播放/暂停"动作（单个）。
     pub pinned_play_pause: bool,
     /// 播放菜单里被图钉固定的"停止"动作（单个）。
@@ -148,7 +150,7 @@ impl Default for AudioSettings {
             layout: LayoutSettings::default(),
             keybindings: Keybindings::default(),
             pinned_file_actions: vec![false; 10],
-            pinned_edit_actions: [false; 10],
+            pinned_edit_actions: vec![false; 12],
             pinned_play_pause: false,
             pinned_stop: false,
             pinned_record: false,
@@ -189,6 +191,10 @@ impl AudioSettings {
                         // 手改或损坏，异常值会让 egui zoom_factor 放大像素尺寸，
                         // 导致离屏纹理超过 GPU 上限而崩溃。
                         s.ui_scale = s.ui_scale.clamp(0.75, 2.0);
+                        // 迁移旧 pinned_edit_actions 长度（10 → 12，新增去重两项）
+                        if s.pinned_edit_actions.len() < 12 {
+                            s.pinned_edit_actions.resize(12, false);
+                        }
                         return s;
                     }
                     Err(e) => {

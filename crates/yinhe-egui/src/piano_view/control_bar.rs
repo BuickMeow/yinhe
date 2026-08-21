@@ -104,8 +104,12 @@ pub fn show(ui: &mut egui::Ui, bar: egui::Rect, ctx: &PrBarData<'_>, events: &mu
         };
         ui.painter().rect_filled(ov_rect, 4.0, bg);
     }
-    // 开启时高亮图标（表示当前允许新重叠音符）；关闭时灰显并带删除线暗示禁用。
-    let ov_icon = egui_material_icons::icons::ICON_DISCOVER_TUNE;
+    // 开启时高亮 stack，关闭时灰显 stack_off（ material 图标语义：stack=多层重叠，stack_off=去重）
+    let ov_icon = if ctx.allow_overlap {
+        egui_material_icons::icons::ICON_STACK
+    } else {
+        egui_material_icons::icons::ICON_STACK_OFF
+    };
     let ov_color = if ctx.allow_overlap {
         if ov_hovered {
             crate::theme::contrast_fg()

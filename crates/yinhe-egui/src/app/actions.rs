@@ -205,6 +205,18 @@ impl App {
         self.with_undo(label.as_ref(), |doc| doc.flip_selected_notes(axis));
     }
 
+    /// 一键为整首歌去重重叠音符（黑乐谱叠音清理）。
+    pub(crate) fn dedup_overlapping_notes(&mut self, cross_track: bool) {
+        let label = if cross_track {
+            t!("undo.dedup_across_tracks")
+        } else {
+            t!("undo.dedup_within_track")
+        };
+        self.with_undo(label.as_ref(), |doc| {
+            doc.dedup_overlapping_notes(cross_track)
+        });
+    }
+
     // ── Copy / Cut / Paste / Select All ──
 
     /// Copy selection rects to clipboard (no note data, just rects).
@@ -352,6 +364,8 @@ impl App {
             }
             A::TransposeUp => self.transpose_selected_notes(12),
             A::TransposeDown => self.transpose_selected_notes(-12),
+            A::DedupWithinTrack => self.dedup_overlapping_notes(false),
+            A::DedupAcrossTracks => self.dedup_overlapping_notes(true),
         }
     }
 

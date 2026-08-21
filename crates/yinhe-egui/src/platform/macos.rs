@@ -584,6 +584,8 @@ impl MenuActionFrom for crate::chrome::transport_bar::EditAction {
             EditAction::Delete => MenuAction::Delete,
             EditAction::TransposeUp => MenuAction::TransposeUp,
             EditAction::TransposeDown => MenuAction::TransposeDown,
+            EditAction::DedupWithinTrack => MenuAction::DedupWithinTrack,
+            EditAction::DedupAcrossTracks => MenuAction::DedupAcrossTracks,
         }
     }
 }

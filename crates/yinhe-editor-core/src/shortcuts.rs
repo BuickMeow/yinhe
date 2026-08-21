@@ -45,6 +45,8 @@ pub const ACTION_DUPLICATE: &str = "duplicate";
 pub const ACTION_DELETE: &str = "delete";
 pub const ACTION_TRANSPOSE_UP: &str = "transpose_up";
 pub const ACTION_TRANSPOSE_DOWN: &str = "transpose_down";
+pub const ACTION_DEDUP_WITHIN_TRACK: &str = "dedup_within_track";
+pub const ACTION_DEDUP_ACROSS_TRACKS: &str = "dedup_across_tracks";
 
 pub const ACTION_TOGGLE_PLAY: &str = "toggle_play";
 pub const ACTION_STOP: &str = "stop";
@@ -79,6 +81,8 @@ pub const ALL_ACTION_IDS: &[&str] = &[
     ACTION_DELETE,
     ACTION_TRANSPOSE_UP,
     ACTION_TRANSPOSE_DOWN,
+    ACTION_DEDUP_WITHIN_TRACK,
+    ACTION_DEDUP_ACROSS_TRACKS,
     ACTION_TOGGLE_PLAY,
     ACTION_STOP,
     ACTION_TOOL_SELECT,

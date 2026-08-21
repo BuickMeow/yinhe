@@ -909,6 +909,71 @@ impl Document {
             }))
         }
     }
+
+    /// 一键为整首歌去重重叠音符（用于黑乐谱叠音清理）。
+    ///
+    /// - `cross_track == false`：仅同一 `(track, key)` 内 `[start,end)` 相交的视为重叠，保留最早的，删后者；
+    /// - `cross_track == true`：同一 `key` 下跨轨也视为重叠（全局 per-key 去重）。
+    ///
+    /// 已按 `start_tick` 有序的桶直接线性扫描 `O(N)`，每 key 单独 `from_sorted` 重建，
+    /// 空桶跳过。对 1 亿音符（128 key × ~78万）峰值临时 `Vec` 约 12MB。
+    pub fn dedup_overlapping_notes(&mut self, cross_track: bool) -> Option<UndoAction> {
+        let model = Arc::make_mut(&mut self.data.model);
+        let mut removed: Vec<(yinhe_types::Note, u8)> = Vec::new();
+        for key in 0u8..=yinhe_types::MAX_KEY {
+            let bucket = Arc::make_mut(&mut model.notes[key as usize]);
+            if bucket.is_empty() {
+                continue;
+            }
+            let notes: Vec<yinhe_types::Note> = bucket.iter().copied().collect();
+            let orig_len = notes.len();
+            let mut kept: Vec<yinhe_types::Note> = Vec::with_capacity(orig_len);
+            if cross_track {
+                let mut last_end: Option<u32> = None;
+                for n in notes {
+                    if let Some(le) = last_end
+                        && n.start_tick < le
+                    {
+                        removed.push((n, key));
+                        continue;
+                    }
+                    kept.push(n);
+                    last_end = Some(n.end_tick);
+                }
+            } else {
+                use std::collections::HashMap;
+                let mut last_per_track: HashMap<u16, u32> = HashMap::new();
+                for n in notes {
+                    if let Some(&le) = last_per_track.get(&n.track)
+                        && n.start_tick < le
+                    {
+                        removed.push((n, key));
+                        continue;
+                    }
+                    kept.push(n);
+                    // 同轨下一个音符的起点必须 >= 本音符终点才保留
+                    last_per_track.insert(n.track, n.end_tick);
+                }
+            }
+            if kept.len() == orig_len {
+                continue;
+            }
+            // 重建桶（kept 已有序，无需再排序）
+            *bucket = yinhe_types::NoteBucket::from_sorted(kept);
+            model.mark_dirty(key);
+        }
+        if removed.is_empty() {
+            return None;
+        }
+        model.rebuild_dirty();
+        self.data.bump_revision();
+        // 清理选中：被删音符若在选区内，其 rect 已无对应音符，但几何选区本身保留，
+        // 不自动缩选区（与删除选中音符的语义一致：选区清空由调用方或下次框选决定）。
+        Some(UndoAction::Notes(NoteDelta {
+            before: removed,
+            after: vec![],
+        }))
+    }
 }
 
 #[cfg(test)]

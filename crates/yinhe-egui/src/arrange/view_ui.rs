@@ -570,6 +570,10 @@ fn sel_drag_frame_arrange(
     let mut move_orig_sel: Vec<(f64, f64, usize, usize)> = ui
         .data_mut(|d| d.get_persisted(move_orig_id))
         .unwrap_or_default();
+    let move_had_moved_id = ui.id().with("arr_move_had_moved");
+    let mut move_had_moved: bool = ui
+        .data_mut(|d| d.get_persisted(move_had_moved_id))
+        .unwrap_or(false);
 
     let pointer = ui.input(|i| i.pointer.clone());
     let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
@@ -583,6 +587,7 @@ fn sel_drag_frame_arrange(
     if move_drag.is_some() && !pointer.primary_down() && !pointer.primary_released() {
         move_drag = None;
         move_orig_sel.clear();
+        move_had_moved = false;
     }
 
     // 弹窗打开时跳过所有 pointer 处理，避免点击穿透
@@ -590,6 +595,7 @@ fn sel_drag_frame_arrange(
         ui.data_mut(|d| d.insert_persisted(sel_id, drag));
         ui.data_mut(|d| d.insert_persisted(move_drag_id, move_drag));
         ui.data_mut(|d| d.insert_persisted(move_orig_id, move_orig_sel));
+        ui.data_mut(|d| d.insert_persisted(move_had_moved_id, move_had_moved));
         return (ghost_notes, hidden_notes, drag_rect);
     }
 
@@ -683,6 +689,30 @@ fn sel_drag_frame_arrange(
             .map(|h| h.track() as f32)
             .unwrap_or(0.0);
         move_drag = Some((origin, (current_tick, current_track_f), alt));
+        // 记录是否曾移动过（用于 Alt 点一下不复制）
+        {
+            let snapped_origin = crate::view_interaction::snap_tick(
+                origin.0,
+                data.quantize,
+                data.ppq,
+                data.bar_line_data,
+            );
+            let snapped_current = crate::view_interaction::snap_tick(
+                current_tick,
+                data.quantize,
+                data.ppq,
+                data.bar_line_data,
+            );
+            let dt = (snapped_current - snapped_origin).round() as i64;
+            let dtr = if vertical {
+                0
+            } else {
+                (current_track_f - origin.1).round() as i32
+            };
+            if dt != 0 || dtr != 0 {
+                move_had_moved = true;
+            }
+        }
 
         // Auto-scroll when dragging near the edge
         let lh = view.lane_height();
@@ -739,6 +769,9 @@ fn sel_drag_frame_arrange(
             })
             .collect();
 
+        if dt != 0 || dtr != 0 {
+            move_had_moved = true;
+        }
         // Generate ghost notes at new positions + hide originals
         if dt != 0 || dtr != 0 {
             let max_track = (data.num_tracks as i32 - 1).max(0) as u16;
@@ -787,12 +820,21 @@ fn sel_drag_frame_arrange(
                 (current_tr - origin_tr).round() as i32
             };
 
-            let has_moved = delta_ticks != 0 || delta_tracks != 0;
+            if delta_ticks != 0 || delta_tracks != 0 {
+                move_had_moved = true;
+            }
+            // Alt 复制：必须曾移动过（点一下不复制，回原位也算移动过）
+            let should_trigger = if alt {
+                move_had_moved
+            } else {
+                delta_ticks != 0 || delta_tracks != 0
+            };
 
-            if has_moved {
+            if should_trigger {
+                // Alt 回原位 delta 0 但 had_moved true 时，delta 保持 0，副本在原位重叠
                 *edit.arr_drag_delta = Some((delta_ticks, delta_tracks, alt));
 
-                // 多选框：对所有原选框应用偏移
+                // 多选框：对所有原选框应用偏移（回原位时 dt 0，选框不变）
                 *edit.arr_sel_rect = move_orig_sel
                     .iter()
                     .map(|&(t_start, t_end, track_lo, track_hi)| {
@@ -811,6 +853,7 @@ fn sel_drag_frame_arrange(
         }
         move_drag = None;
         move_orig_sel.clear();
+        move_had_moved = false;
         drag_rect = None; // edit.arr_sel_rect takes over on release
     }
 
@@ -919,6 +962,7 @@ fn sel_drag_frame_arrange(
     ui.data_mut(|d| d.insert_persisted(sel_id, drag));
     ui.data_mut(|d| d.insert_persisted(move_drag_id, move_drag));
     ui.data_mut(|d| d.insert_persisted(move_orig_id, move_orig_sel));
+    ui.data_mut(|d| d.insert_persisted(move_had_moved_id, move_had_moved));
 
     (ghost_notes, hidden_notes, drag_rect)
 }

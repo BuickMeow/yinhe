@@ -23,11 +23,13 @@ pub enum EditAction {
     Delete,
     TransposeUp,
     TransposeDown,
+    DedupWithinTrack,
+    DedupAcrossTracks,
 }
 
 impl EditAction {
     /// 全部编辑动作。**顺序即 `AudioSettings::pinned_edit_actions` 数组索引**。
-    pub const ALL: [EditAction; 10] = [
+    pub const ALL: [EditAction; 12] = [
         EditAction::Undo,
         EditAction::Redo,
         EditAction::Cut,
@@ -38,6 +40,8 @@ impl EditAction {
         EditAction::Delete,
         EditAction::TransposeUp,
         EditAction::TransposeDown,
+        EditAction::DedupWithinTrack,
+        EditAction::DedupAcrossTracks,
     ];
 
     pub const fn pinned_index(self) -> usize {
@@ -52,6 +56,8 @@ impl EditAction {
             EditAction::Delete => 7,
             EditAction::TransposeUp => 8,
             EditAction::TransposeDown => 9,
+            EditAction::DedupWithinTrack => 10,
+            EditAction::DedupAcrossTracks => 11,
         }
     }
 
@@ -68,6 +74,8 @@ impl EditAction {
             EditAction::Delete => shortcuts::ACTION_DELETE,
             EditAction::TransposeUp => shortcuts::ACTION_TRANSPOSE_UP,
             EditAction::TransposeDown => shortcuts::ACTION_TRANSPOSE_DOWN,
+            EditAction::DedupWithinTrack => shortcuts::ACTION_DEDUP_WITHIN_TRACK,
+            EditAction::DedupAcrossTracks => shortcuts::ACTION_DEDUP_ACROSS_TRACKS,
         }
     }
 
@@ -83,6 +91,8 @@ impl EditAction {
             EditAction::Delete => ICON_DELETE,
             EditAction::TransposeUp => ICON_ARROW_UPWARD,
             EditAction::TransposeDown => ICON_ARROW_DOWNWARD,
+            EditAction::DedupWithinTrack => ICON_STACK_OFF,
+            EditAction::DedupAcrossTracks => ICON_STACK_OFF,
         }
     }
 
@@ -676,7 +686,7 @@ pub const FILE_GROUPS: [&[FileAction]; 5] = [
 ];
 
 /// 编辑菜单 popup 分组（macOS 原生编辑菜单共用）。
-pub const EDIT_GROUPS: [&[EditAction]; 4] = [
+pub const EDIT_GROUPS: [&[EditAction]; 5] = [
     &[EditAction::Undo, EditAction::Redo],
     &[EditAction::Cut, EditAction::Copy, EditAction::Paste],
     &[
@@ -685,6 +695,7 @@ pub const EDIT_GROUPS: [&[EditAction]; 4] = [
         EditAction::Delete,
     ],
     &[EditAction::TransposeUp, EditAction::TransposeDown],
+    &[EditAction::DedupWithinTrack, EditAction::DedupAcrossTracks],
 ];
 
 /// popup 菜单行的统一渲染（图标 + 文本 + 可选右侧快捷键），

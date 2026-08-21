@@ -88,12 +88,16 @@ struct SelDragFrameState {
     drag_notes: Option<Vec<SelDragNoteInfo>>,
     /// 拖拽中已触发预览的 key delta（每变化 1 key 触发一次整组预览）。
     preview_last_dk: i32,
+    /// 选区移动是否曾产生过位移（用于 Alt 复制：点一下不复制，拖动回原位也算移动）。
+    note_drag_had_moved: bool,
     /// 选区边缘缩放：(side, origin_boundary_tick, other_boundary_tick)。
     sel_resize_state: Option<(ResizeSide, f64, f64)>,
     /// 单音符边缘伸缩：(side, track, start_tick, end_tick, key)。
     sel_note_resize: Option<SelNoteResize>,
     /// 单音符移动：(track, orig_start, orig_key, orig_end, press_tick, last_dk, alt)。
     sel_note_move: Option<(u16, u32, u8, u32, f64, i32, bool)>,
+    /// 单音符移动是否曾产生过位移（同上）。
+    single_note_had_moved: bool,
     /// 帧输出：幽灵音符 / 隐藏音符 / 预览请求。
     ghost_notes: Vec<GhostNote>,
     hidden_notes: Vec<HiddenNote>,
@@ -136,6 +140,9 @@ impl SelDragFrameState {
             preview_last_dk: ui
                 .data_mut(|d| d.get_persisted(ui.id().with("note_drag_preview_dk")))
                 .unwrap_or(0),
+            note_drag_had_moved: ui
+                .data_mut(|d| d.get_persisted(ui.id().with("note_drag_had_moved")))
+                .unwrap_or(false),
             sel_resize_state: ui
                 .data_mut(|d| d.get_persisted(ui.id().with("sel_resize_state")))
                 .unwrap_or(None),
@@ -145,6 +152,9 @@ impl SelDragFrameState {
             sel_note_move: ui
                 .data_mut(|d| d.get_persisted(ui.id().with("sel_note_move_state")))
                 .unwrap_or(None),
+            single_note_had_moved: ui
+                .data_mut(|d| d.get_persisted(ui.id().with("single_note_had_moved")))
+                .unwrap_or(false),
             ghost_notes: Vec::new(),
             hidden_notes: Vec::new(),
             preview_reqs: Vec::new(),
@@ -157,15 +167,20 @@ impl SelDragFrameState {
         let Self {
             note_drag_origin,
             drag_notes,
+            note_drag_had_moved,
             sel_resize_state,
             sel_note_resize,
             sel_note_move,
+            single_note_had_moved,
             ..
         } = self;
         ui.data_mut(|d| {
             d.insert_persisted(ui.id().with("note_drag_origin"), note_drag_origin.take())
         });
         ui.data_mut(|d| d.insert_persisted(ui.id().with("drag_notes"), drag_notes.take()));
+        ui.data_mut(|d| {
+            d.insert_persisted(ui.id().with("note_drag_had_moved"), *note_drag_had_moved)
+        });
         ui.data_mut(|d| {
             d.insert_persisted(ui.id().with("sel_resize_state"), sel_resize_state.take())
         });
@@ -177,6 +192,12 @@ impl SelDragFrameState {
         });
         ui.data_mut(|d| {
             d.insert_persisted(ui.id().with("sel_note_move_state"), sel_note_move.take())
+        });
+        ui.data_mut(|d| {
+            d.insert_persisted(
+                ui.id().with("single_note_had_moved"),
+                *single_note_had_moved,
+            )
         });
     }
 }
@@ -278,6 +299,7 @@ fn sel_press(
                             let alt = ui.input(|i| i.modifiers.alt);
                             state.sel_note_move =
                                 Some((track, start_tick, key, end_tick, tick, 0, alt));
+                            state.single_note_had_moved = false;
                         }
                     }
                 }
@@ -334,6 +356,7 @@ fn sel_press(
                         track_selected,
                     ));
                     state.preview_last_dk = 0;
+                    state.note_drag_had_moved = false;
                     ui.data_mut(|d| {
                         d.insert_persisted(
                             ui.id().with("note_drag_preview_dk"),
@@ -410,6 +433,10 @@ fn note_drag_frame(
                 (current_key - origin_key).round() as i32
             };
 
+            if dt != 0 || dk != 0 {
+                state.note_drag_had_moved = true;
+            }
+
             // O(N) — just apply delta to pre-computed data, no midi lookup.
             // Alt（复制模式）：原音符保留可见，不 push hidden_notes。
             for info in notes {
@@ -461,6 +488,8 @@ fn note_drag_frame(
             ui.ctx().request_repaint();
         }
         if pointer.primary_released() {
+            let mut dt = 0i64;
+            let mut dk = 0i32;
             if let Some(pos) = pointer.hover_pos() {
                 let (local_x, local_y) = clamped_local(pos, content_rect, music_rect);
                 let (main_px, cross_px) = main_cross_x_y(view, (local_x, local_y));
@@ -468,18 +497,23 @@ fn note_drag_frame(
                 let snapped_tick =
                     crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
                 let current_key = view.cross_px_to_key(cross_px) as f64;
-                let dt = (snapped_tick - origin_tick).round() as i64;
-                // 垂直选框（垂直工具或空区域框选自动生成的全键选框）：只能水平移动，dk 强制为 0
-                let dk = if vertical || sel_rect.has_auto_vertical() {
+                dt = (snapped_tick - origin_tick).round() as i64;
+                dk = if vertical || sel_rect.has_auto_vertical() {
                     0
                 } else {
                     (current_key - origin_key).round() as i32
                 };
+                if dt != 0 || dk != 0 {
+                    state.note_drag_had_moved = true;
+                }
+            }
+            let had_moved = state.note_drag_had_moved;
+            if alt && !had_moved {
+                // 纯点击不复制
+                sel_rect.cancel_drag();
+            } else {
                 *note_drag_delta = Some((dt, dk, alt));
                 sel_rect.update_drag(dt, dk);
-
-                // Keep ghost/hidden alive on the release frame so the original
-                // notes don't flash back before the model is updated.
                 for info in notes {
                     let new_tick = (info.start_tick as i64 + dt).max(0) as u32;
                     let new_key =
@@ -494,11 +528,12 @@ fn note_drag_frame(
                             .push((info.track, info.start_tick, info.key));
                     }
                 }
+                state.preview_reqs.push(super::PreviewReq::Stop);
+                sel_rect.end_drag();
             }
-            state.preview_reqs.push(super::PreviewReq::Stop);
-            sel_rect.end_drag();
             state.note_drag_origin = None;
             state.drag_notes = None;
+            state.note_drag_had_moved = false;
         }
     }
 }
@@ -804,6 +839,9 @@ fn single_note_move_frame(
                 view.cross_px_to_key(cross_px) as i32 - orig_key as i32
             };
 
+            if dt != 0 || dk != 0 {
+                state.single_note_had_moved = true;
+            }
             let new_start = (orig_start as i64 + dt).max(0) as u32;
             let new_key = (orig_key as i32 + dk).clamp(0, yinhe_types::MAX_KEY as i32) as u8;
             state
@@ -844,33 +882,51 @@ fn single_note_move_frame(
         }
         // Release：提交单音符移动（复用铅笔的 PencilNoteDrag 通道）
         if pointer.primary_released() {
+            let mut dt = 0i64;
+            let mut dk = 0i32;
             if let Some(pos) = pointer.hover_pos() {
                 let (local_x, local_y) = clamped_local(pos, content_rect, music_rect);
                 let (main_px, cross_px) = main_cross_x_y(view, (local_x, local_y));
                 let raw_tick = main_px_to_tick_dir(view, main_px);
                 let snapped_tick =
                     crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
-                let dt = (snapped_tick - press_tick).round() as i64;
-                let dk = if vertical {
+                dt = (snapped_tick - press_tick).round() as i64;
+                dk = if vertical {
                     0
                 } else {
                     view.cross_px_to_key(cross_px) as i32 - orig_key as i32
                 };
-                if alt {
+                if dt != 0 || dk != 0 {
+                    state.single_note_had_moved = true;
+                }
+            }
+            let had_moved = state.single_note_had_moved;
+            if alt {
+                if had_moved {
                     // Alt = 复制：先把该音符置为唯一选中，再走选区复制通道
                     // （duplicate_selected_to 复制后选区跟随副本，便于连续 Alt+拖动）。
                     selected.clear();
                     selected.add_rect_track(orig_start, orig_end, orig_key, orig_key, trk, trk);
                     *note_drag_delta = Some((dt, dk, true));
-                } else {
-                    *pencil_note_drag = Some(yinhe_types::PencilNoteDrag::Move {
-                        track: trk,
-                        start_tick: orig_start,
-                        key: orig_key,
-                        delta_ticks: dt,
-                        delta_keys: dk,
-                    });
+                    // Keep ghost alive on the release frame
+                    let new_start = (orig_start as i64 + dt).max(0) as u32;
+                    let new_key =
+                        (orig_key as i32 + dk).clamp(0, yinhe_types::MAX_KEY as i32) as u8;
+                    state.ghost_notes.push((
+                        new_start,
+                        new_start + (orig_end - orig_start),
+                        new_key,
+                        trk,
+                    ));
                 }
+            } else {
+                *pencil_note_drag = Some(yinhe_types::PencilNoteDrag::Move {
+                    track: trk,
+                    start_tick: orig_start,
+                    key: orig_key,
+                    delta_ticks: dt,
+                    delta_keys: dk,
+                });
                 // Keep ghost/hidden alive on the release frame
                 let new_start = (orig_start as i64 + dt).max(0) as u32;
                 let new_key = (orig_key as i32 + dk).clamp(0, yinhe_types::MAX_KEY as i32) as u8;
@@ -880,12 +936,11 @@ fn single_note_move_frame(
                     new_key,
                     trk,
                 ));
-                if !alt {
-                    state.hidden_notes.push((trk, orig_start, orig_key));
-                }
+                state.hidden_notes.push((trk, orig_start, orig_key));
             }
             state.preview_reqs.push(super::PreviewReq::Stop);
             state.sel_note_move = None;
+            state.single_note_had_moved = false;
         }
     }
 }
@@ -933,6 +988,7 @@ pub(crate) fn sel_drag_frame(
     if state.note_drag_origin.is_some() && !pointer.primary_down() && !pointer.primary_released() {
         state.note_drag_origin = None;
         state.drag_notes = None;
+        state.note_drag_had_moved = false;
         sel_rect.cancel_drag();
     }
     // Clear stale resize state
@@ -948,6 +1004,7 @@ pub(crate) fn sel_drag_frame(
     // Clear stale single-note move state
     if state.sel_note_move.is_some() && !pointer.primary_down() && !pointer.primary_released() {
         state.sel_note_move = None;
+        state.single_note_had_moved = false;
     }
 
     // 弹窗打开时跳过所有 pointer 处理，避免点击穿透

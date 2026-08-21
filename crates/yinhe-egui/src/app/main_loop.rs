@@ -166,6 +166,8 @@ impl eframe::App for App {
                         | MenuAction::Delete
                         | MenuAction::TransposeUp
                         | MenuAction::TransposeDown
+                        | MenuAction::DedupWithinTrack
+                        | MenuAction::DedupAcrossTracks
                 )
             {
                 continue;
@@ -217,6 +219,14 @@ impl eframe::App for App {
                 }
                 MenuAction::TransposeDown => {
                     self.handle_edit_action(transport_bar::EditAction::TransposeDown);
+                    continue;
+                }
+                MenuAction::DedupWithinTrack => {
+                    self.handle_edit_action(transport_bar::EditAction::DedupWithinTrack);
+                    continue;
+                }
+                MenuAction::DedupAcrossTracks => {
+                    self.handle_edit_action(transport_bar::EditAction::DedupAcrossTracks);
                     continue;
                 }
                 MenuAction::TogglePlay => {
