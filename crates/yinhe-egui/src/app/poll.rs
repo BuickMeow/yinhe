@@ -32,6 +32,8 @@ impl App {
                         // 重叠开关是全局设置：打开工程沿用当前持久化值。
                         doc.edit.allow_overlapping_notes =
                             self.audio_settings.allow_overlapping_notes;
+                        doc.edit.overlap_blocked_behavior =
+                            self.audio_settings.overlap_blocked_behavior;
                         // 仅首次启动的 Untitled（未修改且无 file_path）被替换，
                         // 避免另开一个空标签页；用户手动 NewProject 或已修改/已保存
                         // 的工程保持不动，照常 push 新标签页。
@@ -97,6 +99,7 @@ impl App {
                     d.file_path = Some(path.clone());
                     d.mark_loaded(); // Loaded from file, not a fresh empty doc
                     d.edit.allow_overlapping_notes = self.audio_settings.allow_overlapping_notes;
+                    d.edit.overlap_blocked_behavior = self.audio_settings.overlap_blocked_behavior;
 
                     d.edit.project_sf.overrides = sf
                         .overrides

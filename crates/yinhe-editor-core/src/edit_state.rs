@@ -193,6 +193,8 @@ pub struct EditState {
     /// 「允许新重叠音符」运行时副本（全局持久化在 AudioSettings，
     /// 新建文档/切换开关时由 app 同步进来；undo 快照不含它）。
     pub allow_overlapping_notes: bool,
+    /// 重叠关闭时的移动策略（全局持久化在 AudioSettings）。
+    pub overlap_blocked_behavior: crate::audio_settings::OverlapBlockedBehavior,
     pub playback: PlaybackState,
     pub track_overrides: Vec<TrackOverride>,
     pub track_visible: Vec<bool>,
@@ -249,6 +251,7 @@ impl Default for EditState {
             quantize_arrange: QuantizePreset::Fraction(1, 4),
             quantize_pianoroll: QuantizePreset::Fraction(1, 16),
             allow_overlapping_notes: true,
+            overlap_blocked_behavior: crate::audio_settings::OverlapBlockedBehavior::default(),
             playback: PlaybackState::default(),
             track_overrides: vec![TrackOverride::default()],
             track_visible: Vec::new(),

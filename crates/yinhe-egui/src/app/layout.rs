@@ -609,6 +609,7 @@ impl App {
                     // 主音轨纯派生自选中集合：无选中时为空，不显示回退轨。
                     main_track: main,
                     allow_overlap: doc.edit.allow_overlapping_notes,
+                    blocked_behavior: doc.edit.overlap_blocked_behavior,
                     chord: chord_text.as_deref(),
                 };
                 let auto_ctx = Some(piano_view::AutomationPanelsCtx {
@@ -742,6 +743,9 @@ impl App {
         // PR 控制栏事件：量化 / 切换主音轨（track_selected 替换）/ 显示音轨勾选。
         // `overlap_change` 记录开关变动，循环后统一写全局设置（避免 edit 借用期间碰 self 其他字段）。
         let mut overlap_change: Option<bool> = None;
+        let mut blocked_behavior_change: Option<
+            yinhe_editor_core::audio_settings::OverlapBlockedBehavior,
+        > = None;
         for ev in bar_events {
             use crate::piano_view::control_bar::PrBarEvent;
             let Some(idx) = self.active_doc else { break };
@@ -760,10 +764,14 @@ impl App {
                 }
                 PrBarEvent::SetAllVisible(v) => edit.track_pianoroll_visible.fill(v),
                 PrBarEvent::SetAllowOverlap(v) => edit.allow_overlapping_notes = v,
+                PrBarEvent::SetBlockedBehavior(b) => edit.overlap_blocked_behavior = b,
             }
             // 仅当有开关事件时才记录（bar_events 可能为空，避免无谓写入）。
             if let PrBarEvent::SetAllowOverlap(v) = ev {
                 overlap_change = Some(v);
+            }
+            if let PrBarEvent::SetBlockedBehavior(b) = ev {
+                blocked_behavior_change = Some(b);
             }
         }
         // 全局持久化，跨工程生效；并同步到所有已打开文档保持全局语义一致。
@@ -772,6 +780,13 @@ impl App {
             self.audio_settings.save();
             for doc in &mut self.documents {
                 doc.edit.allow_overlapping_notes = v;
+            }
+        }
+        if let Some(b) = blocked_behavior_change {
+            self.audio_settings.overlap_blocked_behavior = b;
+            self.audio_settings.save();
+            for doc in &mut self.documents {
+                doc.edit.overlap_blocked_behavior = b;
             }
         }
 

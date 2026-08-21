@@ -6,6 +6,28 @@ use crate::config::GlobalSfConfig;
 use crate::shortcuts::Keybindings;
 use yinhe_midi::MidiImportEncoding;
 
+/// 重叠关闭时，移动等操作发现重叠后的处理策略。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum OverlapBlockedBehavior {
+    /// 删除原音符，替换目标音符（默认）：原消失，目标被新音符覆盖
+    #[default]
+    ReplaceTarget,
+    /// 删除原音符，不替换目标：原消失，目标保留，新音符丢弃
+    DeleteOriginal,
+    /// 退回重叠音符（当前逻辑）：原保留在原位，目标保留
+    KeepOriginal,
+}
+
+impl OverlapBlockedBehavior {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::ReplaceTarget => "替换目标",
+            Self::DeleteOriginal => "仅删除原",
+            Self::KeepOriginal => "退回原位",
+        }
+    }
+}
+
 /// 用户可拖拽调整的布局状态（跨会话持久化）。
 /// 默认值与 yinhe-egui 的渲染逻辑一致（clamp 由渲染侧 theme 常量负责）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -57,6 +79,11 @@ pub struct AudioSettings {
     /// 产生的新音符若与已有音符重叠（同轨同键、区间相交）则被无视。
     /// 默认开（保持现状行为）。
     pub allow_overlapping_notes: bool,
+    /// 重叠关闭时，移动等操作发现重叠后的处理策略。
+    /// - `ReplaceTarget`（默认）：删除原音符，替换目标音符（原消失，目标被新音符覆盖）
+    /// - `DeleteOriginal`：删除原音符，不替换目标（原消失，目标保留，新音符丢弃）
+    /// - `KeepOriginal`：退回重叠音符（原保留在原位，目标保留）
+    pub overlap_blocked_behavior: OverlapBlockedBehavior,
     pub scroll_mode: u32,
     /// 最小边框宽度(像素), 0=不设下限
     pub min_border_width: f32,
@@ -140,6 +167,7 @@ impl Default for AudioSettings {
             automation_event_density: 1,
             note_outline: true, // outline on by default (existing behavior)
             allow_overlapping_notes: true, // 默认允许重叠（保持现状行为）
+            overlap_blocked_behavior: OverlapBlockedBehavior::default(),
             use_gpu_synth: false,
             use_gpu_cull: false, // 默认 CPU 构建
             locale: "zh-CN".to_string(),

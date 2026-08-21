@@ -558,6 +558,8 @@ impl App {
         // 重叠开关是全局设置：新文档沿用当前持久化值。
         self.documents[idx].edit.allow_overlapping_notes =
             self.audio_settings.allow_overlapping_notes;
+        self.documents[idx].edit.overlap_blocked_behavior =
+            self.audio_settings.overlap_blocked_behavior;
         self.mixer_racks.push(crate::mix::MixerRack::default());
         self.instrument_racks
             .push(crate::mix::InstrumentRack::default());

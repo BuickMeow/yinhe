@@ -411,12 +411,17 @@ impl Document {
             !batch_ops::collect_selected(model, &dest_sel).is_empty()
         };
         let allow_overlap = self.edit.allow_overlapping_notes;
+        let behavior = self.edit.overlap_blocked_behavior;
         let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
             std::collections::HashMap::new();
-        // 被「禁止重叠」拦下而留在原处的音符不进 undo delta（位置没变），
-        // before/after 只含真正移动的音符。
+        // 被「禁止重叠」拦下的音符按 behavior 处理：
+        // - KeepOriginal：留在原位（当前逻辑）
+        // - DeleteOriginal：删除原音符（原消失，目标保留）
+        // - ReplaceTarget：删除目标重叠音符并移动（原消失，目标被覆盖）
         let mut moved_before: Vec<(yinhe_types::Note, u8)> = Vec::new();
         let mut moved_after: Vec<(yinhe_types::Note, u8)> = Vec::new();
+        let mut deleted_before: Vec<(yinhe_types::Note, u8)> = Vec::new();
+        let mut replaced_before: Vec<(yinhe_types::Note, u8)> = Vec::new();
         let mut blocked_any = false;
         for (note, old_key) in &originals {
             let new_key =
@@ -424,7 +429,7 @@ impl Document {
             let new_tick = (note.start_tick as i64 + delta_ticks).max(0) as u32;
             let length = note.end_tick - note.start_tick;
             // 「允许新重叠音符」关闭：目标位置与非本次移动的已有音符重叠
-            // （移动集合已先移除，检查看不到它们）→ 该音符留在原处。
+            // （移动集合已先移除，检查看不到它们）→ 按 behavior 处理。
             if !allow_overlap
                 && batch_ops::has_overlapping_note(
                     model,
@@ -434,8 +439,46 @@ impl Document {
                     new_tick + length,
                 )
             {
-                blocked_any = true;
-                new_by_key.entry(*old_key).or_default().push(*note);
+                match behavior {
+                    crate::audio_settings::OverlapBlockedBehavior::KeepOriginal => {
+                        blocked_any = true;
+                        new_by_key.entry(*old_key).or_default().push(*note);
+                    }
+                    crate::audio_settings::OverlapBlockedBehavior::DeleteOriginal => {
+                        // 删除原音符，不移动也不替换目标
+                        deleted_before.push((*note, *old_key));
+                        // 不插入任何位置，原音符消失
+                    }
+                    crate::audio_settings::OverlapBlockedBehavior::ReplaceTarget => {
+                        // 删除目标处重叠音符，再移动
+                        let lo = new_tick.saturating_sub(model.max_note_len);
+                        let overlapping: Vec<yinhe_types::Note> = model.notes[new_key as usize]
+                            .range(lo, new_tick + length)
+                            .filter(|n| n.track == note.track && n.end_tick > new_tick)
+                            .cloned()
+                            .collect();
+                        if !overlapping.is_empty() {
+                            let ids: std::collections::HashSet<u32> =
+                                overlapping.iter().map(|n| n.id).collect();
+                            let bucket = Arc::make_mut(&mut model.notes[new_key as usize]);
+                            bucket.remove_by_ids(&ids);
+                            model.mark_dirty(new_key);
+                            for t in overlapping {
+                                replaced_before.push((t, new_key));
+                            }
+                        }
+                        let moved = yinhe_types::Note {
+                            id: note.id,
+                            start_tick: new_tick,
+                            end_tick: new_tick + length,
+                            velocity: note.velocity,
+                            track: note.track,
+                        };
+                        moved_before.push((*note, *old_key));
+                        moved_after.push((moved, new_key));
+                        new_by_key.entry(new_key).or_default().push(moved);
+                    }
+                }
                 continue;
             }
             let moved = yinhe_types::Note {
@@ -455,8 +498,13 @@ impl Document {
             .collect();
         batch_ops::insert_batch(model, new_by_key);
 
-        // 全部被拦：音符已原样插回，选区不动，不产生 undo。
-        if blocked_any && moved_before.is_empty() {
+        // 全部被拦且无其他变化（KeepOriginal 全拦）：音符已原样插回，选区不动，不产生 undo。
+        // DeleteOriginal / ReplaceTarget 全拦时有删除/替换，需产生 delta。
+        if blocked_any
+            && moved_before.is_empty()
+            && deleted_before.is_empty()
+            && replaced_before.is_empty()
+        {
             model.rebuild_dirty();
             return None;
         }
@@ -469,28 +517,40 @@ impl Document {
 
         // 操作式 undo 前提：无音符触发 tick/key clamp（undo 反向移动回
         // 原位置，原位置不触发新 clamp，对称性成立），且目标位置无重叠
-        // 非选中音符（否则撤销会误搬 B）。
+        // 非选中音符（否则撤销会误搬 B），且无按 behavior 处理的阻拦/替换。
         let clamp_free = originals.iter().all(|(n, k)| {
             (n.start_tick as i64 + delta_ticks) >= 0
                 && (*k as i32 + delta_keys) >= 0
                 && (*k as i32 + delta_keys) <= yinhe_types::MAX_KEY as i32
         });
-        if clamp_free && !blocked_any && !has_dest_overlap {
+        let has_blocked_handling =
+            blocked_any || !deleted_before.is_empty() || !replaced_before.is_empty();
+        if clamp_free && !has_blocked_handling && !has_dest_overlap {
             Some(UndoAction::MoveNotes {
                 rects: rects_before,
                 delta_ticks,
                 delta_keys,
             })
-        } else if blocked_any {
-            // 有被拦音符时操作式 undo（选区整组平移）不再对称，回退副本制，
-            // 且 delta 只含真正移动的音符。
+        } else if blocked_any
+            && matches!(
+                behavior,
+                crate::audio_settings::OverlapBlockedBehavior::KeepOriginal
+            )
+        {
+            // 退回：仅真正移动的音符进 delta
             Some(UndoAction::Notes(NoteDelta {
                 before: moved_before,
                 after: moved_after,
             }))
         } else {
+            // 删除原位 / 替换目标 或目标有重叠（allow=true）：用完整 before/after
+            // before 需包含被替换的目标音符（B），after 仅含新位置的移动音符
+            let mut before_all = originals.clone();
+            before_all.extend(replaced_before.clone());
+            // deleted_before 已在 originals 中，无需额外；replaced_before 需追加
+            // after 已由 new_by_key 构建（仅含移动后的音符）
             Some(UndoAction::Notes(NoteDelta {
-                before: originals,
+                before: before_all,
                 after,
             }))
         }
@@ -1645,6 +1705,8 @@ mod tests {
         doc.edit.selected.clear();
         doc.edit.selected.add_rect_track(100, 201, 60, 62, 0, 0); // 选中 A、B
         doc.edit.allow_overlapping_notes = false;
+        doc.edit.overlap_blocked_behavior =
+            crate::audio_settings::OverlapBlockedBehavior::KeepOriginal;
 
         // +400 tick：A 目标 [500,600) 与 C 重叠 → 留原处；B 目标 k62 [500,550) 无阻挡 → 移动
         let before_snap = doc.capture_snapshot();
@@ -1700,6 +1762,8 @@ mod tests {
         let mut doc = make_doc_with_note(); // A [100,200) k60（选中）
         doc.add_note(0, ev(500, 600, 60)); // C 占位
         doc.edit.allow_overlapping_notes = false;
+        doc.edit.overlap_blocked_behavior =
+            crate::audio_settings::OverlapBlockedBehavior::KeepOriginal;
 
         assert!(
             doc.move_selected_notes(400, 0).is_none(),

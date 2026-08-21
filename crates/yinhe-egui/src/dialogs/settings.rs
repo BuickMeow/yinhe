@@ -7,6 +7,7 @@ use yinhe_editor_core::shortcuts::{self, KeyCombo};
 use yinhe_theme::base::{BaseColors, Rgba};
 
 use crate::audio_settings::AudioSettings;
+use yinhe_editor_core::audio_settings::OverlapBlockedBehavior;
 
 // ── 设置分类（左侧导航，顺序即 settings_tab 索引） ──
 
@@ -204,6 +205,20 @@ const SETTING_ITEMS: &[SettingItem] = &[
         en: "Factory reset",
         ja: "工場出荷時リセット",
         ko: "공장 초기화",
+    },
+    SettingItem {
+        cat: 5,
+        zh: "允许重叠音符",
+        en: "Allow overlapping notes",
+        ja: "重なりノートを許可",
+        ko: "겹치는 노트 허용",
+    },
+    SettingItem {
+        cat: 5,
+        zh: "重叠时移动策略",
+        en: "Overlap move behavior",
+        ja: "重なり時の移動動作",
+        ko: "겹칠 때 이동 동작",
     },
 ];
 
@@ -1003,6 +1018,60 @@ fn shortcut_combo_ui(
 fn show_general_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     let mut changed = false;
     ui.heading(t!("settings.general.heading").as_ref());
+    ui.add_space(8.0);
+
+    // ── 编辑：重叠音符策略 ──
+    ui.heading(t!("settings.editing.heading").as_ref());
+    ui.add_space(4.0);
+    egui::Grid::new("editing_overlap_grid")
+        .num_columns(2)
+        .spacing([12.0, 8.0])
+        .show(ui, |ui| {
+            ui.label(t!("settings.editing.allow_overlap").as_ref());
+            if ui
+                .checkbox(
+                    &mut settings.allow_overlapping_notes,
+                    t!("settings.editing.allow_overlap_hint").as_ref(),
+                )
+                .changed()
+            {
+                changed = true;
+            }
+            ui.end_row();
+            if !settings.allow_overlapping_notes {
+                ui.label(t!("settings.editing.blocked_behavior").as_ref());
+                let selected_label = match settings.overlap_blocked_behavior {
+                    OverlapBlockedBehavior::ReplaceTarget => t!("pr_bar.blocked_replace"),
+                    OverlapBlockedBehavior::DeleteOriginal => t!("pr_bar.blocked_delete"),
+                    OverlapBlockedBehavior::KeepOriginal => t!("pr_bar.blocked_keep"),
+                };
+                egui::ComboBox::from_id_salt("blocked_behavior")
+                    .selected_text(selected_label.as_ref())
+                    .show_ui(ui, |ui| {
+                        for &b in &[
+                            OverlapBlockedBehavior::ReplaceTarget,
+                            OverlapBlockedBehavior::DeleteOriginal,
+                            OverlapBlockedBehavior::KeepOriginal,
+                        ] {
+                            let label = match b {
+                                OverlapBlockedBehavior::ReplaceTarget => {
+                                    t!("pr_bar.blocked_replace")
+                                }
+                                OverlapBlockedBehavior::DeleteOriginal => {
+                                    t!("pr_bar.blocked_delete")
+                                }
+                                OverlapBlockedBehavior::KeepOriginal => t!("pr_bar.blocked_keep"),
+                            };
+                            let selected = settings.overlap_blocked_behavior == b;
+                            if ui.selectable_label(selected, label.as_ref()).clicked() {
+                                settings.overlap_blocked_behavior = b;
+                                changed = true;
+                            }
+                        }
+                    });
+                ui.end_row();
+            }
+        });
     ui.add_space(8.0);
 
     ui.add_space(16.0);

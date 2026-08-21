@@ -114,12 +114,22 @@ impl App {
         }
 
         // ── Settings dialog ──
+        let prev_allow = self.audio_settings.allow_overlapping_notes;
+        let prev_behavior = self.audio_settings.overlap_blocked_behavior;
         if crate::dialogs::settings::show_viewport(
             &ctx,
             &mut self.audio_settings,
             &self.audio_state.handle,
         ) {
             self.teardown_audio();
+        }
+        if self.audio_settings.allow_overlapping_notes != prev_allow
+            || self.audio_settings.overlap_blocked_behavior != prev_behavior
+        {
+            for doc in &mut self.documents {
+                doc.edit.allow_overlapping_notes = self.audio_settings.allow_overlapping_notes;
+                doc.edit.overlap_blocked_behavior = self.audio_settings.overlap_blocked_behavior;
+            }
         }
 
         // ── Memory breakdown ──
