@@ -73,6 +73,35 @@ impl eframe::App for YinheApp {
             px[3] as f32 / ppp,
         ];
 
+        // ── 统一主题色：checkbox 对勾等 fg_stroke 用主文字色，避免与 btn_bg 同系不可见（与桌面端 main_loop 一致）
+        {
+            let theme = yinhe_theme::egui_colors::derive_theme(yinhe_theme::base::BaseColors::DARK);
+            let mut visuals = egui::Visuals::dark();
+            visuals.window_fill = theme.app_bg;
+            visuals.panel_fill = theme.app_bg;
+            visuals.selection.bg_fill = theme.selected_bg;
+            visuals.selection.stroke = egui::Stroke::new(1.5, theme.text_primary);
+            visuals.extreme_bg_color = theme.control_bg;
+            let btn = theme.btn_bg;
+            let line = theme.line_fg;
+            visuals.widgets.inactive.bg_fill = btn;
+            visuals.widgets.inactive.weak_bg_fill = theme.app_bg;
+            visuals.widgets.hovered.bg_fill = theme.hovered(btn);
+            visuals.widgets.hovered.weak_bg_fill = theme.hovered(theme.app_bg);
+            visuals.widgets.active.bg_fill = theme.pressed(btn);
+            visuals.widgets.active.weak_bg_fill = theme.pressed(theme.app_bg);
+            visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.5, theme.text_primary);
+            visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, line);
+            visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.5, theme.text_primary);
+            visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, theme.hovered(line));
+            visuals.widgets.active.fg_stroke = egui::Stroke::new(1.5, theme.text_primary);
+            visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, theme.pressed(line));
+            visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.5, theme.text_disabled);
+            visuals.widgets.noninteractive.weak_bg_fill = theme.app_bg;
+            visuals.override_text_color = Some(theme.text_primary);
+            ctx.set_visuals(visuals);
+        }
+
         match self.page {
             Page::Menu => self.ui_menu(ui),
             Page::Ar => self.ui_ar(ui),

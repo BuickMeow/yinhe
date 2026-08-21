@@ -349,16 +349,19 @@ impl eframe::App for App {
             visuals.widgets.active.weak_bg_fill =
                 crate::theme::pressed_color(crate::theme::app_bg());
             // 原生描边/滑轨线（Slider rail、ComboBox 边框等）统一为 line_fg
-            visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, line);
+            // 对勾（fg_stroke）用主文字色：与 btn_bg 同系的 line_fg 会导致对勾几乎不可见（见 widgets::checkbox）
+            visuals.widgets.inactive.fg_stroke =
+                egui::Stroke::new(1.5, crate::theme::text_primary());
             visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, line);
             visuals.widgets.hovered.fg_stroke =
-                egui::Stroke::new(1.0, crate::theme::hover_color(line));
+                egui::Stroke::new(1.5, crate::theme::text_primary());
             visuals.widgets.hovered.bg_stroke =
                 egui::Stroke::new(1.0, crate::theme::hover_color(line));
-            visuals.widgets.active.fg_stroke =
-                egui::Stroke::new(1.0, crate::theme::pressed_color(line));
+            visuals.widgets.active.fg_stroke = egui::Stroke::new(1.5, crate::theme::text_primary());
             visuals.widgets.active.bg_stroke =
                 egui::Stroke::new(1.0, crate::theme::pressed_color(line));
+            visuals.widgets.noninteractive.fg_stroke =
+                egui::Stroke::new(1.5, crate::theme::text_disabled());
             // 原生控件文字统一用主题主文字色（egui 默认灰与主题不协调）
             visuals.override_text_color = Some(crate::theme::text_primary());
             // Noninteractive 态（disabled 按钮等）背景也统一为 app_bg：

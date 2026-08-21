@@ -1,6 +1,6 @@
 //! 主题化复选框：egui 0.36 无独立 checkbox 视觉字段，对勾颜色 = widgets 三态
-//! `fg_stroke`（全局为 line_fg 灰，与 btn_bg 底色同系几乎不可见）。
-//! 此处用 `Ui::scope` 局部覆盖为主题主文字色，作用域外不受影响。
+//! `fg_stroke`。`main_loop` 已全局覆盖为主题主文字色，此处再用 `Ui::scope`
+//! 局部覆盖确保 1.5 宽更清晰（并处理 disabled 态），作用域外不受影响。
 
 /// 主题复选框（普通场景）。
 pub(crate) fn checkbox(
@@ -23,6 +23,8 @@ pub(crate) fn check_scope<R>(
         vs.widgets.inactive.fg_stroke = egui::Stroke::new(1.5, check);
         vs.widgets.hovered.fg_stroke = egui::Stroke::new(1.5, check);
         vs.widgets.active.fg_stroke = egui::Stroke::new(1.5, check);
+        // 禁用态（disabled/不可交互）也覆盖：编辑中轨道等场景为 disabled 但仍需可见
+        vs.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.5, crate::theme::text_disabled());
         add(ui)
     })
 }

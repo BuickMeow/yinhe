@@ -125,7 +125,8 @@ impl YinheApp {
             .show(ui.ctx(), |ui| {
                 let visible = self.doc.as_ref().map_or(&[][..], |d| &d.edit.track_visible);
                 let mut all = visible.iter().all(|&v| v);
-                if ui.checkbox(&mut all, format!("全选（{n} 轨）")).changed() {
+                if crate::ui_common::checkbox(ui, &mut all, format!("全选（{n} 轨）")).changed()
+                {
                     new_visible = Some(vec![true; n]);
                 }
                 ui.separator();
@@ -146,10 +147,13 @@ impl YinheApp {
                             };
                             let changed = if is_editing {
                                 // 编辑轨：勾选态固定为可见，控件禁用防误触。
-                                ui.add_enabled(false, egui::Checkbox::new(&mut vis, label))
-                                    .changed()
+                                crate::ui_common::checkbox_scope(ui, |ui| {
+                                    ui.add_enabled(false, egui::Checkbox::new(&mut vis, label))
+                                })
+                                .inner
+                                .changed()
                             } else {
-                                ui.checkbox(&mut vis, label).changed()
+                                crate::ui_common::checkbox(ui, &mut vis, label).changed()
                             };
                             if changed && !is_editing {
                                 let mut v = new_visible.take().unwrap_or_else(|| visible.to_vec());

@@ -577,12 +577,12 @@ fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             ui.end_row();
 
             ui.label(t!("settings.audio.midi_thru").as_ref());
-            if ui
-                .checkbox(
-                    &mut settings.midi_thru,
-                    t!("settings.audio.midi_thru_hint").as_ref(),
-                )
-                .changed()
+            if crate::widgets::checkbox::checkbox(
+                ui,
+                &mut settings.midi_thru,
+                t!("settings.audio.midi_thru_hint").as_ref(),
+            )
+            .changed()
             {
                 changed = true;
             }
@@ -1035,12 +1035,12 @@ fn show_general_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         .spacing([12.0, 8.0])
         .show(ui, |ui| {
             ui.label(t!("settings.editing.allow_overlap").as_ref());
-            if ui
-                .checkbox(
-                    &mut settings.allow_overlapping_notes,
-                    t!("settings.editing.allow_overlap_hint").as_ref(),
-                )
-                .changed()
+            if crate::widgets::checkbox::checkbox(
+                ui,
+                &mut settings.allow_overlapping_notes,
+                t!("settings.editing.allow_overlap_hint").as_ref(),
+            )
+            .changed()
             {
                 changed = true;
             }

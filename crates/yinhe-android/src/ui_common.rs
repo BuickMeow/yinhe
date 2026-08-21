@@ -3,6 +3,34 @@
 use eframe::egui;
 use yinhe_core::YinModel;
 
+/// 主题化复选框作用域：对勾颜色覆盖为主题主文字色（宽 1.5 更清晰），与桌面端
+/// `yinhe-egui::widgets::checkbox` 一致，防止与按钮底色同系导致不可见。
+pub(crate) fn checkbox_scope<R>(
+    ui: &mut egui::Ui,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    ui.scope(|ui| {
+        // 安卓端当前固定暗色主题（与 ArView/PrView 一致）
+        let theme = yinhe_theme::egui_colors::derive_theme(yinhe_theme::base::BaseColors::DARK);
+        let check = theme.text_primary;
+        let vs = ui.visuals_mut();
+        vs.widgets.inactive.fg_stroke = egui::Stroke::new(1.5, check);
+        vs.widgets.hovered.fg_stroke = egui::Stroke::new(1.5, check);
+        vs.widgets.active.fg_stroke = egui::Stroke::new(1.5, check);
+        vs.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.5, theme.text_disabled);
+        add(ui)
+    })
+}
+
+/// 主题化复选框（普通场景）。
+pub(crate) fn checkbox(
+    ui: &mut egui::Ui,
+    checked: &mut bool,
+    text: impl Into<egui::WidgetText>,
+) -> egui::Response {
+    checkbox_scope(ui, |ui| ui.checkbox(checked, text)).inner
+}
+
 /// 图标按钮文字（Material Icons 字形，走带/工具条用）。
 pub(crate) fn icon_text(icon: egui_material_icons::MaterialIcon) -> egui::RichText {
     egui::RichText::new(icon.codepoint)
