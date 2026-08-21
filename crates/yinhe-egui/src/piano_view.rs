@@ -895,10 +895,9 @@ pub fn show(
     // ── Draw selection box on TOP of GPU content ──
     // State was already updated by sel_drag_frame above; this just draws the box
     // after the GPU paint so it's not covered by the texture.
+    // 活跃框选（拖拽中）：仅在选择/橡皮工具下显示。
     if effective_tool == Tool::Select || effective_tool == Tool::SelectVertical {
         let vertical = effective_tool == Tool::SelectVertical;
-
-        // Draw active drag box (if any)
         marquee::draw_marquee_box(
             ui,
             content_rect,
@@ -912,56 +911,6 @@ pub fn show(
             crate::theme::contrast_fg(),
             vertical,
         );
-
-        // Draw persisted selection rects (remains after mouse release).
-        // Compute pixel rect from music coordinates each frame so it follows
-        // scroll/zoom. 多选框时遍历所有 rects。
-        let eff_rects = sel_rect.effective_rects();
-        let persisted_pixel_rects: Vec<egui::Rect> = eff_rects
-            .iter()
-            .map(|&(t_start, t_end, key_lo, key_hi)| {
-                crate::selection::drag::music_sel_to_pixel_rect(
-                    view, t_start, t_end, key_lo, key_hi,
-                )
-            })
-            .collect();
-        {
-            // 横向：像素 rect 相对 content（含键盘列），转成 music-relative 再相对 music_rect 画；
-            // 纵向：music_rect == content_rect，无偏移。
-            let kb_w = if view.is_vertical() {
-                0.0
-            } else {
-                music_rect.min.x - content_rect.min.x
-            };
-            let music_rect_local = egui::Rect::from_min_max(
-                egui::pos2(0.0, 0.0),
-                egui::pos2(music_rect.width(), music_rect.height()),
-            );
-            for &rect in &persisted_pixel_rects {
-                let shifted = egui::Rect::from_min_max(
-                    egui::pos2(rect.min.x - kb_w, rect.min.y),
-                    egui::pos2(rect.max.x - kb_w, rect.max.y),
-                );
-                if shifted.intersects(music_rect_local) {
-                    crate::selection::draw::draw(
-                        ui.painter(),
-                        music_rect,
-                        shifted,
-                        crate::theme::contrast_fg(),
-                        crate::theme::contrast_fg(),
-                    );
-                }
-            }
-        }
-
-        // Show floating action bar next to the latest persisted selection rect
-        if let Some(action) = crate::widgets::selection_actions::show(
-            ui,
-            music_rect,
-            persisted_pixel_rects.last().copied(),
-        ) {
-            sel_action = Some(action);
-        }
     } else if effective_tool == Tool::Eraser {
         // Draw eraser marquee box in red
         marquee::draw_marquee_box(
@@ -977,6 +926,59 @@ pub fn show(
             crate::theme::danger_text_bright(),
             false,
         );
+    }
+    // 已提交的持久选框：任意工具下均保持可见（切换到铅笔等后仍需看到选区），
+    // 仅浮动操作条限制在选择工具下弹出。
+    {
+        let eff_rects = sel_rect.effective_rects();
+        if !eff_rects.is_empty() {
+            let persisted_pixel_rects: Vec<egui::Rect> = eff_rects
+                .iter()
+                .map(|&(t_start, t_end, key_lo, key_hi)| {
+                    crate::selection::drag::music_sel_to_pixel_rect(
+                        view, t_start, t_end, key_lo, key_hi,
+                    )
+                })
+                .collect();
+            {
+                // 横向：像素 rect 相对 content（含键盘列），转成 music-relative 再相对 music_rect 画；
+                // 纵向：music_rect == content_rect，无偏移。
+                let kb_w = if view.is_vertical() {
+                    0.0
+                } else {
+                    music_rect.min.x - content_rect.min.x
+                };
+                let music_rect_local = egui::Rect::from_min_max(
+                    egui::pos2(0.0, 0.0),
+                    egui::pos2(music_rect.width(), music_rect.height()),
+                );
+                for &rect in &persisted_pixel_rects {
+                    let shifted = egui::Rect::from_min_max(
+                        egui::pos2(rect.min.x - kb_w, rect.min.y),
+                        egui::pos2(rect.max.x - kb_w, rect.max.y),
+                    );
+                    if shifted.intersects(music_rect_local) {
+                        crate::selection::draw::draw(
+                            ui.painter(),
+                            music_rect,
+                            shifted,
+                            crate::theme::contrast_fg(),
+                            crate::theme::contrast_fg(),
+                        );
+                    }
+                }
+            }
+            // 浮动操作条仅在选择工具下显示（铅笔等工具下不干扰）。
+            if (effective_tool == Tool::Select || effective_tool == Tool::SelectVertical)
+                && let Some(action) = crate::widgets::selection_actions::show(
+                    ui,
+                    music_rect,
+                    persisted_pixel_rects.last().copied(),
+                )
+            {
+                sel_action = Some(action);
+            }
+        }
     }
 
     // ── Time ruler ──
