@@ -280,6 +280,7 @@ impl Document {
         // ── 1. 复制音符（原音符保留，副本平移到新 tick/新轨）──
         let selected_data = batch_ops::collect_selected(model, &self.edit.selected);
         if !selected_data.is_empty() {
+            let allow_overlap = self.edit.allow_overlapping_notes;
             let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
                 std::collections::HashMap::new();
             for (note, old_key) in &selected_data {
@@ -292,6 +293,18 @@ impl Document {
                     self.edit.conductor_track_idx,
                 );
                 let length = note.end_tick - note.start_tick;
+                // 「允许新重叠音符」关闭：副本与已有音符重叠 → 跳过该副本。
+                if !allow_overlap
+                    && batch_ops::has_overlapping_note(
+                        model,
+                        new_track,
+                        *old_key,
+                        new_tick,
+                        new_tick + length,
+                    )
+                {
+                    continue;
+                }
                 new_by_key
                     .entry(*old_key)
                     .or_default()
@@ -303,15 +316,17 @@ impl Document {
                         track: new_track,
                     });
             }
-            let after: Vec<(yinhe_types::Note, u8)> = new_by_key
-                .iter()
-                .flat_map(|(key, notes)| notes.iter().map(|n| (*n, *key)))
-                .collect();
-            batch_ops::insert_batch(model, new_by_key);
-            sub_actions.push(UndoAction::Notes(NoteDelta {
-                before: vec![],
-                after,
-            }));
+            if !new_by_key.is_empty() {
+                let after: Vec<(yinhe_types::Note, u8)> = new_by_key
+                    .iter()
+                    .flat_map(|(key, notes)| notes.iter().map(|n| (*n, *key)))
+                    .collect();
+                batch_ops::insert_batch(model, new_by_key);
+                sub_actions.push(UndoAction::Notes(NoteDelta {
+                    before: vec![],
+                    after,
+                }));
+            }
         }
 
         // ── 2. 复制自动化事件（原事件保留，副本平移到新 tick/新轨）──
@@ -413,6 +428,12 @@ impl Document {
             }
         }
 
+        if sub_actions.is_empty() {
+            // 全部被「禁止重叠」拦下：不移动选区
+            model.rebuild_dirty();
+            return None;
+        }
+
         // ── 3. Offset selection rects to follow ──
         self.edit.selected.offset_ticks(delta_ticks);
         if delta_tracks != 0 {
@@ -422,9 +443,7 @@ impl Document {
         model.rebuild_dirty();
         self.data.bump_revision();
 
-        if sub_actions.is_empty() {
-            None
-        } else if sub_actions.len() == 1 {
+        if sub_actions.len() == 1 {
             sub_actions.into_iter().next()
         } else {
             Some(UndoAction::Composite(sub_actions))

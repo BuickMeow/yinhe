@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use yinhe_types::{PencilNoteDrag, VelocityEdit};
 
+use crate::batch_ops;
 use crate::history::{NoteDelta, UndoAction};
 
 use super::Document;
@@ -38,6 +39,20 @@ impl Document {
                 let new_tick = (orig_note.start_tick as i64 + delta_ticks).max(0) as u32;
 
                 if *delta_ticks != 0 || *delta_keys != 0 {
+                    // 「允许新重叠音符」关闭：目标与已有音符重叠 → 拒绝移动（模型不动，无 undo）
+                    if !self.edit.allow_overlapping_notes {
+                        let length = orig_note.end_tick - orig_note.start_tick;
+                        if batch_ops::has_overlapping_note_excluding(
+                            model,
+                            *track,
+                            new_key,
+                            new_tick,
+                            new_tick + length,
+                            orig_note.id,
+                        ) {
+                            return None;
+                        }
+                    }
                     let model = Arc::make_mut(&mut self.data.model);
                     // Remove original from old key bucket by id
                     Arc::make_mut(&mut model.notes[*key as usize]).remove_by_id(orig_note.id);
@@ -76,6 +91,20 @@ impl Document {
                     .find(|n| n.track == *track && n.start_tick == *start_tick)?;
                 if *new_end_tick != note.end_tick {
                     let before = *note;
+                    // 「允许新重叠音符」关闭：拉伸后与已有音符重叠 → 拒绝（模型不动）
+                    if !self.edit.allow_overlapping_notes {
+                        let new_end = (*new_end_tick).max(before.start_tick + 1);
+                        if batch_ops::has_overlapping_note_excluding(
+                            model,
+                            *track,
+                            *key,
+                            before.start_tick,
+                            new_end,
+                            before.id,
+                        ) {
+                            return None;
+                        }
+                    }
                     let model = Arc::make_mut(&mut self.data.model);
                     if let Some(n) = Arc::make_mut(&mut model.notes[k]).find_mut(before.id) {
                         n.end_tick = (*new_end_tick).max(n.start_tick + 1);
@@ -104,6 +133,20 @@ impl Document {
                     .find(|n| n.track == *track && n.start_tick == *start_tick)?;
                 if *new_start_tick != note.start_tick {
                     let before = *note;
+                    // 「允许新重叠音符」关闭：拉伸后与已有音符重叠 → 拒绝（模型不动）
+                    if !self.edit.allow_overlapping_notes {
+                        let new_start = (*new_start_tick).min(before.end_tick - 1);
+                        if batch_ops::has_overlapping_note_excluding(
+                            model,
+                            *track,
+                            *key,
+                            new_start,
+                            before.end_tick,
+                            before.id,
+                        ) {
+                            return None;
+                        }
+                    }
                     let model = Arc::make_mut(&mut self.data.model);
                     let bucket = Arc::make_mut(&mut model.notes[k]);
                     let mut moved = bucket.remove_by_id(before.id)?;

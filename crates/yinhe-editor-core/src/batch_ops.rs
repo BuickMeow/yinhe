@@ -111,6 +111,27 @@ pub fn has_overlapping_note(model: &YinModel, track: u16, key: u8, start: u32, e
         .any(|n| n.track == track && n.end_tick > start)
 }
 
+/// 排除自身 id 的重叠判定（单音符原地编辑：move/resize 前检查用）。
+///
+/// 与 `has_overlapping_note` 相同窗口算法，但跳过 `exclude_id`。
+/// 用于 pencil 单音符操作等“原音符仍在桶内”的场景，避免自己与自己误判重叠。
+pub fn has_overlapping_note_excluding(
+    model: &YinModel,
+    track: u16,
+    key: u8,
+    start: u32,
+    end: u32,
+    exclude_id: u32,
+) -> bool {
+    if end <= start {
+        return false;
+    }
+    let lo = start.saturating_sub(model.max_note_len);
+    model.notes[key as usize]
+        .range(lo, end)
+        .any(|n| n.id != exclude_id && n.track == track && n.end_tick > start)
+}
+
 /// 选中音符的统计信息（Info 面板选框信息显示）。
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SelectedNoteSummary {

@@ -463,9 +463,13 @@ impl Document {
 
         let model = Arc::make_mut(&mut self.data.model);
         let originals = batch_ops::remove_selected(model, &self.edit.selected);
+        let allow_overlap = self.edit.allow_overlapping_notes;
 
         let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
             std::collections::HashMap::new();
+        let mut moved_before: Vec<(yinhe_types::Note, u8)> = Vec::new();
+        let mut moved_after: Vec<(yinhe_types::Note, u8)> = Vec::new();
+        let mut blocked_any = false;
         for (note, old_key) in &originals {
             let new_note = match side {
                 ResizeSide::Left => {
@@ -488,6 +492,23 @@ impl Document {
                     }
                 }
             };
+            // 「允许新重叠音符」关闭：拉伸后与已有音符重叠 → 该音符保持原样。
+            // （选中集合已移除，检查看不到它们，批次内部互不影响）
+            if !allow_overlap
+                && batch_ops::has_overlapping_note(
+                    model,
+                    note.track,
+                    *old_key,
+                    new_note.start_tick,
+                    new_note.end_tick,
+                )
+            {
+                blocked_any = true;
+                new_by_key.entry(*old_key).or_default().push(*note);
+                continue;
+            }
+            moved_before.push((*note, *old_key));
+            moved_after.push((new_note, *old_key));
             new_by_key.entry(*old_key).or_default().push(new_note);
         }
 
@@ -497,8 +518,15 @@ impl Document {
             .collect();
         batch_ops::insert_batch(model, new_by_key);
 
+        // 全部被拦：原样插回，选区不动，不产生 undo。
+        if blocked_any && moved_before.is_empty() {
+            model.rebuild_dirty();
+            return None;
+        }
+
         // 同步 Selection 的 tick 范围（用于后续操作的命中判定）。
         // Selection::offset 会同时改 ts 和 te，但 resize 只想改其中一个，手动处理。
+        // 部分被拦时选区仍整体跟随手势（留在原处的音符可能脱出选区）。
         match side {
             ResizeSide::Left => {
                 for r in &mut self.edit.selected.rects {
@@ -519,10 +547,17 @@ impl Document {
         model.rebuild_dirty();
         self.data.bump_revision();
 
-        Some(UndoAction::Notes(NoteDelta {
-            before: originals,
-            after,
-        }))
+        if blocked_any {
+            Some(UndoAction::Notes(NoteDelta {
+                before: moved_before,
+                after: moved_after,
+            }))
+        } else {
+            Some(UndoAction::Notes(NoteDelta {
+                before: originals,
+                after,
+            }))
+        }
     }
 
     /// 对选中音符批量应用表达式编辑（Info 面板选框编辑）。
