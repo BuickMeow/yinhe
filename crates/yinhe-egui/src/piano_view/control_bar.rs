@@ -12,7 +12,6 @@ use rust_i18n::t;
 use yinhe_editor_core::quantize::QuantizePreset;
 
 use crate::widgets::quantize_button::{QuantizeBtnCtx, show as quantize_button};
-use yinhe_editor_core::audio_settings::OverlapBlockedBehavior;
 
 /// 控制栏事件（由 layout 应用到 doc.edit）。
 pub enum PrBarEvent {
@@ -26,8 +25,6 @@ pub enum PrBarEvent {
     SetAllVisible(bool),
     /// 切换「允许新重叠音符」开关（全局持久化，见 AudioSettings）。
     SetAllowOverlap(bool),
-    /// 设置重叠关闭时的移动策略。
-    SetBlockedBehavior(OverlapBlockedBehavior),
 }
 
 /// 控制栏输入（全部只读；状态修改走事件）。
@@ -43,8 +40,6 @@ pub struct PrBarData<'a> {
     pub main_track: Option<u16>,
     /// 「允许新重叠音符」开关当前状态（doc.edit.allow_overlapping_notes）。
     pub allow_overlap: bool,
-    /// 重叠关闭时的移动策略（doc.edit.overlap_blocked_behavior）。
-    pub blocked_behavior: OverlapBlockedBehavior,
     /// 和弦指示器文本（实时 MIDI 按键优先，其次播放中光标处和弦）。
     pub chord: Option<&'a str>,
 }
@@ -145,46 +140,6 @@ pub fn show(ui: &mut egui::Ui, bar: egui::Rect, ctx: &PrBarData<'_>, events: &mu
         ov_resp.on_hover_text(tip);
     }
 
-    // ── 重叠关闭时的移动策略（仅当不允许重叠时显示）──
-    let blocked_combo_w = if !ctx.allow_overlap { 88.0 } else { 0.0 };
-    let mut blocked_next_x = ov_rect.max.x + 2.0;
-    if !ctx.allow_overlap {
-        let combo_rect = egui::Rect::from_min_size(
-            egui::pos2(blocked_next_x, bar.min.y + 2.0),
-            egui::vec2(blocked_combo_w, bar.height() - 4.0),
-        );
-        ui.scope_builder(egui::UiBuilder::new().max_rect(combo_rect), |ui| {
-            let selected_label = match ctx.blocked_behavior {
-                OverlapBlockedBehavior::ReplaceTarget => t!("pr_bar.blocked_replace"),
-                OverlapBlockedBehavior::DeleteOriginal => t!("pr_bar.blocked_delete"),
-                OverlapBlockedBehavior::KeepOriginal => t!("pr_bar.blocked_keep"),
-            };
-            egui::ComboBox::from_id_salt("pr_blocked_behavior")
-                .selected_text(selected_label.as_ref())
-                .width(blocked_combo_w)
-                .show_ui(ui, |ui| {
-                    for &b in &[
-                        OverlapBlockedBehavior::ReplaceTarget,
-                        OverlapBlockedBehavior::DeleteOriginal,
-                        OverlapBlockedBehavior::KeepOriginal,
-                    ] {
-                        let label = match b {
-                            OverlapBlockedBehavior::ReplaceTarget => t!("pr_bar.blocked_replace"),
-                            OverlapBlockedBehavior::DeleteOriginal => t!("pr_bar.blocked_delete"),
-                            OverlapBlockedBehavior::KeepOriginal => t!("pr_bar.blocked_keep"),
-                        };
-                        let selected = b == ctx.blocked_behavior;
-                        if ui.selectable_label(selected, label.as_ref()).clicked() {
-                            events.push(PrBarEvent::SetBlockedBehavior(b));
-                        }
-                    }
-                });
-        });
-        blocked_next_x += blocked_combo_w + 4.0;
-    } else {
-        blocked_next_x += 4.0;
-    }
-
     // ── 音轨名称按钮（点击弹出左右两栏 popup）──
     let name = ctx
         .main_track
@@ -210,7 +165,7 @@ pub fn show(ui: &mut egui::Ui, bar: egui::Rect, ctx: &PrBarData<'_>, events: &mu
         .size()
         .x;
     let btn_rect = egui::Rect::from_min_size(
-        egui::pos2(blocked_next_x, bar.min.y + 2.0),
+        egui::pos2(quantize_rect.max.x + 2.0 + 18.0 + 4.0, bar.min.y + 2.0),
         egui::vec2(text_w + 6.0 + icon_w + 16.0, bar.height() - 4.0),
     );
     let btn_resp = ui.interact(
