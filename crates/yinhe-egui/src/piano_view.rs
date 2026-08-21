@@ -22,6 +22,7 @@ mod interaction;
 mod keyboard;
 mod layout;
 mod marquee;
+mod overlay;
 mod pencil;
 mod perf;
 mod scrollbar;
@@ -133,7 +134,7 @@ pub fn show(
     let content_right_x = rect.max.x - crate::widgets::scrollbar::SCROLLBAR_W;
     let content_h = (content_bottom - content_y).max(0.0);
     let _ = content_h;
-    let ruler_band_y = rect.min.y;
+    let _ruler_band_y = rect.min.y;
 
     // ── Perf probe (only when YIN_PERF=1) ──
     let perf_on = yinhe_memtrace::perf_probe::enabled();
@@ -154,7 +155,6 @@ pub fn show(
     }
     update_follow(view, *cursor_tick, is_playing, follow_mode, ui, &layout);
 
-    let mut sel_action = None;
     let interaction::InteractionOutput {
         effective_tool,
         ghost_notes,
@@ -273,79 +273,17 @@ pub fn show(
     // Static cache was removed — every frame rebuilds + uploads, so always paint.
     view.base.dirty = false;
 
-    // ── Background（app_bg 一层，不透明不叠加；条纹/色块自行叠上）──
-    painter.rect_filled(content_rect, 0.0, crate::theme::app_bg());
-
-    // ── Scale background + 八度横线（调号驱动的调内/调外/根音条带）──
     let kh = view.key_height;
     let kb_w = view.keyboard_width();
-    bg::paint(
-        &painter,
-        content_rect,
-        kb_w,
-        kh,
-        view,
-        key_sig_events,
-        content_opacity,
-    );
-
-    // ── Grid lines (drawn by egui before wgpu texture) ──
-    // 替代原 wgpu grid layer。与 time_ruler 共用 MIN_SPACING 阈值，保证"有线就有标签"。
-    if let Some(midi) = midi
-        && let Some(tpb) = midi.ticks_per_beat()
-    {
-        let (def_num, def_den) = midi.time_sig_default();
-        let sig_events = midi.time_sig_events();
-        // 横向：从键盘列右缘开始；纵向：整块音乐区（时间轴沿 Y，线横着）。
-        let grid_rect = if view.is_vertical() {
-            content_rect
-        } else {
-            egui::Rect::from_min_max(
-                egui::pos2(
-                    content_rect.min.x + view.keyboard_width(),
-                    content_rect.min.y,
-                ),
-                content_rect.max,
-            )
-        };
-        crate::widgets::grid_lines::paint_grid_lines(
-            &painter,
-            grid_rect,
-            &view.base,
-            tpb,
-            def_num,
-            def_den,
-            sig_events,
-            &crate::widgets::grid_lines::GridColors::pianoroll(),
-            view.orientation(),
-        );
-    }
-
-    // Paint wgpu content into the content_rect (notes only — grid moved to egui)
-    if cull_ready {
-        // GPU cull path: draw directly (no render thread needed — cull makes GPU work fast)
-        render_ctx.paint(
-            pianoroll,
-            pw,
-            ph,
-            "pianoroll_frame",
-            &painter,
-            content_rect,
-            true,
-        );
+    let tpb = midi.and_then(|m| m.ticks_per_beat());
+    let grid_rect = if view.is_vertical() {
+        content_rect
     } else {
-        // Render thread handles GPU work — just display the latest texture
-        render_ctx.paint_texture_only(pw, ph, &painter, content_rect);
-    }
-
-    let t_paint_end = if perf_on {
-        Some(std::time::Instant::now())
-    } else {
-        None
+        egui::Rect::from_min_max(
+            egui::pos2(content_rect.min.x + kb_w, content_rect.min.y),
+            content_rect.max,
+        )
     };
-
-    // ── Keyboard (drawn by egui on top of the wgpu texture) ──
-    // 横向 = 左侧键盘列；纵向 = 底部横键盘条（高 = kb_w）。
     let keyboard_rect = if view.is_vertical() {
         let kb_bottom = rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H;
         egui::Rect::from_min_max(
@@ -358,193 +296,42 @@ pub fn show(
             egui::pos2(content_rect.min.x + kb_w, content_rect.max.y),
         )
     };
-    keyboard::paint(&painter, keyboard_rect, kb_w, kh, view, &theme);
-
-    // ── Playback cursor (drawn by egui on top of the wgpu texture) ──
-    // Decoupled from the wgpu pipeline so cursor movement during playback
-    // does NOT invalidate the static instance cache.
-    if let Some(ct) = *cursor_tick {
-        let kb_w = view.keyboard_width();
-        if view.is_vertical() {
-            // 纵向瀑布流：时间沿 Y，游标横线。
-            let cy_local = view.tick_to_main_px(ct);
-            if cy_local >= 0.0 && cy_local <= h as f32 {
-                let cy = content_rect.min.y + cy_local;
-                painter.line_segment(
-                    [
-                        egui::pos2(content_rect.min.x, cy),
-                        egui::pos2(content_rect.max.x, cy),
-                    ],
-                    egui::Stroke::new(crate::theme::CURSOR_WIDTH, crate::theme::contrast_fg()),
-                );
-            }
-        } else {
-            let cx_local = view.tick_to_x(ct);
-            if cx_local >= kb_w && cx_local <= w as f32 {
-                let cx = content_rect.min.x + cx_local;
-                painter.line_segment(
-                    [
-                        egui::pos2(cx, content_rect.min.y),
-                        egui::pos2(cx, content_rect.max.y),
-                    ],
-                    egui::Stroke::new(crate::theme::CURSOR_WIDTH, crate::theme::contrast_fg()),
-                );
-            }
-        }
-    }
-
-    // ── Draw selection box on TOP of GPU content ──
-    // State was already updated by sel_drag_frame above; this just draws the box
-    // after the GPU paint so it's not covered by the texture.
-    // 活跃框选（拖拽中）：仅在选择/橡皮工具下显示。
-    if effective_tool == Tool::Select || effective_tool == Tool::SelectVertical {
-        let vertical = effective_tool == Tool::SelectVertical;
-        marquee::draw_marquee_box(
-            ui,
-            content_rect,
-            music_rect,
-            view,
-            quantize,
-            ppq,
-            bar_line_data,
-            "sel_drag",
-            crate::theme::contrast_fg(),
-            crate::theme::contrast_fg(),
-            vertical,
-        );
-    } else if effective_tool == Tool::Eraser {
-        // Draw eraser marquee box in red
-        marquee::draw_marquee_box(
-            ui,
-            content_rect,
-            music_rect,
-            view,
-            quantize,
-            ppq,
-            bar_line_data,
-            "eraser_drag",
-            crate::theme::danger_text_bright(),
-            crate::theme::danger_text_bright(),
-            false,
-        );
-    }
-    // 已提交的持久选框：任意工具下均保持可见（切换到铅笔等后仍需看到选区），
-    // 仅浮动操作条限制在选择工具下弹出。
-    {
-        let eff_rects = sel_rect.effective_rects();
-        if !eff_rects.is_empty() {
-            let persisted_pixel_rects: Vec<egui::Rect> = eff_rects
-                .iter()
-                .map(|&(t_start, t_end, key_lo, key_hi)| {
-                    crate::selection::drag::music_sel_to_pixel_rect(
-                        view, t_start, t_end, key_lo, key_hi,
-                    )
-                })
-                .collect();
-            {
-                // 横向：像素 rect 相对 content（含键盘列），转成 music-relative 再相对 music_rect 画；
-                // 纵向：music_rect == content_rect，无偏移。
-                let kb_w = if view.is_vertical() {
-                    0.0
-                } else {
-                    music_rect.min.x - content_rect.min.x
-                };
-                let music_rect_local = egui::Rect::from_min_max(
-                    egui::pos2(0.0, 0.0),
-                    egui::pos2(music_rect.width(), music_rect.height()),
-                );
-                for &rect in &persisted_pixel_rects {
-                    let shifted = egui::Rect::from_min_max(
-                        egui::pos2(rect.min.x - kb_w, rect.min.y),
-                        egui::pos2(rect.max.x - kb_w, rect.max.y),
-                    );
-                    if shifted.intersects(music_rect_local) {
-                        crate::selection::draw::draw(
-                            ui.painter(),
-                            music_rect,
-                            shifted,
-                            crate::theme::contrast_fg(),
-                            crate::theme::contrast_fg(),
-                        );
-                    }
-                }
-            }
-            // 浮动操作条仅在选择工具下显示（铅笔等工具下不干扰）。
-            if (effective_tool == Tool::Select || effective_tool == Tool::SelectVertical)
-                && let Some(action) = crate::widgets::selection_actions::show(
-                    ui,
-                    music_rect,
-                    persisted_pixel_rects.last().copied(),
-                )
-            {
-                sel_action = Some(action);
-            }
-        }
-    }
-
-    // ── Time ruler ──
-    // 横向 = 顶部横条；纵向 = 左侧竖条（时间沿 Y）。
-    if let Some(midi) = midi
-        && let Some(tpb) = midi.ticks_per_beat()
-    {
-        let (def_num, def_den) = midi.time_sig_default();
-        let sig_events = midi.time_sig_events();
-
-        let ruler_rect = if view.is_vertical() {
-            egui::Rect::from_min_max(
-                egui::pos2(rect.min.x, content_y),
-                egui::pos2(rect.min.x + RULER_H, content_bottom),
-            )
-        } else {
-            // 左上角角落（键盘列上方）：量化按钮已移至标尺下方控制栏，此处只补背景。
-            let left_corner = egui::Rect::from_min_max(
-                rect.min,
-                egui::pos2(rect.min.x + view.keyboard_width(), ruler_band_y + RULER_H),
-            );
-            ui.painter()
-                .rect_filled(left_corner, 0.0, crate::theme::track_bg());
-
-            // 右上角角落：标尺右缘到垂直滚动条之间（SCROLLBAR_W × RULER_H）
-            let corner_rect = egui::Rect::from_min_max(
-                egui::pos2(content_right_x, ruler_band_y),
-                egui::pos2(rect.max.x, ruler_band_y + RULER_H),
-            );
-            ui.painter()
-                .rect_filled(corner_rect, 0.0, crate::theme::track_bg());
-
-            egui::Rect::from_min_max(
-                egui::pos2(rect.min.x + view.keyboard_width(), ruler_band_y),
-                egui::pos2(content_right_x, ruler_band_y + RULER_H),
-            )
-        };
-
-        let ruler_jumped = crate::widgets::time_ruler::interactive_ruler(
-            ui,
-            ruler_rect,
-            view,
-            tpb,
-            def_num,
-            def_den,
-            sig_events,
-            |tick| crate::view_interaction::snap_tick(tick, quantize, ppq, bar_line_data),
-            "piano_ruler",
-            cursor_tick,
-        );
-        // 点击/拖动时间标尺跳转位置时，取消已选择的选框（含框选与全选）。
-        if ruler_jumped {
-            selected.clear();
-            sel_rect.clear();
-        }
-    }
-
-    // ── PR 控制栏（标尺下方、GPU 画布上方：量化/音轨名称/和弦指示器）──
-    {
-        let bar_rect = egui::Rect::from_min_max(
-            egui::pos2(rect.min.x, ruler_band_y + RULER_H),
-            egui::pos2(rect.max.x, ruler_band_y + RULER_H + theme::PR_BAR_H),
-        );
-        control_bar::show(ui, bar_rect, &bar, feedback.bar_events);
-    }
+    let sel_action = overlay::draw_overlays(
+        ui,
+        &painter,
+        content_rect,
+        music_rect,
+        rect,
+        view,
+        &theme,
+        kh,
+        kb_w,
+        key_sig_events,
+        content_opacity,
+        midi,
+        tpb,
+        grid_rect,
+        cull_ready,
+        render_ctx,
+        pianoroll,
+        pw,
+        ph,
+        keyboard_rect,
+        cursor_tick,
+        effective_tool,
+        sel_rect,
+        quantize,
+        ppq,
+        bar_line_data,
+        &bar,
+        feedback,
+        selected,
+    );
+    let t_paint_end = if perf_on {
+        Some(std::time::Instant::now())
+    } else {
+        None
+    };
 
     // ── Automation panels ──
     let panels_y = content_rect.max.y;
