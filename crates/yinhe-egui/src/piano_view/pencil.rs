@@ -22,6 +22,7 @@ pub(crate) enum PencilDrag {
 }
 
 /// Result of hit-testing the cursor against existing notes.
+#[derive(Clone)]
 pub(crate) struct HitNote {
     pub track: u16,
     pub start_tick: u32,
@@ -199,10 +200,58 @@ pub(crate) fn pencil_frame(
     };
 
     // ── 快速删除（双击/右键）──
+    // 不依赖 can_write / active_track：任意可见音轨的音符均可快速删除
     let mut quick_delete: PencilQuickDelete = None;
+    // 快速删除的 hit-test：任意可见轨道（与铅笔的 active_track 过滤不同）
+    let quick_hit: Option<HitNote> = (|| -> Option<HitNote> {
+        let mouse_screen = hover_pos?;
+        if !music_rect.contains(mouse_screen) {
+            return None;
+        }
+        let mouse_local_x = mouse_screen.x - music_rect.min.x;
+        let mouse_local_y = mouse_screen.y - music_rect.min.y;
+        let (main_px, cross_px) = super::drag::main_cross_x_y(view, (mouse_local_x, mouse_local_y));
+        let key = view.cross_px_to_key(cross_px);
+        let midi = midi?;
+        let notes = midi.key_notes_in_range(key, 0, u32::MAX);
+        for note in notes {
+            if !track_visible
+                .get(note.track as usize)
+                .copied()
+                .unwrap_or(true)
+            {
+                continue;
+            }
+            let tick_shift = if view.is_vertical() { 0.0 } else { kb_w };
+            let a = super::drag::tick_to_main_px_dir(view, note.start_tick as f64) - tick_shift;
+            let b = super::drag::tick_to_main_px_dir(view, note.end_tick as f64) - tick_shift;
+            let c = view.key_to_cross_px(key);
+            let note_rect = super::drag::orient_rect(view, a, b, c, c + view.key_height);
+            if !note_rect.contains(egui::pos2(mouse_local_x, mouse_local_y)) {
+                continue;
+            }
+            let dist_left = (main_px - a).abs();
+            let dist_right = (main_px - b).abs();
+            let mode = if dist_left < EDGE_THRESHOLD_PX {
+                HitMode::ResizeLeft
+            } else if dist_right < EDGE_THRESHOLD_PX {
+                HitMode::ResizeRight
+            } else {
+                HitMode::Move
+            };
+            return Some(HitNote {
+                track: note.track,
+                start_tick: note.start_tick,
+                end_tick: note.end_tick,
+                key,
+                mode,
+            });
+        }
+        None
+    })();
     if quick_delete_mode.allows_right_click()
         && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary))
-        && let Some(ref hit) = hit_note
+        && let Some(hit) = quick_hit.clone()
     {
         quick_delete = Some((hit.track, hit.start_tick, hit.key));
         return (None, Vec::new(), Vec::new(), None, None, quick_delete);
@@ -212,7 +261,7 @@ pub(crate) fn pencil_frame(
             i.pointer
                 .button_double_clicked(egui::PointerButton::Primary)
         })
-        && let Some(ref hit) = hit_note
+        && let Some(hit) = quick_hit
     {
         quick_delete = Some((hit.track, hit.start_tick, hit.key));
         return (None, Vec::new(), Vec::new(), None, None, quick_delete);

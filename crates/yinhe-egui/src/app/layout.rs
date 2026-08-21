@@ -744,17 +744,14 @@ impl App {
                 } => {
                     let Some(idx) = self.active_doc else { return };
                     // 快速删除：按 (track, start_tick, key) 定位单个音符
+                    // 仅检查 PR 可见性，不再受 track_selected 限制（任意可见音轨均可删）
                     let edit = &self.documents[idx].edit;
-                    // 仅在音符可见且在选定轨道范围内才删除
                     if !edit
                         .track_pianoroll_visible
                         .get(track as usize)
                         .copied()
                         .unwrap_or(true)
                     {
-                        return;
-                    }
-                    if !edit.track_selected.is_empty() && !edit.track_selected.contains(&track) {
                         return;
                     }
                     self.with_undo(t!("undo.delete_notes").as_ref(), |doc| {

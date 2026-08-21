@@ -910,9 +910,11 @@ fn dispatch_edit_interaction(
     let mut tooltip: Option<interaction::HoverTooltip> = None;
     if let Some(ctx) = edit_ctx {
         if panel.show_velocity {
-            // Velocity：铅笔笔划修改力度条（命中 noteon，只作用于 active_track）
-            if ctx.active_tool == Tool::Pencil
-                && let Some(track) = ctx.active_track
+            // Velocity：铅笔/选框笔划修改力度条（命中 noteon，只作用于 active_track）
+            if matches!(
+                ctx.active_tool,
+                Tool::Pencil | Tool::Select | Tool::SelectVertical
+            ) && let Some(track) = ctx.active_track
                 && let Some(midi_src) = midi
             {
                 let track_color = track_colors

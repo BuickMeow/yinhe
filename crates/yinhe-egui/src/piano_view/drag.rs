@@ -1079,18 +1079,22 @@ pub(crate) fn sel_drag_frame(
         super::pencil::valid_pencil_track(write_track, track_visible, conductor_idx).is_some();
 
     // ── 右键快速删除（选择工具双击/右键删除音符）──
+    // 不依赖 can_edit / write_track：任意可见音轨的音符均可快速删除
     if quick_delete.is_none()
         && quick_delete_mode.allows_right_click()
         && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary))
         && let Some(pos) = pointer.hover_pos()
         && music_rect.contains(pos)
         && !on_action_bar(pos, music_rect, view, &eff_rects)
-        && can_edit
     {
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-        if let Some((_, track, start_tick, _, key)) =
-            hit_test_note(midi, view, local, track_visible, track_selected)
-        {
+        if let Some((_, track, start_tick, _, key)) = hit_test_note(
+            midi,
+            view,
+            local,
+            track_visible,
+            &std::collections::HashSet::new(),
+        ) {
             quick_delete = Some((track, start_tick, key));
         }
     }
@@ -1200,12 +1204,16 @@ pub(crate) fn sel_drag_frame(
         && !on_action_bar(pos, music_rect, view, &eff_rects)
     {
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-        // 优先尝试快速删除：双击命中音符且设置允许 → 删除
+        // 优先尝试快速删除：双击命中音符且设置允许 → 删除（不依赖 can_edit，任意可见音轨均可）
         let mut handled_as_delete = false;
         if quick_delete_mode.allows_double_click()
-            && can_edit
-            && let Some((_, track, start_tick, _, key)) =
-                hit_test_note(midi, view, local, track_visible, track_selected)
+            && let Some((_, track, start_tick, _, key)) = hit_test_note(
+                midi,
+                view,
+                local,
+                track_visible,
+                &std::collections::HashSet::new(),
+            )
         {
             quick_delete = Some((track, start_tick, key));
             handled_as_delete = true;
