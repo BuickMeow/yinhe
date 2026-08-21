@@ -17,6 +17,7 @@ pub mod control_bar;
 pub(crate) mod drag;
 mod follow;
 pub(crate) mod gpu_upload;
+mod interaction;
 mod keyboard;
 mod layout;
 mod marquee;
@@ -27,6 +28,7 @@ mod tool;
 mod types;
 pub(crate) use follow::update_follow;
 pub(crate) use layout::{Layout, compute_layout};
+#[allow(unused_imports)]
 pub(crate) use tool::effective_tool;
 pub use types::*;
 pub(crate) use types::{NotePreview, PreviewReq};
@@ -149,188 +151,55 @@ pub fn show(
         let (aw, ah) = render_ctx.actual_size();
         rt.update_target(render_ctx.preview_view().clone(), aw, ah);
     }
-
     update_follow(view, *cursor_tick, is_playing, follow_mode, ui, &layout);
 
-    // ── Selection drag (Select tool only) ──
-    // Update state BEFORE handle_input to avoid egui pointer-capture conflicts.
     let mut sel_action = None;
-    let mut pencil_event: Option<PianoViewEvent> = None;
-    let mut eraser_event: Option<PianoViewEvent> = None;
-    let mut ghost_notes: Vec<(u32, u32, u8, u16)> = Vec::new();
-    let mut hidden_notes: std::collections::HashSet<(u16, u32, u8)> =
-        std::collections::HashSet::new();
-    // 按住 Alt 时 Select↔Pencil 双向临时切换（详见 effective_tool）。
-    let effective_tool = effective_tool(
+    let interaction::InteractionOutput {
+        effective_tool,
+        ghost_notes,
+        hidden_notes,
+        pencil_event,
+        eraser_event,
+        quick_delete_event,
+    } = interaction::dispatch(
         ui,
-        *active_tool,
+        view,
+        rect,
+        content_rect,
+        music_rect,
         midi,
+        selected,
+        track_visible,
+        track_colors,
+        cursor_tick,
+        quantize,
+        ppq,
+        bar_line_data,
+        total_ticks,
+        sel_rect,
+        track_selected,
+        write_track,
+        conductor_idx,
+        active_tool,
+        quick_delete_mode,
+        feedback,
+    );
+
+    interaction::update_hover_cursor(
+        ui,
         view,
         content_rect,
         music_rect,
+        midi,
         track_visible,
         track_selected,
         sel_rect,
         write_track,
         conductor_idx,
+        effective_tool,
     );
-    // 快速删除事件（选择/铅笔工具双击或右键删除音符）
-    let mut quick_delete_event: Option<PianoViewEvent> = None;
-    if effective_tool == Tool::Select || effective_tool == Tool::SelectVertical {
-        let vertical = effective_tool == Tool::SelectVertical;
-        let (sel_ghosts, sel_hidden, sel_previews, sel_note_event, sel_pencil_drag, sel_quick) =
-            drag::sel_drag_frame(
-                ui,
-                content_rect,
-                music_rect,
-                view,
-                midi,
-                selected,
-                quantize,
-                ppq,
-                bar_line_data,
-                total_ticks,
-                cursor_tick,
-                feedback.note_drag_delta,
-                feedback.note_resize_delta,
-                sel_rect,
-                track_colors,
-                track_visible,
-                track_selected,
-                write_track,
-                conductor_idx,
-                vertical,
-                quick_delete_mode,
-            );
-        ghost_notes = sel_ghosts;
-        hidden_notes = sel_hidden.into_iter().collect();
-        feedback.preview_reqs.extend(sel_previews);
-        if let Some((track, start_tick, key)) = sel_quick {
-            quick_delete_event = Some(PianoViewEvent::QuickDelete {
-                track,
-                start_tick,
-                key,
-            });
-        }
-        // 双击写音符（选择工具）：与铅笔一致，目标轨 = write_track。
-        if let Some((note, track)) = sel_note_event {
-            pencil_event = Some(PianoViewEvent::AddNote { track, note });
-        }
-        // 单音符边缘伸缩（选择工具，不用先选中）：复用铅笔的提交通道。
-        *feedback.pencil_note_drag = sel_pencil_drag;
-    } else if effective_tool == Tool::Pencil {
-        let (note_event, ghost, hidden, pencil_drag, preview, pencil_quick) = pencil::pencil_frame(
-            ui,
-            content_rect,
-            music_rect,
-            view,
-            quantize,
-            ppq,
-            bar_line_data,
-            write_track,
-            track_visible,
-            conductor_idx,
-            midi,
-            track_colors,
-            total_ticks,
-            quick_delete_mode,
-        );
-        ghost_notes = ghost;
-        hidden_notes.extend(hidden);
-        *feedback.pencil_note_drag = pencil_drag;
-        if let Some(p) = preview {
-            feedback.preview_reqs.push(p);
-        }
-        if let Some((track, start_tick, key)) = pencil_quick {
-            quick_delete_event = Some(PianoViewEvent::QuickDelete {
-                track,
-                start_tick,
-                key,
-            });
-        }
-        if let Some(note) = note_event
-            && let Some(track) =
-                pencil::valid_pencil_track(write_track, track_visible, conductor_idx)
-        {
-            pencil_event = Some(PianoViewEvent::AddNote { track, note });
-        }
-    } else if effective_tool == Tool::Eraser {
-        eraser_event = marquee::eraser_drag_frame(
-            ui,
-            content_rect,
-            music_rect,
-            view,
-            quantize,
-            ppq,
-            bar_line_data,
-            total_ticks,
-            track_selected,
-        );
-    }
-
-    // ── Hover cursor: show Move/ResizeWest/ResizeEast when over selection rect ──
-    if (effective_tool == Tool::Select || effective_tool == Tool::SelectVertical)
-        && !crate::view_interaction::pointer_over_popup(ui.ctx())
-        && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
-        && music_rect.contains(pos)
-    {
-        let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-        let eff_rects = sel_rect.effective_rects();
-        let can_hover_edit =
-            pencil::valid_pencil_track(write_track, track_visible, conductor_idx).is_some();
-        let mut hit_note = false;
-        // 音符 hit-test 仅在有编辑目标时进行，避免未选中时每帧遍历音符
-        // 存在选框时禁用单音符 hover（与 sel_press 移动/缩放禁用保持一致）
-        let has_selection = !sel_rect.is_empty();
-        if can_hover_edit
-            && !has_selection
-            && let Some((mode, _, _, _, _)) =
-                drag::hit_test_note(midi, view, local, track_visible, track_selected)
-        {
-            use crate::piano_view::pencil::HitMode;
-            match mode {
-                HitMode::ResizeLeft => ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest),
-                HitMode::ResizeRight => ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeEast),
-                HitMode::Move => ui.ctx().set_cursor_icon(egui::CursorIcon::Move),
-            }
-            hit_note = true;
-        }
-        // 选框边缘与内部命中不受 can_edit 限制：即使未选中音轨，选框本身仍可拖动/缩放
-        if !hit_note {
-            if let Some((side, _, _)) = drag::hit_test_sel_edge(&eff_rects, view, local) {
-                match side {
-                    yinhe_editor_core::ResizeSide::Left => {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest)
-                    }
-                    yinhe_editor_core::ResizeSide::Right => {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeEast)
-                    }
-                }
-            } else {
-                let in_sel_rect = eff_rects.iter().any(|&(t_start, t_end, key_lo, key_hi)| {
-                    let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
-                        view, t_start, t_end, key_lo, key_hi,
-                    );
-                    pixel_rect.contains(local)
-                });
-                if in_sel_rect {
-                    // 垂直选框（垂直工具或空区域框选自动生成的全键选框）：只能水平拖动
-                    // → 左右双向指针；普通选框工具：四向移动指针。
-                    let icon =
-                        if effective_tool == Tool::SelectVertical || sel_rect.has_auto_vertical() {
-                            egui::CursorIcon::ResizeHorizontal
-                        } else {
-                            egui::CursorIcon::Move
-                        };
-                    ui.ctx().set_cursor_icon(icon);
-                }
-            }
-        }
-    }
 
     // ── Content interaction (zoom/pan/cursor/drag/reset) ──
-    // 横向：左区（键盘列）垂直缩放、右区平移/水平缩放，x_to_tick 内部减 left_panel_width。
-    // 纵向：无左区（键盘在底部），滚轮/缩放直接按主轴（时间轴沿 Y）分发。
     let left_zone = if view.is_vertical() { 0.0 } else { kb_w };
     crate::view_interaction::handle_input(
         ui,
@@ -341,73 +210,13 @@ pub fn show(
         Some((quantize, ppq)),
         bar_line_data,
         None,
-        None, // 命中区域 = content_rect（PR 无左列外区域）
+        None,
         is_playing,
         follow_mode,
         active_tool,
     );
 
-    // ── Keyboard resize handle ──
-    // 横向：左侧键盘列的右缘竖线；纵向：底部键盘条的顶部横线。
-    ui.push_id("kb_handle", |ui| {
-        let vertical = view.is_vertical();
-        let handle_rect = if vertical {
-            let hy = rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H - view.keyboard_width();
-            egui::Rect::from_min_max(
-                egui::pos2(rect.min.x, hy - 2.0),
-                egui::pos2(content_right_x, hy + 2.0),
-            )
-        } else {
-            let handle_x = rect.min.x + view.keyboard_width();
-            egui::Rect::from_min_max(
-                egui::pos2(handle_x - 2.0, rect.min.y),
-                egui::pos2(handle_x + 2.0, content_rect.max.y),
-            )
-        };
-        let handle_resp = ui.interact(handle_rect, ui.id(), egui::Sense::click_and_drag());
-        // 只有按下位置真的在把手矩形内才响应拖动：egui 的 interact_radius
-        // 会把把手附近 ~5px 的按下判为命中，导致拖动自动化锚点/分割线时
-        // 误拖键盘宽度（一次只能按一个物品）。
-        let on_handle = ui
-            .input(|i| i.pointer.interact_pos())
-            .is_some_and(|p| handle_rect.contains(p));
-        let press_on_handle = ui
-            .input(|i| i.pointer.press_origin())
-            .is_some_and(|p| handle_rect.contains(p));
-        if on_handle && (handle_resp.hovered() || handle_resp.dragged()) {
-            ui.ctx().set_cursor_icon(if vertical {
-                egui::CursorIcon::ResizeVertical
-            } else {
-                egui::CursorIcon::ResizeHorizontal
-            });
-        }
-        if press_on_handle && handle_resp.dragged() {
-            let delta = if vertical {
-                handle_resp.drag_delta().y
-            } else {
-                handle_resp.drag_delta().x
-            };
-            let old_kb = view.keyboard_width();
-            let new_kb = (old_kb + delta).clamp(
-                crate::theme::MIN_KEYBOARD_WIDTH,
-                rect.width() * crate::theme::MAX_KEYBOARD_RATIO,
-            );
-
-            // 主视口长度随键盘条尺寸变化，按比例换算保持 start_tick 不变：
-            // 横向 = 音乐区宽 w - kb；纵向 = 音乐区高 h - kb（主轴长度变化）。
-            let old_main = (if vertical { h as f32 } else { w as f32 }) - old_kb;
-            let new_main = (if vertical { h as f32 } else { w as f32 }) - new_kb;
-            if old_main > 0.0 && new_main > 0.0 {
-                let start_tick = view.main_scroll_val() / view.base.pixels_per_tick;
-                let new_start_tick = start_tick * old_main / new_main;
-                *view.main_scroll() = new_start_tick * view.base.pixels_per_tick;
-            }
-
-            view.base.left_panel_width = new_kb;
-            view.base.dirty = true;
-            ui.ctx().request_repaint();
-        }
-    });
+    interaction::handle_kb_resize(ui, view, rect, content_rect, w, h);
 
     // ── Clamp scroll after all interactions ──
     let total_ticks = super::view_interaction::total_ticks_padded(
