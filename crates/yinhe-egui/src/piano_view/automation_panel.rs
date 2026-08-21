@@ -4,10 +4,9 @@ use eframe::egui;
 use egui_material_icons::icons::*;
 use rust_i18n::t;
 
-use yinhe_editor_core::quantize::QuantizePreset;
 pub use yinhe_types::AutomationEdit;
 use yinhe_types::time_format::format_tick_bar_beat_with_time_sig;
-use yinhe_types::{AutomationLane, AutomationTarget, TimeSigEvent, VelocityEdit};
+use yinhe_types::{AutomationLane, AutomationTarget};
 
 use yinhe_types::AutomationPanelView;
 use yinhe_wgpu::InstanceRenderer;
@@ -18,168 +17,17 @@ use crate::widgets::tools_panel::Tool;
 
 pub(crate) mod interaction;
 mod velocity;
-use velocity::VelocityPreview;
 
-/// Curated list of known automation targets shown in the dropdown.
-/// AR 音轨面板「创建自动化」右键菜单也复用此列表（跳过 Tempo）。
-pub(crate) const AUTOMATION_TARGETS: &[AutomationTarget] = &[
-    AutomationTarget::Tempo,
-    AutomationTarget::PitchBend,
-    AutomationTarget::CC { controller: 7 },  // Volume
-    AutomationTarget::CC { controller: 10 }, // Pan
-    AutomationTarget::CC { controller: 11 }, // Expression
-    AutomationTarget::CC { controller: 64 }, // Sustain
-    AutomationTarget::CC { controller: 71 }, // Resonance
-    AutomationTarget::CC { controller: 72 }, // Release
-    AutomationTarget::CC { controller: 73 }, // Attack
-    AutomationTarget::CC { controller: 74 }, // Cutoff
-    AutomationTarget::Rpn { parameter: 0 },  // PB Sensitivity
-    AutomationTarget::Rpn { parameter: 1 },  // Fine Tune
-    AutomationTarget::Rpn { parameter: 2 },  // Coarse Tune
-];
+mod constants;
+mod types;
+mod value;
 
-/// 锚点命中半径（像素）。鼠标在此半径内点击视为选中该锚点。
-const ANCHOR_HIT_PX: f32 = 10.0;
-
-/// 交互上下文：打包 `show_panels` 处理编辑所需的全部外部信息。
-///
-/// `None` 时（如未选中唯一 track）跳过所有编辑交互，仅渲染。
-pub struct AutomationEditCtx<'a> {
-    pub active_tool: Tool,
-    pub active_track: Option<u16>,
-    pub quantize: QuantizePreset,
-    pub ppq: u32,
-    pub bar_line_data: Option<(u32, u8, u8, &'a [TimeSigEvent])>,
-}
+pub use constants::*;
+pub use types::*;
+use value::{min_value_zoom, panel_max_val, value_upper_bound};
 
 use crate::render_context::RenderContext;
 use crate::theme;
-
-/// Height of the split/handle between automation panels.
-pub(crate) const SPLIT_H: f32 = theme::AUTO_PANEL_SPLIT_H;
-
-/// 面板集合渲染状态（panels 与 renderers 一一对应）。
-pub(crate) struct PanelsState<'a> {
-    pub panels: &'a mut Vec<AutomationPanelView>,
-    pub renderers: &'a mut Vec<(InstanceRenderer, RenderContext)>,
-    pub wgpu_state: &'a Arc<eframe::egui_wgpu::RenderState>,
-    pub show_panels: &'a mut bool,
-}
-
-/// 面板布局几何。
-#[derive(Clone, Copy)]
-pub(crate) struct PanelsLayout {
-    pub combo_width: f32,
-    pub content_rect_right: f32,
-    pub content_top_y: f32,
-    pub panels_visible_h: f32,
-}
-
-/// 面板渲染/联动配置。
-#[derive(Clone, Copy)]
-pub(crate) struct PanelsCfg<'a> {
-    pub pianoroll_scroll_x: f32,
-    pub pianoroll_ppt: f32,
-    pub scroll_mode: u32,
-    pub min_border_width: f32,
-    pub revision: u64,
-    /// 状态栏讲解行格式化位置所需（拍号事件）。
-    pub bar_line_data: Option<(u32, u8, u8, &'a [TimeSigEvent])>,
-    /// 讲解行选框统计（AM 选框命中时显示）。
-    pub sel_hint: Option<&'a crate::app::layout::SelHintInfo>,
-    /// 当前编辑目标是否为 Conductor 轨。Conductor 下 AM 面板只可编辑 Tempo
-    /// （下拉菜单仅显示 Tempo，非 Tempo 编辑被 dispatch 层禁用）。
-    pub editing_is_conductor: bool,
-}
-
-/// 面板模型只读数据。
-pub(crate) struct PanelsData<'a> {
-    pub automation_lanes: &'a [AutomationLane],
-    pub render_lanes: &'a [&'a AutomationLane],
-    pub tempo_lane: &'a AutomationLane,
-    pub midi: Option<&'a dyn yinhe_types::NoteSource>,
-    pub track_visible: &'a [bool],
-    pub track_colors: &'a [[f32; 4]],
-}
-
-/// 面板编辑状态。
-pub(crate) struct PanelsEdit<'a> {
-    pub selected: &'a mut yinhe_core::Selection,
-    pub info_content: &'a mut Option<InfoContent>,
-    pub right_tab: &'a mut Option<RightTab>,
-}
-
-/// `show_panels` 的返回：总高度 + 编辑动作列表 + 联动反馈 + (拖拽锚点 tick, value)。
-pub(crate) type PanelsOutput = (
-    f32,
-    Vec<AutomationEdit>,
-    Vec<VelocityEdit>,
-    PanelPianorollFeedback,
-    Option<(u32, f32)>,
-);
-
-/// automation 面板交互产生的 pianoroll 联动反馈。
-///
-/// `show_panels` 返回，由 `piano_view::show` 应用到 pianoroll view。
-pub struct PanelPianorollFeedback {
-    /// 水平滚动 delta（像素）。非零时 piano_view 会调整 `scroll_x`。
-    pub scroll_x_delta: f32,
-    /// 水平缩放因子（1.0 = 无缩放）。
-    pub zoom_factor: f32,
-    /// 缩放中心（pianoroll content 局部 x 坐标，已减去 rect.min.x）。
-    pub zoom_center_x: f32,
-    /// 状态栏讲解行：鼠标悬停在面板 grid 区时的提示（位置 + 值）。
-    pub status_hint: Option<String>,
-}
-
-impl Default for PanelPianorollFeedback {
-    fn default() -> Self {
-        Self {
-            scroll_x_delta: 0.0,
-            zoom_factor: 1.0, // 1.0 = 无缩放
-            zoom_center_x: 0.0,
-            status_hint: None,
-        }
-    }
-}
-
-/// 计算 target 的值上限。达到此上限时不可再缩小 value_zoom。
-/// - Tempo: `AutomationTarget::Tempo.max_value()`（BPM 理论上限 60_000_000）
-/// - CC/PB/RPN/NRPN: max_value()
-fn value_upper_bound(panel: &AutomationPanelView) -> f32 {
-    if panel.show_velocity {
-        127.0
-    } else if panel.selected_target == AutomationTarget::Tempo {
-        AutomationTarget::Tempo.max_value()
-    } else {
-        panel.selected_target.max_value()
-    }
-}
-
-/// 面板当前 target 的值上限（velocity=127；Tempo 由实际事件动态计算；其他 max_value()）。
-/// show_panels（zoom/scroll/标签）与 interaction（y↔value 换算）共用。
-pub(crate) fn panel_max_val(panel: &AutomationPanelView, tempo_lane: &AutomationLane) -> f32 {
-    if panel.show_velocity {
-        127.0
-    } else if panel.selected_target == AutomationTarget::Tempo {
-        tempo_lane
-            .events
-            .iter()
-            .map(|e| e.value)
-            .fold(0.0_f32, f32::max)
-            .max(1.0)
-    } else {
-        panel.selected_target.max_value()
-    }
-}
-
-/// 计算 value_zoom 的下限，使得 visible_range 不超过 upper_bound。
-fn min_value_zoom(max_val: f32, upper_bound: f32) -> f32 {
-    if upper_bound <= 0.0 {
-        return 1.0;
-    }
-    (max_val / upper_bound).max(0.01)
-}
 
 /// Ensure `renderers` has the same count as `panels`, creating/destroying as needed.
 fn sync_renderer_count(
@@ -570,12 +418,6 @@ pub fn show_panels(
     )
 }
 
-/// 当帧交互产生的临时 overlay 数据。
-struct PanelOverlayData {
-    marquee_rect: Option<egui::Rect>,
-    velocity_preview: Option<VelocityPreview>,
-}
-
 /// 绘制 wgpu 纹理之上的面板 overlay：velocity 笔划预览、持续化选框、拖拽中 marquee。
 fn draw_panel_overlay(
     ui: &mut egui::Ui,
@@ -861,22 +703,6 @@ fn handle_panel_scroll_zoom(
             apply_vertical_zoom(panel, factor);
         }
     }
-}
-
-/// 单个面板的编辑交互输出。
-struct PanelInteractionOut {
-    automation_edits: Vec<AutomationEdit>,
-    velocity_edits: Vec<VelocityEdit>,
-    /// wgpu Layer 3 的 lane ghost（仅 lane 编辑）
-    ghost: Option<AutomationGhost>,
-    /// velocity 笔划预览（仅 velocity 模式）
-    preview: Option<velocity::VelocityPreview>,
-    /// 锚点拖拽的实时 (tick, value)，供 InfoPanel 显示
-    anchor_drag: Option<(u32, f32)>,
-    /// Select 工具框选矩形（egui painter 绘制 + 渲染层高亮预览）
-    marquee_rect: Option<egui::Rect>,
-    /// Select 工具选区变更操作（应用到 panel.anchor_sel_rects）
-    sel_op: Option<interaction::SelOp>,
 }
 
 /// 按面板模式分派编辑交互：Tempo / CC / PB / RPN / NRPN 走 lane 编辑；

@@ -9,14 +9,11 @@ use yinhe_wgpu::{
     build_lane_shape_override,
 };
 
-use super::{ANCHOR_HIT_PX, AutomationEditCtx, panel_max_val};
+use super::constants::{ANCHOR_HIT_PX, HOVER_DELAY, MARQUEE_THRESHOLD};
+use super::types::AutomationEditCtx;
+use super::value::panel_max_val;
 use crate::right_panel::{InfoContent, RightTab};
 use crate::widgets::tools_panel::Tool;
-
-/// 悬停在锚点上多久后显示 tooltip（秒）。
-const HOVER_DELAY: f64 = 0.6;
-/// 选框拖拽触发阈值（像素）。小于此距离视为点击，不触发选区清空。
-const MARQUEE_THRESHOLD: f32 = 3.0;
 
 /// 计算两个 sel_rect 的并集（用于 Shift/Cmd+点击或框选扩展选区）。
 /// - tick 范围：取 min/max
