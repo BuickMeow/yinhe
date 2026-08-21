@@ -43,6 +43,8 @@ pub(crate) struct VelocityPreview {
 ///
 /// 命中只看 noteon：start_tick 落在线段 tick 窗口（±`hit_ticks`）内即被笔迹经过；
 /// 新 velocity 取线段在该 start_tick 处的插值，clamp 到 1..=127。
+/// 若 `pr_sel_rect` 非空，仅允许落入选框且轨道在 `pr_track_selected` 内的音符
+/// （空 `pr_track_selected` 表示全部轨道）。
 /// 复杂度 O(log n + 命中数)：按 start_tick 二分定位窗口，与 1 亿音符场景兼容。
 fn collect_segment(
     midi: &dyn NoteSource,
@@ -50,6 +52,8 @@ fn collect_segment(
     seg: ((f64, f32), (f64, f32)),
     hit_ticks: f64,
     touched: &mut HashMap<(u8, u32), TouchedBar>,
+    pr_sel_rect: &yinhe_editor_core::edit_state::SelRectState,
+    pr_track_selected: &std::collections::HashSet<u16>,
 ) {
     let ((t0, v0), (t1, v1)) = seg;
     let lo = (t0.min(t1) - hit_ticks).max(0.0);
@@ -61,6 +65,19 @@ fn collect_segment(
         for note in midi.key_notes(key).range(lo_u, hi_u.saturating_add(1)) {
             if note.track != track {
                 continue;
+            }
+            // 选框过滤：存在选框时仅允许选框内且在选定轨道内的音符
+            if !pr_sel_rect.is_empty() {
+                if !pr_track_selected.is_empty() && !pr_track_selected.contains(&note.track) {
+                    continue;
+                }
+                let in_sel = pr_sel_rect.rects.iter().any(|&(ts, te, kl, kh)| {
+                    let st = note.start_tick as f64;
+                    st >= ts && st < te && key >= kl && key <= kh
+                });
+                if !in_sel {
+                    continue;
+                }
             }
             let t = if (t1 - t0).abs() < f64::EPSILON {
                 0.0
@@ -125,6 +142,8 @@ pub(crate) fn handle_velocity_interaction(
     track: u16,
     track_color: [f32; 4],
     panel_index: usize,
+    pr_sel_rect: &yinhe_editor_core::edit_state::SelRectState,
+    pr_track_selected: &std::collections::HashSet<u16>,
 ) -> (
     Vec<VelocityEdit>,
     Option<VelocityPreview>,
@@ -161,6 +180,8 @@ pub(crate) fn handle_velocity_interaction(
                 ((tick, value), (tick, value)),
                 hit_ticks,
                 &mut touched,
+                pr_sel_rect,
+                pr_track_selected,
             );
             stroke = Some(VelocityStroke {
                 track,
@@ -176,6 +197,8 @@ pub(crate) fn handle_velocity_interaction(
             (last, (tick, value)),
             hit_ticks,
             &mut s.touched,
+            pr_sel_rect,
+            pr_track_selected,
         );
         s.last = (tick, value);
     }
@@ -258,6 +281,10 @@ mod tests {
         }
     }
 
+    fn empty_sel() -> yinhe_editor_core::edit_state::SelRectState {
+        yinhe_editor_core::edit_state::SelRectState::default()
+    }
+
     #[test]
     fn segment_hits_only_active_track_and_interpolates() {
         let src = MockSource {
@@ -269,7 +296,17 @@ mod tests {
         };
         let mut touched = HashMap::new();
         // 线段 tick 0 → 1000，value 0 → 100
-        collect_segment(&src, 0, ((0.0, 0.0), (1000.0, 100.0)), 0.0, &mut touched);
+        let sel = empty_sel();
+        let tracks = std::collections::HashSet::new();
+        collect_segment(
+            &src,
+            0,
+            ((0.0, 0.0), (1000.0, 100.0)),
+            0.0,
+            &mut touched,
+            &sel,
+            &tracks,
+        );
         assert_eq!(touched.len(), 2);
         assert_eq!(touched[&(60, 100)].new_velocity, 10);
         assert_eq!(touched[&(60, 500)].new_velocity, 50);
@@ -282,7 +319,17 @@ mod tests {
         };
         let mut touched = HashMap::new();
         // 单击 tick 105，容差 ±5：两条都命中，值都取单击值 80
-        collect_segment(&src, 0, ((105.0, 80.0), (105.0, 80.0)), 5.0, &mut touched);
+        let sel = empty_sel();
+        let tracks = std::collections::HashSet::new();
+        collect_segment(
+            &src,
+            0,
+            ((105.0, 80.0), (105.0, 80.0)),
+            5.0,
+            &mut touched,
+            &sel,
+            &tracks,
+        );
         assert_eq!(touched.len(), 2);
         assert_eq!(touched[&(60, 100)].new_velocity, 80);
         assert_eq!(touched[&(60, 110)].new_velocity, 80);
@@ -294,8 +341,26 @@ mod tests {
             notes: NoteBucket::from_sorted(vec![note(0, 100, 200, 64)]),
         };
         let mut touched = HashMap::new();
-        collect_segment(&src, 0, ((0.0, 30.0), (200.0, 30.0)), 0.0, &mut touched);
-        collect_segment(&src, 0, ((200.0, 90.0), (0.0, 90.0)), 0.0, &mut touched);
+        let sel = empty_sel();
+        let tracks = std::collections::HashSet::new();
+        collect_segment(
+            &src,
+            0,
+            ((0.0, 30.0), (200.0, 30.0)),
+            0.0,
+            &mut touched,
+            &sel,
+            &tracks,
+        );
+        collect_segment(
+            &src,
+            0,
+            ((200.0, 90.0), (0.0, 90.0)),
+            0.0,
+            &mut touched,
+            &sel,
+            &tracks,
+        );
         assert_eq!(
             touched[&(60, 100)].new_velocity,
             90,
@@ -309,7 +374,17 @@ mod tests {
             notes: NoteBucket::from_sorted(vec![note(0, 0, 100, 64), note(0, 1000, 1100, 64)]),
         };
         let mut touched = HashMap::new();
-        collect_segment(&src, 0, ((0.0, -50.0), (1000.0, 500.0)), 0.0, &mut touched);
+        let sel = empty_sel();
+        let tracks = std::collections::HashSet::new();
+        collect_segment(
+            &src,
+            0,
+            ((0.0, -50.0), (1000.0, 500.0)),
+            0.0,
+            &mut touched,
+            &sel,
+            &tracks,
+        );
         assert_eq!(touched[&(60, 0)].new_velocity, 1);
         assert_eq!(touched[&(60, 1000)].new_velocity, 127);
     }

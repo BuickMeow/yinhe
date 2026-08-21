@@ -219,6 +219,8 @@ pub fn show_panels(
     cfg: PanelsCfg<'_>,
     edit: &mut PanelsEdit<'_>,
     edit_ctx: Option<&AutomationEditCtx<'_>>,
+    pr_sel_rect: &yinhe_editor_core::edit_state::SelRectState,
+    pr_track_selected: &std::collections::HashSet<u16>,
 ) -> PanelsOutput {
     let mut edits = Vec::new();
     let mut velocity_edits = Vec::new();
@@ -426,6 +428,8 @@ pub fn show_panels(
             data.track_colors,
             edit.info_content,
             edit.right_tab,
+            pr_sel_rect,
+            pr_track_selected,
         );
         edits.extend(out.automation_edits);
         velocity_edits.extend(out.velocity_edits);
@@ -891,6 +895,8 @@ fn dispatch_edit_interaction(
     track_colors: &[[f32; 4]],
     info_content: &mut Option<InfoContent>,
     right_tab: &mut Option<RightTab>,
+    pr_sel_rect: &yinhe_editor_core::edit_state::SelRectState,
+    pr_track_selected: &std::collections::HashSet<u16>,
 ) -> PanelInteractionOut {
     let mut out = PanelInteractionOut {
         automation_edits: Vec::new(),
@@ -922,6 +928,8 @@ fn dispatch_edit_interaction(
                     track,
                     track_color,
                     panel_index,
+                    pr_sel_rect,
+                    pr_track_selected,
                 );
                 out.velocity_edits = vel_edits;
                 out.preview = preview;
@@ -1505,6 +1513,8 @@ mod tests {
             };
             let mut info: Option<InfoContent> = None;
             let mut right_tab: Option<RightTab> = None;
+            let pr_sel = yinhe_editor_core::edit_state::SelRectState::default();
+            let pr_tracks = std::collections::HashSet::new();
             edits = dispatch_edit_interaction(
                 ui,
                 panel_rect(),
@@ -1518,6 +1528,8 @@ mod tests {
                 &[[0.8, 0.8, 0.8, 1.0]],
                 &mut info,
                 &mut right_tab,
+                &pr_sel,
+                &pr_tracks,
             )
             .automation_edits;
         })

@@ -4,6 +4,7 @@ use eframe::egui;
 use rust_i18n::t;
 
 use super::PencilNoteDrag;
+use yinhe_editor_core::audio_settings::QuickDeleteMode;
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::TimeSigEvent;
 
@@ -61,6 +62,9 @@ pub(crate) fn valid_pencil_track(
 /// Returns `(note_event, ghost_notes, hidden_notes, pencil_note_drag)`.
 /// ghost_notes are (start_tick, end_tick, key, track) as u32/u8/u16 — color fetched from storage buffer in shader.
 /// hidden_notes are (track, start_tick, key) for notes being dragged.
+/// 快速删除的提交：(track, start_tick, key)。
+pub(crate) type PencilQuickDelete = Option<(u16, u32, u8)>;
+
 /// Pencil 工具的帧输出：新建音符、ghost/hidden、松手拖拽提交、听觉预览请求。
 type PencilFrameOut = (
     Option<yinhe_core::NoteEvent>,
@@ -68,6 +72,7 @@ type PencilFrameOut = (
     Vec<super::drag::HiddenNote>,
     Option<PencilNoteDrag>,
     Option<super::PreviewReq>,
+    PencilQuickDelete,
 );
 
 #[allow(clippy::too_many_arguments)]
@@ -85,6 +90,7 @@ pub(crate) fn pencil_frame(
     midi: Option<&dyn yinhe_types::NoteSource>,
     _track_colors: &[[f32; 4]],
     total_ticks: f64,
+    quick_delete_mode: QuickDeleteMode,
 ) -> PencilFrameOut {
     let pencil_id = ui.id().with("pencil_drag");
     let mut drag_state: Option<PencilDrag> =
@@ -102,7 +108,7 @@ pub(crate) fn pencil_frame(
 
     // 弹窗打开时跳过所有 pointer 处理，避免点击穿透
     if crate::view_interaction::pointer_over_popup(ui.ctx()) {
-        return (None, Vec::new(), Vec::new(), None, None);
+        return (None, Vec::new(), Vec::new(), None, None, None);
     }
 
     let hover_pos = pointer.hover_pos();
@@ -191,6 +197,26 @@ pub(crate) fn pencil_frame(
     } else {
         None
     };
+
+    // ── 快速删除（双击/右键）──
+    let mut quick_delete: PencilQuickDelete = None;
+    if quick_delete_mode.allows_right_click()
+        && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary))
+        && let Some(ref hit) = hit_note
+    {
+        quick_delete = Some((hit.track, hit.start_tick, hit.key));
+        return (None, Vec::new(), Vec::new(), None, None, quick_delete);
+    }
+    if quick_delete_mode.allows_double_click()
+        && ui.input(|i| {
+            i.pointer
+                .button_double_clicked(egui::PointerButton::Primary)
+        })
+        && let Some(ref hit) = hit_note
+    {
+        quick_delete = Some((hit.track, hit.start_tick, hit.key));
+        return (None, Vec::new(), Vec::new(), None, None, quick_delete);
+    }
 
     // ── Set cursor based on hit test ──
     if let Some(ref hit) = hit_note {
@@ -559,6 +585,7 @@ pub(crate) fn pencil_frame(
         hidden_notes,
         pencil_note_drag,
         preview_req,
+        quick_delete,
     )
 }
 
@@ -657,6 +684,7 @@ mod tests {
                 Some(midi),
                 &[],
                 1000.0,
+                yinhe_editor_core::audio_settings::QuickDeleteMode::Off,
             );
             out = (r.0, r.4);
         })

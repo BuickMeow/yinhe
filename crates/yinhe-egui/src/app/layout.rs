@@ -675,6 +675,7 @@ impl App {
                     doc.data.note_revisions(),
                     &mut feedback,
                     sel_hint,
+                    self.audio_settings.quick_delete_mode,
                 );
                 if let Some(t0) = _piano_total_start {
                     yinhe_memtrace::perf_probe::record_piano_total(t0.elapsed());
@@ -734,6 +735,30 @@ impl App {
                     self.documents[idx].edit.selected = sel;
                     self.with_undo(t!("undo.eraser_delete").as_ref(), |doc| {
                         doc.delete_selected()
+                    });
+                }
+                PianoViewEvent::QuickDelete {
+                    track,
+                    start_tick,
+                    key,
+                } => {
+                    let Some(idx) = self.active_doc else { return };
+                    // 快速删除：按 (track, start_tick, key) 定位单个音符
+                    let edit = &self.documents[idx].edit;
+                    // 仅在音符可见且在选定轨道范围内才删除
+                    if !edit
+                        .track_pianoroll_visible
+                        .get(track as usize)
+                        .copied()
+                        .unwrap_or(true)
+                    {
+                        return;
+                    }
+                    if !edit.track_selected.is_empty() && !edit.track_selected.contains(&track) {
+                        return;
+                    }
+                    self.with_undo(t!("undo.delete_notes").as_ref(), |doc| {
+                        doc.delete_single_note(track, start_tick, key)
                     });
                 }
             }
@@ -796,11 +821,38 @@ impl App {
     }
 
     /// 把 automation 面板 velocity 笔划产生的编辑应用到 Document（一笔 = 一个 undo entry）。
+    /// 若存在 PR 选框，仅允许修改选框内且在选定轨道内的音符力度。
     fn handle_velocity_edits(&mut self, edits: &[yinhe_types::VelocityEdit]) {
         let Some(idx) = self.active_doc else { return };
+        // 选框过滤：存在选框时仅保留落在选框且轨道选中的音符
+        let filtered: Vec<yinhe_types::VelocityEdit> = {
+            let doc = &self.documents[idx];
+            if doc.edit.sel_rect.is_empty() {
+                edits.to_vec()
+            } else {
+                edits
+                    .iter()
+                    .copied()
+                    .filter(|e| {
+                        if !doc.edit.track_selected.is_empty()
+                            && !doc.edit.track_selected.contains(&e.track)
+                        {
+                            return false;
+                        }
+                        doc.edit.sel_rect.rects.iter().any(|&(ts, te, kl, kh)| {
+                            let st = e.start_tick as f64;
+                            st >= ts && st < te && e.key >= kl && e.key <= kh
+                        })
+                    })
+                    .collect()
+            }
+        };
+        if filtered.is_empty() {
+            return;
+        }
         let doc = &mut self.documents[idx];
         let before = doc.capture_snapshot();
-        if let Some(action) = doc.set_notes_velocity(edits) {
+        if let Some(action) = doc.set_notes_velocity(&filtered) {
             self.pianoroll_view.base.dirty = true;
             doc.push_undo(action, t!("undo.edit_velocity").as_ref(), before);
             // 纯音符 velocity 修改：只更新 audible_notes，不重建 CC，不 chase

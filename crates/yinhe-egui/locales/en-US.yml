@@ -190,6 +190,11 @@ settings.editing.heading: "Editing"
 settings.editing.allow_overlap: "Allow Overlapping Notes"
 settings.editing.allow_overlap_hint: "When disabled, choose move behavior on overlap below"
 settings.editing.blocked_behavior: "Overlap Move Behavior"
+settings.editing.quick_delete: "Quick Delete Note"
+settings.editing.quick_delete.off: "None"
+settings.editing.quick_delete.double: "Double-click"
+settings.editing.quick_delete.right: "Right-click"
+settings.editing.quick_delete.both: "Double-click & Right-click"
 
 # ── Unsaved dialog ──
 dialog.unsaved.title: "Unsaved Changes"

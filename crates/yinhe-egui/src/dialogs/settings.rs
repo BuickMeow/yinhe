@@ -220,6 +220,13 @@ const SETTING_ITEMS: &[SettingItem] = &[
         ja: "重なり時の移動動作",
         ko: "겹칠 때 이동 동작",
     },
+    SettingItem {
+        cat: 5,
+        zh: "快速删除音符方式",
+        en: "Quick delete note",
+        ja: "クイック削除",
+        ko: "빠른 삭제",
+    },
 ];
 
 /// 归一化：小写并去掉所有空白（拼音/罗马音的带空格输入也能匹配）。
@@ -1071,6 +1078,43 @@ fn show_general_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                     });
                 ui.end_row();
             }
+            ui.label(t!("settings.editing.quick_delete").as_ref());
+            {
+                use yinhe_editor_core::audio_settings::QuickDeleteMode;
+                let selected_label = match settings.quick_delete_mode {
+                    QuickDeleteMode::Off => t!("settings.editing.quick_delete.off"),
+                    QuickDeleteMode::DoubleClick => t!("settings.editing.quick_delete.double"),
+                    QuickDeleteMode::RightClick => t!("settings.editing.quick_delete.right"),
+                    QuickDeleteMode::Both => t!("settings.editing.quick_delete.both"),
+                };
+                egui::ComboBox::from_id_salt("quick_delete_mode")
+                    .selected_text(selected_label.as_ref())
+                    .show_ui(ui, |ui| {
+                        for &m in &[
+                            QuickDeleteMode::Off,
+                            QuickDeleteMode::DoubleClick,
+                            QuickDeleteMode::RightClick,
+                            QuickDeleteMode::Both,
+                        ] {
+                            let label = match m {
+                                QuickDeleteMode::Off => t!("settings.editing.quick_delete.off"),
+                                QuickDeleteMode::DoubleClick => {
+                                    t!("settings.editing.quick_delete.double")
+                                }
+                                QuickDeleteMode::RightClick => {
+                                    t!("settings.editing.quick_delete.right")
+                                }
+                                QuickDeleteMode::Both => t!("settings.editing.quick_delete.both"),
+                            };
+                            let selected = settings.quick_delete_mode == m;
+                            if ui.selectable_label(selected, label.as_ref()).clicked() {
+                                settings.quick_delete_mode = m;
+                                changed = true;
+                            }
+                        }
+                    });
+            }
+            ui.end_row();
         });
     ui.add_space(8.0);
 

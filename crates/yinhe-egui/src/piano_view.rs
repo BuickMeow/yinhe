@@ -7,6 +7,7 @@ use yinhe_types::{AutomationLane, TimeSigEvent};
 use crate::widgets::selection_actions::SelectionAction;
 use crate::widgets::tools_panel::Tool;
 pub use yinhe_editor_core::ResizeSide;
+use yinhe_editor_core::audio_settings::QuickDeleteMode;
 use yinhe_editor_core::quantize::QuantizePreset;
 pub use yinhe_types::PencilNoteDrag;
 
@@ -34,6 +35,11 @@ pub enum PianoViewEvent {
         key_hi: u8,
         track_lo: u16,
         track_hi: u16,
+    },
+    QuickDelete {
+        track: u16,
+        start_tick: u32,
+        key: u8,
     },
 }
 
@@ -211,6 +217,7 @@ pub fn show(
     note_revisions: &[u64; yinhe_types::KEY_COUNT],
     feedback: &mut PianoViewFeedback<'_>,
     sel_hint: Option<&crate::app::layout::SelHintInfo>,
+    quick_delete_mode: QuickDeleteMode,
 ) -> Option<PianoViewEvent> {
     // Sense::hover() — no drag ownership. All drag is handled by dedicated
     // ui.interact calls below, each inside its own push_id scope.
@@ -369,9 +376,11 @@ pub fn show(
         write_track,
         conductor_idx,
     );
+    // 快速删除事件（选择/铅笔工具双击或右键删除音符）
+    let mut quick_delete_event: Option<PianoViewEvent> = None;
     if effective_tool == Tool::Select || effective_tool == Tool::SelectVertical {
         let vertical = effective_tool == Tool::SelectVertical;
-        let (sel_ghosts, sel_hidden, sel_previews, sel_note_event, sel_pencil_drag) =
+        let (sel_ghosts, sel_hidden, sel_previews, sel_note_event, sel_pencil_drag, sel_quick) =
             drag::sel_drag_frame(
                 ui,
                 content_rect,
@@ -393,10 +402,18 @@ pub fn show(
                 write_track,
                 conductor_idx,
                 vertical,
+                quick_delete_mode,
             );
         ghost_notes = sel_ghosts;
         hidden_notes = sel_hidden.into_iter().collect();
         feedback.preview_reqs.extend(sel_previews);
+        if let Some((track, start_tick, key)) = sel_quick {
+            quick_delete_event = Some(PianoViewEvent::QuickDelete {
+                track,
+                start_tick,
+                key,
+            });
+        }
         // 双击写音符（选择工具）：与铅笔一致，目标轨 = write_track。
         if let Some((note, track)) = sel_note_event {
             pencil_event = Some(PianoViewEvent::AddNote { track, note });
@@ -404,7 +421,7 @@ pub fn show(
         // 单音符边缘伸缩（选择工具，不用先选中）：复用铅笔的提交通道。
         *feedback.pencil_note_drag = sel_pencil_drag;
     } else if effective_tool == Tool::Pencil {
-        let (note_event, ghost, hidden, pencil_drag, preview) = pencil::pencil_frame(
+        let (note_event, ghost, hidden, pencil_drag, preview, pencil_quick) = pencil::pencil_frame(
             ui,
             content_rect,
             music_rect,
@@ -418,12 +435,20 @@ pub fn show(
             midi,
             track_colors,
             total_ticks,
+            quick_delete_mode,
         );
         ghost_notes = ghost;
         hidden_notes.extend(hidden);
         *feedback.pencil_note_drag = pencil_drag;
         if let Some(p) = preview {
             feedback.preview_reqs.push(p);
+        }
+        if let Some((track, start_tick, key)) = pencil_quick {
+            quick_delete_event = Some(PianoViewEvent::QuickDelete {
+                track,
+                start_tick,
+                key,
+            });
         }
         if let Some(note) = note_event
             && let Some(track) =
@@ -457,18 +482,20 @@ pub fn show(
             pencil::valid_pencil_track(write_track, track_visible, conductor_idx).is_some();
         let mut hit_note = false;
         // 音符 hit-test 仅在有编辑目标时进行，避免未选中时每帧遍历音符
-        if can_hover_edit {
-            if let Some((mode, _, _, _, _)) =
+        // 存在选框时禁用单音符 hover（与 sel_press 移动/缩放禁用保持一致）
+        let has_selection = !sel_rect.is_empty();
+        if can_hover_edit
+            && !has_selection
+            && let Some((mode, _, _, _, _)) =
                 drag::hit_test_note(midi, view, local, track_visible, track_selected)
-            {
-                use crate::piano_view::pencil::HitMode;
-                match mode {
-                    HitMode::ResizeLeft => ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest),
-                    HitMode::ResizeRight => ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeEast),
-                    HitMode::Move => ui.ctx().set_cursor_icon(egui::CursorIcon::Move),
-                }
-                hit_note = true;
+        {
+            use crate::piano_view::pencil::HitMode;
+            match mode {
+                HitMode::ResizeLeft => ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest),
+                HitMode::ResizeRight => ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeEast),
+                HitMode::Move => ui.ctx().set_cursor_icon(egui::CursorIcon::Move),
             }
+            hit_note = true;
         }
         // 选框边缘与内部命中不受 can_edit 限制：即使未选中音轨，选框本身仍可拖动/缩放
         if !hit_note {
@@ -1098,6 +1125,8 @@ pub fn show(
                 panels_cfg,
                 &mut panels_edit,
                 edit_ctx.as_ref(),
+                sel_rect,
+                track_selected,
             );
         panels_status_hint = auto_feedback.status_hint.clone();
         for edit in auto_edits {
@@ -1391,6 +1420,7 @@ pub fn show(
 
     sel_action
         .map(PianoViewEvent::SelectionAction)
+        .or(quick_delete_event)
         .or(pencil_event)
         .or(eraser_event)
 }

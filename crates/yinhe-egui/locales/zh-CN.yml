@@ -190,6 +190,11 @@ settings.editing.heading: "编辑"
 settings.editing.allow_overlap: "允许重叠音符"
 settings.editing.allow_overlap_hint: "关闭后，移动等操作遇到重叠时的策略由下方决定"
 settings.editing.blocked_behavior: "重叠时移动策略"
+settings.editing.quick_delete: "快速删除音符方式"
+settings.editing.quick_delete.off: "无"
+settings.editing.quick_delete.double: "双击"
+settings.editing.quick_delete.right: "右键"
+settings.editing.quick_delete.both: "双击与右键"
 
 # ── 未保存对话框 ──
 dialog.unsaved.title: "尚未保存"

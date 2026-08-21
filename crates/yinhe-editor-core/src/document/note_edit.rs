@@ -110,6 +110,28 @@ impl Document {
         }))
     }
 
+    /// Delete a single note by `(track, start_tick, key)`. Used by quick-delete (double-click / right-click).
+    pub fn delete_single_note(
+        &mut self,
+        track: u16,
+        start_tick: u32,
+        key: u8,
+    ) -> Option<UndoAction> {
+        let bucket = &self.data.model.notes[key as usize];
+        let note = *bucket
+            .range(start_tick, start_tick.saturating_add(1))
+            .find(|n| n.track == track && n.start_tick == start_tick)?;
+        let model = Arc::make_mut(&mut self.data.model);
+        let removed = Arc::make_mut(&mut model.notes[key as usize]).remove_by_id(note.id)?;
+        model.mark_dirty(key);
+        model.rebuild_dirty();
+        self.data.bump_revision();
+        Some(UndoAction::Notes(NoteDelta {
+            before: vec![(removed, key)],
+            after: vec![],
+        }))
+    }
+
     /// Delete all selected notes. Returns an `UndoAction` if any notes were deleted.
     pub fn delete_selected(&mut self) -> Option<UndoAction> {
         if self.edit.selected.is_empty() {

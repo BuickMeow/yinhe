@@ -6,6 +6,29 @@ use crate::config::GlobalSfConfig;
 use crate::shortcuts::Keybindings;
 use yinhe_midi::MidiImportEncoding;
 
+/// 快速删除音符的方式（选择/铅笔工具双击或右键删除音符）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum QuickDeleteMode {
+    /// 不启用快速删除
+    #[default]
+    Off,
+    /// 双击删除
+    DoubleClick,
+    /// 右键删除
+    RightClick,
+    /// 双击与右键均可删除
+    Both,
+}
+
+impl QuickDeleteMode {
+    pub fn allows_double_click(self) -> bool {
+        matches!(self, Self::DoubleClick | Self::Both)
+    }
+    pub fn allows_right_click(self) -> bool {
+        matches!(self, Self::RightClick | Self::Both)
+    }
+}
+
 /// 重叠关闭时，移动等操作发现重叠后的处理策略。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum OverlapBlockedBehavior {
@@ -84,6 +107,8 @@ pub struct AudioSettings {
     /// - `DeleteOriginal`：删除原音符，不替换目标（原消失，目标保留，新音符丢弃）
     /// - `KeepOriginal`：退回重叠音符（原保留在原位，目标保留）
     pub overlap_blocked_behavior: OverlapBlockedBehavior,
+    /// 快速删除音符方式（选择/铅笔工具双击或右键删除）。
+    pub quick_delete_mode: QuickDeleteMode,
     pub scroll_mode: u32,
     /// 最小边框宽度(像素), 0=不设下限
     pub min_border_width: f32,
@@ -168,6 +193,7 @@ impl Default for AudioSettings {
             note_outline: true, // outline on by default (existing behavior)
             allow_overlapping_notes: true, // 默认允许重叠（保持现状行为）
             overlap_blocked_behavior: OverlapBlockedBehavior::default(),
+            quick_delete_mode: QuickDeleteMode::default(),
             use_gpu_synth: false,
             use_gpu_cull: false, // 默认 CPU 构建
             locale: "zh-CN".to_string(),

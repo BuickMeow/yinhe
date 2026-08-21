@@ -5,6 +5,7 @@
 use eframe::egui;
 
 use yinhe_editor_core::ResizeSide;
+use yinhe_editor_core::audio_settings::QuickDeleteMode;
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::TimeSigEvent;
 
@@ -28,6 +29,9 @@ pub(crate) type SelNoteEvent = Option<(yinhe_core::NoteEvent, u16)>;
 /// 与选框整体伸缩（sel_resize_state）互斥，音符边缘优先。
 pub(crate) type SelNoteResize = (ResizeSide, u16, u32, u32, u8);
 
+/// 快速删除的提交：(track, start_tick, key)。
+pub(crate) type QuickDeleteEvent = Option<(u16, u32, u8)>;
+
 /// sel_drag_frame 的帧输出。
 pub(crate) type SelFrameOut = (
     Vec<GhostNote>,
@@ -35,6 +39,7 @@ pub(crate) type SelFrameOut = (
     Vec<super::PreviewReq>,
     SelNoteEvent,
     Option<yinhe_types::PencilNoteDrag>,
+    QuickDeleteEvent,
 );
 
 /// 指针是否在选框浮动工具条（selection_actions bar）上。
@@ -304,8 +309,11 @@ fn sel_press(
                 // ── 音符 hit-test（不用先选中，与铅笔一致）──
                 // 轨道作用域 = track_selected（空 = 全部）∩ track_visible。
                 // 边缘 → 单音符伸缩；中部（未选中）→ 单音符移动。
-                if let Some((mode, track, start_tick, end_tick, key)) =
-                    hit_test_note(midi, view, local, track_visible, track_selected)
+                // Bug 修复：存在选框时禁用单音符移动/缩放，选框整体操作优先。
+                let has_selection = !sel_rect.is_empty();
+                if !has_selection
+                    && let Some((mode, track, start_tick, end_tick, key)) =
+                        hit_test_note(midi, view, local, track_visible, track_selected)
                 {
                     match mode {
                         super::pencil::HitMode::ResizeLeft
@@ -1008,11 +1016,14 @@ pub(crate) fn sel_drag_frame(
     write_track: Option<u16>,
     conductor_idx: Option<u16>,
     vertical: bool,
+    quick_delete_mode: QuickDeleteMode,
 ) -> SelFrameOut {
     // 双击写音符的提交（note + track），由 show() 转成 PianoViewEvent::AddNote。
     let mut note_event: SelNoteEvent = None;
     // 单音符边缘伸缩的提交（复用铅笔的单音符伸缩通道）。
     let mut pencil_note_drag: Option<yinhe_types::PencilNoteDrag> = None;
+    // 快速删除的提交（双击/右键删除音符）。
+    let mut quick_delete: QuickDeleteEvent = None;
 
     // ── 帧内可变状态：从 egui 持久化加载（拖拽跨帧保持）──
     let mut state = SelDragFrameState::load(ui);
@@ -1050,7 +1061,7 @@ pub(crate) fn sel_drag_frame(
 
     // 弹窗打开时跳过所有 pointer 处理，避免点击穿透
     if crate::view_interaction::pointer_over_popup(ui.ctx()) {
-        return (Vec::new(), Vec::new(), Vec::new(), None, None);
+        return (Vec::new(), Vec::new(), Vec::new(), None, None, None);
     }
 
     // press 分支和 click 分支共用，整个函数作用域内有效。
@@ -1066,6 +1077,23 @@ pub(crate) fn sel_drag_frame(
     // 但框选与点选的清空仍可用。提前计算供 sel_press 与后续状态机共用。
     let can_edit =
         super::pencil::valid_pencil_track(write_track, track_visible, conductor_idx).is_some();
+
+    // ── 右键快速删除（选择工具双击/右键删除音符）──
+    if quick_delete.is_none()
+        && quick_delete_mode.allows_right_click()
+        && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary))
+        && let Some(pos) = pointer.hover_pos()
+        && music_rect.contains(pos)
+        && !on_action_bar(pos, music_rect, view, &eff_rects)
+        && can_edit
+    {
+        let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+        if let Some((_, track, start_tick, _, key)) =
+            hit_test_note(midi, view, local, track_visible, track_selected)
+        {
+            quick_delete = Some((track, start_tick, key));
+        }
+    }
 
     // ── Press：音符/选框 hit-test 分发 ──
     sel_press(
@@ -1153,12 +1181,13 @@ pub(crate) fn sel_drag_frame(
         );
     }
 
-    // ── 双击写音符（第二击 release 帧触发）──
+    // ── 双击处理（第二击 release 帧触发）──
     // egui 在第二击 release 时判定 double-click。条件：
     // - 无 note drag / resize 进行中（排除双击选框内音符/边缘的情况）
     // - 不在浮动工具条上（防事件穿透）
-    // - write_track 有效且点击位置无音符 → 创建，长度 = 一个量化间隔。
-    // 双击命中音符时 double_click_note 返回 None，保持选中/拖拽行为。
+    // - 若命中音符且启用双击快速删除 → 删除音符
+    // - 否则 write_track 有效且点击位置无音符 → 创建，长度 = 一个量化间隔。
+    // 双击命中音符时传统 double_click_note 返回 None，保持选中/拖拽行为（无快速删除时）。
     if ui.input(|i| {
         i.pointer
             .button_double_clicked(egui::PointerButton::Primary)
@@ -1171,17 +1200,29 @@ pub(crate) fn sel_drag_frame(
         && !on_action_bar(pos, music_rect, view, &eff_rects)
     {
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-        if let Some((note, track)) = double_click_note(
-            midi,
-            write_track,
-            track_visible,
-            conductor_idx,
-            view,
-            local,
-            quantize,
-            ppq,
-            bar_line_data,
-        ) {
+        // 优先尝试快速删除：双击命中音符且设置允许 → 删除
+        let mut handled_as_delete = false;
+        if quick_delete_mode.allows_double_click()
+            && can_edit
+            && let Some((_, track, start_tick, _, key)) =
+                hit_test_note(midi, view, local, track_visible, track_selected)
+        {
+            quick_delete = Some((track, start_tick, key));
+            handled_as_delete = true;
+        }
+        if !handled_as_delete
+            && let Some((note, track)) = double_click_note(
+                midi,
+                write_track,
+                track_visible,
+                conductor_idx,
+                view,
+                local,
+                quantize,
+                ppq,
+                bar_line_data,
+            )
+        {
             note_event = Some((note, track));
             // 听觉预览：一次性播放（gate = 新建音符长度）。
             state
@@ -1288,6 +1329,7 @@ pub(crate) fn sel_drag_frame(
         state.preview_reqs,
         note_event,
         pencil_note_drag,
+        quick_delete,
     )
 }
 

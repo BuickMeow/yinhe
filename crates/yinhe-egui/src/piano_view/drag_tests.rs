@@ -124,7 +124,7 @@ fn run_sel_frame(
     ) = (None, Vec::new(), None);
     // run_ui 返回的 FullOutput 含字体纹理 delta，丢弃前必须 clear（epaint 断言）。
     ctx.run_ui(raw, |ui| {
-        let (_, _, previews, note_event, pencil_drag) = sel_drag_frame(
+        let (_, _, previews, note_event, pencil_drag, _) = sel_drag_frame(
             ui,
             content(),
             content(),
@@ -145,6 +145,7 @@ fn run_sel_frame(
             write_track,
             None,
             false,
+            yinhe_editor_core::audio_settings::QuickDeleteMode::Off,
         );
         out = (note_event, previews, pencil_drag);
     })
