@@ -127,4 +127,33 @@ impl SelDragFrameState {
             )
         });
     }
+
+    /// 清理已 stale 的拖拽状态（指针抬起但状态未释放的兜底）。
+    pub(crate) fn clear_stale(
+        &mut self,
+        sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
+        pointer: &egui::PointerState,
+    ) {
+        if self.note_drag_origin.is_some() && !pointer.primary_down() && !pointer.primary_released()
+        {
+            self.note_drag_origin = None;
+            self.drag_notes = None;
+            self.note_drag_had_moved = false;
+            sel_rect.cancel_drag();
+        }
+        if self.sel_resize_state.is_some() && !pointer.primary_down() && !pointer.primary_released()
+        {
+            self.sel_resize_state = None;
+            self.drag_notes = None;
+            sel_rect.cancel_resize();
+        }
+        if self.sel_note_resize.is_some() && !pointer.primary_down() && !pointer.primary_released()
+        {
+            self.sel_note_resize = None;
+        }
+        if self.sel_note_move.is_some() && !pointer.primary_down() && !pointer.primary_released() {
+            self.sel_note_move = None;
+            self.single_note_had_moved = false;
+        }
+    }
 }

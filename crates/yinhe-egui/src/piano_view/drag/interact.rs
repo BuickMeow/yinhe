@@ -74,3 +74,101 @@ pub(crate) fn clamped_local(
         clamped.y - content_rect.min.y,
     )
 }
+
+/// Marquee 框选与简单点击的后续处理（选择工具）。
+///
+/// 有 note 拖拽/缩放时仅清理 marquee 持久化状态；否则尝试 marquee 框选，
+/// 无框选且为简单点击时更新 `cursor_tick`。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn handle_sel_marquee(
+    ui: &mut egui::Ui,
+    state: &super::state::SelDragFrameState,
+    content_rect: egui::Rect,
+    music_rect: egui::Rect,
+    view: &mut yinhe_types::PianoRollView,
+    quantize: QuantizePreset,
+    ppq: u32,
+    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+    total_ticks: f64,
+    cursor_tick: &mut Option<f64>,
+    note_drag_delta: &Option<(i64, i32, bool)>,
+    note_resize_delta: &Option<(yinhe_editor_core::ResizeSide, i64)>,
+    pencil_note_drag: &Option<yinhe_types::PencilNoteDrag>,
+    selected: &mut yinhe_core::Selection,
+    sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
+    midi: Option<&dyn yinhe_types::NoteSource>,
+    track_selected: &std::collections::HashSet<u16>,
+    vertical: bool,
+    press_on_bar: bool,
+    eff_rects: &[(f64, f64, u8, u8)],
+) {
+    if state.note_drag_origin.is_some()
+        || state.sel_resize_state.is_some()
+        || state.sel_note_resize.is_some()
+        || state.sel_note_move.is_some()
+    {
+        let sel_id = ui.id().with("sel_drag");
+        ui.data_mut(|d| {
+            d.insert_persisted(sel_id, Option::<((f64, f32), egui::Pos2, egui::Pos2)>::None)
+        });
+        return;
+    }
+    let release_was_drag =
+        note_drag_delta.is_some() || note_resize_delta.is_some() || pencil_note_drag.is_some();
+    if let Some(result) = crate::piano_view::marquee::marquee_drag_frame(
+        ui,
+        content_rect,
+        music_rect,
+        view,
+        quantize,
+        ppq,
+        bar_line_data,
+        total_ticks,
+        "sel_drag",
+        press_on_bar,
+    ) {
+        let (track_lo, track_hi) = crate::selection::drag::pr_track_range(track_selected);
+        let auto_vertical = !vertical
+            && !super::hit::rect_has_notes(
+                midi,
+                result.t_start as u32,
+                result.t_end as u32,
+                result.key_lo,
+                result.key_hi,
+                track_lo,
+                track_hi,
+            );
+        let (key_lo, key_hi) = if vertical || auto_vertical {
+            (0, 127)
+        } else {
+            (result.key_lo, result.key_hi)
+        };
+        crate::selection::drag::add_pr_selection_rect(
+            selected,
+            result.t_start as u32,
+            result.t_end as u32,
+            key_lo,
+            key_hi,
+            track_selected,
+        );
+        sel_rect.push_rect(
+            (result.t_start, result.t_end, key_lo, key_hi),
+            auto_vertical,
+        );
+    } else if ui.input(|i| i.pointer.primary_released())
+        && !release_was_drag
+        && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
+        && let Some(tick) = cursor_tick_from_click(
+            pos,
+            content_rect,
+            music_rect,
+            view,
+            eff_rects,
+            quantize,
+            ppq,
+            bar_line_data,
+        )
+    {
+        *cursor_tick = Some(tick);
+    }
+}
