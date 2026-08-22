@@ -52,7 +52,7 @@ pub(crate) fn compute_layout(
     let panels_max_h = (avail_h * 0.65).max(0.0);
     let panels_total_h = panels_natural_h.min(panels_max_h);
 
-    // 音乐区位置：横向顶部从 ruler+control_bar 之下开始；纵向顶部从 control_bar 之下。
+    // 音乐区位置：横向顶部从 control_bar+ruler 之下开始（control 在上、ruler 贴内容更易操作）；纵向顶部从 control_bar 之下。
     let ruler_band_y = rect.min.y;
     let (content_y, content_bottom, content_left_x, music_left_x) = if vertical {
         let top = rect.min.y + crate::theme::PR_BAR_H;
@@ -62,7 +62,7 @@ pub(crate) fn compute_layout(
         let left = rect.min.x + super::types::RULER_H; // 竖 ruler 列
         (top, bottom.max(top), left, left)
     } else {
-        let top = rect.min.y + super::types::RULER_H + crate::theme::PR_BAR_H;
+        let top = rect.min.y + crate::theme::PR_BAR_H + super::types::RULER_H;
         let bottom = top + (avail_h - panels_total_h).max(0.0);
         (top, bottom, rect.min.x, rect.min.x + kb_w)
     };
@@ -104,9 +104,13 @@ pub(crate) fn compute_layout(
             egui::pos2(rect.min.x + super::types::RULER_H, content_bottom),
         )
     } else {
+        // 横向：control_bar 在最上（ruler_band_y .. +PR_BAR_H），ruler 在其下贴内容
         egui::Rect::from_min_max(
-            egui::pos2(rect.min.x + kb_w, ruler_band_y),
-            egui::pos2(content_right_x, ruler_band_y + super::types::RULER_H),
+            egui::pos2(rect.min.x + kb_w, ruler_band_y + crate::theme::PR_BAR_H),
+            egui::pos2(
+                content_right_x,
+                ruler_band_y + crate::theme::PR_BAR_H + super::types::RULER_H,
+            ),
         )
     };
 

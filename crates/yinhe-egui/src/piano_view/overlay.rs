@@ -246,7 +246,7 @@ pub(crate) fn draw_overlays(
         }
     }
 
-    // ── Time ruler ──
+    // ── Time ruler ──（横向：control_bar 在最上，ruler 在其下贴内容，更贴近音符便于查看/跳转）
     // time_ruler::interactive_ruler
     if let Some(midi) = midi
         && let Some(tpb_val) = midi.ticks_per_beat()
@@ -263,21 +263,24 @@ pub(crate) fn draw_overlays(
                 egui::pos2(rect.min.x + RULER_H, content_bottom),
             )
         } else {
+            // 横向 ruler 下移 PR_BAR_H，紧贴内容；键盘与右上角空白相应下移
+            let ruler_y0 = ruler_band_y + crate::theme::PR_BAR_H;
+            let ruler_y1 = ruler_y0 + RULER_H;
             let left_corner = egui::Rect::from_min_max(
-                rect.min,
-                egui::pos2(rect.min.x + view.keyboard_width(), ruler_band_y + RULER_H),
+                egui::pos2(rect.min.x, ruler_y0),
+                egui::pos2(rect.min.x + view.keyboard_width(), ruler_y1),
             );
             ui.painter()
                 .rect_filled(left_corner, 0.0, crate::theme::track_bg());
             let corner_rect = egui::Rect::from_min_max(
-                egui::pos2(content_right_x, ruler_band_y),
-                egui::pos2(rect.max.x, ruler_band_y + RULER_H),
+                egui::pos2(content_right_x, ruler_y0),
+                egui::pos2(rect.max.x, ruler_y1),
             );
             ui.painter()
                 .rect_filled(corner_rect, 0.0, crate::theme::track_bg());
             egui::Rect::from_min_max(
-                egui::pos2(rect.min.x + view.keyboard_width(), ruler_band_y),
-                egui::pos2(content_right_x, ruler_band_y + RULER_H),
+                egui::pos2(rect.min.x + view.keyboard_width(), ruler_y0),
+                egui::pos2(content_right_x, ruler_y1),
             )
         };
         let ruler_jumped = crate::widgets::time_ruler::interactive_ruler(
@@ -299,13 +302,13 @@ pub(crate) fn draw_overlays(
         let _ = tpb_val;
     }
 
-    // ── PR 控制栏（标尺下方、GPU 画布上方：量化/音轨名称/和弦指示器）──
+    // ── PR 控制栏（最顶部：量化/音轨名称/和弦指示器；横向时在标尺上方）──
     // control_bar::show
     {
-        let ruler_band_y = rect.min.y;
+        let bar_y0 = rect.min.y;
         let bar_rect = egui::Rect::from_min_max(
-            egui::pos2(rect.min.x, ruler_band_y + RULER_H),
-            egui::pos2(rect.max.x, ruler_band_y + RULER_H + crate::theme::PR_BAR_H),
+            egui::pos2(rect.min.x, bar_y0),
+            egui::pos2(rect.max.x, bar_y0 + crate::theme::PR_BAR_H),
         );
         super::control_bar::show(ui, bar_rect, bar, feedback.bar_events);
     }
