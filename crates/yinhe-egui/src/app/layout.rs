@@ -10,7 +10,7 @@ use yinhe_editor_core::audio_settings::LayoutSettings;
 use yinhe_editor_core::batch_ops::summarize_selected;
 use yinhe_types::AnchorSelRect;
 use yinhe_types::NoteSource;
-use yinhe_types::time_format::format_tick_bar_beat_with_time_sig;
+use yinhe_types::time_format::{format_tick_bar_beat_with_time_sig, measure_ticks};
 
 /// Layout geometry computed once per frame, shared by arrangement and pianoroll.
 pub(in crate::app) struct LayoutInfo {
@@ -1142,8 +1142,31 @@ fn chord_indicator_text(
         model.tracks.get(idx).is_some_and(|t| t.muted)
     };
 
+    // 每首歌自适应的密度阈值：密集视觉轨（黑墙）per_bar 远高于音乐轨，用中位数自适应过滤。
+    // tick 处的拍号决定 bar_ticks，避免 3/4、6/8 等误算。
+    let (num, den) = model.tempo_map.time_sig_at_tick(tick);
+    let bar_ticks = measure_ticks(model.meta.ppq, num, den).max(1);
+    let tick_len = model.tick_length.max(1) as f64;
+    let mut per_bar_vec = Vec::with_capacity(n);
+    for idx in 0..n {
+        let cnt = model.track_note_count.get(idx).copied().unwrap_or(0) as f64;
+        per_bar_vec.push(cnt * bar_ticks as f64 / tick_len);
+    }
+    // 中位数 *2.5 自适应，至少 60，避免稀疏歌误杀。
+    let mut sorted_pb = per_bar_vec.clone();
+    sorted_pb.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let median_pb = if sorted_pb.is_empty() {
+        0.0
+    } else if sorted_pb.len() % 2 == 1 {
+        sorted_pb[sorted_pb.len() / 2]
+    } else {
+        (sorted_pb[sorted_pb.len() / 2 - 1] + sorted_pb[sorted_pb.len() / 2]) * 0.5
+    };
+    let density_thresh = (median_pb * 2.5).max(60.0);
+    let is_dense = |idx: usize| -> bool { per_bar_vec[idx] > density_thresh };
+
     // 每轨发声 key 集合（已过滤静音/不可见/力度≤1），按 key 升序自然有序。
-    let mut keys_by_track: Vec<Vec<u8>> = vec![Vec::new(); n];
+    let mut keys_by_track_sim: Vec<Vec<u8>> = vec![Vec::new(); n];
     // 单次 128 key 扫描，按 tick 覆盖把 key 分发到各轨的 present 标记。
     for key in 0u8..128 {
         // 固定 256 容纳极端多轨（桌面默认 17 轨），避免每 key 分配 HashSet。
@@ -1169,6 +1192,9 @@ fn chord_indicator_text(
             if is_muted(idx) {
                 continue;
             }
+            if is_dense(idx) {
+                continue;
+            }
             // 全局无可听音符的轨道可跳过（由 rebuild_dirty 维护，过滤纯力度1轨道）
             if model.track_audible_count.get(idx).copied().unwrap_or(0) == 0 {
                 continue;
@@ -1183,40 +1209,121 @@ fn chord_indicator_text(
         }
         for idx in 0..n {
             if present[idx] {
-                keys_by_track[idx].push(key);
+                keys_by_track_sim[idx].push(key);
             }
         }
     }
 
-    // 在候选轨道中择优：多音和弦按音级数（distinct pcs）择最完善，单音仅作回退。
-    let mut best_multi: Option<(usize, u8, u16, String)> = None; // (pcs, priority, track, name)
-    let mut best_single: Option<(u8, u16, String)> = None; // (priority, track, name)
-    for (idx, keys) in keys_by_track.iter().enumerate() {
-        if keys.is_empty() {
-            continue;
+    // 分解和弦回退：窗口内起音聚合（lookback 1拍/2拍），即使不同时也能还原和弦。
+    // 窗口按 tick 回溯，避免前瞻预测；窗大小与 ppq 相关，通用任何 ppq。
+    let mut keys_by_track_win: Vec<Vec<u8>> = vec![Vec::new(); n];
+    for window in [model.meta.ppq, model.meta.ppq * 2] {
+        let lo = tick.saturating_sub(window);
+        let hi = tick.saturating_add(1);
+        let mut tmp: Vec<Vec<u8>> = vec![Vec::new(); n];
+        for key in 0u8..128 {
+            let mut present = [false; 256];
+            let mut any = false;
+            for note in model.key_notes(key).range(lo, hi) {
+                if note.velocity <= 1 {
+                    continue;
+                }
+                // 只看起音在窗内的音，过滤过长延音的干扰
+                if note.start_tick < lo || note.start_tick >= hi {
+                    continue;
+                }
+                // 过滤过短视觉音（gate<=60≈1/32音符），音乐轨多为长音
+                if note.end_tick.saturating_sub(note.start_tick) <= 60 {
+                    continue;
+                }
+                let idx = note.track as usize;
+                if idx >= n {
+                    continue;
+                }
+                if Some(idx as u16) == conductor_track_idx {
+                    continue;
+                }
+                if idx >= pr_visible.len() || !pr_visible[idx] {
+                    continue;
+                }
+                if is_muted(idx) {
+                    continue;
+                }
+                if is_dense(idx) {
+                    continue;
+                }
+                if model.track_audible_count.get(idx).copied().unwrap_or(0) == 0 {
+                    continue;
+                }
+                if !present[idx] {
+                    present[idx] = true;
+                    any = true;
+                }
+            }
+            if !any {
+                continue;
+            }
+            for idx in 0..n {
+                if present[idx] {
+                    tmp[idx].push(key);
+                }
+            }
         }
+        // 窗口越大 pcs 越多，择 pcs 最多的窗口保留
+        for idx in 0..n {
+            if tmp[idx].len() > keys_by_track_win[idx].len() {
+                // 粗略用去重后 key 数比较，pcs 会在评分阶段再算
+                keys_by_track_win[idx] = tmp[idx].clone();
+            }
+        }
+    }
+
+    // 在候选轨道中择优：多音和弦按密度惩罚后的 pcs 择最完善，单音仅作回退。
+    // 密集轨 per_bar 高，pcs 相同则稀疏音乐轨胜出，通用任何歌曲。
+    let mut best_multi: Option<(f64, u8, u16, String)> = None; // (score, priority, track, name)
+    let mut best_single: Option<(u8, u16, String)> = None; // (priority, track, name)
+    for idx in 0..n {
         let idx_u16 = idx as u16;
         let priority: u8 = if Some(idx_u16) == main_track { 0 } else { 1 };
-        if let Some(name) = yinhe_editor_core::chord::recognize(keys) {
-            if keys.len() == 1 {
-                match &best_single {
-                    None => best_single = Some((priority, idx_u16, name)),
-                    Some((best_prio, _, _)) if priority < *best_prio => {
-                        best_single = Some((priority, idx_u16, name))
+        let per_bar = per_bar_vec[idx];
+        // 每轨取 sim 与 win 中更好的候选（pcs 更高者）
+        let mut candidates: Vec<&Vec<u8>> = Vec::new();
+        if !keys_by_track_sim[idx].is_empty() {
+            candidates.push(&keys_by_track_sim[idx]);
+        }
+        if !keys_by_track_win[idx].is_empty() {
+            candidates.push(&keys_by_track_win[idx]);
+        }
+        for keys in candidates {
+            if keys.is_empty() {
+                continue;
+            }
+            if let Some(name) = yinhe_editor_core::chord::recognize(keys) {
+                if keys.len() == 1 {
+                    match &best_single {
+                        None => best_single = Some((priority, idx_u16, name.clone())),
+                        Some((best_prio, _, _)) if priority < *best_prio => {
+                            best_single = Some((priority, idx_u16, name.clone()))
+                        }
+                        _ => {}
                     }
-                    _ => {}
-                }
-            } else {
-                let mut mask = 0u16;
-                for &k in keys {
-                    mask |= 1 << (k % 12);
-                }
-                let pcs = mask.count_ones() as usize;
-                match &best_multi {
-                    None => best_multi = Some((pcs, priority, idx_u16, name)),
-                    Some((best_pcs, best_prio, _, _)) => {
-                        if pcs > *best_pcs || (pcs == *best_pcs && priority < *best_prio) {
-                            best_multi = Some((pcs, priority, idx_u16, name));
+                } else {
+                    let mut mask = 0u16;
+                    for &k in keys {
+                        mask |= 1 << (k % 12);
+                    }
+                    let pcs = mask.count_ones() as f64;
+                    // 密度惩罚：per_bar 越高分越低，通用任何歌曲
+                    let score = pcs * 1000.0 / (per_bar + 10.0);
+                    match &best_multi {
+                        None => best_multi = Some((score, priority, idx_u16, name.clone())),
+                        Some((best_score, best_prio, _, _)) => {
+                            if score > *best_score + f64::EPSILON
+                                || (score - *best_score).abs() < f64::EPSILON
+                                    && priority < *best_prio
+                            {
+                                best_multi = Some((score, priority, idx_u16, name.clone()));
+                            }
                         }
                     }
                 }
