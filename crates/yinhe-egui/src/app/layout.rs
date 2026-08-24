@@ -9,6 +9,7 @@ use crate::right_panel::info_panel::selection::selected_am_events;
 use yinhe_editor_core::audio_settings::LayoutSettings;
 use yinhe_editor_core::batch_ops::summarize_selected;
 use yinhe_types::AnchorSelRect;
+use yinhe_types::NoteSource;
 use yinhe_types::time_format::format_tick_bar_beat_with_time_sig;
 
 /// Layout geometry computed once per frame, shared by arrangement and pianoroll.
@@ -595,11 +596,16 @@ impl App {
                     .flat_map(|(_, t)| t.automation_lanes.iter())
                     .collect();
                 // 和弦指示器文本：实时 MIDI 按键优先；无按键且播放中 → 播放头和弦。
+                // 逐轨识别：主轨优先、PR 可见次之，跳过静音/不可见/力度≤1，择最完善的多音和弦。
                 let chord_text = chord_indicator_text(
                     &self.midi_thru_keys,
                     is_playing,
                     doc.edit.cursor_tick,
-                    midi_source,
+                    Some(&*doc.data.model),
+                    main,
+                    &pr_visible,
+                    &doc.edit.track_overrides,
+                    doc.edit.conductor_track_idx,
                 );
                 let bar_data = piano_view::control_bar::PrBarData {
                     ppq: tpb,
@@ -1095,13 +1101,19 @@ impl App {
 
 /// 和弦指示器文本：实时 MIDI 直通按键优先；无按键且播放中 → 播放头处发声音符的和弦。
 ///
-/// 播放路径逐 key 二分查询覆盖播放头的音符（128 key × O(log n)），
-/// 配合 chord::recognize 的防乱按规则（音级 > 7 或跨度 > 2 八度不识别）。
+/// 播放路径逐轨识别：主轨优先、PR 可见次之，跳过静音/不可见/力度≤1 的轨道，
+/// 在所有候选轨道中择最完善的多音和弦（音级数最多），无多音和弦时回退单音。
+/// 每轨内部复用 `chord::recognize` 的防乱按规则（音级 > 7 或跨度 > 2 八度不识别）。
+#[allow(clippy::too_many_arguments)]
 fn chord_indicator_text(
     thru_keys: &std::collections::HashMap<u8, u8>,
     is_playing: bool,
     cursor_tick: Option<f64>,
-    midi: Option<&dyn yinhe_types::NoteSource>,
+    model: Option<&yinhe_core::YinModel>,
+    main_track: Option<u16>,
+    pr_visible: &[bool],
+    track_overrides: &[yinhe_editor_core::document::TrackOverride],
+    conductor_track_idx: Option<u16>,
 ) -> Option<String> {
     if !thru_keys.is_empty() {
         let mut keys: Vec<u8> = thru_keys.keys().copied().collect();
@@ -1112,19 +1124,112 @@ fn chord_indicator_text(
         return None;
     }
     let tick = cursor_tick?.max(0.0) as u32;
-    let midi = midi?;
-    let mut keys = Vec::new();
+    let model = model?;
+    let n = model.tracks.len();
+    if n == 0 {
+        return None;
+    }
+    // 静音/独奏遮罩：有独奏时仅独奏轨可发声，其余视为静音。
+    let has_solo = track_overrides.iter().any(|ov| ov.soloed);
+    let is_muted = |idx: usize| -> bool {
+        if let Some(ov) = track_overrides.get(idx) {
+            if has_solo {
+                return !ov.soloed;
+            }
+            return ov.muted;
+        }
+        // 回退到 model 标记（旧工程或长度不一致时）
+        model.tracks.get(idx).is_some_and(|t| t.muted)
+    };
+
+    // 每轨发声 key 集合（已过滤静音/不可见/力度≤1），按 key 升序自然有序。
+    let mut keys_by_track: Vec<Vec<u8>> = vec![Vec::new(); n];
+    // 单次 128 key 扫描，按 tick 覆盖把 key 分发到各轨的 present 标记。
     for key in 0u8..128 {
-        // key_notes_in_range 左边界保守（tick - max_note_len），右边界精确，
-        // 需自行判定覆盖（start <= tick < end）。
-        let sounding = midi
-            .key_notes_in_range(key, tick, tick.saturating_add(1))
-            .any(|n| n.start_tick <= tick && tick < n.end_tick);
-        if sounding {
-            keys.push(key);
+        // 固定 256 容纳极端多轨（桌面默认 17 轨），避免每 key 分配 HashSet。
+        let mut present = [false; 256];
+        let mut any = false;
+        for note in model.key_notes_in_range(key, tick, tick.saturating_add(1)) {
+            if note.velocity <= 1 {
+                continue;
+            }
+            if note.start_tick > tick || tick >= note.end_tick {
+                continue;
+            }
+            let idx = note.track as usize;
+            if idx >= n {
+                continue;
+            }
+            if Some(idx as u16) == conductor_track_idx {
+                continue;
+            }
+            if idx >= pr_visible.len() || !pr_visible[idx] {
+                continue;
+            }
+            if is_muted(idx) {
+                continue;
+            }
+            // 全局无可听音符的轨道可跳过（由 rebuild_dirty 维护，过滤纯力度1轨道）
+            if model.track_audible_count.get(idx).copied().unwrap_or(0) == 0 {
+                continue;
+            }
+            if !present[idx] {
+                present[idx] = true;
+                any = true;
+            }
+        }
+        if !any {
+            continue;
+        }
+        for idx in 0..n {
+            if present[idx] {
+                keys_by_track[idx].push(key);
+            }
         }
     }
-    yinhe_editor_core::chord::recognize(&keys)
+
+    // 在候选轨道中择优：多音和弦按音级数（distinct pcs）择最完善，单音仅作回退。
+    let mut best_multi: Option<(usize, u8, u16, String)> = None; // (pcs, priority, track, name)
+    let mut best_single: Option<(u8, u16, String)> = None; // (priority, track, name)
+    for (idx, keys) in keys_by_track.iter().enumerate() {
+        if keys.is_empty() {
+            continue;
+        }
+        let idx_u16 = idx as u16;
+        let priority: u8 = if Some(idx_u16) == main_track { 0 } else { 1 };
+        if let Some(name) = yinhe_editor_core::chord::recognize(keys) {
+            if keys.len() == 1 {
+                match &best_single {
+                    None => best_single = Some((priority, idx_u16, name)),
+                    Some((best_prio, _, _)) if priority < *best_prio => {
+                        best_single = Some((priority, idx_u16, name))
+                    }
+                    _ => {}
+                }
+            } else {
+                let mut mask = 0u16;
+                for &k in keys {
+                    mask |= 1 << (k % 12);
+                }
+                let pcs = mask.count_ones() as usize;
+                match &best_multi {
+                    None => best_multi = Some((pcs, priority, idx_u16, name)),
+                    Some((best_pcs, best_prio, _, _)) => {
+                        if pcs > *best_pcs || (pcs == *best_pcs && priority < *best_prio) {
+                            best_multi = Some((pcs, priority, idx_u16, name));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if let Some((_, _, _, name)) = best_multi {
+        return Some(name);
+    }
+    if let Some((_, _, name)) = best_single {
+        return Some(name);
+    }
+    None
 }
 
 #[cfg(test)]
@@ -1190,5 +1295,124 @@ mod tests {
     fn sel_hint_none_without_selection() {
         let doc = make_test_document();
         assert!(App::compute_sel_hint(&doc).is_none());
+    }
+
+    fn chord_tick(doc: &yinhe_editor_core::document::Document, tick: f64) -> Option<String> {
+        let main = doc.edit.main_track();
+        chord_indicator_text(
+            &std::collections::HashMap::new(),
+            true,
+            Some(tick),
+            Some(doc.model()),
+            main,
+            &doc.edit.track_pianoroll_visible,
+            &doc.edit.track_overrides,
+            doc.edit.conductor_track_idx,
+        )
+    }
+
+    fn add_chord(
+        doc: &mut yinhe_editor_core::document::Document,
+        track: u16,
+        keys: &[u8],
+        tick: u32,
+        vel: u8,
+    ) {
+        for &key in keys {
+            let ev = yinhe_core::NoteEvent {
+                id: 0,
+                start_tick: tick,
+                end_tick: tick + 480,
+                key,
+                velocity: vel,
+            };
+            doc.add_note(track, ev).expect("add_note");
+        }
+    }
+
+    #[test]
+    fn chord_per_track_prefers_main_over_visible_when_same_pcs() {
+        let mut doc = yinhe_editor_core::document::Document::empty();
+        // Track 1 (main) = C (60,64,67), Track 2 = G (67,71,74) 同为 3 pcs，优先主轨
+        doc.edit.track_selected.clear();
+        doc.edit.track_selected.insert(1);
+        add_chord(&mut doc, 1, &[60, 64, 67], 0, 100);
+        add_chord(&mut doc, 2, &[67, 71, 74], 0, 100);
+        let chord = chord_tick(&doc, 0.0).expect("should recognize");
+        assert_eq!(chord, "C");
+    }
+
+    #[test]
+    fn chord_picks_most_complete_across_tracks() {
+        let mut doc = yinhe_editor_core::document::Document::empty();
+        doc.edit.track_selected.clear();
+        doc.edit.track_selected.insert(1);
+        // 主轨 1 = C 三和弦 (3 pcs), 轨 2 = Cmaj7 (4 pcs) 更完善 → 选轨 2
+        add_chord(&mut doc, 1, &[60, 64, 67], 0, 100);
+        add_chord(&mut doc, 2, &[60, 64, 67, 71], 0, 100);
+        let chord = chord_tick(&doc, 0.0).expect("should recognize");
+        assert_eq!(chord, "Cmaj7");
+    }
+
+    #[test]
+    fn chord_skips_muted_track() {
+        let mut doc = yinhe_editor_core::document::Document::empty();
+        doc.edit.track_selected.clear();
+        doc.edit.track_selected.insert(1);
+        add_chord(&mut doc, 1, &[60, 64, 67], 0, 100);
+        add_chord(&mut doc, 2, &[60, 64, 67, 71], 0, 100);
+        // 静音轨 2 → 回退主轨
+        doc.edit.track_overrides[2].muted = true;
+        let chord = chord_tick(&doc, 0.0).expect("should fallback");
+        assert_eq!(chord, "C");
+    }
+
+    #[test]
+    fn chord_skips_invisible_track() {
+        let mut doc = yinhe_editor_core::document::Document::empty();
+        doc.edit.track_selected.clear();
+        doc.edit.track_selected.insert(1);
+        add_chord(&mut doc, 1, &[60, 64, 67], 0, 100);
+        add_chord(&mut doc, 2, &[60, 64, 67, 71], 0, 100);
+        doc.edit.track_pianoroll_visible[2] = false;
+        let chord = chord_tick(&doc, 0.0).expect("should fallback");
+        assert_eq!(chord, "C");
+    }
+
+    #[test]
+    fn chord_skips_velocity_one_notes() {
+        let mut doc = yinhe_editor_core::document::Document::empty();
+        doc.edit.track_selected.clear();
+        doc.edit.track_selected.insert(1);
+        add_chord(&mut doc, 1, &[60, 64, 67], 0, 100);
+        // 轨 2 全为力度 1 → 应被过滤
+        add_chord(&mut doc, 2, &[60, 64, 67, 71], 0, 1);
+        let chord = chord_tick(&doc, 0.0).expect("should pick audible");
+        assert_eq!(chord, "C");
+    }
+
+    #[test]
+    fn chord_per_track_anti_garbage_global_span_would_fail() {
+        let mut doc = yinhe_editor_core::document::Document::empty();
+        doc.edit.track_selected.clear();
+        doc.edit.track_selected.insert(1);
+        // 轨 1 低八度 C (36,40,43), 轨 2 高八度 C (84,88,91) 合计跨度 55>24，旧全局会 None
+        add_chord(&mut doc, 1, &[36, 40, 43], 0, 100);
+        add_chord(&mut doc, 2, &[84, 88, 91], 0, 100);
+        let chord = chord_tick(&doc, 0.0).expect("per-track should still recognize");
+        // 主轨优先，故为低八度轨的 C（音名带 slash？识别为 C，转位低音 36 = C2? 实际 low =36 pc 0 root 0 -> C）
+        assert_eq!(chord, "C");
+    }
+
+    #[test]
+    fn chord_prefers_multi_over_single() {
+        let mut doc = yinhe_editor_core::document::Document::empty();
+        doc.edit.track_selected.clear();
+        doc.edit.track_selected.insert(1);
+        // 轨 1 单音 C5 (60), 轨 2 三和弦 C (60,64,67) → 应选多音
+        add_chord(&mut doc, 1, &[60], 0, 100);
+        add_chord(&mut doc, 2, &[60, 64, 67], 0, 100);
+        let chord = chord_tick(&doc, 0.0).expect("should prefer multi");
+        assert_eq!(chord, "C");
     }
 }
