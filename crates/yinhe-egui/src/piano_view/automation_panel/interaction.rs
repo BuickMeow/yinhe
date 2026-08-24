@@ -24,6 +24,7 @@ use yinhe_wgpu::{
     build_lane_shape_override,
 };
 
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn handle_automation_interaction(
     ui: &mut egui::Ui,
     grid_area: egui::Rect,
@@ -1171,6 +1172,8 @@ mod tests {
                 track_panel_row_height: 40.0,
                 track_panel_scroll_y: 0.0,
                 follow_target: None,
+                follow_anim_start: 0.0,
+                follow_anim_elapsed: 0.0,
             },
             ..Default::default()
         }

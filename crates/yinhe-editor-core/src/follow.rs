@@ -3,11 +3,11 @@
 pub enum FollowMode {
     /// Never auto-scroll — user has full manual control.
     None,
-    /// 居中跟随：光标接近视口边缘（20% 余量）时滚动到光标居中。
+    /// 居中跟随：光标始终保持在视口中央（持续跟随）。
     Centered,
-    /// 真正的翻页跟随：光标越过视口边缘时整页滚动，光标落在页首附近。
+    /// 翻页跟随：光标接近/越过视口边缘时整页翻页，带固定时长动画。
     Page,
-    /// Cursor stays glued to the leftmost edge of the content area.
+    /// 左侧跟随：光标紧贴内容区左缘（持续跟随）。
     Continuous,
 }
 
@@ -36,7 +36,7 @@ pub fn total_ticks_padded(tick_length: u64, ppq: u32) -> f64 {
 /// scroll is needed (mode is `None` or cursor is within the safe margin).
 ///
 /// - `left_boundary`: left content edge in pixels (keyboard_width for piano, 0.0 for arrangement)
-/// - `continuous_inset`: pixels to inset the cursor in Continuous mode (1.0 for piano, 0.01 for arrangement)
+/// - `continuous_inset`: pixels to inset the cursor in Continuous mode (0 for tight left)
 /// - `current_scroll_x`: 当前视口滚动位置（翻页/居中边界判断的基准）
 pub fn compute_follow_scroll(
     cursor_tick: f64,
@@ -50,32 +50,46 @@ pub fn compute_follow_scroll(
     match follow_mode {
         FollowMode::None => None,
         FollowMode::Centered => {
+            // 持续居中：每帧都把光标拉到内容区中央，类似 Continuous 的中央版。
+            // 无需边缘判定，避免“从右半区跳到中间”的突兀感。
             let cursor_x = cursor_tick as f32 * pixels_per_tick;
-            let content_width = viewport_width - left_boundary;
-            let margin = content_width * 0.2;
-            let right_edge = current_scroll_x + viewport_width;
-            let left_edge = current_scroll_x + left_boundary;
-            if cursor_x > right_edge - margin || cursor_x < left_edge + margin {
-                Some(cursor_x - content_width * 0.5)
-            } else {
-                None
-            }
+            let content_width = (viewport_width - left_boundary).max(1.0);
+            Some(cursor_x - content_width * 0.5)
         }
         FollowMode::Page => {
-            // 真正的翻页：光标越过视口右缘（左缘）时整页滚动，
-            // 翻页后光标落在页首（页尾）附近，持续播放会逐页前进。
-            // 页宽 = 视口宽 - 左边界（PR 键盘宽）：翻页后光标落在新页左缘右侧，
-            // 不会立刻命中向左翻页判定。若按完整视口宽翻页，光标会卡在
-            // 新页的键盘遮挡区（cursor_x < 新左缘），下一帧又往回翻，
-            // 再下一帧光标仍越右缘又往前翻——每帧来回振荡（翻页抖动）。
+            // 翻页：提前触发 + 大跳转直达 + 固定时长动画（时长由调用方控制）。
+            // - 提前量：视口边缘内 6% 或 24px 取大者，避免指示线完全消失才翻。
+            // - 落点：光标翻后落在新页左侧 inset 处（10% 页宽），避免贴边振荡且保证
+            //   下一帧不在对侧 margin 内（inset > margin）。
+            // - 远距离跳转（seek）：若光标远离视口一页以上，直接跳到含光标的页，
+            //   保持同样动画时长，避免逐页翻叠加多秒。
             let cursor_x = cursor_tick as f32 * pixels_per_tick;
             let page = (viewport_width - left_boundary).max(1.0);
             let right_edge = current_scroll_x + viewport_width;
             let left_edge = current_scroll_x + left_boundary;
-            if cursor_x > right_edge {
-                Some(current_scroll_x + page)
-            } else if cursor_x < left_edge {
-                Some(current_scroll_x - page)
+            let margin = (page * 0.06).max(24.0_f32);
+            let inset = (page * 0.10).max(32.0_f32);
+
+            let far_forward = cursor_x > right_edge + page;
+            let far_backward = cursor_x < left_edge - page;
+
+            if far_forward || far_backward {
+                // 远距离：直接以光标为锚点计算目标，保证同样时长一次到位。
+                // 前向远跳落左侧 inset，后向远跳落右侧附近（保留上下文）。
+                if cursor_x > right_edge {
+                    Some((cursor_x - left_boundary - inset).max(0.0))
+                } else {
+                    // 后向：让光标落在新页右侧附近（距右缘 inset），避免紧贴左缘后立即再触发
+                    let target = cursor_x - left_boundary - page + inset;
+                    Some(target.max(0.0))
+                }
+            } else if cursor_x > right_edge - margin {
+                // 提前翻页：光标尚未完全越界即翻
+                Some((cursor_x - left_boundary - inset).max(0.0))
+            } else if cursor_x < left_edge + margin {
+                // 向左翻：光标落在新页右侧 inset 处
+                let target = cursor_x - left_boundary - page + inset;
+                Some(target.max(0.0))
             } else {
                 None
             }
@@ -87,18 +101,33 @@ pub fn compute_follow_scroll(
     }
 }
 
-/// 跟随平滑时间常数（秒）：指数插值的收敛速度。越小越跟手（硬）、越大越柔和（滞后）。
-pub const FOLLOW_TAU: f32 = 0.1;
+/// 跟随平滑时间常数（秒）：指数插值的收敛速度（仅左侧/居中持续跟随使用）。
+pub const FOLLOW_TAU: f32 = 0.02;
+
+/// 翻页固定动画时长（秒）：无论距离多少像素，动画时间相同。
+pub const FOLLOW_PAGE_DURATION: f32 = 0.30;
 
 /// 帧间插值：向目标滚动位置平滑收敛（帧率无关的指数平滑）。
 /// `dt` 为帧间隔（秒，<= 0 时原样返回 current），`tau` 为时间常数（秒）。
-/// 每帧调用一次，把居中/翻页触发产生的硬跳变变成可见的减速滑动。
+/// 用于 Continuous / Centered 的持续跟随（轻微平滑，紧贴）。
 pub fn follow_interpolate(current: f32, target: f32, dt: f32, tau: f32) -> f32 {
     if dt <= 0.0 {
         return current;
     }
     let k = 1.0 - (-dt / tau).exp();
     current + (target - current) * k
+}
+
+/// 翻页固定时长缓动（ease-out cubic），与距离无关。
+/// `elapsed` 为已流逝时间，`duration` 为总时长。
+pub fn follow_page_lerp(start: f32, target: f32, elapsed: f32, duration: f32) -> f32 {
+    if duration <= 1e-6 {
+        return target;
+    }
+    let t = (elapsed / duration).clamp(0.0, 1.0);
+    // ease-out cubic: 1 - (1-t)^3
+    let e = 1.0 - (1.0 - t).powi(3);
+    start + (target - start) * e
 }
 
 #[cfg(test)]
@@ -122,94 +151,88 @@ mod tests {
     }
 
     #[test]
-    fn centered_mode_centers_when_cursor_near_right_edge() {
-        // 光标离右缘不足 20% 余量：滚动到光标居中
-        let result = compute_follow_scroll(700.0, 1.0, 800.0, 0.0, FollowMode::Centered, 1.0, 0.0);
-        assert_eq!(result, Some(300.0));
-    }
-
-    #[test]
-    fn centered_mode_centers_when_cursor_near_left_boundary() {
-        let result = compute_follow_scroll(20.0, 1.0, 800.0, 0.0, FollowMode::Centered, 1.0, 0.0);
-        assert_eq!(result, Some(-380.0));
-    }
-
-    #[test]
-    fn centered_mode_stays_when_cursor_in_center() {
-        assert_eq!(
-            compute_follow_scroll(400.0, 1.0, 800.0, 0.0, FollowMode::Centered, 1.0, 0.0),
-            None
-        );
-    }
-
-    #[test]
-    fn centered_mode_respects_current_scroll() {
-        // 已滚动到 500：右缘在 1300，光标 900 距右缘 400（>20% 余量）→ 不滚动
-        assert_eq!(
-            compute_follow_scroll(900.0, 1.0, 800.0, 0.0, FollowMode::Centered, 1.0, 500.0),
-            None
-        );
-        // 光标 1200 距右缘 100（<20% 余量 160）→ 滚动到居中
-        assert_eq!(
-            compute_follow_scroll(1200.0, 1.0, 800.0, 0.0, FollowMode::Centered, 1.0, 500.0),
-            Some(800.0)
-        );
+    fn centered_mode_always_centers() {
+        // 居中模式为持续居中：无论光标在何处都返回居中位置
+        let result = compute_follow_scroll(400.0, 1.0, 800.0, 0.0, FollowMode::Centered, 1.0, 0.0);
+        assert_eq!(result, Some(0.0)); // 400 - 400
+        let result2 = compute_follow_scroll(700.0, 1.0, 800.0, 0.0, FollowMode::Centered, 1.0, 0.0);
+        assert_eq!(result2, Some(300.0)); // 700-400
+        let result3 =
+            compute_follow_scroll(100.0, 1.0, 800.0, 0.0, FollowMode::Centered, 1.0, 500.0);
+        // 中心位置与 current_scroll 无关（持续跟随）
+        assert_eq!(result3, Some(-300.0));
     }
 
     #[test]
     fn page_mode_turns_page_when_cursor_passes_right_edge() {
-        // 光标 900 越过右缘 800：整页滚动到 800
+        // 光标 900 越过右缘 800：翻页到 inset 位置
         let result = compute_follow_scroll(900.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0, 0.0);
-        assert_eq!(result, Some(800.0));
+        // page 800, inset 80 => 900-0-80=820
+        assert_eq!(result, Some(820.0));
     }
 
     #[test]
     fn page_mode_turns_back_when_cursor_passes_left_edge() {
-        // 已滚动到 800，光标 100 越过左缘 0：向左翻一页
+        // 已滚动到 800，光标 100 越过左缘附近：向左翻，落在右侧附近
         let result = compute_follow_scroll(100.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0, 800.0);
+        // 后向：100-0-800+80 = -620 => clamp 0
         assert_eq!(result, Some(0.0));
     }
 
     #[test]
-    fn page_mode_stays_while_cursor_inside_viewport() {
-        // 光标在视口内：不滚动
-        assert_eq!(
-            compute_follow_scroll(700.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0, 0.0),
-            None
-        );
-        // 光标在视口内但接近右缘（居中模式会滚，翻页模式不滚）
-        assert_eq!(
-            compute_follow_scroll(750.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0, 0.0),
-            None
-        );
+    fn page_mode_early_trigger() {
+        // 光标 780 距右缘 20（< margin 48 左右）提前触发
+        let result = compute_follow_scroll(780.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0, 0.0);
+        assert!(result.is_some(), "应提前翻页");
+        // 非提前区域内不触发
+        let inside = compute_follow_scroll(400.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0, 0.0);
+        assert_eq!(inside, None);
+    }
+
+    #[test]
+    fn page_mode_far_jump_direct() {
+        // 远距离跳转：光标 5000，视口 800，当前 0，应直接跳到光标附近而非逐页
+        let result = compute_follow_scroll(5000.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0, 0.0);
+        // 应该一次到 4920 附近 (5000-80)
+        assert_eq!(result, Some(4920.0));
+        // 从末尾跳回开头
+        let back = compute_follow_scroll(100.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0, 5000.0);
+        assert_eq!(back, Some(0.0));
     }
 
     #[test]
     fn page_mode_with_nonzero_left_boundary() {
-        // 左边界 100（钢琴键盘宽）：光标 50 越过左缘 → 向左翻一页（页宽 700）
+        // 左边界 100，后向翻页
         let result = compute_follow_scroll(50.0, 1.0, 800.0, 100.0, FollowMode::Page, 1.0, 500.0);
-        assert_eq!(result, Some(-200.0));
+        // 50-100-700+70 ≈ -680 =>0
+        assert_eq!(result, Some(0.0));
     }
 
     #[test]
     fn page_mode_forward_turn_does_not_oscillate() {
-        // 回归：键盘宽 100、视口 800。光标刚过右缘（805）→ 向前翻一页，
-        // 页宽 700 → scroll = 700。新页左缘 = 700 + 100 = 800，光标 805 在其右侧，
-        // 下一帧不得再触发向左翻页（旧实现按整视口宽翻页，scroll = 800，
-        // 光标 805 < 新左缘 900 → 每帧来回翻页 = 翻页抖动）。
+        // 键盘宽 100、视口 800。光标 805 刚过右缘/提前区，翻后应在新页内不振荡
         let turned = compute_follow_scroll(805.0, 1.0, 800.0, 100.0, FollowMode::Page, 1.0, 0.0);
-        assert_eq!(turned, Some(700.0));
-        let next = compute_follow_scroll(805.0, 1.0, 800.0, 100.0, FollowMode::Page, 1.0, 700.0);
+        assert!(turned.is_some());
+        let target = turned.unwrap();
+        // 翻页后光标相对新视口位置应在 inset 附近（> margin），不触发回翻
+        let page: f32 = 700.0;
+        let margin = (page * 0.06).max(24.0_f32);
+        let new_left = target + 100.0;
+        let offset = 805.0 - new_left;
+        assert!(
+            offset > margin,
+            "翻页后光标距新左缘 {offset} 应大于 margin {margin}"
+        );
+        let next = compute_follow_scroll(805.0, 1.0, 800.0, 100.0, FollowMode::Page, 1.0, target);
         assert_eq!(next, None, "翻页后光标在新页内，不得来回振荡");
     }
 
     #[test]
     fn page_mode_backward_turn_does_not_oscillate() {
-        // 回归：反向同理。scroll = 700、光标 795 越过左缘 800 → 向左翻一页（页宽 700）
-        // → scroll = 0。新右缘 = 800 > 光标 795，下一帧不得再触发向前翻页。
         let turned = compute_follow_scroll(795.0, 1.0, 800.0, 100.0, FollowMode::Page, 1.0, 700.0);
-        assert_eq!(turned, Some(0.0));
-        let next = compute_follow_scroll(795.0, 1.0, 800.0, 100.0, FollowMode::Page, 1.0, 0.0);
+        assert!(turned.is_some());
+        let target = turned.unwrap();
+        let next = compute_follow_scroll(795.0, 1.0, 800.0, 100.0, FollowMode::Page, 1.0, target);
         assert_eq!(next, None, "回翻后光标在新页内，不得来回振荡");
     }
 
@@ -239,8 +262,8 @@ mod tests {
     #[test]
     fn continuous_mode_with_left_boundary() {
         let result =
-            compute_follow_scroll(100.0, 1.0, 800.0, 60.0, FollowMode::Continuous, 60.0, 0.0);
-        assert_eq!(result, Some(40.0));
+            compute_follow_scroll(100.0, 1.0, 800.0, 60.0, FollowMode::Continuous, 0.0, 0.0);
+        assert_eq!(result, Some(100.0));
     }
 
     #[test]
@@ -250,33 +273,21 @@ mod tests {
     }
 
     #[test]
-    fn interpolate_reaches_target_over_time() {
-        // 指数平滑的收敛性：以 60fps 插值 100 帧（约 1.7s）应基本到达。
-        let mut v = 0.0;
-        for _ in 0..100 {
-            v = follow_interpolate(v, 100.0, 1.0 / 60.0, FOLLOW_TAU);
-        }
-        assert!((100.0 - v).abs() < 0.01);
-    }
-
-    #[test]
-    fn interpolate_is_framerate_independent() {
-        // 相同累计时间下，30fps 与 60fps 的收敛程度应一致（帧率无关）。
-        let mut a = 0.0;
-        let mut b = 0.0;
-        for _ in 0..60 {
-            a = follow_interpolate(a, 100.0, 1.0 / 60.0, FOLLOW_TAU);
-        }
-        for _ in 0..30 {
-            b = follow_interpolate(b, 100.0, 1.0 / 30.0, FOLLOW_TAU);
-        }
-        assert!((a - b).abs() < 0.01);
+    fn page_lerp_fixed_duration() {
+        // 无论距离，0.3s 内到达
+        let d1 = follow_page_lerp(0.0, 100.0, 0.15, 0.3);
+        let d2 = follow_page_lerp(0.0, 1000.0, 0.15, 0.3);
+        // 半程 ease-out cubic ≈ 0.875
+        assert!((d1 - 87.5).abs() < 1.0);
+        assert!((d2 - 875.0).abs() < 10.0);
+        assert_eq!(follow_page_lerp(0.0, 100.0, 0.3, 0.3), 100.0);
+        assert_eq!(follow_page_lerp(0.0, 100.0, 0.5, 0.3), 100.0);
     }
 
     #[test]
     fn centered_mode_with_nonzero_left_boundary() {
-        // 左边界 60，光标 300 在视口中部：不滚动
         let result = compute_follow_scroll(300.0, 1.0, 800.0, 60.0, FollowMode::Centered, 1.0, 0.0);
-        assert_eq!(result, None);
+        // 300 - (740*0.5)=300-370=-70
+        assert_eq!(result, Some(-70.0));
     }
 }

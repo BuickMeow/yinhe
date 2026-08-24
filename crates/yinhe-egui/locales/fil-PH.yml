@@ -54,6 +54,7 @@ tool.eraser: "Pambura"
 
 # ── Follow mode ──
 follow.none: "Walang Scroll"
+follow.centered: "Centered Follow"
 follow.page: "Page Follow"
 follow.continuous: "Real-time Follow"
 

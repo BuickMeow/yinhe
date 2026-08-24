@@ -54,6 +54,7 @@ tool.eraser: "ยางลบ"
 
 # ── Follow mode ──
 follow.none: "ไม่เลื่อน"
+follow.centered: "Centered Follow"
 follow.page: "ติดตามแบบหน้า"
 follow.continuous: "ติดตามแบบเรียลไทม์"
 

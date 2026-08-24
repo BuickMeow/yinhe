@@ -664,6 +664,8 @@ fn cull_real_midi_vs_cpu() {
                 track_panel_row_height: 40.0,
                 track_panel_scroll_y: 0.0,
                 follow_target: None,
+                follow_anim_start: 0.0,
+                follow_anim_elapsed: 0.0,
             },
         };
         let hidden = std::collections::HashSet::new();
@@ -1956,6 +1958,8 @@ fn cull_render_pixel_check() {
                 track_panel_row_height: 40.0,
                 track_panel_scroll_y: 0.0,
                 follow_target: None,
+                follow_anim_start: 0.0,
+                follow_anim_elapsed: 0.0,
             },
         };
         let job = crate::pianoroll::build_render_job(
@@ -2200,6 +2204,8 @@ fn cull_visible_buffer_content_check() {
             track_panel_row_height: 40.0,
             track_panel_scroll_y: 0.0,
             follow_target: None,
+            follow_anim_start: 0.0,
+            follow_anim_elapsed: 0.0,
         },
     };
     let mut cpu_instances = Vec::new();
@@ -2414,6 +2420,8 @@ fn cull_draw_c_lo_nonzero_minimal() {
                 track_panel_row_height: 40.0,
                 track_panel_scroll_y: 0.0,
                 follow_target: None,
+                follow_anim_start: 0.0,
+                follow_anim_elapsed: 0.0,
             },
         };
         let job = crate::pianoroll::build_render_job(
@@ -2670,6 +2678,8 @@ fn note_boundary_no_gap_large_tick() {
                 track_panel_row_height: 40.0,
                 track_panel_scroll_y: 0.0,
                 follow_target: None,
+                follow_anim_start: 0.0,
+                follow_anim_elapsed: 0.0,
             },
         };
         let job = crate::pianoroll::build_render_job(
@@ -2892,6 +2902,8 @@ fn cull_bench_vs_cpu_start_mid() {
                     track_panel_row_height: 40.0,
                     track_panel_scroll_y: 0.0,
                     follow_target: None,
+                    follow_anim_start: 0.0,
+                    follow_anim_elapsed: 0.0,
                 },
             };
 

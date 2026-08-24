@@ -54,6 +54,7 @@ tool.eraser: "Гумка"
 
 # ── Follow mode ──
 follow.none: "Без прокрутки"
+follow.centered: "Centered Follow"
 follow.page: "Прокрутка по сторінках"
 follow.continuous: "Слідування в реальному часі"
 

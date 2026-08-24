@@ -85,6 +85,8 @@ impl Default for AutomationPanelView {
                 track_panel_row_height: 40.0,
                 track_panel_scroll_y: 0.0,
                 follow_target: None,
+                follow_anim_start: 0.0,
+                follow_anim_elapsed: 0.0,
             },
             panel_height: DEFAULT_PANEL_HEIGHT,
             selected_target: AutomationTarget::CC { controller: 7 },

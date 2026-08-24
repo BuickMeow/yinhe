@@ -54,6 +54,7 @@ tool.eraser: "Tẩy"
 
 # ── Follow mode ──
 follow.none: "Không cuộn"
+follow.centered: "Centered Follow"
 follow.page: "Theo Trang"
 follow.continuous: "Theo dõi trực tiếp"
 

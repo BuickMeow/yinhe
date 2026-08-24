@@ -13,6 +13,8 @@ fn make_base() -> TimelineViewBase {
         track_panel_row_height: 40.0,
         track_panel_scroll_y: 0.0,
         follow_target: None,
+        follow_anim_start: 0.0,
+        follow_anim_elapsed: 0.0,
     }
 }
 
@@ -107,7 +109,7 @@ fn pianoroll_visible_tick_range() {
 #[test]
 fn pianoroll_visible_key_range() {
     let view = PianoRollView::default();
-    let (lo, hi) = view.visible_key_range(600.0);
+    let (lo, hi) = view.visible_cross_range(600.0);
     assert!(lo <= hi);
     assert!(hi <= 127);
 }
@@ -195,7 +197,8 @@ fn compute_follow_scroll_continuous_mode() {
 #[test]
 fn compute_follow_scroll_page_mode_turns_page_at_edge() {
     let result = compute_follow_scroll(900.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0, 0.0);
-    assert_eq!(result, Some(800.0), "cursor past right edge turns a page");
+    // 新逻辑提前翻页 + inset 80 => 900-80=820
+    assert_eq!(result, Some(820.0), "cursor past right edge turns a page");
 }
 
 #[test]

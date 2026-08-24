@@ -22,6 +22,7 @@ pub(crate) fn update_follow(
     let follow_active = is_playing && *follow_mode != FollowMode::None;
     if !follow_active {
         view.base.follow_target = None;
+        view.base.follow_anim_elapsed = 0.0;
         return;
     }
     let Some(ct) = cursor_tick else {
@@ -35,29 +36,65 @@ pub(crate) fn update_follow(
     } else {
         (layout.w as f32, view.keyboard_width(), view.base.scroll_x)
     };
+
+    // 持续跟随（居中 / 左侧）直接贴合，无固定时长动画
+    if *follow_mode == FollowMode::Centered || *follow_mode == FollowMode::Continuous {
+        // 左侧跟随紧贴左缘（inset 0），居中跟随由 compute 内部处理
+        let inset = 0.0;
+        if let Some(t) = crate::view_interaction::compute_follow_scroll(
+            ct,
+            view.base.pixels_per_tick,
+            main_len,
+            left_boundary,
+            *follow_mode,
+            inset,
+            cur_main,
+        ) {
+            // 直接赋值确保紧贴，clamp 保证不越界
+            *view.main_scroll() = t;
+            view.clamp_scroll(layout.w as f32, layout.h as f32, layout.total_ticks);
+            // 保持 follow_target 为 None，避免与 Page 动画状态混淆
+            view.base.follow_target = None;
+            view.base.follow_anim_elapsed = 0.0;
+        }
+        return;
+    }
+
+    // Page 翻页：固定时长缓动
     if let Some(t) = crate::view_interaction::compute_follow_scroll(
         ct,
         view.base.pixels_per_tick,
         main_len,
         left_boundary,
         *follow_mode,
-        1.0,
+        0.0,
         cur_main,
     ) {
-        view.base.follow_target = Some(t);
+        // 新目标与旧目标不同时重启动画（处理大跳转）
+        let need_restart = view.base.follow_target != Some(t);
+        if need_restart {
+            view.base.follow_anim_start = *view.main_scroll();
+            view.base.follow_anim_elapsed = 0.0;
+            view.base.follow_target = Some(t);
+        }
     }
-    if let Some(t) = view.base.follow_target {
-        let before = *view.main_scroll();
-        *view.main_scroll() = crate::view_interaction::follow_interpolate(
-            before,
-            t,
-            dt,
-            crate::view_interaction::FOLLOW_TAU,
+    if let Some(target) = view.base.follow_target {
+        view.base.follow_anim_elapsed += dt;
+        let new_scroll = crate::view_interaction::follow_page_lerp(
+            view.base.follow_anim_start,
+            target,
+            view.base.follow_anim_elapsed,
+            crate::view_interaction::FOLLOW_PAGE_DURATION,
         );
+        *view.main_scroll() = new_scroll;
         view.clamp_scroll(layout.w as f32, layout.h as f32, layout.total_ticks);
-        // 已到达目标（1px 数值容差）或滚动被 clamp 卡在边界：结束插值。
-        if (t - *view.main_scroll()).abs() <= 1.0 || *view.main_scroll() == before {
+        let done = view.base.follow_anim_elapsed >= crate::view_interaction::FOLLOW_PAGE_DURATION
+            || (target - *view.main_scroll()).abs() <= 1.0;
+        if done {
+            *view.main_scroll() = target;
+            view.clamp_scroll(layout.w as f32, layout.h as f32, layout.total_ticks);
             view.base.follow_target = None;
+            view.base.follow_anim_elapsed = 0.0;
         }
     }
 }

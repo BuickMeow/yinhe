@@ -54,6 +54,7 @@ tool.eraser: "지우개"
 
 # ── 팔로우 모드 ──
 follow.none: "스크롤 없음"
+follow.centered: "Centered Follow"
 follow.page: "페이지 따라가기"
 follow.continuous: "실시간 따라가기"
 

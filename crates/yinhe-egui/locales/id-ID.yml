@@ -54,6 +54,7 @@ tool.eraser: "Penghapus"
 
 # ── Follow mode ──
 follow.none: "Tanpa Gulir"
+follow.centered: "Centered Follow"
 follow.page: "Ikuti Halaman"
 follow.continuous: "Ikuti Real-time"
 

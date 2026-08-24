@@ -7,7 +7,7 @@ use yinhe_editor_core::quantize::QuantizePreset;
 use crate::widgets::tools_panel::Tool;
 
 pub use yinhe_editor_core::follow::{
-    FOLLOW_TAU, FollowMode, compute_follow_scroll, follow_interpolate, total_ticks_padded,
+    FOLLOW_PAGE_DURATION, FollowMode, compute_follow_scroll, follow_page_lerp, total_ticks_padded,
 };
 
 /// Extension trait adding egui-specific methods to [`FollowMode`].
@@ -20,9 +20,9 @@ impl FollowModeExt for FollowMode {
         use egui_material_icons::icons::*;
         match self {
             FollowMode::None => ICON_LOCK,
-            FollowMode::Centered => ICON_CENTER_FOCUS_WEAK,
+            FollowMode::Centered => ICON_ALIGN_HORIZONTAL_CENTER,
             FollowMode::Page => ICON_AUTO_STORIES,
-            FollowMode::Continuous => ICON_CENTER_FOCUS_STRONG,
+            FollowMode::Continuous => ICON_ALIGN_HORIZONTAL_LEFT,
         }
     }
 }

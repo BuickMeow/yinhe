@@ -340,6 +340,8 @@ mod tests {
                 track_panel_row_height: 40.0,
                 track_panel_scroll_y: 0.0,
                 follow_target: None,
+                follow_anim_start: 0.0,
+                follow_anim_elapsed: 0.0,
             },
             ..Default::default()
         }

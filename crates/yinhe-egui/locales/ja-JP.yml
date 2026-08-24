@@ -54,6 +54,7 @@ tool.eraser: "消しゴム"
 
 # ── フォローモード ──
 follow.none: "スクロールなし"
+follow.centered: "Centered Follow"
 follow.page: "ページ追従"
 follow.continuous: "リアルタイム追従"
 

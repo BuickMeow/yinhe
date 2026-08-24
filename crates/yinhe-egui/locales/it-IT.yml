@@ -54,6 +54,7 @@ tool.eraser: "Gomma"
 
 # ── Modalità di follow ──
 follow.none: "Nessuno scorrimento"
+follow.centered: "Centered Follow"
 follow.page: "Follow a pagina"
 follow.continuous: "Follow in tempo reale"
 

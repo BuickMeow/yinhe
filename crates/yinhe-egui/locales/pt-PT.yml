@@ -54,6 +54,7 @@ tool.eraser: "Borracha"
 
 # ── Modo de seguimento ──
 follow.none: "Sem deslocamento"
+follow.centered: "Centered Follow"
 follow.page: "Seguir por página"
 follow.continuous: "Seguimento em tempo real"
 

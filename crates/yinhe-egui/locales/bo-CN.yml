@@ -54,6 +54,7 @@ tool.eraser: "སྦྱིག་ཚ་བ།"
 
 # ── Follow mode ──
 follow.none: "འཁོར་མེད།"
+follow.centered: "Centered Follow"
 follow.page: "ཤོག་ངོས་འབྲང་སྟོན།"
 follow.continuous: "དུས་ཐོག་འབྲང་སྟོན།"
 

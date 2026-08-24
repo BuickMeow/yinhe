@@ -54,6 +54,7 @@ tool.eraser: "Gumka"
 
 # ── Tryb podążania ──
 follow.none: "Brak przewijania"
+follow.centered: "Centered Follow"
 follow.page: "Przewijanie stronami"
 follow.continuous: "Podążanie w czasie rzeczywistym"
 

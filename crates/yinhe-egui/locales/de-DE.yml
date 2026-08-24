@@ -54,6 +54,7 @@ tool.eraser: "Radiergummi"
 
 # ── Follow-Modus ──
 follow.none: "Kein Scrollen"
+follow.centered: "Centered Follow"
 follow.page: "Seiten-Follow"
 follow.continuous: "Echtzeit-Follow"
 

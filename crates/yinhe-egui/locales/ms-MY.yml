@@ -54,6 +54,7 @@ tool.eraser: "Pemadam"
 
 # ── Follow mode ──
 follow.none: "Tiada Skrol"
+follow.centered: "Centered Follow"
 follow.page: "Ikut Halaman"
 follow.continuous: "Ikut Masa Nyata"
 

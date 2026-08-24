@@ -54,6 +54,7 @@ tool.eraser: "Ластик"
 
 # ── Режим следования ──
 follow.none: "Без прокрутки"
+follow.centered: "Centered Follow"
 follow.page: "Прокрутка по страницам"
 follow.continuous: "Следование в реальном времени"
 

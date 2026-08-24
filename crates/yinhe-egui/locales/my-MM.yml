@@ -54,6 +54,7 @@ tool.eraser: "ခဲဖျက်"
 
 # ── Follow mode ──
 follow.none: "မလှိမ့်ပါ"
+follow.centered: "Centered Follow"
 follow.page: "စာမျက်နှာလိုက်ပါ"
 follow.continuous: "တိုက်ရိုက်လိုက်ပါ"
 

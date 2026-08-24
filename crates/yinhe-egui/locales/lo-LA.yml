@@ -54,6 +54,7 @@ tool.eraser: "ຢາງລຶບ"
 
 # ── Follow mode ──
 follow.none: "ບໍ່ເລື່ອນ"
+follow.centered: "Centered Follow"
 follow.page: "ຕິດຕາມແບບໜ້າ"
 follow.continuous: "ຕິດຕາມແບບສົດໆ"
 

@@ -267,6 +267,8 @@ mod tests {
             track_panel_row_height: 40.0,
             track_panel_scroll_y: 0.0,
             follow_target: None,
+            follow_anim_start: 0.0,
+            follow_anim_elapsed: 0.0,
         }
     }
 
@@ -320,6 +322,8 @@ mod tests {
         let base = TimelineViewBase {
             pixels_per_tick: 0.1,
             scroll_x: 10000.0,
+            follow_anim_start: 0.0,
+            follow_anim_elapsed: 0.0,
             ..make_base(0.1)
         };
         let rect = egui::Rect::from_min_max(egui::pos2(60.0, 0.0), egui::pos2(660.0, 50.0));
@@ -371,6 +375,8 @@ mod tests {
         let base = TimelineViewBase {
             pixels_per_tick: 0.1,
             scroll_x: 800.0,
+            follow_anim_start: 0.0,
+            follow_anim_elapsed: 0.0,
             ..make_base(0.1)
         };
         let rect = egui::Rect::from_min_max(egui::pos2(60.0, 0.0), egui::pos2(660.0, 50.0));
@@ -463,6 +469,8 @@ mod tests {
         let base = TimelineViewBase {
             pixels_per_tick: 0.05,
             scroll_y: 250.0, // 主轴可见 tick 范围 ≈ [5000, 7000]
+            follow_anim_start: 0.0,
+            follow_anim_elapsed: 0.0,
             ..make_base(0.05)
         };
         let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(200.0, 100.0));

@@ -54,6 +54,7 @@ tool.eraser: "ជ័រលុប"
 
 # ── Follow mode ──
 follow.none: "គ្មានការរំកិល"
+follow.centered: "Centered Follow"
 follow.page: "តាមដានតាមទំព័រ"
 follow.continuous: "តាមដានតាមពេលពិត"
 

@@ -54,6 +54,7 @@ tool.eraser: "Silgi"
 
 # ── Takip modu ──
 follow.none: "Kaydırma Yok"
+follow.centered: "Centered Follow"
 follow.page: "Sayfa Takibi"
 follow.continuous: "Gerçek Zamanlı Takip"
 

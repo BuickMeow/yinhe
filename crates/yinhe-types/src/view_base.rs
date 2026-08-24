@@ -22,6 +22,10 @@ pub struct TimelineViewBase {
     /// 由跟随逻辑（editor-core follow）维护：触发跟随后锁定目标，
     /// 每帧指数插值靠近，到达（或被 clamp 卡住）后清回 None。
     pub follow_target: Option<f32>,
+    /// 翻页动画起点（仅 Page 模式使用，配合固定时长缓动）。
+    pub follow_anim_start: f32,
+    /// 翻页动画已流逝时间（秒）。
+    pub follow_anim_elapsed: f32,
 }
 
 impl TimelineViewBase {
@@ -77,6 +81,8 @@ mod tests {
             track_panel_row_height: 40.0,
             track_panel_scroll_y: 0.0,
             follow_target: None,
+            follow_anim_start: 0.0,
+            follow_anim_elapsed: 0.0,
         }
     }
 

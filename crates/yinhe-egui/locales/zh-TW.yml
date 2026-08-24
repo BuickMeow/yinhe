@@ -30,7 +30,7 @@ hint.play: "播放／暫停 · 空白鍵"
 hint.step_input: "Step Input (write one note per key press and advance)"
 hint.record: "Record (write MIDI input to current track)"
 hint.stop: "停止 · Esc"
-hint.follow: "播放跟隨 · 鎖定／翻頁／即時（點擊切換）"
+hint.follow: "播放跟隨 · 鎖定／居中／翻頁／左側（點擊切換）"
 hint.timecode: "播放位置 · BPM／拍號／PPQ"
 hint.track: "音軌 %{n}"
 hint.sel_notes: "選框 %{n}音符 %{span}"
@@ -54,8 +54,9 @@ tool.eraser: "橡皮擦"
 
 # ── 跟随模式 ──
 follow.none: "不捲動"
+follow.centered: "居中跟隨"
 follow.page: "翻頁跟隨"
-follow.continuous: "即時跟隨"
+follow.continuous: "左側跟隨"
 
 # ── 文件菜单 ──
 file.new_project: "新增工程"

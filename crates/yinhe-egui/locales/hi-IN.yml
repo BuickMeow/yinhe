@@ -54,6 +54,7 @@ tool.eraser: "इरेज़र"
 
 # ── Follow mode ──
 follow.none: "कोई स्क्रॉल नहीं"
+follow.centered: "Centered Follow"
 follow.page: "पेज फ़ॉलो"
 follow.continuous: "रीयल-टाइम फ़ॉलो"
 

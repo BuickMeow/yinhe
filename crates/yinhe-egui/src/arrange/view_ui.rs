@@ -57,35 +57,75 @@ pub fn show(
         cfg.is_playing && *cfg.follow_mode != crate::view_interaction::FollowMode::None;
     if !follow_active {
         view.base.follow_target = None;
+        view.base.follow_anim_elapsed = 0.0;
     } else if let Some(ct) = *edit.cursor_tick {
         let dt = ui.input(|i| i.stable_dt).max(1e-4);
-        if let Some(t) = crate::view_interaction::compute_follow_scroll(
-            ct,
-            view.base.pixels_per_tick,
-            w as f32,
-            0.0,
-            *cfg.follow_mode,
-            0.01,
-            view.base.scroll_x,
-        ) {
-            view.base.follow_target = Some(t);
-        }
-        if let Some(t) = view.base.follow_target {
-            let before = view.base.scroll_x;
-            view.base.scroll_x = crate::view_interaction::follow_interpolate(
-                before,
-                t,
-                dt,
-                crate::view_interaction::FOLLOW_TAU,
-            );
-            view.clamp_scroll(
+        use crate::view_interaction::FollowMode;
+        if *cfg.follow_mode == FollowMode::Centered || *cfg.follow_mode == FollowMode::Continuous {
+            if let Some(t) = crate::view_interaction::compute_follow_scroll(
+                ct,
+                view.base.pixels_per_tick,
                 w as f32,
-                h as f32,
-                data.total_ticks,
-                row_layout.total_rows(),
-            );
-            if (t - view.base.scroll_x).abs() <= 1.0 || view.base.scroll_x == before {
+                0.0,
+                *cfg.follow_mode,
+                0.0,
+                view.base.scroll_x,
+            ) {
+                view.base.scroll_x = t;
+                view.clamp_scroll(
+                    w as f32,
+                    h as f32,
+                    data.total_ticks,
+                    row_layout.total_rows(),
+                );
                 view.base.follow_target = None;
+                view.base.follow_anim_elapsed = 0.0;
+            }
+        } else if *cfg.follow_mode == FollowMode::Page {
+            if let Some(t) = crate::view_interaction::compute_follow_scroll(
+                ct,
+                view.base.pixels_per_tick,
+                w as f32,
+                0.0,
+                *cfg.follow_mode,
+                0.0,
+                view.base.scroll_x,
+            ) {
+                let need_restart = view.base.follow_target != Some(t);
+                if need_restart {
+                    view.base.follow_anim_start = view.base.scroll_x;
+                    view.base.follow_anim_elapsed = 0.0;
+                    view.base.follow_target = Some(t);
+                }
+            }
+            if let Some(target) = view.base.follow_target {
+                view.base.follow_anim_elapsed += dt;
+                view.base.scroll_x = crate::view_interaction::follow_page_lerp(
+                    view.base.follow_anim_start,
+                    target,
+                    view.base.follow_anim_elapsed,
+                    crate::view_interaction::FOLLOW_PAGE_DURATION,
+                );
+                view.clamp_scroll(
+                    w as f32,
+                    h as f32,
+                    data.total_ticks,
+                    row_layout.total_rows(),
+                );
+                let done = view.base.follow_anim_elapsed
+                    >= crate::view_interaction::FOLLOW_PAGE_DURATION
+                    || (target - view.base.scroll_x).abs() <= 1.0;
+                if done {
+                    view.base.scroll_x = target;
+                    view.clamp_scroll(
+                        w as f32,
+                        h as f32,
+                        data.total_ticks,
+                        row_layout.total_rows(),
+                    );
+                    view.base.follow_target = None;
+                    view.base.follow_anim_elapsed = 0.0;
+                }
             }
         }
     }

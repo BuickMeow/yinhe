@@ -492,6 +492,8 @@ mod tests {
             track_panel_row_height: 40.0,
             track_panel_scroll_y: 0.0,
             follow_target: None,
+            follow_anim_start: 0.0,
+            follow_anim_elapsed: 0.0,
         }
     }
 
@@ -522,6 +524,8 @@ mod tests {
             base: TimelineViewBase {
                 pixels_per_tick: 0.1,
                 scroll_x: 800.0,
+                follow_anim_start: 0.0,
+                follow_anim_elapsed: 0.0,
                 ..make_base(0.1)
             },
         };

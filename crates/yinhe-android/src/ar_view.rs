@@ -139,6 +139,8 @@ impl ArView {
                     track_panel_row_height: 56.0,
                     track_panel_scroll_y: 0.0,
                     follow_target: None,
+                    follow_anim_start: 0.0,
+                    follow_anim_elapsed: 0.0,
                 },
             },
             model: None,
@@ -528,6 +530,7 @@ impl ArView {
                 lane_height: self.view.lane_height(),
                 value_zoom: 0.0,
                 value_scroll: 0.0,
+                orientation: 0,
             };
             renderer.upload_uniforms(uniforms);
             let tc = crate::track_colors_for(&model);
