@@ -3,7 +3,7 @@
 //! 防乱按规则：不同音级超过 7 个、或按键跨度超过 24 半音（两个八度）时不识别，
 //! 避免双手乱拍被误识别成莫名其妙的和弦。匹配不上任何和弦时也返回 None（宁缺毋滥）。
 
-use yinhe_types::{NOTE_NAMES, key_name};
+use yinhe_types::NOTE_NAMES;
 
 /// 音级集合转 bitmask：bit i 置位表示音级 i 出现。
 const fn pc_mask(pcs: &[u8]) -> u16 {
@@ -48,16 +48,12 @@ const CHORDS: &[(u16, &str)] = &[
 
 /// 识别按下的琴键集合对应的和弦名。
 ///
-/// - 空输入返回 None
-/// - 单个键返回 "C5" 式音名
+/// - 空输入或单音返回 None（单音不视为和弦，`layout` 层不再显示 `G#3` 这类音名）
 /// - 两个及以上键做精确和弦匹配；根音不等于低音时用 slash 记法（如 "C/E"）
 /// - 匹配不上、音级超过 7 个、或跨度超过 24 半音时返回 None
 pub fn recognize(keys: &[u8]) -> Option<String> {
-    if keys.is_empty() {
+    if keys.len() < 2 {
         return None;
-    }
-    if keys.len() == 1 {
-        return Some(key_name(keys[0]));
     }
     let mut mask = 0u16;
     let mut low = u8::MAX;
@@ -101,7 +97,8 @@ mod tests {
 
     #[test]
     fn single_key_shows_note_name() {
-        assert_eq!(recognize(&[60]), Some("C5".to_string()));
+        // 单音不再视为和弦
+        assert_eq!(recognize(&[60]), None);
     }
 
     #[test]
