@@ -218,8 +218,7 @@ pub fn show(
         active_tool,
     );
 
-    interaction::handle_kb_resize(ui, view, rect, content_rect, w, h);
-
+    // 键盘宽度固定，不再提供左右拖拽缩放（handle_kb_resize 已移除）
     // ── Clamp scroll after all interactions ──
     let total_ticks = super::view_interaction::total_ticks_padded(
         midi.map(|m| m.tick_length().unwrap_or(0)).unwrap_or(0),

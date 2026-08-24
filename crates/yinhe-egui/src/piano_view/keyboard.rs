@@ -64,7 +64,7 @@ fn paint_horizontal(
 
         // C 位置标注音名（中央 C = C4 = key 60），横排在左
         if key % 12 == 0 {
-            let octave = key / 12;
+            let octave = key as i32 / 12 - 1;
             let label = format!("C{}", octave);
             painter.text(
                 egui::pos2(keyboard_rect.min.x + 3.0, screen_y + kh / 2.0),
@@ -125,7 +125,7 @@ fn paint_vertical(
 
         // C 位置标注音名（中央 C = C4 = key 60），竖排标注
         if key % 12 == 0 {
-            let octave = key / 12;
+            let octave = key as i32 / 12 - 1;
             let label = format!("C{}", octave);
             let font_id = egui::FontId::proportional((kh * 0.5).clamp(8.0, 14.0));
             let color = crate::theme::text_disabled();

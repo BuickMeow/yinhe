@@ -34,7 +34,9 @@ pub const FILE_MENU_FONT: f32 = 14.0;
 pub const MIN_ARR_HEIGHT: f32 = 60.0;
 pub const SPLIT_CLAMP_MIN: f32 = 0.1;
 pub const SPLIT_CLAMP_MAX: f32 = 0.7;
+#[allow(dead_code)]
 pub const MIN_KEYBOARD_WIDTH: f32 = 30.0;
+#[allow(dead_code)]
 pub const MAX_KEYBOARD_RATIO: f32 = 0.4;
 
 // ── Cursor / playhead ──
