@@ -1214,13 +1214,54 @@ fn chord_indicator_text(
         }
     }
 
-    // 分解和弦回退：窗口内起音聚合（lookback 1拍/2拍），即使不同时也能还原和弦。
-    // 窗口按 tick 回溯，避免前瞻预测；窗大小与 ppq 相关，通用任何 ppq。
+    // 同时发声已能覆盖块状和弦，为降低延迟与开销：若 sim 已有 pcs>=3 的多音和弦，直接返回，不再跑窗口。
+    // 仅当 sim 无多音时才做分解和弦回退，回退窗口仅 1 拍（ppq），lookback 避免前瞻预测。
+    // 先评估 sim 的 best_multi，若已足够好则提前返回。
+    let best_sim: Option<(f64, u8, u16, String)> = {
+        let mut tmp_multi: Option<(f64, u8, u16, String)> = None;
+        for (idx, keys) in keys_by_track_sim.iter().enumerate() {
+            if keys.is_empty() {
+                continue;
+            }
+            if keys.len() == 1 {
+                continue;
+            }
+            if let Some(name) = yinhe_editor_core::chord::recognize(keys) {
+                let mut mask = 0u16;
+                for &k in keys {
+                    mask |= 1 << (k % 12);
+                }
+                let pcs = mask.count_ones() as f64;
+                let per_bar = per_bar_vec[idx];
+                let score = pcs * 1000.0 / (per_bar + 10.0);
+                let prio = if Some(idx as u16) == main_track { 0 } else { 1 };
+                match &tmp_multi {
+                    None => tmp_multi = Some((score, prio, idx as u16, name.clone())),
+                    Some((best_score, best_prio, _, _)) => {
+                        if score > *best_score + f64::EPSILON
+                            || (score - *best_score).abs() < f64::EPSILON && prio < *best_prio
+                        {
+                            tmp_multi = Some((score, prio, idx as u16, name.clone()));
+                        }
+                    }
+                }
+            }
+        }
+        tmp_multi
+    };
+    if let Some((score, _, _, ref name)) = best_sim {
+        // 块状和弦已足够完整则立即返回，避免窗口回退带来的延迟与额外扫描
+        if score > 30.0 {
+            return Some(name.clone());
+        }
+    }
+
+    // 分解和弦回退：窗口内起音聚合（lookback 1拍），即使不同时也能还原和弦。
     let mut keys_by_track_win: Vec<Vec<u8>> = vec![Vec::new(); n];
-    for window in [model.meta.ppq, model.meta.ppq * 2] {
+    {
+        let window = model.meta.ppq; // 1拍，延迟约 1拍/2，随 ppq 自适应
         let lo = tick.saturating_sub(window);
         let hi = tick.saturating_add(1);
-        let mut tmp: Vec<Vec<u8>> = vec![Vec::new(); n];
         for key in 0u8..128 {
             let mut present = [false; 256];
             let mut any = false;
@@ -1228,11 +1269,9 @@ fn chord_indicator_text(
                 if note.velocity <= 1 {
                     continue;
                 }
-                // 只看起音在窗内的音，过滤过长延音的干扰
                 if note.start_tick < lo || note.start_tick >= hi {
                     continue;
                 }
-                // 过滤过短视觉音（gate<=60≈1/32音符），音乐轨多为长音
                 if note.end_tick.saturating_sub(note.start_tick) <= 60 {
                     continue;
                 }
@@ -1265,15 +1304,8 @@ fn chord_indicator_text(
             }
             for idx in 0..n {
                 if present[idx] {
-                    tmp[idx].push(key);
+                    keys_by_track_win[idx].push(key);
                 }
-            }
-        }
-        // 窗口越大 pcs 越多，择 pcs 最多的窗口保留
-        for idx in 0..n {
-            if tmp[idx].len() > keys_by_track_win[idx].len() {
-                // 粗略用去重后 key 数比较，pcs 会在评分阶段再算
-                keys_by_track_win[idx] = tmp[idx].clone();
             }
         }
     }
