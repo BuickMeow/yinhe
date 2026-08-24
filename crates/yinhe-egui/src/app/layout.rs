@@ -611,6 +611,11 @@ impl App {
                     allow_overlap: doc.edit.allow_overlapping_notes,
                     chord: chord_text.as_deref(),
                 };
+                // 新建音符默认长度：该轨 gate 记忆，无记忆回退量化间隔
+                let default_gate = write_track.map(|t| {
+                    let fallback = doc.edit.quantize_pianoroll.tick_interval(tpb);
+                    doc.edit.default_gate(t, fallback)
+                });
                 let auto_ctx = Some(piano_view::AutomationPanelsCtx {
                     panels: &mut doc.edit.controller_panels,
                     renderers: &mut self.controller_renderers[idx],
@@ -676,6 +681,7 @@ impl App {
                     &mut feedback,
                     sel_hint,
                     self.audio_settings.quick_delete_mode,
+                    default_gate,
                 );
                 if let Some(t0) = _piano_total_start {
                     yinhe_memtrace::perf_probe::record_piano_total(t0.elapsed());

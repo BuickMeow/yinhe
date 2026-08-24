@@ -40,6 +40,7 @@ pub(crate) fn sel_drag_frame(
     conductor_idx: Option<u16>,
     vertical: bool,
     quick_delete_mode: QuickDeleteMode,
+    default_gate: Option<u32>,
 ) -> SelFrameOut {
     let mut pencil_note_drag: Option<yinhe_types::PencilNoteDrag> = None;
     let mut state = SelDragFrameState::load(ui);
@@ -168,6 +169,7 @@ pub(crate) fn sel_drag_frame(
         quantize,
         ppq,
         bar_line_data,
+        default_gate,
     );
     handle_sel_marquee(
         ui,

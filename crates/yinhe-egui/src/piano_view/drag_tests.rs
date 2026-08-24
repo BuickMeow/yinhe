@@ -148,6 +148,7 @@ fn run_sel_frame(
             None,
             false,
             yinhe_editor_core::audio_settings::QuickDeleteMode::Off,
+            None,
         );
         out = (note_event, previews, pencil_drag);
     })

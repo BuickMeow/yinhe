@@ -46,6 +46,7 @@ pub(crate) fn dispatch(
     active_tool: &Tool,
     quick_delete_mode: QuickDeleteMode,
     feedback: &mut PianoViewFeedback<'_>,
+    default_gate: Option<u32>,
 ) -> InteractionOutput {
     let mut ghost_notes: Vec<(u32, u32, u8, u16)> = Vec::new();
     let mut hidden_notes: HashSet<(u16, u32, u8)> = HashSet::new();
@@ -90,6 +91,7 @@ pub(crate) fn dispatch(
                 conductor_idx,
                 vertical,
                 quick_delete_mode,
+                default_gate,
             );
         ghost_notes = sel_ghosts;
         hidden_notes = sel_hidden.into_iter().collect();
@@ -122,6 +124,7 @@ pub(crate) fn dispatch(
                 track_colors,
                 total_ticks,
                 quick_delete_mode,
+                default_gate,
             );
         ghost_notes = ghost;
         hidden_notes.extend(hidden);

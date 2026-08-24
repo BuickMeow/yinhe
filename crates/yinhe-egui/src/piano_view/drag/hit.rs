@@ -7,7 +7,7 @@ use crate::selection::drag::{
     main_cross_x_y, main_px_to_tick_dir, orient_rect, tick_to_main_px_dir,
 };
 
-/// 双击写音符：write_track 有效且点击位置无音符时创建新音符，长度为一个量化间隔。
+/// 双击写音符：write_track 有效且点击位置无音符时创建新音符，长度优先取该轨 gate 记忆。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn double_click_note(
     midi: Option<&dyn yinhe_types::NoteSource>,
@@ -19,6 +19,7 @@ pub(crate) fn double_click_note(
     quantize: QuantizePreset,
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+    default_gate: Option<u32>,
 ) -> Option<(yinhe_core::NoteEvent, u16)> {
     let track =
         crate::piano_view::pencil::valid_pencil_track(write_track, track_visible, conductor_idx)?;
@@ -38,12 +39,12 @@ pub(crate) fn double_click_note(
         }
     }
     let tick = crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data).max(0.0);
-    let interval = quantize.tick_interval(ppq) as f64;
+    let gate = default_gate.unwrap_or(quantize.tick_interval(ppq)) as f64;
     Some((
         yinhe_core::NoteEvent {
             id: 0,
             start_tick: tick as u32,
-            end_tick: (tick + interval) as u32,
+            end_tick: (tick + gate) as u32,
             key,
             velocity: 100,
         },
@@ -172,6 +173,7 @@ pub(crate) fn handle_double_click_create(
     quantize: QuantizePreset,
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+    default_gate: Option<u32>,
 ) -> Option<(yinhe_core::NoteEvent, u16)> {
     if quick_delete.is_some() {
         return None;
@@ -204,6 +206,7 @@ pub(crate) fn handle_double_click_create(
         quantize,
         ppq,
         bar_line_data,
+        default_gate,
     )?;
     state.preview_reqs.push(crate::piano_view::PreviewReq::Note(
         crate::piano_view::NotePreview {

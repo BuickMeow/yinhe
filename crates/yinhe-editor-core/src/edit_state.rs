@@ -226,6 +226,10 @@ pub struct EditState {
     /// 新建音符默认力度取此值（同轨多音符修改时记时间最晚的），无记录回退 100。
     /// UI 状态，不参与 undo 快照，不持久化。
     pub recent_velocity: Vec<Option<(u32, u8)>>,
+    /// 各音轨最近一次 gate 修改（(start_tick, gate)）。
+    /// 新建音符默认长度取此值（同轨多音符修改时记时间最晚的），无记录回退 `fallback`（通常为量化间隔）。
+    /// UI 状态，不参与 undo 快照，不持久化。
+    pub recent_gate: Vec<Option<(u32, u32)>>,
     /// AR：各音轨自动化 lane 是否展开（按音轨位置，与 track_visible 同语义）。
     pub arr_am_expanded: Vec<bool>,
     /// AR：每条展开的自动化 lane 的视图状态（锚点选框等），
@@ -269,6 +273,7 @@ impl Default for EditState {
             sel_rect: SelRectState::default(),
             arr_sel_rect: Vec::new(),
             recent_velocity: Vec::new(),
+            recent_gate: Vec::new(),
             arr_am_expanded: Vec::new(),
             arr_am_views: HashMap::new(),
             arr_am_selected: HashSet::new(),
@@ -313,6 +318,28 @@ impl EditState {
         let slot = &mut self.recent_velocity[i];
         if slot.is_none_or(|(t, _)| start_tick >= t) {
             *slot = Some((start_tick, velocity));
+        }
+    }
+
+    /// 新建音符的默认长度：该音轨最近一次 gate 修改值，无记录时 `fallback`（调用方通常传量化间隔）。
+    pub fn default_gate(&self, track: u16, fallback: u32) -> u32 {
+        self.recent_gate
+            .get(track as usize)
+            .and_then(|v| *v)
+            .map(|(_, g)| g)
+            .unwrap_or(fallback)
+    }
+
+    /// 记录一次 gate 修改。同一音轨多次修改时只保留 start_tick 最晚的
+    /// （一笔批量修改多个音符 = 记录时间最晚那个音符的长度）。
+    pub fn remember_gate(&mut self, track: u16, start_tick: u32, gate: u32) {
+        let i = track as usize;
+        if self.recent_gate.len() <= i {
+            self.recent_gate.resize(i + 1, None);
+        }
+        let slot = &mut self.recent_gate[i];
+        if slot.is_none_or(|(t, _)| start_tick >= t) {
+            *slot = Some((start_tick, gate));
         }
     }
 
@@ -500,5 +527,38 @@ mod tests {
         state.remember_velocity(0, 100, 70);
         state.remember_velocity(0, 100, 80);
         assert_eq!(state.default_velocity(0), 80);
+    }
+
+    #[test]
+    fn default_gate_falls_back_to_interval() {
+        let state = EditState::default();
+        assert_eq!(state.default_gate(0, 120), 120);
+        assert_eq!(state.default_gate(5, 480), 480);
+    }
+
+    #[test]
+    fn remember_gate_keeps_latest_tick_per_track() {
+        let mut state = EditState::default();
+        state.remember_gate(1, 100, 75);
+        assert_eq!(state.default_gate(1, 120), 75);
+        // 更晚的音符覆盖
+        state.remember_gate(1, 300, 60);
+        assert_eq!(state.default_gate(1, 120), 60);
+        // 更早的音符不覆盖
+        state.remember_gate(1, 50, 90);
+        assert_eq!(state.default_gate(1, 120), 60);
+        // 其他音轨不受影响
+        assert_eq!(state.default_gate(0, 120), 120);
+        state.remember_gate(2, 0, 10);
+        assert_eq!(state.default_gate(2, 120), 10);
+        assert_eq!(state.default_gate(1, 120), 60);
+    }
+
+    #[test]
+    fn remember_gate_same_tick_keeps_latest() {
+        let mut state = EditState::default();
+        state.remember_gate(0, 100, 70);
+        state.remember_gate(0, 100, 80);
+        assert_eq!(state.default_gate(0, 120), 80);
     }
 }

@@ -673,6 +673,13 @@ impl Document {
 
         model.rebuild_dirty();
         self.data.bump_revision();
+        // 记录"最近修改长度"：新音符默认长度跟随最近一次修改（同轨取时间最晚的音符）
+        // 左拉伸时 start_tick 变早，用原 start_tick 做"最晚时间"比较
+        for ((before, _), (after, _)) in moved_before.iter().zip(moved_after.iter()) {
+            let gate = after.end_tick - after.start_tick;
+            self.edit
+                .remember_gate(before.track, before.start_tick, gate);
+        }
 
         if blocked_any {
             Some(UndoAction::Notes(NoteDelta {
@@ -775,6 +782,12 @@ impl Document {
             for t in &targets {
                 self.edit
                     .remember_velocity(t.old.track, t.old.start_tick, t.new.velocity);
+            }
+        } else if field == NoteField::Gate {
+            // 记录"最近修改长度"：新音符默认长度跟随最近一次修改（同轨取时间最晚的音符）。
+            for t in &targets {
+                let gate = t.new.end_tick - t.new.start_tick;
+                self.edit.remember_gate(t.old.track, t.old.start_tick, gate);
             }
         }
 
@@ -1610,6 +1623,61 @@ mod tests {
         );
         // 记录时间最晚（t200）的 60
         assert_eq!(doc.edit.default_velocity(0), 60);
+    }
+
+    #[test]
+    fn apply_note_field_edit_gate_remembers_latest_tick() {
+        let mut doc = make_doc_with_note(); // t100 gate 100
+        doc.add_note(
+            0,
+            yinhe_core::NoteEvent {
+                id: 0,
+                start_tick: 300,
+                end_tick: 500,
+                key: 60,
+                velocity: 90,
+            },
+        ); // t300 gate 200
+        // 选区覆盖两者
+        doc.edit.selected.clear();
+        doc.edit.selected.add_rect_track(100, 501, 60, 60, 0, 0);
+        // 批量改 gate：赋值 240
+        let ops = crate::num_expr::parse_num_expr("240").unwrap();
+        assert!(doc.apply_note_field_edit(NoteField::Gate, &ops).is_some());
+        // 记录时间最晚（t300）的 240，且无记忆时回退 120
+        assert_eq!(doc.edit.default_gate(0, 120), 240);
+        assert_eq!(doc.edit.default_gate(1, 120), 120);
+        // 未命中不覆盖
+        doc.edit.selected.clear();
+        doc.edit.selected.add_rect_track(9999, 10000, 60, 60, 0, 0);
+        let ops2 = crate::num_expr::parse_num_expr("10").unwrap();
+        assert!(doc.apply_note_field_edit(NoteField::Gate, &ops2).is_none());
+        assert_eq!(doc.edit.default_gate(0, 120), 240);
+    }
+
+    #[test]
+    fn resize_selected_notes_remembers_gate() {
+        let mut doc = make_doc_with_note(); // t100~200 gate 100
+        doc.add_note(
+            0,
+            yinhe_core::NoteEvent {
+                id: 0,
+                start_tick: 300,
+                end_tick: 500,
+                key: 60,
+                velocity: 90,
+            },
+        ); // t300~500 gate 200
+        doc.edit.selected.clear();
+        doc.edit.selected.add_rect_track(100, 501, 60, 60, 0, 0);
+        doc.edit.sel_rect.clear();
+        doc.edit.sel_rect.push_rect((100.0, 501.0, 60, 60), false);
+        // 右拉 20 tick：gate 变 120 / 220，记时间最晚的 220
+        assert!(
+            doc.resize_selected_notes(crate::edit_state::ResizeSide::Right, 20)
+                .is_some()
+        );
+        assert_eq!(doc.edit.default_gate(0, 120), 220);
     }
 
     #[test]

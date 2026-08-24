@@ -92,6 +92,7 @@ pub(crate) fn pencil_frame(
     _track_colors: &[[f32; 4]],
     total_ticks: f64,
     quick_delete_mode: QuickDeleteMode,
+    default_gate: Option<u32>,
 ) -> PencilFrameOut {
     let pencil_id = ui.id().with("pencil_drag");
     let mut drag_state: Option<PencilDrag> =
@@ -282,15 +283,21 @@ pub(crate) fn pencil_frame(
     // ── Ghost notes: only when not over an existing note ──
     let mut ghost_notes: Vec<super::drag::GhostNote> = Vec::new();
     let mut hidden_notes: Vec<super::drag::HiddenNote> = Vec::new();
+    // 新建音符默认长度：优先取该轨 gate 记忆，无记忆时回退量化间隔
+    let default_gate_len = default_gate.unwrap_or(quantize.tick_interval(ppq)) as f64;
     if can_write
         && drag_state.is_none()
         && hit_note.is_none()
         && let Some((tick, key)) = preview
     {
-        let interval = quantize.tick_interval(ppq) as f64;
         // Not dragging (drag_state is None due to the outer condition),
         // show preview at hover position
-        ghost_notes.push((tick as u32, (tick + interval) as u32, key, track_idx));
+        ghost_notes.push((
+            tick as u32,
+            (tick + default_gate_len) as u32,
+            key,
+            track_idx,
+        ));
     }
 
     // ── Start drag ──
@@ -369,7 +376,7 @@ pub(crate) fn pencil_frame(
                 }
                 if let Some((tick, key)) = preview {
                     let interval = quantize.tick_interval(ppq) as f64;
-                    let current_end = tick.max(*s_tick + interval);
+                    let current_end = tick.max(*s_tick + default_gate_len);
                     // 向右拖不超过一个量化时，key 跟随鼠标（可上下拖变调），
                     // 像移动音符那样：变 key 播放一次（长度 = 当前 gate）。
                     // 超过一个量化后 key 锁定，继续拖长度。
@@ -402,18 +409,17 @@ pub(crate) fn pencil_frame(
             if pointer.primary_released() {
                 preview_req = Some(super::PreviewReq::Stop);
                 if can_write {
-                    let interval = quantize.tick_interval(ppq) as f64;
                     let end_tick = if let Some((tick, _)) = preview {
-                        let current_end = tick.max(*s_tick + interval);
+                        let current_end = tick.max(*s_tick + default_gate_len);
                         let snapped_end = crate::view_interaction::snap_tick_ceil(
                             current_end,
                             quantize,
                             ppq,
                             bar_line_data,
                         );
-                        snapped_end.max(*s_tick + interval)
+                        snapped_end.max(*s_tick + default_gate_len)
                     } else {
-                        *s_tick + interval
+                        *s_tick + default_gate_len
                     };
                     result = Some(yinhe_core::NoteEvent {
                         id: 0, // 由 Document::add_note 分配
@@ -739,6 +745,7 @@ mod tests {
                 &[],
                 1000.0,
                 yinhe_editor_core::audio_settings::QuickDeleteMode::Off,
+                None,
             );
             out = (r.0, r.4);
         })

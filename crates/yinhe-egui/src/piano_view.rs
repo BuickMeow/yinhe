@@ -91,6 +91,7 @@ pub fn show(
     feedback: &mut PianoViewFeedback<'_>,
     sel_hint: Option<&crate::app::layout::SelHintInfo>,
     quick_delete_mode: QuickDeleteMode,
+    default_gate: Option<u32>,
 ) -> Option<PianoViewEvent> {
     // Sense::hover() — no drag ownership. All drag is handled by dedicated
     // ui.interact calls below, each inside its own push_id scope.
@@ -183,6 +184,7 @@ pub fn show(
         active_tool,
         quick_delete_mode,
         feedback,
+        default_gate,
     );
 
     interaction::update_hover_cursor(

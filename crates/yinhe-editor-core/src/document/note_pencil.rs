@@ -112,6 +112,9 @@ impl Document {
                         model.mark_dirty(*key);
                         model.rebuild_dirty();
                         self.data.bump_revision();
+                        let gate = after.end_tick - after.start_tick;
+                        self.edit
+                            .remember_gate(before.track, before.start_tick, gate);
                         return Some(UndoAction::Notes(NoteDelta {
                             before: vec![(before, *key)],
                             after: vec![(after, *key)],
@@ -157,6 +160,11 @@ impl Document {
                     model.mark_dirty(*key);
                     model.rebuild_dirty();
                     self.data.bump_revision();
+                    let gate = after.end_tick - after.start_tick;
+                    // 左拉伸后 start_tick 变早，用原 start_tick 做“最晚时间”比较，避免越拉越早导致不记忆
+                    self.edit
+                        .remember_gate(before.track, before.start_tick, gate);
+                    self.edit.remember_gate(after.track, after.start_tick, gate);
                     return Some(UndoAction::Notes(NoteDelta {
                         before: vec![(before, *key)],
                         after: vec![(after, *key)],
@@ -563,5 +571,32 @@ mod tests {
         }];
         assert!(doc.set_notes_velocity(&edits).is_none());
         assert_eq!(doc.edit.default_velocity(0), 60);
+    }
+
+    #[test]
+    fn pencil_drag_resize_remembers_gate() {
+        let mut doc = make_doc_with_note(); // t100~200 gate100
+        // 右拉：200→400 gate 300
+        let action = doc
+            .pencil_drag_note(&PencilNoteDrag::ResizeRight {
+                track: 0,
+                start_tick: 100,
+                key: 60,
+                new_end_tick: 400,
+            })
+            .expect("应产生 UndoAction");
+        assert!(matches!(action, UndoAction::Notes(_)));
+        assert_eq!(doc.edit.default_gate(0, 120), 300);
+        // 左拉：start 100→50 gate 350（400-50）
+        let action = doc
+            .pencil_drag_note(&PencilNoteDrag::ResizeLeft {
+                track: 0,
+                start_tick: 100,
+                key: 60,
+                new_start_tick: 50,
+            })
+            .expect("应产生 UndoAction");
+        assert!(matches!(action, UndoAction::Notes(_)));
+        assert_eq!(doc.edit.default_gate(0, 120), 350);
     }
 }
