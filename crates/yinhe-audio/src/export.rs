@@ -317,6 +317,8 @@ pub fn export_wav_gpu(
     progress: impl Fn(f32, &str),
     device: Arc<yinhe_synth::wgpu::Device>,
     queue: Arc<yinhe_synth::wgpu::Queue>,
+    export_progress: Option<Arc<Mutex<ExportProgress>>>,
+    cancel: Option<Arc<AtomicBool>>,
 ) -> Result<(), ExportError> {
     let t_start = Instant::now();
     let layout = crate::spawn::channels_for_model(&model);
@@ -463,6 +465,11 @@ pub fn export_wav_gpu(
         return Err(ExportError::Render("歌曲时长为零，没有可导出的内容".into()));
     }
     let audio_secs = main_duration as f64 / sample_rate as f64;
+    if let Some(ref ep) = export_progress
+        && let Ok(mut p) = ep.lock()
+    {
+        p.total_duration_secs = audio_secs;
+    }
 
     // ── 5. 设置 WAV 写入器 ──
     progress(0.05, "准备写入 WAV...");
@@ -486,8 +493,13 @@ pub fn export_wav_gpu(
     let _t_render = Instant::now();
     let mut chunk = vec![0.0f32; GPU_RENDER_CHUNK_FRAMES * STEREO_CHANNELS];
     let mut rendered: u64 = 0;
+    let mut prev_rendered_secs: f64 = 0.0;
+    let mut prev_instant = Instant::now();
 
     while rendered < main_duration {
+        if cancel.as_ref().is_some_and(|c| c.load(Ordering::Relaxed)) {
+            return Err(ExportError::Cancelled);
+        }
         let frames = ((main_duration - rendered) as usize).min(GPU_RENDER_CHUNK_FRAMES);
         let buf = &mut chunk[..frames * STEREO_CHANNELS];
         synth.render(buf);
@@ -499,6 +511,27 @@ pub fn export_wav_gpu(
         if rendered % (GPU_RENDER_CHUNK_FRAMES as u64 * 50) < GPU_RENDER_CHUNK_FRAMES as u64 {
             progress(pct, &format!("GPU 渲染中 {:.0}%", pct * 100.0));
         }
+        if let Some(ref ep) = export_progress
+            && rendered % (GPU_RENDER_CHUNK_FRAMES as u64 * 50) < GPU_RENDER_CHUNK_FRAMES as u64
+            && let Ok(mut p) = ep.lock()
+        {
+            p.rendered_secs = rendered as f64 / sample_rate as f64;
+            p.voice_count = synth.voice_count() as u64;
+            let now = Instant::now();
+            let dt_wall = prev_instant.elapsed().as_secs_f64();
+            let dt_rendered = p.rendered_secs - prev_rendered_secs;
+            if dt_wall > 0.0 {
+                p.render_speed = dt_rendered / dt_wall;
+            }
+            if let Some(start) = p.started_at {
+                let elapsed = start.elapsed().as_secs_f64();
+                if elapsed > 0.0 {
+                    p.overall_speed = p.rendered_secs / elapsed;
+                }
+            }
+            prev_rendered_secs = p.rendered_secs;
+            prev_instant = now;
+        }
     }
 
     // ── 7. 余韵衰减（让 release 尾音自然消失）──
@@ -508,6 +541,9 @@ pub fn export_wav_gpu(
     let mut tail_rendered: u64 = 0;
 
     loop {
+        if cancel.as_ref().is_some_and(|c| c.load(Ordering::Relaxed)) {
+            return Err(ExportError::Cancelled);
+        }
         let frames = GPU_RENDER_CHUNK_FRAMES.min((max_tail_samples - tail_rendered) as usize);
         if frames == 0 {
             break;
@@ -520,6 +556,27 @@ pub fn export_wav_gpu(
         let tail_pct = tail_rendered as f32 / max_tail_samples as f32;
         let overall = 0.96 + tail_pct * 0.03;
         progress(overall, "余韵衰减中...");
+
+        if let Some(ref ep) = export_progress
+            && let Ok(mut p) = ep.lock()
+        {
+            p.rendered_secs = (rendered + tail_rendered) as f64 / sample_rate as f64;
+            p.voice_count = synth.voice_count() as u64;
+            let now = Instant::now();
+            let dt_wall = prev_instant.elapsed().as_secs_f64();
+            let dt_rendered = p.rendered_secs - prev_rendered_secs;
+            if dt_wall > 0.0 {
+                p.render_speed = dt_rendered / dt_wall;
+            }
+            if let Some(start) = p.started_at {
+                let elapsed = start.elapsed().as_secs_f64();
+                if elapsed > 0.0 {
+                    p.overall_speed = p.rendered_secs / elapsed;
+                }
+            }
+            prev_rendered_secs = p.rendered_secs;
+            prev_instant = now;
+        }
 
         // 所有 voice（含 release）都已结束 → 自然完成
         if synth.voice_count() == 0 {

@@ -672,6 +672,11 @@ impl App {
             None => return,
         };
 
+        // 真实计时起点：点击「开始导出」按钮的瞬间（包含后续文件对话框等待），
+        // 避免之前 reset 在文件对话框之后导致 elapsed 不包含对话框等待、看起来
+        // 像“点击之前就已经开始渲染”。
+        let button_time = std::time::Instant::now();
+
         let doc = &self.documents[idx];
         let default_name = format!("{}.wav", doc.file_name);
 
@@ -712,10 +717,11 @@ impl App {
         let use_gpu_synth = self.audio_settings.use_gpu_synth;
         cancel_flag.store(false, std::sync::atomic::Ordering::Relaxed);
 
-        // Reset progress state
+        // Reset progress state（计时起点为按钮点击时刻，保证壁钟时间真实）
         {
             let mut p = export_progress.lock().unwrap();
             p.reset();
+            p.started_at = Some(button_time);
         }
 
         let (tx, rx) = mpsc::channel();
@@ -757,6 +763,8 @@ impl App {
                         },
                         gpu_device,
                         gpu_queue,
+                        Some(export_progress.clone()),
+                        Some(cancel_flag.clone()),
                     )
                 } else {
                     eprintln!("[export] GPU selected but no SFZ path, fallback to CPU.");
