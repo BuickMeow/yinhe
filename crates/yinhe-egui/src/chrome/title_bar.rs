@@ -31,6 +31,8 @@ struct TitlePress {
     /// 按下的标签索引；不在任何标签上时为 None（空白/窗口按钮区域）。
     idx: Option<usize>,
     pos: egui::Pos2,
+    /// 空白区按下且已发送 StartDrag（每按只发一次，防系统拖拽中重发）。
+    win_drag_sent: bool,
 }
 
 /// 给颜色乘一个透明度系数（拖拽中的半透明标签/ghost 用）。
@@ -161,6 +163,22 @@ pub(crate) fn show(
                 ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
             let any_released = ui.input(|i| i.pointer.any_released());
 
+            // 点击/拖拽分界线（与 egui click 判定同阈值，transport bar 同款）
+            let max_click_dist = egui::InputOptions::default().max_click_dist;
+
+            // 空白区（标签右侧、窗口按钮左侧）：窗口拖动 + 双击最大化区域
+            let blank_left = (bar_rect.min.x + left_padding - *tab_scroll_offset
+                + tmp_docs.len() as f32 * (tab_w + tab_gap))
+                .max(bar_rect.min.x + left_padding);
+            let blank_right = if cfg!(target_os = "macos") {
+                bar_rect.max.x
+            } else {
+                bar_rect.max.x - 138.0
+            };
+            let in_blank_area = |pos: egui::Pos2| {
+                pos.x >= blank_left && pos.x <= blank_right && bar_rect.y_range().contains(pos.y)
+            };
+
             // 记录按下起点（标题栏任意位置；标签上额外记下索引）
             if drag.is_none()
                 && button_pressed
@@ -168,14 +186,18 @@ pub(crate) fn show(
                 && bar_rect.contains(pos)
             {
                 let idx = tab_rects.iter().position(|r| r.contains(pos));
-                press = Some(TitlePress { idx, pos });
+                press = Some(TitlePress {
+                    idx,
+                    pos,
+                    win_drag_sent: false,
+                });
             }
 
             // 标签上按下后移动超过阈值则进入拖拽（关闭按钮区域不触发）
             if drag.is_none()
                 && let (Some(p), Some(cur)) = (press.clone(), pointer_pos)
                 && pointer_down
-                && (cur - p.pos).length() > 6.0
+                && (cur - p.pos).length() > max_click_dist
                 && let Some(from) = p.idx
             {
                 let press_on_close = close_rects.get(from).is_some_and(|c| c.contains(p.pos));
@@ -193,6 +215,22 @@ pub(crate) fn show(
                     press = None;
                     ui.ctx().request_repaint();
                 }
+            }
+
+            // 空白区按下后移动超过点击阈值 → 启动系统窗口拖动（每按只发一次）。
+            // 手动指针追踪，不用 ui.interact(Sense::drag)：interact 的 hit-test
+            // 兜底（find_closest / interact_radius）会在标签附近把拖拽归属抢走，
+            // 导致在标签上按下拖动误移动窗口（transport_bar 同款问题的同款解法）。
+            if let Some(p) = press.as_mut()
+                && p.idx.is_none()
+                && !p.win_drag_sent
+                && pointer_down
+                && in_blank_area(p.pos)
+                && let Some(cur) = pointer_pos
+                && (cur - p.pos).length() >= max_click_dist
+            {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                p.win_drag_sent = true;
             }
 
             // 拖拽中：更新插入位置、detach 标记与自动滚动
@@ -590,50 +628,13 @@ pub(crate) fn show(
                 paint_window_buttons(ui, &win_btn_rects, maximized);
             }
 
-            // ── Register interact for each tab to prevent drag from claiming clicks on tabs ──
-            // 拖拽中不注册，避免干扰
-            if drag.is_none() {
-                for (i, tr) in tab_rects.iter().enumerate() {
-                    // 仅对可见标签注册
-                    if tr.max.x < bar_rect.min.x + left_padding || tr.min.x > bar_rect.max.x {
-                        continue;
-                    }
-                    ui.interact(*tr, ui.id().with("tab_block").with(i), egui::Sense::click());
-                }
-            }
-
-            // ── Window drag region (after the tabs, excluding window buttons) ──
-            let drag_right = if cfg!(target_os = "macos") {
-                bar_rect.max.x
-            } else {
-                bar_rect.max.x - 138.0
-            };
-            // 重新计算 tab 区域最右端（考虑当前滚动）
-            let cur_tab_x = bar_rect.min.x + left_padding - *tab_scroll_offset
-                + tmp_docs.len() as f32 * (tab_w + tab_gap);
-            let drag_rect_left = cur_tab_x.max(bar_rect.min.x + left_padding);
-            let drag_rect = egui::Rect::from_min_max(
-                egui::pos2(drag_rect_left, bar_rect.min.y),
-                egui::pos2(drag_right, bar_rect.max.y),
-            );
-
-            // 标签拖拽中禁用窗口拖动（空白区的窗口拖动走下方 drag_rect，
-            // 与标签矩形不重叠，按下待定状态不影响它）
-            let can_window_drag = drag.is_none();
-            if can_window_drag {
-                let drag_resp = ui.interact(drag_rect, ui.next_auto_id(), egui::Sense::drag());
-                if drag_resp.dragged_by(egui::PointerButton::Primary) {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
-                }
-            }
-
-            // Double-click title bar drag area to toggle maximize/restore
+            // Double-click blank area to toggle maximize/restore
             const DOUBLE_CLICK_MS: f64 = 400.0;
             let dbl_id = ui.id().with("title_bar_dbl_click");
-            if can_window_drag
+            if drag.is_none()
                 && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary))
                 && let Some(pos) = pointer_pos
-                && drag_rect.contains(pos)
+                && in_blank_area(pos)
             {
                 let now = ui.input(|i| i.time);
                 let last_click: f64 = ui.data_mut(|d| d.get_persisted(dbl_id)).unwrap_or(0.0);
@@ -766,4 +767,154 @@ fn paint_window_buttons(
         ],
         (1.5, min_color),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui_kittest::Harness;
+
+    /// 测试状态：active_doc / 滚动 / 最近一次 title bar 动作。
+    #[derive(Default)]
+    struct TbState {
+        action: Option<&'static str>,
+        active_doc: Option<usize>,
+        scroll: f32,
+    }
+
+    /// macOS left_padding=80、tab_w=120 → 首个标签 rect [80..200]×[4..28]。
+    fn make_harness<'a>(documents: &'a [Document]) -> Harness<'a, TbState> {
+        let mut first_frame = true;
+        Harness::builder()
+            .with_size(egui::vec2(1200.0, 32.0))
+            .build_ui_state(
+                move |ui, st| {
+                    if std::mem::take(&mut first_frame) {
+                        ui.ctx().add_font(egui_material_icons::font_insert());
+                        return;
+                    }
+                    let mut hint = None;
+                    st.action =
+                        match show(ui, documents, &mut st.active_doc, &mut st.scroll, &mut hint) {
+                            Some(TitleBarAction::CloseDocument(_)) => Some("close"),
+                            Some(TitleBarAction::ReorderTab { .. }) => Some("reorder"),
+                            Some(TitleBarAction::DetachTab(_)) => Some("detach"),
+                            None => None,
+                        };
+                },
+                TbState::default(),
+            )
+    }
+
+    fn event_at(h: &mut Harness<'_, TbState>, time: f64, event: egui::Event) {
+        h.input_mut().time = Some(time);
+        h.event(event);
+        h.step();
+    }
+
+    fn press_at(h: &mut Harness<'_, TbState>, pos: egui::Pos2, time: f64) {
+        event_at(h, time, egui::Event::PointerMoved(pos));
+        event_at(
+            h,
+            time + 0.001,
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::default(),
+            },
+        );
+    }
+
+    fn release_at(h: &mut Harness<'_, TbState>, pos: egui::Pos2, time: f64) {
+        event_at(
+            h,
+            time,
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::default(),
+            },
+        );
+    }
+
+    fn has_command(h: &Harness<'_, TbState>, cmd: &egui::ViewportCommand) -> bool {
+        h.output()
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .is_some_and(|o| o.commands.iter().any(|c| c == cmd))
+    }
+
+    /// 回归测试：标签上按住并拖动不得移动窗口（也不得误触排序/detach）。
+    #[test]
+    fn drag_on_tab_does_not_start_window_drag() {
+        let docs = vec![yinhe_test_helpers::make_test_document()];
+        let mut h = make_harness(&docs);
+        let start = egui::pos2(140.0, 16.0); // 第一个标签中心
+        press_at(&mut h, start, 2.0);
+        for i in 1..=5 {
+            event_at(
+                &mut h,
+                2.0 + i as f64 * 0.05,
+                egui::Event::PointerMoved(start + egui::vec2(10.0 * i as f32, 3.0 * i as f32)),
+            );
+            assert!(
+                !has_command(&h, &egui::ViewportCommand::StartDrag),
+                "标签上拖动不应发送 StartDrag（帧 {i}）"
+            );
+        }
+        release_at(&mut h, start + egui::vec2(50.0, 15.0), 2.4);
+    }
+
+    /// 空白区按住拖动仍应启动窗口拖动。
+    #[test]
+    fn drag_blank_area_starts_window_drag() {
+        let docs = vec![yinhe_test_helpers::make_test_document()];
+        let mut h = make_harness(&docs);
+        let start = egui::pos2(600.0, 16.0);
+        press_at(&mut h, start, 2.0);
+        event_at(
+            &mut h,
+            2.1,
+            egui::Event::PointerMoved(start + egui::vec2(10.0, 0.0)),
+        );
+        assert!(
+            has_command(&h, &egui::ViewportCommand::StartDrag),
+            "空白区拖动应发送 StartDrag"
+        );
+        release_at(&mut h, start + egui::vec2(10.0, 0.0), 2.15);
+    }
+
+    /// 单击标签切换活跃文档；拖拽阈值内的小幅移动不产生排序动作。
+    #[test]
+    fn click_tab_switches_active_doc() {
+        let docs = vec![
+            yinhe_test_helpers::make_test_document(),
+            yinhe_test_helpers::make_test_document(),
+        ];
+        let mut h = make_harness(&docs);
+        h.state_mut().active_doc = Some(0);
+        let start = egui::pos2(262.0, 16.0); // 第二个标签中心（80+122+60）
+        press_at(&mut h, start, 2.0);
+        release_at(&mut h, start, 2.05);
+        assert_eq!(h.state().active_doc, Some(1), "单击第二个标签应切换活跃");
+        assert_eq!(h.state().action, None);
+    }
+
+    /// 点击关闭按钮应返回 CloseDocument 动作。
+    #[test]
+    fn click_close_button_emits_close_action() {
+        let docs = vec![yinhe_test_helpers::make_test_document()];
+        let mut h = make_harness(&docs);
+        // 关闭按钮在标签右缘内 20px：rect [180..200]×[4..28]
+        let start = egui::pos2(190.0, 16.0);
+        press_at(&mut h, start, 2.0);
+        release_at(&mut h, start, 2.05);
+        assert_eq!(
+            h.state().action,
+            Some("close"),
+            "点关闭按钮应触发 CloseDocument"
+        );
+    }
 }
