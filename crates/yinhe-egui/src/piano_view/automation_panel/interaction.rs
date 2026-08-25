@@ -38,6 +38,7 @@ pub(crate) fn handle_automation_interaction(
     track_colors: &[[f32; 4]],
     info_content: &mut Option<InfoContent>,
     right_tab: &mut Option<RightTab>,
+    suppress_blank_marquee: bool,
 ) -> (
     Vec<yinhe_types::AutomationEdit>,
     Option<AutomationGhost>,
@@ -582,14 +583,20 @@ pub(crate) fn handle_automation_interaction(
                         );
                     });
                 } else if let Some((p, _tick, _value)) = mouse_info {
-                    // 不在选框内 → 开始框选（3px 阈值在拖拽中判断）
-                    ui.ctx().data_mut(|d| {
-                        d.insert_temp(drag_id, AutoDrag::MarqueeSelect { start_pos: p });
-                    });
-                    // 非加选模式：清空共享音符选区，触发三视图选框互斥
-                    // （与 AR/PR 在 press 时清空 selected 的行为一致）。
-                    if !cmd && !shift {
-                        sel_op = Some(SelOp::ClearNoteSelection);
+                    // AR conductor Tempo 主行空白处不启动锚点框选，交给外层 sel_drag
+                    // 处理光标跳转/音轨选中（保持可选中、不可写音符）。
+                    if suppress_blank_marquee {
+                        // 不做任何处理
+                    } else {
+                        // 不在选框内 → 开始框选（3px 阈值在拖拽中判断）
+                        ui.ctx().data_mut(|d| {
+                            d.insert_temp(drag_id, AutoDrag::MarqueeSelect { start_pos: p });
+                        });
+                        // 非加选模式：清空共享音符选区，触发三视图选框互斥
+                        // （与 AR/PR 在 press 时清空 selected 的行为一致）。
+                        if !cmd && !shift {
+                            sel_op = Some(SelOp::ClearNoteSelection);
+                        }
                     }
                 }
             }
@@ -1235,6 +1242,7 @@ mod tests {
                 &[[0.8, 0.8, 0.8, 1.0]],
                 &mut info,
                 &mut right_tab,
+                false,
             )
             .0;
         })
@@ -1291,6 +1299,7 @@ mod tests {
                 &[[0.8, 0.8, 0.8, 1.0]],
                 &mut info,
                 &mut right_tab,
+                false,
             );
             edits = e;
             marquee = m;

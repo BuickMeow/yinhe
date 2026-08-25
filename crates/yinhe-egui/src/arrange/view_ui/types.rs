@@ -116,18 +116,17 @@ pub(crate) fn is_on_am_row(
     content_rect: egui::Rect,
     view: &ArrangementView,
     row_layout: &ArRowLayout,
-    conductor_track_idx: Option<u16>,
+    _conductor_track_idx: Option<u16>,
 ) -> bool {
     hover_pos.is_some_and(|pos| {
         hit_rect.contains(pos)
-            && match row_layout.hit_at_music_y(
-                pos.y - content_rect.min.y + view.base.scroll_y,
-                view.lane_height(),
-            ) {
-                Some(ArRow::Automation(..)) => true,
-                Some(ArRow::Track(t)) => conductor_track_idx == Some(t as u16),
-                None => false,
-            }
+            && matches!(
+                row_layout.hit_at_music_y(
+                    pos.y - content_rect.min.y + view.base.scroll_y,
+                    view.lane_height(),
+                ),
+                Some(ArRow::Automation(..))
+            )
     })
 }
 

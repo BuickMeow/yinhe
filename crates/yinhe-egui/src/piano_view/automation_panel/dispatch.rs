@@ -90,6 +90,7 @@ pub(crate) fn dispatch_edit_interaction(
                     track_colors,
                     info_content,
                     right_tab,
+                    false,
                 );
             out.automation_edits = panel_edits;
             out.ghost = ghost;
@@ -115,6 +116,7 @@ pub(crate) fn dispatch_edit_interaction(
                     track_colors,
                     info_content,
                     right_tab,
+                    false,
                 );
             out.automation_edits = panel_edits;
             out.ghost = ghost;

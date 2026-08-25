@@ -186,6 +186,8 @@ pub(crate) fn interact_all(
         lview.show_velocity = false;
 
         let id_base = ui.id().with(("arr_am_lane", r.track, r.sub));
+        // AR conductor 主行 Tempo 空白处不产生锚点框选（交给 sel_drag 选中/跳转）
+        let suppress_blank = r.sub.is_none();
         let (edits, ghost, drag_info, hover_info, marquee, sel_op) =
             interaction::handle_automation_interaction(
                 ui,
@@ -200,6 +202,7 @@ pub(crate) fn interact_all(
                 io.track_colors,
                 io.info_content,
                 io.right_tab,
+                suppress_blank,
             );
         io.edits.extend(edits);
 
