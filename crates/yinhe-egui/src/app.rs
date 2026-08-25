@@ -1,5 +1,7 @@
 use std::sync::mpsc;
 
+use rust_i18n::t;
+
 pub(crate) mod actions;
 pub(crate) mod audio;
 pub(crate) mod audio_state;
@@ -105,7 +107,6 @@ pub struct App {
     pub(crate) track_selection_anchor: Option<u16>,
 
     // ── Manual click tracking for title bar tabs ──
-    pub(crate) title_bar_press_pos: Option<egui::Pos2>,
     /// Horizontal scroll offset for title bar tabs (pixels).
     pub(crate) tab_scroll_offset: f32,
     /// macOS：播放中是否已阻止 App Nap（状态变化时才调用平台 API）。
@@ -363,7 +364,6 @@ impl App {
 
             active_tool: crate::widgets::tools_panel::Tool::Select,
 
-            title_bar_press_pos: None,
             tab_scroll_offset: 0.0,
             app_nap_active: false,
 
@@ -470,55 +470,9 @@ impl App {
         if index >= self.documents.len() {
             return;
         }
-        let was_active = self.active_doc == Some(index);
-        // 音频绑定本文档时先 teardown：渲染线程退回的 insert 处理器需要
-        // 交还本文档机架 deactivate（teardown_audio 内部完成回收），
-        // 之后才移除机架与文档。
-        if self.audio_state.active_doc == Some(index) {
-            self.teardown_audio();
-        }
-        if index < self.mixer_racks.len() {
-            self.mixer_racks.remove(index);
-        }
-        if index < self.instrument_racks.len() {
-            self.instrument_racks.remove(index);
-        }
-        self.documents.remove(index);
-        if index < self.controller_renderers.len() {
-            self.controller_renderers.remove(index);
-        }
-        if self.documents.is_empty() {
-            self.active_doc = None;
-        } else if let Some(active) = self.active_doc {
-            if index < active {
-                self.active_doc = Some(active - 1);
-            } else if index == active {
-                self.active_doc = Some(active.min(self.documents.len() - 1));
-            }
-        }
-
-        // 同步 audio_state：音频绑定的文档已在上方 teardown，这里只修正索引
-        if let Some(audio_idx) = self.audio_state.active_doc
-            && audio_idx > index
-        {
-            self.audio_state.active_doc = Some(audio_idx - 1);
-        }
-
-        // 关闭的是活跃工程时，浮动面板内容失效，一并关闭。
-        if was_active {
-            self.float_panel = None;
-        }
-
-        // 归还 jemalloc arena 中已释放的内存给 OS，防止 RSS 不下降
-        yinhe_memtrace::purge_free_pages();
-
-        // 关闭的是活跃工程时，全局 GPU cull buffer 还残留旧工程音符数据，
-        // 必须清空 + 重置 cull 跟踪键，否则下一个活跃工程首帧会走增量路径
-        // 跳过 upload，渲染出旧工程音符（多 tab 切换的同根问题在 main_loop
-        // 的 document-switch 检测里统一处理）。
-        if was_active {
-            self.invalidate_cull_state();
-        }
+        // 移除 + 索引修正 + teardown/purge/invalidate 全在 take_document 内
+        // （与拖出新窗口共用，见 take_document 文档）。
+        let _ = self.take_document(index);
     }
 
     /// 清空 pianoroll / arr_renderer 的 GPU cull buffer 并重置 cull 跟踪键，
@@ -571,5 +525,212 @@ impl App {
             .push(crate::mix::InstrumentRack::default());
         self.active_doc = Some(idx);
         self.teardown_audio();
+    }
+
+    /// 标题栏标签拖动排序：把 from 位置的工程移动到剩余列表的 insert_at 位置。
+    pub(crate) fn reorder_tab(&mut self, from: usize, insert_at: usize) {
+        let len = self.documents.len();
+        if from >= len {
+            return;
+        }
+        let order = crate::widgets::reorder::plan_order(len, &[from], insert_at);
+        let cur: Vec<usize> = (0..len).collect();
+        if order == cur {
+            return;
+        }
+        let old_active = self.active_doc;
+        let old_audio = self.audio_state.active_doc;
+        crate::widgets::reorder::apply_reorder_noclone(&mut self.documents, &[from], insert_at);
+        crate::widgets::reorder::apply_reorder_noclone(&mut self.mixer_racks, &[from], insert_at);
+        crate::widgets::reorder::apply_reorder_noclone(
+            &mut self.instrument_racks,
+            &[from],
+            insert_at,
+        );
+        while self.controller_renderers.len() < len {
+            self.controller_renderers.push(Vec::new());
+        }
+        if !self.controller_renderers.is_empty() {
+            crate::widgets::reorder::apply_reorder_noclone(
+                &mut self.controller_renderers,
+                &[from],
+                insert_at,
+            );
+        }
+        if let Some(active) = old_active {
+            self.active_doc = order.iter().position(|&i| i == active);
+        }
+        if let Some(a) = old_audio {
+            self.audio_state.active_doc = order.iter().position(|&i| i == a);
+        }
+        // 只是索引重排，文档内容未变：对齐 prev 避免下一帧误触发切换检测
+        self.prev_active_doc = self.active_doc;
+    }
+
+    /// 移除指定索引的文档及平行数组，修正 active/audio 索引。
+    /// 关闭标签与拖出新窗口共用；返回被移除的三元组（关闭场景直接丢弃）。
+    /// 绑定音频的文档在内部先 teardown。
+    fn take_document(
+        &mut self,
+        index: usize,
+    ) -> (Document, crate::mix::MixerRack, crate::mix::InstrumentRack) {
+        let was_active = self.active_doc == Some(index);
+        if self.audio_state.active_doc == Some(index) {
+            self.teardown_audio();
+        }
+        let doc = self.documents.remove(index);
+        let mixer_rack = if index < self.mixer_racks.len() {
+            self.mixer_racks.remove(index)
+        } else {
+            crate::mix::MixerRack::default()
+        };
+        let instrument_rack = if index < self.instrument_racks.len() {
+            self.instrument_racks.remove(index)
+        } else {
+            crate::mix::InstrumentRack::default()
+        };
+        if index < self.controller_renderers.len() {
+            self.controller_renderers.remove(index);
+        }
+        if let Some(active) = self.active_doc {
+            if index < active {
+                self.active_doc = Some(active - 1);
+            } else if index == active {
+                self.active_doc = if self.documents.is_empty() {
+                    None
+                } else {
+                    Some(active.min(self.documents.len() - 1))
+                };
+            }
+        }
+        if let Some(audio_idx) = self.audio_state.active_doc
+            && audio_idx > index
+        {
+            self.audio_state.active_doc = Some(audio_idx - 1);
+        }
+        if was_active {
+            // 活跃工程移除后浮动面板内容失效，一并关闭
+            self.float_panel = None;
+            self.invalidate_cull_state();
+            // 强制下一帧走完整文档切换流程（prev 选框计数对齐、view dirty 标记）
+            self.prev_active_doc = None;
+        }
+        yinhe_memtrace::purge_free_pages();
+        (doc, mixer_rack, instrument_rack)
+    }
+
+    /// 把指定标签的工程拖拽到全新 yinhe 窗口（新进程）。
+    /// 采用“临时 .yin + 新进程打开”方案，多窗口完全隔离，崩溃互不影响；
+    /// 新进程把 temp 路径识别为未保存工程（见 poll.rs），Cmd+S 会弹另存为。
+    pub(crate) fn detach_tab_to_new_window(&mut self, idx: usize) {
+        if idx >= self.documents.len() {
+            return;
+        }
+        let orig_active = self.active_doc;
+        let orig_audio = self.audio_state.active_doc;
+        let (mut doc, mut mixer_rack, mut instr_rack) = self.take_document(idx);
+
+        // 失败回滚：插回原位并还原索引（take 只改了这几个字段）
+        macro_rules! rollback {
+            () => {{
+                let at = idx.min(self.documents.len());
+                self.documents.insert(at, doc);
+                self.mixer_racks
+                    .insert(at.min(self.mixer_racks.len()), mixer_rack);
+                self.instrument_racks
+                    .insert(at.min(self.instrument_racks.len()), instr_rack);
+                self.active_doc = orig_active;
+                self.audio_state.active_doc = orig_audio;
+            }};
+        }
+
+        // 空白 Untitled 直接开新进程，不落盘
+        let is_empty_untitled = doc.file_path.is_none()
+            && doc.data.model.note_count == 0
+            && !doc.history.is_dirty()
+            && !doc.mixer_dirty;
+        if is_empty_untitled {
+            match std::env::current_exe()
+                .map_err(|e| e.to_string())
+                .and_then(|exe| {
+                    std::process::Command::new(exe)
+                        .spawn()
+                        .map_err(|e| e.to_string())
+                }) {
+                Ok(_) => return,
+                Err(e) => {
+                    tracing::error!("Failed to spawn new window: {}", e);
+                    self.load_error = Some(t!("title_bar.detach_spawn_failed", e = e).to_string());
+                    rollback!();
+                    return;
+                }
+            }
+        }
+
+        // 同步保存所需状态（与 save_project_async 一致）
+        doc.sync_overrides_to_model();
+        doc.data.sync_project_file();
+        doc.data.sync_mapping_file();
+        doc.data.project_file.soundfont_project_mode =
+            !self.audio_settings.global_sf_config.global_enabled;
+        doc.data.project_file.soundfont_overrides = doc
+            .edit
+            .project_sf
+            .overrides
+            .iter()
+            .map(|(port, entries)| yinhe_yin::SfPortOverride {
+                port: *port,
+                entries: entries
+                    .iter()
+                    .map(|e| yinhe_yin::SfEntryJson {
+                        path: e.path.clone(),
+                        name: e.name.clone(),
+                        enabled: e.enabled,
+                    })
+                    .collect(),
+            })
+            .collect();
+        mixer_rack.sync_states_to(&mut doc.mixer);
+        instr_rack.sync_states_to(&mut doc.mixer);
+        let tmp_path = std::env::temp_dir().join(format!(
+            "yinhe-detached-{}-{}.yin",
+            doc.file_name,
+            uuid::Uuid::new_v4()
+        ));
+        let save_res = yinhe_yin::save_yin_with_files(
+            &doc.data.model,
+            &tmp_path,
+            &doc.data.project_file,
+            &doc.data.mapping_file,
+            Some(&doc.mixer),
+        );
+        if let Err(e) = save_res {
+            tracing::error!("Failed to save detached document to temp: {}", e);
+            self.load_error =
+                Some(t!("title_bar.detach_save_failed", e = e.to_string()).to_string());
+            rollback!();
+            return;
+        }
+
+        let spawn_res = std::env::current_exe()
+            .map_err(|e| e.to_string())
+            .and_then(|exe| {
+                std::process::Command::new(exe)
+                    .arg(&tmp_path)
+                    .spawn()
+                    .map_err(|e| e.to_string())
+            });
+        match spawn_res {
+            Ok(_) => {
+                tracing::info!("Detached tab {} to new window: {}", idx, tmp_path.display());
+            }
+            Err(e) => {
+                tracing::error!("Failed to spawn new window: {}", e);
+                self.load_error = Some(t!("title_bar.detach_spawn_failed", e = e).to_string());
+                rollback!();
+                // temp 已无用
+                let _ = std::fs::remove_file(&tmp_path);
+            }
+        }
     }
 }

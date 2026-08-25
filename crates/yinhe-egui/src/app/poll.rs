@@ -102,7 +102,13 @@ impl App {
                 )
                 .ok()
                 .map(|mut d| {
-                    d.file_path = Some(path.clone());
+                    // 拖出新窗口产生的 temp 工程：不绑定 file_path，视为未保存
+                    // （Cmd+S 弹另存为、关窗弹确认），避免用户把编辑静默写进 /tmp。
+                    if is_detached_temp_path(&path) {
+                        d.file_path = None;
+                    } else {
+                        d.file_path = Some(path.clone());
+                    }
                     d.mark_loaded(); // Loaded from file, not a fresh empty doc
                     d.edit.allow_overlapping_notes = self.audio_settings.allow_overlapping_notes;
                     d.edit.overlap_blocked_behavior = self.audio_settings.overlap_blocked_behavior;
@@ -143,7 +149,9 @@ impl App {
                     self.teardown_audio();
                     self.invalidate_cull_state();
                     // 打开成功 → 记录到「最近修改的文件」
-                    if self.audio_settings.push_recent_file(&path) {
+                    // 拖出 temp 不进「最近打开」（路径在 /tmp 下，重开无意义）
+                    if !is_detached_temp_path(&path) && self.audio_settings.push_recent_file(&path)
+                    {
                         self.audio_settings.save();
                     }
                 } else {
@@ -228,4 +236,13 @@ impl App {
     pub(crate) fn refresh_system_stats(&mut self) {
         self.sys_monitor.refresh_if_needed();
     }
+}
+
+/// 判断路径是否为「拖出新窗口」产生的 temp 工程
+/// （命名约定见 `App::detach_tab_to_new_window`；uuid 后缀保证不会撞名）。
+fn is_detached_temp_path(path: &str) -> bool {
+    std::path::Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.starts_with("yinhe-detached-") && n.ends_with(".yin"))
 }

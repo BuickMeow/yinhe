@@ -26,6 +26,21 @@ impl DragReorder {
         self.insert_idx = insert;
     }
 
+    /// 指针越过剩余列中线则后移一位（跳过被拖列，标题栏横向用）。
+    pub fn update_insert_idx_horizontal(&mut self, pointer_x: f32, item_rects: &[egui::Rect]) {
+        let mut insert = 0usize;
+        for (i, rect) in item_rects.iter().enumerate() {
+            if self.indices.contains(&i) {
+                continue;
+            }
+            if pointer_x < rect.center().x {
+                break;
+            }
+            insert += 1;
+        }
+        self.insert_idx = insert;
+    }
+
     /// 插入线 y 坐标：删除被拖行后，第 `insert_idx` 个剩余行的顶部；
     /// 插到末尾时为最后一个可见行的底部。
     pub fn insert_line_y(&self, item_rects: &[egui::Rect]) -> Option<f32> {
@@ -40,6 +55,22 @@ impl DragReorder {
             visible += 1;
         }
         item_rects.last().map(|r| r.bottom())
+    }
+
+    /// 插入线 x 坐标（标题栏横向）：删除被拖列后，第 `insert_idx` 个剩余列的左缘；
+    /// 插到末尾时为最后一个标签的右缘。
+    pub fn insert_line_x(&self, item_rects: &[egui::Rect]) -> Option<f32> {
+        let mut visible = 0usize;
+        for (i, rect) in item_rects.iter().enumerate() {
+            if self.indices.contains(&i) {
+                continue;
+            }
+            if visible == self.insert_idx {
+                return Some(rect.left());
+            }
+            visible += 1;
+        }
+        item_rects.last().map(|r| r.right() + 1.0)
     }
 }
 
@@ -80,6 +111,17 @@ pub(crate) fn plan_moves(len: usize, indices: &[usize], insert_at: usize) -> Vec
 pub(crate) fn apply_reorder<T: Clone>(items: &mut Vec<T>, indices: &[usize], insert_at: usize) {
     let order = plan_order(items.len(), indices, insert_at);
     *items = order.iter().map(|&i| items[i].clone()).collect();
+}
+
+/// 对 Vec 直接应用排序（不要求 Clone，用于 Document / MixerRack 等）。
+pub(crate) fn apply_reorder_noclone<T>(items: &mut Vec<T>, indices: &[usize], insert_at: usize) {
+    let order = plan_order(items.len(), indices, insert_at);
+    let mut old: Vec<Option<T>> = std::mem::take(items).into_iter().map(Some).collect();
+    let mut new = Vec::with_capacity(order.len());
+    for &idx in &order {
+        new.push(old[idx].take().expect("order 是排列"));
+    }
+    *items = new;
 }
 
 #[cfg(test)]

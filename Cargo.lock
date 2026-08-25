@@ -7631,6 +7631,7 @@ dependencies = [
  "sysinfo",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "wgpu",
  "yinhe-archive",
  "yinhe-audio",
