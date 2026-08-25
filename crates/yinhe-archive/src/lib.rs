@@ -93,6 +93,11 @@ impl Archive {
         })
     }
 
+    /// 压缩包文件的原始路径（用于「最近文件」记录外层路径）。
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
     /// List all MIDI files (.mid/.midi) in the archive, sorted by name A-Z.
     pub fn list_midi_files(&self) -> Vec<ArchiveEntry> {
         let mut entries = self.midi_entries.clone();

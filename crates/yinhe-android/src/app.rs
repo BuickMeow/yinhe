@@ -287,7 +287,11 @@ impl YinheApp {
         }
         use yinhe_editor_core::file_loading::LoadResult;
         match loader.poll_loading() {
-            LoadResult::ModelLoaded { path, model } => {
+            LoadResult::ModelLoaded {
+                path,
+                archive_path: _,
+                model,
+            } => {
                 // 构造 Document：conductor 检测/插入 + 工程文件结构 + 轨道状态缓存。
                 let project_file = yinhe_yin::ProjectFile::from_meta(&model.meta);
                 let mapping_file = yinhe_yin::MappingFile::default();

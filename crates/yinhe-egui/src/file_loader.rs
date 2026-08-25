@@ -95,7 +95,15 @@ impl FileLoader {
     pub fn poll_loading(&mut self) -> LoadResult {
         use yinhe_editor_core::file_loading::LoadResult as Core;
         match self.core.poll_loading() {
-            Core::ModelLoaded { path, model } => LoadResult::ModelLoaded { path, model },
+            Core::ModelLoaded {
+                path,
+                archive_path,
+                model,
+            } => LoadResult::ModelLoaded {
+                path,
+                archive_path,
+                model,
+            },
             Core::ModelFromYin {
                 path,
                 model,

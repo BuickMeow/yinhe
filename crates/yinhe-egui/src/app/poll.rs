@@ -9,7 +9,11 @@ impl App {
     pub(in crate::app) fn poll_async_operations(&mut self) {
         // Poll async file loading
         match self.file_loader.poll_loading() {
-            LoadResult::ModelLoaded { path, model } => {
+            LoadResult::ModelLoaded {
+                path,
+                archive_path,
+                model,
+            } => {
                 let (quantize_arrange, quantize_pianoroll) = self
                     .active_doc
                     .and_then(|idx| self.documents.get(idx))
@@ -55,7 +59,9 @@ impl App {
                         // 新工程首帧走错路径。
                         self.invalidate_cull_state();
                         // 打开成功 → 记录到「最近修改的文件」
-                        if self.audio_settings.push_recent_file(&path) {
+                        // 压缩包内文件记录外层压缩包路径，避免内部 entry 名（相对路径）导致「找不到文件」
+                        let recent = archive_path.as_deref().unwrap_or(&path);
+                        if self.audio_settings.push_recent_file(recent) {
                             self.audio_settings.save();
                         }
                     }

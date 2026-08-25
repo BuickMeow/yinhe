@@ -49,6 +49,8 @@ pub enum ArchiveLoadEvent {
 
 pub struct MidiLoader {
     pub path: String,
+    /// 压缩包内文件时为外层压缩包路径（用于「最近文件」记录外层路径而非内部 entry 名）。
+    pub archive_path: Option<String>,
     pub rx: mpsc::Receiver<MidiLoadEvent>,
     pub current_progress: Option<LoadProgress>,
     pub cancel: Arc<AtomicBool>,
@@ -68,6 +70,8 @@ pub struct ArchiveLoader {
 pub enum LoadResult {
     ModelLoaded {
         path: String,
+        /// 压缩包内文件时为外层压缩包路径（用于「最近文件」），普通 MIDI 为 None 时与 `path` 相同。
+        archive_path: Option<String>,
         model: YinModel,
     },
     ModelFromYin {
@@ -263,6 +267,7 @@ impl FileLoader {
         });
         self.midi_loader = Some(MidiLoader {
             path: path_str,
+            archive_path: None,
             rx,
             current_progress: None,
             cancel,
@@ -313,8 +318,13 @@ impl FileLoader {
                         match *result {
                             Ok(model) => {
                                 let path = loader.path.clone();
+                                let archive_path = loader.archive_path.clone();
                                 progress::set_visible(&self.load_progress, false);
-                                return LoadResult::ModelLoaded { path, model };
+                                return LoadResult::ModelLoaded {
+                                    path,
+                                    archive_path,
+                                    model,
+                                };
                             }
                             Err(e) => {
                                 tracing::error!("Failed to load MIDI: {}", e);
@@ -427,6 +437,7 @@ impl FileLoader {
     ) {
         let (tx, rx) = mpsc::channel();
         let progress = self.load_progress.clone();
+        let archive_path_str = archive.path().to_string_lossy().to_string();
         let entry_name = entry.name.clone();
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_for_thread = cancel.clone();
@@ -451,6 +462,7 @@ impl FileLoader {
         });
         self.midi_loader = Some(MidiLoader {
             path: entry.name,
+            archive_path: Some(archive_path_str),
             rx,
             current_progress: None,
             cancel,

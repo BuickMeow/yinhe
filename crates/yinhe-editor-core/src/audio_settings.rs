@@ -249,6 +249,19 @@ impl AudioSettings {
                         if s.pinned_edit_actions.len() < 12 {
                             s.pinned_edit_actions.resize(12, false);
                         }
+                        // 清理历史脏数据：早期版本把压缩包内文件（entry 名如 "track.mid"）
+                        // 直接写入 recent_files，其为相对路径且永久不存在。
+                        // 过滤掉所有非绝对路径的残留条目（正常 recent 均为绝对路径）。
+                        let before_len = s.recent_files.len();
+                        s.recent_files
+                            .retain(|p| std::path::Path::new(p).is_absolute());
+                        if s.recent_files.len() != before_len {
+                            // 异步落盘由调用方在下次 save 时完成；此处仅内存清理。
+                            tracing::info!(
+                                "清理 recent_files 残留相对路径 {} 条",
+                                before_len - s.recent_files.len()
+                            );
+                        }
                         return s;
                     }
                     Err(e) => {
