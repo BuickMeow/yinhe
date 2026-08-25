@@ -543,10 +543,16 @@ impl App {
     /// `file_path.is_none()` 且未修改）时返回 true。用户手动 NewProject 后
     /// `documents.len() > 1`，或已编辑/已保存的 Untitled 都不替换。
     fn should_replace_initial_untitled(&self) -> bool {
+        // 空的 Untitled（0 音符、无历史、未保存）允许直接替换，避免首启残留空白 tab。
+        // 新版 is_dirty 对 file_path==None 视为脏，此处需按“真正空”单独判断，
+        // 否则首启打开文件永远走 push 而非替换。
+        let doc = &self.documents[0];
         self.active_doc == Some(0)
             && self.documents.len() == 1
-            && self.documents[0].file_path.is_none()
-            && !self.documents[0].is_dirty()
+            && doc.file_path.is_none()
+            && doc.model().note_count == 0
+            && !doc.history.is_dirty()
+            && !doc.mixer_dirty
     }
 
     /// 新建空白工程（Document::empty）并切换为活跃标签页。

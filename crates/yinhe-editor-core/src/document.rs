@@ -66,7 +66,12 @@ impl Document {
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.history.is_dirty() || self.mixer_dirty
+        // “未完成就提示”：历史/混音有未保存修改，或尚未落盘且已有内容（file_path == None
+        // 且音符数 >0）就视为脏，需弹“是否保存”。纯空工程（0 音符、无历史）不视为脏，
+        // 避免首启空白 tab 关闭时无意义弹窗；should_replace 侧已对 0 音符空工程放行。
+        self.history.is_dirty()
+            || self.mixer_dirty
+            || (self.file_path.is_none() && self.data.model.note_count > 0)
     }
 
     pub fn mark_saved(&mut self) {
