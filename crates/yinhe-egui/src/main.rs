@@ -94,12 +94,17 @@ fn main() {
                     } else {
                         wgpu::Limits::default()
                     };
+                    // 桌面走间接绘制需 INDIRECT_FIRST_INSTANCE（first_instance=chunk*256）
+                    let mut required_features = wgpu::Features::empty();
+                    if adapter
+                        .features()
+                        .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE)
+                    {
+                        required_features |= wgpu::Features::INDIRECT_FIRST_INSTANCE;
+                    }
                     wgpu::DeviceDescriptor {
                         label: Some("egui wgpu device"),
-                        // cull 已改为 CPU 读回 args + 直接 draw_indexed
-                        // （Adreno indirect draw 失效），不再需要
-                        // INDIRECT_FIRST_INSTANCE feature。
-                        required_features: wgpu::Features::empty(),
+                        required_features,
                         required_limits: wgpu::Limits {
                             max_texture_dimension_2d: 8192,
                             // GPU 合成器需要 13 个 storage buffer（采样块 + 段结构 + 指令）

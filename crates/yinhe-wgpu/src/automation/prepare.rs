@@ -102,7 +102,6 @@ pub fn prepare(
     midi: Option<&dyn NoteSource>,
     track_visible: &[bool],
     track_colors: &[[f32; 4]],
-    scroll_mode: u32,
     min_border_width: f32,
     show_anchors: bool,
     max_val: f32,
@@ -113,7 +112,6 @@ pub fn prepare(
     let w = width as f32;
     let h = height as f32;
     let scroll_x = view.base.scroll_x;
-    let (scroll_x_pos, scroll_frac) = crate::compute_scroll_frac(scroll_x, scroll_mode);
 
     // Build track colors in GPU format (vec4) — needed for velocity pipeline
     // which fetches color via `tc[track]` in the shader.
@@ -123,14 +121,12 @@ pub fn prepare(
     let uniforms = Uniforms {
         width: w,
         height: h,
-        scroll_x: scroll_x_pos,
+        scroll_x,
         scroll_y: 0.0,
         pixels_per_tick: view.base.pixels_per_tick,
         key_height: 0.0,
         keyboard_width: view.base.left_panel_width,
         mode: 0, // pixel mode (automation uses rgba_packed directly)
-        scroll_frac,
-        scroll_mode,
         min_border_width,
         track_count,       // used by velocity pipeline for tc[track] bounds check
         sel_rect_count: 0, // unused in pixel mode
@@ -247,7 +243,7 @@ pub struct ArrAutomationLane<'a> {
 ///   3 = ghost（拖拽预览，无缓存，每帧重建）
 ///
 /// 不碰 uniforms / track_colors：AR 的 view_ui 已上传；curve shader 只用
-/// width/height/scroll_frac/scroll_mode，与 AR 的 uniforms 兼容。
+/// width/height/scroll，与 AR 的 uniforms 兼容。
 ///
 /// cache_key：调用方算（含 render 相关 hash + revision——任何编辑都 bump
 /// revision，展开/布局变化进布局 hash）。ghost 覆盖 lane 的内容 hash 在本函数

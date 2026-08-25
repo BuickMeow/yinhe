@@ -239,7 +239,6 @@ pub fn show_panels(
                 data.midi,
                 data.track_visible,
                 data.track_colors,
-                cfg.scroll_mode,
                 cfg.min_border_width,
                 show_anchors,
                 max_val_f,

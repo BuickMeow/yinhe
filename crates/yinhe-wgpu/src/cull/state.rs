@@ -134,6 +134,9 @@ pub(crate) struct CullState {
     /// last cull dispatch. Set by `upload_all_notes` / `upload_one_key`;
     /// cleared by `dispatch_cull`.
     notes_dirty: bool,
+
+    /// 桌面走 GPU 间接绘制（零回读），Android Adreno 驱动间接失效走回读
+    use_indirect: bool,
 }
 
 impl CullState {
@@ -280,6 +283,11 @@ impl CullState {
         }
         track_mask_buffer.unmap();
 
+        // Android Adreno 间接绘制失效，强制回读；桌面走间接零回读（需 INDIRECT_FIRST_INSTANCE）
+        let use_indirect = !cfg!(target_os = "android")
+            && device
+                .features()
+                .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE);
         Self {
             pipeline,
             bind_group_layout,
@@ -299,6 +307,7 @@ impl CullState {
             uploaded_key_revisions: [0; KEY_COUNT],
             last_cull_uniforms: None,
             notes_dirty: false,
+            use_indirect,
         }
     }
 
@@ -362,6 +371,24 @@ impl CullState {
         key: u8,
         notes: &[NoteInstance],
     ) -> Result<(), GpuBudgetError> {
+        // 空 key 不建缓冲：省 3 次 create_buffer + bind_group，首帧 128→非空数
+        if notes.is_empty() {
+            for buf in [
+                &mut self.per_key_buffers[key as usize],
+                &mut self.per_key_visible_buffers[key as usize],
+                &mut self.per_key_draw_args_buffers[key as usize],
+            ] {
+                buf.take();
+            }
+            self.per_key_bind_groups[key as usize] = None;
+            self.per_key_all_bind_groups[key as usize] = None;
+            self.per_key_counts[key as usize] = 0;
+            self.per_key_draw_args_cpu[key as usize].clear();
+            self.frame_chunk_counts[key as usize] = 0;
+            self.bucket_indexes[key as usize] = None;
+            self.notes_dirty = true;
+            return Ok(());
+        }
         let needed = notes.len() as u64 * std::mem::size_of::<NoteInstance>() as u64;
         let chunk_total = (notes.len() as u64).div_ceil(256).max(1);
         // Visible buffer is 256-aligned so every chunk's sparse slots
@@ -432,9 +459,11 @@ impl CullState {
                 &BufferDescriptor {
                     label: Some("draw_args_key"),
                     size: args_size,
-                    // COPY_SRC 供每帧读回 CPU（draw 用）+ 诊断；
-                    // COPY_DST so tests can overwrite draw args directly.
-                    usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
+                    // COPY_SRC 供 Adreno 回读 + 诊断；INDIRECT 供桌面直接 draw_indexed_indirect
+                    usage: BufferUsages::STORAGE
+                        | BufferUsages::INDIRECT
+                        | BufferUsages::COPY_SRC
+                        | BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 },
             );
@@ -469,6 +498,10 @@ impl CullState {
     /// Whether a per-key buffer exists for `key` (incremental upload precondition).
     pub(crate) fn has_key_buffer(&self, key: u8) -> bool {
         self.per_key_buffers[key as usize].is_some()
+    }
+
+    pub(crate) fn use_indirect(&self) -> bool {
+        self.use_indirect
     }
 
     /// The per-key vertex-stage bind group (only `all_instances`).
@@ -806,6 +839,41 @@ impl CullState {
                 if instance_count > 0 {
                     pass.draw_indexed(0..6, 0, first_instance..first_instance + instance_count);
                 }
+            }
+        }
+    }
+
+    /// 桌面间接绘制：零回读，直接 `draw_indexed_indirect`（需 INDIRECT_FIRST_INSTANCE）
+    pub(crate) fn draw_visible_notes_indirect(
+        &self,
+        pass: &mut RenderPass<'_>,
+        note_pipeline: &RenderPipeline,
+        bind_group: &BindGroup,
+        index_buffer: &Buffer,
+        key_lo: u8,
+        key_hi: u8,
+    ) {
+        pass.set_pipeline(note_pipeline);
+        pass.set_bind_group(0, bind_group, &[]);
+        pass.set_index_buffer(index_buffer.slice(..), IndexFormat::Uint32);
+        for key in key_lo..=key_hi {
+            let Some(vis_buf) = &self.per_key_visible_buffers[key as usize] else {
+                continue;
+            };
+            let Some(args_buf) = &self.per_key_draw_args_buffers[key as usize] else {
+                continue;
+            };
+            let chunk_count = self.frame_chunk_counts[key as usize] as usize;
+            if chunk_count == 0 {
+                continue;
+            }
+            let Some(bg) = self.per_key_all_bind_group(key) else {
+                continue;
+            };
+            pass.set_bind_group(1, bg, &[]);
+            pass.set_vertex_buffer(0, vis_buf.slice(..));
+            for chunk in 0..chunk_count {
+                pass.draw_indexed_indirect(args_buf, chunk as u64 * 20);
             }
         }
     }

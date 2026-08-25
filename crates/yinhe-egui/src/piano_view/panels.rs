@@ -21,7 +21,6 @@ use super::types::{AutomationPanelsCtx, PianoViewFeedback};
 /// 参数覆盖任务要求的全集：`ui, view, rect, content_rect, panels_y,
 /// panels_total_h, auto_ctx, midi, track_visible, track_colors, tempo_lane,
 /// sel_rect, track_selected, active_tool, write_track, conductor_idx,
-/// quantize, ppq, bar_line_data, sel_hint, scroll_mode, min_border_width,
 /// revision, feedback, theme`。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn show_panels(
@@ -45,7 +44,6 @@ pub(crate) fn show_panels(
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     sel_hint: Option<&SelHintInfo>,
-    scroll_mode: u32,
     min_border_width: f32,
     revision: u64,
     feedback: &mut PianoViewFeedback<'_>,
@@ -102,7 +100,6 @@ pub(crate) fn show_panels(
                 view.base.scroll_x
             },
             pianoroll_ppt: view.base.pixels_per_tick,
-            scroll_mode,
             min_border_width,
             revision,
             bar_line_data,

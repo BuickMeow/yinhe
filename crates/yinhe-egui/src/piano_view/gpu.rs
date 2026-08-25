@@ -24,7 +24,7 @@ pub(crate) struct GpuOutput {
 ///
 /// 参数覆盖任务要求的全集：`pianoroll, render_ctx, render_thread, view, midi,
 /// midi_arc, selected, track_visible, hidden_notes, track_colors, revision,
-/// note_revisions, last_cull_revision..., ghost_notes, w, h, scroll_mode,
+/// note_revisions, last_cull_revision..., ghost_notes, w, h,
 /// min_border_width, note_outline, use_gpu_cull, perf_on`。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn upload_and_prepare(
@@ -50,7 +50,6 @@ pub(crate) fn upload_and_prepare(
     ghost_notes: &[(u32, u32, u8, u16)],
     w: u32,
     h: u32,
-    scroll_mode: u32,
     min_border_width: f32,
     note_outline: bool,
     use_gpu_cull: bool,
@@ -95,7 +94,6 @@ pub(crate) fn upload_and_prepare(
             view,
             selected,
             track_colors,
-            scroll_mode,
             min_border_width,
             note_outline,
         );
@@ -117,7 +115,6 @@ pub(crate) fn upload_and_prepare(
             view,
             selected,
             track_colors,
-            scroll_mode,
             min_border_width,
             note_outline,
         );

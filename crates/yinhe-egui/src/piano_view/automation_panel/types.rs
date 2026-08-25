@@ -51,7 +51,6 @@ pub(crate) struct PanelsLayout {
 pub(crate) struct PanelsCfg<'a> {
     pub pianoroll_scroll_x: f32,
     pub pianoroll_ppt: f32,
-    pub scroll_mode: u32,
     pub min_border_width: f32,
     pub revision: u64,
     /// 状态栏讲解行格式化位置所需（拍号事件）。

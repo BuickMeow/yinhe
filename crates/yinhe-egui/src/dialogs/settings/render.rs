@@ -12,26 +12,6 @@ pub fn show_render_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool 
         .num_columns(2)
         .spacing([12.0, 8.0])
         .show(ui, |ui| {
-            ui.label(t!("settings.render.scroll_mode").as_ref());
-            let mode_names = [
-                t!("settings.render.scroll.raw").to_string(),
-                t!("settings.render.scroll.integer").to_string(),
-                t!("settings.render.scroll.subpixel").to_string(),
-            ];
-            let current = settings.scroll_mode as usize;
-            egui::ComboBox::from_id_salt("scroll_mode")
-                .selected_text(mode_names[current].clone())
-                .show_ui(ui, |ui| {
-                    for (i, name) in mode_names.iter().enumerate() {
-                        let selected = settings.scroll_mode == i as u32;
-                        if ui.selectable_label(selected, name).clicked() {
-                            settings.scroll_mode = i as u32;
-                            changed = true;
-                        }
-                    }
-                });
-            ui.end_row();
-
             ui.label(t!("settings.render.automation_density").as_ref());
             let mut density = settings.automation_event_density as i32;
             let drag = ui.add(

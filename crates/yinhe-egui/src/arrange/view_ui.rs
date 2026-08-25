@@ -129,27 +129,17 @@ pub fn show(
             }
         }
     }
-    let scroll_x = view.base.scroll_x;
-    let (scroll_x_pos, scroll_frac) = match cfg.scroll_mode {
-        0 => (scroll_x, 0.0),
-        _ => {
-            let f = scroll_x.floor();
-            (f, scroll_x - f)
-        }
-    };
     let track_count = data.track_colors.len().min(MAX_TRACKS) as u32;
     let tc_colors: Vec<[f32; 4]> = data.track_colors.iter().take(MAX_TRACKS).copied().collect();
     let uniforms = Uniforms {
         width: w as f32,
         height: h as f32,
-        scroll_x: scroll_x_pos,
+        scroll_x: view.base.scroll_x,
         scroll_y: view.base.scroll_y,
         pixels_per_tick: view.base.pixels_per_tick,
         key_height: 0.0,
         keyboard_width: view.base.left_panel_width,
         mode: 2,
-        scroll_frac,
-        scroll_mode: cfg.scroll_mode,
         min_border_width: cfg.min_border_width,
         track_count,
         sel_rect_count: 0,

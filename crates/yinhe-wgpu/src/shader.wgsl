@@ -11,8 +11,6 @@ struct Uniforms {
     key_height: f32,
     keyboard_width: f32,
     mode: u32, // 0=pixel, 1=PR notes(tick→pixel+rounding), 2=AR notes(tick→pixel)
-    scroll_frac: f32, // fractional part of scroll_x for sub-pixel NDC offset
-    scroll_mode: u32, // 0=原始, 1=整数对齐, 2=子像素偏移
     min_border_width: f32,
     track_count: u32, // number of valid tracks in track_colors
     sel_rect_count: u32, // number of valid selection rects
@@ -140,20 +138,6 @@ fn vs_main(
         pixel_w = max(x_offset + end_tick * ppu - pixel_x, 2.0);
     }
 
-    // Snap to integer pixels (模式1和2) to prevent sub-pixel jitter.
-    // Use floor(end) - floor(start) for width/height so adjacent notes
-    // sharing a boundary have no gap.
-    if u.scroll_mode != 0u {
-        let raw_x = pixel_x;
-        let raw_right = pixel_x + pixel_w;
-        pixel_x = floor(raw_x + 0.5);
-        let raw_y = pixel_y;
-        let raw_bottom = pixel_y + pixel_h;
-        pixel_y = floor(raw_y + 0.5);
-        pixel_w = max(floor(raw_right + 0.5) - floor(raw_x + 0.5), 1.0);
-        pixel_h = max(floor(raw_bottom + 0.5) - floor(raw_y + 0.5), 1.0);
-    }
-
     var pos = array<vec2<f32>, 6>(
         vec2<f32>(pixel_x + pixel_w, pixel_y),
         vec2<f32>(pixel_x + pixel_w, pixel_y + pixel_h),
@@ -173,11 +157,7 @@ fn vs_main(
     );
 
     let pixel_pos = pos[vertex_index];
-    // Sub-pixel NDC offset (仅模式2): scroll_frac is the fractional part of
-    // scroll_x.  CPU-side positions use floor(scroll_x) so they are stable.
-    // The fractional offset here makes scrolling appear smooth at sub-pixel level.
-    let ndc_offset = select(0.0, u.scroll_frac, u.scroll_mode == 2u);
-    let ndc_x = ((pixel_pos.x - ndc_offset) / u.width) * 2.0 - 1.0;
+    let ndc_x = (pixel_pos.x / u.width) * 2.0 - 1.0;
     let ndc_y = 1.0 - (pixel_pos.y / u.height) * 2.0;
 
     out.clip_position = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
@@ -298,21 +278,7 @@ fn note_geometry(
         }
     }
 
-    // Snap to integer pixels to prevent sub-pixel jitter.
-    if u.scroll_mode != 0u {
-        let raw_x = pixel_x;
-        let raw_right = right;
-        pixel_x = floor(raw_x + 0.5);
-        right = floor(raw_right + 0.5);
-        let raw_y = pixel_y;
-        let raw_bottom = pixel_y + pixel_h;
-        pixel_y = floor(raw_y + 0.5);
-        pixel_w = max(right - pixel_x, 1.0);
-        pixel_h = max(floor(raw_bottom + 0.5) - floor(raw_y + 0.5), 1.0);
-    } else {
-        // 非取整模式：保留 2.0 最小可见宽度（黑乐谱密集短音符保证可见）。
-        right = pixel_x + pixel_w;
-    }
+    right = pixel_x + pixel_w;
 
     // 4 顶点 + 共享 index buffer（[0,1,2, 1,3,2]）：0=TL, 1=TR, 2=BL, 3=BR。
     var pos = array<vec2<f32>, 4>(
@@ -330,15 +296,13 @@ fn note_geometry(
     );
 
     let pixel_pos = pos[vertex_index];
-    // 子像素滚动偏移沿时间轴：横向 = X，纵向 = Y。
-    let ndc_offset = select(0.0, u.scroll_frac, u.scroll_mode == 2u);
     var ndc_x: f32;
     var ndc_y: f32;
     if u.orientation == 1u {
         ndc_x = (pixel_pos.x / u.width) * 2.0 - 1.0;
-        ndc_y = 1.0 - ((pixel_pos.y - ndc_offset) / u.height) * 2.0;
+        ndc_y = 1.0 - (pixel_pos.y / u.height) * 2.0;
     } else {
-        ndc_x = ((pixel_pos.x - ndc_offset) / u.width) * 2.0 - 1.0;
+        ndc_x = (pixel_pos.x / u.width) * 2.0 - 1.0;
         ndc_y = 1.0 - (pixel_pos.y / u.height) * 2.0;
     }
     out.clip_position = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
@@ -427,21 +391,7 @@ fn vs_main_velocity(
     var pixel_y = y_top;
     var pixel_h = max(y_bottom - y_top, 1.0);
 
-    // Snap to integer pixels to prevent sub-pixel jitter.
-    if u.scroll_mode != 0u {
-        let raw_x = pixel_x;
-        let raw_right = right;
-        pixel_x = floor(raw_x + 0.5);
-        right = floor(raw_right + 0.5);
-        let raw_y = pixel_y;
-        let raw_bottom = pixel_y + pixel_h;
-        pixel_y = floor(raw_y + 0.5);
-        pixel_w = max(right - pixel_x, 1.0);
-        pixel_h = max(floor(raw_bottom + 0.5) - floor(raw_y + 0.5), 1.0);
-    } else {
-        // 非取整模式：保留 2.0 最小可见宽度（与 note_geometry 一致）。
-        right = pixel_x + pixel_w;
-    }
+    right = pixel_x + pixel_w;
 
     // 4 顶点 + 共享 index buffer（与 note 相同：[0,1,2, 1,3,2]）。
     var pos = array<vec2<f32>, 4>(
@@ -459,8 +409,7 @@ fn vs_main_velocity(
     );
 
     let pixel_pos = pos[vertex_index];
-    let ndc_offset = select(0.0, u.scroll_frac, u.scroll_mode == 2u);
-    let ndc_x = ((pixel_pos.x - ndc_offset) / u.width) * 2.0 - 1.0;
+    let ndc_x = (pixel_pos.x / u.width) * 2.0 - 1.0;
     let ndc_y = 1.0 - (pixel_pos.y / u.height) * 2.0;
 
     out.clip_position = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
@@ -491,9 +440,14 @@ fn sd_rounded_box(p: vec2<f32>, half_size: vec2<f32>, r: f32) -> f32 {
     return length(max(d, vec2<f32>(0.0))) + min(max(d.x, d.y), 0.0) - r;
 }
 
-// Border + fill alpha compositing
+// Border + fill alpha compositing — 音符全不透明（轨道色 alpha=1 时）
+// 相邻音符共享边界 right==next.left 时，若外缘用 smoothstep 0.5 会与透明 clear
+// 混合出 0.25 漏底细线；此处用硬边 select 保证内侧 alpha=1。
 fn composite_border_fill(fill_a: f32, border_a: f32, base_color: vec4<f32>) -> vec4<f32> {
     let total_a = fill_a + border_a;
+    if total_a <= 0.0 {
+        discard;
+    }
     let border_color = base_color.rgb * BORDER_DARKEN_FACTOR;
     var rgb = border_color;
     if fill_a > 0.0 {
@@ -508,10 +462,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let p = (in.uv - 0.5) * in.half_size * 2.0;
 
-    // Fast path: no rounded corners
+    // Fast path: no rounded corners — 外缘保守 0.5px 硬边防漏底+消 epsilon 闪，内缘平滑保留 <1px 边框平均色
     if in.radius < 0.5 {
         let d_outer = max(abs(p.x) - in.half_size.x, abs(p.y) - in.half_size.y);
-        let outer_a = 1.0 - smoothstep(-0.5, 0.5, d_outer);
+        let outer_a = select(0.0, 1.0, d_outer <= 0.5);
 
         let inner_half = max(in.half_size - vec2(in.border_width), vec2(0.0));
         var fill_a: f32 = 0.0;
@@ -527,9 +481,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return composite_border_fill(fill_a, border_a, base_color);
     }
 
-    // Slow path: SDF rounded rectangle
+    // Slow path: SDF rounded rectangle — 同上
     let d_outer = sd_rounded_box(p, in.half_size, in.radius);
-    let outer_a = 1.0 - smoothstep(-0.5, 0.5, d_outer);
+    let outer_a = select(0.0, 1.0, d_outer <= 0.5);
 
     let inner_half = max(in.half_size - vec2(in.border_width), vec2(0.0));
     let inner_r = max(in.radius - in.border_width, 0.0);
@@ -587,8 +541,7 @@ fn vs_main_curve(
     );
 
     let p = pos[vertex_index];
-    let ndc_offset = select(0.0, u.scroll_frac, u.scroll_mode == 2u);
-    let ndc_x = ((p.x - ndc_offset) / u.width) * 2.0 - 1.0;
+    let ndc_x = (p.x / u.width) * 2.0 - 1.0;
     let ndc_y = 1.0 - (p.y / u.height) * 2.0;
 
     var out: CurveOutput;

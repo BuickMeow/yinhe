@@ -72,7 +72,6 @@ impl App {
                 is_playing,
                 follow_mode: &mut follow_mode,
                 active_tool: &self.active_tool,
-                scroll_mode: self.audio_settings.scroll_mode,
                 min_border_width: self.audio_settings.min_border_width,
                 revision: guard.as_ref().data.revision,
             };
@@ -546,7 +545,6 @@ impl App {
                     follow_mode,
                     &self.active_tool,
                     auto_ctx,
-                    self.audio_settings.scroll_mode,
                     self.audio_settings.min_border_width,
                     self.audio_settings.content_opacity,
                     self.audio_settings.note_outline,

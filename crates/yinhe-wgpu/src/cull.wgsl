@@ -35,8 +35,6 @@ struct Uniforms {
     key_height: f32,
     keyboard_width: f32,
     mode: u32,
-    scroll_frac: f32,
-    scroll_mode: u32,
     min_border_width: f32,
     track_count: u32,
     sel_rect_count: u32,

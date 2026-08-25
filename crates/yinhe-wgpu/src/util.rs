@@ -4,7 +4,7 @@ use crate::resource::TrackedBuffer;
 use crate::vertex::Uniforms;
 
 // Re-export hash utilities from yinhe-types for backward compatibility.
-pub use yinhe_types::{compute_scroll_frac, hash_bools, hash_f32s, hash_f64s, hash_time_sigs};
+pub use yinhe_types::{hash_bools, hash_f32s, hash_f64s, hash_time_sigs};
 
 /// Create a GPU vertex buffer with memtrace tracking (RAII：Drop 自动注销)。
 pub(super) fn create_vertex_buffer(device: &Device, label: &str, size_bytes: u64) -> TrackedBuffer {

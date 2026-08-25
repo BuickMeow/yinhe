@@ -2688,7 +2688,7 @@ fn note_boundary_no_gap_large_tick() {
             &view,
             &yinhe_core::Selection::default(),
             &[[0.2, 0.7, 1.0, 1.0]],
-            1, // scroll_mode = 1（整数对齐，取整路径）
+            1,
             0.0,
             false,
         );
@@ -2866,7 +2866,7 @@ fn cull_bench_vs_cpu_start_mid() {
     let (width, height, kb_w, kh) = (1600.0f32, 900.0f32, 80.0f32, 14.0f32);
     let scroll_y = 400.0f32;
     let ppus = [0.02f32, 0.05, 0.1, 0.5, 2.0];
-    let scroll_fracs = [0.6f32, 0.87];
+    let scroll_ratios = [0.6f32, 0.87];
     println!("\n== 每帧成本（视口 {width:.0}x{height:.0}；滚动帧 scroll_x 每帧 +1px） ==");
     println!(
         "{:>4} {:>5} {:>11} {:>9} {:>9} {:>11} {:>9} {:>11} {:>9} {:>9} {:>6}",
@@ -2885,7 +2885,7 @@ fn cull_bench_vs_cpu_start_mid() {
     // key_lo/key_hi 与 ppu 无关（PR 模式的 Y 坐标不依赖缩放），提前算好。
     let (key_lo, key_hi) = pr_visible_key_range(kh, scroll_y, height);
     println!("PR 可见 key 范围: {key_lo}..={key_hi}");
-    for &frac in &scroll_fracs {
+    for &frac in &scroll_ratios {
         for &ppu in &ppus {
             let scroll_x0 = (max_end_tick as f32 * ppu * frac).max(0.0);
             let view = yinhe_types::PianoRollView {

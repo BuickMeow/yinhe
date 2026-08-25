@@ -73,7 +73,6 @@ pub fn show(
     active_tool: &Tool,
     // Automation panel data (all-or-nothing)
     auto_ctx: Option<AutomationPanelsCtx<'_>>,
-    scroll_mode: u32,
     min_border_width: f32,
     content_opacity: f32,
     note_outline: bool,
@@ -262,7 +261,6 @@ pub fn show(
         &ghost_notes,
         w,
         h,
-        scroll_mode,
         min_border_width,
         note_outline,
         use_gpu_cull,
@@ -356,7 +354,6 @@ pub fn show(
         ppq,
         bar_line_data,
         sel_hint,
-        scroll_mode,
         min_border_width,
         revision,
         feedback,

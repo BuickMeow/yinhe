@@ -15,7 +15,7 @@ pub use layer::{LayerSlot, layer_cache_key};
 pub use note_buffer_key::{NoteBufferKey, hash_hidden};
 pub use render_thread::{NoteLayerData, RenderJob, RenderThreadHandle};
 pub use renderer::{InstanceRenderer, PrepareTimings};
-pub use util::{compute_scroll_frac, hash_bools, hash_f32s, hash_f64s, hash_time_sigs};
+pub use util::{hash_bools, hash_f32s, hash_f64s, hash_time_sigs};
 pub use vertex::{
     DrawInstance, MAX_TRACKS, NoteInstance, Uniforms, VelocityBarInstance, pack_props, pack_rgba,
 };

@@ -463,11 +463,43 @@ impl InstanceRenderer {
             self.cached_uniforms.as_ref().map(|u| u.mode),
         );
         let (key_lo, key_hi) = self.visible_key_range();
-        // Phase 1: Compute cull (skipped if uniforms + notes unchanged since last frame)
         let uniforms = self.cached_uniforms.unwrap_or_default();
-        // 内部管理 encoder 与提交：compute dispatch 独立提交后同步读回 args
-        // 到 CPU（Adreno 驱动 indirect draw 失效，只能 CPU 读回 + 直接 draw，
-        // 跨 submit 读回是稳定路径）。
+        // 桌面间接绘制（零回读）vs Adreno 回读分支
+        if self.cull.use_indirect() {
+            // 单 encoder：compute cull → render pass，GPU 内 barrier，无 CPU 同步
+            let mut enc = self
+                .device
+                .create_command_encoder(&CommandEncoderDescriptor::default());
+            let _ = self
+                .cull
+                .dispatch_cull(&mut enc, &self.queue, key_lo, key_hi, &uniforms);
+            let mut pass = crate::util::begin_pianoroll_pass(
+                &mut enc,
+                target,
+                &self.render.pipeline,
+                &self.render.bind_group,
+                width,
+                height,
+            );
+            self.draw_static_layers(&mut pass);
+            self.cull.draw_visible_notes_indirect(
+                &mut pass,
+                &self.render.note_pipeline,
+                &self.render.bind_group,
+                &self.render.index_buffer,
+                key_lo,
+                key_hi,
+            );
+            let ghost = self.layers.iter().rfind(|l| l.kind() == LayerKind::Note);
+            if let Some(ghost) = ghost {
+                pass.set_pipeline(&self.render.note_direct_pipeline);
+                ghost.draw(&mut pass, 0, Some(&self.render.index_buffer));
+            }
+            drop(pass);
+            self.queue.submit([enc.finish()]);
+            return;
+        }
+        // Adreno 分支：compute 单独提交后同步读回，再渲染
         let mut enc = self
             .device
             .create_command_encoder(&CommandEncoderDescriptor::default());
@@ -479,7 +511,6 @@ impl InstanceRenderer {
             self.cull.readback_args_to_cpu(&self.device, &self.queue);
         }
 
-        // Phase 2: Single render pass
         let mut enc2 = self
             .device
             .create_command_encoder(&CommandEncoderDescriptor::default());
@@ -492,10 +523,8 @@ impl InstanceRenderer {
             height,
         );
 
-        // Step 1-3: decor → velocity → curve
         self.draw_static_layers(&mut pass);
 
-        // Step 4: culled notes (from GPU compute cull buffer)
         self.cull.draw_visible_notes(
             &mut pass,
             &self.render.note_pipeline,
@@ -505,7 +534,6 @@ impl InstanceRenderer {
             key_hi,
         );
 
-        // Step 5: ghost notes (last note layer, if any) — on top of everything
         let ghost = self.layers.iter().rfind(|l| l.kind() == LayerKind::Note);
         if let Some(ghost) = ghost {
             pass.set_pipeline(&self.render.note_direct_pipeline);

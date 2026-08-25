@@ -243,6 +243,7 @@ impl RenderPipelineState {
 
         // GPU-cull note pipeline: 4-byte u32 index vertex layout, indirect-reads
         // all_instances via @group(1). Shares uniforms/bind group.
+        // 音符全不透明（硬边，无 AA），关闭混合避免 0.5 缝隙透底 + 省 ROP。
         let note_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
             label: Some("note_pipeline"),
             layout: Some(&cull_note_pipeline_layout),
@@ -261,7 +262,7 @@ impl RenderPipelineState {
                 entry_point: Some("fs_main"),
                 targets: &[Some(ColorTargetState {
                     format,
-                    blend: Some(BlendState::ALPHA_BLENDING),
+                    blend: None,
                     write_mask: ColorWrites::ALL,
                 })],
                 compilation_options: PipelineCompilationOptions::default(),
@@ -298,7 +299,7 @@ impl RenderPipelineState {
                 entry_point: Some("fs_main"),
                 targets: &[Some(ColorTargetState {
                     format,
-                    blend: Some(BlendState::ALPHA_BLENDING),
+                    blend: None,
                     write_mask: ColorWrites::ALL,
                 })],
                 compilation_options: PipelineCompilationOptions::default(),
@@ -355,7 +356,7 @@ impl RenderPipelineState {
         });
 
         // Velocity bar pipeline: 16-byte VelocityBarInstance vertex layout.
-        // Unified border-based mode (fill + border), reuses `fs_main` (same VertexOutput).
+        // Unified border-based mode (fill + border), reuses `fs_main` 硬边不透明.
         let velocity_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
             label: Some("velocity_pipeline"),
             layout: Some(&pipeline_layout),
@@ -376,7 +377,7 @@ impl RenderPipelineState {
                 entry_point: Some("fs_main"),
                 targets: &[Some(ColorTargetState {
                     format,
-                    blend: Some(BlendState::ALPHA_BLENDING),
+                    blend: None,
                     write_mask: ColorWrites::ALL,
                 })],
                 compilation_options: PipelineCompilationOptions::default(),

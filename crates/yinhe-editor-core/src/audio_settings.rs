@@ -109,7 +109,6 @@ pub struct AudioSettings {
     pub overlap_blocked_behavior: OverlapBlockedBehavior,
     /// 快速删除音符方式（选择/铅笔工具双击或右键删除）。
     pub quick_delete_mode: QuickDeleteMode,
-    pub scroll_mode: u32,
     /// 最小边框宽度(像素), 0=不设下限
     pub min_border_width: f32,
     /// MIDI 导入编码
@@ -186,7 +185,6 @@ impl Default for AudioSettings {
             global_sf_config: GlobalSfConfig::builtin_default(),
             xsynth_layers: 4,
             buffer_size: 0,
-            scroll_mode: 0,
             min_border_width: 0.0,
             midi_import_encoding: MidiImportEncoding::Utf8,
             automation_event_density: 1,

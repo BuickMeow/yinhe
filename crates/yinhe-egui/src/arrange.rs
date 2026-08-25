@@ -67,7 +67,6 @@ pub(crate) struct ArrangeViewCfg<'a> {
     pub is_playing: bool,
     pub follow_mode: &'a mut crate::view_interaction::FollowMode,
     pub active_tool: &'a Tool,
-    pub scroll_mode: u32,
     pub min_border_width: f32,
     pub revision: u64,
 }

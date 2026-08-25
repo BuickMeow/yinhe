@@ -521,8 +521,6 @@ impl ArView {
                 key_height: 0.0, // AR 未使用（shader 用 lane_height）
                 keyboard_width: PANEL_W,
                 mode: 2, // AR notes：shader 用 lane_height + scroll_y 计算 y
-                scroll_frac: 0.0,
-                scroll_mode: 0,
                 min_border_width: 0.0,
                 track_count: num_tracks.min(yinhe_wgpu::MAX_TRACKS) as u32,
                 sel_rect_count: 0,

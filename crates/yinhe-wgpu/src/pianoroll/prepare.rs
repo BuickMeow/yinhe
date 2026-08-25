@@ -28,7 +28,6 @@ pub fn build_render_job(
     view: &PianoRollView,
     selected: &yinhe_core::Selection,
     track_colors: &[[f32; 4]],
-    scroll_mode: u32,
     min_border_width: f32,
     note_outline: bool,
 ) -> PianorollRenderJob {
@@ -41,14 +40,6 @@ pub fn build_render_job(
     let scroll_y = view.base.scroll_y;
     let ppu = view.base.pixels_per_tick;
     let scroll_x = view.base.scroll_x;
-    let (scroll_x_pos, scroll_frac) = crate::compute_scroll_frac(scroll_x, scroll_mode);
-    // 纵向瀑布流时，子像素滚动偏移沿时间轴（Y）而非音高轴（X）。
-    // shader 的 note_geometry 据此把 scroll_frac 施加到 ndc_y。
-    let scroll_frac = if view.is_vertical() {
-        crate::compute_scroll_frac(scroll_y, scroll_mode).1
-    } else {
-        scroll_frac
-    };
 
     // Build track colors — dynamic Vec, no fixed 1MB allocation.
     let track_count = track_colors.len().min(MAX_TRACKS) as u32;
@@ -68,14 +59,12 @@ pub fn build_render_job(
     let uniforms = Uniforms {
         width: w,
         height: h,
-        scroll_x: scroll_x_pos,
+        scroll_x,
         scroll_y,
         pixels_per_tick: ppu,
         key_height: kh,
         keyboard_width: kb_w,
         mode: 1, // PR notes: tick→pixel + compute rounding in shader
-        scroll_frac,
-        scroll_mode,
         min_border_width,
         track_count,
         sel_rect_count,
