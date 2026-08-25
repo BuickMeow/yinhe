@@ -15,7 +15,7 @@
 //! `project.json` 和 `mapping.json` 携带人类可读元数据，不压缩；
 //! `data` 段 = 6 个 (len u32 LE + zstd 块)：
 //! ```text
-//! 0: bincode varint(conductor + tracks payload)   ← 非音符部分
+//! 0: postcard(conductor + tracks payload)   ← 非音符部分
 //! 1: delta 列（varint u32：第一音符绝对 start，其余 = start - prev）
 //! 2: key   列（u8 × N）
 //! 3: track 列（varint u16）
@@ -23,7 +23,7 @@
 //! 5: gate  列（varint u32）
 //! ```
 //!
-//! v5 设计：
+//! v6 设计：
 //! - 音符全局按 (start, track, key) 排序后**列式**存储：黑乐谱的重复单元是
 //!   同一 tick 全轨齐发的图案，该排序让图案整块重复；按字段拆列后每列独立
 //!   zstd，避免交错流互相稀释。实测 1.64 亿音符（start.mid）：v4 key 桶
@@ -32,7 +32,8 @@
 //! - 不序列化音符 id：id 是会话内身份（undo/selection/音频匹配），加载时
 //!   由 `load_bucket_notes` 重新分配；全局递增 id 在 zstd 下几乎压不动
 //! - 压缩级别存 `project.json`（compression_level，默认 3，UI 可调）
-//! - 不兼容旧文件（v1-v4 不提供读取，快速迭代期）
+//! - v6 起二进制段由 `bincode` 切 `postcard`（`bincode` 已停止维护）；不兼容 v5 及更早文件
+//! - 不兼容旧文件（v1-v5 不提供读取，快速迭代期）
 
 mod container;
 mod error;
@@ -50,4 +51,4 @@ pub use mapping::{ChannelMap, MappingFile, PortMap, TrackMap};
 pub use project_meta::{ProjectFile, SfEntryJson, SfPortOverride};
 
 pub const MAGIC: &[u8; 4] = b"YINH";
-pub const VERSION: u16 = 5;
+pub const VERSION: u16 = 6;

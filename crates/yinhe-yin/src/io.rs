@@ -36,9 +36,9 @@ struct MixerParamsV1 {
     pub master_inserts: Vec<yinhe_mixer::InsertRef>,
 }
 
-/// 编码混音段：version u32 LE + zstd(bincode varint MixerParams)。
+/// 编码混音段：version u32 LE + zstd(postcard MixerParams)。
 fn encode_mixer_section(mixer: &MixerParams, level: i32) -> Result<Vec<u8>, YinError> {
-    let payload = serialize_with_varint(mixer)?;
+    let payload = serialize_postcard(mixer)?;
     let comp = zstd::encode_all(Cursor::new(&payload), level.clamp(0, 22))?;
     let mut out = Vec::with_capacity(4 + comp.len());
     out.extend_from_slice(&MIXER_SECTION_VERSION.to_le_bytes());
@@ -55,13 +55,13 @@ fn decode_mixer_section(section: &[u8]) -> Option<MixerParams> {
     let payload = zstd::decode_all(Cursor::new(&section[4..])).ok()?;
     let mut params: MixerParams = match version {
         // 当前版本：完整结构（含 instruments）。
-        MIXER_SECTION_VERSION => deserialize_with_varint(&payload)
+        MIXER_SECTION_VERSION => deserialize_postcard(&payload)
             .map_err(|e| tracing::warn!("混音段解析失败，忽略混音设置: {e}"))
             .ok()?,
         // 旧版 v1：按旧结构解码，乐器表留空（不丢其它混音设置）
-        //（与 bincode 必须整段对齐、不能跳过未知字段相关）。
+        //（与 postcard 必须整段对齐、不能跳过未知字段相关）。
         1 => {
-            let v1: MixerParamsV1 = deserialize_with_varint(&payload)
+            let v1: MixerParamsV1 = deserialize_postcard(&payload)
                 .map_err(|e| tracing::warn!("旧版混音段解析失败，忽略混音设置: {e}"))
                 .ok()?;
             MixerParams {
@@ -105,21 +105,13 @@ pub struct YinProgress {
     pub fraction: f32,
 }
 
-/// bincode varint 编码（所有整数 LEB128）。
-fn serialize_with_varint<T: serde::Serialize>(v: &T) -> Result<Vec<u8>, YinError> {
-    use bincode::Options;
-    let config = bincode::DefaultOptions::new()
-        .with_varint_encoding()
-        .with_little_endian();
-    Ok(config.serialize(v)?)
+/// postcard 编码（varint，紧凑二进制）。
+fn serialize_postcard<T: serde::Serialize>(v: &T) -> Result<Vec<u8>, YinError> {
+    Ok(postcard::to_stdvec(v)?)
 }
 
-fn deserialize_with_varint<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, YinError> {
-    use bincode::Options;
-    let config = bincode::DefaultOptions::new()
-        .with_varint_encoding()
-        .with_little_endian();
-    Ok(config.deserialize(bytes)?)
+fn deserialize_postcard<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, YinError> {
+    Ok(postcard::from_bytes(bytes)?)
 }
 
 /// SoundFont state attached to a project (mode + per-port overrides).
@@ -137,7 +129,7 @@ pub struct ProjectSoundFonts {
 //  v5 列式音符格式
 // =========================================================
 
-/// 非音符部分（conductor + tracks payload），整体 bincode varint + zstd。
+/// 非音符部分（conductor + tracks payload），整体 postcard + zstd。
 #[derive(Serialize, Deserialize)]
 struct MetaPayload {
     conductor: ConductorData,
@@ -316,12 +308,12 @@ fn compress_data(
 ) -> Result<Vec<u8>, YinError> {
     let level = level.clamp(0, 22);
     let plains: [Vec<u8>; 6] = [
-        serialize_with_varint(meta)?,
-        serialize_with_varint(&notes.delta)?,
-        serialize_with_varint(&notes.key)?,
-        serialize_with_varint(&notes.track)?,
-        serialize_with_varint(&notes.vel)?,
-        serialize_with_varint(&notes.gate)?,
+        serialize_postcard(meta)?,
+        serialize_postcard(&notes.delta)?,
+        serialize_postcard(&notes.key)?,
+        serialize_postcard(&notes.track)?,
+        serialize_postcard(&notes.vel)?,
+        serialize_postcard(&notes.gate)?,
     ];
     let mut out = Vec::new();
     for (i, plain) in plains.into_iter().enumerate() {
@@ -367,12 +359,12 @@ fn decompress_data(
             (i as f32 + 1.0) / 6.0,
         );
     }
-    let meta: MetaPayload = deserialize_with_varint(&plains[0])?;
-    let delta: Vec<u32> = deserialize_with_varint(&plains[1])?;
-    let key: Vec<u8> = deserialize_with_varint(&plains[2])?;
-    let track: Vec<u16> = deserialize_with_varint(&plains[3])?;
-    let vel: Vec<u8> = deserialize_with_varint(&plains[4])?;
-    let gate: Vec<u32> = deserialize_with_varint(&plains[5])?;
+    let meta: MetaPayload = deserialize_postcard(&plains[0])?;
+    let delta: Vec<u32> = deserialize_postcard(&plains[1])?;
+    let key: Vec<u8> = deserialize_postcard(&plains[2])?;
+    let track: Vec<u16> = deserialize_postcard(&plains[3])?;
+    let vel: Vec<u8> = deserialize_postcard(&plains[4])?;
+    let gate: Vec<u32> = deserialize_postcard(&plains[5])?;
 
     let n = key.len();
     if delta.len() != n || track.len() != n || vel.len() != n || gate.len() != n {

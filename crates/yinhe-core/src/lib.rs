@@ -1,7 +1,7 @@
 //! Yinhe DAW 内核数据模型。
 //!
 //! `YinModel` 是整个项目的唯一内存数据结构。MIDI 仅作为 import/export
-//! 适配器，.yin 文件通过 bincode + zstd 序列化。
+//! 适配器，.yin 文件通过 postcard + zstd 序列化。
 //!
 //! 设计要点：
 //! - NoteEvent 不带 channel/track，由所属 TrackData 隐含

@@ -14,6 +14,6 @@ pub enum YinError {
     Utf8(#[from] std::str::Utf8Error),
     #[error("json parse error: {0}")]
     Json(#[from] serde_json::Error),
-    #[error("bincode error: {0}")]
-    Bincode(#[from] bincode::Error),
+    #[error("postcard error: {0}")]
+    Postcard(#[from] postcard::Error),
 }

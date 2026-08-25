@@ -8,7 +8,7 @@ pub(crate) struct Sections {
     pub project_json: Vec<u8>,
     pub mapping_json: Vec<u8>,
     pub data: Vec<u8>,
-    /// 可选第 4 段：混音台参数（bincode + zstd）。
+    /// 可选第 4 段：混音台参数（postcard + zstd）。
     /// 老文件没有这一段 → None；老读取器不检查尾部，读新文件时自动忽略。
     pub mixer: Option<Vec<u8>>,
 }

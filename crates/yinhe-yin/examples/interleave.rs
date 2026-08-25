@@ -1,9 +1,7 @@
 //! 实验：把 yin v5 的 5 个音符列交错回"事件流"形态，对比压缩率。
 //! 用法: cargo run --release -p yinhe-yin --example interleave -- <dir>
-//! 读 <dir>/l3_{delta,key,track,vel,gate}.bin（bincode varint 列），
+//! 读 <dir>/l3_{delta,key,track,vel,gate}.bin（postcard 列），
 //! 交错写出 interleaved.bin：每音符 [delta varint][key u8][track varint][vel u8][gate varint]。
-
-use bincode::Options;
 
 fn push_varint(out: &mut Vec<u8>, v: u64) {
     if v <= 250 {
@@ -25,16 +23,13 @@ fn main() {
         .nth(1)
         .unwrap_or_else(|| "/tmp/yin_exp".to_string());
     let read_bin = |name: &str| std::fs::read(format!("{dir}/{name}")).expect(name);
-    let opt = bincode::DefaultOptions::new()
-        .with_varint_encoding()
-        .with_little_endian();
 
     let t = std::time::Instant::now();
-    let delta: Vec<u32> = opt.deserialize(&read_bin("l3_delta.bin")).unwrap();
-    let key: Vec<u8> = opt.deserialize(&read_bin("l3_key.bin")).unwrap();
-    let track: Vec<u16> = opt.deserialize(&read_bin("l3_track.bin")).unwrap();
-    let vel: Vec<u8> = opt.deserialize(&read_bin("l3_vel.bin")).unwrap();
-    let gate: Vec<u32> = opt.deserialize(&read_bin("l3_gate.bin")).unwrap();
+    let delta: Vec<u32> = postcard::from_bytes(&read_bin("l3_delta.bin")).unwrap();
+    let key: Vec<u8> = postcard::from_bytes(&read_bin("l3_key.bin")).unwrap();
+    let track: Vec<u16> = postcard::from_bytes(&read_bin("l3_track.bin")).unwrap();
+    let vel: Vec<u8> = postcard::from_bytes(&read_bin("l3_vel.bin")).unwrap();
+    let gate: Vec<u32> = postcard::from_bytes(&read_bin("l3_gate.bin")).unwrap();
     let n = delta.len();
     assert_eq!(key.len(), n);
     assert_eq!(track.len(), n);

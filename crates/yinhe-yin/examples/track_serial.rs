@@ -1,8 +1,6 @@
 //! 实验：按 (track, start, key) 轨道串行排序（模拟 MIDI 轨道布局），交错写流。
 //! 用法: cargo run --release -p yinhe-yin --example track_serial -- <dir>
 
-use bincode::Options;
-
 fn push_varint(out: &mut Vec<u8>, v: u64) {
     if v <= 250 {
         out.push(v as u8);
@@ -26,16 +24,13 @@ fn main() {
         .unwrap_or_else(|| "/tmp/yin_exp".to_string());
     let split = args.get(2).map(|s| s.as_str()) == Some("--split");
     let read_bin = |name: &str| std::fs::read(format!("{dir}/{name}")).expect(name);
-    let opt = bincode::DefaultOptions::new()
-        .with_varint_encoding()
-        .with_little_endian();
 
     let t = std::time::Instant::now();
-    let delta: Vec<u32> = opt.deserialize(&read_bin("l3_delta.bin")).unwrap();
-    let key: Vec<u8> = opt.deserialize(&read_bin("l3_key.bin")).unwrap();
-    let track: Vec<u16> = opt.deserialize(&read_bin("l3_track.bin")).unwrap();
-    let vel: Vec<u8> = opt.deserialize(&read_bin("l3_vel.bin")).unwrap();
-    let gate: Vec<u32> = opt.deserialize(&read_bin("l3_gate.bin")).unwrap();
+    let delta: Vec<u32> = postcard::from_bytes(&read_bin("l3_delta.bin")).unwrap();
+    let key: Vec<u8> = postcard::from_bytes(&read_bin("l3_key.bin")).unwrap();
+    let track: Vec<u16> = postcard::from_bytes(&read_bin("l3_track.bin")).unwrap();
+    let vel: Vec<u8> = postcard::from_bytes(&read_bin("l3_vel.bin")).unwrap();
+    let gate: Vec<u32> = postcard::from_bytes(&read_bin("l3_gate.bin")).unwrap();
     let n = delta.len();
     assert_eq!(key.len(), n);
     assert_eq!(track.len(), n);

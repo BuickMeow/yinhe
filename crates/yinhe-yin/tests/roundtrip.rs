@@ -221,7 +221,7 @@ fn roundtrip_in_memory() {
     assert!((m2.conductor.tempo.events[1].value - 60.0).abs() < 1e-6);
     assert_eq!(m2.conductor.time_sig.len(), 2);
 
-    // 回归：key_sig 非空时必须能完成 bincode 往返（曾经 untagged 导致 deserialize_any 失败）
+    // 回归：key_sig 非空时必须能完成 postcard 往返（曾经 untagged 导致 deserialize_any 失败）
     assert_eq!(m2.conductor.key_sig.len(), 2);
     assert_eq!(m2.conductor.key_sig[0].root, 0);
     assert_eq!(m2.conductor.key_sig[0].scale, yinhe_types::ScaleType::Major);
@@ -527,7 +527,7 @@ fn dense_score_compresses_well() {
     model.rebuild();
 
     let bytes = save_yin_bytes(&model).unwrap();
-    // 100k * 16B = ~1.6 MB raw bincode（Note 含 id:u32 后）。
+    // 100k * 16B = ~1.6 MB raw postcard（Note 含 id:u32 后）。
     // zstd 应至少压到 50% 以下：id 序列高度可压缩（差分=常量 1），
     // key/vel 都是常量，tick 单调递增。
     assert!(
