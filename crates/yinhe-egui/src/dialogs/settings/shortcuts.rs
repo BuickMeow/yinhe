@@ -146,18 +146,13 @@ pub fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bo
                     changed |= shortcut_combo_ui(ui, rec_id, id, 0, first, &recording, settings);
                 }
 
-                // 追加新快捷键
-                let add_btn = egui::Button::new(if is_adding {
-                    egui::RichText::new(t!("settings.shortcuts.recording").as_ref())
-                } else {
-                    egui::RichText::new("+").strong()
-                })
-                .min_size(egui::vec2(28.0, 24.0));
+                // 追加新快捷键（录制中时末尾不再额外显示录制块，仅保留下一行的占位行）
+                let add_btn =
+                    egui::Button::new(egui::RichText::new("+").strong()).min_size(egui::vec2(28.0, 24.0));
                 if ui
-                    .add(add_btn)
+                    .add_enabled(!is_adding, add_btn)
                     .on_hover_text(t!("settings.shortcuts.add").as_ref())
                     .clicked()
-                    && !is_adding
                 {
                     ui.data_mut(|d| d.insert_temp(rec_id, (id.to_string(), add_idx)));
                     settings.shortcut_recording = true;
