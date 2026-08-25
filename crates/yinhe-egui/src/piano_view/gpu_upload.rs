@@ -497,7 +497,6 @@ mod tests {
             &view_data,
             &yinhe_core::Selection::default(),
             &track_colors,
-            0,
             0.0,
             false,
         );
