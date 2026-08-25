@@ -18,11 +18,18 @@ const fn pc_mask(pcs: &[u8]) -> u16 {
 
 /// 和弦表：相对根音的音级 bitmask（精确相等才匹配）到后缀名，全部为 ASCII。
 /// 按音数从多到少排列（虽然精确匹配不会误判，但保持优先级清晰）。
+/// 标准取 Real Book/Berklee 文本型（m/maj/dim/aug/sus/b/#），6/9 等计为五音。
 const CHORDS: &[(u16, &str)] = &[
     // 五音和弦
     (pc_mask(&[0, 2, 4, 7, 10]), "9"),
     (pc_mask(&[0, 2, 4, 7, 11]), "maj9"),
     (pc_mask(&[0, 2, 3, 7, 10]), "m9"),
+    (pc_mask(&[0, 2, 4, 7, 9]), "6/9"),
+    (pc_mask(&[0, 2, 3, 7, 9]), "m6/9"),
+    (pc_mask(&[0, 1, 4, 7, 10]), "7b9"),
+    (pc_mask(&[0, 3, 4, 7, 10]), "7#9"),
+    (pc_mask(&[0, 4, 6, 7, 10]), "7#11"),
+    (pc_mask(&[0, 4, 6, 7, 11]), "maj7#11"),
     // 四音和弦
     (pc_mask(&[0, 4, 7, 10]), "7"),
     (pc_mask(&[0, 4, 7, 11]), "maj7"),
@@ -35,6 +42,8 @@ const CHORDS: &[(u16, &str)] = &[
     (pc_mask(&[0, 3, 7, 9]), "m6"),
     (pc_mask(&[0, 2, 4, 7]), "add9"),
     (pc_mask(&[0, 2, 3, 7]), "m(add9)"),
+    (pc_mask(&[0, 5, 7, 10]), "7sus4"),
+    (pc_mask(&[0, 3, 5, 7]), "m11"),
     // 三音和弦（大三和弦后缀为空，只显示根音名）
     (pc_mask(&[0, 4, 7]), ""),
     (pc_mask(&[0, 3, 7]), "m"),
@@ -42,6 +51,8 @@ const CHORDS: &[(u16, &str)] = &[
     (pc_mask(&[0, 4, 8]), "aug"),
     (pc_mask(&[0, 2, 7]), "sus2"),
     (pc_mask(&[0, 5, 7]), "sus4"),
+    (pc_mask(&[0, 3, 5]), "m(add4)"),
+    (pc_mask(&[0, 4, 5]), "add4"),
     // 二音（power chord）
     (pc_mask(&[0, 7]), "5"),
 ];
@@ -163,5 +174,23 @@ mod tests {
     #[test]
     fn empty_returns_none() {
         assert_eq!(recognize(&[]), None);
+    }
+
+    #[test]
+    fn six_nine() {
+        // B6/9: B D# F# G# C# = 47,51,54,56,61
+        assert_eq!(recognize(&[47, 51, 54, 56, 61]), Some("B6/9".to_string()));
+    }
+
+    #[test]
+    fn seven_sus4() {
+        // C7sus4: C F G Bb = 60,65,67,70
+        assert_eq!(recognize(&[60, 65, 67, 70]), Some("C7sus4".to_string()));
+    }
+
+    #[test]
+    fn three_note_add4() {
+        // G#2 B2 C#3 -> G#m(add4): G# B C# = 44,47,49
+        assert_eq!(recognize(&[44, 47, 49]), Some("G#m(add4)".to_string()));
     }
 }
