@@ -105,16 +105,25 @@ pub fn set_app_nap_enabled(enabled: bool) {
     set_app_nap_enabled_inner(enabled);
 }
 
+/// 禁用系统标题栏区域的背景拖动（macOS：content view 的
+/// `mouseDownCanMoveWindow` → NO）；非 macOS 平台为空操作。
+/// 窗口拖动由 title_bar / transport_bar 的手动 StartDrag 追踪负责。
+pub fn disable_background_window_drag(frame: &eframe::Frame) {
+    disable_background_window_drag_inner(frame);
+}
+
 // Re-export the platform-specific inner type and function.
 #[cfg(target_os = "macos")]
 use macos::{
-    MenuBarInner, request_user_attention as request_user_attention_inner,
+    MenuBarInner, disable_background_window_drag as disable_background_window_drag_inner,
+    request_user_attention as request_user_attention_inner,
     set_app_nap_enabled as set_app_nap_enabled_inner,
     set_document_edited as set_document_edited_inner,
 };
 #[cfg(not(target_os = "macos"))]
 use stub::{
-    MenuBarInner, request_user_attention as request_user_attention_inner,
+    MenuBarInner, disable_background_window_drag as disable_background_window_drag_inner,
+    request_user_attention as request_user_attention_inner,
     set_app_nap_enabled as set_app_nap_enabled_inner,
     set_document_edited as set_document_edited_inner,
 };

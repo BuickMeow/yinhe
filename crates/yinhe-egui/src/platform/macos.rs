@@ -391,6 +391,61 @@ pub(crate) fn set_document_edited(frame: &eframe::Frame, edited: bool) {
     }
 }
 
+// ── 禁用系统标题栏背景拖动 ────────────────────────────────────────────────
+
+/// 窗口实际是 Titled + FullSizeContentView（egui-winit 把 with_titlebar_shown(false)
+/// 映射为 titlebar_transparent + title_hidden 而非 borderless），AppKit 会把顶部
+/// titlebar 高度区域（~28px）的空白 mouseDown 直接转成系统窗口拖动——自定义
+/// 标题栏的文档标签恰好落在该区域内，导致"拖标签变成拖窗口"，且不经过 egui。
+///
+/// 修复：给 winit 的 contentView 类添加 `mouseDownCanMoveWindow` → NO
+/// （Apple 官方扩展点）。系统背景拖动被禁用后，窗口拖动完全由应用侧手动
+/// 追踪控制；transport_bar / title_bar 的 StartDrag 走显式
+/// performWindowDragWithEvent，不查询该方法，不受影响。红绿灯按钮有独立的
+/// 事件处理，同样不受影响。
+extern "C-unwind" fn no_background_drag(_this: &AnyObject, _sel: Sel) -> i8 {
+    0 // NO：背景点击不得移动窗口
+}
+
+/// 只尝试一次（class_addMethod 成功后无需重复）。
+static BG_DRAG_DISABLED: OnceLock<()> = OnceLock::new();
+
+pub(crate) fn disable_background_window_drag(frame: &eframe::Frame) {
+    if BG_DRAG_DISABLED.get().is_some() {
+        return;
+    }
+    let Ok(handle) = frame.window_handle() else {
+        return;
+    };
+    let RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
+        return;
+    };
+    let ns_view: &AnyObject = unsafe { &*appkit.ns_view.as_ptr().cast() };
+    let view_class: *mut AnyClass = unsafe { objc2::msg_send![ns_view, class] };
+    if view_class.is_null() {
+        return;
+    }
+    // B@: = BOOL (id self, SEL _cmd)
+    let imp: objc2::runtime::Imp = unsafe {
+        std::mem::transmute(
+            no_background_drag as unsafe extern "C-unwind" fn(&AnyObject, Sel) -> i8,
+        )
+    };
+    let added = unsafe {
+        objc2::ffi::class_addMethod(
+            view_class,
+            objc2::sel!(mouseDownCanMoveWindow),
+            imp,
+            c"B@:".as_ptr(),
+        )
+    };
+    let _ = BG_DRAG_DISABLED.set(());
+    if !bool::from(added) {
+        // winit 未实现该方法，正常必然成功；失败只影响本次运行，记日志即可
+        tracing::warn!("Failed to override mouseDownCanMoveWindow on content view");
+    }
+}
+
 // ── App Nap（播放时阻止系统降频）──────────────────────────────────────
 
 // 当前 App Nap 阻止令牌（beginActivityWithOptions: 的返回值），null 表示未阻止。

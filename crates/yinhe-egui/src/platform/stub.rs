@@ -39,3 +39,7 @@ pub(crate) fn request_user_attention() {
 pub(crate) fn set_app_nap_enabled(_enabled: bool) {
     // No-op on non-macOS platforms
 }
+
+pub(crate) fn disable_background_window_drag(_frame: &eframe::Frame) {
+    // No-op on non-macOS platforms
+}

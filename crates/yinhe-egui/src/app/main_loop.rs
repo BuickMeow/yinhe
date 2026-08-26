@@ -126,6 +126,8 @@ impl eframe::App for App {
             self.last_dirty_state = any_dirty;
             crate::platform::set_document_edited(frame, any_dirty);
         }
+        // macOS：禁用系统标题栏区域的背景拖动（否则拖文档标签会变成系统级拖窗口）
+        crate::platform::disable_background_window_drag(frame);
 
         // ── macOS: poll native menu bar actions ──
         // 设置窗口打开、快捷键录制或输入框聚焦期间暂停原生菜单加速键：
