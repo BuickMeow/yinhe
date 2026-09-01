@@ -14,6 +14,7 @@ pub mod playback;
 pub mod progress;
 pub mod project_data;
 pub mod quantize;
+pub mod sel_hint;
 pub mod shortcuts;
 
 pub use config::{ProjectSfConfig, SfEntry};
