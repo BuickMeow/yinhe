@@ -658,7 +658,7 @@ pub(crate) fn show(
             };
             ui.painter().line_segment(
                 [a, b],
-                egui::Stroke::new(theme::CURSOR_WIDTH, theme::contrast_fg()),
+                egui::Stroke::new(theme::CURSOR_WIDTH, theme::accent_active()),
             );
         }
     }

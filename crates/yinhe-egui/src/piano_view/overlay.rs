@@ -142,7 +142,7 @@ pub(crate) fn draw_overlays(
                         egui::pos2(content_rect.min.x, cy),
                         egui::pos2(content_rect.max.x, cy),
                     ],
-                    egui::Stroke::new(crate::theme::CURSOR_WIDTH, crate::theme::contrast_fg()),
+                    egui::Stroke::new(crate::theme::CURSOR_WIDTH, crate::theme::accent_active()),
                 );
             }
         } else if kb_w_cur <= w {
@@ -154,7 +154,7 @@ pub(crate) fn draw_overlays(
                         egui::pos2(cx, content_rect.min.y),
                         egui::pos2(cx, content_rect.max.y),
                     ],
-                    egui::Stroke::new(crate::theme::CURSOR_WIDTH, crate::theme::contrast_fg()),
+                    egui::Stroke::new(crate::theme::CURSOR_WIDTH, crate::theme::accent_active()),
                 );
             }
         }

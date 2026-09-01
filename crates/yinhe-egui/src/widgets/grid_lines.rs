@@ -182,15 +182,14 @@ pub fn paint_grid_lines(
                 let is_sub_pos = local % ticks_per_sub == 0;
 
                 if is_measure {
-                    // 小节线统一粗线（2px）。合并时合并/2 恒为小节边界（divisor 为 2 的幂），
-                    // 因此合并网格密度自动是标签的 2 倍（如 4 小节标签 → 每 2 小节一条线）。
+                    // 小节线与其它层级同宽（1px），仅靠透明度区分层级，减少视觉重量。
                     paint_line(
                         painter,
                         orientation,
                         main_pos,
                         cross_start,
                         cross_end,
-                        2.0,
+                        1.0,
                         colors.measure,
                     );
                 } else if show_beat && is_beat_pos {

@@ -173,18 +173,21 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
         }
     };
     let mix_darken = |t: f32| mix(bg, Color32::BLACK, t);
-    // (control, control_selected, btn, line, sub_beat, tick, track, stripe)
-    let (t_control, t_ctl_sel, t_btn, t_line, t_sub, t_tick, t_track, t_stripe) = if dark {
-        (0.05, 0.15, 0.10, 0.15, 0.08, 0.03, 0.20, 0.15)
+    // (control, control_selected, btn, line, track, stripe) — sub/tick 已改为 line_fg 的 alpha 变体
+    let (t_control, t_ctl_sel, t_btn, t_line, t_track, t_stripe) = if dark {
+        (0.05, 0.15, 0.10, 0.15, 0.20, 0.15)
     } else {
-        (0.03, 0.08, 0.05, 0.07, 0.04, 0.02, 0.12, 0.06)
+        (0.03, 0.08, 0.05, 0.07, 0.12, 0.06)
     };
     let mix_control = mix_surface(t_control);
     let mix_control_selected = mix_surface(t_ctl_sel);
     let mix_btn_bg = mix_surface(t_btn);
     let mix_line = mix_surface(t_line);
-    let mix_grid_sub_beat = mix_surface(t_sub);
-    let mix_grid_tick = mix_surface(t_tick);
+    // 网格次级线用同一 line_fg 的不同透明度，减少调色板数量（同色相不同 alpha）。
+    let mix_grid_sub_beat =
+        Color32::from_rgba_unmultiplied(mix_line.r(), mix_line.g(), mix_line.b(), 140);
+    let mix_grid_tick =
+        Color32::from_rgba_unmultiplied(mix_line.r(), mix_line.g(), mix_line.b(), 70);
     // 条纹/轨道恒为"比背景更黑"（亮暗都压暗，幅度分表）
     let mix_track = mix_darken(t_track);
     let mix_stripe = mix_darken(t_stripe);
@@ -308,34 +311,49 @@ mod tests {
     fn derive_surface_ladder_monotonic() {
         let lum = |c: Color32| c.r() as i32; // 无彩色系下 r 即亮度
         let dark = derive_theme(crate::base::BaseColors::DARK);
-        // 暗色：压暗两档 < 基底 < 提亮梯度（3/5/8/10/15% 单调）
+        // 暗色：压暗两档 < 基底 < 提亮梯度（5/10/15% 单调）；网格次级线为 line_fg 的 alpha 变体，不参与不透明 ladder
         let d = [
             dark.track_bg,
             dark.stripe_bg,
             dark.app_bg,
-            dark.grid_tick,
             dark.control_bg,
-            dark.grid_sub_beat,
             dark.btn_bg,
             dark.line_fg,
         ];
         assert!(d.windows(2).all(|w| lum(w[0]) <= lum(w[1])));
         assert_eq!(dark.control_selected_bg, dark.line_fg);
+        // 网格次级线与 line_fg 同色相不同 alpha（premultiplied 存储需用 to_srgba_unmultiplied 比较，允许 ±1 舍入）
+        let [r, g, b, a] = dark.grid_sub_beat.to_srgba_unmultiplied();
+        assert!((r as i16 - dark.line_fg.r() as i16).abs() <= 1);
+        assert!((g as i16 - dark.line_fg.g() as i16).abs() <= 1);
+        assert!((b as i16 - dark.line_fg.b() as i16).abs() <= 1);
+        assert_eq!(a, 140);
+        let [r, g, b, a] = dark.grid_tick.to_srgba_unmultiplied();
+        assert!((r as i16 - dark.line_fg.r() as i16).abs() <= 1);
+        assert!((g as i16 - dark.line_fg.g() as i16).abs() <= 1);
+        assert!((b as i16 - dark.line_fg.b() as i16).abs() <= 1);
+        assert_eq!(a, 70);
 
         let light = derive_theme(crate::base::BaseColors::LIGHT);
-        // 亮色：全部压暗，幅度阶梯单调（2/3/4/5/6/7/8/12% 单调）
+        // 亮色：全部压暗，幅度阶梯单调（3/5/8/12% 单调），网格线为 alpha 变体
         let l = [
             light.track_bg,
             light.control_selected_bg,
             light.line_fg,
             light.stripe_bg,
             light.btn_bg,
-            light.grid_sub_beat,
             light.control_bg,
-            light.grid_tick,
             light.app_bg,
         ];
         assert!(l.windows(2).all(|w| lum(w[0]) <= lum(w[1])));
+        let [r, g, b, _] = light.grid_sub_beat.to_srgba_unmultiplied();
+        assert!((r as i16 - light.line_fg.r() as i16).abs() <= 1);
+        assert!((g as i16 - light.line_fg.g() as i16).abs() <= 1);
+        assert!((b as i16 - light.line_fg.b() as i16).abs() <= 1);
+        let [r, g, b, _] = light.grid_tick.to_srgba_unmultiplied();
+        assert!((r as i16 - light.line_fg.r() as i16).abs() <= 1);
+        assert!((g as i16 - light.line_fg.g() as i16).abs() <= 1);
+        assert!((b as i16 - light.line_fg.b() as i16).abs() <= 1);
     }
 
     /// 新增的亮色预设：亮基底、深对比字、网格线压暗方向全部正确。

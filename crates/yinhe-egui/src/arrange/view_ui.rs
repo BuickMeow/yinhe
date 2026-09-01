@@ -276,7 +276,7 @@ pub fn show(
             let cx = rect.min.x + cx_local;
             painter.line_segment(
                 [egui::pos2(cx, rect.min.y), egui::pos2(cx, rect.max.y)],
-                egui::Stroke::new(crate::theme::CURSOR_WIDTH, crate::theme::contrast_fg()),
+                egui::Stroke::new(crate::theme::CURSOR_WIDTH, crate::theme::accent_active()),
             );
         }
     }
