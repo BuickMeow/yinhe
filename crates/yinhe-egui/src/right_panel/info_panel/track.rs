@@ -55,7 +55,7 @@ pub(crate) fn show_track_info(
         .map(|(i, n)| (i, n.clone()))
         .collect();
     let mut sel = sel_idx;
-    if crate::widgets::combo::combo_select(ui, "info_track_sel", &mut sel, 160.0, &track_opt) {
+    if crate::widgets::combo::combo_select_auto(ui, "info_track_sel", &mut sel, &track_opt) {
         doc.edit.track_selected.clear();
         doc.edit.track_selected.insert(sel as u16);
     }

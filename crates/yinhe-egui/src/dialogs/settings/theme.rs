@@ -47,11 +47,10 @@ pub fn show_theme_tab(
                 .collect();
             // DRY: 用 combo_select 一行完成，无边框+锁宽
             let preset_opt = preset_names;
-            if crate::widgets::combo::combo_select(
+            if crate::widgets::combo::combo_select_auto(
                 ui,
                 "theme_preset",
                 &mut settings.theme_preset,
-                160.0,
                 &preset_opt,
             ) {
                 if let Some(base) = BaseColors::preset_by_name(&settings.theme_preset) {

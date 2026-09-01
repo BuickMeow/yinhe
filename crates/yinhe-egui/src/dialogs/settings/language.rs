@@ -24,11 +24,10 @@ pub fn show_language_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> boo
                 .iter()
                 .map(|(c, n)| (c.to_string(), n.to_string()))
                 .collect();
-            if crate::widgets::combo::combo_select(
+            if crate::widgets::combo::combo_select_auto(
                 ui,
                 "locale_select",
                 &mut settings.locale,
-                160.0,
                 &locale_opt,
             ) {
                 rust_i18n::set_locale(&settings.locale);
@@ -43,11 +42,10 @@ pub fn show_language_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> boo
                     .iter()
                     .map(|&e| (e, e.label().to_string()))
                     .collect();
-            if crate::widgets::combo::combo_select(
+            if crate::widgets::combo::combo_select_auto(
                 ui,
                 "midi_import_encoding",
                 &mut settings.midi_import_encoding,
-                160.0,
                 &enc_opt,
             ) {
                 changed = true;

@@ -84,11 +84,10 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                 .iter()
                 .map(|&sr| (sr, format!("{} Hz", sr)))
                 .collect();
-            if crate::widgets::combo::combo_select(
+            if crate::widgets::combo::combo_select_auto(
                 ui,
                 "sample_rate",
                 &mut settings.sample_rate,
-                160.0,
                 &sr_opt,
             ) {
                 changed = true;
@@ -116,11 +115,10 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             ];
             let buf_opt: Vec<(u32, String)> =
                 buf_sizes.iter().map(|(v, l)| (*v, l.clone())).collect();
-            if crate::widgets::combo::combo_select(
+            if crate::widgets::combo::combo_select_auto(
                 ui,
                 "buffer_size",
                 &mut settings.buffer_size,
-                160.0,
                 &buf_opt,
             ) {
                 changed = true;
@@ -155,11 +153,10 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                 (false, t!("settings.audio.engine_cpu").to_string()),
                 (true, t!("settings.audio.engine_gpu").to_string()),
             ];
-            if crate::widgets::combo::combo_select(
+            if crate::widgets::combo::combo_select_auto(
                 ui,
                 "synth_engine",
                 &mut settings.use_gpu_synth,
-                160.0,
                 &engine_opt,
             ) {
                 changed = true;

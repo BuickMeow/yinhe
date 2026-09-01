@@ -43,11 +43,10 @@ pub fn show_general_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool
                         t!("pr_bar.blocked_keep").to_string(),
                     ),
                 ];
-                if crate::widgets::combo::combo_select(
+                if crate::widgets::combo::combo_select_auto(
                     ui,
                     "blocked_behavior",
                     &mut settings.overlap_blocked_behavior,
-                    160.0,
                     &blocked_opt,
                 ) {
                     changed = true;
@@ -75,11 +74,10 @@ pub fn show_general_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool
                         t!("settings.editing.quick_delete.both").to_string(),
                     ),
                 ];
-                if crate::widgets::combo::combo_select(
+                if crate::widgets::combo::combo_select_auto(
                     ui,
                     "quick_delete_mode",
                     &mut settings.quick_delete_mode,
-                    160.0,
                     &quick_opt,
                 ) {
                     changed = true;

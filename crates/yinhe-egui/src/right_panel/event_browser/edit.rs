@@ -170,15 +170,21 @@ fn show_choice_popup<T: Copy + PartialEq + Send + Sync + 'static>(
                         .size(crate::theme::SMALL_FONT),
                 );
                 ui.add_space(2.0);
-                crate::widgets::combo::combo_box(ui, salt, label_of(&state), 160.0, |ui| {
-                    for opt in options {
-                        if crate::widgets::combo::combo_item(ui, *opt == state, label_of(opt))
-                            .clicked()
-                        {
-                            state = *opt;
+                crate::widgets::combo::combo_box(
+                    ui,
+                    salt,
+                    label_of(&state),
+                    crate::widgets::combo::DEFAULT_WIDTH,
+                    |ui| {
+                        for opt in options {
+                            if crate::widgets::combo::combo_item(ui, *opt == state, label_of(opt))
+                                .clicked()
+                            {
+                                state = *opt;
+                            }
                         }
-                    }
-                });
+                    },
+                );
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
                     if ui.button(t!("common.confirm").as_ref()).clicked() {
