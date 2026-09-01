@@ -361,18 +361,15 @@ pub(crate) fn pencil_frame(
         Some(PencilDrag::Create(s_tick, s_key)) => {
             // Show ghost while dragging (before release)
             if pointer.primary_down() && !pointer.primary_released() {
-                // auto-scroll：让长音符能拖出屏幕（pos 未 clamp）
                 if let Some(pos) = hover_pos {
-                    crate::selection::drag::auto_scroll_on_drag_dir(
+                    crate::piano_view::drag::drag_scroll_and_clamp(
                         ui,
                         view,
+                        content_rect,
                         music_rect,
+                        total_ticks,
                         pos,
-                        |view, w, h| {
-                            view.clamp_scroll(w, h, total_ticks);
-                        },
                     );
-                    view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
                 }
                 if let Some((tick, key)) = preview {
                     let interval = quantize.tick_interval(ppq) as f64;
@@ -433,21 +430,18 @@ pub(crate) fn pencil_frame(
             }
         }
         Some(PencilDrag::Move(trk, orig_tick, orig_key, orig_end, press_tick, last_dk)) => {
-            // auto-scroll：让音符能拖出屏幕（pos 未 clamp）
             if pointer.primary_down()
                 && !pointer.primary_released()
                 && let Some(pos) = hover_pos
             {
-                crate::selection::drag::auto_scroll_on_drag_dir(
+                crate::piano_view::drag::drag_scroll_and_clamp(
                     ui,
                     view,
+                    content_rect,
                     music_rect,
+                    total_ticks,
                     pos,
-                    |view, w, h| {
-                        view.clamp_scroll(w, h, total_ticks);
-                    },
                 );
-                view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
             }
             if let Some((tick, key)) = preview {
                 let dt = (tick as i64) - (*press_tick as i64);
@@ -508,21 +502,18 @@ pub(crate) fn pencil_frame(
             }
         }
         Some(PencilDrag::ResizeRight(trk, orig_tick, orig_end, orig_key)) => {
-            // auto-scroll：右边缘能拖出屏幕
             if pointer.primary_down()
                 && !pointer.primary_released()
                 && let Some(pos) = hover_pos
             {
-                crate::selection::drag::auto_scroll_on_drag_dir(
+                crate::piano_view::drag::drag_scroll_and_clamp(
                     ui,
                     view,
+                    content_rect,
                     music_rect,
+                    total_ticks,
                     pos,
-                    |view, w, h| {
-                        view.clamp_scroll(w, h, total_ticks);
-                    },
                 );
-                view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
             }
             if let Some((tick, _)) = preview {
                 let interval = quantize.tick_interval(ppq) as f64;
@@ -570,21 +561,18 @@ pub(crate) fn pencil_frame(
             }
         }
         Some(PencilDrag::ResizeLeft(trk, orig_tick, orig_end, orig_key)) => {
-            // auto-scroll：左边缘能拖出屏幕
             if pointer.primary_down()
                 && !pointer.primary_released()
                 && let Some(pos) = hover_pos
             {
-                crate::selection::drag::auto_scroll_on_drag_dir(
+                crate::piano_view::drag::drag_scroll_and_clamp(
                     ui,
                     view,
+                    content_rect,
                     music_rect,
+                    total_ticks,
                     pos,
-                    |view, w, h| {
-                        view.clamp_scroll(w, h, total_ticks);
-                    },
                 );
-                view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
             }
             if let Some((tick, _)) = preview {
                 let interval = quantize.tick_interval(ppq) as f64;

@@ -244,31 +244,13 @@ pub(crate) fn interactive_ruler(
         jumped = true;
     }
 
-    // ── 拖出窗口边缘自动滚动（复用选框 MARGIN/BASE_SPEED 逻辑）──
-    // 仅当起点在标尺内才生效，避免别处按下拖入误触发；与选框的 auto_scroll_delta 一致。
+    // ── 拖出窗口边缘自动滚动（主轴）──
+    // 仅当起点在标尺内才生效，避免别处按下拖入误触发；复用共享 delta（MARGIN/BASE_SPEED）。
     if press_on_ruler
         && ruler_resp.dragged()
         && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
     {
-        use crate::widgets::auto_scroll::{BASE_SPEED, MARGIN};
-        let dt = ui.input(|i| i.unstable_dt);
-        let mut delta: f32 = 0.0;
-        match orientation {
-            Orientation::Horizontal => {
-                if pos.x < ruler_rect.min.x + MARGIN {
-                    delta = -(ruler_rect.min.x + MARGIN - pos.x) * BASE_SPEED * dt;
-                } else if pos.x > ruler_rect.max.x - MARGIN {
-                    delta = (pos.x - (ruler_rect.max.x - MARGIN)) * BASE_SPEED * dt;
-                }
-            }
-            Orientation::Vertical => {
-                if pos.y < ruler_rect.min.y + MARGIN {
-                    delta = -(ruler_rect.min.y + MARGIN - pos.y) * BASE_SPEED * dt;
-                } else if pos.y > ruler_rect.max.y - MARGIN {
-                    delta = (pos.y - (ruler_rect.max.y - MARGIN)) * BASE_SPEED * dt;
-                }
-            }
-        }
+        let delta = crate::widgets::auto_scroll::auto_scroll_main(ui, ruler_rect, pos, orientation);
         if delta != 0.0 {
             *view.scroll_main_mut() += delta;
             view.mark_dirty();

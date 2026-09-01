@@ -104,19 +104,14 @@ pub(crate) fn marquee_drag_frame(
 
             drag = Some((start_music, press_pos, local));
 
-            // ── Auto-scroll when dragging near the edge ──
-            // No scroll compensation needed: start is in music coords, so it
-            // automatically follows the content.
-            crate::selection::drag::auto_scroll_on_drag_dir(
+            crate::piano_view::drag::drag_scroll_and_clamp(
                 ui,
                 view,
+                content_rect,
                 music_rect,
+                total_ticks,
                 pos,
-                |view, w, h| {
-                    view.clamp_scroll(w, h, total_ticks);
-                },
             );
-            view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
 
             // ── Tooltip：显示 ±tick / ±key（tick 按量化 snap）──
             let (s_tick, s_cross) = start_music;
