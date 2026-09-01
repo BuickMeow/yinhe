@@ -49,20 +49,6 @@ pub const SETTING_ITEMS: &[SettingItem] = &[
         ko: "강조색",
     },
     SettingItem {
-        cat: 0,
-        zh: "危险色",
-        en: "Danger color",
-        ja: "危険色",
-        ko: "위험 색",
-    },
-    SettingItem {
-        cat: 0,
-        zh: "警告色",
-        en: "Warning color",
-        ja: "警告色",
-        ko: "경고 색",
-    },
-    SettingItem {
         cat: 1,
         zh: "语言",
         en: "Language",

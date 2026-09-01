@@ -24,8 +24,8 @@ pub fn rgba_to_color32(c: (f32, f32, f32, f32)) -> Color32 {
     )
 }
 
-/// 完整主题：所有派生色。由 [`derive_theme`] 从 7 个标准色计算得出，
-/// 用户改标准色即可生成整套主题，无需逐个调色。
+/// 完整主题：所有派生色。由 [`derive_theme`] 从标准色计算得出，
+/// 用户改可调标准色即可生成整套主题，无需逐个调色（danger/warning 为固定语义色）。
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Theme {
     // ── 背景 / 面板 ──
@@ -142,13 +142,14 @@ fn gray_tone(text: Color32, bg: Color32, dark: bool, f: f32) -> Color32 {
     }
 }
 
-/// 从 7 个标准色计算完整主题。纯函数：相同输入 → 相同输出。
+/// 从标准色计算完整主题。纯函数：相同输入 → 相同输出。
+/// danger/warning 为固定语义色（`FIXED_DANGER`/`FIXED_WARNING`），忽略 `base` 中的旧值。
 pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
     let bg = base.bg.to_color32();
     let text = base.text.to_color32();
     let accent = base.accent.to_color32();
-    let danger = base.danger.to_color32();
-    let warning = base.warning.to_color32();
+    let danger = crate::base::FIXED_DANGER.to_color32();
+    let warning = crate::base::FIXED_WARNING.to_color32();
     let contrast = contrast_text(bg);
     let dark = luminance(bg) <= 0.5;
 

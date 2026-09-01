@@ -1,7 +1,7 @@
 /// All GPU rendering colors for the application.
 ///
 /// Each field corresponds to a previously hardcoded color constant.
-/// `from_base` derives them from the 7 standard colors (`BaseColors`),
+/// `from_base` derives them from the standard colors (`BaseColors`),
 /// so a user theme change recolors the GPU-rendered views too.
 #[derive(Clone, Debug)]
 pub struct GpuTheme {
@@ -14,7 +14,7 @@ pub struct GpuTheme {
 }
 
 impl GpuTheme {
-    /// 从 7 个标准色派生 GPU 渲染颜色（与 egui 侧 derive_theme 同源）。
+    /// 从标准色派生 GPU 渲染颜色（与 egui 侧 derive_theme 同源）。
     pub fn from_base(base: crate::base::BaseColors) -> Self {
         let bg = [
             base.bg.r as f32 / 255.0,

@@ -260,6 +260,9 @@ impl AudioSettings {
                                 before_len - s.recent_files.len()
                             );
                         }
+                        // 危险色/警告色已固定为常量，矫正旧配置中的自定义值
+                        s.theme_base.danger = yinhe_theme::base::FIXED_DANGER;
+                        s.theme_base.warning = yinhe_theme::base::FIXED_WARNING;
                         return s;
                     }
                     Err(e) => {

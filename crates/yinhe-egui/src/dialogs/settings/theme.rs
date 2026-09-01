@@ -82,12 +82,6 @@ pub fn show_theme_tab(
             base_changed |=
                 edit_std_color(ui, t!("settings.theme.accent").as_ref(), &mut base.accent);
             ui.end_row();
-            base_changed |=
-                edit_std_color(ui, t!("settings.theme.danger").as_ref(), &mut base.danger);
-            ui.end_row();
-            base_changed |=
-                edit_std_color(ui, t!("settings.theme.warning").as_ref(), &mut base.warning);
-            ui.end_row();
         });
     if base_changed {
         settings.theme_base = base;
