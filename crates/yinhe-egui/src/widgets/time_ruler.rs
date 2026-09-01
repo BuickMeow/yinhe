@@ -47,6 +47,9 @@ pub(crate) trait TimeRulerView {
     fn zoom_main_around(&mut self, main_px: f32, factor: f32, _view_size: f32) {
         self.zoom_around_x(main_px + self.content_left(), factor);
     }
+
+    /// 主轴滚动位置的可变引用（时间轴：横向=scroll_x，纵向=scroll_y）。
+    fn scroll_main_mut(&mut self) -> &mut f32;
 }
 
 impl TimeRulerView for yinhe_types::PianoRollView {
@@ -91,6 +94,14 @@ impl TimeRulerView for yinhe_types::PianoRollView {
             self.zoom_around_x(main_px + self.content_left(), factor);
         }
     }
+
+    fn scroll_main_mut(&mut self) -> &mut f32 {
+        if self.is_vertical() {
+            &mut self.base.scroll_y
+        } else {
+            &mut self.base.scroll_x
+        }
+    }
 }
 
 impl TimeRulerView for yinhe_types::ArrangementView {
@@ -111,6 +122,10 @@ impl TimeRulerView for yinhe_types::ArrangementView {
     }
     fn mark_dirty(&mut self) {
         self.base.dirty = true;
+    }
+
+    fn scroll_main_mut(&mut self) -> &mut f32 {
+        &mut self.base.scroll_x
     }
 }
 
@@ -201,7 +216,7 @@ pub(crate) fn interactive_ruler(
         };
         // 副轴位移需显著且大于主轴，才视为缩放意图，避免与光标跳转冲突
         if cross.abs() > 1.0 && cross.abs() > main.abs() {
-            let factor = 1.0 - cross * 0.005; // 与 scrollbar 1.0 - delta*0.005 一致
+            let factor = 1.0 + cross * 0.005; // 倒转：上拖缩小、下拖放大（与之前相反）
             // 锚定在当前指针的主轴位置，保持指针下 tick 不动
             if let Some(pos) = ruler_resp
                 .interact_pointer_pos()
@@ -227,6 +242,39 @@ pub(crate) fn interactive_ruler(
         *cursor_tick = Some(snap(tick).max(0.0));
         ui.ctx().request_repaint();
         jumped = true;
+    }
+
+    // ── 拖出窗口边缘自动滚动（复用选框 MARGIN/BASE_SPEED 逻辑）──
+    // 仅当起点在标尺内才生效，避免别处按下拖入误触发；与选框的 auto_scroll_delta 一致。
+    if press_on_ruler
+        && ruler_resp.dragged()
+        && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
+    {
+        const MARGIN: f32 = 20.0;
+        const BASE_SPEED: f32 = 15.0;
+        let dt = ui.input(|i| i.unstable_dt);
+        let mut delta: f32 = 0.0;
+        match orientation {
+            Orientation::Horizontal => {
+                if pos.x < ruler_rect.min.x + MARGIN {
+                    delta = -(ruler_rect.min.x + MARGIN - pos.x) * BASE_SPEED * dt;
+                } else if pos.x > ruler_rect.max.x - MARGIN {
+                    delta = (pos.x - (ruler_rect.max.x - MARGIN)) * BASE_SPEED * dt;
+                }
+            }
+            Orientation::Vertical => {
+                if pos.y < ruler_rect.min.y + MARGIN {
+                    delta = -(ruler_rect.min.y + MARGIN - pos.y) * BASE_SPEED * dt;
+                } else if pos.y > ruler_rect.max.y - MARGIN {
+                    delta = (pos.y - (ruler_rect.max.y - MARGIN)) * BASE_SPEED * dt;
+                }
+            }
+        }
+        if delta != 0.0 {
+            *view.scroll_main_mut() += delta;
+            view.mark_dirty();
+            ui.ctx().request_repaint();
+        }
     }
 
     // ── 滚轮 / 触摸板上下滑动 → 沿主轴缩放 ──
@@ -552,6 +600,9 @@ mod tests {
         }
         fn zoom_around_x(&mut self, _pointer_x: f32, _factor: f32) {}
         fn mark_dirty(&mut self) {}
+        fn scroll_main_mut(&mut self) -> &mut f32 {
+            &mut self.base.scroll_x
+        }
     }
 
     /// 变拍子段（seg_start 不在主步长网格上）的标签必须正常显示：
