@@ -250,8 +250,7 @@ pub(crate) fn interactive_ruler(
         && ruler_resp.dragged()
         && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
     {
-        const MARGIN: f32 = 20.0;
-        const BASE_SPEED: f32 = 15.0;
+        use crate::widgets::auto_scroll::{BASE_SPEED, MARGIN};
         let dt = ui.input(|i| i.unstable_dt);
         let mut delta: f32 = 0.0;
         match orientation {

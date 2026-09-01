@@ -1,7 +1,6 @@
 use eframe::egui;
 use yinhe_editor_core::ResizeSide;
 use yinhe_editor_core::quantize::QuantizePreset;
-use yinhe_types::view_base::TimelineViewBase;
 use yinhe_types::{NoteSource, PianoRollView, TimeSigEvent};
 
 /// Hit-test 边缘的像素阈值（与铅笔工具一致）。
@@ -18,88 +17,8 @@ pub struct CollectedNote {
     pub velocity: u8,
 }
 
-/// 纯计算：指针接近 `rect` 边缘时的滚动速度 (dx, dy)。两个 auto-scroll 封装共用。
-fn auto_scroll_delta(ui: &egui::Ui, rect: egui::Rect, pos: egui::Pos2) -> (f32, f32) {
-    const MARGIN: f32 = 20.0;
-    const BASE_SPEED: f32 = 15.0;
-    let dt = ui.input(|i| i.unstable_dt);
-    let mut dx = 0.0f32;
-    let mut dy = 0.0f32;
-
-    if pos.x < rect.min.x + MARGIN {
-        dx = -(rect.min.x + MARGIN - pos.x) * BASE_SPEED * dt;
-    } else if pos.x > rect.max.x - MARGIN {
-        dx = (pos.x - (rect.max.x - MARGIN)) * BASE_SPEED * dt;
-    }
-
-    if pos.y < rect.min.y + MARGIN {
-        dy = -(rect.min.y + MARGIN - pos.y) * BASE_SPEED * dt;
-    } else if pos.y > rect.max.y - MARGIN {
-        dy = (pos.y - (rect.max.y - MARGIN)) * BASE_SPEED * dt;
-    }
-
-    (dx, dy)
-}
-
-/// Auto-scroll the view when the pointer is near the edges of `content_rect`.
-/// Returns the actual (dx, dy) scroll delta applied, so callers can compensate
-/// drag anchors.
-///
-/// `clamp_fn` is called after modifying scroll to enforce bounds.
-/// It receives `(content_width, content_height)` and should call
-/// `base.clamp_scroll_x(...)` etc. 基础版（AR 等横向视图使用）。
-pub fn auto_scroll_on_drag(
-    ui: &egui::Ui,
-    base: &mut TimelineViewBase,
-    content_rect: egui::Rect,
-    pos: egui::Pos2,
-    clamp_fn: impl FnOnce(&mut TimelineViewBase, f32, f32),
-) -> (f32, f32) {
-    let (dx, dy) = auto_scroll_delta(ui, content_rect, pos);
-    if dx != 0.0 || dy != 0.0 {
-        let old_x = base.scroll_x;
-        let old_y = base.scroll_y;
-        base.scroll_x += dx;
-        base.scroll_y += dy;
-        clamp_fn(base, content_rect.width(), content_rect.height());
-        let actual_dx = base.scroll_x - old_x;
-        let actual_dy = base.scroll_y - old_y;
-        if actual_dx != 0.0 || actual_dy != 0.0 {
-            base.dirty = true;
-            ui.ctx().request_repaint();
-            return (actual_dx, actual_dy);
-        }
-    }
-    (0.0, 0.0)
-}
-
-/// 方向感知版 auto-scroll：把整个 `view` 交给 `clamp_fn`，按主轴/副轴分别 clamp
-/// （PR 拖拽/铅笔/框选共用）。屏幕 dx→scroll_x、dy→scroll_y 的字段语义在任意方向
-/// 下都成立：横向 scroll_x = 时间轴、scroll_y = 音高；纵向相反。
-pub fn auto_scroll_on_drag_dir(
-    ui: &egui::Ui,
-    view: &mut PianoRollView,
-    content_rect: egui::Rect,
-    pos: egui::Pos2,
-    clamp_fn: impl FnOnce(&mut PianoRollView, f32, f32),
-) -> (f32, f32) {
-    let (dx, dy) = auto_scroll_delta(ui, content_rect, pos);
-    if dx != 0.0 || dy != 0.0 {
-        let old_x = view.base.scroll_x;
-        let old_y = view.base.scroll_y;
-        view.base.scroll_x += dx;
-        view.base.scroll_y += dy;
-        clamp_fn(view, content_rect.width(), content_rect.height());
-        let actual_dx = view.base.scroll_x - old_x;
-        let actual_dy = view.base.scroll_y - old_y;
-        if actual_dx != 0.0 || actual_dy != 0.0 {
-            view.base.dirty = true;
-            ui.ctx().request_repaint();
-            return (actual_dx, actual_dy);
-        }
-    }
-    (0.0, 0.0)
-}
+/// 共享实现已抽至 `widgets::auto_scroll`，此处保留薄封装以兼容既有调用方。
+pub use crate::widgets::auto_scroll::{auto_scroll_on_drag, auto_scroll_on_drag_dir};
 
 // ── 方向感知的坐标访问器 ─────────────────────────────────────────────────────
 // 交互状态机全部工作在 (tick, key) 领域坐标，只在入口/出口做方向化：

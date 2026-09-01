@@ -1,3 +1,4 @@
+pub(crate) mod auto_scroll;
 pub(crate) mod checkbox;
 pub(crate) mod color_picker;
 pub(crate) mod combo;
