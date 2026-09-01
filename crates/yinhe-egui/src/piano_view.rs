@@ -372,6 +372,7 @@ pub fn show(
         w,
         h,
         total_ticks,
+        *cursor_tick,
         pr_orientation,
     );
 

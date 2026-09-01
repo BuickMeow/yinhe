@@ -49,6 +49,7 @@ mod tests {
                 scroll_x,
                 ppt,
                 1000.0,
+                None,
                 dirty,
                 yinhe_types::Orientation::Horizontal,
             );
@@ -528,6 +529,7 @@ pub(crate) fn show(
     scroll_x: &mut f32,
     pixels_per_tick: &mut f32,
     total_ticks: f64,
+    play_tick: Option<f64>,
     dirty: &mut bool,
     orientation: yinhe_types::Orientation,
 ) -> f32 {
@@ -630,6 +632,36 @@ pub(crate) fn show(
             rect_color
         };
     ui.painter().rect_filled(rect_rect, 0.0, thumb_color);
+
+    // ── Playhead on scrollbar（整曲进度，与 thumb 同 scale）──
+    // `total_ticks` 已含 64 小节 padded（follow::total_ticks_padded），与 thumb 同一套映射，
+    // 因此即使播放头在视口外，滚动条上仍可见全曲进度。细线盖在 thumb 之上。
+    if let Some(ct) = play_tick
+        && ct.is_finite()
+        && ct >= 0.0
+        && ct <= total_ticks
+        && sb_w > 0.0
+        && total_ticks > 0.0
+    {
+        let px = (ct * scale) as f32;
+        if px >= 0.0 && px <= sb_w {
+            let (a, b) = if vertical {
+                (
+                    egui::pos2(rect.min.x, rect.min.y + px),
+                    egui::pos2(rect.max.x, rect.min.y + px),
+                )
+            } else {
+                (
+                    egui::pos2(rect.min.x + px, rect.min.y),
+                    egui::pos2(rect.min.x + px, rect.max.y),
+                )
+            };
+            ui.painter().line_segment(
+                [a, b],
+                egui::Stroke::new(theme::CURSOR_WIDTH, theme::contrast_fg()),
+            );
+        }
+    }
 
     // ── Cursor ──
     if left_hovered {

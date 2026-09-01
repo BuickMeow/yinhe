@@ -26,6 +26,7 @@ pub(crate) fn show_scrollbars(
     w: u32,
     h: u32,
     total_ticks: f64,
+    play_tick: Option<f64>,
     pr_orientation: yinhe_types::Orientation,
 ) {
     let _ = h;
@@ -59,6 +60,7 @@ pub(crate) fn show_scrollbars(
                     &mut view.base.scroll_y,
                     &mut view.base.pixels_per_tick,
                     total_ticks,
+                    play_tick,
                     &mut view.base.dirty,
                     pr_orientation,
                 )
@@ -135,6 +137,7 @@ pub(crate) fn show_scrollbars(
                     &mut view.base.scroll_x,
                     &mut view.base.pixels_per_tick,
                     total_ticks,
+                    play_tick,
                     &mut view.base.dirty,
                     pr_orientation,
                 )

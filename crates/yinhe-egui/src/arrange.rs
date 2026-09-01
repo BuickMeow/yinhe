@@ -553,6 +553,7 @@ pub fn show(
             &mut arr_view.base.scroll_x,
             &mut arr_view.base.pixels_per_tick,
             total_ticks,
+            doc.edit.cursor_tick,
             &mut arr_view.base.dirty,
             yinhe_types::Orientation::Horizontal,
         );
