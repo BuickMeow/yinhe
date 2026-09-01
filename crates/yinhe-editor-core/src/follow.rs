@@ -65,8 +65,10 @@ pub fn compute_follow_scroll(
             //   保持同样动画时长，避免逐页翻叠加多秒。
             let cursor_x = cursor_tick as f32 * pixels_per_tick;
             let page = (viewport_width - left_boundary).max(1.0);
-            let right_edge = current_scroll_x + viewport_width;
-            let left_edge = current_scroll_x + left_boundary;
+            // 可见 tick 区间为 [scroll, scroll+page]（page 已扣除 left_boundary 的钢琴/面板宽），
+            // cursor_x = tick*ppu 不含 left，避免 left 重复计入（钢琴距离只在 page 中扣一次）。
+            let right_edge = current_scroll_x + page;
+            let left_edge = current_scroll_x;
             let margin = (page * 0.0006).max(1.0_f32);
             let inset = (page * 0.001).max(2.0_f32);
 
@@ -77,18 +79,18 @@ pub fn compute_follow_scroll(
                 // 远距离：直接以光标为锚点计算目标，保证同样时长一次到位。
                 // 前向远跳落左侧 inset，后向远跳落右侧附近（保留上下文）。
                 if cursor_x > right_edge {
-                    Some((cursor_x - left_boundary - inset).max(0.0))
+                    Some((cursor_x - inset).max(0.0))
                 } else {
                     // 后向：让光标落在新页右侧附近（距右缘 inset），避免紧贴左缘后立即再触发
-                    let target = cursor_x - left_boundary - page + inset;
+                    let target = cursor_x - page + inset;
                     Some(target.max(0.0))
                 }
             } else if cursor_x > right_edge - margin {
                 // 提前翻页：光标尚未完全越界即翻
-                Some((cursor_x - left_boundary - inset).max(0.0))
+                Some((cursor_x - inset).max(0.0))
             } else if cursor_x < left_edge + margin {
                 // 向左翻：光标落在新页右侧 inset 处
-                let target = cursor_x - left_boundary - page + inset;
+                let target = cursor_x - page + inset;
                 Some(target.max(0.0))
             } else {
                 None
@@ -215,10 +217,10 @@ mod tests {
         assert!(turned.is_some());
         let target = turned.unwrap();
         // 翻页后光标相对新视口位置应在 inset 附近（> margin），不触发回翻
+        // 新逻辑 left 不重复计入：offset = cursor - scroll（左缘即 scroll）
         let page: f32 = 700.0;
         let margin = (page * 0.0006).max(1.0_f32);
-        let new_left = target + 100.0;
-        let offset = 805.0 - new_left;
+        let offset = 805.0 - target;
         assert!(
             offset > margin,
             "翻页后光标距新左缘 {offset} 应大于 margin {margin}"
@@ -229,10 +231,10 @@ mod tests {
 
     #[test]
     fn page_mode_backward_turn_does_not_oscillate() {
-        let turned = compute_follow_scroll(795.0, 1.0, 800.0, 100.0, FollowMode::Page, 1.0, 700.0);
+        let turned = compute_follow_scroll(700.5, 1.0, 800.0, 100.0, FollowMode::Page, 1.0, 700.0);
         assert!(turned.is_some());
         let target = turned.unwrap();
-        let next = compute_follow_scroll(795.0, 1.0, 800.0, 100.0, FollowMode::Page, 1.0, target);
+        let next = compute_follow_scroll(700.5, 1.0, 800.0, 100.0, FollowMode::Page, 1.0, target);
         assert_eq!(next, None, "回翻后光标在新页内，不得来回振荡");
     }
 
