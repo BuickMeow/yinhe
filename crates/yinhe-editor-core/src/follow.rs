@@ -58,17 +58,17 @@ pub fn compute_follow_scroll(
         }
         FollowMode::Page => {
             // 翻页：提前触发 + 大跳转直达 + 固定时长动画（时长由调用方控制）。
-            // - 提前量：视口边缘内 6% 或 24px 取大者，避免指示线完全消失才翻。
-            // - 落点：光标翻后落在新页左侧 inset 处（10% 页宽），避免贴边振荡且保证
-            //   下一帧不在对侧 margin 内（inset > margin）。
+            // - 提前量：视口边缘内 0.06% 或 1px 取大者，避免指示线完全消失才翻。
+            // - 落点：光标翻后落在新页左侧 inset 处（0.1% 页宽），几乎不留左空白；
+            //   仍保持 inset > margin 以避免贴边振荡（下一帧不在对侧 margin 内）。
             // - 远距离跳转（seek）：若光标远离视口一页以上，直接跳到含光标的页，
             //   保持同样动画时长，避免逐页翻叠加多秒。
             let cursor_x = cursor_tick as f32 * pixels_per_tick;
             let page = (viewport_width - left_boundary).max(1.0);
             let right_edge = current_scroll_x + viewport_width;
             let left_edge = current_scroll_x + left_boundary;
-            let margin = (page * 0.06).max(24.0_f32);
-            let inset = (page * 0.10).max(32.0_f32);
+            let margin = (page * 0.0006).max(1.0_f32);
+            let inset = (page * 0.001).max(2.0_f32);
 
             let far_forward = cursor_x > right_edge + page;
             let far_backward = cursor_x < left_edge - page;
@@ -167,8 +167,8 @@ mod tests {
     fn page_mode_turns_page_when_cursor_passes_right_edge() {
         // 光标 900 越过右缘 800：翻页到 inset 位置
         let result = compute_follow_scroll(900.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0, 0.0);
-        // page 800, inset 80 => 900-0-80=820
-        assert_eq!(result, Some(820.0));
+        // page 800, inset 2 => 900-0-2=898
+        assert_eq!(result, Some(898.0));
     }
 
     #[test]
@@ -181,8 +181,8 @@ mod tests {
 
     #[test]
     fn page_mode_early_trigger() {
-        // 光标 780 距右缘 20（< margin 48 左右）提前触发
-        let result = compute_follow_scroll(780.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0, 0.0);
+        // margin 1px 时仅近边缘 1px 内提前触发
+        let result = compute_follow_scroll(799.5, 1.0, 800.0, 0.0, FollowMode::Page, 1.0, 0.0);
         assert!(result.is_some(), "应提前翻页");
         // 非提前区域内不触发
         let inside = compute_follow_scroll(400.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0, 0.0);
@@ -193,8 +193,8 @@ mod tests {
     fn page_mode_far_jump_direct() {
         // 远距离跳转：光标 5000，视口 800，当前 0，应直接跳到光标附近而非逐页
         let result = compute_follow_scroll(5000.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0, 0.0);
-        // 应该一次到 4920 附近 (5000-80)
-        assert_eq!(result, Some(4920.0));
+        // 应该一次到 4998 附近 (5000-2)
+        assert_eq!(result, Some(4998.0));
         // 从末尾跳回开头
         let back = compute_follow_scroll(100.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0, 5000.0);
         assert_eq!(back, Some(0.0));
@@ -216,7 +216,7 @@ mod tests {
         let target = turned.unwrap();
         // 翻页后光标相对新视口位置应在 inset 附近（> margin），不触发回翻
         let page: f32 = 700.0;
-        let margin = (page * 0.06).max(24.0_f32);
+        let margin = (page * 0.0006).max(1.0_f32);
         let new_left = target + 100.0;
         let offset = 805.0 - new_left;
         assert!(
