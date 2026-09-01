@@ -234,35 +234,9 @@ impl App {
             mono.insert(0, "Pretendard".to_owned());
             mono.insert(1, "MiSans".to_owned());
 
-            // 其余语言字体（MiSans Global 系列，按回退优先级排在 Pretendard/MiSans 之后）：
-            // 繁体中文、泰文、天城文（印地语）、高棉文、老挝文、缅文、藏文。
-            const EXTRA_FONTS: [(&str, &[u8]); 7] = [
-                ("MiSans-TC", include_bytes!("../../../assets/MiSans-TC.otf")),
-                (
-                    "MiSans-Thai",
-                    include_bytes!("../../../assets/MiSans-Thai.otf"),
-                ),
-                (
-                    "MiSans-Devanagari",
-                    include_bytes!("../../../assets/MiSans-Devanagari.otf"),
-                ),
-                (
-                    "MiSans-Khmer",
-                    include_bytes!("../../../assets/MiSans-Khmer.otf"),
-                ),
-                (
-                    "MiSans-Lao",
-                    include_bytes!("../../../assets/MiSans-Lao.otf"),
-                ),
-                (
-                    "MiSans-Myanmar",
-                    include_bytes!("../../../assets/MiSans-Myanmar.ttf"),
-                ),
-                (
-                    "MiSans-Tibetan",
-                    include_bytes!("../../../assets/MiSans-Tibetan.ttf"),
-                ),
-            ];
+            // 繁体中文回退（MiSans-TC），排在 Pretendard/MiSans 之后
+            const EXTRA_FONTS: [(&str, &[u8]); 1] =
+                [("MiSans-TC", include_bytes!("../../../assets/MiSans-TC.otf"))];
             for (name, data) in EXTRA_FONTS {
                 fonts
                     .font_data

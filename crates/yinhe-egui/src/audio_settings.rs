@@ -50,10 +50,14 @@ pub(crate) fn discover_sample_rates() -> (u32, Vec<u32>) {
 pub(crate) fn load_audio_settings() -> AudioSettings {
     let mut settings = AudioSettings::load();
     // locale 名迁移：旧的非区域代码（en/ja/ko）统一为新格式，避免回退到中文。
+    // 已删除的小语种（`locales/` 仅保留中英日韩）→ 回退到 zh-CN（rust-i18n fallback）。
     let legacy = match settings.locale.as_str() {
         "en" => Some("en-US"),
         "ja" => Some("ja-JP"),
         "ko" => Some("ko-KR"),
+        "bo-CN" | "de-DE" | "es-ES" | "fil-PH" | "fr-FR" | "hi-IN" | "id-ID" | "it-IT"
+        | "km-KH" | "lo-LA" | "ms-MY" | "my-MM" | "pl-PL" | "pt-BR" | "pt-PT" | "ru-RU"
+        | "th-TH" | "tr-TR" | "uk-UA" | "vi-VN" => Some("zh-CN"),
         _ => None,
     };
     if let Some(code) = legacy {
