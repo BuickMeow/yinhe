@@ -738,6 +738,46 @@ pub fn list_output_devices() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// 查询系统默认输出设备的默认采样率与所有支持的标准采样率。
+/// 失败时回退到 `(48000, [44100, 48000, 96000])`，与 `yinhe-egui` 原实现一致。
+/// 已下沉自 `yinhe-egui/src/audio_settings.rs`，避免 egui 层直接依赖 cpal 采样率枚举。
+pub fn discover_sample_rates() -> (u32, Vec<u32>) {
+    let host = cpal::default_host();
+    let Some(device) = host.default_output_device() else {
+        return (48000, vec![44100, 48000, 96000]);
+    };
+
+    let default_rate = device
+        .default_output_config()
+        .ok()
+        .map(|cfg| cfg.sample_rate())
+        .unwrap_or(48000);
+
+    // 只列标准采样率与设备支持范围的交集，而非按 1000Hz 步进枚举
+    // （会生成 45100、46100 等设备实际不支持的值，用户选了会建流失败）。
+    const STANDARD_RATES: [u32; 8] = [22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000];
+    let supported_rates: Vec<u32> = device
+        .supported_output_configs()
+        .ok()
+        .map(|configs| {
+            let ranges: Vec<(u32, u32)> = configs
+                .map(|cfg| (cfg.min_sample_rate(), cfg.max_sample_rate()))
+                .collect();
+            STANDARD_RATES
+                .iter()
+                .copied()
+                .filter(|&rate| ranges.iter().any(|(min, max)| rate >= *min && rate <= *max))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if supported_rates.is_empty() {
+        (default_rate, vec![default_rate])
+    } else {
+        (default_rate, supported_rates)
+    }
+}
+
 /// 协商采样率：请求值不在设备任何 f32 输出配置的支持范围内时，
 /// 回退到设备默认采样率。枚举失败时不做判断，交给 cpal 建流时报错。
 fn negotiate_sample_rate(device: &cpal::Device, requested: u32, device_default: u32) -> u32 {
