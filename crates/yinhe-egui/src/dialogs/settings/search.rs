@@ -80,7 +80,11 @@ pub fn show_search_results(
         let cat = item.cat;
         let cat_name = t!(CATEGORY_KEYS[cat]).to_string();
         if ui
-            .selectable_label(false, format!("{}  ·  {}", cat_name, item.zh))
+            .add(crate::widgets::menu::menu_item_button(
+                ui,
+                false,
+                format!("{}  ·  {}", cat_name, item.zh),
+            ))
             .clicked()
         {
             settings.settings_tab = cat;

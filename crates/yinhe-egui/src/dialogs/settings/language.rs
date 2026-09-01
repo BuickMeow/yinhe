@@ -20,38 +20,38 @@ pub fn show_language_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> boo
                 ("ja-JP", "日本語"),
                 ("ko-KR", "한국어"),
             ];
-            let current = locales
+            let locale_opt: Vec<(String, String)> = locales
                 .iter()
-                .find(|(code, _)| *code == settings.locale)
-                .map(|(_, name)| *name)
-                .unwrap_or("简体中文");
-            egui::ComboBox::from_id_salt("locale_select")
-                .selected_text(current)
-                .show_ui(ui, |ui| {
-                    for (code, name) in locales {
-                        let selected = settings.locale == code;
-                        if ui.selectable_label(selected, name).clicked() {
-                            settings.locale = code.to_string();
-                            rust_i18n::set_locale(code);
-                            changed = true;
-                        }
-                    }
-                });
+                .map(|(c, n)| (c.to_string(), n.to_string()))
+                .collect();
+            if crate::widgets::combo::combo_select(
+                ui,
+                "locale_select",
+                &mut settings.locale,
+                160.0,
+                &locale_opt,
+            ) {
+                rust_i18n::set_locale(&settings.locale);
+                changed = true;
+            }
             ui.end_row();
 
             // 音轨名编码（MIDI 文件内文本的语言编码，归类到语言设置）
             ui.label(t!("settings.midi_import.encoding").as_ref());
-            egui::ComboBox::from_id_salt("midi_import_encoding")
-                .selected_text(settings.midi_import_encoding.label())
-                .show_ui(ui, |ui| {
-                    for &enc in yinhe_midi::MidiImportEncoding::ALL {
-                        let selected = settings.midi_import_encoding == enc;
-                        if ui.selectable_label(selected, enc.label()).clicked() {
-                            settings.midi_import_encoding = enc;
-                            changed = true;
-                        }
-                    }
-                });
+            let enc_opt: Vec<(yinhe_midi::MidiImportEncoding, String)> =
+                yinhe_midi::MidiImportEncoding::ALL
+                    .iter()
+                    .map(|&e| (e, e.label().to_string()))
+                    .collect();
+            if crate::widgets::combo::combo_select(
+                ui,
+                "midi_import_encoding",
+                &mut settings.midi_import_encoding,
+                160.0,
+                &enc_opt,
+            ) {
+                changed = true;
+            }
             ui.end_row();
         });
     changed

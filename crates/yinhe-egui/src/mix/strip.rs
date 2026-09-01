@@ -429,7 +429,7 @@ pub(crate) fn plugin_picker(
                             }
                             any = true;
                             if ui
-                                .selectable_label(false, &p.name)
+                                .add(crate::widgets::menu::menu_item_button(ui, false, &p.name))
                                 .on_hover_text(&p.id)
                                 .clicked()
                             {
@@ -535,7 +535,7 @@ pub(crate) fn instrument_picker(
                             }
                             any = true;
                             if ui
-                                .selectable_label(false, &p.name)
+                                .add(crate::widgets::menu::menu_item_button(ui, false, &p.name))
                                 .on_hover_text(&p.id)
                                 .clicked()
                             {

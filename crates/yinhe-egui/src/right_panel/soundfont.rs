@@ -210,15 +210,19 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
 
     let mut selected_port = doc.edit.soundfont_selected_port as usize;
     selected_port = selected_port.min(port_names.len().saturating_sub(1));
-    egui::ComboBox::from_id_salt("project_port")
-        .selected_text(&port_names[selected_port])
-        .show_ui(ui, |ui| {
+    crate::widgets::combo::combo_box(
+        ui,
+        "project_port",
+        &port_names[selected_port],
+        160.0,
+        |ui| {
             for (i, name) in port_names.iter().enumerate() {
-                if ui.selectable_label(i == selected_port, name).clicked() {
+                if crate::widgets::combo::combo_item(ui, i == selected_port, name).clicked() {
                     selected_port = i;
                 }
             }
-        });
+        },
+    );
     doc.edit.soundfont_selected_port = selected_port as u8;
     let port = used_ports[selected_port];
 

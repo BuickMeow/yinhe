@@ -284,41 +284,50 @@ pub(crate) fn show_viewport(
                                             KindChoice::Midi => {
                                                 ui.horizontal(|ui| {
                                                     ui.label(t!("dialog.new_track.port").as_ref());
-                                                    egui::ComboBox::from_id_salt("new_track_port")
-                                                        .selected_text(
-                                                            ((b'A' + state.manual_port.min(15))
-                                                                as char)
-                                                                .to_string(),
-                                                        )
-                                                        .show_ui(ui, |ui| {
+                                                    crate::widgets::combo::combo_box(
+                                                        ui,
+                                                        "new_track_port",
+                                                        ((b'A' + state.manual_port.min(15))
+                                                            as char)
+                                                            .to_string(),
+                                                        100.0,
+                                                        |ui| {
                                                             for p in 0..16u8 {
-                                                                ui.selectable_value(
-                                                                    &mut state.manual_port,
-                                                                    p,
+                                                                if crate::widgets::combo::combo_item(
+                                                                    ui,
+                                                                    state.manual_port == p,
                                                                     ((b'A' + p) as char)
                                                                         .to_string(),
-                                                                );
+                                                                )
+                                                                .clicked()
+                                                                {
+                                                                    state.manual_port = p;
+                                                                }
                                                             }
-                                                        });
+                                                        },
+                                                    );
                                                     ui.label(
                                                         t!("dialog.new_track.channel").as_ref(),
                                                     );
-                                                    egui::ComboBox::from_id_salt(
+                                                    crate::widgets::combo::combo_box(
+                                                        ui,
                                                         "new_track_channel",
-                                                    )
-                                                    .selected_text(format!(
-                                                        "{}",
-                                                        state.manual_channel + 1
-                                                    ))
-                                                    .show_ui(ui, |ui| {
-                                                        for c in 0..16u8 {
-                                                            ui.selectable_value(
-                                                                &mut state.manual_channel,
-                                                                c,
-                                                                format!("{}", c + 1),
-                                                            );
-                                                        }
-                                                    });
+                                                        format!("{}", state.manual_channel + 1),
+                                                        100.0,
+                                                        |ui| {
+                                                            for c in 0..16u8 {
+                                                                if crate::widgets::combo::combo_item(
+                                                                    ui,
+                                                                    state.manual_channel == c,
+                                                                    format!("{}", c + 1),
+                                                                )
+                                                                .clicked()
+                                                                {
+                                                                    state.manual_channel = c;
+                                                                }
+                                                            }
+                                                        },
+                                                    );
                                                 });
                                             }
                                             KindChoice::Instrument => {

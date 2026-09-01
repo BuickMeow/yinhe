@@ -29,72 +29,61 @@ pub fn show_general_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool
             ui.end_row();
             if !settings.allow_overlapping_notes {
                 ui.label(t!("settings.editing.blocked_behavior").as_ref());
-                let selected_label = match settings.overlap_blocked_behavior {
-                    OverlapBlockedBehavior::ReplaceTarget => t!("pr_bar.blocked_replace"),
-                    OverlapBlockedBehavior::DeleteOriginal => t!("pr_bar.blocked_delete"),
-                    OverlapBlockedBehavior::KeepOriginal => t!("pr_bar.blocked_keep"),
-                };
-                egui::ComboBox::from_id_salt("blocked_behavior")
-                    .selected_text(selected_label.as_ref())
-                    .show_ui(ui, |ui| {
-                        for &b in &[
-                            OverlapBlockedBehavior::ReplaceTarget,
-                            OverlapBlockedBehavior::DeleteOriginal,
-                            OverlapBlockedBehavior::KeepOriginal,
-                        ] {
-                            let label = match b {
-                                OverlapBlockedBehavior::ReplaceTarget => {
-                                    t!("pr_bar.blocked_replace")
-                                }
-                                OverlapBlockedBehavior::DeleteOriginal => {
-                                    t!("pr_bar.blocked_delete")
-                                }
-                                OverlapBlockedBehavior::KeepOriginal => t!("pr_bar.blocked_keep"),
-                            };
-                            let selected = settings.overlap_blocked_behavior == b;
-                            if ui.selectable_label(selected, label.as_ref()).clicked() {
-                                settings.overlap_blocked_behavior = b;
-                                changed = true;
-                            }
-                        }
-                    });
+                let blocked_opt = vec![
+                    (
+                        OverlapBlockedBehavior::ReplaceTarget,
+                        t!("pr_bar.blocked_replace").to_string(),
+                    ),
+                    (
+                        OverlapBlockedBehavior::DeleteOriginal,
+                        t!("pr_bar.blocked_delete").to_string(),
+                    ),
+                    (
+                        OverlapBlockedBehavior::KeepOriginal,
+                        t!("pr_bar.blocked_keep").to_string(),
+                    ),
+                ];
+                if crate::widgets::combo::combo_select(
+                    ui,
+                    "blocked_behavior",
+                    &mut settings.overlap_blocked_behavior,
+                    160.0,
+                    &blocked_opt,
+                ) {
+                    changed = true;
+                }
                 ui.end_row();
             }
             ui.label(t!("settings.editing.quick_delete").as_ref());
             {
                 use yinhe_editor_core::audio_settings::QuickDeleteMode;
-                let selected_label = match settings.quick_delete_mode {
-                    QuickDeleteMode::Off => t!("settings.editing.quick_delete.off"),
-                    QuickDeleteMode::DoubleClick => t!("settings.editing.quick_delete.double"),
-                    QuickDeleteMode::RightClick => t!("settings.editing.quick_delete.right"),
-                    QuickDeleteMode::Both => t!("settings.editing.quick_delete.both"),
-                };
-                egui::ComboBox::from_id_salt("quick_delete_mode")
-                    .selected_text(selected_label.as_ref())
-                    .show_ui(ui, |ui| {
-                        for &m in &[
-                            QuickDeleteMode::Off,
-                            QuickDeleteMode::DoubleClick,
-                            QuickDeleteMode::RightClick,
-                            QuickDeleteMode::Both,
-                        ] {
-                            let label = match m {
-                                QuickDeleteMode::Off => t!("settings.editing.quick_delete.off"),
-                                QuickDeleteMode::DoubleClick => {
-                                    t!("settings.editing.quick_delete.double")
-                                }
-                                QuickDeleteMode::RightClick => {
-                                    t!("settings.editing.quick_delete.right")
-                                }
-                                QuickDeleteMode::Both => t!("settings.editing.quick_delete.both"),
-                            };
-                            let selected = settings.quick_delete_mode == m;
-                            if ui.selectable_label(selected, label.as_ref()).clicked() {
-                                settings.quick_delete_mode = m;
-                                changed = true;
-                            }
-                        }
-                    });
+                let quick_opt = vec![
+                    (
+                        QuickDeleteMode::Off,
+                        t!("settings.editing.quick_delete.off").to_string(),
+                    ),
+                    (
+                        QuickDeleteMode::DoubleClick,
+                        t!("settings.editing.quick_delete.double").to_string(),
+                    ),
+                    (
+                        QuickDeleteMode::RightClick,
+                        t!("settings.editing.quick_delete.right").to_string(),
+                    ),
+                    (
+                        QuickDeleteMode::Both,
+                        t!("settings.editing.quick_delete.both").to_string(),
+                    ),
+                ];
+                if crate::widgets::combo::combo_select(
+                    ui,
+                    "quick_delete_mode",
+                    &mut settings.quick_delete_mode,
+                    160.0,
+                    &quick_opt,
+                ) {
+                    changed = true;
+                }
             }
             ui.end_row();
         });

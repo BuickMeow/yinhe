@@ -45,26 +45,21 @@ pub fn show_theme_tab(
                     t!("settings.theme.custom").to_string(),
                 )))
                 .collect();
-            let current_preset = preset_names
-                .iter()
-                .find(|(n, _)| *n == settings.theme_preset)
-                .map(|(_, l)| l.clone())
-                .unwrap_or_else(|| t!("settings.theme.custom").to_string());
-            egui::ComboBox::from_id_salt("theme_preset")
-                .selected_text(current_preset)
-                .show_ui(ui, |ui| {
-                    for (name, label) in preset_names {
-                        let selected = settings.theme_preset == name;
-                        if ui.selectable_label(selected, label).clicked() {
-                            settings.theme_preset = name.clone();
-                            if let Some(base) = BaseColors::preset_by_name(&name) {
-                                settings.theme_base = base;
-                            }
-                            crate::theme::set_theme(settings.theme_base);
-                            changed = true;
-                        }
-                    }
-                });
+            // DRY: 用 combo_select 一行完成，无边框+锁宽
+            let preset_opt = preset_names;
+            if crate::widgets::combo::combo_select(
+                ui,
+                "theme_preset",
+                &mut settings.theme_preset,
+                160.0,
+                &preset_opt,
+            ) {
+                if let Some(base) = BaseColors::preset_by_name(&settings.theme_preset) {
+                    settings.theme_base = base;
+                }
+                crate::theme::set_theme(settings.theme_base);
+                changed = true;
+            }
             ui.end_row();
         });
 

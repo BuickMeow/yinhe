@@ -16,55 +16,54 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             let default_device = t!("settings.audio.default_device").to_string();
             let current_device = settings
                 .output_device_name
-                .as_deref()
-                .unwrap_or(default_device.as_str());
-            egui::ComboBox::from_id_salt("output_device")
-                .selected_text(current_device)
-                .show_ui(ui, |ui| {
-                    for device_name in settings.available_devices().to_vec() {
-                        let selected = settings.output_device_name.as_ref() == Some(&device_name);
-                        if ui.selectable_label(selected, &device_name).clicked() {
-                            settings.output_device_name = Some(device_name);
-                            changed = true;
-                        }
-                    }
-                    let is_default = settings.output_device_name.is_none();
-                    if ui
-                        .selectable_label(is_default, t!("settings.audio.default_device").as_ref())
-                        .clicked()
-                    {
-                        settings.output_device_name = None;
+                .clone()
+                .unwrap_or(default_device);
+            crate::widgets::combo::combo_box(ui, "output_device", current_device, 200.0, |ui| {
+                for device_name in settings.available_devices().to_vec() {
+                    let selected = settings.output_device_name.as_ref() == Some(&device_name);
+                    if crate::widgets::combo::combo_item(ui, selected, &device_name).clicked() {
+                        settings.output_device_name = Some(device_name);
                         changed = true;
                     }
-                });
+                }
+                let is_default = settings.output_device_name.is_none();
+                if crate::widgets::combo::combo_item(
+                    ui,
+                    is_default,
+                    t!("settings.audio.default_device").as_ref(),
+                )
+                .clicked()
+                {
+                    settings.output_device_name = None;
+                    changed = true;
+                }
+            });
             ui.end_row();
 
             // ── MIDI 输入 ──
             ui.label(t!("settings.audio.midi_input_device").as_ref());
             let no_device = t!("settings.audio.midi_no_device").to_string();
-            let current_midi = settings
-                .midi_input_device
-                .as_deref()
-                .unwrap_or(no_device.as_str());
-            egui::ComboBox::from_id_salt("midi_input_device")
-                .selected_text(current_midi)
-                .show_ui(ui, |ui| {
-                    for device_name in settings.available_midi_inputs.clone() {
-                        let selected = settings.midi_input_device.as_ref() == Some(&device_name);
-                        if ui.selectable_label(selected, &device_name).clicked() {
-                            settings.midi_input_device = Some(device_name);
-                            changed = true;
-                        }
-                    }
-                    let is_none = settings.midi_input_device.is_none();
-                    if ui
-                        .selectable_label(is_none, t!("settings.audio.midi_no_device").as_ref())
-                        .clicked()
-                    {
-                        settings.midi_input_device = None;
+            let current_midi = settings.midi_input_device.clone().unwrap_or(no_device);
+            crate::widgets::combo::combo_box(ui, "midi_input_device", current_midi, 200.0, |ui| {
+                for device_name in settings.available_midi_inputs.clone() {
+                    let selected = settings.midi_input_device.as_ref() == Some(&device_name);
+                    if crate::widgets::combo::combo_item(ui, selected, &device_name).clicked() {
+                        settings.midi_input_device = Some(device_name);
                         changed = true;
                     }
-                });
+                }
+                let is_none = settings.midi_input_device.is_none();
+                if crate::widgets::combo::combo_item(
+                    ui,
+                    is_none,
+                    t!("settings.audio.midi_no_device").as_ref(),
+                )
+                .clicked()
+                {
+                    settings.midi_input_device = None;
+                    changed = true;
+                }
+            });
             ui.end_row();
 
             ui.label(t!("settings.audio.midi_thru").as_ref());
@@ -80,21 +79,20 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             ui.end_row();
 
             ui.label(t!("settings.audio.sample_rate").as_ref());
-            let sr_label = format!("{} Hz", settings.sample_rate);
-            egui::ComboBox::from_id_salt("sample_rate")
-                .selected_text(&sr_label)
-                .show_ui(ui, |ui| {
-                    for sr in settings.available_sample_rates().to_vec() {
-                        let selected = settings.sample_rate == sr;
-                        if ui
-                            .selectable_label(selected, format!("{} Hz", sr))
-                            .clicked()
-                        {
-                            settings.sample_rate = sr;
-                            changed = true;
-                        }
-                    }
-                });
+            let sr_opt: Vec<(u32, String)> = settings
+                .available_sample_rates()
+                .iter()
+                .map(|&sr| (sr, format!("{} Hz", sr)))
+                .collect();
+            if crate::widgets::combo::combo_select(
+                ui,
+                "sample_rate",
+                &mut settings.sample_rate,
+                160.0,
+                &sr_opt,
+            ) {
+                changed = true;
+            }
             ui.end_row();
 
             ui.label(t!("settings.audio.buffer_size").as_ref());
@@ -116,23 +114,17 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                     t!("settings.audio.buffer.frames", n = 4096).to_string(),
                 ),
             ];
-            let custom_buf = t!("settings.audio.buffer.custom").to_string();
-            let buf_label = buf_sizes
-                .iter()
-                .find(|(v, _)| *v == settings.buffer_size)
-                .map(|(_, l)| l.as_str())
-                .unwrap_or(custom_buf.as_str());
-            egui::ComboBox::from_id_salt("buffer_size")
-                .selected_text(buf_label)
-                .show_ui(ui, |ui| {
-                    for &(val, ref label) in buf_sizes {
-                        let selected = settings.buffer_size == val;
-                        if ui.selectable_label(selected, label).clicked() {
-                            settings.buffer_size = val;
-                            changed = true;
-                        }
-                    }
-                });
+            let buf_opt: Vec<(u32, String)> =
+                buf_sizes.iter().map(|(v, l)| (*v, l.clone())).collect();
+            if crate::widgets::combo::combo_select(
+                ui,
+                "buffer_size",
+                &mut settings.buffer_size,
+                160.0,
+                &buf_opt,
+            ) {
+                changed = true;
+            }
             ui.end_row();
 
             ui.label(t!("settings.audio.xsynth_layers").as_ref());
@@ -159,22 +151,19 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             ui.end_row();
 
             ui.label(t!("settings.audio.synth_engine").as_ref());
-            let engine_names = [
-                t!("settings.audio.engine_cpu").to_string(),
-                t!("settings.audio.engine_gpu").to_string(),
+            let engine_opt = vec![
+                (false, t!("settings.audio.engine_cpu").to_string()),
+                (true, t!("settings.audio.engine_gpu").to_string()),
             ];
-            let current_engine = if settings.use_gpu_synth { 1 } else { 0 };
-            egui::ComboBox::from_id_salt("synth_engine")
-                .selected_text(engine_names[current_engine].clone())
-                .show_ui(ui, |ui| {
-                    for (i, name) in engine_names.iter().enumerate() {
-                        let selected = (i == 1) == settings.use_gpu_synth;
-                        if ui.selectable_label(selected, name).clicked() {
-                            settings.use_gpu_synth = i == 1;
-                            changed = true;
-                        }
-                    }
-                });
+            if crate::widgets::combo::combo_select(
+                ui,
+                "synth_engine",
+                &mut settings.use_gpu_synth,
+                160.0,
+                &engine_opt,
+            ) {
+                changed = true;
+            }
             ui.end_row();
         });
 

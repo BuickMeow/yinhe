@@ -49,16 +49,16 @@ pub(crate) fn show_track_info(
         .map(|i| (i as usize).min(num_tracks - 1))
         .unwrap_or(0);
 
-    egui::ComboBox::from_id_salt("info_track_sel")
-        .selected_text(&track_names[sel_idx])
-        .show_ui(ui, |ui| {
-            for (i, tn) in track_names.iter().enumerate() {
-                if ui.selectable_label(i == sel_idx, tn).clicked() {
-                    doc.edit.track_selected.clear();
-                    doc.edit.track_selected.insert(i as u16);
-                }
-            }
-        });
+    let track_opt: Vec<(usize, String)> = track_names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (i, n.clone()))
+        .collect();
+    let mut sel = sel_idx;
+    if crate::widgets::combo::combo_select(ui, "info_track_sel", &mut sel, 160.0, &track_opt) {
+        doc.edit.track_selected.clear();
+        doc.edit.track_selected.insert(sel as u16);
+    }
 
     ui.add_space(6.0);
 
@@ -186,38 +186,26 @@ pub(crate) fn show_track_info(
     ui.horizontal(|ui| {
         ui.label("端口/通道:");
 
-        let port_options: Vec<String> = (0..16)
-            .map(|p| format!("Port {}", (b'A' + p) as char))
+        let port_options: Vec<(usize, String)> = (0..16)
+            .map(|p| (p, format!("Port {}", (b'A' + p as u8) as char)))
             .collect();
-        let _port_sel = egui::ComboBox::from_id_salt("track_port")
-            .selected_text(format!("Port {}", (b'A' + ti.port) as char))
-            .width(70.0)
-            .show_ui(ui, |ui| {
-                for (i, label) in port_options.iter().enumerate() {
-                    if ui.selectable_label(i == ti.port as usize, label).clicked() {
-                        new_port = i as u8;
-                        port_changed = true;
-                    }
-                }
-            });
+        let mut port_sel = ti.port as usize;
+        if crate::widgets::combo::combo_select(ui, "track_port", &mut port_sel, 70.0, &port_options)
+        {
+            new_port = port_sel as u8;
+            port_changed = true;
+        }
 
         ui.add_space(4.0);
 
-        let ch_options: Vec<String> = (0..16).map(|c| format!("{:02}", c + 1)).collect();
-        let _ch_sel = egui::ComboBox::from_id_salt("track_channel")
-            .selected_text(format!("{:02}", ti.channel + 1))
-            .width(50.0)
-            .show_ui(ui, |ui| {
-                for (i, label) in ch_options.iter().enumerate() {
-                    if ui
-                        .selectable_label(i == ti.channel as usize, label)
-                        .clicked()
-                    {
-                        new_ch = i as u8;
-                        port_changed = true;
-                    }
-                }
-            });
+        let ch_options: Vec<(usize, String)> =
+            (0..16).map(|c| (c, format!("{:02}", c + 1))).collect();
+        let mut ch_sel = ti.channel as usize;
+        if crate::widgets::combo::combo_select(ui, "track_channel", &mut ch_sel, 50.0, &ch_options)
+        {
+            new_ch = ch_sel as u8;
+            port_changed = true;
+        }
     });
 
     if port_changed {

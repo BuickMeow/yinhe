@@ -300,39 +300,43 @@ pub(crate) fn show_settings_viewport(
                                                 "32-bit float"
                                             }
                                         };
-                                        egui::ComboBox::from_id_salt("export_bit_depth")
-                                            .selected_text(current)
-                                            .show_ui(ui, |ui| {
-                                                if ui
-                                                    .selectable_label(
-                                                        bd == yinhe_audio::export::WavBitDepth::Bit16,
-                                                        "16-bit",
-                                                    )
-                                                    .clicked()
+                                        crate::widgets::combo::combo_box(
+                                            ui,
+                                            "export_bit_depth",
+                                            current,
+                                            160.0,
+                                            |ui| {
+                                                if crate::widgets::combo::combo_item(
+                                                    ui,
+                                                    bd == yinhe_audio::export::WavBitDepth::Bit16,
+                                                    "16-bit",
+                                                )
+                                                .clicked()
                                                 {
                                                     bd_cb.set(yinhe_audio::export::WavBitDepth::Bit16);
                                                 }
-                                                if ui
-                                                    .selectable_label(
-                                                        bd == yinhe_audio::export::WavBitDepth::Bit24,
-                                                        "24-bit",
-                                                    )
-                                                    .clicked()
+                                                if crate::widgets::combo::combo_item(
+                                                    ui,
+                                                    bd == yinhe_audio::export::WavBitDepth::Bit24,
+                                                    "24-bit",
+                                                )
+                                                .clicked()
                                                 {
                                                     bd_cb.set(yinhe_audio::export::WavBitDepth::Bit24);
                                                 }
-                                                if ui
-                                                    .selectable_label(
-                                                        bd == yinhe_audio::export::WavBitDepth::Bit32Float,
-                                                        "32-bit float",
-                                                    )
-                                                    .clicked()
+                                                if crate::widgets::combo::combo_item(
+                                                    ui,
+                                                    bd == yinhe_audio::export::WavBitDepth::Bit32Float,
+                                                    "32-bit float",
+                                                )
+                                                .clicked()
                                                 {
                                                     bd_cb.set(
                                                         yinhe_audio::export::WavBitDepth::Bit32Float,
                                                     );
                                                 }
-                                            });
+                                            },
+                                        );
                                     });
 
                                     ui.horizontal(|ui| {
@@ -344,9 +348,12 @@ pub(crate) fn show_settings_viewport(
                                             format!("{} Hz", r)
                                         };
                                         let sample_rates: [u32; 5] = [0, 44100, 48000, 96000, 192000];
-                                        egui::ComboBox::from_id_salt("export_sample_rate")
-                                            .selected_text(&sr_text)
-                                            .show_ui(ui, |ui| {
+                                        crate::widgets::combo::combo_box(
+                                            ui,
+                                            "export_sample_rate",
+                                            &sr_text,
+                                            160.0,
+                                            |ui| {
                                                 for &rate in &sample_rates {
                                                     let label = if rate == 0 {
                                                         t!("dialog.export.follow_global", n = sample_rate).to_string()
@@ -354,11 +361,16 @@ pub(crate) fn show_settings_viewport(
                                                         format!("{} Hz", rate)
                                                     };
                                                     let selected = r == rate;
-                                                    if ui.selectable_label(selected, label).clicked() {
+                                                    if crate::widgets::combo::combo_item(
+                                                        ui, selected, label,
+                                                    )
+                                                    .clicked()
+                                                    {
                                                         sr_cb.set(rate);
                                                     }
                                                 }
-                                            });
+                                            },
+                                        );
                                     });
 
                                     ui.horizontal(|ui| {

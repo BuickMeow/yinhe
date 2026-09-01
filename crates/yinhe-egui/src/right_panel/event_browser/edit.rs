@@ -170,13 +170,15 @@ fn show_choice_popup<T: Copy + PartialEq + Send + Sync + 'static>(
                         .size(crate::theme::SMALL_FONT),
                 );
                 ui.add_space(2.0);
-                let _resp = egui::ComboBox::from_id_salt(salt)
-                    .selected_text(label_of(&state))
-                    .show_ui(ui, |ui| {
-                        for opt in options {
-                            ui.selectable_value(&mut state, *opt, label_of(opt));
+                crate::widgets::combo::combo_box(ui, salt, label_of(&state), 160.0, |ui| {
+                    for opt in options {
+                        if crate::widgets::combo::combo_item(ui, *opt == state, label_of(opt))
+                            .clicked()
+                        {
+                            state = *opt;
                         }
-                    });
+                    }
+                });
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
                     if ui.button(t!("common.confirm").as_ref()).clicked() {

@@ -1,5 +1,6 @@
 pub(crate) mod checkbox;
 pub(crate) mod color_picker;
+pub(crate) mod combo;
 pub mod grid_lines;
 pub(crate) mod hint;
 pub(crate) mod hover;
