@@ -171,16 +171,56 @@ pub(crate) fn interactive_ruler(
             Orientation::Vertical => pos.y - ruler_rect.min.y,
         }
     };
-    // 主轴视口长度（横向沿用现行为：ruler 矩形高度）。
-    let view_size = ruler_rect.height();
+    // 主轴视口长度：横向为宽、纵向为高（供 zoom_main_around 锚定计算）。
+    let view_size = match orientation {
+        Orientation::Horizontal => ruler_rect.width(),
+        Orientation::Vertical => ruler_rect.height(),
+    };
 
     let ruler_resp = ui.interact(
         ruler_rect,
         ui.id().with(id_salt),
         egui::Sense::click_and_drag(),
     );
+
+    // ── 按下标尺后沿副轴拖动 → 时间缩放（防误触：仅起点在标尺内才生效）──
+    // 参考 scrollbar 的 press_origin 守卫，避免别处按下拖到标尺上误缩放。
+    let press_on_ruler = ui
+        .input(|i| i.pointer.press_origin())
+        .is_some_and(|p| ruler_rect.contains(p));
+    let mut is_zoom_drag = false;
+    if press_on_ruler && ruler_resp.dragged() {
+        let d = ruler_resp.drag_delta();
+        let cross = match orientation {
+            Orientation::Horizontal => d.y,
+            Orientation::Vertical => d.x,
+        };
+        let main = match orientation {
+            Orientation::Horizontal => d.x,
+            Orientation::Vertical => d.y,
+        };
+        // 副轴位移需显著且大于主轴，才视为缩放意图，避免与光标跳转冲突
+        if cross.abs() > 1.0 && cross.abs() > main.abs() {
+            let factor = 1.0 - cross * 0.005; // 与 scrollbar 1.0 - delta*0.005 一致
+            // 锚定在当前指针的主轴位置，保持指针下 tick 不动
+            if let Some(pos) = ruler_resp
+                .interact_pointer_pos()
+                .or_else(|| ui.input(|i| i.pointer.hover_pos()))
+            {
+                let pointer_main = main_px(pos);
+                if factor.is_finite() && factor > 0.0 && factor != 1.0 {
+                    view.zoom_main_around(pointer_main, factor, view_size);
+                    view.mark_dirty();
+                    ui.ctx().request_repaint();
+                    is_zoom_drag = true;
+                }
+            }
+        }
+    }
+
     let mut jumped = false;
-    if (ruler_resp.clicked() || ruler_resp.dragged())
+    if !is_zoom_drag
+        && (ruler_resp.clicked() || ruler_resp.dragged())
         && let Some(pos) = ruler_resp.interact_pointer_pos()
     {
         let tick = view.main_px_to_tick(main_px(pos));
