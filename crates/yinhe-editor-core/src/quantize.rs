@@ -103,6 +103,76 @@ impl Default for QuantizePreset {
     }
 }
 
+// ── 小节感知的 snap（原 yinhe-egui/src/view_interaction.rs，下沉至此） ──
+
+use yinhe_types::{TimeSigEvent, measure_bounds_at_tick};
+
+/// Snap 到最近网格，带小节线感知（小节起始与下一小节起始作为候选）。
+pub fn snap_tick(
+    tick: f64,
+    quantize: QuantizePreset,
+    ppq: u32,
+    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+) -> f64 {
+    if let Some((tpb, num, den, events)) = bar_line_data {
+        let (bar_start, next_bar) = measure_bounds_at_tick(tick, tpb, num, den, events);
+        let offset = tick - bar_start;
+        let snapped_offset = quantize.snap_tick(offset, ppq);
+        let grid_tick = bar_start + snapped_offset;
+        if (tick - next_bar).abs() < (tick - grid_tick).abs() {
+            next_bar
+        } else {
+            grid_tick
+        }
+    } else {
+        quantize.snap_tick(tick, ppq)
+    }
+}
+
+/// Snap 到下一网格（ceil），带小节线感知。
+pub fn snap_tick_ceil(
+    tick: f64,
+    quantize: QuantizePreset,
+    ppq: u32,
+    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+) -> f64 {
+    if let Some((tpb, num, den, events)) = bar_line_data {
+        let (bar_start, next_bar) = measure_bounds_at_tick(tick, tpb, num, den, events);
+        let offset = tick - bar_start;
+        let snapped_offset = quantize.snap_tick_ceil(offset, ppq);
+        let grid_tick = bar_start + snapped_offset;
+        if (tick - next_bar).abs() < (tick - grid_tick).abs() {
+            next_bar
+        } else {
+            grid_tick
+        }
+    } else {
+        quantize.snap_tick_ceil(tick, ppq)
+    }
+}
+
+/// Snap 到上一网格（floor），带小节线感知。
+pub fn snap_tick_floor(
+    tick: f64,
+    quantize: QuantizePreset,
+    ppq: u32,
+    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+) -> f64 {
+    if let Some((tpb, num, den, events)) = bar_line_data {
+        let (bar_start, next_bar) = measure_bounds_at_tick(tick, tpb, num, den, events);
+        let offset = tick - bar_start;
+        let snapped_offset = quantize.snap_tick_floor(offset, ppq);
+        let grid_tick = bar_start + snapped_offset;
+        if (tick - next_bar).abs() < (tick - grid_tick).abs() {
+            next_bar
+        } else {
+            grid_tick
+        }
+    } else {
+        quantize.snap_tick_floor(tick, ppq)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

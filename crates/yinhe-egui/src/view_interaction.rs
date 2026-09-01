@@ -302,76 +302,8 @@ pub(crate) fn pointer_over_popup(ctx: &egui::Context) -> bool {
     false
 }
 
-/// Snap a tick value to the current quantize grid, with optional bar-line awareness.
-pub fn snap_tick(
-    tick: f64,
-    quantize: QuantizePreset,
-    ppq: u32,
-    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
-) -> f64 {
-    if let Some((tpb, num, den, events)) = bar_line_data {
-        let (bar_start, next_bar) =
-            yinhe_types::measure_bounds_at_tick(tick, tpb, num, den, events);
-        let offset = tick - bar_start;
-        let snapped_offset = quantize.snap_tick(offset, ppq);
-        let grid_tick = bar_start + snapped_offset;
-        if (tick - next_bar).abs() < (tick - grid_tick).abs() {
-            next_bar
-        } else {
-            grid_tick
-        }
-    } else {
-        quantize.snap_tick(tick, ppq)
-    }
-}
-
-/// Snap a tick value to the next quantization grid boundary (ceil),
-/// with optional bar-line awareness.
-pub fn snap_tick_ceil(
-    tick: f64,
-    quantize: QuantizePreset,
-    ppq: u32,
-    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
-) -> f64 {
-    if let Some((tpb, num, den, events)) = bar_line_data {
-        let (bar_start, next_bar) =
-            yinhe_types::measure_bounds_at_tick(tick, tpb, num, den, events);
-        let offset = tick - bar_start;
-        let snapped_offset = quantize.snap_tick_ceil(offset, ppq);
-        let grid_tick = bar_start + snapped_offset;
-        if (tick - next_bar).abs() < (tick - grid_tick).abs() {
-            next_bar
-        } else {
-            grid_tick
-        }
-    } else {
-        quantize.snap_tick_ceil(tick, ppq)
-    }
-}
-
-/// Snap a tick value to the previous quantization grid boundary (floor),
-/// with optional bar-line awareness.
-pub fn snap_tick_floor(
-    tick: f64,
-    quantize: QuantizePreset,
-    ppq: u32,
-    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
-) -> f64 {
-    if let Some((tpb, num, den, events)) = bar_line_data {
-        let (bar_start, next_bar) =
-            yinhe_types::measure_bounds_at_tick(tick, tpb, num, den, events);
-        let offset = tick - bar_start;
-        let snapped_offset = quantize.snap_tick_floor(offset, ppq);
-        let grid_tick = bar_start + snapped_offset;
-        if (tick - next_bar).abs() < (tick - grid_tick).abs() {
-            next_bar
-        } else {
-            grid_tick
-        }
-    } else {
-        quantize.snap_tick_floor(tick, ppq)
-    }
-}
+// 已下沉至 yinhe-editor-core::quantize，薄壳 re-export 保持调用方不变
+pub use yinhe_editor_core::quantize::{snap_tick, snap_tick_ceil, snap_tick_floor};
 
 // ── Hover tooltip ──
 
