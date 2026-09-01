@@ -56,9 +56,8 @@ pub struct App {
     // ── Automation panel GPU resources (per-document, per-panel) ──
     pub(crate) controller_renderers: Vec<Vec<(yinhe_wgpu::InstanceRenderer, RenderContext)>>,
 
-    // ── Multi-document state ──
-    pub(crate) documents: Vec<Document>,
-    pub(crate) active_doc: Option<usize>,
+    // ── Multi-document state（已抽离至 yinhe-editor-core::workspace） ──
+    pub(crate) workspace: yinhe_editor_core::workspace::Workspace,
 
     // ── MIX 混音台 ──
     /// MIX 界面 UI 状态（扫描结果/选择器/电平衰减，全局一份）。
@@ -124,9 +123,6 @@ pub struct App {
     pub(crate) prev_pr_count: usize,
     pub(crate) prev_am_count: usize,
     pub(crate) prev_selected_nonempty: bool,
-
-    // ── Document switch tracking ──
-    pub(crate) prev_active_doc: Option<usize>,
 
     // ── Cursor-follow mode (shared across arrangement & piano roll) ──
     pub(crate) follow_mode: crate::view_interaction::FollowMode,
@@ -306,9 +302,7 @@ impl App {
 
             controller_renderers: Vec::new(),
 
-            documents: vec![Document::empty()],
-            active_doc: Some(0),
-            prev_active_doc: Some(0),
+            workspace: yinhe_editor_core::workspace::Workspace::default(),
             mix: crate::mix::MixUiState::default(),
             mixer_racks: vec![crate::mix::MixerRack::default()],
             instrument_racks: vec![crate::mix::InstrumentRack::default()],
@@ -428,9 +422,12 @@ impl App {
         match panel {
             FloatPanel::TrackProps { track_idx } => {
                 // 弹窗内下拉选择器已跟踪 track_selected，这里兜底选中目标轨。
-                if let Some(idx) = self.active_doc {
-                    self.documents[idx].edit.track_selected.clear();
-                    self.documents[idx].edit.track_selected.insert(track_idx);
+                if let Some(idx) = self.workspace.active_doc {
+                    self.workspace.documents[idx].edit.track_selected.clear();
+                    self.workspace.documents[idx]
+                        .edit
+                        .track_selected
+                        .insert(track_idx);
                 }
                 self.info_content = Some(InfoContent::Track);
             }
@@ -441,7 +438,7 @@ impl App {
     }
 
     pub(crate) fn close_document(&mut self, index: usize) {
-        if index >= self.documents.len() {
+        if index >= self.workspace.documents.len() {
             return;
         }
         // 移除 + 索引修正 + teardown/purge/invalidate 全在 take_document 内
@@ -466,44 +463,32 @@ impl App {
     }
 
     /// 判断打开 MIDI/.yin 时是否应替换当前标签页而非另开一个。
-    ///
-    /// 仅当当前是首次启动的 Untitled（`documents.len() == 1`、活跃在 idx 0、
-    /// `file_path.is_none()` 且未修改）时返回 true。用户手动 NewProject 后
-    /// `documents.len() > 1`，或已编辑/已保存的 Untitled 都不替换。
+    /// 已下沉至 `yinhe-editor-core::workspace`，此处薄壳代理保持调用方不变。
     fn should_replace_initial_untitled(&self) -> bool {
-        // 空的 Untitled（0 音符、无历史、未保存）允许直接替换，避免首启残留空白 tab。
-        // 新版 is_dirty 对 file_path==None 视为脏，此处需按“真正空”单独判断，
-        // 否则首启打开文件永远走 push 而非替换。
-        let doc = &self.documents[0];
-        self.active_doc == Some(0)
-            && self.documents.len() == 1
-            && doc.file_path.is_none()
-            && doc.model().note_count == 0
-            && !doc.history.is_dirty()
-            && !doc.mixer_dirty
+        self.workspace.should_replace_initial_untitled()
     }
 
     /// 新建空白工程（Document::empty）并切换为活跃标签页。
     /// `execute_file_action::NewProject` 与 `execute_pending_file_action::NewProject`
     /// 共用此实现，避免两处重复 push + setup 代码。
     fn new_project(&mut self) {
-        self.documents.push(Document::empty());
-        let idx = self.documents.len() - 1;
+        self.workspace.documents.push(Document::empty());
+        let idx = self.workspace.documents.len() - 1;
         // 重叠开关是全局设置：新文档沿用当前持久化值。
-        self.documents[idx].edit.allow_overlapping_notes =
+        self.workspace.documents[idx].edit.allow_overlapping_notes =
             self.audio_settings.allow_overlapping_notes;
-        self.documents[idx].edit.overlap_blocked_behavior =
+        self.workspace.documents[idx].edit.overlap_blocked_behavior =
             self.audio_settings.overlap_blocked_behavior;
         self.mixer_racks.push(crate::mix::MixerRack::default());
         self.instrument_racks
             .push(crate::mix::InstrumentRack::default());
-        self.active_doc = Some(idx);
+        self.workspace.active_doc = Some(idx);
         self.teardown_audio();
     }
 
     /// 标题栏标签拖动排序：把 from 位置的工程移动到剩余列表的 insert_at 位置。
     pub(crate) fn reorder_tab(&mut self, from: usize, insert_at: usize) {
-        let len = self.documents.len();
+        let len = self.workspace.documents.len();
         if from >= len {
             return;
         }
@@ -512,9 +497,13 @@ impl App {
         if order == cur {
             return;
         }
-        let old_active = self.active_doc;
+        let old_active = self.workspace.active_doc;
         let old_audio = self.audio_state.active_doc;
-        crate::widgets::reorder::apply_reorder_noclone(&mut self.documents, &[from], insert_at);
+        crate::widgets::reorder::apply_reorder_noclone(
+            &mut self.workspace.documents,
+            &[from],
+            insert_at,
+        );
         crate::widgets::reorder::apply_reorder_noclone(&mut self.mixer_racks, &[from], insert_at);
         crate::widgets::reorder::apply_reorder_noclone(
             &mut self.instrument_racks,
@@ -532,13 +521,13 @@ impl App {
             );
         }
         if let Some(active) = old_active {
-            self.active_doc = order.iter().position(|&i| i == active);
+            self.workspace.active_doc = order.iter().position(|&i| i == active);
         }
         if let Some(a) = old_audio {
             self.audio_state.active_doc = order.iter().position(|&i| i == a);
         }
         // 只是索引重排，文档内容未变：对齐 prev 避免下一帧误触发切换检测
-        self.prev_active_doc = self.active_doc;
+        self.workspace.prev_active_doc = self.workspace.active_doc;
     }
 
     /// 移除指定索引的文档及平行数组，修正 active/audio 索引。
@@ -548,11 +537,11 @@ impl App {
         &mut self,
         index: usize,
     ) -> (Document, crate::mix::MixerRack, crate::mix::InstrumentRack) {
-        let was_active = self.active_doc == Some(index);
+        let was_active = self.workspace.active_doc == Some(index);
         if self.audio_state.active_doc == Some(index) {
             self.teardown_audio();
         }
-        let doc = self.documents.remove(index);
+        let doc = self.workspace.documents.remove(index);
         let mixer_rack = if index < self.mixer_racks.len() {
             self.mixer_racks.remove(index)
         } else {
@@ -566,14 +555,14 @@ impl App {
         if index < self.controller_renderers.len() {
             self.controller_renderers.remove(index);
         }
-        if let Some(active) = self.active_doc {
+        if let Some(active) = self.workspace.active_doc {
             if index < active {
-                self.active_doc = Some(active - 1);
+                self.workspace.active_doc = Some(active - 1);
             } else if index == active {
-                self.active_doc = if self.documents.is_empty() {
+                self.workspace.active_doc = if self.workspace.documents.is_empty() {
                     None
                 } else {
-                    Some(active.min(self.documents.len() - 1))
+                    Some(active.min(self.workspace.documents.len() - 1))
                 };
             }
         }
@@ -587,7 +576,7 @@ impl App {
             self.float_panel = None;
             self.invalidate_cull_state();
             // 强制下一帧走完整文档切换流程（prev 选框计数对齐、view dirty 标记）
-            self.prev_active_doc = None;
+            self.workspace.prev_active_doc = None;
         }
         yinhe_memtrace::purge_free_pages();
         (doc, mixer_rack, instrument_rack)
@@ -597,23 +586,23 @@ impl App {
     /// 采用“临时 .yin + 新进程打开”方案，多窗口完全隔离，崩溃互不影响；
     /// 新进程把 temp 路径识别为未保存工程（见 poll.rs），Cmd+S 会弹另存为。
     pub(crate) fn detach_tab_to_new_window(&mut self, idx: usize) {
-        if idx >= self.documents.len() {
+        if idx >= self.workspace.documents.len() {
             return;
         }
-        let orig_active = self.active_doc;
+        let orig_active = self.workspace.active_doc;
         let orig_audio = self.audio_state.active_doc;
         let (mut doc, mut mixer_rack, mut instr_rack) = self.take_document(idx);
 
         // 失败回滚：插回原位并还原索引（take 只改了这几个字段）
         macro_rules! rollback {
             () => {{
-                let at = idx.min(self.documents.len());
-                self.documents.insert(at, doc);
+                let at = idx.min(self.workspace.documents.len());
+                self.workspace.documents.insert(at, doc);
                 self.mixer_racks
                     .insert(at.min(self.mixer_racks.len()), mixer_rack);
                 self.instrument_racks
                     .insert(at.min(self.instrument_racks.len()), instr_rack);
-                self.active_doc = orig_active;
+                self.workspace.active_doc = orig_active;
                 self.audio_state.active_doc = orig_audio;
             }};
         }

@@ -76,13 +76,13 @@ impl App {
         if self.recording.is_some() {
             return;
         }
-        let Some(idx) = self.active_doc else {
+        let Some(idx) = self.workspace.active_doc else {
             return;
         };
         let start_tick = self.last_cursor_tick.unwrap_or(0.0).max(0.0) as u32;
-        let tempo_map = &self.documents[idx].data.model.tempo_map;
+        let tempo_map = &self.workspace.documents[idx].data.model.tempo_map;
         let start_secs = tempo_map.tick_to_seconds(start_tick as u64);
-        let before_snapshot = self.documents[idx].capture_snapshot();
+        let before_snapshot = self.workspace.documents[idx].capture_snapshot();
         self.recording = Some(RecordingState {
             started_at: Instant::now(),
             start_secs,
@@ -97,7 +97,7 @@ impl App {
         let Some(state) = self.recording.take() else {
             return;
         };
-        let Some(idx) = self.active_doc else {
+        let Some(idx) = self.workspace.active_doc else {
             return;
         };
         let mut undo_actions = state.undo_actions;
@@ -107,7 +107,9 @@ impl App {
             let end_secs = state.start_secs + state.started_at.elapsed().as_secs_f64();
             let end_tick = self.tick_at_secs(end_secs, idx);
             for p in state.pending.values() {
-                if let Some(a) = self.documents[idx].set_note_end_tick(p.key, p.note_id, end_tick) {
+                if let Some(a) =
+                    self.workspace.documents[idx].set_note_end_tick(p.key, p.note_id, end_tick)
+                {
                     undo_actions.push(a);
                 }
             }
@@ -116,7 +118,7 @@ impl App {
         if undo_actions.is_empty() {
             return;
         }
-        let doc = &mut self.documents[idx];
+        let doc = &mut self.workspace.documents[idx];
         doc.push_undo(
             UndoAction::Composite(undo_actions),
             t!("undo.record").as_ref(),
@@ -204,7 +206,7 @@ impl App {
         {
             return;
         }
-        let Some(idx) = self.active_doc else {
+        let Some(idx) = self.workspace.active_doc else {
             return;
         };
         let track = self.current_write_track();
@@ -216,7 +218,7 @@ impl App {
             key,
             velocity,
         };
-        let action = self.documents[idx].add_note(track, note);
+        let action = self.workspace.documents[idx].add_note(track, note);
         let Some(action) = action else {
             return;
         };
@@ -231,7 +233,7 @@ impl App {
             .pending
             .insert(key, PendingRecordingNote { key, note_id });
         state.undo_actions.push(action);
-        let doc = &mut self.documents[idx];
+        let doc = &mut self.workspace.documents[idx];
         doc.data.bump_revision();
         self.pianoroll_view.base.dirty = true;
         self.arrange_view.base.dirty = true;
@@ -240,7 +242,7 @@ impl App {
 
     /// 录音 NoteOff：闭合对应音符的 gate。
     fn handle_recording_note_off(&mut self, key: u8) {
-        let Some(idx) = self.active_doc else {
+        let Some(idx) = self.workspace.active_doc else {
             return;
         };
         // 先算闭合时刻（借用 recording 只读），再取出 pending（可变借用），避免冲突
@@ -259,13 +261,13 @@ impl App {
             return;
         };
         let end_tick = self.tick_at_secs(end_secs, idx);
-        let action = self.documents[idx].set_note_end_tick(p.key, p.note_id, end_tick);
+        let action = self.workspace.documents[idx].set_note_end_tick(p.key, p.note_id, end_tick);
         if let Some(a) = action
             && let Some(state) = &mut self.recording
         {
             state.undo_actions.push(a);
         }
-        let doc = &mut self.documents[idx];
+        let doc = &mut self.workspace.documents[idx];
         doc.data.bump_revision();
         self.pianoroll_view.base.dirty = true;
         self.arrange_view.base.dirty = true;
@@ -274,14 +276,14 @@ impl App {
 
     /// 步进输入 NoteOn：在光标处写入一个默认长度（四分音符）音符并前进一个步长。
     fn handle_step_input_note_on(&mut self, key: u8, velocity: u8) {
-        let Some(idx) = self.active_doc else {
+        let Some(idx) = self.workspace.active_doc else {
             return;
         };
-        let Some(cursor) = self.documents[idx].edit.cursor_tick else {
+        let Some(cursor) = self.workspace.documents[idx].edit.cursor_tick else {
             return;
         };
         let track = self.current_write_track();
-        let step = self.documents[idx].data.model.meta.ppq.max(1);
+        let step = self.workspace.documents[idx].data.model.meta.ppq.max(1);
         let start = cursor.max(0.0) as u32;
         let note = yinhe_core::NoteEvent {
             id: 0,
@@ -293,7 +295,7 @@ impl App {
         self.add_note_with_undo(track, note);
         // 前进一个步长（光标与跨视图同步 tick）
         let next = (start + step) as f64;
-        self.documents[idx].edit.cursor_tick = Some(next);
+        self.workspace.documents[idx].edit.cursor_tick = Some(next);
         self.last_cursor_tick = Some(next);
     }
 
@@ -308,14 +310,15 @@ impl App {
 
     /// 歌曲时间（秒）→ tick（tempo map 换算）。
     fn tick_at_secs(&self, secs: f64, doc_idx: usize) -> u32 {
-        let tempo_map = &self.documents[doc_idx].data.model.tempo_map;
+        let tempo_map = &self.workspace.documents[doc_idx].data.model.tempo_map;
         tempo_map.tick_at_time(secs).max(0.0) as u32
     }
 
     /// 当前写入目标轨（主音轨；无选中时回退第一个非 Conductor 轨；无文档时回退 0）。
     fn current_write_track(&self) -> u16 {
-        self.active_doc
-            .and_then(|i| self.documents.get(i))
+        self.workspace
+            .active_doc
+            .and_then(|i| self.workspace.documents.get(i))
             .and_then(|d| d.edit.write_track())
             .unwrap_or(0)
     }

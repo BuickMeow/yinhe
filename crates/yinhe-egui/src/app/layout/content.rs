@@ -25,7 +25,8 @@ impl App {
                 .show_pianoroll(self.show_pianoroll_in_arrange);
         if !has_view {
             // MIX 模式：有工程时进混音台，否则只铺背景。
-            if self.view_mode == crate::chrome::mode_bar::ViewMode::Mix && self.active_doc.is_some()
+            if self.view_mode == crate::chrome::mode_bar::ViewMode::Mix
+                && self.workspace.active_doc.is_some()
             {
                 crate::mix::show(self, ui, layout.remaining);
             } else {
@@ -34,7 +35,7 @@ impl App {
             }
             return;
         }
-        let Some(idx) = self.active_doc else {
+        let Some(idx) = self.workspace.active_doc else {
             // 有视图控件（AR/PR 模式）但未打开工程：铺占位面板而非透明。
             self.show_workspace_placeholder(ui, layout);
             return;
@@ -51,7 +52,7 @@ impl App {
         let mut follow_mode = self.follow_mode;
 
         // 讲解行选框统计（存在选框时 Some；PR/AR/AM 互斥，单一来源）
-        let sel_hint = Self::compute_sel_hint(&self.documents[idx]);
+        let sel_hint = Self::compute_sel_hint(&self.workspace.documents[idx]);
 
         // Arrangement view
         let mut needs_audio_rebuild = false;
@@ -67,7 +68,8 @@ impl App {
             let mut arr_drag_delta: Option<crate::arrange::ArrDragDelta> = None;
             let mut arr_eraser_rect: Option<crate::arrange::ArrSelRect> = None;
             let mut float_panel_req: Option<crate::right_panel::FloatPanel> = None;
-            let mut guard = crate::app::main_loop::ReplaceGuard::new(&mut self.documents[idx]);
+            let mut guard =
+                crate::app::main_loop::ReplaceGuard::new(&mut self.workspace.documents[idx]);
             let cfg = crate::arrange::ArrangeViewCfg {
                 is_playing,
                 follow_mode: &mut follow_mode,
@@ -117,7 +119,7 @@ impl App {
         // 方案 A：音轨结构变化（add/remove track）→ drop 旧引擎。
         // ChannelLayout 在引擎创建时冻结，旧引擎无法 dispatch 新增通道。
         // 必须在 guard 被释放后调用 —— teardown_audio 借用 &mut self，
-        // 与 ReplaceGuard 借用的 &mut self.documents[idx] 冲突。
+        // 与 ReplaceGuard 借用的 &mut self.workspace.documents[idx] 冲突。
         // 下一帧 rebuild_audio_if_needed 会用新 model 重新 spawn 引擎和 ChannelLayout。
         if needs_audio_rebuild {
             self.teardown_audio();
@@ -132,7 +134,7 @@ impl App {
             self.notify_audio_model_changed();
         }
 
-        // Handle AR eraser (guard is dropped, no outstanding borrow on self.documents)
+        // Handle AR eraser (guard is dropped, no outstanding borrow on self.workspace.documents)
         if let Some((t_start, t_end, track_lo, track_hi)) = arr_eraser_rect {
             let mut sel = yinhe_core::Selection::default();
             sel.add_rect_track(
@@ -143,21 +145,23 @@ impl App {
                 track_lo as u16,
                 track_hi as u16,
             );
-            let Some(idx) = self.active_doc else { return };
-            self.documents[idx].edit.selected = sel;
+            let Some(idx) = self.workspace.active_doc else {
+                return;
+            };
+            self.workspace.documents[idx].edit.selected = sel;
             self.with_undo(t!("undo.eraser_arrange").as_ref(), |doc| {
                 doc.delete_selected()
             });
         }
 
-        // Handle AR drag after guard is dropped (no outstanding borrow on self.documents)
+        // Handle AR drag after guard is dropped (no outstanding borrow on self.workspace.documents)
         if let Some((delta_ticks, delta_tracks, alt)) = arr_drag_delta {
             self.handle_arr_drag(delta_ticks, delta_tracks, alt);
         }
 
         // Handle AR quantize preset change from corner button
         if let Some(new_preset) = arr_quantize
-            && let Some(doc) = self.documents.get_mut(idx)
+            && let Some(doc) = self.workspace.documents.get_mut(idx)
         {
             doc.edit.quantize_arrange = new_preset;
         }
@@ -239,7 +243,7 @@ impl App {
     /// 清除时同步从共享 `Selection` 中精确移除对应视图的矩形，避免误伤其他视图的选区。
     /// `selected` 被三个视图共享，不能整体 clear()。
     fn enforce_sel_rect_exclusivity(&mut self, idx: usize) {
-        let doc = &mut self.documents[idx];
+        let doc = &mut self.workspace.documents[idx];
 
         // 清除前先采集各视图选框快照（含 f64→整数转换），供精确移除共享 Selection 中的矩形。
         let arr_rects: Vec<(u32, u32, u16, u16)> = doc
@@ -377,7 +381,8 @@ impl App {
             preview_reqs,
             bar_events,
         ) = {
-            let mut guard = crate::app::main_loop::ReplaceGuard::new(&mut self.documents[idx]);
+            let mut guard =
+                crate::app::main_loop::ReplaceGuard::new(&mut self.workspace.documents[idx]);
             let doc = guard.as_mut();
             let midi_source: Option<&dyn yinhe_types::NoteSource> = Some(doc.data.model.as_ref());
             let piano_rect = egui::Rect::from_min_max(
@@ -601,8 +606,8 @@ impl App {
                 PianoViewEvent::AddNote { track, note } => {
                     // 新音符默认力度 = 该音轨最近一次 velocity 修改值（无记录 100）。
                     let mut note = note;
-                    if let Some(idx) = self.active_doc {
-                        note.velocity = self.documents[idx].edit.default_velocity(track);
+                    if let Some(idx) = self.workspace.active_doc {
+                        note.velocity = self.workspace.documents[idx].edit.default_velocity(track);
                     }
                     self.add_note_with_undo(track, note);
                 }
@@ -614,10 +619,12 @@ impl App {
                     track_lo,
                     track_hi,
                 } => {
-                    let Some(idx) = self.active_doc else { return };
+                    let Some(idx) = self.workspace.active_doc else {
+                        return;
+                    };
                     let mut sel = yinhe_core::Selection::default();
                     sel.add_rect_track(t_start, t_end, key_lo, key_hi, track_lo, track_hi);
-                    self.documents[idx].edit.selected = sel;
+                    self.workspace.documents[idx].edit.selected = sel;
                     self.with_undo(t!("undo.eraser_delete").as_ref(), |doc| {
                         doc.delete_selected()
                     });
@@ -627,10 +634,12 @@ impl App {
                     start_tick,
                     key,
                 } => {
-                    let Some(idx) = self.active_doc else { return };
+                    let Some(idx) = self.workspace.active_doc else {
+                        return;
+                    };
                     // 快速删除：按 (track, start_tick, key) 定位单个音符
                     // 仅在音符可见且在选定轨道范围内才删除（与 hit 的 track_selected 过滤一致）
-                    let edit = &self.documents[idx].edit;
+                    let edit = &self.workspace.documents[idx].edit;
                     if !edit
                         .track_pianoroll_visible
                         .get(track as usize)
@@ -654,8 +663,10 @@ impl App {
         let mut overlap_change: Option<bool> = None;
         for ev in bar_events {
             use crate::piano_view::control_bar::PrBarEvent;
-            let Some(idx) = self.active_doc else { break };
-            let edit = &mut self.documents[idx].edit;
+            let Some(idx) = self.workspace.active_doc else {
+                break;
+            };
+            let edit = &mut self.workspace.documents[idx].edit;
             match ev {
                 PrBarEvent::Quantize(preset) => edit.quantize_pianoroll = preset,
                 PrBarEvent::SwitchMainTrack(t) => {
@@ -680,7 +691,7 @@ impl App {
         if let Some(v) = overlap_change {
             self.audio_settings.allow_overlapping_notes = v;
             self.audio_settings.save();
-            for doc in &mut self.documents {
+            for doc in &mut self.workspace.documents {
                 doc.edit.allow_overlapping_notes = v;
             }
         }
@@ -708,10 +719,12 @@ impl App {
     /// 把 automation 面板 velocity 笔划产生的编辑应用到 Document（一笔 = 一个 undo entry）。
     /// 若存在 PR 选框，仅允许修改选框内且在选定轨道内的音符力度。
     fn handle_velocity_edits(&mut self, edits: &[yinhe_types::VelocityEdit]) {
-        let Some(idx) = self.active_doc else { return };
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
         // 选框过滤：存在选框时仅保留落在选框且轨道选中的音符
         let filtered: Vec<yinhe_types::VelocityEdit> = {
-            let doc = &self.documents[idx];
+            let doc = &self.workspace.documents[idx];
             if doc.edit.sel_rect.is_empty() {
                 edits.to_vec()
             } else {
@@ -735,7 +748,7 @@ impl App {
         if filtered.is_empty() {
             return;
         }
-        let doc = &mut self.documents[idx];
+        let doc = &mut self.workspace.documents[idx];
         let before = doc.capture_snapshot();
         if let Some(action) = doc.set_notes_velocity(&filtered) {
             self.pianoroll_view.base.dirty = true;
@@ -750,8 +763,10 @@ impl App {
         &mut self,
         edits: Vec<crate::piano_view::automation_panel::AutomationEdit>,
     ) {
-        let Some(idx) = self.active_doc else { return };
-        let doc = &mut self.documents[idx];
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[idx];
 
         let before = doc.capture_snapshot();
         let actions = doc.apply_automation_edits(edits);
@@ -781,17 +796,17 @@ impl App {
         // 2. 选中目标音轨（音符/CC/PB/PC 事件需要）。
         // Conductor 跳过（不作为写入目标）；Tempo 编辑不依赖选中。
         if let Some((track, _key)) = req.note
-            && let Some(idx) = self.active_doc
-            && self.documents[idx].edit.conductor_track_idx != Some(track)
+            && let Some(idx) = self.workspace.active_doc
+            && self.workspace.documents[idx].edit.conductor_track_idx != Some(track)
         {
-            let sel = &mut self.documents[idx].edit.track_selected;
+            let sel = &mut self.workspace.documents[idx].edit.track_selected;
             sel.clear();
             sel.insert(track);
         }
 
         // 3. 设置 cursor_tick
-        if let Some(idx) = self.active_doc {
-            self.documents[idx].edit.cursor_tick = Some(req.tick as f64);
+        if let Some(idx) = self.workspace.active_doc {
+            self.workspace.documents[idx].edit.cursor_tick = Some(req.tick as f64);
         }
 
         // 4. 滚动到中心（参考 follow.rs Page 模式公式）
@@ -805,8 +820,10 @@ impl App {
 
     fn handle_note_drag(&mut self, note_drag_delta: Option<(i64, i32, bool)>) {
         if let Some((delta_ticks, delta_keys, alt)) = note_drag_delta {
-            let Some(idx) = self.active_doc else { return };
-            let doc = &mut self.documents[idx];
+            let Some(idx) = self.workspace.active_doc else {
+                return;
+            };
+            let doc = &mut self.workspace.documents[idx];
             let before = doc.capture_snapshot();
             let (action, label) = if alt {
                 (
@@ -835,8 +852,10 @@ impl App {
         note_resize_delta: Option<(crate::piano_view::ResizeSide, i64)>,
     ) {
         if let Some((side, dt)) = note_resize_delta {
-            let Some(idx) = self.active_doc else { return };
-            let doc = &mut self.documents[idx];
+            let Some(idx) = self.workspace.active_doc else {
+                return;
+            };
+            let doc = &mut self.workspace.documents[idx];
             let before = doc.capture_snapshot();
             if let Some(action) = doc.resize_selected_notes(side, dt) {
                 self.pianoroll_view.base.dirty = true;
@@ -849,8 +868,10 @@ impl App {
     /// Handle pencil note drag updates (move or resize a single note).
     fn handle_pencil_note_drag(&mut self, drag: Option<crate::piano_view::PencilNoteDrag>) {
         let Some(drag) = drag else { return };
-        let Some(idx) = self.active_doc else { return };
-        let doc = &mut self.documents[idx];
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[idx];
         let before = doc.capture_snapshot();
         if let Some(action) = doc.pencil_drag_note(&drag) {
             self.pianoroll_view.base.dirty = true;
@@ -870,8 +891,10 @@ impl App {
         if delta_ticks == 0 && delta_tracks == 0 {
             return;
         }
-        let Some(idx) = self.active_doc else { return };
-        let doc = &mut self.documents[idx];
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[idx];
 
         let before = doc.capture_snapshot();
         let (action, label) = if alt {
@@ -909,7 +932,10 @@ impl App {
                 egui::pos2(layout.remaining.max.x, layout.remaining.min.y),
                 egui::vec2(layout.right_panel_total_w, layout.remaining.height()),
             );
-            let doc = self.active_doc.and_then(|idx| self.documents.get_mut(idx));
+            let doc = self
+                .workspace
+                .active_doc
+                .and_then(|idx| self.workspace.documents.get_mut(idx));
             let (changed, jump_request, width_drag_ended) = crate::right_panel::show(
                 ui,
                 right_rect,

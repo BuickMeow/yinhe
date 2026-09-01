@@ -126,7 +126,7 @@ impl App {
         if self.audio_settings.allow_overlapping_notes != prev_allow
             || self.audio_settings.overlap_blocked_behavior != prev_behavior
         {
-            for doc in &mut self.documents {
+            for doc in &mut self.workspace.documents {
                 doc.edit.allow_overlapping_notes = self.audio_settings.allow_overlapping_notes;
                 doc.edit.overlap_blocked_behavior = self.audio_settings.overlap_blocked_behavior;
             }
@@ -261,8 +261,8 @@ impl App {
             crate::dialogs::unsaved::show_viewport(&ctx, &self.pending_unsaved, &self.save_rx);
         match action {
             crate::dialogs::unsaved::Action::Save => {
-                if let Some(idx) = self.active_doc {
-                    if let Some(path) = self.documents[idx].file_path.clone() {
+                if let Some(idx) = self.workspace.active_doc {
+                    if let Some(path) = self.workspace.documents[idx].file_path.clone() {
                         self.save_project_async(idx, path);
                     } else {
                         self.save_as_dialog();
@@ -301,10 +301,10 @@ impl App {
             return; // 用户还没选择，保持弹框打开
         }
 
-        let Some(doc_idx) = self.active_doc else {
+        let Some(doc_idx) = self.workspace.active_doc else {
             return;
         };
-        let Some(doc) = self.documents.get_mut(doc_idx) else {
+        let Some(doc) = self.workspace.documents.get_mut(doc_idx) else {
             return;
         };
 
@@ -368,13 +368,13 @@ impl App {
             return;
         }
         // 没有活动文档时不应被触发（「+」按钮在有文档时才渲染），防御性关闭。
-        let Some(doc_idx) = self.active_doc else {
+        let Some(doc_idx) = self.workspace.active_doc else {
             self.new_track_dialog.open = false;
             return;
         };
 
         let mut created = false;
-        if let Some(doc) = self.documents.get_mut(doc_idx) {
+        if let Some(doc) = self.workspace.documents.get_mut(doc_idx) {
             let action = crate::dialogs::new_track::show_viewport(
                 ctx,
                 &mut self.new_track_dialog,
@@ -409,8 +409,10 @@ impl App {
         let Some(panel) = self.float_panel else {
             return;
         };
-        let Some(idx) = self.active_doc else { return };
-        let doc = &mut self.documents[idx];
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[idx];
         let audio = self.audio_state.handle.as_ref();
         let mut open = true;
         let mut dock = false;

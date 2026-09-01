@@ -20,11 +20,11 @@ impl App {
     pub(in crate::app) fn compute_layout(&mut self, ui: &mut egui::Ui) -> LayoutInfo {
         let mut remaining = ui.available_rect_before_wrap();
 
-        let has_arr = self.view_mode.show_transport() && self.active_doc.is_some();
+        let has_arr = self.view_mode.show_transport() && self.workspace.active_doc.is_some();
         let has_piano = self
             .view_mode
             .show_pianoroll(self.show_pianoroll_in_arrange)
-            && self.active_doc.is_some();
+            && self.workspace.active_doc.is_some();
 
         let right_panel_total_w = if self.right_tab.is_some() {
             let max_w = (remaining.width() - 60.0).max(crate::theme::RIGHT_PANEL_MIN_WIDTH + 4.0);

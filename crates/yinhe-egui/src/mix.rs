@@ -137,7 +137,7 @@ impl App {
 
     /// 更新某源通道的 strip 参数：写持久化层 + 推引擎。
     pub(crate) fn apply_strip(&mut self, idx: usize, channel: u8, params: StripParams) {
-        self.documents[idx].mixer_mut().channels[channel as usize] = params;
+        self.workspace.documents[idx].mixer_mut().channels[channel as usize] = params;
         if let Some(audio) = &self.audio_state.handle {
             audio
                 .handle
@@ -146,7 +146,7 @@ impl App {
     }
 
     pub(crate) fn apply_master(&mut self, idx: usize, params: MasterParams) {
-        self.documents[idx].mixer_mut().master = params;
+        self.workspace.documents[idx].mixer_mut().master = params;
         if let Some(audio) = &self.audio_state.handle {
             audio
                 .handle
@@ -158,7 +158,7 @@ impl App {
     /// 实例只加载不激活——引擎此时尚未重建，spawn 完成后由
     /// `push_mixer_state_to_engine` → `ensure_all_sent` 统一激活补发。
     pub(crate) fn restore_mixer_rack(&mut self, idx: usize) {
-        let mixer = self.documents[idx].mixer.clone();
+        let mixer = self.workspace.documents[idx].mixer.clone();
         let mut rack = MixerRack::default();
         for ch in 0..SOURCE_CHANNELS {
             for r in &mixer.channel_inserts[ch] {
@@ -192,7 +192,7 @@ impl App {
     /// 与 restore_mixer_rack 同理——只加载不激活，引擎重建后由
     /// push_mixer_state_to_engine → ensure_all_sent 统一激活补发。
     pub(crate) fn restore_instrument_rack(&mut self, idx: usize) {
-        let mixer = self.documents[idx].mixer.clone();
+        let mixer = self.workspace.documents[idx].mixer.clone();
         let mut rack = InstrumentRack::default();
         for (ch, r) in mixer.instruments.iter().enumerate() {
             if let Some(r) = r {
@@ -216,7 +216,7 @@ impl App {
     pub(crate) fn push_mixer_state_to_engine(&mut self, idx: usize) {
         let Self {
             audio_state,
-            documents,
+            workspace,
             mixer_racks,
             instrument_racks,
             ..
@@ -227,7 +227,7 @@ impl App {
         audio
             .handle
             .send(yinhe_audio::AudioCommand::SetMixerParams {
-                params: Box::new(documents[idx].mixer.clone()),
+                params: Box::new(workspace.documents[idx].mixer.clone()),
             });
         if idx >= mixer_racks.len() {
             mixer_racks.resize_with(idx + 1, MixerRack::default);
@@ -309,7 +309,9 @@ fn smoothed_peak(
 
 /// MIX 模式主入口（layout.rs 在 Mix 模式且已打开工程时调用）。
 pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
-    let Some(idx) = app.active_doc else { return };
+    let Some(idx) = app.workspace.active_doc else {
+        return;
+    };
 
     // 首次进入 MIX：扫描默认目录（进程内扫描，见 yinhe-clap scan 安全性说明）。
     if app.mix.scanned.is_none() {
@@ -317,7 +319,7 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
     }
 
     // 本帧的只读数据快照（Arc 克隆便宜；layout 与引擎同源，dense 映射一致）。
-    let model = app.documents[idx].data.model.clone();
+    let model = app.workspace.documents[idx].data.model.clone();
     let layout = ChannelLayout::from_model(&model);
     let active: Vec<u8> = (0..SOURCE_CHANNELS)
         .filter(|&c| layout.is_active(c))
@@ -481,7 +483,7 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
         }
         MixAction::AddInsert { channel, plugin } => {
             {
-                let doc = &mut app.documents[idx];
+                let doc = &mut app.workspace.documents[idx];
                 let refs = match channel {
                     Some(ch) => &mut doc.mixer_mut().channel_inserts[ch as usize],
                     None => &mut doc.mixer_mut().master_inserts,
@@ -511,7 +513,7 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
             bypassed,
         } => {
             {
-                let doc = &mut app.documents[idx];
+                let doc = &mut app.workspace.documents[idx];
                 let refs = match channel {
                     Some(ch) => &mut doc.mixer_mut().channel_inserts[ch as usize],
                     None => &mut doc.mixer_mut().master_inserts,
@@ -524,7 +526,7 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
         }
         MixAction::RemoveInsert { channel, slot } => {
             {
-                let doc = &mut app.documents[idx];
+                let doc = &mut app.workspace.documents[idx];
                 let refs = match channel {
                     Some(ch) => &mut doc.mixer_mut().channel_inserts[ch as usize],
                     None => &mut doc.mixer_mut().master_inserts,
@@ -554,7 +556,7 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
         }
         MixAction::AssignInstrument { channel, plugin } => {
             {
-                let doc = &mut app.documents[idx];
+                let doc = &mut app.workspace.documents[idx];
                 let c = channel as usize;
                 let m = doc.mixer_mut();
                 if m.instruments.len() <= c {
@@ -579,7 +581,7 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
         }
         MixAction::RemoveInstrument { channel } => {
             {
-                let doc = &mut app.documents[idx];
+                let doc = &mut app.workspace.documents[idx];
                 let c = channel as usize;
                 if c < doc.mixer_mut().instruments.len() {
                     doc.mixer_mut().instruments[c] = None;

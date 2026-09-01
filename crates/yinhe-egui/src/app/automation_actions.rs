@@ -75,13 +75,13 @@ impl App {
     /// 仅 Select/SelectVertical 工具下返回 true。
     /// 此时 copy/paste/duplicate/delete 作用于锚点而非音符。
     pub(crate) fn has_selected_automation_anchors(&self) -> bool {
-        let Some(idx) = self.active_doc else {
+        let Some(idx) = self.workspace.active_doc else {
             return false;
         };
         if !matches!(self.active_tool, Tool::Select | Tool::SelectVertical) {
             return false;
         }
-        self.documents[idx]
+        self.workspace.documents[idx]
             .edit
             .controller_panels
             .iter()
@@ -90,8 +90,10 @@ impl App {
 
     /// 复制选中锚点到剪贴板。
     pub(crate) fn copy_automation_anchors(&mut self) {
-        let Some(idx) = self.active_doc else { return };
-        let doc = &self.documents[idx];
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &self.workspace.documents[idx];
 
         let Some(ctx) = Self::collect_anchor_ctx(doc) else {
             return;
@@ -126,7 +128,9 @@ impl App {
 
     /// 粘贴剪贴板锚点到 cursor_tick 位置。
     pub(crate) fn paste_automation_anchors(&mut self) {
-        let Some(idx) = self.active_doc else { return };
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
         let clipboard = self.automation_clipboard.clone();
         let Some(target) = clipboard.target else {
             return;
@@ -135,7 +139,7 @@ impl App {
             return;
         }
 
-        let doc = &mut self.documents[idx];
+        let doc = &mut self.workspace.documents[idx];
 
         // 找 target 匹配的面板
         let panel_idx = doc
@@ -197,8 +201,10 @@ impl App {
     /// 重复选中锚点（Cmd+D）。
     /// 副本偏移 = 选区跨度；单锚点时用量化间隔作为最小偏移。
     pub(crate) fn duplicate_automation_anchors(&mut self) {
-        let Some(idx) = self.active_doc else { return };
-        let doc = &mut self.documents[idx];
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[idx];
 
         let Some(ctx) = Self::collect_anchor_ctx(doc) else {
             return;
@@ -275,8 +281,10 @@ impl App {
 
     /// 删除选中锚点。
     pub(crate) fn delete_automation_anchors(&mut self) {
-        let Some(idx) = self.active_doc else { return };
-        let doc = &mut self.documents[idx];
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[idx];
 
         let Some(ctx) = Self::collect_anchor_ctx(doc) else {
             return;

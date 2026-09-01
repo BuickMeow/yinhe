@@ -10,7 +10,9 @@ impl App {
     /// 自动 teardown 引擎——`ChannelLayout` 创建后不可变，必须重建才能让新通道
     /// 被 dispatch。下一帧 `rebuild_audio_if_needed` 会用新 model 重新 spawn。
     pub(crate) fn notify_audio_model_changed(&mut self) {
-        let Some(idx) = self.active_doc else { return };
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
         if self.audio_state.handle.is_none() {
             return;
         }
@@ -18,7 +20,7 @@ impl App {
             self.teardown_audio();
         } else if let Some(audio) = &self.audio_state.handle {
             // AM lane M/S 试听状态独立于模型，由 `set_am_ms` 动态掩码维护。
-            audio.reload_notes(self.documents[idx].data.model.clone());
+            audio.reload_notes(self.workspace.documents[idx].data.model.clone());
         }
     }
 
@@ -30,14 +32,16 @@ impl App {
     /// 若 channel 激活状态翻转（首/末发声音符添加/删除），自动 teardown 引擎
     /// 并下一帧重建——同 `notify_audio_model_changed`。
     pub(crate) fn notify_notes_changed(&mut self) {
-        let Some(idx) = self.active_doc else { return };
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
         if self.audio_state.handle.is_none() {
             return;
         }
         if self.channel_layout_flipped_for_doc(idx) {
             self.teardown_audio();
         } else if let Some(audio) = &self.audio_state.handle {
-            audio.update_notes(self.documents[idx].data.model.clone());
+            audio.update_notes(self.workspace.documents[idx].data.model.clone());
         }
     }
 
@@ -55,7 +59,7 @@ impl App {
         if self.audio_state.active_doc != Some(idx) {
             return true; // 绑定的 doc 不一致，必须重建
         }
-        let model = &self.documents[idx].data.model;
+        let model = &self.workspace.documents[idx].data.model;
         layout.differs_from_model(model)
     }
 
@@ -116,7 +120,7 @@ impl App {
     /// 都是慢操作，UI 线程同步执行会冻结几百 ms）；结果由每帧的
     /// `poll_audio_spawn` 收取并完成初始状态注入。
     pub(crate) fn rebuild_audio_if_needed(&mut self) {
-        let idx = match self.active_doc {
+        let idx = match self.workspace.active_doc {
             Some(idx) => idx,
             None => return,
         };
@@ -154,7 +158,7 @@ impl App {
         // 旧引擎的 audible_notes/cc_events 已释放：归还空闲页，切文档后 RSS 不累积。
         yinhe_memtrace::purge_free_pages();
 
-        let doc = &self.documents[idx];
+        let doc = &self.workspace.documents[idx];
         let sr = self.audio_settings.sample_rate;
         let layout = yinhe_audio::channels_for_model(&doc.data.model);
         // spawn_cpal_audio 消费 layout，提前克隆一份作为快照，
@@ -226,7 +230,7 @@ impl App {
 
         match result {
             Ok(audio) => {
-                let Some(idx) = self.active_doc else {
+                let Some(idx) = self.workspace.active_doc else {
                     drop(audio);
                     return;
                 };
@@ -240,7 +244,7 @@ impl App {
 
                 progress::set_stage(&self.load_progress, 1, progress::StageStatus::Done);
 
-                let doc = &self.documents[idx];
+                let doc = &self.workspace.documents[idx];
                 // 音色库完成计数基准（事件驱动进度：每完成一 port +1）
                 let port_configs = self.resolve_sf_config(doc);
                 self.audio_state.sf_total = port_configs.len();
@@ -407,12 +411,12 @@ impl App {
         pause_return: bool,
         stop_play: bool,
     ) {
-        let (idx, audio) = match (self.active_doc, &self.audio_state.handle) {
+        let (idx, audio) = match (self.workspace.active_doc, &self.audio_state.handle) {
             (Some(idx), Some(audio)) => (idx, audio),
             _ => return,
         };
 
-        let doc = &mut self.documents[idx];
+        let doc = &mut self.workspace.documents[idx];
         let handle = &audio.handle;
 
         if toggle_play {
@@ -463,7 +467,7 @@ impl App {
     /// using the last known anchor + elapsed wall-clock time.
     /// Call this every frame during playback for smooth cursor motion.
     pub(crate) fn interpolate_playback_cursor(&mut self) {
-        let (idx, audio) = match (self.active_doc, &self.audio_state.handle) {
+        let (idx, audio) = match (self.workspace.active_doc, &self.audio_state.handle) {
             (Some(idx), Some(audio)) => (idx, audio),
             _ => return,
         };
@@ -482,7 +486,7 @@ impl App {
         self.audio_state.pending_playback = false;
 
         let sr = audio.sample_rate as f64;
-        let doc = match self.documents.get_mut(idx) {
+        let doc = match self.workspace.documents.get_mut(idx) {
             Some(doc) => doc,
             None => return,
         };
@@ -544,10 +548,12 @@ impl App {
         if reqs.is_empty() {
             return;
         }
-        let (Some(idx), Some(audio)) = (self.active_doc, self.audio_state.handle.as_ref()) else {
+        let (Some(idx), Some(audio)) =
+            (self.workspace.active_doc, self.audio_state.handle.as_ref())
+        else {
             return;
         };
-        let doc = &self.documents[idx];
+        let doc = &self.workspace.documents[idx];
         let model = &doc.data.model;
         let mut notes: Vec<yinhe_audio::PreviewNoteParams> = Vec::new();
         let mut stop = false;

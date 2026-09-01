@@ -78,10 +78,10 @@ impl App {
         // 取出请求后立即清除，避免下帧重复启动。
         ctx.data_mut(|d| d.remove::<RescaleRequest>(egui::Id::new(RESCALE_REQUEST_ID)));
 
-        let Some(doc_idx) = self.active_doc else {
+        let Some(doc_idx) = self.workspace.active_doc else {
             return;
         };
-        let Some(doc) = self.documents.get(doc_idx) else {
+        let Some(doc) = self.workspace.documents.get(doc_idx) else {
             return;
         };
 
@@ -124,7 +124,7 @@ impl App {
                 self.rescale.rx = None;
                 let pending = self.rescale.pending.take();
                 if let Some((old_ppq, _new_ppq, _id, doc_idx)) = pending
-                    && let Some(doc) = self.documents.get_mut(doc_idx)
+                    && let Some(doc) = self.workspace.documents.get_mut(doc_idx)
                 {
                     let model = std::sync::Arc::make_mut(&mut doc.data.model);
                     model.meta.ppq = old_ppq;
@@ -143,7 +143,7 @@ impl App {
 
         match result {
             Ok(new_model) => {
-                if let Some(doc) = self.documents.get_mut(doc_idx) {
+                if let Some(doc) = self.workspace.documents.get_mut(doc_idx) {
                     // 用新 model 替换 doc.data.model。
                     doc.data.model = std::sync::Arc::new(new_model);
                     doc.data.bump_revision();
@@ -154,14 +154,14 @@ impl App {
                     // uploaded_key_revisions 巧合相同，增量检测会跳过上传，
                     // 渲染出 PPQ 缩放前的旧音符（见 close_document / main_loop
                     // 的文档替换路径同根修复）。
-                    if self.active_doc == Some(doc_idx) {
+                    if self.workspace.active_doc == Some(doc_idx) {
                         self.invalidate_cull_state();
                     }
                 }
             }
             Err(msg) => {
                 // 用户取消或子线程报错：还原 meta.ppq = old_ppq。
-                if let Some(doc) = self.documents.get_mut(doc_idx) {
+                if let Some(doc) = self.workspace.documents.get_mut(doc_idx) {
                     let model = std::sync::Arc::make_mut(&mut doc.data.model);
                     model.meta.ppq = old_ppq;
                 }

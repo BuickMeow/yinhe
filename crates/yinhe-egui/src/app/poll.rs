@@ -15,8 +15,9 @@ impl App {
                 model,
             } => {
                 let (quantize_arrange, quantize_pianoroll) = self
+                    .workspace
                     .active_doc
-                    .and_then(|idx| self.documents.get(idx))
+                    .and_then(|idx| self.workspace.documents.get(idx))
                     .map(|doc| (doc.edit.quantize_arrange, doc.edit.quantize_pianoroll))
                     .unwrap_or((
                         QuantizePreset::Fraction(1, 4),
@@ -42,14 +43,14 @@ impl App {
                         // 避免另开一个空标签页；用户手动 NewProject 或已修改/已保存
                         // 的工程保持不动，照常 push 新标签页。
                         if self.should_replace_initial_untitled() {
-                            self.documents[0] = doc;
-                            self.active_doc = Some(0);
+                            self.workspace.documents[0] = doc;
+                            self.workspace.active_doc = Some(0);
                             self.restore_mixer_rack(0);
                             self.restore_instrument_rack(0);
                         } else {
-                            let insert_idx = self.documents.len();
-                            self.documents.push(doc);
-                            self.active_doc = Some(insert_idx);
+                            let insert_idx = self.workspace.documents.len();
+                            self.workspace.documents.push(doc);
+                            self.workspace.active_doc = Some(insert_idx);
                             self.restore_mixer_rack(insert_idx);
                             self.restore_instrument_rack(insert_idx);
                         }
@@ -79,8 +80,9 @@ impl App {
                 mixer,
             } => {
                 let (quantize_arrange, quantize_pianoroll) = self
+                    .workspace
                     .active_doc
-                    .and_then(|idx| self.documents.get(idx))
+                    .and_then(|idx| self.workspace.documents.get(idx))
                     .map(|doc| (doc.edit.quantize_arrange, doc.edit.quantize_pianoroll))
                     .unwrap_or((
                         QuantizePreset::Fraction(1, 4),
@@ -135,14 +137,14 @@ impl App {
                 if let Some((doc, sf_project_mode)) = result {
                     self.audio_settings.global_sf_config.global_enabled = !sf_project_mode;
                     if self.should_replace_initial_untitled() {
-                        self.documents[0] = doc;
-                        self.active_doc = Some(0);
+                        self.workspace.documents[0] = doc;
+                        self.workspace.active_doc = Some(0);
                         self.restore_mixer_rack(0);
                         self.restore_instrument_rack(0);
                     } else {
-                        let insert_idx = self.documents.len();
-                        self.documents.push(doc);
-                        self.active_doc = Some(insert_idx);
+                        let insert_idx = self.workspace.documents.len();
+                        self.workspace.documents.push(doc);
+                        self.workspace.active_doc = Some(insert_idx);
                         self.restore_mixer_rack(insert_idx);
                         self.restore_instrument_rack(insert_idx);
                     }
@@ -176,10 +178,10 @@ impl App {
             self.save_progress_rx = None;
             self.save_progress = None;
             // Mark the active document as saved
-            if let Some(idx) = self.active_doc {
-                self.documents[idx].mark_saved();
+            if let Some(idx) = self.workspace.active_doc {
+                self.workspace.documents[idx].mark_saved();
                 // 保存成功 → 记录到「最近修改的文件」
-                if let Some(path) = self.documents[idx].file_path.clone()
+                if let Some(path) = self.workspace.documents[idx].file_path.clone()
                     && self.audio_settings.push_recent_file(&path)
                 {
                     self.audio_settings.save();

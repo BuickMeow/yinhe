@@ -102,7 +102,7 @@ impl eframe::App for App {
         // ── Close interception ──
         let close_requested = ui.ctx().input(|i| i.viewport().close_requested());
         if close_requested && !self.should_exit {
-            let any_dirty = self.documents.iter().any(|d| d.is_dirty());
+            let any_dirty = self.workspace.documents.iter().any(|d| d.is_dirty());
             if any_dirty {
                 // Cancel the close and show the unsaved dialog instead
                 ui.ctx()
@@ -121,7 +121,7 @@ impl eframe::App for App {
         }
 
         // ── macOS: update document-edited dot in traffic light ──
-        let any_dirty = self.documents.iter().any(|d| d.is_dirty());
+        let any_dirty = self.workspace.documents.iter().any(|d| d.is_dirty());
         if any_dirty != self.last_dirty_state {
             self.last_dirty_state = any_dirty;
             crate::platform::set_document_edited(frame, any_dirty);
@@ -291,20 +291,20 @@ impl eframe::App for App {
         }
 
         // ── Detect document switch → invalidate GPU caches ──
-        if self.active_doc != self.prev_active_doc {
+        if self.workspace.active_doc != self.workspace.prev_active_doc {
             self.arrange_view.base.dirty = true;
             self.pianoroll_view.base.dirty = true;
             // 全局 GPU cull buffer 是跨文档共享的，切换后必须清空 + 重置跟踪键，
             // 否则下一个文档首帧可能因 revision/track_visible 巧合相等而跳过
             // upload，渲染出上一个文档的音符（见 close_document 同根修复）。
             self.invalidate_cull_state();
-            self.prev_active_doc = self.active_doc;
+            self.workspace.prev_active_doc = self.workspace.active_doc;
             // 三视图选框互斥：切换文档后把 prev 计数对齐到新文档当前状态，
             // 避免把"已有选框"误判为"新创建的选框"而清除其他视图。
             // 选框本身都存于 doc.edit，切文档后状态自然随文档走。
-            match self.active_doc {
+            match self.workspace.active_doc {
                 Some(i) => {
-                    let edit = &self.documents[i].edit;
+                    let edit = &self.workspace.documents[i].edit;
                     self.prev_arr_count = edit.arr_sel_rect.len();
                     self.prev_pr_count = edit.sel_rect.rects.len();
                     self.prev_am_count = edit
@@ -375,14 +375,19 @@ impl eframe::App for App {
         // ── Custom title bar ──
         let title_bar_action = title_bar::show(
             ui,
-            &self.documents,
-            &mut self.active_doc,
+            &self.workspace.documents,
+            &mut self.workspace.active_doc,
             &mut self.tab_scroll_offset,
             &mut self.status_hint,
         );
         match title_bar_action {
             Some(title_bar::TitleBarAction::CloseDocument(idx)) => {
-                if self.documents.get(idx).is_some_and(|d| d.is_dirty()) {
+                if self
+                    .workspace
+                    .documents
+                    .get(idx)
+                    .is_some_and(|d| d.is_dirty())
+                {
                     self.pending_unsaved = Some(PendingFileAction::CloseDocument(idx));
                     // 把 unsaved 弹窗拉到主窗口前台（用户点击 tab 关闭按钮是主动
                     // 操作，应该立刻看到弹窗）
@@ -405,13 +410,13 @@ impl eframe::App for App {
         }
 
         // ── Defensive: ensure active_doc is always in bounds ──
-        if let Some(idx) = self.active_doc
-            && idx >= self.documents.len()
+        if let Some(idx) = self.workspace.active_doc
+            && idx >= self.workspace.documents.len()
         {
-            self.active_doc = if self.documents.is_empty() {
+            self.workspace.active_doc = if self.workspace.documents.is_empty() {
                 None
             } else {
-                Some(self.documents.len() - 1)
+                Some(self.workspace.documents.len() - 1)
             };
         }
 
@@ -512,7 +517,10 @@ impl eframe::App for App {
         self.poll_mixer_plugins();
 
         // ── Transport bar ──
-        let active_doc = self.active_doc.and_then(|idx| self.documents.get(idx));
+        let active_doc = self
+            .workspace
+            .active_doc
+            .and_then(|idx| self.workspace.documents.get(idx));
         let transport_response = transport_bar::show(
             ui,
             &mut transport_bar::TransportContext {
@@ -588,7 +596,7 @@ impl eframe::App for App {
         let new_enc = self.audio_settings.midi_import_encoding;
         if new_enc != self.last_midi_encoding {
             self.last_midi_encoding = new_enc;
-            if self.active_doc.is_some() {
+            if self.workspace.active_doc.is_some() {
                 self.with_undo(t!("undo.recode_track_names").as_ref(), |doc| {
                     doc.recode_track_names(new_enc);
                     None::<yinhe_editor_core::history::UndoAction>

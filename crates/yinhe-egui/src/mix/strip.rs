@@ -39,7 +39,7 @@ pub(crate) fn show_toolbar(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<M
             }
         }
         // 机架最近一次错误（加载/激活失败）。
-        if let Some(idx) = app.active_doc
+        if let Some(idx) = app.workspace.active_doc
             && let Some(err) = app.mixer_racks.get(idx).and_then(|r| r.last_error.as_ref())
         {
             ui.label(
@@ -62,13 +62,14 @@ pub(crate) fn channel_strip(
     peak: (f32, f32),
     actions: &mut Vec<MixAction>,
 ) {
-    let params = app.documents[idx].mixer.strip(channel);
+    let params = app.workspace.documents[idx].mixer.strip(channel);
     let names = track_names.join(", ");
-    let insert_names: Vec<String> = app.documents[idx].mixer.channel_inserts[channel as usize]
+    let insert_names: Vec<String> = app.workspace.documents[idx].mixer.channel_inserts
+        [channel as usize]
         .iter()
         .map(|r| r.name.clone())
         .collect();
-    let bypassed: Vec<bool> = app.documents[idx].mixer.channel_inserts[channel as usize]
+    let bypassed: Vec<bool> = app.workspace.documents[idx].mixer.channel_inserts[channel as usize]
         .iter()
         .map(|r| r.bypassed)
         .collect();
@@ -130,14 +131,14 @@ pub(crate) fn master_strip(
     peak: (f32, f32),
     actions: &mut Vec<MixAction>,
 ) {
-    let params = app.documents[idx].mixer.master;
-    let insert_names: Vec<String> = app.documents[idx]
+    let params = app.workspace.documents[idx].mixer.master;
+    let insert_names: Vec<String> = app.workspace.documents[idx]
         .mixer
         .master_inserts
         .iter()
         .map(|r| r.name.clone())
         .collect();
-    let bypassed: Vec<bool> = app.documents[idx]
+    let bypassed: Vec<bool> = app.workspace.documents[idx]
         .mixer
         .master_inserts
         .iter()
@@ -461,7 +462,7 @@ pub(crate) fn instrument_strip(
     channel: u16,
     actions: &mut Vec<MixAction>,
 ) {
-    let name = app.documents[idx]
+    let name = app.workspace.documents[idx]
         .mixer
         .instruments
         .get(channel as usize)

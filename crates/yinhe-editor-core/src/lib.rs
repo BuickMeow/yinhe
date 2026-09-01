@@ -16,6 +16,7 @@ pub mod project_data;
 pub mod quantize;
 pub mod sel_hint;
 pub mod shortcuts;
+pub mod workspace;
 
 pub use config::{ProjectSfConfig, SfEntry};
 pub use document::automation_edit::AnchorField;

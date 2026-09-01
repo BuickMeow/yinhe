@@ -222,8 +222,10 @@ impl App {
     /// Copy selection rects to clipboard (no note data, just rects).
     /// Resets cut_past_len since a new copy invalidates the cut undo bridge.
     pub(crate) fn copy_selection(&mut self) {
-        let Some(idx) = self.active_doc else { return };
-        self.clipboard = self.documents[idx].edit.selected.clone();
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        self.clipboard = self.workspace.documents[idx].edit.selected.clone();
         self.cut_past_len = None;
     }
 
@@ -233,8 +235,10 @@ impl App {
     pub(crate) fn cut_selection(&mut self) {
         self.copy_selection();
         // cut_past_len is reset by copy_selection; set it before delete pushes.
-        let Some(idx) = self.active_doc else { return };
-        self.cut_past_len = Some(self.documents[idx].history.past_len());
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        self.cut_past_len = Some(self.workspace.documents[idx].history.past_len());
         self.delete_selected_notes();
     }
 
@@ -242,9 +246,14 @@ impl App {
     pub(crate) fn paste_clipboard(&mut self) {
         let clipboard = self.clipboard.clone();
         let cut_past_len = self.cut_past_len;
-        let Some(idx) = self.active_doc else { return };
-        let cursor_tick = self.documents[idx].edit.cursor_tick.unwrap_or(0.0);
-        let track_selected = self.documents[idx].edit.track_selected.clone();
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let cursor_tick = self.workspace.documents[idx]
+            .edit
+            .cursor_tick
+            .unwrap_or(0.0);
+        let track_selected = self.workspace.documents[idx].edit.track_selected.clone();
         self.with_undo(t!("undo.paste").as_ref(), |doc| {
             doc.paste_from_selection(&clipboard, cursor_tick, cut_past_len, &track_selected)
         });
@@ -252,15 +261,17 @@ impl App {
 
     /// Select all notes — PR or AR depending on current view mode.
     pub(crate) fn select_all(&mut self) {
-        let Some(idx) = self.active_doc else { return };
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
         let is_pr = self.view_mode == crate::chrome::mode_bar::ViewMode::Edit;
         if is_pr {
-            self.documents[idx].select_all_pr();
+            self.workspace.documents[idx].select_all_pr();
         } else {
             // select_all_ar 内部会同步设置 doc.edit.arr_sel_rect（AR 选框）。
-            self.documents[idx].select_all_ar();
+            self.workspace.documents[idx].select_all_ar();
         }
-        self.documents[idx].data.bump_revision();
+        self.workspace.documents[idx].data.bump_revision();
         self.pianoroll_view.base.dirty = true;
         self.arrange_view.base.dirty = true;
     }
@@ -282,11 +293,13 @@ impl App {
     where
         F: FnOnce(&mut Document) -> Option<yinhe_editor_core::history::UndoAction>,
     {
-        let Some(idx) = self.active_doc else { return };
-        let before = self.documents[idx].capture_snapshot();
-        let action = f(&mut self.documents[idx]);
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let before = self.workspace.documents[idx].capture_snapshot();
+        let action = f(&mut self.workspace.documents[idx]);
         let Some(action) = action else { return };
-        let doc = &mut self.documents[idx];
+        let doc = &mut self.workspace.documents[idx];
         doc.push_undo(action, label, before);
         doc.data.bump_revision();
         self.pianoroll_view.base.dirty = true;
@@ -300,8 +313,10 @@ impl App {
 
     /// Restore the previous state on the active document's history stack.
     pub(crate) fn undo(&mut self) {
-        let Some(idx) = self.active_doc else { return };
-        let doc: &mut Document = &mut self.documents[idx];
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc: &mut Document = &mut self.workspace.documents[idx];
         let changed = doc.undo();
         if changed {
             doc.data.bump_revision();
@@ -312,8 +327,10 @@ impl App {
 
     /// Re-apply the most recently undone state on the active document.
     pub(crate) fn redo(&mut self) {
-        let Some(idx) = self.active_doc else { return };
-        let doc: &mut Document = &mut self.documents[idx];
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc: &mut Document = &mut self.workspace.documents[idx];
         let changed = doc.redo();
         if changed {
             doc.data.bump_revision();
@@ -392,8 +409,8 @@ impl App {
         }
 
         // Check for unsaved changes
-        if let Some(idx) = self.active_doc
-            && self.documents[idx].is_dirty()
+        if let Some(idx) = self.workspace.active_doc
+            && self.workspace.documents[idx].is_dirty()
         {
             let pending = match action {
                 transport_bar::FileAction::NewProject => PendingFileAction::NewProject,
@@ -428,8 +445,8 @@ impl App {
             self.load_error = Some(t!("file_dialog.open_failed", name = name).to_string());
             return;
         }
-        if let Some(idx) = self.active_doc
-            && self.documents[idx].is_dirty()
+        if let Some(idx) = self.workspace.active_doc
+            && self.workspace.documents[idx].is_dirty()
         {
             self.pending_unsaved = Some(PendingFileAction::OpenRecent(path.to_string()));
             // 与 handle_file_action 一致：主动触发的操作立刻把 unsaved 弹窗拉到前台
@@ -454,8 +471,8 @@ impl App {
                     .pick_file(self.audio_settings.midi_import_encoding);
             }
             transport_bar::FileAction::Save => {
-                if let Some(idx) = self.active_doc {
-                    let path = self.documents[idx].file_path.clone();
+                if let Some(idx) = self.workspace.active_doc {
+                    let path = self.workspace.documents[idx].file_path.clone();
                     if let Some(path) = path {
                         self.save_project_async(idx, path);
                     } else {
@@ -467,7 +484,7 @@ impl App {
                 self.save_as_dialog();
             }
             transport_bar::FileAction::CloseDocument => {
-                if let Some(idx) = self.active_doc {
+                if let Some(idx) = self.workspace.active_doc {
                     self.close_document(idx);
                 }
             }
@@ -521,7 +538,7 @@ impl App {
 
     /// Spawn a background thread to save the project.
     pub(crate) fn save_project_async(&mut self, idx: usize, path: String) {
-        let doc = &mut self.documents[idx];
+        let doc = &mut self.workspace.documents[idx];
         doc.sync_overrides_to_model();
         doc.data.sync_project_file();
         doc.data.sync_mapping_file();
@@ -549,13 +566,13 @@ impl App {
 
         // 混音台插件：保存前把实例的 CLAP state 写回 InsertRef（旁通标志同步）。
         if let Some(rack) = self.mixer_racks.get_mut(idx) {
-            rack.sync_states_to(&mut self.documents[idx].mixer);
+            rack.sync_states_to(&mut self.workspace.documents[idx].mixer);
         }
         // 乐器插件：同样把实例 state 写回 mixer.instruments[channel]。
         if let Some(irack) = self.instrument_racks.get_mut(idx) {
-            irack.sync_states_to(&mut self.documents[idx].mixer);
+            irack.sync_states_to(&mut self.workspace.documents[idx].mixer);
         }
-        let doc = &self.documents[idx];
+        let doc = &self.workspace.documents[idx];
         let model = doc.data.model.clone();
         let project_file = doc.data.project_file.clone();
         let mapping_file = doc.data.mapping_file.clone();
@@ -581,7 +598,7 @@ impl App {
             let _ = tx.send(());
         });
 
-        if let Some(doc) = self.documents.get_mut(idx) {
+        if let Some(doc) = self.workspace.documents.get_mut(idx) {
             doc.file_path = Some(path);
         }
         self.save_rx = Some(rx);
@@ -589,8 +606,8 @@ impl App {
     }
 
     pub(crate) fn save_as_dialog(&mut self) {
-        let default_name = if let Some(idx) = self.active_doc {
-            format!("{}.yin", self.documents[idx].file_name)
+        let default_name = if let Some(idx) = self.workspace.active_doc {
+            format!("{}.yin", self.workspace.documents[idx].file_name)
         } else {
             t!("file_dialog.untitled").to_string()
         };
@@ -604,11 +621,11 @@ impl App {
             if !path_str.ends_with(".yin") {
                 path_str.push_str(".yin");
             }
-            if let Some(idx) = self.active_doc {
+            if let Some(idx) = self.workspace.active_doc {
                 let path2 = path_str.clone();
                 self.save_project_async(idx, path2);
                 // Update file_name
-                if let Some(doc) = self.documents.get_mut(idx) {
+                if let Some(doc) = self.workspace.documents.get_mut(idx) {
                     doc.file_name = path
                         .file_stem()
                         .and_then(|n| n.to_str())
@@ -620,8 +637,8 @@ impl App {
     }
 
     fn export_midi_dialog(&mut self) {
-        let default_name = if let Some(idx) = self.active_doc {
-            format!("{}.mid", self.documents[idx].file_name)
+        let default_name = if let Some(idx) = self.workspace.active_doc {
+            format!("{}.mid", self.workspace.documents[idx].file_name)
         } else {
             t!("file_dialog.export_mid").to_string()
         };
@@ -631,8 +648,8 @@ impl App {
             .save_file()
         {
             let path_str = path.to_string_lossy().to_string();
-            if let Some(idx) = self.active_doc {
-                let doc = &self.documents[idx];
+            if let Some(idx) = self.workspace.active_doc {
+                let doc = &self.workspace.documents[idx];
                 match yinhe_midi::write_to_bytes(&doc.data.model) {
                     Ok(bytes) => {
                         if let Err(e) = std::fs::write(&path_str, &bytes) {
@@ -648,7 +665,7 @@ impl App {
     }
 
     fn export_audio_dialog(&mut self, ctx: &egui::Context) {
-        if self.active_doc.is_none() {
+        if self.workspace.active_doc.is_none() {
             return;
         }
 
@@ -667,7 +684,7 @@ impl App {
     /// Called after the bit-depth dialog is confirmed.
     /// Opens the file-save dialog and starts the export.
     pub(crate) fn start_export(&mut self) {
-        let idx = match self.active_doc {
+        let idx = match self.workspace.active_doc {
             Some(idx) => idx,
             None => return,
         };
@@ -677,7 +694,7 @@ impl App {
         // 像“点击之前就已经开始渲染”。
         let button_time = std::time::Instant::now();
 
-        let doc = &self.documents[idx];
+        let doc = &self.workspace.documents[idx];
         let default_name = format!("{}.wav", doc.file_name);
 
         let path = match rfd::FileDialog::new()
