@@ -97,11 +97,19 @@ pub fn show_content(
                 .show(ui, |ui| {
                     ui.spacing_mut().interact_size.y = 22.0;
                     ui.spacing_mut().item_spacing.y = 6.0;
-                    ui.add(
+                    ui.add_sized(
+                        [132.0, 22.0],
                         egui::TextEdit::singleline(&mut settings.settings_search)
                             .hint_text(t!("settings.search_hint").as_ref())
                             .id_salt("settings_search")
-                            .desired_width(132.0),
+                            .desired_width(132.0)
+                            .frame(
+                                egui::Frame::new()
+                                    .fill(crate::theme::control_bg())
+                                    .stroke(egui::Stroke::NONE)
+                                    .corner_radius(4)
+                                    .inner_margin(egui::Margin::symmetric(6, 4)),
+                            ),
                     );
                     if !settings.settings_search.is_empty()
                         && ui.button(t!("settings.search_clear").as_ref()).clicked()
