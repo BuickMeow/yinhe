@@ -18,12 +18,9 @@ pub fn show_general_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool
     ui.horizontal(|ui| {
         ui.label(t!("settings.editing.allow_overlap").as_ref());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if crate::widgets::checkbox::checkbox(
-                ui,
-                &mut settings.allow_overlapping_notes,
-                t!("settings.editing.allow_overlap_hint").as_ref(),
-            )
-            .changed()
+            if crate::widgets::switch::switch(ui, &mut settings.allow_overlapping_notes)
+                .on_hover_text(t!("settings.editing.allow_overlap_hint").as_ref())
+                .changed()
             {
                 changed = true;
             }

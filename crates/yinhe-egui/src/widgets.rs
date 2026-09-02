@@ -14,5 +14,6 @@ pub(crate) mod reorder;
 pub mod scrollbar;
 pub mod selection_actions;
 pub mod split_handle;
+pub(crate) mod switch;
 pub mod time_ruler;
 pub mod tools_panel;

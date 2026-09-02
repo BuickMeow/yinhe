@@ -78,12 +78,9 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     ui.horizontal(|ui| {
         ui.label(t!("settings.audio.midi_thru").as_ref());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if crate::widgets::checkbox::checkbox(
-                ui,
-                &mut settings.midi_thru,
-                t!("settings.audio.midi_thru_hint").as_ref(),
-            )
-            .changed()
+            if crate::widgets::switch::switch(ui, &mut settings.midi_thru)
+                .on_hover_text(t!("settings.audio.midi_thru_hint").as_ref())
+                .changed()
             {
                 changed = true;
             }
