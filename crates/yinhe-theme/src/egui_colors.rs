@@ -183,11 +183,11 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
     let mix_control_selected = mix_surface(t_ctl_sel);
     let mix_btn_bg = mix_surface(t_btn);
     let mix_line = mix_surface(t_line);
-    // 网格次级线用同一 line_fg 的不同透明度，减少调色板数量（同色相不同 alpha）。
+    // 网格次级线用同一 line_fg 的不同透明度，四档 255/120/90/40 拉大 measure/beat 差距。
     let mix_grid_sub_beat =
-        Color32::from_rgba_unmultiplied(mix_line.r(), mix_line.g(), mix_line.b(), 140);
+        Color32::from_rgba_unmultiplied(mix_line.r(), mix_line.g(), mix_line.b(), 90);
     let mix_grid_tick =
-        Color32::from_rgba_unmultiplied(mix_line.r(), mix_line.g(), mix_line.b(), 70);
+        Color32::from_rgba_unmultiplied(mix_line.r(), mix_line.g(), mix_line.b(), 40);
     // 条纹/轨道恒为"比背景更黑"（亮暗都压暗，幅度分表）
     let mix_track = mix_darken(t_track);
     let mix_stripe = mix_darken(t_stripe);
@@ -322,17 +322,17 @@ mod tests {
         ];
         assert!(d.windows(2).all(|w| lum(w[0]) <= lum(w[1])));
         assert_eq!(dark.control_selected_bg, dark.line_fg);
-        // 网格次级线与 line_fg 同色相不同 alpha（premultiplied 存储需用 to_srgba_unmultiplied 比较，允许 ±1 舍入）
+        // 网格次级线与 line_fg 同色相不同 alpha（premultiplied 存储需用 to_srgba_unmultiplied 比较，低 alpha 允许 ±3 舍入）
         let [r, g, b, a] = dark.grid_sub_beat.to_srgba_unmultiplied();
-        assert!((r as i16 - dark.line_fg.r() as i16).abs() <= 1);
-        assert!((g as i16 - dark.line_fg.g() as i16).abs() <= 1);
-        assert!((b as i16 - dark.line_fg.b() as i16).abs() <= 1);
-        assert_eq!(a, 140);
+        assert!((r as i16 - dark.line_fg.r() as i16).abs() <= 2);
+        assert!((g as i16 - dark.line_fg.g() as i16).abs() <= 2);
+        assert!((b as i16 - dark.line_fg.b() as i16).abs() <= 2);
+        assert_eq!(a, 90);
         let [r, g, b, a] = dark.grid_tick.to_srgba_unmultiplied();
-        assert!((r as i16 - dark.line_fg.r() as i16).abs() <= 1);
-        assert!((g as i16 - dark.line_fg.g() as i16).abs() <= 1);
-        assert!((b as i16 - dark.line_fg.b() as i16).abs() <= 1);
-        assert_eq!(a, 70);
+        assert!((r as i16 - dark.line_fg.r() as i16).abs() <= 3);
+        assert!((g as i16 - dark.line_fg.g() as i16).abs() <= 3);
+        assert!((b as i16 - dark.line_fg.b() as i16).abs() <= 3);
+        assert_eq!(a, 40);
 
         let light = derive_theme(crate::base::BaseColors::LIGHT);
         // 亮色：全部压暗，幅度阶梯单调（3/5/8/12% 单调），网格线为 alpha 变体
@@ -347,13 +347,13 @@ mod tests {
         ];
         assert!(l.windows(2).all(|w| lum(w[0]) <= lum(w[1])));
         let [r, g, b, _] = light.grid_sub_beat.to_srgba_unmultiplied();
-        assert!((r as i16 - light.line_fg.r() as i16).abs() <= 1);
-        assert!((g as i16 - light.line_fg.g() as i16).abs() <= 1);
-        assert!((b as i16 - light.line_fg.b() as i16).abs() <= 1);
+        assert!((r as i16 - light.line_fg.r() as i16).abs() <= 2);
+        assert!((g as i16 - light.line_fg.g() as i16).abs() <= 2);
+        assert!((b as i16 - light.line_fg.b() as i16).abs() <= 2);
         let [r, g, b, _] = light.grid_tick.to_srgba_unmultiplied();
-        assert!((r as i16 - light.line_fg.r() as i16).abs() <= 1);
-        assert!((g as i16 - light.line_fg.g() as i16).abs() <= 1);
-        assert!((b as i16 - light.line_fg.b() as i16).abs() <= 1);
+        assert!((r as i16 - light.line_fg.r() as i16).abs() <= 3);
+        assert!((g as i16 - light.line_fg.g() as i16).abs() <= 3);
+        assert!((b as i16 - light.line_fg.b() as i16).abs() <= 3);
     }
 
     /// 新增的亮色预设：亮基底、深对比字、网格线压暗方向全部正确。

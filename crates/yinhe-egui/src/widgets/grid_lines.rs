@@ -23,12 +23,12 @@ pub struct GridColors {
 }
 
 impl GridColors {
-    /// Pianoroll 配色（automation 也用这套）：同色相四档透明度。
+    /// Pianoroll 配色（automation 也用这套）：同色相四档透明度，measure/beat 差距拉大。
     pub fn pianoroll() -> Self {
         let base = theme::line_fg();
         Self {
             measure: base,
-            beat: egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), 180),
+            beat: egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), 120),
             sub_beat: Some(theme::grid_sub_beat()),
             tick: Some(theme::grid_tick()),
         }
@@ -39,7 +39,7 @@ impl GridColors {
         let base = theme::line_fg();
         Self {
             measure: base,
-            beat: egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), 180),
+            beat: egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), 120),
             sub_beat: None,
             tick: None,
         }
@@ -448,28 +448,28 @@ mod tests {
         assert!(base.pixels_per_tick <= 0.001);
     }
 
-    /// 验证 GridColors 配色档位：同色相四档透明度。
+    /// 验证 GridColors 配色档位：同色相四档透明度，measure/beat 差距拉大。
     #[test]
     fn test_grid_colors_distinct() {
         let pr = GridColors::pianoroll();
         let ar = GridColors::arrangement();
-        // measure 不透明、beat 180/sub 140/tick 70 同 RGB 不同 alpha（±1 舍入）
+        // measure 255/beat 120/sub 90/tick 40 同 RGB 不同 alpha（低 alpha 允许 ±3 舍入）
         assert_ne!(pr.measure, pr.beat);
         let [r1, g1, b1, _] = pr.measure.to_srgba_unmultiplied();
         let [r2, g2, b2, _] = pr.beat.to_srgba_unmultiplied();
-        assert!((r1 as i16 - r2 as i16).abs() <= 1);
-        assert!((g1 as i16 - g2 as i16).abs() <= 1);
-        assert!((b1 as i16 - b2 as i16).abs() <= 1);
-        assert_eq!(pr.beat.a(), 180);
-        assert_eq!(pr.sub_beat.unwrap().a(), 140);
-        assert_eq!(pr.tick.unwrap().a(), 70);
+        assert!((r1 as i16 - r2 as i16).abs() <= 2);
+        assert!((g1 as i16 - g2 as i16).abs() <= 2);
+        assert!((b1 as i16 - b2 as i16).abs() <= 2);
+        assert_eq!(pr.beat.a(), 120);
+        assert_eq!(pr.sub_beat.unwrap().a(), 90);
+        assert_eq!(pr.tick.unwrap().a(), 40);
         assert!(ar.sub_beat.is_none());
         assert!(ar.tick.is_none());
         let [r1, g1, b1, _] = ar.measure.to_srgba_unmultiplied();
         let [r2, g2, b2, _] = ar.beat.to_srgba_unmultiplied();
-        assert!((r1 as i16 - r2 as i16).abs() <= 1);
-        assert!((g1 as i16 - g2 as i16).abs() <= 1);
-        assert!((b1 as i16 - b2 as i16).abs() <= 1);
+        assert!((r1 as i16 - r2 as i16).abs() <= 2);
+        assert!((g1 as i16 - g2 as i16).abs() <= 2);
+        assert!((b1 as i16 - b2 as i16).abs() <= 2);
     }
 
     /// 纵向（瀑布流）：网格线转置为横线，
