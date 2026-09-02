@@ -29,3 +29,25 @@ pub fn apply_font_scale(ctx: &egui::Context, scale: f32) {
         }
     });
 }
+
+/// 将主题硬编码字号按当前 `font_scale` 缩放。
+/// 基于 `Body` 的缩放比例推算，避免额外存储全局状态。
+pub fn scaled_font(ctx: &egui::Context, base: f32) -> f32 {
+    let default_body = egui::Style::default()
+        .text_styles
+        .get(&egui::TextStyle::Body)
+        .map(|f| f.size)
+        .unwrap_or(13.0);
+    let cur_body = ctx
+        .global_style()
+        .text_styles
+        .get(&egui::TextStyle::Body)
+        .map(|f| f.size)
+        .unwrap_or(default_body);
+    let factor = if default_body > 0.0 {
+        cur_body / default_body
+    } else {
+        1.0
+    };
+    base * factor
+}

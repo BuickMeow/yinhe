@@ -316,14 +316,16 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 left: 8,
                 right: 8,
                 top: 0,
-                bottom: 8,
+                bottom: 6,
             },
             stroke: egui::Stroke::NONE,
             ..Default::default()
         })
         .show(ui, |ui| {
-            // Taller buttons for the transport bar
-            ui.spacing_mut().interact_size.y = 32.0;
+            // 行高/间隙与 popup 统一为 22/6（原 32/8 偏高）
+            ui.spacing_mut().interact_size.y = 22.0;
+            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.spacing_mut().item_spacing.y = 6.0;
 
             let mut timecode_rect: Option<egui::Rect> = None;
 

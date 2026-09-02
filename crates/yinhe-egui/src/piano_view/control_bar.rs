@@ -89,7 +89,10 @@ pub fn show(ui: &mut egui::Ui, bar: egui::Rect, ctx: &PrBarData<'_>, events: &mu
         quant_rect.center(),
         egui::Align2::CENTER_CENTER,
         ctx.quantize.label(),
-        egui::FontId::proportional(crate::theme::SMALL_FONT),
+        egui::FontId::proportional(crate::scaling::scaled_font(
+            ui.ctx(),
+            crate::theme::SMALL_FONT,
+        )),
         quant_color,
     );
     // popup 复用 quantize 弹窗（无背景版，AR 仍走原 quantize_button 保留 track_bg）。
@@ -209,9 +212,15 @@ pub fn show(ui: &mut egui::Ui, bar: egui::Rect, ctx: &PrBarData<'_>, events: &mu
         .map(track_label)
         .unwrap_or_else(|| t!("pr_bar.no_track").to_string());
     // 名称 + 下拉箭头（material 图标，不用 Unicode 字符，避免字体缺字显示方框）。
-    let font = egui::FontId::proportional(crate::theme::SMALL_FONT);
+    let font = egui::FontId::proportional(crate::scaling::scaled_font(
+        ui.ctx(),
+        crate::theme::SMALL_FONT,
+    ));
     let icon = egui_material_icons::icons::ICON_KEYBOARD_ARROW_DOWN;
-    let icon_font = egui::FontId::new(crate::theme::ICON_FONT, icon.font_family());
+    let icon_font = egui::FontId::new(
+        crate::scaling::scaled_font(ui.ctx(), crate::theme::ICON_FONT),
+        icon.font_family(),
+    );
     let text_w = ui
         .painter()
         .layout_no_wrap(name.clone(), font.clone(), crate::theme::mode_bar_text())
@@ -268,7 +277,10 @@ pub fn show(ui: &mut egui::Ui, bar: egui::Rect, ctx: &PrBarData<'_>, events: &mu
             egui::pos2(bar.max.x - 8.0, bar.center().y),
             egui::Align2::RIGHT_CENTER,
             chord,
-            egui::FontId::proportional(crate::theme::BODY_FONT),
+            egui::FontId::proportional(crate::scaling::scaled_font(
+                ui.ctx(),
+                crate::theme::BODY_FONT,
+            )),
             crate::theme::text_primary(),
         );
     }
@@ -281,6 +293,11 @@ pub fn show(ui: &mut egui::Ui, bar: egui::Rect, ctx: &PrBarData<'_>, events: &mu
 /// 「按钮请求可用宽度 → popup 变宽 → 可用宽度更大」的每帧正反馈，popup 向右飞出去。
 fn track_popup(ui: &mut egui::Ui, ctx: &PrBarData<'_>, events: &mut Vec<PrBarEvent>) {
     ui.set_max_height(560.0);
+    // 行高/间隙与通用 menu 22/6 统一，右栏 checkbox 同高
+    ui.spacing_mut().item_spacing.y = 6.0;
+    ui.spacing_mut().item_spacing.x = 6.0;
+    ui.spacing_mut().interact_size.y = 22.0;
+    // 字体跟随 font_scale（原硬编码 SMALL_FONT/ICON_FONT 不受缩放，改用 scaled_font）
     // 列表最小高度：音轨少时 popup 也不会缩成一小条（内容自适应高度的副作用）。
     const LIST_MIN_H: f32 = 280.0;
     ui.horizontal(|ui| {
