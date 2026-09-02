@@ -83,6 +83,10 @@ impl eframe::App for YinheApp {
             visuals.selection.stroke = egui::Stroke::new(1.5, theme.accent_active);
             visuals.text_cursor.stroke = egui::Stroke::new(2.0, theme.accent_active);
             visuals.text_cursor.preview = false;
+            visuals.ime_composition.active_underline_stroke =
+                egui::Stroke::new(2.0, theme.accent_active);
+            visuals.ime_composition.inactive_underline_stroke =
+                egui::Stroke::new(2.0, theme.accent_active.linear_multiply(0.5));
             visuals.extreme_bg_color = theme.control_bg;
             let btn = theme.btn_bg;
             let line = theme.line_fg;

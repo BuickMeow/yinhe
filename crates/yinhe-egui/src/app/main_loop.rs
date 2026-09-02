@@ -355,6 +355,9 @@ impl eframe::App for App {
             let accent = crate::theme::accent_active();
             visuals.text_cursor.stroke = egui::Stroke::new(2.0, accent);
             visuals.text_cursor.preview = false;
+            visuals.ime_composition.active_underline_stroke = egui::Stroke::new(2.0, accent);
+            visuals.ime_composition.inactive_underline_stroke =
+                egui::Stroke::new(2.0, accent.linear_multiply(0.5));
             // 输入框/TextEdit 背景呼应主题（egui 默认灰色与主题不搭）
             visuals.extreme_bg_color = crate::theme::control_bg();
             // egui 原生控件（Button/ComboBox/Slider/Checkbox 等）三态统一：
