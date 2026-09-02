@@ -338,18 +338,29 @@ pub fn show_theme_tab(
     ordered.extend(rest);
     let global_is_dark = settings.theme_base.is_dark();
 
-    // ── 网格渲染（3 列）+ 星标 + 右键菜单（所有卡片按全局明暗统一显示为深/浅）──
+    // ── 网格渲染（自适应列数）+ 星标 + 右键菜单（所有卡片按全局明暗统一显示为深/浅）──
     let mut to_apply: Option<(BaseColors, String)> = None;
     let mut to_toggle_fav: Option<String> = None;
     let mut to_copy: Option<(BaseColors, String)> = None;
     let mut to_delete: Option<u64> = None;
     let mut to_rename: Option<u64> = None;
 
+    // 按实际可用宽度自适应列数：卡片 158 + 间距 12
+    let avail_w = ui.available_width();
+    let card_w = 158.0;
+    let spacing_x = 12.0;
+    let mut cols = ((avail_w + spacing_x) / (card_w + spacing_x)).floor() as usize;
+    if cols < 2 {
+        cols = if avail_w < card_w { 1 } else { 2 };
+    }
+    if cols > 6 {
+        cols = 6;
+    }
     egui::Grid::new("theme_cards_grid")
-        .num_columns(3)
+        .num_columns(cols)
         .spacing([12.0, 12.0])
         .show(ui, |ui| {
-            let mut col = 0u32;
+            let mut col = 0usize;
             for item in &ordered {
                 let eff_base = if item.base.is_dark() == global_is_dark {
                     item.base
@@ -594,11 +605,11 @@ pub fn show_theme_tab(
                 });
 
                 col += 1;
-                if col.is_multiple_of(3) {
+                if col.is_multiple_of(cols) {
                     ui.end_row();
                 }
             }
-            if !col.is_multiple_of(3) {
+            if !col.is_multiple_of(cols) {
                 ui.end_row();
             }
         });
