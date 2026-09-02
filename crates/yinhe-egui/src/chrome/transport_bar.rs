@@ -728,9 +728,8 @@ fn popup_menu_row(
     // 每行绝对定位（ui.put）固定尺寸：主按钮 + 可选右侧图钉，
     // 行宽恰好等于菜单内容宽，不参与 popup 宽度反馈；
     // 无快捷键的项用空 shortcut_text 保持左对齐（grow 占中间）。
-    // 行高取紧凑值：transport bar 的 interact_size（32）是为大按钮设计的，
-    // 下拉菜单行用 24 更紧凑，避免行内上下留白造成"行间距过大"的观感。
-    let row_h = ui.spacing().interact_size.y.min(24.0);
+    // 行高回到 egui 原版 interact_size 18-20 紧凑水准，原 24 偏高
+    let row_h = ui.spacing().interact_size.y.min(20.0);
     let row_w = ui.available_width();
     let (row_rect, _) = ui.allocate_exact_size(egui::vec2(row_w, row_h), egui::Sense::hover());
 

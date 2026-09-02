@@ -4,7 +4,8 @@ use eframe::egui;
 
 /// 菜单项按钮：铺满整行宽度 + 左对齐 + 左右边距≈上下边距。
 ///
-/// 高度 24（从 30→27→24 再缩一档），左内边距≈上下 (24-13)/2≈5.5，限制 3..6，
+/// 高度 20 回到 egui 原版 `interact_size.y 18` + 上下各 1 的紧凑水准，
+/// 左内边距≈上下 (20-13)/2≈3.5，限制 3..6，
 /// 文字左对齐而非居中，避免 `Button` 居中导致的左宽右窄。
 pub(crate) fn menu_item_button(
     ui: &egui::Ui,
@@ -17,7 +18,7 @@ pub(crate) fn menu_item_button(
         selected,
         text,
         width,
-        height: 24.0,
+        height: 20.0,
         wrap: None,
         shortcut: None,
     }
@@ -68,8 +69,8 @@ impl egui::Widget for MenuItemButton {
         } else {
             self.height
         };
-        // 左边距≈上下边距：上下 = (height-13)/2，左取相同值，限制 3..6（用户要求再小一点点）
-        let v_pad = ((height - 13.0) * 0.5).clamp(3.0, 6.0);
+        // 左边距≈上下边距：上下 = (height-13)/2，左取相同值，限制 2..6（20 高时 3.5）
+        let v_pad = ((height - 13.0) * 0.5).clamp(2.0, 6.0);
         let h_pad = v_pad;
         let desired_size = egui::vec2(self.width, height);
         let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
@@ -101,10 +102,10 @@ impl egui::Widget for MenuItemButton {
                 .rect_stroke(rect, rounding, visuals.fg_stroke, egui::StrokeKind::Inside);
         }
 
-        // 主文本左对齐，快捷键右对齐
+        // 主文本左对齐，快捷键右对齐；gap 回到 egui 原版 item_spacing.x 8.0
         let wrap = self.wrap.unwrap_or(egui::TextWrapMode::Truncate);
         if let Some(shortcut) = self.shortcut {
-            let gap = 8.0;
+            let gap = ui.spacing().item_spacing.x;
             // 先测量快捷键实际宽度，再把剩余空间留给主文本，避免固定 80 导致主文本被截断
             let shortcut_galley = shortcut.into_galley(
                 ui,
