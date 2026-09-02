@@ -373,6 +373,7 @@ pub fn show_theme_tab(
                 } else {
                     egui::Stroke::new(1.0, cur_line.gamma_multiply(0.45))
                 };
+                let is_renaming = item.is_custom && settings.rename_custom_id == item.custom_id;
                 if ui.is_rect_visible(card_rect) {
                     let painter = ui.painter_at(card_rect);
                     painter.rect_filled(card_rect, egui::CornerRadius::same(8), preview.app_bg);
@@ -382,14 +383,16 @@ pub fn show_theme_tab(
                         stroke,
                         egui::StrokeKind::Inside,
                     );
-                    let title_pos = card_rect.min + egui::vec2(8.0, 14.0);
-                    painter.text(
-                        title_pos,
-                        egui::Align2::LEFT_CENTER,
-                        &item.display,
-                        egui::FontId::proportional(11.0),
-                        preview.text_primary,
-                    );
+                    if !is_renaming {
+                        let title_pos = card_rect.min + egui::vec2(8.0, 14.0);
+                        painter.text(
+                            title_pos,
+                            egui::Align2::LEFT_CENTER,
+                            &item.display,
+                            egui::FontId::proportional(11.0),
+                            preview.text_primary,
+                        );
+                    }
                     let mock_rect = egui::Rect::from_min_max(
                         card_rect.min + egui::vec2(8.0, 28.0),
                         card_rect.max - egui::vec2(8.0, 8.0),
@@ -461,7 +464,69 @@ pub fn show_theme_tab(
                 if star_resp.clicked() {
                     to_toggle_fav = Some(item.id_str.clone());
                 }
-                let card_clicked = card_resp.clicked() && !star_resp.clicked();
+                // 内联重命名文本框（仅 is_renaming 的卡）
+                if is_renaming {
+                    let title_rect = egui::Rect::from_min_max(
+                        card_rect.min + egui::vec2(6.0, 3.0),
+                        egui::pos2(card_rect.max.x - 28.0, card_rect.min.y + 20.0),
+                    );
+                    let title_id = ui.id().with(format!("rename_{}", item.id_str));
+                    let mut buf = settings.rename_buffer.clone();
+                    let resp = ui.put(
+                        title_rect,
+                        egui::TextEdit::singleline(&mut buf)
+                            .id(title_id)
+                            .font(egui::FontId::proportional(11.0))
+                            .hint_text(t!("settings.theme.custom_name").to_string()),
+                    );
+                    // 首次进入时自动聚焦
+                    if resp.gained_focus() {
+                        // 已聚焦
+                    }
+                    // 请求聚焦（首次）
+                    if settings.rename_buffer == item.display {
+                        ui.memory_mut(|mem| {
+                            if mem.focused().is_none() {
+                                mem.request_focus(title_id);
+                            }
+                        });
+                    }
+                    if resp.changed() {
+                        settings.rename_buffer = buf.clone();
+                    }
+                    let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
+                    if enter {
+                        let new_name = settings.rename_buffer.trim().to_string();
+                        if !new_name.is_empty()
+                            && let Some(cid) = item.custom_id
+                            && let Some(ct) =
+                                settings.custom_themes.iter_mut().find(|c| c.id == cid)
+                        {
+                            ct.name = new_name;
+                            changed = true;
+                        }
+                        settings.rename_custom_id = None;
+                        settings.rename_buffer.clear();
+                    } else if esc {
+                        settings.rename_custom_id = None;
+                        settings.rename_buffer.clear();
+                    } else if resp.lost_focus() && !enter && !esc {
+                        // 失焦视为确认（点击别处）
+                        let new_name = settings.rename_buffer.trim().to_string();
+                        if !new_name.is_empty()
+                            && let Some(cid) = item.custom_id
+                            && let Some(ct) =
+                                settings.custom_themes.iter_mut().find(|c| c.id == cid)
+                        {
+                            ct.name = new_name;
+                            changed = true;
+                        }
+                        settings.rename_custom_id = None;
+                        settings.rename_buffer.clear();
+                    }
+                }
+                let card_clicked = !is_renaming && card_resp.clicked() && !star_resp.clicked();
                 if card_clicked {
                     to_apply = Some((eff_base, item.id_str.clone()));
                 }
@@ -594,59 +659,6 @@ pub fn show_theme_tab(
     {
         settings.rename_custom_id = Some(id);
         settings.rename_buffer = ct.name.clone();
-    }
-
-    // 重命名弹窗（仅自定义）
-    if let Some(rid) = settings.rename_custom_id {
-        let mut open = true;
-        egui::Window::new(t!("settings.theme.rename_title").as_ref())
-            .open(&mut open)
-            .resizable(false)
-            .collapsible(false)
-            .show(ui.ctx(), |ui| {
-                ui.label(t!("settings.theme.custom_name").as_ref());
-                let mut buf = settings.rename_buffer.clone();
-                let resp = ui.text_edit_singleline(&mut buf);
-                // 回写缓冲
-                settings.rename_buffer = buf;
-                ui.add_space(6.0);
-                let mut do_ok = false;
-                let mut do_cancel = false;
-                ui.horizontal(|ui| {
-                    if ui.button(t!("common.ok").as_ref()).clicked() {
-                        do_ok = true;
-                    }
-                    if ui.button(t!("common.cancel").as_ref()).clicked() {
-                        do_cancel = true;
-                    }
-                });
-                // 回车直接确认
-                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    do_ok = true;
-                }
-                if do_ok {
-                    let name = settings.rename_buffer.trim().to_string();
-                    if !name.is_empty() {
-                        if let Some(ct) = settings.custom_themes.iter_mut().find(|c| c.id == rid) {
-                            ct.name = name.clone();
-                            // 若当前正在使用该自定义，同步刷新显示
-                            if settings.theme_preset == rid.to_string() {
-                                // display 会自动更新
-                            }
-                        }
-                        changed = true;
-                    }
-                    settings.rename_custom_id = None;
-                    settings.rename_buffer.clear();
-                } else if do_cancel {
-                    settings.rename_custom_id = None;
-                    settings.rename_buffer.clear();
-                }
-            });
-        if !open && settings.rename_custom_id.is_some() {
-            settings.rename_custom_id = None;
-            settings.rename_buffer.clear();
-        }
     }
 
     // 界面缩放：拖动中不缩放（缩放会让滑条自身位置来回跑），松手才应用
