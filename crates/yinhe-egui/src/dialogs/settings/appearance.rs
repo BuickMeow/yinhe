@@ -13,7 +13,7 @@ pub fn show_appearance_tab(
     ui.heading(t!("settings.appearance.heading").as_ref());
     ui.add_space(8.0);
 
-    // DPI / 界面缩放
+    // DPI / 界面缩放（zoom_factor，独立于字体）
     setting_row(
         ui,
         t!("settings.appearance.ui_scale").as_ref(),
@@ -27,23 +27,21 @@ pub fn show_appearance_tab(
             );
             if resp.changed() {
                 settings.ui_scale = scale;
+                crate::scaling::apply_ui_scale(main_ctx, scale);
                 changed = true;
-            }
-            if resp.drag_stopped() {
-                main_ctx.set_zoom_factor(settings.ui_scale);
             }
             if ui
                 .button(t!("settings.appearance.reset_scale").as_ref())
                 .clicked()
             {
                 settings.ui_scale = 1.0;
-                main_ctx.set_zoom_factor(1.0);
+                crate::scaling::apply_ui_scale(main_ctx, 1.0);
                 changed = true;
             }
         },
     );
 
-    // 字体大小
+    // 字体大小（Style::text_styles 独立缩放，不影响布局）
     setting_row(
         ui,
         t!("settings.appearance.font_scale").as_ref(),
@@ -57,17 +55,15 @@ pub fn show_appearance_tab(
             );
             if resp.changed() {
                 settings.font_scale = fscale;
+                crate::scaling::apply_font_scale(main_ctx, fscale);
                 changed = true;
-            }
-            if resp.drag_stopped() {
-                main_ctx.set_pixels_per_point(settings.font_scale);
             }
             if ui
                 .button(t!("settings.appearance.reset_scale").as_ref())
                 .clicked()
             {
                 settings.font_scale = 1.0;
-                main_ctx.set_pixels_per_point(1.0);
+                crate::scaling::apply_font_scale(main_ctx, 1.0);
                 changed = true;
             }
         },

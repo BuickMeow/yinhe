@@ -215,10 +215,10 @@ pub(crate) fn show_viewport(
                 .send(yinhe_audio::AudioCommand::SetLayerCount { count });
         }
         if (settings.ui_scale - prev_ui_scale).abs() > f32::EPSILON {
-            ctx.set_zoom_factor(settings.ui_scale);
+            crate::scaling::apply_ui_scale(ctx, settings.ui_scale);
         }
         if (settings.font_scale - prev_font_scale).abs() > f32::EPSILON {
-            ctx.set_pixels_per_point(settings.font_scale);
+            crate::scaling::apply_font_scale(ctx, settings.font_scale);
         }
         !settings.show_settings
     } else {

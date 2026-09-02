@@ -189,9 +189,9 @@ pub struct AudioSettings {
     /// 重命名输入缓冲（不持久化）
     #[serde(skip)]
     pub rename_buffer: String,
-    /// UI 缩放倍率（egui zoom_factor，0.75~2.0，1.0 = 100%），对应 DPI。
+    /// UI 缩放倍率（egui zoom_factor，0.75~2.0，1.0 = 100%），对应 DPI，独立于字体。
     pub ui_scale: f32,
-    /// 字体大小缩放（独立于 DPI，作用于全局字体，0.8~2.0）。
+    /// 字体大小缩放（Style::text_styles，0.75~2.0，独立于 DPI）。
     pub font_scale: f32,
     /// 内容层背景/条纹不透明度（PR/AM 背景、AR 条纹；1.0 = 不透明，0.0 = 全透明）。
     pub content_opacity: f32,

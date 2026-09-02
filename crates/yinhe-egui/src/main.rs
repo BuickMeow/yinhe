@@ -18,6 +18,7 @@ mod piano_view;
 mod platform;
 mod render_context;
 mod right_panel;
+mod scaling;
 mod selection;
 mod shortcuts;
 mod theme;
