@@ -236,25 +236,95 @@ impl BaseColors {
         warning: FIXED_WARNING,
     };
 
+    /// 霄绢 — 纸张质感+鼠尾草绿，开源护眼经典（Solarized/Everforest 纸色 #fdf6e3 + 柔和对比）
+    pub const XIAO_JUAN: Self = Self {
+        bg: Rgba::new(253, 246, 227, 255),
+        text: Rgba::new(92, 106, 114, 255),
+        accent: Rgba::new(141, 161, 1, 255),
+        selection: Rgba::new(238, 232, 213, 255),
+        danger: FIXED_DANGER,
+        border: Rgba::new(213, 196, 161, 255),
+        warning: FIXED_WARNING,
+    };
+
+    /// 星砚 — 宣纸暖白+青绿，开源豆沙绿护眼（#f5f0e1 纸 + #76946a 绿，低蓝光）
+    pub const XING_YAN: Self = Self {
+        bg: Rgba::new(245, 240, 225, 255),
+        text: Rgba::new(61, 72, 66, 255),
+        accent: Rgba::new(118, 148, 106, 255),
+        selection: Rgba::new(232, 225, 203, 255),
+        danger: FIXED_DANGER,
+        border: Rgba::new(210, 200, 180, 255),
+        warning: FIXED_WARNING,
+    };
+
+    /// 月渚 — 月光纸+苔绿，Gruvbox/PaperColor 柔和纸感（#f2eee7 + 低饱和绿）
+    pub const YUE_ZHU: Self = Self {
+        bg: Rgba::new(242, 238, 231, 255),
+        text: Rgba::new(67, 64, 61, 255),
+        accent: Rgba::new(122, 158, 126, 255),
+        selection: Rgba::new(228, 222, 213, 255),
+        danger: FIXED_DANGER,
+        border: Rgba::new(210, 200, 190, 255),
+        warning: FIXED_WARNING,
+    };
+
+    /// 秋毫 — 暮晓宣纸+松绿，Rose Pine Dawn 暖调（#faf4ed + #56949f→绿调）
+    pub const QIU_HAO: Self = Self {
+        bg: Rgba::new(250, 244, 237, 255),
+        text: Rgba::new(87, 82, 121, 255),
+        accent: Rgba::new(86, 148, 122, 255),
+        selection: Rgba::new(237, 232, 220, 255),
+        danger: FIXED_DANGER,
+        border: Rgba::new(220, 212, 200, 255),
+        warning: FIXED_WARNING,
+    };
+
     /// 内置预设（设置页下拉框）。`None` 表示"自定义"。
-    pub const PRESETS: [(&'static str, Self); 14] = [
-        ("dark", Self::DARK),
-        ("light", Self::LIGHT),
-        ("light-cool", Self::LIGHT_COOL),
-        ("light-warm", Self::LIGHT_WARM),
-        ("dracula", Self::DRACULA),
-        ("nord", Self::NORD),
-        ("catppuccin-mocha", Self::CATPPUCCIN_MOCHA),
-        ("tokyo-night", Self::TOKYO_NIGHT),
-        ("gruvbox-dark", Self::GRUVBOX_DARK),
-        ("everforest-dark", Self::EVERFOREST_DARK),
-        ("rose-pine", Self::ROSE_PINE),
-        ("one-dark-pro", Self::ONE_DARK_PRO),
-        ("catppuccin-latte", Self::CATPPUCCIN_LATTE),
-        ("gruvbox-light", Self::GRUVBOX_LIGHT),
+    pub const PRESETS: [(&'static str, Self); 18] = [
+        ("obsidian-night", Self::DARK),
+        ("porcelain-dawn", Self::LIGHT),
+        ("frost-mirror", Self::LIGHT_COOL),
+        ("pottery-warmth", Self::LIGHT_WARM),
+        ("crimson-night", Self::DRACULA),
+        ("arctic-mirror", Self::NORD),
+        ("mocha-night", Self::CATPPUCCIN_MOCHA),
+        ("neon-capital", Self::TOKYO_NIGHT),
+        ("earthen-dusk", Self::GRUVBOX_DARK),
+        ("moss-peak", Self::EVERFOREST_DARK),
+        ("rosy-branch", Self::ROSE_PINE),
+        ("abyss-glow", Self::ONE_DARK_PRO),
+        ("mocha-dawn", Self::CATPPUCCIN_LATTE),
+        ("earthen-dawn", Self::GRUVBOX_LIGHT),
+        ("night-silk", Self::XIAO_JUAN),
+        ("star-ink", Self::XING_YAN),
+        ("moon-islet", Self::YUE_ZHU),
+        ("autumn-bristle", Self::QIU_HAO),
     ];
 
     pub fn preset_by_name(name: &str) -> Option<Self> {
+        // 兼容旧键（中英文键名历史遗留）
+        let name = match name {
+            "dark" => "obsidian-night",
+            "light" => "porcelain-dawn",
+            "light-cool" => "frost-mirror",
+            "light-warm" => "pottery-warmth",
+            "dracula" => "crimson-night",
+            "nord" => "arctic-mirror",
+            "catppuccin-mocha" => "mocha-night",
+            "tokyo-night" => "neon-capital",
+            "gruvbox-dark" => "earthen-dusk",
+            "everforest-dark" => "moss-peak",
+            "rose-pine" => "rosy-branch",
+            "one-dark-pro" => "abyss-glow",
+            "catppuccin-latte" => "mocha-dawn",
+            "gruvbox-light" => "earthen-dawn",
+            "xiao-juan" => "night-silk",
+            "xing-yan" => "star-ink",
+            "yue-zhu" => "moon-islet",
+            "qiu-hao" => "autumn-bristle",
+            _ => name,
+        };
         Self::PRESETS
             .iter()
             .find(|(n, _)| *n == name)

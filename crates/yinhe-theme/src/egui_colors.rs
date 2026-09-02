@@ -388,8 +388,8 @@ mod tests {
         }
         assert_eq!(
             crate::base::BaseColors::PRESETS.len(),
-            14,
-            "预设数量应为 14（4 原有 + 10 新增）"
+            18,
+            "预设数量应为 18（4 原有 + 14 新增）"
         );
     }
 
