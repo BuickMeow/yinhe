@@ -1221,6 +1221,94 @@ impl BaseColors {
         warning: FIXED_WARNING,
     };
 
+    /// 初樱 — 初樱，可爱系粉白樱色，少女心
+    pub const HATSUKURA: Self = Self {
+        bg: Rgba::new(255, 240, 243, 255),
+        text: Rgba::new(90, 60, 70, 255),
+        accent: Rgba::new(255, 150, 180, 255),
+        selection: Rgba::new(255, 240, 243, 255),
+        danger: FIXED_DANGER,
+        border: Rgba::new(255, 240, 243, 255),
+        warning: FIXED_WARNING,
+    };
+
+    /// 莓露 — 莓露，可爱系莓果粉
+    pub const BERRY_DEW: Self = Self {
+        bg: Rgba::new(255, 245, 247, 255),
+        text: Rgba::new(110, 70, 80, 255),
+        accent: Rgba::new(255, 120, 150, 255),
+        selection: Rgba::new(255, 245, 247, 255),
+        danger: FIXED_DANGER,
+        border: Rgba::new(255, 245, 247, 255),
+        warning: FIXED_WARNING,
+    };
+
+    /// 星绒 — 星绒，可爱系薰衣草绒
+    pub const STAR_FLUFF: Self = Self {
+        bg: Rgba::new(240, 240, 255, 255),
+        text: Rgba::new(60, 60, 90, 255),
+        accent: Rgba::new(180, 150, 255, 255),
+        selection: Rgba::new(240, 240, 255, 255),
+        danger: FIXED_DANGER,
+        border: Rgba::new(240, 240, 255, 255),
+        warning: FIXED_WARNING,
+    };
+
+    /// 云絮 — 云絮，可爱系云絮暖桃
+    pub const CLOUD_FLOSS: Self = Self {
+        bg: Rgba::new(255, 250, 240, 255),
+        text: Rgba::new(100, 90, 80, 255),
+        accent: Rgba::new(255, 200, 150, 255),
+        selection: Rgba::new(255, 250, 240, 255),
+        danger: FIXED_DANGER,
+        border: Rgba::new(255, 250, 240, 255),
+        warning: FIXED_WARNING,
+    };
+
+    /// 绚歌 — 绚歌，电音/宅系绚烂夜
+    pub const RADIANT_SONG: Self = Self {
+        bg: Rgba::new(20, 20, 35, 255),
+        text: Rgba::new(230, 220, 255, 255),
+        accent: Rgba::new(0, 255, 200, 255),
+        selection: Rgba::new(20, 20, 35, 255),
+        danger: FIXED_DANGER,
+        border: Rgba::new(20, 20, 35, 255),
+        warning: FIXED_WARNING,
+    };
+
+    /// 幻昼 — 幻昼，二次元幻昼紫粉
+    pub const FANTASY_DAY: Self = Self {
+        bg: Rgba::new(30, 25, 40, 255),
+        text: Rgba::new(220, 210, 240, 255),
+        accent: Rgba::new(255, 100, 200, 255),
+        selection: Rgba::new(30, 25, 40, 255),
+        danger: FIXED_DANGER,
+        border: Rgba::new(30, 25, 40, 255),
+        warning: FIXED_WARNING,
+    };
+
+    /// 夜航 — 夜航，音乐人夜航星海
+    pub const NIGHT_VOYAGE: Self = Self {
+        bg: Rgba::new(15, 25, 40, 255),
+        text: Rgba::new(200, 220, 240, 255),
+        accent: Rgba::new(80, 180, 255, 255),
+        selection: Rgba::new(15, 25, 40, 255),
+        danger: FIXED_DANGER,
+        border: Rgba::new(15, 25, 40, 255),
+        warning: FIXED_WARNING,
+    };
+
+    /// 星垂 — 星垂，宅系星垂金
+    pub const STAR_FALL: Self = Self {
+        bg: Rgba::new(25, 30, 50, 255),
+        text: Rgba::new(210, 220, 240, 255),
+        accent: Rgba::new(255, 220, 80, 255),
+        selection: Rgba::new(25, 30, 50, 255),
+        danger: FIXED_DANGER,
+        border: Rgba::new(25, 30, 50, 255),
+        warning: FIXED_WARNING,
+    };
+
     /// Tangerine — 橘柚，热门主题移植，花草诗意中性名
     pub const TANGERINE: Self = Self {
         bg: Rgba::new(240, 236, 237, 255),
@@ -1232,7 +1320,7 @@ impl BaseColors {
         warning: FIXED_WARNING,
     };
 
-    /// 内置预设（94 套花草诗意 + 6 套神话 vivid，无日夜字样，每色可经日/月翻转）。
+    /// 内置预设（86 套花草/节气 + 6 套神话 vivid + 4 套可爱 + 4 套宅/音乐，无日夜字样，每色可经日/月翻转）。
     pub const PRESETS: [(&'static str, Self); 100] = [
         ("ink-wash", Self::DARK),
         ("rice-paper", Self::LIGHT),
@@ -1253,13 +1341,13 @@ impl BaseColors {
         ("bulrush", Self::YUE_ZHU),
         ("reed-fluff", Self::QIU_HAO),
         ("plum-rain", Self::PLUM_RAIN),
-        ("orchid-valley", Self::ORCHID_VALLEY),
+        ("hatsukura", Self::HATSUKURA),
         ("bamboo-fence", Self::BAMBOO_FENCE),
         ("chrysanthemum-dew", Self::CHRYSANTHEMUM_DEW),
         ("pine-wind", Self::PINE_WIND),
-        ("willow-bank", Self::WILLOW_BANK),
+        ("cloud-floss", Self::CLOUD_FLOSS),
         ("peach-stream", Self::PEACH_STREAM),
-        ("apricot-cove", Self::APRICOT_COVE),
+        ("radiant-song", Self::RADIANT_SONG),
         ("cherry-rain", Self::CHERRY_RAIN),
         ("qilin", Self::MAPLE_MARSH),
         ("lotus-pond", Self::LOTUS_POND),
@@ -1272,7 +1360,7 @@ impl BaseColors {
         ("algae", Self::ALGAE),
         ("water-chestnut-song", Self::WATER_CHESTNUT_SONG),
         ("foxnut", Self::FOXNUT),
-        ("wild-rice-pond", Self::WILD_RICE_POND),
+        ("fantasy-day", Self::FANTASY_DAY),
         ("knotweed-bank", Self::KNOTWEED_BANK),
         ("baize", Self::MINT),
         ("bramble-gate", Self::BRAMBLE_GATE),
@@ -1295,11 +1383,11 @@ impl BaseColors {
         ("torreya", Self::TORREYA),
         ("camellia-bud", Self::CAMELLIA_BUD),
         ("coconut-wind", Self::COCONUT_WIND),
-        ("litchi", Self::LITCHI),
+        ("night-voyage", Self::NIGHT_VOYAGE),
         ("grain-awn", Self::GRAIN_AWN),
         ("thatched-pavilion", Self::THATCHED_PAVILION),
         ("silver-grass", Self::SILVER_GRASS),
-        ("duckweed", Self::DUCKWEED),
+        ("berry-dew", Self::BERRY_DEW),
         ("water-chestnut-boat", Self::WATER_CHESTNUT_BOAT),
         ("foxnut-pond", Self::FOXNUT_POND),
         ("knotweed-islet", Self::KNOTWEED_ISLET),
@@ -1307,7 +1395,7 @@ impl BaseColors {
         ("bramble-stream", Self::BRAMBLE_STREAM),
         ("vetch-dew", Self::VETCH_DEW),
         ("calamus-stream", Self::CALAMUS_STREAM),
-        ("asara-waste", Self::ASARA_WASTE),
+        ("star-fluff", Self::STAR_FLUFF),
         ("azalea-balance", Self::AZALEA_BALANCE),
         ("cuckoo-blood", Self::CUCKOO_BLOOD),
         ("violet-mud", Self::VIOLET_MUD),
@@ -1319,7 +1407,7 @@ impl BaseColors {
         ("oak-shrine", Self::OAK_SHRINE),
         ("sandalwood", Self::SANDALWOOD),
         ("zelkova-stream", Self::ZELKOVA_STREAM),
-        ("torreya-wind", Self::TORREYA_WIND),
+        ("star-fall", Self::STAR_FALL),
         ("camellia", Self::CAMELLIA),
         ("coconut-island", Self::COCONUT_ISLAND),
         ("litchi-bank", Self::LITCHI_BANK),
