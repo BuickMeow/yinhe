@@ -101,6 +101,24 @@ pub fn marquee_stroke_alpha() -> f32 {
     current().marquee_stroke_alpha
 }
 
+pub fn conductor_color() -> egui::Color32 {
+    if dark_mode() {
+        egui::Color32::from_rgba_unmultiplied(240, 240, 240, 255)
+    } else {
+        egui::Color32::from_rgba_unmultiplied(0, 0, 0, 255)
+    }
+}
+
+pub fn conductor_color_f32() -> [f32; 4] {
+    let c = conductor_color();
+    [
+        c.r() as f32 / 255.0,
+        c.g() as f32 / 255.0,
+        c.b() as f32 / 255.0,
+        c.a() as f32 / 255.0,
+    ]
+}
+
 /// 危险色（关闭按钮/窗口按钮 hover 等）。
 /// macOS 无窗口按钮，getter 在该平台为死代码。
 #[cfg_attr(target_os = "macos", allow(dead_code))]

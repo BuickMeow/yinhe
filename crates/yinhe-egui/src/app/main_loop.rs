@@ -323,6 +323,15 @@ impl eframe::App for App {
             }
         }
 
+        // ── Conductor 颜色随主题明/暗切换（亮色黑、暗色白）──
+        let is_dark = crate::theme::dark_mode();
+        if is_dark != self.last_dark_mode {
+            self.last_dark_mode = is_dark;
+            for doc in &mut self.workspace.documents {
+                doc.sync_track_caches_with_dark(is_dark);
+            }
+        }
+
         // ── 统一主题色：Visuals 基底跟随主题明/暗（egui 原生控件配色） ──
         ui.ctx().set_visuals({
             let mut visuals = if crate::theme::dark_mode() {

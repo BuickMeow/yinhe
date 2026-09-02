@@ -358,6 +358,11 @@ impl Document {
     /// track_pianoroll_visible/track_overrides to match current track count.
     /// Called after track structure changes (add/remove/move/undo/redo).
     pub(crate) fn sync_track_caches(&mut self) {
+        self.sync_track_caches_with_dark(true);
+    }
+
+    /// `sync_track_caches` with explicit dark/light theme for Conductor color.
+    pub fn sync_track_caches_with_dark(&mut self, is_dark: bool) {
         self.edit.track_info_cache = self.data.track_info();
         let num_tracks = self.data.model.tracks.len();
         self.edit.track_colors_cache = self
@@ -366,7 +371,7 @@ impl Document {
             .tracks
             .iter()
             .enumerate()
-            .map(|(i, t)| track_color(t, i, self.edit.conductor_track_idx))
+            .map(|(i, t)| track_color_with_dark(t, i, self.edit.conductor_track_idx, is_dark))
             .collect();
         while self.edit.track_visible.len() < num_tracks {
             self.edit.track_visible.push(true);
@@ -439,10 +444,25 @@ pub fn detect_conductor_from_model(model: &YinModel) -> Option<u16> {
 
 /// Track display color: prefers `TrackData.color` (when set, i.e. not the
 /// default placeholder), otherwise falls back to the palette with conductor
-/// offset. Conductor track is fixed to a white-ish tone. RGBA.
+/// offset. Conductor track is fixed to a white-ish tone in dark theme and
+/// black in light theme. RGBA.
 pub fn track_color(track: &TrackData, idx: usize, conductor_idx: Option<u16>) -> [f32; 4] {
+    track_color_with_dark(track, idx, conductor_idx, true)
+}
+
+/// `track_color` with explicit dark/light theme (dark = white-ish, light = black).
+pub fn track_color_with_dark(
+    track: &TrackData,
+    idx: usize,
+    conductor_idx: Option<u16>,
+    is_dark: bool,
+) -> [f32; 4] {
     if Some(idx as u16) == conductor_idx {
-        return [0.94, 0.94, 0.94, 1.0];
+        return if is_dark {
+            [0.94, 0.94, 0.94, 1.0]
+        } else {
+            [0.0, 0.0, 0.0, 1.0]
+        };
     }
     if track.color != yinhe_core::DEFAULT_TRACK_COLOR {
         return track.color;
@@ -536,6 +556,9 @@ mod tests {
         let t = TrackData::new(0, 0);
         let color = track_color(&t, 0, Some(0));
         assert_eq!(color, [0.94, 0.94, 0.94, 1.0]);
+        // Light theme should be black
+        let color_light = track_color_with_dark(&t, 0, Some(0), false);
+        assert_eq!(color_light, [0.0, 0.0, 0.0, 1.0]);
     }
 
     #[test]

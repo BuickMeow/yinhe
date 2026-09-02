@@ -46,6 +46,7 @@ pub(crate) fn show_target_combo(
     panels_area_rect: egui::Rect,
     editing_is_conductor: bool,
 ) {
+    let _ = editing_is_conductor;
     ui.painter().rect_filled(combo_rect, 0.0, theme::app_bg());
     let combo_inner = combo_rect.shrink(4.0);
     ui.scope_builder(egui::UiBuilder::new().max_rect(combo_inner), |ui| {
@@ -75,26 +76,22 @@ pub(crate) fn show_target_combo(
                         egui::Frame::menu(ui.style()).show(ui, |ui| {
                             ui.set_min_width(140.0);
                             ui.set_max_width(140.0);
-                            if !editing_is_conductor {
-                                let vel_selected = panel.show_velocity;
-                                if ui
-                                    .add(crate::widgets::menu::menu_item_button(
-                                        ui,
-                                        vel_selected,
-                                        t!("automation.velocity"),
-                                    ))
-                                    .clicked()
-                                {
-                                    panel.show_velocity = true;
-                                    panel.dirty = true;
-                                    ui.ctx().data_mut(|d| d.insert_persisted(popup_id, false));
-                                }
-                                ui.separator();
+                            // Conductor 与其他轨道显示范围一致（仅 Tempo 可编辑由 dispatch 层限制）
+                            let vel_selected = panel.show_velocity;
+                            if ui
+                                .add(crate::widgets::menu::menu_item_button(
+                                    ui,
+                                    vel_selected,
+                                    t!("automation.velocity"),
+                                ))
+                                .clicked()
+                            {
+                                panel.show_velocity = true;
+                                panel.dirty = true;
+                                ui.ctx().data_mut(|d| d.insert_persisted(popup_id, false));
                             }
+                            ui.separator();
                             for target in AUTOMATION_TARGETS {
-                                if editing_is_conductor && *target != AutomationTarget::Tempo {
-                                    continue;
-                                }
                                 let name = target.display_name();
                                 let selected =
                                     !panel.show_velocity && panel.selected_target == *target;
@@ -108,28 +105,24 @@ pub(crate) fn show_target_combo(
                                     ui.ctx().data_mut(|d| d.insert_persisted(popup_id, false));
                                 }
                             }
-                            if !editing_is_conductor {
-                                ui.separator();
-                                ui.label(t!("automation.custom_cc").as_ref());
-                                let mut cc_input = match &panel.selected_target {
-                                    AutomationTarget::CC { controller } => *controller as i32,
-                                    _ => 0,
-                                };
-                                let old_cc = cc_input;
-                                ui.add(
-                                    crate::widgets::numeric_input::decimal_drag_value(
-                                        &mut cc_input,
-                                    )
+                            ui.separator();
+                            ui.label(t!("automation.custom_cc").as_ref());
+                            let mut cc_input = match &panel.selected_target {
+                                AutomationTarget::CC { controller } => *controller as i32,
+                                _ => 0,
+                            };
+                            let old_cc = cc_input;
+                            ui.add(
+                                crate::widgets::numeric_input::decimal_drag_value(&mut cc_input)
                                     .range(0..=127)
                                     .speed(1),
-                                );
-                                if cc_input != old_cc {
-                                    panel.selected_target = AutomationTarget::CC {
-                                        controller: cc_input as u8,
-                                    };
-                                    panel.show_velocity = false;
-                                    panel.dirty = true;
-                                }
+                            );
+                            if cc_input != old_cc {
+                                panel.selected_target = AutomationTarget::CC {
+                                    controller: cc_input as u8,
+                                };
+                                panel.show_velocity = false;
+                                panel.dirty = true;
                             }
                         });
                     });

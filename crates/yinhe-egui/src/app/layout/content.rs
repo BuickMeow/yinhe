@@ -442,16 +442,15 @@ impl App {
                     })
                     .collect();
                 // Get automation lanes：以主音轨为唯一编辑目标。
-                // Conductor 不在此处提供 lanes（Tempo 由单独的 tempo_lane 传入）。
-                // 主音轨缺失/不可见/是 conductor 时返回空 Vec。
+                // Conductor 的 Tempo 由单独的 tempo_lane 传入，此处 lanes 仍按主音轨的
+                // automation_lanes 提供（与其它轨道一致，Conductor 也可显示其 CC lanes）。
                 let automation_lanes: Vec<yinhe_types::AutomationLane> = {
                     let edit_trk = doc
                         .edit
                         .main_track()
                         // 用 pr_visible 而非原始 track_visible：主音轨强制可见，
                         // 取消勾选显示不应使 automation 编辑静默失效。
-                        .filter(|&t| pr_visible.get(t as usize).copied().unwrap_or(false))
-                        .filter(|&t| Some(t) != doc.edit.conductor_track_idx);
+                        .filter(|&t| pr_visible.get(t as usize).copied().unwrap_or(false));
                     match edit_trk {
                         Some(trk_idx) => doc
                             .data

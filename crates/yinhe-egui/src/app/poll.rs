@@ -33,6 +33,7 @@ impl App {
                     None,
                 ) {
                     Ok(mut doc) => {
+                        doc.sync_track_caches_with_dark(crate::theme::dark_mode());
                         doc.mark_loaded(); // Loaded from file, not a fresh empty doc
                         // 重叠开关是全局设置：打开工程沿用当前持久化值。
                         doc.edit.allow_overlapping_notes =
@@ -104,6 +105,7 @@ impl App {
                 )
                 .ok()
                 .map(|mut d| {
+                    d.sync_track_caches_with_dark(crate::theme::dark_mode());
                     // 拖出新窗口产生的 temp 工程：不绑定 file_path，视为未保存
                     // （Cmd+S 弹另存为、关窗弹确认），避免用户把编辑静默写进 /tmp。
                     if is_detached_temp_path(&path) {

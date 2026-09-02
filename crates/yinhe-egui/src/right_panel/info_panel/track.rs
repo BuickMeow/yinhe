@@ -236,12 +236,15 @@ pub(crate) fn show_track_info(
     let was_editing = ui.data(|d| d.get_temp::<bool>(edit_id)).unwrap_or(false);
     ui.horizontal(|ui| {
         ui.label("颜色:");
-        let cur = doc
-            .edit
-            .track_colors_cache
-            .get(track_idx)
-            .copied()
-            .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
+        let cur = if Some(track_idx as u16) == doc.edit.conductor_track_idx {
+            crate::theme::conductor_color_f32()
+        } else {
+            doc.edit
+                .track_colors_cache
+                .get(track_idx)
+                .copied()
+                .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR)
+        };
         let mut srgba = crate::theme::rgba_to_color32((cur[0], cur[1], cur[2], cur[3]));
         let mut changed = false;
         changed |= crate::widgets::color_picker::color_edit_button(ui, &mut srgba).changed();

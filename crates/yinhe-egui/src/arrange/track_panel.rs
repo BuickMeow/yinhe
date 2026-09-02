@@ -294,10 +294,14 @@ pub(crate) fn show(
             );
         }
 
-        let color = track_colors
-            .get(idx)
-            .copied()
-            .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
+        let color = if is_conductor {
+            crate::theme::conductor_color_f32()
+        } else {
+            track_colors
+                .get(idx)
+                .copied()
+                .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR)
+        };
         let color32 = crate::theme::rgba_to_color32((color[0], color[1], color[2], color[3]));
 
         // 色条统一为窄版（conductor 同宽，只是不放 chevron）。

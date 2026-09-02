@@ -130,7 +130,13 @@ pub fn show(
         }
     }
     let track_count = data.track_colors.len().min(MAX_TRACKS) as u32;
-    let tc_colors: Vec<[f32; 4]> = data.track_colors.iter().take(MAX_TRACKS).copied().collect();
+    let mut tc_colors: Vec<[f32; 4]> = data.track_colors.iter().take(MAX_TRACKS).copied().collect();
+    // Conductor 颜色随主题明/暗切换，覆盖缓存的固定值
+    if let Some(c_idx) = data.conductor_track_idx.map(|c| c as usize)
+        && c_idx < tc_colors.len()
+    {
+        tc_colors[c_idx] = crate::theme::conductor_color_f32();
+    }
     let uniforms = Uniforms {
         width: w as f32,
         height: h as f32,
