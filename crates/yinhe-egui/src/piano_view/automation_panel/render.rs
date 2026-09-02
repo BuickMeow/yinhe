@@ -96,7 +96,7 @@ pub(crate) fn render_panel_content(
         egui::pos2(grid_rect.min.x + combo_width, grid_rect.min.y),
         grid_rect.max,
     );
-    painter.rect_filled(content_rect, 0.0, crate::theme::stripe_bg());
+    painter.rect_filled(content_rect, 0.0, crate::theme::app_bg());
     if !panel.show_velocity {
         let target = &panel.selected_target;
         let max_val = target.max_value();
@@ -237,7 +237,10 @@ pub(crate) fn draw_value_labels(
         panel.selected_target.display_name()
     };
     let label_color = crate::theme::measure_label();
-    let font_id = egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT);
+    let font_id = egui::FontId::proportional(crate::scaling::scaled_font(
+        ui.ctx(),
+        crate::theme::SMALL_LABEL_FONT,
+    ));
     let pad_x = 4.0;
     let label_max = if panel.show_velocity || panel.selected_target == AutomationTarget::Tempo {
         max_val_f

@@ -80,7 +80,9 @@ impl eframe::App for YinheApp {
             visuals.window_fill = theme.app_bg;
             visuals.panel_fill = theme.app_bg;
             visuals.selection.bg_fill = theme.selected_bg;
-            visuals.selection.stroke = egui::Stroke::new(1.5, theme.text_primary);
+            visuals.selection.stroke = egui::Stroke::new(1.5, theme.accent_active);
+            visuals.text_cursor.stroke = egui::Stroke::new(2.0, theme.accent_active);
+            visuals.text_cursor.preview = false;
             visuals.extreme_bg_color = theme.control_bg;
             let btn = theme.btn_bg;
             let line = theme.line_fg;
@@ -93,9 +95,10 @@ impl eframe::App for YinheApp {
             visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.5, theme.text_primary);
             visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, line);
             visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.5, theme.text_primary);
-            visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, theme.hovered(line));
+            visuals.widgets.hovered.bg_stroke =
+                egui::Stroke::new(1.0, theme.accent_active.gamma_multiply(0.85));
             visuals.widgets.active.fg_stroke = egui::Stroke::new(1.5, theme.text_primary);
-            visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, theme.pressed(line));
+            visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, theme.accent_active);
             visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.5, theme.text_disabled);
             visuals.widgets.noninteractive.weak_bg_fill = theme.app_bg;
             visuals.override_text_color = Some(theme.text_primary);

@@ -348,9 +348,13 @@ impl eframe::App for App {
             // 弹窗/面板背景色统一为程序背景色（egui 默认 gray(27) 与主题不符）
             visuals.window_fill = crate::theme::app_bg();
             visuals.panel_fill = crate::theme::app_bg();
-            // 选中高亮色统一为 ROW_SELECTED_BG；勾选描边（Checkbox 对勾）用主文字色
+            // 选中高亮色统一为 ROW_SELECTED_BG；选中描边与输入光标改用强调色
             visuals.selection.bg_fill = crate::theme::selected_bg();
-            visuals.selection.stroke = egui::Stroke::new(1.5, crate::theme::text_primary());
+            visuals.selection.stroke = egui::Stroke::new(1.5, crate::theme::accent_active());
+            // 闪烁竖线（光标）与 IME 下划线改用强调色
+            let accent = crate::theme::accent_active();
+            visuals.text_cursor.stroke = egui::Stroke::new(2.0, accent);
+            visuals.text_cursor.preview = false;
             // 输入框/TextEdit 背景呼应主题（egui 默认灰色与主题不搭）
             visuals.extreme_bg_color = crate::theme::control_bg();
             // egui 原生控件（Button/ComboBox/Slider/Checkbox 等）三态统一：
@@ -366,17 +370,16 @@ impl eframe::App for App {
             visuals.widgets.active.weak_bg_fill =
                 crate::theme::pressed_color(crate::theme::app_bg());
             // 原生描边/滑轨线（Slider rail、ComboBox 边框等）统一为 line_fg
+            // 输入框聚焦/悬停描边改用强调色，下划线亦随之
             // 对勾（fg_stroke）用主文字色：与 btn_bg 同系的 line_fg 会导致对勾几乎不可见（见 widgets::checkbox）
             visuals.widgets.inactive.fg_stroke =
                 egui::Stroke::new(1.5, crate::theme::text_primary());
             visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, line);
             visuals.widgets.hovered.fg_stroke =
                 egui::Stroke::new(1.5, crate::theme::text_primary());
-            visuals.widgets.hovered.bg_stroke =
-                egui::Stroke::new(1.0, crate::theme::hover_color(line));
+            visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, accent.gamma_multiply(0.85));
             visuals.widgets.active.fg_stroke = egui::Stroke::new(1.5, crate::theme::text_primary());
-            visuals.widgets.active.bg_stroke =
-                egui::Stroke::new(1.0, crate::theme::pressed_color(line));
+            visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, accent);
             visuals.widgets.noninteractive.fg_stroke =
                 egui::Stroke::new(1.5, crate::theme::text_disabled());
             // 原生控件文字统一用主题主文字色（egui 默认灰与主题不协调）
