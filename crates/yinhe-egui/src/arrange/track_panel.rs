@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use eframe::egui;
 use egui_material_icons::icons::{ICON_ADD, ICON_KEYBOARD_ARROW_DOWN, ICON_KEYBOARD_ARROW_RIGHT};
-use rust_i18n::t;
 
 use yinhe_core::TrackInfo;
 use yinhe_types::{ArRow, ArRowLayout, AutomationTarget};
@@ -13,7 +12,9 @@ use yinhe_editor_core::document::TrackOverride;
 mod badge;
 mod draw;
 mod hover;
+mod interaction;
 mod menu;
+mod render;
 mod types;
 pub(crate) use types::TrackAction;
 
@@ -81,12 +82,10 @@ pub(crate) fn show(
     let drag_id = ui.id().with("track_panel_drag");
     let mut drag: Option<crate::widgets::reorder::DragReorder> =
         ui.data_mut(|d| d.get_temp(drag_id)).unwrap_or_default();
-    let dragging = drag.is_some();
 
     // Visible row range（含展开的 AM 子行；行高均匀 = 音轨行高）
     let lh = *row_height;
-    let first_row = ((*scroll_y / lh).floor().max(0.0) as usize).min(total_rows);
-    let last_row = (((*scroll_y + panel_h) / lh).ceil().max(0.0) as usize + 1).min(total_rows);
+    let (first_row, last_row) = render::visible_range(*scroll_y, panel_h, lh, total_rows);
 
     let painter = ui.painter().clone();
     let mut audio_dirty = false;
@@ -104,14 +103,8 @@ pub(crate) fn show(
 
     // 主行矩形（含视口外/隐藏行，保证拖拽插入索引全局正确；AM 子行不参与排序）；
     // 仅可视行渲染。
-    let mut item_rects: Vec<egui::Rect> = Vec::with_capacity(num_tracks);
-    for idx in 0..num_tracks {
-        let y = panel_rect.min.y + row_layout.track_y(idx, lh) - *scroll_y;
-        item_rects.push(egui::Rect::from_min_size(
-            egui::pos2(panel_rect.min.x, y),
-            egui::vec2(panel_w, lh),
-        ));
-    }
+    let item_rects =
+        render::build_item_rects(row_layout, panel_rect, panel_w, lh, *scroll_y, num_tracks);
 
     // chevron 命中区：按下在 chevron 上不触发排序/选择（只翻转展开状态）。
     let mut chevron_rects: Vec<egui::Rect> = Vec::new();
@@ -142,27 +135,21 @@ pub(crate) fn show(
             let Some(lane) = tracks.get(track).and_then(|t| t.automation_lanes.get(sub)) else {
                 continue;
             };
-            if row % 2 == 0 {
-                painter.rect_filled(row_rect, 0.0, lane_even);
-            }
             let lane_key = (track_info[track].index, lane.target.clone());
-            if am_lane_selected.contains(&lane_key) {
-                painter.rect_filled(row_rect, 0.0, ui.visuals().selection.bg_fill);
-            } else if hover::is_row_hovered(ui, row_rect) {
-                painter.rect_filled(
-                    row_rect,
-                    0.0,
-                    crate::theme::hover_color(crate::theme::app_bg()),
-                );
-            }
+            render::draw_row_background(
+                ui,
+                &painter,
+                row_rect,
+                row,
+                am_lane_selected.contains(&lane_key),
+                lane_even,
+            );
             let color = track_colors
                 .get(track)
                 .copied()
                 .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
             let color32 = crate::theme::rgba_to_color32((color[0], color[1], color[2], color[3]));
-            let badge_w = 14.0_f32;
-            let badge_rect = egui::Rect::from_min_size(row_rect.min, egui::vec2(badge_w, lh));
-            painter.rect_filled(badge_rect, 0.0, color32);
+            let badge_rect = render::draw_badge(&painter, row_rect, lh, color32);
 
             // 完全复刻普通轨的字号与几何：详情模式两行（×0.25，y 0.30/0.70，均 primary），
             // 紧凑模式单行（×0.45 居中）；唯一差异是文本内容（自动化名 / 所属音轨）。
@@ -170,7 +157,7 @@ pub(crate) fn show(
             let label = super::am_lanes::lane_label(&lane.target);
             let owner = track_info[track].name.clone();
             if show_details {
-                let font = egui::FontId::proportional((lh * 0.25).clamp(9.0, 13.0));
+                let font = render::detail_font(lh);
                 painter.text(
                     egui::pos2(text_x, badge_rect.min.y + lh * 0.30),
                     egui::Align2::LEFT_CENTER,
@@ -187,7 +174,7 @@ pub(crate) fn show(
                 );
             } else {
                 // 紧凑模式：自动化名 + 所属音轨拼成单行（与普通轨单行对齐）。
-                let font = egui::FontId::proportional((lh * 0.45).clamp(8.0, 14.0));
+                let font = render::compact_font(lh);
                 painter.text(
                     egui::pos2(text_x, badge_rect.center().y),
                     egui::Align2::LEFT_CENTER,
@@ -275,19 +262,7 @@ pub(crate) fn show(
 
         let is_conductor = Some(ti.index) == conductor_track_idx;
         let selected = track_selected.contains(&ti.index);
-        // 着色行条纹（奇数行 = app_bg 普通行，不画；选中/悬停 tint 在条纹之上）
-        if row % 2 == 0 {
-            painter.rect_filled(row_rect, 0.0, lane_even);
-        }
-        if selected {
-            painter.rect_filled(row_rect, 0.0, ui.visuals().selection.bg_fill);
-        } else if hover::is_row_hovered(ui, row_rect) {
-            painter.rect_filled(
-                row_rect,
-                0.0,
-                crate::theme::hover_color(crate::theme::app_bg()),
-            );
-        }
+        render::draw_row_background(ui, &painter, row_rect, row, selected, lane_even);
 
         let color = if is_conductor {
             crate::theme::conductor_color_f32()
@@ -298,11 +273,7 @@ pub(crate) fn show(
                 .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR)
         };
         let color32 = crate::theme::rgba_to_color32((color[0], color[1], color[2], color[3]));
-
-        // 色条统一为窄版（conductor 同宽，只是不放 chevron）。
-        let badge_w = 14.0_f32;
-        let badge_rect = egui::Rect::from_min_size(row_rect.min, egui::vec2(badge_w, lh));
-        painter.rect_filled(badge_rect, 0.0, color32);
+        let badge_rect = render::draw_badge(&painter, row_rect, lh, color32);
 
         if !is_conductor {
             let expanded = arr_am_expanded.get(idx).copied().unwrap_or(false);
@@ -368,8 +339,7 @@ pub(crate) fn show(
         let track_num_text = format!("{:03}", ti.index);
 
         if show_details {
-            // 详情模式行号/名称字号下限统一为 9（原行号误写 8）
-            let font = egui::FontId::proportional((*row_height * 0.25).clamp(9.0, 13.0));
+            let font = render::detail_font(*row_height);
 
             painter.text(
                 egui::pos2(text_x, badge_rect.min.y + *row_height * 0.30),
@@ -403,7 +373,7 @@ pub(crate) fn show(
             );
 
             let name = &ti.name;
-            let name_font = egui::FontId::proportional((*row_height * 0.25).clamp(9.0, 13.0));
+            let name_font = render::detail_font(*row_height);
             painter.text(
                 egui::pos2(text_x, badge_rect.min.y + *row_height * 0.70),
                 egui::Align2::LEFT_CENTER,
@@ -460,7 +430,7 @@ pub(crate) fn show(
                 }
             }
         } else {
-            let font = egui::FontId::proportional((*row_height * 0.45).clamp(8.0, 14.0));
+            let font = render::compact_font(*row_height);
             painter.text(
                 egui::pos2(text_x, badge_rect.center().y),
                 egui::Align2::LEFT_CENTER,
@@ -470,7 +440,7 @@ pub(crate) fn show(
             );
 
             let name = &ti.name;
-            let name_font = egui::FontId::proportional((*row_height * 0.45).clamp(8.0, 14.0));
+            let name_font = render::compact_font(*row_height);
             painter.text(
                 egui::pos2(text_x + 40.0, badge_rect.center().y),
                 egui::Align2::LEFT_CENTER,
@@ -481,374 +451,31 @@ pub(crate) fn show(
         }
     }
 
-    // ── Click handling ──
-    // 行命中 → 音轨（AM 子行归到所属音轨；双击/单击子行等效于主行）。
-    let hit = |pos: egui::Pos2| -> Option<usize> {
-        let rel_y = pos.y - panel_rect.min.y + *scroll_y;
-        row_layout.hit_at_music_y(rel_y, lh).map(|h| h.track())
-    };
-
-    if resp.double_clicked() && !dragging {
-        if let Some(pos) = resp.interact_pointer_pos()
-            && let Some(idx) = hit(pos)
-        {
-            // 双击：选中该行（track_selected = {该行}，即成为主音轨）并打开 PR。
-            // Conductor 双击同样选中（Tempo automation 编辑照旧，主音轨 = Conductor）。
-            let track_idx = track_info[idx].index;
-            track_selected.clear();
-            track_selected.insert(track_idx);
-            *selection_anchor = Some(track_idx);
-            *request_pianoroll = true;
-            // 双击 = 编辑主轨：清除 AM lane 选择。
-            am_lane_selected.clear();
-        }
-    } else if resp.clicked()
-        && !dragging
-        && let Some(pos) = resp.interact_pointer_pos()
-        && let Some(row_hit) = row_layout.hit_at_music_y(pos.y - panel_rect.min.y + *scroll_y, lh)
-    {
-        let shift = ui.input(|i| i.modifiers.shift);
-        let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
-
-        // AM 子行点击：选择 lane 本身（选中高亮子行；PR 仍显示主轨音符）。
-        if let ArRow::Automation(t, s) = row_hit {
-            if let Some(lane) = tracks.get(t).and_then(|tr| tr.automation_lanes.get(s)) {
-                let key = (track_info[t].index, lane.target.clone());
-                if cmd {
-                    // Toggle this lane.
-                    if !am_lane_selected.remove(&key) {
-                        am_lane_selected.insert(key);
-                    }
-                } else {
-                    // Plain/shift：替换为唯一选中（shift 简化同 plain）。
-                    am_lane_selected.clear();
-                    am_lane_selected.insert(key);
-                }
-            }
-            // 点子行：把主轨写入 track_selected（与主行点击互斥：
-            // 点主行清 arr_am_selected，点子行选中主轨并保留 lane 选中）。
-            // 选中的 AM lane 对应卷帘显示主轨音符（主音轨强制可见，不强制切换当前视图）。
-            track_selected.clear();
-            track_selected.insert(track_info[t].index);
-            *selection_anchor = None;
-        } else {
-            let idx = row_hit.track();
-            let track_idx = track_info[idx].index;
-            // 选中主行：清除 AM lane 选择（互斥）。
-            am_lane_selected.clear();
-            if shift {
-                // Range-select from anchor to this track.
-                if let Some(anchor) = *selection_anchor {
-                    let a = anchor as usize;
-                    let b = track_idx as usize;
-                    let lo = a.min(b);
-                    let hi = a.max(b);
-                    for i in lo..=hi {
-                        track_selected.insert(i as u16);
-                    }
-                } else {
-                    track_selected.clear();
-                    track_selected.insert(track_idx);
-                    *selection_anchor = Some(track_idx);
-                }
-            } else if cmd {
-                // Toggle this track.
-                if track_selected.contains(&track_idx) {
-                    track_selected.remove(&track_idx);
-                } else {
-                    track_selected.insert(track_idx);
-                }
-                *selection_anchor = Some(track_idx);
-            } else {
-                // Plain click: 如果点击的音轨已是唯一选中的，则取消选择；
-                // 否则替换选择（清除旧选择，选中此音轨）。
-                if track_selected.len() == 1 && track_selected.contains(&track_idx) {
-                    track_selected.clear();
-                } else {
-                    track_selected.clear();
-                    track_selected.insert(track_idx);
-                }
-                *selection_anchor = Some(track_idx);
-            }
-        }
-        *info_content = Some(crate::right_panel::InfoContent::Track);
-    }
-
-    // On secondary click, select the track under the cursor and record its
-    // index in egui temp data so the context_menu closure (which may run on
-    // subsequent frames while the menu stays open) can recover it.
-    let ctx_menu_idx_id = egui::Id::new("track_ctx_menu_idx");
-    if resp.secondary_clicked()
-        && let Some(pos) = resp.interact_pointer_pos()
-        && let Some(row_hit) = row_layout.hit_at_music_y(pos.y - panel_rect.min.y + *scroll_y, lh)
-    {
-        // AM 子行右键：额外记录 lane 下标，菜单只给「删除自动化」；并选中该 lane。
-        // 加号行右键等同主行（含创建自动化）。
-        let (idx, sub) = match row_hit {
-            ArRow::Track(t) => (t, None),
-            ArRow::Automation(t, s) => (t, Some(s)),
-        };
-        let track_idx = track_info[idx].index;
-        if let Some(s) = sub {
-            am_lane_selected.clear();
-            if let Some(lane) = tracks.get(idx).and_then(|tr| tr.automation_lanes.get(s)) {
-                let key = (track_idx, lane.target.clone());
-                if !am_lane_selected.contains(&key) {
-                    am_lane_selected.insert(key);
-                }
-            }
-            track_selected.clear();
-            *selection_anchor = None;
-        } else if !track_selected.contains(&track_idx) {
-            am_lane_selected.clear();
-            track_selected.clear();
-            track_selected.insert(track_idx);
-            *selection_anchor = Some(track_idx);
-        }
-        *info_content = Some(crate::right_panel::InfoContent::Track);
-        ui.ctx()
-            .data_mut(|d| d.insert_temp(ctx_menu_idx_id, (idx, sub)));
-    }
-
-    resp.context_menu(|ui| {
-        ui.set_min_width(160.0);
-        ui.set_max_width(160.0);
-        let (idx, sub) = ui
-            .ctx()
-            .data(|d| d.get_temp::<(usize, Option<usize>)>(ctx_menu_idx_id))
-            .unwrap_or((0, None));
-        let track_idx = track_info.get(idx).map(|t| t.index).unwrap_or(0);
-        let is_conductor = conductor_track_idx == Some(track_idx);
-
-        // 任意音轨（含 Conductor）顶部：「音轨属性」→ 选中并打开浮窗。
-        if ui
-            .add(crate::widgets::menu::menu_item_button(
-                ui,
-                false,
-                t!("arrange.track_properties").as_ref(),
-            ))
-            .clicked()
-        {
-            actions.push(TrackAction::ShowProperties { idx });
-            ui.close();
-        }
-        ui.separator();
-
-        // AM 子行右键：只给「删除自动化」。
-        if let Some(lane_idx) = sub {
-            if ui
-                .add(crate::widgets::menu::menu_item_button(
-                    ui,
-                    false,
-                    t!("arrange.delete_automation"),
-                ))
-                .clicked()
-            {
-                actions.push(TrackAction::DeleteAutomation { idx, lane_idx });
-                ui.close();
-            }
-            return;
-        }
-
-        if !is_conductor {
-            if ui
-                .add(crate::widgets::menu::menu_item_button(
-                    ui,
-                    false,
-                    t!("arrange.add_below"),
-                ))
-                .clicked()
-            {
-                actions.push(TrackAction::AddTrack {
-                    after_idx: Some(idx),
-                });
-                ui.close();
-            }
-            if ui
-                .add(crate::widgets::menu::menu_item_button(
-                    ui,
-                    false,
-                    t!("arrange.add_above"),
-                ))
-                .clicked()
-            {
-                actions.push(TrackAction::AddTrack {
-                    after_idx: Some(idx.saturating_sub(1)),
-                });
-                ui.close();
-            }
-            ui.separator();
-            if idx > 0
-                && conductor_track_idx != Some((idx - 1) as u16)
-                && ui
-                    .add(crate::widgets::menu::menu_item_button(
-                        ui,
-                        false,
-                        t!("arrange.move_up"),
-                    ))
-                    .clicked()
-            {
-                actions.push(TrackAction::MoveUp { idx });
-                ui.close();
-            }
-            if idx < num_tracks - 1
-                && ui
-                    .add(crate::widgets::menu::menu_item_button(
-                        ui,
-                        false,
-                        t!("arrange.move_down"),
-                    ))
-                    .clicked()
-            {
-                actions.push(TrackAction::MoveDown { idx });
-                ui.close();
-            }
-            ui.separator();
-            if ui
-                .add(crate::widgets::menu::menu_item_button(
-                    ui,
-                    false,
-                    t!("arrange.delete_track"),
-                ))
-                .clicked()
-            {
-                actions.push(TrackAction::RemoveTrack { idx });
-                ui.close();
-            }
-            ui.separator();
-            menu::create_automation_menu(ui, idx, tracks, &mut actions);
-        } else {
-            // Conductor track: only allow adding after
-            if ui
-                .add(crate::widgets::menu::menu_item_button(
-                    ui,
-                    false,
-                    t!("arrange.add_below"),
-                ))
-                .clicked()
-            {
-                actions.push(TrackAction::AddTrack {
-                    after_idx: Some(idx),
-                });
-                ui.close();
-            }
-        }
-    });
-
-    // ── 拖拽排序 ──
-    // 拖拽开始：未选中的行先单选，然后拖起整个选中集合（排除 conductor）。
-    if resp.drag_started()
-        && !dragging
-        && let Some(pos) = resp.interact_pointer_pos()
-        && !chevron_rects.iter().any(|r| r.contains(pos))
-        // 只有主行能拖动排序，AM 子行不起排序。
-        && matches!(
-            row_layout.hit_at_music_y(pos.y - panel_rect.min.y + *scroll_y, lh),
-            Some(ArRow::Track(_))
-        )
-        && let Some(idx) = hit(pos)
-        && Some(track_info[idx].index) != conductor_track_idx
-    {
-        let track_idx = track_info[idx].index;
-        if !track_selected.contains(&track_idx) {
-            track_selected.clear();
-            track_selected.insert(track_idx);
-            *selection_anchor = Some(track_idx);
-        }
-        let mut indices: Vec<usize> = track_selected.iter().map(|&t| t as usize).collect();
-        indices.sort_unstable();
-        indices.retain(|&i| track_info.get(i).map(|t| Some(t.index)) != Some(conductor_track_idx));
-        if !indices.is_empty() {
-            drag = Some(crate::widgets::reorder::DragReorder {
-                indices,
-                insert_idx: idx,
-            });
-        }
-    }
-
-    // 拖拽进行中：插入位置 + 插入线 + 边缘自动滚动；释放时提交排序。
-    if let Some(drag_state) = &mut drag {
-        if let Some(p) = ui.input(|i| i.pointer.interact_pos()) {
-            drag_state.update_insert_idx(p.y, &item_rects);
-            // conductor 固定在最前（索引 0），被拖行不能插到它前面
-            drag_state.insert_idx = drag_state.insert_idx.max(1);
-
-            // 自动滚动：指针贴近面板上下边缘
-            const AUTO_SCROLL_MARGIN: f32 = 20.0;
-            const AUTO_SCROLL_SPEED: f32 = 32.0;
-            if p.y < panel_rect.top() + AUTO_SCROLL_MARGIN {
-                *scroll_y = (*scroll_y - AUTO_SCROLL_SPEED).max(0.0);
-            } else if p.y > panel_rect.bottom() - AUTO_SCROLL_MARGIN {
-                *scroll_y = (*scroll_y + AUTO_SCROLL_SPEED).min(max_scroll);
-            }
-        }
-
-        if let Some(y) = drag_state.insert_line_y(&item_rects) {
-            let x1 = panel_rect.min.x + 4.0;
-            let x2 = panel_rect.max.x - 4.0;
-            painter.line_segment(
-                [egui::pos2(x1, y), egui::pos2(x2, y)],
-                egui::Stroke::new(3.0, crate::theme::accent_active()),
-            );
-        }
-
-        if ui.input(|i| i.pointer.any_released()) {
-            actions.push(TrackAction::MoveTracks {
-                indices: drag_state.indices.clone(),
-                insert_at: drag_state.insert_idx,
-            });
-            drag = None;
-        }
-    }
-
-    // ── Up/Down arrow key navigation ──
-    if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
-        if let Some(&current) = track_selected.iter().next() {
-            let new_idx = current.saturating_sub(1);
-            let mut found = None;
-            for i in (0..=new_idx as usize).rev() {
-                if track_visible.get(i).copied().unwrap_or(true) {
-                    found = Some(i as u16);
-                    break;
-                }
-            }
-            if let Some(target) = found {
-                track_selected.clear();
-                track_selected.insert(target);
-                *selection_anchor = Some(target);
-            }
-        } else if !track_info.is_empty() {
-            let last = track_info.len() - 1;
-            track_selected.clear();
-            track_selected.insert(last as u16);
-            *selection_anchor = Some(last as u16);
-        }
-        *info_content = Some(crate::right_panel::InfoContent::Track);
-    }
-    if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
-        if let Some(&current) = track_selected.iter().next() {
-            let new_idx = (current as usize + 1).min(num_tracks - 1);
-            let mut found = None;
-            for i in new_idx..num_tracks {
-                if track_visible.get(i).copied().unwrap_or(true) {
-                    found = Some(i as u16);
-                    break;
-                }
-            }
-            if let Some(target) = found {
-                track_selected.clear();
-                track_selected.insert(target);
-                *selection_anchor = Some(target);
-            }
-        } else if !track_info.is_empty() {
-            track_selected.clear();
-            track_selected.insert(0);
-            *selection_anchor = Some(0);
-        }
-        *info_content = Some(crate::right_panel::InfoContent::Track);
-    }
-
-    ui.data_mut(|d| d.insert_temp(drag_id, drag));
+    interaction::handle_interactions(
+        ui,
+        &painter,
+        panel_rect,
+        row_layout,
+        lh,
+        scroll_y,
+        track_info,
+        track_visible,
+        track_selected,
+        selection_anchor,
+        conductor_track_idx,
+        num_tracks,
+        am_lane_selected,
+        &resp,
+        &chevron_rects,
+        &item_rects,
+        &mut drag,
+        drag_id,
+        info_content,
+        request_pianoroll,
+        tracks,
+        &mut actions,
+        max_scroll,
+    );
 
     (audio_dirty, am_ms_dirty, actions)
 }
