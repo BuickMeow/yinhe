@@ -77,6 +77,56 @@ impl Default for LayoutSettings {
     }
 }
 
+fn deserialize_id<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct IdVisitor;
+    impl serde::de::Visitor<'_> for IdVisitor {
+        type Value = u64;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("u64 or string")
+        }
+        fn visit_u64<E>(self, v: u64) -> Result<u64, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(v)
+        }
+        fn visit_i64<E>(self, v: i64) -> Result<u64, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(v as u64)
+        }
+        fn visit_str<E>(self, v: &str) -> Result<u64, E>
+        where
+            E: serde::de::Error,
+        {
+            v.parse().map_err(serde::de::Error::custom)
+        }
+        fn visit_string<E>(self, v: String) -> Result<u64, E>
+        where
+            E: serde::de::Error,
+        {
+            v.parse().map_err(serde::de::Error::custom)
+        }
+    }
+    deserializer.deserialize_any(IdVisitor)
+}
+
+/// 用户自定义主题（本地持久化，数字 id 后台唯一，不展示）
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CustomTheme {
+    /// 唯一数字 id（自增，后台用）
+    #[serde(deserialize_with = "deserialize_id")]
+    pub id: u64,
+    /// 显示名（用于卡片标题，多语言共用）
+    pub name: String,
+    /// 标准色
+    pub base: yinhe_theme::base::BaseColors,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AudioSettings {
@@ -127,10 +177,15 @@ pub struct AudioSettings {
     pub theme_base: yinhe_theme::base::BaseColors,
     /// 主题预设名（"dark"/"light"/"custom"）。
     pub theme_preset: String,
-    /// 每张主题卡片是否处于“翻转（日/月）”状态，存预设键名（如 "ink-wash"）
-    /// 翻转即 `base.inverted()`，与 `theme_base` 的实际明暗无关，持久化跨会话
+    /// 用户自定义主题（持久化到本地），通过主题页首位“+”创建
     #[serde(default)]
-    pub theme_inverted: Vec<String>,
+    pub custom_themes: Vec<CustomTheme>,
+    /// 自定义主题编辑弹窗是否可见（不持久化）
+    #[serde(skip)]
+    pub show_custom_theme_editor: bool,
+    /// 正在编辑/新建的自定义主题草稿（不持久化）
+    #[serde(skip)]
+    pub custom_theme_draft: Option<CustomTheme>,
     /// UI 缩放倍率（egui zoom_factor，0.75~2.0，1.0 = 100%）。
     pub ui_scale: f32,
     /// 内容层背景/条纹不透明度（PR/AM 背景、AR 条纹；1.0 = 不透明，0.0 = 全透明）。
@@ -201,7 +256,9 @@ impl Default for AudioSettings {
             locale: "zh-CN".to_string(),
             theme_base: yinhe_theme::base::BaseColors::DARK,
             theme_preset: "ink-wash".to_string(),
-            theme_inverted: Vec::new(),
+            custom_themes: Vec::new(),
+            show_custom_theme_editor: false,
+            custom_theme_draft: None,
             ui_scale: 1.0, // UI 缩放（egui zoom_factor，1.0 = 100%）
             content_opacity: 0.7,
             layout: LayoutSettings::default(),
