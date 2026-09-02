@@ -171,9 +171,12 @@ pub fn show_theme_tab(
             let btn = egui::Button::new(
                 egui::RichText::new(icon.codepoint.to_string())
                     .family(icon.font_family())
-                    .size(16.0),
+                    .size(crate::scaling::scaled_font(
+                        ui.ctx(),
+                        crate::theme::ICON_FONT,
+                    )),
             )
-            .min_size(egui::vec2(32.0, 24.0));
+            .min_size(egui::vec2(32.0, 22.0));
             if ui
                 .add(btn)
                 .on_hover_text(if is_dark {
@@ -400,7 +403,10 @@ pub fn show_theme_tab(
                             title_pos,
                             egui::Align2::LEFT_CENTER,
                             &item.display,
-                            egui::FontId::proportional(11.0),
+                            egui::FontId::proportional(crate::scaling::scaled_font(
+                                ui.ctx(),
+                                crate::theme::SMALL_FONT,
+                            )),
                             preview.text_primary,
                         );
                     }
@@ -468,7 +474,10 @@ pub fn show_theme_tab(
                         star_rect.center(),
                         egui::Align2::CENTER_CENTER,
                         icon.codepoint.to_string(),
-                        egui::FontId::new(14.0, icon.font_family()),
+                        egui::FontId::new(
+                            crate::scaling::scaled_font(ui.ctx(), crate::theme::ICON_FONT),
+                            icon.font_family(),
+                        ),
                         color,
                     );
                 }
@@ -479,7 +488,7 @@ pub fn show_theme_tab(
                 if is_renaming {
                     let title_rect = egui::Rect::from_min_max(
                         card_rect.min + egui::vec2(6.0, 3.0),
-                        egui::pos2(card_rect.max.x - 28.0, card_rect.min.y + 20.0),
+                        egui::pos2(card_rect.max.x - 28.0, card_rect.min.y + 22.0),
                     );
                     let title_id = ui.id().with(format!("rename_{}", item.id_str));
                     let mut buf = settings.rename_buffer.clone();
@@ -487,7 +496,10 @@ pub fn show_theme_tab(
                         title_rect,
                         egui::TextEdit::singleline(&mut buf)
                             .id(title_id)
-                            .font(egui::FontId::proportional(11.0))
+                            .font(egui::FontId::proportional(crate::scaling::scaled_font(
+                                ui.ctx(),
+                                crate::theme::SMALL_FONT,
+                            )))
                             .hint_text(t!("settings.theme.custom_name").to_string()),
                     );
                     // 首次进入时自动聚焦

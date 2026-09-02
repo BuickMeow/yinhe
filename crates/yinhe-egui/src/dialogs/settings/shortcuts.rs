@@ -136,7 +136,7 @@ pub fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bo
             ui.horizontal(|ui| {
                 let label_key = crate::shortcuts::action_label_key(id);
                 ui.add_sized(
-                    [150.0, 24.0],
+                    [150.0, 22.0],
                     egui::Label::new(egui::RichText::new(t!(label_key).as_ref()))
                         .selectable(false)
                         .wrap_mode(egui::TextWrapMode::Extend),
@@ -148,7 +148,7 @@ pub fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bo
 
                 // 追加新快捷键（录制中时末尾不再额外显示录制块，仅保留下一行的占位行）
                 let add_btn = egui::Button::new(egui::RichText::new("+").strong())
-                    .min_size(egui::vec2(28.0, 24.0));
+                    .min_size(egui::vec2(28.0, 22.0));
                 if ui
                     .add_enabled(!is_adding, add_btn)
                     .on_hover_text(t!("settings.shortcuts.add").as_ref())
@@ -165,7 +165,7 @@ pub fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bo
             // item_spacing，会导致比第一行动作名标签（add_sized）少 8px 而错位。
             for (i, combo) in combos.iter().enumerate().skip(1) {
                 ui.horizontal(|ui| {
-                    ui.allocate_exact_size(egui::vec2(150.0, 24.0), egui::Sense::hover());
+                    ui.allocate_exact_size(egui::vec2(150.0, 22.0), egui::Sense::hover());
                     changed |= shortcut_combo_ui(ui, rec_id, id, i, combo, &recording, settings);
                 });
             }
@@ -173,9 +173,9 @@ pub fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bo
             // 追加录制中：立即在下一行显示录制占位框（按完键后变为新快捷键）
             if is_adding {
                 ui.horizontal(|ui| {
-                    ui.allocate_exact_size(egui::vec2(150.0, 24.0), egui::Sense::hover());
+                    ui.allocate_exact_size(egui::vec2(150.0, 22.0), egui::Sense::hover());
                     let place_btn = egui::Button::new(t!("settings.shortcuts.recording").as_ref())
-                        .min_size(egui::vec2(140.0, 24.0));
+                        .min_size(egui::vec2(140.0, 22.0));
                     ui.add(place_btn);
                 });
             }
@@ -223,7 +223,7 @@ fn shortcut_combo_ui(
     } else {
         crate::shortcuts::display_combo(combo)
     };
-    let kb_btn = egui::Button::new(btn_text).min_size(egui::vec2(140.0, 24.0));
+    let kb_btn = egui::Button::new(btn_text).min_size(egui::vec2(140.0, 22.0));
     if ui.add(kb_btn).clicked() && !is_recording {
         ui.data_mut(|d| d.insert_temp(rec_id, (action_id.to_string(), idx)));
         settings.shortcut_recording = true;
@@ -234,7 +234,7 @@ fn shortcut_combo_ui(
         && ui
             .add(
                 egui::Button::new(egui::RichText::new("×").strong())
-                    .min_size(egui::vec2(28.0, 24.0)),
+                    .min_size(egui::vec2(28.0, 22.0)),
             )
             .on_hover_text(t!("settings.shortcuts.clear").as_ref())
             .clicked()

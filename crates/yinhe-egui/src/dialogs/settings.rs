@@ -44,12 +44,22 @@ pub(crate) fn setting_row(
 ) {
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
-            ui.label(egui::RichText::new(title).strong().size(13.0));
+            ui.label(
+                egui::RichText::new(title)
+                    .strong()
+                    .size(crate::scaling::scaled_font(
+                        ui.ctx(),
+                        crate::theme::SUB_TITLE_FONT,
+                    )),
+            );
             if !desc.is_empty() {
                 ui.add_space(2.0);
                 ui.label(
                     egui::RichText::new(desc)
-                        .size(11.0)
+                        .size(crate::scaling::scaled_font(
+                            ui.ctx(),
+                            crate::theme::SMALL_FONT,
+                        ))
                         .color(crate::theme::text_secondary()),
                 );
             }
@@ -79,10 +89,14 @@ pub fn show_content(
         ui.vertical(|ui| {
             ui.set_width(132.0);
             ui.set_height(full_height);
+            ui.spacing_mut().interact_size.y = 22.0;
+            ui.spacing_mut().item_spacing.y = 6.0;
             egui::ScrollArea::vertical()
                 .id_salt("settings_left_scroll")
                 .auto_shrink([false; 2])
                 .show(ui, |ui| {
+                    ui.spacing_mut().interact_size.y = 22.0;
+                    ui.spacing_mut().item_spacing.y = 6.0;
                     ui.add(
                         egui::TextEdit::singleline(&mut settings.settings_search)
                             .hint_text(t!("settings.search_hint").as_ref())
@@ -126,10 +140,18 @@ pub fn show_content(
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
             ui.set_height(full_height);
+            // 右侧所有控件（按钮/输入框/滑块/combo/拖动值）统一 22 高 6 间隙
+            ui.spacing_mut().interact_size.y = 22.0;
+            ui.spacing_mut().item_spacing.y = 6.0;
+            ui.spacing_mut().item_spacing.x = 6.0;
             egui::ScrollArea::vertical()
                 .id_salt("settings_right_scroll")
                 .auto_shrink([false; 2])
                 .show(ui, |ui| {
+                    // ScrollArea 内需再设一次（ScrollArea 会重置 spacing）
+                    ui.spacing_mut().interact_size.y = 22.0;
+                    ui.spacing_mut().item_spacing.y = 6.0;
+                    ui.spacing_mut().item_spacing.x = 6.0;
                     changed |= show_search_results(ui, settings, main_ctx);
                 });
         });

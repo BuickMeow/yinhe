@@ -154,7 +154,10 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                     ui.label(
                         egui::RichText::new(t!("common.unlimited").as_ref())
                             .weak()
-                            .size(11.0)
+                            .size(crate::scaling::scaled_font(
+                                ui.ctx(),
+                                crate::theme::SMALL_FONT,
+                            ))
                             .color(crate::theme::text_secondary()),
                     );
                 }
