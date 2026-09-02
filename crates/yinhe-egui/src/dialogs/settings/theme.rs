@@ -210,10 +210,31 @@ pub fn show_theme_tab(
             }
         });
         if toggle_clicked {
-            // 全面板变效果：仅翻转当前主题基色并保留 theme_preset，渲染层会按全局明暗将所有卡片统一显示为深/浅
-            let inv = settings.theme_base.inverted();
-            settings.theme_base = inv;
-            crate::theme::set_theme(inv);
+            // 根治保留选中：以选中项的原始基色为锚点，按新全局明暗单次 inverted，避免二次漂移
+            let old_is_dark = settings.theme_base.is_dark();
+            let new_is_dark = !old_is_dark;
+            let orig_base: Option<BaseColors> = if let Ok(id) = settings.theme_preset.parse::<u64>()
+            {
+                settings
+                    .custom_themes
+                    .iter()
+                    .find(|c| c.id == id)
+                    .map(|c| c.base)
+            } else {
+                BaseColors::preset_by_name(&settings.theme_preset)
+            };
+            let new_base = if let Some(orig) = orig_base {
+                if orig.is_dark() == new_is_dark {
+                    orig
+                } else {
+                    orig.inverted()
+                }
+            } else {
+                // 兜底：未找到选中项（legacy custom 字符串等），直接翻转当前
+                settings.theme_base.inverted()
+            };
+            settings.theme_base = new_base;
+            crate::theme::set_theme(new_base);
             changed = true;
         }
         if color_changed {
