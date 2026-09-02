@@ -116,7 +116,7 @@ pub fn show_content(
                     {
                         settings.settings_search.clear();
                     }
-                    ui.add_space(8.0);
+                    ui.add_space(6.0);
 
                     for (i, key) in CATEGORY_KEYS.iter().enumerate() {
                         let selected = settings.settings_tab == i;
