@@ -362,7 +362,7 @@ pub(crate) fn show(
                         icon_rect.center(),
                         egui::Align2::CENTER_CENTER,
                         icon.codepoint,
-                        egui::FontId::new(crate::theme::ICON_BTN_FONT, icon.font_family()),
+                        egui::FontId::new(crate::theme::ICON_FONT, icon.font_family()),
                         icon_color,
                     );
                 }
@@ -959,7 +959,7 @@ fn badge_icon_menu(
         rect.center(),
         egui::Align2::CENTER_CENTER,
         codepoint,
-        egui::FontId::new(crate::theme::ICON_BTN_FONT, family),
+        egui::FontId::new(crate::theme::ICON_FONT, family),
         color,
     );
     // 点击：打开 popup 并在 memory 记下加号中心屏幕坐标作为固定锚点。

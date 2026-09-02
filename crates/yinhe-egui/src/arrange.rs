@@ -672,7 +672,7 @@ pub fn show(
             btn_rect.center(),
             egui::Align2::CENTER_CENTER,
             ICON_ADD.codepoint,
-            egui::FontId::new(crate::theme::ICON_BTN_FONT, ICON_ADD.font_family()),
+            egui::FontId::new(crate::theme::ICON_FONT, ICON_ADD.font_family()),
             icon_color,
         );
 
