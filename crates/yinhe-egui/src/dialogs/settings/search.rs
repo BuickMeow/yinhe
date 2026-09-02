@@ -5,8 +5,10 @@ use rust_i18n::t;
 
 use crate::audio_settings::AudioSettings;
 
+use super::appearance::show_appearance_tab;
 use super::audio::show_audio_tab;
 use super::constants::{CATEGORY_KEYS, SETTING_ITEMS, SettingItem};
+use super::editing::show_editing_tab;
 use super::general::show_general_tab;
 use super::language::show_language_tab;
 use super::render::show_render_tab;
@@ -22,9 +24,6 @@ pub fn norm(s: &str) -> String {
 }
 
 /// 把任意语言文本折叠成检索键：`(全拼/原文, 汉字拼音首字母缩写)`。
-/// - 汉字逐字转拼音（常见读音；ü 折叠成 v，兼容键盘 lv 输入），
-///   并收集首字母供缩写搜索（如 zt→主题）；
-/// - 其余字符经 deunicode 折叠（é→e、假名→罗马音等，为未来多语言做准备）。
 pub fn to_search_keys(s: &str) -> (String, String) {
     let mut full = String::new();
     let mut initials = String::new();
@@ -61,10 +60,12 @@ pub fn show_search_results(
     if query.is_empty() {
         return match settings.settings_tab {
             0 => show_theme_tab(ui, settings, main_ctx),
-            1 => show_language_tab(ui, settings),
-            2 => show_audio_tab(ui, settings),
-            3 => show_render_tab(ui, settings),
-            4 => show_shortcuts_tab(ui, settings),
+            1 => show_appearance_tab(ui, settings, main_ctx),
+            2 => show_language_tab(ui, settings),
+            3 => show_audio_tab(ui, settings),
+            4 => show_render_tab(ui, settings),
+            5 => show_editing_tab(ui, settings),
+            6 => show_shortcuts_tab(ui, settings),
             _ => show_general_tab(ui, settings),
         };
     }

@@ -672,39 +672,6 @@ pub fn show_theme_tab(
         settings.rename_buffer = ct.name.clone();
     }
 
-    // 界面缩放：拖动中不缩放（缩放会让滑条自身位置来回跑），松手才应用
-    ui.add_space(8.0);
-    ui.separator();
-    ui.add_space(4.0);
-    egui::Grid::new("theme_scale_grid")
-        .num_columns(2)
-        .spacing([12.0, 6.0])
-        .show(ui, |ui| {
-            ui.label(t!("settings.theme.ui_scale").as_ref());
-            ui.horizontal(|ui| {
-                let mut scale = settings.ui_scale;
-                let resp = ui.add(
-                    egui::Slider::new(&mut scale, 0.75..=2.0)
-                        .step_by(0.05)
-                        .show_value(true),
-                );
-                if resp.changed() {
-                    settings.ui_scale = scale;
-                    changed = true;
-                }
-                if resp.drag_stopped() {
-                    main_ctx.set_zoom_factor(settings.ui_scale);
-                }
-                if ui
-                    .button(t!("settings.theme.reset_scale").as_ref())
-                    .clicked()
-                {
-                    settings.ui_scale = 1.0;
-                    main_ctx.set_zoom_factor(1.0);
-                    changed = true;
-                }
-            });
-            ui.end_row();
-        });
+    let _ = main_ctx;
     changed
 }

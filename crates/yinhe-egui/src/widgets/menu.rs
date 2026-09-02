@@ -13,6 +13,6 @@ pub(crate) fn menu_item_button(
     text: impl Into<egui::WidgetText>,
 ) -> egui::Button<'static> {
     egui::Button::selectable(selected, text)
-        .min_size(egui::vec2(ui.available_width(), 0.0))
+        .min_size(egui::vec2(ui.available_width(), 30.0))
         .stroke(egui::Stroke::NONE)
 }

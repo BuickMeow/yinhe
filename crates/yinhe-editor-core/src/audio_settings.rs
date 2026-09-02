@@ -189,8 +189,10 @@ pub struct AudioSettings {
     /// 重命名输入缓冲（不持久化）
     #[serde(skip)]
     pub rename_buffer: String,
-    /// UI 缩放倍率（egui zoom_factor，0.75~2.0，1.0 = 100%）。
+    /// UI 缩放倍率（egui zoom_factor，0.75~2.0，1.0 = 100%），对应 DPI。
     pub ui_scale: f32,
+    /// 字体大小缩放（独立于 DPI，作用于全局字体，0.8~2.0）。
+    pub font_scale: f32,
     /// 内容层背景/条纹不透明度（PR/AM 背景、AR 条纹；1.0 = 不透明，0.0 = 全透明）。
     pub content_opacity: f32,
     /// 用户可拖拽调整的布局状态（分割线宽度/比例、PR 显示开关）。
@@ -264,6 +266,7 @@ impl Default for AudioSettings {
             rename_custom_id: None,
             rename_buffer: String::new(),
             ui_scale: 1.0, // UI 缩放（egui zoom_factor，1.0 = 100%）
+            font_scale: 1.0,
             content_opacity: 0.7,
             layout: LayoutSettings::default(),
             keybindings: Keybindings::default(),
@@ -309,6 +312,7 @@ impl AudioSettings {
                         // 手改或损坏，异常值会让 egui zoom_factor 放大像素尺寸，
                         // 导致离屏纹理超过 GPU 上限而崩溃。
                         s.ui_scale = s.ui_scale.clamp(0.75, 2.0);
+                        s.font_scale = s.font_scale.clamp(0.75, 2.0);
                         // 迁移旧 pinned_edit_actions 长度（10 → 12，新增去重两项）
                         if s.pinned_edit_actions.len() < 12 {
                             s.pinned_edit_actions.resize(12, false);

@@ -2,17 +2,18 @@ use eframe::egui;
 use rust_i18n::t;
 
 use crate::audio_settings::AudioSettings;
+use crate::dialogs::settings::setting_row;
 
 pub fn show_language_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     let mut changed = false;
     ui.heading(t!("settings.language").as_ref());
     ui.add_space(8.0);
 
-    let row_gap = 10.0;
-
-    ui.horizontal(|ui| {
-        ui.label(t!("settings.language").as_ref());
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    setting_row(
+        ui,
+        t!("settings.language").as_ref(),
+        t!("settings.language_desc").as_ref(),
+        |ui| {
             let locales = [
                 ("zh-CN", "简体中文"),
                 ("zh-HK", "繁體中文（香港）"),
@@ -34,13 +35,14 @@ pub fn show_language_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> boo
                 rust_i18n::set_locale(&settings.locale);
                 changed = true;
             }
-        });
-    });
-    ui.add_space(row_gap);
+        },
+    );
 
-    ui.horizontal(|ui| {
-        ui.label(t!("settings.midi_import.encoding").as_ref());
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    setting_row(
+        ui,
+        t!("settings.midi_import.encoding").as_ref(),
+        t!("settings.midi_import.encoding_desc").as_ref(),
+        |ui| {
             let enc_opt: Vec<(yinhe_midi::MidiImportEncoding, String)> =
                 yinhe_midi::MidiImportEncoding::ALL
                     .iter()
@@ -54,9 +56,8 @@ pub fn show_language_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> boo
             ) {
                 changed = true;
             }
-        });
-    });
-    ui.add_space(row_gap);
+        },
+    );
 
     changed
 }

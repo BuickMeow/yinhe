@@ -280,8 +280,9 @@ impl App {
         rust_i18n::set_locale(&audio_settings.locale);
         // 主题初始化（读取设置的标准色）
         crate::theme::set_theme(audio_settings.theme_base);
-        // UI 缩放（DPI 选项）
+        // UI 缩放 / 字体（DPI + 字体大小，appearance 分类）
         cc.egui_ctx.set_zoom_factor(audio_settings.ui_scale);
+        cc.egui_ctx.set_pixels_per_point(audio_settings.font_scale);
         let last_automation_density = audio_settings.automation_event_density;
 
         let mut app = Self {

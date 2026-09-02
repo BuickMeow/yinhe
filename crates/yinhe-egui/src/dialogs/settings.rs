@@ -3,8 +3,10 @@ use rust_i18n::t;
 
 use crate::audio_settings::AudioSettings;
 
+mod appearance;
 mod audio;
 mod constants;
+mod editing;
 mod general;
 mod language;
 mod render;
@@ -13,9 +15,13 @@ mod shortcuts;
 mod theme;
 
 #[allow(unused_imports)]
+pub use appearance::show_appearance_tab;
+#[allow(unused_imports)]
 pub use audio::show_audio_tab;
 #[allow(unused_imports)]
 pub use constants::{CATEGORY_KEYS, SETTING_ITEMS, SettingItem};
+#[allow(unused_imports)]
+pub use editing::show_editing_tab;
 #[allow(unused_imports)]
 pub use general::show_general_tab;
 #[allow(unused_imports)]
@@ -28,6 +34,34 @@ pub use search::{item_matches, norm, show_search_results, to_search_keys};
 pub use shortcuts::show_shortcuts_tab;
 #[allow(unused_imports)]
 pub use theme::show_theme_tab;
+
+/// Zed 风格设置行：标题+描述左，控件靠右，行间分割线。
+pub(crate) fn setting_row(
+    ui: &mut egui::Ui,
+    title: &str,
+    desc: &str,
+    add_control: impl FnOnce(&mut egui::Ui),
+) {
+    ui.horizontal(|ui| {
+        ui.vertical(|ui| {
+            ui.label(egui::RichText::new(title).strong().size(13.0));
+            if !desc.is_empty() {
+                ui.add_space(2.0);
+                ui.label(
+                    egui::RichText::new(desc)
+                        .size(11.0)
+                        .color(crate::theme::text_secondary()),
+                );
+            }
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            add_control(ui);
+        });
+    });
+    ui.add_space(8.0);
+    ui.separator();
+    ui.add_space(8.0);
+}
 
 /// Show the settings dialog content inside an existing Ui.
 /// Returns `true` if settings were changed.
@@ -45,12 +79,10 @@ pub fn show_content(
         ui.vertical(|ui| {
             ui.set_width(132.0);
             ui.set_height(full_height);
-            // 显式 id_salt：与右侧滚动区区分，避免两个 ScrollArea 的 id 冲突导致滚动串扰
             egui::ScrollArea::vertical()
                 .id_salt("settings_left_scroll")
                 .auto_shrink([false; 2])
                 .show(ui, |ui| {
-                    // 搜索框（多语言检索设置项）
                     ui.add(
                         egui::TextEdit::singleline(&mut settings.settings_search)
                             .hint_text(t!("settings.search_hint").as_ref())
@@ -62,9 +94,8 @@ pub fn show_content(
                     {
                         settings.settings_search.clear();
                     }
-                    ui.add_space(6.0);
+                    ui.add_space(8.0);
 
-                    // 分类导航：与菜单项同款（铺满整行 + 无边框，选中项高亮）
                     for (i, key) in CATEGORY_KEYS.iter().enumerate() {
                         let selected = settings.settings_tab == i;
                         if ui
@@ -77,6 +108,7 @@ pub fn show_content(
                         {
                             settings.settings_tab = i;
                         }
+                        ui.add_space(4.0);
                     }
                 });
         });
@@ -112,9 +144,11 @@ pub(crate) fn show_viewport(
     }
 
     let prev_xsynth_layers = settings.xsynth_layers;
+    let prev_ui_scale = settings.ui_scale;
+    let prev_font_scale = settings.font_scale;
     let settings_rc = std::rc::Rc::new(std::cell::RefCell::new(Some(std::mem::take(settings))));
     let ctx_clone = ctx.clone();
-    let main_ctx = ctx.clone(); // 闭包内使用（zoom_factor 设在主窗口 ctx）
+    let main_ctx = ctx.clone();
     let settings_cb = settings_rc.clone();
 
     ctx_clone.show_viewport_immediate(
@@ -180,6 +214,12 @@ pub(crate) fn show_viewport(
                 .handle
                 .send(yinhe_audio::AudioCommand::SetLayerCount { count });
         }
+        if (settings.ui_scale - prev_ui_scale).abs() > f32::EPSILON {
+            ctx.set_zoom_factor(settings.ui_scale);
+        }
+        if (settings.font_scale - prev_font_scale).abs() > f32::EPSILON {
+            ctx.set_pixels_per_point(settings.font_scale);
+        }
         !settings.show_settings
     } else {
         false
@@ -221,14 +261,12 @@ mod tests {
         assert!(item_matches(item("采样率"), "caiyanglv"));
     }
 
-    /// 回归测试：快捷键第一行（动作名 150 宽标签）与后续缩进行（add_space 150）
-    /// 的快捷键按钮必须水平对齐。此前 add_sized 按标签文本宽度推进导致错位。
     #[test]
     fn shortcut_rows_align() {
         let mut first_x = 0.0f32;
         let mut second_x = 0.0f32;
         let ctx = egui::Context::default();
-        ctx.set_fonts(egui::FontDefinitions::empty()); // 免加载字体，节省测试时间
+        ctx.set_fonts(egui::FontDefinitions::empty());
         let output = ctx.run_ui(Default::default(), |ui| {
             ui.horizontal(|ui| {
                 ui.add_sized(
