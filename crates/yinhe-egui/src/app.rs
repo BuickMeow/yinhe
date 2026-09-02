@@ -280,14 +280,11 @@ impl App {
         rust_i18n::set_locale(&audio_settings.locale);
         // 主题初始化（读取设置的标准色）+ 窗口/IME 深浅同步
         crate::theme::set_theme(audio_settings.theme_base);
-        cc.egui_ctx
-            .send_viewport_cmd(egui::ViewportCommand::SetTheme(
-                if crate::theme::dark_mode() {
-                    egui::SystemTheme::Dark
-                } else {
-                    egui::SystemTheme::Light
-                },
-            ));
+        cc.egui_ctx.set_theme(if crate::theme::dark_mode() {
+            egui::ThemePreference::Dark
+        } else {
+            egui::ThemePreference::Light
+        });
         // UI 缩放 / 字体（DPI + 字体大小，appearance 分类，独立比例）
         crate::scaling::apply_ui_scale(&cc.egui_ctx, audio_settings.ui_scale);
         crate::scaling::apply_font_scale(&cc.egui_ctx, audio_settings.font_scale);
