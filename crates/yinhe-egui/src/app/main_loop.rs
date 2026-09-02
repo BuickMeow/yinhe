@@ -338,7 +338,14 @@ impl eframe::App for App {
             }
         }
 
-        // ── 统一主题色：Visuals 基底跟随主题明/暗（egui 原生控件配色） ──
+        // ── 统一主题色：Visuals 基底跟随主题明/暗 + 窗口 NSAppearance 同步使 IME 候选窗深浅跟随 ──
+        let is_dark = crate::theme::dark_mode();
+        ui.ctx()
+            .send_viewport_cmd(egui::ViewportCommand::SetTheme(if is_dark {
+                egui::SystemTheme::Dark
+            } else {
+                egui::SystemTheme::Light
+            }));
         ui.ctx().set_visuals({
             let mut visuals = if crate::theme::dark_mode() {
                 egui::Visuals::dark()
