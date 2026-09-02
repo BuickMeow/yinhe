@@ -4,8 +4,8 @@ use eframe::egui;
 
 /// 菜单项按钮：铺满整行宽度 + 左对齐 + 左右边距≈上下边距。
 ///
-/// 高度 20 回到 egui 原版 `interact_size.y 18` + 上下各 1 的紧凑水准，
-/// 左内边距≈上下 (20-13)/2≈3.5，限制 3..6，
+/// 高度 22 比 egui 原版 20 稍松（20 偏挤），
+/// 左内边距≈上下 (22-13)/2≈4.5，限制 2..6，
 /// 文字左对齐而非居中，避免 `Button` 居中导致的左宽右窄。
 pub(crate) fn menu_item_button(
     ui: &egui::Ui,
@@ -18,7 +18,7 @@ pub(crate) fn menu_item_button(
         selected,
         text,
         width,
-        height: 20.0,
+        height: 22.0,
         wrap: None,
         shortcut: None,
     }
@@ -69,7 +69,7 @@ impl egui::Widget for MenuItemButton {
         } else {
             self.height
         };
-        // 左边距≈上下边距：上下 = (height-13)/2，左取相同值，限制 2..6（20 高时 3.5）
+        // 左边距≈上下边距：上下 = (height-13)/2，左取相同值（22 高时 4.5）
         let v_pad = ((height - 13.0) * 0.5).clamp(2.0, 6.0);
         let h_pad = v_pad;
         let desired_size = egui::vec2(self.width, height);
@@ -86,15 +86,8 @@ impl egui::Widget for MenuItemButton {
         let rounding = egui::CornerRadius::same(4);
 
         if self.selected {
+            // 选中仅填充，无描边，避免出现一圈边框的错觉
             ui.painter().rect_filled(rect, rounding, visuals.bg_fill);
-            if visuals.bg_stroke != egui::Stroke::NONE {
-                ui.painter().rect_stroke(
-                    rect,
-                    rounding,
-                    visuals.bg_stroke,
-                    egui::StrokeKind::Inside,
-                );
-            }
         } else if response.hovered() {
             ui.painter().rect_filled(rect, rounding, visuals.bg_fill);
         } else if response.has_focus() {
@@ -102,10 +95,10 @@ impl egui::Widget for MenuItemButton {
                 .rect_stroke(rect, rounding, visuals.fg_stroke, egui::StrokeKind::Inside);
         }
 
-        // 主文本左对齐，快捷键右对齐；gap 回到 egui 原版 item_spacing.x 8.0
+        // 主文本左对齐，快捷键右对齐；gap 6 比原版 8 更紧凑
         let wrap = self.wrap.unwrap_or(egui::TextWrapMode::Truncate);
         if let Some(shortcut) = self.shortcut {
-            let gap = ui.spacing().item_spacing.x;
+            let gap = 6.0;
             // 先测量快捷键实际宽度，再把剩余空间留给主文本，避免固定 80 导致主文本被截断
             let shortcut_galley = shortcut.into_galley(
                 ui,
