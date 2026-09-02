@@ -150,10 +150,18 @@ pub fn show_theme_tab(
 ) -> bool {
     let mut changed = false;
 
-    // 标题行 + 全局日/月切换（保留）
-    ui.horizontal(|ui| {
-        ui.heading(t!("settings.theme.heading").as_ref());
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    ui.heading(t!("settings.theme.heading").as_ref());
+    ui.add_space(8.0);
+
+    // ── 顶部单行：日/月切换（最前） + 背景 / 主文字 / 强调色 ──
+    // 日/月切换：翻转当前主题并保留选中态，所有面板按全局明暗统一显示为深/浅（不额外持久化自定义翻转，仅显示层 inverted）
+    // 只要预设被改 → 自动新建自定义；若当前已是自定义 → 直接改该自定义
+    {
+        let mut new_base = settings.theme_base;
+        let mut color_changed = false;
+        let mut toggle_clicked = false;
+        ui.horizontal(|ui| {
+            // 日/月在最前
             let is_dark = settings.theme_base.is_dark();
             let icon = if is_dark {
                 egui_material_icons::icons::ICON_SUNNY
@@ -175,32 +183,11 @@ pub fn show_theme_tab(
                 })
                 .clicked()
             {
-                let inv = settings.theme_base.inverted();
-                settings.theme_base = inv;
-                // 若当前为自定义，同步更新该自定义的 base，避免“自定义”与显示不一致
-                if let Ok(id) = settings.theme_preset.parse::<u64>() {
-                    if let Some(ct) = settings.custom_themes.iter_mut().find(|c| c.id == id) {
-                        ct.base = inv;
-                    } else {
-                        settings.theme_preset = "custom".to_string();
-                    }
-                } else {
-                    settings.theme_preset = "custom".to_string();
-                }
-                crate::theme::set_theme(inv);
-                changed = true;
+                toggle_clicked = true;
             }
-        });
-    });
-    ui.label(t!("settings.theme.hint").as_ref());
-    ui.add_space(8.0);
-
-    // ── 顶部单行取色器（背景 / 主文字 / 强调色）──
-    // 只要预设被改 → 自动新建自定义；若当前已是自定义 → 直接改该自定义
-    {
-        let mut new_base = settings.theme_base;
-        let mut color_changed = false;
-        ui.horizontal(|ui| {
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(8.0);
             ui.label(t!("settings.theme.bg").as_ref());
             let mut c = new_base.bg.to_color32();
             if crate::widgets::color_picker::color_edit_button(ui, &mut c).changed() {
@@ -222,6 +209,13 @@ pub fn show_theme_tab(
                 color_changed = true;
             }
         });
+        if toggle_clicked {
+            // 全面板变效果：仅翻转当前主题基色并保留 theme_preset，渲染层会按全局明暗将所有卡片统一显示为深/浅
+            let inv = settings.theme_base.inverted();
+            settings.theme_base = inv;
+            crate::theme::set_theme(inv);
+            changed = true;
+        }
         if color_changed {
             // 判断当前是否为已存在的自定义（通过 preset 解析为 id）
             let is_custom = settings
@@ -321,8 +315,9 @@ pub fn show_theme_tab(
     let mut ordered = Vec::with_capacity(fav.len() + rest.len());
     ordered.extend(fav);
     ordered.extend(rest);
+    let global_is_dark = settings.theme_base.is_dark();
 
-    // ── 网格渲染（3 列）+ 星标 + 右键菜单 ──
+    // ── 网格渲染（3 列）+ 星标 + 右键菜单（所有卡片按全局明暗统一显示为深/浅）──
     let mut to_apply: Option<(BaseColors, String)> = None;
     let mut to_toggle_fav: Option<String> = None;
     let mut to_copy: Option<(BaseColors, String)> = None;
@@ -335,14 +330,19 @@ pub fn show_theme_tab(
         .show(ui, |ui| {
             let mut col = 0u32;
             for item in &ordered {
+                let eff_base = if item.base.is_dark() == global_is_dark {
+                    item.base
+                } else {
+                    item.base.inverted()
+                };
                 let is_selected =
-                    settings.theme_preset == item.id_str && settings.theme_base == item.base;
+                    settings.theme_preset == item.id_str && settings.theme_base == eff_base;
                 let is_fav = settings.favorite_themes.contains(&item.id_str);
-                // 渲染卡片（带星标）
+                // 渲染卡片（带星标）——按全局明暗统一显示
                 let card_size = egui::vec2(158.0, 96.0);
                 let (card_rect, card_resp) =
                     ui.allocate_exact_size(card_size, egui::Sense::click());
-                let preview = derive_theme(item.base);
+                let preview = derive_theme(eff_base);
                 let cur_accent = crate::theme::accent_active();
                 let cur_line = crate::theme::line_fg();
                 let stroke = if is_selected {
@@ -442,7 +442,7 @@ pub fn show_theme_tab(
                 }
                 let card_clicked = card_resp.clicked() && !star_resp.clicked();
                 if card_clicked {
-                    to_apply = Some((item.base, item.id_str.clone()));
+                    to_apply = Some((eff_base, item.id_str.clone()));
                 }
                 // 右键菜单
                 card_resp.context_menu(|ui| {
@@ -457,7 +457,7 @@ pub fn show_theme_tab(
                         ui.close();
                     }
                     if ui.button(t!("settings.theme.copy").to_string()).clicked() {
-                        to_copy = Some((item.base, item.display.clone()));
+                        to_copy = Some((eff_base, item.display.clone()));
                         ui.close();
                     }
                     if item.is_custom {
@@ -488,7 +488,7 @@ pub fn show_theme_tab(
                         ui.close();
                     }
                     if ui.button(t!("settings.theme.copy").to_string()).clicked() {
-                        to_copy = Some((item.base, item.display.clone()));
+                        to_copy = Some((eff_base, item.display.clone()));
                         ui.close();
                     }
                     if item.is_custom {
