@@ -376,7 +376,6 @@ impl PrView {
                 &self.view,
                 &self.selected,
                 &track_colors,
-                0,
                 0.0,
                 true,
             );

@@ -363,6 +363,28 @@ impl Document {
 
     /// `sync_track_caches` with explicit dark/light theme for Conductor color.
     pub fn sync_track_caches_with_dark(&mut self, is_dark: bool) {
+        let conductor_color = if is_dark {
+            let c = yinhe_theme::base::BaseColors::DARK.text;
+            [
+                c.r as f32 / 255.0,
+                c.g as f32 / 255.0,
+                c.b as f32 / 255.0,
+                1.0,
+            ]
+        } else {
+            let c = yinhe_theme::base::BaseColors::LIGHT.text;
+            [
+                c.r as f32 / 255.0,
+                c.g as f32 / 255.0,
+                c.b as f32 / 255.0,
+                1.0,
+            ]
+        };
+        self.sync_track_caches_with_conductor_color(conductor_color);
+    }
+
+    /// `sync_track_caches` with precise Conductor color (`text_primary` from theme).
+    pub fn sync_track_caches_with_conductor_color(&mut self, conductor_color: [f32; 4]) {
         self.edit.track_info_cache = self.data.track_info();
         let num_tracks = self.data.model.tracks.len();
         self.edit.track_colors_cache = self
@@ -371,7 +393,14 @@ impl Document {
             .tracks
             .iter()
             .enumerate()
-            .map(|(i, t)| track_color_with_dark(t, i, self.edit.conductor_track_idx, is_dark))
+            .map(|(i, t)| {
+                track_color_with_conductor_color(
+                    t,
+                    i,
+                    self.edit.conductor_track_idx,
+                    conductor_color,
+                )
+            })
             .collect();
         while self.edit.track_visible.len() < num_tracks {
             self.edit.track_visible.push(true);
@@ -444,25 +473,52 @@ pub fn detect_conductor_from_model(model: &YinModel) -> Option<u16> {
 
 /// Track display color: prefers `TrackData.color` (when set, i.e. not the
 /// default placeholder), otherwise falls back to the palette with conductor
-/// offset. Conductor track is fixed to a white-ish tone in dark theme and
-/// black in light theme. RGBA.
+/// offset. Conductor track uses main text color (`text_primary`) rather than
+/// a fixed white/black. RGBA.
 pub fn track_color(track: &TrackData, idx: usize, conductor_idx: Option<u16>) -> [f32; 4] {
     track_color_with_dark(track, idx, conductor_idx, true)
 }
 
-/// `track_color` with explicit dark/light theme (dark = white-ish, light = black).
+/// `track_color` with explicit dark/light theme — Conductor now equals
+/// `text_primary`: dark `BaseColors::DARK.text` (220,220,220), light
+/// `BaseColors::LIGHT.text` (30,30,34). For custom light presets the precise
+/// value comes from `track_color_with_conductor_color` which the UI calls with
+/// `theme::conductor_color_f32()`.
 pub fn track_color_with_dark(
     track: &TrackData,
     idx: usize,
     conductor_idx: Option<u16>,
     is_dark: bool,
 ) -> [f32; 4] {
+    let conductor_color = if is_dark {
+        let c = yinhe_theme::base::BaseColors::DARK.text;
+        [
+            c.r as f32 / 255.0,
+            c.g as f32 / 255.0,
+            c.b as f32 / 255.0,
+            1.0,
+        ]
+    } else {
+        let c = yinhe_theme::base::BaseColors::LIGHT.text;
+        [
+            c.r as f32 / 255.0,
+            c.g as f32 / 255.0,
+            c.b as f32 / 255.0,
+            1.0,
+        ]
+    };
+    track_color_with_conductor_color(track, idx, conductor_idx, conductor_color)
+}
+
+/// `track_color` with explicit Conductor color (precise `text_primary` from theme).
+pub fn track_color_with_conductor_color(
+    track: &TrackData,
+    idx: usize,
+    conductor_idx: Option<u16>,
+    conductor_color: [f32; 4],
+) -> [f32; 4] {
     if Some(idx as u16) == conductor_idx {
-        return if is_dark {
-            [0.94, 0.94, 0.94, 1.0]
-        } else {
-            [0.0, 0.0, 0.0, 1.0]
-        };
+        return conductor_color;
     }
     if track.color != yinhe_core::DEFAULT_TRACK_COLOR {
         return track.color;
@@ -553,12 +609,36 @@ mod tests {
 
     #[test]
     fn track_color_conductor_is_whiteish() {
+        // Conductor 使用主文字色（text_primary），而非固定白/黑
         let t = TrackData::new(0, 0);
         let color = track_color(&t, 0, Some(0));
-        assert_eq!(color, [0.94, 0.94, 0.94, 1.0]);
-        // Light theme should be black
+        let dark_c = yinhe_theme::base::BaseColors::DARK.text;
+        assert_eq!(
+            color,
+            [
+                dark_c.r as f32 / 255.0,
+                dark_c.g as f32 / 255.0,
+                dark_c.b as f32 / 255.0,
+                1.0
+            ]
+        );
         let color_light = track_color_with_dark(&t, 0, Some(0), false);
-        assert_eq!(color_light, [0.0, 0.0, 0.0, 1.0]);
+        let light_c = yinhe_theme::base::BaseColors::LIGHT.text;
+        assert_eq!(
+            color_light,
+            [
+                light_c.r as f32 / 255.0,
+                light_c.g as f32 / 255.0,
+                light_c.b as f32 / 255.0,
+                1.0
+            ]
+        );
+        // 精确 text_primary 透传
+        let custom = [0.11, 0.22, 0.33, 1.0];
+        assert_eq!(
+            track_color_with_conductor_color(&t, 0, Some(0), custom),
+            custom
+        );
     }
 
     #[test]
@@ -895,5 +975,48 @@ mod tests {
         assert_eq!(lane.events.len(), 2, "原件 1 个 + 副本 1 个");
         assert_eq!(lane.events[0].tick, 0, "原件不动");
         assert_eq!(lane.events[1].tick, 100, "副本偏移 +100");
+    }
+
+    /// 回归测试：Conductor 颜色必须跟随主文字 `text_primary`（而非固定白/黑），
+    /// 且 `sync_track_caches_with_conductor_color` 能精确覆盖缓存使曲线及时刷新
+    #[test]
+    fn conductor_sync_with_text_primary_changes_cache() {
+        let mut doc = Document::empty();
+        let dark_c = yinhe_theme::base::BaseColors::DARK.text;
+        let dark_f = [
+            dark_c.r as f32 / 255.0,
+            dark_c.g as f32 / 255.0,
+            dark_c.b as f32 / 255.0,
+            1.0,
+        ];
+        assert_eq!(
+            doc.edit.track_colors_cache[0], dark_f,
+            "新建文档 Conductor 应为暗色主文字"
+        );
+        let light_c = yinhe_theme::base::BaseColors::LIGHT.text;
+        let light_f = [
+            light_c.r as f32 / 255.0,
+            light_c.g as f32 / 255.0,
+            light_c.b as f32 / 255.0,
+            1.0,
+        ];
+        doc.sync_track_caches_with_conductor_color(light_f);
+        assert_eq!(
+            doc.edit.track_colors_cache[0], light_f,
+            "切换主题后缓存应跟随主文字"
+        );
+        let custom = [0.345, 0.305, 0.235, 1.0];
+        doc.sync_track_caches_with_conductor_color(custom);
+        assert_eq!(doc.edit.track_colors_cache[0], custom);
+        // 非 Conductor 轨道不受 Conductor 颜色影响，仍走调色板
+        assert_eq!(
+            doc.edit.track_colors_cache[1],
+            [
+                yinhe_theme::palette::TRACK_PALETTE[0][0],
+                yinhe_theme::palette::TRACK_PALETTE[0][1],
+                yinhe_theme::palette::TRACK_PALETTE[0][2],
+                1.0
+            ]
+        );
     }
 }

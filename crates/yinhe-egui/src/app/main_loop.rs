@@ -323,12 +323,18 @@ impl eframe::App for App {
             }
         }
 
-        // ── Conductor 颜色随主题明/暗切换（亮色黑、暗色白）──
-        let is_dark = crate::theme::dark_mode();
-        if is_dark != self.last_dark_mode {
-            self.last_dark_mode = is_dark;
+        // ── Conductor 颜色随主文字切换 + 刷新 AM 曲线 GPU（烘焙色需重建）──
+        let cur_conductor = crate::theme::conductor_color_f32();
+        if cur_conductor != self.last_conductor_color {
+            self.last_conductor_color = cur_conductor;
             for doc in &mut self.workspace.documents {
-                doc.sync_track_caches_with_dark(is_dark);
+                doc.sync_track_caches_with_conductor_color(cur_conductor);
+                for p in &mut doc.edit.controller_panels {
+                    p.dirty = true;
+                }
+                for v in doc.edit.arr_am_views.values_mut() {
+                    v.dirty = true;
+                }
             }
         }
 

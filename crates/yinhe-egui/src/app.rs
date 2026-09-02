@@ -156,7 +156,7 @@ pub struct App {
     pub(crate) last_midi_encoding: yinhe_midi::MidiImportEncoding,
     /// Tracks the last applied automation density to detect changes.
     pub(crate) last_automation_density: u32,
-    pub(crate) last_dark_mode: bool,
+    pub(crate) last_conductor_color: [f32; 4],
 
     // ── System resource monitoring ──
     pub(crate) sys_monitor: SystemMonitor,
@@ -357,7 +357,7 @@ impl App {
             layout_needs_save: false,
             last_midi_encoding: yinhe_midi::MidiImportEncoding::Utf8,
             last_automation_density,
-            last_dark_mode: crate::theme::dark_mode(),
+            last_conductor_color: crate::theme::conductor_color_f32(),
 
             sys_monitor: SystemMonitor::new(),
             fps: 0.0,
@@ -475,7 +475,7 @@ impl App {
     /// 共用此实现，避免两处重复 push + setup 代码。
     fn new_project(&mut self) {
         let mut doc = Document::empty();
-        doc.sync_track_caches_with_dark(crate::theme::dark_mode());
+        doc.sync_track_caches_with_conductor_color(crate::theme::conductor_color_f32());
         self.workspace.documents.push(doc);
         let idx = self.workspace.documents.len() - 1;
         // 重叠开关是全局设置：新文档沿用当前持久化值。

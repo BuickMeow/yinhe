@@ -1968,7 +1968,6 @@ fn cull_render_pixel_check() {
             &view,
             &yinhe_core::Selection::default(),
             &track_colors,
-            0,
             0.0,
             false,
         );
@@ -2430,7 +2429,6 @@ fn cull_draw_c_lo_nonzero_minimal() {
             &view,
             &yinhe_core::Selection::default(),
             &track_colors,
-            0,
             0.0,
             false,
         );
@@ -2688,8 +2686,7 @@ fn note_boundary_no_gap_large_tick() {
             &view,
             &yinhe_core::Selection::default(),
             &[[0.2, 0.7, 1.0, 1.0]],
-            1,
-            0.0,
+            1.0,
             false,
         );
         renderer.upload_uniforms(job.uniforms);

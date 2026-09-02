@@ -101,12 +101,9 @@ pub fn marquee_stroke_alpha() -> f32 {
     current().marquee_stroke_alpha
 }
 
+/// Conductor 曲线/轨道指示色：主文字色系（跟随主题 `text_primary`，而非固定黑白）。
 pub fn conductor_color() -> egui::Color32 {
-    if dark_mode() {
-        egui::Color32::from_rgba_unmultiplied(240, 240, 240, 255)
-    } else {
-        egui::Color32::from_rgba_unmultiplied(0, 0, 0, 255)
-    }
+    text_primary()
 }
 
 pub fn conductor_color_f32() -> [f32; 4] {
@@ -124,4 +121,32 @@ pub fn conductor_color_f32() -> [f32; 4] {
 #[cfg_attr(target_os = "macos", allow(dead_code))]
 pub fn danger() -> egui::Color32 {
     current().danger
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yinhe_theme::base::BaseColors;
+
+    /// 回归：Conductor 必须使用主文字色系（text_primary），而非固定白/黑
+    #[test]
+    fn conductor_equals_text_primary() {
+        for base in [
+            BaseColors::DARK,
+            BaseColors::LIGHT,
+            BaseColors::LIGHT_COOL,
+            BaseColors::LIGHT_WARM,
+        ] {
+            set_theme(base);
+            assert_eq!(
+                conductor_color(),
+                text_primary(),
+                "Conductor 应等于 text_primary，base={:?}",
+                base
+            );
+            assert_eq!(conductor_color_f32()[3], 1.0);
+        }
+        // 恢复默认暗色，避免污染后续测试
+        set_theme(BaseColors::DARK);
+    }
 }

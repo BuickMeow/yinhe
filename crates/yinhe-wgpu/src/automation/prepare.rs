@@ -151,6 +151,17 @@ pub fn prepare(
     // 传入 `conductor.tempo` lane。
     let is_velocity = view.show_velocity;
     let tv_hash = crate::hash_bools(track_visible);
+    // Conductor 颜色跟随主题主文字（text_primary）变化时，track_colors 会改变
+    // （曲线颜色烘焙在 CurveInstance 里，不在 tc 缓冲），必须让 bars_key 失效重建
+    let tc_hash = {
+        let mut h: u64 = 0;
+        for c in track_colors {
+            h = h
+                .wrapping_mul(0x9e3779b97f4a7c15)
+                .wrapping_add(crate::hash_f32s(c));
+        }
+        h
+    };
     // ghost_lane_hash：被 ghost 覆盖的 lane 内容变化时触发 Layer 0 重建。
     // 拖拽过程中 ghost 不通过 Document 编辑，revision 不会 bump，所以需要单独 hash。
     let ghost_lane_hash = ghost
@@ -168,6 +179,7 @@ pub fn prepare(
         vh,
         wh,
         tv_hash,
+        tc_hash,
         target_hash(&view.selected_target),
         show_anchors as u64,
         view.show_velocity as u64,
@@ -272,7 +284,17 @@ pub fn prepare_arr_automation(
             AutomationGhost::Curve { .. } => 1,
         })
         .unwrap_or(0);
-    let data_key = layer_cache_key(&[cache_key, ghost_lane_hash]);
+    // Conductor 颜色跟随主题主文字变化时，曲线烘焙色需重建（同 prepare 的 tc_hash）
+    let tc_hash = {
+        let mut h: u64 = 0;
+        for c in track_colors {
+            h = h
+                .wrapping_mul(0x9e3779b97f4a7c15)
+                .wrapping_add(crate::hash_f32s(c));
+        }
+        h
+    };
+    let data_key = layer_cache_key(&[cache_key, ghost_lane_hash, tc_hash]);
 
     // 数据层 skip_lane：ghost 为 Move 时被覆盖的 lane 由 ghost 层完整重画。
     let skip_lane = ghost.as_ref().and_then(|(g, ..)| match g {
@@ -329,4 +351,53 @@ pub fn prepare_arr_automation(
             ghost::build_ghost(out, g, width, &view, max_val, show_anchors, &theme);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 回归：切换主题后 Conductor 曲线颜色变化必须使 layer cache 失效
+    /// （track_colors 烘焙在 CurveInstance 里，bars_key 必须包含 tc_hash）
+    #[test]
+    fn automation_bars_key_changes_with_conductor_color() {
+        let wh = crate::hash_f32s(&[800.0, 80.0]);
+        let tv_hash = crate::hash_bools(&[true, true, true]);
+        let target = target_hash(&yinhe_types::AutomationTarget::Tempo);
+        let dark = [220.0 / 255.0, 220.0 / 255.0, 220.0 / 255.0, 1.0];
+        let light = [30.0 / 255.0, 30.0 / 255.0, 34.0 / 255.0, 1.0];
+        let dark_hash = {
+            let mut h = 0u64;
+            for c in [dark] {
+                h = h
+                    .wrapping_mul(0x9e3779b97f4a7c15)
+                    .wrapping_add(crate::hash_f32s(&c));
+            }
+            h
+        };
+        let light_hash = {
+            let mut h = 0u64;
+            for c in [light] {
+                h = h
+                    .wrapping_mul(0x9e3779b97f4a7c15)
+                    .wrapping_add(crate::hash_f32s(&c));
+            }
+            h
+        };
+        assert_ne!(
+            dark_hash, light_hash,
+            "不同 Conductor 颜色 tc_hash 必须不同"
+        );
+        let vh = 12345u64;
+        let bars_dark = layer_cache_key(&[vh, wh, tv_hash, dark_hash, target, 1, 0, 0, 0, 0]);
+        let bars_light = layer_cache_key(&[vh, wh, tv_hash, light_hash, target, 1, 0, 0, 0, 0]);
+        assert_ne!(
+            bars_dark, bars_light,
+            "bars_key 必须包含 tc_hash，否则主题切换后曲线沿用旧纹理"
+        );
+        // AR 数据层同理
+        let data_dark = layer_cache_key(&[vh, 0, dark_hash]);
+        let data_light = layer_cache_key(&[vh, 0, light_hash]);
+        assert_ne!(data_dark, data_light);
+    }
 }
