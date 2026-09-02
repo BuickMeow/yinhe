@@ -102,7 +102,12 @@ pub fn show_content(
                             .add(crate::widgets::menu::menu_item_button(
                                 ui,
                                 selected,
-                                t!(*key),
+                                egui::RichText::new(t!(*key).as_ref()).size(
+                                    crate::scaling::scaled_font(
+                                        ui.ctx(),
+                                        crate::theme::FILE_MENU_FONT,
+                                    ),
+                                ),
                             ))
                             .clicked()
                         {
