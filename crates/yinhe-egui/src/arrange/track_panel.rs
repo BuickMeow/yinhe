@@ -10,9 +10,12 @@ use yinhe_types::{ArRow, ArRowLayout, AutomationTarget};
 
 use yinhe_editor_core::document::TrackOverride;
 
+mod badge;
+mod draw;
+mod hover;
+mod menu;
 mod types;
 pub(crate) use types::TrackAction;
-use types::*;
 
 /// Render the track list using a painter (unified component for both
 /// pianoroll and transport contexts).
@@ -115,11 +118,8 @@ pub(crate) fn show(
 
     // 兄弟轨道联动：鼠标落在某音轨的主行/任意自动化行上，视为悬停整个
     // 「兄弟轨道」（该音轨及其全部自动化轨），它们的 chevron/加号一并显示。
-    let hover_track = ui
-        .input(|i| i.pointer.hover_pos())
-        .filter(|&pos| panel_rect.contains(pos))
-        .and_then(|pos| row_layout.hit_at_music_y(pos.y - panel_rect.min.y + *scroll_y, lh))
-        .map(|h| h.track());
+    // 成熟实现：走 pointer_hits + pointer_over_popup，感知 Foreground popup 遮挡
+    let hover_track = hover::hover_track(ui, panel_rect, row_layout, *scroll_y, lh);
 
     for row in first_row..last_row {
         let y = panel_rect.min.y + row as f32 * lh - *scroll_y;
@@ -148,7 +148,7 @@ pub(crate) fn show(
             let lane_key = (track_info[track].index, lane.target.clone());
             if am_lane_selected.contains(&lane_key) {
                 painter.rect_filled(row_rect, 0.0, ui.visuals().selection.bg_fill);
-            } else if row_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default())) {
+            } else if hover::is_row_hovered(ui, row_rect) {
                 painter.rect_filled(
                     row_rect,
                     0.0,
@@ -211,7 +211,7 @@ pub(crate) fn show(
                     egui::pos2(btn_x_start + btn_size.x + gap, btn_y),
                     btn_size,
                 );
-                let m_resp = draw_inline_button(
+                let m_resp = draw::draw_inline_button(
                     ui,
                     &painter,
                     m_rect,
@@ -220,7 +220,7 @@ pub(crate) fn show(
                     crate::theme::mute_active(),
                     egui::Id::new(("am_btn_m", track, sub)),
                 );
-                let s_resp = draw_inline_button(
+                let s_resp = draw::draw_inline_button(
                     ui,
                     &painter,
                     s_rect,
@@ -254,22 +254,17 @@ pub(crate) fn show(
                 let add_open =
                     egui::Popup::is_id_open(ui.ctx(), egui::Id::new(("arr_add_pop", track)));
                 if hover_track == Some(track) || add_open {
-                    let lum = color[0] * 0.299 + color[1] * 0.587 + color[2] * 0.114;
-                    let plus_color = if lum > 0.55 {
-                        egui::Color32::BLACK
-                    } else {
-                        egui::Color32::WHITE
-                    };
+                    let plus_color = hover::icon_contrast_color(color);
                     // 加号放在色带列底部（与主行 chevron 同位置 lh*0.62）。
                     let badge_center_x = row_rect.min.x + 14.0 * 0.5;
-                    badge_icon_menu(
+                    badge::badge_icon_menu(
                         ui,
                         egui::pos2(badge_center_x, row_rect.min.y + lh * 0.62),
                         ICON_ADD.codepoint,
                         ICON_ADD.font_family(),
                         plus_color,
                         track,
-                        |ui| create_automation_menu(ui, track, tracks, &mut actions),
+                        |ui| menu::create_automation_menu(ui, track, tracks, &mut actions),
                     );
                 }
             }
@@ -286,7 +281,7 @@ pub(crate) fn show(
         }
         if selected {
             painter.rect_filled(row_rect, 0.0, ui.visuals().selection.bg_fill);
-        } else if row_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default())) {
+        } else if hover::is_row_hovered(ui, row_rect) {
             painter.rect_filled(
                 row_rect,
                 0.0,
@@ -316,12 +311,7 @@ pub(crate) fn show(
             let has_any_lane = tracks
                 .get(idx)
                 .is_some_and(|t| !t.automation_lanes.is_empty());
-            let lum = color[0] * 0.299 + color[1] * 0.587 + color[2] * 0.114;
-            let icon_color = if lum > 0.55 {
-                egui::Color32::BLACK
-            } else {
-                egui::Color32::WHITE
-            };
+            let icon_color = hover::icon_contrast_color(color);
             // 兄弟轨道联动：本轨任意行（主/自动化）被悬停时，图标一并显示。
             let family_hovered = hover_track == Some(idx);
             if !expanded && !has_any_lane {
@@ -330,14 +320,14 @@ pub(crate) fn show(
                 let add_open =
                     egui::Popup::is_id_open(ui.ctx(), egui::Id::new(("arr_add_pop", idx)));
                 if family_hovered || add_open {
-                    badge_icon_menu(
+                    badge::badge_icon_menu(
                         ui,
                         egui::pos2(badge_rect.center().x, badge_rect.min.y + lh * 0.62),
                         ICON_ADD.codepoint,
                         ICON_ADD.font_family(),
                         icon_color,
                         idx,
-                        |ui| create_automation_menu(ui, idx, tracks, &mut actions),
+                        |ui| menu::create_automation_menu(ui, idx, tracks, &mut actions),
                     );
                 }
             } else {
@@ -437,7 +427,7 @@ pub(crate) fn show(
                     btn_size,
                 );
 
-                let m_resp = draw_inline_button(
+                let m_resp = draw::draw_inline_button(
                     ui,
                     &painter,
                     m_rect,
@@ -446,7 +436,7 @@ pub(crate) fn show(
                     crate::theme::mute_active(),
                     egui::Id::new(("track_btn_m", idx)),
                 );
-                let s_resp = draw_inline_button(
+                let s_resp = draw::draw_inline_button(
                     ui,
                     &painter,
                     s_rect,
@@ -726,7 +716,7 @@ pub(crate) fn show(
                 ui.close();
             }
             ui.separator();
-            create_automation_menu(ui, idx, tracks, &mut actions);
+            menu::create_automation_menu(ui, idx, tracks, &mut actions);
         } else {
             // Conductor track: only allow adding after
             if ui
@@ -861,190 +851,4 @@ pub(crate) fn show(
     ui.data_mut(|d| d.insert_temp(drag_id, drag));
 
     (audio_dirty, am_ms_dirty, actions)
-}
-
-/// 「创建自动化」子菜单（主行右键 + 加号占位行共用）：复用 PR AM 面板的
-/// target 列表（跳过 Tempo；已有 lane 的 target 不重复显示），自定义 CC 用
-/// DragValue 选控制器号。选择后 push CreateAutomation 交给 arrange.rs 落模型。
-fn create_automation_menu(
-    ui: &mut egui::Ui,
-    idx: usize,
-    tracks: &[Arc<yinhe_core::TrackData>],
-    actions: &mut Vec<TrackAction>,
-) {
-    // 面板轮廓由调用方提供（badge popup 用 Popup::new 的 Frame::menu；
-    // 右键菜单自带 context_menu 面板），这里只渲染无边框等宽的菜单项。
-    ui.set_min_width(160.0);
-    ui.set_max_width(160.0);
-    let existing: Vec<AutomationTarget> = tracks
-        .get(idx)
-        .map(|t| {
-            t.automation_lanes
-                .iter()
-                .map(|l| l.target.clone())
-                .collect()
-        })
-        .unwrap_or_default();
-    for target in crate::piano_view::automation_panel::AUTOMATION_TARGETS {
-        if matches!(target, AutomationTarget::Tempo) || existing.contains(target) {
-            continue;
-        }
-        let label = super::am_lanes::lane_label(target);
-        if ui
-            .add(crate::widgets::menu::menu_item_button(ui, false, label))
-            .clicked()
-        {
-            actions.push(TrackAction::CreateAutomation {
-                idx,
-                target: target.clone(),
-            });
-            ui.close();
-        }
-    }
-    ui.separator();
-    // 自定义 CC：菜单内 DragValue（0..=127）+ 无边框「创建」按钮。
-    let cc_id = egui::Id::new(("arr_custom_cc", idx));
-    let mut cc = ui.ctx().data_mut(|d| d.get_temp::<u8>(cc_id)).unwrap_or(7);
-    ui.horizontal(|ui| {
-        ui.label(t!("arrange.custom_cc"));
-        if ui
-            .add(egui::DragValue::new(&mut cc).range(0..=127))
-            .changed()
-        {
-            ui.ctx().data_mut(|d| d.insert_temp(cc_id, cc));
-        }
-        if ui
-            .add(crate::widgets::menu::menu_item_button(
-                ui,
-                false,
-                t!("arrange.create"),
-            ))
-            .clicked()
-        {
-            let target = AutomationTarget::CC { controller: cc };
-            if !existing.contains(&target) {
-                actions.push(TrackAction::CreateAutomation { idx, target });
-            }
-            ui.close();
-        }
-    });
-}
-
-/// 在色带图标位置（与 chevron 同坐标、同尺寸、同绘制方式）画一个图标，点击弹菜单。
-///
-/// 图标用 `painter.text` 严格 `CENTER_CENTER` 居中（同 chevron）。点击时用固定的
-/// popup id（`arr_add_pop_{track}`）打开，并把加号中心的**屏幕坐标**存为锚点；
-/// popup 用 `Popup::new(id, ?, Position(固定锚点), ...)` 渲染——锚点不与 hover 行绑定，
-/// 只要该加号在 popup 打开期间持续渲染（调用方用 `add_open` 保证），popup 就会稳定
-/// 落在加号旁固定位置，鼠标移向菜单不会漂移或消失。
-fn badge_icon_menu(
-    ui: &mut egui::Ui,
-    center: egui::Pos2,
-    codepoint: &str,
-    family: egui::FontFamily,
-    color: egui::Color32,
-    track: usize,
-    body: impl FnOnce(&mut egui::Ui),
-) {
-    let size = egui::vec2(12.0, 16.0);
-    let rect = egui::Rect::from_center_size(center, size);
-    let popup_id = egui::Id::new(("arr_add_pop", track));
-    let resp = ui.interact(
-        rect,
-        egui::Id::new(("badge_icon", track)),
-        egui::Sense::click(),
-    );
-    // 图标严格水平+垂直居中对齐（同 chevron），不会因按钮 padding 右偏。
-    ui.painter().text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        codepoint,
-        egui::FontId::new(crate::theme::ICON_FONT, family),
-        color,
-    );
-    // 点击：打开 popup 并在 memory 记下加号中心屏幕坐标作为固定锚点。
-    if resp.clicked() {
-        // rect 是 ui 局部坐标，转成全局屏幕坐标。
-        let screen_center = ui
-            .ctx()
-            .layer_transform_to_global(resp.layer_id)
-            .map(|t| t * rect.center())
-            .unwrap_or(rect.center());
-        ui.ctx().data_mut(|d| {
-            d.insert_temp(
-                Anchor::key(),
-                Anchor {
-                    track,
-                    pos: screen_center,
-                },
-            )
-        });
-        egui::Popup::open_id(ui.ctx(), popup_id);
-    }
-    // 打开状态下渲染 popup（open_memory(None)：不干预 memory 的开关）。
-    if egui::Popup::is_id_open(ui.ctx(), popup_id)
-        && let Some(anchor) = ui.ctx().data_mut(|d| d.get_temp::<Anchor>(Anchor::key()))
-        && anchor.track == track
-    {
-        egui::Popup::new(
-            popup_id,
-            ui.ctx().clone(),
-            anchor.pos, // impl From<Pos2> → PopupAnchor::Position
-            egui::LayerId::new(egui::Order::Middle, egui::Id::new("arr_add_popup_layer")),
-        )
-        .frame(egui::Frame::menu(ui.style())) // 只一层菜单轮廓，不再由 body 内部再套
-        .open_memory(None)
-        .show(|ui| {
-            ui.set_min_width(160.0);
-            ui.set_max_width(160.0);
-            body(ui);
-        });
-    }
-}
-
-/// Paint an 18x18 inline button with a one-letter label and click handling.
-fn draw_inline_button(
-    ui: &mut egui::Ui,
-    painter: &egui::Painter,
-    rect: egui::Rect,
-    label: &str,
-    active: bool,
-    active_color: egui::Color32,
-    id: egui::Id,
-) -> egui::Response {
-    let resp = ui.interact(rect, id, egui::Sense::click());
-    let hovered = resp.hovered();
-    let pressed = resp.is_pointer_button_down_on();
-
-    let (fill, text_col) = if active {
-        let f = if pressed {
-            crate::theme::pressed_color(active_color)
-        } else if hovered {
-            crate::theme::hover_color(active_color)
-        } else {
-            active_color
-        };
-        (f, egui::Color32::BLACK)
-    } else {
-        let base = crate::theme::btn_bg();
-        let f = if pressed {
-            crate::theme::pressed_color(base)
-        } else if hovered {
-            crate::theme::hover_color(base)
-        } else {
-            base
-        };
-        (f, crate::theme::text_secondary())
-    };
-
-    painter.rect_filled(rect, 3.0, fill);
-    painter.text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        label,
-        egui::FontId::proportional(crate::theme::SMALL_FONT),
-        text_col,
-    );
-
-    resp
 }
