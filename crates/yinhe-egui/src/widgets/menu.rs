@@ -4,7 +4,7 @@ use eframe::egui;
 
 /// 菜单项按钮：铺满整行宽度 + 左对齐 + 左右边距≈上下边距。
 ///
-/// 高度从 30 → 27 稍微缩减一点点上下边距，左内边距 7 与上下 (27-文本≈13)/2≈7 对齐，
+/// 高度 24（从 30→27→24 再缩一档），左内边距≈上下 (24-13)/2≈5.5，限制 3..6，
 /// 文字左对齐而非居中，避免 `Button` 居中导致的左宽右窄。
 pub(crate) fn menu_item_button(
     ui: &egui::Ui,
@@ -17,7 +17,7 @@ pub(crate) fn menu_item_button(
         selected,
         text,
         width,
-        height: 27.0,
+        height: 24.0,
         wrap: None,
         shortcut: None,
     }
@@ -68,8 +68,8 @@ impl egui::Widget for MenuItemButton {
         } else {
             self.height
         };
-        // 左边距≈上下边距：上下 = (height-13)/2，左取相同值，限制 4..8
-        let v_pad = ((height - 13.0) * 0.5).clamp(4.0, 8.0);
+        // 左边距≈上下边距：上下 = (height-13)/2，左取相同值，限制 3..6（用户要求再小一点点）
+        let v_pad = ((height - 13.0) * 0.5).clamp(3.0, 6.0);
         let h_pad = v_pad;
         let desired_size = egui::vec2(self.width, height);
         let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
@@ -104,19 +104,19 @@ impl egui::Widget for MenuItemButton {
         // 主文本左对齐，快捷键右对齐
         let wrap = self.wrap.unwrap_or(egui::TextWrapMode::Truncate);
         if let Some(shortcut) = self.shortcut {
-            // 左右分区：中间留 gap
-            let gap = 12.0;
-            let shortcut_available = 80.0;
-            let main_available = (rect.width() - 2.0 * h_pad - gap - shortcut_available).max(0.0);
-            let main_galley =
-                self.text
-                    .into_galley(ui, Some(wrap), main_available, egui::TextStyle::Button);
+            let gap = 8.0;
+            // 先测量快捷键实际宽度，再把剩余空间留给主文本，避免固定 80 导致主文本被截断
             let shortcut_galley = shortcut.into_galley(
                 ui,
                 Some(egui::TextWrapMode::Truncate),
-                shortcut_available,
+                120.0,
                 egui::TextStyle::Button,
             );
+            let shortcut_w = shortcut_galley.size().x;
+            let main_available = (rect.width() - 2.0 * h_pad - gap - shortcut_w).max(0.0);
+            let main_galley =
+                self.text
+                    .into_galley(ui, Some(wrap), main_available, egui::TextStyle::Button);
             let main_pos = egui::pos2(
                 rect.min.x + h_pad,
                 rect.center().y - main_galley.size().y * 0.5,
