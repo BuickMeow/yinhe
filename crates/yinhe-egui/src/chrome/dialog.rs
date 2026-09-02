@@ -153,6 +153,12 @@ pub(crate) fn title_bar(ui: &mut egui::Ui, title: &str, close: &mut bool) {
     if drag_resp.dragged_by(egui::PointerButton::Primary) {
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
     }
+    // 双击标题栏切换最大化/还原（行为与主窗口一致，所有可最大化对话框均支持）
+    if drag_resp.double_clicked_by(egui::PointerButton::Primary) {
+        let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+        ui.ctx()
+            .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+    }
 
     // Reserve space
     ui.allocate_space(egui::vec2(0.0, height));
