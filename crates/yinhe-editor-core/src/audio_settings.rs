@@ -177,15 +177,18 @@ pub struct AudioSettings {
     pub theme_base: yinhe_theme::base::BaseColors,
     /// 主题预设名（"dark"/"light"/"custom"）。
     pub theme_preset: String,
-    /// 用户自定义主题（持久化到本地），通过主题页首位“+”创建
+    /// 用户自定义主题（持久化到本地），通过顶部取色器/复制自动创建
     #[serde(default)]
     pub custom_themes: Vec<CustomTheme>,
-    /// 自定义主题编辑弹窗是否可见（不持久化）
+    /// 已收藏的主题标识（预设为 kebab 名，自定义为 id 字符串），收藏的排在网格前面
+    #[serde(default)]
+    pub favorite_themes: Vec<String>,
+    /// 正在重命名的自定义主题 id（不持久化）
     #[serde(skip)]
-    pub show_custom_theme_editor: bool,
-    /// 正在编辑/新建的自定义主题草稿（不持久化）
+    pub rename_custom_id: Option<u64>,
+    /// 重命名输入缓冲（不持久化）
     #[serde(skip)]
-    pub custom_theme_draft: Option<CustomTheme>,
+    pub rename_buffer: String,
     /// UI 缩放倍率（egui zoom_factor，0.75~2.0，1.0 = 100%）。
     pub ui_scale: f32,
     /// 内容层背景/条纹不透明度（PR/AM 背景、AR 条纹；1.0 = 不透明，0.0 = 全透明）。
@@ -257,8 +260,9 @@ impl Default for AudioSettings {
             theme_base: yinhe_theme::base::BaseColors::DARK,
             theme_preset: "ink-wash".to_string(),
             custom_themes: Vec::new(),
-            show_custom_theme_editor: false,
-            custom_theme_draft: None,
+            favorite_themes: Vec::new(),
+            rename_custom_id: None,
+            rename_buffer: String::new(),
             ui_scale: 1.0, // UI 缩放（egui zoom_factor，1.0 = 100%）
             content_opacity: 0.7,
             layout: LayoutSettings::default(),
