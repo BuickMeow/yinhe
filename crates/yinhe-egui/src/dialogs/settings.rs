@@ -194,6 +194,12 @@ pub(crate) fn show_viewport(
             true,
         ),
         move |vctx, _class| {
+            // 设置视口的窗口深浅需与主窗口同步，否则 IME 候选窗跟随焦点窗口深浅，主题切换后需退出才生效
+            vctx.set_theme(if crate::theme::dark_mode() {
+                egui::ThemePreference::Dark
+            } else {
+                egui::ThemePreference::Light
+            });
             let mut slot = settings_cb.borrow_mut().take();
             if let Some(ref mut s) = slot {
                 let mut close = false;
