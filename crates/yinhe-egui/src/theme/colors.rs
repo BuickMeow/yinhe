@@ -144,26 +144,15 @@ mod tests {
         set_theme(BaseColors::DARK);
     }
 
-    /// 新增预设全部派生成功且 dark_mode 正确
+    /// 新增预设全部派生成功且 dark_mode 正确（100 套，含热门移植）
     #[test]
     fn all_presets_have_consistent_dark_mode() {
-        let light_names = [
-            "rice-paper",
-            "reed-mist",
-            "wheat-awn",
-            "cotton-rose",
-            "bamboo",
-            "silk",
-            "tea-bud",
-            "bulrush",
-            "reed-fluff",
-        ];
         for (name, base) in BaseColors::PRESETS {
             let t = derive_theme(base);
-            let is_light = light_names.contains(&name);
             assert_eq!(
-                t.dark_mode, !is_light,
-                "preset {name} dark_mode 与 light 名单不一致"
+                t.dark_mode,
+                base.is_dark(),
+                "preset {name} dark_mode 与 bg 亮度不一致"
             );
             // 所有主题文字与背景必须可区分
             assert_ne!(t.text_primary, t.app_bg, "preset {name}");
