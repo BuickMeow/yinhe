@@ -316,16 +316,14 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 left: 8,
                 right: 8,
                 top: 0,
-                bottom: 6,
+                bottom: 8,
             },
             stroke: egui::Stroke::NONE,
             ..Default::default()
         })
         .show(ui, |ui| {
-            // 行高/间隙与 popup 统一为 22/6（原 32/8 偏高）
-            ui.spacing_mut().interact_size.y = 22.0;
-            ui.spacing_mut().item_spacing.x = 6.0;
-            ui.spacing_mut().item_spacing.y = 6.0;
+            // 顶栏图标保持原 32 尺寸，不随 popup 22 而缩
+            ui.spacing_mut().interact_size.y = 32.0;
 
             let mut timecode_rect: Option<egui::Rect> = None;
 
@@ -905,6 +903,9 @@ fn show_action_menu<T: PopupRow>(
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .width(menu_w)
         .show(|ui| {
+            // 行高/间隙与通用 menu 22/6 统一
+            ui.spacing_mut().item_spacing.y = 6.0;
+            ui.spacing_mut().item_spacing.x = 6.0;
             // 锁死内容宽度（min == max）：宽度恒定保证 Area 尺寸与对齐计算
             // 稳定（亚像素抖动此前已由删除高亮框描边根治）。
             ui.set_min_width(menu_w);

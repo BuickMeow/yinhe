@@ -13,7 +13,7 @@ pub fn show_appearance_tab(
     ui.heading(t!("settings.appearance.heading").as_ref());
     ui.add_space(8.0);
 
-    // DPI / 界面缩放（zoom_factor，独立于字体）—— 松手才应用，避免拖动时 UI 乱窜
+    // DPI / 界面缩放——仅松手才写入并应用，避免拖动中 zoom 导致鼠标错位乱窜
     setting_row(
         ui,
         t!("settings.appearance.ui_scale").as_ref(),
@@ -25,13 +25,10 @@ pub fn show_appearance_tab(
                     .step_by(0.05)
                     .show_value(true),
             );
-            if resp.changed() {
-                settings.ui_scale = scale;
-                changed = true;
-            }
-            // 仅松手/非拖拽变更时应用，防止拖动中 zoom 导致鼠标错位
             if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
-                crate::scaling::apply_ui_scale(main_ctx, settings.ui_scale);
+                settings.ui_scale = scale;
+                crate::scaling::apply_ui_scale(main_ctx, scale);
+                changed = true;
             }
             if ui
                 .button(t!("settings.appearance.reset_scale").as_ref())
@@ -44,7 +41,7 @@ pub fn show_appearance_tab(
         },
     );
 
-    // 字体大小（Style::text_styles 独立缩放，不影响布局）—— 同上松手应用
+    // 字体大小——同上仅松手应用
     setting_row(
         ui,
         t!("settings.appearance.font_scale").as_ref(),
@@ -56,12 +53,10 @@ pub fn show_appearance_tab(
                     .step_by(0.05)
                     .show_value(true),
             );
-            if resp.changed() {
-                settings.font_scale = fscale;
-                changed = true;
-            }
             if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
-                crate::scaling::apply_font_scale(main_ctx, settings.font_scale);
+                settings.font_scale = fscale;
+                crate::scaling::apply_font_scale(main_ctx, fscale);
+                changed = true;
             }
             if ui
                 .button(t!("settings.appearance.reset_scale").as_ref())
