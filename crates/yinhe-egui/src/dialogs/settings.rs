@@ -108,7 +108,7 @@ pub fn show_content(
                         {
                             settings.settings_tab = i;
                         }
-                        ui.add_space(4.0);
+                        ui.add_space(6.0);
                     }
                 });
         });

@@ -728,8 +728,8 @@ fn popup_menu_row(
     // 每行绝对定位（ui.put）固定尺寸：主按钮 + 可选右侧图钉，
     // 行宽恰好等于菜单内容宽，不参与 popup 宽度反馈；
     // 无快捷键的项用空 shortcut_text 保持左对齐（grow 占中间）。
-    // 行高 22 比原版 20 稍松（保持与通用 menu 22 一致）
-    let row_h = ui.spacing().interact_size.y.min(22.0);
+    // 行高固定 22 与通用 menu 22 一致（不跟随 interact_size，避免可点击高度未变而仅 gap 变大）
+    let row_h = 22.0;
     let row_w = ui.available_width();
     let (row_rect, _) = ui.allocate_exact_size(egui::vec2(row_w, row_h), egui::Sense::hover());
 
@@ -795,13 +795,10 @@ fn popup_menu_row(
         )
         .frame(false);
         let resp = ui.put(pin_rect, pin_btn);
-        // 无边框按钮 hover 时补背景反馈，提示可点击
-        if resp.hovered() {
-            ui.painter().rect_filled(
-                pin_rect,
-                4.0,
-                crate::theme::hover_color(crate::theme::app_bg()),
-            );
+        // 图钉悬停/按下与普通选项同用 interact_selectable 色系
+        if resp.hovered() || resp.is_pointer_button_down_on() {
+            let visuals = ui.style().interact_selectable(&resp, false);
+            ui.painter().rect_filled(pin_rect, 4.0, visuals.bg_fill);
         }
         pin_resp = Some(resp);
     }
@@ -1084,6 +1081,8 @@ fn recent_files_section(
         // 展开/收起由上面的 hover/点击逻辑管理，popup 自身不响应点击关闭
         .close_behavior(egui::PopupCloseBehavior::IgnoreClicks)
         .show(|ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            ui.spacing_mut().item_spacing.x = 6.0;
             ui.set_min_width(sub_w);
             ui.set_max_width(sub_w);
             for path in recent {
@@ -1548,6 +1547,8 @@ mod tests {
         // 注册 material icons 字体（popup_menu_row 用图标字体渲染）
         ctx.add_font(egui_material_icons::font_insert());
         let output = ctx.run_ui(Default::default(), |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            ui.spacing_mut().interact_size.y = 22.0;
             spacing_y = ui.spacing().item_spacing.y;
             interact_y = ui.spacing().interact_size.y;
             ui.set_min_width(200.0);
@@ -1585,9 +1586,8 @@ mod tests {
             gaps.iter().all(|g| (g - gaps[0]).abs() < 0.5),
             "播放菜单行间距不一致: {gaps:?}，ys={ys:?}"
         );
-        // 行间距 = 行高 + item_spacing（±1.5 容忍按钮内容高度的取整误差），
-        // 不应出现额外的大空隙（曾因 scope 嵌套 put 双推进 spacing 导致每行多 3px）
-        let expected = interact_y.min(24.0) + spacing_y;
+        // 行间距 = 行高 22 + item_spacing 6（与通用 menu 22/6 统一）
+        let expected = 22.0 + spacing_y;
         assert!(
             gaps.iter().all(|g| (g - expected).abs() < 1.5),
             "行间距异常: {gaps:?}（期望约 {expected}）"
