@@ -282,12 +282,11 @@ mod tests {
     #[test]
     fn derive_light_gray_ladder_monotonic() {
         let lum = |c: Color32| c.r() as i32; // 无彩色系下 r 即亮度
-        for base in [
-            crate::base::BaseColors::LIGHT,
-            crate::base::BaseColors::LIGHT_COOL,
-            crate::base::BaseColors::LIGHT_WARM,
-        ] {
-            let t = derive_theme(base);
+        for (_, base) in crate::base::BaseColors::PRESETS
+            .iter()
+            .filter(|(_, b)| !derive_theme(*b).dark_mode)
+        {
+            let t = derive_theme(*base);
             let ladder = [
                 t.text_primary,
                 t.text_bright,
@@ -298,11 +297,12 @@ mod tests {
             ];
             assert!(
                 ladder.windows(2).all(|w| lum(w[0]) <= lum(w[1])),
-                "亮色灰阶应单调变浅: {:?}",
-                ladder
+                "亮色灰阶应单调变浅: {:?} base={:?}",
+                ladder,
+                base
             );
             // 最弱档与主文字拉开足够差距（>= 40 级），否则亮色下灰字≈黑字
-            assert!(lum(ladder[5]) - lum(ladder[0]) >= 40);
+            assert!(lum(ladder[5]) - lum(ladder[0]) >= 40, "base={:?}", base);
         }
     }
 
@@ -359,15 +359,38 @@ mod tests {
     /// 新增的亮色预设：亮基底、深对比字、网格线压暗方向全部正确。
     #[test]
     fn derive_light_presets_directions() {
-        for base in [
-            crate::base::BaseColors::LIGHT_COOL,
-            crate::base::BaseColors::LIGHT_WARM,
-        ] {
-            let t = derive_theme(base);
-            assert!(!t.dark_mode);
-            assert_eq!(t.contrast_fg, Color32::from_gray(20));
-            assert!(t.line_fg.r() < t.app_bg.r());
+        for (_, base) in crate::base::BaseColors::PRESETS
+            .iter()
+            .filter(|(_, b)| !derive_theme(*b).dark_mode)
+        {
+            let t = derive_theme(*base);
+            assert!(!t.dark_mode, "base={:?}", base);
+            assert_eq!(t.contrast_fg, Color32::from_gray(20), "base={:?}", base);
+            assert!(t.line_fg.r() < t.app_bg.r(), "base={:?}", base);
         }
+    }
+
+    /// 所有预设（涵盖 DJ/影视/开源热门）方向正确：暗底白字、亮底深字， سطح阶梯单调
+    #[test]
+    fn derive_all_presets_directions() {
+        for (name, base) in crate::base::BaseColors::PRESETS {
+            let t = derive_theme(base);
+            // dark_mode 与背景亮度一致
+            if t.dark_mode {
+                assert_eq!(t.contrast_fg, Color32::WHITE, "dark preset {name}");
+                assert!(t.line_fg.r() > t.app_bg.r(), "dark {name} line_fg > bg");
+            } else {
+                assert_eq!(t.contrast_fg, Color32::from_gray(20), "light {name}");
+                assert!(t.line_fg.r() < t.app_bg.r(), "light {name} line_fg < bg");
+            }
+            // 主文字灰阶不坍缩
+            assert_ne!(t.text_primary, t.text_disabled, "preset {name}");
+        }
+        assert_eq!(
+            crate::base::BaseColors::PRESETS.len(),
+            14,
+            "预设数量应为 14（4 原有 + 10 新增）"
+        );
     }
 
     /// Rgba ↔ Color32 往返无损。

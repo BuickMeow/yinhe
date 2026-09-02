@@ -126,12 +126,132 @@ impl BaseColors {
         warning: FIXED_WARNING,
     };
 
+    /// Dracula — 高饱和紫粉绿，DJ/电子现场高能量，插件生态最广
+    pub const DRACULA: Self = Self {
+        bg: Rgba::new(40, 42, 54, 255),
+        text: Rgba::new(248, 248, 242, 255),
+        accent: Rgba::new(189, 147, 249, 255),
+        selection: Rgba::new(68, 71, 90, 255),
+        danger: FIXED_DANGER,
+        border: Rgba::new(68, 71, 90, 255),
+        warning: FIXED_WARNING,
+    };
+
+    /// Nord — 北欧极简冷灰蓝，影视配乐/长时间编曲低疲劳
+    pub const NORD: Self = Self {
+        bg: Rgba::new(46, 52, 64, 255),
+        text: Rgba::new(236, 239, 244, 255),
+        accent: Rgba::new(136, 192, 208, 255),
+        selection: Rgba::new(67, 76, 94, 255),
+        danger: FIXED_DANGER,
+        border: Rgba::new(76, 86, 106, 255),
+        warning: FIXED_WARNING,
+    };
+
+    /// Catppuccin Mocha — 柔和 pastel 暗色，开源社区 2026 最受欢迎，长时舒适
+    pub const CATPPUCCIN_MOCHA: Self = Self {
+        bg: Rgba::new(30, 30, 46, 255),
+        text: Rgba::new(205, 214, 244, 255),
+        accent: Rgba::new(137, 180, 250, 255),
+        selection: Rgba::new(49, 50, 68, 255),
+        danger: FIXED_DANGER,
+        border: Rgba::new(69, 71, 90, 255),
+        warning: FIXED_WARNING,
+    };
+
+    /// Tokyo Night — 深蓝霓虹夜景，高对比度，截图与夜间专注
+    pub const TOKYO_NIGHT: Self = Self {
+        bg: Rgba::new(26, 27, 38, 255),
+        text: Rgba::new(192, 202, 245, 255),
+        accent: Rgba::new(122, 162, 247, 255),
+        selection: Rgba::new(41, 46, 66, 255),
+        danger: FIXED_DANGER,
+        border: Rgba::new(52, 59, 88, 255),
+        warning: FIXED_WARNING,
+    };
+
+    /// Gruvbox Dark — 复古暖棕，低眩光，适合长时间敲代码/DJ 打谱
+    pub const GRUVBOX_DARK: Self = Self {
+        bg: Rgba::new(40, 40, 40, 255),
+        text: Rgba::new(235, 219, 178, 255),
+        accent: Rgba::new(131, 165, 152, 255),
+        selection: Rgba::new(60, 56, 54, 255),
+        danger: FIXED_DANGER,
+        border: Rgba::new(80, 73, 69, 255),
+        warning: FIXED_WARNING,
+    };
+
+    /// Everforest Dark — 绿意森林低饱和，护眼，影视/古典编曲温润
+    pub const EVERFOREST_DARK: Self = Self {
+        bg: Rgba::new(45, 53, 59, 255),
+        text: Rgba::new(211, 198, 170, 255),
+        accent: Rgba::new(127, 187, 179, 255),
+        selection: Rgba::new(61, 72, 77, 255),
+        danger: FIXED_DANGER,
+        border: Rgba::new(83, 98, 85, 255),
+        warning: FIXED_WARNING,
+    };
+
+    /// Rose Pine — 自然松枝暮色，Lo-Fi/独立音乐人审美
+    pub const ROSE_PINE: Self = Self {
+        bg: Rgba::new(25, 23, 36, 255),
+        text: Rgba::new(224, 222, 244, 255),
+        accent: Rgba::new(235, 111, 146, 255),
+        selection: Rgba::new(38, 35, 58, 255),
+        danger: FIXED_DANGER,
+        border: Rgba::new(64, 61, 82, 255),
+        warning: FIXED_WARNING,
+    };
+
+    /// One Dark Pro — Atom 经典深靛蓝，均衡对比，通用开发/编曲
+    pub const ONE_DARK_PRO: Self = Self {
+        bg: Rgba::new(40, 44, 52, 255),
+        text: Rgba::new(171, 178, 191, 255),
+        accent: Rgba::new(97, 175, 239, 255),
+        selection: Rgba::new(62, 68, 81, 255),
+        danger: FIXED_DANGER,
+        border: Rgba::new(62, 68, 81, 255),
+        warning: FIXED_WARNING,
+    };
+
+    /// Catppuccin Latte — 亮色 pastel，开源社区配套浅色，强光下可读
+    pub const CATPPUCCIN_LATTE: Self = Self {
+        bg: Rgba::new(239, 241, 245, 255),
+        text: Rgba::new(76, 79, 105, 255),
+        accent: Rgba::new(30, 102, 245, 255),
+        selection: Rgba::new(204, 208, 218, 255),
+        danger: FIXED_DANGER,
+        border: Rgba::new(188, 192, 204, 255),
+        warning: FIXED_WARNING,
+    };
+
+    /// Gruvbox Light — 复古米黄亮色，暖调低眩光，日间/明亮工作室
+    pub const GRUVBOX_LIGHT: Self = Self {
+        bg: Rgba::new(251, 241, 199, 255),
+        text: Rgba::new(60, 56, 54, 255),
+        accent: Rgba::new(7, 102, 120, 255),
+        selection: Rgba::new(235, 219, 178, 255),
+        danger: FIXED_DANGER,
+        border: Rgba::new(213, 196, 161, 255),
+        warning: FIXED_WARNING,
+    };
+
     /// 内置预设（设置页下拉框）。`None` 表示"自定义"。
-    pub const PRESETS: [(&'static str, Self); 4] = [
+    pub const PRESETS: [(&'static str, Self); 14] = [
         ("dark", Self::DARK),
         ("light", Self::LIGHT),
         ("light-cool", Self::LIGHT_COOL),
         ("light-warm", Self::LIGHT_WARM),
+        ("dracula", Self::DRACULA),
+        ("nord", Self::NORD),
+        ("catppuccin-mocha", Self::CATPPUCCIN_MOCHA),
+        ("tokyo-night", Self::TOKYO_NIGHT),
+        ("gruvbox-dark", Self::GRUVBOX_DARK),
+        ("everforest-dark", Self::EVERFOREST_DARK),
+        ("rose-pine", Self::ROSE_PINE),
+        ("one-dark-pro", Self::ONE_DARK_PRO),
+        ("catppuccin-latte", Self::CATPPUCCIN_LATTE),
+        ("gruvbox-light", Self::GRUVBOX_LIGHT),
     ];
 
     pub fn preset_by_name(name: &str) -> Option<Self> {

@@ -131,22 +131,39 @@ mod tests {
     /// 回归：Conductor 必须使用主文字色系（text_primary），而非固定白/黑
     #[test]
     fn conductor_equals_text_primary() {
-        for base in [
-            BaseColors::DARK,
-            BaseColors::LIGHT,
-            BaseColors::LIGHT_COOL,
-            BaseColors::LIGHT_WARM,
-        ] {
+        for (name, base) in BaseColors::PRESETS {
             set_theme(base);
             assert_eq!(
                 conductor_color(),
                 text_primary(),
-                "Conductor 应等于 text_primary，base={:?}",
-                base
+                "Conductor 应等于 text_primary，preset={name}"
             );
             assert_eq!(conductor_color_f32()[3], 1.0);
         }
         // 恢复默认暗色，避免污染后续测试
+        set_theme(BaseColors::DARK);
+    }
+
+    /// 新增预设全部派生成功且 dark_mode 正确
+    #[test]
+    fn all_presets_have_consistent_dark_mode() {
+        let light_names = [
+            "light",
+            "light-cool",
+            "light-warm",
+            "catppuccin-latte",
+            "gruvbox-light",
+        ];
+        for (name, base) in BaseColors::PRESETS {
+            let t = derive_theme(base);
+            let is_light = light_names.contains(&name);
+            assert_eq!(
+                t.dark_mode, !is_light,
+                "preset {name} dark_mode 与 light 名单不一致"
+            );
+            // 所有主题文字与背景必须可区分
+            assert_ne!(t.text_primary, t.app_bg, "preset {name}");
+        }
         set_theme(BaseColors::DARK);
     }
 }
