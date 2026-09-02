@@ -148,15 +148,15 @@ mod tests {
     #[test]
     fn all_presets_have_consistent_dark_mode() {
         let light_names = [
-            "porcelain-dawn",
-            "frost-mirror",
-            "pottery-warmth",
-            "mocha-dawn",
-            "earthen-dawn",
-            "night-silk",
-            "star-ink",
-            "moon-islet",
-            "autumn-bristle",
+            "rice-paper",
+            "reed-mist",
+            "wheat-awn",
+            "cotton-rose",
+            "bamboo",
+            "silk",
+            "tea-bud",
+            "bulrush",
+            "reed-fluff",
         ];
         for (name, base) in BaseColors::PRESETS {
             let t = derive_theme(base);

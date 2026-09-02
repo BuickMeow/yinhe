@@ -127,6 +127,10 @@ pub struct AudioSettings {
     pub theme_base: yinhe_theme::base::BaseColors,
     /// 主题预设名（"dark"/"light"/"custom"）。
     pub theme_preset: String,
+    /// 每张主题卡片是否处于“翻转（日/月）”状态，存预设键名（如 "ink-wash"）
+    /// 翻转即 `base.inverted()`，与 `theme_base` 的实际明暗无关，持久化跨会话
+    #[serde(default)]
+    pub theme_inverted: Vec<String>,
     /// UI 缩放倍率（egui zoom_factor，0.75~2.0，1.0 = 100%）。
     pub ui_scale: f32,
     /// 内容层背景/条纹不透明度（PR/AM 背景、AR 条纹；1.0 = 不透明，0.0 = 全透明）。
@@ -196,7 +200,8 @@ impl Default for AudioSettings {
             use_gpu_cull: false, // 默认 CPU 构建
             locale: "zh-CN".to_string(),
             theme_base: yinhe_theme::base::BaseColors::DARK,
-            theme_preset: "dark".to_string(),
+            theme_preset: "ink-wash".to_string(),
+            theme_inverted: Vec::new(),
             ui_scale: 1.0, // UI 缩放（egui zoom_factor，1.0 = 100%）
             content_opacity: 0.7,
             layout: LayoutSettings::default(),

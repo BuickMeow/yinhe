@@ -163,21 +163,32 @@ pub fn show_theme_tab(
             for (idx, (name, base)) in BaseColors::PRESETS.iter().enumerate() {
                 let key = format!("settings.theme.{}", name.replace('-', "_"));
                 let display = t!(key.as_str()).to_string();
-                let inverted = base.inverted();
-                let is_selected = settings.theme_base == *base || settings.theme_base == inverted;
+                let is_flipped = settings.theme_inverted.contains(&name.to_string());
+                let effective = if is_flipped { base.inverted() } else { *base };
+                let is_selected = settings.theme_base == effective;
                 let (card_clicked, toggle_clicked) =
-                    theme_preview_card(ui, name, *base, &display, is_selected);
+                    theme_preview_card(ui, name, effective, &display, is_selected);
                 if card_clicked {
-                    settings.theme_base = *base;
+                    settings.theme_base = effective;
                     settings.theme_preset = (*name).to_string();
-                    crate::theme::set_theme(*base);
+                    crate::theme::set_theme(effective);
                     changed = true;
                 }
                 if toggle_clicked {
-                    let inv = base.inverted();
-                    settings.theme_base = inv;
-                    settings.theme_preset = "custom".to_string();
-                    crate::theme::set_theme(inv);
+                    // 翻转该卡片的展示状态
+                    let was_selected = settings.theme_base == effective;
+                    if is_flipped {
+                        settings.theme_inverted.retain(|n| n != *name);
+                    } else {
+                        settings.theme_inverted.push((*name).to_string());
+                    }
+                    let new_effective = if is_flipped { *base } else { base.inverted() };
+                    // 若该卡正被选中，主题随卡片一起翻转
+                    if was_selected {
+                        settings.theme_base = new_effective;
+                        settings.theme_preset = (*name).to_string();
+                        crate::theme::set_theme(new_effective);
+                    }
                     changed = true;
                 }
                 if (idx + 1) % 3 == 0 {
@@ -187,9 +198,21 @@ pub fn show_theme_tab(
         });
 
     // 自定义提示：当前为自定义配色时显示
-    let is_custom = BaseColors::PRESETS
-        .iter()
-        .all(|(_, b)| settings.theme_base != *b && settings.theme_base != b.inverted());
+    let is_custom = {
+        let mut matched = false;
+        for (name, base) in BaseColors::PRESETS.iter() {
+            let eff = if settings.theme_inverted.contains(&name.to_string()) {
+                base.inverted()
+            } else {
+                *base
+            };
+            if settings.theme_base == eff {
+                matched = true;
+                break;
+            }
+        }
+        !matched
+    };
     if is_custom {
         ui.add_space(4.0);
         ui.label(

@@ -330,51 +330,29 @@ impl BaseColors {
         warning: FIXED_WARNING,
     };
 
-    /// 内置预设（设置页下拉框）。`None` 表示"自定义"。
+    /// 内置预设（花草诗意中性名，无日夜字样，每色可经日/月翻转）。
     pub const PRESETS: [(&'static str, Self); 18] = [
-        ("obsidian-night", Self::DARK),
-        ("porcelain-dawn", Self::LIGHT),
-        ("frost-mirror", Self::LIGHT_COOL),
-        ("pottery-warmth", Self::LIGHT_WARM),
-        ("crimson-night", Self::DRACULA),
-        ("arctic-mirror", Self::NORD),
-        ("mocha-night", Self::CATPPUCCIN_MOCHA),
-        ("neon-capital", Self::TOKYO_NIGHT),
-        ("earthen-dusk", Self::GRUVBOX_DARK),
-        ("moss-peak", Self::EVERFOREST_DARK),
-        ("rosy-branch", Self::ROSE_PINE),
-        ("abyss-glow", Self::ONE_DARK_PRO),
-        ("mocha-dawn", Self::CATPPUCCIN_LATTE),
-        ("earthen-dawn", Self::GRUVBOX_LIGHT),
-        ("night-silk", Self::XIAO_JUAN),
-        ("star-ink", Self::XING_YAN),
-        ("moon-islet", Self::YUE_ZHU),
-        ("autumn-bristle", Self::QIU_HAO),
+        ("ink-wash", Self::DARK),
+        ("rice-paper", Self::LIGHT),
+        ("reed-mist", Self::LIGHT_COOL),
+        ("wheat-awn", Self::LIGHT_WARM),
+        ("wisteria", Self::DRACULA),
+        ("pine-frost", Self::NORD),
+        ("plum-ink", Self::CATPPUCCIN_MOCHA),
+        ("iris", Self::TOKYO_NIGHT),
+        ("persimmon", Self::GRUVBOX_DARK),
+        ("moss", Self::EVERFOREST_DARK),
+        ("wild-rose", Self::ROSE_PINE),
+        ("indigo", Self::ONE_DARK_PRO),
+        ("cotton-rose", Self::CATPPUCCIN_LATTE),
+        ("bamboo", Self::GRUVBOX_LIGHT),
+        ("silk", Self::XIAO_JUAN),
+        ("tea-bud", Self::XING_YAN),
+        ("bulrush", Self::YUE_ZHU),
+        ("reed-fluff", Self::QIU_HAO),
     ];
 
     pub fn preset_by_name(name: &str) -> Option<Self> {
-        // 兼容旧键（中英文键名历史遗留）
-        let name = match name {
-            "dark" => "obsidian-night",
-            "light" => "porcelain-dawn",
-            "light-cool" => "frost-mirror",
-            "light-warm" => "pottery-warmth",
-            "dracula" => "crimson-night",
-            "nord" => "arctic-mirror",
-            "catppuccin-mocha" => "mocha-night",
-            "tokyo-night" => "neon-capital",
-            "gruvbox-dark" => "earthen-dusk",
-            "everforest-dark" => "moss-peak",
-            "rose-pine" => "rosy-branch",
-            "one-dark-pro" => "abyss-glow",
-            "catppuccin-latte" => "mocha-dawn",
-            "gruvbox-light" => "earthen-dawn",
-            "xiao-juan" => "night-silk",
-            "xing-yan" => "star-ink",
-            "yue-zhu" => "moon-islet",
-            "qiu-hao" => "autumn-bristle",
-            _ => name,
-        };
         Self::PRESETS
             .iter()
             .find(|(n, _)| *n == name)
