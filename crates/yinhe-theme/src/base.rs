@@ -1232,7 +1232,7 @@ impl BaseColors {
         warning: FIXED_WARNING,
     };
 
-    /// 内置预设（花草诗意中性名，无日夜字样，每色可经日/月翻转）。
+    /// 内置预设（94 套花草诗意 + 6 套神话 vivid，无日夜字样，每色可经日/月翻转）。
     pub const PRESETS: [(&'static str, Self); 100] = [
         ("ink-wash", Self::DARK),
         ("rice-paper", Self::LIGHT),
@@ -1241,7 +1241,7 @@ impl BaseColors {
         ("wisteria", Self::DRACULA),
         ("pine-frost", Self::NORD),
         ("plum-ink", Self::CATPPUCCIN_MOCHA),
-        ("iris", Self::TOKYO_NIGHT),
+        ("yinglong", Self::TOKYO_NIGHT),
         ("persimmon", Self::GRUVBOX_DARK),
         ("moss", Self::EVERFOREST_DARK),
         ("wild-rose", Self::ROSE_PINE),
@@ -1261,10 +1261,10 @@ impl BaseColors {
         ("peach-stream", Self::PEACH_STREAM),
         ("apricot-cove", Self::APRICOT_COVE),
         ("cherry-rain", Self::CHERRY_RAIN),
-        ("maple-marsh", Self::MAPLE_MARSH),
+        ("qilin", Self::MAPLE_MARSH),
         ("lotus-pond", Self::LOTUS_POND),
         ("osmanthus-brew", Self::OSMANTHUS_BREW),
-        ("paulownia-court", Self::PAULOWNIA_COURT),
+        ("fenghuang", Self::PAULOWNIA_COURT),
         ("ginkgo", Self::GINKGO),
         ("crabapple", Self::CRABAPPLE),
         ("vine-grass", Self::VINE_GRASS),
@@ -1274,14 +1274,14 @@ impl BaseColors {
         ("foxnut", Self::FOXNUT),
         ("wild-rice-pond", Self::WILD_RICE_POND),
         ("knotweed-bank", Self::KNOTWEED_BANK),
-        ("mint", Self::MINT),
+        ("baize", Self::MINT),
         ("bramble-gate", Self::BRAMBLE_GATE),
         ("vetch-wall", Self::VETCH_WALL),
-        ("calamus", Self::CALAMUS),
+        ("kunpeng", Self::CALAMUS),
         ("knotweed-flower", Self::KNOTWEED_FLOWER),
         ("angelica-bank", Self::ANGELICA_BANK),
         ("asara", Self::ASARA),
-        ("azalea", Self::AZALEA),
+        ("zhurong", Self::AZALEA),
         ("cuckoo-cry", Self::CUCKOO_CRY),
         ("violet", Self::VIOLET),
         ("mallow", Self::MALLOW),
