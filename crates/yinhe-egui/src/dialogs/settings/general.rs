@@ -9,14 +9,15 @@ pub fn show_general_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool
     ui.heading(t!("settings.general.heading").as_ref());
     ui.add_space(8.0);
 
-    // ── 编辑：重叠音符策略 ──
     ui.heading(t!("settings.editing.heading").as_ref());
     ui.add_space(4.0);
-    egui::Grid::new("editing_overlap_grid")
-        .num_columns(2)
-        .spacing([12.0, 8.0])
-        .show(ui, |ui| {
-            ui.label(t!("settings.editing.allow_overlap").as_ref());
+
+    let row_gap = 10.0;
+
+    // 允许重叠音符
+    ui.horizontal(|ui| {
+        ui.label(t!("settings.editing.allow_overlap").as_ref());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if crate::widgets::checkbox::checkbox(
                 ui,
                 &mut settings.allow_overlapping_notes,
@@ -26,9 +27,14 @@ pub fn show_general_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool
             {
                 changed = true;
             }
-            ui.end_row();
-            if !settings.allow_overlapping_notes {
-                ui.label(t!("settings.editing.blocked_behavior").as_ref());
+        });
+    });
+    ui.add_space(row_gap);
+
+    if !settings.allow_overlapping_notes {
+        ui.horizontal(|ui| {
+            ui.label(t!("settings.editing.blocked_behavior").as_ref());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let blocked_opt = vec![
                     (
                         OverlapBlockedBehavior::ReplaceTarget,
@@ -51,41 +57,45 @@ pub fn show_general_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool
                 ) {
                     changed = true;
                 }
-                ui.end_row();
-            }
-            ui.label(t!("settings.editing.quick_delete").as_ref());
-            {
-                use yinhe_editor_core::audio_settings::QuickDeleteMode;
-                let quick_opt = vec![
-                    (
-                        QuickDeleteMode::Off,
-                        t!("settings.editing.quick_delete.off").to_string(),
-                    ),
-                    (
-                        QuickDeleteMode::DoubleClick,
-                        t!("settings.editing.quick_delete.double").to_string(),
-                    ),
-                    (
-                        QuickDeleteMode::RightClick,
-                        t!("settings.editing.quick_delete.right").to_string(),
-                    ),
-                    (
-                        QuickDeleteMode::Both,
-                        t!("settings.editing.quick_delete.both").to_string(),
-                    ),
-                ];
-                if crate::widgets::combo::combo_select_auto(
-                    ui,
-                    "quick_delete_mode",
-                    &mut settings.quick_delete_mode,
-                    &quick_opt,
-                ) {
-                    changed = true;
-                }
-            }
-            ui.end_row();
+            });
         });
-    ui.add_space(8.0);
+        ui.add_space(row_gap);
+    }
+
+    // 快速删除
+    ui.horizontal(|ui| {
+        ui.label(t!("settings.editing.quick_delete").as_ref());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            use yinhe_editor_core::audio_settings::QuickDeleteMode;
+            let quick_opt = vec![
+                (
+                    QuickDeleteMode::Off,
+                    t!("settings.editing.quick_delete.off").to_string(),
+                ),
+                (
+                    QuickDeleteMode::DoubleClick,
+                    t!("settings.editing.quick_delete.double").to_string(),
+                ),
+                (
+                    QuickDeleteMode::RightClick,
+                    t!("settings.editing.quick_delete.right").to_string(),
+                ),
+                (
+                    QuickDeleteMode::Both,
+                    t!("settings.editing.quick_delete.both").to_string(),
+                ),
+            ];
+            if crate::widgets::combo::combo_select_auto(
+                ui,
+                "quick_delete_mode",
+                &mut settings.quick_delete_mode,
+                &quick_opt,
+            ) {
+                changed = true;
+            }
+        });
+    });
+    ui.add_space(row_gap);
 
     ui.add_space(16.0);
     ui.separator();
@@ -100,7 +110,6 @@ pub fn show_general_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool
             .clicked()
         {
             let default_settings = AudioSettings::default();
-            // Preserve runtime fields (device lists, etc.)
             let devices = std::mem::take(&mut settings.available_devices);
             let rates = std::mem::take(&mut settings.available_sample_rates);
             *settings = default_settings;

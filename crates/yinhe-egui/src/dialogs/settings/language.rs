@@ -7,11 +7,12 @@ pub fn show_language_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> boo
     let mut changed = false;
     ui.heading(t!("settings.language").as_ref());
     ui.add_space(8.0);
-    egui::Grid::new("language_grid")
-        .num_columns(2)
-        .spacing([12.0, 8.0])
-        .show(ui, |ui| {
-            ui.label(t!("settings.language").as_ref());
+
+    let row_gap = 10.0;
+
+    ui.horizontal(|ui| {
+        ui.label(t!("settings.language").as_ref());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let locales = [
                 ("zh-CN", "简体中文"),
                 ("zh-HK", "繁體中文（香港）"),
@@ -33,10 +34,13 @@ pub fn show_language_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> boo
                 rust_i18n::set_locale(&settings.locale);
                 changed = true;
             }
-            ui.end_row();
+        });
+    });
+    ui.add_space(row_gap);
 
-            // 音轨名编码（MIDI 文件内文本的语言编码，归类到语言设置）
-            ui.label(t!("settings.midi_import.encoding").as_ref());
+    ui.horizontal(|ui| {
+        ui.label(t!("settings.midi_import.encoding").as_ref());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let enc_opt: Vec<(yinhe_midi::MidiImportEncoding, String)> =
                 yinhe_midi::MidiImportEncoding::ALL
                     .iter()
@@ -50,7 +54,9 @@ pub fn show_language_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> boo
             ) {
                 changed = true;
             }
-            ui.end_row();
         });
+    });
+    ui.add_space(row_gap);
+
     changed
 }

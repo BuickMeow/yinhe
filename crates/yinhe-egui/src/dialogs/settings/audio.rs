@@ -8,11 +8,13 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     ui.heading(t!("settings.audio.heading").as_ref());
     ui.add_space(8.0);
 
-    egui::Grid::new("audio_settings_grid")
-        .num_columns(2)
-        .spacing([12.0, 8.0])
-        .show(ui, |ui| {
-            ui.label(t!("settings.audio.output_device").as_ref());
+    // 统一行高与间距：描述靠左、控件靠右、行距增大、combobox 统一 200 宽
+    let row_gap = 10.0;
+
+    // ── 输出设备 ──
+    ui.horizontal(|ui| {
+        ui.label(t!("settings.audio.output_device").as_ref());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let default_device = t!("settings.audio.default_device").to_string();
             let current_device = settings
                 .output_device_name
@@ -38,10 +40,14 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                     changed = true;
                 }
             });
-            ui.end_row();
+        });
+    });
+    ui.add_space(row_gap);
 
-            // ── MIDI 输入 ──
-            ui.label(t!("settings.audio.midi_input_device").as_ref());
+    // ── MIDI 输入 ──
+    ui.horizontal(|ui| {
+        ui.label(t!("settings.audio.midi_input_device").as_ref());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let no_device = t!("settings.audio.midi_no_device").to_string();
             let current_midi = settings.midi_input_device.clone().unwrap_or(no_device);
             crate::widgets::combo::combo_box(ui, "midi_input_device", current_midi, 200.0, |ui| {
@@ -64,9 +70,14 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                     changed = true;
                 }
             });
-            ui.end_row();
+        });
+    });
+    ui.add_space(row_gap);
 
-            ui.label(t!("settings.audio.midi_thru").as_ref());
+    // ── MIDI 直通 ──
+    ui.horizontal(|ui| {
+        ui.label(t!("settings.audio.midi_thru").as_ref());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if crate::widgets::checkbox::checkbox(
                 ui,
                 &mut settings.midi_thru,
@@ -76,9 +87,14 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             {
                 changed = true;
             }
-            ui.end_row();
+        });
+    });
+    ui.add_space(row_gap);
 
-            ui.label(t!("settings.audio.sample_rate").as_ref());
+    // ── 采样率 ──
+    ui.horizontal(|ui| {
+        ui.label(t!("settings.audio.sample_rate").as_ref());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let sr_opt: Vec<(u32, String)> = settings
                 .available_sample_rates()
                 .iter()
@@ -92,9 +108,14 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             ) {
                 changed = true;
             }
-            ui.end_row();
+        });
+    });
+    ui.add_space(row_gap);
 
-            ui.label(t!("settings.audio.buffer_size").as_ref());
+    // ── 缓冲区大小 ──
+    ui.horizontal(|ui| {
+        ui.label(t!("settings.audio.buffer_size").as_ref());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let buf_sizes: &[(u32, String)] = &[
                 (0, t!("settings.audio.buffer.default").to_string()),
                 (128, t!("settings.audio.buffer.frames", n = 128).to_string()),
@@ -123,9 +144,23 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             ) {
                 changed = true;
             }
-            ui.end_row();
+        });
+    });
+    ui.add_space(row_gap);
 
-            ui.label(t!("settings.audio.xsynth_layers").as_ref());
+    // ── XSynth 层数 ──
+    ui.horizontal(|ui| {
+        ui.label(t!("settings.audio.xsynth_layers").as_ref());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let layer_label = if settings.xsynth_layers == 0 {
+                t!("common.unlimited").to_string()
+            } else {
+                String::new()
+            };
+            // 右对齐组：先放标签（最右），再放数值输入（其左侧），视觉顺序为 [输入][标签]
+            if !layer_label.is_empty() {
+                ui.label(layer_label);
+            }
             let mut layers = settings.xsynth_layers as usize;
             if ui
                 .add(
@@ -138,17 +173,14 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                 settings.xsynth_layers = layers as u32;
                 changed = true;
             }
-            let layer_label = if settings.xsynth_layers == 0 {
-                t!("common.unlimited").to_string()
-            } else {
-                String::new()
-            };
-            if !layer_label.is_empty() {
-                ui.label(layer_label);
-            }
-            ui.end_row();
+        });
+    });
+    ui.add_space(row_gap);
 
-            ui.label(t!("settings.audio.synth_engine").as_ref());
+    // ── 合成引擎 ──
+    ui.horizontal(|ui| {
+        ui.label(t!("settings.audio.synth_engine").as_ref());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let engine_opt = vec![
                 (false, t!("settings.audio.engine_cpu").to_string()),
                 (true, t!("settings.audio.engine_gpu").to_string()),
@@ -161,8 +193,9 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             ) {
                 changed = true;
             }
-            ui.end_row();
         });
+    });
+    ui.add_space(row_gap);
 
     // 设备列表变更（热插拔等）后手动刷新
     if ui.button(t!("settings.refresh_devices").as_ref()).clicked() {

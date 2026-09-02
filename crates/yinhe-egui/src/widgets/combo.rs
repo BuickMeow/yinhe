@@ -7,8 +7,8 @@
 
 use eframe::egui;
 
-/// 默认宽度（与设置页常用下拉一致），调用方可按内容选 70/160/200。
-pub const DEFAULT_WIDTH: f32 = 160.0;
+/// 默认宽度（与设置页常用下拉一致，统一等宽），调用方可按内容选 70/160/200。
+pub const DEFAULT_WIDTH: f32 = 200.0;
 
 /// 固定宽度的 ComboBox，下拉项需配合 [`combo_item`] 使用。
 /// `width` 为按钮与弹窗的统一宽度，`id` 为 `ComboBox::from_id_salt` 的盐（`&str` 或任意 `Hash`）。
@@ -128,7 +128,7 @@ mod tests {
     }
 
     #[test]
-    fn default_width_is_160() {
-        assert_eq!(DEFAULT_WIDTH, 160.0);
+    fn default_width_is_200() {
+        assert_eq!(DEFAULT_WIDTH, 200.0);
     }
 }
