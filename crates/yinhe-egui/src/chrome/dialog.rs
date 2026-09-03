@@ -145,19 +145,62 @@ pub(crate) fn title_bar(ui: &mut egui::Ui, title: &str, close: &mut bool) {
     );
 
     // ── Drag region (both platforms) ──
+    // 用固定 Id（非 next_auto_id），否则双击跨帧 Id 变化导致 double_clicked 永远为 false
     let drag_rect = egui::Rect::from_min_max(
         egui::pos2(bar_rect.min.x, bar_rect.min.y),
         egui::pos2(bar_rect.max.x, bar_rect.min.y + height),
     );
-    let drag_resp = ui.interact(drag_rect, ui.next_auto_id(), egui::Sense::drag());
+    // 非 macOS 的关闭按钮区域不参与拖拽/双击
+    #[cfg(not(target_os = "macos"))]
+    let close_rect_for_drag = egui::Rect::from_min_size(
+        egui::pos2(bar_rect.max.x - height, bar_rect.min.y),
+        egui::vec2(height, height),
+    );
+    let drag_resp = ui.interact(
+        drag_rect,
+        ui.id().with("dialog_title_drag"),
+        egui::Sense::click_and_drag(),
+    );
     if drag_resp.dragged_by(egui::PointerButton::Primary) {
-        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        #[cfg(not(target_os = "macos"))]
+        {
+            let over_close = ui.input(|i| {
+                i.pointer
+                    .press_origin()
+                    .is_some_and(|p| close_rect_for_drag.contains(p))
+            });
+            if !over_close {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
     }
-    // 双击标题栏切换最大化/还原（行为与主窗口一致，所有可最大化对话框均支持）
-    if drag_resp.double_clicked_by(egui::PointerButton::Primary) {
-        let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
-        ui.ctx()
-            .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+    // 双击标题栏切换最大化/还原（与主窗口 title_bar/transport_bar 一致：400ms 内两次单击空白区）
+    const DOUBLE_CLICK_MS: f64 = 400.0;
+    let dbl_id = ui.id().with("dialog_title_dbl_click");
+    if drag_resp.clicked_by(egui::PointerButton::Primary) {
+        // 关闭按钮上的单击不计入双击
+        #[cfg(not(target_os = "macos"))]
+        let on_close = drag_resp
+            .interact_pointer_pos()
+            .is_some_and(|p| close_rect_for_drag.contains(p));
+        #[cfg(target_os = "macos")]
+        let on_close = false;
+        if !on_close {
+            let now = ui.input(|i| i.time);
+            let last: f64 = ui.data_mut(|d| d.get_persisted(dbl_id)).unwrap_or(0.0);
+            if now - last < DOUBLE_CLICK_MS / 1000.0 {
+                let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                ui.data_mut(|d| d.insert_persisted(dbl_id, 0.0));
+            } else {
+                ui.data_mut(|d| d.insert_persisted(dbl_id, now));
+            }
+        }
     }
 
     // Reserve space
