@@ -131,8 +131,10 @@ pub(crate) fn show_panels(
         if auto_feedback.scroll_x_delta != 0.0 {
             if view.is_vertical() {
                 view.base.scroll_y -= auto_feedback.scroll_x_delta;
+                view.base.scroll_y = view.base.scroll_y.max(0.0);
             } else {
                 view.base.scroll_x -= auto_feedback.scroll_x_delta;
+                view.base.scroll_x = view.base.scroll_x.max(0.0);
             }
             view.base.dirty = true;
         }

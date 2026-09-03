@@ -252,7 +252,11 @@ pub(crate) fn interactive_ruler(
     {
         let delta = crate::widgets::auto_scroll::auto_scroll_main(ui, ruler_rect, pos, orientation);
         if delta != 0.0 {
-            *view.scroll_main_mut() += delta;
+            let scroll = view.scroll_main_mut();
+            *scroll += delta;
+            // 左边界 clamp：拖出第一小节最左时不得产生负滚动（PR/AR 网格已 clamp，但
+            // AM 面板在同一帧 ruler 之后绘制，会透传负值导致网格/GPU 一起右移）。
+            *scroll = scroll.max(0.0);
             view.mark_dirty();
             ui.ctx().request_repaint();
         }

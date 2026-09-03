@@ -331,6 +331,12 @@ pub fn show(
         None
     };
 
+    // Ruler 的边缘自动滚动在 overlay 中直接改了 view.scroll（此时 PR 网格已在
+    // 同一帧绘制完成，AM 尚未绘制）。若 scroll 被推到负值，AM 的 grid/GPU 会
+    // 在本帧透传负值而右移，下一帧才被 compute_layout clamp 回来，形成分层抖动。
+    // 这里在 AM 同步前补一次 clamp，保证 PR/AR/AM 三层同帧同值。
+    view.clamp_scroll(w as f32, h as f32, total_ticks);
+
     // ── Automation panels ──
     let panels_y = content_rect.max.y;
     let panels_status_hint = panels::show_panels(
