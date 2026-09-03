@@ -28,6 +28,7 @@ pub struct PopupRowSpec<'a> {
     pub selected: bool,
     pub accent: Option<egui::Color32>,
     pub pin: Option<bool>,
+    pub pin_index: Option<usize>,
     pub chevron: bool,
 }
 
@@ -83,8 +84,13 @@ pub fn popup_menu_row(
             egui::pos2(row_rect.max.x - PIN_W, row_rect.min.y),
             egui::vec2(PIN_W, row_h),
         );
-        // 无背景，仅前景三态（与 mode_bar hover_button 一致）
-        let resp = ui.interact(pin_rect, ui.next_auto_id(), egui::Sense::click());
+        // 无背景，仅前景三态（与 mode_bar hover_button 一致），用 pin_index 固定 Id 避免错位
+        let pin_id = if let Some(idx) = spec.pin_index {
+            ui.id().with(("pin", idx))
+        } else {
+            ui.id().with("pin")
+        };
+        let resp = ui.interact(pin_rect, pin_id, egui::Sense::click());
         let pin_color = if is_pinned {
             crate::theme::accent_active()
         } else if resp.hovered() {
@@ -215,6 +221,7 @@ pub fn show_action_menu<T: PopupRow>(
                             } else {
                                 None
                             },
+                            pin_index: action.has_pin().then_some(action.pinned_index()),
                             chevron: false,
                         },
                     );

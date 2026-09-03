@@ -76,6 +76,7 @@ fn play_menu_rows_have_consistent_spacing() {
                     selected: r.is_selected(),
                     accent: r.icon_accent(),
                     pin: None,
+                    pin_index: None,
                     chevron: false,
                 },
             );

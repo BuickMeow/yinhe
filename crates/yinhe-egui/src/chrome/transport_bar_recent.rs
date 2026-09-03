@@ -69,6 +69,7 @@ pub fn recent_files_section(
             selected: open,
             accent: None,
             pin: None,
+            pin_index: None,
             chevron: true,
         },
     );
@@ -108,6 +109,7 @@ pub fn recent_files_section(
                         selected: false,
                         accent: None,
                         pin: None,
+                        pin_index: None,
                         chevron: false,
                     },
                 );
