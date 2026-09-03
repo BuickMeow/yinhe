@@ -4,7 +4,7 @@ use rust_i18n::t;
 
 use crate::widgets::action_menu::pinned_action_buttons;
 use crate::widgets::timecode::show_timecode_display;
-use crate::widgets::tools_panel::{ALL_TOOLS, Tool};
+use crate::widgets::tools_panel::ALL_TOOLS;
 
 use super::transport_bar_actions::{PlayActions, PlayMenuAction, tool_hint};
 use super::transport_bar_menus::{show_edit_menu, show_file_menu, show_play_menu};

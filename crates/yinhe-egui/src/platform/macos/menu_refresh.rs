@@ -3,7 +3,7 @@ use rust_i18n::t;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use super::menu::{MenuText, NATIVE_MENU, menu_map};
+use super::menu::{NATIVE_MENU, menu_map};
 use yinhe_editor_core::follow::FollowMode;
 
 pub(super) fn refresh_native_menu_texts() {

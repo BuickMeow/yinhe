@@ -253,6 +253,7 @@ pub fn show_action_menu<T: PopupRow>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn pinned_action_buttons<T: PopupRow>(
     ui: &mut egui::Ui,
     id_prefix: &str,

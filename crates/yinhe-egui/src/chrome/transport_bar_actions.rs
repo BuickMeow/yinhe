@@ -2,7 +2,6 @@ use egui_material_icons::icons::*;
 use rust_i18n::t;
 use yinhe_editor_core::shortcuts;
 
-use crate::view_interaction::FollowModeExt;
 use crate::widgets::action_menu::PopupRow;
 
 /// 文件菜单动作

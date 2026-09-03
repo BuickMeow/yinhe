@@ -3,7 +3,6 @@
 use std::sync::mpsc;
 
 use objc2::runtime::AnyClass;
-use rust_i18n::t;
 
 use yinhe_editor_core::follow::FollowMode;
 use yinhe_editor_core::shortcuts::Keybindings;
@@ -16,7 +15,7 @@ pub(crate) mod menu_refresh;
 pub(crate) mod open_files;
 pub(crate) mod window;
 
-use menu::{menu_map, menu_sender};
+use menu::menu_sender;
 
 pub(crate) use window::{
     disable_background_window_drag, request_user_attention, set_app_nap_enabled,

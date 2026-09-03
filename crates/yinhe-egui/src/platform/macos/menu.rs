@@ -56,7 +56,7 @@ pub(super) struct NativeMenu {
     pub(super) follow_checks: Vec<(FollowMode, &'static str, CheckMenuItem)>,
 }
 
-trait MenuActionFrom {
+pub(super) trait MenuActionFrom {
     fn to_menu_action(self) -> MenuAction;
 }
 
