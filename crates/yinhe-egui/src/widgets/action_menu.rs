@@ -84,7 +84,7 @@ pub fn popup_menu_row(
             egui::pos2(row_rect.max.x - PIN_W, row_rect.min.y),
             egui::vec2(PIN_W, row_h),
         );
-        // 无背景，仅前景三态（与 mode_bar hover_button 一致），用 pin_index 固定 Id 避免错位
+        // 无背景，仅前景四态（与 mode_bar hover_button 一致），用 pin_index 固定 Id 避免错位
         let pin_id = if let Some(idx) = spec.pin_index {
             ui.id().with(("pin", idx))
         } else {
@@ -93,8 +93,18 @@ pub fn popup_menu_row(
         let resp = ui.interact(pin_rect, pin_id, egui::Sense::click());
         let pin_color = if is_pinned {
             crate::theme::accent_active()
+        } else if resp.is_pointer_button_down_on() {
+            if crate::theme::dark_mode() {
+                crate::theme::text_primary()
+            } else {
+                crate::theme::text_primary().gamma_multiply(0.88)
+            }
         } else if resp.hovered() {
-            crate::theme::contrast_fg()
+            if crate::theme::dark_mode() {
+                crate::theme::contrast_fg()
+            } else {
+                crate::theme::text_primary()
+            }
         } else {
             crate::theme::text_disabled()
         };

@@ -6,7 +6,7 @@ use eframe::egui;
 /// 再 painter 一次画完文字/图标 —— hover 时直接换色，不再叠画第二层
 /// （消除重复绘制与文字位置跳动）。
 ///
-/// 三态颜色：active = accent_active；hover = 白（contrast_fg）；inactive = 传入基色。
+/// 四态颜色：active = accent_active；hover 亮走 text_primary/暗走白；pressed 比 hover 回退一档；inactive = 传入基色。
 /// 返回 `Response`（hovered/clicked/rect 供调用方使用）。
 pub(crate) fn hover_button(
     ui: &mut egui::Ui,
@@ -45,8 +45,18 @@ fn hover_button_impl(
     let (rect, resp) = ui.allocate_exact_size(galley.size(), egui::Sense::click());
     let color = if is_active {
         crate::theme::accent_active()
+    } else if resp.is_pointer_button_down_on() {
+        if crate::theme::dark_mode() {
+            crate::theme::text_primary()
+        } else {
+            crate::theme::text_primary().gamma_multiply(0.88)
+        }
     } else if resp.hovered() {
-        crate::theme::contrast_fg()
+        if crate::theme::dark_mode() {
+            crate::theme::contrast_fg()
+        } else {
+            crate::theme::text_primary()
+        }
     } else {
         inactive_color
     };
