@@ -49,8 +49,8 @@ fn play_menu_rows_have_consistent_spacing() {
     // 注册 material icons 字体（popup_menu_row 用图标字体渲染）
     ctx.add_font(egui_material_icons::font_insert());
     let output = ctx.run_ui(Default::default(), |ui| {
-        ui.spacing_mut().item_spacing.y = 6.0;
-        ui.spacing_mut().interact_size.y = 22.0;
+        ui.spacing_mut().item_spacing.y = 4.0;
+        ui.spacing_mut().interact_size.y = 24.0;
         spacing_y = ui.spacing().item_spacing.y;
         interact_y = ui.spacing().interact_size.y;
         ui.set_min_width(200.0);
@@ -88,8 +88,8 @@ fn play_menu_rows_have_consistent_spacing() {
         gaps.iter().all(|g| (g - gaps[0]).abs() < 0.5),
         "播放菜单行间距不一致: {gaps:?}，ys={ys:?}"
     );
-    // 行间距 = 行高 22 + item_spacing 6（与通用 menu 22/6 统一）
-    let expected = 22.0 + spacing_y;
+    // 行间距 = 行高 24 + item_spacing 4（与通用 menu 24/4 统一）
+    let expected = 24.0 + spacing_y;
     assert!(
         gaps.iter().all(|g| (g - expected).abs() < 1.5),
         "行间距异常: {gaps:?}（期望约 {expected}）"

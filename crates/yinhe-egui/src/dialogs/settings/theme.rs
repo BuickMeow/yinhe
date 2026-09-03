@@ -77,11 +77,11 @@ fn theme_card(
         );
         painter.rect_filled(r2, egui::CornerRadius::same(2), preview.text_secondary);
         let r3 = egui::Rect::from_min_max(
-            egui::pos2(mock_rect.min.x + 6.0, mock_rect.min.y + 22.0),
-            egui::pos2(mock_rect.min.x + 26.0, mock_rect.min.y + 26.0),
+            egui::pos2(mock_rect.min.x + 6.0, mock_rect.min.y + 24.0),
+            egui::pos2(mock_rect.min.x + 26.0, mock_rect.min.y + 28.0),
         );
         painter.rect_filled(r3, egui::CornerRadius::same(2), preview.accent_active);
-        let line_y = mock_rect.min.y + 34.0;
+        let line_y = mock_rect.min.y + 36.0;
         painter.hline(
             mock_rect.min.x + 6.0..=mock_rect.max.x - 6.0,
             line_y,
@@ -176,7 +176,7 @@ pub fn show_theme_tab(
                         crate::theme::ICON_FONT,
                     )),
             )
-            .min_size(egui::vec2(32.0, 22.0));
+            .min_size(egui::vec2(32.0, 24.0));
             if ui
                 .add(btn)
                 .on_hover_text(if is_dark {
@@ -426,11 +426,11 @@ pub fn show_theme_tab(
                     );
                     painter.rect_filled(r2, egui::CornerRadius::same(2), preview.text_secondary);
                     let r3 = egui::Rect::from_min_max(
-                        egui::pos2(mock_rect.min.x + 6.0, mock_rect.min.y + 22.0),
-                        egui::pos2(mock_rect.min.x + 26.0, mock_rect.min.y + 26.0),
+                        egui::pos2(mock_rect.min.x + 6.0, mock_rect.min.y + 24.0),
+                        egui::pos2(mock_rect.min.x + 26.0, mock_rect.min.y + 28.0),
                     );
                     painter.rect_filled(r3, egui::CornerRadius::same(2), preview.accent_active);
-                    let line_y = mock_rect.min.y + 34.0;
+                    let line_y = mock_rect.min.y + 36.0;
                     painter.hline(
                         mock_rect.min.x + 6.0..=mock_rect.max.x - 6.0,
                         line_y,
@@ -488,7 +488,7 @@ pub fn show_theme_tab(
                 if is_renaming {
                     let title_rect = egui::Rect::from_min_max(
                         card_rect.min + egui::vec2(6.0, 3.0),
-                        egui::pos2(card_rect.max.x - 28.0, card_rect.min.y + 22.0),
+                        egui::pos2(card_rect.max.x - 28.0, card_rect.min.y + 24.0),
                     );
                     let title_id = ui.id().with(format!("rename_{}", item.id_str));
                     let mut buf = settings.rename_buffer.clone();

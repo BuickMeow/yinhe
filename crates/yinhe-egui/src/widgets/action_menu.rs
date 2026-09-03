@@ -38,7 +38,7 @@ pub fn popup_menu_row(
     ui: &mut egui::Ui,
     spec: PopupRowSpec<'_>,
 ) -> (egui::Response, Option<egui::Response>) {
-    let row_h = 22.0;
+    let row_h = 24.0;
     let row_w = ui.available_width();
     let (row_rect, _) = ui.allocate_exact_size(egui::vec2(row_w, row_h), egui::Sense::hover());
 
@@ -180,8 +180,8 @@ pub fn show_action_menu<T: PopupRow>(
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .width(menu_w)
         .show(|ui| {
-            ui.spacing_mut().item_spacing.y = 6.0;
-            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.spacing_mut().item_spacing.y = 4.0;
+            ui.spacing_mut().item_spacing.x = 4.0;
             ui.set_min_width(menu_w);
             ui.set_max_width(menu_w);
             let hover_id = button.id.with("menu_extra_hover");

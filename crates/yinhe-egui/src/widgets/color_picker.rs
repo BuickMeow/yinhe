@@ -19,7 +19,7 @@ pub(crate) fn color_edit_button(ui: &mut egui::Ui, color: &mut egui::Color32) ->
         egui::Button::new("  ")
             .fill(*color)
             .stroke(Stroke::new(1.0, egui::Color32::from_gray(100)))
-            .min_size(egui::vec2(28.0, 22.0))
+            .min_size(egui::vec2(28.0, 24.0))
             .corner_radius(3.0),
     );
 

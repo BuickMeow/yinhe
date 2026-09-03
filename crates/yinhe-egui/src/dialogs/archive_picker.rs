@@ -154,7 +154,7 @@ pub(crate) fn show(
             }
             ui.add_space(4.0);
 
-            let row_height = 22.0;
+            let row_height = 24.0;
             let available_height = ui.available_height() - 40.0;
             eframe::egui::ScrollArea::vertical()
                 .max_height(available_height)

@@ -180,7 +180,7 @@ pub(crate) fn apply_right_click_anchor(
 
 /// Show the toggle / add / remove buttons horizontally.
 pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_count: &mut usize) {
-    ui.spacing_mut().item_spacing.x = 6.0;
+    ui.spacing_mut().item_spacing.x = 4.0;
     ui.add_space(6.0);
     let toggle_resp = crate::widgets::hover::hover_button(
         ui,

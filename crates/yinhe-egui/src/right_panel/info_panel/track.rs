@@ -259,7 +259,7 @@ pub(crate) fn show_track_info(
                 12.0,
                 crate::theme::text_label(),
             ))
-            .min_size(egui::vec2(68.0, 22.0)),
+            .min_size(egui::vec2(68.0, 24.0)),
         );
         let editing = changed;
         if editing && !was_editing {
@@ -364,7 +364,7 @@ pub(crate) fn show_track_info(
                 12.0,
                 mute_color,
             ))
-            .min_size(egui::vec2(60.0, 22.0)),
+            .min_size(egui::vec2(60.0, 24.0)),
         );
 
         ui.add_space(4.0);
@@ -382,7 +382,7 @@ pub(crate) fn show_track_info(
                 12.0,
                 solo_color,
             ))
-            .min_size(egui::vec2(60.0, 22.0)),
+            .min_size(egui::vec2(60.0, 24.0)),
         );
 
         mute_clicked = r1.clicked();

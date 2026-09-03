@@ -93,8 +93,8 @@ pub fn recent_files_section(
         .width(sub_w)
         .close_behavior(egui::PopupCloseBehavior::IgnoreClicks)
         .show(|ui| {
-            ui.spacing_mut().item_spacing.y = 6.0;
-            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.spacing_mut().item_spacing.y = 4.0;
+            ui.spacing_mut().item_spacing.x = 4.0;
             ui.set_min_width(sub_w);
             ui.set_max_width(sub_w);
             for path in recent {

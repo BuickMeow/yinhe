@@ -293,10 +293,10 @@ pub fn show(ui: &mut egui::Ui, bar: egui::Rect, ctx: &PrBarData<'_>, events: &mu
 /// 「按钮请求可用宽度 → popup 变宽 → 可用宽度更大」的每帧正反馈，popup 向右飞出去。
 fn track_popup(ui: &mut egui::Ui, ctx: &PrBarData<'_>, events: &mut Vec<PrBarEvent>) {
     ui.set_max_height(560.0);
-    // 行高/间隙与通用 menu 22/6 统一，右栏 checkbox 同高
-    ui.spacing_mut().item_spacing.y = 6.0;
-    ui.spacing_mut().item_spacing.x = 6.0;
-    ui.spacing_mut().interact_size.y = 22.0;
+    // 行高/间隙与通用 menu 24/4 统一，右栏 checkbox 同高
+    ui.spacing_mut().item_spacing.y = 4.0;
+    ui.spacing_mut().item_spacing.x = 4.0;
+    ui.spacing_mut().interact_size.y = 24.0;
     // 字体跟随 font_scale（原硬编码 SMALL_FONT/ICON_FONT 不受缩放，改用 scaled_font）
     // 列表最小高度：音轨少时 popup 也不会缩成一小条（内容自适应高度的副作用）。
     const LIST_MIN_H: f32 = 280.0;

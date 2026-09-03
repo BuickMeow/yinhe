@@ -10,8 +10,8 @@ pub fn show(
     current: QuantizePreset,
     pending: &mut Option<QuantizePreset>,
 ) {
-    ui.spacing_mut().item_spacing.y = 6.0;
-    ui.spacing_mut().item_spacing.x = 6.0;
+    ui.spacing_mut().item_spacing.y = 4.0;
+    ui.spacing_mut().item_spacing.x = 4.0;
     ui.set_min_width(200.0);
     ui.set_max_width(200.0);
     for preset in QuantizePreset::ALL {

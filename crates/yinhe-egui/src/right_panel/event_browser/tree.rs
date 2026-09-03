@@ -321,7 +321,7 @@ fn automation_icon(target: &AutomationTarget) -> egui_material_icons::MaterialIc
 // ── Tree row renderers ──
 
 /// 树行统一行高（内容 SMALL_FONT~SUB_TITLE_FONT 加边距）。
-const TREE_ROW_H: f32 = 22.0;
+const TREE_ROW_H: f32 = 24.0;
 
 /// 分配一行树行空间并绘制背景（选中优先于 hover，透明兜底）。
 ///
