@@ -263,31 +263,39 @@ pub fn pinned_action_buttons<T: PopupRow>(
     hovered_hint: &mut Option<String>,
     pending: &mut Option<T>,
 ) {
+    let btn_size = egui::vec2(
+        crate::theme::TRANSPORT_BTN_SIZE,
+        crate::theme::TRANSPORT_BTN_SIZE,
+    );
+    let btn_rounding = egui::CornerRadius::same(2);
     for (idx, &action) in actions.iter().enumerate() {
         if !pinned.get(idx).copied().unwrap_or(false) {
             continue;
         }
         let enabled = action.is_enabled(has_active, loading);
-        let resp = ui.push_id(format!("{id_prefix}_{idx}"), |ui| {
-            let btn = egui::Button::new(
-                action
-                    .icon()
-                    .rich_text()
-                    .size(crate::theme::TRANSPORT_BTN_FONT)
-                    .color(action.icon_accent().unwrap_or_else(|| {
-                        if enabled {
-                            crate::theme::text_label()
-                        } else {
-                            crate::theme::text_disabled()
-                        }
-                    })),
-            )
-            .selected(action.is_selected())
-            .frame(false);
-            ui.add_enabled(enabled, btn)
+        let icon = action.icon();
+        let color = action.icon_accent().unwrap_or_else(|| {
+            if enabled {
+                crate::theme::text_primary()
+            } else {
+                crate::theme::text_disabled()
+            }
         });
-        let resp = resp.inner;
-        if resp.clicked() && enabled {
+        let resp = ui
+            .push_id((id_prefix, action.pinned_index()), |ui| {
+                ui.add_enabled(
+                    enabled,
+                    egui::Button::new(
+                        icon.rich_text()
+                            .size(crate::theme::TRANSPORT_BTN_FONT)
+                            .color(color),
+                    )
+                    .min_size(btn_size)
+                    .corner_radius(btn_rounding),
+                )
+            })
+            .inner;
+        if resp.clicked() {
             *pending = Some(action);
         }
         if resp.hovered() {
