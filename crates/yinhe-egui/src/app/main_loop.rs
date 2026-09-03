@@ -379,17 +379,19 @@ impl eframe::App for App {
             visuals.widgets.active.bg_fill = crate::theme::pressed_color(btn);
             visuals.widgets.active.weak_bg_fill =
                 crate::theme::pressed_color(crate::theme::app_bg());
-            // 原生描边/滑轨线（Slider rail、ComboBox 边框等）统一为 line_fg
-            // 输入框聚焦/悬停描边改用强调色，下划线亦随之
+            // 原生描边/滑轨线（Slider rail、ComboBox 边框等）统一为 line_fg；
+            // 悬停/按下描边保持灰系，强调色仅用于选中/光标/下划线
             // 对勾（fg_stroke）用主文字色：与 btn_bg 同系的 line_fg 会导致对勾几乎不可见（见 widgets::checkbox）
             visuals.widgets.inactive.fg_stroke =
                 egui::Stroke::new(1.5, crate::theme::text_primary());
             visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, line);
             visuals.widgets.hovered.fg_stroke =
                 egui::Stroke::new(1.5, crate::theme::text_primary());
-            visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, accent.gamma_multiply(0.85));
+            visuals.widgets.hovered.bg_stroke =
+                egui::Stroke::new(1.0, crate::theme::hover_color(line));
             visuals.widgets.active.fg_stroke = egui::Stroke::new(1.5, crate::theme::text_primary());
-            visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, accent);
+            visuals.widgets.active.bg_stroke =
+                egui::Stroke::new(1.0, crate::theme::pressed_color(line));
             visuals.widgets.noninteractive.fg_stroke =
                 egui::Stroke::new(1.5, crate::theme::text_disabled());
             // 原生控件文字统一用主题主文字色（egui 默认灰与主题不协调）
