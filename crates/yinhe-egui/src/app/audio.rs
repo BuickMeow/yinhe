@@ -125,9 +125,12 @@ impl App {
             None => return,
         };
 
-        // 文档切换时清除之前的 spawn 失败状态，允许重试
-        if self.audio_state.active_doc != Some(idx) {
+        // 文档切换时清失败：仅切到与失败归属不同文档时才清，同文档保持不重试避免 30Hz 刷屏
+        if let Some(err_doc) = self.audio_state.spawn_error_doc
+            && err_doc != idx
+        {
             self.audio_state.spawn_error = None;
+            self.audio_state.spawn_error_doc = None;
         }
 
         // spawn 失败后不重试，等用户操作（切设备/改设置/切文档）再重试
@@ -264,6 +267,9 @@ impl App {
                 self.audio_state.handle = Some(audio);
                 self.audio_state.active_doc = Some(idx);
                 self.audio_state.last_channel_layout = pending_layout;
+                // 成功后清失败状态，避免同文档下次 rebuild 被误拦
+                self.audio_state.spawn_error = None;
+                self.audio_state.spawn_error_doc = None;
 
                 // 混音台：全量参数 + 各 insert 处理器激活补发（引擎是全新 spawn，
                 // 机架里所有槽位此时都是未发送状态）。
@@ -275,6 +281,7 @@ impl App {
             Err(e) => {
                 tracing::error!("Failed to create audio: {}", e);
                 self.audio_state.spawn_error = Some(e.clone());
+                self.audio_state.spawn_error_doc = spawn_for;
                 self.audio_state.device_switch_error = Some(e);
                 progress::set_visible(&self.load_progress, false);
             }
@@ -383,6 +390,7 @@ impl App {
     pub(crate) fn switch_audio_device(&mut self, device_name: String) {
         // 清除之前的 spawn 失败状态，允许用新设备重试
         self.audio_state.spawn_error = None;
+        self.audio_state.spawn_error_doc = None;
         let saved_sample = self
             .audio_state
             .handle
@@ -607,6 +615,7 @@ impl App {
         self.audio_state.active_doc = None;
         self.audio_state.last_channel_layout = None;
         self.audio_state.spawn_error = None;
+        self.audio_state.spawn_error_doc = None;
         if let (Some(rx), Some(idx)) = (return_rx, bound_doc) {
             let mut returned: Vec<Box<dyn yinhe_mixer::InsertProcessor>> = Vec::new();
             while let Ok(mut batch) = rx.try_recv() {

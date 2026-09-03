@@ -51,6 +51,8 @@ pub(crate) struct AudioState {
     /// spawn_cpal_audio 失败的错误信息。Some 表示失败，rebuild_audio_if_needed
     /// 不再重试，直到用户切换设备/文档/设置清除它。
     pub spawn_error: Option<String>,
+    /// `spawn_error` 归属的文档，`Some(idx)` 时仅该文档不重试，切到其他文档可重活。
+    pub spawn_error_doc: Option<usize>,
     /// 后台 spawn 状态：spawn 是为哪个 doc 发起的（完成时对比 active_doc，
     /// 不一致则丢弃结果）与结果通道。Some = spawn 进行中。
     pub spawn_for_doc: Option<usize>,
@@ -77,6 +79,7 @@ impl AudioState {
             sf_pending: false,
             last_device_poll: None,
             spawn_error: None,
+            spawn_error_doc: None,
             spawn_for_doc: None,
             spawn_rx: None,
             spawn_restore_sample: None,
