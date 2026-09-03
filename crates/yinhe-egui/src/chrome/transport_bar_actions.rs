@@ -307,6 +307,8 @@ impl PopupRow for PlayMenuAction {
 
     fn is_selected(self) -> bool {
         match self {
+            PlayMenuAction::Record { recording } => recording,
+            PlayMenuAction::StepInput { active } => active,
             PlayMenuAction::Follow(_, sel) => sel,
             _ => false,
         }

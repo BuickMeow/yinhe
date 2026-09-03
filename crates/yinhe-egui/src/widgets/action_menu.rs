@@ -282,18 +282,24 @@ pub fn pinned_action_buttons<T: PopupRow>(
                 crate::theme::text_disabled()
             }
         });
+        let selected = action.is_selected();
         let resp = ui
             .push_id((id_prefix, action.pinned_index()), |ui| {
-                ui.add_enabled(
-                    enabled,
-                    egui::Button::new(
-                        icon.rich_text()
-                            .size(crate::theme::TRANSPORT_BTN_FONT)
-                            .color(color),
-                    )
-                    .min_size(btn_size)
-                    .corner_radius(btn_rounding),
+                let mut btn = egui::Button::new(
+                    icon.rich_text()
+                        .size(crate::theme::TRANSPORT_BTN_FONT)
+                        .color(color),
                 )
+                .min_size(btn_size)
+                .corner_radius(btn_rounding);
+                if selected {
+                    let sel_bg = action
+                        .icon_accent()
+                        .map(|c| c.gamma_multiply(0.18))
+                        .unwrap_or(crate::theme::selected_bg());
+                    btn = btn.fill(sel_bg);
+                }
+                ui.add_enabled(enabled, btn)
             })
             .inner;
         if resp.clicked() {
