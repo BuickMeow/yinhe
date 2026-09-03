@@ -1,8 +1,13 @@
 //! Automation panel mouse interaction logic (pencil/curve tools, right-click).
 
+mod curve;
 mod drag;
+mod eraser;
+mod ghost;
 mod hit_test;
 mod hover;
+mod pencil;
+mod select;
 mod selection;
 
 pub(crate) use drag::*;
@@ -10,19 +15,58 @@ pub(crate) use hit_test::*;
 pub(crate) use hover::*;
 pub(crate) use selection::*;
 
-use super::constants::{ANCHOR_HIT_PX, HOVER_DELAY, MARQUEE_THRESHOLD};
+use super::constants::ANCHOR_HIT_PX;
 use super::types::AutomationEditCtx;
 use super::value::panel_max_val;
 use crate::right_panel::{InfoContent, RightTab};
 use crate::widgets::tools_panel::Tool;
 use eframe::egui;
-use yinhe_types::{
-    AnchorSelRect, AutomationLane, AutomationPanelView, AutomationTarget, SegmentShape,
-};
-use yinhe_wgpu::{
-    AutomationGhost, build_lane_multi_copy, build_lane_multi_move, build_lane_override,
-    build_lane_shape_override,
-};
+use yinhe_types::{AutomationLane, AutomationPanelView, AutomationTarget};
+use yinhe_wgpu::AutomationGhost;
+
+pub(crate) enum ToolResult {
+    Continue,
+    Break(Option<AutomationGhost>),
+}
+
+pub(crate) struct InteractionCtx<'a> {
+    pub grid_area: egui::Rect,
+    pub panel_rect: egui::Rect,
+    pub panel: &'a AutomationPanelView,
+    pub target: AutomationTarget,
+    pub lane: Option<&'a AutomationLane>,
+    pub lane_idx: Option<usize>,
+    pub track_idx: u16,
+    pub active_tool: Tool,
+    pub track_color: [f32; 3],
+    pub max_val: f32,
+    pub value_cap: f32,
+    pub ppu: f32,
+    pub scroll_x: f32,
+    pub drag_id: egui::Id,
+    pub move_offset_id: egui::Id,
+    pub drag_state: Option<AutoDrag>,
+    pub pointer_pressed: bool,
+    pub pointer_released: bool,
+    pub pointer_clicked: bool,
+    pub pointer_double_clicked: bool,
+    pub pointer_secondary_clicked: bool,
+    pub mouse_info: Option<(egui::Pos2, u32, f32)>,
+    pub pos: Option<egui::Pos2>,
+    pub in_grid: bool,
+    pub hit_anchor: Option<(usize, u32)>,
+    pub hit_ctrl: Option<ControlPointHit>,
+    pub suppress_blank_marquee: bool,
+    pub cmd: bool,
+    pub alt: bool,
+    pub shift: bool,
+    pub egui_ctx: egui::Context,
+    pub marquee_rect: Option<egui::Rect>,
+    pub sel_op: Option<SelOp>,
+    pub in_sel_rect: bool,
+    pub hover_anchor_id: egui::Id,
+    pub hover_ctrl_id: egui::Id,
+}
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn handle_automation_interaction(
@@ -48,13 +92,10 @@ pub(crate) fn handle_automation_interaction(
     Option<SelOp>,
 ) {
     let mut edits = Vec::new();
-    // target 直接来自 selected_target（Tempo 也是 selected_target 的一种）。
     let target = panel.selected_target.clone();
-    // Tempo 没有 tempo_lane 时无法编辑（防御：正常调用方必传）。
     if target == AutomationTarget::Tempo && tempo_lane.is_none() {
         return (edits, None, None, None, None, None);
     }
-    // max_val 与 show_panels 共用同一计算（Tempo 由实际事件动态计算）。
     let max_val = match tempo_lane {
         Some(tl) => panel_max_val(panel, tl),
         None => panel.selected_target.max_value(),
@@ -62,8 +103,6 @@ pub(crate) fn handle_automation_interaction(
     if max_val == 0.0 {
         return (edits, None, None, None, None, None);
     }
-    // value 的绝对上限：Tempo 允许拖拽突破当前显示上限（当前最大事件值），
-    // 直达 `max_value()` 的 60_000_000 BPM；其他 target 上限就是 max_val（不变）。
     let value_cap = if target == yinhe_types::AutomationTarget::Tempo {
         yinhe_types::AutomationTarget::Tempo.max_value()
     } else {
@@ -73,21 +112,15 @@ pub(crate) fn handle_automation_interaction(
     let ppu = panel.base.pixels_per_tick;
     let scroll_x = panel.base.scroll_x;
     let drag_id = ui.id().with("auto_drag").with(id_base);
-    // MoveAnchors 拖拽偏移量写入此 id，供 automation_panel.rs 偏移持续化选框
     let move_offset_id = ui.id().with("auto_move_offset").with(id_base);
-    // ghost 用 track color 而非黄色（ghost 自身有固定透明度）
     let track_color4 = track_colors
         .get(track_idx as usize)
         .copied()
         .unwrap_or([0.8, 0.8, 0.8, 1.0]);
     let track_color = [track_color4[0], track_color4[1], track_color4[2]];
 
-    // 读取当前拖拽状态
     let drag_state = ui.ctx().data(|d| d.get_temp::<AutoDrag>(drag_id));
 
-    // 不用 ui.interact——piano_view 的 handle_input 已用 Sense::click_and_drag()
-    // 占用了整个 music_rect，自动化面板的 grid_area 是子区域，事件已被父级消费。
-    // 改用 ui.input() 直接检测指针状态。
     let pointer_hover_pos = ui.input(|i| i.pointer.hover_pos());
     let pointer_pressed = ui.input(|i| i.pointer.primary_pressed());
     let pointer_released = ui.input(|i| i.pointer.primary_released());
@@ -99,7 +132,6 @@ pub(crate) fn handle_automation_interaction(
     let pointer_secondary_clicked =
         ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary));
 
-    // 鼠标位置 → tick/value。tick clamp 到 >= 0 防止 as u32 溢出。
     let pos = pointer_hover_pos;
     let mouse_info = pos.map(|p| {
         let x_in_grid = p.x - grid_area.min.x;
@@ -111,28 +143,21 @@ pub(crate) fn handle_automation_interaction(
             ctx.bar_line_data,
         )
         .max(0.0) as u32;
-        // y 不 clamp：允许鼠标拖到面板上方（y < 0），value 线性外推
-        // 突破当前显示上限——Tempo 锚点由此可拖出 120 以上的 BPM。
-        // value 的下限 0 由下方 clamp 兜底。
         let y_in_panel = p.y - panel_rect.min.y;
         let value = panel.y_to_value(y_in_panel, max_val).clamp(0.0, value_cap);
         (p, snapped_tick, value)
     });
 
-    // 鼠标是否在 grid 区域内
     let in_grid = pos.is_some_and(|p| grid_area.contains(p));
 
-    // 找当前 lane：Tempo 模式直接用 tempo_lane；其他模式从 automation_lanes 查。
     let (lane_idx, lane): (Option<usize>, Option<&AutomationLane>) =
         if target == yinhe_types::AutomationTarget::Tempo {
-            // 上方已防御 None，这里 tempo_lane 必为 Some
             (Some(0), tempo_lane)
         } else {
             let idx = automation_lanes.iter().position(|l| l.target == target);
             (idx, idx.and_then(|i| automation_lanes.get(i)))
         };
 
-    // 命中检测：找距离鼠标最近的锚点
     let hit_anchor = lane.and_then(|l| {
         let (_, snapped_tick, _) = mouse_info?;
         l.events
@@ -152,8 +177,6 @@ pub(crate) fn handle_automation_interaction(
             })
     });
 
-    // 命中检测：Curve 段中间的空心圆控制点（Pencil / Select 工具下，未拖拽时）。
-    // Bug 10：Select 也能编辑控制点，命中门控放开到 Select 系。
     let hit_ctrl = if matches!(
         ctx.active_tool,
         Tool::Pencil | Tool::Select | Tool::SelectVertical
@@ -169,716 +192,126 @@ pub(crate) fn handle_automation_interaction(
         None
     };
 
-    // 拖拽中：根据拖拽类型设置光标
+    let egui_ctx = ui.ctx().clone();
+    let (cmd, alt, shift) = egui_ctx.input(|i| {
+        (
+            i.modifiers.command || i.modifiers.ctrl,
+            i.modifiers.alt,
+            i.modifiers.shift,
+        )
+    });
+    let in_sel_rect = panel.anchor_sel_rects.iter().any(|r| {
+        let Some((_, tick, value)) = mouse_info else {
+            return false;
+        };
+        r.contains(tick, value)
+    });
+    let hover_anchor_id = ui.id().with("auto_hover_anchor").with(id_base);
+    let hover_ctrl_id = ui.id().with("auto_hover_ctrl").with(id_base);
+
+    // 拖拽中/悬停光标
     if let Some(drag) = drag_state {
         match drag {
             AutoDrag::MoveAnchors { .. } => {
-                // 多锚点拖拽：显示移动光标（上下左右箭头）
-                ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+                egui_ctx.set_cursor_icon(egui::CursorIcon::Move);
             }
-            AutoDrag::MarqueeSelect { .. } | AutoDrag::EraserMarquee { .. } => {
-                // 框选：保持默认光标
-            }
+            AutoDrag::MarqueeSelect { .. } | AutoDrag::EraserMarquee { .. } => {}
             _ => {
-                // 单锚点拖拽/控制点拖拽：捏合抓手
-                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                egui_ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
             }
         }
     } else if (hit_anchor.is_some() || hit_ctrl.is_some()) && in_grid {
-        // 悬停在锚点或控制点上时，鼠标变抓手
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        egui_ctx.set_cursor_icon(egui::CursorIcon::Grab);
     } else if matches!(ctx.active_tool, Tool::Select | Tool::SelectVertical)
         && hit_anchor.is_none()
         && in_grid
         && !panel.anchor_sel_rects.is_empty()
+        && in_sel_rect
     {
-        // Select 工具下，悬停在持续化选框内（未命中锚点）：显示移动光标
-        let in_sel_rect = panel.anchor_sel_rects.iter().any(|r| {
-            let Some((_, tick, value)) = mouse_info else {
-                return false;
-            };
-            r.contains(tick, value)
-        });
-        if in_sel_rect {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
-        }
+        egui_ctx.set_cursor_icon(egui::CursorIcon::Move);
     }
 
-    // Select 工具的框选矩形（拖拽中每帧更新，用于 egui painter 绘制 + 渲染层高亮预览）。
-    let mut marquee_rect: Option<egui::Rect> = None;
-    // Select 工具的选区变更操作（caller 应用到 `panel.anchor_sel_rects`）。
-    let mut sel_op: Option<SelOp> = None;
+    let mut ictx = InteractionCtx {
+        grid_area,
+        panel_rect,
+        panel,
+        target,
+        lane,
+        lane_idx,
+        track_idx,
+        active_tool: ctx.active_tool,
+        track_color,
+        max_val,
+        value_cap,
+        ppu,
+        scroll_x,
+        drag_id,
+        move_offset_id,
+        drag_state,
+        pointer_pressed,
+        pointer_released,
+        pointer_clicked,
+        pointer_double_clicked,
+        pointer_secondary_clicked,
+        mouse_info,
+        pos,
+        in_grid,
+        hit_anchor,
+        hit_ctrl,
+        suppress_blank_marquee,
+        cmd,
+        alt,
+        shift,
+        egui_ctx: egui_ctx.clone(),
+        marquee_rect: None,
+        sel_op: None,
+        in_sel_rect,
+        hover_anchor_id,
+        hover_ctrl_id,
+    };
 
-    match ctx.active_tool {
-        Tool::Pencil => {
-            // 双击：删除锚点（在锚点上）或新建锚点（空白处）
-            if pointer_double_clicked && in_grid {
-                if let Some((_, tick)) = hit_anchor {
-                    if let Some(lidx) = lane_idx {
-                        edits.push(yinhe_types::AutomationEdit::Delete {
-                            track_idx,
-                            lane_idx: lidx,
-                            target: target.clone(),
-                            tick,
-                        });
-                    }
-                    // 清除可能残留的 drag_state（双击时 pointer_pressed 也会触发）
-                    ui.ctx().data_mut(|d| d.remove::<AutoDrag>(drag_id));
-                } else if hit_ctrl.is_none()
-                    && let Some((_, tick, value)) = mouse_info
-                {
-                    // 双击空白处：新建锚点（控制点上双击不新建）
-                    edits.push(yinhe_types::AutomationEdit::Add {
-                        track_idx,
-                        target: target.clone(),
-                        tick,
-                        value,
-                        shape: SegmentShape::Step,
-                    });
-                }
-                return (edits, None, None, None, None, None);
+    match ictx.active_tool {
+        Tool::Pencil => match pencil::handle_pencil(&mut ictx, &mut edits, info_content, right_tab)
+        {
+            ToolResult::Break(g) => {
+                return (edits, g, None, None, ictx.marquee_rect, ictx.sel_op);
             }
-
-            // 拖拽锚点：press 记录，release 提交
-            // release 不检查 in_grid——用户可能拖到边缘（值=127/0）时鼠标移出 grid，
-            // 但 mouse_info 仍有效（y_in_panel 已 clamp），不应丢失这次编辑。
-            if pointer_pressed && in_grid {
-                if let Some((event_idx, tick)) = hit_anchor {
-                    // 左键点击锚点 → 选中它（信息面板显示该锚点）
-                    if let Some(lidx) = lane_idx {
-                        *info_content = Some(InfoContent::Anchor {
-                            track_idx,
-                            lane_idx: lidx,
-                            event_idx,
-                            target: target.clone(),
-                        });
-                        *right_tab = Some(RightTab::Info);
-                    }
-                    // 记录锚点原始位置，用于判断是否实际拖动过
-                    let anchor_value = lane
-                        .and_then(|l| l.events.iter().find(|e| e.tick == tick))
-                        .map(|e| e.value)
-                        .unwrap_or(0.0);
-                    ui.ctx().data_mut(|d| {
-                        d.insert_temp(
-                            drag_id,
-                            AutoDrag::MoveAnchor {
-                                old_tick: tick,
-                                start_tick: tick,
-                                start_value: anchor_value,
-                            },
-                        );
-                    });
-                } else if let Some(hit) = hit_ctrl {
-                    // 命中控制点：开始拖拽该端控制点
-                    let (start_x, start_y) = match hit.which {
-                        CtrlEnd::Out => (hit.x1, hit.y1),
-                        CtrlEnd::In => (hit.x2, hit.y2),
-                    };
-                    ui.ctx().data_mut(|d| {
-                        d.insert_temp(
-                            drag_id,
-                            AutoDrag::DragControlPoint {
-                                prev_tick: hit.prev_tick,
-                                which: hit.which,
-                                start_x,
-                                start_y,
-                            },
-                        );
-                    });
-                } else if drag_state.is_none() {
-                    // 不在锚点/控制点上：检查是否在线段上，是则添加锚点并开始拖拽
-                    if let Some(l) = lane
-                        && let Some((_, tick, value)) = mouse_info
-                        && hit_line_on_lane(
-                            l,
-                            tick,
-                            value,
-                            ppu,
-                            scroll_x,
-                            grid_area.min.x,
-                            panel_rect.min.y,
-                            panel,
-                            max_val,
-                        )
-                    {
-                        edits.push(yinhe_types::AutomationEdit::Add {
-                            track_idx,
-                            target: target.clone(),
-                            tick,
-                            value,
-                            shape: SegmentShape::Step,
-                        });
-                        ui.ctx().data_mut(|d| {
-                            d.insert_temp(
-                                drag_id,
-                                AutoDrag::MoveAnchor {
-                                    old_tick: tick,
-                                    start_tick: tick,
-                                    start_value: value,
-                                },
-                            );
-                        });
-                    }
-                }
+            ToolResult::Continue => {}
+        },
+        Tool::Curve => match curve::handle_curve(&mut ictx, &mut edits) {
+            ToolResult::Break(g) => {
+                return (edits, g, None, None, ictx.marquee_rect, ictx.sel_op);
             }
-            if pointer_released {
-                let drag = ui.ctx().data(|d| d.get_temp::<AutoDrag>(drag_id));
-                ui.ctx().data_mut(|d| d.remove::<AutoDrag>(drag_id));
-                let ghost = commit_anchor_or_ctrl_release(
-                    drag,
-                    lane,
-                    lane_idx,
-                    track_idx,
-                    &target,
-                    mouse_info,
-                    ppu,
-                    scroll_x,
-                    grid_area,
-                    panel_rect,
-                    panel,
-                    max_val,
-                    &mut edits,
-                    track_color,
-                );
-                return (edits, ghost, None, None, None, None);
+            ToolResult::Continue => {}
+        },
+        Tool::Select | Tool::SelectVertical => match select::handle_select(&mut ictx, &mut edits) {
+            ToolResult::Break(g) => {
+                return (edits, g, None, None, ictx.marquee_rect, ictx.sel_op);
             }
-
-            // 点击空白（非拖拽，非控制点）：添加新锚点（shape = Step）
-            if pointer_clicked
-                && in_grid
-                && hit_anchor.is_none()
-                && hit_ctrl.is_none()
-                && drag_state.is_none()
-            {
-                if let Some((_, tick, value)) = mouse_info {
-                    edits.push(yinhe_types::AutomationEdit::Add {
-                        track_idx,
-                        target: target.clone(),
-                        tick,
-                        value,
-                        shape: SegmentShape::Step,
-                    });
-                }
-                return (edits, None, None, None, None, None);
+            ToolResult::Continue => {}
+        },
+        Tool::Eraser => match eraser::handle_eraser(&mut ictx, &mut edits) {
+            ToolResult::Break(g) => {
+                return (edits, g, None, None, ictx.marquee_rect, ictx.sel_op);
             }
-        }
-        Tool::Curve => {
-            // 拖拽起点 → 终点：press 记录起点，release 提交 2 个锚点
-            // release 不检查 in_grid（同 Pencil 理由）。
-            if pointer_pressed
-                && in_grid
-                && let Some((_, tick, value)) = mouse_info
-            {
-                ui.ctx().data_mut(|d| {
-                    d.insert_temp(
-                        drag_id,
-                        AutoDrag::CurveDraw {
-                            start_tick: tick,
-                            start_value: value,
-                        },
-                    );
-                });
-            }
-            if pointer_released {
-                let drag = ui.ctx().data(|d| d.get_temp::<AutoDrag>(drag_id));
-                ui.ctx().data_mut(|d| d.remove::<AutoDrag>(drag_id));
-                if let Some(AutoDrag::CurveDraw {
-                    start_tick: t1,
-                    start_value: v1,
-                }) = drag
-                    && let Some((_, t2, v2)) = mouse_info
-                {
-                    if t1 != t2 {
-                        // 两个锚点：起点 Curve 直线，终点 Step
-                        edits.push(yinhe_types::AutomationEdit::Add {
-                            track_idx,
-                            target: target.clone(),
-                            tick: t1.min(t2),
-                            value: v1,
-                            shape: SegmentShape::linear_curve(),
-                        });
-                        edits.push(yinhe_types::AutomationEdit::Add {
-                            track_idx,
-                            target: target.clone(),
-                            tick: t1.max(t2),
-                            value: v2,
-                            shape: SegmentShape::Step,
-                        });
-                    } else {
-                        // 单击：只加一个 Curve 直线锚点
-                        edits.push(yinhe_types::AutomationEdit::Add {
-                            track_idx,
-                            target: target.clone(),
-                            tick: t2,
-                            value: v2,
-                            shape: SegmentShape::linear_curve(),
-                        });
-                    }
-                }
-                return (edits, None, None, None, None, None);
-            }
-        }
-        Tool::Select | Tool::SelectVertical => {
-            let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
-            let alt = ui.input(|i| i.modifiers.alt);
-            let shift = ui.input(|i| i.modifiers.shift);
-            let vertical = matches!(ctx.active_tool, Tool::SelectVertical);
-
-            // 检测鼠标是否在持续化选框内（音乐坐标判断）
-            let in_sel_rect = panel.anchor_sel_rects.iter().any(|r| {
-                let Some((_, tick, value)) = mouse_info else {
-                    return false;
-                };
-                r.contains(tick, value)
-            });
-
-            // Bug 10：Select 具备铅笔的锚点编辑能力——双击锚点删除、双击空白新建。
-            if pointer_double_clicked && in_grid {
-                if let Some((_, tick)) = hit_anchor {
-                    if let Some(lidx) = lane_idx {
-                        edits.push(yinhe_types::AutomationEdit::Delete {
-                            track_idx,
-                            lane_idx: lidx,
-                            target: target.clone(),
-                            tick,
-                        });
-                    }
-                    // 清除可能残留的 drag_state（双击时 pointer_pressed 也会触发）
-                    ui.ctx().data_mut(|d| d.remove::<AutoDrag>(drag_id));
-                } else if hit_ctrl.is_none()
-                    && let Some((_, tick, value)) = mouse_info
-                {
-                    // 双击空白处：新建锚点（控制点上双击不新建）
-                    edits.push(yinhe_types::AutomationEdit::Add {
-                        track_idx,
-                        target: target.clone(),
-                        tick,
-                        value,
-                        shape: SegmentShape::Step,
-                    });
-                }
-                return (edits, None, None, None, None, None);
-            }
-
-            // ── 按下：点击锚点 / 点击选框内拖拽 / 开始框选 ──
-            if pointer_pressed && in_grid {
-                if let Some((event_idx, tick)) = hit_anchor {
-                    // 读取锚点实际 value（用于 sel_rect 单点设置）
-                    let anchor_value = lane
-                        .and_then(|l| l.events.get(event_idx))
-                        .map(|e| e.value)
-                        .unwrap_or(0.0);
-                    let anchor_in_sel = panel
-                        .anchor_sel_rects
-                        .iter()
-                        .any(|r| r.contains(tick, anchor_value));
-                    if cmd || shift {
-                        // Shift/Cmd+点击锚点：保持单选框语义，union 到最新选框（或新点 rect）
-                        // 用 Set 替换所有为 unioned rect（与原行为一致）
-                        let point_rect = AnchorSelRect {
-                            tick_start: tick as f64,
-                            tick_end: tick as f64,
-                            value_range: if vertical {
-                                None
-                            } else {
-                                Some((anchor_value, anchor_value))
-                            },
-                        };
-                        let final_rect = match panel.anchor_sel_rects.last().copied() {
-                            Some(existing) => union_anchor_sel_rect(existing, point_rect),
-                            None => point_rect,
-                        };
-                        sel_op = Some(SelOp::Set(SelRectOp::Set(final_rect)));
-                    } else {
-                        // 普通点击：若锚点不在 sel_rect 内，设置 sel_rect 为单点
-                        if !anchor_in_sel {
-                            let point_rect = AnchorSelRect {
-                                tick_start: tick as f64,
-                                tick_end: tick as f64,
-                                value_range: if vertical {
-                                    None
-                                } else {
-                                    Some((anchor_value, anchor_value))
-                                },
-                            };
-                            sel_op = Some(SelOp::Set(SelRectOp::Set(point_rect)));
-                        }
-                        // 开始 MoveAnchors 拖拽（用鼠标位置作为 start，用于 delta 计算）
-                        if let Some((_, _, value)) = mouse_info {
-                            ui.ctx().data_mut(|d| {
-                                d.insert_temp(
-                                    drag_id,
-                                    AutoDrag::MoveAnchors {
-                                        start_tick: tick,
-                                        start_value: value,
-                                        alt,
-                                    },
-                                );
-                            });
-                        }
-                    }
-                } else if in_sel_rect && !panel.anchor_sel_rects.is_empty() {
-                    // 点击持续化选框内（未命中锚点）→ 拖拽选中的锚点
-                    if let Some((_, tick, value)) = mouse_info {
-                        ui.ctx().data_mut(|d| {
-                            d.insert_temp(
-                                drag_id,
-                                AutoDrag::MoveAnchors {
-                                    start_tick: tick,
-                                    start_value: value,
-                                    alt,
-                                },
-                            );
-                        });
-                    }
-                } else if let Some(hit) = hit_ctrl {
-                    // Bug 10：控制点上按下 → 拖拽该端控制点（与铅笔一致）
-                    let (start_x, start_y) = match hit.which {
-                        CtrlEnd::Out => (hit.x1, hit.y1),
-                        CtrlEnd::In => (hit.x2, hit.y2),
-                    };
-                    ui.ctx().data_mut(|d| {
-                        d.insert_temp(
-                            drag_id,
-                            AutoDrag::DragControlPoint {
-                                prev_tick: hit.prev_tick,
-                                which: hit.which,
-                                start_x,
-                                start_y,
-                            },
-                        );
-                    });
-                } else if !(cmd || shift)
-                    && let Some(l) = lane
-                    && let Some((_, tick, value)) = mouse_info
-                    && hit_line_on_lane(
-                        l,
-                        tick,
-                        value,
-                        ppu,
-                        scroll_x,
-                        grid_area.min.x,
-                        panel_rect.min.y,
-                        panel,
-                        max_val,
-                    )
-                {
-                    // Bug 10：线段上按下 → 添加锚点并直接拖拽（与铅笔一致）
-                    edits.push(yinhe_types::AutomationEdit::Add {
-                        track_idx,
-                        target: target.clone(),
-                        tick,
-                        value,
-                        shape: SegmentShape::Step,
-                    });
-                    ui.ctx().data_mut(|d| {
-                        d.insert_temp(
-                            drag_id,
-                            AutoDrag::MoveAnchor {
-                                old_tick: tick,
-                                start_tick: tick,
-                                start_value: value,
-                            },
-                        );
-                    });
-                } else if let Some((p, _tick, _value)) = mouse_info {
-                    // AR conductor Tempo 主行空白处不启动锚点框选，交给外层 sel_drag
-                    // 处理光标跳转/音轨选中（保持可选中、不可写音符）。
-                    if suppress_blank_marquee {
-                        // 不做任何处理
-                    } else {
-                        // 不在选框内 → 开始框选（3px 阈值在拖拽中判断）
-                        ui.ctx().data_mut(|d| {
-                            d.insert_temp(drag_id, AutoDrag::MarqueeSelect { start_pos: p });
-                        });
-                        // 非加选模式：清空共享音符选区，触发三视图选框互斥
-                        // （与 AR/PR 在 press 时清空 selected 的行为一致）。
-                        if !cmd && !shift {
-                            sel_op = Some(SelOp::ClearNoteSelection);
-                        }
-                    }
-                }
-            }
-
-            // ── 拖拽中：更新 marquee_rect ──
-            if let Some(AutoDrag::MarqueeSelect { start_pos, .. }) = drag_state
-                && let Some(p) = pos
-            {
-                let dist = (p - start_pos).length();
-                if dist >= MARQUEE_THRESHOLD {
-                    // Bug 10：AM 选择工具的选框 = 垂直全选（y 范围扩展到整个 grid_area，
-                    // x 范围按鼠标），Select 与 SelectVertical 行为一致。
-                    let rect = egui::Rect::from_min_max(
-                        egui::pos2(start_pos.x.min(p.x), grid_area.min.y),
-                        egui::pos2(start_pos.x.max(p.x), grid_area.max.y),
-                    )
-                    .intersect(grid_area);
-                    marquee_rect = Some(rect);
-                    // 无修饰键时清空选区（让用户看到选区被清空）
-                    if !cmd && !shift {
-                        sel_op = Some(SelOp::Set(SelRectOp::Keep));
-                    }
-                }
-            }
-
-            // ── 释放：提交选区或拖拽 ──
-            if pointer_released {
-                let drag = ui.ctx().data(|d| d.get_temp::<AutoDrag>(drag_id));
-                ui.ctx().data_mut(|d| d.remove::<AutoDrag>(drag_id));
-                // 清除 move_offset（拖拽结束）
-                ui.ctx()
-                    .data_mut(|d| d.remove::<(i64, f32)>(move_offset_id));
-                // 释放时的 ghost（MoveAnchors 释放当帧仍需显示 ghost，避免闪烁）
-                let mut release_ghost: Option<AutomationGhost> = None;
-                match drag {
-                    Some(AutoDrag::MarqueeSelect { start_pos, .. }) => {
-                        let dist = pos.map(|p| (p - start_pos).length()).unwrap_or(0.0);
-                        if dist >= MARQUEE_THRESHOLD {
-                            // 框选完成：计算持续化选框（音乐坐标）。
-                            // Bug 10：AM 选择工具的选框 = 垂直全选（value_range = None），
-                            // Select 与 SelectVertical 行为一致，Select 框选不再按 y 取值。
-                            if let Some((p, _, _)) = mouse_info {
-                                let min_x = start_pos.x.min(p.x);
-                                let max_x = start_pos.x.max(p.x);
-                                let tick_from_x = |x: f32| -> f64 {
-                                    ((x - grid_area.min.x + scroll_x) / ppu).max(0.0) as f64
-                                };
-                                let new_rect = AnchorSelRect {
-                                    tick_start: tick_from_x(min_x),
-                                    tick_end: tick_from_x(max_x),
-                                    value_range: None,
-                                };
-                                // Shift/Cmd+框选：追加新选框（多选框）；否则替换所有
-                                if cmd || shift {
-                                    sel_op = Some(SelOp::Set(SelRectOp::Append(new_rect)));
-                                } else {
-                                    sel_op = Some(SelOp::Set(SelRectOp::Set(new_rect)));
-                                }
-                            }
-                        } else {
-                            // dist < 3px：视为点击，清空选框
-                            if !cmd && !shift {
-                                sel_op = Some(SelOp::Clear);
-                            }
-                        }
-                    }
-                    Some(AutoDrag::MoveAnchors {
-                        start_tick,
-                        start_value,
-                        alt,
-                        ..
-                    }) => {
-                        // 提交移动或复制
-                        if let Some((_, cur_tick, cur_value)) = mouse_info
-                            && let Some(l) = lane
-                            && let Some(lidx) = lane_idx
-                            && !panel.anchor_sel_rects.is_empty()
-                        {
-                            let d_tick = cur_tick as i64 - start_tick as i64;
-                            // 垂直工具或垂直全选框（value_range=None）：只能水平移动，d_value 强制为 0
-                            let d_value = if vertical
-                                || panel
-                                    .anchor_sel_rects
-                                    .iter()
-                                    .any(|r| r.value_range.is_none())
-                            {
-                                0.0
-                            } else {
-                                cur_value - start_value
-                            };
-                            if d_tick != 0 || d_value.abs() > 1e-6 {
-                                // 收集 moves：从 lane.events 筛选落在任一 sel_rect 内的锚点
-                                // moves = (original_tick, new_tick, new_value)
-                                let moves: Vec<(u32, u32, f32)> = l
-                                    .events
-                                    .iter()
-                                    .filter_map(|e| {
-                                        if !panel
-                                            .anchor_sel_rects
-                                            .iter()
-                                            .any(|r| r.contains(e.tick, e.value))
-                                        {
-                                            return None;
-                                        }
-                                        let new_tick = (e.tick as i64 + d_tick).max(0) as u32;
-                                        let new_value = (e.value + d_value).clamp(0.0, value_cap);
-                                        Some((e.tick, new_tick, new_value))
-                                    })
-                                    .collect();
-                                if !moves.is_empty() {
-                                    // 释放当帧仍显示 ghost（基于最终位置），
-                                    // 避免 edits 在 layout.rs apply 前显示旧曲线一帧
-                                    let ghost_lane = if alt {
-                                        build_lane_multi_copy(l, &moves)
-                                    } else {
-                                        build_lane_multi_move(l, &moves)
-                                    };
-                                    release_ghost = Some(AutomationGhost::Move {
-                                        lane: ghost_lane,
-                                        color: track_color,
-                                    });
-                                    if alt {
-                                        // Alt = 复制：为每个选中锚点生成 Add（shape 从原始事件读取）
-                                        for &(tick, new_tick, new_value) in &moves {
-                                            let shape = l
-                                                .events
-                                                .iter()
-                                                .find(|e| e.tick == tick)
-                                                .map(|e| e.shape)
-                                                .unwrap_or(SegmentShape::Step);
-                                            edits.push(yinhe_types::AutomationEdit::Add {
-                                                track_idx,
-                                                target: target.clone(),
-                                                tick: new_tick,
-                                                value: new_value,
-                                                shape,
-                                            });
-                                        }
-                                    } else {
-                                        // 移动：用 MoveBatch 一次性提交所有锚点移动，
-                                        // 避免逐个 Move 导致链式覆盖
-                                        // （如 1→2, 2→3 时 1→2 会先删掉原 2）
-                                        edits.push(yinhe_types::AutomationEdit::MoveBatch {
-                                            track_idx,
-                                            lane_idx: lidx,
-                                            target: target.clone(),
-                                            moves,
-                                        });
-                                    }
-
-                                    // 所有选框一起偏移：tick += d_tick，value += d_value
-                                    // 垂直工具 value_range 为 None 保持 None
-                                    let new_rects: Vec<AnchorSelRect> = panel
-                                        .anchor_sel_rects
-                                        .iter()
-                                        .map(|sel_rect| AnchorSelRect {
-                                            tick_start: (sel_rect.tick_start + d_tick as f64)
-                                                .max(0.0),
-                                            tick_end: (sel_rect.tick_end + d_tick as f64).max(0.0),
-                                            value_range: sel_rect.value_range.map(
-                                                |(vmin, vmax)| {
-                                                    (
-                                                        (vmin + d_value).clamp(0.0, value_cap),
-                                                        (vmax + d_value).clamp(0.0, value_cap),
-                                                    )
-                                                },
-                                            ),
-                                        })
-                                        .collect();
-                                    sel_op = Some(SelOp::Set(SelRectOp::ReplaceAll(new_rects)));
-                                }
-                            }
-                            // delta == 0：视为点击，不提交编辑
-                        }
-                    }
-                    // Bug 10：Select 工具直接拖拽单锚点/控制点（与铅笔一致），
-                    // 走与 Pencil 相同的提交逻辑（MoveAnchor / DragControlPoint）。
-                    drag @ (Some(AutoDrag::MoveAnchor { .. })
-                    | Some(AutoDrag::DragControlPoint { .. })) => {
-                        release_ghost = commit_anchor_or_ctrl_release(
-                            drag,
-                            lane,
-                            lane_idx,
-                            track_idx,
-                            &target,
-                            mouse_info,
-                            ppu,
-                            scroll_x,
-                            grid_area,
-                            panel_rect,
-                            panel,
-                            max_val,
-                            &mut edits,
-                            track_color,
-                        );
-                    }
-                    _ => {}
-                }
-                return (edits, release_ghost, None, None, marquee_rect, sel_op);
-            }
-        }
-        Tool::Eraser => {
-            // 按下命中锚点：立即删除（橡皮擦语义）；空白按下：开始框选删除。
-            if pointer_pressed && in_grid {
-                if let Some((_, tick)) = hit_anchor {
-                    if let Some(lidx) = lane_idx {
-                        edits.push(yinhe_types::AutomationEdit::Delete {
-                            track_idx,
-                            lane_idx: lidx,
-                            target: target.clone(),
-                            tick,
-                        });
-                    }
-                } else if let Some((p, _, _)) = mouse_info {
-                    ui.ctx().data_mut(|d| {
-                        d.insert_temp(drag_id, AutoDrag::EraserMarquee { start_pos: p });
-                    });
-                }
-            }
-
-            // 拖拽中：更新 marquee_rect（红色删除框由 caller 绘制）。
-            if let Some(AutoDrag::EraserMarquee { start_pos, .. }) = drag_state
-                && let Some(p) = pos
-                && (p - start_pos).length() >= MARQUEE_THRESHOLD
-            {
-                marquee_rect = Some(egui::Rect::from_two_pos(start_pos, p).intersect(grid_area));
-            }
-
-            // 释放：删除矩形内（tick + value 双范围）的所有锚点。
-            if pointer_released {
-                let drag = ui.ctx().data(|d| d.get_temp::<AutoDrag>(drag_id));
-                ui.ctx().data_mut(|d| d.remove::<AutoDrag>(drag_id));
-                if let Some(AutoDrag::EraserMarquee { start_pos }) = drag
-                    && let Some(l) = lane
-                    && let Some(lidx) = lane_idx
-                    && let Some(p) = pos
-                    && (p - start_pos).length() >= MARQUEE_THRESHOLD
-                {
-                    let rect = egui::Rect::from_two_pos(start_pos, p);
-                    let tick_from_x = |x: f32| -> f64 {
-                        ((x - grid_area.min.x + scroll_x) / ppu).max(0.0) as f64
-                    };
-                    let t0 = tick_from_x(rect.min.x);
-                    let t1 = tick_from_x(rect.max.x);
-                    // rect 顶部 = 高 value，底部 = 低 value
-                    let v_hi = panel.y_to_value(rect.min.y - panel_rect.min.y, max_val);
-                    let v_lo = panel.y_to_value(rect.max.y - panel_rect.min.y, max_val);
-                    for e in &l.events {
-                        if (e.tick as f64) >= t0
-                            && (e.tick as f64) <= t1
-                            && e.value >= v_lo
-                            && e.value <= v_hi
-                        {
-                            edits.push(yinhe_types::AutomationEdit::Delete {
-                                track_idx,
-                                lane_idx: lidx,
-                                target: target.clone(),
-                                tick: e.tick,
-                            });
-                        }
-                    }
-                }
-                return (edits, None, None, None, marquee_rect, None);
-            }
-        }
+            ToolResult::Continue => {}
+        },
         _ => {}
     }
 
-    // 右键点击锚点 → 记录编辑信息，供 show_panels 弹窗
+    // 右键点击锚点 → 记录编辑信息
     let right_click_id = ui.id().with("auto_right_click").with(id_base);
-    if pointer_secondary_clicked
-        && in_grid
-        && let Some((_, tick)) = hit_anchor
-        && let Some(lidx) = lane_idx
-        && let Some(l) = lane
-        && let Some(_evt) = l.events.iter().find(|e| e.tick == tick)
+    if ictx.pointer_secondary_clicked
+        && ictx.in_grid
+        && let Some((_, tick)) = ictx.hit_anchor
+        && let Some(lidx) = ictx.lane_idx
+        && let Some(l) = ictx.lane
+        && l.events.iter().find(|e| e.tick == tick).is_some()
     {
-        // 清除旧编辑值，确保新锚点使用自己的初始值
         let edit_tick_id = ui.id().with("auto_right_tick").with(id_base);
         let edit_value_id = ui.id().with("auto_right_value").with(id_base);
         let was_open_id = ui.id().with("auto_right_was_open").with(id_base);
-        ui.ctx().data_mut(|d| {
+        egui_ctx.data_mut(|d| {
             d.remove::<f64>(edit_tick_id);
             d.remove::<f64>(edit_value_id);
             d.remove::<bool>(was_open_id);
@@ -888,271 +321,24 @@ pub(crate) fn handle_automation_interaction(
                     track_idx,
                     lane_idx: lidx,
                     old_tick: tick,
-                    target: target.clone(),
+                    target: ictx.target.clone(),
                 },
             );
         });
     }
 
-    // ── Ghost 计算（panel 局部坐标，传给 wgpu Layer 3 绘制）──
-    // 重新读取 drag_state：press 分支可能刚设置过，release 分支已 return。
-    let drag_now = ui.ctx().data(|d| d.get_temp::<AutoDrag>(drag_id));
-    let ghost = if let Some(drag) = drag_now
-        && let Some((p, cur_tick, cur_value)) = mouse_info
-    {
-        // panel 局部坐标，与 build_data_lines 一致：x = x_offset + tick*ppu
-        let x_offset = panel.base.left_panel_width - scroll_x;
-        let cur_x = x_offset + cur_tick as f32 * ppu;
-        let cur_y = panel.value_to_y(cur_value, max_val);
-        match drag {
-            AutoDrag::MoveAnchor {
-                old_tick,
-                start_tick: _,
-                start_value: _,
-            } => {
-                // 用 build_lane_override 生成覆盖后的完整 lane，ghost 层整 lane 绘制。
-                // 这样无论锚点如何跨越、插入、拖到末尾，都只需要正常画线逻辑。
-                lane.map(|l| {
-                    let override_lane = build_lane_override(l, old_tick, cur_tick, cur_value);
-                    AutomationGhost::Move {
-                        lane: override_lane,
-                        color: track_color,
-                    }
-                })
-            }
-            AutoDrag::CurveDraw {
-                start_tick,
-                start_value,
-            } => {
-                let start_x = x_offset + start_tick as f32 * ppu;
-                let start_y = panel.value_to_y(start_value, max_val);
-                Some(AutomationGhost::Curve {
-                    start_x,
-                    start_y,
-                    cur_x,
-                    cur_y,
-                    color: track_color,
-                })
-            }
-            AutoDrag::DragControlPoint {
-                prev_tick, which, ..
-            } => {
-                // 用原始鼠标位置（不 snap）反推该端控制点的 (x, y)，
-                // 合并到现有 shape 后生成覆盖 lane。
-                lane.and_then(|l| {
-                    let new_ctrl = compute_ctrl_from_mouse(
-                        l, prev_tick, which, p, ppu, scroll_x, grid_area, panel_rect, panel,
-                        max_val,
-                    )?;
-                    // 读现有 shape，按端别替换对应分量
-                    let new_shape = merge_ctrl_shape(l, prev_tick, which, new_ctrl);
-                    let override_lane = build_lane_shape_override(l, prev_tick, new_shape);
-                    Some(AutomationGhost::Move {
-                        lane: override_lane,
-                        color: track_color,
-                    })
-                })
-            }
-            AutoDrag::MoveAnchors {
-                start_tick,
-                start_value,
-                alt,
-                ..
-            } => {
-                // Select 工具拖拽多个选中锚点：构建 multi-move 或 multi-copy ghost lane。
-                // 选中锚点的原始 (tick, value) 从 lane.events 读取（拖拽中模型不变）。
-                let d_tick = cur_tick as i64 - start_tick as i64;
-                // 垂直工具或垂直全选框（value_range=None）：只能水平移动，d_value 强制为 0
-                let vertical_now = matches!(ctx.active_tool, Tool::SelectVertical)
-                    || panel
-                        .anchor_sel_rects
-                        .iter()
-                        .any(|r| r.value_range.is_none());
-                let d_value = if vertical_now {
-                    0.0
-                } else {
-                    cur_value - start_value
-                };
-                // 写入 move_offset，供 automation_panel.rs 偏移持续化选框
-                ui.ctx()
-                    .data_mut(|d| d.insert_temp(move_offset_id, (d_tick, d_value)));
-                // 未实际移动时不产生 ghost
-                if d_tick == 0 && d_value.abs() <= 1e-6 {
-                    None
-                } else {
-                    lane.and_then(|l| {
-                        if panel.anchor_sel_rects.is_empty() {
-                            return None;
-                        }
-                        // 从 lane.events 筛选落在任一 sel_rect 内的锚点
-                        let moves: Vec<(u32, u32, f32)> = l
-                            .events
-                            .iter()
-                            .filter_map(|e| {
-                                if !panel
-                                    .anchor_sel_rects
-                                    .iter()
-                                    .any(|r| r.contains(e.tick, e.value))
-                                {
-                                    return None;
-                                }
-                                let new_tick = (e.tick as i64 + d_tick).max(0) as u32;
-                                let new_value = (e.value + d_value).clamp(0.0, value_cap);
-                                Some((e.tick, new_tick, new_value))
-                            })
-                            .collect();
-                        if moves.is_empty() {
-                            return None;
-                        }
-                        let override_lane = if alt {
-                            // Alt = 复制：原事件保留 + 副本
-                            build_lane_multi_copy(l, &moves)
-                        } else {
-                            // 移动：原事件移到新位置
-                            build_lane_multi_move(l, &moves)
-                        };
-                        Some(AutomationGhost::Move {
-                            lane: override_lane,
-                            color: track_color,
-                        })
-                    })
-                }
-            }
-            AutoDrag::MarqueeSelect { .. } | AutoDrag::EraserMarquee { .. } => {
-                // 框选不产生 ghost（marquee_rect 由 egui painter 绘制）
-                None
-            }
-        }
-    } else {
-        None
-    };
+    let ghost = ghost::compute_ghost(&mut ictx);
+    let drag_info = ghost::compute_drag_info(&ictx, ghost.is_some());
+    let hover_info = ghost::compute_hover_info(&ictx, drag_info.is_some());
 
-    // 拖拽中返回拖拽信息用于 tooltip
-    let drag_info: Option<HoverTooltip> = if ghost.is_some() {
-        match drag_now {
-            Some(AutoDrag::DragControlPoint {
-                prev_tick, which, ..
-            }) => {
-                // 拖控制点：从鼠标位置反推 (x, y)，与现有 shape 合并后显示完整 4 值
-                lane.and_then(|l| {
-                    let (p, _, _) = mouse_info?;
-                    let new_ctrl = compute_ctrl_from_mouse(
-                        l, prev_tick, which, p, ppu, scroll_x, grid_area, panel_rect, panel,
-                        max_val,
-                    )?;
-                    let (x1, y1, x2, y2) =
-                        l.events
-                            .iter()
-                            .find(|e| e.tick == prev_tick)
-                            .map(|e| match e.shape {
-                                SegmentShape::Curve { x1, y1, x2, y2 } => (x1, y1, x2, y2),
-                                SegmentShape::Step => (0.0, 0.0, 0.0, 0.0),
-                            })?;
-                    let (x1, y1, x2, y2) = match which {
-                        CtrlEnd::Out => (new_ctrl.0, new_ctrl.1, x2, y2),
-                        CtrlEnd::In => (x1, y1, new_ctrl.0, new_ctrl.1),
-                    };
-                    Some(HoverTooltip::ControlPoint {
-                        x1,
-                        y1,
-                        x2,
-                        y2,
-                        pos: p,
-                    })
-                })
-            }
-            _ => {
-                // 拖锚点 / CurveDraw：显示 (tick, value)，位置跟随鼠标
-                mouse_info.map(|(p, tick, value)| HoverTooltip::Anchor {
-                    tick,
-                    value,
-                    pos: p,
-                })
-            }
-        }
-    } else {
-        None
-    };
-
-    // ── Hover tooltip：悬停在锚点/控制点上 HOVER_DELAY 秒后显示 tooltip ──
-    // 仅在非拖拽时触发（拖拽时 drag_info 已覆盖）。
-    let hover_info: Option<HoverTooltip> = if drag_info.is_none() && in_grid {
-        let hover_anchor_id = ui.id().with("auto_hover_anchor").with(id_base);
-        let hover_ctrl_id = ui.id().with("auto_hover_ctrl").with(id_base);
-        let now = ui.input(|i| i.time);
-        if let Some((_, anchor_tick)) = hit_anchor {
-            // 锚点 hover：清除控制点计时
-            ui.ctx().data_mut(|d| d.remove::<(u32, f64)>(hover_ctrl_id));
-            let prev: Option<(u32, f64)> =
-                ui.ctx().data(|d| d.get_temp::<(u32, f64)>(hover_anchor_id));
-            let entry = match prev {
-                Some(e) if e.0 == anchor_tick => e,
-                _ => {
-                    let new_entry = (anchor_tick, now);
-                    ui.ctx()
-                        .data_mut(|d| d.insert_temp(hover_anchor_id, new_entry));
-                    new_entry
-                }
-            };
-            if now - entry.1 >= HOVER_DELAY {
-                // 从 tick + value 算锚点像素位置
-                let anchor_value = lane
-                    .and_then(|l| l.events.iter().find(|e| e.tick == anchor_tick))
-                    .map(|e| e.value);
-                if let Some(v) = anchor_value {
-                    let ax = grid_area.min.x + anchor_tick as f32 * ppu - scroll_x;
-                    let ay = panel_rect.min.y + panel.value_to_y(v, max_val);
-                    Some(HoverTooltip::Anchor {
-                        tick: anchor_tick,
-                        value: v,
-                        pos: egui::pos2(ax, ay),
-                    })
-                } else {
-                    None
-                }
-            } else {
-                ui.ctx().request_repaint();
-                None
-            }
-        } else if let Some(hit) = hit_ctrl {
-            // 控制点 hover：清除锚点计时
-            ui.ctx()
-                .data_mut(|d| d.remove::<(u32, f64)>(hover_anchor_id));
-            let prev: Option<(u32, f64)> =
-                ui.ctx().data(|d| d.get_temp::<(u32, f64)>(hover_ctrl_id));
-            let entry = match prev {
-                Some(e) if e.0 == hit.prev_tick => e,
-                _ => {
-                    let new_entry = (hit.prev_tick, now);
-                    ui.ctx()
-                        .data_mut(|d| d.insert_temp(hover_ctrl_id, new_entry));
-                    new_entry
-                }
-            };
-            if now - entry.1 >= HOVER_DELAY {
-                Some(HoverTooltip::ControlPoint {
-                    x1: hit.x1,
-                    y1: hit.y1,
-                    x2: hit.x2,
-                    y2: hit.y2,
-                    pos: hit.pos,
-                })
-            } else {
-                ui.ctx().request_repaint();
-                None
-            }
-        } else {
-            ui.ctx().data_mut(|d| {
-                d.remove::<(u32, f64)>(hover_anchor_id);
-                d.remove::<(u32, f64)>(hover_ctrl_id);
-            });
-            None
-        }
-    } else {
-        None
-    };
-
-    (edits, ghost, drag_info, hover_info, marquee_rect, sel_op)
+    (
+        edits,
+        ghost,
+        drag_info,
+        hover_info,
+        ictx.marquee_rect,
+        ictx.sel_op,
+    )
 }
 
 #[cfg(test)]
