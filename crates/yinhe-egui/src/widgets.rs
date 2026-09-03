@@ -1,3 +1,4 @@
+pub mod action_menu;
 pub(crate) mod auto_scroll;
 pub(crate) mod checkbox;
 pub(crate) mod color_picker;
@@ -16,4 +17,5 @@ pub mod selection_actions;
 pub mod split_handle;
 pub(crate) mod switch;
 pub mod time_ruler;
+pub mod timecode;
 pub mod tools_panel;
