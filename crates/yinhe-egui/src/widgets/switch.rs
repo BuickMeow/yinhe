@@ -1,6 +1,6 @@
 //! iOS 风格开关（Switch），用于设置页复选框的现代替代。
 //!
-//! - 无缓存、无阈值，纯 egui 绘制 + `animate_bool_with_time`
+//! - 无缓存、无阈值，纯 egui 绘制 + `animate_bool_with_time_and_easing(cubic_out)`
 //! - 主题化：`on` 用 `accent_active`，`off` 用 `control_bg`，跟随明暗自动切换
 //! - 尺寸 38×22，圆角轨道 + 白色圆 thumb，hover/pressed 有轻微明暗反馈
 
@@ -27,7 +27,12 @@ pub fn switch(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
 
     if ui.is_rect_visible(rect) {
         let visuals_enabled = ui.is_enabled();
-        let how_on = ui.ctx().animate_bool_with_time(resp.id, *checked, 0.15);
+        let how_on = ui.ctx().animate_bool_with_time_and_easing(
+            resp.id,
+            *checked,
+            0.2,
+            egui::emath::easing::cubic_out,
+        );
         let hovered = resp.hovered();
         let pressed = resp.is_pointer_button_down_on();
 
