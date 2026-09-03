@@ -1,10 +1,69 @@
 //! iOS 风格开关（Switch），用于设置页复选框的现代替代。
 //!
-//! - 无缓存、无阈值，纯 egui 绘制 + `animate_bool_with_time_and_easing(cubic_out)`
+//! - 无缓存、无阈值，纯 egui 绘制 + 可打断 `cubic_out`（中途反向从当前位置平滑续播）
 //! - 主题化：`on` 用 `accent_active`，`off` 用 `control_bg`，跟随明暗自动切换
 //! - 尺寸 38×22，圆角轨道 + 白色圆 thumb，hover/pressed 有轻微明暗反馈
 
 use eframe::egui;
+
+/// 单开关的打断续播状态，存于 `ctx.data` 的 temp 槽（`Id + TypeId` 隔离，不持久化）。
+#[derive(Clone)]
+struct SwitchAnim {
+    from: f32,
+    to: f32,
+    start: f64,
+}
+
+const SWITCH_DURATION: f32 = 0.2;
+
+/// 可打断的 eased 动画：`target` 翻转时从当前显示值 `from=cur` 重新起播，保证连续且双向均为 `cubic_out`。
+fn animate_switch(ctx: &egui::Context, id: egui::Id, target: bool) -> f32 {
+    let target_f = if target { 1.0 } else { 0.0 };
+    let now = ctx.input(|i| i.time);
+    // 半帧外推，与 `egui::Context::animate_value` 保持一致，减少一帧延迟感
+    let pred = ctx.input(|i| i.predicted_dt) as f64 * 0.5;
+    let now_eff = now + pred;
+
+    let (cur, needs_repaint) = ctx.data_mut(|data| {
+        if let Some(anim) = data.get_temp::<SwitchAnim>(id) {
+            let elapsed = (now_eff - anim.start) as f32 / SWITCH_DURATION;
+            let t = elapsed.clamp(0.0, 1.0);
+            let eased = egui::emath::easing::cubic_out(t);
+            let cur = egui::lerp(anim.from..=anim.to, eased);
+            if (anim.to - target_f).abs() > f32::EPSILON {
+                // 目标翻转：从当前位置平滑反向
+                data.insert_temp(
+                    id,
+                    SwitchAnim {
+                        from: cur,
+                        to: target_f,
+                        start: now_eff,
+                    },
+                );
+                (cur, true)
+            } else if t < 1.0 {
+                (cur, true)
+            } else {
+                (target_f, false)
+            }
+        } else {
+            data.insert_temp(
+                id,
+                SwitchAnim {
+                    from: target_f,
+                    to: target_f,
+                    start: now_eff,
+                },
+            );
+            (target_f, false)
+        }
+    });
+
+    if needs_repaint {
+        ctx.request_repaint();
+    }
+    cur
+}
 
 /// iOS 风格开关。点击切换 `checked`，返回 `Response`（`changed()` 可判定是否切换）。
 pub fn switch(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
@@ -27,12 +86,7 @@ pub fn switch(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
 
     if ui.is_rect_visible(rect) {
         let visuals_enabled = ui.is_enabled();
-        let how_on = ui.ctx().animate_bool_with_time_and_easing(
-            resp.id,
-            *checked,
-            0.2,
-            egui::emath::easing::cubic_out,
-        );
+        let how_on = animate_switch(ui.ctx(), resp.id, *checked);
         let hovered = resp.hovered();
         let pressed = resp.is_pointer_button_down_on();
 
