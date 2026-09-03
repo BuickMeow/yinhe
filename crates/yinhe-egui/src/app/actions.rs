@@ -650,7 +650,15 @@ impl App {
             let path_str = path.to_string_lossy().to_string();
             if let Some(idx) = self.workspace.active_doc {
                 let doc = &self.workspace.documents[idx];
-                match yinhe_midi::write_to_bytes(&doc.data.model) {
+                let opts = yinhe_midi::MidiExportOptions {
+                    encoding: self.audio_settings.midi_export_encoding,
+                    rpn_full: self.audio_settings.midi_export_rpn_full,
+                    curve_interpolate: self.audio_settings.midi_export_curve_interpolate,
+                    curve_density: self.audio_settings.midi_export_curve_density,
+                    strip_empty_tracks: self.audio_settings.midi_export_strip_empty_tracks,
+                    dedup_overlaps: self.audio_settings.midi_export_dedup_overlaps,
+                };
+                match yinhe_midi::write_with_options(&doc.data.model, &opts) {
                     Ok(bytes) => {
                         if let Err(e) = std::fs::write(&path_str, &bytes) {
                             tracing::error!("Failed to export MIDI: {}", e);

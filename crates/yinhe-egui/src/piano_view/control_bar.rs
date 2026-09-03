@@ -23,8 +23,6 @@ pub enum PrBarEvent {
     SetTrackVisible(u16, bool),
     /// 全选/清空显示音轨（track_visible 全部置为同一值）。
     SetAllVisible(bool),
-    /// 切换「允许新重叠音符」开关（全局持久化，见 AudioSettings）。
-    SetAllowOverlap(bool),
 }
 
 /// 控制栏输入（全部只读；状态修改走事件）。
@@ -38,8 +36,6 @@ pub struct PrBarData<'a> {
     pub pr_track_visible: &'a [bool],
     /// 主音轨（= 选中轨索引最小者；无选中 = None，不显示回退轨）。
     pub main_track: Option<u16>,
-    /// 「允许新重叠音符」开关当前状态（doc.edit.allow_overlapping_notes）。
-    pub allow_overlap: bool,
     /// 和弦指示器文本（实时 MIDI 按键优先，其次播放中光标处和弦）。
     pub chord: Option<&'a str>,
 }
@@ -109,54 +105,7 @@ pub fn show(ui: &mut egui::Ui, bar: egui::Rect, ctx: &PrBarData<'_>, events: &mu
         quant_resp.on_hover_text(ctx.quantize.label());
     }
 
-    // ── 「允许重叠音符」开关（量化按钮右侧；无背景）──
-    let ov_rect = egui::Rect::from_min_size(
-        egui::pos2(quant_rect.max.x + 2.0, bar.min.y),
-        egui::vec2(18.0, bar.height()),
-    );
-    let ov_resp = ui.interact(
-        ov_rect,
-        egui::Id::new("pr_bar_allow_overlap_btn"),
-        egui::Sense::click(),
-    );
-    let ov_hovered = ov_resp.hovered();
-    // 开启时高亮 stack，关闭时灰显 stack_off（ material 图标语义：stack=多层重叠，stack_off=去重）
-    let ov_icon = if ctx.allow_overlap {
-        egui_material_icons::icons::ICON_STACK
-    } else {
-        egui_material_icons::icons::ICON_STACK_OFF
-    };
-    let ov_color = if ctx.allow_overlap {
-        if ov_hovered {
-            crate::theme::contrast_fg()
-        } else {
-            crate::theme::accent_active()
-        }
-    } else if ov_hovered {
-        crate::theme::contrast_fg()
-    } else {
-        crate::theme::mode_bar_text()
-    };
-    ui.painter().text(
-        ov_rect.center(),
-        egui::Align2::CENTER_CENTER,
-        ov_icon.codepoint,
-        egui::FontId::new(crate::theme::ICON_FONT, ov_icon.font_family()),
-        ov_color,
-    );
-    if ov_resp.clicked() {
-        events.push(PrBarEvent::SetAllowOverlap(!ctx.allow_overlap));
-    }
-    if ov_hovered {
-        let tip = if ctx.allow_overlap {
-            t!("pr_bar.allow_overlap_on")
-        } else {
-            t!("pr_bar.allow_overlap_off")
-        };
-        ov_resp.on_hover_text(tip);
-    }
-
-    // ── 「显示其他音轨」幽灵切换（masked transitions；量化/重叠右侧）──
+    // ── 「显示其他音轨」幽灵切换（masked transitions；量化右侧）──
     // 有任意非主轨可见 = 开（高亮），否则关；点击走 SetAllVisible 批量切换。
     let show_others = ctx
         .pr_track_visible
@@ -164,7 +113,7 @@ pub fn show(ui: &mut egui::Ui, bar: egui::Rect, ctx: &PrBarData<'_>, events: &mu
         .enumerate()
         .any(|(i, &v)| v && Some(i as u16) != ctx.main_track);
     let ghost_rect = egui::Rect::from_min_size(
-        egui::pos2(ov_rect.max.x + 2.0, bar.min.y),
+        egui::pos2(quant_rect.max.x + 2.0, bar.min.y),
         egui::vec2(18.0, bar.height()),
     );
     let ghost_resp = ui.interact(

@@ -11,6 +11,7 @@ use super::constants::{CATEGORY_KEYS, SETTING_ITEMS, SettingItem};
 use super::editing::show_editing_tab;
 use super::general::show_general_tab;
 use super::language::show_language_tab;
+use super::midi_export::show_midi_export_tab;
 use super::render::show_render_tab;
 use super::shortcuts::show_shortcuts_tab;
 use super::theme::show_theme_tab;
@@ -64,8 +65,9 @@ pub fn show_search_results(
             2 => show_language_tab(ui, settings),
             3 => show_audio_tab(ui, settings),
             4 => show_render_tab(ui, settings),
-            5 => show_editing_tab(ui, settings),
-            6 => show_shortcuts_tab(ui, settings),
+            5 => show_midi_export_tab(ui, settings),
+            6 => show_editing_tab(ui, settings),
+            7 => show_shortcuts_tab(ui, settings),
             _ => show_general_tab(ui, settings),
         };
     }

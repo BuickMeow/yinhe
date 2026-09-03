@@ -119,6 +119,45 @@ impl MidiImportEncoding {
         }
     }
 
+    pub fn encode(self, s: &str) -> Vec<u8> {
+        let encoding: &'static encoding_rs::Encoding = match self {
+            MidiImportEncoding::Utf8 => encoding_rs::UTF_8,
+            MidiImportEncoding::Gbk => encoding_rs::GBK,
+            MidiImportEncoding::Big5 => encoding_rs::BIG5,
+            MidiImportEncoding::ShiftJis => encoding_rs::SHIFT_JIS,
+            MidiImportEncoding::EucJp => encoding_rs::EUC_JP,
+            MidiImportEncoding::Iso2022Jp => encoding_rs::ISO_2022_JP,
+            MidiImportEncoding::EucKr => encoding_rs::EUC_KR,
+            MidiImportEncoding::Windows1250 => encoding_rs::WINDOWS_1250,
+            MidiImportEncoding::Windows1251 => encoding_rs::WINDOWS_1251,
+            MidiImportEncoding::Windows1252 => encoding_rs::WINDOWS_1252,
+            MidiImportEncoding::Windows1253 => encoding_rs::WINDOWS_1253,
+            MidiImportEncoding::Windows1254 => encoding_rs::WINDOWS_1254,
+            MidiImportEncoding::Windows1255 => encoding_rs::WINDOWS_1255,
+            MidiImportEncoding::Windows1256 => encoding_rs::WINDOWS_1256,
+            MidiImportEncoding::Windows1257 => encoding_rs::WINDOWS_1257,
+            MidiImportEncoding::Windows1258 => encoding_rs::WINDOWS_1258,
+            MidiImportEncoding::Iso8859_2 => encoding_rs::ISO_8859_2,
+            MidiImportEncoding::Iso8859_3 => encoding_rs::ISO_8859_3,
+            MidiImportEncoding::Iso8859_4 => encoding_rs::ISO_8859_4,
+            MidiImportEncoding::Iso8859_5 => encoding_rs::ISO_8859_5,
+            MidiImportEncoding::Iso8859_6 => encoding_rs::ISO_8859_6,
+            MidiImportEncoding::Iso8859_7 => encoding_rs::ISO_8859_7,
+            MidiImportEncoding::Iso8859_8 => encoding_rs::ISO_8859_8,
+            MidiImportEncoding::Iso8859_10 => encoding_rs::ISO_8859_10,
+            MidiImportEncoding::Iso8859_13 => encoding_rs::ISO_8859_13,
+            MidiImportEncoding::Iso8859_14 => encoding_rs::ISO_8859_14,
+            MidiImportEncoding::Iso8859_15 => encoding_rs::ISO_8859_15,
+            MidiImportEncoding::Iso8859_16 => encoding_rs::ISO_8859_16,
+            MidiImportEncoding::Koi8R => encoding_rs::KOI8_R,
+            MidiImportEncoding::Koi8U => encoding_rs::KOI8_U,
+            MidiImportEncoding::Macintosh => encoding_rs::MACINTOSH,
+            MidiImportEncoding::Ibm866 => encoding_rs::IBM866,
+        };
+        let (cow, _, _) = encoding.encode(s);
+        cow.into_owned()
+    }
+
     pub const ALL: &'static [MidiImportEncoding] = &[
         MidiImportEncoding::Utf8,
         MidiImportEncoding::Gbk,

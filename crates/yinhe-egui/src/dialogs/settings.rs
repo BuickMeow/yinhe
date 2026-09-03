@@ -9,6 +9,7 @@ mod constants;
 mod editing;
 mod general;
 mod language;
+mod midi_export;
 mod render;
 mod search;
 mod shortcuts;
@@ -26,6 +27,8 @@ pub use editing::show_editing_tab;
 pub use general::show_general_tab;
 #[allow(unused_imports)]
 pub use language::show_language_tab;
+#[allow(unused_imports)]
+pub use midi_export::show_midi_export_tab;
 #[allow(unused_imports)]
 pub use render::show_render_tab;
 #[allow(unused_imports)]

@@ -182,6 +182,25 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         },
     );
 
+    setting_row(
+        ui,
+        t!("settings.render.automation_density").as_ref(),
+        t!("settings.render.automation_density_desc").as_ref(),
+        |ui| {
+            let mut density = settings.automation_event_density as i32;
+            let drag = ui.add(
+                crate::widgets::numeric_input::decimal_drag_value(&mut density)
+                    .range(1..=480)
+                    .speed(0.2)
+                    .suffix(" tick"),
+            );
+            if drag.changed() {
+                settings.automation_event_density = density.max(1) as u32;
+                changed = true;
+            }
+        },
+    );
+
     // 设备列表变更（热插拔等）后手动刷新
     ui.horizontal(|ui| {
         if ui.button(t!("settings.refresh_devices").as_ref()).clicked() {

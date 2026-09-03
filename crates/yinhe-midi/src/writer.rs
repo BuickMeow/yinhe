@@ -11,21 +11,62 @@ use midly::{
 };
 
 use yinhe_core::{TrackData, YinModel};
-use yinhe_types::{AutomationTarget, Note};
+use yinhe_types::{AutomationTarget, Note, SegmentShape};
 
+use crate::encoding::MidiImportEncoding;
 use crate::error::MidiError;
+
+/// MIDI导出选项（对应 设置→MIDI导出 栏）。
+#[derive(Debug, Clone)]
+pub struct MidiExportOptions {
+    pub encoding: MidiImportEncoding,
+    pub rpn_full: bool,
+    pub curve_interpolate: bool,
+    pub curve_density: u32,
+    pub strip_empty_tracks: bool,
+    pub dedup_overlaps: bool,
+}
+
+impl Default for MidiExportOptions {
+    fn default() -> Self {
+        Self {
+            encoding: MidiImportEncoding::Utf8,
+            rpn_full: true,
+            curve_interpolate: false,
+            curve_density: 1,
+            strip_empty_tracks: true,
+            dedup_overlaps: false,
+        }
+    }
+}
+
+fn encode_text(encoding: MidiImportEncoding, s: &str) -> Vec<u8> {
+    if encoding == MidiImportEncoding::Utf8 {
+        s.as_bytes().to_vec()
+    } else {
+        encoding.encode(s)
+    }
+}
+
+fn leak_bytes(v: Vec<u8>) -> &'static [u8] {
+    Box::leak(v.into_boxed_slice())
+}
 
 /// Serialize a `YinModel` to SMF bytes (Standard MIDI File, format 1).
 pub fn write_to_bytes(model: &YinModel) -> Result<Vec<u8>, MidiError> {
+    write_with_options(model, &MidiExportOptions::default())
+}
+
+/// 带选项的导出（供设置栏驱动）。
+pub fn write_with_options(
+    model: &YinModel,
+    opts: &MidiExportOptions,
+) -> Result<Vec<u8>, MidiError> {
     let ppq = model.meta.ppq;
 
     let mut tracks: Vec<Vec<TrackEvent<'_>>> = Vec::with_capacity(model.tracks.len() + 1);
+    tracks.push(build_conductor_track_with_encoding(model, opts.encoding));
 
-    // Track 0: conductor (tempo + time signature)
-    tracks.push(build_conductor_track(model));
-
-    // 单遍 O(N) 分发：把 128 桶的音符按 track 索引分发到 per_track_notes。
-    // 之前 build_track 每 track 扫一遍 128 桶 → O(T×N)，16 轨 × 1亿音符 = 16 亿次迭代。
     let num_tracks = model.tracks.len();
     let mut per_track_notes: Vec<Vec<(Note, u8)>> = vec![Vec::new(); num_tracks];
     for (key, bucket) in model.notes.iter().enumerate() {
@@ -37,9 +78,31 @@ pub fn write_to_bytes(model: &YinModel) -> Result<Vec<u8>, MidiError> {
         }
     }
 
-    // 颜色事件 payload（ImageToMidi 私有扩展：FF 0A meta + 魔数 00 0F）。
-    // 仅在颜色非默认占位色时写出；channel 用 0x7F（全通道通配），任何读取方
-    // 按通道匹配都能命中。payload 借自本函数局部 Vec，无需泄漏。
+    if opts.dedup_overlaps {
+        for notes in per_track_notes.iter_mut() {
+            if notes.len() <= 1 {
+                continue;
+            }
+            notes.sort_by(|a, b| {
+                a.1.cmp(&b.1)
+                    .then_with(|| a.0.start_tick.cmp(&b.0.start_tick))
+                    .then_with(|| a.0.end_tick.cmp(&b.0.end_tick))
+            });
+            let mut deduped: Vec<(Note, u8)> = Vec::with_capacity(notes.len());
+            let mut last_end: std::collections::HashMap<u8, u32> = std::collections::HashMap::new();
+            for (n, k) in notes.drain(..) {
+                if let Some(&le) = last_end.get(&k) {
+                    if n.start_tick < le {
+                        continue;
+                    }
+                }
+                last_end.insert(k, n.end_tick);
+                deduped.push((n, k));
+            }
+            *notes = deduped;
+        }
+    }
+
     let color_payloads: Vec<Option<Vec<u8>>> = model
         .tracks
         .iter()
@@ -48,12 +111,12 @@ pub fn write_to_bytes(model: &YinModel) -> Result<Vec<u8>, MidiError> {
                 Some(vec![
                     0x00,
                     0x0F,
-                    0x7F, // 全通道通配
+                    0x7F,
                     0x00,
                     (t.color[0] * 255.0).round() as u8,
                     (t.color[1] * 255.0).round() as u8,
                     (t.color[2] * 255.0).round() as u8,
-                    (t.color[3] * 255.0).round() as u8, // alpha
+                    (t.color[3] * 255.0).round() as u8,
                 ])
             } else {
                 None
@@ -61,12 +124,20 @@ pub fn write_to_bytes(model: &YinModel) -> Result<Vec<u8>, MidiError> {
         })
         .collect();
 
-    // Tracks 1..N+1: per-track event streams
     for (i, t) in model.tracks.iter().enumerate() {
-        tracks.push(build_track(
+        let notes = &per_track_notes[i];
+        let is_empty = notes.is_empty()
+            && t.automation_lanes.is_empty()
+            && t.program_change.is_empty()
+            && t.lyrics.is_empty();
+        if opts.strip_empty_tracks && is_empty {
+            continue;
+        }
+        tracks.push(build_track_with_options(
             t,
-            &per_track_notes[i],
+            notes,
             color_payloads[i].as_deref(),
+            opts,
         ));
     }
 
@@ -85,6 +156,13 @@ pub fn write_to_bytes(model: &YinModel) -> Result<Vec<u8>, MidiError> {
 }
 
 fn build_conductor_track<'a>(model: &'a YinModel) -> Vec<TrackEvent<'a>> {
+    build_conductor_track_with_encoding(model, MidiImportEncoding::Utf8)
+}
+
+fn build_conductor_track_with_encoding<'a>(
+    model: &'a YinModel,
+    encoding: MidiImportEncoding,
+) -> Vec<TrackEvent<'a>> {
     let mut events: Vec<(u32, TrackEventKind<'a>)> = Vec::new();
 
     for ev in &model.conductor.tempo.events {
@@ -110,8 +188,6 @@ fn build_conductor_track<'a>(model: &'a YinModel) -> Vec<TrackEvent<'a>> {
             )),
         ));
     }
-    // 调号 (FF 59)。yinhe 内部用 (root, scale) 存储更丰富的音阶信息，
-    // 导出 MIDI 时由 ScaleType::to_midi_sf_mi 降级为 (sf, mi)。
     for ev in &model.conductor.key_sig {
         let (sf, mi) = ev.scale.to_midi_sf_mi(ev.root);
         events.push((
@@ -119,34 +195,35 @@ fn build_conductor_track<'a>(model: &'a YinModel) -> Vec<TrackEvent<'a>> {
             TrackEventKind::Meta(MetaMessage::KeySignature(sf, mi != 0)),
         ));
     }
-    // 标记 (FF 06 Marker / FF 07 CuePoint)
-    // 统一写为 Marker，不区分 kind。
     for ev in &model.conductor.markers {
-        events.push((
-            ev.tick,
-            TrackEventKind::Meta(MetaMessage::Marker(ev.text.as_bytes())),
-        ));
+        let bytes: &'a [u8] = if encoding == MidiImportEncoding::Utf8 {
+            ev.text.as_bytes()
+        } else {
+            leak_bytes(encode_text(encoding, &ev.text))
+        };
+        events.push((ev.tick, TrackEventKind::Meta(MetaMessage::Marker(bytes))));
     }
-    // 歌词 (FF 05 Lyric)。SMF 允许歌词放在 track 0（conductor）。
-    // 普通轨的歌词在 build_track 里写。
     for ev in &model.conductor.lyrics {
-        events.push((
-            ev.tick,
-            TrackEventKind::Meta(MetaMessage::Lyric(ev.text.as_bytes())),
-        ));
+        let bytes: &'a [u8] = if encoding == MidiImportEncoding::Utf8 {
+            ev.text.as_bytes()
+        } else {
+            leak_bytes(encode_text(encoding, &ev.text))
+        };
+        events.push((ev.tick, TrackEventKind::Meta(MetaMessage::Lyric(bytes))));
     }
-    // Chord 不走 MIDI（非 SMF 标准），仅在 .yin 格式存活。
 
     events.sort_by_key(|e| e.0);
 
-    // SMF 标准：track 0 的 TrackName (FF 03) = song title。
-    // 用 meta.name 作为 conductor track 的 TrackName 写出。
-    let song_title = if model.meta.name.is_empty() {
-        None
+    if model.meta.name.is_empty() {
+        flatten_to_track(events, None)
     } else {
-        Some(model.meta.name.as_str())
-    };
-    flatten_to_track(events, song_title)
+        let encoded: &'a [u8] = if encoding == MidiImportEncoding::Utf8 {
+            model.meta.name.as_bytes()
+        } else {
+            leak_bytes(encode_text(encoding, &model.meta.name))
+        };
+        flatten_to_track_with_bytes(events, Some(encoded))
+    }
 }
 
 fn build_track<'a>(
@@ -154,11 +231,18 @@ fn build_track<'a>(
     notes: &[(Note, u8)],
     color_payload: Option<&'a [u8]>,
 ) -> Vec<TrackEvent<'a>> {
+    build_track_with_options(track, notes, color_payload, &MidiExportOptions::default())
+}
+
+fn build_track_with_options<'a>(
+    track: &'a TrackData,
+    notes: &[(Note, u8)],
+    color_payload: Option<&'a [u8]>,
+    opts: &MidiExportOptions,
+) -> Vec<TrackEvent<'a>> {
     let ch = u4::new(track.channel & 0x0F);
     let mut events: Vec<(u32, TrackEventKind<'a>)> = Vec::new();
 
-    // Notes → NoteOn + NoteOff pairs
-    // notes 已由 write_to_bytes 单遍 O(N) 分发好，这里只扫当前 track 的音符。
     for (n, key) in notes {
         events.push((
             n.start_tick,
@@ -182,152 +266,35 @@ fn build_track<'a>(
         ));
     }
 
-    // Automation lanes → MIDI events
     for lane in &track.automation_lanes {
-        for ev in &lane.events {
-            // f32 → u16 一次，所有位运算都用这个整数
+        let n = lane.events.len();
+        for (idx, ev) in lane.events.iter().enumerate() {
             let v = ev.value.round() as u16;
-            match &lane.target {
-                AutomationTarget::CC { controller } => {
-                    events.push((
-                        ev.tick,
-                        TrackEventKind::Midi {
-                            channel: ch,
-                            message: MidiMessage::Controller {
-                                controller: u7::new(*controller & 0x7F),
-                                value: u7::new((v & 0x7F) as u8),
-                            },
-                        },
-                    ));
-                }
-                AutomationTarget::PitchBend => {
-                    events.push((
-                        ev.tick,
-                        TrackEventKind::Midi {
-                            channel: ch,
-                            message: MidiMessage::PitchBend {
-                                bend: PitchBend(midly::num::u14::new(v)),
-                            },
-                        },
-                    ));
-                }
-                AutomationTarget::Rpn { parameter } => {
-                    let msb = ((parameter >> 8) & 0x7F) as u8;
-                    let lsb = (parameter & 0x7F) as u8;
-                    let (data_msb, data_lsb) = if lane.target.is_14bit() {
-                        (((v >> 7) & 0x7F) as u8, (v & 0x7F) as u8)
-                    } else {
-                        (v as u8, 0u8)
-                    };
-                    // CC101 (RPN MSB)
-                    events.push((
-                        ev.tick,
-                        TrackEventKind::Midi {
-                            channel: ch,
-                            message: MidiMessage::Controller {
-                                controller: u7::new(101),
-                                value: u7::new(msb),
-                            },
-                        },
-                    ));
-                    // CC100 (RPN LSB)
-                    events.push((
-                        ev.tick,
-                        TrackEventKind::Midi {
-                            channel: ch,
-                            message: MidiMessage::Controller {
-                                controller: u7::new(100),
-                                value: u7::new(lsb),
-                            },
-                        },
-                    ));
-                    // CC6 (Data Entry MSB)
-                    events.push((
-                        ev.tick,
-                        TrackEventKind::Midi {
-                            channel: ch,
-                            message: MidiMessage::Controller {
-                                controller: u7::new(6),
-                                value: u7::new(data_msb),
-                            },
-                        },
-                    ));
-                    // CC38 (Data Entry LSB) — only for 14-bit targets with non-zero LSB
-                    if data_lsb != 0 && lane.target.is_14bit() {
-                        events.push((
-                            ev.tick,
-                            TrackEventKind::Midi {
-                                channel: ch,
-                                message: MidiMessage::Controller {
-                                    controller: u7::new(38),
-                                    value: u7::new(data_lsb),
-                                },
-                            },
-                        ));
+            push_lane_event(&mut events, lane, ev.tick, v, ch, opts.rpn_full);
+            if opts.curve_interpolate && idx + 1 < n && !matches!(ev.shape, SegmentShape::Step) {
+                let next = &lane.events[idx + 1];
+                let tick1 = ev.tick;
+                let tick2 = next.tick;
+                if tick2 > tick1 {
+                    let v1 = ev.value;
+                    let v2 = next.value;
+                    let span = (tick2 - tick1) as f32;
+                    let density = opts.curve_density.max(1);
+                    let mut t = tick1.saturating_add(density);
+                    while t < tick2 {
+                        let frac = (t - tick1) as f32 / span;
+                        let f = ev.shape.interpolate(frac);
+                        let v = v1 + (v2 - v1) * f;
+                        let vi = v.round() as u16;
+                        push_lane_event(&mut events, lane, t, vi, ch, opts.rpn_full);
+                        t = t.saturating_add(density);
                     }
                 }
-                AutomationTarget::Nrpn { parameter } => {
-                    let msb = ((parameter >> 8) & 0x7F) as u8;
-                    let lsb = (parameter & 0x7F) as u8;
-                    let data_msb = ((v >> 7) & 0x7F) as u8;
-                    let data_lsb = (v & 0x7F) as u8;
-                    // CC99 (NRPN MSB)
-                    events.push((
-                        ev.tick,
-                        TrackEventKind::Midi {
-                            channel: ch,
-                            message: MidiMessage::Controller {
-                                controller: u7::new(99),
-                                value: u7::new(msb),
-                            },
-                        },
-                    ));
-                    // CC98 (NRPN LSB)
-                    events.push((
-                        ev.tick,
-                        TrackEventKind::Midi {
-                            channel: ch,
-                            message: MidiMessage::Controller {
-                                controller: u7::new(98),
-                                value: u7::new(lsb),
-                            },
-                        },
-                    ));
-                    // CC6 (Data Entry MSB)
-                    events.push((
-                        ev.tick,
-                        TrackEventKind::Midi {
-                            channel: ch,
-                            message: MidiMessage::Controller {
-                                controller: u7::new(6),
-                                value: u7::new(data_msb),
-                            },
-                        },
-                    ));
-                    // CC38 (Data Entry LSB) only if non-zero
-                    if data_lsb != 0 {
-                        events.push((
-                            ev.tick,
-                            TrackEventKind::Midi {
-                                channel: ch,
-                                message: MidiMessage::Controller {
-                                    controller: u7::new(38),
-                                    value: u7::new(data_lsb),
-                                },
-                            },
-                        ));
-                    }
-                }
-                // Tempo 走 `conductor.tempo`（已在 build_conductor_track 写出），
-                // 不应出现在 track.automation_lanes 里。
-                AutomationTarget::Tempo => {}
             }
         }
     }
 
-    // Program change + Bank Select
     for ev in &track.program_change {
-        // Bank Select MSB (CC 0) — only if set (0xFF = unset)
         if ev.bank_msb != 0xFF {
             events.push((
                 ev.tick,
@@ -340,7 +307,6 @@ fn build_track<'a>(
                 },
             ));
         }
-        // Bank Select LSB (CC 32) — only if set
         if ev.bank_lsb != 0xFF {
             events.push((
                 ev.tick,
@@ -364,7 +330,6 @@ fn build_track<'a>(
         ));
     }
 
-    // MidiPort meta (FF 21) — preserves port info on roundtrip
     if track.port != 0 {
         events.push((
             0,
@@ -373,13 +338,9 @@ fn build_track<'a>(
             ))),
         ));
     }
-    // 颜色事件（ImageToMidi 私有扩展：FF 0A meta + 魔数 00 0F）。
-    // 0x0A 在 SMF 规范中未定义，midly 用 Unknown 承载，写出时原样回写类型字节。
-    // 放在音轨开头（delta 0），与 ImageToMidi 生态的写法一致。
     if let Some(payload) = color_payload {
         events.push((0, TrackEventKind::Meta(MetaMessage::Unknown(0x0A, payload))));
     }
-    // MidiChannel meta (FF 20) — preserves channel prefix on roundtrip
     if let Some(ch) = track.channel_prefix {
         events.push((
             0,
@@ -387,34 +348,187 @@ fn build_track<'a>(
         ));
     }
 
-    // 歌词 (FF 05 Lyric) — per-track
     for ev in &track.lyrics {
-        events.push((
-            ev.tick,
-            TrackEventKind::Meta(MetaMessage::Lyric(ev.text.as_bytes())),
-        ));
+        let bytes: &'a [u8] = if opts.encoding == MidiImportEncoding::Utf8 {
+            ev.text.as_bytes()
+        } else {
+            leak_bytes(encode_text(opts.encoding, &ev.text))
+        };
+        events.push((ev.tick, TrackEventKind::Meta(MetaMessage::Lyric(bytes))));
     }
 
-    // Stable sort by tick.
     events.sort_by_key(|e| e.0);
 
-    let track_name = if track.name.is_empty() {
-        None
+    if track.name.is_empty() {
+        flatten_to_track(events, None)
     } else {
-        Some(track.name.as_str())
-    };
-    flatten_to_track(events, track_name)
+        let encoded: &'a [u8] = if opts.encoding == MidiImportEncoding::Utf8 {
+            track.name.as_bytes()
+        } else {
+            leak_bytes(encode_text(opts.encoding, &track.name))
+        };
+        flatten_to_track_with_bytes(events, Some(encoded))
+    }
+}
+
+fn push_lane_event<'a>(
+    events: &mut Vec<(u32, TrackEventKind<'a>)>,
+    lane: &yinhe_types::AutomationLane,
+    tick: u32,
+    v: u16,
+    ch: u4,
+    rpn_full: bool,
+) {
+    match &lane.target {
+        AutomationTarget::CC { controller } => {
+            events.push((
+                tick,
+                TrackEventKind::Midi {
+                    channel: ch,
+                    message: MidiMessage::Controller {
+                        controller: u7::new(*controller & 0x7F),
+                        value: u7::new((v & 0x7F) as u8),
+                    },
+                },
+            ));
+        }
+        AutomationTarget::PitchBend => {
+            events.push((
+                tick,
+                TrackEventKind::Midi {
+                    channel: ch,
+                    message: MidiMessage::PitchBend {
+                        bend: PitchBend(midly::num::u14::new(v)),
+                    },
+                },
+            ));
+        }
+        AutomationTarget::Rpn { parameter } => {
+            let msb = ((parameter >> 8) & 0x7F) as u8;
+            let lsb = (parameter & 0x7F) as u8;
+            let (data_msb, data_lsb) = if lane.target.is_14bit() {
+                (((v >> 7) & 0x7F) as u8, (v & 0x7F) as u8)
+            } else {
+                (v as u8, 0u8)
+            };
+            events.push((
+                tick,
+                TrackEventKind::Midi {
+                    channel: ch,
+                    message: MidiMessage::Controller {
+                        controller: u7::new(101),
+                        value: u7::new(msb),
+                    },
+                },
+            ));
+            events.push((
+                tick,
+                TrackEventKind::Midi {
+                    channel: ch,
+                    message: MidiMessage::Controller {
+                        controller: u7::new(100),
+                        value: u7::new(lsb),
+                    },
+                },
+            ));
+            events.push((
+                tick,
+                TrackEventKind::Midi {
+                    channel: ch,
+                    message: MidiMessage::Controller {
+                        controller: u7::new(6),
+                        value: u7::new(data_msb),
+                    },
+                },
+            ));
+            let should_emit_lsb = if rpn_full {
+                lane.target.is_14bit()
+            } else {
+                data_lsb != 0 && lane.target.is_14bit()
+            };
+            if should_emit_lsb {
+                events.push((
+                    tick,
+                    TrackEventKind::Midi {
+                        channel: ch,
+                        message: MidiMessage::Controller {
+                            controller: u7::new(38),
+                            value: u7::new(data_lsb),
+                        },
+                    },
+                ));
+            }
+        }
+        AutomationTarget::Nrpn { parameter } => {
+            let msb = ((parameter >> 8) & 0x7F) as u8;
+            let lsb = (parameter & 0x7F) as u8;
+            let data_msb = ((v >> 7) & 0x7F) as u8;
+            let data_lsb = (v & 0x7F) as u8;
+            events.push((
+                tick,
+                TrackEventKind::Midi {
+                    channel: ch,
+                    message: MidiMessage::Controller {
+                        controller: u7::new(99),
+                        value: u7::new(msb),
+                    },
+                },
+            ));
+            events.push((
+                tick,
+                TrackEventKind::Midi {
+                    channel: ch,
+                    message: MidiMessage::Controller {
+                        controller: u7::new(98),
+                        value: u7::new(lsb),
+                    },
+                },
+            ));
+            events.push((
+                tick,
+                TrackEventKind::Midi {
+                    channel: ch,
+                    message: MidiMessage::Controller {
+                        controller: u7::new(6),
+                        value: u7::new(data_msb),
+                    },
+                },
+            ));
+            let should_emit_lsb = if rpn_full { true } else { data_lsb != 0 };
+            if should_emit_lsb {
+                events.push((
+                    tick,
+                    TrackEventKind::Midi {
+                        channel: ch,
+                        message: MidiMessage::Controller {
+                            controller: u7::new(38),
+                            value: u7::new(data_lsb),
+                        },
+                    },
+                ));
+            }
+        }
+        AutomationTarget::Tempo => {}
+    }
 }
 
 fn flatten_to_track<'a>(
     events: Vec<(u32, TrackEventKind<'a>)>,
     track_name: Option<&'a str>,
 ) -> Vec<TrackEvent<'a>> {
+    let bytes = track_name.map(|s| s.as_bytes());
+    flatten_to_track_with_bytes(events, bytes)
+}
+
+fn flatten_to_track_with_bytes<'a>(
+    events: Vec<(u32, TrackEventKind<'a>)>,
+    track_name_bytes: Option<&'a [u8]>,
+) -> Vec<TrackEvent<'a>> {
     let mut out = Vec::with_capacity(events.len() + 2);
-    if let Some(name) = track_name {
+    if let Some(name) = track_name_bytes {
         out.push(TrackEvent {
             delta: 0.into(),
-            kind: TrackEventKind::Meta(MetaMessage::TrackName(name.as_bytes())),
+            kind: TrackEventKind::Meta(MetaMessage::TrackName(name)),
         });
     }
     let mut last_tick: u32 = 0;
