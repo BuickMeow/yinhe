@@ -21,7 +21,6 @@ pub const RECENT_FILES_LIMIT: usize = 10;
 pub struct AudioSettings {
     pub output_device_name: Option<String>,
     pub midi_input_device: Option<String>,
-    pub midi_thru: bool,
     pub sample_rate: u32,
     pub default_sf2_path: String,
     pub global_sf_config: GlobalSfConfig,
@@ -80,7 +79,6 @@ impl Default for AudioSettings {
         Self {
             output_device_name: None,
             midi_input_device: None,
-            midi_thru: false,
             sample_rate: 48000,
             default_sf2_path: String::new(),
             global_sf_config: GlobalSfConfig::builtin_default(),

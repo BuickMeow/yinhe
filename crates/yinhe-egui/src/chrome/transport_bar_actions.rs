@@ -298,9 +298,7 @@ impl PopupRow for PlayMenuAction {
 
     fn icon_accent(self) -> Option<egui::Color32> {
         match self {
-            PlayMenuAction::Record { recording } if recording => {
-                Some(egui::Color32::from_rgb(232, 17, 35))
-            }
+            PlayMenuAction::Record { .. } => Some(crate::theme::danger()),
             PlayMenuAction::StepInput { active } if active => Some(crate::theme::accent_active()),
             PlayMenuAction::Follow(_, selected) if selected => Some(crate::theme::accent_active()),
             _ => None,

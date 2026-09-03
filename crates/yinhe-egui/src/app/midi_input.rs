@@ -45,12 +45,10 @@ impl App {
         self.consume_midi_events();
     }
 
-    /// 按设置（直通开关 + 设备选择）对齐连接：关闭/未选 → 断开；设备名变化 → 重连。
-    /// 录音/步进输入也需要连接（即使直通关闭），所以三者任一激活即连接。
+    /// 按设备选择对齐连接：未选 → 断开；设备名变化 → 重连。直通常开，有设备即发声。
     fn sync_midi_connection(&mut self) {
-        let enabled = self.audio_settings.midi_thru || self.recording.is_some() || self.step_input;
         let device = self.audio_settings.midi_input_device.clone();
-        if !enabled || device.is_none() {
+        if device.is_none() {
             if self.midi_input.take().is_some() {
                 self.midi_thru_keys.clear();
                 self.midi_connected_device = None;

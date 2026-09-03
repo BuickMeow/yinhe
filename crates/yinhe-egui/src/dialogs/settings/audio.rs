@@ -74,20 +74,6 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
 
     setting_row(
         ui,
-        t!("settings.audio.midi_thru").as_ref(),
-        t!("settings.audio.midi_thru_hint").as_ref(),
-        |ui| {
-            if crate::widgets::switch::switch(ui, &mut settings.midi_thru)
-                .on_hover_text(t!("settings.audio.midi_thru_hint").as_ref())
-                .changed()
-            {
-                changed = true;
-            }
-        },
-    );
-
-    setting_row(
-        ui,
         t!("settings.audio.sample_rate").as_ref(),
         t!("settings.audio.sample_rate_desc").as_ref(),
         |ui| {

@@ -87,13 +87,6 @@ pub const SETTING_ITEMS: &[SettingItem] = &[
     },
     SettingItem {
         cat: 3,
-        zh: "MIDI 直通",
-        en: "MIDI thru",
-        ja: "MIDIスルー",
-        ko: "MIDI 스루",
-    },
-    SettingItem {
-        cat: 3,
         zh: "采样率",
         en: "Sample rate",
         ja: "サンプルレート",
