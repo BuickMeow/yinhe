@@ -15,6 +15,7 @@ use yinhe_core::YinModel;
 
 mod app;
 mod ar_view;
+mod common;
 mod file_picker;
 mod ime;
 mod insets;
