@@ -83,23 +83,22 @@ pub fn popup_menu_row(
             egui::pos2(row_rect.max.x - PIN_W, row_rect.min.y),
             egui::vec2(PIN_W, row_h),
         );
+        // 无背景，仅前景三态（与 mode_bar hover_button 一致）
+        let resp = ui.interact(pin_rect, ui.next_auto_id(), egui::Sense::click());
         let pin_color = if is_pinned {
             crate::theme::accent_active()
+        } else if resp.hovered() {
+            crate::theme::contrast_fg()
         } else {
             crate::theme::text_disabled()
         };
-        let pin_btn = egui::Button::new(
-            ICON_KEEP
-                .rich_text()
-                .size(crate::theme::FILE_MENU_FONT)
-                .color(pin_color),
-        )
-        .frame(false);
-        let resp = ui.put(pin_rect, pin_btn);
-        if resp.hovered() || resp.is_pointer_button_down_on() {
-            let visuals = ui.style().interact_selectable(&resp, false);
-            ui.painter().rect_filled(pin_rect, 4.0, visuals.bg_fill);
-        }
+        ui.painter().text(
+            pin_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            ICON_KEEP.codepoint.to_string(),
+            egui::FontId::new(crate::theme::FILE_MENU_FONT, ICON_KEEP.font_family()),
+            pin_color,
+        );
         pin_resp = Some(resp);
     }
     (main_resp, pin_resp)
