@@ -72,11 +72,40 @@ impl App {
                             .file_name()
                             .and_then(|n| n.to_str())
                             .unwrap_or(&path);
-                        self.notifications.success("已打开", fname.to_string());
+                        if self
+                            .notifications
+                            .has_progress(crate::notifications::LOADING_PROGRESS_ID)
+                            && !self
+                                .notifications
+                                .is_leaving(crate::notifications::LOADING_PROGRESS_ID)
+                        {
+                            self.notifications.complete_progress(
+                                crate::notifications::LOADING_PROGRESS_ID,
+                                crate::notifications::ToastKind::Success,
+                                "已完成",
+                                fname.to_string(),
+                            );
+                        } else {
+                            self.notifications.success("已打开", fname.to_string());
+                        }
                     }
                     Err(msg) => {
                         self.load_error = Some(msg.clone());
-                        self.notifications.error("打开失败", msg);
+                        if self
+                            .notifications
+                            .has_progress(crate::notifications::LOADING_PROGRESS_ID)
+                            && !self
+                                .notifications
+                                .is_leaving(crate::notifications::LOADING_PROGRESS_ID)
+                        {
+                            self.notifications.fail_progress(
+                                crate::notifications::LOADING_PROGRESS_ID,
+                                "打开失败",
+                                msg.clone(),
+                            );
+                        } else {
+                            self.notifications.error("打开失败", msg);
+                        }
                     }
                 }
             }
@@ -166,16 +195,59 @@ impl App {
                     {
                         self.audio_settings.save();
                     }
-                    self.notifications.success("已打开", file_name.clone());
+                    if self
+                        .notifications
+                        .has_progress(crate::notifications::LOADING_PROGRESS_ID)
+                        && !self
+                            .notifications
+                            .is_leaving(crate::notifications::LOADING_PROGRESS_ID)
+                    {
+                        self.notifications.complete_progress(
+                            crate::notifications::LOADING_PROGRESS_ID,
+                            crate::notifications::ToastKind::Success,
+                            "已完成",
+                            file_name.clone(),
+                        );
+                    } else {
+                        self.notifications.success("已打开", file_name.clone());
+                    }
                 } else {
                     let msg = t!("file_dialog.open_failed", name = file_name).to_string();
                     self.load_error = Some(msg.clone());
-                    self.notifications.error("打开失败", msg);
+                    if self
+                        .notifications
+                        .has_progress(crate::notifications::LOADING_PROGRESS_ID)
+                        && !self
+                            .notifications
+                            .is_leaving(crate::notifications::LOADING_PROGRESS_ID)
+                    {
+                        self.notifications.fail_progress(
+                            crate::notifications::LOADING_PROGRESS_ID,
+                            "打开失败",
+                            msg.clone(),
+                        );
+                    } else {
+                        self.notifications.error("打开失败", msg);
+                    }
                 }
             }
             LoadResult::ArchiveError(msg) => {
                 self.load_error = Some(msg.clone());
-                self.notifications.error("打开失败", msg);
+                if self
+                    .notifications
+                    .has_progress(crate::notifications::LOADING_PROGRESS_ID)
+                    && !self
+                        .notifications
+                        .is_leaving(crate::notifications::LOADING_PROGRESS_ID)
+                {
+                    self.notifications.fail_progress(
+                        crate::notifications::LOADING_PROGRESS_ID,
+                        "打开失败",
+                        msg.clone(),
+                    );
+                } else {
+                    self.notifications.error("打开失败", msg);
+                }
             }
             // UI 层 poll_loading 已把这两个变体转换为弹框状态（返回 NotReady），
             // 这里实际不会收到，空分支只是保证 match 穷尽。
@@ -203,7 +275,30 @@ impl App {
             } else {
                 None
             };
-            if let Some(name) = saved_name {
+            let (kind, title) = (crate::notifications::ToastKind::Success, "已完成");
+            if self
+                .notifications
+                .has_progress(crate::notifications::SAVE_PROGRESS_ID)
+                && !self
+                    .notifications
+                    .is_leaving(crate::notifications::SAVE_PROGRESS_ID)
+            {
+                if let Some(name) = saved_name.clone() {
+                    self.notifications.complete_progress(
+                        crate::notifications::SAVE_PROGRESS_ID,
+                        kind,
+                        title,
+                        name,
+                    );
+                } else {
+                    self.notifications.complete_progress(
+                        crate::notifications::SAVE_PROGRESS_ID,
+                        kind,
+                        title,
+                        "",
+                    );
+                }
+            } else if let Some(name) = saved_name {
                 self.notifications.success("已保存", name);
             } else {
                 self.notifications.success("已保存", "");
@@ -232,18 +327,47 @@ impl App {
                         .unwrap_or(&path)
                         .to_string();
                     self.export.completed = Some(crate::dialogs::export::ExportCompleted {
-                        file_path: path,
+                        file_path: path.clone(),
                         elapsed_secs: elapsed,
                         overall_speed: speed,
                     });
-                    self.notifications.success(
-                        "导出完成",
-                        format!("{} ({:.1}s, {:.1}x)", fname, elapsed, speed),
-                    );
+                    if self
+                        .notifications
+                        .has_progress(crate::notifications::EXPORT_PROGRESS_ID)
+                        && !self
+                            .notifications
+                            .is_leaving(crate::notifications::EXPORT_PROGRESS_ID)
+                    {
+                        self.notifications.complete_progress(
+                            crate::notifications::EXPORT_PROGRESS_ID,
+                            crate::notifications::ToastKind::Success,
+                            "已完成",
+                            format!("{} ({:.1}s, {:.1}x)", fname, elapsed, speed),
+                        );
+                    } else {
+                        self.notifications.success(
+                            "导出完成",
+                            format!("{} ({:.1}s, {:.1}x)", fname, elapsed, speed),
+                        );
+                    }
                 }
                 Err(e) => {
                     self.load_error = Some(e.clone());
-                    self.notifications.error("导出失败", e);
+                    if self
+                        .notifications
+                        .has_progress(crate::notifications::EXPORT_PROGRESS_ID)
+                        && !self
+                            .notifications
+                            .is_leaving(crate::notifications::EXPORT_PROGRESS_ID)
+                    {
+                        self.notifications.fail_progress(
+                            crate::notifications::EXPORT_PROGRESS_ID,
+                            "导出失败",
+                            e.clone(),
+                        );
+                    } else {
+                        self.notifications.error("导出失败", e);
+                    }
                 }
             }
         }

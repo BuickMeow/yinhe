@@ -58,4 +58,5 @@ pub const TRACK_PROPS_POPUP_SIZE: [f32; 2] = [300.0, 460.0];
 pub const PROJECT_SETTINGS_POPUP_SIZE: [f32; 2] = [300.0, 460.0];
 
 // ── Dialog progress bars ──
+#[allow(dead_code)]
 pub const PROGRESS_BAR_WIDTH: f32 = 280.0;

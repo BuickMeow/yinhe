@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! PPQ rescale 进度条 overlay。
 //!
 //! 当 `App.rescale.rx` 为 `Some` 时显示，参考

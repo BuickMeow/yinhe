@@ -129,7 +129,18 @@ impl App {
                     let model = std::sync::Arc::make_mut(&mut doc.data.model);
                     model.meta.ppq = old_ppq;
                 }
-                self.load_error = Some("PPQ 缩放线程异常退出".to_string());
+                let msg = "PPQ 缩放线程异常退出".to_string();
+                self.load_error = Some(msg.clone());
+                if self
+                    .notifications
+                    .has_progress(crate::notifications::RESCALE_PROGRESS_ID)
+                {
+                    self.notifications.fail_progress(
+                        crate::notifications::RESCALE_PROGRESS_ID,
+                        "缩放失败",
+                        msg,
+                    );
+                }
                 return;
             }
         };
@@ -149,14 +160,20 @@ impl App {
                     doc.data.bump_revision();
                     // 推 undo（带 rescale 标志）。
                     commit_ppq(doc, dragvalue_id, new_ppq, true); // rescale
-                    // rescale 替换了整个 model（所有音符 tick 按 PPQ 比例变化），
-                    // 必须清空 GPU cull buffer：若新 model 的 note_revisions 与
-                    // uploaded_key_revisions 巧合相同，增量检测会跳过上传，
-                    // 渲染出 PPQ 缩放前的旧音符（见 close_document / main_loop
-                    // 的文档替换路径同根修复）。
                     if self.workspace.active_doc == Some(doc_idx) {
                         self.invalidate_cull_state();
                     }
+                }
+                if self
+                    .notifications
+                    .has_progress(crate::notifications::RESCALE_PROGRESS_ID)
+                {
+                    self.notifications.complete_progress(
+                        crate::notifications::RESCALE_PROGRESS_ID,
+                        crate::notifications::ToastKind::Success,
+                        "已完成",
+                        format!("PPQ {} → {}", old_ppq, new_ppq),
+                    );
                 }
             }
             Err(msg) => {
@@ -165,8 +182,23 @@ impl App {
                     let model = std::sync::Arc::make_mut(&mut doc.data.model);
                     model.meta.ppq = old_ppq;
                 }
-                if msg != "已取消" {
-                    self.load_error = Some(msg);
+                if msg == "已取消" {
+                    self.notifications
+                        .remove_progress(crate::notifications::RESCALE_PROGRESS_ID);
+                } else {
+                    self.load_error = Some(msg.clone());
+                    if self
+                        .notifications
+                        .has_progress(crate::notifications::RESCALE_PROGRESS_ID)
+                    {
+                        self.notifications.fail_progress(
+                            crate::notifications::RESCALE_PROGRESS_ID,
+                            "缩放失败",
+                            msg,
+                        );
+                    } else {
+                        self.notifications.error("缩放失败", msg);
+                    }
                 }
             }
         }

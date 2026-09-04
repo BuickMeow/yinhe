@@ -148,17 +148,110 @@ impl App {
             metal_size,
         );
 
-        // ── Loading overlay ──
-        if self.file_loader.is_loading() {
-            let progress = self.file_loader.load_progress().clone();
-            if crate::dialogs::loading_overlay::show_viewport(&ctx, progress) {
+        // ── Loading toast（替代 loading_overlay viewport）──
+        // 保留 archive_picker/password 仍为 dialog，仅文件加载阶段用 toast
+        // 若 toast 正在离开（用户点了 X/取消），不再 upsert，避免复活
+        if self
+            .notifications
+            .is_leaving(crate::notifications::LOADING_PROGRESS_ID)
+        {
+            // 检测取消：toast 的 cancel flag 被置位则真正取消加载
+            if let Some(flag) = self
+                .notifications
+                .get_cancel_flag(crate::notifications::LOADING_PROGRESS_ID)
+                && flag.load(std::sync::atomic::Ordering::Relaxed)
+            {
                 self.file_loader.cancel_loading();
+                self.notifications
+                    .remove_progress(crate::notifications::LOADING_PROGRESS_ID);
+            }
+        } else if self.file_loader.is_loading() {
+            // 检测 toast 侧取消（用户点 X 或取消按钮）
+            if let Some(flag) = self
+                .notifications
+                .get_cancel_flag(crate::notifications::LOADING_PROGRESS_ID)
+                && flag.load(std::sync::atomic::Ordering::Relaxed)
+            {
+                self.file_loader.cancel_loading();
+                self.notifications
+                    .remove_progress(crate::notifications::LOADING_PROGRESS_ID);
+            } else {
+                let p = self
+                    .file_loader
+                    .load_progress()
+                    .lock()
+                    .ok()
+                    .map(|p| p.clone());
+                if let Some(prog) = p
+                    && prog.visible
+                {
+                    let active = prog
+                        .stages
+                        .iter()
+                        .find(|s| s.status == yinhe_editor_core::progress::StageStatus::Active)
+                        .or_else(|| prog.stages.first());
+                    if let Some(st) = active {
+                        let frac = st.progress.clamp(0.0, 1.0);
+                        let label = if st.detail.is_empty() {
+                            st.label.clone()
+                        } else {
+                            format!("{} {}", st.label, st.detail)
+                        };
+                        let cancel = self.file_loader.cancel_flag();
+                        self.notifications.upsert_progress(
+                            crate::notifications::LOADING_PROGRESS_ID,
+                            crate::notifications::ToastKind::Info,
+                            "正在加载",
+                            label.clone(),
+                            frac,
+                            label,
+                            cancel,
+                        );
+                    }
+                }
+            }
+        } else if self
+            .notifications
+            .has_progress(crate::notifications::LOADING_PROGRESS_ID)
+        {
+            let visible = self
+                .file_loader
+                .load_progress()
+                .lock()
+                .map(|p| p.visible)
+                .unwrap_or(false);
+            if !visible {
+                // 等待 poll 的 complete_progress 覆盖为“已完成”
             }
         }
 
-        // ── 保存进度窗口 ──
-        if let Some((stage, fraction)) = self.save_progress {
-            crate::dialogs::save_overlay::show_viewport(&ctx, stage, fraction);
+        // ── 保存进度 toast（替代 save_overlay viewport）──
+        if self
+            .notifications
+            .is_leaving(crate::notifications::SAVE_PROGRESS_ID)
+        {
+        } else if let Some((stage, fraction)) = self.save_progress {
+            let label = crate::dialogs::save_overlay::stage_label(stage);
+            self.notifications.upsert_progress(
+                crate::notifications::SAVE_PROGRESS_ID,
+                crate::notifications::ToastKind::Info,
+                "正在保存",
+                label.clone(),
+                fraction.clamp(0.0, 1.0),
+                label,
+                None,
+            );
+        } else if self.save_rx.is_some() {
+            // 保存刚启动但首个 progress 尚未到达
+            self.notifications.upsert_progress(
+                crate::notifications::SAVE_PROGRESS_ID,
+                crate::notifications::ToastKind::Info,
+                "正在保存",
+                "准备中…".to_string(),
+                0.0,
+                "准备中…".to_string(),
+                None,
+            );
         }
 
         // ── Archive picker ──
@@ -208,18 +301,64 @@ impl App {
             ctx.request_repaint();
         }
 
-        // ── Export progress ──
-        if self.export.rx.is_some() {
-            let export_progress = self.export.progress.clone();
-            let cancel_flag = self.export.cancel.clone();
-            crate::dialogs::export::show_progress_viewport(&ctx, export_progress, cancel_flag);
+        // ── Export progress toast（替代 export_progress viewport）──
+        if self
+            .notifications
+            .is_leaving(crate::notifications::EXPORT_PROGRESS_ID)
+        {
+            // 用户已点 X，取消标志由 toast 侧置位，下一帧会自动触发 cancel
+        } else if self.export.rx.is_some() {
+            // 若 toast 侧点了取消，已置位则无需再 upsert，直接让线程退出
+            let cancelled = self
+                .notifications
+                .get_cancel_flag(crate::notifications::EXPORT_PROGRESS_ID)
+                .is_some_and(|f| f.load(std::sync::atomic::Ordering::Relaxed));
+            if !cancelled && let Ok(st) = self.export.progress.lock().map(|s| s.clone()) {
+                let frac = st.progress.clamp(0.0, 1.0);
+                let label = if st.status.is_empty() {
+                    format!("{:.0}%", frac * 100.0)
+                } else {
+                    st.status.clone()
+                };
+                self.notifications.upsert_progress(
+                    crate::notifications::EXPORT_PROGRESS_ID,
+                    crate::notifications::ToastKind::Info,
+                    "正在导出",
+                    label.clone(),
+                    frac,
+                    label,
+                    Some(self.export.cancel.clone()),
+                );
+            }
         }
 
-        // ── PPQ rescale progress ──
-        if self.rescale.rx.is_some() {
-            let rescale_progress = self.rescale.progress.clone();
-            let cancel_flag = self.rescale.cancel.clone();
-            crate::dialogs::rescale_overlay::show_viewport(&ctx, rescale_progress, cancel_flag);
+        // ── PPQ rescale progress toast（替代 rescale_overlay viewport）──
+        if self
+            .notifications
+            .is_leaving(crate::notifications::RESCALE_PROGRESS_ID)
+        {
+        } else if self.rescale.rx.is_some() {
+            let cancelled = self
+                .notifications
+                .get_cancel_flag(crate::notifications::RESCALE_PROGRESS_ID)
+                .is_some_and(|f| f.load(std::sync::atomic::Ordering::Relaxed));
+            if !cancelled && let Ok(st) = self.rescale.progress.lock().map(|s| s.clone()) {
+                let frac = st.progress.clamp(0.0, 1.0);
+                let label = if st.label.is_empty() {
+                    format!("{:.0}%", frac * 100.0)
+                } else {
+                    st.label.clone()
+                };
+                self.notifications.upsert_progress(
+                    crate::notifications::RESCALE_PROGRESS_ID,
+                    crate::notifications::ToastKind::Info,
+                    "正在缩放",
+                    label.clone(),
+                    frac,
+                    label,
+                    Some(self.rescale.cancel.clone()),
+                );
+            }
         }
 
         // ── PPQ rescale 确认对话框（标准 viewport 形式）──
@@ -232,9 +371,6 @@ impl App {
 
         // ── 属性浮动面板（音轨属性 / 工程设置；与侧栏 Info 内容互斥切换）──
         self.show_float_panels(&ctx);
-
-        // ── Export completed ──
-        crate::dialogs::export::show_completed_viewport(&ctx, &mut self.export.completed);
 
         // ── Export settings ──
         if crate::dialogs::export::show_settings_viewport(

@@ -145,6 +145,10 @@ impl FileLoader {
         &self.load_progress
     }
 
+    pub fn cancel_flag(&self) -> Option<Arc<AtomicBool>> {
+        self.midi_loader.as_ref().map(|l| l.cancel.clone())
+    }
+
     /// Cancel any in-progress loading. Sets the cancel flag so background
     /// threads stop reporting progress, and clears the loader state.
     pub fn cancel_loading(&mut self) {

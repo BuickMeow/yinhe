@@ -291,13 +291,13 @@ pub(crate) fn pointer_hits(ui: &egui::Ui, rect: egui::Rect) -> bool {
         && !pointer_over_popup(ui.ctx())
 }
 
-/// Returns true if the pointer is currently over a foreground layer (popup/menu).
+/// Returns true if the pointer is currently over a popup/menu or toast.
 /// When true, lower layers should not process pointer events to avoid click-through.
 pub(crate) fn pointer_over_popup(ctx: &egui::Context) -> bool {
     if let Some(pos) = ctx.input(|i| i.pointer.hover_pos())
         && let Some(layer) = ctx.layer_id_at(pos)
     {
-        return layer.order == egui::Order::Foreground;
+        return matches!(layer.order, egui::Order::Foreground | egui::Order::Tooltip);
     }
     false
 }

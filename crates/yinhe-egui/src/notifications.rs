@@ -1,3 +1,4 @@
+use std::sync::{Arc, atomic::AtomicBool};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
@@ -31,29 +32,23 @@ impl ToastKind {
             Self::Error => crate::theme::danger_text(),
         }
     }
-
-    /// 自动消失时长：info/success 短，warning 中，error 长（仍自动消失，历史保留）。
-    fn ttl(self) -> Duration {
-        match self {
-            Self::Info => Duration::from_millis(3000),
-            Self::Success => Duration::from_millis(3000),
-            Self::Warning => Duration::from_millis(5000),
-            Self::Error => Duration::from_millis(6000),
-        }
-    }
 }
 
-// ── 单条 Toast（浮空卡片，自动消失）──
+// ── 单条 Toast（常驻，需手动关闭）──
 struct Toast {
     id: u64,
     kind: ToastKind,
     title: String,
     message: String,
     created: Instant,
-    ttl: Duration,
+    /// 进度：None=普通通知，Some(0.0..1.0)=进度条
+    progress: Option<f32>,
+    progress_label: String,
+    cancel: Option<Arc<AtomicBool>>,
+    leaving_since: Option<Instant>,
 }
 
-// ── 历史记录（持久，通知中心列表）──
+// ── 历史记录（持久）──
 #[derive(Clone)]
 #[allow(dead_code)]
 struct HistoryEntry {
@@ -70,10 +65,15 @@ pub struct Notifications {
     next_id: u64,
     toasts: Vec<Toast>,
     history: Vec<HistoryEntry>,
-    /// 通知中心浮层是否打开（由 mode_bar 铃铛切换）。
+    /// 通知列表是否展开（由 mode_bar 铃铛切换）。
     pub show_center: bool,
     max_history: usize,
 }
+
+pub const LOADING_PROGRESS_ID: u64 = 0x4C4F4144; // "LOAD"
+pub const SAVE_PROGRESS_ID: u64 = 0x53415645; // "SAVE"
+pub const EXPORT_PROGRESS_ID: u64 = 0x45585054; // "EXPT"
+pub const RESCALE_PROGRESS_ID: u64 = 0x5253434C; // "RSCL"
 
 impl Default for Notifications {
     fn default() -> Self {
@@ -111,26 +111,27 @@ impl Notifications {
         self.push(ToastKind::Error, title, message, None);
     }
 
-    /// 自定义 TTL（传 None 则用 kind 默认）。
     pub fn push(
         &mut self,
         kind: ToastKind,
         title: impl Into<String>,
         message: impl Into<String>,
-        ttl: Option<Duration>,
+        _ttl: Option<Duration>,
     ) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         let title = title.into();
         let message = message.into();
-        let ttl = ttl.unwrap_or_else(|| kind.ttl());
         self.toasts.push(Toast {
             id,
             kind,
             title: title.clone(),
             message: message.clone(),
             created: Instant::now(),
-            ttl,
+            progress: None,
+            progress_label: String::new(),
+            cancel: None,
+            leaving_since: None,
         });
         self.history.push(HistoryEntry {
             id,
@@ -145,6 +146,134 @@ impl Notifications {
             self.history.drain(0..excess);
         }
         id
+    }
+
+    /// 创建或更新进度 toast。同一 key（如 "loading"）复用同一 id。
+    #[allow(clippy::too_many_arguments)]
+    pub fn upsert_progress(
+        &mut self,
+        key_id: u64,
+        kind: ToastKind,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        fraction: f32,
+        label: impl Into<String>,
+        cancel: Option<Arc<AtomicBool>>,
+    ) -> u64 {
+        let title = title.into();
+        let message = message.into();
+        let label = label.into();
+        if let Some(t) = self.toasts.iter_mut().find(|t| t.id == key_id) {
+            t.kind = kind;
+            t.title = title.clone();
+            t.message = message.clone();
+            t.progress = Some(fraction.clamp(0.0, 1.0));
+            t.progress_label = label.clone();
+            t.cancel = cancel;
+            t.leaving_since = None;
+            // 同步历史
+            if let Some(h) = self.history.iter_mut().find(|h| h.id == key_id) {
+                h.title = title;
+                h.message = message;
+                h.kind = kind;
+            }
+            return key_id;
+        }
+        // 不存在则新建，沿用指定 id
+        if key_id >= self.next_id {
+            self.next_id = key_id + 1;
+        }
+        let id = key_id;
+        self.toasts.push(Toast {
+            id,
+            kind,
+            title: title.clone(),
+            message: message.clone(),
+            created: Instant::now(),
+            progress: Some(fraction.clamp(0.0, 1.0)),
+            progress_label: label,
+            cancel,
+            leaving_since: None,
+        });
+        self.history.push(HistoryEntry {
+            id,
+            kind,
+            title,
+            message,
+            created: Instant::now(),
+            read: false,
+        });
+        if self.history.len() > self.max_history {
+            let excess = self.history.len() - self.max_history;
+            self.history.drain(0..excess);
+        }
+        id
+    }
+
+    pub fn update_progress(&mut self, id: u64, fraction: f32, label: impl Into<String>) {
+        let label = label.into();
+        if let Some(t) = self.toasts.iter_mut().find(|t| t.id == id) {
+            t.progress = Some(fraction.clamp(0.0, 1.0));
+            t.progress_label = label;
+        }
+    }
+
+    /// 进度完成：保留同一张 toast，原地切换为完成态（无进度条）
+    pub fn complete_progress(
+        &mut self,
+        id: u64,
+        kind: ToastKind,
+        title: impl Into<String>,
+        message: impl Into<String>,
+    ) {
+        let title = title.into();
+        let message = message.into();
+        if let Some(t) = self.toasts.iter_mut().find(|t| t.id == id) {
+            t.kind = kind;
+            t.title = title.clone();
+            t.message = message.clone();
+            t.progress = None;
+            t.progress_label.clear();
+            t.cancel = None;
+            t.leaving_since = None;
+            // 重置 created 以重新触发入场动画（完成态更醒目）
+            t.created = Instant::now();
+        }
+        if let Some(h) = self.history.iter_mut().find(|h| h.id == id) {
+            h.kind = kind;
+            h.title = title.clone();
+            h.message = message.clone();
+        }
+        if self.toasts.iter().find(|t| t.id == id).is_none() {
+            // 若进度 toast 已被手动关闭，改为普通 push
+            self.push(kind, title, message, None);
+        }
+    }
+
+    pub fn fail_progress(&mut self, id: u64, title: impl Into<String>, message: impl Into<String>) {
+        self.complete_progress(id, ToastKind::Error, title, message);
+    }
+
+    pub fn has_progress(&self, id: u64) -> bool {
+        self.toasts.iter().any(|t| t.id == id)
+    }
+
+    pub fn is_leaving(&self, id: u64) -> bool {
+        self.toasts
+            .iter()
+            .find(|t| t.id == id)
+            .is_some_and(|t| t.leaving_since.is_some())
+    }
+
+    pub fn get_cancel_flag(&self, id: u64) -> Option<Arc<AtomicBool>> {
+        self.toasts
+            .iter()
+            .find(|t| t.id == id)
+            .and_then(|t| t.cancel.clone())
+    }
+
+    pub fn remove_progress(&mut self, id: u64) {
+        self.toasts.retain(|t| t.id != id);
     }
 
     pub fn unread_count(&self) -> usize {
@@ -165,21 +294,45 @@ impl Notifications {
         self.history.clear();
     }
 
+    /// 标记离开动画，300ms 后真正移除
+    #[allow(clippy::collapsible_if)]
     pub fn dismiss_toast(&mut self, id: u64) {
-        self.toasts.retain(|t| t.id != id);
+        if let Some(t) = self.toasts.iter_mut().find(|t| t.id == id)
+            && t.leaving_since.is_none()
+        {
+            t.leaving_since = Some(Instant::now());
+        }
     }
 
-    // ── 每帧维护：过期自动移除 + 按需重绘 ──
     fn tick(&mut self, ctx: &egui::Context) {
         let now = Instant::now();
+        let mut needs_repaint = false;
+        // 清理已完成离开动画的 toast
         let before = self.toasts.len();
-        self.toasts
-            .retain(|t| now.duration_since(t.created) < t.ttl);
+        self.toasts.retain(|t| {
+            if let Some(since) = t.leaving_since {
+                now.duration_since(since) < Duration::from_millis(320)
+            } else {
+                true
+            }
+        });
         if self.toasts.len() != before {
-            ctx.request_repaint();
+            needs_repaint = true;
         }
-        // 进度条需丝滑：60fps 刷新，直到全部消失
-        if !self.toasts.is_empty() {
+        // 有 toast 或正在进/离场时持续重绘，保证 60fps 动画丝滑
+        let has_anim = self.toasts.iter().any(|t| {
+            t.leaving_since.is_some()
+                || now.duration_since(t.created) < Duration::from_millis(400)
+                || t.progress.is_some()
+        });
+        if has_anim || needs_repaint {
+            ctx.request_repaint_after(Duration::from_millis(16));
+        } else if !self.toasts.is_empty() {
+            // 常驻 toast 无动画时仍需偶尔重绘以响应 hover
+            ctx.request_repaint_after(Duration::from_millis(500));
+        }
+        // history 展开时也需动画
+        if self.show_center && !self.history.is_empty() {
             ctx.request_repaint_after(Duration::from_millis(16));
         }
     }
@@ -193,11 +346,8 @@ impl Notifications {
         if self.toasts.is_empty() {
             return;
         }
-        // 从右下角向上堆叠，浮空在所有 Panel 之上。
-        // 用单独的 Area + top_down 布局，卡片宽度固定 360。
         const CARD_W: f32 = 360.0;
         const GAP: f32 = 8.0;
-        // mode_bar 高度约 28，shadow 向下 4px，再加 12 边距避免贴边
         const BOTTOM_PAD: f32 = 48.0;
         const RIGHT_PAD: f32 = 12.0;
 
@@ -210,24 +360,55 @@ impl Notifications {
             .movable(false)
             .interactable(true)
             .show(ctx, |ui| {
-                ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
-                    ui.spacing_mut().item_spacing.y = GAP;
-                    let mut to_dismiss: Vec<u64> = Vec::new();
-                    // top_down：旧在上新在下，整体贴底向上长，新 toast 永远贴着 mode_bar
-                    for toast in self.toasts.iter() {
-                        let resp = Self::toast_card(ui, toast, CARD_W);
-                        if resp {
-                            to_dismiss.push(toast.id);
-                        }
-                    }
-                    if !to_dismiss.is_empty() {
-                        ui.ctx().data_mut(|d| {
-                            d.insert_temp(egui::Id::new("yinhe_toasts_dismiss"), to_dismiss);
+                // 让 Area 本身可滚动，拦截滚轮不穿透到底层 PR/AR
+                let max_h = (ctx.viewport_rect().height() - BOTTOM_PAD - 24.0).max(120.0);
+                egui::ScrollArea::vertical()
+                    .max_height(max_h)
+                    .auto_shrink([true, true])
+                    .scroll_bar_visibility(
+                        egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
+                    )
+                    .show(ui, |ui| {
+                        ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
+                            ui.spacing_mut().item_spacing.y = GAP;
+                            let mut to_dismiss: Vec<u64> = Vec::new();
+                            // 逐一飞入：越新的越贴底， staggered 40ms
+                            for (idx, toast) in self.toasts.iter().enumerate() {
+                                let is_leaving = toast.leaving_since.is_some();
+                                // 非线性飞入：从下往上 40px + 透明度，旧 toast 延迟更小
+                                let stagger =
+                                    (self.toasts.len().saturating_sub(1).saturating_sub(idx))
+                                        as f32
+                                        * 0.04;
+                                let (y_off, alpha) = Self::fly_anim(toast, stagger);
+                                // 若完全离开（alpha 近0）则不再布局，占位会跳，提前裁
+                                if is_leaving && alpha < 0.02 {
+                                    continue;
+                                }
+                                // 用偏移 + 透明度包裹卡片
+                                let card_alpha = alpha;
+                                let resp = Self::toast_card(ui, toast, CARD_W, y_off, card_alpha);
+                                if resp.0 {
+                                    to_dismiss.push(toast.id);
+                                }
+                                if resp.1 {
+                                    if let Some(c) = &toast.cancel {
+                                        c.store(true, std::sync::atomic::Ordering::Relaxed);
+                                    }
+                                    to_dismiss.push(toast.id);
+                                }
+                            }
+                            if !to_dismiss.is_empty() {
+                                ui.ctx().data_mut(|d| {
+                                    d.insert_temp(
+                                        egui::Id::new("yinhe_toasts_dismiss"),
+                                        to_dismiss,
+                                    );
+                                });
+                            }
                         });
-                    }
-                });
+                    });
             });
-        // 取回待关闭列表并移除
         let pending: Option<Vec<u64>> =
             ctx.data(|d| d.get_temp(egui::Id::new("yinhe_toasts_dismiss")));
         if let Some(ids) = pending {
@@ -238,103 +419,217 @@ impl Notifications {
         }
     }
 
-    /// 单张卡片：返回 true 表示用户点了关闭。
-    fn toast_card(ui: &mut egui::Ui, toast: &Toast, width: f32) -> bool {
+    fn fly_anim(toast: &Toast, stagger: f32) -> (f32, f32) {
+        let now = Instant::now();
+        if let Some(since) = toast.leaving_since {
+            let t = (now.duration_since(since).as_secs_f32() / 0.28).clamp(0.0, 1.0);
+            // ease_in_cubic：反向飞出，先慢后快
+            let e = t * t * t;
+            let y = e * 36.0;
+            let a = 1.0 - e;
+            return (y, a);
+        }
+        let elapsed = now.duration_since(toast.created).as_secs_f32() - stagger;
+        if elapsed < 0.0 {
+            // stagger 未到，先在屏幕外
+            return (36.0, 0.0);
+        }
+        let t = (elapsed / 0.38).clamp(0.0, 1.0);
+        // ease_out_cubic：先快后慢，非线性
+        let e = 1.0 - (1.0 - t).powi(3);
+        let y = (1.0 - e) * 36.0;
+        let a = e;
+        (y, a)
+    }
+
+    /// 返回 (dismiss, cancel)
+    fn toast_card(
+        ui: &mut egui::Ui,
+        toast: &Toast,
+        width: f32,
+        y_offset: f32,
+        alpha: f32,
+    ) -> (bool, bool) {
         let mut dismiss = false;
+        let mut cancel = false;
+        // 透明度影响背景与文字
+        let bg_base = crate::theme::control_bg();
+        let stroke_base = crate::theme::line_fg().gamma_multiply(0.35);
+        let bg = egui::Color32::from_rgba_unmultiplied(
+            bg_base.r(),
+            bg_base.g(),
+            bg_base.b(),
+            (bg_base.a() as f32 * alpha) as u8,
+        );
+        let stroke_col = egui::Color32::from_rgba_unmultiplied(
+            stroke_base.r(),
+            stroke_base.g(),
+            stroke_base.b(),
+            (stroke_base.a() as f32 * alpha) as u8,
+        );
         let frame = egui::Frame {
-            fill: crate::theme::control_bg(),
-            stroke: egui::Stroke::new(1.0, crate::theme::line_fg().gamma_multiply(0.35)),
+            fill: bg,
+            stroke: egui::Stroke::new(1.0, stroke_col),
             corner_radius: egui::CornerRadius::same(8),
             shadow: egui::Shadow {
                 offset: [0, 4],
                 blur: 12,
                 spread: 0,
-                color: egui::Color32::from_black_alpha(60),
+                color: egui::Color32::from_black_alpha((60.0 * alpha) as u8),
             },
             inner_margin: egui::Margin::symmetric(10, 10),
             ..Default::default()
         };
-        let resp = frame.show(ui, |ui| {
-            ui.set_max_width(width - 20.0);
-            ui.set_min_width(width - 20.0);
-            ui.horizontal(|ui| {
-                // 左图标
-                let icon = toast.kind.icon();
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(icon.codepoint)
-                            .family(icon.font_family())
-                            .size(crate::theme::ICON_FONT)
-                            .color(toast.kind.color()),
-                    )
-                    .selectable(false),
-                );
-                ui.add_space(6.0);
-                // 标题 + 消息 垂直
-                ui.vertical(|ui| {
-                    ui.set_max_width(width - 70.0);
-                    if !toast.title.is_empty() {
+        // y_offset 用 layer 偏移实现飞入：包裹一层垂直偏移
+        ui.allocate_ui_with_layout(
+            egui::vec2(width, 0.0),
+            egui::Layout::top_down(egui::Align::Max),
+            |ui| {
+                // 手动偏移：用 add_space 实现 y 方向位移（正值向下）
+                // 飞入时 y_offset>0，卡片在目标下方，逐渐回到 0
+                if y_offset > 0.5 {
+                    ui.add_space(y_offset);
+                }
+                let mut card_alpha = alpha;
+                // 禁用时略降透明度
+                if toast.leaving_since.is_some() {
+                    card_alpha = alpha;
+                }
+                frame.show(ui, |ui| {
+                    ui.set_max_width(width - 20.0);
+                    ui.set_min_width(width - 20.0);
+                    // 标题行
+                    ui.horizontal(|ui| {
+                        let icon = toast.kind.icon();
+                        let icon_col = mul_alpha(toast.kind.color(), card_alpha);
                         ui.add(
                             egui::Label::new(
-                                egui::RichText::new(&toast.title)
-                                    .size(crate::theme::SMALL_FONT)
-                                    .strong()
-                                    .color(crate::theme::text_primary()),
+                                egui::RichText::new(icon.codepoint)
+                                    .family(icon.font_family())
+                                    .size(crate::theme::ICON_FONT)
+                                    .color(icon_col),
                             )
-                            .selectable(false)
-                            .wrap(),
+                            .selectable(false),
                         );
-                    }
-                    if !toast.message.is_empty() {
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(&toast.message)
-                                    .size(crate::theme::SMALL_FONT)
-                                    .color(crate::theme::text_secondary()),
-                            )
-                            .selectable(false)
-                            .wrap(),
+                        ui.add_space(6.0);
+                        ui.vertical(|ui| {
+                            ui.set_max_width(width - 90.0);
+                            if !toast.title.is_empty() {
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(&toast.title)
+                                            .size(crate::theme::SMALL_FONT)
+                                            .strong()
+                                            .color(mul_alpha(
+                                                crate::theme::text_primary(),
+                                                card_alpha,
+                                            )),
+                                    )
+                                    .selectable(false)
+                                    .wrap(),
+                                );
+                            }
+                            if !toast.message.is_empty() {
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(&toast.message)
+                                            .size(crate::theme::SMALL_FONT)
+                                            .color(mul_alpha(
+                                                crate::theme::text_secondary(),
+                                                card_alpha,
+                                            )),
+                                    )
+                                    .selectable(false)
+                                    .wrap(),
+                                );
+                            }
+                            if let Some(p) = toast.progress {
+                                if !toast.progress_label.is_empty() {
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(&toast.progress_label)
+                                                .size(crate::theme::SMALL_LABEL_FONT)
+                                                .color(mul_alpha(
+                                                    crate::theme::text_muted(),
+                                                    card_alpha,
+                                                )),
+                                        )
+                                        .selectable(false)
+                                        .wrap(),
+                                    );
+                                }
+                                let _ = p;
+                            }
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let close_icon = ICON_CLOSE;
+                            let resp = crate::widgets::hover::hover_button(
+                                ui,
+                                close_icon.codepoint,
+                                egui::FontId::new(
+                                    crate::theme::ICON_FONT_SM,
+                                    close_icon.font_family(),
+                                ),
+                                mul_alpha(crate::theme::text_muted(), card_alpha),
+                                false,
+                            );
+                            if resp.clicked() {
+                                dismiss = true;
+                            }
+                            // 进度态额外提供取消
+                            if toast.progress.is_some() && toast.cancel.is_some() {
+                                ui.add_space(6.0);
+                                let resp2 = ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new("取消")
+                                            .size(crate::theme::SMALL_FONT)
+                                            .color(mul_alpha(
+                                                crate::theme::text_muted(),
+                                                card_alpha,
+                                            )),
+                                    )
+                                    .sense(egui::Sense::click())
+                                    .selectable(false),
+                                );
+                                if resp2.clicked() {
+                                    cancel = true;
+                                }
+                                if resp2.hovered() {
+                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                }
+                            }
+                        });
+                    });
+                    // 进度条
+                    if let Some(p) = toast.progress {
+                        ui.add_space(6.0);
+                        let bar_w = width - 20.0;
+                        let bar_h = 4.0;
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(bar_w, bar_h), egui::Sense::hover());
+                        let bg =
+                            mul_alpha(crate::theme::line_fg().gamma_multiply(0.25), card_alpha);
+                        ui.painter().rect_filled(rect, 2.0, bg);
+                        let fg_rect = egui::Rect::from_min_size(
+                            rect.min,
+                            egui::vec2(rect.width() * p.clamp(0.0, 1.0), rect.height()),
                         );
+                        ui.painter().rect_filled(
+                            fg_rect,
+                            2.0,
+                            mul_alpha(toast.kind.color().gamma_multiply(0.85), card_alpha),
+                        );
+                    } else if toast.leaving_since.is_none() {
+                        // 普通 toast 的 TTL 细线已移除（常驻），不再绘制
                     }
                 });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // 关闭按钮
-                    let close_icon = ICON_CLOSE;
-                    let resp = crate::widgets::hover::hover_button(
-                        ui,
-                        close_icon.codepoint,
-                        egui::FontId::new(crate::theme::ICON_FONT_SM, close_icon.font_family()),
-                        crate::theme::text_muted(),
-                        false,
-                    );
-                    if resp.clicked() {
-                        dismiss = true;
-                    }
-                });
-            });
-            // 进度条（TTL 剩余）：底部细线
-            let elapsed = toast.created.elapsed().as_secs_f32();
-            let total = toast.ttl.as_secs_f32().max(0.001);
-            let frac = 1.0 - (elapsed / total).clamp(0.0, 1.0);
-            if frac > 0.0 && frac < 1.0 {
-                ui.add_space(6.0);
-                let bar_w = width - 20.0;
-                let bar_h = 2.0;
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(bar_w, bar_h), egui::Sense::hover());
-                let bg = crate::theme::line_fg().gamma_multiply(0.25);
-                ui.painter().rect_filled(rect, 1.0, bg);
-                let fg_rect = egui::Rect::from_min_size(
-                    rect.min,
-                    egui::vec2(rect.width() * frac, rect.height()),
-                );
-                ui.painter()
-                    .rect_filled(fg_rect, 1.0, toast.kind.color().gamma_multiply(0.85));
-            }
-        });
-        // 点击卡片本身不关闭，仅 X 按钮
-        let _ = resp;
-        dismiss
+                if y_offset > 0.5 {
+                    // 飞入时底部补偿，避免布局跳动
+                    ui.add_space(0.0);
+                }
+            },
+        );
+        (dismiss, cancel)
     }
 
     // ── 通知展开：点铃铛后从右下→右上排列所有历史 toast，同样浮空，无单独弹窗 ──
@@ -350,7 +645,6 @@ impl Notifications {
         const BOTTOM_PAD: f32 = 48.0;
         const RIGHT_PAD: f32 = 12.0;
 
-        // 可视高度限制：历史很多时用 ScrollArea 承接，避免铺满全屏
         let viewport_h = ctx.viewport_rect().height();
         let max_h = (viewport_h - BOTTOM_PAD - 24.0).max(120.0);
 
@@ -366,41 +660,25 @@ impl Notifications {
                 egui::ScrollArea::vertical()
                     .max_height(max_h)
                     .auto_shrink([true, true])
+                    .scroll_bar_visibility(
+                        egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
+                    )
                     .show(ui, |ui| {
                         ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
                             ui.spacing_mut().item_spacing.y = GAP;
-                            let mut to_remove: Vec<u64> = Vec::new();
-                            // top_down：旧在上新在下，与 transient 一致，新 toast 贴底
+                            // 列表态不提供删除按钮，只读
                             for entry in self.history.iter() {
-                                if Self::history_card(ui, entry, CARD_W) {
-                                    to_remove.push(entry.id);
-                                }
-                            }
-                            if !to_remove.is_empty() {
-                                ui.ctx().data_mut(|d| {
-                                    d.insert_temp(
-                                        egui::Id::new("yinhe_history_dismiss"),
-                                        to_remove,
-                                    );
-                                });
+                                Self::history_card(ui, entry, CARD_W);
                             }
                         });
                     });
             });
-        let pending: Option<Vec<u64>> =
-            ctx.data(|d| d.get_temp(egui::Id::new("yinhe_history_dismiss")));
-        if let Some(ids) = pending {
-            ctx.data_mut(|d| d.remove::<Vec<u64>>(egui::Id::new("yinhe_history_dismiss")));
-            for id in ids {
-                self.history.retain(|e| e.id != id);
-                self.toasts.retain(|t| t.id != id);
-            }
-        }
+        // 展开态持续重绘以支持滚动惯性
+        ctx.request_repaint_after(Duration::from_millis(16));
     }
 
-    /// 历史卡片：与 toast_card 同样式但无 TTL 进度条，复用相同浮空外观
-    fn history_card(ui: &mut egui::Ui, entry: &HistoryEntry, width: f32) -> bool {
-        let mut dismiss = false;
+    /// 历史卡片：只读，无删除
+    fn history_card(ui: &mut egui::Ui, entry: &HistoryEntry, width: f32) {
         let frame = egui::Frame {
             fill: crate::theme::control_bg(),
             stroke: egui::Stroke::new(1.0, crate::theme::line_fg().gamma_multiply(0.35)),
@@ -430,7 +708,7 @@ impl Notifications {
                 );
                 ui.add_space(6.0);
                 ui.vertical(|ui| {
-                    ui.set_max_width(width - 70.0);
+                    ui.set_max_width(width - 90.0);
                     if !entry.title.is_empty() {
                         ui.add(
                             egui::Label::new(
@@ -455,21 +733,12 @@ impl Notifications {
                         );
                     }
                 });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let close_icon = ICON_CLOSE;
-                    let resp = crate::widgets::hover::hover_button(
-                        ui,
-                        close_icon.codepoint,
-                        egui::FontId::new(crate::theme::ICON_FONT_SM, close_icon.font_family()),
-                        crate::theme::text_muted(),
-                        false,
-                    );
-                    if resp.clicked() {
-                        dismiss = true;
-                    }
-                });
             });
         });
-        dismiss
     }
+}
+
+fn mul_alpha(c: egui::Color32, a: f32) -> egui::Color32 {
+    let a = a.clamp(0.0, 1.0);
+    egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (c.a() as f32 * a) as u8)
 }

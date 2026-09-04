@@ -1,3 +1,5 @@
+use std::sync::{Arc, atomic::AtomicBool};
+
 use rust_i18n::t;
 // re-export，让 app/poll.rs 的 use 不变
 pub(crate) use yinhe_editor_core::file_loading::LoadResult;
@@ -44,6 +46,10 @@ impl FileLoader {
     pub fn cancel_loading(&mut self) {
         self.core.cancel_loading();
         self.password_prompt = None;
+    }
+
+    pub fn cancel_flag(&self) -> Option<Arc<AtomicBool>> {
+        self.core.cancel_flag()
     }
 
     /// Show file dialog and start loading in a background thread.
