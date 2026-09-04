@@ -259,32 +259,35 @@ pub(crate) fn draw_card(
                     });
                 }
             });
-            if let Some(p) = progress {
-                // 已完成/失败或进度接近 1 时隐藏进度条
-                let is_done = p >= 0.999 || progress_label == "已完成" || progress_label == "失败";
-                if !is_done {
-                    ui.add_space(6.0);
-                    let bar_w = width - 20.0;
-                    let bar_h = 2.0;
-                    let (rect, _) =
-                        ui.allocate_exact_size(egui::vec2(bar_w, bar_h), egui::Sense::hover());
-                    let bg = mul_alpha(crate::theme::line_fg().gamma_multiply(0.25), card_alpha);
-                    ui.painter().rect_filled(rect, 1.0, bg);
-                    let fg_rect = egui::Rect::from_min_size(
-                        rect.min,
-                        egui::vec2(rect.width() * p.clamp(0.0, 1.0), rect.height()),
-                    );
-                    ui.painter().rect_filled(
-                        fg_rect,
-                        1.0,
-                        mul_alpha(kind.color().gamma_multiply(0.85), card_alpha),
-                    );
-                    ui.add_space(12.0);
-                    // 数字已在 progress_label 中外部显示，不再在条中心绘制
-                } else {
-                    // 已完成隐藏进度条，保持占位避免高度跳变
-                    ui.add_space(20.0);
+            if progress.is_some() {
+                // 进度区恒定结构（6+2+12）：有条画条，无条只占位不绘制。
+                // 必须同为真 widget——真 widget 身后跟一个 item_spacing，
+                // add_space 没有；只算裸高度仍会差一个间距而跳动。
+                ui.add_space(6.0);
+                let bar_w = width - 20.0;
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(bar_w, 2.0), egui::Sense::hover());
+                // 已完成/失败或进度接近 1 时隐藏进度条（数字已在 label 外部显示）
+                let show_bar = progress.is_some_and(|p| {
+                    p < 0.999 && progress_label != "已完成" && progress_label != "失败"
+                });
+                if show_bar {
+                    if let Some(p) = progress {
+                        let bg =
+                            mul_alpha(crate::theme::line_fg().gamma_multiply(0.25), card_alpha);
+                        ui.painter().rect_filled(rect, 1.0, bg);
+                        let fg_rect = egui::Rect::from_min_size(
+                            rect.min,
+                            egui::vec2(rect.width() * p.clamp(0.0, 1.0), rect.height()),
+                        );
+                        ui.painter().rect_filled(
+                            fg_rect,
+                            1.0,
+                            mul_alpha(kind.color().gamma_multiply(0.85), card_alpha),
+                        );
+                    }
                 }
+                ui.add_space(12.0);
             } else {
                 ui.add_space(20.0);
             }
@@ -324,4 +327,96 @@ pub(crate) fn history_card(ui: &mut egui::Ui, entry: &HistoryEntry, width: f32) 
     let _ = draw_card(
         ui, width, 0.0, 1.0, entry.kind, &title, &message, progress, &label, false, None,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 无头渲染一张卡并量高度（无 CJK 字体时为 tofu，但跨状态可比）。
+    fn card_height(
+        width: f32,
+        title: &str,
+        message: &str,
+        progress: Option<f32>,
+        label: &str,
+    ) -> f32 {
+        let ctx = egui::Context::default();
+        // 注册图标字体（app 启动时同款，否则图标 label 排版 panic）
+        ctx.add_font(egui_material_icons::font_insert());
+        let mut h = 0.0;
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1400.0, 900.0),
+            )),
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(raw, |ui| {
+            draw_card(
+                ui,
+                width,
+                0.0,
+                1.0,
+                ToastKind::Info,
+                title,
+                message,
+                progress,
+                label,
+                true,
+                None,
+            );
+            h = ui.min_rect().height();
+        });
+        // 无头测试不贴纹理，显式丢弃（否则 debug 下 panic）
+        out.textures_delta.clear();
+        h
+    }
+
+    fn assert_same_height(cases: &[f32]) {
+        let first = cases[0];
+        for (i, h) in cases.iter().enumerate() {
+            assert!((h - first).abs() < 0.5, "case {i}: height {h} != {first}");
+        }
+    }
+
+    /// 进度族（进行中/完成/失败，文案空满长短）高度必须一致，否则加载卡上下跳。
+    #[test]
+    fn progress_card_height_stable() {
+        let w = 360.0;
+        let running_empty = card_height(w, "正在加载", "解析 MIDI 音轨", Some(0.3), "");
+        let running_short = card_height(w, "正在加载", "解析 MIDI 音轨", Some(0.3), "3/16");
+        let running_long = card_height(
+            w,
+            "正在加载",
+            "解析 MIDI 音轨",
+            Some(0.9),
+            "余韵衰减中 (剩余 3 音色) 余韵衰减中 (剩余 3 音色) 余韵衰减中",
+        );
+        let running_long_msg = card_height(
+            w,
+            "正在加载",
+            "这是一段非常非常长的阶段文案这是一段非常非常长的阶段文案这是一段非常非常长的阶段文案",
+            Some(0.5),
+            "3/16",
+        );
+        let done = card_height(w, "MIDI加载完成", "a.mid", Some(1.0), "已完成");
+        let done_duration = card_height(
+            w,
+            "MIDI加载完成",
+            "a.mid",
+            Some(1.0),
+            "加载时间：15秒321毫秒",
+        );
+        let failed = card_height(w, "打开失败", "err", Some(0.5), "失败");
+        assert_same_height(&[
+            running_empty,
+            running_short,
+            running_long,
+            running_long_msg,
+            done,
+            done_duration,
+            failed,
+        ]);
+    }
 }
