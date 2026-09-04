@@ -178,9 +178,9 @@ impl Notifications {
         if self.toasts.len() != before {
             ctx.request_repaint();
         }
-        // 若还有存活 toast，每 100ms 唤醒一次以检测过期
+        // 进度条需丝滑：60fps 刷新，直到全部消失
         if !self.toasts.is_empty() {
-            ctx.request_repaint_after(Duration::from_millis(100));
+            ctx.request_repaint_after(Duration::from_millis(16));
         }
     }
 
@@ -194,11 +194,11 @@ impl Notifications {
             return;
         }
         // 从右下角向上堆叠，浮空在所有 Panel 之上。
-        // 用单独的 Area + bottom_up 布局，卡片宽度固定 360。
+        // 用单独的 Area + top_down 布局，卡片宽度固定 360。
         const CARD_W: f32 = 360.0;
         const GAP: f32 = 8.0;
-        // mode_bar 高度约 28，加 12 边距避免贴边
-        const BOTTOM_PAD: f32 = 40.0;
+        // mode_bar 高度约 28，shadow 向下 4px，再加 12 边距避免贴边
+        const BOTTOM_PAD: f32 = 48.0;
         const RIGHT_PAD: f32 = 12.0;
 
         egui::Area::new(egui::Id::new("yinhe_toasts"))
@@ -210,23 +210,17 @@ impl Notifications {
             .movable(false)
             .interactable(true)
             .show(ctx, |ui| {
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::Max), |ui| {
+                ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
                     ui.spacing_mut().item_spacing.y = GAP;
-                    // newest at bottom → 逆序遍历，让最新的贴底
                     let mut to_dismiss: Vec<u64> = Vec::new();
-                    // 为了 bottom_up，新est 先画（在最底）
-                    for toast in self.toasts.iter().rev() {
+                    // top_down：旧在上新在下，整体贴底向上长，新 toast 永远贴着 mode_bar
+                    for toast in self.toasts.iter() {
                         let resp = Self::toast_card(ui, toast, CARD_W);
                         if resp {
                             to_dismiss.push(toast.id);
                         }
                     }
-                    // 收集待关闭
                     if !to_dismiss.is_empty() {
-                        // 延迟移除，避免借用冲突（外层 &mut self 已在闭包内）
-                        // 这里用 ctx data 传递？改为直接在外层处理：先收集，闭包结束后移除。
-                        // 但闭包内无法 &mut self.toasts，所以改为在闭包外处理：
-                        // 技巧：把 to_dismiss 写进 egui temp
                         ui.ctx().data_mut(|d| {
                             d.insert_temp(egui::Id::new("yinhe_toasts_dismiss"), to_dismiss);
                         });
@@ -353,7 +347,7 @@ impl Notifications {
         }
         const CARD_W: f32 = 360.0;
         const GAP: f32 = 8.0;
-        const BOTTOM_PAD: f32 = 40.0;
+        const BOTTOM_PAD: f32 = 48.0;
         const RIGHT_PAD: f32 = 12.0;
 
         // 可视高度限制：历史很多时用 ScrollArea 承接，避免铺满全屏
@@ -373,11 +367,11 @@ impl Notifications {
                     .max_height(max_h)
                     .auto_shrink([true, true])
                     .show(ui, |ui| {
-                        ui.with_layout(egui::Layout::bottom_up(egui::Align::Max), |ui| {
+                        ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
                             ui.spacing_mut().item_spacing.y = GAP;
                             let mut to_remove: Vec<u64> = Vec::new();
-                            // newest at bottom → 逆序遍历，让最新的贴底，与 transient toast 一致
-                            for entry in self.history.iter().rev() {
+                            // top_down：旧在上新在下，与 transient 一致，新 toast 贴底
+                            for entry in self.history.iter() {
                                 if Self::history_card(ui, entry, CARD_W) {
                                     to_remove.push(entry.id);
                                 }
