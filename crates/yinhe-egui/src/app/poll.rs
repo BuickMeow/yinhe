@@ -74,14 +74,14 @@ impl App {
                             .unwrap_or(&path);
                         if self
                             .notifications
-                            .has_progress(crate::notifications::LOADING_PROGRESS_ID)
+                            .has_progress(crate::widgets::toast::LOADING_PROGRESS_ID)
                             && !self
                                 .notifications
-                                .is_leaving(crate::notifications::LOADING_PROGRESS_ID)
+                                .is_leaving(crate::widgets::toast::LOADING_PROGRESS_ID)
                         {
                             self.notifications.complete_progress(
-                                crate::notifications::LOADING_PROGRESS_ID,
-                                crate::notifications::ToastKind::Success,
+                                crate::widgets::toast::LOADING_PROGRESS_ID,
+                                crate::widgets::toast::ToastKind::Success,
                                 "已完成",
                                 fname.to_string(),
                             );
@@ -93,13 +93,13 @@ impl App {
                         self.load_error = Some(msg.clone());
                         if self
                             .notifications
-                            .has_progress(crate::notifications::LOADING_PROGRESS_ID)
+                            .has_progress(crate::widgets::toast::LOADING_PROGRESS_ID)
                             && !self
                                 .notifications
-                                .is_leaving(crate::notifications::LOADING_PROGRESS_ID)
+                                .is_leaving(crate::widgets::toast::LOADING_PROGRESS_ID)
                         {
                             self.notifications.fail_progress(
-                                crate::notifications::LOADING_PROGRESS_ID,
+                                crate::widgets::toast::LOADING_PROGRESS_ID,
                                 "打开失败",
                                 msg.clone(),
                             );
@@ -197,14 +197,14 @@ impl App {
                     }
                     if self
                         .notifications
-                        .has_progress(crate::notifications::LOADING_PROGRESS_ID)
+                        .has_progress(crate::widgets::toast::LOADING_PROGRESS_ID)
                         && !self
                             .notifications
-                            .is_leaving(crate::notifications::LOADING_PROGRESS_ID)
+                            .is_leaving(crate::widgets::toast::LOADING_PROGRESS_ID)
                     {
                         self.notifications.complete_progress(
-                            crate::notifications::LOADING_PROGRESS_ID,
-                            crate::notifications::ToastKind::Success,
+                            crate::widgets::toast::LOADING_PROGRESS_ID,
+                            crate::widgets::toast::ToastKind::Success,
                             "已完成",
                             file_name.clone(),
                         );
@@ -216,13 +216,13 @@ impl App {
                     self.load_error = Some(msg.clone());
                     if self
                         .notifications
-                        .has_progress(crate::notifications::LOADING_PROGRESS_ID)
+                        .has_progress(crate::widgets::toast::LOADING_PROGRESS_ID)
                         && !self
                             .notifications
-                            .is_leaving(crate::notifications::LOADING_PROGRESS_ID)
+                            .is_leaving(crate::widgets::toast::LOADING_PROGRESS_ID)
                     {
                         self.notifications.fail_progress(
-                            crate::notifications::LOADING_PROGRESS_ID,
+                            crate::widgets::toast::LOADING_PROGRESS_ID,
                             "打开失败",
                             msg.clone(),
                         );
@@ -235,13 +235,13 @@ impl App {
                 self.load_error = Some(msg.clone());
                 if self
                     .notifications
-                    .has_progress(crate::notifications::LOADING_PROGRESS_ID)
+                    .has_progress(crate::widgets::toast::LOADING_PROGRESS_ID)
                     && !self
                         .notifications
-                        .is_leaving(crate::notifications::LOADING_PROGRESS_ID)
+                        .is_leaving(crate::widgets::toast::LOADING_PROGRESS_ID)
                 {
                     self.notifications.fail_progress(
-                        crate::notifications::LOADING_PROGRESS_ID,
+                        crate::widgets::toast::LOADING_PROGRESS_ID,
                         "打开失败",
                         msg.clone(),
                     );
@@ -275,24 +275,24 @@ impl App {
             } else {
                 None
             };
-            let (kind, title) = (crate::notifications::ToastKind::Success, "已完成");
+            let (kind, title) = (crate::widgets::toast::ToastKind::Success, "已完成");
             if self
                 .notifications
-                .has_progress(crate::notifications::SAVE_PROGRESS_ID)
+                .has_progress(crate::widgets::toast::SAVE_PROGRESS_ID)
                 && !self
                     .notifications
-                    .is_leaving(crate::notifications::SAVE_PROGRESS_ID)
+                    .is_leaving(crate::widgets::toast::SAVE_PROGRESS_ID)
             {
                 if let Some(name) = saved_name.clone() {
                     self.notifications.complete_progress(
-                        crate::notifications::SAVE_PROGRESS_ID,
+                        crate::widgets::toast::SAVE_PROGRESS_ID,
                         kind,
                         title,
                         name,
                     );
                 } else {
                     self.notifications.complete_progress(
-                        crate::notifications::SAVE_PROGRESS_ID,
+                        crate::widgets::toast::SAVE_PROGRESS_ID,
                         kind,
                         title,
                         "",
@@ -333,14 +333,14 @@ impl App {
                     });
                     if self
                         .notifications
-                        .has_progress(crate::notifications::EXPORT_PROGRESS_ID)
+                        .has_progress(crate::widgets::toast::EXPORT_PROGRESS_ID)
                         && !self
                             .notifications
-                            .is_leaving(crate::notifications::EXPORT_PROGRESS_ID)
+                            .is_leaving(crate::widgets::toast::EXPORT_PROGRESS_ID)
                     {
                         self.notifications.complete_progress(
-                            crate::notifications::EXPORT_PROGRESS_ID,
-                            crate::notifications::ToastKind::Success,
+                            crate::widgets::toast::EXPORT_PROGRESS_ID,
+                            crate::widgets::toast::ToastKind::Success,
                             "已完成",
                             format!("{} ({:.1}s, {:.1}x)", fname, elapsed, speed),
                         );
@@ -355,13 +355,13 @@ impl App {
                     self.load_error = Some(e.clone());
                     if self
                         .notifications
-                        .has_progress(crate::notifications::EXPORT_PROGRESS_ID)
+                        .has_progress(crate::widgets::toast::EXPORT_PROGRESS_ID)
                         && !self
                             .notifications
-                            .is_leaving(crate::notifications::EXPORT_PROGRESS_ID)
+                            .is_leaving(crate::widgets::toast::EXPORT_PROGRESS_ID)
                     {
                         self.notifications.fail_progress(
-                            crate::notifications::EXPORT_PROGRESS_ID,
+                            crate::widgets::toast::EXPORT_PROGRESS_ID,
                             "导出失败",
                             e.clone(),
                         );

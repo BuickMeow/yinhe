@@ -201,7 +201,7 @@ pub struct App {
     pub(crate) automation_clipboard: crate::app::automation_actions::AutomationClipboard,
 
     // ── 通知中心（Toast + 历史）──
-    pub(crate) notifications: crate::notifications::Notifications,
+    pub(crate) notifications: crate::widgets::toast::Notifications,
 }
 
 impl App {
@@ -383,7 +383,7 @@ impl App {
             clipboard: yinhe_core::Selection::default(),
             cut_past_len: None,
             automation_clipboard: crate::app::automation_actions::AutomationClipboard::default(),
-            notifications: crate::notifications::Notifications::new(),
+            notifications: crate::widgets::toast::Notifications::new(),
         };
 
         // Spawn the independent render thread for pianoroll GPU rendering.

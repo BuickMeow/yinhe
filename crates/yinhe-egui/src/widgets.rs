@@ -18,4 +18,5 @@ pub mod split_handle;
 pub(crate) mod switch;
 pub mod time_ruler;
 pub mod timecode;
+pub mod toast;
 pub mod tools_panel;

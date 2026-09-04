@@ -153,28 +153,28 @@ impl App {
         // 若 toast 正在离开（用户点了 X/取消），不再 upsert，避免复活
         if self
             .notifications
-            .is_leaving(crate::notifications::LOADING_PROGRESS_ID)
+            .is_leaving(crate::widgets::toast::LOADING_PROGRESS_ID)
         {
             // 检测取消：toast 的 cancel flag 被置位则真正取消加载
             if let Some(flag) = self
                 .notifications
-                .get_cancel_flag(crate::notifications::LOADING_PROGRESS_ID)
+                .get_cancel_flag(crate::widgets::toast::LOADING_PROGRESS_ID)
                 && flag.load(std::sync::atomic::Ordering::Relaxed)
             {
                 self.file_loader.cancel_loading();
                 self.notifications
-                    .remove_progress(crate::notifications::LOADING_PROGRESS_ID);
+                    .remove_progress(crate::widgets::toast::LOADING_PROGRESS_ID);
             }
         } else if self.file_loader.is_loading() {
             // 检测 toast 侧取消（用户点 X 或取消按钮）
             if let Some(flag) = self
                 .notifications
-                .get_cancel_flag(crate::notifications::LOADING_PROGRESS_ID)
+                .get_cancel_flag(crate::widgets::toast::LOADING_PROGRESS_ID)
                 && flag.load(std::sync::atomic::Ordering::Relaxed)
             {
                 self.file_loader.cancel_loading();
                 self.notifications
-                    .remove_progress(crate::notifications::LOADING_PROGRESS_ID);
+                    .remove_progress(crate::widgets::toast::LOADING_PROGRESS_ID);
             } else {
                 let p = self
                     .file_loader
@@ -196,8 +196,8 @@ impl App {
                         let detail = st.detail.clone();
                         let cancel = self.file_loader.cancel_flag();
                         self.notifications.upsert_progress(
-                            crate::notifications::LOADING_PROGRESS_ID,
-                            crate::notifications::ToastKind::Info,
+                            crate::widgets::toast::LOADING_PROGRESS_ID,
+                            crate::widgets::toast::ToastKind::Info,
                             "正在加载",
                             label,
                             frac,
@@ -209,7 +209,7 @@ impl App {
             }
         } else if self
             .notifications
-            .has_progress(crate::notifications::LOADING_PROGRESS_ID)
+            .has_progress(crate::widgets::toast::LOADING_PROGRESS_ID)
         {
             let visible = self
                 .file_loader
@@ -225,13 +225,13 @@ impl App {
         // ── 保存进度 toast（替代 save_overlay viewport）──
         if self
             .notifications
-            .is_leaving(crate::notifications::SAVE_PROGRESS_ID)
+            .is_leaving(crate::widgets::toast::SAVE_PROGRESS_ID)
         {
         } else if let Some((stage, fraction)) = self.save_progress {
             let label = crate::dialogs::save_overlay::stage_label(stage);
             self.notifications.upsert_progress(
-                crate::notifications::SAVE_PROGRESS_ID,
-                crate::notifications::ToastKind::Info,
+                crate::widgets::toast::SAVE_PROGRESS_ID,
+                crate::widgets::toast::ToastKind::Info,
                 "正在保存",
                 label.clone(),
                 fraction.clamp(0.0, 1.0),
@@ -241,8 +241,8 @@ impl App {
         } else if self.save_rx.is_some() {
             // 保存刚启动但首个 progress 尚未到达
             self.notifications.upsert_progress(
-                crate::notifications::SAVE_PROGRESS_ID,
-                crate::notifications::ToastKind::Info,
+                crate::widgets::toast::SAVE_PROGRESS_ID,
+                crate::widgets::toast::ToastKind::Info,
                 "正在保存",
                 "准备中…".to_string(),
                 0.0,
@@ -301,14 +301,14 @@ impl App {
         // ── Export progress toast（替代 export_progress viewport）──
         if self
             .notifications
-            .is_leaving(crate::notifications::EXPORT_PROGRESS_ID)
+            .is_leaving(crate::widgets::toast::EXPORT_PROGRESS_ID)
         {
             // 用户已点 X，取消标志由 toast 侧置位，下一帧会自动触发 cancel
         } else if self.export.rx.is_some() {
             // 若 toast 侧点了取消，已置位则无需再 upsert，直接让线程退出
             let cancelled = self
                 .notifications
-                .get_cancel_flag(crate::notifications::EXPORT_PROGRESS_ID)
+                .get_cancel_flag(crate::widgets::toast::EXPORT_PROGRESS_ID)
                 .is_some_and(|f| f.load(std::sync::atomic::Ordering::Relaxed));
             if !cancelled && let Ok(st) = self.export.progress.lock().map(|s| s.clone()) {
                 let frac = st.progress.clamp(0.0, 1.0);
@@ -318,8 +318,8 @@ impl App {
                     st.status.clone()
                 };
                 self.notifications.upsert_progress(
-                    crate::notifications::EXPORT_PROGRESS_ID,
-                    crate::notifications::ToastKind::Info,
+                    crate::widgets::toast::EXPORT_PROGRESS_ID,
+                    crate::widgets::toast::ToastKind::Info,
                     "正在导出",
                     label.clone(),
                     frac,
@@ -332,12 +332,12 @@ impl App {
         // ── PPQ rescale progress toast（替代 rescale_overlay viewport）──
         if self
             .notifications
-            .is_leaving(crate::notifications::RESCALE_PROGRESS_ID)
+            .is_leaving(crate::widgets::toast::RESCALE_PROGRESS_ID)
         {
         } else if self.rescale.rx.is_some() {
             let cancelled = self
                 .notifications
-                .get_cancel_flag(crate::notifications::RESCALE_PROGRESS_ID)
+                .get_cancel_flag(crate::widgets::toast::RESCALE_PROGRESS_ID)
                 .is_some_and(|f| f.load(std::sync::atomic::Ordering::Relaxed));
             if !cancelled && let Ok(st) = self.rescale.progress.lock().map(|s| s.clone()) {
                 let frac = st.progress.clamp(0.0, 1.0);
@@ -347,8 +347,8 @@ impl App {
                     st.label.clone()
                 };
                 self.notifications.upsert_progress(
-                    crate::notifications::RESCALE_PROGRESS_ID,
-                    crate::notifications::ToastKind::Info,
+                    crate::widgets::toast::RESCALE_PROGRESS_ID,
+                    crate::widgets::toast::ToastKind::Info,
                     "正在缩放",
                     label.clone(),
                     frac,

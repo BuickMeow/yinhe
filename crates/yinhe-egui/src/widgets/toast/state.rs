@@ -1,0 +1,445 @@
+use std::sync::{Arc, atomic::AtomicBool};
+use std::time::{Duration, Instant};
+
+use eframe::egui;
+
+use super::kind::ToastKind;
+use super::model::{HistoryEntry, Toast};
+
+// ── 统一通知中心 ──
+pub struct Notifications {
+    next_id: u64,
+    toasts: Vec<Toast>,
+    history: Vec<HistoryEntry>,
+    /// 通知列表是否展开（由 mode_bar 铃铛切换）。
+    pub center_open: bool,
+    max_history: usize,
+}
+
+pub const LOADING_PROGRESS_ID: u64 = 0x4C4F4144; // "LOAD"
+pub const SAVE_PROGRESS_ID: u64 = 0x53415645; // "SAVE"
+pub const EXPORT_PROGRESS_ID: u64 = 0x45585054; // "EXPT"
+pub const RESCALE_PROGRESS_ID: u64 = 0x5253434C; // "RSCL"
+
+impl Default for Notifications {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[allow(dead_code)]
+impl Notifications {
+    pub fn new() -> Self {
+        Self {
+            next_id: 1,
+            toasts: Vec::new(),
+            history: Vec::new(),
+            center_open: false,
+            max_history: 100,
+        }
+    }
+
+    // ── 对外推送 API ──
+
+    pub fn info(&mut self, title: impl Into<String>, message: impl Into<String>) {
+        self.push(ToastKind::Info, title, message, None);
+    }
+
+    pub fn success(&mut self, title: impl Into<String>, message: impl Into<String>) {
+        self.push(ToastKind::Success, title, message, None);
+    }
+
+    pub fn warning(&mut self, title: impl Into<String>, message: impl Into<String>) {
+        self.push(ToastKind::Warning, title, message, None);
+    }
+
+    pub fn error(&mut self, title: impl Into<String>, message: impl Into<String>) {
+        self.push(ToastKind::Error, title, message, None);
+    }
+
+    pub fn push(
+        &mut self,
+        kind: ToastKind,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        _ttl: Option<Duration>,
+    ) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        let title = title.into();
+        let message = message.into();
+        self.toasts.push(Toast {
+            id,
+            kind,
+            title: title.clone(),
+            message: message.clone(),
+            created: Instant::now(),
+            progress: None,
+            progress_label: String::new(),
+            cancel: None,
+            leaving_since: None,
+        });
+        self.history.push(HistoryEntry {
+            id,
+            kind,
+            title,
+            message,
+            created: Instant::now(),
+            read: false,
+            progress: None,
+            progress_label: String::new(),
+        });
+        if self.history.len() > self.max_history {
+            let excess = self.history.len() - self.max_history;
+            self.history.drain(0..excess);
+        }
+        id
+    }
+
+    /// 创建或更新进度 toast。同一 key（如 "loading"）复用同一 id。
+    #[allow(clippy::too_many_arguments)]
+    pub fn upsert_progress(
+        &mut self,
+        key_id: u64,
+        kind: ToastKind,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        fraction: f32,
+        label: impl Into<String>,
+        cancel: Option<Arc<AtomicBool>>,
+    ) -> u64 {
+        let title = title.into();
+        let message = message.into();
+        let label = label.into();
+        if let Some(t) = self.toasts.iter_mut().find(|t| t.id == key_id) {
+            t.kind = kind;
+            t.title = title.clone();
+            t.message = message.clone();
+            t.progress = Some(fraction.clamp(0.0, 1.0));
+            t.progress_label = label.clone();
+            t.cancel = cancel;
+            t.leaving_since = None;
+            if let Some(h) = self.history.iter_mut().find(|h| h.id == key_id) {
+                h.title = title.clone();
+                h.message = message.clone();
+                h.kind = kind;
+                h.progress = Some(fraction.clamp(0.0, 1.0));
+                h.progress_label = label.clone();
+            }
+            return key_id;
+        }
+        if key_id >= self.next_id {
+            self.next_id = key_id + 1;
+        }
+        let id = key_id;
+        let p = fraction.clamp(0.0, 1.0);
+        self.toasts.push(Toast {
+            id,
+            kind,
+            title: title.clone(),
+            message: message.clone(),
+            created: Instant::now(),
+            progress: Some(p),
+            progress_label: label.clone(),
+            cancel,
+            leaving_since: None,
+        });
+        self.history.push(HistoryEntry {
+            id,
+            kind,
+            title,
+            message,
+            created: Instant::now(),
+            read: false,
+            progress: Some(p),
+            progress_label: label,
+        });
+        if self.history.len() > self.max_history {
+            let excess = self.history.len() - self.max_history;
+            self.history.drain(0..excess);
+        }
+        id
+    }
+
+    pub fn update_progress(&mut self, id: u64, fraction: f32, label: impl Into<String>) {
+        let label = label.into();
+        if let Some(t) = self.toasts.iter_mut().find(|t| t.id == id) {
+            t.progress = Some(fraction.clamp(0.0, 1.0));
+            t.progress_label = label;
+        }
+    }
+
+    /// 进度完成：保留同一张 toast，原地切换为完成态（进度条满格，避免高度跳变）
+    pub fn complete_progress(
+        &mut self,
+        id: u64,
+        kind: ToastKind,
+        title: impl Into<String>,
+        message: impl Into<String>,
+    ) {
+        let title = title.into();
+        let message = message.into();
+        if let Some(t) = self.toasts.iter_mut().find(|t| t.id == id) {
+            t.kind = kind;
+            t.title = title.clone();
+            t.message = message.clone();
+            t.progress = Some(1.0);
+            t.progress_label = "已完成".to_string();
+            t.cancel = None;
+            t.leaving_since = None;
+        }
+        if let Some(h) = self.history.iter_mut().find(|h| h.id == id) {
+            h.kind = kind;
+            h.title = title.clone();
+            h.message = message.clone();
+            h.progress = Some(1.0);
+            h.progress_label = "已完成".to_string();
+        }
+        if self.toasts.iter().find(|t| t.id == id).is_none() {
+            self.push(kind, title, message, None);
+        }
+    }
+
+    pub fn fail_progress(&mut self, id: u64, title: impl Into<String>, message: impl Into<String>) {
+        let title = title.into();
+        let message = message.into();
+        if let Some(t) = self.toasts.iter_mut().find(|t| t.id == id) {
+            t.kind = ToastKind::Error;
+            t.title = title.clone();
+            t.message = message.clone();
+            t.progress_label = "失败".to_string();
+            t.cancel = None;
+            t.leaving_since = None;
+        }
+        if let Some(h) = self.history.iter_mut().find(|h| h.id == id) {
+            h.kind = ToastKind::Error;
+            h.title = title.clone();
+            h.message = message.clone();
+            h.progress_label = "失败".to_string();
+        }
+        if self.toasts.iter().find(|t| t.id == id).is_none() {
+            self.push(ToastKind::Error, title, message, None);
+        }
+    }
+
+    pub fn has_progress(&self, id: u64) -> bool {
+        self.toasts.iter().any(|t| t.id == id)
+    }
+
+    pub fn is_leaving(&self, id: u64) -> bool {
+        self.toasts
+            .iter()
+            .find(|t| t.id == id)
+            .is_some_and(|t| t.leaving_since.is_some())
+    }
+
+    pub fn get_cancel_flag(&self, id: u64) -> Option<Arc<AtomicBool>> {
+        self.toasts
+            .iter()
+            .find(|t| t.id == id)
+            .and_then(|t| t.cancel.clone())
+    }
+
+    pub fn remove_progress(&mut self, id: u64) {
+        self.toasts.retain(|t| t.id != id);
+    }
+
+    pub fn unread_count(&self) -> usize {
+        self.history.iter().filter(|e| !e.read).count()
+    }
+
+    pub fn has_unread(&self) -> bool {
+        self.history.iter().any(|e| !e.read)
+    }
+
+    pub fn mark_all_read(&mut self) {
+        for e in &mut self.history {
+            e.read = true;
+        }
+    }
+
+    pub fn clear_history(&mut self) {
+        self.history.clear();
+    }
+
+    /// 标记离开动画，300ms 后真正移除
+    #[allow(clippy::collapsible_if)]
+    pub fn dismiss_toast(&mut self, id: u64) {
+        if let Some(t) = self.toasts.iter_mut().find(|t| t.id == id)
+            && t.leaving_since.is_none()
+        {
+            t.leaving_since = Some(Instant::now());
+        }
+    }
+
+    fn tick(&mut self, ctx: &egui::Context) {
+        let now = Instant::now();
+        let mut needs_repaint = false;
+        // 清理已完成离开动画的 toast
+        let before = self.toasts.len();
+        self.toasts.retain(|t| {
+            if let Some(since) = t.leaving_since {
+                now.duration_since(since) < Duration::from_millis(320)
+            } else {
+                true
+            }
+        });
+        if self.toasts.len() != before {
+            needs_repaint = true;
+        }
+        let has_anim = self.toasts.iter().any(|t| {
+            t.leaving_since.is_some()
+                || now.duration_since(t.created) < Duration::from_millis(400)
+                || t.progress.is_some_and(|p| p < 0.999)
+        });
+        if has_anim || needs_repaint {
+            ctx.request_repaint_after(Duration::from_millis(16));
+        } else if !self.toasts.is_empty() {
+            // 常驻 toast 无动画时仍需偶尔重绘以响应 hover
+            ctx.request_repaint_after(Duration::from_millis(500));
+        }
+        // history 展开时也需动画
+        if self.center_open && !self.history.is_empty() {
+            ctx.request_repaint_after(Duration::from_millis(16));
+        }
+    }
+
+    // ── Toast 浮空渲染：右下角 → 右上角堆叠，浮于内容之上 ──
+    pub fn show_toasts(&mut self, ctx: &egui::Context) {
+        self.tick(ctx);
+        if self.center_open {
+            return;
+        }
+        if self.toasts.is_empty() {
+            return;
+        }
+        const CARD_W: f32 = 360.0;
+        const GAP: f32 = 8.0;
+        const BOTTOM_PAD: f32 = 48.0;
+        const RIGHT_PAD: f32 = 20.0;
+
+        egui::Area::new(egui::Id::new("yinhe_toasts"))
+            .anchor(
+                egui::Align2::RIGHT_BOTTOM,
+                egui::vec2(-RIGHT_PAD, -BOTTOM_PAD),
+            )
+            .order(egui::Order::Tooltip)
+            .movable(false)
+            .interactable(true)
+            .show(ctx, |ui| {
+                let max_h = (ctx.viewport_rect().height() - BOTTOM_PAD - 24.0).max(120.0);
+                egui::ScrollArea::vertical()
+                    .max_height(max_h)
+                    .auto_shrink([true, true])
+                    .stick_to_bottom(true)
+                    .scroll_bar_visibility(
+                        egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
+                    )
+                    .show(ui, |ui| {
+                        ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            let mut to_dismiss: Vec<u64> = Vec::new();
+                            let mut first = true;
+                            for (idx, toast) in self.toasts.iter().enumerate() {
+                                if !first {
+                                    // 缝隙也设为可悬停，避免滚轮穿透到 PR/AR
+                                    ui.allocate_response(
+                                        egui::vec2(CARD_W, GAP),
+                                        egui::Sense::hover(),
+                                    );
+                                }
+                                first = false;
+                                let is_leaving = toast.leaving_since.is_some();
+                                let stagger =
+                                    (self.toasts.len().saturating_sub(1).saturating_sub(idx))
+                                        as f32
+                                        * 0.04;
+                                let (x_off, alpha) = super::anim::fly_anim(toast, stagger);
+                                if is_leaving && alpha < 0.02 {
+                                    continue;
+                                }
+                                let card_alpha = alpha;
+                                let resp =
+                                    super::card::toast_card(ui, toast, CARD_W, x_off, card_alpha);
+                                if resp.0 {
+                                    to_dismiss.push(toast.id);
+                                }
+                                if resp.1 {
+                                    if let Some(c) = &toast.cancel {
+                                        c.store(true, std::sync::atomic::Ordering::Relaxed);
+                                    }
+                                    to_dismiss.push(toast.id);
+                                }
+                            }
+                            if !to_dismiss.is_empty() {
+                                ui.ctx().data_mut(|d| {
+                                    d.insert_temp(
+                                        egui::Id::new("yinhe_toasts_dismiss"),
+                                        to_dismiss,
+                                    );
+                                });
+                            }
+                        });
+                    });
+            });
+        let pending: Option<Vec<u64>> =
+            ctx.data(|d| d.get_temp(egui::Id::new("yinhe_toasts_dismiss")));
+        if let Some(ids) = pending {
+            ctx.data_mut(|d| d.remove::<Vec<u64>>(egui::Id::new("yinhe_toasts_dismiss")));
+            for id in ids {
+                self.dismiss_toast(id);
+            }
+        }
+    }
+
+    pub fn show_center(&mut self, ctx: &egui::Context) {
+        if !self.center_open {
+            return;
+        }
+        if self.history.is_empty() {
+            return;
+        }
+        const CARD_W: f32 = 360.0;
+        const GAP: f32 = 8.0;
+        const BOTTOM_PAD: f32 = 48.0;
+        const RIGHT_PAD: f32 = 20.0;
+
+        let viewport_h = ctx.viewport_rect().height();
+        let max_h = (viewport_h - BOTTOM_PAD - 24.0).max(120.0);
+
+        egui::Area::new(egui::Id::new("yinhe_notification_center"))
+            .anchor(
+                egui::Align2::RIGHT_BOTTOM,
+                egui::vec2(-RIGHT_PAD, -BOTTOM_PAD),
+            )
+            .order(egui::Order::Tooltip)
+            .movable(false)
+            .interactable(true)
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height(max_h)
+                    .auto_shrink([false, false])
+                    .stick_to_bottom(true)
+                    .scroll_bar_visibility(
+                        egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
+                    )
+                    .show(ui, |ui| {
+                        ui.with_layout(egui::Layout::bottom_up(egui::Align::Max), |ui| {
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            let mut first = true;
+                            for entry in self.history.iter().rev() {
+                                if !first {
+                                    ui.allocate_response(
+                                        egui::vec2(CARD_W, GAP),
+                                        egui::Sense::hover(),
+                                    );
+                                }
+                                first = false;
+                                super::card::history_card(ui, entry, CARD_W);
+                            }
+                        });
+                    });
+            });
+        ctx.request_repaint_after(std::time::Duration::from_millis(16));
+    }
+}

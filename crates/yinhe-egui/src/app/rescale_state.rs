@@ -133,10 +133,10 @@ impl App {
                 self.load_error = Some(msg.clone());
                 if self
                     .notifications
-                    .has_progress(crate::notifications::RESCALE_PROGRESS_ID)
+                    .has_progress(crate::widgets::toast::RESCALE_PROGRESS_ID)
                 {
                     self.notifications.fail_progress(
-                        crate::notifications::RESCALE_PROGRESS_ID,
+                        crate::widgets::toast::RESCALE_PROGRESS_ID,
                         "缩放失败",
                         msg,
                     );
@@ -166,11 +166,11 @@ impl App {
                 }
                 if self
                     .notifications
-                    .has_progress(crate::notifications::RESCALE_PROGRESS_ID)
+                    .has_progress(crate::widgets::toast::RESCALE_PROGRESS_ID)
                 {
                     self.notifications.complete_progress(
-                        crate::notifications::RESCALE_PROGRESS_ID,
-                        crate::notifications::ToastKind::Success,
+                        crate::widgets::toast::RESCALE_PROGRESS_ID,
+                        crate::widgets::toast::ToastKind::Success,
                         "已完成",
                         format!("PPQ {} → {}", old_ppq, new_ppq),
                     );
@@ -184,15 +184,15 @@ impl App {
                 }
                 if msg == "已取消" {
                     self.notifications
-                        .remove_progress(crate::notifications::RESCALE_PROGRESS_ID);
+                        .remove_progress(crate::widgets::toast::RESCALE_PROGRESS_ID);
                 } else {
                     self.load_error = Some(msg.clone());
                     if self
                         .notifications
-                        .has_progress(crate::notifications::RESCALE_PROGRESS_ID)
+                        .has_progress(crate::widgets::toast::RESCALE_PROGRESS_ID)
                     {
                         self.notifications.fail_progress(
-                            crate::notifications::RESCALE_PROGRESS_ID,
+                            crate::widgets::toast::RESCALE_PROGRESS_ID,
                             "缩放失败",
                             msg,
                         );

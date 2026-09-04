@@ -144,7 +144,7 @@ pub fn show(
     fps: f32,
     show_mem_breakdown: &mut bool,
     status_hint: &Option<String>,
-    notifications: &mut crate::notifications::Notifications,
+    notifications: &mut crate::widgets::toast::Notifications,
 ) {
     egui::Panel::bottom("bottom_bar")
         .frame(egui::Frame {
@@ -227,10 +227,10 @@ pub fn show(
                             } else {
                                 ICON_NOTIFICATIONS
                             };
-                            let was_open = notifications.show_center;
+                            let was_open = notifications.center_open;
                             if right_icon_button(ui, icon, was_open, || {
-                                notifications.show_center = !was_open;
-                                if notifications.show_center {
+                                notifications.center_open = !was_open;
+                                if notifications.center_open {
                                     notifications.mark_all_read();
                                 }
                             }) {
