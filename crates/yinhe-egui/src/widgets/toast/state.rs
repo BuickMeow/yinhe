@@ -316,7 +316,7 @@ impl Notifications {
         const CARD_W: f32 = 360.0;
         const GAP: f32 = 8.0;
         const BOTTOM_PAD: f32 = 48.0;
-        const RIGHT_PAD: f32 = 20.0;
+        const RIGHT_PAD: f32 = 24.0;
 
         egui::Area::new(egui::Id::new("yinhe_toasts"))
             .anchor(
@@ -402,7 +402,7 @@ impl Notifications {
         const CARD_W: f32 = 360.0;
         const GAP: f32 = 8.0;
         const BOTTOM_PAD: f32 = 48.0;
-        const RIGHT_PAD: f32 = 20.0;
+        const RIGHT_PAD: f32 = 24.0;
 
         let viewport_h = ctx.viewport_rect().height();
         let max_h = (viewport_h - BOTTOM_PAD - 24.0).max(120.0);
