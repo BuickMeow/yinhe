@@ -17,6 +17,15 @@ pub(crate) struct ToastAction {
     pub kind: ToastActionKind,
 }
 
+/// 卡片一帧的交互结果（bool 四元组太 cryptic，收拢成结构）。
+#[derive(Clone, Copy, Default, Debug)]
+pub(crate) struct CardOutcome {
+    pub dismiss: bool,
+    pub cancel: bool,
+    pub action: bool,
+    pub hovered: bool,
+}
+
 // ── 进度数据源（pull 式）：卡片渲染时实时读取，后台任务只管写自己的共享状态，
 // 不再每帧往通知层拷贝文案。完成/失败时快照进 title/message，source 清空转静态。
 pub(crate) trait ProgressSource: Send + Sync {
@@ -50,6 +59,8 @@ pub(crate) struct Toast {
     pub(crate) collapse_at: Option<Instant>,
     /// 操作按钮（仅浮动卡显示，如“打开文件夹”）。
     pub(crate) action: Option<ToastAction>,
+    /// 上帧渲染时指针是否悬停（悬停暂停自动收起计时）。
+    pub(crate) hovered: bool,
 }
 
 // ── 历史记录（持久，与 Toast 同尺寸以便复用）──

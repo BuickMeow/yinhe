@@ -101,10 +101,8 @@ pub(crate) fn draw_card(
     show_close: bool,
     cancel: Option<Arc<AtomicBool>>,
     action_label: Option<&str>,
-) -> (bool, bool, bool) {
-    let mut dismiss = false;
-    let mut do_cancel = false;
-    let mut do_action = false;
+) -> super::model::CardOutcome {
+    let mut outcome = super::model::CardOutcome::default();
     let frame = base_frame(alpha);
     let card_alpha = alpha;
     // 进行中（进度条未满）：三行文案槽位全部锁死行数，空也占位，卡片高度全程不变；
@@ -117,7 +115,7 @@ pub(crate) fn draw_card(
         clip.min.x -= 20.0;
         ui.set_clip_rect(clip);
         let _ = x_offset; // 外层 Area 已处理飞入位移，此处固定 0，避免布局溢出
-        frame.show(ui, |ui| {
+        let frame_resp = frame.show(ui, |ui| {
             ui.set_max_width(width - 20.0);
             ui.set_min_width(width - 20.0);
             ui.horizontal(|ui| {
@@ -231,7 +229,7 @@ pub(crate) fn draw_card(
                                 false,
                             );
                             if resp.clicked() {
-                                dismiss = true;
+                                outcome.dismiss = true;
                             }
                         }
                         if let Some(c) = &cancel {
@@ -251,7 +249,7 @@ pub(crate) fn draw_card(
                                 );
                                 if resp2.clicked() {
                                     c.store(true, std::sync::atomic::Ordering::Relaxed);
-                                    do_cancel = true;
+                                    outcome.cancel = true;
                                 }
                                 if resp2.hovered() {
                                     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -271,7 +269,7 @@ pub(crate) fn draw_card(
                                 .selectable(false),
                             );
                             if resp3.clicked() {
-                                do_action = true;
+                                outcome.action = true;
                             }
                             if resp3.hovered() {
                                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -292,39 +290,38 @@ pub(crate) fn draw_card(
                 let show_bar = progress.is_some_and(|p| {
                     p < 0.999 && progress_label != "已完成" && progress_label != "失败"
                 });
-                if show_bar {
-                    if let Some(p) = progress {
-                        let bg =
-                            mul_alpha(crate::theme::line_fg().gamma_multiply(0.25), card_alpha);
-                        ui.painter().rect_filled(rect, 1.0, bg);
-                        let fg_rect = egui::Rect::from_min_size(
-                            rect.min,
-                            egui::vec2(rect.width() * p.clamp(0.0, 1.0), rect.height()),
-                        );
-                        ui.painter().rect_filled(
-                            fg_rect,
-                            1.0,
-                            mul_alpha(kind.color().gamma_multiply(0.85), card_alpha),
-                        );
-                    }
+                if show_bar && let Some(p) = progress {
+                    let bg = mul_alpha(crate::theme::line_fg().gamma_multiply(0.25), card_alpha);
+                    ui.painter().rect_filled(rect, 1.0, bg);
+                    let fg_rect = egui::Rect::from_min_size(
+                        rect.min,
+                        egui::vec2(rect.width() * p.clamp(0.0, 1.0), rect.height()),
+                    );
+                    ui.painter().rect_filled(
+                        fg_rect,
+                        1.0,
+                        mul_alpha(kind.color().gamma_multiply(0.85), card_alpha),
+                    );
                 }
                 ui.add_space(12.0);
             } else {
                 ui.add_space(20.0);
             }
         });
+        // 整卡悬停即暂停自动收起计时（含按钮区，阴影除外）
+        outcome.hovered = frame_resp.response.hovered();
     });
-    (dismiss, do_cancel, do_action)
+    outcome
 }
 
-/// 返回 (dismiss, cancel, action)
+/// 返回当帧交互结果（含悬停）
 pub(crate) fn toast_card(
     ui: &mut egui::Ui,
     toast: &Toast,
     width: f32,
     x_offset: f32,
     alpha: f32,
-) -> (bool, bool, bool) {
+) -> super::model::CardOutcome {
     // 进度任务：渲染时从 source pull 最新文案/进度，无 source 读快照
     let (title, message, progress, label) = super::model::resolve_toast(toast);
     draw_card(

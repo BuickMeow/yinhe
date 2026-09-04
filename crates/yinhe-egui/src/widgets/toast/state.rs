@@ -22,6 +22,8 @@ pub struct Notifications {
     collapse_secs: Option<u32>,
     /// 可操作通知自动收起秒数（None=不自动收起；设置页同步，每帧覆盖）。
     action_collapse_secs: Option<u32>,
+    /// 上次 tick 时刻（悬停暂停按帧间隔顺延 deadline 用）。
+    last_tick: Option<Instant>,
 }
 
 pub const LOADING_PROGRESS_ID: u64 = 0x4C4F4144; // "LOAD"
@@ -49,6 +51,7 @@ impl Notifications {
             prev_center_open: false,
             collapse_secs: Some(5),
             action_collapse_secs: Some(60),
+            last_tick: None,
         }
     }
 
@@ -113,6 +116,7 @@ impl Notifications {
             source: None,
             collapse_at: self.collapse_deadline(dur),
             action: None,
+            hovered: false,
         });
         self.history.push(HistoryEntry {
             id,
@@ -177,6 +181,7 @@ impl Notifications {
             source: Some(source.clone()),
             collapse_at: None,
             action: None,
+            hovered: false,
         });
         if self.history.iter().find(|h| h.id == key_id).is_none() {
             self.push_history(key_id, kind, source);
@@ -427,6 +432,23 @@ impl Notifications {
             ctx.request_repaint();
         }
         let mut needs_repaint = false;
+        // 悬停暂停：上帧悬停的卡，deadline 按本帧间隔顺延（精确暂停，不断计时）
+        let dt = self
+            .last_tick
+            .map(|t| now.duration_since(t))
+            .unwrap_or(Duration::ZERO)
+            .min(Duration::from_secs(1));
+        self.last_tick = Some(now);
+        if dt > Duration::ZERO {
+            for t in self.toasts.iter_mut() {
+                if t.hovered
+                    && t.leaving_since.is_none()
+                    && let Some(at) = t.collapse_at
+                {
+                    t.collapse_at = Some(at + dt);
+                }
+            }
+        }
         // 清理已完成离开动画的 toast
         let before = self.toasts.len();
         self.toasts.retain(|t| {
@@ -521,30 +543,32 @@ impl Notifications {
         }
 
         let mut to_dismiss: Vec<u64> = Vec::new();
-        for toast in self.toasts.iter().rev() {
+        for idx in (0..self.toasts.len()).rev() {
+            let tid = self.toasts[idx].id;
             let target_y = if self.center_open {
                 // 重排至历史中的位置
-                history_y_map.get(&toast.id).copied().unwrap_or(BOTTOM_PAD)
+                history_y_map.get(&tid).copied().unwrap_or(BOTTOM_PAD)
             } else {
-                toast_y_map.get(&toast.id).copied().unwrap_or(BOTTOM_PAD)
+                toast_y_map.get(&tid).copied().unwrap_or(BOTTOM_PAD)
             };
             if target_y > max_h + EST_H {
+                self.toasts[idx].hovered = false;
                 continue;
             }
             // 非线性 y 插值：已有通知平滑重排
             let y_off =
-                ctx.animate_value_with_time(egui::Id::new(("notif_y", toast.id)), target_y, 0.35);
-            let is_leaving = toast.leaving_since.is_some();
+                ctx.animate_value_with_time(egui::Id::new(("notif_y", tid)), target_y, 0.35);
+            let is_leaving = self.toasts[idx].leaving_since.is_some();
             // 打开列表时已存在的 toast 不重新飞入，仅重排；离开时仍飞出
             let x_off = if self.center_open && !is_leaving {
                 0.0
             } else {
-                super::anim::fly_anim(toast)
+                super::anim::fly_anim(&self.toasts[idx])
             };
-            let mut inner_dismiss = false;
-            let mut inner_cancel = false;
-            let mut inner_action = false;
-            let area_id = egui::Id::new(("yinhe_notif", toast.id));
+            let cancel_flag = super::model::resolve_cancel_toast(&self.toasts[idx]);
+            let action_opt = self.toasts[idx].action.clone();
+            let mut outcome = super::model::CardOutcome::default();
+            let area_id = egui::Id::new(("yinhe_notif", tid));
             egui::Area::new(area_id)
                 .anchor(
                     egui::Align2::RIGHT_BOTTOM,
@@ -557,22 +581,22 @@ impl Notifications {
                 // 卡片看起来就是“右侧贴窗”而不是“从窗外滑入”
                 .constrain(false)
                 .show(ctx, |ui| {
-                    let (d, c, a) = super::card::toast_card(ui, toast, CARD_W, 0.0, 1.0);
-                    inner_dismiss = d;
-                    inner_cancel = c;
-                    inner_action = a;
+                    outcome = super::card::toast_card(ui, &self.toasts[idx], CARD_W, 0.0, 1.0);
                 });
-            if inner_dismiss {
-                to_dismiss.push(toast.id);
+            self.toasts[idx].hovered = outcome.hovered;
+            if outcome.dismiss {
+                to_dismiss.push(tid);
             }
-            if inner_cancel {
-                if let Some(c) = super::model::resolve_cancel_toast(toast) {
+            if outcome.cancel {
+                if let Some(c) = cancel_flag {
                     c.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
-                to_dismiss.push(toast.id);
+                to_dismiss.push(tid);
             }
             // 操作按钮只执行不收卡（收起交给自动计时）
-            if inner_action && let Some(a) = toast.action.clone() {
+            if outcome.action
+                && let Some(a) = action_opt
+            {
                 Self::perform_action(&a);
             }
         }
@@ -759,6 +783,40 @@ mod tests {
                 .leaving_since
                 .is_none()
         );
+    }
+
+    #[test]
+    fn hover_pauses_collapse_deadline() {
+        let mut n = Notifications::new();
+        n.set_collapse_durations(Some(60), Some(60));
+        let id = n.success("t", "m");
+        let before = n.toasts.iter().find(|t| t.id == id).unwrap().collapse_at;
+        n.tick(&ctx()); // 首 tick 只记录 last_tick，不顺延
+        std::thread::sleep(Duration::from_millis(5));
+        n.toasts.iter_mut().find(|t| t.id == id).unwrap().hovered = true;
+        n.tick(&ctx());
+        let after = n.toasts.iter().find(|t| t.id == id).unwrap().collapse_at;
+        assert!(after.unwrap() > before.unwrap());
+        // 取消悬停：deadline 冻结不再顺延
+        n.toasts.iter_mut().find(|t| t.id == id).unwrap().hovered = false;
+        std::thread::sleep(Duration::from_millis(2));
+        n.tick(&ctx());
+        let still = n.toasts.iter().find(|t| t.id == id).unwrap().collapse_at;
+        assert_eq!(still, after);
+    }
+
+    #[test]
+    fn hover_does_not_extend_leaving_toast() {
+        let mut n = Notifications::new();
+        n.set_collapse_durations(Some(60), Some(60));
+        let id = n.success("t", "m");
+        n.dismiss_toast(id);
+        n.toasts.iter_mut().find(|t| t.id == id).unwrap().hovered = true;
+        let before = n.toasts.iter().find(|t| t.id == id).unwrap().collapse_at;
+        n.tick(&ctx());
+        n.tick(&ctx());
+        let after = n.toasts.iter().find(|t| t.id == id).unwrap().collapse_at;
+        assert_eq!(after, before);
     }
 
     #[test]
