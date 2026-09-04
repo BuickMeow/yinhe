@@ -37,6 +37,56 @@ pub(crate) fn base_frame(alpha: f32) -> egui::Frame {
     }
 }
 
+/// 量文本在给定宽度下的行数（memoized，重复调用便宜）。
+fn count_rows(ctx: &egui::Context, text: &str, font: &egui::FontId, wrap_w: f32) -> usize {
+    if text.is_empty() {
+        return 0;
+    }
+    ctx.fonts_mut(|f| {
+        f.layout(text.to_string(), font.clone(), egui::Color32::WHITE, wrap_w)
+            .rows
+            .len()
+    })
+}
+
+/// 文案截到至多 max_lines 行，超出加 …（egui Label 没有行数限制，手动量）。
+/// 返回显示文本；空文本返回空串，由调用方决定占位还是跳过。
+fn clamp_lines(
+    ctx: &egui::Context,
+    text: &str,
+    font: &egui::FontId,
+    wrap_w: f32,
+    max_lines: usize,
+) -> String {
+    if text.is_empty() || max_lines == 0 {
+        return String::new();
+    }
+    if count_rows(ctx, text, font, wrap_w) <= max_lines {
+        return text.to_string();
+    }
+    // 二分找最长前缀（+…后仍在行数内）
+    let chars: Vec<char> = text.chars().collect();
+    let mut lo = 0usize;
+    let mut hi = chars.len();
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        let cand: String = chars[..mid].iter().collect::<String>() + "…";
+        if count_rows(ctx, &cand, font, wrap_w) <= max_lines {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    chars[..lo].iter().collect::<String>() + "…"
+}
+
+/// 固定占一行高度的空白：空文案也占位，保证进行中卡片高度不变。
+/// 用 allocate（真 widget）而非 add_space，保证与真实行享有同样的 item_spacing。
+fn blank_line(ui: &mut egui::Ui, font: &egui::FontId, wrap_w: f32) {
+    let h = ui.ctx().fonts_mut(|f| f.row_height(font));
+    ui.allocate_exact_size(egui::vec2(wrap_w, h), egui::Sense::hover());
+}
+
 /// 统一样式卡片：弹出与列表共用，仅 show_close 区分
 pub(crate) fn draw_card(
     ui: &mut egui::Ui,
@@ -55,6 +105,10 @@ pub(crate) fn draw_card(
     let mut do_cancel = false;
     let frame = base_frame(alpha);
     let card_alpha = alpha;
+    // 进行中（进度条未满）：三行文案槽位全部锁死行数，空也占位，卡片高度全程不变；
+    // 静态卡（普通通知/已完成）：标题 1 行、正文至多 2 行。
+    let running = progress
+        .is_some_and(|p| p < 0.999 && progress_label != "已完成" && progress_label != "失败");
     ui.scope(|ui| {
         let mut clip = ui.available_rect_before_wrap();
         clip.max.x += 500.0;
@@ -78,22 +132,53 @@ pub(crate) fn draw_card(
                 ui.add_space(6.0);
                 ui.vertical(|ui| {
                     ui.set_max_width(width - 90.0);
-                    if !title.is_empty() {
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(title)
-                                    .size(crate::theme::SMALL_FONT)
-                                    .strong()
-                                    .color(mul_alpha(crate::theme::text_primary(), card_alpha)),
-                            )
-                            .selectable(false)
-                            .wrap(),
-                        );
+                    let ctx = ui.ctx().clone();
+                    let wrap_w = width - 90.0;
+                    let title_font = egui::FontId::proportional(crate::theme::SMALL_FONT);
+                    let msg_font = egui::FontId::proportional(crate::theme::SMALL_FONT);
+                    let det_font = egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT);
+                    // 标题：恒 1 行；进行中为空也占位
+                    let title_shown = clamp_lines(&ctx, title, &title_font, wrap_w, 1);
+                    if running || !title_shown.is_empty() {
+                        if title_shown.is_empty() {
+                            blank_line(ui, &title_font, wrap_w);
+                        } else {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(title_shown)
+                                        .size(crate::theme::SMALL_FONT)
+                                        .strong()
+                                        .color(mul_alpha(crate::theme::text_primary(), card_alpha)),
+                                )
+                                .selectable(false)
+                                .wrap(),
+                            );
+                        }
                     }
-                    if !message.is_empty() {
+                    // 正文：进行中锁 1 行，静态卡至多 2 行（文件名）
+                    if running {
+                        let msg_shown = clamp_lines(&ctx, message, &msg_font, wrap_w, 1);
+                        if msg_shown.is_empty() {
+                            blank_line(ui, &msg_font, wrap_w);
+                        } else {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(msg_shown)
+                                        .size(crate::theme::SMALL_FONT)
+                                        .color(mul_alpha(
+                                            crate::theme::text_secondary(),
+                                            card_alpha,
+                                        )),
+                                )
+                                .selectable(false)
+                                .wrap(),
+                            );
+                        }
+                    } else if !message.is_empty() {
+                        let msg_shown = clamp_lines(&ctx, message, &msg_font, wrap_w, 2);
                         ui.add(
                             egui::Label::new(
-                                egui::RichText::new(message)
+                                egui::RichText::new(msg_shown)
                                     .size(crate::theme::SMALL_FONT)
                                     .color(mul_alpha(crate::theme::text_secondary(), card_alpha)),
                             )
@@ -101,10 +186,27 @@ pub(crate) fn draw_card(
                             .wrap(),
                         );
                     }
-                    if progress.is_some() && !progress_label.is_empty() {
+                    // 详情：进行中锁 1 行（空也占位），静态卡有字才显示
+                    if running {
+                        let det_shown = clamp_lines(&ctx, progress_label, &det_font, wrap_w, 1);
+                        if det_shown.is_empty() {
+                            blank_line(ui, &det_font, wrap_w);
+                        } else {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(det_shown)
+                                        .size(crate::theme::SMALL_LABEL_FONT)
+                                        .color(mul_alpha(crate::theme::text_muted(), card_alpha)),
+                                )
+                                .selectable(false)
+                                .wrap(),
+                            );
+                        }
+                    } else if progress.is_some() && !progress_label.is_empty() {
+                        let det_shown = clamp_lines(&ctx, progress_label, &det_font, wrap_w, 1);
                         ui.add(
                             egui::Label::new(
-                                egui::RichText::new(progress_label)
+                                egui::RichText::new(det_shown)
                                     .size(crate::theme::SMALL_LABEL_FONT)
                                     .color(mul_alpha(crate::theme::text_muted(), card_alpha)),
                             )
