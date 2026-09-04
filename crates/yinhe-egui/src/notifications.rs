@@ -218,7 +218,7 @@ impl Notifications {
         }
     }
 
-    /// 进度完成：保留同一张 toast，原地切换为完成态（无进度条）
+    /// 进度完成：保留同一张 toast，原地切换为完成态（进度条满格，避免高度跳变）
     pub fn complete_progress(
         &mut self,
         id: u64,
@@ -232,12 +232,10 @@ impl Notifications {
             t.kind = kind;
             t.title = title.clone();
             t.message = message.clone();
-            t.progress = None;
-            t.progress_label.clear();
+            t.progress = Some(1.0);
+            t.progress_label = "已完成".to_string();
             t.cancel = None;
             t.leaving_since = None;
-            // 重置 created 以重新触发入场动画（完成态更醒目）
-            t.created = Instant::now();
         }
         if let Some(h) = self.history.iter_mut().find(|h| h.id == id) {
             h.kind = kind;
@@ -251,7 +249,24 @@ impl Notifications {
     }
 
     pub fn fail_progress(&mut self, id: u64, title: impl Into<String>, message: impl Into<String>) {
-        self.complete_progress(id, ToastKind::Error, title, message);
+        let title = title.into();
+        let message = message.into();
+        if let Some(t) = self.toasts.iter_mut().find(|t| t.id == id) {
+            t.kind = ToastKind::Error;
+            t.title = title.clone();
+            t.message = message.clone();
+            t.progress_label = "失败".to_string();
+            t.cancel = None;
+            t.leaving_since = None;
+        }
+        if let Some(h) = self.history.iter_mut().find(|h| h.id == id) {
+            h.kind = ToastKind::Error;
+            h.title = title.clone();
+            h.message = message.clone();
+        }
+        if self.toasts.iter().find(|t| t.id == id).is_none() {
+            self.push(ToastKind::Error, title, message, None);
+        }
     }
 
     pub fn has_progress(&self, id: u64) -> bool {
@@ -319,11 +334,10 @@ impl Notifications {
         if self.toasts.len() != before {
             needs_repaint = true;
         }
-        // 有 toast 或正在进/离场时持续重绘，保证 60fps 动画丝滑
         let has_anim = self.toasts.iter().any(|t| {
             t.leaving_since.is_some()
                 || now.duration_since(t.created) < Duration::from_millis(400)
-                || t.progress.is_some()
+                || t.progress.is_some_and(|p| p < 0.999)
         });
         if has_anim || needs_repaint {
             ctx.request_repaint_after(Duration::from_millis(16));
@@ -360,11 +374,11 @@ impl Notifications {
             .movable(false)
             .interactable(true)
             .show(ctx, |ui| {
-                // 让 Area 本身可滚动，拦截滚轮不穿透到底层 PR/AR
                 let max_h = (ctx.viewport_rect().height() - BOTTOM_PAD - 24.0).max(120.0);
                 egui::ScrollArea::vertical()
                     .max_height(max_h)
                     .auto_shrink([true, true])
+                    .stick_to_bottom(true)
                     .scroll_bar_visibility(
                         egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
                     )
@@ -483,75 +497,51 @@ impl Notifications {
             inner_margin: egui::Margin::symmetric(10, 10),
             ..Default::default()
         };
-        // 右向左飞入：用水平偏移包裹，x 0→80 从屏外滑入
         let mut card_alpha = alpha;
-        ui.allocate_ui_with_layout(
-            egui::vec2(width + x_offset, 0.0),
-            egui::Layout::left_to_right(egui::Align::Min),
-            |ui| {
-                if x_offset > 0.5 {
-                    ui.add_space(x_offset);
-                }
-                // 禁用时略降透明度
-                if toast.leaving_since.is_some() {
-                    card_alpha = alpha;
-                }
-                frame.show(ui, |ui| {
-                    ui.set_max_width(width - 20.0);
-                    ui.set_min_width(width - 20.0);
-                    // 标题行
-                    ui.horizontal(|ui| {
-                        let icon = toast.kind.icon();
-                        let icon_col = mul_alpha(toast.kind.color(), card_alpha);
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(icon.codepoint)
-                                    .family(icon.font_family())
-                                    .size(crate::theme::ICON_FONT)
-                                    .color(icon_col),
-                            )
-                            .selectable(false),
-                        );
-                        ui.add_space(6.0);
-                        ui.vertical(|ui| {
-                            ui.set_max_width(width - 90.0);
-                            if !toast.title.is_empty() {
-                                ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new(&toast.title)
-                                            .size(crate::theme::SMALL_FONT)
-                                            .strong()
-                                            .color(mul_alpha(
-                                                crate::theme::text_primary(),
-                                                card_alpha,
-                                            )),
-                                    )
-                                    .selectable(false)
-                                    .wrap(),
-                                );
-                            }
-                            if !toast.message.is_empty() {
-                                ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new(&toast.message)
-                                            .size(crate::theme::SMALL_FONT)
-                                            .color(mul_alpha(
-                                                crate::theme::text_secondary(),
-                                                card_alpha,
-                                            )),
-                                    )
-                                    .selectable(false)
-                                    .wrap(),
-                                );
-                            }
-                            if let Some(p) = toast.progress {
-                                if !toast.progress_label.is_empty() {
+        // 右向左飞入：x 80→0，扩大裁剪使屏外部分可见
+        ui.scope(|ui| {
+            let mut clip = ui.available_rect_before_wrap();
+            clip.max.x += 120.0;
+            clip.min.x -= 20.0;
+            ui.set_clip_rect(clip);
+            ui.allocate_ui_with_layout(
+                egui::vec2(width, 0.0),
+                egui::Layout::left_to_right(egui::Align::Min),
+                |ui| {
+                    if x_offset > 0.5 {
+                        ui.add_space(x_offset);
+                    }
+                    // 禁用时略降透明度
+                    if toast.leaving_since.is_some() {
+                        card_alpha = alpha;
+                    }
+                    frame.show(ui, |ui| {
+                        ui.set_max_width(width - 20.0);
+                        ui.set_min_width(width - 20.0);
+                        // 标题行
+                        ui.horizontal(|ui| {
+                            let icon = toast.kind.icon();
+                            let icon_col = mul_alpha(toast.kind.color(), card_alpha);
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(icon.codepoint)
+                                        .family(icon.font_family())
+                                        .size(crate::theme::ICON_FONT)
+                                        .color(icon_col),
+                                )
+                                .selectable(false),
+                            );
+                            ui.add_space(6.0);
+                            ui.vertical(|ui| {
+                                ui.set_max_width(width - 90.0);
+                                if !toast.title.is_empty() {
                                     ui.add(
                                         egui::Label::new(
-                                            egui::RichText::new(&toast.progress_label)
-                                                .size(crate::theme::SMALL_LABEL_FONT)
+                                            egui::RichText::new(&toast.title)
+                                                .size(crate::theme::SMALL_FONT)
+                                                .strong()
                                                 .color(mul_alpha(
-                                                    crate::theme::text_muted(),
+                                                    crate::theme::text_primary(),
                                                     card_alpha,
                                                 )),
                                         )
@@ -559,73 +549,109 @@ impl Notifications {
                                         .wrap(),
                                     );
                                 }
-                                let _ = p;
-                            }
-                        });
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let close_icon = ICON_CLOSE;
-                            let resp = crate::widgets::hover::hover_button(
-                                ui,
-                                close_icon.codepoint,
-                                egui::FontId::new(
-                                    crate::theme::ICON_FONT_SM,
-                                    close_icon.font_family(),
-                                ),
-                                mul_alpha(crate::theme::text_muted(), card_alpha),
-                                false,
+                                if !toast.message.is_empty() {
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(&toast.message)
+                                                .size(crate::theme::SMALL_FONT)
+                                                .color(mul_alpha(
+                                                    crate::theme::text_secondary(),
+                                                    card_alpha,
+                                                )),
+                                        )
+                                        .selectable(false)
+                                        .wrap(),
+                                    );
+                                }
+                                if let Some(p) = toast.progress {
+                                    if !toast.progress_label.is_empty() {
+                                        ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new(&toast.progress_label)
+                                                    .size(crate::theme::SMALL_LABEL_FONT)
+                                                    .color(mul_alpha(
+                                                        crate::theme::text_muted(),
+                                                        card_alpha,
+                                                    )),
+                                            )
+                                            .selectable(false)
+                                            .wrap(),
+                                        );
+                                    }
+                                    let _ = p;
+                                }
+                            });
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    let close_icon = ICON_CLOSE;
+                                    let resp = crate::widgets::hover::hover_button(
+                                        ui,
+                                        close_icon.codepoint,
+                                        egui::FontId::new(
+                                            crate::theme::ICON_FONT_SM,
+                                            close_icon.font_family(),
+                                        ),
+                                        mul_alpha(crate::theme::text_muted(), card_alpha),
+                                        false,
+                                    );
+                                    if resp.clicked() {
+                                        dismiss = true;
+                                    }
+                                    // 进度态额外提供取消
+                                    if toast.progress.is_some() && toast.cancel.is_some() {
+                                        ui.add_space(6.0);
+                                        let resp2 = ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new("取消")
+                                                    .size(crate::theme::SMALL_FONT)
+                                                    .color(mul_alpha(
+                                                        crate::theme::text_muted(),
+                                                        card_alpha,
+                                                    )),
+                                            )
+                                            .sense(egui::Sense::click())
+                                            .selectable(false),
+                                        );
+                                        if resp2.clicked() {
+                                            cancel = true;
+                                        }
+                                        if resp2.hovered() {
+                                            ui.ctx()
+                                                .set_cursor_icon(egui::CursorIcon::PointingHand);
+                                        }
+                                    }
+                                },
                             );
-                            if resp.clicked() {
-                                dismiss = true;
-                            }
-                            // 进度态额外提供取消
-                            if toast.progress.is_some() && toast.cancel.is_some() {
-                                ui.add_space(6.0);
-                                let resp2 = ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new("取消")
-                                            .size(crate::theme::SMALL_FONT)
-                                            .color(mul_alpha(
-                                                crate::theme::text_muted(),
-                                                card_alpha,
-                                            )),
-                                    )
-                                    .sense(egui::Sense::click())
-                                    .selectable(false),
-                                );
-                                if resp2.clicked() {
-                                    cancel = true;
-                                }
-                                if resp2.hovered() {
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                }
-                            }
                         });
+                        // 进度条：保持占位高度，避免完成态跳变
+                        if let Some(p) = toast.progress {
+                            ui.add_space(6.0);
+                            let bar_w = width - 20.0;
+                            let bar_h = 4.0;
+                            let (rect, _) = ui.allocate_exact_size(
+                                egui::vec2(bar_w, bar_h),
+                                egui::Sense::hover(),
+                            );
+                            let bg =
+                                mul_alpha(crate::theme::line_fg().gamma_multiply(0.25), card_alpha);
+                            ui.painter().rect_filled(rect, 2.0, bg);
+                            let fg_rect = egui::Rect::from_min_size(
+                                rect.min,
+                                egui::vec2(rect.width() * p.clamp(0.0, 1.0), rect.height()),
+                            );
+                            ui.painter().rect_filled(
+                                fg_rect,
+                                2.0,
+                                mul_alpha(toast.kind.color().gamma_multiply(0.85), card_alpha),
+                            );
+                        } else {
+                            ui.add_space(10.0);
+                        }
                     });
-                    // 进度条
-                    if let Some(p) = toast.progress {
-                        ui.add_space(6.0);
-                        let bar_w = width - 20.0;
-                        let bar_h = 4.0;
-                        let (rect, _) =
-                            ui.allocate_exact_size(egui::vec2(bar_w, bar_h), egui::Sense::hover());
-                        let bg =
-                            mul_alpha(crate::theme::line_fg().gamma_multiply(0.25), card_alpha);
-                        ui.painter().rect_filled(rect, 2.0, bg);
-                        let fg_rect = egui::Rect::from_min_size(
-                            rect.min,
-                            egui::vec2(rect.width() * p.clamp(0.0, 1.0), rect.height()),
-                        );
-                        ui.painter().rect_filled(
-                            fg_rect,
-                            2.0,
-                            mul_alpha(toast.kind.color().gamma_multiply(0.85), card_alpha),
-                        );
-                    } else if toast.leaving_since.is_none() {
-                        // 普通 toast 的 TTL 细线已移除（常驻），不再绘制
-                    }
-                });
-            },
-        );
+                },
+            );
+        });
         (dismiss, cancel)
     }
 
@@ -654,18 +680,19 @@ impl Notifications {
             .movable(false)
             .interactable(true)
             .show(ctx, |ui| {
-                // 固定高度滚动区：即使悬停在缝隙或空白处也能滚动
                 egui::ScrollArea::vertical()
                     .max_height(max_h)
                     .auto_shrink([false, false])
+                    .stick_to_bottom(true)
                     .scroll_bar_visibility(
                         egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
                     )
                     .show(ui, |ui| {
-                        ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
+                        ui.with_layout(egui::Layout::bottom_up(egui::Align::Max), |ui| {
                             ui.spacing_mut().item_spacing.y = 0.0;
                             let mut first = true;
-                            for entry in self.history.iter() {
+                            // bottom_up + rev：最新在最底，贴近 mode_bar，单条时也在底部
+                            for entry in self.history.iter().rev() {
                                 if !first {
                                     ui.allocate_response(
                                         egui::vec2(CARD_W, GAP),
