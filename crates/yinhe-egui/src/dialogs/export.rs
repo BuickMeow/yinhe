@@ -202,23 +202,9 @@ pub(crate) fn show_completed_viewport(
                                         .button(t!("dialog.export.open_folder").as_ref())
                                         .clicked()
                                     {
-                                        let parent = std::path::Path::new(&file_path)
-                                            .parent()
-                                            .map(|p| p.to_path_buf());
-                                        if let Some(dir) = parent {
-                                            #[cfg(target_os = "macos")]
-                                            let _ = std::process::Command::new("open")
-                                                .arg(&dir)
-                                                .spawn();
-                                            #[cfg(target_os = "windows")]
-                                            let _ = std::process::Command::new("explorer")
-                                                .arg(&dir)
-                                                .spawn();
-                                            #[cfg(target_os = "linux")]
-                                            let _ = std::process::Command::new("xdg-open")
-                                                .arg(&dir)
-                                                .spawn();
-                                        }
+                                        crate::platform::open_containing_folder(
+                                            std::path::Path::new(&file_path),
+                                        );
                                     }
                                 },
                             );

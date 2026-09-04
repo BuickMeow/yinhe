@@ -360,16 +360,31 @@ impl App {
                             .notifications
                             .is_leaving(crate::widgets::toast::EXPORT_PROGRESS_ID)
                     {
-                        self.notifications.complete_progress(
+                        let acted = self.notifications.complete_progress(
                             crate::widgets::toast::EXPORT_PROGRESS_ID,
                             crate::widgets::toast::ToastKind::Success,
                             "已完成",
                             format!("{} ({:.1}s, {:.1}x)", fname, elapsed, speed),
                         );
+                        // 可操作卡：打开文件夹（计时自动升为可操作档）
+                        self.notifications.set_action(
+                            acted,
+                            "打开文件夹",
+                            crate::widgets::toast::model::ToastActionKind::RevealInFolder(
+                                std::path::PathBuf::from(&path),
+                            ),
+                        );
                     } else {
-                        self.notifications.success(
+                        let nid = self.notifications.success(
                             "导出完成",
                             format!("{} ({:.1}s, {:.1}x)", fname, elapsed, speed),
+                        );
+                        self.notifications.set_action(
+                            nid,
+                            "打开文件夹",
+                            crate::widgets::toast::model::ToastActionKind::RevealInFolder(
+                                std::path::PathBuf::from(&path),
+                            ),
                         );
                     }
                 }

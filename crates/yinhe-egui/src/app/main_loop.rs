@@ -660,6 +660,11 @@ impl eframe::App for App {
         self.show_load_error_modal(ui);
 
         // ── Toasts + 通知中心（浮空在内容之上，右下→右上）──
+        // 自动收起时长每帧同步（两次 u32 拷贝，新建/完成时按当时值定档）
+        self.notifications.set_collapse_durations(
+            self.audio_settings.toast_collapse_secs,
+            self.audio_settings.toast_action_collapse_secs,
+        );
         self.notifications.show_toasts(ui.ctx());
         self.notifications.show_center(ui.ctx());
 

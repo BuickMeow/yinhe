@@ -16,6 +16,14 @@ pub use theme::CustomTheme;
 /// "最近修改的文件"列表上限
 pub const RECENT_FILES_LIMIT: usize = 10;
 
+fn default_toast_collapse_secs() -> Option<u32> {
+    Some(5)
+}
+
+fn default_toast_action_collapse_secs() -> Option<u32> {
+    Some(60)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AudioSettings {
@@ -55,6 +63,12 @@ pub struct AudioSettings {
     pub ui_scale: f32,
     pub font_scale: f32,
     pub content_opacity: f32,
+    /// 完成通知自动收起秒数（None=不自动收起）
+    #[serde(default = "default_toast_collapse_secs")]
+    pub toast_collapse_secs: Option<u32>,
+    /// 可操作通知自动收起秒数（None=不自动收起）
+    #[serde(default = "default_toast_action_collapse_secs")]
+    pub toast_action_collapse_secs: Option<u32>,
     pub layout: LayoutSettings,
     pub keybindings: Keybindings,
     pub pinned_file_actions: Vec<bool>,
@@ -115,6 +129,8 @@ impl Default for AudioSettings {
             ui_scale: 1.0,
             font_scale: 1.0,
             content_opacity: 0.7,
+            toast_collapse_secs: default_toast_collapse_secs(),
+            toast_action_collapse_secs: default_toast_action_collapse_secs(),
             layout: LayoutSettings::default(),
             keybindings: Keybindings::default(),
             pinned_file_actions: vec![false; 10],

@@ -227,6 +227,20 @@ pub const SETTING_ITEMS: &[SettingItem] = &[
         ko: "공장 초기화",
     },
     SettingItem {
+        cat: 8,
+        zh: "完成通知自动收起",
+        en: "Auto-collapse finished notifications",
+        ja: "完了通知の自動格納",
+        ko: "완료 알림 자동 접기",
+    },
+    SettingItem {
+        cat: 8,
+        zh: "可操作通知自动收起",
+        en: "Auto-collapse actionable notifications",
+        ja: "操作可能な通知の自動格納",
+        ko: "작업 가능 알림 자동 접기",
+    },
+    SettingItem {
         cat: 6,
         zh: "允许重叠音符",
         en: "Allow overlapping notes",

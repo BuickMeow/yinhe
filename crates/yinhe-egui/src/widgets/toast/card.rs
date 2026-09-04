@@ -100,9 +100,11 @@ pub(crate) fn draw_card(
     progress_label: &str,
     show_close: bool,
     cancel: Option<Arc<AtomicBool>>,
-) -> (bool, bool) {
+    action_label: Option<&str>,
+) -> (bool, bool, bool) {
     let mut dismiss = false;
     let mut do_cancel = false;
+    let mut do_action = false;
     let frame = base_frame(alpha);
     let card_alpha = alpha;
     // 进行中（进度条未满）：三行文案槽位全部锁死行数，空也占位，卡片高度全程不变；
@@ -215,7 +217,7 @@ pub(crate) fn draw_card(
                         );
                     }
                 });
-                if show_close || cancel.is_some() {
+                if show_close || cancel.is_some() || action_label.is_some() {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if show_close {
                             let resp = crate::widgets::hover::hover_button(
@@ -256,6 +258,25 @@ pub(crate) fn draw_card(
                                 }
                             }
                         }
+                        // 操作按钮（如“打开文件夹”）：只执行不收卡，收起交给自动计时
+                        if let Some(label) = action_label {
+                            ui.add_space(6.0);
+                            let resp3 = ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(label)
+                                        .size(crate::theme::SMALL_FONT)
+                                        .color(mul_alpha(crate::theme::text_muted(), card_alpha)),
+                                )
+                                .sense(egui::Sense::click())
+                                .selectable(false),
+                            );
+                            if resp3.clicked() {
+                                do_action = true;
+                            }
+                            if resp3.hovered() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                            }
+                        }
                     });
                 }
             });
@@ -293,17 +314,17 @@ pub(crate) fn draw_card(
             }
         });
     });
-    (dismiss, do_cancel)
+    (dismiss, do_cancel, do_action)
 }
 
-/// 返回 (dismiss, cancel)
+/// 返回 (dismiss, cancel, action)
 pub(crate) fn toast_card(
     ui: &mut egui::Ui,
     toast: &Toast,
     width: f32,
     x_offset: f32,
     alpha: f32,
-) -> (bool, bool) {
+) -> (bool, bool, bool) {
     // 进度任务：渲染时从 source pull 最新文案/进度，无 source 读快照
     let (title, message, progress, label) = super::model::resolve_toast(toast);
     draw_card(
@@ -318,6 +339,7 @@ pub(crate) fn toast_card(
         &label,
         true,
         super::model::resolve_cancel_toast(toast),
+        toast.action.as_ref().map(|a| a.label.as_str()),
     )
 }
 
@@ -325,7 +347,7 @@ pub(crate) fn toast_card(
 pub(crate) fn history_card(ui: &mut egui::Ui, entry: &HistoryEntry, width: f32) {
     let (title, message, progress, label) = super::model::resolve_history(entry);
     let _ = draw_card(
-        ui, width, 0.0, 1.0, entry.kind, &title, &message, progress, &label, false, None,
+        ui, width, 0.0, 1.0, entry.kind, &title, &message, progress, &label, false, None, None,
     );
 }
 
@@ -340,6 +362,7 @@ mod tests {
         message: &str,
         progress: Option<f32>,
         label: &str,
+        action: Option<&str>,
     ) -> f32 {
         let ctx = egui::Context::default();
         // 注册图标字体（app 启动时同款，否则图标 label 排版 panic）
@@ -365,6 +388,7 @@ mod tests {
                 label,
                 true,
                 None,
+                action,
             );
             h = ui.min_rect().height();
         });
@@ -380,18 +404,19 @@ mod tests {
         }
     }
 
-    /// 进度族（进行中/完成/失败，文案空满长短）高度必须一致，否则加载卡上下跳。
+    /// 进度族（进行中/完成/失败，文案空满长短，有无操作按钮）高度必须一致，否则加载卡上下跳。
     #[test]
     fn progress_card_height_stable() {
         let w = 360.0;
-        let running_empty = card_height(w, "正在加载", "解析 MIDI 音轨", Some(0.3), "");
-        let running_short = card_height(w, "正在加载", "解析 MIDI 音轨", Some(0.3), "3/16");
+        let running_empty = card_height(w, "正在加载", "解析 MIDI 音轨", Some(0.3), "", None);
+        let running_short = card_height(w, "正在加载", "解析 MIDI 音轨", Some(0.3), "3/16", None);
         let running_long = card_height(
             w,
             "正在加载",
             "解析 MIDI 音轨",
             Some(0.9),
             "余韵衰减中 (剩余 3 音色) 余韵衰减中 (剩余 3 音色) 余韵衰减中",
+            None,
         );
         let running_long_msg = card_height(
             w,
@@ -399,16 +424,26 @@ mod tests {
             "这是一段非常非常长的阶段文案这是一段非常非常长的阶段文案这是一段非常非常长的阶段文案",
             Some(0.5),
             "3/16",
+            None,
         );
-        let done = card_height(w, "MIDI加载完成", "a.mid", Some(1.0), "已完成");
+        let done = card_height(w, "MIDI加载完成", "a.mid", Some(1.0), "已完成", None);
         let done_duration = card_height(
             w,
             "MIDI加载完成",
             "a.mid",
             Some(1.0),
             "加载时间：15秒321毫秒",
+            None,
         );
-        let failed = card_height(w, "打开失败", "err", Some(0.5), "失败");
+        let failed = card_height(w, "打开失败", "err", Some(0.5), "失败", None);
+        let done_action = card_height(
+            w,
+            "已完成",
+            "out.wav (12.3s, 8.1x)",
+            Some(1.0),
+            "已完成",
+            Some("打开文件夹"),
+        );
         assert_same_height(&[
             running_empty,
             running_short,
@@ -417,6 +452,7 @@ mod tests {
             done,
             done_duration,
             failed,
+            done_action,
         ]);
     }
 }

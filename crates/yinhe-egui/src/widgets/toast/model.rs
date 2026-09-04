@@ -1,7 +1,21 @@
+use std::path::PathBuf;
 use std::sync::{Arc, atomic::AtomicBool};
 use std::time::Instant;
 
 use super::kind::ToastKind;
+
+/// 浮动 toast 上的操作按钮（历史列表保持只读，不带按钮）。
+#[derive(Clone, Debug)]
+pub(crate) enum ToastActionKind {
+    /// 在文件管理器中定位文件（打开所在目录）
+    RevealInFolder(PathBuf),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ToastAction {
+    pub label: String,
+    pub kind: ToastActionKind,
+}
 
 // ── 进度数据源（pull 式）：卡片渲染时实时读取，后台任务只管写自己的共享状态，
 // 不再每帧往通知层拷贝文案。完成/失败时快照进 title/message，source 清空转静态。
@@ -18,7 +32,7 @@ pub(crate) trait ProgressSource: Send + Sync {
     fn cancel(&self) -> Option<Arc<AtomicBool>>;
 }
 
-// ── 单条 Toast（常驻，需手动关闭）──
+// ── 单条 Toast（常驻，需手动关闭；完成后按设置自动收进列表）──
 pub(crate) struct Toast {
     pub(crate) id: u64,
     pub(crate) kind: ToastKind,
@@ -32,6 +46,10 @@ pub(crate) struct Toast {
     pub(crate) leaving_since: Option<Instant>,
     /// 进度任务进行中为 Some，渲染时 pull；完成后快照并清空。
     pub(crate) source: Option<std::sync::Arc<dyn ProgressSource>>,
+    /// 自动收起时刻（None=不自动收起；进行中的进度任务不计时，完成才起算）。
+    pub(crate) collapse_at: Option<Instant>,
+    /// 操作按钮（仅浮动卡显示，如“打开文件夹”）。
+    pub(crate) action: Option<ToastAction>,
 }
 
 // ── 历史记录（持久，与 Toast 同尺寸以便复用）──

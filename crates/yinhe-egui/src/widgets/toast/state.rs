@@ -18,6 +18,10 @@ pub struct Notifications {
     center_opened_at: Option<Instant>,
     center_closed_at: Option<Instant>,
     prev_center_open: bool,
+    /// 完成通知自动收起秒数（None=不自动收起；设置页同步，每帧覆盖）。
+    collapse_secs: Option<u32>,
+    /// 可操作通知自动收起秒数（None=不自动收起；设置页同步，每帧覆盖）。
+    action_collapse_secs: Option<u32>,
 }
 
 pub const LOADING_PROGRESS_ID: u64 = 0x4C4F4144; // "LOAD"
@@ -43,25 +47,41 @@ impl Notifications {
             center_opened_at: None,
             center_closed_at: None,
             prev_center_open: false,
+            collapse_secs: Some(5),
+            action_collapse_secs: Some(60),
         }
+    }
+
+    /// 从设置同步自动收起时长（main_loop 每帧调一次，两次 u32 拷贝）。
+    pub fn set_collapse_durations(
+        &mut self,
+        collapse_secs: Option<u32>,
+        action_collapse_secs: Option<u32>,
+    ) {
+        self.collapse_secs = collapse_secs;
+        self.action_collapse_secs = action_collapse_secs;
+    }
+
+    fn collapse_deadline(&self, secs: Option<u32>) -> Option<Instant> {
+        secs.map(|s| Instant::now() + Duration::from_secs(u64::from(s)))
     }
 
     // ── 对外推送 API ──
 
-    pub fn info(&mut self, title: impl Into<String>, message: impl Into<String>) {
-        self.push(ToastKind::Info, title, message, None);
+    pub fn info(&mut self, title: impl Into<String>, message: impl Into<String>) -> u64 {
+        self.push(ToastKind::Info, title, message, None)
     }
 
-    pub fn success(&mut self, title: impl Into<String>, message: impl Into<String>) {
-        self.push(ToastKind::Success, title, message, None);
+    pub fn success(&mut self, title: impl Into<String>, message: impl Into<String>) -> u64 {
+        self.push(ToastKind::Success, title, message, None)
     }
 
-    pub fn warning(&mut self, title: impl Into<String>, message: impl Into<String>) {
-        self.push(ToastKind::Warning, title, message, None);
+    pub fn warning(&mut self, title: impl Into<String>, message: impl Into<String>) -> u64 {
+        self.push(ToastKind::Warning, title, message, None)
     }
 
-    pub fn error(&mut self, title: impl Into<String>, message: impl Into<String>) {
-        self.push(ToastKind::Error, title, message, None);
+    pub fn error(&mut self, title: impl Into<String>, message: impl Into<String>) -> u64 {
+        self.push(ToastKind::Error, title, message, None)
     }
 
     pub fn push(
@@ -75,6 +95,11 @@ impl Notifications {
         self.next_id += 1;
         let title = title.into();
         let message = message.into();
+        // 普通成功/信息按完成档计时，警告/错误按可操作档计时（需用户留意）
+        let dur = match kind {
+            ToastKind::Info | ToastKind::Success => self.collapse_secs,
+            ToastKind::Warning | ToastKind::Error => self.action_collapse_secs,
+        };
         self.toasts.push(Toast {
             id,
             kind,
@@ -86,6 +111,8 @@ impl Notifications {
             cancel: None,
             leaving_since: None,
             source: None,
+            collapse_at: self.collapse_deadline(dur),
+            action: None,
         });
         self.history.push(HistoryEntry {
             id,
@@ -125,6 +152,8 @@ impl Notifications {
             }
             t.kind = kind;
             t.source = Some(source.clone());
+            // 进行中不计时，完成时才起算
+            t.collapse_at = None;
             t.leaving_since = None;
             if let Some(h) = self.history.iter_mut().find(|h| h.id == key_id) {
                 h.kind = kind;
@@ -146,6 +175,8 @@ impl Notifications {
             cancel: source.cancel(),
             leaving_since: None,
             source: Some(source.clone()),
+            collapse_at: None,
+            action: None,
         });
         if self.history.iter().find(|h| h.id == key_id).is_none() {
             self.push_history(key_id, kind, source);
@@ -191,16 +222,25 @@ impl Notifications {
         }
     }
 
-    /// 进度完成：保留同一张 toast，原地切换为完成态（进度条满格，避免高度跳变）
+    /// 进度完成：保留同一张 toast，原地切换为完成态（进度条满格，避免高度跳变）。
+    /// 完成即按档位起算自动收起（导出走可操作档，其余走完成档）。
+    /// 返回实际作用到的 toast id（回退 push 时为新 id，供 set_action 用）。
     pub fn complete_progress(
         &mut self,
         id: u64,
         kind: ToastKind,
         title: impl Into<String>,
         message: impl Into<String>,
-    ) {
+    ) -> u64 {
         let title = title.into();
         let message = message.into();
+        // 导出完成卡带操作按钮，留足操作时间
+        let dur = if id == EXPORT_PROGRESS_ID {
+            self.action_collapse_secs
+        } else {
+            self.collapse_secs
+        };
+        let deadline = self.collapse_deadline(dur);
         let mut toast_found = false;
         if let Some(t) = self.toasts.iter_mut().find(|t| t.id == id) {
             t.kind = kind;
@@ -211,6 +251,7 @@ impl Notifications {
             t.cancel = None;
             t.leaving_since = None;
             t.source = None;
+            t.collapse_at = deadline;
             toast_found = true;
         }
         let mut hist_found = false;
@@ -224,7 +265,8 @@ impl Notifications {
             hist_found = true;
         }
         if !toast_found && !hist_found {
-            self.push(kind, title, message, None);
+            // 回退为普通 push；push 内部已按 kind 定档计时
+            return self.push(kind, title, message, None);
         } else if toast_found && !hist_found {
             self.history.push(HistoryEntry {
                 id,
@@ -245,11 +287,14 @@ impl Notifications {
             // toast 已被手动关闭但历史仍在，无需额外处理；若需要可重新弹出 toast
             // 保持历史已更新即可
         }
+        id
     }
 
     pub fn fail_progress(&mut self, id: u64, title: impl Into<String>, message: impl Into<String>) {
         let title = title.into();
         let message = message.into();
+        // 失败需用户留意，按可操作档计时
+        let deadline = self.collapse_deadline(self.action_collapse_secs);
         let mut toast_found = false;
         if let Some(t) = self.toasts.iter_mut().find(|t| t.id == id) {
             t.kind = ToastKind::Error;
@@ -259,6 +304,7 @@ impl Notifications {
             t.cancel = None;
             t.leaving_since = None;
             t.source = None;
+            t.collapse_at = deadline;
             toast_found = true;
         }
         let mut hist_found = false;
@@ -309,6 +355,24 @@ impl Notifications {
             .and_then(super::model::resolve_cancel_toast)
     }
 
+    /// 给浮动卡挂操作按钮（如“打开文件夹”）。
+    /// 有按钮即可操作，计时自动升为可操作档。
+    pub fn set_action(
+        &mut self,
+        id: u64,
+        label: impl Into<String>,
+        kind: super::model::ToastActionKind,
+    ) {
+        let deadline = self.collapse_deadline(self.action_collapse_secs);
+        if let Some(t) = self.toasts.iter_mut().find(|t| t.id == id) {
+            t.action = Some(super::model::ToastAction {
+                label: label.into(),
+                kind,
+            });
+            t.collapse_at = deadline;
+        }
+    }
+
     pub fn remove_progress(&mut self, id: u64) {
         self.toasts.retain(|t| t.id != id);
     }
@@ -329,6 +393,14 @@ impl Notifications {
 
     pub fn clear_history(&mut self) {
         self.history.clear();
+    }
+
+    fn perform_action(action: &super::model::ToastAction) {
+        match &action.kind {
+            super::model::ToastActionKind::RevealInFolder(path) => {
+                crate::platform::open_containing_folder(path);
+            }
+        }
     }
 
     /// 标记离开动画，300ms 后真正移除
@@ -367,6 +439,17 @@ impl Notifications {
         if self.toasts.len() != before {
             needs_repaint = true;
         }
+        // 自动收起到期：走正常离开动画，只收浮动卡，历史保留
+        let expired: Vec<u64> = self
+            .toasts
+            .iter()
+            .filter(|t| t.leaving_since.is_none() && t.collapse_at.is_some_and(|at| at <= now))
+            .map(|t| t.id)
+            .collect();
+        for id in expired {
+            self.dismiss_toast(id);
+            needs_repaint = true;
+        }
         let has_anim = self.toasts.iter().any(|t| {
             t.leaving_since.is_some()
                 || now.duration_since(t.created) < Duration::from_millis(400)
@@ -377,6 +460,18 @@ impl Notifications {
         } else if !self.toasts.is_empty() {
             // 常驻 toast 无动画时仍需偶尔重绘以响应 hover
             ctx.request_repaint_after(Duration::from_millis(500));
+        }
+        // 有未到期的自动收起则准时唤醒（精度±500ms 内可接受，不另起 timer）
+        if let Some(wait) = self
+            .toasts
+            .iter()
+            .filter(|t| t.leaving_since.is_none())
+            .filter_map(|t| t.collapse_at)
+            .filter(|at| *at > now)
+            .min()
+            .and_then(|at| at.checked_duration_since(now))
+        {
+            ctx.request_repaint_after(wait.min(Duration::from_secs(3600)));
         }
         // history 展开时也需动画（兜底：toast 回退也需）以及重排动画
         if self.center_open && (!self.history.is_empty() || !self.toasts.is_empty()) {
@@ -448,6 +543,7 @@ impl Notifications {
             };
             let mut inner_dismiss = false;
             let mut inner_cancel = false;
+            let mut inner_action = false;
             let area_id = egui::Id::new(("yinhe_notif", toast.id));
             egui::Area::new(area_id)
                 .anchor(
@@ -461,18 +557,23 @@ impl Notifications {
                 // 卡片看起来就是“右侧贴窗”而不是“从窗外滑入”
                 .constrain(false)
                 .show(ctx, |ui| {
-                    let (d, c) = super::card::toast_card(ui, toast, CARD_W, 0.0, 1.0);
+                    let (d, c, a) = super::card::toast_card(ui, toast, CARD_W, 0.0, 1.0);
                     inner_dismiss = d;
                     inner_cancel = c;
+                    inner_action = a;
                 });
             if inner_dismiss {
                 to_dismiss.push(toast.id);
             }
             if inner_cancel {
-                if let Some(c) = &toast.cancel {
+                if let Some(c) = super::model::resolve_cancel_toast(toast) {
                     c.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
                 to_dismiss.push(toast.id);
+            }
+            // 操作按钮只执行不收卡（收起交给自动计时）
+            if inner_action && let Some(a) = toast.action.clone() {
+                Self::perform_action(&a);
             }
         }
         if !to_dismiss.is_empty() {
@@ -561,5 +662,127 @@ impl Notifications {
                 });
         }
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ctx() -> egui::Context {
+        egui::Context::default()
+    }
+
+    #[test]
+    fn push_classifies_collapse_tier() {
+        let mut n = Notifications::new();
+        n.set_collapse_durations(Some(5), Some(60));
+        let ok = n.success("t", "m");
+        let err = n.error("t", "m");
+        let t_ok = n.toasts.iter().find(|t| t.id == ok).unwrap();
+        let t_err = n.toasts.iter().find(|t| t.id == err).unwrap();
+        assert!(t_ok.collapse_at.is_some());
+        assert!(t_err.collapse_at.is_some());
+        // 可操作档晚于完成档
+        assert!(t_err.collapse_at.unwrap() > t_ok.collapse_at.unwrap());
+    }
+
+    #[test]
+    fn never_means_sticky() {
+        let mut n = Notifications::new();
+        n.set_collapse_durations(None, None);
+        let id = n.success("t", "m");
+        assert!(
+            n.toasts
+                .iter()
+                .find(|t| t.id == id)
+                .unwrap()
+                .collapse_at
+                .is_none()
+        );
+        n.tick(&ctx());
+        assert!(
+            n.toasts
+                .iter()
+                .find(|t| t.id == id)
+                .unwrap()
+                .leaving_since
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn expired_toast_starts_leaving_but_keeps_history() {
+        let mut n = Notifications::new();
+        n.set_collapse_durations(Some(0), Some(0));
+        let id = n.success("t", "m");
+        // 0 秒档下帧即到期
+        std::thread::sleep(Duration::from_millis(2));
+        n.tick(&ctx());
+        let t = n.toasts.iter().find(|t| t.id == id).unwrap();
+        assert!(t.leaving_since.is_some());
+        assert!(n.history.iter().any(|h| h.id == id));
+    }
+
+    #[test]
+    fn ensure_does_not_collapse_running_task() {
+        use std::sync::Arc;
+        struct S;
+        impl super::super::model::ProgressSource for S {
+            fn title(&self) -> String {
+                "t".into()
+            }
+            fn message(&self) -> String {
+                String::new()
+            }
+            fn fraction(&self) -> f32 {
+                0.5
+            }
+            fn detail(&self) -> String {
+                String::new()
+            }
+            fn cancel(&self) -> Option<Arc<AtomicBool>> {
+                None
+            }
+        }
+        let mut n = Notifications::new();
+        n.set_collapse_durations(Some(0), Some(0));
+        n.ensure_progress(LOADING_PROGRESS_ID, ToastKind::Info, Arc::new(S));
+        std::thread::sleep(Duration::from_millis(2));
+        n.tick(&ctx());
+        // 进行中不计时，不会离开
+        assert!(
+            n.toasts
+                .iter()
+                .find(|t| t.id == LOADING_PROGRESS_ID)
+                .unwrap()
+                .leaving_since
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn complete_export_uses_actionable_tier() {
+        let mut n = Notifications::new();
+        n.set_collapse_durations(Some(5), Some(60));
+        n.ensure_progress(
+            EXPORT_PROGRESS_ID,
+            ToastKind::Info,
+            Arc::new(crate::file_loader::LoadToastSource {
+                progress: yinhe_editor_core::progress::new_shared(),
+                cancel: None,
+            }),
+        );
+        n.complete_progress(EXPORT_PROGRESS_ID, ToastKind::Success, "done", "f");
+        let t = n
+            .toasts
+            .iter()
+            .find(|t| t.id == EXPORT_PROGRESS_ID)
+            .unwrap();
+        // 60 秒档：剩余远大于 5 秒档上限
+        assert!(
+            t.collapse_at.unwrap() > Instant::now() + Duration::from_secs(50),
+            "export complete should use actionable tier"
+        );
     }
 }

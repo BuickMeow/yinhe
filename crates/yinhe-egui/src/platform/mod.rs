@@ -100,6 +100,28 @@ pub fn request_user_attention() {
     request_user_attention_inner();
 }
 
+/// 在系统文件管理器中打开文件所在目录（macOS open / Windows explorer / Linux xdg-open）。
+/// 路径不存在或启动失败时静默忽略（toast 场景不值得弹错）。
+pub fn open_containing_folder(path: &std::path::Path) {
+    let dir: &std::path::Path = if path.is_dir() {
+        path
+    } else {
+        let Some(parent) = path.parent() else {
+            return;
+        };
+        parent
+    };
+    if dir.as_os_str().is_empty() {
+        return;
+    }
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(dir).spawn();
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("explorer").arg(dir).spawn();
+    #[cfg(target_os = "linux")]
+    let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
+}
+
 /// macOS：播放时阻止 App Nap（防止系统降低定时器精度）；非 macOS 平台为空操作。
 pub fn set_app_nap_enabled(enabled: bool) {
     set_app_nap_enabled_inner(enabled);
