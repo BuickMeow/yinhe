@@ -366,6 +366,8 @@ impl Notifications {
     }
 
     // ── Toast 浮空渲染：右下角 → 右上角堆叠，浮于内容之上 ──
+    // 彻底重构：每个 toast 独立 Area，避免父 Area+ScrollArea 宽度异常导致右侧溢出。
+    // 动画 x 位移由 Area 的 anchor 偏移承担，卡片内部不再做 add_space，保证最终位置固定为 RIGHT_PAD 间距。
     pub fn show_toasts(&mut self, ctx: &egui::Context) {
         self.tick(ctx);
         if self.center_open {
@@ -377,77 +379,64 @@ impl Notifications {
         const CARD_W: f32 = 360.0;
         const GAP: f32 = 8.0;
         const BOTTOM_PAD: f32 = 48.0;
-        const RIGHT_PAD: f32 = 48.0;
+        const RIGHT_PAD: f32 = 32.0;
 
-        egui::Area::new(egui::Id::new("yinhe_toasts"))
-            .anchor(
-                egui::Align2::RIGHT_BOTTOM,
-                egui::vec2(-RIGHT_PAD, -BOTTOM_PAD),
-            )
-            .order(egui::Order::Tooltip)
-            .movable(false)
-            .interactable(true)
-            .show(ctx, |ui| {
-                let max_h = (ctx.viewport_rect().height() - BOTTOM_PAD - 24.0).max(120.0);
-                egui::ScrollArea::vertical()
-                    .max_height(max_h)
-                    .auto_shrink([true, true])
-                    .stick_to_bottom(true)
-                    .scroll_bar_visibility(
-                        egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
-                    )
-                    .show(ui, |ui| {
-                        ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
-                            ui.spacing_mut().item_spacing.y = 0.0;
-                            let mut to_dismiss: Vec<u64> = Vec::new();
-                            let mut first = true;
-                            for (idx, toast) in self.toasts.iter().enumerate() {
-                                if !first {
-                                    // 缝隙也设为可悬停，避免滚轮穿透到 PR/AR
-                                    ui.allocate_response(
-                                        egui::vec2(CARD_W, GAP),
-                                        egui::Sense::hover(),
-                                    );
-                                }
-                                first = false;
-                                let is_leaving = toast.leaving_since.is_some();
-                                let stagger =
-                                    (self.toasts.len().saturating_sub(1).saturating_sub(idx))
-                                        as f32
-                                        * 0.04;
-                                let (x_off, alpha) = super::anim::fly_anim(toast, stagger);
-                                if is_leaving && alpha < 0.02 {
-                                    continue;
-                                }
-                                let card_alpha = alpha;
-                                let resp =
-                                    super::card::toast_card(ui, toast, CARD_W, x_off, card_alpha);
-                                if resp.0 {
-                                    to_dismiss.push(toast.id);
-                                }
-                                if resp.1 {
-                                    if let Some(c) = &toast.cancel {
-                                        c.store(true, std::sync::atomic::Ordering::Relaxed);
-                                    }
-                                    to_dismiss.push(toast.id);
-                                }
-                            }
-                            if !to_dismiss.is_empty() {
-                                ui.ctx().data_mut(|d| {
-                                    d.insert_temp(
-                                        egui::Id::new("yinhe_toasts_dismiss"),
-                                        to_dismiss,
-                                    );
-                                });
-                            }
-                        });
-                    });
-            });
-        let pending: Option<Vec<u64>> =
-            ctx.data(|d| d.get_temp(egui::Id::new("yinhe_toasts_dismiss")));
-        if let Some(ids) = pending {
-            ctx.data_mut(|d| d.remove::<Vec<u64>>(egui::Id::new("yinhe_toasts_dismiss")));
-            for id in ids {
+        let viewport = ctx.viewport_rect();
+        let max_h = (viewport.height() - BOTTOM_PAD - 24.0).max(120.0);
+        // 预估卡片高度：Frame 内边距 20 + 标题/消息 + 进度条占位 34 ≈ 90，取 110 容错
+        const EST_H: f32 = 110.0;
+        // 当累计高度超过 max_h 时仍继续堆叠，后续会被视口顶部裁剪（常见 toast 少于 3 个，不触发）
+        let mut cum_h: f32 = 0.0;
+        let mut to_dismiss: Vec<u64> = Vec::new();
+        let len = self.toasts.len();
+        // 从底部（最新的）开始堆叠，保证最新的贴底
+        for (orig_idx, toast) in self.toasts.iter().enumerate().rev() {
+            if cum_h > max_h {
+                break;
+            }
+            let is_leaving = toast.leaving_since.is_some();
+            let stagger = (len.saturating_sub(1).saturating_sub(orig_idx)) as f32 * 0.04;
+            let (x_off, alpha) = super::anim::fly_anim(toast, stagger);
+            if is_leaving && alpha < 0.02 {
+                continue;
+            }
+            let y_off = BOTTOM_PAD + cum_h;
+            let mut inner_dismiss = false;
+            let mut inner_cancel = false;
+            let area_id = egui::Id::new(("yinhe_toast", toast.id));
+            let resp = egui::Area::new(area_id)
+                .anchor(
+                    egui::Align2::RIGHT_BOTTOM,
+                    egui::vec2(-RIGHT_PAD + x_off, -y_off),
+                )
+                .order(egui::Order::Tooltip)
+                .movable(false)
+                .interactable(true)
+                .show(ctx, |ui| {
+                    // 卡片内部 x 偏移已由 Area 承担，这里固定 0
+                    let (d, c) = super::card::toast_card(ui, toast, CARD_W, 0.0, alpha);
+                    inner_dismiss = d;
+                    inner_cancel = c;
+                });
+            if inner_dismiss {
+                to_dismiss.push(toast.id);
+            }
+            if inner_cancel {
+                if let Some(c) = &toast.cancel {
+                    c.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                to_dismiss.push(toast.id);
+            }
+            // 使用 Area 实际高度更新堆叠，失败则用估计值
+            let h = resp.response.rect.height();
+            let used_h = if h.is_finite() && h > 10.0 { h } else { EST_H };
+            cum_h += used_h + GAP;
+        }
+        if !to_dismiss.is_empty() {
+            // 去重，避免同一 id 既 dismiss 又 cancel 重复
+            to_dismiss.sort_unstable();
+            to_dismiss.dedup();
+            for id in to_dismiss {
                 self.dismiss_toast(id);
             }
         }
@@ -471,68 +460,61 @@ impl Notifications {
         const CARD_W: f32 = 360.0;
         const GAP: f32 = 8.0;
         const BOTTOM_PAD: f32 = 48.0;
-        const RIGHT_PAD: f32 = 48.0;
+        const RIGHT_PAD: f32 = 32.0;
 
-        let viewport_h = ctx.viewport_rect().height();
-        let max_h = (viewport_h - BOTTOM_PAD - 24.0).max(120.0);
-
-        egui::Area::new(egui::Id::new("yinhe_notification_center"))
-            .anchor(
-                egui::Align2::RIGHT_BOTTOM,
-                egui::vec2(-RIGHT_PAD, -BOTTOM_PAD),
-            )
-            .order(egui::Order::Tooltip)
-            .movable(false)
-            .interactable(true)
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
-                    .max_height(max_h)
-                    .auto_shrink([true, true])
-                    .stick_to_bottom(true)
-                    .scroll_bar_visibility(
-                        egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
-                    )
-                    .show(ui, |ui| {
-                        ui.with_layout(egui::Layout::bottom_up(egui::Align::Max), |ui| {
-                            ui.spacing_mut().item_spacing.y = 0.0;
-                            let mut first = true;
-                            if !self.history.is_empty() {
-                                for entry in self.history.iter().rev() {
-                                    if !first {
-                                        ui.allocate_response(
-                                            egui::vec2(CARD_W, GAP),
-                                            egui::Sense::hover(),
-                                        );
-                                    }
-                                    first = false;
-                                    super::card::history_card(ui, entry, CARD_W);
-                                }
-                            } else {
-                                // history 为空但 toast 仍在：用 toast 数据兜底渲染（只读样式）
-                                for toast in self.toasts.iter().rev() {
-                                    if !first {
-                                        ui.allocate_response(
-                                            egui::vec2(CARD_W, GAP),
-                                            egui::Sense::hover(),
-                                        );
-                                    }
-                                    first = false;
-                                    let tmp = super::model::HistoryEntry {
-                                        id: toast.id,
-                                        kind: toast.kind,
-                                        title: toast.title.clone(),
-                                        message: toast.message.clone(),
-                                        created: toast.created,
-                                        read: true,
-                                        progress: toast.progress,
-                                        progress_label: toast.progress_label.clone(),
-                                    };
-                                    super::card::history_card(ui, &tmp, CARD_W);
-                                }
-                            }
-                        });
+        let viewport = ctx.viewport_rect();
+        let max_h = (viewport.height() - BOTTOM_PAD - 24.0).max(120.0);
+        const EST_H: f32 = 110.0;
+        let mut cum_h: f32 = 0.0;
+        if !self.history.is_empty() {
+            for entry in self.history.iter().rev() {
+                if cum_h > max_h {
+                    break;
+                }
+                let y_off = BOTTOM_PAD + cum_h;
+                let area_id = egui::Id::new(("yinhe_history", entry.id));
+                let resp = egui::Area::new(area_id)
+                    .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-RIGHT_PAD, -y_off))
+                    .order(egui::Order::Tooltip)
+                    .movable(false)
+                    .interactable(true)
+                    .show(ctx, |ui| {
+                        super::card::history_card(ui, entry, CARD_W);
                     });
-            });
+                let h = resp.response.rect.height();
+                let used_h = if h.is_finite() && h > 10.0 { h } else { EST_H };
+                cum_h += used_h + GAP;
+            }
+        } else {
+            for toast in self.toasts.iter().rev() {
+                if cum_h > max_h {
+                    break;
+                }
+                let y_off = BOTTOM_PAD + cum_h;
+                let area_id = egui::Id::new(("yinhe_history_fallback", toast.id));
+                let resp = egui::Area::new(area_id)
+                    .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-RIGHT_PAD, -y_off))
+                    .order(egui::Order::Tooltip)
+                    .movable(false)
+                    .interactable(true)
+                    .show(ctx, |ui| {
+                        let tmp = super::model::HistoryEntry {
+                            id: toast.id,
+                            kind: toast.kind,
+                            title: toast.title.clone(),
+                            message: toast.message.clone(),
+                            created: toast.created,
+                            read: true,
+                            progress: toast.progress,
+                            progress_label: toast.progress_label.clone(),
+                        };
+                        super::card::history_card(ui, &tmp, CARD_W);
+                    });
+                let h = resp.response.rect.height();
+                let used_h = if h.is_finite() && h > 10.0 { h } else { EST_H };
+                cum_h += used_h + GAP;
+            }
+        }
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
     }
 }
