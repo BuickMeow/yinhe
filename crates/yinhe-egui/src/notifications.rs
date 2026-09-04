@@ -370,24 +370,29 @@ impl Notifications {
                     )
                     .show(ui, |ui| {
                         ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
-                            ui.spacing_mut().item_spacing.y = GAP;
+                            ui.spacing_mut().item_spacing.y = 0.0;
                             let mut to_dismiss: Vec<u64> = Vec::new();
-                            // 逐一飞入：越新的越贴底， staggered 40ms
+                            let mut first = true;
                             for (idx, toast) in self.toasts.iter().enumerate() {
+                                if !first {
+                                    // 缝隙也设为可悬停，避免滚轮穿透到 PR/AR
+                                    ui.allocate_response(
+                                        egui::vec2(CARD_W, GAP),
+                                        egui::Sense::hover(),
+                                    );
+                                }
+                                first = false;
                                 let is_leaving = toast.leaving_since.is_some();
-                                // 非线性飞入：从下往上 40px + 透明度，旧 toast 延迟更小
                                 let stagger =
                                     (self.toasts.len().saturating_sub(1).saturating_sub(idx))
                                         as f32
                                         * 0.04;
-                                let (y_off, alpha) = Self::fly_anim(toast, stagger);
-                                // 若完全离开（alpha 近0）则不再布局，占位会跳，提前裁
+                                let (x_off, alpha) = Self::fly_anim(toast, stagger);
                                 if is_leaving && alpha < 0.02 {
                                     continue;
                                 }
-                                // 用偏移 + 透明度包裹卡片
                                 let card_alpha = alpha;
-                                let resp = Self::toast_card(ui, toast, CARD_W, y_off, card_alpha);
+                                let resp = Self::toast_card(ui, toast, CARD_W, x_off, card_alpha);
                                 if resp.0 {
                                     to_dismiss.push(toast.id);
                                 }
@@ -423,23 +428,22 @@ impl Notifications {
         let now = Instant::now();
         if let Some(since) = toast.leaving_since {
             let t = (now.duration_since(since).as_secs_f32() / 0.28).clamp(0.0, 1.0);
-            // ease_in_cubic：反向飞出，先慢后快
+            // ease_in_cubic：反向向右飞出，先慢后快
             let e = t * t * t;
-            let y = e * 36.0;
+            let x = e * 80.0;
             let a = 1.0 - e;
-            return (y, a);
+            return (x, a);
         }
         let elapsed = now.duration_since(toast.created).as_secs_f32() - stagger;
         if elapsed < 0.0 {
-            // stagger 未到，先在屏幕外
-            return (36.0, 0.0);
+            return (80.0, 0.0);
         }
         let t = (elapsed / 0.38).clamp(0.0, 1.0);
-        // ease_out_cubic：先快后慢，非线性
+        // ease_out_cubic：先快后慢，从右向左
         let e = 1.0 - (1.0 - t).powi(3);
-        let y = (1.0 - e) * 36.0;
+        let x = (1.0 - e) * 80.0;
         let a = e;
-        (y, a)
+        (x, a)
     }
 
     /// 返回 (dismiss, cancel)
@@ -447,12 +451,11 @@ impl Notifications {
         ui: &mut egui::Ui,
         toast: &Toast,
         width: f32,
-        y_offset: f32,
+        x_offset: f32,
         alpha: f32,
     ) -> (bool, bool) {
         let mut dismiss = false;
         let mut cancel = false;
-        // 透明度影响背景与文字
         let bg_base = crate::theme::control_bg();
         let stroke_base = crate::theme::line_fg().gamma_multiply(0.35);
         let bg = egui::Color32::from_rgba_unmultiplied(
@@ -480,17 +483,15 @@ impl Notifications {
             inner_margin: egui::Margin::symmetric(10, 10),
             ..Default::default()
         };
-        // y_offset 用 layer 偏移实现飞入：包裹一层垂直偏移
+        // 右向左飞入：用水平偏移包裹，x 0→80 从屏外滑入
+        let mut card_alpha = alpha;
         ui.allocate_ui_with_layout(
-            egui::vec2(width, 0.0),
-            egui::Layout::top_down(egui::Align::Max),
+            egui::vec2(width + x_offset, 0.0),
+            egui::Layout::left_to_right(egui::Align::Min),
             |ui| {
-                // 手动偏移：用 add_space 实现 y 方向位移（正值向下）
-                // 飞入时 y_offset>0，卡片在目标下方，逐渐回到 0
-                if y_offset > 0.5 {
-                    ui.add_space(y_offset);
+                if x_offset > 0.5 {
+                    ui.add_space(x_offset);
                 }
-                let mut card_alpha = alpha;
                 // 禁用时略降透明度
                 if toast.leaving_since.is_some() {
                     card_alpha = alpha;
@@ -623,10 +624,6 @@ impl Notifications {
                         // 普通 toast 的 TTL 细线已移除（常驻），不再绘制
                     }
                 });
-                if y_offset > 0.5 {
-                    // 飞入时底部补偿，避免布局跳动
-                    ui.add_space(0.0);
-                }
             },
         );
         (dismiss, cancel)
@@ -657,17 +654,25 @@ impl Notifications {
             .movable(false)
             .interactable(true)
             .show(ctx, |ui| {
+                // 固定高度滚动区：即使悬停在缝隙或空白处也能滚动
                 egui::ScrollArea::vertical()
                     .max_height(max_h)
-                    .auto_shrink([true, true])
+                    .auto_shrink([false, false])
                     .scroll_bar_visibility(
                         egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
                     )
                     .show(ui, |ui| {
                         ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
-                            ui.spacing_mut().item_spacing.y = GAP;
-                            // 列表态不提供删除按钮，只读
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            let mut first = true;
                             for entry in self.history.iter() {
+                                if !first {
+                                    ui.allocate_response(
+                                        egui::vec2(CARD_W, GAP),
+                                        egui::Sense::hover(),
+                                    );
+                                }
+                                first = false;
                                 Self::history_card(ui, entry, CARD_W);
                             }
                         });
