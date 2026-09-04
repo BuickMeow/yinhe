@@ -396,6 +396,7 @@ impl Notifications {
         if !self.center_open {
             return;
         }
+        tracing::debug!("show_center history={} center_open={}", self.history.len(), self.center_open);
         if self.history.is_empty() {
             return;
         }
