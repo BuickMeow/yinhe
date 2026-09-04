@@ -192,19 +192,16 @@ impl App {
                         .or_else(|| prog.stages.first());
                     if let Some(st) = active {
                         let frac = st.progress.clamp(0.0, 1.0);
-                        let label = if st.detail.is_empty() {
-                            st.label.clone()
-                        } else {
-                            format!("{} {}", st.label, st.detail)
-                        };
+                        let label = st.label.clone();
+                        let detail = st.detail.clone();
                         let cancel = self.file_loader.cancel_flag();
                         self.notifications.upsert_progress(
                             crate::notifications::LOADING_PROGRESS_ID,
                             crate::notifications::ToastKind::Info,
                             "正在加载",
-                            label.clone(),
-                            frac,
                             label,
+                            frac,
+                            detail,
                             cancel,
                         );
                     }

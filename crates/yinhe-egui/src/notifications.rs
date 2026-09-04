@@ -363,7 +363,7 @@ impl Notifications {
         const CARD_W: f32 = 360.0;
         const GAP: f32 = 8.0;
         const BOTTOM_PAD: f32 = 48.0;
-        const RIGHT_PAD: f32 = 12.0;
+        const RIGHT_PAD: f32 = 16.0;
 
         egui::Area::new(egui::Id::new("yinhe_toasts"))
             .anchor(
@@ -442,22 +442,18 @@ impl Notifications {
         let now = Instant::now();
         if let Some(since) = toast.leaving_since {
             let t = (now.duration_since(since).as_secs_f32() / 0.28).clamp(0.0, 1.0);
-            // ease_in_cubic：反向向右飞出，先慢后快
             let e = t * t * t;
             let x = e * 80.0;
-            let a = 1.0 - e;
-            return (x, a);
+            return (x, 1.0);
         }
         let elapsed = now.duration_since(toast.created).as_secs_f32() - stagger;
         if elapsed < 0.0 {
-            return (80.0, 0.0);
+            return (80.0, 1.0);
         }
         let t = (elapsed / 0.38).clamp(0.0, 1.0);
-        // ease_out_cubic：先快后慢，从右向左
         let e = 1.0 - (1.0 - t).powi(3);
         let x = (1.0 - e) * 80.0;
-        let a = e;
-        (x, a)
+        (x, 1.0)
     }
 
     /// 返回 (dismiss, cancel)
@@ -624,29 +620,37 @@ impl Notifications {
                                 },
                             );
                         });
-                        // 进度条：保持占位高度，避免完成态跳变
+                        // 进度条：与原 dialog 同款式，保持占位避免跳变
                         if let Some(p) = toast.progress {
                             ui.add_space(6.0);
                             let bar_w = width - 20.0;
-                            let bar_h = 4.0;
+                            let bar_h = 14.0;
                             let (rect, _) = ui.allocate_exact_size(
                                 egui::vec2(bar_w, bar_h),
                                 egui::Sense::hover(),
                             );
                             let bg =
                                 mul_alpha(crate::theme::line_fg().gamma_multiply(0.25), card_alpha);
-                            ui.painter().rect_filled(rect, 2.0, bg);
+                            ui.painter().rect_filled(rect, 4.0, bg);
                             let fg_rect = egui::Rect::from_min_size(
                                 rect.min,
                                 egui::vec2(rect.width() * p.clamp(0.0, 1.0), rect.height()),
                             );
                             ui.painter().rect_filled(
                                 fg_rect,
-                                2.0,
+                                4.0,
                                 mul_alpha(toast.kind.color().gamma_multiply(0.85), card_alpha),
                             );
+                            let pct = format!("{:.0}%", p.clamp(0.0, 1.0) * 100.0);
+                            ui.painter().text(
+                                rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                pct,
+                                egui::FontId::proportional(10.0),
+                                mul_alpha(egui::Color32::WHITE, card_alpha),
+                            );
                         } else {
-                            ui.add_space(10.0);
+                            ui.add_space(20.0);
                         }
                     });
                 },
@@ -666,7 +670,7 @@ impl Notifications {
         const CARD_W: f32 = 360.0;
         const GAP: f32 = 8.0;
         const BOTTOM_PAD: f32 = 48.0;
-        const RIGHT_PAD: f32 = 12.0;
+        const RIGHT_PAD: f32 = 16.0;
 
         let viewport_h = ctx.viewport_rect().height();
         let max_h = (viewport_h - BOTTOM_PAD - 24.0).max(120.0);
