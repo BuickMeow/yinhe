@@ -55,6 +55,7 @@ struct Toast {
 
 // ── 历史记录（持久，通知中心列表）──
 #[derive(Clone)]
+#[allow(dead_code)]
 struct HistoryEntry {
     id: u64,
     kind: ToastKind,
@@ -186,6 +187,9 @@ impl Notifications {
     // ── Toast 浮空渲染：右下角 → 右上角堆叠，浮于内容之上 ──
     pub fn show_toasts(&mut self, ctx: &egui::Context) {
         self.tick(ctx);
+        if self.show_center {
+            return;
+        }
         if self.toasts.is_empty() {
             return;
         }
@@ -339,60 +343,22 @@ impl Notifications {
         dismiss
     }
 
-    // ── 通知中心浮层：点击铃铛在右下角弹出，可滚动历史 ──
-    #[allow(clippy::collapsible_if)]
+    // ── 通知展开：点铃铛后从右下→右上排列所有历史 toast，同样浮空，无单独弹窗 ──
     pub fn show_center(&mut self, ctx: &egui::Context) {
         if !self.show_center {
             return;
         }
-        const W: f32 = 380.0;
-        const H: f32 = 420.0;
+        if self.history.is_empty() {
+            return;
+        }
+        const CARD_W: f32 = 360.0;
+        const GAP: f32 = 8.0;
         const BOTTOM_PAD: f32 = 40.0;
         const RIGHT_PAD: f32 = 12.0;
 
-        // 点击外部关闭：检测是否点在浮层外且非铃铛
-        let mut should_close = false;
-        if ctx.input(|i| i.pointer.any_click()) {
-            if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
-                let screen = ctx.viewport_rect();
-                let panel_rect = egui::Rect::from_min_size(
-                    egui::pos2(screen.max.x - RIGHT_PAD - W, screen.max.y - BOTTOM_PAD - H),
-                    egui::vec2(W, H),
-                );
-                // 底部 mode_bar 区域点击也视为外部
-                let bar_h = 28.0;
-                let bar_rect = egui::Rect::from_min_max(
-                    egui::pos2(screen.min.x, screen.max.y - bar_h),
-                    screen.max,
-                );
-                // 若点击在面板内或铃铛大致区域（右下角 bar 内靠右 40px）则不关闭
-                let bell_rect = egui::Rect::from_min_max(
-                    egui::pos2(screen.max.x - 40.0, screen.max.y - bar_h),
-                    screen.max,
-                );
-                if !panel_rect.contains(pos) && !bell_rect.contains(pos) && !bar_rect.contains(pos)
-                {
-                    // 严格：只有点空白内容区才关，bar 上其他按钮不触发
-                    // 简化：点面板外就关，但排除铃铛
-                    if !bell_rect.contains(pos) {
-                        // 额外判断：若点在 toast 区域，透传不关？
-                        // 暂不处理，直接关
-                        should_close = true;
-                    }
-                } else if panel_rect.contains(pos) {
-                    // 点面板内不关
-                } else if bell_rect.contains(pos) {
-                    // 点铃铛由 mode_bar 自身切换，这里不重复处理
-                } else if bar_rect.contains(pos) && !bell_rect.contains(pos) {
-                    // 点 mode_bar 其他区域 → 关闭
-                    should_close = true;
-                }
-            }
-        }
-        if should_close {
-            self.show_center = false;
-            return;
-        }
+        // 可视高度限制：历史很多时用 ScrollArea 承接，避免铺满全屏
+        let viewport_h = ctx.viewport_rect().height();
+        let max_h = (viewport_h - BOTTOM_PAD - 24.0).max(120.0);
 
         egui::Area::new(egui::Id::new("yinhe_notification_center"))
             .anchor(
@@ -403,255 +369,113 @@ impl Notifications {
             .movable(false)
             .interactable(true)
             .show(ctx, |ui| {
-                let frame = egui::Frame {
-                    fill: crate::theme::app_bg(),
-                    stroke: egui::Stroke::new(1.0, crate::theme::line_fg().gamma_multiply(0.35)),
-                    corner_radius: egui::CornerRadius::same(8),
-                    shadow: egui::Shadow {
-                        offset: [0, 6],
-                        blur: 20,
-                        spread: 0,
-                        color: egui::Color32::from_black_alpha(70),
-                    },
-                    inner_margin: egui::Margin::symmetric(10, 10),
-                    ..Default::default()
-                };
-                frame.show(ui, |ui| {
-                    ui.set_max_width(W - 20.0);
-                    ui.set_min_width(W - 20.0);
-                    ui.set_max_height(H - 20.0);
-                    // 标题栏
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new("通知")
-                                    .size(crate::theme::BODY_FONT)
-                                    .strong()
-                                    .color(crate::theme::text_primary()),
-                            )
-                            .selectable(false),
-                        );
-                        let unread = self.history.iter().filter(|e| !e.read).count();
-                        if unread > 0 {
-                            ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(format!("{} 未读", unread))
-                                        .size(crate::theme::SMALL_FONT)
-                                        .color(crate::theme::accent_active()),
-                                )
-                                .selectable(false),
-                            );
-                        }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            // 关闭
-                            let close_icon = ICON_CLOSE;
-                            let resp = crate::widgets::hover::hover_button(
-                                ui,
-                                close_icon.codepoint,
-                                egui::FontId::new(
-                                    crate::theme::ICON_FONT_SM,
-                                    close_icon.font_family(),
-                                ),
-                                crate::theme::text_muted(),
-                                false,
-                            );
-                            if resp.clicked() {
-                                self.show_center = false;
-                            }
-                            ui.add_space(8.0);
-                            // 清空
-                            if !self.history.is_empty() {
-                                let resp = ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new("清空")
-                                            .size(crate::theme::SMALL_FONT)
-                                            .color(crate::theme::text_muted()),
-                                    )
-                                    .sense(egui::Sense::click())
-                                    .selectable(false),
-                                );
-                                if resp.clicked() {
-                                    self.history.clear();
-                                }
-                                if resp.hovered() {
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                egui::ScrollArea::vertical()
+                    .max_height(max_h)
+                    .auto_shrink([true, true])
+                    .show(ui, |ui| {
+                        ui.with_layout(egui::Layout::bottom_up(egui::Align::Max), |ui| {
+                            ui.spacing_mut().item_spacing.y = GAP;
+                            let mut to_remove: Vec<u64> = Vec::new();
+                            // newest at bottom → 逆序遍历，让最新的贴底，与 transient toast 一致
+                            for entry in self.history.iter().rev() {
+                                if Self::history_card(ui, entry, CARD_W) {
+                                    to_remove.push(entry.id);
                                 }
                             }
-                            ui.add_space(8.0);
-                            // 全部已读
-                            if unread > 0 {
-                                let resp = ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new("全部已读")
-                                            .size(crate::theme::SMALL_FONT)
-                                            .color(crate::theme::text_muted()),
-                                    )
-                                    .sense(egui::Sense::click())
-                                    .selectable(false),
-                                );
-                                if resp.clicked() {
-                                    for e in &mut self.history {
-                                        e.read = true;
-                                    }
-                                }
-                                if resp.hovered() {
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                }
+                            if !to_remove.is_empty() {
+                                ui.ctx().data_mut(|d| {
+                                    d.insert_temp(
+                                        egui::Id::new("yinhe_history_dismiss"),
+                                        to_remove,
+                                    );
+                                });
                             }
                         });
                     });
-                    ui.add_space(6.0);
-                    ui.separator();
-                    ui.add_space(4.0);
-
-                    if self.history.is_empty() {
-                        ui.vertical_centered(|ui| {
-                            ui.add_space(40.0);
-                            let icon = ICON_NOTIFICATIONS;
-                            ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(icon.codepoint)
-                                        .family(icon.font_family())
-                                        .size(crate::theme::ICON_FONT_XL)
-                                        .color(crate::theme::text_muted()),
-                                )
-                                .selectable(false),
-                            );
-                            ui.add_space(8.0);
-                            ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new("暂无通知")
-                                        .size(crate::theme::SMALL_FONT)
-                                        .color(crate::theme::text_muted()),
-                                )
-                                .selectable(false),
-                            );
-                        });
-                    } else {
-                        egui::ScrollArea::vertical()
-                            .max_height(H - 70.0)
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                ui.spacing_mut().item_spacing.y = 6.0;
-                                // 新的在上
-                                let mut to_remove: Option<u64> = None;
-                                for entry in self.history.iter().rev() {
-                                    let is_unread = !entry.read;
-                                    let bg = if is_unread {
-                                        crate::theme::selected_bg().gamma_multiply(0.55)
-                                    } else {
-                                        egui::Color32::TRANSPARENT
-                                    };
-                                    let frame = egui::Frame {
-                                        fill: bg,
-                                        corner_radius: egui::CornerRadius::same(6),
-                                        inner_margin: egui::Margin::symmetric(8, 6),
-                                        ..Default::default()
-                                    };
-                                    let resp = frame.show(ui, |ui| {
-                                        ui.set_max_width(W - 40.0);
-                                        ui.horizontal(|ui| {
-                                            let icon = entry.kind.icon();
-                                            ui.add(
-                                                egui::Label::new(
-                                                    egui::RichText::new(icon.codepoint)
-                                                        .family(icon.font_family())
-                                                        .size(crate::theme::ICON_FONT_SM)
-                                                        .color(entry.kind.color()),
-                                                )
-                                                .selectable(false),
-                                            );
-                                            ui.add_space(6.0);
-                                            ui.vertical(|ui| {
-                                                ui.set_max_width(W - 90.0);
-                                                ui.add(
-                                                    egui::Label::new(
-                                                        egui::RichText::new(&entry.title)
-                                                            .size(crate::theme::SMALL_FONT)
-                                                            .strong()
-                                                            .color(crate::theme::text_primary()),
-                                                    )
-                                                    .selectable(false)
-                                                    .wrap(),
-                                                );
-                                                if !entry.message.is_empty() {
-                                                    ui.add(
-                                                        egui::Label::new(
-                                                            egui::RichText::new(&entry.message)
-                                                                .size(crate::theme::SMALL_FONT)
-                                                                .color(
-                                                                    crate::theme::text_secondary(),
-                                                                ),
-                                                        )
-                                                        .selectable(false)
-                                                        .wrap(),
-                                                    );
-                                                }
-                                                let ago = format_ago(entry.created);
-                                                ui.add(
-                                                    egui::Label::new(
-                                                        egui::RichText::new(ago)
-                                                            .size(crate::theme::MODE_LABEL_FONT)
-                                                            .color(crate::theme::text_muted()),
-                                                    )
-                                                    .selectable(false),
-                                                );
-                                            });
-                                            ui.with_layout(
-                                                egui::Layout::right_to_left(egui::Align::Center),
-                                                |ui| {
-                                                    let close_icon = ICON_CLOSE;
-                                                    let r = crate::widgets::hover::hover_button(
-                                                        ui,
-                                                        close_icon.codepoint,
-                                                        egui::FontId::new(
-                                                            crate::theme::ICON_FONT_SM,
-                                                            close_icon.font_family(),
-                                                        ),
-                                                        crate::theme::text_muted(),
-                                                        false,
-                                                    );
-                                                    if r.clicked() {
-                                                        to_remove = Some(entry.id);
-                                                    }
-                                                },
-                                            );
-                                        });
-                                    });
-                                    let _ = resp;
-                                }
-                                if let Some(id) = to_remove {
-                                    self.history.retain(|e| e.id != id);
-                                    self.toasts.retain(|t| t.id != id);
-                                }
-                            });
-                    }
-                });
             });
-        // 打开即标记已读（下次打开铃铛变回普通）
-        if self.show_center {
-            // 不立即全已读，保留未读直到用户点"全部已读"或关闭后标记？
-            // 按常见设计：打开即已读
-            // 这里延迟到下一帧？先不自动，靠按钮
+        let pending: Option<Vec<u64>> =
+            ctx.data(|d| d.get_temp(egui::Id::new("yinhe_history_dismiss")));
+        if let Some(ids) = pending {
+            ctx.data_mut(|d| d.remove::<Vec<u64>>(egui::Id::new("yinhe_history_dismiss")));
+            for id in ids {
+                self.history.retain(|e| e.id != id);
+                self.toasts.retain(|t| t.id != id);
+            }
         }
     }
 
-    /// 当通知中心关闭时由外部调用，标记已读（可选）。
-    /// 目前策略：关闭时不自动已读，需用户手动；如需自动，取消注释。
-    pub fn on_center_closed_mark_read(&mut self) {
-        // self.mark_all_read();
-    }
-}
-
-fn format_ago(t: Instant) -> String {
-    let secs = t.elapsed().as_secs();
-    if secs < 60 {
-        "刚刚".to_string()
-    } else if secs < 3600 {
-        format!("{} 分钟前", secs / 60)
-    } else if secs < 86400 {
-        format!("{} 小时前", secs / 3600)
-    } else {
-        format!("{} 天前", secs / 86400)
+    /// 历史卡片：与 toast_card 同样式但无 TTL 进度条，复用相同浮空外观
+    fn history_card(ui: &mut egui::Ui, entry: &HistoryEntry, width: f32) -> bool {
+        let mut dismiss = false;
+        let frame = egui::Frame {
+            fill: crate::theme::control_bg(),
+            stroke: egui::Stroke::new(1.0, crate::theme::line_fg().gamma_multiply(0.35)),
+            corner_radius: egui::CornerRadius::same(8),
+            shadow: egui::Shadow {
+                offset: [0, 4],
+                blur: 12,
+                spread: 0,
+                color: egui::Color32::from_black_alpha(60),
+            },
+            inner_margin: egui::Margin::symmetric(10, 10),
+            ..Default::default()
+        };
+        frame.show(ui, |ui| {
+            ui.set_max_width(width - 20.0);
+            ui.set_min_width(width - 20.0);
+            ui.horizontal(|ui| {
+                let icon = entry.kind.icon();
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(icon.codepoint)
+                            .family(icon.font_family())
+                            .size(crate::theme::ICON_FONT)
+                            .color(entry.kind.color()),
+                    )
+                    .selectable(false),
+                );
+                ui.add_space(6.0);
+                ui.vertical(|ui| {
+                    ui.set_max_width(width - 70.0);
+                    if !entry.title.is_empty() {
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(&entry.title)
+                                    .size(crate::theme::SMALL_FONT)
+                                    .strong()
+                                    .color(crate::theme::text_primary()),
+                            )
+                            .selectable(false)
+                            .wrap(),
+                        );
+                    }
+                    if !entry.message.is_empty() {
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(&entry.message)
+                                    .size(crate::theme::SMALL_FONT)
+                                    .color(crate::theme::text_secondary()),
+                            )
+                            .selectable(false)
+                            .wrap(),
+                        );
+                    }
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let close_icon = ICON_CLOSE;
+                    let resp = crate::widgets::hover::hover_button(
+                        ui,
+                        close_icon.codepoint,
+                        egui::FontId::new(crate::theme::ICON_FONT_SM, close_icon.font_family()),
+                        crate::theme::text_muted(),
+                        false,
+                    );
+                    if resp.clicked() {
+                        dismiss = true;
+                    }
+                });
+            });
+        });
+        dismiss
     }
 }
