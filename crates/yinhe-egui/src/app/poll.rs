@@ -82,11 +82,20 @@ impl App {
                             self.notifications.complete_progress(
                                 crate::widgets::toast::LOADING_PROGRESS_ID,
                                 crate::widgets::toast::ToastKind::Success,
-                                "已完成",
+                                "MIDI加载完成",
                                 fname.to_string(),
                             );
+                            // 进度条已满隐藏，label 改为加载耗时
+                            if let Some(d) = self.file_loader.load_elapsed() {
+                                self.notifications.update_progress(
+                                    crate::widgets::toast::LOADING_PROGRESS_ID,
+                                    1.0,
+                                    format_load_duration(d),
+                                );
+                            }
                         } else {
-                            self.notifications.success("已打开", fname.to_string());
+                            self.notifications
+                                .success("MIDI加载完成", fname.to_string());
                         }
                     }
                     Err(msg) => {
@@ -205,11 +214,20 @@ impl App {
                         self.notifications.complete_progress(
                             crate::widgets::toast::LOADING_PROGRESS_ID,
                             crate::widgets::toast::ToastKind::Success,
-                            "已完成",
+                            "MIDI加载完成",
                             file_name.clone(),
                         );
+                        // 进度条已满隐藏，label 改为加载耗时
+                        if let Some(d) = self.file_loader.load_elapsed() {
+                            self.notifications.update_progress(
+                                crate::widgets::toast::LOADING_PROGRESS_ID,
+                                1.0,
+                                format_load_duration(d),
+                            );
+                        }
                     } else {
-                        self.notifications.success("已打开", file_name.clone());
+                        self.notifications
+                            .success("MIDI加载完成", file_name.clone());
                     }
                 } else {
                     let msg = t!("file_dialog.open_failed", name = file_name).to_string();
@@ -395,6 +413,22 @@ impl App {
     }
 }
 
+/// 加载耗时文案：不足一分钟省略“分”，不足一秒省略“秒”。
+/// 例：2分15秒321毫秒 / 15秒321毫秒 / 321毫秒。
+pub(crate) fn format_load_duration(d: std::time::Duration) -> String {
+    let total_ms = d.as_millis();
+    let mins = total_ms / 60_000;
+    let secs = (total_ms % 60_000) / 1_000;
+    let ms = total_ms % 1_000;
+    if mins > 0 {
+        format!("加载时间：{}分{}秒{}毫秒", mins, secs, ms)
+    } else if secs > 0 {
+        format!("加载时间：{}秒{}毫秒", secs, ms)
+    } else {
+        format!("加载时间：{}毫秒", ms)
+    }
+}
+
 /// 判断路径是否为「拖出新窗口」产生的 temp 工程
 /// （命名约定见 `App::detach_tab_to_new_window`；uuid 后缀保证不会撞名）。
 fn is_detached_temp_path(path: &str) -> bool {
@@ -402,4 +436,29 @@ fn is_detached_temp_path(path: &str) -> bool {
         .file_name()
         .and_then(|n| n.to_str())
         .is_some_and(|n| n.starts_with("yinhe-detached-") && n.ends_with(".yin"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_load_duration;
+
+    #[test]
+    fn load_duration_omits_leading_units() {
+        assert_eq!(
+            format_load_duration(std::time::Duration::from_millis(135_321)),
+            "加载时间：2分15秒321毫秒"
+        );
+        assert_eq!(
+            format_load_duration(std::time::Duration::from_millis(15_321)),
+            "加载时间：15秒321毫秒"
+        );
+        assert_eq!(
+            format_load_duration(std::time::Duration::from_millis(321)),
+            "加载时间：321毫秒"
+        );
+        assert_eq!(
+            format_load_duration(std::time::Duration::from_millis(0)),
+            "加载时间：0毫秒"
+        );
+    }
 }

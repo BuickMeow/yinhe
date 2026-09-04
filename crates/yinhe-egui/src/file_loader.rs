@@ -42,6 +42,11 @@ impl FileLoader {
         self.core.load_progress()
     }
 
+    /// 本次加载已用时（加载完成 toast 显示“加载时间”用）。
+    pub fn load_elapsed(&self) -> Option<std::time::Duration> {
+        self.core.load_elapsed()
+    }
+
     /// Cancel any in-progress loading. Clears UI dialog state along with core loaders.
     pub fn cancel_loading(&mut self) {
         self.core.cancel_loading();

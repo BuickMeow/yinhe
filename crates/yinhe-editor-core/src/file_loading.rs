@@ -7,6 +7,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
+use std::time::{Duration, Instant};
 
 use yinhe_core::YinModel;
 use yinhe_midi::{LoadProgress, MidiImportEncoding};
@@ -123,6 +124,9 @@ pub struct FileLoader {
     archive_loader: Option<ArchiveLoader>,
     load_progress: SharedProgress,
     labels: LoadStageLabels,
+    /// 本次加载的起始时刻（加载完成 toast 显示“加载时间”用）。
+    /// 压缩包选条目/密码重试会重新打点，只统计实际加载耗时。
+    started_at: Option<Instant>,
 }
 
 impl FileLoader {
@@ -133,7 +137,13 @@ impl FileLoader {
             archive_loader: None,
             load_progress,
             labels,
+            started_at: None,
         }
+    }
+
+    /// 本次加载已用时（未开始返回 None）。
+    pub fn load_elapsed(&self) -> Option<Duration> {
+        self.started_at.map(|t| t.elapsed())
     }
 
     /// 是否正在加载（只检查三个 loader，不含 UI 层的选择器/密码框）。
@@ -158,6 +168,7 @@ impl FileLoader {
         self.midi_loader = None;
         self.yin_loader = None;
         self.archive_loader = None;
+        self.started_at = None;
         progress::set_visible(&self.load_progress, false);
     }
 
@@ -175,6 +186,7 @@ impl FileLoader {
             .unwrap_or_default();
 
         progress::set_visible(&self.load_progress, true);
+        self.started_at = Some(Instant::now());
 
         match ext.as_str() {
             "yin" => self.start_yin(path_str),
@@ -232,6 +244,7 @@ impl FileLoader {
     /// Start loading an archive with optional password.
     /// `password == None` means no password; `Some("")` is treated as no password.
     pub fn start_archive(&mut self, path_str: String, password: Option<String>) {
+        self.started_at = Some(Instant::now());
         let (tx, rx) = mpsc::channel();
         let path_for_thread = path_str.clone();
         let progress = self.load_progress.clone();
@@ -446,6 +459,7 @@ impl FileLoader {
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_for_thread = cancel.clone();
         progress::set_visible(&self.load_progress, true);
+        self.started_at = Some(Instant::now());
         std::thread::spawn(move || {
             let data = match archive.read_file(&entry_name) {
                 Ok(d) => d,
