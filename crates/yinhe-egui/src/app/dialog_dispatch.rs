@@ -175,37 +175,14 @@ impl App {
                 self.file_loader.cancel_loading();
                 self.notifications
                     .remove_progress(crate::widgets::toast::LOADING_PROGRESS_ID);
-            } else {
-                let p = self
-                    .file_loader
-                    .load_progress()
-                    .lock()
-                    .ok()
-                    .map(|p| p.clone());
-                if let Some(prog) = p
-                    && prog.visible
-                {
-                    let active = prog
-                        .stages
-                        .iter()
-                        .find(|s| s.status == yinhe_editor_core::progress::StageStatus::Active)
-                        .or_else(|| prog.stages.first());
-                    if let Some(st) = active {
-                        let frac = st.progress.clamp(0.0, 1.0);
-                        let label = st.label.clone();
-                        let detail = st.detail.clone();
-                        let cancel = self.file_loader.cancel_flag();
-                        self.notifications.upsert_progress(
-                            crate::widgets::toast::LOADING_PROGRESS_ID,
-                            crate::widgets::toast::ToastKind::Info,
-                            "正在加载",
-                            label,
-                            frac,
-                            detail,
-                            cancel,
-                        );
-                    }
-                }
+            } else if self.file_loader.progress_visible() {
+                // 卡片只建一次，进度文案渲染时 pull，不再每帧拷贝
+                let src = std::sync::Arc::new(self.file_loader.toast_source());
+                self.notifications.ensure_progress(
+                    crate::widgets::toast::LOADING_PROGRESS_ID,
+                    crate::widgets::toast::ToastKind::Info,
+                    src,
+                );
             }
         } else if self
             .notifications
@@ -223,31 +200,19 @@ impl App {
         }
 
         // ── 保存进度 toast（替代 save_overlay viewport）──
+        // “准备中…”由 source 在状态缺失时自行返回，卡片只建一次，进度渲染时 pull
         if self
             .notifications
             .is_leaving(crate::widgets::toast::SAVE_PROGRESS_ID)
         {
-        } else if let Some((stage, fraction)) = self.save_progress {
-            let label = crate::dialogs::save_overlay::stage_label(stage);
-            self.notifications.upsert_progress(
-                crate::widgets::toast::SAVE_PROGRESS_ID,
-                crate::widgets::toast::ToastKind::Info,
-                "正在保存",
-                label.clone(),
-                fraction.clamp(0.0, 1.0),
-                label,
-                None,
-            );
         } else if self.save_rx.is_some() {
-            // 保存刚启动但首个 progress 尚未到达
-            self.notifications.upsert_progress(
+            let src = std::sync::Arc::new(crate::dialogs::save_overlay::SaveToastSource {
+                state: self.save_progress.clone(),
+            });
+            self.notifications.ensure_progress(
                 crate::widgets::toast::SAVE_PROGRESS_ID,
                 crate::widgets::toast::ToastKind::Info,
-                "正在保存",
-                "准备中…".to_string(),
-                0.0,
-                "准备中…".to_string(),
-                None,
+                src,
             );
         }
 
@@ -305,26 +270,20 @@ impl App {
         {
             // 用户已点 X，取消标志由 toast 侧置位，下一帧会自动触发 cancel
         } else if self.export.rx.is_some() {
-            // 若 toast 侧点了取消，已置位则无需再 upsert，直接让线程退出
+            // 若 toast 侧点了取消，已置位则不再建卡，直接让线程退出
             let cancelled = self
                 .notifications
                 .get_cancel_flag(crate::widgets::toast::EXPORT_PROGRESS_ID)
                 .is_some_and(|f| f.load(std::sync::atomic::Ordering::Relaxed));
-            if !cancelled && let Ok(st) = self.export.progress.lock().map(|s| s.clone()) {
-                let frac = st.progress.clamp(0.0, 1.0);
-                let label = if st.status.is_empty() {
-                    format!("{:.0}%", frac * 100.0)
-                } else {
-                    st.status.clone()
-                };
-                self.notifications.upsert_progress(
+            if !cancelled {
+                let src = std::sync::Arc::new(crate::app::export_state::ExportToastSource {
+                    progress: self.export.progress.clone(),
+                    cancel: self.export.cancel.clone(),
+                });
+                self.notifications.ensure_progress(
                     crate::widgets::toast::EXPORT_PROGRESS_ID,
                     crate::widgets::toast::ToastKind::Info,
-                    "正在导出",
-                    label.clone(),
-                    frac,
-                    label,
-                    Some(self.export.cancel.clone()),
+                    src,
                 );
             }
         }
@@ -339,21 +298,15 @@ impl App {
                 .notifications
                 .get_cancel_flag(crate::widgets::toast::RESCALE_PROGRESS_ID)
                 .is_some_and(|f| f.load(std::sync::atomic::Ordering::Relaxed));
-            if !cancelled && let Ok(st) = self.rescale.progress.lock().map(|s| s.clone()) {
-                let frac = st.progress.clamp(0.0, 1.0);
-                let label = if st.label.is_empty() {
-                    format!("{:.0}%", frac * 100.0)
-                } else {
-                    st.label.clone()
-                };
-                self.notifications.upsert_progress(
+            if !cancelled {
+                let src = std::sync::Arc::new(crate::app::rescale_state::RescaleToastSource {
+                    progress: self.rescale.progress.clone(),
+                    cancel: self.rescale.cancel.clone(),
+                });
+                self.notifications.ensure_progress(
                     crate::widgets::toast::RESCALE_PROGRESS_ID,
                     crate::widgets::toast::ToastKind::Info,
-                    "正在缩放",
-                    label.clone(),
-                    frac,
-                    label,
-                    Some(self.rescale.cancel.clone()),
+                    src,
                 );
             }
         }

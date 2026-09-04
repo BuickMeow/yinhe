@@ -3,10 +3,11 @@ use std::sync::{Arc, atomic::AtomicBool};
 use rust_i18n::t;
 // re-export，让 app/poll.rs 的 use 不变
 pub(crate) use yinhe_editor_core::file_loading::LoadResult;
-use yinhe_editor_core::progress::SharedProgress;
+use yinhe_editor_core::progress::{SharedProgress, StageInfo, StageStatus};
 use yinhe_midi::MidiImportEncoding;
 
 use crate::dialogs::archive_picker::{ArchivePickerState, PasswordPrompt};
+use crate::widgets::toast::model::ProgressSource;
 
 /// UI 层薄封装：文件对话框（rfd）与 i18n 文案在这里，
 /// 加载逻辑在 yinhe-editor-core 的 `file_loading` 模块（平台无关）。
@@ -45,6 +46,22 @@ impl FileLoader {
     /// 本次加载已用时（加载完成 toast 显示“加载时间”用）。
     pub fn load_elapsed(&self) -> Option<std::time::Duration> {
         self.core.load_elapsed()
+    }
+
+    /// toast 进度数据源（pull）：渲染时实时读共享进度。
+    pub fn toast_source(&self) -> LoadToastSource {
+        LoadToastSource {
+            progress: self.load_progress().clone(),
+            cancel: self.cancel_flag(),
+        }
+    }
+
+    /// 加载进度是否可见（建卡前轻量检查，无文案拷贝）。
+    pub fn progress_visible(&self) -> bool {
+        self.load_progress()
+            .lock()
+            .map(|p| p.visible)
+            .unwrap_or(false)
     }
 
     /// Cancel any in-progress loading. Clears UI dialog state along with core loaders.
@@ -144,5 +161,41 @@ impl FileLoader {
             Core::ArchiveError(msg) => LoadResult::ArchiveError(msg),
             Core::NotReady => LoadResult::NotReady,
         }
+    }
+}
+
+/// 加载进度数据源：toast 渲染时 pull，不再每帧拷贝文案。
+pub(crate) struct LoadToastSource {
+    pub progress: SharedProgress,
+    pub cancel: Option<Arc<AtomicBool>>,
+}
+
+impl LoadToastSource {
+    fn active_stage(&self) -> Option<StageInfo> {
+        self.progress.lock().ok().and_then(|p| {
+            p.stages
+                .iter()
+                .find(|s| s.status == StageStatus::Active)
+                .or_else(|| p.stages.first())
+                .cloned()
+        })
+    }
+}
+
+impl ProgressSource for LoadToastSource {
+    fn title(&self) -> String {
+        "正在加载".to_string()
+    }
+    fn message(&self) -> String {
+        self.active_stage().map(|s| s.label).unwrap_or_default()
+    }
+    fn fraction(&self) -> f32 {
+        self.active_stage().map(|s| s.progress).unwrap_or(0.0)
+    }
+    fn detail(&self) -> String {
+        self.active_stage().map(|s| s.detail).unwrap_or_default()
+    }
+    fn cancel(&self) -> Option<Arc<AtomicBool>> {
+        self.cancel.clone()
     }
 }

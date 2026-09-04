@@ -279,7 +279,9 @@ impl App {
         {
             self.save_rx = None;
             self.save_progress_rx = None;
-            self.save_progress = None;
+            if let Ok(mut s) = self.save_progress.lock() {
+                *s = None;
+            }
             // Mark the active document as saved
             let saved_name = if let Some(idx) = self.workspace.active_doc {
                 self.workspace.documents[idx].mark_saved();
@@ -328,7 +330,9 @@ impl App {
             }
         } else if let Some(rx) = &self.save_progress_rx {
             while let Ok(p) = rx.try_recv() {
-                self.save_progress = Some((p.stage, p.fraction));
+                if let Ok(mut s) = self.save_progress.lock() {
+                    *s = Some((p.stage, p.fraction));
+                }
             }
         }
 

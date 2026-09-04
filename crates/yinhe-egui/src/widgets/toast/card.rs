@@ -199,34 +199,27 @@ pub(crate) fn toast_card(
     x_offset: f32,
     alpha: f32,
 ) -> (bool, bool) {
+    // 进度任务：渲染时从 source pull 最新文案/进度，无 source 读快照
+    let (title, message, progress, label) = super::model::resolve_toast(toast);
     draw_card(
         ui,
         width,
         x_offset,
         alpha,
         toast.kind,
-        &toast.title,
-        &toast.message,
-        toast.progress,
-        &toast.progress_label,
+        &title,
+        &message,
+        progress,
+        &label,
         true,
-        toast.cancel.clone(),
+        super::model::resolve_cancel_toast(toast),
     )
 }
 
 /// 历史卡片：只读，无删除（与 toast 同尺寸，仅隐藏 X）
 pub(crate) fn history_card(ui: &mut egui::Ui, entry: &HistoryEntry, width: f32) {
+    let (title, message, progress, label) = super::model::resolve_history(entry);
     let _ = draw_card(
-        ui,
-        width,
-        0.0,
-        1.0,
-        entry.kind,
-        &entry.title,
-        &entry.message,
-        entry.progress,
-        &entry.progress_label,
-        false,
-        None,
+        ui, width, 0.0, 1.0, entry.kind, &title, &message, progress, &label, false, None,
     );
 }

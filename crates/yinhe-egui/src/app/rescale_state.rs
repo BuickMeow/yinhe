@@ -15,6 +15,7 @@ use yinhe_core::{RescaleProgress, YinModel};
 use yinhe_editor_core::history::commit_ppq;
 
 use crate::app::App;
+use crate::widgets::toast::model::ProgressSource;
 
 /// egui memory 中暂存 rescale 请求的 Id 常量。
 ///
@@ -59,6 +60,48 @@ impl RescaleState {
     /// 是否有 rescale 正在进行。
     pub fn is_running(&self) -> bool {
         self.rx.is_some()
+    }
+}
+
+/// 缩放进度数据源：toast 渲染时 pull，不再每帧拷贝文案。
+pub(crate) struct RescaleToastSource {
+    pub progress: Arc<Mutex<RescaleProgress>>,
+    pub cancel: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl RescaleToastSource {
+    fn snapshot(&self) -> (f32, String) {
+        self.progress
+            .lock()
+            .ok()
+            .map(|st| {
+                let frac = st.progress.clamp(0.0, 1.0);
+                let label = if st.label.is_empty() {
+                    format!("{:.0}%", frac * 100.0)
+                } else {
+                    st.label.clone()
+                };
+                (frac, label)
+            })
+            .unwrap_or((0.0, String::new()))
+    }
+}
+
+impl ProgressSource for RescaleToastSource {
+    fn title(&self) -> String {
+        "正在缩放".to_string()
+    }
+    fn message(&self) -> String {
+        self.snapshot().1
+    }
+    fn fraction(&self) -> f32 {
+        self.snapshot().0
+    }
+    fn detail(&self) -> String {
+        self.snapshot().1
+    }
+    fn cancel(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
+        Some(self.cancel.clone())
     }
 }
 

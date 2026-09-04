@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use yinhe_audio::export::WavBitDepth;
 
 use crate::dialogs::export::{ExportCompleted, ExportProgress};
+use crate::widgets::toast::model::ProgressSource;
 
 /// 导出线程完成消息：`Ok((输出路径, 耗时秒, 倍速))` 或 `Err(错误信息)`。
 pub(crate) type ExportResultMsg = Result<(String, f64, f64), String>;
@@ -41,5 +42,47 @@ impl ExportState {
             layer_count: 0,
             sample_rate: 0,
         }
+    }
+}
+
+/// 导出进度数据源：toast 渲染时 pull，不再每帧拷贝文案。
+pub(crate) struct ExportToastSource {
+    pub progress: Arc<Mutex<ExportProgress>>,
+    pub cancel: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl ExportToastSource {
+    fn snapshot(&self) -> (f32, String) {
+        self.progress
+            .lock()
+            .ok()
+            .map(|st| {
+                let frac = st.progress.clamp(0.0, 1.0);
+                let label = if st.status.is_empty() {
+                    format!("{:.0}%", frac * 100.0)
+                } else {
+                    st.status.clone()
+                };
+                (frac, label)
+            })
+            .unwrap_or((0.0, String::new()))
+    }
+}
+
+impl ProgressSource for ExportToastSource {
+    fn title(&self) -> String {
+        "正在导出".to_string()
+    }
+    fn message(&self) -> String {
+        self.snapshot().1
+    }
+    fn fraction(&self) -> f32 {
+        self.snapshot().0
+    }
+    fn detail(&self) -> String {
+        self.snapshot().1
+    }
+    fn cancel(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
+        Some(self.cancel.clone())
     }
 }

@@ -85,6 +85,7 @@ impl Notifications {
             progress_label: String::new(),
             cancel: None,
             leaving_since: None,
+            source: None,
         });
         self.history.push(HistoryEntry {
             id,
@@ -95,6 +96,7 @@ impl Notifications {
             read: false,
             progress: None,
             progress_label: String::new(),
+            source: None,
         });
         if self.history.len() > self.max_history {
             let excess = self.history.len() - self.max_history;
@@ -103,96 +105,89 @@ impl Notifications {
         id
     }
 
-    /// 创建或更新进度 toast。同一 key（如 "loading"）复用同一 id。
-    #[allow(clippy::too_many_arguments)]
-    pub fn upsert_progress(
+    /// 确保进度卡存在：同一 key（如 "loading"）复用同一 id。
+    /// 只建卡/换数据源（Arc 交换，无文案拷贝），进度文案渲染时 pull。
+    /// 调用方每帧调也无妨，但文案不再每帧拷贝；用户点了 X（leaving）时不复活。
+    pub fn ensure_progress(
         &mut self,
         key_id: u64,
         kind: ToastKind,
-        title: impl Into<String>,
-        message: impl Into<String>,
-        fraction: f32,
-        label: impl Into<String>,
-        cancel: Option<Arc<AtomicBool>>,
-    ) -> u64 {
-        let title = title.into();
-        let message = message.into();
-        let label = label.into();
+        source: Arc<dyn super::model::ProgressSource>,
+    ) {
+        if self.is_leaving(key_id) {
+            return;
+        }
         if let Some(t) = self.toasts.iter_mut().find(|t| t.id == key_id) {
+            // 已完成态（source 已清空）的新任务：重新入场
+            if t.source.is_none() {
+                t.created = Instant::now();
+                t.title = source.title();
+            }
             t.kind = kind;
-            t.title = title.clone();
-            t.message = message.clone();
-            t.progress = Some(fraction.clamp(0.0, 1.0));
-            t.progress_label = label.clone();
-            t.cancel = cancel;
+            t.source = Some(source.clone());
             t.leaving_since = None;
             if let Some(h) = self.history.iter_mut().find(|h| h.id == key_id) {
-                h.title = title.clone();
-                h.message = message.clone();
                 h.kind = kind;
-                h.progress = Some(fraction.clamp(0.0, 1.0));
-                h.progress_label = label.clone();
+                h.source = Some(source);
             } else {
-                self.history.push(HistoryEntry {
-                    id: key_id,
-                    kind,
-                    title: title.clone(),
-                    message: message.clone(),
-                    created: Instant::now(),
-                    read: false,
-                    progress: Some(fraction.clamp(0.0, 1.0)),
-                    progress_label: label.clone(),
-                });
-                if self.history.len() > self.max_history {
-                    let excess = self.history.len() - self.max_history;
-                    self.history.drain(0..excess);
-                }
+                self.push_history(key_id, kind, source);
             }
-            return key_id;
+            return;
         }
-        if key_id >= self.next_id {
-            self.next_id = key_id + 1;
-        }
-        let id = key_id;
-        let p = fraction.clamp(0.0, 1.0);
+        let now = Instant::now();
         self.toasts.push(Toast {
-            id,
+            id: key_id,
             kind,
-            title: title.clone(),
-            message: message.clone(),
-            created: Instant::now(),
-            progress: Some(p),
-            progress_label: label.clone(),
-            cancel,
+            title: source.title(),
+            message: String::new(),
+            created: now,
+            progress: None,
+            progress_label: String::new(),
+            cancel: source.cancel(),
             leaving_since: None,
+            source: Some(source.clone()),
         });
+        if self.history.iter().find(|h| h.id == key_id).is_none() {
+            self.push_history(key_id, kind, source);
+        }
+    }
+
+    fn push_history(
+        &mut self,
+        id: u64,
+        kind: ToastKind,
+        source: Arc<dyn super::model::ProgressSource>,
+    ) {
         self.history.push(HistoryEntry {
             id,
             kind,
-            title,
-            message,
+            title: source.title(),
+            message: String::new(),
             created: Instant::now(),
             read: false,
-            progress: Some(p),
-            progress_label: label,
+            progress: None,
+            progress_label: String::new(),
+            source: Some(source),
         });
         if self.history.len() > self.max_history {
             let excess = self.history.len() - self.max_history;
             self.history.drain(0..excess);
         }
-        id
     }
 
+    /// 显式覆盖进度（完成 label 等）：快照优先，清空 source 接管。
     pub fn update_progress(&mut self, id: u64, fraction: f32, label: impl Into<String>) {
         let label = label.into();
         let p = fraction.clamp(0.0, 1.0);
         if let Some(t) = self.toasts.iter_mut().find(|t| t.id == id) {
             t.progress = Some(p);
             t.progress_label = label.clone();
+            t.source = None;
         }
         if let Some(h) = self.history.iter_mut().find(|h| h.id == id) {
             h.progress = Some(p);
             h.progress_label = label;
+            h.source = None;
         }
     }
 
@@ -215,6 +210,7 @@ impl Notifications {
             t.progress_label = "已完成".to_string();
             t.cancel = None;
             t.leaving_since = None;
+            t.source = None;
             toast_found = true;
         }
         let mut hist_found = false;
@@ -224,6 +220,7 @@ impl Notifications {
             h.message = message.clone();
             h.progress = Some(1.0);
             h.progress_label = "已完成".to_string();
+            h.source = None;
             hist_found = true;
         }
         if !toast_found && !hist_found {
@@ -238,6 +235,7 @@ impl Notifications {
                 read: false,
                 progress: Some(1.0),
                 progress_label: "已完成".to_string(),
+                source: None,
             });
             if self.history.len() > self.max_history {
                 let excess = self.history.len() - self.max_history;
@@ -260,6 +258,7 @@ impl Notifications {
             t.progress_label = "失败".to_string();
             t.cancel = None;
             t.leaving_since = None;
+            t.source = None;
             toast_found = true;
         }
         let mut hist_found = false;
@@ -268,6 +267,7 @@ impl Notifications {
             h.title = title.clone();
             h.message = message.clone();
             h.progress_label = "失败".to_string();
+            h.source = None;
             hist_found = true;
         }
         if !toast_found && !hist_found {
@@ -282,6 +282,7 @@ impl Notifications {
                 read: false,
                 progress: None,
                 progress_label: "失败".to_string(),
+                source: None,
             });
             if self.history.len() > self.max_history {
                 let excess = self.history.len() - self.max_history;
@@ -305,7 +306,7 @@ impl Notifications {
         self.toasts
             .iter()
             .find(|t| t.id == id)
-            .and_then(|t| t.cancel.clone())
+            .and_then(super::model::resolve_cancel_toast)
     }
 
     pub fn remove_progress(&mut self, id: u64) {
