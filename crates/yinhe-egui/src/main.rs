@@ -14,6 +14,7 @@ mod chrome;
 mod dialogs;
 mod file_loader;
 mod mix;
+mod notifications;
 mod piano_view;
 mod platform;
 mod render_context;

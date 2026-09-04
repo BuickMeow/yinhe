@@ -68,9 +68,15 @@ impl App {
                         if self.audio_settings.push_recent_file(recent) {
                             self.audio_settings.save();
                         }
+                        let fname = std::path::Path::new(&path)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or(&path);
+                        self.notifications.success("已打开", fname.to_string());
                     }
                     Err(msg) => {
-                        self.load_error = Some(msg);
+                        self.load_error = Some(msg.clone());
+                        self.notifications.error("打开失败", msg);
                     }
                 }
             }
@@ -160,13 +166,16 @@ impl App {
                     {
                         self.audio_settings.save();
                     }
+                    self.notifications.success("已打开", file_name.clone());
                 } else {
-                    self.load_error =
-                        Some(t!("file_dialog.open_failed", name = file_name).to_string());
+                    let msg = t!("file_dialog.open_failed", name = file_name).to_string();
+                    self.load_error = Some(msg.clone());
+                    self.notifications.error("打开失败", msg);
                 }
             }
             LoadResult::ArchiveError(msg) => {
-                self.load_error = Some(msg);
+                self.load_error = Some(msg.clone());
+                self.notifications.error("打开失败", msg);
             }
             // UI 层 poll_loading 已把这两个变体转换为弹框状态（返回 NotReady），
             // 这里实际不会收到，空分支只是保证 match 穷尽。
@@ -182,7 +191,7 @@ impl App {
             self.save_progress_rx = None;
             self.save_progress = None;
             // Mark the active document as saved
-            if let Some(idx) = self.workspace.active_doc {
+            let saved_name = if let Some(idx) = self.workspace.active_doc {
                 self.workspace.documents[idx].mark_saved();
                 // 保存成功 → 记录到「最近修改的文件」
                 if let Some(path) = self.workspace.documents[idx].file_path.clone()
@@ -190,6 +199,14 @@ impl App {
                 {
                     self.audio_settings.save();
                 }
+                Some(self.workspace.documents[idx].file_name.clone())
+            } else {
+                None
+            };
+            if let Some(name) = saved_name {
+                self.notifications.success("已保存", name);
+            } else {
+                self.notifications.success("已保存", "");
             }
             // If there's a deferred action, execute it now
             if self.pending_unsaved.is_some() {
@@ -209,14 +226,24 @@ impl App {
             self.export.rx = None;
             match result {
                 Ok((path, elapsed, speed)) => {
+                    let fname = std::path::Path::new(&path)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(&path)
+                        .to_string();
                     self.export.completed = Some(crate::dialogs::export::ExportCompleted {
                         file_path: path,
                         elapsed_secs: elapsed,
                         overall_speed: speed,
                     });
+                    self.notifications.success(
+                        "导出完成",
+                        format!("{} ({:.1}s, {:.1}x)", fname, elapsed, speed),
+                    );
                 }
                 Err(e) => {
-                    self.load_error = Some(e);
+                    self.load_error = Some(e.clone());
+                    self.notifications.error("导出失败", e);
                 }
             }
         }

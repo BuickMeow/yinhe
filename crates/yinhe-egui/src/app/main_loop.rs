@@ -645,6 +645,7 @@ impl eframe::App for App {
             self.fps,
             &mut self.show_mem_breakdown,
             &self.status_hint,
+            &mut self.notifications,
         );
         // PR 显示切换 → 布局设置写盘（帧末 sync_layout_settings 统一落盘）
         if self.show_pianoroll_in_arrange != self.audio_settings.layout.show_pianoroll_in_arrange {
@@ -657,6 +658,10 @@ impl eframe::App for App {
         self.show_panels_and_overlays(ui, &layout);
         self.show_dialogs(ui);
         self.show_load_error_modal(ui);
+
+        // ── Toasts + 通知中心（浮空在内容之上，右下→右上）──
+        self.notifications.show_toasts(ui.ctx());
+        self.notifications.show_center(ui.ctx());
 
         // ── 布局设置持久化（拖拽结束帧才写盘）──
         self.sync_layout_settings();

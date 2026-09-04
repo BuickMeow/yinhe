@@ -144,6 +144,7 @@ pub fn show(
     fps: f32,
     show_mem_breakdown: &mut bool,
     status_hint: &Option<String>,
+    notifications: &mut crate::notifications::Notifications,
 ) {
     egui::Panel::bottom("bottom_bar")
         .frame(egui::Frame {
@@ -213,9 +214,31 @@ pub fn show(
                         let mut icon_hint: Option<String> = None;
 
                         // Right-most first (from right to left):
-                        //  1. ICON_INFO
-                        //  2. ICON_MUSIC_CAST
-                        //  3. ICON_AUTO_STORIES (event browser)
+                        //  1. Notifications (bell)
+                        //  2. ICON_INFO
+                        //  3. ICON_MUSIC_CAST
+                        //  4. ICON_AUTO_STORIES (event browser)
+
+                        // 通知铃铛：最右侧第一个，不与右侧栏联动
+                        {
+                            let has_unread = notifications.has_unread();
+                            let icon = if has_unread {
+                                ICON_NOTIFICATIONS_UNREAD
+                            } else {
+                                ICON_NOTIFICATIONS
+                            };
+                            let was_open = notifications.show_center;
+                            if right_icon_button(ui, icon, was_open, || {
+                                notifications.show_center = !was_open;
+                                if notifications.show_center {
+                                    notifications.mark_all_read();
+                                }
+                            }) {
+                                icon_hint = Some(t!("hint.notifications").to_string());
+                            }
+                        }
+
+                        ui.add_space(4.0);
 
                         if right_icon_button(
                             ui,

@@ -199,6 +199,9 @@ pub struct App {
     /// 自动化锚点剪贴板（与音符剪贴板独立）。
     /// 存储复制的锚点事件 + 源 target，粘贴时只应用到 target 匹配的面板。
     pub(crate) automation_clipboard: crate::app::automation_actions::AutomationClipboard,
+
+    // ── 通知中心（Toast + 历史）──
+    pub(crate) notifications: crate::notifications::Notifications,
 }
 
 impl App {
@@ -380,6 +383,7 @@ impl App {
             clipboard: yinhe_core::Selection::default(),
             cut_past_len: None,
             automation_clipboard: crate::app::automation_actions::AutomationClipboard::default(),
+            notifications: crate::notifications::Notifications::new(),
         };
 
         // Spawn the independent render thread for pianoroll GPU rendering.
