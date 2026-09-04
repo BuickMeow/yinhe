@@ -456,6 +456,9 @@ impl Notifications {
                 .order(egui::Order::Tooltip)
                 .movable(false)
                 .interactable(true)
+                // 允许飞出视口：否则 egui 默认 constrain 会把屏外的起点拉回窗内，
+                // 卡片看起来就是“右侧贴窗”而不是“从窗外滑入”
+                .constrain(false)
                 .show(ctx, |ui| {
                     let (d, c) = super::card::toast_card(ui, toast, CARD_W, 0.0, 1.0);
                     inner_dismiss = d;
@@ -550,6 +553,8 @@ impl Notifications {
                 .order(egui::Order::Tooltip)
                 .movable(false)
                 .interactable(true)
+                // 同上：允许从视口外飞入
+                .constrain(false)
                 .show(ctx, |ui| {
                     super::card::history_card(ui, entry, CARD_W);
                 });
