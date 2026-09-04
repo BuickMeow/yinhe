@@ -125,6 +125,21 @@ impl Notifications {
                 h.kind = kind;
                 h.progress = Some(fraction.clamp(0.0, 1.0));
                 h.progress_label = label.clone();
+            } else {
+                self.history.push(HistoryEntry {
+                    id: key_id,
+                    kind,
+                    title: title.clone(),
+                    message: message.clone(),
+                    created: Instant::now(),
+                    read: false,
+                    progress: Some(fraction.clamp(0.0, 1.0)),
+                    progress_label: label.clone(),
+                });
+                if self.history.len() > self.max_history {
+                    let excess = self.history.len() - self.max_history;
+                    self.history.drain(0..excess);
+                }
             }
             return key_id;
         }
@@ -163,9 +178,14 @@ impl Notifications {
 
     pub fn update_progress(&mut self, id: u64, fraction: f32, label: impl Into<String>) {
         let label = label.into();
+        let p = fraction.clamp(0.0, 1.0);
         if let Some(t) = self.toasts.iter_mut().find(|t| t.id == id) {
-            t.progress = Some(fraction.clamp(0.0, 1.0));
-            t.progress_label = label;
+            t.progress = Some(p);
+            t.progress_label = label.clone();
+        }
+        if let Some(h) = self.history.iter_mut().find(|h| h.id == id) {
+            h.progress = Some(p);
+            h.progress_label = label;
         }
     }
 
@@ -179,6 +199,7 @@ impl Notifications {
     ) {
         let title = title.into();
         let message = message.into();
+        let mut toast_found = false;
         if let Some(t) = self.toasts.iter_mut().find(|t| t.id == id) {
             t.kind = kind;
             t.title = title.clone();
@@ -187,22 +208,44 @@ impl Notifications {
             t.progress_label = "已完成".to_string();
             t.cancel = None;
             t.leaving_since = None;
+            toast_found = true;
         }
+        let mut hist_found = false;
         if let Some(h) = self.history.iter_mut().find(|h| h.id == id) {
             h.kind = kind;
             h.title = title.clone();
             h.message = message.clone();
             h.progress = Some(1.0);
             h.progress_label = "已完成".to_string();
+            hist_found = true;
         }
-        if self.toasts.iter().find(|t| t.id == id).is_none() {
+        if !toast_found && !hist_found {
             self.push(kind, title, message, None);
+        } else if toast_found && !hist_found {
+            self.history.push(HistoryEntry {
+                id,
+                kind,
+                title: title.clone(),
+                message: message.clone(),
+                created: Instant::now(),
+                read: false,
+                progress: Some(1.0),
+                progress_label: "已完成".to_string(),
+            });
+            if self.history.len() > self.max_history {
+                let excess = self.history.len() - self.max_history;
+                self.history.drain(0..excess);
+            }
+        } else if !toast_found && hist_found {
+            // toast 已被手动关闭但历史仍在，无需额外处理；若需要可重新弹出 toast
+            // 保持历史已更新即可
         }
     }
 
     pub fn fail_progress(&mut self, id: u64, title: impl Into<String>, message: impl Into<String>) {
         let title = title.into();
         let message = message.into();
+        let mut toast_found = false;
         if let Some(t) = self.toasts.iter_mut().find(|t| t.id == id) {
             t.kind = ToastKind::Error;
             t.title = title.clone();
@@ -210,15 +253,33 @@ impl Notifications {
             t.progress_label = "失败".to_string();
             t.cancel = None;
             t.leaving_since = None;
+            toast_found = true;
         }
+        let mut hist_found = false;
         if let Some(h) = self.history.iter_mut().find(|h| h.id == id) {
             h.kind = ToastKind::Error;
             h.title = title.clone();
             h.message = message.clone();
             h.progress_label = "失败".to_string();
+            hist_found = true;
         }
-        if self.toasts.iter().find(|t| t.id == id).is_none() {
+        if !toast_found && !hist_found {
             self.push(ToastKind::Error, title, message, None);
+        } else if toast_found && !hist_found {
+            self.history.push(HistoryEntry {
+                id,
+                kind: ToastKind::Error,
+                title: title.clone(),
+                message: message.clone(),
+                created: Instant::now(),
+                read: false,
+                progress: None,
+                progress_label: "失败".to_string(),
+            });
+            if self.history.len() > self.max_history {
+                let excess = self.history.len() - self.max_history;
+                self.history.drain(0..excess);
+            }
         }
     }
 
@@ -298,8 +359,8 @@ impl Notifications {
             // 常驻 toast 无动画时仍需偶尔重绘以响应 hover
             ctx.request_repaint_after(Duration::from_millis(500));
         }
-        // history 展开时也需动画
-        if self.center_open && !self.history.is_empty() {
+        // history 展开时也需动画（兜底：toast 回退也需）
+        if self.center_open && (!self.history.is_empty() || !self.toasts.is_empty()) {
             ctx.request_repaint_after(Duration::from_millis(16));
         }
     }
@@ -316,7 +377,7 @@ impl Notifications {
         const CARD_W: f32 = 360.0;
         const GAP: f32 = 8.0;
         const BOTTOM_PAD: f32 = 48.0;
-        const RIGHT_PAD: f32 = 32.0;
+        const RIGHT_PAD: f32 = 48.0;
 
         egui::Area::new(egui::Id::new("yinhe_toasts"))
             .anchor(
@@ -396,14 +457,21 @@ impl Notifications {
         if !self.center_open {
             return;
         }
-        tracing::debug!("show_center history={} center_open={}", self.history.len(), self.center_open);
-        if self.history.is_empty() {
+        tracing::debug!(
+            "show_center history={} center_open={}",
+            self.history.len(),
+            self.center_open
+        );
+        // 兜底：若历史为空但当前仍有浮动 toast，说明旧数据未同步，直接回退显示 toast
+        // 避免“点开铃铛一片空白”的空列表错觉
+        let has_any = !self.history.is_empty() || !self.toasts.is_empty();
+        if !has_any {
             return;
         }
         const CARD_W: f32 = 360.0;
         const GAP: f32 = 8.0;
         const BOTTOM_PAD: f32 = 48.0;
-        const RIGHT_PAD: f32 = 32.0;
+        const RIGHT_PAD: f32 = 48.0;
 
         let viewport_h = ctx.viewport_rect().height();
         let max_h = (viewport_h - BOTTOM_PAD - 24.0).max(120.0);
@@ -419,7 +487,7 @@ impl Notifications {
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical()
                     .max_height(max_h)
-                    .auto_shrink([false, false])
+                    .auto_shrink([true, true])
                     .stick_to_bottom(true)
                     .scroll_bar_visibility(
                         egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
@@ -428,15 +496,39 @@ impl Notifications {
                         ui.with_layout(egui::Layout::bottom_up(egui::Align::Max), |ui| {
                             ui.spacing_mut().item_spacing.y = 0.0;
                             let mut first = true;
-                            for entry in self.history.iter().rev() {
-                                if !first {
-                                    ui.allocate_response(
-                                        egui::vec2(CARD_W, GAP),
-                                        egui::Sense::hover(),
-                                    );
+                            if !self.history.is_empty() {
+                                for entry in self.history.iter().rev() {
+                                    if !first {
+                                        ui.allocate_response(
+                                            egui::vec2(CARD_W, GAP),
+                                            egui::Sense::hover(),
+                                        );
+                                    }
+                                    first = false;
+                                    super::card::history_card(ui, entry, CARD_W);
                                 }
-                                first = false;
-                                super::card::history_card(ui, entry, CARD_W);
+                            } else {
+                                // history 为空但 toast 仍在：用 toast 数据兜底渲染（只读样式）
+                                for toast in self.toasts.iter().rev() {
+                                    if !first {
+                                        ui.allocate_response(
+                                            egui::vec2(CARD_W, GAP),
+                                            egui::Sense::hover(),
+                                        );
+                                    }
+                                    first = false;
+                                    let tmp = super::model::HistoryEntry {
+                                        id: toast.id,
+                                        kind: toast.kind,
+                                        title: toast.title.clone(),
+                                        message: toast.message.clone(),
+                                        created: toast.created,
+                                        read: true,
+                                        progress: toast.progress,
+                                        progress_label: toast.progress_label.clone(),
+                                    };
+                                    super::card::history_card(ui, &tmp, CARD_W);
+                                }
                             }
                         });
                     });

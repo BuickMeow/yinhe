@@ -57,7 +57,7 @@ pub(crate) fn draw_card(
     let card_alpha = alpha;
     ui.scope(|ui| {
         let mut clip = ui.available_rect_before_wrap();
-        clip.max.x += 120.0;
+        clip.max.x += 24.0;
         clip.min.x -= 20.0;
         ui.set_clip_rect(clip);
         ui.allocate_ui_with_layout(
