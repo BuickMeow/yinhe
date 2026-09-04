@@ -158,30 +158,31 @@ pub(crate) fn draw_card(
                 }
             });
             if let Some(p) = progress {
-                ui.add_space(6.0);
-                let bar_w = width - 20.0;
-                let bar_h = 14.0;
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(bar_w, bar_h), egui::Sense::hover());
-                let bg = mul_alpha(crate::theme::line_fg().gamma_multiply(0.25), card_alpha);
-                ui.painter().rect_filled(rect, 4.0, bg);
-                let fg_rect = egui::Rect::from_min_size(
-                    rect.min,
-                    egui::vec2(rect.width() * p.clamp(0.0, 1.0), rect.height()),
-                );
-                ui.painter().rect_filled(
-                    fg_rect,
-                    4.0,
-                    mul_alpha(kind.color().gamma_multiply(0.85), card_alpha),
-                );
-                let pct = format!("{:.0}%", p.clamp(0.0, 1.0) * 100.0);
-                ui.painter().text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    pct,
-                    egui::FontId::proportional(10.0),
-                    mul_alpha(egui::Color32::WHITE, card_alpha),
-                );
+                // 已完成/失败或进度接近 1 时隐藏进度条
+                let is_done = p >= 0.999 || progress_label == "已完成" || progress_label == "失败";
+                if !is_done {
+                    ui.add_space(6.0);
+                    let bar_w = width - 20.0;
+                    let bar_h = 2.0;
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(bar_w, bar_h), egui::Sense::hover());
+                    let bg = mul_alpha(crate::theme::line_fg().gamma_multiply(0.25), card_alpha);
+                    ui.painter().rect_filled(rect, 1.0, bg);
+                    let fg_rect = egui::Rect::from_min_size(
+                        rect.min,
+                        egui::vec2(rect.width() * p.clamp(0.0, 1.0), rect.height()),
+                    );
+                    ui.painter().rect_filled(
+                        fg_rect,
+                        1.0,
+                        mul_alpha(kind.color().gamma_multiply(0.85), card_alpha),
+                    );
+                    ui.add_space(12.0);
+                    // 数字已在 progress_label 中外部显示，不再在条中心绘制
+                } else {
+                    // 已完成隐藏进度条，保持占位避免高度跳变
+                    ui.add_space(20.0);
+                }
             } else {
                 ui.add_space(20.0);
             }
