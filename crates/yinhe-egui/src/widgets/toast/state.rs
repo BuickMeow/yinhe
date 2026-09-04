@@ -16,6 +16,7 @@ pub struct Notifications {
     pub center_open: bool,
     max_history: usize,
     center_opened_at: Option<Instant>,
+    center_closed_at: Option<Instant>,
     prev_center_open: bool,
 }
 
@@ -40,6 +41,7 @@ impl Notifications {
             center_open: false,
             max_history: 100,
             center_opened_at: None,
+            center_closed_at: None,
             prev_center_open: false,
         }
     }
@@ -343,8 +345,10 @@ impl Notifications {
         if self.center_open != self.prev_center_open {
             if self.center_open {
                 self.center_opened_at = Some(now);
+                self.center_closed_at = None;
             } else {
                 self.center_opened_at = None;
+                self.center_closed_at = Some(now);
             }
             self.prev_center_open = self.center_open;
             ctx.request_repaint();
@@ -377,8 +381,10 @@ impl Notifications {
         if self.center_open && (!self.history.is_empty() || !self.toasts.is_empty()) {
             ctx.request_repaint_after(Duration::from_millis(16));
         }
-        // 重排 y 动画进行中也需重绘
-        if self.center_open || self.prev_center_open {
+        // 列表关闭退场动画进行中也需重绘
+        if let Some(closed) = self.center_closed_at
+            && now.duration_since(closed) < Duration::from_millis(400)
+        {
             ctx.request_repaint_after(Duration::from_millis(16));
         }
     }
@@ -419,8 +425,7 @@ impl Notifications {
         }
 
         let mut to_dismiss: Vec<u64> = Vec::new();
-        let len = self.toasts.len();
-        for (orig_idx, toast) in self.toasts.iter().enumerate().rev() {
+        for toast in self.toasts.iter().rev() {
             let target_y = if self.center_open {
                 // 重排至历史中的位置
                 history_y_map.get(&toast.id).copied().unwrap_or(BOTTOM_PAD)
@@ -434,16 +439,12 @@ impl Notifications {
             let y_off =
                 ctx.animate_value_with_time(egui::Id::new(("notif_y", toast.id)), target_y, 0.35);
             let is_leaving = toast.leaving_since.is_some();
-            let stagger = (len.saturating_sub(1).saturating_sub(orig_idx)) as f32 * 0.04;
             // 打开列表时已存在的 toast 不重新飞入，仅重排；离开时仍飞出
-            let (x_off, alpha) = if self.center_open && !is_leaving {
-                (0.0, 1.0)
+            let x_off = if self.center_open && !is_leaving {
+                0.0
             } else {
-                super::anim::fly_anim(toast, stagger)
+                super::anim::fly_anim(toast)
             };
-            if is_leaving && alpha < 0.02 {
-                continue;
-            }
             let mut inner_dismiss = false;
             let mut inner_cancel = false;
             let area_id = egui::Id::new(("yinhe_notif", toast.id));
@@ -456,7 +457,7 @@ impl Notifications {
                 .movable(false)
                 .interactable(true)
                 .show(ctx, |ui| {
-                    let (d, c) = super::card::toast_card(ui, toast, CARD_W, 0.0, alpha);
+                    let (d, c) = super::card::toast_card(ui, toast, CARD_W, 0.0, 1.0);
                     inner_dismiss = d;
                     inner_cancel = c;
                 });
@@ -481,10 +482,19 @@ impl Notifications {
     }
 
     pub fn show_center(&mut self, ctx: &egui::Context) {
-        if !self.center_open {
-            return;
-        }
-        if self.history.is_empty() {
+        // 关闭时：历史独有项做退场飞出（入场的严格反向），播完再停
+        let closing = !self.center_open;
+        if closing {
+            let Some(closed_at) = self.center_closed_at else {
+                return;
+            };
+            if Instant::now().duration_since(closed_at) > Duration::from_millis(350) {
+                return;
+            }
+            if self.history.is_empty() {
+                return;
+            }
+        } else if self.history.is_empty() {
             return;
         }
         tracing::debug!(
@@ -497,7 +507,6 @@ impl Notifications {
         const BOTTOM_PAD: f32 = 48.0;
         const RIGHT_PAD: f32 = 32.0;
         const EST_H: f32 = 110.0;
-        const FLY_DIST: f32 = 420.0;
 
         let viewport = ctx.viewport_rect();
         let max_h = (viewport.height() - BOTTOM_PAD - 24.0).max(120.0);
@@ -513,8 +522,7 @@ impl Notifications {
         }
 
         // 仅渲染历史中不在当前 toast 的那些（已在屏幕的由 show_toasts 负责重排）
-        let history_len = self.history.len();
-        for (orig_idx, entry) in self.history.iter().enumerate().rev() {
+        for entry in self.history.iter().rev() {
             if self.toasts.iter().any(|t| t.id == entry.id) {
                 continue;
             }
@@ -524,20 +532,14 @@ impl Notifications {
             }
             let y_off =
                 ctx.animate_value_with_time(egui::Id::new(("notif_y", entry.id)), target_y, 0.35);
-            // 新进入的历史项：从右侧飞入
-            let rev_pos = (history_len - 1 - orig_idx) as f32;
-            let stagger = rev_pos * 0.04;
-            let (x_off, alpha) = if let Some(opened_at) = self.center_opened_at {
-                let elapsed = Instant::now().duration_since(opened_at).as_secs_f32() - stagger;
-                if elapsed < 0.0 {
-                    (FLY_DIST, 1.0)
-                } else {
-                    let t = (elapsed / 0.32).clamp(0.0, 1.0);
-                    let e = 1.0 - (1.0 - t).powi(3);
-                    ((1.0 - e) * FLY_DIST, 1.0)
-                }
+            // 打开：无停顿直接从右侧飞入；关闭：入场的严格反向飞出
+            let x_off = if closing {
+                let closed_at = self.center_closed_at.unwrap_or_else(Instant::now);
+                super::anim::exit_x(Instant::now().duration_since(closed_at).as_secs_f32())
+            } else if let Some(opened_at) = self.center_opened_at {
+                super::anim::enter_x(Instant::now().duration_since(opened_at).as_secs_f32())
             } else {
-                (0.0, 1.0)
+                0.0
             };
             let area_id = egui::Id::new(("yinhe_notif", entry.id));
             egui::Area::new(area_id)
@@ -549,8 +551,6 @@ impl Notifications {
                 .movable(false)
                 .interactable(true)
                 .show(ctx, |ui| {
-                    // 复用与 toast 相同的卡片高度与动画，保持一致
-                    let _ = alpha;
                     super::card::history_card(ui, entry, CARD_W);
                 });
         }
