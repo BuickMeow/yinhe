@@ -168,7 +168,7 @@ impl Notifications {
             title,
             message,
             created: Instant::now(),
-            read: false,
+            read: self.center_open,
             progress: None,
             progress_label: String::new(),
             source: None,
@@ -293,7 +293,7 @@ impl Notifications {
             title: source.title(),
             message: String::new(),
             created: Instant::now(),
-            read: false,
+            read: self.center_open,
             progress: None,
             progress_label: String::new(),
             source: Some(source),
@@ -424,7 +424,7 @@ impl Notifications {
                 title: title.clone(),
                 message: message.clone(),
                 created: Instant::now(),
-                read: false,
+                read: self.center_open,
                 progress: Some(1.0),
                 progress_label: "已完成".to_string(),
                 source: None,
@@ -497,7 +497,7 @@ impl Notifications {
                 title: title.clone(),
                 message: message.clone(),
                 created: Instant::now(),
-                read: false,
+                read: self.center_open,
                 progress: None,
                 progress_label: "失败".to_string(),
                 source: None,
@@ -633,7 +633,7 @@ impl Notifications {
                     title: title.clone(),
                     message: message.clone(),
                     created: Instant::now(),
-                    read: false,
+                    read: self.center_open,
                     progress: frac,
                     progress_label: "已中止".to_string(),
                     source: None,
@@ -776,6 +776,8 @@ impl Notifications {
             if self.center_open {
                 self.center_opened_at = Some(now);
                 self.center_closed_at = None;
+                // 开列表边沿：旧未读清零（列表开着时新条目直接已读，见 push 系列）。
+                self.mark_all_read();
             } else {
                 self.center_opened_at = None;
                 self.center_closed_at = Some(now);
@@ -1758,5 +1760,55 @@ mod tests {
         assert!(n.collapsed.contains(&EXPORT_PROGRESS_ID));
         // show_close 取反逻辑：渲染层重（需真 egui 上下文量按钮），只测状态机；
         // show_toasts 以 !center_open 传 show_close，手动验证：列表开无 X、可 stop，关后有 X。
+    }
+
+    #[test]
+    fn center_open_edge_clears_unread() {
+        let mut n = Notifications::new();
+        // 关着时 push 产生未读
+        n.center_open = false;
+        n.tick(&ctx());
+        let _ = n.success("a", "b");
+        assert_eq!(n.unread_count(), 1);
+        // 开列表边沿清零
+        n.center_open = true;
+        n.tick(&ctx());
+        assert_eq!(n.unread_count(), 0);
+        assert!(!n.has_unread());
+    }
+
+    #[test]
+    fn center_open_push_and_ensure_stay_read() {
+        use std::sync::Arc;
+        struct S;
+        impl super::super::model::ProgressSource for S {
+            fn title(&self) -> String {
+                "t".into()
+            }
+            fn message(&self) -> String {
+                String::new()
+            }
+            fn fraction(&self) -> f32 {
+                0.5
+            }
+            fn detail(&self) -> String {
+                String::new()
+            }
+            fn cancel(&self) -> Option<Arc<AtomicBool>> {
+                None
+            }
+        }
+        let mut n = Notifications::new();
+        n.center_open = true;
+        n.tick(&ctx());
+        assert_eq!(n.unread_count(), 0);
+        // 开着时 push 不产生未读
+        let before = n.unread_count();
+        let _ = n.success("c", "d");
+        assert_eq!(n.unread_count(), before);
+        // 开着时 ensure 新任务不产生未读
+        n.ensure_progress(LOADING_PROGRESS_ID, ToastKind::Info, Arc::new(S));
+        assert_eq!(n.unread_count(), before);
+        assert!(!n.has_unread());
     }
 }
