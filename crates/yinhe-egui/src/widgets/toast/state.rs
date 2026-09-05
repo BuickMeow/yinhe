@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, atomic::AtomicBool};
 use std::time::{Duration, Instant};
 
@@ -26,6 +26,8 @@ pub struct Notifications {
     enabled: bool,
     /// 上次 tick 时刻（悬停暂停按帧间隔顺延 deadline 用）。
     last_tick: Option<Instant>,
+    /// 用户手动收起的进行中任务 id：ensure 只更新历史、不重建卡。
+    collapsed: HashSet<u64>,
 }
 
 pub const LOADING_PROGRESS_ID: u64 = 0x4C4F4144; // "LOAD"
@@ -55,6 +57,7 @@ impl Notifications {
             action_collapse_secs: Some(60),
             enabled: true,
             last_tick: None,
+            collapsed: HashSet::new(),
         }
     }
 
@@ -140,6 +143,7 @@ impl Notifications {
             collapse_at: self.collapse_deadline(dur),
             action: None,
             hovered: false,
+            cancelling: false,
         });
         self.history.push(HistoryEntry {
             id,
@@ -174,6 +178,11 @@ impl Notifications {
         if self.is_leaving(key_id) {
             return;
         }
+        // 用户收起中的任务：只更新历史条目，不重建浮动卡
+        if self.collapsed.contains(&key_id) {
+            self.sync_history_source(key_id, kind, source);
+            return;
+        }
         if let Some(t) = self.toasts.iter_mut().find(|t| t.id == key_id) {
             // 已完成态（source 已清空）的新任务：重新入场
             if t.source.is_none() {
@@ -185,12 +194,8 @@ impl Notifications {
             // 进行中不计时，完成时才起算
             t.collapse_at = None;
             t.leaving_since = None;
-            if let Some(h) = self.history.iter_mut().find(|h| h.id == key_id) {
-                h.kind = kind;
-                h.source = Some(source);
-            } else {
-                self.push_history(key_id, kind, source);
-            }
+            t.cancelling = false;
+            self.sync_history_source(key_id, kind, source);
             return;
         }
         let now = Instant::now();
@@ -208,10 +213,32 @@ impl Notifications {
             collapse_at: None,
             action: None,
             hovered: false,
+            cancelling: false,
         });
         if self.history.iter().find(|h| h.id == key_id).is_none() {
             self.push_history(key_id, kind, source);
         }
+    }
+
+    /// 历史条目换数据源（kind/source），无则新建；供 ensure 复用。
+    fn sync_history_source(
+        &mut self,
+        id: u64,
+        kind: ToastKind,
+        source: Arc<dyn super::model::ProgressSource>,
+    ) {
+        if let Some(h) = self.history.iter_mut().find(|h| h.id == id) {
+            h.kind = kind;
+            h.source = Some(source);
+        } else {
+            self.push_history(id, kind, source);
+        }
+    }
+
+    /// 清掉同 id 历史条目（完成/失败新建卡时去 frozen 进度，兼清收起标记）。
+    pub fn prune_history(&mut self, id: u64) {
+        self.history.retain(|h| h.id != id);
+        self.collapsed.remove(&id);
     }
 
     fn push_history(
@@ -278,6 +305,7 @@ impl Notifications {
             self.collapse_secs
         };
         let deadline = self.collapse_deadline(dur);
+        self.collapsed.remove(&id);
         let mut toast_found = false;
         if let Some(t) = self.toasts.iter_mut().find(|t| t.id == id) {
             t.kind = kind;
@@ -289,6 +317,7 @@ impl Notifications {
             t.leaving_since = None;
             t.source = None;
             t.collapse_at = deadline;
+            t.cancelling = false;
             toast_found = true;
         }
         let mut hist_found = false;
@@ -335,6 +364,7 @@ impl Notifications {
         let message = message.into();
         // 失败需用户留意，按可操作档计时
         let deadline = self.collapse_deadline(self.action_collapse_secs);
+        self.collapsed.remove(&id);
         let mut toast_found = false;
         if let Some(t) = self.toasts.iter_mut().find(|t| t.id == id) {
             t.kind = ToastKind::Error;
@@ -345,6 +375,7 @@ impl Notifications {
             t.leaving_since = None;
             t.source = None;
             t.collapse_at = deadline;
+            t.cancelling = false;
             toast_found = true;
         }
         let mut hist_found = false;
@@ -618,12 +649,16 @@ impl Notifications {
                     outcome = super::card::toast_card(ui, &self.toasts[idx], CARD_W, 0.0, 1.0);
                 });
             self.toasts[idx].hovered = outcome.hovered;
-            if outcome.dismiss {
-                to_dismiss.push(tid);
-            }
             if outcome.cancel {
+                // stop：只置 flag + 中止态，卡片留着等 abort 确认（见 C），不进退场
                 if let Some(c) = cancel_flag {
                     c.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                self.toasts[idx].cancelling = true;
+            } else if outcome.dismiss {
+                // 进行中任务收起：记 collapsed 防复活；静态卡直接退场
+                if self.toasts[idx].source.is_some() {
+                    self.collapsed.insert(tid);
                 }
                 to_dismiss.push(tid);
             }
@@ -969,5 +1004,81 @@ mod tests {
         assert!(n.history.iter().any(|h| h.id == id));
         n.tick(&ctx());
         assert!(n.toasts.iter().any(|t| t.id == id));
+    }
+
+    #[test]
+    fn collapsed_ensure_updates_history_without_card() {
+        use std::sync::Arc;
+        struct S(&'static str);
+        impl super::super::model::ProgressSource for S {
+            fn title(&self) -> String {
+                self.0.into()
+            }
+            fn message(&self) -> String {
+                String::new()
+            }
+            fn fraction(&self) -> f32 {
+                0.5
+            }
+            fn detail(&self) -> String {
+                String::new()
+            }
+            fn cancel(&self) -> Option<Arc<AtomicBool>> {
+                None
+            }
+        }
+        let mut n = Notifications::new();
+        n.ensure_progress(LOADING_PROGRESS_ID, ToastKind::Info, Arc::new(S("v1")));
+        assert!(n.has_progress(LOADING_PROGRESS_ID));
+        // 模拟用户点 X 收起进行中任务
+        n.collapsed.insert(LOADING_PROGRESS_ID);
+        n.dismiss_toast(LOADING_PROGRESS_ID);
+        std::thread::sleep(Duration::from_millis(330));
+        n.tick(&ctx());
+        assert!(!n.has_progress(LOADING_PROGRESS_ID));
+        // 收起后 ensure 不建卡，只更新历史
+        n.ensure_progress(LOADING_PROGRESS_ID, ToastKind::Info, Arc::new(S("v2")));
+        assert!(!n.has_progress(LOADING_PROGRESS_ID));
+        let h = n
+            .history
+            .iter()
+            .find(|h| h.id == LOADING_PROGRESS_ID)
+            .unwrap();
+        // 历史渲染走 live source，标题应为新任务
+        assert_eq!(h.source.as_ref().unwrap().title(), "v2");
+        // 任务结束清收起标记，下个任务恢复建卡
+        n.prune_history(LOADING_PROGRESS_ID);
+        n.ensure_progress(LOADING_PROGRESS_ID, ToastKind::Info, Arc::new(S("v3")));
+        assert!(n.has_progress(LOADING_PROGRESS_ID));
+    }
+
+    #[test]
+    fn prune_history_clears_frozen_entry_and_collapsed() {
+        use std::sync::Arc;
+        struct S;
+        impl super::super::model::ProgressSource for S {
+            fn title(&self) -> String {
+                "t".into()
+            }
+            fn message(&self) -> String {
+                String::new()
+            }
+            fn fraction(&self) -> f32 {
+                0.5
+            }
+            fn detail(&self) -> String {
+                String::new()
+            }
+            fn cancel(&self) -> Option<Arc<AtomicBool>> {
+                None
+            }
+        }
+        let mut n = Notifications::new();
+        n.ensure_progress(EXPORT_PROGRESS_ID, ToastKind::Info, Arc::new(S));
+        n.collapsed.insert(EXPORT_PROGRESS_ID);
+        assert!(n.history.iter().any(|h| h.id == EXPORT_PROGRESS_ID));
+        n.prune_history(EXPORT_PROGRESS_ID);
+        assert!(!n.history.iter().any(|h| h.id == EXPORT_PROGRESS_ID));
+        assert!(!n.collapsed.contains(&EXPORT_PROGRESS_ID));
     }
 }

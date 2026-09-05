@@ -95,6 +95,8 @@ impl App {
                             }
                         } else {
                             self.notifications
+                                .prune_history(crate::widgets::toast::LOADING_PROGRESS_ID);
+                            self.notifications
                                 .success("MIDI加载完成", fname.to_string());
                         }
                     }
@@ -113,6 +115,8 @@ impl App {
                                 msg.clone(),
                             );
                         } else {
+                            self.notifications
+                                .prune_history(crate::widgets::toast::LOADING_PROGRESS_ID);
                             self.notifications.error("打开失败", msg);
                         }
                     }
@@ -227,6 +231,8 @@ impl App {
                         }
                     } else {
                         self.notifications
+                            .prune_history(crate::widgets::toast::LOADING_PROGRESS_ID);
+                        self.notifications
                             .success("MIDI加载完成", file_name.clone());
                     }
                 } else {
@@ -245,6 +251,8 @@ impl App {
                             msg.clone(),
                         );
                     } else {
+                        self.notifications
+                            .prune_history(crate::widgets::toast::LOADING_PROGRESS_ID);
                         self.notifications.error("打开失败", msg);
                     }
                 }
@@ -264,6 +272,8 @@ impl App {
                         msg.clone(),
                     );
                 } else {
+                    self.notifications
+                        .prune_history(crate::widgets::toast::LOADING_PROGRESS_ID);
                     self.notifications.error("打开失败", msg);
                 }
             }
@@ -319,8 +329,12 @@ impl App {
                     );
                 }
             } else if let Some(name) = saved_name {
+                self.notifications
+                    .prune_history(crate::widgets::toast::SAVE_PROGRESS_ID);
                 self.notifications.success("已保存", name);
             } else {
+                self.notifications
+                    .prune_history(crate::widgets::toast::SAVE_PROGRESS_ID);
                 self.notifications.success("已保存", "");
             }
             // If there's a deferred action, execute it now
@@ -375,6 +389,8 @@ impl App {
                             ),
                         );
                     } else {
+                        self.notifications
+                            .prune_history(crate::widgets::toast::EXPORT_PROGRESS_ID);
                         let nid = self.notifications.success(
                             "导出完成",
                             format!("{} ({:.1}s, {:.1}x)", fname, elapsed, speed),
@@ -403,6 +419,8 @@ impl App {
                             e.clone(),
                         );
                     } else {
+                        self.notifications
+                            .prune_history(crate::widgets::toast::EXPORT_PROGRESS_ID);
                         self.notifications.error("导出失败", e);
                     }
                 }

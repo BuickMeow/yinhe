@@ -61,6 +61,8 @@ pub(crate) struct Toast {
     pub(crate) action: Option<ToastAction>,
     /// 上帧渲染时指针是否悬停（悬停暂停自动收起计时）。
     pub(crate) hovered: bool,
+    /// stop 已点、中止确认中（按钮置灰，detail 显示“正在中止…”）。
+    pub(crate) cancelling: bool,
 }
 
 // ── 历史记录（持久，与 Toast 同尺寸以便复用）──

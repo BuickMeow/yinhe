@@ -240,6 +240,8 @@ impl App {
                             msg,
                         );
                     } else {
+                        self.notifications
+                            .prune_history(crate::widgets::toast::RESCALE_PROGRESS_ID);
                         self.notifications.error("缩放失败", msg);
                     }
                 }
