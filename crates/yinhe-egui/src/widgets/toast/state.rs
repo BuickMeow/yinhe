@@ -28,6 +28,8 @@ pub struct Notifications {
     last_tick: Option<Instant>,
     /// 用户手动收起的进行中任务 id：ensure 只更新历史、不重建卡。
     collapsed: HashSet<u64>,
+    /// 每张卡上帧实测高度（`ui.min_rect().height()`），堆叠按真实高度累加。
+    card_h: HashMap<u64, f32>,
 }
 
 pub const LOADING_PROGRESS_ID: u64 = 0x4C4F4144; // "LOAD"
@@ -58,6 +60,7 @@ impl Notifications {
             enabled: true,
             last_tick: None,
             collapsed: HashSet::new(),
+            card_h: HashMap::new(),
         }
     }
 
@@ -96,6 +99,11 @@ impl Notifications {
 
     fn collapse_deadline(&self, secs: Option<u32>) -> Option<Instant> {
         secs.map(|s| Instant::now() + Duration::from_secs(u64::from(s)))
+    }
+
+    /// 该卡上帧实测高度；无实测（首帧）回退固定估算。
+    fn measured_h(&self, id: u64, fallback: f32) -> f32 {
+        self.card_h.get(&id).copied().unwrap_or(fallback)
     }
 
     // ── 对外推送 API ──
@@ -661,6 +669,10 @@ impl Notifications {
         if self.toasts.len() != before {
             needs_repaint = true;
         }
+        // 实测高度只保留还存在的卡，防 map 无限涨（量级小，直接查）。
+        self.card_h.retain(|id, _| {
+            self.toasts.iter().any(|t| t.id == *id) || self.history.iter().any(|h| h.id == *id)
+        });
         // 自动收起到期：走正常离开动画，只收浮动卡，历史保留
         let expired: Vec<u64> = self
             .toasts
@@ -724,21 +736,25 @@ impl Notifications {
         let viewport = ctx.viewport_rect();
         let max_h = (viewport.height() - BOTTOM_PAD - 24.0).max(120.0);
 
-        // 预计算目标 y：toast 堆叠 vs 历史堆叠
+        // 预计算目标 y：toast 堆叠 vs 历史堆叠（按每张卡实测高度累加）
         let mut toast_y_map: HashMap<u64, f32> = HashMap::new();
         {
-            let mut cum: f32 = 0.0;
-            for toast in self.toasts.iter().rev() {
-                toast_y_map.insert(toast.id, BOTTOM_PAD + cum);
-                cum += EST_H + GAP;
+            let ids: Vec<u64> = self.toasts.iter().rev().map(|t| t.id).collect();
+            for (id, y) in ids
+                .iter()
+                .zip(stack_ys(&self.card_h, &ids, BOTTOM_PAD, GAP, EST_H))
+            {
+                toast_y_map.insert(*id, y);
             }
         }
         let mut history_y_map: HashMap<u64, f32> = HashMap::new();
         {
-            let mut cum: f32 = 0.0;
-            for entry in self.history.iter().rev() {
-                history_y_map.insert(entry.id, BOTTOM_PAD + cum);
-                cum += EST_H + GAP;
+            let ids: Vec<u64> = self.history.iter().rev().map(|h| h.id).collect();
+            for (id, y) in ids
+                .iter()
+                .zip(stack_ys(&self.card_h, &ids, BOTTOM_PAD, GAP, EST_H))
+            {
+                history_y_map.insert(*id, y);
             }
         }
 
@@ -751,7 +767,7 @@ impl Notifications {
             } else {
                 toast_y_map.get(&tid).copied().unwrap_or(BOTTOM_PAD)
             };
-            if target_y > max_h + EST_H {
+            if target_y > max_h + self.measured_h(tid, EST_H) {
                 self.toasts[idx].hovered = false;
                 continue;
             }
@@ -769,7 +785,7 @@ impl Notifications {
             let action_opt = self.toasts[idx].action.clone();
             let mut outcome = super::model::CardOutcome::default();
             let area_id = egui::Id::new(("yinhe_notif", tid));
-            egui::Area::new(area_id)
+            let area_resp = egui::Area::new(area_id)
                 .anchor(
                     egui::Align2::RIGHT_BOTTOM,
                     egui::vec2(-RIGHT_PAD + x_off, -y_off),
@@ -782,7 +798,9 @@ impl Notifications {
                 .constrain(false)
                 .show(ctx, |ui| {
                     outcome = super::card::toast_card(ui, &self.toasts[idx], CARD_W, 0.0, 1.0);
+                    ui.min_rect().height()
                 });
+            self.card_h.insert(tid, area_resp.inner);
             self.toasts[idx].hovered = outcome.hovered;
             if outcome.cancel {
                 // stop：只置 flag + 中止态，卡片留着等 abort 确认（见 C），不进退场
@@ -846,27 +864,30 @@ impl Notifications {
         let viewport = ctx.viewport_rect();
         let max_h = (viewport.height() - BOTTOM_PAD - 24.0).max(120.0);
 
-        // 预计算历史目标 y（最新在底部）
+        // 预计算历史目标 y（最新在底部，按每张卡实测高度累加）
         let mut history_y_map: HashMap<u64, f32> = HashMap::new();
         {
-            let mut cum: f32 = 0.0;
-            for entry in self.history.iter().rev() {
-                history_y_map.insert(entry.id, BOTTOM_PAD + cum);
-                cum += EST_H + GAP;
+            let ids: Vec<u64> = self.history.iter().rev().map(|h| h.id).collect();
+            for (id, y) in ids
+                .iter()
+                .zip(stack_ys(&self.card_h, &ids, BOTTOM_PAD, GAP, EST_H))
+            {
+                history_y_map.insert(*id, y);
             }
         }
 
         // 仅渲染历史中不在当前 toast 的那些（已在屏幕的由 show_toasts 负责重排）
-        for entry in self.history.iter().rev() {
-            if self.toasts.iter().any(|t| t.id == entry.id) {
+        for idx in (0..self.history.len()).rev() {
+            if self.toasts.iter().any(|t| t.id == self.history[idx].id) {
                 continue;
             }
-            let target_y = history_y_map.get(&entry.id).copied().unwrap_or(BOTTOM_PAD);
-            if target_y > max_h + EST_H {
+            let tid = self.history[idx].id;
+            let target_y = history_y_map.get(&tid).copied().unwrap_or(BOTTOM_PAD);
+            if target_y > max_h + self.measured_h(tid, EST_H) {
                 continue;
             }
             let y_off =
-                ctx.animate_value_with_time(egui::Id::new(("notif_y", entry.id)), target_y, 0.35);
+                ctx.animate_value_with_time(egui::Id::new(("notif_y", tid)), target_y, 0.35);
             // 打开：无停顿直接从右侧飞入；关闭：入场的严格反向飞出
             let x_off = if closing {
                 let closed_at = self.center_closed_at.unwrap_or_else(Instant::now);
@@ -876,8 +897,8 @@ impl Notifications {
             } else {
                 0.0
             };
-            let area_id = egui::Id::new(("yinhe_notif", entry.id));
-            egui::Area::new(area_id)
+            let area_id = egui::Id::new(("yinhe_notif", tid));
+            let area_resp = egui::Area::new(area_id)
                 .anchor(
                     egui::Align2::RIGHT_BOTTOM,
                     egui::vec2(-RIGHT_PAD + x_off, -y_off),
@@ -888,11 +909,31 @@ impl Notifications {
                 // 同上：允许从视口外飞入
                 .constrain(false)
                 .show(ctx, |ui| {
-                    super::card::history_card(ui, entry, CARD_W);
+                    super::card::history_card(ui, &self.history[idx], CARD_W);
+                    ui.min_rect().height()
                 });
+            self.card_h.insert(tid, area_resp.inner);
         }
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
     }
+}
+
+/// 堆叠 y 累加：按 ids 顺序（调用方先排好，如最新在底则传 rev 后），逐项取实测高度，
+/// 缺失 id 用 fallback。返回与 ids 等长对齐的 y。
+fn stack_ys(
+    heights: &HashMap<u64, f32>,
+    ids: &[u64],
+    bottom_pad: f32,
+    gap: f32,
+    fallback: f32,
+) -> Vec<f32> {
+    let mut cum: f32 = 0.0;
+    let mut out = Vec::with_capacity(ids.len());
+    for id in ids {
+        out.push(bottom_pad + cum);
+        cum += heights.get(id).copied().unwrap_or(fallback) + gap;
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1359,5 +1400,30 @@ mod tests {
             !pause_flag.load(Ordering::Relaxed),
             "set_enabled(false) must resume paused task"
         );
+    }
+
+    #[test]
+    fn stack_ys_equal_heights() {
+        let heights: HashMap<u64, f32> = [(1, 80.0), (2, 80.0)].into_iter().collect();
+        assert_eq!(
+            stack_ys(&heights, &[1, 2], 48.0, 8.0, 110.0),
+            vec![48.0, 136.0]
+        );
+    }
+
+    #[test]
+    fn stack_ys_mixed_heights_with_fallback() {
+        let heights: HashMap<u64, f32> = [(1, 60.0), (3, 90.0)].into_iter().collect();
+        // id=2 缺失用 fallback=110：48, 48+60+8=116, 116+110+8=234
+        assert_eq!(
+            stack_ys(&heights, &[1, 2, 3], 48.0, 8.0, 110.0),
+            vec![48.0, 116.0, 234.0]
+        );
+    }
+
+    #[test]
+    fn stack_ys_empty() {
+        let heights: HashMap<u64, f32> = HashMap::new();
+        assert!(stack_ys(&heights, &[], 48.0, 8.0, 110.0).is_empty());
     }
 }
