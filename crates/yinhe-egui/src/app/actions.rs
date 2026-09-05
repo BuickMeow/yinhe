@@ -746,12 +746,15 @@ impl App {
         };
         let export_progress = self.export.progress.clone();
         let cancel_flag = self.export.cancel.clone();
+        let pause_flag = self.export.pause.clone();
         // 记下输出路径：中止卡“打开文件夹”按钮用
         self.export.last_output_path = Some(path_str.clone());
         // 混音台 strip 参数随导出（insert 效果器不导出，见 export_wav 文档）。
         let mixer = doc.mixer.clone();
         let use_gpu_synth = self.audio_settings.use_gpu_synth;
         cancel_flag.store(false, std::sync::atomic::Ordering::Relaxed);
+        // 新导出开始复位暂停（跟 cancel_flag 同位置；否则上次暂停残留会卡住新任务）。
+        pause_flag.store(false, std::sync::atomic::Ordering::Relaxed);
 
         // Reset progress state（计时起点为按钮点击时刻，保证壁钟时间真实）
         {
@@ -801,7 +804,7 @@ impl App {
                         gpu_queue,
                         Some(export_progress.clone()),
                         Some(cancel_flag.clone()),
-                        None,
+                        Some(pause_flag.clone()),
                     )
                 } else {
                     eprintln!("[export] GPU selected but no SFZ path, fallback to CPU.");
@@ -823,7 +826,7 @@ impl App {
                         },
                         Some(export_progress.clone()),
                         Some(cancel_flag),
-                        None,
+                        Some(pause_flag),
                         Some(&mixer),
                     )
                 }
@@ -848,7 +851,7 @@ impl App {
                     },
                     Some(export_progress.clone()),
                     Some(cancel_flag),
-                    None,
+                    Some(pause_flag),
                     Some(&mixer),
                 )
             };
@@ -872,7 +875,7 @@ impl App {
                 },
                 Some(export_progress.clone()),
                 Some(cancel_flag),
-                None,
+                Some(pause_flag),
                 Some(&mixer),
             );
             // Capture final stats before hiding the progress window.

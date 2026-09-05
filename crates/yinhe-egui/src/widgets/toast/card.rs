@@ -101,6 +101,7 @@ pub(crate) fn draw_card(
     progress_label: &str,
     show_close: bool,
     cancel: Option<Arc<AtomicBool>>,
+    pause: Option<Arc<AtomicBool>>,
     action: Option<&super::model::ToastAction>,
     cancelling: bool,
 ) -> super::model::CardOutcome {
@@ -255,7 +256,10 @@ pub(crate) fn draw_card(
         }
         // 右侧按钮覆盖层：相对整卡真正垂直居中（只在有按钮时分配，历史卡片不分配）
         let mut overlay_hovered = false;
-        if show_close || (cancel.is_some() && progress.is_some()) || action.is_some() {
+        if show_close
+            || ((cancel.is_some() || pause.is_some()) && progress.is_some())
+            || action.is_some()
+        {
             let card_rect = frame_resp.response.rect;
             let center_y = card_rect.center().y;
             let right = card_rect.max.x - 10.0;
@@ -303,6 +307,32 @@ pub(crate) fn draw_card(
                             outcome.cancel = true;
                         }
                         overlay_hovered |= resp2.hovered();
+                    }
+                    // 暂停按钮：与 stop 同条件显示（进行中、有 source），位于 stop 左侧；
+                    // 右→左顺序：收起箭头、stop、pause。cancelling 时不画。
+                    // 点击直接 toggle flag（原子操作，无需 outcome 回传）。
+                    if let Some(p) = &pause
+                        && progress.is_some()
+                        && !cancelling
+                    {
+                        ui.add_space(6.0);
+                        let is_paused = p.load(std::sync::atomic::Ordering::Relaxed);
+                        let icon = if is_paused {
+                            ICON_PLAY_ARROW
+                        } else {
+                            ICON_PAUSE
+                        };
+                        let resp_pause = crate::widgets::hover::hover_button(
+                            ui,
+                            icon.codepoint,
+                            egui::FontId::new(crate::theme::ICON_FONT_SM, icon.font_family()),
+                            mul_alpha(crate::theme::text_muted(), card_alpha),
+                            false,
+                        );
+                        if resp_pause.clicked() {
+                            p.store(!is_paused, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        overlay_hovered |= resp_pause.hovered();
                     }
                     // 操作按钮（如“打开文件夹”）：只执行不收卡，收起交给自动计时；
                     // 有图标画图标按钮（hover tooltip 显示 label），否则走文字分支
@@ -371,6 +401,7 @@ pub(crate) fn toast_card(
         &label,
         true,
         super::model::resolve_cancel_toast(toast),
+        super::model::resolve_pause_toast(toast),
         toast.action.as_ref(),
         toast.cancelling,
     )
@@ -381,7 +412,7 @@ pub(crate) fn history_card(ui: &mut egui::Ui, entry: &HistoryEntry, width: f32) 
     let (title, message, progress, label) = super::model::resolve_history(entry);
     let _ = draw_card(
         ui, width, 0.0, 1.0, entry.kind, &title, &message, progress, &label, false, None, None,
-        false,
+        None, false,
     );
 }
 
@@ -399,6 +430,24 @@ mod tests {
         label: &str,
         action: Option<ToastAction>,
     ) -> f32 {
+        card_height_full(
+            width, title, message, progress, label, action, false, false, false,
+        )
+    }
+
+    /// 带取消/暂停按钮的高度测量（暂停按钮与 stop 同条件显示，验证覆盖层没被撑大）。
+    #[allow(clippy::too_many_arguments)]
+    fn card_height_full(
+        width: f32,
+        title: &str,
+        message: &str,
+        progress: Option<f32>,
+        label: &str,
+        action: Option<ToastAction>,
+        with_cancel: bool,
+        with_pause: bool,
+        cancelling: bool,
+    ) -> f32 {
         let ctx = egui::Context::default();
         // 注册图标字体（app 启动时同款，否则图标 label 排版 panic）
         ctx.add_font(egui_material_icons::font_insert());
@@ -409,6 +458,16 @@ mod tests {
                 egui::vec2(1400.0, 900.0),
             )),
             ..Default::default()
+        };
+        let cancel = if with_cancel {
+            Some(Arc::new(AtomicBool::new(false)))
+        } else {
+            None
+        };
+        let pause_flag = if with_pause {
+            Some(Arc::new(AtomicBool::new(false)))
+        } else {
+            None
         };
         let mut out = ctx.run_ui(raw, |ui| {
             draw_card(
@@ -422,13 +481,51 @@ mod tests {
                 progress,
                 label,
                 true,
-                None,
+                cancel.clone(),
+                pause_flag.clone(),
                 action.as_ref(),
-                false,
+                cancelling,
             );
             h = ui.min_rect().height();
         });
         // 无头测试不贴纹理，显式丢弃（否则 debug 下 panic）
+        out.textures_delta.clear();
+        h
+    }
+
+    /// 暂停中（flag=true）高度测量：与进行中同按钮数，detail 覆盖“已暂停”仍 1 行。
+    fn card_height_paused(width: f32, title: &str, message: &str, progress: f32) -> f32 {
+        let ctx = egui::Context::default();
+        ctx.add_font(egui_material_icons::font_insert());
+        let mut h = 0.0;
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1400.0, 900.0),
+            )),
+            ..Default::default()
+        };
+        let cancel = Some(Arc::new(AtomicBool::new(false)));
+        let pause_flag = Some(Arc::new(AtomicBool::new(true)));
+        let mut out = ctx.run_ui(raw, |ui| {
+            draw_card(
+                ui,
+                width,
+                0.0,
+                1.0,
+                ToastKind::Info,
+                title,
+                message,
+                Some(progress),
+                "已暂停",
+                true,
+                cancel.clone(),
+                pause_flag.clone(),
+                None,
+                false,
+            );
+            h = ui.min_rect().height();
+        });
         out.textures_delta.clear();
         h
     }
@@ -503,6 +600,19 @@ mod tests {
             "已中止",
             Some(icon_action("打开文件夹")),
         );
+        // 暂停中：按钮数（收起+stop+pause）/行数与进行中一致，detail“已暂停”仍 1 行
+        let running_with_pause = card_height_full(
+            w,
+            "正在导出",
+            "渲染中 64%",
+            Some(0.64),
+            "已渲染00:12 · 当前8.1x",
+            None,
+            true,
+            true,
+            false,
+        );
+        let paused = card_height_paused(w, "正在导出", "渲染中 64%", 0.64);
         assert_same_height(&[
             running_empty,
             running_short,
@@ -514,6 +624,60 @@ mod tests {
             done_action,
             aborted,
             aborted_action,
+            running_with_pause,
+            paused,
         ]);
+    }
+
+    /// 暂停 toggle 翻转 flag（resolve+toggle 链路；draw_card 内点击即同语义 store）。
+    #[test]
+    fn pause_toggle_flips_flag() {
+        use super::super::kind::ToastKind as Kind;
+        use super::super::model::Toast;
+        use super::super::model::{resolve_pause_toast, resolve_toast};
+        use std::time::Instant as StdInstant;
+        let pause_flag = Arc::new(AtomicBool::new(false));
+        // ExportToastSource 级真 flag（与线上同构）
+        let progress = yinhe_audio::export::ExportProgress::new();
+        let src = Arc::new(crate::app::export_state::ExportToastSource {
+            progress,
+            cancel: Arc::new(AtomicBool::new(false)),
+            pause: Arc::clone(&pause_flag),
+        });
+        let toast = Toast {
+            id: 1,
+            kind: Kind::Info,
+            title: String::new(),
+            message: String::new(),
+            created: StdInstant::now(),
+            progress: None,
+            progress_label: String::new(),
+            cancel: None,
+            leaving_since: None,
+            source: Some(src),
+            collapse_at: None,
+            action: None,
+            hovered: false,
+            cancelling: false,
+        };
+        // 未暂停时 detail 非“已暂停”
+        let resolved = resolve_pause_toast(&toast);
+        assert!(resolved.is_some());
+        if let Some(p) = resolved {
+            assert!(!p.load(std::sync::atomic::Ordering::Relaxed));
+            // 模拟暂停按钮点击 toggle
+            let cur = p.load(std::sync::atomic::Ordering::Relaxed);
+            p.store(!cur, std::sync::atomic::Ordering::Relaxed);
+        }
+        assert!(pause_flag.load(std::sync::atomic::Ordering::Relaxed));
+        // 已暂停态 detail 覆盖“已暂停”
+        let (_, _, _, detail) = resolve_toast(&toast);
+        assert_eq!(detail, "已暂停");
+        // 再 toggle 恢复
+        if let Some(p) = resolve_pause_toast(&toast) {
+            let cur = p.load(std::sync::atomic::Ordering::Relaxed);
+            p.store(!cur, std::sync::atomic::Ordering::Relaxed);
+        }
+        assert!(!pause_flag.load(std::sync::atomic::Ordering::Relaxed));
     }
 }

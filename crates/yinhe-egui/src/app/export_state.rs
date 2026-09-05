@@ -18,6 +18,8 @@ pub(crate) struct ExportState {
     pub progress: Arc<Mutex<ExportProgress>>,
     /// Flag to signal the export thread to cancel.
     pub cancel: Arc<std::sync::atomic::AtomicBool>,
+    /// Flag to signal the export thread to pause (true=paused, spin-wait in render loop).
+    pub pause: Arc<std::sync::atomic::AtomicBool>,
     /// Result of a completed export (shown as a dialog until dismissed).
     pub completed: Option<ExportCompleted>,
     /// Whether the bit-depth dropdown is open.
@@ -38,6 +40,7 @@ impl ExportState {
             rx: None,
             progress: ExportProgress::new(),
             cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            pause: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             completed: None,
             show_bit_depth: false,
             bit_depth: WavBitDepth::Bit24,
@@ -52,6 +55,7 @@ impl ExportState {
 pub(crate) struct ExportToastSource {
     pub progress: Arc<Mutex<ExportProgress>>,
     pub cancel: Arc<std::sync::atomic::AtomicBool>,
+    pub pause: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl ExportToastSource {
@@ -102,5 +106,8 @@ impl ProgressSource for ExportToastSource {
     }
     fn cancel(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
         Some(self.cancel.clone())
+    }
+    fn pause(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
+        Some(self.pause.clone())
     }
 }

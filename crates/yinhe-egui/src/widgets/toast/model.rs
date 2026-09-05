@@ -42,6 +42,10 @@ pub(crate) trait ProgressSource: Send + Sync {
     fn detail(&self) -> String;
     /// 取消句柄（保存任务不支持取消，给 None）。
     fn cancel(&self) -> Option<Arc<AtomicBool>>;
+    /// 暂停句柄（仅导出任务给 Some，其余默认 None → 暂停按钮自动只出现在导出卡）。
+    fn pause(&self) -> Option<Arc<AtomicBool>> {
+        None
+    }
 }
 
 // ── 单条 Toast（常驻，需手动关闭；完成后按设置自动收进列表）──
@@ -85,6 +89,7 @@ pub(crate) struct HistoryEntry {
 
 /// 渲染用解析值：有 source 读 live，无则读快照。
 /// 中止中 detail 覆盖为“正在中止…”（仍 1 行，高度不变）。
+/// 已暂停 detail 覆盖为“已暂停”（优先级低于“正在中止…”；仍 1 行，高度不变）。
 /// 返回 (标题, 正文, 进度, 详情)。
 pub(crate) fn resolve_toast(t: &Toast) -> (String, String, Option<f32>, String) {
     if t.cancelling {
@@ -104,12 +109,24 @@ pub(crate) fn resolve_toast(t: &Toast) -> (String, String, Option<f32>, String) 
             )
         }
     } else if let Some(s) = &t.source {
-        (
-            s.title(),
-            s.message(),
-            Some(s.fraction().clamp(0.0, 1.0)),
-            s.detail(),
-        )
+        // 已暂停覆盖 detail（进度条本身冻结，无需处理；仍 1 行高度不变）
+        if s.pause()
+            .is_some_and(|p| p.load(std::sync::atomic::Ordering::Relaxed))
+        {
+            (
+                s.title(),
+                s.message(),
+                Some(s.fraction().clamp(0.0, 1.0)),
+                "已暂停".to_string(),
+            )
+        } else {
+            (
+                s.title(),
+                s.message(),
+                Some(s.fraction().clamp(0.0, 1.0)),
+                s.detail(),
+            )
+        }
     } else {
         (
             t.title.clone(),
@@ -144,4 +161,9 @@ pub(crate) fn resolve_cancel_toast(t: &Toast) -> Option<Arc<AtomicBool>> {
         .as_ref()
         .and_then(|s| s.cancel())
         .or_else(|| t.cancel.clone())
+}
+
+/// 暂停句柄解析：有 source 读 live；无 source 则无暂停（暂停只存在于进行中导出卡）。
+pub(crate) fn resolve_pause_toast(t: &Toast) -> Option<Arc<AtomicBool>> {
+    t.source.as_ref().and_then(|s| s.pause())
 }

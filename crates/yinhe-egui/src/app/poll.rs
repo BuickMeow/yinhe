@@ -430,6 +430,10 @@ impl App {
             Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
                 // 用户点了 stop：线程已退出，sender 断开，转“已中止”卡
                 self.export.rx = None;
+                // abort 清理暂停 flag（暂停中点 stop 也能干净结束；下次导出开始时亦会复位）。
+                self.export
+                    .pause
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
                 let out_path = self.export.last_output_path.clone();
                 let fname = out_path
                     .as_deref()

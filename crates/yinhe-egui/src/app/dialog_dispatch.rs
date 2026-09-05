@@ -280,6 +280,7 @@ impl App {
                 let src = std::sync::Arc::new(crate::app::export_state::ExportToastSource {
                     progress: self.export.progress.clone(),
                     cancel: self.export.cancel.clone(),
+                    pause: self.export.pause.clone(),
                 });
                 self.notifications.ensure_progress(
                     crate::widgets::toast::EXPORT_PROGRESS_ID,

@@ -75,6 +75,12 @@ impl Notifications {
     /// 关闭时已有卡走正常 320ms 退场（不再立即清空），历史保留。
     pub fn set_enabled(&mut self, enabled: bool) {
         if self.enabled && !enabled {
+            // 防卡死：关闭总开关时自动 resume 已暂停任务，否则任务永远暂停且无 UI 可恢复。
+            for t in &self.toasts {
+                if let Some(p) = super::model::resolve_pause_toast(t) {
+                    p.store(false, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
             let ids: Vec<u64> = self.toasts.iter().map(|t| t.id).collect();
             for id in ids {
                 self.dismiss_toast(id);
@@ -592,6 +598,26 @@ impl Notifications {
         }
     }
 
+    /// 收起进行中任务：记 collapsed 防复活，并自动 resume 已暂停任务。
+    /// show_toasts 的 dismiss 分支调用（单测亦走此链路）。
+    /// 防卡死原因：收起后卡面消失，若仍 paused 则任务永停且无 UI 可恢复。
+    pub(crate) fn collapse_for_dismiss(&mut self, id: u64) {
+        let is_running = self.toasts.iter().any(|t| t.id == id && t.source.is_some());
+        if !is_running {
+            return;
+        }
+        self.collapsed.insert(id);
+        // 先取 flag 再清（与 show_toasts 内联逻辑同语义）
+        let pause_flag = self
+            .toasts
+            .iter()
+            .find(|t| t.id == id)
+            .and_then(super::model::resolve_pause_toast);
+        if let Some(p) = pause_flag {
+            p.store(false, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
     fn tick(&mut self, ctx: &egui::Context) {
         let now = Instant::now();
         if self.center_open != self.prev_center_open {
@@ -765,10 +791,9 @@ impl Notifications {
                 }
                 self.toasts[idx].cancelling = true;
             } else if outcome.dismiss {
-                // 进行中任务收起：记 collapsed 防复活；静态卡直接退场
-                if self.toasts[idx].source.is_some() {
-                    self.collapsed.insert(tid);
-                }
+                // 进行中任务收起：记 collapsed 防复活 + 自动 resume（防卡死，见方法注释）；
+                // 静态卡直接退场（helper 内判 source.is_some() 后直接返回）。
+                self.collapse_for_dismiss(tid);
                 to_dismiss.push(tid);
             }
             // 操作按钮只执行不收卡（收起交给自动计时）
@@ -1292,5 +1317,47 @@ mod tests {
         let t = n.toasts.iter().find(|t| t.id == id).unwrap();
         assert_eq!(t.kind, ToastKind::Warning);
         assert_eq!(t.title, "已中止");
+    }
+
+    /// 收起已暂停的卡必须自动 resume（ExportToastSource 级真 flag）。
+    #[test]
+    fn collapse_paused_task_auto_resumes() {
+        use std::sync::atomic::Ordering;
+        let pause_flag = Arc::new(AtomicBool::new(true));
+        let src = Arc::new(crate::app::export_state::ExportToastSource {
+            progress: yinhe_audio::export::ExportProgress::new(),
+            cancel: Arc::new(AtomicBool::new(false)),
+            pause: Arc::clone(&pause_flag),
+        });
+        let mut n = Notifications::new();
+        n.ensure_progress(EXPORT_PROGRESS_ID, ToastKind::Info, src);
+        assert!(pause_flag.load(Ordering::Relaxed));
+        // 走与 show_toasts 收起分支同一链路
+        n.collapse_for_dismiss(EXPORT_PROGRESS_ID);
+        assert!(
+            !pause_flag.load(Ordering::Relaxed),
+            "collapse must resume paused task"
+        );
+        assert!(n.collapsed.contains(&EXPORT_PROGRESS_ID));
+    }
+
+    /// 关闭通知总开关必须自动 resume 已暂停任务（否则永停且无 UI 可恢复）。
+    #[test]
+    fn disable_notifications_auto_resumes_paused() {
+        use std::sync::atomic::Ordering;
+        let pause_flag = Arc::new(AtomicBool::new(true));
+        let src = Arc::new(crate::app::export_state::ExportToastSource {
+            progress: yinhe_audio::export::ExportProgress::new(),
+            cancel: Arc::new(AtomicBool::new(false)),
+            pause: Arc::clone(&pause_flag),
+        });
+        let mut n = Notifications::new();
+        n.ensure_progress(EXPORT_PROGRESS_ID, ToastKind::Info, src);
+        assert!(pause_flag.load(Ordering::Relaxed));
+        n.set_enabled(false);
+        assert!(
+            !pause_flag.load(Ordering::Relaxed),
+            "set_enabled(false) must resume paused task"
+        );
     }
 }
