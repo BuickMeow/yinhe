@@ -665,6 +665,8 @@ impl eframe::App for App {
             self.audio_settings.toast_collapse_secs,
             self.audio_settings.toast_action_collapse_secs,
         );
+        self.notifications
+            .set_enabled(self.audio_settings.toast_enabled);
         self.notifications.show_toasts(ui.ctx());
         self.notifications.show_center(ui.ctx());
 

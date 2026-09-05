@@ -1,6 +1,6 @@
 // ── 设置分类（左侧导航，顺序即 settings_tab 索引） ──
 
-pub const CATEGORY_KEYS: [&str; 9] = [
+pub const CATEGORY_KEYS: [&str; 10] = [
     "settings.cat.theme",
     "settings.cat.appearance",
     "settings.cat.language",
@@ -10,6 +10,7 @@ pub const CATEGORY_KEYS: [&str; 9] = [
     "settings.cat.editing",
     "settings.cat.shortcuts",
     "settings.cat.general",
+    "settings.cat.notification",
 ];
 
 /// 设置项注册表（供搜索）：各语言名称均可直接检索。
@@ -227,18 +228,25 @@ pub const SETTING_ITEMS: &[SettingItem] = &[
         ko: "공장 초기화",
     },
     SettingItem {
-        cat: 8,
+        cat: 9,
         zh: "完成通知自动收起",
         en: "Auto-collapse finished notifications",
         ja: "完了通知の自動格納",
         ko: "완료 알림 자동 접기",
     },
     SettingItem {
-        cat: 8,
+        cat: 9,
         zh: "可操作通知自动收起",
         en: "Auto-collapse actionable notifications",
         ja: "操作可能な通知の自動格納",
         ko: "작업 가능 알림 자동 접기",
+    },
+    SettingItem {
+        cat: 9,
+        zh: "开启通知",
+        en: "Enable notifications",
+        ja: "通知を有効化",
+        ko: "알림 활성화",
     },
     SettingItem {
         cat: 6,

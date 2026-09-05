@@ -10,6 +10,7 @@ mod editing;
 mod general;
 mod language;
 mod midi_export;
+mod notification;
 mod render;
 mod search;
 mod shortcuts;
@@ -29,6 +30,8 @@ pub use general::show_general_tab;
 pub use language::show_language_tab;
 #[allow(unused_imports)]
 pub use midi_export::show_midi_export_tab;
+#[allow(unused_imports)]
+pub use notification::show_notification_tab;
 #[allow(unused_imports)]
 pub use render::show_render_tab;
 #[allow(unused_imports)]
@@ -330,6 +333,23 @@ mod tests {
         assert!(
             (first_x - second_x).abs() < 0.5,
             "快捷键两行未对齐：第一行 x={first_x}，第二行 x={second_x}"
+        );
+    }
+
+    #[test]
+    fn notification_category_index_is_stable() {
+        // 前 9 个顺序不许动（settings_tab 持久化依赖），通知固定追加为索引 9
+        assert_eq!(CATEGORY_KEYS[8], "settings.cat.general");
+        assert_eq!(CATEGORY_KEYS[9], "settings.cat.notification");
+        // 两条自动收起已搬到通知分类，新增总开关也在通知分类
+        for zh in ["完成通知自动收起", "可操作通知自动收起", "开启通知"] {
+            assert_eq!(item(zh).cat, 9);
+        }
+        // 搜索“开启通知”能命中新条目（跳转 cat=9 由 search.rs match 覆盖）
+        assert!(
+            SETTING_ITEMS
+                .iter()
+                .any(|i| i.cat == 9 && item_matches(i, "开启通知"))
         );
     }
 }

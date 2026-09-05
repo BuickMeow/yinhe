@@ -22,6 +22,8 @@ pub struct Notifications {
     collapse_secs: Option<u32>,
     /// 可操作通知自动收起秒数（None=不自动收起；设置页同步，每帧覆盖）。
     action_collapse_secs: Option<u32>,
+    /// 是否开启通知（设置页同步，每帧覆盖；关闭时不再建卡、不再记入历史）。
+    enabled: bool,
     /// 上次 tick 时刻（悬停暂停按帧间隔顺延 deadline 用）。
     last_tick: Option<Instant>,
 }
@@ -51,6 +53,7 @@ impl Notifications {
             prev_center_open: false,
             collapse_secs: Some(5),
             action_collapse_secs: Some(60),
+            enabled: true,
             last_tick: None,
         }
     }
@@ -63,6 +66,16 @@ impl Notifications {
     ) {
         self.collapse_secs = collapse_secs;
         self.action_collapse_secs = action_collapse_secs;
+    }
+
+    /// 从设置同步通知总开关（main_loop 每帧调一次）。
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    /// 通知总开关是否开启（关闭时 mode_bar 铃铛隐藏）。
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
     }
 
     fn collapse_deadline(&self, secs: Option<u32>) -> Option<Instant> {
@@ -94,6 +107,9 @@ impl Notifications {
         message: impl Into<String>,
         _ttl: Option<Duration>,
     ) -> u64 {
+        if !self.enabled {
+            return 0;
+        }
         let id = self.next_id;
         self.next_id += 1;
         let title = title.into();
@@ -145,6 +161,9 @@ impl Notifications {
         kind: ToastKind,
         source: Arc<dyn super::model::ProgressSource>,
     ) {
+        if !self.enabled {
+            return;
+        }
         if self.is_leaving(key_id) {
             return;
         }
@@ -213,6 +232,9 @@ impl Notifications {
 
     /// 显式覆盖进度（完成 label 等）：快照优先，清空 source 接管。
     pub fn update_progress(&mut self, id: u64, fraction: f32, label: impl Into<String>) {
+        if !self.enabled {
+            return;
+        }
         let label = label.into();
         let p = fraction.clamp(0.0, 1.0);
         if let Some(t) = self.toasts.iter_mut().find(|t| t.id == id) {
@@ -237,6 +259,9 @@ impl Notifications {
         title: impl Into<String>,
         message: impl Into<String>,
     ) -> u64 {
+        if !self.enabled {
+            return id;
+        }
         let title = title.into();
         let message = message.into();
         // 导出完成卡带操作按钮，留足操作时间
@@ -296,6 +321,9 @@ impl Notifications {
     }
 
     pub fn fail_progress(&mut self, id: u64, title: impl Into<String>, message: impl Into<String>) {
+        if !self.enabled {
+            return;
+        }
         let title = title.into();
         let message = message.into();
         // 失败需用户留意，按可操作档计时
@@ -368,6 +396,9 @@ impl Notifications {
         label: impl Into<String>,
         kind: super::model::ToastActionKind,
     ) {
+        if !self.enabled {
+            return;
+        }
         let deadline = self.collapse_deadline(self.action_collapse_secs);
         if let Some(t) = self.toasts.iter_mut().find(|t| t.id == id) {
             t.action = Some(super::model::ToastAction {
@@ -420,6 +451,12 @@ impl Notifications {
 
     fn tick(&mut self, ctx: &egui::Context) {
         let now = Instant::now();
+        if !self.enabled {
+            // 关闭时正在显示的立即消失（不走离开动画），历史保留
+            self.toasts.clear();
+            self.last_tick = Some(now);
+            return;
+        }
         if self.center_open != self.prev_center_open {
             if self.center_open {
                 self.center_opened_at = Some(now);
@@ -511,6 +548,10 @@ impl Notifications {
     // 彻底重构：每个 toast 独立 Area，避免父 Area+ScrollArea 宽度异常导致右侧溢出。
     // 打开通知列表时，已存在的 toast 不消失，而是通过非线性 y 插值重排至历史位置；其余历史项飞入。
     pub fn show_toasts(&mut self, ctx: &egui::Context) {
+        if !self.enabled {
+            self.toasts.clear();
+            return;
+        }
         self.tick(ctx);
         if self.toasts.is_empty() {
             return;
@@ -611,6 +652,9 @@ impl Notifications {
     }
 
     pub fn show_center(&mut self, ctx: &egui::Context) {
+        if !self.enabled {
+            return;
+        }
         // 关闭时：历史独有项做退场飞出（入场的严格反向），播完再停
         let closing = !self.center_open;
         if closing {
@@ -842,5 +886,84 @@ mod tests {
             t.collapse_at.unwrap() > Instant::now() + Duration::from_secs(50),
             "export complete should use actionable tier"
         );
+    }
+
+    #[test]
+    fn disabled_push_does_not_create_card_or_history() {
+        let mut n = Notifications::new();
+        n.set_enabled(false);
+        let hist_before = n.history.len();
+        let id = n.success("t", "m");
+        assert_eq!(id, 0);
+        assert!(n.toasts.is_empty());
+        assert_eq!(n.history.len(), hist_before);
+        n.info("a", "b");
+        n.warning("a", "b");
+        n.error("a", "b");
+        assert!(n.toasts.is_empty());
+        assert_eq!(n.history.len(), hist_before);
+    }
+
+    #[test]
+    fn disabled_ensure_does_not_create_progress_card() {
+        use std::sync::Arc;
+        struct S;
+        impl super::super::model::ProgressSource for S {
+            fn title(&self) -> String {
+                "t".into()
+            }
+            fn message(&self) -> String {
+                String::new()
+            }
+            fn fraction(&self) -> f32 {
+                0.5
+            }
+            fn detail(&self) -> String {
+                String::new()
+            }
+            fn cancel(&self) -> Option<Arc<AtomicBool>> {
+                None
+            }
+        }
+        let mut n = Notifications::new();
+        n.set_enabled(false);
+        n.ensure_progress(LOADING_PROGRESS_ID, ToastKind::Info, Arc::new(S));
+        assert!(!n.has_progress(LOADING_PROGRESS_ID));
+        assert!(n.toasts.is_empty());
+        assert!(n.history.is_empty());
+        // complete/fail 回退也不建卡
+        n.complete_progress(LOADING_PROGRESS_ID, ToastKind::Success, "d", "m");
+        n.fail_progress(SAVE_PROGRESS_ID, "f", "m");
+        assert!(n.toasts.is_empty());
+        assert!(n.history.is_empty());
+    }
+
+    #[test]
+    fn disabled_tick_clears_toasts_but_keeps_history() {
+        let mut n = Notifications::new();
+        let id = n.success("t", "m");
+        assert!(n.toasts.iter().any(|t| t.id == id));
+        n.set_enabled(false);
+        n.tick(&ctx());
+        assert!(n.toasts.is_empty());
+        assert!(n.history.iter().any(|h| h.id == id));
+        // show 系在关闭时直接返回，不复活任何卡
+        n.show_toasts(&ctx());
+        n.show_center(&ctx());
+        assert!(n.toasts.is_empty());
+    }
+
+    #[test]
+    fn reenable_restores_normal_push() {
+        let mut n = Notifications::new();
+        n.set_enabled(false);
+        n.success("t", "m");
+        assert!(n.toasts.is_empty());
+        n.set_enabled(true);
+        let id = n.success("t", "m");
+        assert!(n.toasts.iter().any(|t| t.id == id));
+        assert!(n.history.iter().any(|h| h.id == id));
+        n.tick(&ctx());
+        assert!(n.toasts.iter().any(|t| t.id == id));
     }
 }
