@@ -200,6 +200,8 @@ impl Notifications {
         self.center_scroll = followed.clamp(0.0, new_max);
     }
 
+    /// 滚动条右缘距屏边（卡片在其左侧，两者留空隙）。
+    const SCROLL_RIGHT: f32 = 8.0;
     /// 列表背景捕获（与卡片同 Order::Tooltip 但先画所以在下）：
     /// 覆盖本列实际范围，吞缝隙点击 + 滚轮转滚动。卡片之后再画滚动条（在上）。
     #[allow(clippy::too_many_arguments)]
@@ -220,7 +222,8 @@ impl Notifications {
         }
         let scroll = self.center_scroll;
         let left = viewport.max.x - right_pad - card_w;
-        let right = viewport.max.x - right_pad;
+        // 背景盖到滚动条右缘（含条带），滚轮/吞点击对条带也生效
+        let right = viewport.max.x - Self::SCROLL_RIGHT;
         let bg_bottom = viewport.max.y - (bottom_pad - gap);
         let top_y_off = bottom_pad + total - scroll + gap;
         let bg_top = (viewport.max.y - top_y_off).max(viewport.min.y);
@@ -245,8 +248,9 @@ impl Notifications {
         if over_column {
             let dy = ctx.input(|i| i.smooth_scroll_delta.y);
             if dy != 0.0 {
+                // y_off 从底边向上量：上滑（dy>0）内容下移看旧消息 → scroll 增大
                 let max = self.center_scroll_max;
-                self.center_scroll = (self.center_scroll - dy).clamp(0.0, max);
+                self.center_scroll = (self.center_scroll + dy).clamp(0.0, max);
             }
         }
     }
@@ -260,7 +264,7 @@ impl Notifications {
         _card_w: f32,
         gap: f32,
         bottom_pad: f32,
-        right_pad: f32,
+        _right_pad: f32,
         fallback: f32,
     ) {
         let max = self.center_scroll_max;
@@ -273,7 +277,8 @@ impl Notifications {
         }
         let scroll = self.center_scroll;
         let visible = (viewport.height() - bottom_pad - 24.0).max(0.0);
-        let right = viewport.max.x - right_pad;
+        // 滚动条贴屏边独立条带，与卡片留 18px 空隙
+        let right = viewport.max.x - Self::SCROLL_RIGHT;
         let bg_bottom = viewport.max.y - (bottom_pad - gap);
         let top_y_off = bottom_pad + total - scroll + gap;
         let bg_top = (viewport.max.y - top_y_off).max(viewport.min.y);
@@ -296,7 +301,8 @@ impl Notifications {
         } else {
             0.0
         };
-        let thumb_y = track_rect.min.y + ratio * travel;
+        // scroll=0 看的是底部最新消息，thumb 应在底部
+        let thumb_y = track_rect.min.y + (1.0 - ratio) * travel;
         let thumb_rect = egui::Rect::from_min_size(
             egui::pos2(track_rect.min.x, thumb_y),
             egui::vec2(TRACK_W, thumb_h),
@@ -329,7 +335,8 @@ impl Notifications {
             })
             .inner;
         if drag_dy != 0.0 {
-            self.center_scroll = (self.center_scroll + drag_dy * max / travel).clamp(0.0, max);
+            // 下拽 thumb（drag_dy>0）内容上移看新消息 → scroll 减小
+            self.center_scroll = (self.center_scroll - drag_dy * max / travel).clamp(0.0, max);
         }
     }
 
@@ -2140,9 +2147,12 @@ mod tests {
         assert!(((-50.0_f32).clamp(0.0, max) - 0.0).abs() < 1e-6);
         assert!(((400.0_f32).clamp(0.0, max) - 300.0).abs() < 1e-6);
         assert!(((150.0_f32).clamp(0.0, max) - 150.0).abs() < 1e-6);
-        // 滚轮公式：center_scroll - dy
-        let scrolled = (100.0 - (-30.0_f32)).clamp(0.0, max);
-        assert!((scrolled - 130.0).abs() < 1e-6);
+        // 滚轮公式：center_scroll + dy（上滑 dy>0 看旧消息，scroll 增大）
+        let scrolled = (100.0 + (-30.0_f32)).clamp(0.0, max);
+        assert!((scrolled - 70.0).abs() < 1e-6);
+        // 拖拽公式：center_scroll - drag_dy * max / travel（下拽看新消息，scroll 减小）
+        let dragged = (100.0_f32 - 20.0 * 300.0 / 200.0).clamp(0.0, max);
+        assert!((dragged - 70.0).abs() < 1e-6);
     }
 
     #[test]
