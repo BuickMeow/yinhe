@@ -52,7 +52,10 @@ impl ProgressSource for SaveToastSource {
         self.current().map(|(_, f)| f).unwrap_or(0.0)
     }
     fn detail(&self) -> String {
-        self.message()
+        // 与 message 去重：第二行显示阶段内百分比
+        self.current()
+            .map(|(_, f)| format!("{:.0}%", f.clamp(0.0, 1.0) * 100.0))
+            .unwrap_or_else(|| "0%".to_string())
     }
     fn cancel(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
         None

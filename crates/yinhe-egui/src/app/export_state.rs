@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, mpsc};
 
 use yinhe_audio::export::WavBitDepth;
 
-use crate::dialogs::export::{ExportCompleted, ExportProgress};
+use crate::dialogs::export::{ExportCompleted, ExportProgress, format_duration};
 use crate::widgets::toast::model::ProgressSource;
 
 /// 导出线程完成消息：`Ok((输出路径, 耗时秒, 倍速))` 或 `Err(错误信息)`。
@@ -83,7 +83,22 @@ impl ProgressSource for ExportToastSource {
         self.snapshot().0
     }
     fn detail(&self) -> String {
-        self.snapshot().1
+        // 第二行与第一行去重：渲染中显示已渲染时长与当前倍率，准备阶段回退 status
+        self.progress
+            .lock()
+            .ok()
+            .map(|st| {
+                if st.render_speed > 0.0 {
+                    format!(
+                        "已渲染{} · 当前{:.1}x",
+                        format_duration(st.rendered_secs),
+                        st.render_speed
+                    )
+                } else {
+                    st.status.clone()
+                }
+            })
+            .unwrap_or_default()
     }
     fn cancel(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
         Some(self.cancel.clone())
