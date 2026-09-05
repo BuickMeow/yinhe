@@ -28,6 +28,8 @@ pub struct Notifications {
     last_tick: Option<Instant>,
     /// 用户手动收起的进行中任务 id：ensure 只更新历史、不重建卡。
     collapsed: HashSet<u64>,
+    /// 固定任务 id → 本次运行的历史条目 id（浮动卡复用固定槽位，历史一任务一条）。
+    live_hist: HashMap<u64, u64>,
     /// 每张卡上帧实测高度（`ui.min_rect().height()`），堆叠按真实高度累加。
     card_h: HashMap<u64, f32>,
 }
@@ -60,6 +62,7 @@ impl Notifications {
             enabled: true,
             last_tick: None,
             collapsed: HashSet::new(),
+            live_hist: HashMap::new(),
             card_h: HashMap::new(),
         }
     }
@@ -194,7 +197,7 @@ impl Notifications {
         }
         // 用户收起中的任务：只更新历史条目，不重建浮动卡
         if self.collapsed.contains(&key_id) {
-            self.sync_history_source(key_id, kind, source);
+            self.sync_live_history(key_id, kind, source);
             return;
         }
         if let Some(t) = self.toasts.iter_mut().find(|t| t.id == key_id) {
@@ -209,7 +212,7 @@ impl Notifications {
             t.collapse_at = None;
             t.leaving_since = None;
             t.cancelling = false;
-            self.sync_history_source(key_id, kind, source);
+            self.sync_live_history(key_id, kind, source);
             return;
         }
         let now = Instant::now();
@@ -229,9 +232,7 @@ impl Notifications {
             hovered: false,
             cancelling: false,
         });
-        if self.history.iter().find(|h| h.id == key_id).is_none() {
-            self.push_history(key_id, kind, source);
-        }
+        self.sync_live_history(key_id, kind, source);
     }
 
     /// 历史条目换数据源（kind/source），无则新建；供 ensure 复用。
@@ -249,9 +250,34 @@ impl Notifications {
         }
     }
 
-    /// 清掉同 id 历史条目（完成/失败新建卡时去 frozen 进度，兼清收起标记）。
+    /// 本次运行的历史同步（浮动卡复用固定槽位，历史一任务一条）：
+    /// 映射到且条目还在 → 原地更新；否则用 next_id 新建并记录映射。
+    /// 固定 id 都是 0x4C4C… 大数，next_id 从 1 递增，不会碰撞。
+    fn sync_live_history(
+        &mut self,
+        fixed_id: u64,
+        kind: ToastKind,
+        source: Arc<dyn super::model::ProgressSource>,
+    ) {
+        if let Some(&hist_id) = self.live_hist.get(&fixed_id)
+            && self.history.iter().any(|h| h.id == hist_id)
+        {
+            self.sync_history_source(hist_id, kind, source);
+            return;
+        }
+        let hist_id = self.next_id;
+        self.next_id += 1;
+        self.push_history(hist_id, kind, source);
+        self.live_hist.insert(fixed_id, hist_id);
+    }
+
+    /// 清掉本次运行的 live 历史条目并删映射（封存的不碰）；未映射回退按 id 清，做兼容。
     pub fn prune_history(&mut self, id: u64) {
-        self.history.retain(|h| h.id != id);
+        if let Some(hist_id) = self.live_hist.remove(&id) {
+            self.history.retain(|h| h.id != hist_id);
+        } else {
+            self.history.retain(|h| h.id != id);
+        }
         self.collapsed.remove(&id);
     }
 
@@ -279,18 +305,43 @@ impl Notifications {
     }
 
     /// 显式覆盖进度（完成 label 等）：快照优先，清空 source 接管。
+    /// 调用者均为固定 id（poll.rs 加载完成后的耗时覆盖，LOADING_PROGRESS_ID）。
+    /// 历史走 live 映射，未命中回退按 id；complete 后映射已封存时按标题+正文找最近封存，保证一致。
     pub fn update_progress(&mut self, id: u64, fraction: f32, label: impl Into<String>) {
         if !self.enabled {
             return;
         }
         let label = label.into();
         let p = fraction.clamp(0.0, 1.0);
+        let mut sealed_key: Option<(String, String)> = None;
         if let Some(t) = self.toasts.iter_mut().find(|t| t.id == id) {
             t.progress = Some(p);
             t.progress_label = label.clone();
             t.source = None;
+            sealed_key = Some((t.title.clone(), t.message.clone()));
+        }
+        if let Some(&hist_id) = self.live_hist.get(&id)
+            && let Some(h) = self.history.iter_mut().find(|h| h.id == hist_id)
+        {
+            h.progress = Some(p);
+            h.progress_label = label;
+            h.source = None;
+            return;
         }
         if let Some(h) = self.history.iter_mut().find(|h| h.id == id) {
+            h.progress = Some(p);
+            h.progress_label = label;
+            h.source = None;
+            return;
+        }
+        // complete 刚封存（映射已移除）：找同标题+正文的最近一条封存同步 label
+        if let Some((tt, tm)) = sealed_key
+            && let Some(h) = self
+                .history
+                .iter_mut()
+                .rev()
+                .find(|h| h.title == tt && h.message == tm)
+        {
             h.progress = Some(p);
             h.progress_label = label;
             h.source = None;
@@ -335,7 +386,26 @@ impl Notifications {
             toast_found = true;
         }
         let mut hist_found = false;
-        if let Some(h) = self.history.iter_mut().find(|h| h.id == id) {
+        // 历史走 live 映射：命中则更新该条目并移除映射=封存；未命中回退按 id 找
+        if let Some(hist_id) = self.live_hist.remove(&id) {
+            if let Some(h) = self.history.iter_mut().find(|h| h.id == hist_id) {
+                h.kind = kind;
+                h.title = title.clone();
+                h.message = message.clone();
+                h.progress = Some(1.0);
+                h.progress_label = "已完成".to_string();
+                h.source = None;
+                hist_found = true;
+            } else if let Some(h) = self.history.iter_mut().find(|h| h.id == id) {
+                h.kind = kind;
+                h.title = title.clone();
+                h.message = message.clone();
+                h.progress = Some(1.0);
+                h.progress_label = "已完成".to_string();
+                h.source = None;
+                hist_found = true;
+            }
+        } else if let Some(h) = self.history.iter_mut().find(|h| h.id == id) {
             h.kind = kind;
             h.title = title.clone();
             h.message = message.clone();
@@ -393,7 +463,24 @@ impl Notifications {
             toast_found = true;
         }
         let mut hist_found = false;
-        if let Some(h) = self.history.iter_mut().find(|h| h.id == id) {
+        // 历史走 live 映射：命中则封存，未命中回退按 id
+        if let Some(hist_id) = self.live_hist.remove(&id) {
+            if let Some(h) = self.history.iter_mut().find(|h| h.id == hist_id) {
+                h.kind = ToastKind::Error;
+                h.title = title.clone();
+                h.message = message.clone();
+                h.progress_label = "失败".to_string();
+                h.source = None;
+                hist_found = true;
+            } else if let Some(h) = self.history.iter_mut().find(|h| h.id == id) {
+                h.kind = ToastKind::Error;
+                h.title = title.clone();
+                h.message = message.clone();
+                h.progress_label = "失败".to_string();
+                h.source = None;
+                hist_found = true;
+            }
+        } else if let Some(h) = self.history.iter_mut().find(|h| h.id == id) {
             h.kind = ToastKind::Error;
             h.title = title.clone();
             h.message = message.clone();
@@ -510,14 +597,36 @@ impl Notifications {
             t.source = None;
             t.collapse_at = deadline;
             t.action = None;
-            if let Some(h) = self.history.iter_mut().find(|h| h.id == id) {
+            // 历史走 live 映射：命中则封存，未命中回退按 id
+            let mut hist_done = false;
+            if let Some(hist_id) = self.live_hist.remove(&id) {
+                if let Some(h) = self.history.iter_mut().find(|h| h.id == hist_id) {
+                    h.kind = ToastKind::Warning;
+                    h.title = title.clone();
+                    h.message = message.clone();
+                    h.progress = frac;
+                    h.progress_label = "已中止".to_string();
+                    h.source = None;
+                    hist_done = true;
+                } else if let Some(h) = self.history.iter_mut().find(|h| h.id == id) {
+                    h.kind = ToastKind::Warning;
+                    h.title = title.clone();
+                    h.message = message.clone();
+                    h.progress = frac;
+                    h.progress_label = "已中止".to_string();
+                    h.source = None;
+                    hist_done = true;
+                }
+            } else if let Some(h) = self.history.iter_mut().find(|h| h.id == id) {
                 h.kind = ToastKind::Warning;
                 h.title = title.clone();
                 h.message = message.clone();
                 h.progress = frac;
                 h.progress_label = "已中止".to_string();
                 h.source = None;
-            } else {
+                hist_done = true;
+            }
+            if !hist_done {
                 self.history.push(HistoryEntry {
                     id,
                     kind: ToastKind::Warning,
@@ -534,6 +643,40 @@ impl Notifications {
                     self.history.drain(0..excess);
                 }
             }
+            return id;
+        }
+        // toast 不在：历史走 live 映射，命中则封存并重建同 id 浮动卡
+        if let Some(hist_id) = self.live_hist.remove(&id)
+            && let Some(h) = self.history.iter_mut().find(|h| h.id == hist_id)
+        {
+            let frac = h
+                .source
+                .as_ref()
+                .map(|s| s.fraction().clamp(0.0, 1.0))
+                .or(h.progress);
+            h.kind = ToastKind::Warning;
+            h.title = title.clone();
+            h.message = message.clone();
+            h.progress = frac;
+            h.progress_label = "已中止".to_string();
+            h.source = None;
+            // 重建同 id 浮动卡（abort 态，deadline 重算）
+            self.toasts.push(Toast {
+                id,
+                kind: ToastKind::Warning,
+                title,
+                message,
+                created: Instant::now(),
+                progress: frac,
+                progress_label: "已中止".to_string(),
+                cancel: None,
+                leaving_since: None,
+                source: None,
+                collapse_at: deadline,
+                action: None,
+                hovered: false,
+                cancelling: false,
+            });
             return id;
         }
         if let Some(h) = self.history.iter_mut().find(|h| h.id == id) {
@@ -1214,13 +1357,17 @@ mod tests {
         // 收起后 ensure 不建卡，只更新历史
         n.ensure_progress(LOADING_PROGRESS_ID, ToastKind::Info, Arc::new(S("v2")));
         assert!(!n.has_progress(LOADING_PROGRESS_ID));
-        let h = n
-            .history
-            .iter()
-            .find(|h| h.id == LOADING_PROGRESS_ID)
-            .unwrap();
+        let Some(&hist_id) = n.live_hist.get(&LOADING_PROGRESS_ID) else {
+            panic!("live mapping missing");
+        };
+        let Some(h) = n.history.iter().find(|h| h.id == hist_id) else {
+            panic!("live history missing");
+        };
         // 历史渲染走 live source，标题应为新任务
-        assert_eq!(h.source.as_ref().unwrap().title(), "v2");
+        let Some(src) = h.source.as_ref() else {
+            panic!("live source missing");
+        };
+        assert_eq!(src.title(), "v2");
         // 任务结束清收起标记，下个任务恢复建卡
         n.prune_history(LOADING_PROGRESS_ID);
         n.ensure_progress(LOADING_PROGRESS_ID, ToastKind::Info, Arc::new(S("v3")));
@@ -1251,10 +1398,98 @@ mod tests {
         let mut n = Notifications::new();
         n.ensure_progress(EXPORT_PROGRESS_ID, ToastKind::Info, Arc::new(S));
         n.collapsed.insert(EXPORT_PROGRESS_ID);
-        assert!(n.history.iter().any(|h| h.id == EXPORT_PROGRESS_ID));
+        let Some(&hist_id) = n.live_hist.get(&EXPORT_PROGRESS_ID) else {
+            panic!("live mapping missing");
+        };
+        assert!(n.history.iter().any(|h| h.id == hist_id));
         n.prune_history(EXPORT_PROGRESS_ID);
-        assert!(!n.history.iter().any(|h| h.id == EXPORT_PROGRESS_ID));
+        assert!(!n.history.iter().any(|h| h.id == hist_id));
         assert!(!n.collapsed.contains(&EXPORT_PROGRESS_ID));
+        assert!(!n.live_hist.contains_key(&EXPORT_PROGRESS_ID));
+    }
+
+    #[test]
+    fn fixed_id_two_runs_keep_separate_done_history_and_single_float() {
+        use std::sync::Arc;
+        struct S(&'static str);
+        impl super::super::model::ProgressSource for S {
+            fn title(&self) -> String {
+                self.0.into()
+            }
+            fn message(&self) -> String {
+                String::new()
+            }
+            fn fraction(&self) -> f32 {
+                0.5
+            }
+            fn detail(&self) -> String {
+                String::new()
+            }
+            fn cancel(&self) -> Option<Arc<AtomicBool>> {
+                None
+            }
+        }
+        let mut n = Notifications::new();
+        // 第一轮
+        n.ensure_progress(LOADING_PROGRESS_ID, ToastKind::Info, Arc::new(S("v1")));
+        assert_eq!(
+            n.toasts
+                .iter()
+                .filter(|t| t.id == LOADING_PROGRESS_ID)
+                .count(),
+            1
+        );
+        n.complete_progress(LOADING_PROGRESS_ID, ToastKind::Success, "done1", "a.mid");
+        assert_eq!(
+            n.toasts
+                .iter()
+                .filter(|t| t.id == LOADING_PROGRESS_ID)
+                .count(),
+            1
+        );
+        assert!(!n.live_hist.contains_key(&LOADING_PROGRESS_ID));
+        // 第二轮：浮动卡复用同一槽位，历史新建一条
+        n.ensure_progress(LOADING_PROGRESS_ID, ToastKind::Info, Arc::new(S("v2")));
+        assert_eq!(
+            n.toasts
+                .iter()
+                .filter(|t| t.id == LOADING_PROGRESS_ID)
+                .count(),
+            1
+        );
+        assert_eq!(n.toasts.len(), 1);
+        n.complete_progress(LOADING_PROGRESS_ID, ToastKind::Success, "done2", "b.mid");
+        // 浮动卡始终一张，历史两条独立 done
+        assert_eq!(
+            n.toasts
+                .iter()
+                .filter(|t| t.id == LOADING_PROGRESS_ID)
+                .count(),
+            1
+        );
+        assert_eq!(n.history.len(), 2);
+        assert_ne!(n.history[0].id, n.history[1].id);
+        assert_eq!(n.history[0].title, "done1");
+        assert_eq!(n.history[1].title, "done2");
+        for h in &n.history {
+            assert_eq!(h.progress, Some(1.0));
+            assert_eq!(h.progress_label, "已完成");
+            assert!(h.source.is_none());
+        }
+        // prune 无 live 可清，不碰已封存
+        n.prune_history(LOADING_PROGRESS_ID);
+        assert_eq!(n.history.len(), 2);
+        // 新一轮 live 可被 prune，只清 live
+        n.ensure_progress(LOADING_PROGRESS_ID, ToastKind::Info, Arc::new(S("v3")));
+        assert_eq!(n.history.len(), 3);
+        let Some(&live_id) = n.live_hist.get(&LOADING_PROGRESS_ID) else {
+            panic!("live mapping missing");
+        };
+        n.prune_history(LOADING_PROGRESS_ID);
+        assert_eq!(n.history.len(), 2);
+        assert!(!n.history.iter().any(|h| h.id == live_id));
+        assert_eq!(n.history[0].title, "done1");
+        assert_eq!(n.history[1].title, "done2");
     }
 
     #[test]
@@ -1299,11 +1534,10 @@ mod tests {
         assert!(t.source.is_none());
         assert!(!t.cancelling);
         assert!(t.collapse_at.is_some());
-        let h = n
-            .history
-            .iter()
-            .find(|h| h.id == EXPORT_PROGRESS_ID)
-            .unwrap();
+        // 历史一任务一条：封存后映射移除，历史里仅一条已中止（小 id，非固定 id）
+        assert!(!n.live_hist.contains_key(&EXPORT_PROGRESS_ID));
+        assert_eq!(n.history.len(), 1);
+        let h = &n.history[0];
         assert_eq!(h.progress_label, "已中止");
         assert!(h.source.is_none());
     }
