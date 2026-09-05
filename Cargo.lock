@@ -7608,6 +7608,7 @@ name = "yinhe-egui"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "chrono",
  "cpal",
  "deunicode",
  "dirs",

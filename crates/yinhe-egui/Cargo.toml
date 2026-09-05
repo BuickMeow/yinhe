@@ -38,6 +38,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 sysinfo = { workspace = true }
 egui_material_icons = { workspace = true }
+chrono = { workspace = true }
 image = { workspace = true }
 bytemuck = { workspace = true }
 rust-i18n = { workspace = true }

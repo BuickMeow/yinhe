@@ -1,5 +1,5 @@
 use std::sync::{Arc, atomic::AtomicBool};
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 use eframe::egui;
 use egui_material_icons::icons::*;
@@ -105,6 +105,26 @@ fn format_age(created: Instant, now: Instant) -> String {
     }
 }
 
+/// 墙钟绝对时间（纯函数，本地时区）：`%Y-%m-%d %H:%M:%S`。
+fn format_wall(wall: SystemTime) -> String {
+    let dt: chrono::DateTime<chrono::Local> = wall.into();
+    dt.format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
+/// 统一时间戳行（纯函数）：`{相对} · {绝对}`，相对复用 `format_age`。
+/// `created` 是单调钟，只做相对；墙钟由调用方按
+/// `SystemTime::now().checked_sub(created.elapsed())` 反推后以 `now_wall` 传入，
+/// 未来时间钳制到 `now_wall`（`saturating` + `checked_sub` 回退）。
+fn format_timestamp(created: Instant, now_steady: Instant, now_wall: SystemTime) -> String {
+    let elapsed = now_steady.saturating_duration_since(created);
+    let wall_created = now_wall.checked_sub(elapsed).unwrap_or(now_wall);
+    format!(
+        "{} · {}",
+        format_age(created, now_steady),
+        format_wall(wall_created)
+    )
+}
+
 /// 统一样式卡片：弹出与列表共用，仅 show_close 区分
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_card(
@@ -122,8 +142,8 @@ pub(crate) fn draw_card(
     pause: Option<Arc<AtomicBool>>,
     action: Option<&super::model::ToastAction>,
     cancelling: bool,
-    // 历史年龄行：仅 history_card 传非空（浮动卡传空串），有字才显示一行小字。
-    history_age: &str,
+    // 统一时间戳：浮动/历史/进行中都画 `{相对} · {绝对}`（muted 小字，年龄行同款式）。
+    created: Instant,
 ) -> super::model::CardOutcome {
     let mut outcome = super::model::CardOutcome::default();
     let frame = base_frame(alpha);
@@ -237,20 +257,19 @@ pub(crate) fn draw_card(
                             .wrap(),
                         );
                     }
-                    // 历史年龄行：仅历史列表有字才显示（浮动卡传空串，不占行）。
-                    // 历史列表高度由 state 侧实测自适应，无需占位兼容。
-                    if !history_age.is_empty() {
-                        let age_shown = clamp_lines(&ctx, history_age, &det_font, wrap_w, 1);
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(age_shown)
-                                    .size(crate::theme::SMALL_LABEL_FONT)
-                                    .color(mul_alpha(crate::theme::text_muted(), card_alpha)),
-                            )
-                            .selectable(false)
-                            .wrap(),
-                        );
-                    }
+                    // 统一时间戳行：所有卡都画一行（浮动/历史/进行中），与详情同 muted 小字；
+                    // 高度各卡统一增一行，相对高度不变。墙钟由单调钟反推（future 钳制到 now）。
+                    let timestamp = format_timestamp(created, Instant::now(), SystemTime::now());
+                    let ts_shown = clamp_lines(&ctx, &timestamp, &det_font, wrap_w, 1);
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(ts_shown)
+                                .size(crate::theme::SMALL_LABEL_FONT)
+                                .color(mul_alpha(crate::theme::text_muted(), card_alpha)),
+                        )
+                        .selectable(false)
+                        .wrap(),
+                    );
                     // 右侧按钮组已移至覆盖层（整卡垂直居中），此处仅保留 width-90 给右侧留空
                 });
             });
@@ -439,17 +458,29 @@ pub(crate) fn toast_card(
         super::model::resolve_pause_toast(toast),
         toast.action.as_ref(),
         toast.cancelling,
-        "",
+        toast.created,
     )
 }
 
 /// 历史卡片：只读，无删除（与 toast 同尺寸，仅隐藏 X）
 pub(crate) fn history_card(ui: &mut egui::Ui, entry: &HistoryEntry, width: f32) {
     let (title, message, progress, label) = super::model::resolve_history(entry);
-    let age = format_age(entry.created, Instant::now());
     let _ = draw_card(
-        ui, width, 0.0, 1.0, entry.kind, &title, &message, progress, &label, false, None, None,
-        None, false, &age,
+        ui,
+        width,
+        0.0,
+        1.0,
+        entry.kind,
+        &title,
+        &message,
+        progress,
+        &label,
+        false,
+        None,
+        None,
+        None,
+        false,
+        entry.created,
     );
 }
 
@@ -522,7 +553,7 @@ mod tests {
                 pause_flag.clone(),
                 action.as_ref(),
                 cancelling,
-                "",
+                Instant::now(),
             );
             h = ui.min_rect().height();
         });
@@ -561,7 +592,7 @@ mod tests {
                 pause_flag.clone(),
                 None,
                 false,
-                "",
+                Instant::now(),
             );
             h = ui.min_rect().height();
         });
@@ -745,5 +776,47 @@ mod tests {
         assert_eq!(ago(Duration::from_secs(30 * 86_400)), "30天前");
         // 未来时间（created 晚于 now）钳制为“刚刚”
         assert_eq!(format_age(now, now - Duration::from_secs(10)), "刚刚");
+    }
+
+    /// format_wall 全确定性：UNIX_EPOCH + 已知秒数，不读真实时钟，不 hardcode 时区偏移。
+    #[test]
+    fn format_wall_known_epoch() {
+        use std::time::{Duration, UNIX_EPOCH};
+        let wall = UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+        let s = format_wall(wall);
+        // 形如 2001-09-09 01:46:40（本地时区日期可能不同，只断言格式骨架）
+        assert_eq!(s.len(), 19);
+        assert_eq!(&s[4..5], "-");
+        assert_eq!(&s[7..8], "-");
+        assert_eq!(&s[10..11], " ");
+        assert_eq!(&s[13..14], ":");
+        assert_eq!(&s[16..17], ":");
+        // 同口径期望（chrono Local 同一转换不断言具体偏移）
+        let expected = chrono::DateTime::<chrono::Local>::from(wall)
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        assert_eq!(s, expected);
+    }
+
+    /// format_timestamp 组合 `{age} · {wall}`：age 复用 format_age，wall 由 now_wall 反推。
+    #[test]
+    fn format_timestamp_combines_age_and_wall() {
+        use std::time::{Duration, UNIX_EPOCH};
+        let now_steady = Instant::now();
+        let created = now_steady - Duration::from_secs(12);
+        let now_wall = UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+        let s = format_timestamp(created, now_steady, now_wall);
+        let wall_created = now_wall - Duration::from_secs(12);
+        let expected = format!(
+            "{} · {}",
+            format_age(created, now_steady),
+            format_wall(wall_created)
+        );
+        assert_eq!(s, expected);
+        assert!(s.starts_with("12秒前 · "));
+        // 未来 created 钳制：相对“刚刚”，绝对即 now_wall 本身
+        let future = now_steady + Duration::from_secs(10);
+        let s2 = format_timestamp(future, now_steady, now_wall);
+        assert_eq!(s2, format!("刚刚 · {}", format_wall(now_wall)));
     }
 }
