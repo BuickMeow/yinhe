@@ -772,6 +772,7 @@ impl Notifications {
     fn tick(&mut self, ctx: &egui::Context) {
         let now = Instant::now();
         if self.center_open != self.prev_center_open {
+            let was_open = self.prev_center_open;
             if self.center_open {
                 self.center_opened_at = Some(now);
                 self.center_closed_at = None;
@@ -781,6 +782,19 @@ impl Notifications {
             }
             self.prev_center_open = self.center_open;
             ctx.request_repaint();
+            // 列表关闭瞬间：屏幕上所有卡全部走退场动画；进行中顺带记 collapsed 防复活+resume
+            if was_open && !self.center_open {
+                let ids: Vec<u64> = self
+                    .toasts
+                    .iter()
+                    .filter(|t| t.leaving_since.is_none())
+                    .map(|t| t.id)
+                    .collect();
+                for id in ids {
+                    self.collapse_for_dismiss(id);
+                    self.dismiss_toast(id);
+                }
+            }
         }
         let mut needs_repaint = false;
         // 悬停暂停：上帧悬停的卡，deadline 按本帧间隔顺延（精确暂停，不断计时）
@@ -816,13 +830,17 @@ impl Notifications {
         self.card_h.retain(|id, _| {
             self.toasts.iter().any(|t| t.id == *id) || self.history.iter().any(|h| h.id == *id)
         });
-        // 自动收起到期：走正常离开动画，只收浮动卡，历史保留
-        let expired: Vec<u64> = self
-            .toasts
-            .iter()
-            .filter(|t| t.leaving_since.is_none() && t.collapse_at.is_some_and(|at| at <= now))
-            .map(|t| t.id)
-            .collect();
+        // 自动收起到期：走正常离开动画，只收浮动卡，历史保留；
+        // 列表开着时跳过（deadline 自然过期不管它）
+        let expired: Vec<u64> = if self.center_open {
+            Vec::new()
+        } else {
+            self.toasts
+                .iter()
+                .filter(|t| t.leaving_since.is_none() && t.collapse_at.is_some_and(|at| at <= now))
+                .map(|t| t.id)
+                .collect()
+        };
         for id in expired {
             self.dismiss_toast(id);
             needs_repaint = true;
@@ -940,7 +958,14 @@ impl Notifications {
                 // 卡片看起来就是“右侧贴窗”而不是“从窗外滑入”
                 .constrain(false)
                 .show(ctx, |ui| {
-                    outcome = super::card::toast_card(ui, &self.toasts[idx], CARD_W, 0.0, 1.0);
+                    outcome = super::card::toast_card(
+                        ui,
+                        &self.toasts[idx],
+                        CARD_W,
+                        0.0,
+                        1.0,
+                        !self.center_open,
+                    );
                     ui.min_rect().height()
                 });
             self.card_h.insert(tid, area_resp.inner);
@@ -1659,5 +1684,79 @@ mod tests {
     fn stack_ys_empty() {
         let heights: HashMap<u64, f32> = HashMap::new();
         assert!(stack_ys(&heights, &[], 48.0, 8.0, 110.0).is_empty());
+    }
+
+    #[test]
+    fn center_open_skips_auto_collapse() {
+        let mut n = Notifications::new();
+        n.set_collapse_durations(Some(0), Some(0));
+        let id = n.success("t", "m");
+        std::thread::sleep(Duration::from_millis(2));
+        // 列表开着时到期也不收
+        n.center_open = true;
+        n.tick(&ctx());
+        let Some(t) = n.toasts.iter().find(|t| t.id == id) else {
+            panic!("toast missing");
+        };
+        assert!(t.leaving_since.is_none());
+        // 关着时同条件会收（对照）
+        n.center_open = false;
+        // 关闭边沿本身就会收全部，这里仅断言 leaving 已起算
+        n.tick(&ctx());
+        let Some(t) = n.toasts.iter().find(|t| t.id == id) else {
+            panic!("toast missing");
+        };
+        assert!(t.leaving_since.is_some());
+    }
+
+    #[test]
+    fn center_close_edge_dismisses_all() {
+        use std::sync::Arc;
+        struct S;
+        impl super::super::model::ProgressSource for S {
+            fn title(&self) -> String {
+                "t".into()
+            }
+            fn message(&self) -> String {
+                String::new()
+            }
+            fn fraction(&self) -> f32 {
+                0.5
+            }
+            fn detail(&self) -> String {
+                String::new()
+            }
+            fn cancel(&self) -> Option<Arc<AtomicBool>> {
+                None
+            }
+        }
+        let mut n = Notifications::new();
+        n.set_collapse_durations(None, None);
+        let static_id = n.success("s", "m");
+        n.ensure_progress(EXPORT_PROGRESS_ID, ToastKind::Info, Arc::new(S));
+        // 开列表：先 tick 一次把 prev 对齐为 true
+        n.center_open = true;
+        n.tick(&ctx());
+        assert!(
+            n.toasts.iter().all(|t| t.leaving_since.is_none()),
+            "open list must not dismiss"
+        );
+        // 关列表边沿：全部 leaving（含进行中；collapsed 顺带标记防复活）
+        n.center_open = false;
+        n.tick(&ctx());
+        for t in &n.toasts {
+            assert!(
+                t.leaving_since.is_some(),
+                "close edge must dismiss id={}",
+                t.id
+            );
+        }
+        let Some(st) = n.toasts.iter().find(|t| t.id == static_id) else {
+            panic!("static toast missing");
+        };
+        assert!(st.leaving_since.is_some());
+        assert!(n.collapsed.contains(&EXPORT_PROGRESS_ID));
+        // show_close 取反逻辑：渲染层重（需真 egui 上下文量按钮），只测状态机；
+        // show_toasts 以 !center_open 传 show_close，手动验证：列表开无 X、可 stop，关后有 X。
     }
 }

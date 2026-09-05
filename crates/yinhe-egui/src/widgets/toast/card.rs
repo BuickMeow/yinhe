@@ -386,6 +386,7 @@ pub(crate) fn toast_card(
     width: f32,
     x_offset: f32,
     alpha: f32,
+    show_close: bool,
 ) -> super::model::CardOutcome {
     // 进度任务：渲染时从 source pull 最新文案/进度，无 source 读快照
     let (title, message, progress, label) = super::model::resolve_toast(toast);
@@ -399,7 +400,7 @@ pub(crate) fn toast_card(
         &message,
         progress,
         &label,
-        true,
+        show_close,
         super::model::resolve_cancel_toast(toast),
         super::model::resolve_pause_toast(toast),
         toast.action.as_ref(),
