@@ -305,7 +305,7 @@ impl App {
             } else {
                 None
             };
-            let (kind, title) = (crate::widgets::toast::ToastKind::Success, "已完成");
+            let (kind, title) = (crate::widgets::toast::ToastKind::Success, "工程文件已保存");
             if self
                 .notifications
                 .has_progress(crate::widgets::toast::SAVE_PROGRESS_ID)
@@ -331,11 +331,11 @@ impl App {
             } else if let Some(name) = saved_name {
                 self.notifications
                     .prune_history(crate::widgets::toast::SAVE_PROGRESS_ID);
-                self.notifications.success("已保存", name);
+                self.notifications.success("工程文件已保存", name);
             } else {
                 self.notifications
                     .prune_history(crate::widgets::toast::SAVE_PROGRESS_ID);
-                self.notifications.success("已保存", "");
+                self.notifications.success("工程文件已保存", "");
             }
             // If there's a deferred action, execute it now
             if self.pending_unsaved.is_some() {
@@ -378,16 +378,17 @@ impl App {
                             let acted = self.notifications.complete_progress(
                                 crate::widgets::toast::EXPORT_PROGRESS_ID,
                                 crate::widgets::toast::ToastKind::Success,
-                                "已完成",
+                                "音频导出完成",
                                 format!("{} ({:.1}s, {:.1}x)", fname, elapsed, speed),
                             );
-                            // 可操作卡：打开文件夹（计时自动升为可操作档）
-                            self.notifications.set_action(
+                            // 可操作卡：打开文件夹（图标按钮，hover 显示 label；计时自动升为可操作档）
+                            self.notifications.set_action_with_icon(
                                 acted,
                                 "打开文件夹",
                                 crate::widgets::toast::model::ToastActionKind::RevealInFolder(
                                     std::path::PathBuf::from(&path),
                                 ),
+                                Some(egui_material_icons::icons::ICON_FOLDER_OPEN),
                             );
                         } else {
                             self.notifications
@@ -396,12 +397,13 @@ impl App {
                                 "导出完成",
                                 format!("{} ({:.1}s, {:.1}x)", fname, elapsed, speed),
                             );
-                            self.notifications.set_action(
+                            self.notifications.set_action_with_icon(
                                 nid,
                                 "打开文件夹",
                                 crate::widgets::toast::model::ToastActionKind::RevealInFolder(
                                     std::path::PathBuf::from(&path),
                                 ),
+                                Some(egui_material_icons::icons::ICON_FOLDER_OPEN),
                             );
                         }
                     }

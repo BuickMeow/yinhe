@@ -221,7 +221,7 @@ impl App {
                     self.notifications.complete_progress(
                         crate::widgets::toast::RESCALE_PROGRESS_ID,
                         crate::widgets::toast::ToastKind::Success,
-                        "已完成",
+                        "PPQ缩放完成",
                         format!("PPQ {} → {}", old_ppq, new_ppq),
                     );
                 }
