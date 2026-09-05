@@ -179,6 +179,74 @@ mod tests {
     fn empty_returns_none() {
         assert_eq!(recognize(&[]), None);
     }
+
+    fn wide_model(
+        track_count: usize,
+        hot_track: usize,
+        notes: Vec<(u8, u32, u32)>,
+    ) -> yinhe_core::YinModel {
+        use std::sync::Arc;
+        let tracks: Vec<Arc<yinhe_core::TrackData>> = (0..track_count)
+            .map(|_| Arc::new(yinhe_core::TrackData::new(0, 0)))
+            .collect();
+        let mut per_track: Vec<Vec<yinhe_core::NoteEvent>> =
+            (0..track_count).map(|_| Vec::new()).collect();
+        per_track[hot_track] = notes
+            .into_iter()
+            .map(|(key, start_tick, end_tick)| yinhe_core::NoteEvent {
+                id: 0,
+                start_tick,
+                end_tick,
+                key,
+                velocity: 100,
+            })
+            .collect();
+        let mut model = yinhe_core::YinModel {
+            tracks,
+            ..Default::default()
+        };
+        model.load_track_notes(per_track);
+        model.rebuild();
+        model
+    }
+
+    #[test]
+    fn many_tracks_sim_path_no_oob() {
+        use std::collections::HashMap;
+        // 回归：轨道数 >256（如 762 号轨）时同时发声路径曾用固定 [false; 256] 越界闪退。
+        let model = wide_model(800, 762, vec![(60, 0, 480), (64, 0, 480), (67, 0, 480)]);
+        let pr_visible = vec![true; 800];
+        let out = super::indicator_text(
+            &HashMap::new(),
+            true,
+            Some(0.0),
+            Some(&model),
+            None,
+            &pr_visible,
+            &[],
+            None,
+        );
+        assert_eq!(out, Some("C".to_string()));
+    }
+
+    #[test]
+    fn many_tracks_window_path_no_oob() {
+        use std::collections::HashMap;
+        // 分解和弦回退（窗口聚合）同理曾用固定 256 数组：sim 处仅单音，靠窗口还原 C。
+        let model = wide_model(800, 762, vec![(60, 0, 100), (64, 120, 220), (67, 240, 340)]);
+        let pr_visible = vec![true; 800];
+        let out = super::indicator_text(
+            &HashMap::new(),
+            true,
+            Some(240.0),
+            Some(&model),
+            None,
+            &pr_visible,
+            &[],
+            None,
+        );
+        assert_eq!(out, Some("C".to_string()));
+    }
 }
 
 // ── 和弦指示器（原 yinhe-egui/src/app/layout/chord.rs，下沉至此） ──
@@ -252,10 +320,12 @@ pub fn indicator_text(
     // 每轨发声 key 集合（已过滤静音/不可见/力度≤1），按 key 升序自然有序。
     let mut keys_by_track_sim: Vec<Vec<u8>> = vec![Vec::new(); n];
     // 单次 128 key 扫描，按 tick 覆盖把 key 分发到各轨的 present 标记。
+    // present 按实际轨道数分配（note.track 为 u16，曲目轨道数可超过 256，固定 256 会越界）。
+    // touched 记录本 key 命中的轨道，避免每 key 全量扫描 0..n。
+    let mut present = vec![false; n];
+    let mut touched: Vec<usize> = Vec::new();
     for key in 0u8..128 {
-        // 固定 256 容纳极端多轨（桌面默认 17 轨），避免每 key 分配 HashSet。
-        let mut present = [false; 256];
-        let mut any = false;
+        touched.clear();
         for note in model.key_notes_in_range(key, tick, tick.saturating_add(1)) {
             if note.velocity <= 1 {
                 continue;
@@ -285,16 +355,12 @@ pub fn indicator_text(
             }
             if !present[idx] {
                 present[idx] = true;
-                any = true;
+                touched.push(idx);
             }
         }
-        if !any {
-            continue;
-        }
-        for idx in 0..n {
-            if present[idx] {
-                keys_by_track_sim[idx].push(key);
-            }
+        for idx in touched.drain(..) {
+            keys_by_track_sim[idx].push(key);
+            present[idx] = false;
         }
     }
 
@@ -346,9 +412,11 @@ pub fn indicator_text(
         let window = model.meta.ppq; // 1拍，延迟约 1拍/2，随 ppq 自适应
         let lo = tick.saturating_sub(window);
         let hi = tick.saturating_add(1);
+        // 同上：按实际轨道数分配，避免固定 256 在多轨曲目越界。
+        let mut present = vec![false; n];
+        let mut touched: Vec<usize> = Vec::new();
         for key in 0u8..128 {
-            let mut present = [false; 256];
-            let mut any = false;
+            touched.clear();
             for note in model.key_notes(key).range(lo, hi) {
                 if note.velocity <= 1 {
                     continue;
@@ -380,16 +448,12 @@ pub fn indicator_text(
                 }
                 if !present[idx] {
                     present[idx] = true;
-                    any = true;
+                    touched.push(idx);
                 }
             }
-            if !any {
-                continue;
-            }
-            for idx in 0..n {
-                if present[idx] {
-                    keys_by_track_win[idx].push(key);
-                }
+            for idx in touched.drain(..) {
+                keys_by_track_win[idx].push(key);
+                present[idx] = false;
             }
         }
     }
