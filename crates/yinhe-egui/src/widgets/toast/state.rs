@@ -27,6 +27,18 @@ fn y_anim_value(anim: &YAnim, now: Instant) -> f32 {
     anim.from + (anim.to - anim.from) * ease_out_cubic(t)
 }
 
+fn scroll_max(total: f32, visible: f32) -> f32 {
+    (total - visible).max(0.0)
+}
+
+fn follow_scroll(prev_scroll: f32, prev_max: f32, new_max: f32) -> f32 {
+    if prev_scroll >= prev_max - 40.0 {
+        new_max
+    } else {
+        prev_scroll.clamp(0.0, new_max)
+    }
+}
+
 // ── 统一通知中心 ──
 pub struct Notifications {
     next_id: u64,
@@ -54,6 +66,10 @@ pub struct Notifications {
     card_h: HashMap<u64, f32>,
     /// Y 轴自有 ease-out 动画状态（id → 起点/终点/起始时刻，时长 0.35s）。
     y_anim: HashMap<u64, YAnim>,
+    /// 列表滚动偏移（开列表时两处目标 y 统一减去它）。
+    center_scroll: f32,
+    /// 上帧最大滚动（贴底跟随与 clamp 用，每帧更新）。
+    center_scroll_max: f32,
 }
 
 pub const LOADING_PROGRESS_ID: u64 = 0x4C4F4144; // "LOAD"
@@ -87,6 +103,8 @@ impl Notifications {
             live_hist: HashMap::new(),
             card_h: HashMap::new(),
             y_anim: HashMap::new(),
+            center_scroll: 0.0,
+            center_scroll_max: 0.0,
         }
     }
 
@@ -156,6 +174,162 @@ impl Notifications {
             y_anim_value(a, now)
         } else {
             target
+        }
+    }
+
+    /// 列表内容总高：按 history 顺序用实测高度累加（含 GAP）。
+    fn center_total_h(&self, fallback: f32, gap: f32) -> f32 {
+        if self.history.is_empty() {
+            return 0.0;
+        }
+        let mut total = 0.0;
+        for h in &self.history {
+            total += self.card_h.get(&h.id).copied().unwrap_or(fallback);
+        }
+        total += gap * ((self.history.len() as f32) - 1.0).max(0.0);
+        total
+    }
+
+    /// 每帧更新滚动上限：贴底跟随时吸到新 max，否则 clamp 旧值。
+    fn update_center_scroll(&mut self, viewport_h: f32, bottom_pad: f32, gap: f32, fallback: f32) {
+        let total = self.center_total_h(fallback, gap);
+        let visible = (viewport_h - bottom_pad - 24.0).max(0.0);
+        let new_max = scroll_max(total, visible);
+        let followed = follow_scroll(self.center_scroll, self.center_scroll_max, new_max);
+        self.center_scroll_max = new_max;
+        self.center_scroll = followed.clamp(0.0, new_max);
+    }
+
+    /// 列表背景捕获（与卡片同 Order::Tooltip 但先画所以在下）：
+    /// 覆盖本列实际范围，吞缝隙点击 + 滚轮转滚动。卡片之后再画滚动条（在上）。
+    #[allow(clippy::too_many_arguments)]
+    fn show_center_bg(
+        &mut self,
+        ctx: &egui::Context,
+        viewport: egui::Rect,
+        card_w: f32,
+        gap: f32,
+        bottom_pad: f32,
+        right_pad: f32,
+        fallback: f32,
+    ) {
+        self.update_center_scroll(viewport.height(), bottom_pad, gap, fallback);
+        let total = self.center_total_h(fallback, gap);
+        if total <= 0.0 {
+            return;
+        }
+        let scroll = self.center_scroll;
+        let left = viewport.max.x - right_pad - card_w;
+        let right = viewport.max.x - right_pad;
+        let bg_bottom = viewport.max.y - (bottom_pad - gap);
+        let top_y_off = bottom_pad + total - scroll + gap;
+        let bg_top = (viewport.max.y - top_y_off).max(viewport.min.y);
+        if bg_top >= bg_bottom {
+            return;
+        }
+        let bg_rect =
+            egui::Rect::from_min_max(egui::pos2(left, bg_top), egui::pos2(right, bg_bottom));
+        egui::Area::new(egui::Id::new("yinhe_notif_center_bg"))
+            .fixed_pos(bg_rect.min)
+            .order(egui::Order::Tooltip)
+            .movable(false)
+            .interactable(true)
+            .constrain(false)
+            .show(ctx, |ui| {
+                let resp = ui.allocate_response(bg_rect.size(), egui::Sense::click());
+                // 吞掉缝隙点击，不做任何事
+                let _ = resp.clicked();
+            });
+        // 滚轮：仅指针在本列时生效
+        let over_column = ctx.input(|i| i.pointer.hover_pos().is_some_and(|p| bg_rect.contains(p)));
+        if over_column {
+            let dy = ctx.input(|i| i.smooth_scroll_delta.y);
+            if dy != 0.0 {
+                let max = self.center_scroll_max;
+                self.center_scroll = (self.center_scroll - dy).clamp(0.0, max);
+            }
+        }
+    }
+
+    /// 细滚动条（列右缘 track+thumb，thumb 可拖），在卡片之后画所以在上。
+    #[allow(clippy::too_many_arguments)]
+    fn show_center_scrollbar(
+        &mut self,
+        ctx: &egui::Context,
+        viewport: egui::Rect,
+        _card_w: f32,
+        gap: f32,
+        bottom_pad: f32,
+        right_pad: f32,
+        fallback: f32,
+    ) {
+        let max = self.center_scroll_max;
+        if max <= 0.0 {
+            return;
+        }
+        let total = self.center_total_h(fallback, gap);
+        if total <= 0.0 {
+            return;
+        }
+        let scroll = self.center_scroll;
+        let visible = (viewport.height() - bottom_pad - 24.0).max(0.0);
+        let right = viewport.max.x - right_pad;
+        let bg_bottom = viewport.max.y - (bottom_pad - gap);
+        let top_y_off = bottom_pad + total - scroll + gap;
+        let bg_top = (viewport.max.y - top_y_off).max(viewport.min.y);
+        if bg_top >= bg_bottom {
+            return;
+        }
+        const TRACK_W: f32 = 6.0;
+        let track_rect = egui::Rect::from_min_max(
+            egui::pos2(right - TRACK_W, bg_top),
+            egui::pos2(right, bg_bottom),
+        );
+        let track_h = track_rect.height();
+        if track_h <= 0.0 {
+            return;
+        }
+        let thumb_h = ((visible / total.max(1.0)) * track_h).clamp(24.0, track_h);
+        let travel = (track_h - thumb_h).max(1.0);
+        let ratio = if max > 0.0 {
+            (scroll / max).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let thumb_y = track_rect.min.y + ratio * travel;
+        let thumb_rect = egui::Rect::from_min_size(
+            egui::pos2(track_rect.min.x, thumb_y),
+            egui::vec2(TRACK_W, thumb_h),
+        );
+        // 先画 track+thumb，再用透明 Area 承接拖动（同层后画在上）
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Tooltip,
+            egui::Id::new("yinhe_notif_scroll_paint"),
+        ));
+        painter.rect_filled(track_rect, 3.0, egui::Color32::from_black_alpha(50));
+        painter.rect_filled(thumb_rect, 3.0, egui::Color32::from_black_alpha(130));
+        let drag_dy = egui::Area::new(egui::Id::new("yinhe_notif_scrollbar"))
+            .fixed_pos(track_rect.min)
+            .order(egui::Order::Tooltip)
+            .movable(false)
+            .interactable(true)
+            .constrain(false)
+            .show(ctx, |ui| {
+                let _ = ui.allocate_response(egui::vec2(TRACK_W, track_h), egui::Sense::click());
+                let thumb_resp = ui.interact(
+                    thumb_rect,
+                    egui::Id::new("yinhe_notif_thumb"),
+                    egui::Sense::drag(),
+                );
+                if thumb_resp.dragged() {
+                    thumb_resp.drag_delta().y
+                } else {
+                    0.0
+                }
+            })
+            .inner;
+        if drag_dy != 0.0 {
+            self.center_scroll = (self.center_scroll + drag_dy * max / travel).clamp(0.0, max);
         }
     }
 
@@ -952,6 +1126,10 @@ impl Notifications {
 
         let viewport = ctx.viewport_rect();
         let max_h = (viewport.height() - BOTTOM_PAD - 24.0).max(120.0);
+        // 列表开着时先刷新滚动上限，保证两处用同一 scroll（show_center 随后还会刷一次，同输入幂等）。
+        if self.center_open {
+            self.update_center_scroll(viewport.height(), BOTTOM_PAD, GAP, EST_H);
+        }
 
         // 预计算目标 y：toast 堆叠 vs 历史堆叠（按每张卡实测高度累加）
         let mut toast_y_map: HashMap<u64, f32> = HashMap::new();
@@ -978,13 +1156,25 @@ impl Notifications {
         let mut to_dismiss: Vec<u64> = Vec::new();
         for idx in (0..self.toasts.len()).rev() {
             let tid = self.toasts[idx].id;
-            let target_y = if self.center_open {
+            let raw_y = if self.center_open {
                 // 重排至历史中的位置
                 history_y_map.get(&tid).copied().unwrap_or(BOTTOM_PAD)
             } else {
                 toast_y_map.get(&tid).copied().unwrap_or(BOTTOM_PAD)
             };
-            if target_y > max_h + self.measured_h(tid, EST_H) {
+            // 列表开着时两处统一减滚动
+            let target_y = if self.center_open {
+                raw_y - self.center_scroll
+            } else {
+                raw_y
+            };
+            let card_h = self.measured_h(tid, EST_H);
+            // 滚出可视底部的卡跳过（与顶部裁剪对称）
+            if self.center_open && target_y + card_h < BOTTOM_PAD - 4.0 {
+                self.toasts[idx].hovered = false;
+                continue;
+            }
+            if target_y > max_h + card_h {
                 self.toasts[idx].hovered = false;
                 continue;
             }
@@ -1087,6 +1277,11 @@ impl Notifications {
         let viewport = ctx.viewport_rect();
         let max_h = (viewport.height() - BOTTOM_PAD - 24.0).max(120.0);
 
+        // 列表开着时先画背景捕获（同层先画在下）：吞缝隙点击 + 滚轮，顺带刷新滚动上限。
+        if self.center_open {
+            self.show_center_bg(ctx, viewport, CARD_W, GAP, BOTTOM_PAD, RIGHT_PAD, EST_H);
+        }
+
         // 预计算历史目标 y（最新在底部，按每张卡实测高度累加）
         let mut history_y_map: HashMap<u64, f32> = HashMap::new();
         {
@@ -1105,8 +1300,19 @@ impl Notifications {
                 continue;
             }
             let tid = self.history[idx].id;
-            let target_y = history_y_map.get(&tid).copied().unwrap_or(BOTTOM_PAD);
-            if target_y > max_h + self.measured_h(tid, EST_H) {
+            let raw_y = history_y_map.get(&tid).copied().unwrap_or(BOTTOM_PAD);
+            // 列表开着时与 show_toasts 统一减滚动；关闭退场不减
+            let target_y = if self.center_open {
+                raw_y - self.center_scroll
+            } else {
+                raw_y
+            };
+            let card_h = self.measured_h(tid, EST_H);
+            // 滚出可视底部的卡跳过
+            if self.center_open && target_y + card_h < BOTTOM_PAD - 4.0 {
+                continue;
+            }
+            if target_y > max_h + card_h {
                 continue;
             }
             let y_off = self.y_for(tid, target_y, Instant::now());
@@ -1135,6 +1341,10 @@ impl Notifications {
                     ui.min_rect().height()
                 });
             self.card_h.insert(tid, area_resp.inner);
+        }
+        // 滚动条在卡片之后画所以在上（与背景同层，后画在上）。
+        if self.center_open {
+            self.show_center_scrollbar(ctx, viewport, CARD_W, GAP, BOTTOM_PAD, RIGHT_PAD, EST_H);
         }
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
     }
@@ -1914,5 +2124,61 @@ mod tests {
         };
         assert!((a.from - before).abs() < 1e-4);
         assert!((a.to - 200.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn scroll_max_clamps_to_zero() {
+        assert!((scroll_max(100.0, 200.0) - 0.0).abs() < 1e-6);
+        assert!((scroll_max(200.0, 200.0) - 0.0).abs() < 1e-6);
+        assert!((scroll_max(500.0, 200.0) - 300.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn scroll_clamp_bounds() {
+        let max = 300.0;
+        // 上下界 clamp（与滚轮/拖动同公式）
+        assert!(((-50.0_f32).clamp(0.0, max) - 0.0).abs() < 1e-6);
+        assert!(((400.0_f32).clamp(0.0, max) - 300.0).abs() < 1e-6);
+        assert!(((150.0_f32).clamp(0.0, max) - 150.0).abs() < 1e-6);
+        // 滚轮公式：center_scroll - dy
+        let scrolled = (100.0 - (-30.0_f32)).clamp(0.0, max);
+        assert!((scrolled - 130.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn scroll_follow_sticks_near_bottom() {
+        // 在底部附近（40 以内）内容变高 → 吸到新 max
+        assert!((follow_scroll(460.0, 500.0, 600.0) - 600.0).abs() < 1e-6);
+        assert!((follow_scroll(500.0, 500.0, 600.0) - 600.0).abs() < 1e-6);
+        // 离底部远 → 保持旧值
+        assert!((follow_scroll(100.0, 500.0, 600.0) - 100.0).abs() < 1e-6);
+        // 内容变矮导致旧值越界 → clamp 到新 max
+        assert!((follow_scroll(500.0, 500.0, 200.0) - 200.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn update_center_scroll_sticks_and_updates_max() {
+        let mut n = Notifications::new();
+        // 造 3 条历史，每条实测 100，GAP=8：total=100*3+8*2=316
+        let _ = n.success("a", "1");
+        let _ = n.success("b", "2");
+        let _ = n.success("c", "3");
+        for h in n.history.clone() {
+            n.card_h.insert(h.id, 100.0);
+        }
+        // viewport 高 200：visible=200-48-24=128，max=316-128=188
+        n.center_scroll = 188.0;
+        n.center_scroll_max = 188.0;
+        n.update_center_scroll(200.0, 48.0, 8.0, 110.0);
+        assert!((n.center_scroll_max - 188.0).abs() < 1e-4);
+        // 新增一条变高到 total=424，max=296，底部附近应吸到新 max
+        let _ = n.success("d", "4");
+        let Some(last) = n.history.last().cloned() else {
+            panic!("history missing");
+        };
+        n.card_h.insert(last.id, 100.0);
+        n.update_center_scroll(200.0, 48.0, 8.0, 110.0);
+        assert!((n.center_scroll_max - 296.0).abs() < 1e-4);
+        assert!((n.center_scroll - 296.0).abs() < 1e-4);
     }
 }
