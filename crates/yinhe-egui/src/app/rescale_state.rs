@@ -227,7 +227,7 @@ impl App {
                 }
                 if msg == "已取消" {
                     self.notifications
-                        .remove_progress(crate::widgets::toast::RESCALE_PROGRESS_ID);
+                        .dismiss_toast(crate::widgets::toast::RESCALE_PROGRESS_ID);
                 } else {
                     self.load_error = Some(msg.clone());
                     if self

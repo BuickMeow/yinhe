@@ -69,7 +69,14 @@ impl Notifications {
     }
 
     /// 从设置同步通知总开关（main_loop 每帧调一次）。
+    /// 关闭时已有卡走正常 320ms 退场（不再立即清空），历史保留。
     pub fn set_enabled(&mut self, enabled: bool) {
+        if self.enabled && !enabled {
+            let ids: Vec<u64> = self.toasts.iter().map(|t| t.id).collect();
+            for id in ids {
+                self.dismiss_toast(id);
+            }
+        }
         self.enabled = enabled;
     }
 
@@ -409,10 +416,6 @@ impl Notifications {
         }
     }
 
-    pub fn remove_progress(&mut self, id: u64) {
-        self.toasts.retain(|t| t.id != id);
-    }
-
     pub fn unread_count(&self) -> usize {
         self.history.iter().filter(|e| !e.read).count()
     }
@@ -451,12 +454,6 @@ impl Notifications {
 
     fn tick(&mut self, ctx: &egui::Context) {
         let now = Instant::now();
-        if !self.enabled {
-            // 关闭时正在显示的立即消失（不走离开动画），历史保留
-            self.toasts.clear();
-            self.last_tick = Some(now);
-            return;
-        }
         if self.center_open != self.prev_center_open {
             if self.center_open {
                 self.center_opened_at = Some(now);
@@ -548,10 +545,6 @@ impl Notifications {
     // 彻底重构：每个 toast 独立 Area，避免父 Area+ScrollArea 宽度异常导致右侧溢出。
     // 打开通知列表时，已存在的 toast 不消失，而是通过非线性 y 插值重排至历史位置；其余历史项飞入。
     pub fn show_toasts(&mut self, ctx: &egui::Context) {
-        if !self.enabled {
-            self.toasts.clear();
-            return;
-        }
         self.tick(ctx);
         if self.toasts.is_empty() {
             return;
@@ -944,13 +937,24 @@ mod tests {
         let id = n.success("t", "m");
         assert!(n.toasts.iter().any(|t| t.id == id));
         n.set_enabled(false);
+        // 关闭走正常退场：卡仍在但 leaving 已起算，历史保留
+        assert!(!n.toasts.is_empty());
+        assert!(
+            n.toasts
+                .iter()
+                .find(|t| t.id == id)
+                .unwrap()
+                .leaving_since
+                .is_some()
+        );
+        n.tick(&ctx());
+        assert!(!n.toasts.is_empty());
+        assert!(n.history.iter().any(|h| h.id == id));
+        // 退场动画播完后卡才移除
+        std::thread::sleep(Duration::from_millis(330));
         n.tick(&ctx());
         assert!(n.toasts.is_empty());
         assert!(n.history.iter().any(|h| h.id == id));
-        // show 系在关闭时直接返回，不复活任何卡
-        n.show_toasts(&ctx());
-        n.show_center(&ctx());
-        assert!(n.toasts.is_empty());
     }
 
     #[test]

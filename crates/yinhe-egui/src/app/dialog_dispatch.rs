@@ -155,7 +155,7 @@ impl App {
             .notifications
             .is_leaving(crate::widgets::toast::LOADING_PROGRESS_ID)
         {
-            // 检测取消：toast 的 cancel flag 被置位则真正取消加载
+            // 检测取消：toast 的 stop 按钮置位 cancel flag 则真正取消加载
             if let Some(flag) = self
                 .notifications
                 .get_cancel_flag(crate::widgets::toast::LOADING_PROGRESS_ID)
@@ -163,10 +163,10 @@ impl App {
             {
                 self.file_loader.cancel_loading();
                 self.notifications
-                    .remove_progress(crate::widgets::toast::LOADING_PROGRESS_ID);
+                    .dismiss_toast(crate::widgets::toast::LOADING_PROGRESS_ID);
             }
         } else if self.file_loader.is_loading() {
-            // 检测 toast 侧取消（用户点 X 或取消按钮）
+            // 检测 toast 侧取消（用户点 stop 按钮置位 cancel flag；X 只收起不取消）
             if let Some(flag) = self
                 .notifications
                 .get_cancel_flag(crate::widgets::toast::LOADING_PROGRESS_ID)
@@ -174,7 +174,7 @@ impl App {
             {
                 self.file_loader.cancel_loading();
                 self.notifications
-                    .remove_progress(crate::widgets::toast::LOADING_PROGRESS_ID);
+                    .dismiss_toast(crate::widgets::toast::LOADING_PROGRESS_ID);
             } else if self.file_loader.progress_visible() {
                 // 卡片只建一次，进度文案渲染时 pull，不再每帧拷贝
                 let src = std::sync::Arc::new(self.file_loader.toast_source());
@@ -268,7 +268,8 @@ impl App {
             .notifications
             .is_leaving(crate::widgets::toast::EXPORT_PROGRESS_ID)
         {
-            // 用户已点 X，取消标志由 toast 侧置位，下一帧会自动触发 cancel
+            // 用户点了 X（»）只是收起卡片，不置 cancel 标志，任务继续后台跑；
+            // 只有 stop 按钮才会置位 cancel flag（下一帧 poll 线程退出）。
         } else if self.export.rx.is_some() {
             // 若 toast 侧点了取消，已置位则不再建卡，直接让线程退出
             let cancelled = self
