@@ -79,6 +79,7 @@ fn main() {
         None,
         None,
         None,
+        None,
     )
     .expect("cpu export failed");
     let cpu_elapsed = t0.elapsed();
@@ -165,6 +166,9 @@ fn main() {
         |_, _| {},
         Arc::new(device),
         Arc::new(queue),
+        None,
+        None,
+        None,
     )
     .expect("gpu export failed");
     let gpu_elapsed = t0.elapsed();

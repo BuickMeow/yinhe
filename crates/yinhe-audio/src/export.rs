@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use xsynth_core::effects::VolumeLimiter;
 use yinhe_core::YinModel;
@@ -93,6 +93,63 @@ const GPU_RENDER_CHUNK_FRAMES: usize = 4096;
 /// are still active (prevents infinite loop on stuck voices).
 const MAX_TAIL_SECONDS: f64 = 30.0;
 
+/// 暂停等待：在渲染检查点调用，`pause=true` 时阻塞直到 resume 或 cancel。
+///
+/// - cancel 优先：`cancel=true` 时立刻返回（即使同时 paused）。
+/// - park 期间不持有 `export_progress` 锁（本函数根本不碰锁，由调用方在
+///   返回后另起一次短锁把 park 时长加到 `started_at` 上）。
+/// - SF 加载/finalize 段无检查点，暂停在那里按不灵——接受现状，不硬改加载段。
+/// - 返回本次 park 时长（未暂停则为 ZERO），调用方用它修正 `started_at` 与
+///   `prev_instant`（见各检查点旁的计时修正块）。
+pub(crate) fn wait_if_paused(
+    pause: &Option<Arc<AtomicBool>>,
+    cancel: &Option<Arc<AtomicBool>>,
+) -> Duration {
+    let is_cancelled = || cancel.as_ref().is_some_and(|c| c.load(Ordering::Relaxed));
+    if is_cancelled() {
+        return Duration::ZERO;
+    }
+    let Some(pause_flag) = pause.as_ref() else {
+        return Duration::ZERO;
+    };
+    if !pause_flag.load(Ordering::Relaxed) {
+        return Duration::ZERO;
+    }
+    let park_start = Instant::now();
+    while pause_flag.load(Ordering::Relaxed) {
+        if is_cancelled() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    park_start.elapsed()
+}
+
+/// resume 计时修正：把本次 park 时长加到 `started_at`（None 则跳过），
+///
+/// 这样 `elapsed`/`overall_speed` 自动正确；同时把 `prev_instant` 后移同样时长，
+/// 把 park 从 `render_speed` 的 `dt_wall` 里排除（顺手修，恢复后第一块倍率不再
+/// 偏低一次；改动仅两行，未动计时结构）。
+fn adjust_for_park(
+    export_progress: &Option<Arc<Mutex<ExportProgress>>>,
+    prev_instant: &mut Instant,
+    parked: Duration,
+) {
+    if parked.is_zero() {
+        return;
+    }
+    if let Some(ep) = export_progress
+        && let Ok(mut p) = ep.lock()
+        && let Some(start) = p.started_at
+        && let Some(shifted) = start.checked_add(parked)
+    {
+        p.started_at = Some(shifted);
+    }
+    if let Some(shifted) = prev_instant.checked_add(parked) {
+        *prev_instant = shifted;
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub fn export_wav(
     model: Arc<YinModel>,
@@ -105,6 +162,7 @@ pub fn export_wav(
     progress: impl Fn(f32, &str),
     export_progress: Option<Arc<Mutex<ExportProgress>>>,
     cancel: Option<Arc<AtomicBool>>,
+    pause: Option<Arc<AtomicBool>>,
     // 混音台 strip 参数（增益/声像/静音/独奏）。insert 效果器不参与导出：
     // 插件实例属于 UI 线程的引擎会话，导出线程无法复用。
     mixer_params: Option<&yinhe_mixer::MixerParams>,
@@ -192,6 +250,9 @@ pub fn export_wav(
 
     // ── Phase 1: render the main content (notes + CC events) ──
     while rendered < main_duration {
+        // 暂停检查点（紧贴 cancel 检查点之前；park 期间不持锁，返回后修正计时）。
+        let parked = wait_if_paused(&pause, &cancel);
+        adjust_for_park(&export_progress, &mut prev_instant, parked);
         if cancel.as_ref().is_some_and(|c| c.load(Ordering::Relaxed)) {
             return Err(ExportError::Cancelled);
         }
@@ -237,6 +298,9 @@ pub fn export_wav(
     let mut tail_rendered: u64 = 0;
 
     loop {
+        // 暂停检查点（尾音循环；同主循环：park 后修正计时再走 cancel 检查）。
+        let parked = wait_if_paused(&pause, &cancel);
+        adjust_for_park(&export_progress, &mut prev_instant, parked);
         if cancel.as_ref().is_some_and(|c| c.load(Ordering::Relaxed)) {
             return Err(ExportError::Cancelled);
         }
@@ -319,6 +383,7 @@ pub fn export_wav_gpu(
     queue: Arc<yinhe_synth::wgpu::Queue>,
     export_progress: Option<Arc<Mutex<ExportProgress>>>,
     cancel: Option<Arc<AtomicBool>>,
+    pause: Option<Arc<AtomicBool>>,
 ) -> Result<(), ExportError> {
     let t_start = Instant::now();
     let layout = crate::spawn::channels_for_model(&model);
@@ -497,6 +562,9 @@ pub fn export_wav_gpu(
     let mut prev_instant = Instant::now();
 
     while rendered < main_duration {
+        // 暂停检查点（GPU 主循环；同 CPU：park 后修正计时再走 cancel 检查）。
+        let parked = wait_if_paused(&pause, &cancel);
+        adjust_for_park(&export_progress, &mut prev_instant, parked);
         if cancel.as_ref().is_some_and(|c| c.load(Ordering::Relaxed)) {
             return Err(ExportError::Cancelled);
         }
@@ -541,6 +609,9 @@ pub fn export_wav_gpu(
     let mut tail_rendered: u64 = 0;
 
     loop {
+        // 暂停检查点（GPU 尾音；同主循环）。
+        let parked = wait_if_paused(&pause, &cancel);
+        adjust_for_park(&export_progress, &mut prev_instant, parked);
         if cancel.as_ref().is_some_and(|c| c.load(Ordering::Relaxed)) {
             return Err(ExportError::Cancelled);
         }
@@ -626,4 +697,80 @@ pub(crate) fn write_samples(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pause_none_passes_through() {
+        let parked = wait_if_paused(&None, &None);
+        assert!(parked.is_zero());
+        let cancel = Some(Arc::new(AtomicBool::new(false)));
+        let parked = wait_if_paused(&None, &cancel);
+        assert!(parked.is_zero());
+    }
+
+    #[test]
+    fn pause_and_cancel_returns_immediately() {
+        let pause = Some(Arc::new(AtomicBool::new(true)));
+        let cancel = Some(Arc::new(AtomicBool::new(true)));
+        let t0 = Instant::now();
+        let parked = wait_if_paused(&pause, &cancel);
+        // cancel 优先：不得进入 10ms 睡眠循环，立刻返回
+        assert!(t0.elapsed() < Duration::from_millis(50));
+        assert!(parked < Duration::from_millis(50));
+    }
+
+    #[test]
+    fn paused_helper_blocks_until_resumed() {
+        let pause = Some(Arc::new(AtomicBool::new(true)));
+        let pause_flag = pause.as_ref().map(Arc::clone);
+        let (tx, rx) = std::sync::mpsc::channel::<Duration>();
+        let handle = std::thread::spawn(move || {
+            let parked = wait_if_paused(&pause, &None);
+            let _ = tx.send(parked);
+        });
+        // 子线程应仍阻塞在 park 循环里（20ms 内收不到完成信号）
+        assert!(
+            rx.recv_timeout(Duration::from_millis(20)).is_err(),
+            "helper should block while pause=true"
+        );
+        // 主线程 resume 后放行
+        if let Some(f) = pause_flag {
+            f.store(false, Ordering::Relaxed);
+        }
+        assert!(
+            rx.recv_timeout(Duration::from_millis(200)).is_ok(),
+            "helper should unblock after resume"
+        );
+        assert!(handle.join().is_ok());
+    }
+
+    #[test]
+    fn adjust_for_park_shifts_started_at_and_prev_instant() {
+        let ep = ExportProgress::new();
+        let base = Instant::now() - Duration::from_secs(10);
+        if let Ok(mut p) = ep.lock() {
+            p.started_at = Some(base);
+        }
+        let mut prev = base;
+        let parked = Duration::from_millis(30);
+        adjust_for_park(&Some(Arc::clone(&ep)), &mut prev, parked);
+        if let Ok(p) = ep.lock() {
+            if let Some(start) = p.started_at {
+                assert!(start >= base + parked);
+            } else {
+                assert!(false, "started_at should stay Some");
+            }
+        } else {
+            assert!(false, "lock should succeed");
+        }
+        assert!(prev >= base + parked);
+        // parked=ZERO 时不碰计时
+        let mut prev2 = base;
+        adjust_for_park(&Some(Arc::clone(&ep)), &mut prev2, Duration::ZERO);
+        assert!(prev2 == base);
+    }
 }

@@ -801,6 +801,7 @@ impl App {
                         gpu_queue,
                         Some(export_progress.clone()),
                         Some(cancel_flag.clone()),
+                        None,
                     )
                 } else {
                     eprintln!("[export] GPU selected but no SFZ path, fallback to CPU.");
@@ -822,6 +823,7 @@ impl App {
                         },
                         Some(export_progress.clone()),
                         Some(cancel_flag),
+                        None,
                         Some(&mixer),
                     )
                 }
@@ -846,6 +848,7 @@ impl App {
                     },
                     Some(export_progress.clone()),
                     Some(cancel_flag),
+                    None,
                     Some(&mixer),
                 )
             };
@@ -869,6 +872,7 @@ impl App {
                 },
                 Some(export_progress.clone()),
                 Some(cancel_flag),
+                None,
                 Some(&mixer),
             );
             // Capture final stats before hiding the progress window.
