@@ -1,4 +1,5 @@
 use std::sync::{Arc, atomic::AtomicBool};
+use std::time::Instant;
 
 use eframe::egui;
 use egui_material_icons::icons::*;
@@ -87,6 +88,23 @@ fn blank_line(ui: &mut egui::Ui, font: &egui::FontId, wrap_w: f32) {
     ui.allocate_exact_size(egui::vec2(wrap_w, h), egui::Sense::hover());
 }
 
+/// 历史条目年龄文案（纯函数，方便单测）：5 秒内“刚刚”，之后秒/分/时/天。
+/// 无 chrono/time 依赖，超 7 天也显示“{n}天前”一直下去，不做 MM-DD。
+fn format_age(created: Instant, now: Instant) -> String {
+    let secs = now.saturating_duration_since(created).as_secs();
+    if secs <= 5 {
+        "刚刚".to_string()
+    } else if secs < 60 {
+        format!("{}秒前", secs)
+    } else if secs < 3600 {
+        format!("{}分钟前", secs / 60)
+    } else if secs < 86_400 {
+        format!("{}小时前", secs / 3600)
+    } else {
+        format!("{}天前", secs / 86_400)
+    }
+}
+
 /// 统一样式卡片：弹出与列表共用，仅 show_close 区分
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_card(
@@ -104,6 +122,8 @@ pub(crate) fn draw_card(
     pause: Option<Arc<AtomicBool>>,
     action: Option<&super::model::ToastAction>,
     cancelling: bool,
+    // 历史年龄行：仅 history_card 传非空（浮动卡传空串），有字才显示一行小字。
+    history_age: &str,
 ) -> super::model::CardOutcome {
     let mut outcome = super::model::CardOutcome::default();
     let frame = base_frame(alpha);
@@ -210,6 +230,20 @@ pub(crate) fn draw_card(
                         ui.add(
                             egui::Label::new(
                                 egui::RichText::new(det_shown)
+                                    .size(crate::theme::SMALL_LABEL_FONT)
+                                    .color(mul_alpha(crate::theme::text_muted(), card_alpha)),
+                            )
+                            .selectable(false)
+                            .wrap(),
+                        );
+                    }
+                    // 历史年龄行：仅历史列表有字才显示（浮动卡传空串，不占行）。
+                    // 历史列表高度由 state 侧实测自适应，无需占位兼容。
+                    if !history_age.is_empty() {
+                        let age_shown = clamp_lines(&ctx, history_age, &det_font, wrap_w, 1);
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(age_shown)
                                     .size(crate::theme::SMALL_LABEL_FONT)
                                     .color(mul_alpha(crate::theme::text_muted(), card_alpha)),
                             )
@@ -405,15 +439,17 @@ pub(crate) fn toast_card(
         super::model::resolve_pause_toast(toast),
         toast.action.as_ref(),
         toast.cancelling,
+        "",
     )
 }
 
 /// 历史卡片：只读，无删除（与 toast 同尺寸，仅隐藏 X）
 pub(crate) fn history_card(ui: &mut egui::Ui, entry: &HistoryEntry, width: f32) {
     let (title, message, progress, label) = super::model::resolve_history(entry);
+    let age = format_age(entry.created, Instant::now());
     let _ = draw_card(
         ui, width, 0.0, 1.0, entry.kind, &title, &message, progress, &label, false, None, None,
-        None, false,
+        None, false, &age,
     );
 }
 
@@ -486,6 +522,7 @@ mod tests {
                 pause_flag.clone(),
                 action.as_ref(),
                 cancelling,
+                "",
             );
             h = ui.min_rect().height();
         });
@@ -524,6 +561,7 @@ mod tests {
                 pause_flag.clone(),
                 None,
                 false,
+                "",
             );
             h = ui.min_rect().height();
         });
@@ -680,5 +718,32 @@ mod tests {
             p.store(!cur, std::sync::atomic::Ordering::Relaxed);
         }
         assert!(!pause_flag.load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    /// format_age 全分支：刚刚/秒/分钟/小时/天（含超 7 天一直显示天数）。
+    #[test]
+    fn format_age_branches() {
+        use std::time::{Duration, Instant};
+        let now = Instant::now();
+        let ago = |d: Duration| format_age(now - d, now);
+        // 5 秒内“刚刚”（含边界）
+        assert_eq!(ago(Duration::from_secs(0)), "刚刚");
+        assert_eq!(ago(Duration::from_secs(5)), "刚刚");
+        // 60 秒内秒
+        assert_eq!(ago(Duration::from_secs(6)), "6秒前");
+        assert_eq!(ago(Duration::from_secs(59)), "59秒前");
+        // 60 分钟内分钟
+        assert_eq!(ago(Duration::from_secs(60)), "1分钟前");
+        assert_eq!(ago(Duration::from_secs(3599)), "59分钟前");
+        // 24 小时内小时
+        assert_eq!(ago(Duration::from_secs(3600)), "1小时前");
+        assert_eq!(ago(Duration::from_secs(86399)), "23小时前");
+        // 天（含 7 天边界与更早：无 chrono 依赖，一直显示天数）
+        assert_eq!(ago(Duration::from_secs(86_400)), "1天前");
+        assert_eq!(ago(Duration::from_secs(6 * 86_400)), "6天前");
+        assert_eq!(ago(Duration::from_secs(7 * 86_400)), "7天前");
+        assert_eq!(ago(Duration::from_secs(30 * 86_400)), "30天前");
+        // 未来时间（created 晚于 now）钳制为“刚刚”
+        assert_eq!(format_age(now, now - Duration::from_secs(10)), "刚刚");
     }
 }
