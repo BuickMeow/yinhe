@@ -214,69 +214,8 @@ pub(crate) fn draw_card(
                             .wrap(),
                         );
                     }
+                    // 右侧按钮组已移至覆盖层（整卡垂直居中），此处仅保留 width-90 给右侧留空
                 });
-                if show_close || cancel.is_some() || action_label.is_some() {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if show_close {
-                            let resp = crate::widgets::hover::hover_button(
-                                ui,
-                                ICON_CLOSE.codepoint,
-                                egui::FontId::new(
-                                    crate::theme::ICON_FONT_SM,
-                                    ICON_CLOSE.font_family(),
-                                ),
-                                mul_alpha(crate::theme::text_muted(), card_alpha),
-                                false,
-                            );
-                            if resp.clicked() {
-                                outcome.dismiss = true;
-                            }
-                        }
-                        if let Some(c) = &cancel {
-                            if progress.is_some() {
-                                ui.add_space(6.0);
-                                let resp2 = ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new("取消")
-                                            .size(crate::theme::SMALL_FONT)
-                                            .color(mul_alpha(
-                                                crate::theme::text_muted(),
-                                                card_alpha,
-                                            )),
-                                    )
-                                    .sense(egui::Sense::click())
-                                    .selectable(false),
-                                );
-                                if resp2.clicked() {
-                                    c.store(true, std::sync::atomic::Ordering::Relaxed);
-                                    outcome.cancel = true;
-                                }
-                                if resp2.hovered() {
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                }
-                            }
-                        }
-                        // 操作按钮（如“打开文件夹”）：只执行不收卡，收起交给自动计时
-                        if let Some(label) = action_label {
-                            ui.add_space(6.0);
-                            let resp3 = ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(label)
-                                        .size(crate::theme::SMALL_FONT)
-                                        .color(mul_alpha(crate::theme::text_muted(), card_alpha)),
-                                )
-                                .sense(egui::Sense::click())
-                                .selectable(false),
-                            );
-                            if resp3.clicked() {
-                                outcome.action = true;
-                            }
-                            if resp3.hovered() {
-                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                            }
-                        }
-                    });
-                }
             });
             if progress.is_some() {
                 // 进度区恒定结构（6+2+12）：有条画条，无条只占位不绘制。
@@ -308,8 +247,79 @@ pub(crate) fn draw_card(
                 ui.add_space(20.0);
             }
         });
-        // 整卡悬停即暂停自动收起计时（含按钮区，阴影除外）
-        outcome.hovered = frame_resp.response.hovered();
+        // 右侧按钮覆盖层：相对整卡真正垂直居中（只在有按钮时分配，历史卡片不分配）
+        let mut overlay_hovered = false;
+        if show_close || (cancel.is_some() && progress.is_some()) || action_label.is_some() {
+            let card_rect = frame_resp.response.rect;
+            let center_y = card_rect.center().y;
+            let right = card_rect.max.x - 10.0;
+            let overlay_rect = egui::Rect::from_min_max(
+                egui::pos2(right - 70.0, center_y - 14.0),
+                egui::pos2(right, center_y + 14.0),
+            );
+            ui.scope_builder(egui::UiBuilder::new().max_rect(overlay_rect), |ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if show_close {
+                        let resp = crate::widgets::hover::hover_button(
+                            ui,
+                            ICON_KEYBOARD_DOUBLE_ARROW_RIGHT.codepoint,
+                            egui::FontId::new(
+                                crate::theme::ICON_FONT_SM,
+                                ICON_KEYBOARD_DOUBLE_ARROW_RIGHT.font_family(),
+                            ),
+                            mul_alpha(crate::theme::text_muted(), card_alpha),
+                            false,
+                        );
+                        if resp.clicked() {
+                            outcome.dismiss = true;
+                        }
+                        overlay_hovered |= resp.hovered();
+                    }
+                    if let Some(c) = &cancel
+                        && progress.is_some()
+                    {
+                        ui.add_space(6.0);
+                        let resp2 = crate::widgets::hover::hover_button(
+                            ui,
+                            ICON_STOP_CIRCLE.codepoint,
+                            egui::FontId::new(
+                                crate::theme::ICON_FONT_SM,
+                                ICON_STOP_CIRCLE.font_family(),
+                            ),
+                            mul_alpha(crate::theme::text_muted(), card_alpha),
+                            false,
+                        );
+                        if resp2.clicked() {
+                            c.store(true, std::sync::atomic::Ordering::Relaxed);
+                            outcome.cancel = true;
+                        }
+                        overlay_hovered |= resp2.hovered();
+                    }
+                    // 操作按钮（如“打开文件夹”）：只执行不收卡，收起交给自动计时
+                    if let Some(label) = action_label {
+                        ui.add_space(6.0);
+                        let resp3 = ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(label)
+                                    .size(crate::theme::SMALL_FONT)
+                                    .color(mul_alpha(crate::theme::text_muted(), card_alpha)),
+                            )
+                            .sense(egui::Sense::click())
+                            .selectable(false),
+                        );
+                        if resp3.clicked() {
+                            outcome.action = true;
+                        }
+                        if resp3.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+                        overlay_hovered |= resp3.hovered();
+                    }
+                });
+            });
+        }
+        // 整卡悬停即暂停自动收起计时（含覆盖层按钮区，阴影除外）
+        outcome.hovered = frame_resp.response.hovered() || overlay_hovered;
     });
     outcome
 }
