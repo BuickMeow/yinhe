@@ -7,6 +7,26 @@ use eframe::egui;
 use super::kind::ToastKind;
 use super::model::{HistoryEntry, Toast};
 
+// ── Y 轴 ease-out 动画（与 anim.rs 里 x 飞行动画同族曲线 1-(1-t)^3，时长 0.35s）──
+#[derive(Clone, Copy, Debug)]
+struct YAnim {
+    from: f32,
+    to: f32,
+    t0: Instant,
+}
+
+const Y_ANIM_DUR_SECS: f32 = 0.35;
+
+fn ease_out_cubic(t: f32) -> f32 {
+    1.0 - (1.0 - t).powi(3)
+}
+
+fn y_anim_value(anim: &YAnim, now: Instant) -> f32 {
+    let elapsed = now.saturating_duration_since(anim.t0).as_secs_f32();
+    let t = (elapsed / Y_ANIM_DUR_SECS).clamp(0.0, 1.0);
+    anim.from + (anim.to - anim.from) * ease_out_cubic(t)
+}
+
 // ── 统一通知中心 ──
 pub struct Notifications {
     next_id: u64,
@@ -32,6 +52,8 @@ pub struct Notifications {
     live_hist: HashMap<u64, u64>,
     /// 每张卡上帧实测高度（`ui.min_rect().height()`），堆叠按真实高度累加。
     card_h: HashMap<u64, f32>,
+    /// Y 轴自有 ease-out 动画状态（id → 起点/终点/起始时刻，时长 0.35s）。
+    y_anim: HashMap<u64, YAnim>,
 }
 
 pub const LOADING_PROGRESS_ID: u64 = 0x4C4F4144; // "LOAD"
@@ -64,6 +86,7 @@ impl Notifications {
             collapsed: HashSet::new(),
             live_hist: HashMap::new(),
             card_h: HashMap::new(),
+            y_anim: HashMap::new(),
         }
     }
 
@@ -107,6 +130,33 @@ impl Notifications {
     /// 该卡上帧实测高度；无实测（首帧）回退固定估算。
     fn measured_h(&self, id: u64, fallback: f32) -> f32 {
         self.card_h.get(&id).copied().unwrap_or(fallback)
+    }
+
+    /// Y 轴 ease-out 显示值：无记录或目标变更时从当前显示值重起，保证不断裂。
+    fn y_for(&mut self, id: u64, target: f32, now: Instant) -> f32 {
+        let need_reset = match self.y_anim.get(&id) {
+            None => true,
+            Some(a) => a.to != target,
+        };
+        if need_reset {
+            let cur = match self.y_anim.get(&id) {
+                Some(a) => y_anim_value(a, now),
+                None => target,
+            };
+            self.y_anim.insert(
+                id,
+                YAnim {
+                    from: cur,
+                    to: target,
+                    t0: now,
+                },
+            );
+            cur
+        } else if let Some(a) = self.y_anim.get(&id) {
+            y_anim_value(a, now)
+        } else {
+            target
+        }
     }
 
     // ── 对外推送 API ──
@@ -832,6 +882,10 @@ impl Notifications {
         self.card_h.retain(|id, _| {
             self.toasts.iter().any(|t| t.id == *id) || self.history.iter().any(|h| h.id == *id)
         });
+        // y 动画同理：toasts/history 都不存在的清掉。
+        self.y_anim.retain(|id, _| {
+            self.toasts.iter().any(|t| t.id == *id) || self.history.iter().any(|h| h.id == *id)
+        });
         // 自动收起到期：走正常离开动画，只收浮动卡，历史保留；
         // 列表开着时跳过（deadline 自然过期不管它）
         let expired: Vec<u64> = if self.center_open {
@@ -934,9 +988,8 @@ impl Notifications {
                 self.toasts[idx].hovered = false;
                 continue;
             }
-            // 非线性 y 插值：已有通知平滑重排
-            let y_off =
-                ctx.animate_value_with_time(egui::Id::new(("notif_y", tid)), target_y, 0.35);
+            // 自有 ease-out y 插值（与 x 飞行动画同族曲线），重排不线性
+            let y_off = self.y_for(tid, target_y, Instant::now());
             let is_leaving = self.toasts[idx].leaving_since.is_some();
             // 打开列表时已存在的 toast 不重新飞入，仅重排；离开时仍飞出
             let x_off = if self.center_open && !is_leaving {
@@ -1056,8 +1109,7 @@ impl Notifications {
             if target_y > max_h + self.measured_h(tid, EST_H) {
                 continue;
             }
-            let y_off =
-                ctx.animate_value_with_time(egui::Id::new(("notif_y", tid)), target_y, 0.35);
+            let y_off = self.y_for(tid, target_y, Instant::now());
             // 打开：无停顿直接从右侧飞入；关闭：入场的严格反向飞出
             let x_off = if closing {
                 let closed_at = self.center_closed_at.unwrap_or_else(Instant::now);
@@ -1810,5 +1862,57 @@ mod tests {
         n.ensure_progress(LOADING_PROGRESS_ID, ToastKind::Info, Arc::new(S));
         assert_eq!(n.unread_count(), before);
         assert!(!n.has_unread());
+    }
+
+    #[test]
+    fn ease_out_cubic_values_and_monotonic() {
+        assert!((ease_out_cubic(0.0) - 0.0).abs() < 1e-6);
+        assert!((ease_out_cubic(1.0) - 1.0).abs() < 1e-6);
+        // t=0.5 时 1-(0.5)^3=0.875，快起慢收
+        assert!((ease_out_cubic(0.5) - 0.875).abs() < 1e-6);
+        // 单调递增
+        let mut prev = ease_out_cubic(0.0);
+        let mut t: f32 = 0.1;
+        while t <= 1.0001 {
+            let cur = ease_out_cubic(t.min(1.0));
+            assert!(cur >= prev, "not monotonic at t={t}");
+            prev = cur;
+            t += 0.1;
+        }
+    }
+
+    #[test]
+    fn y_for_retarget_keeps_continuity() {
+        let mut n = Notifications::new();
+        let t0 = Instant::now();
+        // 首帧直接落到目标，无跳变
+        let y0 = n.y_for(7, 100.0, t0);
+        assert!((y0 - 100.0).abs() < 1e-6);
+        // 中途（100ms，约 0.285 进度）取显示值
+        let t1 = t0 + Duration::from_millis(100);
+        let mid = n.y_for(7, 100.0, t1);
+        assert!(mid >= 100.0 - 1e-6, "single target must stay, got {mid}");
+        // 目标突变为 200：本帧返回旧显示值，不断裂
+        let t2 = t0 + Duration::from_millis(150);
+        let snapshot = match n.y_anim.get(&7).copied() {
+            Some(a) => a,
+            None => YAnim {
+                from: 100.0,
+                to: 100.0,
+                t0,
+            },
+        };
+        let before = y_anim_value(&snapshot, t2);
+        let ret = n.y_for(7, 200.0, t2);
+        assert!(
+            (ret - before).abs() < 1e-4,
+            "retarget must continue from display, ret={ret} before={before}"
+        );
+        // 新记录 from 即旧显示值
+        let Some(a) = n.y_anim.get(&7) else {
+            panic!("y_anim missing");
+        };
+        assert!((a.from - before).abs() < 1e-4);
+        assert!((a.to - 200.0).abs() < 1e-6);
     }
 }
