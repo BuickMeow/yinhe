@@ -1205,6 +1205,8 @@ impl Notifications {
                 // 允许飞出视口：否则 egui 默认 constrain 会把屏外的起点拉回窗内，
                 // 卡片看起来就是“右侧贴窗”而不是“从窗外滑入”
                 .constrain(false)
+                // 关 egui Area 自带 fade-in（默认 true，0.2s 透明度动画）：位移只走自有飞入
+                .fade_in(false)
                 .show(ctx, |ui| {
                     // 边缘裁剪滑出：收窄 clip 到可见带，半张卡被裁掉而非突然消失
                     let clip = ui.clip_rect();
@@ -1214,7 +1216,6 @@ impl Notifications {
                         &self.toasts[idx],
                         CARD_W,
                         0.0,
-                        1.0,
                         !self.center_open,
                     );
                     ui.min_rect().height()
@@ -1339,6 +1340,8 @@ impl Notifications {
                 .interactable(true)
                 // 同上：允许从视口外飞入
                 .constrain(false)
+                // 同上：关 egui Area 自带 fade-in
+                .fade_in(false)
                 .show(ctx, |ui| {
                     // 边缘裁剪滑出：收窄 clip 到可见带，半张卡被裁掉而非突然消失
                     let clip = ui.clip_rect();

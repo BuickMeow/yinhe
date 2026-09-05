@@ -4,34 +4,19 @@ use std::time::{Instant, SystemTime};
 use eframe::egui;
 use egui_material_icons::icons::*;
 
-use super::anim::mul_alpha;
 use super::kind::ToastKind;
 use super::model::{HistoryEntry, Toast};
 
-pub(crate) fn base_frame(alpha: f32) -> egui::Frame {
-    let bg_base = crate::theme::control_bg();
-    let stroke_base = crate::theme::line_fg().gamma_multiply(0.35);
-    let bg = egui::Color32::from_rgba_unmultiplied(
-        bg_base.r(),
-        bg_base.g(),
-        bg_base.b(),
-        (bg_base.a() as f32 * alpha) as u8,
-    );
-    let stroke_col = egui::Color32::from_rgba_unmultiplied(
-        stroke_base.r(),
-        stroke_base.g(),
-        stroke_base.b(),
-        (stroke_base.a() as f32 * alpha) as u8,
-    );
+pub(crate) fn base_frame() -> egui::Frame {
     egui::Frame {
-        fill: bg,
-        stroke: egui::Stroke::new(1.0, stroke_col),
+        fill: crate::theme::control_bg(),
+        stroke: egui::Stroke::new(1.0, crate::theme::line_fg().gamma_multiply(0.35)),
         corner_radius: egui::CornerRadius::same(8),
         shadow: egui::Shadow {
             offset: [0, 4],
             blur: 12,
             spread: 0,
-            color: egui::Color32::from_black_alpha((60.0 * alpha) as u8),
+            color: egui::Color32::from_black_alpha(60),
         },
         inner_margin: egui::Margin::symmetric(10, 10),
         ..Default::default()
@@ -131,7 +116,6 @@ pub(crate) fn draw_card(
     ui: &mut egui::Ui,
     width: f32,
     x_offset: f32,
-    alpha: f32,
     kind: ToastKind,
     title: &str,
     message: &str,
@@ -146,8 +130,7 @@ pub(crate) fn draw_card(
     created: Instant,
 ) -> super::model::CardOutcome {
     let mut outcome = super::model::CardOutcome::default();
-    let frame = base_frame(alpha);
-    let card_alpha = alpha;
+    let frame = base_frame();
     // 进行中（进度条未满）：三行文案槽位全部锁死行数，空也占位，卡片高度全程不变；
     // 静态卡（普通通知/已完成）：标题 1 行、正文至多 2 行。
     let running = progress
@@ -164,7 +147,7 @@ pub(crate) fn draw_card(
             ui.set_max_width(width - 20.0);
             ui.set_min_width(width - 20.0);
             ui.horizontal(|ui| {
-                let icon_col = mul_alpha(kind.color(), card_alpha);
+                let icon_col = kind.color();
                 ui.add(
                     egui::Label::new(
                         egui::RichText::new(kind.icon().codepoint)
@@ -193,7 +176,7 @@ pub(crate) fn draw_card(
                                     egui::RichText::new(title_shown)
                                         .size(crate::theme::SMALL_FONT)
                                         .strong()
-                                        .color(mul_alpha(crate::theme::text_primary(), card_alpha)),
+                                        .color(crate::theme::text_primary()),
                                 )
                                 .selectable(false)
                                 .wrap(),
@@ -210,10 +193,7 @@ pub(crate) fn draw_card(
                                 egui::Label::new(
                                     egui::RichText::new(msg_shown)
                                         .size(crate::theme::SMALL_FONT)
-                                        .color(mul_alpha(
-                                            crate::theme::text_secondary(),
-                                            card_alpha,
-                                        )),
+                                        .color(crate::theme::text_secondary()),
                                 )
                                 .selectable(false)
                                 .wrap(),
@@ -225,7 +205,7 @@ pub(crate) fn draw_card(
                             egui::Label::new(
                                 egui::RichText::new(msg_shown)
                                     .size(crate::theme::SMALL_FONT)
-                                    .color(mul_alpha(crate::theme::text_secondary(), card_alpha)),
+                                    .color(crate::theme::text_secondary()),
                             )
                             .selectable(false)
                             .wrap(),
@@ -241,7 +221,7 @@ pub(crate) fn draw_card(
                                 egui::Label::new(
                                     egui::RichText::new(det_shown)
                                         .size(crate::theme::SMALL_LABEL_FONT)
-                                        .color(mul_alpha(crate::theme::text_muted(), card_alpha)),
+                                        .color(crate::theme::text_muted()),
                                 )
                                 .selectable(false)
                                 .wrap(),
@@ -253,7 +233,7 @@ pub(crate) fn draw_card(
                             egui::Label::new(
                                 egui::RichText::new(det_shown)
                                     .size(crate::theme::SMALL_LABEL_FONT)
-                                    .color(mul_alpha(crate::theme::text_muted(), card_alpha)),
+                                    .color(crate::theme::text_muted()),
                             )
                             .selectable(false)
                             .wrap(),
@@ -267,7 +247,7 @@ pub(crate) fn draw_card(
                         egui::Label::new(
                             egui::RichText::new(ts_shown)
                                 .size(crate::theme::SMALL_LABEL_FONT)
-                                .color(mul_alpha(crate::theme::text_muted(), card_alpha)),
+                                .color(crate::theme::text_muted()),
                         )
                         .selectable(false)
                         .wrap(),
@@ -295,17 +275,14 @@ pub(crate) fn draw_card(
                 let y1 = card_rect.max.y - 1.0;
                 let y0 = y1 - 2.0;
                 let bg_rect = egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1));
-                let bg = mul_alpha(crate::theme::line_fg().gamma_multiply(0.25), card_alpha);
+                let bg = crate::theme::line_fg().gamma_multiply(0.25);
                 ui.painter().rect_filled(bg_rect, 0.0, bg);
                 let fg_w = (x1 - x0) * p.clamp(0.0, 1.0);
                 if fg_w > 0.0 {
                     let fg_rect =
                         egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x0 + fg_w, y1));
-                    ui.painter().rect_filled(
-                        fg_rect,
-                        0.0,
-                        mul_alpha(kind.color().gamma_multiply(0.85), card_alpha),
-                    );
+                    ui.painter()
+                        .rect_filled(fg_rect, 0.0, kind.color().gamma_multiply(0.85));
                 }
             }
         }
@@ -332,7 +309,7 @@ pub(crate) fn draw_card(
                                 crate::theme::ICON_FONT_SM,
                                 ICON_KEYBOARD_DOUBLE_ARROW_RIGHT.font_family(),
                             ),
-                            mul_alpha(crate::theme::text_muted(), card_alpha),
+                            crate::theme::text_muted(),
                             false,
                         );
                         if resp.clicked() {
@@ -346,9 +323,9 @@ pub(crate) fn draw_card(
                         ui.add_space(6.0);
                         // 中止中置灰且点击无反应
                         let stop_col = if cancelling {
-                            mul_alpha(crate::theme::text_disabled(), card_alpha)
+                            crate::theme::text_disabled()
                         } else {
-                            mul_alpha(crate::theme::text_muted(), card_alpha)
+                            crate::theme::text_muted()
                         };
                         let resp2 = crate::widgets::hover::hover_button(
                             ui,
@@ -381,7 +358,7 @@ pub(crate) fn draw_card(
                             ui,
                             icon.codepoint,
                             egui::FontId::new(crate::theme::ICON_FONT_SM, icon.font_family()),
-                            mul_alpha(crate::theme::text_muted(), card_alpha),
+                            crate::theme::text_muted(),
                             false,
                         );
                         if resp_pause.clicked() {
@@ -398,7 +375,7 @@ pub(crate) fn draw_card(
                                 ui,
                                 icon.codepoint,
                                 egui::FontId::new(crate::theme::ICON_FONT_SM, icon.font_family()),
-                                mul_alpha(crate::theme::text_muted(), card_alpha),
+                                crate::theme::text_muted(),
                                 false,
                             )
                             .on_hover_text(&a.label);
@@ -411,7 +388,7 @@ pub(crate) fn draw_card(
                                 egui::Label::new(
                                     egui::RichText::new(&a.label)
                                         .size(crate::theme::SMALL_FONT)
-                                        .color(mul_alpha(crate::theme::text_muted(), card_alpha)),
+                                        .color(crate::theme::text_muted()),
                                 )
                                 .sense(egui::Sense::click())
                                 .selectable(false),
@@ -440,7 +417,6 @@ pub(crate) fn toast_card(
     toast: &Toast,
     width: f32,
     x_offset: f32,
-    alpha: f32,
     show_close: bool,
 ) -> super::model::CardOutcome {
     // 进度任务：渲染时从 source pull 最新文案/进度，无 source 读快照
@@ -449,7 +425,6 @@ pub(crate) fn toast_card(
         ui,
         width,
         x_offset,
-        alpha,
         toast.kind,
         &title,
         &message,
@@ -471,7 +446,6 @@ pub(crate) fn history_card(ui: &mut egui::Ui, entry: &HistoryEntry, width: f32) 
         ui,
         width,
         0.0,
-        1.0,
         entry.kind,
         &title,
         &message,
@@ -544,7 +518,6 @@ mod tests {
                 ui,
                 width,
                 0.0,
-                1.0,
                 ToastKind::Info,
                 title,
                 message,
@@ -583,7 +556,6 @@ mod tests {
                 ui,
                 width,
                 0.0,
-                1.0,
                 ToastKind::Info,
                 title,
                 message,
