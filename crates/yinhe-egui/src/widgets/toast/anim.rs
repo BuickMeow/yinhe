@@ -31,8 +31,3 @@ pub(crate) fn fly_anim(toast: &Toast) -> f32 {
     }
     enter_x(now.duration_since(toast.created).as_secs_f32())
 }
-
-pub(crate) fn mul_alpha(c: egui::Color32, a: f32) -> egui::Color32 {
-    let a = a.clamp(0.0, 1.0);
-    egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (c.a() as f32 * a) as u8)
-}
