@@ -24,6 +24,10 @@ fn default_toast_action_collapse_secs() -> Option<u32> {
     Some(60)
 }
 
+fn default_toast_enabled() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AudioSettings {
@@ -69,6 +73,9 @@ pub struct AudioSettings {
     /// 可操作通知自动收起秒数（None=不自动收起）
     #[serde(default = "default_toast_action_collapse_secs")]
     pub toast_action_collapse_secs: Option<u32>,
+    /// 是否开启通知（关闭后不再弹出任何通知，新的也不再记入历史）
+    #[serde(default = "default_toast_enabled")]
+    pub toast_enabled: bool,
     pub layout: LayoutSettings,
     pub keybindings: Keybindings,
     pub pinned_file_actions: Vec<bool>,
@@ -131,6 +138,7 @@ impl Default for AudioSettings {
             content_opacity: 0.7,
             toast_collapse_secs: default_toast_collapse_secs(),
             toast_action_collapse_secs: default_toast_action_collapse_secs(),
+            toast_enabled: default_toast_enabled(),
             layout: LayoutSettings::default(),
             keybindings: Keybindings::default(),
             pinned_file_actions: vec![false; 10],
@@ -148,5 +156,30 @@ impl Default for AudioSettings {
             available_sample_rates: Vec::new(),
             available_midi_inputs: Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn toast_enabled_defaults_true_for_old_saves() {
+        // 旧存档缺字段必须能反序列化，且默认为开启
+        let mut v = serde_json::to_value(AudioSettings::default()).expect("serialize default");
+        v.as_object_mut()
+            .expect("settings serializes to object")
+            .remove("toast_enabled");
+        let s: AudioSettings = serde_json::from_value(v).expect("old save without flag loads");
+        assert!(s.toast_enabled);
+    }
+
+    #[test]
+    fn toast_enabled_roundtrips_when_off() {
+        let mut s = AudioSettings::default();
+        s.toast_enabled = false;
+        let json = serde_json::to_string(&s).expect("serialize");
+        let back: AudioSettings = serde_json::from_str(&json).expect("deserialize");
+        assert!(!back.toast_enabled);
     }
 }
