@@ -219,39 +219,40 @@ pub(crate) fn draw_card(
                     // 右侧按钮组已移至覆盖层（整卡垂直居中），此处仅保留 width-90 给右侧留空
                 });
             });
-            if progress.is_some() {
-                // 进度区恒定结构（6+2+12）：有条画条，无条只占位不绘制。
-                // 必须同为真 widget——真 widget 身后跟一个 item_spacing，
-                // add_space 没有；只算裸高度仍会差一个间距而跳动。
-                ui.add_space(6.0);
-                let bar_w = width - 20.0;
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(bar_w, 2.0), egui::Sense::hover());
-                // 已完成/失败/已中止或进度接近 1 时隐藏进度条（数字已在 label 外部显示）
-                let show_bar = progress.is_some_and(|p| {
-                    p < 0.999
-                        && progress_label != "已完成"
-                        && progress_label != "失败"
-                        && progress_label != "已中止"
-                });
-                if show_bar && let Some(p) = progress {
-                    let bg = mul_alpha(crate::theme::line_fg().gamma_multiply(0.25), card_alpha);
-                    ui.painter().rect_filled(rect, 1.0, bg);
-                    let fg_rect = egui::Rect::from_min_size(
-                        rect.min,
-                        egui::vec2(rect.width() * p.clamp(0.0, 1.0), rect.height()),
-                    );
-                    ui.painter().rect_filled(
-                        fg_rect,
-                        1.0,
-                        mul_alpha(kind.color().gamma_multiply(0.85), card_alpha),
-                    );
-                }
-                ui.add_space(12.0);
-            } else {
+            if progress.is_none() {
                 ui.add_space(20.0);
             }
         });
+        // 进度条画在底边上（非交互，不占布局）：x 避开 8px 圆角，y 取底边内侧 2px 高。
+        // 已完成/失败/已中止或进度接近 1 时隐藏（数字已在 label 外部显示）。
+        let show_bar = progress.is_some_and(|p| {
+            p < 0.999
+                && progress_label != "已完成"
+                && progress_label != "失败"
+                && progress_label != "已中止"
+        });
+        if show_bar && let Some(p) = progress {
+            let card_rect = frame_resp.response.rect;
+            let x0 = card_rect.min.x + 8.0;
+            let x1 = card_rect.max.x - 8.0;
+            if x1 > x0 {
+                let y1 = card_rect.max.y - 1.0;
+                let y0 = y1 - 2.0;
+                let bg_rect = egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1));
+                let bg = mul_alpha(crate::theme::line_fg().gamma_multiply(0.25), card_alpha);
+                ui.painter().rect_filled(bg_rect, 0.0, bg);
+                let fg_w = (x1 - x0) * p.clamp(0.0, 1.0);
+                if fg_w > 0.0 {
+                    let fg_rect =
+                        egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x0 + fg_w, y1));
+                    ui.painter().rect_filled(
+                        fg_rect,
+                        0.0,
+                        mul_alpha(kind.color().gamma_multiply(0.85), card_alpha),
+                    );
+                }
+            }
+        }
         // 右侧按钮覆盖层：相对整卡真正垂直居中（只在有按钮时分配，历史卡片不分配）
         let mut overlay_hovered = false;
         if show_close || (cancel.is_some() && progress.is_some()) || action.is_some() {
