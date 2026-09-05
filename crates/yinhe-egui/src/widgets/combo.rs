@@ -119,7 +119,7 @@ pub fn combo_select_auto<T: PartialEq + Clone>(
 
 #[cfg(test)]
 mod tests {
-    use super::{selected_label, DEFAULT_WIDTH};
+    use super::{DEFAULT_WIDTH, selected_label};
 
     #[test]
     fn selected_label_found() {
