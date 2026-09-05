@@ -1176,12 +1176,8 @@ impl Notifications {
                 raw_y
             };
             let card_h = self.measured_h(tid, EST_H);
-            // 滚出可视底部的卡跳过（与顶部裁剪对称）
-            if self.center_open && target_y + card_h < BOTTOM_PAD - 4.0 {
-                self.toasts[idx].hovered = false;
-                continue;
-            }
-            if target_y > max_h + card_h {
+            // 完全在带外才跳过（零面积无贡献，不闪烁）；跳过时清 hovered
+            if is_fully_outside(target_y, card_h, BOTTOM_PAD, max_h) {
                 self.toasts[idx].hovered = false;
                 continue;
             }
@@ -1210,6 +1206,9 @@ impl Notifications {
                 // 卡片看起来就是“右侧贴窗”而不是“从窗外滑入”
                 .constrain(false)
                 .show(ctx, |ui| {
+                    // 边缘裁剪滑出：收窄 clip 到可见带，半张卡被裁掉而非突然消失
+                    let clip = ui.clip_rect();
+                    ui.set_clip_rect(clip.intersect(notif_band(clip, viewport, BOTTOM_PAD, max_h)));
                     outcome = super::card::toast_card(
                         ui,
                         &self.toasts[idx],
@@ -1315,11 +1314,8 @@ impl Notifications {
                 raw_y
             };
             let card_h = self.measured_h(tid, EST_H);
-            // 滚出可视底部的卡跳过
-            if self.center_open && target_y + card_h < BOTTOM_PAD - 4.0 {
-                continue;
-            }
-            if target_y > max_h + card_h {
+            // 完全在带外才跳过（零面积无贡献，不闪烁；历史卡无 hovered 可清）
+            if is_fully_outside(target_y, card_h, BOTTOM_PAD, max_h) {
                 continue;
             }
             let y_off = self.y_for(tid, target_y, Instant::now());
@@ -1344,6 +1340,9 @@ impl Notifications {
                 // 同上：允许从视口外飞入
                 .constrain(false)
                 .show(ctx, |ui| {
+                    // 边缘裁剪滑出：收窄 clip 到可见带，半张卡被裁掉而非突然消失
+                    let clip = ui.clip_rect();
+                    ui.set_clip_rect(clip.intersect(notif_band(clip, viewport, BOTTOM_PAD, max_h)));
                     super::card::history_card(ui, &self.history[idx], CARD_W);
                     ui.min_rect().height()
                 });
@@ -1355,6 +1354,21 @@ impl Notifications {
         }
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
     }
+}
+
+/// 可见带：x 沿用进入时的 clip，y 裁到 `[viewport.max.y - max_h, viewport.max.y - BOTTOM_PAD]`。
+/// `max_h`/`BOTTOM_PAD` 用两调用函数内现有同名常量/公式，不另起数值。
+fn notif_band(clip: egui::Rect, viewport: egui::Rect, bottom_pad: f32, max_h: f32) -> egui::Rect {
+    egui::Rect::from_min_max(
+        egui::pos2(clip.min.x, viewport.max.y - max_h),
+        egui::pos2(clip.max.x, viewport.max.y - bottom_pad),
+    )
+}
+
+/// 完全在带外才跳过：顶部 `target >= max_h`，底部 `target + h <= BOTTOM_PAD`。
+/// 零面积（恰好贴住带边）即跳过，无贡献所以无闪烁；有 1px 重叠即画，由外层 band 裁剪滑出。
+fn is_fully_outside(target_y: f32, card_h: f32, bottom_pad: f32, max_h: f32) -> bool {
+    target_y >= max_h || target_y + card_h <= bottom_pad
 }
 
 /// 堆叠 y 累加：按 ids 顺序（调用方先排好，如最新在底则传 rev 后），逐项取实测高度，
@@ -2131,6 +2145,35 @@ mod tests {
         };
         assert!((a.from - before).abs() < 1e-4);
         assert!((a.to - 200.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn fully_outside_boundary() {
+        let bottom = 48.0;
+        let max_h = 500.0;
+        // 底部：零面积贴边（target+h == BOTTOM_PAD）在外，1px 重叠即画
+        assert!(is_fully_outside(-52.0, 100.0, bottom, max_h));
+        assert!(!is_fully_outside(-51.0, 100.0, bottom, max_h));
+        // 底边 flush 在内（卡坐底边上）可见
+        assert!(!is_fully_outside(bottom, 100.0, bottom, max_h));
+        // 顶部：零面积贴边（target == max_h）在外，1px 重叠即画
+        assert!(is_fully_outside(max_h, 100.0, bottom, max_h));
+        assert!(!is_fully_outside(max_h - 1.0, 100.0, bottom, max_h));
+        // 顶边 flush 在内可见，中间正常可见
+        assert!(!is_fully_outside(max_h - 100.0, 100.0, bottom, max_h));
+        assert!(!is_fully_outside(100.0, 100.0, bottom, max_h));
+    }
+
+    #[test]
+    fn notif_band_geometry() {
+        let clip = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1400.0, 900.0));
+        let viewport = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1400.0, 900.0));
+        let band = notif_band(clip, viewport, 48.0, 500.0);
+        // y 裁到 [900-500, 900-48]，x 沿用进入 clip
+        assert!((band.min.y - 400.0).abs() < 1e-4);
+        assert!((band.max.y - 852.0).abs() < 1e-4);
+        assert!((band.min.x - 0.0).abs() < 1e-4);
+        assert!((band.max.x - 1400.0).abs() < 1e-4);
     }
 
     #[test]

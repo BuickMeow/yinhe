@@ -156,7 +156,9 @@ pub(crate) fn draw_card(
         let mut clip = ui.available_rect_before_wrap();
         clip.max.x += 500.0;
         clip.min.x -= 20.0;
-        ui.set_clip_rect(clip);
+        // 与进入时的外层 clip 取交集：state 侧可见带裁剪（滑出）由此生效；
+        // 直接调 draw_card 的单测没有外层 band，交集等于原来，行为不变。
+        ui.set_clip_rect(clip.intersect(ui.clip_rect()));
         let _ = x_offset; // 外层 Area 已处理飞入位移，此处固定 0，避免布局溢出
         let frame_resp = frame.show(ui, |ui| {
             ui.set_max_width(width - 20.0);
