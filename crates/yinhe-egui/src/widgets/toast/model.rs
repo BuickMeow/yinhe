@@ -11,10 +11,13 @@ pub(crate) enum ToastActionKind {
     RevealInFolder(PathBuf),
 }
 
+/// 浮动 toast 上的操作按钮（历史列表保持只读，不带按钮）。
 #[derive(Clone, Debug)]
 pub(crate) struct ToastAction {
     pub label: String,
     pub kind: ToastActionKind,
+    /// 有图标画图标按钮（无文字，hover tooltip 显示 label），无则走文字分支。
+    pub icon: Option<egui_material_icons::MaterialIcon>,
 }
 
 /// 卡片一帧的交互结果（bool 四元组太 cryptic，收拢成结构）。
@@ -81,9 +84,26 @@ pub(crate) struct HistoryEntry {
 }
 
 /// 渲染用解析值：有 source 读 live，无则读快照。
+/// 中止中 detail 覆盖为“正在中止…”（仍 1 行，高度不变）。
 /// 返回 (标题, 正文, 进度, 详情)。
 pub(crate) fn resolve_toast(t: &Toast) -> (String, String, Option<f32>, String) {
-    if let Some(s) = &t.source {
+    if t.cancelling {
+        if let Some(s) = &t.source {
+            (
+                s.title(),
+                s.message(),
+                Some(s.fraction().clamp(0.0, 1.0)),
+                "正在中止…".to_string(),
+            )
+        } else {
+            (
+                t.title.clone(),
+                t.message.clone(),
+                t.progress,
+                "正在中止…".to_string(),
+            )
+        }
+    } else if let Some(s) = &t.source {
         (
             s.title(),
             s.message(),

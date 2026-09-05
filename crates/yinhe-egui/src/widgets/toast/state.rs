@@ -434,6 +434,17 @@ impl Notifications {
         label: impl Into<String>,
         kind: super::model::ToastActionKind,
     ) {
+        self.set_action_with_icon(id, label, kind, None);
+    }
+
+    /// 带图标的操作按钮（已中止卡用文件夹图标，无文字，hover 显示 label）。
+    pub fn set_action_with_icon(
+        &mut self,
+        id: u64,
+        label: impl Into<String>,
+        kind: super::model::ToastActionKind,
+        icon: Option<egui_material_icons::MaterialIcon>,
+    ) {
         if !self.enabled {
             return;
         }
@@ -442,9 +453,107 @@ impl Notifications {
             t.action = Some(super::model::ToastAction {
                 label: label.into(),
                 kind,
+                icon,
             });
             t.collapse_at = deadline;
         }
+    }
+
+    /// 任务中止：Warning 黄卡，进度为中断时刻快照，label“已中止”，可操作档计时。
+    /// 三态：toast 在则原地更新+历史同步；toast 不在但历史在则历史更新+重建卡；
+    /// 都不在则回退 push 普通卡。返回作用到的 id 供 set_action 用。
+    pub fn abort_progress(
+        &mut self,
+        id: u64,
+        title: impl Into<String>,
+        message: impl Into<String>,
+    ) -> u64 {
+        if !self.enabled {
+            return id;
+        }
+        let title = title.into();
+        let message = message.into();
+        let deadline = self.collapse_deadline(self.action_collapse_secs);
+        self.collapsed.remove(&id);
+        // 中断时刻进度快照：有 live source 读 fraction，无则保持原 progress
+        let snapshot_fraction = |t: &Toast| -> Option<f32> {
+            if let Some(s) = &t.source {
+                Some(s.fraction().clamp(0.0, 1.0))
+            } else {
+                t.progress
+            }
+        };
+        if let Some(t) = self.toasts.iter_mut().find(|t| t.id == id) {
+            let frac = snapshot_fraction(t);
+            t.kind = ToastKind::Warning;
+            t.title = title.clone();
+            t.message = message.clone();
+            t.progress = frac;
+            t.progress_label = "已中止".to_string();
+            t.cancel = None;
+            t.cancelling = false;
+            t.leaving_since = None;
+            t.source = None;
+            t.collapse_at = deadline;
+            t.action = None;
+            if let Some(h) = self.history.iter_mut().find(|h| h.id == id) {
+                h.kind = ToastKind::Warning;
+                h.title = title.clone();
+                h.message = message.clone();
+                h.progress = frac;
+                h.progress_label = "已中止".to_string();
+                h.source = None;
+            } else {
+                self.history.push(HistoryEntry {
+                    id,
+                    kind: ToastKind::Warning,
+                    title: title.clone(),
+                    message: message.clone(),
+                    created: Instant::now(),
+                    read: false,
+                    progress: frac,
+                    progress_label: "已中止".to_string(),
+                    source: None,
+                });
+                if self.history.len() > self.max_history {
+                    let excess = self.history.len() - self.max_history;
+                    self.history.drain(0..excess);
+                }
+            }
+            return id;
+        }
+        if let Some(h) = self.history.iter_mut().find(|h| h.id == id) {
+            let frac = h
+                .source
+                .as_ref()
+                .map(|s| s.fraction().clamp(0.0, 1.0))
+                .or(h.progress);
+            h.kind = ToastKind::Warning;
+            h.title = title.clone();
+            h.message = message.clone();
+            h.progress = frac;
+            h.progress_label = "已中止".to_string();
+            h.source = None;
+            // 重建同 id 浮动卡（abort 态，deadline 重算）
+            self.toasts.push(Toast {
+                id,
+                kind: ToastKind::Warning,
+                title,
+                message,
+                created: Instant::now(),
+                progress: frac,
+                progress_label: "已中止".to_string(),
+                cancel: None,
+                leaving_since: None,
+                source: None,
+                collapse_at: deadline,
+                action: None,
+                hovered: false,
+                cancelling: false,
+            });
+            return id;
+        }
+        self.push(ToastKind::Warning, title, message, None)
     }
 
     pub fn unread_count(&self) -> usize {
@@ -1080,5 +1189,108 @@ mod tests {
         n.prune_history(EXPORT_PROGRESS_ID);
         assert!(!n.history.iter().any(|h| h.id == EXPORT_PROGRESS_ID));
         assert!(!n.collapsed.contains(&EXPORT_PROGRESS_ID));
+    }
+
+    #[test]
+    fn abort_progress_in_place_updates_toast_and_history() {
+        use std::sync::Arc;
+        struct S;
+        impl super::super::model::ProgressSource for S {
+            fn title(&self) -> String {
+                "正在导出".into()
+            }
+            fn message(&self) -> String {
+                "渲染中".into()
+            }
+            fn fraction(&self) -> f32 {
+                0.64
+            }
+            fn detail(&self) -> String {
+                "渲染中".into()
+            }
+            fn cancel(&self) -> Option<Arc<AtomicBool>> {
+                None
+            }
+        }
+        let mut n = Notifications::new();
+        n.ensure_progress(EXPORT_PROGRESS_ID, ToastKind::Info, Arc::new(S));
+        // 模拟 stop：中止态
+        n.toasts
+            .iter_mut()
+            .find(|t| t.id == EXPORT_PROGRESS_ID)
+            .unwrap()
+            .cancelling = true;
+        let id = n.abort_progress(EXPORT_PROGRESS_ID, "已中止", "out.wav");
+        assert_eq!(id, EXPORT_PROGRESS_ID);
+        let t = n
+            .toasts
+            .iter()
+            .find(|t| t.id == EXPORT_PROGRESS_ID)
+            .unwrap();
+        assert_eq!(t.kind, ToastKind::Warning);
+        assert_eq!(t.progress, Some(0.64));
+        assert_eq!(t.progress_label, "已中止");
+        assert!(t.source.is_none());
+        assert!(!t.cancelling);
+        assert!(t.collapse_at.is_some());
+        let h = n
+            .history
+            .iter()
+            .find(|h| h.id == EXPORT_PROGRESS_ID)
+            .unwrap();
+        assert_eq!(h.progress_label, "已中止");
+        assert!(h.source.is_none());
+    }
+
+    #[test]
+    fn abort_progress_rebuilds_when_only_history_exists() {
+        use std::sync::Arc;
+        struct S;
+        impl super::super::model::ProgressSource for S {
+            fn title(&self) -> String {
+                "正在导出".into()
+            }
+            fn message(&self) -> String {
+                String::new()
+            }
+            fn fraction(&self) -> f32 {
+                0.4
+            }
+            fn detail(&self) -> String {
+                String::new()
+            }
+            fn cancel(&self) -> Option<Arc<AtomicBool>> {
+                None
+            }
+        }
+        let mut n = Notifications::new();
+        n.ensure_progress(EXPORT_PROGRESS_ID, ToastKind::Info, Arc::new(S));
+        // 模拟收起后卡被清理，仅历史残留
+        n.collapsed.insert(EXPORT_PROGRESS_ID);
+        n.dismiss_toast(EXPORT_PROGRESS_ID);
+        std::thread::sleep(Duration::from_millis(330));
+        n.tick(&ctx());
+        assert!(!n.has_progress(EXPORT_PROGRESS_ID));
+        let id = n.abort_progress(EXPORT_PROGRESS_ID, "已中止", "out.wav");
+        assert_eq!(id, EXPORT_PROGRESS_ID);
+        assert!(n.has_progress(EXPORT_PROGRESS_ID));
+        assert!(!n.collapsed.contains(&EXPORT_PROGRESS_ID));
+        let t = n
+            .toasts
+            .iter()
+            .find(|t| t.id == EXPORT_PROGRESS_ID)
+            .unwrap();
+        assert_eq!(t.progress_label, "已中止");
+    }
+
+    #[test]
+    fn abort_progress_falls_back_to_push_when_nothing_exists() {
+        let mut n = Notifications::new();
+        let id = n.abort_progress(EXPORT_PROGRESS_ID, "已中止", "out.wav");
+        assert_ne!(id, 0);
+        assert_ne!(id, EXPORT_PROGRESS_ID);
+        let t = n.toasts.iter().find(|t| t.id == id).unwrap();
+        assert_eq!(t.kind, ToastKind::Warning);
+        assert_eq!(t.title, "已中止");
     }
 }

@@ -88,6 +88,7 @@ fn blank_line(ui: &mut egui::Ui, font: &egui::FontId, wrap_w: f32) {
 }
 
 /// 统一样式卡片：弹出与列表共用，仅 show_close 区分
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_card(
     ui: &mut egui::Ui,
     width: f32,
@@ -100,7 +101,8 @@ pub(crate) fn draw_card(
     progress_label: &str,
     show_close: bool,
     cancel: Option<Arc<AtomicBool>>,
-    action_label: Option<&str>,
+    action: Option<&super::model::ToastAction>,
+    cancelling: bool,
 ) -> super::model::CardOutcome {
     let mut outcome = super::model::CardOutcome::default();
     let frame = base_frame(alpha);
@@ -225,9 +227,12 @@ pub(crate) fn draw_card(
                 let bar_w = width - 20.0;
                 let (rect, _) =
                     ui.allocate_exact_size(egui::vec2(bar_w, 2.0), egui::Sense::hover());
-                // 已完成/失败或进度接近 1 时隐藏进度条（数字已在 label 外部显示）
+                // 已完成/失败/已中止或进度接近 1 时隐藏进度条（数字已在 label 外部显示）
                 let show_bar = progress.is_some_and(|p| {
-                    p < 0.999 && progress_label != "已完成" && progress_label != "失败"
+                    p < 0.999
+                        && progress_label != "已完成"
+                        && progress_label != "失败"
+                        && progress_label != "已中止"
                 });
                 if show_bar && let Some(p) = progress {
                     let bg = mul_alpha(crate::theme::line_fg().gamma_multiply(0.25), card_alpha);
@@ -249,7 +254,7 @@ pub(crate) fn draw_card(
         });
         // 右侧按钮覆盖层：相对整卡真正垂直居中（只在有按钮时分配，历史卡片不分配）
         let mut overlay_hovered = false;
-        if show_close || (cancel.is_some() && progress.is_some()) || action_label.is_some() {
+        if show_close || (cancel.is_some() && progress.is_some()) || action.is_some() {
             let card_rect = frame_resp.response.rect;
             let center_y = card_rect.center().y;
             let right = card_rect.max.x - 10.0;
@@ -279,41 +284,60 @@ pub(crate) fn draw_card(
                         && progress.is_some()
                     {
                         ui.add_space(6.0);
+                        // 中止中置灰且点击无反应
+                        let stop_col = if cancelling {
+                            mul_alpha(crate::theme::text_disabled(), card_alpha)
+                        } else {
+                            mul_alpha(crate::theme::text_muted(), card_alpha)
+                        };
                         let resp2 = crate::widgets::hover::hover_button(
                             ui,
-                            ICON_STOP_CIRCLE.codepoint,
-                            egui::FontId::new(
-                                crate::theme::ICON_FONT_SM,
-                                ICON_STOP_CIRCLE.font_family(),
-                            ),
-                            mul_alpha(crate::theme::text_muted(), card_alpha),
+                            ICON_STOP.codepoint,
+                            egui::FontId::new(crate::theme::ICON_FONT_SM, ICON_STOP.font_family()),
+                            stop_col,
                             false,
                         );
-                        if resp2.clicked() {
+                        if !cancelling && resp2.clicked() {
                             c.store(true, std::sync::atomic::Ordering::Relaxed);
                             outcome.cancel = true;
                         }
                         overlay_hovered |= resp2.hovered();
                     }
-                    // 操作按钮（如“打开文件夹”）：只执行不收卡，收起交给自动计时
-                    if let Some(label) = action_label {
+                    // 操作按钮（如“打开文件夹”）：只执行不收卡，收起交给自动计时；
+                    // 有图标画图标按钮（hover tooltip 显示 label），否则走文字分支
+                    if let Some(a) = action {
                         ui.add_space(6.0);
-                        let resp3 = ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(label)
-                                    .size(crate::theme::SMALL_FONT)
-                                    .color(mul_alpha(crate::theme::text_muted(), card_alpha)),
+                        if let Some(icon) = a.icon {
+                            let resp3 = crate::widgets::hover::hover_button(
+                                ui,
+                                icon.codepoint,
+                                egui::FontId::new(crate::theme::ICON_FONT_SM, icon.font_family()),
+                                mul_alpha(crate::theme::text_muted(), card_alpha),
+                                false,
                             )
-                            .sense(egui::Sense::click())
-                            .selectable(false),
-                        );
-                        if resp3.clicked() {
-                            outcome.action = true;
+                            .on_hover_text(&a.label);
+                            if resp3.clicked() {
+                                outcome.action = true;
+                            }
+                            overlay_hovered |= resp3.hovered();
+                        } else {
+                            let resp3 = ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(&a.label)
+                                        .size(crate::theme::SMALL_FONT)
+                                        .color(mul_alpha(crate::theme::text_muted(), card_alpha)),
+                                )
+                                .sense(egui::Sense::click())
+                                .selectable(false),
+                            );
+                            if resp3.clicked() {
+                                outcome.action = true;
+                            }
+                            if resp3.hovered() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                            }
+                            overlay_hovered |= resp3.hovered();
                         }
-                        if resp3.hovered() {
-                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                        }
-                        overlay_hovered |= resp3.hovered();
                     }
                 });
             });
@@ -346,7 +370,8 @@ pub(crate) fn toast_card(
         &label,
         true,
         super::model::resolve_cancel_toast(toast),
-        toast.action.as_ref().map(|a| a.label.as_str()),
+        toast.action.as_ref(),
+        toast.cancelling,
     )
 }
 
@@ -355,11 +380,13 @@ pub(crate) fn history_card(ui: &mut egui::Ui, entry: &HistoryEntry, width: f32) 
     let (title, message, progress, label) = super::model::resolve_history(entry);
     let _ = draw_card(
         ui, width, 0.0, 1.0, entry.kind, &title, &message, progress, &label, false, None, None,
+        false,
     );
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::model::{ToastAction, ToastActionKind};
     use super::*;
 
     /// 无头渲染一张卡并量高度（无 CJK 字体时为 tofu，但跨状态可比）。
@@ -369,7 +396,7 @@ mod tests {
         message: &str,
         progress: Option<f32>,
         label: &str,
-        action: Option<&str>,
+        action: Option<ToastAction>,
     ) -> f32 {
         let ctx = egui::Context::default();
         // 注册图标字体（app 启动时同款，否则图标 label 排版 panic）
@@ -395,7 +422,8 @@ mod tests {
                 label,
                 true,
                 None,
-                action,
+                action.as_ref(),
+                false,
             );
             h = ui.min_rect().height();
         });
@@ -411,9 +439,23 @@ mod tests {
         }
     }
 
-    /// 进度族（进行中/完成/失败，文案空满长短，有无操作按钮）高度必须一致，否则加载卡上下跳。
+    /// 进度族（进行中/完成/失败/中止，文案空满长短，有无操作按钮）高度必须一致，否则加载卡上下跳。
     #[test]
     fn progress_card_height_stable() {
+        fn text_action(label: &str) -> ToastAction {
+            ToastAction {
+                label: label.to_string(),
+                kind: ToastActionKind::RevealInFolder(std::path::PathBuf::new()),
+                icon: None,
+            }
+        }
+        fn icon_action(label: &str) -> ToastAction {
+            ToastAction {
+                label: label.to_string(),
+                kind: ToastActionKind::RevealInFolder(std::path::PathBuf::new()),
+                icon: Some(ICON_FOLDER_OPEN),
+            }
+        }
         let w = 360.0;
         let running_empty = card_height(w, "正在加载", "解析 MIDI 音轨", Some(0.3), "", None);
         let running_short = card_height(w, "正在加载", "解析 MIDI 音轨", Some(0.3), "3/16", None);
@@ -449,7 +491,16 @@ mod tests {
             "out.wav (12.3s, 8.1x)",
             Some(1.0),
             "已完成",
-            Some("打开文件夹"),
+            Some(text_action("打开文件夹")),
+        );
+        let aborted = card_height(w, "正在导出", "渲染中 64%", Some(0.64), "已中止", None);
+        let aborted_action = card_height(
+            w,
+            "正在导出",
+            "渲染中 64%",
+            Some(0.64),
+            "已中止",
+            Some(icon_action("打开文件夹")),
         );
         assert_same_height(&[
             running_empty,
@@ -460,6 +511,8 @@ mod tests {
             done_duration,
             failed,
             done_action,
+            aborted,
+            aborted_action,
         ]);
     }
 }

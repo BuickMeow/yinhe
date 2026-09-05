@@ -746,6 +746,8 @@ impl App {
         };
         let export_progress = self.export.progress.clone();
         let cancel_flag = self.export.cancel.clone();
+        // 记下输出路径：中止卡“打开文件夹”按钮用
+        self.export.last_output_path = Some(path_str.clone());
         // 混音台 strip 参数随导出（insert 效果器不导出，见 export_wav 文档）。
         let mixer = doc.mixer.clone();
         let use_gpu_synth = self.audio_settings.use_gpu_synth;

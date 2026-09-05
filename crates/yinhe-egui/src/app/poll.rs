@@ -351,80 +351,110 @@ impl App {
         }
 
         // Poll async export completion
-        if let Some(rx) = &self.export.rx
-            && let Ok(result) = rx.try_recv()
-        {
-            self.export.rx = None;
-            match result {
-                Ok((path, elapsed, speed)) => {
-                    let fname = std::path::Path::new(&path)
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or(&path)
-                        .to_string();
-                    self.export.completed = Some(crate::dialogs::export::ExportCompleted {
-                        file_path: path.clone(),
-                        elapsed_secs: elapsed,
-                        overall_speed: speed,
-                    });
-                    if self
-                        .notifications
-                        .has_progress(crate::widgets::toast::EXPORT_PROGRESS_ID)
-                        && !self
+        // 取消时线程直接 drop(tx)（不断开以外的唯一来源），try_recv 报 Disconnected
+        let export_msg = self.export.rx.as_ref().map(|rx| rx.try_recv());
+        match export_msg {
+            Some(Ok(result)) => {
+                self.export.rx = None;
+                match result {
+                    Ok((path, elapsed, speed)) => {
+                        let fname = std::path::Path::new(&path)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or(&path)
+                            .to_string();
+                        self.export.completed = Some(crate::dialogs::export::ExportCompleted {
+                            file_path: path.clone(),
+                            elapsed_secs: elapsed,
+                            overall_speed: speed,
+                        });
+                        if self
                             .notifications
-                            .is_leaving(crate::widgets::toast::EXPORT_PROGRESS_ID)
-                    {
-                        let acted = self.notifications.complete_progress(
-                            crate::widgets::toast::EXPORT_PROGRESS_ID,
-                            crate::widgets::toast::ToastKind::Success,
-                            "已完成",
-                            format!("{} ({:.1}s, {:.1}x)", fname, elapsed, speed),
-                        );
-                        // 可操作卡：打开文件夹（计时自动升为可操作档）
-                        self.notifications.set_action(
-                            acted,
-                            "打开文件夹",
-                            crate::widgets::toast::model::ToastActionKind::RevealInFolder(
-                                std::path::PathBuf::from(&path),
-                            ),
-                        );
-                    } else {
-                        self.notifications
-                            .prune_history(crate::widgets::toast::EXPORT_PROGRESS_ID);
-                        let nid = self.notifications.success(
-                            "导出完成",
-                            format!("{} ({:.1}s, {:.1}x)", fname, elapsed, speed),
-                        );
-                        self.notifications.set_action(
-                            nid,
-                            "打开文件夹",
-                            crate::widgets::toast::model::ToastActionKind::RevealInFolder(
-                                std::path::PathBuf::from(&path),
-                            ),
-                        );
+                            .has_progress(crate::widgets::toast::EXPORT_PROGRESS_ID)
+                            && !self
+                                .notifications
+                                .is_leaving(crate::widgets::toast::EXPORT_PROGRESS_ID)
+                        {
+                            let acted = self.notifications.complete_progress(
+                                crate::widgets::toast::EXPORT_PROGRESS_ID,
+                                crate::widgets::toast::ToastKind::Success,
+                                "已完成",
+                                format!("{} ({:.1}s, {:.1}x)", fname, elapsed, speed),
+                            );
+                            // 可操作卡：打开文件夹（计时自动升为可操作档）
+                            self.notifications.set_action(
+                                acted,
+                                "打开文件夹",
+                                crate::widgets::toast::model::ToastActionKind::RevealInFolder(
+                                    std::path::PathBuf::from(&path),
+                                ),
+                            );
+                        } else {
+                            self.notifications
+                                .prune_history(crate::widgets::toast::EXPORT_PROGRESS_ID);
+                            let nid = self.notifications.success(
+                                "导出完成",
+                                format!("{} ({:.1}s, {:.1}x)", fname, elapsed, speed),
+                            );
+                            self.notifications.set_action(
+                                nid,
+                                "打开文件夹",
+                                crate::widgets::toast::model::ToastActionKind::RevealInFolder(
+                                    std::path::PathBuf::from(&path),
+                                ),
+                            );
+                        }
                     }
-                }
-                Err(e) => {
-                    self.load_error = Some(e.clone());
-                    if self
-                        .notifications
-                        .has_progress(crate::widgets::toast::EXPORT_PROGRESS_ID)
-                        && !self
+                    Err(e) => {
+                        self.load_error = Some(e.clone());
+                        if self
                             .notifications
-                            .is_leaving(crate::widgets::toast::EXPORT_PROGRESS_ID)
-                    {
-                        self.notifications.fail_progress(
-                            crate::widgets::toast::EXPORT_PROGRESS_ID,
-                            "导出失败",
-                            e.clone(),
-                        );
-                    } else {
-                        self.notifications
-                            .prune_history(crate::widgets::toast::EXPORT_PROGRESS_ID);
-                        self.notifications.error("导出失败", e);
+                            .has_progress(crate::widgets::toast::EXPORT_PROGRESS_ID)
+                            && !self
+                                .notifications
+                                .is_leaving(crate::widgets::toast::EXPORT_PROGRESS_ID)
+                        {
+                            self.notifications.fail_progress(
+                                crate::widgets::toast::EXPORT_PROGRESS_ID,
+                                "导出失败",
+                                e.clone(),
+                            );
+                        } else {
+                            self.notifications
+                                .prune_history(crate::widgets::toast::EXPORT_PROGRESS_ID);
+                            self.notifications.error("导出失败", e);
+                        }
                     }
                 }
             }
+            Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
+                // 用户点了 stop：线程已退出，sender 断开，转“已中止”卡
+                self.export.rx = None;
+                let out_path = self.export.last_output_path.clone();
+                let fname = out_path
+                    .as_deref()
+                    .and_then(|p| std::path::Path::new(p).file_name())
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("导出")
+                    .to_string();
+                let aborted = self.notifications.abort_progress(
+                    crate::widgets::toast::EXPORT_PROGRESS_ID,
+                    "已中止",
+                    fname,
+                );
+                // open_containing_folder 对不存在路径容错（静默忽略），直接设按钮
+                if let Some(p) = out_path {
+                    self.notifications.set_action_with_icon(
+                        aborted,
+                        "打开文件夹",
+                        crate::widgets::toast::model::ToastActionKind::RevealInFolder(
+                            std::path::PathBuf::from(p),
+                        ),
+                        Some(egui_material_icons::icons::ICON_FOLDER_OPEN),
+                    );
+                }
+            }
+            Some(Err(std::sync::mpsc::TryRecvError::Empty)) | None => {}
         }
 
         // Poll async PPQ rescale completion
