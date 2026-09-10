@@ -1,6 +1,7 @@
 pub mod anim;
 pub mod card;
 pub mod kind;
+pub mod layout;
 pub mod model;
 pub mod state;
 

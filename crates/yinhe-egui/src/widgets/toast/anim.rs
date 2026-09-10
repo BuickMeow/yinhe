@@ -31,3 +31,45 @@ pub(crate) fn fly_anim(toast: &Toast) -> f32 {
     }
     enter_x(now.duration_since(toast.created).as_secs_f32())
 }
+
+// ── Y 轴 ease-out 动画（与 anim.rs 里 x 飞行动画同族曲线 1-(1-t)^3，时长 0.35s）──
+#[derive(Clone, Copy, Debug)]
+pub(super) struct YAnim {
+    pub(super) from: f32,
+    pub(super) to: f32,
+    pub(super) t0: Instant,
+}
+
+pub(super) const Y_ANIM_DUR_SECS: f32 = 0.35;
+
+pub(super) fn ease_out_cubic(t: f32) -> f32 {
+    1.0 - (1.0 - t).powi(3)
+}
+
+pub(super) fn y_anim_value(anim: &YAnim, now: Instant) -> f32 {
+    let elapsed = now.saturating_duration_since(anim.t0).as_secs_f32();
+    let t = (elapsed / Y_ANIM_DUR_SECS).clamp(0.0, 1.0);
+    anim.from + (anim.to - anim.from) * ease_out_cubic(t)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ease_out_cubic_values_and_monotonic() {
+        assert!((ease_out_cubic(0.0) - 0.0).abs() < 1e-6);
+        assert!((ease_out_cubic(1.0) - 1.0).abs() < 1e-6);
+        // t=0.5 时 1-(0.5)^3=0.875，快起慢收
+        assert!((ease_out_cubic(0.5) - 0.875).abs() < 1e-6);
+        // 单调递增
+        let mut prev = ease_out_cubic(0.0);
+        let mut t: f32 = 0.1;
+        while t <= 1.0001 {
+            let cur = ease_out_cubic(t.min(1.0));
+            assert!(cur >= prev, "not monotonic at t={t}");
+            prev = cur;
+            t += 0.1;
+        }
+    }
+}
