@@ -39,6 +39,11 @@ fn follow_scroll(prev_scroll: f32, prev_max: f32, new_max: f32) -> f32 {
     }
 }
 
+/// 列表可见高度：视口高 − 底部留白 − 顶部 24 留白，窗口过矮时保底 120。
+fn visible_h(viewport_h: f32, bottom_pad: f32) -> f32 {
+    (viewport_h - bottom_pad - 24.0).max(120.0)
+}
+
 // ── 统一通知中心 ──
 pub struct Notifications {
     next_id: u64,
@@ -193,7 +198,7 @@ impl Notifications {
     /// 每帧更新滚动上限：贴底跟随时吸到新 max，否则 clamp 旧值。
     fn update_center_scroll(&mut self, viewport_h: f32, bottom_pad: f32, gap: f32, fallback: f32) {
         let total = self.center_total_h(fallback, gap);
-        let visible = (viewport_h - bottom_pad - 24.0).max(0.0);
+        let visible = visible_h(viewport_h, bottom_pad);
         let new_max = scroll_max(total, visible);
         let followed = follow_scroll(self.center_scroll, self.center_scroll_max, new_max);
         self.center_scroll_max = new_max;
@@ -276,7 +281,7 @@ impl Notifications {
             return;
         }
         let scroll = self.center_scroll;
-        let visible = (viewport.height() - bottom_pad - 24.0).max(0.0);
+        let visible = visible_h(viewport.height(), bottom_pad);
         // 滚动条贴屏边独立条带，与卡片留 18px 空隙
         let right = viewport.max.x - Self::SCROLL_RIGHT;
         let bg_bottom = viewport.max.y - (bottom_pad - gap);
@@ -1132,7 +1137,8 @@ impl Notifications {
         const EST_H: f32 = 110.0;
 
         let viewport = ctx.viewport_rect();
-        let max_h = (viewport.height() - BOTTOM_PAD - 24.0).max(120.0);
+        // 最大 y 偏移（相对底边）：底留白 + 可见高。与滚动上限同源，否则滚到顶会被多切 48px。
+        let max_y = BOTTOM_PAD + visible_h(viewport.height(), BOTTOM_PAD);
         // 列表开着时先刷新滚动上限，保证两处用同一 scroll（show_center 随后还会刷一次，同输入幂等）。
         if self.center_open {
             self.update_center_scroll(viewport.height(), BOTTOM_PAD, GAP, EST_H);
@@ -1180,7 +1186,7 @@ impl Notifications {
             let y_off = self.y_for(tid, target_y, Instant::now());
             // 用“显示位置”判可见性：快速滚动时目标先出带、动画仍在滑出，
             // 若按目标裁会未滑完就消失（提前消失）；显示位置完全出带才跳过
-            if is_fully_outside(y_off, card_h, BOTTOM_PAD, max_h) {
+            if is_fully_outside(y_off, card_h, BOTTOM_PAD, max_y) {
                 self.toasts[idx].hovered = false;
                 continue;
             }
@@ -1211,7 +1217,7 @@ impl Notifications {
                 .show(ctx, |ui| {
                     // 边缘裁剪滑出：收窄 clip 到可见带，半张卡被裁掉而非突然消失
                     let clip = ui.clip_rect();
-                    ui.set_clip_rect(clip.intersect(notif_band(clip, viewport, BOTTOM_PAD, max_h)));
+                    ui.set_clip_rect(clip.intersect(notif_band(clip, viewport, BOTTOM_PAD, max_y)));
                     outcome = super::card::toast_card(
                         ui,
                         &self.toasts[idx],
@@ -1283,7 +1289,8 @@ impl Notifications {
         const EST_H: f32 = 110.0;
 
         let viewport = ctx.viewport_rect();
-        let max_h = (viewport.height() - BOTTOM_PAD - 24.0).max(120.0);
+        // 同 show_toasts：最大 y 偏移与滚动上限同源，滚到顶才不会被多切
+        let max_y = BOTTOM_PAD + visible_h(viewport.height(), BOTTOM_PAD);
 
         // 列表开着时先画背景捕获（同层先画在下）：吞缝隙点击 + 滚轮，顺带刷新滚动上限。
         if self.center_open {
@@ -1318,7 +1325,7 @@ impl Notifications {
             let card_h = self.measured_h(tid, EST_H);
             let y_off = self.y_for(tid, target_y, Instant::now());
             // 同上：按显示位置判可见，避免快速滚动时提前裁掉正在滑出的卡
-            if is_fully_outside(y_off, card_h, BOTTOM_PAD, max_h) {
+            if is_fully_outside(y_off, card_h, BOTTOM_PAD, max_y) {
                 continue;
             }
             // 打开：无停顿直接从右侧飞入；关闭：入场的严格反向飞出
@@ -1346,7 +1353,7 @@ impl Notifications {
                 .show(ctx, |ui| {
                     // 边缘裁剪滑出：收窄 clip 到可见带，半张卡被裁掉而非突然消失
                     let clip = ui.clip_rect();
-                    ui.set_clip_rect(clip.intersect(notif_band(clip, viewport, BOTTOM_PAD, max_h)));
+                    ui.set_clip_rect(clip.intersect(notif_band(clip, viewport, BOTTOM_PAD, max_y)));
                     super::card::history_card(ui, &self.history[idx], CARD_W);
                     ui.min_rect().height()
                 });
@@ -1360,20 +1367,20 @@ impl Notifications {
     }
 }
 
-/// 可见带：x 沿用进入时的 clip，y 裁到 `[viewport.max.y - max_h, viewport.max.y - BOTTOM_PAD]`。
-/// `max_h`/`BOTTOM_PAD` 用两调用函数内现有同名常量/公式，不另起数值。
-fn notif_band(clip: egui::Rect, viewport: egui::Rect, bottom_pad: f32, max_h: f32) -> egui::Rect {
+/// 可见带：x 沿用进入时的 clip，y 裁到 `[viewport.max.y - max_y, viewport.max.y - bottom_pad]`。
+/// `max_y` = 底留白 + 可见高，与滚动上限同源（`BOTTOM_PAD + visible_h(..)`）。
+fn notif_band(clip: egui::Rect, viewport: egui::Rect, bottom_pad: f32, max_y: f32) -> egui::Rect {
     egui::Rect::from_min_max(
-        egui::pos2(clip.min.x, viewport.max.y - max_h),
+        egui::pos2(clip.min.x, viewport.max.y - max_y),
         egui::pos2(clip.max.x, viewport.max.y - bottom_pad),
     )
 }
 
 /// 完全在带外才跳过。传“显示位置”（y 动画后的值）而非目标位置：目标先出带时
-/// 动画可能还没滑完，按目标裁会提前消失。顶部 `y >= max_h`，底部 `y + h <= BOTTOM_PAD`。
+/// 动画可能还没滑完，按目标裁会提前消失。顶部 `y >= max_y`，底部 `y + h <= BOTTOM_PAD`。
 /// 零面积（恰好贴住带边）即跳过，无贡献所以无闪烁；有 1px 重叠即画，由外层 band 裁剪滑出。
-fn is_fully_outside(y: f32, card_h: f32, bottom_pad: f32, max_h: f32) -> bool {
-    y >= max_h || y + card_h <= bottom_pad
+fn is_fully_outside(y: f32, card_h: f32, bottom_pad: f32, max_y: f32) -> bool {
+    y >= max_y || y + card_h <= bottom_pad
 }
 
 /// 堆叠 y 累加：按 ids 顺序（调用方先排好，如最新在底则传 rev 后），逐项取实测高度，
@@ -2155,18 +2162,35 @@ mod tests {
     #[test]
     fn fully_outside_boundary() {
         let bottom = 48.0;
-        let max_h = 500.0;
+        let max_y = 500.0;
         // 底部：零面积贴边（y+h == BOTTOM_PAD）在外，1px 重叠即画
-        assert!(is_fully_outside(-52.0, 100.0, bottom, max_h));
-        assert!(!is_fully_outside(-51.0, 100.0, bottom, max_h));
+        assert!(is_fully_outside(-52.0, 100.0, bottom, max_y));
+        assert!(!is_fully_outside(-51.0, 100.0, bottom, max_y));
         // 底边 flush 在内（卡坐底边上）可见
-        assert!(!is_fully_outside(bottom, 100.0, bottom, max_h));
-        // 顶部：零面积贴边（y == max_h）在外，1px 重叠即画
-        assert!(is_fully_outside(max_h, 100.0, bottom, max_h));
-        assert!(!is_fully_outside(max_h - 1.0, 100.0, bottom, max_h));
+        assert!(!is_fully_outside(bottom, 100.0, bottom, max_y));
+        // 顶部：零面积贴边（y == max_y）在外，1px 重叠即画
+        assert!(is_fully_outside(max_y, 100.0, bottom, max_y));
+        assert!(!is_fully_outside(max_y - 1.0, 100.0, bottom, max_y));
         // 顶边 flush 在内可见，中间正常可见
-        assert!(!is_fully_outside(max_h - 100.0, 100.0, bottom, max_h));
-        assert!(!is_fully_outside(100.0, 100.0, bottom, max_h));
+        assert!(!is_fully_outside(max_y - 100.0, 100.0, bottom, max_y));
+        assert!(!is_fully_outside(100.0, 100.0, bottom, max_y));
+    }
+
+    /// 回归：可见带顶部与滚动上限同源——滚到最顶时最旧卡顶边恰在带顶（视口顶 + 24），
+    /// 不再被多切 48px（曾把 BOTTOM_PAD 重复计入 max_y 导致顶部截断）。
+    #[test]
+    fn band_top_matches_scroll_limit() {
+        let viewport = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1400.0, 900.0));
+        let bottom = 48.0;
+        let max_y = bottom + visible_h(viewport.height(), bottom);
+        let band = notif_band(viewport, viewport, bottom, max_y);
+        // 带顶 = 视口顶 + 24；带底 = 视口底 − 底留白
+        assert!((band.min.y - 24.0).abs() < 1e-4, "band top {}", band.min.y);
+        assert!((band.max.y - (viewport.max.y - bottom)).abs() < 1e-4);
+        // 滚到最顶：最旧卡顶边 offset = bottom + total、scroll = total − visible
+        // → anchor = max_y − h，仍在带内不被裁
+        let h = 110.0;
+        assert!(!is_fully_outside(max_y - h, h, bottom, max_y));
     }
 
     /// 回归：快速滚动时按「显示位置」而非「目标位置」裁卡。
