@@ -1176,13 +1176,14 @@ impl Notifications {
                 raw_y
             };
             let card_h = self.measured_h(tid, EST_H);
-            // 完全在带外才跳过（零面积无贡献，不闪烁）；跳过时清 hovered
-            if is_fully_outside(target_y, card_h, BOTTOM_PAD, max_h) {
+            // 自有 ease-out y 插值（与 x 飞行动画同族曲线），重排不线性
+            let y_off = self.y_for(tid, target_y, Instant::now());
+            // 用“显示位置”判可见性：快速滚动时目标先出带、动画仍在滑出，
+            // 若按目标裁会未滑完就消失（提前消失）；显示位置完全出带才跳过
+            if is_fully_outside(y_off, card_h, BOTTOM_PAD, max_h) {
                 self.toasts[idx].hovered = false;
                 continue;
             }
-            // 自有 ease-out y 插值（与 x 飞行动画同族曲线），重排不线性
-            let y_off = self.y_for(tid, target_y, Instant::now());
             let is_leaving = self.toasts[idx].leaving_since.is_some();
             // 打开列表时已存在的 toast 不重新飞入，仅重排；离开时仍飞出
             let x_off = if self.center_open && !is_leaving {
@@ -1315,11 +1316,11 @@ impl Notifications {
                 raw_y
             };
             let card_h = self.measured_h(tid, EST_H);
-            // 完全在带外才跳过（零面积无贡献，不闪烁；历史卡无 hovered 可清）
-            if is_fully_outside(target_y, card_h, BOTTOM_PAD, max_h) {
+            let y_off = self.y_for(tid, target_y, Instant::now());
+            // 同上：按显示位置判可见，避免快速滚动时提前裁掉正在滑出的卡
+            if is_fully_outside(y_off, card_h, BOTTOM_PAD, max_h) {
                 continue;
             }
-            let y_off = self.y_for(tid, target_y, Instant::now());
             // 打开：无停顿直接从右侧飞入；关闭：入场的严格反向飞出
             let x_off = if closing {
                 let closed_at = self.center_closed_at.unwrap_or_else(Instant::now);
@@ -1368,10 +1369,11 @@ fn notif_band(clip: egui::Rect, viewport: egui::Rect, bottom_pad: f32, max_h: f3
     )
 }
 
-/// 完全在带外才跳过：顶部 `target >= max_h`，底部 `target + h <= BOTTOM_PAD`。
+/// 完全在带外才跳过。传“显示位置”（y 动画后的值）而非目标位置：目标先出带时
+/// 动画可能还没滑完，按目标裁会提前消失。顶部 `y >= max_h`，底部 `y + h <= BOTTOM_PAD`。
 /// 零面积（恰好贴住带边）即跳过，无贡献所以无闪烁；有 1px 重叠即画，由外层 band 裁剪滑出。
-fn is_fully_outside(target_y: f32, card_h: f32, bottom_pad: f32, max_h: f32) -> bool {
-    target_y >= max_h || target_y + card_h <= bottom_pad
+fn is_fully_outside(y: f32, card_h: f32, bottom_pad: f32, max_h: f32) -> bool {
+    y >= max_h || y + card_h <= bottom_pad
 }
 
 /// 堆叠 y 累加：按 ids 顺序（调用方先排好，如最新在底则传 rev 后），逐项取实测高度，
@@ -2154,17 +2156,65 @@ mod tests {
     fn fully_outside_boundary() {
         let bottom = 48.0;
         let max_h = 500.0;
-        // 底部：零面积贴边（target+h == BOTTOM_PAD）在外，1px 重叠即画
+        // 底部：零面积贴边（y+h == BOTTOM_PAD）在外，1px 重叠即画
         assert!(is_fully_outside(-52.0, 100.0, bottom, max_h));
         assert!(!is_fully_outside(-51.0, 100.0, bottom, max_h));
         // 底边 flush 在内（卡坐底边上）可见
         assert!(!is_fully_outside(bottom, 100.0, bottom, max_h));
-        // 顶部：零面积贴边（target == max_h）在外，1px 重叠即画
+        // 顶部：零面积贴边（y == max_h）在外，1px 重叠即画
         assert!(is_fully_outside(max_h, 100.0, bottom, max_h));
         assert!(!is_fully_outside(max_h - 1.0, 100.0, bottom, max_h));
         // 顶边 flush 在内可见，中间正常可见
         assert!(!is_fully_outside(max_h - 100.0, 100.0, bottom, max_h));
         assert!(!is_fully_outside(100.0, 100.0, bottom, max_h));
+    }
+
+    /// 回归：快速滚动时按「显示位置」而非「目标位置」裁卡。
+    /// 目标已出带但 y 动画还在带内时，卡片必须继续渲染（否则未滑出即消失）。
+    #[test]
+    fn cull_uses_displayed_y_not_target() {
+        let ctx = egui::Context::default();
+        ctx.add_font(egui_material_icons::font_insert());
+        let mut n = Notifications::new();
+        n.center_open = true;
+        n.prev_center_open = true;
+        let mut tid = 0;
+        for i in 0..10 {
+            tid = n.success(format!("t{i}"), "m");
+        }
+        for h in n.history.clone() {
+            n.card_h.insert(h.id, 110.0);
+        }
+        // 哨兵高度：被裁则保持原值，渲染则被实测覆盖
+        const SENTINEL: f32 = 1234.5;
+        n.card_h.insert(tid, SENTINEL);
+        // 目标位置：最大滚动后远出下边界
+        n.center_scroll = 5000.0;
+        // 显示位置：仍在可见带内（卡坐在底边上），动画尚未滑出
+        n.y_anim.insert(
+            tid,
+            YAnim {
+                from: 48.0,
+                to: -9999.0,
+                t0: Instant::now(),
+            },
+        );
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1400.0, 900.0),
+            )),
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(raw, |ui| {
+            n.show_toasts(ui.ctx());
+        });
+        out.textures_delta.clear();
+        let h = n.card_h.get(&tid).copied().unwrap_or(SENTINEL);
+        assert!(
+            (h - SENTINEL).abs() > f32::EPSILON,
+            "目标出带但显示位置仍在带内时被提前裁掉（提前消失 bug）"
+        );
     }
 
     #[test]
