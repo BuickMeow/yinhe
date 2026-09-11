@@ -232,6 +232,7 @@ pub enum PlayMenuAction {
     Stop,
     Record { recording: bool },
     StepInput { active: bool },
+    TapTempo,
     Follow(crate::view_interaction::FollowMode, bool),
 }
 
@@ -242,6 +243,7 @@ impl PopupRow for PlayMenuAction {
             PlayMenuAction::Stop => 1,
             PlayMenuAction::Record { .. } => 2,
             PlayMenuAction::StepInput { .. } => 3,
+            PlayMenuAction::TapTempo => 4,
             PlayMenuAction::Follow(..) => 0,
         }
     }
@@ -277,6 +279,7 @@ impl PopupRow for PlayMenuAction {
             PlayMenuAction::Stop => ICON_STOP,
             PlayMenuAction::Record { .. } => ICON_FIBER_MANUAL_RECORD,
             PlayMenuAction::StepInput { .. } => ICON_STEP,
+            PlayMenuAction::TapTempo => ICON_SPEED,
             PlayMenuAction::Follow(mode, _) => mode.icon(),
         }
     }
@@ -287,6 +290,7 @@ impl PopupRow for PlayMenuAction {
             PlayMenuAction::Stop => "shortcuts.stop",
             PlayMenuAction::Record { .. } => "menu.record",
             PlayMenuAction::StepInput { .. } => "menu.step_input",
+            PlayMenuAction::TapTempo => "menu.tap_tempo",
             PlayMenuAction::Follow(mode, _) => match mode {
                 crate::view_interaction::FollowMode::None => "follow.none",
                 crate::view_interaction::FollowMode::Centered => "follow.centered",
@@ -327,6 +331,7 @@ pub struct PlayActions {
     pub stop_play: bool,
     pub record: bool,
     pub step: bool,
+    pub tap_tempo: bool,
 }
 
 /// 传输栏上下文与响应
@@ -348,6 +353,7 @@ pub struct TransportResponse {
     pub stop_play: bool,
     pub record_toggle: bool,
     pub step_toggle: bool,
+    pub tap_tempo: bool,
     pub toggle_orientation: bool,
     pub pending_file_action: Option<FileAction>,
     pub pending_edit_action: Option<EditAction>,

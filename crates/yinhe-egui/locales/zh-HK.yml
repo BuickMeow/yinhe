@@ -88,6 +88,7 @@ menu.duplicate: "重複"
 menu.delete: "刪除"
 menu.octave_up: "升八度"
 menu.octave_down: "降八度"
+menu.tap_tempo: "敲擊測速"
 
 # ── macOS App 菜单 ──
 menu.about: "關於 Yinhe"
@@ -319,6 +320,13 @@ dialog.ppq_rescale.question: "是否同時縮放既有音符與自動化事件�
 dialog.ppq_rescale.hint: "• 是：所有 tick 按比例縮放（建議）\n• 否：僅更改 PPQ，音符位置不變（時值會改變）"
 dialog.ppq_rescale.yes: "是（縮放音符）"
 dialog.ppq_rescale.no: "否（保持音符）"
+
+# ── 敲擊測速 ──
+dialog.tap_tempo.title: "敲擊測速"
+dialog.tap_tempo.tap: "敲擊"
+dialog.tap_tempo.taps: "%{n} 次敲擊"
+dialog.tap_tempo.hint: "點擊按鈕或按空格鍵敲擊"
+dialog.tap_tempo.reset: "重設"
 
 # ── PPQ 缩放进度 ──
 dialog.rescale.title: "PPQ 縮放中"

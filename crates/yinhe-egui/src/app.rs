@@ -182,6 +182,9 @@ pub struct App {
     // ── 新建音轨对话框状态（AR「+」按钮触发）──
     pub(crate) new_track_dialog: crate::dialogs::new_track::NewTrackDialogState,
 
+    // ── 敲击测速对话框状态（播放菜单触发）──
+    pub(crate) tap_tempo_dialog: crate::dialogs::tap_tempo::TapTempoDialogState,
+
     // ── macOS platform integrations ──
     pub(crate) menu_bar: crate::platform::MenuBar,
     /// Tracks the last `is_dirty` state to avoid redundant `setDocumentEdited` calls.
@@ -330,6 +333,7 @@ impl App {
             export: export_state::ExportState::new(),
             rescale: rescale_state::RescaleState::new(),
             new_track_dialog: crate::dialogs::new_track::NewTrackDialogState::default(),
+            tap_tempo_dialog: crate::dialogs::tap_tempo::TapTempoDialogState::default(),
 
             view_mode: ViewMode::Arrange,
             show_pianoroll_in_arrange: audio_settings.layout.show_pianoroll_in_arrange,

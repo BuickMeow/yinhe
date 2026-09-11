@@ -321,6 +321,9 @@ impl App {
         // ── 新建音轨对话框 ──
         self.show_new_track_dialog(&ctx);
 
+        // ── 敲击测速对话框 ──
+        self.show_tap_tempo_dialog(&ctx);
+
         // ── 属性浮动面板（音轨属性 / 工程设置；与侧栏 Info 内容互斥切换）──
         self.show_float_panels(&ctx);
 
@@ -486,6 +489,25 @@ impl App {
         // teardown 借 &mut self，必须在 doc 借用的作用域外调用。
         if created {
             self.teardown_audio();
+        }
+    }
+
+    /// 打开敲击测速对话框（传输栏播放菜单 / macOS 原生菜单共用）。
+    pub(in crate::app) fn open_tap_tempo_dialog(&mut self, ctx: &egui::Context) {
+        self.tap_tempo_dialog.open();
+        crate::chrome::dialog::raise_viewport(
+            ctx,
+            egui::ViewportId::from_hash_of("tap_tempo_dialog"),
+        );
+    }
+
+    /// 敲击测速对话框：每帧渲染，用户关闭窗口后清状态。
+    fn show_tap_tempo_dialog(&mut self, ctx: &egui::Context) {
+        if !self.tap_tempo_dialog.open {
+            return;
+        }
+        if crate::dialogs::tap_tempo::show_viewport(ctx, &mut self.tap_tempo_dialog) {
+            self.tap_tempo_dialog.open = false;
         }
     }
 

@@ -28,7 +28,7 @@ hint.notifications: "通知 · 查看历史通知"
 hint.mem: "内存占用详情 · 点击查看"
 hint.file_menu: "文件菜单 · 新建/打开/保存/导出"
 hint.edit_menu: "编辑菜单 · 撤销/复制/粘贴/删除等"
-hint.play_menu: "播放菜单 · 播放/暂停/停止/跟随"
+hint.play_menu: "播放菜单 · 播放/暂停/停止/跟随/敲击测速"
 hint.play: "播放/暂停 · 空格"
 hint.step_input: "步进输入（每按一键写入一个音符并前进）"
 hint.record: "录音（MIDI 输入写入当前轨）"
@@ -99,6 +99,7 @@ menu.dedup_within_track: "音符去重（轨内）"
 menu.dedup_across_tracks: "音符去重（跨轨）"
 menu.record: "录音"
 menu.step_input: "步进输入"
+menu.tap_tempo: "敲击测速"
 
 # ── macOS App 菜单 ──
 menu.about: "关于 Yinhe"
@@ -380,6 +381,13 @@ dialog.ppq_rescale.question: "是否同时缩放已有音符与自动化事件�
 dialog.ppq_rescale.hint: "• 是：所有 tick 按比例缩放（推荐）\n• 否：仅改 PPQ，音符位置不变（时值会改变）"
 dialog.ppq_rescale.yes: "是（缩放音符）"
 dialog.ppq_rescale.no: "否（保持音符）"
+
+# ── 敲击测速 ──
+dialog.tap_tempo.title: "敲击测速"
+dialog.tap_tempo.tap: "敲击"
+dialog.tap_tempo.taps: "%{n} 次敲击"
+dialog.tap_tempo.hint: "点击按钮或按空格键敲击"
+dialog.tap_tempo.reset: "重置"
 
 # ── 新建音轨 ──
 dialog.new_track.title: "新建音轨"

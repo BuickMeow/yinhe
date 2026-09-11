@@ -12,4 +12,5 @@ pub mod rescale_overlay;
 pub mod save_overlay;
 pub mod settings;
 pub mod system_monitor;
+pub mod tap_tempo;
 pub mod unsaved;

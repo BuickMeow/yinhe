@@ -154,6 +154,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                         PlayMenuAction::Stop => play_actions.stop_play = true,
                         PlayMenuAction::Record { .. } => play_actions.record = true,
                         PlayMenuAction::StepInput { .. } => play_actions.step = true,
+                        PlayMenuAction::TapTempo => play_actions.tap_tempo = true,
                         PlayMenuAction::Follow(..) => unreachable!("跟随档无图钉"),
                     }
                 }
@@ -302,6 +303,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
         stop_play: play_actions.stop_play,
         record_toggle: play_actions.record,
         step_toggle: play_actions.step,
+        tap_tempo: play_actions.tap_tempo,
         toggle_orientation,
         pending_file_action,
         pending_edit_action,

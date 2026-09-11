@@ -96,6 +96,7 @@ pub fn show_play_menu(
             PlayMenuAction::StepInput {
                 active: ctx.step_input,
             },
+            PlayMenuAction::TapTempo,
         ],
         &[
             PlayMenuAction::Follow(FollowMode::None, **follow_mode == FollowMode::None),
@@ -144,6 +145,7 @@ pub fn show_play_menu(
             PlayMenuAction::Stop => actions.stop_play = true,
             PlayMenuAction::Record { .. } => actions.record = true,
             PlayMenuAction::StepInput { .. } => actions.step = true,
+            PlayMenuAction::TapTempo => actions.tap_tempo = true,
             PlayMenuAction::Follow(mode, _) => **follow_mode = mode,
         }
     }

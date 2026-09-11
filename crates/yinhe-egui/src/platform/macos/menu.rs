@@ -220,6 +220,8 @@ pub(super) fn init_native_menu() -> muda::Result<()> {
     map.insert(record_item.id().clone(), MenuAction::ToggleRecord);
     let step_item = Box::new(MenuItem::new(t!("menu.step_input"), true, None));
     map.insert(step_item.id().clone(), MenuAction::ToggleStepInput);
+    let tap_item = Box::new(MenuItem::new(t!("menu.tap_tempo"), true, None));
+    map.insert(tap_item.id().clone(), MenuAction::TapTempo);
 
     const FOLLOW_MODES: [(FollowMode, &str); 4] = [
         (FollowMode::None, "follow.none"),
@@ -241,6 +243,7 @@ pub(super) fn init_native_menu() -> muda::Result<()> {
         &sep_play,
         record_item.as_ref(),
         step_item.as_ref(),
+        tap_item.as_ref(),
         &sep_follow,
     ];
     for (_, _, item) in &follow_checks {
@@ -256,6 +259,7 @@ pub(super) fn init_native_menu() -> muda::Result<()> {
     items.push(("shortcuts.stop", stop_item));
     items.push(("menu.record", record_item));
     items.push(("menu.step_input", step_item));
+    items.push(("menu.tap_tempo", tap_item));
     items.push(("menu.about", about_item));
     items.push(("menu.settings", settings_item));
     items.push(("menu.hide", hide_item));

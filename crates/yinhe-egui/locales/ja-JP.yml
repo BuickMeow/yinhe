@@ -88,6 +88,7 @@ menu.duplicate: "複製"
 menu.delete: "削除"
 menu.octave_up: "1オクターブ上へ"
 menu.octave_down: "1オクターブ下へ"
+menu.tap_tempo: "タップテンポ"
 
 # ── macOSアプリメニュー ──
 menu.about: "Yinheについて"
@@ -324,6 +325,13 @@ dialog.ppq_rescale.question: "既存のノートとオートメーションイ�
 dialog.ppq_rescale.hint: "• はい：すべてのティックを比例スケール（推奨）\n• いいえ：PPQのみ変更、ノート位置は不变（デュレーションが変わります）"
 dialog.ppq_rescale.yes: "はい（ノートをスケール）"
 dialog.ppq_rescale.no: "いいえ（ノートを保持）"
+
+# ── タップテンポ ──
+dialog.tap_tempo.title: "タップテンポ"
+dialog.tap_tempo.tap: "タップ"
+dialog.tap_tempo.taps: "%{n} 回タップ"
+dialog.tap_tempo.hint: "ボタンをクリックするかスペースキーでタップ"
+dialog.tap_tempo.reset: "リセット"
 
 # ── PPQリスケール進行 ──
 dialog.rescale.title: "PPQリスケール中"

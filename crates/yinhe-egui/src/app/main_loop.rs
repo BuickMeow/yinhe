@@ -257,6 +257,10 @@ impl eframe::App for App {
                     menu_step = true;
                     continue;
                 }
+                MenuAction::TapTempo => {
+                    self.open_tap_tempo_dialog(ui.ctx());
+                    continue;
+                }
                 MenuAction::SetFollowMode(mode) => {
                     self.follow_mode = mode;
                     continue;
@@ -584,6 +588,11 @@ impl eframe::App for App {
         // ── 步进输入模式切换 ──
         if transport_response.step_toggle || menu_step {
             self.step_input = !self.step_input;
+        }
+
+        // ── 敲击测速弹窗（播放菜单）──
+        if transport_response.tap_tempo {
+            self.open_tap_tempo_dialog(ui.ctx());
         }
 
         // ── 钢琴卷帘方向切换（横向 / 纵向瀑布流二选一）──

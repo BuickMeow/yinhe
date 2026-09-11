@@ -28,7 +28,7 @@ hint.notifications: "Notifications · view history"
 hint.mem: "Memory details · click to view"
 hint.file_menu: "File menu · New/Open/Save/Export"
 hint.edit_menu: "Edit menu · Undo/Copy/Paste/Delete etc."
-hint.play_menu: "Playback menu · Play/Pause/Stop/Follow"
+hint.play_menu: "Playback menu · Play/Pause/Stop/Follow/Tap Tempo"
 hint.play: "Play/Pause · Space"
 hint.step_input: "Step Input (write one note per key press and advance)"
 hint.record: "Record (write MIDI input to current track)"
@@ -99,6 +99,7 @@ menu.dedup_within_track: "Dedup Notes (Within Track)"
 menu.dedup_across_tracks: "Dedup Notes (Across Tracks)"
 menu.record: "Record"
 menu.step_input: "Step Input"
+menu.tap_tempo: "Tap Tempo"
 
 # ── macOS app menu ──
 menu.about: "About Yinhe"
@@ -380,6 +381,13 @@ dialog.ppq_rescale.question: "Also rescale existing notes and automation events 
 dialog.ppq_rescale.hint: "• Yes: All ticks scaled proportionally (recommended)\n• No: Only change PPQ, note positions unchanged (durations will change)"
 dialog.ppq_rescale.yes: "Yes (Rescale Notes)"
 dialog.ppq_rescale.no: "No (Keep Notes)"
+
+# ── Tap tempo ──
+dialog.tap_tempo.title: "Tap Tempo"
+dialog.tap_tempo.tap: "Tap"
+dialog.tap_tempo.taps: "%{n} taps"
+dialog.tap_tempo.hint: "Click the button or press Space"
+dialog.tap_tempo.reset: "Reset"
 
 # ── New track ──
 dialog.new_track.title: "New Track"

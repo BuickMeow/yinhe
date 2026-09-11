@@ -36,6 +36,8 @@ pub enum MenuAction {
     ToggleRecord,
     /// 播放菜单「步进输入」切换。
     ToggleStepInput,
+    /// 播放菜单「敲击测速」，打开测 BPM 弹窗。
+    TapTempo,
     /// 播放菜单「播放跟随」四档单选。
     SetFollowMode(yinhe_editor_core::follow::FollowMode),
     /// 文件菜单「最近修改的文件」子菜单选中的路径。

@@ -88,6 +88,7 @@ menu.duplicate: "복제"
 menu.delete: "삭제"
 menu.octave_up: "옥타브 올리기"
 menu.octave_down: "옥타브 내리기"
+menu.tap_tempo: "탭 템포"
 
 # ── macOS 앱 메뉴 ──
 menu.about: "Yinhe 정보"
@@ -319,6 +320,13 @@ dialog.ppq_rescale.question: "기존 노트와 자동화 이벤트의 절대 타
 dialog.ppq_rescale.hint: "• 예: 모든 틱을 비례적으로 스케일 (권장)\n• 아니오: PPQ만 변경, 노트 위치 유지 (길이가 변경됨)"
 dialog.ppq_rescale.yes: "예 (노트 스케일)"
 dialog.ppq_rescale.no: "아니오 (노트 유지)"
+
+# ── 탭 템포 ──
+dialog.tap_tempo.title: "탭 템포"
+dialog.tap_tempo.tap: "탭"
+dialog.tap_tempo.taps: "%{n}회 탭"
+dialog.tap_tempo.hint: "버튼을 클릭하거나 스페이스 키로 탭"
+dialog.tap_tempo.reset: "초기화"
 
 # ── PPQ 리스케일 진행 ──
 dialog.rescale.title: "PPQ 리스케일 중"
