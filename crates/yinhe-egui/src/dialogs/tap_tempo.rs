@@ -9,8 +9,8 @@
 use eframe::egui;
 use rust_i18n::t;
 
-/// 停顿超过该秒数后再敲击视为重新开始一轮测量。
-const TAP_RESET_SECS: f64 = 2.0;
+/// 距上次敲击超过当前拍长的该倍数（漏敲超过一拍）时，视为重新开始一轮测量。
+const TAP_RESET_BEATS: f64 = 2.0;
 
 /// 对话框状态（挂在 App 上，跨帧保留；打开时重置）。
 #[derive(Default)]
@@ -28,10 +28,8 @@ impl TapTempoDialogState {
     }
 }
 
-/// 由敲击时间戳估算 BPM：所有间隔的平均值。
-///
-/// 少于 2 次敲击或时间跨度非正（同一帧重复敲击）时返回 `None`。
-fn bpm_from_taps(taps: &[f64]) -> Option<f32> {
+/// 本轮敲击的平均间隔（拍长，秒）；不足 2 次敲击或跨度非正时返回 `None`。
+fn average_interval(taps: &[f64]) -> Option<f64> {
     if taps.len() < 2 {
         return None;
     }
@@ -39,12 +37,22 @@ fn bpm_from_taps(taps: &[f64]) -> Option<f32> {
     if span <= 0.0 {
         return None;
     }
-    Some((60.0 * (taps.len() - 1) as f64 / span) as f32)
+    Some(span / (taps.len() - 1) as f64)
 }
 
-/// 记录一次敲击：距上次敲击超过 [`TAP_RESET_SECS`] 时清空重来。
+/// 由敲击时间戳估算 BPM（平均间隔的倒数）。
+fn bpm_from_taps(taps: &[f64]) -> Option<f32> {
+    Some((60.0 / average_interval(taps)?) as f32)
+}
+
+/// 记录一次敲击：距上次敲击超过当前拍长的 [`TAP_RESET_BEATS`] 倍（漏敲超过一拍）时清空重来。
+///
+/// 拍长取本轮平均间隔（与显示的 BPM 同一来源）；不足 2 次敲击时还没有拍长可参考，
+/// 直接追加，等待第二次敲击建立节奏。
 fn register_tap(taps: &mut Vec<f64>, now: f64) {
-    if taps.last().is_some_and(|last| now - last > TAP_RESET_SECS) {
+    if let (Some(last), Some(beat)) = (taps.last().copied(), average_interval(taps))
+        && now - last > beat * TAP_RESET_BEATS
+    {
         taps.clear();
     }
     taps.push(now);
@@ -216,11 +224,34 @@ mod tests {
     }
 
     #[test]
-    fn tap_resets_after_long_pause() {
+    fn tap_keeps_tapping_within_two_beats() {
+        // 拍长 0.5s → 阈值 1.0s：0.9s 以内继续累计
         let mut taps = vec![0.0, 0.5];
-        register_tap(&mut taps, 0.7);
+        register_tap(&mut taps, 0.9);
         assert_eq!(taps.len(), 3);
-        register_tap(&mut taps, 10.0);
-        assert_eq!(taps, vec![10.0]);
+        // 恰好 1.0s（漏敲一拍）不重置
+        let mut taps = vec![0.0, 0.5];
+        register_tap(&mut taps, 1.5);
+        assert_eq!(taps.len(), 3);
+    }
+
+    #[test]
+    fn tap_resets_when_missing_more_than_one_beat() {
+        // 拍长 0.5s → 阈值 1.0s：1.1s 超过两拍，重新开始
+        let mut taps = vec![0.0, 0.5];
+        register_tap(&mut taps, 1.6);
+        assert_eq!(taps, vec![1.6]);
+        // 按当前平均拍长判定：3 次 1.0s 间隔（拍长 1.0s → 阈值 2.0s）
+        let mut taps = vec![0.0, 1.0, 2.0];
+        register_tap(&mut taps, 4.1);
+        assert_eq!(taps, vec![4.1]);
+    }
+
+    #[test]
+    fn first_interval_has_no_reference_beat() {
+        // 不足 2 次敲击时没有拍长可参考，直接追加
+        let mut taps = vec![5.0];
+        register_tap(&mut taps, 105.0);
+        assert_eq!(taps, vec![5.0, 105.0]);
     }
 }
