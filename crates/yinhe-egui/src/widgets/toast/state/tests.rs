@@ -654,15 +654,13 @@ fn cull_uses_displayed_y_not_target() {
             t0: Instant::now(),
         },
     );
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0));
     let raw = egui::RawInput {
-        screen_rect: Some(egui::Rect::from_min_size(
-            egui::Pos2::ZERO,
-            egui::vec2(1400.0, 900.0),
-        )),
+        screen_rect: Some(viewport),
         ..Default::default()
     };
     let mut out = ctx.run_ui(raw, |ui| {
-        n.show_toasts(ui.ctx(), 900.0);
+        n.show_toasts(ui.ctx(), viewport);
     });
     out.textures_delta.clear();
     let h = n.card_h.get(&oldest).copied().unwrap_or(SENTINEL);
@@ -695,7 +693,7 @@ fn center_list_renders_cards_inside_viewport() {
             ..Default::default()
         };
         let mut out = ctx.run_ui(raw, |ui| {
-            n.show_center(ui.ctx(), 900.0);
+            n.show_center(ui.ctx(), viewport);
         });
         out.textures_delta.clear();
         found = 0;
@@ -734,7 +732,7 @@ fn center_list_shows_newest_when_overflow() {
             ..Default::default()
         };
         let mut out = ctx.run_ui(raw, |ui| {
-            n.show_center(ui.ctx(), 900.0);
+            n.show_center(ui.ctx(), viewport);
         });
         out.textures_delta.clear();
         visible.clear();
@@ -783,8 +781,7 @@ fn center_bottom_follows_bottom_panel() {
             egui::Panel::bottom("test_bar").show(ui, |ui| {
                 ui.allocate_space(egui::vec2(100.0, 40.0));
             });
-            let bottom = ui.available_rect_before_wrap().max.y;
-            n.show_center(ui.ctx(), bottom);
+            n.show_center(ui.ctx(), ui.available_rect_before_wrap());
         });
         out.textures_delta.clear();
         visible.clear();
@@ -802,4 +799,38 @@ fn center_bottom_follows_bottom_panel() {
         visible.iter().any(|(t, y)| t == "title-05" && *y < 560.0),
         "最新卡应完整显示在底栏上方，实际 {visible:?}"
     );
+}
+
+#[test]
+#[ignore]
+fn debug_snapshot_center() {
+    use egui_kittest::Harness;
+    let mut n = Notifications::new();
+    n.set_collapse_durations(None, None);
+    for i in 0..10 {
+        let _ = n.success(format!("title-{i:02}"), "EnchantedLove");
+    }
+    n.center_open = true;
+    let mut first = true;
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(800.0, 600.0))
+        .wgpu()
+        .build_ui_state(
+            move |ui, _| {
+                if first {
+                    first = false;
+                    ui.ctx().add_font(egui_material_icons::font_insert());
+                    return;
+                }
+                n.show_center(ui.ctx(), ui.available_rect_before_wrap());
+            },
+            (),
+        );
+    for _ in 0..4 {
+        harness.step();
+    }
+    let img = harness.render().unwrap();
+    let path = "/var/folders/gs/_prs479j56bdvpc9ggv9c9880000gn/T/opencode/center_debug.png";
+    img.save(path).unwrap();
+    println!("SAVED {path}");
 }

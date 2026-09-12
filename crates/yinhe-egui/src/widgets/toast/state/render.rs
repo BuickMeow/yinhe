@@ -10,23 +10,32 @@ use super::Notifications;
 
 const CARD_W: f32 = 360.0;
 const GAP: f32 = 8.0;
-/// 通知区底边距中央区域底部的呼吸间隙。
+/// 浮卡底边距中央区域底部的呼吸间隙。
 const BOTTOM_GAP: f32 = 8.0;
 const RIGHT_PAD: f32 = 32.0;
+/// 浮卡堆叠顶部保留（不压顶部工具栏）。
 const TOP_PAD: f32 = 24.0;
 const EST_H: f32 = 110.0;
 const CLOSE_ANIM: Duration = Duration::from_millis(350);
 
 impl Notifications {
-    /// 通知区垂直带 `(bottom_gap, max_h)`：
-    /// 底边贴中央区域（底栏之上）再留 BOTTOM_GAP，顶边留 TOP_PAD。
-    /// `bottom` 由 main_loop 传入底栏之后的可用区底边，随底栏高度自动适配；
-    /// 窗口过矮时保底 120。
-    fn notif_band(ctx: &egui::Context, bottom: f32) -> (f32, f32) {
+    /// 通知中心列表带 `(bottom_gap, max_h)`：完整使用中央内容区，
+    /// 顶边贴内容区顶、底边贴内容区底（标题栏/底栏之上）——裁剪线与界面
+    /// 边缘重合，列表内部不再出现悬空的裁剪线。
+    fn center_band(ctx: &egui::Context, area: egui::Rect) -> (f32, f32) {
         let viewport = ctx.viewport_rect();
-        let bottom = bottom.min(viewport.max.y);
+        let bottom = area.max.y.min(viewport.max.y);
+        let bottom_gap = (viewport.max.y - bottom).max(0.0);
+        let max_h = (area.height() - bottom_gap).max(120.0);
+        (bottom_gap, max_h)
+    }
+
+    /// 浮卡带 `(bottom_gap, max_h)`：底边距内容区底 BOTTOM_GAP，顶边留 TOP_PAD。
+    fn toast_band(ctx: &egui::Context, area: egui::Rect) -> (f32, f32) {
+        let viewport = ctx.viewport_rect();
+        let bottom = area.max.y.min(viewport.max.y);
         let bottom_gap = (viewport.max.y - bottom + BOTTOM_GAP).max(BOTTOM_GAP);
-        let max_h = (bottom - viewport.min.y - TOP_PAD - BOTTOM_GAP).max(120.0);
+        let max_h = (area.height() - TOP_PAD - BOTTOM_GAP).max(120.0);
         (bottom_gap, max_h)
     }
 
@@ -46,7 +55,7 @@ impl Notifications {
 
     // ── 浮卡渲染：右下角 → 右上角堆叠，浮于内容之上 ──
     // 每个 toast 独立 Area，避免父 Area+ScrollArea 宽度异常导致右侧溢出。
-    pub fn show_toasts(&mut self, ctx: &egui::Context, bottom: f32) {
+    pub fn show_toasts(&mut self, ctx: &egui::Context, area: egui::Rect) {
         self.tick(ctx);
         let now = Instant::now();
         let needs_float = self.items.iter().any(|n| {
@@ -55,7 +64,7 @@ impl Notifications {
         if !needs_float {
             return;
         }
-        let (bottom_gap, max_h) = Self::notif_band(ctx, bottom);
+        let (bottom_gap, max_h) = Self::toast_band(ctx, area);
         // 最大 y 偏移（相对底边）：底留白 + 可见高
         let max_y = bottom_gap + max_h;
 
@@ -150,7 +159,7 @@ impl Notifications {
     }
 
     // ── 通知中心列表：ScrollArea 从底部向上堆积，打开/关闭整列滑入滑出 ──
-    pub fn show_center(&mut self, ctx: &egui::Context, bottom: f32) {
+    pub fn show_center(&mut self, ctx: &egui::Context, area: egui::Rect) {
         if !self.enabled {
             return;
         }
@@ -173,7 +182,7 @@ impl Notifications {
             return;
         }
 
-        let (bottom_gap, max_h) = Self::notif_band(ctx, bottom);
+        let (bottom_gap, max_h) = Self::center_band(ctx, area);
         // 打开：无停顿整列从右侧滑入；关闭：入场的严格反向滑出
         let x_off = if closing {
             let closed_at = self.center_closed_at.unwrap_or(now);
