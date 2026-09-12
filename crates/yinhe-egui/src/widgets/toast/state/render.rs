@@ -26,7 +26,9 @@ impl Notifications {
         let viewport = ctx.viewport_rect();
         let bottom = area.max.y.min(viewport.max.y);
         let bottom_gap = (viewport.max.y - bottom).max(0.0);
-        let max_h = (area.height() - bottom_gap).max(120.0);
+        // max_h 即区域全高：Area 顶 = area.max.y - max_h = area.min.y。
+        // （曾再减一次 bottom_gap，导致顶部凭空少掉一个底栏的高度）
+        let max_h = area.height().max(120.0);
         (bottom_gap, max_h)
     }
 

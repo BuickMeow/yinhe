@@ -660,13 +660,10 @@ impl eframe::App for App {
         if self.show_pianoroll_in_arrange != self.audio_settings.layout.show_pianoroll_in_arrange {
             self.layout_needs_save = true;
         }
-        // 通知区 = 窗口内容区最顶部（覆盖 transport bar 右侧）到底栏之上的中央区底部：
-        // 上裁剪线贴窗口顶、下裁剪线贴底栏顶，列表内部不再出现悬空切线。
-        let notif_available = ui.available_rect_before_wrap();
-        let notif_area = egui::Rect::from_min_max(
-            egui::pos2(notif_available.min.x, ui.ctx().viewport_rect().min.y),
-            notif_available.max,
-        );
+        // 通知区 = transport bar 下沿到底栏之上的中央内容区：
+        // 上裁剪线由 transport bar 掩护、下裁剪线贴底栏，与底栏对称；
+        // 列表不遮挡标签页栏/走带栏的操作区。
+        let notif_area = ui.available_rect_before_wrap();
 
         // ── Main content area ──
         let layout = self.compute_layout(ui);

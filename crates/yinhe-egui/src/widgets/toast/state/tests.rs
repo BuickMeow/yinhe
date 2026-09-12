@@ -834,3 +834,44 @@ fn debug_snapshot_center() {
     img.save(path).unwrap();
     println!("SAVED {path}");
 }
+
+/// 回归：带底栏时列表 Area 顶必须等于中央内容区顶。
+/// （曾把 bottom_gap 多减一次，顶部凭空少掉一个底栏高度，像裁剪了最顶部一个栏。）
+#[test]
+fn center_area_top_matches_content_top() {
+    let ctx = egui::Context::default();
+    ctx.add_font(egui_material_icons::font_insert());
+    let mut n = Notifications::new();
+    n.set_collapse_durations(None, None);
+    for i in 0..6 {
+        let _ = n.success(format!("t{i}"), "m");
+    }
+    n.center_open = true;
+    n.tick(&ctx);
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+    let mut content_top = 0.0;
+    for _ in 0..3 {
+        let raw = egui::RawInput {
+            screen_rect: Some(viewport),
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(raw, |ui| {
+            egui::Panel::bottom("test_bar").show(ui, |ui| {
+                ui.allocate_space(egui::vec2(100.0, 40.0));
+            });
+            let area = ui.available_rect_before_wrap();
+            content_top = area.min.y;
+            n.show_center(ui.ctx(), area);
+        });
+        out.textures_delta.clear();
+    }
+    let st = egui::AreaState::load(&ctx, egui::Id::new("yinhe_notif_center"));
+    let Some(st) = st else {
+        panic!("notif center area missing");
+    };
+    assert!(
+        (st.rect().min.y - content_top).abs() < 1.5,
+        "area top {} != content top {content_top}",
+        st.rect().min.y
+    );
+}
