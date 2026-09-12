@@ -138,6 +138,30 @@ pub(super) fn combo_to_accelerator(
     Some(Accelerator::new(Some(mods), str_to_muda_code(&combo.key)?))
 }
 
+/// 快捷键表变化时刷新原生菜单加速键
+pub(super) fn refresh_accelerators(
+    items: &[(&'static str, Box<dyn super::menu::MenuText>)],
+    keybindings: &Keybindings,
+) {
+    for (key, item) in items {
+        if let Some(action_id) = menu_action_id(key) {
+            let acc = keybindings
+                .get(action_id)
+                .first()
+                .and_then(combo_to_accelerator);
+            item.update_accelerator(acc);
+        }
+    }
+}
+
+pub(super) fn clear_accelerators(items: &[(&'static str, Box<dyn super::menu::MenuText>)]) {
+    for (key, item) in items {
+        if menu_action_id(key).is_some() {
+            item.update_accelerator(None);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,29 +194,5 @@ mod tests {
             key: "S".to_string(),
         };
         assert!(combo_to_accelerator(&with_cmd).is_some());
-    }
-}
-
-/// 快捷键表变化时刷新原生菜单加速键
-pub(super) fn refresh_accelerators(
-    items: &[(&'static str, Box<dyn super::menu::MenuText>)],
-    keybindings: &Keybindings,
-) {
-    for (key, item) in items {
-        if let Some(action_id) = menu_action_id(key) {
-            let acc = keybindings
-                .get(action_id)
-                .first()
-                .and_then(combo_to_accelerator);
-            item.update_accelerator(acc);
-        }
-    }
-}
-
-pub(super) fn clear_accelerators(items: &[(&'static str, Box<dyn super::menu::MenuText>)]) {
-    for (key, item) in items {
-        if menu_action_id(key).is_some() {
-            item.update_accelerator(None);
-        }
     }
 }

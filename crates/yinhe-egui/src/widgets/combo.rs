@@ -169,6 +169,8 @@ mod tests {
             clip_b: f32,
         }
 
+        type RowRuns = Rc<RefCell<Vec<(usize, Vec<RowGeo>)>>>;
+
         let ctx = egui::Context::default();
         ctx.add_font(egui_material_icons::font_insert());
         // `add_font` 下一 pass 才生效，先空跑两帧让字体度量稳定（行宽断言容差 1px）。
@@ -179,7 +181,7 @@ mod tests {
 
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0));
         // （测试帧，popup 内容闭包记录的各行几何）：闭包只在打开帧运行，以此映射回测试帧。
-        let runs: Rc<RefCell<Vec<(usize, Vec<RowGeo>)>>> = Rc::new(RefCell::new(Vec::new()));
+        let runs: RowRuns = Rc::new(RefCell::new(Vec::new()));
         // `resp.inner.is_some()` 为真的测试帧（popup 打开，已验证可靠）。
         let opened: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(Vec::new()));
         let btn_center: Rc<RefCell<egui::Pos2>> = Rc::new(RefCell::new(egui::pos2(0.0, 0.0)));

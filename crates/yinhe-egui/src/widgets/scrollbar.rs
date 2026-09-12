@@ -27,489 +27,6 @@ fn colors() -> (egui::Color32, egui::Color32, egui::Color32, egui::Color32) {
 const PPT_MIN: f32 = 0.001;
 const PPT_MAX: f32 = 10.0;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// 跑一帧滚动条，返回背景拖拽返回值。
-    fn run_frame(
-        ctx: &egui::Context,
-        raw: egui::RawInput,
-        rect: egui::Rect,
-        scroll_x: &mut f32,
-        ppt: &mut f32,
-        dirty: &mut bool,
-    ) -> f32 {
-        let mut out = 0.0f32;
-        ctx.run_ui(raw, |ui| {
-            out = show(
-                ui,
-                rect,
-                300.0,
-                scroll_x,
-                ppt,
-                1000.0,
-                None,
-                dirty,
-                yinhe_types::Orientation::Horizontal,
-            );
-        })
-        .textures_delta
-        .clear();
-        out
-    }
-
-    /// 跑一帧值空间滚动条（show_vertical_value），无返回值。
-    fn run_frame_value(
-        ctx: &egui::Context,
-        raw: egui::RawInput,
-        rect: egui::Rect,
-        value_scroll: &mut f32,
-        value_zoom: &mut f32,
-        dirty: &mut bool,
-    ) {
-        ctx.run_ui(raw, |ui| {
-            show_vertical_value(
-                ui,
-                rect,
-                200.0,
-                value_scroll,
-                value_zoom,
-                127.0,
-                1.0,
-                8.0,
-                dirty,
-            );
-        })
-        .textures_delta
-        .clear();
-    }
-
-    fn press_event(pos: egui::Pos2) -> egui::RawInput {
-        let mut raw = egui::RawInput::default();
-        raw.events.push(egui::Event::PointerMoved(pos));
-        raw.events.push(egui::Event::PointerButton {
-            pos,
-            button: egui::PointerButton::Primary,
-            pressed: true,
-            modifiers: egui::Modifiers::default(),
-        });
-        raw
-    }
-
-    fn drag_event(pos: egui::Pos2) -> egui::RawInput {
-        let mut raw = egui::RawInput::default();
-        raw.events.push(egui::Event::PointerMoved(pos));
-        raw
-    }
-
-    /// 背景拖拽（thumb 之外的 band 区域）→ 不返回 dy、不平移。
-    /// 回归：拖动自动化锚点时鼠标靠近滚动条 band，绝不能和滚动条一起拖动、
-    /// 绝不能在没按到移动组件（thumb）时触发缩放。
-    /// 配置：total=1000 tick，view_width=300，ppt=1 → thumb 占 [0, 90]，
-    /// x=200 是背景区。
-    /// egui 的 hit test 基于上一帧注册的 widgets：先 hover 注册一帧再 press。
-    #[test]
-    fn background_drag_does_not_zoom() {
-        let ctx = egui::Context::default();
-        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(300.0, 16.0));
-        let mut scroll_x = 0.0f32;
-        let mut ppt = 1.0f32;
-        let mut dirty = false;
-
-        let start = egui::pos2(200.0, 8.0);
-        let end = egui::pos2(200.0, 28.0);
-        // 帧1：hover 注册 widget（hit test 在下一帧生效）
-        let _ = run_frame(
-            &ctx,
-            drag_event(start),
-            rect,
-            &mut scroll_x,
-            &mut ppt,
-            &mut dirty,
-        );
-        // 帧2：press
-        let _ = run_frame(
-            &ctx,
-            press_event(start),
-            rect,
-            &mut scroll_x,
-            &mut ppt,
-            &mut dirty,
-        );
-        // 帧3：drag（本帧垂直移动 20px）→ 背景拖拽不返回 dy
-        let dy = run_frame(
-            &ctx,
-            drag_event(end),
-            rect,
-            &mut scroll_x,
-            &mut ppt,
-            &mut dirty,
-        );
-        assert_eq!(dy, 0.0, "背景拖拽不应返回 dy（不得触发缩放），实际 {dy}");
-        assert_eq!(scroll_x, 0.0, "背景拖拽不应平移");
-    }
-
-    /// 水平滚动条：鼠标在 band 外按下拖动（interact_radius 范围内）→ 不应平移/缩放。
-    /// 回归：拖动自动化锚点时鼠标靠近水平滚动条 band，egui 的 interact_radius
-    /// 会让 band 附近的指针命中滚动条 widget，导致误触发滚动条操作。
-    #[test]
-    fn horizontal_scrollbar_ignores_drag_outside_band() {
-        let ctx = egui::Context::default();
-        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(300.0, 16.0));
-        let mut scroll_x = 0.0f32;
-        let mut ppt = 1.0f32;
-        let mut dirty = false;
-
-        // 鼠标在 band 外（y=-3，距 band 上边缘 3px < interact_radius=5），x 在 thumb 中间
-        let start = egui::pos2(45.0, -3.0);
-        let end = egui::pos2(95.0, -3.0);
-        // 帧1：hover 注册 widget
-        let _ = run_frame(
-            &ctx,
-            drag_event(start),
-            rect,
-            &mut scroll_x,
-            &mut ppt,
-            &mut dirty,
-        );
-        // 帧2：press（band 外）
-        let _ = run_frame(
-            &ctx,
-            press_event(start),
-            rect,
-            &mut scroll_x,
-            &mut ppt,
-            &mut dirty,
-        );
-        // 帧3：drag（水平移动 50px）→ 不应平移、不应缩放
-        let dy = run_frame(
-            &ctx,
-            drag_event(end),
-            rect,
-            &mut scroll_x,
-            &mut ppt,
-            &mut dirty,
-        );
-        assert_eq!(
-            scroll_x, 0.0,
-            "band 外拖动不应平移 scroll_x，实际 {scroll_x}"
-        );
-        assert_eq!(ppt, 1.0, "band 外拖动不应缩放 ppt，实际 {ppt}");
-        assert_eq!(dy, 0.0, "band 外拖动不应返回 dy，实际 {dy}");
-    }
-
-    /// thumb 中间拖拽 = 平移，返回 0（不触发对面轴缩放）。
-    #[test]
-    fn thumb_drag_pans_and_returns_zero() {
-        let ctx = egui::Context::default();
-        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(300.0, 16.0));
-        let mut scroll_x = 0.0f32;
-        let mut ppt = 1.0f32;
-        let mut dirty = false;
-
-        // thumb 中间 (45, 8)，拖到 (95, 8)：平移 50px = 50/0.3 tick。
-        let start = egui::pos2(45.0, 8.0);
-        let end = egui::pos2(95.0, 8.0);
-        // 帧1：hover 注册
-        let _ = run_frame(
-            &ctx,
-            drag_event(start),
-            rect,
-            &mut scroll_x,
-            &mut ppt,
-            &mut dirty,
-        );
-        // 帧2：press
-        let _ = run_frame(
-            &ctx,
-            press_event(start),
-            rect,
-            &mut scroll_x,
-            &mut ppt,
-            &mut dirty,
-        );
-        // 帧3：drag（本帧移动 50px）→ thumb 平移，返回 0
-        let dx = run_frame(
-            &ctx,
-            drag_event(end),
-            rect,
-            &mut scroll_x,
-            &mut ppt,
-            &mut dirty,
-        );
-        assert_eq!(dx, 0.0, "thumb 拖拽（平移）不应返回背景 dx");
-        assert!(scroll_x > 0.0, "thumb 拖拽应平移 scroll_x");
-    }
-
-    /// thumb 上垂直拖动 → 返回 dy（缩放），不产生平移。
-    #[test]
-    fn thumb_vertical_drag_returns_dy() {
-        let ctx = egui::Context::default();
-        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(300.0, 16.0));
-        let mut scroll_x = 0.0f32;
-        let mut ppt = 1.0f32;
-        let mut dirty = false;
-
-        let start = egui::pos2(45.0, 8.0);
-        let end = egui::pos2(45.0, 28.0);
-        // 帧1：hover 注册
-        let _ = run_frame(
-            &ctx,
-            drag_event(start),
-            rect,
-            &mut scroll_x,
-            &mut ppt,
-            &mut dirty,
-        );
-        // 帧2：press
-        let _ = run_frame(
-            &ctx,
-            press_event(start),
-            rect,
-            &mut scroll_x,
-            &mut ppt,
-            &mut dirty,
-        );
-        // 帧3：drag（本帧垂直移动 20px）→ 返回 dy，x 未动 → 不平移
-        let dy = run_frame(
-            &ctx,
-            drag_event(end),
-            rect,
-            &mut scroll_x,
-            &mut ppt,
-            &mut dirty,
-        );
-        assert!(dy > 0.0, "thumb 上垂直拖应返回非零 dy，实际 {dy}");
-        assert_eq!(scroll_x, 0.0, "纯垂直拖不得平移");
-    }
-
-    /// 鼠标在滚动条 band 外按下拖动（interact_radius 范围内）→ 不应触发平移/缩放。
-    /// 回归：拖动自动化锚点时鼠标靠近滚动条 band，egui 的 interact_radius 会让
-    /// band 附近的指针命中滚动条 widget，导致误触发滚动条操作。
-    #[test]
-    fn value_scrollbar_ignores_drag_outside_band() {
-        let ctx = egui::Context::default();
-        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(24.0, 200.0));
-        let mut value_scroll = 0.0f32;
-        let mut value_zoom = 2.0f32; // visible_range=63.5，max_scroll>0，middle 拖动可平移
-        let mut dirty = false;
-
-        // 鼠标在 band 外（x=-3，距 band 左边缘 3px < interact_radius=5），y 在 thumb 中间
-        let start = egui::pos2(-3.0, 100.0);
-        let end = egui::pos2(-3.0, 130.0);
-        // 帧1：hover 注册 widget
-        run_frame_value(
-            &ctx,
-            drag_event(start),
-            rect,
-            &mut value_scroll,
-            &mut value_zoom,
-            &mut dirty,
-        );
-        // 帧2：press
-        run_frame_value(
-            &ctx,
-            press_event(start),
-            rect,
-            &mut value_scroll,
-            &mut value_zoom,
-            &mut dirty,
-        );
-        // 帧3：drag（垂直移动 30px）→ 不应平移 value_scroll
-        run_frame_value(
-            &ctx,
-            drag_event(end),
-            rect,
-            &mut value_scroll,
-            &mut value_zoom,
-            &mut dirty,
-        );
-        assert_eq!(
-            value_scroll, 0.0,
-            "band 外拖动不应平移 value_scroll，实际 {value_scroll}"
-        );
-        assert_eq!(
-            value_zoom, 2.0,
-            "band 外拖动不应缩放 value_zoom，实际 {value_zoom}"
-        );
-    }
-
-    /// 鼠标在 band 外按下、拖动过程中划过 band → 仍不应触发滚动条操作。
-    /// 回归：拖动自动化锚点时鼠标按下在 band 外，但拖动路径经过 band。
-    #[test]
-    fn value_scrollbar_ignores_drag_crossing_band() {
-        let ctx = egui::Context::default();
-        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(24.0, 200.0));
-        let mut value_scroll = 0.0f32;
-        let mut value_zoom = 2.0f32;
-        let mut dirty = false;
-
-        // 按下在 band 外（x=-3），拖动到 band 内（x=12）
-        let start = egui::pos2(-3.0, 100.0);
-        let end = egui::pos2(12.0, 130.0);
-        // 帧1：hover 注册 widget
-        run_frame_value(
-            &ctx,
-            drag_event(start),
-            rect,
-            &mut value_scroll,
-            &mut value_zoom,
-            &mut dirty,
-        );
-        // 帧2：press（band 外）
-        run_frame_value(
-            &ctx,
-            press_event(start),
-            rect,
-            &mut value_scroll,
-            &mut value_zoom,
-            &mut dirty,
-        );
-        // 帧3：drag（进入 band 内）→ 仍不应触发
-        run_frame_value(
-            &ctx,
-            drag_event(end),
-            rect,
-            &mut value_scroll,
-            &mut value_zoom,
-            &mut dirty,
-        );
-        assert_eq!(
-            value_scroll, 0.0,
-            "band 外按下后划过 band 不应平移，实际 {value_scroll}"
-        );
-        assert_eq!(
-            value_zoom, 2.0,
-            "band 外按下后划过 band 不应缩放，实际 {value_zoom}"
-        );
-    }
-
-    /// 跑一帧像素空间垂直滚动条（show_vertical），返回背景/边缘拖拽返回值。
-    fn run_frame_vertical(
-        ctx: &egui::Context,
-        raw: egui::RawInput,
-        rect: egui::Rect,
-        scroll_y: &mut f32,
-        cell_size: &mut f32,
-        dirty: &mut bool,
-    ) -> f32 {
-        let mut out = 0.0f32;
-        ctx.run_ui(raw, |ui| {
-            out = show_vertical(
-                ui,
-                rect,
-                100.0,
-                scroll_y,
-                cell_size,
-                200,
-                0.5,
-                8.0,
-                dirty,
-                yinhe_types::Orientation::Horizontal,
-            );
-        })
-        .textures_delta
-        .clear();
-        out
-    }
-
-    /// 背景拖拽（thumb 之外的 band 区域）→ 不返回 dx、不平移（与水平滚动条一致）。
-    /// 配置：total=200×2=400px，view=100px，thumb 占 [0, 25]，y=60 是背景区。
-    #[test]
-    fn vertical_background_drag_does_not_zoom() {
-        let ctx = egui::Context::default();
-        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(16.0, 100.0));
-        let mut scroll_y = 0.0f32;
-        let mut cell_size = 2.0f32;
-        let mut dirty = false;
-
-        let start = egui::pos2(8.0, 60.0);
-        let end = egui::pos2(28.0, 60.0);
-        // 帧1：hover 注册 widget
-        let _ = run_frame_vertical(
-            &ctx,
-            drag_event(start),
-            rect,
-            &mut scroll_y,
-            &mut cell_size,
-            &mut dirty,
-        );
-        // 帧2：press
-        let _ = run_frame_vertical(
-            &ctx,
-            press_event(start),
-            rect,
-            &mut scroll_y,
-            &mut cell_size,
-            &mut dirty,
-        );
-        // 帧3：drag（水平移动 20px）→ 背景拖拽不返回 dx
-        let dx = run_frame_vertical(
-            &ctx,
-            drag_event(end),
-            rect,
-            &mut scroll_y,
-            &mut cell_size,
-            &mut dirty,
-        );
-        assert_eq!(dx, 0.0, "背景拖拽不应返回 dx（不得触发缩放），实际 {dx}");
-        assert_eq!(scroll_y, 0.0, "背景拖拽不应平移 scroll_y");
-        assert_eq!(cell_size, 2.0, "背景拖拽不应缩放 cell_size");
-    }
-
-    /// 垂直滚动条：鼠标在 band 外按下拖动（interact_radius 范围内）→ 不应平移/缩放。
-    /// 回归：拖动自动化锚点时鼠标靠近垂直滚动条 band。
-    #[test]
-    fn vertical_scrollbar_ignores_drag_outside_band() {
-        let ctx = egui::Context::default();
-        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(16.0, 100.0));
-        let mut scroll_y = 0.0f32;
-        let mut cell_size = 2.0f32;
-        let mut dirty = false;
-
-        // 鼠标在 band 外（x=-3，距 band 左边缘 3px < interact_radius=5），y 在 thumb 中间
-        let start = egui::pos2(-3.0, 12.0);
-        let end = egui::pos2(-3.0, 42.0);
-        // 帧1：hover 注册 widget
-        let _ = run_frame_vertical(
-            &ctx,
-            drag_event(start),
-            rect,
-            &mut scroll_y,
-            &mut cell_size,
-            &mut dirty,
-        );
-        // 帧2：press（band 外）
-        let _ = run_frame_vertical(
-            &ctx,
-            press_event(start),
-            rect,
-            &mut scroll_y,
-            &mut cell_size,
-            &mut dirty,
-        );
-        // 帧3：drag（垂直移动 30px）→ 不应平移、不应缩放
-        let dx = run_frame_vertical(
-            &ctx,
-            drag_event(end),
-            rect,
-            &mut scroll_y,
-            &mut cell_size,
-            &mut dirty,
-        );
-        assert_eq!(
-            scroll_y, 0.0,
-            "band 外拖动不应平移 scroll_y，实际 {scroll_y}"
-        );
-        assert_eq!(
-            cell_size, 2.0,
-            "band 外拖动不应缩放 cell_size，实际 {cell_size}"
-        );
-        assert_eq!(dx, 0.0, "band 外拖动不应返回 dx，实际 {dx}");
-    }
-}
-
 // ── Horizontal scrollbar ──
 
 /// Paint a scrollbar into the given rect along the **主轴方向**（时间轴）。
@@ -1116,5 +633,488 @@ pub(crate) fn show_vertical_value(
         *value_scroll = new_scroll;
         *dirty = true;
         ui.ctx().request_repaint();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 跑一帧滚动条，返回背景拖拽返回值。
+    fn run_frame(
+        ctx: &egui::Context,
+        raw: egui::RawInput,
+        rect: egui::Rect,
+        scroll_x: &mut f32,
+        ppt: &mut f32,
+        dirty: &mut bool,
+    ) -> f32 {
+        let mut out = 0.0f32;
+        ctx.run_ui(raw, |ui| {
+            out = show(
+                ui,
+                rect,
+                300.0,
+                scroll_x,
+                ppt,
+                1000.0,
+                None,
+                dirty,
+                yinhe_types::Orientation::Horizontal,
+            );
+        })
+        .textures_delta
+        .clear();
+        out
+    }
+
+    /// 跑一帧值空间滚动条（show_vertical_value），无返回值。
+    fn run_frame_value(
+        ctx: &egui::Context,
+        raw: egui::RawInput,
+        rect: egui::Rect,
+        value_scroll: &mut f32,
+        value_zoom: &mut f32,
+        dirty: &mut bool,
+    ) {
+        ctx.run_ui(raw, |ui| {
+            show_vertical_value(
+                ui,
+                rect,
+                200.0,
+                value_scroll,
+                value_zoom,
+                127.0,
+                1.0,
+                8.0,
+                dirty,
+            );
+        })
+        .textures_delta
+        .clear();
+    }
+
+    fn press_event(pos: egui::Pos2) -> egui::RawInput {
+        let mut raw = egui::RawInput::default();
+        raw.events.push(egui::Event::PointerMoved(pos));
+        raw.events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::default(),
+        });
+        raw
+    }
+
+    fn drag_event(pos: egui::Pos2) -> egui::RawInput {
+        let mut raw = egui::RawInput::default();
+        raw.events.push(egui::Event::PointerMoved(pos));
+        raw
+    }
+
+    /// 背景拖拽（thumb 之外的 band 区域）→ 不返回 dy、不平移。
+    /// 回归：拖动自动化锚点时鼠标靠近滚动条 band，绝不能和滚动条一起拖动、
+    /// 绝不能在没按到移动组件（thumb）时触发缩放。
+    /// 配置：total=1000 tick，view_width=300，ppt=1 → thumb 占 [0, 90]，
+    /// x=200 是背景区。
+    /// egui 的 hit test 基于上一帧注册的 widgets：先 hover 注册一帧再 press。
+    #[test]
+    fn background_drag_does_not_zoom() {
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(300.0, 16.0));
+        let mut scroll_x = 0.0f32;
+        let mut ppt = 1.0f32;
+        let mut dirty = false;
+
+        let start = egui::pos2(200.0, 8.0);
+        let end = egui::pos2(200.0, 28.0);
+        // 帧1：hover 注册 widget（hit test 在下一帧生效）
+        let _ = run_frame(
+            &ctx,
+            drag_event(start),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        // 帧2：press
+        let _ = run_frame(
+            &ctx,
+            press_event(start),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        // 帧3：drag（本帧垂直移动 20px）→ 背景拖拽不返回 dy
+        let dy = run_frame(
+            &ctx,
+            drag_event(end),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        assert_eq!(dy, 0.0, "背景拖拽不应返回 dy（不得触发缩放），实际 {dy}");
+        assert_eq!(scroll_x, 0.0, "背景拖拽不应平移");
+    }
+
+    /// 水平滚动条：鼠标在 band 外按下拖动（interact_radius 范围内）→ 不应平移/缩放。
+    /// 回归：拖动自动化锚点时鼠标靠近水平滚动条 band，egui 的 interact_radius
+    /// 会让 band 附近的指针命中滚动条 widget，导致误触发滚动条操作。
+    #[test]
+    fn horizontal_scrollbar_ignores_drag_outside_band() {
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(300.0, 16.0));
+        let mut scroll_x = 0.0f32;
+        let mut ppt = 1.0f32;
+        let mut dirty = false;
+
+        // 鼠标在 band 外（y=-3，距 band 上边缘 3px < interact_radius=5），x 在 thumb 中间
+        let start = egui::pos2(45.0, -3.0);
+        let end = egui::pos2(95.0, -3.0);
+        // 帧1：hover 注册 widget
+        let _ = run_frame(
+            &ctx,
+            drag_event(start),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        // 帧2：press（band 外）
+        let _ = run_frame(
+            &ctx,
+            press_event(start),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        // 帧3：drag（水平移动 50px）→ 不应平移、不应缩放
+        let dy = run_frame(
+            &ctx,
+            drag_event(end),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        assert_eq!(
+            scroll_x, 0.0,
+            "band 外拖动不应平移 scroll_x，实际 {scroll_x}"
+        );
+        assert_eq!(ppt, 1.0, "band 外拖动不应缩放 ppt，实际 {ppt}");
+        assert_eq!(dy, 0.0, "band 外拖动不应返回 dy，实际 {dy}");
+    }
+
+    /// thumb 中间拖拽 = 平移，返回 0（不触发对面轴缩放）。
+    #[test]
+    fn thumb_drag_pans_and_returns_zero() {
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(300.0, 16.0));
+        let mut scroll_x = 0.0f32;
+        let mut ppt = 1.0f32;
+        let mut dirty = false;
+
+        // thumb 中间 (45, 8)，拖到 (95, 8)：平移 50px = 50/0.3 tick。
+        let start = egui::pos2(45.0, 8.0);
+        let end = egui::pos2(95.0, 8.0);
+        // 帧1：hover 注册
+        let _ = run_frame(
+            &ctx,
+            drag_event(start),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        // 帧2：press
+        let _ = run_frame(
+            &ctx,
+            press_event(start),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        // 帧3：drag（本帧移动 50px）→ thumb 平移，返回 0
+        let dx = run_frame(
+            &ctx,
+            drag_event(end),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        assert_eq!(dx, 0.0, "thumb 拖拽（平移）不应返回背景 dx");
+        assert!(scroll_x > 0.0, "thumb 拖拽应平移 scroll_x");
+    }
+
+    /// thumb 上垂直拖动 → 返回 dy（缩放），不产生平移。
+    #[test]
+    fn thumb_vertical_drag_returns_dy() {
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(300.0, 16.0));
+        let mut scroll_x = 0.0f32;
+        let mut ppt = 1.0f32;
+        let mut dirty = false;
+
+        let start = egui::pos2(45.0, 8.0);
+        let end = egui::pos2(45.0, 28.0);
+        // 帧1：hover 注册
+        let _ = run_frame(
+            &ctx,
+            drag_event(start),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        // 帧2：press
+        let _ = run_frame(
+            &ctx,
+            press_event(start),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        // 帧3：drag（本帧垂直移动 20px）→ 返回 dy，x 未动 → 不平移
+        let dy = run_frame(
+            &ctx,
+            drag_event(end),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        assert!(dy > 0.0, "thumb 上垂直拖应返回非零 dy，实际 {dy}");
+        assert_eq!(scroll_x, 0.0, "纯垂直拖不得平移");
+    }
+
+    /// 鼠标在滚动条 band 外按下拖动（interact_radius 范围内）→ 不应触发平移/缩放。
+    /// 回归：拖动自动化锚点时鼠标靠近滚动条 band，egui 的 interact_radius 会让
+    /// band 附近的指针命中滚动条 widget，导致误触发滚动条操作。
+    #[test]
+    fn value_scrollbar_ignores_drag_outside_band() {
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(24.0, 200.0));
+        let mut value_scroll = 0.0f32;
+        let mut value_zoom = 2.0f32; // visible_range=63.5，max_scroll>0，middle 拖动可平移
+        let mut dirty = false;
+
+        // 鼠标在 band 外（x=-3，距 band 左边缘 3px < interact_radius=5），y 在 thumb 中间
+        let start = egui::pos2(-3.0, 100.0);
+        let end = egui::pos2(-3.0, 130.0);
+        // 帧1：hover 注册 widget
+        run_frame_value(
+            &ctx,
+            drag_event(start),
+            rect,
+            &mut value_scroll,
+            &mut value_zoom,
+            &mut dirty,
+        );
+        // 帧2：press
+        run_frame_value(
+            &ctx,
+            press_event(start),
+            rect,
+            &mut value_scroll,
+            &mut value_zoom,
+            &mut dirty,
+        );
+        // 帧3：drag（垂直移动 30px）→ 不应平移 value_scroll
+        run_frame_value(
+            &ctx,
+            drag_event(end),
+            rect,
+            &mut value_scroll,
+            &mut value_zoom,
+            &mut dirty,
+        );
+        assert_eq!(
+            value_scroll, 0.0,
+            "band 外拖动不应平移 value_scroll，实际 {value_scroll}"
+        );
+        assert_eq!(
+            value_zoom, 2.0,
+            "band 外拖动不应缩放 value_zoom，实际 {value_zoom}"
+        );
+    }
+
+    /// 鼠标在 band 外按下、拖动过程中划过 band → 仍不应触发滚动条操作。
+    /// 回归：拖动自动化锚点时鼠标按下在 band 外，但拖动路径经过 band。
+    #[test]
+    fn value_scrollbar_ignores_drag_crossing_band() {
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(24.0, 200.0));
+        let mut value_scroll = 0.0f32;
+        let mut value_zoom = 2.0f32;
+        let mut dirty = false;
+
+        // 按下在 band 外（x=-3），拖动到 band 内（x=12）
+        let start = egui::pos2(-3.0, 100.0);
+        let end = egui::pos2(12.0, 130.0);
+        // 帧1：hover 注册 widget
+        run_frame_value(
+            &ctx,
+            drag_event(start),
+            rect,
+            &mut value_scroll,
+            &mut value_zoom,
+            &mut dirty,
+        );
+        // 帧2：press（band 外）
+        run_frame_value(
+            &ctx,
+            press_event(start),
+            rect,
+            &mut value_scroll,
+            &mut value_zoom,
+            &mut dirty,
+        );
+        // 帧3：drag（进入 band 内）→ 仍不应触发
+        run_frame_value(
+            &ctx,
+            drag_event(end),
+            rect,
+            &mut value_scroll,
+            &mut value_zoom,
+            &mut dirty,
+        );
+        assert_eq!(
+            value_scroll, 0.0,
+            "band 外按下后划过 band 不应平移，实际 {value_scroll}"
+        );
+        assert_eq!(
+            value_zoom, 2.0,
+            "band 外按下后划过 band 不应缩放，实际 {value_zoom}"
+        );
+    }
+
+    /// 跑一帧像素空间垂直滚动条（show_vertical），返回背景/边缘拖拽返回值。
+    fn run_frame_vertical(
+        ctx: &egui::Context,
+        raw: egui::RawInput,
+        rect: egui::Rect,
+        scroll_y: &mut f32,
+        cell_size: &mut f32,
+        dirty: &mut bool,
+    ) -> f32 {
+        let mut out = 0.0f32;
+        ctx.run_ui(raw, |ui| {
+            out = show_vertical(
+                ui,
+                rect,
+                100.0,
+                scroll_y,
+                cell_size,
+                200,
+                0.5,
+                8.0,
+                dirty,
+                yinhe_types::Orientation::Horizontal,
+            );
+        })
+        .textures_delta
+        .clear();
+        out
+    }
+
+    /// 背景拖拽（thumb 之外的 band 区域）→ 不返回 dx、不平移（与水平滚动条一致）。
+    /// 配置：total=200×2=400px，view=100px，thumb 占 [0, 25]，y=60 是背景区。
+    #[test]
+    fn vertical_background_drag_does_not_zoom() {
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(16.0, 100.0));
+        let mut scroll_y = 0.0f32;
+        let mut cell_size = 2.0f32;
+        let mut dirty = false;
+
+        let start = egui::pos2(8.0, 60.0);
+        let end = egui::pos2(28.0, 60.0);
+        // 帧1：hover 注册 widget
+        let _ = run_frame_vertical(
+            &ctx,
+            drag_event(start),
+            rect,
+            &mut scroll_y,
+            &mut cell_size,
+            &mut dirty,
+        );
+        // 帧2：press
+        let _ = run_frame_vertical(
+            &ctx,
+            press_event(start),
+            rect,
+            &mut scroll_y,
+            &mut cell_size,
+            &mut dirty,
+        );
+        // 帧3：drag（水平移动 20px）→ 背景拖拽不返回 dx
+        let dx = run_frame_vertical(
+            &ctx,
+            drag_event(end),
+            rect,
+            &mut scroll_y,
+            &mut cell_size,
+            &mut dirty,
+        );
+        assert_eq!(dx, 0.0, "背景拖拽不应返回 dx（不得触发缩放），实际 {dx}");
+        assert_eq!(scroll_y, 0.0, "背景拖拽不应平移 scroll_y");
+        assert_eq!(cell_size, 2.0, "背景拖拽不应缩放 cell_size");
+    }
+
+    /// 垂直滚动条：鼠标在 band 外按下拖动（interact_radius 范围内）→ 不应平移/缩放。
+    /// 回归：拖动自动化锚点时鼠标靠近垂直滚动条 band。
+    #[test]
+    fn vertical_scrollbar_ignores_drag_outside_band() {
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(16.0, 100.0));
+        let mut scroll_y = 0.0f32;
+        let mut cell_size = 2.0f32;
+        let mut dirty = false;
+
+        // 鼠标在 band 外（x=-3，距 band 左边缘 3px < interact_radius=5），y 在 thumb 中间
+        let start = egui::pos2(-3.0, 12.0);
+        let end = egui::pos2(-3.0, 42.0);
+        // 帧1：hover 注册 widget
+        let _ = run_frame_vertical(
+            &ctx,
+            drag_event(start),
+            rect,
+            &mut scroll_y,
+            &mut cell_size,
+            &mut dirty,
+        );
+        // 帧2：press（band 外）
+        let _ = run_frame_vertical(
+            &ctx,
+            press_event(start),
+            rect,
+            &mut scroll_y,
+            &mut cell_size,
+            &mut dirty,
+        );
+        // 帧3：drag（垂直移动 30px）→ 不应平移、不应缩放
+        let dx = run_frame_vertical(
+            &ctx,
+            drag_event(end),
+            rect,
+            &mut scroll_y,
+            &mut cell_size,
+            &mut dirty,
+        );
+        assert_eq!(
+            scroll_y, 0.0,
+            "band 外拖动不应平移 scroll_y，实际 {scroll_y}"
+        );
+        assert_eq!(
+            cell_size, 2.0,
+            "band 外拖动不应缩放 cell_size，实际 {cell_size}"
+        );
+        assert_eq!(dx, 0.0, "band 外拖动不应返回 dx，实际 {dx}");
     }
 }
