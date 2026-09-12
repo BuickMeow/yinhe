@@ -21,6 +21,8 @@ pub enum MenuAction {
     Cut,
     Copy,
     Paste,
+    PasteAtOriginal,
+    PasteFlipped,
     SelectAll,
     Duplicate,
     Delete,

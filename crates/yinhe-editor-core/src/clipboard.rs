@@ -42,6 +42,18 @@ pub struct AutomationClipboard {
     pub clips: Vec<AutomationClip>,
 }
 
+/// 粘贴放置方式（音符与自动化共用）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum PasteMode {
+    /// 对齐光标（默认）。
+    #[default]
+    AtCursor,
+    /// 原位粘贴：保持源 tick / 轨道坐标，忽略光标与目标轨道。
+    AtOriginal,
+    /// 时间镜像粘贴：以光标为基准水平翻转内容（tick 轴镜像，value/key 不变）。
+    Flipped,
+}
+
 /// 应用级剪贴板内容。音符与自动化互斥：最后一次复制决定内容类型，
 /// 粘贴按内容类型分派（不再依赖「当前有无锚点选中」猜测）。
 #[derive(Clone, Default)]

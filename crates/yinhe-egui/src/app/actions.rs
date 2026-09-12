@@ -3,7 +3,7 @@ use std::sync::mpsc;
 use eframe::egui;
 use rust_i18n::t;
 
-use crate::app::{App, PendingFileAction};
+use crate::app::{App, PasteChain, PendingFileAction};
 use crate::chrome::transport_bar;
 use crate::chrome::transport_bar::FileAction;
 use yinhe_editor_core::document::Document;
@@ -24,6 +24,8 @@ pub(crate) struct KeyboardActions {
     pub copy: bool,
     pub cut: bool,
     pub paste: bool,
+    pub paste_at_original: bool,
+    pub paste_flipped: bool,
     pub select_all: bool,
     /// 工具切换快捷键触发的目标工具（None = 本帧未触发）。
     pub tool_to_activate: Option<crate::widgets::tools_panel::Tool>,
@@ -136,6 +138,12 @@ impl App {
             if matches(shortcuts::ACTION_PASTE, key, modifiers) {
                 actions.paste = true;
             }
+            if matches(shortcuts::ACTION_PASTE_AT_ORIGINAL, key, modifiers) {
+                actions.paste_at_original = true;
+            }
+            if matches(shortcuts::ACTION_PASTE_FLIPPED, key, modifiers) {
+                actions.paste_flipped = true;
+            }
             if matches(shortcuts::ACTION_SELECT_ALL, key, modifiers) {
                 actions.select_all = true;
             }
@@ -234,6 +242,7 @@ impl App {
                 snapshot: doc.data.model.clone(),
                 selection: doc.edit.selected.clone(),
             });
+        self.paste_chain = None;
     }
 
     /// Cut: copy selection (snapshot), then delete selected notes.
@@ -245,26 +254,97 @@ impl App {
     /// Paste the clipboard at cursor position, dispatching on clipboard content
     /// (notes vs automation), not on the current selection.
     pub(crate) fn paste_clipboard(&mut self) {
+        self.paste_clipboard_with_mode(yinhe_editor_core::clipboard::PasteMode::AtCursor);
+    }
+
+    /// Paste with an explicit placement mode.
+    ///
+    /// `AtCursor` participates in the consecutive-paste chain: pressing paste
+    /// again without moving the cursor advances by the pasted content span.
+    pub(crate) fn paste_clipboard_with_mode(
+        &mut self,
+        mode: yinhe_editor_core::clipboard::PasteMode,
+    ) {
+        use yinhe_editor_core::clipboard::PasteMode;
+
         let clipboard = self.clipboard.clone();
+        let chained = mode == PasteMode::AtCursor;
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let cursor_tick = self.workspace.documents[idx]
+            .edit
+            .cursor_tick
+            .unwrap_or(0.0);
+
         match clipboard {
             yinhe_editor_core::ClipboardContent::Empty => {}
             yinhe_editor_core::ClipboardContent::Notes(cb) => {
-                let Some(idx) = self.workspace.active_doc else {
-                    return;
+                let chain_offset = if chained {
+                    self.paste_chain_offset(cursor_tick)
+                } else {
+                    0
                 };
-                let cursor_tick = self.workspace.documents[idx]
-                    .edit
-                    .cursor_tick
-                    .unwrap_or(0.0);
+                let effective_cursor = cursor_tick + chain_offset as f64;
                 let track_selected = self.workspace.documents[idx].edit.track_selected.clone();
-                self.with_undo(t!("undo.paste").as_ref(), |doc| {
-                    doc.paste_notes(&cb, cursor_tick, &track_selected)
+                let span = self.with_undo_result(t!("undo.paste").as_ref(), |doc| {
+                    doc.paste_notes(&cb, effective_cursor, &track_selected, mode)
                 });
+                if let Some(span) = span
+                    && chained
+                {
+                    self.advance_paste_chain(cursor_tick, span.max(1));
+                }
             }
             yinhe_editor_core::ClipboardContent::Automation(cb) => {
-                self.paste_automation_clipboard(&cb);
+                let span = self.paste_automation_clipboard(&cb, mode);
+                if let Some(span) = span
+                    && chained
+                {
+                    let advance = self.automation_paste_advance(span);
+                    self.advance_paste_chain(cursor_tick, advance);
+                }
             }
         }
+    }
+
+    /// 连续粘贴链的当前偏移（光标未动时非零）。
+    fn paste_chain_offset(&self, cursor_tick: f64) -> u32 {
+        match self.paste_chain {
+            Some(chain) if chain.cursor_tick == cursor_tick => chain.offset,
+            _ => 0,
+        }
+    }
+
+    /// 记录本次粘贴的内容跨度，下一次同光标粘贴将自动递增。
+    fn advance_paste_chain(&mut self, cursor_tick: f64, advance: u32) {
+        let advance = advance.max(1);
+        match &mut self.paste_chain {
+            Some(chain) if chain.cursor_tick == cursor_tick => {
+                chain.offset = chain.offset.saturating_add(advance);
+            }
+            _ => {
+                self.paste_chain = Some(PasteChain {
+                    cursor_tick,
+                    offset: advance,
+                });
+            }
+        }
+    }
+
+    /// 自动化连续粘贴的递进量：多锚点用内容跨度；单锚点跨度 0 时用量化间隔。
+    fn automation_paste_advance(&self, span: u32) -> u32 {
+        if span > 0 {
+            return span;
+        }
+        let Some(idx) = self.workspace.active_doc else {
+            return 1;
+        };
+        let doc = &self.workspace.documents[idx];
+        doc.edit
+            .quantize_pianoroll
+            .tick_interval(doc.data.model.meta.ppq)
+            .max(1)
     }
 
     /// Select all notes — PR or AR depending on current view mode.
@@ -301,12 +381,17 @@ impl App {
     where
         F: FnOnce(&mut Document) -> Option<yinhe_editor_core::history::UndoAction>,
     {
-        let Some(idx) = self.workspace.active_doc else {
-            return;
-        };
+        self.with_undo_result(label, |doc| f(doc).map(|action| (action, ())));
+    }
+
+    /// [`with_undo`] 的扩展：闭包除 undo action 外再返回一份数据，原样转发给调用方。
+    pub(crate) fn with_undo_result<T, F>(&mut self, label: &str, f: F) -> Option<T>
+    where
+        F: FnOnce(&mut Document) -> Option<(yinhe_editor_core::history::UndoAction, T)>,
+    {
+        let idx = self.workspace.active_doc?;
         let before = self.workspace.documents[idx].capture_snapshot();
-        let action = f(&mut self.workspace.documents[idx]);
-        let Some(action) = action else { return };
+        let (action, extra) = f(&mut self.workspace.documents[idx])?;
         let doc = &mut self.workspace.documents[idx];
         doc.push_undo(action, label, before);
         doc.data.bump_revision();
@@ -317,6 +402,7 @@ impl App {
         // 所以用便宜的 UpdateNotes 路径（不重建 CC，不 chase）。
         // 如果未来有自动化编辑走 with_undo，需要改用 notify_audio_model_changed。
         self.notify_notes_changed();
+        Some(extra)
     }
 
     /// Restore the previous state on the active document's history stack.
@@ -350,7 +436,8 @@ impl App {
 
 impl App {
     /// 处理编辑动作（transport bar 编辑 popup / 图钉与 macOS 菜单共用）。
-    /// 复制/粘贴/复制/删除在自动化锚点选中时作用于锚点（与键盘快捷键一致）。
+    /// copy/cut/duplicate/delete 在自动化锚点选中时作用于锚点；
+    /// paste 按剪贴板内容类型分派（见 paste_clipboard）。
     pub(crate) fn handle_edit_action(&mut self, action: transport_bar::EditAction) {
         use transport_bar::EditAction as A;
         let route_to_automation = self.has_selected_automation_anchors();
@@ -372,6 +459,12 @@ impl App {
                 }
             }
             A::Paste => self.paste_clipboard(),
+            A::PasteAtOriginal => {
+                self.paste_clipboard_with_mode(yinhe_editor_core::clipboard::PasteMode::AtOriginal)
+            }
+            A::PasteFlipped => {
+                self.paste_clipboard_with_mode(yinhe_editor_core::clipboard::PasteMode::Flipped)
+            }
             A::SelectAll => self.select_all(),
             A::Duplicate => {
                 if route_to_automation {

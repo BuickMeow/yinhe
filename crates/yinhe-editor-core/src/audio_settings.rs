@@ -142,7 +142,7 @@ impl Default for AudioSettings {
             layout: LayoutSettings::default(),
             keybindings: Keybindings::default(),
             pinned_file_actions: vec![false; 10],
-            pinned_edit_actions: vec![false; 12],
+            pinned_edit_actions: vec![false; 14],
             pinned_play_pause: false,
             pinned_stop: false,
             pinned_record: false,

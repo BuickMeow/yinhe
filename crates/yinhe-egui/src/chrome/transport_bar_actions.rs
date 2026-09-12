@@ -122,6 +122,8 @@ pub enum EditAction {
     Cut,
     Copy,
     Paste,
+    PasteAtOriginal,
+    PasteFlipped,
     SelectAll,
     Duplicate,
     Delete,
@@ -132,12 +134,14 @@ pub enum EditAction {
 }
 
 impl EditAction {
-    pub const ALL: [EditAction; 12] = [
+    pub const ALL: [EditAction; 14] = [
         EditAction::Undo,
         EditAction::Redo,
         EditAction::Cut,
         EditAction::Copy,
         EditAction::Paste,
+        EditAction::PasteAtOriginal,
+        EditAction::PasteFlipped,
         EditAction::SelectAll,
         EditAction::Duplicate,
         EditAction::Delete,
@@ -154,13 +158,15 @@ impl EditAction {
             EditAction::Cut => 2,
             EditAction::Copy => 3,
             EditAction::Paste => 4,
-            EditAction::SelectAll => 5,
-            EditAction::Duplicate => 6,
-            EditAction::Delete => 7,
-            EditAction::TransposeUp => 8,
-            EditAction::TransposeDown => 9,
-            EditAction::DedupWithinTrack => 10,
-            EditAction::DedupAcrossTracks => 11,
+            EditAction::PasteAtOriginal => 5,
+            EditAction::PasteFlipped => 6,
+            EditAction::SelectAll => 7,
+            EditAction::Duplicate => 8,
+            EditAction::Delete => 9,
+            EditAction::TransposeUp => 10,
+            EditAction::TransposeDown => 11,
+            EditAction::DedupWithinTrack => 12,
+            EditAction::DedupAcrossTracks => 13,
         }
     }
 
@@ -171,6 +177,8 @@ impl EditAction {
             EditAction::Cut => shortcuts::ACTION_CUT,
             EditAction::Copy => shortcuts::ACTION_COPY,
             EditAction::Paste => shortcuts::ACTION_PASTE,
+            EditAction::PasteAtOriginal => shortcuts::ACTION_PASTE_AT_ORIGINAL,
+            EditAction::PasteFlipped => shortcuts::ACTION_PASTE_FLIPPED,
             EditAction::SelectAll => shortcuts::ACTION_SELECT_ALL,
             EditAction::Duplicate => shortcuts::ACTION_DUPLICATE,
             EditAction::Delete => shortcuts::ACTION_DELETE,
@@ -188,6 +196,8 @@ impl EditAction {
             EditAction::Cut => ICON_CONTENT_CUT,
             EditAction::Copy => ICON_CONTENT_COPY,
             EditAction::Paste => ICON_CONTENT_PASTE,
+            EditAction::PasteAtOriginal => ICON_LOCATION_ON,
+            EditAction::PasteFlipped => ICON_FLIP,
             EditAction::SelectAll => ICON_SELECT_ALL,
             EditAction::Duplicate => ICON_COPY_ALL,
             EditAction::Delete => ICON_DELETE,
@@ -373,9 +383,10 @@ pub const FILE_GROUPS: [&[FileAction]; 5] = [
     &[FileAction::Settings, FileAction::Exit],
 ];
 
-pub const EDIT_GROUPS: [&[EditAction]; 5] = [
+pub const EDIT_GROUPS: [&[EditAction]; 6] = [
     &[EditAction::Undo, EditAction::Redo],
     &[EditAction::Cut, EditAction::Copy, EditAction::Paste],
+    &[EditAction::PasteAtOriginal, EditAction::PasteFlipped],
     &[
         EditAction::SelectAll,
         EditAction::Duplicate,

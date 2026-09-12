@@ -32,6 +32,13 @@ pub(crate) enum PendingFileAction {
     Exit,
 }
 
+/// 连续粘贴链状态：记录上次粘贴的光标位置与累计递进量。
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PasteChain {
+    cursor_tick: f64,
+    offset: u32,
+}
+
 pub struct App {
     // ── Pianoroll (shared GPU resources + global view state) ──
     pub(crate) render_ctx: RenderContext,
@@ -198,6 +205,8 @@ pub struct App {
     /// 应用级剪贴板。音符侧持有复制时刻的 `Arc<YinModel>` 快照（O(1)、
     /// 结构共享），自动化侧持有锚点事件，最后一次复制决定内容类型。
     pub(crate) clipboard: yinhe_editor_core::ClipboardContent,
+    /// 连续粘贴链：同一光标位置连续粘贴时自动按内容跨度向后递增。
+    pub(crate) paste_chain: Option<PasteChain>,
 
     // ── 通知中心（Toast + 历史）──
     pub(crate) notifications: crate::widgets::toast::Notifications,
@@ -381,6 +390,7 @@ impl App {
             ctrl_click_active: false,
 
             clipboard: yinhe_editor_core::ClipboardContent::default(),
+            paste_chain: None,
             notifications: crate::widgets::toast::Notifications::new(),
         };
 

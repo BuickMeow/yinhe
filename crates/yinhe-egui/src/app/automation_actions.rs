@@ -5,7 +5,7 @@
 //! paste 由 `App::paste_clipboard` 按剪贴板内容类型分派。
 
 use rust_i18n::t;
-use yinhe_editor_core::clipboard::{AutomationClip, AutomationClipboard};
+use yinhe_editor_core::clipboard::{AutomationClip, AutomationClipboard, PasteMode};
 use yinhe_types::{AnchorSelRect, AutomationTarget, SegmentShape};
 
 use crate::app::App;
@@ -114,6 +114,7 @@ impl App {
         }
         self.clipboard =
             yinhe_editor_core::ClipboardContent::Automation(AutomationClipboard { clips });
+        self.paste_chain = None;
     }
 
     /// 剪切选中锚点：复制到剪贴板后删除。
@@ -122,13 +123,18 @@ impl App {
         self.delete_automation_anchors();
     }
 
-    /// 粘贴自动化剪贴板内容到 cursor_tick 位置（逐 target 粘贴，一次 undo）。
-    pub(crate) fn paste_automation_clipboard(&mut self, clipboard: &AutomationClipboard) {
-        let Some(idx) = self.workspace.active_doc else {
-            return;
-        };
+    /// 粘贴自动化剪贴板内容（逐 target 粘贴，一次 undo）。
+    ///
+    /// 返回粘贴内容的 tick 跨度（多 clip 取最大），供连续粘贴递增；
+    /// 没有实际粘贴时返回 None。
+    pub(crate) fn paste_automation_clipboard(
+        &mut self,
+        clipboard: &AutomationClipboard,
+        mode: PasteMode,
+    ) -> Option<u32> {
+        let idx = self.workspace.active_doc?;
         if clipboard.clips.is_empty() {
-            return;
+            return None;
         }
         let doc = &mut self.workspace.documents[idx];
 
@@ -137,6 +143,7 @@ impl App {
 
         let mut edits = Vec::new();
         let mut panel_anchors: Vec<(usize, Vec<(u32, f32)>)> = Vec::new();
+        let mut max_span = 0u32;
         for clip in &clipboard.clips {
             // 找 target 匹配的面板
             let Some(panel_idx) = doc
@@ -151,10 +158,22 @@ impl App {
                 continue;
             };
             let min_tick = clip.events.iter().map(|(t, _, _)| *t).min().unwrap_or(0);
-            let offset = cursor_tick as i64 - min_tick as i64;
+            let max_tick = clip.events.iter().map(|(t, _, _)| *t).max().unwrap_or(0);
+            let span = max_tick.saturating_sub(min_tick);
+            max_span = max_span.max(span);
             let mut new_anchors = Vec::with_capacity(clip.events.len());
             for (tick, value, shape) in &clip.events {
-                let new_tick = (*tick as i64 + offset).max(0) as u32;
+                let new_tick = match mode {
+                    PasteMode::AtOriginal => *tick,
+                    PasteMode::AtCursor => {
+                        (cursor_tick as i64 + (*tick as i64 - min_tick as i64)).max(0) as u32
+                    }
+                    PasteMode::Flipped => {
+                        // 时间镜像：新 tick = 光标 + (跨度 - (源 tick - 源最早 tick))
+                        (cursor_tick as i64 + span as i64 - (*tick as i64 - min_tick as i64)).max(0)
+                            as u32
+                    }
+                };
                 edits.push(yinhe_types::AutomationEdit::Add {
                     track_idx,
                     target: clip.target.clone(),
@@ -164,17 +183,21 @@ impl App {
                 });
                 new_anchors.push((new_tick, *value));
             }
+            // 镜像后 tick 顺序反转；选区范围与展示要求升序。
+            if mode == PasteMode::Flipped {
+                new_anchors.sort_by_key(|(t, _)| *t);
+            }
             panel_anchors.push((panel_idx, new_anchors));
         }
 
         if edits.is_empty() {
-            return;
+            return None;
         }
 
         let before = doc.capture_snapshot();
         let actions = doc.apply_automation_edits(edits);
         if actions.is_empty() {
-            return;
+            return None;
         }
         self.pianoroll_view.base.dirty = true;
         crate::right_panel::automation_undo::push_automation_actions(
@@ -192,6 +215,7 @@ impl App {
             doc.edit.controller_panels[*panel_idx].dirty = true;
         }
         self.notify_audio_model_changed();
+        Some(max_span)
     }
 
     /// 重复选中锚点（Cmd+D）。

@@ -354,6 +354,8 @@ pub fn action_label_key(action_id: &str) -> &'static str {
         sc::ACTION_CUT => "menu.cut",
         sc::ACTION_COPY => "menu.copy",
         sc::ACTION_PASTE => "menu.paste",
+        sc::ACTION_PASTE_AT_ORIGINAL => "menu.paste_at_original",
+        sc::ACTION_PASTE_FLIPPED => "menu.paste_flipped",
         sc::ACTION_SELECT_ALL => "menu.select_all",
         sc::ACTION_DUPLICATE => "menu.duplicate",
         sc::ACTION_DELETE => "menu.delete",

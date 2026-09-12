@@ -85,30 +85,40 @@ impl Document {
         self.edit.arr_sel_rect = vec![(0.0, (max_end + 1) as f64, 0, num_tracks as usize - 1)];
     }
 
-    /// Paste notes from the clipboard snapshot at the cursor position.
+    /// Paste notes from the clipboard snapshot.
     ///
     /// The clipboard holds an `Arc<YinModel>` snapshot taken at copy time, so
     /// notes edited/deleted/cut after the copy are still pasted. No undo-stack
     /// bridge is needed.
+    ///
+    /// Returns `(undo action, content tick span)`; the span feeds the
+    /// consecutive-paste advance in the UI layer.
     pub fn paste_notes(
         &mut self,
         clipboard: &crate::clipboard::NotesClipboard,
         cursor_tick: f64,
         track_selected: &std::collections::HashSet<u16>,
-    ) -> Option<UndoAction> {
+        mode: crate::clipboard::PasteMode,
+    ) -> Option<(UndoAction, u32)> {
+        use crate::clipboard::PasteMode;
+
         let notes = clipboard.collect();
 
         if notes.is_empty() {
             return None;
         }
 
-        // Calculate offset: cursor - min start_tick.
-        let min_start = notes.iter().map(|(n, _)| n.start_tick).min().unwrap_or(0);
-        let offset = cursor_tick as i64 - min_start as i64;
+        let src_min_start = notes.iter().map(|(n, _)| n.start_tick).min().unwrap_or(0);
+        let src_max_end = notes.iter().map(|(n, _)| n.end_tick).max().unwrap_or(0);
+        let span = src_max_end.saturating_sub(src_min_start);
+
+        // AtCursor/Flipped 以光标为基准；AtOriginal 保持源坐标。
+        let offset = cursor_tick as i64 - src_min_start as i64;
 
         // Calculate track offset: first selected track - min source track.
         // If no track is selected, keep original track positions.
-        let track_offset: i32 = if !track_selected.is_empty() {
+        // AtOriginal 完全原位，不做轨道偏移。
+        let track_offset: i32 = if !track_selected.is_empty() && mode != PasteMode::AtOriginal {
             let src_min_track = notes.iter().map(|(n, _)| n.track).min().unwrap_or(0);
             let first_selected = track_selected.iter().min().copied().unwrap_or(0);
             first_selected as i32 - src_min_track as i32
@@ -126,8 +136,22 @@ impl Document {
             if Some(note.track) == conductor {
                 continue;
             }
-            let new_start = (note.start_tick as i64 + offset).max(0) as u32;
-            let new_end = (note.end_tick as i64 + offset).max(0) as u32;
+            let (new_start, new_end) = match mode {
+                PasteMode::AtOriginal => (note.start_tick, note.end_tick),
+                PasteMode::AtCursor => (
+                    (note.start_tick as i64 + offset).max(0) as u32,
+                    (note.end_tick as i64 + offset).max(0) as u32,
+                ),
+                PasteMode::Flipped => {
+                    // 时间镜像：新起点 = 光标 + (跨度 - (源终点 - 源最早起点))，
+                    // 音高/力度/gate 不变。
+                    let gate = note.end_tick.saturating_sub(note.start_tick) as i64;
+                    let mirrored = cursor_tick as i64 + span as i64
+                        - (note.end_tick as i64 - src_min_start as i64);
+                    let ns = mirrored.max(0) as u32;
+                    (ns, ns.saturating_add(gate as u32))
+                }
+            };
             let new_track = (note.track as i32 + track_offset).clamp(0, u16::MAX as i32) as u16;
             // 「允许新重叠音符」关闭：粘贴副本与已有音符重叠 → 跳过该副本。
             // 检查在批量插入前进行，批次内部互不影响（含剪贴板源音符）。
@@ -172,16 +196,19 @@ impl Document {
             .add_rect_track(min_tick, max_end + 1, 0, MAX_KEY, track_lo, track_hi);
 
         self.data.rebuild_model_dirty();
-        Some(UndoAction::Notes(NoteDelta {
-            before: vec![],
-            after,
-        }))
+        Some((
+            UndoAction::Notes(NoteDelta {
+                before: vec![],
+                after,
+            }),
+            span,
+        ))
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::clipboard::NotesClipboard;
+    use crate::clipboard::{NotesClipboard, PasteMode};
     use crate::document::Document;
     use yinhe_core::{ConductorData, NoteEvent, TrackData, YinModel};
 
@@ -246,9 +273,15 @@ mod tests {
         let clipboard = clipboard_with(&doc, selection);
 
         // 粘贴到 400：A 副本 [400,500) 与 C 相交 → 跳过；B 副本 k62 [400,450) → 插入
-        let action = doc
-            .paste_notes(&clipboard, 400.0, &std::collections::HashSet::new())
+        let (action, span) = doc
+            .paste_notes(
+                &clipboard,
+                400.0,
+                &std::collections::HashSet::new(),
+                PasteMode::AtCursor,
+            )
             .expect("应有部分副本插入");
+        assert_eq!(span, 100, "跨度 = 源内容 max_end - min_start");
         match action {
             UndoAction::Notes(delta) => {
                 assert_eq!(delta.after.len(), 1, "只有 B 的副本被插入");
@@ -272,8 +305,13 @@ mod tests {
         selection.add_rect_track(100, 201, 60, 60, 0, 0);
         let clipboard = clipboard_with(&doc, selection);
         assert!(
-            doc.paste_notes(&clipboard, 400.0, &std::collections::HashSet::new())
-                .is_none(),
+            doc.paste_notes(
+                &clipboard,
+                400.0,
+                &std::collections::HashSet::new(),
+                PasteMode::AtCursor
+            )
+            .is_none(),
             "副本全被拦时应返回 None"
         );
         assert_eq!(doc.data.model.notes[60].len(), 2, "模型不应变化");
@@ -289,8 +327,13 @@ mod tests {
         selection.add_rect_track(100, 201, 60, 60, 0, 0);
         let clipboard = clipboard_with(&doc, selection);
         assert!(
-            doc.paste_notes(&clipboard, 400.0, &std::collections::HashSet::new())
-                .is_some(),
+            doc.paste_notes(
+                &clipboard,
+                400.0,
+                &std::collections::HashSet::new(),
+                PasteMode::AtCursor
+            )
+            .is_some(),
             "默认应允许重叠粘贴"
         );
         assert_eq!(doc.data.model.notes[60].len(), 3);
@@ -311,8 +354,13 @@ mod tests {
         assert_eq!(doc.data.model.notes[60].len(), 0, "源已删除");
 
         assert!(
-            doc.paste_notes(&clipboard, 400.0, &std::collections::HashSet::new())
-                .is_some(),
+            doc.paste_notes(
+                &clipboard,
+                400.0,
+                &std::collections::HashSet::new(),
+                PasteMode::AtCursor
+            )
+            .is_some(),
             "源删除后仍应从快照粘贴"
         );
         assert_eq!(doc.data.model.notes[60].len(), 1);
@@ -333,11 +381,76 @@ mod tests {
         let mut dst = make_doc();
         // 目标文档同坐标区没有音符；若旧实现「重查当前文档」会粘空。
         assert!(
-            dst.paste_notes(&clipboard, 300.0, &std::collections::HashSet::new())
-                .is_some(),
+            dst.paste_notes(
+                &clipboard,
+                300.0,
+                &std::collections::HashSet::new(),
+                PasteMode::AtCursor
+            )
+            .is_some(),
             "跨文档粘贴应使用源快照"
         );
         assert_eq!(dst.data.model.notes[60].len(), 1);
         assert_eq!(dst.data.model.notes[60][0].start_tick, 300);
+    }
+
+    /// 原位置粘贴：保持源坐标，忽略光标与目标轨道。
+    #[test]
+    fn paste_at_original_keeps_source_coordinates() {
+        let mut doc = make_doc();
+        add(&mut doc, 100, 200, 60);
+        let mut selection = yinhe_core::Selection::default();
+        selection.add_rect_track(100, 201, 60, 60, 0, 0);
+        let clipboard = clipboard_with(&doc, selection);
+
+        doc.edit.selected.clear();
+        doc.paste_notes(
+            &clipboard,
+            9999.0,
+            &std::collections::HashSet::new(),
+            PasteMode::AtOriginal,
+        )
+        .expect("原位置粘贴应成功");
+
+        let notes = &doc.data.model.notes[60];
+        assert_eq!(notes.len(), 2);
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.start_tick == 100 && n.end_tick == 200),
+            "源坐标应保持不变"
+        );
+    }
+
+    /// 翻转粘贴：tick 轴镜像，声部前后顺序反转，gate 不变。
+    #[test]
+    fn paste_flipped_mirrors_time_axis() {
+        let mut doc = make_doc();
+        add(&mut doc, 100, 150, 60); // A：靠前、短
+        add(&mut doc, 180, 200, 62); // B：靠后
+        let mut selection = yinhe_core::Selection::default();
+        selection.add_rect_track(100, 201, 60, 62, 0, 0);
+        let clipboard = clipboard_with(&doc, selection);
+
+        doc.edit.selected.clear();
+        doc.paste_notes(
+            &clipboard,
+            400.0,
+            &std::collections::HashSet::new(),
+            PasteMode::Flipped,
+        )
+        .expect("翻转粘贴应成功");
+
+        // span = 100（100..200）。A 镜像后 [450,500)，B 镜像后 [400,420)。
+        let a = doc.data.model.notes[60]
+            .iter()
+            .find(|n| n.start_tick >= 400)
+            .expect("A 的镜像副本");
+        assert_eq!((a.start_tick, a.end_tick), (450, 500));
+        let b = doc.data.model.notes[62]
+            .iter()
+            .find(|n| n.start_tick >= 400)
+            .expect("B 的镜像副本");
+        assert_eq!((b.start_tick, b.end_tick), (400, 420));
     }
 }

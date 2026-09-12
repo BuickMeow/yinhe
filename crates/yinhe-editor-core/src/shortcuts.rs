@@ -40,6 +40,8 @@ pub const ACTION_REDO: &str = "redo";
 pub const ACTION_CUT: &str = "cut";
 pub const ACTION_COPY: &str = "copy";
 pub const ACTION_PASTE: &str = "paste";
+pub const ACTION_PASTE_AT_ORIGINAL: &str = "paste_at_original";
+pub const ACTION_PASTE_FLIPPED: &str = "paste_flipped";
 pub const ACTION_SELECT_ALL: &str = "select_all";
 pub const ACTION_DUPLICATE: &str = "duplicate";
 pub const ACTION_DELETE: &str = "delete";
@@ -76,6 +78,8 @@ pub const ALL_ACTION_IDS: &[&str] = &[
     ACTION_CUT,
     ACTION_COPY,
     ACTION_PASTE,
+    ACTION_PASTE_AT_ORIGINAL,
+    ACTION_PASTE_FLIPPED,
     ACTION_SELECT_ALL,
     ACTION_DUPLICATE,
     ACTION_DELETE,
@@ -158,6 +162,8 @@ fn default_combo(action_id: &str) -> Option<KeyCombo> {
         ACTION_CUT => combo(true, false, false, "X"),
         ACTION_COPY => combo(true, false, false, "C"),
         ACTION_PASTE => combo(true, false, false, "V"),
+        ACTION_PASTE_AT_ORIGINAL => combo(true, true, false, "V"),
+        ACTION_PASTE_FLIPPED => None,
         ACTION_SELECT_ALL => combo(true, false, false, "A"),
         ACTION_DUPLICATE => combo(true, false, false, "D"),
         ACTION_DELETE => combo(false, false, false, "Delete"),

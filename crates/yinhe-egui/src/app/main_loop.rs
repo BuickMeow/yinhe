@@ -163,6 +163,8 @@ impl eframe::App for App {
                         | MenuAction::Cut
                         | MenuAction::Copy
                         | MenuAction::Paste
+                        | MenuAction::PasteAtOriginal
+                        | MenuAction::PasteFlipped
                         | MenuAction::SelectAll
                         | MenuAction::Duplicate
                         | MenuAction::Delete
@@ -201,6 +203,14 @@ impl eframe::App for App {
                 }
                 MenuAction::Paste => {
                     self.handle_edit_action(transport_bar::EditAction::Paste);
+                    continue;
+                }
+                MenuAction::PasteAtOriginal => {
+                    self.handle_edit_action(transport_bar::EditAction::PasteAtOriginal);
+                    continue;
+                }
+                MenuAction::PasteFlipped => {
+                    self.handle_edit_action(transport_bar::EditAction::PasteFlipped);
                     continue;
                 }
                 MenuAction::SelectAll => {
@@ -456,7 +466,8 @@ impl eframe::App for App {
 
         // ── Keyboard shortcuts ──
         let kb = self.handle_keyboard_shortcuts(ui);
-        // 路由：Select/SelectVertical 工具且有锚点选中时，copy/paste/duplicate/delete 作用于自动化锚点
+        // 路由：Select/SelectVertical 工具且有锚点选中时，copy/cut/duplicate/delete
+        // 作用于自动化锚点；paste 由剪贴板内容类型决定（见 paste_clipboard）。
         let route_to_automation = self.has_selected_automation_anchors();
         if kb.delete_selected {
             if route_to_automation {
@@ -500,6 +511,12 @@ impl eframe::App for App {
         }
         if kb.paste {
             self.paste_clipboard();
+        }
+        if kb.paste_at_original {
+            self.paste_clipboard_with_mode(yinhe_editor_core::clipboard::PasteMode::AtOriginal);
+        }
+        if kb.paste_flipped {
+            self.paste_clipboard_with_mode(yinhe_editor_core::clipboard::PasteMode::Flipped);
         }
         if kb.select_all {
             self.select_all();
