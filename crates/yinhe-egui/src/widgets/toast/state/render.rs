@@ -6,10 +6,9 @@ use eframe::egui;
 use super::super::layout::{
     follow_scroll, is_fully_outside, notif_band, scroll_max, stack_ys, visible_h,
 };
-use super::super::{anim, card, model};
+use super::super::{anim, card};
 use super::Notifications;
 
-#[allow(dead_code)]
 impl Notifications {
     /// 每帧更新滚动上限：贴底跟随时吸到新 max，否则 clamp 旧值。
     pub(super) fn update_center_scroll(
@@ -167,12 +166,31 @@ impl Notifications {
         }
     }
 
+    /// 历史堆叠目标 y：全部条目按创建顺序（最新在底）累加实测高度。
+    fn history_ys(
+        items: &[super::super::model::Notification],
+        card_h: &HashMap<u64, f32>,
+        bottom_pad: f32,
+        gap: f32,
+        fallback: f32,
+    ) -> HashMap<u64, f32> {
+        let ids: Vec<u64> = items.iter().rev().map(|n| n.id).collect();
+        let mut out = HashMap::new();
+        for (id, y) in ids
+            .iter()
+            .zip(stack_ys(card_h, &ids, bottom_pad, gap, fallback))
+        {
+            out.insert(*id, y);
+        }
+        out
+    }
+
     // ── Toast 浮空渲染：右下角 → 右上角堆叠，浮于内容之上 ──
-    // 彻底重构：每个 toast 独立 Area，避免父 Area+ScrollArea 宽度异常导致右侧溢出。
+    // 每个 toast 独立 Area，避免父 Area+ScrollArea 宽度异常导致右侧溢出。
     // 打开通知列表时，已存在的 toast 不消失，而是通过非线性 y 插值重排至历史位置；其余历史项飞入。
     pub fn show_toasts(&mut self, ctx: &egui::Context) {
         self.tick(ctx);
-        if self.toasts.is_empty() {
+        if !self.items.iter().any(|n| n.on_screen) {
             return;
         }
         const CARD_W: f32 = 360.0;
@@ -189,10 +207,16 @@ impl Notifications {
             self.update_center_scroll(viewport.height(), BOTTOM_PAD, GAP, EST_H);
         }
 
-        // 预计算目标 y：toast 堆叠 vs 历史堆叠（按每张卡实测高度累加）
+        // 预计算目标 y：浮动卡堆叠 vs 历史堆叠（按每张卡实测高度累加）
+        let on_screen_ids: Vec<u64> = self
+            .items
+            .iter()
+            .filter(|n| n.on_screen)
+            .map(|n| n.id)
+            .collect();
         let mut toast_y_map: HashMap<u64, f32> = HashMap::new();
         {
-            let ids: Vec<u64> = self.toasts.iter().rev().map(|t| t.id).collect();
+            let ids: Vec<u64> = on_screen_ids.iter().rev().copied().collect();
             for (id, y) in ids
                 .iter()
                 .zip(stack_ys(&self.card_h, &ids, BOTTOM_PAD, GAP, EST_H))
@@ -200,20 +224,14 @@ impl Notifications {
                 toast_y_map.insert(*id, y);
             }
         }
-        let mut history_y_map: HashMap<u64, f32> = HashMap::new();
-        {
-            let ids: Vec<u64> = self.history.iter().rev().map(|h| h.id).collect();
-            for (id, y) in ids
-                .iter()
-                .zip(stack_ys(&self.card_h, &ids, BOTTOM_PAD, GAP, EST_H))
-            {
-                history_y_map.insert(*id, y);
-            }
-        }
+        let history_y_map = Self::history_ys(&self.items, &self.card_h, BOTTOM_PAD, GAP, EST_H);
 
         let mut to_dismiss: Vec<u64> = Vec::new();
-        for idx in (0..self.toasts.len()).rev() {
-            let tid = self.toasts[idx].id;
+        for idx in (0..self.items.len()).rev() {
+            if !self.items[idx].on_screen {
+                continue;
+            }
+            let tid = self.items[idx].id;
             let raw_y = if self.center_open {
                 // 重排至历史中的位置
                 history_y_map.get(&tid).copied().unwrap_or(BOTTOM_PAD)
@@ -232,19 +250,19 @@ impl Notifications {
             // 用“显示位置”判可见性：快速滚动时目标先出带、动画仍在滑出，
             // 若按目标裁会未滑完就消失（提前消失）；显示位置完全出带才跳过
             if is_fully_outside(y_off, card_h, BOTTOM_PAD, max_y) {
-                self.toasts[idx].hovered = false;
+                self.items[idx].hovered = false;
                 continue;
             }
-            let is_leaving = self.toasts[idx].leaving_since.is_some();
+            let is_leaving = self.items[idx].leaving_since.is_some();
             // 打开列表时已存在的 toast 不重新飞入，仅重排；离开时仍飞出
             let x_off = if self.center_open && !is_leaving {
                 0.0
             } else {
-                anim::fly_anim(&self.toasts[idx])
+                anim::fly_anim(&self.items[idx])
             };
-            let cancel_flag = model::resolve_cancel_toast(&self.toasts[idx]);
-            let action_opt = self.toasts[idx].action.clone();
-            let mut outcome = model::CardOutcome::default();
+            let cancel_flag = self.items[idx].cancel_flag();
+            let action_opt = self.items[idx].action.clone();
+            let mut outcome = super::super::model::CardOutcome::default();
             let area_id = egui::Id::new(("yinhe_notif", tid));
             let area_resp = egui::Area::new(area_id)
                 .anchor(
@@ -264,21 +282,18 @@ impl Notifications {
                     let clip = ui.clip_rect();
                     ui.set_clip_rect(clip.intersect(notif_band(clip, viewport, BOTTOM_PAD, max_y)));
                     outcome =
-                        card::toast_card(ui, &self.toasts[idx], CARD_W, 0.0, !self.center_open);
+                        card::toast_card(ui, &self.items[idx], CARD_W, 0.0, !self.center_open);
                     ui.min_rect().height()
                 });
             self.card_h.insert(tid, area_resp.inner);
-            self.toasts[idx].hovered = outcome.hovered;
+            self.items[idx].hovered = outcome.hovered;
             if outcome.cancel {
                 // stop：只置 flag + 中止态，卡片留着等 abort 确认（见 C），不进退场
                 if let Some(c) = cancel_flag {
                     c.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
-                self.toasts[idx].cancelling = true;
+                self.items[idx].cancelling = true;
             } else if outcome.dismiss {
-                // 进行中任务收起：记 collapsed 防复活 + 自动 resume（防卡死，见方法注释）；
-                // 静态卡直接退场（helper 内判 source.is_some() 后直接返回）。
-                self.collapse_for_dismiss(tid);
                 to_dismiss.push(tid);
             }
             // 操作按钮只执行不收卡（收起交给自动计时）
@@ -293,7 +308,7 @@ impl Notifications {
             to_dismiss.sort_unstable();
             to_dismiss.dedup();
             for id in to_dismiss {
-                self.dismiss_toast(id);
+                self.dismiss(id);
             }
         }
     }
@@ -311,17 +326,12 @@ impl Notifications {
             if Instant::now().duration_since(closed_at) > Duration::from_millis(350) {
                 return;
             }
-            if self.history.is_empty() {
+            if self.items.is_empty() {
                 return;
             }
-        } else if self.history.is_empty() {
+        } else if self.items.is_empty() {
             return;
         }
-        tracing::debug!(
-            "show_center history={} center_open={}",
-            self.history.len(),
-            self.center_open
-        );
         const CARD_W: f32 = 360.0;
         const GAP: f32 = 8.0;
         const BOTTOM_PAD: f32 = 48.0;
@@ -338,23 +348,14 @@ impl Notifications {
         }
 
         // 预计算历史目标 y（最新在底部，按每张卡实测高度累加）
-        let mut history_y_map: HashMap<u64, f32> = HashMap::new();
-        {
-            let ids: Vec<u64> = self.history.iter().rev().map(|h| h.id).collect();
-            for (id, y) in ids
-                .iter()
-                .zip(stack_ys(&self.card_h, &ids, BOTTOM_PAD, GAP, EST_H))
-            {
-                history_y_map.insert(*id, y);
-            }
-        }
+        let history_y_map = Self::history_ys(&self.items, &self.card_h, BOTTOM_PAD, GAP, EST_H);
 
-        // 仅渲染历史中不在当前 toast 的那些（已在屏幕的由 show_toasts 负责重排）
-        for idx in (0..self.history.len()).rev() {
-            if self.toasts.iter().any(|t| t.id == self.history[idx].id) {
+        // 仅渲染不在浮动层的条目（浮动中的由 show_toasts 负责重排）
+        for idx in (0..self.items.len()).rev() {
+            if self.items[idx].on_screen {
                 continue;
             }
-            let tid = self.history[idx].id;
+            let tid = self.items[idx].id;
             let raw_y = history_y_map.get(&tid).copied().unwrap_or(BOTTOM_PAD);
             // 列表开着时与 show_toasts 统一减滚动；关闭退场不减
             let target_y = if self.center_open {
@@ -394,7 +395,7 @@ impl Notifications {
                     // 边缘裁剪滑出：收窄 clip 到可见带，半张卡被裁掉而非突然消失
                     let clip = ui.clip_rect();
                     ui.set_clip_rect(clip.intersect(notif_band(clip, viewport, BOTTOM_PAD, max_y)));
-                    card::history_card(ui, &self.history[idx], CARD_W);
+                    card::history_card(ui, &self.items[idx], CARD_W);
                     ui.min_rect().height()
                 });
             self.card_h.insert(tid, area_resp.inner);

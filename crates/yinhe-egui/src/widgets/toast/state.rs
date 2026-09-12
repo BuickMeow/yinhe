@@ -1,10 +1,10 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
 
 use super::anim::{YAnim, y_anim_value};
-use super::model::{HistoryEntry, Toast};
+use super::model::Notification;
 
 mod progress;
 mod push;
@@ -13,11 +13,11 @@ mod render;
 #[cfg(test)]
 mod tests;
 
-// ── 统一通知中心 ──
+// ── 统一通知中心（单一数据源：浮动卡与列表是同一列表的两个视图）──
 pub struct Notifications {
     next_id: u64,
-    toasts: Vec<Toast>,
-    history: Vec<HistoryEntry>,
+    /// 唯一数据源：浮动卡与通知中心列表都是这个列表的视图。
+    items: Vec<Notification>,
     /// 通知列表是否展开（由 mode_bar 铃铛切换）。
     pub center_open: bool,
     max_history: usize,
@@ -32,10 +32,6 @@ pub struct Notifications {
     enabled: bool,
     /// 上次 tick 时刻（悬停暂停按帧间隔顺延 deadline 用）。
     last_tick: Option<Instant>,
-    /// 用户手动收起的进行中任务 id：ensure 只更新历史、不重建卡。
-    collapsed: HashSet<u64>,
-    /// 固定任务 id → 本次运行的历史条目 id（浮动卡复用固定槽位，历史一任务一条）。
-    live_hist: HashMap<u64, u64>,
     /// 每张卡上帧实测高度（`ui.min_rect().height()`），堆叠按真实高度累加。
     card_h: HashMap<u64, f32>,
     /// Y 轴自有 ease-out 动画状态（id → 起点/终点/起始时刻，时长 0.35s）。
@@ -57,13 +53,11 @@ impl Default for Notifications {
     }
 }
 
-#[allow(dead_code)]
 impl Notifications {
     pub fn new() -> Self {
         Self {
             next_id: 1,
-            toasts: Vec::new(),
-            history: Vec::new(),
+            items: Vec::new(),
             center_open: false,
             max_history: 100,
             center_opened_at: None,
@@ -73,8 +67,6 @@ impl Notifications {
             action_collapse_secs: Some(60),
             enabled: true,
             last_tick: None,
-            collapsed: HashSet::new(),
-            live_hist: HashMap::new(),
             card_h: HashMap::new(),
             y_anim: HashMap::new(),
             center_scroll: 0.0,
@@ -93,18 +85,23 @@ impl Notifications {
     }
 
     /// 从设置同步通知总开关（main_loop 每帧调一次）。
-    /// 关闭时已有卡走正常 320ms 退场（不再立即清空），历史保留。
+    /// 关闭时已有卡走正常退场动画（不再立即清空），历史保留。
     pub fn set_enabled(&mut self, enabled: bool) {
         if self.enabled && !enabled {
             // 防卡死：关闭总开关时自动 resume 已暂停任务，否则任务永远暂停且无 UI 可恢复。
-            for t in &self.toasts {
-                if let Some(p) = super::model::resolve_pause_toast(t) {
+            for n in &self.items {
+                if let Some(p) = n.pause_flag() {
                     p.store(false, std::sync::atomic::Ordering::Relaxed);
                 }
             }
-            let ids: Vec<u64> = self.toasts.iter().map(|t| t.id).collect();
+            let ids: Vec<u64> = self
+                .items
+                .iter()
+                .filter(|n| n.on_screen && n.leaving_since.is_none())
+                .map(|n| n.id)
+                .collect();
             for id in ids {
-                self.dismiss_toast(id);
+                self.dismiss(id);
             }
         }
         self.enabled = enabled;
@@ -113,6 +110,18 @@ impl Notifications {
     /// 通知总开关是否开启（关闭时 mode_bar 铃铛隐藏）。
     pub fn is_enabled(&self) -> bool {
         self.enabled
+    }
+
+    /// 分配下一个通知 id。
+    pub(super) fn alloc_id(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
+    }
+
+    /// 按 id 找条目。
+    pub(super) fn get(&self, id: u64) -> Option<&Notification> {
+        self.items.iter().find(|n| n.id == id)
     }
 
     fn collapse_deadline(&self, secs: Option<u32>) -> Option<Instant> {
@@ -151,16 +160,16 @@ impl Notifications {
         }
     }
 
-    /// 列表内容总高：按 history 顺序用实测高度累加（含 GAP）。
+    /// 列表内容总高：按创建顺序用实测高度累加（含 GAP）。
     fn center_total_h(&self, fallback: f32, gap: f32) -> f32 {
-        if self.history.is_empty() {
+        if self.items.is_empty() {
             return 0.0;
         }
         let mut total = 0.0;
-        for h in &self.history {
-            total += self.card_h.get(&h.id).copied().unwrap_or(fallback);
+        for n in &self.items {
+            total += self.card_h.get(&n.id).copied().unwrap_or(fallback);
         }
-        total += gap * ((self.history.len() as f32) - 1.0).max(0.0);
+        total += gap * ((self.items.len() as f32) - 1.0).max(0.0);
         total
     }
 
@@ -172,34 +181,39 @@ impl Notifications {
         }
     }
 
-    /// 标记离开动画，300ms 后真正移除
-    #[allow(clippy::collapsible_if)]
-    pub fn dismiss_toast(&mut self, id: u64) {
-        if let Some(t) = self.toasts.iter_mut().find(|t| t.id == id)
-            && t.leaving_since.is_none()
-        {
-            t.leaving_since = Some(Instant::now());
+    /// 收起浮卡：标记退场（320ms 后翻 off-screen），不动列表数据。
+    /// 进行中任务收起时自动 resume 暂停（防卡死）：卡片消失后若仍 paused
+    /// 任务永停且无 UI 可恢复；翻 off-screen 后 ensure 不重建卡，防复活。
+    pub fn dismiss(&mut self, id: u64) {
+        let Some(n) = self.items.iter_mut().find(|n| n.id == id) else {
+            return;
+        };
+        if !n.on_screen {
+            return;
+        }
+        if let Some(p) = n.pause_flag() {
+            p.store(false, std::sync::atomic::Ordering::Relaxed);
+        }
+        if n.leaving_since.is_none() {
+            n.leaving_since = Some(Instant::now());
         }
     }
 
-    /// 收起进行中任务：记 collapsed 防复活，并自动 resume 已暂停任务。
-    /// show_toasts 的 dismiss 分支调用（单测亦走此链路）。
-    /// 防卡死原因：收起后卡面消失，若仍 paused 则任务永停且无 UI 可恢复。
-    pub(crate) fn collapse_for_dismiss(&mut self, id: u64) {
-        let is_running = self.toasts.iter().any(|t| t.id == id && t.source.is_some());
-        if !is_running {
+    /// 历史上限：只裁已收起的旧条目，屏幕上的浮卡不动。
+    pub(super) fn prune_overflow(&mut self) {
+        let archived = self.items.iter().filter(|n| !n.on_screen).count();
+        if archived <= self.max_history {
             return;
         }
-        self.collapsed.insert(id);
-        // 先取 flag 再清（与 show_toasts 内联逻辑同语义）
-        let pause_flag = self
-            .toasts
-            .iter()
-            .find(|t| t.id == id)
-            .and_then(super::model::resolve_pause_toast);
-        if let Some(p) = pause_flag {
-            p.store(false, std::sync::atomic::Ordering::Relaxed);
-        }
+        let mut excess = archived - self.max_history;
+        self.items.retain(|n| {
+            if excess > 0 && !n.on_screen {
+                excess -= 1;
+                false
+            } else {
+                true
+            }
+        });
     }
 
     fn tick(&mut self, ctx: &egui::Context) {
@@ -217,17 +231,16 @@ impl Notifications {
             }
             self.prev_center_open = self.center_open;
             ctx.request_repaint();
-            // 列表关闭瞬间：屏幕上所有卡全部走退场动画；进行中顺带记 collapsed 防复活+resume
+            // 列表关闭瞬间：屏幕上所有卡全部走退场动画，进行中顺带防复活+resume（见 dismiss）
             if was_open && !self.center_open {
                 let ids: Vec<u64> = self
-                    .toasts
+                    .items
                     .iter()
-                    .filter(|t| t.leaving_since.is_none())
-                    .map(|t| t.id)
+                    .filter(|n| n.on_screen && n.leaving_since.is_none())
+                    .map(|n| n.id)
                     .collect();
                 for id in ids {
-                    self.collapse_for_dismiss(id);
-                    self.dismiss_toast(id);
+                    self.dismiss(id);
                 }
             }
         }
@@ -240,67 +253,72 @@ impl Notifications {
             .min(Duration::from_secs(1));
         self.last_tick = Some(now);
         if dt > Duration::ZERO {
-            for t in self.toasts.iter_mut() {
-                if t.hovered
-                    && t.leaving_since.is_none()
-                    && let Some(at) = t.collapse_at
+            for n in self.items.iter_mut() {
+                if n.hovered
+                    && n.leaving_since.is_none()
+                    && let Some(at) = n.collapse_at
                 {
-                    t.collapse_at = Some(at + dt);
+                    n.collapse_at = Some(at + dt);
                 }
             }
         }
-        // 清理已完成离开动画的 toast
-        let before = self.toasts.len();
-        self.toasts.retain(|t| {
-            if let Some(since) = t.leaving_since {
-                now.duration_since(since) < Duration::from_millis(320)
-            } else {
-                true
+        // 退场动画播完：翻 off-screen（条目保留在列表里）
+        let mut retired = false;
+        for n in self.items.iter_mut() {
+            if n.leaving_since
+                .is_some_and(|since| now.duration_since(since) >= Duration::from_millis(320))
+            {
+                n.leaving_since = None;
+                n.on_screen = false;
+                retired = true;
             }
-        });
-        if self.toasts.len() != before {
+        }
+        if retired {
+            self.prune_overflow();
             needs_repaint = true;
         }
-        // 实测高度只保留还存在的卡，防 map 无限涨（量级小，直接查）。
-        self.card_h.retain(|id, _| {
-            self.toasts.iter().any(|t| t.id == *id) || self.history.iter().any(|h| h.id == *id)
-        });
-        // y 动画同理：toasts/history 都不存在的清掉。
-        self.y_anim.retain(|id, _| {
-            self.toasts.iter().any(|t| t.id == *id) || self.history.iter().any(|h| h.id == *id)
-        });
-        // 自动收起到期：走正常离开动画，只收浮动卡，历史保留；
+        // 实测高度/y 动画只保留还存在的条目，防 map 无限涨（量级小，直接查）。
+        self.card_h
+            .retain(|id, _| self.items.iter().any(|n| n.id == *id));
+        self.y_anim
+            .retain(|id, _| self.items.iter().any(|n| n.id == *id));
+        // 自动收起到期：走正常退场，只收浮动卡，列表数据保留；
         // 列表开着时跳过（deadline 自然过期不管它）
         let expired: Vec<u64> = if self.center_open {
             Vec::new()
         } else {
-            self.toasts
+            self.items
                 .iter()
-                .filter(|t| t.leaving_since.is_none() && t.collapse_at.is_some_and(|at| at <= now))
-                .map(|t| t.id)
+                .filter(|n| {
+                    n.on_screen
+                        && n.leaving_since.is_none()
+                        && n.collapse_at.is_some_and(|at| at <= now)
+                })
+                .map(|n| n.id)
                 .collect()
         };
         for id in expired {
-            self.dismiss_toast(id);
+            self.dismiss(id);
             needs_repaint = true;
         }
-        let has_anim = self.toasts.iter().any(|t| {
-            t.leaving_since.is_some()
-                || now.duration_since(t.created) < Duration::from_millis(400)
-                || t.progress.is_some_and(|p| p < 0.999)
+        let has_anim = self.items.iter().any(|n| {
+            n.leaving_since.is_some()
+                || n.source.is_some()
+                || now.duration_since(n.created) < Duration::from_millis(400)
+                || n.progress.is_some_and(|p| p < 0.999)
         });
         if has_anim || needs_repaint {
             ctx.request_repaint_after(Duration::from_millis(16));
-        } else if !self.toasts.is_empty() {
-            // 常驻 toast 无动画时仍需偶尔重绘以响应 hover
+        } else if !self.items.is_empty() {
+            // 常驻通知无动画时仍需偶尔重绘以响应 hover
             ctx.request_repaint_after(Duration::from_millis(500));
         }
         // 有未到期的自动收起则准时唤醒（精度±500ms 内可接受，不另起 timer）
         if let Some(wait) = self
-            .toasts
+            .items
             .iter()
-            .filter(|t| t.leaving_since.is_none())
-            .filter_map(|t| t.collapse_at)
+            .filter(|n| n.leaving_since.is_none())
+            .filter_map(|n| n.collapse_at)
             .filter(|at| *at > now)
             .min()
             .and_then(|at| at.checked_duration_since(now))
@@ -308,7 +326,7 @@ impl Notifications {
             ctx.request_repaint_after(wait.min(Duration::from_secs(3600)));
         }
         // history 展开时也需动画（兜底：toast 回退也需）以及重排动画
-        if self.center_open && (!self.history.is_empty() || !self.toasts.is_empty()) {
+        if self.center_open && !self.items.is_empty() {
             ctx.request_repaint_after(Duration::from_millis(16));
         }
         // 列表关闭退场动画进行中也需重绘

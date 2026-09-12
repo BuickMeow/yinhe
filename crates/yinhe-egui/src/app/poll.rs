@@ -72,53 +72,25 @@ impl App {
                             .file_name()
                             .and_then(|n| n.to_str())
                             .unwrap_or(&path);
-                        if self
-                            .notifications
-                            .has_progress(crate::widgets::toast::LOADING_PROGRESS_ID)
-                            && !self
-                                .notifications
-                                .is_leaving(crate::widgets::toast::LOADING_PROGRESS_ID)
-                        {
-                            self.notifications.complete_progress(
-                                crate::widgets::toast::LOADING_PROGRESS_ID,
-                                crate::widgets::toast::ToastKind::Success,
-                                "MIDI加载完成",
-                                fname.to_string(),
-                            );
-                            // 进度条已满隐藏，label 改为加载耗时
-                            if let Some(d) = self.file_loader.load_elapsed() {
-                                self.notifications.update_progress(
-                                    crate::widgets::toast::LOADING_PROGRESS_ID,
-                                    1.0,
-                                    format_load_duration(d),
-                                );
-                            }
-                        } else {
-                            self.notifications
-                                .prune_history(crate::widgets::toast::LOADING_PROGRESS_ID);
-                            self.notifications
-                                .success("MIDI加载完成", fname.to_string());
-                        }
+                        // 完成卡 detail 覆盖为加载耗时
+                        let detail = self.file_loader.load_elapsed().map(format_load_duration);
+                        self.notifications.finish_progress(
+                            crate::widgets::toast::LOADING_PROGRESS_ID,
+                            crate::widgets::toast::ProgressOutcome::Completed,
+                            "MIDI加载完成",
+                            fname.to_string(),
+                            detail,
+                        );
                     }
                     Err(msg) => {
                         self.load_error = Some(msg.clone());
-                        if self
-                            .notifications
-                            .has_progress(crate::widgets::toast::LOADING_PROGRESS_ID)
-                            && !self
-                                .notifications
-                                .is_leaving(crate::widgets::toast::LOADING_PROGRESS_ID)
-                        {
-                            self.notifications.fail_progress(
-                                crate::widgets::toast::LOADING_PROGRESS_ID,
-                                "打开失败",
-                                msg.clone(),
-                            );
-                        } else {
-                            self.notifications
-                                .prune_history(crate::widgets::toast::LOADING_PROGRESS_ID);
-                            self.notifications.error("打开失败", msg);
-                        }
+                        self.notifications.finish_progress(
+                            crate::widgets::toast::LOADING_PROGRESS_ID,
+                            crate::widgets::toast::ProgressOutcome::Failed,
+                            "打开失败",
+                            msg,
+                            None,
+                        );
                     }
                 }
             }
@@ -208,74 +180,36 @@ impl App {
                     {
                         self.audio_settings.save();
                     }
-                    if self
-                        .notifications
-                        .has_progress(crate::widgets::toast::LOADING_PROGRESS_ID)
-                        && !self
-                            .notifications
-                            .is_leaving(crate::widgets::toast::LOADING_PROGRESS_ID)
-                    {
-                        self.notifications.complete_progress(
-                            crate::widgets::toast::LOADING_PROGRESS_ID,
-                            crate::widgets::toast::ToastKind::Success,
-                            "MIDI加载完成",
-                            file_name.clone(),
-                        );
-                        // 进度条已满隐藏，label 改为加载耗时
-                        if let Some(d) = self.file_loader.load_elapsed() {
-                            self.notifications.update_progress(
-                                crate::widgets::toast::LOADING_PROGRESS_ID,
-                                1.0,
-                                format_load_duration(d),
-                            );
-                        }
-                    } else {
-                        self.notifications
-                            .prune_history(crate::widgets::toast::LOADING_PROGRESS_ID);
-                        self.notifications
-                            .success("MIDI加载完成", file_name.clone());
-                    }
+                    // 完成卡 detail 覆盖为加载耗时
+                    let detail = self.file_loader.load_elapsed().map(format_load_duration);
+                    self.notifications.finish_progress(
+                        crate::widgets::toast::LOADING_PROGRESS_ID,
+                        crate::widgets::toast::ProgressOutcome::Completed,
+                        "MIDI加载完成",
+                        file_name.clone(),
+                        detail,
+                    );
                 } else {
                     let msg = t!("file_dialog.open_failed", name = file_name).to_string();
                     self.load_error = Some(msg.clone());
-                    if self
-                        .notifications
-                        .has_progress(crate::widgets::toast::LOADING_PROGRESS_ID)
-                        && !self
-                            .notifications
-                            .is_leaving(crate::widgets::toast::LOADING_PROGRESS_ID)
-                    {
-                        self.notifications.fail_progress(
-                            crate::widgets::toast::LOADING_PROGRESS_ID,
-                            "打开失败",
-                            msg.clone(),
-                        );
-                    } else {
-                        self.notifications
-                            .prune_history(crate::widgets::toast::LOADING_PROGRESS_ID);
-                        self.notifications.error("打开失败", msg);
-                    }
+                    self.notifications.finish_progress(
+                        crate::widgets::toast::LOADING_PROGRESS_ID,
+                        crate::widgets::toast::ProgressOutcome::Failed,
+                        "打开失败",
+                        msg,
+                        None,
+                    );
                 }
             }
             LoadResult::ArchiveError(msg) => {
                 self.load_error = Some(msg.clone());
-                if self
-                    .notifications
-                    .has_progress(crate::widgets::toast::LOADING_PROGRESS_ID)
-                    && !self
-                        .notifications
-                        .is_leaving(crate::widgets::toast::LOADING_PROGRESS_ID)
-                {
-                    self.notifications.fail_progress(
-                        crate::widgets::toast::LOADING_PROGRESS_ID,
-                        "打开失败",
-                        msg.clone(),
-                    );
-                } else {
-                    self.notifications
-                        .prune_history(crate::widgets::toast::LOADING_PROGRESS_ID);
-                    self.notifications.error("打开失败", msg);
-                }
+                self.notifications.finish_progress(
+                    crate::widgets::toast::LOADING_PROGRESS_ID,
+                    crate::widgets::toast::ProgressOutcome::Failed,
+                    "打开失败",
+                    msg,
+                    None,
+                );
             }
             // UI 层 poll_loading 已把这两个变体转换为弹框状态（返回 NotReady），
             // 这里实际不会收到，空分支只是保证 match 穷尽。
@@ -305,38 +239,13 @@ impl App {
             } else {
                 None
             };
-            let (kind, title) = (crate::widgets::toast::ToastKind::Success, "工程文件已保存");
-            if self
-                .notifications
-                .has_progress(crate::widgets::toast::SAVE_PROGRESS_ID)
-                && !self
-                    .notifications
-                    .is_leaving(crate::widgets::toast::SAVE_PROGRESS_ID)
-            {
-                if let Some(name) = saved_name.clone() {
-                    self.notifications.complete_progress(
-                        crate::widgets::toast::SAVE_PROGRESS_ID,
-                        kind,
-                        title,
-                        name,
-                    );
-                } else {
-                    self.notifications.complete_progress(
-                        crate::widgets::toast::SAVE_PROGRESS_ID,
-                        kind,
-                        title,
-                        "",
-                    );
-                }
-            } else if let Some(name) = saved_name {
-                self.notifications
-                    .prune_history(crate::widgets::toast::SAVE_PROGRESS_ID);
-                self.notifications.success("工程文件已保存", name);
-            } else {
-                self.notifications
-                    .prune_history(crate::widgets::toast::SAVE_PROGRESS_ID);
-                self.notifications.success("工程文件已保存", "");
-            }
+            self.notifications.finish_progress(
+                crate::widgets::toast::SAVE_PROGRESS_ID,
+                crate::widgets::toast::ProgressOutcome::Completed,
+                "工程文件已保存",
+                saved_name.unwrap_or_default(),
+                None,
+            );
             // If there's a deferred action, execute it now
             if self.pending_unsaved.is_some() {
                 let ctx = egui::Context::default();
@@ -368,64 +277,32 @@ impl App {
                             elapsed_secs: elapsed,
                             overall_speed: speed,
                         });
-                        if self
-                            .notifications
-                            .has_progress(crate::widgets::toast::EXPORT_PROGRESS_ID)
-                            && !self
-                                .notifications
-                                .is_leaving(crate::widgets::toast::EXPORT_PROGRESS_ID)
-                        {
-                            let acted = self.notifications.complete_progress(
-                                crate::widgets::toast::EXPORT_PROGRESS_ID,
-                                crate::widgets::toast::ToastKind::Success,
-                                "音频导出完成",
-                                format!("{} ({:.1}s, {:.1}x)", fname, elapsed, speed),
-                            );
-                            // 可操作卡：打开文件夹（图标按钮，hover 显示 label；计时自动升为可操作档）
-                            self.notifications.set_action_with_icon(
-                                acted,
-                                "打开文件夹",
-                                crate::widgets::toast::model::ToastActionKind::RevealInFolder(
-                                    std::path::PathBuf::from(&path),
-                                ),
-                                Some(egui_material_icons::icons::ICON_FOLDER_OPEN),
-                            );
-                        } else {
-                            self.notifications
-                                .prune_history(crate::widgets::toast::EXPORT_PROGRESS_ID);
-                            let nid = self.notifications.success(
-                                "导出完成",
-                                format!("{} ({:.1}s, {:.1}x)", fname, elapsed, speed),
-                            );
-                            self.notifications.set_action_with_icon(
-                                nid,
-                                "打开文件夹",
-                                crate::widgets::toast::model::ToastActionKind::RevealInFolder(
-                                    std::path::PathBuf::from(&path),
-                                ),
-                                Some(egui_material_icons::icons::ICON_FOLDER_OPEN),
-                            );
-                        }
+                        let acted = self.notifications.finish_progress(
+                            crate::widgets::toast::EXPORT_PROGRESS_ID,
+                            crate::widgets::toast::ProgressOutcome::Completed,
+                            "音频导出完成",
+                            format!("{} ({:.1}s, {:.1}x)", fname, elapsed, speed),
+                            None,
+                        );
+                        // 可操作卡：打开文件夹（图标按钮，hover 显示 label；计时自动升为可操作档）
+                        self.notifications.set_action_with_icon(
+                            acted,
+                            "打开文件夹",
+                            crate::widgets::toast::model::ToastActionKind::RevealInFolder(
+                                std::path::PathBuf::from(&path),
+                            ),
+                            Some(egui_material_icons::icons::ICON_FOLDER_OPEN),
+                        );
                     }
                     Err(e) => {
                         self.load_error = Some(e.clone());
-                        if self
-                            .notifications
-                            .has_progress(crate::widgets::toast::EXPORT_PROGRESS_ID)
-                            && !self
-                                .notifications
-                                .is_leaving(crate::widgets::toast::EXPORT_PROGRESS_ID)
-                        {
-                            self.notifications.fail_progress(
-                                crate::widgets::toast::EXPORT_PROGRESS_ID,
-                                "导出失败",
-                                e.clone(),
-                            );
-                        } else {
-                            self.notifications
-                                .prune_history(crate::widgets::toast::EXPORT_PROGRESS_ID);
-                            self.notifications.error("导出失败", e);
-                        }
+                        self.notifications.finish_progress(
+                            crate::widgets::toast::EXPORT_PROGRESS_ID,
+                            crate::widgets::toast::ProgressOutcome::Failed,
+                            "导出失败",
+                            e,
+                            None,
+                        );
                     }
                 }
             }
@@ -443,10 +320,12 @@ impl App {
                     .and_then(|n| n.to_str())
                     .unwrap_or("导出")
                     .to_string();
-                let aborted = self.notifications.abort_progress(
+                let aborted = self.notifications.finish_progress(
                     crate::widgets::toast::EXPORT_PROGRESS_ID,
+                    crate::widgets::toast::ProgressOutcome::Aborted,
                     "已中止",
                     fname,
+                    None,
                 );
                 // open_containing_folder 对不存在路径容错（静默忽略），直接设按钮
                 if let Some(p) = out_path {

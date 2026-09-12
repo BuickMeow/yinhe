@@ -1,10 +1,56 @@
 use std::sync::{Arc, atomic::AtomicBool};
+use std::time::{Duration, Instant};
 
 use super::super::kind::ToastKind;
+use super::super::model::{ProgressOutcome, ProgressSource};
 use super::*;
 
 fn ctx() -> egui::Context {
     egui::Context::default()
+}
+
+/// 测试用进度源：固定标题与进度。
+struct FakeSource {
+    title: &'static str,
+    fraction: f32,
+}
+
+impl FakeSource {
+    fn new(title: &'static str) -> Self {
+        Self {
+            title,
+            fraction: 0.5,
+        }
+    }
+
+    fn at(title: &'static str, fraction: f32) -> Self {
+        Self { title, fraction }
+    }
+}
+
+impl ProgressSource for FakeSource {
+    fn title(&self) -> String {
+        self.title.into()
+    }
+    fn message(&self) -> String {
+        String::new()
+    }
+    fn fraction(&self) -> f32 {
+        self.fraction
+    }
+    fn detail(&self) -> String {
+        String::new()
+    }
+    fn cancel(&self) -> Option<Arc<AtomicBool>> {
+        None
+    }
+}
+
+fn find(n: &Notifications, id: u64) -> &Notification {
+    match n.items.iter().find(|x| x.id == id) {
+        Some(x) => x,
+        None => panic!("notification {id} missing"),
+    }
 }
 
 #[test]
@@ -13,8 +59,8 @@ fn push_classifies_collapse_tier() {
     n.set_collapse_durations(Some(5), Some(60));
     let ok = n.success("t", "m");
     let err = n.error("t", "m");
-    let t_ok = n.toasts.iter().find(|t| t.id == ok).unwrap();
-    let t_err = n.toasts.iter().find(|t| t.id == err).unwrap();
+    let t_ok = find(&n, ok);
+    let t_err = find(&n, err);
     assert!(t_ok.collapse_at.is_some());
     assert!(t_err.collapse_at.is_some());
     // 可操作档晚于完成档
@@ -22,77 +68,54 @@ fn push_classifies_collapse_tier() {
 }
 
 #[test]
+fn single_source_of_truth_has_no_duplicate_history() {
+    let mut n = Notifications::new();
+    let id = n.success("t", "m");
+    // 浮动卡与列表是同一份数据：只有一条
+    assert_eq!(n.items.len(), 1);
+    assert_eq!(n.items[0].id, id);
+    assert!(n.items[0].on_screen);
+}
+
+#[test]
 fn never_means_sticky() {
     let mut n = Notifications::new();
     n.set_collapse_durations(None, None);
     let id = n.success("t", "m");
-    assert!(
-        n.toasts
-            .iter()
-            .find(|t| t.id == id)
-            .unwrap()
-            .collapse_at
-            .is_none()
-    );
+    assert!(find(&n, id).collapse_at.is_none());
     n.tick(&ctx());
-    assert!(
-        n.toasts
-            .iter()
-            .find(|t| t.id == id)
-            .unwrap()
-            .leaving_since
-            .is_none()
-    );
+    assert!(find(&n, id).leaving_since.is_none());
 }
 
 #[test]
-fn expired_toast_starts_leaving_but_keeps_history() {
+fn expired_toast_starts_leaving_but_keeps_entry() {
     let mut n = Notifications::new();
     n.set_collapse_durations(Some(0), Some(0));
     let id = n.success("t", "m");
     // 0 秒档下帧即到期
     std::thread::sleep(Duration::from_millis(2));
     n.tick(&ctx());
-    let t = n.toasts.iter().find(|t| t.id == id).unwrap();
-    assert!(t.leaving_since.is_some());
-    assert!(n.history.iter().any(|h| h.id == id));
+    assert!(find(&n, id).leaving_since.is_some());
+    // 退场播完翻 off-screen，条目仍在列表
+    std::thread::sleep(Duration::from_millis(330));
+    n.tick(&ctx());
+    assert!(!find(&n, id).on_screen);
+    assert_eq!(n.items.len(), 1);
 }
 
 #[test]
 fn ensure_does_not_collapse_running_task() {
-    use std::sync::Arc;
-    struct S;
-    impl super::super::model::ProgressSource for S {
-        fn title(&self) -> String {
-            "t".into()
-        }
-        fn message(&self) -> String {
-            String::new()
-        }
-        fn fraction(&self) -> f32 {
-            0.5
-        }
-        fn detail(&self) -> String {
-            String::new()
-        }
-        fn cancel(&self) -> Option<Arc<AtomicBool>> {
-            None
-        }
-    }
     let mut n = Notifications::new();
     n.set_collapse_durations(Some(0), Some(0));
-    n.ensure_progress(LOADING_PROGRESS_ID, ToastKind::Info, Arc::new(S));
+    n.ensure_progress(
+        LOADING_PROGRESS_ID,
+        ToastKind::Info,
+        Arc::new(FakeSource::new("t")),
+    );
     std::thread::sleep(Duration::from_millis(2));
     n.tick(&ctx());
     // 进行中不计时，不会离开
-    assert!(
-        n.toasts
-            .iter()
-            .find(|t| t.id == LOADING_PROGRESS_ID)
-            .unwrap()
-            .leaving_since
-            .is_none()
-    );
+    assert!(find(&n, LOADING_PROGRESS_ID).leaving_since.is_none());
 }
 
 #[test]
@@ -100,19 +123,18 @@ fn hover_pauses_collapse_deadline() {
     let mut n = Notifications::new();
     n.set_collapse_durations(Some(60), Some(60));
     let id = n.success("t", "m");
-    let before = n.toasts.iter().find(|t| t.id == id).unwrap().collapse_at;
+    let before = find(&n, id).collapse_at;
     n.tick(&ctx()); // 首 tick 只记录 last_tick，不顺延
     std::thread::sleep(Duration::from_millis(5));
-    n.toasts.iter_mut().find(|t| t.id == id).unwrap().hovered = true;
+    n.items.iter_mut().find(|x| x.id == id).unwrap().hovered = true;
     n.tick(&ctx());
-    let after = n.toasts.iter().find(|t| t.id == id).unwrap().collapse_at;
+    let after = find(&n, id).collapse_at;
     assert!(after.unwrap() > before.unwrap());
     // 取消悬停：deadline 冻结不再顺延
-    n.toasts.iter_mut().find(|t| t.id == id).unwrap().hovered = false;
+    n.items.iter_mut().find(|x| x.id == id).unwrap().hovered = false;
     std::thread::sleep(Duration::from_millis(2));
     n.tick(&ctx());
-    let still = n.toasts.iter().find(|t| t.id == id).unwrap().collapse_at;
-    assert_eq!(still, after);
+    assert_eq!(find(&n, id).collapse_at, after);
 }
 
 #[test]
@@ -120,114 +142,95 @@ fn hover_does_not_extend_leaving_toast() {
     let mut n = Notifications::new();
     n.set_collapse_durations(Some(60), Some(60));
     let id = n.success("t", "m");
-    n.dismiss_toast(id);
-    n.toasts.iter_mut().find(|t| t.id == id).unwrap().hovered = true;
-    let before = n.toasts.iter().find(|t| t.id == id).unwrap().collapse_at;
+    n.dismiss(id);
+    n.items.iter_mut().find(|x| x.id == id).unwrap().hovered = true;
+    let before = find(&n, id).collapse_at;
     n.tick(&ctx());
     n.tick(&ctx());
-    let after = n.toasts.iter().find(|t| t.id == id).unwrap().collapse_at;
-    assert_eq!(after, before);
+    assert_eq!(find(&n, id).collapse_at, before);
 }
 
+/// 完成默认走完成档；导出类卡由 set_action 升为可操作档（不再硬编码任务身份）。
 #[test]
-fn complete_export_uses_actionable_tier() {
+fn action_button_escalates_tier() {
     let mut n = Notifications::new();
     n.set_collapse_durations(Some(5), Some(60));
     n.ensure_progress(
         EXPORT_PROGRESS_ID,
         ToastKind::Info,
-        Arc::new(crate::file_loader::LoadToastSource {
-            progress: yinhe_editor_core::progress::new_shared(),
-            cancel: None,
-        }),
+        Arc::new(FakeSource::new("正在导出")),
     );
-    n.complete_progress(EXPORT_PROGRESS_ID, ToastKind::Success, "done", "f");
-    let t = n
-        .toasts
-        .iter()
-        .find(|t| t.id == EXPORT_PROGRESS_ID)
-        .unwrap();
-    // 60 秒档：剩余远大于 5 秒档上限
+    n.finish_progress(
+        EXPORT_PROGRESS_ID,
+        ProgressOutcome::Completed,
+        "done",
+        "f",
+        None,
+    );
+    let before = find(&n, EXPORT_PROGRESS_ID).collapse_at.unwrap();
+    assert!(before < Instant::now() + Duration::from_secs(10));
+    // 挂操作按钮 → 自动升为可操作档
+    n.set_action_with_icon(
+        EXPORT_PROGRESS_ID,
+        "打开文件夹",
+        super::super::model::ToastActionKind::RevealInFolder(std::path::PathBuf::new()),
+        None,
+    );
+    let after = find(&n, EXPORT_PROGRESS_ID).collapse_at.unwrap();
     assert!(
-        t.collapse_at.unwrap() > Instant::now() + Duration::from_secs(50),
-        "export complete should use actionable tier"
+        after > Instant::now() + Duration::from_secs(50),
+        "actionable card should use actionable tier"
     );
 }
 
 #[test]
-fn disabled_push_does_not_create_card_or_history() {
+fn disabled_push_does_not_create_entry() {
     let mut n = Notifications::new();
     n.set_enabled(false);
-    let hist_before = n.history.len();
     let id = n.success("t", "m");
     assert_eq!(id, 0);
-    assert!(n.toasts.is_empty());
-    assert_eq!(n.history.len(), hist_before);
-    n.info("a", "b");
-    n.warning("a", "b");
-    n.error("a", "b");
-    assert!(n.toasts.is_empty());
-    assert_eq!(n.history.len(), hist_before);
+    assert!(n.items.is_empty());
+    n.push(ToastKind::Info, "a", "b");
+    n.push(ToastKind::Warning, "a", "b");
+    n.push(ToastKind::Error, "a", "b");
+    assert!(n.items.is_empty());
 }
 
 #[test]
 fn disabled_ensure_does_not_create_progress_card() {
-    use std::sync::Arc;
-    struct S;
-    impl super::super::model::ProgressSource for S {
-        fn title(&self) -> String {
-            "t".into()
-        }
-        fn message(&self) -> String {
-            String::new()
-        }
-        fn fraction(&self) -> f32 {
-            0.5
-        }
-        fn detail(&self) -> String {
-            String::new()
-        }
-        fn cancel(&self) -> Option<Arc<AtomicBool>> {
-            None
-        }
-    }
     let mut n = Notifications::new();
     n.set_enabled(false);
-    n.ensure_progress(LOADING_PROGRESS_ID, ToastKind::Info, Arc::new(S));
-    assert!(!n.has_progress(LOADING_PROGRESS_ID));
-    assert!(n.toasts.is_empty());
-    assert!(n.history.is_empty());
-    // complete/fail 回退也不建卡
-    n.complete_progress(LOADING_PROGRESS_ID, ToastKind::Success, "d", "m");
-    n.fail_progress(SAVE_PROGRESS_ID, "f", "m");
-    assert!(n.toasts.is_empty());
-    assert!(n.history.is_empty());
+    n.ensure_progress(
+        LOADING_PROGRESS_ID,
+        ToastKind::Info,
+        Arc::new(FakeSource::new("t")),
+    );
+    assert!(n.items.is_empty());
+    // finish 回退也不建卡
+    n.finish_progress(
+        LOADING_PROGRESS_ID,
+        ProgressOutcome::Completed,
+        "d",
+        "m",
+        None,
+    );
+    n.finish_progress(SAVE_PROGRESS_ID, ProgressOutcome::Failed, "f", "m", None);
+    assert!(n.items.is_empty());
 }
 
 #[test]
-fn disabled_tick_clears_toasts_but_keeps_history() {
+fn disabled_tick_clears_cards_but_keeps_entries() {
     let mut n = Notifications::new();
     let id = n.success("t", "m");
-    assert!(n.toasts.iter().any(|t| t.id == id));
+    assert!(find(&n, id).on_screen);
     n.set_enabled(false);
-    // 关闭走正常退场：卡仍在但 leaving 已起算，历史保留
-    assert!(!n.toasts.is_empty());
-    assert!(
-        n.toasts
-            .iter()
-            .find(|t| t.id == id)
-            .unwrap()
-            .leaving_since
-            .is_some()
-    );
+    // 关闭走正常退场：卡仍在但 leaving 已起算，条目保留
+    assert!(find(&n, id).leaving_since.is_some());
     n.tick(&ctx());
-    assert!(!n.toasts.is_empty());
-    assert!(n.history.iter().any(|h| h.id == id));
-    // 退场动画播完后卡才移除
     std::thread::sleep(Duration::from_millis(330));
     n.tick(&ctx());
-    assert!(n.toasts.is_empty());
-    assert!(n.history.iter().any(|h| h.id == id));
+    assert!(!find(&n, id).on_screen);
+    assert_eq!(n.items.len(), 1);
 }
 
 #[test]
@@ -235,283 +238,191 @@ fn reenable_restores_normal_push() {
     let mut n = Notifications::new();
     n.set_enabled(false);
     n.success("t", "m");
-    assert!(n.toasts.is_empty());
+    assert!(n.items.is_empty());
     n.set_enabled(true);
     let id = n.success("t", "m");
-    assert!(n.toasts.iter().any(|t| t.id == id));
-    assert!(n.history.iter().any(|h| h.id == id));
+    assert!(find(&n, id).on_screen);
     n.tick(&ctx());
-    assert!(n.toasts.iter().any(|t| t.id == id));
+    assert!(find(&n, id).on_screen);
 }
 
 #[test]
-fn collapsed_ensure_updates_history_without_card() {
-    use std::sync::Arc;
-    struct S(&'static str);
-    impl super::super::model::ProgressSource for S {
-        fn title(&self) -> String {
-            self.0.into()
-        }
-        fn message(&self) -> String {
-            String::new()
-        }
-        fn fraction(&self) -> f32 {
-            0.5
-        }
-        fn detail(&self) -> String {
-            String::new()
-        }
-        fn cancel(&self) -> Option<Arc<AtomicBool>> {
-            None
-        }
-    }
+fn collapsed_ensure_updates_source_without_card() {
     let mut n = Notifications::new();
-    n.ensure_progress(LOADING_PROGRESS_ID, ToastKind::Info, Arc::new(S("v1")));
-    assert!(n.has_progress(LOADING_PROGRESS_ID));
+    n.ensure_progress(
+        LOADING_PROGRESS_ID,
+        ToastKind::Info,
+        Arc::new(FakeSource::new("v1")),
+    );
+    assert!(find(&n, LOADING_PROGRESS_ID).on_screen);
     // 模拟用户点 X 收起进行中任务
-    n.collapsed.insert(LOADING_PROGRESS_ID);
-    n.dismiss_toast(LOADING_PROGRESS_ID);
+    n.dismiss(LOADING_PROGRESS_ID);
     std::thread::sleep(Duration::from_millis(330));
     n.tick(&ctx());
-    assert!(!n.has_progress(LOADING_PROGRESS_ID));
-    // 收起后 ensure 不建卡，只更新历史
-    n.ensure_progress(LOADING_PROGRESS_ID, ToastKind::Info, Arc::new(S("v2")));
-    assert!(!n.has_progress(LOADING_PROGRESS_ID));
-    let Some(&hist_id) = n.live_hist.get(&LOADING_PROGRESS_ID) else {
-        panic!("live mapping missing");
-    };
-    let Some(h) = n.history.iter().find(|h| h.id == hist_id) else {
-        panic!("live history missing");
-    };
-    // 历史渲染走 live source，标题应为新任务
-    let Some(src) = h.source.as_ref() else {
+    assert!(!find(&n, LOADING_PROGRESS_ID).on_screen);
+    // 收起后 ensure 不重建卡，只更新数据
+    n.ensure_progress(
+        LOADING_PROGRESS_ID,
+        ToastKind::Info,
+        Arc::new(FakeSource::new("v2")),
+    );
+    assert!(!find(&n, LOADING_PROGRESS_ID).on_screen);
+    let x = find(&n, LOADING_PROGRESS_ID);
+    assert!(!x.on_screen);
+    let Some(src) = x.source.as_ref() else {
         panic!("live source missing");
     };
     assert_eq!(src.title(), "v2");
-    // 任务结束清收起标记，下个任务恢复建卡
-    n.prune_history(LOADING_PROGRESS_ID);
-    n.ensure_progress(LOADING_PROGRESS_ID, ToastKind::Info, Arc::new(S("v3")));
-    assert!(n.has_progress(LOADING_PROGRESS_ID));
+    // 任务结束：离屏条目重新弹出，下个任务恢复建卡
+    n.finish_progress(
+        LOADING_PROGRESS_ID,
+        ProgressOutcome::Completed,
+        "done",
+        "",
+        None,
+    );
+    assert!(find(&n, LOADING_PROGRESS_ID).on_screen);
+    n.ensure_progress(
+        LOADING_PROGRESS_ID,
+        ToastKind::Info,
+        Arc::new(FakeSource::new("v3")),
+    );
+    assert!(find(&n, LOADING_PROGRESS_ID).on_screen);
+    assert_eq!(
+        find(&n, LOADING_PROGRESS_ID)
+            .source
+            .as_ref()
+            .unwrap()
+            .title(),
+        "v3"
+    );
 }
 
 #[test]
-fn prune_history_clears_frozen_entry_and_collapsed() {
-    use std::sync::Arc;
-    struct S;
-    impl super::super::model::ProgressSource for S {
-        fn title(&self) -> String {
-            "t".into()
-        }
-        fn message(&self) -> String {
-            String::new()
-        }
-        fn fraction(&self) -> f32 {
-            0.5
-        }
-        fn detail(&self) -> String {
-            String::new()
-        }
-        fn cancel(&self) -> Option<Arc<AtomicBool>> {
-            None
-        }
-    }
+fn prune_overflow_keeps_screen_cards() {
     let mut n = Notifications::new();
-    n.ensure_progress(EXPORT_PROGRESS_ID, ToastKind::Info, Arc::new(S));
-    n.collapsed.insert(EXPORT_PROGRESS_ID);
-    let Some(&hist_id) = n.live_hist.get(&EXPORT_PROGRESS_ID) else {
-        panic!("live mapping missing");
-    };
-    assert!(n.history.iter().any(|h| h.id == hist_id));
-    n.prune_history(EXPORT_PROGRESS_ID);
-    assert!(!n.history.iter().any(|h| h.id == hist_id));
-    assert!(!n.collapsed.contains(&EXPORT_PROGRESS_ID));
-    assert!(!n.live_hist.contains_key(&EXPORT_PROGRESS_ID));
-}
-
-#[test]
-fn fixed_id_two_runs_keep_separate_done_history_and_single_float() {
-    use std::sync::Arc;
-    struct S(&'static str);
-    impl super::super::model::ProgressSource for S {
-        fn title(&self) -> String {
-            self.0.into()
-        }
-        fn message(&self) -> String {
-            String::new()
-        }
-        fn fraction(&self) -> f32 {
-            0.5
-        }
-        fn detail(&self) -> String {
-            String::new()
-        }
-        fn cancel(&self) -> Option<Arc<AtomicBool>> {
-            None
-        }
+    n.max_history = 2;
+    let keep = n.success("keep", "m");
+    for i in 0..3 {
+        let id = n.success(format!("a{i}"), "m");
+        n.dismiss(id);
     }
-    let mut n = Notifications::new();
-    // 第一轮
-    n.ensure_progress(LOADING_PROGRESS_ID, ToastKind::Info, Arc::new(S("v1")));
-    assert_eq!(
-        n.toasts
-            .iter()
-            .filter(|t| t.id == LOADING_PROGRESS_ID)
-            .count(),
-        1
-    );
-    n.complete_progress(LOADING_PROGRESS_ID, ToastKind::Success, "done1", "a.mid");
-    assert_eq!(
-        n.toasts
-            .iter()
-            .filter(|t| t.id == LOADING_PROGRESS_ID)
-            .count(),
-        1
-    );
-    assert!(!n.live_hist.contains_key(&LOADING_PROGRESS_ID));
-    // 第二轮：浮动卡复用同一槽位，历史新建一条
-    n.ensure_progress(LOADING_PROGRESS_ID, ToastKind::Info, Arc::new(S("v2")));
-    assert_eq!(
-        n.toasts
-            .iter()
-            .filter(|t| t.id == LOADING_PROGRESS_ID)
-            .count(),
-        1
-    );
-    assert_eq!(n.toasts.len(), 1);
-    n.complete_progress(LOADING_PROGRESS_ID, ToastKind::Success, "done2", "b.mid");
-    // 浮动卡始终一张，历史两条独立 done
-    assert_eq!(
-        n.toasts
-            .iter()
-            .filter(|t| t.id == LOADING_PROGRESS_ID)
-            .count(),
-        1
-    );
-    assert_eq!(n.history.len(), 2);
-    assert_ne!(n.history[0].id, n.history[1].id);
-    assert_eq!(n.history[0].title, "done1");
-    assert_eq!(n.history[1].title, "done2");
-    for h in &n.history {
-        assert_eq!(h.progress, Some(1.0));
-        assert_eq!(h.progress_label, "已完成");
-        assert!(h.source.is_none());
-    }
-    // prune 无 live 可清，不碰已封存
-    n.prune_history(LOADING_PROGRESS_ID);
-    assert_eq!(n.history.len(), 2);
-    // 新一轮 live 可被 prune，只清 live
-    n.ensure_progress(LOADING_PROGRESS_ID, ToastKind::Info, Arc::new(S("v3")));
-    assert_eq!(n.history.len(), 3);
-    let Some(&live_id) = n.live_hist.get(&LOADING_PROGRESS_ID) else {
-        panic!("live mapping missing");
-    };
-    n.prune_history(LOADING_PROGRESS_ID);
-    assert_eq!(n.history.len(), 2);
-    assert!(!n.history.iter().any(|h| h.id == live_id));
-    assert_eq!(n.history[0].title, "done1");
-    assert_eq!(n.history[1].title, "done2");
-}
-
-#[test]
-fn abort_progress_in_place_updates_toast_and_history() {
-    use std::sync::Arc;
-    struct S;
-    impl super::super::model::ProgressSource for S {
-        fn title(&self) -> String {
-            "正在导出".into()
-        }
-        fn message(&self) -> String {
-            "渲染中".into()
-        }
-        fn fraction(&self) -> f32 {
-            0.64
-        }
-        fn detail(&self) -> String {
-            "渲染中".into()
-        }
-        fn cancel(&self) -> Option<Arc<AtomicBool>> {
-            None
-        }
-    }
-    let mut n = Notifications::new();
-    n.ensure_progress(EXPORT_PROGRESS_ID, ToastKind::Info, Arc::new(S));
-    // 模拟 stop：中止态
-    n.toasts
-        .iter_mut()
-        .find(|t| t.id == EXPORT_PROGRESS_ID)
-        .unwrap()
-        .cancelling = true;
-    let id = n.abort_progress(EXPORT_PROGRESS_ID, "已中止", "out.wav");
-    assert_eq!(id, EXPORT_PROGRESS_ID);
-    let t = n
-        .toasts
-        .iter()
-        .find(|t| t.id == EXPORT_PROGRESS_ID)
-        .unwrap();
-    assert_eq!(t.kind, ToastKind::Warning);
-    assert_eq!(t.progress, Some(0.64));
-    assert_eq!(t.progress_label, "已中止");
-    assert!(t.source.is_none());
-    assert!(!t.cancelling);
-    assert!(t.collapse_at.is_some());
-    // 历史一任务一条：封存后映射移除，历史里仅一条已中止（小 id，非固定 id）
-    assert!(!n.live_hist.contains_key(&EXPORT_PROGRESS_ID));
-    assert_eq!(n.history.len(), 1);
-    let h = &n.history[0];
-    assert_eq!(h.progress_label, "已中止");
-    assert!(h.source.is_none());
-}
-
-#[test]
-fn abort_progress_rebuilds_when_only_history_exists() {
-    use std::sync::Arc;
-    struct S;
-    impl super::super::model::ProgressSource for S {
-        fn title(&self) -> String {
-            "正在导出".into()
-        }
-        fn message(&self) -> String {
-            String::new()
-        }
-        fn fraction(&self) -> f32 {
-            0.4
-        }
-        fn detail(&self) -> String {
-            String::new()
-        }
-        fn cancel(&self) -> Option<Arc<AtomicBool>> {
-            None
-        }
-    }
-    let mut n = Notifications::new();
-    n.ensure_progress(EXPORT_PROGRESS_ID, ToastKind::Info, Arc::new(S));
-    // 模拟收起后卡被清理，仅历史残留
-    n.collapsed.insert(EXPORT_PROGRESS_ID);
-    n.dismiss_toast(EXPORT_PROGRESS_ID);
     std::thread::sleep(Duration::from_millis(330));
     n.tick(&ctx());
-    assert!(!n.has_progress(EXPORT_PROGRESS_ID));
-    let id = n.abort_progress(EXPORT_PROGRESS_ID, "已中止", "out.wav");
-    assert_eq!(id, EXPORT_PROGRESS_ID);
-    assert!(n.has_progress(EXPORT_PROGRESS_ID));
-    assert!(!n.collapsed.contains(&EXPORT_PROGRESS_ID));
-    let t = n
-        .toasts
-        .iter()
-        .find(|t| t.id == EXPORT_PROGRESS_ID)
-        .unwrap();
-    assert_eq!(t.progress_label, "已中止");
+    assert!(find(&n, keep).on_screen);
+    assert_eq!(n.items.iter().filter(|x| !x.on_screen).count(), 2);
+}
+
+/// 固定 id 复用同一槽位：连续两轮任务原地更新同一条目，不再产生第二条历史。
+#[test]
+fn fixed_id_reuses_single_entry_across_runs() {
+    let mut n = Notifications::new();
+    n.ensure_progress(
+        LOADING_PROGRESS_ID,
+        ToastKind::Info,
+        Arc::new(FakeSource::new("v1")),
+    );
+    assert_eq!(n.items.len(), 1);
+    n.finish_progress(
+        LOADING_PROGRESS_ID,
+        ProgressOutcome::Completed,
+        "done1",
+        "a.mid",
+        None,
+    );
+    // 第二轮：复用同一槽位
+    n.ensure_progress(
+        LOADING_PROGRESS_ID,
+        ToastKind::Info,
+        Arc::new(FakeSource::new("v2")),
+    );
+    assert_eq!(n.items.len(), 1);
+    n.finish_progress(
+        LOADING_PROGRESS_ID,
+        ProgressOutcome::Completed,
+        "done2",
+        "b.mid",
+        None,
+    );
+    assert_eq!(n.items.len(), 1);
+    let x = find(&n, LOADING_PROGRESS_ID);
+    assert_eq!(x.title, "done2");
+    assert_eq!(x.progress, Some(1.0));
+    assert_eq!(x.progress_label, "已完成");
+    assert!(x.source.is_none());
 }
 
 #[test]
-fn abort_progress_falls_back_to_push_when_nothing_exists() {
+fn finish_aborted_snapshots_fraction_in_place() {
     let mut n = Notifications::new();
-    let id = n.abort_progress(EXPORT_PROGRESS_ID, "已中止", "out.wav");
+    n.ensure_progress(
+        EXPORT_PROGRESS_ID,
+        ToastKind::Info,
+        Arc::new(FakeSource::at("正在导出", 0.64)),
+    );
+    // 模拟 stop：中止态
+    n.items
+        .iter_mut()
+        .find(|x| x.id == EXPORT_PROGRESS_ID)
+        .unwrap()
+        .cancelling = true;
+    let id = n.finish_progress(
+        EXPORT_PROGRESS_ID,
+        ProgressOutcome::Aborted,
+        "已中止",
+        "out.wav",
+        None,
+    );
+    assert_eq!(id, EXPORT_PROGRESS_ID);
+    let x = find(&n, EXPORT_PROGRESS_ID);
+    assert_eq!(x.kind, ToastKind::Warning);
+    assert_eq!(x.progress, Some(0.64));
+    assert_eq!(x.progress_label, "已中止");
+    assert!(x.source.is_none());
+    assert!(!x.cancelling);
+    assert!(x.collapse_at.is_some());
+}
+
+#[test]
+fn finish_resurfaces_dismissed_task_card() {
+    let mut n = Notifications::new();
+    n.ensure_progress(
+        EXPORT_PROGRESS_ID,
+        ToastKind::Info,
+        Arc::new(FakeSource::at("正在导出", 0.4)),
+    );
+    // 用户收起后卡退场，仅列表可见
+    n.dismiss(EXPORT_PROGRESS_ID);
+    std::thread::sleep(Duration::from_millis(330));
+    n.tick(&ctx());
+    assert!(!find(&n, EXPORT_PROGRESS_ID).on_screen);
+    let id = n.finish_progress(
+        EXPORT_PROGRESS_ID,
+        ProgressOutcome::Aborted,
+        "已中止",
+        "out.wav",
+        None,
+    );
+    assert_eq!(id, EXPORT_PROGRESS_ID);
+    assert!(find(&n, EXPORT_PROGRESS_ID).on_screen);
+    assert_eq!(find(&n, EXPORT_PROGRESS_ID).progress_label, "已中止");
+}
+
+#[test]
+fn finish_falls_back_to_push_when_entry_missing() {
+    let mut n = Notifications::new();
+    let id = n.finish_progress(
+        EXPORT_PROGRESS_ID,
+        ProgressOutcome::Aborted,
+        "已中止",
+        "out.wav",
+        None,
+    );
     assert_ne!(id, 0);
     assert_ne!(id, EXPORT_PROGRESS_ID);
-    let t = n.toasts.iter().find(|t| t.id == id).unwrap();
-    assert_eq!(t.kind, ToastKind::Warning);
-    assert_eq!(t.title, "已中止");
+    let x = find(&n, id);
+    assert_eq!(x.kind, ToastKind::Warning);
+    assert_eq!(x.title, "已中止");
 }
 
 /// 收起已暂停的卡必须自动 resume（ExportToastSource 级真 flag）。
@@ -527,13 +438,13 @@ fn collapse_paused_task_auto_resumes() {
     let mut n = Notifications::new();
     n.ensure_progress(EXPORT_PROGRESS_ID, ToastKind::Info, src);
     assert!(pause_flag.load(Ordering::Relaxed));
-    // 走与 show_toasts 收起分支同一链路
-    n.collapse_for_dismiss(EXPORT_PROGRESS_ID);
+    // 与 show_toasts 收起分支同链路
+    n.dismiss(EXPORT_PROGRESS_ID);
     assert!(
         !pause_flag.load(Ordering::Relaxed),
         "collapse must resume paused task"
     );
-    assert!(n.collapsed.contains(&EXPORT_PROGRESS_ID));
+    assert!(find(&n, EXPORT_PROGRESS_ID).leaving_since.is_some());
 }
 
 /// 关闭通知总开关必须自动 resume 已暂停任务（否则永停且无 UI 可恢复）。
@@ -565,69 +476,40 @@ fn center_open_skips_auto_collapse() {
     // 列表开着时到期也不收
     n.center_open = true;
     n.tick(&ctx());
-    let Some(t) = n.toasts.iter().find(|t| t.id == id) else {
-        panic!("toast missing");
-    };
-    assert!(t.leaving_since.is_none());
+    assert!(find(&n, id).leaving_since.is_none());
     // 关着时同条件会收（对照）
     n.center_open = false;
     // 关闭边沿本身就会收全部，这里仅断言 leaving 已起算
     n.tick(&ctx());
-    let Some(t) = n.toasts.iter().find(|t| t.id == id) else {
-        panic!("toast missing");
-    };
-    assert!(t.leaving_since.is_some());
+    assert!(find(&n, id).leaving_since.is_some());
 }
 
 #[test]
 fn center_close_edge_dismisses_all() {
-    use std::sync::Arc;
-    struct S;
-    impl super::super::model::ProgressSource for S {
-        fn title(&self) -> String {
-            "t".into()
-        }
-        fn message(&self) -> String {
-            String::new()
-        }
-        fn fraction(&self) -> f32 {
-            0.5
-        }
-        fn detail(&self) -> String {
-            String::new()
-        }
-        fn cancel(&self) -> Option<Arc<AtomicBool>> {
-            None
-        }
-    }
     let mut n = Notifications::new();
     n.set_collapse_durations(None, None);
     let static_id = n.success("s", "m");
-    n.ensure_progress(EXPORT_PROGRESS_ID, ToastKind::Info, Arc::new(S));
+    n.ensure_progress(
+        EXPORT_PROGRESS_ID,
+        ToastKind::Info,
+        Arc::new(FakeSource::new("t")),
+    );
     // 开列表：先 tick 一次把 prev 对齐为 true
     n.center_open = true;
     n.tick(&ctx());
     assert!(
-        n.toasts.iter().all(|t| t.leaving_since.is_none()),
+        n.items.iter().all(|x| x.leaving_since.is_none()),
         "open list must not dismiss"
     );
-    // 关列表边沿：全部 leaving（含进行中；collapsed 顺带标记防复活）
+    // 关列表边沿：全部 leaving（含进行中；收起自动 resume 防卡死）
     n.center_open = false;
     n.tick(&ctx());
-    for t in &n.toasts {
-        assert!(
-            t.leaving_since.is_some(),
-            "close edge must dismiss id={}",
-            t.id
-        );
-    }
-    let Some(st) = n.toasts.iter().find(|t| t.id == static_id) else {
-        panic!("static toast missing");
-    };
-    assert!(st.leaving_since.is_some());
-    assert!(n.collapsed.contains(&EXPORT_PROGRESS_ID));
-    // show_close 取反逻辑：渲染层重（需真 egui 上下文量按钮），只测状态机；
-    // show_toasts 以 !center_open 传 show_close，手动验证：列表开无 X、可 stop，关后有 X。
+    assert!(find(&n, static_id).leaving_since.is_some());
+    assert!(find(&n, EXPORT_PROGRESS_ID).leaving_since.is_some());
+    // 退场播完：全部 off-screen（条目保留）
+    std::thread::sleep(Duration::from_millis(330));
+    n.tick(&ctx());
+    assert!(n.items.iter().all(|x| !x.on_screen));
 }
 
 #[test]
@@ -637,46 +519,28 @@ fn center_open_edge_clears_unread() {
     n.center_open = false;
     n.tick(&ctx());
     let _ = n.success("a", "b");
-    assert_eq!(n.unread_count(), 1);
+    assert!(n.has_unread());
     // 开列表边沿清零
     n.center_open = true;
     n.tick(&ctx());
-    assert_eq!(n.unread_count(), 0);
     assert!(!n.has_unread());
 }
 
 #[test]
 fn center_open_push_and_ensure_stay_read() {
-    use std::sync::Arc;
-    struct S;
-    impl super::super::model::ProgressSource for S {
-        fn title(&self) -> String {
-            "t".into()
-        }
-        fn message(&self) -> String {
-            String::new()
-        }
-        fn fraction(&self) -> f32 {
-            0.5
-        }
-        fn detail(&self) -> String {
-            String::new()
-        }
-        fn cancel(&self) -> Option<Arc<AtomicBool>> {
-            None
-        }
-    }
     let mut n = Notifications::new();
     n.center_open = true;
     n.tick(&ctx());
-    assert_eq!(n.unread_count(), 0);
+    assert!(!n.has_unread());
     // 开着时 push 不产生未读
-    let before = n.unread_count();
     let _ = n.success("c", "d");
-    assert_eq!(n.unread_count(), before);
+    assert!(!n.has_unread());
     // 开着时 ensure 新任务不产生未读
-    n.ensure_progress(LOADING_PROGRESS_ID, ToastKind::Info, Arc::new(S));
-    assert_eq!(n.unread_count(), before);
+    n.ensure_progress(
+        LOADING_PROGRESS_ID,
+        ToastKind::Info,
+        Arc::new(FakeSource::new("t")),
+    );
     assert!(!n.has_unread());
 }
 
@@ -728,8 +592,9 @@ fn cull_uses_displayed_y_not_target() {
     for i in 0..10 {
         tid = n.success(format!("t{i}"), "m");
     }
-    for h in n.history.clone() {
-        n.card_h.insert(h.id, 110.0);
+    let ids: Vec<u64> = n.items.iter().map(|x| x.id).collect();
+    for id in ids {
+        n.card_h.insert(id, 110.0);
     }
     // 哨兵高度：被裁则保持原值，渲染则被实测覆盖
     const SENTINEL: f32 = 1234.5;
@@ -781,12 +646,13 @@ fn scroll_clamp_bounds() {
 #[test]
 fn update_center_scroll_sticks_and_updates_max() {
     let mut n = Notifications::new();
-    // 造 3 条历史，每条实测 100，GAP=8：total=100*3+8*2=316
+    // 造 3 条，每条实测 100，GAP=8：total=100*3+8*2=316
     let _ = n.success("a", "1");
     let _ = n.success("b", "2");
     let _ = n.success("c", "3");
-    for h in n.history.clone() {
-        n.card_h.insert(h.id, 100.0);
+    let ids: Vec<u64> = n.items.iter().map(|x| x.id).collect();
+    for id in ids {
+        n.card_h.insert(id, 100.0);
     }
     // viewport 高 200：visible=200-48-24=128，max=316-128=188
     n.center_scroll = 188.0;
@@ -794,11 +660,8 @@ fn update_center_scroll_sticks_and_updates_max() {
     n.update_center_scroll(200.0, 48.0, 8.0, 110.0);
     assert!((n.center_scroll_max - 188.0).abs() < 1e-4);
     // 新增一条变高到 total=424，max=296，底部附近应吸到新 max
-    let _ = n.success("d", "4");
-    let Some(last) = n.history.last().cloned() else {
-        panic!("history missing");
-    };
-    n.card_h.insert(last.id, 100.0);
+    let last = n.success("d", "4");
+    n.card_h.insert(last, 100.0);
     n.update_center_scroll(200.0, 48.0, 8.0, 110.0);
     assert!((n.center_scroll_max - 296.0).abs() < 1e-4);
     assert!((n.center_scroll - 296.0).abs() < 1e-4);

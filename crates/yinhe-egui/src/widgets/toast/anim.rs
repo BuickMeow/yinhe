@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use super::model::Toast;
+use super::model::Notification;
 
 // 纯位移飞行动画：右入左出，无停顿、无透明度。
 // 起步 x=DIST（卡片左侧贴窗口右沿之外，阴影也完全在屏外），终点 x=0。
@@ -24,7 +24,7 @@ pub(crate) fn exit_x(elapsed_secs: f32) -> f32 {
     t.powi(3) * FLY_DIST
 }
 
-pub(crate) fn fly_anim(toast: &Toast) -> f32 {
+pub(crate) fn fly_anim(toast: &Notification) -> f32 {
     let now = Instant::now();
     if let Some(since) = toast.leaving_since {
         return exit_x(now.duration_since(since).as_secs_f32());

@@ -213,8 +213,7 @@ fn progress_card_height_stable() {
 #[test]
 fn pause_toggle_flips_flag() {
     use super::super::kind::ToastKind as Kind;
-    use super::super::model::Toast;
-    use super::super::model::{resolve_pause_toast, resolve_toast};
+    use super::super::model::Notification;
     use std::time::Instant as StdInstant;
     let pause_flag = Arc::new(AtomicBool::new(false));
     // ExportToastSource 级真 flag（与线上同构）
@@ -224,7 +223,7 @@ fn pause_toggle_flips_flag() {
         cancel: Arc::new(AtomicBool::new(false)),
         pause: Arc::clone(&pause_flag),
     });
-    let toast = Toast {
+    let toast = Notification {
         id: 1,
         kind: Kind::Info,
         title: String::new(),
@@ -233,15 +232,17 @@ fn pause_toggle_flips_flag() {
         progress: None,
         progress_label: String::new(),
         cancel: None,
-        leaving_since: None,
         source: Some(src),
         collapse_at: None,
         action: None,
         hovered: false,
         cancelling: false,
+        on_screen: true,
+        leaving_since: None,
+        read: true,
     };
     // 未暂停时 detail 非“已暂停”
-    let resolved = resolve_pause_toast(&toast);
+    let resolved = toast.pause_flag();
     assert!(resolved.is_some());
     if let Some(p) = resolved {
         assert!(!p.load(std::sync::atomic::Ordering::Relaxed));
@@ -251,10 +252,10 @@ fn pause_toggle_flips_flag() {
     }
     assert!(pause_flag.load(std::sync::atomic::Ordering::Relaxed));
     // 已暂停态 detail 覆盖“已暂停”
-    let (_, _, _, detail) = resolve_toast(&toast);
+    let (_, _, _, detail) = toast.resolve();
     assert_eq!(detail, "已暂停");
     // 再 toggle 恢复
-    if let Some(p) = resolve_pause_toast(&toast) {
+    if let Some(p) = toast.pause_flag() {
         let cur = p.load(std::sync::atomic::Ordering::Relaxed);
         p.store(!cur, std::sync::atomic::Ordering::Relaxed);
     }

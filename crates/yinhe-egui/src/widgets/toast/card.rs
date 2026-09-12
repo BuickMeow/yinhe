@@ -14,7 +14,7 @@ use self::text::{blank_line, clamp_lines};
 use self::time::format_timestamp;
 
 use super::kind::ToastKind;
-use super::model::{HistoryEntry, Toast};
+use super::model::Notification;
 
 pub(crate) fn base_frame() -> egui::Frame {
     egui::Frame {
@@ -336,13 +336,13 @@ pub(crate) fn draw_card(
 /// 返回当帧交互结果（含悬停）
 pub(crate) fn toast_card(
     ui: &mut egui::Ui,
-    toast: &Toast,
+    toast: &Notification,
     width: f32,
     x_offset: f32,
     show_close: bool,
 ) -> super::model::CardOutcome {
     // 进度任务：渲染时从 source pull 最新文案/进度，无 source 读快照
-    let (title, message, progress, label) = super::model::resolve_toast(toast);
+    let (title, message, progress, label) = toast.resolve();
     draw_card(
         ui,
         width,
@@ -353,8 +353,8 @@ pub(crate) fn toast_card(
         progress,
         &label,
         show_close,
-        super::model::resolve_cancel_toast(toast),
-        super::model::resolve_pause_toast(toast),
+        toast.cancel_flag(),
+        toast.pause_flag(),
         toast.action.as_ref(),
         toast.cancelling,
         toast.created,
@@ -362,8 +362,8 @@ pub(crate) fn toast_card(
 }
 
 /// 历史卡片：只读，无删除（与 toast 同尺寸，仅隐藏 X）
-pub(crate) fn history_card(ui: &mut egui::Ui, entry: &HistoryEntry, width: f32) {
-    let (title, message, progress, label) = super::model::resolve_history(entry);
+pub(crate) fn history_card(ui: &mut egui::Ui, entry: &Notification, width: f32) {
+    let (title, message, progress, label) = entry.resolve();
     let _ = draw_card(
         ui,
         width,

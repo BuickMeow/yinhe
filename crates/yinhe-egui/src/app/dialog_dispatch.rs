@@ -163,7 +163,7 @@ impl App {
             {
                 self.file_loader.cancel_loading();
                 self.notifications
-                    .dismiss_toast(crate::widgets::toast::LOADING_PROGRESS_ID);
+                    .dismiss(crate::widgets::toast::LOADING_PROGRESS_ID);
             }
         } else if self.file_loader.is_loading() {
             // 检测 toast 侧取消（用户点 stop 按钮置位 cancel flag；X 只收起不取消）
@@ -174,7 +174,7 @@ impl App {
             {
                 self.file_loader.cancel_loading();
                 self.notifications
-                    .dismiss_toast(crate::widgets::toast::LOADING_PROGRESS_ID);
+                    .dismiss(crate::widgets::toast::LOADING_PROGRESS_ID);
             } else if self.file_loader.progress_visible() {
                 // 卡片只建一次，进度文案渲染时 pull，不再每帧拷贝
                 let src = std::sync::Arc::new(self.file_loader.toast_source());
@@ -183,19 +183,6 @@ impl App {
                     crate::widgets::toast::ToastKind::Info,
                     src,
                 );
-            }
-        } else if self
-            .notifications
-            .has_progress(crate::widgets::toast::LOADING_PROGRESS_ID)
-        {
-            let visible = self
-                .file_loader
-                .load_progress()
-                .lock()
-                .map(|p| p.visible)
-                .unwrap_or(false);
-            if !visible {
-                // 等待 poll 的 complete_progress 覆盖为“已完成”
             }
         }
 

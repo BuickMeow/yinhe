@@ -181,16 +181,13 @@ impl App {
                 }
                 let msg = "PPQ 缩放线程异常退出".to_string();
                 self.load_error = Some(msg.clone());
-                if self
-                    .notifications
-                    .has_progress(crate::widgets::toast::RESCALE_PROGRESS_ID)
-                {
-                    self.notifications.fail_progress(
-                        crate::widgets::toast::RESCALE_PROGRESS_ID,
-                        "缩放失败",
-                        msg,
-                    );
-                }
+                self.notifications.finish_progress(
+                    crate::widgets::toast::RESCALE_PROGRESS_ID,
+                    crate::widgets::toast::ProgressOutcome::Failed,
+                    "缩放失败",
+                    msg,
+                    None,
+                );
                 return;
             }
         };
@@ -214,17 +211,13 @@ impl App {
                         self.invalidate_cull_state();
                     }
                 }
-                if self
-                    .notifications
-                    .has_progress(crate::widgets::toast::RESCALE_PROGRESS_ID)
-                {
-                    self.notifications.complete_progress(
-                        crate::widgets::toast::RESCALE_PROGRESS_ID,
-                        crate::widgets::toast::ToastKind::Success,
-                        "PPQ缩放完成",
-                        format!("PPQ {} → {}", old_ppq, new_ppq),
-                    );
-                }
+                self.notifications.finish_progress(
+                    crate::widgets::toast::RESCALE_PROGRESS_ID,
+                    crate::widgets::toast::ProgressOutcome::Completed,
+                    "PPQ缩放完成",
+                    format!("PPQ {} → {}", old_ppq, new_ppq),
+                    None,
+                );
             }
             Err(msg) => {
                 // 用户取消或子线程报错：还原 meta.ppq = old_ppq。
@@ -234,23 +227,16 @@ impl App {
                 }
                 if msg == "已取消" {
                     self.notifications
-                        .dismiss_toast(crate::widgets::toast::RESCALE_PROGRESS_ID);
+                        .dismiss(crate::widgets::toast::RESCALE_PROGRESS_ID);
                 } else {
                     self.load_error = Some(msg.clone());
-                    if self
-                        .notifications
-                        .has_progress(crate::widgets::toast::RESCALE_PROGRESS_ID)
-                    {
-                        self.notifications.fail_progress(
-                            crate::widgets::toast::RESCALE_PROGRESS_ID,
-                            "缩放失败",
-                            msg,
-                        );
-                    } else {
-                        self.notifications
-                            .prune_history(crate::widgets::toast::RESCALE_PROGRESS_ID);
-                        self.notifications.error("缩放失败", msg);
-                    }
+                    self.notifications.finish_progress(
+                        crate::widgets::toast::RESCALE_PROGRESS_ID,
+                        crate::widgets::toast::ProgressOutcome::Failed,
+                        "缩放失败",
+                        msg,
+                        None,
+                    );
                 }
             }
         }
