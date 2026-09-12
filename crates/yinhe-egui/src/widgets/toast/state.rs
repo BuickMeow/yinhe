@@ -226,7 +226,9 @@ impl Notifications {
             }
         }
         let mut needs_repaint = false;
-        // 悬停暂停：上帧悬停的卡，deadline 按本帧间隔顺延（精确暂停，不断计时）
+        // 悬停/窗口失焦暂停：上帧悬停的卡或窗口失焦时，deadline 按本帧间隔顺延
+        // （精确暂停，不断计时；raw.focused 在无输入状态时默认 true）
+        let window_focused = ctx.input(|i| i.raw.focused);
         let dt = self
             .last_tick
             .map(|t| now.duration_since(t))
@@ -235,7 +237,7 @@ impl Notifications {
         self.last_tick = Some(now);
         if dt > Duration::ZERO {
             for n in self.items.iter_mut() {
-                if n.hovered
+                if (n.hovered || !window_focused)
                     && n.leaving_since.is_none()
                     && let Some(at) = n.collapse_at
                 {

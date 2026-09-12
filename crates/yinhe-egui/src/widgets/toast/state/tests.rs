@@ -53,6 +53,22 @@ fn find(n: &Notifications, id: u64) -> &Notification {
     }
 }
 
+/// 在无头 pass 内跑一帧 tick（可指定窗口焦点），模拟真实帧输入。
+fn tick_frame(n: &mut Notifications, ctx: &egui::Context, focused: bool) {
+    let raw = egui::RawInput {
+        focused,
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1400.0, 900.0),
+        )),
+        ..Default::default()
+    };
+    let mut out = ctx.run_ui(raw, |ui| {
+        n.tick(ui.ctx());
+    });
+    out.textures_delta.clear();
+}
+
 #[test]
 fn push_classifies_collapse_tier() {
     let mut n = Notifications::new();
@@ -134,6 +150,26 @@ fn hover_pauses_collapse_deadline() {
     n.items.iter_mut().find(|x| x.id == id).unwrap().hovered = false;
     std::thread::sleep(Duration::from_millis(2));
     n.tick(&ctx());
+    assert_eq!(find(&n, id).collapse_at, after);
+}
+
+/// 窗口失焦暂停自动收起计时（回来继续），与悬停同链路。
+#[test]
+fn window_blur_pauses_collapse_deadline() {
+    let ctx = ctx();
+    let mut n = Notifications::new();
+    n.set_collapse_durations(Some(60), Some(60));
+    let id = n.success("t", "m");
+    n.tick(&ctx); // 首 tick 只记录 last_tick
+    std::thread::sleep(Duration::from_millis(5));
+    let before = find(&n, id).collapse_at;
+    // 失焦帧：deadline 顺延
+    tick_frame(&mut n, &ctx, false);
+    let after = find(&n, id).collapse_at;
+    assert!(after.unwrap() > before.unwrap());
+    // 恢复聚焦后不再顺延
+    std::thread::sleep(Duration::from_millis(2));
+    tick_frame(&mut n, &ctx, true);
     assert_eq!(find(&n, id).collapse_at, after);
 }
 
@@ -673,4 +709,50 @@ fn center_list_renders_cards_inside_viewport() {
         }
     }
     assert_eq!(found, 2, "通知中心应把两张卡画在视口内，实际 {found}");
+}
+
+/// 回归：通知超出视口时滚动吸底，最新的几张必须渲染。
+/// 曾因 draw_card 用 available_rect 做 clip，滚动后下半部分卡片拿到反向矩形被整卡跳过。
+#[test]
+fn center_list_shows_newest_when_overflow() {
+    let ctx = egui::Context::default();
+    ctx.add_font(egui_material_icons::font_insert());
+    let mut n = Notifications::new();
+    n.set_collapse_durations(None, None);
+    for i in 0..12 {
+        let _ = n.success(format!("title-{i:02}"), "m");
+    }
+    n.center_open = true;
+    n.tick(&ctx);
+    std::thread::sleep(Duration::from_millis(350));
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0));
+    let mut visible: Vec<String> = Vec::new();
+    // Area/ScrollArea 首帧只做 sizing，第二帧才落位绘制
+    for _ in 0..2 {
+        let raw = egui::RawInput {
+            screen_rect: Some(viewport),
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(raw, |ui| {
+            n.show_center(ui.ctx());
+        });
+        out.textures_delta.clear();
+        visible.clear();
+        for cs in &out.shapes {
+            if let egui::Shape::Text(t) = &cs.shape {
+                let text = t.galley.text().to_string();
+                if text.starts_with("title-") && viewport.contains(t.pos) {
+                    visible.push(text);
+                }
+            }
+        }
+    }
+    assert!(
+        visible.iter().any(|t| t == "title-11"),
+        "滚动到底后最新通知应可见，实际可见 {visible:?}"
+    );
+    assert!(
+        !visible.iter().any(|t| t == "title-00"),
+        "最早的应滚出视口，实际可见 {visible:?}"
+    );
 }

@@ -57,12 +57,13 @@ pub(crate) fn draw_card(
     let running = progress
         .is_some_and(|p| p < 0.999 && progress_label != "已完成" && progress_label != "失败");
     ui.scope(|ui| {
-        let mut clip = ui.available_rect_before_wrap();
+        // 水平放宽（阴影/溢出）但垂直沿用父 clip：
+        // ScrollArea 内 available_rect_before_wrap 受 content max_rect（只有视口高）限制，
+        // 滚动后下半部分卡片会拿到反向矩形而被整卡跳过绘制，必须用 clip_rect 为基准。
+        let mut clip = ui.clip_rect();
         clip.max.x += 500.0;
         clip.min.x -= 20.0;
-        // 与进入时的外层 clip 取交集：state 侧可见带裁剪（滑出）由此生效；
-        // 直接调 draw_card 的单测没有外层 band，交集等于原来，行为不变。
-        ui.set_clip_rect(clip.intersect(ui.clip_rect()));
+        ui.set_clip_rect(clip);
         let frame_resp = frame.show(ui, |ui| {
             ui.set_max_width(width - 20.0);
             ui.set_min_width(width - 20.0);
