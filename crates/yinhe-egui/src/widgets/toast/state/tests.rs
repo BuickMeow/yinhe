@@ -662,7 +662,7 @@ fn cull_uses_displayed_y_not_target() {
         ..Default::default()
     };
     let mut out = ctx.run_ui(raw, |ui| {
-        n.show_toasts(ui.ctx());
+        n.show_toasts(ui.ctx(), 900.0);
     });
     out.textures_delta.clear();
     let h = n.card_h.get(&oldest).copied().unwrap_or(SENTINEL);
@@ -695,7 +695,7 @@ fn center_list_renders_cards_inside_viewport() {
             ..Default::default()
         };
         let mut out = ctx.run_ui(raw, |ui| {
-            n.show_center(ui.ctx());
+            n.show_center(ui.ctx(), 900.0);
         });
         out.textures_delta.clear();
         found = 0;
@@ -734,7 +734,7 @@ fn center_list_shows_newest_when_overflow() {
             ..Default::default()
         };
         let mut out = ctx.run_ui(raw, |ui| {
-            n.show_center(ui.ctx());
+            n.show_center(ui.ctx(), 900.0);
         });
         out.textures_delta.clear();
         visible.clear();
@@ -754,5 +754,52 @@ fn center_list_shows_newest_when_overflow() {
     assert!(
         !visible.iter().any(|t| t == "title-00"),
         "最早的应滚出视口，实际可见 {visible:?}"
+    );
+}
+
+/// 回归：通知区底边跟随底部状态栏（中央区域底部），裁剪线不写死窗口底留白。
+#[test]
+fn center_bottom_follows_bottom_panel() {
+    let ctx = egui::Context::default();
+    ctx.add_font(egui_material_icons::font_insert());
+    let mut n = Notifications::new();
+    n.set_collapse_durations(None, None);
+    for i in 0..6 {
+        let _ = n.success(format!("title-{i:02}"), "m");
+    }
+    n.center_open = true;
+    n.tick(&ctx);
+    std::thread::sleep(Duration::from_millis(350));
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+    let mut visible: Vec<(String, f32)> = Vec::new();
+    // Area/ScrollArea 首帧只做 sizing，第二帧才落位绘制
+    for _ in 0..2 {
+        let raw = egui::RawInput {
+            screen_rect: Some(viewport),
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(raw, |ui| {
+            // 模拟底部状态栏
+            egui::Panel::bottom("test_bar").show(ui, |ui| {
+                ui.allocate_space(egui::vec2(100.0, 40.0));
+            });
+            let bottom = ui.available_rect_before_wrap().max.y;
+            n.show_center(ui.ctx(), bottom);
+        });
+        out.textures_delta.clear();
+        visible.clear();
+        for cs in &out.shapes {
+            if let egui::Shape::Text(t) = &cs.shape {
+                let s = t.galley.text().to_string();
+                if s.starts_with("title-") {
+                    visible.push((s, t.pos.y));
+                }
+            }
+        }
+    }
+    // 最新卡片完整落在底栏上方（底栏顶 ≤ 560）
+    assert!(
+        visible.iter().any(|(t, y)| t == "title-05" && *y < 560.0),
+        "最新卡应完整显示在底栏上方，实际 {visible:?}"
     );
 }

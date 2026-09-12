@@ -10,13 +10,26 @@ use super::Notifications;
 
 const CARD_W: f32 = 360.0;
 const GAP: f32 = 8.0;
-const BOTTOM_PAD: f32 = 48.0;
+/// 通知区底边距中央区域底部的呼吸间隙。
+const BOTTOM_GAP: f32 = 8.0;
 const RIGHT_PAD: f32 = 32.0;
 const TOP_PAD: f32 = 24.0;
 const EST_H: f32 = 110.0;
 const CLOSE_ANIM: Duration = Duration::from_millis(350);
 
 impl Notifications {
+    /// 通知区垂直带 `(bottom_gap, max_h)`：
+    /// 底边贴中央区域（底栏之上）再留 BOTTOM_GAP，顶边留 TOP_PAD。
+    /// `bottom` 由 main_loop 传入底栏之后的可用区底边，随底栏高度自动适配；
+    /// 窗口过矮时保底 120。
+    fn notif_band(ctx: &egui::Context, bottom: f32) -> (f32, f32) {
+        let viewport = ctx.viewport_rect();
+        let bottom = bottom.min(viewport.max.y);
+        let bottom_gap = (viewport.max.y - bottom + BOTTOM_GAP).max(BOTTOM_GAP);
+        let max_h = (bottom - viewport.min.y - TOP_PAD - BOTTOM_GAP).max(120.0);
+        (bottom_gap, max_h)
+    }
+
     /// 条目是否由通知中心列表接管渲染：列表展开时全部接管；
     /// 关闭退场窗口内，关闭前已存在的条目随列表整列滑出（之后新 push 的走浮卡）。
     fn center_takes(
@@ -33,7 +46,7 @@ impl Notifications {
 
     // ── 浮卡渲染：右下角 → 右上角堆叠，浮于内容之上 ──
     // 每个 toast 独立 Area，避免父 Area+ScrollArea 宽度异常导致右侧溢出。
-    pub fn show_toasts(&mut self, ctx: &egui::Context) {
+    pub fn show_toasts(&mut self, ctx: &egui::Context, bottom: f32) {
         self.tick(ctx);
         let now = Instant::now();
         let needs_float = self.items.iter().any(|n| {
@@ -42,9 +55,9 @@ impl Notifications {
         if !needs_float {
             return;
         }
-        let viewport = ctx.viewport_rect();
-        // 最大 y 偏移（相对底边）：底留白 + 可见高，顶部留 24 不压窗口标题区
-        let max_y = BOTTOM_PAD + (viewport.height() - BOTTOM_PAD - TOP_PAD).max(120.0);
+        let (bottom_gap, max_h) = Self::notif_band(ctx, bottom);
+        // 最大 y 偏移（相对底边）：底留白 + 可见高
+        let max_y = bottom_gap + max_h;
 
         // 浮动堆叠目标 y：最新在底，按每张卡实测高度累加
         let ids: Vec<u64> = self
@@ -56,7 +69,7 @@ impl Notifications {
             })
             .map(|n| n.id)
             .collect();
-        let ys = stack_ys(&self.card_h, &ids, BOTTOM_PAD, GAP, EST_H);
+        let ys = stack_ys(&self.card_h, &ids, bottom_gap, GAP, EST_H);
         let mut toast_y_map: HashMap<u64, f32> = HashMap::new();
         for (id, y) in ids.iter().zip(ys) {
             toast_y_map.insert(*id, y);
@@ -76,13 +89,13 @@ impl Notifications {
                 continue;
             }
             let tid = self.items[idx].id;
-            let target_y = toast_y_map.get(&tid).copied().unwrap_or(BOTTOM_PAD);
+            let target_y = toast_y_map.get(&tid).copied().unwrap_or(bottom_gap);
             let card_h = self.measured_h(tid, EST_H);
             // 自有 ease-out y 插值（与 x 飞行动画同族曲线），堆叠重排不线性
             let y_off = self.y_for(tid, target_y, now);
             // 用“显示位置”判可见性：快速重排时目标先出带、动画仍在滑出，
             // 若按目标裁会未滑完就消失（提前消失）；显示位置完全出带才跳过
-            if is_fully_outside(y_off, card_h, BOTTOM_PAD, max_y) {
+            if is_fully_outside(y_off, card_h, bottom_gap, max_y) {
                 self.items[idx].hovered = false;
                 continue;
             }
@@ -137,7 +150,7 @@ impl Notifications {
     }
 
     // ── 通知中心列表：ScrollArea 从底部向上堆积，打开/关闭整列滑入滑出 ──
-    pub fn show_center(&mut self, ctx: &egui::Context) {
+    pub fn show_center(&mut self, ctx: &egui::Context, bottom: f32) {
         if !self.enabled {
             return;
         }
@@ -160,8 +173,7 @@ impl Notifications {
             return;
         }
 
-        let viewport = ctx.viewport_rect();
-        let max_h = (viewport.height() - BOTTOM_PAD - TOP_PAD).max(120.0);
+        let (bottom_gap, max_h) = Self::notif_band(ctx, bottom);
         // 打开：无停顿整列从右侧滑入；关闭：入场的严格反向滑出
         let x_off = if closing {
             let closed_at = self.center_closed_at.unwrap_or(now);
@@ -184,7 +196,7 @@ impl Notifications {
         egui::Area::new(egui::Id::new("yinhe_notif_center"))
             .anchor(
                 egui::Align2::RIGHT_BOTTOM,
-                egui::vec2(-RIGHT_PAD + x_off, -BOTTOM_PAD),
+                egui::vec2(-RIGHT_PAD + x_off, -bottom_gap),
             )
             // 显式给出列宽与可见高：Area 首帧默认尺寸极小，ScrollArea 会被压扁成
             // 1px 宽只剩滚动条，default_size 是首帧 Ui max_rect 的依据

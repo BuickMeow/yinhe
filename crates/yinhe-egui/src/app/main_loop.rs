@@ -660,6 +660,9 @@ impl eframe::App for App {
         if self.show_pianoroll_in_arrange != self.audio_settings.layout.show_pianoroll_in_arrange {
             self.layout_needs_save = true;
         }
+        // 通知区底边 = 底栏之后的中央区域底部：通知裁剪线随底栏高度自适应，
+        // 不再用写死的窗口底留白（底栏高度变化时会被盖住/悬空）。
+        let notif_bottom = ui.available_rect_before_wrap().max.y;
 
         // ── Main content area ──
         let layout = self.compute_layout(ui);
@@ -676,8 +679,8 @@ impl eframe::App for App {
         );
         self.notifications
             .set_enabled(self.audio_settings.toast_enabled);
-        self.notifications.show_toasts(ui.ctx());
-        self.notifications.show_center(ui.ctx());
+        self.notifications.show_toasts(ui.ctx(), notif_bottom);
+        self.notifications.show_center(ui.ctx(), notif_bottom);
 
         // ── 布局设置持久化（拖拽结束帧才写盘）──
         self.sync_layout_settings();
