@@ -53,7 +53,6 @@ fn card_height_full(
         draw_card(
             ui,
             width,
-            0.0,
             ToastKind::Info,
             title,
             message,
@@ -91,7 +90,6 @@ fn card_height_paused(width: f32, title: &str, message: &str, progress: f32) -> 
         draw_card(
             ui,
             width,
-            0.0,
             ToastKind::Info,
             title,
             message,

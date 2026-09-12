@@ -37,7 +37,6 @@ pub(crate) fn base_frame() -> egui::Frame {
 pub(crate) fn draw_card(
     ui: &mut egui::Ui,
     width: f32,
-    x_offset: f32,
     kind: ToastKind,
     title: &str,
     message: &str,
@@ -64,7 +63,6 @@ pub(crate) fn draw_card(
         // 与进入时的外层 clip 取交集：state 侧可见带裁剪（滑出）由此生效；
         // 直接调 draw_card 的单测没有外层 band，交集等于原来，行为不变。
         ui.set_clip_rect(clip.intersect(ui.clip_rect()));
-        let _ = x_offset; // 外层 Area 已处理飞入位移，此处固定 0，避免布局溢出
         let frame_resp = frame.show(ui, |ui| {
             ui.set_max_width(width - 20.0);
             ui.set_min_width(width - 20.0);
@@ -338,7 +336,6 @@ pub(crate) fn toast_card(
     ui: &mut egui::Ui,
     toast: &Notification,
     width: f32,
-    x_offset: f32,
     show_close: bool,
 ) -> super::model::CardOutcome {
     // 进度任务：渲染时从 source pull 最新文案/进度，无 source 读快照
@@ -346,7 +343,6 @@ pub(crate) fn toast_card(
     draw_card(
         ui,
         width,
-        x_offset,
         toast.kind,
         &title,
         &message,
@@ -367,7 +363,6 @@ pub(crate) fn history_card(ui: &mut egui::Ui, entry: &Notification, width: f32) 
     let _ = draw_card(
         ui,
         width,
-        0.0,
         entry.kind,
         &title,
         &message,

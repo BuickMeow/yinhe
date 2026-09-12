@@ -105,7 +105,7 @@ impl Notifications {
                 // 关 egui Area 自带 fade-in（默认 true，0.2s 透明度动画）：位移只走自有飞入
                 .fade_in(false)
                 .show(ctx, |ui| {
-                    outcome = card::toast_card(ui, &self.items[idx], CARD_W, 0.0, true);
+                    outcome = card::toast_card(ui, &self.items[idx], CARD_W, true);
                     ui.min_rect().height()
                 });
             self.card_h.insert(tid, area_resp.inner);
@@ -209,7 +209,7 @@ impl Notifications {
                             let n = &self.items[i];
                             // 浮动层的卡在列表里仍可 stop/pause/操作（无 X）；已收起卡只读
                             if n.on_screen {
-                                let outcome = card::toast_card(ui, n, CARD_W, 0.0, false);
+                                let outcome = card::toast_card(ui, n, CARD_W, false);
                                 outcomes.push((n.id, outcome));
                             } else {
                                 card::history_card(ui, n, CARD_W);
