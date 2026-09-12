@@ -1,7 +1,7 @@
 //! 敲击测速（Tap Tempo）对话框（标准 viewport 形式）。
 //!
 //! 播放菜单「敲击测速」触发：独立 viewport 内点击敲击区或按空格键敲击，
-//! 根据敲击间隔平均值估算 BPM。仅用于测量显示，暂不写入工程。
+//! 根据最近几次敲击间隔的平均值估算 BPM。仅用于测量显示，暂不写入工程。
 //!
 //! 空格键冲突说明：主窗口的空格是「播放/暂停」，本对话框是独立 OS 窗口，
 //! 键盘事件只在聚焦窗口内分发，因此弹窗内空格不会触发主窗口播放。
@@ -11,6 +11,10 @@ use rust_i18n::t;
 
 /// 距上次敲击超过当前拍长的该倍数（漏敲超过一拍）时，视为重新开始一轮测量。
 const TAP_RESET_BEATS: f64 = 2.0;
+
+/// 参与平均的最近敲击次数（滑动窗口）：起步阶段没找稳节奏时，
+/// 后面稳定的敲击能尽快把前面的偏差挤出去。
+const TAP_WINDOW: usize = 4;
 
 /// 对话框状态（挂在 App 上，跨帧保留；打开时重置）。
 #[derive(Default)]
@@ -28,27 +32,28 @@ impl TapTempoDialogState {
     }
 }
 
-/// 本轮敲击的平均间隔（拍长，秒）；不足 2 次敲击或跨度非正时返回 `None`。
+/// 最近 [`TAP_WINDOW`] 次敲击的平均间隔（拍长，秒）；不足 2 次或跨度非正时返回 `None`。
 fn average_interval(taps: &[f64]) -> Option<f64> {
-    if taps.len() < 2 {
+    let window = &taps[taps.len().saturating_sub(TAP_WINDOW)..];
+    if window.len() < 2 {
         return None;
     }
-    let span = taps[taps.len() - 1] - taps[0];
+    let span = window[window.len() - 1] - window[0];
     if span <= 0.0 {
         return None;
     }
-    Some(span / (taps.len() - 1) as f64)
+    Some(span / (window.len() - 1) as f64)
 }
 
-/// 由敲击时间戳估算 BPM（平均间隔的倒数）。
+/// 由最近 [`TAP_WINDOW`] 次敲击估算 BPM（平均间隔的倒数）。
 fn bpm_from_taps(taps: &[f64]) -> Option<f32> {
     Some((60.0 / average_interval(taps)?) as f32)
 }
 
-/// 记录一次敲击：距上次敲击超过当前拍长的 [`TAP_RESET_BEATS`] 倍（漏敲超过一拍）时清空重来。
+/// 记录一次敲击：距上次敲击超过当前拍长（最近 [`TAP_WINDOW`] 次的平均间隔）
+/// 的 [`TAP_RESET_BEATS`] 倍（漏敲超过一拍）时清空重来。
 ///
-/// 拍长取本轮平均间隔（与显示的 BPM 同一来源）；不足 2 次敲击时还没有拍长可参考，
-/// 直接追加，等待第二次敲击建立节奏。
+/// 不足 2 次敲击时还没有拍长可参考，直接追加，等待第二次敲击建立节奏。
 fn register_tap(taps: &mut Vec<f64>, now: f64) {
     if let (Some(last), Some(beat)) = (taps.last().copied(), average_interval(taps))
         && now - last > beat * TAP_RESET_BEATS
@@ -253,5 +258,14 @@ mod tests {
         let mut taps = vec![5.0];
         register_tap(&mut taps, 105.0);
         assert_eq!(taps, vec![5.0, 105.0]);
+    }
+
+    #[test]
+    fn bpm_uses_last_four_taps() {
+        // 前两拍不稳（1.0s、0.5s），随后稳定在 0.5s：
+        // 全局平均是 0.6s（100 BPM），最近 4 次应为 0.5s（120 BPM）
+        let taps = [0.0, 1.0, 1.5, 2.0, 2.5, 3.0];
+        let bpm = bpm_from_taps(&taps).unwrap();
+        assert!((bpm - 120.0).abs() < 1e-3);
     }
 }
