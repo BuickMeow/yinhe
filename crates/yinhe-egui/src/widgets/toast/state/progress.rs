@@ -33,9 +33,10 @@ impl Notifications {
         self.insert(id, kind, title, String::new(), Some(source), None);
     }
 
-    /// 进度任务收尾：保留同一张卡原地切换完成态（避免高度跳变），
-    /// 已收起/离屏的重新弹出；完成/中止按可操作档计时，普通完成按完成档。
-    /// `detail` 覆盖默认详情文案（如加载耗时）。返回作用到的 id。
+    /// 进度任务收尾：原地切换完成态（避免高度跳变）并换独立 id 转正，
+    /// 腾出任务槽位——下次同类操作新建条目，多次操作各自保留完成通知。
+    /// 已收起/离屏的重新弹出；失败/中止按可操作档计时，普通完成按完成档。
+    /// `detail` 覆盖默认详情文案（如加载耗时）。返回完成通知的 id（供 set_action 用）。
     pub fn finish_progress(
         &mut self,
         id: u64,
@@ -55,6 +56,13 @@ impl Notifications {
             ProgressOutcome::Aborted => (ToastKind::Warning, "已中止", self.action_collapse_secs),
         };
         let deadline = self.collapse_deadline(dur);
+        if !self.items.iter().any(|n| n.id == id) {
+            // 条目不存在（被历史上限裁掉等）：回退普通通知
+            let new_id = self.alloc_id();
+            return self.insert(new_id, kind, title, message, None, deadline);
+        }
+        // 先分配转正 id，再进入条目可变借用（alloc_id 需要 &mut self）
+        let promoted = self.alloc_id();
         if let Some(n) = self.items.iter_mut().find(|n| n.id == id) {
             // 完成满格；失败无进度条；中止保留中断时刻快照
             let fraction = match outcome {
@@ -77,12 +85,17 @@ impl Notifications {
                 n.on_screen = true;
             }
             n.leaving_since = None;
-            self.prune_overflow();
-            return id;
+            n.id = promoted;
         }
-        // 条目不存在（被历史上限裁掉等）：回退普通通知
-        let new_id = self.alloc_id();
-        self.insert(new_id, kind, title, message, None, deadline)
+        // 动画/实测高度跟随换 id，避免完成瞬间位置跳变
+        if let Some(h) = self.card_h.remove(&id) {
+            self.card_h.insert(promoted, h);
+        }
+        if let Some(a) = self.y_anim.remove(&id) {
+            self.y_anim.insert(promoted, a);
+        }
+        self.prune_overflow();
+        promoted
     }
 
     /// 给浮动卡挂操作按钮（如“打开文件夹”）。

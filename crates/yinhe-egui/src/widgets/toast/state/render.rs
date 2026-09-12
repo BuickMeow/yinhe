@@ -186,6 +186,9 @@ impl Notifications {
                 egui::Align2::RIGHT_BOTTOM,
                 egui::vec2(-RIGHT_PAD + x_off, -BOTTOM_PAD),
             )
+            // 显式给出列宽与可见高：Area 首帧默认尺寸极小，ScrollArea 会被压扁成
+            // 1px 宽只剩滚动条，default_size 是首帧 Ui max_rect 的依据
+            .default_size(egui::vec2(CARD_W + 8.0, max_h))
             .order(egui::Order::Tooltip)
             .movable(false)
             .interactable(true)

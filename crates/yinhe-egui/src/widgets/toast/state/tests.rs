@@ -160,23 +160,23 @@ fn action_button_escalates_tier() {
         ToastKind::Info,
         Arc::new(FakeSource::new("正在导出")),
     );
-    n.finish_progress(
+    let done = n.finish_progress(
         EXPORT_PROGRESS_ID,
         ProgressOutcome::Completed,
         "done",
         "f",
         None,
     );
-    let before = find(&n, EXPORT_PROGRESS_ID).collapse_at.unwrap();
+    let before = find(&n, done).collapse_at.unwrap();
     assert!(before < Instant::now() + Duration::from_secs(10));
     // 挂操作按钮 → 自动升为可操作档
     n.set_action_with_icon(
-        EXPORT_PROGRESS_ID,
+        done,
         "打开文件夹",
         super::super::model::ToastActionKind::RevealInFolder(std::path::PathBuf::new()),
         None,
     );
-    let after = find(&n, EXPORT_PROGRESS_ID).collapse_at.unwrap();
+    let after = find(&n, done).collapse_at.unwrap();
     assert!(
         after > Instant::now() + Duration::from_secs(50),
         "actionable card should use actionable tier"
@@ -273,21 +273,22 @@ fn collapsed_ensure_updates_source_without_card() {
         panic!("live source missing");
     };
     assert_eq!(src.title(), "v2");
-    // 任务结束：离屏条目重新弹出，下个任务恢复建卡
-    n.finish_progress(
+    // 任务结束：离屏条目转正弹出（独立 id），槽位腾空
+    let done = n.finish_progress(
         LOADING_PROGRESS_ID,
         ProgressOutcome::Completed,
         "done",
         "",
         None,
     );
-    assert!(find(&n, LOADING_PROGRESS_ID).on_screen);
+    assert_ne!(done, LOADING_PROGRESS_ID);
+    assert!(find(&n, done).on_screen);
+    // 下个任务新建槽位，不再覆盖完成通知
     n.ensure_progress(
         LOADING_PROGRESS_ID,
         ToastKind::Info,
         Arc::new(FakeSource::new("v3")),
     );
-    assert!(find(&n, LOADING_PROGRESS_ID).on_screen);
     assert_eq!(
         find(&n, LOADING_PROGRESS_ID)
             .source
@@ -313,9 +314,9 @@ fn prune_overflow_keeps_screen_cards() {
     assert_eq!(n.items.iter().filter(|x| !x.on_screen).count(), 2);
 }
 
-/// 固定 id 复用同一槽位：连续两轮任务原地更新同一条目，不再产生第二条历史。
+/// 固定 id 只是任务槽位：每次完成转正为独立通知，多次操作各自保留完成卡。
 #[test]
-fn fixed_id_reuses_single_entry_across_runs() {
+fn fixed_id_finish_promotes_to_standalone_entry() {
     let mut n = Notifications::new();
     n.ensure_progress(
         LOADING_PROGRESS_ID,
@@ -323,33 +324,40 @@ fn fixed_id_reuses_single_entry_across_runs() {
         Arc::new(FakeSource::new("v1")),
     );
     assert_eq!(n.items.len(), 1);
-    n.finish_progress(
+    let done1 = n.finish_progress(
         LOADING_PROGRESS_ID,
         ProgressOutcome::Completed,
         "done1",
         "a.mid",
         None,
     );
-    // 第二轮：复用同一槽位
+    assert_ne!(done1, LOADING_PROGRESS_ID);
+    assert_eq!(n.items.len(), 1);
+    // 槽位已腾空，完成通知以独立 id 继续存在
+    assert!(!n.items.iter().any(|x| x.id == LOADING_PROGRESS_ID));
+    // 第二轮：新建进行中条目，不覆盖完成卡
     n.ensure_progress(
         LOADING_PROGRESS_ID,
         ToastKind::Info,
         Arc::new(FakeSource::new("v2")),
     );
-    assert_eq!(n.items.len(), 1);
-    n.finish_progress(
+    assert_eq!(n.items.len(), 2);
+    let done2 = n.finish_progress(
         LOADING_PROGRESS_ID,
         ProgressOutcome::Completed,
         "done2",
         "b.mid",
         None,
     );
-    assert_eq!(n.items.len(), 1);
-    let x = find(&n, LOADING_PROGRESS_ID);
-    assert_eq!(x.title, "done2");
-    assert_eq!(x.progress, Some(1.0));
-    assert_eq!(x.progress_label, "已完成");
-    assert!(x.source.is_none());
+    assert_ne!(done2, done1);
+    assert_eq!(n.items.len(), 2);
+    let x1 = find(&n, done1);
+    let x2 = find(&n, done2);
+    assert_eq!(x1.title, "done1");
+    assert_eq!(x2.title, "done2");
+    assert_eq!(x2.progress, Some(1.0));
+    assert_eq!(x2.progress_label, "已完成");
+    assert!(x1.source.is_none() && x2.source.is_none());
 }
 
 #[test]
@@ -373,8 +381,8 @@ fn finish_aborted_snapshots_fraction_in_place() {
         "out.wav",
         None,
     );
-    assert_eq!(id, EXPORT_PROGRESS_ID);
-    let x = find(&n, EXPORT_PROGRESS_ID);
+    assert_ne!(id, EXPORT_PROGRESS_ID);
+    let x = find(&n, id);
     assert_eq!(x.kind, ToastKind::Warning);
     assert_eq!(x.progress, Some(0.64));
     assert_eq!(x.progress_label, "已中止");
@@ -403,9 +411,9 @@ fn finish_resurfaces_dismissed_task_card() {
         "out.wav",
         None,
     );
-    assert_eq!(id, EXPORT_PROGRESS_ID);
-    assert!(find(&n, EXPORT_PROGRESS_ID).on_screen);
-    assert_eq!(find(&n, EXPORT_PROGRESS_ID).progress_label, "已中止");
+    assert_ne!(id, EXPORT_PROGRESS_ID);
+    assert!(find(&n, id).on_screen);
+    assert_eq!(find(&n, id).progress_label, "已中止");
 }
 
 #[test]
@@ -626,4 +634,43 @@ fn cull_uses_displayed_y_not_target() {
         (h - SENTINEL).abs() > f32::EPSILON,
         "目标出带但显示位置仍在带内时被提前裁掉（提前消失 bug）"
     );
+}
+
+/// 回归：打开通知中心时卡片必须实际渲染在视口内。
+/// 曾因 Area 首帧默认尺寸过小，ScrollArea 被压成 1px 宽只剩滚动条。
+#[test]
+fn center_list_renders_cards_inside_viewport() {
+    let ctx = egui::Context::default();
+    ctx.add_font(egui_material_icons::font_insert());
+    let mut n = Notifications::new();
+    n.set_collapse_durations(None, None);
+    let _ = n.success("title-zero", "m");
+    let _ = n.success("title-one", "m");
+    n.center_open = true;
+    n.tick(&ctx);
+    // 等整列滑入动画结束
+    std::thread::sleep(Duration::from_millis(350));
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0));
+    // Area/ScrollArea 首帧只做 sizing，第二帧才落位绘制
+    let mut found = 0;
+    for _ in 0..2 {
+        let raw = egui::RawInput {
+            screen_rect: Some(viewport),
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(raw, |ui| {
+            n.show_center(ui.ctx());
+        });
+        out.textures_delta.clear();
+        found = 0;
+        for cs in &out.shapes {
+            if let egui::Shape::Text(t) = &cs.shape {
+                let text = t.galley.text();
+                if (text == "title-zero" || text == "title-one") && viewport.contains(t.pos) {
+                    found += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(found, 2, "通知中心应把两张卡画在视口内，实际 {found}");
 }
