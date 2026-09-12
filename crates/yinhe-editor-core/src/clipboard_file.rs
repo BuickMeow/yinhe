@@ -114,14 +114,15 @@ pub fn write_notes(path: &Path, clipboard: &NotesClipboard) -> io::Result<()> {
     w.flush()
 }
 
-/// 把自动化剪贴板写入文件。
+/// 把自动化剪贴板写入文件（内部先物化选择范围内的锚点）。
 pub fn write_automation(path: &Path, clipboard: &AutomationClipboard) -> io::Result<()> {
+    let clips = clipboard.collect();
     create_parent(path)?;
     let mut w = BufWriter::new(File::create(path)?);
     w.write_all(MAGIC)?;
     w.write_all(&[VERSION, KIND_AUTOMATION])?;
-    w.write_all(&(clipboard.clips.len() as u32).to_le_bytes())?;
-    for clip in &clipboard.clips {
+    w.write_all(&(clips.len() as u32).to_le_bytes())?;
+    for clip in &clips {
         write_target(&mut w, &clip.target)?;
         w.write_all(&(clip.events.len() as u64).to_le_bytes())?;
         for (tick, value, shape) in &clip.events {
@@ -199,7 +200,9 @@ pub fn read(path: &Path) -> io::Result<ClipboardContent> {
                 }
                 clips.push(AutomationClip { target, events });
             }
-            Ok(ClipboardContent::Automation(AutomationClipboard { clips }))
+            Ok(ClipboardContent::Automation(
+                AutomationClipboard::from_materialized(clips),
+            ))
         }
         _ => Err(invalid("unknown clipboard kind")),
     }
@@ -404,54 +407,50 @@ mod tests {
     #[test]
     fn automation_roundtrip() {
         let path = temp_path("automation");
-        let clipboard = AutomationClipboard {
-            clips: vec![
-                AutomationClip {
-                    target: AutomationTarget::Tempo,
-                    events: vec![
-                        (0, 120.0, SegmentShape::Step),
-                        (
-                            480,
-                            90.5,
-                            SegmentShape::Curve {
-                                x1: 0.25,
-                                y1: -0.5,
-                                x2: 0.1,
-                                y2: 0.4,
-                            },
-                        ),
-                    ],
-                },
-                AutomationClip {
-                    target: AutomationTarget::CC { controller: 74 },
-                    events: vec![(96, 64.0, SegmentShape::Step)],
-                },
-                AutomationClip {
-                    target: AutomationTarget::Nrpn { parameter: 1234 },
-                    events: vec![],
-                },
-            ],
-        };
+        let clipboard = AutomationClipboard::from_materialized(vec![
+            AutomationClip {
+                target: AutomationTarget::Tempo,
+                events: vec![
+                    (0, 120.0, SegmentShape::Step),
+                    (
+                        480,
+                        90.5,
+                        SegmentShape::Curve {
+                            x1: 0.25,
+                            y1: -0.5,
+                            x2: 0.1,
+                            y2: 0.4,
+                        },
+                    ),
+                ],
+            },
+            AutomationClip {
+                target: AutomationTarget::CC { controller: 74 },
+                events: vec![(96, 64.0, SegmentShape::Step)],
+            },
+            AutomationClip {
+                target: AutomationTarget::Nrpn { parameter: 1234 },
+                events: vec![],
+            },
+        ]);
         write_automation(&path, &clipboard).unwrap();
         let back = read(&path).unwrap();
         let _ = fs::remove_file(&path);
         match back {
             ClipboardContent::Automation(cb) => {
-                assert_eq!(cb.clips.len(), 3);
-                assert!(matches!(cb.clips[0].target, AutomationTarget::Tempo));
-                assert_eq!(cb.clips[0].events.len(), 2);
-                assert_eq!(cb.clips[0].events[1].0, 480);
-                assert!((cb.clips[0].events[1].1 - 90.5).abs() < f32::EPSILON);
+                let clips = cb.collect();
+                assert_eq!(clips.len(), 3);
+                assert!(matches!(clips[0].target, AutomationTarget::Tempo));
+                assert_eq!(clips[0].events.len(), 2);
+                assert_eq!(clips[0].events[1].0, 480);
+                assert!((clips[0].events[1].1 - 90.5).abs() < f32::EPSILON);
+                assert!(matches!(clips[0].events[1].2, SegmentShape::Curve { .. }));
                 assert!(matches!(
-                    cb.clips[0].events[1].2,
-                    SegmentShape::Curve { .. }
-                ));
-                assert!(matches!(
-                    cb.clips[1].target,
+                    clips[1].target,
                     AutomationTarget::CC { controller: 74 }
                 ));
                 assert!(matches!(
-                    cb.clips[2].target,
+                    clips[2].target,
                     AutomationTarget::Nrpn { parameter: 1234 }
                 ));
             }

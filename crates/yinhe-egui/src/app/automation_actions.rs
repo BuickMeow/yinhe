@@ -5,7 +5,7 @@
 //! paste 由 `App::paste_clipboard` 按剪贴板内容类型分派。
 
 use rust_i18n::t;
-use yinhe_editor_core::clipboard::{AutomationClip, AutomationClipboard, PasteMode};
+use yinhe_editor_core::clipboard::{AutomationClipboard, AutomationSelection, PasteMode};
 use yinhe_types::{AnchorSelRect, AutomationTarget, SegmentShape};
 
 use crate::app::App;
@@ -80,40 +80,36 @@ impl App {
             .any(|p| !p.show_velocity && !p.anchor_sel_rects.is_empty())
     }
 
-    /// 复制所有有选中锚点的面板到剪贴板（多面板一次复制）。
+    /// 复制所有有选中锚点的面板到剪贴板。
+    ///
+    /// 与音符剪贴板同构：只存「选择范围 + 轨道/Conductor 结构共享快照」，
+    /// 复制 O(1)，源之后被改/删不影响粘贴内容。
     pub(crate) fn copy_automation_anchors(&mut self) {
         let Some(idx) = self.workspace.active_doc else {
             return;
         };
         let doc = &self.workspace.documents[idx];
 
-        let clips: Vec<AutomationClip> = Self::collect_anchor_ctxs(doc)
-            .into_iter()
-            .filter_map(|ctx| {
-                let mut copied: Vec<(u32, f32, SegmentShape)> = ctx
-                    .events
-                    .iter()
-                    .filter(|(tick, value, _)| {
-                        ctx.sel_rects.iter().any(|r| r.contains(*tick, *value))
-                    })
-                    .copied()
-                    .collect();
-                if copied.is_empty() {
-                    return None;
-                }
-                copied.sort_by_key(|(t, _, _)| *t);
-                Some(AutomationClip {
-                    target: ctx.target,
-                    events: copied,
-                })
+        let selections: Vec<AutomationSelection> = doc
+            .edit
+            .controller_panels
+            .iter()
+            .filter(|p| !p.show_velocity && !p.anchor_sel_rects.is_empty())
+            .map(|p| AutomationSelection {
+                target: p.selected_target.clone(),
+                sel_rects: p.anchor_sel_rects.clone(),
             })
             .collect();
-
-        if clips.is_empty() {
+        if selections.is_empty() {
             return;
         }
+
         self.clipboard =
-            yinhe_editor_core::ClipboardContent::Automation(AutomationClipboard { clips });
+            yinhe_editor_core::ClipboardContent::Automation(AutomationClipboard::from_snapshot(
+                doc.data.model.tracks.clone(),
+                doc.data.model.conductor.clone(),
+                selections,
+            ));
         self.paste_chain = None;
         self.export_clipboard_to_system();
     }
@@ -134,7 +130,9 @@ impl App {
         mode: PasteMode,
     ) -> Option<u32> {
         let idx = self.workspace.active_doc?;
-        if clipboard.clips.is_empty() {
+        // 物化复制内容（快照按选择范围查询 / 跨实例数据直接使用）。
+        let clips = clipboard.collect();
+        if clips.is_empty() {
             return None;
         }
         let doc = &mut self.workspace.documents[idx];
@@ -145,7 +143,7 @@ impl App {
         let mut edits = Vec::new();
         let mut panel_anchors: Vec<(usize, Vec<(u32, f32)>)> = Vec::new();
         let mut max_span = 0u32;
-        for clip in &clipboard.clips {
+        for clip in &clips {
             // 找 target 匹配的面板
             let Some(panel_idx) = doc
                 .edit

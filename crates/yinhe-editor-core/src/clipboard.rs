@@ -1,15 +1,16 @@
 //! 应用级剪贴板。
 //!
-//! 音符剪贴板只存「选区矩形 + 复制那一刻的模型快照」。快照是
-//! `Arc<YinModel>`：clone 是 O(1)，未编辑的音符桶与源文档结构共享，
-//! 不额外占内存；源文档之后的编辑/删除/关闭都不改变粘贴内容。
-//! 这正是「选框省内存」与「快照语义」的兼顾：复制 O(1)，
-//! 实际数据拷贝推迟到源桶第一次被编辑时的 copy-on-write。
+//! 音符与自动化剪贴板都只存「选择范围 + 复制那一刻的结构共享快照」。
+//! 音符快照是 `Arc<YinModel>`，自动化快照是 `Vec<Arc<TrackData>>` +
+//! `Arc<ConductorData>`：clone 都是 O(1)，未编辑的桶/轨道与源文档
+//! 结构共享，不额外占内存；源文档之后的编辑/删除/关闭都不改变粘贴
+//! 内容。这正是「选框省内存」与「快照语义」的兼顾：复制 O(1)，
+//! 实际数据拷贝推迟到源第一次被编辑时的 copy-on-write。
 
 use std::sync::Arc;
 
-use yinhe_core::{Selection, YinModel};
-use yinhe_types::{AutomationTarget, Note, SegmentShape};
+use yinhe_core::{ConductorData, Selection, TrackData, YinModel};
+use yinhe_types::{AnchorSelRect, AutomationTarget, Note, SegmentShape};
 
 /// 音符剪贴板的数据来源。
 #[derive(Clone)]
@@ -66,7 +67,7 @@ impl NotesClipboard {
     }
 }
 
-/// 单个自动化面板复制的内容。
+/// 单个自动化面板复制的内容（物化形态）。
 #[derive(Clone, Debug)]
 pub struct AutomationClip {
     /// 锚点所属 target。
@@ -75,10 +76,112 @@ pub struct AutomationClip {
     pub events: Vec<(u32, f32, SegmentShape)>,
 }
 
-/// 自动化剪贴板：可同时包含多个面板的锚点。
-#[derive(Clone, Debug, Default)]
+/// 一个面板的自动化选择范围（复制时的选框）。
+#[derive(Clone, Debug)]
+pub struct AutomationSelection {
+    pub target: AutomationTarget,
+    pub sel_rects: Vec<AnchorSelRect>,
+}
+
+/// 自动化剪贴板的数据来源。
+#[derive(Clone)]
+pub enum AutomationClipboardData {
+    /// 同实例复制：轨道 / Conductor 结构共享快照 + 各面板选择范围，O(1)。
+    Snapshot {
+        tracks: Vec<Arc<TrackData>>,
+        conductor: Arc<ConductorData>,
+        selections: Vec<AutomationSelection>,
+    },
+    /// 跨实例加载：已物化的事件。
+    Materialized(Vec<AutomationClip>),
+}
+
+/// 自动化剪贴板：可同时包含多个面板的选择范围。
+#[derive(Clone)]
 pub struct AutomationClipboard {
-    pub clips: Vec<AutomationClip>,
+    pub data: AutomationClipboardData,
+}
+
+impl AutomationClipboard {
+    /// 同实例复制：O(1) 的轨道 / Conductor 结构共享快照。
+    pub fn from_snapshot(
+        tracks: Vec<Arc<TrackData>>,
+        conductor: Arc<ConductorData>,
+        selections: Vec<AutomationSelection>,
+    ) -> Self {
+        Self {
+            data: AutomationClipboardData::Snapshot {
+                tracks,
+                conductor,
+                selections,
+            },
+        }
+    }
+
+    /// 跨实例加载：已物化的事件列表。
+    pub fn from_materialized(clips: Vec<AutomationClip>) -> Self {
+        Self {
+            data: AutomationClipboardData::Materialized(clips),
+        }
+    }
+
+    /// 物化复制内容：从快照按选择范围筛出各 target 的锚点事件。
+    ///
+    /// 返回的 clips 按 target 分组、事件按 tick 升序；没有命中锚点的
+    /// 选择范围被跳过。
+    pub fn collect(&self) -> Vec<AutomationClip> {
+        match &self.data {
+            AutomationClipboardData::Snapshot {
+                tracks,
+                conductor,
+                selections,
+            } => selections
+                .iter()
+                .filter_map(|sel| {
+                    let events: Vec<(u32, f32, SegmentShape)> =
+                        if matches!(sel.target, AutomationTarget::Tempo) {
+                            conductor
+                                .tempo
+                                .events
+                                .iter()
+                                .map(|e| (e.tick, e.value, e.shape))
+                                .collect()
+                        } else {
+                            tracks
+                                .iter()
+                                .flat_map(|t| t.automation_lanes.iter())
+                                .find(|l| l.target == sel.target)?
+                                .events
+                                .iter()
+                                .map(|e| (e.tick, e.value, e.shape))
+                                .collect()
+                        };
+                    let mut hit: Vec<(u32, f32, SegmentShape)> = events
+                        .into_iter()
+                        .filter(|(tick, value, _)| {
+                            sel.sel_rects.iter().any(|r| r.contains(*tick, *value))
+                        })
+                        .collect();
+                    if hit.is_empty() {
+                        return None;
+                    }
+                    hit.sort_by_key(|(t, _, _)| *t);
+                    Some(AutomationClip {
+                        target: sel.target.clone(),
+                        events: hit,
+                    })
+                })
+                .collect(),
+            AutomationClipboardData::Materialized(clips) => clips.clone(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match &self.data {
+            AutomationClipboardData::Snapshot { selections, .. } => selections.is_empty(),
+            AutomationClipboardData::Materialized(clips) => clips.is_empty(),
+        }
+    }
 }
 
 /// 粘贴放置方式（音符与自动化共用）。
@@ -106,5 +209,111 @@ pub enum ClipboardContent {
 impl ClipboardContent {
     pub fn is_empty(&self) -> bool {
         matches!(self, Self::Empty)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yinhe_types::{AutomationEvent, AutomationLane};
+
+    fn lane(target: AutomationTarget, events: Vec<(u32, f32)>) -> AutomationLane {
+        AutomationLane {
+            target,
+            track: 0,
+            events: events
+                .into_iter()
+                .map(|(tick, value)| AutomationEvent {
+                    tick,
+                    value,
+                    shape: SegmentShape::Step,
+                })
+                .collect(),
+        }
+    }
+
+    fn rect(tick_start: f64, tick_end: f64) -> AnchorSelRect {
+        AnchorSelRect {
+            tick_start,
+            tick_end,
+            value_range: None,
+        }
+    }
+
+    /// 快照剪贴板按各面板选择范围筛选锚点（Tempo 与 CC 各自独立）。
+    #[test]
+    fn automation_snapshot_collect_filters_by_rects() {
+        let cc = AutomationTarget::CC { controller: 74 };
+        let mut track = TrackData::new(0, 0);
+        track
+            .automation_lanes
+            .push(lane(cc.clone(), vec![(0, 10.0), (100, 20.0), (200, 30.0)]));
+        let tracks = vec![Arc::new(track)];
+        let conductor = Arc::new(ConductorData {
+            tempo: lane(AutomationTarget::Tempo, vec![(0, 120.0), (500, 140.0)]),
+            ..Default::default()
+        });
+        let selections = vec![
+            AutomationSelection {
+                target: cc.clone(),
+                sel_rects: vec![rect(50.0, 250.0)],
+            },
+            AutomationSelection {
+                target: AutomationTarget::Tempo,
+                sel_rects: vec![rect(400.0, 600.0)],
+            },
+        ];
+        let cb = AutomationClipboard::from_snapshot(tracks, conductor, selections);
+
+        let clips = cb.collect();
+        assert_eq!(clips.len(), 2);
+        assert_eq!(clips[0].events.len(), 2, "tick 100/200 命中 CC 选框");
+        assert_eq!(clips[0].events[0].0, 100);
+        assert_eq!(clips[1].events.len(), 1, "tick 500 命中 Tempo 选框");
+        assert_eq!(clips[1].events[0].1, 140.0);
+    }
+
+    /// 快照语义：复制后源轨道被 COW 编辑，剪贴板仍是复制时的值。
+    #[test]
+    fn automation_snapshot_keeps_source_before_edit() {
+        let cc = AutomationTarget::CC { controller: 74 };
+        let mut track = TrackData::new(0, 0);
+        track
+            .automation_lanes
+            .push(lane(cc.clone(), vec![(100, 20.0)]));
+        let tracks = vec![Arc::new(track)];
+        let conductor = Arc::new(ConductorData::default());
+        let selections = vec![AutomationSelection {
+            target: cc,
+            sel_rects: vec![rect(0.0, 1000.0)],
+        }];
+        let cb = AutomationClipboard::from_snapshot(tracks.clone(), conductor, selections);
+
+        // 模拟文档编辑：Arc::make_mut 触发 COW
+        let mut edited = tracks[0].clone();
+        Arc::make_mut(&mut edited).automation_lanes[0].events[0].value = 999.0;
+
+        let clips = cb.collect();
+        assert_eq!(clips[0].events[0].1, 20.0, "剪贴板应保留复制时的值");
+        assert_eq!(edited.automation_lanes[0].events[0].value, 999.0);
+    }
+
+    /// 没有锚点命中时该选择范围被跳过。
+    #[test]
+    fn automation_snapshot_skips_empty_selection() {
+        let cc = AutomationTarget::CC { controller: 1 };
+        let mut track = TrackData::new(0, 0);
+        track
+            .automation_lanes
+            .push(lane(cc.clone(), vec![(100, 20.0)]));
+        let cb = AutomationClipboard::from_snapshot(
+            vec![Arc::new(track)],
+            Arc::new(ConductorData::default()),
+            vec![AutomationSelection {
+                target: cc,
+                sel_rects: vec![rect(500.0, 600.0)],
+            }],
+        );
+        assert!(cb.collect().is_empty());
     }
 }
