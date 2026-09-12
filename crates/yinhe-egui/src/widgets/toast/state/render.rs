@@ -202,6 +202,9 @@ impl Notifications {
 
         // 卡片交互结果（闭包内不能 &mut self，收集后回写）
         let mut outcomes: Vec<(u64, super::super::model::CardOutcome)> = Vec::new();
+        // 打开边沿：首帧把滚动定位到最新（底部），不依赖 stick 状态
+        let scroll_bottom = self.center_bottom_pending;
+        self.center_bottom_pending = false;
         egui::Area::new(egui::Id::new("yinhe_notif_center"))
             .anchor(
                 egui::Align2::RIGHT_BOTTOM,
@@ -224,6 +227,8 @@ impl Notifications {
                     .max_height(max_h)
                     .auto_shrink([false, false])
                     .stick_to_bottom(true)
+                    // 打开列表的“定位到最新”即时生效，不做滚动动画
+                    .animated(false)
                     .show(ui, |ui| {
                         ui.set_width(CARD_W);
                         if pad_top > 0.0 {
@@ -239,6 +244,9 @@ impl Notifications {
                                 card::history_card(ui, n, CARD_W);
                             }
                             ui.add_space(GAP);
+                        }
+                        if scroll_bottom {
+                            ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
                         }
                     });
             });

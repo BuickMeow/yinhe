@@ -20,6 +20,9 @@ pub struct Notifications {
     items: Vec<Notification>,
     /// 通知列表是否展开（由 mode_bar 铃铛切换）。
     pub center_open: bool,
+    /// 列表打开边沿置位：首帧把滚动定位到最新（底部），
+    /// 不依赖 stick 状态（用户上次滚到中间后重开也应先看最新）。
+    center_bottom_pending: bool,
     max_history: usize,
     center_opened_at: Option<Instant>,
     center_closed_at: Option<Instant>,
@@ -55,6 +58,7 @@ impl Notifications {
             next_id: 1,
             items: Vec::new(),
             center_open: false,
+            center_bottom_pending: false,
             max_history: 100,
             center_opened_at: None,
             center_closed_at: None,
@@ -204,6 +208,7 @@ impl Notifications {
             if self.center_open {
                 self.center_opened_at = Some(now);
                 self.center_closed_at = None;
+                self.center_bottom_pending = true;
                 // 开列表边沿：旧未读清零（列表开着时新条目直接已读，见 push 系列）。
                 self.mark_all_read();
             } else {
