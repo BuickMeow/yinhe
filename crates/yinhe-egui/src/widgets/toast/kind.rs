@@ -3,7 +3,6 @@ use egui_material_icons::icons::*;
 
 // ── Toast 种类 ──
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum ToastKind {
     Info,
     Success,

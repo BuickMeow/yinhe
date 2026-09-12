@@ -1,13 +1,10 @@
-#![allow(dead_code)]
-//! "正在保存工程"进度窗口。
+//! "正在保存工程"进度数据源。
 //!
 //! v5 保存包含全局排序 + 6 流 zstd 压缩，1.64 亿音符可达 30s+，
-//! 必须给用户进度反馈。窗口不可交互（保存无法取消），用户关闭
-//! 窗口只隐藏视图，保存照常完成。
+//! 必须给用户进度反馈。保存无法取消，toast 卡不提供 stop 按钮。
 
 use std::sync::{Arc, Mutex};
 
-use eframe::egui;
 use rust_i18n::t;
 use yinhe_yin::YinProgressStage;
 
@@ -60,51 +57,4 @@ impl ProgressSource for SaveToastSource {
     fn cancel(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
         None
     }
-}
-
-/// 保存进度窗口。`fraction` 是阶段内 0.0~1.0。
-pub(crate) fn show_viewport(ctx: &egui::Context, stage: YinProgressStage, fraction: f32) {
-    ctx.show_viewport_immediate(
-        egui::ViewportId::from_hash_of("save_overlay_dialog"),
-        crate::chrome::dialog::viewport_builder(
-            t!("dialog.saving.title").as_ref(),
-            [380.0, 110.0],
-            false,
-        ),
-        move |vctx, _class| {
-            let mut close = false;
-            egui::CentralPanel::default()
-                .frame(egui::Frame {
-                    fill: crate::theme::app_bg(),
-                    ..Default::default()
-                })
-                .show(vctx, |ui| {
-                    crate::chrome::dialog::title_bar(
-                        ui,
-                        t!("dialog.saving.title").as_ref(),
-                        &mut close,
-                    );
-                    egui::Frame::new()
-                        .inner_margin(egui::Margin {
-                            left: 12,
-                            right: 12,
-                            top: 0,
-                            bottom: 12,
-                        })
-                        .show(ui, |ui| {
-                            ui.add(
-                                egui::ProgressBar::new(fraction)
-                                    .desired_width(crate::theme::PROGRESS_BAR_WIDTH)
-                                    .show_percentage(),
-                            );
-                            ui.label(
-                                egui::RichText::new(stage_label(stage))
-                                    .size(crate::theme::BODY_FONT),
-                            );
-                        });
-                });
-        },
-    );
-
-    ctx.request_repaint();
 }
