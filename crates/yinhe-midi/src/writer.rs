@@ -91,10 +91,10 @@ pub fn write_with_options(
             let mut deduped: Vec<(Note, u8)> = Vec::with_capacity(notes.len());
             let mut last_end: std::collections::HashMap<u8, u32> = std::collections::HashMap::new();
             for (n, k) in notes.drain(..) {
-                if let Some(&le) = last_end.get(&k) {
-                    if n.start_tick < le {
-                        continue;
-                    }
+                if let Some(&le) = last_end.get(&k)
+                    && n.start_tick < le
+                {
+                    continue;
                 }
                 last_end.insert(k, n.end_tick);
                 deduped.push((n, k));
@@ -153,10 +153,6 @@ pub fn write_with_options(
     smf.write(&mut buf)
         .map_err(|e| MidiError::Io(std::io::Error::other(e.to_string())))?;
     Ok(buf)
-}
-
-fn build_conductor_track<'a>(model: &'a YinModel) -> Vec<TrackEvent<'a>> {
-    build_conductor_track_with_encoding(model, MidiImportEncoding::Utf8)
 }
 
 fn build_conductor_track_with_encoding<'a>(
@@ -224,14 +220,6 @@ fn build_conductor_track_with_encoding<'a>(
         };
         flatten_to_track_with_bytes(events, Some(encoded))
     }
-}
-
-fn build_track<'a>(
-    track: &'a TrackData,
-    notes: &[(Note, u8)],
-    color_payload: Option<&'a [u8]>,
-) -> Vec<TrackEvent<'a>> {
-    build_track_with_options(track, notes, color_payload, &MidiExportOptions::default())
 }
 
 fn build_track_with_options<'a>(
