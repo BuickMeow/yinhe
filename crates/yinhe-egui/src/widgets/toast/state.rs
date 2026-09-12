@@ -36,10 +36,6 @@ pub struct Notifications {
     card_h: HashMap<u64, f32>,
     /// Y 轴自有 ease-out 动画状态（id → 起点/终点/起始时刻，时长 0.35s）。
     y_anim: HashMap<u64, YAnim>,
-    /// 列表滚动偏移（开列表时两处目标 y 统一减去它）。
-    center_scroll: f32,
-    /// 上帧最大滚动（贴底跟随与 clamp 用，每帧更新）。
-    center_scroll_max: f32,
 }
 
 pub const LOADING_PROGRESS_ID: u64 = 0x4C4F4144; // "LOAD"
@@ -69,8 +65,6 @@ impl Notifications {
             last_tick: None,
             card_h: HashMap::new(),
             y_anim: HashMap::new(),
-            center_scroll: 0.0,
-            center_scroll_max: 0.0,
         }
     }
 
@@ -158,19 +152,6 @@ impl Notifications {
         } else {
             target
         }
-    }
-
-    /// 列表内容总高：按创建顺序用实测高度累加（含 GAP）。
-    fn center_total_h(&self, fallback: f32, gap: f32) -> f32 {
-        if self.items.is_empty() {
-            return 0.0;
-        }
-        let mut total = 0.0;
-        for n in &self.items {
-            total += self.card_h.get(&n.id).copied().unwrap_or(fallback);
-        }
-        total += gap * ((self.items.len() as f32) - 1.0).max(0.0);
-        total
     }
 
     fn perform_action(action: &super::model::ToastAction) {

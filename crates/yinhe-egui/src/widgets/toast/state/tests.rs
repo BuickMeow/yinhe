@@ -579,18 +579,19 @@ fn y_for_retarget_keeps_continuity() {
     assert!((a.to - 200.0).abs() < 1e-6);
 }
 
-/// 回归：快速滚动时按「显示位置」而非「目标位置」裁卡。
+/// 回归：堆叠重排时按「显示位置」而非「目标位置」裁卡。
 /// 目标已出带但 y 动画还在带内时，卡片必须继续渲染（否则未滑出即消失）。
 #[test]
 fn cull_uses_displayed_y_not_target() {
     let ctx = egui::Context::default();
     ctx.add_font(egui_material_icons::font_insert());
     let mut n = Notifications::new();
-    n.center_open = true;
-    n.prev_center_open = true;
-    let mut tid = 0;
+    let mut oldest = 0;
     for i in 0..10 {
-        tid = n.success(format!("t{i}"), "m");
+        let id = n.success(format!("t{i}"), "m");
+        if i == 0 {
+            oldest = id;
+        }
     }
     let ids: Vec<u64> = n.items.iter().map(|x| x.id).collect();
     for id in ids {
@@ -598,12 +599,11 @@ fn cull_uses_displayed_y_not_target() {
     }
     // 哨兵高度：被裁则保持原值，渲染则被实测覆盖
     const SENTINEL: f32 = 1234.5;
-    n.card_h.insert(tid, SENTINEL);
-    // 目标位置：最大滚动后远出下边界
-    n.center_scroll = 5000.0;
-    // 显示位置：仍在可见带内（卡坐在底边上），动画尚未滑出
+    n.card_h.insert(oldest, SENTINEL);
+    // 最旧卡目标位置：10 张堆叠远超视口顶部（出带）
+    // 显示位置：y 动画仍在带内（卡坐在底边上），动画尚未滑出
     n.y_anim.insert(
-        tid,
+        oldest,
         YAnim {
             from: 48.0,
             to: -9999.0,
@@ -621,48 +621,9 @@ fn cull_uses_displayed_y_not_target() {
         n.show_toasts(ui.ctx());
     });
     out.textures_delta.clear();
-    let h = n.card_h.get(&tid).copied().unwrap_or(SENTINEL);
+    let h = n.card_h.get(&oldest).copied().unwrap_or(SENTINEL);
     assert!(
         (h - SENTINEL).abs() > f32::EPSILON,
         "目标出带但显示位置仍在带内时被提前裁掉（提前消失 bug）"
     );
-}
-
-#[test]
-fn scroll_clamp_bounds() {
-    let max = 300.0;
-    // 上下界 clamp（与滚轮/拖动同公式）
-    assert!(((-50.0_f32).clamp(0.0, max) - 0.0).abs() < 1e-6);
-    assert!(((400.0_f32).clamp(0.0, max) - 300.0).abs() < 1e-6);
-    assert!(((150.0_f32).clamp(0.0, max) - 150.0).abs() < 1e-6);
-    // 滚轮公式：center_scroll + dy（上滑 dy>0 看旧消息，scroll 增大）
-    let scrolled = (100.0 + (-30.0_f32)).clamp(0.0, max);
-    assert!((scrolled - 70.0).abs() < 1e-6);
-    // 拖拽公式：center_scroll - drag_dy * max / travel（下拽看新消息，scroll 减小）
-    let dragged = (100.0_f32 - 20.0 * 300.0 / 200.0).clamp(0.0, max);
-    assert!((dragged - 70.0).abs() < 1e-6);
-}
-
-#[test]
-fn update_center_scroll_sticks_and_updates_max() {
-    let mut n = Notifications::new();
-    // 造 3 条，每条实测 100，GAP=8：total=100*3+8*2=316
-    let _ = n.success("a", "1");
-    let _ = n.success("b", "2");
-    let _ = n.success("c", "3");
-    let ids: Vec<u64> = n.items.iter().map(|x| x.id).collect();
-    for id in ids {
-        n.card_h.insert(id, 100.0);
-    }
-    // viewport 高 200：visible=200-48-24=128，max=316-128=188
-    n.center_scroll = 188.0;
-    n.center_scroll_max = 188.0;
-    n.update_center_scroll(200.0, 48.0, 8.0, 110.0);
-    assert!((n.center_scroll_max - 188.0).abs() < 1e-4);
-    // 新增一条变高到 total=424，max=296，底部附近应吸到新 max
-    let last = n.success("d", "4");
-    n.card_h.insert(last, 100.0);
-    n.update_center_scroll(200.0, 48.0, 8.0, 110.0);
-    assert!((n.center_scroll_max - 296.0).abs() < 1e-4);
-    assert!((n.center_scroll - 296.0).abs() < 1e-4);
 }
