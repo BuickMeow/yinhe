@@ -14,7 +14,7 @@ const TAP_RESET_BEATS: f64 = 2.0;
 
 /// 参与平均的最近敲击次数（滑动窗口）：起步阶段没找稳节奏时，
 /// 后面稳定的敲击能尽快把前面的偏差挤出去。
-const TAP_WINDOW: usize = 4;
+const TAP_WINDOW: usize = 8;
 
 /// 对话框状态（挂在 App 上，跨帧保留；打开时重置）。
 #[derive(Default)]
@@ -261,10 +261,10 @@ mod tests {
     }
 
     #[test]
-    fn bpm_uses_last_four_taps() {
+    fn bpm_uses_last_eight_taps() {
         // 前两拍不稳（1.0s、0.5s），随后稳定在 0.5s：
-        // 全局平均是 0.6s（100 BPM），最近 4 次应为 0.5s（120 BPM）
-        let taps = [0.0, 1.0, 1.5, 2.0, 2.5, 3.0];
+        // 全局平均是 0.5625s（约 106.7 BPM），最近 8 次应为 0.5s（120 BPM）
+        let taps = [0.0, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5];
         let bpm = bpm_from_taps(&taps).unwrap();
         assert!((bpm - 120.0).abs() < 1e-3);
     }
