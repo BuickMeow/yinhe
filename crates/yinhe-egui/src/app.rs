@@ -194,15 +194,10 @@ pub struct App {
     #[cfg(target_os = "macos")]
     pub(crate) ctrl_click_active: bool,
 
-    // ── Clipboard (selection-rect based, not note data) ──
-    pub(crate) clipboard: yinhe_core::Selection,
-    /// Length of `doc.history.past` at the time of the last cut.
-    /// Used by paste to locate the correct undo entry (undo bridge).
-    pub(crate) cut_past_len: Option<usize>,
-
-    /// 自动化锚点剪贴板（与音符剪贴板独立）。
-    /// 存储复制的锚点事件 + 源 target，粘贴时只应用到 target 匹配的面板。
-    pub(crate) automation_clipboard: crate::app::automation_actions::AutomationClipboard,
+    // ── Clipboard ──
+    /// 应用级剪贴板。音符侧持有复制时刻的 `Arc<YinModel>` 快照（O(1)、
+    /// 结构共享），自动化侧持有锚点事件，最后一次复制决定内容类型。
+    pub(crate) clipboard: yinhe_editor_core::ClipboardContent,
 
     // ── 通知中心（Toast + 历史）──
     pub(crate) notifications: crate::widgets::toast::Notifications,
@@ -385,9 +380,7 @@ impl App {
             #[cfg(target_os = "macos")]
             ctrl_click_active: false,
 
-            clipboard: yinhe_core::Selection::default(),
-            cut_past_len: None,
-            automation_clipboard: crate::app::automation_actions::AutomationClipboard::default(),
+            clipboard: yinhe_editor_core::ClipboardContent::default(),
             notifications: crate::widgets::toast::Notifications::new(),
         };
 

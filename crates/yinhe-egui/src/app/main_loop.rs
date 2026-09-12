@@ -499,11 +499,7 @@ impl eframe::App for App {
             }
         }
         if kb.paste {
-            if route_to_automation {
-                self.paste_automation_anchors();
-            } else {
-                self.paste_clipboard();
-            }
+            self.paste_clipboard();
         }
         if kb.select_all {
             self.select_all();

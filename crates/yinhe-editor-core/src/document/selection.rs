@@ -85,49 +85,18 @@ impl Document {
         self.edit.arr_sel_rect = vec![(0.0, (max_end + 1) as f64, 0, num_tracks as usize - 1)];
     }
 
-    /// Paste notes from clipboard (selection rects) at the cursor position.
+    /// Paste notes from the clipboard snapshot at the cursor position.
     ///
-    /// Clipboard stores only selection rects (not note data) for performance.
-    /// Notes are queried from the model at paste time. If the notes have been
-    /// deleted (e.g. after cut), falls back to the undo entry identified by
-    /// `cut_past_len` which contains the deleted notes in its `before` field.
-    pub fn paste_from_selection(
+    /// The clipboard holds an `Arc<YinModel>` snapshot taken at copy time, so
+    /// notes edited/deleted/cut after the copy are still pasted. No undo-stack
+    /// bridge is needed.
+    pub fn paste_notes(
         &mut self,
-        clipboard: &yinhe_core::Selection,
+        clipboard: &crate::clipboard::NotesClipboard,
         cursor_tick: f64,
-        cut_past_len: Option<usize>,
         track_selected: &std::collections::HashSet<u16>,
     ) -> Option<UndoAction> {
-        if clipboard.is_empty() {
-            return None;
-        }
-
-        // Try querying the model first (normal copy-paste).
-        let model = &self.data.model;
-        let mut notes = batch_ops::collect_selected(model, clipboard);
-
-        // Undo bridge: if model query returned nothing (notes were cut/deleted),
-        // fall back to the correct undo entry identified by cut_past_len.
-        //
-        // cut_past_len was captured as past.len() BEFORE the delete was pushed.
-        // After push, the delete entry sits at index `cut_past_len` (push appends
-        // at the end, so old length = new entry's index).
-        if notes.is_empty() {
-            let entry = cut_past_len
-                .and_then(|len| self.history.past.get(len))
-                .or_else(|| self.history.past.back());
-            if let Some(entry) = entry
-                && let UndoAction::Notes(delta) = &entry.action
-                && !delta.before.is_empty()
-            {
-                notes = delta
-                    .before
-                    .iter()
-                    .filter(|(n, key)| clipboard.contains(n.track, n.start_tick, *key))
-                    .cloned()
-                    .collect();
-            }
-        }
+        let notes = clipboard.collect();
 
         if notes.is_empty() {
             return None;
@@ -212,6 +181,7 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clipboard::NotesClipboard;
     use crate::document::Document;
     use yinhe_core::{ConductorData, NoteEvent, TrackData, YinModel};
 
@@ -253,7 +223,15 @@ mod tests {
         );
     }
 
-    /// paste_from_selection：与已有音符重叠的粘贴副本跳过，其余正常插入。
+    /// 用当前文档模型 + 指定选框构造剪贴板快照。
+    fn clipboard_with(doc: &Document, selection: yinhe_core::Selection) -> NotesClipboard {
+        NotesClipboard {
+            snapshot: doc.data.model.clone(),
+            selection,
+        }
+    }
+
+    /// 与已有音符重叠的粘贴副本跳过，其余正常插入。
     #[test]
     fn paste_skips_overlapping_notes_when_disallowed() {
         let mut doc = make_doc();
@@ -263,12 +241,13 @@ mod tests {
         doc.edit.allow_overlapping_notes = false;
 
         // 剪贴板 = 源音符所在选框（只含 A、B）
-        let mut clipboard = yinhe_core::Selection::default();
-        clipboard.add_rect_track(100, 201, 60, 62, 0, 0);
+        let mut selection = yinhe_core::Selection::default();
+        selection.add_rect_track(100, 201, 60, 62, 0, 0);
+        let clipboard = clipboard_with(&doc, selection);
 
         // 粘贴到 400：A 副本 [400,500) 与 C 相交 → 跳过；B 副本 k62 [400,450) → 插入
         let action = doc
-            .paste_from_selection(&clipboard, 400.0, None, &std::collections::HashSet::new())
+            .paste_notes(&clipboard, 400.0, &std::collections::HashSet::new())
             .expect("应有部分副本插入");
         match action {
             UndoAction::Notes(delta) => {
@@ -281,7 +260,7 @@ mod tests {
         assert_eq!(doc.data.model.notes[62].len(), 2, "B 及其副本");
     }
 
-    /// paste_from_selection：副本全被拦时返回 None，模型不变。
+    /// 副本全被拦时返回 None，模型不变。
     #[test]
     fn paste_all_blocked_returns_none() {
         let mut doc = make_doc();
@@ -289,10 +268,11 @@ mod tests {
         add(&mut doc, 450, 550, 60); // 占位 C（与 A 的副本 [400,500) 相交）
         doc.edit.allow_overlapping_notes = false;
 
-        let mut clipboard = yinhe_core::Selection::default();
-        clipboard.add_rect_track(100, 201, 60, 60, 0, 0);
+        let mut selection = yinhe_core::Selection::default();
+        selection.add_rect_track(100, 201, 60, 60, 0, 0);
+        let clipboard = clipboard_with(&doc, selection);
         assert!(
-            doc.paste_from_selection(&clipboard, 400.0, None, &std::collections::HashSet::new())
+            doc.paste_notes(&clipboard, 400.0, &std::collections::HashSet::new())
                 .is_none(),
             "副本全被拦时应返回 None"
         );
@@ -305,13 +285,59 @@ mod tests {
         let mut doc = make_doc();
         add(&mut doc, 100, 200, 60);
         add(&mut doc, 450, 550, 60);
-        let mut clipboard = yinhe_core::Selection::default();
-        clipboard.add_rect_track(100, 201, 60, 60, 0, 0);
+        let mut selection = yinhe_core::Selection::default();
+        selection.add_rect_track(100, 201, 60, 60, 0, 0);
+        let clipboard = clipboard_with(&doc, selection);
         assert!(
-            doc.paste_from_selection(&clipboard, 400.0, None, &std::collections::HashSet::new())
+            doc.paste_notes(&clipboard, 400.0, &std::collections::HashSet::new())
                 .is_some(),
             "默认应允许重叠粘贴"
         );
         assert_eq!(doc.data.model.notes[60].len(), 3);
+    }
+
+    /// 快照语义：复制后源音符被删除（等同 cut），粘贴内容不受影响。
+    #[test]
+    fn paste_uses_snapshot_after_source_deleted() {
+        let mut doc = make_doc();
+        add(&mut doc, 100, 200, 60);
+
+        let mut selection = yinhe_core::Selection::default();
+        selection.add_rect_track(100, 201, 60, 60, 0, 0);
+        let clipboard = clipboard_with(&doc, selection);
+
+        doc.edit.selected.add_rect_track(100, 201, 60, 60, 0, 0);
+        doc.delete_selected();
+        assert_eq!(doc.data.model.notes[60].len(), 0, "源已删除");
+
+        assert!(
+            doc.paste_notes(&clipboard, 400.0, &std::collections::HashSet::new())
+                .is_some(),
+            "源删除后仍应从快照粘贴"
+        );
+        assert_eq!(doc.data.model.notes[60].len(), 1);
+        let pasted = &doc.data.model.notes[60][0];
+        assert_eq!(pasted.start_tick, 400);
+        assert_eq!(pasted.end_tick, 500);
+    }
+
+    /// 快照语义：跨文档粘贴使用源文档复制时刻的内容。
+    #[test]
+    fn paste_across_documents_uses_source_snapshot() {
+        let mut src = make_doc();
+        add(&mut src, 100, 200, 60);
+        let mut selection = yinhe_core::Selection::default();
+        selection.add_rect_track(100, 201, 60, 60, 0, 0);
+        let clipboard = clipboard_with(&src, selection);
+
+        let mut dst = make_doc();
+        // 目标文档同坐标区没有音符；若旧实现「重查当前文档」会粘空。
+        assert!(
+            dst.paste_notes(&clipboard, 300.0, &std::collections::HashSet::new())
+                .is_some(),
+            "跨文档粘贴应使用源快照"
+        );
+        assert_eq!(dst.data.model.notes[60].len(), 1);
+        assert_eq!(dst.data.model.notes[60][0].start_tick, 300);
     }
 }

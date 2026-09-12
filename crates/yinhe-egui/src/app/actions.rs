@@ -219,44 +219,52 @@ impl App {
 
     // ── Copy / Cut / Paste / Select All ──
 
-    /// Copy selection rects to clipboard (no note data, just rects).
-    /// Resets cut_past_len since a new copy invalidates the cut undo bridge.
+    /// Copy selected notes to the clipboard as an O(1) model snapshot.
+    /// Empty selection leaves the clipboard untouched (成熟软件惯例：空复制不覆盖).
     pub(crate) fn copy_selection(&mut self) {
         let Some(idx) = self.workspace.active_doc else {
             return;
         };
-        self.clipboard = self.workspace.documents[idx].edit.selected.clone();
-        self.cut_past_len = None;
+        let doc = &self.workspace.documents[idx];
+        if doc.edit.selected.is_empty() {
+            return;
+        }
+        self.clipboard =
+            yinhe_editor_core::ClipboardContent::Notes(yinhe_editor_core::NotesClipboard {
+                snapshot: doc.data.model.clone(),
+                selection: doc.edit.selected.clone(),
+            });
     }
 
-    /// Cut: copy rects to clipboard, then delete selected notes.
-    /// Stores the current undo stack length so paste can locate the
-    /// correct undo entry (undo bridge) even if intervening edits occur.
+    /// Cut: copy selection (snapshot), then delete selected notes.
     pub(crate) fn cut_selection(&mut self) {
         self.copy_selection();
-        // cut_past_len is reset by copy_selection; set it before delete pushes.
-        let Some(idx) = self.workspace.active_doc else {
-            return;
-        };
-        self.cut_past_len = Some(self.workspace.documents[idx].history.past_len());
         self.delete_selected_notes();
     }
 
-    /// Paste notes from clipboard at cursor position.
+    /// Paste the clipboard at cursor position, dispatching on clipboard content
+    /// (notes vs automation), not on the current selection.
     pub(crate) fn paste_clipboard(&mut self) {
         let clipboard = self.clipboard.clone();
-        let cut_past_len = self.cut_past_len;
-        let Some(idx) = self.workspace.active_doc else {
-            return;
-        };
-        let cursor_tick = self.workspace.documents[idx]
-            .edit
-            .cursor_tick
-            .unwrap_or(0.0);
-        let track_selected = self.workspace.documents[idx].edit.track_selected.clone();
-        self.with_undo(t!("undo.paste").as_ref(), |doc| {
-            doc.paste_from_selection(&clipboard, cursor_tick, cut_past_len, &track_selected)
-        });
+        match clipboard {
+            yinhe_editor_core::ClipboardContent::Empty => {}
+            yinhe_editor_core::ClipboardContent::Notes(cb) => {
+                let Some(idx) = self.workspace.active_doc else {
+                    return;
+                };
+                let cursor_tick = self.workspace.documents[idx]
+                    .edit
+                    .cursor_tick
+                    .unwrap_or(0.0);
+                let track_selected = self.workspace.documents[idx].edit.track_selected.clone();
+                self.with_undo(t!("undo.paste").as_ref(), |doc| {
+                    doc.paste_notes(&cb, cursor_tick, &track_selected)
+                });
+            }
+            yinhe_editor_core::ClipboardContent::Automation(cb) => {
+                self.paste_automation_clipboard(&cb);
+            }
+        }
     }
 
     /// Select all notes — PR or AR depending on current view mode.
@@ -363,13 +371,7 @@ impl App {
                     self.copy_selection();
                 }
             }
-            A::Paste => {
-                if route_to_automation {
-                    self.paste_automation_anchors();
-                } else {
-                    self.paste_clipboard();
-                }
-            }
+            A::Paste => self.paste_clipboard(),
             A::SelectAll => self.select_all(),
             A::Duplicate => {
                 if route_to_automation {
