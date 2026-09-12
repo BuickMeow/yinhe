@@ -546,6 +546,7 @@ impl eframe::App for App {
         // 再 poll 现有异步操作（包括 rescale 完成检测）。
         self.start_rescale_if_requested(ui.ctx());
         self.poll_async_operations();
+        self.poll_clipboard_sync();
 
         // ── Handle deferred exit ──
         // 不重置 should_exit：保持 true 直到窗口真正关闭，

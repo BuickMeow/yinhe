@@ -3,6 +3,7 @@ pub mod batch_ops;
 pub mod channel_alloc;
 pub mod chord;
 pub mod clipboard;
+pub mod clipboard_file;
 pub mod config;
 pub mod document;
 pub mod edit_state;
@@ -19,7 +20,10 @@ pub mod sel_hint;
 pub mod shortcuts;
 pub mod workspace;
 
-pub use clipboard::{AutomationClip, AutomationClipboard, ClipboardContent, NotesClipboard};
+pub use clipboard::{
+    AutomationClip, AutomationClipboard, ClipboardContent, NotesClipboard, NotesClipboardData,
+    PasteMode,
+};
 pub use config::{ProjectSfConfig, SfEntry};
 pub use document::automation_edit::AnchorField;
 pub use document::note_edit::FlipAxis;

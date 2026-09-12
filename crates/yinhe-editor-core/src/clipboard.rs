@@ -11,19 +11,58 @@ use std::sync::Arc;
 use yinhe_core::{Selection, YinModel};
 use yinhe_types::{AutomationTarget, Note, SegmentShape};
 
-/// 音符剪贴板：复制时刻的模型快照 + 选区。
+/// 音符剪贴板的数据来源。
+#[derive(Clone)]
+pub enum NotesClipboardData {
+    /// 同实例复制：模型结构共享快照 + 选区，O(1) 且延迟查询。
+    Snapshot {
+        snapshot: Arc<YinModel>,
+        selection: Selection,
+    },
+    /// 从系统剪贴板文件加载的外来数据（已物化）。
+    Materialized(Vec<(Note, u8)>),
+}
+
+/// 音符剪贴板。
 #[derive(Clone)]
 pub struct NotesClipboard {
-    /// 复制那一刻的模型（结构共享，O(1) clone）。
-    pub snapshot: Arc<YinModel>,
-    /// 复制时的选区（决定从快照里取哪些音符）。
-    pub selection: Selection,
+    pub data: NotesClipboardData,
 }
 
 impl NotesClipboard {
-    /// 从快照收集选中音符（不查询当前文档）。
+    /// 同实例复制：O(1) 的结构共享快照。
+    pub fn from_snapshot(snapshot: Arc<YinModel>, selection: Selection) -> Self {
+        Self {
+            data: NotesClipboardData::Snapshot {
+                snapshot,
+                selection,
+            },
+        }
+    }
+
+    /// 跨实例加载：已物化的音符列表。
+    pub fn from_materialized(notes: Vec<(Note, u8)>) -> Self {
+        Self {
+            data: NotesClipboardData::Materialized(notes),
+        }
+    }
+
+    /// 收集选中音符（快照从模型查询，物化数据直接克隆）。
     pub fn collect(&self) -> Vec<(Note, u8)> {
-        crate::batch_ops::collect_selected(&self.snapshot, &self.selection)
+        match &self.data {
+            NotesClipboardData::Snapshot {
+                snapshot,
+                selection,
+            } => crate::batch_ops::collect_selected(snapshot, selection),
+            NotesClipboardData::Materialized(notes) => notes.clone(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match &self.data {
+            NotesClipboardData::Snapshot { selection, .. } => selection.is_empty(),
+            NotesClipboardData::Materialized(notes) => notes.is_empty(),
+        }
     }
 }
 

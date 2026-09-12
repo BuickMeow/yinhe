@@ -115,6 +115,7 @@ impl App {
         self.clipboard =
             yinhe_editor_core::ClipboardContent::Automation(AutomationClipboard { clips });
         self.paste_chain = None;
+        self.export_clipboard_to_system();
     }
 
     /// 剪切选中锚点：复制到剪贴板后删除。

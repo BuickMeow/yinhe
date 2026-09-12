@@ -252,10 +252,7 @@ mod tests {
 
     /// 用当前文档模型 + 指定选框构造剪贴板快照。
     fn clipboard_with(doc: &Document, selection: yinhe_core::Selection) -> NotesClipboard {
-        NotesClipboard {
-            snapshot: doc.data.model.clone(),
-            selection,
-        }
+        NotesClipboard::from_snapshot(doc.data.model.clone(), selection)
     }
 
     /// 与已有音符重叠的粘贴副本跳过，其余正常插入。

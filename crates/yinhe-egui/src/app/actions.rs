@@ -237,12 +237,14 @@ impl App {
         if doc.edit.selected.is_empty() {
             return;
         }
-        self.clipboard =
-            yinhe_editor_core::ClipboardContent::Notes(yinhe_editor_core::NotesClipboard {
-                snapshot: doc.data.model.clone(),
-                selection: doc.edit.selected.clone(),
-            });
+        self.clipboard = yinhe_editor_core::ClipboardContent::Notes(
+            yinhe_editor_core::NotesClipboard::from_snapshot(
+                doc.data.model.clone(),
+                doc.edit.selected.clone(),
+            ),
+        );
         self.paste_chain = None;
+        self.export_clipboard_to_system();
     }
 
     /// Cut: copy selection (snapshot), then delete selected notes.
@@ -266,6 +268,12 @@ impl App {
         mode: yinhe_editor_core::clipboard::PasteMode,
     ) {
         use yinhe_editor_core::clipboard::PasteMode;
+
+        // 系统剪贴板是剪贴板内容的唯一真相：外部内容使内部剪贴板失效；
+        // 其他实例的引用则从临时文件加载。已是最新内容时零开销。
+        if !self.clipboard_sync.resolve_paste(&mut self.clipboard) {
+            return;
+        }
 
         let clipboard = self.clipboard.clone();
         let chained = mode == PasteMode::AtCursor;

@@ -6,6 +6,7 @@ pub(crate) mod actions;
 pub(crate) mod audio;
 pub(crate) mod audio_state;
 pub(crate) mod automation_actions;
+pub(crate) mod clipboard_sync;
 pub(crate) mod dialog_dispatch;
 pub(crate) mod export_state;
 pub(crate) mod layout;
@@ -207,6 +208,8 @@ pub struct App {
     pub(crate) clipboard: yinhe_editor_core::ClipboardContent,
     /// 连续粘贴链：同一光标位置连续粘贴时自动按内容跨度向后递增。
     pub(crate) paste_chain: Option<PasteChain>,
+    /// 系统剪贴板桥（跨实例剪贴板）。
+    pub(crate) clipboard_sync: clipboard_sync::ClipboardSync,
 
     // ── 通知中心（Toast + 历史）──
     pub(crate) notifications: crate::widgets::toast::Notifications,
@@ -214,6 +217,10 @@ pub struct App {
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // 清理跨实例剪贴板的过期临时文件（可能仍被其他实例引用，只清 7 天前的）。
+        yinhe_editor_core::clipboard_file::cleanup_stale(std::time::Duration::from_secs(
+            7 * 24 * 3600,
+        ));
         // ── Load fonts: Pretendard-SemiBold primary, MiSans fallback ──
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Ui, || {
             let mut fonts = egui::FontDefinitions::default();
@@ -391,6 +398,7 @@ impl App {
 
             clipboard: yinhe_editor_core::ClipboardContent::default(),
             paste_chain: None,
+            clipboard_sync: clipboard_sync::ClipboardSync::new(),
             notifications: crate::widgets::toast::Notifications::new(),
         };
 

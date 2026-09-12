@@ -71,24 +71,30 @@ pub fn append_notes_ordered(bucket: &mut NoteBucket, new_notes: Vec<Note>) {
     bucket.insert_batch_sorted(new_notes);
 }
 
+/// Iterate notes matching `selection` (read-only), calling `f` for each.
+///
+/// Streaming variant of [`collect_selected`] for callers that must not
+/// materialize the whole selection (e.g. writing huge clipboards to disk).
+pub fn for_each_selected(model: &YinModel, selection: &Selection, mut f: impl FnMut(&Note, u8)) {
+    for &(tick_start, tick_end, key_lo, key_hi, track_lo, track_hi) in &selection.rects {
+        for key in key_lo..=key_hi {
+            let k = key as usize;
+            for n in model.notes[k].range(tick_start, tick_end) {
+                if n.track >= track_lo && n.track <= track_hi {
+                    f(n, key);
+                }
+            }
+        }
+    }
+}
+
 /// Collect notes matching `selection` from the model (read-only, no removal).
 ///
 /// For each rect × key range, iterates `start_tick ∈ [tick_start, tick_end)`.
 /// Returns `(Note, key)` pairs.
 pub fn collect_selected(model: &YinModel, selection: &Selection) -> Vec<(Note, u8)> {
     let mut result: Vec<(Note, u8)> = Vec::new();
-
-    for &(tick_start, tick_end, key_lo, key_hi, track_lo, track_hi) in &selection.rects {
-        for key in key_lo..=key_hi {
-            let k = key as usize;
-            for n in model.notes[k].range(tick_start, tick_end) {
-                if n.track >= track_lo && n.track <= track_hi {
-                    result.push((*n, key));
-                }
-            }
-        }
-    }
-
+    for_each_selected(model, selection, |n, key| result.push((*n, key)));
     result
 }
 

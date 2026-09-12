@@ -45,6 +45,8 @@ rust-i18n = { workspace = true }
 uuid = { workspace = true }
 pinyin = "0.11.0"
 deunicode = "1.6.2"
+# 系统剪贴板（跨实例剪贴板；egui-winit 已用它，无新增编译负担）
+arboard = "3.6"
 
 [dev-dependencies]
 yinhe-test-helpers = { path = "../yinhe-test-helpers" }

@@ -7612,6 +7612,7 @@ dependencies = [
 name = "yinhe-egui"
 version = "0.1.0"
 dependencies = [
+ "arboard",
  "bytemuck",
  "chrono",
  "cpal",
