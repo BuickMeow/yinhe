@@ -349,7 +349,13 @@ impl App {
         match action {
             A::Undo => self.undo(),
             A::Redo => self.redo(),
-            A::Cut => self.cut_selection(),
+            A::Cut => {
+                if route_to_automation {
+                    self.cut_automation_anchors();
+                } else {
+                    self.cut_selection();
+                }
+            }
             A::Copy => {
                 if route_to_automation {
                     self.copy_automation_anchors();

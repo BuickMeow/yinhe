@@ -126,6 +126,12 @@ impl App {
         };
     }
 
+    /// 剪切选中锚点：复制到剪贴板后删除。
+    pub(crate) fn cut_automation_anchors(&mut self) {
+        self.copy_automation_anchors();
+        self.delete_automation_anchors();
+    }
+
     /// 粘贴剪贴板锚点到 cursor_tick 位置。
     pub(crate) fn paste_automation_anchors(&mut self) {
         let Some(idx) = self.workspace.active_doc else {

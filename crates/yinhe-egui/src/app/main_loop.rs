@@ -492,7 +492,11 @@ impl eframe::App for App {
             }
         }
         if kb.cut {
-            self.cut_selection();
+            if route_to_automation {
+                self.cut_automation_anchors();
+            } else {
+                self.cut_selection();
+            }
         }
         if kb.paste {
             if route_to_automation {
