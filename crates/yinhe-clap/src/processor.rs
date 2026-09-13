@@ -9,6 +9,8 @@
 //! 按声明端口数读 `audio_inputs[i]` 的插件包装层（如 JUCE 的
 //! ClapJuceWrapper）越界读到空指针——Element FX（17 进 17 出）实测崩。
 
+use std::sync::Arc;
+
 use clack_host::events::io::EventBuffer;
 use clack_host::prelude::{InputEvents, OutputEvents};
 use clack_host::process::audio_buffers::{
@@ -20,6 +22,7 @@ use yinhe_mixer::{InstrumentProcessor, PluginEvent};
 use crate::error::PluginError;
 use crate::events::push_event;
 use crate::host::YinheHost;
+use crate::param_queue::ParamQueue;
 
 /// 插件声明的端口布局（activate 时管理线程查询并冻结）。
 ///
@@ -49,6 +52,10 @@ pub struct ClapProcessor {
     in_bufs: Vec<PortBuffers>,
     out_bufs: Vec<PortBuffers>,
     frames: usize,
+    /// UI 线程写入的参数变化；每块 drain 成 ParamValue 事件。
+    param_queue: Arc<ParamQueue>,
+    /// drain 暂存（保留容量，处理期间零分配）。
+    param_scratch: Vec<(u32, f64)>,
 }
 
 impl ClapProcessor {
@@ -56,6 +63,7 @@ impl ClapProcessor {
         stopped: StoppedPluginAudioProcessor<YinheHost>,
         frames: usize,
         layout: &PortLayout,
+        param_queue: Arc<ParamQueue>,
     ) -> Self {
         // with_capacity 第一个参数是**声道总数**（所有端口声道数之和）。
         // 给小了会让 clack 内部 Vec 重分配，其重分配后的指针修复路径有 bug
@@ -72,6 +80,8 @@ impl ClapProcessor {
             in_bufs: alloc_ports(&layout.in_channels, frames),
             out_bufs: alloc_ports(&layout.out_channels, frames),
             frames,
+            param_queue,
+            param_scratch: Vec::new(),
         }
     }
 
@@ -131,6 +141,19 @@ impl ClapProcessor {
         for event in events {
             push_event(&mut self.input_events, event);
         }
+        // UI 线程写入的参数变化：作为块首（time 0）ParamValue 事件交给插件。
+        self.param_queue.take_into(&mut self.param_scratch);
+        for &(param_id, value) in &self.param_scratch {
+            push_event(
+                &mut self.input_events,
+                &PluginEvent::ParamValue {
+                    time: 0,
+                    param_id,
+                    value,
+                },
+            );
+        }
+        self.param_scratch.clear();
         self.input_events.sort();
         for port in &mut self.out_bufs {
             for ch in port {
@@ -195,6 +218,28 @@ impl ClapProcessor {
         }
     }
 
+    /// 是否有待发参数变化（暂停 flush 前的快速检查）。
+    pub fn has_pending_params(&self) -> bool {
+        !self.param_queue.is_empty()
+    }
+
+    /// 暂停/停止时把待发参数送达插件：跑一个静音块，参数经 ParamValue 事件应用，
+    /// 音频输出丢弃。播放时无需调用（`process` 每块自然携带参数事件）。
+    pub fn flush_pending_params(&mut self, position_samples: u64) {
+        if !self.has_pending_params() {
+            return;
+        }
+        // 输入端口清零（乐器本就无音频输入；效果器此处视为静音源）。
+        for port in &mut self.in_bufs {
+            for ch in port {
+                ch.fill(0.0);
+            }
+        }
+        if let Err(e) = self.process_inner(&[], Some(position_samples)) {
+            tracing::warn!(target: "clap-plugin", "暂停参数 flush 失败: {e}");
+        }
+    }
+
     /// 停止处理并返回可传回主线程的句柄（供 deactivate）。
     pub fn into_stopped(mut self) -> StoppedPluginAudioProcessor<YinheHost> {
         self.processor.ensure_processing_stopped();
@@ -238,6 +283,10 @@ impl InstrumentProcessor for ClapProcessor {
 
     fn reset(&mut self) {
         ClapProcessor::reset(self);
+    }
+
+    fn flush_pending_params(&mut self, position_samples: u64) {
+        ClapProcessor::flush_pending_params(self, position_samples);
     }
 
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any + Send> {

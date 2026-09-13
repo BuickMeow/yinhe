@@ -24,6 +24,10 @@ pub trait InsertProcessor: Send {
     /// 清空内部处理状态（envelope、delay 尾音等）。seek 后调用。
     fn reset(&mut self) {}
 
+    /// 暂停/停止时把待发参数送达插件（输出丢弃）。播放时由 `process` 携带，
+    /// 无需调用。默认无操作。
+    fn flush_pending_params(&mut self, _position_samples: u64) {}
+
     /// 回收时还原为具体类型（如插件处理器需要 deactivate 回实例）。
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
 }
@@ -232,6 +236,18 @@ impl MixerGraph {
         out
     }
 
+    /// 暂停/停止时把待发参数经各 insert 送达插件（输出丢弃；播放时无需调用）。
+    pub fn flush_pending_insert_params(&mut self, position_samples: u64) {
+        for chain in &mut self.inserts {
+            for insert in chain {
+                insert.flush_pending_params(position_samples);
+            }
+        }
+        for insert in &mut self.master_inserts {
+            insert.flush_pending_params(position_samples);
+        }
+    }
+
     /// 通道电平表 tap（用于 UI 端读取）。
     pub fn channel_meter(&self, channel: usize) -> Option<MeterTap> {
         self.meters.get(channel).cloned()
@@ -318,6 +334,32 @@ mod tests {
         fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
             self
         }
+    }
+
+    /// 记录 flush 调用的 insert（验证暂停参数 flush 覆盖所有链）。
+    struct FlushCounter(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+    impl InsertProcessor for FlushCounter {
+        fn process(&mut self, _left: &mut [f32], _right: &mut [f32]) {}
+
+        fn flush_pending_params(&mut self, _position_samples: u64) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+
+        fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+            self
+        }
+    }
+
+    #[test]
+    fn flush_pending_insert_params_reaches_all_chains() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let count = std::sync::Arc::new(AtomicUsize::new(0));
+        let mut g = graph_with(&[StripParams::default(), StripParams::default()], 4);
+        g.insert_insert(0, 0, Box::new(FlushCounter(count.clone())));
+        g.insert_insert(1, 0, Box::new(FlushCounter(count.clone())));
+        g.insert_master_insert(0, Box::new(FlushCounter(count.clone())));
+        g.flush_pending_insert_params(123);
+        assert_eq!(count.load(Ordering::Relaxed), 3);
     }
 
     fn graph_with(channels: &[StripParams], frames: usize) -> MixerGraph {

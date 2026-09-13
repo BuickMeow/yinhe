@@ -95,6 +95,15 @@ impl MixerRack {
         }
     }
 
+    /// 按槽位取插件实例（参数面板用）。槽位不存在/无实例返回 None。
+    pub(crate) fn instance_mut(
+        &mut self,
+        channel: Option<u8>,
+        slot: usize,
+    ) -> Option<&mut ClapPluginInstance> {
+        self.chain_mut(channel).get_mut(slot)?.instance.as_mut()
+    }
+
     /// 在链尾加载插件实例（不激活、不发送——发送走 [`ensure_all_sent`]）。
     ///
     /// `state`/`bypassed` 来自工程加载时的 InsertRef；手动添加传 None/false。

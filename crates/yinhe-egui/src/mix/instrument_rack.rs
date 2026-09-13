@@ -49,6 +49,11 @@ impl InstrumentRack {
         self.slots.iter_mut().find(|s| s.channel == channel)
     }
 
+    /// 按乐器通道取插件实例（参数面板用）。槽位不存在/无实例返回 None。
+    pub(crate) fn instance_mut(&mut self, channel: u16) -> Option<&mut ClapPluginInstance> {
+        self.slot_mut(channel)?.instance.as_mut()
+    }
+
     /// 加载某乐器通道的插件实例（不激活、不发送——发送走 ensure_all_sent）。
     /// 替换该通道已有槽位：已安装的旧实例移入 pending_return，等旧处理器退回 deactivate。
     /// 持久化层 InsertRef 由调用方先行写入。

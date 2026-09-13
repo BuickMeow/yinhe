@@ -52,6 +52,10 @@ impl InsertProcessor for ClapInsert {
         self.processor.reset();
     }
 
+    fn flush_pending_params(&mut self, position_samples: u64) {
+        self.processor.flush_pending_params(position_samples);
+    }
+
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
         self
     }

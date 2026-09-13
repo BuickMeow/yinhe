@@ -434,6 +434,17 @@ fn insert_row(
             .add(crate::widgets::menu::menu_item_button(
                 ui,
                 false,
+                t!("mix.params").as_ref(),
+            ))
+            .clicked()
+        {
+            actions.push(MixAction::OpenInsertParams { channel, slot });
+            ui.close();
+        }
+        if ui
+            .add(crate::widgets::menu::menu_item_button(
+                ui,
+                false,
                 t!("mix.remove_insert").as_ref(),
             ))
             .clicked()
@@ -766,6 +777,9 @@ pub(crate) fn instrument_strip(
                 );
                 resp.on_hover_text(n);
                 ui.add_space(4.0);
+                if ui.small_button(t!("mix.params")).clicked() {
+                    actions.push(MixAction::OpenInstrumentParams { channel });
+                }
                 if ui.small_button(t!("mix.change_instrument")).clicked() {
                     actions.push(MixAction::OpenInstrumentPicker { channel });
                 }

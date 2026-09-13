@@ -756,10 +756,13 @@ impl AudioRenderer {
         // 预览组非空或有余音时强制渲染：未播放时也要输出。
         // 预览引擎是独立合成器（不依赖模型），所以预览时不需要 initialized。
         let previewing = self.preview_engine.previewing();
-        if !self.state.initialized.load(Ordering::Acquire) && !previewing {
+        if !self.engine.playing() && !previewing {
+            // 暂停时把待发的插件参数送达（否则调参数要等播放才生效）。
+            // 不依赖 initialized：空工程挂乐器插件也要能立即调参数。
+            self.engine.flush_pending_plugin_params();
             return false;
         }
-        if !self.engine.playing() && !previewing {
+        if !self.state.initialized.load(Ordering::Acquire) && !previewing {
             return false;
         }
 

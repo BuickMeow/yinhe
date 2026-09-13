@@ -4,6 +4,7 @@
 //! 本类型的所有方法都不应在渲染线程调用（可能分配内存、可能阻塞）。
 
 use std::ffi::CString;
+use std::sync::Arc;
 
 use clack_extensions::params::{ParamInfoBuffer, PluginParams};
 use clack_extensions::state::PluginState;
@@ -15,6 +16,7 @@ use clack_host::process::{PluginAudioConfiguration, StoppedPluginAudioProcessor}
 use crate::describe::PluginInfo;
 use crate::error::PluginError;
 use crate::host::{YinheHost, YinheMainThread, YinheShared};
+use crate::param_queue::ParamQueue;
 use crate::processor::ClapProcessor;
 
 /// 插件参数描述（供 egui 通用参数面板使用）。
@@ -37,6 +39,8 @@ pub struct ParamDescriptor {
 pub struct ClapPluginInstance {
     instance: PluginInstance<YinheHost>,
     info: PluginInfo,
+    /// 参数写入队列：UI 线程 push，[`ClapProcessor`] 渲染时 drain 成事件。
+    param_queue: Arc<ParamQueue>,
     /// 插件 GUI 已 create（浮动窗口模型；drop 前必须 destroy，否则插件进程内资源泄漏/崩溃）。
     gui_created: bool,
 }
@@ -62,12 +66,18 @@ impl ClapPluginInstance {
         Ok(Self {
             instance,
             info: info.clone(),
+            param_queue: Arc::new(ParamQueue::new()),
             gui_created: false,
         })
     }
 
     pub fn info(&self) -> &PluginInfo {
         &self.info
+    }
+
+    /// 参数写入队列（UI 线程 push；处理器在渲染线程 drain）。
+    pub fn param_queue(&self) -> Arc<ParamQueue> {
+        Arc::clone(&self.param_queue)
     }
 
     /// 枚举插件参数。插件不支持 params 扩展时返回空列表（不算错误，
@@ -108,6 +118,18 @@ impl ClapPluginInstance {
         let mut handle = self.instance.plugin_handle();
         let params_ext = handle.get_extension::<PluginParams>()?;
         params_ext.get_value(&mut handle, id)
+    }
+
+    /// 参数值的插件侧格式化文本（如 "8.2 kHz"）；插件不支持时返回 None。
+    pub fn value_to_text(&mut self, param_id: u32, value: f64) -> Option<String> {
+        let id = clack_host::prelude::ClapId::from_raw(param_id)?;
+        let mut handle = self.instance.plugin_handle();
+        let params_ext = handle.get_extension::<PluginParams>()?;
+        let mut buffer = [0u8; 256];
+        let bytes = params_ext
+            .value_to_text(&mut handle, id, value, &mut buffer)
+            .ok()?;
+        Some(String::from_utf8_lossy(bytes).into_owned())
     }
 
     /// 保存插件状态（进工程文件）。插件不支持 state 扩展时返回 Ok(None)。
@@ -155,7 +177,12 @@ impl ClapPluginInstance {
                 max_frames_count: max_frames,
             },
         )?;
-        Ok(ClapProcessor::new(stopped, max_frames as usize, &layout))
+        Ok(ClapProcessor::new(
+            stopped,
+            max_frames as usize,
+            &layout,
+            Arc::clone(&self.param_queue),
+        ))
     }
 
     /// 查询插件声明的 audio ports 布局；插件不支持 audio-ports 扩展时
@@ -244,6 +271,15 @@ impl ClapPluginInstance {
             }
         }
         out
+    }
+
+    /// 插件请求重扫参数列表（如 Kontakt 载入新音色后参数集合变化），取出即清除。
+    pub fn take_params_rescan(&mut self) -> bool {
+        self.instance.access_handler_mut(|main_thread| {
+            let requested = main_thread.params_rescan_requested;
+            main_thread.params_rescan_requested = false;
+            requested
+        })
     }
 
     /// 插件状态脏标记（需要重新 save_state），取出即清除。

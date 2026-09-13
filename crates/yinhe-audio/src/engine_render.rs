@@ -294,6 +294,16 @@ impl AudioEngine {
         (dense != u32::MAX).then_some(dense as usize)
     }
 
+    /// 暂停/停止时把待发插件参数送达（静音块）。renderer 每轮轮询调用；
+    /// 无参数变化时开销可忽略（每个处理器一次空队列检查）。
+    pub(crate) fn flush_pending_plugin_params(&mut self) {
+        let position = self.sample_position;
+        for slot in self.instruments.iter_mut().flatten() {
+            slot.processor.flush_pending_params(position);
+        }
+        self.mixer.flush_pending_insert_params(position);
+    }
+
     /// 把本块累积的乐器事件喂给各乐器实例，输出写进对应乐器 dense 通道。
     /// 在 xsynth 段渲染之后、mixer.process() 之前调用。
     fn render_instruments(&mut self, block_start_sample: u64, frames: usize) {

@@ -55,6 +55,10 @@ pub trait InstrumentProcessor: Send {
     /// 清空内部处理状态（envelope、delay 尾音等）。seek 后调用。
     fn reset(&mut self) {}
 
+    /// 暂停/停止时把待发参数送达插件（跑一个静音块或等价 flush，输出丢弃）。
+    /// 播放时由 [`Self::process`] 正常携带参数事件，无需调用本方法。
+    fn flush_pending_params(&mut self, _position_samples: u64) {}
+
     /// 插件报告的延迟（采样数），供延迟补偿（PDC）用。
     fn latency_samples(&self) -> u32 {
         0

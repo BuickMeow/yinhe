@@ -12,6 +12,7 @@
 #[cfg(target_os = "macos")]
 pub(crate) mod gui_window;
 pub(crate) mod instrument_rack;
+pub(crate) mod param_panel;
 pub(crate) mod rack;
 mod strip;
 
@@ -23,6 +24,7 @@ use yinhe_mixer::{MasterParams, StripParams};
 use crate::app::App;
 
 pub(crate) use instrument_rack::InstrumentRack;
+pub(crate) use param_panel::ParamPanel;
 pub(crate) use rack::MixerRack;
 
 /// 源通道总数（16 port × 16 通道）。
@@ -65,6 +67,8 @@ pub(crate) struct MixUiState {
     /// 乐器插件选择器目标：乐器通道号（0 起）；None = 未打开。
     pub(crate) instrument_picker_for: Option<u16>,
     pub(crate) picker_filter: String,
+    /// 插件参数面板（同一时间至多一个）。
+    pub(crate) param_panel: Option<ParamPanel>,
 }
 
 impl Default for MixUiState {
@@ -77,6 +81,7 @@ impl Default for MixUiState {
             picker_for: None,
             instrument_picker_for: None,
             picker_filter: String::new(),
+            param_panel: None,
         }
     }
 }
@@ -121,6 +126,15 @@ pub(crate) enum MixAction {
     },
     /// 移除乐器通道的插件（卸下载机架 + 持久化层置 None）。
     RemoveInstrument {
+        channel: u16,
+    },
+    /// 打开 insert 槽位的参数面板。
+    OpenInsertParams {
+        channel: Option<u8>,
+        slot: usize,
+    },
+    /// 打开乐器槽位的参数面板。
+    OpenInstrumentParams {
         channel: u16,
     },
     RescanPlugins,
@@ -497,6 +511,9 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
         apply_action(app, idx, action);
     }
 
+    // 插件参数面板（浮窗；动作应用后渲染，打开当帧即可见）。
+    param_panel::show(app, ui.ctx());
+
     // 电平表动画：播放中或衰减未归零时保持约 30fps 重绘。
     let any_level = app.mix.smoothed.iter().any(|s| s.0 > 0.001 || s.1 > 0.001)
         || app.mix.smoothed_master.0 > 0.001
@@ -630,6 +647,40 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
                 let handle = app.audio_state.handle.as_ref().map(|a| &a.handle);
                 let rack = &mut app.instrument_racks[idx];
                 rack.unload(channel, handle);
+            }
+        }
+        MixAction::OpenInsertParams { channel, slot } => {
+            let panel = app
+                .mixer_racks
+                .get_mut(idx)
+                .and_then(|rack| rack.instance_mut(channel, slot))
+                .map(|instance| {
+                    let title = instance.info().name.clone();
+                    ParamPanel::open(
+                        param_panel::ParamTarget::Insert { channel, slot },
+                        title,
+                        instance,
+                    )
+                });
+            if let Some(panel) = panel {
+                app.mix.param_panel = Some(panel);
+            }
+        }
+        MixAction::OpenInstrumentParams { channel } => {
+            let panel = app
+                .instrument_racks
+                .get_mut(idx)
+                .and_then(|rack| rack.instance_mut(channel))
+                .map(|instance| {
+                    let title = instance.info().name.clone();
+                    ParamPanel::open(
+                        param_panel::ParamTarget::Instrument { channel },
+                        title,
+                        instance,
+                    )
+                });
+            if let Some(panel) = panel {
+                app.mix.param_panel = Some(panel);
             }
         }
         MixAction::RescanPlugins => rescan(app),
