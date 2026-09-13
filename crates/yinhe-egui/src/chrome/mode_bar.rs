@@ -182,7 +182,7 @@ pub fn show(
                     hovered_hint = Some(t!("hint.mode_edit").to_string());
                 }
 
-                // ── Piano roll toggle ──
+                // ── Piano roll toggle（仅 AR）──
                 if *view_mode == ViewMode::Arrange {
                     ui.add_space(6.0);
                     ui.separator();
@@ -197,18 +197,23 @@ pub fn show(
                     );
                     if piano_resp.clicked() {
                         *show_pianoroll_in_arrange = !*show_pianoroll_in_arrange;
+                        // 与底部设备栏互斥：同时只展开一个。
+                        if *show_pianoroll_in_arrange {
+                            *show_bottom_dock = false;
+                        }
                     }
                     if piano_resp.hovered() {
                         hovered_hint = Some(t!("hint.pr_toggle").to_string());
                     }
-                }
-
-                // ── Bottom dock toggle（三视图通用设备栏）──
-                {
+                } else {
+                    // MIX/EDIT 无钢琴栏：dock 前保留一次分隔（与模式按钮分隔）。
                     ui.add_space(6.0);
                     ui.separator();
                     ui.add_space(6.0);
+                }
 
+                // ── Bottom dock toggle（三视图通用设备栏；紧贴钢琴按钮，无分隔线）──
+                {
                     let dock_icon = egui_material_icons::icons::ICON_DOCK_TO_RIGHT;
                     let dock_resp = crate::widgets::hover::hover_button(
                         ui,
@@ -219,6 +224,9 @@ pub fn show(
                     );
                     if dock_resp.clicked() {
                         *show_bottom_dock = !*show_bottom_dock;
+                        if *show_bottom_dock {
+                            *show_pianoroll_in_arrange = false;
+                        }
                     }
                     if dock_resp.hovered() {
                         hovered_hint = Some(t!("hint.dock_toggle").to_string());

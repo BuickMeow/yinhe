@@ -330,6 +330,36 @@ impl AutomationLane {
         let hi = self.events.partition_point(|e| e.tick < end_tick);
         &self.events[lo..hi]
     }
+
+    /// 求 `target` 处的值（chase/预览/UI 共用）：
+    /// - Step：最后一条 `tick < target` 的事件值（保持语义）；
+    /// - Linear/Curve：target 落在段内时**实时插值**（真实值，与 flatten 的 density 无关）；
+    ///   target == 下一事件 tick 时取曲线终点值（连续），Step 则保持上一值。
+    ///
+    /// 返回 `(value, tick)`；tick 用于与播放事件流一致的排序（曲线插值用 target）。
+    pub fn value_at(&self, target: u32) -> Option<(f32, u32)> {
+        let events = &self.events;
+        let idx = events.partition_point(|e| e.tick < target);
+        if idx == 0 {
+            return None; // target 之前没有任何事件
+        }
+        let e = &events[idx - 1];
+        if idx < events.len() {
+            let next = &events[idx];
+            if !matches!(e.shape, SegmentShape::Step) && target < next.tick {
+                // 曲线段内：插值真实值（事件 tick 用 target，排序时位于本段生效点）
+                let frac = (target - e.tick) as f32 / (next.tick - e.tick) as f32;
+                let v = e.value + (next.value - e.value) * e.shape.interpolate(frac);
+                return Some((v, target));
+            }
+            if !matches!(e.shape, SegmentShape::Step) && target == next.tick {
+                // 曲线终点：连续到达 next.value（下一事件 tick == target 由 dispatch 处理，
+                // chase 提供同值兜底，chase_skip 会跳过已 dispatch 的控制器）
+                return Some((next.value, next.tick));
+            }
+        }
+        Some((e.value, e.tick))
+    }
 }
 
 /// 用户在 automation 面板上的编辑操作。
