@@ -28,8 +28,70 @@ pub trait InsertProcessor: Send {
     /// 无需调用。默认无操作。
     fn flush_pending_params(&mut self, _position_samples: u64) {}
 
+    /// 插件报告的延迟（采样数），供延迟补偿（PDC）用。
+    fn latency_samples(&self) -> u32 {
+        0
+    }
+
     /// 回收时还原为具体类型（如插件处理器需要 deactivate 回实例）。
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
+}
+
+/// 单通道延迟线（PDC 对齐）：先读后写，`delay` 个样本后输出输入，
+/// 起始输出为静音。`delay == 0` 时直通（不分配缓冲）。
+struct DelayLine {
+    left: Vec<f32>,
+    right: Vec<f32>,
+    write: usize,
+}
+
+impl DelayLine {
+    fn new() -> Self {
+        Self {
+            left: Vec::new(),
+            right: Vec::new(),
+            write: 0,
+        }
+    }
+
+    #[cfg(test)]
+    fn delay(&self) -> usize {
+        self.left.len()
+    }
+
+    /// 设定延迟样本数（变化时重建缓冲；仅命令处理阶段调用，允许分配）。
+    fn set_delay(&mut self, delay: usize) {
+        if self.left.len() != delay {
+            self.left = vec![0.0; delay];
+            self.right = vec![0.0; delay];
+            self.write = 0;
+        }
+    }
+
+    fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
+        if self.left.is_empty() {
+            return;
+        }
+        let len = self.left.len();
+        for i in 0..left.len() {
+            let out_l = self.left[self.write];
+            let out_r = self.right[self.write];
+            self.left[self.write] = left[i];
+            self.right[self.write] = right[i];
+            left[i] = out_l;
+            right[i] = out_r;
+            self.write += 1;
+            if self.write == len {
+                self.write = 0;
+            }
+        }
+    }
+
+    fn clear(&mut self) {
+        self.left.fill(0.0);
+        self.right.fill(0.0);
+        self.write = 0;
+    }
 }
 
 /// 一条通道的立体声缓冲（planar），供上层音源渲染写入。
@@ -43,6 +105,10 @@ pub struct MixerGraph {
     buffers: Vec<ChannelBuffers>,
     strips: Vec<StripState>,
     inserts: Vec<Vec<Box<dyn InsertProcessor>>>,
+    /// 每通道的 PDC 对齐延迟线（补偿到最长路径；长度 0 = 直通）。
+    delays: Vec<DelayLine>,
+    /// 每通道的基础延迟（乐器插件上报的采样数，由引擎设置）。
+    base_latency: Vec<u32>,
     meters: Vec<MeterTap>,
     /// 与 meters 一一对应的 UI 侧读数端（引擎创建时被上层取走克隆）。
     meter_readings: Vec<MeterReading>,
@@ -64,6 +130,8 @@ impl MixerGraph {
             buffers: Vec::new(),
             strips: Vec::new(),
             inserts: Vec::new(),
+            delays: Vec::new(),
+            base_latency: Vec::new(),
             meters: Vec::new(),
             meter_readings: Vec::new(),
             master_l: vec![0.0; frames],
@@ -96,6 +164,8 @@ impl MixerGraph {
         }
         self.strips.truncate(n_old);
         self.inserts.truncate(n_old);
+        self.delays.truncate(n_old);
+        self.base_latency.truncate(n_old);
         self.meters.truncate(n_old);
         self.meter_readings.truncate(n_old);
         for i in n_old..channel_count {
@@ -106,11 +176,14 @@ impl MixerGraph {
             self.strips
                 .push(StripState::new(strips.get(i).copied().unwrap_or_default()));
             self.inserts.push(Vec::new());
+            self.delays.push(DelayLine::new());
+            self.base_latency.push(0);
             let (tap, reading) = MeterTap::new();
             self.meters.push(tap);
             self.meter_readings.push(reading);
         }
         self.buffers = buffers;
+        self.refresh_pdc();
     }
 
     /// 通道数。
@@ -153,11 +226,13 @@ impl MixerGraph {
         channel: usize,
         inserts: Vec<Box<dyn InsertProcessor>>,
     ) -> Vec<Box<dyn InsertProcessor>> {
-        if let Some(slot) = self.inserts.get_mut(channel) {
+        let old = if let Some(slot) = self.inserts.get_mut(channel) {
             std::mem::replace(slot, inserts)
         } else {
             inserts
-        }
+        };
+        self.refresh_pdc();
+        old
     }
 
     pub fn set_master_inserts(
@@ -171,6 +246,7 @@ impl MixerGraph {
     pub fn insert_insert(&mut self, channel: usize, slot: usize, p: Box<dyn InsertProcessor>) {
         if let Some(chain) = self.inserts.get_mut(channel) {
             chain.insert(slot.min(chain.len()), p);
+            self.refresh_pdc();
         }
     }
 
@@ -181,7 +257,11 @@ impl MixerGraph {
         slot: usize,
     ) -> Option<Box<dyn InsertProcessor>> {
         let chain = self.inserts.get_mut(channel)?;
-        (slot < chain.len()).then(|| chain.remove(slot))
+        let removed = (slot < chain.len()).then(|| chain.remove(slot));
+        if removed.is_some() {
+            self.refresh_pdc();
+        }
+        removed
     }
 
     /// 替换槽位 `slot` 的处理器，返回旧的（插件请求 restart 时用）。
@@ -192,7 +272,11 @@ impl MixerGraph {
         p: Box<dyn InsertProcessor>,
     ) -> Option<Box<dyn InsertProcessor>> {
         let chain = self.inserts.get_mut(channel)?;
-        chain.get_mut(slot).map(|old| std::mem::replace(old, p))
+        let old = chain.get_mut(slot).map(|old| std::mem::replace(old, p));
+        if old.is_some() {
+            self.refresh_pdc();
+        }
+        old
     }
 
     /// 在 master 链槽位 `slot` 处插入处理器（越界则追加）。
@@ -215,6 +299,35 @@ impl MixerGraph {
         self.master_inserts
             .get_mut(slot)
             .map(|old| std::mem::replace(old, p))
+    }
+
+    /// 设置某通道的基础延迟（乐器插件上报的采样数；0 = 无延迟）。
+    /// 变化时重算 PDC 对齐（重建延迟线缓冲）。
+    pub fn set_channel_latency(&mut self, channel: usize, samples: u32) {
+        if let Some(slot) = self.base_latency.get_mut(channel)
+            && *slot != samples
+        {
+            *slot = samples;
+            self.refresh_pdc();
+        }
+    }
+
+    /// 重算 PDC 对齐：每通道补 `最长路径 - 本通道路径` 的延迟，
+    /// 使所有通道在求和点时间对齐。insert 链/乐器延迟变化后调用。
+    ///
+    /// 路径延迟 = 乐器延迟（base_latency）+ insert 链延迟之和。
+    /// master 链的延迟对所有通道相同，不影响通道间对齐，不参与补偿。
+    /// 仅命令处理阶段调用（延迟线缓冲重建会分配内存）。
+    pub fn refresh_pdc(&mut self) {
+        let mut total: Vec<u32> = self.base_latency.clone();
+        for (i, chain) in self.inserts.iter().enumerate() {
+            total[i] =
+                total[i].saturating_add(chain.iter().map(|p| p.latency_samples()).sum::<u32>());
+        }
+        let align = total.iter().copied().max().unwrap_or(0);
+        for (i, delay) in self.delays.iter_mut().enumerate() {
+            delay.set_delay(align.saturating_sub(total[i]) as usize);
+        }
     }
 
     /// 通道电平表读数端（UI 线程持有克隆，Arc 共享）。
@@ -257,7 +370,8 @@ impl MixerGraph {
         self.master_meter.clone()
     }
 
-    /// seek 后清空所有 insert 的处理状态（delay 尾音/envelope 等）。
+    /// seek 后清空所有 insert 的处理状态（delay 尾音/envelope 等）
+    /// 与 PDC 延迟线内容。
     pub fn reset_inserts(&mut self) {
         for chain in &mut self.inserts {
             for insert in chain {
@@ -266,6 +380,9 @@ impl MixerGraph {
         }
         for insert in &mut self.master_inserts {
             insert.reset();
+        }
+        for delay in &mut self.delays {
+            delay.clear();
         }
     }
 
@@ -287,6 +404,8 @@ impl MixerGraph {
             for insert in &mut self.inserts[i] {
                 insert.process(&mut buffers.left, &mut buffers.right);
             }
+            // PDC：insert/乐器的延迟在此补掉，保证求和点各通道时间对齐。
+            self.delays[i].process(&mut buffers.left, &mut buffers.right);
 
             let strip = &mut self.strips[i];
             let p = strip.params;
@@ -478,6 +597,133 @@ mod tests {
         g.resize(1, 8, &[]);
         assert_eq!(g.frames(), 8);
         assert_eq!(g.buffers[0].left.len(), 8);
+    }
+
+    /// 报告延迟 N 且实际延迟 N 个样本的 insert（PDC 测试用）。
+    struct DelayInsert {
+        line: DelayLine,
+        latency: u32,
+    }
+
+    impl DelayInsert {
+        fn new(latency: u32) -> Self {
+            let mut line = DelayLine::new();
+            line.set_delay(latency as usize);
+            Self { line, latency }
+        }
+    }
+
+    impl InsertProcessor for DelayInsert {
+        fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
+            self.line.process(left, right);
+        }
+
+        fn latency_samples(&self) -> u32 {
+            self.latency
+        }
+
+        fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+            self
+        }
+    }
+
+    #[test]
+    fn delay_line_delays_by_n_samples() {
+        let mut d = DelayLine::new();
+        d.set_delay(2);
+        assert_eq!(d.delay(), 2);
+        let mut l = [1.0f32, 2.0, 3.0, 4.0];
+        let mut r = l;
+        d.process(&mut l, &mut r);
+        // 前两块是延迟线初始静音，随后是延迟 2 的输入。
+        assert_eq!(l, [0.0, 0.0, 1.0, 2.0]);
+        assert_eq!(r, [0.0, 0.0, 1.0, 2.0]);
+        // 下一块继续吐出剩余的 3、4。
+        let mut l2 = [5.0f32, 6.0];
+        let mut r2 = l2;
+        d.process(&mut l2, &mut r2);
+        assert_eq!(l2, [3.0, 4.0]);
+        // clear 后重新从静音开始。
+        d.clear();
+        let mut l3 = [7.0f32, 8.0];
+        d.process(&mut l3, &mut [0.0, 0.0]);
+        assert!(l3.iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn delay_line_zero_delay_is_passthrough() {
+        let mut d = DelayLine::new();
+        let mut l = [1.0f32, 2.0];
+        d.process(&mut l, &mut [0.0, 0.0]);
+        assert_eq!(l, [1.0, 2.0]);
+    }
+
+    #[test]
+    fn pdc_aligns_channels_with_latency_insert() {
+        // 通道 1 有 2 样本延迟的 insert；通道 0 无。
+        // 两通道同时输入脉冲：PDC 应给通道 0 补 2 样本，使求和点对齐。
+        let mut g = graph_with(&[StripParams::default(), StripParams::default()], 4);
+        g.set_inserts(1, vec![Box::new(DelayInsert::new(2))]);
+        fill(&mut g, 0, 0.0);
+        fill(&mut g, 1, 0.0);
+        {
+            let b = g.channel_buffers_mut(0).unwrap();
+            b.left[0] = 1.0;
+            b.right[0] = 1.0;
+        }
+        {
+            let b = g.channel_buffers_mut(1).unwrap();
+            b.left[0] = 1.0;
+            b.right[0] = 1.0;
+        }
+        // 第一块：两个脉冲都应出现在 sample 2（通道 1 由 insert 延迟，
+        // 通道 0 由 PDC 延迟线延迟）。
+        let (l, _r) = g.process();
+        let single = core::f32::consts::FRAC_1_SQRT_2;
+        assert!(l[0].abs() < 1e-6, "sample 0 应无输出（对齐后）");
+        assert!(l[1].abs() < 1e-6, "sample 1 应无输出（对齐后）");
+        assert!(
+            (l[2] - 2.0 * single).abs() < 1e-6,
+            "sample 2 应为两个通道脉冲之和: {}",
+            l[2]
+        );
+        assert!(l[3].abs() < 1e-6);
+    }
+
+    #[test]
+    fn pdc_keeps_single_channel_alignment_when_no_latency() {
+        // 没有延迟插入时延迟线全为 0（直通），输出与无 PDC 时一致。
+        let mut g = graph_with(&[StripParams::default(), StripParams::default()], 4);
+        assert!(g.delays.iter().all(|d| d.delay() == 0));
+        fill(&mut g, 0, 0.5);
+        let (l, _r) = g.process();
+        let expect = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
+        assert!((l[0] - expect).abs() < 1e-6);
+    }
+
+    #[test]
+    fn pdc_recomputes_on_insert_removal() {
+        // 移除延迟 insert 后对齐回退为 0（延迟线长度归零）。
+        let mut g = graph_with(&[StripParams::default(), StripParams::default()], 4);
+        g.set_inserts(1, vec![Box::new(DelayInsert::new(3))]);
+        assert_eq!(g.delays[0].delay(), 3);
+        g.set_inserts(1, Vec::new());
+        assert!(g.delays.iter().all(|d| d.delay() == 0));
+    }
+
+    #[test]
+    fn reset_clears_pdc_delay_lines() {
+        let mut g = graph_with(&[StripParams::default(), StripParams::default()], 2);
+        g.set_inserts(1, vec![Box::new(DelayInsert::new(2))]);
+        {
+            let b = g.channel_buffers_mut(0).unwrap();
+            b.left[0] = 1.0;
+        }
+        let _ = g.process();
+        g.reset_inserts();
+        fill(&mut g, 0, 0.0);
+        let (l, _r) = g.process();
+        assert!(l.iter().all(|&v| v == 0.0), "reset 后延迟线应清空");
     }
 
     #[test]

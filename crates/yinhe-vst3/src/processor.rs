@@ -323,6 +323,10 @@ impl yinhe_mixer::InsertProcessor for Vst3Insert {
         );
     }
 
+    fn latency_samples(&self) -> u32 {
+        yinhe_mixer::InstrumentProcessor::latency_samples(&self.processor)
+    }
+
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
         self
     }

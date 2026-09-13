@@ -129,10 +129,13 @@ impl AudioEngine {
             }
             return;
         }
+        // 乐器延迟（PDC）：安装时查询一次，用于该通道延迟补偿。
+        let latency = processor.as_ref().map(|p| p.latency_samples()).unwrap_or(0);
         let old = std::mem::replace(
             &mut self.instruments[dense],
             processor.map(|p| crate::instrument::InstrumentSource::new(channel, p)),
         );
+        self.mixer.set_channel_latency(dense, latency);
         if let Some(old) = old {
             self.instrument_returns.push((old.channel, old.processor));
         }

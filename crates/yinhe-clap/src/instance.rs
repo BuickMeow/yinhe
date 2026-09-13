@@ -169,6 +169,15 @@ impl ClapPluginInstance {
         // 查询插件声明的端口布局：必须给全所有端口（含 Aux），只给主端口
         // 会让按声明端口数读 audio_inputs[i] 的包装层越界（Element FX 实测崩）。
         let layout = self.query_port_layout();
+        // 插件延迟（PDC 用）：activate 前查询；不支持扩展视为 0。
+        let latency = {
+            use clack_extensions::latency::PluginLatency;
+            let mut handle = self.instance.plugin_handle();
+            match handle.get_extension::<PluginLatency>() {
+                Some(ext) => ext.get(&mut handle),
+                None => 0,
+            }
+        };
         let stopped = self.instance.activate(
             |_, _| crate::host::YinheAudioProcessor,
             PluginAudioConfiguration {
@@ -182,6 +191,7 @@ impl ClapPluginInstance {
             max_frames as usize,
             &layout,
             Arc::clone(&self.param_queue),
+            latency,
         ))
     }
 

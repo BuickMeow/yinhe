@@ -56,6 +56,10 @@ impl InsertProcessor for ClapInsert {
         self.processor.flush_pending_params(position_samples);
     }
 
+    fn latency_samples(&self) -> u32 {
+        self.processor.latency_samples()
+    }
+
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
         self
     }
