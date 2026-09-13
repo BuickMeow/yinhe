@@ -97,11 +97,11 @@ pub(crate) fn dialog_button_row(ui: &mut egui::Ui, buttons: &[DialogButton<'_>])
     clicked
 }
 
-/// 主按钮配色：与 transport bar 播放菜单/列表选中态统一
-/// （`selected_bg` 底 + 主文字色）。`selected_bg` 由主题派生，亮暗自动适配，
-/// 不再单独为亮色做 tonal 混色，避免两套"强调"风格。
+/// 主按钮配色：完整对齐 transport bar 播放菜单选中项——
+/// `selected_bg` 底 + 强调色文字（菜单项图标与文字同用 `accent_active`）。
+/// `selected_bg` 由主题派生，亮暗自动适配。
 fn primary_colors() -> (egui::Color32, egui::Color32) {
-    (crate::theme::selected_bg(), crate::theme::text_primary())
+    (crate::theme::selected_bg(), crate::theme::accent_active())
 }
 
 /// 绘制单个按钮（需要自定义排布时使用；一般用 [`dialog_button_row`]）。
