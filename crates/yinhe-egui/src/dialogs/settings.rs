@@ -12,6 +12,7 @@ mod language;
 mod midi_export;
 mod notification;
 mod render;
+mod saving;
 mod search;
 mod shortcuts;
 mod theme;
@@ -34,6 +35,8 @@ pub use midi_export::show_midi_export_tab;
 pub use notification::show_notification_tab;
 #[allow(unused_imports)]
 pub use render::show_render_tab;
+#[allow(unused_imports)]
+pub use saving::show_saving_tab;
 #[allow(unused_imports)]
 pub use search::{item_matches, norm, show_search_results, to_search_keys};
 #[allow(unused_imports)]
@@ -337,19 +340,25 @@ mod tests {
     }
 
     #[test]
-    fn notification_category_index_is_stable() {
-        // 前 9 个顺序不许动（settings_tab 持久化依赖），通知固定追加为索引 9
-        assert_eq!(CATEGORY_KEYS[8], "settings.cat.general");
-        assert_eq!(CATEGORY_KEYS[9], "settings.cat.notification");
+    fn notification_before_general_and_saving_appended() {
+        // 用户要求：通知移到通用之前；「保存」作为新分类追加在最后。
+        // settings_tab 持久化值会随顺序调整错位（落回相邻分类，无害）。
+        assert_eq!(CATEGORY_KEYS[8], "settings.cat.notification");
+        assert_eq!(CATEGORY_KEYS[9], "settings.cat.general");
+        assert_eq!(CATEGORY_KEYS[10], "settings.cat.saving");
         // 两条自动收起已搬到通知分类，新增总开关也在通知分类
         for zh in ["完成通知自动收起", "可操作通知自动收起", "开启通知"] {
-            assert_eq!(item(zh).cat, 9);
+            assert_eq!(item(zh).cat, 8);
         }
-        // 搜索“开启通知”能命中新条目（跳转 cat=9 由 search.rs match 覆盖）
+        // 自动保存两项在「保存」分类
+        for zh in ["自动保存", "自动保存间隔"] {
+            assert_eq!(item(zh).cat, 10);
+        }
+        // 搜索“开启通知”能命中通知分类条目
         assert!(
             SETTING_ITEMS
                 .iter()
-                .any(|i| i.cat == 9 && item_matches(i, "开启通知"))
+                .any(|i| i.cat == 8 && item_matches(i, "开启通知"))
         );
     }
 }

@@ -17,7 +17,11 @@ struct SwitchAnim {
 const SWITCH_DURATION: f32 = 0.2;
 
 /// 可打断的 eased 动画：`target` 翻转时从当前显示值 `from=cur` 重新起播，保证连续且双向均为 `cubic_out`。
-fn animate_switch(ctx: &egui::Context, id: egui::Id, target: bool) -> f32 {
+///
+/// `animate = false` 表示本次值变化不是用户交互（例如切换设置页后同一屏幕
+/// 位置复用了同一个 egui Id 的开关，或列表增删导致行移位）：此时直接跳到
+/// 目标值，不播放过渡动画，避免"串台"的开关动画。
+fn animate_switch(ctx: &egui::Context, id: egui::Id, target: bool, animate: bool) -> f32 {
     let target_f = if target { 1.0 } else { 0.0 };
     let now = ctx.input(|i| i.time);
     // 半帧外推，与 `egui::Context::animate_value` 保持一致，减少一帧延迟感
@@ -26,6 +30,18 @@ fn animate_switch(ctx: &egui::Context, id: egui::Id, target: bool) -> f32 {
 
     let (cur, needs_repaint) = ctx.data_mut(|data| {
         if let Some(anim) = data.get_temp::<SwitchAnim>(id) {
+            if !animate && (anim.to - target_f).abs() > f32::EPSILON {
+                // 非交互变化：直接落到目标，不播放过渡
+                data.insert_temp(
+                    id,
+                    SwitchAnim {
+                        from: target_f,
+                        to: target_f,
+                        start: now_eff,
+                    },
+                );
+                return (target_f, false);
+            }
             let elapsed = (now_eff - anim.start) as f32 / SWITCH_DURATION;
             let t = elapsed.clamp(0.0, 1.0);
             let eased = egui::emath::easing::cubic_out(t);
@@ -69,9 +85,11 @@ fn animate_switch(ctx: &egui::Context, id: egui::Id, target: bool) -> f32 {
 pub fn switch(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
     let desired = egui::vec2(38.0, 22.0);
     let (rect, mut resp) = ui.allocate_exact_size(desired, egui::Sense::click());
+    let mut toggled = false;
     if resp.clicked() {
         *checked = !*checked;
         resp.mark_changed();
+        toggled = true;
     }
     // 键盘：Space/Enter 触发（allocate 的 click 已含部分键盘，但显式处理更稳）
     if resp.has_focus()
@@ -79,6 +97,7 @@ pub fn switch(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
     {
         *checked = !*checked;
         resp.mark_changed();
+        toggled = true;
     }
     resp.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), *checked, "")
@@ -86,7 +105,7 @@ pub fn switch(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
 
     if ui.is_rect_visible(rect) {
         let visuals_enabled = ui.is_enabled();
-        let how_on = animate_switch(ui.ctx(), resp.id, *checked);
+        let how_on = animate_switch(ui.ctx(), resp.id, *checked, toggled);
         let hovered = resp.hovered();
         let pressed = resp.is_pointer_button_down_on();
 
@@ -191,4 +210,26 @@ pub fn switch(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
         }
     }
     resp
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_interactive_value_change_skips_animation() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::new("test_switch_anim");
+        ctx.begin_pass(egui::RawInput::default());
+        // 首次出现：直接显示目标值
+        assert_eq!(animate_switch(&ctx, id, true, false), 1.0);
+        // 非交互变化（换页/换行复用同一 Id）：立即到位，无过渡
+        assert_eq!(animate_switch(&ctx, id, false, false), 0.0);
+        // 非交互又变回 true：同样立即到位
+        assert_eq!(animate_switch(&ctx, id, true, false), 1.0);
+        // 用户交互切换：从当前位置开始过渡（起点即当前值）
+        assert_eq!(animate_switch(&ctx, id, false, true), 1.0);
+        let mut out = ctx.end_pass();
+        out.textures_delta.clear();
+    }
 }

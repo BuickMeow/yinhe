@@ -13,6 +13,8 @@ mod audio_settings;
 mod chrome;
 mod dialogs;
 mod file_loader;
+#[cfg(test)]
+mod i18n_tests;
 mod mix;
 mod piano_view;
 mod platform;
