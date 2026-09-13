@@ -9,19 +9,46 @@ use eframe::egui;
 const START_DEG: f32 = 135.0;
 const SWEEP_DEG: f32 = 270.0;
 
+/// 拖动会话（存 `ctx.data` 的 temp 槽，按 widget Id 隔离）：
+/// 每帧从**起始值 + 指针位移**重算，避免 `drag_delta` 累计语义导致的回弹。
+#[derive(Clone, Copy)]
+struct KnobSession {
+    start_norm: f32,
+    start_y: f32,
+}
+
 /// 旋钮（归一化值 0..1）。返回 `Response`；`changed()` 表示值被拖动改变。
 pub fn knob(ui: &mut egui::Ui, value: &mut f32, diameter: f32) -> egui::Response {
     let (rect, mut resp) = ui.allocate_exact_size(
         egui::vec2(diameter, diameter),
         egui::Sense::click_and_drag(),
     );
-    if resp.dragged() {
+    let id = resp.id;
+    let pointer_y = resp.interact_pointer_pos().map(|p| p.y);
+    if resp.drag_started()
+        && let Some(y) = pointer_y
+    {
+        ui.ctx().data_mut(|d| {
+            d.insert_temp(
+                id,
+                KnobSession {
+                    start_norm: *value,
+                    start_y: y,
+                },
+            )
+        });
+    }
+    if resp.dragged()
+        && let Some(y) = pointer_y
+        && let Some(session) = ui.ctx().data(|d| d.get_temp::<KnobSession>(id))
+    {
         // 向上拖 = 增大；灵敏度：拖动约 2.5 倍直径覆盖全程。
-        let delta = resp.drag_delta().y;
-        if delta != 0.0 {
-            *value = (*value - delta / (diameter * 2.5)).clamp(0.0, 1.0);
-            resp.mark_changed();
-        }
+        let dy = y - session.start_y;
+        *value = (session.start_norm - dy / (diameter * 2.5)).clamp(0.0, 1.0);
+        resp.mark_changed();
+    }
+    if resp.drag_stopped() {
+        ui.ctx().data_mut(|d| d.remove::<KnobSession>(id));
     }
     resp.widget_info(|| egui::WidgetInfo::slider(ui.is_enabled(), *value as f64, ""));
 

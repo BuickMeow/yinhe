@@ -171,11 +171,19 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
     let lane_current: Vec<(AutomationTarget, Option<f32>)> = xsynth_targets()
         .into_iter()
         .map(|target| {
+            // 光标处应显示的值：<= tick 的最后一条事件（tick 0 也要命中，
+            // 与 chase 的 value_at 语义不同——那是"事件之后才生效"）。
             let value = model
                 .tracks
                 .get(lane_track_ti)
                 .and_then(|t| t.automation_lanes.iter().find(|l| l.target == target))
-                .and_then(|l| l.value_at(tick).map(|(v, _)| v));
+                .and_then(|l| {
+                    l.events
+                        .iter()
+                        .rev()
+                        .find(|e| e.tick <= tick)
+                        .map(|e| e.value)
+                });
             (target, value)
         })
         .collect();
@@ -193,7 +201,22 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
             .collect()
     };
 
-    let mut selected = app.dock_selected.unwrap_or(DockDevice::XSynth);
+    // 默认选中乐器设备；上次选中项在当前链上无效时回退（换通道/插件被移除）。
+    let is_xsynth = instrument_plugin.is_none();
+    let default_device = if is_xsynth {
+        DockDevice::XSynth
+    } else {
+        DockDevice::Instrument
+    };
+    let mut selected = app.dock_selected.unwrap_or(default_device);
+    let valid = match selected {
+        DockDevice::XSynth => is_xsynth,
+        DockDevice::Instrument => !is_xsynth,
+        DockDevice::Insert(slot) => slot < inserts.len(),
+    };
+    if !valid {
+        selected = default_device;
+    }
     let mut open_picker = false;
     let mut knob_actions: Vec<KnobAction> = Vec::new();
     let mut open_params: Option<DockDevice> = None;
@@ -234,96 +257,60 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
         }
     });
 
-    // ── 设备链（横向滚动）──
-    egui::ScrollArea::horizontal()
-        .id_salt("dock_chain")
-        .auto_shrink([false, true])
-        .max_height(58.0)
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
+    // ── 主体：左侧设备大卡片（含参数列表）+ 效果器小卡片 + 「+」竖条 ──
+    let inst_title = instrument_plugin.as_deref().unwrap_or("XSynth");
 
-                // 乐器（XSynth 或插件）。
-                let is_xsynth = instrument_plugin.is_none();
-                let inst_device = if is_xsynth {
-                    DockDevice::XSynth
-                } else {
-                    DockDevice::Instrument
-                };
-                let title = instrument_plugin.as_deref().unwrap_or("XSynth");
-                let subtitle = if is_xsynth {
-                    t!("dock.builtin_synth").to_string()
-                } else {
-                    t!("dock.instrument_plugin").to_string()
-                };
-                if device_card(
+    let avail = ui.available_size();
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        const FX_W: f32 = 108.0;
+        const ADD_W: f32 = 44.0;
+        let fx_total = inserts.len() as f32 * (FX_W + 6.0);
+        let big_w = (avail.x - fx_total - ADD_W - 12.0).clamp(220.0, 520.0);
+
+        // 设备大卡片：标题 + 参数（XSynth 为旋钮纵向列表；插件为入口按钮）。
+        ui.allocate_ui_with_layout(
+            egui::vec2(big_w, avail.y),
+            egui::Layout::top_down(egui::Align::LEFT),
+            |ui| {
+                big_device_card(
                     ui,
-                    egui_material_icons::icons::ICON_MUSIC_NOTE.codepoint,
-                    title,
-                    &subtitle,
-                    selected == inst_device,
-                )
-                .clicked()
-                {
-                    selected = inst_device;
-                }
-
-                // 效果器链。
-                for (slot, (name, bypassed)) in inserts.iter().enumerate() {
-                    ui.label(
-                        egui::RichText::new("→")
-                            .color(crate::theme::text_muted())
-                            .size(crate::theme::SMALL_FONT),
-                    );
-                    let subtitle = if *bypassed {
-                        t!("mix.bypass").to_string()
-                    } else {
-                        t!("dock.effect").to_string()
-                    };
-                    if device_card(
-                        ui,
-                        egui_material_icons::icons::ICON_TUNE.codepoint,
-                        name,
-                        &subtitle,
-                        selected == DockDevice::Insert(slot),
-                    )
-                    .clicked()
-                    {
-                        selected = DockDevice::Insert(slot);
-                    }
-                }
-
-                // 添加效果器。
-                ui.label(
-                    egui::RichText::new("→")
-                        .color(crate::theme::text_muted())
-                        .size(crate::theme::SMALL_FONT),
-                );
-                if add_card(ui).clicked() {
-                    open_picker = true;
-                }
-            });
-        });
-
-    ui.separator();
-
-    // ── 参数区 ──
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .show(ui, |ui| match selected {
-            DockDevice::XSynth => {
-                xsynth_params(ui, tick, &lane_current, &mut knob_actions);
-            }
-            device @ (DockDevice::Instrument | DockDevice::Insert(_)) => {
-                plugin_device_params(
-                    ui,
-                    instrument_plugin.as_deref(),
+                    selected,
+                    inst_title,
+                    tick,
+                    &lane_current,
                     &inserts,
-                    device,
+                    &mut knob_actions,
                     &mut open_params,
                 );
+            },
+        );
+
+        // 效果器小卡片（横向）。
+        for (slot, (name, bypassed)) in inserts.iter().enumerate() {
+            let subtitle = if *bypassed {
+                t!("mix.bypass").to_string()
+            } else {
+                t!("dock.effect").to_string()
+            };
+            if device_card(
+                ui,
+                egui_material_icons::icons::ICON_TUNE.codepoint,
+                name,
+                &subtitle,
+                selected == DockDevice::Insert(slot),
+            )
+            .clicked()
+            {
+                selected = DockDevice::Insert(slot);
             }
-        });
+        }
+
+        // 「+」竖条：撑满高度，点击添加效果器。
+        if add_column(ui, avail.y).clicked() {
+            open_picker = true;
+        }
+    });
 
     // ── 应用动作 ──
     app.dock_selected = Some(selected);
@@ -406,10 +393,9 @@ fn device_card(
     resp
 }
 
-/// 「+」添加效果器卡片。
-fn add_card(ui: &mut egui::Ui) -> egui::Response {
-    let size = egui::vec2(120.0, 52.0);
-    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+/// 「+」添加效果器竖条（高度撑满主体区）。
+fn add_column(ui: &mut egui::Ui, height: f32) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(44.0, height), egui::Sense::click());
     let bg = if resp.hovered() {
         crate::theme::hover_color(crate::theme::track_bg())
     } else {
@@ -434,13 +420,17 @@ fn add_card(ui: &mut egui::Ui) -> egui::Response {
     resp.on_hover_text(t!("mix.add_insert_hint"))
 }
 
-/// XSynth 虚拟乐器参数：大卡片 + 滚动网格，每项为「旋钮 + 两行文字」。
-/// 旋钮拖动即在编辑光标处写入自动化事件（同 tick 覆盖，松手一条 undo）。
-fn xsynth_params(
+/// 设备大卡片：XSynth 显示旋钮纵向列表；插件设备显示参数面板入口。
+#[allow(clippy::too_many_arguments)] // UI 上下文透传，见 AGENTS 约定
+fn big_device_card(
     ui: &mut egui::Ui,
+    selected: DockDevice,
+    inst_title: &str,
     tick: u32,
-    values: &[(AutomationTarget, Option<f32>)],
-    actions: &mut Vec<KnobAction>,
+    lane_current: &[(AutomationTarget, Option<f32>)],
+    inserts: &[(String, bool)],
+    knob_actions: &mut Vec<KnobAction>,
+    open_params: &mut Option<DockDevice>,
 ) {
     egui::Frame::new()
         .fill(crate::theme::track_bg())
@@ -448,33 +438,68 @@ fn xsynth_params(
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
             ui.set_min_size(ui.available_size());
-            ui.label(
-                egui::RichText::new(t!("dock.write_at", tick = tick))
-                    .size(crate::theme::SMALL_FONT)
-                    .color(crate::theme::text_muted()),
-            );
-            ui.add_space(4.0);
-            egui::ScrollArea::vertical()
-                .id_salt("xsynth_knobs")
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    egui::Grid::new("xsynth_knob_grid")
-                        .num_columns(3)
-                        .spacing([18.0, 10.0])
+            match selected {
+                DockDevice::XSynth => {
+                    ui.label(
+                        egui::RichText::new("XSynth")
+                            .size(crate::theme::SMALL_FONT + 2.0)
+                            .color(crate::theme::text_primary()),
+                    );
+                    ui.label(
+                        egui::RichText::new(t!("dock.write_at", tick = tick))
+                            .size(crate::theme::SMALL_FONT)
+                            .color(crate::theme::text_muted()),
+                    );
+                    ui.add_space(6.0);
+                    egui::ScrollArea::vertical()
+                        .id_salt("xsynth_knobs")
+                        .auto_shrink([false, false])
                         .show(ui, |ui| {
-                            for (i, (target, current)) in values.iter().enumerate() {
-                                knob_cell(ui, target, *current, actions);
-                                if (i + 1) % 3 == 0 {
-                                    ui.end_row();
-                                }
-                            }
+                            xsynth_params(ui, lane_current, knob_actions);
                         });
-                });
+                }
+                device @ (DockDevice::Instrument | DockDevice::Insert(_)) => {
+                    let name = match device {
+                        DockDevice::Instrument => inst_title.to_string(),
+                        DockDevice::Insert(slot) => inserts
+                            .get(slot)
+                            .map(|(n, _)| n.clone())
+                            .unwrap_or_else(|| "?".into()),
+                        DockDevice::XSynth => return,
+                    };
+                    ui.label(
+                        egui::RichText::new(name)
+                            .size(crate::theme::SMALL_FONT + 2.0)
+                            .color(crate::theme::text_primary()),
+                    );
+                    ui.add_space(6.0);
+                    if ui.button(t!("dock.open_params")).clicked() {
+                        *open_params = Some(device);
+                    }
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new(t!("dock.plugin_hint"))
+                            .size(crate::theme::SMALL_FONT)
+                            .color(crate::theme::text_muted()),
+                    );
+                }
+            }
         });
 }
 
-/// 单个参数单元：左旋钮 + 右侧两行（名称、数值）。
-fn knob_cell(
+/// XSynth 参数纵向列表：每项「旋钮 + 右侧两行（名称、数值）」。
+fn xsynth_params(
+    ui: &mut egui::Ui,
+    values: &[(AutomationTarget, Option<f32>)],
+    actions: &mut Vec<KnobAction>,
+) {
+    for (target, current) in values {
+        knob_row(ui, target, *current, actions);
+    }
+}
+
+/// 单个参数行：左旋钮 + 右两行（第一行名称、第二行数值）。
+fn knob_row(
     ui: &mut egui::Ui,
     target: &AutomationTarget,
     current: Option<f32>,
@@ -485,7 +510,7 @@ fn knob_cell(
     let mut norm = (raw / max.max(1.0)).clamp(0.0, 1.0);
 
     ui.horizontal(|ui| {
-        let resp = crate::widgets::knob::knob(ui, &mut norm, 30.0);
+        let resp = crate::widgets::knob::knob(ui, &mut norm, 28.0);
         if resp.drag_started() {
             actions.push(KnobAction::DragStart(target.clone()));
         }
@@ -517,6 +542,7 @@ fn knob_cell(
             );
         });
     });
+    ui.add_space(6.0);
 }
 
 /// 自动化原始值 → 显示文本（整数域取整）。
@@ -642,40 +668,6 @@ fn upsert_automation_event(app: &mut App, idx: usize, drag: &mut KnobDrag, raw: 
                 .position(|l| l.target == drag.target);
         }
     }
-}
-
-/// 插件设备（乐器/效果器）的参数区：提供参数面板与原生界面入口。
-fn plugin_device_params(
-    ui: &mut egui::Ui,
-    instrument_plugin: Option<&str>,
-    inserts: &[(String, bool)],
-    device: DockDevice,
-    open_params: &mut Option<DockDevice>,
-) {
-    let name = match device {
-        DockDevice::Instrument => instrument_plugin.unwrap_or("?").to_string(),
-        DockDevice::Insert(slot) => inserts
-            .get(slot)
-            .map(|(n, _)| n.clone())
-            .unwrap_or_else(|| "?".into()),
-        DockDevice::XSynth => return,
-    };
-    ui.add_space(4.0);
-    ui.label(
-        egui::RichText::new(name)
-            .size(crate::theme::SMALL_FONT + 1.0)
-            .color(crate::theme::text_primary()),
-    );
-    ui.add_space(6.0);
-    if ui.button(t!("dock.open_params")).clicked() {
-        *open_params = Some(device);
-    }
-    ui.add_space(4.0);
-    ui.label(
-        egui::RichText::new(t!("dock.plugin_hint"))
-            .size(crate::theme::SMALL_FONT)
-            .color(crate::theme::text_muted()),
-    );
 }
 
 /// 打开设备对应的参数面板（复用浮窗 ParamPanel）。
