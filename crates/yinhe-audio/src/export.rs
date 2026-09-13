@@ -1,13 +1,15 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+#[cfg(feature = "gpu")]
+use std::time::Duration;
+use std::time::Instant;
 
 use xsynth_core::effects::VolumeLimiter;
+#[cfg(feature = "gpu")]
 use yinhe_core::YinModel;
 
 use crate::engine::AudioEngine;
-use crate::spawn::channels_for_model;
 
 /// Shared export progress state, updated from the background thread.
 #[derive(Clone)]
@@ -23,6 +25,10 @@ pub struct ExportProgress {
     pub render_speed: f64,
     /// Overall average speed since rendering started.
     pub overall_speed: f64,
+    /// 导出已结束（成功/失败/中止）：UI 轮询此标志收尾。
+    pub finished: bool,
+    /// 失败原因（None = 无错误；中止时为 "已中止"）。
+    pub error: Option<String>,
 }
 
 impl ExportProgress {
@@ -37,6 +43,8 @@ impl ExportProgress {
             voice_count: 0,
             render_speed: 0.0,
             overall_speed: 0.0,
+            finished: false,
+            error: None,
         }))
     }
 
@@ -50,6 +58,8 @@ impl ExportProgress {
         self.voice_count = 0;
         self.render_speed = 0.0;
         self.overall_speed = 0.0;
+        self.finished = false;
+        self.error = None;
     }
 }
 
@@ -84,7 +94,6 @@ impl From<hound::Error> for ExportError {
 }
 
 const STEREO_CHANNELS: usize = 2;
-const RENDER_CHUNK_FRAMES: usize = 1024;
 /// GPU 路径块大小：比 CPU 大 4 倍，减少每块的 write_buffer/提交/同步等待开销。
 /// partial 缓冲 = voices × frames × 2 线性增长，可承受。
 #[cfg(feature = "gpu")]
@@ -101,6 +110,7 @@ const MAX_TAIL_SECONDS: f64 = 30.0;
 /// - SF 加载/finalize 段无检查点，暂停在那里按不灵——接受现状，不硬改加载段。
 /// - 返回本次 park 时长（未暂停则为 ZERO），调用方用它修正 `started_at` 与
 ///   `prev_instant`（见各检查点旁的计时修正块）。
+#[cfg(feature = "gpu")]
 pub(crate) fn wait_if_paused(
     pause: &Option<Arc<AtomicBool>>,
     cancel: &Option<Arc<AtomicBool>>,
@@ -130,6 +140,7 @@ pub(crate) fn wait_if_paused(
 /// 这样 `elapsed`/`overall_speed` 自动正确；同时把 `prev_instant` 后移同样时长，
 /// 把 park 从 `render_speed` 的 `dt_wall` 里排除（顺手修，恢复后第一块倍率不再
 /// 偏低一次；改动仅两行，未动计时结构）。
+#[cfg(feature = "gpu")]
 fn adjust_for_park(
     export_progress: &Option<Arc<Mutex<ExportProgress>>>,
     prev_instant: &mut Instant,
@@ -150,218 +161,186 @@ fn adjust_for_park(
     }
 }
 
-#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
-pub fn export_wav(
-    model: Arc<YinModel>,
-    sample_rate: u32,
-    port_soundfonts: &[(u8, Vec<String>)],
-    skip_tracks: &[bool],
-    path: &Path,
+// ── 渲染线程导出任务 ──
+
+/// 渲染线程的导出任务：逐块离线渲染实时引擎（含全部 insert/乐器插件与
+/// PDC 延迟补偿）并写 WAV。
+///
+/// 与实时播放共用同一个 [`AudioEngine`]：插件实例始终在原本的线程上，
+/// 无需重新加载/重建，导出结果与实时听感一致（含混音台与插件链）。
+pub(crate) struct ExportJob {
+    writer: hound::WavWriter<std::io::BufWriter<std::fs::File>>,
     bit_depth: WavBitDepth,
-    layer_count: Option<usize>,
-    progress: impl Fn(f32, &str),
-    export_progress: Option<Arc<Mutex<ExportProgress>>>,
-    cancel: Option<Arc<AtomicBool>>,
-    pause: Option<Arc<AtomicBool>>,
-    // 混音台 strip 参数（增益/声像/静音/独奏）。insert 效果器不参与导出：
-    // 插件实例属于 UI 线程的引擎会话，导出线程无法复用。
-    mixer_params: Option<&yinhe_mixer::MixerParams>,
-) -> Result<(), ExportError> {
-    let t_start = Instant::now();
-    let layout = channels_for_model(&model);
+    limiter: VolumeLimiter,
+    buf: Vec<f32>,
+    sample_rate: u32,
+    /// 主内容时长（采样）。
+    main_duration: u64,
+    /// 主内容已渲染（采样）。
+    rendered: u64,
+    /// 尾音已渲染（采样）。
+    tail_rendered: u64,
+    /// 尾音上限（采样；防 voice 卡死导致无限循环）。
+    max_tail_samples: u64,
+    /// 是否已进入尾音阶段。
+    in_tail: bool,
+    progress: Arc<Mutex<ExportProgress>>,
+    cancel: Arc<AtomicBool>,
+    pause: Arc<AtomicBool>,
+    prev_instant: Instant,
+    prev_rendered_secs: f64,
+}
 
-    let mut engine = AudioEngine::new(sample_rate, layout);
-
-    progress(0.0, "加载 MIDI");
-    engine.handle_command(crate::spawn::AudioCommand::LoadModel {
-        model: Arc::clone(&model),
-    });
-    let t_model = t_start.elapsed();
-
-    engine.set_layer_count(layer_count);
-
-    let total_sf: usize = port_soundfonts.iter().map(|(_, p)| p.len()).sum();
-    let mut sf_loaded = 0usize;
-    for (port, paths) in port_soundfonts {
-        // 每个端口一次性下发全部 paths——LoadSoundFont 会整体替换该端口的
-        // soundfont 列表，逐个下发会导致后面覆盖前面，最终只剩最后一个 SF。
-        for _p in paths {
-            sf_loaded += 1;
-            progress(
-                sf_loaded as f32 / total_sf.max(1) as f32 * 0.05,
-                &format!("加载音色库 {}/{} …", sf_loaded, total_sf),
-            );
+impl ExportJob {
+    #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
+    pub(crate) fn new(
+        path: &Path,
+        bit_depth: WavBitDepth,
+        sample_rate: u32,
+        main_duration: u64,
+        chunk_frames: usize,
+        progress: Arc<Mutex<ExportProgress>>,
+        cancel: Arc<AtomicBool>,
+        pause: Arc<AtomicBool>,
+    ) -> Result<Self, ExportError> {
+        let spec = hound::WavSpec {
+            channels: STEREO_CHANNELS as u16,
+            sample_rate,
+            bits_per_sample: match bit_depth {
+                WavBitDepth::Bit16 => 16,
+                WavBitDepth::Bit24 => 24,
+                WavBitDepth::Bit32Float => 32,
+            },
+            sample_format: match bit_depth {
+                WavBitDepth::Bit32Float => hound::SampleFormat::Float,
+                _ => hound::SampleFormat::Int,
+            },
+        };
+        let writer = hound::WavWriter::create(path, spec).map_err(ExportError::from)?;
+        if let Ok(mut p) = progress.lock() {
+            p.reset();
+            p.total_duration_secs = main_duration as f64 / sample_rate as f64;
         }
-        engine.handle_command(crate::spawn::AudioCommand::LoadSoundFont {
-            port: *port,
-            paths: paths.clone(),
-        });
-    }
-    let t_sf = t_start.elapsed() - t_model;
-
-    progress(0.05, "应用音轨静音");
-    engine.handle_command(crate::spawn::AudioCommand::SkipTracks {
-        skip: skip_tracks.to_vec(),
-    });
-
-    // 混音台 strip 参数（在 strip 应用后渲染即生效；insert 不进导出）。
-    if let Some(m) = mixer_params {
-        engine.handle_command(crate::spawn::AudioCommand::SetMixerParams {
-            params: Box::new(m.clone()),
-        });
-    }
-
-    let main_duration = engine.duration_samples();
-    if main_duration == 0 {
-        return Err(ExportError::Render("歌曲时长为零，没有可导出的内容".into()));
+        Ok(Self {
+            writer,
+            bit_depth,
+            limiter: VolumeLimiter::new(STEREO_CHANNELS as u16),
+            buf: vec![0.0; chunk_frames * STEREO_CHANNELS],
+            sample_rate,
+            main_duration,
+            rendered: 0,
+            tail_rendered: 0,
+            max_tail_samples: (MAX_TAIL_SECONDS * sample_rate as f64) as u64,
+            in_tail: false,
+            progress,
+            cancel,
+            pause,
+            prev_instant: Instant::now(),
+            prev_rendered_secs: 0.0,
+        })
     }
 
-    if let Some(ref ep) = export_progress
-        && let Ok(mut p) = ep.lock()
-    {
-        p.total_duration_secs = main_duration as f64 / sample_rate as f64;
+    /// 是否被用户暂停（渲染线程跳过本块，保持命令处理）。
+    pub(crate) fn paused(&self) -> bool {
+        self.pause.load(Ordering::Relaxed)
     }
 
-    let spec = hound::WavSpec {
-        channels: 2,
-        sample_rate,
-        bits_per_sample: match bit_depth {
-            WavBitDepth::Bit16 => 16,
-            WavBitDepth::Bit24 => 24,
-            WavBitDepth::Bit32Float => 32,
-        },
-        sample_format: match bit_depth {
-            WavBitDepth::Bit32Float => hound::SampleFormat::Float,
-            _ => hound::SampleFormat::Int,
-        },
-    };
+    /// 是否被用户取消。
+    pub(crate) fn cancelled(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
+    }
 
-    let mut writer = hound::WavWriter::create(path, spec).map_err(ExportError::from)?;
-
-    engine.handle_command(crate::spawn::AudioCommand::Play { from_sample: 0 });
-
-    let use_limiter = bit_depth != WavBitDepth::Bit32Float;
-    let mut limiter = VolumeLimiter::new(STEREO_CHANNELS as u16);
-
-    let mut chunk = vec![0.0f32; RENDER_CHUNK_FRAMES * STEREO_CHANNELS];
-    let mut rendered: u64 = 0;
-    let mut prev_rendered_secs: f64 = 0.0;
-    let mut prev_instant = Instant::now();
-
-    // ── Phase 1: render the main content (notes + CC events) ──
-    while rendered < main_duration {
-        // 暂停检查点（紧贴 cancel 检查点之前；park 期间不持锁，返回后修正计时）。
-        let parked = wait_if_paused(&pause, &cancel);
-        adjust_for_park(&export_progress, &mut prev_instant, parked);
-        if cancel.as_ref().is_some_and(|c| c.load(Ordering::Relaxed)) {
-            return Err(ExportError::Cancelled);
+    /// 渲染下一块并写盘；返回 false = 导出内容已全部完成。
+    pub(crate) fn step(&mut self, engine: &mut AudioEngine) -> Result<bool, ExportError> {
+        let chunk = self.buf.len() / STEREO_CHANNELS;
+        if !self.in_tail {
+            if self.rendered >= self.main_duration {
+                self.in_tail = true;
+            } else {
+                let n = ((self.main_duration - self.rendered) as usize).min(chunk);
+                self.render_block(engine, n)?;
+                self.rendered += n as u64;
+                self.report_progress(engine);
+                return Ok(true);
+            }
         }
-        let frames = ((main_duration - rendered) as usize).min(RENDER_CHUNK_FRAMES);
-        let buf = &mut chunk[..frames * STEREO_CHANNELS];
+        // 尾音阶段：让 release 尾音自然衰减。
+        if self.tail_rendered >= self.max_tail_samples {
+            return Ok(false);
+        }
+        // 主内容刚结束：先探测是否还有尾音（voice/插件），已静音则立即收尾，
+        // 不写多余的静音块。
+        if self.tail_rendered == 0 && engine.voice_count() == 0 && !engine.has_active_plugins() {
+            return Ok(false);
+        }
+        let remaining = (self.max_tail_samples - self.tail_rendered) as usize;
+        let n = remaining.min(chunk);
+        self.render_block(engine, n)?;
+        self.tail_rendered += n as u64;
+        self.report_progress(engine);
+        // xsynth voice 与插件都静了才算尾音结束。插件（insert/乐器）的尾音
+        // 无法逐块探测，有插件时按上限渲染满。
+        if engine.voice_count() == 0 && !engine.has_active_plugins() {
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    fn render_block(&mut self, engine: &mut AudioEngine, n: usize) -> Result<(), ExportError> {
+        let buf = &mut self.buf[..n * STEREO_CHANNELS];
         engine.render(buf);
-        if use_limiter {
-            limiter.limit(buf);
+        // 非浮点输出需要限幅（与实时输出一致）；32-bit float 保留原始幅度。
+        if self.bit_depth != WavBitDepth::Bit32Float {
+            self.limiter.limit(buf);
         }
-
-        write_samples(&mut writer, buf, bit_depth)?;
-
-        rendered += frames as u64;
-        let pct = 0.05 + (rendered as f32 / main_duration as f32) * 0.85;
-        progress(pct, &format!("渲染中 {:.0}%", pct * 100.0));
-
-        // Update export progress every ~100 blocks to reduce lock overhead
-        if let Some(ref ep) = export_progress
-            && rendered % (RENDER_CHUNK_FRAMES as u64 * 100) < RENDER_CHUNK_FRAMES as u64
-            && let Ok(mut p) = ep.lock()
-        {
-            p.rendered_secs = rendered as f64 / sample_rate as f64;
-            p.voice_count = engine.voice_count();
-            let now = Instant::now();
-            let dt_wall = prev_instant.elapsed().as_secs_f64();
-            let dt_rendered = p.rendered_secs - prev_rendered_secs;
-            if dt_wall > 0.0 {
-                p.render_speed = dt_rendered / dt_wall;
-            }
-            if let Some(start) = p.started_at {
-                let elapsed = start.elapsed().as_secs_f64();
-                if elapsed > 0.0 {
-                    p.overall_speed = p.rendered_secs / elapsed;
-                }
-            }
-            prev_rendered_secs = p.rendered_secs;
-            prev_instant = now;
-        }
+        write_samples(&mut self.writer, buf, self.bit_depth)?;
+        Ok(())
     }
 
-    // ── Phase 2: tail — let release tails decay naturally ──
-    let max_tail_samples = (MAX_TAIL_SECONDS * sample_rate as f64) as u64;
-    let mut tail_rendered: u64 = 0;
-
-    loop {
-        // 暂停检查点（尾音循环；同主循环：park 后修正计时再走 cancel 检查）。
-        let parked = wait_if_paused(&pause, &cancel);
-        adjust_for_park(&export_progress, &mut prev_instant, parked);
-        if cancel.as_ref().is_some_and(|c| c.load(Ordering::Relaxed)) {
-            return Err(ExportError::Cancelled);
+    fn report_progress(&mut self, engine: &AudioEngine) {
+        let progress = Arc::clone(&self.progress);
+        let Ok(mut p) = progress.lock() else {
+            return;
+        };
+        p.rendered_secs = (self.rendered + self.tail_rendered) as f64 / self.sample_rate as f64;
+        p.voice_count = engine.voice_count();
+        let now = Instant::now();
+        let dt_wall = self.prev_instant.elapsed().as_secs_f64();
+        let dt_rendered = p.rendered_secs - self.prev_rendered_secs;
+        if dt_wall > 0.0 {
+            p.render_speed = dt_rendered / dt_wall;
         }
-        let frames = RENDER_CHUNK_FRAMES.min((max_tail_samples - tail_rendered) as usize);
-        if frames == 0 {
-            break;
-        }
-        let buf = &mut chunk[..frames * STEREO_CHANNELS];
-        engine.render(buf);
-        if use_limiter {
-            limiter.limit(buf);
-        }
-
-        write_samples(&mut writer, buf, bit_depth)?;
-
-        tail_rendered += frames as u64;
-
-        // Check if all voices have finished (including release phase)
-        let vc = engine.voice_count();
-        if vc == 0 {
-            break;
-        }
-
-        let tail_pct = tail_rendered as f32 / max_tail_samples as f32;
-        let overall = 0.90 + tail_pct * 0.09;
-        progress(overall, &format!("余韵衰减中 (剩余 {} 音色)", vc));
-
-        if let Some(ref ep) = export_progress
-            && let Ok(mut p) = ep.lock()
-        {
-            p.rendered_secs = (rendered + tail_rendered) as f64 / sample_rate as f64;
-            p.voice_count = vc;
-            let now = Instant::now();
-            let dt_wall = prev_instant.elapsed().as_secs_f64();
-            let dt_rendered = p.rendered_secs - prev_rendered_secs;
-            if dt_wall > 0.0 {
-                p.render_speed = dt_rendered / dt_wall;
+        if let Some(start) = p.started_at {
+            let elapsed = start.elapsed().as_secs_f64();
+            if elapsed > 0.0 {
+                p.overall_speed = p.rendered_secs / elapsed;
             }
-            if let Some(start) = p.started_at {
-                let elapsed = start.elapsed().as_secs_f64();
-                if elapsed > 0.0 {
-                    p.overall_speed = p.rendered_secs / elapsed;
-                }
-            }
-            prev_rendered_secs = p.rendered_secs;
-            prev_instant = now;
         }
+        let frac = if self.in_tail {
+            let tail_pct = self.tail_rendered as f32 / self.max_tail_samples.max(1) as f32;
+            0.90 + tail_pct * 0.09
+        } else {
+            0.05 + (self.rendered as f32 / self.main_duration.max(1) as f32) * 0.85
+        };
+        p.progress = frac.min(0.99);
+        p.status = if self.in_tail {
+            "余韵衰减中".to_string()
+        } else {
+            format!("渲染中 {:.0}%", frac * 100.0)
+        };
+        self.prev_rendered_secs = p.rendered_secs;
+        self.prev_instant = now;
     }
 
-    progress(0.99, "写入文件");
-    let t_render = t_start.elapsed() - t_sf - t_model;
-    writer.finalize()?;
-    let t_total = t_start.elapsed();
-    progress(1.0, "导出完成");
+    /// 收尾写盘（成功路径；取消路径不调用，保留不完整文件）。
+    pub(crate) fn finalize(self) -> Result<(), ExportError> {
+        self.writer.finalize().map_err(ExportError::from)
+    }
 
-    eprintln!(
-        "[export_wav timing] model={:.2?} sf={:.2?} render={:.2?} total={:.2?}",
-        t_model, t_sf, t_render, t_total,
-    );
-
-    Ok(())
+    /// 进度共享句柄（收尾时写完成状态）。
+    pub(crate) fn progress_handle(&self) -> Arc<Mutex<ExportProgress>> {
+        Arc::clone(&self.progress)
+    }
 }
 
 // ── GPU 导出路径 ──
@@ -699,7 +678,7 @@ pub(crate) fn write_samples(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "gpu"))]
 mod tests {
     use super::*;
 
@@ -762,15 +741,144 @@ mod tests {
             if let Some(start) = p.started_at {
                 assert!(start >= base + parked);
             } else {
-                assert!(false, "started_at should stay Some");
+                panic!("started_at should stay Some");
             }
         } else {
-            assert!(false, "lock should succeed");
+            panic!("lock should succeed");
         }
         assert!(prev >= base + parked);
         // parked=ZERO 时不碰计时
         let mut prev2 = base;
         adjust_for_park(&Some(Arc::clone(&ep)), &mut prev2, Duration::ZERO);
         assert!(prev2 == base);
+    }
+}
+
+#[cfg(test)]
+mod job_tests {
+    use super::*;
+    use crate::channel_layout::ChannelLayout;
+    use crate::engine::AudioEngine;
+    use yinhe_core::{ConductorData, NoteEvent, ProjectMeta, TrackData, YinModel};
+    use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
+
+    /// 1 拍、单个音符的模型（120 BPM / PPQ 480）。
+    fn tiny_model() -> Arc<YinModel> {
+        let conductor = ConductorData {
+            tempo: AutomationLane {
+                target: AutomationTarget::Tempo,
+                track: 0,
+                events: vec![AutomationEvent {
+                    tick: 0,
+                    value: 120.0,
+                    shape: SegmentShape::Step,
+                }],
+            },
+            time_sig: Vec::new(),
+            key_sig: Vec::new(),
+            markers: Vec::new(),
+            lyrics: Vec::new(),
+            chord: Vec::new(),
+        };
+        let mut model = YinModel {
+            conductor: Arc::new(conductor),
+            tracks: vec![Arc::new(TrackData::new(0, 0))],
+            meta: ProjectMeta {
+                ppq: 480,
+                ..ProjectMeta::default()
+            },
+            ..Default::default()
+        };
+        model.load_track_notes(vec![vec![NoteEvent {
+            start_tick: 0,
+            end_tick: 480,
+            key: 60,
+            velocity: 100,
+            id: 0,
+        }]]);
+        model.rebuild();
+        Arc::new(model)
+    }
+
+    /// 导出任务应写出与主内容等长的 WAV（无插件、无 voice 时尾音立即结束）。
+    #[test]
+    fn export_job_writes_main_duration() {
+        let model = tiny_model();
+        let layout = ChannelLayout::from_model(&model);
+        let mut engine = AudioEngine::new(48000, layout);
+        engine.handle_command(crate::spawn::AudioCommand::LoadModel { model });
+        let main_duration = engine.duration_samples();
+        assert!(
+            main_duration >= 24000,
+            "1 拍 @120BPM/48kHz = 24000 采样，实际 {main_duration}"
+        );
+        engine.handle_command(crate::spawn::AudioCommand::Play { from_sample: 0 });
+
+        let dir = std::env::temp_dir().join("yinhe_export_job_test");
+        std::fs::create_dir_all(&dir).expect("创建临时目录");
+        let path = dir.join("export_job_test.wav");
+        let progress = ExportProgress::new();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let pause = Arc::new(AtomicBool::new(false));
+        let mut job = ExportJob::new(
+            &path,
+            WavBitDepth::Bit16,
+            48000,
+            main_duration,
+            512,
+            Arc::clone(&progress),
+            cancel,
+            pause,
+        )
+        .expect("创建导出任务");
+
+        let mut steps = 0u32;
+        while job.step(&mut engine).expect("导出渲染") {
+            steps += 1;
+            assert!(steps < 100_000, "导出未收敛（死循环）");
+        }
+        job.finalize().expect("写盘收尾");
+
+        let reader = hound::WavReader::open(&path).expect("读回 WAV");
+        let spec = reader.spec();
+        assert_eq!(spec.sample_rate, 48000);
+        assert_eq!(spec.channels, 2);
+        assert_eq!(spec.bits_per_sample, 16);
+        let frames = reader.len() as u64 / spec.channels as u64;
+        assert_eq!(frames, main_duration, "无尾音时帧数应等于主内容长度");
+
+        if let Ok(p) = progress.lock() {
+            let expect = main_duration as f64 / 48000.0;
+            assert!((p.total_duration_secs - expect).abs() < 1e-9);
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// 取消后不再推进（step 上层会看到 cancelled 标志）。
+    #[test]
+    fn export_job_reports_cancel_flag() {
+        let model = tiny_model();
+        let layout = ChannelLayout::from_model(&model);
+        let mut engine = AudioEngine::new(48000, layout);
+        engine.handle_command(crate::spawn::AudioCommand::LoadModel { model });
+        let main_duration = engine.duration_samples();
+        let progress = ExportProgress::new();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let pause = Arc::new(AtomicBool::new(true));
+        let job = ExportJob::new(
+            &std::env::temp_dir().join("yinhe_export_job_cancel.wav"),
+            WavBitDepth::Bit16,
+            48000,
+            main_duration,
+            512,
+            progress,
+            Arc::clone(&cancel),
+            pause,
+        )
+        .expect("创建导出任务");
+        assert!(!job.cancelled());
+        assert!(job.paused());
+        cancel.store(true, Ordering::Relaxed);
+        assert!(job.cancelled());
     }
 }

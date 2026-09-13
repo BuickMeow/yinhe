@@ -9,6 +9,8 @@ use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use xsynth_core::channel::ControlEvent;
 use xsynth_core::effects::VolumeLimiter;
 
+use crate::export::{ExportError, ExportJob, ExportProgress, WavBitDepth};
+
 use crate::audio_ring::AudioRingProducer;
 use crate::engine::AudioEngine;
 use crate::preview_engine::PreviewEngine;
@@ -97,6 +99,10 @@ struct AudioRenderer {
     /// 是否启用 GPU 合成器。启用后加载音色库时初始化 GpuSynth，渲染走 engine.gpu_synth。
     #[cfg(feature = "gpu")]
     use_gpu_synth: bool,
+    /// 导出任务（Some = 导出模式：不推 ring、不发布播放状态，连续离线渲染写 WAV）。
+    export: Option<ExportJob>,
+    /// 导出结束后要恢复的 xsynth 层数（导出设置不污染用户设置）。
+    export_prev_layer_count: Option<Option<usize>>,
 }
 
 impl AudioRenderer {
@@ -126,6 +132,8 @@ impl AudioRenderer {
             ring,
             state,
             limiter: VolumeLimiter::new(channels),
+            export: None,
+            export_prev_layer_count: None,
             cmd_rx,
             worker_tx,
             prepared_rx,
@@ -173,6 +181,16 @@ impl AudioRenderer {
                 self.preview_engine.stop_all();
                 did_work = true;
             }
+            if self.export.is_some() {
+                // 导出模式：不推 ring、不发布播放状态（UI 保持停止外观），
+                // 连续离线渲染；每轮仍处理命令（取消/参数/编辑）。
+                self.step_export();
+                if !did_work {
+                    thread::sleep(WAKE_SLEEP);
+                }
+                continue;
+            }
+
             did_work |= self.render_if_needed();
 
             self.publish_state();
@@ -246,7 +264,9 @@ impl AudioRenderer {
                             }
                         }
                         AudioCommand::Play { from_sample } => {
-                            if self.engine.model_loaded() {
+                            if self.export.is_some() {
+                                // 导出中忽略播放控制（取消用导出卡的停止按钮）。
+                            } else if self.engine.model_loaded() {
                                 self.preview_engine.stop_all();
                                 self.engine
                                     .handle_command(AudioCommand::Play { from_sample });
@@ -264,28 +284,36 @@ impl AudioRenderer {
                             }
                         }
                         AudioCommand::Seek { sample } => {
-                            self.preview_engine.stop_all();
-                            self.engine.handle_command(AudioCommand::Seek { sample });
-                            #[cfg(feature = "gpu")]
-                            if self.engine.gpu_synth.is_some() {
-                                self.sync_gpu_synth_events();
+                            if self.export.is_some() {
+                                // 导出中忽略 seek。
+                            } else {
+                                self.preview_engine.stop_all();
+                                self.engine.handle_command(AudioCommand::Seek { sample });
+                                #[cfg(feature = "gpu")]
+                                if self.engine.gpu_synth.is_some() {
+                                    self.sync_gpu_synth_events();
+                                }
+                                // 显式 seek：ring 清空锚定引擎当前（=seek 后）位置。
+                                self.clear_buffered_audio(self.engine.sample_position());
+                                // 方案 B：seek 后异步 chase（current_tick 已由 seek 更新）
+                                self.request_chase(self.engine.current_tick());
                             }
-                            // 显式 seek：ring 清空锚定引擎当前（=seek 后）位置。
-                            self.clear_buffered_audio(self.engine.sample_position());
-                            // 方案 B：seek 后异步 chase（current_tick 已由 seek 更新）
-                            self.request_chase(self.engine.current_tick());
                         }
                         AudioCommand::Stop => {
-                            self.preview_engine.stop_all();
-                            self.engine.handle_command(AudioCommand::Stop);
-                            #[cfg(feature = "gpu")]
-                            if self.engine.gpu_synth.is_some() {
-                                self.sync_gpu_synth_events();
+                            if self.export.is_some() {
+                                // 导出中忽略停止（取消用导出卡的停止按钮）。
+                            } else {
+                                self.preview_engine.stop_all();
+                                self.engine.handle_command(AudioCommand::Stop);
+                                #[cfg(feature = "gpu")]
+                                if self.engine.gpu_synth.is_some() {
+                                    self.sync_gpu_synth_events();
+                                }
+                                // Stop = 显式 seek 到 0。
+                                self.clear_buffered_audio(self.engine.sample_position());
+                                // 方案 B：Stop 也 seek 到 0，需要 chase 恢复初始 channel state
+                                self.request_chase(0);
                             }
-                            // Stop = 显式 seek 到 0。
-                            self.clear_buffered_audio(self.engine.sample_position());
-                            // 方案 B：Stop 也 seek 到 0，需要 chase 恢复初始 channel state
-                            self.request_chase(0);
                         }
                         AudioCommand::SetAutomationDensity { density } => {
                             self.engine.automation_density = density.max(1);
@@ -356,6 +384,25 @@ impl AudioRenderer {
                         }
                         AudioCommand::PreviewStop => {
                             self.preview_engine.stop_all();
+                        }
+                        AudioCommand::ExportStart {
+                            path,
+                            bit_depth,
+                            layer_count,
+                            restore_layer_count,
+                            progress,
+                            cancel,
+                            pause,
+                        } => {
+                            self.start_export(
+                                path,
+                                bit_depth,
+                                layer_count,
+                                restore_layer_count,
+                                progress,
+                                cancel,
+                                pause,
+                            );
                         }
                         other => self.engine.handle_command(other),
                     }
@@ -833,6 +880,156 @@ impl AudioRenderer {
         self.state.reset_generation.fetch_add(1, Ordering::AcqRel);
     }
 
+    // ── 导出模式（渲染线程内，复用实时引擎与插件实例） ──
+
+    /// 开始导出：复位到干净起点（停止播放 + seek 0），用当前引擎（含全部
+    /// insert/乐器插件与 PDC）从头离线渲染。完成状态经 `progress.finished` 通知 UI。
+    #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
+    fn start_export(
+        &mut self,
+        path: std::path::PathBuf,
+        bit_depth: WavBitDepth,
+        layer_count: Option<usize>,
+        restore_layer_count: Option<usize>,
+        progress: Arc<Mutex<ExportProgress>>,
+        cancel: Arc<AtomicBool>,
+        pause: Arc<AtomicBool>,
+    ) {
+        if self.export.is_some() {
+            return;
+        }
+        cancel.store(false, Ordering::Relaxed);
+        pause.store(false, Ordering::Relaxed);
+        // 复位到干净起点：停止播放（清 voice/插件状态/PDC 延迟线）→ seek 0。
+        self.preview_engine.stop_all();
+        self.engine.handle_command(AudioCommand::Stop);
+        self.clear_buffered_audio(0);
+        self.engine.set_layer_count(layer_count);
+        self.request_chase(0);
+        let main_duration = self.engine.duration_samples();
+        if !self.engine.model_loaded() || main_duration == 0 {
+            if let Ok(mut p) = progress.lock() {
+                p.finished = true;
+                p.error = Some("歌曲时长为零，没有可导出的内容".into());
+                p.status = "导出失败".into();
+            }
+            return;
+        }
+        match ExportJob::new(
+            &path,
+            bit_depth,
+            self.engine.sample_rate,
+            main_duration,
+            crate::engine::ENGINE_BLOCK_FRAMES,
+            Arc::clone(&progress),
+            cancel,
+            pause,
+        ) {
+            Ok(job) => {
+                // 从头播放：render 仅在 playing 时产出内容。
+                self.engine
+                    .handle_command(AudioCommand::Play { from_sample: 0 });
+                self.export = Some(job);
+                self.export_prev_layer_count = Some(restore_layer_count);
+                // 让 UI 立即看到导出开始（停止外观）。
+                self.publish_state();
+                tracing::info!(
+                    "导出开始: {} ({:.1}s, {} Hz)",
+                    path.display(),
+                    main_duration as f64 / self.engine.sample_rate as f64,
+                    self.engine.sample_rate
+                );
+            }
+            Err(e) => {
+                if let Ok(mut p) = progress.lock() {
+                    p.finished = true;
+                    p.error = Some(e.to_string());
+                    p.status = format!("导出失败: {e}");
+                }
+            }
+        }
+    }
+
+    /// 导出模式每轮：推进一块（或处理取消/暂停/完成）。
+    fn step_export(&mut self) {
+        enum Step {
+            Continue,
+            Paused,
+            Done,
+            Failed(ExportError),
+        }
+        let step = match self.export.as_mut() {
+            None => return,
+            Some(job) => {
+                if job.cancelled() {
+                    Step::Failed(ExportError::Cancelled)
+                } else if job.paused() {
+                    Step::Paused
+                } else {
+                    match job.step(&mut self.engine) {
+                        Ok(true) => Step::Continue,
+                        Ok(false) => Step::Done,
+                        Err(e) => Step::Failed(e),
+                    }
+                }
+            }
+        };
+        match step {
+            Step::Continue => {}
+            Step::Paused => thread::sleep(WAKE_SLEEP),
+            Step::Done => self.finish_export(Ok(())),
+            Step::Failed(e) => self.finish_export(Err(e)),
+        }
+    }
+
+    /// 导出收尾：成功时 finalize 文件；无论成败都回到干净停止态并发布状态。
+    fn finish_export(&mut self, result: Result<(), ExportError>) {
+        let Some(job) = self.export.take() else {
+            return;
+        };
+        let progress = job.progress_handle();
+        match result {
+            Ok(()) => {
+                let err = job.finalize().err().map(|e| e.to_string());
+                if let Ok(mut p) = progress.lock() {
+                    p.progress = 1.0;
+                    p.error = err.clone();
+                    p.finished = true;
+                    p.status = if err.is_some() {
+                        "写入文件失败".into()
+                    } else {
+                        "导出完成".into()
+                    };
+                }
+                tracing::info!("导出完成");
+            }
+            Err(e) => {
+                // 不 finalize：保留不完整文件（与旧导出的中止行为一致）。
+                drop(job);
+                if let Ok(mut p) = progress.lock() {
+                    p.finished = true;
+                    p.status = match &e {
+                        ExportError::Cancelled => "已中止".into(),
+                        _ => format!("导出失败: {e}"),
+                    };
+                    p.error = Some(e.to_string());
+                }
+                tracing::info!("导出结束（未完成）: {e}");
+            }
+        }
+        // 回到干净停止态（导出期间未推 ring，这里确保停止后无残留），
+        // 并恢复导出前的 xsynth 层数（导出设置不污染用户设置）。
+        self.engine.handle_command(AudioCommand::Stop);
+        if let Some(prev) = self.export_prev_layer_count.take() {
+            self.engine.set_layer_count(prev);
+        } else {
+            // 无记录：恢复为 None（清空导出设定的层数限制）。
+            self.engine.set_layer_count(None);
+        }
+        self.clear_buffered_audio(0);
+        self.publish_state();
+    }
+
     fn publish_state(&self) {
         self.state
             .producer_sample_position
@@ -888,6 +1085,15 @@ pub(crate) fn spawn_renderer(
                 use_gpu_synth,
             );
             renderer.run();
+            // 导出中引擎被拆除（切文档/关工程）：把导出标记为中断，
+            // 否则 UI 的进度卡永远停留在“导出中”。
+            if let Some(job) = renderer.export.take()
+                && let Ok(mut p) = job.progress_handle().lock()
+            {
+                p.finished = true;
+                p.error = Some("导出被中断（音频引擎已重建）".into());
+                p.status = "已中断".into();
+            }
             // 引擎拆除：mixer 里的 insert 处理器全部退回 UI 线程回收
             //（CLAP deactivate 必须在管理线程做，不能在渲染线程 drop）。
             let leftovers = renderer.engine.mixer.take_all_inserts();

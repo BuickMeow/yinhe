@@ -898,20 +898,18 @@ impl App {
 
     /// Called after the bit-depth dialog is confirmed.
     /// Opens the file-save dialog and starts the export.
+    ///
+    /// 含插件链的导出在渲染线程内复用**实时引擎**（insert/乐器/PDC 全量参与）；
+    /// GPU 合成器模式仍走独立 GPU 导出线程（不经混音台，不含插件链）。
     pub(crate) fn start_export(&mut self) {
         let idx = match self.workspace.active_doc {
             Some(idx) => idx,
             None => return,
         };
 
-        // 真实计时起点：点击「开始导出」按钮的瞬间（包含后续文件对话框等待），
-        // 避免之前 reset 在文件对话框之后导致 elapsed 不包含对话框等待、看起来
-        // 像“点击之前就已经开始渲染”。
+        // 真实计时起点：点击「开始导出」按钮的瞬间（包含后续文件对话框等待）。
         let button_time = std::time::Instant::now();
-
-        let doc = &self.workspace.documents[idx];
-        let default_name = format!("{}.wav", doc.file_name);
-
+        let default_name = format!("{}.wav", self.workspace.documents[idx].file_name);
         let path = match rfd::FileDialog::new()
             .add_filter("WAV", &["wav"])
             .set_file_name(&default_name)
@@ -920,22 +918,29 @@ impl App {
             Some(p) => p,
             None => return,
         };
-
         let mut path_str = path.to_string_lossy().to_string();
         if !path_str.ends_with(".wav") {
             path_str.push_str(".wav");
         }
 
-        // Collect render inputs
-        let model = doc.data.model.clone();
         let sr = if self.export.sample_rate > 0 {
             self.export.sample_rate
         } else {
             self.audio_settings.sample_rate
         };
-        let port_sf = self.resolve_sf_config(doc);
-        eprintln!("[export] port_sf = {:?}", port_sf);
-        let skip = doc.compute_skip_mask();
+        // 导出复用实时引擎（含插件链与 PDC），采样率必须与当前设备一致：
+        // 插件实例按设备采样率激活，无法在不重载插件的情况下换采样率。
+        if sr != self.audio_settings.sample_rate {
+            self.notifications.error(
+                "导出采样率不匹配",
+                format!(
+                    "当前设备采样率为 {} Hz，含插件链的导出只能使用设备采样率；请在音频设置中切换采样率后重试。",
+                    self.audio_settings.sample_rate
+                ),
+            );
+            return;
+        }
+
         let bit_depth = self.export.bit_depth;
         let layer_count = if self.export.layer_count == 0 {
             None
@@ -945,100 +950,88 @@ impl App {
         let export_progress = self.export.progress.clone();
         let cancel_flag = self.export.cancel.clone();
         let pause_flag = self.export.pause.clone();
-        // 记下输出路径：中止卡“打开文件夹”按钮用
+        // 记下输出路径：中止卡“打开文件夹”按钮用。
         self.export.last_output_path = Some(path_str.clone());
-        // 混音台 strip 参数随导出（insert 效果器不导出，见 export_wav 文档）。
-        let mixer = doc.mixer.clone();
-        let use_gpu_synth = self.audio_settings.use_gpu_synth;
         cancel_flag.store(false, std::sync::atomic::Ordering::Relaxed);
-        // 新导出开始复位暂停（跟 cancel_flag 同位置；否则上次暂停残留会卡住新任务）。
         pause_flag.store(false, std::sync::atomic::Ordering::Relaxed);
-
-        // Reset progress state（计时起点为按钮点击时刻，保证壁钟时间真实）
-        {
-            let mut p = export_progress.lock().unwrap();
+        // Reset progress state（计时起点为按钮点击时刻，保证壁钟时间真实）。
+        if let Ok(mut p) = export_progress.lock() {
             p.reset();
             p.started_at = Some(button_time);
         }
 
-        let (tx, rx) = mpsc::channel();
+        // GPU 合成器模式：GpuSynth 内部直接混成立体声、不经混音台，
+        // 混音台/插件链不参与导出；仍走旧的独立 GPU 导出线程。
+        #[cfg(feature = "gpu")]
+        if self.audio_settings.use_gpu_synth {
+            self.start_export_gpu(
+                idx,
+                path_str,
+                sr,
+                bit_depth,
+                export_progress,
+                cancel_flag,
+                pause_flag,
+            );
+            return;
+        }
 
-        // Try GPU export first — use the app's existing wgpu Device/Queue.
-        #[cfg(feature = "gpu")]
-        let gpu_device = std::sync::Arc::new(self.render_ctx.device().clone());
-        #[cfg(feature = "gpu")]
-        let gpu_queue = std::sync::Arc::new(self.render_ctx.queue().clone());
-        // Extract SFZ paths per port for GPU export.
-        #[cfg(feature = "gpu")]
-        let gpu_port_sf = port_sf.clone();
-        #[cfg(feature = "gpu")]
-        eprintln!("[export] gpu port_sf = {:?}", gpu_port_sf);
-        #[cfg(not(feature = "gpu"))]
-        eprintln!("[export] GPU feature NOT enabled");
-
-        std::thread::spawn(move || {
-            eprintln!("[export] Thread started");
-            // 根据设置选择导出引擎：GPU 还是 CPU
-            #[cfg(feature = "gpu")]
-            let result = if use_gpu_synth {
-                if !gpu_port_sf.is_empty() {
-                    eprintln!("[export] Using GPU path (GpuSynth)");
-                    yinhe_audio::export::export_wav_gpu(
-                        model,
-                        sr,
-                        &gpu_port_sf,
-                        &skip,
-                        std::path::Path::new(&path_str),
-                        bit_depth,
-                        |pct, msg| {
-                            if let Ok(mut p) = export_progress.lock() {
-                                p.progress = pct;
-                                if !msg.is_empty() {
-                                    p.status = msg.to_string();
-                                }
-                            }
-                        },
-                        gpu_device,
-                        gpu_queue,
-                        Some(export_progress.clone()),
-                        Some(cancel_flag.clone()),
-                        Some(pause_flag.clone()),
-                    )
-                } else {
-                    eprintln!("[export] GPU selected but no SFZ path, fallback to CPU.");
-                    yinhe_audio::export::export_wav(
-                        model,
-                        sr,
-                        &port_sf,
-                        &skip,
-                        std::path::Path::new(&path_str),
-                        bit_depth,
-                        layer_count,
-                        |pct, msg| {
-                            if let Ok(mut p) = export_progress.lock() {
-                                p.progress = pct;
-                                if !msg.is_empty() {
-                                    p.status = msg.to_string();
-                                }
-                            }
-                        },
-                        Some(export_progress.clone()),
-                        Some(cancel_flag),
-                        Some(pause_flag),
-                        Some(&mixer),
-                    )
-                }
+        // 含插件链的导出：交给渲染线程复用实时引擎。
+        if let Some(h) = &self.audio_state.handle {
+            // 导出结束后恢复用户设置的层数（导出设置只影响本次导出）。
+            let restore_layer_count = if self.audio_settings.xsynth_layers == 0 {
+                None
             } else {
-                // 用户选择 CPU 引擎 — 使用 xsynth 导出。
-                eprintln!("[export] Using CPU path (xsynth).");
-                yinhe_audio::export::export_wav(
+                Some(self.audio_settings.xsynth_layers as usize)
+            };
+            h.handle.send(yinhe_audio::AudioCommand::ExportStart {
+                path: std::path::PathBuf::from(&path_str),
+                bit_depth,
+                layer_count,
+                restore_layer_count,
+                progress: export_progress,
+                cancel: cancel_flag,
+                pause: pause_flag,
+            });
+            self.export.running = true;
+        }
+    }
+
+    /// GPU 合成器模式的导出（独立线程 + GpuSynth；不含混音台/插件链）。
+    #[cfg(feature = "gpu")]
+    #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
+    fn start_export_gpu(
+        &mut self,
+        idx: usize,
+        path_str: String,
+        sr: u32,
+        bit_depth: yinhe_audio::export::WavBitDepth,
+        export_progress: std::sync::Arc<std::sync::Mutex<crate::dialogs::export::ExportProgress>>,
+        cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        pause_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        let doc = &self.workspace.documents[idx];
+        let model = doc.data.model.clone();
+        let port_sf = self.resolve_sf_config(doc);
+        let skip = doc.compute_skip_mask();
+        let gpu_device = std::sync::Arc::new(self.render_ctx.device().clone());
+        let gpu_queue = std::sync::Arc::new(self.render_ctx.queue().clone());
+
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            eprintln!("[export] GPU 导出线程启动");
+            let result = if port_sf.is_empty() {
+                Err(yinhe_audio::export::ExportError::Render(
+                    "GPU 导出需要音色库配置（SFZ）".into(),
+                ))
+            } else {
+                yinhe_audio::export::export_wav_gpu(
                     model,
                     sr,
                     &port_sf,
                     &skip,
                     std::path::Path::new(&path_str),
                     bit_depth,
-                    layer_count,
                     |pct, msg| {
                         if let Ok(mut p) = export_progress.lock() {
                             p.progress = pct;
@@ -1047,45 +1040,25 @@ impl App {
                             }
                         }
                     },
+                    gpu_device,
+                    gpu_queue,
                     Some(export_progress.clone()),
                     Some(cancel_flag),
                     Some(pause_flag),
-                    Some(&mixer),
                 )
             };
-
-            #[cfg(not(feature = "gpu"))]
-            let result = yinhe_audio::export::export_wav(
-                model,
-                sr,
-                &port_sf,
-                &skip,
-                std::path::Path::new(&path_str),
-                bit_depth,
-                layer_count,
-                |pct, msg| {
-                    if let Ok(mut p) = export_progress.lock() {
-                        p.progress = pct;
-                        if !msg.is_empty() {
-                            p.status = msg.to_string();
-                        }
-                    }
-                },
-                Some(export_progress.clone()),
-                Some(cancel_flag),
-                Some(pause_flag),
-                Some(&mixer),
-            );
-            // Capture final stats before hiding the progress window.
             let (elapsed, speed) = {
-                let p = export_progress.lock().unwrap();
-                let elapsed = p
-                    .started_at
-                    .map(|t| t.elapsed().as_secs_f64())
-                    .unwrap_or(0.0);
-                (elapsed, p.overall_speed)
+                let p = export_progress.lock();
+                match p {
+                    Ok(p) => (
+                        p.started_at
+                            .map(|t| t.elapsed().as_secs_f64())
+                            .unwrap_or(0.0),
+                        p.overall_speed,
+                    ),
+                    Err(_) => (0.0, 0.0),
+                }
             };
-            // Mark done
             if let Ok(mut p) = export_progress.lock() {
                 p.visible = false;
             }
@@ -1094,7 +1067,7 @@ impl App {
                     let _ = tx.send(Ok((path_str, elapsed, speed)));
                 }
                 Err(yinhe_audio::export::ExportError::Cancelled) => {
-                    // User cancelled — hide progress silently, don't send error.
+                    // 用户取消：静默丢弃，不发错误。
                     drop(tx);
                 }
                 Err(e) => {
@@ -1104,5 +1077,6 @@ impl App {
         });
 
         self.export.rx = Some(rx);
+        self.export.running = true;
     }
 }

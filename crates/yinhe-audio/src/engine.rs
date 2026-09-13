@@ -213,6 +213,13 @@ impl AudioEngine {
         self.model.is_some()
     }
 
+    /// 是否有插件（insert/乐器）参与当前渲染。
+    /// 插件的尾音无法像 xsynth 那样用 voice_count 探测，导出尾音阶段据此
+    /// 决定是否渲染满上限。
+    pub(crate) fn has_active_plugins(&self) -> bool {
+        self.mixer.has_inserts() || self.instruments.iter().any(|i| i.is_some())
+    }
+
     pub(crate) fn set_pending_play(&mut self, from_sample: u64) {
         self.pending_play_from_sample = Some(from_sample);
     }
@@ -296,6 +303,8 @@ impl AudioEngine {
             AudioCommand::RefreshLatency => self.refresh_latency(),
             // 预览命令由渲染器处理（独立预览合成器 + 渲染时钟），引擎层忽略。
             AudioCommand::PreviewNotes { .. } | AudioCommand::PreviewStop => {}
+            // 导出由渲染器执行（导出模式状态机 + WAV 写盘），引擎层忽略。
+            AudioCommand::ExportStart { .. } => {}
         }
     }
 

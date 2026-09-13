@@ -269,6 +269,7 @@ impl App {
         match export_msg {
             Some(Ok(result)) => {
                 self.export.rx = None;
+                self.export.running = false;
                 match result {
                     Ok((path, elapsed, speed)) => {
                         let fname = std::path::Path::new(&path)
@@ -307,6 +308,7 @@ impl App {
             Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
                 // 用户点了 stop：线程已退出，sender 断开，转“已中止”卡
                 self.export.rx = None;
+                self.export.running = false;
                 // abort 清理暂停 flag（暂停中点 stop 也能干净结束；下次导出开始时亦会复位）。
                 self.export
                     .pause
@@ -338,6 +340,85 @@ impl App {
                 }
             }
             Some(Err(std::sync::mpsc::TryRecvError::Empty)) | None => {}
+        }
+
+        // 渲染线程导出（复用实时引擎，含插件链/PDC）完成轮询：
+        // `progress.finished` 置位即收尾（取消/失败/成功三态）。
+        if self.export.running && self.export.rx.is_none() {
+            let finished = self.export.progress.lock().ok().and_then(|p| {
+                p.finished.then(|| {
+                    (
+                        p.error.clone(),
+                        p.overall_speed,
+                        p.started_at
+                            .map(|t| t.elapsed().as_secs_f64())
+                            .unwrap_or(0.0),
+                    )
+                })
+            });
+            if let Some((error, speed, elapsed)) = finished {
+                self.export.running = false;
+                let out_path = self.export.last_output_path.clone();
+                let cancelled = self
+                    .export
+                    .cancel
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                let fname = out_path
+                    .as_deref()
+                    .and_then(|p| std::path::Path::new(p).file_name())
+                    .and_then(|n| n.to_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| t!("toast.export_label").to_string());
+                if cancelled {
+                    // 中止：转“已中止”卡（清理暂停 flag，下次导出开始时亦会复位）。
+                    self.export
+                        .pause
+                        .store(false, std::sync::atomic::Ordering::Relaxed);
+                    let aborted = self.notifications.finish_progress(
+                        crate::widgets::toast::EXPORT_PROGRESS_ID,
+                        crate::widgets::toast::ProgressOutcome::Aborted,
+                        t!("toast.export_aborted").to_string(),
+                        fname,
+                        None,
+                    );
+                    if let Some(p) = out_path {
+                        self.notifications.set_action_with_icon(
+                            aborted,
+                            t!("dialog.export.open_folder").to_string(),
+                            crate::widgets::toast::model::ToastActionKind::RevealInFolder(
+                                std::path::PathBuf::from(p),
+                            ),
+                            Some(egui_material_icons::icons::ICON_FOLDER_OPEN),
+                        );
+                    }
+                } else if let Some(e) = error {
+                    self.notifications.finish_progress(
+                        crate::widgets::toast::EXPORT_PROGRESS_ID,
+                        crate::widgets::toast::ProgressOutcome::Failed,
+                        t!("toast.export_failed").to_string(),
+                        e,
+                        None,
+                    );
+                } else {
+                    let acted = self.notifications.finish_progress(
+                        crate::widgets::toast::EXPORT_PROGRESS_ID,
+                        crate::widgets::toast::ProgressOutcome::Completed,
+                        t!("toast.export_done").to_string(),
+                        format!("{} ({:.1}s, {:.1}x)", fname, elapsed, speed),
+                        None,
+                    );
+                    if let Some(p) = out_path {
+                        self.notifications.set_action_with_icon(
+                            acted,
+                            t!("dialog.export.open_folder").to_string(),
+                            crate::widgets::toast::model::ToastActionKind::RevealInFolder(
+                                std::path::PathBuf::from(p),
+                            ),
+                            Some(egui_material_icons::icons::ICON_FOLDER_OPEN),
+                        );
+                    }
+                }
+            }
         }
 
         // Poll async PPQ rescale completion

@@ -196,6 +196,11 @@ impl MixerGraph {
         self.frames
     }
 
+    /// 是否有任何 insert 处理器（含 master；导出的尾音判断用）。
+    pub fn has_inserts(&self) -> bool {
+        !self.master_inserts.is_empty() || self.inserts.iter().any(|c| !c.is_empty())
+    }
+
     /// 整体借出通道缓冲：渲染线程跨通道并行写入音源（每通道一个 rayon 任务）。
     /// 每块开始前上层应自行清零或完全覆盖。
     pub fn buffers_mut(&mut self) -> &mut [ChannelBuffers] {

@@ -144,6 +144,20 @@ pub enum AudioCommand {
     /// 插件延迟变化（CLAP latency changed / VST3 kLatencyChanged）：
     /// 重新查询各处理器延迟并重算 PDC 对齐。
     RefreshLatency,
+    /// 开始导出：渲染线程进入导出模式——停止播放、复位到 0，用**当前引擎**
+    /// （含全部 insert/乐器插件与 PDC）从头离线渲染到 WAV。
+    /// 进度/暂停/取消经共享 Arc 通信；完成后 `progress.finished` 置位。
+    ExportStart {
+        path: std::path::PathBuf,
+        bit_depth: crate::export::WavBitDepth,
+        /// xsynth 层数限制（None = 跟随当前设置）。
+        layer_count: Option<usize>,
+        /// 导出结束后恢复的层数（= UI 当前设置换算值；导出不改用户设置）。
+        restore_layer_count: Option<usize>,
+        progress: Arc<Mutex<crate::export::ExportProgress>>,
+        cancel: Arc<AtomicBool>,
+        pause: Arc<AtomicBool>,
+    },
 }
 
 /// 单个预览音符的参数（tick 域，与编辑层一致；渲染线程转 sample 差喂预览引擎）。

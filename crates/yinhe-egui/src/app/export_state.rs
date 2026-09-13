@@ -12,8 +12,10 @@ pub(crate) type ExportResultMsg = Result<(String, f64, f64), String>;
 
 /// All audio-export-related state, extracted from `App` to reduce the God Object.
 pub(crate) struct ExportState {
-    /// Receiver for the async export result.
+    /// Receiver for the async export result（仅 GPU 导出线程路径使用）。
     pub rx: Option<mpsc::Receiver<ExportResultMsg>>,
+    /// 是否有导出在进行（渲染线程路径轮询 progress.finished 收尾）。
+    pub running: bool,
     /// Shared progress for the export thread to report status.
     pub progress: Arc<Mutex<ExportProgress>>,
     /// Flag to signal the export thread to cancel.
@@ -36,6 +38,7 @@ impl ExportState {
     pub fn new() -> Self {
         Self {
             rx: None,
+            running: false,
             progress: ExportProgress::new(),
             cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pause: Arc::new(std::sync::atomic::AtomicBool::new(false)),

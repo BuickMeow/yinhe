@@ -276,7 +276,7 @@ impl App {
         {
             // 用户点了 X（»）只是收起卡片，不置 cancel 标志，任务继续后台跑；
             // 只有 stop 按钮才会置位 cancel flag（下一帧 poll 线程退出）。
-        } else if self.export.rx.is_some() {
+        } else if self.export.running {
             // 若 toast 侧点了取消，已置位则不再建卡，直接让线程退出
             let cancelled = self
                 .notifications
