@@ -42,6 +42,8 @@ const DB_MIN: f32 = -60.0;
 const DB_MAX: f32 = 6.0;
 /// 推子最小高度（px）。
 const FADER_MIN_H: f32 = 64.0;
+/// 推子之下的固定区高度（M/S + 声像 + dB 读数 + 间距）。
+const BOTTOM_H: f32 = 62.0;
 
 /// dB 值 → 纵向占比（0 = DB_MIN，1 = DB_MAX）。
 fn db_frac(db: f32) -> f32 {
@@ -133,24 +135,23 @@ pub(crate) fn channel_strip(
         );
         ui.add_space(4.0);
 
-        // 底部区从下往上排：insert 高度变化不影响推子/按钮对齐。
-        ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-            db_label(ui, params.gain);
-            ui.add_space(4.0);
-            ms_pan_block(ui, &params, |new_params| {
-                actions.push(MixAction::SetStrip {
-                    channel,
-                    params: new_params,
-                });
-            });
-            ui.add_space(4.0);
-            let fader_h = (ui.available_height() - 2.0).max(FADER_MIN_H);
-            fader_and_meter(ui, params.gain, peak, fader_h, |gain| {
-                let mut p = params;
-                p.gain = gain;
-                actions.push(MixAction::SetStrip { channel, params: p });
+        // 推子占满 insert 之下的剩余空间（底部固定区之外），
+        // 因此 insert 高度变化只影响推子顶部，底部对齐不变。
+        let fader_h = (ui.available_height() - BOTTOM_H).max(FADER_MIN_H);
+        fader_and_meter(ui, params.gain, peak, fader_h, |gain| {
+            let mut p = params;
+            p.gain = gain;
+            actions.push(MixAction::SetStrip { channel, params: p });
+        });
+        ui.add_space(4.0);
+        ms_pan_block(ui, &params, |new_params| {
+            actions.push(MixAction::SetStrip {
+                channel,
+                params: new_params,
             });
         });
+        ui.add_space(4.0);
+        db_label(ui, params.gain);
     });
 }
 
@@ -189,64 +190,68 @@ pub(crate) fn master_strip(
         insert_area(ui, None, &insert_names, &bypassed, &gui_open, actions);
         ui.add_space(4.0);
 
-        ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-            db_label(ui, params.gain);
-            ui.add_space(4.0);
-            // master 无 M/S/声像：按 ms_pan_block 实际高度占位，推子与通道条对齐。
-            let ms_h = BTN + ui.spacing().item_spacing.y + 14.0;
-            ui.allocate_space(egui::vec2(CONTENT_W, ms_h));
-            ui.add_space(4.0);
-            let fader_h = (ui.available_height() - 2.0).max(FADER_MIN_H);
-            fader_and_meter(ui, params.gain, peak, fader_h, |gain| {
-                actions.push(MixAction::SetMaster {
-                    params: MasterParams { gain },
-                });
+        let fader_h = (ui.available_height() - BOTTOM_H).max(FADER_MIN_H);
+        fader_and_meter(ui, params.gain, peak, fader_h, |gain| {
+            actions.push(MixAction::SetMaster {
+                params: MasterParams { gain },
             });
         });
+        ui.add_space(4.0);
+        // master 无 M/S/声像：按 ms_pan_block 实际高度占位，dB 与通道条对齐。
+        let ms_h = BTN + ui.spacing().item_spacing.y + 14.0;
+        ui.allocate_space(egui::vec2(CONTENT_W, ms_h));
+        ui.add_space(4.0);
+        db_label(ui, params.gain);
     });
 }
 
-/// 通道条外框：顶部轨道色条 + 内容区（撑满 `height`）。
+/// 通道条外框：固定 STRIP_WIDTH×height 尺寸分配（否则 Frame 会占满外层
+/// 剩余宽度），顶部轨道色条 + 内容区。
 fn strip_frame(
     ui: &mut egui::Ui,
     color: egui::Color32,
     height: f32,
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
-    egui::Frame::new()
-        .fill(crate::theme::control_bg())
-        .stroke(egui::Stroke::new(1.0, crate::theme::grid_sub_beat()))
-        .corner_radius(4.0)
-        .show(ui, |ui| {
-            ui.set_width(STRIP_WIDTH);
-            ui.set_min_height(height);
-            // 顶部轨道色条：贴顶，上角跟随外框圆角。
-            let (bar, _) = ui.allocate_exact_size(
-                egui::vec2(ui.available_width(), COLOR_BAR_H),
-                egui::Sense::hover(),
-            );
-            ui.painter().rect_filled(
-                bar,
-                egui::CornerRadius {
-                    nw: 4,
-                    ne: 4,
-                    sw: 0,
-                    se: 0,
-                },
-                color,
-            );
+    ui.allocate_ui_with_layout(
+        egui::vec2(STRIP_WIDTH, height),
+        egui::Layout::top_down(egui::Align::LEFT),
+        |ui| {
             egui::Frame::new()
-                .inner_margin(egui::Margin {
-                    left: PAD_X,
-                    right: PAD_X,
-                    top: 4,
-                    bottom: 6,
-                })
+                .fill(crate::theme::control_bg())
+                .stroke(egui::Stroke::new(1.0, crate::theme::grid_sub_beat()))
+                .corner_radius(4.0)
                 .show(ui, |ui| {
-                    ui.set_width(CONTENT_W);
-                    add_contents(ui);
+                    ui.set_min_height(height);
+                    // 顶部轨道色条：贴顶，上角跟随外框圆角。
+                    let (bar, _) = ui.allocate_exact_size(
+                        egui::vec2(STRIP_WIDTH, COLOR_BAR_H),
+                        egui::Sense::hover(),
+                    );
+                    ui.painter().rect_filled(
+                        bar,
+                        egui::CornerRadius {
+                            nw: 4,
+                            ne: 4,
+                            sw: 0,
+                            se: 0,
+                        },
+                        color,
+                    );
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin {
+                            left: PAD_X,
+                            right: PAD_X,
+                            top: 4,
+                            bottom: 6,
+                        })
+                        .show(ui, |ui| {
+                            ui.set_min_width(CONTENT_W);
+                            add_contents(ui);
+                        });
                 });
-        });
+        },
+    );
 }
 
 /// 标签区：通道号（强）+ 轨道名（小字截断，hover 显示全名）。
