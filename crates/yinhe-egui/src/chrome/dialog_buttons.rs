@@ -97,18 +97,11 @@ pub(crate) fn dialog_button_row(ui: &mut egui::Ui, buttons: &[DialogButton<'_>])
     clicked
 }
 
-/// 主按钮配色：暗色主题用强调色实底 + 高对比文字；亮色主题用 tonal 风格
-/// （强调色混白的浅底 + 强调色混深的深色文字），避免深色实心按钮在亮色
-/// 界面里过重，同时保持"确定"与次要按钮的层次区分。
+/// 主按钮配色：与 transport bar 播放菜单/列表选中态统一
+/// （`selected_bg` 底 + 主文字色）。`selected_bg` 由主题派生，亮暗自动适配，
+/// 不再单独为亮色做 tonal 混色，避免两套"强调"风格。
 fn primary_colors() -> (egui::Color32, egui::Color32) {
-    let accent = crate::theme::accent_active();
-    if crate::theme::dark_mode() {
-        (accent, crate::theme::contrast_fg())
-    } else {
-        let bg = accent.lerp_to_gamma(egui::Color32::WHITE, 0.66);
-        let fg = accent.lerp_to_gamma(egui::Color32::from_gray(20), 0.55);
-        (bg, fg)
-    }
+    (crate::theme::selected_bg(), crate::theme::text_primary())
 }
 
 /// 绘制单个按钮（需要自定义排布时使用；一般用 [`dialog_button_row`]）。
