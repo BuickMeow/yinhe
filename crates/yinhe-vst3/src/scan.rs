@@ -10,6 +10,8 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use crate::factory;
+use crate::loader::LoadedModule;
 use crate::moduleinfo::read_moduleinfo;
 
 /// 一个可加载的 VST3 插件类（UI 插件浏览器的一行）。
@@ -127,17 +129,8 @@ fn scan_bundle(path: &Path) -> ScanOutcome {
                 ScanOutcome::Loaded(plugins)
             }
         }
-        // 无 moduleinfo：旧插件，占位显示（需要 factory 枚举才能加载）。
-        Ok(None) => ScanOutcome::Loaded(vec![PluginInfo {
-            path: path.to_path_buf(),
-            class_id: String::new(),
-            name: bundle_display_name(path),
-            vendor: String::new(),
-            version: String::new(),
-            is_instrument: false,
-            is_effect: false,
-            needs_factory: true,
-        }]),
+        // 无 moduleinfo：旧插件，加载 factory 枚举类信息。
+        Ok(None) => scan_with_factory(path),
         Err(e) => ScanOutcome::Failed {
             path: path.to_path_buf(),
             error: e.to_string(),
@@ -145,11 +138,54 @@ fn scan_bundle(path: &Path) -> ScanOutcome {
     }
 }
 
-/// bundle 显示名：文件名去掉 `.vst3` 后缀。
-fn bundle_display_name(path: &Path) -> String {
-    path.file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.display().to_string())
+/// 无 moduleinfo 的插件：加载 factory 枚举。
+///
+/// 注意：这会**进程内加载第三方二进制**（与 CLAP 扫描同一风险模型：损坏/恶意
+/// 插件可能杀死宿主进程）。后续阶段将改为子进程隔离扫描。
+fn scan_with_factory(path: &Path) -> ScanOutcome {
+    let module = match LoadedModule::load(path) {
+        Ok(module) => module,
+        Err(e) => {
+            return ScanOutcome::Failed {
+                path: path.to_path_buf(),
+                error: format!("加载模块失败: {e}"),
+            };
+        }
+    };
+    // SAFETY: factory 指针由模块拥有且生命周期覆盖本函数；ComRef 借用不增减引用。
+    let Some(factory) = (unsafe { vst3::ComRef::from_raw(module.factory_ptr()) }) else {
+        return ScanOutcome::Failed {
+            path: path.to_path_buf(),
+            error: "factory 指针为空".into(),
+        };
+    };
+    let info = factory::factory_info(&factory);
+    let classes = factory::enumerate_classes(&factory);
+    if classes.is_empty() {
+        return ScanOutcome::Failed {
+            path: path.to_path_buf(),
+            error: "factory 未导出音频处理器类".into(),
+        };
+    }
+    ScanOutcome::Loaded(
+        classes
+            .into_iter()
+            .map(|c| PluginInfo {
+                path: path.to_path_buf(),
+                class_id: c.class_id,
+                name: c.name,
+                vendor: if c.vendor.is_empty() {
+                    info.vendor.clone()
+                } else {
+                    c.vendor
+                },
+                version: c.version,
+                is_instrument: c.is_instrument,
+                is_effect: c.is_effect,
+                needs_factory: false,
+            })
+            .collect(),
+    )
 }
 
 #[cfg(test)]
@@ -205,17 +241,14 @@ mod tests {
     }
 
     #[test]
-    fn bundle_without_moduleinfo_is_placeholder() {
+    fn bundle_without_moduleinfo_fails_without_binary() {
+        // 假 bundle 内没有真实二进制：factory 加载失败 → Failed。
+        // （真实无 moduleinfo 插件会走 factory 枚举，见 loader/factory 模块。）
         let dir = tempfile::tempdir().expect("tempdir");
         write_bundle(dir.path(), "OldPlugin", None);
         let outcomes = scan_dirs(&[dir.path().to_path_buf()]);
         assert_eq!(outcomes.len(), 1);
-        let ScanOutcome::Loaded(plugins) = &outcomes[0] else {
-            panic!("expected loaded");
-        };
-        assert_eq!(plugins.len(), 1);
-        assert!(plugins[0].needs_factory);
-        assert_eq!(plugins[0].name, "OldPlugin");
+        assert!(matches!(outcomes[0], ScanOutcome::Failed { .. }));
     }
 
     #[test]
