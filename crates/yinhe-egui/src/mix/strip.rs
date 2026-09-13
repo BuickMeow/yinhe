@@ -464,6 +464,17 @@ fn insert_row(
             .add(crate::widgets::menu::menu_item_button(
                 ui,
                 false,
+                t!("mix.toggle_gui").as_ref(),
+            ))
+            .clicked()
+        {
+            actions.push(MixAction::ToggleGui { channel, slot });
+            ui.close();
+        }
+        if ui
+            .add(crate::widgets::menu::menu_item_button(
+                ui,
+                false,
                 t!("mix.params").as_ref(),
             ))
             .clicked()
