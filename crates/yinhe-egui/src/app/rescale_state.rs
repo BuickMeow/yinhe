@@ -90,12 +90,12 @@ impl RescaleToastSource {
 
 impl ProgressSource for RescaleToastSource {
     fn title(&self) -> String {
-        "正在缩放".to_string()
+        t!("toast.rescale_working").to_string()
     }
     fn message(&self) -> String {
         let (_, label) = self.snapshot();
         if label.is_empty() {
-            "准备中…".to_string()
+            t!("toast.rescale_preparing").to_string()
         } else {
             label
         }
@@ -180,12 +180,11 @@ impl App {
                     let model = std::sync::Arc::make_mut(&mut doc.data.model);
                     model.meta.ppq = old_ppq;
                 }
-                let msg = "PPQ 缩放线程异常退出".to_string();
-                self.show_error(t!("dialog.error.rescale_failed"), msg.clone());
+                let msg = t!("toast.rescale_crashed").to_string();
                 self.notifications.finish_progress(
                     crate::widgets::toast::RESCALE_PROGRESS_ID,
                     crate::widgets::toast::ProgressOutcome::Failed,
-                    "缩放失败",
+                    t!("toast.rescale_failed").to_string(),
                     msg,
                     None,
                 );
@@ -215,7 +214,7 @@ impl App {
                 self.notifications.finish_progress(
                     crate::widgets::toast::RESCALE_PROGRESS_ID,
                     crate::widgets::toast::ProgressOutcome::Completed,
-                    "PPQ缩放完成",
+                    t!("toast.rescale_done").to_string(),
                     format!("PPQ {} → {}", old_ppq, new_ppq),
                     None,
                 );
@@ -230,11 +229,10 @@ impl App {
                     self.notifications
                         .dismiss(crate::widgets::toast::RESCALE_PROGRESS_ID);
                 } else {
-                    self.show_error(t!("dialog.error.rescale_failed"), msg.clone());
                     self.notifications.finish_progress(
                         crate::widgets::toast::RESCALE_PROGRESS_ID,
                         crate::widgets::toast::ProgressOutcome::Failed,
-                        "缩放失败",
+                        t!("toast.rescale_failed").to_string(),
                         msg,
                         None,
                     );

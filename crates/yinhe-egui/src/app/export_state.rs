@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, mpsc};
 
 use yinhe_audio::export::WavBitDepth;
 
-use crate::dialogs::export::{ExportCompleted, ExportProgress, format_duration};
+use crate::dialogs::export::{ExportProgress, format_duration};
 use crate::widgets::toast::model::ProgressSource;
 
 /// 导出线程完成消息：`Ok((输出路径, 耗时秒, 倍速))` 或 `Err(错误信息)`。
@@ -20,8 +20,6 @@ pub(crate) struct ExportState {
     pub cancel: Arc<std::sync::atomic::AtomicBool>,
     /// Flag to signal the export thread to pause (true=paused, spin-wait in render loop).
     pub pause: Arc<std::sync::atomic::AtomicBool>,
-    /// Result of a completed export (shown as a dialog until dismissed).
-    pub completed: Option<ExportCompleted>,
     /// Whether the bit-depth dropdown is open.
     pub show_bit_depth: bool,
     /// Selected WAV bit depth for export.
@@ -41,7 +39,6 @@ impl ExportState {
             progress: ExportProgress::new(),
             cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pause: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            completed: None,
             show_bit_depth: false,
             bit_depth: WavBitDepth::Bit24,
             layer_count: 0,

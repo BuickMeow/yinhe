@@ -78,10 +78,6 @@ pub struct App {
     // ── Shared state ──
     pub(crate) transport_panel_width: f32,
     pub(crate) file_loader: FileLoader,
-    /// 通用错误弹窗（加载/导出/缩放/窗口创建失败等共用，标题按场景给）。
-    /// 关闭后清空。
-    pub(crate) error_dialog: Option<crate::dialogs::error_dialog::ErrorDialog>,
-
     // ── Async save ──
     pub(crate) save_rx: Option<mpsc::Receiver<()>>,
     /// 保存进度（阶段 + 阶段内 0.0~1.0），由保存线程经 channel 推送、
@@ -220,12 +216,11 @@ pub struct App {
 }
 
 impl App {
-    /// 弹出通用错误弹窗。`title` 按场景给（加载失败/导出失败/…），
-    /// `message` 为具体错误描述；两者都应为已翻译文案。
+    /// 弹出错误 toast（无进度卡的错误场景；有进度卡的由 finish_progress 收尾）。
+    /// `title` 按场景给（打开失败/文件不存在/…），`message` 为具体错误描述，
+    /// 两者都应为已翻译文案。
     pub(crate) fn show_error(&mut self, title: impl Into<String>, message: impl Into<String>) {
-        self.error_dialog = Some(crate::dialogs::error_dialog::ErrorDialog::open(
-            title, message,
-        ));
+        self.notifications.error(title, message);
     }
 
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
@@ -347,7 +342,6 @@ impl App {
             transport_panel_width: audio_settings.layout.transport_panel_width,
             load_progress: load_progress.clone(),
             file_loader: FileLoader::new(load_progress.clone()),
-            error_dialog: None,
             save_rx: None,
             save_progress: Default::default(),
             save_progress_rx: None,
@@ -667,7 +661,7 @@ impl App {
                 Err(e) => {
                     tracing::error!("Failed to spawn new window: {}", e);
                     self.show_error(
-                        t!("dialog.error.title"),
+                        t!("toast.error_title"),
                         t!("title_bar.detach_spawn_failed", e = e),
                     );
                     rollback!();
@@ -716,7 +710,7 @@ impl App {
         if let Err(e) = save_res {
             tracing::error!("Failed to save detached document to temp: {}", e);
             self.show_error(
-                t!("dialog.error.title"),
+                t!("toast.error_title"),
                 t!("title_bar.detach_save_failed", e = e.to_string()),
             );
             rollback!();
@@ -738,7 +732,7 @@ impl App {
             Err(e) => {
                 tracing::error!("Failed to spawn new window: {}", e);
                 self.show_error(
-                    t!("dialog.error.title"),
+                    t!("toast.error_title"),
                     t!("title_bar.detach_spawn_failed", e = e),
                 );
                 rollback!();

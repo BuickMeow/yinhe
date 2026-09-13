@@ -220,7 +220,7 @@ impl App {
                 self.file_loader.archive_picker = None;
             }
             ArchivePickerAction::Error(ref msg) => {
-                self.show_error(t!("dialog.load_error.title"), msg.clone());
+                self.show_error(t!("toast.open_failed"), msg);
                 self.file_loader.archive_picker = None;
             }
             ArchivePickerAction::None => {}
@@ -331,12 +331,9 @@ impl App {
         }
     }
 
-    /// Show the load-error modal as an independent window.
-    pub(in crate::app) fn show_error_dialog(&mut self, ui: &mut egui::Ui) {
+    /// 显示未保存确认弹窗（独立窗口）。
+    pub(in crate::app) fn show_unsaved_dialog(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-
-        // ── Error dialog ──
-        crate::dialogs::error_dialog::show_viewport(&ctx, &mut self.error_dialog);
 
         // ── Unsaved changes confirmation ──
         let action =

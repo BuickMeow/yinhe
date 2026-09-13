@@ -184,7 +184,7 @@ impl LoadToastSource {
 
 impl ProgressSource for LoadToastSource {
     fn title(&self) -> String {
-        "正在加载".to_string()
+        t!("toast.loading").to_string()
     }
     fn message(&self) -> String {
         self.active_stage().map(|s| s.label).unwrap_or_default()

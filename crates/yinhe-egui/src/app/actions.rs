@@ -621,7 +621,7 @@ impl App {
                 .and_then(|n| n.to_str())
                 .unwrap_or(path);
             self.show_error(
-                t!("dialog.error.not_found_title"),
+                t!("toast.file_missing"),
                 t!("file_dialog.not_found", name = name),
             );
             return;

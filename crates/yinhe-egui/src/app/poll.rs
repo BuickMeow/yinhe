@@ -77,17 +77,16 @@ impl App {
                         self.notifications.finish_progress(
                             crate::widgets::toast::LOADING_PROGRESS_ID,
                             crate::widgets::toast::ProgressOutcome::Completed,
-                            "MIDI加载完成",
+                            t!("toast.load_done").to_string(),
                             fname.to_string(),
                             detail,
                         );
                     }
                     Err(msg) => {
-                        self.show_error(t!("dialog.load_error.title"), msg.clone());
                         self.notifications.finish_progress(
                             crate::widgets::toast::LOADING_PROGRESS_ID,
                             crate::widgets::toast::ProgressOutcome::Failed,
-                            "打开失败",
+                            t!("toast.open_failed").to_string(),
                             msg,
                             None,
                         );
@@ -185,28 +184,26 @@ impl App {
                     self.notifications.finish_progress(
                         crate::widgets::toast::LOADING_PROGRESS_ID,
                         crate::widgets::toast::ProgressOutcome::Completed,
-                        "MIDI加载完成",
+                        t!("toast.load_done").to_string(),
                         file_name.clone(),
                         detail,
                     );
                 } else {
                     let msg = t!("file_dialog.open_failed", name = file_name).to_string();
-                    self.show_error(t!("dialog.load_error.title"), msg.clone());
                     self.notifications.finish_progress(
                         crate::widgets::toast::LOADING_PROGRESS_ID,
                         crate::widgets::toast::ProgressOutcome::Failed,
-                        "打开失败",
+                        t!("toast.open_failed").to_string(),
                         msg,
                         None,
                     );
                 }
             }
             LoadResult::ArchiveError(msg) => {
-                self.show_error(t!("dialog.load_error.title"), msg.clone());
                 self.notifications.finish_progress(
                     crate::widgets::toast::LOADING_PROGRESS_ID,
                     crate::widgets::toast::ProgressOutcome::Failed,
-                    "打开失败",
+                    t!("toast.open_failed").to_string(),
                     msg,
                     None,
                 );
@@ -242,7 +239,7 @@ impl App {
             self.notifications.finish_progress(
                 crate::widgets::toast::SAVE_PROGRESS_ID,
                 crate::widgets::toast::ProgressOutcome::Completed,
-                "工程文件已保存",
+                t!("toast.save_done").to_string(),
                 saved_name.unwrap_or_default(),
                 None,
             );
@@ -272,22 +269,17 @@ impl App {
                             .and_then(|n| n.to_str())
                             .unwrap_or(&path)
                             .to_string();
-                        self.export.completed = Some(crate::dialogs::export::ExportCompleted {
-                            file_path: path.clone(),
-                            elapsed_secs: elapsed,
-                            overall_speed: speed,
-                        });
                         let acted = self.notifications.finish_progress(
                             crate::widgets::toast::EXPORT_PROGRESS_ID,
                             crate::widgets::toast::ProgressOutcome::Completed,
-                            "音频导出完成",
+                            t!("toast.export_done").to_string(),
                             format!("{} ({:.1}s, {:.1}x)", fname, elapsed, speed),
                             None,
                         );
                         // 可操作卡：打开文件夹（图标按钮，hover 显示 label；计时自动升为可操作档）
                         self.notifications.set_action_with_icon(
                             acted,
-                            "打开文件夹",
+                            t!("dialog.export.open_folder").to_string(),
                             crate::widgets::toast::model::ToastActionKind::RevealInFolder(
                                 std::path::PathBuf::from(&path),
                             ),
@@ -295,11 +287,10 @@ impl App {
                         );
                     }
                     Err(e) => {
-                        self.show_error(t!("dialog.error.export_failed"), e.clone());
                         self.notifications.finish_progress(
                             crate::widgets::toast::EXPORT_PROGRESS_ID,
                             crate::widgets::toast::ProgressOutcome::Failed,
-                            "导出失败",
+                            t!("toast.export_failed").to_string(),
                             e,
                             None,
                         );
@@ -318,12 +309,12 @@ impl App {
                     .as_deref()
                     .and_then(|p| std::path::Path::new(p).file_name())
                     .and_then(|n| n.to_str())
-                    .unwrap_or("导出")
-                    .to_string();
+                    .map(str::to_string)
+                    .unwrap_or_else(|| t!("toast.export_label").to_string());
                 let aborted = self.notifications.finish_progress(
                     crate::widgets::toast::EXPORT_PROGRESS_ID,
                     crate::widgets::toast::ProgressOutcome::Aborted,
-                    "已中止",
+                    t!("toast.export_aborted").to_string(),
                     fname,
                     None,
                 );
@@ -331,7 +322,7 @@ impl App {
                 if let Some(p) = out_path {
                     self.notifications.set_action_with_icon(
                         aborted,
-                        "打开文件夹",
+                        t!("dialog.export.open_folder").to_string(),
                         crate::widgets::toast::model::ToastActionKind::RevealInFolder(
                             std::path::PathBuf::from(p),
                         ),

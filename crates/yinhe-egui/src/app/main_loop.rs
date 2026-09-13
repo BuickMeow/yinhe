@@ -706,7 +706,7 @@ impl eframe::App for App {
         self.show_main_content(ui, &layout);
         self.show_panels_and_overlays(ui, &layout);
         self.show_dialogs(ui);
-        self.show_error_dialog(ui);
+        self.show_unsaved_dialog(ui);
 
         // ── Toasts + 通知中心（浮空在内容之上，右下→右上）──
         // 自动收起时长每帧同步（两次 u32 拷贝，新建/完成时按当时值定档）
