@@ -695,7 +695,7 @@ impl App {
                 );
             }
             transport_bar::FileAction::ProjectSettings => {
-                self.set_float_panel(Some(crate::right_panel::FloatPanel::ProjectSettings));
+                self.set_float_panel(ctx, Some(crate::right_panel::FloatPanel::ProjectSettings));
             }
         }
     }

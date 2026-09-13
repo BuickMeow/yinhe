@@ -19,8 +19,8 @@ pub(crate) const PPQ_RESCALE_PENDING_ID: &str = "ppq_rescale_pending";
 /// 工程设置内容（仅工程设置浮窗使用）。
 ///
 /// 排版对齐设置窗口：标题 + 描述在左、控件靠右、行间分割线。
+/// 顶部不加 heading（窗口标题栏已有「工程设置」）。
 pub fn show(ui: &mut egui::Ui, doc: &mut Document) {
-    ui.heading(t!("dialog.project_settings.title").as_ref());
     ui.add_space(8.0);
 
     // ── Project name ──
@@ -135,6 +135,12 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document) {
                             (old_val, new_val, resp.id.value()),
                         )
                     });
+                    // 确认框可能已存在但失焦（用户先前改过 PPQ 未选择），
+                    // 再次触发时显式拉回前台。
+                    crate::chrome::dialog::raise_viewport(
+                        ui.ctx(),
+                        egui::ViewportId::from_hash_of("ppq_rescale_confirm_dialog"),
+                    );
                     // 不立即 commit，等弹框确认后再 commit
                 } else {
                     // 无音符或未变化：直接 commit（rescale=false）

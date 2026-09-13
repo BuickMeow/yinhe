@@ -448,11 +448,28 @@ impl App {
     ///
     /// 音轨属性与侧栏 Info 内容互斥：打开时收起右侧栏 Info tab，避免同一内容
     /// 两边同时显示互相拉扯状态。工程设置只在浮窗显示，不影响侧栏。
-    pub(crate) fn set_float_panel(&mut self, panel: Option<crate::right_panel::FloatPanel>) {
-        if matches!(
-            panel,
-            Some(crate::right_panel::FloatPanel::TrackProps { .. })
-        ) && self.right_tab == Some(crate::right_panel::RightTab::Info)
+    ///
+    /// raise 统一收敛在这里：浮窗已存在但失焦时，再次点击菜单/右键打开
+    /// egui 不会自动带子窗口到前台，必须显式 Focus（见 `chrome::dialog::raise_viewport`）。
+    pub(crate) fn set_float_panel(
+        &mut self,
+        ctx: &egui::Context,
+        panel: Option<crate::right_panel::FloatPanel>,
+    ) {
+        use crate::right_panel::FloatPanel;
+        if let Some(panel) = panel {
+            let id = match panel {
+                FloatPanel::TrackProps { .. } => {
+                    egui::ViewportId::from_hash_of("track_props_dialog")
+                }
+                FloatPanel::ProjectSettings => {
+                    egui::ViewportId::from_hash_of("project_settings_dialog")
+                }
+            };
+            crate::chrome::dialog::raise_viewport(ctx, id);
+        }
+        if matches!(panel, Some(FloatPanel::TrackProps { .. }))
+            && self.right_tab == Some(crate::right_panel::RightTab::Info)
         {
             self.right_tab = None;
         }

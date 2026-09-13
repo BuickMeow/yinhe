@@ -460,6 +460,11 @@ impl App {
         });
         if open_req {
             self.new_track_dialog.open();
+            // 弹窗已存在但失焦时，再次点「+」需显式拉回前台
+            crate::chrome::dialog::raise_viewport(
+                ctx,
+                egui::ViewportId::from_hash_of("new_track_dialog"),
+            );
         }
         if !self.new_track_dialog.open {
             return;

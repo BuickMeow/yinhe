@@ -126,7 +126,7 @@ impl App {
         }
         // 右键「音轨属性」/ 其他浮动面板请求：设浮窗并收起侧栏 Info（互斥）。
         if let Some(panel) = float_panel_req {
-            self.set_float_panel(Some(panel));
+            self.set_float_panel(ui.ctx(), Some(panel));
         }
         // 自动化内容变化（AR lane 增删 / AM 事件编辑）：与 PR 的
         // handle_automation_edits 同路径，通知音频引擎 model 已变。

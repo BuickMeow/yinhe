@@ -4,12 +4,16 @@ use egui_material_icons::icons::*;
 
 /// Bring a child viewport to the front if it already exists.
 ///
-/// egui does not automatically raise an existing sub-viewport when the user
-/// clicks the "open window" button again (e.g. after the sub-window was hidden
-/// behind the main window). This helper sends `Visible(true)` + `Focus` to the
-/// given viewport, which on all platforms activates and raises the window.
+/// 统一约定（所有弹窗打开动作都必须遵守）：
+/// - egui 不会在用户通过主窗口 UI 再次「打开」一个已存在的子窗口时自动把它
+///   带到前台（直接点击子窗口本身会，那是 OS 行为）。
+/// - 因此每个「打开窗口」的动作入口（菜单项 / 按钮 / 右键菜单 / 快捷键）
+///   都要调用本函数一次：窗口已存在则 `Visible(true)` + `Focus` 拉回前台；
+///   尚不存在时命令排队，窗口创建后自然显示在前台，无副作用。
+/// - 不要在每帧渲染处调用——那会让子窗口永久抢焦点，用户无法操作主窗口。
 ///
-/// Safe to call every frame; idempotent.
+/// 已有的统一收敛点示例：`App::set_float_panel`（音轨属性/工程设置浮窗）、
+/// `App::open_tap_tempo_dialog`、`App::open_filter_dialog`。
 pub(crate) fn raise_viewport(ctx: &egui::Context, id: egui::ViewportId) {
     ctx.send_viewport_cmd_to(id, egui::ViewportCommand::Visible(true));
     ctx.send_viewport_cmd_to(id, egui::ViewportCommand::Focus);
