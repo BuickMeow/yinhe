@@ -11,6 +11,43 @@ pub fn show_general_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool
 
     setting_row(
         ui,
+        t!("settings.auto_save").as_ref(),
+        t!("settings.auto_save_desc").as_ref(),
+        |ui| {
+            if crate::widgets::switch::switch(ui, &mut settings.auto_save_enabled).changed() {
+                changed = true;
+            }
+        },
+    );
+
+    let intervals: [u64; 5] = [60, 300, 600, 900, 1800];
+    let current = settings.auto_save_interval_secs;
+    let enabled = settings.auto_save_enabled;
+    let current_label = t!("settings.auto_save.interval_minutes", n = current / 60).to_string();
+    setting_row(ui, t!("settings.auto_save_interval").as_ref(), "", |ui| {
+        ui.add_enabled_ui(enabled, |ui| {
+            crate::widgets::combo::combo_box(
+                ui,
+                "auto_save_interval",
+                current_label.as_str(),
+                140.0,
+                |ui| {
+                    for secs in intervals {
+                        let label = t!("settings.auto_save.interval_minutes", n = secs / 60);
+                        if crate::widgets::combo::combo_item(ui, current == secs, label.as_ref())
+                            .clicked()
+                        {
+                            settings.auto_save_interval_secs = secs;
+                            changed = true;
+                        }
+                    }
+                },
+            );
+        });
+    });
+
+    setting_row(
+        ui,
         t!("settings.factory_reset").as_ref(),
         t!("settings.factory_reset_desc").as_ref(),
         |ui| {

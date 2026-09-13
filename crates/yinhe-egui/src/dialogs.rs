@@ -1,5 +1,6 @@
 pub mod archive_picker;
 pub mod audio_device_switch;
+pub mod autosave_recovery;
 pub mod export;
 pub mod filter;
 pub mod gpu_device_lost;

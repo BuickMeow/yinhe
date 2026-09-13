@@ -573,6 +573,7 @@ mod tests {
             file_path: None,
             mixer: Default::default(),
             mixer_dirty: false,
+            doc_id: 0,
         }
     }
 

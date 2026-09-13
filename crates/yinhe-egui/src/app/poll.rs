@@ -159,6 +159,8 @@ impl App {
                 });
                 if let Some((doc, sf_project_mode)) = result {
                     self.audio_settings.global_sf_config.global_enabled = !sf_project_mode;
+                    // 自动保存恢复：绑定原路径/名称并删除备份（内容已在内存）
+                    let is_restored = self.finish_restore_one(&path);
                     if self.should_replace_initial_untitled() {
                         self.workspace.documents[0] = doc;
                         self.workspace.active_doc = Some(0);
@@ -175,7 +177,9 @@ impl App {
                     self.invalidate_cull_state();
                     // 打开成功 → 记录到「最近修改的文件」
                     // 拖出 temp 不进「最近打开」（路径在 /tmp 下，重开无意义）
-                    if !is_detached_temp_path(&path) && self.audio_settings.push_recent_file(&path)
+                    if !is_restored
+                        && !is_detached_temp_path(&path)
+                        && self.audio_settings.push_recent_file(&path)
                     {
                         self.audio_settings.save();
                     }
@@ -225,7 +229,10 @@ impl App {
             }
             // Mark the active document as saved
             let saved_name = if let Some(idx) = self.workspace.active_doc {
+                let doc_id = self.workspace.documents[idx].doc_id;
                 self.workspace.documents[idx].mark_saved();
+                // 已正常保存：该文档的崩溃备份可删
+                self.discard_autosave_for(doc_id);
                 // 保存成功 → 记录到「最近修改的文件」
                 if let Some(path) = self.workspace.documents[idx].file_path.clone()
                     && self.audio_settings.push_recent_file(&path)

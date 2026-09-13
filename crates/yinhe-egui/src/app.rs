@@ -6,6 +6,7 @@ pub(crate) mod actions;
 pub(crate) mod audio;
 pub(crate) mod audio_state;
 pub(crate) mod automation_actions;
+pub(crate) mod autosave;
 pub(crate) mod clipboard_sync;
 pub(crate) mod dialog_dispatch;
 pub(crate) mod export_state;
@@ -83,6 +84,8 @@ pub struct App {
     /// 保存进度（阶段 + 阶段内 0.0~1.0），由保存线程经 channel 推送、
     /// poll 写入共享状态，toast 渲染时 pull 读取。
     pub(crate) save_progress: crate::dialogs::save_overlay::SharedSaveProgress,
+    /// 自动保存运行时状态（定时备份 + 崩溃恢复）。
+    pub(crate) autosave: autosave::AutoSaveState,
     pub(crate) save_progress_rx: Option<mpsc::Receiver<yinhe_yin::YinProgress>>,
 
     // ── Unsaved changes confirmation ──
@@ -344,6 +347,7 @@ impl App {
             file_loader: FileLoader::new(load_progress.clone()),
             save_rx: None,
             save_progress: Default::default(),
+            autosave: autosave::AutoSaveState::new(),
             save_progress_rx: None,
             pending_unsaved: None,
             should_exit: false,
@@ -476,6 +480,9 @@ impl App {
         if index >= self.workspace.documents.len() {
             return;
         }
+        // 关闭的文档不再需要崩溃备份
+        let doc_id = self.workspace.documents[index].doc_id;
+        self.discard_autosave_for(doc_id);
         // 移除 + 索引修正 + teardown/purge/invalidate 全在 take_document 内
         // （与拖出新窗口共用，见 take_document 文档）。
         let _ = self.take_document(index);

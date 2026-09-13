@@ -9,6 +9,15 @@ use crate::chrome::transport_bar::FileAction;
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::shortcuts;
 
+/// 离线保存所需的文档快照（用户保存与自动保存共用）。
+/// 抓取后不再借用 `App`，可整体移动到后台线程。
+pub(crate) struct SaveSnapshot {
+    pub model: std::sync::Arc<yinhe_core::YinModel>,
+    pub project_file: yinhe_yin::ProjectFile,
+    pub mapping_file: yinhe_yin::MappingFile,
+    pub mixer: yinhe_mixer::MixerParams,
+}
+
 /// Actions detected from keyboard input in the current frame.
 #[derive(Default)]
 pub(crate) struct KeyboardActions {
@@ -717,8 +726,9 @@ impl App {
         }
     }
 
-    /// Spawn a background thread to save the project.
-    pub(crate) fn save_project_async(&mut self, idx: usize, path: String) {
+    /// 保存前把编辑态同步进 model/project_file，并抓取可离线保存的快照。
+    /// 保存线程只持有快照，不再借用 `self`；保存与自动保存共用。
+    pub(crate) fn take_save_snapshot(&mut self, idx: usize) -> SaveSnapshot {
         let doc = &mut self.workspace.documents[idx];
         doc.sync_overrides_to_model();
         doc.data.sync_project_file();
@@ -754,21 +764,28 @@ impl App {
             irack.sync_states_to(&mut self.workspace.documents[idx].mixer);
         }
         let doc = &self.workspace.documents[idx];
-        let model = doc.data.model.clone();
-        let project_file = doc.data.project_file.clone();
-        let mapping_file = doc.data.mapping_file.clone();
-        let mixer = doc.mixer.clone();
+        SaveSnapshot {
+            model: doc.data.model.clone(),
+            project_file: doc.data.project_file.clone(),
+            mapping_file: doc.data.mapping_file.clone(),
+            mixer: doc.mixer.clone(),
+        }
+    }
+
+    /// Spawn a background thread to save the project.
+    pub(crate) fn save_project_async(&mut self, idx: usize, path: String) {
+        let snap = self.take_save_snapshot(idx);
         let path_for_thread = path.clone();
 
         let (tx, rx) = mpsc::channel();
         let (progress_tx, progress_rx) = mpsc::channel();
         std::thread::spawn(move || {
             let result = yinhe_yin::save_yin_with_files_progress(
-                &model,
+                &snap.model,
                 &path_for_thread,
-                &project_file,
-                &mapping_file,
-                Some(&mixer),
+                &snap.project_file,
+                &snap.mapping_file,
+                Some(&snap.mixer),
                 |p| {
                     let _ = progress_tx.send(p);
                 },

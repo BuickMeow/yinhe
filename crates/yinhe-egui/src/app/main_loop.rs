@@ -45,6 +45,15 @@ impl<'a, T> Drop for ReplaceGuard<'a, T> {
 }
 
 impl eframe::App for App {
+    /// 正常退出：清理自动保存备份（异常退出时保留，供下次启动恢复）。
+    /// device lost 自动重启例外：备份要留给新进程恢复，绝不能删。
+    fn on_exit(&mut self) {
+        if self.autosave.lost_started {
+            return;
+        }
+        self.clear_autosave();
+    }
+
     /// macOS: 把 Ctrl+左键改写为右键（系统惯例，Finder/多数原生应用如此）。
     /// 改写发生在 egui 处理输入之前，因此 `secondary_clicked()` 等会正确触发；
     /// 同时清除 ctrl 修饰符，避免 PR 视图把它误判为"加选/快捷键"。
@@ -565,6 +574,8 @@ impl eframe::App for App {
         self.start_rescale_if_requested(ui.ctx());
         self.poll_async_operations();
         self.poll_clipboard_sync();
+        // ── 自动保存（间隔到期时后台备份脏文档）──
+        self.poll_autosave();
 
         // ── Handle deferred exit ──
         // 不重置 should_exit：保持 true 直到窗口真正关闭，

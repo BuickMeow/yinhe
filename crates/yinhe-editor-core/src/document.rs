@@ -1,6 +1,7 @@
 //! Per-document state: persistent data + editing state + undo history.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use yinhe_core::{TrackData, YinModel};
 use yinhe_mixer::MixerParams;
@@ -11,6 +12,13 @@ use crate::edit_state::EditState;
 use crate::history::{EditSnapshot, UndoAction, UndoEntry, UndoStack};
 use crate::project_data::ProjectData;
 use crate::quantize::QuantizePreset;
+
+/// 会话内文档 id 分配器（不持久化，仅用于自动保存文件命名等关联）。
+static NEXT_DOC_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_doc_id() -> u64 {
+    NEXT_DOC_ID.fetch_add(1, Ordering::Relaxed)
+}
 
 pub mod arrange_move;
 pub mod automation_edit;
@@ -40,6 +48,8 @@ pub struct Document {
     pub mixer: MixerParams,
     /// 混音参数自上次保存以来是否被修改（并进 is_dirty）。
     pub mixer_dirty: bool,
+    /// 会话内稳定 id（自动保存文件命名与恢复关联用；不持久化、不参与界面对比）。
+    pub doc_id: u64,
 }
 
 impl Default for Document {
@@ -129,6 +139,7 @@ impl Document {
             file_name: "Untitled".into(),
             file_path: None,
             mixer: MixerParams::default(),
+            doc_id: next_doc_id(),
             mixer_dirty: false,
         }
     }
@@ -218,6 +229,7 @@ impl Document {
                 file_path: None,
                 mixer,
                 mixer_dirty: false,
+                doc_id: next_doc_id(),
             })
         })
     }

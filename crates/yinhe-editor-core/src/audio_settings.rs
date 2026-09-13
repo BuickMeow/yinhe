@@ -28,6 +28,14 @@ fn default_toast_enabled() -> bool {
     true
 }
 
+fn default_auto_save_enabled() -> bool {
+    true
+}
+
+fn default_auto_save_interval_secs() -> u64 {
+    300
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AudioSettings {
@@ -76,6 +84,12 @@ pub struct AudioSettings {
     /// 是否开启通知（关闭后不再弹出任何通知，新的也不再记入历史）
     #[serde(default = "default_toast_enabled")]
     pub toast_enabled: bool,
+    /// 自动保存：定时把脏文档备份到配置目录的 autosave/（不覆盖原文件）
+    #[serde(default = "default_auto_save_enabled")]
+    pub auto_save_enabled: bool,
+    /// 自动保存间隔（秒）。
+    #[serde(default = "default_auto_save_interval_secs")]
+    pub auto_save_interval_secs: u64,
     pub layout: LayoutSettings,
     pub keybindings: Keybindings,
     pub pinned_file_actions: Vec<bool>,
@@ -139,6 +153,8 @@ impl Default for AudioSettings {
             toast_collapse_secs: default_toast_collapse_secs(),
             toast_action_collapse_secs: default_toast_action_collapse_secs(),
             toast_enabled: default_toast_enabled(),
+            auto_save_enabled: default_auto_save_enabled(),
+            auto_save_interval_secs: default_auto_save_interval_secs(),
             layout: LayoutSettings::default(),
             keybindings: Keybindings::default(),
             pinned_file_actions: vec![false; 10],

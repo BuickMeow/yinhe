@@ -109,8 +109,27 @@ impl App {
             }
         }
 
-        if device_lost && crate::dialogs::gpu_device_lost::show_viewport(&ctx) {
-            self.should_exit = true;
+        if device_lost {
+            // 自动保全 + 重启恢复；失败时内部回退到手动重启弹窗
+            self.handle_device_lost(&ctx);
+        }
+
+        // ── 自动保存恢复询问 ──
+        if self.autosave.show_recovery_dialog {
+            let entries = self.autosave.recovery.clone().unwrap_or_default();
+            match crate::dialogs::autosave_recovery::show_viewport(
+                &ctx,
+                &entries,
+                &mut self.autosave.show_recovery_dialog,
+            ) {
+                crate::dialogs::autosave_recovery::RecoveryAction::Restore => {
+                    self.restore_autosave_entries(entries);
+                }
+                crate::dialogs::autosave_recovery::RecoveryAction::Discard => {
+                    self.discard_recovery(&entries);
+                }
+                crate::dialogs::autosave_recovery::RecoveryAction::None => {}
+            }
         }
 
         // ── Settings dialog ──
