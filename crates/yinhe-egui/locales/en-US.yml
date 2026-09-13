@@ -437,6 +437,7 @@ dialog.track_props.title: "Track Properties"
 dialog.project_settings.title: "Project Settings"
 panel.pop_out: "Pop Out"
 panel.dock_to_side: "Dock to Sidebar"
+panel.no_selection: "Nothing selected"
 dialog.new_track.full: "All 256 MIDI channels (A1-P16) are in use; cannot create"
 
 # ── PPQ rescale progress ──
@@ -563,10 +564,15 @@ soundfont.clear_port: "Clear this Port"
 
 # ── Project info ──
 project.name: "Project Name"
+project.name_desc: "Written to MIDI metadata and track 1 name"
 project.artist: "Artist"
+project.artist_desc: "Author info, written to MIDI metadata"
 project.ppq: "PPQ (Pulses Per Quarter)"
+project.ppq_desc: "Pulses per quarter note; changing it with notes present prompts a rescale"
 project.compression: "Compression Level (zstd)"
+project.compression_desc: "zstd compression level for saving, 0 = no compression"
 project.description: "Description"
+project.description_desc: "Project description, written to MIDI metadata"
 
 # ── Track info panel ──
 track.no_tracks: "(No tracks)"

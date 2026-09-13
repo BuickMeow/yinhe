@@ -498,10 +498,15 @@ soundfont.clear_port: "このPortをクリア"
 
 # ── プロジェクト情報 ──
 project.name: "プロジェクト名"
+project.name_desc: "MIDI メタデータとトラック 1 の名前に書き込まれます"
 project.artist: "アーティスト"
+project.artist_desc: "作者情報。MIDI メタデータに書き込まれます"
 project.ppq: "PPQ (四分音符あたりのパルス数)"
+project.ppq_desc: "四分音符あたりのパルス数。ノートがある状態で変更するとリサイズを確認します"
 project.compression: "圧縮レベル (zstd)"
+project.compression_desc: "保存時の zstd 圧縮レベル。0 は無圧縮"
 project.description: "説明"
+project.description_desc: "プロジェクトの説明。MIDI メタデータに書き込まれます"
 
 # ── トラック情報パネル ──
 track.no_tracks: "(トラックなし)"
@@ -749,6 +754,7 @@ dialog.track_props.title: "トラックプロパティ"
 dialog.project_settings.title: "プロジェクト設定"
 panel.pop_out: "ウィンドウとして切り離す"
 panel.dock_to_side: "サイドバーにドッキング"
+panel.no_selection: "何も選択されていません"
 
 # ワークスペースプレースホルダー
 workspace.placeholder_hint: "新規作成またはプロジェクトを開いて編集を開始"

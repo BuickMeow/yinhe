@@ -494,10 +494,15 @@ soundfont.clear_port: "清空此 Port"
 
 # ── 项目信息 ──
 project.name: "專案名稱"
+project.name_desc: "寫入 MIDI 中繼資料與第 1 軌名稱"
 project.artist: "藝術家"
+project.artist_desc: "作者資訊，寫入 MIDI 中繼資料"
 project.ppq: "PPQ (每拍節拍數)"
+project.ppq_desc: "每四分音符的脈衝數，修改含音符專案時會提示縮放"
 project.compression: "壓縮等級 (zstd)"
+project.compression_desc: "儲存專案的 zstd 壓縮等級，0 表示不壓縮"
 project.description: "簡介"
+project.description_desc: "專案簡介，寫入 MIDI 中繼資料"
 
 # ── 音轨信息面板 ──
 track.no_tracks: "（無音軌）"
@@ -745,6 +750,7 @@ dialog.track_props.title: "音軌屬性"
 dialog.project_settings.title: "工程設定"
 panel.pop_out: "彈出為視窗"
 panel.dock_to_side: "停靠到側欄"
+panel.no_selection: "未選取任何內容"
 dialog.new_track.full: "256 個 MIDI 通道（A1–P16）已全部佔用，無法新增"
 
 # ── 工作區佔位面板 ──

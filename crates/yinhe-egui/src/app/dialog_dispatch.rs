@@ -333,7 +333,7 @@ impl App {
         // ── 选择筛选对话框 ──
         self.show_filter_dialog(&ctx);
 
-        // ── 属性浮动面板（音轨属性 / 工程设置；与侧栏 Info 内容互斥切换）──
+        // ── 属性浮动面板（音轨属性与侧栏互斥；工程设置仅浮窗）──
         self.show_float_panels(&ctx);
 
         // ── Export settings ──
@@ -554,8 +554,9 @@ impl App {
 
     /// 渲染音轨属性 / 工程设置浮动面板（独立视口子窗口）。
     ///
-    /// 与右侧栏 Info 内容互斥：弹窗打开时右侧栏已收起（set_float_panel 关闭），
-    /// 用户点 X 只关闭弹窗，点「停靠到侧栏」则把内容搬回右侧栏 Info tab。
+    /// 音轨属性与右侧栏 Info 内容互斥：弹窗打开时右侧栏已收起（set_float_panel
+    /// 关闭），用户点 X 只关闭弹窗，点「停靠到侧栏」则把内容搬回右侧栏 Info tab。
+    /// 工程设置只在浮窗显示（无停靠入口），点 X 即关闭。
     fn show_float_panels(&mut self, ctx: &egui::Context) {
         let Some(panel) = self.float_panel else {
             return;
@@ -577,9 +578,7 @@ impl App {
                 );
             }
             FloatPanel::ProjectSettings => {
-                crate::dialogs::prop_panels::show_project_settings_viewport(
-                    ctx, doc, &mut open, &mut dock,
-                );
+                crate::dialogs::prop_panels::show_project_settings_viewport(ctx, doc, &mut open);
             }
         }
 

@@ -444,36 +444,39 @@ impl App {
 
     // ── macOS: reserve_render_targets_for_window_anim has been removed ──
 
-    /// 打开属性浮窗（与侧栏 Info 内容互斥：弹窗打开时收起右侧栏 Info tab，
-    /// 避免同一内容两边同时显示互相拉扯状态）。
+    /// 打开属性浮窗。
+    ///
+    /// 音轨属性与侧栏 Info 内容互斥：打开时收起右侧栏 Info tab，避免同一内容
+    /// 两边同时显示互相拉扯状态。工程设置只在浮窗显示，不影响侧栏。
     pub(crate) fn set_float_panel(&mut self, panel: Option<crate::right_panel::FloatPanel>) {
-        if panel.is_some() && self.right_tab == Some(crate::right_panel::RightTab::Info) {
+        if matches!(
+            panel,
+            Some(crate::right_panel::FloatPanel::TrackProps { .. })
+        ) && self.right_tab == Some(crate::right_panel::RightTab::Info)
+        {
             self.right_tab = None;
         }
         self.float_panel = panel;
     }
 
-    /// 把浮窗内容停靠回右侧栏：关弹窗、开 Info tab、并按内容恢复 info_content。
+    /// 把音轨属性浮窗停靠回右侧栏：关弹窗、开 Info tab、并恢复 info_content。
+    /// （工程设置浮窗无停靠入口，不会走到这里。）
     pub(crate) fn dock_float_panel(&mut self, panel: crate::right_panel::FloatPanel) {
         use crate::right_panel::{FloatPanel, InfoContent, RightTab};
+        let FloatPanel::TrackProps { track_idx } = panel else {
+            return;
+        };
         self.float_panel = None;
         self.right_tab = Some(RightTab::Info);
-        match panel {
-            FloatPanel::TrackProps { track_idx } => {
-                // 弹窗内下拉选择器已跟踪 track_selected，这里兜底选中目标轨。
-                if let Some(idx) = self.workspace.active_doc {
-                    self.workspace.documents[idx].edit.track_selected.clear();
-                    self.workspace.documents[idx]
-                        .edit
-                        .track_selected
-                        .insert(track_idx);
-                }
-                self.info_content = Some(InfoContent::Track);
-            }
-            FloatPanel::ProjectSettings => {
-                self.info_content = None;
-            }
+        // 弹窗内下拉选择器已跟踪 track_selected，这里兜底选中目标轨。
+        if let Some(idx) = self.workspace.active_doc {
+            self.workspace.documents[idx].edit.track_selected.clear();
+            self.workspace.documents[idx]
+                .edit
+                .track_selected
+                .insert(track_idx);
         }
+        self.info_content = Some(InfoContent::Track);
     }
 
     pub(crate) fn close_document(&mut self, index: usize) {

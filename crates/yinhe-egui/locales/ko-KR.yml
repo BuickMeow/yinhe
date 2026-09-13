@@ -494,10 +494,15 @@ soundfont.clear_port: "이 Port 지우기"
 
 # ── 프로젝트 정보 ──
 project.name: "프로젝트 이름"
+project.name_desc: "MIDI 메타데이터와 트랙 1 이름에 기록됩니다"
 project.artist: "아티스트"
+project.artist_desc: "작성자 정보. MIDI 메타데이터에 기록됩니다"
 project.ppq: "PPQ (분당 펄스 수)"
+project.ppq_desc: "4분음표당 펄스 수. 노트가 있는 상태에서 변경하면 리스케일을 확인합니다"
 project.compression: "압축 수준 (zstd)"
+project.compression_desc: "저장 시 zstd 압축 수준. 0은 무압축"
 project.description: "설명"
+project.description_desc: "프로젝트 설명. MIDI 메타데이터에 기록됩니다"
 
 # ── 트랙 정보 패널 ──
 track.no_tracks: "(트랙 없음)"
@@ -747,6 +752,7 @@ dialog.track_props.title: "트랙 속성"
 dialog.project_settings.title: "프로젝트 설정"
 panel.pop_out: "새 창으로 분리"
 panel.dock_to_side: "사이드바에 고정"
+panel.no_selection: "선택된 항목이 없습니다"
 dialog.new_track.full: "256개 MIDI 채널(A1–P16)이 모두 사용 중이라 새로 만들 수 없습니다"
 
 # ── 작업 공간 플레이스홀더 패널 ──

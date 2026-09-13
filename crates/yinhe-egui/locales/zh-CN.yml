@@ -437,6 +437,7 @@ dialog.track_props.title: "音轨属性"
 dialog.project_settings.title: "工程设置"
 panel.pop_out: "弹出为窗口"
 panel.dock_to_side: "停靠到侧栏"
+panel.no_selection: "未选择任何内容"
 dialog.new_track.full: "256 个 MIDI 通道（A1–P16）已全部占用，无法新建"
 
 # ── PPQ 缩放进度 ──
@@ -563,10 +564,15 @@ soundfont.clear_port: "清空此 Port"
 
 # ── 项目信息 ──
 project.name: "项目名称"
+project.name_desc: "写入 MIDI 元数据与第 1 轨名称"
 project.artist: "艺术家"
+project.artist_desc: "作者信息，写入 MIDI 元数据"
 project.ppq: "PPQ (每拍节拍数)"
+project.ppq_desc: "每四分音符的脉冲数，修改含音符工程时会提示缩放"
 project.compression: "压缩级别 (zstd)"
+project.compression_desc: "保存工程的 zstd 压缩级别，0 表示不压缩"
 project.description: "简介"
+project.description_desc: "工程简介，写入 MIDI 元数据"
 
 # ── 音轨信息面板 ──
 track.no_tracks: "（无音轨）"

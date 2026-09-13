@@ -3,7 +3,8 @@
 //! 按 `InfoContent` 分发到子模块：
 //! - [`anchor`] — 自动化锚点信息（Tick / Value / Shape / Ctrl X / Ctrl Y）
 //! - [`track`] — 音轨信息（名称 / 端口 / 通道 / Mute / Solo / 摘要）
-//! - `project_info` — 项目设置（无选择时）
+//!
+//! 无选择时显示空态提示；工程设置只在独立浮窗（见 `dialogs::prop_panels`）。
 
 mod anchor;
 pub(crate) mod selection;
@@ -114,9 +115,9 @@ fn render(
         // ── 音轨信息 ──
         Some(InfoContent::Track) => track::show_track_info(ui, doc, audio, info_content),
 
-        // ── 无选择 → 项目设置 ──
+        // ── 无选择 → 空态提示（工程设置请从菜单打开浮窗） ──
         None => {
-            super::project_info::show(ui, Some(doc));
+            crate::widgets::hint::empty_hint(ui, t!("panel.no_selection").as_ref());
             false
         }
     }

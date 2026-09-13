@@ -1,10 +1,10 @@
 //! 属性浮动面板（独立视口子窗口）：音轨属性 / 工程设置。
 //!
-//! 与右侧栏 Info 内容共用同一套渲染函数（`info_panel::show_track_info` /
-//! `project_info::show`），只是换了视图容器。egui 的每个 viewport 有独立的
-//! widget id 链，因此与侧栏渲染函数互不打扰，也不会 id clash。
+//! 音轨属性与右侧栏 Info 内容共用同一套渲染函数（`info_panel::show_track_info`），
+//! 只是换了视图容器。egui 的每个 viewport 有独立的 widget id 链，因此与侧栏渲染
+//! 函数互不打扰，也不会 id clash。工程设置只在浮窗出现（侧栏不再承载）。
 //!
-//! 与侧栏互斥切换（见 `App::set_float_panel` / `App::dock_float_panel`）：
+//! 音轨属性与侧栏互斥切换（见 `App::set_float_panel` / `App::dock_float_panel`）：
 //! 同一内容要么在侧栏、要么在浮窗，不会同时出现。
 
 use std::cell::RefCell;
@@ -123,12 +123,11 @@ pub(crate) fn show_track_props_viewport(
     *changed_out.borrow()
 }
 
-/// 工程设置浮窗。语义同 `show_track_props_viewport`（无 port_changed 返回值）。
+/// 工程设置浮窗（内容排版对齐设置窗口）。
 pub(crate) fn show_project_settings_viewport(
     ctx: &egui::Context,
     doc: &mut Document,
     open: &mut bool,
-    dock_to_side: &mut bool,
 ) {
     if !*open {
         return;
@@ -136,8 +135,6 @@ pub(crate) fn show_project_settings_viewport(
     let viewport_id = egui::ViewportId::from_hash_of("project_settings_dialog");
     let open_rc = Rc::new(RefCell::new(true));
     let open_out = Rc::clone(&open_rc);
-    let dock_rc = Rc::new(RefCell::new(false));
-    let dock_out = Rc::clone(&dock_rc);
     let ctx_clone = ctx.clone();
 
     ctx_clone.show_viewport_immediate(
@@ -166,28 +163,22 @@ pub(crate) fn show_project_settings_viewport(
                     );
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
-                            left: 10,
-                            right: 10,
-                            top: 4,
-                            bottom: 10,
+                            left: 12,
+                            right: 12,
+                            top: 0,
+                            bottom: 12,
                         })
                         .show(ui, |ui| {
-                            if ui
-                                .add(crate::widgets::menu::menu_item_button(
-                                    ui,
-                                    false,
-                                    t!("panel.dock_to_side").as_ref(),
-                                ))
-                                .clicked()
-                            {
-                                *dock_rc.borrow_mut() = true;
-                                close = true;
-                            }
-                            ui.separator();
+                            // 与设置窗口一致的控件密度
+                            ui.spacing_mut().interact_size.y = 24.0;
+                            ui.spacing_mut().item_spacing.y = 4.0;
                             egui::ScrollArea::vertical()
+                                .id_salt("project_settings_scroll")
                                 .auto_shrink([false; 2])
                                 .show(ui, |ui| {
-                                    crate::right_panel::project_info::show(ui, Some(doc));
+                                    ui.spacing_mut().interact_size.y = 24.0;
+                                    ui.spacing_mut().item_spacing.y = 4.0;
+                                    crate::right_panel::project_info::show(ui, doc);
                                 });
                         });
                 });
@@ -201,5 +192,4 @@ pub(crate) fn show_project_settings_viewport(
     if !*open_out.borrow() {
         *open = false;
     }
-    *dock_to_side = *dock_out.borrow();
 }
