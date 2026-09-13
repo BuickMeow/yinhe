@@ -15,17 +15,19 @@
 use std::path::Path;
 
 use yinhe_audio::{AudioCommand, AudioHandle};
-use yinhe_clap::{ClapPluginInstance, ClapProcessor, PluginInfo};
-use yinhe_mixer::{InstrumentProcessor, MixerParams};
+use yinhe_clap::ClapProcessor;
+use yinhe_mixer::{InstrumentProcessor, MixerParams, PluginFormat};
+use yinhe_vst3::Vst3Processor;
 
-use super::rack::{ACTIVATE_MAX_FRAMES, PluginLoadError, host_info};
+use super::plugin_instance::{PluginEntry, PluginInstance};
+use super::rack::{ACTIVATE_MAX_FRAMES, PluginLoadError};
 
 /// 单个乐器通道的运行时槽位。
 pub(crate) struct InstrumentSlot {
     /// 乐器通道号（0 起）。
     pub channel: u16,
     /// None = 加载失败占位（持久化层仍保留 InsertRef，保存不丢引用）。
-    pub instance: Option<ClapPluginInstance>,
+    pub instance: Option<PluginInstance>,
     /// 处理器当前在渲染线程（已 SetInstrument 且未退回）。
     pub sent: bool,
     /// 激活失败过：不再每帧重试（重新选择插件才会再试）。
@@ -39,7 +41,7 @@ pub(crate) struct InstrumentRack {
     pub slots: Vec<InstrumentSlot>,
     /// 已移除/被替换但仍占着渲染线程的旧实例：其旧处理器退回后 deactivate。
     /// 每通道至多一条（再次替换会直接覆盖丢弃更旧的——其处理器在引擎侧已丢失）。
-    pending_return: Vec<(u16, ClapPluginInstance)>,
+    pending_return: Vec<(u16, PluginInstance)>,
     /// 最近一次加载/激活失败信息（MIX 界面状态行展示）。
     pub last_error: Option<String>,
 }
@@ -50,7 +52,7 @@ impl InstrumentRack {
     }
 
     /// 按乐器通道取插件实例（参数面板用）。槽位不存在/无实例返回 None。
-    pub(crate) fn instance_mut(&mut self, channel: u16) -> Option<&mut ClapPluginInstance> {
+    pub(crate) fn instance_mut(&mut self, channel: u16) -> Option<&mut PluginInstance> {
         self.slot_mut(channel)?.instance.as_mut()
     }
 
@@ -60,22 +62,23 @@ impl InstrumentRack {
     pub fn load(
         &mut self,
         channel: u16,
+        format: PluginFormat,
         plugin_path: &Path,
         plugin_id: &str,
         name: &str,
         state: Option<&[u8]>,
     ) -> Result<(), PluginLoadError> {
-        let info = PluginInfo {
+        let entry = PluginEntry {
+            format,
             path: plugin_path.to_path_buf(),
             id: plugin_id.to_string(),
             name: name.to_string(),
-            vendor: None,
-            version: None,
-            features: Vec::new(),
+            vendor: String::new(),
+            is_instrument: true,
+            is_effect: false,
         };
         let result = (|| {
-            let mut instance = ClapPluginInstance::load(&info, &host_info())
-                .map_err(|e| PluginLoadError(format!("{e}")))?;
+            let mut instance = PluginInstance::load(&entry).map_err(PluginLoadError)?;
             if let Some(bytes) = state {
                 instance
                     .load_state(bytes)
@@ -125,12 +128,23 @@ impl InstrumentRack {
         let Some(instance) = rt.instance.as_mut() else {
             return Ok(()); // 加载失败占位：跳过激活
         };
-        let processor = instance
-            .activate(sample_rate as f64, ACTIVATE_MAX_FRAMES)
-            .map_err(|e| PluginLoadError(format!("激活乐器插件失败: {e}")))?;
+        let processor: Box<dyn InstrumentProcessor> = match instance {
+            PluginInstance::Clap(inst) => {
+                let p = inst
+                    .activate(sample_rate as f64, ACTIVATE_MAX_FRAMES)
+                    .map_err(|e| PluginLoadError(format!("激活乐器插件失败: {e}")))?;
+                Box::new(p)
+            }
+            PluginInstance::Vst3 { instance, .. } => {
+                let p = instance
+                    .activate_audio(sample_rate as f64, ACTIVATE_MAX_FRAMES)
+                    .map_err(|e| PluginLoadError(format!("激活 VST3 乐器失败: {e}")))?;
+                Box::new(p)
+            }
+        };
         handle.send(AudioCommand::SetInstrument {
             channel,
-            processor: Some(Box::new(processor)),
+            processor: Some(processor),
         });
         rt.sent = true;
         Ok(())
@@ -181,25 +195,46 @@ impl InstrumentRack {
     ///（VST3 接入后在此按槽位记录的格式分派）。
     pub fn on_returns(&mut self, returned: Vec<(u16, Box<dyn InstrumentProcessor>)>) {
         for (channel, processor) in returned {
-            let Some(processor) = processor.into_any().downcast::<ClapProcessor>().ok() else {
-                tracing::warn!("退回的乐器处理器不是 CLAP（未知格式），无法 deactivate，丢弃");
-                continue;
-            };
-            if let Some(idx) = self.pending_return.iter().position(|(c, _)| *c == channel) {
-                let (_, mut inst) = self.pending_return.remove(idx);
-                inst.deactivate(*processor);
-                continue;
+            let any = processor.into_any();
+            match any.downcast::<ClapProcessor>() {
+                Ok(clap) => {
+                    if let Some(idx) = self.pending_return.iter().position(|(c, _)| *c == channel) {
+                        let (_, mut inst) = self.pending_return.remove(idx);
+                        if let PluginInstance::Clap(instance) = &mut inst {
+                            instance.deactivate(*clap);
+                        }
+                        continue;
+                    }
+                    let Some(rt) = self.slot_mut(channel) else {
+                        tracing::warn!("退回的乐器处理器 channel={channel} 找不到槽位，丢弃");
+                        continue;
+                    };
+                    if let Some(PluginInstance::Clap(instance)) = rt.instance.as_mut() {
+                        instance.deactivate(*clap);
+                    } else {
+                        tracing::warn!(
+                            "channel={channel} 的槽位无 CLAP 实例，处理器无法 deactivate，丢弃"
+                        );
+                    }
+                    rt.sent = false;
+                }
+                Err(any) => match any.downcast::<Vst3Processor>() {
+                    Ok(vst3) => {
+                        // VST3：stop（关激活）后直接释放；被替换的旧实例无需匹配。
+                        vst3.stop();
+                        if let Some(idx) =
+                            self.pending_return.iter().position(|(c, _)| *c == channel)
+                        {
+                            self.pending_return.remove(idx);
+                            continue;
+                        }
+                        if let Some(rt) = self.slot_mut(channel) {
+                            rt.sent = false;
+                        }
+                    }
+                    Err(_) => tracing::warn!("退回的乐器处理器类型未知，丢弃"),
+                },
             }
-            let Some(rt) = self.slot_mut(channel) else {
-                tracing::warn!("退回的乐器处理器 channel={channel} 找不到槽位，丢弃");
-                continue;
-            };
-            if let Some(instance) = rt.instance.as_mut() {
-                instance.deactivate(*processor);
-            } else {
-                tracing::warn!("channel={channel} 的槽位无实例，处理器无法 deactivate，丢弃");
-            }
-            rt.sent = false;
         }
     }
 
@@ -218,10 +253,8 @@ impl InstrumentRack {
             let Some(instance) = rt.instance.as_mut() else {
                 continue;
             };
-            match instance.save_state() {
-                Ok(Some(bytes)) => r.state = Some(bytes),
-                Ok(None) => {}
-                Err(e) => tracing::warn!("保存乐器插件状态失败: {e}"),
+            if let Some(bytes) = instance.save_state() {
+                r.state = Some(bytes);
             }
         }
     }
@@ -244,6 +277,7 @@ mod tests {
         let mut mixer = MixerParams::default();
         mixer.instruments.resize(4, None);
         mixer.instruments[3] = Some(yinhe_mixer::InsertRef {
+            format: yinhe_mixer::PluginFormat::Clap,
             plugin_path: std::path::PathBuf::from("/tmp/x.clap"),
             plugin_id: "test".into(),
             name: "Test".into(),

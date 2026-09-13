@@ -7669,6 +7669,7 @@ dependencies = [
  "yinhe-test-helpers",
  "yinhe-theme",
  "yinhe-types",
+ "yinhe-vst3",
  "yinhe-wgpu",
  "yinhe-yin",
 ]

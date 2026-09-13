@@ -54,23 +54,34 @@ impl Default for MasterParams {
     }
 }
 
+/// 插件格式（持久化进工程；旧工程缺省按 CLAP 处理）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PluginFormat {
+    #[default]
+    Clap,
+    Vst3,
+}
+
 /// insert 槽位的插件引用（持久化进工程文件）。
 ///
 /// 插件本体（实例/处理器）由上层（yinhe-egui）管理，这里只存
 /// 「哪个插件 + 是否旁通 + 状态字节」。加载时按 id 为主、路径为辅找回插件。
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InsertRef {
-    /// 插件包路径（如 .clap 文件 / bundle 目录）。
+    /// 插件包路径（如 .clap 文件 / .vst3 bundle 目录）。
     pub plugin_path: PathBuf,
-    /// 包内插件 id（如 "com.u-he.diva"）。
+    /// 包内插件 id（CLAP id / VST3 32 位十六进制 class id）。
     pub plugin_id: String,
     /// 显示名（持久化：恢复时扫描结果可能不含该插件，仍能显示原名）。
     #[serde(default)]
     pub name: String,
+    /// 插件格式（旧工程缺省 CLAP）。
+    #[serde(default)]
+    pub format: PluginFormat,
     /// 旁通：链上保留槽位但不参与处理。
     #[serde(default)]
     pub bypassed: bool,
-    /// 插件状态字节（CLAP state 扩展产出）；None = 插件无状态扩展或未保存过。
+    /// 插件状态字节（CLAP state 扩展 / VST3 component+controller 两段）；None = 未保存过。
     #[serde(default)]
     pub state: Option<Vec<u8>>,
 }

@@ -134,7 +134,7 @@ impl Vst3Processor {
     ///
     /// `input`：效果器用法时为主端口立体声输入；乐器传 `None`（输入静音）。
     /// `position_samples`：本块起始的工程时间（采样数）。
-    pub fn process(
+    pub fn process_block(
         &mut self,
         events: &[PluginEvent],
         position_samples: u64,
@@ -223,5 +223,104 @@ impl Drop for Vst3Processor {
     fn drop(&mut self) {
         // 只释放引用；插件状态（setActive/setProcessing）由管理线程 stop() 处理。
         let _ = (&self.in_channels, &self.out_channels, ptr::null::<u8>());
+    }
+}
+
+impl yinhe_mixer::InstrumentProcessor for Vst3Processor {
+    fn process(
+        &mut self,
+        events: &[PluginEvent],
+        out_l: &mut [f32],
+        out_r: &mut [f32],
+        position_samples: u64,
+    ) {
+        if let Err(e) = self.process_block(events, position_samples, None) {
+            tracing::warn!(target: "vst3-instrument", "乐器处理失败，本块静音: {e}");
+            out_l.fill(0.0);
+            out_r.fill(0.0);
+            return;
+        }
+        let (ol, or) = self.output();
+        let n = out_l.len().min(out_r.len()).min(ol.len()).min(or.len());
+        out_l[..n].copy_from_slice(&ol[..n]);
+        out_r[..n].copy_from_slice(&or[..n]);
+        out_l[n..].fill(0.0);
+        out_r[n..].fill(0.0);
+    }
+
+    fn reset(&mut self) {
+        // VST3 无 reset API：setActive 循环让插件重置内部状态（尾音/延迟清零）。
+        unsafe {
+            let _ = self.processor.setProcessing(0);
+            let _ = self.component.setActive(0);
+            let _ = self.component.setActive(1);
+            let _ = self.processor.setProcessing(1);
+        }
+    }
+
+    fn flush_pending_params(&mut self, position_samples: u64) {
+        if self.param_queue.is_empty() {
+            return;
+        }
+        // 跑一个静音块把参数送达插件（输出丢弃）。
+        let _ = self.process_block(&[], position_samples, None);
+    }
+
+    fn latency_samples(&self) -> u32 {
+        unsafe { self.processor.getLatencySamples() }
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any + Send> {
+        self
+    }
+}
+
+/// VST3 效果器 → 混音台 insert 适配器。
+///
+/// 与 CLAP 的 `ClapInsert` 同模型：处理器由管理线程激活产出，
+/// 渲染线程独占调用，回收时 move 回管理线程 stop()/销毁。
+pub struct Vst3Insert {
+    processor: Vst3Processor,
+}
+
+impl Vst3Insert {
+    pub fn new(processor: Vst3Processor) -> Self {
+        Self { processor }
+    }
+
+    /// 拆回处理器（回收路径：交还实例/管理线程）。
+    pub fn into_processor(self) -> Vst3Processor {
+        self.processor
+    }
+}
+
+impl yinhe_mixer::InsertProcessor for Vst3Insert {
+    fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
+        if let Err(e) = self
+            .processor
+            .process_block(&[], 0, Some((&*left, &*right)))
+        {
+            tracing::warn!(target: "vst3-insert", "insert 处理失败，本块旁通: {e}");
+            return;
+        }
+        let (ol, or) = self.processor.output();
+        let n = left.len().min(right.len()).min(ol.len()).min(or.len());
+        left[..n].copy_from_slice(&ol[..n]);
+        right[..n].copy_from_slice(&or[..n]);
+    }
+
+    fn reset(&mut self) {
+        yinhe_mixer::InstrumentProcessor::reset(&mut self.processor);
+    }
+
+    fn flush_pending_params(&mut self, position_samples: u64) {
+        yinhe_mixer::InstrumentProcessor::flush_pending_params(
+            &mut self.processor,
+            position_samples,
+        );
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+        self
     }
 }

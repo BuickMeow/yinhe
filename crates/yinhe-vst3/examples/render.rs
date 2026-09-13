@@ -85,7 +85,7 @@ fn main() {
         } else {
             Some((left.as_slice(), right.as_slice()))
         };
-        if let Err(e) = processor.process(&events, block * frames as u64, input) {
+        if let Err(e) = processor.process_block(&events, block * frames as u64, input) {
             eprintln!("block {block} 处理失败: {e}");
             std::process::exit(1);
         }

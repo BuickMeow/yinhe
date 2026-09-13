@@ -163,6 +163,21 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
                 .position(|t| t.global_channel() == channel)
         })
         .unwrap_or(0);
+    // 乐器旁通状态：该通道所有轨道都 muted 视为旁通（任一未 mute = 开着）。
+    let inst_powered = !model
+        .tracks
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| t.global_channel() == channel)
+        .all(|(ti, _)| {
+            app.workspace.documents[idx]
+                .edit
+                .track_overrides
+                .get(ti)
+                .map(|o| o.muted)
+                .unwrap_or(false)
+        });
+
     // 编辑光标位置（旋钮写入位置）与各自动化 target 的当前值。
     let tick = {
         let doc = &app.workspace.documents[idx];
@@ -221,6 +236,7 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
     let mut knob_actions: Vec<KnobAction> = Vec::new();
     let mut open_params: Option<DockDevice> = None;
     let mut toggle_bypass: Option<(usize, bool)> = None;
+    let mut toggle_instrument: Option<bool> = None;
     let mut open_gui: Option<DockDevice> = None;
 
     // ── 顶部：通道选择 + 使用该通道的轨道 ──
@@ -268,7 +284,7 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
         const FX_W: f32 = 108.0;
         const ADD_W: f32 = 44.0;
         let fx_total = inserts.len() as f32 * (FX_W + 6.0);
-        let big_w = (avail.x - fx_total - ADD_W - 12.0).clamp(220.0, 320.0);
+        let big_w = (avail.x - fx_total - ADD_W - 12.0).clamp(200.0, 240.0);
 
         // 设备大卡片：标题 + 参数（XSynth 为旋钮纵向列表；插件为入口按钮）。
         ui.allocate_ui_with_layout(
@@ -282,9 +298,11 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
                     &lane_current,
                     &inserts,
                     &mut app.dock_param_search,
+                    inst_powered,
                     &mut knob_actions,
                     &mut open_params,
                     &mut toggle_bypass,
+                    &mut toggle_instrument,
                     &mut open_gui,
                 );
             },
@@ -328,6 +346,26 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
         && let Some(panel) = open_param_panel(app, idx, device, channel, instrument_channel)
     {
         app.mix.param_panel = Some(panel);
+    }
+    if let Some(muted) = toggle_instrument {
+        // 乐器旁通 = 该通道所有轨道 mute（AR 读 track_overrides，自动同步）。
+        let doc = &mut app.workspace.documents[idx];
+        let track_ids: Vec<usize> = doc
+            .data
+            .model
+            .tracks
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.global_channel() == channel)
+            .map(|(ti, _)| ti)
+            .collect();
+        for ti in track_ids {
+            if let Some(ov) = doc.edit.track_overrides.get_mut(ti) {
+                ov.muted = muted;
+            }
+        }
+        let audio = app.audio_state.handle.as_ref();
+        crate::right_panel::info_panel::send_skip_tracks(doc, audio);
     }
     if let Some((slot, bypassed)) = toggle_bypass {
         if let Some(r) = app.workspace.documents[idx]
@@ -455,9 +493,11 @@ fn big_device_card(
     lane_current: &[(AutomationTarget, Option<f32>)],
     inserts: &[(String, bool)],
     search: &mut String,
+    inst_powered: bool,
     knob_actions: &mut Vec<KnobAction>,
     open_params: &mut Option<DockDevice>,
     toggle_bypass: &mut Option<(usize, bool)>,
+    toggle_instrument: &mut Option<bool>,
     open_gui: &mut Option<DockDevice>,
 ) {
     egui::Frame::new()
@@ -469,12 +509,13 @@ fn big_device_card(
 
             // ── 标题行 ──
             ui.horizontal(|ui| {
-                // 电源：强调色 = 开着；点击切换效果器旁通。
+                // 电源：强调色 = 开着；点击切换旁通
+                // （效果器 = 自身旁通；乐器/XSynth = 该通道所有轨道 mute）。
                 let powered = match selected {
                     DockDevice::Insert(slot) => {
                         !inserts.get(slot).map(|(_, b)| *b).unwrap_or(false)
                     }
-                    _ => true,
+                    _ => inst_powered,
                 };
                 let power = egui_material_icons::icons::ICON_POWER_SETTINGS_NEW;
                 let power_color = if powered {
@@ -490,11 +531,16 @@ fn big_device_card(
                     )
                     .frame(false),
                 );
-                if power_resp.clicked()
-                    && let DockDevice::Insert(slot) = selected
-                    && let Some((_, bypassed)) = inserts.get(slot)
-                {
-                    *toggle_bypass = Some((slot, !*bypassed));
+                if power_resp.clicked() {
+                    match selected {
+                        DockDevice::Insert(slot) => {
+                            if let Some((_, bypassed)) = inserts.get(slot) {
+                                *toggle_bypass = Some((slot, !*bypassed));
+                            }
+                        }
+                        // 目标 muted 值 = 当前是否开着（true→全 mute，false→全恢复）。
+                        _ => *toggle_instrument = Some(inst_powered),
+                    }
                 }
                 power_resp.on_hover_text(t!("mix.bypass"));
 
@@ -515,11 +561,14 @@ fn big_device_card(
 
                 // 搜索（仅 XSynth 参数列表）。
                 if matches!(selected, DockDevice::XSynth) {
+                    let search_font = egui::FontId::proportional(crate::theme::SMALL_FONT);
                     ui.add(
                         egui::TextEdit::singleline(search)
                             .desired_width(88.0)
-                            .hint_text(t!("mix.search"))
-                            .font(egui::FontId::proportional(crate::theme::SMALL_FONT)),
+                            .hint_text(
+                                egui::RichText::new(t!("mix.search")).font(search_font.clone()),
+                            )
+                            .font(search_font),
                     );
                 }
 
@@ -773,7 +822,7 @@ fn open_param_panel(
                 .instrument_racks
                 .get_mut(idx)
                 .and_then(|rack| rack.instance_mut(ich))?;
-            let title = instance.info().name.clone();
+            let title = instance.name().to_string();
             Some(ParamPanel::open(
                 ParamTarget::Instrument { channel: ich },
                 title,
@@ -785,7 +834,7 @@ fn open_param_panel(
                 .mixer_racks
                 .get_mut(idx)
                 .and_then(|rack| rack.instance_mut(Some(channel), slot))?;
-            let title = instance.info().name.clone();
+            let title = instance.name().to_string();
             Some(ParamPanel::open(
                 ParamTarget::Insert {
                     channel: Some(channel),

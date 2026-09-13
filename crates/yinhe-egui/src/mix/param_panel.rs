@@ -10,8 +10,9 @@ use std::collections::HashMap;
 
 use eframe::egui;
 use rust_i18n::t;
-use yinhe_clap::{ClapPluginInstance, ParamDescriptor};
 use yinhe_mixer::ParamQueue;
+
+use super::plugin_instance::{PluginInstance, PluginParam};
 
 use crate::app::App;
 
@@ -33,7 +34,7 @@ pub(crate) struct ParamPanel {
     plugin_id: String,
     /// 写入队列（拖动时 push）。
     queue: std::sync::Arc<ParamQueue>,
-    params: Vec<ParamDescriptor>,
+    params: Vec<PluginParam>,
     /// 搜索过滤后的参数索引。
     filtered: Vec<usize>,
     search: String,
@@ -47,17 +48,13 @@ pub(crate) struct ParamPanel {
 
 impl ParamPanel {
     /// 打开面板：枚举参数（无参数/枚举失败也可打开，显示空态）。
-    pub(crate) fn open(
-        target: ParamTarget,
-        title: String,
-        instance: &mut ClapPluginInstance,
-    ) -> Self {
+    pub(crate) fn open(target: ParamTarget, title: String, instance: &mut PluginInstance) -> Self {
         let params = instance.param_list();
         let queue = instance.param_queue();
         let mut panel = Self {
             target,
             title,
-            plugin_id: instance.info().id.clone(),
+            plugin_id: instance.id().to_string(),
             queue,
             params,
             filtered: Vec::new(),
@@ -86,7 +83,7 @@ impl ParamPanel {
         self.filter_dirty = false;
     }
 
-    fn refresh(&mut self, instance: &mut ClapPluginInstance) {
+    fn refresh(&mut self, instance: &mut PluginInstance) {
         self.params = instance.param_list();
         self.editing.clear();
         self.rebuild_filter();
@@ -103,7 +100,7 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
         return;
     };
 
-    let instance: Option<&mut ClapPluginInstance> = match panel.target {
+    let instance: Option<&mut PluginInstance> = match panel.target {
         ParamTarget::Insert { channel, slot } => app
             .mixer_racks
             .get_mut(idx)
@@ -129,9 +126,9 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
                 );
                 return;
             };
-            if instance.info().id != panel.plugin_id {
+            if instance.id() != panel.plugin_id {
                 // 槽位被换成别的插件：重枚举参数。
-                panel.plugin_id = instance.info().id.clone();
+                panel.plugin_id = instance.id().to_string();
                 panel.refresh(instance);
             } else if instance.take_params_rescan() {
                 panel.refresh(instance);
@@ -194,8 +191,8 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
 fn param_row(
     ui: &mut egui::Ui,
     row_h: f32,
-    p: &ParamDescriptor,
-    instance: &mut ClapPluginInstance,
+    p: &PluginParam,
+    instance: &mut PluginInstance,
     editing: &mut HashMap<u32, f64>,
     queue: &ParamQueue,
     wrote_params: &mut bool,
@@ -205,7 +202,7 @@ fn param_row(
         .get(&p.id)
         .copied()
         .or_else(|| instance.get_param_value(p.id))
-        .unwrap_or(p.default_value);
+        .unwrap_or(p.default);
 
     ui.horizontal(|ui| {
         let label = if p.module.is_empty() {
@@ -225,7 +222,7 @@ fn param_row(
         let mut value = live;
         let slider = ui.add_enabled(
             !p.read_only,
-            egui::Slider::new(&mut value, p.min_value..=p.max_value).show_value(false),
+            egui::Slider::new(&mut value, p.min..=p.max).show_value(false),
         );
         if slider.changed() {
             editing.insert(p.id, value);

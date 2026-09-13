@@ -23,4 +23,4 @@ pub use factory::{FactoryClass, FactoryInfo};
 pub use instance::{InstanceError, Vst3ParamInfo, Vst3PluginInstance};
 pub use loader::{LoadError, LoadedModule};
 pub use moduleinfo::{ModuleClassInfo, ModuleInfo, ModuleInfoError, read_moduleinfo};
-pub use processor::{ProcessError, Vst3Processor};
+pub use processor::{ProcessError, Vst3Insert, Vst3Processor};

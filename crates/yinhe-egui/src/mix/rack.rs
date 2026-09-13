@@ -19,8 +19,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use yinhe_audio::{AudioCommand, AudioHandle, ClapInsert};
-use yinhe_clap::{ClapPluginInstance, ClapProcessor, HostInfo, PluginInfo};
-use yinhe_mixer::{InsertProcessor, MixerParams};
+use yinhe_clap::{ClapProcessor, HostInfo};
+use yinhe_mixer::{InsertProcessor, MixerParams, PluginFormat};
+use yinhe_vst3::Vst3Insert;
+
+use super::plugin_instance::{PluginEntry, PluginInstance};
 
 /// 引擎实时渲染块长（yinhe-audio ENGINE_BLOCK_FRAMES），activate 的 max_frames。
 /// 必须 ≥ 引擎实际块长，否则 ClapProcessor::process_effect 会截断尾部。
@@ -31,7 +34,7 @@ pub(crate) struct SlotRuntime {
     /// 机架内全局唯一 id（处理器回收匹配用）。
     pub owner: u64,
     /// None = 加载失败占位：槽位保留（与 InsertRef 链顺序对齐），不参与处理。
-    pub instance: Option<ClapPluginInstance>,
+    pub instance: Option<PluginInstance>,
     /// 与渲染线程处理器共享的旁通标志。
     pub bypass: Arc<AtomicBool>,
     /// 处理器当前在渲染线程（已 InsertAdd 且未退回）。
@@ -100,7 +103,7 @@ impl MixerRack {
         &mut self,
         channel: Option<u8>,
         slot: usize,
-    ) -> Option<&mut ClapPluginInstance> {
+    ) -> Option<&mut PluginInstance> {
         self.chain_mut(channel).get_mut(slot)?.instance.as_mut()
     }
 
@@ -109,29 +112,31 @@ impl MixerRack {
     /// `state`/`bypassed` 来自工程加载时的 InsertRef；手动添加传 None/false。
     /// 加载/状态恢复失败时槽位以无实例占位保留（与 InsertRef 链顺序对齐，
     /// 保存不丢引用），错误信息写入 `last_error` 并返回 Err。
+    #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
     pub fn load_plugin(
         &mut self,
         channel: Option<u8>,
+        format: PluginFormat,
         plugin_path: &Path,
         plugin_id: &str,
         name: &str,
         state: Option<&[u8]>,
         bypassed: bool,
     ) -> Result<(), PluginLoadError> {
-        let info = PluginInfo {
+        let entry = PluginEntry {
+            format,
             path: plugin_path.to_path_buf(),
             id: plugin_id.to_string(),
             name: name.to_string(),
-            vendor: None,
-            version: None,
-            features: Vec::new(),
+            vendor: String::new(),
+            is_instrument: false,
+            is_effect: false,
         };
         let owner = self.next_owner;
         self.next_owner += 1;
         let bypass = Arc::new(AtomicBool::new(bypassed));
         let result = (|| {
-            let mut instance = ClapPluginInstance::load(&info, &host_info())
-                .map_err(|e| PluginLoadError(format!("{e}")))?;
+            let mut instance = PluginInstance::load(&entry).map_err(PluginLoadError)?;
             if let Some(bytes) = state {
                 instance
                     .load_state(bytes)
@@ -175,14 +180,24 @@ impl MixerRack {
         let Some(instance) = rt.instance.as_mut() else {
             return Ok(()); // 加载失败占位槽位：跳过激活
         };
-        let processor = instance
-            .activate(sample_rate as f64, ACTIVATE_MAX_FRAMES)
-            .map_err(|e| PluginLoadError(format!("激活插件失败: {e}")))?;
-        let insert = ClapInsert::new(processor, Arc::clone(&rt.bypass), rt.owner);
+        let processor: Box<dyn InsertProcessor> = match instance {
+            PluginInstance::Clap(inst) => {
+                let p = inst
+                    .activate(sample_rate as f64, ACTIVATE_MAX_FRAMES)
+                    .map_err(|e| PluginLoadError(format!("激活插件失败: {e}")))?;
+                Box::new(ClapInsert::new(p, Arc::clone(&rt.bypass), rt.owner))
+            }
+            PluginInstance::Vst3 { instance, .. } => {
+                let p = instance
+                    .activate_audio(sample_rate as f64, ACTIVATE_MAX_FRAMES)
+                    .map_err(|e| PluginLoadError(format!("激活 VST3 插件失败: {e}")))?;
+                Box::new(Vst3Insert::new(p))
+            }
+        };
         handle.send(AudioCommand::InsertAdd {
             channel,
             slot,
-            processor: Box::new(insert),
+            processor,
         });
         rt.sent = true;
         Ok(())
@@ -223,7 +238,8 @@ impl MixerRack {
             gui_window,
             ..
         } = rt;
-        let Some(instance) = instance.as_mut() else {
+        // VST3 原生界面未实现（gui_open 恒 false）；只有 CLAP 走本流程。
+        let Some(PluginInstance::Clap(instance)) = instance.as_mut() else {
             return;
         };
         // 插件侧主动断开（closed 回调）：host destroy 确认 + 释放窗口。
@@ -292,6 +308,10 @@ impl MixerRack {
             tracing::warn!("打开插件界面失败: 槽位无实例（插件未加载成功）");
             return Err(PluginLoadError("插件未加载成功，无法打开界面".into()));
         };
+        // VST3 原生界面尚未实现（CLAP 走宿主 NSWindow 嵌入流程）。
+        let PluginInstance::Clap(instance) = instance else {
+            return Err(PluginLoadError("VST3 原生界面暂未实现".into()));
+        };
         if rt.gui_open {
             // 先 close_gui（插件 view 脱离父 view），再释放窗口对象。
             instance.close_gui();
@@ -337,12 +357,21 @@ impl MixerRack {
     /// `sent = false`，由 `ensure_all_sent` 在新引擎上补发。
     pub fn on_returns(&mut self, returned: Vec<Box<dyn InsertProcessor>>) {
         for boxed in returned {
-            let Ok(insert) = boxed.into_any().downcast::<ClapInsert>() else {
-                tracing::warn!("退回的 insert 处理器类型未知，丢弃");
-                continue;
-            };
-            let (processor, _bypass, owner) = insert.into_parts();
-            self.return_processor(owner, processor);
+            let any = boxed.into_any();
+            match any.downcast::<ClapInsert>() {
+                Ok(insert) => {
+                    let (processor, _bypass, owner) = insert.into_parts();
+                    self.return_processor(owner, processor);
+                }
+                Err(any) => match any.downcast::<Vst3Insert>() {
+                    Ok(insert) => {
+                        // VST3：处理器独占，stop()（关激活）后直接释放。
+                        let processor = insert.into_processor();
+                        processor.stop();
+                    }
+                    Err(_) => tracing::warn!("退回的 insert 处理器类型未知，丢弃"),
+                },
+            }
         }
     }
 
@@ -366,10 +395,10 @@ impl MixerRack {
         };
         {
             let rt = &mut self.chain_mut(channel)[slot];
-            if let Some(instance) = rt.instance.as_mut() {
+            if let Some(PluginInstance::Clap(instance)) = rt.instance.as_mut() {
                 instance.deactivate(processor);
             } else {
-                tracing::warn!("owner={owner} 的槽位无实例，处理器无法 deactivate，丢弃");
+                tracing::warn!("owner={owner} 的槽位无 CLAP 实例，处理器无法 deactivate，丢弃");
             }
             rt.sent = false;
         }
@@ -391,7 +420,7 @@ impl MixerRack {
                 if !rt.sent {
                     continue;
                 }
-                let Some(instance) = rt.instance.as_mut() else {
+                let Some(PluginInstance::Clap(instance)) = rt.instance.as_mut() else {
                     continue;
                 };
                 let (restart, _process, _callback, _flush) = instance.take_requests();
@@ -408,7 +437,7 @@ impl MixerRack {
             if !rt.sent {
                 continue;
             }
-            let Some(instance) = rt.instance.as_mut() else {
+            let Some(PluginInstance::Clap(instance)) = rt.instance.as_mut() else {
                 continue;
             };
             let (restart, _process, _callback, _flush) = instance.take_requests();
@@ -448,11 +477,9 @@ fn sync_chain<'a>(
         let Some(instance) = rt.instance.as_mut() else {
             continue;
         };
-        // 插件不支持 state 扩展时 save_state 返回 Ok(None)，保留旧 state。
-        match instance.save_state() {
-            Ok(Some(bytes)) => insert_ref.state = Some(bytes),
-            Ok(None) => {}
-            Err(e) => tracing::warn!("保存插件状态失败: {e}"),
+        // 无状态扩展/失败时返回 None，保留旧 state。
+        if let Some(bytes) = instance.save_state() {
+            insert_ref.state = Some(bytes);
         }
     }
 }

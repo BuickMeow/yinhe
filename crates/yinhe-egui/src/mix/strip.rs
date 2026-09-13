@@ -57,7 +57,7 @@ pub(crate) fn show_toolbar(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<M
             actions.push(MixAction::RescanPlugins);
         }
         if let Some(plugins) = &app.mix.scanned {
-            let effects = plugins.iter().filter(|p| p.is_audio_effect()).count();
+            let effects = plugins.iter().filter(|p| p.is_effect).count();
             ui.label(
                 egui::RichText::new(t!("mix.scan_status", count = effects))
                     .small()
@@ -757,7 +757,7 @@ pub(crate) fn plugin_picker(
                 .show(ui, |ui| {
                     let mut any = false;
                     if let Some(plugins) = plugins {
-                        for p in plugins.iter().filter(|p| p.is_audio_effect()) {
+                        for p in plugins.iter().filter(|p| p.is_effect) {
                             if !filter.is_empty() && !p.name.to_lowercase().contains(&filter) {
                                 continue;
                             }
@@ -863,7 +863,7 @@ pub(crate) fn instrument_picker(
                 .show(ui, |ui| {
                     let mut any = false;
                     if let Some(plugins) = plugins {
-                        for p in plugins.iter().filter(|p| p.is_instrument()) {
+                        for p in plugins.iter().filter(|p| p.is_instrument) {
                             if !filter.is_empty() && !p.name.to_lowercase().contains(&filter) {
                                 continue;
                             }

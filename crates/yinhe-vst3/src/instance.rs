@@ -77,6 +77,8 @@ pub struct Vst3PluginInstance {
     class_id: String,
     /// UI → 渲染线程的参数变化队列。
     param_queue: Arc<ParamQueue>,
+    /// 是否已音频激活（未激活时 getState 有崩溃风险——实测 Serum 2）。
+    activated: std::sync::atomic::AtomicBool,
 }
 
 impl Vst3PluginInstance {
@@ -166,6 +168,7 @@ impl Vst3PluginInstance {
             params,
             class_id: class_id.to_string(),
             param_queue: Arc::new(ParamQueue::new()),
+            activated: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -176,6 +179,11 @@ impl Vst3PluginInstance {
     /// 参数写入队列（UI 线程 push；处理器在渲染线程 drain）。
     pub fn param_queue(&self) -> Arc<ParamQueue> {
         Arc::clone(&self.param_queue)
+    }
+
+    /// 是否已音频激活（激活前 getState 有崩溃风险，保存状态前必须检查）。
+    pub fn is_activated(&self) -> bool {
+        self.activated.load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// 激活音频并产出渲染线程处理器。
@@ -238,14 +246,17 @@ impl Vst3PluginInstance {
             )));
         }
 
-        Vst3Processor::new(
+        let processor = Vst3Processor::new(
             self.component.clone(),
             processor,
             sample_rate,
             max_frames as usize,
             Arc::clone(&self.param_queue),
         )
-        .ok_or_else(|| InstanceError::Initialize("音频缓冲/宿主对象构造失败".into()))
+        .ok_or_else(|| InstanceError::Initialize("音频缓冲/宿主对象构造失败".into()))?;
+        self.activated
+            .store(true, std::sync::atomic::Ordering::Release);
+        Ok(processor)
     }
 
     /// 参数列表（创建时枚举一次；插件 rescan 后需重建实例/重新枚举）。

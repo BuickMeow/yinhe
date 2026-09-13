@@ -13,13 +13,15 @@
 pub(crate) mod gui_window;
 pub(crate) mod instrument_rack;
 pub(crate) mod param_panel;
+pub(crate) mod plugin_instance;
 pub(crate) mod rack;
 mod strip;
 
 use eframe::egui;
 use yinhe_audio::channel_layout::ChannelLayout;
-use yinhe_clap::PluginInfo;
-use yinhe_mixer::{MasterParams, StripParams};
+use yinhe_mixer::{MasterParams, PluginFormat, StripParams};
+
+use self::plugin_instance::PluginEntry;
 
 use crate::app::App;
 
@@ -59,7 +61,7 @@ pub(crate) struct MixUiState {
     smoothed: Vec<(f32, f32)>,
     smoothed_master: (f32, f32),
     /// 插件扫描结果（首次进入 MIX 或点「扫描」时填充）。
-    pub(crate) scanned: Option<Vec<PluginInfo>>,
+    pub(crate) scanned: Option<Vec<PluginEntry>>,
     /// 扫描中失败的包数量（诊断展示）。
     pub(crate) scan_errors: usize,
     /// 插件选择器打开目标：Some(Some(ch)) = 通道 ch，Some(None) = master。
@@ -100,7 +102,7 @@ pub(crate) enum MixAction {
     },
     AddInsert {
         channel: Option<u8>,
-        plugin: PluginInfo,
+        plugin: PluginEntry,
     },
     BypassInsert {
         channel: Option<u8>,
@@ -122,7 +124,7 @@ pub(crate) enum MixAction {
     /// 为乐器通道分配插件（InsertRef 入持久化层 + 机架加载 + 安装引擎）。
     AssignInstrument {
         channel: u16,
-        plugin: PluginInfo,
+        plugin: PluginEntry,
     },
     /// 移除乐器通道的插件（卸下载机架 + 持久化层置 None）。
     RemoveInstrument {
@@ -178,6 +180,7 @@ impl App {
             for r in &mixer.channel_inserts[ch] {
                 let _ = rack.load_plugin(
                     Some(ch as u8),
+                    r.format,
                     &r.plugin_path,
                     &r.plugin_id,
                     &r.name,
@@ -189,6 +192,7 @@ impl App {
         for r in &mixer.master_inserts {
             let _ = rack.load_plugin(
                 None,
+                r.format,
                 &r.plugin_path,
                 &r.plugin_id,
                 &r.name,
@@ -212,6 +216,7 @@ impl App {
             if let Some(r) = r {
                 let _ = rack.load(
                     ch as u16,
+                    r.format,
                     &r.plugin_path,
                     &r.plugin_id,
                     &r.name,
@@ -557,14 +562,21 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
                     plugin_path: plugin.path.clone(),
                     plugin_id: plugin.id.clone(),
                     name: plugin.name.clone(),
+                    format: plugin.format,
                     bypassed: false,
                     state: None,
                 });
             }
             let rack = app.mixer_rack_mut(idx);
-            if let Err(e) =
-                rack.load_plugin(channel, &plugin.path, &plugin.id, &plugin.name, None, false)
-            {
+            if let Err(e) = rack.load_plugin(
+                channel,
+                plugin.format,
+                &plugin.path,
+                &plugin.id,
+                &plugin.name,
+                None,
+                false,
+            ) {
                 // 加载失败：引用已入持久化层（保存不丢），但机架无实例；
                 // 状态行提示用户。
                 rack.last_error = Some(e.0);
@@ -631,13 +643,21 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
                     plugin_path: plugin.path.clone(),
                     plugin_id: plugin.id.clone(),
                     name: plugin.name.clone(),
+                    format: plugin.format,
                     bypassed: false,
                     state: None,
                 });
             }
             if idx < app.instrument_racks.len() {
                 let rack = &mut app.instrument_racks[idx];
-                if let Err(e) = rack.load(channel, &plugin.path, &plugin.id, &plugin.name, None) {
+                if let Err(e) = rack.load(
+                    channel,
+                    plugin.format,
+                    &plugin.path,
+                    &plugin.id,
+                    &plugin.name,
+                    None,
+                ) {
                     rack.last_error = Some(e.0);
                 }
             }
@@ -664,7 +684,7 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
                 .get_mut(idx)
                 .and_then(|rack| rack.instance_mut(channel, slot))
                 .map(|instance| {
-                    let title = instance.info().name.clone();
+                    let title = instance.name().to_string();
                     ParamPanel::open(
                         param_panel::ParamTarget::Insert { channel, slot },
                         title,
@@ -681,7 +701,7 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
                 .get_mut(idx)
                 .and_then(|rack| rack.instance_mut(channel))
                 .map(|instance| {
-                    let title = instance.info().name.clone();
+                    let title = instance.name().to_string();
                     ParamPanel::open(
                         param_panel::ParamTarget::Instrument { channel },
                         title,
@@ -696,21 +716,55 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
     }
 }
 
-/// 扫描默认 CLAP 目录（进程内加载元数据；崩溃风险见 yinhe-clap scan 文档）。
+/// 扫描默认 CLAP + VST3 目录（进程内加载元数据；崩溃风险见各自 scan 文档）。
 fn rescan(app: &mut App) {
-    let dirs = yinhe_clap::scan::default_plugin_dirs();
-    let outcomes = yinhe_clap::scan::scan_dirs(&dirs);
-    let mut plugins = Vec::new();
+    let mut plugins: Vec<PluginEntry> = Vec::new();
     let mut errors = 0;
-    for outcome in outcomes {
+
+    for outcome in yinhe_clap::scan::scan_dirs(&yinhe_clap::scan::default_plugin_dirs()) {
         match outcome {
-            yinhe_clap::scan::ScanOutcome::Loaded(infos) => plugins.extend(infos),
+            yinhe_clap::scan::ScanOutcome::Loaded(infos) => {
+                plugins.extend(infos.into_iter().map(|p| {
+                    let is_instrument = p.is_instrument();
+                    let is_effect = p.is_audio_effect();
+                    PluginEntry {
+                        format: PluginFormat::Clap,
+                        path: p.path,
+                        id: p.id,
+                        name: p.name,
+                        vendor: p.vendor.unwrap_or_default(),
+                        is_instrument,
+                        is_effect,
+                    }
+                }));
+            }
             yinhe_clap::scan::ScanOutcome::Failed { path, error } => {
                 errors += 1;
-                tracing::warn!("扫描插件包失败 {:?}: {error}", path);
+                tracing::warn!("扫描 CLAP 插件包失败 {:?}: {error}", path);
             }
         }
     }
+
+    for outcome in yinhe_vst3::scan::scan_dirs(&yinhe_vst3::scan::default_plugin_dirs()) {
+        match outcome {
+            yinhe_vst3::scan::ScanOutcome::Loaded(infos) => {
+                plugins.extend(infos.into_iter().map(|p| PluginEntry {
+                    format: PluginFormat::Vst3,
+                    path: p.path,
+                    id: p.class_id,
+                    name: p.name,
+                    vendor: p.vendor,
+                    is_instrument: p.is_instrument,
+                    is_effect: p.is_effect,
+                }));
+            }
+            yinhe_vst3::scan::ScanOutcome::Failed { path, error } => {
+                errors += 1;
+                tracing::warn!("扫描 VST3 插件包失败 {:?}: {error}", path);
+            }
+        }
+    }
+
     plugins.sort_by(|a, b| a.name.cmp(&b.name));
     app.mix.scanned = Some(plugins);
     app.mix.scan_errors = errors;
