@@ -1,7 +1,7 @@
 //! 引擎的混音台接线：MixerParams（源通道索引）↔ MixerGraph（dense 索引）映射，
 //! insert 命令处理与处理器回收。
 
-use yinhe_mixer::{InsertProcessor, MasterParams, MixerParams, StripParams};
+use yinhe_mixer::{InsertProcessor, InstrumentProcessor, MasterParams, MixerParams, StripParams};
 
 use crate::engine::AudioEngine;
 
@@ -105,7 +105,7 @@ impl AudioEngine {
         std::mem::take(&mut self.insert_returns)
     }
 
-    /// 安装/替换/移除某乐器通道上的 CLAP 乐器实例。
+    /// 安装/替换/移除某乐器通道上的乐器插件实例（CLAP/VST3 等，抽象为 trait）。
     ///
     /// 由 `AudioCommand::SetInstrument` 触发，渲染线程调用。被替换/移除的旧
     /// 处理器（以及无乐器轨却收到安装命令的多余处理器）攒进 `instrument_returns`
@@ -113,7 +113,7 @@ impl AudioEngine {
     pub(crate) fn set_instrument(
         &mut self,
         channel: u16,
-        processor: Option<yinhe_clap::ClapProcessor>,
+        processor: Option<Box<dyn InstrumentProcessor>>,
     ) {
         let dense = self.channel_layout.instrument_dense_for(channel);
         let Some(dense) = (dense != u32::MAX).then_some(dense as usize) else {
@@ -139,7 +139,7 @@ impl AudioEngine {
     }
 
     /// 取出待回收的乐器处理器（renderer 每轮命令处理后调用，送回 UI 线程）。
-    pub(crate) fn drain_instrument_returns(&mut self) -> Vec<(u16, yinhe_clap::ClapProcessor)> {
+    pub(crate) fn drain_instrument_returns(&mut self) -> Vec<(u16, Box<dyn InstrumentProcessor>)> {
         std::mem::take(&mut self.instrument_returns)
     }
 }

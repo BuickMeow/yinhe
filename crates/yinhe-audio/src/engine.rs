@@ -8,7 +8,7 @@ use xsynth_core::soundfont::SoundfontBase;
 use xsynth_core::{AudioStreamParams, ChannelCount};
 
 use yinhe_core::YinModel;
-use yinhe_mixer::{InsertProcessor, MixerGraph, MixerParams};
+use yinhe_mixer::{InsertProcessor, InstrumentProcessor, MixerGraph, MixerParams};
 use yinhe_types::KEY_COUNT;
 
 use crate::audio_model::{ActiveNote, AudibleNote, AudioModel, SortedCC};
@@ -35,12 +35,12 @@ pub(crate) struct AudioEngine {
     pub(crate) insert_returns: Vec<Box<dyn InsertProcessor>>,
     /// 被替换/移除的乐器处理器：同样不能在渲染线程 deactivate，攒在
     /// 这里由 renderer 送回 UI 线程回收（与 insert 同通道回流）。
-    pub(crate) instrument_returns: Vec<(u16, yinhe_clap::ClapProcessor)>,
-    /// CLAP 乐器实例，长度 = `compacted_channels`，只有乐器 dense 槽位非空。
+    pub(crate) instrument_returns: Vec<(u16, Box<dyn InstrumentProcessor>)>,
+    /// 乐器实例，长度 = `compacted_channels`，只有乐器 dense 槽位非空。
     /// 索引 = 全局 dense（= midi_compacted + 乐器通道排序位置）。
     pub(crate) instruments: Vec<Option<crate::instrument::InstrumentSource>>,
     /// 当前渲染块的起始 sample：dispatch 时把 tick 域事件换算成块内 frame offset
-    /// 喂 CLAP 乐器（`ClapInputEvent::time`）。render() 每块开头设置。
+    /// 喂乐器插件（`PluginEvent::time`）。render() 每块开头设置。
     pub(crate) block_start_sample: u64,
     /// 不可变通道布局：active_mask + channel_map + num_channels。
     /// 创建后定型，若 model 结构变化必须 teardown + 重建引擎。
@@ -291,7 +291,7 @@ impl AudioEngine {
                 processor,
             } => self.insert_replace(channel, slot, processor),
             AudioCommand::SetInstrument { channel, processor } => {
-                self.set_instrument(channel, processor.map(|p| *p))
+                self.set_instrument(channel, processor)
             }
             // 预览命令由渲染器处理（独立预览合成器 + 渲染时钟），引擎层忽略。
             AudioCommand::PreviewNotes { .. } | AudioCommand::PreviewStop => {}

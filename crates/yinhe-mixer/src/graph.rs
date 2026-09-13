@@ -24,7 +24,7 @@ pub trait InsertProcessor: Send {
     /// 清空内部处理状态（envelope、delay 尾音等）。seek 后调用。
     fn reset(&mut self) {}
 
-    /// 回收时还原为具体类型（如 CLAP 处理器需要 deactivate 回实例）。
+    /// 回收时还原为具体类型（如插件处理器需要 deactivate 回实例）。
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
 }
 
@@ -142,7 +142,7 @@ impl MixerGraph {
     }
 
     /// 替换某通道 insert 链（新链在上层构建好后整体换入），返回旧链。
-    /// 旧链（CLAP 处理器等）需要在上层线程回收（deactivate），不能直接 drop
+    /// 旧链（插件处理器等）需要在上层线程回收（deactivate），不能直接 drop
     /// 在渲染线程——调用方负责把返回值送回去。
     pub fn set_inserts(
         &mut self,

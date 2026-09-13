@@ -5,8 +5,8 @@ use xsynth_core::channel::{ChannelAudioEvent, ChannelConfigEvent, ChannelEvent};
 use xsynth_core::channel_group::SynthEvent;
 use xsynth_core::soundfont::SoundfontBase;
 
-use yinhe_clap::ClapInputEvent;
 use yinhe_core::YinModel;
+use yinhe_mixer::PluginEvent;
 use yinhe_types::KEY_COUNT;
 
 use crate::audio_model::{
@@ -222,11 +222,11 @@ impl AudioEngine {
             return;
         }
         if let Some(inst_ch) = self.model.as_ref().and_then(|m| m.track_instrument(track)) {
-            // 乐器轨：chase 重启的音符喂 CLAP 实例（time 0 = 下一块开头）。
+            // 乐器轨：chase 重启的音符喂乐器实例（time 0 = 下一块开头）。
             if let Some(dense) = self.instrument_dense(inst_ch)
                 && let Some(Some(slot)) = self.instruments.get_mut(dense)
             {
-                slot.events.push(ClapInputEvent::NoteOn {
+                slot.events.push(PluginEvent::NoteOn {
                     time: 0,
                     channel: (ch & 0x0F) as u8,
                     key: key as u8,
@@ -276,7 +276,7 @@ impl AudioEngine {
             }
             if an.is_instrument {
                 if let Some(Some(slot)) = self.instruments.get_mut(an.dense as usize) {
-                    slot.events.push(ClapInputEvent::NoteOff {
+                    slot.events.push(PluginEvent::NoteOff {
                         time: 0,
                         channel: an.clap_channel,
                         key: an.key,

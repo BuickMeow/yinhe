@@ -119,7 +119,7 @@ pub(crate) struct AudioModel {
     /// `track_channels[i]` = global channel `(port<<4)|channel` for track `i`.
     pub track_channels: Vec<u8>,
     /// 每条音轨的路由：`Some(instrument_channel)` 表示该轨是**乐器轨**，音符/CC
-    /// 走 CLAP 乐器实例（按 instrument_channel 路由，独立于 MIDI 源通道）；
+    /// 走乐器插件实例（按 instrument_channel 路由，独立于 MIDI 源通道）；
     /// `None` 表示普通 MIDI 轨（走 xsynth）。与 `track_channels` 对齐。
     pub track_instrument: Vec<Option<u16>>,
     /// Bank Select MSB declarations per track, for percussion-mode detection.
@@ -182,7 +182,7 @@ impl AudioModel {
         self.track_channels.get(track_idx).copied().unwrap_or(0)
     }
 
-    /// 音轨是否为乐器轨（走 CLAP 实例）；返回其 instrument_channel。
+    /// 音轨是否为乐器轨（走乐器插件实例）；返回其 instrument_channel。
     pub(crate) fn track_instrument(&self, track_idx: usize) -> Option<u16> {
         self.track_instrument.get(track_idx).copied().flatten()
     }

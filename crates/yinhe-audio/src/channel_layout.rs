@@ -13,7 +13,7 @@ use yinhe_core::{TrackKind, YinModel};
 /// dense 通道空间如下（引擎/混音台/预览合成器按 `compacted_channels()` 分配）：
 /// - `[0, midi_compacted)`：MIDI 源通道（`global_channel`）压缩后的 xsynth 通道；
 /// - `[midi_compacted, compacted)`：**乐器通道**（`TrackData::instrument_channel`），
-///   每个用到的乐器通道独占一条 dense 通道（CLAP 乐器输出在此混入混音台）。
+///   每个用到的乐器通道独占一条 dense 通道（乐器插件输出在此混入混音台）。
 #[derive(Clone)]
 pub struct ChannelLayout {
     /// `active_mask[i] == true` 表示源 MIDI 通道 `i` 被某条音轨使用（存在即激活）。

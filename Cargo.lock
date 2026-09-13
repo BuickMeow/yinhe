@@ -7575,6 +7575,7 @@ dependencies = [
  "clack-host",
  "thiserror 2.0.18",
  "tracing",
+ "yinhe-mixer",
 ]
 
 [[package]]

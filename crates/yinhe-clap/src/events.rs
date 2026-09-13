@@ -1,4 +1,4 @@
-//! yinhe 风格事件 → CLAP 事件转换。
+//! 格式无关事件 → CLAP 事件转换。
 //!
 //! 约定（与 yinhe-audio 对齐）：
 //! - `time` 是块内 sample offset；
@@ -14,39 +14,12 @@ use clack_host::events::io::EventBuffer;
 use clack_host::events::{Match, Pckn};
 use clack_host::prelude::ClapId;
 use clack_host::utils::Cookie;
-
-/// 渲染线程输入给插件的单条事件。
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ClapInputEvent {
-    NoteOn {
-        time: u32,
-        channel: u8,
-        key: u8,
-        /// 0.0 ~ 1.0（MIDI velocity / 127）。
-        velocity: f64,
-    },
-    NoteOff {
-        time: u32,
-        channel: u8,
-        key: u8,
-        velocity: f64,
-    },
-    /// 掐掉指定键的所有发声（note_id 不指定）。
-    NoteChoke { time: u32, channel: u8, key: u8 },
-    /// 原始 MIDI 1.0 消息（CC、弯音、ProgramChange 等），最多 3 字节。
-    Midi { time: u32, data: [u8; 3] },
-    /// 插件参数变化。
-    ParamValue {
-        time: u32,
-        param_id: u32,
-        value: f64,
-    },
-}
+use yinhe_mixer::PluginEvent;
 
 /// 推入事件缓冲。非法 param_id（u32::MAX）直接丢弃并记日志，不 panic。
-pub(crate) fn push_event(buffer: &mut EventBuffer, event: &ClapInputEvent) {
+pub(crate) fn push_event(buffer: &mut EventBuffer, event: &PluginEvent) {
     match *event {
-        ClapInputEvent::NoteOn {
+        PluginEvent::NoteOn {
             time,
             channel,
             key,
@@ -55,7 +28,7 @@ pub(crate) fn push_event(buffer: &mut EventBuffer, event: &ClapInputEvent) {
             let pckn = Pckn::new(0u16, u16::from(channel), u16::from(key), Match::<u32>::All);
             buffer.push(&NoteOnEvent::new(time, pckn, velocity));
         }
-        ClapInputEvent::NoteOff {
+        PluginEvent::NoteOff {
             time,
             channel,
             key,
@@ -64,14 +37,14 @@ pub(crate) fn push_event(buffer: &mut EventBuffer, event: &ClapInputEvent) {
             let pckn = Pckn::new(0u16, u16::from(channel), u16::from(key), Match::<u32>::All);
             buffer.push(&NoteOffEvent::new(time, pckn, velocity));
         }
-        ClapInputEvent::NoteChoke { time, channel, key } => {
+        PluginEvent::NoteChoke { time, channel, key } => {
             let pckn = Pckn::new(0u16, u16::from(channel), u16::from(key), Match::<u32>::All);
             buffer.push(&NoteChokeEvent::new(time, pckn));
         }
-        ClapInputEvent::Midi { time, data } => {
+        PluginEvent::Midi { time, data } => {
             buffer.push(&MidiEvent::new(time, 0, data));
         }
-        ClapInputEvent::ParamValue {
+        PluginEvent::ParamValue {
             time,
             param_id,
             value,
@@ -100,7 +73,7 @@ mod tests {
         let mut buf = EventBuffer::with_capacity(8);
         push_event(
             &mut buf,
-            &ClapInputEvent::NoteOn {
+            &PluginEvent::NoteOn {
                 time: 0,
                 channel: 0,
                 key: 60,
@@ -109,7 +82,7 @@ mod tests {
         );
         push_event(
             &mut buf,
-            &ClapInputEvent::Midi {
+            &PluginEvent::Midi {
                 time: 3,
                 data: [0xB0, 7, 100],
             },
@@ -122,7 +95,7 @@ mod tests {
         let mut buf = EventBuffer::with_capacity(8);
         push_event(
             &mut buf,
-            &ClapInputEvent::ParamValue {
+            &PluginEvent::ParamValue {
                 time: 0,
                 param_id: u32::MAX,
                 value: 1.0,

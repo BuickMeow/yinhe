@@ -1,4 +1,4 @@
-//! 乐器机架：每个乐器通道（TrackData.instrument_channel）对应一个 CLAP 乐器实例，
+//! 乐器机架：每个乐器通道（TrackData.instrument_channel）对应一个乐器插件实例，
 //! UI/管理线程持有其生命周期。比效果器机架（rack.rs）简单：一个通道只有一个
 //! 乐器插件（无链、无旁通、原生 GUI 暂不支持），输出直接混进该乐器 dense 通道。
 //!
@@ -16,7 +16,7 @@ use std::path::Path;
 
 use yinhe_audio::{AudioCommand, AudioHandle};
 use yinhe_clap::{ClapPluginInstance, ClapProcessor, PluginInfo};
-use yinhe_mixer::MixerParams;
+use yinhe_mixer::{InstrumentProcessor, MixerParams};
 
 use super::rack::{ACTIVATE_MAX_FRAMES, PluginLoadError, host_info};
 
@@ -171,11 +171,18 @@ impl InstrumentRack {
 
     /// 处理渲染线程退回的乐器处理器：先匹配 pending_return（移除/替换的旧实例），
     /// 再匹配当前槽位（引擎 teardown 回收），deactivate 并置 sent=false。
-    pub fn on_returns(&mut self, returned: Vec<(u16, ClapProcessor)>) {
+    ///
+    /// 退回的处理器是格式无关 trait object：按具体格式 downcast 回 CLAP 处理器
+    ///（VST3 接入后在此按槽位记录的格式分派）。
+    pub fn on_returns(&mut self, returned: Vec<(u16, Box<dyn InstrumentProcessor>)>) {
         for (channel, processor) in returned {
+            let Some(processor) = processor.into_any().downcast::<ClapProcessor>().ok() else {
+                tracing::warn!("退回的乐器处理器不是 CLAP（未知格式），无法 deactivate，丢弃");
+                continue;
+            };
             if let Some(idx) = self.pending_return.iter().position(|(c, _)| *c == channel) {
                 let (_, mut inst) = self.pending_return.remove(idx);
-                inst.deactivate(processor);
+                inst.deactivate(*processor);
                 continue;
             }
             let Some(rt) = self.slot_mut(channel) else {
@@ -183,7 +190,7 @@ impl InstrumentRack {
                 continue;
             };
             if let Some(instance) = rt.instance.as_mut() {
-                instance.deactivate(processor);
+                instance.deactivate(*processor);
             } else {
                 tracing::warn!("channel={channel} 的槽位无实例，处理器无法 deactivate，丢弃");
             }

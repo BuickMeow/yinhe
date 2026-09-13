@@ -15,9 +15,10 @@ use clack_host::process::audio_buffers::{
     AudioPortBuffer, AudioPortBufferType, AudioPorts, InputChannel,
 };
 use clack_host::process::{PluginAudioProcessor, StoppedPluginAudioProcessor};
+use yinhe_mixer::{InstrumentProcessor, PluginEvent};
 
 use crate::error::PluginError;
-use crate::events::{ClapInputEvent, push_event};
+use crate::events::push_event;
 use crate::host::YinheHost;
 
 /// 插件声明的端口布局（activate 时管理线程查询并冻结）。
@@ -74,20 +75,6 @@ impl ClapProcessor {
         }
     }
 
-    /// 乐器用法：只喂事件，返回本块主端口立体声输出。
-    pub fn process_instrument(
-        &mut self,
-        events: &[ClapInputEvent],
-        steady_time: Option<u64>,
-    ) -> Result<(&[f32], &[f32]), PluginError> {
-        for port in &mut self.in_bufs {
-            for ch in port {
-                ch.fill(0.0);
-            }
-        }
-        self.process_inner(events, steady_time)
-    }
-
     /// 效果器用法（混音台 insert）：就地处理主端口输入音频。
     ///
     /// 输入拷贝进主端口内部缓冲（Aux 端口清零）后走 process，
@@ -96,7 +83,7 @@ impl ClapProcessor {
         &mut self,
         left: &mut [f32],
         right: &mut [f32],
-        events: &[ClapInputEvent],
+        events: &[PluginEvent],
         steady_time: Option<u64>,
     ) -> Result<(), PluginError> {
         let frames = self.frames.min(left.len()).min(right.len());
@@ -136,7 +123,7 @@ impl ClapProcessor {
 
     fn process_inner(
         &mut self,
-        events: &[ClapInputEvent],
+        events: &[PluginEvent],
         steady_time: Option<u64>,
     ) -> Result<(&[f32], &[f32]), PluginError> {
         self.input_events.clear();
@@ -215,5 +202,45 @@ impl ClapProcessor {
             PluginAudioProcessor::Stopped(stopped) => stopped,
             PluginAudioProcessor::Started(started) => started.stop_processing(),
         }
+    }
+}
+
+impl InstrumentProcessor for ClapProcessor {
+    fn process(
+        &mut self,
+        events: &[PluginEvent],
+        out_l: &mut [f32],
+        out_r: &mut [f32],
+        position_samples: u64,
+    ) {
+        // 乐器输入无音频：清空全部输入端口（Aux 也清），只喂事件。
+        for port in &mut self.in_bufs {
+            for ch in port {
+                ch.fill(0.0);
+            }
+        }
+        match self.process_inner(events, Some(position_samples)) {
+            Ok((l, r)) => {
+                let frames = out_l.len().min(out_r.len());
+                let n = l.len().min(r.len()).min(frames);
+                out_l[..n].copy_from_slice(&l[..n]);
+                out_r[..n].copy_from_slice(&r[..n]);
+                out_l[n..frames].fill(0.0);
+                out_r[n..frames].fill(0.0);
+            }
+            Err(e) => {
+                tracing::warn!(target: "clap-instrument", "乐器处理失败，本块静音: {e}");
+                out_l.fill(0.0);
+                out_r.fill(0.0);
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        ClapProcessor::reset(self);
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any + Send> {
+        self
     }
 }

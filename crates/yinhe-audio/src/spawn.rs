@@ -7,7 +7,9 @@ use crossbeam_channel::{Sender, bounded, unbounded};
 use xsynth_core::soundfont::SoundfontBase;
 
 use yinhe_core::YinModel;
-use yinhe_mixer::{InsertProcessor, MasterParams, MeterReading, MixerParams, StripParams};
+use yinhe_mixer::{
+    InsertProcessor, InstrumentProcessor, MasterParams, MeterReading, MixerParams, StripParams,
+};
 use yinhe_types::{KEY_COUNT, SegmentShape};
 
 /// AR 自动化 lane 的 M/S 试听旁通集（跨线程共享，Empty 由 default 提供）。
@@ -132,12 +134,12 @@ pub enum AudioCommand {
         processor: Box<dyn InsertProcessor>,
     },
     /// 安装/替换/移除某**乐器通道**（0 起，与 `TrackData::instrument_channel` 对齐）
-    /// 上的 CLAP 乐器实例。`Some(processor)` = 安装/替换；`None` = 移除。
-    /// 被替换/移除的旧处理器经乐器 return 通道送回 UI 线程 deactivate。
+    /// 上的乐器插件实例（CLAP/VST3 等，抽象为 trait）。`Some(processor)` = 安装/替换；
+    /// `None` = 移除。被替换/移除的旧处理器经乐器 return 通道送回 UI 线程 deactivate。
     SetInstrument {
         channel: u16,
         /// 处理器较大（含渲染缓冲），用 Box 避免枚举体积膨胀。
-        processor: Option<Box<yinhe_clap::ClapProcessor>>,
+        processor: Option<Box<dyn InstrumentProcessor>>,
     },
 }
 
@@ -180,7 +182,7 @@ pub struct AudioHandle {
     /// 渲染线程退回的 insert 处理器（插件 deactivate 必须在 UI/管理线程做）。
     insert_return_rx: crossbeam_channel::Receiver<Vec<Box<dyn InsertProcessor>>>,
     /// 渲染线程退回的乐器处理器（deactivate 同样必须在 UI/管理线程做）。
-    instrument_return_rx: crossbeam_channel::Receiver<(u16, yinhe_clap::ClapProcessor)>,
+    instrument_return_rx: crossbeam_channel::Receiver<(u16, Box<dyn InstrumentProcessor>)>,
 }
 
 impl AudioHandle {
@@ -292,7 +294,7 @@ impl AudioHandle {
     }
 
     /// 取回渲染线程退回的乐器处理器（每帧轮询；deactivate 在 UI 线程做）。
-    pub fn drain_instrument_returns(&self) -> Vec<(u16, yinhe_clap::ClapProcessor)> {
+    pub fn drain_instrument_returns(&self) -> Vec<(u16, Box<dyn InstrumentProcessor>)> {
         let mut out = Vec::new();
         while let Ok(p) = self.instrument_return_rx.try_recv() {
             out.push(p);
@@ -311,7 +313,7 @@ impl AudioHandle {
     /// 克隆乐器退回通道接收端（同 `clone_insert_return_rx` 的用途）。
     pub fn clone_instrument_return_rx(
         &self,
-    ) -> crossbeam_channel::Receiver<(u16, yinhe_clap::ClapProcessor)> {
+    ) -> crossbeam_channel::Receiver<(u16, Box<dyn InstrumentProcessor>)> {
         self.instrument_return_rx.clone()
     }
 }
@@ -918,7 +920,7 @@ pub fn spawn_cpal_audio(
     let (insert_return_tx, insert_return_rx) = unbounded::<Vec<Box<dyn InsertProcessor>>>();
     // 渲染线程 → UI 的乐器处理器退回通道（替换/移除/拆除时回收 deactivate）。
     let (instrument_return_tx, instrument_return_rx) =
-        unbounded::<(u16, yinhe_clap::ClapProcessor)>();
+        unbounded::<(u16, Box<dyn InstrumentProcessor>)>();
 
     let (worker_tx, prepared_rx) = spawn_worker(sample_rate)
         .map_err(|e| format!("Failed to spawn audio worker thread: {e}"))?;

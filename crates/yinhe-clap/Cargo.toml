@@ -19,3 +19,4 @@ clack-extensions = { version = "0.1", features = [
 ] }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+yinhe-mixer = { path = "../yinhe-mixer" }

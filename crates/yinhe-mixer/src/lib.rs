@@ -6,6 +6,7 @@
 //! - [`meter`]：峰值电平表，渲染线程写、UI 线程读（Arc<AtomicU32> 模式，
 //!   与 yinhe-audio 的 sample_position 相同）。
 //! - [`graph`]：渲染线程持有的处理图，处理期间零分配、零锁。
+//! - [`plugin`]：插件格式无关的事件与处理器 trait（CLAP/VST3 后端共用）。
 //!
 //! 依赖方向：本 crate 不依赖任何插件/合成器 crate。
 //! insert 效果通过 [`graph::InsertProcessor`] trait 由上层（yinhe-audio）适配接入。
@@ -13,8 +14,10 @@
 mod graph;
 mod meter;
 mod params;
+mod plugin;
 mod strip;
 
 pub use graph::{ChannelBuffers, InsertProcessor, MixerGraph};
 pub use meter::{MeterReading, MeterTap};
 pub use params::{CHANNEL_COUNT, InsertRef, MasterParams, MixerParams, StripParams};
+pub use plugin::{InstrumentProcessor, PluginEvent};
