@@ -7,7 +7,8 @@
 
 use std::sync::Arc;
 
-use yinhe_types::{AutomationEvent, MAX_KEY, Note};
+use yinhe_core::Selection;
+use yinhe_types::{AutomationEvent, Note};
 
 pub mod apply;
 pub mod commit;
@@ -169,14 +170,15 @@ pub enum UndoAction {
     /// 几何平移类操作（move/transpose）的操作式 undo：不存数据副本，
     /// 存逆操作参数（O(1) 内存，与受影响音符数无关）。
     ///
-    /// `rects` = 操作前选区矩形（含 track 过滤）。redo 在 rects 收集音符
-    /// 施加 (+delta)；undo 时 `reversed()` 把 rects 平移到操作后位置并取反
-    /// delta，在操作后位置收集音符施加 (−delta)——与 redo 共用同一 apply。
+    /// `selection` = 操作前选区（矩形 + 属性筛选）。redo 在 rects 收集
+    /// 音符施加 (+delta)；undo 时 `reversed()` 把 rects 平移到操作后位置
+    /// 并取反 delta，在操作后位置收集音符施加 (−delta)——与 redo 共用同一
+    /// apply。筛选边界不变，重建选择时保留。
     ///
     /// 前提：操作不触发 tick/key 边界 clamp（触发时生成端回退 `Notes`
     /// 副本制，保证 undo 精确）。栈序保证 undo 时对象集 = 操作刚完成时。
     MoveNotes {
-        rects: Vec<(u32, u32, u8, u8, u16, u16)>,
+        selection: Selection,
         delta_ticks: i64,
         delta_keys: i32,
     },
@@ -185,7 +187,7 @@ pub enum UndoAction {
     /// 前提：音符都在选框内（跨出选框的音符镜像会触发 clamp，生成端
     /// 检测到后回退 `Notes` 副本制）。
     FlipNotes {
-        rects: Vec<(u32, u32, u8, u8, u16, u16)>,
+        selection: Selection,
         bounds: (u64, u64, u8, u8),
         axis: crate::document::note_edit::FlipAxis,
     },
@@ -292,27 +294,15 @@ impl UndoAction {
                 }
             }
             UndoAction::MoveNotes {
-                rects,
+                mut selection,
                 delta_ticks,
                 delta_keys,
             } => {
                 // 逆操作：rects 平移到操作后位置（undo 时音符在此），delta 取反。
-                // apply 统一为“在 rects 收集 + 施加 delta”。
-                let moved_rects = rects
-                    .into_iter()
-                    .map(|(ts, te, kl, kh, tl, th)| {
-                        (
-                            (ts as i64 + delta_ticks).max(0) as u32,
-                            (te as i64 + delta_ticks).max(0) as u32,
-                            (kl as i32 + delta_keys).clamp(0, MAX_KEY as i32) as u8,
-                            (kh as i32 + delta_keys).clamp(0, MAX_KEY as i32) as u8,
-                            tl,
-                            th,
-                        )
-                    })
-                    .collect();
+                // apply 统一为“在 selection 收集 + 施加 delta”；筛选边界保持。
+                selection.offset(delta_ticks, delta_keys);
                 UndoAction::MoveNotes {
-                    rects: moved_rects,
+                    selection,
                     delta_ticks: -delta_ticks,
                     delta_keys: -delta_keys,
                 }

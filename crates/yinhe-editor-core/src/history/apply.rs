@@ -19,17 +19,17 @@ impl UndoAction {
     pub fn redo(&self, doc: &mut Document) {
         match self {
             UndoAction::Notes(delta) => apply_note_delta(doc, &delta.before, &delta.after),
-            // 操作式 undo：按 rects 重放几何变换（不存数据副本）。
+            // 操作式 undo：按 selection 重放几何变换（不存数据副本）。
             UndoAction::MoveNotes {
-                rects,
+                selection,
                 delta_ticks,
                 delta_keys,
-            } => apply_note_shift(doc, rects, *delta_ticks, *delta_keys),
+            } => apply_note_shift(doc, selection, *delta_ticks, *delta_keys),
             UndoAction::FlipNotes {
-                rects,
+                selection,
                 bounds,
                 axis,
-            } => apply_note_flip(doc, rects, *bounds, *axis),
+            } => apply_note_flip(doc, selection, *bounds, *axis),
             UndoAction::Automation(delta) => apply_automation_delta(
                 doc,
                 delta.track_idx,
@@ -213,17 +213,17 @@ pub(crate) fn apply_note_delta(doc: &mut Document, remove: &[(Note, u8)], insert
     doc.data.bump_revision();
 }
 
-/// 操作式 undo：按 rects 收集音符，统一平移 (delta_ticks, delta_keys)。
+/// 操作式 undo：按 selection 收集音符，统一平移 (delta_ticks, delta_keys)。
 ///
-/// redo 方向：rects = 操作前位置，音符在此，施加 +delta。
-/// undo 方向：`reversed()` 已把 rects 平移到操作后位置、delta 取反，
+/// redo 方向：selection 为操作前选区，音符在此，施加 +delta。
+/// undo 方向：`reversed()` 已把选区平移到操作后位置、delta 取反，
 /// 音符在此，施加 −delta——与 redo 共用同一实现。
 ///
 /// 与 `Document::move_selected_notes` 的模型操作一致（收集→变换→删原→插新），
 /// 但不碰选区状态。前提：操作不触发 clamp（生成端已检测回退副本制）。
 pub(crate) fn apply_note_shift(
     doc: &mut Document,
-    rects: &[(u32, u32, u8, u8, u16, u16)],
+    selection: &Selection,
     delta_ticks: i64,
     delta_keys: i32,
 ) {
@@ -231,10 +231,7 @@ pub(crate) fn apply_note_shift(
         return;
     }
     let model = Arc::make_mut(&mut doc.data.model);
-    let sel = Selection {
-        rects: rects.to_vec(),
-    };
-    let originals = crate::batch_ops::collect_selected(model, &sel);
+    let originals = crate::batch_ops::collect_selected(model, selection);
     if originals.is_empty() {
         return;
     }
@@ -250,28 +247,25 @@ pub(crate) fn apply_note_shift(
         };
         new_by_key.entry(new_key).or_default().push(moved);
     }
-    crate::batch_ops::remove_selected(model, &sel);
+    crate::batch_ops::remove_selected(model, selection);
     crate::batch_ops::insert_batch(model, new_by_key);
     model.rebuild_dirty();
     doc.data.bump_revision();
 }
 
-/// 操作式 undo：按 rects 收集音符，以 bounds 为镜像边界翻转（两次镜像恒等）。
+/// 操作式 undo：按 selection 收集音符，以 bounds 为镜像边界翻转（两次镜像恒等）。
 ///
 /// 前提：所有音符都在选框内（跨出选框的镜像会触发 clamp，生成端已
 /// 检测回退副本制）。
 pub(crate) fn apply_note_flip(
     doc: &mut Document,
-    rects: &[(u32, u32, u8, u8, u16, u16)],
+    selection: &Selection,
     bounds: (u64, u64, u8, u8),
     axis: crate::document::note_edit::FlipAxis,
 ) {
     let (t0, t1, kl, kh) = bounds;
     let model = Arc::make_mut(&mut doc.data.model);
-    let sel = Selection {
-        rects: rects.to_vec(),
-    };
-    let originals = crate::batch_ops::collect_selected(model, &sel);
+    let originals = crate::batch_ops::collect_selected(model, selection);
     if originals.is_empty() {
         return;
     }
@@ -295,7 +289,7 @@ pub(crate) fn apply_note_flip(
             }
         }
     }
-    crate::batch_ops::remove_selected(model, &sel);
+    crate::batch_ops::remove_selected(model, selection);
     crate::batch_ops::insert_batch(model, new_by_key);
     model.rebuild_dirty();
     doc.data.bump_revision();

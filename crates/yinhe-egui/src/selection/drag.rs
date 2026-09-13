@@ -110,9 +110,9 @@ pub fn music_sel_to_pixel_rect(
 
 /// 预计算选中音符信息（move 和 resize 共用）。
 ///
-/// 使用 `Selection::contains` 做精确的半开 tick 过滤，并叠加 track_selected
-/// 和 track_visible 过滤，与 note layer 的 build_notes 对齐。
-/// `track_selected` 传空集合表示不过滤轨道（空 = 全部轨道）。
+/// 使用 `Selection::accepts_note` 做精确的半开 tick 过滤 + 属性筛选，
+/// 并叠加 track_selected 和 track_visible 过滤，与 note layer 的
+/// build_notes 对齐。`track_selected` 传空集合表示不过滤轨道（空 = 全部轨道）。
 pub fn collect_selected_notes(
     selected: &yinhe_core::Selection,
     midi: Option<&dyn NoteSource>,
@@ -126,7 +126,7 @@ pub fn collect_selected_notes(
             (kl..=kh).flat_map(move |key| {
                 midi.map(|m| {
                     m.key_notes_in_range(key, ts, te)
-                        .filter(|n| selected.contains(n.track, n.start_tick, key))
+                        .filter(|n| selected.accepts_note(n, key))
                         .filter(|n| track_selected.is_empty() || track_selected.contains(&n.track))
                         .filter(|n| track_visible.get(n.track as usize).copied().unwrap_or(true))
                         .map(|n| CollectedNote {

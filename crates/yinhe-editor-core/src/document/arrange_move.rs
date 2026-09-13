@@ -55,7 +55,7 @@ impl Document {
         let mut sub_actions: Vec<UndoAction> = Vec::new();
         let model = Arc::make_mut(&mut self.data.model);
         let num_tracks = model.tracks.len() as i32;
-        let rects = self.edit.selected.rects.clone();
+        let selection = self.edit.selected.clone();
 
         // ── 1. Move notes (tick + track in one pass) ──
         // Collect originals, remove from model, re-insert at new positions.
@@ -212,7 +212,7 @@ impl Document {
         }
         let mut lane_moves: Vec<LaneMove> = Vec::new();
 
-        for &(tick_start, tick_end, _key_lo, _key_hi, track_lo, track_hi) in &rects {
+        for &(tick_start, tick_end, _key_lo, _key_hi, track_lo, track_hi) in &selection.rects {
             for track_idx in track_lo..=track_hi {
                 let track_idx = track_idx as usize;
                 if track_idx >= model.tracks.len() {
@@ -224,7 +224,10 @@ impl Document {
                     let mut in_range: Vec<AutomationEvent> = Vec::new();
                     let mut out_of_range: Vec<AutomationEvent> = Vec::new();
                     for evt in lane.events.iter() {
-                        if evt.tick >= tick_start && evt.tick < tick_end {
+                        if evt.tick >= tick_start
+                            && evt.tick < tick_end
+                            && selection.filter.accepts_automation(&lane.target, evt.value)
+                        {
                             let mut moved = *evt;
                             moved.tick = (moved.tick as i64 + delta_ticks).max(0) as u32;
                             in_range.push(moved);
@@ -364,7 +367,7 @@ impl Document {
         let mut sub_actions: Vec<UndoAction> = Vec::new();
         let model = Arc::make_mut(&mut self.data.model);
         let num_tracks = model.tracks.len() as i32;
-        let rects = self.edit.selected.rects.clone();
+        let selection = self.edit.selected.clone();
 
         // ── 1. 复制音符（原音符保留，副本平移到新 tick/新轨）──
         let selected_data = batch_ops::collect_selected(model, &self.edit.selected);
@@ -427,7 +430,7 @@ impl Document {
             events: Vec<AutomationEvent>,
         }
         let mut lane_collects: Vec<LaneCollect> = Vec::new();
-        for &(tick_start, tick_end, _key_lo, _key_hi, track_lo, track_hi) in &rects {
+        for &(tick_start, tick_end, _key_lo, _key_hi, track_lo, track_hi) in &selection.rects {
             for track_idx in track_lo..=track_hi {
                 let track_idx = track_idx as usize;
                 if track_idx >= model.tracks.len() {
@@ -439,7 +442,11 @@ impl Document {
                     let in_range: Vec<AutomationEvent> = lane
                         .events
                         .iter()
-                        .filter(|evt| evt.tick >= tick_start && evt.tick < tick_end)
+                        .filter(|evt| {
+                            evt.tick >= tick_start
+                                && evt.tick < tick_end
+                                && selection.filter.accepts_automation(&lane.target, evt.value)
+                        })
                         .copied()
                         .collect();
                     if !in_range.is_empty() {

@@ -312,7 +312,7 @@ impl Document {
             return None;
         }
         // 操作式 undo 需要操作**前**的选区矩形（offset_sel_keys 之前捕获）。
-        let rects_before = self.edit.selected.rects.clone();
+        let selection_before = self.edit.selected.clone();
         let (before, after, has_dest_overlap) = {
             let model = Arc::make_mut(&mut self.data.model);
 
@@ -324,7 +324,8 @@ impl Document {
             // 检测目标位置是否已有非选中音符：若目标选框内已有音符，
             // 操作式 undo 会误搬 B，需回退副本制。
             let has_dest_overlap = {
-                let dest_rects: Vec<(u32, u32, u8, u8, u16, u16)> = rects_before
+                let dest_rects: Vec<(u32, u32, u8, u8, u16, u16)> = selection_before
+                    .rects
                     .iter()
                     .map(|&(ts, te, kl, kh, tl, th)| {
                         (
@@ -339,7 +340,8 @@ impl Document {
                         )
                     })
                     .collect();
-                let dest_sel = yinhe_core::Selection { rects: dest_rects };
+                let mut dest_sel = selection_before.clone();
+                dest_sel.rects = dest_rects;
                 !batch_ops::collect_selected(model, &dest_sel).is_empty()
             };
 
@@ -379,7 +381,7 @@ impl Document {
         });
         if clamp_free && !has_dest_overlap {
             Some(UndoAction::MoveNotes {
-                rects: rects_before,
+                selection: selection_before,
                 delta_ticks: 0,
                 delta_keys: semitones as i32,
             })
@@ -409,14 +411,15 @@ impl Document {
         // Batch removal + collect removed notes.
         let originals = batch_ops::remove_selected(model, &self.edit.selected);
         // 操作式 undo 需要操作**前**的选区矩形（offset 之前捕获）。
-        let rects_before = self.edit.selected.rects.clone();
+        let selection_before = self.edit.selected.clone();
         // 检测目标位置是否已有非选中音符（重叠允许时也会产生）：
         // 若目标选框内已有音符，操作式 undo（按选框收集）在撤销时会把
         // 这些原本不在选区的 B 音符也一起平移回 A，造成“B 被搬到 A”的 bug。
         // 此时必须回退到副本制（NoteDelta），仅精确撤销被移动的音符。
         // 必须在插入新音符前检测（此时模型仅含 B 等非选中音符）。
         let has_dest_overlap = {
-            let dest_rects: Vec<(u32, u32, u8, u8, u16, u16)> = rects_before
+            let dest_rects: Vec<(u32, u32, u8, u8, u16, u16)> = selection_before
+                .rects
                 .iter()
                 .map(|&(ts, te, kl, kh, tl, th)| {
                     (
@@ -429,7 +432,8 @@ impl Document {
                     )
                 })
                 .collect();
-            let dest_sel = yinhe_core::Selection { rects: dest_rects };
+            let mut dest_sel = selection_before.clone();
+            dest_sel.rects = dest_rects;
             !batch_ops::collect_selected(model, &dest_sel).is_empty()
         };
         let allow_overlap = self.edit.allow_overlapping_notes;
@@ -549,7 +553,7 @@ impl Document {
             blocked_any || !deleted_before.is_empty() || !replaced_before.is_empty();
         if clamp_free && !has_blocked_handling && !has_dest_overlap {
             Some(UndoAction::MoveNotes {
-                rects: rects_before,
+                selection: selection_before,
                 delta_ticks,
                 delta_keys,
             })
@@ -728,6 +732,9 @@ impl Document {
                     let k = key as usize;
                     for n in model.notes[k].range(ts, te) {
                         if n.track < tl || n.track > th {
+                            continue;
+                        }
+                        if !self.edit.selected.filter.accepts_note(n) {
                             continue;
                         }
                         let new = match field {
@@ -1028,9 +1035,7 @@ impl Document {
         // 检测选区内是否还有非选中音符：若目标选框内已有音符，
         // 操作式 Flip 在撤销时会把这些 B 音符也一起翻转，造成误搬。
         let has_dest_overlap = {
-            let sel = yinhe_core::Selection {
-                rects: self.edit.selected.rects.clone(),
-            };
+            let sel = self.edit.selected.clone();
             !batch_ops::collect_selected(model, &sel).is_empty()
         };
         batch_ops::insert_batch(model, new_by_key);
@@ -1047,7 +1052,7 @@ impl Document {
                 .all(|(n, _)| (n.end_tick as u64) <= t1 && (n.start_tick as u64) >= t0);
         if flip_safe && !has_dest_overlap {
             Some(UndoAction::FlipNotes {
-                rects: self.edit.selected.rects.clone(),
+                selection: self.edit.selected.clone(),
                 bounds: (t0, t1, kl, kh),
                 axis,
             })
@@ -1552,8 +1557,10 @@ mod tests {
         assert_eq!(doc.data.model.notes[60][1].start_tick, 151);
         assert_eq!(doc.data.model.notes[60][1].end_tick, 251);
         match action {
-            UndoAction::FlipNotes { rects, bounds, .. } => {
-                assert!(!rects.is_empty());
+            UndoAction::FlipNotes {
+                selection, bounds, ..
+            } => {
+                assert!(!selection.rects.is_empty());
                 assert_eq!(bounds, (100, 251, 60, 60));
             }
             other => panic!("expected FlipNotes, got {other:?}"),
@@ -1938,5 +1945,51 @@ mod tests {
         assert_eq!(doc.data.model.notes[60].len(), 1);
         assert!(doc.redo(), "redo 应成功（即使重新制造重叠）");
         assert_eq!(doc.data.model.notes[60].len(), 2);
+    }
+
+    /// 筛选后移动只搬匹配音符；action 携带筛选边界，undo 精确恢复。
+    #[test]
+    fn move_with_velocity_filter_moves_subset_and_undo_restores() {
+        let mut doc = make_doc_with_note(); // k60 [100,200) v100（已选中）
+        doc.add_note(
+            0,
+            NoteEvent {
+                id: 0,
+                start_tick: 100,
+                end_tick: 150,
+                key: 62,
+                velocity: 20,
+            },
+        );
+        doc.edit.selected.clear();
+        doc.edit.selected.add_rect_track(100, 201, 60, 62, 0, 0);
+        doc.edit.selected.filter.velocity = Some((90, 127)); // 只筛 v100 的 k60
+
+        let before_snap = doc.capture_snapshot();
+        let action = doc.move_selected_notes(400, 0).expect("应移动");
+        match &action {
+            UndoAction::MoveNotes { selection, .. } => {
+                assert_eq!(
+                    selection.filter.velocity,
+                    Some((90, 127)),
+                    "操作式 undo 应携带筛选边界"
+                );
+            }
+            other => panic!("应走操作式 MoveNotes，实际 {other:?}"),
+        }
+        // k60 已移动，k62（v20）原地不动
+        assert!(doc.data.model.notes[60].iter().any(|n| n.start_tick == 500));
+        assert!(doc.data.model.notes[62].iter().any(|n| n.start_tick == 100));
+
+        doc.push_undo(action, "move", before_snap);
+        assert!(doc.undo(), "undo 应成功");
+        assert!(
+            doc.data.model.notes[60].iter().any(|n| n.start_tick == 100),
+            "k60 应回到原位"
+        );
+        assert!(
+            doc.data.model.notes[62].iter().any(|n| n.start_tick == 100),
+            "k62 从未移动"
+        );
     }
 }

@@ -19,26 +19,28 @@ use yinhe_types::{MAX_KEY, Note, NoteBucket};
 /// Remove all notes matching `selection` from the model.
 ///
 /// For each rect × key range, deletes `start_tick ∈ [tick_start, tick_end)`
-/// within the track range, in a single pass per bucket (chunked: only hit
-/// chunks are scanned). All tracks selected → contiguous `drain_range`;
-/// track-filtered → `drain_range_filtered`.
+/// within the track range and passing the selection's attribute filter,
+/// in a single pass per bucket (chunked: only hit chunks are scanned).
+/// 无属性边界且全轨选中 → 连续 `drain_range`；否则 `drain_range_filtered`。
 ///
 /// Returns the removed notes with their original key, so callers can
 /// re-insert them at a new position (move/transpose) or discard them (delete).
 pub fn remove_selected(model: &mut YinModel, selection: &Selection) -> Vec<(Note, u8)> {
     let mut removed: Vec<(Note, u8)> = Vec::new();
+    let filter = &selection.filter;
+    let has_bounds = filter.has_note_bounds();
 
     for &(tick_start, tick_end, key_lo, key_hi, track_lo, track_hi) in &selection.rects {
         for key in key_lo..=key_hi {
             let k = key as usize;
             let bucket = Arc::make_mut(&mut model.notes[k]);
-            // Fast path: all tracks selected → contiguous span drain.
-            // Slow path: track-filtered → segment scan + filter.
-            let out = if track_lo == 0 && track_hi == u16::MAX {
+            // Fast path: all tracks selected and no attribute bounds
+            // → contiguous span drain.
+            let out = if track_lo == 0 && track_hi == u16::MAX && !has_bounds {
                 bucket.drain_range(tick_start, tick_end)
             } else {
                 bucket.drain_range_filtered(tick_start, tick_end, |n| {
-                    n.track >= track_lo && n.track <= track_hi
+                    n.track >= track_lo && n.track <= track_hi && filter.accepts_note(n)
                 })
             };
             if !out.is_empty() {
@@ -75,14 +77,21 @@ pub fn append_notes_ordered(bucket: &mut NoteBucket, new_notes: Vec<Note>) {
 ///
 /// Streaming variant of [`collect_selected`] for callers that must not
 /// materialize the whole selection (e.g. writing huge clipboards to disk).
+/// Honors the selection's attribute filter.
 pub fn for_each_selected(model: &YinModel, selection: &Selection, mut f: impl FnMut(&Note, u8)) {
+    let filter = &selection.filter;
+    let has_bounds = filter.has_note_bounds();
     for &(tick_start, tick_end, key_lo, key_hi, track_lo, track_hi) in &selection.rects {
         for key in key_lo..=key_hi {
             let k = key as usize;
             for n in model.notes[k].range(tick_start, tick_end) {
-                if n.track >= track_lo && n.track <= track_hi {
-                    f(n, key);
+                if n.track < track_lo || n.track > track_hi {
+                    continue;
                 }
+                if has_bounds && !filter.accepts_note(n) {
+                    continue;
+                }
+                f(n, key);
             }
         }
     }
@@ -155,19 +164,22 @@ pub struct SelectedNoteSummary {
 
 /// 统计选中音符数量与 uniform 字段值。
 ///
-/// count 带全选快路径（O(1) 返回 `note_count`，避免全选 1 亿音符时扫描）；
-/// uniform 字段扫描遇到第一个不同值即短路为 None（绝大多数 mixed 情况
-/// 无需遍历完整选区）。
+/// count 带全选快路径（无属性边界且单 rect 全范围时 O(1) 返回
+/// `note_count`，避免全选 1 亿音符时扫描）；uniform 字段扫描遇到第一个
+/// 不同值即短路为 None（绝大多数 mixed 情况无需遍历完整选区）。
 pub fn summarize_selected(model: &YinModel, selection: &Selection) -> SelectedNoteSummary {
-    // 全选快路径：单个 rect 覆盖全部 key/track 与全部 tick
-    let full = selection.rects.iter().any(|&(ts, te, kl, kh, tl, th)| {
-        kl == 0
-            && kh == MAX_KEY
-            && tl == 0
-            && th == u16::MAX
-            && ts == 0
-            && te as u64 >= model.tick_length
-    });
+    let filter = &selection.filter;
+    let has_bounds = filter.has_note_bounds();
+    // 全选快路径：无属性边界时，单个 rect 覆盖全部 key/track 与全部 tick
+    let full = !has_bounds
+        && selection.rects.iter().any(|&(ts, te, kl, kh, tl, th)| {
+            kl == 0
+                && kh == MAX_KEY
+                && tl == 0
+                && th == u16::MAX
+                && ts == 0
+                && te as u64 >= model.tick_length
+        });
     let mut summary = SelectedNoteSummary {
         count: if full { model.note_count } else { 0 },
         ..Default::default()
@@ -178,6 +190,9 @@ pub fn summarize_selected(model: &YinModel, selection: &Selection) -> SelectedNo
             let k = key as usize;
             for n in model.notes[k].range(ts, te) {
                 if n.track < tl || n.track > th {
+                    continue;
+                }
+                if has_bounds && !filter.accepts_note(n) {
                     continue;
                 }
                 if !full {
@@ -403,6 +418,63 @@ mod tests {
         let s = summarize_selected(&m, &sel);
         assert_eq!(s.count, 1);
         assert_eq!(s.velocity, Some(100));
+    }
+
+    /// 筛选边界：remove_selected 只删匹配属性边界的音符。
+    #[test]
+    fn remove_selected_honors_velocity_filter() {
+        let mut m = model_with_notes();
+        let mut sel = Selection::default();
+        sel.add_rect(0, u32::MAX, 0, MAX_KEY);
+        sel.filter.velocity = Some((90, 127)); // 只匹配两个 v100
+
+        let removed = remove_selected(&mut m, &sel);
+        assert_eq!(removed.len(), 2);
+        assert_eq!(m.notes[60].len(), 1, "k60 的 v80 应保留");
+        assert_eq!(m.notes[60][0].velocity, 80);
+        assert_eq!(m.notes[64].len(), 0, "k64 的 v100 应删除");
+    }
+
+    /// 筛选边界：gate 过滤按 end-start 区间判定。
+    #[test]
+    fn remove_selected_honors_gate_filter() {
+        let mut m = model_with_notes();
+        let mut sel = Selection::default();
+        sel.add_rect(0, u32::MAX, 0, MAX_KEY);
+        sel.filter.gate = Some((300, 1000)); // k60 两条 gate=480 命中；k64 gate=240 不命中
+
+        let removed = remove_selected(&mut m, &sel);
+        assert_eq!(removed.len(), 2);
+        assert_eq!(m.notes[60].len(), 0);
+        assert_eq!(m.notes[64].len(), 1, "短音符保留");
+    }
+
+    /// 反选：范围内不满足边界的音符被删除（即选中它们）。
+    #[test]
+    fn remove_selected_honors_invert() {
+        let mut m = model_with_notes();
+        let mut sel = Selection::default();
+        sel.add_rect(0, u32::MAX, 0, MAX_KEY);
+        sel.filter.velocity = Some((90, 127));
+        sel.filter.invert = true;
+
+        let removed = remove_selected(&mut m, &sel);
+        assert_eq!(removed.len(), 1, "只有 v80 满足反选条件");
+        assert_eq!(removed[0].0.velocity, 80);
+    }
+
+    /// 统计与删除共用同一筛选语义（Info 面板数字与操作一致）。
+    #[test]
+    fn summarize_honors_filter_and_disables_fast_path() {
+        let m = model_with_notes();
+        let mut sel = Selection::default();
+        sel.add_rect(0, u32::MAX, 0, MAX_KEY);
+        sel.filter.velocity = Some((90, 127));
+
+        let s = summarize_selected(&m, &sel);
+        assert_eq!(s.count, 2, "有筛选时全选快路径必须禁用");
+        assert_eq!(s.velocity, Some(100));
+        assert_eq!(s.gate, None, "两条命中音符 gate 480/240 混合");
     }
 
     /// 重叠判定：相交/相接/跨轨/跨 key/长音符起点远早于窗口（靠 max_note_len 左扩命中）。
