@@ -10,6 +10,7 @@
 use std::sync::{Arc, Mutex, mpsc};
 
 use eframe::egui;
+use rust_i18n::t;
 
 use yinhe_core::{RescaleProgress, YinModel};
 use yinhe_editor_core::history::commit_ppq;
@@ -180,7 +181,7 @@ impl App {
                     model.meta.ppq = old_ppq;
                 }
                 let msg = "PPQ 缩放线程异常退出".to_string();
-                self.load_error = Some(msg.clone());
+                self.show_error(t!("dialog.error.rescale_failed"), msg.clone());
                 self.notifications.finish_progress(
                     crate::widgets::toast::RESCALE_PROGRESS_ID,
                     crate::widgets::toast::ProgressOutcome::Failed,
@@ -229,7 +230,7 @@ impl App {
                     self.notifications
                         .dismiss(crate::widgets::toast::RESCALE_PROGRESS_ID);
                 } else {
-                    self.load_error = Some(msg.clone());
+                    self.show_error(t!("dialog.error.rescale_failed"), msg.clone());
                     self.notifications.finish_progress(
                         crate::widgets::toast::RESCALE_PROGRESS_ID,
                         crate::widgets::toast::ProgressOutcome::Failed,

@@ -345,6 +345,10 @@ dialog.unsaved.back: "返回"
 # ── 加载错误对话框 ──
 dialog.load_error.title: "无法打开文件"
 dialog.load_error.ok: "确定"
+dialog.error.title: "出错了"
+dialog.error.not_found_title: "文件不存在"
+dialog.error.export_failed: "导出失败"
+dialog.error.rescale_failed: "缩放失败"
 
 # ── 导出对话框 ──
 dialog.export.progress_title: "导出音频中"
@@ -696,6 +700,7 @@ file_dialog.soundfont: "SoundFont"
 file_dialog.untitled: "未命名.yin"
 file_dialog.export_mid: "导出.mid"
 file_dialog.open_failed: "无法打开「%{name}」：可能不是有效的 .yin 文件，或其内嵌 MIDI 缺少 Conductor 轨道。"
+file_dialog.not_found: "无法打开「%{name}」：文件不存在或已被移动，已从最近使用列表中移除。"
 
 # ── 工作区占位面板 ──
 workspace.placeholder_hint: "新建或打开一个工程开始编辑"

@@ -298,6 +298,10 @@ dialog.unsaved.back: "뒤로"
 # ── 로드 오류 대화상자 ──
 dialog.load_error.title: "파일을 열 수 없습니다"
 dialog.load_error.ok: "확인"
+dialog.error.title: "문제가 발생했습니다"
+dialog.error.not_found_title: "파일을 찾을 수 없음"
+dialog.error.export_failed: "내보내기 실패"
+dialog.error.rescale_failed: "리샘플 실패"
 
 # ── 내보내기 대화상자 ──
 dialog.export.progress_title: "오디오 내보내는 중"
@@ -628,6 +632,7 @@ file_dialog.soundfont: "SoundFont"
 file_dialog.untitled: "Untitled.yin"
 file_dialog.export_mid: "export.mid"
 file_dialog.open_failed: "\"%{name}\"을(를) 열 수 없습니다: 유효한 .yin 파일이 아니거나, 내장된 MIDI에 Conductor 트랙이 없습니다."
+file_dialog.not_found: "\"%{name}\"을(를) 열 수 없습니다: 파일이 존재하지 않거나 이동되었습니다. 최근 사용 목록에서 제거했습니다."
 title_bar.detach_hint: "놓으면 새 창에서 열립니다"
 title_bar.detach_save_failed: "새 창으로 분리하지 못했습니다: %{e}"
 title_bar.detach_spawn_failed: "새 창을 열 수 없습니다: %{e}"

@@ -1,4 +1,5 @@
 use eframe::egui;
+use rust_i18n::t;
 
 use crate::app::App;
 
@@ -219,7 +220,7 @@ impl App {
                 self.file_loader.archive_picker = None;
             }
             ArchivePickerAction::Error(ref msg) => {
-                self.load_error = Some(msg.clone());
+                self.show_error(t!("dialog.load_error.title"), msg.clone());
                 self.file_loader.archive_picker = None;
             }
             ArchivePickerAction::None => {}
@@ -331,11 +332,11 @@ impl App {
     }
 
     /// Show the load-error modal as an independent window.
-    pub(in crate::app) fn show_load_error_modal(&mut self, ui: &mut egui::Ui) {
+    pub(in crate::app) fn show_error_dialog(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
 
-        // ── Load error ──
-        crate::dialogs::load_error::show_viewport(&ctx, &mut self.load_error);
+        // ── Error dialog ──
+        crate::dialogs::error_dialog::show_viewport(&ctx, &mut self.error_dialog);
 
         // ── Unsaved changes confirmation ──
         let action =

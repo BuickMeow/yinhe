@@ -620,7 +620,10 @@ impl App {
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or(path);
-            self.load_error = Some(t!("file_dialog.open_failed", name = name).to_string());
+            self.show_error(
+                t!("dialog.error.not_found_title"),
+                t!("file_dialog.not_found", name = name),
+            );
             return;
         }
         if let Some(idx) = self.workspace.active_doc

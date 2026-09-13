@@ -83,7 +83,7 @@ impl App {
                         );
                     }
                     Err(msg) => {
-                        self.load_error = Some(msg.clone());
+                        self.show_error(t!("dialog.load_error.title"), msg.clone());
                         self.notifications.finish_progress(
                             crate::widgets::toast::LOADING_PROGRESS_ID,
                             crate::widgets::toast::ProgressOutcome::Failed,
@@ -191,7 +191,7 @@ impl App {
                     );
                 } else {
                     let msg = t!("file_dialog.open_failed", name = file_name).to_string();
-                    self.load_error = Some(msg.clone());
+                    self.show_error(t!("dialog.load_error.title"), msg.clone());
                     self.notifications.finish_progress(
                         crate::widgets::toast::LOADING_PROGRESS_ID,
                         crate::widgets::toast::ProgressOutcome::Failed,
@@ -202,7 +202,7 @@ impl App {
                 }
             }
             LoadResult::ArchiveError(msg) => {
-                self.load_error = Some(msg.clone());
+                self.show_error(t!("dialog.load_error.title"), msg.clone());
                 self.notifications.finish_progress(
                     crate::widgets::toast::LOADING_PROGRESS_ID,
                     crate::widgets::toast::ProgressOutcome::Failed,
@@ -295,7 +295,7 @@ impl App {
                         );
                     }
                     Err(e) => {
-                        self.load_error = Some(e.clone());
+                        self.show_error(t!("dialog.error.export_failed"), e.clone());
                         self.notifications.finish_progress(
                             crate::widgets::toast::EXPORT_PROGRESS_ID,
                             crate::widgets::toast::ProgressOutcome::Failed,

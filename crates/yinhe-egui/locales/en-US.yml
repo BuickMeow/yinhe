@@ -345,6 +345,10 @@ dialog.unsaved.back: "Back"
 # ── Load error dialog ──
 dialog.load_error.title: "Cannot Open File"
 dialog.load_error.ok: "OK"
+dialog.error.title: "Something Went Wrong"
+dialog.error.not_found_title: "File Not Found"
+dialog.error.export_failed: "Export Failed"
+dialog.error.rescale_failed: "Rescale Failed"
 
 # ── Export dialog ──
 dialog.export.progress_title: "Exporting Audio"
@@ -696,6 +700,7 @@ file_dialog.soundfont: "SoundFont"
 file_dialog.untitled: "Untitled.yin"
 file_dialog.export_mid: "export.mid"
 file_dialog.open_failed: "Cannot open \"%{name}\": may not be a valid .yin file, or its embedded MIDI lacks a Conductor track."
+file_dialog.not_found: "Cannot open \"%{name}\": the file does not exist or has been moved. It has been removed from the recent files list."
 
 # ── Workspace placeholder ──
 workspace.placeholder_hint: "Create or open a project to start editing"

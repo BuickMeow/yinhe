@@ -78,8 +78,9 @@ pub struct App {
     // ── Shared state ──
     pub(crate) transport_panel_width: f32,
     pub(crate) file_loader: FileLoader,
-    /// Last user-facing load error (e.g. unsupported MIDI). Cleared on dismiss.
-    pub(crate) load_error: Option<String>,
+    /// 通用错误弹窗（加载/导出/缩放/窗口创建失败等共用，标题按场景给）。
+    /// 关闭后清空。
+    pub(crate) error_dialog: Option<crate::dialogs::error_dialog::ErrorDialog>,
 
     // ── Async save ──
     pub(crate) save_rx: Option<mpsc::Receiver<()>>,
@@ -219,6 +220,14 @@ pub struct App {
 }
 
 impl App {
+    /// 弹出通用错误弹窗。`title` 按场景给（加载失败/导出失败/…），
+    /// `message` 为具体错误描述；两者都应为已翻译文案。
+    pub(crate) fn show_error(&mut self, title: impl Into<String>, message: impl Into<String>) {
+        self.error_dialog = Some(crate::dialogs::error_dialog::ErrorDialog::open(
+            title, message,
+        ));
+    }
+
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         // 清理跨实例剪贴板的过期临时文件（可能仍被其他实例引用，只清 7 天前的）。
         yinhe_editor_core::clipboard_file::cleanup_stale(std::time::Duration::from_secs(
@@ -338,7 +347,7 @@ impl App {
             transport_panel_width: audio_settings.layout.transport_panel_width,
             load_progress: load_progress.clone(),
             file_loader: FileLoader::new(load_progress.clone()),
-            load_error: None,
+            error_dialog: None,
             save_rx: None,
             save_progress: Default::default(),
             save_progress_rx: None,
@@ -657,7 +666,10 @@ impl App {
                 Ok(_) => return,
                 Err(e) => {
                     tracing::error!("Failed to spawn new window: {}", e);
-                    self.load_error = Some(t!("title_bar.detach_spawn_failed", e = e).to_string());
+                    self.show_error(
+                        t!("dialog.error.title"),
+                        t!("title_bar.detach_spawn_failed", e = e),
+                    );
                     rollback!();
                     return;
                 }
@@ -703,8 +715,10 @@ impl App {
         );
         if let Err(e) = save_res {
             tracing::error!("Failed to save detached document to temp: {}", e);
-            self.load_error =
-                Some(t!("title_bar.detach_save_failed", e = e.to_string()).to_string());
+            self.show_error(
+                t!("dialog.error.title"),
+                t!("title_bar.detach_save_failed", e = e.to_string()),
+            );
             rollback!();
             return;
         }
@@ -723,7 +737,10 @@ impl App {
             }
             Err(e) => {
                 tracing::error!("Failed to spawn new window: {}", e);
-                self.load_error = Some(t!("title_bar.detach_spawn_failed", e = e).to_string());
+                self.show_error(
+                    t!("dialog.error.title"),
+                    t!("title_bar.detach_spawn_failed", e = e),
+                );
                 rollback!();
                 // temp 已无用
                 let _ = std::fs::remove_file(&tmp_path);

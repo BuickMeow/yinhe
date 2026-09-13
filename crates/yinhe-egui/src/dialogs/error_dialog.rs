@@ -1,12 +1,30 @@
+//! 通用错误弹窗：所有阻塞式错误（加载/导出/缩放/窗口创建失败等）共用，
+//! 只换标题与消息，交互与排版完全一致。
+
 use eframe::egui;
 use rust_i18n::t;
 
-pub(crate) fn show_viewport(ctx: &egui::Context, error: &mut Option<String>) {
-    let msg = match error {
-        Some(m) => m.clone(),
-        None => return,
+/// 一次错误提示的内容。标题已由调用方按场景翻译好。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ErrorDialog {
+    pub title: String,
+    pub message: String,
+}
+
+impl ErrorDialog {
+    pub fn open(title: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            message: message.into(),
+        }
+    }
+}
+
+pub(crate) fn show_viewport(ctx: &egui::Context, state: &mut Option<ErrorDialog>) {
+    let Some(dialog) = state.clone() else {
+        return;
     };
-    let viewport_id = egui::ViewportId::from_hash_of("load_error_dialog");
+    let viewport_id = egui::ViewportId::from_hash_of("error_dialog");
 
     let open = std::rc::Rc::new(std::cell::RefCell::new(true));
     let open_cb = open.clone();
@@ -14,11 +32,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, error: &mut Option<String>) {
 
     ctx_clone.show_viewport_immediate(
         viewport_id,
-        crate::chrome::dialog::viewport_builder(
-            t!("dialog.load_error.title").as_ref(),
-            [420.0, 120.0],
-            false,
-        ),
+        crate::chrome::dialog::viewport_builder(&dialog.title, [420.0, 150.0], false),
         move |vctx, _class| {
             let mut close = false;
             if vctx.input(|i| i.viewport().close_requested()) {
@@ -30,11 +44,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, error: &mut Option<String>) {
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
-                    crate::chrome::dialog::title_bar(
-                        ui,
-                        t!("dialog.load_error.title").as_ref(),
-                        &mut close,
-                    );
+                    crate::chrome::dialog::title_bar(ui, &dialog.title, &mut close);
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
                             left: 12,
@@ -49,8 +59,13 @@ pub(crate) fn show_viewport(ctx: &egui::Context, error: &mut Option<String>) {
                                 ui,
                                 btn_zone_h,
                                 |ui| {
-                                    ui.add_space(8.0);
-                                    ui.label(&msg);
+                                    egui::ScrollArea::vertical()
+                                        .auto_shrink([false, false])
+                                        .max_height(ui.available_height())
+                                        .show(ui, |ui| {
+                                            ui.add_space(8.0);
+                                            ui.label(&dialog.message);
+                                        });
                                 },
                                 |ui| {
                                     use crate::chrome::dialog_buttons::{
@@ -75,6 +90,6 @@ pub(crate) fn show_viewport(ctx: &egui::Context, error: &mut Option<String>) {
     );
 
     if !*open.borrow() {
-        *error = None;
+        *state = None;
     }
 }
