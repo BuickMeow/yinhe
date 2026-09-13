@@ -17,7 +17,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, open: &mut bool, mem_mb: f64, m
         crate::chrome::dialog::viewport_builder(
             t!("dialog.memory.title").as_ref(),
             crate::theme::MEM_POPUP_SIZE,
-            false,
+            true,
         ),
         move |vctx, _class| {
             let mut close = false;
@@ -34,6 +34,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, open: &mut bool, mem_mb: f64, m
                         ui,
                         t!("dialog.memory.title").as_ref(),
                         &mut close,
+                        true,
                     );
                     egui::Frame::new()
                         .inner_margin(egui::Margin {

@@ -54,6 +54,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, old: u32, new: u32) -> PpqResca
                         ui,
                         t!("dialog.ppq_rescale.title").as_ref(),
                         &mut close,
+                        false,
                     );
                     egui::Frame::new()
                         .inner_margin(egui::Margin {

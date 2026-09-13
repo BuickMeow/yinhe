@@ -42,7 +42,7 @@ pub(crate) fn show_settings_viewport(
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
-                    crate::chrome::dialog::title_bar(ui, t!("dialog.export.settings_title").as_ref(), &mut close);
+                    crate::chrome::dialog::title_bar(ui, t!("dialog.export.settings_title").as_ref(), &mut close, false);
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
                             left: 12,

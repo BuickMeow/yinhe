@@ -106,8 +106,12 @@ pub(crate) fn paint_close_button(
 /// - Other platforms: draws an X close button on the right, centered title,
 ///   and drag region.
 ///
+/// `allow_maximize`：窗口是否允许双击标题栏最大化/还原。只有
+/// `viewport_builder(..., resizable = true)` 的弹窗才应传 `true`，
+/// 保证"可最大化"与 macOS zoom 动画在各弹窗间一致。
+///
 /// Sets `*close = true` when the close button is clicked.
-pub(crate) fn title_bar(ui: &mut egui::Ui, title: &str, close: &mut bool) {
+pub(crate) fn title_bar(ui: &mut egui::Ui, title: &str, close: &mut bool, allow_maximize: bool) {
     #[cfg(target_os = "macos")]
     let _ = close;
 
@@ -178,10 +182,10 @@ pub(crate) fn title_bar(ui: &mut egui::Ui, title: &str, close: &mut bool) {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
     }
-    // 双击标题栏切换最大化/还原（与主窗口 title_bar/transport_bar 一致：400ms 内两次单击空白区）
+    // 双击标题栏切换最大化/还原（仅允许最大化的窗口；400ms 内两次单击空白区）
     const DOUBLE_CLICK_MS: f64 = 400.0;
     let dbl_id = ui.id().with("dialog_title_dbl_click");
-    if drag_resp.clicked_by(egui::PointerButton::Primary) {
+    if allow_maximize && drag_resp.clicked_by(egui::PointerButton::Primary) {
         // 关闭按钮上的单击不计入双击
         #[cfg(not(target_os = "macos"))]
         let on_close = drag_resp

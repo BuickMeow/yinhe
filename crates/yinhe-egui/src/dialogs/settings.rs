@@ -223,6 +223,7 @@ pub(crate) fn show_viewport(
                             ui,
                             t!("settings.title").as_ref(),
                             &mut close,
+                            true,
                         );
                         eframe::egui::Frame::new()
                             .inner_margin(eframe::egui::Margin {

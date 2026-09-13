@@ -43,6 +43,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context) -> bool {
                         ui,
                         t!("dialog.gpu_lost.title").as_ref(),
                         &mut close,
+                        false,
                     );
                     egui::Frame::new()
                         .inner_margin(egui::Margin {

@@ -211,6 +211,7 @@ pub(crate) fn show_viewport(
                         ui,
                         t!("dialog.new_track.title").as_ref(),
                         &mut close,
+                        false,
                     );
                     egui::Frame::new()
                         .inner_margin(egui::Margin {

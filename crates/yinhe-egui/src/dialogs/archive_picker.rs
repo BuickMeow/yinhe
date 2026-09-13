@@ -328,6 +328,7 @@ pub(crate) fn show_viewport(
                         ui,
                         t!("dialog.archive.title").as_ref(),
                         &mut close,
+                        true,
                     );
                     if close {
                         vctx_cmd.send_viewport_cmd(eframe::egui::ViewportCommand::Visible(false));
@@ -440,6 +441,7 @@ pub(crate) fn show_password_prompt_viewport(
                         ui,
                         t!("dialog.archive.password_title").as_ref(),
                         &mut close,
+                        false,
                     );
                     if close {
                         vctx_cmd.send_viewport_cmd(eframe::egui::ViewportCommand::Visible(false));

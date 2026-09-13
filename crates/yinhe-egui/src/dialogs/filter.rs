@@ -187,7 +187,7 @@ pub(crate) fn show_viewport(
 
     ctx.show_viewport_immediate(
         viewport_id,
-        crate::chrome::dialog::viewport_builder(title.as_ref(), [420.0, 540.0], false),
+        crate::chrome::dialog::viewport_builder(title.as_ref(), [420.0, 540.0], true),
         |vctx, _class| {
             if vctx.input(|i| i.viewport().close_requested()) {
                 close = true;
@@ -199,7 +199,7 @@ pub(crate) fn show_viewport(
                 })
                 .show(vctx, |ui| {
                     let mut title_close = false;
-                    crate::chrome::dialog::title_bar(ui, title.as_ref(), &mut title_close);
+                    crate::chrome::dialog::title_bar(ui, title.as_ref(), &mut title_close, true);
                     if title_close {
                         close = true;
                     }

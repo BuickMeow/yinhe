@@ -63,6 +63,7 @@ pub(crate) fn show_track_props_viewport(
                         ui,
                         t!("dialog.track_props.title").as_ref(),
                         &mut close,
+                        true,
                     );
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
@@ -161,6 +162,7 @@ pub(crate) fn show_project_settings_viewport(
                         ui,
                         t!("dialog.project_settings.title").as_ref(),
                         &mut close,
+                        true,
                     );
                     egui::Frame::new()
                         .inner_margin(egui::Margin {

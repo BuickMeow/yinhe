@@ -35,7 +35,7 @@ pub(crate) fn show_viewport(
 
     ctx.show_viewport_immediate(
         viewport_id,
-        crate::chrome::dialog::viewport_builder(title.as_ref(), [460.0, 320.0], false),
+        crate::chrome::dialog::viewport_builder(title.as_ref(), [460.0, 320.0], true),
         |vctx, _class| {
             if vctx.input(|i| i.viewport().close_requested()) {
                 // 关闭窗口 = 本次不处理（备份保留，下次启动再询问）
@@ -50,7 +50,7 @@ pub(crate) fn show_viewport(
                 })
                 .show(vctx, |ui| {
                     let mut title_close = false;
-                    crate::chrome::dialog::title_bar(ui, title.as_ref(), &mut title_close);
+                    crate::chrome::dialog::title_bar(ui, title.as_ref(), &mut title_close, true);
                     if title_close {
                         *show = false;
                         hide_requested = true;

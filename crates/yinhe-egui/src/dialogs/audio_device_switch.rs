@@ -45,7 +45,7 @@ pub(crate) fn show_viewport(
         crate::chrome::dialog::viewport_builder(
             t!("dialog.audio_switch.title").as_ref(),
             [460.0, 440.0],
-            false,
+            true,
         ),
         move |vctx, _class| {
             let hide = std::cell::Cell::new(false);
@@ -63,6 +63,7 @@ pub(crate) fn show_viewport(
                         ui,
                         t!("dialog.audio_switch.title").as_ref(),
                         &mut title_close,
+                        true,
                     );
                     if title_close {
                         hide.set(true);

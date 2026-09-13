@@ -112,7 +112,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, state: &mut TapTempoDialogState
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
-                    crate::chrome::dialog::title_bar(ui, title.as_ref(), &mut close);
+                    crate::chrome::dialog::title_bar(ui, title.as_ref(), &mut close, false);
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
                             left: 12,

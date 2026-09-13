@@ -97,6 +97,20 @@ pub(crate) fn dialog_button_row(ui: &mut egui::Ui, buttons: &[DialogButton<'_>])
     clicked
 }
 
+/// 主按钮配色：暗色主题用强调色实底 + 高对比文字；亮色主题用 tonal 风格
+/// （强调色混白的浅底 + 强调色混深的深色文字），避免深色实心按钮在亮色
+/// 界面里过重，同时保持"确定"与次要按钮的层次区分。
+fn primary_colors() -> (egui::Color32, egui::Color32) {
+    let accent = crate::theme::accent_active();
+    if crate::theme::dark_mode() {
+        (accent, crate::theme::contrast_fg())
+    } else {
+        let bg = accent.lerp_to_gamma(egui::Color32::WHITE, 0.66);
+        let fg = accent.lerp_to_gamma(egui::Color32::from_gray(20), 0.55);
+        (bg, fg)
+    }
+}
+
 /// 绘制单个按钮（需要自定义排布时使用；一般用 [`dialog_button_row`]）。
 ///
 /// 自绘原因：统一高度/圆角/hover 与按下反馈；`egui::Button` 无法在指定
@@ -104,11 +118,12 @@ pub(crate) fn dialog_button_row(ui: &mut egui::Ui, buttons: &[DialogButton<'_>])
 pub(crate) fn dialog_button(ui: &mut egui::Ui, spec: &DialogButton<'_>) -> egui::Response {
     let ctx = ui.ctx().clone();
     let scale = |v: f32| crate::scaling::scaled_font(&ctx, v);
+    let (primary_bg, primary_fg) = primary_colors();
     let fg = if !spec.enabled {
         crate::theme::text_disabled()
     } else {
         match spec.kind {
-            DialogButtonKind::Primary => crate::theme::contrast_fg(),
+            DialogButtonKind::Primary => primary_fg,
             DialogButtonKind::Secondary => crate::theme::text_primary(),
             DialogButtonKind::Danger => crate::theme::danger_text_bright(),
         }
@@ -136,7 +151,7 @@ pub(crate) fn dialog_button(ui: &mut egui::Ui, spec: &DialogButton<'_>) -> egui:
 
     if ui.is_rect_visible(rect) {
         let base = match spec.kind {
-            DialogButtonKind::Primary => crate::theme::accent_active(),
+            DialogButtonKind::Primary => primary_bg,
             DialogButtonKind::Secondary | DialogButtonKind::Danger => crate::theme::btn_bg(),
         };
         let fill = if !spec.enabled {
