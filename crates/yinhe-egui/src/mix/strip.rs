@@ -390,8 +390,11 @@ fn insert_row(
     }
     dot_resp.on_hover_text(t!("mix.bypass"));
 
-    // 名称：截断显示，hover 全名。
-    let name_rect = egui::Rect::from_min_max(egui::pos2(dot_hit.max.x + 2.0, rect.min.y), rect.max);
+    // 名称：截断显示，hover 全名（右侧给参数按钮留位）。
+    let name_rect = egui::Rect::from_min_max(
+        egui::pos2(dot_hit.max.x + 2.0, rect.min.y),
+        egui::pos2(rect.max.x - 18.0, rect.max.y),
+    );
     let name_color = if is_bypassed {
         crate::theme::text_muted()
     } else {
@@ -406,6 +409,33 @@ fn insert_row(
         )
         .truncate(),
     );
+
+    // 参数按钮（行右侧小图标）：打开通用参数面板。
+    let tune = egui_material_icons::icons::ICON_TUNE;
+    let btn_rect = egui::Rect::from_min_max(
+        egui::pos2(rect.max.x - 17.0, rect.min.y + 2.0),
+        egui::pos2(rect.max.x - 1.0, rect.max.y - 2.0),
+    );
+    let params_resp = ui.interact(
+        btn_rect,
+        ui.id().with(("mix_insert_params", channel, slot)),
+        egui::Sense::click(),
+    );
+    let icon_color = if params_resp.hovered() {
+        crate::theme::accent_active()
+    } else {
+        crate::theme::text_muted()
+    };
+    ui.painter().text(
+        btn_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        tune.codepoint,
+        egui::FontId::new(11.0, tune.font_family()),
+        icon_color,
+    );
+    if params_resp.on_hover_text(t!("mix.params")).clicked() {
+        actions.push(MixAction::OpenInsertParams { channel, slot });
+    }
 
     // 行点击：打开/关闭插件原生界面。
     if resp.clicked() {

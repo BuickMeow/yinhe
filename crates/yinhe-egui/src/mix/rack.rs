@@ -289,6 +289,7 @@ impl MixerRack {
             return Ok(false);
         };
         let Some(instance) = rt.instance.as_mut() else {
+            tracing::warn!("打开插件界面失败: 槽位无实例（插件未加载成功）");
             return Err(PluginLoadError("插件未加载成功，无法打开界面".into()));
         };
         if rt.gui_open {
@@ -299,18 +300,23 @@ impl MixerRack {
             return Ok(false);
         }
         let name = instance.info().name.clone();
-        let (w, h) = instance
-            .create_gui()
-            .map_err(|e| PluginLoadError(format!("{e}")))?;
+        let (w, h) = instance.create_gui().map_err(|e| {
+            tracing::warn!("插件界面 create_gui 失败 ({name}): {e}");
+            PluginLoadError(format!("{e}"))
+        })?;
+        tracing::info!("插件界面创建中: {name} {w}x{h}");
         let Some(win) = super::gui_window::PluginGuiWindow::new(&name, w, h) else {
             instance.close_gui();
+            tracing::warn!("插件窗口创建失败: {name}");
             return Err(PluginLoadError("创建插件窗口失败".into()));
         };
         if let Err(e) = instance.attach_and_show_gui(win.view_ptr()) {
             instance.close_gui();
+            tracing::warn!("插件界面嵌入失败 ({name}): {e}");
             return Err(PluginLoadError(format!("{e}")));
         }
         win.show();
+        tracing::info!("插件界面已显示: {name}");
         rt.gui_window = Some(win);
         rt.gui_open = true;
         Ok(true)
