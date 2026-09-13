@@ -14,7 +14,7 @@ use yinhe_mixer::{
 use yinhe_types::KEY_COUNT;
 
 /// insert 链的目标位置。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum InsertTarget {
     /// 源 MIDI 通道（A01..P16）。
     Channel(u8),
@@ -22,6 +22,16 @@ pub enum InsertTarget {
     Bus(u8),
     /// 主输出。
     Master,
+}
+
+/// 兼容惯例：`Some(ch)` = 源通道，`None` = 主输出。
+impl From<Option<u8>> for InsertTarget {
+    fn from(channel: Option<u8>) -> Self {
+        match channel {
+            Some(ch) => InsertTarget::Channel(ch),
+            None => InsertTarget::Master,
+        }
+    }
 }
 
 /// AR 自动化 lane 的 M/S 试听旁通集（跨线程共享，Empty 由 default 提供）。
@@ -219,6 +229,8 @@ pub struct AudioHandle {
     mixer_channel_readings: Vec<MeterReading>,
     /// 主输出电平表读数端。
     mixer_master_reading: MeterReading,
+    /// 总线电平表读数端（动态：增删总线由渲染线程更新此槽）。
+    mixer_bus_readings: Arc<Mutex<Vec<MeterReading>>>,
     /// 渲染线程退回的 insert 处理器（插件 deactivate 必须在 UI/管理线程做）。
     insert_return_rx: crossbeam_channel::Receiver<Vec<Box<dyn InsertProcessor>>>,
     /// 渲染线程退回的乐器处理器（deactivate 同样必须在 UI/管理线程做）。
@@ -320,6 +332,15 @@ impl AudioHandle {
     }
 
     /// 读主输出电平。
+    /// 总线电平表读数（bus 索引；不存在返回静音）。
+    pub fn bus_meter_read(&self, bus: usize) -> (f32, f32) {
+        self.mixer_bus_readings
+            .lock()
+            .ok()
+            .and_then(|r| r.get(bus).map(|m| m.read()))
+            .unwrap_or((0.0, 0.0))
+    }
+
     pub fn master_meter_read(&self) -> (f32, f32) {
         self.mixer_master_reading.read()
     }
@@ -928,6 +949,12 @@ pub fn spawn_cpal_audio(
         .filter_map(|i| engine.mixer.channel_meter_reading(i))
         .collect();
     let mixer_master_reading = engine.mixer.master_meter_reading();
+    // 总线读数端随增删总线动态变化：渲染线程在 SyncBusConfig 后刷新此槽。
+    let mixer_bus_readings: Arc<Mutex<Vec<MeterReading>>> = Arc::new(Mutex::new(
+        (0..engine.mixer.bus_count())
+            .filter_map(|i| engine.mixer.bus_meter_reading(i))
+            .collect(),
+    ));
     // 渲染线程 → UI 的 insert 处理器退回通道（替换/移除/拆除时回收 deactivate）。
     let (insert_return_tx, insert_return_rx) = unbounded::<Vec<Box<dyn InsertProcessor>>>();
     // 渲染线程 → UI 的乐器处理器退回通道（替换/移除/拆除时回收 deactivate）。
@@ -939,7 +966,8 @@ pub fn spawn_cpal_audio(
 
     let (ring_producer, mut ring_consumer) = AudioRing::new(RING_CAPACITY).split();
 
-    let renderer_state = RendererSharedState::new();
+    let mut renderer_state = RendererSharedState::new();
+    renderer_state.bus_readings = Arc::clone(&mixer_bus_readings);
     // UI 播放指示线的上限：渲染器已推入 ring 的采样位置（producer）。
     let handle_producer_position = Arc::clone(&renderer_state.producer_sample_position);
     let renderer_playing = Arc::clone(&renderer_state.playing);
@@ -1085,6 +1113,7 @@ pub fn spawn_cpal_audio(
             pending_skip,
             pending_am_ms,
             mixer_channel_readings,
+            mixer_bus_readings,
             mixer_master_reading,
             insert_return_rx,
             instrument_return_rx,

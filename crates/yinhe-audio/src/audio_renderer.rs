@@ -48,6 +48,8 @@ pub(crate) struct RendererSharedState {
     /// 已加载完成的音色库 port 数（每 port 一条 `LoadedSoundFont` 结果 +1）。
     /// UI 据此驱动"加载音色库"stage 的真实进度（完成计数，不预填）。
     pub(crate) sf_loaded: Arc<AtomicUsize>,
+    /// 总线电平表读数端（增删总线时由渲染线程刷新；UI 读锁取用）。
+    pub(crate) bus_readings: Arc<Mutex<Vec<yinhe_mixer::MeterReading>>>,
 }
 
 impl RendererSharedState {
@@ -61,6 +63,7 @@ impl RendererSharedState {
             clear_base_sample: Arc::new(AtomicU64::new(0)),
             clear_ring_write: Arc::new(AtomicUsize::new(0)),
             sf_loaded: Arc::new(AtomicUsize::new(0)),
+            bus_readings: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -384,6 +387,11 @@ impl AudioRenderer {
                         }
                         AudioCommand::PreviewStop => {
                             self.preview_engine.stop_all();
+                        }
+                        AudioCommand::SyncBusConfig { buses, sends } => {
+                            self.engine
+                                .handle_command(AudioCommand::SyncBusConfig { buses, sends });
+                            self.sync_bus_meter_readings();
                         }
                         AudioCommand::ExportStart {
                             path,
@@ -1028,6 +1036,16 @@ impl AudioRenderer {
         }
         self.clear_buffered_audio(0);
         self.publish_state();
+    }
+
+    /// 刷新总线电平表读数槽（增删总线后调用；UI 侧共享同一 Arc）。
+    fn sync_bus_meter_readings(&self) {
+        let readings: Vec<yinhe_mixer::MeterReading> = (0..self.engine.mixer.bus_count())
+            .filter_map(|i| self.engine.mixer.bus_meter_reading(i))
+            .collect();
+        if let Ok(mut slot) = self.state.bus_readings.lock() {
+            *slot = readings;
+        }
     }
 
     fn publish_state(&self) {

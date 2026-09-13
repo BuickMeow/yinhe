@@ -772,6 +772,11 @@ pr_bar.blocked_keep: "退回重疊音符"
 
 # ── MIX 混音台 ──
 mix.scan_plugins: "掃描插件"
+mix.add_bus: "新增總線"
+mix.sends: "發送"
+mix.no_buses: "還沒有總線，先按工具列「新增總線」建立"
+mix.pre_fader: "推子前"
+mix.pre_fader_hint: "推子前發送不受通道推子影響"
 mix.scan_status: "%{count} 個效果器"
 mix.scan_errors: "%{count} 個插件包掃描失敗"
 mix.master: "主輸出"

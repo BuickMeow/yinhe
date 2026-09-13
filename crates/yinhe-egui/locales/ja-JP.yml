@@ -775,6 +775,11 @@ pr_bar.blocked_keep: "重複ノートを押し戻す"
 
 # MIX ミキサー
 mix.scan_plugins: "プラグインをスキャン"
+mix.add_bus: "バスを追加"
+mix.sends: "センド"
+mix.no_buses: "バスがありません。ツールバーの「バスを追加」で作成してください"
+mix.pre_fader: "プリフェーダー"
+mix.pre_fader_hint: "プリフェーダーセンドはチャンネルフェーダーの影響を受けません"
 mix.scan_status: "%{count} 個のエフェクト"
 mix.scan_errors: "%{count} 個のパッケージのスキャンに失敗"
 mix.master: "マスター出力"

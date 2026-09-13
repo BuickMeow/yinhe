@@ -19,8 +19,11 @@ use crate::app::App;
 /// 参数面板目标槽位。
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ParamTarget {
-    /// insert 链：channel None = master。
-    Insert { channel: Option<u8>, slot: usize },
+    /// insert 链目标（源通道 / 总线 / master）。
+    Insert {
+        target: yinhe_audio::InsertTarget,
+        slot: usize,
+    },
     /// 乐器通道（0 起）。
     Instrument { channel: u16 },
 }
@@ -101,10 +104,10 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
     };
 
     let instance: Option<&mut PluginInstance> = match panel.target {
-        ParamTarget::Insert { channel, slot } => app
+        ParamTarget::Insert { target, slot } => app
             .mixer_racks
             .get_mut(idx)
-            .and_then(|rack| rack.instance_mut(channel, slot)),
+            .and_then(|rack| rack.instance_mut(target, slot)),
         ParamTarget::Instrument { channel } => app
             .instrument_racks
             .get_mut(idx)

@@ -7,6 +7,7 @@
 
 use eframe::egui;
 use rust_i18n::t;
+use yinhe_audio::InsertTarget;
 use yinhe_mixer::{MasterParams, StripParams};
 
 use crate::app::App;
@@ -43,7 +44,7 @@ const DB_MAX: f32 = 6.0;
 /// 推子最小高度（px）。
 const FADER_MIN_H: f32 = 64.0;
 /// 推子之下的固定区高度（M/S + 声像 + dB 读数 + 间距）。
-const BOTTOM_H: f32 = 62.0;
+const BOTTOM_H: f32 = 80.0;
 
 /// dB 值 → 纵向占比（0 = DB_MIN，1 = DB_MAX）。
 fn db_frac(db: f32) -> f32 {
@@ -55,6 +56,9 @@ pub(crate) fn show_toolbar(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<M
     ui.horizontal(|ui| {
         if ui.button(t!("mix.scan_plugins")).clicked() {
             actions.push(MixAction::RescanPlugins);
+        }
+        if ui.button(t!("mix.add_bus")).clicked() {
+            actions.push(MixAction::AddBus);
         }
         if app.mix.scan_in_progress {
             ui.label(
@@ -120,12 +124,18 @@ pub(crate) fn channel_strip(
         .mixer_racks
         .get(idx)
         .map(|rack| {
-            rack.chain(Some(channel))
+            rack.chain(InsertTarget::Channel(channel))
                 .iter()
                 .map(|rt| rt.gui_open)
                 .collect()
         })
         .unwrap_or_default();
+    let send_count = app.workspace.documents[idx]
+        .mixer
+        .sends
+        .get(channel as usize)
+        .map(|l| l.iter().filter(|s| s.amount > 0.0).count())
+        .unwrap_or(0);
 
     strip_frame(ui, color, height, |ui| {
         label_block(ui, channel_label(channel), &names);
@@ -133,7 +143,7 @@ pub(crate) fn channel_strip(
         ui.add_space(4.0);
         insert_area(
             ui,
-            Some(channel),
+            InsertTarget::Channel(channel),
             &insert_names,
             &bypassed,
             &gui_open,
@@ -157,8 +167,209 @@ pub(crate) fn channel_strip(
             });
         });
         ui.add_space(4.0);
+        send_button(ui, channel, send_count, actions);
+        ui.add_space(4.0);
         db_label(ui, params.gain);
     });
+}
+
+/// 总线条（bus / return）：与通道条同构（insert 链 + 推子 + M/S/声像）。
+#[allow(clippy::too_many_arguments)] // 通道条渲染上下文透传
+pub(crate) fn bus_strip(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    idx: usize,
+    bus: u8,
+    peak: (f32, f32),
+    height: f32,
+    actions: &mut Vec<MixAction>,
+) {
+    let params = app.workspace.documents[idx]
+        .mixer
+        .buses
+        .get(bus as usize)
+        .copied()
+        .unwrap_or_default();
+    let insert_names: Vec<String> = app.workspace.documents[idx]
+        .mixer
+        .bus_inserts
+        .get(bus as usize)
+        .map(|chain| chain.iter().map(|r| r.name.clone()).collect())
+        .unwrap_or_default();
+    let bypassed: Vec<bool> = app.workspace.documents[idx]
+        .mixer
+        .bus_inserts
+        .get(bus as usize)
+        .map(|chain| chain.iter().map(|r| r.bypassed).collect())
+        .unwrap_or_default();
+    let gui_open: Vec<bool> = app
+        .mixer_racks
+        .get(idx)
+        .map(|rack| {
+            rack.chain(InsertTarget::Bus(bus))
+                .iter()
+                .map(|rt| rt.gui_open)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    strip_frame(ui, crate::theme::accent_active(), height, |ui| {
+        label_block(ui, format!("BUS {}", bus + 1), "");
+
+        // 删除总线（右上角小按钮；其 send 清理、更高索引前移）。
+        ui.horizontal(|ui| {
+            ui.add_space(CONTENT_W - BTN);
+            if toggle_button(
+                ui,
+                egui_material_icons::icons::ICON_DELETE.codepoint,
+                false,
+                crate::theme::danger_text(),
+            ) {
+                actions.push(MixAction::RemoveBus { bus });
+            }
+        });
+        ui.add_space(2.0);
+
+        insert_area(
+            ui,
+            InsertTarget::Bus(bus),
+            &insert_names,
+            &bypassed,
+            &gui_open,
+            actions,
+        );
+        ui.add_space(4.0);
+
+        let fader_h = (ui.available_height() - BOTTOM_H).max(FADER_MIN_H);
+        fader_and_meter(ui, params.gain, peak, fader_h, |gain| {
+            let mut p = params;
+            p.gain = gain;
+            actions.push(MixAction::SetBusStrip { bus, params: p });
+        });
+        ui.add_space(4.0);
+        ms_pan_block(ui, &params, |new_params| {
+            actions.push(MixAction::SetBusStrip {
+                bus,
+                params: new_params,
+            });
+        });
+        ui.add_space(4.0);
+        // 与通道条发送按钮同高占位，保持底部对齐。
+        ui.allocate_space(egui::vec2(CONTENT_W, 16.0));
+        ui.add_space(4.0);
+        db_label(ui, params.gain);
+    });
+}
+
+/// 发送入口按钮（通道条底部）：点击打开该通道的发送面板；有发送时显示数量。
+fn send_button(ui: &mut egui::Ui, channel: u8, send_count: usize, actions: &mut Vec<MixAction>) {
+    let label = if send_count > 0 {
+        format!("SEND ({send_count})")
+    } else {
+        "SEND".to_string()
+    };
+    let color = if send_count > 0 {
+        crate::theme::text_primary()
+    } else {
+        crate::theme::text_secondary()
+    };
+    let resp = ui.add_sized(
+        egui::vec2(CONTENT_W, 16.0),
+        egui::Button::new(
+            egui::RichText::new(label)
+                .size(crate::theme::SMALL_FONT - 1.0)
+                .color(color),
+        ),
+    );
+    if resp.clicked() {
+        actions.push(MixAction::OpenSends { channel });
+    }
+}
+
+/// 发送面板（某源通道对各总线的发送量 / 推子前推子后）。
+pub(crate) fn send_popup(
+    app: &mut App,
+    ctx: &egui::Context,
+    channel: u8,
+    actions: &mut Vec<MixAction>,
+) {
+    let Some(idx) = app.workspace.active_doc else {
+        return;
+    };
+    let bus_count = app.workspace.documents[idx].mixer.buses.len();
+    let current: Vec<(f32, bool)> = (0..bus_count)
+        .map(|b| {
+            app.workspace.documents[idx]
+                .mixer
+                .sends
+                .get(channel as usize)
+                .and_then(|list| list.iter().find(|s| s.bus as usize == b))
+                .map(|s| (s.amount, s.pre_fader))
+                .unwrap_or((0.0, false))
+        })
+        .collect();
+
+    let mut open = true;
+    egui::Window::new(format!(
+        "{} {}",
+        t!("mix.sends"),
+        crate::mix::channel_label(channel)
+    ))
+    .collapsible(false)
+    .resizable(false)
+    .default_width(300.0)
+    .open(&mut open)
+    .show(ctx, |ui| {
+        if bus_count == 0 {
+            ui.label(egui::RichText::new(t!("mix.no_buses")).color(crate::theme::text_muted()));
+            return;
+        }
+        for (b, (amount, pre)) in current.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(format!("BUS {}", b + 1));
+                let mut val = *amount;
+                let slider = ui.add(
+                    egui::Slider::new(&mut val, 0.0..=2.0)
+                        .show_value(false)
+                        .clamping(egui::SliderClamping::Always),
+                );
+                if slider.changed() {
+                    actions.push(MixAction::SetSend {
+                        channel,
+                        bus: b as u8,
+                        amount: val,
+                        pre_fader: *pre,
+                    });
+                }
+                let db = if val <= 0.0 {
+                    "-∞".to_string()
+                } else {
+                    format!("{:+.1} dB", crate::mix::gain_to_db(val))
+                };
+                ui.label(
+                    egui::RichText::new(db)
+                        .size(crate::theme::SMALL_FONT)
+                        .color(crate::theme::text_secondary()),
+                );
+                let mut pre_flag = *pre;
+                if ui
+                    .checkbox(&mut pre_flag, t!("mix.pre_fader"))
+                    .on_hover_text(t!("mix.pre_fader_hint"))
+                    .changed()
+                {
+                    actions.push(MixAction::SetSend {
+                        channel,
+                        bus: b as u8,
+                        amount: val,
+                        pre_fader: pre_flag,
+                    });
+                }
+            });
+        }
+    });
+    if !open {
+        app.mix.sends_for = None;
+    }
 }
 
 /// 主输出条。
@@ -193,7 +404,14 @@ pub(crate) fn master_strip(
         label_block(ui, t!("mix.master").to_string(), "");
 
         ui.add_space(4.0);
-        insert_area(ui, None, &insert_names, &bypassed, &gui_open, actions);
+        insert_area(
+            ui,
+            InsertTarget::Master,
+            &insert_names,
+            &bypassed,
+            &gui_open,
+            actions,
+        );
         ui.add_space(4.0);
 
         let fader_h = (ui.available_height() - BOTTOM_H).max(FADER_MIN_H);
@@ -206,6 +424,9 @@ pub(crate) fn master_strip(
         // master 无 M/S/声像：按 ms_pan_block 实际高度占位，dB 与通道条对齐。
         let ms_h = BTN + ui.spacing().item_spacing.y + 14.0;
         ui.allocate_space(egui::vec2(CONTENT_W, ms_h));
+        ui.add_space(4.0);
+        // 与通道条的发送按钮同高占位，保持底部对齐。
+        ui.allocate_space(egui::vec2(CONTENT_W, 16.0));
         ui.add_space(4.0);
         db_label(ui, params.gain);
     });
@@ -285,7 +506,7 @@ fn label_block(ui: &mut egui::Ui, title: String, names: &str) {
 #[allow(clippy::too_many_arguments)] // 通道条渲染上下文透传
 fn insert_area(
     ui: &mut egui::Ui,
-    channel: Option<u8>,
+    target: InsertTarget,
     names: &[String],
     bypassed: &[bool],
     gui_open: &[bool],
@@ -317,7 +538,7 @@ fn insert_area(
             crate::theme::text_muted(),
         );
         if resp.on_hover_text(t!("mix.add_insert_hint")).clicked() {
-            actions.push(MixAction::OpenPicker { channel });
+            actions.push(MixAction::OpenPicker { target });
         }
         return;
     }
@@ -335,7 +556,7 @@ fn insert_area(
                     for (slot, name) in names.iter().enumerate() {
                         insert_row(
                             ui,
-                            channel,
+                            target,
                             slot,
                             name,
                             bypassed.get(slot).copied().unwrap_or(false),
@@ -351,7 +572,7 @@ fn insert_area(
 /// 右键菜单：旁通 / 移除。
 fn insert_row(
     ui: &mut egui::Ui,
-    channel: Option<u8>,
+    target: InsertTarget,
     slot: usize,
     name: &str,
     is_bypassed: bool,
@@ -384,12 +605,12 @@ fn insert_row(
     let dot_hit = egui::Rect::from_center_size(dot_center, egui::vec2(14.0, INSERT_ROW_H));
     let dot_resp = ui.interact(
         dot_hit,
-        ui.id().with(("mix_insert_bypass", channel, slot)),
+        ui.id().with(("mix_insert_bypass", target, slot)),
         egui::Sense::click(),
     );
     if dot_resp.clicked() {
         actions.push(MixAction::BypassInsert {
-            channel,
+            target,
             slot,
             bypassed: !is_bypassed,
         });
@@ -424,7 +645,7 @@ fn insert_row(
     );
     let params_resp = ui.interact(
         btn_rect,
-        ui.id().with(("mix_insert_params", channel, slot)),
+        ui.id().with(("mix_insert_params", target, slot)),
         egui::Sense::click(),
     );
     let icon_color = if params_resp.hovered() {
@@ -440,12 +661,12 @@ fn insert_row(
         icon_color,
     );
     if params_resp.on_hover_text(t!("mix.params")).clicked() {
-        actions.push(MixAction::OpenInsertParams { channel, slot });
+        actions.push(MixAction::OpenInsertParams { target, slot });
     }
 
     // 行点击：打开/关闭插件原生界面。
     if resp.clicked() {
-        actions.push(MixAction::ToggleGui { channel, slot });
+        actions.push(MixAction::ToggleGui { target, slot });
     }
     resp.clone().on_hover_text(t!("mix.toggle_gui"));
     resp.context_menu(|ui| {
@@ -460,7 +681,7 @@ fn insert_row(
             .clicked()
         {
             actions.push(MixAction::BypassInsert {
-                channel,
+                target,
                 slot,
                 bypassed: !is_bypassed,
             });
@@ -474,7 +695,7 @@ fn insert_row(
             ))
             .clicked()
         {
-            actions.push(MixAction::ToggleGui { channel, slot });
+            actions.push(MixAction::ToggleGui { target, slot });
             ui.close();
         }
         if ui
@@ -485,7 +706,7 @@ fn insert_row(
             ))
             .clicked()
         {
-            actions.push(MixAction::OpenInsertParams { channel, slot });
+            actions.push(MixAction::OpenInsertParams { target, slot });
             ui.close();
         }
         if ui
@@ -496,7 +717,7 @@ fn insert_row(
             ))
             .clicked()
         {
-            actions.push(MixAction::RemoveInsert { channel, slot });
+            actions.push(MixAction::RemoveInsert { target, slot });
             ui.close();
         }
     });
@@ -741,7 +962,7 @@ fn meter(ui: &mut egui::Ui, peak: (f32, f32), height: f32) {
 pub(crate) fn plugin_picker(
     app: &mut App,
     ctx: &egui::Context,
-    target: Option<u8>,
+    target: InsertTarget,
     actions: &mut Vec<MixAction>,
 ) {
     let mut open = true;
@@ -787,7 +1008,7 @@ pub(crate) fn plugin_picker(
                                 .clicked()
                             {
                                 actions.push(MixAction::AddInsert {
-                                    channel: target,
+                                    target,
                                     plugin: p.clone(),
                                 });
                             }

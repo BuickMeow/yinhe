@@ -337,7 +337,7 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
     // ── 应用动作 ──
     app.dock_selected = Some(selected);
     if open_picker {
-        app.mix.picker_for = Some(Some(channel));
+        app.mix.picker_for = Some(yinhe_audio::InsertTarget::Channel(channel));
     }
     for action in knob_actions {
         apply_knob_action(app, idx, lane_track_ti, tick, action);
@@ -837,7 +837,7 @@ fn open_param_panel(
             let title = instance.name().to_string();
             Some(ParamPanel::open(
                 ParamTarget::Insert {
-                    channel: Some(channel),
+                    target: yinhe_audio::InsertTarget::Channel(channel),
                     slot,
                 },
                 title,

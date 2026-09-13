@@ -18,6 +18,7 @@ pub(crate) mod rack;
 mod strip;
 
 use eframe::egui;
+use yinhe_audio::InsertTarget;
 use yinhe_audio::channel_layout::ChannelLayout;
 use yinhe_mixer::{MasterParams, StripParams};
 
@@ -61,6 +62,8 @@ pub(crate) struct MixUiState {
     /// 各 dense 通道的滑动峰值（L, R），UI 侧衰减用。
     smoothed: Vec<(f32, f32)>,
     smoothed_master: (f32, f32),
+    /// 总线条电平表滑动峰值（key = "bus{n}"，增删总线时旧键闲置无害）。
+    smoothed_buses: std::collections::HashMap<String, (f32, f32)>,
     /// 插件扫描结果（后台线程填充；None = 尚未完成首次扫描）。
     pub(crate) scanned: Option<Vec<PluginEntry>>,
     /// 扫描中失败的包数量（诊断展示）。
@@ -69,8 +72,10 @@ pub(crate) struct MixUiState {
     pub(crate) scan_rx: Option<std::sync::mpsc::Receiver<ScanProgress>>,
     /// 后台扫描进行中（UI 状态展示用）。
     pub(crate) scan_in_progress: bool,
-    /// 插件选择器打开目标：Some(Some(ch)) = 通道 ch，Some(None) = master。
-    pub(crate) picker_for: Option<Option<u8>>,
+    /// 插件选择器打开目标（None = 关闭）。
+    pub(crate) picker_for: Option<InsertTarget>,
+    /// 发送面板打开目标（None = 关闭）。
+    pub(crate) sends_for: Option<u8>,
     /// 乐器插件选择器目标：乐器通道号（0 起）；None = 未打开。
     pub(crate) instrument_picker_for: Option<u16>,
     pub(crate) picker_filter: String,
@@ -83,11 +88,13 @@ impl Default for MixUiState {
         Self {
             smoothed: Vec::new(),
             smoothed_master: (0.0, 0.0),
+            smoothed_buses: std::collections::HashMap::new(),
             scanned: None,
             scan_errors: 0,
             scan_rx: None,
             scan_in_progress: false,
             picker_for: None,
+            sends_for: None,
             instrument_picker_for: None,
             picker_filter: String::new(),
             param_panel: None,
@@ -105,24 +112,46 @@ pub(crate) enum MixAction {
         params: MasterParams,
     },
     OpenPicker {
-        channel: Option<u8>,
+        target: InsertTarget,
     },
     AddInsert {
-        channel: Option<u8>,
+        target: InsertTarget,
         plugin: PluginEntry,
     },
     BypassInsert {
-        channel: Option<u8>,
+        target: InsertTarget,
         slot: usize,
         bypassed: bool,
     },
     ToggleGui {
-        channel: Option<u8>,
+        target: InsertTarget,
         slot: usize,
     },
     RemoveInsert {
-        channel: Option<u8>,
+        target: InsertTarget,
         slot: usize,
+    },
+    /// 新增一条总线（追加到末尾）。
+    AddBus,
+    /// 删除总线 `bus`（其 send 清理、更高索引前移）。
+    RemoveBus {
+        bus: u8,
+    },
+    /// 更新某总线的 strip 参数。
+    SetBusStrip {
+        bus: u8,
+        params: StripParams,
+    },
+    /// 打开某源通道的发送面板。
+    OpenSends {
+        channel: u8,
+    },
+    /// 更新某源通道对某总线的发送。
+    SetSend {
+        channel: u8,
+        bus: u8,
+        amount: f32,
+        pre_fader: bool,
     },
     /// 打开乐器插件选择器（channel = 乐器通道，0 起）。
     OpenInstrumentPicker {
@@ -139,7 +168,7 @@ pub(crate) enum MixAction {
     },
     /// 打开 insert 槽位的参数面板。
     OpenInsertParams {
-        channel: Option<u8>,
+        target: InsertTarget,
         slot: usize,
     },
     /// 打开乐器槽位的参数面板。
@@ -168,6 +197,36 @@ impl App {
         }
     }
 
+    /// 更新某总线的 strip 参数：写持久化层 + 推引擎（高频路径）。
+    pub(crate) fn apply_bus_strip(&mut self, idx: usize, bus: u8, params: StripParams) {
+        if let Some(slot) = self.workspace.documents[idx]
+            .mixer_mut()
+            .buses
+            .get_mut(bus as usize)
+        {
+            *slot = params;
+        }
+        if let Some(a) = &self.audio_state.handle {
+            a.handle
+                .send(yinhe_audio::AudioCommand::SetBusStrip { bus, params });
+        }
+    }
+
+    /// 全量同步总线配置（增删总线 / 改发送后推一次）。
+    pub(crate) fn sync_bus_config_to_engine(&mut self, idx: usize) {
+        let (buses, sends) = {
+            let mixer = self.workspace.documents[idx].mixer_mut();
+            mixer.ensure_len();
+            (mixer.buses.clone(), mixer.sends.clone())
+        };
+        if let Some(a) = &self.audio_state.handle {
+            a.handle.send(yinhe_audio::AudioCommand::SyncBusConfig {
+                buses: Box::new(buses),
+                sends: Box::new(sends),
+            });
+        }
+    }
+
     pub(crate) fn apply_master(&mut self, idx: usize, params: MasterParams) {
         self.workspace.documents[idx].mixer_mut().master = params;
         if let Some(audio) = &self.audio_state.handle {
@@ -187,6 +246,19 @@ impl App {
             for r in &mixer.channel_inserts[ch] {
                 let _ = rack.load_plugin(
                     Some(ch as u8),
+                    r.format,
+                    &r.plugin_path,
+                    &r.plugin_id,
+                    &r.name,
+                    r.state.as_deref(),
+                    r.bypassed,
+                );
+            }
+        }
+        for (b, chain) in mixer.bus_inserts.iter().enumerate() {
+            for r in chain {
+                let _ = rack.load_plugin(
+                    InsertTarget::Bus(b as u8),
                     r.format,
                     &r.plugin_path,
                     &r.plugin_id,
@@ -464,6 +536,34 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                                         );
                                     }
                                 }
+                                // 总线条（bus / return）。
+                                let bus_count = app.workspace.documents[idx].mixer.buses.len();
+                                if bus_count > 0 {
+                                    ui.separator();
+                                    for b in 0..bus_count {
+                                        let raw = app
+                                            .audio_state
+                                            .handle
+                                            .as_ref()
+                                            .map(|a| a.handle.bus_meter_read(b))
+                                            .unwrap_or((0.0, 0.0));
+                                        let key = format!("bus{b}");
+                                        let slot =
+                                            app.mix.smoothed_buses.entry(key).or_insert((0.0, 0.0));
+                                        slot.0 = raw.0.max(slot.0 - METER_FALLOFF_PER_SEC * dt);
+                                        slot.1 = raw.1.max(slot.1 - METER_FALLOFF_PER_SEC * dt);
+                                        let peak = *slot;
+                                        strip::bus_strip(
+                                            app,
+                                            ui,
+                                            idx,
+                                            b as u8,
+                                            peak,
+                                            strip_h,
+                                            &mut actions,
+                                        );
+                                    }
+                                }
                             });
                         });
                 },
@@ -540,27 +640,37 @@ pub(crate) fn show_global_overlays(app: &mut App, ctx: &egui::Context) {
     if let Some(ich) = app.mix.instrument_picker_for {
         strip::instrument_picker(app, ctx, ich, &mut actions);
     }
+    if let Some(ch) = app.mix.sends_for {
+        strip::send_popup(app, ctx, ch, &mut actions);
+    }
     for action in actions {
         apply_action(app, idx, action);
     }
     param_panel::show(app, ctx);
 }
 
+/// insert 目标的持久化链（越界/不存在返回 None）。
+fn insert_refs(
+    mixer: &mut yinhe_mixer::MixerParams,
+    target: InsertTarget,
+) -> Option<&mut Vec<yinhe_mixer::InsertRef>> {
+    match target {
+        InsertTarget::Channel(ch) => mixer.channel_inserts.get_mut(ch as usize),
+        InsertTarget::Bus(bus) => mixer.bus_inserts.get_mut(bus as usize),
+        InsertTarget::Master => Some(&mut mixer.master_inserts),
+    }
+}
+
 fn apply_action(app: &mut App, idx: usize, action: MixAction) {
     match action {
         MixAction::SetStrip { channel, params } => app.apply_strip(idx, channel, params),
         MixAction::SetMaster { params } => app.apply_master(idx, params),
-        MixAction::OpenPicker { channel } => {
-            app.mix.picker_for = Some(channel);
+        MixAction::OpenPicker { target } => {
+            app.mix.picker_for = Some(target);
             app.mix.picker_filter.clear();
         }
-        MixAction::AddInsert { channel, plugin } => {
-            {
-                let doc = &mut app.workspace.documents[idx];
-                let refs = match channel {
-                    Some(ch) => &mut doc.mixer_mut().channel_inserts[ch as usize],
-                    None => &mut doc.mixer_mut().master_inserts,
-                };
+        MixAction::AddInsert { target, plugin } => {
+            if let Some(refs) = insert_refs(app.workspace.documents[idx].mixer_mut(), target) {
                 refs.push(yinhe_mixer::InsertRef {
                     plugin_path: plugin.path.clone(),
                     plugin_id: plugin.id.clone(),
@@ -572,7 +682,7 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
             }
             let rack = app.mixer_rack_mut(idx);
             if let Err(e) = rack.load_plugin(
-                channel,
+                target,
                 plugin.format,
                 &plugin.path,
                 &plugin.id,
@@ -588,41 +698,70 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
             app.mix.picker_for = None;
         }
         MixAction::BypassInsert {
-            channel,
+            target,
             slot,
             bypassed,
         } => {
+            if let Some(refs) = insert_refs(app.workspace.documents[idx].mixer_mut(), target)
+                && let Some(r) = refs.get_mut(slot)
             {
-                let doc = &mut app.workspace.documents[idx];
-                let refs = match channel {
-                    Some(ch) => &mut doc.mixer_mut().channel_inserts[ch as usize],
-                    None => &mut doc.mixer_mut().master_inserts,
-                };
-                if let Some(r) = refs.get_mut(slot) {
-                    r.bypassed = bypassed;
-                }
+                r.bypassed = bypassed;
             }
-            app.mixer_rack_mut(idx).set_bypass(channel, slot, bypassed);
+            app.mixer_rack_mut(idx).set_bypass(target, slot, bypassed);
         }
-        MixAction::RemoveInsert { channel, slot } => {
+        MixAction::RemoveInsert { target, slot } => {
+            if let Some(refs) = insert_refs(app.workspace.documents[idx].mixer_mut(), target)
+                && slot < refs.len()
             {
-                let doc = &mut app.workspace.documents[idx];
-                let refs = match channel {
-                    Some(ch) => &mut doc.mixer_mut().channel_inserts[ch as usize],
-                    None => &mut doc.mixer_mut().master_inserts,
-                };
-                if slot < refs.len() {
-                    refs.remove(slot);
-                }
+                refs.remove(slot);
             }
             // 字段级借用分裂：audio_state 只读、mixer_racks 可变。
             let handle = app.audio_state.handle.as_ref().map(|a| &a.handle);
             if idx < app.mixer_racks.len() {
-                app.mixer_racks[idx].remove_slot(channel, slot, handle);
+                app.mixer_racks[idx].remove_slot(target, slot, handle);
             }
         }
-        MixAction::ToggleGui { channel, slot } => {
-            match app.mixer_rack_mut(idx).toggle_gui(channel, slot) {
+        MixAction::AddBus => {
+            app.workspace.documents[idx].mixer_mut().add_bus();
+            app.sync_bus_config_to_engine(idx);
+        }
+        MixAction::RemoveBus { bus } => {
+            app.workspace.documents[idx].mixer_mut().remove_bus(bus);
+            let handle = app.audio_state.handle.as_ref().map(|a| &a.handle);
+            if idx < app.mixer_racks.len() {
+                app.mixer_racks[idx].remove_bus_chain(bus, handle);
+            }
+            app.sync_bus_config_to_engine(idx);
+        }
+        MixAction::SetBusStrip { bus, params } => app.apply_bus_strip(idx, bus, params),
+        MixAction::SetSend {
+            channel,
+            bus,
+            amount,
+            pre_fader,
+        } => {
+            {
+                let mixer = app.workspace.documents[idx].mixer_mut();
+                if let Some(list) = mixer.sends.get_mut(channel as usize) {
+                    if let Some(send) = list.iter_mut().find(|s| s.bus == bus) {
+                        send.amount = amount;
+                        send.pre_fader = pre_fader;
+                    } else if amount > 0.0 {
+                        list.push(yinhe_mixer::SendParams {
+                            bus,
+                            amount,
+                            pre_fader,
+                        });
+                    }
+                    // 发送量为 0 的条目不再保留（避免持久化层堆积）。
+                    list.retain(|s| s.amount > 0.0);
+                }
+            }
+            app.sync_bus_config_to_engine(idx);
+        }
+        MixAction::OpenSends { channel } => app.mix.sends_for = Some(channel),
+        MixAction::ToggleGui { target, slot } => {
+            match app.mixer_rack_mut(idx).toggle_gui(target, slot) {
                 Ok(_) => {}
                 Err(e) => {
                     let msg = e.0.clone();
@@ -681,15 +820,15 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
                 rack.unload(channel, handle);
             }
         }
-        MixAction::OpenInsertParams { channel, slot } => {
+        MixAction::OpenInsertParams { target, slot } => {
             let panel = app
                 .mixer_racks
                 .get_mut(idx)
-                .and_then(|rack| rack.instance_mut(channel, slot))
+                .and_then(|rack| rack.instance_mut(target, slot))
                 .map(|instance| {
                     let title = instance.name().to_string();
                     ParamPanel::open(
-                        param_panel::ParamTarget::Insert { channel, slot },
+                        param_panel::ParamTarget::Insert { target, slot },
                         title,
                         instance,
                     )
