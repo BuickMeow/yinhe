@@ -78,7 +78,20 @@ pub(crate) enum PluginInstance {
         instance: Vst3PluginInstance,
         /// 显示名（VST3 实例自身不带 UI 名，持久化/扫描时记录）。
         name: String,
+        /// 参数重扫待面板刷新（poll_requests 检出后暂存；参数面板 take）。
+        rescan_pending: bool,
     },
+}
+
+/// 插件反向请求（管理线程每帧轮询；取出即清除）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PluginRequests {
+    /// 需要重新激活实例（restart / I/O 变化）：走两阶段回收 + `ensure_all_sent` 补发。
+    pub restart: bool,
+    /// 参数列表需要重扫（参数面板刷新）。
+    pub params_rescan: bool,
+    /// 延迟变化（CLAP 共享值已重查）：需通知引擎重算 PDC。
+    pub latency_changed: bool,
 }
 
 impl PluginInstance {
@@ -104,6 +117,7 @@ impl PluginInstance {
                 Ok(Self::Vst3 {
                     instance,
                     name: entry.name.clone(),
+                    rescan_pending: false,
                 })
             }
         }
@@ -200,11 +214,51 @@ impl PluginInstance {
         }
     }
 
-    /// 插件请求重扫参数（CLAP 有；VST3 参数列表静态，恒 false）。
+    /// 插件请求重扫参数（取出即清除；参数面板刷新用）。
     pub fn take_params_rescan(&mut self) -> bool {
         match self {
-            Self::Clap(inst) => inst.take_params_rescan(),
-            Self::Vst3 { .. } => false,
+            Self::Clap(inst) => inst.take_params_rescan_pending(),
+            Self::Vst3 { rescan_pending, .. } => std::mem::take(rescan_pending),
+        }
+    }
+
+    /// 轮询插件反向请求（restart/参数重扫/延迟变化），取出即清除。
+    /// 管理线程每帧调用；restart 由调用方走两阶段回收。
+    pub fn poll_requests(&mut self) -> PluginRequests {
+        match self {
+            Self::Clap(inst) => {
+                let (restart, _process, _callback, _flush) = inst.take_requests();
+                let latency_changed = inst.take_latency_changed();
+                if latency_changed {
+                    // 重查并写入共享值（渲染线程经 Arc 读到最新延迟）。
+                    inst.refresh_latency();
+                }
+                if inst.take_params_rescan() {
+                    inst.mark_params_rescan_pending();
+                }
+                PluginRequests {
+                    restart,
+                    params_rescan: inst.take_params_rescan_pending(),
+                    latency_changed,
+                }
+            }
+            Self::Vst3 {
+                instance,
+                rescan_pending,
+                ..
+            } => {
+                let flags = instance.take_restart_flags();
+                if flags & yinhe_vst3::restart_flags::NEEDS_PARAM_RESCAN != 0 {
+                    // 参数值/标题变化：重枚举参数（面板下一帧刷新）。
+                    instance.refresh_params();
+                    *rescan_pending = true;
+                }
+                PluginRequests {
+                    restart: flags & yinhe_vst3::restart_flags::NEEDS_RESTART != 0,
+                    params_rescan: *rescan_pending,
+                    latency_changed: flags & yinhe_vst3::restart_flags::LATENCY_CHANGED != 0,
+                }
+            }
         }
     }
 

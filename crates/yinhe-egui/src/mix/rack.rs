@@ -326,7 +326,7 @@ impl MixerRack {
                 inst.info().name.clone(),
                 inst.create_gui().map_err(|e| format!("{e}")),
             ),
-            Some(PluginInstance::Vst3 { instance, name }) => (
+            Some(PluginInstance::Vst3 { instance, name, .. }) => (
                 name.clone(),
                 instance.create_view().map_err(|e| format!("{e}")),
             ),
@@ -430,24 +430,31 @@ impl MixerRack {
         }
     }
 
-    /// 每帧轮询插件反向请求：restart 走两阶段回收（先 InsertRemove，
-    /// 退回后由 ensure_all_sent 重新激活补发）。
+    /// 每帧轮询插件反向请求（CLAP/VST3 统一）：
+    /// - restart / I/O 变化 → 走两阶段回收（先 InsertRemove，退回后由
+    ///   ensure_all_sent 重新激活补发）；
+    /// - 参数重扫 → 实例内暂存，参数面板刷新时消费；
+    /// - 延迟变化 → CLAP 在此重查共享值，然后通知引擎重算 PDC。
+    ///
+    /// 轮询不看 `sent`（未发送实例的 rescan/latency 也要消费，否则标志永久
+    /// 挂起）；restart 仅在 `sent` 时走回收（未发送的由 ensure_all_sent 激活）。
     pub fn poll_requests(&mut self, handle: Option<&AudioHandle>) {
         let mut restarts: Vec<(Option<u8>, usize)> = Vec::new();
+        let mut latency_changed = false;
         for (ch, chain) in self.channels.iter_mut() {
             for (slot, rt) in chain.iter_mut().enumerate() {
                 if rt.pending_remove {
                     continue;
                 }
                 Self::poll_gui(rt);
-                if !rt.sent {
-                    continue;
-                }
-                let Some(PluginInstance::Clap(instance)) = rt.instance.as_mut() else {
+                let Some(instance) = rt.instance.as_mut() else {
                     continue;
                 };
-                let (restart, _process, _callback, _flush) = instance.take_requests();
-                if restart {
+                let requests = instance.poll_requests();
+                if requests.latency_changed {
+                    latency_changed = true;
+                }
+                if requests.restart && rt.sent {
                     restarts.push((Some(*ch), slot));
                 }
             }
@@ -457,20 +464,23 @@ impl MixerRack {
                 continue;
             }
             Self::poll_gui(rt);
-            if !rt.sent {
-                continue;
-            }
-            let Some(PluginInstance::Clap(instance)) = rt.instance.as_mut() else {
+            let Some(instance) = rt.instance.as_mut() else {
                 continue;
             };
-            let (restart, _process, _callback, _flush) = instance.take_requests();
-            if restart {
+            let requests = instance.poll_requests();
+            if requests.latency_changed {
+                latency_changed = true;
+            }
+            if requests.restart && rt.sent {
                 restarts.push((None, slot));
             }
         }
         if let Some(h) = handle {
             for (channel, slot) in restarts {
                 h.send(AudioCommand::InsertRemove { channel, slot });
+            }
+            if latency_changed {
+                h.send(AudioCommand::RefreshLatency);
             }
         }
     }

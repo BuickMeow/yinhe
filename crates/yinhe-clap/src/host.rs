@@ -154,7 +154,7 @@ pub struct YinheMainThread<'a> {
     pub(crate) state_dirty: bool,
     /// 插件请求重扫参数列表。
     pub(crate) params_rescan_requested: bool,
-    /// 插件延迟变化（PDC 预留，第一期不消费）。
+    /// 插件延迟变化（管理线程轮询后重查并刷新引擎 PDC）。
     pub(crate) latency_changed: bool,
 }
 

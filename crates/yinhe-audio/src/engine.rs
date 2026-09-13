@@ -293,6 +293,7 @@ impl AudioEngine {
             AudioCommand::SetInstrument { channel, processor } => {
                 self.set_instrument(channel, processor)
             }
+            AudioCommand::RefreshLatency => self.refresh_latency(),
             // 预览命令由渲染器处理（独立预览合成器 + 渲染时钟），引擎层忽略。
             AudioCommand::PreviewNotes { .. } | AudioCommand::PreviewStop => {}
         }

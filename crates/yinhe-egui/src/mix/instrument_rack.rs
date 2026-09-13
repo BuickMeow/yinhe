@@ -189,6 +189,37 @@ impl InstrumentRack {
         }
     }
 
+    /// 每帧轮询乐器插件的反向请求（CLAP/VST3 统一）：
+    /// - restart / I/O 变化 → 送 `SetInstrument(None)` 收回处理器，退回后
+    ///   `on_returns` 置 `sent=false`，下一帧 `ensure_all_sent` 重新激活补发；
+    /// - 参数重扫 → 实例内暂存，参数面板刷新时消费；
+    /// - 延迟变化 → CLAP 在此重查共享值，然后通知引擎重算 PDC。
+    pub fn poll_requests(&mut self, handle: &AudioHandle) {
+        let mut restarts: Vec<u16> = Vec::new();
+        let mut latency_changed = false;
+        for rt in self.slots.iter_mut() {
+            let Some(instance) = rt.instance.as_mut() else {
+                continue;
+            };
+            let requests = instance.poll_requests();
+            if requests.latency_changed {
+                latency_changed = true;
+            }
+            if requests.restart && rt.sent {
+                restarts.push(rt.channel);
+            }
+        }
+        for channel in restarts {
+            handle.send(AudioCommand::SetInstrument {
+                channel,
+                processor: None,
+            });
+        }
+        if latency_changed {
+            handle.send(AudioCommand::RefreshLatency);
+        }
+    }
+
     /// 处理渲染线程退回的乐器处理器：先匹配 pending_return（移除/替换的旧实例），
     /// 再匹配当前槽位（引擎 teardown 回收），deactivate 并置 sent=false。
     ///

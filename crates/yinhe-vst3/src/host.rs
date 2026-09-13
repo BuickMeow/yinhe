@@ -7,8 +7,8 @@
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_void};
 use std::ptr;
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use vst3::Steinberg::Vst::{
     IAttributeList, IAttributeListTrait, IComponentHandler, IComponentHandlerTrait,
@@ -278,9 +278,42 @@ impl IMessageTrait for HostMessage {
     }
 }
 
+/// VST3 `restartComponent` 的 RestartFlags 位（`RestartFlags_` 子集）。
+pub mod restart_flags {
+    /// 组件需要重新加载（重扫参数、重建内部结构）。
+    pub const RELOAD_COMPONENT: i32 = 1 << 0;
+    /// 音频 I/O 布局变化（总线数/通道数）。
+    pub const IO_CHANGED: i32 = 1 << 1;
+    /// 参数**值**变化（不影响数量/名称）。
+    pub const PARAM_VALUES_CHANGED: i32 = 1 << 2;
+    /// 延迟变化（PDC 需重查）。
+    pub const LATENCY_CHANGED: i32 = 1 << 3;
+    /// 参数**标题/数量**变化（需重枚举参数）。
+    pub const PARAM_TITLES_CHANGED: i32 = 1 << 4;
+    /// 路由信息变化（多输出总线布局）。
+    pub const ROUTING_INFO_CHANGED: i32 = 1 << 9;
+    /// 需要重枚举参数的位（值变化/标题变化）。
+    pub const NEEDS_PARAM_RESCAN: i32 = PARAM_VALUES_CHANGED | PARAM_TITLES_CHANGED;
+    /// 需要重新激活实例的位（I/O 变化/组件重载）。
+    pub const NEEDS_RESTART: i32 = IO_CHANGED | RELOAD_COMPONENT;
+}
+
 /// 组件处理器（controller → host 通知）。
-#[derive(Default)]
-pub struct HostComponentHandler;
+///
+/// `restartComponent` 可能在插件任意线程（含音频线程）调用：flags 只做
+/// 原子累积（无锁、无分配），管理线程经共享 Arc 取出消费（取出即清除，
+/// 见 `Vst3PluginInstance::take_restart_flags`）。
+pub struct HostComponentHandler {
+    pending_restart: Arc<AtomicI32>,
+}
+
+impl Default for HostComponentHandler {
+    fn default() -> Self {
+        Self {
+            pending_restart: Arc::new(AtomicI32::new(0)),
+        }
+    }
+}
 
 impl Class for HostComponentHandler {
     type Interfaces = (IComponentHandler,);
@@ -299,7 +332,8 @@ impl IComponentHandlerTrait for HostComponentHandler {
         kResultOk
     }
 
-    unsafe fn restartComponent(&self, _flags: int32) -> tresult {
+    unsafe fn restartComponent(&self, flags: int32) -> tresult {
+        self.pending_restart.fetch_or(flags, Ordering::AcqRel);
         kResultOk
     }
 }
@@ -309,9 +343,14 @@ pub(crate) fn create_host_application() -> Option<ComPtr<IHostApplication>> {
     ComWrapper::new(HostApplication).to_com_ptr::<IHostApplication>()
 }
 
-/// 创建组件处理器对象并返回 COM 指针。
-pub(crate) fn create_component_handler() -> Option<ComPtr<IComponentHandler>> {
-    ComWrapper::new(HostComponentHandler).to_com_ptr::<IComponentHandler>()
+/// 创建组件处理器对象：返回 COM 指针（交给插件）+ 共享的 flags 句柄（宿主轮询）。
+pub(crate) fn create_component_handler() -> Option<(ComPtr<IComponentHandler>, Arc<AtomicI32>)> {
+    let flags = Arc::new(AtomicI32::new(0));
+    let handler = HostComponentHandler {
+        pending_restart: Arc::clone(&flags),
+    };
+    let ptr = ComWrapper::new(handler).to_com_ptr::<IComponentHandler>()?;
+    Some((ptr, flags))
 }
 
 /// 编辑器 frame（host 侧）：插件请求调整窗口尺寸的中转。
@@ -355,4 +394,41 @@ impl IPlugFrameTrait for HostPlugFrame {
 /// 创建编辑器 frame 对象。
 pub(crate) fn create_plug_frame() -> Option<ComWrapper<HostPlugFrame>> {
     Some(ComWrapper::new(HostPlugFrame::default()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restart_flags_accumulate_and_take() {
+        let handler = HostComponentHandler::default();
+        // 模拟插件线程连续两次请求（restartComponent 只做原子或）。
+        unsafe {
+            let _ =
+                IComponentHandlerTrait::restartComponent(&handler, restart_flags::LATENCY_CHANGED);
+            let _ = IComponentHandlerTrait::restartComponent(
+                &handler,
+                restart_flags::PARAM_TITLES_CHANGED,
+            );
+        }
+        let flags = handler.pending_restart.swap(0, Ordering::AcqRel);
+        assert_eq!(
+            flags,
+            restart_flags::LATENCY_CHANGED | restart_flags::PARAM_TITLES_CHANGED
+        );
+        // 取出即清除。
+        assert_eq!(handler.pending_restart.swap(0, Ordering::AcqRel), 0);
+    }
+
+    #[test]
+    fn restart_flag_groups_do_not_overlap() {
+        // 「重扫参数」与「重新激活」是两组互斥动作，位不可重叠。
+        assert_eq!(
+            restart_flags::NEEDS_PARAM_RESCAN & restart_flags::NEEDS_RESTART,
+            0
+        );
+        assert_ne!(restart_flags::NEEDS_PARAM_RESCAN, 0);
+        assert_ne!(restart_flags::NEEDS_RESTART, 0);
+    }
 }

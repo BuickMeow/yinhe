@@ -52,8 +52,8 @@ pub struct ClapProcessor {
     in_bufs: Vec<PortBuffers>,
     out_bufs: Vec<PortBuffers>,
     frames: usize,
-    /// 插件上报的延迟（采样数，activate 时查询；PDC 用）。
-    latency: u32,
+    /// 插件上报的延迟（采样数；实例侧写入，这里只读；PDC 用）。
+    latency: Arc<std::sync::atomic::AtomicU32>,
     /// UI 线程写入的参数变化；每块 drain 成 ParamValue 事件。
     param_queue: Arc<ParamQueue>,
     /// drain 暂存（保留容量，处理期间零分配）。
@@ -66,7 +66,7 @@ impl ClapProcessor {
         frames: usize,
         layout: &PortLayout,
         param_queue: Arc<ParamQueue>,
-        latency: u32,
+        latency: Arc<std::sync::atomic::AtomicU32>,
     ) -> Self {
         // with_capacity 第一个参数是**声道总数**（所有端口声道数之和）。
         // 给小了会让 clack 内部 Vec 重分配，其重分配后的指针修复路径有 bug
@@ -222,14 +222,9 @@ impl ClapProcessor {
         }
     }
 
-    /// 插件上报的延迟（采样数；activate 时查询、延迟变化时更新）。
+    /// 插件上报的延迟（采样数；实例侧在 activate/延迟变化时更新）。
     pub fn latency_samples(&self) -> u32 {
-        self.latency
-    }
-
-    /// 更新延迟值（插件 latency changed 通知后由管理线程重查）。
-    pub fn set_latency(&mut self, samples: u32) {
-        self.latency = samples;
+        self.latency.load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// 是否有待发参数变化（暂停 flush 前的快速检查）。

@@ -20,6 +20,7 @@ mod processor;
 mod stream;
 
 pub use factory::{FactoryClass, FactoryInfo};
+pub use host::restart_flags;
 pub use instance::{InstanceError, Vst3ParamInfo, Vst3PluginInstance};
 pub use loader::{LoadError, LoadedModule};
 pub use moduleinfo::{ModuleClassInfo, ModuleInfo, ModuleInfoError, read_moduleinfo};

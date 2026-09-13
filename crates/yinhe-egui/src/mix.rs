@@ -310,6 +310,7 @@ impl App {
             irack.on_returns(instrument_returned);
         }
         rack.poll_requests(Some(&audio.handle));
+        irack.poll_requests(&audio.handle);
         rack.ensure_all_sent(&audio.handle, audio.sample_rate);
         irack.ensure_all_sent(&audio.handle, audio.sample_rate);
     }

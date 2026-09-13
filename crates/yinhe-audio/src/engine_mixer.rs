@@ -145,4 +145,18 @@ impl AudioEngine {
     pub(crate) fn drain_instrument_returns(&mut self) -> Vec<(u16, Box<dyn InstrumentProcessor>)> {
         std::mem::take(&mut self.instrument_returns)
     }
+
+    /// 插件延迟变化：重新查询乐器延迟并重算 PDC 对齐（insert 链延迟由
+    /// `refresh_pdc` 内部向各处理器查询最新值）。
+    pub(crate) fn refresh_latency(&mut self) {
+        for dense in 0..self.instruments.len() {
+            let latency = self.instruments[dense]
+                .as_ref()
+                .map(|src| src.processor.latency_samples());
+            if let Some(latency) = latency {
+                self.mixer.set_channel_latency(dense, latency);
+            }
+        }
+        self.mixer.refresh_pdc();
+    }
 }

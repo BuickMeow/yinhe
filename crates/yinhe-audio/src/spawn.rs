@@ -141,6 +141,9 @@ pub enum AudioCommand {
         /// 处理器较大（含渲染缓冲），用 Box 避免枚举体积膨胀。
         processor: Option<Box<dyn InstrumentProcessor>>,
     },
+    /// 插件延迟变化（CLAP latency changed / VST3 kLatencyChanged）：
+    /// 重新查询各处理器延迟并重算 PDC 对齐。
+    RefreshLatency,
 }
 
 /// 单个预览音符的参数（tick 域，与编辑层一致；渲染线程转 sample 差喂预览引擎）。

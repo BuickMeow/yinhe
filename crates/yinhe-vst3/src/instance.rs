@@ -70,6 +70,8 @@ pub struct Vst3PluginInstance {
     component_cp: Option<ComPtr<IConnectionPoint>>,
     controller_cp: Option<ComPtr<IConnectionPoint>>,
     _handler: ComPtr<IComponentHandler>,
+    /// controller 的 restartComponent flags（共享原子；管理线程轮询消费）。
+    restart_flags: std::sync::Arc<std::sync::atomic::AtomicI32>,
     _host: ComPtr<IHostApplication>,
     _module: LoadedModule,
     /// 分离式 controller（与 component 不是同一 COM 对象；terminate 要分别调用）。
@@ -160,7 +162,7 @@ impl Vst3PluginInstance {
         }
 
         // 组件处理器：controller 的参数编辑/重启通知入口。
-        let handler = create_component_handler()
+        let (handler, restart_flags) = create_component_handler()
             .ok_or_else(|| InstanceError::Initialize("无法创建组件处理器对象".into()))?;
         let _ = unsafe { controller.setComponentHandler(handler.as_ptr()) };
 
@@ -172,6 +174,7 @@ impl Vst3PluginInstance {
             component_cp,
             controller_cp,
             _handler: handler,
+            restart_flags,
             _host: host,
             _module: module,
             separate_controller,
@@ -389,9 +392,20 @@ impl Vst3PluginInstance {
         Ok(processor)
     }
 
-    /// 参数列表（创建时枚举一次；插件 rescan 后需重建实例/重新枚举）。
+    /// 参数列表（创建时枚举；插件请求重扫后由 [`refresh_params`](Self::refresh_params) 更新）。
     pub fn params(&self) -> &[Vst3ParamInfo] {
         &self.params
+    }
+
+    /// 取出并清除累积的 restartComponent flags（0 = 无请求）。
+    pub fn take_restart_flags(&self) -> i32 {
+        self.restart_flags
+            .swap(0, std::sync::atomic::Ordering::AcqRel)
+    }
+
+    /// 重新枚举参数（插件请求参数值/标题变化后调用）。
+    pub fn refresh_params(&mut self) {
+        self.params = enumerate_params(&self.controller);
     }
 
     /// 读取参数当前归一化值（0..1）。

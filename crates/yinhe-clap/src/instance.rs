@@ -43,6 +43,10 @@ pub struct ClapPluginInstance {
     param_queue: Arc<ParamQueue>,
     /// 插件 GUI 已 create（浮动窗口模型；drop 前必须 destroy，否则插件进程内资源泄漏/崩溃）。
     gui_created: bool,
+    /// 插件延迟（采样数）：管理线程写入，[`ClapProcessor`]（渲染线程）经 Arc 读取。
+    latency: Arc<std::sync::atomic::AtomicU32>,
+    /// 参数重扫待刷新（管理线程 poll 检出后暂存；参数面板 take）。
+    rescan_pending: bool,
 }
 
 impl ClapPluginInstance {
@@ -68,6 +72,8 @@ impl ClapPluginInstance {
             info: info.clone(),
             param_queue: Arc::new(ParamQueue::new()),
             gui_created: false,
+            latency: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            rescan_pending: false,
         })
     }
 
@@ -170,14 +176,7 @@ impl ClapPluginInstance {
         // 会让按声明端口数读 audio_inputs[i] 的包装层越界（Element FX 实测崩）。
         let layout = self.query_port_layout();
         // 插件延迟（PDC 用）：activate 前查询；不支持扩展视为 0。
-        let latency = {
-            use clack_extensions::latency::PluginLatency;
-            let mut handle = self.instance.plugin_handle();
-            match handle.get_extension::<PluginLatency>() {
-                Some(ext) => ext.get(&mut handle),
-                None => 0,
-            }
-        };
+        self.refresh_latency();
         let stopped = self.instance.activate(
             |_, _| crate::host::YinheAudioProcessor,
             PluginAudioConfiguration {
@@ -191,7 +190,7 @@ impl ClapPluginInstance {
             max_frames as usize,
             &layout,
             Arc::clone(&self.param_queue),
-            latency,
+            Arc::clone(&self.latency),
         ))
     }
 
@@ -281,6 +280,37 @@ impl ClapPluginInstance {
             }
         }
         out
+    }
+
+    /// 暂存「参数重扫待面板刷新」标记（poll_requests 检出后调用）。
+    pub fn mark_params_rescan_pending(&mut self) {
+        self.rescan_pending = true;
+    }
+
+    /// 取出「参数重扫待面板刷新」标记，取出即清除。
+    pub fn take_params_rescan_pending(&mut self) -> bool {
+        std::mem::take(&mut self.rescan_pending)
+    }
+
+    /// 插件延迟变化通知，取出即清除（消费后应调用 [`refresh_latency`](Self::refresh_latency)）。
+    pub fn take_latency_changed(&mut self) -> bool {
+        self.instance.access_handler_mut(|main_thread| {
+            let changed = main_thread.latency_changed;
+            main_thread.latency_changed = false;
+            changed
+        })
+    }
+
+    /// 重新查询插件延迟并写入共享值（渲染线程经 Arc 读到最新值）。
+    pub fn refresh_latency(&mut self) {
+        use clack_extensions::latency::PluginLatency;
+        let mut handle = self.instance.plugin_handle();
+        let samples = match handle.get_extension::<PluginLatency>() {
+            Some(ext) => ext.get(&mut handle),
+            None => 0,
+        };
+        self.latency
+            .store(samples, std::sync::atomic::Ordering::Release);
     }
 
     /// 插件请求重扫参数列表（如 Kontakt 载入新音色后参数集合变化），取出即清除。
