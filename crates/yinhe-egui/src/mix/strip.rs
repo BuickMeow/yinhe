@@ -56,7 +56,13 @@ pub(crate) fn show_toolbar(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<M
         if ui.button(t!("mix.scan_plugins")).clicked() {
             actions.push(MixAction::RescanPlugins);
         }
-        if let Some(plugins) = &app.mix.scanned {
+        if app.mix.scan_in_progress {
+            ui.label(
+                egui::RichText::new(t!("mix.scanning"))
+                    .small()
+                    .color(crate::theme::text_secondary()),
+            );
+        } else if let Some(plugins) = &app.mix.scanned {
             let effects = plugins.iter().filter(|p| p.is_effect).count();
             ui.label(
                 egui::RichText::new(t!("mix.scan_status", count = effects))

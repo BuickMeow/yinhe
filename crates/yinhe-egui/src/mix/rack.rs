@@ -232,37 +232,41 @@ impl MixerRack {
         if !rt.gui_open {
             return;
         }
-        let SlotRuntime {
-            instance,
-            gui_open,
-            gui_window,
-            ..
-        } = rt;
-        // VST3 原生界面未实现（gui_open 恒 false）；只有 CLAP 走本流程。
-        let Some(PluginInstance::Clap(instance)) = instance.as_mut() else {
-            return;
-        };
-        // 插件侧主动断开（closed 回调）：host destroy 确认 + 释放窗口。
-        if instance.take_gui_closed() {
-            instance.on_gui_closed();
-            *gui_window = None;
-            *gui_open = false;
-            return;
-        }
-        if let Some(win) = gui_window.as_ref() {
-            // 用户点了宿主窗口的关闭按钮：窗口不可见 → 关闭插件 GUI。
-            if !win.is_visible() {
-                instance.close_gui();
-                *gui_window = None;
-                *gui_open = false;
-                return;
-            }
-        }
-        // 插件请求调整尺寸（如编辑器内部布局变化）。
-        if let Some((w, h)) = instance.take_gui_resize()
-            && let Some(win) = gui_window.as_ref()
+        // 用户点了宿主窗口的关闭按钮：关闭插件 GUI。
+        if let Some(win) = rt.gui_window.as_ref()
+            && !win.is_visible()
         {
-            win.set_content_size(w, h);
+            close_plugin_view(rt);
+            rt.gui_window = None;
+            rt.gui_open = false;
+            return;
+        }
+        match rt.instance.as_mut() {
+            Some(PluginInstance::Clap(instance)) => {
+                // 插件侧主动断开（closed 回调）：host destroy 确认 + 释放窗口。
+                if instance.take_gui_closed() {
+                    instance.on_gui_closed();
+                    rt.gui_window = None;
+                    rt.gui_open = false;
+                    return;
+                }
+                // 插件请求调整尺寸（如编辑器内部布局变化）。
+                if let Some((w, h)) = instance.take_gui_resize()
+                    && let Some(win) = rt.gui_window.as_ref()
+                {
+                    win.set_content_size(w, h);
+                }
+            }
+            Some(PluginInstance::Vst3 { instance, .. }) => {
+                // 插件请求调整尺寸：调窗口 + 回调 onSize（VST3 规范）。
+                if let Some((w, h)) = instance.take_view_resize() {
+                    if let Some(win) = rt.gui_window.as_ref() {
+                        win.set_content_size(w, h);
+                    }
+                    instance.notify_view_resize(w, h);
+                }
+            }
+            None => {}
         }
     }
 
@@ -294,7 +298,7 @@ impl MixerRack {
     }
 
     /// 打开/关闭插件原生界面（host 自建窗口 + 插件 view 嵌入）。
-    /// 返回切换后的打开状态。
+    /// CLAP / VST3 共用宿主 NSWindow。
     #[cfg(target_os = "macos")]
     pub fn toggle_gui(
         &mut self,
@@ -304,36 +308,54 @@ impl MixerRack {
         let Some(rt) = self.chain_mut(channel).get_mut(slot) else {
             return Ok(false);
         };
-        let Some(instance) = rt.instance.as_mut() else {
+        if rt.instance.is_none() {
             tracing::warn!("打开插件界面失败: 槽位无实例（插件未加载成功）");
             return Err(PluginLoadError("插件未加载成功，无法打开界面".into()));
-        };
-        // VST3 原生界面尚未实现（CLAP 走宿主 NSWindow 嵌入流程）。
-        let PluginInstance::Clap(instance) = instance else {
-            return Err(PluginLoadError("VST3 原生界面暂未实现".into()));
-        };
+        }
+        // 关闭：先让插件 view 脱离父 view，再释放窗口对象。
         if rt.gui_open {
-            // 先 close_gui（插件 view 脱离父 view），再释放窗口对象。
-            instance.close_gui();
+            close_plugin_view(rt);
             rt.gui_window = None;
             rt.gui_open = false;
             return Ok(false);
         }
-        let name = instance.info().name.clone();
-        let (w, h) = instance.create_gui().map_err(|e| {
-            tracing::warn!("插件界面 create_gui 失败 ({name}): {e}");
-            PluginLoadError(format!("{e}"))
+        // 打开：创建插件 view + 宿主窗口 + 嵌入。
+        let (name, size_result): (String, Result<(u32, u32), String>) = match rt.instance.as_mut() {
+            Some(PluginInstance::Clap(inst)) => (
+                inst.info().name.clone(),
+                inst.create_gui().map_err(|e| format!("{e}")),
+            ),
+            Some(PluginInstance::Vst3 { instance, name }) => (
+                name.clone(),
+                instance.create_view().map_err(|e| format!("{e}")),
+            ),
+            None => return Err(PluginLoadError("插件未加载成功，无法打开界面".into())),
+        };
+        let (w, h) = size_result.map_err(|e| {
+            tracing::warn!("插件界面创建失败 ({name}): {e}");
+            PluginLoadError(e)
         })?;
         tracing::info!("插件界面创建中: {name} {w}x{h}");
         let Some(win) = super::gui_window::PluginGuiWindow::new(&name, w, h) else {
-            instance.close_gui();
+            close_plugin_view(rt);
             tracing::warn!("插件窗口创建失败: {name}");
             return Err(PluginLoadError("创建插件窗口失败".into()));
         };
-        if let Err(e) = instance.attach_and_show_gui(win.view_ptr()) {
-            instance.close_gui();
+        let attach_result: Result<(), String> = match rt.instance.as_mut() {
+            Some(PluginInstance::Clap(inst)) => inst
+                .attach_and_show_gui(win.view_ptr())
+                .map_err(|e| format!("{e}")),
+            Some(PluginInstance::Vst3 { instance, .. }) => unsafe {
+                instance
+                    .attach_view(win.view_ptr())
+                    .map_err(|e| format!("{e}"))
+            },
+            None => Err("实例丢失".into()),
+        };
+        if let Err(e) = attach_result {
+            close_plugin_view(rt);
             tracing::warn!("插件界面嵌入失败 ({name}): {e}");
-            return Err(PluginLoadError(format!("{e}")));
+            return Err(PluginLoadError(e));
         }
         win.show();
         tracing::info!("插件界面已显示: {name}");
@@ -462,6 +484,16 @@ impl MixerRack {
             sync_chain(chain.iter_mut(), refs.iter_mut());
         }
         sync_chain(self.master.iter_mut(), mixer.master_inserts.iter_mut());
+    }
+}
+
+/// 关闭槽位当前插件的原生 view（CLAP/VST3 分派）。
+#[cfg(target_os = "macos")]
+fn close_plugin_view(rt: &mut SlotRuntime) {
+    match rt.instance.as_mut() {
+        Some(PluginInstance::Clap(inst)) => inst.close_gui(),
+        Some(PluginInstance::Vst3 { instance, .. }) => instance.close_view(),
+        None => {}
     }
 }
 

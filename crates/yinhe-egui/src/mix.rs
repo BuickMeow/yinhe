@@ -60,10 +60,14 @@ pub(crate) struct MixUiState {
     /// 各 dense 通道的滑动峰值（L, R），UI 侧衰减用。
     smoothed: Vec<(f32, f32)>,
     smoothed_master: (f32, f32),
-    /// 插件扫描结果（首次进入 MIX 或点「扫描」时填充）。
+    /// 插件扫描结果（后台线程填充；None = 尚未完成首次扫描）。
     pub(crate) scanned: Option<Vec<PluginEntry>>,
     /// 扫描中失败的包数量（诊断展示）。
     pub(crate) scan_errors: usize,
+    /// 后台扫描结果接收端（Some = 扫描进行中）。
+    pub(crate) scan_rx: Option<std::sync::mpsc::Receiver<ScanResult>>,
+    /// 后台扫描进行中（UI 状态展示用）。
+    pub(crate) scan_in_progress: bool,
     /// 插件选择器打开目标：Some(Some(ch)) = 通道 ch，Some(None) = master。
     pub(crate) picker_for: Option<Option<u8>>,
     /// 乐器插件选择器目标：乐器通道号（0 起）；None = 未打开。
@@ -80,6 +84,8 @@ impl Default for MixUiState {
             smoothed_master: (0.0, 0.0),
             scanned: None,
             scan_errors: 0,
+            scan_rx: None,
+            scan_in_progress: false,
             picker_for: None,
             instrument_picker_for: None,
             picker_filter: String::new(),
@@ -331,11 +337,6 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
     let Some(idx) = app.workspace.active_doc else {
         return;
     };
-
-    // 首次进入 MIX：扫描默认目录（进程内扫描，见 yinhe-clap scan 安全性说明）。
-    if app.mix.scanned.is_none() {
-        rescan(app);
-    }
 
     // 本帧的只读数据快照（Arc 克隆便宜；layout 与引擎同源，dense 映射一致）。
     let model = app.workspace.documents[idx].data.model.clone();
@@ -712,12 +713,64 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
                 app.mix.param_panel = Some(panel);
             }
         }
-        MixAction::RescanPlugins => rescan(app),
+        MixAction::RescanPlugins => start_plugin_scan(app),
     }
 }
 
-/// 扫描默认 CLAP + VST3 目录（进程内加载元数据；崩溃风险见各自 scan 文档）。
-fn rescan(app: &mut App) {
+/// 后台扫描结果。
+pub(crate) struct ScanResult {
+    pub plugins: Vec<PluginEntry>,
+    pub errors: usize,
+}
+
+/// 启动后台扫描（不阻塞 UI）；已有扫描进行中则忽略。
+/// 进程内加载插件元数据（崩溃风险见各自 scan 文档）。
+pub(crate) fn start_plugin_scan(app: &mut App) {
+    if app.mix.scan_in_progress {
+        return;
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let spawn_result = std::thread::Builder::new()
+        .name("plugin-scan".into())
+        .spawn(move || {
+            let (plugins, errors) = scan_all();
+            let _ = tx.send(ScanResult { plugins, errors });
+        });
+    match spawn_result {
+        Ok(_) => {
+            app.mix.scan_rx = Some(rx);
+            app.mix.scan_in_progress = true;
+            app.mix.scanned = None;
+            app.mix.scan_errors = 0;
+        }
+        Err(e) => {
+            tracing::warn!("启动插件扫描线程失败: {e}");
+        }
+    }
+}
+
+/// 每帧轮询后台扫描结果。
+pub(crate) fn poll_plugin_scan(app: &mut App) {
+    let Some(rx) = &app.mix.scan_rx else {
+        return;
+    };
+    match rx.try_recv() {
+        Ok(result) => {
+            app.mix.scanned = Some(result.plugins);
+            app.mix.scan_errors = result.errors;
+            app.mix.scan_rx = None;
+            app.mix.scan_in_progress = false;
+        }
+        Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+            app.mix.scan_rx = None;
+            app.mix.scan_in_progress = false;
+        }
+    }
+}
+
+/// 扫描默认 CLAP + VST3 目录（纯计算，后台线程调用）。
+fn scan_all() -> (Vec<PluginEntry>, usize) {
     let mut plugins: Vec<PluginEntry> = Vec::new();
     let mut errors = 0;
 
@@ -766,6 +819,5 @@ fn rescan(app: &mut App) {
     }
 
     plugins.sort_by(|a, b| a.name.cmp(&b.name));
-    app.mix.scanned = Some(plugins);
-    app.mix.scan_errors = errors;
+    (plugins, errors)
 }

@@ -23,10 +23,11 @@ use vst3::Steinberg::Vst::{
     SymbolicSampleSizes_::kSample32,
 };
 use vst3::Steinberg::{
-    FUnknown, IBStream, IPluginBaseTrait, IPluginFactory, IPluginFactoryTrait, TUID,
-    kNotImplemented, kResultOk,
+    FUnknown, IBStream, IPlugFrame, IPlugView, IPlugViewContentScaleSupport,
+    IPlugViewContentScaleSupportTrait, IPlugViewTrait, IPluginBaseTrait, IPluginFactory,
+    IPluginFactoryTrait, TUID, ViewRect, kNotImplemented, kPlatformTypeNSView, kResultOk,
 };
-use vst3::{ComPtr, ComRef, Interface};
+use vst3::{ComPtr, ComRef, ComWrapper, Interface};
 
 use yinhe_mixer::ParamQueue;
 
@@ -79,6 +80,15 @@ pub struct Vst3PluginInstance {
     param_queue: Arc<ParamQueue>,
     /// 是否已音频激活（未激活时 getState 有崩溃风险——实测 Serum 2）。
     activated: std::sync::atomic::AtomicBool,
+    // ── 编辑器（原生 GUI）──
+    /// 插件编辑器视图（createView 产出，drop 前必须 close_view）。
+    view: Option<ComPtr<IPlugView>>,
+    /// host 侧 frame（持有引用计数）。
+    plug_frame: Option<ComWrapper<crate::host::HostPlugFrame>>,
+    /// frame 的接口指针（setFrame 用）。
+    frame_ptr: Option<ComPtr<IPlugFrame>>,
+    /// 是否已嵌入宿主 view（attached 状态）。
+    gui_attached: bool,
 }
 
 impl Vst3PluginInstance {
@@ -169,6 +179,10 @@ impl Vst3PluginInstance {
             class_id: class_id.to_string(),
             param_queue: Arc::new(ParamQueue::new()),
             activated: std::sync::atomic::AtomicBool::new(false),
+            view: None,
+            plug_frame: None,
+            frame_ptr: None,
+            gui_attached: false,
         })
     }
 
@@ -184,6 +198,119 @@ impl Vst3PluginInstance {
     /// 是否已音频激活（激活前 getState 有崩溃风险，保存状态前必须检查）。
     pub fn is_activated(&self) -> bool {
         self.activated.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    // ── 原生 GUI（macOS：NSView 嵌入；与 CLAP 共用宿主 NSWindow）──
+
+    /// 创建编辑器视图（幂等）并返回首选尺寸。
+    pub fn create_view(&mut self) -> Result<(u32, u32), InstanceError> {
+        if self.view.is_none() {
+            // 先用 "editor"；部分插件只提供默认视图（空名）。
+            let mut view_ptr = unsafe { self.controller.createView(c"editor".as_ptr()) };
+            if view_ptr.is_null() {
+                view_ptr = unsafe { self.controller.createView(c"".as_ptr()) };
+            }
+            let Some(view) = (unsafe { ComPtr::from_raw(view_ptr) }) else {
+                return Err(InstanceError::Initialize(
+                    "插件没有编辑器（createView 返回空）".into(),
+                ));
+            };
+            let r = unsafe { view.isPlatformTypeSupported(kPlatformTypeNSView) };
+            if r != kResultOk {
+                return Err(InstanceError::Initialize(
+                    "插件编辑器不支持 NSView 嵌入".into(),
+                ));
+            }
+            let frame = crate::host::create_plug_frame()
+                .ok_or_else(|| InstanceError::Initialize("创建 plug frame 失败".into()))?;
+            let frame_ptr = frame
+                .to_com_ptr::<IPlugFrame>()
+                .ok_or_else(|| InstanceError::Initialize("plug frame 接口查询失败".into()))?;
+            unsafe {
+                let _ = view.setFrame(frame_ptr.as_ptr());
+            }
+            // Retina 缩放：Serum 等插件在 attached 前依赖已设置的 scale factor
+            //（接口可选；不实现则忽略）。
+            if let Some(scale) = view.cast::<IPlugViewContentScaleSupport>() {
+                let _ = unsafe { scale.setContentScaleFactor(2.0) };
+            }
+            self.view = Some(view);
+            self.plug_frame = Some(frame);
+            self.frame_ptr = Some(frame_ptr);
+        }
+        let Some(view) = &self.view else {
+            return Err(InstanceError::Initialize("编辑器创建失败".into()));
+        };
+        let mut rect: ViewRect = unsafe { std::mem::zeroed() };
+        let r = unsafe { view.getSize(&mut rect) };
+        if r != kResultOk {
+            return Err(InstanceError::Initialize(format!(
+                "获取编辑器尺寸失败（{r:#x}）"
+            )));
+        }
+        Ok((
+            (rect.right - rect.left).max(0) as u32,
+            (rect.bottom - rect.top).max(0) as u32,
+        ))
+    }
+
+    /// 把编辑器嵌入宿主 view（macOS: NSView 指针）。
+    ///
+    /// # Safety
+    /// `parent` 必须是有效的、生命周期覆盖编辑器关闭时机的平台窗口句柄
+    /// （macOS NSView；由调用方保证存活）。
+    pub unsafe fn attach_view(
+        &mut self,
+        parent: *mut std::ffi::c_void,
+    ) -> Result<(), InstanceError> {
+        let Some(view) = &self.view else {
+            return Err(InstanceError::Initialize("编辑器未创建".into()));
+        };
+        let r = unsafe { view.attached(parent, kPlatformTypeNSView) };
+        if r != kResultOk {
+            return Err(InstanceError::Initialize(format!(
+                "编辑器嵌入失败（{r:#x}）"
+            )));
+        }
+        self.gui_attached = true;
+        Ok(())
+    }
+
+    /// 关闭并销毁编辑器（重复调用幂等）。
+    pub fn close_view(&mut self) {
+        if let Some(view) = self.view.take() {
+            unsafe {
+                if self.gui_attached {
+                    let _ = view.removed();
+                    let _ = view.attached(std::ptr::null_mut(), kPlatformTypeNSView);
+                }
+                let _ = view.setFrame(std::ptr::null_mut());
+            }
+            self.gui_attached = false;
+        }
+        self.frame_ptr = None;
+        self.plug_frame = None;
+    }
+
+    /// 插件请求的窗口尺寸（取出即清除）。
+    pub fn take_view_resize(&self) -> Option<(u32, u32)> {
+        self.plug_frame.as_ref().and_then(|f| f.take_resize())
+    }
+
+    /// 宿主窗口调整后通知插件（VST3 规范要求）。
+    pub fn notify_view_resize(&self, width: u32, height: u32) {
+        let Some(view) = &self.view else {
+            return;
+        };
+        let mut rect = ViewRect {
+            left: 0,
+            top: 0,
+            right: width as i32,
+            bottom: height as i32,
+        };
+        unsafe {
+            let _ = view.onSize(&mut rect);
+        }
     }
 
     /// 激活音频并产出渲染线程处理器。
@@ -256,6 +383,9 @@ impl Vst3PluginInstance {
         .ok_or_else(|| InstanceError::Initialize("音频缓冲/宿主对象构造失败".into()))?;
         self.activated
             .store(true, std::sync::atomic::Ordering::Release);
+        // 激活后组件状态才可读（Serum 等未激活 getState 失败）：重新同步给 controller，
+        // 编辑器与参数显示依赖它。
+        sync_component_state(&self.component, &self.controller);
         Ok(processor)
     }
 
@@ -373,6 +503,8 @@ fn split_state(bytes: &[u8]) -> Option<(&[u8], &[u8])> {
 
 impl Drop for Vst3PluginInstance {
     fn drop(&mut self) {
+        // GUI 必须先于 controller/component 释放（插件 view 引用控制器/组件）。
+        self.close_view();
         unsafe {
             if let (Some(ccp), Some(kcp)) = (&self.component_cp, &self.controller_cp) {
                 let _ = ccp.disconnect(kcp.as_ptr());
@@ -396,7 +528,9 @@ fn sync_component_state(component: &ComPtr<IComponent>, controller: &ComPtr<IEdi
     unsafe {
         let r = component.getState(stream_ptr.as_ptr());
         if r != kResultOk {
-            tracing::warn!("component.getState 失败（{r:#x}）");
+            // 未激活时部分插件（Element/Serum）getState 返回失败：正常现象，
+            // 参数列表通常不依赖它；激活后如需状态同步由 save_state 处理。
+            tracing::debug!("component.getState 失败（{r:#x}，未激活时常见）");
             return;
         }
     }
@@ -404,7 +538,7 @@ fn sync_component_state(component: &ComPtr<IComponent>, controller: &ComPtr<IEdi
     unsafe {
         let r = controller.setComponentState(stream_ptr.as_ptr());
         if r != kResultOk {
-            tracing::warn!("controller.setComponentState 失败（{r:#x}）");
+            tracing::debug!("controller.setComponentState 失败（{r:#x}）");
         }
     }
 }

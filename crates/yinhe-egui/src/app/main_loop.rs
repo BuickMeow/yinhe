@@ -690,6 +690,12 @@ impl eframe::App for App {
             }
         }
 
+        // ── 插件扫描（后台线程；首次启动、每帧轮询结果）──
+        if self.mix.scanned.is_none() && !self.mix.scan_in_progress {
+            crate::mix::start_plugin_scan(self);
+        }
+        crate::mix::poll_plugin_scan(self);
+
         // ── Bottom mode bar ──
         mode_bar::show(
             ui,
