@@ -7588,6 +7588,7 @@ version = "0.1.0"
 dependencies = [
  "clack-extensions",
  "clack-host",
+ "objc2 0.6.4",
  "thiserror 2.0.18",
  "tracing",
  "yinhe-mixer",

@@ -138,6 +138,7 @@ pub fn show(
     ui: &mut egui::Ui,
     view_mode: &mut ViewMode,
     show_pianoroll_in_arrange: &mut bool,
+    show_bottom_dock: &mut bool,
     right_tab: &mut Option<RightTab>,
     cpu_usage: f32,
     mem_mb: f64,
@@ -199,6 +200,28 @@ pub fn show(
                     }
                     if piano_resp.hovered() {
                         hovered_hint = Some(t!("hint.pr_toggle").to_string());
+                    }
+                }
+
+                // ── Bottom dock toggle（三视图通用设备栏）──
+                {
+                    ui.add_space(6.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+
+                    let dock_icon = egui_material_icons::icons::ICON_DOCK_TO_RIGHT;
+                    let dock_resp = crate::widgets::hover::hover_button(
+                        ui,
+                        dock_icon.codepoint,
+                        egui::FontId::new(crate::theme::ICON_FONT, dock_icon.font_family()),
+                        crate::theme::mode_bar_text(),
+                        *show_bottom_dock,
+                    );
+                    if dock_resp.clicked() {
+                        *show_bottom_dock = !*show_bottom_dock;
+                    }
+                    if dock_resp.hovered() {
+                        hovered_hint = Some(t!("hint.dock_toggle").to_string());
                     }
                 }
 

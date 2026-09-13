@@ -110,6 +110,16 @@ pub struct App {
     pub(crate) active_tool: crate::widgets::tools_panel::Tool,
     pub(crate) show_pianoroll_in_arrange: bool,
 
+    // ── 三视图通用底部设备栏 ──
+    /// 是否展开（mode_bar 的 dock 按钮切换，持久化到 LayoutSettings）。
+    pub(crate) show_bottom_dock: bool,
+    /// dock 高度（px，拖拽调整后持久化）。
+    pub(crate) bottom_dock_height: f32,
+    /// dock 参数区当前选中的设备（不持久化）。
+    pub(crate) dock_selected: Option<crate::chrome::dock_bar::DockDevice>,
+    /// dock 上次显示的音轨（切换轨道时重置设备选中）。
+    pub(crate) dock_track: Option<u16>,
+
     /// Anchor for shift-click range selection in the track panel.
     /// Set on every non-shift click; consumed on shift-click.
     pub(crate) track_selection_anchor: Option<u16>,
@@ -359,6 +369,10 @@ impl App {
 
             view_mode: ViewMode::Arrange,
             show_pianoroll_in_arrange: audio_settings.layout.show_pianoroll_in_arrange,
+            show_bottom_dock: audio_settings.layout.show_bottom_dock,
+            bottom_dock_height: audio_settings.layout.bottom_dock_height,
+            dock_selected: None,
+            dock_track: None,
             track_selection_anchor: None,
 
             right_panel_width: audio_settings.layout.right_panel_width,

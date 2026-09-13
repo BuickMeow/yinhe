@@ -695,6 +695,7 @@ impl eframe::App for App {
             ui,
             &mut self.view_mode,
             &mut self.show_pianoroll_in_arrange,
+            &mut self.show_bottom_dock,
             &mut self.right_tab,
             self.sys_monitor.cpu_usage,
             mem_mb,
@@ -707,6 +708,13 @@ impl eframe::App for App {
         if self.show_pianoroll_in_arrange != self.audio_settings.layout.show_pianoroll_in_arrange {
             self.layout_needs_save = true;
         }
+        if self.show_bottom_dock != self.audio_settings.layout.show_bottom_dock {
+            self.layout_needs_save = true;
+        }
+
+        // ── Bottom device dock（三视图通用；Panel::bottom 自动扣减可用区）──
+        crate::chrome::dock_bar::show(self, ui);
+
         // 通知区 = transport bar 下沿到底栏之上的中央内容区：
         // 上裁剪线由 transport bar 掩护、下裁剪线贴底栏，与底栏对称；
         // 列表不遮挡标签页栏/走带栏的操作区。
@@ -716,6 +724,7 @@ impl eframe::App for App {
         let layout = self.compute_layout(ui);
         self.show_main_content(ui, &layout);
         self.show_panels_and_overlays(ui, &layout);
+        crate::mix::show_global_overlays(self, ui.ctx());
         self.show_dialogs(ui);
         self.show_unsaved_dialog(ui);
 

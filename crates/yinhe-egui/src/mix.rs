@@ -497,22 +497,10 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
         },
     );
 
-    // 插件选择器（窗口）。
-    if let Some(target) = app.mix.picker_for {
-        strip::plugin_picker(app, ui.ctx(), target, &mut actions);
-    }
-    // 乐器插件选择器（窗口）。
-    if let Some(ich) = app.mix.instrument_picker_for {
-        strip::instrument_picker(app, ui.ctx(), ich, &mut actions);
-    }
-
     // 统一应用本帧动作。
     for action in actions {
         apply_action(app, idx, action);
     }
-
-    // 插件参数面板（浮窗；动作应用后渲染，打开当帧即可见）。
-    param_panel::show(app, ui.ctx());
 
     // 电平表动画：播放中或衰减未归零时保持约 30fps 重绘。
     let any_level = app.mix.smoothed.iter().any(|s| s.0 > 0.001 || s.1 > 0.001)
@@ -527,6 +515,27 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(33));
     }
+}
+
+/// 全局浮层：插件选择器 + 参数面板。
+///
+/// 从 MIX 视图的 `show` 里拆出（三视图通用：底部设备栏在 AR/EDIT 下也能打开
+/// 选择器与参数面板），由 main_loop 的 overlay 阶段统一调用。
+pub(crate) fn show_global_overlays(app: &mut App, ctx: &egui::Context) {
+    let Some(idx) = app.workspace.active_doc else {
+        return;
+    };
+    let mut actions: Vec<MixAction> = Vec::new();
+    if let Some(target) = app.mix.picker_for {
+        strip::plugin_picker(app, ctx, target, &mut actions);
+    }
+    if let Some(ich) = app.mix.instrument_picker_for {
+        strip::instrument_picker(app, ctx, ich, &mut actions);
+    }
+    for action in actions {
+        apply_action(app, idx, action);
+    }
+    param_panel::show(app, ctx);
 }
 
 fn apply_action(app: &mut App, idx: usize, action: MixAction) {

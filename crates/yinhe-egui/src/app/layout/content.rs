@@ -974,6 +974,8 @@ impl App {
         l.arr_split = self.arr_split;
         l.transport_panel_width = self.transport_panel_width;
         l.show_pianoroll_in_arrange = self.show_pianoroll_in_arrange;
+        l.show_bottom_dock = self.show_bottom_dock;
+        l.bottom_dock_height = self.bottom_dock_height;
         if self.layout_needs_save {
             self.audio_settings.save();
             self.layout_needs_save = false;
