@@ -771,7 +771,11 @@ impl CullState {
             });
             pending.push((key, done));
         }
-        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        // 等待全部回读完成。device lost 时这里会返回错误：仅告警并继续，
+        // 未完成的回读在下方按 done=false 跳过（不阻塞主线程）。
+        if let Err(e) = device.poll(wgpu::PollType::wait_indefinitely()) {
+            tracing::warn!("[cull] instance readback poll failed: {e}");
+        }
 
         for (key, done) in pending {
             if !done.load(std::sync::atomic::Ordering::SeqCst) {

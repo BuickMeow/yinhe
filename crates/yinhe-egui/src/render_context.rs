@@ -1,6 +1,34 @@
 use eframe::egui;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
+
+/// 全局 device-lost 标志：同一 device 只注册一次回调，所有 `RenderContext`
+/// 共享同一个 `Arc<AtomicBool>`。
+///
+/// `wgpu::Device::set_device_lost_callback` 是替换式 API，若每个 RenderContext
+/// 各注册一次，后创建者（如自动化面板）会覆盖先注册的回调，导致主视口再也
+/// 检测不到设备丢失。这里用进程级 `OnceLock` 保证只注册一次、全员可见。
+static DEVICE_LOST: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+
+/// 查询全局 device-lost 标志（尚未注册回调时恒为 false）。
+pub(crate) fn device_lost_global() -> bool {
+    DEVICE_LOST.get().is_some_and(|f| f.load(Ordering::Relaxed))
+}
+
+/// 取得（首次调用时创建并注册回调）共享的 device-lost 标志。
+fn shared_device_lost(device: &wgpu::Device) -> Arc<AtomicBool> {
+    DEVICE_LOST
+        .get_or_init(|| {
+            let flag = Arc::new(AtomicBool::new(false));
+            let f = Arc::clone(&flag);
+            device.set_device_lost_callback(move |reason, msg| {
+                tracing::error!("wgpu device lost: {reason:?} — {msg}");
+                f.store(true, Ordering::Relaxed);
+            });
+            flag
+        })
+        .clone()
+}
 
 /// Calculate the byte size of a 2D texture with the given format and dimensions.
 fn texture_byte_size(format: wgpu::TextureFormat, width: u32, height: u32, samples: u32) -> u64 {
@@ -85,16 +113,8 @@ impl RenderContext {
             tracing::error!("wgpu uncaptured error: {err}");
         }));
 
-        // Register a device-lost callback so we can skip GPU operations if the
-        // device is lost (e.g. after a failed texture creation during resize).
-        let device_lost = Arc::new(AtomicBool::new(false));
-        {
-            let flag = Arc::clone(&device_lost);
-            device.set_device_lost_callback(move |reason, msg| {
-                tracing::error!("wgpu device lost: {reason:?} — {msg}");
-                flag.store(true, Ordering::Relaxed);
-            });
-        }
+        // 共享的 device-lost 回调（同一 device 只注册一次，见 `DEVICE_LOST`）。
+        let device_lost = shared_device_lost(device);
 
         let (texture, view, texture_id, texture_size_bytes) = Self::create_target(
             device,
@@ -130,14 +150,8 @@ impl RenderContext {
         let device = &wgpu_state.device;
         let format = wgpu_state.target_format;
 
-        let device_lost = Arc::new(AtomicBool::new(false));
-        {
-            let flag = Arc::clone(&device_lost);
-            device.set_device_lost_callback(move |reason, msg| {
-                tracing::error!("wgpu device lost: {reason:?} — {msg}");
-                flag.store(true, Ordering::Relaxed);
-            });
-        }
+        // 共享的 device-lost 回调（同一 device 只注册一次，见 `DEVICE_LOST`）。
+        let device_lost = shared_device_lost(device);
 
         let (texture, view, texture_id, texture_size_bytes) = Self::create_target(
             device,
@@ -288,19 +302,6 @@ impl RenderContext {
 
     pub fn target_format(&self) -> wgpu::TextureFormat {
         self.wgpu_state.target_format
-    }
-
-    /// 查询 GPU device 是否已丢失（驱动 TDR、热拔显示器、显存耗尽等）。
-    ///
-    /// 一旦置位就不会清零：当前没有重建 device 的路径，UI 应在每帧检测到
-    /// `true` 时弹出"需要重启"对话框（见 `dialogs::gpu_device_lost`）。
-    ///
-    /// 注意：`wgpu::Device::set_device_lost_callback` 会替换前一个回调，
-    /// 同一个 `wgpu_state.device` 上后注册的 RenderContext 会"抢"掉先注册的。
-    /// 因此实际使用时通常需要 OR 多个 RenderContext 的结果，或者让
-    /// `RenderContext::new` / `from_render_state` 共享同一个 `Arc<AtomicBool>`。
-    pub fn device_lost(&self) -> bool {
-        self.device_lost.load(Ordering::Relaxed)
     }
 
     /// Query the underlying Metal driver's current allocated size (macOS only).

@@ -8,11 +8,10 @@ impl App {
     pub(in crate::app) fn show_dialogs(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
 
-        // ── GPU device-lost 重启提示 ──
-        // 任一 RenderContext 报告 device lost 都触发：同一 device 上后注册的回调
-        // 会替换先注册的，所以需要 OR 多个 RenderContext 的结果。详见
-        // `RenderContext::device_lost` 的文档。GPU device lost 不可恢复，只能退出。
-        let device_lost = self.render_ctx.device_lost() || self.arr_render_ctx.device_lost();
+        // ── GPU device-lost 处理 ──
+        // 全局标志：所有 RenderContext（含自动化面板）共享同一回调，
+        // 不再依赖 OR 多个实例的结果。见 `render_context::device_lost_global`。
+        let device_lost = crate::render_context::device_lost_global();
 
         // ── spawn 失败检测 ──
         // rebuild_audio_if_needed 里 spawn_cpal_audio 失败时设置 spawn_error。
