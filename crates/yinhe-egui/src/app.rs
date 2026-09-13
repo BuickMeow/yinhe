@@ -117,7 +117,9 @@ pub struct App {
     pub(crate) bottom_dock_height: f32,
     /// dock 参数区当前选中的设备（不持久化）。
     pub(crate) dock_selected: Option<crate::chrome::dock_bar::DockDevice>,
-    /// dock 上次显示的音轨（切换轨道时重置设备选中）。
+    /// dock 当前显示的源通道（Studio One 风格按通道组织；不持久化）。
+    pub(crate) dock_channel: Option<u8>,
+    /// dock 上次跟随的选中轨（切换轨道时 dock 通道跟随）。
     pub(crate) dock_track: Option<u16>,
 
     /// Anchor for shift-click range selection in the track panel.
@@ -372,6 +374,7 @@ impl App {
             show_bottom_dock: audio_settings.layout.show_bottom_dock,
             bottom_dock_height: audio_settings.layout.bottom_dock_height,
             dock_selected: None,
+            dock_channel: None,
             dock_track: None,
             track_selection_anchor: None,
 

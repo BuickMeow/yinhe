@@ -790,7 +790,7 @@ settings.notification.collapse_desc: "How long finished notifications with no ac
 settings.notification.action_collapse_desc: "How long notifications with action buttons or needing attention (e.g. export done, failures) stay floating"
 settings.notification.enabled_desc: "When off, no notifications are shown and new ones are not recorded to history; existing history is kept"
 hint.dock_toggle: "Show/hide device dock"
-dock.select_track: "Select a track to show its device chain"
+dock.select_channel: "Select a track or channel to show its device chain"
 dock.builtin_synth: "Built-in synth"
 dock.instrument_plugin: "Instrument plugin"
 dock.effect: "Effect"

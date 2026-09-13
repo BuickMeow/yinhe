@@ -74,77 +74,136 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui) {
 
 /// 设备链 + 参数区。
 fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
-    // ── 选中轨 ──
-    let track_ti = {
+    // ── 通道选择（Studio One 风格：设备链按源通道组织）──
+    let selected_track = {
         let doc = &app.workspace.documents[idx];
         doc.edit.track_selected.iter().min().copied()
     };
-    let Some(track_ti) = track_ti else {
+    if selected_track != app.dock_track {
+        // 切换选中轨：dock 跟随该轨所在通道，并重置设备选中。
+        app.dock_track = selected_track;
+        if let Some(ch) = selected_track
+            .and_then(|ti| {
+                app.workspace.documents[idx]
+                    .data
+                    .model
+                    .tracks
+                    .get(ti as usize)
+            })
+            .map(|t| t.global_channel())
+        {
+            app.dock_channel = Some(ch);
+            app.dock_selected = None;
+        }
+    }
+    let Some(channel) = app.dock_channel else {
         ui.centered_and_justified(|ui| {
             ui.label(
-                egui::RichText::new(t!("dock.select_track"))
+                egui::RichText::new(t!("dock.select_channel"))
                     .color(crate::theme::text_muted())
                     .size(crate::theme::SMALL_FONT),
             );
         });
         return;
     };
-    if track_ti as usize >= app.workspace.documents[idx].data.model.tracks.len() {
-        return;
-    }
-    // 切换音轨：重置设备选中。
-    if app.dock_track != Some(track_ti) {
-        app.dock_track = Some(track_ti);
-        app.dock_selected = None;
-    }
 
     // ── 收集链数据（后续 UI 不再借 workspace）──
-    let (track_name, is_instrument_track, instrument_channel, channel) = {
-        let track = &app.workspace.documents[idx].data.model.tracks[track_ti as usize];
-        (
-            track.name.clone(),
-            track.kind == TrackKind::Instrument,
-            track.instrument_channel,
-            track.global_channel(),
-        )
-    };
-    let instrument_plugin: Option<String> = if is_instrument_track {
-        instrument_channel.and_then(|ich| {
-            app.workspace.documents[idx]
-                .mixer
-                .instruments
-                .get(ich as usize)
-                .and_then(|o| o.as_ref())
-                .map(|r| r.name.clone())
-        })
-    } else {
-        None
-    };
+    let model = app.workspace.documents[idx].data.model.clone();
+    // 该通道上的乐器轨（乐器插件挂在 instrument_channel 上）。
+    let instrument_channel: Option<u16> = model
+        .tracks
+        .iter()
+        .find(|t| t.kind == TrackKind::Instrument && t.global_channel() == channel)
+        .and_then(|t| t.instrument_channel);
+    let instrument_plugin: Option<String> = instrument_channel.and_then(|ich| {
+        app.workspace.documents[idx]
+            .mixer
+            .instruments
+            .get(ich as usize)
+            .and_then(|o| o.as_ref())
+            .map(|r| r.name.clone())
+    });
     let inserts: Vec<(String, bool)> = app.workspace.documents[idx].mixer.channel_inserts
         [channel as usize]
         .iter()
         .map(|r| (r.name.clone(), r.bypassed))
         .collect();
-    // 已有自动化的 target（用于参数区标记/禁用「显示自动化」）。
-    let existing_lanes: Vec<AutomationTarget> = app.workspace.documents[idx].data.model.tracks
-        [track_ti as usize]
-        .automation_lanes
+    // lane 归属轨：该通道上的乐器轨优先，否则该通道第一条轨
+    //（xsynth 事件本就按通道走，多条轨共享时 lane 只挂一条）。
+    let lane_track_ti: usize = model
+        .tracks
         .iter()
-        .map(|l| l.target.clone())
+        .position(|t| t.kind == TrackKind::Instrument && t.global_channel() == channel)
+        .or_else(|| {
+            model
+                .tracks
+                .iter()
+                .position(|t| t.global_channel() == channel)
+        })
+        .unwrap_or(0);
+    let existing_lanes: Vec<AutomationTarget> = model
+        .tracks
+        .get(lane_track_ti)
+        .map(|t| {
+            t.automation_lanes
+                .iter()
+                .map(|l| l.target.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    let track_names: Vec<String> = model
+        .tracks
+        .iter()
+        .filter(|t| t.global_channel() == channel)
+        .map(|t| t.name.clone())
         .collect();
+    let active_channels: Vec<u8> = {
+        let layout = yinhe_audio::channel_layout::ChannelLayout::from_model(&model);
+        (0..256u16)
+            .filter(|&c| layout.is_active(c as usize))
+            .map(|c| c as u8)
+            .collect()
+    };
 
     let mut selected = app.dock_selected.unwrap_or(DockDevice::XSynth);
     let mut open_picker = false;
     let mut create_lane: Option<AutomationTarget> = None;
     let mut open_params: Option<DockDevice> = None;
 
-    // ── 顶部：轨道名 ──
+    // ── 顶部：通道选择 + 使用该通道的轨道 ──
     ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(&track_name)
-                .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::text_secondary()),
+        let mut picked: Option<u8> = None;
+        ui.menu_button(
+            egui::RichText::new(format!("{} \u{25be}", crate::mix::channel_label(channel)))
+                .size(crate::theme::SMALL_FONT + 1.0)
+                .color(crate::theme::text_primary()),
+            |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height(320.0)
+                    .show(ui, |ui| {
+                        for ch in &active_channels {
+                            if ui
+                                .selectable_label(*ch == channel, crate::mix::channel_label(*ch))
+                                .clicked()
+                            {
+                                picked = Some(*ch);
+                                ui.close();
+                            }
+                        }
+                    });
+            },
         );
+        if let Some(ch) = picked {
+            app.dock_channel = Some(ch);
+            app.dock_selected = None;
+        }
+        if !track_names.is_empty() {
+            ui.label(
+                egui::RichText::new(track_names.join(", "))
+                    .size(crate::theme::SMALL_FONT)
+                    .color(crate::theme::text_muted()),
+            );
+        }
     });
 
     // ── 设备链（横向滚动）──
@@ -245,9 +304,9 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
     }
     if let Some(target) = create_lane {
         app.with_undo(t!("undo.create_automation").as_ref(), |doc| {
-            let r = doc.add_automation_lane(track_ti as usize, target);
+            let r = doc.add_automation_lane(lane_track_ti, target);
             if r.is_some()
-                && let Some(e) = doc.edit.arr_am_expanded.get_mut(track_ti as usize)
+                && let Some(e) = doc.edit.arr_am_expanded.get_mut(lane_track_ti)
             {
                 *e = true;
             }
