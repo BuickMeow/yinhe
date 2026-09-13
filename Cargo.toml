@@ -15,6 +15,7 @@ members = [
     "crates/yinhe-android",
     "crates/yinhe-clap",
     "crates/yinhe-mixer",
+    "crates/yinhe-vst3",
     "crates/yinhe-memtrace",
     "crates/yinhe-tests",
     "crates/yinhe-test-helpers",
