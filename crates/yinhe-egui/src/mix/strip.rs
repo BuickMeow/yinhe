@@ -768,6 +768,19 @@ pub(crate) fn plugin_picker(
                                 continue;
                             }
                             any = true;
+                            if let Some(err) = &p.error {
+                                // 加载失败的插件：灰色不可选，hover 显示原因（不静默消失）。
+                                ui.add_enabled(
+                                    false,
+                                    egui::Button::new(
+                                        egui::RichText::new(p.display_name())
+                                            .size(crate::theme::SMALL_FONT)
+                                            .color(crate::theme::text_muted()),
+                                    ),
+                                )
+                                .on_hover_text(err);
+                                continue;
+                            }
                             if ui
                                 .add(crate::widgets::menu::menu_item_button(ui, false, &p.name))
                                 .on_hover_text(&p.id)
@@ -874,6 +887,18 @@ pub(crate) fn instrument_picker(
                                 continue;
                             }
                             any = true;
+                            if let Some(err) = &p.error {
+                                ui.add_enabled(
+                                    false,
+                                    egui::Button::new(
+                                        egui::RichText::new(p.display_name())
+                                            .size(crate::theme::SMALL_FONT)
+                                            .color(crate::theme::text_muted()),
+                                    ),
+                                )
+                                .on_hover_text(err);
+                                continue;
+                            }
                             if ui
                                 .add(crate::widgets::menu::menu_item_button(ui, false, &p.name))
                                 .on_hover_text(&p.id)

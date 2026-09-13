@@ -119,11 +119,13 @@ impl IBStreamTrait for MemoryStream {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let len = inner.data.len() as i64;
         let mode = mode as u32;
-        let base = if mode == kIBSeekSet {
+        // 常量类型随平台绑定不同（i32/u32），统一转换比较。
+        #[allow(clippy::unnecessary_cast)]
+        let base = if mode == kIBSeekSet as u32 {
             0
-        } else if mode == kIBSeekCur {
+        } else if mode == kIBSeekCur as u32 {
             inner.pos as i64
-        } else if mode == kIBSeekEnd {
+        } else if mode == kIBSeekEnd as u32 {
             len
         } else {
             return kInvalidArgument;

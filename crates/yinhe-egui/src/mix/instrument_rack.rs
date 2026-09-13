@@ -76,6 +76,7 @@ impl InstrumentRack {
             vendor: String::new(),
             is_instrument: true,
             is_effect: false,
+            error: None,
         };
         let result = (|| {
             let mut instance = PluginInstance::load(&entry).map_err(PluginLoadError)?;

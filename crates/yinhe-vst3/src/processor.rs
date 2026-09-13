@@ -172,7 +172,10 @@ impl Vst3Processor {
 
         // 处理上下文。
         self.context.projectTimeSamples = position_samples as i64;
-        self.context.state = kPlaying | kTempoValid | kTimeSigValid;
+        // 常量类型随平台绑定不同（i32/u32），统一转换。
+        #[allow(clippy::unnecessary_cast)]
+        let state = (kPlaying | kTempoValid | kTimeSigValid) as u32;
+        self.context.state = state;
         self.context.sampleRate = self.sample_rate;
         self.context.tempo = 120.0;
         self.context.timeSigNumerator = 4;

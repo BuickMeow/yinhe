@@ -68,6 +68,16 @@ pub fn default_plugin_dirs() -> Vec<PathBuf> {
 
 /// 扫描目录集合：递归查找 `.vst3`（不深入 bundle 内部），逐个解析元数据。
 pub fn scan_dirs(dirs: &[PathBuf]) -> Vec<ScanOutcome> {
+    collect_bundle_paths(dirs)
+        .iter()
+        .map(|b| scan_bundle(b))
+        .collect()
+}
+
+/// 递归收集目录下的 `.vst3` bundle 路径（纯文件系统，**不加载**；防符号链接循环）。
+///
+/// 供子进程隔离扫描：主进程先安全地拿到 bundle 列表，再逐个交给子进程加载。
+pub fn collect_bundle_paths(dirs: &[PathBuf]) -> Vec<PathBuf> {
     let mut bundles = Vec::new();
     let mut visited = HashSet::new();
     for dir in dirs {
@@ -77,7 +87,7 @@ pub fn scan_dirs(dirs: &[PathBuf]) -> Vec<ScanOutcome> {
     }
     bundles.sort();
     bundles.dedup();
-    bundles.iter().map(|b| scan_bundle(b)).collect()
+    bundles
 }
 
 /// 递归收集 `.vst3` bundle；`visited`（canonical 路径）防御符号链接循环。
@@ -102,8 +112,8 @@ fn collect_bundles(dir: &Path, out: &mut Vec<PathBuf>, visited: &mut HashSet<Pat
     }
 }
 
-/// 解析单个 bundle 的元数据。
-fn scan_bundle(path: &Path) -> ScanOutcome {
+/// 解析单个 bundle 的元数据（子进程隔离调用）。
+pub fn scan_bundle(path: &Path) -> ScanOutcome {
     match read_moduleinfo(path) {
         Ok(Some(info)) => {
             let plugins: Vec<PluginInfo> = info

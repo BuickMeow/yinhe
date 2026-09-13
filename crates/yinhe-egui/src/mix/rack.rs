@@ -131,6 +131,7 @@ impl MixerRack {
             vendor: String::new(),
             is_instrument: false,
             is_effect: false,
+            error: None,
         };
         let owner = self.next_owner;
         self.next_owner += 1;

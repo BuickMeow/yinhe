@@ -18,6 +18,7 @@ mod i18n_tests;
 mod mix;
 mod piano_view;
 mod platform;
+mod plugin_scan;
 mod render_context;
 mod right_panel;
 mod scaling;
@@ -28,6 +29,16 @@ mod view_interaction;
 mod widgets;
 
 fn main() {
+    // 子进程扫描模式：不初始化 GUI，扫描单个 bundle 并输出 JSON 后退出。
+    // （部分插件要求主线程加载；子进程隔离崩溃与挂起风险。）
+    let argv: Vec<String> = std::env::args().collect();
+    if let Some(pos) = argv.iter().position(|a| a == plugin_scan::SCAN_CHILD_ARG) {
+        let format = argv.get(pos + 1).map(String::as_str).unwrap_or("");
+        let path = argv.get(pos + 2).map(std::path::PathBuf::from);
+        plugin_scan::run_scan_child(format, path.as_deref());
+        return;
+    }
+
     let mut env_filter = tracing_subscriber::EnvFilter::builder()
         .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
         .from_env_lossy();

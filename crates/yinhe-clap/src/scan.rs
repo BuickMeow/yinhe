@@ -7,6 +7,7 @@
 //! 用户重扫时把该路径加入黑名单跳过）；后续阶段把 `scan_path` 包一层
 //! 子进程（同一 exe 加 --scan-plugin 参数）即可，本模块 API 不需要变。
 
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
@@ -88,6 +89,51 @@ pub fn scan_dir(dir: &Path) -> Vec<ScanOutcome> {
     let mut outcomes = Vec::new();
     scan_dir_into(dir, &mut outcomes);
     outcomes
+}
+
+/// 递归收集目录下的 `.clap` bundle 路径（纯文件系统，**不加载**；防符号链接循环）。
+///
+/// 供子进程隔离扫描：主进程先安全地拿到 bundle 列表，再逐个交给子进程加载。
+pub fn collect_bundles(dirs: &[PathBuf]) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut visited = HashSet::new();
+    for dir in dirs {
+        collect_into(dir, &mut out, &mut visited);
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn collect_into(dir: &Path, out: &mut Vec<PathBuf>, visited: &mut HashSet<PathBuf>) {
+    let Ok(real) = dir.canonicalize() else {
+        return;
+    };
+    if !visited.insert(real) {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension() == Some(OsStr::new("clap")) {
+            out.push(path);
+        } else if path.is_dir() {
+            collect_into(&path, out, visited);
+        }
+    }
+}
+
+/// 扫描单个 `.clap` 包（子进程隔离调用；不 panic，失败返回 `Failed`）。
+pub fn scan_bundle(path: &Path) -> ScanOutcome {
+    match scan_path(path) {
+        Ok(infos) => ScanOutcome::Loaded(infos),
+        Err(error) => ScanOutcome::Failed {
+            path: path.to_path_buf(),
+            error,
+        },
+    }
 }
 
 fn scan_dir_into(dir: &Path, outcomes: &mut Vec<ScanOutcome>) {

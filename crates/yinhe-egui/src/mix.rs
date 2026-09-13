@@ -19,9 +19,10 @@ mod strip;
 
 use eframe::egui;
 use yinhe_audio::channel_layout::ChannelLayout;
-use yinhe_mixer::{MasterParams, PluginFormat, StripParams};
+use yinhe_mixer::{MasterParams, StripParams};
 
 use self::plugin_instance::PluginEntry;
+use crate::plugin_scan::ScanProgress;
 
 use crate::app::App;
 
@@ -64,8 +65,8 @@ pub(crate) struct MixUiState {
     pub(crate) scanned: Option<Vec<PluginEntry>>,
     /// 扫描中失败的包数量（诊断展示）。
     pub(crate) scan_errors: usize,
-    /// 后台扫描结果接收端（Some = 扫描进行中）。
-    pub(crate) scan_rx: Option<std::sync::mpsc::Receiver<ScanResult>>,
+    /// 扫描 worker 进度接收端（Some = 扫描进行中）。
+    pub(crate) scan_rx: Option<std::sync::mpsc::Receiver<ScanProgress>>,
     /// 后台扫描进行中（UI 状态展示用）。
     pub(crate) scan_in_progress: bool,
     /// 插件选择器打开目标：Some(Some(ch)) = 通道 ch，Some(None) = master。
@@ -717,47 +718,35 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
     }
 }
 
-/// 后台扫描结果。
-pub(crate) struct ScanResult {
-    pub plugins: Vec<PluginEntry>,
-    pub errors: usize,
-}
-
-/// 启动后台扫描（不阻塞 UI）；已有扫描进行中则忽略。
-/// 进程内加载插件元数据（崩溃风险见各自 scan 文档）。
+/// 启动插件扫描子进程（不阻塞 UI）；已有扫描进行中则忽略。
 pub(crate) fn start_plugin_scan(app: &mut App) {
     if app.mix.scan_in_progress {
         return;
     }
-    let (tx, rx) = std::sync::mpsc::channel();
-    let spawn_result = std::thread::Builder::new()
-        .name("plugin-scan".into())
-        .spawn(move || {
-            let (plugins, errors) = scan_all();
-            let _ = tx.send(ScanResult { plugins, errors });
-        });
-    match spawn_result {
-        Ok(_) => {
+    match crate::plugin_scan::spawn_scan_worker() {
+        Some(rx) => {
             app.mix.scan_rx = Some(rx);
             app.mix.scan_in_progress = true;
             app.mix.scanned = None;
             app.mix.scan_errors = 0;
         }
-        Err(e) => {
-            tracing::warn!("启动插件扫描线程失败: {e}");
-        }
+        None => tracing::warn!("启动插件扫描子进程失败"),
     }
 }
 
-/// 每帧轮询后台扫描结果。
+/// 每帧轮询扫描子进程结果。
 pub(crate) fn poll_plugin_scan(app: &mut App) {
     let Some(rx) = &app.mix.scan_rx else {
         return;
     };
     match rx.try_recv() {
-        Ok(result) => {
-            app.mix.scanned = Some(result.plugins);
-            app.mix.scan_errors = result.errors;
+        Ok(ScanProgress::Batch(entries)) => {
+            let scanned = app.mix.scanned.get_or_insert_with(Vec::new);
+            scanned.extend(entries);
+            scanned.sort_by(|a, b| a.name.cmp(&b.name));
+        }
+        Ok(ScanProgress::Finished { errors }) => {
+            app.mix.scan_errors = errors;
             app.mix.scan_rx = None;
             app.mix.scan_in_progress = false;
         }
@@ -767,57 +756,4 @@ pub(crate) fn poll_plugin_scan(app: &mut App) {
             app.mix.scan_in_progress = false;
         }
     }
-}
-
-/// 扫描默认 CLAP + VST3 目录（纯计算，后台线程调用）。
-fn scan_all() -> (Vec<PluginEntry>, usize) {
-    let mut plugins: Vec<PluginEntry> = Vec::new();
-    let mut errors = 0;
-
-    for outcome in yinhe_clap::scan::scan_dirs(&yinhe_clap::scan::default_plugin_dirs()) {
-        match outcome {
-            yinhe_clap::scan::ScanOutcome::Loaded(infos) => {
-                plugins.extend(infos.into_iter().map(|p| {
-                    let is_instrument = p.is_instrument();
-                    let is_effect = p.is_audio_effect();
-                    PluginEntry {
-                        format: PluginFormat::Clap,
-                        path: p.path,
-                        id: p.id,
-                        name: p.name,
-                        vendor: p.vendor.unwrap_or_default(),
-                        is_instrument,
-                        is_effect,
-                    }
-                }));
-            }
-            yinhe_clap::scan::ScanOutcome::Failed { path, error } => {
-                errors += 1;
-                tracing::warn!("扫描 CLAP 插件包失败 {:?}: {error}", path);
-            }
-        }
-    }
-
-    for outcome in yinhe_vst3::scan::scan_dirs(&yinhe_vst3::scan::default_plugin_dirs()) {
-        match outcome {
-            yinhe_vst3::scan::ScanOutcome::Loaded(infos) => {
-                plugins.extend(infos.into_iter().map(|p| PluginEntry {
-                    format: PluginFormat::Vst3,
-                    path: p.path,
-                    id: p.class_id,
-                    name: p.name,
-                    vendor: p.vendor,
-                    is_instrument: p.is_instrument,
-                    is_effect: p.is_effect,
-                }));
-            }
-            yinhe_vst3::scan::ScanOutcome::Failed { path, error } => {
-                errors += 1;
-                tracing::warn!("扫描 VST3 插件包失败 {:?}: {error}", path);
-            }
-        }
-    }
-
-    plugins.sort_by(|a, b| a.name.cmp(&b.name));
-    (plugins, errors)
 }

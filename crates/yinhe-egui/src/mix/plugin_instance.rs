@@ -8,14 +8,15 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
 use yinhe_clap::ClapPluginInstance;
 use yinhe_mixer::{ParamQueue, PluginFormat};
 use yinhe_vst3::Vst3PluginInstance;
 
 use super::rack::host_info;
 
-/// 插件浏览器条目（CLAP/VST3 扫描结果统一）。
-#[derive(Clone, Debug)]
+/// 插件浏览器条目（CLAP/VST3 扫描结果统一；serde 用于子进程扫描结果回传）。
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct PluginEntry {
     pub format: PluginFormat,
     pub path: PathBuf,
@@ -24,6 +25,38 @@ pub(crate) struct PluginEntry {
     pub vendor: String,
     pub is_instrument: bool,
     pub is_effect: bool,
+    /// Some = 扫描/加载失败的原因（占位条目；UI 灰色展示，不静默消失）。
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+impl PluginEntry {
+    /// 扫描/加载失败的占位条目（bundle 显示名 + 失败原因）。
+    pub(crate) fn failed(format: PluginFormat, path: &std::path::Path, message: String) -> Self {
+        let name = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        Self {
+            format,
+            path: path.to_path_buf(),
+            id: String::new(),
+            name,
+            vendor: String::new(),
+            is_instrument: false,
+            is_effect: false,
+            error: Some(message),
+        }
+    }
+
+    /// UI 显示名（失败项加后缀）。
+    pub(crate) fn display_name(&self) -> String {
+        if self.error.is_some() {
+            format!("{}（加载失败）", self.name)
+        } else {
+            self.name.clone()
+        }
+    }
 }
 
 /// 统一参数描述（VST3 值的语义为归一化 0..1）。
