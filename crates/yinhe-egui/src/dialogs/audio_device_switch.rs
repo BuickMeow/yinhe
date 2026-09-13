@@ -76,9 +76,10 @@ pub(crate) fn show_viewport(
                         })
                         .show(ui, |ui| {
                             ui.set_max_width(436.0);
+                            let btn_zone_h = crate::chrome::dialog_buttons::btn_zone_h(ui.ctx());
                             crate::chrome::dialog::content_with_bottom_buttons(
                                 ui,
-                                130.0,
+                                btn_zone_h,
                                 |ui| {
                                     ui.vertical_centered(|ui| {
                                         ui.add_space(8.0);
@@ -128,14 +129,6 @@ pub(crate) fn show_viewport(
                                                 }
                                             }
                                         });
-                                },
-                                |ui| {
-                                    ui.add_space(4.0);
-                                    if ui.button(t!("common.exit_app").as_ref()).clicked() {
-                                        *action_capture.borrow_mut() =
-                                            AudioDeviceSwitchAction::Exit;
-                                        hide.set(true);
-                                    }
 
                                     if let Some(err) = &error_str {
                                         ui.add_space(8.0);
@@ -144,24 +137,39 @@ pub(crate) fn show_viewport(
                                                 .color(crate::theme::danger_text()),
                                         );
                                     }
-
-                                    if allow_keep_current {
-                                        ui.add_space(8.0);
-                                        if ui
-                                            .button(t!("dialog.audio_switch.keep_current").as_ref())
-                                            .clicked()
-                                        {
-                                            *action_capture.borrow_mut() =
-                                                AudioDeviceSwitchAction::KeepCurrent;
-                                            hide.set(true);
-                                        }
-                                    }
-
+                                },
+                                |ui| {
+                                    use crate::chrome::dialog_buttons::{
+                                        DialogButton, dialog_button_row,
+                                    };
                                     ui.add_space(8.0);
-                                    if ui.button(t!("settings.refresh_devices").as_ref()).clicked()
-                                    {
-                                        *action_capture.borrow_mut() =
-                                            AudioDeviceSwitchAction::Refresh;
+                                    let exit = t!("common.exit_app");
+                                    let refresh = t!("settings.refresh_devices");
+                                    let keep = t!("dialog.audio_switch.keep_current");
+                                    let mut buttons = vec![
+                                        DialogButton::danger(exit.as_ref()),
+                                        DialogButton::secondary(refresh.as_ref()),
+                                    ];
+                                    if allow_keep_current {
+                                        buttons.push(DialogButton::primary(keep.as_ref()));
+                                    }
+                                    if let Some(idx) = dialog_button_row(ui, &buttons) {
+                                        match idx {
+                                            0 => {
+                                                *action_capture.borrow_mut() =
+                                                    AudioDeviceSwitchAction::Exit;
+                                                hide.set(true);
+                                            }
+                                            1 => {
+                                                *action_capture.borrow_mut() =
+                                                    AudioDeviceSwitchAction::Refresh;
+                                            }
+                                            _ => {
+                                                *action_capture.borrow_mut() =
+                                                    AudioDeviceSwitchAction::KeepCurrent;
+                                                hide.set(true);
+                                            }
+                                        }
                                     }
                                 },
                             );

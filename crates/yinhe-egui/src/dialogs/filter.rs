@@ -211,52 +211,48 @@ pub(crate) fn show_viewport(
                             bottom: 12,
                         })
                         .show(ui, |ui| {
-                            egui::ScrollArea::vertical()
-                                .auto_shrink([false, false])
-                                .max_height(440.0)
-                                .show(ui, |ui| {
-                                    show_note_section(ui, state, num_tracks);
-                                    ui.add_space(6.0);
-                                    show_automation_section(ui, state);
-                                });
+                            let btn_zone_h = crate::chrome::dialog_buttons::btn_zone_h(ui.ctx());
+                            crate::chrome::dialog::content_with_bottom_buttons(
+                                ui,
+                                btn_zone_h,
+                                |ui| {
+                                    egui::ScrollArea::vertical()
+                                        .auto_shrink([false, false])
+                                        .max_height(ui.available_height())
+                                        .show(ui, |ui| {
+                                            show_note_section(ui, state, num_tracks);
+                                            ui.add_space(6.0);
+                                            show_automation_section(ui, state);
+                                        });
+                                },
+                                |ui| {
+                                    use crate::chrome::dialog_buttons::{
+                                        DialogButton, dialog_button_row,
+                                    };
+                                    ui.add_space(8.0);
+                                    let clear = t!("dialog.filter.clear");
+                                    let cancel = t!("dialog.filter.cancel");
+                                    let apply = t!("dialog.filter.apply");
+                                    let ok = t!("dialog.filter.ok");
+                                    if let Some(idx) = dialog_button_row(
+                                        ui,
+                                        &[
+                                            DialogButton::secondary(clear.as_ref()),
+                                            DialogButton::secondary(cancel.as_ref()),
+                                            DialogButton::secondary(apply.as_ref()),
+                                            DialogButton::primary(ok.as_ref()),
+                                        ],
+                                    ) {
+                                        action = match idx {
+                                            0 => FilterDialogAction::Clear,
+                                            1 => FilterDialogAction::Cancel,
+                                            2 => FilterDialogAction::Apply,
+                                            _ => FilterDialogAction::Confirm,
+                                        };
+                                    }
+                                },
+                            );
                         });
-
-                    let mut action_left = FilterDialogAction::None;
-                    let mut action_right = FilterDialogAction::None;
-                    crate::chrome::dialog::content_with_bottom_buttons(
-                        ui,
-                        32.0,
-                        |ui| {
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                if ui.button(t!("dialog.filter.clear").as_ref()).clicked() {
-                                    action_left = FilterDialogAction::Clear;
-                                }
-                            });
-                        },
-                        |ui| {
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                if ui.button(t!("dialog.filter.cancel").as_ref()).clicked() {
-                                    action_right = FilterDialogAction::Cancel;
-                                }
-                                ui.add_space(6.0);
-                                if ui.button(t!("dialog.filter.apply").as_ref()).clicked() {
-                                    action_right = FilterDialogAction::Apply;
-                                }
-                                ui.add_space(6.0);
-                                if ui.button(t!("dialog.filter.ok").as_ref()).clicked() {
-                                    action_right = FilterDialogAction::Confirm;
-                                }
-                            });
-                        },
-                    );
-                    if action_left != FilterDialogAction::None {
-                        action = action_left;
-                    }
-                    if action_right != FilterDialogAction::None {
-                        action = action_right;
-                    }
                 });
             if close && action == FilterDialogAction::None {
                 action = FilterDialogAction::Cancel;

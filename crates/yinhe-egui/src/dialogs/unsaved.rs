@@ -58,37 +58,37 @@ pub(crate) fn show_viewport(
                         })
                         .show(ui, |ui| {
                             ui.set_max_width(316.0);
+                            let btn_zone_h = crate::chrome::dialog_buttons::btn_zone_h(ui.ctx());
                             crate::chrome::dialog::content_with_bottom_buttons(
                                 ui,
-                                36.0,
+                                btn_zone_h,
                                 |ui| {
                                     ui.add_space(8.0);
                                     ui.label(t!("dialog.unsaved.message").as_ref());
                                 },
                                 |ui| {
-                                    ui.add_space(4.0);
-                                    ui.horizontal(|ui| {
-                                        if ui.button(t!("dialog.unsaved.save").as_ref()).clicked() {
-                                            *action_cb.borrow_mut() = Some(Action::Save);
-                                            close = true;
-                                        }
-                                        ui.add_space(8.0);
-                                        let discard_btn = ui.button(
-                                            egui::RichText::new(
-                                                t!("dialog.unsaved.discard").as_ref(),
-                                            )
-                                            .color(crate::theme::danger_text_bright()),
-                                        );
-                                        if discard_btn.clicked() {
-                                            *action_cb.borrow_mut() = Some(Action::Discard);
-                                            close = true;
-                                        }
-                                        ui.add_space(8.0);
-                                        if ui.button(t!("dialog.unsaved.back").as_ref()).clicked() {
-                                            *action_cb.borrow_mut() = Some(Action::Cancel);
-                                            close = true;
-                                        }
-                                    });
+                                    use crate::chrome::dialog_buttons::{
+                                        DialogButton, dialog_button_row,
+                                    };
+                                    ui.add_space(8.0);
+                                    let discard = t!("dialog.unsaved.discard");
+                                    let back = t!("dialog.unsaved.back");
+                                    let save = t!("dialog.unsaved.save");
+                                    if let Some(idx) = dialog_button_row(
+                                        ui,
+                                        &[
+                                            DialogButton::danger(discard.as_ref()),
+                                            DialogButton::secondary(back.as_ref()),
+                                            DialogButton::primary(save.as_ref()),
+                                        ],
+                                    ) {
+                                        *action_cb.borrow_mut() = Some(match idx {
+                                            0 => Action::Discard,
+                                            1 => Action::Cancel,
+                                            _ => Action::Save,
+                                        });
+                                        close = true;
+                                    }
                                 },
                             );
                         });

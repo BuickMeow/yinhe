@@ -174,9 +174,10 @@ pub(crate) fn show_completed_viewport(
                             bottom: 12,
                         })
                         .show(ui, |ui| {
+                            let btn_zone_h = crate::chrome::dialog_buttons::btn_zone_h(ui.ctx());
                             crate::chrome::dialog::content_with_bottom_buttons(
                                 ui,
-                                36.0,
+                                btn_zone_h,
                                 |ui| {
                                     ui.add_space(4.0);
                                     egui::Grid::new("export_completed_grid")
@@ -197,10 +198,16 @@ pub(crate) fn show_completed_viewport(
                                         });
                                 },
                                 |ui| {
-                                    ui.add_space(4.0);
-                                    if ui
-                                        .button(t!("dialog.export.open_folder").as_ref())
-                                        .clicked()
+                                    use crate::chrome::dialog_buttons::{
+                                        DialogButton, dialog_button_row,
+                                    };
+                                    ui.add_space(8.0);
+                                    let open_folder = t!("dialog.export.open_folder");
+                                    if dialog_button_row(
+                                        ui,
+                                        &[DialogButton::secondary(open_folder.as_ref())],
+                                    )
+                                    .is_some()
                                     {
                                         crate::platform::open_containing_folder(
                                             std::path::Path::new(&file_path),
@@ -271,9 +278,10 @@ pub(crate) fn show_settings_viewport(
                         })
                         .show(ui, |ui| {
                             ui.set_max_width(280.0);
+                            let btn_zone_h = crate::chrome::dialog_buttons::btn_zone_h(ui.ctx());
                             crate::chrome::dialog::content_with_bottom_buttons(
                                 ui,
-                                36.0,
+                                btn_zone_h,
                                 |ui| {
                                     ui.add_space(8.0);
 
@@ -375,8 +383,15 @@ pub(crate) fn show_settings_viewport(
                                     });
                                 },
                                 |ui| {
-                                    ui.add_space(4.0);
-                                    if ui.button(t!("dialog.export.start").as_ref()).clicked() {
+                                    use crate::chrome::dialog_buttons::{DialogButton, dialog_button_row};
+                                    ui.add_space(8.0);
+                                    let start = t!("dialog.export.start");
+                                    if dialog_button_row(
+                                        ui,
+                                        &[DialogButton::primary(start.as_ref())],
+                                    )
+                                    .is_some()
+                                    {
                                         *started_cb.borrow_mut() = true;
                                         close = true;
                                     }

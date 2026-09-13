@@ -53,9 +53,10 @@ pub(crate) fn show_viewport(
                             bottom: 12,
                         })
                         .show(ui, |ui| {
+                            let btn_zone_h = crate::chrome::dialog_buttons::btn_zone_h(ui.ctx());
                             crate::chrome::dialog::content_with_bottom_buttons(
                                 ui,
-                                36.0,
+                                btn_zone_h,
                                 |ui| {
                                     ui.add_space(4.0);
                                     ui.add(
@@ -73,8 +74,17 @@ pub(crate) fn show_viewport(
                                     }
                                 },
                                 |ui| {
-                                    ui.add_space(4.0);
-                                    if ui.button(t!("common.cancel").as_ref()).clicked() {
+                                    use crate::chrome::dialog_buttons::{
+                                        DialogButton, dialog_button_row,
+                                    };
+                                    ui.add_space(8.0);
+                                    let cancel = t!("common.cancel");
+                                    if dialog_button_row(
+                                        ui,
+                                        &[DialogButton::secondary(cancel.as_ref())],
+                                    )
+                                    .is_some()
+                                    {
                                         close = true;
                                     }
                                 },

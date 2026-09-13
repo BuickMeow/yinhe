@@ -226,9 +226,10 @@ pub(crate) fn show_viewport(
                             let plan_rc: std::rc::Rc<std::cell::RefCell<Option<Plan>>> =
                                 std::rc::Rc::new(std::cell::RefCell::new(None));
                             let plan_cb = plan_rc.clone();
+                            let btn_zone_h = crate::chrome::dialog_buttons::btn_zone_h(ui.ctx());
                             crate::chrome::dialog::content_with_bottom_buttons(
                                 ui,
-                                36.0,
+                                btn_zone_h,
                                 |ui| {
                                     ui.add_space(6.0);
                                     // 种类：MIDI 轨 / 乐器轨 / 音频轨（预留，禁用）
@@ -371,33 +372,33 @@ pub(crate) fn show_viewport(
                                     *plan_cb.borrow_mut() = Some(plan);
                                 },
                                 |ui| {
+                                    use crate::chrome::dialog_buttons::{DialogButton, dialog_button_row};
                                     // 内容区同帧已算好方案，直接取用（不碰 state）。
                                     let mut plan_cell = plan_rc.borrow_mut();
                                     let can_confirm = plan_cell
                                         .as_ref()
                                         .is_some_and(|p| !p.specs.is_empty());
-                                    ui.add_space(4.0);
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
-                                        // 通道全满（specs 为空）时禁止确认。
-                                        if ui
-                                            .add_enabled(
-                                                can_confirm,
-                                                egui::Button::new(t!("common.confirm").as_ref()),
-                                            )
-                                            .clicked()
-                                            && let Some(p) = plan_cell.take()
-                                        {
+                                    ui.add_space(8.0);
+                                    let cancel = t!("common.cancel");
+                                    let confirm = t!("common.confirm");
+                                    if let Some(idx) = dialog_button_row(
+                                        ui,
+                                        &[
+                                            DialogButton::secondary(cancel.as_ref()),
+                                            DialogButton::primary(confirm.as_ref())
+                                                .enabled(can_confirm),
+                                        ],
+                                    ) {
+                                        if idx == 0 {
+                                            *action_cb.borrow_mut() =
+                                                Some(NewTrackAction::Cancel);
+                                            close = true;
+                                        } else if let Some(p) = plan_cell.take() {
                                             *action_cb.borrow_mut() =
                                                 Some(NewTrackAction::Confirm(p.specs));
                                             close = true;
                                         }
-                                        ui.add_space(4.0);
-                                        if ui.button(t!("common.cancel").as_ref()).clicked() {
-                                            *action_cb.borrow_mut() = Some(NewTrackAction::Cancel);
-                                            close = true;
-                                        }
-                                    });
+                                    }
                                 },
                             );
                         });

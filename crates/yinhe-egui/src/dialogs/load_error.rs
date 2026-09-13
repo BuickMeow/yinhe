@@ -44,16 +44,23 @@ pub(crate) fn show_viewport(ctx: &egui::Context, error: &mut Option<String>) {
                         })
                         .show(ui, |ui| {
                             ui.set_max_width(396.0);
+                            let btn_zone_h = crate::chrome::dialog_buttons::btn_zone_h(ui.ctx());
                             crate::chrome::dialog::content_with_bottom_buttons(
                                 ui,
-                                36.0,
+                                btn_zone_h,
                                 |ui| {
                                     ui.add_space(8.0);
                                     ui.label(&msg);
                                 },
                                 |ui| {
-                                    ui.add_space(4.0);
-                                    if ui.button(t!("dialog.load_error.ok").as_ref()).clicked() {
+                                    use crate::chrome::dialog_buttons::{
+                                        DialogButton, dialog_button_row,
+                                    };
+                                    ui.add_space(8.0);
+                                    let ok = t!("dialog.load_error.ok");
+                                    if dialog_button_row(ui, &[DialogButton::primary(ok.as_ref())])
+                                        .is_some()
+                                    {
                                         close = true;
                                     }
                                 },

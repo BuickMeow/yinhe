@@ -125,9 +125,10 @@ pub(crate) fn show_viewport(ctx: &egui::Context, state: &mut TapTempoDialogState
 
                             let mut tapped = space_pressed;
                             let mut reset = false;
+                            let btn_zone_h = crate::chrome::dialog_buttons::btn_zone_h(ui.ctx());
                             crate::chrome::dialog::content_with_bottom_buttons(
                                 ui,
-                                36.0,
+                                btn_zone_h,
                                 |ui| {
                                     ui.add_space(6.0);
                                     let bpm_text = bpm
@@ -191,11 +192,17 @@ pub(crate) fn show_viewport(ctx: &egui::Context, state: &mut TapTempoDialogState
                                     );
                                 },
                                 |ui| {
-                                    ui.add_space(4.0);
-                                    let reset_btn =
-                                        egui::Button::new(t!("dialog.tap_tempo.reset").as_ref())
-                                            .sense(egui::Sense::CLICK);
-                                    if ui.add(reset_btn).clicked() {
+                                    use crate::chrome::dialog_buttons::{
+                                        DialogButton, dialog_button_row,
+                                    };
+                                    ui.add_space(8.0);
+                                    let reset_label = t!("dialog.tap_tempo.reset");
+                                    if dialog_button_row(
+                                        ui,
+                                        &[DialogButton::secondary(reset_label.as_ref())],
+                                    )
+                                    .is_some()
+                                    {
                                         reset = true;
                                     }
                                 },

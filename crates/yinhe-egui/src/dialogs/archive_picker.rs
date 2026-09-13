@@ -252,16 +252,15 @@ pub(crate) fn show(
                 ui.with_layout(
                     eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
                     |ui| {
-                        if ui.button(t!("common.cancel").as_ref()).clicked() {
-                            action = ArchivePickerAction::Cancel;
-                        }
+                        use crate::chrome::dialog_buttons::{DialogButton, dialog_button};
+                        let cancel = t!("common.cancel");
+                        let confirm = t!("common.confirm");
                         let confirm_enabled = picker.selected_idx.is_some();
-                        if ui
-                            .add_enabled(
-                                confirm_enabled,
-                                eframe::egui::Button::new(t!("common.confirm").as_ref()),
-                            )
-                            .clicked()
+                        if dialog_button(
+                            ui,
+                            &DialogButton::primary(confirm.as_ref()).enabled(confirm_enabled),
+                        )
+                        .clicked()
                             && let Some(idx) = picker.selected_idx
                         {
                             let entry = picker.entries[idx].clone();
@@ -269,6 +268,10 @@ pub(crate) fn show(
                                 archive: picker.archive.clone(),
                                 entry,
                             };
+                        }
+                        ui.add_space(8.0);
+                        if dialog_button(ui, &DialogButton::secondary(cancel.as_ref())).clicked() {
+                            action = ArchivePickerAction::Cancel;
                         }
                     },
                 );
@@ -494,9 +497,10 @@ fn show_password_prompt(
     let confirm_clicked = std::rc::Rc::new(std::cell::Cell::new(false));
     let confirm_cb = confirm_clicked.clone();
 
+    let btn_zone_h = crate::chrome::dialog_buttons::btn_zone_h(ui.ctx());
     crate::chrome::dialog::content_with_bottom_buttons(
         ui,
-        36.0,
+        btn_zone_h,
         |ui| {
             ui.add_space(6.0);
             let display_name = truncate_name(&filename, 40);
@@ -556,27 +560,24 @@ fn show_password_prompt(
             ui.separator();
         },
         |ui| {
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.with_layout(
-                    eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
-                    |ui| {
-                        if ui.button(t!("common.cancel").as_ref()).clicked() {
-                            cancel_cb.set(true);
-                        }
-                        let confirm_enabled = password_len.get() > 0;
-                        if ui
-                            .add_enabled(
-                                confirm_enabled,
-                                eframe::egui::Button::new(t!("common.confirm").as_ref()),
-                            )
-                            .clicked()
-                        {
-                            confirm_cb.set(true);
-                        }
-                    },
-                );
-            });
+            use crate::chrome::dialog_buttons::{DialogButton, dialog_button_row};
+            ui.add_space(8.0);
+            let cancel = t!("common.cancel");
+            let confirm = t!("common.confirm");
+            let confirm_enabled = password_len.get() > 0;
+            if let Some(idx) = dialog_button_row(
+                ui,
+                &[
+                    DialogButton::secondary(cancel.as_ref()),
+                    DialogButton::primary(confirm.as_ref()).enabled(confirm_enabled),
+                ],
+            ) {
+                if idx == 0 {
+                    cancel_cb.set(true);
+                } else {
+                    confirm_cb.set(true);
+                }
+            }
         },
     );
 
