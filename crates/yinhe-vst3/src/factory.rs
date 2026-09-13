@@ -151,6 +151,31 @@ fn format_uid(cid: &[std::ffi::c_char; 16]) -> String {
         .collect()
 }
 
+/// canonical 32 位十六进制文本 → TUID 字节（[`format_uid`] 的逆操作）。
+///
+/// 置换表自逆：Windows 上 COM 顺序与 canonical 顺序互为同一次字段交换。
+pub(crate) fn parse_uid(text: &str) -> Option<[std::ffi::c_char; 16]> {
+    if text.len() != 32 {
+        return None;
+    }
+    let mut canonical = [0u8; 16];
+    for (i, byte) in canonical.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(text.get(i * 2..i * 2 + 2)?, 16).ok()?;
+    }
+    const COM_TO_CANONICAL: [usize; 16] = [3, 2, 1, 0, 5, 4, 7, 6, 8, 9, 10, 11, 12, 13, 14, 15];
+    const IDENTITY: [usize; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+    let order = if cfg!(target_os = "windows") {
+        COM_TO_CANONICAL
+    } else {
+        IDENTITY
+    };
+    let mut tuid = [0i8; 16];
+    for (i, &src) in order.iter().enumerate() {
+        tuid[i] = canonical[src] as i8;
+    }
+    Some(tuid)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
