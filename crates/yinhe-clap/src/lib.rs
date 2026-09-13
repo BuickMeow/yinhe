@@ -14,7 +14,6 @@ mod error;
 mod events;
 mod host;
 mod instance;
-mod param_queue;
 mod processor;
 pub mod scan;
 
@@ -23,5 +22,4 @@ pub use describe::PluginInfo;
 pub use error::PluginError;
 pub use host::YinheHost;
 pub use instance::{ClapPluginInstance, ParamDescriptor};
-pub use param_queue::ParamQueue;
 pub use processor::ClapProcessor;

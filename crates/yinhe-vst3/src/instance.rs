@@ -9,18 +9,31 @@
 use std::path::Path;
 use std::ptr;
 
+use std::sync::Arc;
+
 use vst3::Steinberg::Vst::{
-    IComponent, IComponentHandler, IComponentTrait, IConnectionPoint, IConnectionPointTrait,
-    IEditController, IEditControllerTrait, IHostApplication, ParameterInfo, String128,
+    BusDirections_::{kInput, kOutput},
+    IAudioProcessor, IAudioProcessorTrait, IComponent, IComponentHandler, IComponentTrait,
+    IConnectionPoint, IConnectionPointTrait, IEditController, IEditControllerTrait,
+    IHostApplication,
+    MediaTypes_::kAudio,
+    ParameterInfo,
+    ProcessModes_::kRealtime,
+    ProcessSetup, String128,
+    SymbolicSampleSizes_::kSample32,
 };
 use vst3::Steinberg::{
-    FUnknown, IBStream, IPluginBaseTrait, IPluginFactory, IPluginFactoryTrait, TUID, kResultOk,
+    FUnknown, IBStream, IPluginBaseTrait, IPluginFactory, IPluginFactoryTrait, TUID,
+    kNotImplemented, kResultOk,
 };
 use vst3::{ComPtr, ComRef, Interface};
+
+use yinhe_mixer::ParamQueue;
 
 use crate::factory::parse_uid;
 use crate::host::{create_component_handler, create_host_application};
 use crate::loader::{LoadError, LoadedModule};
+use crate::processor::Vst3Processor;
 
 /// 实例创建失败。
 #[derive(Debug, thiserror::Error)]
@@ -62,6 +75,8 @@ pub struct Vst3PluginInstance {
     separate_controller: bool,
     params: Vec<Vst3ParamInfo>,
     class_id: String,
+    /// UI → 渲染线程的参数变化队列。
+    param_queue: Arc<ParamQueue>,
 }
 
 impl Vst3PluginInstance {
@@ -150,11 +165,87 @@ impl Vst3PluginInstance {
             separate_controller,
             params,
             class_id: class_id.to_string(),
+            param_queue: Arc::new(ParamQueue::new()),
         })
     }
 
     pub fn class_id(&self) -> &str {
         &self.class_id
+    }
+
+    /// 参数写入队列（UI 线程 push；处理器在渲染线程 drain）。
+    pub fn param_queue(&self) -> Arc<ParamQueue> {
+        Arc::clone(&self.param_queue)
+    }
+
+    /// 激活音频并产出渲染线程处理器。
+    ///
+    /// 流程：`setupProcessing` → 激活主音频总线（其余不激活）→ `setActive(true)`
+    /// → `setProcessing(true)`。管理线程调用。
+    pub fn activate_audio(
+        &self,
+        sample_rate: f64,
+        max_frames: u32,
+    ) -> Result<Vst3Processor, InstanceError> {
+        let processor = self
+            .component
+            .cast::<IAudioProcessor>()
+            .ok_or_else(|| InstanceError::Initialize("组件不支持 IAudioProcessor".into()))?;
+
+        let mut setup = ProcessSetup {
+            processMode: kRealtime as i32,
+            symbolicSampleSize: kSample32 as i32,
+            maxSamplesPerBlock: max_frames as i32,
+            sampleRate: sample_rate,
+        };
+        let r = unsafe { processor.setupProcessing(&mut setup) };
+        if r != kResultOk {
+            return Err(InstanceError::Initialize(format!(
+                "setupProcessing 失败（{r:#x}）"
+            )));
+        }
+
+        let n_in = unsafe { self.component.getBusCount(kAudio as i32, kInput as i32) };
+        let n_out = unsafe { self.component.getBusCount(kAudio as i32, kOutput as i32) };
+        if n_out <= 0 {
+            return Err(InstanceError::Initialize("插件没有音频输出总线".into()));
+        }
+        unsafe {
+            if n_in > 0 {
+                let _ = self
+                    .component
+                    .activateBus(kAudio as i32, kInput as i32, 0, 1);
+            }
+            let _ = self
+                .component
+                .activateBus(kAudio as i32, kOutput as i32, 0, 1);
+        }
+
+        let r = unsafe { self.component.setActive(1) };
+        if r != kResultOk {
+            return Err(InstanceError::Initialize(format!(
+                "setActive 失败（{r:#x}）"
+            )));
+        }
+        // `setProcessing` 是可选通知：插件可以返回 kNotImplemented（新旧 SDK
+        // 常量值分别为 0x80004001 / 3，如 kHs 系列），不算错误。
+        const K_NOT_IMPLEMENTED_OLD: i32 = 3;
+        let r = unsafe { processor.setProcessing(1) };
+        if r != kResultOk && r != kNotImplemented && r != K_NOT_IMPLEMENTED_OLD {
+            let _ = unsafe { self.component.setActive(0) };
+            return Err(InstanceError::Initialize(format!(
+                "setProcessing 失败（{r:#x}）"
+            )));
+        }
+
+        Vst3Processor::new(
+            self.component.clone(),
+            processor,
+            sample_rate,
+            max_frames as usize,
+            Arc::clone(&self.param_queue),
+        )
+        .ok_or_else(|| InstanceError::Initialize("音频缓冲/宿主对象构造失败".into()))
     }
 
     /// 参数列表（创建时枚举一次；插件 rescan 后需重建实例/重新枚举）。

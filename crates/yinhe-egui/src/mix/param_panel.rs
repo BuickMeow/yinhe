@@ -10,7 +10,8 @@ use std::collections::HashMap;
 
 use eframe::egui;
 use rust_i18n::t;
-use yinhe_clap::{ClapPluginInstance, ParamDescriptor, ParamQueue};
+use yinhe_clap::{ClapPluginInstance, ParamDescriptor};
+use yinhe_mixer::ParamQueue;
 
 use crate::app::App;
 

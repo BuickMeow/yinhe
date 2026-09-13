@@ -30,7 +30,7 @@ impl ParamQueue {
     }
 
     /// 渲染线程：把全部待应用变化追加进 `out`（保留两边容量，无分配）。
-    pub(crate) fn take_into(&self, out: &mut Vec<(u32, f64)>) {
+    pub fn take_into(&self, out: &mut Vec<(u32, f64)>) {
         let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
         out.append(&mut pending);
     }

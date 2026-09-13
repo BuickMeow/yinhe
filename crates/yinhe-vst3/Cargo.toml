@@ -10,6 +10,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 dirs = { workspace = true }
 vst3 = "0.3"
+yinhe-mixer = { path = "../yinhe-mixer" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"

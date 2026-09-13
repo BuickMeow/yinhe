@@ -55,8 +55,10 @@ fn main() {
     };
 
     unsafe {
-        let app: *mut AnyObject =
-            msg_send![AnyClass::get(c"NSApplication").expect("NSApplication"), sharedApplication];
+        let app: *mut AnyObject = msg_send![
+            AnyClass::get(c"NSApplication").expect("NSApplication"),
+            sharedApplication
+        ];
         let _: objc2::runtime::Bool = msg_send![app, setActivationPolicy: 0u64]; // Regular
         let _: () = msg_send![app, activateIgnoringOtherApps: true];
     }
@@ -120,12 +122,13 @@ fn main() {
 
     // 跑 5 秒事件循环，让窗口实际绘制出来。
     unsafe {
-        let run_loop: *mut AnyObject =
-            msg_send![AnyClass::get(c"NSRunLoop").expect("NSRunLoop"), currentRunLoop];
+        let run_loop: *mut AnyObject = msg_send![
+            AnyClass::get(c"NSRunLoop").expect("NSRunLoop"),
+            currentRunLoop
+        ];
         let deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < deadline {
-            let date: *mut AnyObject =
-                msg_send![AnyClass::get(c"NSDate").expect("NSDate"), dateWithTimeIntervalSinceNow: 0.05f64];
+            let date: *mut AnyObject = msg_send![AnyClass::get(c"NSDate").expect("NSDate"), dateWithTimeIntervalSinceNow: 0.05f64];
             let _: () = msg_send![run_loop, runUntilDate: date];
         }
     }

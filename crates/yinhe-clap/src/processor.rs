@@ -22,7 +22,7 @@ use yinhe_mixer::{InstrumentProcessor, PluginEvent};
 use crate::error::PluginError;
 use crate::events::push_event;
 use crate::host::YinheHost;
-use crate::param_queue::ParamQueue;
+use yinhe_mixer::ParamQueue;
 
 /// 插件声明的端口布局（activate 时管理线程查询并冻结）。
 ///

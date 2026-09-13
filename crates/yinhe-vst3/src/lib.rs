@@ -9,14 +9,18 @@
 
 pub mod scan;
 
+mod event_list;
+mod events;
 mod factory;
 mod host;
 mod instance;
 mod loader;
 mod moduleinfo;
+mod processor;
 mod stream;
 
 pub use factory::{FactoryClass, FactoryInfo};
 pub use instance::{InstanceError, Vst3ParamInfo, Vst3PluginInstance};
 pub use loader::{LoadError, LoadedModule};
 pub use moduleinfo::{ModuleClassInfo, ModuleInfo, ModuleInfoError, read_moduleinfo};
+pub use processor::{ProcessError, Vst3Processor};

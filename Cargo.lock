@@ -7783,6 +7783,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
  "vst3",
+ "yinhe-mixer",
 ]
 
 [[package]]

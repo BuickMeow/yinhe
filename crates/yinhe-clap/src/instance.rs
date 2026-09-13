@@ -16,8 +16,8 @@ use clack_host::process::{PluginAudioConfiguration, StoppedPluginAudioProcessor}
 use crate::describe::PluginInfo;
 use crate::error::PluginError;
 use crate::host::{YinheHost, YinheMainThread, YinheShared};
-use crate::param_queue::ParamQueue;
 use crate::processor::ClapProcessor;
+use yinhe_mixer::ParamQueue;
 
 /// 插件参数描述（供 egui 通用参数面板使用）。
 #[derive(Clone, Debug, PartialEq)]
