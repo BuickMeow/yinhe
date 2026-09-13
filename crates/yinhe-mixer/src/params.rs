@@ -86,6 +86,30 @@ pub struct InsertRef {
     pub state: Option<Vec<u8>>,
 }
 
+/// 发送参数：源通道 → 总线（bus / return）。
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SendParams {
+    /// 目标总线索引（`MixerParams::buses` 下标）。
+    pub bus: u8,
+    /// 发送量（线性增益；0.0 = 关闭）。
+    #[serde(default)]
+    pub amount: f32,
+    /// 发送点：true = 推子前（insert 后、fader 前，不受增益/声像影响），
+    /// false = 推子后。
+    #[serde(default)]
+    pub pre_fader: bool,
+}
+
+impl Default for SendParams {
+    fn default() -> Self {
+        Self {
+            bus: 0,
+            amount: 0.0,
+            pre_fader: false,
+        }
+    }
+}
+
 /// 整个混音台的持久化参数。
 ///
 /// 索引语义：`channels[i]` / `channel_inserts[i]` 对应**源 MIDI 通道 i**
@@ -110,6 +134,15 @@ pub struct MixerParams {
     /// 与 MIDI 源通道命名空间独立（乐器通道是另一套）。
     #[serde(default)]
     pub instruments: Vec<Option<InsertRef>>,
+    /// 总线（bus / return）通道参数：每元素一条总线（与源通道同语义）。
+    #[serde(default)]
+    pub buses: Vec<StripParams>,
+    /// 每条总线的 insert 链（与 `buses` 等长）。
+    #[serde(default)]
+    pub bus_inserts: Vec<Vec<InsertRef>>,
+    /// 每个源通道的发送列表（按源通道索引；一个通道可发往多条总线）。
+    #[serde(default)]
+    pub sends: Vec<Vec<SendParams>>,
 }
 
 impl Default for MixerParams {
@@ -120,6 +153,9 @@ impl Default for MixerParams {
             channel_inserts: vec![Vec::new(); CHANNEL_COUNT],
             master_inserts: Vec::new(),
             instruments: Vec::new(),
+            buses: Vec::new(),
+            bus_inserts: Vec::new(),
+            sends: Vec::new(),
         }
     }
 }
@@ -131,6 +167,48 @@ impl MixerParams {
         self.channel_inserts.resize(CHANNEL_COUNT, Vec::new());
         self.channels.truncate(CHANNEL_COUNT);
         self.channel_inserts.truncate(CHANNEL_COUNT);
+        self.sends.resize(CHANNEL_COUNT, Vec::new());
+        self.sends.truncate(CHANNEL_COUNT);
+        self.bus_inserts.resize(self.buses.len(), Vec::new());
+        self.bus_inserts.truncate(self.buses.len());
+        // 防御：清理指向不存在总线的 send（工程被手工编辑/版本迁移残留）。
+        let bus_count = self.buses.len();
+        for list in &mut self.sends {
+            list.retain(|s| (s.bus as usize) < bus_count);
+        }
+    }
+
+    /// 总线数量。
+    pub fn bus_count(&self) -> usize {
+        self.buses.len()
+    }
+
+    /// 新增一条总线，返回其索引。
+    pub fn add_bus(&mut self) -> u8 {
+        self.buses.push(StripParams::default());
+        self.bus_inserts.push(Vec::new());
+        (self.buses.len() - 1) as u8
+    }
+
+    /// 删除总线 `bus`：移除其参数与 insert 链，清理指向它的 send、
+    /// 并把更高索引的 send 目标前移一位（保持路由语义）。
+    pub fn remove_bus(&mut self, bus: u8) {
+        let idx = bus as usize;
+        if idx >= self.buses.len() {
+            return;
+        }
+        self.buses.remove(idx);
+        if idx < self.bus_inserts.len() {
+            self.bus_inserts.remove(idx);
+        }
+        for list in &mut self.sends {
+            list.retain(|s| s.bus != bus);
+            for s in list.iter_mut() {
+                if s.bus > bus {
+                    s.bus -= 1;
+                }
+            }
+        }
     }
 
     /// 某源通道的 strip 参数（越界给默认值，防御性）。
@@ -161,6 +239,61 @@ mod tests {
         assert_eq!(p.channel_inserts.len(), CHANNEL_COUNT);
         assert_eq!(p.channels[0].gain, 0.5);
         assert!(p.channels[1..].iter().all(|s| *s == StripParams::default()));
+    }
+
+    #[test]
+    fn remove_bus_remaps_send_targets() {
+        let mut p = MixerParams::default();
+        p.ensure_len();
+        p.add_bus();
+        p.add_bus();
+        p.add_bus();
+        p.sends[0] = vec![
+            SendParams {
+                bus: 1,
+                amount: 0.5,
+                pre_fader: false,
+            },
+            SendParams {
+                bus: 2,
+                amount: 0.5,
+                pre_fader: true,
+            },
+        ];
+        p.remove_bus(0);
+        assert_eq!(p.buses.len(), 2);
+        let s = &p.sends[0];
+        assert_eq!(s.len(), 2, "指向其他 bus 的 send 保留");
+        assert_eq!(s[0].bus, 0, "bus 1 → 0 前移");
+        assert_eq!(s[1].bus, 1, "bus 2 → 1 前移");
+    }
+
+    #[test]
+    fn remove_bus_drops_sends_to_it() {
+        let mut p = MixerParams::default();
+        p.ensure_len();
+        p.add_bus();
+        p.add_bus();
+        p.sends[3] = vec![SendParams {
+            bus: 0,
+            amount: 1.0,
+            pre_fader: false,
+        }];
+        p.remove_bus(0);
+        assert!(p.sends[3].is_empty(), "指向被删 bus 的 send 应清理");
+    }
+
+    #[test]
+    fn ensure_len_prunes_dangling_sends() {
+        let mut p = MixerParams::default();
+        p.ensure_len();
+        p.sends[0] = vec![SendParams {
+            bus: 5,
+            amount: 1.0,
+            pre_fader: false,
+        }];
+        p.ensure_len();
+        assert!(p.sends[0].is_empty(), "越界 bus 的 send 应被清理");
     }
 
     #[test]

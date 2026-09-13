@@ -8,9 +8,21 @@ use xsynth_core::soundfont::SoundfontBase;
 
 use yinhe_core::YinModel;
 use yinhe_mixer::{
-    InsertProcessor, InstrumentProcessor, MasterParams, MeterReading, MixerParams, StripParams,
+    InsertProcessor, InstrumentProcessor, MasterParams, MeterReading, MixerParams, SendParams,
+    StripParams,
 };
 use yinhe_types::KEY_COUNT;
+
+/// insert 链的目标位置。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InsertTarget {
+    /// 源 MIDI 通道（A01..P16）。
+    Channel(u8),
+    /// 总线（bus / return）。
+    Bus(u8),
+    /// 主输出。
+    Master,
+}
 
 /// AR 自动化 lane 的 M/S 试听旁通集（跨线程共享，Empty 由 default 提供）。
 pub type AmMsMap =
@@ -116,22 +128,33 @@ pub enum AudioCommand {
     SetMasterParams {
         params: MasterParams,
     },
-    /// 在 channel（None = master）insert 链的 slot 处插入处理器。
+    /// 在 target 指定位置 insert 链的 slot 处插入处理器。
     InsertAdd {
-        channel: Option<u8>,
+        target: InsertTarget,
         slot: usize,
         processor: Box<dyn InsertProcessor>,
     },
-    /// 移除 channel（None = master）insert 链 slot 处的处理器（经 return 通道送回 UI 回收）。
+    /// 移除 target 位置 insert 链 slot 处的处理器（经 return 通道送回 UI 回收）。
     InsertRemove {
-        channel: Option<u8>,
+        target: InsertTarget,
         slot: usize,
     },
-    /// 替换 channel（None = master）insert 链 slot 处的处理器（插件 restart 用）。
+    /// 替换 target 位置 insert 链 slot 处的处理器（插件 restart 用）。
     InsertReplace {
-        channel: Option<u8>,
+        target: InsertTarget,
         slot: usize,
         processor: Box<dyn InsertProcessor>,
+    },
+    /// 更新某总线的 strip 参数（推子拖动高频路径，幂等）。
+    SetBusStrip {
+        bus: u8,
+        params: StripParams,
+    },
+    /// 全量同步总线配置（增删总线 / 改发送后推一次）：
+    /// `buses` 为总线参数、`sends` 为按源通道索引的发送列表。
+    SyncBusConfig {
+        buses: Box<Vec<StripParams>>,
+        sends: Box<Vec<Vec<SendParams>>>,
     },
     /// 安装/替换/移除某**乐器通道**（0 起，与 `TrackData::instrument_channel` 对齐）
     /// 上的乐器插件实例（CLAP/VST3 等，抽象为 trait）。`Some(processor)` = 安装/替换；

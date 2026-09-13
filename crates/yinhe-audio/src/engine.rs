@@ -287,16 +287,20 @@ impl AudioEngine {
             }
             AudioCommand::SetMasterParams { params } => self.set_master_params(params),
             AudioCommand::InsertAdd {
-                channel,
+                target,
                 slot,
                 processor,
-            } => self.insert_add(channel, slot, processor),
-            AudioCommand::InsertRemove { channel, slot } => self.insert_remove(channel, slot),
+            } => self.insert_add(target, slot, processor),
+            AudioCommand::InsertRemove { target, slot } => self.insert_remove(target, slot),
             AudioCommand::InsertReplace {
-                channel,
+                target,
                 slot,
                 processor,
-            } => self.insert_replace(channel, slot, processor),
+            } => self.insert_replace(target, slot, processor),
+            AudioCommand::SetBusStrip { bus, params } => self.set_bus_strip(bus, params),
+            AudioCommand::SyncBusConfig { buses, sends } => {
+                self.sync_bus_config(*buses, *sends);
+            }
             AudioCommand::SetInstrument { channel, processor } => {
                 self.set_instrument(channel, processor)
             }

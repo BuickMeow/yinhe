@@ -22,6 +22,6 @@ pub use yinhe_synth as synth;
 
 pub use clap_insert::ClapInsert;
 pub use spawn::{
-    AudioCommand, AudioHandle, CpalAudioHandle, PreviewNoteParams, channels_for_model,
-    discover_sample_rates, list_output_devices, spawn_cpal_audio,
+    AudioCommand, AudioHandle, CpalAudioHandle, InsertTarget, PreviewNoteParams,
+    channels_for_model, discover_sample_rates, list_output_devices, spawn_cpal_audio,
 };

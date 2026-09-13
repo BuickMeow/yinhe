@@ -25,7 +25,9 @@ use crate::project_meta::{ProjectFile, SfPortOverride};
 ///
 /// v2：新增 instruments（乐器通道 → 插件引用）。加载 v1（无该字段）时按旧结构
 /// 解码并补上空乐器表，避免既有工程丢失混音设置。
-const MIXER_SECTION_VERSION: u32 = 2;
+///
+/// v3：新增 buses / bus_inserts / sends（总线与发送）。加载 v1/v2 时补空。
+const MIXER_SECTION_VERSION: u32 = 3;
 
 /// v1 混音段结构（无 instruments 字段），供旧版工程迁移解码。
 #[derive(serde::Deserialize)]
@@ -34,6 +36,16 @@ struct MixerParamsV1 {
     pub master: yinhe_mixer::MasterParams,
     pub channel_inserts: Vec<Vec<yinhe_mixer::InsertRef>>,
     pub master_inserts: Vec<yinhe_mixer::InsertRef>,
+}
+
+/// v2 混音段结构（无 buses/bus_inserts/sends），供旧版工程迁移解码。
+#[derive(serde::Deserialize)]
+struct MixerParamsV2 {
+    pub channels: Vec<yinhe_mixer::StripParams>,
+    pub master: yinhe_mixer::MasterParams,
+    pub channel_inserts: Vec<Vec<yinhe_mixer::InsertRef>>,
+    pub master_inserts: Vec<yinhe_mixer::InsertRef>,
+    pub instruments: Vec<Option<yinhe_mixer::InsertRef>>,
 }
 
 /// 编码混音段：version u32 LE + zstd(postcard MixerParams)。
@@ -58,8 +70,24 @@ fn decode_mixer_section(section: &[u8]) -> Option<MixerParams> {
         MIXER_SECTION_VERSION => deserialize_postcard(&payload)
             .map_err(|e| tracing::warn!("混音段解析失败，忽略混音设置: {e}"))
             .ok()?,
-        // 旧版 v1：按旧结构解码，乐器表留空（不丢其它混音设置）
+        // 旧版 v2：按旧结构解码，总线/发送留空（不丢其它混音设置）
         //（与 postcard 必须整段对齐、不能跳过未知字段相关）。
+        2 => {
+            let v2: MixerParamsV2 = deserialize_postcard(&payload)
+                .map_err(|e| tracing::warn!("旧版混音段解析失败，忽略混音设置: {e}"))
+                .ok()?;
+            MixerParams {
+                channels: v2.channels,
+                master: v2.master,
+                channel_inserts: v2.channel_inserts,
+                master_inserts: v2.master_inserts,
+                instruments: v2.instruments,
+                buses: Vec::new(),
+                bus_inserts: Vec::new(),
+                sends: Vec::new(),
+            }
+        }
+        // 旧版 v1：按旧结构解码，乐器表与总线留空（不丢其它混音设置）。
         1 => {
             let v1: MixerParamsV1 = deserialize_postcard(&payload)
                 .map_err(|e| tracing::warn!("旧版混音段解析失败，忽略混音设置: {e}"))
@@ -70,6 +98,9 @@ fn decode_mixer_section(section: &[u8]) -> Option<MixerParams> {
                 channel_inserts: v1.channel_inserts,
                 master_inserts: v1.master_inserts,
                 instruments: Vec::new(),
+                buses: Vec::new(),
+                bus_inserts: Vec::new(),
+                sends: Vec::new(),
             }
         }
         other => {

@@ -22,5 +22,7 @@ mod strip;
 pub use graph::{ChannelBuffers, InsertProcessor, MixerGraph};
 pub use meter::{MeterReading, MeterTap};
 pub use param_queue::ParamQueue;
-pub use params::{CHANNEL_COUNT, InsertRef, MasterParams, MixerParams, PluginFormat, StripParams};
+pub use params::{
+    CHANNEL_COUNT, InsertRef, MasterParams, MixerParams, PluginFormat, SendParams, StripParams,
+};
 pub use plugin::{InstrumentProcessor, PluginEvent};

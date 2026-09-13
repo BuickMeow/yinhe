@@ -1,9 +1,12 @@
 //! 引擎的混音台接线：MixerParams（源通道索引）↔ MixerGraph（dense 索引）映射，
 //! insert 命令处理与处理器回收。
 
-use yinhe_mixer::{InsertProcessor, InstrumentProcessor, MasterParams, MixerParams, StripParams};
+use yinhe_mixer::{
+    InsertProcessor, InstrumentProcessor, MasterParams, MixerParams, SendParams, StripParams,
+};
 
 use crate::engine::AudioEngine;
+use crate::spawn::InsertTarget;
 
 impl AudioEngine {
     /// 全量同步混音台参数（引擎 spawn/工程加载后由 UI 推一次）。
@@ -15,6 +18,61 @@ impl AudioEngine {
             self.mixer.set_strip(dense, p);
         }
         self.mixer.set_master(self.mixer_params.master);
+        // 总线与发送：全量同步（数量变化走 resize_buses）。
+        let buses = self.mixer_params.buses.clone();
+        self.mixer
+            .resize_buses(buses.len(), self.mixer.frames(), &buses);
+        for (i, p) in buses.into_iter().enumerate() {
+            self.mixer.set_bus_strip(i, p);
+        }
+        let sends = self.mixer_params.sends.clone();
+        self.sync_sends_to_graph(&sends);
+    }
+
+    /// 把按源通道索引的发送列表映射到 dense 通道并推给混音图。
+    /// 未激活通道的 send 暂存于持久化层，引擎重建/激活后由全量同步补上。
+    fn sync_sends_to_graph(&mut self, sends: &[Vec<SendParams>]) {
+        let count = self.channel_set.channel_count();
+        for dense in 0..count {
+            let list = self
+                .dense_to_src(dense)
+                .and_then(|src| sends.get(src))
+                .map(Vec::as_slice)
+                .unwrap_or(&[])
+                .to_vec();
+            self.mixer.set_sends(dense, list);
+        }
+    }
+
+    /// dense 索引 → 源通道（未激活返回 None；仅结构性操作时调用，O(256)）。
+    fn dense_to_src(&self, dense: usize) -> Option<usize> {
+        self.channel_layout
+            .channel_map()
+            .iter()
+            .position(|&d| d as usize == dense)
+    }
+
+    /// 更新某总线的 strip 参数（高频路径）。
+    pub(crate) fn set_bus_strip(&mut self, bus: u8, params: StripParams) {
+        let idx = bus as usize;
+        if let Some(slot) = self.mixer_params.buses.get_mut(idx) {
+            *slot = params;
+        }
+        self.mixer.set_bus_strip(idx, params);
+    }
+
+    /// 全量同步总线参数与发送（增删总线 / 改 send 后推一次）。
+    pub(crate) fn sync_bus_config(&mut self, buses: Vec<StripParams>, sends: Vec<Vec<SendParams>>) {
+        self.mixer_params.buses = buses;
+        self.mixer_params.sends = sends;
+        let buses = self.mixer_params.buses.clone();
+        self.mixer
+            .resize_buses(buses.len(), self.mixer.frames(), &buses);
+        for (i, p) in buses.into_iter().enumerate() {
+            self.mixer.set_bus_strip(i, p);
+        }
+        let sends = self.mixer_params.sends.clone();
+        self.sync_sends_to_graph(&sends);
     }
 
     /// 更新某源通道的 strip（推子/声像/M/S 拖动的高频路径，幂等）。
@@ -57,26 +115,28 @@ impl AudioEngine {
 
     pub(crate) fn insert_add(
         &mut self,
-        channel: Option<u8>,
+        target: InsertTarget,
         slot: usize,
         processor: Box<dyn InsertProcessor>,
     ) {
-        match channel {
-            Some(ch) => match self.dense_of(ch) {
+        match target {
+            InsertTarget::Channel(ch) => match self.dense_of(ch) {
                 Some(dense) => self.mixer.insert_insert(dense, slot, processor),
                 // 通道未激活（模型无音轨用此通道）：处理器无处安放，直接退回。
                 None => self.insert_returns.push(processor),
             },
-            None => self.mixer.insert_master_insert(slot, processor),
+            InsertTarget::Bus(bus) => self.mixer.insert_bus_insert(bus as usize, slot, processor),
+            InsertTarget::Master => self.mixer.insert_master_insert(slot, processor),
         }
     }
 
-    pub(crate) fn insert_remove(&mut self, channel: Option<u8>, slot: usize) {
-        let removed = match channel {
-            Some(ch) => self
+    pub(crate) fn insert_remove(&mut self, target: InsertTarget, slot: usize) {
+        let removed = match target {
+            InsertTarget::Channel(ch) => self
                 .dense_of(ch)
                 .and_then(|dense| self.mixer.remove_insert(dense, slot)),
-            None => self.mixer.remove_master_insert(slot),
+            InsertTarget::Bus(bus) => self.mixer.remove_bus_insert(bus as usize, slot),
+            InsertTarget::Master => self.mixer.remove_master_insert(slot),
         };
         if let Some(p) = removed {
             self.insert_returns.push(p);
@@ -85,15 +145,16 @@ impl AudioEngine {
 
     pub(crate) fn insert_replace(
         &mut self,
-        channel: Option<u8>,
+        target: InsertTarget,
         slot: usize,
         processor: Box<dyn InsertProcessor>,
     ) {
-        let old = match channel {
-            Some(ch) => self
+        let old = match target {
+            InsertTarget::Channel(ch) => self
                 .dense_of(ch)
                 .and_then(|dense| self.mixer.replace_insert(dense, slot, processor)),
-            None => self.mixer.replace_master_insert(slot, processor),
+            InsertTarget::Bus(bus) => self.mixer.replace_bus_insert(bus as usize, slot, processor),
+            InsertTarget::Master => self.mixer.replace_master_insert(slot, processor),
         };
         if let Some(p) = old {
             self.insert_returns.push(p);

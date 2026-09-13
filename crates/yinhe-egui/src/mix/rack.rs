@@ -18,7 +18,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use yinhe_audio::{AudioCommand, AudioHandle, ClapInsert};
+use yinhe_audio::{AudioCommand, AudioHandle, ClapInsert, InsertTarget};
 use yinhe_clap::{ClapProcessor, HostInfo};
 use yinhe_mixer::{InsertProcessor, MixerParams, PluginFormat};
 use yinhe_vst3::Vst3Insert;
@@ -196,7 +196,7 @@ impl MixerRack {
             }
         };
         handle.send(AudioCommand::InsertAdd {
-            channel,
+            target: insert_target(channel),
             slot,
             processor,
         });
@@ -283,7 +283,10 @@ impl MixerRack {
         }
         if self.chain(channel)[slot].sent {
             if let Some(h) = handle {
-                h.send(AudioCommand::InsertRemove { channel, slot });
+                h.send(AudioCommand::InsertRemove {
+                    target: insert_target(channel),
+                    slot,
+                });
             }
             self.chain_mut(channel)[slot].pending_remove = true;
         } else {
@@ -477,7 +480,10 @@ impl MixerRack {
         }
         if let Some(h) = handle {
             for (channel, slot) in restarts {
-                h.send(AudioCommand::InsertRemove { channel, slot });
+                h.send(AudioCommand::InsertRemove {
+                    target: insert_target(channel),
+                    slot,
+                });
             }
             if latency_changed {
                 h.send(AudioCommand::RefreshLatency);
@@ -495,6 +501,15 @@ impl MixerRack {
             sync_chain(chain.iter_mut(), refs.iter_mut());
         }
         sync_chain(self.master.iter_mut(), mixer.master_inserts.iter_mut());
+    }
+}
+
+/// 机架内部通道寻址（None = master）→ 音频命令的 insert 目标。
+/// 总线链的 insert 由后续阶段接入（rack 暂不管理 bus 链）。
+fn insert_target(channel: Option<u8>) -> InsertTarget {
+    match channel {
+        Some(ch) => InsertTarget::Channel(ch),
+        None => InsertTarget::Master,
     }
 }
 
