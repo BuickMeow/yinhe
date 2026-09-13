@@ -327,18 +327,31 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
         .collect();
     // 乐器通道（0 起），绘制独立的乐器条。
     let inst_channels: Vec<u16> = layout.instrument_channels().to_vec();
-    // 每通道列出使用该通道的轨道名（共享通道的轨道全部列出）。
-    let names: Vec<Vec<String>> = active
+    // 每通道列出使用该通道的轨道名（共享通道的轨道全部列出）+ 取首个轨道的
+    // 颜色作为通道条色条（与 AR/PR 轨道色同源，含 Conductor 主题色）。
+    let track_colors = &app.workspace.documents[idx].edit.track_colors_cache;
+    let (names, colors): (Vec<Vec<String>>, Vec<egui::Color32>) = active
         .iter()
         .map(|&ch| {
-            model
-                .tracks
-                .iter()
-                .filter(|t| t.global_channel() == ch)
-                .map(|t| t.name.clone())
-                .collect()
+            let mut names = Vec::new();
+            let mut first_track = None;
+            for (ti, t) in model.tracks.iter().enumerate() {
+                if t.global_channel() == ch {
+                    names.push(t.name.clone());
+                    if first_track.is_none() {
+                        first_track = Some(ti);
+                    }
+                }
+            }
+            let c = first_track
+                .and_then(|ti| track_colors.get(ti).copied())
+                .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
+            (
+                names,
+                crate::theme::rgba_to_color32((c[0], c[1], c[2], c[3])),
+            )
         })
-        .collect();
+        .unzip();
 
     let dt = ui.ctx().input(|i| i.stable_dt).min(0.1);
     // 引擎重建后通道数变化 → 重置滑动峰值。
@@ -382,6 +395,8 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                     egui::ScrollArea::horizontal()
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.x = strip::STRIP_GAP;
+                            let strip_h = ui.available_height();
                             ui.horizontal_top(|ui| {
                                 for (i, &ch) in active.iter().enumerate() {
                                     let dense = layout.dense_for(ch as usize);
@@ -401,7 +416,9 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                                         idx,
                                         ch,
                                         &names[i],
+                                        colors[i],
                                         peak,
+                                        strip_h,
                                         &mut actions,
                                     );
                                 }
@@ -409,7 +426,14 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                                 if !inst_channels.is_empty() {
                                     ui.separator();
                                     for &ich in inst_channels.iter() {
-                                        strip::instrument_strip(app, ui, idx, ich, &mut actions);
+                                        strip::instrument_strip(
+                                            app,
+                                            ui,
+                                            idx,
+                                            ich,
+                                            strip_h,
+                                            &mut actions,
+                                        );
                                     }
                                 }
                             });
@@ -439,7 +463,16 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                 egui::UiBuilder::new()
                     .max_rect(master_rect)
                     .layout(egui::Layout::top_down(egui::Align::Center)),
-                |ui| strip::master_strip(app, ui, idx, master_peak, &mut actions),
+                |ui| {
+                    strip::master_strip(
+                        app,
+                        ui,
+                        idx,
+                        master_peak,
+                        master_rect.height(),
+                        &mut actions,
+                    )
+                },
             );
         },
     );
