@@ -17,6 +17,10 @@ use yinhe_types::{AutomationTarget, MAX_KEY, Note};
 /// 之后所有选择操作（拖动/删除/复制/统计）自动按边界过滤。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SelectionFilter {
+    /// 音高范围（含端点，0–127），与选框 key 范围取交集。
+    pub key: Option<(u8, u8)>,
+    /// 轨道范围（含端点），与选框 track 范围取交集。
+    pub track: Option<(u16, u16)>,
     /// 力度范围（含端点，0–127）。
     pub velocity: Option<(u8, u8)>,
     /// gate 范围（`end_tick - start_tick`，含端点）。
@@ -27,23 +31,25 @@ pub struct SelectionFilter {
     /// 自动化 value 范围（含端点，`None` = 不限制）。
     pub automation_value: Option<(f32, f32)>,
     /// 反选：矩形范围内不满足音符属性边界的音符变为选中。
-    /// 只在至少一个音符属性边界（velocity/gate）存在时生效。
+    /// 只在至少一个音符属性边界存在时生效。
     pub invert: bool,
 }
 
 impl SelectionFilter {
     /// 是否未设任何边界（此时判定与无筛选完全一致）。
     pub fn is_empty(&self) -> bool {
-        self.velocity.is_none()
+        self.key.is_none()
+            && self.track.is_none()
+            && self.velocity.is_none()
             && self.gate.is_none()
             && self.automation_targets.is_none()
             && self.automation_value.is_none()
             && !self.invert
     }
 
-    /// 是否设置了音符属性边界（velocity/gate）。
+    /// 是否设置了音符属性边界（key/track/velocity/gate）。
     pub fn has_note_bounds(&self) -> bool {
-        self.velocity.is_some() || self.gate.is_some()
+        self.key.is_some() || self.track.is_some() || self.velocity.is_some() || self.gate.is_some()
     }
 
     /// 是否设置了自动化边界。
@@ -52,7 +58,17 @@ impl SelectionFilter {
     }
 
     /// 音符是否满足属性边界（invert 之前）。
-    pub fn note_matches(&self, note: &Note) -> bool {
+    pub fn note_matches(&self, note: &Note, key: u8) -> bool {
+        if let Some((lo, hi)) = self.key
+            && !(lo..=hi).contains(&key)
+        {
+            return false;
+        }
+        if let Some((lo, hi)) = self.track
+            && !(lo..=hi).contains(&note.track)
+        {
+            return false;
+        }
         if let Some((lo, hi)) = self.velocity
             && !(lo..=hi).contains(&note.velocity)
         {
@@ -68,11 +84,11 @@ impl SelectionFilter {
     }
 
     /// 完整音符判定（含反选）。无音符边界时恒为 true（反选无对象）。
-    pub fn accepts_note(&self, note: &Note) -> bool {
+    pub fn accepts_note(&self, note: &Note, key: u8) -> bool {
         if !self.has_note_bounds() {
             return true;
         }
-        self.note_matches(note) != self.invert
+        self.note_matches(note, key) != self.invert
     }
 
     /// 自动化锚点判定：target 在白名单内且 value 在范围内。
@@ -160,7 +176,7 @@ impl Selection {
         if !self.filter.has_note_bounds() {
             return self.contains(note.track, note.start_tick, key);
         }
-        self.contains(note.track, note.start_tick, key) && self.filter.accepts_note(note)
+        self.contains(note.track, note.start_tick, key) && self.filter.accepts_note(note, key)
     }
 
     /// 是否设置了任何筛选边界。

@@ -734,7 +734,7 @@ impl Document {
                         if n.track < tl || n.track > th {
                             continue;
                         }
-                        if !self.edit.selected.filter.accepts_note(n) {
+                        if !self.edit.selected.filter.accepts_note(n, key) {
                             continue;
                         }
                         let new = match field {

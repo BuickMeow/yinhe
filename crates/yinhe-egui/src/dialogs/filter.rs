@@ -1,7 +1,7 @@
 //! 选择筛选对话框。
 //!
 //! 在现有选框（矩形空间范围：tick/key/track）之上叠加属性边界：
-//! - 音符：力度、gate，可反选
+//! - 音符：音高/轨道/力度/gate，可反选
 //! - 自动化：事件类型（target 白名单）、value 范围
 //!
 //! 应用后 `Selection.filter` 生效，所有选择操作（拖动/删除/复制/统计）
@@ -27,13 +27,13 @@ pub(crate) struct FilterDialogState {
     /// 本帧刚打开（dialog_dispatch 用于把窗口提升到前台）。
     pub just_opened: bool,
 
-    // ── 空间范围（应用时收窄选框 rects）──
+    // ── 音符边界（开关 + 范围）──
+    pub key_enabled: bool,
     pub key_lo: u8,
     pub key_hi: u8,
+    pub track_enabled: bool,
     pub track_lo: u16,
     pub track_hi: u16,
-
-    // ── 音符属性边界 ──
     pub velocity_enabled: bool,
     pub velocity_lo: u8,
     pub velocity_hi: u8,
@@ -70,28 +70,16 @@ impl FilterDialogState {
         self.open = true;
         self.just_opened = true;
 
-        // 空间范围 = 选区 rects 的并集；空选区退化为全范围。
-        let (mut klo, mut khi) = (u8::MAX, 0u8);
-        let (mut tlo, mut thi) = (u16::MAX, 0u16);
-        for &(_, _, kl, kh, tl, th) in &selection.rects {
-            klo = klo.min(kl);
-            khi = khi.max(kh);
-            tlo = tlo.min(tl);
-            thi = thi.max(th);
-        }
-        if selection.rects.is_empty() {
-            klo = 0;
-            khi = yinhe_types::MAX_KEY;
-            tlo = 0;
-            thi = model.tracks.len().saturating_sub(1) as u16;
-        }
+        let f = &selection.filter;
+        self.key_enabled = f.key.is_some();
+        let (klo, khi) = f.key.unwrap_or((0, yinhe_types::MAX_KEY));
         self.key_lo = klo;
         self.key_hi = khi;
+        self.track_enabled = f.track.is_some();
+        let max_track = model.tracks.len().saturating_sub(1) as u16;
+        let (tlo, thi) = f.track.unwrap_or((0, max_track));
         self.track_lo = tlo;
         self.track_hi = thi;
-
-        // 属性边界
-        let f = &selection.filter;
         self.velocity_enabled = f.velocity.is_some();
         let (vlo, vhi) = f.velocity.unwrap_or((0, 127));
         self.velocity_lo = vlo;
@@ -129,6 +117,15 @@ impl FilterDialogState {
     /// 生成 `SelectionFilter`。
     pub fn build_filter(&self) -> SelectionFilter {
         let mut f = SelectionFilter::default();
+        if self.key_enabled {
+            f.key = Some((self.key_lo.min(self.key_hi), self.key_lo.max(self.key_hi)));
+        }
+        if self.track_enabled {
+            f.track = Some((
+                self.track_lo.min(self.track_hi),
+                self.track_lo.max(self.track_hi),
+            ));
+        }
         if self.velocity_enabled {
             f.velocity = Some((
                 self.velocity_lo.min(self.velocity_hi),
@@ -158,22 +155,6 @@ impl FilterDialogState {
         }
         f.invert = self.invert;
         f
-    }
-
-    /// 把空间范围应用到选框 rects（收窄；空 rect 丢弃）。
-    pub fn apply_range(&self, selection: &mut Selection) {
-        let (klo, khi) = (self.key_lo.min(self.key_hi), self.key_lo.max(self.key_hi));
-        let (tlo, thi) = (
-            self.track_lo.min(self.track_hi),
-            self.track_lo.max(self.track_hi),
-        );
-        for r in &mut selection.rects {
-            r.2 = r.2.max(klo);
-            r.3 = r.3.min(khi);
-            r.4 = r.4.max(tlo);
-            r.5 = r.5.min(thi);
-        }
-        selection.rects.retain(|r| r.2 <= r.3 && r.4 <= r.5);
     }
 }
 
@@ -206,7 +187,7 @@ pub(crate) fn show_viewport(
 
     ctx.show_viewport_immediate(
         viewport_id,
-        crate::chrome::dialog::viewport_builder(title.as_ref(), [420.0, 560.0], false),
+        crate::chrome::dialog::viewport_builder(title.as_ref(), [420.0, 540.0], false),
         |vctx, _class| {
             if vctx.input(|i| i.viewport().close_requested()) {
                 close = true;
@@ -230,20 +211,12 @@ pub(crate) fn show_viewport(
                             bottom: 12,
                         })
                         .show(ui, |ui| {
-                            ui.label(
-                                egui::RichText::new(t!("dialog.filter.hint").as_ref())
-                                    .size(crate::theme::SMALL_FONT)
-                                    .color(crate::theme::text_muted()),
-                            );
-                            ui.add_space(4.0);
                             egui::ScrollArea::vertical()
                                 .auto_shrink([false, false])
-                                .max_height(420.0)
+                                .max_height(440.0)
                                 .show(ui, |ui| {
-                                    show_range_section(ui, state, num_tracks);
-                                    ui.add_space(8.0);
-                                    show_note_bounds_section(ui, state);
-                                    ui.add_space(8.0);
+                                    show_note_section(ui, state, num_tracks);
+                                    ui.add_space(6.0);
                                     show_automation_section(ui, state);
                                 });
                         });
@@ -252,22 +225,30 @@ pub(crate) fn show_viewport(
                     let mut action_right = FilterDialogAction::None;
                     crate::chrome::dialog::content_with_bottom_buttons(
                         ui,
-                        36.0,
+                        32.0,
                         |ui| {
-                            if ui.button(t!("dialog.filter.clear").as_ref()).clicked() {
-                                action_left = FilterDialogAction::Clear;
-                            }
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                if ui.button(t!("dialog.filter.clear").as_ref()).clicked() {
+                                    action_left = FilterDialogAction::Clear;
+                                }
+                            });
                         },
                         |ui| {
-                            if ui.button(t!("dialog.filter.cancel").as_ref()).clicked() {
-                                action_right = FilterDialogAction::Cancel;
-                            }
-                            if ui.button(t!("dialog.filter.apply").as_ref()).clicked() {
-                                action_right = FilterDialogAction::Apply;
-                            }
-                            if ui.button(t!("dialog.filter.ok").as_ref()).clicked() {
-                                action_right = FilterDialogAction::Confirm;
-                            }
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                if ui.button(t!("dialog.filter.cancel").as_ref()).clicked() {
+                                    action_right = FilterDialogAction::Cancel;
+                                }
+                                ui.add_space(6.0);
+                                if ui.button(t!("dialog.filter.apply").as_ref()).clicked() {
+                                    action_right = FilterDialogAction::Apply;
+                                }
+                                ui.add_space(6.0);
+                                if ui.button(t!("dialog.filter.ok").as_ref()).clicked() {
+                                    action_right = FilterDialogAction::Confirm;
+                                }
+                            });
                         },
                     );
                     if action_left != FilterDialogAction::None {
@@ -292,90 +273,135 @@ pub(crate) fn show_viewport(
     action
 }
 
+/// 分组标题。
 fn section_title(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(2.0);
     ui.label(
         egui::RichText::new(text)
-            .size(crate::theme::SMALL_FONT)
-            .color(crate::theme::text_label()),
+            .strong()
+            .size(crate::scaling::scaled_font(
+                ui.ctx(),
+                crate::theme::SUB_TITLE_FONT,
+            )),
     );
-    ui.add_space(2.0);
+    ui.add_space(6.0);
 }
 
-fn range_row(ui: &mut egui::Ui, label: &str, lo: &mut u32, hi: &mut u32, max: u32) {
+/// 属性边界行：自绘开关在左，标题跟随，范围控件右对齐。
+fn bound_row(
+    ui: &mut egui::Ui,
+    title: &str,
+    enabled: &mut bool,
+    add_range: impl FnOnce(&mut egui::Ui),
+) {
     ui.horizontal(|ui| {
+        crate::widgets::switch::switch(ui, enabled);
+        ui.add_space(4.0);
         ui.label(
-            egui::RichText::new(label)
-                .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::text_primary()),
+            egui::RichText::new(title)
+                .size(crate::scaling::scaled_font(
+                    ui.ctx(),
+                    crate::theme::SMALL_FONT,
+                ))
+                .color(if *enabled {
+                    crate::theme::text_primary()
+                } else {
+                    crate::theme::text_muted()
+                }),
         );
-        ui.add(egui::DragValue::new(lo).range(0..=max).speed(1.0));
-        ui.label("~");
-        ui.add(egui::DragValue::new(hi).range(0..=max).speed(1.0));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_enabled_ui(*enabled, |ui| add_range(ui));
+        });
     });
+    ui.add_space(4.0);
+    ui.separator();
+    ui.add_space(4.0);
 }
 
-fn show_range_section(ui: &mut egui::Ui, state: &mut FilterDialogState, num_tracks: usize) {
-    section_title(ui, t!("dialog.filter.range").as_ref());
+fn drag_u32(ui: &mut egui::Ui, v: &mut u32, max: u32) {
+    ui.add(egui::DragValue::new(v).range(0..=max).speed(1.0));
+}
+
+fn show_note_section(ui: &mut egui::Ui, state: &mut FilterDialogState, num_tracks: usize) {
+    section_title(ui, t!("dialog.filter.note_bounds").as_ref());
     let max_track = num_tracks.saturating_sub(1) as u32;
-    let mut klo = state.key_lo as u32;
-    let mut khi = state.key_hi as u32;
-    range_row(
+
+    bound_row(
         ui,
         t!("dialog.filter.key").as_ref(),
-        &mut klo,
-        &mut khi,
-        127,
+        &mut state.key_enabled,
+        |ui| {
+            let mut hi = state.key_hi as u32;
+            drag_u32(ui, &mut hi, 127);
+            state.key_hi = hi as u8;
+            ui.label("~");
+            let mut lo = state.key_lo as u32;
+            drag_u32(ui, &mut lo, 127);
+            state.key_lo = lo as u8;
+        },
     );
-    state.key_lo = klo as u8;
-    state.key_hi = khi as u8;
-    let mut tlo = state.track_lo as u32;
-    let mut thi = state.track_hi as u32;
-    range_row(
+    bound_row(
         ui,
         t!("dialog.filter.track").as_ref(),
-        &mut tlo,
-        &mut thi,
-        max_track,
+        &mut state.track_enabled,
+        |ui| {
+            let mut hi = state.track_hi as u32;
+            drag_u32(ui, &mut hi, max_track);
+            state.track_hi = hi as u16;
+            ui.label("~");
+            let mut lo = state.track_lo as u32;
+            drag_u32(ui, &mut lo, max_track);
+            state.track_lo = lo as u16;
+        },
     );
-    state.track_lo = tlo as u16;
-    state.track_hi = thi as u16;
-}
-
-fn show_note_bounds_section(ui: &mut egui::Ui, state: &mut FilterDialogState) {
-    section_title(ui, t!("dialog.filter.note_bounds").as_ref());
-    ui.horizontal(|ui| {
-        ui.checkbox(
-            &mut state.velocity_enabled,
-            t!("dialog.filter.velocity").as_ref(),
-        );
-        let mut lo = state.velocity_lo as u32;
-        let mut hi = state.velocity_hi as u32;
-        ui.add_enabled_ui(state.velocity_enabled, |ui| {
-            ui.add(egui::DragValue::new(&mut lo).range(0..=127).speed(1.0));
+    bound_row(
+        ui,
+        t!("dialog.filter.velocity").as_ref(),
+        &mut state.velocity_enabled,
+        |ui| {
+            let mut hi = state.velocity_hi as u32;
+            drag_u32(ui, &mut hi, 127);
+            state.velocity_hi = hi as u8;
             ui.label("~");
-            ui.add(egui::DragValue::new(&mut hi).range(0..=127).speed(1.0));
-        });
-        state.velocity_lo = lo as u8;
-        state.velocity_hi = hi as u8;
-    });
-    ui.horizontal(|ui| {
-        ui.checkbox(&mut state.gate_enabled, t!("dialog.filter.gate").as_ref());
-        ui.add_enabled_ui(state.gate_enabled, |ui| {
-            ui.add(
-                egui::DragValue::new(&mut state.gate_lo)
-                    .range(1..=u32::MAX)
-                    .speed(1.0),
-            );
-            ui.label("~");
+            let mut lo = state.velocity_lo as u32;
+            drag_u32(ui, &mut lo, 127);
+            state.velocity_lo = lo as u8;
+        },
+    );
+    bound_row(
+        ui,
+        t!("dialog.filter.gate").as_ref(),
+        &mut state.gate_enabled,
+        |ui| {
             ui.add(
                 egui::DragValue::new(&mut state.gate_hi)
                     .range(1..=u32::MAX)
                     .speed(1.0),
             );
-        });
+            ui.label("~");
+            ui.add(
+                egui::DragValue::new(&mut state.gate_lo)
+                    .range(1..=u32::MAX)
+                    .speed(1.0),
+            );
+        },
+    );
+    ui.horizontal(|ui| {
+        crate::widgets::switch::switch(ui, &mut state.invert);
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(t!("dialog.filter.invert").as_ref())
+                .size(crate::scaling::scaled_font(
+                    ui.ctx(),
+                    crate::theme::SMALL_FONT,
+                ))
+                .color(if state.invert {
+                    crate::theme::text_primary()
+                } else {
+                    crate::theme::text_muted()
+                }),
+        );
     });
-    ui.add_space(2.0);
-    ui.checkbox(&mut state.invert, t!("dialog.filter.invert").as_ref());
 }
 
 fn show_automation_section(ui: &mut egui::Ui, state: &mut FilterDialogState) {
@@ -388,29 +414,30 @@ fn show_automation_section(ui: &mut egui::Ui, state: &mut FilterDialogState) {
         );
         return;
     }
-    ui.checkbox(
-        &mut state.automation_enabled,
+    bound_row(
+        ui,
         t!("dialog.filter.automation_targets").as_ref(),
+        &mut state.automation_enabled,
+        |_ui| {},
     );
-    ui.add_enabled_ui(state.automation_enabled, |ui| {
+    if state.automation_enabled {
         ui.indent("filter_automation_targets", |ui| {
             for entry in &mut state.automation_targets {
                 ui.checkbox(&mut entry.checked, entry.label.as_str());
             }
         });
-    });
-    ui.add_space(2.0);
-    ui.horizontal(|ui| {
-        ui.checkbox(
-            &mut state.automation_value_enabled,
-            t!("dialog.filter.value").as_ref(),
-        );
-        ui.add_enabled_ui(state.automation_value_enabled, |ui| {
-            ui.add(egui::DragValue::new(&mut state.automation_value_lo).speed(1.0));
-            ui.label("~");
+        ui.add_space(4.0);
+    }
+    bound_row(
+        ui,
+        t!("dialog.filter.value").as_ref(),
+        &mut state.automation_value_enabled,
+        |ui| {
             ui.add(egui::DragValue::new(&mut state.automation_value_hi).speed(1.0));
-        });
-    });
+            ui.label("~");
+            ui.add(egui::DragValue::new(&mut state.automation_value_lo).speed(1.0));
+        },
+    );
 }
 
 #[cfg(test)]
@@ -453,6 +480,7 @@ mod tests {
         let model = model_with_cc();
         let mut selection = Selection::default();
         selection.add_rect_track(100, 500, 60, 70, 0, 0);
+        selection.filter.key = Some((55, 65));
         selection.filter.velocity = Some((10, 20));
         selection.filter.gate = Some((30, 40));
         selection.filter.invert = true;
@@ -461,6 +489,8 @@ mod tests {
         let mut state = FilterDialogState::default();
         state.open(&selection, &model);
 
+        assert!(state.key_enabled);
+        assert_eq!((state.key_lo, state.key_hi), (55, 65));
         assert!(state.velocity_enabled);
         assert_eq!((state.velocity_lo, state.velocity_hi), (10, 20));
         assert!(state.gate_enabled);
@@ -480,10 +510,6 @@ mod tests {
             .find(|e| matches!(e.target, AutomationTarget::Tempo))
             .unwrap();
         assert!(!tempo.checked, "白名单只含 CC1");
-
-        // 空间范围取选框并集
-        assert_eq!((state.key_lo, state.key_hi), (60, 70));
-        assert_eq!((state.track_lo, state.track_hi), (0, 0));
     }
 
     #[test]
@@ -492,6 +518,9 @@ mod tests {
         let selection = Selection::default();
         let mut state = FilterDialogState::default();
         state.open(&selection, &model);
+        state.key_enabled = true;
+        state.key_lo = 80;
+        state.key_hi = 40; // 反着填也应规范化为 (40, 80)
         state.velocity_enabled = true;
         state.velocity_lo = 90;
         state.velocity_hi = 10; // 反着填也应规范化为 (10, 90)
@@ -504,6 +533,7 @@ mod tests {
         state.automation_value_hi = 1.0;
 
         let f = state.build_filter();
+        assert_eq!(f.key, Some((40, 80)));
         assert_eq!(f.velocity, Some((10, 90)));
         assert_eq!(f.gate, Some((5, 100)));
         assert!(f.invert);
@@ -512,19 +542,20 @@ mod tests {
     }
 
     #[test]
-    fn apply_range_narrows_rects_and_drops_empty() {
-        let mut selection = Selection::default();
-        selection.add_rect_track(0, 100, 10, 90, 0, 5);
-        selection.add_rect_track(0, 100, 100, 110, 0, 5); // key 范围外，应收窄后丢弃
+    fn disabled_bounds_are_none() {
+        let model = model_with_cc();
+        let selection = Selection::default();
         let mut state = FilterDialogState::default();
-        state.key_lo = 50;
-        state.key_hi = 80;
-        state.track_lo = 2;
-        state.track_hi = 4;
-        state.apply_range(&mut selection);
+        state.open(&selection, &model);
+        state.key_enabled = false;
+        state.track_enabled = false;
+        state.velocity_enabled = false;
+        state.gate_enabled = false;
 
-        assert_eq!(selection.rects.len(), 1);
-        let r = selection.rects[0];
-        assert_eq!((r.2, r.3, r.4, r.5), (50, 80, 2, 4));
+        let f = state.build_filter();
+        assert!(f.key.is_none());
+        assert!(f.track.is_none());
+        assert!(f.velocity.is_none());
+        assert!(f.gate.is_none());
     }
 }

@@ -40,7 +40,7 @@ pub fn remove_selected(model: &mut YinModel, selection: &Selection) -> Vec<(Note
                 bucket.drain_range(tick_start, tick_end)
             } else {
                 bucket.drain_range_filtered(tick_start, tick_end, |n| {
-                    n.track >= track_lo && n.track <= track_hi && filter.accepts_note(n)
+                    n.track >= track_lo && n.track <= track_hi && filter.accepts_note(n, key)
                 })
             };
             if !out.is_empty() {
@@ -88,7 +88,7 @@ pub fn for_each_selected(model: &YinModel, selection: &Selection, mut f: impl Fn
                 if n.track < track_lo || n.track > track_hi {
                     continue;
                 }
-                if has_bounds && !filter.accepts_note(n) {
+                if has_bounds && !filter.accepts_note(n, key) {
                     continue;
                 }
                 f(n, key);
@@ -192,7 +192,7 @@ pub fn summarize_selected(model: &YinModel, selection: &Selection) -> SelectedNo
                 if n.track < tl || n.track > th {
                     continue;
                 }
-                if has_bounds && !filter.accepts_note(n) {
+                if has_bounds && !filter.accepts_note(n, key) {
                     continue;
                 }
                 if !full {

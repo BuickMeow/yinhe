@@ -417,15 +417,13 @@ impl App {
         self.filter_dialog.open(&doc.edit.selected, &doc.data.model);
     }
 
-    /// 应用筛选：写属性边界并收窄选框空间范围。
+    /// 应用筛选：写属性边界（选框矩形保持不动）。
     pub(crate) fn apply_filter_dialog(&mut self) {
         let Some(idx) = self.workspace.active_doc else {
             return;
         };
         let doc = &mut self.workspace.documents[idx];
-        let filter = self.filter_dialog.build_filter();
-        self.filter_dialog.apply_range(&mut doc.edit.selected);
-        doc.edit.selected.filter = filter;
+        doc.edit.selected.filter = self.filter_dialog.build_filter();
         self.pianoroll_view.base.dirty = true;
         self.arrange_view.base.dirty = true;
     }
