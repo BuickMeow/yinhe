@@ -121,6 +121,8 @@ pub struct App {
     pub(crate) dock_channel: Option<u8>,
     /// dock 上次跟随的选中轨（切换轨道时 dock 通道跟随）。
     pub(crate) dock_track: Option<u16>,
+    /// dock 旋钮拖动会话（一次拖动 = 一条 undo，不持久化）。
+    pub(crate) knob_drag: Option<crate::chrome::dock_bar::KnobDrag>,
 
     /// Anchor for shift-click range selection in the track panel.
     /// Set on every non-shift click; consumed on shift-click.
@@ -376,6 +378,7 @@ impl App {
             dock_selected: None,
             dock_channel: None,
             dock_track: None,
+            knob_drag: None,
             track_selection_anchor: None,
 
             right_panel_width: audio_settings.layout.right_panel_width,

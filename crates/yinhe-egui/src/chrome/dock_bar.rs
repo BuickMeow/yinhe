@@ -11,7 +11,7 @@
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_core::TrackKind;
-use yinhe_types::AutomationTarget;
+use yinhe_types::{AutomationEvent, AutomationTarget};
 
 use crate::app::App;
 
@@ -24,6 +24,28 @@ pub(crate) enum DockDevice {
     Instrument,
     /// 效果器链槽位（按通道链索引）。
     Insert(usize),
+}
+
+/// 旋钮拖动会话（一次拖动 = 一条 undo）。
+pub(crate) struct KnobDrag {
+    track_idx: usize,
+    target: AutomationTarget,
+    /// 写入位置（编辑光标 tick）。
+    tick: u32,
+    /// 拖动开始时的界面快照（undo 用）。
+    snapshot: yinhe_editor_core::history::EditSnapshot,
+    /// 拖动开始前该 lane 的完整事件（lane 尚未创建时为空）。
+    before: Vec<AutomationEvent>,
+    /// 当前 lane 索引（懒创建后记录）。
+    lane_idx: Option<usize>,
+}
+
+/// 单帧内旋钮产生的动作（渲染后统一应用，避开借用冲突）。
+enum KnobAction {
+    DragStart(AutomationTarget),
+    /// 拖动到归一化值 `norm`。
+    Drag(AutomationTarget, f32),
+    DragStop(AutomationTarget),
 }
 
 /// xsynth 支持且有实际效果的自动化目标（Pitch Bend 到 Coarse Tune + 内建 CC）。
@@ -141,16 +163,22 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
                 .position(|t| t.global_channel() == channel)
         })
         .unwrap_or(0);
-    let existing_lanes: Vec<AutomationTarget> = model
-        .tracks
-        .get(lane_track_ti)
-        .map(|t| {
-            t.automation_lanes
-                .iter()
-                .map(|l| l.target.clone())
-                .collect()
+    // 编辑光标位置（旋钮写入位置）与各自动化 target 的当前值。
+    let tick = {
+        let doc = &app.workspace.documents[idx];
+        doc.edit.cursor_tick.unwrap_or(0.0).max(0.0) as u32
+    };
+    let lane_current: Vec<(AutomationTarget, Option<f32>)> = xsynth_targets()
+        .into_iter()
+        .map(|target| {
+            let value = model
+                .tracks
+                .get(lane_track_ti)
+                .and_then(|t| t.automation_lanes.iter().find(|l| l.target == target))
+                .and_then(|l| l.value_at(tick).map(|(v, _)| v));
+            (target, value)
         })
-        .unwrap_or_default();
+        .collect();
     let track_names: Vec<String> = model
         .tracks
         .iter()
@@ -167,7 +195,7 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
 
     let mut selected = app.dock_selected.unwrap_or(DockDevice::XSynth);
     let mut open_picker = false;
-    let mut create_lane: Option<AutomationTarget> = None;
+    let mut knob_actions: Vec<KnobAction> = Vec::new();
     let mut open_params: Option<DockDevice> = None;
 
     // ── 顶部：通道选择 + 使用该通道的轨道 ──
@@ -284,7 +312,7 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
         .auto_shrink([false, false])
         .show(ui, |ui| match selected {
             DockDevice::XSynth => {
-                xsynth_params(ui, &existing_lanes, &mut create_lane);
+                xsynth_params(ui, tick, &lane_current, &mut knob_actions);
             }
             device @ (DockDevice::Instrument | DockDevice::Insert(_)) => {
                 plugin_device_params(
@@ -302,16 +330,8 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
     if open_picker {
         app.mix.picker_for = Some(Some(channel));
     }
-    if let Some(target) = create_lane {
-        app.with_undo(t!("undo.create_automation").as_ref(), |doc| {
-            let r = doc.add_automation_lane(lane_track_ti, target);
-            if r.is_some()
-                && let Some(e) = doc.edit.arr_am_expanded.get_mut(lane_track_ti)
-            {
-                *e = true;
-            }
-            r.map(|(_, a)| a)
-        });
+    for action in knob_actions {
+        apply_knob_action(app, idx, lane_track_ti, tick, action);
     }
     if let Some(device) = open_params
         && let Some(panel) = open_param_panel(app, idx, device, channel, instrument_channel)
@@ -414,44 +434,213 @@ fn add_card(ui: &mut egui::Ui) -> egui::Response {
     resp.on_hover_text(t!("mix.add_insert_hint"))
 }
 
-/// XSynth 虚拟乐器的参数列表：每行可一键「显示自动化」。
+/// XSynth 虚拟乐器参数：大卡片 + 滚动网格，每项为「旋钮 + 两行文字」。
+/// 旋钮拖动即在编辑光标处写入自动化事件（同 tick 覆盖，松手一条 undo）。
 fn xsynth_params(
     ui: &mut egui::Ui,
-    existing: &[AutomationTarget],
-    create_lane: &mut Option<AutomationTarget>,
+    tick: u32,
+    values: &[(AutomationTarget, Option<f32>)],
+    actions: &mut Vec<KnobAction>,
 ) {
-    for target in xsynth_targets() {
-        let has_lane = existing.contains(&target);
-        ui.horizontal(|ui| {
-            ui.add_sized(
-                [150.0, 20.0],
-                egui::Label::new(
-                    egui::RichText::new(target.display_name())
-                        .size(crate::theme::SMALL_FONT)
-                        .color(crate::theme::text_primary()),
-                )
-                .truncate(),
+    egui::Frame::new()
+        .fill(crate::theme::track_bg())
+        .corner_radius(4.0)
+        .inner_margin(egui::Margin::symmetric(10, 8))
+        .show(ui, |ui| {
+            ui.set_min_size(ui.available_size());
+            ui.label(
+                egui::RichText::new(t!("dock.write_at", tick = tick))
+                    .size(crate::theme::SMALL_FONT)
+                    .color(crate::theme::text_muted()),
             );
-            let default = target.default_value();
-            ui.add_sized(
-                [80.0, 20.0],
-                egui::Label::new(
-                    egui::RichText::new(format!("{default:.0}"))
-                        .size(crate::theme::SMALL_FONT)
-                        .monospace()
-                        .color(crate::theme::text_muted()),
-                ),
-            );
-            if has_lane {
-                ui.label(
-                    egui::RichText::new(t!("dock.lane_exists"))
-                        .size(crate::theme::SMALL_FONT)
-                        .color(crate::theme::accent_active()),
-                );
-            } else if ui.small_button(t!("dock.show_automation")).clicked() {
-                *create_lane = Some(target.clone());
-            }
+            ui.add_space(4.0);
+            egui::ScrollArea::vertical()
+                .id_salt("xsynth_knobs")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    egui::Grid::new("xsynth_knob_grid")
+                        .num_columns(3)
+                        .spacing([18.0, 10.0])
+                        .show(ui, |ui| {
+                            for (i, (target, current)) in values.iter().enumerate() {
+                                knob_cell(ui, target, *current, actions);
+                                if (i + 1) % 3 == 0 {
+                                    ui.end_row();
+                                }
+                            }
+                        });
+                });
         });
+}
+
+/// 单个参数单元：左旋钮 + 右侧两行（名称、数值）。
+fn knob_cell(
+    ui: &mut egui::Ui,
+    target: &AutomationTarget,
+    current: Option<f32>,
+    actions: &mut Vec<KnobAction>,
+) {
+    let max = target.max_value();
+    let raw = current.unwrap_or_else(|| target.default_value());
+    let mut norm = (raw / max.max(1.0)).clamp(0.0, 1.0);
+
+    ui.horizontal(|ui| {
+        let resp = crate::widgets::knob::knob(ui, &mut norm, 30.0);
+        if resp.drag_started() {
+            actions.push(KnobAction::DragStart(target.clone()));
+        }
+        if resp.dragged() {
+            actions.push(KnobAction::Drag(target.clone(), norm));
+        }
+        if resp.drag_stopped() {
+            actions.push(KnobAction::DragStop(target.clone()));
+        }
+
+        ui.vertical(|ui| {
+            ui.label(
+                egui::RichText::new(target.display_name())
+                    .size(crate::theme::SMALL_FONT)
+                    .color(crate::theme::text_primary()),
+            );
+            let (text, color) = match current {
+                Some(v) => (format_value(v), crate::theme::accent_active()),
+                None => (
+                    format!("{}（默认）", format_value(target.default_value())),
+                    crate::theme::text_muted(),
+                ),
+            };
+            ui.label(
+                egui::RichText::new(text)
+                    .size(crate::theme::SMALL_FONT)
+                    .monospace()
+                    .color(color),
+            );
+        });
+    });
+}
+
+/// 自动化原始值 → 显示文本（整数域取整）。
+fn format_value(value: f32) -> String {
+    format!("{value:.0}")
+}
+
+/// 应用单帧旋钮动作：拖动中 upsert 事件，松手 push 一条 undo。
+fn apply_knob_action(app: &mut App, idx: usize, track_idx: usize, tick: u32, action: KnobAction) {
+    match action {
+        KnobAction::DragStart(target) => {
+            let doc = &mut app.workspace.documents[idx];
+            if track_idx >= doc.data.model.tracks.len() {
+                return;
+            }
+            let lane_pos = doc.data.model.tracks[track_idx]
+                .automation_lanes
+                .iter()
+                .position(|l| l.target == target);
+            let before = lane_pos
+                .map(|li| {
+                    doc.data.model.tracks[track_idx].automation_lanes[li]
+                        .events
+                        .clone()
+                })
+                .unwrap_or_default();
+            app.knob_drag = Some(KnobDrag {
+                track_idx,
+                target,
+                tick,
+                snapshot: doc.capture_snapshot(),
+                before,
+                lane_idx: lane_pos,
+            });
+        }
+        KnobAction::Drag(target, norm) => {
+            let Some(mut drag) = app.knob_drag.take() else {
+                return;
+            };
+            if drag.target == target {
+                let raw = norm * drag.target.max_value();
+                upsert_automation_event(app, idx, &mut drag, raw);
+                app.notify_audio_model_changed();
+            }
+            app.knob_drag = Some(drag);
+        }
+        KnobAction::DragStop(target) => {
+            let Some(drag) = app.knob_drag.take_if(|d| d.target == target) else {
+                return;
+            };
+            let Some(lane_idx) = drag.lane_idx else {
+                return;
+            };
+            let doc = &mut app.workspace.documents[idx];
+            let after = crate::right_panel::automation_undo::snapshot_lane_events(
+                doc,
+                drag.track_idx as u16,
+                lane_idx,
+                &drag.target,
+            );
+            crate::right_panel::automation_undo::push_automation_undo(
+                doc,
+                drag.track_idx as u16,
+                lane_idx,
+                &drag.target,
+                drag.before,
+                after,
+                t!("undo.edit_automation").as_ref(),
+                drag.snapshot,
+            );
+        }
+    }
+}
+
+/// 在拖动会话的 tick 处写入/覆盖自动化事件（lane 懒创建）。
+fn upsert_automation_event(app: &mut App, idx: usize, drag: &mut KnobDrag, raw: f32) {
+    let doc = &mut app.workspace.documents[idx];
+    let lane_pos = doc.data.model.tracks[drag.track_idx]
+        .automation_lanes
+        .iter()
+        .position(|l| l.target == drag.target);
+    match lane_pos {
+        Some(lane_idx) => {
+            drag.lane_idx = Some(lane_idx);
+            let has_event = doc.data.model.tracks[drag.track_idx].automation_lanes[lane_idx]
+                .events
+                .iter()
+                .any(|e| e.tick == drag.tick);
+            if has_event {
+                doc.move_automation_event(
+                    drag.track_idx,
+                    lane_idx,
+                    &drag.target,
+                    drag.tick,
+                    drag.tick,
+                    raw,
+                );
+            } else {
+                doc.add_automation_event(
+                    drag.track_idx,
+                    drag.target.clone(),
+                    AutomationEvent {
+                        tick: drag.tick,
+                        value: raw,
+                        shape: drag.target.default_shape(),
+                    },
+                );
+            }
+        }
+        None => {
+            doc.add_automation_event(
+                drag.track_idx,
+                drag.target.clone(),
+                AutomationEvent {
+                    tick: drag.tick,
+                    value: raw,
+                    shape: drag.target.default_shape(),
+                },
+            );
+            drag.lane_idx = doc.data.model.tracks[drag.track_idx]
+                .automation_lanes
+                .iter()
+                .position(|l| l.target == drag.target);
+        }
     }
 }
 
