@@ -193,6 +193,9 @@ pub struct App {
     // ── 敲击测速对话框状态（播放菜单触发）──
     pub(crate) tap_tempo_dialog: crate::dialogs::tap_tempo::TapTempoDialogState,
 
+    // ── 选择筛选对话框状态（编辑菜单触发）──
+    pub(crate) filter_dialog: crate::dialogs::filter::FilterDialogState,
+
     // ── macOS platform integrations ──
     pub(crate) menu_bar: crate::platform::MenuBar,
     /// Tracks the last `is_dirty` state to avoid redundant `setDocumentEdited` calls.
@@ -345,6 +348,7 @@ impl App {
             rescale: rescale_state::RescaleState::new(),
             new_track_dialog: crate::dialogs::new_track::NewTrackDialogState::default(),
             tap_tempo_dialog: crate::dialogs::tap_tempo::TapTempoDialogState::default(),
+            filter_dialog: crate::dialogs::filter::FilterDialogState::default(),
 
             view_mode: ViewMode::Arrange,
             show_pianoroll_in_arrange: audio_settings.layout.show_pianoroll_in_arrange,

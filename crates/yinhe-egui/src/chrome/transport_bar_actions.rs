@@ -125,6 +125,8 @@ pub enum EditAction {
     PasteAtOriginal,
     PasteFlipped,
     SelectAll,
+    SelectNotesOnly,
+    FilterSelection,
     Duplicate,
     Delete,
     TransposeUp,
@@ -134,7 +136,7 @@ pub enum EditAction {
 }
 
 impl EditAction {
-    pub const ALL: [EditAction; 14] = [
+    pub const ALL: [EditAction; 16] = [
         EditAction::Undo,
         EditAction::Redo,
         EditAction::Cut,
@@ -143,6 +145,8 @@ impl EditAction {
         EditAction::PasteAtOriginal,
         EditAction::PasteFlipped,
         EditAction::SelectAll,
+        EditAction::SelectNotesOnly,
+        EditAction::FilterSelection,
         EditAction::Duplicate,
         EditAction::Delete,
         EditAction::TransposeUp,
@@ -161,12 +165,14 @@ impl EditAction {
             EditAction::PasteAtOriginal => 5,
             EditAction::PasteFlipped => 6,
             EditAction::SelectAll => 7,
-            EditAction::Duplicate => 8,
-            EditAction::Delete => 9,
-            EditAction::TransposeUp => 10,
-            EditAction::TransposeDown => 11,
-            EditAction::DedupWithinTrack => 12,
-            EditAction::DedupAcrossTracks => 13,
+            EditAction::SelectNotesOnly => 8,
+            EditAction::FilterSelection => 9,
+            EditAction::Duplicate => 10,
+            EditAction::Delete => 11,
+            EditAction::TransposeUp => 12,
+            EditAction::TransposeDown => 13,
+            EditAction::DedupWithinTrack => 14,
+            EditAction::DedupAcrossTracks => 15,
         }
     }
 
@@ -180,6 +186,8 @@ impl EditAction {
             EditAction::PasteAtOriginal => shortcuts::ACTION_PASTE_AT_ORIGINAL,
             EditAction::PasteFlipped => shortcuts::ACTION_PASTE_FLIPPED,
             EditAction::SelectAll => shortcuts::ACTION_SELECT_ALL,
+            EditAction::SelectNotesOnly => shortcuts::ACTION_SELECT_NOTES_ONLY,
+            EditAction::FilterSelection => shortcuts::ACTION_FILTER_SELECTION,
             EditAction::Duplicate => shortcuts::ACTION_DUPLICATE,
             EditAction::Delete => shortcuts::ACTION_DELETE,
             EditAction::TransposeUp => shortcuts::ACTION_TRANSPOSE_UP,
@@ -199,6 +207,8 @@ impl EditAction {
             EditAction::PasteAtOriginal => ICON_LOCATION_ON,
             EditAction::PasteFlipped => ICON_FLIP,
             EditAction::SelectAll => ICON_SELECT_ALL,
+            EditAction::SelectNotesOnly => ICON_MUSIC_NOTE,
+            EditAction::FilterSelection => ICON_FILTER_ALT,
             EditAction::Duplicate => ICON_COPY_ALL,
             EditAction::Delete => ICON_DELETE,
             EditAction::TransposeUp => ICON_ARROW_UPWARD,
@@ -383,15 +393,16 @@ pub const FILE_GROUPS: [&[FileAction]; 5] = [
     &[FileAction::Settings, FileAction::Exit],
 ];
 
-pub const EDIT_GROUPS: [&[EditAction]; 6] = [
+pub const EDIT_GROUPS: [&[EditAction]; 7] = [
     &[EditAction::Undo, EditAction::Redo],
     &[EditAction::Cut, EditAction::Copy, EditAction::Paste],
     &[EditAction::PasteAtOriginal, EditAction::PasteFlipped],
     &[
         EditAction::SelectAll,
-        EditAction::Duplicate,
-        EditAction::Delete,
+        EditAction::SelectNotesOnly,
+        EditAction::FilterSelection,
     ],
+    &[EditAction::Duplicate, EditAction::Delete],
     &[EditAction::TransposeUp, EditAction::TransposeDown],
     &[EditAction::DedupWithinTrack, EditAction::DedupAcrossTracks],
 ];

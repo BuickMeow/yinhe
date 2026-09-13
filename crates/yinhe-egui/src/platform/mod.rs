@@ -24,6 +24,8 @@ pub enum MenuAction {
     PasteAtOriginal,
     PasteFlipped,
     SelectAll,
+    SelectNotesOnly,
+    FilterSelection,
     Duplicate,
     Delete,
     TransposeUp,

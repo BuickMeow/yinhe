@@ -166,6 +166,8 @@ impl eframe::App for App {
                         | MenuAction::PasteAtOriginal
                         | MenuAction::PasteFlipped
                         | MenuAction::SelectAll
+                        | MenuAction::SelectNotesOnly
+                        | MenuAction::FilterSelection
                         | MenuAction::Duplicate
                         | MenuAction::Delete
                         | MenuAction::TransposeUp
@@ -215,6 +217,14 @@ impl eframe::App for App {
                 }
                 MenuAction::SelectAll => {
                     self.handle_edit_action(transport_bar::EditAction::SelectAll);
+                    continue;
+                }
+                MenuAction::SelectNotesOnly => {
+                    self.handle_edit_action(transport_bar::EditAction::SelectNotesOnly);
+                    continue;
+                }
+                MenuAction::FilterSelection => {
+                    self.handle_edit_action(transport_bar::EditAction::FilterSelection);
                     continue;
                 }
                 MenuAction::Duplicate => {
@@ -308,6 +318,8 @@ impl eframe::App for App {
         if self.workspace.active_doc != self.workspace.prev_active_doc {
             self.arrange_view.base.dirty = true;
             self.pianoroll_view.base.dirty = true;
+            // 筛选弹窗绑定当前文档的选区，切换文档时关闭避免作用错对象。
+            self.filter_dialog.open = false;
             // 全局 GPU cull buffer 是跨文档共享的，切换后必须清空 + 重置跟踪键，
             // 否则下一个文档首帧可能因 revision/track_visible 巧合相等而跳过
             // upload，渲染出上一个文档的音符（见 close_document 同根修复）。
@@ -520,6 +532,12 @@ impl eframe::App for App {
         }
         if kb.select_all {
             self.select_all();
+        }
+        if kb.select_notes_only {
+            self.select_notes_only();
+        }
+        if kb.filter_selection {
+            self.open_filter_dialog();
         }
         if let Some(tool) = kb.tool_to_activate {
             self.active_tool = tool;

@@ -94,6 +94,8 @@ pub fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bo
                 shortcuts::ACTION_PASTE_AT_ORIGINAL,
                 shortcuts::ACTION_PASTE_FLIPPED,
                 shortcuts::ACTION_SELECT_ALL,
+                shortcuts::ACTION_SELECT_NOTES_ONLY,
+                shortcuts::ACTION_FILTER_SELECTION,
                 shortcuts::ACTION_DUPLICATE,
                 shortcuts::ACTION_DELETE,
                 shortcuts::ACTION_TRANSPOSE_UP,

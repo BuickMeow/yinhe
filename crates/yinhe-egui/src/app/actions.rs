@@ -27,6 +27,8 @@ pub(crate) struct KeyboardActions {
     pub paste_at_original: bool,
     pub paste_flipped: bool,
     pub select_all: bool,
+    pub select_notes_only: bool,
+    pub filter_selection: bool,
     /// 工具切换快捷键触发的目标工具（None = 本帧未触发）。
     pub tool_to_activate: Option<crate::widgets::tools_panel::Tool>,
     /// 文件菜单动作（非 macOS 平台由键盘触发；macOS 走原生菜单栏）。
@@ -146,6 +148,12 @@ impl App {
             }
             if matches(shortcuts::ACTION_SELECT_ALL, key, modifiers) {
                 actions.select_all = true;
+            }
+            if matches(shortcuts::ACTION_SELECT_NOTES_ONLY, key, modifiers) {
+                actions.select_notes_only = true;
+            }
+            if matches(shortcuts::ACTION_FILTER_SELECTION, key, modifiers) {
+                actions.filter_selection = true;
             }
 
             // ── 工具切换 ──
@@ -372,6 +380,67 @@ impl App {
         self.arrange_view.base.dirty = true;
     }
 
+    /// 「仅选择音符」：清除所有自动化锚点选择（PR 面板 + AR 展开 lane），
+    /// 只保留音符选框。
+    pub(crate) fn select_notes_only(&mut self) {
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[idx];
+        let mut changed = false;
+        for panel in &mut doc.edit.controller_panels {
+            if !panel.anchor_sel_rects.is_empty() {
+                panel.anchor_sel_rects.clear();
+                panel.dirty = true;
+                changed = true;
+            }
+        }
+        for view in doc.edit.arr_am_views.values_mut() {
+            if !view.anchor_sel_rects.is_empty() {
+                view.anchor_sel_rects.clear();
+                view.dirty = true;
+                changed = true;
+            }
+        }
+        if changed {
+            self.pianoroll_view.base.dirty = true;
+            self.arrange_view.base.dirty = true;
+        }
+    }
+
+    /// 打开选择筛选对话框（从当前选区/筛选初始化）。
+    pub(crate) fn open_filter_dialog(&mut self) {
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &self.workspace.documents[idx];
+        self.filter_dialog.open(&doc.edit.selected, &doc.data.model);
+    }
+
+    /// 应用筛选：写属性边界并收窄选框空间范围。
+    pub(crate) fn apply_filter_dialog(&mut self) {
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[idx];
+        let filter = self.filter_dialog.build_filter();
+        self.filter_dialog.apply_range(&mut doc.edit.selected);
+        doc.edit.selected.filter = filter;
+        self.pianoroll_view.base.dirty = true;
+        self.arrange_view.base.dirty = true;
+    }
+
+    /// 清除筛选边界（保留选框与已收窄的空间范围）。
+    pub(crate) fn clear_filter(&mut self) {
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[idx];
+        doc.edit.selected.filter = Default::default();
+        self.pianoroll_view.base.dirty = true;
+        self.arrange_view.base.dirty = true;
+    }
+
     /// Add a single note to the given track and record an undo entry.
     pub(crate) fn add_note_with_undo(&mut self, track_idx: u16, note: yinhe_core::NoteEvent) {
         self.with_undo(t!("undo.add_note").as_ref(), |doc| {
@@ -474,6 +543,8 @@ impl App {
                 self.paste_clipboard_with_mode(yinhe_editor_core::clipboard::PasteMode::Flipped)
             }
             A::SelectAll => self.select_all(),
+            A::SelectNotesOnly => self.select_notes_only(),
+            A::FilterSelection => self.open_filter_dialog(),
             A::Duplicate => {
                 if route_to_automation {
                     self.duplicate_automation_anchors();

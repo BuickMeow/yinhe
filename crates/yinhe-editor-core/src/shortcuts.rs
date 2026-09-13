@@ -43,6 +43,8 @@ pub const ACTION_PASTE: &str = "paste";
 pub const ACTION_PASTE_AT_ORIGINAL: &str = "paste_at_original";
 pub const ACTION_PASTE_FLIPPED: &str = "paste_flipped";
 pub const ACTION_SELECT_ALL: &str = "select_all";
+pub const ACTION_SELECT_NOTES_ONLY: &str = "select_notes_only";
+pub const ACTION_FILTER_SELECTION: &str = "filter_selection";
 pub const ACTION_DUPLICATE: &str = "duplicate";
 pub const ACTION_DELETE: &str = "delete";
 pub const ACTION_TRANSPOSE_UP: &str = "transpose_up";
@@ -81,6 +83,8 @@ pub const ALL_ACTION_IDS: &[&str] = &[
     ACTION_PASTE_AT_ORIGINAL,
     ACTION_PASTE_FLIPPED,
     ACTION_SELECT_ALL,
+    ACTION_SELECT_NOTES_ONLY,
+    ACTION_FILTER_SELECTION,
     ACTION_DUPLICATE,
     ACTION_DELETE,
     ACTION_TRANSPOSE_UP,
@@ -165,6 +169,8 @@ fn default_combo(action_id: &str) -> Option<KeyCombo> {
         ACTION_PASTE_AT_ORIGINAL => combo(true, true, false, "V"),
         ACTION_PASTE_FLIPPED => None,
         ACTION_SELECT_ALL => combo(true, false, false, "A"),
+        ACTION_SELECT_NOTES_ONLY => None,
+        ACTION_FILTER_SELECTION => None,
         ACTION_DUPLICATE => combo(true, false, false, "D"),
         ACTION_DELETE => combo(false, false, false, "Delete"),
         ACTION_TRANSPOSE_UP => combo(false, true, false, "ArrowUp"),

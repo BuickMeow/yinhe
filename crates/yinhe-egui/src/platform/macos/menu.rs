@@ -90,6 +90,8 @@ impl MenuActionFrom for crate::chrome::transport_bar::EditAction {
             EditAction::PasteAtOriginal => MenuAction::PasteAtOriginal,
             EditAction::PasteFlipped => MenuAction::PasteFlipped,
             EditAction::SelectAll => MenuAction::SelectAll,
+            EditAction::SelectNotesOnly => MenuAction::SelectNotesOnly,
+            EditAction::FilterSelection => MenuAction::FilterSelection,
             EditAction::Duplicate => MenuAction::Duplicate,
             EditAction::Delete => MenuAction::Delete,
             EditAction::TransposeUp => MenuAction::TransposeUp,

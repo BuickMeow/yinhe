@@ -357,6 +357,8 @@ pub fn action_label_key(action_id: &str) -> &'static str {
         sc::ACTION_PASTE_AT_ORIGINAL => "menu.paste_at_original",
         sc::ACTION_PASTE_FLIPPED => "menu.paste_flipped",
         sc::ACTION_SELECT_ALL => "menu.select_all",
+        sc::ACTION_SELECT_NOTES_ONLY => "menu.select_notes_only",
+        sc::ACTION_FILTER_SELECTION => "menu.filter_selection",
         sc::ACTION_DUPLICATE => "menu.duplicate",
         sc::ACTION_DELETE => "menu.delete",
         sc::ACTION_TRANSPOSE_UP => "menu.octave_up",

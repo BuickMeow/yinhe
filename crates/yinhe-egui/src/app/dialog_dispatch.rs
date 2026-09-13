@@ -311,6 +311,9 @@ impl App {
         // ── 敲击测速对话框 ──
         self.show_tap_tempo_dialog(&ctx);
 
+        // ── 选择筛选对话框 ──
+        self.show_filter_dialog(&ctx);
+
         // ── 属性浮动面板（音轨属性 / 工程设置；与侧栏 Info 内容互斥切换）──
         self.show_float_panels(&ctx);
 
@@ -495,6 +498,41 @@ impl App {
         }
         if crate::dialogs::tap_tempo::show_viewport(ctx, &mut self.tap_tempo_dialog) {
             self.tap_tempo_dialog.open = false;
+        }
+    }
+
+    /// 选择筛选对话框：每帧渲染；应用/清除/取消后同步选择状态。
+    fn show_filter_dialog(&mut self, ctx: &egui::Context) {
+        if !self.filter_dialog.open {
+            return;
+        }
+        if self.filter_dialog.just_opened {
+            self.filter_dialog.just_opened = false;
+            crate::chrome::dialog::raise_viewport(
+                ctx,
+                egui::ViewportId::from_hash_of("selection_filter_dialog"),
+            );
+        }
+        let num_tracks = self
+            .workspace
+            .active_doc
+            .and_then(|i| self.workspace.documents.get(i))
+            .map(|d| d.data.model.tracks.len())
+            .unwrap_or(0);
+        use crate::dialogs::filter::FilterDialogAction as A;
+        match crate::dialogs::filter::show_viewport(ctx, &mut self.filter_dialog, num_tracks) {
+            A::None => {}
+            A::Apply => self.apply_filter_dialog(),
+            A::Confirm => {
+                self.apply_filter_dialog();
+                self.filter_dialog.open = false;
+            }
+            A::Clear => {
+                self.clear_filter();
+                // 弹窗输入状态同步复位（从清空后的 filter 重新初始化）
+                self.open_filter_dialog();
+            }
+            A::Cancel => self.filter_dialog.open = false,
         }
     }
 
