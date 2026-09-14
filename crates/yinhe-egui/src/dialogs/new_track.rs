@@ -87,26 +87,10 @@ pub(crate) enum NewTrackAction {
     Cancel,
 }
 
-/// 分配方案：将创建的 specs + 预览文本 + 错误提示（有值且 specs 为空 = 禁止确认）。
+/// 分配方案：将创建的 specs + 错误提示（有值且 specs 为空 = 禁止确认）。
 struct Plan {
     specs: Vec<NewTrackSpec>,
-    preview: String,
     error: Option<String>,
-}
-
-/// MIDI 通道 badge 文本（如 MIDI-A01、MIDI-P16），与轨道面板 badge 同规则。
-fn midi_badge(port: u8, channel: u8) -> String {
-    format!("MIDI-{}{:02}", (b'A' + port.min(15)) as char, channel + 1)
-}
-
-/// 乐器通道 badge 文本（如 Inst-01），与轨道面板 badge 同规则。
-fn instrument_badge(channel0: u16) -> String {
-    crate::mix::instrument_label(channel0)
-}
-
-/// 音频通道 badge 文本（如 Audio-01），与轨道面板 badge 同规则。
-fn audio_badge(channel0: u16) -> String {
-    crate::mix::audio_label(channel0)
 }
 
 /// 根据当前状态计算分配方案（预览/提示/确认共用同一规则）。
@@ -123,7 +107,6 @@ fn plan(state: &NewTrackDialogState, tracks: &[Arc<yinhe_core::TrackData>]) -> P
                 // 256 通道（A1..P16）全满：禁止确认。
                 return Plan {
                     specs: Vec::new(),
-                    preview: String::new(),
                     error: Some(t!("dialog.new_track.full").to_string()),
                 };
             };
@@ -138,22 +121,13 @@ fn plan(state: &NewTrackDialogState, tracks: &[Arc<yinhe_core::TrackData>]) -> P
                     audio_channel: None,
                 })
                 .collect::<Vec<_>>();
-            let preview = alloc
-                .iter()
-                .map(|&(p, c)| midi_badge(p, c))
-                .collect::<Vec<_>>()
-                .join(", ");
             // 超出 P16 截断：提示实际创建数量（截断后仍可确认）。
             let error = if alloc.len() < state.count {
                 Some(t!("dialog.new_track.truncated", n = alloc.len()).to_string())
             } else {
                 None
             };
-            Plan {
-                specs,
-                preview,
-                error,
-            }
+            Plan { specs, error }
         }
         KindChoice::Instrument => {
             let start = match state.mode {
@@ -170,17 +144,7 @@ fn plan(state: &NewTrackDialogState, tracks: &[Arc<yinhe_core::TrackData>]) -> P
                     audio_channel: None,
                 })
                 .collect::<Vec<_>>();
-            let preview = specs
-                .iter()
-                .filter_map(|s| s.instrument_channel)
-                .map(instrument_badge)
-                .collect::<Vec<_>>()
-                .join(", ");
-            Plan {
-                specs,
-                preview,
-                error: None,
-            }
+            Plan { specs, error: None }
         }
         KindChoice::Audio => {
             let start = match state.mode {
@@ -196,17 +160,7 @@ fn plan(state: &NewTrackDialogState, tracks: &[Arc<yinhe_core::TrackData>]) -> P
                     audio_channel: Some(start.saturating_add(i as u16)),
                 })
                 .collect::<Vec<_>>();
-            let preview = specs
-                .iter()
-                .filter_map(|s| s.audio_channel)
-                .map(audio_badge)
-                .collect::<Vec<_>>()
-                .join(", ");
-            Plan {
-                specs,
-                preview,
-                error: None,
-            }
+            Plan { specs, error: None }
         }
     }
 }
@@ -228,7 +182,7 @@ pub(crate) fn show_viewport(
         viewport_id,
         crate::chrome::dialog::viewport_builder(
             t!("dialog.new_track.title").as_ref(),
-            [400.0, 320.0],
+            [420.0, 420.0],
             false,
         ),
         move |vctx, _class| {
@@ -268,149 +222,165 @@ pub(crate) fn show_viewport(
                                 ui,
                                 btn_zone_h,
                                 |ui| {
+                                    // 设置菜单样式的行：左标题（无描述）+ 右控件。
                                     ui.add_space(6.0);
                                     // 种类：MIDI 轨 / 乐器轨 / 音频轨
-                                    ui.horizontal(|ui| {
-                                        ui.label(t!("dialog.new_track.kind").as_ref());
-                                        ui.selectable_value(
-                                            &mut state.kind,
-                                            KindChoice::Midi,
-                                            t!("dialog.new_track.kind.midi").as_ref(),
-                                        );
-                                        ui.selectable_value(
-                                            &mut state.kind,
-                                            KindChoice::Instrument,
-                                            t!("dialog.new_track.kind.instrument").as_ref(),
-                                        );
-                                        ui.selectable_value(
-                                            &mut state.kind,
-                                            KindChoice::Audio,
-                                            t!("dialog.new_track.kind.audio").as_ref(),
-                                        );
-                                    });
+                                    crate::dialogs::settings::setting_row(
+                                        ui,
+                                        t!("dialog.new_track.kind").as_ref(),
+                                        "",
+                                        |ui| {
+                                            ui.selectable_value(
+                                                &mut state.kind,
+                                                KindChoice::Midi,
+                                                t!("dialog.new_track.kind.midi").as_ref(),
+                                            );
+                                            ui.selectable_value(
+                                                &mut state.kind,
+                                                KindChoice::Instrument,
+                                                t!("dialog.new_track.kind.instrument").as_ref(),
+                                            );
+                                            ui.selectable_value(
+                                                &mut state.kind,
+                                                KindChoice::Audio,
+                                                t!("dialog.new_track.kind.audio").as_ref(),
+                                            );
+                                        },
+                                    );
 
                                     // 数量：1..=64
-                                    ui.horizontal(|ui| {
-                                        ui.label(t!("dialog.new_track.count").as_ref());
-                                        ui.add(
-                                            crate::widgets::numeric_input::decimal_drag_value(
-                                                &mut state.count,
-                                            )
-                                            .range(1..=MAX_COUNT),
-                                        );
-                                    });
+                                    crate::dialogs::settings::setting_row(
+                                        ui,
+                                        t!("dialog.new_track.count").as_ref(),
+                                        "",
+                                        |ui| {
+                                            ui.add(
+                                                crate::widgets::numeric_input::decimal_drag_value(
+                                                    &mut state.count,
+                                                )
+                                                .range(1..=MAX_COUNT),
+                                            );
+                                        },
+                                    );
 
                                     // 通道分配：自动 / 指定起点
-                                    ui.horizontal(|ui| {
-                                        ui.label(t!("dialog.new_track.assign").as_ref());
-                                        ui.selectable_value(
-                                            &mut state.mode,
-                                            AssignMode::Auto,
-                                            t!("dialog.new_track.assign.auto").as_ref(),
-                                        );
-                                        ui.selectable_value(
-                                            &mut state.mode,
-                                            AssignMode::Manual,
-                                            t!("dialog.new_track.assign.manual").as_ref(),
-                                        );
-                                    });
+                                    crate::dialogs::settings::setting_row(
+                                        ui,
+                                        t!("dialog.new_track.assign").as_ref(),
+                                        "",
+                                        |ui| {
+                                            ui.selectable_value(
+                                                &mut state.mode,
+                                                AssignMode::Auto,
+                                                t!("dialog.new_track.assign.auto").as_ref(),
+                                            );
+                                            ui.selectable_value(
+                                                &mut state.mode,
+                                                AssignMode::Manual,
+                                                t!("dialog.new_track.assign.manual").as_ref(),
+                                            );
+                                        },
+                                    );
 
                                     // 手动起点输入
                                     if state.mode == AssignMode::Manual {
                                         match state.kind {
                                             KindChoice::Midi => {
-                                                ui.horizontal(|ui| {
-                                                    ui.label(t!("dialog.new_track.port").as_ref());
-                                                    crate::widgets::combo::combo_box(
-                                                        ui,
-                                                        "new_track_port",
-                                                        ((b'A' + state.manual_port.min(15))
-                                                            as char)
-                                                            .to_string(),
-                                                        100.0,
-                                                        |ui| {
-                                                            for p in 0..16u8 {
-                                                                if crate::widgets::combo::combo_item(
-                                                                    ui,
-                                                                    state.manual_port == p,
-                                                                    ((b'A' + p) as char)
-                                                                        .to_string(),
-                                                                )
-                                                                .clicked()
-                                                                {
-                                                                    state.manual_port = p;
+                                                crate::dialogs::settings::setting_row(
+                                                    ui,
+                                                    t!("dialog.new_track.port").as_ref(),
+                                                    "",
+                                                    |ui| {
+                                                        crate::widgets::combo::combo_box(
+                                                            ui,
+                                                            "new_track_port",
+                                                            ((b'A'
+                                                                + state.manual_port.min(15))
+                                                                as char)
+                                                                .to_string(),
+                                                            100.0,
+                                                            |ui| {
+                                                                for p in 0..16u8 {
+                                                                    if crate::widgets::combo::combo_item(
+                                                                        ui,
+                                                                        state.manual_port == p,
+                                                                        ((b'A' + p) as char)
+                                                                            .to_string(),
+                                                                    )
+                                                                    .clicked()
+                                                                    {
+                                                                        state.manual_port = p;
+                                                                    }
                                                                 }
-                                                            }
-                                                        },
-                                                    );
-                                                    ui.label(
-                                                        t!("dialog.new_track.channel").as_ref(),
-                                                    );
-                                                    crate::widgets::combo::combo_box(
-                                                        ui,
-                                                        "new_track_channel",
-                                                        format!("{}", state.manual_channel + 1),
-                                                        100.0,
-                                                        |ui| {
-                                                            for c in 0..16u8 {
-                                                                if crate::widgets::combo::combo_item(
-                                                                    ui,
-                                                                    state.manual_channel == c,
-                                                                    format!("{}", c + 1),
-                                                                )
-                                                                .clicked()
-                                                                {
-                                                                    state.manual_channel = c;
+                                                            },
+                                                        );
+                                                    },
+                                                );
+                                                crate::dialogs::settings::setting_row(
+                                                    ui,
+                                                    t!("dialog.new_track.channel").as_ref(),
+                                                    "",
+                                                    |ui| {
+                                                        crate::widgets::combo::combo_box(
+                                                            ui,
+                                                            "new_track_channel",
+                                                            format!(
+                                                                "{}",
+                                                                state.manual_channel + 1
+                                                            ),
+                                                            100.0,
+                                                            |ui| {
+                                                                for c in 0..16u8 {
+                                                                    if crate::widgets::combo::combo_item(
+                                                                        ui,
+                                                                        state.manual_channel == c,
+                                                                        format!("{}", c + 1),
+                                                                    )
+                                                                    .clicked()
+                                                                    {
+                                                                        state.manual_channel = c;
+                                                                    }
                                                                 }
-                                                            }
-                                                        },
-                                                    );
-                                                });
+                                                            },
+                                                        );
+                                                    },
+                                                );
                                             }
                                             KindChoice::Instrument => {
-                                                ui.horizontal(|ui| {
-                                                    ui.label(
-                                                        t!("dialog.new_track.instrument_start")
-                                                            .as_ref(),
-                                                    );
-                                                    ui.add(
-                                                        crate::widgets::numeric_input::decimal_drag_value(
-                                                            &mut state.manual_instrument,
-                                                        )
-                                                        .range(1..=u16::MAX as usize + 1),
-                                                    );
-                                                });
+                                                crate::dialogs::settings::setting_row(
+                                                    ui,
+                                                    t!("dialog.new_track.instrument_start")
+                                                        .as_ref(),
+                                                    "",
+                                                    |ui| {
+                                                        ui.add(
+                                                            crate::widgets::numeric_input::decimal_drag_value(
+                                                                &mut state.manual_instrument,
+                                                            )
+                                                            .range(1..=u16::MAX as usize + 1),
+                                                        );
+                                                    },
+                                                );
                                             }
                                             KindChoice::Audio => {
-                                                ui.horizontal(|ui| {
-                                                    ui.label(
-                                                        t!("dialog.new_track.audio_start").as_ref(),
-                                                    );
-                                                    ui.add(
-                                                        crate::widgets::numeric_input::decimal_drag_value(
-                                                            &mut state.manual_audio,
-                                                        )
-                                                        .range(1..=u16::MAX as usize + 1),
-                                                    );
-                                                });
+                                                crate::dialogs::settings::setting_row(
+                                                    ui,
+                                                    t!("dialog.new_track.audio_start").as_ref(),
+                                                    "",
+                                                    |ui| {
+                                                        ui.add(
+                                                            crate::widgets::numeric_input::decimal_drag_value(
+                                                                &mut state.manual_audio,
+                                                            )
+                                                            .range(1..=u16::MAX as usize + 1),
+                                                        );
+                                                    },
+                                                );
                                             }
                                         }
                                     }
 
-                                    // 预览将分配的通道序列（同帧反映上面的输入）
                                     let plan = plan(state, tracks);
-                                    ui.add_space(4.0);
-                                    ui.label(
-                                        egui::RichText::new(
-                                            t!(
-                                                "dialog.new_track.preview",
-                                                channels = plan.preview.as_str()
-                                            )
-                                            .as_ref(),
-                                        )
-                                        .color(crate::theme::text_label())
-                                        .size(crate::theme::SMALL_FONT),
-                                    );
                                     if let Some(err) = &plan.error {
                                         ui.label(
                                             egui::RichText::new(err)

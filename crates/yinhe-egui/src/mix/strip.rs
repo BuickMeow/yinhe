@@ -1060,21 +1060,11 @@ pub(crate) fn plugin_picker(
                                             any = true;
                                             if let Some(err) = &p.error {
                                                 // 加载失败的插件：灰色不可选，hover 显示原因（不静默消失）。
-                                                ui.add_enabled(
-                                                    false,
-                                                    egui::Button::new(
-                                                        egui::RichText::new(p.display_name())
-                                                            .size(crate::theme::SMALL_FONT)
-                                                            .color(crate::theme::text_muted()),
-                                                    ),
-                                                )
-                                                .on_hover_text(err);
+                                                plugin_row(ui, &p.display_name(), p.format, false)
+                                                    .on_hover_text(err);
                                                 continue;
                                             }
-                                            if ui
-                                                .add(crate::widgets::menu::menu_item_button(
-                                                    ui, false, &p.name,
-                                                ))
+                                            if plugin_row(ui, &p.name, p.format, true)
                                                 .on_hover_text(&p.id)
                                                 .clicked()
                                             {
@@ -1251,6 +1241,61 @@ pub(crate) fn audio_strip(
     });
 }
 
+/// 插件选择器的一行：左名称（超宽裁剪）+ 右格式标签（CLAP / VST3）。
+///
+/// `enabled = false`（加载失败）时灰色且不响应点击；hover 提示由调用方追加。
+fn plugin_row(
+    ui: &mut egui::Ui,
+    name: &str,
+    format: yinhe_mixer::PluginFormat,
+    enabled: bool,
+) -> egui::Response {
+    let row_h = 24.0;
+    let (rect, resp) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), row_h),
+        egui::Sense::click(),
+    );
+    let text_color = if enabled {
+        crate::theme::text_primary()
+    } else {
+        crate::theme::text_muted()
+    };
+    if enabled && resp.hovered() {
+        ui.painter().rect_filled(
+            rect,
+            3.0,
+            crate::theme::hover_color(crate::theme::track_bg()),
+        );
+    }
+    let font = egui::FontId::proportional(crate::theme::SMALL_FONT);
+    // 名称（左侧，超宽裁剪；右侧留 56px 给格式标签）。
+    let name_rect = egui::Rect::from_min_max(rect.min, egui::pos2(rect.max.x - 56.0, rect.max.y));
+    ui.painter().with_clip_rect(name_rect).text(
+        egui::pos2(rect.min.x + 6.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        name,
+        font.clone(),
+        text_color,
+    );
+    // 格式标签（右对齐）。
+    let fmt = match format {
+        yinhe_mixer::PluginFormat::Clap => "CLAP",
+        yinhe_mixer::PluginFormat::Vst3 => "VST3",
+    };
+    ui.painter().text(
+        egui::pos2(rect.max.x - 6.0, rect.center().y),
+        egui::Align2::RIGHT_CENTER,
+        fmt,
+        font,
+        crate::theme::text_muted(),
+    );
+    if enabled {
+        resp
+    } else {
+        resp.on_hover_cursor(egui::CursorIcon::NotAllowed)
+    }
+}
+
 /// 乐器插件选择器（独立 OS 窗口）：只列 is_instrument() 插件。
 pub(crate) fn instrument_picker(
     app: &mut App,
@@ -1307,21 +1352,11 @@ pub(crate) fn instrument_picker(
                                             }
                                             any = true;
                                             if let Some(err) = &p.error {
-                                                ui.add_enabled(
-                                                    false,
-                                                    egui::Button::new(
-                                                        egui::RichText::new(p.display_name())
-                                                            .size(crate::theme::SMALL_FONT)
-                                                            .color(crate::theme::text_muted()),
-                                                    ),
-                                                )
-                                                .on_hover_text(err);
+                                                plugin_row(ui, &p.display_name(), p.format, false)
+                                                    .on_hover_text(err);
                                                 continue;
                                             }
-                                            if ui
-                                                .add(crate::widgets::menu::menu_item_button(
-                                                    ui, false, &p.name,
-                                                ))
+                                            if plugin_row(ui, &p.name, p.format, true)
                                                 .on_hover_text(&p.id)
                                                 .clicked()
                                             {
