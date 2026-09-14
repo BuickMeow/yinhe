@@ -119,12 +119,12 @@ pub(crate) fn show_track_info(
         ui.add_space(8.0);
         ui.separator();
         ui.add_space(6.0);
-        if ui
-            .add(egui::Button::new(
-                egui::RichText::new(t!("common.clear_selection").as_ref())
-                    .size(crate::theme::BODY_FONT),
-            ))
-            .clicked()
+        if crate::widgets::flat::flat_button(
+            ui,
+            egui::RichText::new(t!("common.clear_selection").as_ref())
+                .size(crate::theme::BODY_FONT),
+        )
+        .clicked()
         {
             *info_content = None;
         }
@@ -251,15 +251,16 @@ pub(crate) fn show_track_info(
         // 重置为默认颜色：清除显式颜色事件（写入占位色），
         // 显示回落到调色板；轨道已是默认色时禁用。
         let stored_color = doc.data.model.tracks[track_idx].color;
-        let reset_btn = ui.add_enabled(
-            stored_color != yinhe_core::DEFAULT_TRACK_COLOR,
-            egui::Button::new(crate::widgets::icon_text::icon_text(
+        let reset_btn = crate::widgets::flat::flat_button_sized(
+            ui,
+            crate::widgets::icon_text::icon_text(
                 ICON_FORMAT_COLOR_RESET,
                 t!("track.reset_color").as_ref(),
                 12.0,
                 crate::theme::text_label(),
-            ))
-            .min_size(egui::vec2(68.0, 24.0)),
+            ),
+            egui::vec2(68.0, 24.0),
+            stored_color != yinhe_core::DEFAULT_TRACK_COLOR,
         );
         let editing = changed;
         if editing && !was_editing {
@@ -357,14 +358,16 @@ pub(crate) fn show_track_info(
         } else {
             crate::theme::text_label()
         };
-        let r1 = ui.add(
-            egui::Button::new(crate::widgets::icon_text::icon_text(
+        let r1 = crate::widgets::flat::flat_button_sized(
+            ui,
+            crate::widgets::icon_text::icon_text(
                 ICON_VOLUME_OFF,
                 t!("track.mute").as_ref(),
                 12.0,
                 mute_color,
-            ))
-            .min_size(egui::vec2(60.0, 24.0)),
+            ),
+            egui::vec2(60.0, 24.0),
+            true,
         );
 
         ui.add_space(4.0);
@@ -375,14 +378,16 @@ pub(crate) fn show_track_info(
         } else {
             crate::theme::text_label()
         };
-        let r2 = ui.add(
-            egui::Button::new(crate::widgets::icon_text::icon_text(
+        let r2 = crate::widgets::flat::flat_button_sized(
+            ui,
+            crate::widgets::icon_text::icon_text(
                 ICON_HEADPHONES,
                 t!("track.solo").as_ref(),
                 12.0,
                 solo_color,
-            ))
-            .min_size(egui::vec2(60.0, 24.0)),
+            ),
+            egui::vec2(60.0, 24.0),
+            true,
         );
 
         mute_clicked = r1.clicked();
@@ -444,11 +449,11 @@ pub(crate) fn show_track_info(
     ui.add_space(8.0);
     ui.separator();
     ui.add_space(6.0);
-    if ui
-        .add(egui::Button::new(
-            egui::RichText::new(t!("track.clear_selection").as_ref()).size(crate::theme::BODY_FONT),
-        ))
-        .clicked()
+    if crate::widgets::flat::flat_button(
+        ui,
+        egui::RichText::new(t!("track.clear_selection").as_ref()).size(crate::theme::BODY_FONT),
+    )
+    .clicked()
     {
         *info_content = None;
     }

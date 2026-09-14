@@ -124,7 +124,11 @@ pub fn show_content(
                             ),
                     );
                     if !settings.settings_search.is_empty()
-                        && ui.button(t!("settings.search_clear").as_ref()).clicked()
+                        && crate::widgets::flat::flat_button(
+                            ui,
+                            t!("settings.search_clear").as_ref(),
+                        )
+                        .clicked()
                     {
                         settings.settings_search.clear();
                     }
@@ -327,12 +331,22 @@ mod tests {
                         .selectable(false)
                         .wrap_mode(egui::TextWrapMode::Extend),
                 );
-                let resp = ui.add(egui::Button::new("⌘S").min_size(egui::vec2(140.0, 24.0)));
+                let resp = crate::widgets::flat::flat_button_sized(
+                    ui,
+                    "⌘S",
+                    egui::vec2(140.0, 24.0),
+                    true,
+                );
                 first_x = resp.rect.min.x;
             });
             ui.horizontal(|ui| {
                 ui.allocate_exact_size(egui::vec2(150.0, 24.0), egui::Sense::hover());
-                let resp = ui.add(egui::Button::new("⌘S").min_size(egui::vec2(140.0, 24.0)));
+                let resp = crate::widgets::flat::flat_button_sized(
+                    ui,
+                    "⌘S",
+                    egui::vec2(140.0, 24.0),
+                    true,
+                );
                 second_x = resp.rect.min.x;
             });
         });

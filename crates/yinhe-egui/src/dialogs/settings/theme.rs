@@ -168,17 +168,18 @@ pub fn show_theme_tab(
             } else {
                 egui_material_icons::icons::ICON_DARK_MODE
             };
-            let btn = egui::Button::new(
+            let btn = crate::widgets::flat::flat_button_sized(
+                ui,
                 egui::RichText::new(icon.codepoint.to_string())
                     .family(icon.font_family())
                     .size(crate::scaling::scaled_font(
                         ui.ctx(),
                         crate::theme::ICON_FONT,
                     )),
-            )
-            .min_size(egui::vec2(32.0, 24.0));
-            if ui
-                .add(btn)
+                egui::vec2(32.0, 24.0),
+                true,
+            );
+            if btn
                 .on_hover_text(if is_dark {
                     t!("settings.theme.to_light").to_string()
                 } else {
@@ -561,22 +562,34 @@ pub fn show_theme_tab(
                     } else {
                         t!("settings.theme.favorite").to_string()
                     };
-                    if ui.button(fav_label).clicked() {
+                    if crate::widgets::flat::flat_button(ui, fav_label).clicked() {
                         to_toggle_fav = Some(item.id_str.clone());
                         ui.close();
                     }
-                    if ui.button(t!("settings.theme.copy").to_string()).clicked() {
+                    if crate::widgets::flat::flat_button(ui, t!("settings.theme.copy").to_string())
+                        .clicked()
+                    {
                         to_copy = Some((eff_base, item.display.clone()));
                         ui.close();
                     }
                     if item.is_custom {
-                        if ui.button(t!("settings.theme.rename").to_string()).clicked() {
+                        if crate::widgets::flat::flat_button(
+                            ui,
+                            t!("settings.theme.rename").to_string(),
+                        )
+                        .clicked()
+                        {
                             if let Some(cid) = item.custom_id {
                                 to_rename = Some(cid);
                             }
                             ui.close();
                         }
-                        if ui.button(t!("settings.theme.delete").to_string()).clicked() {
+                        if crate::widgets::flat::flat_button(
+                            ui,
+                            t!("settings.theme.delete").to_string(),
+                        )
+                        .clicked()
+                        {
                             if let Some(cid) = item.custom_id {
                                 to_delete = Some(cid);
                             }
@@ -592,22 +605,34 @@ pub fn show_theme_tab(
                     } else {
                         t!("settings.theme.favorite").to_string()
                     };
-                    if ui.button(fav_label).clicked() {
+                    if crate::widgets::flat::flat_button(ui, fav_label).clicked() {
                         to_toggle_fav = Some(item.id_str.clone());
                         ui.close();
                     }
-                    if ui.button(t!("settings.theme.copy").to_string()).clicked() {
+                    if crate::widgets::flat::flat_button(ui, t!("settings.theme.copy").to_string())
+                        .clicked()
+                    {
                         to_copy = Some((eff_base, item.display.clone()));
                         ui.close();
                     }
                     if item.is_custom {
-                        if ui.button(t!("settings.theme.rename").to_string()).clicked() {
+                        if crate::widgets::flat::flat_button(
+                            ui,
+                            t!("settings.theme.rename").to_string(),
+                        )
+                        .clicked()
+                        {
                             if let Some(cid) = item.custom_id {
                                 to_rename = Some(cid);
                             }
                             ui.close();
                         }
-                        if ui.button(t!("settings.theme.delete").to_string()).clicked() {
+                        if crate::widgets::flat::flat_button(
+                            ui,
+                            t!("settings.theme.delete").to_string(),
+                        )
+                        .clicked()
+                        {
                             if let Some(cid) = item.custom_id {
                                 to_delete = Some(cid);
                             }

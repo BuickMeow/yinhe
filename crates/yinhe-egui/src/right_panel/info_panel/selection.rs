@@ -338,22 +338,22 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
         ui.separator();
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            if ui
-                .add(egui::Button::new(
-                    egui::RichText::new(t!("sel.flip_horizontal")).size(crate::theme::BODY_FONT),
-                ))
-                .clicked()
+            if crate::widgets::flat::flat_button(
+                ui,
+                egui::RichText::new(t!("sel.flip_horizontal")).size(crate::theme::BODY_FONT),
+            )
+            .clicked()
             {
                 let before = doc.capture_snapshot();
                 if let Some(action) = doc.flip_selected_notes(FlipAxis::Horizontal) {
                     doc.push_undo(action, t!("undo.flip_horizontal").as_ref(), before);
                 }
             }
-            if ui
-                .add(egui::Button::new(
-                    egui::RichText::new(t!("sel.flip_vertical")).size(crate::theme::BODY_FONT),
-                ))
-                .clicked()
+            if crate::widgets::flat::flat_button(
+                ui,
+                egui::RichText::new(t!("sel.flip_vertical")).size(crate::theme::BODY_FONT),
+            )
+            .clicked()
             {
                 let before = doc.capture_snapshot();
                 if let Some(action) = doc.flip_selected_notes(FlipAxis::Vertical) {

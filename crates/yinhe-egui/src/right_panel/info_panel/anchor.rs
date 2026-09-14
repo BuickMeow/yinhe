@@ -341,12 +341,11 @@ pub(super) fn show_anchor_info(
     ui.separator();
     ui.add_space(6.0);
 
-    if ui
-        .add(egui::Button::new(
-            egui::RichText::new(t!("common.clear_selection").as_ref())
-                .size(crate::theme::BODY_FONT),
-        ))
-        .clicked()
+    if crate::widgets::flat::flat_button(
+        ui,
+        egui::RichText::new(t!("common.clear_selection").as_ref()).size(crate::theme::BODY_FONT),
+    )
+    .clicked()
     {
         *info_content = None;
     }

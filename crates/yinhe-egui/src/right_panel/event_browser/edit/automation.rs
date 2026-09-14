@@ -256,10 +256,13 @@ fn show_auto_shape_popup(
 
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
-                    if ui.button(t!("common.confirm").as_ref()).clicked() {
+                    if crate::widgets::flat::flat_button(ui, t!("common.confirm").as_ref())
+                        .clicked()
+                    {
                         open = false;
                     }
-                    if ui.button(t!("common.cancel").as_ref()).clicked() {
+                    if crate::widgets::flat::flat_button(ui, t!("common.cancel").as_ref()).clicked()
+                    {
                         open = false;
                         cancelled = true;
                     }

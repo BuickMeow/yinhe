@@ -54,10 +54,10 @@ fn db_frac(db: f32) -> f32 {
 /// 顶部工具条：扫描插件 + 状态信息。
 pub(crate) fn show_toolbar(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<MixAction>) {
     ui.horizontal(|ui| {
-        if ui.button(t!("mix.scan_plugins")).clicked() {
+        if crate::widgets::flat::flat_button(ui, t!("mix.scan_plugins")).clicked() {
             actions.push(MixAction::RescanPlugins);
         }
-        if ui.button(t!("mix.add_bus")).clicked() {
+        if crate::widgets::flat::flat_button(ui, t!("mix.add_bus")).clicked() {
             actions.push(MixAction::AddBus);
         }
         if app.mix.scan_in_progress {
@@ -291,13 +291,12 @@ fn send_button(ui: &mut egui::Ui, channel: u8, send_count: usize, actions: &mut 
     } else {
         crate::theme::text_secondary()
     };
-    let resp = ui.add_sized(
+    let resp = crate::widgets::flat::flat_button_fixed(
+        ui,
+        egui::RichText::new(label)
+            .size(crate::theme::SMALL_FONT - 1.0)
+            .color(color),
         egui::vec2(CONTENT_W, 16.0),
-        egui::Button::new(
-            egui::RichText::new(label)
-                .size(crate::theme::SMALL_FONT - 1.0)
-                .color(color),
-        ),
     );
     if resp.clicked() {
         actions.push(MixAction::OpenSends { channel });
@@ -1167,7 +1166,7 @@ pub(crate) fn instrument_strip(
                 }
             }
             None => {
-                if ui.button(t!("mix.pick_instrument")).clicked() {
+                if crate::widgets::flat::flat_button(ui, t!("mix.pick_instrument")).clicked() {
                     actions.push(MixAction::OpenInstrumentPicker { channel });
                 }
             }

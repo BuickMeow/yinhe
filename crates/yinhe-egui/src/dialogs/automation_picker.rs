@@ -261,7 +261,9 @@ pub(crate) fn show_viewport(
                                     );
                                 });
                                 ui.add_space(4.0);
-                                if ui.button(t!("arrange.create")).clicked() {
+                                if crate::widgets::flat::flat_button(ui, t!("arrange.create"))
+                                    .clicked()
+                                {
                                     let target = AutomationTarget::CC {
                                         controller: state.custom_cc,
                                     };

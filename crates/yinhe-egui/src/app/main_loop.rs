@@ -414,17 +414,21 @@ impl eframe::App for App {
             visuals.widgets.active.bg_fill = crate::theme::pressed_color(btn);
             visuals.widgets.active.weak_bg_fill =
                 crate::theme::pressed_color(crate::theme::app_bg());
-            // 原生控件一律**无描边**（项目规范：带边框的按钮悬停时边框出现/变化
-            // 会让内容视觉位移）；悬停/按下只变背景色。
+            // 原生描边（输入框/下拉框/数值框/复选框等**输入类**控件需要边框）；
+            // 按钮/选项等纯操作控件不得带边框（悬停边框出现会让内容视觉位移），
+            // 一律用 `widgets::flat` 的无边框按钮，不依赖这里。
+            let line = crate::theme::line_fg();
             // 对勾（fg_stroke）用主文字色：与 btn_bg 同系的 line_fg 会导致对勾几乎不可见（见 widgets::checkbox）
             visuals.widgets.inactive.fg_stroke =
                 egui::Stroke::new(1.5, crate::theme::text_primary());
-            visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
+            visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, line);
             visuals.widgets.hovered.fg_stroke =
                 egui::Stroke::new(1.5, crate::theme::text_primary());
-            visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
+            visuals.widgets.hovered.bg_stroke =
+                egui::Stroke::new(1.0, crate::theme::hover_color(line));
             visuals.widgets.active.fg_stroke = egui::Stroke::new(1.5, crate::theme::text_primary());
-            visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
+            visuals.widgets.active.bg_stroke =
+                egui::Stroke::new(1.0, crate::theme::pressed_color(line));
             visuals.widgets.noninteractive.fg_stroke =
                 egui::Stroke::new(1.5, crate::theme::text_disabled());
             // 原生控件文字统一用主题主文字色（egui 默认灰与主题不协调）

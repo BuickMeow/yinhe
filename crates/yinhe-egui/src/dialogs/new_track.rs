@@ -327,12 +327,14 @@ pub(crate) fn show_viewport(
                                         t!("dialog.new_track.assign").as_ref(),
                                         "",
                                         |ui| {
-                                            ui.selectable_value(
+                                            crate::widgets::flat::flat_selectable_value(
+                                            ui,
                                                 &mut state.mode,
                                                 AssignMode::Auto,
                                                 t!("dialog.new_track.assign.auto").as_ref(),
                                             );
-                                            ui.selectable_value(
+                                            crate::widgets::flat::flat_selectable_value(
+                                            ui,
                                                 &mut state.mode,
                                                 AssignMode::Manual,
                                                 t!("dialog.new_track.assign.manual").as_ref(),

@@ -149,7 +149,8 @@ pub(super) fn frame(
         let resp = ui.interact(rect, id, egui::Sense::click());
         let selected_ids = selected_ids_for(edit, track, clip.id);
         resp.context_menu(|ui| {
-            if ui.button(rust_i18n::t!("arrange.audio_split")).clicked() {
+            if crate::widgets::flat::flat_button(ui, rust_i18n::t!("arrange.audio_split")).clicked()
+            {
                 let at =
                     pointer_seconds(pos.x - rect.min.x, view, data).max(clip.start_seconds + 0.001);
                 if at < clip.end_seconds() - 0.001 {
@@ -178,7 +179,9 @@ pub(super) fn frame(
                 });
                 ui.close();
             }
-            if ui.button(rust_i18n::t!("arrange.audio_reverse")).clicked() {
+            if crate::widgets::flat::flat_button(ui, rust_i18n::t!("arrange.audio_reverse"))
+                .clicked()
+            {
                 edit.audio_commands.push(AudioEditCmd::Reverse {
                     track,
                     ids: selected_ids.clone(),
@@ -194,7 +197,9 @@ pub(super) fn frame(
                 ui.close();
             }
             ui.separator();
-            if ui.button(rust_i18n::t!("arrange.audio_gain_up")).clicked() {
+            if crate::widgets::flat::flat_button(ui, rust_i18n::t!("arrange.audio_gain_up"))
+                .clicked()
+            {
                 edit.audio_commands.push(AudioEditCmd::GainDelta {
                     track,
                     id: clip.id,
@@ -222,7 +227,9 @@ pub(super) fn frame(
                 ui.close();
             }
             ui.separator();
-            if ui.button(rust_i18n::t!("arrange.audio_delete")).clicked() {
+            if crate::widgets::flat::flat_button(ui, rust_i18n::t!("arrange.audio_delete"))
+                .clicked()
+            {
                 edit.audio_commands.push(AudioEditCmd::Delete {
                     track,
                     ids: selected_ids.clone(),

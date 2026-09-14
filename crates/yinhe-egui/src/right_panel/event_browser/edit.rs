@@ -107,10 +107,13 @@ fn show_number_popup(ui: &mut egui::Ui, cfg: PopupConfig) -> PopupAction {
                 }
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
-                    if ui.button(t!("common.confirm").as_ref()).clicked() {
+                    if crate::widgets::flat::flat_button(ui, t!("common.confirm").as_ref())
+                        .clicked()
+                    {
                         open = false;
                     }
-                    if ui.button(t!("common.cancel").as_ref()).clicked() {
+                    if crate::widgets::flat::flat_button(ui, t!("common.cancel").as_ref()).clicked()
+                    {
                         open = false;
                         cancelled = true;
                     }
@@ -187,10 +190,13 @@ fn show_choice_popup<T: Copy + PartialEq + Send + Sync + 'static>(
                 );
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
-                    if ui.button(t!("common.confirm").as_ref()).clicked() {
+                    if crate::widgets::flat::flat_button(ui, t!("common.confirm").as_ref())
+                        .clicked()
+                    {
                         open = false;
                     }
-                    if ui.button(t!("common.cancel").as_ref()).clicked() {
+                    if crate::widgets::flat::flat_button(ui, t!("common.cancel").as_ref()).clicked()
+                    {
                         open = false;
                         cancelled = true;
                     }
@@ -315,10 +321,13 @@ pub(super) fn show_position_popup(
                 }
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
-                    if ui.button(t!("common.confirm").as_ref()).clicked() {
+                    if crate::widgets::flat::flat_button(ui, t!("common.confirm").as_ref())
+                        .clicked()
+                    {
                         open = false;
                     }
-                    if ui.button(t!("common.cancel").as_ref()).clicked() {
+                    if crate::widgets::flat::flat_button(ui, t!("common.cancel").as_ref()).clicked()
+                    {
                         open = false;
                         cancelled = true;
                     }

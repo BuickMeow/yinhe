@@ -316,17 +316,16 @@ fn menu_button(
     id: &str,
     icon: egui_material_icons::MaterialIcon,
     btn_size: egui::Vec2,
-    btn_rounding: egui::CornerRadius,
+    _btn_rounding: egui::CornerRadius,
 ) -> egui::Response {
     ui.push_id(id, |ui| {
-        ui.add(
-            egui::Button::new(
-                icon.rich_text()
-                    .size(crate::theme::TRANSPORT_BTN_FONT)
-                    .color(crate::theme::text_primary()),
-            )
-            .min_size(btn_size)
-            .corner_radius(btn_rounding),
+        crate::widgets::flat::flat_button_sized(
+            ui,
+            icon.rich_text()
+                .size(crate::theme::TRANSPORT_BTN_FONT)
+                .color(crate::theme::text_primary()),
+            btn_size,
+            true,
         )
     })
     .inner

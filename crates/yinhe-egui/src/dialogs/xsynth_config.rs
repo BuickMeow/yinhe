@@ -154,7 +154,11 @@ pub(crate) fn show_viewport(app: &mut App, ctx: &egui::Context) -> bool {
                                     let Some(entries) = entries else {
                                         return;
                                     };
-                                    if ui.button(t!("soundfont.add").as_ref()).clicked()
+                                    if crate::widgets::flat::flat_button(
+                                        ui,
+                                        t!("soundfont.add").as_ref(),
+                                    )
+                                    .clicked()
                                         && let Some(paths) = rfd::FileDialog::new()
                                             .add_filter("SoundFont", &["sf2", "sf3", "sfz"])
                                             .pick_files()
@@ -173,7 +177,12 @@ pub(crate) fn show_viewport(app: &mut App, ctx: &egui::Context) -> bool {
                                         }
                                         *changed_rc.borrow_mut() = true;
                                     }
-                                    if ui.button(t!("common.clear").as_ref()).clicked() {
+                                    if crate::widgets::flat::flat_button(
+                                        ui,
+                                        t!("common.clear").as_ref(),
+                                    )
+                                    .clicked()
+                                    {
                                         entries.clear();
                                         *changed_rc.borrow_mut() = true;
                                     }

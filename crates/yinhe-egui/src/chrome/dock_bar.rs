@@ -758,7 +758,7 @@ fn big_device_card(
                 }
                 Some(DockDevice::Instrument) => {
                     if instrument_name.is_some() {
-                        if ui.button(t!("dock.open_params")).clicked() {
+                        if crate::widgets::flat::flat_button(ui, t!("dock.open_params")).clicked() {
                             *open_params = Some(DockDevice::Instrument);
                         }
                         ui.add_space(4.0);
@@ -776,14 +776,15 @@ fn big_device_card(
                         );
                         ui.add_space(4.0);
                         if let Some(ich) = instrument_channel
-                            && ui.button(t!("mix.pick_instrument")).clicked()
+                            && crate::widgets::flat::flat_button(ui, t!("mix.pick_instrument"))
+                                .clicked()
                         {
                             *open_instrument_picker = Some(ich);
                         }
                     }
                 }
                 Some(DockDevice::Insert(_)) => {
-                    if ui.button(t!("dock.open_params")).clicked() {
+                    if crate::widgets::flat::flat_button(ui, t!("dock.open_params")).clicked() {
                         *open_params = selected;
                     }
                     ui.add_space(4.0);

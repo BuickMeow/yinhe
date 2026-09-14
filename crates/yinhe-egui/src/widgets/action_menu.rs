@@ -284,7 +284,6 @@ pub fn pinned_action_buttons<T: PopupRow>(
         crate::theme::TRANSPORT_BTN_SIZE,
         crate::theme::TRANSPORT_BTN_SIZE,
     );
-    let btn_rounding = egui::CornerRadius::same(2);
     for (idx, &action) in actions.iter().enumerate() {
         if !pinned.get(idx).copied().unwrap_or(false) {
             continue;
@@ -299,23 +298,23 @@ pub fn pinned_action_buttons<T: PopupRow>(
             }
         });
         let selected = action.is_selected();
+        let sel_bg = selected.then(|| {
+            action
+                .icon_accent()
+                .map(|c| c.gamma_multiply(0.18))
+                .unwrap_or(crate::theme::selected_bg())
+        });
         let resp = ui
             .push_id((id_prefix, action.pinned_index()), |ui| {
-                let mut btn = egui::Button::new(
+                crate::widgets::flat::flat_button_custom(
+                    ui,
                     icon.rich_text()
                         .size(crate::theme::TRANSPORT_BTN_FONT)
                         .color(color),
+                    btn_size,
+                    sel_bg,
+                    enabled,
                 )
-                .min_size(btn_size)
-                .corner_radius(btn_rounding);
-                if selected {
-                    let sel_bg = action
-                        .icon_accent()
-                        .map(|c| c.gamma_multiply(0.18))
-                        .unwrap_or(crate::theme::selected_bg());
-                    btn = btn.fill(sel_bg);
-                }
-                ui.add_enabled(enabled, btn)
             })
             .inner;
         if resp.clicked() {
