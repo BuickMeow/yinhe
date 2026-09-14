@@ -250,6 +250,14 @@ impl App {
                 self.audio_state.sf_total = port_configs.len();
                 self.audio_state.sf_pending = true;
 
+                // 音频素材：按实际采样率重新解码（若未解码过），并把已有 PCM
+                // 重推给新引擎（引擎重建后 audio_sources 为空）。
+                {
+                    let model = self.workspace.documents[idx].data.model.clone();
+                    let sr = audio.sample_rate;
+                    self.audio_library.ensure_decoded(&model, sr);
+                }
+                let doc = &self.workspace.documents[idx];
                 self.send_initial_audio_state(&audio, doc, &port_configs);
 
                 // 设备切换：恢复播放位置，关对话框
@@ -340,6 +348,37 @@ impl App {
 
         // AM lane M/S 试听旁通：引擎重建后必须重发，否则 UI 按钮点亮但旁通静默丢失。
         audio.set_am_ms(std::sync::Arc::new(doc.edit.arr_am_ms.clone()));
+
+        // 音频素材：把素材库中已解码的 PCM 全部重推给新引擎。
+        self.audio_library.push_all_to_engine(&audio.handle);
+    }
+
+    /// 每帧轮询音频素材解码：确保当前工程素材已提交解码；新结果推给引擎。
+    ///
+    /// 引擎重建后由 `send_initial_audio_state` 重推全部素材；这里只处理
+    /// 增量（导入新素材 / 后台解码完成）。
+    pub(crate) fn poll_audio_library(&mut self) {
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let sample_rate = self
+            .audio_state
+            .handle
+            .as_ref()
+            .map(|a| a.sample_rate)
+            .unwrap_or(self.audio_settings.sample_rate);
+        let model = self.workspace.documents[idx].data.model.clone();
+        self.audio_library.ensure_decoded(&model, sample_rate);
+        let arrived = self.audio_library.poll();
+        if arrived.is_empty() {
+            return;
+        }
+        if let Some(audio) = &self.audio_state.handle {
+            for (uuid, decoded) in arrived {
+                self.audio_library
+                    .push_to_engine(&audio.handle, uuid, decoded);
+            }
+        }
     }
 
     /// 每帧轮询音色库加载进度：`sf_loaded_count() / sf_total` 驱动

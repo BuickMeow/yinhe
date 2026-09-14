@@ -8,12 +8,25 @@
 
 use yinhe_core::{TrackKind, YinModel};
 
+/// dense 通道所属的命名空间（strip/insert/send 反查路由用）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChannelNamespace {
+    /// 源 MIDI 通道（0..256，global = port<<4 | channel）。
+    Midi(usize),
+    /// 乐器通道（`TrackData::instrument_channel`）。
+    Instrument(usize),
+    /// 音频通道（`TrackData::audio_channel`）。
+    Audio(usize),
+}
+
 /// 不可变的通道布局，`AudioEngine` 创建时定型。
 ///
 /// dense 通道空间如下（引擎/混音台/预览合成器按 `compacted_channels()` 分配）：
 /// - `[0, midi_compacted)`：MIDI 源通道（`global_channel`）压缩后的 xsynth 通道；
-/// - `[midi_compacted, compacted)`：**乐器通道**（`TrackData::instrument_channel`），
-///   每个用到的乐器通道独占一条 dense 通道（乐器插件输出在此混入混音台）。
+/// - `[midi_compacted, instrument_compacted)`：**乐器通道**（`TrackData::instrument_channel`），
+///   每个用到的乐器通道独占一条 dense 通道（乐器插件输出在此混入混音台）；
+/// - `[instrument_compacted, compacted)`：**音频通道**（`TrackData::audio_channel`），
+///   每个用到的音频通道独占一条 dense 通道（音频片段回放混入混音台）。
 #[derive(Clone)]
 pub struct ChannelLayout {
     /// `active_mask[i] == true` 表示源 MIDI 通道 `i` 被某条音轨使用（存在即激活）。
@@ -27,27 +40,37 @@ pub struct ChannelLayout {
     /// 用到的乐器通道（升序去重，来自乐器轨的 `instrument_channel`）。
     /// 第 `i` 个的 dense = `midi_compacted + i`。
     instrument_channels: Vec<u16>,
+    /// 用到的音频通道（升序去重，来自音频轨的 `audio_channel`）。
+    /// 第 `i` 个的 dense = `instrument_compacted + i`。
+    audio_channels: Vec<u16>,
     /// MIDI 通道的激活数（= xsynth `ChannelGroup` 的通道数）。
     midi_compacted: u32,
-    /// 总激活通道数 = `midi_compacted + instrument_channels.len()`。
+    /// 乐器 dense 段的结束（= midi_compacted + instrument_channels.len()）。
+    instrument_compacted: u32,
+    /// 总激活通道数 = `instrument_compacted + audio_channels.len()`。
     compacted_channels: u32,
 }
 
 impl ChannelLayout {
     /// 分析 `YinModel` 构建通道布局。
     ///
-    /// 源通道"激活"条件：存在音轨使用该通道（`TrackData::global_channel`）。
+    /// 源通道"激活"条件：存在 MIDI/乐器音轨使用该通道（`TrackData::global_channel`）。
     /// 音轨存在即激活——空音轨的通道也随时可用（首音符预览/播放立即有声），
     /// 不再按音符/CC 数量推断。成本 O(tracks)，与音符总数无关。
+    /// 音频轨没有 MIDI 通道语义，不参与 MIDI 激活（否则默认 port/channel 0
+    /// 会凭空激活 A01，混音台/音色库 UI 出现幽灵通道）。
     pub fn from_model(model: &YinModel) -> Self {
         let mut ch_active = [false; 256];
 
-        // 乐器通道独立于 MIDI 源通道：收集用到的乐器通道（升序去重）。
+        // 乐器/音频通道独立于 MIDI 源通道：收集用到的通道（升序去重）。
         let mut inst_channels: Vec<u16> = Vec::new();
+        let mut audio_channels: Vec<u16> = Vec::new();
         for track in model.tracks.iter() {
-            let ch = track.global_channel() as usize;
-            if ch < 256 {
-                ch_active[ch] = true;
+            if track.kind != TrackKind::Audio {
+                let ch = track.global_channel() as usize;
+                if ch < 256 {
+                    ch_active[ch] = true;
+                }
             }
             if track.kind == TrackKind::Instrument
                 && let Some(ich) = track.instrument_channel
@@ -55,24 +78,35 @@ impl ChannelLayout {
             {
                 inst_channels.push(ich);
             }
+            if track.kind == TrackKind::Audio
+                && let Some(ach) = track.audio_channel
+                && !audio_channels.contains(&ach)
+            {
+                audio_channels.push(ach);
+            }
         }
         inst_channels.sort_unstable();
+        audio_channels.sort_unstable();
 
         let max_active_ch = ch_active.iter().rposition(|&c| c).unwrap_or(0);
         let num_channels = (max_active_ch + 1).max(1) as u32;
 
         let active_mask: Vec<bool> = ch_active[..num_channels as usize].to_vec();
 
-        Self::from_mask_full(active_mask, inst_channels)
+        Self::from_mask_full(active_mask, inst_channels, audio_channels)
     }
 
-    /// 从 `active_mask` 构建压缩后的 `channel_map`（无乐器通道）。
+    /// 从 `active_mask` 构建压缩后的 `channel_map`（无乐器/音频通道）。
     pub fn from_mask(active_mask: Vec<bool>) -> Self {
-        Self::from_mask_full(active_mask, Vec::new())
+        Self::from_mask_full(active_mask, Vec::new(), Vec::new())
     }
 
-    /// 从 `active_mask` + `inst_channels` 构建完整布局。
-    fn from_mask_full(active_mask: Vec<bool>, instrument_channels: Vec<u16>) -> Self {
+    /// 从 `active_mask` + 乐器/音频通道构建完整布局。
+    fn from_mask_full(
+        active_mask: Vec<bool>,
+        instrument_channels: Vec<u16>,
+        audio_channels: Vec<u16>,
+    ) -> Self {
         let mut channel_map = Box::new([u32::MAX; 256]);
         let mut next_dense: u32 = 0;
         for (src, &alive) in active_mask.iter().enumerate().take(256) {
@@ -82,14 +116,17 @@ impl ChannelLayout {
             }
         }
         let midi_compacted = next_dense.max(1);
-        let compacted_channels = midi_compacted + instrument_channels.len() as u32;
+        let instrument_compacted = midi_compacted + instrument_channels.len() as u32;
+        let compacted_channels = instrument_compacted + audio_channels.len() as u32;
         let num_channels = active_mask.len() as u32;
         Self {
             active_mask,
             channel_map,
             num_channels,
             instrument_channels,
+            audio_channels,
             midi_compacted,
+            instrument_compacted,
             compacted_channels,
         }
     }
@@ -120,6 +157,16 @@ impl ChannelLayout {
         &self.instrument_channels
     }
 
+    /// 用到的音频通道列表（升序去重）。
+    pub fn audio_channels(&self) -> &[u16] {
+        &self.audio_channels
+    }
+
+    /// 乐器 dense 段的结束（音频 dense 从该值起）。
+    pub fn instrument_compacted(&self) -> u32 {
+        self.instrument_compacted
+    }
+
     /// 乐器通道 `ich` 的 dense 索引（= midi_compacted + 排序位置），
     /// 未用到返回 `u32::MAX`。
     #[inline]
@@ -130,10 +177,26 @@ impl ChannelLayout {
         }
     }
 
-    /// dense 通道是不是乐器通道（dense >= midi_compacted）。
+    /// 音频通道 `ach` 的 dense 索引（= instrument_compacted + 排序位置），
+    /// 未用到返回 `u32::MAX`。
+    #[inline]
+    pub fn audio_dense_for(&self, ach: u16) -> u32 {
+        match self.audio_channels.binary_search(&ach) {
+            Ok(i) => self.instrument_compacted + i as u32,
+            Err(_) => u32::MAX,
+        }
+    }
+
+    /// dense 通道是不是乐器通道（`[midi_compacted, instrument_compacted)`）。
     #[inline]
     pub fn is_instrument_dense(&self, dense: usize) -> bool {
-        dense as u32 >= self.midi_compacted && (dense as u32) < self.compacted_channels
+        dense as u32 >= self.midi_compacted && (dense as u32) < self.instrument_compacted
+    }
+
+    /// dense 通道是不是音频通道（`[instrument_compacted, compacted)`）。
+    #[inline]
+    pub fn is_audio_dense(&self, dense: usize) -> bool {
+        dense as u32 >= self.instrument_compacted && (dense as u32) < self.compacted_channels
     }
 
     /// 源通道 `ch` 是否激活。
@@ -175,10 +238,13 @@ impl ChannelLayout {
     pub fn differs_from_model(&self, model: &YinModel) -> bool {
         let mut now_active = [false; 256];
         let mut now_inst: Vec<u16> = Vec::new();
+        let mut now_audio: Vec<u16> = Vec::new();
         for track in model.tracks.iter() {
-            let ch = track.global_channel() as usize;
-            if ch < 256 {
-                now_active[ch] = true;
+            if track.kind != TrackKind::Audio {
+                let ch = track.global_channel() as usize;
+                if ch < 256 {
+                    now_active[ch] = true;
+                }
             }
             if track.kind == TrackKind::Instrument
                 && let Some(ich) = track.instrument_channel
@@ -186,9 +252,16 @@ impl ChannelLayout {
             {
                 now_inst.push(ich);
             }
+            if track.kind == TrackKind::Audio
+                && let Some(ach) = track.audio_channel
+                && !now_audio.contains(&ach)
+            {
+                now_audio.push(ach);
+            }
         }
         now_inst.sort_unstable();
-        if now_inst != self.instrument_channels {
+        now_audio.sort_unstable();
+        if now_inst != self.instrument_channels || now_audio != self.audio_channels {
             return true;
         }
         for (ch, &now) in now_active.iter().enumerate() {

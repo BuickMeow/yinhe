@@ -7,6 +7,9 @@ use yinhe_editor_core::quantize::QuantizePreset;
 impl App {
     /// Poll all async operations: file loading, save completion, export completion.
     pub(in crate::app) fn poll_async_operations(&mut self) {
+        // 音频素材：后台解码轮询（无素材时开销可忽略）。
+        self.poll_audio_library();
+
         // Poll async file loading
         match self.file_loader.poll_loading() {
             LoadResult::ModelLoaded {

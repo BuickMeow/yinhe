@@ -10,6 +10,8 @@ gpu = ["yinhe-synth"]
 [dependencies]
 xsynth-core = "0.4"
 xsynth-soundfonts = "0.4"
+symphonia = "0.5"
+rubato = "0.15"
 
 cpal = { workspace = true }
 hound = "3.5"

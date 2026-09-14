@@ -91,6 +91,9 @@ impl AudioEngine {
         // 乐器插件：把每块累积的事件喂给各自实例，输出写进对应乐器 dense 通道。
         self.render_instruments(block_start_sample, frames);
 
+        // 音频片段回放：按绝对时间直接混进对应音频 dense 通道（无状态）。
+        self.render_audio_tracks(block_start_sample, frames);
+
         // 混音：insert → 增益/声像斜坡 → mute/solo → master，然后交错输出。
         let (master_l, master_r) = self.mixer.process();
         for (i, chunk) in output.chunks_exact_mut(STEREO_CHANNELS).enumerate() {
@@ -325,6 +328,96 @@ impl AudioEngine {
             }
             events.clear();
             slot.events = events;
+        }
+    }
+
+    /// 音频轨片段回放：按块内**绝对时间**把每条音频轨的片段混进对应音频
+    /// dense 通道缓冲。完全无状态（seek/暂停/导出天然正确），PDC 由混音台
+    /// 统一补偿。音频通道是覆盖写（没有 xsynth/插件替它清零）。
+    fn render_audio_tracks(&mut self, block_start_sample: u64, frames: usize) {
+        if self.channel_layout.audio_channels().is_empty() {
+            return;
+        }
+        let Some(model) = self.yin_model.clone() else {
+            return;
+        };
+        for &ach in self.channel_layout.audio_channels() {
+            let dense = self.channel_layout.audio_dense_for(ach) as usize;
+            if let Some(cb) = self.mixer.channel_buffers_mut(dense) {
+                let n = frames.min(cb.left.len()).min(cb.right.len());
+                cb.left[..n].fill(0.0);
+                cb.right[..n].fill(0.0);
+            }
+        }
+        let sr = self.sample_rate as f64;
+        let block_start = block_start_sample as i64;
+        let block_end = block_start + frames as i64;
+        for (track_idx, track) in model.tracks.iter().enumerate() {
+            if track.kind != yinhe_core::TrackKind::Audio || track.audio_clips.is_empty() {
+                continue;
+            }
+            if self.skip_track.get(track_idx).copied().unwrap_or(false) {
+                continue;
+            }
+            let Some(ach) = track.audio_channel else {
+                continue;
+            };
+            let dense = self.channel_layout.audio_dense_for(ach);
+            if dense == u32::MAX {
+                continue;
+            }
+            let dense = dense as usize;
+            for (ci, clip) in track.audio_clips.iter().enumerate() {
+                let Some(pcm) = self.audio_sources.get(&clip.source) else {
+                    continue;
+                };
+                if pcm.frames == 0 || clip.duration_seconds <= 0.0 {
+                    continue;
+                }
+                let clip_start = (clip.start_seconds * sr).round() as i64;
+                let clip_end = (clip.end_seconds() * sr).round() as i64;
+                let from = clip_start.max(block_start);
+                let to = clip_end.min(block_end);
+                if to <= from {
+                    continue;
+                }
+                let (fade_in, fade_out) =
+                    crate::audio_model::effective_fades(&track.audio_clips, ci);
+                let Some(cb) = self.mixer.channel_buffers_mut(dense) else {
+                    continue;
+                };
+                for g in from..to {
+                    let n = (g - block_start) as usize;
+                    if n >= frames {
+                        break;
+                    }
+                    // 片段内已播时长（秒）；淡入淡出与素材偏移都以它为准。
+                    let p = g as f64 / sr - clip.start_seconds;
+                    let mut gain = clip.gain;
+                    if fade_in > 0.0 && p < fade_in {
+                        gain *= (p / fade_in).clamp(0.0, 1.0) as f32;
+                    }
+                    let remain = clip.duration_seconds - p;
+                    if fade_out > 0.0 && remain < fade_out {
+                        gain *= (remain / fade_out).clamp(0.0, 1.0) as f32;
+                    }
+                    let src_sec = if clip.reversed {
+                        clip.offset_seconds + (clip.duration_seconds - p)
+                    } else {
+                        clip.offset_seconds + p
+                    };
+                    let src_frame = (src_sec * sr).floor();
+                    if src_frame < 0.0 {
+                        continue;
+                    }
+                    let si = src_frame as usize;
+                    if si >= pcm.frames {
+                        continue;
+                    }
+                    cb.left[n] += pcm.left[si] * gain;
+                    cb.right[n] += pcm.right[si] * gain;
+                }
+            }
         }
     }
 }

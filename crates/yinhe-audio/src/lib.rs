@@ -1,6 +1,7 @@
 mod audio_model;
 mod audio_renderer;
 mod audio_ring;
+pub mod audio_source;
 mod channel;
 pub mod channel_layout;
 mod channel_set;
@@ -20,6 +21,7 @@ pub mod spawn;
 #[cfg(feature = "gpu")]
 pub use yinhe_synth as synth;
 
+pub use audio_source::{DecodedAudio, WavePeaks, decode_audio};
 pub use clap_insert::ClapInsert;
 pub use spawn::{
     AudioCommand, AudioHandle, CpalAudioHandle, InsertTarget, PreviewNoteParams,

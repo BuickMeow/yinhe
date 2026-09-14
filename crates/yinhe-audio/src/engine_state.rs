@@ -31,9 +31,21 @@ impl AudioEngine {
         self.am_lane_skip = crate::audio_model::build_am_lane_skip(model, &self.am_ms);
 
         self.duration_samples =
-            (model.tempo_map.tick_to_seconds(model.tick_length) * self.sample_rate as f64) as u64;
+            (crate::prepare_model::model_duration_seconds(model) * self.sample_rate as f64) as u64;
 
-        self.skip_track = model.track_audible_count.iter().map(|&c| c == 0).collect();
+        // 音频轨的 skip 依据是"有没有片段"（note_count 恒为 0，不能按音符数判定）。
+        self.skip_track = model
+            .tracks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                if t.kind == yinhe_core::TrackKind::Audio {
+                    t.audio_clips.is_empty()
+                } else {
+                    model.track_audible_count.get(i).copied().unwrap_or(0) == 0
+                }
+            })
+            .collect();
 
         self.note_cursor = [0; KEY_COUNT];
         self.current_tick = 0;

@@ -18,6 +18,10 @@ use yinhe_types::KEY_COUNT;
 pub enum InsertTarget {
     /// 源 MIDI 通道（A01..P16）。
     Channel(u8),
+    /// 乐器通道（0 起，与 `TrackData::instrument_channel` 对齐）。
+    Instrument(u16),
+    /// 音频通道（0 起，与 `TrackData::audio_channel` 对齐）。
+    Audio(u16),
     /// 总线（bus / return）。
     Bus(u8),
     /// 主输出。
@@ -135,6 +139,16 @@ pub enum AudioCommand {
         channel: u8,
         params: StripParams,
     },
+    /// 更新某乐器通道的 strip 参数（推子拖动高频路径，幂等）。
+    SetInstrumentStrip {
+        channel: u16,
+        params: StripParams,
+    },
+    /// 更新某音频通道的 strip 参数（推子拖动高频路径，幂等）。
+    SetAudioStrip {
+        channel: u16,
+        params: StripParams,
+    },
     /// 更新主输出参数。
     SetMasterParams {
         params: MasterParams,
@@ -174,6 +188,12 @@ pub enum AudioCommand {
         channel: u16,
         /// 处理器较大（含渲染缓冲），用 Box 避免枚举体积膨胀。
         processor: Option<Box<dyn InstrumentProcessor>>,
+    },
+    /// 安装/替换已解码音频素材（uuid → PCM）。UI 后台线程解码后推送；
+    /// 音频轨片段按 uuid 引用。素材池只增不减。
+    SetAudioSource {
+        uuid: String,
+        decoded: Arc<crate::audio_source::DecodedAudio>,
     },
     /// 插件延迟变化（CLAP latency changed / VST3 kLatencyChanged）：
     /// 重新查询各处理器延迟并重算 PDC 对齐。

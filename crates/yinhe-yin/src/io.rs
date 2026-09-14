@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use yinhe_core::{BucketNote, ConductorData, PcEvent, ProjectMeta, TrackData, YinModel};
 use yinhe_types::{AutomationLane, KEY_COUNT};
 
-use yinhe_mixer::MixerParams;
+use yinhe_mixer::{MixerParams, StripParams};
 
 use crate::container::{Sections, pack, unpack};
 use crate::error::YinError;
@@ -27,7 +27,10 @@ use crate::project_meta::{ProjectFile, SfChannelOverride};
 /// 解码并补上空乐器表，避免既有工程丢失混音设置。
 ///
 /// v3：新增 buses / bus_inserts / sends（总线与发送）。加载 v1/v2 时补空。
-const MIXER_SECTION_VERSION: u32 = 3;
+///
+/// v4：新增乐器通道 strip/inserts/sends 与音频通道 strip/inserts/sends。
+/// 加载 v1/v2/v3 时补空。
+const MIXER_SECTION_VERSION: u32 = 4;
 
 /// v1 混音段结构（无 instruments 字段），供旧版工程迁移解码。
 #[derive(serde::Deserialize)]
@@ -48,6 +51,19 @@ struct MixerParamsV2 {
     pub instruments: Vec<Option<yinhe_mixer::InsertRef>>,
 }
 
+/// v3 混音段结构（无乐器/音频通道 strip 表），供旧版工程迁移解码。
+#[derive(serde::Deserialize)]
+struct MixerParamsV3 {
+    pub channels: Vec<yinhe_mixer::StripParams>,
+    pub master: yinhe_mixer::MasterParams,
+    pub channel_inserts: Vec<Vec<yinhe_mixer::InsertRef>>,
+    pub master_inserts: Vec<yinhe_mixer::InsertRef>,
+    pub instruments: Vec<Option<yinhe_mixer::InsertRef>>,
+    pub buses: Vec<yinhe_mixer::StripParams>,
+    pub bus_inserts: Vec<Vec<yinhe_mixer::InsertRef>>,
+    pub sends: Vec<Vec<yinhe_mixer::SendParams>>,
+}
+
 /// 编码混音段：version u32 LE + zstd(postcard MixerParams)。
 fn encode_mixer_section(mixer: &MixerParams, level: i32) -> Result<Vec<u8>, YinError> {
     let payload = serialize_postcard(mixer)?;
@@ -66,12 +82,34 @@ fn decode_mixer_section(section: &[u8]) -> Option<MixerParams> {
     let version = u32::from_le_bytes(section[..4].try_into().ok()?);
     let payload = zstd::decode_all(Cursor::new(&section[4..])).ok()?;
     let mut params: MixerParams = match version {
-        // 当前版本：完整结构（含 instruments）。
+        // 当前版本：完整结构（含乐器/音频通道 strip 表）。
         MIXER_SECTION_VERSION => deserialize_postcard(&payload)
             .map_err(|e| tracing::warn!("混音段解析失败，忽略混音设置: {e}"))
             .ok()?,
-        // 旧版 v2：按旧结构解码，总线/发送留空（不丢其它混音设置）
-        //（与 postcard 必须整段对齐、不能跳过未知字段相关）。
+        // 旧版 v3：按旧结构解码，乐器/音频通道 strip 表留空（其它设置保留）。
+        3 => {
+            let v3: MixerParamsV3 = deserialize_postcard(&payload)
+                .map_err(|e| tracing::warn!("旧版混音段解析失败，忽略混音设置: {e}"))
+                .ok()?;
+            MixerParams {
+                channels: v3.channels,
+                master: v3.master,
+                channel_inserts: v3.channel_inserts,
+                master_inserts: v3.master_inserts,
+                instruments: v3.instruments.clone(),
+                instrument_strips: vec![StripParams::default(); v3.instruments.len()],
+                instrument_inserts: vec![Vec::new(); v3.instruments.len()],
+                instrument_sends: vec![Vec::new(); v3.instruments.len()],
+                audio_channels: Vec::new(),
+                audio_inserts: Vec::new(),
+                audio_sends: Vec::new(),
+                buses: v3.buses,
+                bus_inserts: v3.bus_inserts,
+                sends: v3.sends,
+            }
+        }
+        // 旧版 v2：按旧结构解码，总线/发送与乐器/音频通道 strip 表留空
+        //（不丢其它混音设置）（与 postcard 必须整段对齐、不能跳过未知字段相关）。
         2 => {
             let v2: MixerParamsV2 = deserialize_postcard(&payload)
                 .map_err(|e| tracing::warn!("旧版混音段解析失败，忽略混音设置: {e}"))
@@ -81,7 +119,13 @@ fn decode_mixer_section(section: &[u8]) -> Option<MixerParams> {
                 master: v2.master,
                 channel_inserts: v2.channel_inserts,
                 master_inserts: v2.master_inserts,
-                instruments: v2.instruments,
+                instruments: v2.instruments.clone(),
+                instrument_strips: vec![StripParams::default(); v2.instruments.len()],
+                instrument_inserts: vec![Vec::new(); v2.instruments.len()],
+                instrument_sends: vec![Vec::new(); v2.instruments.len()],
+                audio_channels: Vec::new(),
+                audio_inserts: Vec::new(),
+                audio_sends: Vec::new(),
                 buses: Vec::new(),
                 bus_inserts: Vec::new(),
                 sends: Vec::new(),
@@ -98,6 +142,12 @@ fn decode_mixer_section(section: &[u8]) -> Option<MixerParams> {
                 channel_inserts: v1.channel_inserts,
                 master_inserts: v1.master_inserts,
                 instruments: Vec::new(),
+                instrument_strips: Vec::new(),
+                instrument_inserts: Vec::new(),
+                instrument_sends: Vec::new(),
+                audio_channels: Vec::new(),
+                audio_inserts: Vec::new(),
+                audio_sends: Vec::new(),
                 buses: Vec::new(),
                 bus_inserts: Vec::new(),
                 sends: Vec::new(),

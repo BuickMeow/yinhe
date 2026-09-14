@@ -111,6 +111,16 @@ pub(crate) enum MixAction {
         channel: u8,
         params: StripParams,
     },
+    /// 更新某乐器通道的 strip 参数（推子/声像/M/S 高频路径）。
+    SetInstrumentStrip {
+        channel: u16,
+        params: StripParams,
+    },
+    /// 更新某音频通道的 strip 参数（推子/声像/M/S 高频路径）。
+    SetAudioStrip {
+        channel: u16,
+        params: StripParams,
+    },
     SetMaster {
         params: MasterParams,
     },
@@ -212,6 +222,36 @@ impl App {
         if let Some(a) = &self.audio_state.handle {
             a.handle
                 .send(yinhe_audio::AudioCommand::SetBusStrip { bus, params });
+        }
+    }
+
+    /// 更新某乐器通道的 strip 参数：写持久化层 + 推引擎（高频路径）。
+    pub(crate) fn apply_instrument_strip(&mut self, idx: usize, channel: u16, params: StripParams) {
+        let mixer = self.workspace.documents[idx].mixer_mut();
+        if mixer.instrument_strips.len() <= channel as usize {
+            mixer
+                .instrument_strips
+                .resize(channel as usize + 1, StripParams::default());
+        }
+        mixer.instrument_strips[channel as usize] = params;
+        if let Some(a) = &self.audio_state.handle {
+            a.handle
+                .send(yinhe_audio::AudioCommand::SetInstrumentStrip { channel, params });
+        }
+    }
+
+    /// 更新某音频通道的 strip 参数：写持久化层 + 推引擎（高频路径）。
+    pub(crate) fn apply_audio_strip(&mut self, idx: usize, channel: u16, params: StripParams) {
+        let mixer = self.workspace.documents[idx].mixer_mut();
+        if mixer.audio_channels.len() <= channel as usize {
+            mixer
+                .audio_channels
+                .resize(channel as usize + 1, StripParams::default());
+        }
+        mixer.audio_channels[channel as usize] = params;
+        if let Some(a) = &self.audio_state.handle {
+            a.handle
+                .send(yinhe_audio::AudioCommand::SetAudioStrip { channel, params });
         }
     }
 
@@ -529,11 +569,50 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                                 if !inst_channels.is_empty() {
                                     ui.separator();
                                     for &ich in inst_channels.iter() {
+                                        let dense = layout.instrument_dense_for(ich);
+                                        let peak = if dense != u32::MAX {
+                                            smoothed_peak(
+                                                app.audio_state.handle.as_ref(),
+                                                &mut app.mix.smoothed,
+                                                dense as usize,
+                                                dt,
+                                            )
+                                        } else {
+                                            (0.0, 0.0)
+                                        };
                                         strip::instrument_strip(
                                             app,
                                             ui,
                                             idx,
                                             ich,
+                                            peak,
+                                            strip_h,
+                                            &mut actions,
+                                        );
+                                    }
+                                }
+                                // 音频条：乐器条后分隔 + 每个音频通道一条。
+                                let audio_channels: Vec<u16> = layout.audio_channels().to_vec();
+                                if !audio_channels.is_empty() {
+                                    ui.separator();
+                                    for &ach in audio_channels.iter() {
+                                        let dense = layout.audio_dense_for(ach);
+                                        let peak = if dense != u32::MAX {
+                                            smoothed_peak(
+                                                app.audio_state.handle.as_ref(),
+                                                &mut app.mix.smoothed,
+                                                dense as usize,
+                                                dt,
+                                            )
+                                        } else {
+                                            (0.0, 0.0)
+                                        };
+                                        strip::audio_strip(
+                                            app,
+                                            ui,
+                                            idx,
+                                            ach,
+                                            peak,
                                             strip_h,
                                             &mut actions,
                                         );
@@ -659,6 +738,18 @@ fn insert_refs(
 ) -> Option<&mut Vec<yinhe_mixer::InsertRef>> {
     match target {
         InsertTarget::Channel(ch) => mixer.channel_inserts.get_mut(ch as usize),
+        InsertTarget::Instrument(ch) => {
+            if mixer.instrument_inserts.len() <= ch as usize {
+                mixer.instrument_inserts.resize(ch as usize + 1, Vec::new());
+            }
+            mixer.instrument_inserts.get_mut(ch as usize)
+        }
+        InsertTarget::Audio(ch) => {
+            if mixer.audio_inserts.len() <= ch as usize {
+                mixer.audio_inserts.resize(ch as usize + 1, Vec::new());
+            }
+            mixer.audio_inserts.get_mut(ch as usize)
+        }
         InsertTarget::Bus(bus) => mixer.bus_inserts.get_mut(bus as usize),
         InsertTarget::Master => Some(&mut mixer.master_inserts),
     }
@@ -667,6 +758,10 @@ fn insert_refs(
 fn apply_action(app: &mut App, idx: usize, action: MixAction) {
     match action {
         MixAction::SetStrip { channel, params } => app.apply_strip(idx, channel, params),
+        MixAction::SetInstrumentStrip { channel, params } => {
+            app.apply_instrument_strip(idx, channel, params)
+        }
+        MixAction::SetAudioStrip { channel, params } => app.apply_audio_strip(idx, channel, params),
         MixAction::SetMaster { params } => app.apply_master(idx, params),
         MixAction::OpenPicker { target } => {
             app.mix.picker_for = Some(target);

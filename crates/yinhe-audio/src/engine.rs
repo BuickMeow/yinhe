@@ -77,6 +77,11 @@ pub(crate) struct AudioEngine {
     pub(crate) ended_notes: Vec<ActiveNote>,
     pub(crate) model: Option<AudioModel>,
     pub(crate) skip_track: Vec<bool>,
+    /// 已解码音频素材（uuid → PCM + 峰值）。由 UI 后台解码后经
+    /// `AudioCommand::SetAudioSource` 推入；素材池只增不减（换工程时随引擎重建清空）。
+    /// 音频轨渲染按片段的 `source` uuid 在此查找。
+    pub(crate) audio_sources:
+        std::collections::HashMap<String, Arc<crate::audio_source::DecodedAudio>>,
     /// AR 自动化 lane 的 M/S 试听旁通集：dispatch 用它预计算 `am_lane_skip`
     ///（chase 计算在 worker 侧直接查本 map）。随 `SetAmMs` 命令更新。
     pub(crate) am_ms: Arc<crate::spawn::AmMsMap>,
@@ -154,6 +159,7 @@ impl AudioEngine {
                 ended_notes: Vec::new(),
                 model: None,
                 skip_track: Vec::new(),
+                audio_sources: std::collections::HashMap::new(),
                 am_ms: Arc::new(crate::spawn::AmMsMap::new()),
                 am_lane_skip: Vec::new(),
                 pending_play_from_sample: None,
@@ -287,6 +293,12 @@ impl AudioEngine {
             AudioCommand::SetChannelStrip { channel, params } => {
                 self.set_channel_strip(channel, params);
             }
+            AudioCommand::SetInstrumentStrip { channel, params } => {
+                self.set_instrument_strip(channel, params);
+            }
+            AudioCommand::SetAudioStrip { channel, params } => {
+                self.set_audio_strip(channel, params);
+            }
             AudioCommand::SetMasterParams { params } => self.set_master_params(params),
             AudioCommand::InsertAdd {
                 target,
@@ -305,6 +317,9 @@ impl AudioEngine {
             }
             AudioCommand::SetInstrument { channel, processor } => {
                 self.set_instrument(channel, processor)
+            }
+            AudioCommand::SetAudioSource { uuid, decoded } => {
+                self.audio_sources.insert(uuid, decoded);
             }
             AudioCommand::RefreshLatency => self.refresh_latency(),
             // 预览命令由渲染器处理（独立预览合成器 + 渲染时钟），引擎层忽略。

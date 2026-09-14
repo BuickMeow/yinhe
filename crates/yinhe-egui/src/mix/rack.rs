@@ -58,6 +58,10 @@ pub(crate) struct MixerRack {
     pub channels: HashMap<u8, Vec<SlotRuntime>>,
     /// 总线（bus/return）→ 槽位实例（稀疏）。
     pub buses: HashMap<u8, Vec<SlotRuntime>>,
+    /// 乐器通道 insert 链（键 = 乐器通道号）。
+    pub instruments: HashMap<u16, Vec<SlotRuntime>>,
+    /// 音频通道 insert 链（键 = 音频通道号）。
+    pub audios: HashMap<u16, Vec<SlotRuntime>>,
     pub master: Vec<SlotRuntime>,
     /// 总线删除时的孤儿槽位：Wait 已发 InsertRemove 的处理器退回后 deactivate。
     orphan: Vec<SlotRuntime>,
@@ -71,6 +75,8 @@ impl Default for MixerRack {
         Self {
             channels: HashMap::new(),
             buses: HashMap::new(),
+            instruments: HashMap::new(),
+            audios: HashMap::new(),
             master: Vec::new(),
             orphan: Vec::new(),
             next_owner: 1,
@@ -93,6 +99,8 @@ impl MixerRack {
     fn chain_mut(&mut self, target: impl Into<InsertTarget>) -> &mut Vec<SlotRuntime> {
         match target.into() {
             InsertTarget::Channel(ch) => self.channels.entry(ch).or_default(),
+            InsertTarget::Instrument(ch) => self.instruments.entry(ch).or_default(),
+            InsertTarget::Audio(ch) => self.audios.entry(ch).or_default(),
             InsertTarget::Bus(bus) => self.buses.entry(bus).or_default(),
             InsertTarget::Master => &mut self.master,
         }
@@ -101,6 +109,10 @@ impl MixerRack {
     pub(crate) fn chain(&self, target: impl Into<InsertTarget>) -> &[SlotRuntime] {
         match target.into() {
             InsertTarget::Channel(ch) => self.channels.get(&ch).map(Vec::as_slice).unwrap_or(&[]),
+            InsertTarget::Instrument(ch) => {
+                self.instruments.get(&ch).map(Vec::as_slice).unwrap_or(&[])
+            }
+            InsertTarget::Audio(ch) => self.audios.get(&ch).map(Vec::as_slice).unwrap_or(&[]),
             InsertTarget::Bus(bus) => self.buses.get(&bus).map(Vec::as_slice).unwrap_or(&[]),
             InsertTarget::Master => &self.master,
         }
@@ -228,6 +240,20 @@ impl MixerRack {
             for (slot, rt) in chain.iter().enumerate() {
                 if !rt.sent && !rt.pending_remove && !rt.activate_failed {
                     targets.push((InsertTarget::Bus(*bus), slot));
+                }
+            }
+        }
+        for (ch, chain) in &self.instruments {
+            for (slot, rt) in chain.iter().enumerate() {
+                if !rt.sent && !rt.pending_remove && !rt.activate_failed {
+                    targets.push((InsertTarget::Instrument(*ch), slot));
+                }
+            }
+        }
+        for (ch, chain) in &self.audios {
+            for (slot, rt) in chain.iter().enumerate() {
+                if !rt.sent && !rt.pending_remove && !rt.activate_failed {
+                    targets.push((InsertTarget::Audio(*ch), slot));
                 }
             }
         }

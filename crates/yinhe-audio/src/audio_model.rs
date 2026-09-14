@@ -579,6 +579,41 @@ pub(crate) fn emit_automation_event(
     }
 }
 
+/// 计算片段的有效淡入/淡出时长（秒）：合并自身参数与同轨重叠片段的自动交叉淡化。
+///
+/// 自动交叉淡化规则（同轨两两重叠）：
+/// - 另一片段在本片段内部结束（`o.end < c.end`）→ 本片段从自身起点淡入到 `o.end`；
+/// - 另一片段在本片段内部开始（`o.start > c.start`）→ 本片段从 `o.start` 淡出到自身终点。
+///
+/// 同起点重叠不交叉（并排叠加）。结果不超过片段时长。
+pub(crate) fn effective_fades(clips: &[yinhe_core::AudioClip], index: usize) -> (f64, f64) {
+    let Some(c) = clips.get(index) else {
+        return (0.0, 0.0);
+    };
+    let mut fade_in = c.fade_in_seconds.max(0.0);
+    let mut fade_out = c.fade_out_seconds.max(0.0);
+    for (j, o) in clips.iter().enumerate() {
+        if j == index {
+            continue;
+        }
+        let overlap_start = c.start_seconds.max(o.start_seconds);
+        let overlap_end = c.end_seconds().min(o.end_seconds());
+        if overlap_end <= overlap_start {
+            continue;
+        }
+        if o.start_seconds > c.start_seconds {
+            fade_out = fade_out.max(c.end_seconds() - overlap_start);
+        }
+        if o.end_seconds() < c.end_seconds() {
+            fade_in = fade_in.max(overlap_end - c.start_seconds);
+        }
+    }
+    (
+        fade_in.min(c.duration_seconds.max(0.0)),
+        fade_out.min(c.duration_seconds.max(0.0)),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -666,6 +701,37 @@ mod tests {
         assert_eq!(audio.track_banks[0], vec![(100, 0)]);
         assert_eq!(audio.track_banks[1], vec![(200, 0), (400, 121)]);
         assert!(audio.track_banks[2].is_empty());
+    }
+
+    #[test]
+    fn crossfade_overlap_computes_effective_fades() {
+        let clip = |id, start, dur, fade_in, fade_out| yinhe_core::AudioClip {
+            id,
+            source: "s".into(),
+            start_seconds: start,
+            offset_seconds: 0.0,
+            duration_seconds: dur,
+            gain: 1.0,
+            fade_in_seconds: fade_in,
+            fade_out_seconds: fade_out,
+            reversed: false,
+        };
+        // A [0,4) 与 B [3,5) 重叠 [3,4)：A 在重叠区淡出 1s，B 从 3s 处淡入到 4s（1s）。
+        let clips = vec![clip(1, 0.0, 4.0, 0.0, 0.0), clip(2, 3.0, 2.0, 0.0, 0.0)];
+        assert_eq!(effective_fades(&clips, 0), (0.0, 1.0));
+        assert_eq!(effective_fades(&clips, 1), (1.0, 0.0));
+        // 自身淡入淡出更大时保留自身。
+        let clips = vec![clip(1, 0.0, 4.0, 2.0, 2.0)];
+        assert_eq!(effective_fades(&clips, 0), (2.0, 2.0));
+        // 不重叠：保持自身（0）。
+        let clips = vec![clip(1, 0.0, 2.0, 0.0, 0.0), clip(2, 3.0, 2.0, 0.0, 0.0)];
+        assert_eq!(effective_fades(&clips, 0), (0.0, 0.0));
+        assert_eq!(effective_fades(&clips, 1), (0.0, 0.0));
+        // 完全包含：外片段获得淡入（到内片段尾）+ 淡出（从内片段头到自身尾）。
+        let clips = vec![clip(1, 0.0, 10.0, 0.0, 0.0), clip(2, 3.0, 2.0, 0.0, 0.0)];
+        let (fi, fo) = effective_fades(&clips, 0);
+        assert!((fi - 5.0).abs() < 1e-9, "fi={fi}");
+        assert!((fo - 7.0).abs() < 1e-9, "fo={fo}");
     }
 
     /// 回归测试：同 tick 上 RPN 0 (PBS) 必须排在 PitchBend 之前。

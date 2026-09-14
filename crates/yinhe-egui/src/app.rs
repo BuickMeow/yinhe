@@ -4,6 +4,7 @@ use rust_i18n::t;
 
 pub(crate) mod actions;
 pub(crate) mod audio;
+pub(crate) mod audio_library;
 pub(crate) mod audio_state;
 pub(crate) mod automation_actions;
 pub(crate) mod autosave;
@@ -160,6 +161,8 @@ pub struct App {
 
     // ── Audio engine ──
     pub(crate) audio_state: audio_state::AudioState,
+    /// 音频素材库（后台解码 + 峰值；引擎重建后重推素材）。
+    pub(crate) audio_library: audio_library::AudioLibrary,
 
     // ── Settings ──
     pub(crate) audio_settings: crate::audio_settings::AudioSettings,
@@ -406,6 +409,7 @@ impl App {
             status_hint: None,
 
             audio_state: audio_state::AudioState::new(),
+            audio_library: audio_library::AudioLibrary::new(),
 
             audio_settings,
             midi_input: None,

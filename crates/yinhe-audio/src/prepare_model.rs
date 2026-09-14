@@ -7,6 +7,14 @@ use crate::audio_model::{
     AudibleDelta, AudibleNote, AudioModel, PreparedModel, flatten_automation_to_cc_events,
 };
 
+/// 全曲时长（秒）：MIDI/自动化末尾与音频片段末尾取大者。
+pub(crate) fn model_duration_seconds(model: &YinModel) -> f64 {
+    model
+        .tempo_map
+        .tick_to_seconds(model.tick_length)
+        .max(model.audio_end_seconds())
+}
+
 /// Build `PreparedModel` on a worker thread (no `&mut AudioEngine` needed).
 /// This is the expensive part; the result is applied cheaply on the audio thread.
 ///
@@ -19,8 +27,7 @@ pub(crate) fn prepare_model(
 ) -> PreparedModel {
     let cc_events = flatten_automation_to_cc_events(model, density);
 
-    let duration_samples =
-        (model.tempo_map.tick_to_seconds(model.tick_length) * sample_rate as f64) as u64;
+    let duration_samples = (model_duration_seconds(model) * sample_rate as f64) as u64;
 
     let audible_notes = build_audible_notes(model);
 
@@ -43,8 +50,7 @@ pub(crate) fn prepare_notes_dirty(
     sample_rate: u32,
     dirty: &[bool; KEY_COUNT],
 ) -> (AudioModel, Arc<YinModel>, AudibleDelta, u64) {
-    let duration_samples =
-        (model.tempo_map.tick_to_seconds(model.tick_length) * sample_rate as f64) as u64;
+    let duration_samples = (model_duration_seconds(model) * sample_rate as f64) as u64;
 
     let mut delta: AudibleDelta = Box::new(core::array::from_fn(|_| None));
     for key in 0..KEY_COUNT {

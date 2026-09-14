@@ -7568,6 +7568,8 @@ dependencies = [
  "hound",
  "pollster 1.0.1",
  "rayon",
+ "rubato",
+ "symphonia",
  "tempfile",
  "tracing",
  "xsynth-core",

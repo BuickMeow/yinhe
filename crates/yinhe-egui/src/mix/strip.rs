@@ -140,36 +140,54 @@ pub(crate) fn channel_strip(
     strip_frame(ui, color, height, |ui| {
         label_block(ui, channel_label(channel), &names);
 
-        ui.add_space(4.0);
-        insert_area(
+        strip_body(
             ui,
             InsertTarget::Channel(channel),
+            params,
+            peak,
             &insert_names,
             &bypassed,
             &gui_open,
+            |p| MixAction::SetStrip { channel, params: p },
             actions,
         );
-        ui.add_space(4.0);
-
-        // 推子占满 insert 之下的剩余空间（底部固定区之外），
-        // 因此 insert 高度变化只影响推子顶部，底部对齐不变。
-        let fader_h = (ui.available_height() - BOTTOM_H).max(FADER_MIN_H);
-        fader_and_meter(ui, params.gain, peak, fader_h, |gain| {
-            let mut p = params;
-            p.gain = gain;
-            actions.push(MixAction::SetStrip { channel, params: p });
-        });
-        ui.add_space(4.0);
-        ms_pan_block(ui, &params, |new_params| {
-            actions.push(MixAction::SetStrip {
-                channel,
-                params: new_params,
-            });
-        });
         ui.add_space(4.0);
         send_button(ui, channel, send_count, actions);
         ui.add_space(4.0);
         db_label(ui, params.gain);
+    });
+}
+
+/// 通道条主体（insert 链 + 推子/电平 + M/S/声像），三种命名空间（MIDI/乐器/音频）
+/// 共用。`on_strip` 把新 StripParams 转成对应命名空间的 MixAction 变体。
+#[allow(clippy::too_many_arguments)] // strip 渲染上下文透传
+fn strip_body(
+    ui: &mut egui::Ui,
+    target: InsertTarget,
+    params: StripParams,
+    peak: (f32, f32),
+    insert_names: &[String],
+    bypassed: &[bool],
+    gui_open: &[bool],
+    mut on_strip: impl FnMut(StripParams) -> MixAction,
+    actions: &mut Vec<MixAction>,
+) {
+    ui.add_space(4.0);
+    insert_area(ui, target, insert_names, bypassed, gui_open, actions);
+    ui.add_space(4.0);
+
+    // 推子占满 insert 之下的剩余空间（底部固定区之外），
+    // 因此 insert 高度变化只影响推子顶部，底部对齐不变。
+    let fader_h = (ui.available_height() - BOTTOM_H).max(FADER_MIN_H);
+    let base = params;
+    fader_and_meter(ui, params.gain, peak, fader_h, |gain| {
+        let mut p = base;
+        p.gain = gain;
+        actions.push(on_strip(p));
+    });
+    ui.add_space(4.0);
+    ms_pan_block(ui, &params, |new_params| {
+        actions.push(on_strip(new_params));
     });
 }
 
@@ -1028,12 +1046,14 @@ pub(crate) fn plugin_picker(
     }
 }
 
-/// 乐器通道条：标签 + 插件名/选择按钮 + 更换/移除。乐器音频走独立 dense 通道。
+/// 乐器通道条：标签 + 插件名/选择按钮 + insert 链 + 推子/M/S/声像。
+/// 乐器音频走独立 dense 通道；多条乐器轨共享同一乐器通道 = 共享本条。
 pub(crate) fn instrument_strip(
     app: &mut App,
     ui: &mut egui::Ui,
     idx: usize,
     channel: u16,
+    peak: (f32, f32),
     height: f32,
     actions: &mut Vec<MixAction>,
 ) {
@@ -1043,6 +1063,30 @@ pub(crate) fn instrument_strip(
         .get(channel as usize)
         .and_then(|o| o.as_ref())
         .map(|r| r.name.clone());
+    let params = app.workspace.documents[idx].mixer.instrument_strip(channel);
+    let insert_names: Vec<String> = app.workspace.documents[idx]
+        .mixer
+        .instrument_inserts
+        .get(channel as usize)
+        .map(|chain| chain.iter().map(|r| r.name.clone()).collect())
+        .unwrap_or_default();
+    let bypassed: Vec<bool> = app.workspace.documents[idx]
+        .mixer
+        .instrument_inserts
+        .get(channel as usize)
+        .map(|chain| chain.iter().map(|r| r.bypassed).collect())
+        .unwrap_or_default();
+    let gui_open: Vec<bool> = app
+        .mixer_racks
+        .get(idx)
+        .map(|rack| {
+            rack.chain(InsertTarget::Instrument(channel))
+                .iter()
+                .map(|rt| rt.gui_open)
+                .collect()
+        })
+        .unwrap_or_default();
+
     strip_frame(ui, crate::theme::accent_active(), height, |ui| {
         label_block(ui, format!("{} {}", t!("mix.instrument"), channel + 1), "");
         ui.add_space(4.0);
@@ -1074,6 +1118,72 @@ pub(crate) fn instrument_strip(
                 }
             }
         }
+        strip_body(
+            ui,
+            InsertTarget::Instrument(channel),
+            params,
+            peak,
+            &insert_names,
+            &bypassed,
+            &gui_open,
+            |p| MixAction::SetInstrumentStrip { channel, params: p },
+            actions,
+        );
+        ui.add_space(4.0);
+        db_label(ui, params.gain);
+    });
+}
+
+/// 音频通道条：标签 + insert 链 + 推子/M/S/声像。
+/// 多条音频轨共享同一音频通道 = 共享本条（与乐器通道同构）。
+pub(crate) fn audio_strip(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    idx: usize,
+    channel: u16,
+    peak: (f32, f32),
+    height: f32,
+    actions: &mut Vec<MixAction>,
+) {
+    let params = app.workspace.documents[idx].mixer.audio_strip(channel);
+    let insert_names: Vec<String> = app.workspace.documents[idx]
+        .mixer
+        .audio_inserts
+        .get(channel as usize)
+        .map(|chain| chain.iter().map(|r| r.name.clone()).collect())
+        .unwrap_or_default();
+    let bypassed: Vec<bool> = app.workspace.documents[idx]
+        .mixer
+        .audio_inserts
+        .get(channel as usize)
+        .map(|chain| chain.iter().map(|r| r.bypassed).collect())
+        .unwrap_or_default();
+    let gui_open: Vec<bool> = app
+        .mixer_racks
+        .get(idx)
+        .map(|rack| {
+            rack.chain(InsertTarget::Audio(channel))
+                .iter()
+                .map(|rt| rt.gui_open)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    strip_frame(ui, crate::theme::accent_active(), height, |ui| {
+        label_block(ui, format!("{} {}", t!("mix.audio"), channel + 1), "");
+        strip_body(
+            ui,
+            InsertTarget::Audio(channel),
+            params,
+            peak,
+            &insert_names,
+            &bypassed,
+            &gui_open,
+            |p| MixAction::SetAudioStrip { channel, params: p },
+            actions,
+        );
+        ui.add_space(4.0);
+        db_label(ui, params.gain);
     });
 }
 
