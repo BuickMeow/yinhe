@@ -16,6 +16,7 @@ mod interaction;
 mod menu;
 mod render;
 mod types;
+pub(crate) use interaction::instrument_channel_of;
 pub(crate) use types::TrackAction;
 
 /// Render the track list using a painter (unified component for both

@@ -529,19 +529,9 @@ impl App {
             let Some(track) = doc.data.model.tracks.get(track_idx) else {
                 return;
             };
-            // 乐器轨用自身通道；MIDI 轨用同 MIDI 通道上的乐器轨。
-            let ich = track.instrument_channel.or_else(|| {
-                doc.data
-                    .model
-                    .tracks
-                    .iter()
-                    .find(|o| {
-                        o.kind == yinhe_core::TrackKind::Instrument
-                            && o.global_channel() == track.global_channel()
-                    })
-                    .and_then(|o| o.instrument_channel)
-            });
-            let Some(ich) = ich else {
+            let Some(ich) =
+                crate::arrange::instrument_channel_of(&doc.data.model.tracks, track_idx)
+            else {
                 return;
             };
             let existing: std::collections::HashSet<u32> = track

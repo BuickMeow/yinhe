@@ -253,27 +253,25 @@ pub fn handle_interactions(
                 ui.close();
             }
             ui.separator();
-            super::menu::create_automation_menu(ui, idx, tracks, actions);
-            // 插件参数（可达数千个）不在菜单里平铺：打开选择窗口。
-            // 乐器轨，或该轨 MIDI 通道上挂了乐器轨时可用。
-            let has_instrument = tracks.get(idx).is_some_and(|t| {
-                t.instrument_channel.is_some()
-                    || tracks.iter().any(|o| {
-                        o.kind == yinhe_core::TrackKind::Instrument
-                            && o.global_channel() == t.global_channel()
-                    })
-            });
-            if has_instrument
-                && ui
+            // 「添加自动化」按该轨的**乐器设备**分流（自动化属于设备，不属于音轨）：
+            // - 插件设备（乐器轨，或无乐器通道但有同 MIDI 通道乐器轨）：参数可达
+            //   数千个，不在菜单平铺 → 一个入口打开独立选择窗口；
+            // - XSynth 设备（普通 MIDI 轨）：参数即那组特调 CC/PB/RPN，直接列菜单。
+            let device_instrument = super::instrument_channel_of(tracks, idx);
+            if device_instrument.is_some() {
+                if ui
                     .add(crate::widgets::menu::menu_item_button(
                         ui,
                         false,
-                        t!("arrange.add_plugin_automation"),
+                        t!("arrange.add_automation"),
                     ))
                     .clicked()
-            {
-                actions.push(TrackAction::OpenPluginParamPicker { idx });
-                ui.close();
+                {
+                    actions.push(TrackAction::OpenPluginParamPicker { idx });
+                    ui.close();
+                }
+            } else {
+                super::menu::create_automation_menu(ui, idx, tracks, actions);
             }
         } else if ui
             .add(crate::widgets::menu::menu_item_button(
@@ -399,4 +397,24 @@ pub fn handle_interactions(
     }
 
     ui.data_mut(|d| d.insert_temp(drag_id, drag.clone()));
+}
+
+/// 该轨的乐器设备通道：乐器轨用自身；MIDI 轨用同 MIDI 通道上的乐器轨。
+///
+/// 「添加自动化」按设备分流用：设备是插件时参数多（弹窗口），
+/// 设备是 XSynth 时参数即那组特调 CC/PB/RPN（直接列菜单）。
+pub(crate) fn instrument_channel_of(
+    tracks: &[Arc<yinhe_core::TrackData>],
+    idx: usize,
+) -> Option<u16> {
+    let t = tracks.get(idx)?;
+    t.instrument_channel.or_else(|| {
+        tracks
+            .iter()
+            .find(|o| {
+                o.kind == yinhe_core::TrackKind::Instrument
+                    && o.global_channel() == t.global_channel()
+            })
+            .and_then(|o| o.instrument_channel)
+    })
 }
