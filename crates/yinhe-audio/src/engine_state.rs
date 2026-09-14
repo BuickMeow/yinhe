@@ -229,6 +229,65 @@ impl AudioEngine {
             .apply_loaded_for_channel(channel, soundfonts, &mut self.channel_set, dense);
     }
 
+    /// 暂停：传输停止 + 停掉乐器插件的挂音。
+    ///
+    /// 插件在停止状态仍被空闲渲染持续 process（GUI 键盘/尾音语义），
+    /// 不杀挂音就会在暂停时一直响（连续音色如三角波尤其明显）。
+    /// tick 未推进 → 音符未结束，恢复时按跨点音符重启。
+    pub(crate) fn pause(&mut self) {
+        self.playing = false;
+        let all = std::mem::take(&mut self.active_notes);
+        let mut remaining = std::collections::BinaryHeap::new();
+        for std::cmp::Reverse(an) in all.into_iter() {
+            if an.is_instrument {
+                if let Some(Some(slot)) = self.instruments.get_mut(an.dense as usize) {
+                    slot.events.push(PluginEvent::NoteOff {
+                        time: 0,
+                        channel: an.clap_channel,
+                        key: an.key,
+                        velocity: 0.0,
+                    });
+                }
+            } else {
+                remaining.push(std::cmp::Reverse(an));
+            }
+        }
+        self.active_notes = remaining;
+        // 试听音同样停掉（暂停不该有预览在响）。
+        self.preview_instrument_stop(None, None);
+    }
+
+    /// 恢复（Pause 后）：重启 pause 期间被杀掉的**乐器**跨点音符。
+    /// xsynth 音符不受影响（暂停不杀 xsynth voice，恢复自然续响）。
+    pub(crate) fn resume(&mut self) {
+        self.playing = true;
+        self.restart_crossing_instrument_notes();
+    }
+
+    /// 重启当前 tick 处仍有效的乐器跨点音符（pause→resume 用）。
+    fn restart_crossing_instrument_notes(&mut self) {
+        let tick = self.current_tick;
+        for key in 0..KEY_COUNT {
+            let notes = self.audible_notes[key].as_slice();
+            let cursor = notes.partition_point(|n| n.start_tick < tick);
+            let mut to_restart: Vec<AudibleNote> = Vec::new();
+            for n in &notes[..cursor] {
+                if n.end_tick > tick
+                    && self
+                        .model
+                        .as_ref()
+                        .and_then(|m| m.track_instrument(n.track as usize))
+                        .is_some()
+                {
+                    to_restart.push(*n);
+                }
+            }
+            for n in to_restart {
+                self.restart_note(key, &n);
+            }
+        }
+    }
+
     /// 重启一个跨点音符（seek / unmute 复用）：NoteOn + 记入 active_notes。
     /// `key`：桶索引。`n`：audible_notes 里的源音符（已是当前 tick 之前的跨点音符，
     /// 由调用方过滤 end_tick > tick）。同步检查 skip_track（mute 轨跳过不重启）。

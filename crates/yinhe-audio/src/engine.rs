@@ -267,8 +267,8 @@ impl AudioEngine {
                 self.seek_to(from_sample);
                 self.playing = true;
             }
-            AudioCommand::Resume => self.playing = true,
-            AudioCommand::Pause => self.playing = false,
+            AudioCommand::Resume => self.resume(),
+            AudioCommand::Pause => self.pause(),
             AudioCommand::Stop => {
                 self.playing = false;
                 self.seek_to(0);
