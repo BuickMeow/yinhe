@@ -1,4 +1,5 @@
 mod am_lanes;
+pub(crate) use am_lanes::lane_label;
 mod track_panel;
 pub(crate) use track_panel::instrument_channel_of;
 mod view_ui;
@@ -125,8 +126,8 @@ pub fn show(
     sel_hint: Option<&crate::app::layout::SelHintInfo>,
     // 右键「音轨属性」等请求：请求打开属性浮窗（由调用方 set_float_panel 落地）。
     float_panel_req: &mut Option<crate::right_panel::FloatPanel>,
-    // 右键「添加插件参数自动化…」：请求打开参数选择窗口（由调用方落地）。
-    plugin_param_picker_req: &mut Option<usize>,
+    // 「添加自动化」：请求打开设备参数选择窗口（由调用方落地）。
+    automation_picker_req: &mut Option<usize>,
 ) -> Option<QuantizePreset> {
     *last_cursor_tick = doc.edit.cursor_tick;
 
@@ -370,10 +371,10 @@ pub fn show(
             let mut structural = true;
             let (undo_action, label) = match &action {
                 // 右键「音轨属性」：不产生 undo，选中目标轨后请求打开浮窗。
-                track_panel::TrackAction::OpenPluginParamPicker { idx } => {
+                track_panel::TrackAction::OpenAutomationPicker { idx } => {
                     // 不产生 undo：请求打开参数选择窗口（由调用方落地）。
                     structural = false;
-                    *plugin_param_picker_req = Some(*idx);
+                    *automation_picker_req = Some(*idx);
                     (None, String::new())
                 }
                 track_panel::TrackAction::ShowProperties { idx } => {
@@ -389,17 +390,6 @@ pub fn show(
                     *float_panel_req =
                         Some(crate::right_panel::FloatPanel::TrackProps { track_idx });
                     (None, String::new())
-                }
-                track_panel::TrackAction::CreateAutomation { idx, target } => {
-                    structural = false;
-                    let r = doc.add_automation_lane(*idx, target.clone());
-                    if r.is_some()
-                        && let Some(e) = doc.edit.arr_am_expanded.get_mut(*idx)
-                    {
-                        // 创建后自动展开该轨
-                        *e = true;
-                    }
-                    (r.map(|(_, a)| a), t!("undo.create_automation").to_string())
                 }
                 track_panel::TrackAction::DeleteAutomation { idx, lane_idx } => {
                     structural = false;

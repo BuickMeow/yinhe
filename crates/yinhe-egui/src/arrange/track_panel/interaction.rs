@@ -253,25 +253,18 @@ pub fn handle_interactions(
                 ui.close();
             }
             ui.separator();
-            // 「添加自动化」按该轨的**乐器设备**分流（自动化属于设备，不属于音轨）：
-            // - 插件设备（乐器轨，或无乐器通道但有同 MIDI 通道乐器轨）：参数可达
-            //   数千个，不在菜单平铺 → 一个入口打开独立选择窗口；
-            // - XSynth 设备（普通 MIDI 轨）：参数即那组特调 CC/PB/RPN，直接列菜单。
-            let device_instrument = super::instrument_channel_of(tracks, idx);
-            if device_instrument.is_some() {
-                if ui
-                    .add(crate::widgets::menu::menu_item_button(
-                        ui,
-                        false,
-                        t!("arrange.add_automation"),
-                    ))
-                    .clicked()
-                {
-                    actions.push(TrackAction::OpenPluginParamPicker { idx });
-                    ui.close();
-                }
-            } else {
-                super::menu::create_automation_menu(ui, idx, tracks, actions);
+            // 「添加自动化」：自动化属于**乐器设备**（XSynth / 插件），不属于音轨。
+            // 设备参数统一在独立窗口里选择（XSynth 十几个、插件可达数千个）。
+            if ui
+                .add(crate::widgets::menu::menu_item_button(
+                    ui,
+                    false,
+                    t!("arrange.add_automation"),
+                ))
+                .clicked()
+            {
+                actions.push(TrackAction::OpenAutomationPicker { idx });
+                ui.close();
             }
         } else if ui
             .add(crate::widgets::menu::menu_item_button(

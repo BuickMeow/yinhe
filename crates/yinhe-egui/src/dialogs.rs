@@ -1,12 +1,12 @@
 pub mod archive_picker;
 pub mod audio_device_switch;
+pub mod automation_picker;
 pub mod autosave_recovery;
 pub mod export;
 pub mod filter;
 pub mod gpu_device_lost;
 pub mod memory_breakdown;
 pub mod new_track;
-pub mod plugin_param_picker;
 pub mod ppq_rescale_confirm;
 pub mod prop_panels;
 pub mod save_overlay;

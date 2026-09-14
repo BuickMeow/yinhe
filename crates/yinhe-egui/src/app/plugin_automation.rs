@@ -143,6 +143,60 @@ impl App {
         }
     }
 
+    /// 添加/移除一条 AM lane（「添加自动化」窗口的条目切换）。
+    /// 返回操作后该 lane 是否存在（供窗口回写对勾）。
+    pub(crate) fn apply_automation_toggle(
+        &mut self,
+        idx: usize,
+        track_idx: usize,
+        target: &AutomationTarget,
+        add: bool,
+    ) -> bool {
+        let (snapshot, action, exists_after) = {
+            let doc = &mut self.workspace.documents[idx];
+            if track_idx >= doc.data.model.tracks.len() {
+                return false;
+            }
+            let lane_idx = doc.data.model.tracks[track_idx]
+                .automation_lanes
+                .iter()
+                .position(|l| &l.target == target);
+            if add {
+                if lane_idx.is_some() {
+                    return true;
+                }
+                let snapshot = doc.capture_snapshot();
+                let action = doc.add_automation_lane(track_idx, target.clone());
+                (Some(snapshot), action, true)
+            } else {
+                let Some(li) = lane_idx else {
+                    return false;
+                };
+                let snapshot = doc.capture_snapshot();
+                let action = doc.remove_automation_lane(track_idx, li).map(|a| (li, a));
+                (Some(snapshot), action, false)
+            }
+        };
+        // 添加后自动展开该轨的自动化面板（移除时保持现状）。
+        {
+            let doc = &mut self.workspace.documents[idx];
+            if let Some(e) = doc.edit.arr_am_expanded.get_mut(track_idx) {
+                *e = true;
+            }
+        }
+        if let (Some(snapshot), Some((_li, action))) = (snapshot, action) {
+            let label = if add {
+                t!("undo.create_automation")
+            } else {
+                t!("undo.delete_automation_lane")
+            };
+            let doc = &mut self.workspace.documents[idx];
+            doc.push_undo(action, label.as_ref(), snapshot);
+            self.notify_audio_model_changed();
+        }
+        exists_after
+    }
+
     /// ParamPanel 的「显示自动化」按钮：确保该插件参数的 AM lane 存在并展开轨道。
     /// 已存在时只展开（不重复创建、不产生 undo）。
     pub(crate) fn toggle_plugin_param_lane(

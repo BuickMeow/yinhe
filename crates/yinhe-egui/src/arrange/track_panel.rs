@@ -13,7 +13,6 @@ mod badge;
 mod draw;
 mod hover;
 mod interaction;
-mod menu;
 mod render;
 mod types;
 pub(crate) use interaction::instrument_channel_of;
@@ -238,22 +237,20 @@ pub(crate) fn show(
             let is_last_lane = tracks
                 .get(track)
                 .is_some_and(|t| sub + 1 == t.automation_lanes.len());
-            if is_last_lane {
-                let add_open =
-                    egui::Popup::is_id_open(ui.ctx(), egui::Id::new(("arr_add_pop", track)));
-                if hover_track == Some(track) || add_open {
-                    let plus_color = hover::icon_contrast_color(color);
-                    // 加号放在色带列底部（与主行 chevron 同位置 lh*0.62）。
-                    let badge_center_x = row_rect.min.x + 14.0 * 0.5;
-                    badge::badge_icon_menu(
-                        ui,
-                        egui::pos2(badge_center_x, row_rect.min.y + lh * 0.62),
-                        ICON_ADD.codepoint,
-                        ICON_ADD.font_family(),
-                        plus_color,
-                        track,
-                        |ui| menu::create_automation_menu(ui, track, tracks, &mut actions),
-                    );
+            if is_last_lane && hover_track == Some(track) {
+                let plus_color = hover::icon_contrast_color(color);
+                // 加号放在色带列底部（与主行 chevron 同位置 lh*0.62）。
+                let badge_center_x = row_rect.min.x + 14.0 * 0.5;
+                // 点击加号：直接打开「添加自动化」窗口（设备维度，不再弹菜单）。
+                if badge::badge_icon_button(
+                    ui,
+                    egui::pos2(badge_center_x, row_rect.min.y + lh * 0.62),
+                    ICON_ADD.codepoint,
+                    ICON_ADD.font_family(),
+                    plus_color,
+                    track,
+                ) {
+                    actions.push(TrackAction::OpenAutomationPicker { idx: track });
                 }
             }
             continue;
@@ -287,20 +284,19 @@ pub(crate) fn show(
             // 兄弟轨道联动：本轨任意行（主/自动化）被悬停时，图标一并显示。
             let family_hovered = hover_track == Some(idx);
             if !expanded && !has_any_lane {
-                // 无自动化未展开：色带同一图标位给无边框「+」，点弹创建自动化菜单；
-                // 与 chevron 一样仅悬浮显示；popup 打开期间持续渲染加号防漂移。
-                let add_open =
-                    egui::Popup::is_id_open(ui.ctx(), egui::Id::new(("arr_add_pop", idx)));
-                if family_hovered || add_open {
-                    badge::badge_icon_menu(
+                // 无自动化未展开：色带同一图标位给无边框「+」，点击直接打开
+                // 「添加自动化」窗口（设备维度）；仅悬浮显示。
+                if family_hovered
+                    && badge::badge_icon_button(
                         ui,
                         egui::pos2(badge_rect.center().x, badge_rect.min.y + lh * 0.62),
                         ICON_ADD.codepoint,
                         ICON_ADD.font_family(),
                         icon_color,
                         idx,
-                        |ui| menu::create_automation_menu(ui, idx, tracks, &mut actions),
-                    );
+                    )
+                {
+                    actions.push(TrackAction::OpenAutomationPicker { idx });
                 }
             } else {
                 let icon = if expanded {

@@ -334,7 +334,7 @@ impl App {
         self.show_filter_dialog(&ctx);
 
         // ── 插件参数自动化选择窗口 ──
-        self.show_plugin_param_picker(&ctx);
+        self.show_automation_picker(&ctx);
 
         // ── 属性浮动面板（音轨属性与侧栏互斥；工程设置仅浮窗）──
         self.show_float_panels(&ctx);
@@ -515,91 +515,126 @@ impl App {
         );
     }
 
-    /// 轨道右键「添加插件参数自动化…」：枚举该乐器通道的参数并打开选择窗口。
-    pub(in crate::app) fn open_plugin_param_picker(
-        &mut self,
-        ctx: &egui::Context,
-        track_idx: usize,
-    ) {
+    /// 「添加自动化」窗口：按该轨的乐器设备（XSynth / 插件）收集条目并打开。
+    ///
+    /// 自动化属于设备：XSynth 设备列内置参数（CC/PB/RPN + 自定义 CC）；
+    /// 插件设备列插件参数（数千个走窗口虚拟滚动）。
+    pub(in crate::app) fn open_automation_picker(&mut self, ctx: &egui::Context, track_idx: usize) {
+        use crate::dialogs::automation_picker::AutomationEntry;
         let Some(idx) = self.workspace.active_doc else {
             return;
         };
-        let (ich, channel_label, existing) = {
+        let device_instrument = {
+            let doc = &self.workspace.documents[idx];
+            crate::arrange::instrument_channel_of(&doc.data.model.tracks, track_idx)
+        };
+        let (channel_label, device_name, entries, show_custom_cc) = {
             let doc = &self.workspace.documents[idx];
             let Some(track) = doc.data.model.tracks.get(track_idx) else {
                 return;
             };
-            let Some(ich) =
-                crate::arrange::instrument_channel_of(&doc.data.model.tracks, track_idx)
-            else {
-                return;
-            };
-            let existing: std::collections::HashSet<u32> = track
+            let existing: Vec<yinhe_types::AutomationTarget> = track
                 .automation_lanes
                 .iter()
-                .filter_map(|l| match &l.target {
-                    yinhe_types::AutomationTarget::PluginParam {
-                        instrument_channel,
-                        param_id,
-                        ..
-                    } if *instrument_channel == ich => Some(*param_id),
-                    _ => None,
-                })
+                .map(|l| l.target.clone())
                 .collect();
-            (ich, crate::mix::instrument_label(ich), existing)
-        };
-        // 参数列表：实例可用才有内容（未加载时打开空列表，窗口提示）。
-        let (plugin_name, params) = match self
-            .instrument_racks
-            .get_mut(idx)
-            .and_then(|rack| rack.instance_mut(ich))
-        {
-            Some(instance) => {
-                let name = instance.name().to_string();
-                (name, instance.param_list())
+            match device_instrument {
+                Some(ich) => {
+                    // 插件设备：实例可用才有参数（未加载时空列表，窗口提示）。
+                    let (name, params) = match self
+                        .instrument_racks
+                        .get_mut(idx)
+                        .and_then(|rack| rack.instance_mut(ich))
+                    {
+                        Some(instance) => (instance.name().to_string(), instance.param_list()),
+                        None => (String::new(), Vec::new()),
+                    };
+                    let entries = params
+                        .into_iter()
+                        .map(|p| AutomationEntry {
+                            existing: existing.iter().any(|t| {
+                                matches!(
+                                    t,
+                                    yinhe_types::AutomationTarget::PluginParam {
+                                        instrument_channel,
+                                        param_id,
+                                        ..
+                                    } if *instrument_channel == ich && *param_id == p.id
+                                )
+                            }),
+                            label: if p.module.is_empty() {
+                                p.name.clone()
+                            } else {
+                                format!("{}/{}", p.module, p.name)
+                            },
+                            target: yinhe_types::AutomationTarget::PluginParam {
+                                instrument_channel: ich,
+                                param_id: p.id,
+                                name: p.name,
+                            },
+                        })
+                        .collect();
+                    (crate::mix::instrument_label(ich), name, entries, false)
+                }
+                None => {
+                    // XSynth 设备：内置参数（跳过 Tempo，那是工程级）。
+                    let entries = crate::piano_view::automation_panel::AUTOMATION_TARGETS
+                        .iter()
+                        .filter(|t| !matches!(t, yinhe_types::AutomationTarget::Tempo))
+                        .map(|t| AutomationEntry {
+                            target: t.clone(),
+                            label: crate::arrange::lane_label(t),
+                            existing: existing.contains(t),
+                        })
+                        .collect();
+                    (
+                        crate::mix::channel_label(track.global_channel()),
+                        "XSynth".to_string(),
+                        entries,
+                        true,
+                    )
+                }
             }
-            None => (String::new(), Vec::new()),
         };
-        self.plugin_param_picker
-            .open(track_idx, ich, channel_label, plugin_name, params, existing);
+        self.automation_picker.open(
+            track_idx,
+            channel_label,
+            device_name,
+            entries,
+            show_custom_cc,
+        );
         crate::chrome::dialog::raise_viewport(
             ctx,
-            egui::ViewportId::from_hash_of("plugin_param_picker"),
+            egui::ViewportId::from_hash_of("automation_picker"),
         );
     }
 
-    /// 插件参数选择窗口：每帧渲染；点参数创建/定位 AM lane。
-    fn show_plugin_param_picker(&mut self, ctx: &egui::Context) {
-        if !self.plugin_param_picker.open {
+    /// 「添加自动化」窗口：每帧渲染；点条目添加/移除 AM lane。
+    fn show_automation_picker(&mut self, ctx: &egui::Context) {
+        if !self.automation_picker.open {
             return;
         }
-        if self.plugin_param_picker.just_opened {
-            self.plugin_param_picker.just_opened = false;
+        if self.automation_picker.just_opened {
+            self.automation_picker.just_opened = false;
             crate::chrome::dialog::raise_viewport(
                 ctx,
-                egui::ViewportId::from_hash_of("plugin_param_picker"),
+                egui::ViewportId::from_hash_of("automation_picker"),
             );
         }
-        use crate::dialogs::plugin_param_picker::PluginParamPickerAction as A;
-        match crate::dialogs::plugin_param_picker::show_viewport(ctx, &mut self.plugin_param_picker)
-        {
+        use crate::dialogs::automation_picker::AutomationPickerAction as A;
+        match crate::dialogs::automation_picker::show_viewport(ctx, &mut self.automation_picker) {
             A::None => {}
-            A::Add {
+            A::Toggle {
                 track_idx,
-                param_id,
-                name,
+                target,
+                add,
             } => {
                 if let Some(idx) = self.workspace.active_doc {
-                    let _ = track_idx;
-                    self.toggle_plugin_param_lane(
-                        idx,
-                        self.plugin_param_picker.instrument_channel,
-                        param_id,
-                        &name,
-                    );
+                    let now = self.apply_automation_toggle(idx, track_idx, &target, add);
+                    self.automation_picker.set_existing(&target, now);
                 }
             }
-            A::Close => self.plugin_param_picker.open = false,
+            A::Close => self.automation_picker.open = false,
         }
     }
 
