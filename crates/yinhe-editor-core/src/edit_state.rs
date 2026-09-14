@@ -45,6 +45,8 @@ pub struct EditState {
         HashMap<(u16, yinhe_types::AutomationTarget), yinhe_types::AutomationPanelView>,
     pub arr_am_selected: HashSet<(u16, yinhe_types::AutomationTarget)>,
     pub arr_am_ms: HashMap<(u16, yinhe_types::AutomationTarget), yinhe_types::AmMsState>,
+    /// AR 已选中的音频片段 (轨道索引, 片段 id)。会话态，不落盘。
+    pub selected_audio_clips: HashSet<(u16, u32)>,
 }
 
 impl Default for EditState {
@@ -79,6 +81,7 @@ impl Default for EditState {
             arr_am_views: HashMap::new(),
             arr_am_selected: HashSet::new(),
             arr_am_ms: HashMap::new(),
+            selected_audio_clips: HashSet::new(),
         }
     }
 }

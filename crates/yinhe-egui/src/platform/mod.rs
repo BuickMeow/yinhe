@@ -11,6 +11,7 @@ mod stub;
 pub enum MenuAction {
     NewProject,
     Open,
+    ImportAudio,
     Save,
     SaveAs,
     CloseDocument,

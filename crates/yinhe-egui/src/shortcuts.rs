@@ -341,6 +341,7 @@ pub fn action_label_key(action_id: &str) -> &'static str {
     match action_id {
         sc::ACTION_NEW_PROJECT => "file.new_project",
         sc::ACTION_OPEN => "file.open",
+        sc::ACTION_IMPORT_AUDIO => "file.import_audio",
         sc::ACTION_SAVE => "file.save",
         sc::ACTION_SAVE_AS => "file.save_as",
         sc::ACTION_CLOSE_DOCUMENT => "file.close",

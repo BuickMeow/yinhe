@@ -110,6 +110,16 @@ impl AudioLibrary {
         arrived
     }
 
+    /// 已解码素材（UI 波形绘制用）。未解码完成返回 None。
+    pub fn get(&self, uuid: &str) -> Option<&Arc<DecodedAudio>> {
+        self.sources.get(uuid)
+    }
+
+    /// 素材是否仍在后台解码（UI 显示"解码中"占位）。
+    pub fn is_pending(&self, uuid: &str) -> bool {
+        self.pending.contains(uuid)
+    }
+
     /// 引擎（重）建后把所有已解码素材推给引擎。
     pub fn push_all_to_engine(&self, handle: &AudioHandle) {
         for (uuid, decoded) in &self.sources {

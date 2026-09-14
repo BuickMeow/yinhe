@@ -275,6 +275,15 @@ pub fn show(
         rect,
         content_changed,
     );
+    // 音频片段（波形/淡入淡出/素材名）画在 GPU 音符层之上、播放光标之下。
+    render::draw_audio_clips(
+        &painter,
+        rect,
+        view,
+        row_layout,
+        &data,
+        edit.selected_audio_clips,
+    );
     if let Some(ct) = *edit.cursor_tick {
         let lb_w = view.base.left_panel_width;
         let cx_local = view.tick_to_x(ct);

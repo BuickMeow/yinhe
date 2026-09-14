@@ -586,7 +586,7 @@ pub(crate) fn emit_automation_event(
 /// - 另一片段在本片段内部开始（`o.start > c.start`）→ 本片段从 `o.start` 淡出到自身终点。
 ///
 /// 同起点重叠不交叉（并排叠加）。结果不超过片段时长。
-pub(crate) fn effective_fades(clips: &[yinhe_core::AudioClip], index: usize) -> (f64, f64) {
+pub fn effective_fades(clips: &[yinhe_core::AudioClip], index: usize) -> (f64, f64) {
     let Some(c) = clips.get(index) else {
         return (0.0, 0.0);
     };

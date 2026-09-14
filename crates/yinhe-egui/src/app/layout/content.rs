@@ -92,6 +92,7 @@ impl App {
                 cfg,
                 &mut self.last_cursor_tick,
                 self.audio_state.handle.as_ref(),
+                &self.audio_library,
                 &mut request_pianoroll,
                 &mut self.track_selection_anchor,
                 &mut arr_drag_delta,

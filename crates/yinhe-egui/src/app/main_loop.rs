@@ -190,6 +190,7 @@ impl eframe::App for App {
             let file_action = match action {
                 MenuAction::NewProject => transport_bar::FileAction::NewProject,
                 MenuAction::Open => transport_bar::FileAction::Open,
+                MenuAction::ImportAudio => transport_bar::FileAction::ImportAudio,
                 MenuAction::Save => transport_bar::FileAction::Save,
                 MenuAction::SaveAs => transport_bar::FileAction::SaveAs,
                 MenuAction::CloseDocument => transport_bar::FileAction::CloseDocument,

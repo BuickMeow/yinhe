@@ -219,6 +219,87 @@ pub fn decode_audio(data: &[u8], target_sample_rate: u32) -> Result<DecodedAudio
     })
 }
 
+/// 音频文件基本信息（导入时探测，不解码 PCM）。
+pub struct AudioInfo {
+    /// 时长（秒）。
+    pub duration_seconds: f64,
+    /// 原始采样率（0 = 未知）。
+    pub sample_rate: u32,
+    /// 声道数。
+    pub channels: u16,
+}
+
+/// 探测音频文件信息（时长/采样率/声道数）。
+///
+/// 优先用 codec 声明的总帧数；没有时遍历 packet 头累加时间戳（不解码 payload）。
+/// 导入时同步调用（几十毫秒内），完整解码走后台线程。
+pub fn probe_audio_info(data: &[u8]) -> Result<AudioInfo, String> {
+    let hint = Hint::new();
+    let mss = MediaSourceStream::new(
+        Box::new(std::io::Cursor::new(data.to_vec())),
+        Default::default(),
+    );
+    let probed = symphonia::default::get_probe()
+        .format(
+            &hint,
+            mss,
+            &FormatOptions {
+                enable_gapless: true,
+                ..Default::default()
+            },
+            &MetadataOptions::default(),
+        )
+        .map_err(|e| format!("无法识别音频格式: {e}"))?;
+    let mut format = probed.format;
+    let track = format
+        .default_track()
+        .ok_or_else(|| "音频文件没有可用轨道".to_string())?;
+    let track_id = track.id;
+    let sample_rate = track.codec_params.sample_rate.unwrap_or(0);
+    let channels = track
+        .codec_params
+        .channels
+        .map(|c| c.count() as u16)
+        .unwrap_or(2);
+
+    let duration_seconds = match (track.codec_params.n_frames, sample_rate) {
+        (Some(n_frames), sr) if sr > 0 => n_frames as f64 / sr as f64,
+        _ => {
+            // 无总帧数：遍历 packet 头，取时间戳 + 时长的最大值。
+            let time_base = track.codec_params.time_base;
+            let mut max_end = 0.0f64;
+            loop {
+                let packet = match format.next_packet() {
+                    Ok(p) => p,
+                    Err(SymphoniaError::IoError(e))
+                        if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+                    {
+                        break;
+                    }
+                    Err(_) => break,
+                };
+                if packet.track_id() != track_id {
+                    continue;
+                }
+                if let Some(tb) = time_base {
+                    let t = tb.calc_time(packet.ts().saturating_add(packet.dur()));
+                    max_end = max_end.max(t.seconds as f64 + t.frac);
+                }
+            }
+            if sample_rate > 0 && max_end <= 0.0 {
+                return Err("音频文件没有可用的时长信息".to_string());
+            }
+            max_end
+        }
+    };
+
+    Ok(AudioInfo {
+        duration_seconds,
+        sample_rate,
+        channels,
+    })
+}
+
 /// 单声道分块重采样（rubato SincFixedIn）。
 ///
 /// 分块处理避免整段一次性缓冲（长音频内存翻数倍）；最后一块不足一个 chunk

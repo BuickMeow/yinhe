@@ -588,6 +588,7 @@ impl App {
             | transport_bar::FileAction::ExportAudio
             | transport_bar::FileAction::Settings
             | transport_bar::FileAction::ProjectSettings
+            | transport_bar::FileAction::ImportAudio
             | transport_bar::FileAction::Open => {
                 self.execute_file_action(action, ctx);
                 return;
@@ -659,6 +660,9 @@ impl App {
             transport_bar::FileAction::Open => {
                 self.file_loader
                     .pick_file(self.audio_settings.midi_import_encoding);
+            }
+            transport_bar::FileAction::ImportAudio => {
+                self.import_audio_dialog();
             }
             transport_bar::FileAction::Save => {
                 if let Some(idx) = self.workspace.active_doc {

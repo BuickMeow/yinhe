@@ -9,6 +9,7 @@ use crate::widgets::action_menu::PopupRow;
 pub enum FileAction {
     NewProject,
     Open,
+    ImportAudio,
     Save,
     SaveAs,
     CloseDocument,
@@ -20,9 +21,10 @@ pub enum FileAction {
 }
 
 impl FileAction {
-    pub const ALL: [FileAction; 10] = [
+    pub const ALL: [FileAction; 11] = [
         FileAction::NewProject,
         FileAction::Open,
+        FileAction::ImportAudio,
         FileAction::Save,
         FileAction::SaveAs,
         FileAction::CloseDocument,
@@ -37,14 +39,15 @@ impl FileAction {
         match self {
             FileAction::NewProject => 0,
             FileAction::Open => 1,
-            FileAction::Save => 2,
-            FileAction::SaveAs => 3,
-            FileAction::CloseDocument => 4,
-            FileAction::ExportAudio => 5,
-            FileAction::ExportMidi => 6,
-            FileAction::ProjectSettings => 7,
-            FileAction::Settings => 8,
-            FileAction::Exit => 9,
+            FileAction::ImportAudio => 2,
+            FileAction::Save => 3,
+            FileAction::SaveAs => 4,
+            FileAction::CloseDocument => 5,
+            FileAction::ExportAudio => 6,
+            FileAction::ExportMidi => 7,
+            FileAction::ProjectSettings => 8,
+            FileAction::Settings => 9,
+            FileAction::Exit => 10,
         }
     }
 
@@ -52,6 +55,7 @@ impl FileAction {
         match self {
             FileAction::NewProject => shortcuts::ACTION_NEW_PROJECT,
             FileAction::Open => shortcuts::ACTION_OPEN,
+            FileAction::ImportAudio => shortcuts::ACTION_IMPORT_AUDIO,
             FileAction::Save => shortcuts::ACTION_SAVE,
             FileAction::SaveAs => shortcuts::ACTION_SAVE_AS,
             FileAction::CloseDocument => shortcuts::ACTION_CLOSE_DOCUMENT,
@@ -67,6 +71,7 @@ impl FileAction {
         match self {
             FileAction::NewProject => ICON_NOTE_ADD,
             FileAction::Open => ICON_FOLDER_OPEN,
+            FileAction::ImportAudio => ICON_AUDIO_FILE,
             FileAction::Save => ICON_SAVE,
             FileAction::SaveAs => ICON_SAVE_ALT,
             FileAction::CloseDocument => ICON_CLOSE,
@@ -84,7 +89,7 @@ impl FileAction {
 
     fn is_enabled(self, has_active: bool, loading: bool) -> bool {
         match self {
-            FileAction::NewProject | FileAction::Open => !loading,
+            FileAction::NewProject | FileAction::Open | FileAction::ImportAudio => !loading,
             FileAction::Save
             | FileAction::SaveAs
             | FileAction::CloseDocument
@@ -382,7 +387,11 @@ pub struct TransportResponse {
 
 /// 文件/编辑分组常量
 pub const FILE_GROUPS: [&[FileAction]; 5] = [
-    &[FileAction::NewProject, FileAction::Open],
+    &[
+        FileAction::NewProject,
+        FileAction::Open,
+        FileAction::ImportAudio,
+    ],
     &[
         FileAction::Save,
         FileAction::SaveAs,

@@ -4,6 +4,7 @@ use rust_i18n::t;
 
 pub(crate) mod actions;
 pub(crate) mod audio;
+pub(crate) mod audio_import;
 pub(crate) mod audio_library;
 pub(crate) mod audio_state;
 pub(crate) mod automation_actions;

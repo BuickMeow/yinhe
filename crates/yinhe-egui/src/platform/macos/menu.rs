@@ -66,6 +66,7 @@ impl MenuActionFrom for crate::chrome::transport_bar::FileAction {
         match self {
             FileAction::NewProject => MenuAction::NewProject,
             FileAction::Open => MenuAction::Open,
+            FileAction::ImportAudio => MenuAction::ImportAudio,
             FileAction::Save => MenuAction::Save,
             FileAction::SaveAs => MenuAction::SaveAs,
             FileAction::CloseDocument => MenuAction::CloseDocument,

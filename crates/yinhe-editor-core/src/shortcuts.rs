@@ -26,6 +26,7 @@ pub struct KeyCombo {
 
 pub const ACTION_NEW_PROJECT: &str = "new_project";
 pub const ACTION_OPEN: &str = "open";
+pub const ACTION_IMPORT_AUDIO: &str = "import_audio";
 pub const ACTION_SAVE: &str = "save";
 pub const ACTION_SAVE_AS: &str = "save_as";
 pub const ACTION_CLOSE_DOCUMENT: &str = "close_document";
@@ -67,6 +68,7 @@ pub const ACTION_TOOL_ERASER: &str = "tool_eraser";
 pub const ALL_ACTION_IDS: &[&str] = &[
     ACTION_NEW_PROJECT,
     ACTION_OPEN,
+    ACTION_IMPORT_AUDIO,
     ACTION_SAVE,
     ACTION_SAVE_AS,
     ACTION_CLOSE_DOCUMENT,
@@ -153,6 +155,7 @@ fn default_combo(action_id: &str) -> Option<KeyCombo> {
     match action_id {
         ACTION_NEW_PROJECT => combo(true, false, false, "N"),
         ACTION_OPEN => combo(true, false, false, "O"),
+        ACTION_IMPORT_AUDIO => combo(true, true, false, "I"),
         ACTION_SAVE => combo(true, false, false, "S"),
         ACTION_SAVE_AS => combo(true, true, false, "S"),
         ACTION_CLOSE_DOCUMENT => combo(true, false, false, "W"),

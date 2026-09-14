@@ -21,7 +21,8 @@ pub mod spawn;
 #[cfg(feature = "gpu")]
 pub use yinhe_synth as synth;
 
-pub use audio_source::{DecodedAudio, WavePeaks, decode_audio};
+pub use audio_model::effective_fades;
+pub use audio_source::{AudioInfo, DecodedAudio, WavePeaks, decode_audio, probe_audio_info};
 pub use clap_insert::ClapInsert;
 pub use spawn::{
     AudioCommand, AudioHandle, CpalAudioHandle, InsertTarget, PreviewNoteParams,

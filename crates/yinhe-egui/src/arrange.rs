@@ -39,6 +39,12 @@ pub(crate) struct ArrangeData<'a> {
     /// Conductor 的 Tempo lane（Conductor 主行直显/直编）。
     pub tempo_lane: &'a yinhe_types::AutomationLane,
     pub conductor_track_idx: Option<u16>,
+    /// Tempo 映射（音频片段秒 ↔ tick 换算）。
+    pub tempo_map: &'a yinhe_core::TempoMap,
+    /// 音频素材库（波形峰值读取；未解码完成的片段显示占位）。
+    pub audio_library: &'a crate::app::audio_library::AudioLibrary,
+    /// 工程内嵌音频素材表（片段显示名查询）。
+    pub audio_sources: &'a [std::sync::Arc<yinhe_core::AudioSource>],
 }
 
 /// Arrange 交互产生的可变编辑状态（out-params 聚合）。
@@ -60,6 +66,8 @@ pub(crate) struct ArrangeEdit<'a> {
     pub am_edits: &'a mut Vec<yinhe_types::AutomationEdit>,
     /// AM 锚点右键打开信息面板用。
     pub right_tab: &'a mut Option<crate::right_panel::RightTab>,
+    /// 已选中的音频片段 (轨道索引, 片段 id)。AR 音频交互读写。
+    pub selected_audio_clips: &'a mut std::collections::HashSet<(u16, u32)>,
 }
 
 /// Arrange 视图/播放/渲染配置（layout.rs 每帧构造）。
@@ -96,6 +104,7 @@ pub fn show(
     mut cfg: ArrangeViewCfg<'_>,
     last_cursor_tick: &mut Option<f64>,
     audio: Option<&yinhe_audio::CpalAudioHandle>,
+    audio_library: &crate::app::audio_library::AudioLibrary,
     request_pianoroll: &mut bool,
     selection_anchor: &mut Option<u16>,
     arr_drag_delta: &mut Option<ArrDragDelta>,
@@ -490,6 +499,9 @@ pub fn show(
             tracks: &model.tracks,
             tempo_lane: &model.conductor.tempo,
             conductor_track_idx: doc.edit.conductor_track_idx,
+            tempo_map: &model.tempo_map,
+            audio_library,
+            audio_sources: &model.audio_sources,
         };
         let mut edit = ArrangeEdit {
             selected: &mut doc.edit.selected,
@@ -503,6 +515,7 @@ pub fn show(
             arr_am_views: &mut doc.edit.arr_am_views,
             am_edits: &mut am_edits,
             right_tab,
+            selected_audio_clips: &mut doc.edit.selected_audio_clips,
         };
         view_ui::show(
             ui,
