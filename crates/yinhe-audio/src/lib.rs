@@ -28,7 +28,7 @@ pub use audio_source::{
 };
 pub use clap_insert::ClapInsert;
 pub use spawn::{
-    AudioCommand, AudioHandle, CpalAudioHandle, InsertTarget, PreviewNoteParams,
-    channels_for_model, discover_sample_rates, list_input_devices, list_output_devices,
-    spawn_cpal_audio,
+    AudioCommand, AudioHandle, CpalAudioHandle, InsertTarget, InstrumentPreviewNote,
+    PreviewNoteParams, channels_for_model, discover_sample_rates, list_input_devices,
+    list_output_devices, spawn_cpal_audio,
 };

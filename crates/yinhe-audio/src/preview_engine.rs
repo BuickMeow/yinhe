@@ -261,6 +261,21 @@ impl PreviewEngine {
         self.pending.clear();
     }
 
+    /// 停止指定键的预览音（MIDI 直通单键 NoteOff：只停松开的键，和弦保持）。
+    /// 匹配所有通道的该键（多轨同键同时预览极罕见，忽略通道差异）。
+    pub(crate) fn stop_key(&mut self, key: u8) {
+        self.pending.retain(|p| p.key != key);
+        let mut i = 0;
+        while i < self.voices.len() {
+            if self.voices[i].key == key {
+                let v = self.voices.swap_remove(i);
+                self.note_off(v.channel, v.key);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
     /// 触发所有 trigger_at <= pos 的待触发音符（pending 按 trigger_at 降序，
     /// 末尾最早触发，pop 即 O(1)）。start_position 用精确触发帧，保证块内
     /// 中间帧触发的音符 gate 到期不错位。

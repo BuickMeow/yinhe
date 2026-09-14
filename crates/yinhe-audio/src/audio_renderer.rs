@@ -403,6 +403,10 @@ impl AudioRenderer {
                         AudioCommand::PreviewStop => {
                             self.preview_engine.stop_all();
                         }
+                        // MIDI 直通单键停止：只停松开的键（和弦保持）。
+                        AudioCommand::PreviewStopKey { key } => {
+                            self.preview_engine.stop_key(key);
+                        }
                         AudioCommand::SyncBusConfig { buses, sends } => {
                             self.engine
                                 .handle_command(AudioCommand::SyncBusConfig { buses, sends });
@@ -825,20 +829,23 @@ impl AudioRenderer {
         // 预览组非空或有余音时强制渲染：未播放时也要输出。
         // 预览引擎是独立合成器（不依赖模型），所以预览时不需要 initialized。
         let previewing = self.preview_engine.previewing();
-        if !self.engine.playing() && !previewing {
+        // 乐器插件空闲渲染：存在已安装乐器时停止状态也持续 process
+        //（GUI 键盘、插件预览、插件尾音 —— 成熟 DAW 语义：乐器始终在跑）。
+        let idle_instruments = !self.engine.playing() && self.engine.has_instruments();
+        if !self.engine.playing() && !previewing && !idle_instruments {
             // 暂停时把待发的插件参数送达（否则调参数要等播放才生效）。
             // 不依赖 initialized：空工程挂乐器插件也要能立即调参数。
             self.engine.flush_pending_plugin_params();
             return false;
         }
-        if !self.state.initialized.load(Ordering::Acquire) && !previewing {
+        if !self.state.initialized.load(Ordering::Acquire) && !previewing && !idle_instruments {
             return false;
         }
 
-        // 预览时用更小的 ring 目标（512 帧 ≈ 10ms）：预览是交互操作，
-        // 音符 NoteOn 后要等 ring 里已有音频播完才出声，目标 4096 帧会带来
-        // 约 85ms 延迟，快速拖动时每个音都滞后、听感响应很慢。
-        let target_samples = if previewing {
+        // 预览/空闲乐器监听用更小的 ring 目标（512 帧 ≈ 10ms）：都是交互操作，
+        // NoteOn 后要等 ring 里已有音频播完才出声，目标 4096 帧会带来约 85ms
+        // 延迟，快速拖动/弹键盘时每个音都滞后、听感响应很慢。
+        let target_samples = if previewing || idle_instruments {
             self.preview_target_frames * STEREO_CHANNELS
         } else {
             TARGET_BUFFER_FRAMES * STEREO_CHANNELS
@@ -854,6 +861,9 @@ impl AudioRenderer {
 
         if self.engine.playing() {
             self.engine.render(&mut self.scratch);
+        } else if idle_instruments {
+            // 未播放但有乐器：只驱动乐器插件与混音输出（不推进走带）。
+            self.engine.render_idle(&mut self.scratch);
         } else {
             // 未播放：主引擎不渲染，输出静音，预览音单独叠加。
             self.scratch.fill(0.0);

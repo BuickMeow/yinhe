@@ -598,6 +598,9 @@ impl App {
         let doc = &self.workspace.documents[idx];
         let model = &doc.data.model;
         let mut notes: Vec<yinhe_audio::PreviewNoteParams> = Vec::new();
+        // 乐器轨且有可用插件实例 → 插件预览（音色与播放一致）；否则 xsynth 预览。
+        let mut plugin_notes: Vec<(u16, Vec<yinhe_audio::InstrumentPreviewNote>)> = Vec::new();
+        let rack = self.instrument_racks.get(idx);
         let mut stop = false;
         for req in reqs {
             match req {
@@ -605,17 +608,34 @@ impl App {
                     let Some(track) = model.tracks.get(p.track as usize) else {
                         continue;
                     };
-                    let channel = track.global_channel();
                     let velocity = p
                         .velocity
                         .unwrap_or_else(|| doc.edit.default_velocity(p.track));
-                    notes.push(yinhe_audio::PreviewNoteParams {
-                        channel,
-                        key: p.key,
-                        velocity,
-                        target_tick: p.target_tick,
-                        duration_ticks: p.duration_ticks,
-                    });
+                    let plugin_channel = (track.kind == yinhe_core::TrackKind::Instrument)
+                        .then_some(track.instrument_channel)
+                        .flatten()
+                        .filter(|&ich| rack.is_some_and(|r| r.has_instance(ich)));
+                    if let Some(ich) = plugin_channel {
+                        let note = yinhe_audio::InstrumentPreviewNote {
+                            midi_channel: track.channel,
+                            key: p.key,
+                            velocity,
+                            target_tick: p.target_tick,
+                            duration_ticks: p.duration_ticks,
+                        };
+                        match plugin_notes.iter_mut().find(|(c, _)| *c == ich) {
+                            Some((_, list)) => list.push(note),
+                            None => plugin_notes.push((ich, vec![note])),
+                        }
+                    } else {
+                        notes.push(yinhe_audio::PreviewNoteParams {
+                            channel: track.global_channel(),
+                            key: p.key,
+                            velocity,
+                            target_tick: p.target_tick,
+                            duration_ticks: p.duration_ticks,
+                        });
+                    }
                 }
                 crate::piano_view::PreviewReq::Stop => stop = true,
             }
@@ -625,12 +645,64 @@ impl App {
             // Stop 走快速路径标志（渲染忙时命令通道满会丢命令，标志保证松手即停）。
             audio.handle.request_preview_stop();
             audio.handle.send(yinhe_audio::AudioCommand::PreviewStop);
-        } else if !notes.is_empty() {
-            // 新预览组：清除待消费的 Stop 请求，避免被渲染器当作"松手后的堆积旧组"跳过。
-            audio.handle.clear_preview_stop();
             audio
                 .handle
-                .send(yinhe_audio::AudioCommand::PreviewNotes { notes });
+                .send(yinhe_audio::AudioCommand::PreviewInstrumentStop {
+                    channel: None,
+                    key: None,
+                });
+        } else if !notes.is_empty() || !plugin_notes.is_empty() {
+            // 新预览组：清除待消费的 Stop 请求，避免被渲染器当作"松手后的堆积旧组"跳过。
+            audio.handle.clear_preview_stop();
+            if !notes.is_empty() {
+                audio
+                    .handle
+                    .send(yinhe_audio::AudioCommand::PreviewNotes { notes });
+            }
+            for (channel, notes) in plugin_notes {
+                audio
+                    .handle
+                    .send(yinhe_audio::AudioCommand::PreviewInstrumentNotes { channel, notes });
+            }
+        }
+    }
+
+    /// MIDI 直通单键 NoteOff：只停该键的预览音（xsynth + 乐器插件通道），和弦保持。
+    pub(crate) fn stop_preview_key(&self, key: u8) {
+        let (Some(idx), Some(audio)) =
+            (self.workspace.active_doc, self.audio_state.handle.as_ref())
+        else {
+            return;
+        };
+        audio
+            .handle
+            .send(yinhe_audio::AudioCommand::PreviewStopKey { key });
+        let doc = &self.workspace.documents[idx];
+        let Some(track) = doc
+            .data
+            .model
+            .tracks
+            .get(self.current_write_track() as usize)
+        else {
+            return;
+        };
+        if track.kind != yinhe_core::TrackKind::Instrument {
+            return;
+        }
+        let Some(ich) = track.instrument_channel else {
+            return;
+        };
+        if self
+            .instrument_racks
+            .get(idx)
+            .is_some_and(|r| r.has_instance(ich))
+        {
+            audio
+                .handle
+                .send(yinhe_audio::AudioCommand::PreviewInstrumentStop {
+                    channel: Some(ich),
+                    key: Some(key),
+                });
         }
     }
 

@@ -139,7 +139,7 @@ impl App {
         }
 
         let mut previews: Vec<PreviewReq> = Vec::new();
-        let mut any_note_off = false;
+        let mut released: Vec<u8> = Vec::new();
         for msg in &raw {
             let Some(ev) = yinhe_midi_io::parse_event(msg) else {
                 continue;
@@ -171,25 +171,16 @@ impl App {
                         self.handle_recording_note_off(key);
                     }
                     if self.midi_thru_keys.remove(&key).is_some() {
-                        any_note_off = true;
+                        released.push(key);
                     }
                 }
                 _ => {}
             }
         }
 
-        if any_note_off {
-            // PreviewStop 是全局停：先停全部，再重发仍按住的键（和弦保持连续）。
-            previews.push(PreviewReq::Stop);
-            for (&key, &velocity) in &self.midi_thru_keys {
-                previews.push(PreviewReq::Note(NotePreview {
-                    track: self.current_write_track(),
-                    key,
-                    velocity: Some(velocity),
-                    target_tick: self.current_preview_tick(),
-                    duration_ticks: 0,
-                }));
-            }
+        // 单键停止（只停松开的键；按住的键不受影响，和弦保持连续）。
+        for key in released {
+            self.stop_preview_key(key);
         }
         self.send_note_previews(&previews);
     }
@@ -313,7 +304,7 @@ impl App {
     }
 
     /// 当前写入目标轨（主音轨；无选中时回退第一个非 Conductor 轨；无文档时回退 0）。
-    fn current_write_track(&self) -> u16 {
+    pub(crate) fn current_write_track(&self) -> u16 {
         self.workspace
             .active_doc
             .and_then(|i| self.workspace.documents.get(i))

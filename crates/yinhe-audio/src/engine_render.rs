@@ -89,6 +89,7 @@ impl AudioEngine {
         }
 
         // 乐器插件：把每块累积的事件喂给各自实例，输出写进对应乐器 dense 通道。
+        self.dispatch_plugin_previews(block_start_sample, frames);
         self.render_instruments(block_start_sample, frames);
 
         // 音频片段回放：按绝对时间直接混进对应音频 dense 通道（无状态）。
@@ -295,6 +296,187 @@ impl AudioEngine {
     pub(crate) fn instrument_dense(&self, inst_ch: u16) -> Option<usize> {
         let dense = self.channel_layout.instrument_dense_for(inst_ch);
         (dense != u32::MAX).then_some(dense as usize)
+    }
+
+    /// 是否存在已安装的乐器处理器（渲染器判据：停止状态也需要空闲渲染）。
+    pub(crate) fn has_instruments(&self) -> bool {
+        self.instruments.iter().any(|s| s.is_some())
+    }
+
+    /// 插件预览：登记音符，NoteOn/NoteOff 由 `dispatch_plugin_previews` 按块调度。
+    /// 组替换语义与 xsynth 预览一致：清掉该通道旧的**待触发**音符；
+    /// 已触发的保留（快速拖动时每个音都能听到）。组内按 target_tick 错开触发。
+    pub(crate) fn preview_instrument_notes(
+        &mut self,
+        instrument_channel: u16,
+        notes: Vec<crate::spawn::InstrumentPreviewNote>,
+    ) {
+        let Some(dense) = self.instrument_dense(instrument_channel) else {
+            return;
+        };
+        self.plugin_previews
+            .retain(|p| !(p.dense == dense && !p.triggered));
+        if notes.is_empty() {
+            return;
+        }
+        // 位置换算：模型未加载（无 tempo map）时全部立即触发。
+        let has_tempo = self.yin_model.is_some();
+        let min_tick = notes.iter().map(|n| n.target_tick).min().unwrap_or(0);
+        let base_sample = self.tick_to_sample(min_tick);
+        let base_on = self.sample_position;
+        for n in notes {
+            let on_sample = if has_tempo {
+                base_on
+                    + self
+                        .tick_to_sample(n.target_tick)
+                        .saturating_sub(base_sample)
+            } else {
+                base_on
+            };
+            let off_sample = if n.duration_ticks > 0 && has_tempo {
+                let start = self.tick_to_sample(n.target_tick);
+                let end = self.tick_to_sample(n.target_tick.saturating_add(n.duration_ticks));
+                Some(on_sample + end.saturating_sub(start))
+            } else {
+                None
+            };
+            self.plugin_previews.push(crate::engine::PluginPreviewNote {
+                dense,
+                midi_channel: n.midi_channel,
+                key: n.key,
+                velocity: n.velocity,
+                on_sample,
+                off_sample,
+                triggered: false,
+            });
+        }
+    }
+
+    /// 停止插件预览：清除匹配的待触发音符 + 对已触发音符发 NoteOff。
+    /// `channel` 限定乐器通道（None = 全部），`key` 限定单个键（None = 全部）。
+    pub(crate) fn preview_instrument_stop(
+        &mut self,
+        instrument_channel: Option<u16>,
+        key: Option<u8>,
+    ) {
+        if self.plugin_previews.is_empty() {
+            return;
+        }
+        let target_dense = instrument_channel.and_then(|ch| self.instrument_dense(ch));
+        let mut i = 0;
+        while i < self.plugin_previews.len() {
+            let p = &self.plugin_previews[i];
+            let matches = target_dense.map(|d| d == p.dense).unwrap_or(true)
+                && key.map(|k| k == p.key).unwrap_or(true);
+            if !matches {
+                i += 1;
+                continue;
+            }
+            let p = self.plugin_previews.swap_remove(i);
+            if p.triggered
+                && let Some(slot) = self.instruments.get_mut(p.dense).and_then(|s| s.as_mut())
+            {
+                slot.events.push(PluginEvent::NoteOff {
+                    time: 0,
+                    channel: p.midi_channel,
+                    key: p.key,
+                    velocity: 0.0,
+                });
+            }
+        }
+    }
+
+    /// 每块调度插件预览的 NoteOn/NoteOff（在 `render_instruments` 之前调用）。
+    fn dispatch_plugin_previews(&mut self, block_start: u64, frames: usize) {
+        if self.plugin_previews.is_empty() {
+            return;
+        }
+        let block_end = block_start + frames as u64;
+        let mut i = 0;
+        while i < self.plugin_previews.len() {
+            let (dense, midi_channel, key, velocity, on_sample, off_sample, triggered) = {
+                let p = &self.plugin_previews[i];
+                (
+                    p.dense,
+                    p.midi_channel,
+                    p.key,
+                    p.velocity,
+                    p.on_sample,
+                    p.off_sample,
+                    p.triggered,
+                )
+            };
+            if !triggered {
+                if on_sample > block_end {
+                    i += 1;
+                    continue;
+                }
+                let time = on_sample.saturating_sub(block_start).min(frames as u64) as u32;
+                if let Some(slot) = self.instruments.get_mut(dense).and_then(|s| s.as_mut()) {
+                    slot.events.push(PluginEvent::NoteOn {
+                        time,
+                        channel: midi_channel,
+                        key,
+                        velocity: f64::from(velocity.min(127)) / 127.0,
+                    });
+                }
+                self.plugin_previews[i].triggered = true;
+                i += 1;
+                continue;
+            }
+            let Some(off) = off_sample else {
+                i += 1;
+                continue;
+            };
+            if off > block_end {
+                i += 1;
+                continue;
+            }
+            let time = off.saturating_sub(block_start).min(frames as u64) as u32;
+            if let Some(slot) = self.instruments.get_mut(dense).and_then(|s| s.as_mut()) {
+                slot.events.push(PluginEvent::NoteOff {
+                    time,
+                    channel: midi_channel,
+                    key,
+                    velocity: 0.0,
+                });
+            }
+            self.plugin_previews.swap_remove(i);
+        }
+    }
+
+    /// 空闲渲染（停止/暂停）：不推进走带、不派发音符，只驱动乐器插件
+    ///（GUI 键盘、插件预览、插件尾音）与混音输出。
+    /// 存在已安装乐器时由渲染器持续调用（成熟 DAW 语义：乐器插件始终在跑）。
+    pub(crate) fn render_idle(&mut self, output: &mut [f32]) {
+        let frames = output.len() / STEREO_CHANNELS;
+        if frames == 0 {
+            output.fill(0.0);
+            return;
+        }
+        // GPU 路径不经过混音台/插件（既有局限）：空闲无内容可渲染。
+        #[cfg(feature = "gpu")]
+        if self.gpu_synth.is_some() {
+            output.fill(0.0);
+            return;
+        }
+        // 块长变化（导出用 1024、实时 512）：与 render 同一逻辑。
+        if self.mixer.frames() != frames {
+            let strips = self.dense_strip_params();
+            let count = self.mixer.channel_count();
+            self.mixer.resize(count, frames, &strips);
+            self.channel_set.resize_scratches(frames);
+        }
+        let block_start = self.sample_position;
+        self.block_start_sample = block_start;
+        self.mixer.clear_channel_buffers();
+        self.dispatch_plugin_previews(block_start, frames);
+        self.render_instruments(block_start, frames);
+        let (master_l, master_r) = self.mixer.process();
+        for (i, chunk) in output.chunks_exact_mut(STEREO_CHANNELS).enumerate() {
+            chunk[0] = master_l[i];
+            chunk[1] = master_r[i];
+        }
     }
 
     /// 暂停/停止时把待发插件参数送达（静音块）。renderer 每轮轮询调用；

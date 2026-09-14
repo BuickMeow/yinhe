@@ -99,9 +99,30 @@ pub(crate) struct AudioEngine {
     ///（cc_events 已被新 PrepareModel 替换的旧结果）。
     pub(crate) chase_generation: u64,
 
+    /// 插件预览的活动音符：到期/停止时向对应乐器通道发 NoteOff。
+    /// 与 xsynth 预览（PreviewEngine）并列；`off_sample = None` 表示持续音。
+    pub(crate) plugin_previews: Vec<PluginPreviewNote>,
+
     /// GPU 合成器 — 启用后渲染走 GpuSynth 而非 xsynth
     #[cfg(feature = "gpu")]
     pub(crate) gpu_synth: Option<yinhe_synth::GpuSynth>,
+}
+
+/// 插件预览的一条活动音符（引擎侧调度 NoteOn/NoteOff）。
+pub(crate) struct PluginPreviewNote {
+    /// 乐器 dense 通道索引。
+    pub dense: usize,
+    /// 通道内 MIDI 通道（低 4 位）。
+    pub midi_channel: u8,
+    pub key: u8,
+    /// 1 ~ 127（发送时转 0..1）。
+    pub velocity: u8,
+    /// 触发位置（采样；组内按 target_tick 差错开）。
+    pub on_sample: u64,
+    /// None = 持续音（等 `PreviewInstrumentStop`）。
+    pub off_sample: Option<u64>,
+    /// 是否已发 NoteOn（未触发的音符在新组到来时被替换）。
+    pub triggered: bool,
 }
 
 impl AudioEngine {
@@ -165,6 +186,7 @@ impl AudioEngine {
                 pending_play_from_sample: None,
                 automation_density: 1,
                 chase_generation: 0,
+                plugin_previews: Vec::new(),
                 #[cfg(feature = "gpu")]
                 gpu_synth: None,
             }
@@ -323,7 +345,16 @@ impl AudioEngine {
             }
             AudioCommand::RefreshLatency => self.refresh_latency(),
             // 预览命令由渲染器处理（独立预览合成器 + 渲染时钟），引擎层忽略。
-            AudioCommand::PreviewNotes { .. } | AudioCommand::PreviewStop => {}
+            AudioCommand::PreviewNotes { .. }
+            | AudioCommand::PreviewStop
+            | AudioCommand::PreviewStopKey { .. } => {}
+            // 插件预览：引擎直接调度（乐器通道 NoteOn/NoteOff，停止状态空闲渲染出声）。
+            AudioCommand::PreviewInstrumentNotes { channel, notes } => {
+                self.preview_instrument_notes(channel, notes);
+            }
+            AudioCommand::PreviewInstrumentStop { channel, key } => {
+                self.preview_instrument_stop(channel, key);
+            }
             // 导出由渲染器执行（导出模式状态机 + WAV 写盘），引擎层忽略。
             AudioCommand::ExportStart { .. } => {}
         }

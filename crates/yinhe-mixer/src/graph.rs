@@ -230,6 +230,15 @@ impl MixerGraph {
         self.buffers.get_mut(channel)
     }
 
+    /// 清空全部通道缓冲。空闲渲染（停止状态驱动乐器插件）用：
+    /// 该路径没有 xsynth/音频轨覆盖写，只有插件写自己的通道缓冲。
+    pub fn clear_channel_buffers(&mut self) {
+        for cb in &mut self.buffers {
+            cb.left.fill(0.0);
+            cb.right.fill(0.0);
+        }
+    }
+
     /// 更新某通道的 strip 目标参数（推子拖动等高频操作直接调这个，幂等）。
     pub fn set_strip(&mut self, channel: usize, params: StripParams) {
         if let Some(s) = self.strips.get_mut(channel) {

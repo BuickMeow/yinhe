@@ -63,6 +63,14 @@ impl InstrumentRack {
         self.slot_mut(channel)?.instance.as_mut()
     }
 
+    /// 该乐器通道是否持有可用插件实例（音符预览路由用：有实例走插件试听）。
+    pub(crate) fn has_instance(&self, channel: u16) -> bool {
+        self.slots
+            .iter()
+            .find(|s| s.channel == channel)
+            .is_some_and(|s| s.instance.is_some())
+    }
+
     /// 打开/关闭乐器插件原生界面（host 自建窗口 + 插件 view 嵌入）。
     /// CLAP / VST3 共用宿主 NSWindow（与效果器机架同一实现）。
     #[cfg(target_os = "macos")]

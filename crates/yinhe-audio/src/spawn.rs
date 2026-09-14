@@ -130,6 +130,24 @@ pub enum AudioCommand {
     },
     /// 停止全部预览音（余音自然衰减完才停）。
     PreviewStop,
+    /// 停止单个键的预览音（MIDI 直通单键 NoteOff：只停松开的键，和弦保持）。
+    PreviewStopKey {
+        key: u8,
+    },
+    /// 乐器插件预览：把音符直接送进乐器通道的插件实例（停止状态下空闲渲染出声）。
+    /// 与 `PreviewNotes`（xsynth 预览）并列：乐器轨预览走这条，音色与播放一致。
+    /// 组替换语义与 `PreviewNotes` 一致（替换旧组待触发音符；已响的保留）。
+    PreviewInstrumentNotes {
+        /// 乐器通道（0 起，与 `TrackData::instrument_channel` 对齐）。
+        channel: u16,
+        notes: Vec<InstrumentPreviewNote>,
+    },
+    /// 停止乐器插件预览。`channel` 限定乐器通道（None = 全部）；
+    /// `key` 限定单个键（None = 全部，MIDI 直通单键停止用）。
+    PreviewInstrumentStop {
+        channel: Option<u16>,
+        key: Option<u8>,
+    },
     /// 全量同步混音台参数（引擎 spawn / 工程加载后由 UI 推一次；Box 避免命令枚举过大）。
     SetMixerParams {
         params: Box<MixerParams>,
@@ -223,6 +241,19 @@ pub struct PreviewNoteParams {
     /// 目标位置 tick：该处的自动化状态（volume/pan/PBS/Program 等）用于预览。
     pub target_tick: u32,
     /// 预览时长（tick）；0 = 持续音（等 `PreviewStop`）。
+    pub duration_ticks: u32,
+}
+
+/// 单个插件预览音符（tick 域；引擎侧换算采样位置并调度 NoteOn/NoteOff）。
+pub struct InstrumentPreviewNote {
+    /// 通道内 MIDI 通道（低 4 位，与播放路径一致）。
+    pub midi_channel: u8,
+    pub key: u8,
+    /// 1 ~ 127（与编辑层一致）。
+    pub velocity: u8,
+    /// 目标位置 tick：组内音符按此差错开触发（与 xsynth 预览一致）。
+    pub target_tick: u32,
+    /// 预览时长（tick）；0 = 持续音（等 `PreviewInstrumentStop`）。
     pub duration_ticks: u32,
 }
 

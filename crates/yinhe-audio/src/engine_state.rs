@@ -352,6 +352,8 @@ impl AudioEngine {
             inst.processor.reset();
             inst.events.clear();
         }
+        // 插件预览的 NoteOff 调度随 seek 作废（reset 已清插件挂音）。
+        self.plugin_previews.clear();
 
         self.sample_position = sample;
         self.current_tick = self.sample_to_tick(sample);
