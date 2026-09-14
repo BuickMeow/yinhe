@@ -215,6 +215,8 @@ pub struct App {
 
     // ── 新建音轨对话框状态（AR「+」按钮触发）──
     pub(crate) new_track_dialog: crate::dialogs::new_track::NewTrackDialogState,
+    /// 插件参数自动化选择窗口（轨道右键「添加插件参数自动化…」）。
+    pub(crate) plugin_param_picker: crate::dialogs::plugin_param_picker::PluginParamPickerState,
 
     // ── 敲击测速对话框状态（播放菜单触发）──
     pub(crate) tap_tempo_dialog: crate::dialogs::tap_tempo::TapTempoDialogState,
@@ -380,6 +382,8 @@ impl App {
             export: export_state::ExportState::new(),
             rescale: rescale_state::RescaleState::new(),
             new_track_dialog: crate::dialogs::new_track::NewTrackDialogState::default(),
+            plugin_param_picker:
+                crate::dialogs::plugin_param_picker::PluginParamPickerState::default(),
             tap_tempo_dialog: crate::dialogs::tap_tempo::TapTempoDialogState::default(),
             filter_dialog: crate::dialogs::filter::FilterDialogState::default(),
 

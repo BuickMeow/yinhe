@@ -127,6 +127,9 @@ pub enum AudioCommand {
     /// 预览走独立合成器（PreviewEngine）：不占主引擎 voice、不改播放状态。
     PreviewNotes {
         notes: Vec<PreviewNoteParams>,
+        /// 替换模式（PR 拖动/铅笔）：先停掉旧组全部预览音再触发新组，
+        /// 避免拖动时多个音叠加；false（MIDI 直通）= 叠加式，和弦保持。
+        exclusive: bool,
     },
     /// 停止全部预览音（余音自然衰减完才停）。
     PreviewStop,
@@ -141,6 +144,8 @@ pub enum AudioCommand {
         /// 乐器通道（0 起，与 `TrackData::instrument_channel` 对齐）。
         channel: u16,
         notes: Vec<InstrumentPreviewNote>,
+        /// 替换模式：先停掉该通道旧组全部预览音再触发新组（PR 拖动不叠加）。
+        exclusive: bool,
     },
     /// 停止乐器插件预览。`channel` 限定乐器通道（None = 全部）；
     /// `key` 限定单个键（None = 全部，MIDI 直通单键停止用）。
@@ -541,8 +546,10 @@ pub(crate) enum WorkerResult {
     },
     /// Result of `PrepareChase` — 256-channel state snapshot.
     /// `Some(state)` = 该通道在目标位置有生效事件（无事件通道不触碰）。
+    /// `plugin_params`：插件参数 chase 值（乐器通道, param_id, 归一化值）。
     ChaseResult {
         states: Box<[Option<ChannelState>; 256]>,
+        plugin_params: Vec<(u16, u32, f32)>,
         generation: u64,
     },
     LoadedSoundFont {
@@ -676,7 +683,7 @@ pub(crate) fn spawn_worker(
                                 }
                             }
                         }
-                        let states = compute_chase_states(
+                        let (states, plugin_params) = compute_chase_states(
                             &latest_model,
                             latest_target,
                             &latest_mask,
@@ -684,6 +691,7 @@ pub(crate) fn spawn_worker(
                         );
                         let _ = result_tx.send(WorkerResult::ChaseResult {
                             states,
+                            plugin_params,
                             generation: latest_gen,
                         });
                     }
@@ -713,6 +721,9 @@ pub(crate) fn spawn_worker(
     Ok((cmd_tx, result_rx))
 }
 
+/// `compute_chase_states` 的结果：(256 通道状态, 插件参数 chase 值列表)。
+type ChaseOutcome = (Box<[Option<ChannelState>; 256]>, Vec<(u16, u32, f32)>);
+
 /// 在 worker 线程上**查询式**构建 256 通道状态快照：不再从曲首逐条累计
 /// cc_events，而是直接查询模型自动化 lane——每个 lane 二分定位目标位置的
 /// 生效值（Linear/Curve 段实时插值，与 density 无关的真实值），PC 取最后一条。
@@ -721,17 +732,22 @@ pub(crate) fn spawn_worker(
 /// `skip_mask`：mute 的音轨的 lane/PC 不参与 chase，不影响同 channel 其他轨道。
 /// `am_ms`：AR 自动化 lane 的 M/S 试听旁通（与播放事件流同规则过滤）。
 ///
+/// 插件参数 chase 一并在此计算（全局 chase）：返回
+/// `(通道状态, 插件参数值列表)`；后者由引擎写入对应乐器实例。
+///
 /// 复杂度：O(所有未 mute 音轨的 lane 数 × log(lane 事件数))，与曲长无关。
 fn compute_chase_states(
     model: &YinModel,
     target_tick: u32,
     skip_mask: &[bool],
     am_ms: &crate::spawn::AmMsMap,
-) -> Box<[Option<ChannelState>; 256]> {
+) -> ChaseOutcome {
     use crate::audio_model::{emit_automation_event, push_program_change};
 
     // 每通道收集目标位置生效事件（tick 排序后顺序 apply，多 track 同 channel 自动合并）。
     let mut events: [Vec<SortedCC>; 256] = std::array::from_fn(|_| Vec::new());
+    // 插件参数 chase：目标位置生效的 (乐器通道, param_id, 归一化值)。
+    let mut plugin_params: Vec<(u16, u32, f32)> = Vec::new();
 
     for (track_idx, track) in model.tracks.iter().enumerate() {
         if skip_mask.get(track_idx).copied().unwrap_or(false) {
@@ -757,12 +773,16 @@ fn compute_chase_states(
             ) {
                 continue;
             }
-            // 插件参数 chase 第一版不做（由插件实例自己维持当前值）；
-            // 跳过避免占位事件污染 MIDI 通道的 chase 状态。
-            if matches!(
-                lane.target,
-                yinhe_types::AutomationTarget::PluginParam { .. }
-            ) {
+            // 插件参数：不进 MIDI 通道状态（占位事件会污染 CC0），单独收集。
+            if let yinhe_types::AutomationTarget::PluginParam {
+                instrument_channel,
+                param_id,
+                ..
+            } = &lane.target
+            {
+                if let Some((value, _)) = lane.value_at(target_tick) {
+                    plugin_params.push((*instrument_channel, *param_id, value));
+                }
                 continue;
             }
             if let Some((value, tick)) = lane.value_at(target_tick) {
@@ -799,7 +819,7 @@ fn compute_chase_states(
         }
         states[ch] = Some(state);
     }
-    states
+    (states, plugin_params)
 }
 
 /// 查询 lane 在 `target` 位置的生效值（模型 lane 声明为按 tick 排序）。
@@ -811,7 +831,7 @@ pub(crate) fn compute_chase_states_for_test(
     target_tick: u32,
     skip_mask: &[bool],
 ) -> Box<[Option<ChannelState>; 256]> {
-    compute_chase_states(model, target_tick, skip_mask, &crate::spawn::AmMsMap::new())
+    compute_chase_states(model, target_tick, skip_mask, &crate::spawn::AmMsMap::new()).0
 }
 
 /// 列出系统所有可用输出设备的描述名（cpal `Device::description()`）。

@@ -333,6 +333,9 @@ impl App {
         // ── 选择筛选对话框 ──
         self.show_filter_dialog(&ctx);
 
+        // ── 插件参数自动化选择窗口 ──
+        self.show_plugin_param_picker(&ctx);
+
         // ── 属性浮动面板（音轨属性与侧栏互斥；工程设置仅浮窗）──
         self.show_float_panels(&ctx);
 
@@ -510,6 +513,104 @@ impl App {
             ctx,
             egui::ViewportId::from_hash_of("tap_tempo_dialog"),
         );
+    }
+
+    /// 轨道右键「添加插件参数自动化…」：枚举该乐器通道的参数并打开选择窗口。
+    pub(in crate::app) fn open_plugin_param_picker(
+        &mut self,
+        ctx: &egui::Context,
+        track_idx: usize,
+    ) {
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let (ich, channel_label, existing) = {
+            let doc = &self.workspace.documents[idx];
+            let Some(track) = doc.data.model.tracks.get(track_idx) else {
+                return;
+            };
+            // 乐器轨用自身通道；MIDI 轨用同 MIDI 通道上的乐器轨。
+            let ich = track.instrument_channel.or_else(|| {
+                doc.data
+                    .model
+                    .tracks
+                    .iter()
+                    .find(|o| {
+                        o.kind == yinhe_core::TrackKind::Instrument
+                            && o.global_channel() == track.global_channel()
+                    })
+                    .and_then(|o| o.instrument_channel)
+            });
+            let Some(ich) = ich else {
+                return;
+            };
+            let existing: std::collections::HashSet<u32> = track
+                .automation_lanes
+                .iter()
+                .filter_map(|l| match &l.target {
+                    yinhe_types::AutomationTarget::PluginParam {
+                        instrument_channel,
+                        param_id,
+                        ..
+                    } if *instrument_channel == ich => Some(*param_id),
+                    _ => None,
+                })
+                .collect();
+            (ich, crate::mix::instrument_label(ich), existing)
+        };
+        // 参数列表：实例可用才有内容（未加载时打开空列表，窗口提示）。
+        let (plugin_name, params) = match self
+            .instrument_racks
+            .get_mut(idx)
+            .and_then(|rack| rack.instance_mut(ich))
+        {
+            Some(instance) => {
+                let name = instance.name().to_string();
+                (name, instance.param_list())
+            }
+            None => (String::new(), Vec::new()),
+        };
+        self.plugin_param_picker
+            .open(track_idx, ich, channel_label, plugin_name, params, existing);
+        crate::chrome::dialog::raise_viewport(
+            ctx,
+            egui::ViewportId::from_hash_of("plugin_param_picker"),
+        );
+    }
+
+    /// 插件参数选择窗口：每帧渲染；点参数创建/定位 AM lane。
+    fn show_plugin_param_picker(&mut self, ctx: &egui::Context) {
+        if !self.plugin_param_picker.open {
+            return;
+        }
+        if self.plugin_param_picker.just_opened {
+            self.plugin_param_picker.just_opened = false;
+            crate::chrome::dialog::raise_viewport(
+                ctx,
+                egui::ViewportId::from_hash_of("plugin_param_picker"),
+            );
+        }
+        use crate::dialogs::plugin_param_picker::PluginParamPickerAction as A;
+        match crate::dialogs::plugin_param_picker::show_viewport(ctx, &mut self.plugin_param_picker)
+        {
+            A::None => {}
+            A::Add {
+                track_idx,
+                param_id,
+                name,
+            } => {
+                if let Some(idx) = self.workspace.active_doc {
+                    let _ = track_idx;
+                    self.toggle_plugin_param_lane(
+                        idx,
+                        self.plugin_param_picker.instrument_channel,
+                        param_id,
+                        &name,
+                    );
+                }
+            }
+            A::Close => self.plugin_param_picker.open = false,
+        }
     }
 
     /// 敲击测速对话框：每帧渲染，用户关闭窗口后清状态。

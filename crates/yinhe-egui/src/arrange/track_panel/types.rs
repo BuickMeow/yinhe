@@ -28,6 +28,8 @@ pub(crate) enum TrackAction {
     DeleteAutomation { idx: usize, lane_idx: usize },
     /// 右键「音轨属性」：选中该轨并请求打开属性浮窗（不改动模型）。
     ShowProperties { idx: usize },
+    /// 右键「添加插件参数自动化…」：打开参数选择窗口（不改动模型）。
+    OpenPluginParamPicker { idx: usize },
 }
 
 #[derive(Clone, Copy)]

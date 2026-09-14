@@ -586,7 +586,13 @@ impl App {
     /// 整组合并成一条 `PreviewNotes` 命令发送（替换旧组待触发音符；正在响的音符
     /// 继续响满 gate，松手时由 Stop 统一停止；且不占命令通道额度）。
     /// 时刻全在 tick 域（与编辑层一致），渲染线程内部转 sample。
-    pub(crate) fn send_note_previews(&self, reqs: &[crate::piano_view::PreviewReq]) {
+    /// `exclusive`：PR 拖动/铅笔的替换式预览（同一时刻只响当前组）；
+    /// MIDI 直通用 false（叠加式，和弦保持）。
+    pub(crate) fn send_note_previews(
+        &self,
+        reqs: &[crate::piano_view::PreviewReq],
+        exclusive: bool,
+    ) {
         if reqs.is_empty() {
             return;
         }
@@ -657,12 +663,16 @@ impl App {
             if !notes.is_empty() {
                 audio
                     .handle
-                    .send(yinhe_audio::AudioCommand::PreviewNotes { notes });
+                    .send(yinhe_audio::AudioCommand::PreviewNotes { notes, exclusive });
             }
             for (channel, notes) in plugin_notes {
                 audio
                     .handle
-                    .send(yinhe_audio::AudioCommand::PreviewInstrumentNotes { channel, notes });
+                    .send(yinhe_audio::AudioCommand::PreviewInstrumentNotes {
+                        channel,
+                        notes,
+                        exclusive,
+                    });
             }
         }
     }

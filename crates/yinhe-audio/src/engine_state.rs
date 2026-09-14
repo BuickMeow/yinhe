@@ -134,7 +134,11 @@ impl AudioEngine {
         self.dispatched_skip
     }
 
-    pub(crate) fn apply_chase_result(&mut self, states: &[Option<ChannelState>; 256]) {
+    pub(crate) fn apply_chase_result(
+        &mut self,
+        states: &[Option<ChannelState>; 256],
+        plugin_params: &[(u16, u32, f32)],
+    ) {
         let skip = self.chase_skip();
         for ch in 0..256u32 {
             let dense = self.channel_layout.dense_for(ch as usize);
@@ -146,6 +150,20 @@ impl AudioEngine {
                 continue;
             };
             state.send_to(dense, &mut self.channel_set, &skip);
+        }
+        // 插件参数 chase：seek 后插件已 reset（值丢失），把目标位置的
+        // lane 值写回对应乐器实例（归一化值，下一块 process 生效）。
+        for &(ich, param_id, value) in plugin_params {
+            let Some(dense) = self.instrument_dense(ich) else {
+                continue;
+            };
+            if let Some(Some(slot)) = self.instruments.get_mut(dense) {
+                slot.events.push(PluginEvent::ParamValue {
+                    time: 0,
+                    param_id,
+                    value: f64::from(value),
+                });
+            }
         }
     }
 

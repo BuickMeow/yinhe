@@ -58,16 +58,26 @@ impl App {
         let mut needs_audio_rebuild = false;
         // AR 自动化 lane 增删/编辑 → notify_audio_model_changed（不重建引擎）。
         let mut needs_audio_notify = false;
-        let (arr_drag_delta, arr_eraser_rect, arr_quantize, float_panel_req): (
+        /// AR 视图单帧输出（guard drop 后由 App 消费）。
+        type ArrOutputs = (
             Option<crate::arrange::ArrDragDelta>,
             Option<crate::arrange::ArrSelRect>,
             Option<yinhe_editor_core::quantize::QuantizePreset>,
             Option<crate::right_panel::FloatPanel>,
-        ) = if self.view_mode.show_transport() {
+            Option<usize>,
+        );
+        let (
+            arr_drag_delta,
+            arr_eraser_rect,
+            arr_quantize,
+            float_panel_req,
+            plugin_param_picker_req,
+        ): ArrOutputs = if self.view_mode.show_transport() {
             let mut request_pianoroll = false;
             let mut arr_drag_delta: Option<crate::arrange::ArrDragDelta> = None;
             let mut arr_eraser_rect: Option<crate::arrange::ArrSelRect> = None;
             let mut float_panel_req: Option<crate::right_panel::FloatPanel> = None;
+            let mut plugin_param_picker_req: Option<usize> = None;
             let mut guard =
                 crate::app::main_loop::ReplaceGuard::new(&mut self.workspace.documents[idx]);
             let cfg = crate::arrange::ArrangeViewCfg {
@@ -104,6 +114,7 @@ impl App {
                 &mut self.status_hint,
                 sel_hint.as_ref(),
                 &mut float_panel_req,
+                &mut plugin_param_picker_req,
             );
             if request_pianoroll {
                 self.show_pianoroll_in_arrange = true;
@@ -113,9 +124,10 @@ impl App {
                 arr_eraser_rect,
                 arr_quantize,
                 float_panel_req,
+                plugin_param_picker_req,
             ) // guard dropped here
         } else {
-            (None, None, None, None)
+            (None, None, None, None, None)
         };
         // 方案 A：音轨结构变化（add/remove track）→ drop 旧引擎。
         // ChannelLayout 在引擎创建时冻结，旧引擎无法 dispatch 新增通道。
@@ -128,6 +140,10 @@ impl App {
         // 右键「音轨属性」/ 其他浮动面板请求：设浮窗并收起侧栏 Info（互斥）。
         if let Some(panel) = float_panel_req {
             self.set_float_panel(ui.ctx(), Some(panel));
+        }
+        // 右键「添加插件参数自动化…」：打开参数选择窗口。
+        if let Some(track_idx) = plugin_param_picker_req {
+            self.open_plugin_param_picker(ui.ctx(), track_idx);
         }
         // 自动化内容变化（AR lane 增删 / AM 事件编辑）：与 PR 的
         // handle_automation_edits 同路径，通知音频引擎 model 已变。
@@ -581,7 +597,8 @@ impl App {
         };
 
         // 音符听觉预览（铅笔新建/拖拽、选框拖拽触发）。
-        self.send_note_previews(&preview_reqs);
+        // PR 拖动/铅笔：替换式预览（拖动时不叠加，只响当前组）。
+        self.send_note_previews(&preview_reqs, true);
 
         // Handle piano-view events
         if let Some(event) = piano_event {

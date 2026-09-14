@@ -182,7 +182,8 @@ impl App {
         for key in released {
             self.stop_preview_key(key);
         }
-        self.send_note_previews(&previews);
+        // MIDI 直通：叠加式（和弦保持，单键停止另发）。
+        self.send_note_previews(&previews, false);
     }
 
     /// 录音 NoteOn：向当前轨写入 gate=1 占位音符，记录 id 待闭合。

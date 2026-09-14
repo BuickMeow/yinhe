@@ -179,14 +179,17 @@ impl PreviewEngine {
     /// 例如旋律音符 start 相差 4800 帧（已按目标位置 Tempo/PPQ 换算），
     /// 预览时就错开 4800 帧依次触发。时值差来自真实乐曲位置，不用固定毫秒封顶。
     ///
-    /// **已在响的音符不在这里 NoteOff**（继续响满自己的 gate）：
-    /// 快速拖拽时每帧提交一组新音符，渲染线程按 ring 水位门控渲染（频率 ≈ cpal
-    /// 回调频率），若提交即 `stop_all()`，音符会在下一次渲染之前被杀掉、永远听不到
-    /// ——"拖过几十个键只响几声"的根因。替换语义由 `stop_all()`（PreviewStop /
-    /// 释放）负责：两次预览之间必然有一次释放，正在响的旧组在那里统一停止。
-    pub(crate) fn preview_notes(&mut self, notes: Vec<PreviewNoteIn>) {
-        // 旧组未触发的待触发音符已过期（目标位置被新组替换），只清 pending；
-        // 已在响的音符保留，继续响满自己的 gate。
+    /// `exclusive = true`（PR 拖动/铅笔）：先 `stop_all()` 停掉旧组全部预览音，
+    /// 保证同一时刻只听到当前组（拖动时不叠加）；旧音的 NoteOff 走音色包络
+    /// 自然衰减，不会硬切。
+    /// `exclusive = false`（MIDI 直通）：已响音符保留（和弦保持），
+    /// 只清待触发音符（目标位置被新组替换）。
+    pub(crate) fn preview_notes(&mut self, notes: Vec<PreviewNoteIn>, exclusive: bool) {
+        if exclusive {
+            // 拖动替换：旧组所有预览音（含正在响的）统一停止。
+            self.stop_all();
+        }
+        // 旧组未触发的待触发音符已过期（目标位置被新组替换），只清 pending。
         self.pending.clear();
         let min = notes.iter().map(|n| n.target_sample).min().unwrap_or(0);
         // trigger_at 存绝对位置（组开始 + 相对时值差）：position 是累计渲染帧数，
@@ -244,6 +247,12 @@ impl PreviewEngine {
         self.flush_pending_at(block_end);
         self.expire_voices_at(block_end);
         self.position = block_end;
+    }
+
+    /// 测试辅助：非替换（叠加式）提交，等价于 `preview_notes(notes, false)`。
+    #[cfg(test)]
+    pub(crate) fn preview_notes_append(&mut self, notes: Vec<PreviewNoteIn>) {
+        self.preview_notes(notes, false);
     }
 
     /// 是否处于预览状态（有活跃预览音、待触发音符或余音仍在响）——
@@ -345,6 +354,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn exclusive_replacement_stops_playing_voices() {
+        // 替换模式（PR 拖动/铅笔）：新组提交时旧组已响音符被 NoteOff，
+        // 同一时刻只有当前组的音（修"拖过十几个键全部叠加"）。
+        let layout = ChannelLayout::from_mask(vec![true; 16]);
+        let mut engine = PreviewEngine::new(&layout, 48000);
+        let note = |key: u8| PreviewNoteIn {
+            channel: 0,
+            key,
+            velocity: 100,
+            duration: None,
+            state: ChannelState::default(),
+            target_sample: 0,
+        };
+        engine.preview_notes(vec![note(60)], true);
+        assert_eq!(engine.voices.len(), 1);
+        assert_eq!(engine.voices[0].key, 60);
+
+        // 新组替换：旧的持续音被 NoteOff 移除，voices 只剩新音。
+        engine.preview_notes(vec![note(62)], true);
+        assert_eq!(engine.voices.len(), 1);
+        assert_eq!(engine.voices[0].key, 62);
+
+        // 非替换（MIDI 直通）：旧音保留（和弦保持）。
+        engine.preview_notes_append(vec![note(64)]);
+        assert_eq!(engine.voices.len(), 2);
+    }
+
+    #[test]
     fn note_on_keeps_whole_group_and_duration_expires() {
         let layout = ChannelLayout::from_mask(vec![true; 16]);
         let mut engine = PreviewEngine::new(&layout, 48000);
@@ -411,7 +448,7 @@ mod tests {
         let mut engine = PreviewEngine::new(&layout, 48000);
 
         // 两个音符：B 比 A 晚 4800 帧（目标位置差）
-        engine.preview_notes(vec![
+        engine.preview_notes_append(vec![
             PreviewNoteIn {
                 channel: 0,
                 key: 60,
@@ -458,7 +495,7 @@ mod tests {
         let layout = ChannelLayout::from_mask(vec![true; 16]);
         let mut engine = PreviewEngine::new(&layout, 48000);
 
-        engine.preview_notes(vec![
+        engine.preview_notes_append(vec![
             PreviewNoteIn {
                 channel: 0,
                 key: 60,
@@ -544,7 +581,7 @@ mod tests {
             engine.render(&mut out);
         }
 
-        engine.preview_notes(vec![
+        engine.preview_notes_append(vec![
             PreviewNoteIn {
                 channel: 0,
                 key: 60,
@@ -585,7 +622,7 @@ mod tests {
         // 模拟 C2→C7 快速拖拽：60 个键，每键一组、渲染器来不及渲染。
         let mut out = vec![0.0f32; 1024];
         for key in 36..96 {
-            engine.preview_notes(vec![PreviewNoteIn {
+            engine.preview_notes_append(vec![PreviewNoteIn {
                 channel: 0,
                 key,
                 velocity: 100,
@@ -617,7 +654,7 @@ mod tests {
 
         // A 立即触发（组内最早）；B 的 trigger_at = 1000（落在第二个渲染块
         // [512, 1024) 的中间帧），gate 300 帧 → 到期于 1300（第三个块中间帧）。
-        engine.preview_notes(vec![
+        engine.preview_notes_append(vec![
             PreviewNoteIn {
                 channel: 0,
                 key: 60,
@@ -662,7 +699,7 @@ mod tests {
         let layout = ChannelLayout::from_mask(vec![true; 16]);
         let mut engine = PreviewEngine::new(&layout, 48000);
 
-        engine.preview_notes(vec![
+        engine.preview_notes_append(vec![
             PreviewNoteIn {
                 channel: 0,
                 key: 60,
@@ -684,7 +721,7 @@ mod tests {
         assert_eq!(engine.pending.len(), 1, "延迟音符在等待触发");
 
         // 新组替换：旧组延迟音符过期清掉，已在响的 60 号音符保留。
-        engine.preview_notes(vec![PreviewNoteIn {
+        engine.preview_notes_append(vec![PreviewNoteIn {
             channel: 0,
             key: 67,
             velocity: 100,

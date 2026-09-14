@@ -254,6 +254,27 @@ pub fn handle_interactions(
             }
             ui.separator();
             super::menu::create_automation_menu(ui, idx, tracks, actions);
+            // 插件参数（可达数千个）不在菜单里平铺：打开选择窗口。
+            // 乐器轨，或该轨 MIDI 通道上挂了乐器轨时可用。
+            let has_instrument = tracks.get(idx).is_some_and(|t| {
+                t.instrument_channel.is_some()
+                    || tracks.iter().any(|o| {
+                        o.kind == yinhe_core::TrackKind::Instrument
+                            && o.global_channel() == t.global_channel()
+                    })
+            });
+            if has_instrument
+                && ui
+                    .add(crate::widgets::menu::menu_item_button(
+                        ui,
+                        false,
+                        t!("arrange.add_plugin_automation"),
+                    ))
+                    .clicked()
+            {
+                actions.push(TrackAction::OpenPluginParamPicker { idx });
+                ui.close();
+            }
         } else if ui
             .add(crate::widgets::menu::menu_item_button(
                 ui,

@@ -325,10 +325,15 @@ impl AudioEngine {
         &mut self,
         instrument_channel: u16,
         notes: Vec<crate::spawn::InstrumentPreviewNote>,
+        exclusive: bool,
     ) {
         let Some(dense) = self.instrument_dense(instrument_channel) else {
             return;
         };
+        if exclusive {
+            // 拖动替换：旧组该通道的全部预览音（含已响）停掉，只保留当前组。
+            self.preview_instrument_stop(Some(instrument_channel), None);
+        }
         self.plugin_previews
             .retain(|p| !(p.dense == dense && !p.triggered));
         if notes.is_empty() {

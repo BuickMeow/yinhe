@@ -124,6 +124,8 @@ pub fn show(
     sel_hint: Option<&crate::app::layout::SelHintInfo>,
     // 右键「音轨属性」等请求：请求打开属性浮窗（由调用方 set_float_panel 落地）。
     float_panel_req: &mut Option<crate::right_panel::FloatPanel>,
+    // 右键「添加插件参数自动化…」：请求打开参数选择窗口（由调用方落地）。
+    plugin_param_picker_req: &mut Option<usize>,
 ) -> Option<QuantizePreset> {
     *last_cursor_tick = doc.edit.cursor_tick;
 
@@ -367,6 +369,12 @@ pub fn show(
             let mut structural = true;
             let (undo_action, label) = match &action {
                 // 右键「音轨属性」：不产生 undo，选中目标轨后请求打开浮窗。
+                track_panel::TrackAction::OpenPluginParamPicker { idx } => {
+                    // 不产生 undo：请求打开参数选择窗口（由调用方落地）。
+                    structural = false;
+                    *plugin_param_picker_req = Some(*idx);
+                    (None, String::new())
+                }
                 track_panel::TrackAction::ShowProperties { idx } => {
                     let track_idx = doc
                         .edit

@@ -346,7 +346,7 @@ impl AudioRenderer {
                         AudioCommand::SetAmMs { am_ms } => {
                             self.apply_set_am_ms(am_ms);
                         }
-                        AudioCommand::PreviewNotes { notes } => {
+                        AudioCommand::PreviewNotes { notes, exclusive } => {
                             // 用户已松手（Stop 请求尚未消费）：跳过堆积的旧预览组，
                             // 否则松手后还会触发一组在响。
                             if self.preview_stop_flag.load(Ordering::Acquire) {
@@ -398,7 +398,7 @@ impl AudioRenderer {
                                 }
                             }
                             // 提交预览组：组内按目标位置相对时值错开触发。
-                            self.preview_engine.preview_notes(inputs);
+                            self.preview_engine.preview_notes(inputs, exclusive);
                         }
                         AudioCommand::PreviewStop => {
                             self.preview_engine.stop_all();
@@ -605,10 +605,14 @@ impl AudioRenderer {
                     self.state.initialized.store(true, Ordering::Release);
                     did_work = true;
                 }
-                Ok(WorkerResult::ChaseResult { states, generation }) => {
+                Ok(WorkerResult::ChaseResult {
+                    states,
+                    plugin_params,
+                    generation,
+                }) => {
                     // 丢弃过期结果：cc_events 已被新 PrepareModel 替换
                     if generation == self.engine.chase_generation {
-                        self.engine.apply_chase_result(&states);
+                        self.engine.apply_chase_result(&states, &plugin_params);
                         // GPU 路径：把 chase 快照应用到 GpuSynth（跳过 seek 后
                         // 已实时处理过的控制器，避免旧值覆盖新值）。
                         #[cfg(feature = "gpu")]

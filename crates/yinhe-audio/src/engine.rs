@@ -349,8 +349,12 @@ impl AudioEngine {
             | AudioCommand::PreviewStop
             | AudioCommand::PreviewStopKey { .. } => {}
             // 插件预览：引擎直接调度（乐器通道 NoteOn/NoteOff，停止状态空闲渲染出声）。
-            AudioCommand::PreviewInstrumentNotes { channel, notes } => {
-                self.preview_instrument_notes(channel, notes);
+            AudioCommand::PreviewInstrumentNotes {
+                channel,
+                notes,
+                exclusive,
+            } => {
+                self.preview_instrument_notes(channel, notes, exclusive);
             }
             AudioCommand::PreviewInstrumentStop { channel, key } => {
                 self.preview_instrument_stop(channel, key);
