@@ -131,91 +131,119 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
         .unwrap_or_default();
     let mut lane_requests: Vec<(u32, String)> = Vec::new();
 
-    let instance: Option<&mut PluginInstance> = match panel.target {
-        ParamTarget::Insert { target, slot } => app
-            .mixer_racks
-            .get_mut(idx)
-            .and_then(|rack| rack.instance_mut(target, slot)),
-        ParamTarget::Instrument { channel } => app
-            .instrument_racks
-            .get_mut(idx)
-            .and_then(|rack| rack.instance_mut(channel)),
-    };
-
-    let mut open = true;
-    egui::Window::new(format!("{} — {}", t!("mix.params_title"), panel.title))
-        .id(egui::Id::new("mix_param_panel"))
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(true)
-        .default_size([460.0, 520.0])
-        .show(ctx, |ui| {
-            let Some(instance) = instance else {
-                ui.label(
-                    egui::RichText::new(t!("mix.params_unloaded"))
-                        .color(crate::theme::text_muted()),
-                );
-                return;
-            };
-            if instance.id() != panel.plugin_id {
-                // 槽位被换成别的插件：重枚举参数。
-                panel.plugin_id = instance.id().to_string();
-                panel.refresh(instance);
-            } else if instance.take_params_rescan() {
-                panel.refresh(instance);
+    // 独立 OS 窗口（viewport）：插件参数面板。
+    let id = egui::ViewportId::from_hash_of("mix_param_panel");
+    crate::chrome::dialog::raise_on_open(ctx, id);
+    let title = format!("{} — {}", t!("mix.params_title"), panel.title);
+    let mut close = false;
+    ctx.show_viewport_immediate(
+        id,
+        crate::chrome::dialog::viewport_builder(title.as_ref(), [460.0, 520.0], true),
+        |vctx, _class| {
+            if vctx.input(|i| i.viewport().close_requested()) {
+                close = true;
             }
-            if panel.filter_dirty {
-                panel.rebuild_filter();
-            }
+            let mut closed = close;
+            egui::CentralPanel::default()
+                .frame(egui::Frame {
+                    fill: crate::theme::app_bg(),
+                    ..Default::default()
+                })
+                .show(vctx, |ui| {
+                    crate::chrome::dialog::title_bar(ui, title.as_ref(), &mut closed, false);
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin {
+                            left: 12,
+                            right: 12,
+                            top: 0,
+                            bottom: 12,
+                        })
+                        .show(ui, |ui| {
+                            let instance: Option<&mut PluginInstance> = match panel.target {
+                                ParamTarget::Insert { target, slot } => app
+                                    .mixer_racks
+                                    .get_mut(idx)
+                                    .and_then(|rack| rack.instance_mut(target, slot)),
+                                ParamTarget::Instrument { channel } => app
+                                    .instrument_racks
+                                    .get_mut(idx)
+                                    .and_then(|rack| rack.instance_mut(channel)),
+                            };
+                            let Some(instance) = instance else {
+                                ui.label(
+                                    egui::RichText::new(t!("mix.params_unloaded"))
+                                        .color(crate::theme::text_muted()),
+                                );
+                                return;
+                            };
+                            if instance.id() != panel.plugin_id {
+                                // 槽位被换成别的插件：重枚举参数。
+                                panel.plugin_id = instance.id().to_string();
+                                panel.refresh(instance);
+                            } else if instance.take_params_rescan() {
+                                panel.refresh(instance);
+                            }
+                            if panel.filter_dirty {
+                                panel.rebuild_filter();
+                            }
 
-            ui.horizontal(|ui| {
-                ui.label(t!("mix.search"));
-                if ui.text_edit_singleline(&mut panel.search).changed() {
-                    panel.filter_dirty = true;
-                }
-                let count = format!("{}/{}", panel.filtered.len(), panel.params.len());
-                ui.label(
-                    egui::RichText::new(count)
-                        .size(crate::theme::SMALL_FONT)
-                        .color(crate::theme::text_muted()),
-                );
-            });
-            ui.separator();
+                            ui.horizontal(|ui| {
+                                ui.label(t!("mix.search"));
+                                if ui.text_edit_singleline(&mut panel.search).changed() {
+                                    panel.filter_dirty = true;
+                                }
+                                let count =
+                                    format!("{}/{}", panel.filtered.len(), panel.params.len());
+                                ui.label(
+                                    egui::RichText::new(count)
+                                        .size(crate::theme::SMALL_FONT)
+                                        .color(crate::theme::text_muted()),
+                                );
+                            });
+                            ui.separator();
 
-            if panel.params.is_empty() {
-                ui.label(
-                    egui::RichText::new(t!("mix.no_params")).color(crate::theme::text_muted()),
-                );
-                return;
-            }
+                            if panel.params.is_empty() {
+                                ui.label(
+                                    egui::RichText::new(t!("mix.no_params"))
+                                        .color(crate::theme::text_muted()),
+                                );
+                                return;
+                            }
 
-            let row_h = 22.0;
-            let list_h = ui.available_height();
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .max_height(list_h)
-                .show_rows(ui, row_h, panel.filtered.len(), |ui, range| {
-                    for &pi in &panel.filtered[range] {
-                        let am_exists =
-                            am_channel.map(|ch| am_lanes.contains(&(ch, panel.params[pi].id)));
-                        if param_row(
-                            ui,
-                            row_h,
-                            &panel.params[pi],
-                            instance,
-                            &mut panel.editing,
-                            &panel.queue,
-                            &mut panel.wrote_params,
-                            am_exists,
-                        ) && am_channel.is_some()
-                        {
-                            let p = &panel.params[pi];
-                            lane_requests.push((p.id, p.name.clone()));
-                        }
-                    }
+                            let row_h = 22.0;
+                            let list_h = ui.available_height();
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, false])
+                                .max_height(list_h)
+                                .show_rows(ui, row_h, panel.filtered.len(), |ui, range| {
+                                    for &pi in &panel.filtered[range] {
+                                        let am_exists = am_channel.map(|ch| {
+                                            am_lanes.contains(&(ch, panel.params[pi].id))
+                                        });
+                                        if param_row(
+                                            ui,
+                                            row_h,
+                                            &panel.params[pi],
+                                            instance,
+                                            &mut panel.editing,
+                                            &panel.queue,
+                                            &mut panel.wrote_params,
+                                            am_exists,
+                                        ) && am_channel.is_some()
+                                        {
+                                            let p = &panel.params[pi];
+                                            lane_requests.push((p.id, p.name.clone()));
+                                        }
+                                    }
+                                });
+                        });
                 });
-        });
-    // 「显示自动化」：创建/定位该参数的 AM lane（闭包内无法借 app，攒到外部处理）。
+            if closed {
+                close = true;
+            }
+        },
+    );
+    // 「显示自动化」：创建/定位该参数的 AM lane（窗口内无法借 app，攒到外部处理）。
     if let Some(channel) = am_channel {
         for (param_id, name) in lane_requests {
             app.toggle_plugin_param_lane(idx, channel, param_id, &name);
@@ -226,7 +254,10 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
         app.workspace.documents[idx].mixer_mut();
         panel.wrote_params = false;
     }
-    if open {
+    if close {
+        crate::chrome::dialog::mark_viewport_closed(ctx, id);
+        // 不放回 panel：窗口关闭。
+    } else {
         app.mix.param_panel = Some(panel);
     }
 }

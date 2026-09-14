@@ -327,65 +327,92 @@ pub(crate) fn send_popup(
         })
         .collect();
 
-    let mut open = true;
-    egui::Window::new(format!(
-        "{} {}",
-        t!("mix.sends"),
-        crate::mix::channel_label(channel)
-    ))
-    .collapsible(false)
-    .resizable(false)
-    .default_width(300.0)
-    .open(&mut open)
-    .show(ctx, |ui| {
-        if bus_count == 0 {
-            ui.label(egui::RichText::new(t!("mix.no_buses")).color(crate::theme::text_muted()));
-            return;
-        }
-        for (b, (amount, pre)) in current.iter().enumerate() {
-            ui.horizontal(|ui| {
-                ui.label(format!("BUS {}", b + 1));
-                let mut val = *amount;
-                let slider = ui.add(
-                    egui::Slider::new(&mut val, 0.0..=2.0)
-                        .show_value(false)
-                        .clamping(egui::SliderClamping::Always),
-                );
-                if slider.changed() {
-                    actions.push(MixAction::SetSend {
-                        channel,
-                        bus: b as u8,
-                        amount: val,
-                        pre_fader: *pre,
-                    });
-                }
-                let db = if val <= 0.0 {
-                    "-∞".to_string()
-                } else {
-                    format!("{:+.1} dB", crate::mix::gain_to_db(val))
-                };
-                ui.label(
-                    egui::RichText::new(db)
-                        .size(crate::theme::SMALL_FONT)
-                        .color(crate::theme::text_secondary()),
-                );
-                let mut pre_flag = *pre;
-                if ui
-                    .checkbox(&mut pre_flag, t!("mix.pre_fader"))
-                    .on_hover_text(t!("mix.pre_fader_hint"))
-                    .changed()
-                {
-                    actions.push(MixAction::SetSend {
-                        channel,
-                        bus: b as u8,
-                        amount: val,
-                        pre_fader: pre_flag,
-                    });
-                }
-            });
-        }
-    });
-    if !open {
+    // 独立 OS 窗口（viewport）：发送面板。
+    let id = egui::ViewportId::from_hash_of("mix_send_popup");
+    crate::chrome::dialog::raise_on_open(ctx, id);
+    let title = format!("{} {}", t!("mix.sends"), crate::mix::channel_label(channel));
+    let mut close = false;
+    ctx.show_viewport_immediate(
+        id,
+        crate::chrome::dialog::viewport_builder(title.as_ref(), [300.0, 260.0], false),
+        |vctx, _class| {
+            if vctx.input(|i| i.viewport().close_requested()) {
+                close = true;
+            }
+            let mut closed = close;
+            egui::CentralPanel::default()
+                .frame(egui::Frame {
+                    fill: crate::theme::app_bg(),
+                    ..Default::default()
+                })
+                .show(vctx, |ui| {
+                    crate::chrome::dialog::title_bar(ui, title.as_ref(), &mut closed, false);
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin {
+                            left: 12,
+                            right: 12,
+                            top: 0,
+                            bottom: 12,
+                        })
+                        .show(ui, |ui| {
+                            if bus_count == 0 {
+                                ui.label(
+                                    egui::RichText::new(t!("mix.no_buses"))
+                                        .color(crate::theme::text_muted()),
+                                );
+                                return;
+                            }
+                            for (b, (amount, pre)) in current.iter().enumerate() {
+                                ui.horizontal(|ui| {
+                                    ui.label(format!("BUS {}", b + 1));
+                                    let mut val = *amount;
+                                    let slider = ui.add(
+                                        egui::Slider::new(&mut val, 0.0..=2.0)
+                                            .show_value(false)
+                                            .clamping(egui::SliderClamping::Always),
+                                    );
+                                    if slider.changed() {
+                                        actions.push(MixAction::SetSend {
+                                            channel,
+                                            bus: b as u8,
+                                            amount: val,
+                                            pre_fader: *pre,
+                                        });
+                                    }
+                                    let db = if val <= 0.0 {
+                                        "-∞".to_string()
+                                    } else {
+                                        format!("{:+.1} dB", crate::mix::gain_to_db(val))
+                                    };
+                                    ui.label(
+                                        egui::RichText::new(db)
+                                            .size(crate::theme::SMALL_FONT)
+                                            .color(crate::theme::text_secondary()),
+                                    );
+                                    let mut pre_flag = *pre;
+                                    if ui
+                                        .checkbox(&mut pre_flag, t!("mix.pre_fader"))
+                                        .on_hover_text(t!("mix.pre_fader_hint"))
+                                        .changed()
+                                    {
+                                        actions.push(MixAction::SetSend {
+                                            channel,
+                                            bus: b as u8,
+                                            amount: val,
+                                            pre_fader: pre_flag,
+                                        });
+                                    }
+                                });
+                            }
+                        });
+                });
+            if closed {
+                close = true;
+            }
+        },
+    );
+    if close {
+        crate::chrome::dialog::mark_viewport_closed(ctx, id);
         app.mix.sends_for = None;
     }
 }
@@ -976,72 +1003,104 @@ fn meter(ui: &mut egui::Ui, peak: (f32, f32), height: f32) {
     );
 }
 
-/// 插件选择器窗口（列出扫描到的效果器，按名称过滤）。
+/// 插件选择器窗口（独立 OS 窗口；列出扫描到的效果器，按名称过滤）。
 pub(crate) fn plugin_picker(
     app: &mut App,
     ctx: &egui::Context,
     target: InsertTarget,
     actions: &mut Vec<MixAction>,
 ) {
-    let mut open = true;
-    egui::Window::new(t!("mix.picker_title"))
-        .collapsible(false)
-        .resizable(true)
-        .default_width(320.0)
-        .open(&mut open)
-        .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(t!("mix.search"));
-                ui.text_edit_singleline(&mut app.mix.picker_filter);
-            });
-            ui.separator();
-            let filter = app.mix.picker_filter.to_lowercase();
-            let plugins = app.mix.scanned.as_ref();
-            egui::ScrollArea::vertical()
-                .max_height(320.0)
-                .show(ui, |ui| {
-                    let mut any = false;
-                    if let Some(plugins) = plugins {
-                        for p in plugins.iter().filter(|p| p.is_effect) {
-                            if !filter.is_empty() && !p.name.to_lowercase().contains(&filter) {
-                                continue;
-                            }
-                            any = true;
-                            if let Some(err) = &p.error {
-                                // 加载失败的插件：灰色不可选，hover 显示原因（不静默消失）。
-                                ui.add_enabled(
-                                    false,
-                                    egui::Button::new(
-                                        egui::RichText::new(p.display_name())
-                                            .size(crate::theme::SMALL_FONT)
-                                            .color(crate::theme::text_muted()),
-                                    ),
-                                )
-                                .on_hover_text(err);
-                                continue;
-                            }
-                            if ui
-                                .add(crate::widgets::menu::menu_item_button(ui, false, &p.name))
-                                .on_hover_text(&p.id)
-                                .clicked()
-                            {
-                                actions.push(MixAction::AddInsert {
-                                    target,
-                                    plugin: p.clone(),
+    let id = egui::ViewportId::from_hash_of("mix_plugin_picker");
+    crate::chrome::dialog::raise_on_open(ctx, id);
+    let title = t!("mix.picker_title");
+    let mut close = false;
+    ctx.show_viewport_immediate(
+        id,
+        crate::chrome::dialog::viewport_builder(title.as_ref(), [340.0, 420.0], true),
+        |vctx, _class| {
+            if vctx.input(|i| i.viewport().close_requested()) {
+                close = true;
+            }
+            let mut closed = close;
+            egui::CentralPanel::default()
+                .frame(egui::Frame {
+                    fill: crate::theme::app_bg(),
+                    ..Default::default()
+                })
+                .show(vctx, |ui| {
+                    crate::chrome::dialog::title_bar(ui, title.as_ref(), &mut closed, false);
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin {
+                            left: 12,
+                            right: 12,
+                            top: 0,
+                            bottom: 12,
+                        })
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(t!("mix.search"));
+                                ui.text_edit_singleline(&mut app.mix.picker_filter);
+                            });
+                            ui.separator();
+                            let filter = app.mix.picker_filter.to_lowercase();
+                            let plugins = app.mix.scanned.as_ref();
+                            egui::ScrollArea::vertical()
+                                .id_salt("mix_plugin_picker_list")
+                                .auto_shrink([false, false])
+                                .max_height(ui.available_height())
+                                .show(ui, |ui| {
+                                    let mut any = false;
+                                    if let Some(plugins) = plugins {
+                                        for p in plugins.iter().filter(|p| p.is_effect) {
+                                            if !filter.is_empty()
+                                                && !p.name.to_lowercase().contains(&filter)
+                                            {
+                                                continue;
+                                            }
+                                            any = true;
+                                            if let Some(err) = &p.error {
+                                                // 加载失败的插件：灰色不可选，hover 显示原因（不静默消失）。
+                                                ui.add_enabled(
+                                                    false,
+                                                    egui::Button::new(
+                                                        egui::RichText::new(p.display_name())
+                                                            .size(crate::theme::SMALL_FONT)
+                                                            .color(crate::theme::text_muted()),
+                                                    ),
+                                                )
+                                                .on_hover_text(err);
+                                                continue;
+                                            }
+                                            if ui
+                                                .add(crate::widgets::menu::menu_item_button(
+                                                    ui, false, &p.name,
+                                                ))
+                                                .on_hover_text(&p.id)
+                                                .clicked()
+                                            {
+                                                actions.push(MixAction::AddInsert {
+                                                    target,
+                                                    plugin: p.clone(),
+                                                });
+                                            }
+                                        }
+                                    }
+                                    if !any {
+                                        ui.label(
+                                            egui::RichText::new(t!("mix.no_plugins"))
+                                                .color(crate::theme::text_muted()),
+                                        );
+                                    }
                                 });
-                            }
-                        }
-                    }
-                    if !any {
-                        ui.label(
-                            egui::RichText::new(t!("mix.no_plugins"))
-                                .color(crate::theme::text_muted()),
-                        );
-                    }
+                        });
                 });
-        });
-    if !open {
-        // 用户关了窗口：清空选择器状态（无动作）。
+            if closed {
+                close = true;
+            }
+        },
+    );
+    if close {
+        crate::chrome::dialog::mark_viewport_closed(ctx, id);
         app.mix.picker_for = None;
     }
 }
@@ -1192,70 +1251,103 @@ pub(crate) fn audio_strip(
     });
 }
 
-/// 乐器插件选择器：只列 is_instrument() 插件。
+/// 乐器插件选择器（独立 OS 窗口）：只列 is_instrument() 插件。
 pub(crate) fn instrument_picker(
     app: &mut App,
     ctx: &egui::Context,
     channel: u16,
     actions: &mut Vec<MixAction>,
 ) {
-    let mut open = true;
-    egui::Window::new(t!("mix.instrument_picker_title"))
-        .collapsible(false)
-        .resizable(true)
-        .default_width(320.0)
-        .open(&mut open)
-        .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(t!("mix.search"));
-                ui.text_edit_singleline(&mut app.mix.picker_filter);
-            });
-            ui.separator();
-            let filter = app.mix.picker_filter.to_lowercase();
-            let plugins = app.mix.scanned.as_ref();
-            egui::ScrollArea::vertical()
-                .max_height(320.0)
-                .show(ui, |ui| {
-                    let mut any = false;
-                    if let Some(plugins) = plugins {
-                        for p in plugins.iter().filter(|p| p.is_instrument) {
-                            if !filter.is_empty() && !p.name.to_lowercase().contains(&filter) {
-                                continue;
-                            }
-                            any = true;
-                            if let Some(err) = &p.error {
-                                ui.add_enabled(
-                                    false,
-                                    egui::Button::new(
-                                        egui::RichText::new(p.display_name())
-                                            .size(crate::theme::SMALL_FONT)
-                                            .color(crate::theme::text_muted()),
-                                    ),
-                                )
-                                .on_hover_text(err);
-                                continue;
-                            }
-                            if ui
-                                .add(crate::widgets::menu::menu_item_button(ui, false, &p.name))
-                                .on_hover_text(&p.id)
-                                .clicked()
-                            {
-                                actions.push(MixAction::AssignInstrument {
-                                    channel,
-                                    plugin: p.clone(),
+    let id = egui::ViewportId::from_hash_of("mix_instrument_picker");
+    crate::chrome::dialog::raise_on_open(ctx, id);
+    let title = t!("mix.instrument_picker_title");
+    let mut close = false;
+    ctx.show_viewport_immediate(
+        id,
+        crate::chrome::dialog::viewport_builder(title.as_ref(), [340.0, 420.0], true),
+        |vctx, _class| {
+            if vctx.input(|i| i.viewport().close_requested()) {
+                close = true;
+            }
+            let mut closed = close;
+            egui::CentralPanel::default()
+                .frame(egui::Frame {
+                    fill: crate::theme::app_bg(),
+                    ..Default::default()
+                })
+                .show(vctx, |ui| {
+                    crate::chrome::dialog::title_bar(ui, title.as_ref(), &mut closed, false);
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin {
+                            left: 12,
+                            right: 12,
+                            top: 0,
+                            bottom: 12,
+                        })
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(t!("mix.search"));
+                                ui.text_edit_singleline(&mut app.mix.picker_filter);
+                            });
+                            ui.separator();
+                            let filter = app.mix.picker_filter.to_lowercase();
+                            let plugins = app.mix.scanned.as_ref();
+                            egui::ScrollArea::vertical()
+                                .id_salt("mix_instrument_picker_list")
+                                .auto_shrink([false, false])
+                                .max_height(ui.available_height())
+                                .show(ui, |ui| {
+                                    let mut any = false;
+                                    if let Some(plugins) = plugins {
+                                        for p in plugins.iter().filter(|p| p.is_instrument) {
+                                            if !filter.is_empty()
+                                                && !p.name.to_lowercase().contains(&filter)
+                                            {
+                                                continue;
+                                            }
+                                            any = true;
+                                            if let Some(err) = &p.error {
+                                                ui.add_enabled(
+                                                    false,
+                                                    egui::Button::new(
+                                                        egui::RichText::new(p.display_name())
+                                                            .size(crate::theme::SMALL_FONT)
+                                                            .color(crate::theme::text_muted()),
+                                                    ),
+                                                )
+                                                .on_hover_text(err);
+                                                continue;
+                                            }
+                                            if ui
+                                                .add(crate::widgets::menu::menu_item_button(
+                                                    ui, false, &p.name,
+                                                ))
+                                                .on_hover_text(&p.id)
+                                                .clicked()
+                                            {
+                                                actions.push(MixAction::AssignInstrument {
+                                                    channel,
+                                                    plugin: p.clone(),
+                                                });
+                                            }
+                                        }
+                                    }
+                                    if !any {
+                                        ui.label(
+                                            egui::RichText::new(t!("mix.no_instruments"))
+                                                .color(crate::theme::text_muted()),
+                                        );
+                                    }
                                 });
-                            }
-                        }
-                    }
-                    if !any {
-                        ui.label(
-                            egui::RichText::new(t!("mix.no_instruments"))
-                                .color(crate::theme::text_muted()),
-                        );
-                    }
+                        });
                 });
-        });
-    if !open {
+            if closed {
+                close = true;
+            }
+        },
+    );
+    if close {
+        crate::chrome::dialog::mark_viewport_closed(ctx, id);
         app.mix.instrument_picker_for = None;
     }
 }

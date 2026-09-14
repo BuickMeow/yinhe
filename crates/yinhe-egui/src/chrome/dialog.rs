@@ -21,6 +21,26 @@ pub(crate) fn raise_viewport(ctx: &egui::Context, id: egui::ViewportId) {
 
 /// Build a `ViewportBuilder` for a dialog window, matching the main window's
 /// custom chrome style (no native title bar).
+/// viewport 首帧（上次未打开）时拉到前台。
+///
+/// `show_viewport_immediate` 每帧重建窗口、状态不保留，用 `ctx.data`
+/// 记录"上帧是否打开"来检测打开瞬间；关闭时用 [`mark_viewport_closed`] 复位。
+pub(crate) fn raise_on_open(ctx: &egui::Context, id: egui::ViewportId) {
+    let key = egui::Id::new(("viewport_was_open", id));
+    let was = ctx.data_mut(|d| d.get_temp::<bool>(key).unwrap_or(false));
+    if !was {
+        raise_viewport(ctx, id);
+    }
+    ctx.data_mut(|d| d.insert_temp(key, true));
+}
+
+/// 复位的"上帧已打开"标记（窗口关闭时调用）。
+pub(crate) fn mark_viewport_closed(ctx: &egui::Context, id: egui::ViewportId) {
+    ctx.data_mut(|d| {
+        d.insert_temp(egui::Id::new(("viewport_was_open", id)), false);
+    });
+}
+
 pub(crate) fn viewport_builder(
     title: &str,
     size: [f32; 2],
