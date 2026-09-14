@@ -34,10 +34,21 @@ pub(crate) use rack::MixerRack;
 /// 源通道总数（16 port × 16 通道）。
 const SOURCE_CHANNELS: usize = yinhe_mixer::CHANNEL_COUNT;
 
-/// 源通道号 → 显示标签（0 → "A01"，255 → "P16"）。
+/// 源通道号 → 显示标签（0 → "MIDI-A01"，255 → "MIDI-P16"）。
 pub(crate) fn channel_label(ch: u8) -> String {
     let port = (b'A' + ch / 16) as char;
-    format!("{}{:02}", port, ch % 16 + 1)
+    format!("MIDI-{}{:02}", port, ch % 16 + 1)
+}
+
+/// 乐器通道号 → 显示标签（0 → "Inst-01"）。
+pub(crate) fn instrument_label(ch: u16) -> String {
+    // u32 转换避免 u16 上限 +1 溢出 panic。
+    format!("Inst-{:02}", u32::from(ch) + 1)
+}
+
+/// 音频通道号 → 显示标签（0 → "Audio-01"）。
+pub(crate) fn audio_label(ch: u16) -> String {
+    format!("Audio-{:02}", u32::from(ch) + 1)
 }
 
 /// 线性增益 → dB（0 以下按 -60 显示）。
@@ -186,6 +197,10 @@ pub(crate) enum MixAction {
     },
     /// 打开乐器槽位的参数面板。
     OpenInstrumentParams {
+        channel: u16,
+    },
+    /// 打开/关闭乐器插件原生界面。
+    ToggleInstrumentGui {
         channel: u16,
     },
     RescanPlugins,
@@ -732,7 +747,7 @@ pub(crate) fn show_global_overlays(app: &mut App, ctx: &egui::Context) {
 }
 
 /// insert 目标的持久化链（越界/不存在返回 None）。
-fn insert_refs(
+pub(crate) fn insert_refs(
     mixer: &mut yinhe_mixer::MixerParams,
     target: InsertTarget,
 ) -> Option<&mut Vec<yinhe_mixer::InsertRef>> {
@@ -870,6 +885,17 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
         MixAction::OpenInstrumentPicker { channel } => {
             app.mix.instrument_picker_for = Some(channel);
             app.mix.picker_filter.clear();
+        }
+        MixAction::ToggleInstrumentGui { channel } => {
+            let result = app
+                .instrument_racks
+                .get_mut(idx)
+                .map(|rack| rack.toggle_gui(channel));
+            if let Some(Err(e)) = result
+                && let Some(rack) = app.instrument_racks.get_mut(idx)
+            {
+                rack.last_error = Some(e.0);
+            }
         }
         MixAction::AssignInstrument { channel, plugin } => {
             {

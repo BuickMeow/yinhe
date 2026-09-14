@@ -94,17 +94,38 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
+/// dock 的通道语境（MIDI / 乐器 / 音频三套命名空间独立）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum DockContext {
+    /// MIDI 源通道（0..255）。
+    Midi(u8),
+    /// 乐器通道（0 起）。
+    Instrument(u16),
+    /// 音频通道（0 起）。
+    Audio(u16),
+}
+
+/// 选中轨 → dock 通道语境。
+fn track_context(t: &yinhe_core::TrackData) -> DockContext {
+    match t.kind {
+        TrackKind::Audio => DockContext::Audio(t.audio_channel.unwrap_or(0)),
+        TrackKind::Instrument => DockContext::Instrument(t.instrument_channel.unwrap_or(0)),
+        TrackKind::Midi => DockContext::Midi(t.global_channel()),
+    }
+}
+
 /// 设备链 + 参数区。
 fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
-    // ── 通道选择（Studio One 风格：设备链按源通道组织）──
+    // ── 通道选择（Studio One 风格：设备链按通道组织；三类通道独立）──
     let selected_track = {
         let doc = &app.workspace.documents[idx];
         doc.edit.track_selected.iter().min().copied()
     };
     if selected_track != app.dock_track {
-        // 切换选中轨：dock 跟随该轨所在通道，并重置设备选中。
+        // 切换选中轨：dock 跟随该轨所在通道（音频轨→音频通道，乐器轨→乐器通道），
+        // 并重置设备选中。
         app.dock_track = selected_track;
-        if let Some(ch) = selected_track
+        if let Some(context) = selected_track
             .and_then(|ti| {
                 app.workspace.documents[idx]
                     .data
@@ -112,13 +133,13 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
                     .tracks
                     .get(ti as usize)
             })
-            .map(|t| t.global_channel())
+            .map(|t| track_context(t))
         {
-            app.dock_channel = Some(ch);
+            app.dock_context = Some(context);
             app.dock_selected = None;
         }
     }
-    let Some(channel) = app.dock_channel else {
+    let Some(context) = app.dock_context else {
         ui.centered_and_justified(|ui| {
             ui.label(
                 egui::RichText::new(t!("dock.select_channel"))
@@ -129,40 +150,28 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
         return;
     };
 
-    // 音频轨：设备链按音频通道组织（MIX 界面），这里只提示去向，
-    // 不显示 MIDI 通道的 XSynth 链（音频轨没有 MIDI 通道语义）。
-    let selected_audio_channel = selected_track
-        .and_then(|ti| {
-            app.workspace.documents[idx]
-                .data
-                .model
-                .tracks
-                .get(ti as usize)
-        })
-        .filter(|t| t.kind == TrackKind::Audio)
-        .and_then(|t| t.audio_channel);
-    if let Some(ach) = selected_audio_channel {
-        ui.centered_and_justified(|ui| {
-            ui.label(
-                egui::RichText::new(t!(
-                    "dock.audio_track_hint",
-                    ch = format!("A{:02}", u32::from(ach) + 1)
-                ))
-                .color(crate::theme::text_muted())
-                .size(crate::theme::SMALL_FONT),
-            );
-        });
-        return;
-    }
-
     // ── 收集链数据（后续 UI 不再借 workspace）──
     let model = app.workspace.documents[idx].data.model.clone();
-    // 该通道上的乐器轨（乐器插件挂在 instrument_channel 上）。
-    let instrument_channel: Option<u16> = model
-        .tracks
-        .iter()
-        .find(|t| t.kind == TrackKind::Instrument && t.global_channel() == channel)
-        .and_then(|t| t.instrument_channel);
+    // 语境 → 相关通道（三套命名空间各一条链）。
+    let midi_channel = match context {
+        DockContext::Midi(ch) => Some(ch),
+        _ => None,
+    };
+    // MIDI 语境下该通道上的乐器轨（乐器插件挂在 instrument_channel 上）。
+    let instrument_channel = match context {
+        DockContext::Instrument(ich) => Some(ich),
+        DockContext::Midi(ch) => model
+            .tracks
+            .iter()
+            .find(|t| t.kind == TrackKind::Instrument && t.global_channel() == ch)
+            .and_then(|t| t.instrument_channel),
+        DockContext::Audio(_) => None,
+    };
+    let insert_target = match context {
+        DockContext::Midi(ch) => yinhe_audio::InsertTarget::Channel(ch),
+        DockContext::Instrument(ich) => yinhe_audio::InsertTarget::Instrument(ich),
+        DockContext::Audio(ach) => yinhe_audio::InsertTarget::Audio(ach),
+    };
     let instrument_plugin: Option<String> = instrument_channel.and_then(|ich| {
         app.workspace.documents[idx]
             .mixer
@@ -171,31 +180,34 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
             .and_then(|o| o.as_ref())
             .map(|r| r.name.clone())
     });
-    let inserts: Vec<(String, bool)> = app.workspace.documents[idx].mixer.channel_inserts
-        [channel as usize]
-        .iter()
-        .map(|r| (r.name.clone(), r.bypassed))
-        .collect();
-    // lane 归属轨：该通道上的乐器轨优先，否则该通道第一条轨
+    let inserts: Vec<(String, bool)> =
+        crate::mix::insert_refs(&mut app.workspace.documents[idx].mixer, insert_target)
+            .map(|chain| chain.iter().map(|r| (r.name.clone(), r.bypassed)).collect())
+            .unwrap_or_default();
+    // 语境归属轨（该通道上的轨道）。
+    let belongs = |t: &std::sync::Arc<yinhe_core::TrackData>| match context {
+        DockContext::Midi(ch) => t.global_channel() == ch,
+        DockContext::Instrument(ich) => t.instrument_channel == Some(ich),
+        DockContext::Audio(ach) => t.audio_channel == Some(ach),
+    };
+    // lane 归属轨：乐器轨优先，否则该通道第一条轨
     //（xsynth 事件本就按通道走，多条轨共享时 lane 只挂一条）。
     let lane_track_ti: usize = model
         .tracks
         .iter()
-        .position(|t| t.kind == TrackKind::Instrument && t.global_channel() == channel)
-        .or_else(|| {
-            model
-                .tracks
-                .iter()
-                .position(|t| t.global_channel() == channel)
-        })
+        .position(|t| belongs(t) && t.kind == TrackKind::Instrument)
+        .or_else(|| model.tracks.iter().position(belongs))
         .unwrap_or(0);
-    // 乐器旁通状态：该通道所有轨道都 muted 视为旁通（任一未 mute = 开着）。
-    let inst_powered = !model
+    // 归属轨索引与旁通状态：该通道所有轨道都 muted 视为旁通（任一未 mute = 开着）。
+    let powered_tracks: Vec<usize> = model
         .tracks
         .iter()
         .enumerate()
-        .filter(|(_, t)| t.global_channel() == channel)
-        .all(|(ti, _)| {
+        .filter(|(_, t)| belongs(t))
+        .map(|(ti, _)| ti)
+        .collect();
+    let inst_powered = !powered_tracks.is_empty()
+        && !powered_tracks.iter().all(|&ti| {
             app.workspace.documents[idx]
                 .edit
                 .track_overrides
@@ -231,65 +243,117 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
     let track_names: Vec<String> = model
         .tracks
         .iter()
-        .filter(|t| t.global_channel() == channel)
+        .filter(|t| belongs(t))
         .map(|t| t.name.clone())
         .collect();
-    let active_channels: Vec<u8> = {
+    // 顶部选择器：三类通道的各活跃项。
+    let midi_active: Vec<u8> = {
         let layout = yinhe_audio::channel_layout::ChannelLayout::from_model(&model);
         (0..256u16)
             .filter(|&c| layout.is_active(c as usize))
             .map(|c| c as u8)
             .collect()
     };
+    let mut instrument_active: Vec<u16> = model
+        .tracks
+        .iter()
+        .filter_map(|t| t.instrument_channel)
+        .collect();
+    instrument_active.sort_unstable();
+    instrument_active.dedup();
+    let mut audio_active: Vec<u16> = model
+        .tracks
+        .iter()
+        .filter_map(|t| t.audio_channel)
+        .collect();
+    audio_active.sort_unstable();
+    audio_active.dedup();
 
-    // 默认选中乐器设备；上次选中项在当前链上无效时回退（换通道/插件被移除）。
-    let is_xsynth = instrument_plugin.is_none();
-    let default_device = if is_xsynth {
-        DockDevice::XSynth
+    // 主设备位：MIDI 通道无乐器轨 → XSynth；有乐器轨（或乐器语境）→ 乐器；
+    // 音频语境无主设备（只有 insert 链）。
+    let has_xsynth = midi_channel.is_some() && instrument_channel.is_none();
+    let default_device = if has_xsynth {
+        Some(DockDevice::XSynth)
+    } else if instrument_channel.is_some() {
+        Some(DockDevice::Instrument)
     } else {
-        DockDevice::Instrument
+        None
     };
-    let mut selected = app.dock_selected.unwrap_or(default_device);
-    let valid = match selected {
-        DockDevice::XSynth => is_xsynth,
-        DockDevice::Instrument => !is_xsynth,
-        DockDevice::Insert(slot) => slot < inserts.len(),
+    let valid = |sel: &DockDevice| match sel {
+        DockDevice::XSynth => has_xsynth,
+        DockDevice::Instrument => instrument_channel.is_some(),
+        DockDevice::Insert(slot) => *slot < inserts.len(),
     };
-    if !valid {
-        selected = default_device;
-    }
+    let mut selected: Option<DockDevice> = app
+        .dock_selected
+        .filter(|sel| valid(sel))
+        .or(default_device);
     let mut open_picker = false;
     let mut knob_actions: Vec<KnobAction> = Vec::new();
     let mut open_params: Option<DockDevice> = None;
     let mut toggle_bypass: Option<(usize, bool)> = None;
     let mut toggle_instrument: Option<bool> = None;
     let mut open_gui: Option<DockDevice> = None;
+    let mut open_instrument_picker: Option<u16> = None;
 
     // ── 顶部：通道选择 + 使用该通道的轨道 ──
     ui.horizontal(|ui| {
-        let mut picked: Option<u8> = None;
+        let mut picked: Option<DockContext> = None;
         ui.menu_button(
-            egui::RichText::new(format!("{} \u{25be}", crate::mix::channel_label(channel)))
+            egui::RichText::new(format!("{} \u{25be}", context_label(context)))
                 .size(crate::theme::SMALL_FONT + 1.0)
                 .color(crate::theme::text_primary()),
             |ui| {
                 egui::ScrollArea::vertical()
                     .max_height(320.0)
                     .show(ui, |ui| {
-                        for ch in &active_channels {
+                        for ch in &midi_active {
                             if ui
-                                .selectable_label(*ch == channel, crate::mix::channel_label(*ch))
+                                .selectable_label(
+                                    context == DockContext::Midi(*ch),
+                                    crate::mix::channel_label(*ch),
+                                )
                                 .clicked()
                             {
-                                picked = Some(*ch);
+                                picked = Some(DockContext::Midi(*ch));
                                 ui.close();
+                            }
+                        }
+                        if !instrument_active.is_empty() {
+                            ui.separator();
+                            for ich in &instrument_active {
+                                if ui
+                                    .selectable_label(
+                                        context == DockContext::Instrument(*ich),
+                                        crate::mix::instrument_label(*ich),
+                                    )
+                                    .clicked()
+                                {
+                                    picked = Some(DockContext::Instrument(*ich));
+                                    ui.close();
+                                }
+                            }
+                        }
+                        if !audio_active.is_empty() {
+                            ui.separator();
+                            for ach in &audio_active {
+                                if ui
+                                    .selectable_label(
+                                        context == DockContext::Audio(*ach),
+                                        crate::mix::audio_label(*ach),
+                                    )
+                                    .clicked()
+                                {
+                                    picked = Some(DockContext::Audio(*ach));
+                                    ui.close();
+                                }
                             }
                         }
                     });
             },
         );
-        if let Some(ch) = picked {
-            app.dock_channel = Some(ch);
+        if let Some(ctx) = picked {
+            app.dock_context = Some(ctx);
             app.dock_selected = None;
         }
         if !track_names.is_empty() {
@@ -302,8 +366,6 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
     });
 
     // ── 主体：左侧设备大卡片（含参数列表）+ 效果器小卡片 + 「+」竖条 ──
-    let inst_title = instrument_plugin.as_deref().unwrap_or("XSynth");
-
     let avail = ui.available_size();
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
@@ -312,7 +374,8 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
         let fx_total = inserts.len() as f32 * (FX_W + 6.0);
         let big_w = (avail.x - fx_total - ADD_W - 12.0).clamp(200.0, 240.0);
 
-        // 设备大卡片：标题 + 参数（XSynth 为旋钮纵向列表；插件为入口按钮）。
+        // 设备大卡片：标题 + 参数（XSynth 为旋钮纵向列表；插件为入口按钮；
+        // 音频语境为通道信息）。
         ui.allocate_ui_with_layout(
             egui::vec2(big_w, avail.y),
             egui::Layout::top_down(egui::Align::LEFT),
@@ -320,7 +383,9 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
                 big_device_card(
                     ui,
                     selected,
-                    inst_title,
+                    context,
+                    instrument_channel,
+                    instrument_plugin.as_deref(),
                     &lane_current,
                     &inserts,
                     &mut app.dock_param_search,
@@ -330,6 +395,7 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
                     &mut toggle_bypass,
                     &mut toggle_instrument,
                     &mut open_gui,
+                    &mut open_instrument_picker,
                 );
             },
         );
@@ -346,11 +412,11 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
                 egui_material_icons::icons::ICON_TUNE.codepoint,
                 name,
                 &subtitle,
-                selected == DockDevice::Insert(slot),
+                selected == Some(DockDevice::Insert(slot)),
             )
             .clicked()
             {
-                selected = DockDevice::Insert(slot);
+                selected = Some(DockDevice::Insert(slot));
             }
         }
 
@@ -361,31 +427,40 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
     });
 
     // ── 应用动作 ──
-    app.dock_selected = Some(selected);
+    app.dock_selected = selected;
     if open_picker {
-        app.mix.picker_for = Some(yinhe_audio::InsertTarget::Channel(channel));
+        app.mix.picker_for = Some(insert_target);
     }
     for action in knob_actions {
         apply_knob_action(app, idx, lane_track_ti, tick, action);
     }
-    if let Some(device) = open_params
-        && let Some(panel) = open_param_panel(app, idx, device, channel, instrument_channel)
-    {
-        app.mix.param_panel = Some(panel);
+    if let Some(device) = open_params {
+        match open_param_panel(app, idx, device, insert_target, instrument_channel) {
+            Some(panel) => app.mix.param_panel = Some(panel),
+            None => {
+                // 实例不可用（未加载成功）：在 MIX 状态行提示，避免"点了没反应"。
+                let msg = t!("dock.plugin_unavailable").to_string();
+                match device {
+                    DockDevice::Instrument => {
+                        if let Some(rack) = app.instrument_racks.get_mut(idx) {
+                            rack.last_error = Some(msg);
+                        }
+                    }
+                    _ => {
+                        let rack = app.mixer_rack_mut(idx);
+                        rack.last_error = Some(msg);
+                    }
+                }
+            }
+        }
+    }
+    if let Some(ich) = open_instrument_picker {
+        app.mix.instrument_picker_for = Some(ich);
     }
     if let Some(muted) = toggle_instrument {
-        // 乐器旁通 = 该通道所有轨道 mute（AR 读 track_overrides，自动同步）。
+        // 旁通 = 该通道所有轨道 mute（AR 读 track_overrides，自动同步）。
         let doc = &mut app.workspace.documents[idx];
-        let track_ids: Vec<usize> = doc
-            .data
-            .model
-            .tracks
-            .iter()
-            .enumerate()
-            .filter(|(_, t)| t.global_channel() == channel)
-            .map(|(ti, _)| ti)
-            .collect();
-        for ti in track_ids {
+        for &ti in &powered_tracks {
             if let Some(ov) = doc.edit.track_overrides.get_mut(ti) {
                 ov.muted = muted;
             }
@@ -394,32 +469,55 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
         crate::right_panel::info_panel::send_skip_tracks(doc, audio);
     }
     if let Some((slot, bypassed)) = toggle_bypass {
-        if let Some(r) = app.workspace.documents[idx]
-            .mixer_mut()
-            .channel_inserts
-            .get_mut(channel as usize)
-            .and_then(|chain| chain.get_mut(slot))
+        if let Some(r) =
+            crate::mix::insert_refs(&mut app.workspace.documents[idx].mixer, insert_target)
+                .and_then(|chain| chain.get_mut(slot))
         {
             r.bypassed = bypassed;
         }
         if let Some(rack) = app.mixer_racks.get_mut(idx) {
-            rack.set_bypass(Some(channel), slot, bypassed);
+            rack.set_bypass(insert_target, slot, bypassed);
         }
     }
     match open_gui {
         Some(DockDevice::Insert(slot)) => {
             #[cfg(target_os = "macos")]
-            if let Err(e) = app.mixer_rack_mut(idx).toggle_gui(Some(channel), slot) {
+            if let Err(e) = app.mixer_rack_mut(idx).toggle_gui(insert_target, slot) {
                 app.mixer_rack_mut(idx).last_error = Some(e.0);
             }
             #[cfg(not(target_os = "macos"))]
             let _ = slot;
         }
+        // 乐器插件原生界面（乐器通道上的实例）。
+        Some(DockDevice::Instrument) => {
+            if let Some(ich) = instrument_channel {
+                let result = app
+                    .instrument_racks
+                    .get_mut(idx)
+                    .map(|rack| rack.toggle_gui(ich));
+                if let Some(Err(e)) = result
+                    && let Some(rack) = app.instrument_racks.get_mut(idx)
+                {
+                    rack.last_error = Some(e.0);
+                }
+            }
+        }
         // 内置 XSynth 的"界面"就是音色库配置窗口。
         Some(DockDevice::XSynth) => {
-            app.mix.xsynth_config_for = Some(channel);
+            if let Some(ch) = midi_channel {
+                app.mix.xsynth_config_for = Some(ch);
+            }
         }
-        _ => {}
+        None => {}
+    }
+}
+
+/// 语境标签（MIDI-A01 / Inst-01 / Audio-01）。
+fn context_label(context: DockContext) -> String {
+    match context {
+        DockContext::Midi(ch) => crate::mix::channel_label(ch),
+        DockContext::Instrument(ich) => crate::mix::instrument_label(ich),
+        DockContext::Audio(ach) => crate::mix::audio_label(ach),
     }
 }
 
@@ -516,13 +614,15 @@ fn add_column(ui: &mut egui::Ui, height: f32) -> egui::Response {
     resp.on_hover_text(t!("mix.add_insert_hint"))
 }
 
-/// 设备大卡片：标题行（电源 / 名称 / 搜索 / 打开 GUI）+ 内容
-/// （XSynth 旋钮纵向列表；插件设备参数面板入口）。
+/// 设备大卡片：标题行（电源 / 名称 / 搜索 / 界面按钮）+ 内容
+/// （XSynth 旋钮纵向列表；插件设备参数面板入口；音频语境为通道信息）。
 #[allow(clippy::too_many_arguments)] // UI 上下文透传，见 AGENTS 约定
 fn big_device_card(
     ui: &mut egui::Ui,
-    selected: DockDevice,
-    inst_title: &str,
+    selected: Option<DockDevice>,
+    context: DockContext,
+    instrument_channel: Option<u16>,
+    instrument_name: Option<&str>,
     lane_current: &[(AutomationTarget, Option<f32>)],
     inserts: &[(String, bool)],
     search: &mut String,
@@ -532,6 +632,7 @@ fn big_device_card(
     toggle_bypass: &mut Option<(usize, bool)>,
     toggle_instrument: &mut Option<bool>,
     open_gui: &mut Option<DockDevice>,
+    open_instrument_picker: &mut Option<u16>,
 ) {
     egui::Frame::new()
         .fill(crate::theme::track_bg())
@@ -543,9 +644,9 @@ fn big_device_card(
             // ── 标题行 ──
             ui.horizontal(|ui| {
                 // 电源：强调色 = 开着；点击切换旁通
-                // （效果器 = 自身旁通；乐器/XSynth = 该通道所有轨道 mute）。
+                // （效果器 = 自身旁通；乐器/XSynth/音频 = 该通道所有轨道 mute）。
                 let powered = match selected {
-                    DockDevice::Insert(slot) => {
+                    Some(DockDevice::Insert(slot)) => {
                         !inserts.get(slot).map(|(_, b)| *b).unwrap_or(false)
                     }
                     _ => inst_powered,
@@ -566,11 +667,13 @@ fn big_device_card(
                 );
                 if power_resp.clicked() {
                     match selected {
-                        DockDevice::Insert(slot) => {
+                        Some(DockDevice::Insert(slot)) => {
                             if let Some((_, bypassed)) = inserts.get(slot) {
                                 *toggle_bypass = Some((slot, !*bypassed));
                             }
                         }
+                        // 音频语境无主设备（音频轨 mute 在 AR/MIX 里操作）。
+                        None => {}
                         // 目标 muted 值 = 当前是否开着（true→全 mute，false→全恢复）。
                         _ => *toggle_instrument = Some(inst_powered),
                     }
@@ -579,12 +682,15 @@ fn big_device_card(
 
                 // 名称。
                 let name = match selected {
-                    DockDevice::XSynth => "XSynth".to_string(),
-                    DockDevice::Instrument => inst_title.to_string(),
-                    DockDevice::Insert(slot) => inserts
+                    Some(DockDevice::XSynth) => "XSynth".to_string(),
+                    Some(DockDevice::Instrument) => instrument_name
+                        .map(str::to_string)
+                        .unwrap_or_else(|| t!("dock.instrument_unloaded").to_string()),
+                    Some(DockDevice::Insert(slot)) => inserts
                         .get(slot)
                         .map(|(n, _)| n.clone())
                         .unwrap_or_else(|| "?".into()),
+                    None => context_label(context),
                 };
                 ui.label(
                     egui::RichText::new(name)
@@ -593,7 +699,7 @@ fn big_device_card(
                 );
 
                 // 搜索（仅 XSynth 参数列表）。
-                if matches!(selected, DockDevice::XSynth) {
+                if selected == Some(DockDevice::XSynth) {
                     let search_font = egui::FontId::proportional(crate::theme::SMALL_FONT);
                     ui.add(
                         egui::TextEdit::singleline(search)
@@ -607,8 +713,8 @@ fn big_device_card(
 
                 // 界面按钮：插件设备打开原生 GUI；XSynth 打开音色库配置窗口
                 //（内置合成器的"界面"）。
-                {
-                    let icon = if matches!(selected, DockDevice::XSynth) {
+                if let Some(device) = selected {
+                    let icon = if device == DockDevice::XSynth {
                         egui_material_icons::icons::ICON_LIBRARY_MUSIC
                     } else {
                         egui_material_icons::icons::ICON_HOME_STORAGE
@@ -622,9 +728,9 @@ fn big_device_card(
                         .frame(false),
                     );
                     if resp.clicked() {
-                        *open_gui = Some(selected);
+                        *open_gui = Some(device);
                     }
-                    resp.on_hover_text(if matches!(selected, DockDevice::XSynth) {
+                    resp.on_hover_text(if device == DockDevice::XSynth {
                         t!("soundfont.title").to_string()
                     } else {
                         t!("mix.toggle_gui").to_string()
@@ -635,7 +741,7 @@ fn big_device_card(
 
             // ── 内容 ──
             match selected {
-                DockDevice::XSynth => {
+                Some(DockDevice::XSynth) => {
                     let needle = search.trim().to_lowercase();
                     let filtered: Vec<&(AutomationTarget, Option<f32>)> = lane_current
                         .iter()
@@ -650,13 +756,47 @@ fn big_device_card(
                             xsynth_params(ui, &filtered, knob_actions);
                         });
                 }
-                device @ (DockDevice::Instrument | DockDevice::Insert(_)) => {
+                Some(DockDevice::Instrument) => {
+                    if instrument_name.is_some() {
+                        if ui.button(t!("dock.open_params")).clicked() {
+                            *open_params = Some(DockDevice::Instrument);
+                        }
+                        ui.add_space(4.0);
+                        ui.label(
+                            egui::RichText::new(t!("dock.plugin_hint"))
+                                .size(crate::theme::SMALL_FONT)
+                                .color(crate::theme::text_muted()),
+                        );
+                    } else {
+                        // 乐器通道存在但未加载插件：给出加载入口。
+                        ui.label(
+                            egui::RichText::new(t!("dock.instrument_unloaded_hint"))
+                                .size(crate::theme::SMALL_FONT)
+                                .color(crate::theme::text_muted()),
+                        );
+                        ui.add_space(4.0);
+                        if let Some(ich) = instrument_channel
+                            && ui.button(t!("mix.pick_instrument")).clicked()
+                        {
+                            *open_instrument_picker = Some(ich);
+                        }
+                    }
+                }
+                Some(DockDevice::Insert(_)) => {
                     if ui.button(t!("dock.open_params")).clicked() {
-                        *open_params = Some(device);
+                        *open_params = selected;
                     }
                     ui.add_space(4.0);
                     ui.label(
                         egui::RichText::new(t!("dock.plugin_hint"))
+                            .size(crate::theme::SMALL_FONT)
+                            .color(crate::theme::text_muted()),
+                    );
+                }
+                // 音频语境：无主设备（insert 链在右侧，推子/发送在 MIX 视图）。
+                None => {
+                    ui.label(
+                        egui::RichText::new(t!("dock.audio_channel_hint"))
                             .size(crate::theme::SMALL_FONT)
                             .color(crate::theme::text_muted()),
                     );
@@ -853,7 +993,7 @@ fn open_param_panel(
     app: &mut App,
     idx: usize,
     device: DockDevice,
-    channel: u8,
+    insert_target: yinhe_audio::InsertTarget,
     instrument_channel: Option<u16>,
 ) -> Option<crate::mix::ParamPanel> {
     use crate::mix::param_panel::{ParamPanel, ParamTarget};
@@ -875,11 +1015,11 @@ fn open_param_panel(
             let instance = app
                 .mixer_racks
                 .get_mut(idx)
-                .and_then(|rack| rack.instance_mut(Some(channel), slot))?;
+                .and_then(|rack| rack.instance_mut(insert_target, slot))?;
             let title = instance.name().to_string();
             Some(ParamPanel::open(
                 ParamTarget::Insert {
-                    target: yinhe_audio::InsertTarget::Channel(channel),
+                    target: insert_target,
                     slot,
                 },
                 title,

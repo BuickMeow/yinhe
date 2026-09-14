@@ -1088,7 +1088,7 @@ pub(crate) fn instrument_strip(
         .unwrap_or_default();
 
     strip_frame(ui, crate::theme::accent_active(), height, |ui| {
-        label_block(ui, format!("{} {}", t!("mix.instrument"), channel + 1), "");
+        label_block(ui, crate::mix::instrument_label(channel), "");
         ui.add_space(4.0);
         match &name {
             Some(n) => {
@@ -1100,7 +1100,12 @@ pub(crate) fn instrument_strip(
                     )
                     .truncate(),
                 );
-                resp.on_hover_text(n);
+                resp.clone()
+                    .on_hover_text(format!("{n}\n{}", t!("mix.toggle_gui")));
+                // 名称行点击：打开/关闭插件原生界面（与效果器行一致）。
+                if resp.clicked() {
+                    actions.push(MixAction::ToggleInstrumentGui { channel });
+                }
                 ui.add_space(4.0);
                 if ui.small_button(t!("mix.params")).clicked() {
                     actions.push(MixAction::OpenInstrumentParams { channel });
@@ -1170,7 +1175,7 @@ pub(crate) fn audio_strip(
         .unwrap_or_default();
 
     strip_frame(ui, crate::theme::accent_active(), height, |ui| {
-        label_block(ui, format!("{} {}", t!("mix.audio"), channel + 1), "");
+        label_block(ui, crate::mix::audio_label(channel), "");
         strip_body(
             ui,
             InsertTarget::Audio(channel),

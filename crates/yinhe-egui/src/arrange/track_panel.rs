@@ -355,13 +355,19 @@ pub(crate) fn show(
                     // 乐器轨显示乐器通道（与 MIDI 通道是两套独立命名空间）。
                     Some(t) if t.kind == yinhe_core::TrackKind::Instrument => t
                         .instrument_channel
-                        // u32 转换避免 u16 上限（65535）+1 溢出 panic。
-                        .map(|c| format!("I{:02}", u32::from(c) + 1))
-                        .unwrap_or_else(|| "I--".to_string()),
-                    // 音频轨（预留）显示 AU。
-                    Some(t) if t.kind == yinhe_core::TrackKind::Audio => "AU".to_string(),
+                        .map(crate::mix::instrument_label)
+                        .unwrap_or_else(|| "Inst--".to_string()),
+                    // 音频轨显示音频通道。
+                    Some(t) if t.kind == yinhe_core::TrackKind::Audio => t
+                        .audio_channel
+                        .map(crate::mix::audio_label)
+                        .unwrap_or_else(|| "Audio--".to_string()),
                     // MIDI 轨：port 字母（A..P）+ 通道号。
-                    _ => format!("{}{:02}", (b'A' + ti.port.min(15)) as char, ti.channel + 1),
+                    _ => format!(
+                        "MIDI-{}{:02}",
+                        (b'A' + ti.port.min(15)) as char,
+                        ti.channel + 1
+                    ),
                 }
             };
             painter.text(

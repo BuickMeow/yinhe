@@ -94,20 +94,19 @@ struct Plan {
     error: Option<String>,
 }
 
-/// MIDI 通道 badge 文本（如 A01、P16），与轨道面板 badge 同规则。
+/// MIDI 通道 badge 文本（如 MIDI-A01、MIDI-P16），与轨道面板 badge 同规则。
 fn midi_badge(port: u8, channel: u8) -> String {
-    format!("{}{:02}", (b'A' + port.min(15)) as char, channel + 1)
+    format!("MIDI-{}{:02}", (b'A' + port.min(15)) as char, channel + 1)
 }
 
-/// 乐器通道 badge 文本（如 I01），与轨道面板 badge 同规则。
+/// 乐器通道 badge 文本（如 Inst-01），与轨道面板 badge 同规则。
 fn instrument_badge(channel0: u16) -> String {
-    // saturating：u16 上限 65535 时 +1 不溢出（显示 65536 超出 u16 表达范围）。
-    format!("I{:02}", u32::from(channel0) + 1)
+    crate::mix::instrument_label(channel0)
 }
 
-/// 音频通道 badge 文本（如 A01），与轨道面板 badge 同规则。
+/// 音频通道 badge 文本（如 Audio-01），与轨道面板 badge 同规则。
 fn audio_badge(channel0: u16) -> String {
-    format!("A{:02}", u32::from(channel0) + 1)
+    crate::mix::audio_label(channel0)
 }
 
 /// 根据当前状态计算分配方案（预览/提示/确认共用同一规则）。

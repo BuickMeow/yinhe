@@ -32,6 +32,13 @@ pub(crate) struct InstrumentSlot {
     pub sent: bool,
     /// 激活失败过：不再每帧重试（重新选择插件才会再试）。
     pub activate_failed: bool,
+    /// 插件原生 GUI 窗口当前打开中（host 自建窗口嵌入插件 view）。
+    pub gui_open: bool,
+    /// 宿主侧 GUI 窗口（macOS NSWindow）。必须在 `instance` 之后声明：
+    /// 字段按声明顺序 drop，instance 的 Drop 先执行 close_gui（插件 view
+    /// 从父 view 移除），之后窗口对象才能释放。
+    #[cfg(target_os = "macos")]
+    pub gui_window: Option<super::gui_window::PluginGuiWindow>,
 }
 
 /// 一个文档的乐器机架（与 documents 平行，索引 = 文档 idx）。
@@ -54,6 +61,75 @@ impl InstrumentRack {
     /// 按乐器通道取插件实例（参数面板用）。槽位不存在/无实例返回 None。
     pub(crate) fn instance_mut(&mut self, channel: u16) -> Option<&mut PluginInstance> {
         self.slot_mut(channel)?.instance.as_mut()
+    }
+
+    /// 打开/关闭乐器插件原生界面（host 自建窗口 + 插件 view 嵌入）。
+    /// CLAP / VST3 共用宿主 NSWindow（与效果器机架同一实现）。
+    #[cfg(target_os = "macos")]
+    pub fn toggle_gui(&mut self, channel: u16) -> Result<bool, PluginLoadError> {
+        let Some(rt) = self.slot_mut(channel) else {
+            return Ok(false);
+        };
+        if rt.instance.is_none() {
+            tracing::warn!("打开乐器界面失败: 槽位无实例（插件未加载成功）");
+            return Err(PluginLoadError("插件未加载成功，无法打开界面".into()));
+        }
+        // 关闭：先让插件 view 脱离父 view，再释放窗口对象。
+        if rt.gui_open {
+            close_plugin_view(rt);
+            rt.gui_window = None;
+            rt.gui_open = false;
+            return Ok(false);
+        }
+        // 打开：创建插件 view + 宿主窗口 + 嵌入。
+        let (name, size_result): (String, Result<(u32, u32), String>) = match rt.instance.as_mut() {
+            Some(PluginInstance::Clap(inst)) => (
+                inst.info().name.clone(),
+                inst.create_gui().map_err(|e| format!("{e}")),
+            ),
+            Some(PluginInstance::Vst3 { instance, name, .. }) => (
+                name.clone(),
+                instance.create_view().map_err(|e| format!("{e}")),
+            ),
+            None => return Err(PluginLoadError("插件未加载成功，无法打开界面".into())),
+        };
+        let (w, h) = size_result.map_err(|e| {
+            tracing::warn!("乐器界面创建失败 ({name}): {e}");
+            PluginLoadError(e)
+        })?;
+        tracing::info!("乐器界面创建中: {name} {w}x{h}");
+        let Some(win) = super::gui_window::PluginGuiWindow::new(&name, w, h) else {
+            close_plugin_view(rt);
+            tracing::warn!("乐器窗口创建失败: {name}");
+            return Err(PluginLoadError("创建插件窗口失败".into()));
+        };
+        let attach_result: Result<(), String> = match rt.instance.as_mut() {
+            Some(PluginInstance::Clap(inst)) => inst
+                .attach_and_show_gui(win.view_ptr())
+                .map_err(|e| format!("{e}")),
+            Some(PluginInstance::Vst3 { instance, .. }) => unsafe {
+                instance
+                    .attach_view(win.view_ptr())
+                    .map_err(|e| format!("{e}"))
+            },
+            None => Err("实例丢失".into()),
+        };
+        if let Err(e) = attach_result {
+            close_plugin_view(rt);
+            tracing::warn!("乐器界面嵌入失败 ({name}): {e}");
+            return Err(PluginLoadError(e));
+        }
+        win.show();
+        tracing::info!("乐器界面已显示: {name}");
+        rt.gui_window = Some(win);
+        rt.gui_open = true;
+        Ok(true)
+    }
+
+    /// 非 macOS：原生 GUI 尚未实现。
+    #[cfg(not(target_os = "macos"))]
+    pub fn toggle_gui(&mut self, _channel: u16) -> Result<bool, PluginLoadError> {
+        Err(PluginLoadError("当前平台暂不支持插件界面".into()))
     }
 
     /// 加载某乐器通道的插件实例（不激活、不发送——发送走 ensure_all_sent）。
@@ -108,6 +184,9 @@ impl InstrumentRack {
             instance,
             sent: false,
             activate_failed: false,
+            gui_open: false,
+            #[cfg(target_os = "macos")]
+            gui_window: None,
         });
         self.slots.sort_by_key(|s| s.channel);
         match error {
@@ -292,6 +371,16 @@ impl InstrumentRack {
     }
 }
 
+/// 关闭槽位当前插件的原生 view（CLAP/VST3 分派）。
+#[cfg(target_os = "macos")]
+fn close_plugin_view(slot: &mut InstrumentSlot) {
+    match slot.instance.as_mut() {
+        Some(PluginInstance::Clap(inst)) => inst.close_gui(),
+        Some(PluginInstance::Vst3 { instance, .. }) => instance.close_view(),
+        None => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,6 +394,9 @@ mod tests {
             instance: None,
             sent: false,
             activate_failed: false,
+            gui_open: false,
+            #[cfg(target_os = "macos")]
+            gui_window: None,
         });
         let mut mixer = MixerParams::default();
         mixer.instruments.resize(4, None);
@@ -332,6 +424,9 @@ mod tests {
             instance: None,
             sent: false,
             activate_failed: false,
+            gui_open: false,
+            #[cfg(target_os = "macos")]
+            gui_window: None,
         });
         rack.unload(2, None);
         assert!(!rack.slots.iter().any(|s| s.channel == 2));

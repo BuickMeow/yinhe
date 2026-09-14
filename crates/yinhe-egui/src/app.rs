@@ -120,8 +120,8 @@ pub struct App {
     pub(crate) bottom_dock_height: f32,
     /// dock 参数区当前选中的设备（不持久化）。
     pub(crate) dock_selected: Option<crate::chrome::dock_bar::DockDevice>,
-    /// dock 当前显示的源通道（Studio One 风格按通道组织；不持久化）。
-    pub(crate) dock_channel: Option<u8>,
+    /// dock 当前通道语境（MIDI / 乐器 / 音频三套命名空间；不持久化）。
+    pub(crate) dock_context: Option<crate::chrome::dock_bar::DockContext>,
     /// dock 上次跟随的选中轨（切换轨道时 dock 通道跟随）。
     pub(crate) dock_track: Option<u16>,
     /// dock 旋钮拖动会话（一次拖动 = 一条 undo，不持久化）。
@@ -385,7 +385,7 @@ impl App {
             show_bottom_dock: audio_settings.layout.show_bottom_dock,
             bottom_dock_height: audio_settings.layout.bottom_dock_height,
             dock_selected: None,
-            dock_channel: None,
+            dock_context: None,
             dock_track: None,
             knob_drag: None,
             dock_param_search: String::new(),
