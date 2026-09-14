@@ -65,14 +65,75 @@ pub const DEFAULT_TRACK_COLOR: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
 
 /// 音轨种类。MIDI 轨走 xsynth 音色库（按 port/channel 路由）；
 /// 乐器轨走 CLAP 乐器插件（按 instrument_channel 路由，与 MIDI 通道是
-/// 两套独立命名空间）；音频轨为预留，本期未实现。
+/// 两套独立命名空间）；音频轨走内嵌音频素材的片段回放
+/// （按 audio_channel 路由，与另外两套命名空间独立）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TrackKind {
     #[default]
     Midi,
     Instrument,
-    /// 预留：音频轨（音频剪辑回放，本期未实现）。
     Audio,
+}
+
+// =========================================================
+//  Audio source / clip
+// =========================================================
+
+/// 工程内嵌的音频素材（导入或录音产生）。
+///
+/// `data` 是**原始文件字节**（wav/mp3/flac/ogg/m4a），随 `.yin` 存档内嵌，
+/// 保证工程自包含可移植。运行时解码后的 PCM 与波形峰值是派生数据，
+/// 不放进模型（见 yinhe-audio 的 `AudioLibrary`）。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AudioSource {
+    /// 工程内唯一 id（片段用 `AudioClip::source` 引用）。
+    pub uuid: String,
+    /// 显示名（原文件名）。
+    pub name: String,
+    /// 原始文件字节。`Arc` 共享，编辑模型时不做深拷贝。
+    pub data: Arc<Vec<u8>>,
+    /// 原始时长（秒），供 UI 显示/裁剪上限。
+    pub duration_seconds: f64,
+}
+
+/// 音频片段：在绝对时间轴上播放素材的一段（时间基准 = 秒，不受 BPM 影响）。
+///
+/// 所有时间都相对工程时间线，与 tempo 无关（用户选定的语义）。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AudioClip {
+    /// 工程内唯一片段 id（选择/undo 引用）。
+    pub id: u32,
+    /// 引用的 `AudioSource::uuid`。
+    pub source: String,
+    /// 时间线起点（秒）。
+    pub start_seconds: f64,
+    /// 素材内起点偏移（秒）。
+    pub offset_seconds: f64,
+    /// 播放时长（秒）。
+    pub duration_seconds: f64,
+    /// 线性增益（1.0 = 0 dB）。
+    #[serde(default = "default_audio_gain")]
+    pub gain: f32,
+    /// 淡入时长（秒，0 = 无）。
+    #[serde(default)]
+    pub fade_in_seconds: f64,
+    /// 淡出时长（秒，0 = 无）。
+    #[serde(default)]
+    pub fade_out_seconds: f64,
+    /// 反向播放（只翻标志，不改 PCM）。
+    #[serde(default)]
+    pub reversed: bool,
+}
+
+const fn default_audio_gain() -> f32 {
+    1.0
+}
+
+impl AudioClip {
+    /// 时间线终点（秒）。
+    pub fn end_seconds(&self) -> f64 {
+        self.start_seconds + self.duration_seconds
+    }
 }
 
 /// One MIDI track's complete data.
@@ -105,6 +166,14 @@ pub struct TrackData {
     /// 多条乐器轨共享同一乐器通道 = 共享同一个插件实例。
     #[serde(default)]
     pub instrument_channel: Option<u16>,
+    /// 音频通道号（0 起，UI 显示 1 起）。仅音频轨有意义；
+    /// 与 MIDI/乐器通道均无关，是音频混音条的路由命名空间。
+    /// 多条音频轨共享同一音频通道 = 共享同一条混音 strip/insert 链。
+    #[serde(default)]
+    pub audio_channel: Option<u16>,
+    /// 音频片段（仅音频轨有意义），按 start_seconds 排序由编辑命令维护。
+    #[serde(default)]
+    pub audio_clips: Vec<AudioClip>,
 
     /// Notes are stored in `YinModel.notes` (by-key store).
     /// This field is only used during parsing and is moved out
@@ -136,6 +205,8 @@ impl TrackData {
             soloed: false,
             kind: TrackKind::Midi,
             instrument_channel: None,
+            audio_channel: None,
+            audio_clips: Vec::new(),
             notes: Vec::new(),
             automation_lanes: Vec::new(),
             program_change: Vec::new(),
@@ -245,6 +316,12 @@ pub struct YinModel {
     /// 0 保留为"未分配"哨兵，实际 id 从 1 开始。
     /// 编辑时调 `alloc_note_id()`，加载时由 `load_track_notes` 统一分配。
     pub next_note_id: u32,
+
+    /// 工程内嵌音频素材表（去重：一个素材可被多个片段引用）。
+    /// `Arc` 共享，编辑模型时不做字节深拷贝。
+    pub audio_sources: Vec<Arc<AudioSource>>,
+    /// 全局音频片段 id 发号器（0 保留为哨兵，实际从 1 开始）。
+    pub next_audio_clip_id: u32,
 }
 
 impl Default for YinModel {
@@ -266,6 +343,8 @@ impl Default for YinModel {
             bucket_max_end_tick: [0; KEY_COUNT],
             bucket_track_stats: core::array::from_fn(|_| HashMap::new()),
             next_note_id: 1,
+            audio_sources: Vec::new(),
+            next_audio_clip_id: 1,
         }
     }
 }
@@ -402,6 +481,27 @@ impl YinModel {
             .copied()
             .unwrap_or(0)
             > 0
+    }
+
+    /// 分配一个新的音频片段 id。
+    pub fn alloc_audio_clip_id(&mut self) -> u32 {
+        let id = self.next_audio_clip_id.max(1);
+        self.next_audio_clip_id = id.wrapping_add(1);
+        id
+    }
+
+    /// 按 uuid 查找音频素材。
+    pub fn audio_source(&self, uuid: &str) -> Option<&Arc<AudioSource>> {
+        self.audio_sources.iter().find(|s| s.uuid == uuid)
+    }
+
+    /// 所有音频片段的时间线末尾（秒）。无音频时 0。
+    pub fn audio_end_seconds(&self) -> f64 {
+        self.tracks
+            .iter()
+            .flat_map(|t| t.audio_clips.iter())
+            .map(|c| c.end_seconds())
+            .fold(0.0, f64::max)
     }
 }
 

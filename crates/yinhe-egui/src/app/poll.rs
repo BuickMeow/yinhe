@@ -25,7 +25,7 @@ impl App {
                     ));
                 match Document::from_model(
                     &path,
-                    model,
+                    *model,
                     quantize_arrange,
                     quantize_pianoroll,
                     yinhe_yin::ProjectFile::default(),
@@ -114,12 +114,12 @@ impl App {
                     yinhe_yin::ProjectFile::from_meta_with_sf(&model.meta, sf.overrides.clone());
                 let result = Document::from_model(
                     &path,
-                    model,
+                    *model,
                     quantize_arrange,
                     quantize_pianoroll,
                     project_file,
                     mapping,
-                    mixer,
+                    mixer.map(|m| *m),
                 )
                 .ok()
                 .map(|mut d| {

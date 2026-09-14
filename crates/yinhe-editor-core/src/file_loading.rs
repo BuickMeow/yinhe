@@ -68,20 +68,25 @@ pub struct ArchiveLoader {
 }
 
 /// Result of polling the async loader.
+///
+/// `model` 用 `Box` 装：`YinModel` 是大结构体（十几 KB 的派生索引数组），
+/// 直接内联在枚举里会让整个枚举取最大变体尺寸，每次返回都要搬运全部字节。
 pub enum LoadResult {
     ModelLoaded {
         path: String,
         /// 压缩包内文件时为外层压缩包路径（用于「最近文件」），普通 MIDI 为 None 时与 `path` 相同。
         archive_path: Option<String>,
-        model: YinModel,
+        model: Box<YinModel>,
     },
     ModelFromYin {
         path: String,
-        model: YinModel,
+        model: Box<YinModel>,
         file_name: String,
         sf: ProjectSoundFonts,
         mapping: MappingFile,
-        mixer: Option<MixerParams>,
+        /// Box：`MixerParams` 内含多条 Vec（~170 字节），内联会把
+        /// 本变体撑到与最小变体差 200 字节以上。
+        mixer: Option<Box<MixerParams>>,
     },
     /// 压缩包含多个 MIDI 文件，需要 UI 层弹选择器。rx 已就绪
     /// （channel 中已 send `Ok((archive, entries))`）。
@@ -340,7 +345,7 @@ impl FileLoader {
                                 return LoadResult::ModelLoaded {
                                     path,
                                     archive_path,
-                                    model,
+                                    model: Box::new(model),
                                 };
                             }
                             Err(e) => {
@@ -364,11 +369,11 @@ impl FileLoader {
                             progress::set_visible(&self.load_progress, false);
                             return LoadResult::ModelFromYin {
                                 path,
-                                model,
+                                model: Box::new(model),
                                 file_name,
                                 sf,
                                 mapping,
-                                mixer,
+                                mixer: mixer.map(Box::new),
                             };
                         }
                         Err(e) => {

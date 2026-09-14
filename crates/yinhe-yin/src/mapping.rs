@@ -52,6 +52,13 @@ pub struct TrackMap {
     /// 乐器通道号（仅乐器轨有意义）。
     #[serde(default)]
     pub instrument_channel: Option<u16>,
+    /// 音频通道号（仅音频轨有意义）。
+    #[serde(default)]
+    pub audio_channel: Option<u16>,
+    /// 音频片段（仅音频轨有意义）。放在 mapping.json（自描述 JSON）而非
+    /// data 段的 postcard 里：postcard 非自描述，追字段会让旧文件解析失败。
+    #[serde(default)]
+    pub audio_clips: Vec<yinhe_core::AudioClip>,
 }
 
 fn default_track_color() -> [f32; 4] {
@@ -111,6 +118,8 @@ impl MappingFile {
                 soloed: t.soloed,
                 kind: t.kind,
                 instrument_channel: t.instrument_channel,
+                audio_channel: t.audio_channel,
+                audio_clips: t.audio_clips.clone(),
             });
         }
 

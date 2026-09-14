@@ -9,7 +9,7 @@ use super::Document;
 /// 新建音轨的规格（新建音轨对话框 → Document::add_tracks_batch）。
 #[derive(Clone, Copy, Debug)]
 pub struct NewTrackSpec {
-    /// 音轨种类（MIDI / 乐器；音频轨为预留，暂不能创建）。
+    /// 音轨种类（MIDI / 乐器 / 音频）。
     pub kind: yinhe_core::TrackKind,
     /// MIDI port（0 起，UI 显示 A..P）。仅 MIDI 轨有意义。
     pub port: u8,
@@ -18,6 +18,9 @@ pub struct NewTrackSpec {
     /// 乐器通道（0 起，UI 显示 1 起）。仅乐器轨有值；
     /// 多条乐器轨同号 = 共享同一个 CLAP 插件实例。
     pub instrument_channel: Option<u16>,
+    /// 音频通道（0 起，UI 显示 1 起）。仅音频轨有值；
+    /// 多条音频轨同号 = 共享同一条混音 strip/insert 链。
+    pub audio_channel: Option<u16>,
 }
 
 /// 现有轨道中自动命名 "Track N" 的最大 N（Conductor/导入的真实轨名如
@@ -154,6 +157,7 @@ impl Document {
             let mut new_track = yinhe_core::TrackData::new(spec.port, spec.channel);
             new_track.kind = spec.kind;
             new_track.instrument_channel = spec.instrument_channel;
+            new_track.audio_channel = spec.audio_channel;
             new_track.name = format!("Track {}", num);
             model.tracks.push(Arc::new(new_track));
         }
@@ -449,18 +453,21 @@ mod tests {
                 port: 1,
                 channel: 0,
                 instrument_channel: None,
+                audio_channel: None,
             },
             NewTrackSpec {
                 kind: yinhe_core::TrackKind::Midi,
                 port: 1,
                 channel: 1,
                 instrument_channel: None,
+                audio_channel: None,
             },
             NewTrackSpec {
                 kind: yinhe_core::TrackKind::Instrument,
                 port: 0,
                 channel: 0,
                 instrument_channel: Some(0),
+                audio_channel: None,
             },
         ];
         assert!(doc.add_tracks_batch(&specs).is_some());
@@ -489,12 +496,14 @@ mod tests {
                 port: 0,
                 channel: 15,
                 instrument_channel: None,
+                audio_channel: None,
             },
             NewTrackSpec {
                 kind: yinhe_core::TrackKind::Midi,
                 port: 1,
                 channel: 0,
                 instrument_channel: None,
+                audio_channel: None,
             },
         ];
         let action = doc.add_tracks_batch(&specs).expect("批量创建应成功");

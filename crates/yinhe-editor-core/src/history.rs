@@ -191,6 +191,13 @@ pub enum UndoAction {
         bounds: (u64, u64, u8, u8),
         axis: crate::document::note_edit::FlipAxis,
     },
+    /// 音频片段整体替换（移动/裁剪/分割/复制/删除/增益/淡入淡出/反向
+    /// 等全部片段编辑共用）。片段数量少，整轨快照比逐片段 delta 更简单。
+    AudioClips {
+        track_idx: usize,
+        before: Vec<yinhe_core::AudioClip>,
+        after: Vec<yinhe_core::AudioClip>,
+    },
     /// Multiple actions applied atomically (undo/redo as a single step).
     Composite(Vec<UndoAction>),
 }
@@ -309,6 +316,18 @@ impl UndoAction {
             }
             // 两次镜像恒等：自逆，原样返回。
             UndoAction::FlipNotes { .. } => self,
+            UndoAction::AudioClips {
+                track_idx,
+                mut before,
+                mut after,
+            } => {
+                std::mem::swap(&mut before, &mut after);
+                UndoAction::AudioClips {
+                    track_idx,
+                    before,
+                    after,
+                }
+            }
             UndoAction::Composite(actions) => {
                 // Reverse order so that reversed().redo() undoes in reverse order,
                 // matching the original undo() semantics.

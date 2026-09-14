@@ -50,6 +50,18 @@ pub fn auto_instrument_channel_start(tracks: &[Arc<yinhe_core::TrackData>]) -> u
         .unwrap_or(0)
 }
 
+/// 音频轨自动分配起点（0 起）：现有音频轨最大 audio_channel + 1；
+/// 没有音频轨时从 0（UI 显示「A01」）开始。与乐器通道规则一致。
+pub fn auto_audio_channel_start(tracks: &[Arc<yinhe_core::TrackData>]) -> u16 {
+    tracks
+        .iter()
+        .filter(|t| t.kind == yinhe_core::TrackKind::Audio)
+        .filter_map(|t| t.audio_channel)
+        .max()
+        .map(|m| m.saturating_add(1))
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

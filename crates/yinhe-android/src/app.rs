@@ -296,7 +296,7 @@ impl YinheApp {
                 let mapping_file = yinhe_yin::MappingFile::default();
                 let mut doc = match Document::from_model(
                     &path,
-                    model,
+                    *model,
                     QuantizePreset::Fraction(1, 4),
                     QuantizePreset::Fraction(1, 16),
                     project_file,

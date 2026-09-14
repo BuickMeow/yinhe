@@ -169,6 +169,17 @@ impl UndoAction {
                         .filter(|&v| v != u16::MAX)
                 });
             }
+            UndoAction::AudioClips {
+                track_idx,
+                before: _,
+                after,
+            } => {
+                let model = Arc::make_mut(&mut doc.data.model);
+                if let Some(track) = model.tracks.get_mut(*track_idx) {
+                    Arc::make_mut(track).audio_clips = after.clone();
+                }
+                doc.data.bump_revision();
+            }
             UndoAction::Composite(actions) => {
                 for action in actions {
                     action.redo(doc);

@@ -19,11 +19,12 @@ pub(crate) const OPEN_REQUEST_ID: &str = "new_track_dialog_open";
 /// 一次最多创建的音轨数。
 const MAX_COUNT: usize = 64;
 
-/// 对话框内的音轨种类选择。音频轨为预留（禁用展示，不可选）。
+/// 对话框内的音轨种类选择。
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum KindChoice {
     Midi,
     Instrument,
+    Audio,
 }
 
 /// 通道分配方式：自动（顺延既有最大通道）或指定起点向后顺延。
@@ -46,6 +47,8 @@ pub(crate) struct NewTrackDialogState {
     manual_channel: u8,
     /// 手动起始乐器通道（UI 显示 1 起，这里存的也是显示值）。
     manual_instrument: usize,
+    /// 手动起始音频通道（UI 显示 1 起，这里存的也是显示值）。
+    manual_audio: usize,
 }
 
 impl Default for NewTrackDialogState {
@@ -58,6 +61,7 @@ impl Default for NewTrackDialogState {
             manual_port: 0,
             manual_channel: 0,
             manual_instrument: 1,
+            manual_audio: 1,
         }
     }
 }
@@ -101,6 +105,11 @@ fn instrument_badge(channel0: u16) -> String {
     format!("I{:02}", u32::from(channel0) + 1)
 }
 
+/// 音频通道 badge 文本（如 A01），与轨道面板 badge 同规则。
+fn audio_badge(channel0: u16) -> String {
+    format!("A{:02}", u32::from(channel0) + 1)
+}
+
 /// 根据当前状态计算分配方案（预览/提示/确认共用同一规则）。
 fn plan(state: &NewTrackDialogState, tracks: &[Arc<yinhe_core::TrackData>]) -> Plan {
     match state.kind {
@@ -127,6 +136,7 @@ fn plan(state: &NewTrackDialogState, tracks: &[Arc<yinhe_core::TrackData>]) -> P
                     port,
                     channel,
                     instrument_channel: None,
+                    audio_channel: None,
                 })
                 .collect::<Vec<_>>();
             let preview = alloc
@@ -158,12 +168,39 @@ fn plan(state: &NewTrackDialogState, tracks: &[Arc<yinhe_core::TrackData>]) -> P
                     channel: 0,
                     // 大起点 + 大数量时饱和，不回绕。
                     instrument_channel: Some(start.saturating_add(i as u16)),
+                    audio_channel: None,
                 })
                 .collect::<Vec<_>>();
             let preview = specs
                 .iter()
                 .filter_map(|s| s.instrument_channel)
                 .map(instrument_badge)
+                .collect::<Vec<_>>()
+                .join(", ");
+            Plan {
+                specs,
+                preview,
+                error: None,
+            }
+        }
+        KindChoice::Audio => {
+            let start = match state.mode {
+                AssignMode::Auto => channel_alloc::auto_audio_channel_start(tracks),
+                AssignMode::Manual => state.manual_audio.saturating_sub(1) as u16,
+            };
+            let specs = (0..state.count)
+                .map(|i| NewTrackSpec {
+                    kind: yinhe_core::TrackKind::Audio,
+                    port: 0,
+                    channel: 0,
+                    instrument_channel: None,
+                    audio_channel: Some(start.saturating_add(i as u16)),
+                })
+                .collect::<Vec<_>>();
+            let preview = specs
+                .iter()
+                .filter_map(|s| s.audio_channel)
+                .map(audio_badge)
                 .collect::<Vec<_>>()
                 .join(", ");
             Plan {
@@ -233,7 +270,7 @@ pub(crate) fn show_viewport(
                                 btn_zone_h,
                                 |ui| {
                                     ui.add_space(6.0);
-                                    // 种类：MIDI 轨 / 乐器轨 / 音频轨（预留，禁用）
+                                    // 种类：MIDI 轨 / 乐器轨 / 音频轨
                                     ui.horizontal(|ui| {
                                         ui.label(t!("dialog.new_track.kind").as_ref());
                                         ui.selectable_value(
@@ -246,12 +283,11 @@ pub(crate) fn show_viewport(
                                             KindChoice::Instrument,
                                             t!("dialog.new_track.kind.instrument").as_ref(),
                                         );
-                                        ui.add_enabled_ui(false, |ui| {
-                                            let _ = ui.selectable_label(
-                                                false,
-                                                t!("dialog.new_track.kind.audio").as_ref(),
-                                            );
-                                        });
+                                        ui.selectable_value(
+                                            &mut state.kind,
+                                            KindChoice::Audio,
+                                            t!("dialog.new_track.kind.audio").as_ref(),
+                                        );
                                     });
 
                                     // 数量：1..=64
@@ -341,6 +377,19 @@ pub(crate) fn show_viewport(
                                                     ui.add(
                                                         crate::widgets::numeric_input::decimal_drag_value(
                                                             &mut state.manual_instrument,
+                                                        )
+                                                        .range(1..=u16::MAX as usize + 1),
+                                                    );
+                                                });
+                                            }
+                                            KindChoice::Audio => {
+                                                ui.horizontal(|ui| {
+                                                    ui.label(
+                                                        t!("dialog.new_track.audio_start").as_ref(),
+                                                    );
+                                                    ui.add(
+                                                        crate::widgets::numeric_input::decimal_drag_value(
+                                                            &mut state.manual_audio,
                                                         )
                                                         .range(1..=u16::MAX as usize + 1),
                                                     );
