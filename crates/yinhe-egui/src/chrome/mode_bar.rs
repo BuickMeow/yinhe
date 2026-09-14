@@ -289,23 +289,6 @@ pub fn show(
 
                         if right_icon_button(
                             ui,
-                            ICON_MUSIC_CAST,
-                            *right_tab == Some(RightTab::SoundFont),
-                            || {
-                                *right_tab = if *right_tab == Some(RightTab::SoundFont) {
-                                    None
-                                } else {
-                                    Some(RightTab::SoundFont)
-                                };
-                            },
-                        ) {
-                            icon_hint = Some(t!("hint.right_soundfont").to_string());
-                        }
-
-                        ui.add_space(4.0);
-
-                        if right_icon_button(
-                            ui,
                             ICON_FOLDER_ZIP,
                             *right_tab == Some(RightTab::EventBrowser),
                             || {

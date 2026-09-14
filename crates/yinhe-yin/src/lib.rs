@@ -48,7 +48,7 @@ pub use io::{
     save_yin_bytes_with_sf, save_yin_with_files, save_yin_with_files_progress, save_yin_with_sf,
 };
 pub use mapping::{ChannelMap, MappingFile, PortMap, TrackMap};
-pub use project_meta::{ProjectFile, SfEntryJson, SfPortOverride};
+pub use project_meta::{ProjectFile, SfChannelOverride, SfEntryJson};
 
 pub const MAGIC: &[u8; 4] = b"YINH";
 pub const VERSION: u16 = 6;

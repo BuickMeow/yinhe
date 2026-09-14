@@ -18,7 +18,7 @@ use yinhe_mixer::MixerParams;
 use crate::container::{Sections, pack, unpack};
 use crate::error::YinError;
 use crate::mapping::MappingFile;
-use crate::project_meta::{ProjectFile, SfPortOverride};
+use crate::project_meta::{ProjectFile, SfChannelOverride};
 
 /// 混音段格式版本（段内前 4 字节）。MixerParams 字段演进时递增，
 /// 加载侧版本不符则忽略混音段（工程本体照常打开）。
@@ -145,15 +145,13 @@ fn deserialize_postcard<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<
     Ok(postcard::from_bytes(bytes)?)
 }
 
-/// SoundFont state attached to a project (mode + per-port overrides).
+/// SoundFont state attached to a project（每源通道覆盖）。
 ///
 /// This is what `save_yin_with_sf` consumes and `load_yin_with_sf` returns.
-/// `mode = true` means the project was saved in per-port mode; `false`
-/// means global mode (or the file predates SF persistence).
+/// 未列出的通道使用全局音色库。
 #[derive(Debug, Clone, Default)]
 pub struct ProjectSoundFonts {
-    pub mode: bool,
-    pub overrides: Vec<SfPortOverride>,
+    pub overrides: Vec<SfChannelOverride>,
 }
 
 // =========================================================
@@ -473,7 +471,7 @@ fn save_yin_bytes_inner(
 ) -> Result<Vec<u8>, YinError> {
     // 1. project.json (with or without SF state)
     let project = match sf {
-        Some(sf) => ProjectFile::from_meta_with_sf(&model.meta, sf.mode, sf.overrides.clone()),
+        Some(sf) => ProjectFile::from_meta_with_sf(&model.meta, sf.overrides.clone()),
         None => ProjectFile::from_meta(&model.meta),
     };
     let mapping = MappingFile::from_tracks(&model.tracks);
@@ -688,8 +686,7 @@ pub fn load_yin_bytes_with_sf(
 ) -> Result<(YinModel, ProjectSoundFonts, MappingFile), YinError> {
     let (model, project, mapping, _mixer) = load_yin_bytes_inner(bytes, &mut |_| {})?;
     let sf = ProjectSoundFonts {
-        mode: project.soundfont_project_mode,
-        overrides: project.soundfont_overrides,
+        overrides: project.sf_channel_overrides,
     };
     Ok((model, sf, mapping))
 }
@@ -731,8 +728,7 @@ pub fn load_yin_with_sf_progress(
     let bytes = std::fs::read(path.as_ref())?;
     let (model, project, mapping, mixer) = load_yin_bytes_inner(&bytes, &mut on_progress)?;
     let sf = ProjectSoundFonts {
-        mode: project.soundfont_project_mode,
-        overrides: project.soundfont_overrides,
+        overrides: project.sf_channel_overrides,
     };
     Ok((model, sf, mapping, mixer))
 }

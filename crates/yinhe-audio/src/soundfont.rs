@@ -26,14 +26,15 @@ fn sweep_unused() {
 }
 
 pub struct SoundFontManager {
-    port_sfs: [Vec<Arc<dyn SoundfontBase>>; 16],
+    /// 每源通道（0..256）的音色库列表（按源通道索引；未配置为空）。
+    channel_sfs: Box<[Vec<Arc<dyn SoundfontBase>>; 256]>,
     stream_params: AudioStreamParams,
 }
 
 impl SoundFontManager {
     pub fn new(sample_rate: u32) -> Self {
         Self {
-            port_sfs: std::array::from_fn(|_| Vec::new()),
+            channel_sfs: Box::new(std::array::from_fn(|_| Vec::new())),
             stream_params: AudioStreamParams {
                 sample_rate,
                 channels: ChannelCount::Stereo,
@@ -61,15 +62,15 @@ impl SoundFontManager {
         Ok(arc)
     }
 
-    pub(crate) fn load_for_port_with_dense(
+    pub(crate) fn load_for_channel(
         &mut self,
-        port: u8,
+        channel: u8,
         paths: &[String],
         cg: &mut ChannelSet,
-        dense_channels: &[u32],
+        dense: u32,
     ) -> Result<(), String> {
         let soundfonts = self.load_paths(paths)?;
-        self.apply_loaded_for_port_with_dense(port, soundfonts, cg, dense_channels);
+        self.apply_loaded_for_channel(channel, soundfonts, cg, dense);
         Ok(())
     }
 
@@ -83,22 +84,20 @@ impl SoundFontManager {
         Ok(soundfonts)
     }
 
-    pub(crate) fn apply_loaded_for_port_with_dense(
+    pub(crate) fn apply_loaded_for_channel(
         &mut self,
-        port: u8,
+        channel: u8,
         soundfonts: Vec<Arc<dyn SoundfontBase>>,
         cg: &mut ChannelSet,
-        dense_channels: &[u32],
+        dense: u32,
     ) {
-        self.port_sfs[port as usize] = soundfonts;
+        self.channel_sfs[channel as usize] = soundfonts;
         sweep_unused();
 
-        for &dense in dense_channels {
-            let sfs = self.port_sfs[port as usize].clone();
-            cg.send_event(SynthEvent::Channel(
-                dense,
-                ChannelEvent::Config(ChannelConfigEvent::SetSoundfonts(sfs)),
-            ));
-        }
+        let sfs = self.channel_sfs[channel as usize].clone();
+        cg.send_event(SynthEvent::Channel(
+            dense,
+            ChannelEvent::Config(ChannelConfigEvent::SetSoundfonts(sfs)),
+        ));
     }
 }

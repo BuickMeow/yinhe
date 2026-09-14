@@ -734,16 +734,14 @@ impl App {
         doc.data.sync_project_file();
         doc.data.sync_mapping_file();
 
-        // Sync SF state into project_file
-        doc.data.project_file.soundfont_project_mode =
-            !self.audio_settings.global_sf_config.global_enabled;
-        doc.data.project_file.soundfont_overrides = doc
+        // Sync SF state into project_file（每源通道覆盖；空 = 全部用全局）。
+        doc.data.project_file.sf_channel_overrides = doc
             .edit
             .project_sf
             .overrides
             .iter()
-            .map(|(port, entries)| yinhe_yin::SfPortOverride {
-                port: *port,
+            .map(|(channel, entries)| yinhe_yin::SfChannelOverride {
+                channel: *channel,
                 entries: entries
                     .iter()
                     .map(|e| yinhe_yin::SfEntryJson {

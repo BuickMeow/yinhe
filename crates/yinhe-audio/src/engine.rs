@@ -261,8 +261,10 @@ impl AudioEngine {
                 // 这里只在直接 handle_command 时退化成 load_model（测试路径）。
                 self.load_model(&model);
             }
-            AudioCommand::LoadSoundFont { port, paths } => {
-                self.load_soundfont_for_port(port, &paths);
+            AudioCommand::SetSoundFonts { configs } => {
+                for (channel, paths) in configs.iter() {
+                    self.load_soundfont_for_channel(*channel, paths);
+                }
             }
             AudioCommand::SkipTracks { skip } => {
                 self.skip_track = skip;

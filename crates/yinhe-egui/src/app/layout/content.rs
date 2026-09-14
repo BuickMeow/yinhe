@@ -924,7 +924,6 @@ impl App {
                 right_rect,
                 &mut self.right_panel_width,
                 &mut self.right_tab,
-                &mut self.audio_settings,
                 doc,
                 self.audio_state.handle.as_ref(),
                 &mut self.event_browser_state,

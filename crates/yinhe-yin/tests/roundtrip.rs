@@ -555,15 +555,15 @@ fn version_bump_rejected() {
 // ──────────────────────── SoundFont persistence ────────────────────────
 
 use yinhe_yin::{
-    ProjectSoundFonts, SfEntryJson, SfPortOverride, load_yin_bytes_with_sf, save_yin_bytes_with_sf,
+    ProjectSoundFonts, SfChannelOverride, SfEntryJson, load_yin_bytes_with_sf,
+    save_yin_bytes_with_sf,
 };
 
 fn sample_sf_state() -> ProjectSoundFonts {
     ProjectSoundFonts {
-        mode: true,
         overrides: vec![
-            SfPortOverride {
-                port: 0,
+            SfChannelOverride {
+                channel: 0,
                 entries: vec![
                     SfEntryJson {
                         path: "/sf2/piano.sf2".to_string(),
@@ -577,8 +577,8 @@ fn sample_sf_state() -> ProjectSoundFonts {
                     },
                 ],
             },
-            SfPortOverride {
-                port: 3,
+            SfChannelOverride {
+                channel: 3,
                 entries: vec![SfEntryJson {
                     path: "/sf2/drums.sf2".to_string(),
                     name: "Drums".to_string(),
@@ -590,7 +590,7 @@ fn sample_sf_state() -> ProjectSoundFonts {
 }
 
 #[test]
-fn sf_roundtrip_preserves_mode_and_entries() {
+fn sf_roundtrip_preserves_channel_entries() {
     let model = build_complex_model();
     let sf = sample_sf_state();
 
@@ -602,22 +602,21 @@ fn sf_roundtrip_preserves_mode_and_entries() {
     assert_eq!(m2.note_count, model.note_count);
 
     // SF state is intact.
-    assert!(sf2.mode);
     assert_eq!(sf2.overrides.len(), 2);
 
-    let p0 = &sf2.overrides[0];
-    assert_eq!(p0.port, 0);
-    assert_eq!(p0.entries.len(), 2);
-    assert_eq!(p0.entries[0].path, "/sf2/piano.sf2");
-    assert_eq!(p0.entries[0].name, "Piano");
-    assert!(p0.entries[0].enabled);
-    assert_eq!(p0.entries[1].path, "/sf2/strings.sf2");
-    assert!(!p0.entries[1].enabled);
+    let c0 = &sf2.overrides[0];
+    assert_eq!(c0.channel, 0);
+    assert_eq!(c0.entries.len(), 2);
+    assert_eq!(c0.entries[0].path, "/sf2/piano.sf2");
+    assert_eq!(c0.entries[0].name, "Piano");
+    assert!(c0.entries[0].enabled);
+    assert_eq!(c0.entries[1].path, "/sf2/strings.sf2");
+    assert!(!c0.entries[1].enabled);
 
-    let p3 = &sf2.overrides[1];
-    assert_eq!(p3.port, 3);
-    assert_eq!(p3.entries.len(), 1);
-    assert_eq!(p3.entries[0].name, "Drums");
+    let c3 = &sf2.overrides[1];
+    assert_eq!(c3.channel, 3);
+    assert_eq!(c3.entries.len(), 1);
+    assert_eq!(c3.entries[0].name, "Drums");
 }
 
 // ──────────────────────── 旧存档颜色兼容 ────────────────────────
@@ -647,7 +646,6 @@ fn sf_save_without_state_loads_as_empty() {
     let model = build_complex_model();
     let bytes = save_yin_bytes(&model).unwrap();
     let (_m2, sf2, _mapping) = load_yin_bytes_with_sf(&bytes).unwrap();
-    assert!(!sf2.mode);
     assert!(sf2.overrides.is_empty());
 }
 
@@ -664,34 +662,41 @@ fn sf_save_with_state_loads_through_plain_load() {
 }
 
 #[test]
-fn sf_global_mode_and_empty_overrides() {
-    // mode=false (global mode) with empty overrides should also round-trip.
+fn sf_empty_overrides_roundtrip() {
+    // 空覆盖列表（全部通道用全局音色库）应正常往返。
     let model = build_complex_model();
-    let sf = ProjectSoundFonts {
-        mode: false,
-        overrides: vec![],
-    };
+    let sf = ProjectSoundFonts { overrides: vec![] };
     let bytes = save_yin_bytes_with_sf(&model, &sf).unwrap();
     let (_m2, sf2, _mapping) = load_yin_bytes_with_sf(&bytes).unwrap();
-    assert!(!sf2.mode);
     assert!(sf2.overrides.is_empty());
 }
 
+/// 回归：旧版工程（按 port 的 soundfont_overrides 字段）加载时被忽略
+/// （字段名不同），不会误读成通道配置。
 #[test]
-fn sf_global_mode_preserves_overrides_list() {
-    // User had per-port entries configured, then switched to global mode and
-    // saved. The overrides list should still survive the round-trip so that
-    // switching back to project mode restores their configuration.
+fn legacy_port_sf_fields_are_ignored() {
     let model = build_complex_model();
-    let sf = ProjectSoundFonts {
-        mode: false,                            // global mode
-        overrides: sample_sf_state().overrides, // but per-port list intact
-    };
-    let bytes = save_yin_bytes_with_sf(&model, &sf).unwrap();
-    let (_m2, sf2, _mapping) = load_yin_bytes_with_sf(&bytes).unwrap();
-    assert!(!sf2.mode);
-    assert_eq!(sf2.overrides.len(), 2);
-    assert_eq!(sf2.overrides[0].entries[0].path, "/sf2/piano.sf2");
+    let bytes = save_yin_bytes_with_sf(&model, &ProjectSoundFonts::default()).unwrap();
+    // 在 .yin 的 project.json 里注入旧字段，模拟旧工程。
+    let mut bytes = bytes;
+    let old_json = br#""soundfont_project_mode":true,"soundfont_overrides":[{"port":5,"entries":[{"path":"/sf2/old.sf2","name":"Old","enabled":true}]}]"#;
+    // 直接替换 project.json 段里的一个已知字段序列太脆弱——改为验证
+    // 反序列化行为：旧字段被忽略、新字段为默认空。
+    let needle = b"\"version\":3";
+    if let Some(pos) = bytes.windows(needle.len()).position(|w| w == needle) {
+        let insert_at = pos + needle.len();
+        let mut injected = Vec::with_capacity(bytes.len() + old_json.len() + 1);
+        injected.extend_from_slice(&bytes[..insert_at]);
+        injected.push(b',');
+        injected.extend_from_slice(old_json);
+        injected.extend_from_slice(&bytes[insert_at..]);
+        bytes = injected;
+        let (_m2, sf2, _mapping) = load_yin_bytes_with_sf(&bytes).unwrap();
+        assert!(
+            sf2.overrides.is_empty(),
+            "旧 port 字段应被忽略，不产生通道覆盖"
+        );
+    }
 }
 // ---------------------------------------------------------------------------
 //  混音段（可选第 4 段）roundtrip

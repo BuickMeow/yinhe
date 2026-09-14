@@ -45,7 +45,7 @@ pub(crate) struct RendererSharedState {
     /// 清空瞬间 ring 的写入计数。cpal 回调 ack 时丢弃该值之前的全部内容
     /// （旧音频），保留之后推入的新音频 —— 比整体 clear 更竞态安全。
     pub(crate) clear_ring_write: Arc<AtomicUsize>,
-    /// 已加载完成的音色库 port 数（每 port 一条 `LoadedSoundFont` 结果 +1）。
+    /// 已加载完成的通道音色库数（每通道一条 `LoadedSoundFont` 结果 +1）。
     /// UI 据此驱动"加载音色库"stage 的真实进度（完成计数，不预填）。
     pub(crate) sf_loaded: Arc<AtomicUsize>,
     /// 总线电平表读数端（增删总线时由渲染线程刷新；UI 读锁取用）。
@@ -106,6 +106,8 @@ struct AudioRenderer {
     export: Option<ExportJob>,
     /// 导出结束后要恢复的 xsynth 层数（导出设置不污染用户设置）。
     export_prev_layer_count: Option<Option<usize>>,
+    /// GPU 模式待加载音色库的通道数（全部完成后统一上传样本）。
+    gpu_sf_pending: usize,
 }
 
 impl AudioRenderer {
@@ -137,6 +139,7 @@ impl AudioRenderer {
             limiter: VolumeLimiter::new(channels),
             export: None,
             export_prev_layer_count: None,
+            gpu_sf_pending: 0,
             cmd_rx,
             worker_tx,
             prepared_rx,
@@ -256,13 +259,25 @@ impl AudioRenderer {
                                 pending_update_notes = Some(model);
                             }
                         }
-                        AudioCommand::LoadSoundFont { port, paths } => {
-                            let dense_channels = self.engine.dense_channels_for_port(port);
-                            if !dense_channels.is_empty() {
+                        AudioCommand::SetSoundFonts { configs } => {
+                            // 一次性清 ring（音色切换锚定听音位置，位置不移动）；
+                            // 结果逐个应用时不再清，避免频繁打断输出。
+                            let anchor = self.consumer_position.load(Ordering::Acquire);
+                            self.clear_buffered_audio(anchor);
+                            #[cfg(feature = "gpu")]
+                            {
+                                self.gpu_sf_pending = configs
+                                    .iter()
+                                    .filter(|(_, paths)| !paths.is_empty())
+                                    .count();
+                            }
+                            for (channel, paths) in configs.iter() {
+                                if paths.is_empty() {
+                                    continue;
+                                }
                                 let _ = self.worker_tx.send(WorkerCmd::LoadSoundFont {
-                                    port,
-                                    paths,
-                                    dense_channels,
+                                    channel: *channel,
+                                    paths: paths.clone(),
                                 });
                             }
                         }
@@ -600,31 +615,30 @@ impl AudioRenderer {
                     }
                 }
                 Ok(WorkerResult::LoadedSoundFont {
-                    port,
+                    channel,
                     soundfonts,
-                    dense_channels,
                     paths,
                 }) => {
-                    // 音色库完成计数：UI 的"加载音色库"stage 进度 = 已完成 port 数。
+                    // 音色库完成计数：UI 的"加载音色库"stage 进度 = 已完成通道数。
                     self.state.sf_loaded.fetch_add(1, Ordering::Relaxed);
                     // 预览引擎与主引擎共享同一音色（Arc，零拷贝）。
                     self.preview_engine
-                        .set_port_soundfonts(port, soundfonts.clone());
+                        .set_channel_soundfonts(channel, soundfonts.clone());
+                    let dense = self.engine.channel_layout.dense_for(channel as usize);
                     self.engine
-                        .apply_loaded_soundfont_for_port(port, soundfonts, &dense_channels);
-                    // GPU 路径：首次加载音色库时初始化 GpuSynth，后续 port 逐个加载
+                        .apply_loaded_soundfont_for_channel(channel, dense, soundfonts);
+                    // GPU 路径：首次加载音色库时初始化 GpuSynth，后续通道逐个加载；
+                    // 样本统一在最后一个通道完成时上传一次（避免逐通道全量重传）。
                     #[cfg(feature = "gpu")]
-                    if self.use_gpu_synth {
+                    if self.use_gpu_synth && dense != u32::MAX {
                         let sr = self.engine.sample_rate;
-                        let paths: Vec<std::path::PathBuf> =
+                        let gpu_paths: Vec<std::path::PathBuf> =
                             paths.iter().map(std::path::PathBuf::from).collect();
                         if self.engine.gpu_synth.is_none() {
                             match yinhe_synth::GpuSynth::new_default(sr) {
                                 Ok(mut synth) => {
-                                    if let Err(e) =
-                                        synth.load_port_soundfonts(port, &dense_channels, &paths)
-                                    {
-                                        eprintln!("[gpu] Failed to load soundfonts: {}", e);
+                                    if let Err(e) = synth.load_dense_soundfonts(dense, &gpu_paths) {
+                                        eprintln!("[gpu] Failed to load soundfonts: {e}");
                                     }
                                     // 加载当前模型的事件
                                     let events =
@@ -632,27 +646,27 @@ impl AudioRenderer {
                                     synth.load_events(events);
                                     synth.seek(self.engine.sample_position());
                                     self.engine.gpu_synth = Some(synth);
-                                    eprintln!("[gpu] GpuSynth initialized (port {})", port);
+                                    eprintln!("[gpu] GpuSynth initialized (channel {channel})");
                                 }
                                 Err(e) => {
-                                    eprintln!("[gpu] Failed to init GpuSynth: {}", e);
+                                    eprintln!("[gpu] Failed to init GpuSynth: {e}");
                                 }
                             }
-                        } else if let Some(ref mut synth) = self.engine.gpu_synth {
-                            // 已有合成器：追加加载其他 port 的音色库
-                            if let Err(e) =
-                                synth.load_port_soundfonts(port, &dense_channels, &paths)
-                            {
-                                eprintln!("[gpu] Failed to load port {} soundfonts: {}", port, e);
-                            }
+                        } else if let Some(synth) = self.engine.gpu_synth.as_mut()
+                            && let Err(e) = synth.load_dense_soundfonts(dense, &gpu_paths)
+                        {
+                            eprintln!("[gpu] Failed to load channel {channel} soundfonts: {e}");
+                        }
+                        self.gpu_sf_pending = self.gpu_sf_pending.saturating_sub(1);
+                        if self.gpu_sf_pending == 0
+                            && let Some(synth) = self.engine.gpu_synth.as_mut()
+                        {
+                            synth.finish_soundfont_load();
                         }
                     }
                     // 非 GPU feature 下 paths 不使用，显式标记避免 warning
                     #[cfg(not(feature = "gpu"))]
                     let _ = paths;
-                    // 非显式操作：ring 清空锚定听音位置，位置不移动。
-                    let anchor = self.consumer_position.load(Ordering::Acquire);
-                    self.clear_buffered_audio(anchor);
                     did_work = true;
                 }
                 Err(TryRecvError::Empty) => break,

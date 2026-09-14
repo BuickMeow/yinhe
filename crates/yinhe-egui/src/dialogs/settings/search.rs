@@ -16,6 +16,7 @@ use super::notification::show_notification_tab;
 use super::render::show_render_tab;
 use super::saving::show_saving_tab;
 use super::shortcuts::show_shortcuts_tab;
+use super::soundfont::show_soundfont_tab;
 use super::theme::show_theme_tab;
 
 /// 归一化：小写并去掉所有空白（拼音/罗马音的带空格输入也能匹配）。
@@ -72,6 +73,7 @@ pub fn show_search_results(
             7 => show_shortcuts_tab(ui, settings),
             8 => show_notification_tab(ui, settings),
             10 => show_saving_tab(ui, settings),
+            11 => show_soundfont_tab(ui, settings),
             _ => show_general_tab(ui, settings),
         };
     }

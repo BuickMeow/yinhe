@@ -65,52 +65,49 @@ impl App {
 
     /// Resolve the merged SF configuration for the given document.
     ///
-    /// Returns a list of `(port, paths)` for every port the MIDI uses.
+    /// Returns `(源通道, paths)` for every **激活**源通道：通道有工程内覆盖
+    /// 时用覆盖列表，否则用全局音色库；都为空时回退内置 GeneralUser GS。
     pub(crate) fn resolve_sf_config(
         &self,
         doc: &yinhe_editor_core::document::Document,
     ) -> Vec<(u8, Vec<String>)> {
         let layout = yinhe_audio::channels_for_model(&doc.data.model);
-        let num_ports = (layout.num_channels().div_ceil(16) as u8).max(1);
         let global = &self.audio_settings.global_sf_config;
         let project = &doc.edit.project_sf;
 
-        let mut result: Vec<(u8, Vec<String>)> = Vec::new();
+        let global_paths: Vec<String> = global
+            .entries
+            .iter()
+            .filter(|e| e.enabled)
+            .map(|e| e.path.clone())
+            .collect();
+        let builtin = yinhe_editor_core::config::builtin_soundfont_path()
+            .map(|p| p.to_string_lossy().to_string());
 
-        for port in 0..num_ports {
-            if global.global_enabled {
-                // ── Global mode: all ports share ports[0] ──
-                let paths: Vec<String> = global.ports[0]
+        let mut result: Vec<(u8, Vec<String>)> = Vec::new();
+        for ch in 0..layout.num_channels().min(256) as u8 {
+            if !layout.is_active(ch as usize) {
+                continue;
+            }
+            // 通道覆盖优先；无覆盖用全局。
+            let paths: Vec<String> = match project.overrides.iter().find(|(c, _)| *c == ch) {
+                Some((_, entries)) => entries
                     .iter()
                     .filter(|e| e.enabled)
                     .map(|e| e.path.clone())
-                    .collect();
-                if !paths.is_empty() {
-                    result.push((port, paths));
-                    continue;
-                }
+                    .collect(),
+                None => global_paths.clone(),
+            };
+            // 都为空：内置 fallback（仍然没有就跳过该通道 = 静音）。
+            let paths = if paths.is_empty() {
+                builtin.iter().cloned().collect()
             } else {
-                // ── Project mode: per-port from overrides ──
-                if let Some((_, entries)) = project.overrides.iter().find(|(p, _)| *p == port) {
-                    let paths: Vec<String> = entries
-                        .iter()
-                        .filter(|e| e.enabled)
-                        .map(|e| e.path.clone())
-                        .collect();
-                    if !paths.is_empty() {
-                        result.push((port, paths));
-                        continue;
-                    }
-                }
-            }
-
-            // Built-in fallback
-            if let Some(builtin) = yinhe_editor_core::config::builtin_soundfont_path() {
-                let path_str = builtin.to_string_lossy().to_string();
-                result.push((port, vec![path_str]));
+                paths
+            };
+            if !paths.is_empty() {
+                result.push((ch, paths));
             }
         }
-
         result
     }
 
@@ -332,12 +329,10 @@ impl App {
             0.0,
             format!("0/{}", port_configs.len()),
         );
-        for (port, paths) in port_configs {
-            audio.handle.send(yinhe_audio::AudioCommand::LoadSoundFont {
-                port: *port,
-                paths: paths.clone(),
-            });
-        }
+        // 一条批量命令携带全部通道配置（命令通道容量小，逐通道发会被丢弃）。
+        audio.handle.send(yinhe_audio::AudioCommand::SetSoundFonts {
+            configs: Box::new(port_configs.to_vec()),
+        });
 
         // Send initial mute/solo state (latest-wins 槽，必达)
         let skip = doc.compute_skip_mask();

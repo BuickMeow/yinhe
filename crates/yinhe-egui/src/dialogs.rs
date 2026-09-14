@@ -13,3 +13,4 @@ pub mod settings;
 pub mod system_monitor;
 pub mod tap_tempo;
 pub mod unsaved;
+pub mod xsynth_config;

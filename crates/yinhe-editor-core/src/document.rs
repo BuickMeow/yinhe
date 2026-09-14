@@ -234,19 +234,19 @@ impl Document {
         })
     }
 
-    /// Load a `.yin` file. Returns `(Document, soundfont_project_mode)`.
+    /// Load a `.yin` file. 工程内每通道音色库覆盖会填入 `edit.project_sf`。
     pub fn from_yin_path(
         path: &str,
         quantize_arrange: QuantizePreset,
         quantize_pianoroll: QuantizePreset,
-    ) -> std::io::Result<(Self, bool)> {
+    ) -> std::io::Result<Self> {
         let (model, sf, mapping, mixer) =
             yinhe_yin::load_yin_with_sf(path).map_err(|e| match e {
                 yinhe_yin::YinError::Io(io) => io,
                 other => std::io::Error::new(std::io::ErrorKind::InvalidData, other.to_string()),
             })?;
         let project_file =
-            yinhe_yin::ProjectFile::from_meta_with_sf(&model.meta, sf.mode, sf.overrides.clone());
+            yinhe_yin::ProjectFile::from_meta_with_sf(&model.meta, sf.overrides.clone());
         let mut doc = Self::from_model(
             path,
             model,
@@ -257,8 +257,25 @@ impl Document {
             mixer,
         )
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        // 工程内每通道音色库覆盖（源通道 → SfEntry）。
+        doc.edit.project_sf.overrides = sf
+            .overrides
+            .iter()
+            .map(|co| {
+                let entries = co
+                    .entries
+                    .iter()
+                    .map(|e| crate::config::SfEntry {
+                        path: e.path.clone(),
+                        name: e.name.clone(),
+                        enabled: e.enabled,
+                    })
+                    .collect();
+                (co.channel, entries)
+            })
+            .collect();
         doc.file_path = Some(path.to_string());
-        Ok((doc, sf.mode))
+        Ok(doc)
     }
 
     pub fn recode_track_names(&mut self, _encoding: yinhe_midi::MidiImportEncoding) {

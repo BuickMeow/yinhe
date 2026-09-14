@@ -13,8 +13,7 @@ impl AudioSettings {
             match std::fs::read_to_string(&path) {
                 Ok(json) => match serde_json::from_str::<AudioSettings>(&json) {
                     Ok(mut s) => {
-                        if !s.default_sf2_path.is_empty() && s.global_sf_config.ports[0].is_empty()
-                        {
+                        if !s.default_sf2_path.is_empty() && s.global_sf_config.entries.is_empty() {
                             s.global_sf_config = std::mem::take(&mut s.global_sf_config)
                                 .with_fallback_path(&s.default_sf2_path);
                         }

@@ -110,11 +110,8 @@ impl App {
                         QuantizePreset::Fraction(1, 4),
                         QuantizePreset::Fraction(1, 16),
                     ));
-                let project_file = yinhe_yin::ProjectFile::from_meta_with_sf(
-                    &model.meta,
-                    sf.mode,
-                    sf.overrides.clone(),
-                );
+                let project_file =
+                    yinhe_yin::ProjectFile::from_meta_with_sf(&model.meta, sf.overrides.clone());
                 let result = Document::from_model(
                     &path,
                     model,
@@ -141,8 +138,8 @@ impl App {
                     d.edit.project_sf.overrides = sf
                         .overrides
                         .iter()
-                        .map(|po| {
-                            let entries = po
+                        .map(|co| {
+                            let entries = co
                                 .entries
                                 .iter()
                                 .map(|e| yinhe_editor_core::SfEntry {
@@ -151,14 +148,13 @@ impl App {
                                     enabled: e.enabled,
                                 })
                                 .collect();
-                            (po.port, entries)
+                            (co.channel, entries)
                         })
                         .collect();
 
-                    (d, sf.mode)
+                    d
                 });
-                if let Some((doc, sf_project_mode)) = result {
-                    self.audio_settings.global_sf_config.global_enabled = !sf_project_mode;
+                if let Some(doc) = result {
                     // 自动保存恢复：绑定原路径/名称并删除备份（内容已在内存）
                     let is_restored = self.finish_restore_one(&path);
                     if self.should_replace_initial_untitled() {

@@ -1,6 +1,6 @@
 // ── 设置分类（左侧导航，顺序即 settings_tab 索引） ──
 
-pub const CATEGORY_KEYS: [&str; 11] = [
+pub const CATEGORY_KEYS: [&str; 12] = [
     "settings.cat.theme",
     "settings.cat.appearance",
     "settings.cat.language",
@@ -12,6 +12,7 @@ pub const CATEGORY_KEYS: [&str; 11] = [
     "settings.cat.notification",
     "settings.cat.general",
     "settings.cat.saving",
+    "settings.cat.soundfont",
 ];
 
 /// 设置项注册表（供搜索）：各语言名称均可直接检索。
@@ -25,6 +26,20 @@ pub struct SettingItem {
 }
 
 pub const SETTING_ITEMS: &[SettingItem] = &[
+    SettingItem {
+        cat: 11,
+        zh: "全局音色库",
+        en: "Global SoundFont",
+        ja: "グローバルサウンドフォント",
+        ko: "전역 사운드폰트",
+    },
+    SettingItem {
+        cat: 11,
+        zh: "音色库",
+        en: "SoundFont",
+        ja: "サウンドフォント",
+        ko: "사운드폰트",
+    },
     SettingItem {
         cat: 0,
         zh: "主题预设",

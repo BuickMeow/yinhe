@@ -174,38 +174,29 @@ impl AudioEngine {
         }
     }
 
-    pub(crate) fn load_soundfont_for_port(&mut self, port: u8, paths: &[String]) {
-        let dense_channels = self.dense_channels_for_port(port);
-        if dense_channels.is_empty() {
+    /// 加载某源通道的音色库（同步路径：测试/直连命令用）。
+    pub(crate) fn load_soundfont_for_channel(&mut self, channel: u8, paths: &[String]) {
+        let dense = self.channel_layout.dense_for(channel as usize);
+        if dense == u32::MAX {
             return;
         }
-        let _ = self.sf_manager.load_for_port_with_dense(
-            port,
-            paths,
-            &mut self.channel_set,
-            &dense_channels,
-        );
+        let _ = self
+            .sf_manager
+            .load_for_channel(channel, paths, &mut self.channel_set, dense);
     }
 
-    pub(crate) fn dense_channels_for_port(&self, port: u8) -> Vec<u32> {
-        self.channel_layout.dense_channels_for_port(port)
-    }
-
-    pub(crate) fn apply_loaded_soundfont_for_port(
+    /// 应用 worker 加载完成的音色库（按源通道索引；dense 由调用方预计算）。
+    pub(crate) fn apply_loaded_soundfont_for_channel(
         &mut self,
-        port: u8,
+        channel: u8,
+        dense: u32,
         soundfonts: Vec<Arc<dyn SoundfontBase>>,
-        dense_channels: &[u32],
     ) {
-        if dense_channels.is_empty() {
+        if dense == u32::MAX {
             return;
         }
-        self.sf_manager.apply_loaded_for_port_with_dense(
-            port,
-            soundfonts,
-            &mut self.channel_set,
-            dense_channels,
-        );
+        self.sf_manager
+            .apply_loaded_for_channel(channel, soundfonts, &mut self.channel_set, dense);
     }
 
     /// 重启一个跨点音符（seek / unmute 复用）：NoteOn + 记入 active_notes。

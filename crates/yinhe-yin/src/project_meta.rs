@@ -20,10 +20,10 @@ fn default_true() -> bool {
     true
 }
 
-/// Project-level soundfont override for one MIDI port.
+/// Project-level soundfont override for one source channel (0..256).
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SfPortOverride {
-    pub port: u8,
+pub struct SfChannelOverride {
+    pub channel: u8,
     pub entries: Vec<SfEntryJson>,
 }
 
@@ -39,50 +39,42 @@ pub struct ProjectFile {
 
     // ── SoundFont state ──
     //
-    // These fields are `#[serde(default)]` so older `.yin` files (written
-    // before SF persistence existed) still load cleanly with empty SF state.
-    /// `true` = project was saved while in per-port (project) SF mode.
-    /// `false` = global mode (or unknown / pre-SF-persistence file).
+    // `#[serde(default)]` so older `.yin` files still load cleanly. 旧版按
+    // port 的字段（soundfont_project_mode / soundfont_overrides）已废弃：
+    // 新格式用 `sf_channel_overrides`（每源通道覆盖），旧字段名不同会被
+    // serde 忽略（旧工程回退为全局音色库）。
+    /// 每源通道（0..256）的音色库覆盖；未列出的通道用全局音色库。
     #[serde(default)]
-    pub soundfont_project_mode: bool,
-
-    /// Per-port SoundFont entries. Only meaningful in project mode, but is
-    /// always serialized (so the user's project-mode list survives a global-
-    /// mode save→load cycle if they switch back).
-    #[serde(default)]
-    pub soundfont_overrides: Vec<SfPortOverride>,
+    pub sf_channel_overrides: Vec<SfChannelOverride>,
 }
 
 impl ProjectFile {
     /// Build from `ProjectMeta` only — leaves SF fields empty/default.
     pub fn from_meta(meta: &ProjectMeta) -> Self {
         Self {
-            version: 2,
+            version: 3,
             name: meta.name.clone(),
             artist: meta.artist.clone(),
             description: meta.description.clone(),
             ppq: meta.ppq,
             compression_level: meta.compression_level,
-            soundfont_project_mode: false,
-            soundfont_overrides: Vec::new(),
+            sf_channel_overrides: Vec::new(),
         }
     }
 
     /// Build from `ProjectMeta` plus SF state.
     pub fn from_meta_with_sf(
         meta: &ProjectMeta,
-        soundfont_project_mode: bool,
-        soundfont_overrides: Vec<SfPortOverride>,
+        sf_channel_overrides: Vec<SfChannelOverride>,
     ) -> Self {
         Self {
-            version: 2,
+            version: 3,
             name: meta.name.clone(),
             artist: meta.artist.clone(),
             description: meta.description.clone(),
             ppq: meta.ppq,
             compression_level: meta.compression_level,
-            soundfont_project_mode,
-            soundfont_overrides,
+            sf_channel_overrides,
         }
     }
 

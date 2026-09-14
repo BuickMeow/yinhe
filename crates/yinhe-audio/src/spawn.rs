@@ -94,9 +94,10 @@ pub enum AudioCommand {
     UpdateNotes {
         model: Arc<YinModel>,
     },
-    LoadSoundFont {
-        port: u8,
-        paths: Vec<String>,
+    /// 全量设置各源通道（0..256）的音色库（批量；只含需要加载的非空配置）。
+    /// 每个通道独立；未列出的通道保持当前音色库（通常是全局默认）。
+    SetSoundFonts {
+        configs: Box<Vec<(u8, Vec<String>)>>,
     },
     /// `skip[i] == true` means track i is hidden (not audible).
     SkipTracks {
@@ -469,9 +470,8 @@ pub(crate) enum WorkerCmd {
         am_ms: Arc<AmMsMap>,
     },
     LoadSoundFont {
-        port: u8,
+        channel: u8,
         paths: Vec<String>,
-        dense_channels: Vec<u32>,
     },
 }
 
@@ -492,9 +492,8 @@ pub(crate) enum WorkerResult {
         generation: u64,
     },
     LoadedSoundFont {
-        port: u8,
+        channel: u8,
         soundfonts: Vec<Arc<dyn SoundfontBase>>,
-        dense_channels: Vec<u32>,
         /// 原始路径列表 — GPU 路径用其初始化 GpuPlayer
         paths: Vec<String>,
     },
@@ -634,11 +633,7 @@ pub(crate) fn spawn_worker(
                             generation: latest_gen,
                         });
                     }
-                    WorkerCmd::LoadSoundFont {
-                        port,
-                        paths,
-                        dense_channels,
-                    } => {
+                    WorkerCmd::LoadSoundFont { channel, paths } => {
                         // 不合并，但把 try_recv 到的命令存到 pending 避免饿死
                         while let Ok(next) = cmd_rx.try_recv() {
                             pending.push_back(next);
@@ -647,9 +642,8 @@ pub(crate) fn spawn_worker(
                             crate::engine::AudioEngine::load_soundfont_paths(sample_rate, &paths)
                         {
                             let _ = result_tx.send(WorkerResult::LoadedSoundFont {
-                                port,
+                                channel,
                                 soundfonts,
-                                dense_channels,
                                 paths,
                             });
                         }

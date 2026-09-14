@@ -735,9 +735,8 @@ fn prof_night_voyager_parallelism() {
         engine.handle_command(AudioCommand::LoadModel {
             model: std::sync::Arc::clone(&model),
         });
-        engine.handle_command(AudioCommand::LoadSoundFont {
-            port: 0,
-            paths: vec![sf_path.into()],
+        engine.handle_command(AudioCommand::SetSoundFonts {
+            configs: Box::new(vec![(0u8, vec![sf_path.into()])]),
         });
         engine.handle_command(AudioCommand::Play { from_sample: 0 });
 

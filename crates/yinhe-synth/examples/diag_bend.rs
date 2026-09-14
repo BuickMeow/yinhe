@@ -77,7 +77,7 @@ fn main() {
     ) as Arc<dyn SoundfontBase>;
     let mut synth = yinhe_synth::GpuSynth::new_default(SR).unwrap();
     synth
-        .load_port_soundfonts(0, &[0], std::slice::from_ref(&sfz))
+        .load_dense_soundfonts(0, std::slice::from_ref(&sfz))
         .unwrap();
     synth.set_limiter_enabled(false);
 

@@ -168,9 +168,8 @@ impl YinheApp {
             self.audio_status = format!("音色库不存在: {}", crate::TEST_SF_PATH);
             return;
         }
-        audio.handle.send(AudioCommand::LoadSoundFont {
-            port: 0,
-            paths: vec![crate::TEST_SF_PATH.to_string()],
+        audio.handle.send(AudioCommand::SetSoundFonts {
+            configs: Box::new(vec![(0u8, vec![crate::TEST_SF_PATH.to_string()])]),
         });
         self.sf_load_start = Some(std::time::Instant::now());
         self.sf_loaded_baseline = audio.handle.sf_loaded_count();

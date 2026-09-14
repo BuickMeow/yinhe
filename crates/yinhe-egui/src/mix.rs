@@ -76,6 +76,8 @@ pub(crate) struct MixUiState {
     pub(crate) picker_for: Option<InsertTarget>,
     /// 发送面板打开目标（None = 关闭）。
     pub(crate) sends_for: Option<u8>,
+    /// XSynth 配置窗口目标（源通道；None = 关闭）。
+    pub(crate) xsynth_config_for: Option<u8>,
     /// 乐器插件选择器目标：乐器通道号（0 起）；None = 未打开。
     pub(crate) instrument_picker_for: Option<u16>,
     pub(crate) picker_filter: String,
@@ -95,6 +97,7 @@ impl Default for MixUiState {
             scan_in_progress: false,
             picker_for: None,
             sends_for: None,
+            xsynth_config_for: None,
             instrument_picker_for: None,
             picker_filter: String::new(),
             param_panel: None,

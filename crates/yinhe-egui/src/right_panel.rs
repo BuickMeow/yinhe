@@ -3,13 +3,11 @@ pub mod event_browser;
 pub mod info_panel;
 pub mod project_info;
 pub mod sf_list;
-pub mod soundfont;
 
 use eframe::egui;
 
 use rust_i18n::t;
 
-use crate::audio_settings::AudioSettings;
 use yinhe_editor_core::audio_settings::LayoutSettings;
 use yinhe_editor_core::document::Document;
 use yinhe_types::AutomationTarget;
@@ -17,7 +15,6 @@ use yinhe_types::AutomationTarget;
 #[derive(PartialEq, Clone, Copy)]
 pub enum RightTab {
     Info,
-    SoundFont,
     EventBrowser,
 }
 
@@ -61,7 +58,6 @@ pub fn show(
     rect: egui::Rect,
     right_panel_width: &mut f32,
     right_tab: &mut Option<RightTab>,
-    audio_settings: &mut AudioSettings,
     doc: Option<&mut Document>,
     audio: Option<&yinhe_audio::CpalAudioHandle>,
     event_browser_state: &mut event_browser::EventBrowserState,
@@ -159,9 +155,6 @@ pub fn show(
                         }
                         changed |=
                             info_panel::show(ui, doc, audio, info_content, automation_drag_ghost);
-                    }
-                    RightTab::SoundFont => {
-                        changed |= soundfont::show(ui, audio_settings, doc);
                     }
                     RightTab::EventBrowser => {
                         jump_request = event_browser::show(ui, doc, event_browser_state);

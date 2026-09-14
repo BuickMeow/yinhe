@@ -380,13 +380,20 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
             rack.set_bypass(Some(channel), slot, bypassed);
         }
     }
-    if let Some(DockDevice::Insert(slot)) = open_gui {
-        #[cfg(target_os = "macos")]
-        if let Err(e) = app.mixer_rack_mut(idx).toggle_gui(Some(channel), slot) {
-            app.mixer_rack_mut(idx).last_error = Some(e.0);
+    match open_gui {
+        Some(DockDevice::Insert(slot)) => {
+            #[cfg(target_os = "macos")]
+            if let Err(e) = app.mixer_rack_mut(idx).toggle_gui(Some(channel), slot) {
+                app.mixer_rack_mut(idx).last_error = Some(e.0);
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = slot;
         }
-        #[cfg(not(target_os = "macos"))]
-        let _ = slot;
+        // 内置 XSynth 的"界面"就是音色库配置窗口。
+        Some(DockDevice::XSynth) => {
+            app.mix.xsynth_config_for = Some(channel);
+        }
+        _ => {}
     }
 }
 
@@ -572,13 +579,18 @@ fn big_device_card(
                     );
                 }
 
-                // 打开插件原生 GUI（仅插件设备；XSynth 无原生界面）。
-                if matches!(selected, DockDevice::Instrument | DockDevice::Insert(_)) {
-                    let home = egui_material_icons::icons::ICON_HOME_STORAGE;
+                // 界面按钮：插件设备打开原生 GUI；XSynth 打开音色库配置窗口
+                //（内置合成器的"界面"）。
+                {
+                    let icon = if matches!(selected, DockDevice::XSynth) {
+                        egui_material_icons::icons::ICON_LIBRARY_MUSIC
+                    } else {
+                        egui_material_icons::icons::ICON_HOME_STORAGE
+                    };
                     let resp = ui.add(
                         egui::Button::new(
-                            egui::RichText::new(home.codepoint)
-                                .font(egui::FontId::new(14.0, home.font_family()))
+                            egui::RichText::new(icon.codepoint)
+                                .font(egui::FontId::new(14.0, icon.font_family()))
                                 .color(crate::theme::text_secondary()),
                         )
                         .frame(false),
@@ -586,7 +598,11 @@ fn big_device_card(
                     if resp.clicked() {
                         *open_gui = Some(selected);
                     }
-                    resp.on_hover_text(t!("mix.toggle_gui"));
+                    resp.on_hover_text(if matches!(selected, DockDevice::XSynth) {
+                        t!("soundfont.title").to_string()
+                    } else {
+                        t!("mix.toggle_gui").to_string()
+                    });
                 }
             });
             ui.add_space(6.0);

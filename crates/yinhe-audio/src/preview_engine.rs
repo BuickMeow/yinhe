@@ -53,7 +53,8 @@ pub(crate) struct PreviewEngine {
     /// 源通道 → dense 通道映射（与主引擎同一布局，dense 索引一致）。
     dense_map: [u32; 256],
     /// 每 port 的音色（与主引擎共享 Arc）。
-    port_sfs: [Vec<Arc<dyn SoundfontBase>>; 16],
+    /// 每源通道（0..256）的音色库（与主引擎共享同一批 Arc，零拷贝）。
+    channel_sfs: Box<[Vec<Arc<dyn SoundfontBase>>; 256]>,
     /// 渲染时钟（预览输出帧数累计，与主引擎 sample_position 独立）。
     position: u64,
     /// 活跃预览音。
@@ -117,20 +118,20 @@ impl PreviewEngine {
         Self {
             channel_group: ChannelGroup::new(config),
             dense_map: std::array::from_fn(|ch| layout.dense_for(ch)),
-            port_sfs: std::array::from_fn(|_| Vec::new()),
+            channel_sfs: Box::new(std::array::from_fn(|_| Vec::new())),
             position: 0,
             voices: Vec::new(),
             pending: Vec::new(),
         }
     }
 
-    /// 同步某 port 的音色（与主引擎共享 Arc，零拷贝）。
-    pub(crate) fn set_port_soundfonts(
+    /// 同步某源通道的音色（与主引擎共享 Arc，零拷贝）。
+    pub(crate) fn set_channel_soundfonts(
         &mut self,
-        port: u8,
+        channel: u8,
         soundfonts: Vec<Arc<dyn SoundfontBase>>,
     ) {
-        self.port_sfs[port as usize] = soundfonts;
+        self.channel_sfs[channel as usize] = soundfonts;
     }
 
     /// 预览 NoteOn：设置通道音色 + 目标位置自动化状态（含 Program）+ NoteOn。
@@ -150,9 +151,8 @@ impl PreviewEngine {
             return;
         }
         // 音色与主引擎同源（同一 Arc，零拷贝）。
-        let port = (channel >> 4) & 0x0F;
-        if !self.port_sfs[port as usize].is_empty() {
-            let sfs = self.port_sfs[port as usize].clone();
+        if !self.channel_sfs[channel as usize].is_empty() {
+            let sfs = self.channel_sfs[channel as usize].clone();
             self.channel_group.send_event(SynthEvent::Channel(
                 dense,
                 ChannelEvent::Config(ChannelConfigEvent::SetSoundfonts(sfs)),

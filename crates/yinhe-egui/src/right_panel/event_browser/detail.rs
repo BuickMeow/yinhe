@@ -925,22 +925,22 @@ fn show_project_json(ui: &mut egui::Ui, doc: &Document) {
     kv(ui, "compression_level", format!("{}", pf.compression_level));
     kv(
         ui,
-        "soundfont_project_mode",
-        format!("{}", pf.soundfont_project_mode),
+        "soundfont_channels",
+        format!("{}", pf.sf_channel_overrides.len()),
     );
 
-    if !pf.soundfont_overrides.is_empty() {
+    if !pf.sf_channel_overrides.is_empty() {
         ui.add_space(6.0);
         ui.label(
             egui::RichText::new("soundfont_overrides")
                 .size(crate::theme::SMALL_FONT)
                 .strong(),
         );
-        for po in &pf.soundfont_overrides {
+        for po in &pf.sf_channel_overrides {
             ui.horizontal(|ui| {
                 ui.add_space(14.0);
                 ui.label(
-                    egui::RichText::new(format!("port {}:", po.port))
+                    egui::RichText::new(format!("channel {}:", po.channel))
                         .size(crate::theme::SMALL_FONT)
                         .color(crate::theme::text_label()),
                 );

@@ -8,13 +8,11 @@ pub struct SfEntry {
     pub enabled: bool,
 }
 
-/// Song-specific soundfont config — lives in `Document`.
-///
-/// When `GlobalSfConfig.global_enabled` is `false`, each port uses its
-/// entry here (if present), otherwise falls back to the built-in SF.
+/// 工程内音色库覆盖：某**源通道**（`TrackData::global_channel`，0..256）
+/// 单独配置的音色库列表。未在此列出的通道使用全局音色库（设置页配置）。
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ProjectSfConfig {
-    /// Port → SF entries for that port.
+    /// 源通道 → 该通道的 SF 条目。
     pub overrides: Vec<(u8, Vec<SfEntry>)>,
 }
 
@@ -45,44 +43,39 @@ pub fn builtin_soundfont_path() -> Option<std::path::PathBuf> {
     candidates.into_iter().flatten().find(|path| path.exists())
 }
 
-/// Global soundfont config — persisted to `yinhe_settings.json`.
+/// 全局音色库（应用级默认）— 持久化到 `yinhe_settings.json`。
 ///
-/// Always has 16 ports (A–P). Ports with no entries are simply empty.
+/// 语义：所有未在工程内单独配置的源通道都使用此列表。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GlobalSfConfig {
-    /// Global SF list.  In global mode all ports share `ports[0]`.
-    pub ports: [Vec<SfEntry>; 16],
-    /// `true` = global mode (one SF set for all ports).
-    /// `false` = project mode (per-port SF from `ProjectSfConfig`).
-    pub global_enabled: bool,
+    /// 全局 SF 条目列表。
+    #[serde(default)]
+    pub entries: Vec<SfEntry>,
 }
 
 impl GlobalSfConfig {
-    /// Build the default config: Port A gets the built-in GeneralUser GS.
+    /// 默认配置：内置 GeneralUser GS。
     pub fn builtin_default() -> Self {
-        let mut ports = std::array::from_fn(|_| Vec::new());
+        let mut entries = Vec::new();
         if let Some(builtin) = builtin_soundfont_path() {
-            ports[0] = vec![SfEntry {
+            entries.push(SfEntry {
                 path: builtin.to_string_lossy().to_string(),
                 name: "GeneralUser GS".into(),
                 enabled: true,
-            }];
+            });
         }
-        Self {
-            ports,
-            global_enabled: true,
-        }
+        Self { entries }
     }
 
-    /// Migrate the old single-path default into Port A's entry list.
+    /// 旧格式迁移：把旧的单路径默认值搬进条目列表（列表为空时）。
     pub fn with_fallback_path(mut self, old_path: &str) -> Self {
-        if !old_path.is_empty() && self.ports[0].is_empty() {
+        if !old_path.is_empty() && self.entries.is_empty() {
             let name = std::path::Path::new(old_path)
                 .file_stem()
                 .and_then(|n| n.to_str())
                 .unwrap_or("SoundFont")
                 .to_string();
-            self.ports[0] = vec![SfEntry {
+            self.entries = vec![SfEntry {
                 path: old_path.to_string(),
                 name,
                 enabled: true,

@@ -15,6 +15,7 @@ mod render;
 mod saving;
 mod search;
 mod shortcuts;
+mod soundfont;
 mod theme;
 
 #[allow(unused_imports)]
@@ -41,6 +42,8 @@ pub use saving::show_saving_tab;
 pub use search::{item_matches, norm, show_search_results, to_search_keys};
 #[allow(unused_imports)]
 pub use shortcuts::show_shortcuts_tab;
+#[allow(unused_imports)]
+pub use soundfont::show_soundfont_tab;
 #[allow(unused_imports)]
 pub use theme::show_theme_tab;
 

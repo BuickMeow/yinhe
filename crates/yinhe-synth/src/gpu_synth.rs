@@ -508,26 +508,32 @@ impl GpuSynth {
         })
     }
 
-    /// 加载一个 port 的音色库列表（多文件 = 多个 (bank, preset) 条目，
-    /// ProgramChange 在它们之间切换）。`dense_channels` 记录该 port 的
-    /// dense 通道号（来自 yinhe-audio 的 ChannelLayout），用于通道 → port 映射。
-    /// 可多次调用（不同 port / 重新加载）。
-    pub fn load_port_soundfonts(
+    /// 加载一个 dense 通道的音色库列表（多文件 = 多个 (bank, preset) 条目，
+    /// ProgramChange 在它们之间切换）。可多次调用（逐通道加载）。
+    ///
+    /// 只登记 key map，不上传样本——全部通道加载完成后由调用方调一次
+    /// [`finish_soundfont_load`](Self::finish_soundfont_load) 统一上传
+    /// （逐通道上传会退化成 O(n²) 全量重传）。
+    /// 注意：`MAX_CHANNELS`（32）是 GPU 侧的 dense 槽位上限（`dense % MAX_CHANNELS`
+    /// 复用槽位），超出时后加载的通道覆盖先前的。
+    pub fn load_dense_soundfonts(
         &mut self,
-        port: u8,
-        dense_channels: &[u32],
+        dense: u32,
         paths: &[std::path::PathBuf],
     ) -> Result<(), String> {
+        let slot = dense as usize % MAX_CHANNELS;
         let mut entries: Vec<sfz_parser::KeyMapEntry> = Vec::new();
         for path in paths {
             entries.extend(sfz_parser::build_key_maps(path, self.sample_rate)?);
         }
-        for &dense in dense_channels {
-            self.channel_port[dense as usize % MAX_CHANNELS] = port;
-        }
-        self.port_key_maps[port as usize] = entries;
-        self.rebuild_sample_upload();
+        self.port_key_maps[slot] = entries;
+        self.channel_port[slot] = slot as u8;
         Ok(())
+    }
+
+    /// 全部通道音色加载完成后调用一次：把样本统一上传 GPU。
+    pub fn finish_soundfont_load(&mut self) {
+        self.rebuild_sample_upload();
     }
 
     /// 把所有 port 的采样按 Arc 身份去重后拼成大块上传 GPU（增量 port 加载时

@@ -371,14 +371,19 @@ pub fn export_wav_gpu(
     progress(0.0, "初始化 GPU 合成器...");
     let mut synth = yinhe_synth::GpuSynth::new(device, queue, sample_rate)
         .map_err(|e| ExportError::Render(format!("GpuSynth 初始化失败: {}", e)))?;
-    // 逐 port 加载音色库（多文件 = 多 (bank, preset) 条目，PC 切换选择）
-    for (port, paths) in port_soundfonts {
-        let dense = layout.dense_channels_for_port(*port);
+    // 逐通道加载音色库（多文件 = 多 (bank, preset) 条目，PC 切换选择）；
+    // 全部登记后统一上传样本。
+    for (channel, paths) in port_soundfonts {
+        let dense = layout.dense_for(*channel as usize);
+        if dense == u32::MAX {
+            continue;
+        }
         let paths: Vec<std::path::PathBuf> = paths.iter().map(std::path::PathBuf::from).collect();
         synth
-            .load_port_soundfonts(*port, &dense, &paths)
+            .load_dense_soundfonts(dense, &paths)
             .map_err(|e| ExportError::Render(format!("音色库加载失败: {}", e)))?;
     }
+    synth.finish_soundfont_load();
     eprintln!(
         "[gpu-export] GpuSynth initialized: {:.2?}",
         t_start.elapsed()
