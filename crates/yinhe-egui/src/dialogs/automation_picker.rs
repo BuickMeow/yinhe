@@ -183,49 +183,49 @@ pub(crate) fn show_viewport(
                                         .color(crate::theme::text_muted()),
                                 );
                             } else {
-                                let row_h = 22.0;
+                                // 设置菜单样式的行：左标题（无描述）+ 右开关（= 已添加自动化）。
+                                let row_h = 40.0;
                                 egui::ScrollArea::vertical()
                                     .id_salt("automation_picker_list")
                                     .auto_shrink([false, false])
-                                    .max_height(ui.available_height() - 34.0)
+                                    .max_height(ui.available_height() - 40.0)
                                     .show_rows(ui, row_h, state.filtered.len(), |ui, range| {
                                         for &pi in &state.filtered[range] {
-                                            let e = &state.entries[pi];
-                                            let added = e.existing;
-                                            let resp = ui.add_sized(
-                                                [ui.available_width(), row_h],
-                                                egui::Button::new(
-                                                    egui::RichText::new(&e.label)
-                                                        .size(crate::theme::SMALL_FONT)
-                                                        .color(crate::theme::text_primary()),
-                                                )
-                                                .fill(egui::Color32::TRANSPARENT)
-                                                .stroke(egui::Stroke::NONE),
-                                            );
-                                            if added {
-                                                ui.painter().text(
-                                                    egui::pos2(
-                                                        resp.rect.max.x - 10.0,
-                                                        resp.rect.center().y,
+                                            let label = state.entries[pi].label.clone();
+                                            let added = state.entries[pi].existing;
+                                            let mut on = added;
+                                            let mut toggled = false;
+                                            ui.horizontal(|ui| {
+                                                ui.label(egui::RichText::new(label).strong().size(
+                                                    crate::scaling::scaled_font(
+                                                        ui.ctx(),
+                                                        crate::theme::SUB_TITLE_FONT,
                                                     ),
-                                                    egui::Align2::RIGHT_CENTER,
-                                                    egui_material_icons::icons::ICON_CHECK_CIRCLE
-                                                        .codepoint,
-                                                    egui::FontId::new(
-                                                        13.0,
-                                                        egui_material_icons::icons::ICON_CHECK_CIRCLE
-                                                            .font_family(),
+                                                ));
+                                                ui.with_layout(
+                                                    egui::Layout::right_to_left(
+                                                        egui::Align::Center,
                                                     ),
-                                                    crate::theme::accent_active(),
+                                                    |ui| {
+                                                        if crate::widgets::switch::switch(
+                                                            ui, &mut on,
+                                                        )
+                                                        .changed()
+                                                        {
+                                                            toggled = true;
+                                                        }
+                                                    },
                                                 );
-                                            }
-                                            if resp.clicked() {
+                                            });
+                                            ui.add_space(6.0);
+                                            ui.separator();
+                                            if toggled {
                                                 let target = state.entries[pi].target.clone();
-                                                state.entries[pi].existing = !added;
+                                                state.entries[pi].existing = on;
                                                 action = AutomationPickerAction::Toggle {
                                                     track_idx: state.track_idx,
                                                     target,
-                                                    add: !added,
+                                                    add: on,
                                                 };
                                             }
                                         }
@@ -234,50 +234,64 @@ pub(crate) fn show_viewport(
 
                             // 自定义 CC 行（仅 XSynth 设备）：输入控制器号 → 添加。
                             if state.show_custom_cc {
-                                ui.separator();
+                                ui.add_space(8.0);
                                 ui.horizontal(|ui| {
                                     ui.label(
-                                        egui::RichText::new(t!("arrange.custom_cc"))
-                                            .size(crate::theme::SMALL_FONT)
-                                            .color(crate::theme::text_primary()),
+                                        egui::RichText::new(t!("arrange.custom_cc")).strong().size(
+                                            crate::scaling::scaled_font(
+                                                ui.ctx(),
+                                                crate::theme::SUB_TITLE_FONT,
+                                            ),
+                                        ),
                                     );
-                                    ui.add(
-                                        egui::DragValue::new(&mut state.custom_cc).range(0..=127),
-                                    );
-                                    if ui.button(t!("arrange.create")).clicked() {
-                                        let target =
-                                            AutomationTarget::CC {
-                                                controller: state.custom_cc,
-                                            };
-                                        let label =
-                                            crate::arrange::lane_label(&target);
-                                        if let Some(e) =
-                                            state.entries.iter_mut().find(|e| e.target == target)
-                                        {
-                                            if !e.existing {
-                                                e.existing = true;
-                                                action = AutomationPickerAction::Toggle {
-                                                    track_idx: state.track_idx,
-                                                    target: target.clone(),
-                                                    add: true,
-                                                };
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if ui
+                                                .add(
+                                                    egui::DragValue::new(&mut state.custom_cc)
+                                                        .range(0..=127),
+                                                )
+                                                .changed()
+                                            {
+                                                // 仅更新输入值。
                                             }
-                                        } else {
-                                            state.entries.push(AutomationEntry {
-                                                target: target.clone(),
-                                                label,
-                                                existing: true,
-                                            });
-                                            // 新条目可能不在当前过滤结果里：重建。
-                                            state.filter_dirty = true;
+                                            ui.label(t!("dialog.automation.cc_number"));
+                                        },
+                                    );
+                                });
+                                ui.add_space(4.0);
+                                if ui.button(t!("arrange.create")).clicked() {
+                                    let target = AutomationTarget::CC {
+                                        controller: state.custom_cc,
+                                    };
+                                    let label = crate::arrange::lane_label(&target);
+                                    if let Some(e) =
+                                        state.entries.iter_mut().find(|e| e.target == target)
+                                    {
+                                        if !e.existing {
+                                            e.existing = true;
                                             action = AutomationPickerAction::Toggle {
                                                 track_idx: state.track_idx,
-                                                target,
+                                                target: target.clone(),
                                                 add: true,
                                             };
                                         }
+                                    } else {
+                                        state.entries.push(AutomationEntry {
+                                            target: target.clone(),
+                                            label,
+                                            existing: true,
+                                        });
+                                        // 新条目可能不在当前过滤结果里：重建。
+                                        state.filter_dirty = true;
+                                        action = AutomationPickerAction::Toggle {
+                                            track_idx: state.track_idx,
+                                            target,
+                                            add: true,
+                                        };
                                     }
-                                });
+                                }
                             }
                         });
                 });
