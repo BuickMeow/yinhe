@@ -1,6 +1,10 @@
+pub(crate) mod audio_edit;
 mod interaction;
 mod render;
 mod types;
+
+/// 音频片段编辑命令（arrange.rs 应用 + undo 用）。
+pub(crate) use audio_edit::AudioEditCmd;
 
 use std::collections::HashSet;
 
@@ -159,15 +163,28 @@ pub fn show(
     renderer.upload_uniforms(uniforms);
     renderer.upload_track_colors(&tc_colors);
     renderer.ensure_layers(2);
-    let (mut ghost_notes, hidden_notes, drag_rect) =
-        if *cfg.active_tool == Tool::Select || *cfg.active_tool == Tool::SelectVertical {
-            let vertical = *cfg.active_tool == Tool::SelectVertical;
-            interaction::sel_drag_frame_arrange(
-                ui, rect, music_rect, view, row_layout, &data, edit, vertical,
-            )
-        } else {
-            (Vec::new(), HashSet::new(), None)
-        };
+    let mut ghost_notes;
+    let hidden_notes;
+    let drag_rect;
+    // 音频片段交互优先：拖动/命中时消费指针，避免与框选冲突。
+    let audio_consumed = audio_edit::frame(ui, rect, music_rect, view, row_layout, &data, edit);
+    if audio_consumed {
+        ghost_notes = Vec::new();
+        hidden_notes = HashSet::new();
+        drag_rect = None;
+    } else if *cfg.active_tool == Tool::Select || *cfg.active_tool == Tool::SelectVertical {
+        let vertical = *cfg.active_tool == Tool::SelectVertical;
+        let (g, h, d) = interaction::sel_drag_frame_arrange(
+            ui, rect, music_rect, view, row_layout, &data, edit, vertical,
+        );
+        ghost_notes = g;
+        hidden_notes = h;
+        drag_rect = d;
+    } else {
+        ghost_notes = Vec::new();
+        hidden_notes = HashSet::new();
+        drag_rect = None;
+    }
     let vh = view.render_hash();
     let wh = {
         let mut hash: u64 = 0;

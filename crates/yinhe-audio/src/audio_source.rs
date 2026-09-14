@@ -115,6 +115,15 @@ impl WavePeaks {
             .copied()
             .unwrap_or((0.0, 0.0))
     }
+
+    /// 全程峰值（|min| 与 |max| 的较大者），供归一化用。
+    pub fn peak_max(&self) -> f32 {
+        self.levels
+            .last()
+            .and_then(|l| l.first())
+            .map(|(mn, mx)| mn.abs().max(mx.abs()))
+            .unwrap_or(0.0)
+    }
 }
 
 /// 解码音频字节到目标采样率立体声。

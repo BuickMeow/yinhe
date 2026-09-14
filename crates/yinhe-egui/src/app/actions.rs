@@ -198,9 +198,53 @@ impl App {
 
     /// Delete all selected notes from the active document.
     pub(crate) fn delete_selected_notes(&mut self) {
+        // AR 音频选择优先：有选中的音频片段时删除片段（与音符选择互斥使用）。
+        if self.delete_selected_audio_clips() {
+            return;
+        }
         self.with_undo(t!("undo.delete_notes").as_ref(), |doc| {
             doc.delete_selected()
         });
+    }
+
+    /// 删除 AR 选中的音频片段；返回是否执行了删除。
+    pub(crate) fn delete_selected_audio_clips(&mut self) -> bool {
+        let Some(idx) = self.workspace.active_doc else {
+            return false;
+        };
+        if self.workspace.documents[idx]
+            .edit
+            .selected_audio_clips
+            .is_empty()
+        {
+            return false;
+        }
+        let ids: Vec<(u16, u32)> = self.workspace.documents[idx]
+            .edit
+            .selected_audio_clips
+            .iter()
+            .copied()
+            .collect();
+        let before = self.workspace.documents[idx].capture_snapshot();
+        let mut actions = Vec::new();
+        for (track, id) in ids {
+            if let Some(action) =
+                self.workspace.documents[idx].delete_audio_clips(track as usize, &[id])
+            {
+                actions.push(action);
+            }
+        }
+        if actions.is_empty() {
+            return false;
+        }
+        self.workspace.documents[idx]
+            .edit
+            .selected_audio_clips
+            .clear();
+        let action = yinhe_editor_core::history::UndoAction::Composite(actions);
+        self.workspace.documents[idx].push_undo(action, t!("undo.edit_audio").as_ref(), before);
+        self.notify_audio_model_changed();
+        true
     }
 
     /// Duplicate all selected notes (Ctrl+D / Cmd+D).
