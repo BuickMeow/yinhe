@@ -129,6 +129,32 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
         return;
     };
 
+    // 音频轨：设备链按音频通道组织（MIX 界面），这里只提示去向，
+    // 不显示 MIDI 通道的 XSynth 链（音频轨没有 MIDI 通道语义）。
+    let selected_audio_channel = selected_track
+        .and_then(|ti| {
+            app.workspace.documents[idx]
+                .data
+                .model
+                .tracks
+                .get(ti as usize)
+        })
+        .filter(|t| t.kind == TrackKind::Audio)
+        .and_then(|t| t.audio_channel);
+    if let Some(ach) = selected_audio_channel {
+        ui.centered_and_justified(|ui| {
+            ui.label(
+                egui::RichText::new(t!(
+                    "dock.audio_track_hint",
+                    ch = format!("A{:02}", u32::from(ach) + 1)
+                ))
+                .color(crate::theme::text_muted())
+                .size(crate::theme::SMALL_FONT),
+            );
+        });
+        return;
+    }
+
     // ── 收集链数据（后续 UI 不再借 workspace）──
     let model = app.workspace.documents[idx].data.model.clone();
     // 该通道上的乐器轨（乐器插件挂在 instrument_channel 上）。

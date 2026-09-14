@@ -834,6 +834,7 @@ settings.notification.action_collapse_desc: "带操作按钮或需留意的通�
 settings.notification.enabled_desc: "关闭后不再弹出任何通知，新的通知也不再记入历史；已有历史保留"
 hint.dock_toggle: "显示/隐藏底部设备栏"
 dock.select_channel: "选择一条音轨或通道以显示设备链"
+dock.audio_track_hint: "音频轨：设备链在混音台 %{ch}"
 dock.builtin_synth: "内置合成器"
 dock.instrument_plugin: "乐器插件"
 dock.effect: "效果器"
