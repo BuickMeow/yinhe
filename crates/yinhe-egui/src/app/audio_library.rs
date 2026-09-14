@@ -120,6 +120,16 @@ impl AudioLibrary {
         self.pending.contains(uuid)
     }
 
+    /// 直接插入已解码素材（录音产物；跳过解码路径）。
+    /// 库尚未建立采样率时以该素材采样率为准。
+    pub fn insert_decoded(&mut self, uuid: String, decoded: Arc<DecodedAudio>) {
+        if self.sample_rate == 0 {
+            self.sample_rate = decoded.sample_rate;
+        }
+        self.pending.remove(&uuid);
+        self.sources.insert(uuid, decoded);
+    }
+
     /// 引擎（重）建后把所有已解码素材推给引擎。
     pub fn push_all_to_engine(&self, handle: &AudioHandle) {
         for (uuid, decoded) in &self.sources {

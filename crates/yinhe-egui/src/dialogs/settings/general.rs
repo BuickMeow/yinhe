@@ -23,9 +23,11 @@ pub fn show_general_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool
             {
                 let default_settings = AudioSettings::default();
                 let devices = std::mem::take(&mut settings.available_devices);
+                let input_devices = std::mem::take(&mut settings.available_input_devices);
                 let rates = std::mem::take(&mut settings.available_sample_rates);
                 *settings = default_settings;
                 settings.available_devices = devices;
+                settings.available_input_devices = input_devices;
                 settings.available_sample_rates = rates;
                 changed = true;
             }

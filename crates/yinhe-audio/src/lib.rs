@@ -22,9 +22,13 @@ pub mod spawn;
 pub use yinhe_synth as synth;
 
 pub use audio_model::effective_fades;
-pub use audio_source::{AudioInfo, DecodedAudio, WavePeaks, decode_audio, probe_audio_info};
+pub use audio_source::{
+    AudioInfo, DecodedAudio, WavePeaks, decode_audio, encode_wav_bytes, probe_audio_info,
+    resample_channel,
+};
 pub use clap_insert::ClapInsert;
 pub use spawn::{
     AudioCommand, AudioHandle, CpalAudioHandle, InsertTarget, PreviewNoteParams,
-    channels_for_model, discover_sample_rates, list_output_devices, spawn_cpal_audio,
+    channels_for_model, discover_sample_rates, list_input_devices, list_output_devices,
+    spawn_cpal_audio,
 };

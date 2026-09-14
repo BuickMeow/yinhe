@@ -4,7 +4,7 @@ pub use yinhe_editor_core::audio_settings::AudioSettings;
 
 // `list_output_devices` / `discover_sample_rates` 由 yinhe-audio 统一导出，避免在 yinhe-egui 里再写一份 cpal
 // 枚举逻辑（设备切换对话框和设置面板都用这一个）。
-pub(crate) use yinhe_audio::{discover_sample_rates, list_output_devices};
+pub(crate) use yinhe_audio::{discover_sample_rates, list_input_devices, list_output_devices};
 
 /// Load AudioSettings and populate device lists from the system.
 pub(crate) fn load_audio_settings() -> AudioSettings {
@@ -40,6 +40,13 @@ pub(crate) fn load_audio_settings() -> AudioSettings {
     }
     settings.refresh_devices(devices, rates, default_rate);
     refresh_midi_inputs(&mut settings);
+    // 录音输入设备：刷新列表；上次选的设备已拔出时清空（回退系统默认）。
+    settings.available_input_devices = list_input_devices();
+    if let Some(name) = settings.input_device_name.as_ref()
+        && !settings.available_input_devices.iter().any(|d| d == name)
+    {
+        settings.input_device_name = None;
+    }
     settings
 }
 

@@ -68,7 +68,7 @@ impl App {
         }
 
         if !loaded.is_empty() {
-            self.insert_imported_audio(idx, &loaded);
+            self.insert_imported_audio_at(Some(idx), &loaded, None);
         }
         if !errors.is_empty() {
             self.show_error(
@@ -79,7 +79,21 @@ impl App {
     }
 
     /// 把已读取的音频素材插入工程：必要时新建音频轨，再逐个建片段。
-    fn insert_imported_audio(&mut self, idx: usize, loaded: &[(String, Arc<Vec<u8>>, f64)]) {
+    ///
+    /// - `idx`：目标文档（None = 活动文档）。
+    /// - `start_seconds_override`：显式起点（录音用）；None = 光标位置，多文件依次排开。
+    pub(crate) fn insert_imported_audio_at(
+        &mut self,
+        idx: Option<usize>,
+        loaded: &[(String, Arc<Vec<u8>>, f64)],
+        start_seconds_override: Option<f64>,
+    ) {
+        let Some(idx) = idx.or(self.workspace.active_doc) else {
+            return;
+        };
+        if loaded.is_empty() {
+            return;
+        }
         let before = self.workspace.documents[idx].capture_snapshot();
 
         // 目标轨道：选中集合里的音频轨优先（取最靠前的），否则首个音频轨。
@@ -124,8 +138,8 @@ impl App {
             }
         };
 
-        // 起点：光标位置（tick → 秒；音频用绝对时间）。
-        let mut start_seconds = {
+        // 起点：显式覆盖优先（录音），否则光标位置（tick → 秒；音频用绝对时间）。
+        let mut start_seconds = start_seconds_override.unwrap_or_else(|| {
             let doc = &self.workspace.documents[idx];
             doc.edit
                 .cursor_tick
@@ -136,7 +150,7 @@ impl App {
                         .tick_to_seconds(tick.max(0.0) as u64)
                 })
                 .unwrap_or(0.0)
-        };
+        });
 
         for (name, data, duration) in loaded {
             let uuid = uuid::Uuid::new_v4().to_string();

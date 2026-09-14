@@ -74,6 +74,66 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
 
     setting_row(
         ui,
+        t!("settings.audio.input_device").as_ref(),
+        t!("settings.audio.input_device_desc").as_ref(),
+        |ui| {
+            let default_input = t!("settings.audio.default_input").to_string();
+            let current_input = settings.input_device_name.clone().unwrap_or(default_input);
+            crate::widgets::combo::combo_box(ui, "input_device", current_input, 200.0, |ui| {
+                for device_name in settings.available_input_devices.clone() {
+                    let selected = settings.input_device_name.as_ref() == Some(&device_name);
+                    if crate::widgets::combo::combo_item(ui, selected, &device_name).clicked() {
+                        settings.input_device_name = Some(device_name);
+                        changed = true;
+                    }
+                }
+                let is_default = settings.input_device_name.is_none();
+                if crate::widgets::combo::combo_item(
+                    ui,
+                    is_default,
+                    t!("settings.audio.default_input").as_ref(),
+                )
+                .clicked()
+                {
+                    settings.input_device_name = None;
+                    changed = true;
+                }
+            });
+        },
+    );
+
+    setting_row(
+        ui,
+        t!("settings.audio.record_monitor").as_ref(),
+        t!("settings.audio.record_monitor_desc").as_ref(),
+        |ui| {
+            if crate::widgets::switch::switch(ui, &mut settings.record_monitor).changed() {
+                changed = true;
+            }
+        },
+    );
+
+    setting_row(
+        ui,
+        t!("settings.audio.record_offset").as_ref(),
+        t!("settings.audio.record_offset_desc").as_ref(),
+        |ui| {
+            if ui
+                .add(
+                    egui::DragValue::new(&mut settings.record_offset_ms)
+                        .range(0.0..=500.0)
+                        .speed(1.0)
+                        .suffix(" ms"),
+                )
+                .changed()
+            {
+                changed = true;
+            }
+        },
+    );
+
+    setting_row(
+        ui,
         t!("settings.audio.sample_rate").as_ref(),
         t!("settings.audio.sample_rate_desc").as_ref(),
         |ui| {

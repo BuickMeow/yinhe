@@ -36,10 +36,23 @@ fn default_auto_save_interval_secs() -> u64 {
     300
 }
 
+fn default_record_monitor() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AudioSettings {
     pub output_device_name: Option<String>,
+    /// 录音输入设备名（None = 系统默认输入）。
+    #[serde(default)]
+    pub input_device_name: Option<String>,
+    /// 录音时监听（输入直通输出；关 = 纯录制）。
+    #[serde(default = "default_record_monitor")]
+    pub record_monitor: bool,
+    /// 录音延迟补偿（毫秒）：录音起点前移该值，抵消输入/输出延迟。
+    #[serde(default)]
+    pub record_offset_ms: f32,
     pub midi_input_device: Option<String>,
     pub sample_rate: u32,
     pub default_sf2_path: String,
@@ -109,6 +122,9 @@ pub struct AudioSettings {
     pub shortcut_recording: bool,
     #[serde(skip)]
     pub available_devices: Vec<String>,
+    /// 可用录音输入设备（运行时刷新，不落盘）。
+    #[serde(skip)]
+    pub available_input_devices: Vec<String>,
     #[serde(skip)]
     pub available_sample_rates: Vec<u32>,
     #[serde(skip)]
@@ -119,6 +135,9 @@ impl Default for AudioSettings {
     fn default() -> Self {
         Self {
             output_device_name: None,
+            input_device_name: None,
+            record_monitor: default_record_monitor(),
+            record_offset_ms: 0.0,
             midi_input_device: None,
             sample_rate: 48000,
             default_sf2_path: String::new(),
@@ -169,6 +188,7 @@ impl Default for AudioSettings {
             settings_search: String::new(),
             shortcut_recording: false,
             available_devices: Vec::new(),
+            available_input_devices: Vec::new(),
             available_sample_rates: Vec::new(),
             available_midi_inputs: Vec::new(),
         }

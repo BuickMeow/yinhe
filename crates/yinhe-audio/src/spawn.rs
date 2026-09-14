@@ -404,6 +404,9 @@ impl AudioHandle {
 pub struct CpalAudioHandle {
     pub handle: AudioHandle,
     pub sample_rate: u32,
+    /// 录音监听缓冲（交错立体声）：输入回调 push、输出回调混入。
+    /// 上限见 `MONITOR_MAX_SAMPLES`，超限丢最旧样本（延迟不累积）。
+    pub monitor: Arc<Mutex<std::collections::VecDeque<f32>>>,
     /// 共享给 cpal 错误回调（采样率变化时恢复流）。用 Arc<Mutex<Option>> 而非裸
     /// Stream：错误回调在流创建之前就注册，只能通过共享句柄访问。回调只持 Weak，
     /// handle drop 时 Arc 归零 → Stream 正常释放，不形成循环引用。
@@ -787,6 +790,19 @@ pub fn list_output_devices() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// 列出系统所有可用输入设备的描述名（录音输入选择用）。
+/// 错误同样吞掉返回空 Vec（UI 辅助，不阻塞引擎）。
+pub fn list_input_devices() -> Vec<String> {
+    let host = cpal::default_host();
+    host.input_devices()
+        .map(|devices| {
+            devices
+                .filter_map(|d| d.description().ok().map(|desc| desc.to_string()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
 /// 查询系统默认输出设备的默认采样率与所有支持的标准采样率。
 /// 失败时回退到 `(48000, [44100, 48000, 96000])`，与 `yinhe-egui` 原实现一致。
 /// 已下沉自 `yinhe-egui/src/audio_settings.rs`，避免 egui 层直接依赖 cpal 采样率枚举。
@@ -1034,6 +1050,11 @@ pub fn spawn_cpal_audio(
     //（SRC），恢复流即可，不该弹"重新选择设备"。真正不可恢复的错误（设备
     // 移除、驱动崩溃等）才置位 stream_error。
     let stream_error_flag = Arc::clone(&stream_error);
+    // 监听缓冲：录音输入 → 输出直通（DAW 监听）。容量上限由输入侧
+    // （yinhe-egui 的录音回调）控制，保证监听延迟不随录音时长增长。
+    let monitor: Arc<Mutex<std::collections::VecDeque<f32>>> =
+        Arc::new(Mutex::new(std::collections::VecDeque::new()));
+    let monitor_out = Arc::clone(&monitor);
     // 流在回调注册之后才创建，用 Arc<Mutex<Option>> 共享给错误回调；
     // 回调只持 Weak，handle 释放时不会形成循环引用。
     let stream_holder: Arc<Mutex<Option<cpal::Stream>>> = Arc::new(Mutex::new(None));
@@ -1058,6 +1079,16 @@ pub fn spawn_cpal_audio(
                 }
                 consumer_sample_position =
                     consumer_sample_position.saturating_add((popped / STEREO_CHANNELS) as u64);
+
+                // 监听混入（try_lock：失败跳过，绝不阻塞实时回调）。
+                if let Ok(mut mon) = monitor_out.try_lock()
+                    && !mon.is_empty()
+                {
+                    let n = mon.len().min(data.len());
+                    for (dst, src) in data.iter_mut().zip(mon.drain(..n)) {
+                        *dst += src;
+                    }
+                }
 
                 sp.store(consumer_sample_position, Ordering::Relaxed);
                 pl.store(renderer_playing.load(Ordering::Relaxed), Ordering::Relaxed);
@@ -1133,6 +1164,7 @@ pub fn spawn_cpal_audio(
             instrument_return_rx,
         },
         sample_rate,
+        monitor,
         _stream: stream_holder,
         shutdown,
         renderer_handle: Some(renderer_handle),

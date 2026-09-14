@@ -9,6 +9,8 @@ impl App {
     pub(in crate::app) fn poll_async_operations(&mut self) {
         // 音频素材：后台解码轮询（无素材时开销可忽略）。
         self.poll_audio_library();
+        // 录音：引擎丢失（切设备/关工程）时停止，避免输入流悬空。
+        self.poll_audio_recording();
 
         // Poll async file loading
         match self.file_loader.poll_loading() {

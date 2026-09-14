@@ -309,11 +309,41 @@ pub fn probe_audio_info(data: &[u8]) -> Result<AudioInfo, String> {
     })
 }
 
+/// 把立体声 PCM 编码为 16-bit WAV 字节（录音素材内嵌进工程用）。
+pub fn encode_wav_bytes(left: &[f32], right: &[f32], sample_rate: u32) -> Result<Vec<u8>, String> {
+    let spec = hound::WavSpec {
+        channels: 2,
+        sample_rate,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    {
+        let mut writer =
+            hound::WavWriter::new(&mut cursor, spec).map_err(|e| format!("WAV 编码失败: {e}"))?;
+        let frames = left.len().min(right.len());
+        for i in 0..frames {
+            let l = (left[i].clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
+            let r = (right[i].clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
+            writer
+                .write_sample(l)
+                .map_err(|e| format!("WAV 写入失败: {e}"))?;
+            writer
+                .write_sample(r)
+                .map_err(|e| format!("WAV 写入失败: {e}"))?;
+        }
+        writer
+            .finalize()
+            .map_err(|e| format!("WAV 收尾失败: {e}"))?;
+    }
+    Ok(cursor.into_inner())
+}
+
 /// 单声道分块重采样（rubato SincFixedIn）。
 ///
 /// 分块处理避免整段一次性缓冲（长音频内存翻数倍）；最后一块不足一个 chunk
-/// 时用 `process_partial` 补零收尾。
-fn resample_channel(input: &[f32], src_rate: u32, dst_rate: u32) -> Result<Vec<f32>, String> {
+/// 时用 `process_partial` 补零收尾。公开供录音后处理复用。
+pub fn resample_channel(input: &[f32], src_rate: u32, dst_rate: u32) -> Result<Vec<f32>, String> {
     use rubato::{
         Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
     };

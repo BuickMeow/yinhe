@@ -612,7 +612,7 @@ impl eframe::App for App {
                 active_tool: &mut self.active_tool,
                 status_hint: &mut self.status_hint,
                 settings: &mut self.audio_settings,
-                is_recording: self.recording.is_some(),
+                is_recording: self.recording.is_some() || self.audio_recording.is_some(),
                 step_input: self.step_input,
                 orientation: &mut self.pianoroll_view.orientation,
             },
@@ -649,12 +649,33 @@ impl eframe::App for App {
                 .set_orientation(self.pianoroll_view.orientation().toggled());
         }
 
-        // ── MIDI 录音切换（REC 按钮 / macOS 播放菜单）──
+        // ── MIDI/音频录音切换（REC 按钮 / macOS 播放菜单）──
         if transport_response.record_toggle || menu_record {
-            if self.recording.is_some() {
+            if self.recording.is_some() || self.audio_recording.is_some() {
                 self.stop_recording();
+                self.stop_audio_recording();
             } else {
                 self.start_recording();
+                self.start_audio_recording();
+                // 录音与播放对齐：未播放则从光标开始播放。
+                let playing = self
+                    .audio_state
+                    .handle
+                    .as_ref()
+                    .is_some_and(|a| a.handle.is_playing());
+                if !playing {
+                    self.handle_playback(true, false, false);
+                }
+            }
+        }
+
+        // 停止播放时同步结束录音，避免音频缓冲无限增长。
+        if transport_response.stop_play || kb.stop_play || menu_stop {
+            if self.recording.is_some() {
+                self.stop_recording();
+            }
+            if self.audio_recording.is_some() {
+                self.stop_audio_recording();
             }
         }
 

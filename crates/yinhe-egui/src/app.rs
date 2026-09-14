@@ -6,6 +6,7 @@ pub(crate) mod actions;
 pub(crate) mod audio;
 pub(crate) mod audio_import;
 pub(crate) mod audio_library;
+pub(crate) mod audio_recording;
 pub(crate) mod audio_state;
 pub(crate) mod automation_actions;
 pub(crate) mod autosave;
@@ -164,6 +165,8 @@ pub struct App {
     pub(crate) audio_state: audio_state::AudioState,
     /// 音频素材库（后台解码 + 峰值；引擎重建后重推素材）。
     pub(crate) audio_library: audio_library::AudioLibrary,
+    /// 进行中的音频录音（None = 未录音）。
+    pub(crate) audio_recording: Option<audio_recording::AudioRecording>,
 
     // ── Settings ──
     pub(crate) audio_settings: crate::audio_settings::AudioSettings,
@@ -411,6 +414,7 @@ impl App {
 
             audio_state: audio_state::AudioState::new(),
             audio_library: audio_library::AudioLibrary::new(),
+            audio_recording: None,
 
             audio_settings,
             midi_input: None,
