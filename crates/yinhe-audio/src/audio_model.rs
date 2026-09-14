@@ -20,6 +20,19 @@ pub(crate) struct SortedCC {
     /// 使旁通切换不再需要重建事件流。
     pub(crate) lane: u16,
     pub(crate) event: ChannelAudioEvent,
+    /// 插件参数事件：`Some` 时 `event` 为占位（不影响 xsynth 路径），
+    /// dispatch 走乐器通道的 `PluginEvent::ParamValue`。
+    pub(crate) plugin_param: Option<PluginParamEvent>,
+}
+
+/// 插件参数自动化事件（值域归一化 0..1）。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PluginParamEvent {
+    /// 乐器通道（0 起）。
+    pub(crate) instrument_channel: u16,
+    pub(crate) param_id: u32,
+    /// 归一化值 0..1。
+    pub(crate) value: f32,
 }
 
 /// `SortedCC.lane` 哨兵：ProgramChange 事件（不受 AM lane 掩码过滤）。
@@ -372,7 +385,12 @@ pub(crate) fn flatten_automation_to_cc_events(
     cc_events.sort_by_key(|e| (e.tick, e.channel, dispatch_priority(&e.event)));
     // 去重限定在同一 lane：不同 lane 的同名同值事件必须各自保留，
     // 否则 dispatch 按 lane 查掩码时会把正常 lane 的事件误判成被旁通。
-    cc_events.dedup_by(|a, b| a.channel == b.channel && a.lane == b.lane && a.event == b.event);
+    cc_events.dedup_by(|a, b| {
+        a.channel == b.channel
+            && a.lane == b.lane
+            && a.event == b.event
+            && a.plugin_param == b.plugin_param
+    });
     Arc::new(cc_events)
 }
 
@@ -392,6 +410,7 @@ pub(crate) fn push_program_change(
             channel,
             track,
             lane: PC_LANE,
+            plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(0, pc.bank_msb)),
         });
     }
@@ -401,6 +420,7 @@ pub(crate) fn push_program_change(
             channel,
             track,
             lane: PC_LANE,
+            plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(32, pc.bank_lsb)),
         });
     }
@@ -409,6 +429,7 @@ pub(crate) fn push_program_change(
         channel,
         track,
         lane: PC_LANE,
+        plugin_param: None,
         event: ChannelAudioEvent::ProgramChange(pc.program),
     });
 }
@@ -443,6 +464,7 @@ pub(crate) fn emit_automation_event(
                 channel,
                 track,
                 lane,
+                plugin_param: None,
                 event: ChannelAudioEvent::Control(ControlEvent::Raw(
                     *controller,
                     value.round().clamp(0.0, 127.0) as u8,
@@ -455,6 +477,7 @@ pub(crate) fn emit_automation_event(
                 channel,
                 track,
                 lane,
+                plugin_param: None,
                 event: ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
                     (value - 8192.0) / 8192.0,
                 )),
@@ -468,6 +491,7 @@ pub(crate) fn emit_automation_event(
                         channel,
                         track,
                         lane,
+                        plugin_param: None,
                         event: ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(
                             value,
                         )),
@@ -480,6 +504,7 @@ pub(crate) fn emit_automation_event(
                         channel,
                         track,
                         lane,
+                        plugin_param: None,
                         event: ChannelAudioEvent::Control(ControlEvent::FineTune(fine)),
                     });
                 }
@@ -490,6 +515,7 @@ pub(crate) fn emit_automation_event(
                         channel,
                         track,
                         lane,
+                        plugin_param: None,
                         event: ChannelAudioEvent::Control(ControlEvent::CoarseTune(coarse)),
                     });
                 }
@@ -508,6 +534,7 @@ pub(crate) fn emit_automation_event(
                         channel,
                         track,
                         lane,
+                        plugin_param: None,
                         event: ChannelAudioEvent::Control(ControlEvent::Raw(101, msb)),
                     });
                     out.push(SortedCC {
@@ -515,6 +542,7 @@ pub(crate) fn emit_automation_event(
                         channel,
                         track,
                         lane,
+                        plugin_param: None,
                         event: ChannelAudioEvent::Control(ControlEvent::Raw(100, lsb)),
                     });
                     out.push(SortedCC {
@@ -522,6 +550,7 @@ pub(crate) fn emit_automation_event(
                         channel,
                         track,
                         lane,
+                        plugin_param: None,
                         event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)),
                     });
                     if data_lsb != 0 {
@@ -530,6 +559,7 @@ pub(crate) fn emit_automation_event(
                             channel,
                             track,
                             lane,
+                            plugin_param: None,
                             event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)),
                         });
                     }
@@ -547,6 +577,7 @@ pub(crate) fn emit_automation_event(
                 channel,
                 track,
                 lane,
+                plugin_param: None,
                 event: ChannelAudioEvent::Control(ControlEvent::Raw(99, msb)),
             });
             out.push(SortedCC {
@@ -554,6 +585,7 @@ pub(crate) fn emit_automation_event(
                 channel,
                 track,
                 lane,
+                plugin_param: None,
                 event: ChannelAudioEvent::Control(ControlEvent::Raw(98, lsb)),
             });
             out.push(SortedCC {
@@ -561,6 +593,7 @@ pub(crate) fn emit_automation_event(
                 channel,
                 track,
                 lane,
+                plugin_param: None,
                 event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)),
             });
             if data_lsb != 0 {
@@ -569,6 +602,7 @@ pub(crate) fn emit_automation_event(
                     channel,
                     track,
                     lane,
+                    plugin_param: None,
                     event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)),
                 });
             }
@@ -576,6 +610,27 @@ pub(crate) fn emit_automation_event(
         // Tempo 走 `conductor.tempo` 而非 `track.automation_lanes`，
         // 由 `build_tempo_map` 消费，不进入 CC 事件流。
         AutomationTarget::Tempo => {}
+        // 插件参数：占位 event 只保证排序/去重键完整；dispatch 按
+        // `plugin_param` 分支走 `PluginEvent::ParamValue`。
+        AutomationTarget::PluginParam {
+            instrument_channel,
+            param_id,
+            ..
+        } => {
+            out.push(SortedCC {
+                tick,
+                // 排序键用乐器通道（与 MIDI 通道无交集语义，只求稳定顺序）。
+                channel: u32::from(*instrument_channel),
+                track,
+                lane,
+                event: ChannelAudioEvent::Control(ControlEvent::Raw(0, 0)),
+                plugin_param: Some(PluginParamEvent {
+                    instrument_channel: *instrument_channel,
+                    param_id: *param_id,
+                    value: value.clamp(0.0, 1.0),
+                }),
+            });
+        }
     }
 }
 
@@ -701,6 +756,46 @@ mod tests {
         assert_eq!(audio.track_banks[0], vec![(100, 0)]);
         assert_eq!(audio.track_banks[1], vec![(200, 0), (400, 121)]);
         assert!(audio.track_banks[2].is_empty());
+    }
+
+    /// 插件参数 lane 展平成 plugin_param 事件：占位 event 不参与 xsynth 语义，
+    /// 值归一到 0..1（越界钳制），param_id/乐器通道原样携带。
+    #[test]
+    fn plugin_param_lane_flattens_to_plugin_param_event() {
+        let model = model_with_lanes(vec![AutomationLane {
+            target: AutomationTarget::PluginParam {
+                instrument_channel: 2,
+                param_id: 42,
+                name: "Cutoff".into(),
+            },
+            track: 0,
+            events: vec![
+                AutomationEvent {
+                    tick: 0,
+                    value: 0.25,
+                    shape: SegmentShape::Step,
+                },
+                AutomationEvent {
+                    tick: 10,
+                    value: 1.7, // 越界：展平钳制到 1.0
+                    shape: SegmentShape::Step,
+                },
+            ],
+        }]);
+        let events = flatten_automation_to_cc_events(&model, 1);
+        assert_eq!(events.len(), 2);
+        for e in events.iter() {
+            let pp = e.plugin_param.expect("插件参数事件必须带 plugin_param");
+            assert_eq!(pp.instrument_channel, 2);
+            assert_eq!(pp.param_id, 42);
+            // 占位 event 恒为 Raw(0,0)：dispatch 按 plugin_param 分支优先处理。
+            assert!(matches!(
+                e.event,
+                ChannelAudioEvent::Control(ControlEvent::Raw(0, 0))
+            ));
+        }
+        assert_eq!(events[0].plugin_param.map(|p| p.value), Some(0.25));
+        assert_eq!(events[1].plugin_param.map(|p| p.value), Some(1.0));
     }
 
     #[test]

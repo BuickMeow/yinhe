@@ -63,6 +63,7 @@ fn test_sorted_cc_ordering() {
             channel: 0,
             track: 0,
             lane: 0,
+            plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 80)),
         },
         SortedCC {
@@ -70,6 +71,7 @@ fn test_sorted_cc_ordering() {
             channel: 0,
             track: 0,
             lane: 0,
+            plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)),
         },
         SortedCC {
@@ -77,6 +79,7 @@ fn test_sorted_cc_ordering() {
             channel: 0,
             track: 0,
             lane: 0,
+            plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 60)),
         },
     ];
@@ -1086,6 +1089,7 @@ fn test_muted_track_cc_skipped_in_dispatch() {
             channel: 0,
             track: 0,
             lane: 0,
+            plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 40)),
         },
         SortedCC {
@@ -1093,6 +1097,7 @@ fn test_muted_track_cc_skipped_in_dispatch() {
             channel: 0,
             track: 1,
             lane: 0,
+            plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)),
         },
     ]);
@@ -1137,6 +1142,7 @@ fn test_unmute_chase_skip_excludes_events_missed_while_muted() {
             channel: 0,
             track: 0,
             lane: 0,
+            plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 40)),
         },
         SortedCC {
@@ -1144,6 +1150,7 @@ fn test_unmute_chase_skip_excludes_events_missed_while_muted() {
             channel: 0,
             track: 0,
             lane: 0,
+            plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 80)),
         },
     ]);
@@ -1418,6 +1425,7 @@ fn test_chase_channel_states_incremental() {
             channel: 0,
             track: 0,
             lane: 0,
+            plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)),
         },
         // ch1 的 CC7=50（不应影响 ch0）
@@ -1426,6 +1434,7 @@ fn test_chase_channel_states_incremental() {
             channel: 1,
             track: 1,
             lane: 0,
+            plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 50)),
         },
         // ch0 的 CC10=80（pan）
@@ -1434,6 +1443,7 @@ fn test_chase_channel_states_incremental() {
             channel: 0,
             track: 0,
             lane: 0,
+            plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(10, 80)),
         },
         // ch0 的 CC7=90（最新）
@@ -1442,6 +1452,7 @@ fn test_chase_channel_states_incremental() {
             channel: 0,
             track: 0,
             lane: 0,
+            plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 90)),
         },
         // ch0 的 PBS=48
@@ -1450,6 +1461,7 @@ fn test_chase_channel_states_incremental() {
             channel: 0,
             track: 0,
             lane: 0,
+            plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(48.0)),
         },
         // 边界：tick == target 参与（预览无 dispatch 兜底，Bug 8 回归）
@@ -1458,6 +1470,7 @@ fn test_chase_channel_states_incremental() {
             channel: 0,
             track: 0,
             lane: 0,
+            plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 10)),
         },
     ];
@@ -1494,6 +1507,7 @@ fn test_preview_chase_includes_jump_at_target_tick() {
             channel: 0,
             track: 0,
             lane: 0,
+            plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 0)),
         },
         SortedCC {
@@ -1501,6 +1515,7 @@ fn test_preview_chase_includes_jump_at_target_tick() {
             channel: 0,
             track: 0,
             lane: 0,
+            plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 127)),
         },
     ];

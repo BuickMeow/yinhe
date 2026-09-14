@@ -177,6 +177,12 @@ impl ClapPluginInstance {
         let layout = self.query_port_layout();
         // 插件延迟（PDC 用）：activate 前查询；不支持扩展视为 0。
         self.refresh_latency();
+        // 参数原生值域表（归一化 → 原生换算用）：activate 是主线程操作，可枚举。
+        let param_ranges: Vec<(u32, f64, f64)> = self
+            .param_list()
+            .into_iter()
+            .map(|p| (p.id, p.min_value, p.max_value))
+            .collect();
         let stopped = self.instance.activate(
             |_, _| crate::host::YinheAudioProcessor,
             PluginAudioConfiguration {
@@ -191,6 +197,7 @@ impl ClapPluginInstance {
             &layout,
             Arc::clone(&self.param_queue),
             Arc::clone(&self.latency),
+            param_ranges,
         ))
     }
 

@@ -1205,7 +1205,8 @@ pub(super) fn show_track_detail(
             AutomationTarget::Rpn { .. } | AutomationTarget::Nrpn { .. } => {
                 rpn_total += lane.events.len()
             }
-            AutomationTarget::Tempo => {}
+            // Tempo 在 conductor；插件参数在本汇总不单独展示。
+            AutomationTarget::Tempo | AutomationTarget::PluginParam { .. } => {}
         }
     }
     if !cc_controllers.is_empty() {

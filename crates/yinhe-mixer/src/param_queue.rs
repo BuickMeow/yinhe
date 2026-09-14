@@ -4,6 +4,9 @@
 //! 必须以 `ParamValue` 事件在 process 时交给插件。UI 拖动是高频的，走命令
 //! 通道（bounded 会丢）不合适，因此用本队列累积：UI 线程 [`ParamQueue::push`]，
 //! 渲染线程每块 [`take_into`](ParamQueue::take_into) 后转成事件。
+//!
+//! 值语义：**归一化 0..1**（与 AM 插件参数曲线一致）；后端处理器按参数
+//! 范围换算成原生值（VST3 本身即归一化，CLAP 由处理器换算）。
 
 use std::sync::Mutex;
 
@@ -20,7 +23,7 @@ impl ParamQueue {
         Self::default()
     }
 
-    /// UI 线程：记录一次参数变化（同 id 覆盖，避免拖动时事件堆积）。
+    /// UI 线程：记录一次参数变化（归一化 0..1；同 id 覆盖，避免拖动时事件堆积）。
     pub fn push(&self, param_id: u32, value: f64) {
         let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
         match pending.iter_mut().find(|(id, _)| *id == param_id) {

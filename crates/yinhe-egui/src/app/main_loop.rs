@@ -598,6 +598,9 @@ impl eframe::App for App {
         // ── 混音台 insert：回收退回处理器 + 插件反向请求（restart 等）──
         self.poll_mixer_plugins();
 
+        // ── 插件参数 GUI 录制（performEdit → AM lane 写入）──
+        self.poll_plugin_param_automation();
+
         // ── Transport bar ──
         let active_doc = self
             .workspace

@@ -25,7 +25,8 @@ pub enum PluginEvent {
     NoteChoke { time: u32, channel: u8, key: u8 },
     /// 原始 MIDI 1.0 消息（CC、弯音、ProgramChange 等），最多 3 字节。
     Midi { time: u32, data: [u8; 3] },
-    /// 插件参数变化。
+    /// 插件参数变化。`value` 为**归一化值 0..1**（AM 曲线与参数面板
+    /// 统一语义；各后端在处理器内换算成插件原生值）。
     ParamValue {
         time: u32,
         param_id: u32,

@@ -51,6 +51,12 @@ pub(crate) struct InstrumentRack {
     pending_return: Vec<(u16, PluginInstance)>,
     /// 最近一次加载/激活失败信息（MIX 界面状态行展示）。
     pub last_error: Option<String>,
+    /// 待处理的插件 GUI 改参（instrument_channel, param_id, 归一化值）。
+    /// 每帧由 UI 消费（写入插件参数 AM lane）；队列在 `poll_requests` 填充。
+    pub gui_param_changes: Vec<(u16, u32, f64)>,
+    /// 正在 GUI 编辑（beginEdit 后未 endEdit）的乐器通道集：
+    /// 一次拖动合并为一条 undo 的分组依据。
+    pub gui_param_editing: std::collections::HashSet<u16>,
 }
 
 impl InstrumentRack {
@@ -284,10 +290,18 @@ impl InstrumentRack {
     pub fn poll_requests(&mut self, handle: &AudioHandle) {
         let mut restarts: Vec<u16> = Vec::new();
         let mut latency_changed = false;
+        // GUI 改参先收集，循环后再写自身字段（避免与 slots 的借用冲突）。
+        let mut param_changes: Vec<(u16, u32, f64)> = Vec::new();
+        let mut editing_now: Vec<(u16, bool)> = Vec::new();
         for rt in self.slots.iter_mut() {
             let Some(instance) = rt.instance.as_mut() else {
                 continue;
             };
+            let (changes, editing) = instance.take_gui_param_changes();
+            for (param_id, value) in changes {
+                param_changes.push((rt.channel, param_id, value));
+            }
+            editing_now.push((rt.channel, editing));
             let requests = instance.poll_requests();
             if requests.latency_changed {
                 latency_changed = true;
@@ -296,6 +310,14 @@ impl InstrumentRack {
                 restarts.push(rt.channel);
             }
         }
+        for (channel, editing) in editing_now {
+            if editing {
+                self.gui_param_editing.insert(channel);
+            } else {
+                self.gui_param_editing.remove(&channel);
+            }
+        }
+        self.gui_param_changes.extend(param_changes);
         for channel in restarts {
             handle.send(AudioCommand::SetInstrument {
                 channel,

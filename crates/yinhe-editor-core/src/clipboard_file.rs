@@ -260,8 +260,27 @@ fn write_target(w: &mut impl Write, target: &AutomationTarget) -> io::Result<()>
         AutomationTarget::Tempo => {
             w.write_all(&[4])?;
         }
+        AutomationTarget::PluginParam {
+            instrument_channel,
+            param_id,
+            name,
+        } => {
+            w.write_all(&[5])?;
+            w.write_all(&instrument_channel.to_le_bytes())?;
+            w.write_all(&param_id.to_le_bytes())?;
+            let bytes = name.as_bytes();
+            w.write_all(&(bytes.len() as u32).to_le_bytes())?;
+            w.write_all(bytes)?;
+        }
     }
     Ok(())
+}
+
+fn read_string(r: &mut impl Read) -> io::Result<String> {
+    let len = read_u32(r)? as usize;
+    let mut buf = vec![0u8; len];
+    r.read_exact(&mut buf)?;
+    String::from_utf8(buf).map_err(|_| invalid("invalid utf-8 string"))
 }
 
 fn read_target(r: &mut impl Read) -> io::Result<AutomationTarget> {
@@ -281,6 +300,16 @@ fn read_target(r: &mut impl Read) -> io::Result<AutomationTarget> {
             parameter: read_u16(r)?,
         },
         4 => AutomationTarget::Tempo,
+        5 => {
+            let instrument_channel = read_u16(r)?;
+            let param_id = read_u32(r)?;
+            let name = read_string(r)?;
+            AutomationTarget::PluginParam {
+                instrument_channel,
+                param_id,
+                name,
+            }
+        }
         _ => return Err(invalid("unknown automation target")),
     })
 }

@@ -496,7 +496,8 @@ fn push_lane_event<'a>(
                 ));
             }
         }
-        AutomationTarget::Tempo => {}
+        // 插件参数不进 MIDI 导出（MIDI 无对应语义）。
+        AutomationTarget::Tempo | AutomationTarget::PluginParam { .. } => {}
     }
 }
 

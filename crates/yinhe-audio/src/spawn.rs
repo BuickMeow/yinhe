@@ -757,6 +757,14 @@ fn compute_chase_states(
             ) {
                 continue;
             }
+            // 插件参数 chase 第一版不做（由插件实例自己维持当前值）；
+            // 跳过避免占位事件污染 MIDI 通道的 chase 状态。
+            if matches!(
+                lane.target,
+                yinhe_types::AutomationTarget::PluginParam { .. }
+            ) {
+                continue;
+            }
             if let Some((value, tick)) = lane.value_at(target_tick) {
                 emit_automation_event(
                     &lane.target,

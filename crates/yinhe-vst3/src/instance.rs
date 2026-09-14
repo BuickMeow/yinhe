@@ -80,6 +80,10 @@ pub struct Vst3PluginInstance {
     class_id: String,
     /// UI → 渲染线程的参数变化队列。
     param_queue: Arc<ParamQueue>,
+    /// 插件 GUI 改参队列（performEdit，归一化值）→ 宿主（自动化录制）。
+    gui_params: Arc<ParamQueue>,
+    /// 是否处于 beginEdit/endEdit 之间（一次拖动 = 一条 undo）。
+    gui_editing: Arc<std::sync::atomic::AtomicBool>,
     /// 是否已音频激活（未激活时 getState 有崩溃风险——实测 Serum 2）。
     activated: std::sync::atomic::AtomicBool,
     // ── 编辑器（原生 GUI）──
@@ -162,9 +166,12 @@ impl Vst3PluginInstance {
         }
 
         // 组件处理器：controller 的参数编辑/重启通知入口。
-        let (handler, restart_flags) = create_component_handler()
+        let handler = create_component_handler()
             .ok_or_else(|| InstanceError::Initialize("无法创建组件处理器对象".into()))?;
-        let _ = unsafe { controller.setComponentHandler(handler.as_ptr()) };
+        let _ = unsafe { controller.setComponentHandler(handler.ptr.as_ptr()) };
+        let restart_flags = Arc::clone(&handler.restart_flags);
+        let gui_params = Arc::clone(&handler.gui_params);
+        let gui_editing = Arc::clone(&handler.editing);
 
         let params = enumerate_params(&controller);
 
@@ -173,7 +180,7 @@ impl Vst3PluginInstance {
             controller,
             component_cp,
             controller_cp,
-            _handler: handler,
+            _handler: handler.ptr,
             restart_flags,
             _host: host,
             _module: module,
@@ -181,6 +188,8 @@ impl Vst3PluginInstance {
             params,
             class_id: class_id.to_string(),
             param_queue: Arc::new(ParamQueue::new()),
+            gui_params,
+            gui_editing,
             activated: std::sync::atomic::AtomicBool::new(false),
             view: None,
             plug_frame: None,
@@ -196,6 +205,15 @@ impl Vst3PluginInstance {
     /// 参数写入队列（UI 线程 push；处理器在渲染线程 drain）。
     pub fn param_queue(&self) -> Arc<ParamQueue> {
         Arc::clone(&self.param_queue)
+    }
+
+    /// 取出插件 GUI 改参（performEdit，归一化值）与当前是否处于编辑拖动中。
+    /// 宿主每帧轮询；队列 latest-wins、取出即清。
+    pub fn take_gui_param_changes(&self) -> (Vec<(u32, f64)>, bool) {
+        let mut out = Vec::new();
+        self.gui_params.take_into(&mut out);
+        let editing = self.gui_editing.load(std::sync::atomic::Ordering::Acquire);
+        (out, editing)
     }
 
     /// 是否已音频激活（激活前 getState 有崩溃风险，保存状态前必须检查）。

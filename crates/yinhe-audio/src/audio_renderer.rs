@@ -772,6 +772,10 @@ impl AudioRenderer {
             if track_skipped || lane_skipped {
                 continue;
             }
+            // GPU 路径不经过混音台/插件：插件参数事件无接收方，跳过。
+            if cc.plugin_param.is_some() {
+                continue;
+            }
             let dense = self.engine.channel_layout.dense_for(cc.channel as usize);
             if dense == u32::MAX {
                 continue;

@@ -16,6 +16,7 @@ pub(crate) mod export_state;
 pub(crate) mod layout;
 pub(crate) mod main_loop;
 pub(crate) mod midi_input;
+pub(crate) mod plugin_automation;
 pub(crate) mod poll;
 pub(crate) mod rescale_state;
 
@@ -167,6 +168,8 @@ pub struct App {
     pub(crate) audio_library: audio_library::AudioLibrary,
     /// 进行中的音频录音（None = 未录音）。
     pub(crate) audio_recording: Option<audio_recording::AudioRecording>,
+    /// 进行中的插件参数 GUI 录制拖动（None = 不在拖动；一次拖动一条 undo）。
+    pub(crate) plugin_param_drag: Option<plugin_automation::PluginParamDrag>,
 
     // ── Settings ──
     pub(crate) audio_settings: crate::audio_settings::AudioSettings,
@@ -415,6 +418,7 @@ impl App {
             audio_state: audio_state::AudioState::new(),
             audio_library: audio_library::AudioLibrary::new(),
             audio_recording: None,
+            plugin_param_drag: None,
 
             audio_settings,
             midi_input: None,

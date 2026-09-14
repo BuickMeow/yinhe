@@ -315,6 +315,7 @@ fn automation_icon(target: &AutomationTarget) -> egui_material_icons::MaterialIc
         AutomationTarget::PitchBend => ICON_EDIT_AUDIO,
         AutomationTarget::Rpn { .. } | AutomationTarget::Nrpn { .. } => ICON_TUNE,
         AutomationTarget::Tempo => ICON_SPEED,
+        AutomationTarget::PluginParam { .. } => ICON_TUNE,
     }
 }
 

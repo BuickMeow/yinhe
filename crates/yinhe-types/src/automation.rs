@@ -148,6 +148,18 @@ pub enum AutomationTarget {
     /// `value` 直接装 bpm（f32）。`max_value` 仅作 fallback，
     /// panel 层会按实际事件动态计算最大值。
     Tempo,
+    /// 插件参数（乐器通道上的插件实例）。值域统一**归一化 0..1**：
+    /// AM 事件的 `value` 存归一化值，引擎按插件格式换算成原生值
+    /// （VST3 本身即归一化；CLAP 由处理器按参数范围换算）。
+    /// `param_id` 在插件实例内唯一且稳定（VST3 ParamID / CLAP clap_id）。
+    PluginParam {
+        /// 乐器通道（0 起，与 `TrackData::instrument_channel` 对齐）。
+        instrument_channel: u16,
+        /// 插件参数 id。
+        param_id: u32,
+        /// 参数显示名（来自 param_list，仅用于显示）。
+        name: String,
+    },
 }
 
 impl AutomationTarget {
@@ -179,6 +191,8 @@ impl AutomationTarget {
             },
             AutomationTarget::Nrpn { .. } => 16383.0,
             AutomationTarget::Tempo => 60_000_000.0,
+            // 插件参数统一归一化值域。
+            AutomationTarget::PluginParam { .. } => 1.0,
         }
     }
 
@@ -197,6 +211,8 @@ impl AutomationTarget {
             },
             AutomationTarget::Nrpn { .. } => 0.0,
             AutomationTarget::Tempo => 120.0,
+            // 插件默认值在引擎侧不一定可查询：基线用 0（绘制参考线用）。
+            AutomationTarget::PluginParam { .. } => 0.0,
         }
     }
 
@@ -229,6 +245,7 @@ impl AutomationTarget {
             AutomationTarget::Rpn { parameter: _ } => SegmentShape::linear_curve(),
             AutomationTarget::Nrpn { parameter: _ } => SegmentShape::linear_curve(),
             AutomationTarget::Tempo => SegmentShape::linear_curve(),
+            AutomationTarget::PluginParam { .. } => SegmentShape::linear_curve(),
         }
     }
 
@@ -254,6 +271,14 @@ impl AutomationTarget {
                 format!("NRPN {}", parameter)
             }
             AutomationTarget::Tempo => "Tempo".into(),
+            // 插件参数直接用插件给的参数名（已含模块语义）。
+            AutomationTarget::PluginParam { name, .. } => {
+                if name.is_empty() {
+                    "Plugin Param".into()
+                } else {
+                    name.clone()
+                }
+            }
         }
     }
 }

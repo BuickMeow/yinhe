@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_void};
 use std::ptr;
-use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use vst3::Steinberg::Vst::{
@@ -305,12 +305,18 @@ pub mod restart_flags {
 /// 见 `Vst3PluginInstance::take_restart_flags`）。
 pub struct HostComponentHandler {
     pending_restart: Arc<AtomicI32>,
+    /// 插件 GUI 改参（归一化值，latest-wins）→ 宿主管理线程（自动化录制用）。
+    gui_params: Arc<yinhe_mixer::ParamQueue>,
+    /// 是否处于 `beginEdit` / `endEdit` 之间（拖动分组：一次拖动一条 undo）。
+    editing: Arc<AtomicBool>,
 }
 
 impl Default for HostComponentHandler {
     fn default() -> Self {
         Self {
             pending_restart: Arc::new(AtomicI32::new(0)),
+            gui_params: Arc::new(yinhe_mixer::ParamQueue::new()),
+            editing: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -321,14 +327,20 @@ impl Class for HostComponentHandler {
 
 impl IComponentHandlerTrait for HostComponentHandler {
     unsafe fn beginEdit(&self, _id: ParamID) -> tresult {
+        self.editing.store(true, Ordering::Release);
         kResultOk
     }
 
-    unsafe fn performEdit(&self, _id: ParamID, _value_normalized: ParamValue) -> tresult {
+    unsafe fn performEdit(&self, id: ParamID, value_normalized: ParamValue) -> tresult {
+        // 插件 GUI 改参：入队供宿主录制/同步（渲染音频侧由插件自身处理）。
+        if value_normalized.is_finite() {
+            self.gui_params.push(id, value_normalized.clamp(0.0, 1.0));
+        }
         kResultOk
     }
 
     unsafe fn endEdit(&self, _id: ParamID) -> tresult {
+        self.editing.store(false, Ordering::Release);
         kResultOk
     }
 
@@ -343,14 +355,32 @@ pub(crate) fn create_host_application() -> Option<ComPtr<IHostApplication>> {
     ComWrapper::new(HostApplication).to_com_ptr::<IHostApplication>()
 }
 
-/// 创建组件处理器对象：返回 COM 指针（交给插件）+ 共享的 flags 句柄（宿主轮询）。
-pub(crate) fn create_component_handler() -> Option<(ComPtr<IComponentHandler>, Arc<AtomicI32>)> {
+/// 组件处理器句柄组：COM 指针交给插件，其余句柄留给宿主管理线程轮询
+///（restart flags / GUI 改参队列 / 是否编辑中）。
+pub(crate) struct ComponentHandler {
+    pub(crate) ptr: ComPtr<IComponentHandler>,
+    pub(crate) restart_flags: Arc<AtomicI32>,
+    pub(crate) gui_params: Arc<yinhe_mixer::ParamQueue>,
+    pub(crate) editing: Arc<AtomicBool>,
+}
+
+/// 创建组件处理器对象。
+pub(crate) fn create_component_handler() -> Option<ComponentHandler> {
     let flags = Arc::new(AtomicI32::new(0));
+    let gui_params = Arc::new(yinhe_mixer::ParamQueue::new());
+    let editing = Arc::new(AtomicBool::new(false));
     let handler = HostComponentHandler {
         pending_restart: Arc::clone(&flags),
+        gui_params: Arc::clone(&gui_params),
+        editing: Arc::clone(&editing),
     };
     let ptr = ComWrapper::new(handler).to_com_ptr::<IComponentHandler>()?;
-    Some((ptr, flags))
+    Some(ComponentHandler {
+        ptr,
+        restart_flags: flags,
+        gui_params,
+        editing,
+    })
 }
 
 /// 编辑器 frame（host 侧）：插件请求调整窗口尺寸的中转。

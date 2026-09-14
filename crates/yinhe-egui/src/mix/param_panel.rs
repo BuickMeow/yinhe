@@ -103,6 +103,34 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
         return;
     };
 
+    // 「显示自动化」按钮状态：该乐器通道已有的插件参数 lane 集
+    //（只遍历本通道轨道，参数可达数千个，逐参数查会太贵）。
+    let am_channel = match panel.target {
+        ParamTarget::Instrument { channel } => Some(channel),
+        ParamTarget::Insert { .. } => None,
+    };
+    let am_lanes: std::collections::HashSet<(u16, u32)> = am_channel
+        .map(|channel| {
+            let doc = &app.workspace.documents[idx];
+            doc.data
+                .model
+                .tracks
+                .iter()
+                .filter(|t| t.instrument_channel == Some(channel))
+                .flat_map(|t| t.automation_lanes.iter())
+                .filter_map(|l| match &l.target {
+                    yinhe_types::AutomationTarget::PluginParam {
+                        instrument_channel,
+                        param_id,
+                        ..
+                    } => Some((*instrument_channel, *param_id)),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut lane_requests: Vec<(u32, String)> = Vec::new();
+
     let instance: Option<&mut PluginInstance> = match panel.target {
         ParamTarget::Insert { target, slot } => app
             .mixer_racks
@@ -168,7 +196,9 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
                 .max_height(list_h)
                 .show_rows(ui, row_h, panel.filtered.len(), |ui, range| {
                     for &pi in &panel.filtered[range] {
-                        param_row(
+                        let am_exists =
+                            am_channel.map(|ch| am_lanes.contains(&(ch, panel.params[pi].id)));
+                        if param_row(
                             ui,
                             row_h,
                             &panel.params[pi],
@@ -176,10 +206,21 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
                             &mut panel.editing,
                             &panel.queue,
                             &mut panel.wrote_params,
-                        );
+                            am_exists,
+                        ) && am_channel.is_some()
+                        {
+                            let p = &panel.params[pi];
+                            lane_requests.push((p.id, p.name.clone()));
+                        }
                     }
                 });
         });
+    // 「显示自动化」：创建/定位该参数的 AM lane（闭包内无法借 app，攒到外部处理）。
+    if let Some(channel) = am_channel {
+        for (param_id, name) in lane_requests {
+            app.toggle_plugin_param_lane(idx, channel, param_id, &name);
+        }
+    }
     if panel.wrote_params {
         // 参数变化写进插件 state，保存工程时随 InsertRef.state 持久化 → 标脏。
         app.workspace.documents[idx].mixer_mut();
@@ -191,6 +232,7 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
 }
 
 /// 单行参数：名称（模块/名称）+ 滑块 + 插件格式化值。
+#[allow(clippy::too_many_arguments)] // UI 上下文透传，见 AGENTS 约定
 fn param_row(
     ui: &mut egui::Ui,
     row_h: f32,
@@ -199,13 +241,16 @@ fn param_row(
     editing: &mut HashMap<u32, f64>,
     queue: &ParamQueue,
     wrote_params: &mut bool,
-) {
+    // Some(lane 已存在) = 显示「显示自动化」按钮（仅乐器通道插件）。
+    am_exists: Option<bool>,
+) -> bool {
     // 拖动中优先本地值；否则读插件当前值；读不到退回默认值。
     let live = editing
         .get(&p.id)
         .copied()
         .or_else(|| instance.get_param_value(p.id))
         .unwrap_or(p.default);
+    let mut am_clicked = false;
 
     ui.horizontal(|ui| {
         let label = if p.module.is_empty() {
@@ -229,7 +274,13 @@ fn param_row(
         );
         if slider.changed() {
             editing.insert(p.id, value);
-            queue.push(p.id, value);
+            // ParamQueue 统一归一化语义（与 AM 曲线一致）；按参数范围换算。
+            let norm = if p.max > p.min {
+                (value - p.min) / (p.max - p.min)
+            } else {
+                value
+            };
+            queue.push(p.id, norm.clamp(0.0, 1.0));
             *wrote_params = true;
         }
         // 松手：丢弃本地值，下一帧从插件读回。
@@ -249,5 +300,26 @@ fn param_row(
             )
             .truncate(),
         );
+        // 「显示自动化」：创建/定位该参数的 AM lane（已有 lane 时高亮）。
+        if let Some(exists) = am_exists {
+            let icon = egui_material_icons::icons::ICON_TIMELINE;
+            let color = if exists {
+                crate::theme::accent_active()
+            } else {
+                crate::theme::text_muted()
+            };
+            let resp = ui.add(
+                egui::Button::new(
+                    egui::RichText::new(icon.codepoint)
+                        .font(egui::FontId::new(14.0, icon.font_family()))
+                        .color(color),
+                )
+                .frame(false),
+            );
+            if resp.on_hover_text(t!("dock.show_automation")).clicked() {
+                am_clicked = true;
+            }
+        }
     });
+    am_clicked
 }

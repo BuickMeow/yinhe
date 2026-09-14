@@ -154,16 +154,25 @@ impl Vst3Processor {
             None => self.in_buf.fill(0.0),
         }
 
-        // 输入事件。
+        // 输入事件（ParamValue 走 IParameterChanges，其余走事件列表）。
         self.in_events.clear();
+        self.in_params.clear();
         for e in events {
-            if let Some(ev) = plugin_event_to_vst(e) {
-                self.in_events.push(ev);
+            match e {
+                PluginEvent::ParamValue {
+                    time,
+                    param_id,
+                    value,
+                } => self.in_params.push_point(*param_id, *time as i32, *value),
+                _ => {
+                    if let Some(ev) = plugin_event_to_vst(e) {
+                        self.in_events.push(ev);
+                    }
+                }
             }
         }
 
-        // 参数变化（UI 队列 → IParameterChanges）。
-        self.in_params.clear();
+        // 参数变化（UI 队列 → IParameterChanges；值已是归一化）。
         self.param_queue.take_into(&mut self.param_scratch);
         for &(id, value) in &self.param_scratch {
             self.in_params.push_point(id, 0, value);

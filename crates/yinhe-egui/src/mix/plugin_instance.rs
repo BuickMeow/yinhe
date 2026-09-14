@@ -268,4 +268,13 @@ impl PluginInstance {
             Self::Vst3 { instance, .. } => instance.param_queue(),
         }
     }
+
+    /// 取出插件 GUI 改参（归一化值）与当前是否处于编辑拖动中。
+    /// CLAP 第一版返回空（输出参数事件待接）。
+    pub(crate) fn take_gui_param_changes(&mut self) -> (Vec<(u32, f64)>, bool) {
+        match self {
+            Self::Vst3 { instance, .. } => instance.take_gui_param_changes(),
+            Self::Clap(_) => (Vec::new(), false),
+        }
+    }
 }

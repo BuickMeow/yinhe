@@ -129,12 +129,27 @@ impl AudioEngine {
                 .copied()
                 .unwrap_or(false);
             if !track_skipped && !lane_skipped {
-                // 乐器轨的自动化 → 喂对应乐器实例；否则走 xsynth。
-                if let Some(inst_ch) = self
+                if let Some(pp) = cc.plugin_param {
+                    // 插件参数自动化 → 对应乐器 dense 通道的 ParamValue。
+                    if let Some(dense) = self.instrument_dense(pp.instrument_channel) {
+                        let time = self
+                            .tick_to_sample(cc.tick)
+                            .saturating_sub(self.block_start_sample)
+                            as u32;
+                        if let Some(Some(slot)) = self.instruments.get_mut(dense) {
+                            slot.events.push(PluginEvent::ParamValue {
+                                time,
+                                param_id: pp.param_id,
+                                value: f64::from(pp.value),
+                            });
+                        }
+                    }
+                } else if let Some(inst_ch) = self
                     .model
                     .as_ref()
                     .and_then(|m| m.track_instrument(cc.track as usize))
                 {
+                    // 乐器轨的自动化 → 喂对应乐器实例；否则走 xsynth。
                     if let Some(dense) = self.instrument_dense(inst_ch) {
                         // 先算 frame offset（只读），再取可变实例引用，避免整机借用冲突。
                         let time = self

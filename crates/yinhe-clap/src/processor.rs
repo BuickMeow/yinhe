@@ -58,6 +58,9 @@ pub struct ClapProcessor {
     param_queue: Arc<ParamQueue>,
     /// drain 暂存（保留容量，处理期间零分配）。
     param_scratch: Vec<(u32, f64)>,
+    /// 参数原生值域表（param_id → (min, max)）：归一化值 → 原生值换算用。
+    /// activate 前枚举一次；插件不支持 params 扩展时为空（按 1:1 处理）。
+    param_ranges: std::collections::HashMap<u32, (f64, f64)>,
 }
 
 impl ClapProcessor {
@@ -67,6 +70,7 @@ impl ClapProcessor {
         layout: &PortLayout,
         param_queue: Arc<ParamQueue>,
         latency: Arc<std::sync::atomic::AtomicU32>,
+        param_ranges: Vec<(u32, f64, f64)>,
     ) -> Self {
         // with_capacity 第一个参数是**声道总数**（所有端口声道数之和）。
         // 给小了会让 clack 内部 Vec 重分配，其重分配后的指针修复路径有 bug
@@ -86,6 +90,18 @@ impl ClapProcessor {
             latency,
             param_queue,
             param_scratch: Vec::new(),
+            param_ranges: param_ranges
+                .into_iter()
+                .map(|(id, min, max)| (id, (min, max)))
+                .collect(),
+        }
+    }
+
+    /// 归一化值（0..1）→ 插件原生值（AM 曲线/参数面板统一归一化语义）。
+    fn denormalize(&self, param_id: u32, value: f64) -> f64 {
+        match self.param_ranges.get(&param_id) {
+            Some(&(min, max)) if max > min => min + value * (max - min),
+            _ => value,
         }
     }
 
@@ -143,17 +159,37 @@ impl ClapProcessor {
         self.input_events.clear();
         self.output_events.clear();
         for event in events {
-            push_event(&mut self.input_events, event);
+            match event {
+                // 归一化值 → 插件原生值（AM 回放等事件路径）。
+                PluginEvent::ParamValue {
+                    time,
+                    param_id,
+                    value,
+                } => {
+                    // 先换算（不可变借用）再 push（可变借用）。
+                    let raw = self.denormalize(*param_id, *value);
+                    push_event(
+                        &mut self.input_events,
+                        &PluginEvent::ParamValue {
+                            time: *time,
+                            param_id: *param_id,
+                            value: raw,
+                        },
+                    );
+                }
+                _ => push_event(&mut self.input_events, event),
+            }
         }
-        // UI 线程写入的参数变化：作为块首（time 0）ParamValue 事件交给插件。
+        // UI 线程写入的参数变化（归一化值）：作为块首（time 0）交给插件。
         self.param_queue.take_into(&mut self.param_scratch);
         for &(param_id, value) in &self.param_scratch {
+            let raw = self.denormalize(param_id, value);
             push_event(
                 &mut self.input_events,
                 &PluginEvent::ParamValue {
                     time: 0,
                     param_id,
-                    value,
+                    value: raw,
                 },
             );
         }
