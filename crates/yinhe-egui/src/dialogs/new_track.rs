@@ -8,6 +8,7 @@
 use std::sync::Arc;
 
 use eframe::egui;
+use egui_material_icons::icons::{ICON_GRAPHIC_EQ, ICON_LIBRARY_MUSIC, ICON_PIANO};
 use rust_i18n::t;
 
 use yinhe_editor_core::NewTrackSpec;
@@ -85,6 +86,55 @@ pub(crate) enum NewTrackAction {
     Confirm(Vec<NewTrackSpec>),
     /// 取消（含点窗口关闭按钮）。
     Cancel,
+}
+
+/// 轨道种类卡片：图标 + 名称；选中用强调色描边，hover 只变背景
+///（项目规范：按钮不带边框，避免悬停时边框出现导致内容视觉位移）。
+fn kind_card(
+    ui: &mut egui::Ui,
+    icon: &str,
+    family: egui::FontFamily,
+    label: &str,
+    selected: bool,
+) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(116.0, 64.0), egui::Sense::click());
+    let bg = if selected {
+        crate::theme::selected_bg()
+    } else if resp.hovered() {
+        crate::theme::hover_color(crate::theme::btn_bg())
+    } else {
+        crate::theme::btn_bg()
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, 6.0, bg);
+    if selected {
+        painter.rect_stroke(
+            rect,
+            6.0,
+            egui::Stroke::new(1.2, crate::theme::accent_active()),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let icon_color = if selected {
+        crate::theme::accent_active()
+    } else {
+        crate::theme::text_primary()
+    };
+    painter.text(
+        egui::pos2(rect.center().x, rect.min.y + 22.0),
+        egui::Align2::CENTER_CENTER,
+        icon,
+        egui::FontId::new(22.0, family),
+        icon_color,
+    );
+    painter.text(
+        egui::pos2(rect.center().x, rect.min.y + 47.0),
+        egui::Align2::CENTER_CENTER,
+        label,
+        egui::FontId::proportional(crate::theme::SUB_TITLE_FONT),
+        crate::theme::text_primary(),
+    );
+    resp.clicked()
 }
 
 /// 分配方案：将创建的 specs + 错误提示（有值且 specs 为空 = 禁止确认）。
@@ -182,7 +232,7 @@ pub(crate) fn show_viewport(
         viewport_id,
         crate::chrome::dialog::viewport_builder(
             t!("dialog.new_track.title").as_ref(),
-            [420.0, 420.0],
+            [420.0, 470.0],
             false,
         ),
         move |vctx, _class| {
@@ -222,31 +272,39 @@ pub(crate) fn show_viewport(
                                 ui,
                                 btn_zone_h,
                                 |ui| {
-                                    // 设置菜单样式的行：左标题（无描述）+ 右控件。
-                                    ui.add_space(6.0);
-                                    // 种类：MIDI 轨 / 乐器轨 / 音频轨
-                                    crate::dialogs::settings::setting_row(
-                                        ui,
-                                        t!("dialog.new_track.kind").as_ref(),
-                                        "",
-                                        |ui| {
-                                            ui.selectable_value(
-                                                &mut state.kind,
-                                                KindChoice::Midi,
-                                                t!("dialog.new_track.kind.midi").as_ref(),
-                                            );
-                                            ui.selectable_value(
-                                                &mut state.kind,
-                                                KindChoice::Instrument,
-                                                t!("dialog.new_track.kind.instrument").as_ref(),
-                                            );
-                                            ui.selectable_value(
-                                                &mut state.kind,
-                                                KindChoice::Audio,
-                                                t!("dialog.new_track.kind.audio").as_ref(),
-                                            );
-                                        },
-                                    );
+                                    // 轨道种类：三张卡片（图标 + 名称），点击选中。
+                                    ui.add_space(2.0);
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 8.0;
+                                        if kind_card(
+                                            ui,
+                                            ICON_PIANO.codepoint,
+                                            ICON_PIANO.font_family(),
+                                            t!("dialog.new_track.kind.midi").as_ref(),
+                                            state.kind == KindChoice::Midi,
+                                        ) {
+                                            state.kind = KindChoice::Midi;
+                                        }
+                                        if kind_card(
+                                            ui,
+                                            ICON_LIBRARY_MUSIC.codepoint,
+                                            ICON_LIBRARY_MUSIC.font_family(),
+                                            t!("dialog.new_track.kind.instrument").as_ref(),
+                                            state.kind == KindChoice::Instrument,
+                                        ) {
+                                            state.kind = KindChoice::Instrument;
+                                        }
+                                        if kind_card(
+                                            ui,
+                                            ICON_GRAPHIC_EQ.codepoint,
+                                            ICON_GRAPHIC_EQ.font_family(),
+                                            t!("dialog.new_track.kind.audio").as_ref(),
+                                            state.kind == KindChoice::Audio,
+                                        ) {
+                                            state.kind = KindChoice::Audio;
+                                        }
+                                    });
+                                    ui.add_space(10.0);
 
                                     // 数量：1..=64
                                     crate::dialogs::settings::setting_row(

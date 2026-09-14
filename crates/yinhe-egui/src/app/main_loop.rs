@@ -406,7 +406,6 @@ impl eframe::App for App {
             // egui 原生控件（Button/ComboBox/Slider/Checkbox 等）三态统一：
             // inactive = btn_bg，hover/active 用统一增益；描边统一 line_fg
             let btn = crate::theme::btn_bg();
-            let line = crate::theme::line_fg();
             visuals.widgets.inactive.bg_fill = btn;
             visuals.widgets.inactive.weak_bg_fill = crate::theme::app_bg();
             visuals.widgets.hovered.bg_fill = crate::theme::hover_color(btn);
@@ -415,19 +414,17 @@ impl eframe::App for App {
             visuals.widgets.active.bg_fill = crate::theme::pressed_color(btn);
             visuals.widgets.active.weak_bg_fill =
                 crate::theme::pressed_color(crate::theme::app_bg());
-            // 原生描边/滑轨线（Slider rail、ComboBox 边框等）统一为 line_fg；
-            // 悬停/按下描边保持灰系，强调色仅用于选中/光标/下划线
+            // 原生控件一律**无描边**（项目规范：带边框的按钮悬停时边框出现/变化
+            // 会让内容视觉位移）；悬停/按下只变背景色。
             // 对勾（fg_stroke）用主文字色：与 btn_bg 同系的 line_fg 会导致对勾几乎不可见（见 widgets::checkbox）
             visuals.widgets.inactive.fg_stroke =
                 egui::Stroke::new(1.5, crate::theme::text_primary());
-            visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, line);
+            visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
             visuals.widgets.hovered.fg_stroke =
                 egui::Stroke::new(1.5, crate::theme::text_primary());
-            visuals.widgets.hovered.bg_stroke =
-                egui::Stroke::new(1.0, crate::theme::hover_color(line));
+            visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
             visuals.widgets.active.fg_stroke = egui::Stroke::new(1.5, crate::theme::text_primary());
-            visuals.widgets.active.bg_stroke =
-                egui::Stroke::new(1.0, crate::theme::pressed_color(line));
+            visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
             visuals.widgets.noninteractive.fg_stroke =
                 egui::Stroke::new(1.5, crate::theme::text_disabled());
             // 原生控件文字统一用主题主文字色（egui 默认灰与主题不协调）
