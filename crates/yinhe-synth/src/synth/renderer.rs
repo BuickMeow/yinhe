@@ -24,6 +24,12 @@ pub struct GpuAudioRenderer {
     /// 采样数据（连续大块；chunk 切片直接在 `ensure_buffers` 里上传，
     /// 不再预切成 `Vec<Vec<f32>>` 以避免一次全量拷贝）。
     pub(crate) sample_data: Vec<f32>,
+    /// 采样 GPU buffer（跨 GpuBuffers 重建复用：voice/帧数扩容触发的重建
+    /// 不再重传采样数据）。`upload_samples` 置 None 表示数据已更新。
+    pub(crate) sample_buffers: Option<Vec<wgpu::Buffer>>,
+    /// 采样 GPU 上传次数（测试回归：扩容重建不应重传）。
+    #[cfg(test)]
+    pub(crate) sample_upload_count: usize,
     pub(crate) frame_count: u32,
     /// render_into 的 per-channel 混音临时缓冲（复用，避免每块分配）
     pub(crate) mix_scratch: Vec<f32>,
@@ -182,6 +188,9 @@ impl GpuAudioRenderer {
             dummy_buf,
             buffers: None,
             sample_data: Vec::new(),
+            sample_buffers: None,
+            #[cfg(test)]
+            sample_upload_count: 0,
             frame_count: 0,
             mix_scratch: Vec::new(),
             pending_voice_writes: Vec::new(),
@@ -226,6 +235,7 @@ impl GpuAudioRenderer {
     /// `ensure_buffers`，为避免额外拷贝这里不做预切分）。
     pub fn upload_samples(&mut self, sample_data: Vec<f32>) {
         self.sample_data = sample_data;
+        self.sample_buffers = None;
         self.buffers = None;
     }
 

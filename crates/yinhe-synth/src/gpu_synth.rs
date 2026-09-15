@@ -434,22 +434,28 @@ impl GpuSynth {
     /// 把所有 port 的采样按 Arc 身份去重后拼成大块上传 GPU（增量 port 加载时
     /// 全量重传：port 加载只发生在一首歌的加载阶段，重传成本可接受）。
     fn rebuild_sample_upload(&mut self) {
-        let mut data: Vec<f32> = Vec::new();
-        let mut offsets: HashMap<usize, (u32, u32)> = HashMap::new();
+        // 先按 Arc 身份去重并统计总长，再一次性预分配拼接（避免 Vec 反复
+        // 扩容拷贝；500MB 级样本下这是上传前的主要 CPU 成本）。
+        let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut unique: Vec<&Arc<[f32]>> = Vec::new();
         for entries in &self.port_key_maps {
             for entry in entries {
                 for key_layers in &entry.map {
                     for info in key_layers {
-                        let ptr = info.sample_data.as_ptr() as usize;
-                        if offsets.contains_key(&ptr) {
-                            continue;
+                        if seen.insert(info.sample_data.as_ptr() as usize) {
+                            unique.push(&info.sample_data);
                         }
-                        let offset = data.len() as u32;
-                        data.extend_from_slice(&info.sample_data);
-                        offsets.insert(ptr, (offset, info.sample_data.len() as u32));
                     }
                 }
             }
+        }
+        let mut data: Vec<f32> = Vec::with_capacity(unique.iter().map(|s| s.len()).sum());
+        let mut offsets: HashMap<usize, (u32, u32)> = HashMap::with_capacity(unique.len());
+        for sample in &unique {
+            let offset = data.len() as u32;
+            let len = sample.len() as u32;
+            data.extend_from_slice(sample);
+            offsets.insert(sample.as_ptr() as usize, (offset, len));
         }
         self.sample_data = data;
         self.sample_offsets = offsets;
@@ -597,6 +603,11 @@ impl GpuSynth {
                     self.renderer.write_voice_state(i as u32, &v.state);
                 }
             }
+        } else {
+            // voice 清空（seek/Stop 后到首音符之间）：必须清零复用缓冲，
+            // 否则上一块的残留音频会被原样重写进混音台（空白区一直响旧余韵，
+            // 直到下一个音符触发正常渲染覆盖它）。
+            self.channel_mix.fill(0.0);
         }
 
         // 各通道去交错写入混音台 planar 缓冲（覆盖写；dense >= MAX_CHANNELS 清零）。
@@ -1270,5 +1281,57 @@ mod tests {
         let ptr_b = first_sample_ptr(&b);
         assert!(!ptr_a.is_null(), "样本指针不应为空");
         assert_eq!(ptr_a, ptr_b, "同路径两次加载应共享同一份样本内存（Arc）");
+    }
+
+    /// 回归：seek 清空 voices 后到下一个音符之间必须静音——复用缓冲的残留
+    /// 音频会被原样写进混音台，导致空白区循环播放上一块（4096 帧）的余韵。
+    #[test]
+    fn seek_to_silence_without_voices() {
+        let Some(sfz) = std::env::var_os("YINHE_TEST_SFZ") else {
+            eprintln!("YINHE_TEST_SFZ not set, skipping");
+            return;
+        };
+        let path = std::path::PathBuf::from(&sfz);
+        let mut synth = GpuSynth::new_default(44_100).expect("GpuSynth");
+        synth
+            .load_dense_soundfonts(0, std::slice::from_ref(&path))
+            .expect("load");
+        synth.finish_soundfont_load();
+        synth.load_events(vec![
+            SynthEvent::NoteOn {
+                sample: 0,
+                channel: 0,
+                key: 60,
+                velocity: 100,
+            },
+            SynthEvent::NoteOff {
+                sample: 44_100,
+                channel: 0,
+                key: 60,
+            },
+        ]);
+
+        let peak = |buffers: &[yinhe_mixer::ChannelBuffers]| {
+            buffers
+                .iter()
+                .flat_map(|b| b.left.iter().chain(b.right.iter()))
+                .fold(0.0f32, |m, v| m.max(v.abs()))
+        };
+        let frames = 512;
+        let mut buffers: Vec<yinhe_mixer::ChannelBuffers> = (0..2)
+            .map(|_| yinhe_mixer::ChannelBuffers {
+                left: vec![0.0; frames],
+                right: vec![0.0; frames],
+            })
+            .collect();
+
+        synth.render_to_mixer(&mut buffers);
+        synth.render_to_mixer(&mut buffers);
+        assert!(peak(&buffers) > 0.0, "音符期间应有输出");
+
+        // seek 到音符之后：voices 清空、无新音符 → 必须静音
+        synth.seek(4_000_000);
+        synth.render_to_mixer(&mut buffers);
+        assert_eq!(peak(&buffers), 0.0, "voices 清空后不得循环输出残留音频");
     }
 }

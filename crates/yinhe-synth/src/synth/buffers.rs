@@ -100,41 +100,52 @@ impl GpuAudioRenderer {
         let device = &self.device;
         let chunk_count = self.sample_data.len().div_ceil(CHUNK_SIZE).min(MAX_CHUNKS) as u32;
 
-        // 采样 chunk buffer：mapped_at_creation 直写（统一内存下等价 memcpy，
-        // 比 create_buffer_init 的 staging 拷贝路径快得多）。
-        let t_samples = std::time::Instant::now();
-        let queue = &self.queue;
-        let sample_chunks: Vec<wgpu::Buffer> = self
-            .sample_data
-            .chunks(CHUNK_SIZE)
-            .take(MAX_CHUNKS)
-            .map(|data| {
-                let buf = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("sample_chunk"),
-                    size: std::mem::size_of_val(data) as u64,
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-                    mapped_at_creation: true,
-                });
-                let mapped = buf.slice(..).get_mapped_range_mut();
-                match mapped {
-                    Ok(mut view) => {
-                        view.copy_from_slice(bytemuck::cast_slice(data));
-                        drop(view);
-                        buf.unmap();
-                    }
-                    // mapped_at_creation 立即映射，正常不会失败；退化到
-                    // write_buffer 兜底保证数据仍然正确（不静默出静音）。
-                    Err(_) => queue.write_buffer(&buf, 0, bytemuck::cast_slice(data)),
+        // 采样 chunk buffer：数据未变时复用已有 GPU buffer（voice/帧数扩容
+        // 触发的重建不重传采样数据）。仅 `upload_samples` 后重建并上传一次。
+        let sample_chunks: Vec<wgpu::Buffer> = match self.sample_buffers.take() {
+            Some(b) => b,
+            None => {
+                let t_samples = std::time::Instant::now();
+                let queue = &self.queue;
+                let created: Vec<wgpu::Buffer> = self
+                    .sample_data
+                    .chunks(CHUNK_SIZE)
+                    .take(MAX_CHUNKS)
+                    .map(|data| {
+                        let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                            label: Some("sample_chunk"),
+                            size: std::mem::size_of_val(data) as u64,
+                            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                            mapped_at_creation: true,
+                        });
+                        let mapped = buf.slice(..).get_mapped_range_mut();
+                        match mapped {
+                            Ok(mut view) => {
+                                view.copy_from_slice(bytemuck::cast_slice(data));
+                                drop(view);
+                                buf.unmap();
+                            }
+                            // mapped_at_creation 立即映射，正常不会失败；退化到
+                            // write_buffer 兜底保证数据仍然正确（不静默出静音）。
+                            Err(_) => queue.write_buffer(&buf, 0, bytemuck::cast_slice(data)),
+                        }
+                        buf
+                    })
+                    .collect();
+                eprintln!(
+                    "[gpu] 采样 buffer 上传={:?}（{} chunks，{:.0}MB）",
+                    t_samples.elapsed(),
+                    created.len(),
+                    self.sample_data.len() as f64 * 4.0 / (1024.0 * 1024.0)
+                );
+                #[cfg(test)]
+                {
+                    self.sample_upload_count += 1;
                 }
-                buf
-            })
-            .collect();
-        eprintln!(
-            "[gpu] 采样 buffer 上传={:?}（{} chunks，{:.0}MB）",
-            t_samples.elapsed(),
-            sample_chunks.len(),
-            self.sample_data.len() as f64 * 4.0 / (1024.0 * 1024.0)
-        );
+                created
+            }
+        };
+        self.sample_buffers = Some(sample_chunks.clone());
 
         // Create chunk_offsets buffer (uniform, padded to 32 bytes = 8 u32 for 16-byte alignment)
         let mut offsets: Vec<u32> = Vec::with_capacity(8);

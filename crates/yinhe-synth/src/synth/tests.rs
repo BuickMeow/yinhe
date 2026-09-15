@@ -519,3 +519,42 @@ fn new_voice_after_seg_boundary_sounds() {
         "new voice silent with old voice present"
     );
 }
+
+/// 回归：voice/帧数扩容触发的 buffer 重建不应重传采样数据
+///（500MB 级重传会让播放开头反复卡顿，是"越播越完善"的真身）。
+#[test]
+fn sample_upload_not_repeated_on_voice_grow() {
+    let Some((mut renderer, _samples)) = setup_gpu() else {
+        eprintln!("no GPU, skipping");
+        return;
+    };
+    // 上传发生在首次 render_block 的 ensure_buffers
+    let mut mix = vec![0.0f32; CHANNEL_COUNT * 256 * 2];
+    let mut stage = vec![0u32; 64];
+    renderer.render_block(64, None, &mut mix, &mut stage, &[], &[], &[], &[], 44100);
+    assert_eq!(renderer.sample_upload_count, 1, "首次渲染应上传一次采样");
+
+    let mut mix = vec![0.0f32; CHANNEL_COUNT * 256 * 2];
+    let mut stage = vec![0u32; 64];
+    renderer.render_block(64, None, &mut mix, &mut stage, &[], &[], &[], &[], 44100);
+    assert_eq!(renderer.sample_upload_count, 1, "普通渲染不应重传采样");
+
+    // 大扩容：voice 4096 + 帧数 1024 → 触发 partial 等缓冲重建
+    let mut mix2 = vec![0.0f32; CHANNEL_COUNT * 1024 * 2];
+    let mut stage2 = vec![0u32; 4096];
+    renderer.render_block(
+        4096,
+        None,
+        &mut mix2,
+        &mut stage2,
+        &[],
+        &[],
+        &[],
+        &[],
+        44100,
+    );
+    assert_eq!(
+        renderer.sample_upload_count, 1,
+        "扩容重建不应重传采样数据（采样 buffer 应跨重建复用）"
+    );
+}
