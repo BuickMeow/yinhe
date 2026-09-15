@@ -83,8 +83,13 @@ impl AudioEngine {
 
         // If Play arrived while loading, seek now
         if let Some(from_sample) = self.pending_play_from_sample.take() {
+            let t = std::time::Instant::now();
             self.seek_to(from_sample);
             self.playing = true;
+            crate::audio_renderer::play_log(&format!(
+                "[play] 挂起的 Play 生效（seek={:?}）",
+                t.elapsed()
+            ));
         }
     }
 

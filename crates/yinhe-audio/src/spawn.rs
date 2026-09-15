@@ -259,6 +259,10 @@ pub struct InstrumentPreviewNote {
 /// Handle used by the UI to control audio playback.
 pub struct AudioHandle {
     pub(crate) cmd_tx: Sender<AudioCommand>,
+    /// 传输命令专用无界通道：Play/Resume/Pause/Stop/Seek 保序、永不丢。
+    /// 普通命令通道（容量 16）在渲染线程忙（音色库加载/事件重建）时打满，
+    /// 若 Play 被丢弃，UI 会永久 pending、指示线不动。
+    transport_tx: Sender<AudioCommand>,
     sample_position: Arc<AtomicU64>,
     /// 渲染线程已产出（推入 ring）的采样位置。UI 用它限制播放指示线
     /// 不能超过实际已渲染的音频（防止"准备播放"期间指示线空跑）。
@@ -288,6 +292,39 @@ pub struct AudioHandle {
     instrument_return_rx: crossbeam_channel::Receiver<(u8, Box<dyn InstrumentProcessor>)>,
 }
 
+/// 传输类命令（走独立无界通道，保序、永不丢）。
+fn is_transport(cmd: &AudioCommand) -> bool {
+    matches!(
+        cmd,
+        AudioCommand::Play { .. }
+            | AudioCommand::Resume
+            | AudioCommand::Pause
+            | AudioCommand::Stop
+            | AudioCommand::Seek { .. }
+    )
+}
+
+/// 命令类型名（诊断日志用）。
+fn cmd_kind(cmd: &AudioCommand) -> &'static str {
+    match cmd {
+        AudioCommand::Play { .. } => "Play",
+        AudioCommand::Resume => "Resume",
+        AudioCommand::Pause => "Pause",
+        AudioCommand::Stop => "Stop",
+        AudioCommand::Seek { .. } => "Seek",
+        AudioCommand::LoadModel { .. } => "LoadModel",
+        AudioCommand::ReloadNotes { .. } => "ReloadNotes",
+        AudioCommand::UpdateNotes { .. } => "UpdateNotes",
+        AudioCommand::SetSoundFonts { .. } => "SetSoundFonts",
+        AudioCommand::SkipTracks { .. } => "SkipTracks",
+        AudioCommand::SetAmMs { .. } => "SetAmMs",
+        AudioCommand::SetLayerCount { .. } => "SetLayerCount",
+        AudioCommand::PreviewStop => "PreviewStop",
+        AudioCommand::RefreshLatency => "RefreshLatency",
+        _ => "Other",
+    }
+}
+
 impl AudioHandle {
     /// 发命令给 renderer 线程。
     ///
@@ -299,10 +336,17 @@ impl AudioHandle {
     /// - `Disconnected`：renderer 线程已退出。仅记日志，不 panic ——
     ///   渲染线程死亡不应该让 UI 也跟着崩。
     pub fn send(&self, cmd: AudioCommand) {
+        if is_transport(&cmd) {
+            // 无界通道：除渲染线程退出外不会失败。
+            let _ = self.transport_tx.send(cmd);
+            return;
+        }
         match self.cmd_tx.try_send(cmd) {
             Ok(()) => {}
-            Err(crossbeam_channel::TrySendError::Full(_)) => {
-                tracing::warn!("AudioHandle::send: channel full, dropping command");
+            Err(crossbeam_channel::TrySendError::Full(cmd)) => {
+                let kind = cmd_kind(&cmd);
+                tracing::warn!("AudioHandle::send: channel full, dropping {kind}");
+                crate::audio_renderer::play_log(&format!("[play] 命令通道满，丢弃 {kind}"));
             }
             Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
                 tracing::warn!("AudioHandle::send: channel disconnected, dropping command");
@@ -600,11 +644,16 @@ pub(crate) fn spawn_worker(
                                 }
                             }
                         }
+                        let t_prepare = std::time::Instant::now();
                         let prepared = crate::prepare_model::prepare_model(
                             &latest,
                             sample_rate,
                             latest_density,
                         );
+                        crate::audio_renderer::play_log(&format!(
+                            "[play] worker prepare_model={:?}",
+                            t_prepare.elapsed()
+                        ));
                         last_synced_revisions = Some(latest.note_revisions);
                         let _ = result_tx.send(WorkerResult::PreparedModel(prepared));
                         // 构建 audible_notes/cc_events 的临时内存已释放：归还空闲页，
@@ -954,6 +1003,7 @@ pub fn spawn_cpal_audio(
     #[cfg(feature = "gpu")] use_gpu_synth: bool,
 ) -> Result<CpalAudioHandle, String> {
     let (cmd_tx, cmd_rx) = bounded::<AudioCommand>(AUDIO_CMD_CHANNEL_CAPACITY);
+    let (transport_tx, transport_rx) = unbounded::<AudioCommand>();
     let sample_position = Arc::new(AtomicU64::new(0));
     let playing = Arc::new(AtomicBool::new(false));
     let duration_samples = Arc::new(AtomicU64::new(0));
@@ -1071,6 +1121,7 @@ pub fn spawn_cpal_audio(
         renderer_state,
         channels as u16,
         cmd_rx,
+        transport_rx,
         worker_tx,
         prepared_rx,
         Arc::clone(&shutdown),
@@ -1199,6 +1250,7 @@ pub fn spawn_cpal_audio(
     Ok(CpalAudioHandle {
         handle: AudioHandle {
             cmd_tx,
+            transport_tx,
             sample_position,
             producer_sample_position: handle_producer_position,
             playing,

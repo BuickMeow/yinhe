@@ -25,6 +25,8 @@ pub(crate) struct AudioState {
     /// Set when Play/Resume is sent but the audio thread hasn't acknowledged yet.
     /// Ensures request_repaint() keeps firing until is_playing() returns true.
     pub pending_playback: bool,
+    /// 诊断：Play/Resume 发出时刻（音频确认播放时打印等待时长）。
+    pub pending_playback_since: Option<std::time::Instant>,
     /// 设备切换对话框是否需要显示。
     ///
     /// 两种触发场景：
@@ -71,6 +73,7 @@ impl AudioState {
             last_channel_layout: None,
             playback_anchor: None,
             pending_playback: false,
+            pending_playback_since: None,
             device_switch_pending: false,
             device_switch_required: false,
             device_switch_error: None,

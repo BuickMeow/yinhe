@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 #[cfg(feature = "gpu")]
@@ -33,6 +33,40 @@ const PREVIEW_TARGET_FRAMES: usize = 4096;
 #[cfg(not(target_os = "android"))]
 const PREVIEW_TARGET_FRAMES: usize = 512;
 const WAKE_SLEEP: Duration = Duration::from_millis(1);
+
+/// 合并一批传输命令：只把**连续**的 `Seek` 折叠成最后一个（绝对位置，
+/// 中间值没有渲染意义）；其余命令保序。Play/Pause/Stop 不与 Seek 跨类合并。
+fn merge_transport_batch(batch: Vec<AudioCommand>) -> Vec<AudioCommand> {
+    let mut merged: Vec<AudioCommand> = Vec::with_capacity(batch.len());
+    for cmd in batch {
+        match (merged.last_mut(), cmd) {
+            (Some(AudioCommand::Seek { sample: prev }), AudioCommand::Seek { sample }) => {
+                *prev = sample;
+            }
+            (_, cmd) => merged.push(cmd),
+        }
+    }
+    merged
+}
+
+/// 播放启动诊断日志：stderr + `/tmp/yinhe-play.log`（GUI 双击启动时 stderr
+/// 不可见）。诊断用，定位后删除。
+pub(crate) fn play_log(msg: &str) {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0);
+    let line = format!("[{ts:.3}] {msg}");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/yinhe-play.log")
+    {
+        use std::io::Write;
+        let _ = writeln!(f, "{line}");
+    }
+    eprintln!("{line}");
+}
 
 pub(crate) struct RendererSharedState {
     pub(crate) producer_sample_position: Arc<AtomicU64>,
@@ -79,6 +113,8 @@ struct AudioRenderer {
     state: RendererSharedState,
     limiter: VolumeLimiter,
     cmd_rx: Receiver<AudioCommand>,
+    /// 传输命令通道（无界）：Play/Resume/Pause/Stop/Seek 优先、保序处理。
+    transport_rx: Receiver<AudioCommand>,
     worker_tx: Sender<WorkerCmd>,
     prepared_rx: Receiver<WorkerResult>,
     shutdown: Arc<AtomicBool>,
@@ -107,6 +143,8 @@ struct AudioRenderer {
     /// 是否启用 GPU 合成器。启用后加载音色库时初始化 GpuSynth，渲染走 engine.gpu_synth。
     #[cfg(feature = "gpu")]
     use_gpu_synth: bool,
+    /// 播放启动诊断：Play 时刻与目标位置（首块渲染完成后打印一次耗时）。
+    play_timing: Option<(Instant, u64)>,
     /// GPU 事件列表需要重建（模型/跳过掩码变化时置位；Play/Stop/Seek 往返复用）。
     #[cfg(feature = "gpu")]
     gpu_events_dirty: bool,
@@ -130,6 +168,7 @@ impl AudioRenderer {
         state: RendererSharedState,
         channels: u16,
         cmd_rx: Receiver<AudioCommand>,
+        transport_rx: Receiver<AudioCommand>,
         worker_tx: Sender<WorkerCmd>,
         prepared_rx: Receiver<WorkerResult>,
         shutdown: Arc<AtomicBool>,
@@ -157,6 +196,7 @@ impl AudioRenderer {
             ring,
             state,
             limiter: VolumeLimiter::new(channels),
+            transport_rx,
             export: None,
             export_prev_layer_count: None,
             gpu_sf_pending: 0,
@@ -176,6 +216,7 @@ impl AudioRenderer {
             instrument_return_tx,
             #[cfg(feature = "gpu")]
             use_gpu_synth,
+            play_timing: None,
             #[cfg(feature = "gpu")]
             gpu_events_dirty: true,
             #[cfg(feature = "gpu")]
@@ -222,6 +263,15 @@ impl AudioRenderer {
             }
 
             did_work |= self.render_if_needed();
+            if let Some((t, from)) = self.play_timing
+                && self.engine.sample_position() != from
+            {
+                play_log(&format!(
+                    "[play] 首块就绪（指示线可推进）={:?}",
+                    t.elapsed()
+                ));
+                self.play_timing = None;
+            }
 
             self.publish_state();
 
@@ -258,205 +308,34 @@ impl AudioRenderer {
             did_work = true;
         }
 
+        // 传输命令（独立无界通道）：优先、保序处理，永不丢。
+        // 批内连续 Seek 合并为最后一个（绝对位置，中间值无需逐条同步）。
+        let mut transport: Vec<AudioCommand> = Vec::new();
+        while let Ok(cmd) = self.transport_rx.try_recv() {
+            transport.push(cmd);
+        }
+        if !transport.is_empty() {
+            for cmd in merge_transport_batch(transport) {
+                did_work = true;
+                self.apply_command(
+                    cmd,
+                    &mut pending_reload,
+                    &mut pending_update_notes,
+                    &mut pending_density_rebuild,
+                );
+            }
+        }
+
         loop {
             match self.cmd_rx.try_recv() {
                 Ok(cmd) => {
                     did_work = true;
-                    match cmd {
-                        AudioCommand::LoadModel { model } => {
-                            self.preview_engine.stop_all();
-                            self.engine.handle_command(AudioCommand::Pause);
-                            self.engine.handle_command(AudioCommand::Stop);
-                            // 首次加载：消费位置 == 前沿 == 0，锚定无差别。
-                            self.clear_buffered_audio(self.engine.sample_position());
-                            let density = self.engine.automation_density;
-                            let _ = self.worker_tx.send(WorkerCmd::PrepareModel(model, density));
-                        }
-                        AudioCommand::ReloadNotes { model } => {
-                            // 全量重建优先于只更新音符 —— 丢弃 pending UpdateNotes
-                            pending_update_notes = None;
-                            pending_reload = Some(model);
-                        }
-                        AudioCommand::UpdateNotes { model } => {
-                            // 只在没有 pending ReloadNotes 时记录（ReloadNotes 包含 audible_notes）
-                            if pending_reload.is_none() {
-                                pending_update_notes = Some(model);
-                            }
-                        }
-                        AudioCommand::SetSoundFonts { configs } => {
-                            // 一次性清 ring（音色切换锚定听音位置，位置不移动）；
-                            // 结果逐个应用时不再清，避免频繁打断输出。
-                            let anchor = self.consumer_position.load(Ordering::Acquire);
-                            self.clear_buffered_audio(anchor);
-                            #[cfg(feature = "gpu")]
-                            {
-                                self.gpu_sf_pending = configs
-                                    .iter()
-                                    .filter(|(_, paths)| !paths.is_empty())
-                                    .count();
-                            }
-                            for (channel, paths) in configs.iter() {
-                                if paths.is_empty() {
-                                    continue;
-                                }
-                                let _ = self.worker_tx.send(WorkerCmd::LoadSoundFont {
-                                    channel: *channel,
-                                    paths: paths.clone(),
-                                });
-                            }
-                        }
-                        AudioCommand::Play { from_sample } => {
-                            if self.export.is_some() {
-                                // 导出中忽略播放控制（取消用导出卡的停止按钮）。
-                            } else if self.engine.model_loaded() {
-                                self.preview_engine.stop_all();
-                                self.engine
-                                    .handle_command(AudioCommand::Play { from_sample });
-                                // GPU 路径：重建事件（含鼓组/复活音符）并同步位置
-                                #[cfg(feature = "gpu")]
-                                if self.engine.gpu_synth.is_some() {
-                                    self.sync_gpu_synth_events();
-                                }
-                                // 显式 seek：ring 清空锚定引擎当前（=seek 后）位置。
-                                self.clear_buffered_audio(self.engine.sample_position());
-                                // 方案 B：seek 后异步 chase（current_tick 已由 seek 更新）
-                                self.request_chase(self.engine.current_tick());
-                            } else {
-                                self.engine.set_pending_play(from_sample);
-                            }
-                        }
-                        AudioCommand::Seek { sample } => {
-                            if self.export.is_some() {
-                                // 导出中忽略 seek。
-                            } else {
-                                self.preview_engine.stop_all();
-                                self.engine.handle_command(AudioCommand::Seek { sample });
-                                #[cfg(feature = "gpu")]
-                                if self.engine.gpu_synth.is_some() {
-                                    self.sync_gpu_synth_events();
-                                }
-                                // 显式 seek：ring 清空锚定引擎当前（=seek 后）位置。
-                                self.clear_buffered_audio(self.engine.sample_position());
-                                // 方案 B：seek 后异步 chase（current_tick 已由 seek 更新）
-                                self.request_chase(self.engine.current_tick());
-                            }
-                        }
-                        AudioCommand::Stop => {
-                            if self.export.is_some() {
-                                // 导出中忽略停止（取消用导出卡的停止按钮）。
-                            } else {
-                                self.preview_engine.stop_all();
-                                self.engine.handle_command(AudioCommand::Stop);
-                                #[cfg(feature = "gpu")]
-                                if self.engine.gpu_synth.is_some() {
-                                    self.sync_gpu_synth_events();
-                                }
-                                // Stop = 显式 seek 到 0。
-                                self.clear_buffered_audio(self.engine.sample_position());
-                                // 方案 B：Stop 也 seek 到 0，需要 chase 恢复初始 channel state
-                                self.request_chase(0);
-                            }
-                        }
-                        AudioCommand::SetAutomationDensity { density } => {
-                            self.engine.automation_density = density.max(1);
-                            // 若已加载模型，触发 worker 重建 cc_events
-                            if self.engine.yin_model.is_some() {
-                                pending_density_rebuild = true;
-                            }
-                        }
-                        AudioCommand::SkipTracks { skip } => {
-                            self.apply_skip_tracks(skip);
-                        }
-                        AudioCommand::SetAmMs { am_ms } => {
-                            self.apply_set_am_ms(am_ms);
-                        }
-                        AudioCommand::PreviewNotes { notes, exclusive } => {
-                            // 用户已松手（Stop 请求尚未消费）：跳过堆积的旧预览组，
-                            // 否则松手后还会触发一组在响。
-                            if self.preview_stop_flag.load(Ordering::Acquire) {
-                                continue;
-                            }
-                            // 按 channel 分组、组内按 target_tick 升序，增量 chase：
-                            // 每个通道只扫一遍 cc_events，避免整组预览反复全量扫描。
-                            let cc_events = self.engine.cc_events.clone();
-                            let mut groups: Vec<(u32, Vec<&crate::spawn::PreviewNoteParams>)> =
-                                Vec::new();
-                            for n in &notes {
-                                let ch = n.channel as u32;
-                                if let Some((_, g)) = groups.iter_mut().find(|(c, _)| *c == ch) {
-                                    g.push(n);
-                                } else {
-                                    groups.push((ch, vec![n]));
-                                }
-                            }
-                            for (_, g) in &mut groups {
-                                g.sort_by_key(|n| n.target_tick);
-                            }
-                            let mut inputs: Vec<crate::preview_engine::PreviewNoteIn> =
-                                Vec::with_capacity(notes.len());
-                            for (ch, g) in groups {
-                                let targets: Vec<u32> = g.iter().map(|n| n.target_tick).collect();
-                                let states = crate::preview_engine::chase_channel_states(
-                                    &cc_events, ch, &targets,
-                                );
-                                for (n, state) in g.iter().zip(states.iter()) {
-                                    // 预览引擎内部时钟是渲染帧（sample 域）：tick 只用于
-                                    // chase 目标比较，这里把相对时值差/时长转回 sample。
-                                    let target = self.engine.tick_to_sample(n.target_tick);
-                                    let duration = if n.duration_ticks > 0 {
-                                        let end = self.engine.tick_to_sample(
-                                            n.target_tick.saturating_add(n.duration_ticks),
-                                        );
-                                        Some(end.saturating_sub(target))
-                                    } else {
-                                        None
-                                    };
-                                    inputs.push(crate::preview_engine::PreviewNoteIn {
-                                        channel: n.channel,
-                                        key: n.key,
-                                        velocity: n.velocity,
-                                        duration,
-                                        state: *state,
-                                        target_sample: target,
-                                    });
-                                }
-                            }
-                            // 提交预览组：组内按目标位置相对时值错开触发。
-                            self.preview_engine.preview_notes(inputs, exclusive);
-                        }
-                        AudioCommand::PreviewStop => {
-                            self.preview_engine.stop_all();
-                        }
-                        // MIDI 直通单键停止：只停松开的键（和弦保持）。
-                        AudioCommand::PreviewStopKey { key } => {
-                            self.preview_engine.stop_key(key);
-                        }
-                        AudioCommand::SyncBusConfig { buses, sends } => {
-                            self.engine
-                                .handle_command(AudioCommand::SyncBusConfig { buses, sends });
-                            self.sync_bus_meter_readings();
-                        }
-                        AudioCommand::ExportStart {
-                            path,
-                            bit_depth,
-                            layer_count,
-                            restore_layer_count,
-                            progress,
-                            cancel,
-                            pause,
-                        } => {
-                            self.start_export(
-                                path,
-                                bit_depth,
-                                layer_count,
-                                restore_layer_count,
-                                progress,
-                                cancel,
-                                pause,
-                            );
-                        }
-                        other => self.engine.handle_command(other),
-                    }
+                    self.apply_command(
+                        cmd,
+                        &mut pending_reload,
+                        &mut pending_update_notes,
+                        &mut pending_density_rebuild,
+                    );
                 }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => return did_work,
@@ -487,6 +366,224 @@ impl AudioRenderer {
 
     /// 应用轨道 mute/solo 掩码（即时派）：diff 旧掩码，新 mute 的轨立即停发 NoteOff，
     /// 新 unmute 的轨立即重启跨点音符（CPU/GPU 统一语义），随后异步 chase 恢复 CC。
+    /// 应用单条命令（传输/普通命令通道共用）。
+    fn apply_command(
+        &mut self,
+        cmd: AudioCommand,
+        pending_reload: &mut Option<Arc<yinhe_core::YinModel>>,
+        pending_update_notes: &mut Option<Arc<yinhe_core::YinModel>>,
+        pending_density_rebuild: &mut bool,
+    ) {
+        match cmd {
+            AudioCommand::LoadModel { model } => {
+                self.preview_engine.stop_all();
+                self.engine.handle_command(AudioCommand::Pause);
+                self.engine.handle_command(AudioCommand::Stop);
+                // 首次加载：消费位置 == 前沿 == 0，锚定无差别。
+                self.clear_buffered_audio(self.engine.sample_position());
+                let density = self.engine.automation_density;
+                let _ = self.worker_tx.send(WorkerCmd::PrepareModel(model, density));
+            }
+            AudioCommand::ReloadNotes { model } => {
+                // 全量重建优先于只更新音符 —— 丢弃 pending UpdateNotes
+                *pending_update_notes = None;
+                *pending_reload = Some(model);
+            }
+            AudioCommand::UpdateNotes { model } => {
+                // 只在没有 pending ReloadNotes 时记录（ReloadNotes 包含 audible_notes）
+                if pending_reload.is_none() {
+                    *pending_update_notes = Some(model);
+                }
+            }
+            AudioCommand::SetSoundFonts { configs } => {
+                // 一次性清 ring（音色切换锚定听音位置，位置不移动）；
+                // 结果逐个应用时不再清，避免频繁打断输出。
+                let anchor = self.consumer_position.load(Ordering::Acquire);
+                self.clear_buffered_audio(anchor);
+                #[cfg(feature = "gpu")]
+                {
+                    self.gpu_sf_pending = configs
+                        .iter()
+                        .filter(|(_, paths)| !paths.is_empty())
+                        .count();
+                }
+                for (channel, paths) in configs.iter() {
+                    if paths.is_empty() {
+                        return;
+                    }
+                    let _ = self.worker_tx.send(WorkerCmd::LoadSoundFont {
+                        channel: *channel,
+                        paths: paths.clone(),
+                    });
+                }
+            }
+            AudioCommand::Play { from_sample } => {
+                if self.export.is_some() {
+                    // 导出中忽略播放控制（取消用导出卡的停止按钮）。
+                } else if self.engine.model_loaded() {
+                    let t0 = Instant::now();
+                    self.preview_engine.stop_all();
+                    self.engine
+                        .handle_command(AudioCommand::Play { from_sample });
+                    let dt_engine = t0.elapsed();
+                    // GPU 路径：重建事件（含鼓组/复活音符）并同步位置
+                    let t1 = Instant::now();
+                    #[cfg(feature = "gpu")]
+                    if self.engine.gpu_synth.is_some() {
+                        self.sync_gpu_synth_events();
+                    }
+                    let dt_sync = t1.elapsed();
+                    // 显式 seek：ring 清空锚定引擎当前（=seek 后）位置。
+                    let t2 = Instant::now();
+                    self.clear_buffered_audio(self.engine.sample_position());
+                    let dt_clear = t2.elapsed();
+                    // 方案 B：seek 后异步 chase（current_tick 已由 seek 更新）
+                    let t3 = Instant::now();
+                    self.request_chase(self.engine.current_tick());
+                    let dt_chase = t3.elapsed();
+                    play_log(&format!(
+                        "[play] engine.seek={dt_engine:?} gpu_sync={dt_sync:?} clear_ring={dt_clear:?} chase_req={dt_chase:?} 命令处理总计={:?}",
+                        t0.elapsed()
+                    ));
+                    self.play_timing = Some((t0, from_sample));
+                } else {
+                    self.engine.set_pending_play(from_sample);
+                    play_log("[play] 模型未就绪，Play 挂起等待模型/音色库加载");
+                    self.play_timing = Some((Instant::now(), from_sample));
+                }
+            }
+            AudioCommand::Seek { sample } => {
+                if self.export.is_some() {
+                    // 导出中忽略 seek。
+                } else {
+                    self.preview_engine.stop_all();
+                    self.engine.handle_command(AudioCommand::Seek { sample });
+                    #[cfg(feature = "gpu")]
+                    if self.engine.gpu_synth.is_some() {
+                        self.sync_gpu_synth_events();
+                    }
+                    // 显式 seek：ring 清空锚定引擎当前（=seek 后）位置。
+                    self.clear_buffered_audio(self.engine.sample_position());
+                    // 方案 B：seek 后异步 chase（current_tick 已由 seek 更新）
+                    self.request_chase(self.engine.current_tick());
+                }
+            }
+            AudioCommand::Stop => {
+                if self.export.is_some() {
+                    // 导出中忽略停止（取消用导出卡的停止按钮）。
+                } else {
+                    self.preview_engine.stop_all();
+                    self.engine.handle_command(AudioCommand::Stop);
+                    #[cfg(feature = "gpu")]
+                    if self.engine.gpu_synth.is_some() {
+                        self.sync_gpu_synth_events();
+                    }
+                    // Stop = 显式 seek 到 0。
+                    self.clear_buffered_audio(self.engine.sample_position());
+                    // 方案 B：Stop 也 seek 到 0，需要 chase 恢复初始 channel state
+                    self.request_chase(0);
+                }
+            }
+            AudioCommand::SetAutomationDensity { density } => {
+                self.engine.automation_density = density.max(1);
+                // 若已加载模型，触发 worker 重建 cc_events
+                if self.engine.yin_model.is_some() {
+                    *pending_density_rebuild = true;
+                }
+            }
+            AudioCommand::SkipTracks { skip } => {
+                self.apply_skip_tracks(skip);
+            }
+            AudioCommand::SetAmMs { am_ms } => {
+                self.apply_set_am_ms(am_ms);
+            }
+            AudioCommand::PreviewNotes { notes, exclusive } => {
+                // 用户已松手（Stop 请求尚未消费）：跳过堆积的旧预览组，
+                // 否则松手后还会触发一组在响。
+                if self.preview_stop_flag.load(Ordering::Acquire) {
+                    return;
+                }
+                // 按 channel 分组、组内按 target_tick 升序，增量 chase：
+                // 每个通道只扫一遍 cc_events，避免整组预览反复全量扫描。
+                let cc_events = self.engine.cc_events.clone();
+                let mut groups: Vec<(u32, Vec<&crate::spawn::PreviewNoteParams>)> = Vec::new();
+                for n in &notes {
+                    let ch = n.channel as u32;
+                    if let Some((_, g)) = groups.iter_mut().find(|(c, _)| *c == ch) {
+                        g.push(n);
+                    } else {
+                        groups.push((ch, vec![n]));
+                    }
+                }
+                for (_, g) in &mut groups {
+                    g.sort_by_key(|n| n.target_tick);
+                }
+                let mut inputs: Vec<crate::preview_engine::PreviewNoteIn> =
+                    Vec::with_capacity(notes.len());
+                for (ch, g) in groups {
+                    let targets: Vec<u32> = g.iter().map(|n| n.target_tick).collect();
+                    let states =
+                        crate::preview_engine::chase_channel_states(&cc_events, ch, &targets);
+                    for (n, state) in g.iter().zip(states.iter()) {
+                        // 预览引擎内部时钟是渲染帧（sample 域）：tick 只用于
+                        // chase 目标比较，这里把相对时值差/时长转回 sample。
+                        let target = self.engine.tick_to_sample(n.target_tick);
+                        let duration = if n.duration_ticks > 0 {
+                            let end = self
+                                .engine
+                                .tick_to_sample(n.target_tick.saturating_add(n.duration_ticks));
+                            Some(end.saturating_sub(target))
+                        } else {
+                            None
+                        };
+                        inputs.push(crate::preview_engine::PreviewNoteIn {
+                            channel: n.channel,
+                            key: n.key,
+                            velocity: n.velocity,
+                            duration,
+                            state: *state,
+                            target_sample: target,
+                        });
+                    }
+                }
+                // 提交预览组：组内按目标位置相对时值错开触发。
+                self.preview_engine.preview_notes(inputs, exclusive);
+            }
+            AudioCommand::PreviewStop => {
+                self.preview_engine.stop_all();
+            }
+            // MIDI 直通单键停止：只停松开的键（和弦保持）。
+            AudioCommand::PreviewStopKey { key } => {
+                self.preview_engine.stop_key(key);
+            }
+            AudioCommand::SyncBusConfig { buses, sends } => {
+                self.engine
+                    .handle_command(AudioCommand::SyncBusConfig { buses, sends });
+                self.sync_bus_meter_readings();
+            }
+            AudioCommand::ExportStart {
+                path,
+                bit_depth,
+                layer_count,
+                restore_layer_count,
+                progress,
+                cancel,
+                pause,
+            } => {
+                self.start_export(
+                    path,
+                    bit_depth,
+                    layer_count,
+                    restore_layer_count,
+                    progress,
+                    cancel,
+                    pause,
+                );
+            }
+            other => self.engine.handle_command(other),
+        }
+    }
+
     fn apply_skip_tracks(&mut self, skip: Vec<bool>) {
         let old = self.engine.skip_track.clone();
         self.engine.apply_skip_mask(&old, &skip);
@@ -593,6 +690,7 @@ impl AudioRenderer {
         loop {
             match self.prepared_rx.try_recv() {
                 Ok(WorkerResult::PreparedModel(prepared)) => {
+                    let t_prepared = Instant::now();
                     self.state
                         .duration_samples
                         .store(prepared.duration_samples, Ordering::Relaxed);
@@ -610,6 +708,7 @@ impl AudioRenderer {
                     // 方案 B：apply_prepared_model 内部 seek_to 不再 chase，
                     // 这里发 PrepareChase 让 worker 异步算 channel state
                     self.request_chase(self.engine.current_tick());
+                    play_log(&format!("[play] 应用模型结果={:?}", t_prepared.elapsed()));
                     did_work = true;
                 }
                 Ok(WorkerResult::PreparedNotes {
@@ -641,6 +740,7 @@ impl AudioRenderer {
                     plugin_params,
                     generation,
                 }) => {
+                    let t_chase_apply = Instant::now();
                     // 丢弃过期结果：cc_events 已被新 PrepareModel 替换
                     if generation == self.engine.chase_generation {
                         self.engine.apply_chase_result(&states, &plugin_params);
@@ -649,6 +749,12 @@ impl AudioRenderer {
                         #[cfg(feature = "gpu")]
                         if let Some(synth) = self.engine.gpu_synth.as_mut() {
                             Self::apply_chase_to_gpu(&self.engine.channel_layout, synth, &states);
+                        }
+                        if self.play_timing.is_some() {
+                            play_log(&format!(
+                                "[play] chase 快照应用={:?}",
+                                t_chase_apply.elapsed()
+                            ));
                         }
                         did_work = true;
                     }
@@ -677,18 +783,31 @@ impl AudioRenderer {
                         let gpu_paths: Vec<std::path::PathBuf> =
                             paths.iter().map(std::path::PathBuf::from).collect();
                         if self.engine.gpu_synth.is_none() {
+                            let t_init = Instant::now();
                             match yinhe_synth::GpuSynth::new_default(sr) {
                                 Ok(mut synth) => {
+                                    let t2 = Instant::now();
                                     if let Err(e) = synth.load_dense_soundfonts(dense, &gpu_paths) {
                                         eprintln!("[gpu] Failed to load soundfonts: {e}");
                                     }
+                                    let dt_load = t2.elapsed();
                                     // 加载当前模型的事件
+                                    let t3 = Instant::now();
                                     let events =
                                         self.build_gpu_synth_events(self.engine.sample_position());
+                                    let n = events.len();
+                                    let dt_build = t3.elapsed();
+                                    let t4 = Instant::now();
                                     synth.load_events(events);
                                     synth.seek(self.engine.sample_position());
                                     self.engine.gpu_synth = Some(synth);
                                     eprintln!("[gpu] GpuSynth initialized (channel {channel})");
+                                    play_log(&format!(
+                                        "[play] GpuSynth 初始化：new={:?} 音色库解析={dt_load:?} 事件构建={dt_build:?}（{n}）装载+seek={:?} 总={:?}",
+                                        t2.duration_since(t_init),
+                                        t4.elapsed(),
+                                        t_init.elapsed()
+                                    ));
                                 }
                                 Err(e) => {
                                     eprintln!("[gpu] Failed to init GpuSynth: {e}");
@@ -703,7 +822,12 @@ impl AudioRenderer {
                         if self.gpu_sf_pending == 0
                             && let Some(synth) = self.engine.gpu_synth.as_mut()
                         {
+                            let t_upload = Instant::now();
                             synth.finish_soundfont_load();
+                            play_log(&format!(
+                                "[play] GPU 采样上传完成：{:?}",
+                                t_upload.elapsed()
+                            ));
                         }
                     }
                     // 非 GPU feature 下 paths 不使用，显式标记避免 warning
@@ -731,16 +855,26 @@ impl AudioRenderer {
         let pos = self.engine.sample_position();
         let needs_rebuild = self.gpu_events_dirty || self.gpu_events_last_pos != Some(pos);
         if needs_rebuild {
+            let t = Instant::now();
             let events = self.build_gpu_synth_events(pos);
+            let n = events.len();
+            let dt_build = t.elapsed();
+            let t2 = Instant::now();
             if let Some(ref mut synth) = self.engine.gpu_synth {
                 synth.load_events(events);
             }
+            play_log(&format!(
+                "[play] gpu事件重建：构建={dt_build:?}（{n} 事件）装载={:?}",
+                t2.elapsed()
+            ));
             self.gpu_events_last_pos = Some(pos);
             self.gpu_events_dirty = false;
         }
+        let t = Instant::now();
         if let Some(ref mut synth) = self.engine.gpu_synth {
             synth.seek(pos);
         }
+        play_log(&format!("[play] gpu_synth.seek={:?}", t.elapsed()));
     }
 
     /// 标记 GPU 事件列表失效（模型/跳过掩码变化时调用；下一次同步重建）。
@@ -925,7 +1059,14 @@ impl AudioRenderer {
         }
 
         if self.engine.playing() {
+            let t_render = Instant::now();
             self.engine.render(&mut self.scratch);
+            if self.play_timing.is_some() {
+                play_log(&format!(
+                    "[play] engine.render 块耗时={:?}",
+                    t_render.elapsed()
+                ));
+            }
         } else if idle_instruments {
             // 未播放但有乐器：只驱动乐器插件与混音输出（不推进走带）。
             self.engine.render_idle(&mut self.scratch);
@@ -1164,6 +1305,7 @@ pub(crate) fn spawn_renderer(
     state: RendererSharedState,
     channels: u16,
     cmd_rx: Receiver<AudioCommand>,
+    transport_rx: Receiver<AudioCommand>,
     worker_tx: Sender<WorkerCmd>,
     prepared_rx: Receiver<WorkerResult>,
     shutdown: Arc<AtomicBool>,
@@ -1187,6 +1329,7 @@ pub(crate) fn spawn_renderer(
                 state,
                 channels,
                 cmd_rx,
+                transport_rx,
                 worker_tx,
                 prepared_rx,
                 shutdown,
@@ -1266,5 +1409,43 @@ pub(crate) fn to_gpu_control_event(
             Some(yinhe_synth::ControlEvent::ProgramChange(p))
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn seek(sample: u64) -> AudioCommand {
+        AudioCommand::Seek { sample }
+    }
+
+    #[test]
+    fn merge_transport_folds_consecutive_seeks() {
+        let out = merge_transport_batch(vec![seek(10), seek(20), seek(30)]);
+        assert_eq!(out.len(), 1);
+        assert!(matches!(out[0], AudioCommand::Seek { sample: 30 }));
+    }
+
+    #[test]
+    fn merge_transport_keeps_order_around_non_seek() {
+        let out = merge_transport_batch(vec![
+            AudioCommand::Play { from_sample: 0 },
+            seek(10),
+            seek(20),
+            AudioCommand::Pause,
+            seek(30),
+            seek(40),
+        ]);
+        assert_eq!(out.len(), 4);
+        assert!(matches!(out[0], AudioCommand::Play { from_sample: 0 }));
+        assert!(matches!(out[1], AudioCommand::Seek { sample: 20 }));
+        assert!(matches!(out[2], AudioCommand::Pause));
+        assert!(matches!(out[3], AudioCommand::Seek { sample: 40 }));
+    }
+
+    #[test]
+    fn merge_transport_empty() {
+        assert!(merge_transport_batch(Vec::new()).is_empty());
     }
 }

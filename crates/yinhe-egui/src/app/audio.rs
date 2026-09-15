@@ -483,6 +483,7 @@ impl App {
                     });
                 }
                 self.audio_state.pending_playback = true;
+                self.audio_state.pending_playback_since = Some(std::time::Instant::now());
                 doc.edit.playback.toggle_play(tick, &doc.data.model);
             }
         }
@@ -520,12 +521,29 @@ impl App {
             if self.audio_state.pending_playback {
                 // Audio thread hasn't processed the Play command yet.
                 // Keep the flag set so request_repaint() keeps firing.
+                // 诊断：1s 仍未确认 → 命令可能被通道丢弃（只报一次）。
+                if let Some(t) = self.audio_state.pending_playback_since
+                    && t.elapsed() > std::time::Duration::from_secs(1)
+                {
+                    tracing::warn!(
+                        "[play] Play 命令 1s 未被音频线程确认（可能已被命令通道丢弃）"
+                    );
+                    self.audio_state.pending_playback_since = None;
+                }
                 return;
             }
             return;
         }
         // Audio is confirmed playing — clear the pending flag.
         self.audio_state.pending_playback = false;
+        if let Some(t) = self.audio_state.pending_playback_since.take() {
+            tracing::info!(
+                "[play] UI 等待音频确认={:?} producer={} consumer={}",
+                t.elapsed(),
+                handle.producer_sample_position(),
+                handle.sample_position()
+            );
+        }
 
         let sr = audio.sample_rate as f64;
         let doc = match self.workspace.documents.get_mut(idx) {
