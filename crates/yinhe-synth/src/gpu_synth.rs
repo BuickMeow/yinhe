@@ -29,6 +29,31 @@ type KeyMapCacheValue = Arc<Vec<sfz_parser::KeyMapEntry>>;
 static KEY_MAP_CACHE: LazyLock<Mutex<HashMap<KeyMapCacheKey, KeyMapCacheValue>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// 预热进程级解析缓存（worker 线程调用）：未命中才解析。
+/// 音频线程随后加载同一音色库时直接命中缓存，不再在音频线程里解析（3-4s）。
+pub fn prefetch_key_maps(path: &std::path::Path, sample_rate: u32) -> Result<(), String> {
+    let key = (path.to_path_buf(), sample_rate);
+    {
+        let cache = KEY_MAP_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if cache.contains_key(&key) {
+            return Ok(());
+        }
+    }
+    let t = std::time::Instant::now();
+    let built = Arc::new(sfz_parser::build_key_maps(path, sample_rate)?);
+    eprintln!(
+        "[gpu] worker 预解析音色库={:?}：{}",
+        t.elapsed(),
+        path.display()
+    );
+    KEY_MAP_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .entry(key)
+        .or_insert(built);
+    Ok(())
+}
+
 /// 合成器事件（sample 域，按 sample 排序后由 `load_events` 加载）。
 #[derive(Clone, Copy, Debug)]
 pub enum SynthEvent {

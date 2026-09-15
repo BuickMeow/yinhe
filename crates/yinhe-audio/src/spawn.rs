@@ -569,6 +569,9 @@ pub(crate) enum WorkerCmd {
     LoadSoundFont {
         channel: u8,
         paths: Vec<String>,
+        /// GPU 模式：在 worker 里预热 yinhe-synth 的解析缓存，
+        /// 音频线程随后命中缓存，不在音频线程解析（3-4s）。
+        prefetch_gpu: bool,
     },
 }
 
@@ -738,11 +741,35 @@ pub(crate) fn spawn_worker(
                             generation: latest_gen,
                         });
                     }
-                    WorkerCmd::LoadSoundFont { channel, paths } => {
+                    WorkerCmd::LoadSoundFont {
+                        channel,
+                        paths,
+                        prefetch_gpu,
+                    } => {
                         // 不合并，但把 try_recv 到的命令存到 pending 避免饿死
                         while let Ok(next) = cmd_rx.try_recv() {
                             pending.push_back(next);
                         }
+                        // GPU 路径的 key map 解析（重采样 SFZ，未命中缓存时 3-4s）
+                        // 移到 worker：音频线程随后只做缓存命中 + 登记。
+                        #[cfg(feature = "gpu")]
+                        if prefetch_gpu {
+                            let t_prefetch = std::time::Instant::now();
+                            for path in &paths {
+                                if let Err(e) = yinhe_synth::prefetch_key_maps(
+                                    std::path::Path::new(path),
+                                    sample_rate,
+                                ) {
+                                    eprintln!("[gpu] worker 预解析失败 {path}: {e}");
+                                }
+                            }
+                            crate::audio_renderer::play_log(&format!(
+                                "[play] worker 预解析 GPU key map={:?}",
+                                t_prefetch.elapsed()
+                            ));
+                        }
+                        #[cfg(not(feature = "gpu"))]
+                        let _ = prefetch_gpu;
                         if let Ok(soundfonts) =
                             crate::engine::AudioEngine::load_soundfont_paths(sample_rate, &paths)
                         {

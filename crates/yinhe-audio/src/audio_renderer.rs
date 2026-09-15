@@ -407,13 +407,18 @@ impl AudioRenderer {
                         .filter(|(_, paths)| !paths.is_empty())
                         .count();
                 }
+                #[cfg(feature = "gpu")]
+                let prefetch_gpu = self.use_gpu_synth;
+                #[cfg(not(feature = "gpu"))]
+                let prefetch_gpu = false;
                 for (channel, paths) in configs.iter() {
                     if paths.is_empty() {
-                        return;
+                        continue;
                     }
                     let _ = self.worker_tx.send(WorkerCmd::LoadSoundFont {
                         channel: *channel,
                         paths: paths.clone(),
+                        prefetch_gpu,
                     });
                 }
             }
