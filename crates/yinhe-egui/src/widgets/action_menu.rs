@@ -306,7 +306,7 @@ pub fn pinned_action_buttons<T: PopupRow>(
         });
         let resp = ui
             .push_id((id_prefix, action.pinned_index()), |ui| {
-                crate::widgets::flat::flat_button_custom(
+                crate::widgets::flat::flat_button_filled(
                     ui,
                     icon.rich_text()
                         .size(crate::theme::TRANSPORT_BTN_FONT)

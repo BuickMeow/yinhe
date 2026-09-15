@@ -320,6 +320,8 @@ fn menu_button(
                 .size(crate::theme::TRANSPORT_BTN_FONT)
                 .color(crate::theme::text_primary()),
             btn_size,
+            None,
+            true,
         )
     })
     .inner
