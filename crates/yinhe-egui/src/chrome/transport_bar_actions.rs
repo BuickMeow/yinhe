@@ -253,11 +253,22 @@ impl PopupRow for EditAction {
 /// 播放菜单动作
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlayMenuAction {
-    PlayPause { playing: bool },
+    PlayPause {
+        playing: bool,
+    },
     Stop,
-    Record { recording: bool },
-    StepInput { active: bool },
+    Record {
+        recording: bool,
+    },
+    StepInput {
+        active: bool,
+    },
     TapTempo,
+    /// 写入自动化开关：开 = 拖动效果器旋钮时写入自动化 lane；
+    /// 关（默认）= 只实时预览声音。
+    AutomationWrite {
+        enabled: bool,
+    },
     Follow(crate::view_interaction::FollowMode, bool),
 }
 
@@ -269,18 +280,13 @@ impl PopupRow for PlayMenuAction {
             PlayMenuAction::Record { .. } => 2,
             PlayMenuAction::StepInput { .. } => 3,
             PlayMenuAction::TapTempo => 4,
+            PlayMenuAction::AutomationWrite { .. } => 5,
             PlayMenuAction::Follow(..) => 0,
         }
     }
 
     fn has_pin(self) -> bool {
-        matches!(
-            self,
-            PlayMenuAction::PlayPause { .. }
-                | PlayMenuAction::Stop
-                | PlayMenuAction::Record { .. }
-                | PlayMenuAction::StepInput { .. }
-        )
+        !matches!(self, PlayMenuAction::Follow(..))
     }
 
     fn action_id(self) -> &'static str {
@@ -305,6 +311,7 @@ impl PopupRow for PlayMenuAction {
             PlayMenuAction::Record { .. } => ICON_FIBER_MANUAL_RECORD,
             PlayMenuAction::StepInput { .. } => ICON_STEP,
             PlayMenuAction::TapTempo => ICON_SPEED,
+            PlayMenuAction::AutomationWrite { .. } => ICON_EDIT_NOTE,
             PlayMenuAction::Follow(mode, _) => mode.icon(),
         }
     }
@@ -316,6 +323,7 @@ impl PopupRow for PlayMenuAction {
             PlayMenuAction::Record { .. } => "menu.record",
             PlayMenuAction::StepInput { .. } => "menu.step_input",
             PlayMenuAction::TapTempo => "menu.tap_tempo",
+            PlayMenuAction::AutomationWrite { .. } => "menu.automation_write",
             PlayMenuAction::Follow(mode, _) => match mode {
                 crate::view_interaction::FollowMode::None => "follow.none",
                 crate::view_interaction::FollowMode::Centered => "follow.centered",
@@ -329,6 +337,9 @@ impl PopupRow for PlayMenuAction {
         match self {
             PlayMenuAction::Record { .. } => Some(crate::theme::danger()),
             PlayMenuAction::StepInput { active } if active => Some(crate::theme::accent_active()),
+            PlayMenuAction::AutomationWrite { enabled } if enabled => {
+                Some(crate::theme::accent_active())
+            }
             PlayMenuAction::Follow(_, selected) if selected => Some(crate::theme::accent_active()),
             _ => None,
         }
@@ -338,6 +349,7 @@ impl PopupRow for PlayMenuAction {
         match self {
             PlayMenuAction::Record { recording } => recording,
             PlayMenuAction::StepInput { active } => active,
+            PlayMenuAction::AutomationWrite { enabled } => enabled,
             PlayMenuAction::Follow(_, sel) => sel,
             _ => false,
         }
@@ -357,6 +369,8 @@ pub struct PlayActions {
     pub record: bool,
     pub step: bool,
     pub tap_tempo: bool,
+    /// 切换「写入自动化」开关（Some = 设为该值）。
+    pub set_automation_write: Option<bool>,
 }
 
 /// 传输栏上下文与响应

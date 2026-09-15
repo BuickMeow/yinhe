@@ -105,6 +105,7 @@ menu.dedup_within_track: "音符去重（轨内）"
 menu.dedup_across_tracks: "音符去重（跨轨）"
 menu.record: "录音"
 menu.step_input: "步进输入"
+menu.automation_write: "写入自动化"
 menu.tap_tempo: "敲击测速"
 
 # ── macOS App 菜单 ──

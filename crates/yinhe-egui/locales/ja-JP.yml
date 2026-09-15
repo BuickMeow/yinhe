@@ -105,6 +105,7 @@ menu.dedup_within_track: "ノート重複除去（トラック内）"
 menu.dedup_across_tracks: "ノート重複除去（トラック間）"
 menu.record: "録音"
 menu.step_input: "ステップ入力"
+menu.automation_write: "オートメーション書き込み"
 menu.tap_tempo: "タップテンポ"
 
 # ── macOSアプリメニュー ──

@@ -105,6 +105,7 @@ menu.dedup_within_track: "노트 중복 제거 (트랙 내)"
 menu.dedup_across_tracks: "노트 중복 제거 (트랙 간)"
 menu.record: "녹음"
 menu.step_input: "스텝 입력"
+menu.automation_write: "자동화 쓰기"
 menu.tap_tempo: "탭 템포"
 
 # ── macOS 앱 메뉴 ──

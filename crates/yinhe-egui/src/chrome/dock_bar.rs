@@ -26,6 +26,10 @@ pub(crate) enum DockDevice {
 
 /// 旋钮拖动会话（一次拖动 = 一条 undo）。
 pub(crate) struct KnobDrag {
+    /// 最近一次拖动到的归一化值（松手落 lane 用）。
+    last_norm: f32,
+    /// 本会话是否真的拖动过（单击不写事件）。
+    moved: bool,
     track_idx: usize,
     target: AutomationTarget,
     /// 写入位置（编辑光标 tick）。
@@ -38,12 +42,21 @@ pub(crate) struct KnobDrag {
     lane_idx: Option<usize>,
 }
 
+/// 旋钮归属：决定拖动走"实时预览"还是"直写 lane"。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum KnobOwner {
+    /// 乐器参数（走 lane → 合成器；当前无实时预览通道，松手落 lane）。
+    Instrument,
+    /// 效果器槽位（拖动实时预览走参数队列，不写模型）。
+    Insert(usize),
+}
+
 /// 单帧内旋钮产生的动作（渲染后统一应用，避开借用冲突）。
 enum KnobAction {
-    DragStart(AutomationTarget),
+    DragStart(KnobOwner, AutomationTarget),
     /// 拖动到归一化值 `norm`。
-    Drag(AutomationTarget, f32),
-    DragStop(AutomationTarget),
+    Drag(KnobOwner, AutomationTarget, f32),
+    DragStop(KnobOwner, AutomationTarget),
 }
 
 /// xsynth 支持的**音源层**自动化目标。
@@ -488,7 +501,7 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
         app.mix.picker_for = Some(insert_target);
     }
     for action in knob_actions {
-        apply_knob_action(app, idx, lane_track_ti, tick, action);
+        apply_knob_action(app, idx, insert_target, lane_track_ti, tick, action);
     }
     if let Some(device) = open_params {
         match open_param_panel(app, idx, device, insert_target, midi_channel) {
@@ -685,7 +698,7 @@ fn effect_card(
                 .id_salt(("dock_fx_knobs", slot))
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    param_knobs(ui, &values, knob_actions);
+                    param_knobs(ui, &values, KnobOwner::Insert(slot), knob_actions);
                 });
         } else {
             if crate::widgets::flat::flat_button(ui, t!("dock.open_params")).clicked() {
@@ -878,7 +891,7 @@ fn instrument_card(
                     .id_salt("xsynth_knobs")
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        param_knobs(ui, &filtered, knob_actions);
+                        param_knobs(ui, &filtered, KnobOwner::Instrument, knob_actions);
                     });
             } else {
                 // 插件乐器：参数面板入口 + 提示。
@@ -896,14 +909,19 @@ fn instrument_card(
 }
 
 /// 参数纵向列表：每项「旋钮 + 右侧两行（名称、数值）」。
-fn param_knobs(ui: &mut egui::Ui, values: &[DockParam], actions: &mut Vec<KnobAction>) {
+fn param_knobs(
+    ui: &mut egui::Ui,
+    values: &[DockParam],
+    owner: KnobOwner,
+    actions: &mut Vec<KnobAction>,
+) {
     for param in values {
-        knob_row(ui, param, actions);
+        knob_row(ui, param, owner, actions);
     }
 }
 
 /// 单个参数行：左旋钮 + 右两行（第一行名称、第二行数值）。
-fn knob_row(ui: &mut egui::Ui, param: &DockParam, actions: &mut Vec<KnobAction>) {
+fn knob_row(ui: &mut egui::Ui, param: &DockParam, owner: KnobOwner, actions: &mut Vec<KnobAction>) {
     let max = param.target.max_value();
     let raw = param.current.unwrap_or(param.default);
     let mut norm = (raw / max.max(1.0)).clamp(0.0, 1.0);
@@ -912,13 +930,13 @@ fn knob_row(ui: &mut egui::Ui, param: &DockParam, actions: &mut Vec<KnobAction>)
     ui.horizontal(|ui| {
         let resp = crate::widgets::knob::knob(ui, &mut norm, 28.0);
         if resp.drag_started() {
-            actions.push(KnobAction::DragStart(target.clone()));
+            actions.push(KnobAction::DragStart(owner, target.clone()));
         }
         if resp.dragged() {
-            actions.push(KnobAction::Drag(target.clone(), norm));
+            actions.push(KnobAction::Drag(owner, target.clone(), norm));
         }
         if resp.drag_stopped() {
-            actions.push(KnobAction::DragStop(target.clone()));
+            actions.push(KnobAction::DragStop(owner, target.clone()));
         }
 
         ui.vertical(|ui| {
@@ -951,9 +969,17 @@ fn format_value(value: f32) -> String {
 }
 
 /// 应用单帧旋钮动作：拖动中 upsert 事件，松手 push 一条 undo。
-fn apply_knob_action(app: &mut App, idx: usize, track_idx: usize, tick: u32, action: KnobAction) {
+fn apply_knob_action(
+    app: &mut App,
+    idx: usize,
+    insert_target: yinhe_audio::InsertTarget,
+    track_idx: usize,
+    tick: u32,
+    action: KnobAction,
+) {
     match action {
-        KnobAction::DragStart(target) => {
+        KnobAction::DragStart(_owner, target) => {
+            // 效果器拖动走实时预览（不写模型）；这里只记录会话（松手才可能落 lane）。
             let doc = &mut app.workspace.documents[idx];
             if track_idx >= doc.data.model.tracks.len() {
                 return;
@@ -970,6 +996,8 @@ fn apply_knob_action(app: &mut App, idx: usize, track_idx: usize, tick: u32, act
                 })
                 .unwrap_or_default();
             app.knob_drag = Some(KnobDrag {
+                last_norm: 0.0,
+                moved: false,
                 track_idx,
                 target,
                 tick,
@@ -978,21 +1006,50 @@ fn apply_knob_action(app: &mut App, idx: usize, track_idx: usize, tick: u32, act
                 lane_idx: lane_pos,
             });
         }
-        KnobAction::Drag(target, norm) => {
+        KnobAction::Drag(owner, target, norm) => {
+            // 效果器：实时预览（参数队列，渲染线程下一块生效）——不写模型、不卡。
+            if let KnobOwner::Insert(slot) = owner {
+                if let Some(instance) = app.mixer_rack_mut(idx).instance_mut(insert_target, slot) {
+                    let queue = instance.param_queue();
+                    if let AutomationTarget::CC { controller } = target {
+                        queue.push(controller as u32, norm as f64);
+                    }
+                }
+                if let Some(drag) = app.knob_drag.as_mut()
+                    && drag.target == target
+                {
+                    drag.last_norm = norm;
+                    drag.tick = tick;
+                    drag.moved = true;
+                }
+                return;
+            }
+            // 乐器：无实时预览通道，拖动中不写模型（松手落 lane，避免每帧重 flatten 卡顿）。
             let Some(mut drag) = app.knob_drag.take() else {
                 return;
             };
             if drag.target == target {
-                let raw = norm * drag.target.max_value();
-                upsert_automation_event(app, idx, &mut drag, raw);
-                app.notify_audio_model_changed();
+                // 仅更新本地快照位置（松手时用），不写模型。
+                drag.tick = tick;
+                drag.last_norm = norm;
+                drag.moved = true;
             }
             app.knob_drag = Some(drag);
         }
-        KnobAction::DragStop(target) => {
-            let Some(drag) = app.knob_drag.take_if(|d| d.target == target) else {
+        KnobAction::DragStop(owner, target) => {
+            let Some(mut drag) = app.knob_drag.take_if(|d| d.target == target) else {
                 return;
             };
+            // 写入开关：关（默认）时效果器只预览，不落 lane；乐器始终落 lane。
+            let write =
+                matches!(owner, KnobOwner::Instrument) || app.audio_settings.automation_write;
+            if !write {
+                return;
+            }
+            // 用松手时的最终值写一条事件（拖动过程只预览，避免每帧重 flatten）。
+            let raw = drag.last_norm * drag.target.max_value();
+            upsert_automation_event(app, idx, &mut drag, raw);
+            app.notify_audio_model_changed();
             let Some(lane_idx) = drag.lane_idx else {
                 return;
             };

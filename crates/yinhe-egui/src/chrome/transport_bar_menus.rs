@@ -97,6 +97,9 @@ pub fn show_play_menu(
                 active: ctx.step_input,
             },
             PlayMenuAction::TapTempo,
+            PlayMenuAction::AutomationWrite {
+                enabled: settings.automation_write,
+            },
         ],
         &[
             PlayMenuAction::Follow(FollowMode::None, **follow_mode == FollowMode::None),
@@ -114,6 +117,8 @@ pub fn show_play_menu(
         settings.pinned_stop,
         settings.pinned_record,
         settings.pinned_step_input,
+        settings.pinned_tap_tempo,
+        settings.pinned_automation_write,
     ];
     if show_action_menu(
         button,
@@ -131,6 +136,8 @@ pub fn show_play_menu(
         settings.pinned_stop = pinned[1];
         settings.pinned_record = pinned[2];
         settings.pinned_step_input = pinned[3];
+        settings.pinned_tap_tempo = pinned[4];
+        settings.pinned_automation_write = pinned[5];
         settings.save();
     }
     if let Some(action) = pending {
@@ -146,6 +153,9 @@ pub fn show_play_menu(
             PlayMenuAction::Record { .. } => actions.record = true,
             PlayMenuAction::StepInput { .. } => actions.step = true,
             PlayMenuAction::TapTempo => actions.tap_tempo = true,
+            PlayMenuAction::AutomationWrite { enabled } => {
+                actions.set_automation_write = Some(!enabled);
+            }
             PlayMenuAction::Follow(mode, _) => **follow_mode = mode,
         }
     }

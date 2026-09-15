@@ -111,6 +111,16 @@ pub struct AudioSettings {
     pub pinned_stop: bool,
     pub pinned_record: bool,
     pub pinned_step_input: bool,
+    /// 「敲击测速」图钉（显示在 transport bar）。
+    #[serde(default)]
+    pub pinned_tap_tempo: bool,
+    /// 「写入自动化」开关：开 = 拖动效果器旋钮时写入自动化 lane；
+    /// 关（默认）= 只实时预览声音，不改自动化。
+    #[serde(default)]
+    pub automation_write: bool,
+    /// 「写入自动化」图钉（显示在 transport bar）。
+    #[serde(default)]
+    pub pinned_automation_write: bool,
     pub recent_files: Vec<String>,
     #[serde(skip)]
     pub show_settings: bool,
@@ -182,6 +192,9 @@ impl Default for AudioSettings {
             pinned_stop: false,
             pinned_record: false,
             pinned_step_input: false,
+            pinned_tap_tempo: false,
+            automation_write: false,
+            pinned_automation_write: false,
             recent_files: Vec::new(),
             show_settings: false,
             settings_tab: 0,

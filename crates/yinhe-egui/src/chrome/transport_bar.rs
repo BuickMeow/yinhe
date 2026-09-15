@@ -109,7 +109,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 }
                 show_play_menu(&play_menu_btn, ctx, is_playing, &mut play_actions);
 
-                let play_btn_actions: [PlayMenuAction; 4] = [
+                let play_btn_actions: [PlayMenuAction; 6] = [
                     PlayMenuAction::PlayPause {
                         playing: is_playing,
                     },
@@ -120,12 +120,18 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     PlayMenuAction::StepInput {
                         active: ctx.step_input,
                     },
+                    PlayMenuAction::TapTempo,
+                    PlayMenuAction::AutomationWrite {
+                        enabled: ctx.settings.automation_write,
+                    },
                 ];
                 let play_btn_pins = [
                     ctx.settings.pinned_play_pause,
                     ctx.settings.pinned_stop,
                     ctx.settings.pinned_record,
                     ctx.settings.pinned_step_input,
+                    ctx.settings.pinned_tap_tempo,
+                    ctx.settings.pinned_automation_write,
                 ];
                 let mut pending_play: Option<PlayMenuAction> = None;
                 pinned_action_buttons(
@@ -151,6 +157,9 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                         PlayMenuAction::Record { .. } => play_actions.record = true,
                         PlayMenuAction::StepInput { .. } => play_actions.step = true,
                         PlayMenuAction::TapTempo => play_actions.tap_tempo = true,
+                        PlayMenuAction::AutomationWrite { enabled } => {
+                            play_actions.set_automation_write = Some(!enabled);
+                        }
                         PlayMenuAction::Follow(..) => unreachable!("跟随档无图钉"),
                     }
                 }
@@ -292,6 +301,12 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 
             ui.data_mut(|d| d.insert_temp(drag_id, drag_started));
         });
+
+    // 「写入自动化」开关：直接落 settings（无需经 response 往返）。
+    if let Some(enabled) = play_actions.set_automation_write {
+        ctx.settings.automation_write = enabled;
+        ctx.settings.save();
+    }
 
     TransportResponse {
         toggle_play: play_actions.toggle_play,

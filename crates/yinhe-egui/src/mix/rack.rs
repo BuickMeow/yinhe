@@ -219,9 +219,14 @@ impl MixerRack {
                     .map_err(|e| PluginLoadError(format!("激活 VST3 插件失败: {e}")))?;
                 Box::new(Vst3Insert::new(p))
             }
-            PluginInstance::Builtin { kind, .. } => {
+            PluginInstance::Builtin { kind, queue } => {
                 let p = kind.build(sample_rate);
-                Box::new(BuiltinInsert::new(p, Arc::clone(&rt.bypass), rt.owner))
+                Box::new(BuiltinInsert::new(
+                    p,
+                    Arc::clone(&rt.bypass),
+                    rt.owner,
+                    Arc::clone(queue),
+                ))
             }
         };
         handle.send(AudioCommand::InsertAdd {

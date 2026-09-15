@@ -105,6 +105,7 @@ menu.dedup_within_track: "Dedup Notes (Within Track)"
 menu.dedup_across_tracks: "Dedup Notes (Across Tracks)"
 menu.record: "Record"
 menu.step_input: "Step Input"
+menu.automation_write: "Write Automation"
 menu.tap_tempo: "Tap Tempo"
 
 # ── macOS app menu ──
