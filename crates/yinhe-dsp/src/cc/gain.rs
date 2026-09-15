@@ -3,7 +3,9 @@
 //! 参数语义对齐 xsynth `VoiceChannel::apply_channel_effects`：
 //! `out *= (volume * expression)^2`，其中 `volume = Volume/127`、
 //! `expression = Expression/127`。
-//! 默认值取 GM 标准：Volume=100、Expression=127。
+//!
+//! 默认 Volume=127（满，直通不衰减）：无事件时保持与 xsynth 相同的听感；
+//! 文件里显式的 Volume/Expression 事件按 `/127` 比例生效。
 //!
 //! 参数在底层伪装成 MIDI CC（Volume=CC7、Expression=CC11）存储与导出，
 //! 但它们是效果器自己的参数。
@@ -24,12 +26,11 @@ pub struct ChannelGain {
 
 impl ChannelGain {
     pub fn new(sample_rate: u32) -> Self {
-        // GM 默认：Volume=100、Expression=127。
-        let volume = 100.0 / 127.0;
+        // 默认 Volume=127、Expression=127（满增益）。
         Self {
-            volume,
+            volume: 1.0,
             expression: 1.0,
-            gain: Smoothed::new(volume.powi(2)),
+            gain: Smoothed::new(1.0),
             ramp_samples: (sample_rate as f32 * CC_RAMP_SECONDS).max(1.0) as u32,
         }
     }
@@ -84,19 +85,14 @@ impl InsertProcessor for ChannelGain {
 mod tests {
     use super::*;
 
-    /// GM 默认增益：`(100/127)^2`。
-    fn gm_default_gain() -> f32 {
-        (100.0f32 / 127.0).powi(2)
-    }
-
     #[test]
-    fn default_is_gm_volume() {
+    fn default_is_unity() {
         let mut g = ChannelGain::new(48_000);
-        let mut l = [1.0; 8];
-        let mut r = [1.0; 8];
+        let mut l = [0.5; 8];
+        let mut r = [0.25; 8];
         g.process(&mut l, &mut r);
-        assert!((l[0] - gm_default_gain()).abs() < 1e-5, "got {}", l[0]);
-        assert!((r[0] - gm_default_gain()).abs() < 1e-5);
+        assert!(l.iter().all(|v| (*v - 0.5).abs() < 1e-6));
+        assert!(r.iter().all(|v| (*v - 0.25).abs() < 1e-6));
     }
 
     #[test]

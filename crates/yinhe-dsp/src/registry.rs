@@ -85,7 +85,7 @@ impl BuiltinEffectKind {
                     name: "Volume",
                     cc: 7,
                     max: 127.0,
-                    default: 100.0,
+                    default: 127.0,
                 },
                 EffectParamInfo {
                     name: "Expression",
