@@ -749,13 +749,13 @@ impl eframe::App for App {
         // dock 只能在右栏左侧展开（与 PR 同规则）。
         let right_panel_rect = self.right_panel_placeholder(ui);
 
+        // 通知区 = transport bar 下沿到底栏（mode bar）之上的中央内容区。
+        // 必须在 dock show 之前取：通知是浮层，与钢琴一致地浮在 dock 之上，
+        // 不因 dock 展开被推高；上裁剪线由 transport bar 掩护。
+        let notif_area = ui.available_rect_before_wrap();
+
         // ── Bottom device dock（三视图通用；Panel::bottom 自动扣减可用区）──
         crate::chrome::dock_bar::show(self, ui);
-
-        // 通知区 = transport bar 下沿到底栏之上的中央内容区：
-        // 上裁剪线由 transport bar 掩护、下裁剪线贴底栏，与底栏对称；
-        // 列表不遮挡标签页栏/走带栏的操作区。
-        let notif_area = ui.available_rect_before_wrap();
 
         // ── Main content area ──
         let layout = self.compute_layout(ui, right_panel_rect);
