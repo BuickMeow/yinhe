@@ -10,13 +10,22 @@ use std::sync::Arc;
 
 use rayon::prelude::*;
 use xsynth_core::AudioPipe;
-use xsynth_core::channel::{ChannelAudioEvent, ChannelEvent, VoiceChannel};
+use xsynth_core::channel::{ChannelAudioEvent, ChannelEvent, ControlEvent, VoiceChannel};
 use xsynth_core::channel_group::{ChannelGroupConfig, SynthEvent, SynthFormat, ThreadCount};
 
 use yinhe_mixer::ChannelBuffers;
 
 /// 与 xsynth ChannelGroup 相同的事件缓存阈值：超过则在下次 send_event 时 flush。
 const MAX_EVENT_CACHE_SIZE: u32 = 1024 * 1024;
+
+/// 是否为通道级 DSP CC（由 yinhe-dsp 模块处理，合成器不再支持）。
+fn is_dsp_channel_cc(event: &ChannelAudioEvent) -> bool {
+    matches!(
+        event,
+        ChannelAudioEvent::Control(ControlEvent::Raw(cc, _))
+            if yinhe_dsp::cc::DSP_CHANNEL_CCS.contains(cc)
+    )
+}
 
 /// 分通道渲染的通道组（dense 通道索引，与 `ChannelLayout` 一致）。
 pub(crate) struct ChannelSet {
@@ -97,10 +106,17 @@ impl ChannelSet {
 
     /// 与 `ChannelGroup::send_event` 相同语义：音频事件进缓存（渲染前 flush），
     /// 配置事件直发。
+    ///
+    /// 通道级 DSP CC（`yinhe_dsp::cc::DSP_CHANNEL_CCS`）在此**硬切断**：
+    /// 这些参数由 yinhe-dsp 模块处理（dispatch 已广播给模块），合成器不再支持，
+    /// 即使上层漏发也不会进入 xsynth。
     pub(crate) fn send_event(&mut self, event: SynthEvent) {
         match event {
             SynthEvent::Channel(channel, event) => match event {
                 ChannelEvent::Audio(e) => {
+                    if is_dsp_channel_cc(&e) {
+                        return;
+                    }
                     if let Some(cache) = self.channel_events_cache.get_mut(channel as usize) {
                         cache.push(e);
                         self.cached_event_count += 1;
@@ -117,6 +133,9 @@ impl ChannelSet {
             },
             SynthEvent::AllChannels(event) => match event {
                 ChannelEvent::Audio(e) => {
+                    if is_dsp_channel_cc(&e) {
+                        return;
+                    }
                     for cache in self.channel_events_cache.iter_mut() {
                         cache.push(e);
                     }
@@ -268,6 +287,23 @@ mod tests {
             },
             512,
         )
+    }
+
+    #[test]
+    fn dsp_ccs_cut_but_source_ccs_pass() {
+        // 硬切断判定：白名单 CC 丢弃，音源层 CC 与非 CC 事件放行。
+        for cc in yinhe_dsp::cc::DSP_CHANNEL_CCS {
+            let ev = ChannelAudioEvent::Control(ControlEvent::Raw(*cc, 100));
+            assert!(is_dsp_channel_cc(&ev), "CC{cc} 应被硬切断");
+        }
+        for cc in [1u8, 5, 64, 72, 73, 75, 91] {
+            let ev = ChannelAudioEvent::Control(ControlEvent::Raw(cc, 100));
+            assert!(!is_dsp_channel_cc(&ev), "CC{cc} 不应被切断");
+        }
+        assert!(!is_dsp_channel_cc(&ChannelAudioEvent::NoteOn {
+            key: 60,
+            vel: 100
+        }));
     }
 
     #[test]
