@@ -66,6 +66,11 @@ fn xsynth_targets() -> Vec<AutomationTarget> {
     ]
 }
 
+/// dock 高度下限（与旧 Panel min_size 一致）。
+const DOCK_MIN_H: f32 = 120.0;
+/// dock 内容水平内边距（等价旧 frame `inner_margin(8, 4)` 的横向值）。
+const DOCK_PAD_X: f32 = 8.0;
+
 /// 每帧绘制底部设备栏（mode_bar 之后、compute_layout 之前调用）。
 pub(crate) fn show(app: &mut App, ui: &mut egui::Ui) {
     if !app.show_bottom_dock {
@@ -75,23 +80,48 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui) {
         return;
     };
 
-    let resp = egui::Panel::bottom("bottom_dock")
-        .resizable(true)
-        .default_size(app.bottom_dock_height)
-        .min_size(120.0)
-        .max_size((ui.available_height() - 160.0).max(200.0))
+    let max_h = (ui.available_height() - 160.0).max(200.0);
+    let h = app.bottom_dock_height.clamp(DOCK_MIN_H, max_h);
+
+    // 顶部 2px 用项目统一的 `split_handle::horizontal`（同右栏/PR 样式与交互），
+    // 不用 egui Panel 原生 resizable 分隔线——它的颜色取自全局 Visuals，
+    // 亮暗主题下与 `theme::line_fg` 不一致（高亮发黑）。
+    egui::Panel::bottom("bottom_dock")
+        .exact_size(h)
+        .resizable(false)
+        .show_separator_line(false)
         .frame(egui::Frame {
             fill: crate::theme::app_bg(),
-            inner_margin: egui::Margin::symmetric(8, 4),
+            inner_margin: egui::Margin::ZERO,
             ..Default::default()
         })
-        .show(ui, |ui| show_body(app, idx, ui));
+        .show(ui, |ui| {
+            let panel_rect = ui.max_rect();
+            let handle_rect = egui::Rect::from_min_size(
+                panel_rect.min,
+                egui::vec2(panel_rect.width(), crate::theme::SPLIT_HANDLE_W),
+            );
+            let handle =
+                crate::widgets::split_handle::horizontal(ui, "__dock_split__", handle_rect);
+            if handle.dragged() {
+                // 分割线向上拖 → dock 变高（drag_delta().y 为负）。
+                app.bottom_dock_height =
+                    (app.bottom_dock_height - handle.drag_delta().y).clamp(DOCK_MIN_H, max_h);
+            }
+            // 拖动结束：持久化高度（帧末统一落盘）。
+            if handle.drag_stopped() {
+                app.layout_needs_save = true;
+            }
 
-    // 拖动结束：同步高度并持久化。
-    if resp.response.drag_stopped() {
-        app.bottom_dock_height = resp.response.rect.height().max(120.0);
-        app.layout_needs_save = true;
-    }
+            // 内容区：等价原 frame `inner_margin(8, 4)`，顶部再让出分割线。
+            let content = egui::Rect::from_min_max(
+                egui::pos2(panel_rect.min.x + DOCK_PAD_X, handle_rect.max.y + 4.0),
+                egui::pos2(panel_rect.max.x - DOCK_PAD_X, panel_rect.max.y - 4.0),
+            );
+            ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
+                show_body(app, idx, ui);
+            });
+        });
 }
 
 /// dock 的通道语境（MIDI / 乐器 / 音频三套命名空间独立）。
