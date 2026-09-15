@@ -930,7 +930,7 @@ impl App {
             return;
         }
 
-        if self.export.rx.is_some() {
+        if self.export.running {
             return; // already exporting
         }
 
@@ -1006,22 +1006,6 @@ impl App {
             p.started_at = Some(button_time);
         }
 
-        // GPU 合成器模式：GpuSynth 内部直接混成立体声、不经混音台，
-        // 混音台/插件链不参与导出；仍走旧的独立 GPU 导出线程。
-        #[cfg(feature = "gpu")]
-        if self.audio_settings.use_gpu_synth {
-            self.start_export_gpu(
-                idx,
-                path_str,
-                sr,
-                bit_depth,
-                export_progress,
-                cancel_flag,
-                pause_flag,
-            );
-            return;
-        }
-
         // 含插件链的导出：交给渲染线程复用实时引擎。
         if let Some(h) = &self.audio_state.handle {
             // 导出结束后恢复用户设置的层数（导出设置只影响本次导出）。
@@ -1041,88 +1025,5 @@ impl App {
             });
             self.export.running = true;
         }
-    }
-
-    /// GPU 合成器模式的导出（独立线程 + GpuSynth；不含混音台/插件链）。
-    #[cfg(feature = "gpu")]
-    #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
-    fn start_export_gpu(
-        &mut self,
-        idx: usize,
-        path_str: String,
-        sr: u32,
-        bit_depth: yinhe_audio::export::WavBitDepth,
-        export_progress: std::sync::Arc<std::sync::Mutex<crate::dialogs::export::ExportProgress>>,
-        cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
-        pause_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    ) {
-        let doc = &self.workspace.documents[idx];
-        let model = doc.data.model.clone();
-        let port_sf = self.resolve_sf_config(doc);
-        let skip = doc.compute_skip_mask();
-        let gpu_device = std::sync::Arc::new(self.render_ctx.device().clone());
-        let gpu_queue = std::sync::Arc::new(self.render_ctx.queue().clone());
-
-        let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            eprintln!("[export] GPU 导出线程启动");
-            let result = if port_sf.is_empty() {
-                Err(yinhe_audio::export::ExportError::Render(
-                    "GPU 导出需要音色库配置（SFZ）".into(),
-                ))
-            } else {
-                yinhe_audio::export::export_wav_gpu(
-                    model,
-                    sr,
-                    &port_sf,
-                    &skip,
-                    std::path::Path::new(&path_str),
-                    bit_depth,
-                    |pct, msg| {
-                        if let Ok(mut p) = export_progress.lock() {
-                            p.progress = pct;
-                            if !msg.is_empty() {
-                                p.status = msg.to_string();
-                            }
-                        }
-                    },
-                    gpu_device,
-                    gpu_queue,
-                    Some(export_progress.clone()),
-                    Some(cancel_flag),
-                    Some(pause_flag),
-                )
-            };
-            let (elapsed, speed) = {
-                let p = export_progress.lock();
-                match p {
-                    Ok(p) => (
-                        p.started_at
-                            .map(|t| t.elapsed().as_secs_f64())
-                            .unwrap_or(0.0),
-                        p.overall_speed,
-                    ),
-                    Err(_) => (0.0, 0.0),
-                }
-            };
-            if let Ok(mut p) = export_progress.lock() {
-                p.visible = false;
-            }
-            match result {
-                Ok(()) => {
-                    let _ = tx.send(Ok((path_str, elapsed, speed)));
-                }
-                Err(yinhe_audio::export::ExportError::Cancelled) => {
-                    // 用户取消：静默丢弃，不发错误。
-                    drop(tx);
-                }
-                Err(e) => {
-                    let _ = tx.send(Err(e.to_string()));
-                }
-            }
-        });
-
-        self.export.rx = Some(rx);
-        self.export.running = true;
     }
 }

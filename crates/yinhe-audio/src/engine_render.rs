@@ -18,12 +18,39 @@ impl AudioEngine {
             return;
         }
 
-        // GPU 路径：GpuSynth 管理自己的事件列表和 voice 状态
-        //（暂不经过混音台：GPU 合成器内部直接混成立体声）
+        // GPU 路径：GpuSynth 渲染到混音台 planar 通道缓冲，之后与 CPU 路径
+        // 共用插件乐器 / 音频轨 / mixer.process（insert 效果器、总线、推子全部生效）。
+        // 块长变化（导出用 1024、实时 512）：与 CPU 路径同一逻辑。
         #[cfg(feature = "gpu")]
-        if let Some(ref mut synth) = self.gpu_synth {
-            synth.render(output);
-            self.sample_position = synth.sample_position();
+        if self.gpu_synth.is_some() {
+            if self.mixer.frames() != frames {
+                let strips = self.dense_strip_params();
+                let count = self.mixer.channel_count();
+                self.mixer.resize(count, frames, &strips);
+                self.channel_set.resize_scratches(frames);
+            }
+            let block_start_sample = self.sample_position;
+            let block_end_sample = block_start_sample + frames as u64;
+            let block_end_tick = self.sample_to_tick(block_end_sample);
+            self.block_start_sample = block_start_sample;
+
+            // GPU 渲染（覆盖写 dense 0..MAX_CHANNELS，其余清零）。
+            if let Some(synth) = self.gpu_synth.as_mut() {
+                synth.render_to_mixer(self.mixer.buffers_mut());
+            }
+            // 插件乐器事件：按块推进 tick（GPU 模式下非插件通道不喂 xsynth）。
+            self.dispatch_block_events(block_end_tick);
+            self.dispatch_plugin_previews(block_start_sample, frames);
+            self.render_instruments(block_start_sample, frames);
+            self.render_audio_tracks(block_start_sample, frames);
+
+            let (master_l, master_r) = self.mixer.process();
+            for (i, chunk) in output.chunks_exact_mut(STEREO_CHANNELS).enumerate() {
+                chunk[0] = master_l[i];
+                chunk[1] = master_r[i];
+            }
+            self.sample_position = block_end_sample;
+            self.current_tick = block_end_tick;
             return;
         }
 
@@ -106,6 +133,35 @@ impl AudioEngine {
         self.current_tick = block_end_tick;
     }
 
+    /// GPU 合成器是否启用（无 `gpu` feature 时恒 false）。
+    /// dispatch 用它决定是否把事件喂给 xsynth（GPU 自管事件列表）。
+    #[inline]
+    fn gpu_synth_active(&self) -> bool {
+        #[cfg(feature = "gpu")]
+        {
+            self.gpu_synth.is_some()
+        }
+        #[cfg(not(feature = "gpu"))]
+        {
+            false
+        }
+    }
+
+    /// GPU 路径：把一整块的事件派发到插件乐器并推进 `current_tick`。
+    /// CPU 路径在分段渲染循环里逐段 dispatch；GPU 由合成器自管音符/CC，
+    /// 这里只需把插件事件推完（`dispatch_and_find_next` 内部在 GPU 模式下
+    /// 跳过 xsynth 发送）。
+    #[cfg(feature = "gpu")]
+    fn dispatch_block_events(&mut self, block_end_tick: u32) {
+        let mut t = self.current_tick;
+        while t < block_end_tick {
+            t = self
+                .dispatch_and_find_next(t, block_end_tick)
+                .unwrap_or(block_end_tick)
+                .min(block_end_tick);
+        }
+    }
+
     /// 合并了原来 `next_event_sample`、`dispatch_cc_until`、`dispatch_notes_at`
     /// 三个函数的职责，KEY_COUNT 桶只扫描一次。所有比较都在 tick 域，无需转换。
     ///
@@ -172,8 +228,14 @@ impl AudioEngine {
                 } else {
                     let dense = self.channel_layout.dense_for(cc.channel as usize);
                     if dense != u32::MAX {
-                        self.channel_set
-                            .send_event(SynthEvent::Channel(dense, ChannelEvent::Audio(cc.event)));
+                        // GPU 合成器路径：事件由 GpuSynth 自己的事件列表管理，
+                        // 不喂 xsynth（避免缓存无界增长）。
+                        if !self.gpu_synth_active() {
+                            self.channel_set.send_event(SynthEvent::Channel(
+                                dense,
+                                ChannelEvent::Audio(cc.event),
+                            ));
+                        }
                         self.dispatched_skip.mark(&cc.event, cc.channel as usize);
                     }
                 }
@@ -241,7 +303,8 @@ impl AudioEngine {
                                     track: track as u16,
                                 }));
                             }
-                        } else {
+                        } else if !self.gpu_synth_active() {
+                            // GPU 路径：音符由 GpuSynth 事件列表处理（不喂 xsynth）。
                             self.channel_set.send_event(SynthEvent::Channel(
                                 dense,
                                 ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
@@ -299,7 +362,8 @@ impl AudioEngine {
                 }
             } else {
                 let dense = an.dense;
-                if dense != u32::MAX {
+                if dense != u32::MAX && !self.gpu_synth_active() {
+                    // GPU 路径：音符由 GpuSynth 事件列表处理（不喂 xsynth）。
                     self.channel_set.send_event(SynthEvent::Channel(
                         dense,
                         ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: an.key }),
@@ -478,12 +542,6 @@ impl AudioEngine {
     pub(crate) fn render_idle(&mut self, output: &mut [f32]) {
         let frames = output.len() / STEREO_CHANNELS;
         if frames == 0 {
-            output.fill(0.0);
-            return;
-        }
-        // GPU 路径不经过混音台/插件（既有局限）：空闲无内容可渲染。
-        #[cfg(feature = "gpu")]
-        if self.gpu_synth.is_some() {
             output.fill(0.0);
             return;
         }

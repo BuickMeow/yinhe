@@ -532,10 +532,10 @@ impl AudioRenderer {
         let mut skip = crate::channel::ChaseSkip::default();
         for ch in 0..256usize {
             let dense = layout.dense_for(ch);
-            if dense == u32::MAX {
+            if dense == u32::MAX || (dense as usize) >= yinhe_synth::MAX_CHANNELS {
                 continue;
             }
-            let idx = dense as usize % yinhe_synth::MAX_CHANNELS;
+            let idx = dense as usize;
             skip.cc_mask[ch] = synth_skip.cc_mask[idx];
             skip.pitch_bend[ch] = synth_skip.pitch_bend[idx];
             skip.pbs[ch] = synth_skip.pbs[idx];
@@ -545,7 +545,7 @@ impl AudioRenderer {
         }
         for ch in 0..256u32 {
             let dense = layout.dense_for(ch as usize);
-            if dense == u32::MAX {
+            if dense == u32::MAX || (dense as usize) >= yinhe_synth::MAX_CHANNELS {
                 continue;
             }
             // 无事件通道不触碰（与 CPU 路径 apply_chase_result 一致）。
@@ -638,7 +638,10 @@ impl AudioRenderer {
                     // GPU 路径：首次加载音色库时初始化 GpuSynth，后续通道逐个加载；
                     // 样本统一在最后一个通道完成时上传一次（避免逐通道全量重传）。
                     #[cfg(feature = "gpu")]
-                    if self.use_gpu_synth && dense != u32::MAX {
+                    if self.use_gpu_synth
+                        && dense != u32::MAX
+                        && (dense as usize) < yinhe_synth::MAX_CHANNELS
+                    {
                         let sr = self.engine.sample_rate;
                         let gpu_paths: Vec<std::path::PathBuf> =
                             paths.iter().map(std::path::PathBuf::from).collect();
@@ -726,7 +729,8 @@ impl AudioRenderer {
         for p in 0..16u8 {
             let src = p as usize * 16 + 9;
             let dense = self.engine.channel_layout.dense_for(src);
-            if dense != u32::MAX {
+            // GPU 合成器只支持前 MAX_CHANNELS 个 dense 槽位。
+            if dense != u32::MAX && (dense as usize) < yinhe_synth::MAX_CHANNELS {
                 events.push(yinhe_synth::SynthEvent::Control {
                     sample: seek_pos,
                     channel: dense as u8,
@@ -743,7 +747,7 @@ impl AudioRenderer {
                 continue;
             }
             let dense = self.engine.channel_layout.dense_for(src);
-            if dense == u32::MAX {
+            if dense == u32::MAX || (dense as usize) >= yinhe_synth::MAX_CHANNELS {
                 continue;
             }
             for &(_, value) in banks {
@@ -780,8 +784,12 @@ impl AudioRenderer {
             if cc.plugin_param.is_some() {
                 continue;
             }
+            // 插件乐器通道的事件由 CPU dispatch 转 MIDI 喂插件，不进 GPU。
+            if self.engine.channel_plugin_dense(cc.channel as u8).is_some() {
+                continue;
+            }
             let dense = self.engine.channel_layout.dense_for(cc.channel as usize);
-            if dense == u32::MAX {
+            if dense == u32::MAX || (dense as usize) >= yinhe_synth::MAX_CHANNELS {
                 continue;
             }
             let Some(event) = to_gpu_control_event(&cc.event) else {
@@ -802,8 +810,12 @@ impl AudioRenderer {
                     continue;
                 }
                 let ch = audio_model.track_channel(track) as usize;
+                // 插件乐器通道的音符由 CPU dispatch 喂插件，不进 GPU。
+                if self.engine.channel_plugin_dense(ch as u8).is_some() {
+                    continue;
+                }
                 let dense = self.engine.channel_layout.dense_for(ch);
-                if dense == u32::MAX {
+                if dense == u32::MAX || (dense as usize) >= yinhe_synth::MAX_CHANNELS {
                     continue;
                 }
 
@@ -941,6 +953,11 @@ impl AudioRenderer {
         self.clear_buffered_audio(0);
         self.engine.set_layer_count(layer_count);
         self.request_chase(0);
+        // GPU 路径：事件列表按 seek 后位置（0）重建（与 AudioCommand::Stop 同语义）。
+        #[cfg(feature = "gpu")]
+        if self.engine.gpu_synth.is_some() {
+            self.sync_gpu_synth_events();
+        }
         let main_duration = self.engine.duration_samples();
         if !self.engine.model_loaded() || main_duration == 0 {
             if let Ok(mut p) = progress.lock() {

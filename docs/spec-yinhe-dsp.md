@@ -436,7 +436,7 @@ GPU 合成器（`GpuSynth`）已按"只做音源层"精简：
 
 ### 5.7 GPU 与 CPU 的分工
 
-**结论：GPU 只做高并发发声（voice），效果器链保持 CPU。**
+**结论：GPU 只做高并发发声（voice），效果器链保持 CPU；GPU 输出已接入混音台（D10 完成）。**
 
 | 维度 | voice 渲染 | 效果器链 |
 |---|---|---|
@@ -445,8 +445,22 @@ GPU 合成器（`GpuSynth`）已按"只做音源层"精简：
 | 与外部插件混合 | 无关 | 链里有 CLAP/VST3 就必须 CPU，无法 GPU/CPU 混合链 |
 | 状态/参数 | 每 voice 独立状态 | 延迟线/滤波状态/参数平滑，GPU 化需 CPU↔GPU 同步，复杂且延迟高 |
 
-- 现有 `GpuSynth` 正是"高并发发声给 GPU"的实现；`ChannelSet`（CPU）是等效的 CPU 路径。
-- 若未来实测效果器链成为瓶颈，再评估"纯内置链全 GPU"；当前优先级是先把 GPU 路径接回混音台（D10），而不是把效果器 GPU 化。
+**GPU 接入混音台（已完成）**：
+
+- `GpuSynth::render_to_mixer` 把 per-channel 输出去交错写入混音台 planar 通道缓冲
+  （覆盖写 dense 0..32，其余清零）；之后与 CPU 路径共用
+  `render_instruments` / `render_audio_tracks` / `mixer.process()`（insert 效果器、
+  总线、推子、PDC 全部生效）。
+- 通道上限：GPU 合成器支持 32 个 dense 槽位（2 个 MIDI 端口）；
+  `load_dense_soundfonts` 越界返回错误（不再 `% 32` 折叠），事件构建过滤 dense ≥ 32。
+- 插件乐器通道的音符/CC 由 CPU dispatch 喂插件，不进 GPU 事件列表；
+  GPU 模式下 dispatch 不再向 xsynth 发送事件。
+- `render_idle` 的 GPU 提前返回删除：空闲统一走混音台（插件尾音/GUI 键盘正常）。
+- 导出统一：删除独立的 `export_wav_gpu` 路径，导出复用实时引擎
+  （GPU 模式导出同样经过混音台与效果器链）。
+- 限幅统一在 `audio_renderer` 最终输出（`yinhe_dsp::dsp::limiter`）。
+
+- 若未来实测效果器链成为瓶颈，再评估"纯内置链全 GPU"。
 - CPU 侧优化空间（按需再做）：静音/空通道跳过效果器处理、通道间并行（rayon）。
 
 ### 5.8 GM2 CC 覆盖差距与补齐路线
@@ -557,7 +571,7 @@ xsynth-core 0.4 实际处理的 CC：`0, 6, 7, 8, 10, 11, 38, 64, 71, 72, 73, 74
 10. **P10 master 轨 UI 完善**：AR/PR/事件浏览器/保护逻辑。
 11. **P11 验收**：真实/自造 MIDI 文件端到端 + release 构建。
 
-**阶段 C（远期）**：XG/GS 效果扩展；GPU 接入混音台；xsynth 精简评估。
+**阶段 C（远期）**：XG/GS 效果扩展；xsynth 精简评估（替换为纯采样器）。
 
 每个阶段完成后跑 `cargo fmt`、涉及 crate 的 `clippy`/`test`，并按 AGENTS.md 分步 commit。
 
@@ -565,7 +579,7 @@ xsynth-core 0.4 实际处理的 CC：`0, 6, 7, 8, 10, 11, 38, 64, 71, 72, 73, 74
 
 ## 九、后续与已知限制
 
-1. **GPU 合成器绕过混音台**（独立任务）：`GpuSynth::render` 输出最终交错立体声，接入 mixer 需 per-channel planar 出口、解决 `dense % 32` 上限、限幅移至 master 后、修 `render_idle`、同步两条导出路径（`export.rs::render_block` 与 `export_wav_gpu`）。GPU 路径不通时，CC 模块/内置效果器在 GPU 模式不生效。
+1. **GPU 合成器**：已接入混音台（见 §5.7）。32 通道上限保留（2 端口）；超出通道在 GPU 模式下静音。
 2. **Send to Reverb**：第一批只存与导出，回放不生效。
 3. **XG/GS 效果**：阶段 C 按同一模式扩展（effect_id 空间、SysEx 前缀不同）。
 4. **MIDI 效果器**（琶音器等）：需要新的 MIDI 事件链，当前 `InsertProcessor` 设计未覆盖。

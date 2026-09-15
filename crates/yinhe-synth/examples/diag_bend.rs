@@ -187,7 +187,18 @@ fn main() {
     while synth.sample_position() < total {
         let n = ((total - synth.sample_position()) as usize).min(512);
         let buf = &mut chunk[..n * 2];
-        synth.render(buf);
+        {
+            let frames = buf.len() / 2;
+            let mut chans = vec![yinhe_mixer::ChannelBuffers {
+                left: vec![0.0; frames],
+                right: vec![0.0; frames],
+            }];
+            synth.render_to_mixer(&mut chans);
+            for i in 0..frames {
+                buf[i * 2] = chans[0].left[i];
+                buf[i * 2 + 1] = chans[0].right[i];
+            }
+        }
         gpu.extend_from_slice(buf);
     }
 

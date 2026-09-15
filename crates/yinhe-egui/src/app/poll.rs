@@ -264,88 +264,9 @@ impl App {
             }
         }
 
-        // Poll async export completion
-        // 取消时线程直接 drop(tx)（不断开以外的唯一来源），try_recv 报 Disconnected
-        let export_msg = self.export.rx.as_ref().map(|rx| rx.try_recv());
-        match export_msg {
-            Some(Ok(result)) => {
-                self.export.rx = None;
-                self.export.running = false;
-                match result {
-                    Ok((path, elapsed, speed)) => {
-                        let fname = std::path::Path::new(&path)
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or(&path)
-                            .to_string();
-                        let acted = self.notifications.finish_progress(
-                            crate::widgets::toast::EXPORT_PROGRESS_ID,
-                            crate::widgets::toast::ProgressOutcome::Completed,
-                            t!("toast.export_done").to_string(),
-                            format!("{} ({:.1}s, {:.1}x)", fname, elapsed, speed),
-                            None,
-                        );
-                        // 可操作卡：打开文件夹（图标按钮，hover 显示 label；计时自动升为可操作档）
-                        self.notifications.set_action_with_icon(
-                            acted,
-                            t!("dialog.export.open_folder").to_string(),
-                            crate::widgets::toast::model::ToastActionKind::RevealInFolder(
-                                std::path::PathBuf::from(&path),
-                            ),
-                            Some(egui_material_icons::icons::ICON_FOLDER_OPEN),
-                        );
-                    }
-                    Err(e) => {
-                        self.notifications.finish_progress(
-                            crate::widgets::toast::EXPORT_PROGRESS_ID,
-                            crate::widgets::toast::ProgressOutcome::Failed,
-                            t!("toast.export_failed").to_string(),
-                            e,
-                            None,
-                        );
-                    }
-                }
-            }
-            Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
-                // 用户点了 stop：线程已退出，sender 断开，转“已中止”卡
-                self.export.rx = None;
-                self.export.running = false;
-                // abort 清理暂停 flag（暂停中点 stop 也能干净结束；下次导出开始时亦会复位）。
-                self.export
-                    .pause
-                    .store(false, std::sync::atomic::Ordering::Relaxed);
-                let out_path = self.export.last_output_path.clone();
-                let fname = out_path
-                    .as_deref()
-                    .and_then(|p| std::path::Path::new(p).file_name())
-                    .and_then(|n| n.to_str())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| t!("toast.export_label").to_string());
-                let aborted = self.notifications.finish_progress(
-                    crate::widgets::toast::EXPORT_PROGRESS_ID,
-                    crate::widgets::toast::ProgressOutcome::Aborted,
-                    t!("toast.export_aborted").to_string(),
-                    fname,
-                    None,
-                );
-                // open_containing_folder 对不存在路径容错（静默忽略），直接设按钮
-                if let Some(p) = out_path {
-                    self.notifications.set_action_with_icon(
-                        aborted,
-                        t!("dialog.export.open_folder").to_string(),
-                        crate::widgets::toast::model::ToastActionKind::RevealInFolder(
-                            std::path::PathBuf::from(p),
-                        ),
-                        Some(egui_material_icons::icons::ICON_FOLDER_OPEN),
-                    );
-                }
-            }
-            Some(Err(std::sync::mpsc::TryRecvError::Empty)) | None => {}
-        }
-
-        // 渲染线程导出（复用实时引擎，含插件链/PDC）完成轮询：
+        // 导出完成轮询（复用实时引擎，含混音台/PDC）：
         // `progress.finished` 置位即收尾（取消/失败/成功三态）。
-        if self.export.running && self.export.rx.is_none() {
+        if self.export.running {
             let finished = self.export.progress.lock().ok().and_then(|p| {
                 p.finished.then(|| {
                     (

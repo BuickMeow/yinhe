@@ -19,6 +19,25 @@ use yinhe_synth::GpuSynth;
 const SR: u32 = 44100;
 const FRAMES: u32 = 512;
 
+/// 测试辅助：渲染一块到 mixer 式 planar 缓冲，取指定通道的交错输出。
+/// `GpuSynth` 只输出 per-channel 缓冲（由混音台负责后续处理），这里做
+/// 单通道提取以便与 xsynth 直连对比。
+fn render_channel_interleaved(synth: &mut GpuSynth, out: &mut [f32], channel: usize) {
+    let frames = out.len() / 2;
+    let mut chans: Vec<yinhe_mixer::ChannelBuffers> = (0..=channel)
+        .map(|_| yinhe_mixer::ChannelBuffers {
+            left: vec![0.0; frames],
+            right: vec![0.0; frames],
+        })
+        .collect();
+    synth.render_to_mixer(&mut chans);
+    let ch = &chans[channel];
+    for i in 0..frames {
+        out[i * 2] = ch.left[i];
+        out[i * 2 + 1] = ch.right[i];
+    }
+}
+
 fn test_sfz() -> Option<PathBuf> {
     std::env::var("YINHE_TEST_SFZ").ok().map(PathBuf::from)
 }
@@ -215,7 +234,7 @@ fn gpu_render(sfz: &Path) -> Vec<f32> {
     while synth.sample_position() < total_frames {
         let frames = ((total_frames - synth.sample_position()) as usize).min(FRAMES as usize);
         let buf = &mut chunk[..frames * 2];
-        synth.render(buf);
+        render_channel_interleaved(&mut synth, buf, 0);
         out.extend_from_slice(buf);
     }
     out
@@ -288,7 +307,7 @@ fn multi_port_channels_do_not_fold() {
     let mut chunk = vec![0.0f32; FRAMES as usize * 2];
     while gpu.sample_position() < total_frames {
         let frames = ((total_frames - gpu.sample_position()) as usize).min(FRAMES as usize);
-        gpu.render(&mut chunk[..frames * 2]);
+        render_channel_interleaved(&mut gpu, &mut chunk[..frames * 2], 16);
         gpu_out.extend_from_slice(&chunk[..frames * 2]);
     }
 
@@ -471,7 +490,7 @@ fn program_change_selects_preset() {
     let mut chunk = vec![0.0f32; FRAMES as usize * 2];
     while gpu.sample_position() < total_frames {
         let frames = ((total_frames - gpu.sample_position()) as usize).min(FRAMES as usize);
-        gpu.render(&mut chunk[..frames * 2]);
+        render_channel_interleaved(&mut gpu, &mut chunk[..frames * 2], 0);
         gpu_out.extend_from_slice(&chunk[..frames * 2]);
     }
 

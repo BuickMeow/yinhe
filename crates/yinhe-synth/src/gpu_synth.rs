@@ -343,14 +343,17 @@ impl GpuSynth {
     /// 只登记 key map，不上传样本——全部通道加载完成后由调用方调一次
     /// [`finish_soundfont_load`](Self::finish_soundfont_load) 统一上传
     /// （逐通道上传会退化成 O(n²) 全量重传）。
-    /// 注意：`MAX_CHANNELS`（32）是 GPU 侧的 dense 槽位上限（`dense % MAX_CHANNELS`
-    /// 复用槽位），超出时后加载的通道覆盖先前的。
+    /// `MAX_CHANNELS`（32）是 GPU 侧的 dense 槽位上限（2 个 MIDI 端口）；
+    /// `dense >= MAX_CHANNELS` 返回错误（不支持折叠复用槽位）。
     pub fn load_dense_soundfonts(
         &mut self,
         dense: u32,
         paths: &[std::path::PathBuf],
     ) -> Result<(), String> {
-        let slot = dense as usize % MAX_CHANNELS;
+        let slot = dense as usize;
+        if slot >= MAX_CHANNELS {
+            return Err(format!("GPU 合成器仅支持 32 个通道（dense {dense} 超出）"));
+        }
         let mut entries: Vec<sfz_parser::KeyMapEntry> = Vec::new();
         for path in paths {
             entries.extend(sfz_parser::build_key_maps(path, self.sample_rate)?);
@@ -431,19 +434,20 @@ impl GpuSynth {
         self.channels = [ChannelState::new(self.sample_rate); MAX_CHANNELS];
     }
 
-    /// 渲染一块音频到 output（output.len() = frames * 2，立体声交错）。
+    /// 渲染一块到混音台的 planar 通道缓冲（覆盖写，与 CPU 路径
+    /// `ChannelSet::render_segment` 同格式）：GPU 槽位 `ch` 写入 `buffers[ch]`，
+    /// 超出 `MAX_CHANNELS` 的 dense 通道清零（GPU 合成器只支持前 32 个通道）。
     ///
     /// 块内事件（CC 段边界、note on/off、release/env 指令）在 CPU 收集为段结构，
     /// **一次 GPU 提交**渲染整块；voice 状态在 GPU 内逐帧推进（块末全字段读回）。
-    pub fn render(&mut self, output: &mut [f32]) {
-        let frames = output.len() / 2;
+    pub fn render_to_mixer(&mut self, buffers: &mut [yinhe_mixer::ChannelBuffers]) {
+        let frames = buffers.first().map(|b| b.left.len()).unwrap_or(0);
         if frames == 0 {
             return;
         }
 
         let block_start = self.sample_position;
         let block_end = block_start + frames as u64;
-        output.fill(0.0);
 
         // 收集块内事件为段结构（同时创建 voice、发 release/env 指令、推进 CPU 通道状态）
         let mut segs: Vec<SegInfo> = Vec::new();
@@ -479,14 +483,19 @@ impl GpuSynth {
             }
         }
 
-        // 各通道求和（通道音量/声像/滤波已迁至 yinhe-dsp 效果器）。
-        output.fill(0.0);
-        for ch_idx in 0..self.channels.len() {
+        // 各通道去交错写入混音台 planar 缓冲（覆盖写；dense >= MAX_CHANNELS 清零）。
+        let n = buffers.len().min(MAX_CHANNELS);
+        for (ch_idx, buf) in buffers.iter_mut().enumerate().take(n) {
             let base = ch_idx * frames * 2;
             let ch_mix = &self.channel_mix[base..base + frames * 2];
-            for (i, o) in output.iter_mut().enumerate() {
-                *o += ch_mix[i];
+            for i in 0..frames {
+                buf.left[i] = ch_mix[i * 2];
+                buf.right[i] = ch_mix[i * 2 + 1];
             }
+        }
+        for buf in buffers.iter_mut().skip(n) {
+            buf.left.fill(0.0);
+            buf.right.fill(0.0);
         }
 
         // 清理已结束的 voice（GPU 推进后的 env_stage）
@@ -627,7 +636,12 @@ impl GpuSynth {
                     self.note_off_to_cmd(channel, key, frame, releases);
                 }
                 SynthEvent::Control { channel, event, .. } => {
-                    let ch_idx = channel as usize % MAX_CHANNELS;
+                    let Some(ch_idx) = (channel as usize)
+                        .lt(&MAX_CHANNELS)
+                        .then_some(channel as usize)
+                    else {
+                        continue;
+                    };
                     match event {
                         ControlEvent::Raw(0x78, 0) => {
                             // All Sounds Off：kill 所有 voice
@@ -729,8 +743,10 @@ impl GpuSynth {
     /// 通道音量/声像已迁至 yinhe-dsp 效果器，不再同步。
     fn sync_channel_state(&mut self) {
         for v in &mut self.voices {
-            // dense 通道号可能超过 31（多端口 MIDI：port×16+ch），取模折叠到 32 通道状态
-            let ch = self.channels[v.channel as usize % MAX_CHANNELS];
+            // voice 只可能属于前 MAX_CHANNELS 个 dense 通道（note_on 已过滤）
+            let Some(ch) = self.channels.get(v.channel as usize).copied() else {
+                continue;
+            };
             v.state.speed = v.base_speed * ch.pitch_multiplier();
         }
     }
@@ -748,7 +764,12 @@ impl GpuSynth {
     ) {
         // 音色库选择：dense 通道 → port → (bank, preset) 条目（与 xsynth
         // ChannelSoundfont::rebuild_matrix 一致：主选 + 兜底，落空静音）。
-        let ch_idx = channel as usize % MAX_CHANNELS;
+        let Some(ch_idx) = (channel as usize)
+            .lt(&MAX_CHANNELS)
+            .then_some(channel as usize)
+        else {
+            return;
+        };
         let ch = self.channels[ch_idx];
         let entries = &self.port_key_maps[self.channel_port[ch_idx] as usize];
         let info = match sfz_parser::select_key_info_multi(entries, ch.bank, ch.program, key, vel) {
@@ -818,8 +839,8 @@ impl GpuSynth {
                 base_gain: info.volume,
                 time: 0.0,
                 start_offset: block_frame,
-                // 取模后的通道号（与 ChannelState 索引/pass2 归约一致）
-                channel: channel as u32 % MAX_CHANNELS as u32,
+                // dense 通道号（note_on 已过滤 < MAX_CHANNELS）
+                channel: channel as u32,
                 envelope: info.ampeg_start,
                 env_stage: 0,
                 stage_progress: 0.0,
@@ -894,7 +915,13 @@ impl GpuSynth {
         frame: u32,
         releases: &mut Vec<ReleaseCmd>,
     ) {
-        let damper = self.channels[channel as usize % MAX_CHANNELS].damper;
+        let Some(ch_idx) = (channel as usize)
+            .lt(&MAX_CHANNELS)
+            .then_some(channel as usize)
+        else {
+            return;
+        };
+        let damper = self.channels[ch_idx].damper;
         for (i, v) in self.voices.iter_mut().enumerate() {
             // 跳过已 held 的 voice（xsynth damper 分支只匹配 "isn't being held" 的
             // voice：否则同 key 多个 off 会重复匹配同一个 held voice，其余 voice 永不释放）
@@ -941,7 +968,12 @@ impl GpuSynth {
             let SynthEvent::Control { channel, event, .. } = ev else {
                 continue;
             };
-            let ch = *channel as usize % MAX_CHANNELS;
+            let Some(ch) = (*channel as usize)
+                .lt(&MAX_CHANNELS)
+                .then_some(*channel as usize)
+            else {
+                continue;
+            };
             match event {
                 ControlEvent::Raw(cc, _) => skip.cc_mask[ch] |= 1u128 << cc,
                 ControlEvent::PitchBend(_) => skip.pitch_bend[ch] = true,
@@ -959,7 +991,9 @@ impl GpuSynth {
     /// 与 CPU 路径 `channel_group.send_event` 对等：逐事件走通道状态机；
     /// damper 松开 / CC72/73 传播到当前活跃 voice（seek 后复活音符）。
     pub fn apply_chase(&mut self, dense: u32, events: &[ControlEvent]) {
-        let ch_idx = dense as usize % MAX_CHANNELS;
+        let Some(ch_idx) = (dense as usize).lt(&MAX_CHANNELS).then_some(dense as usize) else {
+            return;
+        };
         for &ev in events {
             let damper_released = self.channels[ch_idx].process_control(ev);
             if damper_released {

@@ -1,20 +1,15 @@
 //! Export state subsystem — all audio-export-related fields and methods.
 
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex};
 
 use yinhe_audio::export::WavBitDepth;
 
 use crate::dialogs::export::{ExportProgress, format_duration};
 use crate::widgets::toast::model::ProgressSource;
 
-/// 导出线程完成消息：`Ok((输出路径, 耗时秒, 倍速))` 或 `Err(错误信息)`。
-pub(crate) type ExportResultMsg = Result<(String, f64, f64), String>;
-
 /// All audio-export-related state, extracted from `App` to reduce the God Object.
 pub(crate) struct ExportState {
-    /// Receiver for the async export result（仅 GPU 导出线程路径使用）。
-    pub rx: Option<mpsc::Receiver<ExportResultMsg>>,
-    /// 是否有导出在进行（渲染线程路径轮询 progress.finished 收尾）。
+    /// 是否有导出在进行（轮询 progress.finished 收尾）。
     pub running: bool,
     /// Shared progress for the export thread to report status.
     pub progress: Arc<Mutex<ExportProgress>>,
@@ -37,7 +32,6 @@ pub(crate) struct ExportState {
 impl ExportState {
     pub fn new() -> Self {
         Self {
-            rx: None,
             running: false,
             progress: ExportProgress::new(),
             cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),

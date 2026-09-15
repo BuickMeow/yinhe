@@ -9,6 +9,7 @@ bytemuck = { workspace = true }
 pollster = { workspace = true }
 xsynth-soundfonts = "0.4"
 hound = "3.5"
+yinhe-mixer = { path = "../yinhe-mixer" }
 
 [dev-dependencies]
 tempfile = { workspace = true }
