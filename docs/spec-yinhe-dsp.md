@@ -55,8 +55,9 @@ yinhe 已有效果器链（`yinhe-mixer` 的 `InsertProcessor`，每通道/bus/m
 | D12 | CC91/93 目标 bus | 自动识别（bus 链上挂 Gm2Reverb/Gm2Chorus 者） |
 | D13 | 效果器优先级 | GM2 完成后才启动 XG/GS |
 | D14 | DSP 迁移方向 | xsynth 通道级 DSP 逐步迁至 yinhe-dsp CC 模块，最终 xsynth 只剩采样播放 + voice 级参数 |
-| D15 | 接管语义 | 通道链上挂了处理某 CC 的模块，则该 CC 不再发给合成器/乐器插件（模块独占） |
+| D15 | 接管语义 | 通道链上挂了处理某 CC 的模块，则该 CC **完全丢弃**（不发给合成器/乐器插件，不做其他处理），插件当作该 CC 不存在；不改 xsynth 源码 |
 | D16 | CC 模块粒度 | 按功能组：Gain(7/11)、Pan(8/10)、Filter(71/74) |
+| D17 | CPU DSP 依赖 | yinhe-dsp 不依赖 wgpu/yinhe-synth；GPU 与 CPU 实现独立 |
 
 ---
 
@@ -166,6 +167,12 @@ pub enum AutomationTarget {
   `yinhe-types/automation.rs`（max/default/shape/display 4 处）、`yinhe-midi/writer.rs:370`、`yinhe-audio/audio_model.rs:442`、`yinhe-editor-core/clipboard_file.rs:245`（+`read_target` tag）、`yinhe-wgpu/automation/prepare.rs:34`、`yinhe-egui/right_panel/event_browser/tree.rs:313`、`detail.rs:1193`、`yinhe-midi/examples/cc_stat.rs`。
 
 ### 4.2 master 轨（`TrackKind::Master`）
+
+**为什么需要 master 轨（CC 层级澄清）**：
+
+- MIDI 1.0 的 128 个 CC **全部是通道级**，标准中不存在"master CC"；设备级/全局参数走 SysEx（GM2 效果参数、Master Volume/Tuning 等）。
+- 混响是两层组合：**CC91 是通道级送量**（每通道送多少进混响），**混响参数（Type/Time）是设备级**（唯一一台）。本设计分别对应 §4.5（CC91 → 通道 bus send）与本节 Gm2Effect lane。
+- master 轨承载的 CC **不是标准语义**，而是"用户想让所有通道统一收到同一 CC"的工程内便利工具，回放广播、导出展开；是否使用完全由用户决定。
 
 **模型约定**：
 
@@ -376,10 +383,12 @@ xsynth-core 0.4 的 `VoiceChannel::apply_channel_effects`（`channel/mod.rs:154-
 
 ### 5.3 接管机制
 
-1. **模块声明**：`InsertProcessor` 新增
+1. **模块声明与接收**：`InsertProcessor` 新增
    ```rust
    /// 本处理器接管的 MIDI CC 号（默认空）。挂在通道链上时生效。
    fn handled_ccs(&self) -> &'static [u8] { &[] }
+   /// 接收被接管的 CC 值（0..127）。
+   fn apply_cc(&mut self, _cc: u8, _value: u8) {}
    ```
 2. **接管掩码**：`MixerGraph` 维护每通道 `cc_taken: [u128; 2]`（256 位），在 `set_inserts/insert_insert/remove_insert/replace_insert` 时按链上模块重算（结构性变更，非缓存）。
 3. **dispatch 分流**（`engine_render.rs::dispatch_and_find_next`）：
@@ -396,7 +405,7 @@ xsynth-core 0.4 的 `VoiceChannel::apply_channel_effects`（`channel/mod.rs:154-
 
 - 模块顺序影响结果（如 Filter 在失真模块之后 = 对失真输出滤波；之前 = 先滤波再失真），这是用户要的自由度。
 - CC 模块只对**通道 insert 链**生效；挂在 bus/master 上的 CC 模块不接管通道 CC（CC 通道级语义）。
-- 通道挂了乐器插件（CLAP/VST3）时同样适用接管：被接管 CC 不发给插件乐器（用户挂模块即表示要接管）。
+- 通道挂了乐器插件（CLAP/VST3）时同样适用接管：被接管 CC **完全丢弃**（不转发、不改插件），插件当作该 CC 不存在（D15）。
 - 与 CC91/93 的 send 机制并存：send 不在 `cc_taken` 里，始终由 §4.5 处理。
 - 迁移期可以让部分通道挂模块、部分通道不挂，逐个试听对比。
 
@@ -409,8 +418,8 @@ xsynth-core 0.4 的 `VoiceChannel::apply_channel_effects`（`channel/mod.rs:154-
 
 ### 5.6 GPU DSP 参考点
 
-- `crates/yinhe-synth/src/synth/filter.rs::biquad_coeffs`：CPU biquad 系数计算，`ChannelFilter` 可直接复用。
-- `crates/yinhe-synth/src/gpu_synth.rs::ValueLerp`：10ms 参数平滑实现，`ChannelGain/Pan/Filter` 参考。
+- `crates/yinhe-synth/src/synth/filter.rs::biquad_coeffs`：CPU biquad 系数计算，`ChannelFilter` 可参考/复用（复用方式见 §10-5；两选项都不引入 wgpu 依赖）。
+- `crates/yinhe-synth/src/gpu_synth.rs::ValueLerp`：10ms 参数平滑实现（私有类型，按模式自实现），`ChannelGain/Pan/Filter` 参考。
 - GPU 合成器路径（`GpuSynth`）绕过混音台，CC 模块不会生效（D10 后续任务）；迁移期 CPU/GPU 行为会有差异，属已知限制。
 
 ---
@@ -524,5 +533,6 @@ xsynth-core 0.4 的 `VoiceChannel::apply_channel_effects`（`channel/mod.rs:154-
 2. **导出时 SysEx 写在哪条轨**：本稿为"第一条实际写出的 MIDI 轨"。
 3. **master 轨是否允许用户删除**：本稿为"自动 ensure、不可删除"。
 4. **conductor 改名**：本稿建议 conductor badge 从 `"Master"` 改为 `"Conductor"`。
-5. **CC 模块与 xsynth 的 biquad 复用**：`yinhe-synth` 的 `biquad_coeffs` 是 `pub` 但 yinhe-synth 强依赖 wgpu；是提取共享模块、还是 yinhe-dsp 自带一份（接受重复）？
-6. **接管 CC 与乐器插件的默认语义**：本稿为"接管即不发给乐器插件"（D15）。若希望"模块与插件都收到"，需要额外规则。
+5. **CC 模块与 xsynth 的 biquad 复用**（两个选项都**不引入 wgpu 依赖**）：
+   - A. 提取共享：把 `biquad_coeffs` 纯数学函数挪到中立轻量位置（如 yinhe-dsp 提供、yinhe-synth 依赖它，或独立 tiny 模块），两边共用；
+   - B. 各自一份：yinhe-dsp 自带约 30 行实现，注释互指 yinhe-synth 版本，接受重复。
