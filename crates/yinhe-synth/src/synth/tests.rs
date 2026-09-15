@@ -24,9 +24,6 @@ fn make_voices(sample_len: u32, count: u32, speed: f32) -> Vec<GpuVoiceState> {
             sustain_level: 1.0,
             base_pan_l: 1.0,
             base_pan_r: 1.0,
-            ch_vol: 1.0,
-            ch_expr: 1.0,
-            ch_pan: 0.5,
             ..Default::default()
         })
         .collect()
@@ -154,9 +151,6 @@ fn gpu_vs_cpu_correctness() {
                 release_frames: 500.0,
                 base_pan_l: 0.8,
                 base_pan_r: 0.6,
-                ch_vol: 1.0,
-                ch_expr: 1.0,
-                ch_pan: 0.5,
                 is_stereo: 1,
                 interp: 0,
                 cutoff: 1800.0,
@@ -185,9 +179,6 @@ fn gpu_vs_cpu_correctness() {
                 release_frames: 500.0,
                 base_pan_l: 0.5,
                 base_pan_r: 1.0,
-                ch_vol: 1.0,
-                ch_expr: 1.0,
-                ch_pan: 0.5,
                 loop_mode: 1,
                 loop_start: 100,
                 loop_end: 2048,
@@ -212,9 +203,6 @@ fn gpu_vs_cpu_correctness() {
                 release_frames: 500.0,
                 base_pan_l: 1.0,
                 base_pan_r: 0.3,
-                ch_vol: 1.0,
-                ch_expr: 1.0,
-                ch_pan: 0.5,
                 is_stereo: 1,
                 cutoff: 4000.0,
                 resonance: 3.0,
@@ -319,9 +307,6 @@ fn gpu_filter_matches_biquad_crate() {
         base_pan_l: 1.0,
         base_pan_r: 1.0,
         // ch_pan=0 → cos(0)=1，左声道无衰减（与下方 expected 一致）
-        ch_vol: 1.0,
-        ch_expr: 1.0,
-        ch_pan: 0.0,
         cutoff: if with_filter { cutoff } else { 0.0 },
         resonance: q,
         filter_type: 0,
@@ -472,15 +457,6 @@ fn new_voice_after_seg_boundary_sounds() {
     let ch_updates = [ChState {
         ch: 0,
         speed_mult: 1.0,
-        ch_vol: 0.5,
-        ch_vol_step: 0.0,
-        ch_vol_frames: 0,
-        ch_expr: 1.0,
-        ch_expr_step: 0.0,
-        ch_expr_frames: 0,
-        ch_pan: 0.5,
-        ch_pan_step: 0.0,
-        ch_pan_frames: 0,
     }];
     renderer.render_block(&mut voices, &mut mix, &segs, &ch_updates, &[], &[], sr);
     for i in 0..out.len() {

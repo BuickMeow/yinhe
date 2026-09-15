@@ -36,15 +36,6 @@ fn release_cmd_advances_envelope() {
         release_frames: 39690.0,
         base_pan_l: 1.0,
         base_pan_r: 1.0,
-        ch_vol: 1.0,
-        ch_vol_step: 0.0,
-        ch_vol_frames: 0,
-        ch_expr: 1.0,
-        ch_expr_step: 0.0,
-        ch_expr_frames: 0,
-        ch_pan: 0.5,
-        ch_pan_step: 0.0,
-        ch_pan_frames: 0,
         loop_start: 0,
         loop_end: 0,
         loop_mode: 0,
@@ -80,12 +71,11 @@ fn release_cmd_advances_envelope() {
     let t = 1024.0f32 / 39690.0;
     let expected_env = 0.7 * (1.0 - t).powi(8);
     eprintln!(
-        "release test: stage={} env={:.6} expected_env={:.6} progress={} ch_pan={} mix_peak={}",
+        "release test: stage={} env={:.6} expected_env={:.6} progress={} mix_peak={}",
         voice.env_stage,
         voice.envelope,
         expected_env,
         voice.stage_progress,
-        voice.ch_pan,
         mix.iter().fold(0.0f32, |m, &s| m.max(s.abs()))
     );
     assert_eq!(voice.env_stage, 5, "voice should be in release");
@@ -126,15 +116,6 @@ fn release_progress_advances_full_block() {
         release_frames: 100000.0,
         base_pan_l: 1.0,
         base_pan_r: 1.0,
-        ch_vol: 1.0,
-        ch_vol_step: 0.0,
-        ch_vol_frames: 0,
-        ch_expr: 1.0,
-        ch_expr_step: 0.0,
-        ch_expr_frames: 0,
-        ch_pan: 0.5,
-        ch_pan_step: 0.0,
-        ch_pan_frames: 0,
         loop_start: 0,
         loop_end: 0,
         loop_mode: 0,
@@ -219,24 +200,11 @@ pub fn cpu_render_voices(
             }
             let frame_in_voice = fi - voice.start_offset as usize;
 
-            // 通道渐变逐帧推进（与 shader/xsynth ValueLerp 一致）
-            if voice.ch_vol_frames > 0 {
-                voice.ch_vol += voice.ch_vol_step;
-                voice.ch_vol_frames -= 1;
-            }
-            if voice.ch_expr_frames > 0 {
-                voice.ch_expr += voice.ch_expr_step;
-                voice.ch_expr_frames -= 1;
-            }
-            if voice.ch_pan_frames > 0 {
-                voice.ch_pan += voice.ch_pan_step;
-                voice.ch_pan_frames -= 1;
-            }
-            let ch_vol = voice.ch_vol * voice.ch_expr;
-            let ch_gain = voice.base_gain * ch_vol * ch_vol;
-            let ch_ang = voice.ch_pan * std::f32::consts::FRAC_PI_2;
-            let ch_pan_l = voice.base_pan_l * ch_ang.cos();
-            let ch_pan_r = voice.base_pan_r * ch_ang.sin();
+            // 通道音量/声像（CC7/10/11）已迁至 yinhe-dsp 效果器，
+            // 这里只用音色库基础增益/声像（与 shader 一致）。
+            let ch_gain = voice.base_gain;
+            let ch_pan_l = voice.base_pan_l;
+            let ch_pan_r = voice.base_pan_r;
 
             let t = voice.time + frame_in_voice as f32 * voice.speed;
             let mut idx = t as u32;

@@ -1,14 +1,17 @@
 //! yinhe-synth: GPU-accelerated audio synthesizer.
 //!
-//! 独立的合成器 crate，包含：
+//! 独立的合成器 crate，**只负责音源层**：采样播放、voice 包络（ADSR）、
+//! 音高（pitch bend/RPN 调音）、延音踏板、音色选择。
+//! 通道级 DSP（音量/声像/滤波/效果/输出限幅）全部由 yinhe-dsp 与混音台负责
+//! （见 `docs/spec-yinhe-dsp.md`）。
+//!
 //! - GpuSynth 高层封装（统一播放+导出接口，对等 xsynth ChannelGroup）
 //! - GPU compute shader 渲染器 (wgpu)
 //! - SFZ/SF2 解析器（委托 xsynth-soundfonts）
-//! - Voice 状态管理（7 阶段 ADSR envelope + per-voice biquad 滤波器）
-//! - 16 通道 MIDI 状态机（CC/pitch bend/RPN/damper）
+//! - Voice 状态管理（7 阶段 ADSR envelope + per-voice biquad 滤波器 = 音色自带 filter）
+//! - 32 通道 MIDI 状态机（仅音源层：bank/program、pitch bend/RPN、damper、ADSR CC）
 
 pub mod gpu_synth;
-pub mod limiter;
 pub mod sfz_parser;
 pub mod synth;
 

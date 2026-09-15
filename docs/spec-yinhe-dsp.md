@@ -419,7 +419,22 @@ xsynth-core 0.4 的 `VoiceChannel::apply_channel_effects`（`channel/mod.rs:154-
 3. 验收：同一 MIDI 文件在"xsynth 处理"与"模块处理"两种配置下 A/B 对比，音量/声像/滤波听感一致（参数语义对即可，不要求样本级一致）。
 4. 全部通道迁移完成后，xsynth 侧只剩采样播放 + voice 级事件；远期再评估 fork/替换 xsynth 为纯采样器（保持 ADSR/音高处理）。
 
-### 5.6 GPU 与 CPU 的分工
+### 5.6 yinhe-synth 精简（已完成）
+
+GPU 合成器（`GpuSynth`）已按"只做音源层"精简：
+
+- **移除**：CC7/10/11/71/74 的通道音量/声像/滤波处理（含 shader 内的通道渐变与
+  `GpuVoiceState.ch_vol/ch_expr/ch_pan`）、通道级 CC74/71 biquad（`apply_cutoff_filter`）、
+  内部 `VolumeLimiter` 限幅、`ChannelState` 的对应状态与 `ValueLerp`。
+- **保留**：采样播放、7 阶段 ADSR 包络、pitch bend/RPN 调音、damper（CC64）、
+  ADSR CC（72/73）、bank/program，以及**音色自带**的 per-voice biquad（SFZ/SF2 filter）。
+- **限幅归属**：`VolumeLimiter` 移至 `yinhe-dsp::dsp::limiter`，由 yinhe-audio 在
+  最终输出（实时渲染与两条导出路径）统一调用；GPU 导出循环补上限幅。
+- **事件过滤**：`to_gpu_control_event` 丢弃 DSP 白名单 CC，不再进入 GPU 事件流；
+  CPU 路径的 `ChannelSet::send_event` 同样硬切断。
+- parity 测试的 `cc_plan` 只保留音源层 CC；多端口折叠回归测试改用 PitchBend。
+
+### 5.7 GPU 与 CPU 的分工
 
 **结论：GPU 只做高并发发声（voice），效果器链保持 CPU。**
 
@@ -434,7 +449,7 @@ xsynth-core 0.4 的 `VoiceChannel::apply_channel_effects`（`channel/mod.rs:154-
 - 若未来实测效果器链成为瓶颈，再评估"纯内置链全 GPU"；当前优先级是先把 GPU 路径接回混音台（D10），而不是把效果器 GPU 化。
 - CPU 侧优化空间（按需再做）：静音/空通道跳过效果器处理、通道间并行（rayon）。
 
-### 5.7 GM2 CC 覆盖差距与补齐路线
+### 5.8 GM2 CC 覆盖差距与补齐路线
 
 xsynth-core 0.4 实际处理的 CC：`0, 6, 7, 8, 10, 11, 38, 64, 71, 72, 73, 74, 100, 101, 120, 121, 123`（+RPN 0/1/2）。GM2 要求但缺失的部分：
 
@@ -448,7 +463,7 @@ xsynth-core 0.4 实际处理的 CC：`0, 6, 7, 8, 10, 11, 38, 64, 71, 72, 73, 74
 - 迁移期原则：**先迁移 xsynth 已有能力（不回归），通道级缺失可顺带补齐，voice 级缺失不承诺**。
 - 两套合成实现的 CC 覆盖也不完全一致（`gpu_synth.rs` 与 xsynth），迁移与测试以 xsynth（CPU）为基准。
 
-### 5.8 GPU DSP 参考点
+### 5.9 GPU DSP 参考点
 
 - `crates/yinhe-synth/src/synth/filter.rs::biquad_coeffs`：CPU biquad 系数计算，`ChannelFilter` 可参考/复用（复用方式见 §10-5；两选项都不引入 wgpu 依赖）。
 - `crates/yinhe-synth/src/gpu_synth.rs::ValueLerp`：10ms 参数平滑实现（私有类型，按模式自实现），`ChannelGain/Pan/Filter` 参考。
@@ -566,6 +581,7 @@ xsynth-core 0.4 实际处理的 CC：`0, 6, 7, 8, 10, 11, 38, 64, 71, 72, 73, 74
 2. **导出时 SysEx 写在哪条轨**：本稿为"第一条实际写出的 MIDI 轨"。
 3. **master 轨是否允许用户删除**：本稿为"自动 ensure、不可删除"。
 4. **conductor 改名**：本稿建议 conductor badge 从 `"Master"` 改为 `"Conductor"`。
-5. **CC 模块与 xsynth 的 biquad 复用**（两个选项都**不引入 wgpu 依赖**）：
-   - A. 提取共享：把 `biquad_coeffs` 纯数学函数挪到中立轻量位置（如 yinhe-dsp 提供、yinhe-synth 依赖它，或独立 tiny 模块），两边共用；
-   - B. 各自一份：yinhe-dsp 自带约 30 行实现，注释互指 yinhe-synth 版本，接受重复。
+5. ~~CC 模块与 xsynth 的 biquad 复用~~（已定：各自一份）：
+   `yinhe-dsp::dsp::biquad`（ChannelFilter 的通道低通）与
+   `yinhe-synth::synth::filter`（per-voice 音色 filter，音源层保留）
+   用途已分离，各持约 30 行 RBJ 系数实现，注释互指；都不引入 wgpu 依赖。

@@ -38,19 +38,9 @@ pub struct GpuVoiceState {
     pub hold_frames: f32,
     pub decay_frames: f32,
     pub release_frames: f32,
-    // 声像：音色库基础声像（通道 pan 渐变在 shader 内逐帧计算，见 ch_pan）
+    // 声像：音色库基础声像（通道音量/声像已迁至 yinhe-dsp 效果器，见 spec-yinhe-dsp）
     pub base_pan_l: f32,
     pub base_pan_r: f32,
-    // 通道渐变状态（xsynth ValueLerp：CC7/10/11 10ms 线性渐变，shader 逐帧推进）
-    pub ch_vol: f32,
-    pub ch_vol_step: f32,
-    pub ch_vol_frames: u32,
-    pub ch_expr: f32,
-    pub ch_expr_step: f32,
-    pub ch_expr_frames: u32,
-    pub ch_pan: f32,
-    pub ch_pan_step: f32,
-    pub ch_pan_frames: u32,
     // Loop
     pub loop_start: u32,
     pub loop_end: u32,
@@ -109,15 +99,6 @@ pub struct SegInfo {
 pub struct ChState {
     pub ch: u32,
     pub speed_mult: f32,
-    pub ch_vol: f32,
-    pub ch_vol_step: f32,
-    pub ch_vol_frames: u32,
-    pub ch_expr: f32,
-    pub ch_expr_step: f32,
-    pub ch_expr_frames: u32,
-    pub ch_pan: f32,
-    pub ch_pan_step: f32,
-    pub ch_pan_frames: u32,
 }
 
 /// release/kill 指令（与 WGSL `ReleaseCmd` 对应；mode 5=release，6=kill）。

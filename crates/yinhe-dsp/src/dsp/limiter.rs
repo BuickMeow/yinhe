@@ -1,4 +1,7 @@
 //! 峰值限幅器（自实现，逻辑与 xsynth `VolumeLimiter` 完全一致）。
+//!
+//! 由 yinhe-audio 在最终输出（混音/预览叠加后）统一调用；
+//! 合成器内部不再做任何 DSP（见 `docs/spec-yinhe-dsp.md`）。
 
 struct SingleChannelLimiter {
     loudness: f32,

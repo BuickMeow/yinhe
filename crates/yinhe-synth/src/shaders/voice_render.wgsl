@@ -47,19 +47,9 @@ struct VoiceState {
     hold_frames: f32,
     decay_frames: f32,
     release_frames: f32,
-    // 声像：音色库基础声像（通道 pan 渐变逐帧计算，见 ch_pan）
+    // 声像：音色库基础声像（通道音量/声像已迁至 yinhe-dsp 效果器）
     base_pan_l: f32,
     base_pan_r: f32,
-    // 通道渐变状态（xsynth ValueLerp：CC7/10/11 10ms 线性渐变，逐帧推进）
-    ch_vol: f32,
-    ch_vol_step: f32,
-    ch_vol_frames: u32,
-    ch_expr: f32,
-    ch_expr_step: f32,
-    ch_expr_frames: u32,
-    ch_pan: f32,
-    ch_pan_step: f32,
-    ch_pan_frames: u32,
     // Loop
     loop_start: u32,
     loop_end: u32,
@@ -101,15 +91,6 @@ struct SegInfo {
 struct ChState {
     ch: u32,
     speed_mult: f32,
-    ch_vol: f32,
-    ch_vol_step: f32,
-    ch_vol_frames: u32,
-    ch_expr: f32,
-    ch_expr_step: f32,
-    ch_expr_frames: u32,
-    ch_pan: f32,
-    ch_pan_step: f32,
-    ch_pan_frames: u32,
 };
 
 /// release/kill 指令：在 frame 帧对 vid 应用（mode 5=release，6=kill）。
@@ -277,15 +258,6 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
             let cu = ch_updates[ui];
             if cu.ch == st.channel {
                 st.speed = st.base_speed * cu.speed_mult;
-                st.ch_vol = cu.ch_vol;
-                st.ch_vol_step = cu.ch_vol_step;
-                st.ch_vol_frames = cu.ch_vol_frames;
-                st.ch_expr = cu.ch_expr;
-                st.ch_expr_step = cu.ch_expr_step;
-                st.ch_expr_frames = cu.ch_expr_frames;
-                st.ch_pan = cu.ch_pan;
-                st.ch_pan_step = cu.ch_pan_step;
-                st.ch_pan_frames = cu.ch_pan_frames;
             }
         }
     }
@@ -311,15 +283,6 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
                             st.time += f32(fi) * (old_speed - st.speed)
                                 - (old_speed - st.speed);
                         }
-                        st.ch_vol = cu.ch_vol;
-                        st.ch_vol_step = cu.ch_vol_step;
-                        st.ch_vol_frames = cu.ch_vol_frames;
-                        st.ch_expr = cu.ch_expr;
-                        st.ch_expr_step = cu.ch_expr_step;
-                        st.ch_expr_frames = cu.ch_expr_frames;
-                        st.ch_pan = cu.ch_pan;
-                        st.ch_pan_step = cu.ch_pan_step;
-                        st.ch_pan_frames = cu.ch_pan_frames;
                     }
                 }
             }
@@ -362,25 +325,11 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
         var my_l = 0.0;
         var my_r = 0.0;
         if is_active && st.env_stage < 6u && fi >= st.start_offset {
-            // 通道渐变逐帧推进（与 xsynth ValueLerp 一致：10ms 线性渐变）
-            if st.ch_vol_frames > 0u {
-                st.ch_vol += st.ch_vol_step;
-                st.ch_vol_frames -= 1u;
-            }
-            if st.ch_expr_frames > 0u {
-                st.ch_expr += st.ch_expr_step;
-                st.ch_expr_frames -= 1u;
-            }
-            if st.ch_pan_frames > 0u {
-                st.ch_pan += st.ch_pan_step;
-                st.ch_pan_frames -= 1u;
-            }
-            // 通道增益 = base × (volume×expression)²，声像 = base × cos/sin(pan·π/2)
-            let ch_vol = st.ch_vol * st.ch_expr;
-            let ch_gain = st.base_gain * ch_vol * ch_vol;
-            let ch_ang = st.ch_pan * 1.57079632679;
-            let ch_pan_l = st.base_pan_l * cos(ch_ang);
-            let ch_pan_r = st.base_pan_r * sin(ch_ang);
+            // 通道音量/声像（CC7/10/11）已迁至 yinhe-dsp 效果器，
+            // 此处只用音色库基础增益/声像。
+            let ch_gain = st.base_gain;
+            let ch_pan_l = st.base_pan_l;
+            let ch_pan_r = st.base_pan_r;
 
             // 采样位置（帧索引；立体声样本交错存储，位置 = 帧 * 2）
             let t = st.time + f32(fi - st.start_offset) * st.speed;

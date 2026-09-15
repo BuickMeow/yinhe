@@ -175,8 +175,6 @@ fn gpu_render(sfz: &Path) -> Vec<f32> {
         .load_dense_soundfonts(0, &[sfz.to_path_buf()])
         .expect("soundfont load failed");
     synth.finish_soundfont_load();
-    // 对比测试排除限幅器（CPU 路径无限幅）
-    synth.set_limiter_enabled(false);
 
     let plan = note_plan();
     let mut events = Vec::new();
@@ -225,9 +223,9 @@ fn gpu_render(sfz: &Path) -> Vec<f32> {
 
 /// 回归：dense 通道 ≥16（第二端口）不折叠到通道 0-15。
 ///
-/// 通道 0 与通道 16 各发不同的 CC7 音量并按下同 key 音符：
-/// 折叠 bug（MAX_CHANNELS=16 时 16 % 16 == 0）会让 ch16 的 CC7=10 覆盖 ch0
-/// 的音量状态，ch0 音符响度错误；修复后两通道状态独立，波形与直连一致。
+/// 通道 0 与通道 16 各发不同的弯音并按下同 key 音符：
+/// 折叠 bug（MAX_CHANNELS=16 时 16 % 16 == 0）会让 ch16 的弯音覆盖 ch0
+/// 的音高状态，ch0 音符音高错误；修复后两通道状态独立，波形与直连一致。
 #[test]
 fn multi_port_channels_do_not_fold() {
     let Some(sfz) = test_sfz() else { return };
@@ -237,12 +235,12 @@ fn multi_port_channels_do_not_fold() {
         yinhe_synth::SynthEvent::Control {
             sample: 50 * sr / 1000,
             channel: 0,
-            event: yinhe_synth::ControlEvent::Raw(7, 127),
+            event: yinhe_synth::ControlEvent::PitchBend(0.0),
         },
         yinhe_synth::SynthEvent::Control {
             sample: 50 * sr / 1000,
             channel: 16,
-            event: yinhe_synth::ControlEvent::Raw(7, 10),
+            event: yinhe_synth::ControlEvent::PitchBend(-1.0),
         },
         yinhe_synth::SynthEvent::NoteOn {
             sample: 100 * sr / 1000,
@@ -275,7 +273,6 @@ fn multi_port_channels_do_not_fold() {
     gpu.load_dense_soundfonts(16, std::slice::from_ref(&sfz))
         .expect("channel 16 soundfont load failed");
     gpu.finish_soundfont_load();
-    gpu.set_limiter_enabled(false);
     gpu.load_events(gpu_events.clone());
     let total_frames = 1100 * sr / 1000;
     let mut gpu_out = Vec::with_capacity(total_frames as usize * 2);
@@ -355,6 +352,7 @@ fn multi_port_channels_do_not_fold() {
                         *channel as u32,
                         ChannelEvent::Audio(ChannelAudioEvent::Control(match event {
                             yinhe_synth::ControlEvent::Raw(c, v) => ControlEvent::Raw(*c, *v),
+                            yinhe_synth::ControlEvent::PitchBend(v) => ControlEvent::PitchBend(*v),
                             _ => panic!("unexpected control"),
                         })),
                     ),
@@ -398,7 +396,7 @@ fn multi_port_channels_do_not_fold() {
     let rel_rms = (sse / s_ref.max(1e-9)).sqrt();
     assert!(
         rel_rms < 0.05,
-        "多端口通道折叠：ch16 的 CC7 污染了 ch0 状态（rel_rms={rel_rms:.3}）"
+        "多端口通道折叠：ch16 的弯音污染了 ch0 状态（rel_rms={rel_rms:.3}）"
     );
 }
 
@@ -452,7 +450,6 @@ fn program_change_selects_preset() {
     gpu.load_dense_soundfonts(0, std::slice::from_ref(&sfz))
         .expect("soundfont load failed");
     gpu.finish_soundfont_load();
-    gpu.set_limiter_enabled(false);
     gpu.load_events(gpu_events.clone());
     let total_frames = 2100 * sr / 1000;
     let mut gpu_out = Vec::with_capacity(total_frames as usize * 2);
@@ -588,14 +585,13 @@ fn program_change_selects_preset() {
 }
 
 /// 通道控制事件计划：(ms, controller, value)
+///
+/// 只含音源层 CC（Sustain/ADSR）：通道音量/声像/滤波已迁至 yinhe-dsp
+/// 效果器，两边都不再处理，不能用于 CPU/GPU 对比。
 fn cc_plan() -> Vec<(u64, u8, u8)> {
     vec![
-        (1000, 7, 100),  // 音量 0.78
-        (1500, 7, 60),   // 音量 0.47（进行中音符音量变化）
         (2600, 64, 127), // 延音踏板踩下
         (2800, 64, 0),   // 延音踏板松开（held 音符一起 release）
-        (1200, 74, 20),  // CC74 cutoff：FREQS[84]≈1047Hz 低通
-        (1250, 71, 100), // CC71 resonance：Q ≈ 3.98（通道滤波器谐振）
         (1200, 72, 100), // CC72 attack：加速 attack
         (1200, 73, 100), // CC73 release：加速 release
         // 回归：长踩 damper（note 在踩下期间 off → held，松开时释放）

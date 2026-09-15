@@ -79,7 +79,6 @@ fn main() {
     synth
         .load_dense_soundfonts(0, std::slice::from_ref(&sfz))
         .unwrap();
-    synth.set_limiter_enabled(false);
 
     // 场景：parity 完整音符计划 + 完整 CC 计划
     let s = |ms: u64| ms * SR as u64 / 1000;

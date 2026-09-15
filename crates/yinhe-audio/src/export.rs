@@ -5,9 +5,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::time::Instant;
 
-use xsynth_core::effects::VolumeLimiter;
 #[cfg(feature = "gpu")]
 use yinhe_core::YinModel;
+use yinhe_dsp::dsp::limiter::VolumeLimiter;
 
 use crate::engine::AudioEngine;
 
@@ -541,6 +541,8 @@ pub fn export_wav_gpu(
     progress(0.06, "GPU 渲染中...");
     let _t_render = Instant::now();
     let mut chunk = vec![0.0f32; GPU_RENDER_CHUNK_FRAMES * STEREO_CHANNELS];
+    // 输出限幅（合成器内部不再做 DSP，限幅统一在这里做）。
+    let mut limiter = VolumeLimiter::new(STEREO_CHANNELS as u16);
     let mut rendered: u64 = 0;
     let mut prev_rendered_secs: f64 = 0.0;
     let mut prev_instant = Instant::now();
@@ -555,7 +557,7 @@ pub fn export_wav_gpu(
         let frames = ((main_duration - rendered) as usize).min(GPU_RENDER_CHUNK_FRAMES);
         let buf = &mut chunk[..frames * STEREO_CHANNELS];
         synth.render(buf);
-        // GpuSynth::render 内部已经做了限幅
+        limiter.limit(buf);
         write_samples(&mut writer, buf, bit_depth)?;
 
         rendered = synth.sample_position();
@@ -605,6 +607,7 @@ pub fn export_wav_gpu(
         }
         let buf = &mut chunk[..frames * STEREO_CHANNELS];
         synth.render(buf);
+        limiter.limit(buf);
         write_samples(&mut writer, buf, bit_depth)?;
 
         tail_rendered += frames as u64;

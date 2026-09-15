@@ -7,7 +7,7 @@ use std::time::Duration;
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 #[cfg(feature = "gpu")]
 use xsynth_core::channel::ControlEvent;
-use xsynth_core::effects::VolumeLimiter;
+use yinhe_dsp::dsp::limiter::VolumeLimiter;
 
 use crate::export::{ExportError, ExportJob, ExportProgress, WavBitDepth};
 
@@ -884,12 +884,7 @@ impl AudioRenderer {
             }
         }
 
-        // GPU 路径在 GpuSynth::render 内部已做限幅；CPU 路径需要外部限幅
-        #[cfg(feature = "gpu")]
-        if self.engine.gpu_synth.is_none() {
-            self.limiter.limit(&mut self.scratch);
-        }
-        #[cfg(not(feature = "gpu"))]
+        // 输出限幅（GPU/CPU 路径统一在此处理；合成器内部不做 DSP）。
         self.limiter.limit(&mut self.scratch);
 
         let pushed = self.ring.push_slice(&self.scratch);
@@ -1178,6 +1173,10 @@ pub(crate) fn to_gpu_control_event(
 ) -> Option<yinhe_synth::ControlEvent> {
     match *ev {
         xsynth_core::channel::ChannelAudioEvent::Control(ControlEvent::Raw(c, v)) => {
+            // 通道级 DSP CC 由 yinhe-dsp 效果器处理，GPU 合成器不再接收。
+            if yinhe_dsp::cc::DSP_CHANNEL_CCS.contains(&c) {
+                return None;
+            }
             Some(yinhe_synth::ControlEvent::Raw(c, v))
         }
         xsynth_core::channel::ChannelAudioEvent::Control(ControlEvent::PitchBendValue(v)) => {
