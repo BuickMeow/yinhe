@@ -21,8 +21,9 @@ pub struct GpuAudioRenderer {
     pub(crate) bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) dummy_buf: wgpu::Buffer,
     pub(crate) buffers: Option<GpuBuffers>,
-    /// Persistent copy of sample data chunks (never consumed, reused for buffer rebuilds).
-    pub(crate) sample_chunks: Vec<Vec<f32>>,
+    /// 采样数据（连续大块；chunk 切片直接在 `ensure_buffers` 里上传，
+    /// 不再预切成 `Vec<Vec<f32>>` 以避免一次全量拷贝）。
+    pub(crate) sample_data: Vec<f32>,
     pub(crate) frame_count: u32,
     /// render_into 的 per-channel 混音临时缓冲（复用，避免每块分配）
     pub(crate) mix_scratch: Vec<f32>,
@@ -180,7 +181,7 @@ impl GpuAudioRenderer {
             bind_group_layout,
             dummy_buf,
             buffers: None,
-            sample_chunks: Vec::new(),
+            sample_data: Vec::new(),
             frame_count: 0,
             mix_scratch: Vec::new(),
             pending_voice_writes: Vec::new(),
@@ -221,12 +222,10 @@ impl GpuAudioRenderer {
         Self::new(Arc::new(device), Arc::new(queue))
     }
 
-    /// Upload soundfont sample data. Splits into chunks for GPU buffer limits.
-    pub fn upload_samples(&mut self, sample_data: &[f32]) {
-        self.sample_chunks = sample_data
-            .chunks(super::types::CHUNK_SIZE)
-            .map(|c| c.to_vec())
-            .collect();
+    /// 上传音色库采样数据（接管所有权；GPU 上传发生在下一次 `render_block` 的
+    /// `ensure_buffers`，为避免额外拷贝这里不做预切分）。
+    pub fn upload_samples(&mut self, sample_data: Vec<f32>) {
+        self.sample_data = sample_data;
         self.buffers = None;
     }
 

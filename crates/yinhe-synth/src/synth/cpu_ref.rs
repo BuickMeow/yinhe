@@ -11,7 +11,7 @@ use super::types::ReleaseCmd;
 #[test]
 fn release_cmd_advances_envelope() {
     let mut renderer = GpuAudioRenderer::new_default().expect("renderer");
-    renderer.upload_samples(&[0.5f32; 4096]);
+    renderer.upload_samples(vec![0.5f32; 4096]);
 
     let voice = GpuVoiceState {
         sample_offset: 0,
@@ -103,7 +103,7 @@ fn release_cmd_advances_envelope() {
 #[test]
 fn release_progress_advances_full_block() {
     let mut renderer = GpuAudioRenderer::new_default().expect("renderer");
-    renderer.upload_samples(&[0.5f32; 4096]);
+    renderer.upload_samples(vec![0.5f32; 4096]);
 
     let make_voice = |vid: u32| GpuVoiceState {
         sample_offset: 0,

@@ -428,7 +428,22 @@ impl GpuSynth {
         }
         self.sample_data = data;
         self.sample_offsets = offsets;
-        self.renderer.upload_samples(&self.sample_data);
+        let chunk_count = self
+            .sample_data
+            .len()
+            .div_ceil(crate::synth::types::CHUNK_SIZE);
+        self.renderer
+            .upload_samples(std::mem::take(&mut self.sample_data));
+        eprintln!(
+            "[gpu] 采样拼接：{} 个 chunk（{:.0}MB），已交给渲染器",
+            chunk_count,
+            self.sample_offsets
+                .values()
+                .map(|(_, l)| *l as usize)
+                .sum::<usize>() as f64
+                * 4.0
+                / (1024.0 * 1024.0)
+        );
     }
 
     /// 批量加载排序好的事件列表（导出/Seek 用）。重置渲染位置到 0。
