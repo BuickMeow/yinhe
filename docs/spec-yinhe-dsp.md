@@ -58,6 +58,8 @@ yinhe 已有效果器链（`yinhe-mixer` 的 `InsertProcessor`，每通道/bus/m
 | D15 | 接管语义 | 通道链上挂了处理某 CC 的模块，则该 CC **完全丢弃**（不发给合成器/乐器插件，不做其他处理），插件当作该 CC 不存在；不改 xsynth 源码 |
 | D16 | CC 模块粒度 | 按功能组：Gain(7/11)、Pan(8/10)、Filter(71/74) |
 | D17 | CPU DSP 依赖 | yinhe-dsp 不依赖 wgpu/yinhe-synth；GPU 与 CPU 实现独立 |
+| D18 | GPU/CPU 分工 | GPU 只做高并发 voice 发声；效果器链保持 CPU（数据量小、串行依赖、需与 CLAP/VST3 混合） |
+| D19 | CC 补齐策略 | 先迁移 xsynth 已有通道级 CC；通道级缺失（94、标准 Balance）顺带补；voice 级缺失（Vibrato/Portamento 等）不承诺，属远期 |
 
 ---
 
@@ -374,7 +376,7 @@ xsynth-core 0.4 的 `VoiceChannel::apply_channel_effects`（`channel/mod.rs:154-
 | 模块 | 接管 CC | 语义 | effect_id |
 |---|---|---|---|
 | `ChannelGain` | 7, 11 | `(vol/128 * expr/128)^2` 通道增益，参数平滑 | 16 |
-| `ChannelPan` | 8, 10 | 等功率声像（映射对齐 xsynth） | 17 |
+| `ChannelPan` | 8, 10 | 等功率声像（迁移对齐 xsynth；CC8 标准语义为 Balance，可在模块内按标准区分，见 §5.7） | 17 |
 | `ChannelFilter` | 71, 74 | biquad 低通（cutoff 查表 + resonance Q，复刻 xsynth 映射） | 18 |
 
 - 全部实现 `InsertProcessor`，可在任意通道 insert 链中与 CLAP/VST3 效果任意排列。
@@ -416,7 +418,36 @@ xsynth-core 0.4 的 `VoiceChannel::apply_channel_effects`（`channel/mod.rs:154-
 3. 验收：同一 MIDI 文件在"xsynth 处理"与"模块处理"两种配置下 A/B 对比，音量/声像/滤波听感一致（参数语义对即可，不要求样本级一致）。
 4. 全部通道迁移完成后，xsynth 侧只剩采样播放 + voice 级事件；远期再评估 fork/替换 xsynth 为纯采样器（保持 ADSR/音高处理）。
 
-### 5.6 GPU DSP 参考点
+### 5.6 GPU 与 CPU 的分工
+
+**结论：GPU 只做高并发发声（voice），效果器链保持 CPU。**
+
+| 维度 | voice 渲染 | 效果器链 |
+|---|---|---|
+| 数据规模 | 音符数 × 每 voice 独立 | 通道级混合后音频（512 帧 × 2ch × N 通道），小几个数量级 |
+| 并行性 | 海量独立任务，GPU 理想场景 | 链内串行依赖，GPU 并行优势有限 |
+| 与外部插件混合 | 无关 | 链里有 CLAP/VST3 就必须 CPU，无法 GPU/CPU 混合链 |
+| 状态/参数 | 每 voice 独立状态 | 延迟线/滤波状态/参数平滑，GPU 化需 CPU↔GPU 同步，复杂且延迟高 |
+
+- 现有 `GpuSynth` 正是"高并发发声给 GPU"的实现；`ChannelSet`（CPU）是等效的 CPU 路径。
+- 若未来实测效果器链成为瓶颈，再评估"纯内置链全 GPU"；当前优先级是先把 GPU 路径接回混音台（D10），而不是把效果器 GPU 化。
+- CPU 侧优化空间（按需再做）：静音/空通道跳过效果器处理、通道间并行（rayon）。
+
+### 5.7 GM2 CC 覆盖差距与补齐路线
+
+xsynth-core 0.4 实际处理的 CC：`0, 6, 7, 8, 10, 11, 38, 64, 71, 72, 73, 74, 100, 101, 120, 121, 123`（+RPN 0/1/2）。GM2 要求但缺失的部分：
+
+| 类别 | 缺失 CC | 归属与计划 |
+|---|---|---|
+| 通道级 send | 91/93（Reverb/Chorus Send）、94（Variation Send） | 91/93 属阶段一（§4.5）；94 随 XG/GS 阶段 |
+| 通道级 | 标准 CC8 Balance（xsynth 把 8 当 Pan） | 阶段二可在 `ChannelPan` 模块内按标准区分 |
+| voice 级 | 1 Modulation、5/65/84 Portamento、66 Sostenuto、67 Soft、75 Decay、76/77/78 Vibrato、88 High-Res Velocity、96/97 Data Inc/Dec、98/99 NRPN | 远期（随 xsynth 精简/替换评估） |
+| 音色选择 | 32 Bank LSB | xsynth/采样器侧 |
+
+- 迁移期原则：**先迁移 xsynth 已有能力（不回归），通道级缺失可顺带补齐，voice 级缺失不承诺**。
+- 两套合成实现的 CC 覆盖也不完全一致（`gpu_synth.rs` 与 xsynth），迁移与测试以 xsynth（CPU）为基准。
+
+### 5.8 GPU DSP 参考点
 
 - `crates/yinhe-synth/src/synth/filter.rs::biquad_coeffs`：CPU biquad 系数计算，`ChannelFilter` 可参考/复用（复用方式见 §10-5；两选项都不引入 wgpu 依赖）。
 - `crates/yinhe-synth/src/gpu_synth.rs::ValueLerp`：10ms 参数平滑实现（私有类型，按模式自实现），`ChannelGain/Pan/Filter` 参考。
