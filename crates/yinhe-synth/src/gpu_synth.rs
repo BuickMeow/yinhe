@@ -318,7 +318,8 @@ impl GpuSynth {
     fn from_renderer(renderer: GpuAudioRenderer, sample_rate: u32) -> Result<Self, String> {
         Ok(Self {
             renderer,
-            port_key_maps: vec![Vec::new(); 16],
+            // 每 dense 通道一个音色库条目列表（dense = port×16+ch，最多 MAX_CHANNELS）
+            port_key_maps: vec![Vec::new(); MAX_CHANNELS],
             channel_port: [0; MAX_CHANNELS],
             sample_data: Vec::new(),
             sample_offsets: HashMap::new(),
