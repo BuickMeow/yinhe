@@ -2,6 +2,7 @@ mod audio_model;
 mod audio_renderer;
 mod audio_ring;
 pub mod audio_source;
+mod builtin_insert;
 mod channel;
 pub mod channel_layout;
 mod channel_set;
@@ -26,6 +27,7 @@ pub use audio_source::{
     AudioInfo, DecodedAudio, WavePeaks, decode_audio, encode_wav_bytes, probe_audio_info,
     resample_channel,
 };
+pub use builtin_insert::BuiltinInsert;
 pub use clap_insert::ClapInsert;
 pub use spawn::{
     AudioCommand, AudioHandle, CpalAudioHandle, InsertTarget, InstrumentPreviewNote,

@@ -1,0 +1,10 @@
+[package]
+name = "yinhe-dsp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+yinhe-mixer = { path = "../yinhe-mixer" }
+tracing = { workspace = true }
+
+[dev-dependencies]

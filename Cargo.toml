@@ -10,6 +10,7 @@ members = [
     "crates/yinhe-wgpu",
     "crates/yinhe-audio",
     "crates/yinhe-synth",
+    "crates/yinhe-dsp",
     "crates/yinhe-editor-core",
     "crates/yinhe-egui",
     "crates/yinhe-android",

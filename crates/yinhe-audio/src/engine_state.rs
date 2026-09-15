@@ -150,6 +150,14 @@ impl AudioEngine {
                 continue;
             };
             state.send_to(dense, &mut self.channel_set, &skip);
+            // 通道级 DSP CC 回填给 yinhe-dsp 模块（与 xsynth 的 skip 语义一致：
+            // 已被 dispatch 的 CC 不覆盖，避免旧值打回新值）。
+            for &cc in yinhe_dsp::cc::DSP_CHANNEL_CCS {
+                if skip.cc_mask[ch as usize] & (1u128 << cc) == 0 {
+                    self.mixer
+                        .broadcast_channel_cc(dense as usize, cc, state.dsp_cc_value(cc));
+                }
+            }
         }
         // 插件参数 chase：seek 后插件已 reset（值丢失），把目标位置的
         // lane 值写回对应乐器实例（归一化值，下一块 process 生效）。

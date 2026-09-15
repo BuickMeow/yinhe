@@ -7576,6 +7576,7 @@ dependencies = [
  "xsynth-soundfonts",
  "yinhe-clap",
  "yinhe-core",
+ "yinhe-dsp",
  "yinhe-editor-core",
  "yinhe-memtrace",
  "yinhe-midi",
@@ -7604,6 +7605,14 @@ dependencies = [
  "serde",
  "uuid",
  "yinhe-types",
+]
+
+[[package]]
+name = "yinhe-dsp"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+ "yinhe-mixer",
 ]
 
 [[package]]
@@ -7663,6 +7672,7 @@ dependencies = [
  "yinhe-audio",
  "yinhe-clap",
  "yinhe-core",
+ "yinhe-dsp",
  "yinhe-editor-core",
  "yinhe-memtrace",
  "yinhe-midi",

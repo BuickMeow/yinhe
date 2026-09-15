@@ -105,6 +105,11 @@ impl InstrumentRack {
                 name.clone(),
                 instance.create_view().map_err(|e| format!("{e}")),
             ),
+            Some(PluginInstance::Builtin { .. }) => {
+                return Err(PluginLoadError(
+                    "内置效果器不是乐器，无法打开乐器界面".into(),
+                ));
+            }
             None => return Err(PluginLoadError("插件未加载成功，无法打开界面".into())),
         };
         let (w, h) = size_result.map_err(|e| {
@@ -126,6 +131,7 @@ impl InstrumentRack {
                     .attach_view(win.view_ptr())
                     .map_err(|e| format!("{e}"))
             },
+            Some(PluginInstance::Builtin { .. }) => Err("内置效果器不是乐器".into()),
             None => Err("实例丢失".into()),
         };
         if let Err(e) = attach_result {
@@ -234,6 +240,9 @@ impl InstrumentRack {
                     .activate_audio(sample_rate as f64, ACTIVATE_MAX_FRAMES)
                     .map_err(|e| PluginLoadError(format!("激活 VST3 乐器失败: {e}")))?;
                 Box::new(p)
+            }
+            PluginInstance::Builtin { .. } => {
+                return Err(PluginLoadError("内置效果器不是乐器，无法激活".into()));
             }
         };
         handle.send(AudioCommand::SetInstrument {
@@ -407,7 +416,7 @@ fn close_plugin_view(slot: &mut InstrumentSlot) {
     match slot.instance.as_mut() {
         Some(PluginInstance::Clap(inst)) => inst.close_gui(),
         Some(PluginInstance::Vst3 { instance, .. }) => instance.close_view(),
-        None => {}
+        Some(PluginInstance::Builtin { .. }) | None => {}
     }
 }
 

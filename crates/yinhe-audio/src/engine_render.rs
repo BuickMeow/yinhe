@@ -129,6 +129,10 @@ impl AudioEngine {
                 .copied()
                 .unwrap_or(false);
             if !track_skipped && !lane_skipped {
+                // 通道级 DSP CC（yinhe-dsp 模块处理）：直接进通道 insert 链，
+                // 不下发合成器/乐器插件；其余事件保持原路径。
+                let dsp_cc = raw_cc(&cc.event)
+                    .filter(|(num, _)| yinhe_dsp::cc::DSP_CHANNEL_CCS.contains(num));
                 if let Some(pp) = cc.plugin_param {
                     // 插件参数自动化 → 该 MIDI 通道插件实例的 ParamValue。
                     if let Some(dense) = self.channel_plugin_dense(pp.channel) {
@@ -144,6 +148,14 @@ impl AudioEngine {
                             });
                         }
                     }
+                } else if let Some((cc_num, cc_value)) = dsp_cc {
+                    let dense = self.channel_layout.dense_for(cc.channel as usize);
+                    if dense != u32::MAX {
+                        self.mixer
+                            .broadcast_channel_cc(dense as usize, cc_num, cc_value);
+                        // 实际发送 → 打点（chase 应用时跳过，避免旧值覆盖新值）。
+                        self.dispatched_skip.mark(&cc.event, cc.channel as usize);
+                    }
                 } else if let Some(dense) = self.channel_plugin_dense(cc.channel as u8) {
                     // 该 MIDI 通道挂了插件 → CC/PB/RPN/PC 转原始 MIDI 字节喂实例；
                     // 否则走 xsynth。
@@ -155,7 +167,6 @@ impl AudioEngine {
                         && let Some(Some(slot)) = self.instruments.get_mut(dense)
                     {
                         slot.events.push(PluginEvent::Midi { time, data });
-                        // 实际发送 → 打点（chase 应用时跳过，避免旧值覆盖新值）。
                         self.dispatched_skip.mark(&cc.event, cc.channel as usize);
                     }
                 } else {
@@ -163,7 +174,6 @@ impl AudioEngine {
                     if dense != u32::MAX {
                         self.channel_set
                             .send_event(SynthEvent::Channel(dense, ChannelEvent::Audio(cc.event)));
-                        // 实际发送 → 打点（chase 应用时跳过，避免旧值覆盖新值）。
                         self.dispatched_skip.mark(&cc.event, cc.channel as usize);
                     }
                 }
@@ -618,6 +628,14 @@ impl AudioEngine {
                 }
             }
         }
+    }
+}
+
+/// 提取原始 CC（号 + 值）；非 CC 事件返回 None。
+fn raw_cc(event: &ChannelAudioEvent) -> Option<(u8, u8)> {
+    match event {
+        ChannelAudioEvent::Control(ControlEvent::Raw(cc, value)) => Some((*cc, *value)),
+        _ => None,
     }
 }
 

@@ -23,6 +23,7 @@ yinhe-audio = { path = "../yinhe-audio", features = ["gpu"] }
 yinhe-memtrace = { path = "../yinhe-memtrace" }
 yinhe-editor-core = { path = "../yinhe-editor-core" }
 yinhe-mixer = { path = "../yinhe-mixer" }
+yinhe-dsp = { path = "../yinhe-dsp" }
 yinhe-vst3 = { path = "../yinhe-vst3" }
 yinhe-clap = { path = "../yinhe-clap" }
 cpal = { workspace = true }

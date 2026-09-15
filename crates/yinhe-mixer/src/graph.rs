@@ -33,6 +33,16 @@ pub trait InsertProcessor: Send {
         0
     }
 
+    /// 本处理器接管的 MIDI CC 号（默认空）。挂在通道 insert 链上时生效：
+    /// 宿主把被接管的 CC 分流到 [`InsertProcessor::apply_cc`]，
+    /// 不再下发给合成器/乐器插件（见 `docs/spec-yinhe-dsp.md` §5.3）。
+    fn handled_ccs(&self) -> &'static [u8] {
+        &[]
+    }
+
+    /// 接收被接管的 CC 值（0..127）。仅对 `handled_ccs` 中的 CC 调用。
+    fn apply_cc(&mut self, _cc: u8, _value: u8) {}
+
     /// 回收时还原为具体类型（如插件处理器需要 deactivate 回实例）。
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
 }
@@ -309,6 +319,20 @@ impl MixerGraph {
             self.refresh_pdc();
         }
         old
+    }
+
+    /// 把一段 CC 直接广播给该通道 insert 链上处理它的模块（yinhe-dsp）。
+    ///
+    /// 对应"CC 效果直接进 DSP 链"：dispatch 对通道级 CC 调用本方法，
+    /// 不再下发合成器；模块按自己的 `handled_ccs` 过滤，无关 CC 被忽略。
+    pub fn broadcast_channel_cc(&mut self, channel: usize, cc: u8, value: u8) {
+        if let Some(chain) = self.inserts.get_mut(channel) {
+            for p in chain.iter_mut() {
+                if p.handled_ccs().contains(&cc) {
+                    p.apply_cc(cc, value);
+                }
+            }
+        }
     }
 
     /// 在 master 链槽位 `slot` 处插入处理器（越界则追加）。

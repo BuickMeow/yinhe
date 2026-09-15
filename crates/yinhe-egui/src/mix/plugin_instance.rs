@@ -31,6 +31,20 @@ pub(crate) struct PluginEntry {
 }
 
 impl PluginEntry {
+    /// 内置效果器条目（yinhe-dsp；picker 选择用）。
+    pub(crate) fn builtin(kind: yinhe_dsp::BuiltinEffectKind) -> Self {
+        Self {
+            format: PluginFormat::Builtin,
+            path: PathBuf::new(),
+            id: kind.id().to_string(),
+            name: kind.name().to_string(),
+            vendor: "yinhe".into(),
+            is_instrument: false,
+            is_effect: true,
+            error: None,
+        }
+    }
+
     /// 扫描/加载失败的占位条目（bundle 显示名 + 失败原因）。
     pub(crate) fn failed(format: PluginFormat, path: &std::path::Path, message: String) -> Self {
         let name = path
@@ -81,6 +95,13 @@ pub(crate) enum PluginInstance {
         /// 参数重扫待面板刷新（poll_requests 检出后暂存；参数面板 take）。
         rescan_pending: bool,
     },
+    /// 内置效果器（yinhe-dsp）。参数由通道 CC 驱动（不走 ParamQueue），
+    /// 无原生 GUI、无插件状态。
+    Builtin {
+        kind: yinhe_dsp::BuiltinEffectKind,
+        /// 占位参数队列（`param_queue()` 接口需要；内置模块不消费）。
+        queue: Arc<ParamQueue>,
+    },
 }
 
 /// 插件反向请求（管理线程每帧轮询；取出即清除）。
@@ -120,6 +141,14 @@ impl PluginInstance {
                     rescan_pending: false,
                 })
             }
+            PluginFormat::Builtin => {
+                let kind = yinhe_dsp::BuiltinEffectKind::from_id(&entry.id)
+                    .ok_or_else(|| format!("未知内置效果器: {}", entry.id))?;
+                Ok(Self::Builtin {
+                    kind,
+                    queue: Arc::new(ParamQueue::new()),
+                })
+            }
         }
     }
 
@@ -127,6 +156,7 @@ impl PluginInstance {
         match self {
             Self::Clap(inst) => &inst.info().name,
             Self::Vst3 { name, .. } => name,
+            Self::Builtin { kind, .. } => kind.name(),
         }
     }
 
@@ -134,6 +164,7 @@ impl PluginInstance {
         match self {
             Self::Clap(inst) => &inst.info().id,
             Self::Vst3 { instance, .. } => instance.class_id(),
+            Self::Builtin { kind, .. } => kind.id(),
         }
     }
 
@@ -167,6 +198,8 @@ impl PluginInstance {
                     read_only: p.flags & 0x2 != 0, // kIsReadOnly = 1<<1
                 })
                 .collect(),
+            // 内置效果器参数由通道 CC 驱动（CC7/10/11/71/74），无插件参数。
+            Self::Builtin { .. } => Vec::new(),
         }
     }
 
@@ -174,6 +207,7 @@ impl PluginInstance {
         match self {
             Self::Clap(inst) => inst.get_param_value(id),
             Self::Vst3 { instance, .. } => Some(instance.get_param_normalized(id)),
+            Self::Builtin { .. } => None,
         }
     }
 
@@ -181,6 +215,7 @@ impl PluginInstance {
         match self {
             Self::Clap(inst) => inst.value_to_text(id, value),
             Self::Vst3 { instance, .. } => instance.format_param(id, value),
+            Self::Builtin { .. } => None,
         }
     }
 
@@ -204,6 +239,8 @@ impl PluginInstance {
                 }
                 Some(instance.save_state())
             }
+            // 内置效果器无插件状态：参数在 CC lane，模块本身无持久化状态。
+            Self::Builtin { .. } => None,
         }
     }
 
@@ -211,6 +248,7 @@ impl PluginInstance {
         match self {
             Self::Clap(inst) => inst.load_state(bytes).map_err(|e| format!("{e}")),
             Self::Vst3 { instance, .. } => instance.load_state(bytes).map_err(|e| format!("{e}")),
+            Self::Builtin { .. } => Ok(()),
         }
     }
 
@@ -219,6 +257,7 @@ impl PluginInstance {
         match self {
             Self::Clap(inst) => inst.take_params_rescan_pending(),
             Self::Vst3 { rescan_pending, .. } => std::mem::take(rescan_pending),
+            Self::Builtin { .. } => false,
         }
     }
 
@@ -259,6 +298,8 @@ impl PluginInstance {
                     latency_changed: flags & yinhe_vst3::restart_flags::LATENCY_CHANGED != 0,
                 }
             }
+            // 内置效果器无反向请求。
+            Self::Builtin { .. } => PluginRequests::default(),
         }
     }
 
@@ -266,6 +307,7 @@ impl PluginInstance {
         match self {
             Self::Clap(inst) => inst.param_queue(),
             Self::Vst3 { instance, .. } => instance.param_queue(),
+            Self::Builtin { queue, .. } => Arc::clone(queue),
         }
     }
 
@@ -274,7 +316,7 @@ impl PluginInstance {
     pub(crate) fn take_gui_param_changes(&mut self) -> (Vec<(u32, f64)>, bool) {
         match self {
             Self::Vst3 { instance, .. } => instance.take_gui_param_changes(),
-            Self::Clap(_) => (Vec::new(), false),
+            Self::Clap(_) | Self::Builtin { .. } => (Vec::new(), false),
         }
     }
 }

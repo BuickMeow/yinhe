@@ -238,16 +238,13 @@ impl ChannelState {
         };
         push_raw(0, self.bank_msb);
         push_raw(32, self.bank_lsb);
-        push_raw(7, self.volume);
-        push_raw(10, self.pan);
-        push_raw(11, self.expression);
         push_raw(64, self.sustain);
         if self.env_set {
             push_raw(73, self.attack);
             push_raw(72, self.release);
         }
-        push_raw(74, self.cutoff);
-        push_raw(71, self.resonance);
+        // 通道级 DSP CC（7/10/11/71/74）由 yinhe-dsp 模块处理，不再发合成器；
+        // chase 回填见 `AudioEngine::apply_chase_result`。
         if !skip.program[channel] {
             out.push(ChannelAudioEvent::ProgramChange(self.program));
         }
@@ -294,6 +291,18 @@ impl ChannelState {
     pub(crate) fn send_to(&self, ch: u32, cg: &mut impl EventSink, skip: &ChaseSkip) {
         for event in self.events_to_send(ch as usize, skip) {
             cg.send_event(SynthEvent::Channel(ch, ChannelEvent::Audio(event)));
+        }
+    }
+
+    /// 通道级 DSP CC 的当前值（chase 回填给 yinhe-dsp 模块用）。
+    pub(crate) fn dsp_cc_value(&self, cc: u8) -> u8 {
+        match cc {
+            7 => self.volume,
+            10 => self.pan,
+            11 => self.expression,
+            71 => self.resonance,
+            74 => self.cutoff,
+            other => self.cc_values[other as usize],
         }
     }
 }
@@ -411,18 +420,29 @@ mod tests {
             ..Default::default()
         };
         state.cc_values[91] = 80; // 通用 CC（reverb），不走专门字段
+        state.cc_values[1] = 64; // Modulation（音源层 CC，会发送）
 
         let mut skip = ChaseSkip::default();
-        skip.cc_mask[0] |= 1u128 << 7; // CC7 已 dispatch
+        skip.cc_mask[0] |= 1u128 << 1; // CC1 已 dispatch
         skip.cc_mask[0] |= 1u128 << 91; // CC91 已 dispatch
         skip.pbs[0] = true; // PitchBendSensitivity 已 dispatch
         skip.pitch_bend[0] = true; // PitchBendValue 已 dispatch
 
         let events = state.events_to_send(0, &skip);
+        // 通道级 DSP CC（7/10/11/71/74）不走 xsynth 事件（由 yinhe-dsp 模块处理）。
+        for cc in [7u8, 10, 11, 71, 74] {
+            assert!(
+                !events.iter().any(
+                    |e| matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(c, _)) if *c == cc)
+                ),
+                "DSP CC{cc} 不应出现在 xsynth chase 事件中"
+            );
+        }
+        // skip 标记的 CC 不发送
         assert!(
             !events
                 .iter()
-                .any(|e| matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(7, _))))
+                .any(|e| matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(1, _))))
         );
         assert!(
             !events
@@ -441,16 +461,6 @@ mod tests {
         assert!(
             events
                 .iter()
-                .any(|e| matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(10, _))))
-        );
-        assert!(
-            events
-                .iter()
-                .any(|e| matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(11, _))))
-        );
-        assert!(
-            events
-                .iter()
                 .any(|e| matches!(e, ChannelAudioEvent::ProgramChange(_)))
         );
         // 其他 channel 不受跳过影响
@@ -458,7 +468,7 @@ mod tests {
         assert!(
             other
                 .iter()
-                .any(|e| matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(7, 100))))
+                .any(|e| matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(1, 64))))
         );
     }
 

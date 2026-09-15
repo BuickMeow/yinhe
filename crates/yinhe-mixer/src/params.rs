@@ -60,6 +60,9 @@ pub enum PluginFormat {
     #[default]
     Clap,
     Vst3,
+    /// 内置效果器（yinhe-dsp）。`InsertRef.plugin_id` 为内置效果器标识
+    /// （见 `yinhe_dsp::BuiltinEffectKind::id`），`plugin_path` 为空。
+    Builtin,
 }
 
 /// insert 槽位的插件引用（持久化进工程文件）。

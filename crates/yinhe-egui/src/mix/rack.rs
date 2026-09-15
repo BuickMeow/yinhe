@@ -18,7 +18,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use yinhe_audio::{AudioCommand, AudioHandle, ClapInsert, InsertTarget};
+use yinhe_audio::{AudioCommand, AudioHandle, BuiltinInsert, ClapInsert, InsertTarget};
 use yinhe_clap::{ClapProcessor, HostInfo};
 use yinhe_mixer::{InsertProcessor, MixerParams, PluginFormat};
 use yinhe_vst3::Vst3Insert;
@@ -91,6 +91,16 @@ pub(crate) fn host_info() -> HostInfo {
 
 /// 插件加载/激活失败（MIX 界面状态行展示）。
 pub(crate) struct PluginLoadError(pub String);
+
+/// `MixerRack::locate_slot` 的定位结果。
+enum SlotLocation {
+    /// 总线删除后等退回的孤儿槽位。
+    Orphan(usize),
+    /// 常规槽位（目标 + 链内下标）。
+    Slot(InsertTarget, usize),
+    /// 找不到（引擎已拆除等）。
+    NotFound,
+}
 
 impl MixerRack {
     fn chain_mut(&mut self, target: impl Into<InsertTarget>) -> &mut Vec<SlotRuntime> {
@@ -209,6 +219,10 @@ impl MixerRack {
                     .map_err(|e| PluginLoadError(format!("激活 VST3 插件失败: {e}")))?;
                 Box::new(Vst3Insert::new(p))
             }
+            PluginInstance::Builtin { kind, .. } => {
+                let p = kind.build(sample_rate);
+                Box::new(BuiltinInsert::new(p, Arc::clone(&rt.bypass), rt.owner))
+            }
         };
         handle.send(AudioCommand::InsertAdd {
             target,
@@ -296,6 +310,8 @@ impl MixerRack {
                     instance.notify_view_resize(w, h);
                 }
             }
+            // 内置效果器无原生 GUI。
+            Some(PluginInstance::Builtin { .. }) => {}
             None => {}
         }
     }
@@ -365,6 +381,12 @@ impl MixerRack {
                 name.clone(),
                 instance.create_view().map_err(|e| format!("{e}")),
             ),
+            Some(PluginInstance::Builtin { kind, .. }) => {
+                return Err(PluginLoadError(format!(
+                    "内置效果器 {} 没有原生界面（参数由 CC 控制）",
+                    kind.name()
+                )));
+            }
             None => return Err(PluginLoadError("插件未加载成功，无法打开界面".into())),
         };
         let (w, h) = size_result.map_err(|e| {
@@ -386,6 +408,7 @@ impl MixerRack {
                     .attach_view(win.view_ptr())
                     .map_err(|e| format!("{e}"))
             },
+            Some(PluginInstance::Builtin { .. }) => Err("内置效果器没有原生界面".into()),
             None => Err("实例丢失".into()),
         };
         if let Err(e) = attach_result {
@@ -459,57 +482,91 @@ impl MixerRack {
                         let processor = insert.into_processor();
                         processor.stop();
                     }
-                    Err(_) => tracing::warn!("退回的 insert 处理器类型未知，丢弃"),
+                    Err(any) => match any.downcast::<BuiltinInsert>() {
+                        Ok(insert) => {
+                            // 内置效果器：处理器直接释放，只需按 owner 复位槽位。
+                            let (_processor, _bypass, owner) = insert.into_parts();
+                            self.return_builtin(owner);
+                        }
+                        Err(_) => tracing::warn!("退回的 insert 处理器类型未知，丢弃"),
+                    },
                 },
             }
         }
     }
 
-    fn return_processor(&mut self, owner: u64, processor: ClapProcessor) {
-        // 孤儿槽位（总线删除后等退回）优先匹配。
+    /// 按 owner 定位槽位（孤儿槽位优先）。
+    fn locate_slot(&self, owner: u64) -> SlotLocation {
         if let Some(idx) = self.orphan.iter().position(|rt| rt.owner == owner) {
-            let mut rt = self.orphan.remove(idx);
-            if let Some(PluginInstance::Clap(instance)) = rt.instance.as_mut() {
-                instance.deactivate(processor);
-            }
-            return;
+            return SlotLocation::Orphan(idx);
         }
-        // 找槽位（channels + buses + master 线性扫，槽位数很小）。
-        let mut found: Option<(InsertTarget, usize)> = None;
         for (ch, chain) in &self.channels {
             if let Some(slot) = chain.iter().position(|rt| rt.owner == owner) {
-                found = Some((InsertTarget::Channel(*ch), slot));
-                break;
+                return SlotLocation::Slot(InsertTarget::Channel(*ch), slot);
             }
         }
-        if found.is_none() {
-            for (bus, chain) in &self.buses {
-                if let Some(slot) = chain.iter().position(|rt| rt.owner == owner) {
-                    found = Some((InsertTarget::Bus(*bus), slot));
-                    break;
+        for (bus, chain) in &self.buses {
+            if let Some(slot) = chain.iter().position(|rt| rt.owner == owner) {
+                return SlotLocation::Slot(InsertTarget::Bus(*bus), slot);
+            }
+        }
+        for (ch, chain) in &self.audios {
+            if let Some(slot) = chain.iter().position(|rt| rt.owner == owner) {
+                return SlotLocation::Slot(InsertTarget::Audio(*ch), slot);
+            }
+        }
+        if let Some(slot) = self.master.iter().position(|rt| rt.owner == owner) {
+            return SlotLocation::Slot(InsertTarget::Master, slot);
+        }
+        SlotLocation::NotFound
+    }
+
+    fn return_processor(&mut self, owner: u64, processor: ClapProcessor) {
+        match self.locate_slot(owner) {
+            // 孤儿槽位（总线删除后等退回）：deactivate 后释放。
+            SlotLocation::Orphan(idx) => {
+                let mut rt = self.orphan.remove(idx);
+                if let Some(PluginInstance::Clap(instance)) = rt.instance.as_mut() {
+                    instance.deactivate(processor);
                 }
             }
-        }
-        if found.is_none()
-            && let Some(slot) = self.master.iter().position(|rt| rt.owner == owner)
-        {
-            found = Some((InsertTarget::Master, slot));
-        }
-        let Some((target, slot)) = found else {
-            tracing::warn!("退回的处理器 owner={owner} 找不到槽位，丢弃");
-            return;
-        };
-        {
-            let rt = &mut self.chain_mut(target)[slot];
-            if let Some(PluginInstance::Clap(instance)) = rt.instance.as_mut() {
-                instance.deactivate(processor);
-            } else {
-                tracing::warn!("owner={owner} 的槽位无 CLAP 实例，处理器无法 deactivate，丢弃");
+            SlotLocation::Slot(target, slot) => {
+                {
+                    let rt = &mut self.chain_mut(target)[slot];
+                    if let Some(PluginInstance::Clap(instance)) = rt.instance.as_mut() {
+                        instance.deactivate(processor);
+                    } else {
+                        tracing::warn!(
+                            "owner={owner} 的槽位无 CLAP 实例，处理器无法 deactivate，丢弃"
+                        );
+                    }
+                    rt.sent = false;
+                }
+                if self.chain(target)[slot].pending_remove {
+                    self.chain_mut(target).remove(slot);
+                }
             }
-            rt.sent = false;
+            SlotLocation::NotFound => {
+                tracing::warn!("退回的处理器 owner={owner} 找不到槽位，丢弃");
+            }
         }
-        if self.chain(target)[slot].pending_remove {
-            self.chain_mut(target).remove(slot);
+    }
+
+    /// 内置效果器处理器退回：无 deactivate 需求，仅复位槽位。
+    fn return_builtin(&mut self, owner: u64) {
+        match self.locate_slot(owner) {
+            SlotLocation::Orphan(idx) => {
+                self.orphan.remove(idx);
+            }
+            SlotLocation::Slot(target, slot) => {
+                self.chain_mut(target)[slot].sent = false;
+                if self.chain(target)[slot].pending_remove {
+                    self.chain_mut(target).remove(slot);
+                }
+            }
+            SlotLocation::NotFound => {
+                tracing::warn!("退回的内置效果器 owner={owner} 找不到槽位，丢弃");
+            }
         }
     }
 
@@ -611,7 +668,7 @@ fn close_plugin_view(rt: &mut SlotRuntime) {
     match rt.instance.as_mut() {
         Some(PluginInstance::Clap(inst)) => inst.close_gui(),
         Some(PluginInstance::Vst3 { instance, .. }) => instance.close_view(),
-        None => {}
+        Some(PluginInstance::Builtin { .. }) | None => {}
     }
 }
 
