@@ -268,6 +268,10 @@ pub struct GpuSynth {
     port_key_maps: Vec<Vec<sfz_parser::KeyMapEntry>>,
     /// dense 通道 → port 映射（由 `load_port_soundfonts` 按 layout 填表）。
     channel_port: [u8; MAX_CHANNELS],
+    /// 音色库解析缓存：同路径只解析/重采样一次。
+    /// 多通道配置同一音色库时避免重复解析（每通道约 1.5s）与样本多份占用
+    /// （样本为 `Arc`，clone 条目后按指针去重，GPU 只上传一份）。
+    key_map_cache: HashMap<std::path::PathBuf, Vec<sfz_parser::KeyMapEntry>>,
     /// 累积的采样数据（全部 port 拼接；port 加载时全量重传 GPU）。
     sample_data: Vec<f32>,
     /// 采样数据在 GPU 上传块中的 (offset, len)，按 Arc 身份（指针 as usize）去重
@@ -320,6 +324,7 @@ impl GpuSynth {
             renderer,
             // 每 dense 通道一个音色库条目列表（dense = port×16+ch，最多 MAX_CHANNELS）
             port_key_maps: vec![Vec::new(); MAX_CHANNELS],
+            key_map_cache: HashMap::new(),
             channel_port: [0; MAX_CHANNELS],
             sample_data: Vec::new(),
             sample_offsets: HashMap::new(),
@@ -356,7 +361,13 @@ impl GpuSynth {
         }
         let mut entries: Vec<sfz_parser::KeyMapEntry> = Vec::new();
         for path in paths {
-            entries.extend(sfz_parser::build_key_maps(path, self.sample_rate)?);
+            if let Some(cached) = self.key_map_cache.get(path) {
+                entries.extend(cached.iter().cloned());
+            } else {
+                let built = sfz_parser::build_key_maps(path, self.sample_rate)?;
+                self.key_map_cache.insert(path.clone(), built.clone());
+                entries.extend(built);
+            }
         }
         self.port_key_maps[slot] = entries;
         self.channel_port[slot] = slot as u8;

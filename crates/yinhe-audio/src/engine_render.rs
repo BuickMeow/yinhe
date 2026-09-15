@@ -753,3 +753,98 @@ mod tests {
         assert!(r.is_none());
     }
 }
+
+/// GPU 合成器接入混音台的冒烟测试（需 `YINHE_TEST_SFZ` 指向 SFZ 文件）。
+#[cfg(all(test, feature = "gpu"))]
+mod gpu_tests {
+    use std::sync::Arc;
+
+    use yinhe_core::{ConductorData, NoteEvent, ProjectMeta, TrackData, YinModel};
+    use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
+
+    use crate::channel_layout::ChannelLayout;
+    use crate::engine::AudioEngine;
+    use crate::spawn::AudioCommand;
+
+    /// 1 拍、单个音符的模型（120 BPM / PPQ 480）。
+    fn tiny_model() -> Arc<YinModel> {
+        let conductor = ConductorData {
+            tempo: AutomationLane {
+                target: AutomationTarget::Tempo,
+                track: 0,
+                events: vec![AutomationEvent {
+                    tick: 0,
+                    value: 120.0,
+                    shape: SegmentShape::Step,
+                }],
+            },
+            time_sig: Vec::new(),
+            key_sig: Vec::new(),
+            markers: Vec::new(),
+            lyrics: Vec::new(),
+            chord: Vec::new(),
+        };
+        let mut model = YinModel {
+            conductor: Arc::new(conductor),
+            tracks: vec![Arc::new(TrackData::new(0, 0))],
+            meta: ProjectMeta {
+                ppq: 480,
+                ..ProjectMeta::default()
+            },
+            ..Default::default()
+        };
+        model.load_track_notes(vec![vec![NoteEvent {
+            start_tick: 0,
+            end_tick: 480,
+            key: 60,
+            velocity: 100,
+            id: 0,
+        }]]);
+        model.rebuild();
+        Arc::new(model)
+    }
+
+    /// GPU 路径经混音台渲染：不卡死、输出有限且有声音。
+    #[test]
+    fn gpu_engine_render_smoke() {
+        let Some(sfz) = std::env::var_os("YINHE_TEST_SFZ") else {
+            eprintln!("YINHE_TEST_SFZ not set, skipping");
+            return;
+        };
+        let model = tiny_model();
+        let layout = ChannelLayout::from_model(&model);
+        let mut engine = AudioEngine::new(48_000, layout);
+        engine.handle_command(AudioCommand::LoadModel { model });
+
+        let mut synth = yinhe_synth::GpuSynth::new_default(48_000).expect("GpuSynth init");
+        synth
+            .load_dense_soundfonts(0, &[std::path::PathBuf::from(&sfz)])
+            .expect("soundfont load");
+        synth.finish_soundfont_load();
+        // 与真实路径一致：加载事件列表（这里手动构造一个 0..100ms 的音符）。
+        synth.load_events(vec![
+            yinhe_synth::SynthEvent::NoteOn {
+                sample: 0,
+                channel: 0,
+                key: 60,
+                velocity: 100,
+            },
+            yinhe_synth::SynthEvent::NoteOff {
+                sample: 4800,
+                channel: 0,
+                key: 60,
+            },
+        ]);
+        engine.gpu_synth = Some(synth);
+
+        engine.handle_command(AudioCommand::Play { from_sample: 0 });
+        let mut out = vec![0.0f32; 512 * 2];
+        let mut peak = 0.0f32;
+        for i in 0..200 {
+            engine.render(&mut out);
+            assert!(out.iter().all(|v| v.is_finite()), "block {i} 输出异常");
+            peak = out.iter().fold(peak, |m, v| m.max(v.abs()));
+        }
+        assert!(peak > 0.0, "GPU 渲染无输出（peak=0）");
+    }
+}
