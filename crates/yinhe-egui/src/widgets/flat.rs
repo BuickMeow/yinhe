@@ -31,15 +31,17 @@ pub(crate) fn flat_button_fixed(
     flat_button_ex(ui, text, Some(size), None, true, true)
 }
 
-/// 无边框按钮（自定义选中背景；transport 等图标按钮用）。
+/// 无边框按钮（固定尺寸 + 自定义选中背景；transport 等图标按钮用）。
+/// 固定尺寸而非 min：图标 galley 左右 padding 大于上下，用 min 会把宽度撑大
+/// （如 32×32 目标被撑成 38×32），图标按钮必须严格正方形。
 pub(crate) fn flat_button_custom(
     ui: &mut egui::Ui,
     text: impl Into<egui::WidgetText>,
-    min_size: egui::Vec2,
+    size: egui::Vec2,
     selected_bg: Option<egui::Color32>,
     enabled: bool,
 ) -> egui::Response {
-    flat_button_ex(ui, text, Some(min_size), selected_bg, enabled, false)
+    flat_button_ex(ui, text, Some(size), selected_bg, enabled, true)
 }
 
 /// 无边框选项按钮：`selected` 时用选中背景 + 强调色文字（替代 `selectable_label`）。

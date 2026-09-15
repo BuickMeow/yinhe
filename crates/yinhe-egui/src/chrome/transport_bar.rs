@@ -51,10 +51,8 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     crate::theme::TRANSPORT_BTN_SIZE,
                     crate::theme::TRANSPORT_BTN_SIZE,
                 );
-                let btn_rounding = egui::CornerRadius::same(2);
 
-                let file_btn =
-                    menu_button(ui, "file_menu", ICON_DESCRIPTION, btn_size, btn_rounding);
+                let file_btn = menu_button(ui, "file_menu", ICON_DESCRIPTION, btn_size);
                 if file_btn.hovered() {
                     let m = crate::chrome::mode_bar::mod_key();
                     hovered_hint = Some(format!("{} ({}N/{}O/{}S)", t!("hint.file_menu"), m, m, m));
@@ -79,8 +77,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     &mut pending_file_action,
                 );
 
-                let edit_btn =
-                    menu_button(ui, "edit_menu", ICON_EDIT_SQUARE, btn_size, btn_rounding);
+                let edit_btn = menu_button(ui, "edit_menu", ICON_EDIT_SQUARE, btn_size);
                 if edit_btn.hovered() {
                     hovered_hint = Some(t!("hint.edit_menu").to_string());
                 }
@@ -106,8 +103,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     .doc
                     .map(|d| d.edit.playback.is_playing())
                     .unwrap_or(false);
-                let play_menu_btn =
-                    menu_button(ui, "play_menu", ICON_PLAY_CIRCLE, btn_size, btn_rounding);
+                let play_menu_btn = menu_button(ui, "play_menu", ICON_PLAY_CIRCLE, btn_size);
                 if play_menu_btn.hovered() {
                     hovered_hint = Some(t!("hint.play_menu").to_string());
                 }
@@ -316,16 +312,14 @@ fn menu_button(
     id: &str,
     icon: egui_material_icons::MaterialIcon,
     btn_size: egui::Vec2,
-    _btn_rounding: egui::CornerRadius,
 ) -> egui::Response {
     ui.push_id(id, |ui| {
-        crate::widgets::flat::flat_button_sized(
+        crate::widgets::flat::flat_button_fixed(
             ui,
             icon.rich_text()
                 .size(crate::theme::TRANSPORT_BTN_FONT)
                 .color(crate::theme::text_primary()),
             btn_size,
-            true,
         )
     })
     .inner

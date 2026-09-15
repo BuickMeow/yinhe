@@ -297,6 +297,47 @@ fn has_command_state(h: &Harness<'_, TbTestState>, cmd: &egui::ViewportCommand) 
         .is_some_and(|o| o.commands.iter().any(|c| c == cmd))
 }
 
+/// 回归测试：transport bar 图标按钮必须严格正方形（32×32）。
+/// 此前菜单按钮用 `flat_button_sized`（min 尺寸），图标 galley 的左右 padding
+/// 大于上下，宽度被撑成 38，比高度 32 多 6px。
+#[test]
+fn transport_icon_buttons_are_square() {
+    let ctx = egui::Context::default();
+    ctx.add_font(egui_material_icons::font_insert());
+    ctx.run_ui(Default::default(), |_| {})
+        .drop_without_applying_deltas();
+    let target = crate::theme::TRANSPORT_BTN_SIZE;
+    let mut sizes: Vec<(&str, egui::Vec2)> = Vec::new();
+    let output = ctx.run_ui(Default::default(), |ui| {
+        let btn_size = egui::vec2(target, target);
+        for (name, icon) in [
+            ("file", ICON_DESCRIPTION),
+            ("edit", ICON_EDIT_SQUARE),
+            ("play", ICON_PLAY_CIRCLE),
+        ] {
+            let r = menu_button(ui, name, icon, btn_size);
+            sizes.push((name, r.rect.size()));
+        }
+        let pinned = crate::widgets::flat::flat_button_custom(
+            ui,
+            ICON_DESCRIPTION
+                .rich_text()
+                .size(crate::theme::TRANSPORT_BTN_FONT),
+            btn_size,
+            None,
+            true,
+        );
+        sizes.push(("pinned", pinned.rect.size()));
+    });
+    output.drop_without_applying_deltas();
+    for (name, s) in &sizes {
+        assert!(
+            (s.x - target).abs() < 0.01 && (s.y - target).abs() < 0.01,
+            "{name} 图标按钮不是正方形: {s:?}（期望 {target}×{target}）"
+        );
+    }
+}
+
 /// 回归测试：双击 transport bar 真空白区域应发送最大化命令。
 #[test]
 fn double_click_blank_area_toggles_maximize() {
