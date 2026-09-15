@@ -137,7 +137,7 @@ impl AudioEngine {
     pub(crate) fn apply_chase_result(
         &mut self,
         states: &[Option<ChannelState>; 256],
-        plugin_params: &[(u16, u32, f32)],
+        plugin_params: &[(u8, u32, f32)],
     ) {
         let skip = self.chase_skip();
         for ch in 0..256u32 {
@@ -153,8 +153,8 @@ impl AudioEngine {
         }
         // 插件参数 chase：seek 后插件已 reset（值丢失），把目标位置的
         // lane 值写回对应乐器实例（归一化值，下一块 process 生效）。
-        for &(ich, param_id, value) in plugin_params {
-            let Some(dense) = self.instrument_dense(ich) else {
+        for &(ch, param_id, value) in plugin_params {
+            let Some(dense) = self.channel_plugin_dense(ch) else {
                 continue;
             };
             if let Some(Some(slot)) = self.instruments.get_mut(dense) {
@@ -272,14 +272,15 @@ impl AudioEngine {
             let cursor = notes.partition_point(|n| n.start_tick < tick);
             let mut to_restart: Vec<AudibleNote> = Vec::new();
             for n in &notes[..cursor] {
-                if n.end_tick > tick
-                    && self
+                if n.end_tick > tick {
+                    let ch = self
                         .model
                         .as_ref()
-                        .and_then(|m| m.track_instrument(n.track as usize))
-                        .is_some()
-                {
-                    to_restart.push(*n);
+                        .map(|m| m.track_channel(n.track as usize))
+                        .unwrap_or(0);
+                    if self.channel_plugin_dense(ch).is_some() {
+                        to_restart.push(*n);
+                    }
                 }
             }
             for n in to_restart {
@@ -301,11 +302,9 @@ impl AudioEngine {
         if self.skip_track.get(track).copied().unwrap_or(false) {
             return;
         }
-        if let Some(inst_ch) = self.model.as_ref().and_then(|m| m.track_instrument(track)) {
-            // 乐器轨：chase 重启的音符喂乐器实例（time 0 = 下一块开头）。
-            if let Some(dense) = self.instrument_dense(inst_ch)
-                && let Some(Some(slot)) = self.instruments.get_mut(dense)
-            {
+        if let Some(dense) = self.channel_plugin_dense(ch as u8) {
+            // 插件通道：chase 重启的音符喂乐器实例（time 0 = 下一块开头）。
+            if let Some(Some(slot)) = self.instruments.get_mut(dense) {
                 slot.events.push(PluginEvent::NoteOn {
                     time: 0,
                     channel: (ch & 0x0F) as u8,

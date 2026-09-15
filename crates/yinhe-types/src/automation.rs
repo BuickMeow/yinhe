@@ -148,13 +148,13 @@ pub enum AutomationTarget {
     /// `value` 直接装 bpm（f32）。`max_value` 仅作 fallback，
     /// panel 层会按实际事件动态计算最大值。
     Tempo,
-    /// 插件参数（乐器通道上的插件实例）。值域统一**归一化 0..1**：
+    /// 插件参数（该 MIDI 通道上挂载的插件乐器实例）。值域统一**归一化 0..1**：
     /// AM 事件的 `value` 存归一化值，引擎按插件格式换算成原生值
     /// （VST3 本身即归一化；CLAP 由处理器按参数范围换算）。
     /// `param_id` 在插件实例内唯一且稳定（VST3 ParamID / CLAP clap_id）。
     PluginParam {
-        /// 乐器通道（0 起，与 `TrackData::instrument_channel` 对齐）。
-        instrument_channel: u16,
+        /// MIDI 全局通道（0 起，`TrackData::global_channel()`）。
+        channel: u8,
         /// 插件参数 id。
         param_id: u32,
         /// 参数显示名（来自 param_list，仅用于显示）。

@@ -28,8 +28,8 @@ pub(crate) struct SortedCC {
 /// 插件参数自动化事件（值域归一化 0..1）。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PluginParamEvent {
-    /// 乐器通道（0 起）。
-    pub(crate) instrument_channel: u16,
+    /// MIDI 全局通道（0..256，与 `TrackData::global_channel()` 对齐）。
+    pub(crate) channel: u8,
     pub(crate) param_id: u32,
     /// 归一化值 0..1。
     pub(crate) value: f32,
@@ -130,11 +130,8 @@ pub(crate) struct PreparedModel {
 /// KB instead of a full deep clone of the model.
 pub(crate) struct AudioModel {
     /// `track_channels[i]` = global channel `(port<<4)|channel` for track `i`.
+    /// 轨道音符/CC 的去向由该通道是否挂了插件实例决定（挂 = 插件，未挂 = XSynth）。
     pub track_channels: Vec<u8>,
-    /// 每条音轨的路由：`Some(instrument_channel)` 表示该轨是**乐器轨**，音符/CC
-    /// 走乐器插件实例（按 instrument_channel 路由，独立于 MIDI 源通道）；
-    /// `None` 表示普通 MIDI 轨（走 xsynth）。与 `track_channels` 对齐。
-    pub track_instrument: Vec<Option<u16>>,
     /// Bank Select MSB declarations per track, for percussion-mode detection.
     /// `(tick, value)` pairs merged from standalone CC0 automation lanes and
     /// CC0 values folded into `PcEvent.bank_msb` (same-tick CC0+PC), sorted by
@@ -146,15 +143,6 @@ pub(crate) struct AudioModel {
 impl AudioModel {
     pub(crate) fn from_model(model: &YinModel) -> Self {
         let track_channels: Vec<u8> = model.tracks.iter().map(|t| t.global_channel()).collect();
-        let track_instrument: Vec<Option<u16>> = model
-            .tracks
-            .iter()
-            .map(|t| {
-                (t.kind == yinhe_core::TrackKind::Instrument)
-                    .then_some(t.instrument_channel)
-                    .flatten()
-            })
-            .collect();
         let track_banks: Vec<Vec<(u32, u8)>> = model
             .tracks
             .iter()
@@ -185,7 +173,6 @@ impl AudioModel {
             .collect();
         Self {
             track_channels,
-            track_instrument,
             track_banks,
         }
     }
@@ -193,11 +180,6 @@ impl AudioModel {
     /// Global channel for a track index, or 0 if out of range.
     pub(crate) fn track_channel(&self, track_idx: usize) -> u8 {
         self.track_channels.get(track_idx).copied().unwrap_or(0)
-    }
-
-    /// 音轨是否为乐器轨（走乐器插件实例）；返回其 instrument_channel。
-    pub(crate) fn track_instrument(&self, track_idx: usize) -> Option<u16> {
-        self.track_instrument.get(track_idx).copied().flatten()
     }
 }
 
@@ -613,19 +595,17 @@ pub(crate) fn emit_automation_event(
         // 插件参数：占位 event 只保证排序/去重键完整；dispatch 按
         // `plugin_param` 分支走 `PluginEvent::ParamValue`。
         AutomationTarget::PluginParam {
-            instrument_channel,
-            param_id,
-            ..
+            channel, param_id, ..
         } => {
             out.push(SortedCC {
                 tick,
-                // 排序键用乐器通道（与 MIDI 通道无交集语义，只求稳定顺序）。
-                channel: u32::from(*instrument_channel),
+                // 排序键用 MIDI 通道（占位 event 无 xsynth 语义，只求稳定顺序）。
+                channel: u32::from(*channel),
                 track,
                 lane,
                 event: ChannelAudioEvent::Control(ControlEvent::Raw(0, 0)),
                 plugin_param: Some(PluginParamEvent {
-                    instrument_channel: *instrument_channel,
+                    channel: *channel,
                     param_id: *param_id,
                     value: value.clamp(0.0, 1.0),
                 }),
@@ -764,7 +744,7 @@ mod tests {
     fn plugin_param_lane_flattens_to_plugin_param_event() {
         let model = model_with_lanes(vec![AutomationLane {
             target: AutomationTarget::PluginParam {
-                instrument_channel: 2,
+                channel: 2,
                 param_id: 42,
                 name: "Cutoff".into(),
             },
@@ -786,7 +766,7 @@ mod tests {
         assert_eq!(events.len(), 2);
         for e in events.iter() {
             let pp = e.plugin_param.expect("插件参数事件必须带 plugin_param");
-            assert_eq!(pp.instrument_channel, 2);
+            assert_eq!(pp.channel, 2);
             assert_eq!(pp.param_id, 42);
             // 占位 event 恒为 Raw(0,0)：dispatch 按 plugin_param 分支优先处理。
             assert!(matches!(

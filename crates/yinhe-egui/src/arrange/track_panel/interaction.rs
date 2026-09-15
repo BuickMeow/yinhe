@@ -392,22 +392,21 @@ pub fn handle_interactions(
     ui.data_mut(|d| d.insert_temp(drag_id, drag.clone()));
 }
 
-/// 该轨的乐器设备通道：乐器轨用自身；MIDI 轨用同 MIDI 通道上的乐器轨。
+/// 该轨 MIDI 通道上挂载的插件乐器通道（= global channel，0..256）；
+/// 未挂插件（默认 XSynth）返回 None。
 ///
 /// 「添加自动化」按设备分流用：设备是插件时参数多（弹窗口），
 /// 设备是 XSynth 时参数即那组特调 CC/PB/RPN（直接列菜单）。
-pub(crate) fn instrument_channel_of(
+pub(crate) fn plugin_instrument_of(
     tracks: &[Arc<yinhe_core::TrackData>],
+    mixer: &yinhe_mixer::MixerParams,
     idx: usize,
-) -> Option<u16> {
+) -> Option<u8> {
     let t = tracks.get(idx)?;
-    t.instrument_channel.or_else(|| {
-        tracks
-            .iter()
-            .find(|o| {
-                o.kind == yinhe_core::TrackKind::Instrument
-                    && o.global_channel() == t.global_channel()
-            })
-            .and_then(|o| o.instrument_channel)
-    })
+    let ch = t.global_channel();
+    mixer
+        .instruments
+        .get(ch as usize)
+        .and_then(|slot| slot.as_ref())
+        .map(|_| ch)
 }

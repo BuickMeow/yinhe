@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use eframe::egui;
-use egui_material_icons::icons::{ICON_GRAPHIC_EQ, ICON_LIBRARY_MUSIC, ICON_PIANO};
+use egui_material_icons::icons::{ICON_GRAPHIC_EQ, ICON_PIANO};
 use rust_i18n::t;
 
 use yinhe_editor_core::NewTrackSpec;
@@ -24,7 +24,6 @@ const MAX_COUNT: usize = 64;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum KindChoice {
     Midi,
-    Instrument,
     Audio,
 }
 
@@ -46,8 +45,6 @@ pub(crate) struct NewTrackDialogState {
     manual_port: u8,
     /// 手动起点 channel（0 起，UI 显示 1..16）。
     manual_channel: u8,
-    /// 手动起始乐器通道（UI 显示 1 起，这里存的也是显示值）。
-    manual_instrument: usize,
     /// 手动起始音频通道（UI 显示 1 起，这里存的也是显示值）。
     manual_audio: usize,
 }
@@ -61,7 +58,6 @@ impl Default for NewTrackDialogState {
             mode: AssignMode::Auto,
             manual_port: 0,
             manual_channel: 0,
-            manual_instrument: 1,
             manual_audio: 1,
         }
     }
@@ -167,7 +163,6 @@ fn plan(state: &NewTrackDialogState, tracks: &[Arc<yinhe_core::TrackData>]) -> P
                     kind: yinhe_core::TrackKind::Midi,
                     port,
                     channel,
-                    instrument_channel: None,
                     audio_channel: None,
                 })
                 .collect::<Vec<_>>();
@@ -179,23 +174,6 @@ fn plan(state: &NewTrackDialogState, tracks: &[Arc<yinhe_core::TrackData>]) -> P
             };
             Plan { specs, error }
         }
-        KindChoice::Instrument => {
-            let start = match state.mode {
-                AssignMode::Auto => channel_alloc::auto_instrument_channel_start(tracks),
-                AssignMode::Manual => state.manual_instrument.saturating_sub(1) as u16,
-            };
-            let specs = (0..state.count)
-                .map(|i| NewTrackSpec {
-                    kind: yinhe_core::TrackKind::Instrument,
-                    port: 0,
-                    channel: 0,
-                    // 大起点 + 大数量时饱和，不回绕。
-                    instrument_channel: Some(start.saturating_add(i as u16)),
-                    audio_channel: None,
-                })
-                .collect::<Vec<_>>();
-            Plan { specs, error: None }
-        }
         KindChoice::Audio => {
             let start = match state.mode {
                 AssignMode::Auto => channel_alloc::auto_audio_channel_start(tracks),
@@ -206,7 +184,6 @@ fn plan(state: &NewTrackDialogState, tracks: &[Arc<yinhe_core::TrackData>]) -> P
                     kind: yinhe_core::TrackKind::Audio,
                     port: 0,
                     channel: 0,
-                    instrument_channel: None,
                     audio_channel: Some(start.saturating_add(i as u16)),
                 })
                 .collect::<Vec<_>>();
@@ -284,15 +261,6 @@ pub(crate) fn show_viewport(
                                             state.kind == KindChoice::Midi,
                                         ) {
                                             state.kind = KindChoice::Midi;
-                                        }
-                                        if kind_card(
-                                            ui,
-                                            ICON_LIBRARY_MUSIC.codepoint,
-                                            ICON_LIBRARY_MUSIC.font_family(),
-                                            t!("dialog.new_track.kind.instrument").as_ref(),
-                                            state.kind == KindChoice::Instrument,
-                                        ) {
-                                            state.kind = KindChoice::Instrument;
                                         }
                                         if kind_card(
                                             ui,
@@ -402,22 +370,6 @@ pub(crate) fn show_viewport(
                                                                     }
                                                                 }
                                                             },
-                                                        );
-                                                    },
-                                                );
-                                            }
-                                            KindChoice::Instrument => {
-                                                crate::dialogs::settings::setting_row(
-                                                    ui,
-                                                    t!("dialog.new_track.instrument_start")
-                                                        .as_ref(),
-                                                    "",
-                                                    |ui| {
-                                                        ui.add(
-                                                            crate::widgets::numeric_input::decimal_drag_value(
-                                                                &mut state.manual_instrument,
-                                                            )
-                                                            .range(1..=u16::MAX as usize + 1),
                                                         );
                                                     },
                                                 );

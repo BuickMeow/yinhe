@@ -15,7 +15,7 @@ mod hover;
 mod interaction;
 mod render;
 mod types;
-pub(crate) use interaction::instrument_channel_of;
+pub(crate) use interaction::plugin_instrument_of;
 pub(crate) use types::TrackAction;
 
 /// Render the track list using a painter (unified component for both
@@ -349,17 +349,13 @@ pub(crate) fn show(
                 "Master".to_string()
             } else {
                 match tracks.get(idx) {
-                    // 乐器轨显示乐器通道（与 MIDI 通道是两套独立命名空间）。
-                    Some(t) if t.kind == yinhe_core::TrackKind::Instrument => t
-                        .instrument_channel
-                        .map(crate::mix::instrument_label)
-                        .unwrap_or_else(|| "Inst--".to_string()),
                     // 音频轨显示音频通道。
                     Some(t) if t.kind == yinhe_core::TrackKind::Audio => t
                         .audio_channel
                         .map(crate::mix::audio_label)
                         .unwrap_or_else(|| "Audio--".to_string()),
-                    // MIDI 轨：port 字母（A..P）+ 通道号。
+                    // MIDI 轨：port 字母（A..P）+ 通道号。乐器（XSynth/插件）
+                    // 挂在该通道上，MIX/dock 里显示。
                     _ => format!(
                         "MIDI-{}{:02}",
                         (b'A' + ti.port.min(15)) as char,

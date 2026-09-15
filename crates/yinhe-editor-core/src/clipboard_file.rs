@@ -261,12 +261,12 @@ fn write_target(w: &mut impl Write, target: &AutomationTarget) -> io::Result<()>
             w.write_all(&[4])?;
         }
         AutomationTarget::PluginParam {
-            instrument_channel,
+            channel,
             param_id,
             name,
         } => {
             w.write_all(&[5])?;
-            w.write_all(&instrument_channel.to_le_bytes())?;
+            w.write_all(&[*channel])?;
             w.write_all(&param_id.to_le_bytes())?;
             let bytes = name.as_bytes();
             w.write_all(&(bytes.len() as u32).to_le_bytes())?;
@@ -301,11 +301,12 @@ fn read_target(r: &mut impl Read) -> io::Result<AutomationTarget> {
         },
         4 => AutomationTarget::Tempo,
         5 => {
-            let instrument_channel = read_u16(r)?;
+            let mut ch = [0u8; 1];
+            r.read_exact(&mut ch)?;
             let param_id = read_u32(r)?;
             let name = read_string(r)?;
             AutomationTarget::PluginParam {
-                instrument_channel,
+                channel: ch[0],
                 param_id,
                 name,
             }

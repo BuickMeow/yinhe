@@ -128,7 +128,6 @@ impl App {
                     kind: TrackKind::Audio,
                     port: 0,
                     channel: 0,
-                    instrument_channel: None,
                     audio_channel: Some(start),
                 }];
                 if let Some(action) = self.workspace.documents[idx].add_tracks_batch(&specs) {

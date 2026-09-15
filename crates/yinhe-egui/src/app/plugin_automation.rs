@@ -202,12 +202,12 @@ impl App {
     pub(crate) fn toggle_plugin_param_lane(
         &mut self,
         idx: usize,
-        instrument_channel: u16,
+        channel: u8,
         param_id: u32,
         name: &str,
     ) {
         let target = AutomationTarget::PluginParam {
-            instrument_channel,
+            channel,
             param_id,
             name: name.to_string(),
         };
@@ -217,7 +217,7 @@ impl App {
                 .model
                 .tracks
                 .iter()
-                .position(|t| t.instrument_channel == Some(instrument_channel))
+                .position(|t| t.global_channel() == channel)
         }) else {
             return;
         };
@@ -256,7 +256,7 @@ impl App {
     fn plugin_param_lane(
         &self,
         idx: usize,
-        ich: u16,
+        channel: u8,
         param_id: u32,
     ) -> Option<(u16, usize, AutomationTarget)> {
         let doc = &self.workspace.documents[idx];
@@ -265,16 +265,16 @@ impl App {
             .model
             .tracks
             .iter()
-            .position(|t| t.instrument_channel == Some(ich))?;
+            .position(|t| t.global_channel() == channel)?;
         let track = doc.data.model.tracks.get(track_idx)?;
         let lane_idx = track.automation_lanes.iter().position(|l| {
             matches!(
                 &l.target,
                 AutomationTarget::PluginParam {
-                    instrument_channel,
+                    channel: c,
                     param_id: pid,
                     ..
-                } if *instrument_channel == ich && *pid == param_id
+                } if *c == channel && *pid == param_id
             )
         })?;
         Some((

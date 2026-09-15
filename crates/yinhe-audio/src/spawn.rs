@@ -16,10 +16,8 @@ use yinhe_types::KEY_COUNT;
 /// insert 链的目标位置。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum InsertTarget {
-    /// 源 MIDI 通道（A01..P16）。
+    /// 源 MIDI 通道（A01..P16）。乐器输出也走该通道的 strip/insert 链。
     Channel(u8),
-    /// 乐器通道（0 起，与 `TrackData::instrument_channel` 对齐）。
-    Instrument(u16),
     /// 音频通道（0 起，与 `TrackData::audio_channel` 对齐）。
     Audio(u16),
     /// 总线（bus / return）。
@@ -137,20 +135,20 @@ pub enum AudioCommand {
     PreviewStopKey {
         key: u8,
     },
-    /// 乐器插件预览：把音符直接送进乐器通道的插件实例（停止状态下空闲渲染出声）。
-    /// 与 `PreviewNotes`（xsynth 预览）并列：乐器轨预览走这条，音色与播放一致。
+    /// 乐器插件预览：把音符直接送进 MIDI 通道上挂载的插件实例（停止状态下空闲渲染出声）。
+    /// 与 `PreviewNotes`（xsynth 预览）并列：挂了插件的通道预览走这条，音色与播放一致。
     /// 组替换语义与 `PreviewNotes` 一致（替换旧组待触发音符；已响的保留）。
     PreviewInstrumentNotes {
-        /// 乐器通道（0 起，与 `TrackData::instrument_channel` 对齐）。
-        channel: u16,
+        /// MIDI 全局通道（0..256，与 `TrackData::global_channel()` 对齐）。
+        channel: u8,
         notes: Vec<InstrumentPreviewNote>,
         /// 替换模式：先停掉该通道旧组全部预览音再触发新组（PR 拖动不叠加）。
         exclusive: bool,
     },
-    /// 停止乐器插件预览。`channel` 限定乐器通道（None = 全部）；
+    /// 停止乐器插件预览。`channel` 限定 MIDI 通道（None = 全部）；
     /// `key` 限定单个键（None = 全部，MIDI 直通单键停止用）。
     PreviewInstrumentStop {
-        channel: Option<u16>,
+        channel: Option<u8>,
         key: Option<u8>,
     },
     /// 全量同步混音台参数（引擎 spawn / 工程加载后由 UI 推一次；Box 避免命令枚举过大）。
@@ -160,11 +158,6 @@ pub enum AudioCommand {
     /// 更新某源通道（0..=255，A01..P16）的 strip 参数（推子拖动高频路径，幂等）。
     SetChannelStrip {
         channel: u8,
-        params: StripParams,
-    },
-    /// 更新某乐器通道的 strip 参数（推子拖动高频路径，幂等）。
-    SetInstrumentStrip {
-        channel: u16,
         params: StripParams,
     },
     /// 更新某音频通道的 strip 参数（推子拖动高频路径，幂等）。
@@ -204,11 +197,12 @@ pub enum AudioCommand {
         buses: Box<Vec<StripParams>>,
         sends: Box<Vec<Vec<SendParams>>>,
     },
-    /// 安装/替换/移除某**乐器通道**（0 起，与 `TrackData::instrument_channel` 对齐）
+    /// 安装/替换/移除某**MIDI 通道**（0..256，与 `TrackData::global_channel()` 对齐）
     /// 上的乐器插件实例（CLAP/VST3 等，抽象为 trait）。`Some(processor)` = 安装/替换；
-    /// `None` = 移除。被替换/移除的旧处理器经乐器 return 通道送回 UI 线程 deactivate。
+    /// `None` = 移除（回到默认 XSynth）。被替换/移除的旧处理器经乐器 return 通道
+    /// 送回 UI 线程 deactivate。
     SetInstrument {
-        channel: u16,
+        channel: u8,
         /// 处理器较大（含渲染缓冲），用 Box 避免枚举体积膨胀。
         processor: Option<Box<dyn InstrumentProcessor>>,
     },
@@ -291,7 +285,7 @@ pub struct AudioHandle {
     /// 渲染线程退回的 insert 处理器（插件 deactivate 必须在 UI/管理线程做）。
     insert_return_rx: crossbeam_channel::Receiver<Vec<Box<dyn InsertProcessor>>>,
     /// 渲染线程退回的乐器处理器（deactivate 同样必须在 UI/管理线程做）。
-    instrument_return_rx: crossbeam_channel::Receiver<(u16, Box<dyn InstrumentProcessor>)>,
+    instrument_return_rx: crossbeam_channel::Receiver<(u8, Box<dyn InstrumentProcessor>)>,
 }
 
 impl AudioHandle {
@@ -412,7 +406,7 @@ impl AudioHandle {
     }
 
     /// 取回渲染线程退回的乐器处理器（每帧轮询；deactivate 在 UI 线程做）。
-    pub fn drain_instrument_returns(&self) -> Vec<(u16, Box<dyn InstrumentProcessor>)> {
+    pub fn drain_instrument_returns(&self) -> Vec<(u8, Box<dyn InstrumentProcessor>)> {
         let mut out = Vec::new();
         while let Ok(p) = self.instrument_return_rx.try_recv() {
             out.push(p);
@@ -431,7 +425,7 @@ impl AudioHandle {
     /// 克隆乐器退回通道接收端（同 `clone_insert_return_rx` 的用途）。
     pub fn clone_instrument_return_rx(
         &self,
-    ) -> crossbeam_channel::Receiver<(u16, Box<dyn InstrumentProcessor>)> {
+    ) -> crossbeam_channel::Receiver<(u8, Box<dyn InstrumentProcessor>)> {
         self.instrument_return_rx.clone()
     }
 }
@@ -546,10 +540,10 @@ pub(crate) enum WorkerResult {
     },
     /// Result of `PrepareChase` — 256-channel state snapshot.
     /// `Some(state)` = 该通道在目标位置有生效事件（无事件通道不触碰）。
-    /// `plugin_params`：插件参数 chase 值（乐器通道, param_id, 归一化值）。
+    /// `plugin_params`：插件参数 chase 值（MIDI 通道, param_id, 归一化值）。
     ChaseResult {
         states: Box<[Option<ChannelState>; 256]>,
-        plugin_params: Vec<(u16, u32, f32)>,
+        plugin_params: Vec<(u8, u32, f32)>,
         generation: u64,
     },
     LoadedSoundFont {
@@ -722,7 +716,7 @@ pub(crate) fn spawn_worker(
 }
 
 /// `compute_chase_states` 的结果：(256 通道状态, 插件参数 chase 值列表)。
-type ChaseOutcome = (Box<[Option<ChannelState>; 256]>, Vec<(u16, u32, f32)>);
+type ChaseOutcome = (Box<[Option<ChannelState>; 256]>, Vec<(u8, u32, f32)>);
 
 /// 在 worker 线程上**查询式**构建 256 通道状态快照：不再从曲首逐条累计
 /// cc_events，而是直接查询模型自动化 lane——每个 lane 二分定位目标位置的
@@ -747,7 +741,7 @@ fn compute_chase_states(
     // 每通道收集目标位置生效事件（tick 排序后顺序 apply，多 track 同 channel 自动合并）。
     let mut events: [Vec<SortedCC>; 256] = std::array::from_fn(|_| Vec::new());
     // 插件参数 chase：目标位置生效的 (乐器通道, param_id, 归一化值)。
-    let mut plugin_params: Vec<(u16, u32, f32)> = Vec::new();
+    let mut plugin_params: Vec<(u8, u32, f32)> = Vec::new();
 
     for (track_idx, track) in model.tracks.iter().enumerate() {
         if skip_mask.get(track_idx).copied().unwrap_or(false) {
@@ -775,13 +769,11 @@ fn compute_chase_states(
             }
             // 插件参数：不进 MIDI 通道状态（占位事件会污染 CC0），单独收集。
             if let yinhe_types::AutomationTarget::PluginParam {
-                instrument_channel,
-                param_id,
-                ..
+                channel, param_id, ..
             } = &lane.target
             {
                 if let Some((value, _)) = lane.value_at(target_tick) {
-                    plugin_params.push((*instrument_channel, *param_id, value));
+                    plugin_params.push((*channel, *param_id, value));
                 }
                 continue;
             }
@@ -1048,7 +1040,7 @@ pub fn spawn_cpal_audio(
     let (insert_return_tx, insert_return_rx) = unbounded::<Vec<Box<dyn InsertProcessor>>>();
     // 渲染线程 → UI 的乐器处理器退回通道（替换/移除/拆除时回收 deactivate）。
     let (instrument_return_tx, instrument_return_rx) =
-        unbounded::<(u16, Box<dyn InstrumentProcessor>)>();
+        unbounded::<(u8, Box<dyn InstrumentProcessor>)>();
 
     let (worker_tx, prepared_rx) = spawn_worker(sample_rate)
         .map_err(|e| format!("Failed to spawn audio worker thread: {e}"))?;

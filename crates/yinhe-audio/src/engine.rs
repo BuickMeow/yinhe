@@ -35,7 +35,7 @@ pub(crate) struct AudioEngine {
     pub(crate) insert_returns: Vec<Box<dyn InsertProcessor>>,
     /// 被替换/移除的乐器处理器：同样不能在渲染线程 deactivate，攒在
     /// 这里由 renderer 送回 UI 线程回收（与 insert 同通道回流）。
-    pub(crate) instrument_returns: Vec<(u16, Box<dyn InstrumentProcessor>)>,
+    pub(crate) instrument_returns: Vec<(u8, Box<dyn InstrumentProcessor>)>,
     /// 乐器实例，长度 = `compacted_channels`，只有乐器 dense 槽位非空。
     /// 索引 = 全局 dense（= midi_compacted + 乐器通道排序位置）。
     pub(crate) instruments: Vec<Option<crate::instrument::InstrumentSource>>,
@@ -314,9 +314,6 @@ impl AudioEngine {
             AudioCommand::SetMixerParams { params } => self.set_mixer_params(*params),
             AudioCommand::SetChannelStrip { channel, params } => {
                 self.set_channel_strip(channel, params);
-            }
-            AudioCommand::SetInstrumentStrip { channel, params } => {
-                self.set_instrument_strip(channel, params);
             }
             AudioCommand::SetAudioStrip { channel, params } => {
                 self.set_audio_strip(channel, params);

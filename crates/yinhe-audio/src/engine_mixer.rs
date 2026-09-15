@@ -14,10 +14,8 @@ impl AudioEngine {
     /// 只推 strip/master 参数；insert 处理器走 Insert* 命令单独进。
     pub(crate) fn set_mixer_params(&mut self, mut params: MixerParams) {
         // 防御：通道表补齐到当前布局需要的长度（只增不减，保留下线通道设置）。
-        params.ensure_channel_tables(
-            self.channel_layout.instrument_channels().len(),
-            self.channel_layout.audio_channels().len(),
-        );
+        params.ensure_channel_tables(self.channel_layout.audio_channels().len());
+        params.ensure_len();
         self.mixer_params = params;
         let strips = self.dense_strip_params();
         for (dense, p) in strips.into_iter().enumerate() {
@@ -38,7 +36,6 @@ impl AudioEngine {
     /// 未激活通道的 send 暂存于持久化层，引擎重建/激活后由全量同步补上。
     fn sync_sends_to_graph(&mut self) {
         let sends = self.mixer_params.sends.clone();
-        let instrument_sends = self.mixer_params.instrument_sends.clone();
         let audio_sends = self.mixer_params.audio_sends.clone();
         let count = self.channel_set.channel_count();
         for dense in 0..count {
@@ -46,7 +43,6 @@ impl AudioEngine {
                 .dense_to_namespace(dense)
                 .and_then(|ns| match ns {
                     ChannelNamespace::Midi(src) => sends.get(src),
-                    ChannelNamespace::Instrument(ich) => instrument_sends.get(ich),
                     ChannelNamespace::Audio(ach) => audio_sends.get(ach),
                 })
                 .cloned()
@@ -58,18 +54,12 @@ impl AudioEngine {
     /// dense 索引 → 所属通道命名空间（仅结构性操作时调用，O(1)）。
     fn dense_to_namespace(&self, dense: usize) -> Option<ChannelNamespace> {
         let d = dense as u32;
-        if d >= self.channel_layout.instrument_compacted() {
-            let idx = (d - self.channel_layout.instrument_compacted()) as usize;
+        if d >= self.channel_layout.midi_compacted() {
+            let idx = (d - self.channel_layout.midi_compacted()) as usize;
             self.channel_layout
                 .audio_channels()
                 .get(idx)
                 .map(|&ach| ChannelNamespace::Audio(ach as usize))
-        } else if d >= self.channel_layout.midi_compacted() {
-            let idx = (d - self.channel_layout.midi_compacted()) as usize;
-            self.channel_layout
-                .instrument_channels()
-                .get(idx)
-                .map(|&ich| ChannelNamespace::Instrument(ich as usize))
         } else {
             self.channel_layout
                 .channel_map()
@@ -117,21 +107,6 @@ impl AudioEngine {
         self.mixer.set_master(params);
     }
 
-    /// 更新某乐器通道的 strip（推子/声像/M/S 拖动的高频路径，幂等）。
-    pub(crate) fn set_instrument_strip(&mut self, channel: u16, params: StripParams) {
-        if let Some(slot) = self
-            .mixer_params
-            .instrument_strips
-            .get_mut(channel as usize)
-        {
-            *slot = params;
-        }
-        let dense = self.channel_layout.instrument_dense_for(channel);
-        if dense != u32::MAX {
-            self.mixer.set_strip(dense as usize, params);
-        }
-    }
-
     /// 更新某音频通道的 strip（推子/声像/M/S 拖动的高频路径，幂等）。
     pub(crate) fn set_audio_strip(&mut self, channel: u16, params: StripParams) {
         if let Some(slot) = self.mixer_params.audio_channels.get_mut(channel as usize) {
@@ -144,14 +119,11 @@ impl AudioEngine {
     }
 
     /// 各 dense 通道当前的 strip 参数（resize 重建 strip 状态用）。
-    /// MIDI 源通道按 channel_map 反查，乐器/音频通道按 dense 段位置索引。
+    /// MIDI 源通道按 channel_map 反查，音频通道按 dense 段位置索引。
     pub(crate) fn dense_strip_params(&self) -> Vec<StripParams> {
         (0..self.channel_set.channel_count())
             .map(|dense| match self.dense_to_namespace(dense) {
                 Some(ChannelNamespace::Midi(src)) => self.mixer_params.strip(src as u8),
-                Some(ChannelNamespace::Instrument(ich)) => {
-                    self.mixer_params.instrument_strip(ich as u16)
-                }
                 Some(ChannelNamespace::Audio(ach)) => self.mixer_params.audio_strip(ach as u16),
                 None => StripParams::default(),
             })
@@ -176,14 +148,6 @@ impl AudioEngine {
                 // 通道未激活（模型无音轨用此通道）：处理器无处安放，直接退回。
                 None => self.insert_returns.push(processor),
             },
-            InsertTarget::Instrument(ch) => {
-                let dense = self.channel_layout.instrument_dense_for(ch);
-                if dense != u32::MAX {
-                    self.mixer.insert_insert(dense as usize, slot, processor);
-                } else {
-                    self.insert_returns.push(processor);
-                }
-            }
             InsertTarget::Audio(ch) => {
                 let dense = self.channel_layout.audio_dense_for(ch);
                 if dense != u32::MAX {
@@ -202,12 +166,6 @@ impl AudioEngine {
             InsertTarget::Channel(ch) => self
                 .dense_of(ch)
                 .and_then(|dense| self.mixer.remove_insert(dense, slot)),
-            InsertTarget::Instrument(ch) => {
-                let dense = self.channel_layout.instrument_dense_for(ch);
-                (dense != u32::MAX)
-                    .then(|| self.mixer.remove_insert(dense as usize, slot))
-                    .flatten()
-            }
             InsertTarget::Audio(ch) => {
                 let dense = self.channel_layout.audio_dense_for(ch);
                 (dense != u32::MAX)
@@ -232,12 +190,6 @@ impl AudioEngine {
             InsertTarget::Channel(ch) => self
                 .dense_of(ch)
                 .and_then(|dense| self.mixer.replace_insert(dense, slot, processor)),
-            InsertTarget::Instrument(ch) => {
-                let dense = self.channel_layout.instrument_dense_for(ch);
-                (dense != u32::MAX)
-                    .then(|| self.mixer.replace_insert(dense as usize, slot, processor))
-                    .flatten()
-            }
             InsertTarget::Audio(ch) => {
                 let dense = self.channel_layout.audio_dense_for(ch);
                 (dense != u32::MAX)
@@ -257,17 +209,18 @@ impl AudioEngine {
         std::mem::take(&mut self.insert_returns)
     }
 
-    /// 安装/替换/移除某乐器通道上的乐器插件实例（CLAP/VST3 等，抽象为 trait）。
+    /// 安装/替换/移除某 MIDI 通道上的乐器插件实例（CLAP/VST3 等，抽象为 trait）。
+    /// 移除（`processor = None`）后该通道回到默认 XSynth。
     ///
     /// 由 `AudioCommand::SetInstrument` 触发，渲染线程调用。被替换/移除的旧
-    /// 处理器（以及无乐器轨却收到安装命令的多余处理器）攒进 `instrument_returns`
+    /// 处理器（以及通道未激活却收到安装命令的多余处理器）攒进 `instrument_returns`
     /// 送回 UI 线程 deactivate——渲染线程不能 deactivate 插件。
     pub(crate) fn set_instrument(
         &mut self,
-        channel: u16,
+        channel: u8,
         processor: Option<Box<dyn InstrumentProcessor>>,
     ) {
-        let dense = self.channel_layout.instrument_dense_for(channel);
+        let dense = self.channel_layout.dense_for(channel as usize);
         let Some(dense) = (dense != u32::MAX).then_some(dense as usize) else {
             if let Some(p) = processor {
                 self.instrument_returns.push((channel, p));
@@ -294,7 +247,7 @@ impl AudioEngine {
     }
 
     /// 取出待回收的乐器处理器（renderer 每轮命令处理后调用，送回 UI 线程）。
-    pub(crate) fn drain_instrument_returns(&mut self) -> Vec<(u16, Box<dyn InstrumentProcessor>)> {
+    pub(crate) fn drain_instrument_returns(&mut self) -> Vec<(u8, Box<dyn InstrumentProcessor>)> {
         std::mem::take(&mut self.instrument_returns)
     }
 

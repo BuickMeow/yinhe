@@ -526,7 +526,7 @@ impl App {
         };
         let device_instrument = {
             let doc = &self.workspace.documents[idx];
-            crate::arrange::instrument_channel_of(&doc.data.model.tracks, track_idx)
+            crate::arrange::plugin_instrument_of(&doc.data.model.tracks, &doc.mixer, track_idx)
         };
         let (channel_label, device_name, entries, show_custom_cc) = {
             let doc = &self.workspace.documents[idx];
@@ -556,10 +556,10 @@ impl App {
                                 matches!(
                                     t,
                                     yinhe_types::AutomationTarget::PluginParam {
-                                        instrument_channel,
+                                        channel,
                                         param_id,
                                         ..
-                                    } if *instrument_channel == ich && *param_id == p.id
+                                    } if *channel == ich && *param_id == p.id
                                 )
                             }),
                             label: if p.module.is_empty() {
@@ -568,13 +568,13 @@ impl App {
                                 format!("{}/{}", p.module, p.name)
                             },
                             target: yinhe_types::AutomationTarget::PluginParam {
-                                instrument_channel: ich,
+                                channel: ich,
                                 param_id: p.id,
                                 name: p.name,
                             },
                         })
                         .collect();
-                    (crate::mix::instrument_label(ich), name, entries, false)
+                    (crate::mix::channel_label(ich), name, entries, false)
                 }
                 None => {
                     // XSynth 设备：内置参数（跳过 Tempo，那是工程级）。

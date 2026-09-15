@@ -49,9 +49,6 @@ pub struct TrackMap {
     /// 音轨种类（旧存档无此字段，默认 Midi）。
     #[serde(default)]
     pub kind: yinhe_core::TrackKind,
-    /// 乐器通道号（仅乐器轨有意义）。
-    #[serde(default)]
-    pub instrument_channel: Option<u16>,
     /// 音频通道号（仅音频轨有意义）。
     #[serde(default)]
     pub audio_channel: Option<u16>,
@@ -117,7 +114,6 @@ impl MappingFile {
                 muted: t.muted,
                 soloed: t.soloed,
                 kind: t.kind,
-                instrument_channel: t.instrument_channel,
                 audio_channel: t.audio_channel,
                 audio_clips: t.audio_clips.clone(),
             });

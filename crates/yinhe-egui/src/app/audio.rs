@@ -604,8 +604,9 @@ impl App {
         let doc = &self.workspace.documents[idx];
         let model = &doc.data.model;
         let mut notes: Vec<yinhe_audio::PreviewNoteParams> = Vec::new();
-        // 乐器轨且有可用插件实例 → 插件预览（音色与播放一致）；否则 xsynth 预览。
-        let mut plugin_notes: Vec<(u16, Vec<yinhe_audio::InstrumentPreviewNote>)> = Vec::new();
+        // 该 MIDI 通道挂载了可用插件实例 → 插件预览（音色与播放一致）；
+        // 否则 XSynth 预览。
+        let mut plugin_notes: Vec<(u8, Vec<yinhe_audio::InstrumentPreviewNote>)> = Vec::new();
         let rack = self.instrument_racks.get(idx);
         let mut stop = false;
         for req in reqs {
@@ -617,11 +618,10 @@ impl App {
                     let velocity = p
                         .velocity
                         .unwrap_or_else(|| doc.edit.default_velocity(p.track));
-                    let plugin_channel = (track.kind == yinhe_core::TrackKind::Instrument)
-                        .then_some(track.instrument_channel)
-                        .flatten()
-                        .filter(|&ich| rack.is_some_and(|r| r.has_instance(ich)));
-                    if let Some(ich) = plugin_channel {
+                    let plugin_channel = rack
+                        .is_some_and(|r| r.has_instance(track.global_channel()))
+                        .then_some(track.global_channel());
+                    if let Some(ch) = plugin_channel {
                         let note = yinhe_audio::InstrumentPreviewNote {
                             midi_channel: track.channel,
                             key: p.key,
@@ -629,9 +629,9 @@ impl App {
                             target_tick: p.target_tick,
                             duration_ticks: p.duration_ticks,
                         };
-                        match plugin_notes.iter_mut().find(|(c, _)| *c == ich) {
+                        match plugin_notes.iter_mut().find(|(c, _)| *c == ch) {
                             Some((_, list)) => list.push(note),
-                            None => plugin_notes.push((ich, vec![note])),
+                            None => plugin_notes.push((ch, vec![note])),
                         }
                     } else {
                         notes.push(yinhe_audio::PreviewNoteParams {
@@ -696,21 +696,19 @@ impl App {
         else {
             return;
         };
-        if track.kind != yinhe_core::TrackKind::Instrument {
+        if track.kind == yinhe_core::TrackKind::Audio {
             return;
         }
-        let Some(ich) = track.instrument_channel else {
-            return;
-        };
+        let ch = track.global_channel();
         if self
             .instrument_racks
             .get(idx)
-            .is_some_and(|r| r.has_instance(ich))
+            .is_some_and(|r| r.has_instance(ch))
         {
             audio
                 .handle
                 .send(yinhe_audio::AudioCommand::PreviewInstrumentStop {
-                    channel: Some(ich),
+                    channel: Some(ch),
                     key: Some(key),
                 });
         }

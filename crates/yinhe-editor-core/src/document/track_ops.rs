@@ -9,15 +9,12 @@ use super::Document;
 /// 新建音轨的规格（新建音轨对话框 → Document::add_tracks_batch）。
 #[derive(Clone, Copy, Debug)]
 pub struct NewTrackSpec {
-    /// 音轨种类（MIDI / 乐器 / 音频）。
+    /// 音轨种类（MIDI / 音频）。
     pub kind: yinhe_core::TrackKind,
     /// MIDI port（0 起，UI 显示 A..P）。仅 MIDI 轨有意义。
     pub port: u8,
     /// MIDI channel（0 起，UI 显示 1..16）。仅 MIDI 轨有意义。
     pub channel: u8,
-    /// 乐器通道（0 起，UI 显示 1 起）。仅乐器轨有值；
-    /// 多条乐器轨同号 = 共享同一个 CLAP 插件实例。
-    pub instrument_channel: Option<u16>,
     /// 音频通道（0 起，UI 显示 1 起）。仅音频轨有值；
     /// 多条音频轨同号 = 共享同一条混音 strip/insert 链。
     pub audio_channel: Option<u16>,
@@ -156,7 +153,6 @@ impl Document {
         for (num, spec) in (next_num..).zip(specs.iter()) {
             let mut new_track = yinhe_core::TrackData::new(spec.port, spec.channel);
             new_track.kind = spec.kind;
-            new_track.instrument_channel = spec.instrument_channel;
             new_track.audio_channel = spec.audio_channel;
             new_track.name = format!("Track {}", num);
             model.tracks.push(Arc::new(new_track));
@@ -442,8 +438,8 @@ mod tests {
         assert_eq!(names.len(), model.tracks.len(), "新音轨名与既有音轨重名");
     }
 
-    /// 批量创建：追加到末尾、按 spec 设置 kind/通道、命名从最大编号 + 1 递增
-    /// （MIDI 轨与乐器轨统一编号），新建的整批被选中。
+    /// 批量创建：追加到末尾、按 spec 设置 kind/通道、命名从最大编号 + 1 递增，
+    /// 新建的整批被选中。
     #[test]
     fn add_tracks_batch_appends_with_specs() {
         let mut doc = Document::empty(); // Conductor + Track 1..16（17 条）
@@ -452,22 +448,19 @@ mod tests {
                 kind: yinhe_core::TrackKind::Midi,
                 port: 1,
                 channel: 0,
-                instrument_channel: None,
                 audio_channel: None,
             },
             NewTrackSpec {
                 kind: yinhe_core::TrackKind::Midi,
                 port: 1,
                 channel: 1,
-                instrument_channel: None,
                 audio_channel: None,
             },
             NewTrackSpec {
-                kind: yinhe_core::TrackKind::Instrument,
+                kind: yinhe_core::TrackKind::Audio,
                 port: 0,
                 channel: 0,
-                instrument_channel: Some(0),
-                audio_channel: None,
+                audio_channel: Some(0),
             },
         ];
         assert!(doc.add_tracks_batch(&specs).is_some());
@@ -478,8 +471,8 @@ mod tests {
         assert_eq!(model.tracks[18].name, "Track 18");
         assert_eq!(model.tracks[19].name, "Track 19");
         assert_eq!((model.tracks[17].port, model.tracks[17].channel), (1, 0));
-        assert_eq!(model.tracks[19].kind, yinhe_core::TrackKind::Instrument);
-        assert_eq!(model.tracks[19].instrument_channel, Some(0));
+        assert_eq!(model.tracks[19].kind, yinhe_core::TrackKind::Audio);
+        assert_eq!(model.tracks[19].audio_channel, Some(0));
         // 新建的 3 条全部被选中
         assert_eq!(doc.edit.track_selected.len(), 3);
         assert!(doc.edit.track_selected.contains(&19));
@@ -495,14 +488,12 @@ mod tests {
                 kind: yinhe_core::TrackKind::Midi,
                 port: 0,
                 channel: 15,
-                instrument_channel: None,
                 audio_channel: None,
             },
             NewTrackSpec {
                 kind: yinhe_core::TrackKind::Midi,
                 port: 1,
                 channel: 0,
-                instrument_channel: None,
                 audio_channel: None,
             },
         ];

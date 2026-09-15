@@ -1,7 +1,7 @@
 mod am_lanes;
 pub(crate) use am_lanes::lane_label;
 mod track_panel;
-pub(crate) use track_panel::instrument_channel_of;
+pub(crate) use track_panel::plugin_instrument_of;
 mod view_ui;
 
 use eframe::egui;

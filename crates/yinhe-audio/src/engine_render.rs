@@ -130,8 +130,8 @@ impl AudioEngine {
                 .unwrap_or(false);
             if !track_skipped && !lane_skipped {
                 if let Some(pp) = cc.plugin_param {
-                    // 插件参数自动化 → 对应乐器 dense 通道的 ParamValue。
-                    if let Some(dense) = self.instrument_dense(pp.instrument_channel) {
+                    // 插件参数自动化 → 该 MIDI 通道插件实例的 ParamValue。
+                    if let Some(dense) = self.channel_plugin_dense(pp.channel) {
                         let time = self
                             .tick_to_sample(cc.tick)
                             .saturating_sub(self.block_start_sample)
@@ -144,25 +144,19 @@ impl AudioEngine {
                             });
                         }
                     }
-                } else if let Some(inst_ch) = self
-                    .model
-                    .as_ref()
-                    .and_then(|m| m.track_instrument(cc.track as usize))
-                {
-                    // 乐器轨的自动化 → 喂对应乐器实例；否则走 xsynth。
-                    if let Some(dense) = self.instrument_dense(inst_ch) {
-                        // 先算 frame offset（只读），再取可变实例引用，避免整机借用冲突。
-                        let time = self
-                            .tick_to_sample(cc.tick)
-                            .saturating_sub(self.block_start_sample)
-                            as u32;
-                        if let Some(data) = cc_to_midi(&cc.event, cc.channel as u8)
-                            && let Some(Some(slot)) = self.instruments.get_mut(dense)
-                        {
-                            slot.events.push(PluginEvent::Midi { time, data });
-                            // 实际发送 → 打点（chase 应用时跳过，避免旧值覆盖新值）。
-                            self.dispatched_skip.mark(&cc.event, cc.channel as usize);
-                        }
+                } else if let Some(dense) = self.channel_plugin_dense(cc.channel as u8) {
+                    // 该 MIDI 通道挂了插件 → CC/PB/RPN/PC 转原始 MIDI 字节喂实例；
+                    // 否则走 xsynth。
+                    // 先算 frame offset（只读），再取可变实例引用，避免整机借用冲突。
+                    let time =
+                        self.tick_to_sample(cc.tick)
+                            .saturating_sub(self.block_start_sample) as u32;
+                    if let Some(data) = cc_to_midi(&cc.event, cc.channel as u8)
+                        && let Some(Some(slot)) = self.instruments.get_mut(dense)
+                    {
+                        slot.events.push(PluginEvent::Midi { time, data });
+                        // 实际发送 → 打点（chase 应用时跳过，避免旧值覆盖新值）。
+                        self.dispatched_skip.mark(&cc.event, cc.channel as usize);
                     }
                 } else {
                     let dense = self.channel_layout.dense_for(cc.channel as usize);
@@ -204,21 +198,24 @@ impl AudioEngine {
                 let ch = self
                     .model
                     .as_ref()
-                    .map(|m| m.track_channel(track) as usize)
+                    .map(|m| m.track_channel(track))
                     .unwrap_or(0);
                 if !self.skip_track.get(track).copied().unwrap_or(false) {
-                    if let Some(inst_ch) =
-                        self.model.as_ref().and_then(|m| m.track_instrument(track))
-                    {
-                        // 乐器轨：音符喂乐器插件实例（插件通道 = 音轨 MIDI 通道低 4 位）。
-                        if let Some(dense) = self.instrument_dense(inst_ch) {
+                    let dense = self.channel_layout.dense_for(ch as usize);
+                    if dense != u32::MAX {
+                        let has_plugin = self
+                            .instruments
+                            .get(dense as usize)
+                            .is_some_and(|s| s.is_some());
+                        if has_plugin {
+                            // 该通道挂了插件乐器：音符喂实例（插件通道 = MIDI 通道低 4 位）。
                             // 先算 frame offset 与 CLAP 通道（只读），再取可变实例引用。
                             let time = self
                                 .tick_to_sample(note.start_tick)
                                 .saturating_sub(self.block_start_sample)
                                 as u32;
-                            let clap_ch = (ch & 0x0F) as u8;
-                            if let Some(Some(slot)) = self.instruments.get_mut(dense) {
+                            let clap_ch = ch & 0x0F;
+                            if let Some(Some(slot)) = self.instruments.get_mut(dense as usize) {
                                 slot.events.push(PluginEvent::NoteOn {
                                     time,
                                     channel: clap_ch,
@@ -227,17 +224,14 @@ impl AudioEngine {
                                 });
                                 self.active_notes.push(Reverse(ActiveNote {
                                     key: key as u8,
-                                    dense: dense as u32,
+                                    dense,
                                     clap_channel: clap_ch,
                                     is_instrument: true,
                                     end_tick: note.end_tick,
                                     track: track as u16,
                                 }));
                             }
-                        }
-                    } else {
-                        let dense = self.channel_layout.dense_for(ch);
-                        if dense != u32::MAX {
+                        } else {
                             self.channel_set.send_event(SynthEvent::Channel(
                                 dense,
                                 ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
@@ -307,10 +301,17 @@ impl AudioEngine {
         next
     }
 
-    /// 乐器通道 → 乐器 dense 索引（无对应乐器轨 = 未激活，返回 None）。
-    pub(crate) fn instrument_dense(&self, inst_ch: u16) -> Option<usize> {
-        let dense = self.channel_layout.instrument_dense_for(inst_ch);
-        (dense != u32::MAX).then_some(dense as usize)
+    /// MIDI 通道 `channel` 上已挂载插件乐器时的 dense 索引；
+    /// 通道未激活或使用默认 XSynth（未挂插件）时返回 None。
+    pub(crate) fn channel_plugin_dense(&self, channel: u8) -> Option<usize> {
+        let dense = self.channel_layout.dense_for(channel as usize);
+        if dense == u32::MAX {
+            return None;
+        }
+        self.instruments
+            .get(dense as usize)
+            .is_some_and(|s| s.is_some())
+            .then_some(dense as usize)
     }
 
     /// 是否存在已安装的乐器处理器（渲染器判据：停止状态也需要空闲渲染）。
@@ -323,16 +324,16 @@ impl AudioEngine {
     /// 已触发的保留（快速拖动时每个音都能听到）。组内按 target_tick 错开触发。
     pub(crate) fn preview_instrument_notes(
         &mut self,
-        instrument_channel: u16,
+        channel: u8,
         notes: Vec<crate::spawn::InstrumentPreviewNote>,
         exclusive: bool,
     ) {
-        let Some(dense) = self.instrument_dense(instrument_channel) else {
+        let Some(dense) = self.channel_plugin_dense(channel) else {
             return;
         };
         if exclusive {
             // 拖动替换：旧组该通道的全部预览音（含已响）停掉，只保留当前组。
-            self.preview_instrument_stop(Some(instrument_channel), None);
+            self.preview_instrument_stop(Some(channel), None);
         }
         self.plugin_previews
             .retain(|p| !(p.dense == dense && !p.triggered));
@@ -373,16 +374,12 @@ impl AudioEngine {
     }
 
     /// 停止插件预览：清除匹配的待触发音符 + 对已触发音符发 NoteOff。
-    /// `channel` 限定乐器通道（None = 全部），`key` 限定单个键（None = 全部）。
-    pub(crate) fn preview_instrument_stop(
-        &mut self,
-        instrument_channel: Option<u16>,
-        key: Option<u8>,
-    ) {
+    /// `channel` 限定 MIDI 通道（None = 全部），`key` 限定单个键（None = 全部）。
+    pub(crate) fn preview_instrument_stop(&mut self, channel: Option<u8>, key: Option<u8>) {
         if self.plugin_previews.is_empty() {
             return;
         }
-        let target_dense = instrument_channel.and_then(|ch| self.instrument_dense(ch));
+        let target_dense = channel.and_then(|ch| self.channel_plugin_dense(ch));
         let mut i = 0;
         while i < self.plugin_previews.len() {
             let p = &self.plugin_previews[i];

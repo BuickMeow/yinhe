@@ -38,12 +38,10 @@ fn target_hash(target: &AutomationTarget) -> u64 {
         AutomationTarget::Rpn { parameter } => 2 + *parameter as u64,
         AutomationTarget::Nrpn { parameter } => 2 + 0x10000 + *parameter as u64,
         AutomationTarget::Tempo => u64::MAX,
-        // 插件参数 lane 哈希：乐器通道 + 参数 id（渲染与 MIDI lane 同路径）。
+        // 插件参数 lane 哈希：MIDI 通道 + 参数 id（渲染与 MIDI lane 同路径）。
         AutomationTarget::PluginParam {
-            instrument_channel,
-            param_id,
-            ..
-        } => 3 + 0x2_0000 + u64::from(*instrument_channel) * 0x1_0000_0000 + u64::from(*param_id),
+            channel, param_id, ..
+        } => 3 + 0x2_0000 + u64::from(*channel) * 0x1_0000_0000 + u64::from(*param_id),
     }
 }
 

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use yinhe_core::{BucketNote, ConductorData, PcEvent, ProjectMeta, TrackData, YinModel};
 use yinhe_types::{AutomationLane, KEY_COUNT};
 
-use yinhe_mixer::{MixerParams, StripParams};
+use yinhe_mixer::MixerParams;
 
 use crate::container::{Sections, pack, unpack};
 use crate::error::YinError;
@@ -23,16 +23,21 @@ use crate::project_meta::{ProjectFile, SfChannelOverride};
 /// 混音段格式版本（段内前 4 字节）。MixerParams 字段演进时递增，
 /// 加载侧版本不符则忽略混音段（工程本体照常打开）。
 ///
-/// v2：新增 instruments（乐器通道 → 插件引用）。加载 v1（无该字段）时按旧结构
-/// 解码并补上空乐器表，避免既有工程丢失混音设置。
+/// v2：新增 instruments（当时按乐器通道索引）。加载 v1（无该字段）时按旧结构
+/// 解码并补空；v5 起 instruments 改为按 MIDI 通道索引（旧语义作废，迁移时清空）。
 ///
 /// v3：新增 buses / bus_inserts / sends（总线与发送）。加载 v1/v2 时补空。
 ///
-/// v4：新增乐器通道 strip/inserts/sends 与音频通道 strip/inserts/sends。
-/// 加载 v1/v2/v3 时补空。
-const MIXER_SECTION_VERSION: u32 = 4;
+/// v4：新增乐器通道 strip/inserts/sends 与音频通道 strip/inserts/sends
+///（乐器通道命名空间已废弃，v4 不再支持）。
+///
+/// v5：乐器挂载统一到 MIDI 通道：删除 instrument_strips/inserts/sends，
+/// instruments 固定 CHANNEL_COUNT 长度（None = 内置 XSynth）。
+const MIXER_SECTION_VERSION: u32 = 5;
 
 /// v1 混音段结构（无 instruments 字段），供旧版工程迁移解码。
+/// 字段必须与编码顺序完整对齐（postcard 非自描述），未用字段允许 dead_code。
+#[allow(dead_code)]
 #[derive(serde::Deserialize)]
 struct MixerParamsV1 {
     pub channels: Vec<yinhe_mixer::StripParams>,
@@ -42,6 +47,8 @@ struct MixerParamsV1 {
 }
 
 /// v2 混音段结构（无 buses/bus_inserts/sends），供旧版工程迁移解码。
+/// `instruments` 是旧乐器通道语义，迁移时丢弃。
+#[allow(dead_code)]
 #[derive(serde::Deserialize)]
 struct MixerParamsV2 {
     pub channels: Vec<yinhe_mixer::StripParams>,
@@ -52,6 +59,8 @@ struct MixerParamsV2 {
 }
 
 /// v3 混音段结构（无乐器/音频通道 strip 表），供旧版工程迁移解码。
+/// `instruments` 是旧乐器通道语义，迁移时丢弃。
+#[allow(dead_code)]
 #[derive(serde::Deserialize)]
 struct MixerParamsV3 {
     pub channels: Vec<yinhe_mixer::StripParams>,
@@ -86,7 +95,8 @@ fn decode_mixer_section(section: &[u8]) -> Option<MixerParams> {
         MIXER_SECTION_VERSION => deserialize_postcard(&payload)
             .map_err(|e| tracing::warn!("混音段解析失败，忽略混音设置: {e}"))
             .ok()?,
-        // 旧版 v3：按旧结构解码，乐器/音频通道 strip 表留空（其它设置保留）。
+        // 旧版 v3：按旧结构解码；乐器表是旧通道语义、随命名空间废弃清空
+        //（其它设置保留）。postcard 必须整段对齐，不能跳过未知字段。
         3 => {
             let v3: MixerParamsV3 = deserialize_postcard(&payload)
                 .map_err(|e| tracing::warn!("旧版混音段解析失败，忽略混音设置: {e}"))
@@ -96,10 +106,7 @@ fn decode_mixer_section(section: &[u8]) -> Option<MixerParams> {
                 master: v3.master,
                 channel_inserts: v3.channel_inserts,
                 master_inserts: v3.master_inserts,
-                instruments: v3.instruments.clone(),
-                instrument_strips: vec![StripParams::default(); v3.instruments.len()],
-                instrument_inserts: vec![Vec::new(); v3.instruments.len()],
-                instrument_sends: vec![Vec::new(); v3.instruments.len()],
+                instruments: Vec::new(),
                 audio_channels: Vec::new(),
                 audio_inserts: Vec::new(),
                 audio_sends: Vec::new(),
@@ -108,8 +115,7 @@ fn decode_mixer_section(section: &[u8]) -> Option<MixerParams> {
                 sends: v3.sends,
             }
         }
-        // 旧版 v2：按旧结构解码，总线/发送与乐器/音频通道 strip 表留空
-        //（不丢其它混音设置）（与 postcard 必须整段对齐、不能跳过未知字段相关）。
+        // 旧版 v2：总线/发送留空（不丢其它混音设置）。
         2 => {
             let v2: MixerParamsV2 = deserialize_postcard(&payload)
                 .map_err(|e| tracing::warn!("旧版混音段解析失败，忽略混音设置: {e}"))
@@ -119,10 +125,7 @@ fn decode_mixer_section(section: &[u8]) -> Option<MixerParams> {
                 master: v2.master,
                 channel_inserts: v2.channel_inserts,
                 master_inserts: v2.master_inserts,
-                instruments: v2.instruments.clone(),
-                instrument_strips: vec![StripParams::default(); v2.instruments.len()],
-                instrument_inserts: vec![Vec::new(); v2.instruments.len()],
-                instrument_sends: vec![Vec::new(); v2.instruments.len()],
+                instruments: Vec::new(),
                 audio_channels: Vec::new(),
                 audio_inserts: Vec::new(),
                 audio_sends: Vec::new(),
@@ -131,7 +134,7 @@ fn decode_mixer_section(section: &[u8]) -> Option<MixerParams> {
                 sends: Vec::new(),
             }
         }
-        // 旧版 v1：按旧结构解码，乐器表与总线留空（不丢其它混音设置）。
+        // 旧版 v1：乐器表与总线留空（不丢其它混音设置）。
         1 => {
             let v1: MixerParamsV1 = deserialize_postcard(&payload)
                 .map_err(|e| tracing::warn!("旧版混音段解析失败，忽略混音设置: {e}"))
@@ -142,9 +145,6 @@ fn decode_mixer_section(section: &[u8]) -> Option<MixerParams> {
                 channel_inserts: v1.channel_inserts,
                 master_inserts: v1.master_inserts,
                 instruments: Vec::new(),
-                instrument_strips: Vec::new(),
-                instrument_inserts: Vec::new(),
-                instrument_sends: Vec::new(),
                 audio_channels: Vec::new(),
                 audio_inserts: Vec::new(),
                 audio_sends: Vec::new(),
@@ -788,7 +788,6 @@ fn load_yin_bytes_inner(
             muted: tm.muted,
             soloed: tm.soloed,
             kind: tm.kind,
-            instrument_channel: tm.instrument_channel,
             audio_channel: tm.audio_channel,
             audio_clips: tm.audio_clips.clone(),
             notes: Vec::new(), // notes loaded via load_bucket_notes

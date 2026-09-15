@@ -129,21 +129,11 @@ pub struct MixerParams {
     /// 主输出 insert 链。
     #[serde(default)]
     pub master_inserts: Vec<InsertRef>,
-    /// 乐器通道（0 起，与 `TrackData::instrument_channel` 对齐）→ 插件引用。
-    /// 索引 = 乐器通道号；未用到的通道为 `None`。仅工程用到乐器轨时非空。
-    /// 与 MIDI 源通道命名空间独立（乐器通道是另一套）。
+    /// 乐器插件（索引 = 源 MIDI 通道，固定 CHANNEL_COUNT 长度）：
+    /// `None` = 该通道使用默认的内置 XSynth；`Some` = 挂载的 CLAP/VST3 插件。
+    /// 混音参数（推子/声像/insert/send）统一走该 MIDI 通道的 strip 表。
     #[serde(default)]
     pub instruments: Vec<Option<InsertRef>>,
-    /// 乐器通道 strip（推子/声像/M/S），与 `instruments` 等长。
-    /// 旧工程为空表；由 UI 在通道数变化时补齐默认值。
-    #[serde(default)]
-    pub instrument_strips: Vec<StripParams>,
-    /// 每乐器通道的 insert 链（与 `instruments` 等长）。
-    #[serde(default)]
-    pub instrument_inserts: Vec<Vec<InsertRef>>,
-    /// 每乐器通道的 send 列表。
-    #[serde(default)]
-    pub instrument_sends: Vec<Vec<SendParams>>,
     /// 音频通道 strip（索引 = 音频通道号，与 `TrackData::audio_channel` 对齐）。
     #[serde(default)]
     pub audio_channels: Vec<StripParams>,
@@ -171,10 +161,7 @@ impl Default for MixerParams {
             master: MasterParams::default(),
             channel_inserts: vec![Vec::new(); CHANNEL_COUNT],
             master_inserts: Vec::new(),
-            instruments: Vec::new(),
-            instrument_strips: Vec::new(),
-            instrument_inserts: Vec::new(),
-            instrument_sends: Vec::new(),
+            instruments: vec![None; CHANNEL_COUNT],
             audio_channels: Vec::new(),
             audio_inserts: Vec::new(),
             audio_sends: Vec::new(),
@@ -194,6 +181,8 @@ impl MixerParams {
         self.channel_inserts.truncate(CHANNEL_COUNT);
         self.sends.resize(CHANNEL_COUNT, Vec::new());
         self.sends.truncate(CHANNEL_COUNT);
+        self.instruments.resize(CHANNEL_COUNT, None);
+        self.instruments.truncate(CHANNEL_COUNT);
         self.bus_inserts.resize(self.buses.len(), Vec::new());
         self.bus_inserts.truncate(self.buses.len());
         // 防御：清理指向不存在总线的 send（工程被手工编辑/版本迁移残留）。
@@ -244,14 +233,6 @@ impl MixerParams {
             .unwrap_or_default()
     }
 
-    /// 乐器通道 `ch` 的 strip 参数（越界给默认值，防御性）。
-    pub fn instrument_strip(&self, ch: u16) -> StripParams {
-        self.instrument_strips
-            .get(ch as usize)
-            .copied()
-            .unwrap_or_default()
-    }
-
     /// 音频通道 `ch` 的 strip 参数（越界给默认值，防御性）。
     pub fn audio_strip(&self, ch: u16) -> StripParams {
         self.audio_channels
@@ -260,23 +241,10 @@ impl MixerParams {
             .unwrap_or_default()
     }
 
-    /// 把乐器/音频通道相关表补齐到 `count` 条（通道数变化时调用，只增不减：
+    /// 把音频通道相关表补齐到 `count` 条（通道数变化时调用，只增不减：
     /// 通道号是稳定索引，删轨道后重新加同号通道要恢复原设置）。
     /// 参数表长度与通道号索引严格对应，缺位补默认值。
-    pub fn ensure_channel_tables(&mut self, instrument_count: usize, audio_count: usize) {
-        if self.instruments.len() < instrument_count {
-            self.instruments.resize(instrument_count, None);
-        }
-        if self.instrument_strips.len() < instrument_count {
-            self.instrument_strips
-                .resize(instrument_count, StripParams::default());
-        }
-        if self.instrument_inserts.len() < instrument_count {
-            self.instrument_inserts.resize(instrument_count, Vec::new());
-        }
-        if self.instrument_sends.len() < instrument_count {
-            self.instrument_sends.resize(instrument_count, Vec::new());
-        }
+    pub fn ensure_channel_tables(&mut self, audio_count: usize) {
         if self.audio_channels.len() < audio_count {
             self.audio_channels
                 .resize(audio_count, StripParams::default());

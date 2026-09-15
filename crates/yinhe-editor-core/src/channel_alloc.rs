@@ -1,7 +1,7 @@
 //! 新建音轨的通道分配规则（纯函数）。
 //!
 //! MIDI 通道全局编号 global = port * 16 + channel（0 起，UI 显示 A1..P16）；
-//! 乐器通道是与 MIDI 通道独立的命名空间（CLAP 乐器插件路由用，0 起，UI 显示 1 起）。
+//! 该通道同时是乐器的挂载点（默认 XSynth，可挂 CLAP/VST3 插件）。
 //! 新建音轨对话框与 `Document::add_tracks_batch` 共用这里的规则。
 
 use std::sync::Arc;
@@ -38,20 +38,8 @@ pub fn auto_midi_channel_start(tracks: &[Arc<yinhe_core::TrackData>]) -> Option<
     }
 }
 
-/// 乐器轨自动分配起点（0 起）：现有乐器轨最大 instrument_channel + 1；
-/// 没有乐器轨时从 0（UI 显示「乐器通道 1」）开始。
-pub fn auto_instrument_channel_start(tracks: &[Arc<yinhe_core::TrackData>]) -> u16 {
-    tracks
-        .iter()
-        .filter(|t| t.kind == yinhe_core::TrackKind::Instrument)
-        .filter_map(|t| t.instrument_channel)
-        .max()
-        .map(|m| m.saturating_add(1))
-        .unwrap_or(0)
-}
-
 /// 音频轨自动分配起点（0 起）：现有音频轨最大 audio_channel + 1；
-/// 没有音频轨时从 0（UI 显示「A01」）开始。与乐器通道规则一致。
+/// 没有音频轨时从 0（UI 显示「A01」）开始。
 pub fn auto_audio_channel_start(tracks: &[Arc<yinhe_core::TrackData>]) -> u16 {
     tracks
         .iter()
@@ -70,10 +58,10 @@ mod tests {
         Arc::new(yinhe_core::TrackData::new(port, channel))
     }
 
-    fn instrument_track(instrument_channel: u16) -> Arc<yinhe_core::TrackData> {
+    fn audio_track(audio_channel: u16) -> Arc<yinhe_core::TrackData> {
         let mut t = yinhe_core::TrackData::new(0, 0);
-        t.kind = yinhe_core::TrackKind::Instrument;
-        t.instrument_channel = Some(instrument_channel);
+        t.kind = yinhe_core::TrackKind::Audio;
+        t.audio_channel = Some(audio_channel);
         Arc::new(t)
     }
 
@@ -123,19 +111,10 @@ mod tests {
         assert_eq!(auto_midi_channel_start(&tracks), None);
     }
 
-    /// 乐器轨不参与 MIDI 自动起点的计算（两套独立命名空间）。
+    /// 音频轨不参与 MIDI 自动起点的计算（独立命名空间）。
     #[test]
-    fn auto_midi_start_ignores_instrument_tracks() {
-        let tracks = vec![instrument_track(3), midi_track(0, 4)]; // A5
+    fn auto_midi_start_ignores_audio_tracks() {
+        let tracks = vec![audio_track(3), midi_track(0, 4)]; // A5
         assert_eq!(auto_midi_channel_start(&tracks), Some(5)); // A6
-    }
-
-    /// 乐器通道自动起点：没有乐器轨从 0 开始，否则最大 + 1；
-    /// MIDI 轨不参与。
-    #[test]
-    fn auto_instrument_start() {
-        assert_eq!(auto_instrument_channel_start(&[]), 0);
-        let tracks = vec![midi_track(0, 7), instrument_track(2), instrument_track(5)];
-        assert_eq!(auto_instrument_channel_start(&tracks), 6);
     }
 }

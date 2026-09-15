@@ -63,15 +63,13 @@ impl Default for ConductorData {
 /// RGBA，alpha 默认不透明。
 pub const DEFAULT_TRACK_COLOR: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
 
-/// 音轨种类。MIDI 轨走 xsynth 音色库（按 port/channel 路由）；
-/// 乐器轨走 CLAP 乐器插件（按 instrument_channel 路由，与 MIDI 通道是
-/// 两套独立命名空间）；音频轨走内嵌音频素材的片段回放
-/// （按 audio_channel 路由，与另外两套命名空间独立）。
+/// 音轨种类。MIDI 轨按 port/channel（A01..P16，256 通道）路由到该通道的乐器：
+/// 默认 XSynth（内置），可挂载 CLAP/VST3 插件乐器覆盖；
+/// 音频轨走内嵌音频素材的片段回放（按 audio_channel 路由，独立命名空间）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TrackKind {
     #[default]
     Midi,
-    Instrument,
     Audio,
 }
 
@@ -161,11 +159,6 @@ pub struct TrackData {
     /// 音轨种类（旧存档无此字段，默认 Midi）。
     #[serde(default)]
     pub kind: TrackKind,
-    /// 乐器通道号（0 起，UI 显示 1 起）。仅乐器轨有意义；
-    /// 与 MIDI port/channel 无关，是 CLAP 乐器插件的路由命名空间。
-    /// 多条乐器轨共享同一乐器通道 = 共享同一个插件实例。
-    #[serde(default)]
-    pub instrument_channel: Option<u16>,
     /// 音频通道号（0 起，UI 显示 1 起）。仅音频轨有意义；
     /// 与 MIDI/乐器通道均无关，是音频混音条的路由命名空间。
     /// 多条音频轨共享同一音频通道 = 共享同一条混音 strip/insert 链。
@@ -204,7 +197,6 @@ impl TrackData {
             muted: false,
             soloed: false,
             kind: TrackKind::Midi,
-            instrument_channel: None,
             audio_channel: None,
             audio_clips: Vec::new(),
             notes: Vec::new(),

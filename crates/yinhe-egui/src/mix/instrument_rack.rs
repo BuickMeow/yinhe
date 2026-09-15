@@ -1,4 +1,4 @@
-//! 乐器机架：每个乐器通道（TrackData.instrument_channel）对应一个乐器插件实例，
+//! 乐器机架：每个 MIDI 通道（TrackData.global_channel()）至多挂一个乐器插件实例，
 //! UI/管理线程持有其生命周期。比效果器机架（rack.rs）简单：一个通道只有一个
 //! 乐器插件（无链、无旁通、原生 GUI 暂不支持），输出直接混进该乐器 dense 通道。
 //!
@@ -25,7 +25,7 @@ use super::rack::{ACTIVATE_MAX_FRAMES, PluginLoadError};
 /// 单个乐器通道的运行时槽位。
 pub(crate) struct InstrumentSlot {
     /// 乐器通道号（0 起）。
-    pub channel: u16,
+    pub channel: u8,
     /// None = 加载失败占位（持久化层仍保留 InsertRef，保存不丢引用）。
     pub instance: Option<PluginInstance>,
     /// 处理器当前在渲染线程（已 SetInstrument 且未退回）。
@@ -48,29 +48,29 @@ pub(crate) struct InstrumentRack {
     pub slots: Vec<InstrumentSlot>,
     /// 已移除/被替换但仍占着渲染线程的旧实例：其旧处理器退回后 deactivate。
     /// 每通道至多一条（再次替换会直接覆盖丢弃更旧的——其处理器在引擎侧已丢失）。
-    pending_return: Vec<(u16, PluginInstance)>,
+    pending_return: Vec<(u8, PluginInstance)>,
     /// 最近一次加载/激活失败信息（MIX 界面状态行展示）。
     pub last_error: Option<String>,
-    /// 待处理的插件 GUI 改参（instrument_channel, param_id, 归一化值）。
+    /// 待处理的插件 GUI 改参（MIDI 通道, param_id, 归一化值）。
     /// 每帧由 UI 消费（写入插件参数 AM lane）；队列在 `poll_requests` 填充。
-    pub gui_param_changes: Vec<(u16, u32, f64)>,
+    pub gui_param_changes: Vec<(u8, u32, f64)>,
     /// 正在 GUI 编辑（beginEdit 后未 endEdit）的乐器通道集：
     /// 一次拖动合并为一条 undo 的分组依据。
-    pub gui_param_editing: std::collections::HashSet<u16>,
+    pub gui_param_editing: std::collections::HashSet<u8>,
 }
 
 impl InstrumentRack {
-    fn slot_mut(&mut self, channel: u16) -> Option<&mut InstrumentSlot> {
+    fn slot_mut(&mut self, channel: u8) -> Option<&mut InstrumentSlot> {
         self.slots.iter_mut().find(|s| s.channel == channel)
     }
 
     /// 按乐器通道取插件实例（参数面板用）。槽位不存在/无实例返回 None。
-    pub(crate) fn instance_mut(&mut self, channel: u16) -> Option<&mut PluginInstance> {
+    pub(crate) fn instance_mut(&mut self, channel: u8) -> Option<&mut PluginInstance> {
         self.slot_mut(channel)?.instance.as_mut()
     }
 
     /// 该乐器通道是否持有可用插件实例（音符预览路由用：有实例走插件试听）。
-    pub(crate) fn has_instance(&self, channel: u16) -> bool {
+    pub(crate) fn has_instance(&self, channel: u8) -> bool {
         self.slots
             .iter()
             .find(|s| s.channel == channel)
@@ -80,7 +80,7 @@ impl InstrumentRack {
     /// 打开/关闭乐器插件原生界面（host 自建窗口 + 插件 view 嵌入）。
     /// CLAP / VST3 共用宿主 NSWindow（与效果器机架同一实现）。
     #[cfg(target_os = "macos")]
-    pub fn toggle_gui(&mut self, channel: u16) -> Result<bool, PluginLoadError> {
+    pub fn toggle_gui(&mut self, channel: u8) -> Result<bool, PluginLoadError> {
         let Some(rt) = self.slot_mut(channel) else {
             return Ok(false);
         };
@@ -142,7 +142,7 @@ impl InstrumentRack {
 
     /// 非 macOS：原生 GUI 尚未实现。
     #[cfg(not(target_os = "macos"))]
-    pub fn toggle_gui(&mut self, _channel: u16) -> Result<bool, PluginLoadError> {
+    pub fn toggle_gui(&mut self, _channel: u8) -> Result<bool, PluginLoadError> {
         Err(PluginLoadError("当前平台暂不支持插件界面".into()))
     }
 
@@ -151,7 +151,7 @@ impl InstrumentRack {
     /// 持久化层 InsertRef 由调用方先行写入。
     pub fn load(
         &mut self,
-        channel: u16,
+        channel: u8,
         format: PluginFormat,
         plugin_path: &Path,
         plugin_id: &str,
@@ -212,7 +212,7 @@ impl InstrumentRack {
     /// 激活槽位并发送 SetInstrument 安装。
     fn activate_slot(
         &mut self,
-        channel: u16,
+        channel: u8,
         handle: &AudioHandle,
         sample_rate: u32,
     ) -> Result<(), PluginLoadError> {
@@ -246,7 +246,7 @@ impl InstrumentRack {
 
     /// 引擎（重）spawn 后：补发所有「有实例但未在渲染线程」的乐器槽位。
     pub fn ensure_all_sent(&mut self, handle: &AudioHandle, sample_rate: u32) {
-        let targets: Vec<u16> = self
+        let targets: Vec<u8> = self
             .slots
             .iter()
             .filter(|rt| !rt.sent && !rt.activate_failed)
@@ -264,7 +264,7 @@ impl InstrumentRack {
 
     /// 移除某乐器通道（MIX 界面 ✕）：已安装的送 SetInstrument(None)，旧实例移入
     /// pending_return 等旧处理器退回 deactivate；从未进引擎时直接 drop。
-    pub fn unload(&mut self, channel: u16, handle: Option<&AudioHandle>) {
+    pub fn unload(&mut self, channel: u8, handle: Option<&AudioHandle>) {
         let Some(idx) = self.slots.iter().position(|s| s.channel == channel) else {
             return;
         };
@@ -288,11 +288,11 @@ impl InstrumentRack {
     /// - 参数重扫 → 实例内暂存，参数面板刷新时消费；
     /// - 延迟变化 → CLAP 在此重查共享值，然后通知引擎重算 PDC。
     pub fn poll_requests(&mut self, handle: &AudioHandle) {
-        let mut restarts: Vec<u16> = Vec::new();
+        let mut restarts: Vec<u8> = Vec::new();
         let mut latency_changed = false;
         // GUI 改参先收集，循环后再写自身字段（避免与 slots 的借用冲突）。
-        let mut param_changes: Vec<(u16, u32, f64)> = Vec::new();
-        let mut editing_now: Vec<(u16, bool)> = Vec::new();
+        let mut param_changes: Vec<(u8, u32, f64)> = Vec::new();
+        let mut editing_now: Vec<(u8, bool)> = Vec::new();
         for rt in self.slots.iter_mut() {
             let Some(instance) = rt.instance.as_mut() else {
                 continue;
@@ -334,7 +334,7 @@ impl InstrumentRack {
     ///
     /// 退回的处理器是格式无关 trait object：按具体格式 downcast 回 CLAP 处理器
     ///（VST3 接入后在此按槽位记录的格式分派）。
-    pub fn on_returns(&mut self, returned: Vec<(u16, Box<dyn InstrumentProcessor>)>) {
+    pub fn on_returns(&mut self, returned: Vec<(u8, Box<dyn InstrumentProcessor>)>) {
         for (channel, processor) in returned {
             let any = processor.into_any();
             match any.downcast::<ClapProcessor>() {
@@ -383,11 +383,11 @@ impl InstrumentRack {
     /// 已移除通道的 InsertRef 由移除动作置 None，这里跳过。
     pub fn sync_states_to(&mut self, mixer: &mut MixerParams) {
         for rt in self.slots.iter_mut() {
-            let c = rt.channel as usize;
-            if mixer.instruments.len() <= c {
-                mixer.instruments.resize(c + 1, None);
-            }
-            let Some(r) = mixer.instruments[c].as_mut() else {
+            let Some(r) = mixer
+                .instruments
+                .get_mut(rt.channel as usize)
+                .and_then(|slot| slot.as_mut())
+            else {
                 continue;
             };
             // 加载失败占位无实例：保留工程里的旧 state。

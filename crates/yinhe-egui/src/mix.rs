@@ -40,12 +40,6 @@ pub(crate) fn channel_label(ch: u8) -> String {
     format!("MIDI-{}{:02}", port, ch % 16 + 1)
 }
 
-/// 乐器通道号 → 显示标签（0 → "Inst-01"）。
-pub(crate) fn instrument_label(ch: u16) -> String {
-    // u32 转换避免 u16 上限 +1 溢出 panic。
-    format!("Inst-{:02}", u32::from(ch) + 1)
-}
-
 /// 音频通道号 → 显示标签（0 → "Audio-01"）。
 pub(crate) fn audio_label(ch: u16) -> String {
     format!("Audio-{:02}", u32::from(ch) + 1)
@@ -89,8 +83,8 @@ pub(crate) struct MixUiState {
     pub(crate) sends_for: Option<u8>,
     /// XSynth 配置窗口目标（源通道；None = 关闭）。
     pub(crate) xsynth_config_for: Option<u8>,
-    /// 乐器插件选择器目标：乐器通道号（0 起）；None = 未打开。
-    pub(crate) instrument_picker_for: Option<u16>,
+    /// 乐器选择器目标：MIDI 通道（挂载点）；None = 未打开。
+    pub(crate) instrument_picker_for: Option<u8>,
     pub(crate) picker_filter: String,
     /// 插件参数面板（同一时间至多一个）。
     pub(crate) param_panel: Option<ParamPanel>,
@@ -120,11 +114,6 @@ impl Default for MixUiState {
 pub(crate) enum MixAction {
     SetStrip {
         channel: u8,
-        params: StripParams,
-    },
-    /// 更新某乐器通道的 strip 参数（推子/声像/M/S 高频路径）。
-    SetInstrumentStrip {
-        channel: u16,
         params: StripParams,
     },
     /// 更新某音频通道的 strip 参数（推子/声像/M/S 高频路径）。
@@ -177,18 +166,18 @@ pub(crate) enum MixAction {
         amount: f32,
         pre_fader: bool,
     },
-    /// 打开乐器插件选择器（channel = 乐器通道，0 起）。
+    /// 打开乐器选择器（channel = MIDI 通道；含内置 XSynth 与插件）。
     OpenInstrumentPicker {
-        channel: u16,
+        channel: u8,
     },
-    /// 为乐器通道分配插件（InsertRef 入持久化层 + 机架加载 + 安装引擎）。
+    /// 为 MIDI 通道分配插件乐器（InsertRef 入持久化层 + 机架加载 + 安装引擎）。
     AssignInstrument {
-        channel: u16,
+        channel: u8,
         plugin: PluginEntry,
     },
-    /// 移除乐器通道的插件（卸下载机架 + 持久化层置 None）。
+    /// 移除 MIDI 通道的插件乐器（卸载机架 + 持久化层置 None → 回到 XSynth）。
     RemoveInstrument {
-        channel: u16,
+        channel: u8,
     },
     /// 打开 insert 槽位的参数面板。
     OpenInsertParams {
@@ -197,11 +186,15 @@ pub(crate) enum MixAction {
     },
     /// 打开乐器槽位的参数面板。
     OpenInstrumentParams {
-        channel: u16,
+        channel: u8,
     },
     /// 打开/关闭乐器插件原生界面。
     ToggleInstrumentGui {
-        channel: u16,
+        channel: u8,
+    },
+    /// 打开某 MIDI 通道内置 XSynth 的音色库配置窗口。
+    OpenXsynthConfig {
+        channel: u8,
     },
     RescanPlugins,
 }
@@ -237,21 +230,6 @@ impl App {
         if let Some(a) = &self.audio_state.handle {
             a.handle
                 .send(yinhe_audio::AudioCommand::SetBusStrip { bus, params });
-        }
-    }
-
-    /// 更新某乐器通道的 strip 参数：写持久化层 + 推引擎（高频路径）。
-    pub(crate) fn apply_instrument_strip(&mut self, idx: usize, channel: u16, params: StripParams) {
-        let mixer = self.workspace.documents[idx].mixer_mut();
-        if mixer.instrument_strips.len() <= channel as usize {
-            mixer
-                .instrument_strips
-                .resize(channel as usize + 1, StripParams::default());
-        }
-        mixer.instrument_strips[channel as usize] = params;
-        if let Some(a) = &self.audio_state.handle {
-            a.handle
-                .send(yinhe_audio::AudioCommand::SetInstrumentStrip { channel, params });
         }
     }
 
@@ -352,7 +330,7 @@ impl App {
         for (ch, r) in mixer.instruments.iter().enumerate() {
             if let Some(r) = r {
                 let _ = rack.load(
-                    ch as u16,
+                    ch as u8,
                     r.format,
                     &r.plugin_path,
                     &r.plugin_id,
@@ -477,8 +455,6 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
         .filter(|&c| layout.is_active(c))
         .map(|c| c as u8)
         .collect();
-    // 乐器通道（0 起），绘制独立的乐器条。
-    let inst_channels: Vec<u16> = layout.instrument_channels().to_vec();
     // 每通道列出使用该通道的轨道名（共享通道的轨道全部列出）+ 取首个轨道的
     // 颜色作为通道条色条（与 AR/PR 轨道色同源，含 Conductor 主题色）。
     // Conductor 是 Master 轨（AR 里不显示通道号），不归入任何通道条。
@@ -580,33 +556,7 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                                         &mut actions,
                                     );
                                 }
-                                // 乐器条：MIDI 条后分隔 + 每个乐器通道一条。
-                                if !inst_channels.is_empty() {
-                                    ui.separator();
-                                    for &ich in inst_channels.iter() {
-                                        let dense = layout.instrument_dense_for(ich);
-                                        let peak = if dense != u32::MAX {
-                                            smoothed_peak(
-                                                app.audio_state.handle.as_ref(),
-                                                &mut app.mix.smoothed,
-                                                dense as usize,
-                                                dt,
-                                            )
-                                        } else {
-                                            (0.0, 0.0)
-                                        };
-                                        strip::instrument_strip(
-                                            app,
-                                            ui,
-                                            idx,
-                                            ich,
-                                            peak,
-                                            strip_h,
-                                            &mut actions,
-                                        );
-                                    }
-                                }
-                                // 音频条：乐器条后分隔 + 每个音频通道一条。
+                                // 音频条：MIDI 条后分隔 + 每个音频通道一条。
                                 let audio_channels: Vec<u16> = layout.audio_channels().to_vec();
                                 if !audio_channels.is_empty() {
                                     ui.separator();
@@ -734,8 +684,8 @@ pub(crate) fn show_global_overlays(app: &mut App, ctx: &egui::Context) {
     if let Some(target) = app.mix.picker_for {
         strip::plugin_picker(app, ctx, target, &mut actions);
     }
-    if let Some(ich) = app.mix.instrument_picker_for {
-        strip::instrument_picker(app, ctx, ich, &mut actions);
+    if let Some(ch) = app.mix.instrument_picker_for {
+        strip::instrument_picker(app, ctx, ch, &mut actions);
     }
     if let Some(ch) = app.mix.sends_for {
         strip::send_popup(app, ctx, ch, &mut actions);
@@ -753,12 +703,6 @@ pub(crate) fn insert_refs(
 ) -> Option<&mut Vec<yinhe_mixer::InsertRef>> {
     match target {
         InsertTarget::Channel(ch) => mixer.channel_inserts.get_mut(ch as usize),
-        InsertTarget::Instrument(ch) => {
-            if mixer.instrument_inserts.len() <= ch as usize {
-                mixer.instrument_inserts.resize(ch as usize + 1, Vec::new());
-            }
-            mixer.instrument_inserts.get_mut(ch as usize)
-        }
         InsertTarget::Audio(ch) => {
             if mixer.audio_inserts.len() <= ch as usize {
                 mixer.audio_inserts.resize(ch as usize + 1, Vec::new());
@@ -773,9 +717,6 @@ pub(crate) fn insert_refs(
 fn apply_action(app: &mut App, idx: usize, action: MixAction) {
     match action {
         MixAction::SetStrip { channel, params } => app.apply_strip(idx, channel, params),
-        MixAction::SetInstrumentStrip { channel, params } => {
-            app.apply_instrument_strip(idx, channel, params)
-        }
         MixAction::SetAudioStrip { channel, params } => app.apply_audio_strip(idx, channel, params),
         MixAction::SetMaster { params } => app.apply_master(idx, params),
         MixAction::OpenPicker { target } => {
@@ -886,6 +827,9 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
             app.mix.instrument_picker_for = Some(channel);
             app.mix.picker_filter.clear();
         }
+        MixAction::OpenXsynthConfig { channel } => {
+            app.mix.xsynth_config_for = Some(channel);
+        }
         MixAction::ToggleInstrumentGui { channel } => {
             let result = app
                 .instrument_racks
@@ -900,11 +844,9 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
         MixAction::AssignInstrument { channel, plugin } => {
             {
                 let doc = &mut app.workspace.documents[idx];
-                let c = channel as usize;
                 let m = doc.mixer_mut();
-                if m.instruments.len() <= c {
-                    m.instruments.resize(c + 1, None);
-                }
+                m.ensure_len();
+                let c = channel as usize;
                 m.instruments[c] = Some(yinhe_mixer::InsertRef {
                     plugin_path: plugin.path.clone(),
                     plugin_id: plugin.id.clone(),

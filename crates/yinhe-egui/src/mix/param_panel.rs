@@ -24,8 +24,8 @@ pub(crate) enum ParamTarget {
         target: yinhe_audio::InsertTarget,
         slot: usize,
     },
-    /// 乐器通道（0 起）。
-    Instrument { channel: u16 },
+    /// MIDI 全局通道（挂载的插件乐器所在通道）。
+    Instrument { channel: u8 },
 }
 
 /// 参数面板状态（打开时枚举一次；插件 rescan 时重枚举）。
@@ -109,21 +109,19 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
         ParamTarget::Instrument { channel } => Some(channel),
         ParamTarget::Insert { .. } => None,
     };
-    let am_lanes: std::collections::HashSet<(u16, u32)> = am_channel
+    let am_lanes: std::collections::HashSet<(u8, u32)> = am_channel
         .map(|channel| {
             let doc = &app.workspace.documents[idx];
             doc.data
                 .model
                 .tracks
                 .iter()
-                .filter(|t| t.instrument_channel == Some(channel))
+                .filter(|t| t.global_channel() == channel)
                 .flat_map(|t| t.automation_lanes.iter())
                 .filter_map(|l| match &l.target {
                     yinhe_types::AutomationTarget::PluginParam {
-                        instrument_channel,
-                        param_id,
-                        ..
-                    } => Some((*instrument_channel, *param_id)),
+                        channel, param_id, ..
+                    } => Some((*channel, *param_id)),
                     _ => None,
                 })
                 .collect()

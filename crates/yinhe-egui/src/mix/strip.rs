@@ -137,8 +137,16 @@ pub(crate) fn channel_strip(
         .map(|l| l.iter().filter(|s| s.amount > 0.0).count())
         .unwrap_or(0);
 
+    let plugin_name = app.workspace.documents[idx]
+        .mixer
+        .instruments
+        .get(channel as usize)
+        .and_then(|o| o.as_ref())
+        .map(|r| r.name.clone());
+
     strip_frame(ui, color, height, |ui| {
         label_block(ui, channel_label(channel), &names);
+        instrument_slot(ui, channel, plugin_name.as_deref(), actions);
 
         strip_body(
             ui,
@@ -155,6 +163,57 @@ pub(crate) fn channel_strip(
         send_button(ui, channel, send_count, actions);
         ui.add_space(4.0);
         db_label(ui, params.gain);
+    });
+}
+
+/// MIDI 通道条上的乐器设备行：当前乐器名（内置 XSynth / 插件名）+
+/// 界面（插件 GUI / XSynth 音色库）、参数、更换乐器入口。
+/// 内置 XSynth 与插件走同一套入口；在乐器选择器里可互相切换。
+fn instrument_slot(
+    ui: &mut egui::Ui,
+    channel: u8,
+    plugin_name: Option<&str>,
+    actions: &mut Vec<MixAction>,
+) {
+    ui.add_space(6.0);
+    ui.label(
+        egui::RichText::new(t!("mix.instrument"))
+            .size(crate::theme::SMALL_LABEL_FONT)
+            .color(crate::theme::text_muted()),
+    );
+    let name = plugin_name.unwrap_or("XSynth");
+    let resp = ui.add(
+        egui::Label::new(
+            egui::RichText::new(name)
+                .size(crate::theme::SMALL_FONT)
+                .color(crate::theme::text_primary()),
+        )
+        .truncate()
+        .sense(egui::Sense::click()),
+    );
+    if resp.clicked() {
+        if plugin_name.is_some() {
+            actions.push(MixAction::ToggleInstrumentGui { channel });
+        } else {
+            actions.push(MixAction::OpenXsynthConfig { channel });
+        }
+    }
+    resp.on_hover_text(if plugin_name.is_some() {
+        t!("mix.toggle_gui").to_string()
+    } else {
+        t!("soundfont.title").to_string()
+    });
+    ui.horizontal_wrapped(|ui| {
+        if ui.small_button(t!("mix.params")).clicked() {
+            if plugin_name.is_some() {
+                actions.push(MixAction::OpenInstrumentParams { channel });
+            } else {
+                actions.push(MixAction::OpenXsynthConfig { channel });
+            }
+        }
+        if ui.small_button(t!("mix.change_instrument")).clicked() {
+            actions.push(MixAction::OpenInstrumentPicker { channel });
+        }
     });
 }
 
@@ -1094,99 +1153,6 @@ pub(crate) fn plugin_picker(
     }
 }
 
-/// 乐器通道条：标签 + 插件名/选择按钮 + insert 链 + 推子/M/S/声像。
-/// 乐器音频走独立 dense 通道；多条乐器轨共享同一乐器通道 = 共享本条。
-pub(crate) fn instrument_strip(
-    app: &mut App,
-    ui: &mut egui::Ui,
-    idx: usize,
-    channel: u16,
-    peak: (f32, f32),
-    height: f32,
-    actions: &mut Vec<MixAction>,
-) {
-    let name = app.workspace.documents[idx]
-        .mixer
-        .instruments
-        .get(channel as usize)
-        .and_then(|o| o.as_ref())
-        .map(|r| r.name.clone());
-    let params = app.workspace.documents[idx].mixer.instrument_strip(channel);
-    let insert_names: Vec<String> = app.workspace.documents[idx]
-        .mixer
-        .instrument_inserts
-        .get(channel as usize)
-        .map(|chain| chain.iter().map(|r| r.name.clone()).collect())
-        .unwrap_or_default();
-    let bypassed: Vec<bool> = app.workspace.documents[idx]
-        .mixer
-        .instrument_inserts
-        .get(channel as usize)
-        .map(|chain| chain.iter().map(|r| r.bypassed).collect())
-        .unwrap_or_default();
-    let gui_open: Vec<bool> = app
-        .mixer_racks
-        .get(idx)
-        .map(|rack| {
-            rack.chain(InsertTarget::Instrument(channel))
-                .iter()
-                .map(|rt| rt.gui_open)
-                .collect()
-        })
-        .unwrap_or_default();
-
-    strip_frame(ui, crate::theme::accent_active(), height, |ui| {
-        label_block(ui, crate::mix::instrument_label(channel), "");
-        ui.add_space(4.0);
-        match &name {
-            Some(n) => {
-                let resp = ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(n)
-                            .size(crate::theme::SMALL_FONT)
-                            .color(crate::theme::text_primary()),
-                    )
-                    .truncate(),
-                );
-                resp.clone()
-                    .on_hover_text(format!("{n}\n{}", t!("mix.toggle_gui")));
-                // 名称行点击：打开/关闭插件原生界面（与效果器行一致）。
-                if resp.clicked() {
-                    actions.push(MixAction::ToggleInstrumentGui { channel });
-                }
-                ui.add_space(4.0);
-                if ui.small_button(t!("mix.params")).clicked() {
-                    actions.push(MixAction::OpenInstrumentParams { channel });
-                }
-                if ui.small_button(t!("mix.change_instrument")).clicked() {
-                    actions.push(MixAction::OpenInstrumentPicker { channel });
-                }
-                if ui.small_button(t!("mix.remove_insert")).clicked() {
-                    actions.push(MixAction::RemoveInstrument { channel });
-                }
-            }
-            None => {
-                if crate::widgets::flat::flat_button(ui, t!("mix.pick_instrument")).clicked() {
-                    actions.push(MixAction::OpenInstrumentPicker { channel });
-                }
-            }
-        }
-        strip_body(
-            ui,
-            InsertTarget::Instrument(channel),
-            params,
-            peak,
-            &insert_names,
-            &bypassed,
-            &gui_open,
-            |p| MixAction::SetInstrumentStrip { channel, params: p },
-            actions,
-        );
-        ui.add_space(4.0);
-        db_label(ui, params.gain);
-    });
-}
-
 /// 音频通道条：标签 + insert 链 + 推子/M/S/声像。
 /// 多条音频轨共享同一音频通道 = 共享本条（与乐器通道同构）。
 pub(crate) fn audio_strip(
@@ -1295,11 +1261,12 @@ fn plugin_row(
     }
 }
 
-/// 乐器插件选择器（独立 OS 窗口）：只列 is_instrument() 插件。
+/// 乐器选择器（独立 OS 窗口）：内置 XSynth + 全部 is_instrument() 插件。
+/// 选择 XSynth 即清除该通道的插件挂载（回到默认内置乐器）。
 pub(crate) fn instrument_picker(
     app: &mut App,
     ctx: &egui::Context,
-    channel: u16,
+    channel: u8,
     actions: &mut Vec<MixAction>,
 ) {
     let id = egui::ViewportId::from_hash_of("mix_instrument_picker");
@@ -1342,6 +1309,17 @@ pub(crate) fn instrument_picker(
                                 .max_height(ui.available_height())
                                 .show(ui, |ui| {
                                     let mut any = false;
+                                    // 内置 XSynth：默认乐器（选择 = 清除插件挂载）。
+                                    if filter.is_empty() || "xsynth".contains(&filter) {
+                                        any = true;
+                                        if ui
+                                            .selectable_label(false, "XSynth")
+                                            .on_hover_text(t!("soundfont.title"))
+                                            .clicked()
+                                        {
+                                            actions.push(MixAction::RemoveInstrument { channel });
+                                        }
+                                    }
                                     if let Some(plugins) = plugins {
                                         for p in plugins.iter().filter(|p| p.is_instrument) {
                                             if !filter.is_empty()
