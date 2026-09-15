@@ -7739,6 +7739,7 @@ dependencies = [
  "wgpu",
  "xsynth-core",
  "xsynth-soundfonts",
+ "yinhe-mixer",
 ]
 
 [[package]]

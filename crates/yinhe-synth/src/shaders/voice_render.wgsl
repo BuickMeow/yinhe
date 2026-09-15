@@ -123,6 +123,9 @@ struct EnvUpdateCmd {
 @group(0) @binding(12) var<storage, read> release_by_frame: array<u32>;
 @group(0) @binding(13) var<storage, read> release_cmds: array<ReleaseCmd>;
 @group(0) @binding(14) var<storage, read> env_cmds: array<EnvUpdateCmd>;
+/// 紧凑活跃状态：pass1 写 env_stage（CPU 只读回这一个数组做 voice 清理，
+/// 不再读回全字段状态 —— 状态常驻 GPU）。
+@group(0) @binding(15) var<storage, read_write> voice_stage: array<u32>;
 
 struct ChunkOffsets {
     o0: u32, o1: u32, o2: u32, o3: u32, o4: u32, total: u32,
@@ -451,6 +454,8 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
             st.start_offset = 0u;
         }
         voice_states[vid] = st;
+        // 紧凑状态：CPU 只读回 env_stage（voice 结束清理用）。
+        voice_stage[vid] = st.env_stage;
     }
 }
 

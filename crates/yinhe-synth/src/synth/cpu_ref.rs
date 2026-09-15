@@ -66,7 +66,19 @@ fn release_cmd_advances_envelope() {
     }];
     let mut mix = vec![0.0f32; 32 * 1024 * 2];
     let mut voices = vec![voice];
-    renderer.render_block(&mut voices, &mut mix, &[], &[], &releases, &[], 44100);
+    let mut stage = vec![0u32; voices.len()];
+    renderer.upload_voice_states(&voices);
+    renderer.render_block(
+        voices.len() as u32,
+        Some(&mut voices),
+        &mut mix,
+        &mut stage,
+        &[],
+        &[],
+        &releases,
+        &[],
+        44100,
+    );
     let voice = &voices[0];
     let t = 1024.0f32 / 39690.0;
     let expected_env = 0.7 * (1.0 - t).powi(8);
@@ -155,7 +167,19 @@ fn release_progress_advances_full_block() {
         },
     ];
     let mut mix = vec![0.0f32; 32 * 1024 * 2];
-    renderer.render_block(&mut voices, &mut mix, &[], &[], &releases, &[], 44100);
+    let mut stage = vec![0u32; voices.len()];
+    renderer.upload_voice_states(&voices);
+    renderer.render_block(
+        voices.len() as u32,
+        Some(&mut voices),
+        &mut mix,
+        &mut stage,
+        &[],
+        &[],
+        &releases,
+        &[],
+        44100,
+    );
     eprintln!(
         "block1: v0 stage={} prog={:.0} | v1 stage={} prog={:.0}",
         voices[0].env_stage,
@@ -169,7 +193,19 @@ fn release_progress_advances_full_block() {
     assert_eq!(voices[1].stage_progress, 524.0); // 1024-500
 
     // 第二块：无 release，prog 应该 +1024
-    renderer.render_block(&mut voices, &mut mix, &[], &[], &[], &[], 44100);
+    let mut stage = vec![0u32; voices.len()];
+    renderer.upload_voice_states(&voices);
+    renderer.render_block(
+        voices.len() as u32,
+        Some(&mut voices),
+        &mut mix,
+        &mut stage,
+        &[],
+        &[],
+        &[],
+        &[],
+        44100,
+    );
     eprintln!(
         "block2: v0 stage={} prog={:.0} | v1 stage={} prog={:.0}",
         voices[0].env_stage,

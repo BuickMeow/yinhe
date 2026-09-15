@@ -26,6 +26,9 @@ pub struct GpuAudioRenderer {
     pub(crate) frame_count: u32,
     /// render_into 的 per-channel 混音临时缓冲（复用，避免每块分配）
     pub(crate) mix_scratch: Vec<f32>,
+    /// 待写入的 voice 槽位更新（buffer 未就绪时也不丢；render_block 在
+    /// ensure_buffers 之后统一 flush）。
+    pending_voice_writes: Vec<(u32, GpuVoiceState)>,
 }
 
 impl GpuAudioRenderer {
@@ -121,6 +124,17 @@ impl GpuAudioRenderer {
                 count: None,
             });
         }
+        // 紧凑 voice_stage（binding 15，pass1 写、CPU 读回）
+        entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 15,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("audio_render_bgl"),
@@ -169,6 +183,7 @@ impl GpuAudioRenderer {
             sample_chunks: Vec::new(),
             frame_count: 0,
             mix_scratch: Vec::new(),
+            pending_voice_writes: Vec::new(),
         })
     }
 
@@ -217,16 +232,21 @@ impl GpuAudioRenderer {
 
     /// 渲染一块音频的 per-channel 混音（32 通道 × frames × 2 f32，立体声交错）。
     ///
-    /// 块内按段渲染（段边界 = CC 事件位置）：段结构与通道状态更新、release/env
-    /// 指令作为数据上传，shader 在对应帧应用；voice 状态在块末**全字段**写回
-    /// `voices`（时间/包络/滤波均由 GPU 推进，CPU 不再 advance）。
-    /// 通道滤波（CC74/71）与通道求和由调用方（GpuSynth）在 CPU 完成。
+    /// **voice 状态常驻 GPU**（方案 A）：本方法不再上传/读回全字段 voice 状态，
+    /// 只读回紧凑的 `voice_stage_out`（每 voice 的 env_stage，CPU 用于 voice 清理）。
+    /// 新 voice 的状态由调用方在 dispatch 前通过 [`write_voice_state`] 写入槽位。
+    /// `readback_states = Some` 时额外读回全字段（测试校验 / 生产压缩前的
+    /// 权威状态对齐）；生产常规路径传 None 零开销。
+    ///
+    /// 读回合并到一次 map/poll（channel_mix + voice_stage [+ full states]）。
     /// 返回实际 voice 数量（0 表示静音）。
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // 渲染上下文透传，见 AGENTS 约定
     pub fn render_block(
         &mut self,
-        voices: &mut [GpuVoiceState],
+        voice_count: u32,
+        readback_states: Option<&mut [GpuVoiceState]>,
         channel_mix: &mut [f32],
+        voice_stage_out: &mut [u32],
         segs: &[SegInfo],
         ch_updates: &[ChState],
         releases: &[ReleaseCmd],
@@ -234,7 +254,7 @@ impl GpuAudioRenderer {
         sample_rate: u32,
     ) -> u32 {
         let frame_count = (channel_mix.len() / 2 / CHANNEL_COUNT) as u32;
-        let voice_count = voices.len() as u32;
+        let voice_count = voice_count.min(super::buffers::MAX_VOICE_SLOTS);
         if voice_count == 0 || frame_count == 0 {
             channel_mix.fill(0.0);
             return 0;
@@ -249,6 +269,12 @@ impl GpuAudioRenderer {
             env_cmds.len(),
         );
         // 未 upload 采样时（音色库为空）直接输出静音，绝不 panic
+        if self.buffers.is_none() {
+            channel_mix.fill(0.0);
+            return 0;
+        }
+        // 首块/重建后：把待写槽位 flush（buffer 就绪前调用的 write 不丢）。
+        self.flush_pending_voice_writes();
         let buf = match self.buffers.as_mut() {
             Some(b) => b,
             None => {
@@ -258,8 +284,6 @@ impl GpuAudioRenderer {
         };
 
         let voice_wg_count = voice_count.div_ceil(WORKGROUP_SIZE);
-        self.queue
-            .write_buffer(&buf.voice_state_buf, 0, bytemuck::cast_slice(voices));
         // 段结构与指令（release 按帧前缀和构建 release_by_frame）
         let mut release_by_frame = vec![0u32; frame_count as usize + 2];
         for r in releases {
@@ -301,8 +325,7 @@ impl GpuAudioRenderer {
                 label: Some("audio_render"),
             });
 
-        // pass1：每 voice 串行渲染 block 内所有帧（含逐帧包络推进与 per-voice 滤波），
-        // 每帧结果直写 partial[vid][frame]
+        // pass1：每线程一个 voice，串行推进 block 内所有帧（状态常驻 GPU）
         {
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("voice_pass"),
@@ -323,41 +346,46 @@ impl GpuAudioRenderer {
             cpass.dispatch_workgroups(frame_count, 1, 1);
         }
 
+        // 读回：channel_mix + 紧凑 voice_stage（一次 map/poll）
         let mix_size = std::mem::size_of_val(channel_mix) as u64;
+        let stage_size = (voice_count as usize * std::mem::size_of::<u32>()) as u64;
         encoder.copy_buffer_to_buffer(&buf.channel_mix_buf, 0, &buf.staging[idx], 0, mix_size);
-        // 读回 voice 状态（滤波器 IIR 状态，供下一 block 上传）
-        let voice_state_size = buf.voice_state_buf.size();
         encoder.copy_buffer_to_buffer(
-            &buf.voice_state_buf,
+            &buf.voice_stage_buf,
             0,
-            &buf.staging_voice[idx],
-            0,
-            voice_state_size,
+            &buf.staging[idx],
+            buf.staging_stage_offset,
+            stage_size,
         );
+        // 读回全字段（测试/压缩路径；copy size 只覆盖实际 voice 数）
+        let want_full = readback_states.is_some();
+        if want_full {
+            let full_size = (voice_count as usize * std::mem::size_of::<GpuVoiceState>()) as u64;
+            encoder.copy_buffer_to_buffer(
+                &buf.voice_state_buf,
+                0,
+                &buf.staging[idx],
+                buf.staging_full_offset,
+                full_size,
+            );
+        }
         self.queue.submit(std::iter::once(encoder.finish()));
 
-        // 只 map 本次实际渲染的帧数（staging 可能比本次 block 大）
-        let buffer_slice = buf.staging[idx].slice(..mix_size);
+        let buffer_slice = buf.staging[idx].slice(..);
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = sender.send(result);
-        });
-        let voice_slice = buf.staging_voice[idx].slice(..);
-        let (vsender, vreceiver) = std::sync::mpsc::channel();
-        voice_slice.map_async(wgpu::MapMode::Read, move |result| {
-            let _ = vsender.send(result);
         });
         let _ = self.device.poll(wgpu::PollType::Wait {
             submission_index: None,
             timeout: None,
         });
         // map 失败（如设备丢失）：输出静音，不 unwrap 保命
-        if !matches!(receiver.recv(), Ok(Ok(()))) || !matches!(vreceiver.recv(), Ok(Ok(()))) {
+        if !matches!(receiver.recv(), Ok(Ok(()))) {
             channel_mix.fill(0.0);
             return 0;
         }
 
-        // 读回失败（如设备丢失）：输出静音，不 unwrap 保命
         let data = match buffer_slice.get_mapped_range() {
             Ok(d) => d,
             Err(_) => {
@@ -365,35 +393,78 @@ impl GpuAudioRenderer {
                 return 0;
             }
         };
-        let gpu_mix: &[f32] = bytemuck::cast_slice(&data);
+        // channel_mix
+        let mix_bytes = mix_size as usize;
+        let gpu_mix: &[f32] = bytemuck::cast_slice(&data[..mix_bytes]);
         channel_mix[..gpu_mix.len()].copy_from_slice(gpu_mix);
+        // 紧凑 stage
+        let stage_start = buf.staging_stage_offset as usize;
+        let stage: &[u32] =
+            bytemuck::cast_slice(&data[stage_start..stage_start + stage_size as usize]);
+        let n_stage = stage.len().min(voice_stage_out.len());
+        voice_stage_out[..n_stage].copy_from_slice(&stage[..n_stage]);
+        // 全字段读回
+        if let Some(out) = readback_states {
+            let full_start = buf.staging_full_offset as usize;
+            let full_bytes = voice_count as usize * std::mem::size_of::<GpuVoiceState>();
+            let states: &[GpuVoiceState] =
+                bytemuck::cast_slice(&data[full_start..full_start + full_bytes]);
+            let n = states.len().min(out.len());
+            out[..n].copy_from_slice(&states[..n]);
+        }
         drop(data);
         buf.staging[idx].unmap();
-
-        // 读回滤波器与包络状态（GPU 全字段推进，CPU 读回为下一块起点）
-        let vdata = match voice_slice.get_mapped_range() {
-            Ok(d) => d,
-            Err(_) => {
-                channel_mix.fill(0.0);
-                return 0;
-            }
-        };
-        let gpu_voices: &[GpuVoiceState] = bytemuck::cast_slice(&vdata);
-        for (i, v) in voices.iter_mut().enumerate() {
-            *v = gpu_voices[i];
-        }
-        drop(vdata);
-        buf.staging_voice[idx].unmap();
         buf.staging_idx = 1 - buf.staging_idx;
 
         voice_count
     }
 
-    /// Render a block of audio using the GPU.
+    /// 写入单个 voice 的完整状态到 GPU 槽位（新 voice / chase 恢复用）。
+    /// 状态常驻 GPU 后，CPU 只在创建或修改 voice 时写，不再整块重传。
+    /// 调用点可能在 buffer 尚未创建时（首块）：入队，`render_block` 在
+    /// ensure_buffers 之后统一 flush。
+    pub fn write_voice_state(&mut self, vid: u32, state: &GpuVoiceState) {
+        // 一律入队：buffer 可能还没创建，或将在本块 render_block 里因扩容重建，
+        // flush 统一发生在 ensure_buffers 之后，写入不会丢。
+        self.pending_voice_writes.push((vid, *state));
+    }
+
+    /// 全量上传 voice 状态（测试路径；生产用 `write_voice_state` 增量写）。
+    pub fn upload_voice_states(&mut self, states: &[GpuVoiceState]) {
+        for (i, st) in states.iter().enumerate() {
+            self.write_voice_state(i as u32, st);
+        }
+    }
+
+    /// 把待写 voice 槽位 flush 到 GPU（render_block 在 ensure_buffers 之后调用）。
+    fn flush_pending_voice_writes(&mut self) {
+        if self.pending_voice_writes.is_empty() {
+            return;
+        }
+        let Some(buf) = &self.buffers else {
+            return;
+        };
+        let size = std::mem::size_of::<GpuVoiceState>() as u64;
+        for (vid, st) in self.pending_voice_writes.drain(..) {
+            if vid >= buf.voice_slots {
+                continue;
+            }
+            self.queue.write_buffer(
+                &buf.voice_state_buf,
+                vid as u64 * size,
+                bytemuck::bytes_of(&st),
+            );
+        }
+    }
+
+    /// Render a block of audio using the GPU（测试/便利路径）。
     /// 渲染一块音频（frames × 2 立体声交错）：per-channel 混音求和，无通道滤波。
     /// `voices` 会被更新：读回 GPU 端推进的**全字段**状态（时间/包络/滤波）。
     /// 调用方**不应再**调用 advance_voices（GPU 已推进）。
     /// 返回实际 voice 数量（0 表示静音）。
+    ///
+    /// 注意：生产路径（GpuSynth::render_to_mixer）用 `render_block` 的紧凑读回；
+    /// 本方法保留全字段读回供 CPU/GPU 一致性测试使用。
     pub fn render_into(
         &mut self,
         voices: &mut [GpuVoiceState],
@@ -403,7 +474,20 @@ impl GpuAudioRenderer {
         let frames = output.len() / 2;
         let mut scratch = std::mem::take(&mut self.mix_scratch);
         scratch.resize(CHANNEL_COUNT * frames * 2, 0.0);
-        let n = self.render_block(voices, &mut scratch, &[], &[], &[], &[], sample_rate);
+        // 测试路径：先全量上传（状态自包含），再渲染 + 全字段读回。
+        self.upload_voice_states(voices);
+        let mut stage = vec![0u32; voices.len()];
+        let n = self.render_block(
+            voices.len() as u32,
+            Some(voices),
+            &mut scratch,
+            &mut stage,
+            &[],
+            &[],
+            &[],
+            &[],
+            sample_rate,
+        );
         self.mix_scratch = scratch;
         output.fill(0.0);
         for ch in 0..CHANNEL_COUNT {

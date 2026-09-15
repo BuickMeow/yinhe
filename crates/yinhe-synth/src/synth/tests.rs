@@ -458,7 +458,19 @@ fn new_voice_after_seg_boundary_sounds() {
         ch: 0,
         speed_mult: 1.0,
     }];
-    renderer.render_block(&mut voices, &mut mix, &segs, &ch_updates, &[], &[], sr);
+    let mut stage = vec![0u32; voices.len()];
+    renderer.upload_voice_states(&voices);
+    renderer.render_block(
+        voices.len() as u32,
+        Some(&mut voices),
+        &mut mix,
+        &mut stage,
+        &segs,
+        &ch_updates,
+        &[],
+        &[],
+        sr,
+    );
     for i in 0..out.len() {
         for ch in 0..CHANNEL_COUNT {
             out[i] += mix[ch * frame_count as usize * 2 + i];
@@ -482,7 +494,19 @@ fn new_voice_after_seg_boundary_sounds() {
     newv.start_offset = 68;
     newv.time = 0.0;
     voices2.push(newv);
-    renderer.render_block(&mut voices2, &mut mix2, &segs, &ch_updates, &[], &[], sr);
+    let mut stage2 = vec![0u32; voices2.len()];
+    renderer.upload_voice_states(&voices2);
+    renderer.render_block(
+        voices2.len() as u32,
+        Some(&mut voices2),
+        &mut mix2,
+        &mut stage2,
+        &segs,
+        &ch_updates,
+        &[],
+        &[],
+        sr,
+    );
     let out2: Vec<f32> = (0..out.len())
         .map(|i| {
             (0..CHANNEL_COUNT)

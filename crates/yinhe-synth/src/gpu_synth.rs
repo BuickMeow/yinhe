@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use crate::sfz_parser;
 use crate::synth::GpuAudioRenderer;
+use crate::synth::buffers::MAX_VOICE_SLOTS;
 use crate::synth::{ChState, EnvUpdateCmd, GpuVoiceState, ReleaseCmd, SegInfo};
 use crate::wgpu;
 
@@ -244,8 +245,6 @@ struct Voice {
     state: GpuVoiceState,
     key: u8,
     channel: u8,
-    /// 音色库基础播放倍率（不含弯音）。
-    base_speed: f32,
     /// region 原始 attack/release 帧数（CC72/73 重算的基准，多次 CC 不累积）
     orig_attack_frames: f32,
     orig_release_frames: f32,
@@ -277,8 +276,12 @@ pub struct GpuSynth {
     /// 采样数据在 GPU 上传块中的 (offset, len)，按 Arc 身份（指针 as usize）去重
     sample_offsets: HashMap<usize, (u32, u32)>,
     voices: Vec<Voice>,
-    /// 预分配的 voice states 缓冲区，避免每帧分配
+    /// 紧凑 env_stage 读回缓冲（voice 清理用；全长缓冲复用）
+    voice_stage_buf: Vec<u32>,
+    /// 压缩时的全字段读回缓冲（复用，避免每块分配）
     states_buf: Vec<GpuVoiceState>,
+    /// 每通道上次的 pitch_multiplier（块起点比对；变化才产生段 0 的 ChState）
+    channel_speed_cache: [f32; MAX_CHANNELS],
     /// 32 通道混音缓冲（GPU 输出读回，CPU 通道滤波 + 求和）
     channel_mix: Vec<f32>,
     /// 32 通道 MIDI 控制状态
@@ -329,7 +332,9 @@ impl GpuSynth {
             sample_data: Vec::new(),
             sample_offsets: HashMap::new(),
             voices: Vec::new(),
+            voice_stage_buf: Vec::new(),
             states_buf: Vec::new(),
+            channel_speed_cache: [0.0; MAX_CHANNELS],
             channel_mix: Vec::new(),
             channels: [ChannelState::new(sample_rate); MAX_CHANNELS],
             max_voices: 8192,
@@ -410,6 +415,7 @@ impl GpuSynth {
         self.event_cursor = 0;
         self.voices.clear();
         self.channels = [ChannelState::new(self.sample_rate); MAX_CHANNELS];
+        self.channel_speed_cache = [0.0; MAX_CHANNELS];
         self.sample_position = 0;
         self.chase_base = 0;
     }
@@ -419,9 +425,9 @@ impl GpuSynth {
         self.sample_position
     }
 
-    /// 当前活跃 voice 数量（含 release 阶段）。导出余韵循环用它早退。
+    /// 当前活跃 voice 数量（含 release 阶段，不含墓碑）。导出余韵循环用它早退。
     pub fn voice_count(&self) -> usize {
-        self.voices.len()
+        self.voices.iter().filter(|v| v.state.env_stage < 6).count()
     }
 
     /// 设置全局 voice 上限（默认 8192）。超过时淘汰最老的 release 中 voice。
@@ -443,6 +449,8 @@ impl GpuSynth {
         self.voices.clear();
         // 通道状态在 seek 时重置（chase 由 yinhe-audio 的 cc_events 重建保证）
         self.channels = [ChannelState::new(self.sample_rate); MAX_CHANNELS];
+        // speed 缓存清空：下一块起点重新下发全部通道的 pitch_multiplier。
+        self.channel_speed_cache = [0.0; MAX_CHANNELS];
     }
 
     /// 渲染一块到混音台的 planar 通道缓冲（覆盖写，与 CPU 路径
@@ -460,11 +468,24 @@ impl GpuSynth {
         let block_start = self.sample_position;
         let block_end = block_start + frames as u64;
 
+        // 压缩预判（基于上一块读回的 env_stage）：墓碑占多数或接近槽位上限。
+        // 压缩必须用 GPU 权威状态（time/envelope 由 GPU 推进），在本块读回后执行。
+        let need_compact = self.voices.len() >= MAX_VOICE_SLOTS as usize
+            || (!self.voices.is_empty()
+                && self
+                    .voices
+                    .iter()
+                    .filter(|v| v.state.env_stage >= 6)
+                    .count()
+                    * 2
+                    >= self.voices.len());
+
         // 收集块内事件为段结构（同时创建 voice、发 release/env 指令、推进 CPU 通道状态）
         let mut segs: Vec<SegInfo> = Vec::new();
         let mut ch_updates: Vec<ChState> = Vec::new();
         let mut releases: Vec<ReleaseCmd> = Vec::new();
         let mut env_cmds: Vec<EnvUpdateCmd> = Vec::new();
+        let upload_from = self.voices.len();
         self.collect_block(
             block_start,
             block_end,
@@ -474,23 +495,45 @@ impl GpuSynth {
             &mut env_cmds,
         );
 
-        // 上传块起点 voice 状态（含块内新增）→ 一次提交 → 全字段读回
-        self.states_buf.clear();
-        self.states_buf.extend(self.voices.iter().map(|v| v.state));
+        // 只上传本块新增的 voice 槽位（状态常驻 GPU，不再整块重传）。
+        for (i, v) in self.voices.iter().enumerate().skip(upload_from) {
+            self.renderer.write_voice_state(i as u32, &v.state);
+        }
+
         self.channel_mix.resize(MAX_CHANNELS * frames * 2, 0.0);
-        if !self.states_buf.is_empty() {
-            self.renderer.render_block(
-                &mut self.states_buf,
+        if !self.voices.is_empty() {
+            self.voice_stage_buf.resize(self.voices.len(), 0);
+            // 需要压缩时额外读回全字段（GPU 权威状态），否则零开销紧凑读回。
+            if need_compact {
+                self.states_buf
+                    .resize(self.voices.len(), GpuVoiceState::default());
+            }
+            let readback = need_compact.then_some(self.states_buf.as_mut_slice());
+            let n = self.renderer.render_block(
+                self.voices.len() as u32,
+                readback,
                 &mut self.channel_mix,
+                &mut self.voice_stage_buf,
                 &segs,
                 &ch_updates,
                 &releases,
                 &env_cmds,
                 self.sample_rate,
             );
-            // 读回 GPU 推进后的全字段状态（下块起点 = 本块末）
-            for (v, st) in self.voices.iter_mut().zip(&self.states_buf) {
-                v.state = *st;
+            debug_assert_eq!(n as usize, self.voices.len().min(MAX_VOICE_SLOTS as usize));
+            // 读回紧凑 env_stage（voice 清理/墓碑标记用；其余状态常驻 GPU）。
+            for (v, &stage) in self.voices.iter_mut().zip(self.voice_stage_buf.iter()) {
+                v.state.env_stage = stage;
+            }
+            // 块末压缩：以刚读回的全字段状态为准 retain + 全量重传（索引重排）。
+            if need_compact {
+                for (v, st) in self.voices.iter_mut().zip(self.states_buf.iter()) {
+                    v.state = *st;
+                }
+                self.voices.retain(|v| v.state.env_stage < 6);
+                for (i, v) in self.voices.iter().enumerate() {
+                    self.renderer.write_voice_state(i as u32, &v.state);
+                }
             }
         }
 
@@ -509,9 +552,11 @@ impl GpuSynth {
             buf.right.fill(0.0);
         }
 
-        // 清理已结束的 voice（GPU 推进后的 env_stage）
-        self.voices.retain(|v| v.state.env_stage < 6);
-        self.peak_voices = self.peak_voices.max(self.voices.len());
+        // 注意：死 voice（env_stage >= 6）保留在列表中作为墓碑，索引与 GPU 槽位
+        // 严格一一对应；清理统一由块末压缩（need_compact）做 retain + 重传。
+        self.peak_voices = self
+            .peak_voices
+            .max(self.voices.iter().filter(|v| v.state.env_stage < 6).count());
 
         self.sample_position = block_end;
     }
@@ -545,24 +590,30 @@ impl GpuSynth {
         releases: &mut Vec<ReleaseCmd>,
         env_cmds: &mut Vec<EnvUpdateCmd>,
     ) {
-        // 块起点：所有 voice 对齐通道状态（speed/ch_vol/expr/pan）。
-        // 块起点若有 CC 事件（sample == block_start），其更新记录在段 0，
-        // 由 shader 在初始化时应用——段 0 渲染起点值 = 这里的 sync 值（与现状一致）。
-        self.sync_channel_state();
-
-        // 段 0 恒为空：块起点无事件时 shader 循环外应用它 = 无操作；
-        // 块起点有 CC 时其更新在段 1（start_frame=0），fi=0 即应用。
-        // 段 i（i>=1）的 start_frame = 该段边界 CC 的块内帧位置，
-        // 保证 CC 更新在**事件帧**生效而不是提前到块起点。
+        // 段 0：块起点的通道 pitch 变化（seek/chase/调音后）→ shader 初始化时应用
+        // speed = base_speed × speed_mult。voice 状态常驻 GPU，CPU 不再逐 voice 同步。
+        let seg0_off = ch_updates.len();
+        for ch_idx in 0..MAX_CHANNELS {
+            let m = self.channels[ch_idx].pitch_multiplier();
+            if (m - self.channel_speed_cache[ch_idx]).abs() > f32::EPSILON {
+                self.channel_speed_cache[ch_idx] = m;
+                ch_updates.push(ChState {
+                    ch: ch_idx as u32,
+                    speed_mult: m,
+                });
+            }
+        }
+        let seg0_count = ch_updates.len() - seg0_off;
+        // 段 0 的 start_frame=0：块起点有 CC 事件时其更新在段 1（start_frame=0）。
         segs.push(SegInfo {
             start_frame: 0,
-            ch_off: 0,
-            ch_count: 0,
+            ch_off: seg0_off as u32,
+            ch_count: seg0_count as u32,
             _pad: 0,
         });
         let mut seg_start = block_start;
         let mut seg_frame = 0u32;
-        let mut seg_ch_off = 0usize;
+        let mut seg_ch_off = ch_updates.len();
 
         loop {
             let next_cc = self.next_cc_in_block(seg_start, block_end);
@@ -750,18 +801,6 @@ impl GpuSynth {
         }
     }
 
-    /// 段起点同步所有 voice：弯音倍率（speed）。
-    /// 通道音量/声像已迁至 yinhe-dsp 效果器，不再同步。
-    fn sync_channel_state(&mut self) {
-        for v in &mut self.voices {
-            // voice 只可能属于前 MAX_CHANNELS 个 dense 通道（note_on 已过滤）
-            let Some(ch) = self.channels.get(v.channel as usize).copied() else {
-                continue;
-            };
-            v.state.speed = v.base_speed * ch.pitch_multiplier();
-        }
-    }
-
     /// NoteOn（block_frame = 块内起始帧）。
     /// key_map 已按 (key, vel) 展开为最终参数快照，这里零公式计算直接消费。
     /// 超 voice 上限时淘汰最老的 voice（发 kill 指令，不 remove——索引保持稳定）。
@@ -781,6 +820,11 @@ impl GpuSynth {
         else {
             return;
         };
+        // voice 槽位上限（状态常驻 GPU，槽位固定）；超限时由 maybe_compact_voices
+        // 在块边界压缩，这里防御性拒绝。
+        if self.voices.len() >= MAX_VOICE_SLOTS as usize {
+            return;
+        }
         let ch = self.channels[ch_idx];
         let entries = &self.port_key_maps[self.channel_port[ch_idx] as usize];
         let info = match sfz_parser::select_key_info_multi(entries, ch.bank, ch.program, key, vel) {
@@ -837,7 +881,6 @@ impl GpuSynth {
         self.voices.push(Voice {
             key,
             channel,
-            base_speed: info.speed_mult,
             orig_attack_frames,
             orig_release_frames,
             held_by_damper: false,
@@ -1005,11 +1048,13 @@ impl GpuSynth {
         let Some(ch_idx) = (dense as usize).lt(&MAX_CHANNELS).then_some(dense as usize) else {
             return;
         };
+        // 被修改的 voice 槽位（状态常驻 GPU，改完需写回）。
+        let mut dirty: Vec<u32> = Vec::new();
         for &ev in events {
             let damper_released = self.channels[ch_idx].process_control(ev);
             if damper_released {
                 // 松开延音踏板：释放该通道所有被保持的 voice（与 shader release 指令同语义）
-                for v in self.voices.iter_mut() {
+                for (i, v) in self.voices.iter_mut().enumerate() {
                     if v.channel == dense as u8
                         && v.held_by_damper
                         && v.state.env_stage < 5
@@ -1019,6 +1064,7 @@ impl GpuSynth {
                         v.state.env_start = v.state.envelope;
                         v.state.env_stage = 5;
                         v.state.stage_progress = 0.0;
+                        dirty.push(i as u32);
                     }
                     v.held_by_damper = false;
                 }
@@ -1030,7 +1076,7 @@ impl GpuSynth {
                 ControlEvent::Raw(0x48 | 0x49, _) | ControlEvent::Raw(0x79, 0)
             ) {
                 let ch = self.channels[ch_idx];
-                for v in self.voices.iter_mut() {
+                for (i, v) in self.voices.iter_mut().enumerate() {
                     if v.channel as usize != ch_idx || v.state.env_stage >= 6 {
                         continue;
                     }
@@ -1051,7 +1097,14 @@ impl GpuSynth {
                         }
                         _ => {}
                     }
+                    dirty.push(i as u32);
                 }
+            }
+        }
+        // 写回被修改的槽位（chase 不频繁，逐个写可接受）。
+        for vid in dirty {
+            if let Some(v) = self.voices.get(vid as usize) {
+                self.renderer.write_voice_state(vid, &v.state);
             }
         }
     }
