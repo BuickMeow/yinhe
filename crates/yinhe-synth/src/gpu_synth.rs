@@ -10,7 +10,7 @@
 //! voice 管理、通道状态、ADSR 推进封装在内部。
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::sfz_parser;
 use crate::synth::GpuAudioRenderer;
@@ -20,6 +20,14 @@ use crate::wgpu;
 
 /// MIDI 通道数（dense 通道 = port×16+ch，支持 2 端口 32 通道）。
 pub const MAX_CHANNELS: usize = 32;
+
+/// 进程级音色库解析缓存：key = (路径, 目标采样率)。
+/// 反复打开/切换工程不再重复解析（每次约 3-4s）；样本 `Arc` 跨引擎共享，
+/// 内存只存一份。缓存常驻（音色库条目数量有限）。
+type KeyMapCacheKey = (std::path::PathBuf, u32);
+type KeyMapCacheValue = Arc<Vec<sfz_parser::KeyMapEntry>>;
+static KEY_MAP_CACHE: LazyLock<Mutex<HashMap<KeyMapCacheKey, KeyMapCacheValue>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// 合成器事件（sample 域，按 sample 排序后由 `load_events` 加载）。
 #[derive(Clone, Copy, Debug)]
@@ -267,10 +275,6 @@ pub struct GpuSynth {
     port_key_maps: Vec<Vec<sfz_parser::KeyMapEntry>>,
     /// dense 通道 → port 映射（由 `load_port_soundfonts` 按 layout 填表）。
     channel_port: [u8; MAX_CHANNELS],
-    /// 音色库解析缓存：同路径只解析/重采样一次。
-    /// 多通道配置同一音色库时避免重复解析（每通道约 1.5s）与样本多份占用
-    /// （样本为 `Arc`，clone 条目后按指针去重，GPU 只上传一份）。
-    key_map_cache: HashMap<std::path::PathBuf, Vec<sfz_parser::KeyMapEntry>>,
     /// 累积的采样数据（全部 port 拼接；port 加载时全量重传 GPU）。
     sample_data: Vec<f32>,
     /// 采样数据在 GPU 上传块中的 (offset, len)，按 Arc 身份（指针 as usize）去重
@@ -327,7 +331,6 @@ impl GpuSynth {
             renderer,
             // 每 dense 通道一个音色库条目列表（dense = port×16+ch，最多 MAX_CHANNELS）
             port_key_maps: vec![Vec::new(); MAX_CHANNELS],
-            key_map_cache: HashMap::new(),
             channel_port: [0; MAX_CHANNELS],
             sample_data: Vec::new(),
             sample_offsets: HashMap::new(),
@@ -366,13 +369,32 @@ impl GpuSynth {
         }
         let mut entries: Vec<sfz_parser::KeyMapEntry> = Vec::new();
         for path in paths {
-            if let Some(cached) = self.key_map_cache.get(path) {
-                entries.extend(cached.iter().cloned());
-            } else {
-                let built = sfz_parser::build_key_maps(path, self.sample_rate)?;
-                self.key_map_cache.insert(path.clone(), built.clone());
-                entries.extend(built);
-            }
+            let key = (path.clone(), self.sample_rate);
+            let cached = {
+                let cache = KEY_MAP_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+                cache.get(&key).cloned()
+            };
+            let built = match cached {
+                Some(arc) => {
+                    eprintln!("[gpu] 音色库解析缓存命中：{}", path.display());
+                    arc
+                }
+                None => {
+                    let t = std::time::Instant::now();
+                    let arc = Arc::new(sfz_parser::build_key_maps(path, self.sample_rate)?);
+                    eprintln!(
+                        "[gpu] 音色库解析（未命中缓存）={:?}：{}",
+                        t.elapsed(),
+                        path.display()
+                    );
+                    KEY_MAP_CACHE
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .insert(key, Arc::clone(&arc));
+                    arc
+                }
+            };
+            entries.extend(built.iter().cloned());
         }
         self.port_key_maps[slot] = entries;
         self.channel_port[slot] = slot as u8;
@@ -1172,5 +1194,41 @@ mod tests {
         assert!(ch.process_control(ControlEvent::Raw(0x79, 0)));
         assert_eq!(ch.pitch_bend_sensitivity, 2.0);
         assert_eq!(ch.coarse_tune, 0.0);
+    }
+
+    fn first_sample_ptr(s: &GpuSynth) -> *const f32 {
+        s.port_key_maps[0]
+            .iter()
+            .flat_map(|e| e.map.iter())
+            .flatten()
+            .map(|info| info.sample_data.as_ptr())
+            .next()
+            .unwrap_or(std::ptr::null())
+    }
+
+    /// 进程级解析缓存：同路径第二次加载命中缓存，样本 Arc 跨实例共享。
+    #[test]
+    fn soundfont_parse_cache_shared_across_instances() {
+        let Some(sfz) = std::env::var_os("YINHE_TEST_SFZ") else {
+            eprintln!("YINHE_TEST_SFZ not set, skipping");
+            return;
+        };
+        let path = std::path::PathBuf::from(&sfz);
+        // 预热缓存：并行测试下也保证后续两次都是命中（不依赖执行顺序）。
+        let mut warm = GpuSynth::new_default(44_100).expect("GpuSynth warm");
+        warm.load_dense_soundfonts(0, std::slice::from_ref(&path))
+            .expect("warm load");
+
+        let mut a = GpuSynth::new_default(44_100).expect("GpuSynth a");
+        a.load_dense_soundfonts(0, std::slice::from_ref(&path))
+            .expect("load a");
+        let mut b = GpuSynth::new_default(44_100).expect("GpuSynth b");
+        b.load_dense_soundfonts(0, std::slice::from_ref(&path))
+            .expect("load b");
+
+        let ptr_a = first_sample_ptr(&a);
+        let ptr_b = first_sample_ptr(&b);
+        assert!(!ptr_a.is_null(), "样本指针不应为空");
+        assert_eq!(ptr_a, ptr_b, "同路径两次加载应共享同一份样本内存（Arc）");
     }
 }
