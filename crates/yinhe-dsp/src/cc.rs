@@ -4,7 +4,9 @@
 //! 宿主把被接管的 CC 从合成器分流到模块（`apply_cc`），
 //! 使 xsynth 只保留音源层参数。
 
+pub mod filter;
 pub mod gain;
+pub mod pan;
 
 /// 参数斜坡时长（秒）：与 xsynth `ValueLerp` 一致（10ms）。
 pub const CC_RAMP_SECONDS: f32 = 0.01;

@@ -5,23 +5,35 @@
 
 use yinhe_mixer::InsertProcessor;
 
+use crate::cc::filter::ChannelFilter;
 use crate::cc::gain::ChannelGain;
+use crate::cc::pan::ChannelPan;
 
 /// 内置效果器种类。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuiltinEffectKind {
     /// 通道音量/表情（CC7/11）。
     ChannelGain,
+    /// 通道声像（CC10）。
+    ChannelPan,
+    /// 通道低通滤波（CC71/74）。
+    ChannelFilter,
 }
 
 impl BuiltinEffectKind {
     /// 全部内置效果器（UI 选择器展示顺序）。
-    pub const ALL: &'static [BuiltinEffectKind] = &[BuiltinEffectKind::ChannelGain];
+    pub const ALL: &'static [BuiltinEffectKind] = &[
+        BuiltinEffectKind::ChannelGain,
+        BuiltinEffectKind::ChannelPan,
+        BuiltinEffectKind::ChannelFilter,
+    ];
 
     /// 持久化标识（`InsertRef.plugin_id`）。
     pub const fn id(self) -> &'static str {
         match self {
             BuiltinEffectKind::ChannelGain => "channel_gain",
+            BuiltinEffectKind::ChannelPan => "channel_pan",
+            BuiltinEffectKind::ChannelFilter => "channel_filter",
         }
     }
 
@@ -34,6 +46,8 @@ impl BuiltinEffectKind {
     pub const fn name(self) -> &'static str {
         match self {
             BuiltinEffectKind::ChannelGain => "Channel Gain",
+            BuiltinEffectKind::ChannelPan => "Channel Pan",
+            BuiltinEffectKind::ChannelFilter => "Channel Filter",
         }
     }
 
@@ -41,6 +55,8 @@ impl BuiltinEffectKind {
     pub const fn description(self) -> &'static str {
         match self {
             BuiltinEffectKind::ChannelGain => "CC7/CC11 channel volume & expression",
+            BuiltinEffectKind::ChannelPan => "CC10 equal-power pan",
+            BuiltinEffectKind::ChannelFilter => "CC71/CC74 channel low-pass filter",
         }
     }
 
@@ -48,6 +64,8 @@ impl BuiltinEffectKind {
     pub const fn handled_ccs(self) -> &'static [u8] {
         match self {
             BuiltinEffectKind::ChannelGain => &[7, 11],
+            BuiltinEffectKind::ChannelPan => &[10],
+            BuiltinEffectKind::ChannelFilter => &[71, 74],
         }
     }
 
@@ -55,6 +73,8 @@ impl BuiltinEffectKind {
     pub fn build(self, sample_rate: u32) -> Box<dyn InsertProcessor> {
         match self {
             BuiltinEffectKind::ChannelGain => Box::new(ChannelGain::new(sample_rate)),
+            BuiltinEffectKind::ChannelPan => Box::new(ChannelPan::new(sample_rate)),
+            BuiltinEffectKind::ChannelFilter => Box::new(ChannelFilter::new(sample_rate)),
         }
     }
 }
