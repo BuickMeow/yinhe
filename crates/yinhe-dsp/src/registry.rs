@@ -90,4 +90,25 @@ mod tests {
         }
         assert_eq!(BuiltinEffectKind::from_id("nope"), None);
     }
+
+    #[test]
+    fn dsp_channel_ccs_matches_module_union() {
+        // 白名单（dispatch 直发）必须等于所有模块 handled_ccs 的并集，
+        // 否则新增模块/改白名单时会漏发或错发。
+        let mut union: Vec<u8> = Vec::new();
+        for kind in BuiltinEffectKind::ALL {
+            for &cc in kind.handled_ccs() {
+                if !union.contains(&cc) {
+                    union.push(cc);
+                }
+            }
+        }
+        union.sort_unstable();
+        let mut expected = crate::cc::DSP_CHANNEL_CCS.to_vec();
+        expected.sort_unstable();
+        assert_eq!(
+            union, expected,
+            "DSP_CHANNEL_CCS 与模块 handled_ccs 并集不同步"
+        );
+    }
 }
