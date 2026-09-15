@@ -39,6 +39,30 @@ pub(crate) fn mod_key() -> &'static str {
     }
 }
 
+/// 设置钢琴卷帘可见性；展开时与底部设备栏互斥（同时只展开一个）。
+pub(crate) fn set_pianoroll_visible(
+    show_pianoroll_in_arrange: &mut bool,
+    show_bottom_dock: &mut bool,
+    visible: bool,
+) {
+    *show_pianoroll_in_arrange = visible;
+    if visible {
+        *show_bottom_dock = false;
+    }
+}
+
+/// 设置底部设备栏可见性；展开时与钢琴卷帘互斥（同时只展开一个）。
+pub(crate) fn set_dock_visible(
+    show_pianoroll_in_arrange: &mut bool,
+    show_bottom_dock: &mut bool,
+    visible: bool,
+) {
+    *show_bottom_dock = visible;
+    if visible {
+        *show_pianoroll_in_arrange = false;
+    }
+}
+
 /// 返回 true 表示当前鼠标悬停在该按钮上（供状态栏讲解行使用）。
 fn mode_button(ui: &mut egui::Ui, label: &str, is_selected: bool, on_click: impl FnOnce()) -> bool {
     let resp = crate::widgets::hover::hover_button(
@@ -196,11 +220,11 @@ pub fn show(
                         *show_pianoroll_in_arrange,
                     );
                     if piano_resp.clicked() {
-                        *show_pianoroll_in_arrange = !*show_pianoroll_in_arrange;
-                        // 与底部设备栏互斥：同时只展开一个。
-                        if *show_pianoroll_in_arrange {
-                            *show_bottom_dock = false;
-                        }
+                        set_pianoroll_visible(
+                            show_pianoroll_in_arrange,
+                            show_bottom_dock,
+                            !*show_pianoroll_in_arrange,
+                        );
                     }
                     if piano_resp.hovered() {
                         hovered_hint = Some(t!("hint.pr_toggle").to_string());
@@ -223,10 +247,11 @@ pub fn show(
                         *show_bottom_dock,
                     );
                     if dock_resp.clicked() {
-                        *show_bottom_dock = !*show_bottom_dock;
-                        if *show_bottom_dock {
-                            *show_pianoroll_in_arrange = false;
-                        }
+                        set_dock_visible(
+                            show_pianoroll_in_arrange,
+                            show_bottom_dock,
+                            !*show_bottom_dock,
+                        );
                     }
                     if dock_resp.hovered() {
                         hovered_hint = Some(t!("hint.dock_toggle").to_string());
@@ -357,4 +382,26 @@ pub fn show(
                 }
             });
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 回归：钢琴卷帘与底部设备栏互斥，展开一个自动收起另一个；
+    /// 收起动作不产生互斥副作用。
+    #[test]
+    fn pianoroll_and_dock_are_mutually_exclusive() {
+        let (mut piano, mut dock) = (false, true);
+        set_pianoroll_visible(&mut piano, &mut dock, true);
+        assert!(piano && !dock, "打开钢琴应收起 dock");
+
+        let (mut piano, mut dock) = (true, false);
+        set_dock_visible(&mut piano, &mut dock, true);
+        assert!(!piano && dock, "打开 dock 应收起钢琴");
+
+        let (mut piano, mut dock) = (false, true);
+        set_pianoroll_visible(&mut piano, &mut dock, false);
+        assert!(!piano && dock, "收起钢琴不应动 dock");
+    }
 }

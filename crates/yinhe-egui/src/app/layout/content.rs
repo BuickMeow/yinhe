@@ -117,7 +117,11 @@ impl App {
                 &mut automation_picker_req,
             );
             if request_pianoroll {
-                self.show_pianoroll_in_arrange = true;
+                crate::chrome::mode_bar::set_pianoroll_visible(
+                    &mut self.show_pianoroll_in_arrange,
+                    &mut self.show_bottom_dock,
+                    true,
+                );
             }
             (
                 arr_drag_delta,
