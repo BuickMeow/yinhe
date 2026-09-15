@@ -23,6 +23,7 @@ pub use sfz_parser::{
     select_key_info_multi,
 };
 pub use synth::{
-    GpuAudioRenderer, GpuVoiceState, RenderParams, advance_voices, biquad_coeffs, cpu_render_voices,
+    GpuAudioRenderer, GpuVoiceState, RENDER_SEGMENT_FRAMES, RenderParams, RenderSegment,
+    advance_voices, biquad_coeffs, cpu_render_voices,
 };
 pub use wgpu;

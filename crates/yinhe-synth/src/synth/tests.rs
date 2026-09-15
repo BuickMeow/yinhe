@@ -460,7 +460,7 @@ fn new_voice_after_seg_boundary_sounds() {
     }];
     let mut stage = vec![0u32; voices.len()];
     renderer.upload_voice_states(&voices);
-    renderer.render_block(
+    renderer.render_block_single(
         voices.len() as u32,
         Some(&mut voices),
         &mut mix,
@@ -496,7 +496,7 @@ fn new_voice_after_seg_boundary_sounds() {
     voices2.push(newv);
     let mut stage2 = vec![0u32; voices2.len()];
     renderer.upload_voice_states(&voices2);
-    renderer.render_block(
+    renderer.render_block_single(
         voices2.len() as u32,
         Some(&mut voices2),
         &mut mix2,
@@ -531,18 +531,18 @@ fn sample_upload_not_repeated_on_voice_grow() {
     // 上传发生在首次 render_block 的 ensure_buffers
     let mut mix = vec![0.0f32; CHANNEL_COUNT * 256 * 2];
     let mut stage = vec![0u32; 64];
-    renderer.render_block(64, None, &mut mix, &mut stage, &[], &[], &[], &[], 44100);
+    renderer.render_block_single(64, None, &mut mix, &mut stage, &[], &[], &[], &[], 44100);
     assert_eq!(renderer.sample_upload_count, 1, "首次渲染应上传一次采样");
 
     let mut mix = vec![0.0f32; CHANNEL_COUNT * 256 * 2];
     let mut stage = vec![0u32; 64];
-    renderer.render_block(64, None, &mut mix, &mut stage, &[], &[], &[], &[], 44100);
+    renderer.render_block_single(64, None, &mut mix, &mut stage, &[], &[], &[], &[], 44100);
     assert_eq!(renderer.sample_upload_count, 1, "普通渲染不应重传采样");
 
     // 大扩容：voice 4096 + 帧数 1024 → 触发 partial 等缓冲重建
     let mut mix2 = vec![0.0f32; CHANNEL_COUNT * 1024 * 2];
     let mut stage2 = vec![0u32; 4096];
-    renderer.render_block(
+    renderer.render_block_single(
         4096,
         None,
         &mut mix2,

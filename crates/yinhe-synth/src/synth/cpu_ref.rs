@@ -68,7 +68,7 @@ fn release_cmd_advances_envelope() {
     let mut voices = vec![voice];
     let mut stage = vec![0u32; voices.len()];
     renderer.upload_voice_states(&voices);
-    renderer.render_block(
+    renderer.render_block_single(
         voices.len() as u32,
         Some(&mut voices),
         &mut mix,
@@ -169,7 +169,7 @@ fn release_progress_advances_full_block() {
     let mut mix = vec![0.0f32; 32 * 1024 * 2];
     let mut stage = vec![0u32; voices.len()];
     renderer.upload_voice_states(&voices);
-    renderer.render_block(
+    renderer.render_block_single(
         voices.len() as u32,
         Some(&mut voices),
         &mut mix,
@@ -195,7 +195,7 @@ fn release_progress_advances_full_block() {
     // 第二块：无 release，prog 应该 +1024
     let mut stage = vec![0u32; voices.len()];
     renderer.upload_voice_states(&voices);
-    renderer.render_block(
+    renderer.render_block_single(
         voices.len() as u32,
         Some(&mut voices),
         &mut mix,

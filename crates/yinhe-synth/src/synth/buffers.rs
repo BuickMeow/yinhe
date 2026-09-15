@@ -12,6 +12,20 @@ use super::types::{
 /// 槽位固定分配一次，避免扩容重建导致状态丢失。超限由 GpuSynth 侧压缩/淘汰。
 pub(crate) const MAX_VOICE_SLOTS: u32 = 8192;
 
+/// `ensure_buffers` 的容量需求（整块帧数与 partial 段长分开：分段渲染时
+/// partial 只按段长上界分配，channel_mix/staging 按整块）。
+pub(crate) struct BufferSpec {
+    pub(crate) voice_count: u32,
+    /// 整块帧数（channel_mix / staging）
+    pub(crate) frame_count: u32,
+    /// partial 的每 voice 帧容量（= 所有渲染段的最长段长）
+    pub(crate) partial_frames: u32,
+    pub(crate) segs_len: usize,
+    pub(crate) ch_updates_len: usize,
+    pub(crate) releases_len: usize,
+    pub(crate) env_cmds_len: usize,
+}
+
 /// Persistent GPU state — all buffers allocated once, reused every block.
 pub(crate) struct GpuBuffers {
     #[allow(dead_code)]
@@ -24,7 +38,9 @@ pub(crate) struct GpuBuffers {
     pub(crate) voice_slots: u32,
     /// 紧凑 env_stage（pass1 写、CPU 读回做 voice 清理）
     pub(crate) voice_stage_buf: wgpu::Buffer,
-    /// partial 分配使用的 voice 容量（幂增长）
+    /// partial 分配容量（每 voice 帧数；不足时重建）
+    pub(crate) partial_frames: u32,
+    /// partial 分配使用的 voice 容量（releases/env_cmds cap 用）
     pub(crate) max_voices: u32,
     /// 段/指令缓冲的容量（按块内实际需求幂等增长）
     pub(crate) segs_cap: usize,
@@ -53,15 +69,16 @@ pub(crate) struct GpuBuffers {
 }
 
 impl GpuAudioRenderer {
-    pub(crate) fn ensure_buffers(
-        &mut self,
-        voice_count: u32,
-        frame_count: u32,
-        segs_len: usize,
-        ch_updates_len: usize,
-        releases_len: usize,
-        env_cmds_len: usize,
-    ) {
+    pub(crate) fn ensure_buffers(&mut self, spec: &BufferSpec) {
+        let BufferSpec {
+            voice_count,
+            frame_count,
+            partial_frames,
+            segs_len,
+            ch_updates_len,
+            releases_len,
+            env_cmds_len,
+        } = *spec;
         // voice 数超槽位上限：调用方（GpuSynth）负责压缩/淘汰；这里仅防御。
         let voice_count = voice_count.min(MAX_VOICE_SLOTS);
         // 幂增长策略：向上取整到 2 的幂次，避免每个 block 都重建缓冲区
@@ -84,6 +101,7 @@ impl GpuAudioRenderer {
             match &self.buffers {
                 Some(b) => {
                     b.max_voices < rounded_voices
+                        || b.partial_frames < partial_frames
                         || self.frame_count < frame_count
                         || b.segs_cap < segs_cap
                         || b.ch_updates_cap < ch_updates_cap
@@ -97,6 +115,7 @@ impl GpuAudioRenderer {
             return;
         }
 
+        let t_create = std::time::Instant::now();
         let device = &self.device;
         let chunk_count = self.sample_data.len().div_ceil(CHUNK_SIZE).min(MAX_CHUNKS) as u32;
 
@@ -170,8 +189,14 @@ impl GpuAudioRenderer {
         let slots = MAX_VOICE_SLOTS as usize;
         let voice_state_size = (slots * std::mem::size_of::<GpuVoiceState>()) as u64;
         let voice_stage_size = (slots * std::mem::size_of::<u32>()) as u64;
-        let (voice_state_buf, voice_stage_buf) = match self.buffers.take() {
-            Some(b) if b.voice_slots >= MAX_VOICE_SLOTS => (b.voice_state_buf, b.voice_stage_buf),
+        // pass1 每 voice 每帧输出：分段渲染只按段长上界分配（与整块帧数无关，
+        // 满容量 8192 voice + 512 帧段长也仅 ~32MB，且跨重建复用）
+        let partial_size =
+            (slots * partial_frames as usize * 2 * std::mem::size_of::<f32>()) as u64;
+        let (voice_state_buf, voice_stage_buf, partial_buf) = match self.buffers.take() {
+            Some(b) if b.voice_slots >= MAX_VOICE_SLOTS && b.partial_frames >= partial_frames => {
+                (b.voice_state_buf, b.voice_stage_buf, b.partial_buf)
+            }
             _ => (
                 device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("gpu_voice_states"),
@@ -188,16 +213,17 @@ impl GpuAudioRenderer {
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                     mapped_at_creation: false,
                 }),
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("gpu_partial"),
+                    size: partial_size,
+                    usage: wgpu::BufferUsages::STORAGE,
+                    mapped_at_creation: false,
+                }),
             ),
         };
         // per-channel 混音：32 通道 × frames × 2
         let channel_mix_size =
             (CHANNEL_COUNT * frame_count.max(1) as usize * 2 * std::mem::size_of::<f32>()) as u64;
-        // pass1 每 voice 每帧输出（按分配的最大 voice 数）
-        let partial_size = (rounded_voices as usize
-            * frame_count.max(1) as usize
-            * 2
-            * std::mem::size_of::<f32>()) as u64;
         let params_size = std::mem::size_of::<RenderParams>() as u64;
         // 块内段/指令结构：按实际需求容量（幂等增长）分配
         let segs_size = (segs_cap * std::mem::size_of::<SegInfo>()) as u64;
@@ -207,12 +233,6 @@ impl GpuAudioRenderer {
         let release_cmds_size = (releases_cap * std::mem::size_of::<ReleaseCmd>()) as u64;
         let env_cmds_size = (env_cmds_cap * std::mem::size_of::<EnvUpdateCmd>()) as u64;
 
-        let partial_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gpu_partial"),
-            size: partial_size,
-            usage: wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
         let channel_mix_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("gpu_channel_mix"),
             size: channel_mix_size,
@@ -394,6 +414,7 @@ impl GpuAudioRenderer {
             voice_state_buf,
             voice_slots: MAX_VOICE_SLOTS,
             voice_stage_buf,
+            partial_frames,
             max_voices: rounded_voices,
             segs_cap,
             ch_updates_cap,
@@ -413,5 +434,11 @@ impl GpuAudioRenderer {
             staging_idx: 0,
         });
         self.frame_count = frame_count;
+        eprintln!(
+            "[gpu] GPU 缓冲重建={:?}（partial={:.0}MB/{}帧，frames={frame_count}）",
+            t_create.elapsed(),
+            partial_size as f64 / (1024.0 * 1024.0),
+            partial_frames
+        );
     }
 }

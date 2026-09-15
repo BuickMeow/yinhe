@@ -15,7 +15,9 @@ use std::sync::{Arc, LazyLock, Mutex};
 use crate::sfz_parser;
 use crate::synth::GpuAudioRenderer;
 use crate::synth::buffers::MAX_VOICE_SLOTS;
-use crate::synth::{ChState, EnvUpdateCmd, GpuVoiceState, ReleaseCmd, SegInfo};
+use crate::synth::{
+    ChState, EnvUpdateCmd, GpuVoiceState, RENDER_SEGMENT_FRAMES, ReleaseCmd, RenderSegment, SegInfo,
+};
 use crate::wgpu;
 
 /// MIDI 通道数（dense 通道 = port×16+ch，支持 2 端口 32 通道）。
@@ -289,6 +291,17 @@ struct Voice {
     release_pending: bool,
 }
 
+/// 一段的事件结构，render_to_mixer 内先按段 collect 保存所有权，
+/// 再构造 RenderSegment 借用视图传给 renderer 一次性渲染。
+struct SegBuffers {
+    frame_start: u32,
+    frame_length: u32,
+    segs: Vec<SegInfo>,
+    ch_updates: Vec<ChState>,
+    releases: Vec<ReleaseCmd>,
+    env_cmds: Vec<EnvUpdateCmd>,
+}
+
 /// GPU 合成器 — 封装 GPU 渲染器 + voice 管理 + 通道状态 + 事件调度 + 限幅。
 ///
 /// 接口设计参照 xsynth ChannelGroup：
@@ -431,6 +444,12 @@ impl GpuSynth {
         self.rebuild_sample_upload();
     }
 
+    /// 预热 GPU 缓冲（加载阶段调用，`finish_soundfont_load` 之后）：
+    /// 按最大 voice 容量与段长一次性分配，播放中不再扩容重建。
+    pub fn prewarm(&mut self, frames: u32) {
+        self.renderer.prewarm(frames);
+    }
+
     /// 把所有 port 的采样按 Arc 身份去重后拼成大块上传 GPU（增量 port 加载时
     /// 全量重传：port 加载只发生在一首歌的加载阶段，重传成本可接受）。
     fn rebuild_sample_upload(&mut self) {
@@ -548,20 +567,37 @@ impl GpuSynth {
                     * 2
                     >= self.voices.len());
 
-        // 收集块内事件为段结构（同时创建 voice、发 release/env 指令、推进 CPU 通道状态）
-        let mut segs: Vec<SegInfo> = Vec::new();
-        let mut ch_updates: Vec<ChState> = Vec::new();
-        let mut releases: Vec<ReleaseCmd> = Vec::new();
-        let mut env_cmds: Vec<EnvUpdateCmd> = Vec::new();
+        // 按渲染段 collect（段内帧索引相对段起点）：每段独立结构，
+        // 供 renderer 分段跑 pass1/pass2（partial 只需 voices × 段长）。
         let upload_from = self.voices.len();
-        self.collect_block(
-            block_start,
-            block_end,
-            &mut segs,
-            &mut ch_updates,
-            &mut releases,
-            &mut env_cmds,
-        );
+        let mut seg_data: Vec<SegBuffers> = Vec::new();
+        let mut offset = 0usize;
+        while offset < frames {
+            let seg_frames = (frames - offset).min(RENDER_SEGMENT_FRAMES as usize);
+            let s0 = block_start + offset as u64;
+            let s1 = s0 + seg_frames as u64;
+            let mut segs: Vec<SegInfo> = Vec::new();
+            let mut ch_updates: Vec<ChState> = Vec::new();
+            let mut releases: Vec<ReleaseCmd> = Vec::new();
+            let mut env_cmds: Vec<EnvUpdateCmd> = Vec::new();
+            self.collect_block(
+                s0,
+                s1,
+                &mut segs,
+                &mut ch_updates,
+                &mut releases,
+                &mut env_cmds,
+            );
+            seg_data.push(SegBuffers {
+                frame_start: offset as u32,
+                frame_length: seg_frames as u32,
+                segs,
+                ch_updates,
+                releases,
+                env_cmds,
+            });
+            offset += seg_frames;
+        }
 
         // 只上传本块新增的 voice 槽位（状态常驻 GPU，不再整块重传）。
         for (i, v) in self.voices.iter().enumerate().skip(upload_from) {
@@ -577,15 +613,23 @@ impl GpuSynth {
                     .resize(self.voices.len(), GpuVoiceState::default());
             }
             let readback = need_compact.then_some(self.states_buf.as_mut_slice());
+            let segments: Vec<RenderSegment<'_>> = seg_data
+                .iter()
+                .map(|s| RenderSegment {
+                    frame_start: s.frame_start,
+                    frame_length: s.frame_length,
+                    segs: &s.segs,
+                    ch_updates: &s.ch_updates,
+                    releases: &s.releases,
+                    env_cmds: &s.env_cmds,
+                })
+                .collect();
             let n = self.renderer.render_block(
                 self.voices.len() as u32,
                 readback,
                 &mut self.channel_mix,
                 &mut self.voice_stage_buf,
-                &segs,
-                &ch_updates,
-                &releases,
-                &env_cmds,
+                &segments,
                 self.sample_rate,
             );
             debug_assert_eq!(n as usize, self.voices.len().min(MAX_VOICE_SLOTS as usize));
@@ -1333,5 +1377,88 @@ mod tests {
         synth.seek(4_000_000);
         synth.render_to_mixer(&mut buffers);
         assert_eq!(peak(&buffers), 0.0, "voices 清空后不得循环输出残留音频");
+    }
+
+    /// 回归：内部分段渲染（外层块 4096 = 8×512 段）与小块（512，单段）
+    /// 输出一致，验证跨段 voice 状态（time/包络/滤波）与段间事件推进连续。
+    #[test]
+    fn segmented_render_matches_small_blocks() {
+        let Some(sfz) = std::env::var_os("YINHE_TEST_SFZ") else {
+            eprintln!("YINHE_TEST_SFZ not set, skipping");
+            return;
+        };
+        let path = std::path::PathBuf::from(&sfz);
+        let events = vec![
+            SynthEvent::NoteOn {
+                sample: 0,
+                channel: 0,
+                key: 60,
+                velocity: 100,
+            },
+            SynthEvent::NoteOff {
+                sample: 96_000,
+                channel: 0,
+                key: 60,
+            },
+            SynthEvent::NoteOn {
+                sample: 20_000,
+                channel: 0,
+                key: 64,
+                velocity: 90,
+            },
+            SynthEvent::NoteOff {
+                sample: 30_000,
+                channel: 0,
+                key: 64,
+            },
+            // 踩/松延音踏板（跨段事件）
+            SynthEvent::Control {
+                sample: 10_000,
+                channel: 0,
+                event: ControlEvent::Raw(64, 127),
+            },
+            SynthEvent::Control {
+                sample: 50_000,
+                channel: 0,
+                event: ControlEvent::Raw(64, 0),
+            },
+        ];
+        let render = |frames: usize| -> Vec<f32> {
+            let mut synth = GpuSynth::new_default(44_100).expect("GpuSynth");
+            synth
+                .load_dense_soundfonts(0, std::slice::from_ref(&path))
+                .expect("load");
+            synth.finish_soundfont_load();
+            synth.load_events(events.clone());
+            let mut bufs: Vec<yinhe_mixer::ChannelBuffers> = (0..2)
+                .map(|_| yinhe_mixer::ChannelBuffers {
+                    left: vec![0.0; frames],
+                    right: vec![0.0; frames],
+                })
+                .collect();
+            let mut out = Vec::with_capacity(120_000 * 2);
+            while out.len() < 120_000 * 2 {
+                synth.render_to_mixer(&mut bufs);
+                for i in 0..frames {
+                    out.push(bufs[0].left[i]);
+                    out.push(bufs[0].right[i]);
+                }
+            }
+            out
+        };
+        let a = render(512);
+        let b = render(4096);
+        let n = a.len().min(b.len());
+        let max_diff = a[..n]
+            .iter()
+            .zip(&b[..n])
+            .map(|(x, y)| (x - y).abs())
+            .fold(0.0f32, f32::max);
+        let peak = a.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(peak > 0.0, "应有输出");
+        assert!(
+            max_diff < peak * 0.01,
+            "分段（4096）与小块（512）输出不一致: max_diff={max_diff} peak={peak}"
+        );
     }
 }

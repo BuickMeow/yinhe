@@ -829,6 +829,10 @@ impl AudioRenderer {
                         {
                             let t_upload = Instant::now();
                             synth.finish_soundfont_load();
+                            // 预热 GPU 缓冲（满 voice 容量 + 段长）：把首次分配
+                            // 从播放阶段（第一个音符触发扩容）移到加载阶段。
+                            #[cfg(feature = "gpu")]
+                            synth.prewarm(GPU_RENDER_CHUNK_FRAMES as u32);
                             play_log(&format!(
                                 "[play] GPU 采样上传完成：{:?}",
                                 t_upload.elapsed()

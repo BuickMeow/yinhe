@@ -2,6 +2,11 @@
 
 pub const MAX_CHUNKS: usize = 5;
 pub const CHUNK_SIZE: usize = 30_000_000; // 30M f32 = 120MB per chunk
+
+/// 内部分段渲染的段长（帧）：外层块（4096）在 renderer 内部切成若干段，
+/// 每段独立 pass1+pass2（partial 只需 voices × 段长），一次 submit/读回。
+/// 512 帧下 partial 满容量（8192 voice）= 32MB，dispatch 数 ×8。
+pub const RENDER_SEGMENT_FRAMES: u32 = 512;
 pub const WORKGROUP_SIZE: u32 = 256;
 /// MIDI 通道数（与 shader pass2 的 32 通道归约布局对齐；dense = port×16+ch，支持 2 端口）。
 pub const CHANNEL_COUNT: usize = 32;
@@ -78,9 +83,30 @@ pub struct RenderParams {
     pub sample_rate: u32,
     pub sample_chunk_count: u32,
     pub voice_wg_count: u32,   // pass1 workgroup 数 = ceil(voice_count / 256)
-    pub seg_count: u32,        // 块内段数（段边界 = CC 事件位置）
+    pub seg_count: u32,        // 段内段数（段边界 = CC 事件位置）
     pub release_count: u32,    // release/kill 指令总数
     pub env_update_count: u32, // CC72/73/121 包络更新指令总数
+    /// partial 缓冲的每 voice 帧 stride（= 段长上界 RENDER_SEGMENT_FRAMES；
+    /// 末日段短于该值时仍按此 stride 索引，保证各段不串位）
+    pub partial_stride: u32,
+    /// 整块 channel_mix 的帧数（pass2 写入 stride；= 外层块的帧数）
+    pub channel_mix_frames: u32,
+    /// 本渲染段的帧在整块 channel_mix 中的起始偏移（pass2 写入位置）
+    pub mix_offset: u32,
+}
+
+/// 一个渲染段：外层块内的帧区间 + 该段的事件结构。
+/// 段内所有帧索引（SegInfo.start_frame / ReleaseCmd.frame / EnvUpdateCmd.frame /
+/// voice 的 start_offset）均为**段内相对**（0..frame_length）。
+pub struct RenderSegment<'a> {
+    /// 段在块内的起始帧（pass2 写 channel_mix 的偏移）
+    pub frame_start: u32,
+    /// 段帧数（<= RENDER_SEGMENT_FRAMES）
+    pub frame_length: u32,
+    pub segs: &'a [SegInfo],
+    pub ch_updates: &'a [ChState],
+    pub releases: &'a [ReleaseCmd],
+    pub env_cmds: &'a [EnvUpdateCmd],
 }
 
 /// 段信息：块内段边界（与 WGSL `SegInfo` 对应）。

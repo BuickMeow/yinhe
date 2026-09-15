@@ -1,8 +1,12 @@
-// GPU audio voice rendering — two-pass architecture:
-//  - vs_main (pass 1): 每个线程一个 voice，串行推进 block 内所有帧
+// GPU audio voice rendering — two-pass architecture（分段渲染）:
+//  - vs_main (pass 1): 每个线程一个 voice，串行推进**本渲染段**内所有帧
 //    （逐帧推进 envelope 阶段 + 立体声采样 + 插值 + per-voice biquad 滤波器），
-//    每帧 workgroup 树归约写入 partial 缓冲。
-//  - mix_main (pass 2): 每帧一个 workgroup，归约所有 workgroup 的 partial 到最终输出。
+//    直写 partial[vid][fi]（无 workgroup 同步）。
+//  - mix_main (pass 2): 每帧一个 workgroup，把该帧所有 voice 的 partial
+//    按通道归约到 channel_mix[ch][mix_offset + fi]。
+//  外层块（如 4096 帧）在 renderer 内切成若干段（RENDER_SEGMENT_FRAMES），
+//  每段独立跑两 pass 并 submit；partial 只需 voices × 段长（32MB 级），
+//  voice 状态经 voice_states 在段间传递，CPU↔GPU 往返仍为一次。
 // 7 阶段 envelope: Delay→Attack→Hold→Decay→Sustain→Release→Finished
 // Attack=线性, Decay/Release=指数(1-t)^8（与 XSynth 默认一致）
 // 滤波器为 DirectForm1 biquad，系数由 CPU 按 RBJ cookbook 预计算；
@@ -14,9 +18,15 @@ struct RenderParams {
     sample_rate: u32,
     sample_chunk_count: u32,
     voice_wg_count: u32, // pass1 workgroup 数 = ceil(voice_count / 256)
-    seg_count: u32,      // 块内段数（段边界 = CC 事件位置）
+    seg_count: u32,      // 段内段数（段边界 = CC 事件位置）
     release_count: u32,  // release/kill 指令总数
     env_update_count: u32, // CC72/73/121 包络更新指令总数
+    // partial 缓冲的每 voice 帧 stride（= 段长上界；末日段短于该值时也用它）
+    partial_stride: u32,
+    // 整块 channel_mix 的帧数（pass2 写入 stride；= 外层块的帧数）
+    channel_mix_frames: u32,
+    // 本渲染段的帧在整块 channel_mix 中的起始偏移（pass2 写入位置）
+    mix_offset: u32,
 };
 
 struct VoiceState {
@@ -421,9 +431,11 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
             }
         }
 
-        // 直写自己的 slot（pass2 按通道归约；无 workgroup 同步）
-        partial[vid * fc * 2u + fi * 2u] = my_l;
-        partial[vid * fc * 2u + fi * 2u + 1u] = my_r;
+        // 直写自己的 slot（pass2 按通道归约；无 workgroup 同步）。
+        // stride 用 partial_stride（段长上界）而非 fc：分段渲染时各段共用
+        // 同一 partial 区域，保证索引不串位。
+        partial[vid * params.partial_stride * 2u + fi * 2u] = my_l;
+        partial[vid * params.partial_stride * 2u + fi * 2u + 1u] = my_r;
     }
 
     // 全字段写回（CPU 读回为下一块起点状态；flt_* 亦在其中）。
@@ -475,7 +487,7 @@ fn mix_main(@builtin(workgroup_id) wid: vec3<u32>,
     var sum_r = 0.0;
     for (var vid = s; vid < params.voice_count; vid += 8u) {
         if voice_states[vid].channel == ch {
-            let base = vid * fc * 2u + fi * 2u;
+            let base = vid * params.partial_stride * 2u + fi * 2u;
             sum_l += partial[base];
             sum_r += partial[base + 1u];
         }
@@ -497,7 +509,9 @@ fn mix_main(@builtin(workgroup_id) wid: vec3<u32>,
     }
 
     if s == 0u {
-        let base = (ch * fc + fi) * 2u;
+        // 写整块 channel_mix 的对应帧区间（分段渲染：mix_offset 为该段起始帧，
+        // fc 为整块帧数而非段长）
+        let base = (ch * params.channel_mix_frames + params.mix_offset + fi) * 2u;
         channel_mix[base] = shared_l[ch * 8u];
         channel_mix[base + 1u] = shared_r[ch * 8u];
     }
