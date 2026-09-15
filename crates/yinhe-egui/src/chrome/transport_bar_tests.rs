@@ -329,6 +329,15 @@ fn transport_icon_buttons_are_square() {
         );
         sizes.push(("pinned", pinned.rect.size()));
     });
+    // 菜单按钮常态即有底：绘制指令中应出现 btn_bg 填充（与 dialog 按钮统一样式）。
+    // 图钉按钮（flat_button_custom 未选中）保持无底，所以只检查菜单按钮部分。
+    assert!(
+        output.shapes.iter().any(|cs| matches!(
+            &cs.shape,
+            egui::Shape::Rect(r) if r.fill == crate::theme::btn_bg()
+        )),
+        "菜单图标按钮应绘制 btn_bg 常态底色（风格与 dialog 按钮统一）"
+    );
     output.drop_without_applying_deltas();
     for (name, s) in &sizes {
         assert!(

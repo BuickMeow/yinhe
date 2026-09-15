@@ -7,9 +7,12 @@
 
 use eframe::egui;
 
+/// 有底按钮的圆角：与 `dialog_buttons::BTN_RADIUS` 保持一致（样式统一）。
+const FILLED_RADIUS: f32 = 6.0;
+
 /// 无边框按钮：宽度自适应文字，居中显示；hover/按下只变背景。
 pub(crate) fn flat_button(ui: &mut egui::Ui, text: impl Into<egui::WidgetText>) -> egui::Response {
-    flat_button_ex(ui, text, None, None, true, false)
+    flat_button_ex(ui, text, None, None, true, false, None, 4.0)
 }
 
 /// 无边框按钮（可设最小尺寸；`enabled = false` 置灰不可点）。
@@ -19,7 +22,7 @@ pub(crate) fn flat_button_sized(
     min_size: egui::Vec2,
     enabled: bool,
 ) -> egui::Response {
-    flat_button_ex(ui, text, Some(min_size), None, enabled, false)
+    flat_button_ex(ui, text, Some(min_size), None, enabled, false, None, 4.0)
 }
 
 /// 无边框按钮（固定尺寸，内容居中；MIX 条等紧凑布局用）。
@@ -28,7 +31,26 @@ pub(crate) fn flat_button_fixed(
     text: impl Into<egui::WidgetText>,
     size: egui::Vec2,
 ) -> egui::Response {
-    flat_button_ex(ui, text, Some(size), None, true, true)
+    flat_button_ex(ui, text, Some(size), None, true, true, None, 4.0)
+}
+
+/// 无边框按钮（固定尺寸 + 常态底色；transport 菜单图标按钮用）。
+/// 底色风格与 `dialog_buttons` 统一：常态 `btn_bg`，hover/pressed 在这之上派生。
+pub(crate) fn flat_button_filled(
+    ui: &mut egui::Ui,
+    text: impl Into<egui::WidgetText>,
+    size: egui::Vec2,
+) -> egui::Response {
+    flat_button_ex(
+        ui,
+        text,
+        Some(size),
+        None,
+        true,
+        true,
+        Some(crate::theme::btn_bg()),
+        FILLED_RADIUS,
+    )
 }
 
 /// 无边框按钮（固定尺寸 + 自定义选中背景；transport 等图标按钮用）。
@@ -41,7 +63,7 @@ pub(crate) fn flat_button_custom(
     selected_bg: Option<egui::Color32>,
     enabled: bool,
 ) -> egui::Response {
-    flat_button_ex(ui, text, Some(size), selected_bg, enabled, true)
+    flat_button_ex(ui, text, Some(size), selected_bg, enabled, true, None, 4.0)
 }
 
 /// 无边框选项按钮：`selected` 时用选中背景 + 强调色文字（替代 `selectable_label`）。
@@ -57,6 +79,8 @@ pub(crate) fn flat_selected(
         selected.then(crate::theme::selected_bg),
         true,
         false,
+        None,
+        4.0,
     )
 }
 
@@ -75,6 +99,8 @@ pub(crate) fn flat_selectable_value<T: PartialEq + Copy>(
 }
 
 /// 自绘实现：解析文本 → 布局 → 分配 rect → 画背景与文字。
+/// `base_bg = Some` 时常态即有底（hover/pressed 在底上派生）；`None` 时常态透明。
+#[allow(clippy::too_many_arguments)]
 fn flat_button_ex(
     ui: &mut egui::Ui,
     text: impl Into<egui::WidgetText>,
@@ -82,6 +108,8 @@ fn flat_button_ex(
     selected_bg: Option<egui::Color32>,
     enabled: bool,
     fixed_size: bool,
+    base_bg: Option<egui::Color32>,
+    radius: f32,
 ) -> egui::Response {
     let ctx = ui.ctx().clone();
     let scale = |v: f32| crate::scaling::scaled_font(&ctx, v);
@@ -116,19 +144,21 @@ fn flat_button_ex(
         egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, galley.text().to_owned())
     });
     if ui.is_rect_visible(rect) {
+        let base = base_bg.unwrap_or_else(crate::theme::btn_bg);
         let bg = if !enabled {
-            egui::Color32::TRANSPARENT
+            // 有底按钮禁用时保留底（与 dialog 按钮一致），无底按钮不画。
+            base_bg.unwrap_or(egui::Color32::TRANSPARENT)
         } else if let Some(sel) = selected_bg {
             sel
         } else if resp.is_pointer_button_down_on() {
-            crate::theme::pressed_color(crate::theme::btn_bg())
+            crate::theme::pressed_color(base)
         } else if resp.hovered() {
-            crate::theme::hover_color(crate::theme::btn_bg())
+            crate::theme::hover_color(base)
         } else {
-            egui::Color32::TRANSPARENT
+            base_bg.unwrap_or(egui::Color32::TRANSPARENT)
         };
         if bg != egui::Color32::TRANSPARENT {
-            ui.painter().rect_filled(rect, scale(4.0), bg);
+            ui.painter().rect_filled(rect, scale(radius), bg);
         }
         let color = if !enabled {
             crate::theme::text_disabled()

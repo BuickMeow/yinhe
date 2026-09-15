@@ -314,7 +314,7 @@ fn menu_button(
     btn_size: egui::Vec2,
 ) -> egui::Response {
     ui.push_id(id, |ui| {
-        crate::widgets::flat::flat_button_fixed(
+        crate::widgets::flat::flat_button_filled(
             ui,
             icon.rich_text()
                 .size(crate::theme::TRANSPORT_BTN_FONT)
