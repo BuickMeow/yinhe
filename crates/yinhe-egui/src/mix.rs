@@ -276,6 +276,7 @@ impl App {
     /// 实例只加载不激活——引擎此时尚未重建，spawn 完成后由
     /// `push_mixer_state_to_engine` → `ensure_all_sent` 统一激活补发。
     pub(crate) fn restore_mixer_rack(&mut self, idx: usize) {
+        self.ensure_default_dsp_chain(idx);
         let mixer = self.workspace.documents[idx].mixer.clone();
         let mut rack = MixerRack::default();
         for ch in 0..SOURCE_CHANNELS {
@@ -319,6 +320,54 @@ impl App {
             self.mixer_racks.resize_with(idx + 1, MixerRack::default);
         }
         self.mixer_racks[idx] = rack;
+    }
+
+    /// 默认 DSP 链：工程使用中的 MIDI 通道若 insert 链为空，自动补
+    /// ChannelGain → ChannelPan → ChannelFilter（链序即处理顺序），
+    /// 保证 CC7/10/11/71/74 有处理者（这些 CC 不再下发给 xsynth，
+    /// 见 `docs/spec-yinhe-dsp.md`）。
+    ///
+    /// 判据"链为空"：用户已有任何 insert（插件或模块）时不打扰；
+    /// 用户完全清空链后重新加载工程会再次补上（默认链语义）。
+    fn ensure_default_dsp_chain(&mut self, idx: usize) {
+        use yinhe_dsp::BuiltinEffectKind;
+        use yinhe_mixer::{InsertRef, PluginFormat};
+
+        let active: Vec<u8> = {
+            let model = &self.workspace.documents[idx].data.model;
+            let mut list: Vec<u8> = Vec::new();
+            for t in &model.tracks {
+                if t.kind != yinhe_core::TrackKind::Midi {
+                    continue;
+                }
+                let ch = t.global_channel();
+                if !list.contains(&ch) {
+                    list.push(ch);
+                }
+            }
+            list
+        };
+        if active.is_empty() {
+            return;
+        }
+        let mixer = self.workspace.documents[idx].mixer_mut();
+        mixer.ensure_len();
+        for ch in active {
+            let chain = match mixer.channel_inserts.get_mut(ch as usize) {
+                Some(c) if c.is_empty() => c,
+                _ => continue,
+            };
+            for kind in BuiltinEffectKind::ALL {
+                chain.push(InsertRef {
+                    plugin_path: std::path::PathBuf::new(),
+                    plugin_id: kind.id().to_string(),
+                    name: kind.name().to_string(),
+                    format: PluginFormat::Builtin,
+                    bypassed: false,
+                    state: None,
+                });
+            }
+        }
     }
 
     /// 工程加载后：按 MixerParams.instruments 重建乐器机架。
