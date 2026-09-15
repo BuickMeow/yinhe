@@ -1125,13 +1125,14 @@ pub(crate) fn plugin_picker(
                                         );
                                         for kind in builtins {
                                             any = true;
-                                            let ccs = kind
-                                                .handled_ccs()
+                                            let params = kind
+                                                .params()
                                                 .iter()
-                                                .map(|c| format!("CC{c}"))
+                                                .map(|p| p.name)
                                                 .collect::<Vec<_>>()
-                                                .join(" ");
-                                            let hover = format!("{}\n{}", kind.description(), ccs);
+                                                .join(", ");
+                                            let hover =
+                                                format!("{}\n{}", kind.description(), params);
                                             if plugin_row(
                                                 ui,
                                                 kind.name(),

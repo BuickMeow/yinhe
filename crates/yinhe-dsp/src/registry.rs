@@ -9,14 +9,31 @@ use crate::cc::filter::ChannelFilter;
 use crate::cc::gain::ChannelGain;
 use crate::cc::pan::ChannelPan;
 
+/// 内置效果器的一个参数（UI 显示 + 底层映射）。
+///
+/// 命名约定：这些是**效果器自己的参数**（Volume/Cutoff/…），
+/// 只是在工程底层**伪装成 MIDI CC**（用 CC lane 存储、导出 MIDI 时按 CC 写出）。
+/// UI 与文档中不得称其为"CC"。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EffectParamInfo {
+    /// 参数显示名（效果器语义）。
+    pub name: &'static str,
+    /// 底层伪 CC 号（存储/导出映射，内部实现细节）。
+    pub cc: u8,
+    /// 值域上限（0..max）。
+    pub max: f32,
+    /// 默认值（无 lane 事件时采用；GM 标准默认）。
+    pub default: f32,
+}
+
 /// 内置效果器种类。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuiltinEffectKind {
-    /// 通道音量/表情（CC7/11）。
+    /// 通道音量/表情。
     ChannelGain,
-    /// 通道声像（CC10）。
+    /// 通道声像。
     ChannelPan,
-    /// 通道低通滤波（CC71/74）。
+    /// 通道低通滤波。
     ChannelFilter,
 }
 
@@ -54,13 +71,54 @@ impl BuiltinEffectKind {
     /// 功能说明（UI 选择器副标题）。
     pub const fn description(self) -> &'static str {
         match self {
-            BuiltinEffectKind::ChannelGain => "CC7/CC11 channel volume & expression",
-            BuiltinEffectKind::ChannelPan => "CC10 equal-power pan",
-            BuiltinEffectKind::ChannelFilter => "CC71/CC74 channel low-pass filter",
+            BuiltinEffectKind::ChannelGain => "Channel volume & expression",
+            BuiltinEffectKind::ChannelPan => "Equal-power pan",
+            BuiltinEffectKind::ChannelFilter => "Channel low-pass filter",
         }
     }
 
-    /// 接管的 CC 列表（UI 提示用）。
+    /// 参数表（UI 旋钮 + 底层伪 CC 映射）。
+    pub const fn params(self) -> &'static [EffectParamInfo] {
+        match self {
+            BuiltinEffectKind::ChannelGain => &[
+                EffectParamInfo {
+                    name: "Volume",
+                    cc: 7,
+                    max: 127.0,
+                    default: 100.0,
+                },
+                EffectParamInfo {
+                    name: "Expression",
+                    cc: 11,
+                    max: 127.0,
+                    default: 127.0,
+                },
+            ],
+            BuiltinEffectKind::ChannelPan => &[EffectParamInfo {
+                name: "Pan",
+                cc: 10,
+                max: 127.0,
+                default: 64.0,
+            }],
+            BuiltinEffectKind::ChannelFilter => &[
+                EffectParamInfo {
+                    name: "Cutoff",
+                    cc: 74,
+                    max: 127.0,
+                    default: 64.0,
+                },
+                EffectParamInfo {
+                    name: "Resonance",
+                    cc: 71,
+                    max: 127.0,
+                    default: 64.0,
+                },
+            ],
+        }
+    }
+
+    /// 底层伪 CC 列表（dispatch 分发与广播过滤用的内部映射；
+    /// 不得用于 UI 显示）。
     pub const fn handled_ccs(self) -> &'static [u8] {
         match self {
             BuiltinEffectKind::ChannelGain => &[7, 11],
@@ -110,5 +168,23 @@ mod tests {
             union, expected,
             "DSP_CHANNEL_CCS 与模块 handled_ccs 并集不同步"
         );
+    }
+
+    #[test]
+    fn params_map_to_handled_ccs() {
+        // 参数表的底层伪 CC 必须与 handled_ccs 覆盖同一集合（顺序无关：
+        // 参数表用于 UI 显示顺序，handled_ccs 用于分发过滤）。
+        for kind in BuiltinEffectKind::ALL {
+            let mut from_params: Vec<u8> = kind.params().iter().map(|p| p.cc).collect();
+            let mut handled = kind.handled_ccs().to_vec();
+            from_params.sort_unstable();
+            handled.sort_unstable();
+            assert_eq!(
+                from_params,
+                handled,
+                "{} 参数映射与 handled_ccs 不一致",
+                kind.name()
+            );
+        }
     }
 }

@@ -1,12 +1,14 @@
-//! 通道声像模块（CC10 Pan）。
+//! 通道声像模块（Pan 参数）。
 //!
 //! 语义对齐 xsynth `VoiceChannel::apply_channel_effects` 的立体声 Pan：
-//! `pan = CC10/128`，等功率声像
+//! `pan = Pan/127`，等功率声像
 //! `left *= cos(pan * π/2)`、`right *= sin(pan * π/2)`，
-//! 默认 `pan = 0.5`（中心，左右各 -3dB）。
+//! 默认 `Pan = 64`（中心，左右各 -3dB）。
+//!
+//! 参数在底层伪装成 MIDI CC（Pan=CC10）存储与导出。
 //!
 //! 注意与混音台通道条的 `StripParams.pan`（工程混音设置）区分：
-//! 本模块处理乐曲内容（CC），两者串联、互不相干。
+//! 本模块处理乐曲内容，两者串联、互不相干。
 
 use yinhe_mixer::InsertProcessor;
 
@@ -20,7 +22,7 @@ fn pan_gains(pan: f32) -> (f32, f32) {
     (angle.cos().min(1.0), angle.sin().min(1.0))
 }
 
-/// 通道声像（CC 驱动）。
+/// 通道声像。
 pub struct ChannelPan {
     pan: Smoothed,
     ramp_samples: u32,
@@ -29,7 +31,7 @@ pub struct ChannelPan {
 impl ChannelPan {
     pub fn new(sample_rate: u32) -> Self {
         Self {
-            pan: Smoothed::new(0.5),
+            pan: Smoothed::new(64.0 / 127.0),
             ramp_samples: (sample_rate as f32 * CC_RAMP_SECONDS).max(1.0) as u32,
         }
     }
@@ -60,7 +62,7 @@ impl InsertProcessor for ChannelPan {
 
     fn apply_cc(&mut self, cc: u8, value: u8) {
         if cc == 10 {
-            self.pan.set_target(value as f32 / 128.0, self.ramp_samples);
+            self.pan.set_target(value as f32 / 127.0, self.ramp_samples);
         }
     }
 
@@ -79,9 +81,9 @@ mod tests {
         let mut l = [1.0; 8];
         let mut r = [1.0; 8];
         p.process(&mut l, &mut r);
-        let expect = std::f32::consts::FRAC_1_SQRT_2;
-        assert!((l[0] - expect).abs() < 1e-5);
-        assert!((r[0] - expect).abs() < 1e-5);
+        let (gl, gr) = pan_gains(64.0 / 127.0);
+        assert!((l[0] - gl).abs() < 1e-5);
+        assert!((r[0] - gr).abs() < 1e-5);
     }
 
     #[test]
@@ -91,10 +93,8 @@ mod tests {
         let mut l = [1.0; 4096];
         let mut r = [1.0; 4096];
         p.process(&mut l, &mut r);
-        // 语义对齐 xsynth：pan = 127/128（不是 1.0），左声道接近静音。
-        let expect_l = (127.0 / 128.0 * std::f32::consts::FRAC_PI_2).cos();
-        assert!((l[4095] - expect_l).abs() < 1e-3, "left {}", l[4095]);
-        let expect_r = (127.0 / 128.0 * std::f32::consts::FRAC_PI_2).sin();
-        assert!((r[4095] - expect_r).abs() < 1e-3, "right {}", r[4095]);
+        // pan = 127/127 = 1.0：完全右（左声道静音）。
+        assert!(l[4095].abs() < 1e-3, "left {}", l[4095]);
+        assert!((r[4095] - 1.0).abs() < 1e-3, "right {}", r[4095]);
     }
 }

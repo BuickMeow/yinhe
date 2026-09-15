@@ -70,7 +70,9 @@ impl Default for ChannelState {
             bank_msb: 0,
             bank_lsb: 0,
             program: 0,
-            volume: 127,
+            // GM 默认 Volume=100（伪装 CC；xsynth 已不处理该 CC，
+            // chase 回填给 yinhe-dsp 的 ChannelGain 用）。
+            volume: 100,
             pan: 64,
             expression: 127,
             sustain: 0,
@@ -341,7 +343,7 @@ mod tests {
     #[test]
     fn test_channel_state_default() {
         let state = ChannelState::default();
-        assert_eq!(state.volume, 127);
+        assert_eq!(state.volume, 100);
         assert_eq!(state.pan, 64);
         assert_eq!(state.expression, 127);
         assert_eq!(state.program, 0);
