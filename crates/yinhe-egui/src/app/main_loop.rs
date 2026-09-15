@@ -744,6 +744,11 @@ impl eframe::App for App {
             self.layout_needs_save = true;
         }
 
+        // ── 右栏布局占位（必须先于 dock）──
+        // 右栏优先级高于 dock：右栏占右侧整条（走带栏下沿→底栏上沿），
+        // dock 只能在右栏左侧展开（与 PR 同规则）。
+        let right_panel_rect = self.right_panel_placeholder(ui);
+
         // ── Bottom device dock（三视图通用；Panel::bottom 自动扣减可用区）──
         crate::chrome::dock_bar::show(self, ui);
 
@@ -753,7 +758,7 @@ impl eframe::App for App {
         let notif_area = ui.available_rect_before_wrap();
 
         // ── Main content area ──
-        let layout = self.compute_layout(ui);
+        let layout = self.compute_layout(ui, right_panel_rect);
         self.show_main_content(ui, &layout);
         self.show_panels_and_overlays(ui, &layout);
         crate::mix::show_global_overlays(self, ui.ctx());

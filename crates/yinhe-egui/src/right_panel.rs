@@ -77,10 +77,9 @@ pub fn show(
     }
 
     let theme = crate::theme::RIGHT_PANEL_MIN_WIDTH;
-    let total_avail = ui.available_rect_before_wrap().width();
-    let max_w = (total_avail - 60.0).max(theme + 4.0);
-    let clamp_w = (*right_panel_width + 4.0).clamp(theme + 4.0, max_w);
-    *right_panel_width = (clamp_w - 4.0).max(theme);
+    // 宽度 clamp 由 App::right_panel_total_width 在布局时统一处理；这里只算拖拽上限。
+    // 基准取窗口宽（不能取 ui.available：右栏占位 Panel 已扣掉右栏宽度）。
+    let max_w = (ui.ctx().viewport_rect().width() - 60.0).max(theme + 4.0);
 
     // ── Split handle (SPLIT_HANDLE_W at the left edge) ──
     let handle_rect = egui::Rect::from_min_max(

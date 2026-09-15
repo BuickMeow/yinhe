@@ -811,8 +811,9 @@ impl App {
         }
 
         // 4. 滚动到中心（参考 follow.rs Page 模式公式）
+        // remaining 已由 Panel 扣掉右栏/dock，此处不能再减右栏宽（原双重扣减）。
         let view = &mut self.pianoroll_view;
-        let viewport_w = layout.remaining.width() - layout.right_panel_total_w;
+        let viewport_w = layout.remaining.width();
         let content_w = viewport_w - view.base.left_panel_width;
         let target_x = req.tick as f32 * view.base.pixels_per_tick;
         view.base.scroll_x = (target_x - content_w * 0.5).max(0.0);
@@ -927,12 +928,9 @@ impl App {
         {
             self.float_panel = None;
         }
-        // Right panel
+        // Right panel（rect 来自 Panel::right 占位：整条，dock 不截断）
         if self.right_tab.is_some() {
-            let right_rect = egui::Rect::from_min_size(
-                egui::pos2(layout.remaining.max.x, layout.remaining.min.y),
-                egui::vec2(layout.right_panel_total_w, layout.remaining.height()),
-            );
+            let right_rect = layout.right_panel_rect;
             let doc = self
                 .workspace
                 .active_doc
