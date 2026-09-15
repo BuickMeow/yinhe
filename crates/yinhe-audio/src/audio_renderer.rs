@@ -18,6 +18,11 @@ use crate::spawn::{AmMsMap, AudioCommand, WorkerCmd, WorkerResult};
 
 const STEREO_CHANNELS: usize = 2;
 const RENDER_CHUNK_FRAMES: usize = 512;
+/// GPU 合成器模式的渲染块（帧）：GPU 每块有一次 submit + voice 状态读回
+/// 的 CPU↔GPU 往返，块越小往返越频繁、音符多时抖动越明显。
+/// 4096 帧把往返次数降低 8 倍（代价：输出批延迟增大，GPU 模式可接受）。
+#[cfg(feature = "gpu")]
+const GPU_RENDER_CHUNK_FRAMES: usize = 4096;
 const TARGET_BUFFER_FRAMES: usize = 4096;
 /// 预览激活时的 ring 目标（帧数）：降低输出延迟（≈10ms @48k）。
 /// 安卓：MIUI 等 ROM 对后台线程调度抖动大（线程 sleep 实际延迟可达 10ms+），
@@ -102,6 +107,12 @@ struct AudioRenderer {
     /// 是否启用 GPU 合成器。启用后加载音色库时初始化 GpuSynth，渲染走 engine.gpu_synth。
     #[cfg(feature = "gpu")]
     use_gpu_synth: bool,
+    /// GPU 事件列表需要重建（模型/跳过掩码变化时置位；Play/Stop/Seek 往返复用）。
+    #[cfg(feature = "gpu")]
+    gpu_events_dirty: bool,
+    /// GPU 事件列表上次构建时的位置（相同位置 + 非 dirty 时只 seek 不重建）。
+    #[cfg(feature = "gpu")]
+    gpu_events_last_pos: Option<u64>,
     /// 导出任务（Some = 导出模式：不推 ring、不发布播放状态，连续离线渲染写 WAV）。
     export: Option<ExportJob>,
     /// 导出结束后要恢复的 xsynth 层数（导出设置不污染用户设置）。
@@ -132,6 +143,15 @@ impl AudioRenderer {
         instrument_return_tx: Sender<(u8, Box<dyn yinhe_mixer::InstrumentProcessor>)>,
         #[cfg(feature = "gpu")] use_gpu_synth: bool,
     ) -> Self {
+        // GPU 模式用更大的渲染块（见 GPU_RENDER_CHUNK_FRAMES）。
+        #[cfg(feature = "gpu")]
+        let render_chunk_frames = if use_gpu_synth {
+            GPU_RENDER_CHUNK_FRAMES
+        } else {
+            RENDER_CHUNK_FRAMES
+        };
+        #[cfg(not(feature = "gpu"))]
+        let render_chunk_frames = RENDER_CHUNK_FRAMES;
         Self {
             engine,
             ring,
@@ -144,9 +164,9 @@ impl AudioRenderer {
             worker_tx,
             prepared_rx,
             shutdown,
-            scratch: vec![0.0; RENDER_CHUNK_FRAMES * STEREO_CHANNELS],
+            scratch: vec![0.0; render_chunk_frames * STEREO_CHANNELS],
             preview_engine,
-            preview_scratch: vec![0.0; RENDER_CHUNK_FRAMES * STEREO_CHANNELS],
+            preview_scratch: vec![0.0; render_chunk_frames * STEREO_CHANNELS],
             preview_stop_flag,
             consumer_position,
             pending_skip,
@@ -156,6 +176,10 @@ impl AudioRenderer {
             instrument_return_tx,
             #[cfg(feature = "gpu")]
             use_gpu_synth,
+            #[cfg(feature = "gpu")]
+            gpu_events_dirty: true,
+            #[cfg(feature = "gpu")]
+            gpu_events_last_pos: None,
         }
     }
 
@@ -475,6 +499,7 @@ impl AudioRenderer {
         // 位置不移动（与 CPU 路径第 4 层语义一致）。
         #[cfg(feature = "gpu")]
         if self.engine.gpu_synth.is_some() && self.engine.model_loaded() {
+            self.invalidate_gpu_events();
             self.sync_gpu_synth_events();
             let anchor = self.consumer_position.load(Ordering::Acquire);
             self.clear_buffered_audio(anchor);
@@ -574,9 +599,12 @@ impl AudioRenderer {
                     // 锚定听音位置（非显式 reload 不移动播放位置）。
                     let anchor = self.consumer_position.load(Ordering::Acquire);
                     self.engine.apply_prepared_model(prepared, anchor);
-                    // GPU 路径：模型应用后同步事件到 GpuSynth
+                    // GPU 路径：模型变化 → 事件列表失效并重建
                     #[cfg(feature = "gpu")]
-                    self.sync_gpu_synth_events();
+                    {
+                        self.invalidate_gpu_events();
+                        self.sync_gpu_synth_events();
+                    }
                     self.clear_buffered_audio(anchor);
                     self.state.initialized.store(true, Ordering::Release);
                     // 方案 B：apply_prepared_model 内部 seek_to 不再 chase，
@@ -595,9 +623,12 @@ impl AudioRenderer {
                         .store(duration_samples, Ordering::Relaxed);
                     self.engine
                         .apply_notes_only(model, yin_model, audible_delta, duration_samples);
-                    // GPU 路径：音符变化后同步事件到 GpuSynth
+                    // GPU 路径：音符变化 → 事件列表失效并重建
                     #[cfg(feature = "gpu")]
-                    self.sync_gpu_synth_events();
+                    {
+                        self.invalidate_gpu_events();
+                        self.sync_gpu_synth_events();
+                    }
                     // 注意：这里**不**清 ring。UpdateNotes 不 seek、不改 cc_events，
                     // 已渲染的 ring 内容是"过去时"音频（新音符只影响未来 dispatch），
                     // 清空会把正在播放的预览余音/当前音频丢掉 → 松手停顿。
@@ -687,21 +718,35 @@ impl AudioRenderer {
         did_work
     }
 
-    /// GPU 路径：从 engine 当前模型构建事件列表并加载到 GpuSynth
+    /// GPU 路径：从 engine 当前模型构建事件列表并加载到 GpuSynth。
+    ///
+    /// 事件列表构建（几万音符的遍历+排序）在音频线程执行，是播放启动的主要成本；
+    /// 相同位置重复同步（Play/Stop/Seek 往返）且模型未变时只 `seek` 复用已有列表。
     #[cfg(feature = "gpu")]
     fn sync_gpu_synth_events(&mut self) {
         if self.engine.gpu_synth.is_none() {
             return;
         }
-        // 先构建事件列表（需要借用 engine 的数据；seek_pos 决定鼓组事件与
-        // 跨点音符复活位置，与 CPU 路径 seek_to 语义一致）
+        // seek_pos 决定鼓组事件与跨点音符复活位置（与 CPU 路径 seek_to 语义一致）。
         let pos = self.engine.sample_position();
-        let events = self.build_gpu_synth_events(pos);
-        // 再加载到 synth（需要可变借用 engine.gpu_synth）
+        let needs_rebuild = self.gpu_events_dirty || self.gpu_events_last_pos != Some(pos);
+        if needs_rebuild {
+            let events = self.build_gpu_synth_events(pos);
+            if let Some(ref mut synth) = self.engine.gpu_synth {
+                synth.load_events(events);
+            }
+            self.gpu_events_last_pos = Some(pos);
+            self.gpu_events_dirty = false;
+        }
         if let Some(ref mut synth) = self.engine.gpu_synth {
-            synth.load_events(events);
             synth.seek(pos);
         }
+    }
+
+    /// 标记 GPU 事件列表失效（模型/跳过掩码变化时调用；下一次同步重建）。
+    #[cfg(feature = "gpu")]
+    fn invalidate_gpu_events(&mut self) {
+        self.gpu_events_dirty = true;
     }
 
     /// 从 engine 的当前 audible_notes + cc_events 构建 SynthEvent 列表（GPU 路径）
@@ -967,12 +1012,21 @@ impl AudioRenderer {
             }
             return;
         }
+        // 导出块长与实时渲染块一致（GPU 模式大块可显著减少提交/读回次数）。
+        #[cfg(feature = "gpu")]
+        let export_chunk_frames = if self.use_gpu_synth {
+            GPU_RENDER_CHUNK_FRAMES
+        } else {
+            crate::engine::ENGINE_BLOCK_FRAMES
+        };
+        #[cfg(not(feature = "gpu"))]
+        let export_chunk_frames = crate::engine::ENGINE_BLOCK_FRAMES;
         match ExportJob::new(
             &path,
             bit_depth,
             self.engine.sample_rate,
             main_duration,
-            crate::engine::ENGINE_BLOCK_FRAMES,
+            export_chunk_frames,
             Arc::clone(&progress),
             cancel,
             pause,
