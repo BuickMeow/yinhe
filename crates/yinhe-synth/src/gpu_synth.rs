@@ -266,6 +266,39 @@ fn env_curve_frames(value: u8, orig_frames: f32, sample_rate: u32, is_release: b
     secs * sample_rate as f32
 }
 
+/// dense 通道号 → 槽位索引；>= MAX_CHANNELS 返回 None（GPU 合成器只支持 32 槽位）。
+fn dense_channel(channel: usize) -> Option<usize> {
+    (channel < MAX_CHANNELS).then_some(channel)
+}
+
+/// 立即结束 voice 的 kill 指令（mode 6），vid 为 voices 列表索引。
+fn kill_cmd(frame: u32, vid: usize) -> ReleaseCmd {
+    ReleaseCmd {
+        frame,
+        vid: vid as u32,
+        mode: 6,
+        _pad: 0,
+    }
+}
+
+/// 正常释放 voice 的 release 指令（mode 5）。
+fn release_cmd(frame: u32, vid: usize) -> ReleaseCmd {
+    ReleaseCmd {
+        frame,
+        vid: vid as u32,
+        mode: 5,
+        _pad: 0,
+    }
+}
+
+/// CC72/73（包络时长）与 CC121（重置包络）需要重算活跃 voice 的包络时长。
+fn is_env_effect_cc(event: &ControlEvent) -> bool {
+    matches!(
+        event,
+        ControlEvent::Raw(0x48 | 0x49, _) | ControlEvent::Raw(0x79, 0)
+    )
+}
+
 /// voice + MIDI key + 所属通道 + 通道无关的基础参数。
 #[derive(Clone, Debug)]
 struct Voice {
@@ -860,38 +893,18 @@ impl GpuSynth {
                     self.note_off_to_cmd(channel, key, frame, releases);
                 }
                 SynthEvent::Control { channel, event, .. } => {
-                    let Some(ch_idx) = (channel as usize)
-                        .lt(&MAX_CHANNELS)
-                        .then_some(channel as usize)
-                    else {
+                    let Some(ch_idx) = dense_channel(channel as usize) else {
                         continue;
                     };
                     match event {
-                        ControlEvent::Raw(0x78, 0) => {
-                            // All Sounds Off：kill 所有 voice
+                        // All Sounds Off (CC78)：结束所有 voice；
+                        // All Notes Off (CC7B)：结束所有非 held voice（held 等 damper 松开）
+                        ControlEvent::Raw(cc @ (0x78 | 0x7B), 0) => {
+                            let all = cc == 0x78;
                             for (i, v) in self.voices.iter_mut().enumerate() {
-                                if v.state.env_stage < 6 {
+                                if v.state.env_stage < 6 && (all || !v.held_by_damper) {
                                     v.state.env_stage = 6;
-                                    releases.push(ReleaseCmd {
-                                        frame,
-                                        vid: i as u32,
-                                        mode: 6,
-                                        _pad: 0,
-                                    });
-                                }
-                            }
-                        }
-                        ControlEvent::Raw(0x7B, 0) => {
-                            // All Notes Off：kill 所有非 held voice（held 等待 damper 松开）
-                            for (i, v) in self.voices.iter_mut().enumerate() {
-                                if v.state.env_stage < 6 && !v.held_by_damper {
-                                    v.state.env_stage = 6;
-                                    releases.push(ReleaseCmd {
-                                        frame,
-                                        vid: i as u32,
-                                        mode: 6,
-                                        _pad: 0,
-                                    });
+                                    releases.push(kill_cmd(frame, i));
                                 }
                             }
                         }
@@ -906,22 +919,14 @@ impl GpuSynth {
                                             && !v.release_pending
                                         {
                                             v.release_pending = true;
-                                            releases.push(ReleaseCmd {
-                                                frame,
-                                                vid: i as u32,
-                                                mode: 5,
-                                                _pad: 0,
-                                            });
+                                            releases.push(release_cmd(frame, i));
                                         }
                                         v.held_by_damper = false;
                                     }
                                 }
                             }
                             // CC72/73 修改包络时长、CC121 重置包络：传播到该通道活跃 voice
-                            if matches!(
-                                event,
-                                ControlEvent::Raw(0x48 | 0x49, _) | ControlEvent::Raw(0x79, 0)
-                            ) {
+                            if is_env_effect_cc(&event) {
                                 self.propagate_env_controls_to_cmds(ch_idx, frame, env_cmds);
                             }
                             // 记录该通道的段边界状态（shader 段边界应用）
@@ -976,10 +981,7 @@ impl GpuSynth {
     ) {
         // 音色库选择：dense 通道 → port → (bank, preset) 条目（与 xsynth
         // ChannelSoundfont::rebuild_matrix 一致：主选 + 兜底，落空静音）。
-        let Some(ch_idx) = (channel as usize)
-            .lt(&MAX_CHANNELS)
-            .then_some(channel as usize)
-        else {
+        let Some(ch_idx) = dense_channel(channel as usize) else {
             return;
         };
         // voice 槽位上限（状态常驻 GPU，槽位固定）；超限时由 maybe_compact_voices
@@ -1108,12 +1110,7 @@ impl GpuSynth {
             if v.state.env_stage < 6 {
                 v.state.env_stage = 6;
                 v.held_by_damper = false;
-                releases.push(ReleaseCmd {
-                    frame: block_frame,
-                    vid: idx as u32,
-                    mode: 6,
-                    _pad: 0,
-                });
+                releases.push(kill_cmd(block_frame, idx));
             } else {
                 break; // 其余已被淘汰（块末统一清理），不再继续
             }
@@ -1131,10 +1128,7 @@ impl GpuSynth {
         frame: u32,
         releases: &mut Vec<ReleaseCmd>,
     ) {
-        let Some(ch_idx) = (channel as usize)
-            .lt(&MAX_CHANNELS)
-            .then_some(channel as usize)
-        else {
+        let Some(ch_idx) = dense_channel(channel as usize) else {
             return;
         };
         let damper = self.channels[ch_idx].damper;
@@ -1151,12 +1145,7 @@ impl GpuSynth {
                     v.held_by_damper = true;
                 } else {
                     v.release_pending = true;
-                    releases.push(ReleaseCmd {
-                        frame,
-                        vid: i as u32,
-                        mode: 5,
-                        _pad: 0,
-                    });
+                    releases.push(release_cmd(frame, i));
                 }
                 break;
             }
@@ -1184,10 +1173,7 @@ impl GpuSynth {
             let SynthEvent::Control { channel, event, .. } = ev else {
                 continue;
             };
-            let Some(ch) = (*channel as usize)
-                .lt(&MAX_CHANNELS)
-                .then_some(*channel as usize)
-            else {
+            let Some(ch) = dense_channel(*channel as usize) else {
                 continue;
             };
             match event {
@@ -1207,7 +1193,7 @@ impl GpuSynth {
     /// 与 CPU 路径 `channel_group.send_event` 对等：逐事件走通道状态机；
     /// damper 松开 / CC72/73 传播到当前活跃 voice（seek 后复活音符）。
     pub fn apply_chase(&mut self, dense: u32, events: &[ControlEvent]) {
-        let Some(ch_idx) = (dense as usize).lt(&MAX_CHANNELS).then_some(dense as usize) else {
+        let Some(ch_idx) = dense_channel(dense as usize) else {
             return;
         };
         // 被修改的 voice 槽位（状态常驻 GPU，改完需写回）。
@@ -1233,10 +1219,7 @@ impl GpuSynth {
             }
             // CC72/73 修改包络时长、CC121 重置包络：直接写 voice 状态
             //（chase 不在渲染块内，无法发指令；块边界写入与指令帧效果一致）
-            if matches!(
-                ev,
-                ControlEvent::Raw(0x48 | 0x49, _) | ControlEvent::Raw(0x79, 0)
-            ) {
+            if is_env_effect_cc(&ev) {
                 let ch = self.channels[ch_idx];
                 for (i, v) in self.voices.iter_mut().enumerate() {
                     if v.channel as usize != ch_idx || v.state.env_stage >= 6 {
