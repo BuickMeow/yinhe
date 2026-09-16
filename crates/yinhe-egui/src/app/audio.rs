@@ -10,6 +10,11 @@ impl App {
     /// 自动 teardown 引擎——`ChannelLayout` 创建后不可变，必须重建才能让新通道
     /// 被 dispatch。下一帧 `rebuild_audio_if_needed` 会用新 model 重新 spawn。
     pub(crate) fn notify_audio_model_changed(&mut self) {
+        // 待激活文档加载中：音频已绑定新文档，编辑的是界面上的旧文档——
+        // 不做翻转检测（否则会误 teardown 正在重建的新引擎）。
+        if self.audio_state.pending_doc_activate.is_some() {
+            return;
+        }
         let Some(idx) = self.workspace.active_doc else {
             return;
         };
@@ -32,6 +37,10 @@ impl App {
     /// 若 channel 激活状态翻转（首/末发声音符添加/删除），自动 teardown 引擎
     /// 并下一帧重建——同 `notify_audio_model_changed`。
     pub(crate) fn notify_notes_changed(&mut self) {
+        // 同 notify_audio_model_changed：待激活加载中不做增量/翻转处理。
+        if self.audio_state.pending_doc_activate.is_some() {
+            return;
+        }
         let Some(idx) = self.workspace.active_doc else {
             return;
         };
@@ -238,7 +247,15 @@ impl App {
 
         match result {
             Ok(audio) => {
-                let Some(idx) = self.workspace.active_doc else {
+                // 目标文档：与 rebuild_audio_if_needed 一致——有待激活文档时
+                // 用它（加载完成但音频就绪前不切 active_doc），否则用当前文档。
+                let target = self
+                    .audio_state
+                    .pending_doc_activate
+                    .as_ref()
+                    .map(|p| p.idx)
+                    .or(self.workspace.active_doc);
+                let Some(idx) = target else {
                     drop(audio);
                     return;
                 };
@@ -366,6 +383,11 @@ impl App {
     /// 引擎重建后由 `send_initial_audio_state` 重推全部素材；这里只处理
     /// 增量（导入新素材 / 后台解码完成）。
     pub(crate) fn poll_audio_library(&mut self) {
+        // 待激活加载中：素材解码/推送针对新文档（spawn 时统一处理），
+        // 跳过旧文档的增量，避免把旧素材推给已绑定新文档的引擎。
+        if self.audio_state.pending_doc_activate.is_some() {
+            return;
+        }
         let Some(idx) = self.workspace.active_doc else {
             return;
         };
