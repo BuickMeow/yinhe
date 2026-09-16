@@ -321,41 +321,6 @@ impl MixerGraph {
         old
     }
 
-    /// 把一段 CC 直接广播给该通道 insert 链上处理它的模块（yinhe-dsp）。
-    ///
-    /// 对应"CC 效果直接进 DSP 链"：dispatch 对通道级 CC 调用本方法，
-    /// 不再下发合成器；模块按自己的 `handled_ccs` 过滤，无关 CC 被忽略。
-    pub fn broadcast_channel_cc(&mut self, channel: usize, cc: u8, value: u8) {
-        if let Some(chain) = self.inserts.get_mut(channel) {
-            for p in chain.iter_mut() {
-                if p.handled_ccs().contains(&cc) {
-                    p.apply_cc(cc, value);
-                }
-            }
-        }
-    }
-
-    /// 该通道 insert 链上所有模块订阅的 CC 集合（去重、升序）。
-    ///
-    /// chase 回填用：seek 后只需把"链上真正关心"的 CC 写回模块，
-    /// 与 dispatch 的 `broadcast_channel_cc` 共用同一份订阅声明
-    /// （`handled_ccs`），不硬编码 CC 号列表。
-    pub fn channel_subscribed_ccs(&self, channel: usize) -> Vec<u8> {
-        let Some(chain) = self.inserts.get(channel) else {
-            return Vec::new();
-        };
-        let mut ccs: Vec<u8> = Vec::new();
-        for p in chain {
-            for &cc in p.handled_ccs() {
-                if !ccs.contains(&cc) {
-                    ccs.push(cc);
-                }
-            }
-        }
-        ccs.sort_unstable();
-        ccs
-    }
-
     /// 在 master 链槽位 `slot` 处插入处理器（越界则追加）。
     pub fn insert_master_insert(&mut self, slot: usize, p: Box<dyn InsertProcessor>) {
         self.master_inserts
@@ -745,30 +710,6 @@ mod tests {
         fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
             self
         }
-    }
-
-    /// `channel_subscribed_ccs`：链上订阅集合去重升序（chase 回填用）。
-    #[test]
-    fn channel_subscribed_ccs_dedup_sorted() {
-        struct Subscriber(&'static [u8]);
-        impl InsertProcessor for Subscriber {
-            fn process(&mut self, _left: &mut [f32], _right: &mut [f32]) {}
-
-            fn handled_ccs(&self) -> &'static [u8] {
-                self.0
-            }
-
-            fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
-                self
-            }
-        }
-
-        let mut g = graph_with(&[StripParams::default()], 4);
-        g.insert_insert(0, 0, Box::new(Subscriber(&[11, 7])));
-        g.insert_insert(0, 1, Box::new(Subscriber(&[7, 74])));
-        assert_eq!(g.channel_subscribed_ccs(0), vec![7, 11, 74]);
-        // 空链/越界通道返回空集合。
-        assert!(g.channel_subscribed_ccs(1).is_empty());
     }
 
     #[test]

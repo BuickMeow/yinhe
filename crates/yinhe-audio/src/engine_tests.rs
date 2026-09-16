@@ -3921,35 +3921,12 @@ fn diag_engine_cpu_vs_gpu() {
 }
 
 // ---------------------------------------------------------------------------
-// CC 广播方案回归（低层 CC → insert 链订阅 + 常规路径透传）
+// 通道处理回归音源：CC7/10/11/71/74 → 内置音源通道处理段
 // ---------------------------------------------------------------------------
 
-/// 低层 CC 在 dispatch 时广播给通道 insert 链上订阅的模块（`handled_ccs`
-/// 匹配），不依赖 target 类型或 CC 号白名单（CC 广播方案核心行为）。
+/// 内置音源通道：CC7 由通道处理段消费（dispatch 打点），不再有外挂广播。
 #[test]
-fn low_level_cc_broadcasts_to_subscribed_insert() {
-    use std::sync::{Arc, Mutex};
-
-    struct CcRecorder(Arc<Mutex<Vec<(u8, u8)>>>);
-    impl yinhe_mixer::InsertProcessor for CcRecorder {
-        fn process(&mut self, _left: &mut [f32], _right: &mut [f32]) {}
-
-        fn handled_ccs(&self) -> &'static [u8] {
-            &[7, 11]
-        }
-
-        fn apply_cc(&mut self, cc: u8, value: u8) {
-            self.0
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push((cc, value));
-        }
-
-        fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
-            self
-        }
-    }
-
+fn low_level_cc_routes_to_channel_dsp() {
     let sample_rate = 44100u32;
     let mut doc = Document::empty();
     {
@@ -3968,55 +3945,31 @@ fn low_level_cc_broadcasts_to_subscribed_insert() {
     doc.data.bump_revision();
 
     let mut engine = spawn_engine_for_doc(&doc, sample_rate);
-    let recorded = Arc::new(Mutex::new(Vec::new()));
-    let dense = engine.channel_layout.dense_for(0) as usize;
-    engine
-        .mixer
-        .insert_insert(dense, 0, Box::new(CcRecorder(recorded.clone())));
-
     engine.playing = true;
     engine.dispatch_and_find_next(0, 60_000);
 
-    let got = recorded.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    assert_eq!(got, vec![(7, 100)], "低层 CC7 应广播给订阅的 insert");
+    // 打点 = 该 CC 已被实际消费（内置音源通道处理段）；外挂 insert 不再收 CC。
+    let skip = engine.chase_skip();
+    assert!(
+        skip.cc_mask[0] & (1u128 << 7) != 0,
+        "CC7 应由内置音源通道处理段消费"
+    );
 }
 
-/// 未订阅的 CC 不投递：同一 insert 声明 [7]，CC11 事件不应到达。
+/// 音源层 CC（如 Sustain=CC64）不进通道处理段（由合成器消费）。
 #[test]
-fn cc_broadcast_respects_handled_ccs_filter() {
-    use std::sync::{Arc, Mutex};
-
-    struct CcRecorder(Arc<Mutex<Vec<(u8, u8)>>>);
-    impl yinhe_mixer::InsertProcessor for CcRecorder {
-        fn process(&mut self, _left: &mut [f32], _right: &mut [f32]) {}
-
-        fn handled_ccs(&self) -> &'static [u8] {
-            &[7]
-        }
-
-        fn apply_cc(&mut self, cc: u8, value: u8) {
-            self.0
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push((cc, value));
-        }
-
-        fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
-            self
-        }
-    }
-
+fn source_level_cc_not_routed_to_channel_dsp() {
     let sample_rate = 44100u32;
     let mut doc = Document::empty();
     {
         let model = Arc::make_mut(&mut doc.data.model);
         let track = Arc::make_mut(&mut model.tracks[1]);
         track.automation_lanes.push(AutomationLane {
-            target: AutomationTarget::CC { controller: 11 },
+            target: AutomationTarget::CC { controller: 64 },
             track: 1,
             events: vec![AutomationEvent {
                 tick: 0,
-                value: 64.0 / 127.0,
+                value: 1.0,
                 shape: SegmentShape::Step,
             }],
         });
@@ -4024,15 +3977,13 @@ fn cc_broadcast_respects_handled_ccs_filter() {
     doc.data.bump_revision();
 
     let mut engine = spawn_engine_for_doc(&doc, sample_rate);
-    let recorded = Arc::new(Mutex::new(Vec::new()));
-    let dense = engine.channel_layout.dense_for(0) as usize;
-    engine
-        .mixer
-        .insert_insert(dense, 0, Box::new(CcRecorder(recorded.clone())));
-
     engine.playing = true;
     engine.dispatch_and_find_next(0, 60_000);
 
-    let got = recorded.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    assert!(got.is_empty(), "未订阅的 CC11 不应投递：{got:?}");
+    // CC64 走常规路径（xsynth 处理），不被通道处理段接管（处理段只管 DSP_CHANNEL_CCS）。
+    let skip = engine.chase_skip();
+    assert!(
+        skip.cc_mask[0] & (1u128 << 64) != 0,
+        "CC64 应走常规路径并打点（xsynth 消费）"
+    );
 }

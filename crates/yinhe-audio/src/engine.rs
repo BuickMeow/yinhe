@@ -39,6 +39,9 @@ pub(crate) struct AudioEngine {
     /// 乐器实例，长度 = `compacted_channels`，只有乐器 dense 槽位非空。
     /// 索引 = 全局 dense（= midi_compacted + 乐器通道排序位置）。
     pub(crate) instruments: Vec<Option<crate::instrument::InstrumentSource>>,
+    /// 内置音源通道处理段（CC7/10/11/71/74），索引 = dense 通道。
+    /// 挂插件乐器的通道不处理（CC 透传插件）。见 `channel_dsp` 模块文档。
+    pub(crate) channel_dsp: Vec<crate::channel_dsp::ChannelDspChain>,
     /// 当前渲染块的起始 sample：dispatch 时把 tick 域事件换算成块内 frame offset
     /// 喂乐器插件（`PluginEvent::time`）。render() 每块开头设置。
     pub(crate) block_start_sample: u64,
@@ -162,6 +165,9 @@ impl AudioEngine {
                 insert_returns: Vec::new(),
                 instrument_returns: Vec::new(),
                 instruments: (0..compacted).map(|_| None).collect(),
+                channel_dsp: (0..compacted)
+                    .map(|_| crate::channel_dsp::ChannelDspChain::new(sample_rate))
+                    .collect(),
                 block_start_sample: 0,
                 channel_layout: layout,
                 sf_manager: SoundFontManager::new(sample_rate),

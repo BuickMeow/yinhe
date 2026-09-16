@@ -152,12 +152,20 @@ impl AudioEngine {
                 continue;
             };
             state.send_to(dense, &mut self.channel_set, &skip);
-            // 通道 insert 链上订阅的 CC 回填给对应模块（与 xsynth 的 skip
-            // 语义一致：已被 dispatch 的 CC 不覆盖，避免旧值打回新值）。
-            for cc in self.mixer.channel_subscribed_ccs(dense as usize) {
-                if skip.cc_mask[ch as usize] & (1u128 << cc) == 0 {
-                    self.mixer
-                        .broadcast_channel_cc(dense as usize, cc, state.dsp_cc_value(cc));
+            // 内置音源通道处理段回填（与 xsynth 的 skip 语义一致：已被
+            // dispatch 的 CC 不覆盖，避免旧值打回新值）。插件通道的 CC 由
+            // 插件实例自身处理（透传语义），不经处理段。
+            if (dense as usize) < self.channel_layout.midi_compacted() as usize
+                && self
+                    .instruments
+                    .get(dense as usize)
+                    .is_none_or(|s| s.is_none())
+                && let Some(chain) = self.channel_dsp.get_mut(dense as usize)
+            {
+                for &cc in yinhe_dsp::cc::DSP_CHANNEL_CCS {
+                    if skip.cc_mask[ch as usize] & (1u128 << cc) == 0 {
+                        chain.apply_cc(cc, state.dsp_cc_value(cc));
+                    }
                 }
             }
         }
@@ -433,6 +441,10 @@ impl AudioEngine {
             )));
         // insert 效果器（delay 尾音/envelope 等）随 seek 清空内部状态
         self.mixer.reset_inserts();
+        // 内置音源通道处理段随 seek 清空内部状态（filter 历史等）
+        for chain in &mut self.channel_dsp {
+            chain.reset();
+        }
         // 乐器实例随 seek 清空内部状态（尾音/envelope/挂音）与事件累积。
         for inst in self.instruments.iter_mut().flatten() {
             inst.processor.reset();

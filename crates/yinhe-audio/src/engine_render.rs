@@ -42,6 +42,7 @@ impl AudioEngine {
             self.dispatch_block_events(block_end_tick);
             self.dispatch_plugin_previews(block_start_sample, frames);
             self.render_instruments(block_start_sample, frames);
+            self.render_channel_dsp(frames);
             self.render_audio_tracks(block_start_sample, frames);
 
             let (master_l, master_r) = self.mixer.process();
@@ -118,6 +119,9 @@ impl AudioEngine {
         // 乐器插件：把每块累积的事件喂给各自实例，输出写进对应乐器 dense 通道。
         self.dispatch_plugin_previews(block_start_sample, frames);
         self.render_instruments(block_start_sample, frames);
+
+        // 内置音源通道处理段（CC7/10/11/71/74）在混音台 insert 链之前生效。
+        self.render_channel_dsp(frames);
 
         // 音频片段回放：按绝对时间直接混进对应音频 dense 通道（无状态）。
         self.render_audio_tracks(block_start_sample, frames);
@@ -201,15 +205,21 @@ impl AudioEngine {
                         }
                     }
                 } else {
-                    // CC 广播：先广播给该通道 insert 链上订阅的效果器（内置
-                    // DSP 模块经 `handled_ccs` 接管），再走常规路径（挂插件则
-                    // 转 MIDI 喂插件，否则进合成器）。两路都发：谁订阅谁消费；
-                    // 同时挂插件与效果器时的双重处理由用户挂载选择决定。
+                    // 内置音源的通道处理段（CC7/10/11/71/74）；挂插件乐器的
+                    // 通道跳过（CC 透传插件，插件自己响应）。两层互斥：
+                    // CC 的消费者只有音源一侧，不存在广播/双发语义。
                     if let Some((cc_num, cc_value)) = raw_cc(&cc.event) {
                         let dense = self.channel_layout.dense_for(cc.channel as usize);
-                        if dense != u32::MAX {
-                            self.mixer
-                                .broadcast_channel_cc(dense as usize, cc_num, cc_value);
+                        if dense != u32::MAX
+                            && (dense as usize) < self.channel_layout.midi_compacted() as usize
+                            && self
+                                .instruments
+                                .get(dense as usize)
+                                .is_none_or(|s| s.is_none())
+                            && yinhe_dsp::cc::DSP_CHANNEL_CCS.contains(&cc_num)
+                            && let Some(chain) = self.channel_dsp.get_mut(dense as usize)
+                        {
+                            chain.apply_cc(cc_num, cc_value);
                             // 实际发送 → 打点（chase 应用时跳过，避免旧值覆盖新值）。
                             self.dispatched_skip.mark(&cc.event, cc.channel as usize);
                         }
@@ -576,6 +586,32 @@ impl AudioEngine {
             slot.processor.flush_pending_params(position);
         }
         self.mixer.flush_pending_insert_params(position);
+        for chain in &mut self.channel_dsp {
+            chain.flush_pending_params(position);
+        }
+    }
+
+    /// 内置音源通道处理段：合成器输出之后、`mixer.process()` 之前，
+    /// 对所有内置音源 MIDI 通道应用 CC7/10/11/71/74 的当前值。
+    /// 插件乐器通道跳过（CC 已透传插件，插件自行处理）。
+    fn render_channel_dsp(&mut self, frames: usize) {
+        let midi_count = self.channel_layout.midi_compacted() as usize;
+        // 字段级借用拆分：mixer 缓冲 / 处理段 / 乐器表互不相交。
+        let Self {
+            mixer,
+            channel_dsp,
+            instruments,
+            ..
+        } = self;
+        for (dense, buf) in mixer.buffers_mut().iter_mut().enumerate().take(midi_count) {
+            if instruments.get(dense).is_some_and(|s| s.is_some()) {
+                continue;
+            }
+            if let Some(chain) = channel_dsp.get_mut(dense) {
+                let f = frames.min(buf.left.len()).min(buf.right.len());
+                chain.process(&mut buf.left[..f], &mut buf.right[..f]);
+            }
+        }
     }
 
     /// 把本块累积的乐器事件喂给各乐器实例，输出写进对应乐器 dense 通道。

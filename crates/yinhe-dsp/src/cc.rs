@@ -16,8 +16,9 @@ pub const CC_RAMP_SECONDS: f32 = 0.01;
 
 /// 由 yinhe-dsp 模块处理的伪 CC 白名单（内部映射，不用于 UI 显示）。
 ///
-/// dispatch 对这些 CC 直接广播给通道 insert 链
-/// （[`yinhe_mixer::MixerGraph::broadcast_channel_cc`]），不再下发合成器/乐器插件。
+/// dispatch 对这些 CC 不再下发合成器/乐器插件，而是交给"内置音源通道处理段"
+/// （`yinhe-audio` 的 `ChannelDspChain`，在合成器输出后、insert 链前处理）；
+/// 挂插件乐器的通道由插件自己响应（CC 透传）。
 /// 音源层 CC（ADSR、Sustain、Portamento、Vibrato、Bank/PC、RPN 等）
 /// 仍由合成器处理——那些必须对 voice 动刀。
 pub const DSP_CHANNEL_CCS: &[u8] = &[

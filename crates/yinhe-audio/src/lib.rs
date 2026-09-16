@@ -4,6 +4,7 @@ mod audio_ring;
 pub mod audio_source;
 mod builtin_insert;
 mod channel;
+mod channel_dsp;
 pub mod channel_layout;
 mod channel_set;
 pub mod clap_insert;
