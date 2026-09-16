@@ -10,7 +10,7 @@
 //! voice 管理、通道状态、ADSR 推进封装在内部。
 
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::Arc;
 
 use crate::sfz_parser;
 use crate::synth::GpuAudioRenderer;
@@ -25,41 +25,13 @@ mod channel;
 pub use channel::ChaseSkip;
 use channel::{ChannelState, env_curve_frames, is_env_effect_cc};
 
+mod cache;
+
+pub use cache::prefetch_key_maps;
+use cache::{SampleBundle, cached_sample_bundle, load_key_maps, store_sample_bundle};
+
 /// MIDI 通道数（dense 通道 = port×16+ch，支持 2 端口 32 通道）。
 pub const MAX_CHANNELS: usize = 32;
-
-/// 进程级音色库解析缓存：key = (路径, 目标采样率)。
-/// 反复打开/切换工程不再重复解析（每次约 3-4s）；样本 `Arc` 跨引擎共享，
-/// 内存只存一份。缓存常驻（音色库条目数量有限）。
-type KeyMapCacheKey = (std::path::PathBuf, u32);
-type KeyMapCacheValue = Arc<Vec<sfz_parser::KeyMapEntry>>;
-static KEY_MAP_CACHE: LazyLock<Mutex<HashMap<KeyMapCacheKey, KeyMapCacheValue>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
-/// 预热进程级解析缓存（worker 线程调用）：未命中才解析。
-/// 音频线程随后加载同一音色库时直接命中缓存，不再在音频线程里解析（3-4s）。
-pub fn prefetch_key_maps(path: &std::path::Path, sample_rate: u32) -> Result<(), String> {
-    let key = (path.to_path_buf(), sample_rate);
-    {
-        let cache = KEY_MAP_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-        if cache.contains_key(&key) {
-            return Ok(());
-        }
-    }
-    let t = std::time::Instant::now();
-    let built = Arc::new(sfz_parser::build_key_maps(path, sample_rate)?);
-    eprintln!(
-        "[gpu] worker 预解析音色库={:?}：{}",
-        t.elapsed(),
-        path.display()
-    );
-    KEY_MAP_CACHE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .entry(key)
-        .or_insert(built);
-    Ok(())
-}
 
 /// 合成器事件（sample 域，按 sample 排序后由 `load_events` 加载）。
 #[derive(Clone, Copy, Debug)]
@@ -166,18 +138,6 @@ struct SegBuffers {
     releases: Vec<ReleaseCmd>,
     env_cmds: Vec<EnvUpdateCmd>,
 }
-
-/// 采样拼接结果缓存（只保留最近一份）：key = 排序去重后的音色库路径集合 + 采样率。
-/// 反复加载相同音色库的工程（引擎重建会新建 GpuSynth）不再重新拼接
-/// 500MB 级连续缓冲（~2.3s）；`data` 为 Arc 共享，与渲染器引用同一份内存
-/// （总内存不增加，换音色库组合时旧数据自然释放）。
-type SampleBundleKey = (Vec<std::path::PathBuf>, u32);
-struct SampleBundle {
-    data: Arc<Vec<f32>>,
-    offsets: HashMap<usize, (u32, u32)>,
-}
-static SAMPLE_BUNDLE_CACHE: LazyLock<Mutex<Option<(SampleBundleKey, SampleBundle)>>> =
-    LazyLock::new(|| Mutex::new(None));
 
 /// GPU 合成器 — 封装 GPU 渲染器 + voice 管理 + 通道状态 + 事件调度 + 限幅。
 ///
@@ -292,34 +252,7 @@ impl GpuSynth {
         self.sample_paths.extend(paths.iter().cloned());
         let mut entries: Vec<sfz_parser::KeyMapEntry> = Vec::new();
         for path in paths {
-            let key = (path.clone(), self.sample_rate);
-            let cached = {
-                let cache = KEY_MAP_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-                cache.get(&key).cloned()
-            };
-            let built = match cached {
-                Some(arc) => {
-                    eprintln!("[gpu] 音色库解析缓存命中：{}", path.display());
-                    arc
-                }
-                None => {
-                    let t = std::time::Instant::now();
-                    let built = Arc::new(sfz_parser::build_key_maps(path, self.sample_rate)?);
-                    eprintln!(
-                        "[gpu] 音色库解析（未命中缓存）={:?}：{}",
-                        t.elapsed(),
-                        path.display()
-                    );
-                    // 并发下可能有别的线程先插入：取缓存内实际条目（or_insert），
-                    // 保证所有实例共享同一份样本指针（拼接缓存的 offsets 依赖指针）。
-                    KEY_MAP_CACHE
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .entry(key)
-                        .or_insert(built)
-                        .clone()
-                }
-            };
+            let built = load_key_maps(path, self.sample_rate)?;
             entries.extend(built.iter().cloned());
         }
         self.port_key_maps[slot] = entries;
@@ -350,18 +283,7 @@ impl GpuSynth {
         let key = (paths, self.sample_rate);
 
         // 缓存命中：复用拼接数据（样本 Arc 与解析缓存共享，offsets 指针一致）
-        let cached = {
-            let cache = SAMPLE_BUNDLE_CACHE
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            match &*cache {
-                Some((k, bundle)) if *k == key => {
-                    Some((Arc::clone(&bundle.data), bundle.offsets.clone()))
-                }
-                _ => None,
-            }
-        };
-        if let Some((data, offsets)) = cached {
+        if let Some((data, offsets)) = cached_sample_bundle(&key) {
             let mb = data.len() as f64 * 4.0 / (1024.0 * 1024.0);
             self.sample_offsets = offsets;
             self.renderer.upload_samples(data);
@@ -396,18 +318,13 @@ impl GpuSynth {
         let chunk_count = data.len().div_ceil(crate::synth::types::CHUNK_SIZE);
         let data = Arc::new(data);
         self.sample_offsets = offsets.clone();
-        {
-            let mut cache = SAMPLE_BUNDLE_CACHE
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            *cache = Some((
-                key,
-                SampleBundle {
-                    data: Arc::clone(&data),
-                    offsets,
-                },
-            ));
-        }
+        store_sample_bundle(
+            key,
+            SampleBundle {
+                data: Arc::clone(&data),
+                offsets,
+            },
+        );
         self.renderer.upload_samples(data);
         eprintln!(
             "[gpu] 采样拼接={:?}（{chunk_count} 个 chunk，{mb:.0}MB），已缓存复用",
