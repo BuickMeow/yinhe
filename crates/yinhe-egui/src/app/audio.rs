@@ -397,6 +397,19 @@ impl App {
         let total = self.audio_state.sf_total;
         let loaded = audio.handle.sf_loaded_count();
         if total == 0 || loaded >= total {
+            // 音色库已加载完，但音频可能还在做 GpuSynth 初始化/采样上传/管线
+            // 预热（约数百 ms）：等 audio_ready 再宣布"加载完成"，保证用户
+            // 看到完成时点播放能立即响应。
+            if !audio.handle.audio_ready() {
+                progress::set_stage_progress(
+                    &self.load_progress,
+                    2,
+                    total as f32,
+                    "初始化音频".to_string(),
+                );
+                progress::set_visible(&self.load_progress, true);
+                return;
+            }
             self.audio_state.sf_pending = false;
             progress::set_stage(&self.load_progress, 2, progress::StageStatus::Done);
             progress::set_visible(&self.load_progress, false);
@@ -525,9 +538,7 @@ impl App {
                 if let Some(t) = self.audio_state.pending_playback_since
                     && t.elapsed() > std::time::Duration::from_secs(1)
                 {
-                    tracing::warn!(
-                        "[play] Play 命令 1s 未被音频线程确认（可能已被命令通道丢弃）"
-                    );
+                    tracing::warn!("[play] Play 命令 1s 未被音频线程确认（可能已被命令通道丢弃）");
                     self.audio_state.pending_playback_since = None;
                 }
                 return;

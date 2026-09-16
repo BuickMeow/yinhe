@@ -276,6 +276,8 @@ pub struct AudioHandle {
     preview_stop_flag: Arc<AtomicBool>,
     /// 已完成加载的音色库 port 数（worker 每完成一 port +1）。
     sf_loaded: Arc<AtomicUsize>,
+    /// 音频完全就绪（模型 + 音色库 + 采样上传 + 管线预热）。
+    audio_ready: Arc<AtomicBool>,
     /// latest-wins：轨道 mute/solo 掩码必达（命令通道满合并时不丢最新值）。
     pending_skip: Arc<Mutex<Option<Vec<bool>>>>,
     /// latest-wins：AM lane M/S 试听旁通集必达。
@@ -414,6 +416,11 @@ impl AudioHandle {
     /// 已完成加载的音色库 port 数（`LoadSoundFont` 结果回传时 +1）。
     pub fn sf_loaded_count(&self) -> usize {
         self.sf_loaded.load(Ordering::Relaxed)
+    }
+
+    /// 音频是否完全就绪（模型 + 音色库 + 采样上传 + 管线预热）。
+    pub fn audio_ready(&self) -> bool {
+        self.audio_ready.load(Ordering::Relaxed)
     }
 
     /// 混音台 dense 通道数（= 引擎 compacted 通道数）。
@@ -1136,6 +1143,7 @@ pub fn spawn_cpal_audio(
     let clear_ring_write = Arc::clone(&renderer_state.clear_ring_write);
     // 音色库完成计数（renderer_state 即将 move 进 renderer，先 clone 给 handle）。
     let handle_sf_loaded = Arc::clone(&renderer_state.sf_loaded);
+    let handle_audio_ready = Arc::clone(&renderer_state.audio_ready);
 
     let shutdown = Arc::new(AtomicBool::new(false));
     // latest-wins 槽：M/S 掩码必达（UI 写、renderer 每轮消费最新值）。
@@ -1285,6 +1293,7 @@ pub fn spawn_cpal_audio(
             stream_error,
             preview_stop_flag,
             sf_loaded: handle_sf_loaded,
+            audio_ready: handle_audio_ready,
             pending_skip,
             pending_am_ms,
             mixer_channel_readings,

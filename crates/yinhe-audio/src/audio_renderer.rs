@@ -87,6 +87,10 @@ pub(crate) struct RendererSharedState {
     /// 已加载完成的通道音色库数（每通道一条 `LoadedSoundFont` 结果 +1）。
     /// UI 据此驱动"加载音色库"stage 的真实进度（完成计数，不预填）。
     pub(crate) sf_loaded: Arc<AtomicUsize>,
+    /// 音频完全就绪：LoadModel 相关的全部初始化完成（GPU 路径含 GpuSynth
+    /// 初始化 + 采样上传 + 管线预热）。UI 用它 gate"加载完成"提示，
+    /// 保证用户看到加载完成时点播放能立即响应。
+    pub(crate) audio_ready: Arc<AtomicBool>,
     /// 总线电平表读数端（增删总线时由渲染线程刷新；UI 读锁取用）。
     pub(crate) bus_readings: Arc<Mutex<Vec<yinhe_mixer::MeterReading>>>,
 }
@@ -102,6 +106,7 @@ impl RendererSharedState {
             clear_base_sample: Arc::new(AtomicU64::new(0)),
             clear_ring_write: Arc::new(AtomicUsize::new(0)),
             sf_loaded: Arc::new(AtomicUsize::new(0)),
+            audio_ready: Arc::new(AtomicBool::new(false)),
             bus_readings: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -221,6 +226,13 @@ impl AudioRenderer {
             gpu_events_dirty: true,
             #[cfg(feature = "gpu")]
             gpu_events_last_pos: None,
+        }
+    }
+
+    /// 标记音频就绪（幂等）：UI 的"加载完成"提示以此为准。
+    fn mark_audio_ready(&self) {
+        if !self.state.audio_ready.swap(true, Ordering::AcqRel) {
+            play_log("[play] 音频就绪（模型+音色库+采样上传+管线预热完成）");
         }
     }
 
@@ -376,6 +388,9 @@ impl AudioRenderer {
     ) {
         match cmd {
             AudioCommand::LoadModel { model } => {
+                // 新的加载流程开始：音频重置为未就绪（音色库/采样/管线
+                // 全部就绪后由 mark_audio_ready 置回）。
+                self.state.audio_ready.store(false, Ordering::Release);
                 self.preview_engine.stop_all();
                 self.engine.handle_command(AudioCommand::Pause);
                 self.engine.handle_command(AudioCommand::Stop);
@@ -713,6 +728,10 @@ impl AudioRenderer {
                     // 方案 B：apply_prepared_model 内部 seek_to 不再 chase，
                     // 这里发 PrepareChase 让 worker 异步算 channel state
                     self.request_chase(self.engine.current_tick());
+                    // 模型已就绪且没有待加载音色库（无配置/已加载完）→ 音频就绪。
+                    if self.gpu_sf_pending == 0 {
+                        self.mark_audio_ready();
+                    }
                     play_log(&format!("[play] 应用模型结果={:?}", t_prepared.elapsed()));
                     did_work = true;
                 }
@@ -837,6 +856,9 @@ impl AudioRenderer {
                                 "[play] GPU 采样上传完成：{:?}",
                                 t_upload.elapsed()
                             ));
+                            if self.gpu_sf_pending == 0 {
+                                self.mark_audio_ready();
+                            }
                         }
                     }
                     // 非 GPU feature 下 paths 不使用，显式标记避免 warning
