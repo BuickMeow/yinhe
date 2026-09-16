@@ -398,6 +398,17 @@ pub fn show(
                         t!("undo.delete_automation_lane").to_string(),
                     )
                 }
+                track_panel::TrackAction::ConvertAutomation {
+                    idx,
+                    lane_idx,
+                    target,
+                } => {
+                    structural = false;
+                    (
+                        convert_automation_lane_target(doc, *idx, *lane_idx, target.clone()),
+                        t!("undo.convert_automation_target").to_string(),
+                    )
+                }
                 track_panel::TrackAction::AddTrack { after_idx } => {
                     let idx = after_idx.unwrap_or(doc.data.model.tracks.len() - 1);
                     (doc.add_track(idx), t!("undo.add_track").to_string())
@@ -911,4 +922,160 @@ fn clip_params(doc: &Document, track: usize, id: u32) -> Option<(f32, f64, f64)>
         .get(track)
         .and_then(|t| t.audio_clips.iter().find(|c| c.id == id))
         .map(|c| (c.gain, c.fade_in_seconds, c.fade_out_seconds))
+}
+
+/// 原地替换 lane 的 target（设备参数 ↔ 低层 CC），事件值不变（两边都归一化）。
+///
+/// 编辑器没有「原地替换 lane target」的公开 API：这里直接替换模型，并构造
+/// 「删旧 + 插新」组合 undo —— `reversed()` 反转成「删新 + 插旧」，在同一
+/// `lane_idx` 上正好还原为原 lane。
+///
+/// 目标 target 已存在（每轨同 target 至多一条）或索引越界时返回 None。
+fn convert_automation_lane_target(
+    doc: &mut Document,
+    track_idx: usize,
+    lane_idx: usize,
+    new_target: yinhe_types::AutomationTarget,
+) -> Option<yinhe_editor_core::history::UndoAction> {
+    let old_lane = doc
+        .data
+        .model
+        .tracks
+        .get(track_idx)?
+        .automation_lanes
+        .get(lane_idx)?
+        .clone();
+    if old_lane.target == new_target {
+        return None;
+    }
+    if doc.data.model.tracks[track_idx]
+        .automation_lanes
+        .iter()
+        .any(|l| l.target == new_target)
+    {
+        return None;
+    }
+    let mut new_lane = old_lane.clone();
+    new_lane.target = new_target;
+    {
+        // 与编辑器其他 egui 层直改模型的做法一致（Arc::make_mut 写时复制）。
+        let model = std::sync::Arc::make_mut(&mut doc.data.model);
+        let track = std::sync::Arc::make_mut(&mut model.tracks[track_idx]);
+        track.automation_lanes[lane_idx] = new_lane.clone();
+    }
+    doc.data.bump_revision();
+    Some(yinhe_editor_core::history::UndoAction::Composite(vec![
+        yinhe_editor_core::history::UndoAction::AutomationLane {
+            track_idx,
+            lane_idx,
+            before: Some(old_lane),
+            after: None,
+        },
+        yinhe_editor_core::history::UndoAction::AutomationLane {
+            track_idx,
+            lane_idx,
+            before: None,
+            after: Some(new_lane),
+        },
+    ]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yinhe_types::automation::{ParamDevice, channel_dsp_param};
+    use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
+
+    fn lane(target: AutomationTarget, ticks: &[u32]) -> AutomationLane {
+        AutomationLane {
+            target,
+            track: 1,
+            events: ticks
+                .iter()
+                .map(|&tick| AutomationEvent {
+                    tick,
+                    value: 0.5,
+                    shape: SegmentShape::Step,
+                })
+                .collect(),
+        }
+    }
+
+    fn push_lane(doc: &mut Document, lane: AutomationLane) {
+        let model = std::sync::Arc::make_mut(&mut doc.data.model);
+        let track = std::sync::Arc::make_mut(&mut model.tracks[1]);
+        track.automation_lanes.push(lane);
+    }
+
+    /// 转换 = 原地替换 target：事件不变、其他 lane 位置不变，undo/redo 精确往返。
+    #[test]
+    fn convert_lane_target_roundtrip_keeps_events_and_index() {
+        let mut doc = Document::empty();
+        let cc = AutomationTarget::CC { controller: 7 };
+        let untouched = AutomationTarget::CC { controller: 1 };
+        push_lane(&mut doc, lane(untouched.clone(), &[0]));
+        push_lane(
+            &mut doc,
+            lane(AutomationTarget::CC { controller: 64 }, &[10]),
+        );
+        push_lane(&mut doc, lane(cc.clone(), &[100, 200]));
+
+        let new_target = AutomationTarget::Param {
+            device: ParamDevice::ChannelDsp { channel: 0 },
+            id: channel_dsp_param::VOLUME,
+            name: String::new(),
+        };
+        let snapshot = doc.capture_snapshot();
+        let action = convert_automation_lane_target(&mut doc, 1, 2, new_target.clone())
+            .expect("CC7 → 设备参数应可转换");
+        let converted = &doc.data.model.tracks[1].automation_lanes[2];
+        assert_eq!(converted.target, new_target);
+        assert_eq!(converted.events.len(), 2, "事件必须原样保留");
+        assert_eq!(converted.events[0].tick, 100);
+        assert_eq!(
+            doc.data.model.tracks[1].automation_lanes[0].target, untouched,
+            "其他 lane 不受影响"
+        );
+
+        doc.push_undo(action, "convert", snapshot);
+        assert!(doc.undo(), "undo 应成功");
+        let restored = &doc.data.model.tracks[1].automation_lanes[2];
+        assert_eq!(restored.target, cc, "undo 恢复原 target");
+        assert_eq!(restored.events.len(), 2, "undo 恢复原事件");
+        assert!(doc.redo(), "redo 应成功");
+        assert_eq!(
+            doc.data.model.tracks[1].automation_lanes[2].target,
+            new_target
+        );
+        assert_eq!(
+            doc.data.model.tracks[1].automation_lanes.len(),
+            3,
+            "转换不增删 lane"
+        );
+    }
+
+    /// 目标 target 已存在时不转换（每轨同 target 至多一条）。
+    #[test]
+    fn convert_lane_target_refuses_existing_target() {
+        let mut doc = Document::empty();
+        let existing = AutomationTarget::Param {
+            device: ParamDevice::ChannelDsp { channel: 0 },
+            id: channel_dsp_param::VOLUME,
+            name: String::new(),
+        };
+        push_lane(&mut doc, lane(existing.clone(), &[0]));
+        push_lane(
+            &mut doc,
+            lane(AutomationTarget::CC { controller: 7 }, &[100]),
+        );
+
+        assert!(
+            convert_automation_lane_target(&mut doc, 1, 1, existing).is_none(),
+            "目标已存在时应拒绝"
+        );
+        assert_eq!(
+            doc.data.model.tracks[1].automation_lanes[1].target,
+            AutomationTarget::CC { controller: 7 }
+        );
+    }
 }
