@@ -763,4 +763,124 @@ mod tests {
             .fold(0.0f32, |m, v| m.max(v.abs()));
         assert!(peak > 0.0, "预热后正常渲染应有输出（peak={peak}）");
     }
+
+    /// 测试用 voice（sustain 阶段），只填被 chase 路径读取的字段。
+    fn test_voice(stage: u32) -> Voice {
+        Voice {
+            state: GpuVoiceState {
+                env_stage: stage,
+                ..Default::default()
+            },
+            key: 60,
+            channel: 0,
+            orig_attack_frames: 0.0,
+            orig_release_frames: 0.0,
+            held_by_damper: false,
+            release_pending: false,
+        }
+    }
+
+    /// chase 应用：damper 松开把 held voice 置入 release（块外直接写状态路径）。
+    #[test]
+    fn apply_chase_damper_release_marks_held_voices() {
+        let Ok(mut synth) = GpuSynth::new_default(44_100) else {
+            eprintln!("no GPU, skipping");
+            return;
+        };
+        let mut v = test_voice(4);
+        v.state.envelope = 0.7;
+        v.held_by_damper = true;
+        synth.voices.push(v);
+
+        // 踩下再松开延音踏板：held voice 进入 release
+        synth.apply_chase(0, &[ControlEvent::Raw(64, 127), ControlEvent::Raw(64, 0)]);
+        let v = &synth.voices[0];
+        assert_eq!(v.state.env_stage, 5, "held voice 应进入 release");
+        assert_eq!(v.state.env_start, 0.7, "release 起点 = 当前 amp");
+        assert_eq!(v.state.stage_progress, 0.0);
+        assert!(v.release_pending);
+        assert!(!v.held_by_damper);
+    }
+
+    /// chase 应用：CC73 修改 attack 时长后按 shader 规则重走当前阶段。
+    #[test]
+    fn apply_chase_env_cc_rewalks_stage() {
+        let Ok(mut synth) = GpuSynth::new_default(44_100) else {
+            eprintln!("no GPU, skipping");
+            return;
+        };
+        let mut v = test_voice(3);
+        v.state.envelope = 0.5;
+        v.state.decay_start = 0.7;
+        v.state.stage_progress = 10.0;
+        v.state.attack_frames = 1000.0;
+        v.state.release_frames = 2000.0;
+        v.orig_attack_frames = 4410.0;
+        synth.voices.push(v);
+
+        synth.apply_chase(0, &[ControlEvent::Raw(0x49, 100)]);
+        let v = &synth.voices[0];
+        let expected = super::channel::env_curve_frames(100, 4410.0, 44_100, false);
+        assert!(
+            (v.state.attack_frames - expected).abs() < 1e-3,
+            "CC73 应重算 attack 时长: {} vs {expected}",
+            v.state.attack_frames
+        );
+        assert_eq!(v.state.release_frames, 2000.0, "未修改的 release 保持原值");
+        assert_eq!(v.state.decay_start, 0.5, "Decay 重走起点 = 当前 amp");
+        assert_eq!(v.state.stage_progress, 0.0);
+    }
+
+    /// chase_skip：只标记 seek 之后被实时处理过的控制事件（区间 [chase_base, cursor)）。
+    #[test]
+    fn chase_skip_marks_only_post_seek_controls() {
+        let Ok(mut synth) = GpuSynth::new_default(44_100) else {
+            eprintln!("no GPU, skipping");
+            return;
+        };
+        synth.load_events(vec![
+            SynthEvent::Control {
+                sample: 100,
+                channel: 0,
+                event: ControlEvent::Raw(7, 100),
+            },
+            SynthEvent::Control {
+                sample: 200,
+                channel: 0,
+                event: ControlEvent::PitchBend(0.5),
+            },
+            SynthEvent::NoteOn {
+                sample: 300,
+                channel: 0,
+                key: 60,
+                velocity: 100,
+            },
+            SynthEvent::Control {
+                sample: 400,
+                channel: 0,
+                event: ControlEvent::Raw(64, 127),
+            },
+        ]);
+        synth.seek(300);
+        // 渲染一块推进 cursor 过 300（音符）与 400（CC64）
+        let frames = 512;
+        let mut bufs: Vec<yinhe_mixer::ChannelBuffers> = (0..2)
+            .map(|_| yinhe_mixer::ChannelBuffers {
+                left: vec![0.0; frames],
+                right: vec![0.0; frames],
+            })
+            .collect();
+        synth.render_to_mixer(&mut bufs);
+
+        let skip = synth.chase_skip();
+        assert!(
+            skip.cc_mask[0] & (1u128 << 64) != 0,
+            "seek 后被实时处理的 CC64 应标记"
+        );
+        assert!(
+            skip.cc_mask[0] & (1u128 << 7) == 0,
+            "seek 前的 CC7 不应标记"
+        );
+        assert!(!skip.pitch_bend[0], "seek 前的 PitchBend 不应标记");
+    }
 }
