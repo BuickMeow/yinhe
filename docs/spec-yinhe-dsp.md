@@ -1,7 +1,7 @@
 # spec-yinhe-dsp：内置效果器、CC 模块化与 GM2 全链
 
 > 状态：设计稿（待评审）
-> 范围：阶段 A（已落地）= xsynth 通道级 DSP 向 yinhe-dsp 模块迁移（CC 模块化）+ 统一参数模型（A 方案，见 §4.1）；阶段 B = GM2 Reverb/Chorus + master 轨 + SysEx 全链
+> 范围：阶段 A（已落地）= xsynth 通道级 DSP 向 yinhe-dsp 模块迁移（CC 模块化）+ 统一参数模型 + CC 广播（见 §4.1）；阶段 B = GM2 Reverb/Chorus + master 轨 + SysEx 全链
 > 关联：`spec-xsynth-integration.md`（效果器链预留架构）、`docs/GMLevel2.xml`（参数词典）
 
 ---
@@ -14,8 +14,8 @@ yinhe 已有效果器链（`yinhe-mixer` 的 `InsertProcessor`，每通道/bus/m
 
 ```
 阶段 A（已落地）：xsynth 通道级 DSP 迁移为 yinhe-dsp 模块，
-   统一参数模型 AutomationTarget::Param 落地（A 方案，见 §4.1）
-   ↓  ChannelGain/Pan/Filter 已实现；路由由 target 类型决定（dsp_route，见 §5）
+   统一参数模型 AutomationTarget 落地 + CC 广播（见 §4.1）
+   ↓  ChannelGain/Pan/Filter 已实现；低层 CC 广播给链上订阅的模块（见 §5）
 阶段 B：GM2 效果器（Reverb/Chorus）与 SysEx 全链
    ↓  xsynth 0.4 完全没有这两者，必须新做
 阶段 C：XG/GS 效果器（同一模块体系扩展）
@@ -45,7 +45,7 @@ yinhe 已有效果器链（`yinhe-mixer` 的 `InsertProcessor`，每通道/bus/m
 | D1 | yinhe-dsp 职责 | 音频 DSP；SysEx 仅在导入/导出层与自动化参数互转 |
 | D2 | 第一批效果范围 | 只做 GM2 Reverb/Chorus（含全部 7 个参数） |
 | D3 | 效果器拓扑 | 纯手动拼搭，导入不自动挂效果器 |
-| D4 | 参数事件寻址 | 参数身份 = 设备 + 参数 id（精确寻址，§4.1）；回放路由由 target 类型决定（`dsp_route`，D15），不按实例、不按 CC 号白名单 |
+| D4 | 参数事件寻址 | 参数身份 = 设备 + 参数 id（精确寻址，§4.1）；MIDI CC 保留为低层事件，回放广播给链上订阅的效果器（D15），不按实例寻址 |
 | D5 | 调参行为 | 写 lane（在播放头 tick），lane 是唯一真相（lane 存归一化值，UI 换算显示原始值） |
 | D6 | SysEx 全链 | 效果参数解析+生成；开关类消息（GM1/GM2 System On 等）丢弃 |
 | D7 | 未识别 SysEx | 丢弃（与现状一致） |
@@ -56,7 +56,7 @@ yinhe 已有效果器链（`yinhe-mixer` 的 `InsertProcessor`，每通道/bus/m
 | D12 | CC91/93 目标 bus | 自动识别（bus 链上挂 Gm2Reverb/Gm2Chorus 者） |
 | D13 | 效果器优先级 | GM2 完成后才启动 XG/GS |
 | D14 | DSP 迁移方向 | xsynth 通道级 DSP 迁至 yinhe-dsp 通道 DSP（`ChannelDsp` 参数），xsynth 侧通道 DSP CC 已硬切断（`channel_set.rs`）；最终 xsynth 只剩采样播放 + voice 级参数 |
-| D15 | 接管语义 | 路由由 target 类型决定：`Param{ChannelDsp}` 回放打 `dsp_route` 标记，广播给该通道 insert 链上的 yinhe-dsp 模块（不挂模块则静默）；`Param{ChannelInstrument}`/低层 `CC` 走常规路径（第三方乐器插件则转 MIDI 喂插件，否则进合成器）；不改 xsynth 源码 |
+| D15 | 接管语义 | CC 广播：低层 CC 事件在 dispatch 时先广播给该通道 insert 链上订阅的模块（`handled_ccs` 匹配，如 yinhe-dsp），再走常规路径（第三方乐器插件则转 MIDI 喂插件，否则进合成器）；同时挂插件与效果器时该 CC 被两方处理（用户挂载选择）；不改 xsynth 源码 |
 | D16 | 参数粒度 | 按功能组：Gain(Volume/Expression)、Pan、Filter(Cutoff/Resonance)，绑定见 §4.1；CC8 不采用 |
 | D17 | CPU DSP 依赖 | yinhe-dsp 不依赖 wgpu/yinhe-synth；GPU 与 CPU 实现独立 |
 | D18 | GPU/CPU 分工 | GPU 只做高并发 voice 发声；效果器链保持 CPU（数据量小、串行依赖、需与 CLAP/VST3 混合） |
@@ -183,7 +183,7 @@ pub enum AutomationTarget {
 **设备寻址约定**：
 
 - **不用槽位序号、不用实例 uuid**：三个 `ParamDevice` 变体都只带通道号。导入的 MIDI 数据在挂效果器之前就已有归属（CC/PB/RPN 天生属于通道），挂/删/重排效果器不影响既有 lane。
-- 通道 insert 的**回放路由由 target 类型决定**：`Param{ChannelDsp}` 事件打 `dsp_route` 标记 → 广播给该通道 insert 链上的 yinhe-dsp 模块（不挂模块则静默）；同通道挂多个模块则都收到（用户自负），参数身份不区分实例。
+- 通道 insert 的**回放路由是广播**：低层 CC 事件先广播给该通道 insert 链上订阅的模块（`handled_ccs` 匹配）；同通道挂多个订阅模块则都收到（用户自负），不区分实例。
 - 内置与第三方分开：`ChannelInstrument` 是内置 XSynth（id 见下表），`PluginInstrument` 是第三方乐器插件（id 为插件自身的 ParamID/clap_id，不在内置表中）。
 - 第三方插入效果器的实例级参数（需要 uuid 区分）不在本期；将来新增 `ParamDevice::Insert { target, instance }` 扩展。
 
@@ -207,26 +207,25 @@ pub enum AutomationTarget {
 | 环节 | 职责 |
 |---|---|
 | 存储（内存 / `.yin`） | `Param`/`CC`/`Rpn`/`Nrpn` 事件值一律归一化 0..1；Tempo 存 bpm；velocity/gate 整数 |
-| 导入 | MIDI CC/PB/RPN/NRPN → 命中绑定表转 `Param`（DSP 绑定优先），未命中保留 `CC`/`Rpn`/`Nrpn`；统一归一化后写入 lane（§4.7） |
-| 回放 | 路由由 target 类型决定（`Param{ChannelDsp}` → `dsp_route` → 通道 DSP 链；其余 → 第三方乐器插件/xsynth）；边界还原整数后投递（§4.5） |
+| 导入 | MIDI CC → 保留低层 `CC` 事件；PB/RPN 0/1/2 → `Param{ChannelInstrument}`；其他 RPN/NRPN 保留低层变体；统一归一化后写入 lane（§4.7） |
+| 回放 | 低层 CC 广播给链上订阅的效果器 + 常规路径（第三方乐器插件/xsynth）；边界还原整数后投递（§4.5） |
 | 导出 | `Param` → 绑定的 MIDI 消息（还原整数）；未映射变体原样写出；第三方插件参数**不导出**（§4.8） |
 | UI（面板/事件编辑器） | 显示与输入按原始值换算；写回 lane 时归一化（§4.10） |
 
-**导入映射（A 方案，已落地）**：
+**导入映射（CC 广播方案，已落地）**：
 
 | MIDI 来源 | 目标 |
 |---|---|
-| CC7/11/10/74/71 | `Param{ChannelDsp, 对应 id}`（DSP 绑定优先） |
-| CC64/72/73 | `Param{ChannelInstrument, 对应 id}` |
+| 所有 CC | 低层 `CC{controller}`（值归一化；回放广播给订阅的效果器 + 透传插件） |
 | Pitch Bend、RPN 0/1/2 | `Param{ChannelInstrument, 对应 id}` |
-| 其他 CC / RPN / NRPN | 保留 `CC`/`Rpn`/`Nrpn` 低层变体 |
+| 其他 RPN / NRPN | 保留 `Rpn`/`Nrpn` 低层变体 |
 | Tempo | 不变（`ConductorData.tempo`，BPM 原值） |
 
-- 导入即归属设备通道；值域统一归一化 0..1（Tempo 除外）；引擎 flatten 边界按 MIDI 绑定还原整数（无损）。
-- **回放路由由 target 类型决定**（不再按 CC 号白名单）：`Param{ChannelDsp}` 在 flatten 时打 `dsp_route` 标记，dispatch 广播给该通道 insert 链上的 yinhe-dsp 模块（不挂模块则静默）；无标记事件（`CC`/`Param{ChannelInstrument}` 还原的）走常规路径——挂第三方乐器插件则转 MIDI 喂插件，否则进合成器。GPU 事件构建跳过 `dsp_route` 事件（DSP 链在 CPU 侧）。
-- **chase/预览**：`ChannelState` 区分 `apply`（普通 CC 只进 `cc_values`）与 `apply_dsp_cc`（DSP 专有字段，回填广播用）；seek 回填按 `DSP_CHANNEL_CCS` 广播专有字段，避免低层 CC 污染。
-- **lane 转换（用户可控路径，egui 已落地）**：AR 自动化 lane 右键 `CC{cc}` ↔ 对应设备参数 `Param`（按内置绑定表双向），值不变（无损）、带 undo；目标 lane 已存在时不可转换。默认转 DSP 参数（内置音源开箱有效），Kontakt 等插件音源场景可转回原始 CC 透传。
-- 为什么透传给内置音源是死路：xsynth 通道级处理已按 D14 切断（`channel_set.rs` 硬切断）、GpuSynth 从无该路径；"透传"只对第三方插件音源（如 Kontakt）有意义，用 lane 转换即可覆盖。
+- 值域统一归一化 0..1（Tempo 除外）；引擎 flatten 边界按绑定还原整数（无损）。
+- **回放（CC 广播）**：dispatch 对每条 CC 事件先 `broadcast_channel_cc` 给链上订阅的模块（`handled_ccs` 匹配，如 yinhe-dsp 的 ChannelGain/Pan/Filter），再走常规路径（挂第三方乐器插件则转 MIDI 喂插件，否则进合成器）。"谁订阅谁消费"；同时挂插件与效果器时该 CC 被两方处理——用户挂载选择决定，好调（轻量 MIDI，用户自行调整）。
+- **chase/seek 回填**：`MixerGraph::channel_subscribed_ccs` 列出链上订阅集合，只为这些 CC 广播 `ChannelState` 的当前值（不硬编码 CC 号列表）。
+- 为什么 CC 不转设备参数：CC 是事件（谁订阅谁消费）；设备参数（`Param`）是无 MIDI 信道参数（GM2 SysEx、插件原生参数）的载体。不做"CC ↔ 参数"身份转换，避免"转回来才能透传"的往返。
+- 为什么透传给内置音源是死路：xsynth 通道级处理已按 D14 切断（`channel_set.rs` 硬切断）、GpuSynth 从无该路径；第三方插件音源（如 Kontakt）天然收到 CC。
 
 **内置参数绑定表**（权威唯一，`yinhe-types` 的 `XSYNTH_PARAMS`/`CHANNEL_DSP_PARAMS`；`yinhe-dsp` 的 `EffectParamInfo` 与其一致性由测试锁定）：
 
@@ -364,17 +363,16 @@ impl MixerGraph {
 ### 4.5 回放：AM 事件 → DSP
 
 - `audio_model.rs::emit_automation_event`（flatten 边界，全链路唯一整数还原点）：
-  - `Param { device: ChannelDsp { .. } }` → 还原为绑定的 Raw CC，打 `dsp_route` 标记（`SortedCC::dsp_route`）。
-  - `Param { device: ChannelInstrument { .. } }` → 按 MIDI 绑定还原（CC/PB/RPN 原始事件），无标记。
+  - `Param { device: ChannelInstrument/ChannelDsp }` → 按 MIDI 绑定还原为原始整数事件（CC/PB/RPN）。
   - `Param { device: PluginInstrument { .. } }` → 占位事件 + `plugin_param`（值保持归一化，dispatch 走 `PluginEvent::ParamValue`）。
-  - `CC`/`Rpn`/`Nrpn` → 低层事件还原，无标记。
-- `engine_render.rs::dispatch_and_find_next`（路由由 target 类型决定，不看 CC 号）：
-  - `dsp_route` 事件 → `broadcast_channel_cc` 广播给该通道 insert 链上的 yinhe-dsp 模块；不挂模块则静默。
-  - 无标记事件 → 常规路径：该通道挂第三方乐器插件则转 MIDI 喂插件，否则进合成器（xsynth 已按 D14 硬切断通道 DSP CC）。
+  - `CC`/`Rpn`/`Nrpn` → 低层事件还原。
+- `engine_render.rs::dispatch_and_find_next`（CC 广播）：
+  - 低层 CC → 先 `broadcast_channel_cc` 广播给该通道 insert 链上订阅的模块（`handled_ccs` 匹配）；再走常规路径（挂第三方乐器插件则转 MIDI 喂插件，否则进合成器；xsynth 已按 D14 硬切断通道 DSP CC）。
+  - 插件参数（`Param{PluginInstrument}` 的占位事件）→ `PluginEvent::ParamValue`（不进入 CC 广播）。
   - GM2 参数 → 按设备定位目标链后精确投递（阶段 B，不广播）。
-- GPU：`dsp_route` 事件不进 GPU 事件流（`audio_renderer.rs`），DSP 链在 CPU 侧照常生效。
+- GPU：`to_gpu_control_event` 仍过滤 DSP 白名单 CC（GpuSynth 无通道 DSP，与 CPU 的 `channel_set` 硬切断对齐），DSP 链在 CPU 侧照常生效。
 - 投递粒度：块级（512 帧 ≈ 11.6ms @44.1k），参数变化稀疏，可接受。
-- seek/chase：`compute_chase_states` 用 `ChannelState::apply_dsp_cc` 把 DSP 参数写入专有字段（普通 CC 走 `apply` 只进 `cc_values`），`apply_chase_result` 按 `DSP_CHANNEL_CCS` 广播回填（已 dispatch 的 CC 跳过）。
+- seek/chase：`compute_chase_states` 统一 `ChannelState::apply`（含 DSP 专有字段），`apply_chase_result` 按 `channel_subscribed_ccs` 广播回填（已 dispatch 的 CC 跳过）。
 
 ### 4.6 回放：CC91/93 → bus send
 
@@ -387,7 +385,7 @@ impl MixerGraph {
 
 ### 4.7 导入：MIDI/SysEx → lane
 
-- **MIDI 映射**（统一参数模型，已落地）：按 §4.1 导入映射表转 `Param`——CC 先查 DSP 绑定（7/11/10/74/71）、再查音源绑定（64/72/73）；PB → `ChannelInstrument`；RPN 0/1/2 → `ChannelInstrument`；未命中保留 `CC`/`Rpn`/`Nrpn` 原始变体。原 MSB/LSB 组装逻辑不变，组装出的整数统一归一化后写入 lane；归属通道取事件所在通道。
+- **MIDI 映射**（CC 广播方案，已落地）：所有 CC 保留低层 `CC` 事件；PB → `Param{ChannelInstrument, PITCH_BEND}`；RPN 0/1/2 → `Param{ChannelInstrument, 对应 id}`；其他 RPN/NRPN 保留原始变体。原 MSB/LSB 组装逻辑不变，组装出的整数统一归一化后写入 lane；归属通道取事件所在通道。
 - 新增 `crates/yinhe-midi/src/gm2.rs`：
   - `parse_sysex(data: &[u8]) -> Option<(Gm2EffectUnit, u8 param, u8 value)>`（前缀/长度/值域校验）。
   - `build_sysex(unit, param, value) -> [u8; 12]`（不含 F0，含 F7，midly 直接可写）。
@@ -504,24 +502,23 @@ xsynth-core 0.4 的 `VoiceChannel::apply_channel_effects`（`channel/mod.rs:154-
    /// 接收被接管的 CC 值（0..127）。
    fn apply_cc(&mut self, _cc: u8, _value: u8) {}
    ```
-2. **路由标记**：flatten 只对 `Param{ChannelDsp}` 事件打 `dsp_route` 标记；dispatch 对标记事件还原为伪 CC 后 `MixerGraph::broadcast_channel_cc`，
-   广播给该通道 insert 链上的 yinhe-dsp 模块；**不挂模块则该事件静默**（无"没挂模块就回退"的兜底）。
-   路由由 target 类型决定，不按 CC 号白名单判断。
-3. **无标记事件**：`Param{ChannelInstrument}`/低层 `CC`/`Rpn`/`Nrpn` 还原的事件走常规路径——挂第三方乐器插件则转 MIDI 喂插件，否则进合成器（xsynth 已按 D14 硬切断通道 DSP CC，透传对内置音源无意义）。
+2. **CC 广播**：dispatch 对每条低层 CC 事件先 `MixerGraph::broadcast_channel_cc`，广播给该通道 insert 链上 `handled_ccs` 命中的模块（如 yinhe-dsp 的 ChannelGain/Pan/Filter）；**不挂模块则该 CC 无人消费**（无"没挂模块就回退"的兜底）。
+   路由由"谁订阅"决定，不按 CC 号白名单判断、不依赖 lane 的 target 类型。
+3. **常规路径**：同一条 CC 再走既有路径——挂第三方乐器插件则转 MIDI 喂插件，否则进合成器（xsynth 已按 D14 硬切断通道 DSP CC，透传对内置音源无意义）。两路都发是设计行为（CC 是广播语义）。
 4. **广播过滤**：`broadcast_channel_cc` 遍历通道 insert 链，只调用 `handled_ccs` 命中的模块。
-5. **chase 回填**：seek 后，`ChannelState::apply_dsp_cc` 写入的 DSP 专有字段按 `DSP_CHANNEL_CCS` 广播给模块
+5. **chase 回填**：seek 后，按 `MixerGraph::channel_subscribed_ccs`（链上订阅集合）把 `ChannelState` 当前值广播给模块
    （与 xsynth 的 `skip` 语义一致，已被 dispatch 的不覆盖）。
 6. **参数平滑**：Gain/Pan 内部 10ms 线性斜坡（`Smoothed`，参考 xsynth `ValueLerp`）；
    Filter 采用块级系数更新（CC 事件本身以块为粒度）。
 7. **音源层参数**：`Sustain/ADSR/调音` 等属 `ChannelInstrument` 参数（§4.1），回放还原为 MIDI 后继续走 xsynth/乐器插件路径；`Portamento/Vibrato/Bank/PC` 等无内置绑定，保持原始变体。
 
-> `DSP_CHANNEL_CCS`（[7, 10, 11, 71, 74]）仍用于合成器硬切断（`channel_set.rs`）与模块一致性校验，但不再是 dispatch 的路由判据。
+> `DSP_CHANNEL_CCS`（[7, 10, 11, 71, 74]）仍用于合成器硬切断（`channel_set.rs`）与模块一致性校验（`yinhe-dsp` 测试），不参与 dispatch 路由。
 
 ### 5.4 自由组合语义与边界
 
 - 模块顺序影响结果（如 Filter 在失真模块之后 = 对失真输出滤波；之前 = 先滤波再失真），这是用户要的自由度。
 - CC 模块只对**通道 insert 链**生效；挂在 bus/master 上的模块不接收通道 CC（CC 通道级语义）。
-- 通道挂了乐器插件（CLAP/VST3）时：`Param{ChannelDsp}` 事件仍只广播给 DSP 模块（不转发插件）；插件需要的原始 CC 用 lane 转换（§4.1）把 `Param` 转回 `CC`，无标记事件即转 MIDI 喂插件。
+- 通道挂了乐器插件（CLAP/VST3）时：CC 事件两路都发——既广播给订阅的 DSP 模块，也转 MIDI 喂插件；同时挂两者则都被处理（用户挂载选择，好调）。
 - 迁移期可以让部分通道挂模块、部分通道不挂，逐个试听对比。
 
 ### 5.5 迁移路线与验收
@@ -618,19 +615,19 @@ xsynth-core 0.4 实际处理的 CC：`0, 6, 7, 8, 10, 11, 38, 64, 71, 72, 73, 74
 - [x] 阶段 A：`ChannelGain`/`ChannelPan`/`ChannelFilter` 已实现；biquad 各持一份（见 §10-6）；`Smoothed` 按 `ValueLerp` 模式自实现。
 
 ### yinhe-midi
-- [x] `parser.rs` CC/PB/RPN/NRPN ↔ `Param` 映射（A 方案：DSP 绑定优先）+ `writer.rs` `Param` 还原（含 roundtrip 测试）。
+- [x] `parser.rs`：CC 保留低层事件 + PB/RPN 0/1/2 ↔ `Param`（CC 广播方案）+ `writer.rs` `Param` 还原（含 roundtrip 测试）。
 - [ ] `gm2.rs`（解析/生成）、`parser.rs` SysEx 分支、`writer.rs` master 展开 + SysEx 还原。
 
 ### yinhe-audio
-- [x] `audio_model.rs`：`Param` 边界还原/占位 + `dsp_route` 标记（阶段 A′）。
+- [x] `audio_model.rs`：`Param` 边界还原/占位（阶段 A′）。
 - [ ] `audio_model.rs`：master 复制（阶段 B）。
-- [x] `engine_render.rs`：dispatch 按 `dsp_route` 路由（阶段 A′，删除 CC 号白名单判断）。
+- [x] `engine_render.rs`：dispatch CC 广播（订阅模块 + 常规路径，阶段 A′，删除 CC 号白名单判断）。
 - [ ] `engine_render.rs`：GM2 精确投递、CC91/93（阶段 B）。
-- [x] `engine_state.rs`：chase 回填内置参数（`apply_dsp_cc` 专有字段）。
+- [x] `engine_state.rs`：chase 回填改用 `channel_subscribed_ccs`（链上订阅集合）。
 - [ ] `engine_state.rs`：`skip_track` 不跳 master（阶段 B）。
 - [ ] `channel_layout.rs`：kind 过滤修正。
 - [ ] `engine_mixer.rs`/`spawn.rs`：内置效果器实例的回收识别（如需）。
-- [x] 阶段 A：`channel.rs` chase 事件流不再发这些 CC；`preview_engine`/GPU 事件构建跳过 `dsp_route`。
+- [x] 阶段 A：`channel.rs` chase 事件流不再发这些 CC；`preview_engine` 统一 `apply`；GPU 过滤保持白名单对齐 `channel_set` 硬切断。
 
 ### yinhe-editor-core
 - [x] `clipboard_file.rs`：target 二进制 tag 重做（Param 三 device/CC/Rpn/Nrpn/Tempo，往返测试）。
@@ -641,11 +638,10 @@ xsynth-core 0.4 实际处理的 CC：`0, 6, 7, 8, 10, 11, 38, 64, 71, 72, 73, 74
 - [x] `mix/`：`PluginInstance::Builtin`、picker 内置分组、activate/on_returns 分支、参数面板（阶段 A 已落地）。
 - [ ] `arrange/`：master badge/颜色、AM 展开、右键菜单保护、拖拽保护。
 - [ ] `piano_view/`：master 不可写音符。
-- [x] `chrome/dock_bar.rs`：新 target 适配（内置效果器 → `Param{ChannelDsp}`、参数面板经绑定表）。
+- [x] `chrome/dock_bar.rs`：内置效果器参数经绑定表反查低层 `CC` lane（CC 广播方案）。
 - [ ] `event_browser`：master 节点/排除。
 - [x] `app/audio.rs`、`app/plugin_automation.rs` 等静默点（新变体穷尽 match 已全部跟进）。
 - [x] 自动化面板常量与原始值显示适配（`to_display_value`/`from_display_value` 换算）。
-- [x] AR lane 转换：`CC{cc}` ↔ 设备参数 `Param`（右键，值不变、带 undo）。
 
 ### yinhe-yin
 - [x] `lib.rs`/`container.rs`：`.yin` VERSION 6 → 7（旧档拒绝，D23）；mapping/io 随 serde 自动；`.yin` 往返测试已适配。
@@ -662,7 +658,7 @@ xsynth-core 0.4 实际处理的 CC：`0, 6, 7, 8, 10, 11, 38, 64, 71, 72, 73, 74
 | yinhe-types | 新变体方法（值域/默认值/显示名）、lane 唯一性；统一参数模型：绑定表完备（id 唯一、覆盖全部内置参数）、归一化全值域往返（0..127 / 0..16383 边界无损）、Tempo/velocity/gate 不归一化 |
 | yinhe-midi | 导入映射：已知 CC/PB/RPN/NRPN → `Param`、未知 → 原始变体；导出还原：`Param` → MIDI 消息；SysEx 解析/生成单测（7 参数 × 边界值 + 非 GM2 丢弃）；roundtrip：构造含 SysEx 的 SMF → 模型 → 导出 → 字节比对；master 展开（2 通道 + master CC，断言两通道都有且同 tick 通道自身覆盖）；空轨 strip 后的展开集合 |
 | yinhe-audio | flatten：master CC 复制到所有激活通道；`Param` 边界还原/占位事件；dispatch 按设备投递到 mixer（用测试用 InsertProcessor 记录）；CC91/93 设 send；seek chase 回填 |
-| yinhe-audio（阶段 A/A′） | `dsp_route` 事件不发 xsynth、广播给模块，无标记事件走常规路径；chase 回填（`apply`/`apply_dsp_cc` 分离）；`events_to_send` 不再包含 DSP CC |
+| yinhe-audio（阶段 A/A′） | 低层 CC 广播给订阅模块 + 走常规路径（双路）；`handled_ccs` 过滤；chase 回填用订阅集合；`events_to_send` 不再包含 DSP CC |
 | yinhe-dsp | 各效果器：参数生效、无 NaN/爆音、reset 清尾、块长/采样率无关性 |
 | yinhe-dsp（阶段 A） | Gain/Pan/Filter 单测（默认值、CC 生效、平滑、稳定性）；与 xsynth `apply_channel_effects` 的 A/B 听感对比（手工） |
 | yinhe-editor-core | master 轨保护（删除/移动/音符）、剪贴板序列化 tag（统一参数变体） |
@@ -685,7 +681,7 @@ xsynth-core 0.4 实际处理的 CC：`0, 6, 7, 8, 10, 11, 38, 64, 71, 72, 73, 74
 
 6. ~~P5.1 模型层：`AutomationTarget::Param`/`ParamDevice` + 绑定表（`yinhe-types`）+ 所有穷举 match 跟进 + 单测~~ ✅
 7. ~~P5.2 映射层：导入/导出 CC/PB/RPN/NRPN ↔ `Param`（无损往返）；`.yin` 升 v7（旧档拒绝）~~ ✅
-8. ~~P5.3 边界与 UI：回放边界还原整数投递；参数面板/事件编辑器原始值换算；dispatch/chase 跟进；AR lane 转换（`CC` ↔ 设备参数）~~ ✅
+8. ~~P5.3 边界与 UI：回放边界还原整数投递；参数面板/事件编辑器原始值换算；dispatch/chase 跟进（CC 广播）~~ ✅
 
 **阶段 B：GM2 效果与 SysEx 全链（下一步）**
 
