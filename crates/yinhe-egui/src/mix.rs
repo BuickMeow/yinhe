@@ -985,7 +985,11 @@ pub(crate) fn start_plugin_scan(app: &mut App) {
             app.mix.scanned = None;
             app.mix.scan_errors = 0;
         }
-        None => tracing::warn!("启动插件扫描子进程失败"),
+        None => {
+            // worker 起不来也标记"扫描完成（空结果）"，否则每帧重试。
+            tracing::warn!("启动插件扫描子进程失败");
+            app.mix.scanned = Some(Vec::new());
+        }
     }
 }
 
@@ -1004,6 +1008,9 @@ pub(crate) fn poll_plugin_scan(app: &mut App) {
             app.mix.scan_errors = errors;
             app.mix.scan_rx = None;
             app.mix.scan_in_progress = false;
+            // 零结果（无插件目录/全部未产出条目）也要落 Some，
+            // 否则"scanned.is_none() 才扫描"的条件会每帧重扫。
+            app.mix.scanned.get_or_insert_with(Vec::new);
         }
         Err(std::sync::mpsc::TryRecvError::Empty) => {}
         Err(std::sync::mpsc::TryRecvError::Disconnected) => {
