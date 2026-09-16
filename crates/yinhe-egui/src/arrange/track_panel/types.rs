@@ -19,13 +19,6 @@ pub(crate) enum TrackAction {
     OpenAutomationPicker { idx: usize },
     /// AM 子行右键「删除自动化」：删除 idx 轨的第 lane_idx 条 lane。
     DeleteAutomation { idx: usize, lane_idx: usize },
-    /// AM 子行右键「转换为设备参数 / 原始 CC」：替换 idx 轨第 lane_idx 条 lane 的 target。
-    /// 事件值不动（两边都是归一化 0..1）。
-    ConvertAutomation {
-        idx: usize,
-        lane_idx: usize,
-        target: yinhe_types::AutomationTarget,
-    },
     /// 右键「音轨属性」：选中该轨并请求打开属性浮窗（不改动模型）。
     ShowProperties { idx: usize },
 }

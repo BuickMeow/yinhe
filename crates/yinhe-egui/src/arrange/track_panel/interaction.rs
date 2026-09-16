@@ -173,37 +173,6 @@ pub fn handle_interactions(
         ui.separator();
 
         if let Some(lane_idx) = sub {
-            // 「转换为设备参数 / 原始 CC」：按 lane 当前 target 动态显示（二选一）。
-            // 目标 lane 已存在时不可转换（每轨同 target 至多一条）。
-            if let Some(lane) = tracks
-                .get(idx)
-                .and_then(|tr| tr.automation_lanes.get(lane_idx))
-                && let Some(tr) = tracks.get(idx)
-                && let Some(new_target) = crate::piano_view::automation_panel::convert_lane_target(
-                    &lane.target,
-                    tr.global_channel(),
-                )
-                && !tr.automation_lanes.iter().any(|l| l.target == new_target)
-            {
-                let label = match &lane.target {
-                    yinhe_types::AutomationTarget::CC { .. } => {
-                        t!("arrange.convert_to_device_param")
-                    }
-                    _ => t!("arrange.convert_to_cc"),
-                };
-                if ui
-                    .add(crate::widgets::menu::menu_item_button(ui, false, label))
-                    .clicked()
-                {
-                    actions.push(TrackAction::ConvertAutomation {
-                        idx,
-                        lane_idx,
-                        target: new_target,
-                    });
-                    ui.close();
-                }
-                ui.separator();
-            }
             if ui
                 .add(crate::widgets::menu::menu_item_button(
                     ui,

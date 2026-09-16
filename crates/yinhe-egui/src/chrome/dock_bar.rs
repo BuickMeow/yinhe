@@ -3,7 +3,8 @@
 //! 布局：上方设备链（乐器在最左 + 效果器链 + 「+」添加），下方选中设备的参数区。
 //! - 普通 MIDI 轨的乐器位显示 **XSynth 虚拟乐器**，参数区列出 XSynth 设备参数
 //!   （Sustain/Release/Pitch Bend/RPN 等），拖动旋钮写对应 AM lane；
-//! - 内置 DSP 效果器卡片列出自己的设备参数（`ChannelDsp`），同样可自动化；
+//! - 内置 DSP 效果器卡片列出自己的参数（底层伪 CC lane，回放广播给订阅模块），
+//!   同样可自动化；
 //! - 乐器插件 / 效果器插件的参数区提供「参数面板」「插件界面」入口。
 //!
 //! 效果器链当前按**源 MIDI 通道**索引（与 MIX/引擎一致）；同通道多轨共享一条链。
@@ -12,9 +13,7 @@
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_core::TrackKind;
-use yinhe_types::automation::{
-    MidiBinding, ParamDevice, XSYNTH_PARAMS, builtin_param, channel_dsp_param_id_for_midi,
-};
+use yinhe_types::automation::{MidiBinding, ParamDevice, XSYNTH_PARAMS};
 use yinhe_types::{AutomationEvent, AutomationTarget};
 
 use crate::app::App;
@@ -65,15 +64,20 @@ enum KnobAction {
 
 /// xsynth 支持的**音源层**自动化目标（内置参数表生成，id 与 MIDI 绑定共用）。
 ///
+/// CC 绑定参数（Sustain/Release/Attack）走低层 `CC lane`（回放广播/xsynth
+/// 常规路径）；PB/RPN 无低层 lane 形态，保留设备参数（`ChannelInstrument`）。
 /// 通道级 DSP CC（7/10/11/71/74）已迁移到 yinhe-dsp 模块（效果器卡片上的旋钮），
 /// 不再由 xsynth 处理——见 `docs/spec-yinhe-dsp.md`。
 fn xsynth_targets(channel: u8) -> Vec<AutomationTarget> {
     XSYNTH_PARAMS
         .iter()
-        .map(|p| AutomationTarget::Param {
-            device: ParamDevice::ChannelInstrument { channel },
-            id: p.id,
-            name: String::new(),
+        .map(|p| match p.midi {
+            MidiBinding::Cc(cc) => AutomationTarget::CC { controller: cc },
+            _ => AutomationTarget::Param {
+                device: ParamDevice::ChannelInstrument { channel },
+                id: p.id,
+                name: String::new(),
+            },
         })
         .collect()
 }
@@ -88,8 +92,9 @@ pub(crate) struct DockInsert {
 
 /// dock 旋钮的一项参数。
 ///
-/// 显示名是**效果器/XSynth 自己的参数名**；`target` 是统一参数模型的设备参数
-/// （内置 DSP 参数按通道寻址，不再外显为 CC 概念）。
+/// 显示名是**效果器/XSynth 自己的参数名**；`target` 是统一参数模型的目标：
+/// CC 绑定参数走低层 CC lane（回放广播给订阅模块/合成器），PB/RPN 保留设备
+/// 参数（`Param`）。
 #[derive(Clone)]
 pub(crate) struct DockParam {
     name: String,
@@ -100,33 +105,26 @@ pub(crate) struct DockParam {
     current: Option<f32>,
 }
 
-/// 内置效果器的参数 → DockParam（`ChannelDsp` 设备参数）；插件/无通道返回空。
-fn builtin_params(r: &yinhe_mixer::InsertRef, channel: Option<u8>) -> Vec<DockParam> {
-    if r.format != yinhe_mixer::PluginFormat::Builtin {
+/// 内置效果器的参数 → DockParam（低层伪 CC lane，由模块 `handled_ccs` 订阅）；
+/// 插件返回空；音频语境无 MIDI 通道（CC 广播只走 MIDI 通道）也返回空。
+fn builtin_params(r: &yinhe_mixer::InsertRef, midi_channel: Option<u8>) -> Vec<DockParam> {
+    if r.format != yinhe_mixer::PluginFormat::Builtin || midi_channel.is_none() {
         return Vec::new();
     }
-    // 通道 DSP 参数以 MIDI 通道寻址；音频/总线/master 的内置效果器无此归属。
-    let Some(channel) = channel else {
-        return Vec::new();
-    };
     yinhe_dsp::BuiltinEffectKind::from_id(&r.plugin_id)
         .map(|kind| {
             kind.params()
                 .iter()
-                .filter_map(|p| {
-                    // 底层伪 CC → 设备参数 id；表外映射跳过（不 panic）。
-                    let id = channel_dsp_param_id_for_midi(MidiBinding::Cc(p.cc))?;
-                    let target = AutomationTarget::Param {
-                        device: ParamDevice::ChannelDsp { channel },
-                        id,
-                        name: String::new(),
-                    };
-                    Some(DockParam {
+                .map(|p| {
+                    let target = AutomationTarget::CC { controller: p.cc };
+                    DockParam {
                         name: p.name.to_string(),
-                        default: target.default_value(),
+                        // 默认值用效果器自己的默认（归一化）：与模块无事件时的
+                        // 初始状态一致（如 Volume 满增益 = 127/127）。
+                        default: p.default / p.max,
                         target,
                         current: None,
-                    })
+                    }
                 })
                 .collect()
         })
@@ -1068,12 +1066,10 @@ fn apply_knob_action(
             if let KnobOwner::Insert(slot) = owner {
                 if let Some(instance) = app.mixer_rack_mut(idx).instance_mut(insert_target, slot) {
                     let queue = instance.param_queue();
-                    // 预览 id 用设备参数对应的 MIDI 绑定（内置 DSP 的底层伪 CC）。
-                    if let AutomationTarget::Param { device, id, .. } = &target
-                        && let Some(info) = builtin_param(device, *id)
-                        && let MidiBinding::Cc(cc) = info.midi
-                    {
-                        queue.push(u32::from(cc), norm as f64);
+                    // 预览 id = 底层伪 CC（BuiltinInsert 按 CC 号 apply_cc），
+                    // 与 lane/回放广播同一映射；拖动实时生效、不写模型。
+                    if let AutomationTarget::CC { controller } = &target {
+                        queue.push(u32::from(*controller), norm as f64);
                     }
                 }
                 if let Some(drag) = app.knob_drag.as_mut()
@@ -1227,5 +1223,71 @@ fn open_param_panel(
                 instance,
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yinhe_types::automation::xsynth_param;
+
+    fn builtin_ref(id: &str) -> yinhe_mixer::InsertRef {
+        yinhe_mixer::InsertRef {
+            plugin_id: id.to_string(),
+            format: yinhe_mixer::PluginFormat::Builtin,
+            ..Default::default()
+        }
+    }
+
+    /// 内置效果器参数 = 底层伪 CC lane（回放广播给订阅模块），默认值取效果器默认。
+    #[test]
+    fn builtin_params_bind_to_pseudo_cc_lanes() {
+        let gain = builtin_params(&builtin_ref("channel_gain"), Some(2));
+        assert_eq!(gain.len(), 2);
+        assert_eq!(gain[0].name, "Volume");
+        assert_eq!(gain[0].target, AutomationTarget::CC { controller: 7 });
+        assert!((gain[0].default - 1.0).abs() < 1e-6, "Volume 默认满增益");
+        assert_eq!(gain[1].target, AutomationTarget::CC { controller: 11 });
+
+        let pan = builtin_params(&builtin_ref("channel_pan"), Some(2));
+        assert_eq!(pan.len(), 1);
+        assert_eq!(pan[0].target, AutomationTarget::CC { controller: 10 });
+        assert!((pan[0].default - 64.0 / 127.0).abs() < 1e-6);
+        assert!(pan[0].target.has_center_line(), "Pan 应有中心参考线");
+
+        // 音频语境（无 MIDI 通道）与插件不产参数。
+        assert!(builtin_params(&builtin_ref("channel_gain"), None).is_empty());
+        let mut plugin = builtin_ref("channel_gain");
+        plugin.format = yinhe_mixer::PluginFormat::Clap;
+        assert!(builtin_params(&plugin, Some(2)).is_empty());
+    }
+
+    /// XSynth：CC 绑定参数走低层 CC lane，PB/RPN 保留设备参数。
+    #[test]
+    fn xsynth_params_split_cc_and_device() {
+        let targets = xsynth_targets(4);
+        for cc in [64u8, 72, 73] {
+            assert!(
+                targets.contains(&AutomationTarget::CC { controller: cc }),
+                "CC{cc} 应是低层 CC lane"
+            );
+        }
+        let inst = |id| AutomationTarget::Param {
+            device: ParamDevice::ChannelInstrument { channel: 4 },
+            id,
+            name: String::new(),
+        };
+        for id in [
+            xsynth_param::PITCH_BEND,
+            xsynth_param::PB_SENSITIVITY,
+            xsynth_param::FINE_TUNE,
+            xsynth_param::COARSE_TUNE,
+        ] {
+            assert!(targets.contains(&inst(id)), "PB/RPN 参数保留设备参数");
+        }
+        assert!(
+            !targets.contains(&inst(xsynth_param::SUSTAIN)),
+            "CC 绑定参数不再生成设备参数条目"
+        );
     }
 }
