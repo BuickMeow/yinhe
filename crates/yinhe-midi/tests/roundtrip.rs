@@ -5,7 +5,80 @@ use std::sync::Arc;
 use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
 use yinhe_midi::{parse_bytes, write_to_bytes};
 use yinhe_types::TimeSigEvent;
+use yinhe_types::automation::{ParamDevice, channel_dsp_param, xsynth_param};
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
+
+/// 内置 XSynth 参数的 target（导入后 name 为空）。
+fn xsynth_target(channel: u8, id: u32) -> AutomationTarget {
+    AutomationTarget::Param {
+        device: ParamDevice::ChannelInstrument { channel },
+        id,
+        name: String::new(),
+    }
+}
+
+/// 通道内置 DSP 参数的 target。
+fn dsp_target(channel: u8, id: u32) -> AutomationTarget {
+    AutomationTarget::Param {
+        device: ParamDevice::ChannelDsp { channel },
+        id,
+        name: String::new(),
+    }
+}
+
+fn empty_conductor() -> ConductorData {
+    ConductorData {
+        tempo: AutomationLane {
+            target: AutomationTarget::Tempo,
+            track: 0,
+            events: Vec::new(),
+        },
+        time_sig: Vec::new(),
+        key_sig: Vec::new(),
+        markers: Vec::new(),
+        lyrics: Vec::new(),
+        chord: Vec::new(),
+    }
+}
+
+/// 单轨模型（仅一条自动化 lane），用于 target 往返测试。
+fn model_with_lane(
+    target: AutomationTarget,
+    events: Vec<AutomationEvent>,
+    channel: u8,
+) -> YinModel {
+    let mut t = TrackData::new(0, channel);
+    t.name = "Lane".to_string();
+    t.automation_lanes = vec![AutomationLane {
+        target,
+        track: 0,
+        events,
+    }];
+    let mut model = YinModel {
+        conductor: Arc::new(empty_conductor()),
+        tracks: vec![Arc::new(t)],
+        meta: ProjectMeta {
+            ppq: 480,
+            ..ProjectMeta::default()
+        },
+        ..Default::default()
+    };
+    model.rebuild();
+    model
+}
+
+/// 单事件 lane 的模型（Step 形状）。
+fn model_with_point(target: AutomationTarget, tick: u32, value: f32) -> YinModel {
+    model_with_lane(
+        target,
+        vec![AutomationEvent {
+            tick,
+            value,
+            shape: SegmentShape::Step,
+        }],
+        0,
+    )
+}
 
 /// 手写带颜色事件的 SMF：1 条音轨，音符在 channel 0，
 /// 颜色事件（FF 0A Copyright + 魔数 00 0F + ch=0x7F + 红 RGB）。
@@ -263,36 +336,36 @@ fn build_complex_model() -> YinModel {
     ];
     t0.automation_lanes = vec![
         AutomationLane {
-            target: AutomationTarget::CC { controller: 7 },
+            target: dsp_target(0, channel_dsp_param::VOLUME),
             track: 0,
             events: vec![
                 AutomationEvent {
                     tick: 0,
-                    value: 100.0,
+                    value: 100.0 / 127.0,
                     shape: SegmentShape::Step,
                 },
                 AutomationEvent {
                     tick: 480,
-                    value: 80.0,
+                    value: 80.0 / 127.0,
                     shape: SegmentShape::Step,
                 },
             ],
         },
         AutomationLane {
-            target: AutomationTarget::PitchBend,
+            target: xsynth_target(0, xsynth_param::PITCH_BEND),
             track: 0,
             events: vec![AutomationEvent {
                 tick: 200,
-                value: 2000.0,
+                value: 2000.0 / 16383.0,
                 shape: SegmentShape::Step,
             }],
         },
         AutomationLane {
-            target: AutomationTarget::Rpn { parameter: 0x0000 },
+            target: xsynth_target(0, xsynth_param::PB_SENSITIVITY),
             track: 0,
             events: vec![AutomationEvent {
                 tick: 100,
-                value: 2.0,
+                value: 2.0 / 127.0,
                 shape: SegmentShape::Step,
             }],
         },
@@ -369,16 +442,16 @@ fn roundtrip_complex_model_preserves_everything() {
     let find_lane = |target: &AutomationTarget| -> Option<&AutomationLane> {
         l2.automation_lanes.iter().find(|l| &l.target == target)
     };
-    let cc7 = find_lane(&AutomationTarget::CC { controller: 7 }).expect("CC 7 lane");
+    let cc7 = find_lane(&dsp_target(0, channel_dsp_param::VOLUME)).expect("Volume lane");
     assert_eq!(cc7.events.len(), 2);
-    assert_eq!(cc7.events[0].value, 100.0);
-    assert_eq!(cc7.events[1].value, 80.0);
-    let pb = find_lane(&AutomationTarget::PitchBend).expect("PitchBend lane");
+    assert_eq!(cc7.events[0].value, 100.0 / 127.0);
+    assert_eq!(cc7.events[1].value, 80.0 / 127.0);
+    let pb = find_lane(&xsynth_target(0, xsynth_param::PITCH_BEND)).expect("PitchBend lane");
     assert_eq!(pb.events.len(), 1);
-    assert_eq!(pb.events[0].value, 2000.0);
-    let rpn = find_lane(&AutomationTarget::Rpn { parameter: 0x0000 }).expect("RPN 0 lane");
+    assert_eq!(pb.events[0].value, 2000.0 / 16383.0);
+    let rpn = find_lane(&xsynth_target(0, xsynth_param::PB_SENSITIVITY)).expect("RPN 0 lane");
     assert_eq!(rpn.events.len(), 1);
-    assert_eq!(rpn.events[0].value, 2.0);
+    assert_eq!(rpn.events[0].value, 2.0 / 127.0);
     assert_eq!(l2.program_change.len(), 1);
     assert_eq!(l2.program_change[0].program, 5);
 
@@ -465,15 +538,138 @@ fn rpn_sequence_decodes_to_rpn_event() {
             *controller != 101 && *controller != 100 && *controller != 6,
         _ => true,
     }));
-    // Should have one RPN lane for parameter 0x0000
-    let rpn_lane = t
+    // RPN 0/0 绑定到 XSynth PB Sensitivity
+    let lane = t
         .automation_lanes
         .iter()
-        .find(|l| l.target == AutomationTarget::Rpn { parameter: 0x0000 })
-        .expect("RPN 0 lane");
-    assert_eq!(rpn_lane.events.len(), 1);
-    // CC6=2 is stored as 7-bit value: 2 (Pitch Bend Sensitivity, semitones)
-    assert_eq!(rpn_lane.events[0].value, 2.0);
+        .find(|l| l.target == xsynth_target(0, xsynth_param::PB_SENSITIVITY))
+        .expect("PB sensitivity lane");
+    assert_eq!(lane.events.len(), 1);
+    // CC6=2：7-bit RPN 归一化后为 2/127
+    assert_eq!(lane.events[0].value, 2.0 / 127.0);
+}
+
+/// 手写含 CC7=100 的 SMF：导入应成为 ChannelDsp Volume 参数。
+#[test]
+fn cc7_import_becomes_channel_dsp_param() {
+    let mut data = Vec::new();
+    data.extend_from_slice(b"MThd");
+    data.extend_from_slice(&6u32.to_be_bytes());
+    data.extend_from_slice(&[0, 0, 0, 1, 1, 0xE0]);
+    data.extend_from_slice(b"MTrk");
+    let track: &[u8] = &[
+        0x00, 0xB0, 7, 100, // CC7 = 100
+        0x00, 0x90, 60, 100, // NoteOn
+        0x81, 0x70, 0x80, 60, 0, // NoteOff
+        0x00, 0xFF, 0x2F, 0x00,
+    ];
+    data.extend_from_slice(&(track.len() as u32).to_be_bytes());
+    data.extend_from_slice(track);
+
+    let model = parse_bytes(&data).expect("parse failed");
+    let t = &model.tracks[1];
+    let lane = t
+        .automation_lanes
+        .iter()
+        .find(|l| l.target == dsp_target(0, channel_dsp_param::VOLUME))
+        .expect("Volume lane");
+    assert_eq!(lane.events.len(), 1);
+    assert_eq!(lane.events[0].value, 100.0 / 127.0);
+}
+
+/// ChannelDsp Volume 参数导出为 CC7，重新解析后无损。
+#[test]
+fn channel_dsp_param_exports_back_to_cc() {
+    let model1 = model_with_point(dsp_target(0, channel_dsp_param::VOLUME), 0, 100.0 / 127.0);
+    let bytes = write_to_bytes(&model1).unwrap();
+    let model2 = parse_bytes(&bytes).unwrap();
+
+    let lane = model2.tracks[1]
+        .automation_lanes
+        .iter()
+        .find(|l| l.target == dsp_target(0, channel_dsp_param::VOLUME))
+        .expect("Volume lane");
+    assert_eq!(lane.events.len(), 1);
+    assert_eq!(lane.events[0].value, 100.0 / 127.0);
+}
+
+/// PB / RPN0 / RPN1 往返：原始整数经归一化存储后应逐位还原。
+#[test]
+fn pb_and_rpn_roundtrip() {
+    let mut t = TrackData::new(0, 0);
+    t.name = "Lane".to_string();
+    t.automation_lanes = vec![
+        AutomationLane {
+            target: xsynth_target(0, xsynth_param::PITCH_BEND),
+            track: 0,
+            events: vec![AutomationEvent {
+                tick: 0,
+                value: 8192.0 / 16383.0,
+                shape: SegmentShape::Step,
+            }],
+        },
+        AutomationLane {
+            target: xsynth_target(0, xsynth_param::PB_SENSITIVITY),
+            track: 0,
+            events: vec![AutomationEvent {
+                tick: 10,
+                value: 2.0 / 127.0,
+                shape: SegmentShape::Step,
+            }],
+        },
+        AutomationLane {
+            target: xsynth_target(0, xsynth_param::FINE_TUNE),
+            track: 0,
+            events: vec![AutomationEvent {
+                tick: 20,
+                value: 8192.0 / 16383.0,
+                shape: SegmentShape::Step,
+            }],
+        },
+    ];
+    let mut model1 = YinModel {
+        conductor: Arc::new(empty_conductor()),
+        tracks: vec![Arc::new(t)],
+        meta: ProjectMeta {
+            ppq: 480,
+            ..ProjectMeta::default()
+        },
+        ..Default::default()
+    };
+    model1.rebuild();
+
+    let bytes = write_to_bytes(&model1).unwrap();
+    let model2 = parse_bytes(&bytes).unwrap();
+    let t2 = &model2.tracks[1];
+    let find = |target: &AutomationTarget| {
+        t2.automation_lanes
+            .iter()
+            .find(|l| &l.target == target)
+            .unwrap_or_else(|| panic!("lane missing: {target:?}"))
+    };
+
+    let pb = find(&xsynth_target(0, xsynth_param::PITCH_BEND));
+    assert_eq!(pb.events[0].value, 8192.0 / 16383.0);
+    let sens = find(&xsynth_target(0, xsynth_param::PB_SENSITIVITY));
+    assert_eq!(sens.events[0].value, 2.0 / 127.0);
+    let fine = find(&xsynth_target(0, xsynth_param::FINE_TUNE));
+    assert_eq!(fine.events[0].value, 8192.0 / 16383.0);
+}
+
+/// 未绑定设备的 CC 保持低层 target，值仍归一化往返。
+#[test]
+fn unmapped_cc_stays_low_level() {
+    let model1 = model_with_point(AutomationTarget::CC { controller: 1 }, 0, 64.0 / 127.0);
+    let bytes = write_to_bytes(&model1).unwrap();
+    let model2 = parse_bytes(&bytes).unwrap();
+
+    let lane = model2.tracks[1]
+        .automation_lanes
+        .iter()
+        .find(|l| l.target == AutomationTarget::CC { controller: 1 })
+        .expect("CC1 lane");
+    assert_eq!(lane.events.len(), 1);
+    assert_eq!(lane.events[0].value, 64.0 / 127.0);
 }
 
 /// Build SMF with port + channel-prefix metas

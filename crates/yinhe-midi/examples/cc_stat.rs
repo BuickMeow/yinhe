@@ -18,15 +18,14 @@ fn main() {
             let ch_key = format!("port{} ch{}", t.port, t.channel);
             *channels.entry(ch_key).or_insert(0) += 1;
             for lane in &t.automation_lanes {
-                let key = match lane.target {
+                let key = match &lane.target {
+                    AutomationTarget::Param { .. } => {
+                        format!("Param({})", lane.target.display_name())
+                    }
                     AutomationTarget::CC { controller } => format!("CC{controller}"),
-                    AutomationTarget::PitchBend => "PitchBend".into(),
                     AutomationTarget::Rpn { parameter } => format!("RPN{parameter}"),
                     AutomationTarget::Nrpn { parameter } => format!("NRPN{parameter}"),
                     AutomationTarget::Tempo => "Tempo".into(),
-                    AutomationTarget::PluginParam { param_id, .. } => {
-                        format!("PluginParam{param_id}")
-                    }
                 };
                 let e = per_target.entry(key).or_insert((0, 0));
                 e.0 += lane.events.len();

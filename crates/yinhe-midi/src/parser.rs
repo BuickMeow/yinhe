@@ -6,8 +6,9 @@
 //! collected across all tracks first.
 //!
 //! Control events are unified into `AutomationLane` — one lane per
-//! parameter per track. RPN and NRPN are decoded from their CC sequences
-//! and stored as `AutomationTarget::Rpn` / `AutomationTarget::Nrpn`.
+//! parameter per track. CC/PB/RPN bound to a built-in device parameter
+//! become `AutomationTarget::Param`; unbound CC/RPN/NRPN stay low-level.
+//! Event values are normalized 0..1 (raw / binding max).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -15,6 +16,10 @@ use std::sync::Arc;
 use rayon::prelude::*;
 
 use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
+use yinhe_types::automation::{
+    MidiBinding, ParamDevice, binding_max, channel_dsp_param_id_for_midi, xsynth_param,
+    xsynth_param_id_for_midi,
+};
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent};
 
 use crate::encoding::MidiImportEncoding;
@@ -494,6 +499,7 @@ fn parse_track(
                             }
                             6 => handle_cc6(
                                 val,
+                                global_ch,
                                 ch_idx,
                                 current_tick,
                                 &rpn_state,
@@ -502,6 +508,7 @@ fn parse_track(
                             ),
                             38 => handle_cc38(
                                 val,
+                                global_ch,
                                 ch_idx,
                                 current_tick,
                                 &rpn_state,
@@ -509,12 +516,32 @@ fn parse_track(
                                 &mut auto_events,
                             ),
                             _ => {
-                                // All other CC → AutomationTarget::CC
+                                // 已绑定内置设备的 CC → 设备参数；其余保持低层 CC。
+                                let dsp_id = channel_dsp_param_id_for_midi(MidiBinding::Cc(cc));
+                                let target = if let Some(id) = dsp_id {
+                                    AutomationTarget::Param {
+                                        device: ParamDevice::ChannelDsp { channel: global_ch },
+                                        id,
+                                        name: String::new(),
+                                    }
+                                } else if let Some(id) =
+                                    xsynth_param_id_for_midi(MidiBinding::Cc(cc))
+                                {
+                                    AutomationTarget::Param {
+                                        device: ParamDevice::ChannelInstrument {
+                                            channel: global_ch,
+                                        },
+                                        id,
+                                        name: String::new(),
+                                    }
+                                } else {
+                                    AutomationTarget::CC { controller: cc }
+                                };
                                 auto_events.push((
-                                    AutomationTarget::CC { controller: cc },
+                                    target,
                                     AutomationEvent {
                                         tick: current_tick,
-                                        value: val as f32,
+                                        value: val as f32 / 127.0,
                                         ..Default::default()
                                     },
                                 ));
@@ -549,10 +576,14 @@ fn parse_track(
                     }
                     midly::MidiMessage::PitchBend { bend } => {
                         auto_events.push((
-                            AutomationTarget::PitchBend,
+                            AutomationTarget::Param {
+                                device: ParamDevice::ChannelInstrument { channel: global_ch },
+                                id: xsynth_param::PITCH_BEND,
+                                name: String::new(),
+                            },
                             AutomationEvent {
                                 tick: current_tick,
-                                value: bend.0.as_int() as f32, // raw 0–16383
+                                value: bend.0.as_int() as f32 / 16383.0,
                                 ..Default::default()
                             },
                         ));
@@ -593,7 +624,7 @@ fn parse_track(
                 AutomationTarget::CC { controller: 0 },
                 AutomationEvent {
                     tick,
-                    value: val as f32,
+                    value: val as f32 / 127.0,
                     ..Default::default()
                 },
             ));
@@ -603,7 +634,7 @@ fn parse_track(
                 AutomationTarget::CC { controller: 32 },
                 AutomationEvent {
                     tick,
-                    value: val as f32,
+                    value: val as f32 / 127.0,
                     ..Default::default()
                 },
             ));
@@ -667,6 +698,7 @@ fn group_automation_events(
 /// Handle CC 6 (Data Entry MSB) with RPN/NRPN state machine.
 fn handle_cc6(
     val: u8,
+    global_ch: u8,
     ch_idx: usize,
     current_tick: u32,
     rpn_state: &[RpnState; 16],
@@ -677,12 +709,14 @@ fn handle_cc6(
     let nrpn = nrpn_state[ch_idx];
     if let (Some(msb), Some(lsb)) = (rpn.msb, rpn.lsb) {
         let parameter = ((msb as u16) << 8) | lsb as u16;
-        let target = AutomationTarget::Rpn { parameter };
-        let value = if target.is_14bit() {
-            ((val as u16) << 7) as f32
+        let target = rpn_target(global_ch, parameter);
+        // CC6 在 14-bit RPN 中是数据高 7 位，在 7-bit RPN 中是完整值。
+        let raw = if binding_max(MidiBinding::Rpn(parameter)) > 127.0 {
+            (val as u16) << 7
         } else {
-            val as f32
+            val as u16
         };
+        let value = target.from_display_value(raw as f32);
         auto_events.push((
             target,
             AutomationEvent {
@@ -697,7 +731,7 @@ fn handle_cc6(
             AutomationTarget::Nrpn { parameter },
             AutomationEvent {
                 tick: current_tick,
-                value: ((val as u16) << 7) as f32,
+                value: ((val as u16) << 7) as f32 / 16383.0,
                 ..Default::default()
             },
         ));
@@ -706,7 +740,7 @@ fn handle_cc6(
             AutomationTarget::CC { controller: 6 },
             AutomationEvent {
                 tick: current_tick,
-                value: val as f32,
+                value: val as f32 / 127.0,
                 ..Default::default()
             },
         ));
@@ -716,6 +750,7 @@ fn handle_cc6(
 /// Handle CC 38 (Data Entry LSB) with RPN/NRPN state machine.
 fn handle_cc38(
     val: u8,
+    global_ch: u8,
     ch_idx: usize,
     current_tick: u32,
     rpn_state: &[RpnState; 16],
@@ -726,60 +761,77 @@ fn handle_cc38(
     let nrpn = nrpn_state[ch_idx];
     if let (Some(msb), Some(lsb)) = (rpn.msb, rpn.lsb) {
         let parameter = ((msb as u16) << 8) | lsb as u16;
-        let target = AutomationTarget::Rpn { parameter };
-        if target.is_14bit() {
-            if let Some((_, last)) = auto_events
-                .iter_mut()
-                .rfind(|(t, e)| *t == target && e.tick == current_tick)
-            {
-                // 把已有的 14-bit 高 7 位 OR 上当前 7-bit 低字节
-                let v = last.value.round() as u16;
-                last.value = ((v & 0xFF80) | (val as u16)) as f32;
-            } else {
-                auto_events.push((
-                    target,
-                    AutomationEvent {
-                        tick: current_tick,
-                        value: val as f32,
-                        ..Default::default()
-                    },
-                ));
-            }
+        if binding_max(MidiBinding::Rpn(parameter)) > 127.0 {
+            merge_14bit_lsb(
+                rpn_target(global_ch, parameter),
+                val,
+                current_tick,
+                auto_events,
+            );
         } else {
+            // 7-bit RPN 没有低位字节语义，落回低层 CC 避免丢数据。
             auto_events.push((
                 AutomationTarget::CC { controller: 38 },
                 AutomationEvent {
                     tick: current_tick,
-                    value: val as f32,
+                    value: val as f32 / 127.0,
                     ..Default::default()
                 },
             ));
         }
     } else if let (Some(msb), Some(lsb)) = (nrpn.msb, nrpn.lsb) {
         let parameter = ((msb as u16) << 8) | lsb as u16;
-        let target = AutomationTarget::Nrpn { parameter };
-        if let Some((_, last)) = auto_events
-            .iter_mut()
-            .rfind(|(t, e)| *t == target && e.tick == current_tick)
-        {
-            let v = last.value.round() as u16;
-            last.value = ((v & 0xFF80) | (val as u16)) as f32;
-        } else {
-            auto_events.push((
-                target,
-                AutomationEvent {
-                    tick: current_tick,
-                    value: val as f32,
-                    ..Default::default()
-                },
-            ));
-        }
+        merge_14bit_lsb(
+            AutomationTarget::Nrpn { parameter },
+            val,
+            current_tick,
+            auto_events,
+        );
     } else {
         auto_events.push((
             AutomationTarget::CC { controller: 38 },
             AutomationEvent {
                 tick: current_tick,
-                value: val as f32,
+                value: val as f32 / 127.0,
+                ..Default::default()
+            },
+        ));
+    }
+}
+
+/// RPN 参数 → 目标：0/1/2 绑定到 XSynth 内置参数，其余保留低层 RPN。
+fn rpn_target(global_ch: u8, parameter: u16) -> AutomationTarget {
+    match xsynth_param_id_for_midi(MidiBinding::Rpn(parameter)) {
+        Some(id) => AutomationTarget::Param {
+            device: ParamDevice::ChannelInstrument { channel: global_ch },
+            id,
+            name: String::new(),
+        },
+        None => AutomationTarget::Rpn { parameter },
+    }
+}
+
+/// CC38（14-bit 低 7 位）合并进同 tick 已写入的 CC6 事件。
+/// 值以归一化存储，这里先还原原始整数再合并，保证往返无损。
+fn merge_14bit_lsb(
+    target: AutomationTarget,
+    val: u8,
+    current_tick: u32,
+    auto_events: &mut Vec<(AutomationTarget, AutomationEvent)>,
+) {
+    if let Some((_, last)) = auto_events
+        .iter_mut()
+        .rfind(|(t, e)| *t == target && e.tick == current_tick)
+    {
+        let raw = target.to_display_value(last.value).round() as u16;
+        last.value = target.from_display_value(((raw & 0xFF80) | val as u16) as f32);
+    } else {
+        let value = target.from_display_value(val as f32);
+        auto_events.push((
+            target,
+            AutomationEvent {
+                tick: current_tick,
+                value,
                 ..Default::default()
             },
         ));

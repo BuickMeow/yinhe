@@ -11,7 +11,8 @@ use midly::{
 };
 
 use yinhe_core::{TrackData, YinModel};
-use yinhe_types::{AutomationTarget, Note, SegmentShape};
+use yinhe_types::automation::{MidiBinding, binding_max, builtin_param};
+use yinhe_types::{AutomationLane, AutomationTarget, Note, SegmentShape};
 
 use crate::encoding::MidiImportEncoding;
 use crate::error::MidiError;
@@ -257,8 +258,7 @@ fn build_track_with_options<'a>(
     for lane in &track.automation_lanes {
         let n = lane.events.len();
         for (idx, ev) in lane.events.iter().enumerate() {
-            let v = ev.value.round() as u16;
-            push_lane_event(&mut events, lane, ev.tick, v, ch, opts.rpn_full);
+            push_lane_event(&mut events, lane, ev.tick, ev.value, ch, opts.rpn_full);
             if opts.curve_interpolate && idx + 1 < n && !matches!(ev.shape, SegmentShape::Step) {
                 let next = &lane.events[idx + 1];
                 let tick1 = ev.tick;
@@ -273,8 +273,7 @@ fn build_track_with_options<'a>(
                         let frac = (t - tick1) as f32 / span;
                         let f = ev.shape.interpolate(frac);
                         let v = v1 + (v2 - v1) * f;
-                        let vi = v.round() as u16;
-                        push_lane_event(&mut events, lane, t, vi, ch, opts.rpn_full);
+                        push_lane_event(&mut events, lane, t, v, ch, opts.rpn_full);
                         t = t.saturating_add(density);
                     }
                 }
@@ -359,145 +358,125 @@ fn build_track_with_options<'a>(
     }
 }
 
+/// 归一化值 → 原始整数（四舍五入并夹取到 `0..max`）。
+fn normalized_to_raw(value: f32, max: f32) -> u16 {
+    (value * max).round().clamp(0.0, max) as u16
+}
+
+fn push_cc<'a>(
+    events: &mut Vec<(u32, TrackEventKind<'a>)>,
+    tick: u32,
+    ch: u4,
+    controller: u8,
+    value: u8,
+) {
+    events.push((
+        tick,
+        TrackEventKind::Midi {
+            channel: ch,
+            message: MidiMessage::Controller {
+                controller: u7::new(controller),
+                value: u7::new(value),
+            },
+        },
+    ));
+}
+
+/// RPN/NRPN 数据输入序列：选择参数（CC101/100 或 CC99/98）+ CC6 高 7 位
+/// + 14-bit 时的 CC38 低 7 位。
+fn push_data_entry<'a>(
+    events: &mut Vec<(u32, TrackEventKind<'a>)>,
+    tick: u32,
+    ch: u4,
+    nrpn: bool,
+    parameter: u16,
+    value: f32,
+    rpn_full: bool,
+) {
+    let raw_max = if nrpn {
+        16383.0
+    } else {
+        binding_max(MidiBinding::Rpn(parameter))
+    };
+    let raw = normalized_to_raw(value, raw_max);
+    let is_14bit = raw_max > 127.0;
+    let (msb_cc, lsb_cc) = if nrpn { (99, 98) } else { (101, 100) };
+    let (data_msb, data_lsb) = if is_14bit {
+        (((raw >> 7) & 0x7F) as u8, (raw & 0x7F) as u8)
+    } else {
+        (raw as u8, 0)
+    };
+    push_cc(events, tick, ch, msb_cc, ((parameter >> 8) & 0x7F) as u8);
+    push_cc(events, tick, ch, lsb_cc, (parameter & 0x7F) as u8);
+    push_cc(events, tick, ch, 6, data_msb);
+    if if rpn_full {
+        is_14bit
+    } else {
+        is_14bit && data_lsb != 0
+    } {
+        push_cc(events, tick, ch, 38, data_lsb);
+    }
+}
+
 fn push_lane_event<'a>(
     events: &mut Vec<(u32, TrackEventKind<'a>)>,
-    lane: &yinhe_types::AutomationLane,
+    lane: &AutomationLane,
     tick: u32,
-    v: u16,
+    value: f32,
     ch: u4,
     rpn_full: bool,
 ) {
     match &lane.target {
-        AutomationTarget::CC { controller } => {
-            events.push((
-                tick,
-                TrackEventKind::Midi {
-                    channel: ch,
-                    message: MidiMessage::Controller {
-                        controller: u7::new(*controller & 0x7F),
-                        value: u7::new((v & 0x7F) as u8),
-                    },
-                },
-            ));
+        AutomationTarget::Param { device, id, .. } => {
+            // 非内置参数（第三方插件）无 MIDI 语义，与 Tempo 一样不导出。
+            let Some(info) = builtin_param(device, *id) else {
+                return;
+            };
+            let max = binding_max(info.midi);
+            match info.midi {
+                MidiBinding::Cc(controller) => {
+                    push_cc(
+                        events,
+                        tick,
+                        ch,
+                        controller,
+                        normalized_to_raw(value, max) as u8,
+                    );
+                }
+                MidiBinding::PitchBend => {
+                    events.push((
+                        tick,
+                        TrackEventKind::Midi {
+                            channel: ch,
+                            message: MidiMessage::PitchBend {
+                                bend: PitchBend(midly::num::u14::new(normalized_to_raw(
+                                    value, max,
+                                ))),
+                            },
+                        },
+                    ));
+                }
+                MidiBinding::Rpn(parameter) => {
+                    push_data_entry(events, tick, ch, false, parameter, value, rpn_full);
+                }
+            }
         }
-        AutomationTarget::PitchBend => {
-            events.push((
+        AutomationTarget::CC { controller } => {
+            push_cc(
+                events,
                 tick,
-                TrackEventKind::Midi {
-                    channel: ch,
-                    message: MidiMessage::PitchBend {
-                        bend: PitchBend(midly::num::u14::new(v)),
-                    },
-                },
-            ));
+                ch,
+                *controller,
+                normalized_to_raw(value, 127.0) as u8,
+            );
         }
         AutomationTarget::Rpn { parameter } => {
-            let msb = ((parameter >> 8) & 0x7F) as u8;
-            let lsb = (parameter & 0x7F) as u8;
-            let (data_msb, data_lsb) = if lane.target.is_14bit() {
-                (((v >> 7) & 0x7F) as u8, (v & 0x7F) as u8)
-            } else {
-                (v as u8, 0u8)
-            };
-            events.push((
-                tick,
-                TrackEventKind::Midi {
-                    channel: ch,
-                    message: MidiMessage::Controller {
-                        controller: u7::new(101),
-                        value: u7::new(msb),
-                    },
-                },
-            ));
-            events.push((
-                tick,
-                TrackEventKind::Midi {
-                    channel: ch,
-                    message: MidiMessage::Controller {
-                        controller: u7::new(100),
-                        value: u7::new(lsb),
-                    },
-                },
-            ));
-            events.push((
-                tick,
-                TrackEventKind::Midi {
-                    channel: ch,
-                    message: MidiMessage::Controller {
-                        controller: u7::new(6),
-                        value: u7::new(data_msb),
-                    },
-                },
-            ));
-            let should_emit_lsb = if rpn_full {
-                lane.target.is_14bit()
-            } else {
-                data_lsb != 0 && lane.target.is_14bit()
-            };
-            if should_emit_lsb {
-                events.push((
-                    tick,
-                    TrackEventKind::Midi {
-                        channel: ch,
-                        message: MidiMessage::Controller {
-                            controller: u7::new(38),
-                            value: u7::new(data_lsb),
-                        },
-                    },
-                ));
-            }
+            push_data_entry(events, tick, ch, false, *parameter, value, rpn_full);
         }
         AutomationTarget::Nrpn { parameter } => {
-            let msb = ((parameter >> 8) & 0x7F) as u8;
-            let lsb = (parameter & 0x7F) as u8;
-            let data_msb = ((v >> 7) & 0x7F) as u8;
-            let data_lsb = (v & 0x7F) as u8;
-            events.push((
-                tick,
-                TrackEventKind::Midi {
-                    channel: ch,
-                    message: MidiMessage::Controller {
-                        controller: u7::new(99),
-                        value: u7::new(msb),
-                    },
-                },
-            ));
-            events.push((
-                tick,
-                TrackEventKind::Midi {
-                    channel: ch,
-                    message: MidiMessage::Controller {
-                        controller: u7::new(98),
-                        value: u7::new(lsb),
-                    },
-                },
-            ));
-            events.push((
-                tick,
-                TrackEventKind::Midi {
-                    channel: ch,
-                    message: MidiMessage::Controller {
-                        controller: u7::new(6),
-                        value: u7::new(data_msb),
-                    },
-                },
-            ));
-            let should_emit_lsb = if rpn_full { true } else { data_lsb != 0 };
-            if should_emit_lsb {
-                events.push((
-                    tick,
-                    TrackEventKind::Midi {
-                        channel: ch,
-                        message: MidiMessage::Controller {
-                            controller: u7::new(38),
-                            value: u7::new(data_lsb),
-                        },
-                    },
-                ));
-            }
+            push_data_entry(events, tick, ch, true, *parameter, value, rpn_full);
         }
-        // 插件参数不进 MIDI 导出（MIDI 无对应语义）。
-        AutomationTarget::Tempo | AutomationTarget::PluginParam { .. } => {}
+        AutomationTarget::Tempo => {}
     }
 }
 
