@@ -464,13 +464,10 @@ pub(crate) fn emit_automation_event(
                     }),
                 });
             }
-            // 内置设备参数（XSynth / 通道 DSP）：按 MIDI 绑定还原为对应的
-            // 原始整数事件。回放时 dispatch 统一"广播给 insert 链上订阅的
-            // 效果器 + 走常规路径透传乐器插件"（CC 广播方案）。
+            // 内置设备参数（XSynth）：按 MIDI 绑定还原为对应的原始整数事件。
+            // 回放时 dispatch 统一"广播给 insert 链上订阅的效果器 + 走常规
+            // 路径透传乐器插件"（CC 广播方案）。
             ParamDevice::ChannelInstrument {
-                channel: device_channel,
-            }
-            | ParamDevice::ChannelDsp {
                 channel: device_channel,
             } => {
                 let Some(info) = builtin_param(device, *id) else {
@@ -697,7 +694,7 @@ pub fn effective_fades(clips: &[yinhe_core::AudioClip], index: usize) -> (f64, f
 mod tests {
     use super::*;
     use yinhe_core::{ConductorData, ProjectMeta, TrackData, YinModel};
-    use yinhe_types::automation::{channel_dsp_param, xsynth_param};
+    use yinhe_types::automation::xsynth_param;
     use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
 
     /// 构建 1 轨道模型，给定 automation lanes。
@@ -823,15 +820,11 @@ mod tests {
         assert_eq!(events[1].plugin_param.map(|p| p.value), Some(1.0));
     }
 
-    /// DSP 内置参数：归一化值在 flatten 边界还原成原始整数 CC（Volume → CC7）。
+    /// 低层 CC：归一化值在 flatten 边界还原成原始整数（CC7 = 100）。
     #[test]
-    fn emit_channel_dsp_param_restores_integer_cc() {
+    fn emit_low_level_cc_restores_integer() {
         let model = model_with_lanes(vec![AutomationLane {
-            target: AutomationTarget::Param {
-                device: ParamDevice::ChannelDsp { channel: 0 },
-                id: channel_dsp_param::VOLUME,
-                name: String::new(),
-            },
+            target: AutomationTarget::CC { controller: 7 },
             track: 0,
             events: vec![AutomationEvent {
                 tick: 0,
@@ -1007,11 +1000,7 @@ mod tests {
     fn am_ms_builds_lane_skip_mask() {
         let lanes = vec![
             AutomationLane {
-                target: AutomationTarget::Param {
-                    device: ParamDevice::ChannelDsp { channel: 0 },
-                    id: channel_dsp_param::VOLUME,
-                    name: String::new(),
-                },
+                target: AutomationTarget::CC { controller: 7 },
                 track: 0,
                 events: vec![AutomationEvent {
                     tick: 0,
@@ -1020,11 +1009,7 @@ mod tests {
                 }],
             },
             AutomationLane {
-                target: AutomationTarget::Param {
-                    device: ParamDevice::ChannelDsp { channel: 0 },
-                    id: channel_dsp_param::PAN,
-                    name: String::new(),
-                },
+                target: AutomationTarget::CC { controller: 10 },
                 track: 0,
                 events: vec![AutomationEvent {
                     tick: 0,
@@ -1034,16 +1019,8 @@ mod tests {
             },
         ];
         let model = model_with_lanes(lanes);
-        let cc7 = AutomationTarget::Param {
-            device: ParamDevice::ChannelDsp { channel: 0 },
-            id: channel_dsp_param::VOLUME,
-            name: String::new(),
-        };
-        let cc10 = AutomationTarget::Param {
-            device: ParamDevice::ChannelDsp { channel: 0 },
-            id: channel_dsp_param::PAN,
-            name: String::new(),
-        };
+        let cc7 = AutomationTarget::CC { controller: 7 };
+        let cc10 = AutomationTarget::CC { controller: 10 };
         let mask_for = |am_ms: &HashMap<
             (u16, yinhe_types::AutomationTarget),
             yinhe_types::AmMsState,

@@ -257,7 +257,6 @@ fn write_target(w: &mut impl Write, target: &AutomationTarget) -> io::Result<()>
             let (device_tag, channel) = match device {
                 ParamDevice::ChannelInstrument { channel } => (0u8, *channel),
                 ParamDevice::PluginInstrument { channel } => (1u8, *channel),
-                ParamDevice::ChannelDsp { channel } => (2u8, *channel),
             };
             w.write_all(&[0, device_tag, channel])?;
             w.write_all(&id.to_le_bytes())?;
@@ -300,7 +299,6 @@ fn read_target(r: &mut impl Read) -> io::Result<AutomationTarget> {
             let device = match head[0] {
                 0 => ParamDevice::ChannelInstrument { channel },
                 1 => ParamDevice::PluginInstrument { channel },
-                2 => ParamDevice::ChannelDsp { channel },
                 _ => return Err(invalid("unknown param device")),
             };
             AutomationTarget::Param {
@@ -446,7 +444,7 @@ mod tests {
 
     #[test]
     fn automation_roundtrip() {
-        use yinhe_types::automation::{channel_dsp_param, xsynth_param};
+        use yinhe_types::automation::xsynth_param;
 
         let path = temp_path("automation");
         let targets = [
@@ -459,11 +457,6 @@ mod tests {
                 device: ParamDevice::PluginInstrument { channel: 11 },
                 id: 0xDEAD_BEEF,
                 name: "Filter Cutoff".into(),
-            },
-            AutomationTarget::Param {
-                device: ParamDevice::ChannelDsp { channel: 0 },
-                id: channel_dsp_param::VOLUME,
-                name: String::new(),
             },
             AutomationTarget::CC { controller: 74 },
             AutomationTarget::Rpn { parameter: 0 },
@@ -490,7 +483,7 @@ mod tests {
                                 },
                             ),
                         ],
-                        6 => vec![(0, 120.0, SegmentShape::Step)],
+                        5 => vec![(0, 120.0, SegmentShape::Step)],
                         _ => vec![],
                     },
                 })
@@ -510,7 +503,7 @@ mod tests {
                 assert_eq!(clips[0].events[1].0, 480);
                 assert!((clips[0].events[1].1 - 0.5).abs() < f32::EPSILON);
                 assert!(matches!(clips[0].events[1].2, SegmentShape::Curve { .. }));
-                assert!((clips[6].events[0].1 - 120.0).abs() < f32::EPSILON);
+                assert!((clips[5].events[0].1 - 120.0).abs() < f32::EPSILON);
             }
             _ => panic!("期望自动化剪贴板"),
         }

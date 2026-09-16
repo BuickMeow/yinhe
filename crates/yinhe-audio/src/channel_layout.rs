@@ -209,7 +209,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use yinhe_core::{ConductorData, NoteEvent, ProjectMeta, TrackData, YinModel};
-    use yinhe_types::automation::{ParamDevice, channel_dsp_param};
+
     use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
 
     fn make_model_with_notes(notes: Vec<(u8, u32, u32, u8, u8)>) -> YinModel {
@@ -397,11 +397,7 @@ mod tests {
         let conductor = ConductorData::default();
         let mut t = TrackData::new(0, 5);
         t.automation_lanes = vec![AutomationLane {
-            target: AutomationTarget::Param {
-                device: ParamDevice::ChannelDsp { channel: 5 },
-                id: channel_dsp_param::VOLUME,
-                name: String::new(),
-            },
+            target: AutomationTarget::CC { controller: 7 },
             track: 0,
             events: vec![AutomationEvent {
                 tick: 0,

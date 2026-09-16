@@ -5,22 +5,13 @@ use std::sync::Arc;
 use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
 use yinhe_midi::{parse_bytes, write_to_bytes};
 use yinhe_types::TimeSigEvent;
-use yinhe_types::automation::{ParamDevice, channel_dsp_param, xsynth_param};
+use yinhe_types::automation::{ParamDevice, xsynth_param};
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
 
 /// 内置 XSynth 参数的 target（导入后 name 为空）。
 fn xsynth_target(channel: u8, id: u32) -> AutomationTarget {
     AutomationTarget::Param {
         device: ParamDevice::ChannelInstrument { channel },
-        id,
-        name: String::new(),
-    }
-}
-
-/// 通道内置 DSP 参数的 target。
-fn dsp_target(channel: u8, id: u32) -> AutomationTarget {
-    AutomationTarget::Param {
-        device: ParamDevice::ChannelDsp { channel },
         id,
         name: String::new(),
     }
@@ -580,11 +571,10 @@ fn cc7_import_stays_low_level() {
 
 /// 设备参数导出为绑定的 CC，重新解析后为低层 CC 事件（值无损）。
 ///
-/// 导入不把 CC 转回设备参数（CC 广播方案），所以往返后身份是 CC——
-/// 值必须逐位无损。
+/// CC 往返：导入保留低层身份（CC 广播方案），值经归一化存储后必须逐位无损。
 #[test]
-fn channel_dsp_param_exports_to_cc_low_level() {
-    let model1 = model_with_point(dsp_target(0, channel_dsp_param::VOLUME), 0, 100.0 / 127.0);
+fn cc7_roundtrip_low_level() {
+    let model1 = model_with_point(AutomationTarget::CC { controller: 7 }, 0, 100.0 / 127.0);
     let bytes = write_to_bytes(&model1).unwrap();
     let model2 = parse_bytes(&bytes).unwrap();
 

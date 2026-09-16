@@ -143,8 +143,6 @@ pub enum ParamDevice {
     ChannelInstrument { channel: u8 },
     /// 通道乐器插件（VST3/CLAP）参数（id 为插件原生 id）。
     PluginInstrument { channel: u8 },
-    /// 通道内置 DSP 参数（ChannelGain/Pan/Filter，id 见 [`CHANNEL_DSP_PARAMS`]）。
-    ChannelDsp { channel: u8 },
 }
 
 /// 内置参数的 MIDI 绑定（导入/导出/回放的双向映射）。
@@ -196,7 +194,10 @@ pub mod xsynth_param {
     pub const COARSE_TUNE: u32 = 6;
 }
 
-/// 通道内置 DSP 参数 id（`ParamDevice::ChannelDsp`）。
+/// 通道 DSP 参数（ChannelGain/Pan/Filter）的 id 与 MIDI 绑定表。
+///
+/// 无 `ParamDevice` 承载：CC 广播方案下它们作为低层 `CC` 事件存储，
+/// 本表供 UI 把 CC 号映射为参数名（如 CC7 ↔ "Volume"）与 dsp 一致性校验。
 pub mod channel_dsp_param {
     /// 音量（CC7）。
     pub const VOLUME: u32 = 0;
@@ -322,7 +323,6 @@ impl ParamDevice {
     pub fn builtin_params(&self) -> &'static [BuiltinParamInfo] {
         match self {
             ParamDevice::ChannelInstrument { .. } => XSYNTH_PARAMS,
-            ParamDevice::ChannelDsp { .. } => CHANNEL_DSP_PARAMS,
             ParamDevice::PluginInstrument { .. } => &[],
         }
     }
@@ -331,8 +331,7 @@ impl ParamDevice {
     pub fn channel(&self) -> u8 {
         match self {
             ParamDevice::ChannelInstrument { channel }
-            | ParamDevice::PluginInstrument { channel }
-            | ParamDevice::ChannelDsp { channel } => *channel,
+            | ParamDevice::PluginInstrument { channel } => *channel,
         }
     }
 }
@@ -345,14 +344,6 @@ pub fn builtin_param(device: &ParamDevice, id: u32) -> Option<&'static BuiltinPa
 /// MIDI 绑定 → XSynth 参数 id（导入映射）。
 pub fn xsynth_param_id_for_midi(midi: MidiBinding) -> Option<u32> {
     XSYNTH_PARAMS.iter().find(|p| p.midi == midi).map(|p| p.id)
-}
-
-/// MIDI 绑定 → 通道 DSP 参数 id（导入映射）。
-pub fn channel_dsp_param_id_for_midi(midi: MidiBinding) -> Option<u32> {
-    CHANNEL_DSP_PARAMS
-        .iter()
-        .find(|p| p.midi == midi)
-        .map(|p| p.id)
 }
 
 /// MIDI 绑定的原始值上限（7-bit / 14-bit）。
@@ -757,28 +748,6 @@ mod tests {
             Some(xsynth_param::PB_SENSITIVITY)
         );
         assert_eq!(xsynth_param_id_for_midi(MidiBinding::Cc(7)), None);
-
-        assert_eq!(
-            channel_dsp_param_id_for_midi(MidiBinding::Cc(7)),
-            Some(channel_dsp_param::VOLUME)
-        );
-        assert_eq!(
-            channel_dsp_param_id_for_midi(MidiBinding::Cc(11)),
-            Some(channel_dsp_param::EXPRESSION)
-        );
-        assert_eq!(
-            channel_dsp_param_id_for_midi(MidiBinding::Cc(10)),
-            Some(channel_dsp_param::PAN)
-        );
-        assert_eq!(
-            channel_dsp_param_id_for_midi(MidiBinding::Cc(74)),
-            Some(channel_dsp_param::CUTOFF)
-        );
-        assert_eq!(
-            channel_dsp_param_id_for_midi(MidiBinding::Cc(71)),
-            Some(channel_dsp_param::RESONANCE)
-        );
-        assert_eq!(channel_dsp_param_id_for_midi(MidiBinding::Cc(64)), None);
     }
 
     fn param(device: &ParamDevice, id: u32) -> AutomationTarget {
@@ -792,21 +761,6 @@ mod tests {
     /// 设备参数：内置查表（显示名/上限/默认/中心/形状），第三方走缓存名。
     #[test]
     fn test_param_target_methods() {
-        let ch = ParamDevice::ChannelDsp { channel: 3 };
-
-        let vol = param(&ch, channel_dsp_param::VOLUME);
-        assert_eq!(vol.display_name(), "Volume");
-        assert_eq!(vol.display_max(), Some(127.0));
-        assert_eq!(vol.default_value(), 1.0);
-        assert!(!vol.has_center_line());
-        assert_eq!(vol.default_shape(), SegmentShape::linear_curve());
-        assert_eq!(vol.channel(), Some(3));
-
-        let pan = param(&ch, channel_dsp_param::PAN);
-        assert_eq!(pan.display_max(), Some(127.0));
-        assert!((pan.default_value() - 64.0 / 127.0).abs() < 1e-6);
-        assert!(pan.has_center_line());
-
         let xs = ParamDevice::ChannelInstrument { channel: 0 };
         let sus = param(&xs, xsynth_param::SUSTAIN);
         assert_eq!(sus.default_shape(), SegmentShape::Step);

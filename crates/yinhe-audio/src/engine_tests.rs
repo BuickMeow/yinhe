@@ -4,9 +4,7 @@ use xsynth_core::channel::{ChannelAudioEvent, ControlEvent};
 use xsynth_core::channel_group::ParallelismOptions;
 use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
 use yinhe_editor_core::document::Document;
-use yinhe_types::automation::{
-    MidiBinding, ParamDevice, channel_dsp_param, channel_dsp_param_id_for_midi, xsynth_param,
-};
+use yinhe_types::automation::{ParamDevice, xsynth_param};
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, KEY_COUNT, SegmentShape};
 
 use crate::channel_layout::ChannelLayout;
@@ -382,21 +380,9 @@ fn xsynth_target(id: u32) -> AutomationTarget {
     }
 }
 
-/// track 0（MIDI 通道 0）的内置 DSP 参数 target。
-fn dsp_target(id: u32) -> AutomationTarget {
-    AutomationTarget::Param {
-        device: ParamDevice::ChannelDsp { channel: 0 },
-        id,
-        name: String::new(),
-    }
-}
-
-/// CC → target：命中通道 DSP 绑定（CC7/10/11/71/74）的走设备参数，其余保留低层 CC。
+/// CC → target：一律低层 CC（CC 广播方案）。
 fn cc_target(controller: u8) -> AutomationTarget {
-    match channel_dsp_param_id_for_midi(MidiBinding::Cc(controller)) {
-        Some(id) => dsp_target(id),
-        None => AutomationTarget::CC { controller },
-    }
+    AutomationTarget::CC { controller }
 }
 
 fn make_model_with_controls(
@@ -1272,7 +1258,7 @@ fn test_muted_track_cc_skipped_in_chase() {
     // track 0（将被 mute）的 CC7=40，track 1（非 mute）的 CC7=100，同 channel 0
     let mut t0 = TrackData::new(0, 0);
     t0.automation_lanes = vec![AutomationLane {
-        target: dsp_target(channel_dsp_param::VOLUME),
+        target: cc_target(7),
         track: 0,
         events: vec![AutomationEvent {
             tick: 100,
@@ -1282,7 +1268,7 @@ fn test_muted_track_cc_skipped_in_chase() {
     }];
     let mut t1 = TrackData::new(0, 0);
     t1.automation_lanes = vec![AutomationLane {
-        target: dsp_target(channel_dsp_param::VOLUME),
+        target: cc_target(7),
         track: 1,
         events: vec![AutomationEvent {
             tick: 200,
@@ -1366,7 +1352,7 @@ fn make_chase_model() -> YinModel {
             ],
         },
         AutomationLane {
-            target: dsp_target(channel_dsp_param::VOLUME),
+            target: cc_target(7),
             track: 0,
             events: vec![
                 AutomationEvent {
@@ -1820,7 +1806,7 @@ fn model_with_lane(lane: AutomationLane) -> YinModel {
 fn test_chase_query_linear_interpolation() {
     // CC7：tick 0 = 100 → tick 480 = 60，Linear（退化曲线）。
     let model = model_with_lane(AutomationLane {
-        target: dsp_target(channel_dsp_param::VOLUME),
+        target: cc_target(7),
         track: 0,
         events: vec![
             AutomationEvent {
@@ -1883,7 +1869,7 @@ fn test_chase_query_linear_interpolation() {
 fn test_chase_query_step_keeps_last_value() {
     // CC10 pan：tick 0 = 100（Step）→ tick 480 = 20（Step）。
     let model = model_with_lane(AutomationLane {
-        target: dsp_target(channel_dsp_param::PAN),
+        target: cc_target(10),
         track: 0,
         events: vec![
             AutomationEvent {

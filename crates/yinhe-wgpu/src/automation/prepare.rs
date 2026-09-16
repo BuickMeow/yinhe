@@ -37,7 +37,7 @@ pub enum AutomationGhost {
 ///
 /// 编码：CC `[0x1_0000, 0x1_007F]`；Rpn `[0x2_0000, 0x2_FFFF]`；
 /// Nrpn `[0x3_0000, 0x3_FFFF]`；Tempo `u64::MAX`；
-/// Param `[0x4_0000_0000, 0x2_04FF_FFFF_FFFF]`（device 2 位 @40、
+/// Param `[0x4_0000_0000, 0x5_00FF_FFFF_FFFF]`（device 1 位 @40、
 /// channel 8 位 @32、id 32 位）。
 fn target_hash(target: &AutomationTarget) -> u64 {
     match target {
@@ -49,7 +49,6 @@ fn target_hash(target: &AutomationTarget) -> u64 {
             let (device_tag, channel) = match device {
                 ParamDevice::ChannelInstrument { channel } => (0u64, u64::from(*channel)),
                 ParamDevice::PluginInstrument { channel } => (1, u64::from(*channel)),
-                ParamDevice::ChannelDsp { channel } => (2, u64::from(*channel)),
             };
             0x4_0000_0000 + (device_tag << 40) + (channel << 32) + u64::from(*id)
         }
@@ -431,16 +430,6 @@ mod tests {
                 id: 0,
                 name: String::new(),
             },
-            AutomationTarget::Param {
-                device: ParamDevice::ChannelDsp { channel: 0 },
-                id: 0,
-                name: String::new(),
-            },
-            AutomationTarget::Param {
-                device: ParamDevice::ChannelDsp { channel: 255 },
-                id: u32::MAX,
-                name: String::new(),
-            },
         ];
         for (i, a) in targets.iter().enumerate() {
             for b in &targets[i + 1..] {
@@ -457,14 +446,14 @@ mod tests {
             id,
             name: String::new(),
         };
-        let ch_dsp = |channel: u8| ParamDevice::ChannelDsp { channel };
+        let inst = |channel: u8| ParamDevice::PluginInstrument { channel };
         assert_ne!(
-            target_hash(&make(ch_dsp(0), 1)),
-            target_hash(&make(ch_dsp(0), 2))
+            target_hash(&make(inst(0), 1)),
+            target_hash(&make(inst(0), 2))
         );
         assert_ne!(
-            target_hash(&make(ch_dsp(1), 1)),
-            target_hash(&make(ch_dsp(2), 1))
+            target_hash(&make(inst(1), 1)),
+            target_hash(&make(inst(2), 1))
         );
         assert_ne!(
             target_hash(&make(ParamDevice::ChannelInstrument { channel: 0 }, 3)),

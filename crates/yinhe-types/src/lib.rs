@@ -20,8 +20,7 @@ pub use arrangement_view::ArrangementView;
 pub use automation::{
     AmMsState, AutomationEdit, AutomationEvent, AutomationLane, AutomationTarget, BuiltinParamInfo,
     CHANNEL_DSP_PARAMS, MidiBinding, ParamDevice, SegmentShape, XSYNTH_PARAMS, binding_max,
-    builtin_param, channel_dsp_param, channel_dsp_param_id_for_midi, xsynth_param,
-    xsynth_param_id_for_midi,
+    builtin_param, channel_dsp_param, xsynth_param, xsynth_param_id_for_midi,
 };
 pub use automation_panel_view::{AnchorSelRect, AutomationPanelView};
 pub use hash::*;
