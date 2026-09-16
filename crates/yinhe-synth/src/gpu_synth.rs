@@ -217,10 +217,6 @@ impl ChannelState {
                     self.damper = damper;
                     return released;
                 }
-                0x78 if value == 0 => {
-                    // All Sounds Off：立即结束所有 voice
-                    return false; // 由调用方处理
-                }
                 0x79 if value == 0 => {
                     // Reset All Controllers。
                     // xsynth 的 reset_control 不重置 program.bank，这里保留 bank。
@@ -228,10 +224,6 @@ impl ChannelState {
                     *self = ChannelState::new(self.sample_rate);
                     self.bank = bank;
                     return true; // damper 松开语义
-                }
-                0x7B if value == 0 => {
-                    // All Notes Off：释放所有非 held voice
-                    return false;
                 }
                 _ => {}
             },
