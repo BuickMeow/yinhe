@@ -175,39 +175,32 @@ impl ChannelLayout {
         dense_channels
     }
 
-    /// 检测当前 layout 与 model 的 tracks 是否在激活状态上有差异。
+    /// 本布局是否覆盖 `model` 的通道需求（引擎"过户复用"判定）。
     ///
-    /// 用于音频引擎在编辑后判断是否需要 teardown + 重建：`ChannelLayout`
-    /// 创建后不可变，只有激活状态翻转才必须重建。
+    /// 覆盖 = model 用到的**每个**源 MIDI 通道都已在本布局中激活，且 model
+    /// 用到的每个音频通道都已在布局里。覆盖成立时引擎无需 teardown 重建，
+    /// 直接 `LoadModel` / `UpdateNotes` 复用（布局里多出来的通道保持静默）。
     ///
-    /// 激活语义与 `from_model` 完全对齐：`active(ch) = ch 上有音轨`。
-    /// 音轨增删/改 port 或 channel → 翻转 → 重建；音符增删不改变激活状态，
-    /// 走便宜的 `UpdateNotes` 路径即可。成本 O(tracks)，与音符总数无关。
-    pub fn differs_from_model(&self, model: &YinModel) -> bool {
-        let mut now_active = [false; 256];
-        let mut now_audio: Vec<u16> = Vec::new();
+    /// 与"完全一致"的区别：
+    /// - model 少用/不再用某个已激活通道（删音轨、改 channel 移走）→ 仍覆盖；
+    /// - model 用到未激活通道（加音轨、改 port/channel 指向新通道）→ 不覆盖，
+    ///   必须重建（`ChannelLayout` 创建后不可变，新通道无法被 dispatch）。
+    ///
+    /// 成本 O(tracks)，与音符总数无关。
+    pub fn covers_model(&self, model: &YinModel) -> bool {
         for track in model.tracks.iter() {
             if track.kind != TrackKind::Audio {
                 let ch = track.global_channel() as usize;
-                if ch < 256 {
-                    now_active[ch] = true;
+                if ch < 256 && !self.is_active(ch) {
+                    return false;
                 }
             } else if let Some(ach) = track.audio_channel
-                && !now_audio.contains(&ach)
+                && self.audio_dense_for(ach) == u32::MAX
             {
-                now_audio.push(ach);
+                return false;
             }
         }
-        now_audio.sort_unstable();
-        if now_audio != self.audio_channels {
-            return true;
-        }
-        for (ch, &now) in now_active.iter().enumerate() {
-            if self.is_active(ch) != now {
-                return true;
-            }
-        }
-        false
+        true
     }
 }
 
@@ -495,57 +488,73 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // differs_from_model 测试：flip 检测的核心逻辑
+    // covers_model 测试：引擎复用（过户）判定核心逻辑
     // -----------------------------------------------------------------------
     // 激活完全由音轨决定：
-    // - 加音轨/改音轨 channel → 0→1 翻转 → differs = true → teardown
-    // - 删音轨 → 1→0 翻转 → differs = true → teardown
-    // - 音符增删 → 激活状态不变 → differs = false → 走 UpdateNotes
+    // - 加音轨/改到未激活 channel/port → 不覆盖（需重建）
+    // - 删音轨/移到已激活 channel → 仍覆盖（复用引擎，直接 UpdateNotes）
+    // - 音符增删 → 不改变通道需求 → 覆盖
 
     #[test]
-    fn differs_from_model_no_flip_on_note_edits() {
-        // 音符增删不改变激活状态：layout 与 model 的音轨集合一致 → 无翻转
+    fn covers_model_same_layout() {
         let model = make_model_with_notes(vec![(60, 0, 480, 100, 0)]);
         let layout = ChannelLayout::from_model(&model);
-        assert!(!layout.differs_from_model(&model), "同 model 无翻转");
+        assert!(layout.covers_model(&model), "同 model 覆盖");
     }
 
     #[test]
-    fn differs_from_model_flip_when_track_added() {
-        // layout: ch 0 激活；model 新增 ch 1 音轨 → 0→1 翻转
+    fn covers_model_false_when_new_channel_appears() {
+        // layout: ch 0 激活；model 新增 ch 1 音轨 → 未覆盖
         let model = make_model_with_notes(vec![(60, 0, 480, 100, 0)]);
         let layout = ChannelLayout::from_model(&model);
 
         let mut extended = model.clone();
         extended.tracks.push(Arc::new(TrackData::new(0, 1)));
-        assert!(layout.differs_from_model(&extended), "ch 1 0→1 翻转");
+        assert!(!layout.covers_model(&extended), "ch 1 未激活，不覆盖");
     }
 
     #[test]
-    fn differs_from_model_flip_when_track_removed() {
-        // layout: ch 0 激活；model 删掉唯一音轨 → 1→0 翻转
+    fn covers_model_true_when_channel_freed() {
+        // layout: ch 0 激活；model 删掉唯一音轨 → 仍覆盖（多余通道静默）
         let model = make_model_with_notes(vec![(60, 0, 480, 100, 0)]);
         let layout = ChannelLayout::from_model(&model);
 
         let mut reduced = model.clone();
         reduced.tracks.clear();
-        assert!(layout.differs_from_model(&reduced), "ch 0 1→0 翻转");
+        assert!(layout.covers_model(&reduced), "占用减少，仍覆盖");
     }
 
     #[test]
-    fn differs_from_model_flip_when_track_changes_channel() {
-        // 音轨从 ch 0 改到 ch 1 → 0→1 翻转
-        let model = make_model_with_notes(vec![(60, 0, 480, 100, 0)]);
+    fn covers_model_channel_move() {
+        // 双通道 layout：ch 0→ch 1 移动仍在覆盖内；移到未激活的 ch 2 不覆盖
+        let conductor = ConductorData::default();
+        let mut model = YinModel {
+            conductor: Arc::new(conductor),
+            tracks: vec![
+                Arc::new(TrackData::new(0, 0)),
+                Arc::new(TrackData::new(0, 1)),
+            ],
+            meta: ProjectMeta {
+                ppq: 480,
+                ..ProjectMeta::default()
+            },
+            ..Default::default()
+        };
+        model.rebuild();
         let layout = ChannelLayout::from_model(&model);
 
         let mut moved = model.clone();
         let t = Arc::make_mut(&mut moved.tracks[0]);
         t.channel = 1;
-        assert!(layout.differs_from_model(&moved), "ch 0→1 翻转");
+        assert!(layout.covers_model(&moved), "移到已激活 ch1，仍覆盖");
+
+        let t = Arc::make_mut(&mut moved.tracks[0]);
+        t.channel = 2;
+        assert!(!layout.covers_model(&moved), "移到未激活 ch2，不覆盖");
     }
 
     #[test]
-    fn differs_from_model_multi_port_flip() {
+    fn covers_model_multi_port_growth() {
         // layout: ch 0 (port 0) 和 ch 16 (port 1) 激活；model 新增 port 2 音轨
         let conductor = ConductorData::default();
         let per_track_notes: Vec<Vec<NoteEvent>> = vec![vec![NoteEvent {
@@ -575,39 +584,34 @@ mod tests {
 
         let mut extended = model.clone();
         extended.tracks.push(Arc::new(TrackData::new(2, 0)));
-        assert!(layout.differs_from_model(&extended), "多 port 翻转");
+        assert!(!layout.covers_model(&extended), "多 port 新增通道，不覆盖");
     }
 
     #[test]
-    fn differs_from_model_all_inactive() {
-        // layout: 全 false（空 model）；model 也无音轨 → 无翻转
+    fn covers_model_all_inactive() {
         let empty = YinModel::default();
         let layout = ChannelLayout::from_model(&empty);
-        assert!(!layout.differs_from_model(&empty), "全未激活，无翻转");
+        assert!(layout.covers_model(&empty), "空 model 恒覆盖");
     }
 
     /// 集成测试：完整复现 bug 场景——空工程写第一个音符必须立即有声。
     ///
     /// 场景：空 model spawn 引擎（无音轨）→ 加音轨（即使还没有音符）→
-    /// `differs_from_model` 报告翻转 → teardown；重建后通道已激活，
-    /// 再写第一个音符无需任何重建即可发声。
+    /// 未覆盖 → teardown；重建后通道已激活，再写第一个音符无需任何重建。
     #[test]
-    fn differs_from_model_detects_first_track_activation() {
+    fn covers_model_first_track_activation_needs_rebuild() {
         // 1. 空 model → layout 全 false
         let empty = YinModel::default();
         let layout = ChannelLayout::from_model(&empty);
 
-        // 2. 加音轨（ch 0，无音符）→ 0→1 翻转
+        // 2. 加音轨（ch 0，无音符）→ 未覆盖，必须重建
         let mut with_track = empty.clone();
         with_track.tracks.push(Arc::new(TrackData::new(0, 0)));
-        assert!(layout.differs_from_model(&with_track), "ch 0 0→1 翻转");
+        assert!(!layout.covers_model(&with_track), "ch 0 未激活，不覆盖");
 
-        // 3. 重建 layout → 与 model 一致，不再翻转；空音轨的通道已激活
+        // 3. 重建 layout → 覆盖成立；空音轨的通道已激活
         let new_layout = ChannelLayout::from_model(&with_track);
-        assert!(
-            !new_layout.differs_from_model(&with_track),
-            "新 layout 一致"
-        );
+        assert!(new_layout.covers_model(&with_track), "新 layout 覆盖");
         assert!(new_layout.is_active(0), "空音轨通道已激活");
     }
 
@@ -662,6 +666,20 @@ mod tests {
         assert_eq!(layout.compacted_channels(), 2);
         assert!(layout.is_audio_dense(1));
         assert!(!layout.is_audio_dense(0));
-        assert!(!layout.differs_from_model(&model));
+        assert!(layout.covers_model(&model));
+
+        // 新增未覆盖的音频通道 → 不覆盖；移除音频轨 → 仍覆盖
+        let mut extra = model.clone();
+        let mut audio2 = TrackData::new(0, 0);
+        audio2.kind = TrackKind::Audio;
+        audio2.audio_channel = Some(9);
+        extra.tracks.push(Arc::new(audio2));
+        extra.rebuild();
+        assert!(!layout.covers_model(&extra), "音频通道 9 未覆盖");
+
+        let mut removed = model.clone();
+        removed.tracks.retain(|t| t.kind != TrackKind::Audio);
+        removed.rebuild();
+        assert!(layout.covers_model(&removed), "音频轨移除仍覆盖");
     }
 }

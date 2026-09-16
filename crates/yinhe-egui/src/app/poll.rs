@@ -57,7 +57,9 @@ impl App {
                         self.restore_instrument_rack(insert_idx);
                         // 音频就绪前不切换显示：保证"看到音符即可立即播放"，
                         // 避免用户看到 MIDI 就点播放而音频初始化还在跑。
-                        self.teardown_audio();
+                        // 不在这里 teardown：下一帧 `rebuild_audio_if_needed`
+                        // 会先尝试 `try_adopt_engine`（设置/布局/音色库覆盖时
+                        // 复用现有引擎，不重开流、不重传采样），不满足才拆建。
                         // 打开成功 → 记录到「最近修改的文件」
                         // 压缩包内文件记录外层压缩包路径，避免内部 entry 名（相对路径）导致「找不到文件」
                         let recent = archive_path.as_deref().unwrap_or(&path);
@@ -159,7 +161,8 @@ impl App {
                     self.workspace.documents.push(doc);
                     self.restore_mixer_rack(insert_idx);
                     self.restore_instrument_rack(insert_idx);
-                    self.teardown_audio();
+                    // 同 ModelLoaded：不在此 teardown，交给下一帧
+                    // `rebuild_audio_if_needed`（优先 try_adopt_engine 复用引擎）。
                     // 打开成功 → 记录到「最近修改的文件」
                     // 拖出 temp 不进「最近打开」（路径在 /tmp 下，重开无意义）
                     if !is_restored

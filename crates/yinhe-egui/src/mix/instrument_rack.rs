@@ -60,6 +60,12 @@ pub(crate) struct InstrumentRack {
 }
 
 impl InstrumentRack {
+    /// 机架内是否没有任何插件乐器（引擎侧没有本机架装过的乐器）。
+    /// 跨文档复用引擎的前提之一，语义同 `MixerRack::is_plugin_free`。
+    pub(crate) fn is_plugin_free(&self) -> bool {
+        self.slots.iter().all(|s| s.instance.is_none() && !s.sent) && self.pending_return.is_empty()
+    }
+
     fn slot_mut(&mut self, channel: u8) -> Option<&mut InstrumentSlot> {
         self.slots.iter_mut().find(|s| s.channel == channel)
     }

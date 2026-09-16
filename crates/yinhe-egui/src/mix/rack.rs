@@ -275,6 +275,24 @@ impl MixerRack {
         }
     }
 
+    /// 机架内是否没有任何插件处理器（引擎侧没有本机架装过的插件）。
+    ///
+    /// 跨文档复用引擎的前提之一：旧文档有插件时引擎内部残留 insert，
+    /// 直接复用会与新文档的机架状态错位，必须走重建。
+    pub(crate) fn is_plugin_free(&self) -> bool {
+        fn clean(chain: &[SlotRuntime]) -> bool {
+            chain.iter().all(|rt| rt.instance.is_none() && !rt.sent)
+        }
+        self.channels.values().all(|v| clean(v))
+            && self.buses.values().all(|v| clean(v))
+            && self.audios.values().all(|v| clean(v))
+            && clean(&self.master)
+            && self
+                .orphan
+                .iter()
+                .all(|rt| rt.instance.is_none() && !rt.sent)
+    }
+
     /// 插件 GUI 状态轮询：插件主动关窗 / 用户关宿主窗口 / 尺寸请求。
     #[cfg(target_os = "macos")]
     fn poll_gui(rt: &mut SlotRuntime) {

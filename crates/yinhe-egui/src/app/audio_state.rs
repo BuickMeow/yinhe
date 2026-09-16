@@ -2,6 +2,43 @@
 
 use yinhe_audio::channel_layout::ChannelLayout;
 
+/// 影响音频引擎 spawn 的设置字段快照。
+///
+/// 两处使用：
+/// - 设置对话框：区分「设置真的改了」与「只是关掉了设置窗口」（`show_viewport`
+///   的返回值是"窗口关闭"而非"有修改"）；
+/// - 引擎复用：`AudioState::engine_key` 记录引擎创建时的输入，跨文档复用前
+///   要求其与当前设置一致。
+///
+/// 覆盖 `rebuild_audio_if_needed` / `resolve_sf_config` 的全部 spawn 输入：
+/// 采样率、缓冲大小、输出设备、GPU 合成开关、全局音色库列表。
+/// `xsynth_layers` 由 `SetLayerCount` 在线应用，不参与。
+#[derive(Clone, PartialEq)]
+pub(crate) struct EngineSpawnKey {
+    sample_rate: u32,
+    buffer_size: u32,
+    output_device_name: Option<String>,
+    use_gpu_synth: bool,
+    sf_entries: Vec<(String, String, bool)>,
+}
+
+impl EngineSpawnKey {
+    pub(crate) fn of(settings: &crate::audio_settings::AudioSettings) -> Self {
+        Self {
+            sample_rate: settings.sample_rate,
+            buffer_size: settings.buffer_size,
+            output_device_name: settings.output_device_name.clone(),
+            use_gpu_synth: settings.use_gpu_synth,
+            sf_entries: settings
+                .global_sf_config
+                .entries
+                .iter()
+                .map(|e| (e.path.clone(), e.name.clone(), e.enabled))
+                .collect(),
+        }
+    }
+}
+
 /// 加载完成但等音频就绪（`audio_ready`）后才激活显示的文档。
 pub(crate) struct PendingDocActivate {
     /// 文档在 `workspace.documents` 中的索引。
@@ -27,12 +64,18 @@ pub(crate) struct AudioState {
     /// Which document index the audio engine is currently bound to.
     /// Used to detect document switches that require an audio rebuild.
     pub active_doc: Option<usize>,
+    /// 引擎创建时的设置快照（`EngineSpawnKey::of`）。`None` = 无引擎。
+    /// 文档切换时若与当前设置一致、且布局/音色库被覆盖，可复用引擎不重建。
+    pub engine_key: Option<EngineSpawnKey>,
+    /// 引擎创建时发送的音色库配置（源通道 → paths）。
+    /// 文档复用时要求新文档需要的配置逐通道完全相同（避免重复加载/替换）。
+    pub engine_sf_configs: Vec<(u8, Vec<String>)>,
     /// 当前引擎创建时使用的 `ChannelLayout` 快照。
     ///
     /// 用于在 `notify_notes_changed` / `notify_audio_model_changed` 里检测
-    /// channel 激活状态是否翻转：若 `layout.differs_from_model(model)` 为 true，
-    /// 说明有音轨增删/改通道（激活状态变了），必须 teardown + 重建引擎。
-    /// 否则可走便宜的 `UpdateNotes` / `ReloadNotes` 路径。
+    /// channel 激活状态是否翻转：若 `layout.covers_model(model)` 为 false，
+    /// 说明 model 用到了引擎未激活的通道，必须 teardown + 重建引擎。
+    /// 覆盖成立（含"占用减少"）则走便宜的 `UpdateNotes` / `ReloadNotes` 路径。
     ///
     /// `None` 表示引擎尚未 spawn，下一帧 `rebuild_audio_if_needed` 会用新 model
     /// 重新算 layout 并填入此字段。
@@ -93,6 +136,8 @@ impl AudioState {
         Self {
             handle: None,
             active_doc: None,
+            engine_key: None,
+            engine_sf_configs: Vec::new(),
             last_channel_layout: None,
             playback_anchor: None,
             pending_playback: false,

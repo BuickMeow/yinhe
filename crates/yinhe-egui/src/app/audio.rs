@@ -54,13 +54,15 @@ impl App {
         }
     }
 
-    /// 检测 doc idx 的当前 model 是否与引擎持有的 `ChannelLayout` 在激活状态上有差异。
+    /// 检测 doc idx 的当前 model 是否用到了引擎 `ChannelLayout` 里未激活的通道。
     ///
-    /// 返回 true 表示有 channel 的激活状态翻转了（0→1 或 1→0），必须 teardown。
-    /// 返回 false 表示激活状态没变（如已激活 channel 加/删非末音符），可走便宜路径。
+    /// 返回 true 表示必须 teardown 重建：`ChannelLayout` 创建后不可变，
+    /// 新通道（加音轨/改 port/channel）无法被 dispatch。
+    /// 返回 false 表示引擎布局仍覆盖该 model（含"占用减少"：删音轨/移走通道），
+    /// 可走便宜的 `UpdateNotes` / `ReloadNotes` 路径。
     ///
     /// 若引擎绑定的 doc 与 idx 不一致（tab 切换后的 1 帧延迟），也返回 true
-    /// ——必须 teardown 重建以绑定到新 doc。
+    /// ——必须 teardown 重建（或由 `try_adopt_engine` 先过户）以绑定到新 doc。
     fn channel_layout_flipped_for_doc(&self, idx: usize) -> bool {
         let Some(layout) = &self.audio_state.last_channel_layout else {
             return true; // 引擎未 spawn 过，让 rebuild 处理
@@ -69,7 +71,7 @@ impl App {
             return true; // 绑定的 doc 不一致，必须重建
         }
         let model = &self.workspace.documents[idx].data.model;
-        layout.differs_from_model(model)
+        !layout.covers_model(model)
     }
 
     /// Resolve the merged SF configuration for the given document.
@@ -158,9 +160,15 @@ impl App {
             return;
         }
 
-        // spawn 进行中且目标 doc 没变：等待结果，不重复发起。
-        // （doc 变了则发起新 spawn，旧结果到达时按 spawn_for_doc 对比丢弃。）
-        if self.audio_state.spawn_rx.is_some() && self.audio_state.spawn_for_doc == Some(idx) {
+        // spawn 进行中：等结果（不在飞 spawn 上叠过户）。
+        // 结果到达后若目标 doc 已变，下一帧再按过户/重建处理。
+        if self.audio_state.spawn_rx.is_some() {
+            return;
+        }
+
+        // 文档切换但引擎可复用（设置/布局/音色库都覆盖、机架无插件）：
+        // 过户给新文档——不重开 cpal 流、不重建 GpuSynth、不重传采样。
+        if self.try_adopt_engine(idx) {
             return;
         }
 
@@ -297,6 +305,11 @@ impl App {
                 self.audio_state.handle = Some(audio);
                 self.audio_state.active_doc = Some(idx);
                 self.audio_state.last_channel_layout = pending_layout;
+                // 记录引擎创建快照：跨文档复用（try_adopt_engine）的判定依据。
+                self.audio_state.engine_key = Some(crate::app::audio_state::EngineSpawnKey::of(
+                    &self.audio_settings,
+                ));
+                self.audio_state.engine_sf_configs = port_configs.clone();
                 // 成功后清失败状态，避免同文档下次 rebuild 被误拦
                 self.audio_state.spawn_error = None;
                 self.audio_state.spawn_error_doc = None;
@@ -316,6 +329,87 @@ impl App {
                 progress::set_visible(&self.load_progress, false);
             }
         }
+    }
+
+    /// 尝试把现有引擎"过户"给文档 `idx`——不 teardown + 重 spawn。
+    ///
+    /// 换文档的常规路径是"拆引擎 + 重开 cpal 流 + 重建 GpuSynth + 重传采样"，
+    /// 即使音色库/设备/采样率毫无变化也要全量重来（数百 ms 到数秒）。满足
+    /// 以下条件时直接把新文档的模型与通道状态推给现有引擎即可（毫秒级）：
+    /// 1. 引擎活着且设置快照未变（采样率/缓冲/设备/GPU 开关/全局音色库）；
+    /// 2. 引擎布局覆盖新文档的通道需求（`ChannelLayout::covers_model`）；
+    /// 3. 新文档需要的音色库配置逐通道与引擎已加载的完全一致；
+    /// 4. 新旧文档的机架都没有插件 insert / 插件乐器（引擎内部状态干净，
+    ///    避免旧插件残留或需要替换语义）。
+    ///
+    /// 任一条件不满足返回 false，调用方继续走 teardown + spawn 老路。
+    fn try_adopt_engine(&mut self, idx: usize) -> bool {
+        if self.audio_state.handle.is_none() {
+            return false;
+        }
+        let Some(engine_key) = self.audio_state.engine_key.as_ref() else {
+            return false;
+        };
+        if *engine_key != crate::app::audio_state::EngineSpawnKey::of(&self.audio_settings) {
+            return false;
+        }
+        let Some(layout) = self.audio_state.last_channel_layout.as_ref() else {
+            return false;
+        };
+        let Some(old_idx) = self.audio_state.active_doc else {
+            return false;
+        };
+        let model = self.workspace.documents[idx].data.model.clone();
+        if !layout.covers_model(&model) {
+            return false;
+        }
+        let port_configs = self.resolve_sf_config(&self.workspace.documents[idx]);
+        if !sf_configs_cover(&self.audio_state.engine_sf_configs, &port_configs) {
+            return false;
+        }
+        if !self.racks_plugin_free(old_idx) || !self.racks_plugin_free(idx) {
+            return false;
+        }
+
+        // 过户：把新文档状态推给现有引擎（`send_initial_audio_state` 的增量
+        // 版本——音色库已覆盖，跳过 SetSoundFonts/SetLayerCount）。
+        let doc = &self.workspace.documents[idx];
+        let Some(audio) = self.audio_state.handle.as_ref() else {
+            return false;
+        };
+        audio.handle.send(yinhe_audio::AudioCommand::Stop);
+        audio.handle.send(yinhe_audio::AudioCommand::LoadModel {
+            model: model.clone(),
+        });
+        audio
+            .handle
+            .send(yinhe_audio::AudioCommand::SetMixerParams {
+                params: Box::new(doc.mixer.clone()),
+            });
+        audio.handle.set_skip_tracks(doc.compute_skip_mask());
+        audio.set_am_ms(std::sync::Arc::new(doc.edit.arr_am_ms.clone()));
+        self.audio_library.push_all_to_engine(&audio.handle);
+        let sample_rate = audio.sample_rate;
+        self.audio_library.ensure_decoded(&model, sample_rate);
+
+        self.audio_state.active_doc = Some(idx);
+        self.audio_state.playback_anchor = None;
+        self.audio_state.pending_playback = false;
+        // 引擎与音色库都已就绪：不进入"等音色库加载"的进度卡阶段。
+        self.audio_state.sf_total = 0;
+        self.audio_state.sf_pending = false;
+        progress::set_stage(&self.load_progress, 1, progress::StageStatus::Done);
+        progress::set_stage(&self.load_progress, 2, progress::StageStatus::Done);
+        true
+    }
+
+    /// 文档 idx 的两个机架是否都没有插件实例（引擎侧无本机架插件残留）。
+    fn racks_plugin_free(&self, idx: usize) -> bool {
+        self.mixer_racks.get(idx).is_none_or(|r| r.is_plugin_free())
+            && self
+                .instrument_racks
+                .get(idx)
+                .is_none_or(|r| r.is_plugin_free())
     }
 
     /// Send the initial state to a freshly spawned audio handle:
@@ -808,6 +902,8 @@ impl App {
         }
         self.audio_state.active_doc = None;
         self.audio_state.last_channel_layout = None;
+        self.audio_state.engine_key = None;
+        self.audio_state.engine_sf_configs.clear();
         self.audio_state.spawn_error = None;
         self.audio_state.spawn_error_doc = None;
     }
@@ -828,5 +924,49 @@ impl App {
         if !returned.is_empty() && idx < self.mixer_racks.len() {
             self.mixer_racks[idx].on_returns(returned);
         }
+    }
+}
+
+/// `engine` 已加载的音色库配置是否覆盖 `needed`：`needed` 的每一项
+/// 都能在 `engine` 里找到完全相同的 (源通道, paths)。
+fn sf_configs_cover(engine: &[(u8, Vec<String>)], needed: &[(u8, Vec<String>)]) -> bool {
+    needed
+        .iter()
+        .all(|(ch, paths)| engine.iter().any(|(c, p)| c == ch && p == paths))
+}
+
+#[cfg(test)]
+mod adopt_tests {
+    use super::sf_configs_cover;
+
+    fn cfgs(items: &[(u8, &[&str])]) -> Vec<(u8, Vec<String>)> {
+        items
+            .iter()
+            .map(|(ch, paths)| (*ch, paths.iter().map(|s| s.to_string()).collect()))
+            .collect()
+    }
+
+    #[test]
+    fn sf_configs_cover_subset_with_same_paths() {
+        let engine = cfgs(&[(0, &["/a.sfz"]), (1, &["/a.sfz"])]);
+        assert!(sf_configs_cover(&engine, &cfgs(&[(0, &["/a.sfz"])])));
+        assert!(sf_configs_cover(&engine, &[]));
+        assert!(sf_configs_cover(&engine, &engine));
+    }
+
+    #[test]
+    fn sf_configs_cover_rejects_missing_or_different() {
+        let engine = cfgs(&[(0, &["/a.sfz"])]);
+        // 新文档用到的通道引擎没加载
+        assert!(!sf_configs_cover(&engine, &cfgs(&[(1, &["/a.sfz"])])));
+        // 同通道但路径不同（工程覆盖）
+        assert!(!sf_configs_cover(&engine, &cfgs(&[(0, &["/b.sfz"])])));
+        // 同通道路径追加
+        assert!(!sf_configs_cover(
+            &engine,
+            &cfgs(&[(0, &["/a.sfz", "/b.sfz"])])
+        ));
+        // 引擎空，需求非空
+        assert!(!sf_configs_cover(&cfgs(&[]), &cfgs(&[(0, &["/a.sfz"])])));
     }
 }
