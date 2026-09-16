@@ -374,6 +374,9 @@ pub struct GpuSynth {
     /// 排序好的事件列表（导出/Seek 用）
     events: Vec<SynthEvent>,
     event_cursor: usize,
+    /// 本块内 CC 事件位置（升序，含重复 sample；collect_block 每块收集一次，
+    /// 替代逐段从 event_cursor 重扫全部事件）
+    cc_scratch: Vec<u64>,
     /// 当前渲染位置
     sample_position: u64,
     /// 最近一次 seek 时的 event_cursor：`chase_skip` 用它计算"seek 后已处理
@@ -420,6 +423,7 @@ impl GpuSynth {
             sample_rate,
             events: Vec::new(),
             event_cursor: 0,
+            cc_scratch: Vec::new(),
             sample_position: 0,
             chase_base: 0,
         })
@@ -756,20 +760,6 @@ impl GpuSynth {
         self.sample_position = block_end;
     }
 
-    /// 在 [start, block_end) 内查找下一个 CC 事件的位置（从 event_cursor 开始）。
-    fn next_cc_in_block(&self, start: u64, block_end: u64) -> Option<u64> {
-        for ev in &self.events[self.event_cursor..] {
-            let s = ev.sample();
-            if s >= block_end {
-                return None;
-            }
-            if s >= start && matches!(ev, SynthEvent::Control { .. }) {
-                return Some(s);
-            }
-        }
-        None
-    }
-
     /// 收集块内事件为段结构：
     /// - 段边界 = CC 事件位置（ch_updates 记录受影响通道的状态快照）
     /// - note_on 创建 voice（块内帧偏移）；note_off 发 release 指令（帧 + vid）
@@ -785,6 +775,20 @@ impl GpuSynth {
         releases: &mut Vec<ReleaseCmd>,
         env_cmds: &mut Vec<EnvUpdateCmd>,
     ) {
+        // 本块内的 CC 位置一次收集（升序；段边界逐段消费）。
+        // 逐段重扫全部事件是 O(事件数 × CC 数)，黑乐谱密集事件块下不可忽略；
+        // event_cursor 处事件恒 >= block_start（块末 cursor 停在 >= block_end 处）。
+        self.cc_scratch.clear();
+        for ev in &self.events[self.event_cursor..] {
+            let s = ev.sample();
+            if s >= block_end {
+                break;
+            }
+            if matches!(ev, SynthEvent::Control { .. }) {
+                self.cc_scratch.push(s);
+            }
+        }
+
         // 段 0：块起点的通道 pitch 变化（seek/chase/调音后）→ shader 初始化时应用
         // speed = base_speed × speed_mult。voice 状态常驻 GPU，CPU 不再逐 voice 同步。
         let seg0_off = ch_updates.len();
@@ -809,9 +813,11 @@ impl GpuSynth {
         let mut seg_start = block_start;
         let mut seg_frame = 0u32;
         let mut seg_ch_off = ch_updates.len();
+        let mut cc_idx = 0usize;
 
         loop {
-            let next_cc = self.next_cc_in_block(seg_start, block_end);
+            // 下一个未处理的 CC 位置（跳过已消费的项；cc_scratch 升序）
+            let next_cc = self.cc_scratch.get(cc_idx).copied();
 
             // 段 [seg_start, next_cc) 内的音符事件（sample == next_cc 的留给段边界）
             while self.event_cursor < self.events.len() {
@@ -846,6 +852,10 @@ impl GpuSynth {
             let seg_ch_off_before = seg_ch_off;
             self.process_events_at(cc_sample, frame, ch_updates, releases, env_cmds);
             let ch_count = ch_updates.len() - seg_ch_off_before;
+            // 同 sample 的重复 CC 项一并消费（事件已全部处理）
+            while cc_idx < self.cc_scratch.len() && self.cc_scratch[cc_idx] <= cc_sample {
+                cc_idx += 1;
+            }
 
             segs.push(SegInfo {
                 start_frame: frame,
