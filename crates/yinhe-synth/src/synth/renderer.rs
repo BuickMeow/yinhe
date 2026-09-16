@@ -262,9 +262,11 @@ impl GpuAudioRenderer {
         }
         let mut mix = vec![0.0f32; CHANNEL_COUNT * frames as usize * 2];
         let mut stage = vec![0u32; 1];
+        // 哑渲染只跑一个段长：目的是触发 shader/管线/派发路径的首次执行，
+        // 不是跑满整块（少占 GPU，减轻与 UI 渲染的竞争）。
         let seg = RenderSegment {
             frame_start: 0,
-            frame_length: frames,
+            frame_length: RENDER_SEGMENT_FRAMES.min(frames),
             segs: &[],
             ch_updates: &[],
             releases: &[],

@@ -149,6 +149,10 @@ impl GpuAudioRenderer {
                             // write_buffer 兜底保证数据仍然正确（不静默出静音）。
                             Err(_) => queue.write_buffer(&buf, 0, bytemuck::cast_slice(data)),
                         }
+                        // 让路：大块 GPU 缓冲创建/上传会与 UI 渲染（egui 的 wgpu）
+                        // 争抢 GPU/驱动资源，逐 chunk 之间让出一帧，避免加载
+                        // 进度/动画断续（CPU 音频路径无此问题）。
+                        std::thread::sleep(std::time::Duration::from_millis(2));
                         buf
                     })
                     .collect();
