@@ -318,6 +318,8 @@ struct Voice {
 
 /// 一段的事件结构，render_to_mixer 内先按段 collect 保存所有权，
 /// 再构造 RenderSegment 借用视图传给 renderer 一次性渲染。
+/// 实例常驻 `GpuSynth::seg_scratch` 复用（每块只 clear，不重新分配）。
+#[derive(Default)]
 struct SegBuffers {
     frame_start: u32,
     frame_length: u32,
@@ -377,6 +379,8 @@ pub struct GpuSynth {
     /// 本块内 CC 事件位置（升序，含重复 sample；collect_block 每块收集一次，
     /// 替代逐段从 event_cursor 重扫全部事件）
     cc_scratch: Vec<u64>,
+    /// 分段渲染的段缓冲（复用，消除每块 4×段数 次 Vec 分配）
+    seg_scratch: Vec<SegBuffers>,
     /// 当前渲染位置
     sample_position: u64,
     /// 最近一次 seek 时的 event_cursor：`chase_skip` 用它计算"seek 后已处理
@@ -424,6 +428,7 @@ impl GpuSynth {
             events: Vec::new(),
             event_cursor: 0,
             cc_scratch: Vec::new(),
+            seg_scratch: Vec::new(),
             sample_position: 0,
             chase_base: 0,
         })
@@ -645,39 +650,40 @@ impl GpuSynth {
 
         // 按渲染段 collect（段内帧索引相对段起点）：每段独立结构，
         // 供 renderer 分段跑 pass1/pass2（partial 只需 voices × 段长）。
+        // 段缓冲跨块复用（take 出来，渲染完放回），只 clear 不重新分配。
         let upload_from = self.voices.len();
-        let mut seg_data: Vec<SegBuffers> = Vec::new();
+        let mut seg_data = std::mem::take(&mut self.seg_scratch);
+        let mut seg_used = 0usize;
         let mut offset = 0usize;
         while offset < frames {
             let seg_frames = (frames - offset).min(RENDER_SEGMENT_FRAMES as usize);
             let s0 = block_start + offset as u64;
             let s1 = s0 + seg_frames as u64;
-            let mut segs: Vec<SegInfo> = Vec::new();
-            let mut ch_updates: Vec<ChState> = Vec::new();
-            let mut releases: Vec<ReleaseCmd> = Vec::new();
-            let mut env_cmds: Vec<EnvUpdateCmd> = Vec::new();
+            if seg_used == seg_data.len() {
+                seg_data.push(SegBuffers::default());
+            }
+            let sb = &mut seg_data[seg_used];
+            sb.frame_start = offset as u32;
+            sb.frame_length = seg_frames as u32;
+            sb.segs.clear();
+            sb.ch_updates.clear();
+            sb.releases.clear();
+            sb.env_cmds.clear();
             let new_from = self.voices.len();
             self.collect_block(
                 s0,
                 s1,
-                &mut segs,
-                &mut ch_updates,
-                &mut releases,
-                &mut env_cmds,
+                &mut sb.segs,
+                &mut sb.ch_updates,
+                &mut sb.releases,
+                &mut sb.env_cmds,
             );
             // 本段新建 voice 的 start_offset（段内帧）转**全局块内帧**：
             // shader 段末按段长右移未开始 voice 的偏移，跨段后回到段内相对值。
             for v in &mut self.voices[new_from..] {
                 v.state.start_offset += offset as u32;
             }
-            seg_data.push(SegBuffers {
-                frame_start: offset as u32,
-                frame_length: seg_frames as u32,
-                segs,
-                ch_updates,
-                releases,
-                env_cmds,
-            });
+            seg_used += 1;
             offset += seg_frames;
         }
 
@@ -695,7 +701,7 @@ impl GpuSynth {
                     .resize(self.voices.len(), GpuVoiceState::default());
             }
             let readback = need_compact.then_some(self.states_buf.as_mut_slice());
-            let segments: Vec<RenderSegment<'_>> = seg_data
+            let segments: Vec<RenderSegment<'_>> = seg_data[..seg_used]
                 .iter()
                 .map(|s| RenderSegment {
                     frame_start: s.frame_start,
@@ -715,6 +721,7 @@ impl GpuSynth {
                 self.sample_rate,
             );
             debug_assert_eq!(n as usize, self.voices.len().min(MAX_VOICE_SLOTS as usize));
+            drop(segments);
             // 读回紧凑 env_stage（voice 清理/墓碑标记用；其余状态常驻 GPU）。
             for (v, &stage) in self.voices.iter_mut().zip(self.voice_stage_buf.iter()) {
                 v.state.env_stage = stage;
@@ -757,6 +764,8 @@ impl GpuSynth {
             .peak_voices
             .max(self.voices.iter().filter(|v| v.state.env_stage < 6).count());
 
+        // 段缓冲放回复用池（只保留容量，下块 clear 复用）
+        self.seg_scratch = seg_data;
         self.sample_position = block_end;
     }
 

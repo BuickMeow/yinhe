@@ -33,6 +33,8 @@ pub struct GpuAudioRenderer {
     pub(crate) frame_count: u32,
     /// render_into 的 per-channel 混音临时缓冲（复用，避免每块分配）
     pub(crate) mix_scratch: Vec<f32>,
+    /// 每段 release 指令的按帧前缀和（复用，避免每段分配）
+    pub(crate) release_by_frame_scratch: Vec<u32>,
     /// 待写入的 voice 槽位更新（buffer 未就绪时也不丢；render_block 在
     /// ensure_buffers 之后统一 flush）。
     pending_voice_writes: Vec<(u32, GpuVoiceState)>,
@@ -193,6 +195,7 @@ impl GpuAudioRenderer {
             sample_upload_count: 0,
             frame_count: 0,
             mix_scratch: Vec::new(),
+            release_by_frame_scratch: Vec::new(),
             pending_voice_writes: Vec::new(),
         })
     }
@@ -349,13 +352,15 @@ impl GpuAudioRenderer {
                 break;
             };
             let idx = buf.staging_idx;
-            // release 按帧前缀和（段内帧）
-            let mut release_by_frame = vec![0u32; seg.frame_length as usize + 2];
+            // release 按帧前缀和（段内帧；scratch 复用，clear 后全量填零）
+            self.release_by_frame_scratch.clear();
+            self.release_by_frame_scratch
+                .resize(seg.frame_length as usize + 2, 0);
             for r in seg.releases {
-                release_by_frame[r.frame as usize + 1] += 1;
+                self.release_by_frame_scratch[r.frame as usize + 1] += 1;
             }
-            for i in 1..release_by_frame.len() {
-                release_by_frame[i] += release_by_frame[i - 1];
+            for i in 1..self.release_by_frame_scratch.len() {
+                self.release_by_frame_scratch[i] += self.release_by_frame_scratch[i - 1];
             }
             let params = RenderParams {
                 frame_count: seg.frame_length,
@@ -377,7 +382,7 @@ impl GpuAudioRenderer {
             self.queue.write_buffer(
                 &buf.release_by_frame_buf,
                 0,
-                bytemuck::cast_slice(&release_by_frame),
+                bytemuck::cast_slice(&self.release_by_frame_scratch),
             );
             self.queue
                 .write_buffer(&buf.release_cmds_buf, 0, bytemuck::cast_slice(seg.releases));
