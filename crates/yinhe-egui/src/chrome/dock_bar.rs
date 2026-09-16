@@ -118,7 +118,10 @@ fn builtin_params(r: &yinhe_mixer::InsertRef) -> Vec<DockParam> {
         .unwrap_or_default()
 }
 
-/// 光标处应显示的值：`<= tick` 的最后一条事件（tick 0 也要命中）。
+/// 光标处应显示的值。
+///
+/// 复用 [`yinhe_types::AutomationLane::value_at`]（chase/预览/UI 共用）：
+/// 二分查找 + 曲线段内实时插值，播放中旋钮随自动化平滑转动。
 fn lane_current_value(
     model: &yinhe_core::YinModel,
     track_ti: usize,
@@ -129,13 +132,7 @@ fn lane_current_value(
         .tracks
         .get(track_ti)
         .and_then(|t| t.automation_lanes.iter().find(|l| l.target == *target))
-        .and_then(|l| {
-            l.events
-                .iter()
-                .rev()
-                .find(|e| e.tick <= tick)
-                .map(|e| e.value)
-        })
+        .and_then(|l| l.value_at(tick).map(|(v, _)| v))
 }
 
 /// dock 高度下限（与旧 Panel min_size 一致）。
@@ -313,10 +310,18 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
         let doc = &app.workspace.documents[idx];
         doc.edit.cursor_tick.unwrap_or(0.0).max(0.0) as u32
     };
+    // 显示值取值位置：播放中跟随播放头（自动化实时驱动旋钮），停止时跟随
+    // 编辑光标。写入位置（`tick`）始终是编辑光标，避免拖动旋钮写到播放头处。
+    let display_tick = app.workspace.documents[idx]
+        .edit
+        .playback
+        .current_tick(&model)
+        .map(|(t, _)| t.max(0.0) as u32)
+        .unwrap_or(tick);
     let lane_current: Vec<DockParam> = xsynth_targets()
         .into_iter()
         .map(|target| {
-            let current = lane_current_value(&model, lane_track_ti, tick, &target);
+            let current = lane_current_value(&model, lane_track_ti, display_tick, &target);
             DockParam {
                 name: target.display_name(),
                 default: target.default_value(),
@@ -472,7 +477,7 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
                                             ins,
                                             &model,
                                             lane_track_ti,
-                                            tick,
+                                            display_tick,
                                             selected,
                                             &mut knob_actions,
                                             &mut open_params,
