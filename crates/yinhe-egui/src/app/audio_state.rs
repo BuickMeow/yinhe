@@ -2,6 +2,12 @@
 
 use yinhe_audio::channel_layout::ChannelLayout;
 
+/// 后台 teardown 回传的 insert 处理器批次（+ 归属文档索引）。
+type InsertReturnBatch = (
+    std::sync::mpsc::Receiver<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
+    usize,
+);
+
 /// All audio-engine-related state, extracted from `App` to reduce the God Object.
 pub(crate) struct AudioState {
     /// The active audio backend handle (None if not initialized yet).
@@ -27,6 +33,9 @@ pub(crate) struct AudioState {
     pub pending_playback: bool,
     /// 诊断：Play/Resume 发出时刻（音频确认播放时打印等待时长）。
     pub pending_playback_since: Option<std::time::Instant>,
+    /// teardown 后台线程回收的 insert 处理器（渲染线程 join 完成后回传）
+    /// 与归属文档索引。`poll_insert_returns` 每帧尝试收取。
+    pub pending_insert_returns: Option<InsertReturnBatch>,
     /// 设备切换对话框是否需要显示。
     ///
     /// 两种触发场景：
@@ -74,6 +83,7 @@ impl AudioState {
             playback_anchor: None,
             pending_playback: false,
             pending_playback_since: None,
+            pending_insert_returns: None,
             device_switch_pending: false,
             device_switch_required: false,
             device_switch_error: None,

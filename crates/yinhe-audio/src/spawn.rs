@@ -499,6 +499,10 @@ pub struct CpalAudioHandle {
     /// Drop 时同步 join，确保 AudioEngine（含 rayon 线程池）完全释放。
     /// 不 join 会导致反复 teardown+rebuild（如蓝牙耳机抖动触发设备切换）时
     /// rayon 工作线程累积，最终触发 EAGAIN (code 35) panic。
+    ///
+    /// 注意：渲染线程退出需释放 GPU 资源并 `purge_free_pages`（jemalloc
+    /// 归还大块采样缓冲给 OS），join 可能耗时数百 ms——调用方（UI）应把
+    /// drop 放到后台线程，避免卡住主线程。
     pub(crate) renderer_handle: Option<std::thread::JoinHandle<()>>,
 }
 

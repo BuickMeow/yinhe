@@ -595,6 +595,7 @@ impl eframe::App for App {
 
         // ── 音色库异步加载进度（完成计数驱动 stage 2）──
         self.poll_audio_progress();
+        self.poll_insert_returns();
 
         // ── 混音台 insert：回收退回处理器 + 插件反向请求（restart 等）──
         self.poll_mixer_plugins();

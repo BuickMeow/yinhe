@@ -744,29 +744,59 @@ impl App {
     }
 
     /// Tear down audio (e.g. on new project or settings change).
+    ///
+    /// `CpalAudioHandle::Drop` 会 join 渲染线程，而渲染线程退出时要释放 GPU
+    /// 资源（device/buffer）并 `purge_free_pages`（jemalloc 归还 500MB 级采样
+    /// 缓冲给 OS），可达数百 ms——同步做会把 UI 卡住（toast 停住、恢复后跳到
+    /// 最新进度）。这里把 drop 扔到后台线程，渲染线程关机时退回的 insert
+    /// 处理器由后台线程收齐后经 std mpsc 回传，`poll_insert_returns` 每帧取回。
     pub(crate) fn teardown_audio(&mut self) {
-        // 渲染线程关机时会把全部 insert 处理器经 return 通道退回；
-        // 先克隆接收端再 drop 句柄，之后 drain 交回绑定文档的机架 deactivate，
-        // 避免处理器在渲染线程上裸 drop（CLAP deactivate 必须在管理线程做）。
+        // 先克隆接收端再 drop 句柄（关机退回的处理器经它取回）。
         let return_rx = self
             .audio_state
             .handle
             .as_ref()
             .map(|a| a.handle.clone_insert_return_rx());
         let bound_doc = self.audio_state.active_doc;
-        self.audio_state.handle = None;
+        if let Some(a) = self.audio_state.handle.take() {
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let t = std::time::Instant::now();
+                drop(a);
+                let mut returned: Vec<Box<dyn yinhe_mixer::InsertProcessor>> = Vec::new();
+                if let Some(rx) = return_rx {
+                    while let Ok(mut batch) = rx.try_recv() {
+                        returned.append(&mut batch);
+                    }
+                }
+                let _ = tx.send(returned);
+                tracing::info!("[audio] 后台 teardown（join + 回收）={:?}", t.elapsed());
+            });
+            if let Some(idx) = bound_doc {
+                self.audio_state.pending_insert_returns = Some((rx, idx));
+            }
+        }
         self.audio_state.active_doc = None;
         self.audio_state.last_channel_layout = None;
         self.audio_state.spawn_error = None;
         self.audio_state.spawn_error_doc = None;
-        if let (Some(rx), Some(idx)) = (return_rx, bound_doc) {
-            let mut returned: Vec<Box<dyn yinhe_mixer::InsertProcessor>> = Vec::new();
-            while let Ok(mut batch) = rx.try_recv() {
-                returned.append(&mut batch);
-            }
-            if !returned.is_empty() && idx < self.mixer_racks.len() {
-                self.mixer_racks[idx].on_returns(returned);
-            }
+    }
+
+    /// 每帧收取后台 teardown 回传的 insert 处理器，交回机架 deactivate
+    /// （CLAP deactivate 必须在 UI/管理线程做）。
+    pub(crate) fn poll_insert_returns(&mut self) {
+        let Some((rx, idx)) = self.audio_state.pending_insert_returns.as_ref() else {
+            return;
+        };
+        let idx = *idx;
+        let returned = match rx.try_recv() {
+            Ok(returned) => returned,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => Vec::new(),
+        };
+        self.audio_state.pending_insert_returns = None;
+        if !returned.is_empty() && idx < self.mixer_racks.len() {
+            self.mixer_racks[idx].on_returns(returned);
         }
     }
 }
