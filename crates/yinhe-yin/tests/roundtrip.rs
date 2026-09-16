@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
+use yinhe_types::automation::{ParamDevice, xsynth_param};
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent};
 use yinhe_yin::{load_yin, load_yin_bytes, save_yin, save_yin_bytes};
 
@@ -95,12 +96,12 @@ fn build_complex_model() -> YinModel {
             events: vec![
                 AutomationEvent {
                     tick: 0,
-                    value: 100.0,
+                    value: 100.0 / 127.0,
                     shape: SegmentShape::Step,
                 },
                 AutomationEvent {
                     tick: 480,
-                    value: 80.0,
+                    value: 80.0 / 127.0,
                     shape: SegmentShape::Step,
                 },
             ],
@@ -110,24 +111,28 @@ fn build_complex_model() -> YinModel {
             track: 0,
             events: vec![AutomationEvent {
                 tick: 100,
-                value: 64.0,
+                value: 64.0 / 127.0,
                 shape: SegmentShape::Step,
             }],
         },
         AutomationLane {
-            target: AutomationTarget::PitchBend,
+            target: AutomationTarget::Param {
+                device: ParamDevice::ChannelInstrument { channel: 0 },
+                id: xsynth_param::PITCH_BEND,
+                name: String::new(),
+            },
             track: 0,
             events: vec![
                 AutomationEvent {
                     tick: 200,
-                    value: 2000.0,
+                    value: 2000.0 / 16383.0,
                     shape: SegmentShape::Step,
                 },
                 AutomationEvent {
                     tick: 400,
-                    value: 1000.0,
+                    value: 1000.0 / 16383.0,
                     shape: SegmentShape::Step,
-                }, // 8192 - 1000 = 7192 → 1000
+                },
             ],
         },
         AutomationLane {
@@ -135,7 +140,7 @@ fn build_complex_model() -> YinModel {
             track: 0,
             events: vec![AutomationEvent {
                 tick: 100,
-                value: 2.0,
+                value: 2.0 / 127.0,
                 shape: SegmentShape::Step,
             }],
         },
@@ -144,7 +149,7 @@ fn build_complex_model() -> YinModel {
             track: 0,
             events: vec![AutomationEvent {
                 tick: 200,
-                value: 8192.0,
+                value: 8192.0 / 16383.0,
                 shape: SegmentShape::Step,
             }],
         },
@@ -276,10 +281,17 @@ fn roundtrip_in_memory() {
     let pb = lead
         .automation_lanes
         .iter()
-        .find(|l| l.target == AutomationTarget::PitchBend)
+        .find(|l| {
+            l.target
+                == AutomationTarget::Param {
+                    device: ParamDevice::ChannelInstrument { channel: 0 },
+                    id: xsynth_param::PITCH_BEND,
+                    name: String::new(),
+                }
+        })
         .expect("PitchBend lane");
     assert_eq!(pb.events.len(), 2);
-    assert_eq!(pb.events[1].value, 1000.0);
+    assert_eq!(pb.events[1].value, 1000.0 / 16383.0);
 
     assert_eq!(lead.program_change.len(), 1);
     assert_eq!(lead.program_change[0].program, 5);
@@ -297,7 +309,7 @@ fn roundtrip_in_memory() {
         .iter()
         .find(|l| l.target == AutomationTarget::Rpn { parameter: 0x0001 })
         .expect("RPN 0x0001 lane");
-    assert_eq!(rpn1.events[0].value, 8192.0);
+    assert_eq!(rpn1.events[0].value, 8192.0 / 16383.0);
 
     let bass = m2.tracks.iter().find(|t| t.name == "Bass").expect("Bass");
     let bass_idx = m2.tracks.iter().position(|t| t.name == "Bass").unwrap() as u16;
@@ -374,7 +386,7 @@ fn track_order_preserved_when_ports_interleave() {
         track: 0,
         events: vec![AutomationEvent {
             tick: 0,
-            value: 100.0,
+            value: 100.0 / 127.0,
             shape: SegmentShape::Step,
         }],
     }];

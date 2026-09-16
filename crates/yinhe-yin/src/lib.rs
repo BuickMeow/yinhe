@@ -23,6 +23,9 @@
 //! 5: gate  列（varint u32）
 //! ```
 //!
+//! v7：`AutomationTarget` 迁移统一参数模型（`Param{device,id,name}`），
+//! 不兼容 v6（旧档拒绝加载，重新导入 MIDI）。
+//!
 //! v6 设计：
 //! - 音符全局按 (start, track, key) 排序后**列式**存储：黑乐谱的重复单元是
 //!   同一 tick 全轨齐发的图案，该排序让图案整块重复；按字段拆列后每列独立
@@ -51,4 +54,4 @@ pub use mapping::{ChannelMap, MappingFile, PortMap, TrackMap};
 pub use project_meta::{ProjectFile, SfChannelOverride, SfEntryJson};
 
 pub const MAGIC: &[u8; 4] = b"YINH";
-pub const VERSION: u16 = 6;
+pub const VERSION: u16 = 7;
