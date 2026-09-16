@@ -200,9 +200,11 @@ impl AudioEngine {
                             });
                         }
                     }
-                } else if cc.dsp_route {
-                    // DSP 参数事件（`Param{ChannelDsp}` 还原）：广播给该通道
-                    // insert 链上的 yinhe-dsp 模块，不走合成器/乐器插件。
+                } else {
+                    // CC 广播：先广播给该通道 insert 链上订阅的效果器（内置
+                    // DSP 模块经 `handled_ccs` 接管），再走常规路径（挂插件则
+                    // 转 MIDI 喂插件，否则进合成器）。两路都发：谁订阅谁消费；
+                    // 同时挂插件与效果器时的双重处理由用户挂载选择决定。
                     if let Some((cc_num, cc_value)) = raw_cc(&cc.event) {
                         let dense = self.channel_layout.dense_for(cc.channel as usize);
                         if dense != u32::MAX {
@@ -212,31 +214,33 @@ impl AudioEngine {
                             self.dispatched_skip.mark(&cc.event, cc.channel as usize);
                         }
                     }
-                } else if let Some(dense) = self.channel_plugin_dense(cc.channel as u8) {
-                    // 该 MIDI 通道挂了插件 → CC/PB/RPN/PC 转原始 MIDI 字节喂实例；
-                    // 否则走 xsynth。
-                    // 先算 frame offset（只读），再取可变实例引用，避免整机借用冲突。
-                    let time =
-                        self.tick_to_sample(cc.tick)
-                            .saturating_sub(self.block_start_sample) as u32;
-                    if let Some(data) = cc_to_midi(&cc.event, cc.channel as u8)
-                        && let Some(Some(slot)) = self.instruments.get_mut(dense)
-                    {
-                        slot.events.push(PluginEvent::Midi { time, data });
-                        self.dispatched_skip.mark(&cc.event, cc.channel as usize);
-                    }
-                } else {
-                    let dense = self.channel_layout.dense_for(cc.channel as usize);
-                    if dense != u32::MAX {
-                        // GPU 合成器路径：事件由 GpuSynth 自己的事件列表管理，
-                        // 不喂 xsynth（避免缓存无界增长）。
-                        if !self.gpu_synth_active() {
-                            self.channel_set.send_event(SynthEvent::Channel(
-                                dense,
-                                ChannelEvent::Audio(cc.event),
-                            ));
+                    if let Some(dense) = self.channel_plugin_dense(cc.channel as u8) {
+                        // 该 MIDI 通道挂了插件 → CC/PB/RPN/PC 转原始 MIDI 字节喂实例；
+                        // 否则走 xsynth。
+                        // 先算 frame offset（只读），再取可变实例引用，避免整机借用冲突。
+                        let time = self
+                            .tick_to_sample(cc.tick)
+                            .saturating_sub(self.block_start_sample)
+                            as u32;
+                        if let Some(data) = cc_to_midi(&cc.event, cc.channel as u8)
+                            && let Some(Some(slot)) = self.instruments.get_mut(dense)
+                        {
+                            slot.events.push(PluginEvent::Midi { time, data });
+                            self.dispatched_skip.mark(&cc.event, cc.channel as usize);
                         }
-                        self.dispatched_skip.mark(&cc.event, cc.channel as usize);
+                    } else {
+                        let dense = self.channel_layout.dense_for(cc.channel as usize);
+                        if dense != u32::MAX {
+                            // GPU 合成器路径：事件由 GpuSynth 自己的事件列表管理，
+                            // 不喂 xsynth（避免缓存无界增长）。
+                            if !self.gpu_synth_active() {
+                                self.channel_set.send_event(SynthEvent::Channel(
+                                    dense,
+                                    ChannelEvent::Audio(cc.event),
+                                ));
+                            }
+                            self.dispatched_skip.mark(&cc.event, cc.channel as usize);
+                        }
                     }
                 }
             }

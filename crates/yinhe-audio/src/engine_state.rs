@@ -152,9 +152,9 @@ impl AudioEngine {
                 continue;
             };
             state.send_to(dense, &mut self.channel_set, &skip);
-            // 通道级 DSP CC 回填给 yinhe-dsp 模块（与 xsynth 的 skip 语义一致：
-            // 已被 dispatch 的 CC 不覆盖，避免旧值打回新值）。
-            for &cc in yinhe_dsp::cc::DSP_CHANNEL_CCS {
+            // 通道 insert 链上订阅的 CC 回填给对应模块（与 xsynth 的 skip
+            // 语义一致：已被 dispatch 的 CC 不覆盖，避免旧值打回新值）。
+            for cc in self.mixer.channel_subscribed_ccs(dense as usize) {
                 if skip.cc_mask[ch as usize] & (1u128 << cc) == 0 {
                     self.mixer
                         .broadcast_channel_cc(dense as usize, cc, state.dsp_cc_value(cc));

@@ -913,13 +913,7 @@ fn compute_chase_states(
         evs.sort_by_key(|e| (e.tick, crate::audio_model::dispatch_priority(&e.event)));
         let mut state = ChannelState::default();
         for e in &evs {
-            if e.dsp_route {
-                if let Some((cc, val)) = crate::engine_render::raw_cc(&e.event) {
-                    state.apply_dsp_cc(cc, val);
-                }
-            } else {
-                state.apply(&e.event);
-            }
+            state.apply(&e.event);
         }
         states[ch] = Some(state);
     }

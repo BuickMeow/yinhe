@@ -17,8 +17,7 @@ use rayon::prelude::*;
 
 use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
 use yinhe_types::automation::{
-    MidiBinding, ParamDevice, binding_max, channel_dsp_param_id_for_midi, xsynth_param,
-    xsynth_param_id_for_midi,
+    MidiBinding, ParamDevice, binding_max, xsynth_param, xsynth_param_id_for_midi,
 };
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent};
 
@@ -516,29 +515,12 @@ fn parse_track(
                                 &mut auto_events,
                             ),
                             _ => {
-                                // 已绑定内置设备的 CC → 设备参数；其余保持低层 CC。
-                                let dsp_id = channel_dsp_param_id_for_midi(MidiBinding::Cc(cc));
-                                let target = if let Some(id) = dsp_id {
-                                    AutomationTarget::Param {
-                                        device: ParamDevice::ChannelDsp { channel: global_ch },
-                                        id,
-                                        name: String::new(),
-                                    }
-                                } else if let Some(id) =
-                                    xsynth_param_id_for_midi(MidiBinding::Cc(cc))
-                                {
-                                    AutomationTarget::Param {
-                                        device: ParamDevice::ChannelInstrument {
-                                            channel: global_ch,
-                                        },
-                                        id,
-                                        name: String::new(),
-                                    }
-                                } else {
-                                    AutomationTarget::CC { controller: cc }
-                                };
+                                // 所有 CC 保持低层事件（值归一化）：回放时广播给
+                                // insert 链上订阅的效果器（内置 DSP 模块经
+                                // handled_ccs 接管），同时走常规路径透传乐器插件。
+                                // "谁消费 CC"由运行时订阅决定，不按 CC 号转换身份。
                                 auto_events.push((
-                                    target,
+                                    AutomationTarget::CC { controller: cc },
                                     AutomationEvent {
                                         tick: current_tick,
                                         value: val as f32 / 127.0,

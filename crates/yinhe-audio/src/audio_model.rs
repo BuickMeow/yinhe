@@ -21,10 +21,6 @@ pub(crate) struct SortedCC {
     /// 使旁通切换不再需要重建事件流。
     pub(crate) lane: u16,
     pub(crate) event: ChannelAudioEvent,
-    /// DSP 路由标记：来自 `Param{ChannelDsp}` 的事件（通道内置 DSP 参数）。
-    /// dispatch 只把这类事件广播给通道 insert 链（yinhe-dsp），不走合成器/
-    /// 乐器插件。路由由 target 类型决定，不按 CC 号白名单判断。
-    pub(crate) dsp_route: bool,
     /// 插件参数事件：`Some` 时 `event` 为占位（不影响 xsynth 路径），
     /// dispatch 走乐器通道的 `PluginEvent::ParamValue`。
     pub(crate) plugin_param: Option<PluginParamEvent>,
@@ -397,7 +393,6 @@ pub(crate) fn push_program_change(
             channel,
             track,
             lane: PC_LANE,
-            dsp_route: false,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(0, pc.bank_msb)),
         });
@@ -408,7 +403,6 @@ pub(crate) fn push_program_change(
             channel,
             track,
             lane: PC_LANE,
-            dsp_route: false,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(32, pc.bank_lsb)),
         });
@@ -418,7 +412,6 @@ pub(crate) fn push_program_change(
         channel,
         track,
         lane: PC_LANE,
-        dsp_route: false,
         plugin_param: None,
         event: ChannelAudioEvent::ProgramChange(pc.program),
     });
@@ -464,7 +457,6 @@ pub(crate) fn emit_automation_event(
                     track,
                     lane,
                     event: ChannelAudioEvent::Control(ControlEvent::Raw(0, 0)),
-                    dsp_route: false,
                     plugin_param: Some(PluginParamEvent {
                         channel: *plugin_channel,
                         param_id: *id,
@@ -472,8 +464,13 @@ pub(crate) fn emit_automation_event(
                     }),
                 });
             }
-            // 内置音源参数（XSynth）：还原为 MIDI 事件走常规路径（合成器/插件）。
+            // 内置设备参数（XSynth / 通道 DSP）：按 MIDI 绑定还原为对应的
+            // 原始整数事件。回放时 dispatch 统一"广播给 insert 链上订阅的
+            // 效果器 + 走常规路径透传乐器插件"（CC 广播方案）。
             ParamDevice::ChannelInstrument {
+                channel: device_channel,
+            }
+            | ParamDevice::ChannelDsp {
                 channel: device_channel,
             } => {
                 let Some(info) = builtin_param(device, *id) else {
@@ -487,27 +484,6 @@ pub(crate) fn emit_automation_event(
                     track,
                     lane,
                     out,
-                );
-            }
-            // 通道内置 DSP 参数：还原为 Raw CC 并打 DSP 路由标记（广播给
-            // 通道 insert 链上的 yinhe-dsp 模块）。
-            ParamDevice::ChannelDsp {
-                channel: device_channel,
-            } => {
-                let Some(info) = builtin_param(device, *id) else {
-                    return; // 表外 id：无 MIDI 绑定，不产生事件。
-                };
-                let MidiBinding::Cc(controller) = info.midi else {
-                    return; // DSP 参数均为 CC 绑定。
-                };
-                push_control_routed(
-                    out,
-                    tick,
-                    u32::from(*device_channel),
-                    track,
-                    lane,
-                    ControlEvent::Raw(controller, restore_raw(value, 127.0) as u8),
-                    true,
                 );
             }
         },
@@ -565,7 +541,7 @@ pub(crate) fn emit_automation_event(
     }
 }
 
-/// 推入一条非插件参数的 SortedCC（常规路由）。
+/// 推入一条非插件参数的 SortedCC。
 fn push_control(
     out: &mut Vec<SortedCC>,
     tick: u32,
@@ -574,25 +550,11 @@ fn push_control(
     lane: u16,
     event: ControlEvent,
 ) {
-    push_control_routed(out, tick, channel, track, lane, event, false);
-}
-
-/// 推入一条非插件参数的 SortedCC；`dsp_route` 语义见 [`SortedCC::dsp_route`]。
-fn push_control_routed(
-    out: &mut Vec<SortedCC>,
-    tick: u32,
-    channel: u32,
-    track: u16,
-    lane: u16,
-    event: ControlEvent,
-    dsp_route: bool,
-) {
     out.push(SortedCC {
         tick,
         channel,
         track,
         lane,
-        dsp_route,
         plugin_param: None,
         event: ChannelAudioEvent::Control(event),
     });
@@ -861,8 +823,7 @@ mod tests {
         assert_eq!(events[1].plugin_param.map(|p| p.value), Some(1.0));
     }
 
-    /// DSP 内置参数：归一化值在 flatten 边界还原成原始整数 CC（Volume → CC7），
-    /// 并打 DSP 路由标记（dispatch 只把这类事件广播给 insert 链）。
+    /// DSP 内置参数：归一化值在 flatten 边界还原成原始整数 CC（Volume → CC7）。
     #[test]
     fn emit_channel_dsp_param_restores_integer_cc() {
         let model = model_with_lanes(vec![AutomationLane {
@@ -885,42 +846,6 @@ mod tests {
             events[0].event,
             ChannelAudioEvent::Control(ControlEvent::Raw(7, 100))
         ));
-        assert!(events[0].dsp_route, "ChannelDsp 参数必须打 DSP 路由标记");
-    }
-
-    /// 低层 CC 与非 DSP 内置参数不打 DSP 路由标记（透传合成器/乐器插件）。
-    #[test]
-    fn emit_low_level_events_are_not_dsp_routed() {
-        let model = model_with_lanes(vec![
-            AutomationLane {
-                target: AutomationTarget::CC { controller: 7 },
-                track: 0,
-                events: vec![AutomationEvent {
-                    tick: 0,
-                    value: 100.0 / 127.0,
-                    shape: SegmentShape::Step,
-                }],
-            },
-            AutomationLane {
-                target: AutomationTarget::Param {
-                    device: ParamDevice::ChannelInstrument { channel: 0 },
-                    id: xsynth_param::SUSTAIN,
-                    name: String::new(),
-                },
-                track: 0,
-                events: vec![AutomationEvent {
-                    tick: 0,
-                    value: 1.0,
-                    shape: SegmentShape::Step,
-                }],
-            },
-        ]);
-        let events = flatten_automation_to_cc_events(&model, 1);
-        assert_eq!(events.len(), 2);
-        assert!(
-            events.iter().all(|e| !e.dsp_route),
-            "低层 CC 与 ChannelInstrument 参数不应打 DSP 路由标记"
-        );
     }
 
     /// XSynth 内置参数：PB 中心/满值、RPN0 半音数都按原始整数上限还原。

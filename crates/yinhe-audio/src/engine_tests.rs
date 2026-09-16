@@ -66,7 +66,6 @@ fn test_sorted_cc_ordering() {
             channel: 0,
             track: 0,
             lane: 0,
-            dsp_route: false,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 80)),
         },
@@ -75,7 +74,6 @@ fn test_sorted_cc_ordering() {
             channel: 0,
             track: 0,
             lane: 0,
-            dsp_route: false,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)),
         },
@@ -84,7 +82,6 @@ fn test_sorted_cc_ordering() {
             channel: 0,
             track: 0,
             lane: 0,
-            dsp_route: false,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 60)),
         },
@@ -1127,7 +1124,6 @@ fn test_muted_track_cc_skipped_in_dispatch() {
             channel: 0,
             track: 0,
             lane: 0,
-            dsp_route: false,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 40)),
         },
@@ -1136,7 +1132,6 @@ fn test_muted_track_cc_skipped_in_dispatch() {
             channel: 0,
             track: 1,
             lane: 0,
-            dsp_route: false,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)),
         },
@@ -1183,7 +1178,6 @@ fn test_unmute_chase_skip_excludes_events_missed_while_muted() {
             channel: 0,
             track: 0,
             lane: 0,
-            dsp_route: false,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 40)),
         },
@@ -1192,7 +1186,6 @@ fn test_unmute_chase_skip_excludes_events_missed_while_muted() {
             channel: 0,
             track: 0,
             lane: 0,
-            dsp_route: false,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(1, 80)),
         },
@@ -1474,7 +1467,6 @@ fn test_chase_channel_states_incremental() {
             channel: 0,
             track: 0,
             lane: 0,
-            dsp_route: true,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)),
         },
@@ -1484,7 +1476,6 @@ fn test_chase_channel_states_incremental() {
             channel: 1,
             track: 1,
             lane: 0,
-            dsp_route: true,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 50)),
         },
@@ -1494,7 +1485,6 @@ fn test_chase_channel_states_incremental() {
             channel: 0,
             track: 0,
             lane: 0,
-            dsp_route: true,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(10, 80)),
         },
@@ -1504,7 +1494,6 @@ fn test_chase_channel_states_incremental() {
             channel: 0,
             track: 0,
             lane: 0,
-            dsp_route: true,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 90)),
         },
@@ -1514,7 +1503,6 @@ fn test_chase_channel_states_incremental() {
             channel: 0,
             track: 0,
             lane: 0,
-            dsp_route: false,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(48.0)),
         },
@@ -1524,7 +1512,6 @@ fn test_chase_channel_states_incremental() {
             channel: 0,
             track: 0,
             lane: 0,
-            dsp_route: true,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 10)),
         },
@@ -1562,7 +1549,6 @@ fn test_preview_chase_includes_jump_at_target_tick() {
             channel: 0,
             track: 0,
             lane: 0,
-            dsp_route: true,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 0)),
         },
@@ -1571,7 +1557,6 @@ fn test_preview_chase_includes_jump_at_target_tick() {
             channel: 0,
             track: 0,
             lane: 0,
-            dsp_route: true,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 127)),
         },
@@ -1992,13 +1977,7 @@ fn test_chase_query_matches_flattened_scan() {
             if e.tick >= target {
                 break;
             }
-            if e.dsp_route {
-                if let Some((cc_num, val)) = crate::engine_render::raw_cc(&e.event) {
-                    old[e.channel as usize].apply_dsp_cc(cc_num, val);
-                }
-            } else {
-                old[e.channel as usize].apply(&e.event);
-            }
+            old[e.channel as usize].apply(&e.event);
         }
         // 新式：查询模型 lane（无事件通道 = None，等价于 default 状态）
         let new = crate::spawn::compute_chase_states_for_test(&model, target, &skip);
@@ -3953,4 +3932,121 @@ fn diag_engine_cpu_vs_gpu() {
         wr.finalize().unwrap();
     }
     eprintln!("已导出 /tmp/eng_cpu.wav /tmp/eng_gpu.wav");
+}
+
+// ---------------------------------------------------------------------------
+// CC 广播方案回归（低层 CC → insert 链订阅 + 常规路径透传）
+// ---------------------------------------------------------------------------
+
+/// 低层 CC 在 dispatch 时广播给通道 insert 链上订阅的模块（`handled_ccs`
+/// 匹配），不依赖 target 类型或 CC 号白名单（CC 广播方案核心行为）。
+#[test]
+fn low_level_cc_broadcasts_to_subscribed_insert() {
+    use std::sync::{Arc, Mutex};
+
+    struct CcRecorder(Arc<Mutex<Vec<(u8, u8)>>>);
+    impl yinhe_mixer::InsertProcessor for CcRecorder {
+        fn process(&mut self, _left: &mut [f32], _right: &mut [f32]) {}
+
+        fn handled_ccs(&self) -> &'static [u8] {
+            &[7, 11]
+        }
+
+        fn apply_cc(&mut self, cc: u8, value: u8) {
+            self.0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((cc, value));
+        }
+
+        fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+            self
+        }
+    }
+
+    let sample_rate = 44100u32;
+    let mut doc = Document::empty();
+    {
+        let model = Arc::make_mut(&mut doc.data.model);
+        let track = Arc::make_mut(&mut model.tracks[1]);
+        track.automation_lanes.push(AutomationLane {
+            target: AutomationTarget::CC { controller: 7 },
+            track: 1,
+            events: vec![AutomationEvent {
+                tick: 0,
+                value: 100.0 / 127.0,
+                shape: SegmentShape::Step,
+            }],
+        });
+    }
+    doc.data.bump_revision();
+
+    let mut engine = spawn_engine_for_doc(&doc, sample_rate);
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+    let dense = engine.channel_layout.dense_for(0) as usize;
+    engine
+        .mixer
+        .insert_insert(dense, 0, Box::new(CcRecorder(recorded.clone())));
+
+    engine.playing = true;
+    engine.dispatch_and_find_next(0, 60_000);
+
+    let got = recorded.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    assert_eq!(got, vec![(7, 100)], "低层 CC7 应广播给订阅的 insert");
+}
+
+/// 未订阅的 CC 不投递：同一 insert 声明 [7]，CC11 事件不应到达。
+#[test]
+fn cc_broadcast_respects_handled_ccs_filter() {
+    use std::sync::{Arc, Mutex};
+
+    struct CcRecorder(Arc<Mutex<Vec<(u8, u8)>>>);
+    impl yinhe_mixer::InsertProcessor for CcRecorder {
+        fn process(&mut self, _left: &mut [f32], _right: &mut [f32]) {}
+
+        fn handled_ccs(&self) -> &'static [u8] {
+            &[7]
+        }
+
+        fn apply_cc(&mut self, cc: u8, value: u8) {
+            self.0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((cc, value));
+        }
+
+        fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+            self
+        }
+    }
+
+    let sample_rate = 44100u32;
+    let mut doc = Document::empty();
+    {
+        let model = Arc::make_mut(&mut doc.data.model);
+        let track = Arc::make_mut(&mut model.tracks[1]);
+        track.automation_lanes.push(AutomationLane {
+            target: AutomationTarget::CC { controller: 11 },
+            track: 1,
+            events: vec![AutomationEvent {
+                tick: 0,
+                value: 64.0 / 127.0,
+                shape: SegmentShape::Step,
+            }],
+        });
+    }
+    doc.data.bump_revision();
+
+    let mut engine = spawn_engine_for_doc(&doc, sample_rate);
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+    let dense = engine.channel_layout.dense_for(0) as usize;
+    engine
+        .mixer
+        .insert_insert(dense, 0, Box::new(CcRecorder(recorded.clone())));
+
+    engine.playing = true;
+    engine.dispatch_and_find_next(0, 60_000);
+
+    let got = recorded.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    assert!(got.is_empty(), "未订阅的 CC11 不应投递：{got:?}");
 }

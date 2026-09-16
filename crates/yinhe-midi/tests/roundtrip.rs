@@ -336,7 +336,7 @@ fn build_complex_model() -> YinModel {
     ];
     t0.automation_lanes = vec![
         AutomationLane {
-            target: dsp_target(0, channel_dsp_param::VOLUME),
+            target: AutomationTarget::CC { controller: 7 },
             track: 0,
             events: vec![
                 AutomationEvent {
@@ -442,7 +442,7 @@ fn roundtrip_complex_model_preserves_everything() {
     let find_lane = |target: &AutomationTarget| -> Option<&AutomationLane> {
         l2.automation_lanes.iter().find(|l| &l.target == target)
     };
-    let cc7 = find_lane(&dsp_target(0, channel_dsp_param::VOLUME)).expect("Volume lane");
+    let cc7 = find_lane(&AutomationTarget::CC { controller: 7 }).expect("CC7 lane");
     assert_eq!(cc7.events.len(), 2);
     assert_eq!(cc7.events[0].value, 100.0 / 127.0);
     assert_eq!(cc7.events[1].value, 80.0 / 127.0);
@@ -549,9 +549,10 @@ fn rpn_sequence_decodes_to_rpn_event() {
     assert_eq!(lane.events[0].value, 2.0 / 127.0);
 }
 
-/// 手写含 CC7=100 的 SMF：导入应成为 ChannelDsp Volume 参数。
+/// 手写含 CC7=100 的 SMF：导入保留为低层 CC 事件（CC 广播方案——
+/// 回放时广播给 insert 链上订阅的效果器，同时透传乐器插件）。
 #[test]
-fn cc7_import_becomes_channel_dsp_param() {
+fn cc7_import_stays_low_level() {
     let mut data = Vec::new();
     data.extend_from_slice(b"MThd");
     data.extend_from_slice(&6u32.to_be_bytes());
@@ -571,15 +572,18 @@ fn cc7_import_becomes_channel_dsp_param() {
     let lane = t
         .automation_lanes
         .iter()
-        .find(|l| l.target == dsp_target(0, channel_dsp_param::VOLUME))
-        .expect("Volume lane");
+        .find(|l| l.target == AutomationTarget::CC { controller: 7 })
+        .expect("CC7 lane");
     assert_eq!(lane.events.len(), 1);
     assert_eq!(lane.events[0].value, 100.0 / 127.0);
 }
 
-/// ChannelDsp Volume 参数导出为 CC7，重新解析后无损。
+/// 设备参数导出为绑定的 CC，重新解析后为低层 CC 事件（值无损）。
+///
+/// 导入不把 CC 转回设备参数（CC 广播方案），所以往返后身份是 CC——
+/// 值必须逐位无损。
 #[test]
-fn channel_dsp_param_exports_back_to_cc() {
+fn channel_dsp_param_exports_to_cc_low_level() {
     let model1 = model_with_point(dsp_target(0, channel_dsp_param::VOLUME), 0, 100.0 / 127.0);
     let bytes = write_to_bytes(&model1).unwrap();
     let model2 = parse_bytes(&bytes).unwrap();
@@ -587,8 +591,8 @@ fn channel_dsp_param_exports_back_to_cc() {
     let lane = model2.tracks[1]
         .automation_lanes
         .iter()
-        .find(|l| l.target == dsp_target(0, channel_dsp_param::VOLUME))
-        .expect("Volume lane");
+        .find(|l| l.target == AutomationTarget::CC { controller: 7 })
+        .expect("CC7 lane");
     assert_eq!(lane.events.len(), 1);
     assert_eq!(lane.events[0].value, 100.0 / 127.0);
 }

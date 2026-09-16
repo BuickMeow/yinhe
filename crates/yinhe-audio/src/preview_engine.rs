@@ -33,17 +33,9 @@ pub(crate) fn chase_channel_states(
     for &target in targets {
         while cursor < cc_events.len() && cc_events[cursor].tick <= target {
             let cc = &cc_events[cursor];
-            // 插件参数事件不是 xsynth 通道事件（占位），跳过避免污染预览 chase；
-            // DSP 参数事件与 `compute_chase_states` 一致走 `apply_dsp_cc`
-            // （写专有字段），保持两条 chase 路径语义相同。
+            // 插件参数事件不是 xsynth 通道事件（占位），跳过避免污染预览 chase。
             if cc.plugin_param.is_none() && cc.channel == channel {
-                if cc.dsp_route {
-                    if let Some((cc_num, val)) = crate::engine_render::raw_cc(&cc.event) {
-                        state.apply_dsp_cc(cc_num, val);
-                    }
-                } else {
-                    state.apply(&cc.event);
-                }
+                state.apply(&cc.event);
             }
             cursor += 1;
         }

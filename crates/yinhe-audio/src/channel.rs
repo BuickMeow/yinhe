@@ -154,26 +154,6 @@ impl ChaseSkip {
 }
 
 impl ChannelState {
-    /// 应用一条通道 DSP 参数事件（`Param{ChannelDsp}` 还原的 Raw CC）。
-    ///
-    /// 写专有字段（volume/pan/expression/resonance/cutoff），供 chase 回填时
-    /// 广播给 yinhe-dsp 模块。普通 CC（透传音源/乐器插件）不写这些字段，
-    /// 避免低层 CC 污染 DSP 回填值。
-    pub(crate) fn apply_dsp_cc(&mut self, cc: u8, val: u8) {
-        let cc_idx = cc as usize;
-        if cc_idx < 128 {
-            self.cc_values[cc_idx] = val;
-        }
-        match cc {
-            7 => self.volume = val,
-            10 => self.pan = val,
-            11 => self.expression = val,
-            71 => self.resonance = val,
-            74 => self.cutoff = val,
-            _ => {}
-        }
-    }
-
     pub(crate) fn apply(&mut self, event: &ChannelAudioEvent) {
         match event {
             ChannelAudioEvent::Control(ControlEvent::Raw(cc, val)) => {
@@ -187,12 +167,16 @@ impl ChannelState {
                         self.data_entry_msb = *val;
                         self.resolve_rpn();
                     }
+                    7 => self.volume = *val,
+                    10 => self.pan = *val,
+                    11 => self.expression = *val,
                     32 => self.bank_lsb = *val,
                     38 => {
                         self.data_entry_lsb = *val;
                         self.resolve_rpn();
                     }
                     64 => self.sustain = *val,
+                    71 => self.resonance = *val,
                     72 => {
                         self.release = *val;
                         self.env_set = true;
@@ -201,6 +185,7 @@ impl ChannelState {
                         self.attack = *val;
                         self.env_set = true;
                     }
+                    74 => self.cutoff = *val,
                     100 => self.rpn_lsb = Some(*val),
                     101 => self.rpn_msb = Some(*val),
                     _ => {}
@@ -331,18 +316,12 @@ mod tests {
     #[test]
     fn test_channel_state_apply() {
         let mut state = ChannelState::default();
-        // 普通 CC（透传音源/乐器插件）：只进 cc_values，不写 DSP 专有字段。
         state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)));
-        assert_eq!(state.volume, 127, "低层 CC7 不应写 DSP volume");
+        assert_eq!(state.volume, 100);
         assert_eq!(state.cc_values[7], 100);
         state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(10, 100)));
-        assert_eq!(state.pan, 64, "低层 CC10 不应写 DSP pan");
+        assert_eq!(state.pan, 100);
         assert_eq!(state.cc_values[10], 100);
-        // DSP 参数事件（Param{ChannelDsp} 还原）：写专有字段（chase 回填用）。
-        state.apply_dsp_cc(7, 90);
-        assert_eq!(state.volume, 90);
-        state.apply_dsp_cc(10, 20);
-        assert_eq!(state.pan, 20);
 
         state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(101, 0)));
         assert_eq!(state.rpn_msb, Some(0));
