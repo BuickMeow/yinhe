@@ -31,7 +31,6 @@ impl StartupState {
             shared: Arc::new(StartupShared {
                 status: Mutex::new(String::new()),
                 exit_requested: AtomicBool::new(false),
-                skip_requested: AtomicBool::new(false),
             }),
             splash_created: false,
         }
@@ -44,8 +43,6 @@ pub(crate) struct StartupShared {
     status: Mutex<String>,
     /// 用户请求退出（Cmd+Q / 关闭请求）。
     exit_requested: AtomicBool,
-    /// 用户请求跳过等待，直接进入主界面。
-    skip_requested: AtomicBool,
 }
 
 /// 启动阶段就绪判定。
@@ -124,21 +121,14 @@ impl App {
             .is_some_and(|a| a.handle.audio_ready());
         let audio_failed = self.audio_state.spawn_error.is_some();
         let scan_done = !self.mix.scan_in_progress && self.mix.scanned.is_some();
-        let skip = self
-            .startup
-            .shared
-            .skip_requested
-            .swap(false, Ordering::Relaxed);
 
-        if skip
-            || startup_ready(
-                audio_ready,
-                audio_failed,
-                scan_done,
-                self.file_loader.is_loading(),
-                self.audio_state.pending_doc_activate.is_some(),
-            )
-        {
+        if startup_ready(
+            audio_ready,
+            audio_failed,
+            scan_done,
+            self.file_loader.is_loading(),
+            self.audio_state.pending_doc_activate.is_some(),
+        ) {
             // 就绪：进入主界面（不再声明启动页 → 窗口随之销毁）。
             self.startup.pending = false;
             ui.ctx()
@@ -208,15 +198,14 @@ fn splash_viewport_builder() -> egui::ViewportBuilder {
 }
 
 /// 启动页绘制（deferred viewport 闭包；不能访问 `App`）。
+///
+/// 布局：大号 "Yinhe" 作背景字放左下角，当前流程（Spinner + 文案）放右下角。
 fn draw_splash(ui: &mut egui::Ui, shared: &StartupShared) {
-    // 关闭 / Cmd+Q → 退出；Esc / 按钮 → 跳过等待。
+    // 无系统按钮：关闭请求 / Cmd+Q 是退出方式。
     if ui.input(|i| i.viewport().close_requested())
         || ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Q))
     {
         shared.exit_requested.store(true, Ordering::Relaxed);
-    }
-    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-        shared.skip_requested.store(true, Ordering::Relaxed);
     }
 
     let status = shared
@@ -225,41 +214,41 @@ fn draw_splash(ui: &mut egui::Ui, shared: &StartupShared) {
         .unwrap_or_else(|e| e.into_inner())
         .clone();
 
-    egui::CentralPanel::default()
-        .frame(egui::Frame::new().fill(crate::theme::app_bg()))
-        .show(ui, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(30.0);
-                ui.label(
-                    egui::RichText::new(rust_i18n::t!("startup.title"))
-                        .size(26.0)
-                        .color(crate::theme::accent_active()),
-                );
-                ui.add_space(20.0);
-                ui.add(
-                    egui::Spinner::new()
-                        .size(22.0)
-                        .color(crate::theme::accent_active()),
-                );
-                ui.add_space(12.0);
-                ui.label(egui::RichText::new(status).color(crate::theme::text_secondary()));
-            });
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                ui.add_space(12.0);
-                let skip = ui.add(
-                    egui::Button::new(
-                        egui::RichText::new(rust_i18n::t!("startup.skip"))
-                            .color(crate::theme::text_muted()),
-                    )
-                    .frame(false),
-                );
-                if skip.clicked() {
-                    shared.skip_requested.store(true, Ordering::Relaxed);
-                }
-            });
-        });
+    let painter = ui.painter().clone();
+    let rect = ui.max_rect();
+    // 窗口无装饰：全窗口自绘背景。
+    painter.rect_filled(rect, 0.0, crate::theme::app_bg());
 
-    // 启动页独立重绘：Spinner 动画 + 主线程写入的状态刷新。
+    let inner = rect.shrink2(egui::vec2(18.0, 14.0));
+    // 左下角：大号 "Yinhe"（背景字）。
+    painter.text(
+        inner.left_bottom(),
+        egui::Align2::LEFT_BOTTOM,
+        rust_i18n::t!("startup.title"),
+        egui::FontId::proportional(72.0),
+        crate::theme::text_primary(),
+    );
+    // 右下角：Spinner + 当前流程文案。
+    let text_color = crate::theme::text_secondary();
+    let galley = painter.layout_no_wrap(status, egui::FontId::proportional(14.0), text_color);
+    let text_size = galley.size();
+    let text_pos = egui::pos2(inner.right() - text_size.x, inner.bottom() - text_size.y);
+    painter.galley(text_pos, galley, text_color);
+
+    let spinner_size = 16.0;
+    let spinner_rect = egui::Rect::from_center_size(
+        egui::pos2(
+            text_pos.x - 8.0 - spinner_size / 2.0,
+            inner.bottom() - text_size.y / 2.0,
+        ),
+        egui::vec2(spinner_size, spinner_size),
+    );
+    egui::Spinner::new()
+        .size(spinner_size)
+        .color(crate::theme::accent_active())
+        .paint_at(ui, spinner_rect);
+
+    // Spinner 动画 + 主线程状态写入的刷新。
     ui.ctx().request_repaint();
 }
 

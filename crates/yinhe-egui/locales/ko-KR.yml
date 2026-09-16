@@ -864,5 +864,4 @@ mix.pre_fader_hint: "프리 페이더 센드는 채널 페이더를 무시합니
 mix.scanning: "플러그인 스캔 중…"
 startup.title: "Yinhe"
 startup.preparing: "시작하는 중…"
-startup.skip: "대기 건너뛰기"
 mix.sends: "센드"
