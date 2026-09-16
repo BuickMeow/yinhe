@@ -194,7 +194,13 @@ fn splash_viewport_id() -> egui::ViewportId {
 }
 
 fn splash_viewport_builder() -> egui::ViewportBuilder {
-    crate::chrome::dialog::viewport_builder(&rust_i18n::t!("startup.title"), [420.0, 230.0], false)
+    egui::ViewportBuilder::default()
+        .with_title(&*rust_i18n::t!("startup.title"))
+        .with_inner_size([420.0, 230.0])
+        .with_resizable(false)
+        // 无系统装饰与按钮：macOS 交通灯 / Windows 最小化-最大化-关闭按钮都不要。
+        .with_decorations(false)
+        .with_titlebar_buttons_shown(false)
 }
 
 /// 启动页绘制（deferred viewport 闭包；不能访问 `App`）。
@@ -219,28 +225,37 @@ fn draw_splash(ui: &mut egui::Ui, shared: &StartupShared) {
     // 窗口无装饰：全窗口自绘背景。
     painter.rect_filled(rect, 0.0, crate::theme::app_bg());
 
-    let inner = rect.shrink2(egui::vec2(18.0, 14.0));
+    // 左右下三边同边距；文字按字形实际边界（mesh_bounds）对齐，
+    // 消除字体行高下行留白带来的"下方边距偏大"。
+    let inner = rect.shrink(18.0);
+
     // 左下角：大号 "Yinhe"（背景字）。
-    painter.text(
-        inner.left_bottom(),
-        egui::Align2::LEFT_BOTTOM,
-        rust_i18n::t!("startup.title"),
+    let title_color = crate::theme::text_primary();
+    let title = painter.layout_no_wrap(
+        rust_i18n::t!("startup.title").to_string(),
         egui::FontId::proportional(72.0),
-        crate::theme::text_primary(),
+        title_color,
     );
+    let title_pos = egui::pos2(
+        inner.left() - title.mesh_bounds.left(),
+        inner.bottom() - title.mesh_bounds.bottom(),
+    );
+    painter.galley(title_pos, title, title_color);
+
     // 右下角：Spinner + 当前流程文案。
     let text_color = crate::theme::text_secondary();
-    let galley = painter.layout_no_wrap(status, egui::FontId::proportional(14.0), text_color);
-    let text_size = galley.size();
-    let text_pos = egui::pos2(inner.right() - text_size.x, inner.bottom() - text_size.y);
-    painter.galley(text_pos, galley, text_color);
+    let status = painter.layout_no_wrap(status, egui::FontId::proportional(14.0), text_color);
+    let status_pos = egui::pos2(
+        inner.right() - status.mesh_bounds.right(),
+        inner.bottom() - status.mesh_bounds.bottom(),
+    );
+    let status_center_y = inner.bottom() - status.mesh_bounds.height() / 2.0;
+    let status_left = status_pos.x + status.mesh_bounds.left();
+    painter.galley(status_pos, status, text_color);
 
     let spinner_size = 16.0;
     let spinner_rect = egui::Rect::from_center_size(
-        egui::pos2(
-            text_pos.x - 8.0 - spinner_size / 2.0,
-            inner.bottom() - text_size.y / 2.0,
-        ),
+        egui::pos2(status_left - 8.0 - spinner_size / 2.0, status_center_y),
         egui::vec2(spinner_size, spinner_size),
     );
     egui::Spinner::new()
