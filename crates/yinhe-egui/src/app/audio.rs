@@ -117,7 +117,15 @@ impl App {
     /// 都是慢操作，UI 线程同步执行会冻结几百 ms）；结果由每帧的
     /// `poll_audio_spawn` 收取并完成初始状态注入。
     pub(crate) fn rebuild_audio_if_needed(&mut self) {
-        let idx = match self.workspace.active_doc {
+        // 有新文档待激活（加载完成等音频就绪）：音频按"待激活文档"重建，
+        // 而不是当前仍显示着的旧文档。
+        let target = self
+            .audio_state
+            .pending_doc_activate
+            .as_ref()
+            .map(|p| p.idx)
+            .or(self.workspace.active_doc);
+        let idx = match target {
             Some(idx) => idx,
             None => return,
         };

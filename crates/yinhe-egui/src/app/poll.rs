@@ -48,25 +48,16 @@ impl App {
                         doc.edit.overlap_blocked_behavior =
                             self.audio_settings.overlap_blocked_behavior;
                         // 仅首次启动的 Untitled（未修改且无 file_path）被替换，
-                        // 避免另开一个空标签页；用户手动 NewProject 或已修改/已保存
-                        // 的工程保持不动，照常 push 新标签页。
-                        if self.should_replace_initial_untitled() {
-                            self.workspace.documents[0] = doc;
-                            self.workspace.active_doc = Some(0);
-                            self.restore_mixer_rack(0);
-                            self.restore_instrument_rack(0);
-                        } else {
-                            let insert_idx = self.workspace.documents.len();
-                            self.workspace.documents.push(doc);
-                            self.workspace.active_doc = Some(insert_idx);
-                            self.restore_mixer_rack(insert_idx);
-                            self.restore_instrument_rack(insert_idx);
-                        }
+                        // 避免另开一个空标签页；替换与否记在 pending 里由
+                        // 激活时执行（见 poll_pending_doc_activate）。
+                        let replace_untitled = self.should_replace_initial_untitled();
+                        let insert_idx = self.workspace.documents.len();
+                        self.workspace.documents.push(doc);
+                        self.restore_mixer_rack(insert_idx);
+                        self.restore_instrument_rack(insert_idx);
+                        // 音频就绪前不切换显示：保证"看到音符即可立即播放"，
+                        // 避免用户看到 MIDI 就点播放而音频初始化还在跑。
                         self.teardown_audio();
-                        // 替换路径下 active_doc 不变，main_loop 的 switch 检测不到，
-                        // 必须主动清空 cull，否则旧 Untitled 的空 buffer 状态会让
-                        // 新工程首帧走错路径。
-                        self.invalidate_cull_state();
                         // 打开成功 → 记录到「最近修改的文件」
                         // 压缩包内文件记录外层压缩包路径，避免内部 entry 名（相对路径）导致「找不到文件」
                         let recent = archive_path.as_deref().unwrap_or(&path);
@@ -79,13 +70,13 @@ impl App {
                             .unwrap_or(&path);
                         // 完成卡 detail 覆盖为加载耗时
                         let detail = self.file_loader.load_elapsed().map(format_load_duration);
-                        self.notifications.finish_progress(
-                            crate::widgets::toast::LOADING_PROGRESS_ID,
-                            crate::widgets::toast::ProgressOutcome::Completed,
-                            t!("toast.load_done").to_string(),
-                            fname.to_string(),
-                            detail,
-                        );
+                        self.audio_state.pending_doc_activate =
+                            Some(crate::app::audio_state::PendingDocActivate {
+                                idx: insert_idx,
+                                replace_untitled,
+                                file_name: fname.to_string(),
+                                detail,
+                            });
                     }
                     Err(msg) => {
                         self.notifications.finish_progress(
@@ -162,20 +153,13 @@ impl App {
                 if let Some(doc) = result {
                     // 自动保存恢复：绑定原路径/名称并删除备份（内容已在内存）
                     let is_restored = self.finish_restore_one(&path);
-                    if self.should_replace_initial_untitled() {
-                        self.workspace.documents[0] = doc;
-                        self.workspace.active_doc = Some(0);
-                        self.restore_mixer_rack(0);
-                        self.restore_instrument_rack(0);
-                    } else {
-                        let insert_idx = self.workspace.documents.len();
-                        self.workspace.documents.push(doc);
-                        self.workspace.active_doc = Some(insert_idx);
-                        self.restore_mixer_rack(insert_idx);
-                        self.restore_instrument_rack(insert_idx);
-                    }
+                    // 同 ModelLoaded：先登记文档，音频就绪后再激活显示。
+                    let replace_untitled = self.should_replace_initial_untitled();
+                    let insert_idx = self.workspace.documents.len();
+                    self.workspace.documents.push(doc);
+                    self.restore_mixer_rack(insert_idx);
+                    self.restore_instrument_rack(insert_idx);
                     self.teardown_audio();
-                    self.invalidate_cull_state();
                     // 打开成功 → 记录到「最近修改的文件」
                     // 拖出 temp 不进「最近打开」（路径在 /tmp 下，重开无意义）
                     if !is_restored
@@ -186,13 +170,13 @@ impl App {
                     }
                     // 完成卡 detail 覆盖为加载耗时
                     let detail = self.file_loader.load_elapsed().map(format_load_duration);
-                    self.notifications.finish_progress(
-                        crate::widgets::toast::LOADING_PROGRESS_ID,
-                        crate::widgets::toast::ProgressOutcome::Completed,
-                        t!("toast.load_done").to_string(),
-                        file_name.clone(),
-                        detail,
-                    );
+                    self.audio_state.pending_doc_activate =
+                        Some(crate::app::audio_state::PendingDocActivate {
+                            idx: insert_idx,
+                            replace_untitled,
+                            file_name: file_name.clone(),
+                            detail,
+                        });
                 } else {
                     let msg = t!("file_dialog.open_failed", name = file_name).to_string();
                     self.notifications.finish_progress(
@@ -361,6 +345,54 @@ impl App {
     }
 
     /// Refresh system resource monitoring (CPU, memory) if enough time has elapsed.
+    /// 音频就绪后激活"加载完成"的文档（延迟显示）：切换标签页 + 弹完成 toast。
+    /// 音频初始化（GpuSynth/采样上传/管线预热）完成前，音符不显示、完成
+    /// 提示不弹——保证用户看到音符时点播放能立即响应。
+    pub(crate) fn poll_pending_doc_activate(&mut self) {
+        let Some(pending) = self.audio_state.pending_doc_activate.take() else {
+            return;
+        };
+        let ready = self
+            .audio_state
+            .handle
+            .as_ref()
+            .is_some_and(|a| a.handle.audio_ready());
+        if !ready {
+            // 未就绪：放回，下一帧再看（进度条仍在"初始化音频"）。
+            self.audio_state.pending_doc_activate = Some(pending);
+            return;
+        }
+
+        if pending.replace_untitled && pending.idx > 0 {
+            // 替换初始 Untitled：删除 index 0，新文档前移一位。
+            self.workspace.documents.remove(0);
+            if !self.mixer_racks.is_empty() {
+                self.mixer_racks.remove(0);
+            }
+            if !self.instrument_racks.is_empty() {
+                self.instrument_racks.remove(0);
+            }
+            let new_idx = pending.idx - 1;
+            self.workspace.active_doc = Some(new_idx);
+            // 音频已绑定同一文档（rebuild_audio_if_needed 用的 pending idx），
+            // 索引前移后同步，避免误判"文档切换"触发重建。
+            self.audio_state.active_doc = Some(new_idx);
+        } else {
+            self.workspace.active_doc = Some(pending.idx);
+        }
+        // 替换路径下 active_doc 数值可能不变（0→0），main_loop 的 switch
+        // 检测不到：主动清 cull，避免旧文档空 buffer 状态让新工程首帧走错。
+        self.invalidate_cull_state();
+        // 完成 toast 延迟到这里：真正可播放时才宣布"加载完成"。
+        self.notifications.finish_progress(
+            crate::widgets::toast::LOADING_PROGRESS_ID,
+            crate::widgets::toast::ProgressOutcome::Completed,
+            t!("toast.load_done").to_string(),
+            pending.file_name,
+            pending.detail,
+        );
+    }
+
     pub(crate) fn refresh_system_stats(&mut self) {
         self.sys_monitor.refresh_if_needed();
     }

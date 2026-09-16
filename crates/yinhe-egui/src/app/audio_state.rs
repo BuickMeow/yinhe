@@ -2,6 +2,18 @@
 
 use yinhe_audio::channel_layout::ChannelLayout;
 
+/// 加载完成但等音频就绪（`audio_ready`）后才激活显示的文档。
+pub(crate) struct PendingDocActivate {
+    /// 文档在 `workspace.documents` 中的索引。
+    pub idx: usize,
+    /// 是否替换初始 Untitled（激活时删除 index 0）。
+    pub replace_untitled: bool,
+    /// "加载完成"toast 的文件名（激活时才弹）。
+    pub file_name: String,
+    /// 完成卡 detail（加载耗时）。
+    pub detail: Option<String>,
+}
+
 /// 后台 teardown 回传的 insert 处理器批次（+ 归属文档索引）。
 type InsertReturnBatch = (
     std::sync::mpsc::Receiver<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
@@ -36,6 +48,8 @@ pub(crate) struct AudioState {
     /// teardown 后台线程回收的 insert 处理器（渲染线程 join 完成后回传）
     /// 与归属文档索引。`poll_insert_returns` 每帧尝试收取。
     pub pending_insert_returns: Option<InsertReturnBatch>,
+    /// 待激活的文档（音频就绪后由 `poll_pending_doc_activate` 激活显示）。
+    pub pending_doc_activate: Option<PendingDocActivate>,
     /// 设备切换对话框是否需要显示。
     ///
     /// 两种触发场景：
@@ -84,6 +98,7 @@ impl AudioState {
             pending_playback: false,
             pending_playback_since: None,
             pending_insert_returns: None,
+            pending_doc_activate: None,
             device_switch_pending: false,
             device_switch_required: false,
             device_switch_error: None,
