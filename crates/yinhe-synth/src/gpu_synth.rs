@@ -831,6 +831,128 @@ mod tests {
         assert_eq!(v.state.stage_progress, 0.0);
     }
 
+    /// 临时诊断：dump 高音区采样的包络参数。
+    #[test]
+    #[ignore = "需要 YINHE_TEST_SFZ"]
+    fn tmp_dump_envelope_params() {
+        let Some(sfz) = std::env::var_os("YINHE_TEST_SFZ") else {
+            return;
+        };
+        let path = std::path::PathBuf::from(&sfz);
+        let mut synth = GpuSynth::new_default(48_000).expect("GpuSynth");
+        synth
+            .load_dense_soundfonts(0, std::slice::from_ref(&path))
+            .expect("load");
+        synth.finish_soundfont_load();
+        for key in [60u8, 107, 108, 120, 127] {
+            synth.voices.clear();
+            synth.load_events(vec![SynthEvent::NoteOn {
+                sample: 0,
+                channel: 0,
+                key,
+                velocity: 127,
+            }]);
+            let frames = 512;
+            let mut bufs: Vec<yinhe_mixer::ChannelBuffers> = (0..1)
+                .map(|_| yinhe_mixer::ChannelBuffers {
+                    left: vec![0.0; frames],
+                    right: vec![0.0; frames],
+                })
+                .collect();
+            synth.render_to_mixer(&mut bufs);
+            if let Some(v) = synth.voices.first() {
+                eprintln!(
+                    "key={key}: attack={:.1} hold={:.1} decay={:.0} release={:.1} sustain={:.4} env_level={} speed={:.4} sample_len={}",
+                    v.state.attack_frames,
+                    v.state.hold_frames,
+                    v.state.decay_frames,
+                    v.state.release_frames,
+                    v.state.sustain_level,
+                    v.state.env_level,
+                    v.state.speed,
+                    v.state.sample_length,
+                );
+            } else {
+                eprintln!("key={key}: 无 voice（选不到音色？）");
+            }
+        }
+    }
+
+    /// 临时诊断：5 批高音簇的 voice 状态 dump。
+    #[test]
+    #[ignore = "需要本地环境"]
+    fn tmp_multi_batch_voice_dump() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let wav_path = dir.path().join("tone.wav");
+        let sfz_path = dir.path().join("tone.sfz");
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 48_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut w = hound::WavWriter::create(&wav_path, spec).expect("wav");
+        for i in 0..48_000u32 {
+            let v = ((i as f32) * 0.05).sin() * 20_000.0;
+            w.write_sample(v as i16).expect("write");
+        }
+        w.finalize().expect("finalize");
+        std::fs::write(
+            &sfz_path,
+            "<region>\nsample=tone.wav\nampeg_hold=0.6\nampeg_decay=89.88\nampeg_sustain=1.778\nampeg_release=3.5\n",
+        )
+        .expect("sfz");
+
+        let sr = 48_000u32;
+        let mut events = Vec::new();
+        for b in 0..5u64 {
+            let t0 = b * 5_294;
+            for key in 107u8..112 {
+                events.push(SynthEvent::NoteOn {
+                    sample: t0,
+                    channel: 0,
+                    key,
+                    velocity: 127,
+                });
+                events.push(SynthEvent::NoteOff {
+                    sample: t0 + 4_963,
+                    channel: 0,
+                    key,
+                });
+            }
+        }
+        let mut synth = GpuSynth::new_default(sr).expect("GpuSynth");
+        synth
+            .load_dense_soundfonts(0, std::slice::from_ref(&sfz_path))
+            .expect("load");
+        synth.finish_soundfont_load();
+        synth.load_events(events);
+        synth.seek(0);
+        let frames = 512;
+        let mut bufs: Vec<yinhe_mixer::ChannelBuffers> = vec![yinhe_mixer::ChannelBuffers {
+            left: vec![0.0; frames],
+            right: vec![0.0; frames],
+        }];
+        for i in 0..180 {
+            synth.render_to_mixer(&mut bufs);
+            let pos = (i + 1) * frames;
+            if [6, 7, 8, 10, 12, 14, 16, 20].contains(&i) {
+                let vc: Vec<String> = synth
+                    .voices
+                    .iter()
+                    .filter(|v| v.state.env_stage < 6)
+                    .map(|v| {
+                        format!(
+                            "k{}:s{}/e{:.3}/t{:.0}",
+                            v.key, v.state.env_stage, v.state.envelope, v.state.time
+                        )
+                    })
+                    .collect();
+                eprintln!("块{}（帧{}）: {}", i + 1, pos, vc.join(" "));
+            }
+        }
+    }
+
     /// chase_skip：只标记 seek 之后被实时处理过的控制事件（区间 [chase_base, cursor)）。
     #[test]
     fn chase_skip_marks_only_post_seek_controls() {
@@ -882,5 +1004,63 @@ mod tests {
             "seek 前的 CC7 不应标记"
         );
         assert!(!skip.pitch_bend[0], "seek 前的 PitchBend 不应标记");
+    }
+
+    /// 诊断/回归：块内任意帧开始的音符必须在正确帧出声。
+    /// 生产块长 4096（8×512 渲染段），而多数测试用 512 块（单段）——
+    /// 段偏移（start_offset 的段内相对 vs 块内帧语义）只在多段块暴露。
+    #[test]
+    fn note_starts_on_time_in_later_segments() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let wav_path = dir.path().join("tone.wav");
+        let sfz_path = dir.path().join("tone.sfz");
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 44_100,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut w = hound::WavWriter::create(&wav_path, spec).expect("wav create");
+        for _ in 0..44_100 {
+            w.write_sample(16_000i16).expect("wav write");
+        }
+        w.finalize().expect("wav finalize");
+        std::fs::write(&sfz_path, "<region>\nsample=tone.wav key=60\n").expect("sfz write");
+
+        let onset_for = |note_sample: u64| -> Option<usize> {
+            let mut synth = GpuSynth::new_default(44_100).expect("GpuSynth");
+            synth
+                .load_dense_soundfonts(0, std::slice::from_ref(&sfz_path))
+                .expect("load");
+            synth.finish_soundfont_load();
+            synth.load_events(vec![SynthEvent::NoteOn {
+                sample: note_sample,
+                channel: 0,
+                key: 60,
+                velocity: 127,
+            }]);
+            let frames = 2048usize;
+            let mut bufs: Vec<yinhe_mixer::ChannelBuffers> = (0..2)
+                .map(|_| yinhe_mixer::ChannelBuffers {
+                    left: vec![0.0; frames],
+                    right: vec![0.0; frames],
+                })
+                .collect();
+            synth.render_to_mixer(&mut bufs);
+            bufs[0].left.iter().position(|&x| x.abs() > 0.001)
+        };
+
+        let mut onsets = Vec::new();
+        for note_sample in [100u64, 600, 1500, 2000] {
+            let onset = onset_for(note_sample).expect("应有输出");
+            onsets.push((note_sample, onset));
+        }
+        for (note_sample, onset) in onsets {
+            let diff = onset as i64 - note_sample as i64;
+            assert!(
+                diff.abs() < 64,
+                "块内帧 {note_sample} 的音符 onset 错位（实际 {onset}，差 {diff}）"
+            );
+        }
     }
 }

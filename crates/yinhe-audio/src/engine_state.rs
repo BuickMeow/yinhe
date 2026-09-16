@@ -33,18 +33,15 @@ impl AudioEngine {
         self.duration_samples =
             (crate::prepare_model::model_duration_seconds(model) * self.sample_rate as f64) as u64;
 
-        // 音频轨的 skip 依据是"有没有片段"（note_count 恒为 0，不能按音符数判定）。
+        // skip 的唯一来源：音频轨没有片段（无可听内容，note_count 恒为 0，
+        // 不能按音符数判定）。MIDI 轨不按 audible_count 跳过：空轨的音符本来
+        // 就不在 audible_notes 里（无需过滤），而自动化（CC/PB/RPN）必须照常
+        // 发送——此前用 audible_count==0 过滤会误杀挂在无音符轨上的全部
+        // 自动化事件（cyber-night 全部 17 万 CC/PB 被丢弃的根因）。
         self.skip_track = model
             .tracks
             .iter()
-            .enumerate()
-            .map(|(i, t)| {
-                if t.kind == yinhe_core::TrackKind::Audio {
-                    t.audio_clips.is_empty()
-                } else {
-                    model.track_audible_count.get(i).copied().unwrap_or(0) == 0
-                }
-            })
+            .map(|t| t.kind == yinhe_core::TrackKind::Audio && t.audio_clips.is_empty())
             .collect();
 
         self.note_cursor = [0; KEY_COUNT];

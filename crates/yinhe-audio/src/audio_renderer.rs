@@ -112,6 +112,148 @@ impl RendererSharedState {
     }
 }
 
+/// 从 engine 的当前 audible_notes + cc_events 构建 SynthEvent 列表（GPU 路径）
+/// 音符事件 + 通道控制事件（CC/pitch bend/RPN）统一转 sample 域并排序。
+///
+/// `seek_pos`：渲染起点（0 = 从头）。鼓组/乐器模式事件在起点注入（seek 后
+/// GpuSynth 通道状态重置，必须重建——CPU 路径 SetPercussionMode 在模型加载
+/// 时应用且 ResetControl 不重置 program.bank）；起点之前开始、之后才结束的
+/// 音符在起点重启（与 CPU seek_to 的跨点音符重启一致）。
+///
+/// 顺序：鼓组/CC 事件先于音符事件构建——stable sort 后同 sample 时 CC 先处理，
+/// 与 CPU 路径 dispatch（cc_cursor 循环在 note 循环之前）一致。
+#[cfg(feature = "gpu")]
+pub(crate) fn build_gpu_synth_events(
+    engine: &AudioEngine,
+    seek_pos: u64,
+) -> Vec<yinhe_synth::SynthEvent> {
+    let audio_model = match engine.model.as_ref() {
+        Some(m) => m,
+        None => return Vec::new(),
+    };
+
+    let mut events: Vec<yinhe_synth::SynthEvent> = Vec::new();
+
+    // ── 鼓组/乐器模式初始状态（渲染起点注入；与 CPU setup_percussion 同序）──
+    // 先 GM 鼓通道（每 port 的 9 通道），再模型 bank 声明（>=120 鼓组），
+    // 同通道多条声明后者覆盖前者。
+    for p in 0..16u8 {
+        let src = p as usize * 16 + 9;
+        let dense = engine.channel_layout.dense_for(src);
+        // GPU 合成器只支持前 MAX_CHANNELS 个 dense 槽位。
+        if dense != u32::MAX && (dense as usize) < yinhe_synth::MAX_CHANNELS {
+            events.push(yinhe_synth::SynthEvent::Control {
+                sample: seek_pos,
+                channel: dense as u8,
+                event: yinhe_synth::ControlEvent::PercussionMode(true),
+            });
+        }
+    }
+    for (track_idx, banks) in audio_model.track_banks.iter().enumerate() {
+        if banks.is_empty() {
+            continue;
+        }
+        let src = audio_model.track_channel(track_idx) as usize;
+        if src >= 256 {
+            continue;
+        }
+        let dense = engine.channel_layout.dense_for(src);
+        if dense == u32::MAX || (dense as usize) >= yinhe_synth::MAX_CHANNELS {
+            continue;
+        }
+        for &(_, value) in banks {
+            events.push(yinhe_synth::SynthEvent::Control {
+                sample: seek_pos,
+                channel: dense as u8,
+                event: yinhe_synth::ControlEvent::PercussionMode(value >= 120),
+            });
+        }
+    }
+
+    // ── 通道控制事件（CC/pitch bend/RPN），tick 域转 sample 域 ──
+    // 放在音符事件之前：同 sample 时 CC 先于 note 处理（与 CPU dispatch 一致）
+    for cc in engine.cc_events.iter() {
+        // mute 的音轨：跳过其自动化事件（与 CPU 路径 dispatch 一致）；
+        // AM M/S 动态掩码：跳过被旁通的 lane（PC 事件 lane==哨兵，天然不跳过）。
+        let track_skipped = engine
+            .skip_track
+            .get(cc.track as usize)
+            .copied()
+            .unwrap_or(false);
+        let lane_skipped = engine
+            .am_lane_skip
+            .get(cc.track as usize)
+            .and_then(|v| v.get(cc.lane as usize))
+            .copied()
+            .unwrap_or(false);
+        if track_skipped || lane_skipped {
+            continue;
+        }
+        // GPU 路径不经过混音台/插件：插件参数事件无接收方，跳过。
+        if cc.plugin_param.is_some() {
+            continue;
+        }
+        // 插件乐器通道的事件由 CPU dispatch 转 MIDI 喂插件，不进 GPU。
+        if engine.channel_plugin_dense(cc.channel as u8).is_some() {
+            continue;
+        }
+        let dense = engine.channel_layout.dense_for(cc.channel as usize);
+        if dense == u32::MAX || (dense as usize) >= yinhe_synth::MAX_CHANNELS {
+            continue;
+        }
+        let Some(event) = to_gpu_control_event(&cc.event) else {
+            continue;
+        };
+        events.push(yinhe_synth::SynthEvent::Control {
+            sample: engine.tick_to_sample(cc.tick),
+            channel: dense as u8,
+            event,
+        });
+    }
+
+    // ── 音符事件（带 dense channel）──
+    for key in 0..128usize {
+        for note in engine.audible_notes[key].iter() {
+            let track = note.track as usize;
+            if engine.skip_track.get(track).copied().unwrap_or(false) {
+                continue;
+            }
+            let ch = audio_model.track_channel(track) as usize;
+            // 插件乐器通道的音符由 CPU dispatch 喂插件，不进 GPU。
+            if engine.channel_plugin_dense(ch as u8).is_some() {
+                continue;
+            }
+            let dense = engine.channel_layout.dense_for(ch);
+            if dense == u32::MAX || (dense as usize) >= yinhe_synth::MAX_CHANNELS {
+                continue;
+            }
+
+            let start_sample = engine.tick_to_sample(note.start_tick);
+            let end_sample = engine.tick_to_sample(note.end_tick);
+            // 跨 seek 点的音符：在 seek 点重启（CPU seek_to 同语义）
+            let on_sample = if start_sample < seek_pos && end_sample > seek_pos {
+                seek_pos
+            } else {
+                start_sample
+            };
+            events.push(yinhe_synth::SynthEvent::NoteOn {
+                sample: on_sample,
+                channel: dense as u8,
+                key: key as u8,
+                velocity: note.velocity,
+            });
+            events.push(yinhe_synth::SynthEvent::NoteOff {
+                sample: end_sample,
+                channel: dense as u8,
+                key: key as u8,
+            });
+        }
+    }
+
+    events.sort_by_key(|e| e.sample());
+    events
+}
+
 struct AudioRenderer {
     engine: AudioEngine,
     ring: AudioRingProducer,
@@ -817,8 +959,10 @@ impl AudioRenderer {
                                     let dt_load = t2.elapsed();
                                     // 加载当前模型的事件
                                     let t3 = Instant::now();
-                                    let events =
-                                        self.build_gpu_synth_events(self.engine.sample_position());
+                                    let events = build_gpu_synth_events(
+                                        &self.engine,
+                                        self.engine.sample_position(),
+                                    );
                                     let n = events.len();
                                     let dt_build = t3.elapsed();
                                     let t4 = Instant::now();
@@ -887,7 +1031,7 @@ impl AudioRenderer {
         let needs_rebuild = self.gpu_events_dirty || self.gpu_events_last_pos != Some(pos);
         if needs_rebuild {
             let t = Instant::now();
-            let events = self.build_gpu_synth_events(pos);
+            let events = build_gpu_synth_events(&self.engine, pos);
             let n = events.len();
             let dt_build = t.elapsed();
             let t2 = Instant::now();
@@ -912,147 +1056,6 @@ impl AudioRenderer {
     #[cfg(feature = "gpu")]
     fn invalidate_gpu_events(&mut self) {
         self.gpu_events_dirty = true;
-    }
-
-    /// 从 engine 的当前 audible_notes + cc_events 构建 SynthEvent 列表（GPU 路径）
-    /// 音符事件 + 通道控制事件（CC/pitch bend/RPN）统一转 sample 域并排序。
-    ///
-    /// `seek_pos`：渲染起点（0 = 从头）。鼓组/乐器模式事件在起点注入（seek 后
-    /// GpuSynth 通道状态重置，必须重建——CPU 路径 SetPercussionMode 在模型加载
-    /// 时应用且 ResetControl 不重置 program.bank）；起点之前开始、之后才结束的
-    /// 音符在起点重启（与 CPU seek_to 的跨点音符重启一致）。
-    ///
-    /// 顺序：鼓组/CC 事件先于音符事件构建——stable sort 后同 sample 时 CC 先处理，
-    /// 与 CPU 路径 dispatch（cc_cursor 循环在 note 循环之前）一致。
-    #[cfg(feature = "gpu")]
-    fn build_gpu_synth_events(&self, seek_pos: u64) -> Vec<yinhe_synth::SynthEvent> {
-        let audio_model = match self.engine.model.as_ref() {
-            Some(m) => m,
-            None => return Vec::new(),
-        };
-
-        let mut events: Vec<yinhe_synth::SynthEvent> = Vec::new();
-
-        // ── 鼓组/乐器模式初始状态（渲染起点注入；与 CPU setup_percussion 同序）──
-        // 先 GM 鼓通道（每 port 的 9 通道），再模型 bank 声明（>=120 鼓组），
-        // 同通道多条声明后者覆盖前者。
-        for p in 0..16u8 {
-            let src = p as usize * 16 + 9;
-            let dense = self.engine.channel_layout.dense_for(src);
-            // GPU 合成器只支持前 MAX_CHANNELS 个 dense 槽位。
-            if dense != u32::MAX && (dense as usize) < yinhe_synth::MAX_CHANNELS {
-                events.push(yinhe_synth::SynthEvent::Control {
-                    sample: seek_pos,
-                    channel: dense as u8,
-                    event: yinhe_synth::ControlEvent::PercussionMode(true),
-                });
-            }
-        }
-        for (track_idx, banks) in audio_model.track_banks.iter().enumerate() {
-            if banks.is_empty() {
-                continue;
-            }
-            let src = audio_model.track_channel(track_idx) as usize;
-            if src >= 256 {
-                continue;
-            }
-            let dense = self.engine.channel_layout.dense_for(src);
-            if dense == u32::MAX || (dense as usize) >= yinhe_synth::MAX_CHANNELS {
-                continue;
-            }
-            for &(_, value) in banks {
-                events.push(yinhe_synth::SynthEvent::Control {
-                    sample: seek_pos,
-                    channel: dense as u8,
-                    event: yinhe_synth::ControlEvent::PercussionMode(value >= 120),
-                });
-            }
-        }
-
-        // ── 通道控制事件（CC/pitch bend/RPN），tick 域转 sample 域 ──
-        // 放在音符事件之前：同 sample 时 CC 先于 note 处理（与 CPU dispatch 一致）
-        for cc in self.engine.cc_events.iter() {
-            // mute 的音轨：跳过其自动化事件（与 CPU 路径 dispatch 一致）；
-            // AM M/S 动态掩码：跳过被旁通的 lane（PC 事件 lane==哨兵，天然不跳过）。
-            let track_skipped = self
-                .engine
-                .skip_track
-                .get(cc.track as usize)
-                .copied()
-                .unwrap_or(false);
-            let lane_skipped = self
-                .engine
-                .am_lane_skip
-                .get(cc.track as usize)
-                .and_then(|v| v.get(cc.lane as usize))
-                .copied()
-                .unwrap_or(false);
-            if track_skipped || lane_skipped {
-                continue;
-            }
-            // GPU 路径不经过混音台/插件：插件参数事件无接收方，跳过。
-            if cc.plugin_param.is_some() {
-                continue;
-            }
-            // 插件乐器通道的事件由 CPU dispatch 转 MIDI 喂插件，不进 GPU。
-            if self.engine.channel_plugin_dense(cc.channel as u8).is_some() {
-                continue;
-            }
-            let dense = self.engine.channel_layout.dense_for(cc.channel as usize);
-            if dense == u32::MAX || (dense as usize) >= yinhe_synth::MAX_CHANNELS {
-                continue;
-            }
-            let Some(event) = to_gpu_control_event(&cc.event) else {
-                continue;
-            };
-            events.push(yinhe_synth::SynthEvent::Control {
-                sample: self.engine.tick_to_sample(cc.tick),
-                channel: dense as u8,
-                event,
-            });
-        }
-
-        // ── 音符事件（带 dense channel）──
-        for key in 0..128usize {
-            for note in self.engine.audible_notes[key].iter() {
-                let track = note.track as usize;
-                if self.engine.skip_track.get(track).copied().unwrap_or(false) {
-                    continue;
-                }
-                let ch = audio_model.track_channel(track) as usize;
-                // 插件乐器通道的音符由 CPU dispatch 喂插件，不进 GPU。
-                if self.engine.channel_plugin_dense(ch as u8).is_some() {
-                    continue;
-                }
-                let dense = self.engine.channel_layout.dense_for(ch);
-                if dense == u32::MAX || (dense as usize) >= yinhe_synth::MAX_CHANNELS {
-                    continue;
-                }
-
-                let start_sample = self.engine.tick_to_sample(note.start_tick);
-                let end_sample = self.engine.tick_to_sample(note.end_tick);
-                // 跨 seek 点的音符：在 seek 点重启（CPU seek_to 同语义）
-                let on_sample = if start_sample < seek_pos && end_sample > seek_pos {
-                    seek_pos
-                } else {
-                    start_sample
-                };
-                events.push(yinhe_synth::SynthEvent::NoteOn {
-                    sample: on_sample,
-                    channel: dense as u8,
-                    key: key as u8,
-                    velocity: note.velocity,
-                });
-                events.push(yinhe_synth::SynthEvent::NoteOff {
-                    sample: end_sample,
-                    channel: dense as u8,
-                    key: key as u8,
-                });
-            }
-        }
-
-        events.sort_by_key(|e| e.sample());
-        events
     }
 
     fn render_if_needed(&mut self) -> bool {
