@@ -172,7 +172,7 @@ fn collect_segments(
 /// 跳过，本函数只画未被覆盖的 lane。
 ///
 /// `max_val` 由调用方传入：Tempo 时为实际事件的最大值（动态），其他 target
-/// 时为 `target.max_value()`。所有 lane 必须共享同一 max_val。
+/// 时为其值域上限。所有 lane 必须共享同一 max_val。
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub fn build_data_lines(
     out: &mut Vec<CurveInstance>,

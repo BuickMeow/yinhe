@@ -1,3 +1,4 @@
+use yinhe_types::automation::ParamDevice;
 use yinhe_types::{AutomationLane, AutomationTarget, NoteSource, SegmentShape, TimelineViewBase};
 
 use super::data_lines;
@@ -31,17 +32,27 @@ pub enum AutomationGhost {
     },
 }
 
+/// Lane 渲染缓存键：各变体命名空间隔离（区间互不重叠），避免不同 target
+/// 撞 hash 后复用错误的 GPU 实例。name 不参与（仅显示用）。
+///
+/// 编码：CC `[0x1_0000, 0x1_007F]`；Rpn `[0x2_0000, 0x2_FFFF]`；
+/// Nrpn `[0x3_0000, 0x3_FFFF]`；Tempo `u64::MAX`；
+/// Param `[0x4_0000_0000, 0x2_04FF_FFFF_FFFF]`（device 2 位 @40、
+/// channel 8 位 @32、id 32 位）。
 fn target_hash(target: &AutomationTarget) -> u64 {
     match target {
-        AutomationTarget::CC { controller } => *controller as u64,
-        AutomationTarget::PitchBend => 1,
-        AutomationTarget::Rpn { parameter } => 2 + *parameter as u64,
-        AutomationTarget::Nrpn { parameter } => 2 + 0x10000 + *parameter as u64,
+        AutomationTarget::CC { controller } => 0x1_0000 + u64::from(*controller),
+        AutomationTarget::Rpn { parameter } => 0x2_0000 + u64::from(*parameter),
+        AutomationTarget::Nrpn { parameter } => 0x3_0000 + u64::from(*parameter),
         AutomationTarget::Tempo => u64::MAX,
-        // 插件参数 lane 哈希：MIDI 通道 + 参数 id（渲染与 MIDI lane 同路径）。
-        AutomationTarget::PluginParam {
-            channel, param_id, ..
-        } => 3 + 0x2_0000 + u64::from(*channel) * 0x1_0000_0000 + u64::from(*param_id),
+        AutomationTarget::Param { device, id, .. } => {
+            let (device_tag, channel) = match device {
+                ParamDevice::ChannelInstrument { channel } => (0u64, u64::from(*channel)),
+                ParamDevice::PluginInstrument { channel } => (1, u64::from(*channel)),
+                ParamDevice::ChannelDsp { channel } => (2, u64::from(*channel)),
+            };
+            0x4_0000_0000 + (device_tag << 40) + (channel << 32) + u64::from(*id)
+        }
     }
 }
 
@@ -95,7 +106,7 @@ fn hash_lane(lane: &AutomationLane) -> u64 {
 /// `highlight_ticks`: 这些 tick 位置的锚点渲染为白色高亮（选中锚点，可多选）。
 ///
 /// `max_val`: 当前 panel 的值域上界。Tempo 由调用方按实际事件动态计算，
-///            其他 target 直接传 `target.max_value()`。
+///            其他 target 由调用方按其值域给出。
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub fn prepare(
     renderer: &mut InstanceRenderer,
@@ -246,7 +257,7 @@ pub struct ArrAutomationLane<'a> {
     pub y_top: f32,
     /// 子行高（= 音轨行高）。
     pub height: f32,
-    /// 值域上限（Tempo 由调用方按事件动态算，其他 target.max_value()）。
+    /// 值域上限（Tempo 由调用方按事件动态算，其他由调用方按其值域给出）。
     pub max_val: f32,
     /// 需要白色高亮的锚点 tick（选中的锚点）。
     pub highlight_ticks: &'a [u32],
@@ -370,24 +381,8 @@ mod tests {
         let target = target_hash(&yinhe_types::AutomationTarget::Tempo);
         let dark = [220.0 / 255.0, 220.0 / 255.0, 220.0 / 255.0, 1.0];
         let light = [30.0 / 255.0, 30.0 / 255.0, 34.0 / 255.0, 1.0];
-        let dark_hash = {
-            let mut h = 0u64;
-            for c in [dark] {
-                h = h
-                    .wrapping_mul(0x9e3779b97f4a7c15)
-                    .wrapping_add(crate::hash_f32s(&c));
-            }
-            h
-        };
-        let light_hash = {
-            let mut h = 0u64;
-            for c in [light] {
-                h = h
-                    .wrapping_mul(0x9e3779b97f4a7c15)
-                    .wrapping_add(crate::hash_f32s(&c));
-            }
-            h
-        };
+        let dark_hash = crate::hash_f32s(&dark);
+        let light_hash = crate::hash_f32s(&light);
         assert_ne!(
             dark_hash, light_hash,
             "不同 Conductor 颜色 tc_hash 必须不同"
@@ -403,5 +398,77 @@ mod tests {
         let data_dark = layer_cache_key(&[vh, 0, dark_hash]);
         let data_light = layer_cache_key(&[vh, 0, light_hash]);
         assert_ne!(data_dark, data_light);
+    }
+
+    /// 回归：统一参数模型的 target_hash 命名空间必须隔离。撞 hash 会让
+    /// 不同 target 的 lane 复用同一份 GPU 实例缓存（渲染出错的 lane）。
+    #[test]
+    fn target_hash_namespaces_must_not_collide() {
+        let targets = [
+            AutomationTarget::CC { controller: 0 },
+            AutomationTarget::CC { controller: 127 },
+            AutomationTarget::Rpn { parameter: 0 },
+            AutomationTarget::Rpn {
+                parameter: u16::MAX,
+            },
+            AutomationTarget::Nrpn { parameter: 0 },
+            AutomationTarget::Nrpn {
+                parameter: u16::MAX,
+            },
+            AutomationTarget::Tempo,
+            AutomationTarget::Param {
+                device: ParamDevice::ChannelInstrument { channel: 0 },
+                id: 0,
+                name: String::new(),
+            },
+            AutomationTarget::Param {
+                device: ParamDevice::ChannelInstrument { channel: 255 },
+                id: u32::MAX,
+                name: "内置参数".into(),
+            },
+            AutomationTarget::Param {
+                device: ParamDevice::PluginInstrument { channel: 0 },
+                id: 0,
+                name: String::new(),
+            },
+            AutomationTarget::Param {
+                device: ParamDevice::ChannelDsp { channel: 0 },
+                id: 0,
+                name: String::new(),
+            },
+            AutomationTarget::Param {
+                device: ParamDevice::ChannelDsp { channel: 255 },
+                id: u32::MAX,
+                name: String::new(),
+            },
+        ];
+        for (i, a) in targets.iter().enumerate() {
+            for b in &targets[i + 1..] {
+                assert_ne!(target_hash(a), target_hash(b), "{a:?} 与 {b:?} 撞 hash");
+            }
+        }
+    }
+
+    /// Param 的 device 类型 / channel / id 任一不同都必须区分。
+    #[test]
+    fn target_hash_param_components_distinguish() {
+        let make = |device: ParamDevice, id: u32| AutomationTarget::Param {
+            device,
+            id,
+            name: String::new(),
+        };
+        let ch_dsp = |channel: u8| ParamDevice::ChannelDsp { channel };
+        assert_ne!(
+            target_hash(&make(ch_dsp(0), 1)),
+            target_hash(&make(ch_dsp(0), 2))
+        );
+        assert_ne!(
+            target_hash(&make(ch_dsp(1), 1)),
+            target_hash(&make(ch_dsp(2), 1))
+        );
+        assert_ne!(
+            target_hash(&make(ParamDevice::ChannelInstrument { channel: 0 }, 3)),
+            target_hash(&make(ParamDevice::PluginInstrument { channel: 0 }, 3))
+        );
     }
 }
