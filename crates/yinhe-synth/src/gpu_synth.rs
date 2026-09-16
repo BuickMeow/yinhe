@@ -892,14 +892,14 @@ mod tests {
             sample_format: hound::SampleFormat::Int,
         };
         let mut w = hound::WavWriter::create(&wav_path, spec).expect("wav");
-        for i in 0..48_000u32 {
+        for i in 0..480_000u32 {
             let v = ((i as f32) * 0.05).sin() * 20_000.0;
             w.write_sample(v as i16).expect("write");
         }
         w.finalize().expect("finalize");
         std::fs::write(
             &sfz_path,
-            "<region>\nsample=tone.wav\nampeg_hold=0.6\nampeg_decay=89.88\nampeg_sustain=1.778\nampeg_release=3.5\n",
+            "<region>\nsample=tone.wav\nlokey=0 hikey=127\nampeg_hold=0.6\nampeg_decay=89.88\nampeg_sustain=1.778\nampeg_release=3.5\n",
         )
         .expect("sfz");
 
@@ -907,7 +907,7 @@ mod tests {
         let mut events = Vec::new();
         for b in 0..5u64 {
             let t0 = b * 5_294;
-            for key in 107u8..112 {
+            for key in 60u8..65 {
                 events.push(SynthEvent::NoteOn {
                     sample: t0,
                     channel: 0,
@@ -928,28 +928,111 @@ mod tests {
         synth.finish_soundfont_load();
         synth.load_events(events);
         synth.seek(0);
-        let frames = 512;
+        let frames = 4096; // 与生产块一致（多段渲染路径）
         let mut bufs: Vec<yinhe_mixer::ChannelBuffers> = vec![yinhe_mixer::ChannelBuffers {
             left: vec![0.0; frames],
             right: vec![0.0; frames],
         }];
-        for i in 0..180 {
+        for i in 0..30 {
             synth.render_to_mixer(&mut bufs);
             let pos = (i + 1) * frames;
-            if [6, 7, 8, 10, 12, 14, 16, 20].contains(&i) {
+            if [1, 2, 3, 4, 5, 6, 7, 8, 10, 15, 20, 25].contains(&i) {
                 let vc: Vec<String> = synth
                     .voices
                     .iter()
-                    .filter(|v| v.state.env_stage < 6)
-                    .map(|v| {
-                        format!(
-                            "k{}:s{}/e{:.3}/t{:.0}",
-                            v.key, v.state.env_stage, v.state.envelope, v.state.time
-                        )
-                    })
+                    .map(|v| format!("k{}:s{}", v.key, v.state.env_stage))
                     .collect();
-                eprintln!("块{}（帧{}）: {}", i + 1, pos, vc.join(" "));
+                eprintln!("块{}（帧{}）: n={} {}", i + 1, pos, vc.len(), vc.join(" "));
             }
+        }
+    }
+
+    /// 最小复现：批 0 on@0/off@4963 + 批 1 on@4096/off@9059（块 4096）。
+    #[test]
+    #[ignore = "诊断"]
+    fn tmp_min_repro_batches() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let wav_path = dir.path().join("tone.wav");
+        let sfz_path = dir.path().join("tone.sfz");
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 48_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut w = hound::WavWriter::create(&wav_path, spec).expect("wav");
+        for i in 0..480_000u32 {
+            let v = ((i as f32) * 0.05).sin() * 20_000.0;
+            w.write_sample(v as i16).expect("write");
+        }
+        w.finalize().expect("finalize");
+        std::fs::write(
+            &sfz_path,
+            "<region>\nsample=tone.wav\nampeg_hold=0.6\nampeg_decay=89.88\nampeg_sustain=1.778\nampeg_release=3.5\n",
+        )
+        .expect("sfz");
+
+        let sr = 48_000u32;
+        let events = vec![
+            SynthEvent::NoteOn {
+                sample: 0,
+                channel: 0,
+                key: 60,
+                velocity: 127,
+            },
+            SynthEvent::NoteOff {
+                sample: 4_963,
+                channel: 0,
+                key: 60,
+            },
+            SynthEvent::NoteOn {
+                sample: 4_096,
+                channel: 0,
+                key: 61,
+                velocity: 127,
+            },
+            SynthEvent::NoteOff {
+                sample: 9_059,
+                channel: 0,
+                key: 61,
+            },
+        ];
+        // 验证 sfz 的 keyrange
+        {
+            let maps = crate::sfz_parser::build_key_maps(&sfz_path, sr).expect("build maps");
+            for key in [60u8, 61] {
+                let ok = crate::sfz_parser::select_key_info(&maps[0].map, key, 127).is_some();
+                eprintln!("  key={key} region存在={ok}");
+            }
+        }
+        let mut synth = GpuSynth::new_default(sr).expect("GpuSynth");
+        synth
+            .load_dense_soundfonts(0, std::slice::from_ref(&sfz_path))
+            .expect("load");
+        synth.finish_soundfont_load();
+        synth.load_events(events);
+        synth.seek(0);
+        let frames = 4096;
+        let mut bufs: Vec<yinhe_mixer::ChannelBuffers> = vec![yinhe_mixer::ChannelBuffers {
+            left: vec![0.0; frames],
+            right: vec![0.0; frames],
+        }];
+        for i in 0..4 {
+            synth.render_to_mixer(&mut bufs);
+            let rms =
+                (bufs[0].left.iter().map(|x| (x * x) as f64).sum::<f64>() / frames as f64).sqrt();
+            let vc: Vec<String> = synth
+                .voices
+                .iter()
+                .enumerate()
+                .map(|(idx, v)| {
+                    format!(
+                        "[{idx}]k{}:s{}/so{}/rp{}",
+                        v.key, v.state.env_stage, v.state.start_offset, v.release_pending as u8
+                    )
+                })
+                .collect();
+            eprintln!("块{}: rms={rms:.5} voices={vc:?}", i + 1);
         }
     }
 

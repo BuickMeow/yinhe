@@ -2483,15 +2483,13 @@ fn diag_cyber_night_ch3_wave_dump() {
         })
         .copied()
         .collect();
+    // 只保留音符（去 PB + 去 CC64/72/73），验证纯音符通路
     let events_no_pb: Vec<yinhe_synth::SynthEvent> = events
         .iter()
         .filter(|e| {
-            !matches!(
+            matches!(
                 e,
-                yinhe_synth::SynthEvent::Control {
-                    event: yinhe_synth::ControlEvent::PitchBend(_),
-                    ..
-                }
+                yinhe_synth::SynthEvent::NoteOn { .. } | yinhe_synth::SynthEvent::NoteOff { .. }
             )
         })
         .copied()
@@ -2501,8 +2499,10 @@ fn diag_cyber_night_ch3_wave_dump() {
         events.len(),
         events_no_pb.len()
     );
-    for e in events.iter().take(16) {
-        eprintln!("  {e:?}");
+    for e in events.iter() {
+        if let yinhe_synth::SynthEvent::Control { sample, event, .. } = e {
+            eprintln!("  CC @{:.4}s: {event:?}", *sample as f64 / sr as f64);
+        }
     }
 
     // 完整事件聚合（时间 + on/off 数 + key 范围）
@@ -2548,12 +2548,12 @@ fn diag_cyber_night_ch3_wave_dump() {
         }
     }
 
-    // GPU
+    // GPU（与 CPU 侧同一输入 events_no_pb）
     let mut gpu = yinhe_synth::GpuSynth::new_default(sr).unwrap();
     gpu.load_dense_soundfonts(3, &[std::path::PathBuf::from(sfz)])
         .unwrap();
     gpu.finish_soundfont_load();
-    gpu.load_events(events.clone());
+    gpu.load_events(events_no_pb.clone());
     gpu.seek(0);
     let mut bufs: Vec<yinhe_mixer::ChannelBuffers> = (0..4)
         .map(|_| yinhe_mixer::ChannelBuffers {
@@ -2794,10 +2794,10 @@ fn diag_high_cluster_isolated() {
     let frames_per_chunk = 512usize;
     let _total_frames = 0; // 在循环内按批数设置
 
-    for (tag, batches, keys) in [("5键5批", 5usize, 5u8)] {
+    for (tag, batches, keys, interval) in [("30批x5294_21键", 30usize, 21u8, 5_294u64)] {
         let mut events: Vec<yinhe_synth::SynthEvent> = Vec::new();
         for b in 0..batches {
-            let t0 = b as u64 * 5_294;
+            let t0 = b as u64 * interval;
             for key in 107u8..107 + keys {
                 events.push(yinhe_synth::SynthEvent::NoteOn {
                     sample: t0,
@@ -2812,8 +2812,9 @@ fn diag_high_cluster_isolated() {
                 });
             }
         }
+        events.sort_by_key(|e| e.sample());
 
-        let total_frames = batches as u64 * 5_294 + 5 * sr as u64;
+        let total_frames = batches as u64 * interval + 5 * sr as u64;
         // GPU
         let mut gpu = yinhe_synth::GpuSynth::new_default(sr).unwrap();
         gpu.load_dense_soundfonts(3, &[std::path::PathBuf::from(sfz)])
@@ -2834,6 +2835,19 @@ fn diag_high_cluster_isolated() {
                 gpu_out.push(bufs[3].left[i]);
                 gpu_out.push(bufs[3].right[i]);
             }
+        }
+        let spec = hound::WavSpec {
+            channels: 2,
+            sample_rate: sr,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+        {
+            let mut w = hound::WavWriter::create(format!("/tmp/mb_{tag}_gpu.wav"), spec).unwrap();
+            for &v in gpu_out.iter() {
+                w.write_sample(v).unwrap();
+            }
+            w.finalize().unwrap();
         }
 
         // CPU
@@ -2916,6 +2930,13 @@ fn diag_high_cluster_isolated() {
         }
         for v in cpu_out.iter_mut() {
             *v *= std::f32::consts::SQRT_2;
+        }
+        {
+            let mut w = hound::WavWriter::create(format!("/tmp/mb_{tag}_cpu.wav"), spec).unwrap();
+            for &v in cpu_out.iter() {
+                w.write_sample(v).unwrap();
+            }
+            w.finalize().unwrap();
         }
 
         let n = gpu_out.len().min(cpu_out.len());
@@ -3331,5 +3352,239 @@ fn diag_pitch_bend_single() {
         }
         w.finalize().unwrap();
         eprintln!("导出 {path}");
+    }
+}
+
+/// 诊断：纯音符 + 单个 CC，找出让 GPU 崩坏的 CC。
+#[test]
+#[ignore = "需要本地 MIDI + SoundFont"]
+fn diag_ch3_cc_bisect() {
+    use std::sync::Arc;
+    use xsynth_core::channel::{ChannelConfigEvent, ChannelEvent};
+    use xsynth_core::channel_group::{
+        ChannelGroup, ChannelGroupConfig, SynthEvent as XEvent, SynthFormat,
+    };
+    use xsynth_core::soundfont::{SampleSoundfont, SoundfontInitOptions};
+    use xsynth_core::{AudioPipe, AudioStreamParams, ChannelCount};
+
+    let midi = "/Users/jieneng/Music/MIDIs/cyber-night.mid";
+    let sfz = "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
+    let sr = 48_000u32;
+    let frames_per_chunk = 512usize;
+    let total_frames = sr as u64;
+
+    let model = Arc::new(yinhe_midi::parse_path(midi).unwrap());
+    let active = crate::spawn::channels_for_model(&model)
+        .active_mask()
+        .to_vec();
+    let mut engine = AudioEngine::new(sr, ChannelLayout::from_mask(active));
+    engine.handle_command(AudioCommand::LoadModel { model });
+    let all = crate::audio_renderer::build_gpu_synth_events(&engine, 0);
+    // ch3 前 1 秒的纯音符
+    let notes: Vec<yinhe_synth::SynthEvent> = all
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                yinhe_synth::SynthEvent::NoteOn { channel: 3, .. }
+                    | yinhe_synth::SynthEvent::NoteOff { channel: 3, .. }
+            ) && e.sample() < total_frames
+        })
+        .copied()
+        .collect();
+    // ch3 前 1 秒的 CC（非 PB）
+    let ccs: Vec<yinhe_synth::SynthEvent> = all
+        .iter()
+        .filter(|e| {
+            matches!(e, yinhe_synth::SynthEvent::Control { channel: 3, .. })
+                && e.sample() < total_frames
+                && !matches!(
+                    e,
+                    yinhe_synth::SynthEvent::Control {
+                        event: yinhe_synth::ControlEvent::PitchBend(_),
+                        ..
+                    }
+                )
+        })
+        .copied()
+        .collect();
+
+    let sf = Arc::new(
+        SampleSoundfont::new(
+            std::path::PathBuf::from(sfz),
+            AudioStreamParams {
+                channels: ChannelCount::Stereo,
+                sample_rate: sr,
+            },
+            SoundfontInitOptions::default(),
+        )
+        .expect("sf"),
+    );
+
+    let render_gpu = |events: &[yinhe_synth::SynthEvent]| -> (f32, f32) {
+        let mut gpu = yinhe_synth::GpuSynth::new_default(sr).unwrap();
+        gpu.load_dense_soundfonts(3, &[std::path::PathBuf::from(sfz)])
+            .unwrap();
+        gpu.finish_soundfont_load();
+        gpu.load_events(events.to_vec());
+        gpu.seek(0);
+        let mut bufs: Vec<yinhe_mixer::ChannelBuffers> = (0..4)
+            .map(|_| yinhe_mixer::ChannelBuffers {
+                left: vec![0.0; frames_per_chunk],
+                right: vec![0.0; frames_per_chunk],
+            })
+            .collect();
+        let mut peak = 0.0f32;
+        let mut n = 0u64;
+        while n < total_frames {
+            gpu.render_to_mixer(&mut bufs);
+            for i in 0..frames_per_chunk {
+                peak = peak.max(bufs[3].left[i].abs()).max(bufs[3].right[i].abs());
+            }
+            n += frames_per_chunk as u64;
+        }
+        (peak, 0.0)
+    };
+
+    let render_cpu = |events: &[yinhe_synth::SynthEvent]| -> f32 {
+        let mut cg = ChannelGroup::new(ChannelGroupConfig {
+            channel_init_options: Default::default(),
+            format: SynthFormat::Custom { channels: 32 },
+            audio_params: AudioStreamParams {
+                channels: ChannelCount::Stereo,
+                sample_rate: sr,
+            },
+            parallelism: ParallelismOptions {
+                channel: xsynth_core::channel_group::ThreadCount::None,
+                key: xsynth_core::channel_group::ThreadCount::None,
+            },
+        });
+        cg.send_event(XEvent::Channel(
+            3,
+            ChannelEvent::Config(ChannelConfigEvent::SetSoundfonts(vec![sf.clone()])),
+        ));
+        let xevents: Vec<(u64, XEvent)> = events
+            .iter()
+            .map(|e| match e {
+                yinhe_synth::SynthEvent::NoteOn {
+                    sample,
+                    key,
+                    velocity,
+                    ..
+                } => (
+                    *sample,
+                    XEvent::Channel(
+                        3,
+                        ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
+                            key: *key,
+                            vel: *velocity,
+                        }),
+                    ),
+                ),
+                yinhe_synth::SynthEvent::NoteOff { sample, key, .. } => (
+                    *sample,
+                    XEvent::Channel(
+                        3,
+                        ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: *key }),
+                    ),
+                ),
+                yinhe_synth::SynthEvent::Control { sample, event, .. } => (
+                    *sample,
+                    XEvent::Channel(
+                        3,
+                        ChannelEvent::Audio(ChannelAudioEvent::Control(match event {
+                            yinhe_synth::ControlEvent::Raw(c, v) => ControlEvent::Raw(*c, *v),
+                            yinhe_synth::ControlEvent::PitchBend(v) => {
+                                ControlEvent::PitchBendValue(*v)
+                            }
+                            yinhe_synth::ControlEvent::PitchBendSensitivity(v) => {
+                                ControlEvent::PitchBendSensitivity(*v)
+                            }
+                            yinhe_synth::ControlEvent::FineTune(v) => ControlEvent::FineTune(*v),
+                            yinhe_synth::ControlEvent::CoarseTune(v) => {
+                                ControlEvent::CoarseTune(*v)
+                            }
+                            yinhe_synth::ControlEvent::ProgramChange(p) => {
+                                return (
+                                    *sample,
+                                    XEvent::Channel(
+                                        3,
+                                        ChannelEvent::Audio(ChannelAudioEvent::ProgramChange(*p)),
+                                    ),
+                                );
+                            }
+                            _ => ControlEvent::Raw(0, 0),
+                        })),
+                    ),
+                ),
+            })
+            .collect();
+        let mut out: Vec<f32> = Vec::new();
+        let mut chunk = vec![0.0f32; frames_per_chunk * 2];
+        let mut cursor = 0usize;
+        let mut rendered = 0u64;
+        while rendered < total_frames {
+            while cursor < xevents.len() && xevents[cursor].0 <= rendered {
+                cg.send_event(xevents[cursor].1.clone());
+                cursor += 1;
+            }
+            let seg_end = xevents
+                .get(cursor)
+                .map(|(s, _)| (*s).min(total_frames))
+                .unwrap_or(total_frames);
+            let seg_frames = seg_end - rendered;
+            let mut done = 0u64;
+            while done < seg_frames {
+                let n = ((seg_frames - done) as usize).min(frames_per_chunk);
+                cg.read_samples(&mut chunk[..n * 2]);
+                out.extend_from_slice(&chunk[..n * 2]);
+                done += n as u64;
+            }
+            rendered = seg_end;
+        }
+        out.iter().fold(0.0f32, |m, &v| m.max(v.abs())) * std::f32::consts::SQRT_2
+    };
+
+    // 基线：纯音符（各 CC 单独加入）
+    let cpu_peak = render_cpu(&notes);
+    let (gpu_peak, _) = render_gpu(&notes);
+    eprintln!("[baseline 纯音符] gpu_peak={gpu_peak:.3} cpu_peak={cpu_peak:.3}");
+
+    // 全部 16 个 CC 一起
+    {
+        let mut ev = notes.clone();
+        ev.extend(ccs.iter().copied());
+        ev.sort_by_key(|e| e.sample());
+        let tag = format!("全部{}CC", ccs.len());
+        let (gp, _) = render_gpu(&ev);
+        let cp = render_cpu(&ev);
+        let ratio = gp / cp.max(1e-9);
+        let flag = if !(0.5..=1.5).contains(&ratio) {
+            " <<< 崩坏"
+        } else {
+            ""
+        };
+        eprintln!("[{tag}] gpu={gp:.3} cpu={cp:.3} ratio={ratio:.3}{flag}");
+    }
+
+    for cc in ccs.iter() {
+        let mut ev = notes.clone();
+        ev.push(*cc);
+        ev.sort_by_key(|e| e.sample());
+        let (gp, _) = render_gpu(&ev);
+        let cp = render_cpu(&ev);
+        let tag = match cc {
+            yinhe_synth::SynthEvent::Control { sample, event, .. } => {
+                format!("{event:?} @{:.3}s", *sample as f64 / sr as f64)
+            }
+            _ => "?".into(),
+        };
+        let ratio = gp / cp.max(1e-9);
+        let flag = if !(0.5..=1.5).contains(&ratio) {
+            " <<< 崩坏"
+        } else {
+            ""
+        };
+        eprintln!("[+{tag}] gpu={gp:.3} cpu={cp:.3} ratio={ratio:.3}{flag}");
     }
 }

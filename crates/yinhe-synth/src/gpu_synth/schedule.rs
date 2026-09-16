@@ -305,29 +305,42 @@ impl GpuSynth {
         // 音色库选择：dense 通道 → port → (bank, preset) 条目（与 xsynth
         // ChannelSoundfont::rebuild_matrix 一致：主选 + 兜底，落空静音）。
         let Some(ch_idx) = dense_channel(channel as usize) else {
+            eprintln!("[dbg] note_on: dense_channel 失败 ch={channel}");
             return;
         };
         // voice 槽位上限（状态常驻 GPU，槽位固定）；超限时由 maybe_compact_voices
         // 在块边界压缩，这里防御性拒绝。
         if self.voices.len() >= MAX_VOICE_SLOTS as usize {
+            eprintln!("[dbg] note_on: slots 满");
             return;
         }
         let ch = self.channels[ch_idx];
         let entries = &self.port_key_maps[self.channel_port[ch_idx] as usize];
         let info = match sfz_parser::select_key_info_multi(entries, ch.bank, ch.program, key, vel) {
             Some(i) => i,
-            None => return,
+            None => {
+                eprintln!(
+                    "[dbg] note_on: select 失败 key={key} vel={vel} bank={} prog={}",
+                    ch.bank, ch.program
+                );
+                return;
+            }
         };
         let (offset, length) = match self
             .sample_offsets
             .get(&(info.sample_data.as_ptr() as usize))
         {
             Some(&v) => v,
-            None => return,
+            None => {
+                eprintln!("[dbg] note_on: offsets 无该采样指针 key={key}");
+                return;
+            }
         };
         if length == 0 {
+            eprintln!("[dbg] note_on: length=0 key={key}");
             return;
         }
+        eprintln!("[dbg] note_on OK key={key} frame={block_frame}");
 
         // 音色库声像：等功率法则（xsynth stereo spawner 公式，左右各 1.42 补偿）
         let angle = info.pan * std::f32::consts::FRAC_PI_2;
