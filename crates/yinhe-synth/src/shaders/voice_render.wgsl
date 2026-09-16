@@ -263,25 +263,33 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
     if is_active {
         st = voice_states[vid];
     }
-    // 段 0 的通道更新（块起点 CC 事件）在初始化时应用
-    if is_active && params.seg_count > 0u {
+    // 段 0 的通道更新（段起点 CC 事件）在初始化时应用。
+    // 只应用于**已开始**的 voice（start_offset == 0）：尚未开始的 voice
+    // （段内稍后/后续段才发声，但已在渲染前上传）的创建值已是"其开始帧的
+    // 通道状态"，套用段 0 的旧 mult 会在 speed 修正里引入一次性 time 偏差。
+    // 段起点（fi=0）换速需补偿：上一段的末尾推进用的是旧速度外推一帧，
+    // 而逐帧语义下本帧位置 = 上一帧位置 + 新速度 → time += 新 - 旧。
+    if is_active && params.seg_count > 0u && st.start_offset == 0u {
         let off = segs[0].ch_off;
         let cnt = segs[0].ch_count;
         for (var ui: u32 = off; ui < off + cnt; ui++) {
             let cu = ch_updates[ui];
             if cu.ch == st.channel {
+                let old_speed = st.speed;
                 st.speed = st.base_speed * cu.speed_mult;
+                st.time += st.speed - old_speed;
             }
         }
     }
     var seg_idx = 0u;
-    var ended_this_block = 0u;
 
     for (var fi: u32 = 0u; fi < fc; fi++) {
         // 跨段：应用该段边界的通道状态更新
         while seg_idx + 1u < params.seg_count && fi >= segs[seg_idx + 1u].start_frame {
             seg_idx += 1u;
-            if is_active {
+            // 只对已开始的 voice 应用通道更新（同初始化：未开始的 voice
+            // 创建值已是其开始帧的通道状态）。
+            if is_active && fi >= st.start_offset {
                 let off = segs[seg_idx].ch_off;
                 let cnt = segs[seg_idx].ch_count;
                 for (var ui: u32 = off; ui < off + cnt; ui++) {
@@ -290,12 +298,12 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
                         let old_speed = st.speed;
                         st.speed = st.base_speed * cu.speed_mult;
                         // speed 跳变（弯音/调音）时修正 time，保持采样位置连续：
-                        // 解析式 t = time + fi*speed 在段边界处产生 fi*(new-old) 的
-                        // 位置跳变，回退到上一帧末的连续位置（fi 帧从旧速度末尾接新速度）
-                        if fi > 0u {
-                            st.time += f32(fi) * (old_speed - st.speed)
-                                - (old_speed - st.speed);
-                        }
+                        // 解析式 t = time + (fi - start_offset)*speed 在换速处产生
+                        // 跳变，回退到"上一帧末 + 新速度"的连续位置。修正量
+                        // = (fi - start_offset - 1) * (old - new)（fi == start_offset
+                        // 即音符首帧时无前帧可比，修正量为 -Δ 保持解析式基准连续）。
+                        let n = f32(fi - st.start_offset);
+                        st.time += (n - 1.0) * (old_speed - st.speed);
                     }
                 }
             }
@@ -424,11 +432,7 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
                 // 与 xsynth `is_past_end` 一致（Continuous 恒循环，永不因采样结束）。
                 st.env_stage = 6u;
             }
-            let prev_stage = st.env_stage;
             st = advance_env(st);
-            if is_active && prev_stage < 6u && st.env_stage == 6u {
-                ended_this_block = 1u;
-            }
         }
 
         // 直写自己的 slot（pass2 按通道归约；无 workgroup 同步）。
@@ -440,6 +444,9 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
 
     // 全字段写回（CPU 读回为下一块起点状态；flt_* 亦在其中）。
     // 与 CPU advance_voices 一致：消耗一次性 start_offset、推进 time。
+    // 分段渲染：voice 的 start_offset 为**段内相对**偏移（跨段时由 else 分支
+    // 右移 fc）；音符在后续段才开始时不能推进 time、也不能清零（否则下段
+    // 会被误判为"已开始"而提前发声）。
     if is_active {
         if fc > st.start_offset {
             let act_frames = fc - st.start_offset;
@@ -463,7 +470,8 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
                 }
             }
         } else {
-            st.start_offset = 0u;
+            // 音符在后续渲染段才开始：start_offset（段内相对）右移到下一段。
+            st.start_offset -= fc;
         }
         voice_states[vid] = st;
         // 紧凑状态：CPU 只读回 env_stage（voice 结束清理用）。

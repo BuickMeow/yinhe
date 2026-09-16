@@ -580,6 +580,7 @@ impl GpuSynth {
             let mut ch_updates: Vec<ChState> = Vec::new();
             let mut releases: Vec<ReleaseCmd> = Vec::new();
             let mut env_cmds: Vec<EnvUpdateCmd> = Vec::new();
+            let new_from = self.voices.len();
             self.collect_block(
                 s0,
                 s1,
@@ -588,6 +589,11 @@ impl GpuSynth {
                 &mut releases,
                 &mut env_cmds,
             );
+            // 本段新建 voice 的 start_offset（段内帧）转**全局块内帧**：
+            // shader 段末按段长右移未开始 voice 的偏移，跨段后回到段内相对值。
+            for v in &mut self.voices[new_from..] {
+                v.state.start_offset += offset as u32;
+            }
             seg_data.push(SegBuffers {
                 frame_start: offset as u32,
                 frame_length: seg_frames as u32,
@@ -1459,6 +1465,80 @@ mod tests {
         assert!(
             max_diff < peak * 0.01,
             "分段（4096）与小块（512）输出不一致: max_diff={max_diff} peak={peak}"
+        );
+    }
+
+    /// 回归：密集 pitch bend（段内反复换 speed）+ 音符在段内起始时，
+    /// 分段（4096=8×512）与小块（512）输出一致（验证跨段时间推进连续）。
+    #[test]
+    fn segmented_render_matches_with_dense_bend() {
+        let Some(sfz) = std::env::var_os("YINHE_TEST_SFZ") else {
+            eprintln!("YINHE_TEST_SFZ not set, skipping");
+            return;
+        };
+        let path = std::path::PathBuf::from(&sfz);
+        let mut events: Vec<SynthEvent> = Vec::new();
+        // 音符在段内多个位置创建（start_offset 非 0），跨多个渲染段
+        for (i, start) in [100usize, 700, 1500, 2600, 3900].iter().enumerate() {
+            events.push(SynthEvent::NoteOn {
+                sample: *start as u64,
+                channel: 0,
+                key: 60 + i as u8,
+                velocity: 100,
+            });
+            events.push(SynthEvent::NoteOff {
+                sample: (*start + 3000) as u64,
+                channel: 0,
+                key: 60 + i as u8,
+            });
+        }
+        // 每 64 帧一次 pitch bend（段内反复换 speed，触发段边界 time 修正）
+        for k in 0..180 {
+            let v = ((k % 40) as f32 - 20.0) / 20.0 * 0.5;
+            events.push(SynthEvent::Control {
+                sample: (64 * k) as u64,
+                channel: 0,
+                event: ControlEvent::PitchBend(v),
+            });
+        }
+        events.sort_by_key(|e| e.sample());
+
+        let render = |frames: usize| -> Vec<f32> {
+            let mut synth = GpuSynth::new_default(44_100).expect("GpuSynth");
+            synth
+                .load_dense_soundfonts(0, std::slice::from_ref(&path))
+                .expect("load");
+            synth.finish_soundfont_load();
+            synth.load_events(events.clone());
+            let mut bufs: Vec<yinhe_mixer::ChannelBuffers> = (0..2)
+                .map(|_| yinhe_mixer::ChannelBuffers {
+                    left: vec![0.0; frames],
+                    right: vec![0.0; frames],
+                })
+                .collect();
+            let mut out = Vec::with_capacity(120_000 * 2);
+            while out.len() < 120_000 * 2 {
+                synth.render_to_mixer(&mut bufs);
+                for i in 0..frames {
+                    out.push(bufs[0].left[i]);
+                    out.push(bufs[0].right[i]);
+                }
+            }
+            out
+        };
+        let a = render(512);
+        let b = render(4096);
+        let n = a.len().min(b.len());
+        let max_diff = a[..n]
+            .iter()
+            .zip(&b[..n])
+            .map(|(x, y)| (x - y).abs())
+            .fold(0.0f32, f32::max);
+        let peak = a.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(peak > 0.0, "应有输出");
+        assert!(
+            max_diff < peak * 0.01,
+            "密集 bend 下分段与小块输出不一致: max_diff={max_diff} peak={peak}"
         );
     }
 }
