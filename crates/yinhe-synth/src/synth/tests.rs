@@ -37,7 +37,7 @@ fn setup_gpu() -> Option<(GpuAudioRenderer, Vec<f32>)> {
             make_sine_samples(sample_len as usize, 440.0 * (inst as f32 + 1.0), 44100.0)
         })
         .collect();
-    renderer.upload_samples(samples.clone());
+    renderer.upload_samples(std::sync::Arc::new(samples.clone()));
     let limits = renderer.device.limits();
     eprintln!(
         "GPU limits: min_storage_buf_align={} max_buf_binding={}",
@@ -130,7 +130,7 @@ fn gpu_vs_cpu_correctness() {
 
     let sample_len = 4096u32; // 帧数
     let samples = make_stereo_samples(sample_len as usize, 220.0, 44100.0);
-    renderer.upload_samples(samples.clone());
+    renderer.upload_samples(std::sync::Arc::new(samples.clone()));
     renderer.buffers = None;
 
     let make_test_voices = |stage: u32| {
@@ -287,7 +287,7 @@ fn gpu_filter_matches_biquad_crate() {
             (2.0 * std::f32::consts::PI * (200.0 + 8000.0 * t / 0.2) * t).sin()
         })
         .collect();
-    renderer.upload_samples(samples.clone());
+    renderer.upload_samples(std::sync::Arc::new(samples.clone()));
     renderer.buffers = None;
 
     // 用 biquad crate 生成系数（权威来源）
@@ -371,7 +371,7 @@ fn loop_mode_semantics_match_xsynth() {
     let frame_count = 256u32;
     let samples: Vec<f32> = make_sine_samples(frame_count as usize, 440.0, sr as f32);
     let mut renderer = GpuAudioRenderer::new_default().expect("renderer init failed");
-    renderer.upload_samples(samples.clone());
+    renderer.upload_samples(std::sync::Arc::new(samples.clone()));
 
     let peak_of = |o: &[f32]| o.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
 
@@ -438,7 +438,7 @@ fn new_voice_after_seg_boundary_sounds() {
         .map(|i| ((i as f32) * 0.01).sin() * 0.5)
         .collect();
     let mut renderer = GpuAudioRenderer::new_default().expect("renderer init failed");
-    renderer.upload_samples(samples.clone());
+    renderer.upload_samples(std::sync::Arc::new(samples.clone()));
 
     let mut v = make_voices(samples.len() as u32, 1, 1.0).remove(0);
     // 块内 68 帧处创建（段边界位置）

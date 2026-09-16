@@ -128,6 +128,7 @@ impl GpuAudioRenderer {
                 let queue = &self.queue;
                 let created: Vec<wgpu::Buffer> = self
                     .sample_data
+                    .as_slice()
                     .chunks(CHUNK_SIZE)
                     .take(MAX_CHUNKS)
                     .map(|data| {
@@ -169,7 +170,12 @@ impl GpuAudioRenderer {
         // Create chunk_offsets buffer (uniform, padded to 32 bytes = 8 u32 for 16-byte alignment)
         let mut offsets: Vec<u32> = Vec::with_capacity(8);
         let mut acc = 0u32;
-        for chunk in self.sample_data.chunks(CHUNK_SIZE).take(MAX_CHUNKS) {
+        for chunk in self
+            .sample_data
+            .as_slice()
+            .chunks(CHUNK_SIZE)
+            .take(MAX_CHUNKS)
+        {
             offsets.push(acc);
             acc += chunk.len() as u32;
         }

@@ -21,9 +21,9 @@ pub struct GpuAudioRenderer {
     pub(crate) bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) dummy_buf: wgpu::Buffer,
     pub(crate) buffers: Option<GpuBuffers>,
-    /// 采样数据（连续大块；chunk 切片直接在 `ensure_buffers` 里上传，
-    /// 不再预切成 `Vec<Vec<f32>>` 以避免一次全量拷贝）。
-    pub(crate) sample_data: Vec<f32>,
+    /// 采样数据（连续大块，Arc 与拼接缓存共享同一份内存；chunk 切片直接在
+    /// `ensure_buffers` 里上传，不再预切成 `Vec<Vec<f32>>` 以避免额外拷贝）。
+    pub(crate) sample_data: Arc<Vec<f32>>,
     /// 采样 GPU buffer（跨 GpuBuffers 重建复用：voice/帧数扩容触发的重建
     /// 不再重传采样数据）。`upload_samples` 置 None 表示数据已更新。
     pub(crate) sample_buffers: Option<Vec<wgpu::Buffer>>,
@@ -187,7 +187,7 @@ impl GpuAudioRenderer {
             bind_group_layout,
             dummy_buf,
             buffers: None,
-            sample_data: Vec::new(),
+            sample_data: Arc::new(Vec::new()),
             sample_buffers: None,
             #[cfg(test)]
             sample_upload_count: 0,
@@ -233,7 +233,7 @@ impl GpuAudioRenderer {
 
     /// 上传音色库采样数据（接管所有权；GPU 上传发生在下一次 `render_block` 的
     /// `ensure_buffers`，为避免额外拷贝这里不做预切分）。
-    pub fn upload_samples(&mut self, sample_data: Vec<f32>) {
+    pub fn upload_samples(&mut self, sample_data: Arc<Vec<f32>>) {
         self.sample_data = sample_data;
         self.sample_buffers = None;
         self.buffers = None;
