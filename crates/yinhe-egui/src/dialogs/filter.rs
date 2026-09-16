@@ -109,7 +109,8 @@ impl FilterDialogState {
             })
             .collect();
         self.automation_value_enabled = f.automation_value.is_some();
-        let (alo, ahi) = f.automation_value.unwrap_or((0.0, 127.0));
+        // 统一参数模型：自动化事件值统一归一化 0..1（Tempo 除外，但筛选按 lane 值比较）。
+        let (alo, ahi) = f.automation_value.unwrap_or((0.0, 1.0));
         self.automation_value_lo = alo;
         self.automation_value_hi = ahi;
     }
@@ -429,9 +430,17 @@ fn show_automation_section(ui: &mut egui::Ui, state: &mut FilterDialogState) {
         t!("dialog.filter.value").as_ref(),
         &mut state.automation_value_enabled,
         |ui| {
-            ui.add(egui::DragValue::new(&mut state.automation_value_hi).speed(1.0));
+            ui.add(
+                egui::DragValue::new(&mut state.automation_value_hi)
+                    .speed(0.01)
+                    .fixed_decimals(3),
+            );
             ui.label("~");
-            ui.add(egui::DragValue::new(&mut state.automation_value_lo).speed(1.0));
+            ui.add(
+                egui::DragValue::new(&mut state.automation_value_lo)
+                    .speed(0.01)
+                    .fixed_decimals(3),
+            );
         },
     );
 }

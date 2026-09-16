@@ -39,6 +39,7 @@ pub(crate) fn show_panels(
     track_selected: &HashSet<u16>,
     active_tool: &Tool,
     write_track: Option<u16>,
+    write_channel: Option<u8>,
     conductor_idx: Option<u16>,
     quantize: QuantizePreset,
     ppq: u32,
@@ -86,6 +87,7 @@ pub(crate) fn show_panels(
             midi,
             track_visible,
             track_colors,
+            write_channel,
         };
         let panels_layout = automation_panel::PanelsLayout {
             combo_width: combo_w,

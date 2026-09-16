@@ -85,16 +85,18 @@ fn show_auto_value_popup(
         PopupConfig {
             salt,
             title: t!("event_browser.edit_value").as_ref(),
-            initial: value as f64,
+            // 编辑器用显示值（CC 0..127 / PB 0..16383 / Tempo=BPM）。
+            initial: ctx.target.to_display_value(value) as f64,
             range_min: 0.0,
-            range_max: ctx.target.max_value() as f64,
+            range_max: crate::piano_view::automation_panel::display_max_or_bound(ctx.target) as f64,
             speed: 1.0,
             fixed_decimals: None,
         },
     );
     match action {
         PopupAction::Closed(new_val_f) => {
-            let new_val = new_val_f as f32;
+            // 显示值 → 归一化值（写入换算唯一入口）。
+            let new_val = ctx.target.from_display_value(new_val_f as f32);
             let snapshot = doc.capture_snapshot();
             let before = snapshot_lane_events(doc, ctx.track_idx, ctx.lane_idx, ctx.target);
             doc.apply_automation_edits(vec![yinhe_types::AutomationEdit::Move {

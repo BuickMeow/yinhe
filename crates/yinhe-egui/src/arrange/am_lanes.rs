@@ -61,7 +61,7 @@ pub(crate) fn visible_am_rows(
 }
 
 /// AM lane 的值域上限：Tempo 由实际事件动态计算（与 PR 的 panel_max_val 一致），
-/// 其他 target 用 max_value()。
+/// 其他 target 统一归一化 1.0。
 pub(crate) fn lane_max_val(lane: &AutomationLane) -> f32 {
     if lane.target == AutomationTarget::Tempo {
         lane.events
@@ -70,7 +70,7 @@ pub(crate) fn lane_max_val(lane: &AutomationLane) -> f32 {
             .fold(0.0_f32, f32::max)
             .max(1.0)
     } else {
-        lane.target.max_value()
+        1.0
     }
 }
 
@@ -271,7 +271,7 @@ pub(crate) fn interact_all(
                     let val_str = if target == AutomationTarget::Tempo {
                         format!("{:.2} BPM", value)
                     } else {
-                        format!("{:.2}", value)
+                        crate::piano_view::automation_panel::format_display_value(&target, value)
                     };
                     (vec![pos_str, val_str], pos.x, pos.y)
                 }

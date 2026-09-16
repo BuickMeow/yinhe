@@ -7,7 +7,7 @@ use yinhe_types::{AutomationLane, AutomationPanelView, AutomationTarget};
 use crate::right_panel::{InfoContent, RightTab};
 use crate::theme;
 
-use super::constants::AUTOMATION_TARGETS;
+use super::constants::automation_targets;
 use super::interaction;
 
 /// 分割条拖拽：调整面板高度。写入下一帧生效，避免帧内布局抖动。
@@ -38,15 +38,17 @@ pub(crate) fn handle_split_drag(
     }
 }
 
-/// 左侧 target 选择器：图标按钮 + 弹出菜单（velocity / curated targets / 自定义 CC）。
+/// 左侧 target 选择器：图标按钮 + 弹出菜单（velocity / 设备参数 / 自定义 CC）。
 pub(crate) fn show_target_combo(
     ui: &mut egui::Ui,
     panel: &mut AutomationPanelView,
     combo_rect: egui::Rect,
     panels_area_rect: egui::Rect,
     editing_is_conductor: bool,
+    channel: Option<u8>,
 ) {
-    let _ = editing_is_conductor;
+    // Conductor 无设备通道：只列 Tempo（非 Tempo 编辑由 dispatch 层禁用）。
+    let channel = if editing_is_conductor { None } else { channel };
     ui.painter().rect_filled(combo_rect, 0.0, theme::app_bg());
     let combo_inner = combo_rect.shrink(4.0);
     ui.scope_builder(egui::UiBuilder::new().max_rect(combo_inner), |ui| {
@@ -91,7 +93,7 @@ pub(crate) fn show_target_combo(
                                 ui.ctx().data_mut(|d| d.insert_persisted(popup_id, false));
                             }
                             ui.separator();
-                            for target in AUTOMATION_TARGETS {
+                            for target in &automation_targets(channel) {
                                 let name = target.display_name();
                                 let selected =
                                     !panel.show_velocity && panel.selected_target == *target;

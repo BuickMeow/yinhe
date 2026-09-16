@@ -8,6 +8,7 @@
 //! 首个变化捕获快照，编辑结束（endEdit 到达）且当帧无新变化时提交。
 
 use rust_i18n::t;
+use yinhe_types::automation::ParamDevice;
 use yinhe_types::{AutomationEvent, AutomationTarget};
 
 use crate::app::App;
@@ -206,9 +207,9 @@ impl App {
         param_id: u32,
         name: &str,
     ) {
-        let target = AutomationTarget::PluginParam {
-            channel,
-            param_id,
+        let target = AutomationTarget::Param {
+            device: ParamDevice::PluginInstrument { channel },
+            id: param_id,
             name: name.to_string(),
         };
         let Some(track_idx) = ({
@@ -270,9 +271,9 @@ impl App {
         let lane_idx = track.automation_lanes.iter().position(|l| {
             matches!(
                 &l.target,
-                AutomationTarget::PluginParam {
-                    channel: c,
-                    param_id: pid,
+                AutomationTarget::Param {
+                    device: ParamDevice::PluginInstrument { channel: c },
+                    id: pid,
                     ..
                 } if *c == channel && *pid == param_id
             )

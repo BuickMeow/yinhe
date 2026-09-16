@@ -70,6 +70,8 @@ pub(crate) struct PanelsData<'a> {
     pub midi: Option<&'a dyn NoteSource>,
     pub track_visible: &'a [bool],
     pub track_colors: &'a [[f32; 4]],
+    /// 当前编辑目标轨的设备通道（生成设备参数目标用；Conductor/无轨时为 None）。
+    pub write_channel: Option<u8>,
 }
 
 /// 面板编辑状态。

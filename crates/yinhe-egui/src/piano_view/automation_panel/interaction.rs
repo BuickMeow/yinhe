@@ -17,7 +17,7 @@ pub(crate) use selection::*;
 
 use super::constants::ANCHOR_HIT_PX;
 use super::types::AutomationEditCtx;
-use super::value::panel_max_val;
+use super::value::{TEMPO_DISPLAY_MAX, panel_max_val};
 use crate::right_panel::{InfoContent, RightTab};
 use crate::widgets::tools_panel::Tool;
 use eframe::egui;
@@ -98,13 +98,14 @@ pub(crate) fn handle_automation_interaction(
     }
     let max_val = match tempo_lane {
         Some(tl) => panel_max_val(panel, tl),
-        None => panel.selected_target.max_value(),
+        // AR 非 Tempo 子行不传 tempo_lane：非 Tempo 值空间统一归一化 0..1。
+        None => 1.0,
     };
     if max_val == 0.0 {
         return (edits, None, None, None, None, None);
     }
     let value_cap = if target == yinhe_types::AutomationTarget::Tempo {
-        yinhe_types::AutomationTarget::Tempo.max_value()
+        TEMPO_DISPLAY_MAX
     } else {
         max_val
     };

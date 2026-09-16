@@ -8,6 +8,7 @@ use crate::widgets::tools_panel::Tool;
 
 use super::interaction;
 use super::types::{AutomationEditCtx, PanelInteractionOut};
+use super::value::format_display_value;
 use super::velocity;
 
 /// 按面板模式分派编辑交互：Tempo / CC / PB / RPN / NRPN 走 lane 编辑；
@@ -144,7 +145,7 @@ pub(crate) fn dispatch_edit_interaction(
                 } else if panel.selected_target == AutomationTarget::Tempo {
                     format!("{:.2} BPM", value)
                 } else {
-                    format!("{:.2}", value)
+                    format_display_value(&panel.selected_target, value)
                 };
                 (vec![pos_str, val_str], pos.x, pos.y)
             }

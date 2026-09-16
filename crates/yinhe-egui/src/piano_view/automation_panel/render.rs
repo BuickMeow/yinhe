@@ -6,6 +6,8 @@ use rust_i18n::t;
 use yinhe_types::{AutomationLane, AutomationPanelView, AutomationTarget};
 use yinhe_wgpu::{AutomationGhost, InstanceRenderer, prepare_automation};
 
+use super::value::format_display_value;
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_panel_content(
     ui: &mut egui::Ui,
@@ -99,10 +101,10 @@ pub(crate) fn render_panel_content(
     painter.rect_filled(content_rect, 0.0, crate::theme::app_bg());
     if !panel.show_velocity {
         let target = &panel.selected_target;
-        let max_val = target.max_value();
-        if max_val > 0.0 && target.has_center_line() {
+        // 中心参考线画在归一化的默认值处（Tempo 与无中心线的参数不画）。
+        if target.has_center_line() {
             let center_val = target.default_value();
-            let y_center = panel.value_to_y(center_val, max_val);
+            let y_center = panel.value_to_y(center_val, max_val_f);
             painter.rect_filled(
                 egui::Rect::from_min_size(
                     egui::pos2(content_rect.min.x, content_rect.min.y + y_center - 0.5),
@@ -242,22 +244,22 @@ pub(crate) fn draw_value_labels(
         crate::theme::SMALL_LABEL_FONT,
     ));
     let pad_x = 4.0;
-    let label_max = if panel.show_velocity || panel.selected_target == AutomationTarget::Tempo {
-        max_val_f
-    } else {
-        panel.selected_target.max_value()
-    };
+    let label_max = max_val_f;
     let h = panel_rect.height();
     let (top_val, mid_val, bot_val) = (
-        panel.y_to_value(0.0, label_max).round() as u32,
-        panel.y_to_value(h * 0.5, label_max).round() as u32,
-        panel.y_to_value(h, label_max).round() as u32,
+        panel.y_to_value(0.0, label_max),
+        panel.y_to_value(h * 0.5, label_max),
+        panel.y_to_value(h, label_max),
     );
-    let (top_val, mid_val, bot_val) = (
-        top_val.to_string(),
-        mid_val.to_string(),
-        bot_val.to_string(),
-    );
+    // 显示值换算唯一入口：velocity/Tempo 取整，其余（含 CC）走 display 换算。
+    let fmt = |v: f32| -> String {
+        if panel.show_velocity || panel.selected_target == AutomationTarget::Tempo {
+            format!("{}", v.round() as i32)
+        } else {
+            format_display_value(&panel.selected_target, v)
+        }
+    };
+    let (top_val, mid_val, bot_val) = (fmt(top_val), fmt(mid_val), fmt(bot_val));
     let text_x = panel_rect.min.x + combo_width + pad_x;
     let top_y = panel_rect.min.y + 4.0;
     let mid_y = panel_rect.center().y;

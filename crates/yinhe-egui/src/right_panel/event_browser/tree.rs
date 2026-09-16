@@ -311,11 +311,10 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
 /// 按 AutomationTarget 类型选图标。
 fn automation_icon(target: &AutomationTarget) -> egui_material_icons::MaterialIcon {
     match target {
+        AutomationTarget::Param { .. } => ICON_TUNE,
         AutomationTarget::CC { .. } => ICON_SETTINGS,
-        AutomationTarget::PitchBend => ICON_EDIT_AUDIO,
         AutomationTarget::Rpn { .. } | AutomationTarget::Nrpn { .. } => ICON_TUNE,
         AutomationTarget::Tempo => ICON_SPEED,
-        AutomationTarget::PluginParam { .. } => ICON_TUNE,
     }
 }
 

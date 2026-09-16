@@ -8,6 +8,7 @@ use eframe::egui;
 use rust_i18n::t;
 use yinhe_editor_core::document::Document;
 use yinhe_types::AutomationTarget;
+use yinhe_types::automation::{ParamDevice, xsynth_param};
 
 use super::bar_lookup::BarLookup;
 use super::edit::{
@@ -223,7 +224,7 @@ fn show_automation_detail(
                     row,
                     "eb_auto_edit",
                     i,
-                    format!("{}", e.value),
+                    crate::piano_view::automation_panel::format_display_value(target, e.value),
                     EditRequest::AutoValue {
                         tick: e.tick,
                         value: e.value,
@@ -1065,19 +1066,30 @@ pub(super) fn show_overview(ui: &mut egui::Ui, model: &yinhe_core::YinModel) {
         format!("音符: {} 个", model.note_count),
     );
     let mut cc = 0usize;
+    let mut param = 0usize;
     let mut pb = 0usize;
     let mut pc = 0usize;
     for t in &model.tracks {
         for lane in &t.automation_lanes {
             match &lane.target {
                 AutomationTarget::CC { .. } => cc += lane.events.len(),
-                AutomationTarget::PitchBend => pb += lane.events.len(),
+                // 设备参数：Pitch Bend 单独统计（与旧 UI 的「弯音」行对齐）。
+                AutomationTarget::Param {
+                    device: ParamDevice::ChannelInstrument { .. },
+                    id,
+                    ..
+                } if *id == xsynth_param::PITCH_BEND => pb += lane.events.len(),
+                AutomationTarget::Param { .. } => param += lane.events.len(),
                 _ => {}
             }
         }
         pc += t.program_change.len();
     }
     ui.colored_label(crate::theme::text_label(), format!("CC: {} 个", cc));
+    ui.colored_label(
+        crate::theme::text_label(),
+        format!("设备参数: {} 个", param),
+    );
     ui.colored_label(crate::theme::text_label(), format!("弯音: {} 个", pb));
     ui.colored_label(crate::theme::text_label(), format!("音色变更: {} 个", pc));
     ui.colored_label(
@@ -1190,6 +1202,7 @@ pub(super) fn show_track_detail(
     let mut cc_counts: Vec<usize> = Vec::new();
     let mut pb_total = 0usize;
     let mut rpn_total = 0usize;
+    let mut param_total = 0usize;
     for lane in &track.automation_lanes {
         match &lane.target {
             AutomationTarget::CC { controller } => {
@@ -1201,12 +1214,18 @@ pub(super) fn show_track_detail(
                     cc_counts.push(lane.events.len());
                 }
             }
-            AutomationTarget::PitchBend => pb_total += lane.events.len(),
+            // 设备参数：Pitch Bend 单独统计，其余归入「设备参数」。
+            AutomationTarget::Param {
+                device: ParamDevice::ChannelInstrument { .. },
+                id,
+                ..
+            } if *id == xsynth_param::PITCH_BEND => pb_total += lane.events.len(),
+            AutomationTarget::Param { .. } => param_total += lane.events.len(),
             AutomationTarget::Rpn { .. } | AutomationTarget::Nrpn { .. } => {
                 rpn_total += lane.events.len()
             }
-            // Tempo 在 conductor；插件参数在本汇总不单独展示。
-            AutomationTarget::Tempo | AutomationTarget::PluginParam { .. } => {}
+            // Tempo 在 conductor。
+            AutomationTarget::Tempo => {}
         }
     }
     if !cc_controllers.is_empty() {
@@ -1229,6 +1248,9 @@ pub(super) fn show_track_detail(
         }
     }
     kv(ui, "Pitch Bend", format!("{}", pb_total));
+    if param_total > 0 {
+        kv(ui, "设备参数", format!("{}", param_total));
+    }
     kv(
         ui,
         "Program Change",

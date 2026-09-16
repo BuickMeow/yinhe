@@ -119,9 +119,11 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
                 .filter(|t| t.global_channel() == channel)
                 .flat_map(|t| t.automation_lanes.iter())
                 .filter_map(|l| match &l.target {
-                    yinhe_types::AutomationTarget::PluginParam {
-                        channel, param_id, ..
-                    } => Some((*channel, *param_id)),
+                    yinhe_types::AutomationTarget::Param {
+                        device: yinhe_types::automation::ParamDevice::PluginInstrument { channel },
+                        id,
+                        ..
+                    } => Some((*channel, *id)),
                     _ => None,
                 })
                 .collect()

@@ -339,6 +339,12 @@ pub fn show(
 
     // ── Automation panels ──
     let panels_y = content_rect.max.y;
+    // 当前编辑目标轨的设备通道：自动化下拉生成设备参数目标用。
+    let write_channel = write_track.and_then(|t| {
+        midi_arc
+            .and_then(|m| m.tracks.get(t as usize))
+            .map(|tr| tr.global_channel())
+    });
     let panels_status_hint = panels::show_panels(
         ui,
         view,
@@ -355,6 +361,7 @@ pub fn show(
         track_selected,
         active_tool,
         write_track,
+        write_channel,
         conductor_idx,
         quantize,
         ppq,

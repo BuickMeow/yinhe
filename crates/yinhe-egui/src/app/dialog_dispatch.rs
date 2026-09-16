@@ -561,11 +561,13 @@ impl App {
                             existing: existing.iter().any(|t| {
                                 matches!(
                                     t,
-                                    yinhe_types::AutomationTarget::PluginParam {
-                                        channel,
-                                        param_id,
+                                    yinhe_types::AutomationTarget::Param {
+                                        device: yinhe_types::automation::ParamDevice::PluginInstrument {
+                                            channel,
+                                        },
+                                        id,
                                         ..
-                                    } if *channel == ich && *param_id == p.id
+                                    } if *channel == ich && *id == p.id
                                 )
                             }),
                             label: if p.module.is_empty() {
@@ -573,9 +575,9 @@ impl App {
                             } else {
                                 format!("{}/{}", p.module, p.name)
                             },
-                            target: yinhe_types::AutomationTarget::PluginParam {
-                                channel: ich,
-                                param_id: p.id,
+                            target: yinhe_types::AutomationTarget::Param {
+                                device: yinhe_types::automation::ParamDevice::PluginInstrument { channel: ich },
+                                id: p.id,
                                 name: p.name,
                             },
                         })
@@ -583,16 +585,18 @@ impl App {
                     (crate::mix::channel_label(ich), name, entries, false)
                 }
                 None => {
-                    // XSynth 设备：内置参数（跳过 Tempo，那是工程级）。
-                    let entries = crate::piano_view::automation_panel::AUTOMATION_TARGETS
-                        .iter()
-                        .filter(|t| !matches!(t, yinhe_types::AutomationTarget::Tempo))
-                        .map(|t| AutomationEntry {
-                            target: t.clone(),
-                            label: crate::arrange::lane_label(t),
-                            existing: existing.contains(t),
-                        })
-                        .collect();
+                    // XSynth 设备：内置参数（音源 + 通道 DSP；跳过 Tempo，那是工程级）。
+                    let entries = crate::piano_view::automation_panel::automation_targets(Some(
+                        track.global_channel(),
+                    ))
+                    .into_iter()
+                    .filter(|t| !matches!(t, yinhe_types::AutomationTarget::Tempo))
+                    .map(|t| AutomationEntry {
+                        label: crate::arrange::lane_label(&t),
+                        existing: existing.contains(&t),
+                        target: t,
+                    })
+                    .collect();
                     (
                         crate::mix::channel_label(track.global_channel()),
                         "XSynth".to_string(),

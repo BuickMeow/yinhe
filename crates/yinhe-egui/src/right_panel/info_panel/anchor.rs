@@ -31,7 +31,8 @@ pub(super) fn show_anchor_info(
     target: &AutomationTarget,
     info_content: &mut Option<InfoContent>,
 ) {
-    let max_val = target.max_value();
+    // 值编辑器在显示空间工作：上限按 target 换算（Tempo 用理论边界）。
+    let max_val = crate::piano_view::automation_panel::display_max_or_bound(target);
 
     ui.add_space(4.0);
 
@@ -97,7 +98,7 @@ pub(super) fn show_anchor_info(
 
     // ── Value ──
     let guard = LaneUndoGuard::new(ui, "val", track_idx, lane_idx, target);
-    let mut edit_value = value as f64;
+    let mut edit_value = target.to_display_value(value) as f64;
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(t!("anchor.value").as_ref())
@@ -113,7 +114,8 @@ pub(super) fn show_anchor_info(
             guard.gained(ui, doc);
         }
         if resp.changed() {
-            let new_value = edit_value as f32;
+            // 显示值 → 归一化值（写入换算唯一入口）。
+            let new_value = target.from_display_value(edit_value as f32);
             if new_value != value {
                 doc.apply_automation_edits(vec![yinhe_types::AutomationEdit::Move {
                     track_idx,

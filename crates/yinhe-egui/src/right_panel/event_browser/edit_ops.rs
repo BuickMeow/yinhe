@@ -514,15 +514,10 @@ pub fn apply_automation_ops(
             }
         }
         EditRequest::InsertAbove { tick } | EditRequest::InsertBelow { tick } => {
-            // 默认 value：Tempo=120（BPM），其他=0.0；shape=Step
-            let value = if matches!(target, yinhe_types::AutomationTarget::Tempo) {
-                120.0
-            } else {
-                0.0
-            };
+            // 默认值由 target 提供（Tempo=120 BPM，其余为归一化默认值）。
             let event = yinhe_types::AutomationEvent {
                 tick,
-                value,
+                value: target.default_value(),
                 shape: yinhe_types::SegmentShape::Step,
             };
             let before = doc.capture_snapshot();
@@ -535,14 +530,10 @@ pub fn apply_automation_ops(
         }
         EditRequest::InsertFirst => {
             let tick = current_tick(doc);
-            let value = if matches!(target, yinhe_types::AutomationTarget::Tempo) {
-                120.0
-            } else {
-                0.0
-            };
+            // 默认值由 target 提供（Tempo=120 BPM，其余为归一化默认值）。
             let event = yinhe_types::AutomationEvent {
                 tick,
-                value,
+                value: target.default_value(),
                 shape: yinhe_types::SegmentShape::Step,
             };
             let before = doc.capture_snapshot();

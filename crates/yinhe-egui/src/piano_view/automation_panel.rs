@@ -28,6 +28,7 @@ pub(crate) use dispatch::dispatch_edit_interaction;
 
 pub use constants::*;
 pub use types::*;
+pub(crate) use value::{display_max_or_bound, format_display_value};
 use value::{min_value_zoom, panel_max_val, value_upper_bound};
 
 pub use widgets::show_toggle_buttons;
@@ -143,7 +144,7 @@ pub fn show_panels(
                 } else if panel.selected_target == AutomationTarget::Tempo {
                     format!("{:.2} BPM", value)
                 } else {
-                    format!("{}", value.round() as i32)
+                    format_display_value(&panel.selected_target, value)
                 };
                 let sel_text = if !panel.anchor_sel_rects.is_empty()
                     && let Some(sh) = cfg.sel_hint
@@ -290,6 +291,7 @@ pub fn show_panels(
             combo_rect,
             panels_area_rect,
             cfg.editing_is_conductor,
+            data.write_channel,
         );
 
         render::draw_value_labels(ui, panel, panel_rect, lay.combo_width, max_val_f);

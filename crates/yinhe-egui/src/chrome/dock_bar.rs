@@ -1,8 +1,9 @@
 //! 三视图通用底部设备栏（Ableton 风格设备链）。
 //!
 //! 布局：上方设备链（乐器在最左 + 效果器链 + 「+」添加），下方选中设备的参数区。
-//! - 普通 MIDI 轨的乐器位显示 **XSynth 虚拟乐器**，参数区列出 xsynth 支持的
-//!   自动化目标（Pitch Bend / RPN 0-2 / 常用 CC），可一键「显示自动化」建 lane；
+//! - 普通 MIDI 轨的乐器位显示 **XSynth 虚拟乐器**，参数区列出 XSynth 设备参数
+//!   （Sustain/Release/Pitch Bend/RPN 等），拖动旋钮写对应 AM lane；
+//! - 内置 DSP 效果器卡片列出自己的设备参数（`ChannelDsp`），同样可自动化；
 //! - 乐器插件 / 效果器插件的参数区提供「参数面板」「插件界面」入口。
 //!
 //! 效果器链当前按**源 MIDI 通道**索引（与 MIX/引擎一致）；同通道多轨共享一条链。
@@ -11,6 +12,9 @@
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_core::TrackKind;
+use yinhe_types::automation::{
+    MidiBinding, ParamDevice, XSYNTH_PARAMS, builtin_param, channel_dsp_param_id_for_midi,
+};
 use yinhe_types::{AutomationEvent, AutomationTarget};
 
 use crate::app::App;
@@ -59,20 +63,19 @@ enum KnobAction {
     DragStop(KnobOwner, AutomationTarget),
 }
 
-/// xsynth 支持的**音源层**自动化目标。
+/// xsynth 支持的**音源层**自动化目标（内置参数表生成，id 与 MIDI 绑定共用）。
 ///
 /// 通道级 DSP CC（7/10/11/71/74）已迁移到 yinhe-dsp 模块（效果器卡片上的旋钮），
 /// 不再由 xsynth 处理——见 `docs/spec-yinhe-dsp.md`。
-fn xsynth_targets() -> Vec<AutomationTarget> {
-    vec![
-        AutomationTarget::CC { controller: 64 },
-        AutomationTarget::CC { controller: 72 },
-        AutomationTarget::CC { controller: 73 },
-        AutomationTarget::PitchBend,
-        AutomationTarget::Rpn { parameter: 0 },
-        AutomationTarget::Rpn { parameter: 1 },
-        AutomationTarget::Rpn { parameter: 2 },
-    ]
+fn xsynth_targets(channel: u8) -> Vec<AutomationTarget> {
+    XSYNTH_PARAMS
+        .iter()
+        .map(|p| AutomationTarget::Param {
+            device: ParamDevice::ChannelInstrument { channel },
+            id: p.id,
+            name: String::new(),
+        })
+        .collect()
 }
 
 /// 效果器链槽位在 dock 的展示数据。
@@ -85,33 +88,45 @@ pub(crate) struct DockInsert {
 
 /// dock 旋钮的一项参数。
 ///
-/// 显示名是**效果器/XSynth 自己的参数名**；底层 `target` 是工程存储与导出
-/// 用的自动化目标（内置效果器参数在底层伪装成 MIDI CC，仅内部映射，
-/// 不外显为 CC 概念）。
+/// 显示名是**效果器/XSynth 自己的参数名**；`target` 是统一参数模型的设备参数
+/// （内置 DSP 参数按通道寻址，不再外显为 CC 概念）。
 #[derive(Clone)]
 pub(crate) struct DockParam {
     name: String,
     target: AutomationTarget,
-    /// 无事件时的默认值。
+    /// 无事件时的默认值（归一化 0..1）。
     default: f32,
-    /// 光标处的当前值（None = 未设置，显示默认值）。
+    /// 光标处的当前值（None = 未设置，显示默认值；归一化 0..1）。
     current: Option<f32>,
 }
 
-/// 内置效果器的参数 → DockParam（底层伪 CC 映射）；插件返回空。
-fn builtin_params(r: &yinhe_mixer::InsertRef) -> Vec<DockParam> {
+/// 内置效果器的参数 → DockParam（`ChannelDsp` 设备参数）；插件/无通道返回空。
+fn builtin_params(r: &yinhe_mixer::InsertRef, channel: Option<u8>) -> Vec<DockParam> {
     if r.format != yinhe_mixer::PluginFormat::Builtin {
         return Vec::new();
     }
+    // 通道 DSP 参数以 MIDI 通道寻址；音频/总线/master 的内置效果器无此归属。
+    let Some(channel) = channel else {
+        return Vec::new();
+    };
     yinhe_dsp::BuiltinEffectKind::from_id(&r.plugin_id)
         .map(|kind| {
             kind.params()
                 .iter()
-                .map(|p| DockParam {
-                    name: p.name.to_string(),
-                    target: AutomationTarget::CC { controller: p.cc },
-                    default: p.default,
-                    current: None,
+                .filter_map(|p| {
+                    // 底层伪 CC → 设备参数 id；表外映射跳过（不 panic）。
+                    let id = channel_dsp_param_id_for_midi(MidiBinding::Cc(p.cc))?;
+                    let target = AutomationTarget::Param {
+                        device: ParamDevice::ChannelDsp { channel },
+                        id,
+                        name: String::new(),
+                    };
+                    Some(DockParam {
+                        name: p.name.to_string(),
+                        default: target.default_value(),
+                        target,
+                        current: None,
+                    })
                 })
                 .collect()
         })
@@ -299,7 +314,7 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
                     .map(|r| DockInsert {
                         name: r.name.clone(),
                         bypassed: r.bypassed,
-                        params: builtin_params(r),
+                        params: builtin_params(r, midi_channel),
                     })
                     .collect()
             })
@@ -348,7 +363,9 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
         .current_tick(&model)
         .map(|(t, _)| t.max(0.0) as u32)
         .unwrap_or(tick);
-    let lane_current: Vec<DockParam> = xsynth_targets()
+    let lane_current: Vec<DockParam> = midi_channel
+        .map(xsynth_targets)
+        .unwrap_or_default()
         .into_iter()
         .map(|target| {
             let current = lane_current_value(&model, &lane_track_tis, display_tick, &target);
@@ -957,9 +974,8 @@ fn param_knobs(
 
 /// 单个参数行：左旋钮 + 右两行（第一行名称、第二行数值）。
 fn knob_row(ui: &mut egui::Ui, param: &DockParam, owner: KnobOwner, actions: &mut Vec<KnobAction>) {
-    let max = param.target.max_value();
-    let raw = param.current.unwrap_or(param.default);
-    let mut norm = (raw / max.max(1.0)).clamp(0.0, 1.0);
+    // 统一参数模型：lane 存归一化值，旋钮直接用（显示换算只在文本处）。
+    let mut norm = param.current.unwrap_or(param.default).clamp(0.0, 1.0);
     let target = &param.target;
 
     ui.horizontal(|ui| {
@@ -981,9 +997,18 @@ fn knob_row(ui: &mut egui::Ui, param: &DockParam, owner: KnobOwner, actions: &mu
                     .color(crate::theme::text_primary()),
             );
             let (text, color) = match param.current {
-                Some(v) => (format_value(v), crate::theme::accent_active()),
+                Some(v) => (
+                    crate::piano_view::automation_panel::format_display_value(&param.target, v),
+                    crate::theme::accent_active(),
+                ),
                 None => (
-                    format!("{}（默认）", format_value(param.default)),
+                    format!(
+                        "{}（默认）",
+                        crate::piano_view::automation_panel::format_display_value(
+                            &param.target,
+                            param.default,
+                        )
+                    ),
                     crate::theme::text_muted(),
                 ),
             };
@@ -996,11 +1021,6 @@ fn knob_row(ui: &mut egui::Ui, param: &DockParam, owner: KnobOwner, actions: &mu
         });
     });
     ui.add_space(6.0);
-}
-
-/// 自动化原始值 → 显示文本（整数域取整）。
-fn format_value(value: f32) -> String {
-    format!("{value:.0}")
 }
 
 /// 应用单帧旋钮动作：拖动中 upsert 事件，松手 push 一条 undo。
@@ -1048,8 +1068,12 @@ fn apply_knob_action(
             if let KnobOwner::Insert(slot) = owner {
                 if let Some(instance) = app.mixer_rack_mut(idx).instance_mut(insert_target, slot) {
                     let queue = instance.param_queue();
-                    if let AutomationTarget::CC { controller } = target {
-                        queue.push(controller as u32, norm as f64);
+                    // 预览 id 用设备参数对应的 MIDI 绑定（内置 DSP 的底层伪 CC）。
+                    if let AutomationTarget::Param { device, id, .. } = &target
+                        && let Some(info) = builtin_param(device, *id)
+                        && let MidiBinding::Cc(cc) = info.midi
+                    {
+                        queue.push(u32::from(cc), norm as f64);
                     }
                 }
                 if let Some(drag) = app.knob_drag.as_mut()
@@ -1084,8 +1108,9 @@ fn apply_knob_action(
                 return;
             }
             // 用松手时的最终值写一条事件（拖动过程只预览，避免每帧重 flatten）。
-            let raw = drag.last_norm * drag.target.max_value();
-            upsert_automation_event(app, idx, &mut drag, raw);
+            // 拖动值本身就是归一化值（统一参数模型），直接写入。
+            let norm = drag.last_norm;
+            upsert_automation_event(app, idx, &mut drag, norm);
             app.notify_audio_model_changed();
             let Some(lane_idx) = drag.lane_idx else {
                 return;
@@ -1112,7 +1137,7 @@ fn apply_knob_action(
 }
 
 /// 在拖动会话的 tick 处写入/覆盖自动化事件（lane 懒创建）。
-fn upsert_automation_event(app: &mut App, idx: usize, drag: &mut KnobDrag, raw: f32) {
+fn upsert_automation_event(app: &mut App, idx: usize, drag: &mut KnobDrag, norm: f32) {
     let doc = &mut app.workspace.documents[idx];
     let lane_pos = doc.data.model.tracks[drag.track_idx]
         .automation_lanes
@@ -1132,7 +1157,7 @@ fn upsert_automation_event(app: &mut App, idx: usize, drag: &mut KnobDrag, raw: 
                     &drag.target,
                     drag.tick,
                     drag.tick,
-                    raw,
+                    norm,
                 );
             } else {
                 doc.add_automation_event(
@@ -1140,7 +1165,7 @@ fn upsert_automation_event(app: &mut App, idx: usize, drag: &mut KnobDrag, raw: 
                     drag.target.clone(),
                     AutomationEvent {
                         tick: drag.tick,
-                        value: raw,
+                        value: norm,
                         shape: drag.target.default_shape(),
                     },
                 );
@@ -1152,7 +1177,7 @@ fn upsert_automation_event(app: &mut App, idx: usize, drag: &mut KnobDrag, raw: 
                 drag.target.clone(),
                 AutomationEvent {
                     tick: drag.tick,
-                    value: raw,
+                    value: norm,
                     shape: drag.target.default_shape(),
                 },
             );
