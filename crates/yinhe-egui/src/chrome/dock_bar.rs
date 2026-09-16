@@ -120,19 +120,43 @@ fn builtin_params(r: &yinhe_mixer::InsertRef) -> Vec<DockParam> {
 
 /// 光标处应显示的值。
 ///
-/// 复用 [`yinhe_types::AutomationLane::value_at`]（chase/预览/UI 共用）：
+/// 顺序查该通道的**所有轨**：MIDI 导入会把自动化 lane 挂在独立的 "CC xx"
+/// 轨上（不在音符轨），只看第一条轨会永远找不到 lane（旋钮卡在"默认"）。
+/// 值复用 [`yinhe_types::AutomationLane::value_at`]（chase/预览/UI 共用）：
 /// 二分查找 + 曲线段内实时插值，播放中旋钮随自动化平滑转动。
 fn lane_current_value(
     model: &yinhe_core::YinModel,
-    track_ti: usize,
+    track_tis: &[usize],
     tick: u32,
     target: &AutomationTarget,
 ) -> Option<f32> {
-    model
-        .tracks
-        .get(track_ti)
-        .and_then(|t| t.automation_lanes.iter().find(|l| l.target == *target))
-        .and_then(|l| l.value_at(tick).map(|(v, _)| v))
+    track_tis.iter().find_map(|&ti| {
+        model
+            .tracks
+            .get(ti)
+            .and_then(|t| t.automation_lanes.iter().find(|l| l.target == *target))
+            .and_then(|l| l.value_at(tick).map(|(v, _)| v))
+    })
+}
+
+/// 写入目标轨：优先已有该 target lane 的轨（保持导入的 "CC xx" 轨结构），
+/// 都没有时用第一条轨（lane 懒创建）。
+fn lane_write_track(
+    model: &yinhe_core::YinModel,
+    track_tis: &[usize],
+    target: &AutomationTarget,
+) -> usize {
+    track_tis
+        .iter()
+        .copied()
+        .find(|&ti| {
+            model
+                .tracks
+                .get(ti)
+                .is_some_and(|t| t.automation_lanes.iter().any(|l| l.target == *target))
+        })
+        .or_else(|| track_tis.first().copied())
+        .unwrap_or(0)
 }
 
 /// dock 高度下限（与旧 Panel min_size 一致）。
@@ -285,7 +309,8 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
         DockContext::Midi(ch) => t.global_channel() == ch,
         DockContext::Audio(ach) => t.audio_channel == Some(ach),
     };
-    // lane 归属轨：该通道第一条轨（事件按通道走，多条轨共享时 lane 只挂一条）。
+    // lane 归属轨：该通道的所有轨（导入的自动化挂在独立 "CC xx" 轨上，
+    // 不能用"第一条轨"定位）。
     let lane_track_ti: usize = model.tracks.iter().position(belongs).unwrap_or(0);
     // 归属轨索引与旁通状态：该通道所有轨道都 muted 视为旁通（任一未 mute = 开着）。
     let powered_tracks: Vec<usize> = model
@@ -295,6 +320,11 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
         .filter(|(_, t)| belongs(t))
         .map(|(ti, _)| ti)
         .collect();
+    let lane_track_tis: Vec<usize> = if powered_tracks.is_empty() {
+        vec![lane_track_ti]
+    } else {
+        powered_tracks.clone()
+    };
     let inst_powered = !powered_tracks.is_empty()
         && !powered_tracks.iter().all(|&ti| {
             app.workspace.documents[idx]
@@ -321,7 +351,7 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
     let lane_current: Vec<DockParam> = xsynth_targets()
         .into_iter()
         .map(|target| {
-            let current = lane_current_value(&model, lane_track_ti, display_tick, &target);
+            let current = lane_current_value(&model, &lane_track_tis, display_tick, &target);
             DockParam {
                 name: target.display_name(),
                 default: target.default_value(),
@@ -476,7 +506,7 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
                                             slot,
                                             ins,
                                             &model,
-                                            lane_track_ti,
+                                            &lane_track_tis,
                                             display_tick,
                                             selected,
                                             &mut knob_actions,
@@ -506,7 +536,7 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
         app.mix.picker_for = Some(insert_target);
     }
     for action in knob_actions {
-        apply_knob_action(app, idx, insert_target, lane_track_ti, tick, action);
+        apply_knob_action(app, idx, insert_target, &lane_track_tis, tick, action);
     }
     if let Some(device) = open_params {
         match open_param_panel(app, idx, device, insert_target, midi_channel) {
@@ -600,7 +630,7 @@ fn effect_card(
     slot: usize,
     ins: &DockInsert,
     model: &yinhe_core::YinModel,
-    lane_track_ti: usize,
+    lane_track_tis: &[usize],
     tick: u32,
     selected: Option<DockDevice>,
     knob_actions: &mut Vec<KnobAction>,
@@ -695,7 +725,7 @@ fn effect_card(
                 .params
                 .iter()
                 .map(|p| DockParam {
-                    current: lane_current_value(model, lane_track_ti, tick, &p.target),
+                    current: lane_current_value(model, lane_track_tis, tick, &p.target),
                     ..p.clone()
                 })
                 .collect();
@@ -978,7 +1008,7 @@ fn apply_knob_action(
     app: &mut App,
     idx: usize,
     insert_target: yinhe_audio::InsertTarget,
-    track_idx: usize,
+    track_tis: &[usize],
     tick: u32,
     action: KnobAction,
 ) {
@@ -986,6 +1016,8 @@ fn apply_knob_action(
         KnobAction::DragStart(_owner, target) => {
             // 效果器拖动走实时预览（不写模型）；这里只记录会话（松手才可能落 lane）。
             let doc = &mut app.workspace.documents[idx];
+            // 目标轨：优先已有该 target lane 的轨（保持导入的 "CC xx" 轨结构）。
+            let track_idx = lane_write_track(&doc.data.model, track_tis, &target);
             if track_idx >= doc.data.model.tracks.len() {
                 return;
             }
