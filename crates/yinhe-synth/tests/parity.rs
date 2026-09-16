@@ -416,9 +416,6 @@ fn multi_port_channels_do_not_fold() {
     compensate_xsynth_channel_pan(&mut xout);
 
     // 逐样本对比：折叠 bug 时 ch0 状态被覆盖，rel_rms 会 > 10%
-    // 抵消 xsynth 内置的固定默认 pan 衰减（见 compensate_xsynth_channel_pan）
-    compensate_xsynth_channel_pan(&mut xout);
-
     let n = gpu_out.len().min(xout.len());
     let mut sse = 0.0f64;
     let mut s_ref = 0.0f64;
