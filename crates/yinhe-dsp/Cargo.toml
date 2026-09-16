@@ -8,3 +8,4 @@ yinhe-mixer = { path = "../yinhe-mixer" }
 tracing = { workspace = true }
 
 [dev-dependencies]
+yinhe-types = { path = "../yinhe-types" }

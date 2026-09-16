@@ -170,6 +170,61 @@ mod tests {
         );
     }
 
+    /// 与 `yinhe-types` 内置参数绑定表一致（名称 / cc 绑定 / 默认值）。
+    ///
+    /// types 侧是导入/导出/引擎/UI 的权威表（`XSYNTH_PARAMS`/`CHANNEL_DSP_PARAMS`），
+    /// dsp 侧是处理实现：任何一侧改名字、换 cc、调默认值都会让"存储的参数"与
+    /// "实际处理的参数"漂移，必须在编译期抓出来。
+    #[test]
+    fn params_match_types_binding_table() {
+        use yinhe_types::automation::{CHANNEL_DSP_PARAMS, MidiBinding};
+
+        // 正向：dsp 侧每个参数都能在 types 表里按 cc 找到，名称/默认值一致。
+        for kind in BuiltinEffectKind::ALL {
+            for p in kind.params() {
+                let Some(t) = CHANNEL_DSP_PARAMS
+                    .iter()
+                    .find(|t| t.midi == MidiBinding::Cc(p.cc))
+                else {
+                    panic!(
+                        "{} 参数 {}（cc{}）在 types 绑定表中不存在",
+                        kind.name(),
+                        p.name,
+                        p.cc
+                    );
+                };
+                assert_eq!(t.name, p.name, "cc{} 名称不一致", p.cc);
+                assert!(
+                    (t.default * 127.0 - p.default).abs() < 1e-3,
+                    "cc{} 默认值不一致：types={} dsp={}",
+                    p.cc,
+                    t.default * 127.0,
+                    p.default
+                );
+                assert!(
+                    (t.default * 127.0 - p.max).abs() < 127.0,
+                    "cc{} 默认值超出值域",
+                    p.cc
+                );
+            }
+        }
+
+        // 反向：types 表每个绑定都能在 dsp 模块里找到对应参数。
+        for t in CHANNEL_DSP_PARAMS {
+            let MidiBinding::Cc(cc) = t.midi else {
+                panic!("DSP 参数 {} 必须是 CC 绑定", t.name);
+            };
+            let found = BuiltinEffectKind::ALL
+                .iter()
+                .any(|k| k.params().iter().any(|p| p.cc == cc));
+            assert!(
+                found,
+                "types 绑定表 cc{}（{}）在 dsp 模块中无实现",
+                cc, t.name
+            );
+        }
+    }
+
     #[test]
     fn params_map_to_handled_ccs() {
         // 参数表的底层伪 CC 必须与 handled_ccs 覆盖同一集合（顺序无关：
