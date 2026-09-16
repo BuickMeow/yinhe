@@ -340,7 +340,6 @@ impl GpuSynth {
             eprintln!("[dbg] note_on: length=0 key={key}");
             return;
         }
-        eprintln!("[dbg] note_on OK key={key} frame={block_frame}");
 
         // 音色库声像：等功率法则（xsynth stereo spawner 公式，左右各 1.42 补偿）
         let angle = info.pan * std::f32::consts::FRAC_PI_2;
