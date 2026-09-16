@@ -194,13 +194,27 @@ fn splash_viewport_id() -> egui::ViewportId {
 }
 
 fn splash_viewport_builder() -> egui::ViewportBuilder {
-    egui::ViewportBuilder::default()
+    let vb = egui::ViewportBuilder::default()
         .with_title(&*rust_i18n::t!("startup.title"))
         .with_inner_size([420.0, 230.0])
-        .with_resizable(false)
-        // 无系统装饰与按钮：macOS 交通灯 / Windows 最小化-最大化-关闭按钮都不要。
-        .with_decorations(false)
-        .with_titlebar_buttons_shown(false)
+        .with_resizable(false);
+
+    // macOS：保留系统窗口框架（系统圆角 + 系统阴影 + 可拖动），只隐藏标题与
+    // 交通灯——titled 窗口 + fullsize content view + 透明标题栏（Safari/Chrome
+    // 同款做法）；`decorations(false)` 会丢掉圆角和阴影，不可用。
+    #[cfg(target_os = "macos")]
+    let vb = vb
+        .with_transparent(true)
+        .with_fullsize_content_view(true)
+        .with_titlebar_shown(false)
+        .with_title_shown(false)
+        .with_titlebar_buttons_shown(false);
+
+    // 其他平台：无边框窗口（无最小化-最大化-关闭按钮）。
+    #[cfg(not(target_os = "macos"))]
+    let vb = vb.with_decorations(false);
+
+    vb
 }
 
 /// 启动页绘制（deferred viewport 闭包；不能访问 `App`）。
