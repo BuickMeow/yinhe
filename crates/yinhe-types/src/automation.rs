@@ -129,129 +129,365 @@ fn solve_cubic_bezier_u_for_x(t: f32, x1: f32, x2: f32) -> f32 {
     u
 }
 
+/// 自动化参数的宿主设备（统一参数模型，与 VST3/CLAP 的"设备 + 参数 id"对齐）。
+///
+/// 寻址不用效果器槽位序号（插入/删除/重排会变）：内置 DSP 参数是通道级的
+/// （挂/删效果器不影响自动化归属）。第三方插入效果器的实例 uuid 寻址作为
+/// 阶段 B 扩展（新增变体）。
+///
+/// 内置与第三方分开变体：两者参数 id 空间独立（内置 id 很小，第三方由插件
+/// 定义），同一变体内混用会产生歧义。
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum ParamDevice {
+    /// 通道内置 XSynth 参数（id 见 [`XSYNTH_PARAMS`]）。
+    ChannelInstrument { channel: u8 },
+    /// 通道乐器插件（VST3/CLAP）参数（id 为插件原生 id）。
+    PluginInstrument { channel: u8 },
+    /// 通道内置 DSP 参数（ChannelGain/Pan/Filter，id 见 [`CHANNEL_DSP_PARAMS`]）。
+    ChannelDsp { channel: u8 },
+}
+
+/// 内置参数的 MIDI 绑定（导入/导出/回放的双向映射）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MidiBinding {
+    /// CC 控制器号（0–127）。
+    Cc(u8),
+    /// Pitch Bend（14-bit，中心 8192）。
+    PitchBend,
+    /// RPN 参数号（0–16383）。
+    Rpn(u16),
+}
+
+/// 内置参数条目：id 在所属设备内唯一。
+///
+/// 值域约定（统一参数模型）：事件 `value` 一律归一化 `0..1`；`default` 为
+/// 归一化默认值；显示/导出/回放按 [`MidiBinding`] 换算回原始整数。
+#[derive(Clone, Copy, Debug)]
+pub struct BuiltinParamInfo {
+    /// 设备内唯一参数 id（u32，与 VST3 ParamID / CLAP clap_id 对齐）。
+    pub id: u32,
+    /// 参数显示名（与效果器/合成器面板一致）。
+    pub name: &'static str,
+    /// MIDI 绑定（导入导出的双向映射）。
+    pub midi: MidiBinding,
+    /// 归一化默认值（0..1）。
+    pub default: f32,
+    /// 是否有中心参考线（归一化 0.5 中心）。
+    pub center: bool,
+    /// 开关类参数：新建事件默认 `Step` 形状。
+    pub step: bool,
+}
+
+/// XSynth 内置参数 id（`ParamDevice::ChannelInstrument`）。
+pub mod xsynth_param {
+    /// Sustain（CC64）。
+    pub const SUSTAIN: u32 = 0;
+    /// Release（CC72）。
+    pub const RELEASE: u32 = 1;
+    /// Attack（CC73）。
+    pub const ATTACK: u32 = 2;
+    /// Pitch Bend（PB）。
+    pub const PITCH_BEND: u32 = 3;
+    /// Pitch Bend Sensitivity（RPN 0，半音数）。
+    pub const PB_SENSITIVITY: u32 = 4;
+    /// Fine Tune（RPN 1，14-bit 中心 8192）。
+    pub const FINE_TUNE: u32 = 5;
+    /// Coarse Tune（RPN 2，0..127 表示 -64..+63 半音）。
+    pub const COARSE_TUNE: u32 = 6;
+}
+
+/// 通道内置 DSP 参数 id（`ParamDevice::ChannelDsp`）。
+pub mod channel_dsp_param {
+    /// 音量（CC7）。
+    pub const VOLUME: u32 = 0;
+    /// 表情（CC11）。
+    pub const EXPRESSION: u32 = 1;
+    /// 声像（CC10，中心 64）。
+    pub const PAN: u32 = 2;
+    /// 低通截止（CC74，中心 64）。
+    pub const CUTOFF: u32 = 3;
+    /// 共振（CC71，中心 64）。
+    pub const RESONANCE: u32 = 4;
+}
+
+/// XSynth 内置参数表（权威唯一：导入/导出/引擎/UI 共用）。
+pub const XSYNTH_PARAMS: &[BuiltinParamInfo] = &[
+    BuiltinParamInfo {
+        id: xsynth_param::SUSTAIN,
+        name: "Sustain",
+        midi: MidiBinding::Cc(64),
+        default: 0.0,
+        center: false,
+        step: true,
+    },
+    BuiltinParamInfo {
+        id: xsynth_param::RELEASE,
+        name: "Release",
+        midi: MidiBinding::Cc(72),
+        default: 64.0 / 127.0,
+        center: true,
+        step: false,
+    },
+    BuiltinParamInfo {
+        id: xsynth_param::ATTACK,
+        name: "Attack",
+        midi: MidiBinding::Cc(73),
+        default: 64.0 / 127.0,
+        center: true,
+        step: false,
+    },
+    BuiltinParamInfo {
+        id: xsynth_param::PITCH_BEND,
+        name: "Pitch Bend",
+        midi: MidiBinding::PitchBend,
+        default: 8192.0 / 16383.0,
+        center: true,
+        step: false,
+    },
+    BuiltinParamInfo {
+        id: xsynth_param::PB_SENSITIVITY,
+        name: "PB Sensitivity",
+        midi: MidiBinding::Rpn(0),
+        default: 2.0 / 127.0,
+        center: false,
+        step: false,
+    },
+    BuiltinParamInfo {
+        id: xsynth_param::FINE_TUNE,
+        name: "Fine Tune",
+        midi: MidiBinding::Rpn(1),
+        default: 8192.0 / 16383.0,
+        center: true,
+        step: false,
+    },
+    BuiltinParamInfo {
+        id: xsynth_param::COARSE_TUNE,
+        name: "Coarse Tune",
+        midi: MidiBinding::Rpn(2),
+        default: 64.0 / 127.0,
+        center: true,
+        step: false,
+    },
+];
+
+/// 通道内置 DSP 参数表。
+///
+/// 与 yinhe-dsp registry `EffectParamInfo` 的一致性由后者侧测试锁定
+/// （id 顺序、名称、绑定 cc、默认值）。
+pub const CHANNEL_DSP_PARAMS: &[BuiltinParamInfo] = &[
+    BuiltinParamInfo {
+        id: channel_dsp_param::VOLUME,
+        name: "Volume",
+        midi: MidiBinding::Cc(7),
+        default: 1.0,
+        center: false,
+        step: false,
+    },
+    BuiltinParamInfo {
+        id: channel_dsp_param::EXPRESSION,
+        name: "Expression",
+        midi: MidiBinding::Cc(11),
+        default: 1.0,
+        center: false,
+        step: false,
+    },
+    BuiltinParamInfo {
+        id: channel_dsp_param::PAN,
+        name: "Pan",
+        midi: MidiBinding::Cc(10),
+        default: 64.0 / 127.0,
+        center: true,
+        step: false,
+    },
+    BuiltinParamInfo {
+        id: channel_dsp_param::CUTOFF,
+        name: "Cutoff",
+        midi: MidiBinding::Cc(74),
+        default: 64.0 / 127.0,
+        center: true,
+        step: false,
+    },
+    BuiltinParamInfo {
+        id: channel_dsp_param::RESONANCE,
+        name: "Resonance",
+        midi: MidiBinding::Cc(71),
+        default: 64.0 / 127.0,
+        center: true,
+        step: false,
+    },
+];
+
+impl ParamDevice {
+    /// 设备的内置参数表（第三方插件返回空表，参数由插件定义）。
+    pub fn builtin_params(&self) -> &'static [BuiltinParamInfo] {
+        match self {
+            ParamDevice::ChannelInstrument { .. } => XSYNTH_PARAMS,
+            ParamDevice::ChannelDsp { .. } => CHANNEL_DSP_PARAMS,
+            ParamDevice::PluginInstrument { .. } => &[],
+        }
+    }
+
+    /// 宿主通道（MIDI 全局通道 0..255）。
+    pub fn channel(&self) -> u8 {
+        match self {
+            ParamDevice::ChannelInstrument { channel }
+            | ParamDevice::PluginInstrument { channel }
+            | ParamDevice::ChannelDsp { channel } => *channel,
+        }
+    }
+}
+
+/// 查内置参数条目（`None` = 非内置参数，如第三方插件参数）。
+pub fn builtin_param(device: &ParamDevice, id: u32) -> Option<&'static BuiltinParamInfo> {
+    device.builtin_params().iter().find(|p| p.id == id)
+}
+
+/// MIDI 绑定 → XSynth 参数 id（导入映射）。
+pub fn xsynth_param_id_for_midi(midi: MidiBinding) -> Option<u32> {
+    XSYNTH_PARAMS.iter().find(|p| p.midi == midi).map(|p| p.id)
+}
+
+/// MIDI 绑定 → 通道 DSP 参数 id（导入映射）。
+pub fn channel_dsp_param_id_for_midi(midi: MidiBinding) -> Option<u32> {
+    CHANNEL_DSP_PARAMS
+        .iter()
+        .find(|p| p.midi == midi)
+        .map(|p| p.id)
+}
+
+/// MIDI 绑定的原始值上限（7-bit / 14-bit）。
+pub fn binding_max(midi: MidiBinding) -> f32 {
+    match midi {
+        MidiBinding::Cc(_) | MidiBinding::Rpn(0) | MidiBinding::Rpn(2) => 127.0,
+        MidiBinding::PitchBend | MidiBinding::Rpn(_) => 16383.0,
+    }
+}
+
 /// Identifies an automatable parameter.
 ///
-/// This enum is the unified key for all automation data — CC, PitchBend,
-/// RPN, NRPN, Tempo, and future VST parameters. Each variant maps to a lane
-/// of `(tick, value)` events sorted by tick.
+/// 统一参数模型（spec-yinhe-dsp）：设备参数走 [`AutomationTarget::Param`]
+/// （值域归一化 0..1，与 VST3/CLAP 对齐）；无法归属到设备的低层 MIDI 数据
+/// 保留 [`AutomationTarget::CC`]/[`AutomationTarget::Rpn`]/
+/// [`AutomationTarget::Nrpn`]（值域同样归一化）；[`AutomationTarget::Tempo`]
+/// 是时间轴数据，值保持 BPM 原值（唯一不归一化的量）。
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum AutomationTarget {
-    /// MIDI CC 0–127.
-    CC { controller: u8 },
-    /// MIDI Pitch Bend (0–16383, center 8192).
-    PitchBend,
-    /// RPN (Registered Parameter Number), 14-bit parameter address 0–16383.
-    Rpn { parameter: u16 },
-    /// NRPN (Non-Registered Parameter Number), 14-bit parameter address 0–16383.
-    Nrpn { parameter: u16 },
-    /// Tempo (BPM). 全局唯一一条 lane，存于 `ConductorData.tempo`。
-    /// `value` 直接装 bpm（f32）。`max_value` 仅作 fallback，
-    /// panel 层会按实际事件动态计算最大值。
-    Tempo,
-    /// 插件参数（该 MIDI 通道上挂载的插件乐器实例）。值域统一**归一化 0..1**：
-    /// AM 事件的 `value` 存归一化值，引擎按插件格式换算成原生值
-    /// （VST3 本身即归一化；CLAP 由处理器按参数范围换算）。
-    /// `param_id` 在插件实例内唯一且稳定（VST3 ParamID / CLAP clap_id）。
-    PluginParam {
-        /// MIDI 全局通道（0 起，`TrackData::global_channel()`）。
-        channel: u8,
-        /// 插件参数 id。
-        param_id: u32,
-        /// 参数显示名（来自 param_list，仅用于显示）。
+    /// 设备参数（内置 XSynth/DSP 或第三方插件）。`value` 归一化 0..1。
+    Param {
+        device: ParamDevice,
+        /// 设备内唯一参数 id（内置设备见 [`XSYNTH_PARAMS`]/[`CHANNEL_DSP_PARAMS`]）。
+        id: u32,
+        /// 参数显示名（第三方插件参数必填；内置参数以表为准，可为空）。
         name: String,
     },
+    /// 无设备归属的 MIDI CC（`value` 归一化 0..1）。
+    CC { controller: u8 },
+    /// 无设备归属的标准 RPN（`value` 归一化 0..1）。
+    Rpn { parameter: u16 },
+    /// NRPN（`value` 归一化 0..1）。
+    Nrpn { parameter: u16 },
+    /// Tempo（BPM）。全局唯一一条 lane，存于 `ConductorData.tempo`。
+    /// `value` 直接装 bpm（f32），是唯一不归一化的量。
+    Tempo,
 }
 
 impl AutomationTarget {
-    /// Whether this target uses the full 14-bit range (0–16383).
-    ///
-    /// RPN 0 (Pitch Bend Sensitivity) and RPN 2 (Coarse Tune) are 7-bit
-    /// values (0–127). Only RPN 1 (Fine Tune) is 14-bit.
-    pub fn is_14bit(&self) -> bool {
-        matches!(
-            self,
-            AutomationTarget::PitchBend
-                | AutomationTarget::Rpn { parameter: 1 }
-                | AutomationTarget::Nrpn { .. }
-        )
-    }
-
-    /// Maximum raw value for this target (used to normalize bar heights).
-    ///
-    /// `Tempo` 返回的 60_000_000.0（BPM 理论上限，对应 mpq=1）仅作 fallback；
-    /// panel 层会按实际事件动态计算最大值（Tempo 的实际范围由项目内的事件决定）。
-    pub fn max_value(&self) -> f32 {
+    /// 宿主通道（`Param` 取 device 的通道；其他变体由 lane 所在轨决定，返回 `None`）。
+    pub fn channel(&self) -> Option<u8> {
         match self {
-            AutomationTarget::CC { .. } => 127.0,
-            AutomationTarget::PitchBend => 16383.0,
-            AutomationTarget::Rpn { parameter } => match parameter {
-                0 => 127.0,   // Pitch Bend Sensitivity (semitones)
-                2 => 127.0,   // Coarse Tune (semitones, -64..+63 stored as 0..127)
-                _ => 16383.0, // Fine Tune (14-bit)
-            },
-            AutomationTarget::Nrpn { .. } => 16383.0,
-            AutomationTarget::Tempo => 60_000_000.0,
-            // 插件参数统一归一化值域。
-            AutomationTarget::PluginParam { .. } => 1.0,
+            AutomationTarget::Param { device, .. } => Some(device.channel()),
+            _ => None,
         }
     }
 
-    /// Default / center value (used to draw a reference line).
+    /// 显示值上限：把归一化 value 换算回原始整数用；`None` = 原值显示
+    /// （Tempo 是 BPM；第三方插件参数范围未知，按归一化显示）。
+    pub fn display_max(&self) -> Option<f32> {
+        match self {
+            AutomationTarget::Param { device, id, .. } => {
+                builtin_param(device, *id).map(|p| binding_max(p.midi))
+            }
+            AutomationTarget::CC { .. } => Some(127.0),
+            AutomationTarget::Rpn { parameter } => Some(rpn_max(*parameter)),
+            AutomationTarget::Nrpn { .. } => Some(16383.0),
+            AutomationTarget::Tempo => None,
+        }
+    }
+
+    /// 默认值：归一化 0..1（Tempo 为 BPM 原值）。
     pub fn default_value(&self) -> f32 {
         match self {
-            AutomationTarget::CC { controller } => match controller {
-                10 | 71 | 72 | 73 | 74 => 64.0,
-                _ => 0.0,
-            },
-            AutomationTarget::PitchBend => 8192.0,
-            AutomationTarget::Rpn { parameter } => match parameter {
-                0 => 2.0,    // Pitch Bend Sensitivity (2 semitones)
-                1 => 8192.0, // Fine Tune (center of 14-bit range)
-                _ => 0.0,
-            },
-            AutomationTarget::Nrpn { .. } => 0.0,
+            AutomationTarget::Param { device, id, .. } => {
+                builtin_param(device, *id).map(|p| p.default).unwrap_or(0.0)
+            }
+            AutomationTarget::CC {
+                controller: 10 | 71 | 72 | 73 | 74,
+            } => 64.0 / 127.0,
+            AutomationTarget::CC { .. } => 0.0,
+            AutomationTarget::Rpn { .. } | AutomationTarget::Nrpn { .. } => 0.0,
             AutomationTarget::Tempo => 120.0,
-            // 插件默认值在引擎侧不一定可查询：基线用 0（绘制参考线用）。
-            AutomationTarget::PluginParam { .. } => 0.0,
         }
     }
 
-    /// Whether this target has a non-zero center (PitchBend, Fine Tune).
+    /// 是否有中心参考线（归一化 0.5 中心）。
     pub fn has_center_line(&self) -> bool {
-        matches!(
-            self,
-            AutomationTarget::PitchBend
-                | AutomationTarget::Rpn { parameter: 1 }
-                | AutomationTarget::CC { controller: 10 }
-                | AutomationTarget::CC { controller: 71 }
-                | AutomationTarget::CC { controller: 72 }
-                | AutomationTarget::CC { controller: 73 }
-                | AutomationTarget::CC { controller: 74 }
-        )
+        match self {
+            AutomationTarget::Param { device, id, .. } => {
+                builtin_param(device, *id).is_some_and(|p| p.center)
+            }
+            AutomationTarget::CC { controller } => matches!(controller, 10 | 71 | 72 | 73 | 74),
+            _ => false,
+        }
     }
 
-    /// 用户在编辑器里新建事件时，本目标默认采用的插值形状。
-    ///
-    /// - 开关类 CC（Sustain/Sostenuto/Soft/Legato/Portamento）默认 `Step`
-    /// - 其他连续量（Volume/Pan/PB/FineTune/Tempo/...）默认 `Curve` 直线（偏移量 0,0,0,0）
-    /// - MIDI 导入时一律使用 `Step`（保留 MIDI 原生语义），见 parser
+    /// 新建事件默认形状：开关类 Step，其余直线 Curve。
     pub fn default_shape(&self) -> SegmentShape {
         match self {
-            AutomationTarget::CC { controller } => match controller {
-                64..=68 => SegmentShape::Step,
-                _ => SegmentShape::linear_curve(),
-            },
-            AutomationTarget::PitchBend => SegmentShape::linear_curve(),
-            AutomationTarget::Rpn { parameter: _ } => SegmentShape::linear_curve(),
-            AutomationTarget::Nrpn { parameter: _ } => SegmentShape::linear_curve(),
-            AutomationTarget::Tempo => SegmentShape::linear_curve(),
-            AutomationTarget::PluginParam { .. } => SegmentShape::linear_curve(),
+            AutomationTarget::Param { device, id, .. } => {
+                if builtin_param(device, *id).is_some_and(|p| p.step) {
+                    SegmentShape::Step
+                } else {
+                    SegmentShape::linear_curve()
+                }
+            }
+            AutomationTarget::CC {
+                controller: 64..=68,
+            } => SegmentShape::Step,
+            _ => SegmentShape::linear_curve(),
         }
     }
 
-    /// Human-readable display name for the dropdown.
+    /// 归一化值 → 显示值（UI 显示换算的唯一入口；`display_max` 为 `None`
+    /// 时原样返回，如 Tempo 的 BPM、第三方插件参数的归一化值）。
+    pub fn to_display_value(&self, value: f32) -> f32 {
+        match self.display_max() {
+            Some(max) => value * max,
+            None => value,
+        }
+    }
+
+    /// 显示值 → 归一化值（编辑写入换算的唯一入口，与
+    /// [`AutomationTarget::to_display_value`] 互逆）。
+    pub fn from_display_value(&self, display: f32) -> f32 {
+        match self.display_max() {
+            Some(max) if max > 0.0 => display / max,
+            _ => display,
+        }
+    }
+
+    /// 显示名（下拉/AR/事件浏览器共用）。
     pub fn display_name(&self) -> String {
         match self {
+            AutomationTarget::Param { device, id, name } => match builtin_param(device, *id) {
+                Some(p) => p.name.to_string(),
+                None if !name.is_empty() => name.clone(),
+                None => match device {
+                    ParamDevice::PluginInstrument { channel } => {
+                        format!("Plugin Param {id} (ch {channel})")
+                    }
+                    _ => format!("Param {id}"),
+                },
+            },
             AutomationTarget::CC { controller } => {
                 let name = cc_name(*controller);
                 if name.is_empty() {
@@ -260,26 +496,18 @@ impl AutomationTarget {
                     format!("CC {} ({})", controller, name)
                 }
             }
-            AutomationTarget::PitchBend => "Pitch Bend".into(),
-            AutomationTarget::Rpn { parameter } => match parameter {
-                0 => "PB Sensitivity (RPN 0)".into(),
-                1 => "Fine Tune (RPN 1)".into(),
-                2 => "Coarse Tune (RPN 2)".into(),
-                _ => format!("RPN {}", parameter),
-            },
-            AutomationTarget::Nrpn { parameter } => {
-                format!("NRPN {}", parameter)
-            }
+            AutomationTarget::Rpn { parameter } => format!("RPN {}", parameter),
+            AutomationTarget::Nrpn { parameter } => format!("NRPN {}", parameter),
             AutomationTarget::Tempo => "Tempo".into(),
-            // 插件参数直接用插件给的参数名（已含模块语义）。
-            AutomationTarget::PluginParam { name, .. } => {
-                if name.is_empty() {
-                    "Plugin Param".into()
-                } else {
-                    name.clone()
-                }
-            }
         }
+    }
+}
+
+/// RPN 参数号的原始值上限（RPN 0/2 是 7-bit，其余 14-bit）。
+fn rpn_max(parameter: u16) -> f32 {
+    match parameter {
+        0 | 2 => 127.0,
+        _ => 16383.0,
     }
 }
 
@@ -326,8 +554,9 @@ fn cc_name(cc: u8) -> &'static str {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AutomationEvent {
     pub tick: u32,
-    /// 原始值的浮点表示。CC/PB/RPN 仍装原始整数值（如 CC 64.0 = CC=64），
-    /// Tempo 装 bpm（如 120.0）。未来浮点自动化可直接存小数。
+    /// 归一化值 0..1（统一参数模型）；Tempo 例外，存 bpm（如 120.0）。
+    /// 原始整数语义（CC 0..127、PB 0..16383）在导入时归一化，导出/回放时
+    /// 按 target 的 [`AutomationTarget::display_max`] 还原（无损往返）。
     pub value: f32,
     /// 描述"从本事件到下一事件"的插值形状。
     /// 默认 `Step`（保留 MIDI 原生语义），编辑器新建事件时由
@@ -486,121 +715,158 @@ mod tests {
         assert!(lane.events_in_range(300, 400).is_empty());
     }
 
+    /// 内置参数表一致性：id 与 MIDI 绑定在表内唯一、默认值在 0..1。
     #[test]
-    fn test_display_names() {
+    fn test_builtin_param_tables_are_consistent() {
+        for table in [XSYNTH_PARAMS, CHANNEL_DSP_PARAMS] {
+            let mut ids: Vec<u32> = table.iter().map(|p| p.id).collect();
+            ids.sort_unstable();
+            let total = ids.len();
+            ids.dedup();
+            assert_eq!(ids.len(), total, "参数 id 必须唯一");
+
+            let mut binds: Vec<String> = table.iter().map(|p| format!("{:?}", p.midi)).collect();
+            binds.sort();
+            let total = binds.len();
+            binds.dedup();
+            assert_eq!(binds.len(), total, "MIDI 绑定必须唯一");
+
+            for p in table {
+                assert!(
+                    (0.0..=1.0).contains(&p.default),
+                    "{} 默认值必须在 0..1",
+                    p.name
+                );
+            }
+        }
+    }
+
+    /// 导入映射：MIDI 绑定 → 内置参数 id（含不命中的否定断言）。
+    #[test]
+    fn test_midi_reverse_lookup() {
         assert_eq!(
-            AutomationTarget::CC { controller: 7 }.display_name(),
-            "CC 7 (Volume)"
+            xsynth_param_id_for_midi(MidiBinding::Cc(64)),
+            Some(xsynth_param::SUSTAIN)
         );
         assert_eq!(
-            AutomationTarget::CC { controller: 99 }.display_name(),
-            "CC 99"
-        );
-        assert_eq!(AutomationTarget::PitchBend.display_name(), "Pitch Bend");
-        assert_eq!(
-            AutomationTarget::Rpn { parameter: 0 }.display_name(),
-            "PB Sensitivity (RPN 0)"
+            xsynth_param_id_for_midi(MidiBinding::PitchBend),
+            Some(xsynth_param::PITCH_BEND)
         );
         assert_eq!(
-            AutomationTarget::Rpn { parameter: 1 }.display_name(),
-            "Fine Tune (RPN 1)"
+            xsynth_param_id_for_midi(MidiBinding::Rpn(0)),
+            Some(xsynth_param::PB_SENSITIVITY)
+        );
+        assert_eq!(xsynth_param_id_for_midi(MidiBinding::Cc(7)), None);
+
+        assert_eq!(
+            channel_dsp_param_id_for_midi(MidiBinding::Cc(7)),
+            Some(channel_dsp_param::VOLUME)
         );
         assert_eq!(
-            AutomationTarget::Rpn { parameter: 2 }.display_name(),
-            "Coarse Tune (RPN 2)"
+            channel_dsp_param_id_for_midi(MidiBinding::Cc(11)),
+            Some(channel_dsp_param::EXPRESSION)
         );
+        assert_eq!(
+            channel_dsp_param_id_for_midi(MidiBinding::Cc(10)),
+            Some(channel_dsp_param::PAN)
+        );
+        assert_eq!(
+            channel_dsp_param_id_for_midi(MidiBinding::Cc(74)),
+            Some(channel_dsp_param::CUTOFF)
+        );
+        assert_eq!(
+            channel_dsp_param_id_for_midi(MidiBinding::Cc(71)),
+            Some(channel_dsp_param::RESONANCE)
+        );
+        assert_eq!(channel_dsp_param_id_for_midi(MidiBinding::Cc(64)), None);
+    }
+
+    fn param(device: &ParamDevice, id: u32) -> AutomationTarget {
+        AutomationTarget::Param {
+            device: device.clone(),
+            id,
+            name: String::new(),
+        }
+    }
+
+    /// 设备参数：内置查表（显示名/上限/默认/中心/形状），第三方走缓存名。
+    #[test]
+    fn test_param_target_methods() {
+        let ch = ParamDevice::ChannelDsp { channel: 3 };
+
+        let vol = param(&ch, channel_dsp_param::VOLUME);
+        assert_eq!(vol.display_name(), "Volume");
+        assert_eq!(vol.display_max(), Some(127.0));
+        assert_eq!(vol.default_value(), 1.0);
+        assert!(!vol.has_center_line());
+        assert_eq!(vol.default_shape(), SegmentShape::linear_curve());
+        assert_eq!(vol.channel(), Some(3));
+
+        let pan = param(&ch, channel_dsp_param::PAN);
+        assert_eq!(pan.display_max(), Some(127.0));
+        assert!((pan.default_value() - 64.0 / 127.0).abs() < 1e-6);
+        assert!(pan.has_center_line());
+
+        let xs = ParamDevice::ChannelInstrument { channel: 0 };
+        let sus = param(&xs, xsynth_param::SUSTAIN);
+        assert_eq!(sus.default_shape(), SegmentShape::Step);
+        assert_eq!(sus.display_max(), Some(127.0));
+        assert!(!sus.has_center_line());
+
+        let pb = param(&xs, xsynth_param::PITCH_BEND);
+        assert_eq!(pb.display_max(), Some(16383.0));
+        assert!(pb.has_center_line());
+
+        // 第三方插件参数：无内置表 → 归一化显示（无换算上限），名字用缓存。
+        let plug = AutomationTarget::Param {
+            device: ParamDevice::PluginInstrument { channel: 2 },
+            id: 42,
+            name: "Cutoff".into(),
+        };
+        assert_eq!(plug.display_name(), "Cutoff");
+        assert_eq!(plug.display_max(), None);
+        assert_eq!(plug.default_value(), 0.0);
+        assert!(!plug.has_center_line());
+    }
+
+    /// 低层变体：CC/RPN/NRPN 的显示与换算上限；Tempo 原值。
+    #[test]
+    fn test_low_level_targets() {
+        let cc7 = AutomationTarget::CC { controller: 7 };
+        assert_eq!(cc7.display_name(), "CC 7 (Volume)");
+        assert_eq!(cc7.display_max(), Some(127.0));
+        assert_eq!(cc7.default_value(), 0.0);
+        assert!(!cc7.has_center_line());
+        assert_eq!(
+            AutomationTarget::CC { controller: 64 }.default_shape(),
+            SegmentShape::Step
+        );
+        assert_eq!(
+            AutomationTarget::CC { controller: 7 }.default_shape(),
+            SegmentShape::linear_curve()
+        );
+
         assert_eq!(
             AutomationTarget::Rpn { parameter: 5 }.display_name(),
             "RPN 5"
         );
         assert_eq!(
-            AutomationTarget::Nrpn { parameter: 10 }.display_name(),
-            "NRPN 10"
-        );
-    }
-
-    #[test]
-    fn test_max_and_default_values() {
-        assert_eq!(AutomationTarget::CC { controller: 0 }.max_value(), 127.0);
-        assert_eq!(AutomationTarget::CC { controller: 0 }.default_value(), 0.0);
-        assert_eq!(
-            AutomationTarget::CC { controller: 10 }.default_value(),
-            64.0
+            AutomationTarget::Rpn { parameter: 5 }.display_max(),
+            Some(16383.0)
         );
         assert_eq!(
-            AutomationTarget::CC { controller: 71 }.default_value(),
-            64.0
+            AutomationTarget::Rpn { parameter: 0 }.display_max(),
+            Some(127.0)
         );
         assert_eq!(
-            AutomationTarget::CC { controller: 72 }.default_value(),
-            64.0
+            AutomationTarget::Nrpn { parameter: 1 }.display_max(),
+            Some(16383.0)
         );
-        assert_eq!(
-            AutomationTarget::CC { controller: 73 }.default_value(),
-            64.0
-        );
-        assert_eq!(
-            AutomationTarget::CC { controller: 74 }.default_value(),
-            64.0
-        );
-        assert_eq!(AutomationTarget::PitchBend.max_value(), 16383.0);
-        assert_eq!(AutomationTarget::PitchBend.default_value(), 8192.0);
-        assert!(AutomationTarget::PitchBend.has_center_line());
-        assert!(!AutomationTarget::CC { controller: 0 }.has_center_line());
-        assert!(AutomationTarget::CC { controller: 10 }.has_center_line());
-        assert!(AutomationTarget::CC { controller: 71 }.has_center_line());
-        assert!(!AutomationTarget::CC { controller: 7 }.has_center_line());
-        assert_eq!(AutomationTarget::Rpn { parameter: 0 }.max_value(), 127.0);
-        assert_eq!(AutomationTarget::Rpn { parameter: 0 }.default_value(), 2.0);
-        assert_eq!(AutomationTarget::Rpn { parameter: 1 }.max_value(), 16383.0);
-        assert_eq!(
-            AutomationTarget::Rpn { parameter: 1 }.default_value(),
-            8192.0
-        );
-        assert!(AutomationTarget::Rpn { parameter: 1 }.has_center_line());
-        assert_eq!(AutomationTarget::Rpn { parameter: 2 }.max_value(), 127.0);
-        assert_eq!(AutomationTarget::Rpn { parameter: 2 }.default_value(), 0.0);
-        assert!(!AutomationTarget::Rpn { parameter: 2 }.has_center_line());
-        assert_eq!(AutomationTarget::Nrpn { parameter: 5 }.max_value(), 16383.0);
-        assert_eq!(AutomationTarget::Nrpn { parameter: 5 }.default_value(), 0.0);
-        // Tempo 上限：BPM 理论上限 60_000_000（对应 mpq=1），不应退回 240
-        assert_eq!(AutomationTarget::Tempo.max_value(), 60_000_000.0);
+        assert_eq!(AutomationTarget::Tempo.display_max(), None);
         assert_eq!(AutomationTarget::Tempo.default_value(), 120.0);
-        assert!(!AutomationTarget::Tempo.has_center_line());
-    }
-
-    #[test]
-    fn test_default_shape_per_target() {
-        // 开关类 CC → Step
-        for cc in [64u8, 65, 66, 67, 68] {
-            assert_eq!(
-                AutomationTarget::CC { controller: cc }.default_shape(),
-                SegmentShape::Step,
-                "CC {cc} should default to Step"
-            );
-        }
-        // 连续量 CC → Curve 直线（偏移量 0,0,0,0）
-        let linear = SegmentShape::linear_curve();
-        for cc in [0u8, 1, 7, 10, 11, 71, 74] {
-            assert_eq!(
-                AutomationTarget::CC { controller: cc }.default_shape(),
-                linear,
-                "CC {cc} should default to linear Curve"
-            );
-        }
-        // PB / RPN / NRPN → 直线 Curve
-        assert_eq!(AutomationTarget::PitchBend.default_shape(), linear);
         assert_eq!(
-            AutomationTarget::Rpn { parameter: 0 }.default_shape(),
-            linear
-        );
-        assert_eq!(
-            AutomationTarget::Rpn { parameter: 1 }.default_shape(),
-            linear
-        );
-        assert_eq!(
-            AutomationTarget::Nrpn { parameter: 5 }.default_shape(),
-            linear
+            AutomationTarget::Tempo.default_shape(),
+            SegmentShape::linear_curve()
         );
     }
 
