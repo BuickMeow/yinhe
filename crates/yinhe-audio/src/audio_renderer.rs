@@ -559,10 +559,11 @@ impl AudioRenderer {
                 self.clear_buffered_audio(anchor);
                 #[cfg(feature = "gpu")]
                 {
-                    self.gpu_sf_pending = configs
-                        .iter()
-                        .filter(|(_, paths)| !paths.is_empty())
-                        .count();
+                    self.gpu_sf_pending = count_gpu_sf_pending(
+                        &configs,
+                        &self.engine.channel_layout,
+                        self.use_gpu_synth,
+                    );
                 }
                 #[cfg(feature = "gpu")]
                 let prefetch_gpu = self.use_gpu_synth;
@@ -1446,6 +1447,31 @@ pub(crate) fn to_gpu_control_event(
     }
 }
 
+/// GPU 模式「待加载音色库」通道计数。
+///
+/// 计数条件必须与 `LoadedSoundFont` 分支的递减条件（`use_gpu_synth` 且 dense
+/// 槽位有效）严格一致：多计一个不递减的通道，`gpu_sf_pending` 永远归不了零，
+/// `mark_audio_ready` 不触发，启动页卡在"初始化音频"（CPU 模式曾因此无法进入）。
+#[cfg(feature = "gpu")]
+fn count_gpu_sf_pending(
+    configs: &[(u8, Vec<String>)],
+    layout: &crate::channel_layout::ChannelLayout,
+    use_gpu_synth: bool,
+) -> usize {
+    if !use_gpu_synth {
+        return 0;
+    }
+    configs
+        .iter()
+        .filter(|(channel, paths)| {
+            !paths.is_empty() && {
+                let dense = layout.dense_for(*channel as usize);
+                dense != u32::MAX && (dense as usize) < yinhe_synth::MAX_CHANNELS
+            }
+        })
+        .count()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1481,5 +1507,25 @@ mod tests {
     #[test]
     fn merge_transport_empty() {
         assert!(merge_transport_batch(Vec::new()).is_empty());
+    }
+
+    /// 回归：CPU 模式必须为 0（曾无条件计数，导致 gpu_sf_pending 永不归零、
+    /// 音频就绪不触发、启动页卡死）；未激活通道与空配置不计数。
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn gpu_sf_pending_only_counts_gpu_eligible_channels() {
+        use crate::channel_layout::ChannelLayout;
+
+        let configs = vec![
+            (0u8, vec!["a.sfz".to_string()]),
+            (1u8, vec!["b.sfz".to_string()]),
+            (2u8, vec!["c.sfz".to_string()]),
+            (3u8, Vec::new()),
+        ];
+        // ch0 激活；ch1 未激活（dense = u32::MAX）；ch2/3 不在 mask 内。
+        let layout = ChannelLayout::from_mask(vec![true, false]);
+
+        assert_eq!(count_gpu_sf_pending(&configs, &layout, false), 0);
+        assert_eq!(count_gpu_sf_pending(&configs, &layout, true), 1);
     }
 }
