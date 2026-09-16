@@ -3008,7 +3008,7 @@ fn diag_pitch_bend_dense() {
         if pb_every > 0 {
             let mut i = 0u64;
             while i * pb_every < 2 * sr as u64 {
-                let v = if i % 2 == 0 { 0.5 } else { -0.5 };
+                let v = if i.is_multiple_of(2) { 0.5 } else { -0.5 };
                 events.push(yinhe_synth::SynthEvent::Control {
                     sample: i * pb_every,
                     channel: 3,
