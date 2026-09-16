@@ -1036,6 +1036,98 @@ mod tests {
         }
     }
 
+    /// 临时诊断：同 key 3 批音符的 voice 释放顺序（note_off 是否释放"最老"）。
+    #[test]
+    #[ignore = "诊断"]
+    fn tmp_three_batches_release_order() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let wav_path = dir.path().join("tone.wav");
+        let sfz_path = dir.path().join("tone.sfz");
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 48_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut w = hound::WavWriter::create(&wav_path, spec).expect("wav");
+        for i in 0..480_000u32 {
+            let v = ((i as f32) * 0.05).sin() * 20_000.0;
+            w.write_sample(v as i16).expect("write");
+        }
+        w.finalize().expect("finalize");
+        std::fs::write(
+            &sfz_path,
+            "<region>\nsample=tone.wav\nampeg_hold=0.6\nampeg_decay=89.88\nampeg_sustain=1.778\nampeg_release=3.5\n",
+        )
+        .expect("sfz");
+
+        let sr = 48_000u32;
+        // 3 批同 key：on 0 / off 4963 / on 5294 / off 10257 / on 10588 / off 15551
+        let events = vec![
+            SynthEvent::NoteOn {
+                sample: 0,
+                channel: 0,
+                key: 60,
+                velocity: 100,
+            },
+            SynthEvent::NoteOff {
+                sample: 4_963,
+                channel: 0,
+                key: 60,
+            },
+            SynthEvent::NoteOn {
+                sample: 5_294,
+                channel: 0,
+                key: 60,
+                velocity: 110,
+            },
+            SynthEvent::NoteOff {
+                sample: 10_257,
+                channel: 0,
+                key: 60,
+            },
+            SynthEvent::NoteOn {
+                sample: 10_588,
+                channel: 0,
+                key: 60,
+                velocity: 120,
+            },
+            SynthEvent::NoteOff {
+                sample: 15_551,
+                channel: 0,
+                key: 60,
+            },
+        ];
+        let mut synth = GpuSynth::new_default(sr).expect("GpuSynth");
+        synth
+            .load_dense_soundfonts(0, std::slice::from_ref(&sfz_path))
+            .expect("load");
+        synth.finish_soundfont_load();
+        synth.load_events(events);
+        synth.seek(0);
+        let frames = 4096;
+        let mut bufs: Vec<yinhe_mixer::ChannelBuffers> = vec![yinhe_mixer::ChannelBuffers {
+            left: vec![0.0; frames],
+            right: vec![0.0; frames],
+        }];
+        for i in 0..6 {
+            synth.render_to_mixer(&mut bufs);
+            let vc: Vec<String> = synth
+                .voices
+                .iter()
+                .enumerate()
+                .map(|(idx, v)| format!("[{idx}]vel?/stage{}", v.state.env_stage))
+                .collect();
+            eprintln!(
+                "块{}（帧{}）: n={} {}",
+                i + 1,
+                (i + 1) * frames,
+                vc.len(),
+                vc.join(" ")
+            );
+        }
+    }
+
     /// chase_skip：只标记 seek 之后被实时处理过的控制事件（区间 [chase_base, cursor)）。
     #[test]
     fn chase_skip_marks_only_post_seek_controls() {

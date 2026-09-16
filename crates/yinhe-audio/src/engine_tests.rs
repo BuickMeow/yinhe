@@ -2459,7 +2459,7 @@ fn diag_cyber_night_ch3_wave_dump() {
 
     let midi = "/Users/jieneng/Music/MIDIs/cyber-night.mid";
     let sfz = "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
-    let sr = 48_000u32;
+    let sr = 44_100u32;
     let secs = 3u64;
     let frames_per_chunk = 512usize;
     let total_frames = secs * sr as u64;
@@ -2483,7 +2483,7 @@ fn diag_cyber_night_ch3_wave_dump() {
         })
         .copied()
         .collect();
-    // 只保留音符（去 PB + 去 CC64/72/73），验证纯音符通路
+    // 全部音符（44.1k 重采样路径验证）
     let events_no_pb: Vec<yinhe_synth::SynthEvent> = events
         .iter()
         .filter(|e| {
@@ -2794,7 +2794,12 @@ fn diag_high_cluster_isolated() {
     let frames_per_chunk = 512usize;
     let _total_frames = 0; // 在循环内按批数设置
 
-    for (tag, batches, keys, interval) in [("30批x5294_21键", 30usize, 21u8, 5_294u64)] {
+    for (tag, batches, keys, interval, with_off) in [
+        ("8批", 8usize, 1u8, 5_294u64, false),
+        ("12批", 12, 1, 5_294, false),
+        ("16批", 16, 1, 5_294, false),
+        ("20批", 20, 1, 5_294, false),
+    ] {
         let mut events: Vec<yinhe_synth::SynthEvent> = Vec::new();
         for b in 0..batches {
             let t0 = b as u64 * interval;
@@ -2805,11 +2810,13 @@ fn diag_high_cluster_isolated() {
                     key,
                     velocity: 127,
                 });
-                events.push(yinhe_synth::SynthEvent::NoteOff {
-                    sample: t0 + 4_963,
-                    channel: 3,
-                    key,
-                });
+                if with_off {
+                    events.push(yinhe_synth::SynthEvent::NoteOff {
+                        sample: t0 + 4_963,
+                        channel: 3,
+                        key,
+                    });
+                }
             }
         }
         events.sort_by_key(|e| e.sample());
@@ -3203,15 +3210,10 @@ fn diag_pitch_bend_single() {
     let sfz = "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
     let sr = 48_000u32;
     let frames_per_chunk = 512usize;
-    let total_frames = sr as u64;
+    let total_frames = 5 * sr as u64;
 
-    // CC/PB 先于音符构造（与生产 build_gpu_synth_events 同序）
+    // 5 秒长音（检验 GPU shader 的 f32 time 累积漂移）
     let mut events: Vec<yinhe_synth::SynthEvent> = vec![
-        yinhe_synth::SynthEvent::Control {
-            sample: 24_000,
-            channel: 3,
-            event: yinhe_synth::ControlEvent::PitchBend(0.5),
-        },
         yinhe_synth::SynthEvent::NoteOn {
             sample: 0,
             channel: 3,
@@ -3219,7 +3221,7 @@ fn diag_pitch_bend_single() {
             velocity: 127,
         },
         yinhe_synth::SynthEvent::NoteOff {
-            sample: sr as u64,
+            sample: 5 * sr as u64,
             channel: 3,
             key: 60,
         },
@@ -3587,4 +3589,312 @@ fn diag_ch3_cc_bisect() {
         };
         eprintln!("[+{tag}] gpu={gp:.3} cpu={cp:.3} ratio={ratio:.3}{flag}");
     }
+}
+
+/// 诊断：走 AudioEngine::render（应用真实入口）与裸 GpuSynth 对比。
+/// 复现"测试找不到、应用出问题"——定位差异在 render 路径还是合成器。
+#[test]
+#[ignore = "需要本地 MIDI + SoundFont"]
+fn diag_app_render_path() {
+    use std::sync::Arc;
+
+    let midi = "/Users/jieneng/Music/MIDIs/cyber-night.mid";
+    let sfz = "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
+    let sr = 48_000u32;
+    let secs = 3u64;
+    let frames_per_chunk = 512usize;
+    let total = secs * sr as u64;
+
+    let model = Arc::new(yinhe_midi::parse_path(midi).unwrap());
+    let active = crate::spawn::channels_for_model(&model)
+        .active_mask()
+        .to_vec();
+    let mut engine = AudioEngine::new(sr, ChannelLayout::from_mask(active));
+    engine.handle_command(AudioCommand::LoadModel {
+        model: Arc::clone(&model),
+    });
+    let events = crate::audio_renderer::build_gpu_synth_events(&engine, 0);
+    eprintln!("事件数={}", events.len());
+
+    // 裸 GpuSynth 参考（与既有测试相同）
+    let mut bare = yinhe_synth::GpuSynth::new_default(sr).unwrap();
+    let sfz_path = std::path::PathBuf::from(sfz);
+    for ch in 0..16u32 {
+        bare.load_dense_soundfonts(ch, std::slice::from_ref(&sfz_path))
+            .unwrap();
+    }
+    bare.finish_soundfont_load();
+    bare.load_events(events.clone());
+    bare.seek(0);
+
+    // 应用路径：engine + gpu_synth + AudioEngine::render
+    let mut synth = yinhe_synth::GpuSynth::new_default(sr).unwrap();
+    for ch in 0..16u32 {
+        synth
+            .load_dense_soundfonts(ch, std::slice::from_ref(&sfz_path))
+            .unwrap();
+    }
+    synth.finish_soundfont_load();
+    synth.load_events(events.clone());
+    synth.seek(0);
+    engine.gpu_synth = Some(synth);
+    engine.playing = true;
+
+    let mut out_app = vec![0.0f32; frames_per_chunk * 2];
+    let mut app_all: Vec<f32> = Vec::new();
+    let mut n = 0u64;
+    while n < total {
+        engine.render(&mut out_app);
+        app_all.extend_from_slice(&out_app);
+        n += frames_per_chunk as u64;
+    }
+
+    // 裸路径（GpuSynth 直接渲染，通道求和）
+    let mut bare_all: Vec<f32> = Vec::new();
+    let mut bufs: Vec<yinhe_mixer::ChannelBuffers> = (0..16)
+        .map(|_| yinhe_mixer::ChannelBuffers {
+            left: vec![0.0; frames_per_chunk],
+            right: vec![0.0; frames_per_chunk],
+        })
+        .collect();
+    let mut n = 0u64;
+    while n < total {
+        bare.render_to_mixer(&mut bufs);
+        for i in 0..frames_per_chunk {
+            let (mut l, mut r) = (0.0f32, 0.0f32);
+            for b in &bufs {
+                l += b.left[i];
+                r += b.right[i];
+            }
+            bare_all.push(l);
+            bare_all.push(r);
+        }
+        n += frames_per_chunk as u64;
+    }
+
+    let m = app_all.len().min(bare_all.len());
+    let mut max_diff = 0.0f32;
+    let mut max_at = 0usize;
+    let mut sse = 0.0f64;
+    let mut sref = 0.0f64;
+    for i in 0..m {
+        let d = (app_all[i] - bare_all[i]).abs();
+        if d > max_diff {
+            max_diff = d;
+            max_at = i;
+        }
+        sse += ((app_all[i] - bare_all[i]) as f64).powi(2);
+        sref += (app_all[i] as f64).powi(2);
+    }
+    eprintln!(
+        "app_peak={:.4} bare_peak={:.4} max_diff={max_diff:.4} @{:.3}s rel_rmse={:.4}",
+        app_all.iter().fold(0.0f32, |a, &v| a.max(v.abs())),
+        bare_all.iter().fold(0.0f32, |a, &v| a.max(v.abs())),
+        max_at as f64 / 2.0 / sr as f64,
+        (sse / sref.max(1e-12)).sqrt()
+    );
+    // 补偿 mixer 声像（中心 0.707）后再对比：app × √2 vs bare
+    let s2 = std::f32::consts::SQRT_2;
+    let mut sse2 = 0.0f64;
+    let mut sref2 = 0.0f64;
+    let mut max2 = 0.0f32;
+    let mut at2 = 0usize;
+    for i in 0..m {
+        let a = app_all[i] * s2;
+        let d = (a - bare_all[i]).abs();
+        if d > max2 {
+            max2 = d;
+            at2 = i;
+        }
+        sse2 += ((a - bare_all[i]) as f64).powi(2);
+        sref2 += (bare_all[i] as f64).powi(2);
+    }
+    eprintln!(
+        "补偿√2后: max_diff={max2:.4} @{:.3}s rel_rmse={:.4}",
+        at2 as f64 / 2.0 / sr as f64,
+        (sse2 / sref2.max(1e-12)).sqrt()
+    );
+    // 每 0.25s 的差异分布
+    let w = (sr / 4) as usize * 2;
+    let mut i = 0usize;
+    let mut line = String::new();
+    while i + w <= m {
+        let d: f64 = (0..w)
+            .map(|k| ((app_all[i + k] * s2 - bare_all[i + k]) as f64).powi(2))
+            .sum();
+        line.push_str(&format!("{:.3} ", (d / w as f64).sqrt()));
+        i += w;
+    }
+    eprintln!("每0.25s差异(补偿后): {line}");
+}
+
+/// 诊断：同一模型下 CPU 路径（xsynth）vs GPU 路径（GpuSynth）经完整 render 链路的输出对比。
+/// 这是"只有 GPU 出问题"的直接验证。
+#[test]
+#[ignore = "需要本地 MIDI + SoundFont"]
+fn diag_engine_cpu_vs_gpu() {
+    use std::sync::Arc;
+
+    let midi = "/Users/jieneng/Music/MIDIs/cyber-night.mid";
+    let sfz = "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
+    let sr = 48_000u32;
+    let secs = 3u64;
+    let frames_per_chunk = 512usize;
+    let total = secs * sr as u64;
+
+    let render = |use_gpu: bool| -> Vec<f32> {
+        let model = Arc::new(yinhe_midi::parse_path(midi).unwrap());
+        let active = crate::spawn::channels_for_model(&model)
+            .active_mask()
+            .to_vec();
+        let mut engine = AudioEngine::new(sr, ChannelLayout::from_mask(active));
+        engine.handle_command(AudioCommand::LoadModel {
+            model: Arc::clone(&model),
+        });
+
+        if use_gpu {
+            let events = crate::audio_renderer::build_gpu_synth_events(&engine, 0);
+            let sfz_path = std::path::PathBuf::from(sfz);
+            let mut synth = yinhe_synth::GpuSynth::new_default(sr).unwrap();
+            let mut used = std::collections::BTreeSet::new();
+            for e in &events {
+                match e {
+                    yinhe_synth::SynthEvent::NoteOn { channel, .. }
+                    | yinhe_synth::SynthEvent::NoteOff { channel, .. }
+                    | yinhe_synth::SynthEvent::Control { channel, .. } => {
+                        used.insert(*channel);
+                    }
+                }
+            }
+            for ch in &used {
+                synth
+                    .load_dense_soundfonts(*ch as u32, std::slice::from_ref(&sfz_path))
+                    .unwrap();
+            }
+            synth.finish_soundfont_load();
+            synth.load_events(events);
+            synth.seek(0);
+            engine.gpu_synth = Some(synth);
+        } else {
+            // CPU 路径：xsynth 需要音色库。测试里通过 same-channel soundfont 注入。
+            // engine 的 channel_set 由 worker 异步配置，这里直接逐通道加载。
+            let sfz_path = std::path::PathBuf::from(sfz);
+            let stream_params = xsynth_core::AudioStreamParams {
+                channels: xsynth_core::ChannelCount::Stereo,
+                sample_rate: sr,
+            };
+            let sf = std::sync::Arc::new(
+                xsynth_core::soundfont::SampleSoundfont::new(
+                    sfz_path,
+                    stream_params,
+                    xsynth_core::soundfont::SoundfontInitOptions {
+                        use_effects: false,
+                        ..Default::default()
+                    },
+                )
+                .expect("sf"),
+            );
+            let base: std::sync::Arc<dyn xsynth_core::soundfont::SoundfontBase> = sf;
+            for ch in 0..16u8 {
+                let dense = engine.channel_layout.dense_for(ch as usize);
+                engine.apply_loaded_soundfont_for_channel(ch, dense, vec![Arc::clone(&base)]);
+            }
+            engine.playing = true;
+        }
+
+        engine.playing = true;
+        let mut out = vec![0.0f32; frames_per_chunk * 2];
+        let mut all: Vec<f32> = Vec::new();
+        let mut n = 0u64;
+        while n < total {
+            engine.render(&mut out);
+            all.extend_from_slice(&out);
+            n += frames_per_chunk as u64;
+        }
+        all
+    };
+
+    let cpu = render(false);
+    let gpu = render(true);
+    let m = cpu.len().min(gpu.len());
+    let mut max_diff = 0.0f32;
+    let mut at = 0usize;
+    let mut sse = 0.0f64;
+    let mut sref = 0.0f64;
+    for i in 0..m {
+        let d = (cpu[i] - gpu[i]).abs();
+        if d > max_diff {
+            max_diff = d;
+            at = i;
+        }
+        sse += ((cpu[i] - gpu[i]) as f64).powi(2);
+        sref += (cpu[i] as f64).powi(2);
+    }
+    eprintln!(
+        "cpu_peak={:.4} gpu_peak={:.4} max_diff={max_diff:.4} @{:.3}s rel_rmse={:.4}",
+        cpu.iter().fold(0.0f32, |a, &v| a.max(v.abs())),
+        gpu.iter().fold(0.0f32, |a, &v| a.max(v.abs())),
+        at as f64 / 2.0 / sr as f64,
+        (sse / sref.max(1e-12)).sqrt()
+    );
+    // 每 0.25s 差异
+    let w = (sr / 4) as usize * 2;
+    let mut i = 0usize;
+    let mut line = String::new();
+    while i + w <= m {
+        let d: f64 = (0..w)
+            .map(|k| ((cpu[i + k] - gpu[i + k]) as f64).powi(2))
+            .sum();
+        line.push_str(&format!("{:.3} ", (d / w as f64).sqrt()));
+        i += w;
+    }
+    eprintln!("每0.25s差异: {line}");
+    // 补偿 xsynth 通道 pan（中心 0.707）后对比
+    let s2 = std::f32::consts::SQRT_2;
+    let mut sse2 = 0.0f64;
+    let mut sref2 = 0.0f64;
+    let mut max2 = 0.0f32;
+    let mut at2 = 0usize;
+    for i in 0..m {
+        let cc = cpu[i] * s2;
+        let d = (cc - gpu[i]).abs();
+        if d > max2 {
+            max2 = d;
+            at2 = i;
+        }
+        sse2 += ((cc - gpu[i]) as f64).powi(2);
+        sref2 += (cc as f64).powi(2);
+    }
+    eprintln!(
+        "补偿 pan(√2)后: max_diff={max2:.4} @{:.3}s rel_rmse={:.4}",
+        at2 as f64 / 2.0 / sr as f64,
+        (sse2 / sref2.max(1e-12)).sqrt()
+    );
+    let w2 = (sr / 4) as usize * 2;
+    let mut i2 = 0usize;
+    let mut line2 = String::new();
+    while i2 + w2 <= m {
+        let d: f64 = (0..w2)
+            .map(|k| ((cpu[i2 + k] * s2 - gpu[i2 + k]) as f64).powi(2))
+            .sum();
+        line2.push_str(&format!("{:.3} ", (d / w2 as f64).sqrt()));
+        i2 += w2;
+    }
+    eprintln!("补偿后每0.25s差异: {line2}");
+
+    // 导出 wav
+    let spec = hound::WavSpec {
+        channels: 2,
+        sample_rate: sr,
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
+    for (name, data) in [("cpu", &cpu), ("gpu", &gpu)] {
+        let mut wr = hound::WavWriter::create(format!("/tmp/eng_{name}.wav"), spec).unwrap();
+        for &v in data.iter() {
+            wr.write_sample(v).unwrap();
+        }
+        wr.finalize().unwrap();
+    }
+    eprintln!("已导出 /tmp/eng_cpu.wav /tmp/eng_gpu.wav");
 }
