@@ -11,6 +11,16 @@
 //! - automation: clip_count u32，随后每个 clip:
 //!   target（tag u8 + 参数）+ event_count u64，随后每个事件
 //!   `tick u32 | value f32 | shape（tag u8 + 可选 4×f32）`
+//!
+//! target 编码（tag u8）：
+//! - 0 = `Param`：device u8（0=ChannelInstrument、1=PluginInstrument、
+//!   2=ChannelDsp）+ channel u8 + id u32 + name（len u32 + UTF-8 字节）
+//! - 1 = `CC`（controller u8）
+//! - 2 = `Rpn`（parameter u16）
+//! - 3 = `Nrpn`（parameter u16）
+//! - 4 = `Tempo`
+//!
+//! 旧工程文件不兼容，直接按统一参数模型重新编码。
 
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Read, Write};
@@ -18,7 +28,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use yinhe_types::Note;
-use yinhe_types::automation::{AutomationTarget, SegmentShape};
+use yinhe_types::automation::{AutomationTarget, ParamDevice, SegmentShape};
 
 use crate::clipboard::{
     AutomationClip, AutomationClipboard, ClipboardContent, NotesClipboard, NotesClipboardData,
@@ -243,44 +253,40 @@ fn write_note(w: &mut impl Write, note: &Note, key: u8) -> io::Result<()> {
 
 fn write_target(w: &mut impl Write, target: &AutomationTarget) -> io::Result<()> {
     match target {
-        AutomationTarget::CC { controller } => {
-            w.write_all(&[0, *controller])?;
+        AutomationTarget::Param { device, id, name } => {
+            let (device_tag, channel) = match device {
+                ParamDevice::ChannelInstrument { channel } => (0u8, *channel),
+                ParamDevice::PluginInstrument { channel } => (1u8, *channel),
+                ParamDevice::ChannelDsp { channel } => (2u8, *channel),
+            };
+            w.write_all(&[0, device_tag, channel])?;
+            w.write_all(&id.to_le_bytes())?;
+            let bytes = name.as_bytes();
+            w.write_all(&(bytes.len() as u32).to_le_bytes())?;
+            w.write_all(bytes)
         }
-        AutomationTarget::PitchBend => {
-            w.write_all(&[1])?;
-        }
+        AutomationTarget::CC { controller } => w.write_all(&[1, *controller]),
         AutomationTarget::Rpn { parameter } => {
             w.write_all(&[2])?;
-            w.write_all(&parameter.to_le_bytes())?;
+            w.write_all(&parameter.to_le_bytes())
         }
         AutomationTarget::Nrpn { parameter } => {
             w.write_all(&[3])?;
-            w.write_all(&parameter.to_le_bytes())?;
+            w.write_all(&parameter.to_le_bytes())
         }
-        AutomationTarget::Tempo => {
-            w.write_all(&[4])?;
-        }
-        AutomationTarget::PluginParam {
-            channel,
-            param_id,
-            name,
-        } => {
-            w.write_all(&[5])?;
-            w.write_all(&[*channel])?;
-            w.write_all(&param_id.to_le_bytes())?;
-            let bytes = name.as_bytes();
-            w.write_all(&(bytes.len() as u32).to_le_bytes())?;
-            w.write_all(bytes)?;
-        }
+        AutomationTarget::Tempo => w.write_all(&[4]),
     }
-    Ok(())
 }
 
 fn read_string(r: &mut impl Read) -> io::Result<String> {
-    let len = read_u32(r)? as usize;
-    let mut buf = vec![0u8; len];
-    r.read_exact(&mut buf)?;
-    String::from_utf8(buf).map_err(|_| invalid("invalid utf-8 string"))
+    let len = read_u32(r)? as u64;
+    // take 限流，避免损坏文件用长度字段触发超大预分配。
+    let mut s = String::new();
+    r.take(len).read_to_string(&mut s)?;
+    if s.len() as u64 != len {
+        return Err(invalid("truncated string"));
+    }
+    Ok(s)
 }
 
 fn read_target(r: &mut impl Read) -> io::Result<AutomationTarget> {
@@ -288,11 +294,26 @@ fn read_target(r: &mut impl Read) -> io::Result<AutomationTarget> {
     r.read_exact(&mut tag)?;
     Ok(match tag[0] {
         0 => {
+            let mut head = [0u8; 2];
+            r.read_exact(&mut head)?;
+            let channel = head[1];
+            let device = match head[0] {
+                0 => ParamDevice::ChannelInstrument { channel },
+                1 => ParamDevice::PluginInstrument { channel },
+                2 => ParamDevice::ChannelDsp { channel },
+                _ => return Err(invalid("unknown param device")),
+            };
+            AutomationTarget::Param {
+                device,
+                id: read_u32(r)?,
+                name: read_string(r)?,
+            }
+        }
+        1 => {
             let mut v = [0u8; 1];
             r.read_exact(&mut v)?;
             AutomationTarget::CC { controller: v[0] }
         }
-        1 => AutomationTarget::PitchBend,
         2 => AutomationTarget::Rpn {
             parameter: read_u16(r)?,
         },
@@ -300,17 +321,6 @@ fn read_target(r: &mut impl Read) -> io::Result<AutomationTarget> {
             parameter: read_u16(r)?,
         },
         4 => AutomationTarget::Tempo,
-        5 => {
-            let mut ch = [0u8; 1];
-            r.read_exact(&mut ch)?;
-            let param_id = read_u32(r)?;
-            let name = read_string(r)?;
-            AutomationTarget::PluginParam {
-                channel: ch[0],
-                param_id,
-                name,
-            }
-        }
         _ => return Err(invalid("unknown automation target")),
     })
 }
@@ -436,56 +446,118 @@ mod tests {
 
     #[test]
     fn automation_roundtrip() {
+        use yinhe_types::automation::{channel_dsp_param, xsynth_param};
+
         let path = temp_path("automation");
-        let clipboard = AutomationClipboard::from_materialized(vec![
-            AutomationClip {
-                target: AutomationTarget::Tempo,
-                events: vec![
-                    (0, 120.0, SegmentShape::Step),
-                    (
-                        480,
-                        90.5,
-                        SegmentShape::Curve {
-                            x1: 0.25,
-                            y1: -0.5,
-                            x2: 0.1,
-                            y2: 0.4,
-                        },
-                    ),
-                ],
+        let targets = [
+            AutomationTarget::Param {
+                device: ParamDevice::ChannelInstrument { channel: 3 },
+                id: xsynth_param::PITCH_BEND,
+                name: String::new(),
             },
-            AutomationClip {
-                target: AutomationTarget::CC { controller: 74 },
-                events: vec![(96, 64.0, SegmentShape::Step)],
+            AutomationTarget::Param {
+                device: ParamDevice::PluginInstrument { channel: 11 },
+                id: 0xDEAD_BEEF,
+                name: "Filter Cutoff".into(),
             },
-            AutomationClip {
-                target: AutomationTarget::Nrpn { parameter: 1234 },
-                events: vec![],
+            AutomationTarget::Param {
+                device: ParamDevice::ChannelDsp { channel: 0 },
+                id: channel_dsp_param::VOLUME,
+                name: String::new(),
             },
-        ]);
+            AutomationTarget::CC { controller: 74 },
+            AutomationTarget::Rpn { parameter: 0 },
+            AutomationTarget::Nrpn { parameter: 1234 },
+            AutomationTarget::Tempo,
+        ];
+        let clipboard = AutomationClipboard::from_materialized(
+            targets
+                .iter()
+                .enumerate()
+                .map(|(i, target)| AutomationClip {
+                    target: target.clone(),
+                    events: match i {
+                        0 => vec![
+                            (0, 0.5, SegmentShape::Step),
+                            (
+                                480,
+                                0.5,
+                                SegmentShape::Curve {
+                                    x1: 0.25,
+                                    y1: -0.5,
+                                    x2: 0.1,
+                                    y2: 0.4,
+                                },
+                            ),
+                        ],
+                        6 => vec![(0, 120.0, SegmentShape::Step)],
+                        _ => vec![],
+                    },
+                })
+                .collect(),
+        );
         write_automation(&path, &clipboard).unwrap();
         let back = read(&path).unwrap();
         let _ = fs::remove_file(&path);
         match back {
             ClipboardContent::Automation(cb) => {
                 let clips = cb.collect();
-                assert_eq!(clips.len(), 3);
-                assert!(matches!(clips[0].target, AutomationTarget::Tempo));
+                assert_eq!(clips.len(), targets.len());
+                for (clip, expected) in clips.iter().zip(&targets) {
+                    assert_eq!(&clip.target, expected);
+                }
                 assert_eq!(clips[0].events.len(), 2);
                 assert_eq!(clips[0].events[1].0, 480);
-                assert!((clips[0].events[1].1 - 90.5).abs() < f32::EPSILON);
+                assert!((clips[0].events[1].1 - 0.5).abs() < f32::EPSILON);
                 assert!(matches!(clips[0].events[1].2, SegmentShape::Curve { .. }));
-                assert!(matches!(
-                    clips[1].target,
-                    AutomationTarget::CC { controller: 74 }
-                ));
-                assert!(matches!(
-                    clips[2].target,
-                    AutomationTarget::Nrpn { parameter: 1234 }
-                ));
+                assert!((clips[6].events[0].1 - 120.0).abs() < f32::EPSILON);
             }
             _ => panic!("期望自动化剪贴板"),
         }
+    }
+
+    #[test]
+    fn rejects_unknown_target_tag() {
+        let path = temp_path("bad-target");
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(MAGIC);
+        bytes.extend_from_slice(&[VERSION, KIND_AUTOMATION]);
+        bytes.extend_from_slice(&1u32.to_le_bytes()); // clip_count
+        bytes.push(9); // 未知 target tag
+        fs::write(&path, &bytes).unwrap();
+        assert!(read(&path).is_err());
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn rejects_truncated_param_name() {
+        let path = temp_path("truncated-name");
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(MAGIC);
+        bytes.extend_from_slice(&[VERSION, KIND_AUTOMATION]);
+        bytes.extend_from_slice(&1u32.to_le_bytes()); // clip_count
+        bytes.extend_from_slice(&[0, 1, 2]); // Param, PluginInstrument, ch 2
+        bytes.extend_from_slice(&7u32.to_le_bytes()); // id
+        bytes.extend_from_slice(&64u32.to_le_bytes()); // 声明 64 字节 name
+        bytes.extend_from_slice(b"short");
+        fs::write(&path, &bytes).unwrap();
+        assert!(read(&path).is_err());
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn rejects_unknown_param_device() {
+        let path = temp_path("bad-device");
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(MAGIC);
+        bytes.extend_from_slice(&[VERSION, KIND_AUTOMATION]);
+        bytes.extend_from_slice(&1u32.to_le_bytes()); // clip_count
+        bytes.extend_from_slice(&[0, 9, 0]); // Param，未知 device tag 9
+        bytes.extend_from_slice(&1u32.to_le_bytes()); // id
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // name len
+        fs::write(&path, &bytes).unwrap();
+        assert!(read(&path).is_err());
+        let _ = fs::remove_file(&path);
     }
 
     #[test]

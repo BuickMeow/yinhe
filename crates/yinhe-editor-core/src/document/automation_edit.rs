@@ -492,6 +492,9 @@ impl Document {
 
     /// 对面板选框内的锚点批量应用表达式编辑（Info 面板选框编辑）。
     ///
+    /// `ops` 在显示值域输入（Tempo 为 BPM，其余为绑定表上限内的原始值），
+    /// 写回 lane 时归一化（除 Tempo）。
+    ///
     /// Value 仅改值；Tick 改 tick（保持 value）。加减 uniform 时选框
     /// 跟随平移，乘除/赋值（非 uniform）时选框不动。
     /// 返回单个 UndoAction（AutomationDelta），调用方 push 到 history。
@@ -535,7 +538,14 @@ impl Document {
         } else {
             &self.data.model.tracks[track_idx as usize].automation_lanes[lane_idx].events
         };
-        let max_val = target.max_value();
+        // lane 存归一化值（Tempo 为 BPM 原值，不归一化）：Info 面板按
+        // 显示值输入，这里换算。
+        let display_max = match target.display_max() {
+            Some(max) => max,
+            // Tempo 的显示值就是 BPM（历史上限）；第三方插件参数按归一化值显示。
+            None if matches!(target, AutomationTarget::Tempo) => 60_000_000.0,
+            None => 1.0,
+        };
         let mut moves: Vec<(u32, u32, f32)> = Vec::new();
         let mut uniform_tick: Option<i64> = None;
         let mut uniform_value: Option<f32> = None;
@@ -545,8 +555,9 @@ impl Document {
             }
             let (new_tick, new_value) = match field {
                 AnchorField::Value => {
-                    let v = apply_ops(ops, ev.value as f64).clamp(0.0, max_val as f64) as f32;
-                    (ev.tick, v)
+                    let cur = target.to_display_value(ev.value) as f64;
+                    let display = apply_ops(ops, cur).clamp(0.0, display_max as f64) as f32;
+                    (ev.tick, target.from_display_value(display))
                 }
                 AnchorField::Tick => {
                     let t = apply_ops_round(ops, ev.tick as f64).clamp(0.0, u32::MAX as f64) as u32;
@@ -712,12 +723,12 @@ mod tests {
                     events: vec![
                         AutomationEvent {
                             tick: 100,
-                            value: 64.0,
+                            value: 64.0 / 127.0,
                             shape: SegmentShape::Step,
                         },
                         AutomationEvent {
                             tick: 200,
-                            value: 96.0,
+                            value: 96.0 / 127.0,
                             shape: SegmentShape::Step,
                         },
                     ],
@@ -743,7 +754,7 @@ mod tests {
                     anchor_sel_rects: vec![AnchorSelRect {
                         tick_start: 0.0,
                         tick_end: 250.0,
-                        value_range: Some((0.0, 127.0)),
+                        value_range: Some((0.0, 1.0)),
                     }],
                     ..Default::default()
                 }],
@@ -766,8 +777,9 @@ mod tests {
             .apply_anchor_field_edit(0, AnchorField::Value, &ops)
             .expect("should edit");
         let lane = &doc.data.model.tracks[0].automation_lanes[0];
-        assert_eq!(lane.events[0].value, 74.0);
-        assert_eq!(lane.events[1].value, 106.0);
+        // Info 面板按显示值输入（+10 个 CC 单位），lane 存归一化值。
+        assert!((lane.events[0].value - 74.0 / 127.0).abs() < 1e-6);
+        assert!((lane.events[1].value - 106.0 / 127.0).abs() < 1e-6);
         assert!(matches!(action, UndoAction::Automation(_)));
     }
 
@@ -777,7 +789,10 @@ mod tests {
         let ops = crate::num_expr::parse_num_expr("-4").unwrap();
         doc.apply_anchor_field_edit(0, AnchorField::Value, &ops);
         let rect = doc.edit.controller_panels[0].anchor_sel_rects[0];
-        assert_eq!(rect.value_range, Some((-4.0, 123.0)));
+        let dv = -4.0 / 127.0;
+        let (lo, hi) = rect.value_range.expect("rect 应有 value_range");
+        assert!((lo - dv).abs() < 1e-6);
+        assert!((hi - (1.0 + dv)).abs() < 1e-6);
     }
 
     #[test]
