@@ -218,10 +218,18 @@ fn build_key_map_from_sfz(sfz_path: &Path, sample_rate: u32) -> Result<Vec<Vec<K
                 };
                 let out = if src_sr == sample_rate {
                     Arc::<[f32]>::from(raw)
-                } else {
+                } else if raw_stereo {
                     // 重采样前必须分声道解交错：resample_vec 是单声道序列插值，
                     // 直接对 LRLR 交错数据重采样会把左右声道混在一起（波形错乱）
                     resample_interleaved(raw, src_sr, sample_rate)
+                } else {
+                    // 单声道：按单声道序列重采样（走交错路径会把样本按奇偶
+                    // 拆成两个"半速声道"，波形/音调全错）
+                    xsynth_soundfonts::resample::resample_vec(
+                        raw,
+                        src_sr as f32,
+                        sample_rate as f32,
+                    )
                 };
                 wav_cache.insert(
                     region.sample_path.clone(),
@@ -488,6 +496,58 @@ pub fn load_wav_as_f32(path: &Path) -> Result<(Vec<f32>, u32, bool), String> {
                 .flat_map(|ch| [ch[0], ch[1]])
                 .collect();
             Ok((stereo, spec.sample_rate, true))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 回归：单声道 wav 且源采样率 != 目标采样率时，重采样必须按单声道序列
+    /// 处理（曾走交错路径，样本被按奇偶拆成两个"半速声道"，波形错乱）。
+    #[test]
+    fn mono_wav_resampled_as_mono() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let wav_path = dir.path().join("tone.wav");
+        let sfz_path = dir.path().join("tone.sfz");
+
+        let src_sr = 44_100u32;
+        let len = 4096usize;
+        let samples: Vec<f32> = (0..len)
+            .map(|i| (2.0 * std::f32::consts::PI * 440.0 * i as f32 / src_sr as f32).sin() * 0.5)
+            .collect();
+        let mut writer = hound::WavWriter::create(
+            &wav_path,
+            hound::WavSpec {
+                channels: 1,
+                sample_rate: src_sr,
+                bits_per_sample: 16,
+                sample_format: hound::SampleFormat::Int,
+            },
+        )
+        .expect("wav create");
+        for &s in &samples {
+            writer
+                .write_sample((s * i16::MAX as f32) as i16)
+                .expect("wav write");
+        }
+        writer.finalize().expect("wav finalize");
+        std::fs::write(&sfz_path, "<region>\nsample=tone.wav key=60\n").expect("sfz write");
+
+        let dst_sr = 48_000u32;
+        let entries = build_key_maps(&sfz_path, dst_sr).expect("build key maps");
+        let info = &entries[0].map[60][0];
+        assert!(!info.is_stereo, "单声道样本必须标记为非立体声");
+        assert_eq!(info.sample_rate, dst_sr);
+
+        // 与单声道重采样参考逐样本一致（交错路径的输出会明显不同）
+        let (raw, _, is_stereo) = load_wav_as_f32(&wav_path).expect("load wav");
+        assert!(!is_stereo);
+        let expected = xsynth_soundfonts::resample::resample_vec(raw, src_sr as f32, dst_sr as f32);
+        assert_eq!(info.sample_data.len(), expected.len());
+        for (i, (a, b)) in info.sample_data.iter().zip(expected.iter()).enumerate() {
+            assert!((a - b).abs() < 1e-6, "sample {i}: {a} vs {b}");
         }
     }
 }
