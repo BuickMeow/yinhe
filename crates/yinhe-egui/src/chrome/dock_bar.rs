@@ -60,7 +60,7 @@ enum KnobAction {
 /// 处理段/合成器）；PB/RPN 无低层 lane 形态，保留设备参数
 /// （`ChannelInstrument`）。返回 (target, 显示名)，显示名取参数表自己的
 /// 名字（如 "Sustain"），不用 CC 目标的通用显示名（"CC 64 (Sustain)"）。
-fn instrument_targets(channel: u8) -> Vec<(AutomationTarget, String)> {
+fn instrument_targets(channel: u8) -> Vec<(AutomationTarget, String, f32)> {
     CHANNEL_DSP_PARAMS
         .iter()
         .chain(XSYNTH_PARAMS)
@@ -68,6 +68,9 @@ fn instrument_targets(channel: u8) -> Vec<(AutomationTarget, String)> {
             (
                 crate::piano_view::automation_panel::builtin_target(p, channel),
                 p.name.to_string(),
+                // 默认值取参数表（引擎无事件时的实际值，如 Volume/Expression
+                // 满增益 1.0）；不能用 CC 目标的通用默认值（CC7 会得 0）。
+                p.default,
             )
         })
         .collect()
@@ -327,11 +330,11 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
         .map(instrument_targets)
         .unwrap_or_default()
         .into_iter()
-        .map(|(target, name)| {
+        .map(|(target, name, default)| {
             let current = lane_current_value(&model, &lane_track_tis, display_tick, &target);
             DockParam {
                 name,
-                default: target.default_value(),
+                default,
                 target,
                 current,
             }
@@ -1138,7 +1141,12 @@ mod tests {
         let params = instrument_targets(4);
         assert_eq!(params.len(), CHANNEL_DSP_PARAMS.len() + XSYNTH_PARAMS.len());
 
-        let names: Vec<&str> = params.iter().map(|(_, name)| name.as_str()).collect();
+        // 通道处理的 Volume/Expression 默认满增益（表默认 1.0），
+        // 不能是 CC 通用默认值 0——否则面板无事件时显示 0。
+        assert_eq!(params[0].2, 1.0, "Volume 默认应为满增益");
+        assert_eq!(params[1].2, 1.0, "Expression 默认应为满增益");
+
+        let names: Vec<&str> = params.iter().map(|(_, name, _)| name.as_str()).collect();
         let expect: Vec<&str> = CHANNEL_DSP_PARAMS
             .iter()
             .chain(XSYNTH_PARAMS)
@@ -1146,7 +1154,8 @@ mod tests {
             .collect();
         assert_eq!(names, expect, "顺序应为通道处理参数在前、XSynth 在后");
 
-        let targets: Vec<AutomationTarget> = params.into_iter().map(|(target, _)| target).collect();
+        let targets: Vec<AutomationTarget> =
+            params.into_iter().map(|(target, _, _)| target).collect();
         // 通道处理参数全部是 CC 绑定（Volume=CC7 / Expression=CC11 / Pan=CC10 /
         // Cutoff=CC74 / Resonance=CC71）。
         for p in CHANNEL_DSP_PARAMS {

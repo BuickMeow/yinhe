@@ -944,6 +944,7 @@ fn strip_builtin_inserts(mixer: &mut yinhe_mixer::MixerParams) -> bool {
         .channel_inserts
         .iter_mut()
         .chain(mixer.bus_inserts.iter_mut())
+        .chain(mixer.audio_inserts.iter_mut())
     {
         let before = chain.len();
         chain.retain(|r| r.format != PluginFormat::Builtin);
