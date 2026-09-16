@@ -12,6 +12,10 @@ use super::types::{
 /// 槽位固定分配一次，避免扩容重建导致状态丢失。超限由 GpuSynth 侧压缩/淘汰。
 pub(crate) const MAX_VOICE_SLOTS: u32 = 8192;
 
+/// 采样数据分片写入的每片字节数（16MB）：写一片让路 1ms，避免长段
+/// GPU/内存带宽抢占把 UI 渲染卡住。
+const SAMPLE_WRITE_SLICE: usize = 16 * 1024 * 1024;
+
 /// `ensure_buffers` 的容量需求（整块帧数与 partial 段长分开：分段渲染时
 /// partial 只按段长上界分配，channel_mix/staging 按整块）。
 pub(crate) struct BufferSpec {
@@ -141,7 +145,17 @@ impl GpuAudioRenderer {
                         let mapped = buf.slice(..).get_mapped_range_mut();
                         match mapped {
                             Ok(mut view) => {
-                                view.copy_from_slice(bytemuck::cast_slice(data));
+                                // 分片写入并逐片让路：一次性 120MB 的内存/GPU
+                                // 带宽抢占会把 UI 渲染（egui 的 wgpu）卡住整段
+                                // 时间（toast 停在原地、恢复后跳到最新进度）。
+                                let bytes = bytemuck::cast_slice(data);
+                                let mut off = 0usize;
+                                while off < bytes.len() {
+                                    let end = (off + SAMPLE_WRITE_SLICE).min(bytes.len());
+                                    view.slice(off..end).copy_from_slice(&bytes[off..end]);
+                                    off = end;
+                                    std::thread::sleep(std::time::Duration::from_millis(1));
+                                }
                                 drop(view);
                                 buf.unmap();
                             }
@@ -149,10 +163,6 @@ impl GpuAudioRenderer {
                             // write_buffer 兜底保证数据仍然正确（不静默出静音）。
                             Err(_) => queue.write_buffer(&buf, 0, bytemuck::cast_slice(data)),
                         }
-                        // 让路：大块 GPU 缓冲创建/上传会与 UI 渲染（egui 的 wgpu）
-                        // 争抢 GPU/驱动资源，逐 chunk 之间让出一帧，避免加载
-                        // 进度/动画断续（CPU 音频路径无此问题）。
-                        std::thread::sleep(std::time::Duration::from_millis(2));
                         buf
                     })
                     .collect();
