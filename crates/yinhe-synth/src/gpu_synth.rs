@@ -460,10 +460,12 @@ impl GpuSynth {
         self.rebuild_sample_upload();
     }
 
-    /// 预热 GPU 缓冲（加载阶段调用，`finish_soundfont_load` 之后）：
-    /// 按最大 voice 容量与段长一次性分配，播放中不再扩容重建。
+    /// 预热 GPU 缓冲与管线（加载阶段调用，`finish_soundfont_load` 之后）：
+    /// 按最大 voice 容量与段长一次性分配并跑一次哑渲染，
+    /// 播放中不再扩容重建、首块也不再触发 GPU 冷启动。
     pub fn prewarm(&mut self, frames: u32) {
-        self.renderer.prewarm(frames);
+        let sample_rate = self.sample_rate;
+        self.renderer.prewarm(frames, sample_rate);
     }
 
     /// 把所有 port 的采样按 Arc 身份去重后拼成大块上传 GPU。
@@ -1585,5 +1587,48 @@ mod tests {
             max_diff < peak * 0.01,
             "密集 bend 下分段与小块输出不一致: max_diff={max_diff} peak={peak}"
         );
+    }
+
+    /// 预热（含哑渲染）不破坏后续正常渲染：加载 → finish → prewarm → 音符正常出声。
+    #[test]
+    fn prewarm_then_render_ok() {
+        let Some(sfz) = std::env::var_os("YINHE_TEST_SFZ") else {
+            eprintln!("YINHE_TEST_SFZ not set, skipping");
+            return;
+        };
+        let path = std::path::PathBuf::from(&sfz);
+        let mut synth = GpuSynth::new_default(44_100).expect("GpuSynth");
+        synth
+            .load_dense_soundfonts(0, std::slice::from_ref(&path))
+            .expect("load");
+        synth.finish_soundfont_load();
+        // 预热（分配 + 哑渲染）：不应 panic，也不污染后续 voice 槽位
+        synth.prewarm(4096);
+        synth.load_events(vec![
+            SynthEvent::NoteOn {
+                sample: 0,
+                channel: 0,
+                key: 60,
+                velocity: 100,
+            },
+            SynthEvent::NoteOff {
+                sample: 44_100,
+                channel: 0,
+                key: 60,
+            },
+        ]);
+        let frames = 4096;
+        let mut bufs: Vec<yinhe_mixer::ChannelBuffers> = (0..2)
+            .map(|_| yinhe_mixer::ChannelBuffers {
+                left: vec![0.0; frames],
+                right: vec![0.0; frames],
+            })
+            .collect();
+        synth.render_to_mixer(&mut bufs);
+        let peak = bufs
+            .iter()
+            .flat_map(|b| b.left.iter().chain(b.right.iter()))
+            .fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(peak > 0.0, "预热后正常渲染应有输出（peak={peak}）");
     }
 }

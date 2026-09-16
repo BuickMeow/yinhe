@@ -239,18 +239,40 @@ impl GpuAudioRenderer {
         self.buffers = None;
     }
 
-    /// 预热 GPU 缓冲（音色库加载完成后调用）：按最大 voice 容量与段长分配，
-    /// 播放中不再因 voice 增长重建（首次分配开销从播放移到加载阶段）。
-    pub fn prewarm(&mut self, frames: u32) {
+    /// 预热 GPU 缓冲与渲染管线（音色库加载完成后调用）：
+    /// 1. 按最大 voice 容量与段长分配全部缓冲（播放中不再因 voice 增长重建）；
+    /// 2. 跑一次**哑渲染**（1 个零状态 voice + 整块帧数），触发 shader/管线/
+    ///    派发路径的 GPU 首次执行——否则这份开销会落在播放后的首块上，
+    ///    表现为"playhead 走到第一个音符前卡一下"。
+    ///
+    /// 哑 voice 全零：`sample_length == 0` 立即进入 Finished，输出静音。
+    pub fn prewarm(&mut self, frames: u32, sample_rate: u32) {
+        let frames = frames.max(1);
         self.ensure_buffers(&BufferSpec {
             voice_count: super::buffers::MAX_VOICE_SLOTS,
-            frame_count: frames.max(1),
+            frame_count: frames,
             partial_frames: RENDER_SEGMENT_FRAMES,
             segs_len: 0,
             ch_updates_len: 0,
             releases_len: 0,
             env_cmds_len: 0,
         });
+        if self.buffers.is_none() {
+            return;
+        }
+        let mut mix = vec![0.0f32; CHANNEL_COUNT * frames as usize * 2];
+        let mut stage = vec![0u32; 1];
+        let seg = RenderSegment {
+            frame_start: 0,
+            frame_length: frames,
+            segs: &[],
+            ch_updates: &[],
+            releases: &[],
+            env_cmds: &[],
+        };
+        let t = std::time::Instant::now();
+        let _ = self.render_block(1, None, &mut mix, &mut stage, &[seg], sample_rate);
+        eprintln!("[gpu] GPU 管线预热（哑渲染）={:?}", t.elapsed());
     }
 
     /// 渲染一块音频的 per-channel 混音（32 通道 × frames × 2 f32，立体声交错）。
