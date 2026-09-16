@@ -861,3 +861,6 @@ dock.plugin_hint: "參數面板可調整插件參數；在 MIX 視圖雙擊插�
 dock.plugin_unavailable: "外掛未載入成功"
 dock.write_at: "旋鈕改動會在光標位置（tick %{tick}）寫入自動化"
 mix.scanning: "掃描插件中…"
+startup.title: "Yinhe"
+startup.preparing: "正在啟動…"
+startup.skip: "跳過等待"

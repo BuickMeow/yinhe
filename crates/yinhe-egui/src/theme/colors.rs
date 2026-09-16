@@ -123,6 +123,67 @@ pub fn danger() -> egui::Color32 {
     current().danger
 }
 
+/// 把统一主题应用到 egui Context（主界面与启动页共用同一 Context）。
+///
+/// 必须用 `set_theme(ThemePreference)` 而非直接 SetTheme，
+/// 否则下一帧被窗口深浅同步逻辑覆写。
+pub fn apply_to_ctx(ctx: &egui::Context) {
+    ctx.set_theme(if dark_mode() {
+        egui::ThemePreference::Dark
+    } else {
+        egui::ThemePreference::Light
+    });
+    ctx.set_visuals({
+        let mut visuals = if dark_mode() {
+            egui::Visuals::dark()
+        } else {
+            egui::Visuals::light()
+        };
+        // 弹窗/面板背景色统一为程序背景色（egui 默认 gray(27) 与主题不符）
+        visuals.window_fill = app_bg();
+        visuals.panel_fill = app_bg();
+        // 选中高亮色统一为 ROW_SELECTED_BG；选中描边与输入光标改用强调色
+        visuals.selection.bg_fill = selected_bg();
+        visuals.selection.stroke = egui::Stroke::new(1.5, accent_active());
+        // 闪烁竖线（光标）与 IME 下划线改用强调色
+        let accent = accent_active();
+        visuals.text_cursor.stroke = egui::Stroke::new(2.0, accent);
+        visuals.text_cursor.preview = false;
+        visuals.ime_composition.active_underline_stroke = egui::Stroke::new(2.0, accent);
+        visuals.ime_composition.inactive_underline_stroke =
+            egui::Stroke::new(2.0, accent.linear_multiply(0.5));
+        // 输入框/TextEdit 背景呼应主题（egui 默认灰色与主题不搭）
+        visuals.extreme_bg_color = control_bg();
+        // egui 原生控件（Button/ComboBox/Slider/Checkbox 等）三态统一：
+        // inactive = btn_bg，hover/active 用统一增益；描边统一 line_fg
+        let btn = btn_bg();
+        visuals.widgets.inactive.bg_fill = btn;
+        visuals.widgets.inactive.weak_bg_fill = app_bg();
+        visuals.widgets.hovered.bg_fill = hover_color(btn);
+        visuals.widgets.hovered.weak_bg_fill = hover_color(app_bg());
+        visuals.widgets.active.bg_fill = pressed_color(btn);
+        visuals.widgets.active.weak_bg_fill = pressed_color(app_bg());
+        // 原生描边（输入框/下拉框/数值框/复选框等**输入类**控件需要边框）；
+        // 按钮/选项等纯操作控件不得带边框（悬停边框出现会让内容视觉位移），
+        // 一律用 `widgets::flat` 的无边框按钮，不依赖这里。
+        let line = line_fg();
+        // 对勾（fg_stroke）用主文字色：与 btn_bg 同系的 line_fg 会导致对勾几乎不可见（见 widgets::checkbox）
+        visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.5, text_primary());
+        visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, line);
+        visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.5, text_primary());
+        visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, hover_color(line));
+        visuals.widgets.active.fg_stroke = egui::Stroke::new(1.5, text_primary());
+        visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, pressed_color(line));
+        visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.5, text_disabled());
+        // 原生控件文字统一用主题主文字色（egui 默认灰与主题不协调）
+        visuals.override_text_color = Some(text_primary());
+        // Noninteractive 态（disabled 按钮等）背景也统一为 app_bg：
+        // 缺省会回落到 egui 默认灰，与主题背景不一致（亮色主题下差异明显）
+        visuals.widgets.noninteractive.weak_bg_fill = app_bg();
+        visuals
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

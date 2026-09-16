@@ -856,3 +856,6 @@ dock.plugin_hint: "Use the parameter panel to tweak the plugin; double-click the
 dock.plugin_unavailable: "Plugin not loaded successfully"
 dock.write_at: "Knob moves write automation at the cursor (tick %{tick})"
 mix.scanning: "Scanning plugins…"
+startup.title: "Yinhe"
+startup.preparing: "Starting…"
+startup.skip: "Skip waiting"

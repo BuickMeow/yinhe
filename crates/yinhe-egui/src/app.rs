@@ -19,6 +19,7 @@ pub(crate) mod midi_input;
 pub(crate) mod plugin_automation;
 pub(crate) mod poll;
 pub(crate) mod rescale_state;
+pub(crate) mod startup;
 
 use crate::chrome::mode_bar::ViewMode;
 use crate::dialogs::system_monitor::SystemMonitor;
@@ -207,6 +208,9 @@ pub struct App {
     // ── Multi-stage loading progress ──
     pub(crate) load_progress: yinhe_editor_core::progress::SharedProgress,
 
+    // ── 启动阶段（主窗口隐藏 + 独立启动页；音频/插件就绪后进主界面）──
+    pub(crate) startup: startup::StartupState,
+
     // ── Async audio export ──
     pub(crate) export: export_state::ExportState,
 
@@ -372,6 +376,7 @@ impl App {
 
             transport_panel_width: audio_settings.layout.transport_panel_width,
             load_progress: load_progress.clone(),
+            startup: startup::StartupState::new(),
             file_loader: FileLoader::new(load_progress.clone()),
             save_rx: None,
             save_progress: Default::default(),

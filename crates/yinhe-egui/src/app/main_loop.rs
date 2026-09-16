@@ -99,6 +99,13 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        // ── 启动阶段：主窗口隐藏，独立启动页显示进度 ──
+        // 音频引擎 + 插件扫描就绪后才渲染主界面（见 app/startup.rs）。
+        if self.startup.pending {
+            self.startup_ui(ui);
+            return;
+        }
+
         let _ui_total_start = if yinhe_memtrace::perf_probe::enabled() {
             Some(std::time::Instant::now())
         } else {
@@ -375,69 +382,7 @@ impl eframe::App for App {
         }
 
         // ── 统一主题色：Visuals 基底跟随主题明/暗 + 窗口 NSAppearance 同步使 IME 候选窗深浅跟随 ──
-        // 必须用 set_theme(ThemePreference) 而非直接 SetTheme，否则下一帧被同步逻辑覆写
-        let is_dark = crate::theme::dark_mode();
-        ui.ctx().set_theme(if is_dark {
-            egui::ThemePreference::Dark
-        } else {
-            egui::ThemePreference::Light
-        });
-        ui.ctx().set_visuals({
-            let mut visuals = if crate::theme::dark_mode() {
-                egui::Visuals::dark()
-            } else {
-                egui::Visuals::light()
-            };
-            // 弹窗/面板背景色统一为程序背景色（egui 默认 gray(27) 与主题不符）
-            visuals.window_fill = crate::theme::app_bg();
-            visuals.panel_fill = crate::theme::app_bg();
-            // 选中高亮色统一为 ROW_SELECTED_BG；选中描边与输入光标改用强调色
-            visuals.selection.bg_fill = crate::theme::selected_bg();
-            visuals.selection.stroke = egui::Stroke::new(1.5, crate::theme::accent_active());
-            // 闪烁竖线（光标）与 IME 下划线改用强调色
-            let accent = crate::theme::accent_active();
-            visuals.text_cursor.stroke = egui::Stroke::new(2.0, accent);
-            visuals.text_cursor.preview = false;
-            visuals.ime_composition.active_underline_stroke = egui::Stroke::new(2.0, accent);
-            visuals.ime_composition.inactive_underline_stroke =
-                egui::Stroke::new(2.0, accent.linear_multiply(0.5));
-            // 输入框/TextEdit 背景呼应主题（egui 默认灰色与主题不搭）
-            visuals.extreme_bg_color = crate::theme::control_bg();
-            // egui 原生控件（Button/ComboBox/Slider/Checkbox 等）三态统一：
-            // inactive = btn_bg，hover/active 用统一增益；描边统一 line_fg
-            let btn = crate::theme::btn_bg();
-            visuals.widgets.inactive.bg_fill = btn;
-            visuals.widgets.inactive.weak_bg_fill = crate::theme::app_bg();
-            visuals.widgets.hovered.bg_fill = crate::theme::hover_color(btn);
-            visuals.widgets.hovered.weak_bg_fill =
-                crate::theme::hover_color(crate::theme::app_bg());
-            visuals.widgets.active.bg_fill = crate::theme::pressed_color(btn);
-            visuals.widgets.active.weak_bg_fill =
-                crate::theme::pressed_color(crate::theme::app_bg());
-            // 原生描边（输入框/下拉框/数值框/复选框等**输入类**控件需要边框）；
-            // 按钮/选项等纯操作控件不得带边框（悬停边框出现会让内容视觉位移），
-            // 一律用 `widgets::flat` 的无边框按钮，不依赖这里。
-            let line = crate::theme::line_fg();
-            // 对勾（fg_stroke）用主文字色：与 btn_bg 同系的 line_fg 会导致对勾几乎不可见（见 widgets::checkbox）
-            visuals.widgets.inactive.fg_stroke =
-                egui::Stroke::new(1.5, crate::theme::text_primary());
-            visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, line);
-            visuals.widgets.hovered.fg_stroke =
-                egui::Stroke::new(1.5, crate::theme::text_primary());
-            visuals.widgets.hovered.bg_stroke =
-                egui::Stroke::new(1.0, crate::theme::hover_color(line));
-            visuals.widgets.active.fg_stroke = egui::Stroke::new(1.5, crate::theme::text_primary());
-            visuals.widgets.active.bg_stroke =
-                egui::Stroke::new(1.0, crate::theme::pressed_color(line));
-            visuals.widgets.noninteractive.fg_stroke =
-                egui::Stroke::new(1.5, crate::theme::text_disabled());
-            // 原生控件文字统一用主题主文字色（egui 默认灰与主题不协调）
-            visuals.override_text_color = Some(crate::theme::text_primary());
-            // Noninteractive 态（disabled 按钮等）背景也统一为 app_bg：
-            // 缺省会回落到 egui 默认灰，与主题背景不一致（亮色主题下差异明显）
-            visuals.widgets.noninteractive.weak_bg_fill = crate::theme::app_bg();
-            visuals
-        });
+        crate::theme::apply_to_ctx(ui.ctx());
 
         // ── Custom title bar ──
         let title_bar_action = title_bar::show(

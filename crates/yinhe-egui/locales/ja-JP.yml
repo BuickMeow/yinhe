@@ -864,3 +864,6 @@ dock.plugin_hint: "パラメータパネルでプラグインを調整できま�
 dock.plugin_unavailable: "プラグインの読み込みに失敗しました"
 dock.write_at: "ノブの変更はカーソル位置（tick %{tick}）にオートメーションを書き込みます"
 mix.scanning: "プラグインをスキャン中…"
+startup.title: "Yinhe"
+startup.preparing: "起動中…"
+startup.skip: "待機をスキップ"
