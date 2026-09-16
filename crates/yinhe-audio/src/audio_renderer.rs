@@ -193,6 +193,10 @@ pub(crate) fn build_gpu_synth_events(
         if cc.plugin_param.is_some() {
             continue;
         }
+        // DSP 参数事件（Param{ChannelDsp}）：走 CPU 侧 insert 链，不进 GPU。
+        if cc.dsp_route {
+            continue;
+        }
         // 插件乐器通道的事件由 CPU dispatch 转 MIDI 喂插件，不进 GPU。
         if engine.channel_plugin_dense(cc.channel as u8).is_some() {
             continue;

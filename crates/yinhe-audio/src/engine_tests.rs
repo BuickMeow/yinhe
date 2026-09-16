@@ -66,6 +66,7 @@ fn test_sorted_cc_ordering() {
             channel: 0,
             track: 0,
             lane: 0,
+            dsp_route: false,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 80)),
         },
@@ -74,6 +75,7 @@ fn test_sorted_cc_ordering() {
             channel: 0,
             track: 0,
             lane: 0,
+            dsp_route: false,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)),
         },
@@ -82,6 +84,7 @@ fn test_sorted_cc_ordering() {
             channel: 0,
             track: 0,
             lane: 0,
+            dsp_route: false,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 60)),
         },
@@ -1124,6 +1127,7 @@ fn test_muted_track_cc_skipped_in_dispatch() {
             channel: 0,
             track: 0,
             lane: 0,
+            dsp_route: false,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 40)),
         },
@@ -1132,6 +1136,7 @@ fn test_muted_track_cc_skipped_in_dispatch() {
             channel: 0,
             track: 1,
             lane: 0,
+            dsp_route: false,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)),
         },
@@ -1178,6 +1183,7 @@ fn test_unmute_chase_skip_excludes_events_missed_while_muted() {
             channel: 0,
             track: 0,
             lane: 0,
+            dsp_route: false,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 40)),
         },
@@ -1186,6 +1192,7 @@ fn test_unmute_chase_skip_excludes_events_missed_while_muted() {
             channel: 0,
             track: 0,
             lane: 0,
+            dsp_route: false,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(1, 80)),
         },
@@ -1467,6 +1474,7 @@ fn test_chase_channel_states_incremental() {
             channel: 0,
             track: 0,
             lane: 0,
+            dsp_route: true,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)),
         },
@@ -1476,6 +1484,7 @@ fn test_chase_channel_states_incremental() {
             channel: 1,
             track: 1,
             lane: 0,
+            dsp_route: true,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 50)),
         },
@@ -1485,6 +1494,7 @@ fn test_chase_channel_states_incremental() {
             channel: 0,
             track: 0,
             lane: 0,
+            dsp_route: true,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(10, 80)),
         },
@@ -1494,15 +1504,17 @@ fn test_chase_channel_states_incremental() {
             channel: 0,
             track: 0,
             lane: 0,
+            dsp_route: true,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 90)),
         },
-        // ch0 的 PBS=48
+        // ch0 的 PBS=48（PB 参数，非 DSP CC，走常规 apply）
         SortedCC {
             tick: 45,
             channel: 0,
             track: 0,
             lane: 0,
+            dsp_route: false,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(48.0)),
         },
@@ -1512,6 +1524,7 @@ fn test_chase_channel_states_incremental() {
             channel: 0,
             track: 0,
             lane: 0,
+            dsp_route: true,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 10)),
         },
@@ -1549,6 +1562,7 @@ fn test_preview_chase_includes_jump_at_target_tick() {
             channel: 0,
             track: 0,
             lane: 0,
+            dsp_route: true,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 0)),
         },
@@ -1557,6 +1571,7 @@ fn test_preview_chase_includes_jump_at_target_tick() {
             channel: 0,
             track: 0,
             lane: 0,
+            dsp_route: true,
             plugin_param: None,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 127)),
         },
@@ -1977,7 +1992,13 @@ fn test_chase_query_matches_flattened_scan() {
             if e.tick >= target {
                 break;
             }
-            old[e.channel as usize].apply(&e.event);
+            if e.dsp_route {
+                if let Some((cc_num, val)) = crate::engine_render::raw_cc(&e.event) {
+                    old[e.channel as usize].apply_dsp_cc(cc_num, val);
+                }
+            } else {
+                old[e.channel as usize].apply(&e.event);
+            }
         }
         // 新式：查询模型 lane（无事件通道 = None，等价于 default 状态）
         let new = crate::spawn::compute_chase_states_for_test(&model, target, &skip);
