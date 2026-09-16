@@ -294,8 +294,13 @@ pub struct AudioHandle {
     instrument_return_rx: crossbeam_channel::Receiver<(u8, Box<dyn InstrumentProcessor>)>,
 }
 
-/// 传输类命令（走独立无界通道，保序、永不丢）。
-fn is_transport(cmd: &AudioCommand) -> bool {
+/// 可靠命令（走独立无界通道，保序、永不丢）。
+///
+/// - 传输控制：UI 时钟对齐依赖，丢失会造成播放/暂停状态错位。
+/// - 结构性变更（insert 挂载/移除、乐器挂载、总线结构）：单次命令、无
+///   重发路径（UI 发完即标记已发送），丢失即永久不一致（曾因此效果器
+///   在渲染线程阻塞 4-5 秒时被丢，卡片在 UI 上但引擎里根本没挂上）。
+fn is_reliable(cmd: &AudioCommand) -> bool {
     matches!(
         cmd,
         AudioCommand::Play { .. }
@@ -303,6 +308,12 @@ fn is_transport(cmd: &AudioCommand) -> bool {
             | AudioCommand::Pause
             | AudioCommand::Stop
             | AudioCommand::Seek { .. }
+            | AudioCommand::InsertAdd { .. }
+            | AudioCommand::InsertRemove { .. }
+            | AudioCommand::InsertReplace { .. }
+            | AudioCommand::SetInstrument { .. }
+            | AudioCommand::SetMixerParams { .. }
+            | AudioCommand::SyncBusConfig { .. }
     )
 }
 
@@ -321,6 +332,11 @@ fn cmd_kind(cmd: &AudioCommand) -> &'static str {
         AudioCommand::SkipTracks { .. } => "SkipTracks",
         AudioCommand::SetAmMs { .. } => "SetAmMs",
         AudioCommand::SetLayerCount { .. } => "SetLayerCount",
+        AudioCommand::InsertAdd { .. } => "InsertAdd",
+        AudioCommand::InsertRemove { .. } => "InsertRemove",
+        AudioCommand::InsertReplace { .. } => "InsertReplace",
+        AudioCommand::SetInstrument { .. } => "SetInstrument",
+        AudioCommand::SyncBusConfig { .. } => "SyncBusConfig",
         AudioCommand::PreviewStop => "PreviewStop",
         AudioCommand::RefreshLatency => "RefreshLatency",
         _ => "Other",
@@ -330,15 +346,16 @@ fn cmd_kind(cmd: &AudioCommand) -> &'static str {
 impl AudioHandle {
     /// 发命令给 renderer 线程。
     ///
-    /// 通道容量 `AUDIO_CMD_CHANNEL_CAPACITY`（16）。满时 `try_send` 失败 →
-    /// 丢弃新命令 + `warn!` 日志，绝不阻塞 UI 线程。
+    /// 可靠命令（传输控制 + 结构性变更，见 [`is_reliable`]）走独立无界通道，
+    /// 保序永不丢。其余走容量 `AUDIO_CMD_CHANNEL_CAPACITY`（16）的通道，
+    /// 满时 `try_send` 失败 → 丢弃新命令 + `warn!` 日志，绝不阻塞 UI 线程。
     /// - `Full`：renderer 处理不过来。renderer 已对 `ReloadNotes`/`UpdateNotes`
     ///   做同类型合并，worker 对 `PrepareModel`/`PrepareNotes`/`PrepareChase`
     ///   也做合并，因此偶发丢弃只造成短暂 UI/音频错位，下一次操作即重新同步。
     /// - `Disconnected`：renderer 线程已退出。仅记日志，不 panic ——
     ///   渲染线程死亡不应该让 UI 也跟着崩。
     pub fn send(&self, cmd: AudioCommand) {
-        if is_transport(&cmd) {
+        if is_reliable(&cmd) {
             // 无界通道：除渲染线程退出外不会失败。
             let _ = self.transport_tx.send(cmd);
             return;
@@ -1312,4 +1329,28 @@ pub fn spawn_cpal_audio(
         shutdown,
         renderer_handle: Some(renderer_handle),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 回归：结构性变更命令必须走可靠通道。渲染线程曾因音色库/采样上传
+    /// 阻塞 4-5 秒导致命令通道（容量 16）满，InsertAdd 被静默丢弃 ——
+    /// UI 标记已发送、无重发路径，效果器永远不生效。
+    #[test]
+    fn structural_commands_use_reliable_channel() {
+        assert!(is_reliable(&AudioCommand::Play { from_sample: 0 }));
+        assert!(is_reliable(&AudioCommand::InsertRemove {
+            target: InsertTarget::Channel(0),
+            slot: 0,
+        }));
+        assert!(is_reliable(&AudioCommand::SetInstrument {
+            channel: 0,
+            processor: None,
+        }));
+        // 可重发/可合并的普通命令仍走有界通道（满了丢弃、下一次操作自愈）。
+        assert!(!is_reliable(&AudioCommand::RefreshLatency));
+        assert!(!is_reliable(&AudioCommand::PreviewStop));
+    }
 }

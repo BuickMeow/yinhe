@@ -462,7 +462,7 @@ impl AudioRenderer {
             did_work = true;
         }
 
-        // 传输命令（独立无界通道）：优先、保序处理，永不丢。
+        // 可靠命令（独立无界通道）：优先、保序处理，永不丢。
         // 批内连续 Seek 合并为最后一个（绝对位置，中间值无需逐条同步）。
         let mut transport: Vec<AudioCommand> = Vec::new();
         while let Ok(cmd) = self.transport_rx.try_recv() {
