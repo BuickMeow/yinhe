@@ -871,13 +871,15 @@ fn compute_chase_states(
             ) {
                 continue;
             }
-            // 插件参数：不进 MIDI 通道状态（占位事件会污染 CC0），单独收集。
-            if let yinhe_types::AutomationTarget::PluginParam {
-                channel, param_id, ..
+            // 第三方乐器插件参数：不进 MIDI 通道状态（占位事件会污染 CC0），单独收集。
+            if let yinhe_types::AutomationTarget::Param {
+                device: yinhe_types::automation::ParamDevice::PluginInstrument { channel },
+                id,
+                ..
             } = &lane.target
             {
                 if let Some((value, _)) = lane.value_at(target_tick) {
-                    plugin_params.push((*channel, *param_id, value));
+                    plugin_params.push((*channel, *id, value));
                 }
                 continue;
             }

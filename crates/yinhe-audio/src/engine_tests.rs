@@ -4,6 +4,9 @@ use xsynth_core::channel::{ChannelAudioEvent, ControlEvent};
 use xsynth_core::channel_group::ParallelismOptions;
 use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
 use yinhe_editor_core::document::Document;
+use yinhe_types::automation::{
+    MidiBinding, ParamDevice, channel_dsp_param, channel_dsp_param_id_for_midi, xsynth_param,
+};
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, KEY_COUNT, SegmentShape};
 
 use crate::channel_layout::ChannelLayout;
@@ -370,6 +373,32 @@ fn test_engine_render_zero_frames() {
     engine.render(&mut output);
 }
 
+/// track 0（MIDI 通道 0）的内置 XSynth 参数 target。
+fn xsynth_target(id: u32) -> AutomationTarget {
+    AutomationTarget::Param {
+        device: ParamDevice::ChannelInstrument { channel: 0 },
+        id,
+        name: String::new(),
+    }
+}
+
+/// track 0（MIDI 通道 0）的内置 DSP 参数 target。
+fn dsp_target(id: u32) -> AutomationTarget {
+    AutomationTarget::Param {
+        device: ParamDevice::ChannelDsp { channel: 0 },
+        id,
+        name: String::new(),
+    }
+}
+
+/// CC → target：命中通道 DSP 绑定（CC7/10/11/71/74）的走设备参数，其余保留低层 CC。
+fn cc_target(controller: u8) -> AutomationTarget {
+    match channel_dsp_param_id_for_midi(MidiBinding::Cc(controller)) {
+        Some(id) => dsp_target(id),
+        None => AutomationTarget::CC { controller },
+    }
+}
+
 fn make_model_with_controls(
     cc: Vec<(u8, u32, u8)>,
     pb: Vec<(u32, i16)>,
@@ -394,7 +423,7 @@ fn make_model_with_controls(
     };
     let mut t = TrackData::new(0, 0);
 
-    // Build automation lanes from CC events
+    // Build automation lanes from CC events（入参为原始整数 CC 值，内部归一化）。
     let mut lanes: Vec<AutomationLane> = Vec::new();
     if !cc.is_empty() {
         let mut cc_by_controller: BTreeMap<u8, Vec<AutomationEvent>> = BTreeMap::new();
@@ -404,44 +433,50 @@ fn make_model_with_controls(
                 .or_default()
                 .push(AutomationEvent {
                     tick,
-                    value: value as f32,
+                    value: value as f32 / 127.0,
                     shape: SegmentShape::Step,
                 });
         }
         for (controller, events) in cc_by_controller {
             lanes.push(AutomationLane {
-                target: AutomationTarget::CC { controller },
+                target: cc_target(controller),
                 track: 0,
                 events,
             });
         }
     }
 
-    // Pitch bend lane
+    // Pitch bend lane（入参为相对中心的原始偏移 -8192..8191，内部归一化）。
     if !pb.is_empty() {
         let events: Vec<AutomationEvent> = pb
             .into_iter()
             .map(|(tick, value)| AutomationEvent {
                 tick,
-                value: (value + 8192) as f32,
+                value: (value + 8192) as f32 / 16383.0,
                 shape: SegmentShape::Step,
             })
             .collect();
         lanes.push(AutomationLane {
-            target: AutomationTarget::PitchBend,
+            target: xsynth_target(xsynth_param::PITCH_BEND),
             track: 0,
             events,
         });
     }
 
-    // RPN lanes
+    // RPN lanes（入参为原始整数，按绑定上限归一化）。
     for (key, tick, value) in rpn {
+        let (target, max) = match key {
+            0 => (xsynth_target(xsynth_param::PB_SENSITIVITY), 127.0),
+            1 => (xsynth_target(xsynth_param::FINE_TUNE), 16383.0),
+            2 => (xsynth_target(xsynth_param::COARSE_TUNE), 127.0),
+            _ => (AutomationTarget::Rpn { parameter: key }, 16383.0),
+        };
         lanes.push(AutomationLane {
-            target: AutomationTarget::Rpn { parameter: key },
+            target,
             track: 0,
             events: vec![AutomationEvent {
                 tick,
-                value,
+                value: value / max,
                 shape: SegmentShape::Step,
             }],
         });
@@ -1237,21 +1272,21 @@ fn test_muted_track_cc_skipped_in_chase() {
     // track 0（将被 mute）的 CC7=40，track 1（非 mute）的 CC7=100，同 channel 0
     let mut t0 = TrackData::new(0, 0);
     t0.automation_lanes = vec![AutomationLane {
-        target: AutomationTarget::CC { controller: 7 },
+        target: dsp_target(channel_dsp_param::VOLUME),
         track: 0,
         events: vec![AutomationEvent {
             tick: 100,
-            value: 40.0,
+            value: 40.0 / 127.0,
             shape: SegmentShape::Step,
         }],
     }];
     let mut t1 = TrackData::new(0, 0);
     t1.automation_lanes = vec![AutomationLane {
-        target: AutomationTarget::CC { controller: 7 },
+        target: dsp_target(channel_dsp_param::VOLUME),
         track: 1,
         events: vec![AutomationEvent {
             tick: 200,
-            value: 100.0,
+            value: 100.0 / 127.0,
             shape: SegmentShape::Step,
         }],
     }];
@@ -1299,49 +1334,49 @@ fn make_chase_model() -> YinModel {
     t.name = "Chase".into();
     t.automation_lanes = vec![
         AutomationLane {
-            target: AutomationTarget::Rpn { parameter: 0 },
+            target: xsynth_target(xsynth_param::PB_SENSITIVITY),
             track: 0,
             events: vec![
                 AutomationEvent {
                     tick: 0,
-                    value: 2.0,
+                    value: 2.0 / 127.0,
                     shape: SegmentShape::Step,
                 },
                 AutomationEvent {
                     tick: 768,
-                    value: 48.0,
+                    value: 48.0 / 127.0,
                     shape: SegmentShape::Step,
                 },
             ],
         },
         AutomationLane {
-            target: AutomationTarget::PitchBend,
+            target: xsynth_target(xsynth_param::PITCH_BEND),
             track: 0,
             events: vec![
                 AutomationEvent {
                     tick: 336,
-                    value: 8192.0,
+                    value: 8192.0 / 16383.0,
                     shape: SegmentShape::Step,
                 },
                 AutomationEvent {
                     tick: 1536,
-                    value: 10892.0,
+                    value: 10892.0 / 16383.0,
                     shape: SegmentShape::Step,
                 },
             ],
         },
         AutomationLane {
-            target: AutomationTarget::CC { controller: 7 },
+            target: dsp_target(channel_dsp_param::VOLUME),
             track: 0,
             events: vec![
                 AutomationEvent {
                     tick: 192,
-                    value: 100.0,
+                    value: 100.0 / 127.0,
                     shape: SegmentShape::Step,
                 },
                 AutomationEvent {
                     tick: 768,
-                    value: 80.0,
+                    value: 80.0 / 127.0,
                     shape: SegmentShape::Step,
                 },
             ],
@@ -1785,12 +1820,12 @@ fn model_with_lane(lane: AutomationLane) -> YinModel {
 fn test_chase_query_linear_interpolation() {
     // CC7：tick 0 = 100 → tick 480 = 60，Linear（退化曲线）。
     let model = model_with_lane(AutomationLane {
-        target: AutomationTarget::CC { controller: 7 },
+        target: dsp_target(channel_dsp_param::VOLUME),
         track: 0,
         events: vec![
             AutomationEvent {
                 tick: 0,
-                value: 100.0,
+                value: 100.0 / 127.0,
                 shape: SegmentShape::Curve {
                     x1: 0.0,
                     y1: 0.0,
@@ -1800,7 +1835,7 @@ fn test_chase_query_linear_interpolation() {
             },
             AutomationEvent {
                 tick: 480,
-                value: 60.0,
+                value: 60.0 / 127.0,
                 shape: SegmentShape::Curve {
                     x1: 0.0,
                     y1: 0.0,
@@ -1848,17 +1883,17 @@ fn test_chase_query_linear_interpolation() {
 fn test_chase_query_step_keeps_last_value() {
     // CC10 pan：tick 0 = 100（Step）→ tick 480 = 20（Step）。
     let model = model_with_lane(AutomationLane {
-        target: AutomationTarget::CC { controller: 10 },
+        target: dsp_target(channel_dsp_param::PAN),
         track: 0,
         events: vec![
             AutomationEvent {
                 tick: 0,
-                value: 100.0,
+                value: 100.0 / 127.0,
                 shape: SegmentShape::Step,
             },
             AutomationEvent {
                 tick: 480,
-                value: 20.0,
+                value: 20.0 / 127.0,
                 shape: SegmentShape::Step,
             },
         ],

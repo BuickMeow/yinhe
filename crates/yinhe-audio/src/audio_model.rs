@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use xsynth_core::channel::{ChannelAudioEvent, ControlEvent};
 use yinhe_core::YinModel;
 
+use yinhe_types::automation::{MidiBinding, ParamDevice, binding_max, builtin_param};
 use yinhe_types::{AutomationLane, AutomationTarget, KEY_COUNT, SegmentShape};
 
 pub(crate) struct SortedCC {
@@ -158,7 +159,7 @@ impl AudioModel {
                     banks.extend(
                         lane.events
                             .iter()
-                            .map(|e| (e.tick, e.value.round().clamp(0.0, 127.0) as u8)),
+                            .map(|e| (e.tick, restore_raw(e.value, 127.0) as u8)),
                     );
                 }
                 // 同 tick 被 PC 折叠的 CC0（PcEvent.bank_msb）——否则声明会被丢掉。
@@ -430,6 +431,9 @@ pub(crate) fn dispatch_priority(event: &ChannelAudioEvent) -> u8 {
 /// 事件时刻为 tick（u32，与模型一致）。
 /// `lane`：源自动化 lane 索引（轨道内），dispatch 查 AM M/S 动态掩码用。
 /// 供 `flatten_automation_to_cc_events`（播放事件流）与查询式 chase 共用。
+///
+/// 值域边界：lane 事件 `value` 归一化 0..1（Tempo 例外），引擎内部链路吃原始
+/// 整数 CC/PB/RPN，这里按 target 的 MIDI 绑定还原（全链路唯一换算点）。
 pub(crate) fn emit_automation_event(
     target: &AutomationTarget,
     value: f32,
@@ -440,176 +444,214 @@ pub(crate) fn emit_automation_event(
     out: &mut Vec<SortedCC>,
 ) {
     match target {
+        AutomationTarget::Param { device, id, .. } => match device {
+            // 第三方乐器插件参数：占位 event 只保证排序/去重键完整；dispatch 按
+            // `plugin_param` 分支走 `PluginEvent::ParamValue`（值保持归一化）。
+            ParamDevice::PluginInstrument {
+                channel: plugin_channel,
+            } => {
+                out.push(SortedCC {
+                    tick,
+                    // 排序键用 MIDI 通道（占位 event 无 xsynth 语义，只求稳定顺序）。
+                    channel: u32::from(*plugin_channel),
+                    track,
+                    lane,
+                    event: ChannelAudioEvent::Control(ControlEvent::Raw(0, 0)),
+                    plugin_param: Some(PluginParamEvent {
+                        channel: *plugin_channel,
+                        param_id: *id,
+                        value: value.clamp(0.0, 1.0),
+                    }),
+                });
+            }
+            // 内置设备参数：按 MIDI 绑定还原为对应的原始整数事件。
+            ParamDevice::ChannelInstrument {
+                channel: device_channel,
+            }
+            | ParamDevice::ChannelDsp {
+                channel: device_channel,
+            } => {
+                let Some(info) = builtin_param(device, *id) else {
+                    return; // 表外 id：无 MIDI 绑定，不产生事件。
+                };
+                emit_midi_binding(
+                    info.midi,
+                    value,
+                    tick,
+                    u32::from(*device_channel),
+                    track,
+                    lane,
+                    out,
+                );
+            }
+        },
         AutomationTarget::CC { controller } => {
-            out.push(SortedCC {
+            push_control(
+                out,
                 tick,
                 channel,
                 track,
                 lane,
-                plugin_param: None,
-                event: ChannelAudioEvent::Control(ControlEvent::Raw(
-                    *controller,
-                    value.round().clamp(0.0, 127.0) as u8,
-                )),
-            });
-        }
-        AutomationTarget::PitchBend => {
-            out.push(SortedCC {
-                tick,
-                channel,
-                track,
-                lane,
-                plugin_param: None,
-                event: ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
-                    (value - 8192.0) / 8192.0,
-                )),
-            });
+                ControlEvent::Raw(*controller, restore_raw(value, 127.0) as u8),
+            );
         }
         AutomationTarget::Rpn { parameter } => {
-            match parameter {
-                0 => {
-                    out.push(SortedCC {
-                        tick,
-                        channel,
-                        track,
-                        lane,
-                        plugin_param: None,
-                        event: ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(
-                            value,
-                        )),
-                    });
-                }
-                1 => {
-                    let fine = (value - 8192.0) / 8192.0 * 100.0;
-                    out.push(SortedCC {
-                        tick,
-                        channel,
-                        track,
-                        lane,
-                        plugin_param: None,
-                        event: ChannelAudioEvent::Control(ControlEvent::FineTune(fine)),
-                    });
-                }
-                2 => {
-                    let coarse = value - 64.0;
-                    out.push(SortedCC {
-                        tick,
-                        channel,
-                        track,
-                        lane,
-                        plugin_param: None,
-                        event: ChannelAudioEvent::Control(ControlEvent::CoarseTune(coarse)),
-                    });
-                }
-                _ => {
-                    // Non-standard RPN: fall back to CC sequence
-                    let msb = ((parameter >> 8) & 0x7F) as u8;
-                    let lsb = (parameter & 0x7F) as u8;
-                    let (data_msb, data_lsb) = if target.is_14bit() {
-                        let v = value.round().clamp(0.0, 16383.0) as u16;
-                        (((v >> 7) & 0x7F) as u8, (v & 0x7F) as u8)
-                    } else {
-                        (value.round().clamp(0.0, 127.0) as u8, 0u8)
-                    };
-                    out.push(SortedCC {
-                        tick,
-                        channel,
-                        track,
-                        lane,
-                        plugin_param: None,
-                        event: ChannelAudioEvent::Control(ControlEvent::Raw(101, msb)),
-                    });
-                    out.push(SortedCC {
-                        tick,
-                        channel,
-                        track,
-                        lane,
-                        plugin_param: None,
-                        event: ChannelAudioEvent::Control(ControlEvent::Raw(100, lsb)),
-                    });
-                    out.push(SortedCC {
-                        tick,
-                        channel,
-                        track,
-                        lane,
-                        plugin_param: None,
-                        event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)),
-                    });
-                    if data_lsb != 0 {
-                        out.push(SortedCC {
-                            tick,
-                            channel,
-                            track,
-                            lane,
-                            plugin_param: None,
-                            event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)),
-                        });
-                    }
-                }
-            }
+            emit_midi_binding(
+                MidiBinding::Rpn(*parameter),
+                value,
+                tick,
+                channel,
+                track,
+                lane,
+                out,
+            );
         }
         AutomationTarget::Nrpn { parameter } => {
             let msb = ((parameter >> 8) & 0x7F) as u8;
             let lsb = (parameter & 0x7F) as u8;
-            let v = value.round().clamp(0.0, 16383.0) as u16;
+            let v = restore_raw(value, 16383.0);
             let data_msb = ((v >> 7) & 0x7F) as u8;
             let data_lsb = (v & 0x7F) as u8;
-            out.push(SortedCC {
+            push_control(out, tick, channel, track, lane, ControlEvent::Raw(99, msb));
+            push_control(out, tick, channel, track, lane, ControlEvent::Raw(98, lsb));
+            push_control(
+                out,
                 tick,
                 channel,
                 track,
                 lane,
-                plugin_param: None,
-                event: ChannelAudioEvent::Control(ControlEvent::Raw(99, msb)),
-            });
-            out.push(SortedCC {
-                tick,
-                channel,
-                track,
-                lane,
-                plugin_param: None,
-                event: ChannelAudioEvent::Control(ControlEvent::Raw(98, lsb)),
-            });
-            out.push(SortedCC {
-                tick,
-                channel,
-                track,
-                lane,
-                plugin_param: None,
-                event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)),
-            });
+                ControlEvent::Raw(6, data_msb),
+            );
             if data_lsb != 0 {
-                out.push(SortedCC {
+                push_control(
+                    out,
                     tick,
                     channel,
                     track,
                     lane,
-                    plugin_param: None,
-                    event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)),
-                });
+                    ControlEvent::Raw(38, data_lsb),
+                );
             }
         }
         // Tempo 走 `conductor.tempo` 而非 `track.automation_lanes`，
         // 由 `build_tempo_map` 消费，不进入 CC 事件流。
         AutomationTarget::Tempo => {}
-        // 插件参数：占位 event 只保证排序/去重键完整；dispatch 按
-        // `plugin_param` 分支走 `PluginEvent::ParamValue`。
-        AutomationTarget::PluginParam {
-            channel, param_id, ..
-        } => {
-            out.push(SortedCC {
+    }
+}
+
+/// 推入一条非插件参数的 SortedCC。
+fn push_control(
+    out: &mut Vec<SortedCC>,
+    tick: u32,
+    channel: u32,
+    track: u16,
+    lane: u16,
+    event: ControlEvent,
+) {
+    out.push(SortedCC {
+        tick,
+        channel,
+        track,
+        lane,
+        plugin_param: None,
+        event: ChannelAudioEvent::Control(event),
+    });
+}
+
+/// 归一化值 → 原始整数（四舍五入 + 钳制）。
+fn restore_raw(value: f32, max: f32) -> u16 {
+    (value * max).round().clamp(0.0, max) as u16
+}
+
+/// 按 MIDI 绑定把归一化值还原成原始整数事件。
+fn emit_midi_binding(
+    midi: MidiBinding,
+    value: f32,
+    tick: u32,
+    channel: u32,
+    track: u16,
+    lane: u16,
+    out: &mut Vec<SortedCC>,
+) {
+    let raw = restore_raw(value, binding_max(midi));
+    match midi {
+        MidiBinding::Cc(controller) => {
+            push_control(
+                out,
                 tick,
-                // 排序键用 MIDI 通道（占位 event 无 xsynth 语义，只求稳定顺序）。
-                channel: u32::from(*channel),
+                channel,
                 track,
                 lane,
-                event: ChannelAudioEvent::Control(ControlEvent::Raw(0, 0)),
-                plugin_param: Some(PluginParamEvent {
-                    channel: *channel,
-                    param_id: *param_id,
-                    value: value.clamp(0.0, 1.0),
-                }),
-            });
+                ControlEvent::Raw(controller, raw as u8),
+            );
+        }
+        MidiBinding::PitchBend => {
+            push_control(
+                out,
+                tick,
+                channel,
+                track,
+                lane,
+                ControlEvent::PitchBendValue((raw as f32 - 8192.0) / 8192.0),
+            );
+        }
+        MidiBinding::Rpn(0) => {
+            push_control(
+                out,
+                tick,
+                channel,
+                track,
+                lane,
+                ControlEvent::PitchBendSensitivity(raw as f32),
+            );
+        }
+        MidiBinding::Rpn(1) => {
+            let fine = (raw as f32 - 8192.0) / 8192.0 * 100.0;
+            push_control(
+                out,
+                tick,
+                channel,
+                track,
+                lane,
+                ControlEvent::FineTune(fine),
+            );
+        }
+        MidiBinding::Rpn(2) => {
+            push_control(
+                out,
+                tick,
+                channel,
+                track,
+                lane,
+                ControlEvent::CoarseTune(raw as f32 - 64.0),
+            );
+        }
+        // 非标准 RPN：RPN 选择（CC101/100）+ Data Entry（CC6/38）序列。
+        MidiBinding::Rpn(parameter) => {
+            let msb = ((parameter >> 8) & 0x7F) as u8;
+            let lsb = (parameter & 0x7F) as u8;
+            let data_msb = ((raw >> 7) & 0x7F) as u8;
+            let data_lsb = (raw & 0x7F) as u8;
+            push_control(out, tick, channel, track, lane, ControlEvent::Raw(101, msb));
+            push_control(out, tick, channel, track, lane, ControlEvent::Raw(100, lsb));
+            push_control(
+                out,
+                tick,
+                channel,
+                track,
+                lane,
+                ControlEvent::Raw(6, data_msb),
+            );
+            if data_lsb != 0 {
+                push_control(
+                    out,
+                    tick,
+                    channel,
+                    track,
+                    lane,
+                    ControlEvent::Raw(38, data_lsb),
+                );
+            }
         }
     }
 }
@@ -653,6 +695,7 @@ pub fn effective_fades(clips: &[yinhe_core::AudioClip], index: usize) -> (f64, f
 mod tests {
     use super::*;
     use yinhe_core::{ConductorData, ProjectMeta, TrackData, YinModel};
+    use yinhe_types::automation::{channel_dsp_param, xsynth_param};
     use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
 
     /// 构建 1 轨道模型，给定 automation lanes。
@@ -738,14 +781,14 @@ mod tests {
         assert!(audio.track_banks[2].is_empty());
     }
 
-    /// 插件参数 lane 展平成 plugin_param 事件：占位 event 不参与 xsynth 语义，
-    /// 值归一到 0..1（越界钳制），param_id/乐器通道原样携带。
+    /// 插件乐器参数 lane 展平成 plugin_param 事件：占位 event 不参与 xsynth 语义，
+    /// 值保持归一化 0..1（越界钳制），param_id/乐器通道原样携带。
     #[test]
-    fn plugin_param_lane_flattens_to_plugin_param_event() {
+    fn emit_plugin_instrument_param_keeps_normalized() {
         let model = model_with_lanes(vec![AutomationLane {
-            target: AutomationTarget::PluginParam {
-                channel: 2,
-                param_id: 42,
+            target: AutomationTarget::Param {
+                device: ParamDevice::PluginInstrument { channel: 2 },
+                id: 42,
                 name: "Cutoff".into(),
             },
             track: 0,
@@ -776,6 +819,92 @@ mod tests {
         }
         assert_eq!(events[0].plugin_param.map(|p| p.value), Some(0.25));
         assert_eq!(events[1].plugin_param.map(|p| p.value), Some(1.0));
+    }
+
+    /// DSP 内置参数：归一化值在 flatten 边界还原成原始整数 CC（Volume → CC7）。
+    #[test]
+    fn emit_channel_dsp_param_restores_integer_cc() {
+        let model = model_with_lanes(vec![AutomationLane {
+            target: AutomationTarget::Param {
+                device: ParamDevice::ChannelDsp { channel: 0 },
+                id: channel_dsp_param::VOLUME,
+                name: String::new(),
+            },
+            track: 0,
+            events: vec![AutomationEvent {
+                tick: 0,
+                value: 100.0 / 127.0,
+                shape: SegmentShape::Step,
+            }],
+        }]);
+        let events = flatten_automation_to_cc_events(&model, 1);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].channel, 0);
+        assert!(matches!(
+            events[0].event,
+            ChannelAudioEvent::Control(ControlEvent::Raw(7, 100))
+        ));
+    }
+
+    /// XSynth 内置参数：PB 中心/满值、RPN0 半音数都按原始整数上限还原。
+    #[test]
+    fn emit_pitch_bend_and_rpn_restore() {
+        let pb_lane = AutomationLane {
+            target: AutomationTarget::Param {
+                device: ParamDevice::ChannelInstrument { channel: 0 },
+                id: xsynth_param::PITCH_BEND,
+                name: String::new(),
+            },
+            track: 0,
+            events: vec![
+                AutomationEvent {
+                    tick: 0,
+                    value: 8192.0 / 16383.0,
+                    shape: SegmentShape::Step,
+                },
+                AutomationEvent {
+                    tick: 10,
+                    value: 1.0,
+                    shape: SegmentShape::Step,
+                },
+            ],
+        };
+        let pbs_lane = AutomationLane {
+            target: AutomationTarget::Param {
+                device: ParamDevice::ChannelInstrument { channel: 0 },
+                id: xsynth_param::PB_SENSITIVITY,
+                name: String::new(),
+            },
+            track: 0,
+            events: vec![AutomationEvent {
+                tick: 0,
+                value: 2.0 / 127.0,
+                shape: SegmentShape::Step,
+            }],
+        };
+        let model = model_with_lanes(vec![pb_lane, pbs_lane]);
+        let events = flatten_automation_to_cc_events(&model, 1);
+
+        let pb_values: Vec<f32> = events
+            .iter()
+            .filter_map(|e| match e.event {
+                ChannelAudioEvent::Control(ControlEvent::PitchBendValue(v)) => Some(v),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pb_values.len(), 2);
+        assert_eq!(pb_values[0], 0.0, "中心 8192 → 无弯音");
+        assert!(
+            (pb_values[1] - (16383.0 - 8192.0) / 8192.0).abs() < 1e-6,
+            "满值 16383 应还原到 +1 附近，实际 {}",
+            pb_values[1]
+        );
+
+        let pbs = events.iter().find_map(|e| match e.event {
+            ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(v)) => Some(v),
+            _ => None,
+        });
+        assert_eq!(pbs, Some(2.0), "RPN0 半音数 2 应还原为 2.0");
     }
 
     #[test]
@@ -815,20 +944,28 @@ mod tests {
     fn rpn_pbs_must_precede_pitch_bend_at_same_tick() {
         let lanes = vec![
             AutomationLane {
-                target: AutomationTarget::PitchBend,
+                target: AutomationTarget::Param {
+                    device: ParamDevice::ChannelInstrument { channel: 0 },
+                    id: xsynth_param::PITCH_BEND,
+                    name: String::new(),
+                },
                 track: 0,
                 events: vec![AutomationEvent {
                     tick: 0,
-                    value: 16383.0,
+                    value: 1.0,
                     shape: SegmentShape::Step,
                 }],
             },
             AutomationLane {
-                target: AutomationTarget::Rpn { parameter: 0 },
+                target: AutomationTarget::Param {
+                    device: ParamDevice::ChannelInstrument { channel: 0 },
+                    id: xsynth_param::PB_SENSITIVITY,
+                    name: String::new(),
+                },
                 track: 0,
                 events: vec![AutomationEvent {
                     tick: 0,
-                    value: 24.0,
+                    value: 24.0 / 127.0,
                     shape: SegmentShape::Step,
                 }],
             },
@@ -868,27 +1005,43 @@ mod tests {
     fn am_ms_builds_lane_skip_mask() {
         let lanes = vec![
             AutomationLane {
-                target: AutomationTarget::CC { controller: 7 },
+                target: AutomationTarget::Param {
+                    device: ParamDevice::ChannelDsp { channel: 0 },
+                    id: channel_dsp_param::VOLUME,
+                    name: String::new(),
+                },
                 track: 0,
                 events: vec![AutomationEvent {
                     tick: 0,
-                    value: 100.0,
+                    value: 100.0 / 127.0,
                     shape: SegmentShape::Step,
                 }],
             },
             AutomationLane {
-                target: AutomationTarget::CC { controller: 10 },
+                target: AutomationTarget::Param {
+                    device: ParamDevice::ChannelDsp { channel: 0 },
+                    id: channel_dsp_param::PAN,
+                    name: String::new(),
+                },
                 track: 0,
                 events: vec![AutomationEvent {
                     tick: 0,
-                    value: 64.0,
+                    value: 64.0 / 127.0,
                     shape: SegmentShape::Step,
                 }],
             },
         ];
         let model = model_with_lanes(lanes);
-        let cc7 = AutomationTarget::CC { controller: 7 };
-        let cc10 = AutomationTarget::CC { controller: 10 };
+        let cc7 = AutomationTarget::Param {
+            device: ParamDevice::ChannelDsp { channel: 0 },
+            id: channel_dsp_param::VOLUME,
+            name: String::new(),
+        };
+        let cc10 = AutomationTarget::Param {
+            device: ParamDevice::ChannelDsp { channel: 0 },
+            id: channel_dsp_param::PAN,
+            name: String::new(),
+        };
         let mask_for = |am_ms: &HashMap<
             (u16, yinhe_types::AutomationTarget),
             yinhe_types::AmMsState,
@@ -926,11 +1079,15 @@ mod tests {
     fn nonstandard_rpn_cc_sequence_must_precede_pitch_bend() {
         let lanes = vec![
             AutomationLane {
-                target: AutomationTarget::PitchBend,
+                target: AutomationTarget::Param {
+                    device: ParamDevice::ChannelInstrument { channel: 0 },
+                    id: xsynth_param::PITCH_BEND,
+                    name: String::new(),
+                },
                 track: 0,
                 events: vec![AutomationEvent {
                     tick: 0,
-                    value: 16383.0,
+                    value: 1.0,
                     shape: SegmentShape::Step,
                 }],
             },
@@ -940,7 +1097,7 @@ mod tests {
                 track: 0,
                 events: vec![AutomationEvent {
                     tick: 0,
-                    value: 100.0,
+                    value: 100.0 / 16383.0,
                     shape: SegmentShape::Step,
                 }],
             },
@@ -973,11 +1130,15 @@ mod tests {
     fn nrpn_cc_sequence_must_precede_pitch_bend() {
         let lanes = vec![
             AutomationLane {
-                target: AutomationTarget::PitchBend,
+                target: AutomationTarget::Param {
+                    device: ParamDevice::ChannelInstrument { channel: 0 },
+                    id: xsynth_param::PITCH_BEND,
+                    name: String::new(),
+                },
                 track: 0,
                 events: vec![AutomationEvent {
                     tick: 0,
-                    value: 16383.0,
+                    value: 1.0,
                     shape: SegmentShape::Step,
                 }],
             },
@@ -986,7 +1147,7 @@ mod tests {
                 track: 0,
                 events: vec![AutomationEvent {
                     tick: 0,
-                    value: 100.0,
+                    value: 100.0 / 16383.0,
                     shape: SegmentShape::Step,
                 }],
             },
@@ -1019,29 +1180,41 @@ mod tests {
     fn rpn_fine_and_coarse_tune_precede_pitch_bend() {
         let lanes = vec![
             AutomationLane {
-                target: AutomationTarget::PitchBend,
+                target: AutomationTarget::Param {
+                    device: ParamDevice::ChannelInstrument { channel: 0 },
+                    id: xsynth_param::PITCH_BEND,
+                    name: String::new(),
+                },
                 track: 0,
                 events: vec![AutomationEvent {
                     tick: 0,
-                    value: 16383.0,
+                    value: 1.0,
                     shape: SegmentShape::Step,
                 }],
             },
             AutomationLane {
-                target: AutomationTarget::Rpn { parameter: 1 },
+                target: AutomationTarget::Param {
+                    device: ParamDevice::ChannelInstrument { channel: 0 },
+                    id: xsynth_param::FINE_TUNE,
+                    name: String::new(),
+                },
                 track: 0,
                 events: vec![AutomationEvent {
                     tick: 0,
-                    value: 9000.0,
+                    value: 9000.0 / 16383.0,
                     shape: SegmentShape::Step,
                 }],
             },
             AutomationLane {
-                target: AutomationTarget::Rpn { parameter: 2 },
+                target: AutomationTarget::Param {
+                    device: ParamDevice::ChannelInstrument { channel: 0 },
+                    id: xsynth_param::COARSE_TUNE,
+                    name: String::new(),
+                },
                 track: 0,
                 events: vec![AutomationEvent {
                     tick: 0,
-                    value: 70.0,
+                    value: 70.0 / 127.0,
                     shape: SegmentShape::Step,
                 }],
             },
