@@ -31,20 +31,6 @@ pub(crate) struct PluginEntry {
 }
 
 impl PluginEntry {
-    /// 内置效果器条目（yinhe-dsp；picker 选择用）。
-    pub(crate) fn builtin(kind: yinhe_dsp::BuiltinEffectKind) -> Self {
-        Self {
-            format: PluginFormat::Builtin,
-            path: PathBuf::new(),
-            id: kind.id().to_string(),
-            name: kind.name().to_string(),
-            vendor: "yinhe".into(),
-            is_instrument: false,
-            is_effect: true,
-            error: None,
-        }
-    }
-
     /// 扫描/加载失败的占位条目（bundle 显示名 + 失败原因）。
     pub(crate) fn failed(format: PluginFormat, path: &std::path::Path, message: String) -> Self {
         let name = path

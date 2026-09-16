@@ -276,7 +276,7 @@ impl App {
     /// 实例只加载不激活——引擎此时尚未重建，spawn 完成后由
     /// `push_mixer_state_to_engine` → `ensure_all_sent` 统一激活补发。
     pub(crate) fn restore_mixer_rack(&mut self, idx: usize) {
-        self.ensure_default_dsp_chain(idx);
+        self.migrate_builtin_inserts(idx);
         let mixer = self.workspace.documents[idx].mixer.clone();
         let mut rack = MixerRack::default();
         for ch in 0..SOURCE_CHANNELS {
@@ -322,51 +322,13 @@ impl App {
         self.mixer_racks[idx] = rack;
     }
 
-    /// 默认 DSP 链：工程使用中的 MIDI 通道若 insert 链为空，自动补
-    /// ChannelGain → ChannelPan → ChannelFilter（链序即处理顺序），
-    /// 保证 CC7/10/11/71/74 有处理者（这些 CC 不再下发给 xsynth，
-    /// 见 `docs/spec-yinhe-dsp.md`）。
-    ///
-    /// 判据"链为空"：用户已有任何 insert（插件或模块）时不打扰；
-    /// 用户完全清空链后重新加载工程会再次补上（默认链语义）。
-    fn ensure_default_dsp_chain(&mut self, idx: usize) {
-        use yinhe_dsp::BuiltinEffectKind;
-        use yinhe_mixer::{InsertRef, PluginFormat};
-
-        let active: Vec<u8> = {
-            let model = &self.workspace.documents[idx].data.model;
-            let mut list: Vec<u8> = Vec::new();
-            for t in &model.tracks {
-                if t.kind != yinhe_core::TrackKind::Midi {
-                    continue;
-                }
-                let ch = t.global_channel();
-                if !list.contains(&ch) {
-                    list.push(ch);
-                }
-            }
-            list
-        };
-        if active.is_empty() {
-            return;
-        }
-        let mixer = self.workspace.documents[idx].mixer_mut();
-        mixer.ensure_len();
-        for ch in active {
-            let chain = match mixer.channel_inserts.get_mut(ch as usize) {
-                Some(c) if c.is_empty() => c,
-                _ => continue,
-            };
-            for kind in BuiltinEffectKind::ALL {
-                chain.push(InsertRef {
-                    plugin_path: std::path::PathBuf::new(),
-                    plugin_id: kind.id().to_string(),
-                    name: kind.name().to_string(),
-                    format: PluginFormat::Builtin,
-                    bypassed: false,
-                    state: None,
-                });
-            }
+    /// 迁移：移除旧工程残留的内置效果器（ChannelGain/Pan/Filter）insert。
+    /// 通道处理已内置到音源的通道处理段（yinhe-audio `ChannelDspChain`），
+    /// 保留会双重处理 CC7/10/11/71/74；确有移除时标脏以便保存清理结果。
+    fn migrate_builtin_inserts(&mut self, idx: usize) {
+        let doc = &mut self.workspace.documents[idx];
+        if strip_builtin_inserts(&mut doc.mixer) {
+            doc.mixer_dirty = true;
         }
     }
 
@@ -973,6 +935,28 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
     }
 }
 
+/// 移除混音台里所有内置效果器（`PluginFormat::Builtin`）insert（迁移）。
+/// 返回是否有移除：无移除时调用方不应标脏（打开旧工程不该弹保存）。
+fn strip_builtin_inserts(mixer: &mut yinhe_mixer::MixerParams) -> bool {
+    use yinhe_mixer::PluginFormat;
+    let mut removed = false;
+    for chain in mixer
+        .channel_inserts
+        .iter_mut()
+        .chain(mixer.bus_inserts.iter_mut())
+    {
+        let before = chain.len();
+        chain.retain(|r| r.format != PluginFormat::Builtin);
+        removed |= chain.len() != before;
+    }
+    let before = mixer.master_inserts.len();
+    mixer
+        .master_inserts
+        .retain(|r| r.format != PluginFormat::Builtin);
+    removed |= mixer.master_inserts.len() != before;
+    removed
+}
+
 /// 启动插件扫描子进程（不阻塞 UI）；已有扫描进行中则忽略。
 pub(crate) fn start_plugin_scan(app: &mut App) {
     if app.mix.scan_in_progress {
@@ -1017,5 +1001,48 @@ pub(crate) fn poll_plugin_scan(app: &mut App) {
             app.mix.scan_rx = None;
             app.mix.scan_in_progress = false;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yinhe_mixer::{InsertRef, MixerParams, PluginFormat};
+
+    fn insert_ref(format: PluginFormat, id: &str) -> InsertRef {
+        InsertRef {
+            plugin_id: id.to_string(),
+            format,
+            ..Default::default()
+        }
+    }
+
+    /// 迁移只移除内置效果器 insert（channel/bus/master），插件保留；
+    /// 无内置时不报告移除（调用方由此避免把刚打开的工程标脏）。
+    #[test]
+    fn strip_builtin_inserts_removes_builtin_only() {
+        let mut mixer = MixerParams::default();
+        mixer.channel_inserts[3] = vec![
+            insert_ref(PluginFormat::Builtin, "channel_gain"),
+            insert_ref(PluginFormat::Clap, "clap-fx"),
+        ];
+        mixer.bus_inserts.push(vec![
+            insert_ref(PluginFormat::Builtin, "channel_pan"),
+            insert_ref(PluginFormat::Vst3, "vst-fx"),
+        ]);
+        mixer.master_inserts = vec![
+            insert_ref(PluginFormat::Vst3, "vst-master"),
+            insert_ref(PluginFormat::Builtin, "channel_filter"),
+        ];
+
+        assert!(strip_builtin_inserts(&mut mixer));
+        assert_eq!(mixer.channel_inserts[3].len(), 1);
+        assert_eq!(mixer.channel_inserts[3][0].plugin_id, "clap-fx");
+        assert_eq!(mixer.bus_inserts[0].len(), 1);
+        assert_eq!(mixer.bus_inserts[0][0].plugin_id, "vst-fx");
+        assert_eq!(mixer.master_inserts.len(), 1);
+        assert_eq!(mixer.master_inserts[0].plugin_id, "vst-master");
+
+        assert!(!strip_builtin_inserts(&mut mixer), "无内置 insert 不算迁移");
     }
 }

@@ -12,7 +12,6 @@ use yinhe_mixer::{MasterParams, StripParams};
 
 use crate::app::App;
 
-use super::plugin_instance::PluginEntry;
 use super::{MixAction, channel_label, db_to_gain, gain_to_db};
 
 /// 通道条宽度（px）。
@@ -1109,47 +1108,6 @@ pub(crate) fn plugin_picker(
                                 .max_height(ui.available_height())
                                 .show(ui, |ui| {
                                     let mut any = false;
-                                    // 内置效果器（yinhe-dsp）分组：与扫描插件并列。
-                                    let builtins: Vec<_> = yinhe_dsp::BuiltinEffectKind::ALL
-                                        .iter()
-                                        .copied()
-                                        .filter(|k| {
-                                            filter.is_empty()
-                                                || k.name().to_lowercase().contains(&filter)
-                                        })
-                                        .collect();
-                                    if !builtins.is_empty() {
-                                        ui.label(
-                                            egui::RichText::new(t!("mix.builtin_effects"))
-                                                .color(crate::theme::text_muted()),
-                                        );
-                                        for kind in builtins {
-                                            any = true;
-                                            let params = kind
-                                                .params()
-                                                .iter()
-                                                .map(|p| p.name)
-                                                .collect::<Vec<_>>()
-                                                .join(", ");
-                                            let hover =
-                                                format!("{}\n{}", kind.description(), params);
-                                            if plugin_row(
-                                                ui,
-                                                kind.name(),
-                                                yinhe_mixer::PluginFormat::Builtin,
-                                                true,
-                                            )
-                                            .on_hover_text(hover)
-                                            .clicked()
-                                            {
-                                                actions.push(MixAction::AddInsert {
-                                                    target,
-                                                    plugin: PluginEntry::builtin(kind),
-                                                });
-                                            }
-                                        }
-                                        ui.separator();
-                                    }
                                     if let Some(plugins) = plugins {
                                         for p in plugins.iter().filter(|p| p.is_effect) {
                                             if !filter.is_empty()
