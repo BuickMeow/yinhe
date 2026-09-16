@@ -26,7 +26,8 @@ pub fn automation_targets(channel: Option<u8>) -> Vec<AutomationTarget> {
 
 /// 内置参数 → 自动化目标：CC 绑定 = 低层 `CC{controller}` lane（通道 DSP 参数
 /// 全部如此，回放广播给效果器模块）；PB/RPN 保留设备参数（`ChannelInstrument`）。
-fn builtin_target(p: &BuiltinParamInfo, channel: u8) -> AutomationTarget {
+/// XSYNTH_PARAMS 与 CHANNEL_DSP_PARAMS 共用（dock 旋钮生成 XSynth 目标同样复用）。
+pub(crate) fn builtin_target(p: &BuiltinParamInfo, channel: u8) -> AutomationTarget {
     match p.midi {
         MidiBinding::Cc(cc) => AutomationTarget::CC { controller: cc },
         _ => AutomationTarget::Param {

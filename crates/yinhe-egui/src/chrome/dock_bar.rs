@@ -13,7 +13,7 @@
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_core::TrackKind;
-use yinhe_types::automation::{MidiBinding, ParamDevice, XSYNTH_PARAMS};
+use yinhe_types::automation::XSYNTH_PARAMS;
 use yinhe_types::{AutomationEvent, AutomationTarget};
 
 use crate::app::App;
@@ -71,14 +71,7 @@ enum KnobAction {
 fn xsynth_targets(channel: u8) -> Vec<AutomationTarget> {
     XSYNTH_PARAMS
         .iter()
-        .map(|p| match p.midi {
-            MidiBinding::Cc(cc) => AutomationTarget::CC { controller: cc },
-            _ => AutomationTarget::Param {
-                device: ParamDevice::ChannelInstrument { channel },
-                id: p.id,
-                name: String::new(),
-            },
-        })
+        .map(|p| crate::piano_view::automation_panel::builtin_target(p, channel))
         .collect()
 }
 
@@ -1229,7 +1222,7 @@ fn open_param_panel(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use yinhe_types::automation::xsynth_param;
+    use yinhe_types::automation::{ParamDevice, xsynth_param};
 
     fn builtin_ref(id: &str) -> yinhe_mixer::InsertRef {
         yinhe_mixer::InsertRef {
