@@ -3,6 +3,7 @@ use std::sync::Arc;
 use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::quantize::QuantizePreset;
+use yinhe_types::automation::{ParamDevice, xsynth_param};
 use yinhe_types::{
     AutomationEvent, AutomationLane, AutomationTarget, KEY_COUNT, Note, NoteBucket, NoteSource,
     SegmentShape, TimeSigEvent,
@@ -103,12 +104,12 @@ pub fn make_test_model() -> YinModel {
         events: vec![
             AutomationEvent {
                 tick: 0,
-                value: 100.0,
+                value: 100.0 / 127.0,
                 shape: SegmentShape::Step,
             },
             AutomationEvent {
                 tick: 240,
-                value: 80.0,
+                value: 80.0 / 127.0,
                 shape: SegmentShape::Step,
             },
         ],
@@ -117,13 +118,18 @@ pub fn make_test_model() -> YinModel {
     let mut t1 = TrackData::new(0, 1); // port 0, ch 1
     t1.name = "Bass".into();
     t1.automation_lanes = vec![AutomationLane {
-        target: AutomationTarget::PitchBend,
+        target: AutomationTarget::Param {
+            device: ParamDevice::ChannelInstrument { channel: 1 },
+            id: xsynth_param::PITCH_BEND,
+            name: String::new(),
+        },
         track: 1,
         events: vec![AutomationEvent {
             tick: 100,
-            value: 9216.0,
+            // 9216 = 1024 + 8192（14-bit 原始值），lane 存归一化值。
+            value: 9216.0 / 16383.0,
             shape: SegmentShape::Step,
-        }], // 1024 + 8192 = raw value
+        }],
     }];
 
     let mut t2 = TrackData::new(1, 0); // port 1, ch 0
