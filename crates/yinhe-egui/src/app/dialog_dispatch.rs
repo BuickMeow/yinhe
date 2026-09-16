@@ -135,11 +135,17 @@ impl App {
         // ── Settings dialog ──
         let prev_allow = self.audio_settings.allow_overlapping_notes;
         let prev_behavior = self.audio_settings.overlap_blocked_behavior;
+        // show_viewport 的返回值语义是「设置窗口已关闭」（dialogs/settings.rs 末尾
+        // `!settings.show_settings`），不是「有修改」：直接用它会变成"开关一下
+        // 设置窗口就重建音频引擎"（音色库解析/采样上传/预热全部重来）。
+        // 只有真正影响 spawn 的设置变化才 teardown。
+        let prev_engine = EngineSettingsKey::of(&self.audio_settings);
         if crate::dialogs::settings::show_viewport(
             &ctx,
             &mut self.audio_settings,
             &self.audio_state.handle,
-        ) {
+        ) && prev_engine.differs(&EngineSettingsKey::of(&self.audio_settings))
+        {
             self.teardown_audio();
         }
         if self.audio_settings.allow_overlapping_notes != prev_allow
@@ -726,5 +732,92 @@ impl App {
         if port_changed {
             self.teardown_audio();
         }
+    }
+}
+
+/// 影响音频引擎 spawn 的设置字段快照。
+///
+/// 用于区分「设置真的改了」与「只是关掉了设置窗口」：`rebuild_audio_if_needed`
+/// 只读取这些字段（采样率 / 缓冲大小 / 输出设备 / GPU 合成开关 / 全局音色库）
+/// 作为 spawn 输入。`xsynth_layers` 由 `SetLayerCount` 在线应用，不需要重建。
+struct EngineSettingsKey {
+    sample_rate: u32,
+    buffer_size: u32,
+    output_device_name: Option<String>,
+    use_gpu_synth: bool,
+    sf_entries: Vec<(String, String, bool)>,
+}
+
+impl EngineSettingsKey {
+    fn of(settings: &crate::audio_settings::AudioSettings) -> Self {
+        Self {
+            sample_rate: settings.sample_rate,
+            buffer_size: settings.buffer_size,
+            output_device_name: settings.output_device_name.clone(),
+            use_gpu_synth: settings.use_gpu_synth,
+            sf_entries: settings
+                .global_sf_config
+                .entries
+                .iter()
+                .map(|e| (e.path.clone(), e.name.clone(), e.enabled))
+                .collect(),
+        }
+    }
+
+    fn differs(&self, other: &Self) -> bool {
+        self.sample_rate != other.sample_rate
+            || self.buffer_size != other.buffer_size
+            || self.output_device_name != other.output_device_name
+            || self.use_gpu_synth != other.use_gpu_synth
+            || self.sf_entries != other.sf_entries
+    }
+}
+
+#[cfg(test)]
+mod engine_settings_key_tests {
+    use super::EngineSettingsKey;
+
+    fn base() -> EngineSettingsKey {
+        EngineSettingsKey {
+            sample_rate: 48000,
+            buffer_size: 0,
+            output_device_name: Some("A".into()),
+            use_gpu_synth: true,
+            sf_entries: vec![("/p.sfz".into(), "Piano".into(), true)],
+        }
+    }
+
+    #[test]
+    fn identical_settings_do_not_diff() {
+        assert!(!base().differs(&base()));
+    }
+
+    #[test]
+    fn engine_relevant_changes_are_detected() {
+        let mut sr = base();
+        sr.sample_rate = 44100;
+        assert!(base().differs(&sr));
+
+        let mut buf = base();
+        buf.buffer_size = 256;
+        assert!(base().differs(&buf));
+
+        let mut dev = base();
+        dev.output_device_name = None;
+        assert!(base().differs(&dev));
+
+        let mut gpu = base();
+        gpu.use_gpu_synth = false;
+        assert!(base().differs(&gpu));
+
+        let mut sf = base();
+        sf.sf_entries[0].2 = false;
+        assert!(base().differs(&sf));
+
+        let mut sf_add = base();
+        sf_add
+            .sf_entries
+            .push(("/q.sfz".into(), "Strings".into(), true));
+        assert!(base().differs(&sf_add));
     }
 }
