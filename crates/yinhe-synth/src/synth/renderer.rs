@@ -574,7 +574,7 @@ impl GpuAudioRenderer {
     /// Render a block of audio using the GPU（测试/便利路径）。
     /// 渲染一块音频（frames × 2 立体声交错）：per-channel 混音求和，无通道滤波。
     /// `voices` 会被更新：读回 GPU 端推进的**全字段**状态（时间/包络/滤波）。
-    /// 调用方**不应再**调用 advance_voices（GPU 已推进）。
+    /// 调用方**不应再**用 CPU 推进 voice 状态（GPU 已推进）。
     /// 返回实际 voice 数量（0 表示静音）。
     ///
     /// 注意：生产路径（GpuSynth::render_to_mixer）用 `render_block` 的紧凑读回；

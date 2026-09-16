@@ -1,12 +1,12 @@
 //! CPU 参考实现与 release 回归（与 GPU shader 逐帧对应）。
 
+#[cfg(test)]
 use super::types::GpuVoiceState;
 
 #[cfg(test)]
 use super::renderer::GpuAudioRenderer;
 #[cfg(test)]
 use super::types::ReleaseCmd;
-
 /// 最小复现：sustain 阶段 voice + frame=0 release 指令，验证 release 推进正确
 #[test]
 fn release_cmd_advances_envelope() {
@@ -220,7 +220,8 @@ fn release_progress_advances_full_block() {
 /// CPU reference implementation (与 GPU shader pass1 逐帧逻辑完全对应).
 /// 7 阶段: 0=Delay, 1=Attack, 2=Hold, 3=Decay, 4=Sustain, 5=Release, 6=Finished
 /// 立体声采样 + 插值 + per-voice biquad 滤波均与 shader 一致，用于对比测试。
-pub fn cpu_render_voices(
+#[cfg(test)]
+pub(crate) fn cpu_render_voices(
     sample_data: &[f32],
     voices: &mut [GpuVoiceState],
     frame_count: u32,
@@ -318,6 +319,7 @@ pub fn cpu_render_voices(
 }
 
 /// 逐帧推进 envelope（与 shader `advance_env` 完全对应）。
+#[cfg(test)]
 fn advance_env_cpu(v: &mut GpuVoiceState) {
     if v.env_stage >= 6 {
         return;

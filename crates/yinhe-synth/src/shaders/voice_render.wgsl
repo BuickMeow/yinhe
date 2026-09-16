@@ -178,7 +178,7 @@ fn sample_at(global_idx: u32) -> f32 {
     }
 }
 
-/// 推进 1 帧 envelope（与 CPU advance_voices 逐帧等价）。
+/// 推进 1 帧 envelope（与 CPU 参考实现 cpu_ref::advance_env_cpu 逐帧等价）。
 /// WGSL 无指针，返回推进后的整个 VoiceState。
 fn advance_env(st: VoiceState) -> VoiceState {
     var s = st;
@@ -443,7 +443,7 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
     }
 
     // 全字段写回（CPU 读回为下一块起点状态；flt_* 亦在其中）。
-    // 与 CPU advance_voices 一致：消耗一次性 start_offset、推进 time。
+    // 与 CPU 参考实现 cpu_ref 一致：消耗一次性 start_offset、推进 time。
     // 分段渲染：voice 的 start_offset 为**段内相对**偏移（跨段时由 else 分支
     // 右移 fc）；音符在后续段才开始时不能推进 time、也不能清零（否则下段
     // 会被误判为"已开始"而提前发声）。

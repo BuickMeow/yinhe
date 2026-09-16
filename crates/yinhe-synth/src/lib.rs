@@ -24,6 +24,6 @@ pub use sfz_parser::{
 };
 pub use synth::{
     GpuAudioRenderer, GpuVoiceState, RENDER_SEGMENT_FRAMES, RenderParams, RenderSegment,
-    advance_voices, biquad_coeffs, cpu_render_voices,
+    biquad_coeffs,
 };
 pub use wgpu;

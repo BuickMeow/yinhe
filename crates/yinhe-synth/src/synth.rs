@@ -8,12 +8,10 @@ pub mod cpu_ref;
 pub mod filter;
 pub mod renderer;
 pub mod types;
-pub mod voice;
 
 #[cfg(test)]
 mod tests;
 
-pub use cpu_ref::cpu_render_voices;
 pub use filter::biquad_coeffs;
 pub use renderer::GpuAudioRenderer;
 pub use types::{CHANNEL_COUNT, CHUNK_SIZE, MAX_CHUNKS, WORKGROUP_SIZE};
@@ -21,4 +19,3 @@ pub use types::{
     ChState, EnvUpdateCmd, GpuVoiceState, RENDER_SEGMENT_FRAMES, ReleaseCmd, RenderParams,
     RenderSegment, SegInfo,
 };
-pub use voice::advance_voices;
