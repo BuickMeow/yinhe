@@ -12,6 +12,11 @@
 //! - 采样长度按帧计算（修正 GPU 立体声样本的 frames/elements 混用）；
 //! - 事件按帧边界分段同步渲染（无 GPU 的段/指令流水线）；并行留待后续分片。
 
+// 渐进重构：SoA 内核接入渲染路径后删除这些 allow（见模块文档）
+#[allow(dead_code)]
+mod simd;
+#[allow(dead_code)]
+mod soa;
 mod voice;
 
 use std::path::PathBuf;
