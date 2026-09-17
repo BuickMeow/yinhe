@@ -36,6 +36,9 @@ pub(super) struct CpuVoice {
     pub(super) held_by_damper: bool,
     /// 已发 release（防止重复触发；damper 保持的 voice 不置位）。
     pub(super) released: bool,
+    /// 已发 kill（淘汰中，1ms 淡出）：不再计入活跃数、不参与淘汰候选
+    /// （xsynth `Voice::is_killed()` 语义）。
+    pub(super) killed: bool,
 
     // 采样
     sample: Arc<[f32]>,
@@ -131,6 +134,7 @@ impl CpuVoice {
             end_sample,
             held_by_damper: false,
             released: false,
+            killed: false,
             sample: Arc::clone(&info.sample_data),
             is_stereo: info.is_stereo,
             interp: info.interp,
@@ -204,6 +208,11 @@ impl CpuVoice {
         self.env_stage >= ENV_FINISHED
     }
 
+    /// 淘汰中（1ms 淡出），xsynth `Voice::is_killed()` 语义。
+    pub(super) fn is_killed(&self) -> bool {
+        self.killed
+    }
+
     /// 段边界换速（弯音/调音/音色切换）：复刻 WGSL 的 time 校正，
     /// 保持"上一帧末 + 新速度"的位置连续。
     pub(super) fn set_speed(&mut self, multiplier: f32, block_frame: u32) {
@@ -215,6 +224,19 @@ impl CpuVoice {
         self.speed = new_speed;
         let n = block_frame.saturating_sub(self.start_offset) as f64;
         self.time += (n - 1.0) * (old_speed - new_speed) as f64;
+    }
+
+    /// kill：淘汰时 1ms 淡出（xsynth `ReleaseType::Kill` 语义——把 release 时长
+    /// 改为 1ms 并从当前幅度衰减）。xsynth `fade_out_killing` 默认 false（立即
+    /// 移除），但它无全局上限、淘汰罕见；我们淘汰频繁（8192 上限 + 同键 layer），
+    /// 硬切会产生 click（用户实测）。
+    pub(super) fn signal_kill(&mut self, sample_rate: u32) {
+        self.env_start = self.envelope;
+        self.env_stage = ENV_RELEASE;
+        self.stage_progress = 0.0;
+        self.released = true;
+        self.killed = true;
+        self.release_frames = 0.001 * sample_rate as f32;
     }
 
     /// release/kill：复刻 WGSL release 指令（env_start = 当前 amp，从当前阶段重走）。

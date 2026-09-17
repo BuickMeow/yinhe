@@ -21,7 +21,7 @@ use rayon::prelude::*;
 use yinhe_mixer::ChannelBuffers;
 
 use crate::channel_state::{ChannelState, ChaseSkip, MAX_CHANNELS, is_env_effect_cc};
-use crate::cpu_synth::voice::{CpuVoice, ENV_FINISHED, ENV_RELEASE};
+use crate::cpu_synth::voice::{CpuVoice, ENV_RELEASE};
 use crate::gpu_synth::{ControlEvent, SynthEvent};
 use crate::sfz_parser::{self, KeyMapEntry};
 
@@ -441,7 +441,10 @@ impl CpuSynth {
             // 先 O(layer) 数活跃数；未超限直接返回（多数 note_on 不分配、不扫候选）
             let active = self.key_indices[slot]
                 .iter()
-                .filter(|&&i| !self.voices[i as usize].finished())
+                .filter(|&&i| {
+                    let v = &self.voices[i as usize];
+                    !v.finished() && !v.is_killed()
+                })
                 .count();
             if active <= max {
                 return;
@@ -452,7 +455,7 @@ impl CpuSynth {
             for &i in self.key_indices[slot].iter() {
                 let idx = i as usize;
                 let v = &self.voices[idx];
-                if idx != keep && !v.finished() && v.velocity < victim_vel {
+                if idx != keep && !v.finished() && !v.is_killed() && v.velocity < victim_vel {
                     victim_vel = v.velocity;
                     victim = Some(i);
                 }
@@ -460,8 +463,8 @@ impl CpuSynth {
             let Some(victim) = victim else {
                 return;
             };
-            // 立即结束（xsynth 默认 fade_out_killing=false，同为立即杀）。
-            self.voices[victim as usize].signal_release(ENV_FINISHED);
+            // 1ms 淡出（硬切会产生 click，用户实测）。
+            self.voices[victim as usize].signal_kill(self.sample_rate);
         }
     }
 
@@ -474,8 +477,8 @@ impl CpuSynth {
                 return;
             }
             let v = &self.voices[i];
-            if !v.finished() && v.env_stage >= ENV_RELEASE {
-                self.voices[i].signal_release(ENV_FINISHED);
+            if !v.finished() && !v.is_killed() && v.env_stage >= ENV_RELEASE {
+                self.voices[i].signal_kill(self.sample_rate);
                 killed += 1;
             }
         }
@@ -484,8 +487,8 @@ impl CpuSynth {
                 return;
             }
             let v = &self.voices[i];
-            if !v.finished() && !v.released {
-                self.voices[i].signal_release(ENV_FINISHED);
+            if !v.finished() && !v.is_killed() && !v.released {
+                self.voices[i].signal_kill(self.sample_rate);
                 killed += 1;
             }
         }

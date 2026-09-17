@@ -315,7 +315,13 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
                 let rc = release_cmds[ri];
                 if rc.vid == vid {
                     st.env_start = st.envelope;
-                    st.env_stage = rc.mode;
+                    if rc.mode == 6u {
+                        // kill：1ms 淡出（xsynth ReleaseType::Kill；硬切有 click）
+                        st.release_frames = 0.001 * f32(params.sample_rate);
+                        st.env_stage = 5u;
+                    } else {
+                        st.env_stage = rc.mode;
+                    }
                     st.stage_progress = 0.0;
                 }
             }
