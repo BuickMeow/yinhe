@@ -95,6 +95,7 @@ pub(super) struct CpuVoice {
 impl CpuVoice {
     /// 由 key map 快照（`note_on` 时零公式计算）构造 voice。
     /// `end_sample`：音符结束的绝对 sample（到期自释）。
+    #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
     pub(super) fn new(
         info: &KeyInfo,
         channel: u8,
