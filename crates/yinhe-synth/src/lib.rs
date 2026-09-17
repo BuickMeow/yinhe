@@ -11,13 +11,13 @@
 //! - Voice 状态管理（7 阶段 ADSR envelope + per-voice biquad 滤波器 = 音色自带 filter）
 //! - 32 通道 MIDI 状态机（仅音源层：bank/program、pitch bend/RPN、damper、ADSR CC）
 
+pub mod channel_state;
 pub mod gpu_synth;
 pub mod sfz_parser;
 pub mod synth;
 
-pub use gpu_synth::{
-    ChaseSkip, ControlEvent, GpuSynth, MAX_CHANNELS, SynthEvent, prefetch_key_maps,
-};
+pub use channel_state::{ChaseSkip, MAX_CHANNELS};
+pub use gpu_synth::{ControlEvent, GpuSynth, SynthEvent, prefetch_key_maps};
 pub use sfz_parser::{
     KeyInfo, KeyMapEntry, LoopMode, build_key_maps, load_wav_as_f32, select_key_info,
     select_key_info_multi,

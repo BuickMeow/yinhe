@@ -1,36 +1,41 @@
 //! 音源层通道状态机（CC/RPN/弯音/鼓组）与 chase 跳过信息。
+//!
+//! CPU（`cpu_synth`）与 GPU（`gpu_synth`）两条渲染路径共用的纯状态逻辑。
 
-use super::{ControlEvent, MAX_CHANNELS};
+use crate::gpu_synth::ControlEvent;
+
+/// 合成器通道数上限（dense 通道槽位；两条渲染路径一致）。
+pub const MAX_CHANNELS: usize = 32;
 
 /// 单通道 MIDI 控制状态（仅音源层参数；音量/声像/滤波已迁至 yinhe-dsp）。
 #[derive(Clone, Copy, Debug)]
-pub(super) struct ChannelState {
-    pub(super) damper: bool,                // CC64 >= 64
-    pub(super) pitch_bend: f32,             // -1..1
-    pub(super) pitch_bend_sensitivity: f32, // 半音（RPN0 = msb + lsb/100），默认 2
-    pub(super) pbs_msb: u8,                 // RPN0 data msb（CC6）
-    pub(super) pbs_lsb: u8,                 // RPN0 data lsb（CC38）
-    pub(super) fine_tune: f32,              // 音分（RPN1）
-    pub(super) fine_tune_msb: u8,           // RPN1 data msb（CC6）
-    pub(super) fine_tune_lsb: u8,           // RPN1 data lsb（CC38）
-    pub(super) coarse_tune: f32,            // 半音（RPN2）
-    pub(super) program: u8,
+pub(crate) struct ChannelState {
+    pub(crate) damper: bool,                // CC64 >= 64
+    pub(crate) pitch_bend: f32,             // -1..1
+    pub(crate) pitch_bend_sensitivity: f32, // 半音（RPN0 = msb + lsb/100），默认 2
+    pub(crate) pbs_msb: u8,                 // RPN0 data msb（CC6）
+    pub(crate) pbs_lsb: u8,                 // RPN0 data lsb（CC38）
+    pub(crate) fine_tune: f32,              // 音分（RPN1）
+    pub(crate) fine_tune_msb: u8,           // RPN1 data msb（CC6）
+    pub(crate) fine_tune_lsb: u8,           // RPN1 data lsb（CC38）
+    pub(crate) coarse_tune: f32,            // 半音（RPN2）
+    pub(crate) program: u8,
     /// 音色库 bank（xsynth `ProgramDescriptor.bank` 语义）：CC0 设置（鼓组 128 锁定），
     /// `PercussionMode` 直接置 128/0。note_on 时与 program 一起选择音色库条目。
-    pub(super) bank: u8,
+    pub(crate) bank: u8,
     // RPN 选择器状态（CC100/101）
     rpn_msb: i8,
     rpn_lsb: i8,
     /// 渐变长度基准（CC79 重置时需要重建 ValueLerp）
     sample_rate: u32,
     /// CC73 attack 时长倍率（u8，None = 用 region 原始值）
-    pub(super) env_attack: Option<u8>,
+    pub(crate) env_attack: Option<u8>,
     /// CC72 release 时长倍率（u8，None = 用 region 原始值）
-    pub(super) env_release: Option<u8>,
+    pub(crate) env_release: Option<u8>,
 }
 
 impl ChannelState {
-    pub(super) fn new(sample_rate: u32) -> Self {
+    pub(crate) fn new(sample_rate: u32) -> Self {
         Self {
             damper: false,
             pitch_bend: 0.0,
@@ -52,7 +57,7 @@ impl ChannelState {
     }
 
     /// 弯音倍率：2^((bend×sensitivity + coarse + fine/100) / 12)（与 xsynth 一致）。
-    pub(super) fn pitch_multiplier(&self) -> f32 {
+    pub(crate) fn pitch_multiplier(&self) -> f32 {
         let combined = self.pitch_bend * self.pitch_bend_sensitivity
             + self.coarse_tune
             + self.fine_tune / 100.0;
@@ -61,7 +66,7 @@ impl ChannelState {
 
     /// 处理一个控制事件（语义对齐 xsynth `process_control_event`）。
     /// 返回是否触发了 damper 松开（需要释放 held voices）。
-    pub(super) fn process_control(&mut self, event: ControlEvent) -> bool {
+    pub(crate) fn process_control(&mut self, event: ControlEvent) -> bool {
         match event {
             ControlEvent::Raw(controller, value) => match controller {
                 0x00 => {
@@ -150,7 +155,7 @@ pub struct ChaseSkip {
 /// xsynth `calculate_curve`：CC72/73 值缩放 region 原始时长（秒）。
 /// v<=64: (v/64)^5 × dur；v>64: dur + ((v-64)/64)^3 × 15
 /// release 有 0.02s 下限；attack 无下限。返回帧数。
-pub(super) fn env_curve_frames(
+pub(crate) fn env_curve_frames(
     value: u8,
     orig_frames: f32,
     sample_rate: u32,
@@ -167,7 +172,7 @@ pub(super) fn env_curve_frames(
 }
 
 /// CC72/73（包络时长）与 CC121（重置包络）需要重算活跃 voice 的包络时长。
-pub(super) fn is_env_effect_cc(event: &ControlEvent) -> bool {
+pub(crate) fn is_env_effect_cc(event: &ControlEvent) -> bool {
     matches!(
         event,
         ControlEvent::Raw(0x48 | 0x49, _) | ControlEvent::Raw(0x79, 0)

@@ -4,8 +4,9 @@ use crate::sfz_parser;
 use crate::synth::buffers::MAX_VOICE_SLOTS;
 use crate::synth::{ChState, EnvUpdateCmd, GpuVoiceState, ReleaseCmd, SegInfo};
 
-use super::channel::{ChannelState, env_curve_frames, is_env_effect_cc};
-use super::{ChaseSkip, ControlEvent, GpuSynth, MAX_CHANNELS, SynthEvent};
+use super::{ControlEvent, GpuSynth, MAX_CHANNELS, SynthEvent};
+use crate::channel_state::ChaseSkip;
+use crate::channel_state::{ChannelState, env_curve_frames, is_env_effect_cc};
 
 /// dense 通道号 → 槽位索引；>= MAX_CHANNELS 返回 None（GPU 合成器只支持 32 槽位）。
 fn dense_channel(channel: usize) -> Option<usize> {

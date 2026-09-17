@@ -18,10 +18,8 @@ use crate::synth::buffers::MAX_VOICE_SLOTS;
 use crate::synth::{GpuVoiceState, RENDER_SEGMENT_FRAMES, RenderSegment};
 use crate::wgpu;
 
-mod channel;
-
-use channel::ChannelState;
-pub use channel::ChaseSkip;
+use crate::channel_state::ChannelState;
+pub use crate::channel_state::ChaseSkip;
 
 mod schedule;
 
@@ -33,7 +31,7 @@ pub use cache::prefetch_key_maps;
 use cache::{SampleBundle, cached_sample_bundle, load_key_maps, store_sample_bundle};
 
 /// MIDI 通道数（dense 通道 = port×16+ch，支持 2 端口 32 通道）。
-pub const MAX_CHANNELS: usize = 32;
+pub use crate::channel_state::MAX_CHANNELS;
 
 /// 合成器事件（sample 域，按 sample 排序后由 `load_events` 加载）。
 #[derive(Clone, Copy, Debug)]
@@ -799,7 +797,7 @@ mod tests {
 
         synth.apply_chase(0, &[ControlEvent::Raw(0x49, 100)]);
         let v = &synth.voices[0];
-        let expected = super::channel::env_curve_frames(100, 4410.0, 44_100, false);
+        let expected = crate::channel_state::env_curve_frames(100, 4410.0, 44_100, false);
         assert!(
             (v.state.attack_frames - expected).abs() < 1e-3,
             "CC73 应重算 attack 时长: {} vs {expected}",
