@@ -32,6 +32,7 @@ pub use audio_source::{
 };
 pub use builtin_insert::BuiltinInsert;
 pub use clap_insert::ClapInsert;
+pub use engine::MAX_ENGINE_BLOCK_FRAMES;
 pub use spawn::{
     AudioCommand, AudioHandle, CpalAudioHandle, InsertTarget, InstrumentPreviewNote,
     PreviewNoteParams, channels_for_model, discover_sample_rates, list_input_devices,

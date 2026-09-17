@@ -21,6 +21,13 @@ use crate::strip::StripState;
 pub trait InsertProcessor: Send {
     fn process(&mut self, left: &mut [f32], right: &mut [f32]);
 
+    /// 处理器的最大块长能力（激活时声明）。默认 `usize::MAX`（内置处理器无限制）。
+    /// `MixerGraph::process` 在块长超过该值时按此分段调用，保证插件内部按激活值
+    /// 分配的缓冲不被越界（GPU 模式块长 4096 曾因此只处理前 512 帧）。
+    fn max_block_frames(&self) -> usize {
+        usize::MAX
+    }
+
     /// 清空内部处理状态（envelope、delay 尾音等）。seek 后调用。
     fn reset(&mut self) {}
 
@@ -557,7 +564,22 @@ impl MixerGraph {
             {
                 let (buffers, inserts) = (&mut self.buffers[i], &mut self.inserts[i]);
                 for insert in inserts {
-                    insert.process(&mut buffers.left, &mut buffers.right);
+                    // 插件能力可能小于引擎块长（按 512 激活的插件遇到 4096 的块）：
+                    // 按能力分段调用，等效连续处理（原地、无事件，分段安全）。
+                    let max = insert.max_block_frames().max(1);
+                    if max >= frames {
+                        insert.process(&mut buffers.left, &mut buffers.right);
+                        continue;
+                    }
+                    let mut start = 0;
+                    while start < frames {
+                        let end = (start + max).min(frames);
+                        insert.process(
+                            &mut buffers.left[start..end],
+                            &mut buffers.right[start..end],
+                        );
+                        start = end;
+                    }
                 }
             }
             {
@@ -722,6 +744,63 @@ mod tests {
         g.insert_master_insert(0, Box::new(FlushCounter(count.clone())));
         g.flush_pending_insert_params(123);
         assert_eq!(count.load(Ordering::Relaxed), 3);
+    }
+
+    /// 记录每次 process 调用长度的 insert（`max` = 声明的块长能力）。
+    struct SegmentRecorder {
+        max: usize,
+        lens: std::sync::Arc<std::sync::Mutex<Vec<usize>>>,
+    }
+    impl InsertProcessor for SegmentRecorder {
+        fn max_block_frames(&self) -> usize {
+            self.max
+        }
+
+        fn process(&mut self, left: &mut [f32], _right: &mut [f32]) {
+            self.lens
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(left.len());
+        }
+
+        fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+            self
+        }
+    }
+
+    /// 回归：插件能力（max_block_frames）小于引擎块长时按能力分段调用
+    /// （512 激活的插件遇到 GPU 4096 块曾只处理前 512 帧）。
+    #[test]
+    fn insert_capability_smaller_than_block_is_segmented() {
+        let lens = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut g = graph_with(&[StripParams::default()], 10);
+        g.insert_insert(
+            0,
+            0,
+            Box::new(SegmentRecorder {
+                max: 4,
+                lens: lens.clone(),
+            }),
+        );
+        g.process();
+        assert_eq!(&*lens.lock().unwrap_or_else(|e| e.into_inner()), &[4, 4, 2]);
+    }
+
+    /// 无能力限制（默认 usize::MAX）时整块单次调用。
+    #[test]
+    fn insert_without_capability_is_single_call() {
+        let lens = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut g = graph_with(&[StripParams::default()], 10);
+        g.insert_insert(
+            0,
+            0,
+            Box::new(SegmentRecorder {
+                max: usize::MAX,
+                lens: lens.clone(),
+            }),
+        );
+        g.process();
+        assert_eq!(&*lens.lock().unwrap_or_else(|e| e.into_inner()), &[10]);
     }
 
     fn graph_with(channels: &[StripParams], frames: usize) -> MixerGraph {

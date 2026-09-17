@@ -22,6 +22,14 @@ use crate::spawn::AudioCommand;
 /// 导出用更大的块，首次 render 时 mixer/暂存按实际块长 resize（每引擎至多一次）。
 pub(crate) const ENGINE_BLOCK_FRAMES: usize = 512;
 
+/// 引擎可能请求的最大渲染块长（帧）。
+///
+/// **插件激活契约**：所有 insert/乐器插件必须按此能力激活（`yinhe-egui` 的
+/// `activate` 调用），否则插件内部按小块分配的缓冲会被更大的块越界
+/// （GPU 合成模式 4096 块曾让 512 激活的插件每块只处理前 512 帧）。
+/// 引擎任何路径（实时/导出）的块长都不得超过该值。
+pub const MAX_ENGINE_BLOCK_FRAMES: usize = 4096;
+
 /// Core MIDI synthesis engine.  Owned by the renderer thread.
 pub(crate) struct AudioEngine {
     pub(crate) channel_set: ChannelSet,

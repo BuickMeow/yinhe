@@ -25,9 +25,11 @@ use yinhe_vst3::Vst3Insert;
 
 use super::plugin_instance::{PluginEntry, PluginInstance};
 
-/// 引擎实时渲染块长（yinhe-audio ENGINE_BLOCK_FRAMES），activate 的 max_frames。
-/// 必须 ≥ 引擎实际块长，否则 ClapProcessor::process_effect 会截断尾部。
-pub(crate) const ACTIVATE_MAX_FRAMES: u32 = 512;
+/// 插件 activate 时声明的最大块长 = 引擎可能请求的块长上限
+/// （`yinhe_audio::MAX_ENGINE_BLOCK_FRAMES`，GPU 合成模式实时/导出为 4096）。
+/// 必须 ≥ 引擎任何路径的实际块长，否则插件内部小块缓冲会被越界/截断
+/// （曾用 512：GPU 模式 4096 的块只有前 512 帧被处理）。
+pub(crate) const ACTIVATE_MAX_FRAMES: u32 = yinhe_audio::MAX_ENGINE_BLOCK_FRAMES as u32;
 
 /// 单个 insert 槽位的运行时状态。
 pub(crate) struct SlotRuntime {

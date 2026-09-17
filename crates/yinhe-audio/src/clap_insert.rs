@@ -37,6 +37,10 @@ impl ClapInsert {
 }
 
 impl InsertProcessor for ClapInsert {
+    fn max_block_frames(&self) -> usize {
+        yinhe_mixer::InstrumentProcessor::max_block_frames(&self.processor)
+    }
+
     fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
         if self.bypass.load(Ordering::Relaxed) {
             return;

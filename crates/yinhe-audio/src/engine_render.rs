@@ -626,6 +626,13 @@ impl AudioEngine {
             let mut events = std::mem::take(&mut slot.events);
             if let Some(cb) = self.mixer.channel_buffers_mut(dense) {
                 let f = frames.min(cb.left.len()).min(cb.right.len());
+                // 乐器不做隐式分段（携带事件与时间戳）：引擎块长必须 ≤ 插件
+                // 激活能力（见 MAX_ENGINE_BLOCK_FRAMES 契约），越界是宿主 bug。
+                debug_assert!(
+                    f <= slot.processor.max_block_frames(),
+                    "乐器块长 {f} 超过插件能力 {}",
+                    slot.processor.max_block_frames()
+                );
                 slot.processor.process(
                     &events,
                     &mut cb.left[..f],

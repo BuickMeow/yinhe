@@ -296,6 +296,10 @@ impl ClapProcessor {
 }
 
 impl InstrumentProcessor for ClapProcessor {
+    fn max_block_frames(&self) -> usize {
+        self.frames
+    }
+
     fn process(
         &mut self,
         events: &[PluginEvent],

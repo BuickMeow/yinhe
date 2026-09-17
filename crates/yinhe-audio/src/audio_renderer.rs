@@ -20,7 +20,12 @@ const RENDER_CHUNK_FRAMES: usize = 512;
 /// 的 CPU↔GPU 往返，块越小往返越频繁、音符多时抖动越明显。
 /// 4096 帧把往返次数降低 8 倍（代价：输出批延迟增大，GPU 模式可接受）。
 #[cfg(feature = "gpu")]
-const GPU_RENDER_CHUNK_FRAMES: usize = 4096;
+const GPU_RENDER_CHUNK_FRAMES: usize = crate::engine::MAX_ENGINE_BLOCK_FRAMES;
+
+// 引擎任何路径的块长都不得超过 MAX_ENGINE_BLOCK_FRAMES（插件激活值依据）。
+const _: () = assert!(RENDER_CHUNK_FRAMES <= crate::engine::MAX_ENGINE_BLOCK_FRAMES);
+#[cfg(feature = "gpu")]
+const _: () = assert!(GPU_RENDER_CHUNK_FRAMES <= crate::engine::MAX_ENGINE_BLOCK_FRAMES);
 const TARGET_BUFFER_FRAMES: usize = 4096;
 /// 预览激活时的 ring 目标（帧数）：降低输出延迟（≈10ms @48k）。
 /// 安卓：MIUI 等 ROM 对后台线程调度抖动大（线程 sleep 实际延迟可达 10ms+），

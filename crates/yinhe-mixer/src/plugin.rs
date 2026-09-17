@@ -53,6 +53,14 @@ pub trait InstrumentProcessor: Send {
         position_samples: u64,
     );
 
+    /// 处理器的最大块长能力（激活时声明）。默认 `usize::MAX`（内置实现无限制）。
+    ///
+    /// 与 [`crate::InsertProcessor::max_block_frames`] 不同，乐器调用携带事件与
+    /// 时间戳，不做隐式分段：引擎保证块长不超过该值（激活即按引擎最大块长声明）。
+    fn max_block_frames(&self) -> usize {
+        usize::MAX
+    }
+
     /// 清空内部处理状态（envelope、delay 尾音等）。seek 后调用。
     fn reset(&mut self) {}
 

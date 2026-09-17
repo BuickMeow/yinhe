@@ -239,6 +239,10 @@ impl Drop for Vst3Processor {
 }
 
 impl yinhe_mixer::InstrumentProcessor for Vst3Processor {
+    fn max_block_frames(&self) -> usize {
+        self.frames
+    }
+
     fn process(
         &mut self,
         events: &[PluginEvent],
@@ -307,6 +311,10 @@ impl Vst3Insert {
 }
 
 impl yinhe_mixer::InsertProcessor for Vst3Insert {
+    fn max_block_frames(&self) -> usize {
+        self.processor.frames
+    }
+
     fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
         if let Err(e) = self
             .processor
