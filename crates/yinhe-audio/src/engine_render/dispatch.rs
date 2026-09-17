@@ -34,12 +34,11 @@ macro_rules! route_cpu_event {
                         end_sample: u64::MAX,
                     });
                 }
-                xsynth_core::channel::ChannelAudioEvent::NoteOff { key } => {
-                    cs.send_event(yinhe_synth::SynthEvent::NoteOff {
-                        sample,
-                        channel: dense as u8,
-                        key,
-                    });
+                xsynth_core::channel::ChannelAudioEvent::NoteOff { .. } => {
+                    // yinhe CPU：NoteOn 带精确 `end_sample`（音符自身 end_tick）到期
+                    // 自释（含 damper 快照），显式 NoteOff 不再投递——它是 FIFO 语义
+                    // （释放该 key 最老未释放 voice），被 enforce 杀掉的 voice 会让
+                    // 后续 NoteOff 错位释放下一个音符（听感上音符被逐个截短）。
                 }
                 other => {
                     if let Some(ev) = $crate::engine_gpu::to_backend_control_event(&other) {
@@ -239,14 +238,30 @@ impl AudioEngine {
                             }
                         } else if !self.gpu_synth_active() {
                             // GPU 路径：音符由 GpuSynth 事件列表处理（不喂 CPU 后端）。
-                            route_cpu_event!(
-                                self,
-                                dense,
-                                ChannelAudioEvent::NoteOn {
+                            // yinhe CPU：直接投递带精确 `end_sample` 的 NoteOn（该音符
+                            // 自身的 end_tick），voice 到期自释 + damper 快照，无需
+                            // NoteOff；xsynth 回退路径才走 `route_cpu_event!`。
+                            let sample = self.segment_start_sample;
+                            let end_sample = self.tick_to_sample(note.end_tick);
+                            let vel = note.velocity;
+                            if let Some(cs) = self.cpu_synth.as_mut() {
+                                cs.send_event(yinhe_synth::SynthEvent::NoteOn {
+                                    sample,
+                                    channel: dense as u8,
                                     key: key as u8,
-                                    vel: note.velocity,
-                                }
-                            );
+                                    velocity: vel,
+                                    end_sample,
+                                });
+                            } else {
+                                route_cpu_event!(
+                                    self,
+                                    dense,
+                                    ChannelAudioEvent::NoteOn {
+                                        key: key as u8,
+                                        vel,
+                                    }
+                                );
+                            }
                             self.active_notes.push(Reverse(ActiveNote {
                                 key: key as u8,
                                 dense,

@@ -82,13 +82,15 @@ impl AudioEngine {
         #[cfg(feature = "gpu")]
         let sample = self.sample_position;
         #[cfg(feature = "gpu")]
+        let end_sample = self.tick_to_sample(n.end_tick);
+        #[cfg(feature = "gpu")]
         if let Some(cs) = self.cpu_synth.as_mut() {
             cs.send_event(yinhe_synth::SynthEvent::NoteOn {
                 sample,
                 channel: dense as u8,
                 key: key as u8,
                 velocity: n.velocity,
-                end_sample: u64::MAX,
+                end_sample,
             });
         } else {
             self.channel_set.send_event(SynthEvent::Channel(

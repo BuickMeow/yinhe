@@ -74,6 +74,9 @@ pub struct CpuSynth {
     /// note_on/note_off/enforce 的查找从 O(V) 降为 O(layer)（成本分解实测
     /// note_on+note_off 占 91% 渲染时间）；块末 retain 后重建。
     key_indices: Vec<Vec<u32>>,
+    /// 丢音统计（layer 超限淘汰次数）与上次日志位置（限流每秒最多一条）。
+    dropped_voices: u64,
+    last_drop_log_sample: u64,
 }
 
 impl CpuSynth {
@@ -93,6 +96,8 @@ impl CpuSynth {
             damper_flags: [false; MAX_CHANNELS],
             par_scratch: Vec::new(),
             key_indices: vec![Vec::new(); MAX_CHANNELS * 128],
+            dropped_voices: 0,
+            last_drop_log_sample: 0,
         }
     }
 
@@ -441,6 +446,11 @@ impl CpuSynth {
     /// 该 key 活跃 voice 超过 `max` 时，反复杀 velocity 最低的
     /// （xsynth `pop_quietest_voice_group` 语义；`keep` = 刚加入的索引不参与）。
     /// 经 `key_indices` 只扫该 key 的 voice（O(layer)，非 O(V)）。
+    ///
+    /// 候选**不排除已 release 的 voice**：xsynth 的 `pop_quietest_voice_group`
+    /// 只排除 killed，releasing 的 voice 同样在 `buffer` 里参与淘汰——且它们
+    /// 创建最早，velocity 并列时优先被杀。release 尾巴被截掉听感无害，这是
+    /// xsynth「几乎不丢音」的关键；只杀在响 voice 会造成明显丢音。
     fn enforce_key_layers(&mut self, slot: usize, max: usize, keep: usize) {
         loop {
             // 先 O(layer) 数活跃数；未超限直接返回（多数 note_on 不分配、不扫候选）
@@ -451,22 +461,37 @@ impl CpuSynth {
             if active <= max {
                 return;
             }
-            // 超限（罕见）：找 velocity 最低的未释放候选
+            // 超限（罕见）：找 velocity 最低的候选（含 release 中；并列取最早）
             let mut victim: Option<u32> = None;
             let mut victim_vel = u8::MAX;
             for &i in self.key_indices[slot].iter() {
                 let idx = i as usize;
                 let v = &self.voices[idx];
-                if idx != keep && !v.finished() && !v.released && v.velocity < victim_vel {
+                if idx != keep && !v.finished() && v.velocity < victim_vel {
                     victim_vel = v.velocity;
                     victim = Some(i);
                 }
             }
             let Some(victim) = victim else {
-                return; // 其余已在 release 中，无候选
+                return;
             };
-            // 立即结束（等同 GPU 的 kill 指令；xsynth 的 fade_out_killing 为 1ms
-            // 淡出，CPU 路径暂用立即结束避免 click 之外的行为差异）。
+            self.dropped_voices += 1;
+            if self
+                .sample_position
+                .saturating_sub(self.last_drop_log_sample)
+                >= self.sample_rate as u64
+            {
+                self.last_drop_log_sample = self.sample_position;
+                eprintln!(
+                    "[yinhe-cpu] 丢音：累计 {} 次（ch={} key={} vel={} 被淘汰，layer={}）",
+                    self.dropped_voices,
+                    slot / 128,
+                    slot % 128,
+                    victim_vel,
+                    max
+                );
+            }
+            // 立即结束（xsynth 默认 fade_out_killing=false，同为立即杀）。
             self.voices[victim as usize].signal_release(ENV_FINISHED);
         }
     }
@@ -597,6 +622,48 @@ mod tests {
         assert_eq!(head_energy, 0.0, "起始帧前不得发声");
         assert!(tail_energy > 0.0, "起始帧后应有输出");
     }
+    /// 重叠音符精确释放（回归：显式 NoteOff 的 FIFO 错位——短音符的结束会
+    /// 释放长音符——是「音符被截断」的根因；NoteOn 自带 end_sample 后消除）。
+    #[test]
+    fn overlapping_notes_end_precisely() {
+        let Some(sfz) = std::env::var_os("YINHE_TEST_SFZ") else {
+            return;
+        };
+        let mut synth = CpuSynth::new(48_000);
+        synth
+            .load_dense_soundfonts(0, &[PathBuf::from(sfz)])
+            .expect("load soundfont");
+        synth.load_events(vec![
+            SynthEvent::NoteOn {
+                sample: 0,
+                channel: 0,
+                key: 60,
+                velocity: 100,
+                end_sample: 48_000,
+            },
+            SynthEvent::NoteOn {
+                sample: 0,
+                channel: 0,
+                key: 60,
+                velocity: 60,
+                end_sample: 4_800,
+            },
+        ]);
+        let mut bufs = buffers(4_800);
+        synth.render_to_mixer(&mut bufs);
+        let long = synth
+            .voices
+            .iter()
+            .find(|v| v.velocity == 100)
+            .expect("长音符应在响");
+        assert!(!long.released, "短音符结束不得释放长音符（FIFO 错位回归）");
+        let short = synth.voices.iter().find(|v| v.velocity == 60);
+        assert!(
+            short.is_none_or(|v| v.released || v.finished()),
+            "短音符到期应已释放"
+        );
+    }
+
     /// layer 上限（对齐 xsynth）：同一 key 5 个递增力度音符 + layer=4 →
     /// 活跃 voice 只 4 个（杀 velocity 最低的 20）。
     #[test]
