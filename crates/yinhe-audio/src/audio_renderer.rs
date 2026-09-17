@@ -210,11 +210,12 @@ impl AudioRenderer {
         };
         #[cfg(not(feature = "gpu"))]
         let render_chunk_frames = RENDER_CHUNK_FRAMES;
+        let sample_rate = engine.sample_rate;
         Self {
             engine,
             ring,
             state,
-            limiter: VolumeLimiter::new(),
+            limiter: VolumeLimiter::new(sample_rate),
             transport_rx,
             export: None,
             export_prev_layer_count: None,

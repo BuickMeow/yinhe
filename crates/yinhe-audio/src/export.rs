@@ -157,7 +157,7 @@ impl ExportJob {
         Ok(Self {
             writer,
             bit_depth,
-            limiter: VolumeLimiter::new(),
+            limiter: VolumeLimiter::new(sample_rate),
             buf: vec![0.0; chunk_frames * STEREO_CHANNELS],
             sample_rate,
             main_duration,
@@ -266,7 +266,20 @@ impl ExportJob {
     }
 
     /// 收尾写盘（成功路径；取消路径不调用，保留不完整文件）。
-    pub(crate) fn finalize(self) -> Result<(), ExportError> {
+    pub(crate) fn finalize(mut self) -> Result<(), ExportError> {
+        // 补上限幅器延迟线残留（末段 lookahead，约 3ms），否则尾部缺一小段。
+        if self.bit_depth != WavBitDepth::Bit32Float {
+            let latency = self.limiter.latency_frames();
+            let mut buf = vec![0.0f32; latency * STEREO_CHANNELS];
+            let frames = self.limiter.flush(&mut buf);
+            if frames > 0 {
+                write_samples(
+                    &mut self.writer,
+                    &buf[..frames * STEREO_CHANNELS],
+                    self.bit_depth,
+                )?;
+            }
+        }
         self.writer.finalize().map_err(ExportError::from)
     }
 
