@@ -138,6 +138,11 @@ impl CpuSynth {
         self.events = events;
         self.event_cursor = 0;
         self.voices.clear();
+        // 索引表与 voices 同生命周期：不清空则残留索引在后续 note_on/off
+        // 的 enforce/查找中越界（重复 load_events 必崩；与 seek 一致）。
+        for v in self.key_indices.iter_mut() {
+            v.clear();
+        }
         self.channels = [ChannelState::new(self.sample_rate); MAX_CHANNELS];
         self.sample_position = 0;
         self.chase_base = 0;
