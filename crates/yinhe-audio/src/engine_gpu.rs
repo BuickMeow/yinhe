@@ -160,6 +160,18 @@ impl AudioEngine {
         if !self.gpu_backend_dirty || self.gpu_synth.is_none() {
             return;
         }
+        // GPU 只支持前 MAX_CHANNELS 个 MIDI dense 通道：超出的通道事件在
+        // `build_gpu_events` 里被静默丢弃。这里告警一次（不静默丢音）。
+        if !self.gpu_overflow_warned
+            && self.channel_layout.midi_compacted() > yinhe_synth::MAX_CHANNELS as u32
+        {
+            tracing::error!(
+                "GPU 合成只支持前 {} 个 MIDI 通道（当前工程 {} 个），超出的通道将静音",
+                yinhe_synth::MAX_CHANNELS,
+                self.channel_layout.midi_compacted()
+            );
+            self.gpu_overflow_warned = true;
+        }
         let pos = self.sample_position;
         // 先构建（&self）再装载（&mut self），避免借用冲突。
         let events = self.build_gpu_events(pos);

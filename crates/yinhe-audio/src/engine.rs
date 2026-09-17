@@ -122,6 +122,9 @@ pub(crate) struct AudioEngine {
     /// 取代过去散落在 renderer 命令处理点上的显式 `sync_gpu_synth_events` 调用。
     #[cfg(feature = "gpu")]
     pub(crate) gpu_backend_dirty: bool,
+    /// GPU 通道超限（`midi_compacted > MAX_CHANNELS`）告警只报一次，避免刷屏。
+    #[cfg(feature = "gpu")]
+    pub(crate) gpu_overflow_warned: bool,
 }
 
 /// 插件预览的一条活动音符（引擎侧调度 NoteOn/NoteOff）。
@@ -210,6 +213,8 @@ impl AudioEngine {
                 gpu_synth: None,
                 #[cfg(feature = "gpu")]
                 gpu_backend_dirty: true,
+                #[cfg(feature = "gpu")]
+                gpu_overflow_warned: false,
             }
         })
     }
