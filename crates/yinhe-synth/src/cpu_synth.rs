@@ -33,6 +33,10 @@ pub static CPU_PROFILE_MODE: std::sync::atomic::AtomicU8 = std::sync::atomic::At
 pub static PROF_NOTE_ON_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static PROF_NOTE_OFF_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static PROF_RENDER_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// note_on 内部细分：key map 查找 / voice 构造（含 biquad 系数）/ push。
+pub static PROF_ON_SELECT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static PROF_ON_NEW_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static PROF_ON_PUSH_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 /// 默认全局 voice 上限（与 GpuSynth 一致）。
 const DEFAULT_MAX_VOICES: usize = 8192;
 /// 默认每 key layer 上限（对齐 xsynth `VoiceChannelParams.layers`）。
@@ -375,12 +379,17 @@ impl CpuSynth {
         };
         let ch = self.channels[ch_idx];
         let entries = &self.port_key_maps[ch_idx];
+        let t_sel = std::time::Instant::now();
         let Some(info) = sfz_parser::select_key_info_multi(entries, ch.bank, ch.program, key, vel)
         else {
             return;
         };
-        let new_index = self.voices.len();
-        self.voices.push(CpuVoice::new(
+        PROF_ON_SELECT_NS.fetch_add(
+            t_sel.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        let t_new = std::time::Instant::now();
+        let voice = CpuVoice::new(
             info,
             channel,
             key,
@@ -389,9 +398,20 @@ impl CpuSynth {
             frame,
             self.sample_rate,
             &ch,
-        ));
+        );
+        PROF_ON_NEW_NS.fetch_add(
+            t_new.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        let t_push = std::time::Instant::now();
+        let new_index = self.voices.len();
+        self.voices.push(voice);
         let slot = Self::key_slot(channel, key);
         self.key_indices[slot].push(new_index as u32);
+        PROF_ON_PUSH_NS.fetch_add(
+            t_push.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
 
         // per-key layer 上限：超限时按 xsynth 语义杀该 key velocity 最低的 voice
         //（跳过刚加入的，保证新音符发声）。
@@ -423,27 +443,27 @@ impl CpuSynth {
     /// 经 `key_indices` 只扫该 key 的 voice（O(layer)，非 O(V)）。
     fn enforce_key_layers(&mut self, slot: usize, max: usize, keep: usize) {
         loop {
-            // 该 key 的候选（未结束、未释放、非刚加入）——clone 小表避免借用冲突
-            let candidates: Vec<u32> = self.key_indices[slot]
-                .iter()
-                .copied()
-                .filter(|&i| {
-                    let i = i as usize;
-                    i != keep && !self.voices[i].finished() && !self.voices[i].released
-                })
-                .collect();
+            // 先 O(layer) 数活跃数；未超限直接返回（多数 note_on 不分配、不扫候选）
             let active = self.key_indices[slot]
                 .iter()
                 .filter(|&&i| !self.voices[i as usize].finished())
                 .count();
             if active <= max {
-                break;
+                return;
             }
-            let Some(victim) = candidates
-                .into_iter()
-                .min_by_key(|&i| self.voices[i as usize].velocity)
-            else {
-                break; // 其余已在 release 中，无候选
+            // 超限（罕见）：找 velocity 最低的未释放候选
+            let mut victim: Option<u32> = None;
+            let mut victim_vel = u8::MAX;
+            for &i in self.key_indices[slot].iter() {
+                let idx = i as usize;
+                let v = &self.voices[idx];
+                if idx != keep && !v.finished() && !v.released && v.velocity < victim_vel {
+                    victim_vel = v.velocity;
+                    victim = Some(i);
+                }
+            }
+            let Some(victim) = victim else {
+                return; // 其余已在 release 中，无候选
             };
             // 立即结束（等同 GPU 的 kill 指令；xsynth 的 fade_out_killing 为 1ms
             // 淡出，CPU 路径暂用立即结束避免 click 之外的行为差异）。

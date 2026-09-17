@@ -4326,7 +4326,13 @@ fn prof_blackmidi_cost_breakdown() {
                 from_sample: start_sample,
             });
             let (el, pv, mc) = render_3s(&mut cs_engine, 1);
+            let b_sel = base(&yinhe_synth::cpu_synth::PROF_ON_SELECT_NS);
+            let b_new = base(&yinhe_synth::cpu_synth::PROF_ON_NEW_NS);
+            let b_push = base(&yinhe_synth::cpu_synth::PROF_ON_PUSH_NS);
             let d_on = base(&yinhe_synth::cpu_synth::PROF_NOTE_ON_NS) - b_on;
+            let d_sel = base(&yinhe_synth::cpu_synth::PROF_ON_SELECT_NS) - b_sel;
+            let d_new = base(&yinhe_synth::cpu_synth::PROF_ON_NEW_NS) - b_new;
+            let d_push = base(&yinhe_synth::cpu_synth::PROF_ON_PUSH_NS) - b_push;
             let d_off = base(&yinhe_synth::cpu_synth::PROF_NOTE_OFF_NS) - b_off;
             let d_render = base(&yinhe_synth::cpu_synth::PROF_RENDER_NS) - b_render;
             let total_ns = (el * 1e9) as u64;
@@ -4336,6 +4342,12 @@ fn prof_blackmidi_cost_breakdown() {
                 100.0 * d_on as f64 / total_ns as f64,
                 100.0 * d_off as f64 / total_ns as f64,
                 100.0 * d_render as f64 / total_ns as f64,
+            );
+            eprintln!(
+                "    └ note_on 细分: select={:.0}% new={:.0}% push={:.0}%（占 note_on）",
+                100.0 * d_sel as f64 / d_on.max(1) as f64,
+                100.0 * d_new as f64 / d_on.max(1) as f64,
+                100.0 * d_push as f64 / d_on.max(1) as f64,
             );
         }
         yinhe_synth::cpu_synth::CPU_PROFILE_MODE.store(0, Ordering::Relaxed);
