@@ -310,7 +310,10 @@ impl CpuVoice {
         // 到期释放的段内帧（未释放且未被踏板保持时有效；<= 段首表示段首已到期）。
         // 释放点在包络切片边界应用——取代逐帧 O(V×frames) 的到期扫描
         //（8139 voice × 512 帧 × 1723 块 = 72 亿次比较，实测主导成本）。
-        let release_at: usize = if !self.released && !self.held_by_damper {
+        // 触发后置 `usize::MAX`：局部变量不随 `self.released` 更新，不置位会
+        // 每帧重复 `signal_release`（progress 反复清零 → release 曲线退化为
+        // 乘法累积，与 GPU/xsynth 的逐帧 release 不一致）。
+        let mut release_at: usize = if !self.released && !self.held_by_damper {
             self.end_sample.saturating_sub(sample_start) as usize
         } else {
             usize::MAX
@@ -322,6 +325,7 @@ impl CpuVoice {
             } else {
                 self.signal_release(ENV_RELEASE);
             }
+            release_at = usize::MAX;
         }
         while done < frames {
             let (mut sub, constant) = self.env_slice(frames - done);
@@ -341,6 +345,7 @@ impl CpuVoice {
                 } else {
                     self.signal_release(ENV_RELEASE);
                 }
+                release_at = usize::MAX;
             }
         }
     }
