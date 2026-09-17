@@ -928,6 +928,10 @@ impl App {
             .map(|a| a.handle.clone_insert_return_rx());
         let bound_doc = self.audio_state.active_doc;
         if let Some(a) = self.audio_state.handle.take() {
+            // 同步暂停输出流（立即静音）：drop 在后台线程做（join 渲染线程
+            // 可能数百 ms），期间旧流仍会播完 ring 残余；新引擎可能已在
+            // 另一线程 build+play → 双流重叠的设备二次配置"滋"。
+            a.pause_stream();
             let (tx, rx) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
                 let t = std::time::Instant::now();

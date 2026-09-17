@@ -553,6 +553,19 @@ impl Drop for CpalAudioHandle {
 }
 
 impl CpalAudioHandle {
+    /// 同步暂停输出流（立即静音，不销毁流）。teardown 在把句柄丢后台线程
+    /// drop 之前调用：drop 里的 join 可能数百 ms，期间旧流仍会播完 ring 里
+    /// 的残余音频，而新引擎可能已在另一线程 build+play（双流重叠的"滋"）。
+    /// pause 在调用线程同步完成，瞬时可返回。
+    pub fn pause_stream(&self) {
+        if let Ok(guard) = self._stream.lock()
+            && let Some(stream) = guard.as_ref()
+            && let Err(e) = stream.pause()
+        {
+            tracing::debug!("Failed to pause audio stream: {e}");
+        }
+    }
+
     /// Notify the audio thread that the MIDI model has changed (full rebuild:
     /// cc_events + audible_notes + chase). Use for automation edits / undo / redo.
     /// AM lane M/S 旁通独立于模型存在，由 [`Self::set_am_ms`] 维护。
