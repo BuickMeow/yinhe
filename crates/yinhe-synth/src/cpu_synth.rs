@@ -47,8 +47,6 @@ pub struct CpuSynth {
     chase_base: usize,
     max_voices: usize,
     peak_voices: usize,
-    /// 通道混音缓冲（MAX_CHANNELS × frames × 2，跨块复用）。
-    channel_mix: Vec<f32>,
     /// 块内 damper 快照（voice 循环读取，避免借用冲突）。
     damper_flags: [bool; MAX_CHANNELS],
 }
@@ -66,7 +64,6 @@ impl CpuSynth {
             chase_base: 0,
             max_voices: DEFAULT_MAX_VOICES,
             peak_voices: 0,
-            channel_mix: Vec::new(),
             damper_flags: [false; MAX_CHANNELS],
         }
     }
@@ -89,8 +86,12 @@ impl CpuSynth {
     /// 与 GpuSynth 对等的收尾钩子（CPU 无上传，保留以统一调用方流程）。
     pub fn finish_soundfont_load(&mut self) {}
 
-    /// 批量加载事件（排序好的列表），重置渲染位置到 0。
+    /// 批量加载事件（**要求按 sample 有序**，调用方负责），重置渲染位置到 0。
     pub fn load_events(&mut self, events: Vec<SynthEvent>) {
+        debug_assert!(
+            events.windows(2).all(|w| w[0].sample() <= w[1].sample()),
+            "load_events 要求事件按 sample 有序（调用方负责排序）"
+        );
         self.events = events;
         self.event_cursor = 0;
         self.voices.clear();
@@ -155,29 +156,43 @@ impl CpuSynth {
         }
     }
 
-    /// 渲染一块到混音台 planar 通道缓冲（覆盖写；dense >= MAX_CHANNELS 清零）。
+    /// 投递一个事件（追加到事件队列）。`sample` 必须单调不减
+    /// （引擎的 dispatch 按 tick/sample 顺序投递）；事件在渲染到其 sample
+    /// 所在段起点时生效（与 GPU 的段边界语义一致）。
+    pub fn send_event(&mut self, event: SynthEvent) {
+        self.events.push(event);
+    }
+
+    /// 增量渲染 `[offset, offset + frames)` 到混音台 planar 缓冲（覆盖写本段区间）。
     ///
-    /// 事件在各自 sample 的帧边界生效（段 = 相邻事件之间），与 GPU 的段结构同语义。
-    pub fn render_to_mixer(&mut self, buffers: &mut [ChannelBuffers]) {
-        let frames = buffers.first().map(|b| b.left.len()).unwrap_or(0);
-        if frames == 0 {
+    /// 与 `render_to_mixer` 的差异：由调用方（engine 的逐段 dispatch）提供区间，
+    /// `sample_position` 按 `frames` 推进；区间起点处消费所有已到事件。
+    pub fn render_range(&mut self, buffers: &mut [ChannelBuffers], offset: usize, frames: usize) {
+        if frames == 0 || buffers.is_empty() {
             return;
         }
-        let block_start = self.sample_position;
-        let block_end = block_start + frames as u64;
+        let sample_start = self.sample_position;
 
-        // 混音缓冲（每块清零复用）
-        self.channel_mix.clear();
-        self.channel_mix.resize(MAX_CHANNELS * frames * 2, 0.0);
+        // 覆盖语义：清零本段区间（与 ChannelSet::render_segment 一致）
+        let n = buffers.len().min(MAX_CHANNELS);
+        for buf in buffers.iter_mut().take(n) {
+            buf.left[offset..offset + frames].fill(0.0);
+            buf.right[offset..offset + frames].fill(0.0);
+        }
+        for buf in buffers.iter_mut().skip(n) {
+            buf.left[offset..offset + frames].fill(0.0);
+            buf.right[offset..offset + frames].fill(0.0);
+        }
+
         for i in 0..MAX_CHANNELS {
             self.damper_flags[i] = self.channels[i].damper;
         }
 
-        // 段循环：段边界 = 下一个事件的 sample
+        // 区间内按事件分段：事件在各自 sample 的帧生效（段 = 相邻事件之间）
+        let range_end = sample_start + frames as u64;
         let mut fi = 0usize;
         while fi < frames {
-            let sample = block_start + fi as u64;
-            // 本帧及之前积压的事件（列表已按 sample 排序）
+            let sample = sample_start + fi as u64;
             while self.event_cursor < self.events.len()
                 && self.events[self.event_cursor].sample() <= sample
             {
@@ -185,64 +200,55 @@ impl CpuSynth {
                 self.event_cursor += 1;
                 self.dispatch_event(&ev, fi as u32);
             }
-            // 渲染到下一个事件（或块末）
             let next = self
                 .events
                 .get(self.event_cursor)
                 .map(|e| e.sample())
                 .unwrap_or(u64::MAX);
-            let seg_end = next.min(block_end);
-            let seg_frames = (seg_end.saturating_sub(sample) as usize).min(frames - fi);
-            if seg_frames == 0 {
+            let seg_end = next.min(range_end);
+            let seg = (seg_end.saturating_sub(sample) as usize).min(frames - fi);
+            if seg == 0 {
                 // 同 sample 的事件已在上面消费完，next 必然 > sample；
-                // 防御性推进避免死循环（浮点/异常事件数据兜底）。
+                // 防御性推进避免死循环（异常事件数据兜底）。
                 fi += 1;
                 continue;
             }
-            self.render_segment(fi, seg_frames, sample, frames);
-            fi += seg_frames;
+            self.render_range_frames(buffers, offset + fi, fi, seg, sample);
+            fi += seg;
         }
 
-        // 块末：time 推进 + 清理结束 voice
+        // 段末：time 推进 + 清理结束 voice
         for v in self.voices.iter_mut() {
             v.advance_block(frames as u32);
         }
         self.voices.retain(|v| !v.finished());
-
-        // 写混音台（覆盖写；越界通道清零）
-        let n = buffers.len().min(MAX_CHANNELS);
-        for (ch_idx, buf) in buffers.iter_mut().enumerate().take(n) {
-            let base = ch_idx * frames * 2;
-            let src = &self.channel_mix[base..base + frames * 2];
-            for (i, frame) in src.chunks_exact(2).enumerate() {
-                buf.left[i] = frame[0];
-                buf.right[i] = frame[1];
-            }
-        }
-        for buf in buffers.iter_mut().skip(n) {
-            buf.left.fill(0.0);
-            buf.right.fill(0.0);
-        }
-
         self.peak_voices = self.peak_voices.max(self.voice_count());
-        self.sample_position = block_end;
+        self.sample_position = sample_start + frames as u64;
     }
 
-    /// 渲染 [fi_start, fi_start + seg_frames)：逐帧推进所有活跃 voice。
-    /// 字段级分离借用（voices 可变 + channel_mix 可变 + damper_flags 只读）。
-    fn render_segment(
+    /// 渲染一整块（offset = 0；对等 GpuSynth 的 `render_to_mixer`）。
+    pub fn render_to_mixer(&mut self, buffers: &mut [ChannelBuffers]) {
+        let frames = buffers.first().map(|b| b.left.len()).unwrap_or(0);
+        self.render_range(buffers, 0, frames);
+    }
+
+    /// 逐帧渲染 `[fi_start, fi_start + frames)`（区间内帧坐标，voice 的
+    /// `start_offset` 同坐标系），输出直接累加进目标缓冲。字段级分离借用。
+    fn render_range_frames(
         &mut self,
+        buffers: &mut [ChannelBuffers],
+        out_offset: usize,
         fi_start: usize,
-        seg_frames: usize,
+        frames: usize,
         sample_start: u64,
-        block_frames: usize,
     ) {
         let voices = &mut self.voices;
-        let channel_mix = &mut self.channel_mix;
         let damper_flags = self.damper_flags;
-        for offset in 0..seg_frames {
-            let fi = fi_start + offset;
-            let sample = sample_start + offset as u64;
+        let n = buffers.len().min(MAX_CHANNELS);
+        for i in 0..frames {
+            let fi = fi_start + i;
+            let sample = sample_start + i as u64;
+            let out_i = out_offset + i;
             for v in voices.iter_mut() {
                 // 到期释放（NoteOn 自带 end_sample；延音踏板按住时只标记）
                 if !v.released && !v.held_by_damper && v.end_sample <= sample {
@@ -254,9 +260,11 @@ impl CpuSynth {
                 }
                 let (l, r) = v.render_frame(fi as u32);
                 if l != 0.0 || r != 0.0 {
-                    let base = (v.channel as usize * block_frames + fi) * 2;
-                    channel_mix[base] += l;
-                    channel_mix[base + 1] += r;
+                    let ch = v.channel as usize;
+                    if ch < n {
+                        buffers[ch].left[out_i] += l;
+                        buffers[ch].right[out_i] += r;
+                    }
                 }
             }
         }

@@ -281,6 +281,10 @@ impl GpuSynth {
 
     /// 批量加载排序好的事件列表（导出/Seek 用）。重置渲染位置到 0。
     pub fn load_events(&mut self, events: Vec<SynthEvent>) {
+        debug_assert!(
+            events.windows(2).all(|w| w[0].sample() <= w[1].sample()),
+            "load_events 要求事件按 sample 有序（调用方负责排序）"
+        );
         self.events = events;
         self.event_cursor = 0;
         self.voices.clear();
@@ -567,7 +571,7 @@ mod tests {
             return;
         };
         let path = std::path::PathBuf::from(&sfz);
-        let events = vec![
+        let mut events = vec![
             SynthEvent::NoteOn {
                 sample: 0,
                 channel: 0,
@@ -594,6 +598,7 @@ mod tests {
                 event: ControlEvent::Raw(64, 0),
             },
         ];
+        events.sort_by_key(|e| e.sample());
         let render = |frames: usize| -> Vec<f32> {
             let mut synth = GpuSynth::new_default(44_100).expect("GpuSynth");
             synth
