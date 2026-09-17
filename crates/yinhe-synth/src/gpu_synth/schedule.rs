@@ -67,15 +67,6 @@ pub(super) struct SegBuffers {
 }
 
 /// xsynth FilterType → shader 滤波器类型编号（与 voice_render.wgsl 一致）
-fn filter_type_to_u32(ft: xsynth_soundfonts::FilterType) -> u32 {
-    match ft {
-        xsynth_soundfonts::FilterType::LowPass => 0,
-        xsynth_soundfonts::FilterType::HighPass => 1,
-        xsynth_soundfonts::FilterType::BandPass => 2,
-        xsynth_soundfonts::FilterType::LowPassPole => 3,
-    }
-}
-
 impl GpuSynth {
     /// 收集块内事件为段结构：
     /// - 段边界 = CC 事件位置（ch_updates 记录受影响通道的状态快照）
@@ -387,7 +378,7 @@ impl GpuSynth {
         // per-voice biquad 系数（RBJ cookbook，与 xsynth 一致）；cutoff=0 时无滤波器
         let (flt_b0, flt_b1, flt_b2, flt_a1, flt_a2) = if info.cutoff > 0.0 {
             crate::synth::biquad_coeffs(
-                filter_type_to_u32(info.filter_type),
+                crate::sfz_parser::filter_type_code(info.filter_type),
                 info.cutoff,
                 info.resonance,
                 self.sample_rate as f32,
@@ -448,7 +439,7 @@ impl GpuSynth {
                 interp: info.interp,
                 cutoff: info.cutoff,
                 resonance: info.resonance,
-                filter_type: filter_type_to_u32(info.filter_type),
+                filter_type: crate::sfz_parser::filter_type_code(info.filter_type),
                 flt_b0,
                 flt_b1,
                 flt_b2,

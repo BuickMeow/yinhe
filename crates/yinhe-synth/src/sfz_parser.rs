@@ -17,6 +17,16 @@ use xsynth_soundfonts::FilterType;
 /// Butterworth Q 值（与 xsynth 一致，来自 biquad crate）。
 const Q_BUTTERWORTH: f32 = std::f32::consts::FRAC_1_SQRT_2;
 
+/// 滤波器类型 → 渲染器编码（WGSL/CPU voice 共用；shader `filter_type` 字段）。
+pub(crate) fn filter_type_code(ft: FilterType) -> u32 {
+    match ft {
+        FilterType::LowPass => 0,
+        FilterType::HighPass => 1,
+        FilterType::BandPass => 2,
+        FilterType::LowPassPole => 3,
+    }
+}
+
 /// 每个 (MIDI key, velocity) 对应的最终合成参数快照。
 ///
 /// 展开语义与 xsynth `SampleVoiceSpawnerParams` 对齐：

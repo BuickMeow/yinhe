@@ -12,11 +12,13 @@
 //! - 32 通道 MIDI 状态机（仅音源层：bank/program、pitch bend/RPN、damper、ADSR CC）
 
 pub mod channel_state;
+pub mod cpu_synth;
 pub mod gpu_synth;
 pub mod sfz_parser;
 pub mod synth;
 
 pub use channel_state::{ChaseSkip, MAX_CHANNELS};
+pub use cpu_synth::CpuSynth;
 pub use gpu_synth::{ControlEvent, GpuSynth, SynthEvent, prefetch_key_maps};
 pub use sfz_parser::{
     KeyInfo, KeyMapEntry, LoopMode, build_key_maps, load_wav_as_f32, select_key_info,

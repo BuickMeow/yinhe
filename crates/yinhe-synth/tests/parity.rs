@@ -730,3 +730,118 @@ fn parity_cpu_vs_gpu() {
     );
     assert!(rel_rmse < 0.02, "relative RMSE {} exceeds 2%", rel_rmse);
 }
+
+/// yinhe CPU 路径：CpuSynth（与 gpu_render 相同的事件构造）。
+fn yinhe_cpu_render(sfz: &Path) -> Vec<f32> {
+    let mut synth = yinhe_synth::CpuSynth::new(SR);
+    synth
+        .load_dense_soundfonts(0, &[sfz.to_path_buf()])
+        .expect("soundfont load failed");
+    synth.finish_soundfont_load();
+
+    let plan = note_plan();
+    let mut events = Vec::new();
+    for (start, key, vel, dur) in &plan {
+        events.push(yinhe_synth::SynthEvent::NoteOn {
+            sample: start * SR as u64 / 1000,
+            channel: 0,
+            key: *key,
+            velocity: *vel,
+            end_sample: (start + dur) * SR as u64 / 1000,
+        });
+    }
+    for (ms, controller, value) in cc_plan() {
+        events.push(yinhe_synth::SynthEvent::Control {
+            sample: ms * SR as u64 / 1000,
+            channel: 0,
+            event: yinhe_synth::ControlEvent::Raw(controller, value),
+        });
+    }
+    for (ms, value) in bend_plan() {
+        events.push(yinhe_synth::SynthEvent::Control {
+            sample: ms * SR as u64 / 1000,
+            channel: 0,
+            event: yinhe_synth::ControlEvent::PitchBend(value),
+        });
+    }
+    events.sort_by_key(|e| e.sample());
+    synth.load_events(events);
+
+    let total_frames = total_duration_ms(&plan) * SR as u64 / 1000;
+    let mut out = Vec::with_capacity(total_frames as usize * 2);
+    let mut chunk = vec![0.0f32; FRAMES as usize * 2];
+    let mut chans = vec![yinhe_mixer::ChannelBuffers {
+        left: Vec::new(),
+        right: Vec::new(),
+    }];
+    while synth.sample_position() < total_frames {
+        let frames = ((total_frames - synth.sample_position()) as usize).min(FRAMES as usize);
+        chans[0].left.clear();
+        chans[0].left.resize(frames, 0.0);
+        chans[0].right.clear();
+        chans[0].right.resize(frames, 0.0);
+        synth.render_to_mixer(&mut chans);
+        for i in 0..frames {
+            chunk[i * 2] = chans[0].left[i];
+            chunk[i * 2 + 1] = chans[0].right[i];
+        }
+        out.extend_from_slice(&chunk[..frames * 2]);
+    }
+    out
+}
+
+/// yinhe CPU vs GPU：同一事件流（NoteOn 自带 end + CC + 弯音）逐样本对比。
+/// GPU 路径已通过 `parity_cpu_vs_gpu` 与 xsynth 对齐，本测试保证 CPU 路径
+/// 与 GPU 路径听感一致（切换后端不改变听感）。
+#[test]
+fn parity_yinhe_cpu_vs_gpu() {
+    let Some(sfz) = test_sfz() else {
+        eprintln!("YINHE_TEST_SFZ not set, skipping");
+        return;
+    };
+    if !sfz.exists() {
+        eprintln!("SFZ not found, skipping");
+        return;
+    }
+    let cpu = yinhe_cpu_render(&sfz);
+    let gpu = gpu_render(&sfz);
+    assert_eq!(cpu.len(), gpu.len(), "length mismatch");
+
+    let peak = cpu
+        .iter()
+        .chain(&gpu)
+        .fold(0.0f32, |m, &s| m.max(s.abs()))
+        .max(1e-6);
+    let mut max_diff = 0.0f32;
+    let mut sum_sq = 0.0f64;
+    let mut sum_sq_gpu = 0.0f64;
+    let mut worst = (0usize, 0.0f32);
+    for (i, (a, b)) in cpu.iter().zip(&gpu).enumerate() {
+        let d = (a - b).abs();
+        if d > worst.1 {
+            worst = (i, d);
+        }
+        max_diff = max_diff.max(d);
+        sum_sq += (a - b) as f64 * (a - b) as f64;
+        sum_sq_gpu += (*b as f64) * (*b as f64);
+    }
+    let rel_rmse = (sum_sq / sum_sq_gpu.max(1e-12)).sqrt();
+    eprintln!(
+        "yinhe cpu vs gpu: frames={} peak={:.4} max_diff={:.5} ({:.3}% of peak) rel_rmse={:.5} worst@sample={} (cpu={:.4} gpu={:.4})",
+        cpu.len() / 2,
+        peak,
+        max_diff,
+        max_diff / peak * 100.0,
+        rel_rmse,
+        worst.0,
+        cpu[worst.0],
+        gpu[worst.0],
+    );
+    assert!(
+        max_diff < peak * 0.03,
+        "max diff {} exceeds 3% of peak {}",
+        max_diff,
+        peak
+    );
+    assert!(rel_rmse < 0.02, "relative RMSE {} exceeds 2%", rel_rmse);
+}
