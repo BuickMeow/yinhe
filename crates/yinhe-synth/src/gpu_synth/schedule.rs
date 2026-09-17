@@ -38,6 +38,9 @@ pub(super) struct Voice {
     pub(super) state: GpuVoiceState,
     pub(super) key: u8,
     pub(super) channel: u8,
+    /// 音符结束时间（绝对 sample）：voice 到期自行 release（NoteOn 携带）。
+    /// 事件表因此不再需要 NoteOff 事件（分页装载时 NoteOff 归属会破坏事件顺序）。
+    pub(super) end_sample: u64,
     /// region 原始 attack/release 帧数（CC72/73 重算的基准，多次 CC 不累积）
     pub(super) orig_attack_frames: f32,
     pub(super) orig_release_frames: f32,
@@ -146,8 +149,11 @@ impl GpuSynth {
                             channel,
                             key,
                             velocity,
+                            end_sample,
                             ..
-                        } => self.note_on(channel, key, velocity, block_frame, releases),
+                        } => {
+                            self.note_on(channel, key, velocity, end_sample, block_frame, releases)
+                        }
                         SynthEvent::NoteOff { channel, key, .. } => {
                             self.note_off_to_cmd(channel, key, block_frame, releases);
                         }
@@ -188,6 +194,28 @@ impl GpuSynth {
             ch_count: (ch_updates.len() - seg_ch_off) as u32,
             _pad: 0,
         });
+
+        // 到期释放：NoteOn 自带 `end_sample`，落在本段 [block_start, block_end) 的
+        // voice 于段内释放（取代 NoteOff 事件；延音踏板按住时只标记 held，
+        // 由踏板松开路径统一释放）。每渲染段扫一次 O(V)，V ≤ MAX_VOICE_SLOTS。
+        let dampers: [bool; MAX_CHANNELS] = std::array::from_fn(|i| self.channels[i].damper);
+        for (i, v) in self.voices.iter_mut().enumerate() {
+            if v.state.env_stage >= 5 || v.release_pending || v.held_by_damper {
+                continue;
+            }
+            if v.end_sample < block_start || v.end_sample >= block_end {
+                continue;
+            }
+            let Some(ch_idx) = dense_channel(v.channel as usize) else {
+                continue;
+            };
+            if dampers[ch_idx] {
+                v.held_by_damper = true;
+            } else {
+                v.release_pending = true;
+                releases.push(release_cmd((v.end_sample - block_start) as u32, i));
+            }
+        }
     }
 
     /// 处理段边界（同一 sample 位置）的所有事件：CC 更新通道状态并记录 ch_updates、
@@ -210,8 +238,9 @@ impl GpuSynth {
                     channel,
                     key,
                     velocity,
+                    end_sample,
                     ..
-                } => self.note_on(channel, key, velocity, frame, releases),
+                } => self.note_on(channel, key, velocity, end_sample, frame, releases),
                 SynthEvent::NoteOff { channel, key, .. } => {
                     self.note_off_to_cmd(channel, key, frame, releases);
                 }
@@ -299,6 +328,7 @@ impl GpuSynth {
         channel: u8,
         key: u8,
         vel: u8,
+        end_sample: u64,
         block_frame: u32,
         releases: &mut Vec<ReleaseCmd>,
     ) {
@@ -380,6 +410,7 @@ impl GpuSynth {
         self.voices.push(Voice {
             key,
             channel,
+            end_sample,
             orig_attack_frames,
             orig_release_frames,
             held_by_damper: false,

@@ -154,11 +154,7 @@ fn main() {
             channel: 0,
             key: *key,
             velocity: *vel,
-        });
-        gpu_events.push(yinhe_synth::SynthEvent::NoteOff {
-            sample: s(start + dur),
-            channel: 0,
-            key: *key,
+            end_sample: s(start + dur),
         });
     }
     for (ms, controller, value) in [

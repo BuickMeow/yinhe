@@ -129,16 +129,14 @@ impl AudioEngine {
                 } else {
                     start_sample
                 };
+                // NoteOn 自带 end_sample：voice 到期自释，事件表不再产生 NoteOff
+                //（事件量减半，且窗口分页装载不会被跨窗口的 NoteOff 打乱顺序）。
                 events.push(yinhe_synth::SynthEvent::NoteOn {
                     sample: on_sample,
                     channel: dense as u8,
                     key: key as u8,
                     velocity: note.velocity,
-                });
-                events.push(yinhe_synth::SynthEvent::NoteOff {
-                    sample: end_sample,
-                    channel: dense as u8,
-                    key: key as u8,
+                    end_sample,
                 });
             }
         }

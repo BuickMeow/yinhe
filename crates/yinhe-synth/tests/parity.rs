@@ -187,6 +187,40 @@ fn cpu_render(sfz: &Path) -> Vec<f32> {
     out
 }
 
+/// GPU 事件流（NoteOn 自带 `end_sample`）→ 展开出独立 NoteOff，供 xsynth 直连
+/// 对比使用：xsynth 靠 NoteOff 事件释放，GpuSynth 靠 voice 到期自释，展开后
+/// 两条路径的释放时机在同一 sample 对齐。
+fn expand_note_offs(events: &[yinhe_synth::SynthEvent]) -> Vec<yinhe_synth::SynthEvent> {
+    let mut out = Vec::with_capacity(events.len() * 2);
+    for e in events {
+        match e {
+            yinhe_synth::SynthEvent::NoteOn {
+                sample,
+                channel,
+                key,
+                velocity,
+                end_sample,
+            } => {
+                out.push(yinhe_synth::SynthEvent::NoteOn {
+                    sample: *sample,
+                    channel: *channel,
+                    key: *key,
+                    velocity: *velocity,
+                    end_sample: *end_sample,
+                });
+                out.push(yinhe_synth::SynthEvent::NoteOff {
+                    sample: *end_sample,
+                    channel: *channel,
+                    key: *key,
+                });
+            }
+            other => out.push(*other),
+        }
+    }
+    out.sort_by_key(|e| e.sample());
+    out
+}
+
 /// GPU 路径：GpuSynth（同一音符序列）
 fn gpu_render(sfz: &Path) -> Vec<f32> {
     let mut synth = GpuSynth::new_default(SR).expect("GpuSynth init failed");
@@ -203,11 +237,7 @@ fn gpu_render(sfz: &Path) -> Vec<f32> {
             channel: 0,
             key: *key,
             velocity: *vel,
-        });
-        events.push(yinhe_synth::SynthEvent::NoteOff {
-            sample: (start + dur) * SR as u64 / 1000,
-            channel: 0,
-            key: *key,
+            end_sample: (start + dur) * SR as u64 / 1000,
         });
     }
     // CC 事件（volume/sustain 踏板）与弯音
@@ -270,22 +300,14 @@ fn multi_port_channels_do_not_fold() {
             channel: 0,
             key: 60,
             velocity: 100,
+            end_sample: 900 * sr / 1000,
         },
         yinhe_synth::SynthEvent::NoteOn {
             sample: 100 * sr / 1000,
             channel: 16,
             key: 60,
             velocity: 100,
-        },
-        yinhe_synth::SynthEvent::NoteOff {
-            sample: 900 * sr / 1000,
-            channel: 0,
-            key: 60,
-        },
-        yinhe_synth::SynthEvent::NoteOff {
-            sample: 900 * sr / 1000,
-            channel: 16,
-            key: 60,
+            end_sample: 900 * sr / 1000,
         },
         yinhe_synth::SynthEvent::Control {
             sample: 1000 * sr / 1000,
@@ -339,7 +361,8 @@ fn multi_port_channels_do_not_fold() {
             ChannelEvent::Config(ChannelConfigEvent::SetSoundfonts(vec![sf.clone()])),
         ));
     }
-    let xev: Vec<(u64, SynthEvent)> = gpu_events
+    let expanded = expand_note_offs(&gpu_events);
+    let xev: Vec<(u64, SynthEvent)> = expanded
         .iter()
         .map(|e| {
             let (sample, event) = match e {
@@ -348,6 +371,7 @@ fn multi_port_channels_do_not_fold() {
                     channel,
                     key,
                     velocity,
+                    ..
                 } => (
                     *sample,
                     SynthEvent::Channel(
@@ -452,11 +476,7 @@ fn program_change_selects_preset() {
             channel: 0,
             key: 60,
             velocity: 100,
-        },
-        yinhe_synth::SynthEvent::NoteOff {
-            sample: 800 * sr / 1000,
-            channel: 0,
-            key: 60,
+            end_sample: 800 * sr / 1000,
         },
         yinhe_synth::SynthEvent::Control {
             sample: 900 * sr / 1000,
@@ -468,11 +488,7 @@ fn program_change_selects_preset() {
             channel: 0,
             key: 64,
             velocity: 100,
-        },
-        yinhe_synth::SynthEvent::NoteOff {
-            sample: 1800 * sr / 1000,
-            channel: 0,
-            key: 64,
+            end_sample: 1800 * sr / 1000,
         },
     ];
     gpu_events.sort_by_key(|e| e.sample());
@@ -515,7 +531,8 @@ fn program_change_selects_preset() {
         ChannelEvent::Config(ChannelConfigEvent::SetSoundfonts(vec![sf])),
     ));
     // 事件按 sample 位置逐步派发（与 multi_port 测试一致）
-    let xev: Vec<(u64, SynthEvent)> = gpu_events
+    let expanded = expand_note_offs(&gpu_events);
+    let xev: Vec<(u64, SynthEvent)> = expanded
         .iter()
         .map(|e| {
             let (sample, event) = match e {
@@ -524,6 +541,7 @@ fn program_change_selects_preset() {
                     channel,
                     key,
                     velocity,
+                    ..
                 } => (
                     *sample,
                     SynthEvent::Channel(

@@ -38,17 +38,19 @@ pub const MAX_CHANNELS: usize = 32;
 /// 合成器事件（sample 域，按 sample 排序后由 `load_events` 加载）。
 #[derive(Clone, Copy, Debug)]
 pub enum SynthEvent {
+    /// NoteOn 携带音符结束时间 `end_sample`：voice 到期自行 release。
+    /// 引擎的事件表**不再生成 NoteOff**（分页装载时 NoteOff 的时间戳跨窗口会
+    /// 破坏事件顺序；自带 end 后事件量也减半）。
     NoteOn {
         sample: u64,
         channel: u8,
         key: u8,
         velocity: u8,
+        end_sample: u64,
     },
-    NoteOff {
-        sample: u64,
-        channel: u8,
-        key: u8,
-    },
+    /// 立即释放该 (channel, key) 最老的未释放 voice。
+    /// 引擎事件表不使用（NoteOn 自带 end 取代）；保留给实时 MIDI 输入/提前释放。
+    NoteOff { sample: u64, channel: u8, key: u8 },
     Control {
         sample: u64,
         channel: u8,
@@ -526,19 +528,13 @@ mod tests {
             .load_dense_soundfonts(0, std::slice::from_ref(&path))
             .expect("load");
         synth.finish_soundfont_load();
-        synth.load_events(vec![
-            SynthEvent::NoteOn {
-                sample: 0,
-                channel: 0,
-                key: 60,
-                velocity: 100,
-            },
-            SynthEvent::NoteOff {
-                sample: 44_100,
-                channel: 0,
-                key: 60,
-            },
-        ]);
+        synth.load_events(vec![SynthEvent::NoteOn {
+            sample: 0,
+            channel: 0,
+            key: 60,
+            velocity: 100,
+            end_sample: 44_100,
+        }]);
 
         let peak = |buffers: &[yinhe_mixer::ChannelBuffers]| {
             buffers
@@ -579,22 +575,14 @@ mod tests {
                 channel: 0,
                 key: 60,
                 velocity: 100,
-            },
-            SynthEvent::NoteOff {
-                sample: 96_000,
-                channel: 0,
-                key: 60,
+                end_sample: 96_000,
             },
             SynthEvent::NoteOn {
                 sample: 20_000,
                 channel: 0,
                 key: 64,
                 velocity: 90,
-            },
-            SynthEvent::NoteOff {
-                sample: 30_000,
-                channel: 0,
-                key: 64,
+                end_sample: 30_000,
             },
             // 踩/松延音踏板（跨段事件）
             SynthEvent::Control {
@@ -664,11 +652,7 @@ mod tests {
                 channel: 0,
                 key: 60 + i as u8,
                 velocity: 100,
-            });
-            events.push(SynthEvent::NoteOff {
-                sample: (*start + 3000) as u64,
-                channel: 0,
-                key: 60 + i as u8,
+                end_sample: (*start + 3000) as u64,
             });
         }
         // 每 64 帧一次 pitch bend（段内反复换 speed，触发段边界 time 修正）
@@ -736,19 +720,13 @@ mod tests {
         synth.finish_soundfont_load();
         // 预热（分配 + 哑渲染）：不应 panic，也不污染后续 voice 槽位
         synth.prewarm(4096);
-        synth.load_events(vec![
-            SynthEvent::NoteOn {
-                sample: 0,
-                channel: 0,
-                key: 60,
-                velocity: 100,
-            },
-            SynthEvent::NoteOff {
-                sample: 44_100,
-                channel: 0,
-                key: 60,
-            },
-        ]);
+        synth.load_events(vec![SynthEvent::NoteOn {
+            sample: 0,
+            channel: 0,
+            key: 60,
+            velocity: 100,
+            end_sample: 44_100,
+        }]);
         let frames = 4096;
         let mut bufs: Vec<yinhe_mixer::ChannelBuffers> = (0..2)
             .map(|_| yinhe_mixer::ChannelBuffers {
@@ -773,6 +751,7 @@ mod tests {
             },
             key: 60,
             channel: 0,
+            end_sample: u64::MAX,
             orig_attack_frames: 0.0,
             orig_release_frames: 0.0,
             held_by_damper: false,
@@ -851,6 +830,7 @@ mod tests {
                 channel: 0,
                 key,
                 velocity: 127,
+                end_sample: 44_100,
             }]);
             let frames = 512;
             let mut bufs: Vec<yinhe_mixer::ChannelBuffers> = (0..1)
@@ -913,11 +893,7 @@ mod tests {
                     channel: 0,
                     key,
                     velocity: 127,
-                });
-                events.push(SynthEvent::NoteOff {
-                    sample: t0 + 4_963,
-                    channel: 0,
-                    key,
+                    end_sample: t0 + 4_963,
                 });
             }
         }
@@ -979,22 +955,14 @@ mod tests {
                 channel: 0,
                 key: 60,
                 velocity: 127,
-            },
-            SynthEvent::NoteOff {
-                sample: 4_963,
-                channel: 0,
-                key: 60,
+                end_sample: 4_963,
             },
             SynthEvent::NoteOn {
                 sample: 4_096,
                 channel: 0,
                 key: 61,
                 velocity: 127,
-            },
-            SynthEvent::NoteOff {
-                sample: 9_059,
-                channel: 0,
-                key: 61,
+                end_sample: 9_059,
             },
         ];
         // 验证 sfz 的 keyrange
@@ -1069,33 +1037,21 @@ mod tests {
                 channel: 0,
                 key: 60,
                 velocity: 100,
-            },
-            SynthEvent::NoteOff {
-                sample: 4_963,
-                channel: 0,
-                key: 60,
+                end_sample: 4_963,
             },
             SynthEvent::NoteOn {
                 sample: 5_294,
                 channel: 0,
                 key: 60,
                 velocity: 110,
-            },
-            SynthEvent::NoteOff {
-                sample: 10_257,
-                channel: 0,
-                key: 60,
+                end_sample: 10_257,
             },
             SynthEvent::NoteOn {
                 sample: 10_588,
                 channel: 0,
                 key: 60,
                 velocity: 120,
-            },
-            SynthEvent::NoteOff {
-                sample: 15_551,
-                channel: 0,
-                key: 60,
+                end_sample: 15_551,
             },
         ];
         let mut synth = GpuSynth::new_default(sr).expect("GpuSynth");
@@ -1151,6 +1107,7 @@ mod tests {
                 channel: 0,
                 key: 60,
                 velocity: 100,
+                end_sample: 100_000,
             },
             SynthEvent::Control {
                 sample: 400,
@@ -1213,6 +1170,7 @@ mod tests {
                 channel: 0,
                 key: 60,
                 velocity: 127,
+                end_sample: note_sample + 44_100,
             }]);
             let frames = 2048usize;
             let mut bufs: Vec<yinhe_mixer::ChannelBuffers> = (0..2)

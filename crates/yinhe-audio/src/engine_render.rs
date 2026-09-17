@@ -158,19 +158,13 @@ mod gpu_tests {
             .expect("soundfont load");
         synth.finish_soundfont_load();
         // 与真实路径一致：加载事件列表（这里手动构造一个 0..100ms 的音符）。
-        synth.load_events(vec![
-            yinhe_synth::SynthEvent::NoteOn {
-                sample: 0,
-                channel: 0,
-                key: 60,
-                velocity: 100,
-            },
-            yinhe_synth::SynthEvent::NoteOff {
-                sample: 4800,
-                channel: 0,
-                key: 60,
-            },
-        ]);
+        synth.load_events(vec![yinhe_synth::SynthEvent::NoteOn {
+            sample: 0,
+            channel: 0,
+            key: 60,
+            velocity: 100,
+            end_sample: 4800,
+        }]);
         engine.gpu_synth = Some(synth);
 
         engine.handle_command(AudioCommand::Play { from_sample: 0 });

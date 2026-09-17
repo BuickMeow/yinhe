@@ -9,6 +9,41 @@ use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, KEY_COUNT, 
 
 use crate::channel_layout::ChannelLayout;
 
+/// GPU 事件流（NoteOn 自带 `end_sample`）→ 展开出独立 NoteOff，供 xsynth 对比
+/// 路径使用：xsynth 靠 NoteOff 事件释放，GpuSynth 靠 voice 到期自释，展开后
+/// 两条路径的释放时机在同一 sample 对齐。
+#[cfg(feature = "gpu")]
+fn expand_note_offs(events: &[yinhe_synth::SynthEvent]) -> Vec<yinhe_synth::SynthEvent> {
+    let mut out = Vec::with_capacity(events.len() * 2);
+    for e in events {
+        match e {
+            yinhe_synth::SynthEvent::NoteOn {
+                sample,
+                channel,
+                key,
+                velocity,
+                end_sample,
+            } => {
+                out.push(yinhe_synth::SynthEvent::NoteOn {
+                    sample: *sample,
+                    channel: *channel,
+                    key: *key,
+                    velocity: *velocity,
+                    end_sample: *end_sample,
+                });
+                out.push(yinhe_synth::SynthEvent::NoteOff {
+                    sample: *end_sample,
+                    channel: *channel,
+                    key: *key,
+                });
+            }
+            other => out.push(*other),
+        }
+    }
+    out.sort_by_key(|e| e.sample());
+    out
+}
+
 fn make_model_with_notes(notes: Vec<(u8, u32, u32, u8, u8)>) -> YinModel {
     let conductor = ConductorData {
         tempo: AutomationLane {
@@ -2275,7 +2310,8 @@ fn diag_cyber_night_channel_isolation() {
                 ChannelEvent::Config(ChannelConfigEvent::SetSoundfonts(vec![sf.clone()])),
             ));
         }
-        let xevents: Vec<(u64, XEvent)> = events
+        let expanded = expand_note_offs(events);
+        let xevents: Vec<(u64, XEvent)> = expanded
             .iter()
             .map(|e| match e {
                 yinhe_synth::SynthEvent::NoteOn {
@@ -2283,6 +2319,7 @@ fn diag_cyber_night_channel_isolation() {
                     channel,
                     key,
                     velocity,
+                    ..
                 } => (
                     *sample,
                     XEvent::Channel(
@@ -2834,6 +2871,7 @@ fn diag_high_cluster_isolated() {
                     channel: 3,
                     key,
                     velocity: 127,
+                    end_sample: if with_off { t0 + 4_963 } else { u64::MAX },
                 });
                 if with_off {
                     events.push(yinhe_synth::SynthEvent::NoteOff {
@@ -3076,11 +3114,7 @@ fn diag_pitch_bend_dense() {
             channel: 3,
             key: 60,
             velocity: 127,
-        });
-        events.push(yinhe_synth::SynthEvent::NoteOff {
-            sample: 2 * sr as u64 - 1,
-            channel: 3,
-            key: 60,
+            end_sample: 2 * sr as u64 - 1,
         });
         events.sort_by_key(|e| e.sample());
 
@@ -3240,19 +3274,13 @@ fn diag_pitch_bend_single() {
     let total_frames = 5 * sr as u64;
 
     // 5 秒长音（检验 GPU shader 的 f32 time 累积漂移）
-    let mut events: Vec<yinhe_synth::SynthEvent> = vec![
-        yinhe_synth::SynthEvent::NoteOn {
-            sample: 0,
-            channel: 3,
-            key: 60,
-            velocity: 127,
-        },
-        yinhe_synth::SynthEvent::NoteOff {
-            sample: 5 * sr as u64,
-            channel: 3,
-            key: 60,
-        },
-    ];
+    let mut events: Vec<yinhe_synth::SynthEvent> = vec![yinhe_synth::SynthEvent::NoteOn {
+        sample: 0,
+        channel: 3,
+        key: 60,
+        velocity: 127,
+        end_sample: 5 * sr as u64,
+    }];
     events.sort_by_key(|e| e.sample());
 
     // GPU
