@@ -102,6 +102,9 @@ pub(crate) struct RendererSharedState {
     pub(crate) audio_ready: Arc<AtomicBool>,
     /// 总线电平表读数端（增删总线时由渲染线程刷新；UI 读锁取用）。
     pub(crate) bus_readings: Arc<Mutex<Vec<yinhe_mixer::MeterReading>>>,
+    /// 欠载累计样本数（立体声交错）：播放中 cpal 回调从 ring 取不到足够样本
+    /// 而补零的总量。非零增长 = 渲染跟不上（音频断续/咔哒的客观指标）。
+    pub(crate) underrun_samples: Arc<AtomicU64>,
 }
 
 impl RendererSharedState {
@@ -117,6 +120,7 @@ impl RendererSharedState {
             sf_loaded: Arc::new(AtomicUsize::new(0)),
             audio_ready: Arc::new(AtomicBool::new(false)),
             bus_readings: Arc::new(Mutex::new(Vec::new())),
+            underrun_samples: Arc::new(AtomicU64::new(0)),
         }
     }
 }
@@ -268,6 +272,8 @@ impl AudioRenderer {
     }
 
     fn run(&mut self) {
+        let mut last_underrun_report = std::time::Instant::now();
+        let mut last_underrun_total = 0u64;
         while !self.shutdown.load(Ordering::Relaxed) {
             let mut did_work = self.process_commands() | self.process_worker_results();
             self.flush_insert_returns();
@@ -294,6 +300,21 @@ impl AudioRenderer {
             }
 
             did_work |= self.render_if_needed();
+
+            // 欠载诊断：每秒报告 ring 补零增量（>0 = 渲染跟不上实时）。
+            if last_underrun_report.elapsed() >= Duration::from_secs(1) {
+                let total = self.state.underrun_samples.load(Ordering::Relaxed);
+                if total > last_underrun_total {
+                    let delta = total - last_underrun_total;
+                    let ms = delta as f64 / 2.0 / self.engine.sample_rate as f64 * 1000.0;
+                    eprintln!(
+                        "[audio] 欠载：+{delta} 样本（≈{ms:.1}ms，累计 {}）——渲染跟不上实时",
+                        total
+                    );
+                    last_underrun_total = total;
+                }
+                last_underrun_report = std::time::Instant::now();
+            }
             if let Some((t, from)) = self.play_timing
                 && self.engine.sample_position() != from
             {

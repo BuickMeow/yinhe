@@ -1210,6 +1210,8 @@ pub fn spawn_cpal_audio(
     // 音色库完成计数（renderer_state 即将 move 进 renderer，先 clone 给 handle）。
     let handle_sf_loaded = Arc::clone(&renderer_state.sf_loaded);
     let handle_audio_ready = Arc::clone(&renderer_state.audio_ready);
+    // 欠载计数（cpal 回调写；renderer_state 即将 move，先 clone）。
+    let underrun_counter = Arc::clone(&renderer_state.underrun_samples);
 
     let shutdown = Arc::new(AtomicBool::new(false));
     // latest-wins 槽：M/S 掩码必达（UI 写、renderer 每轮消费最新值）。
@@ -1279,6 +1281,10 @@ pub fn spawn_cpal_audio(
                 let popped = ring_consumer.pop_into(data);
                 if popped < data.len() {
                     data[popped..].fill(0.0);
+                    // 欠载计数：仅播放中（未播放时 ring 空是正常静音）。
+                    if pl.load(Ordering::Relaxed) {
+                        underrun_counter.fetch_add((data.len() - popped) as u64, Ordering::Relaxed);
+                    }
                 }
                 consumer_sample_position =
                     consumer_sample_position.saturating_add((popped / STEREO_CHANNELS) as u64);
