@@ -11,6 +11,7 @@ use yinhe_mixer::{
     InsertProcessor, InstrumentProcessor, MasterParams, MeterReading, MixerParams, SendParams,
     StripParams,
 };
+use yinhe_types::Interpolation;
 use yinhe_types::KEY_COUNT;
 use yinhe_types::SynthEngine;
 
@@ -665,6 +666,7 @@ pub(crate) enum WorkerResult {
 /// 调用方应给出用户可见的错误，而不是直接 abort 进程。
 pub(crate) fn spawn_worker(
     sample_rate: u32,
+    interpolation: Interpolation,
 ) -> Result<(Sender<WorkerCmd>, crossbeam_channel::Receiver<WorkerResult>), std::io::Error> {
     let (cmd_tx, cmd_rx) = unbounded::<WorkerCmd>();
     let (result_tx, result_rx) = bounded::<WorkerResult>(1);
@@ -816,6 +818,7 @@ pub(crate) fn spawn_worker(
                                 if let Err(e) = yinhe_synth::prefetch_key_maps(
                                     std::path::Path::new(path),
                                     sample_rate,
+                                    interpolation.code(),
                                 ) {
                                     eprintln!("[gpu] worker 预解析失败 {path}: {e}");
                                 }
@@ -827,9 +830,11 @@ pub(crate) fn spawn_worker(
                         }
                         #[cfg(not(feature = "gpu"))]
                         let _ = prefetch_keymaps;
-                        if let Ok(soundfonts) =
-                            crate::engine::AudioEngine::load_soundfont_paths(sample_rate, &paths)
-                        {
+                        if let Ok(soundfonts) = crate::engine::AudioEngine::load_soundfont_paths(
+                            sample_rate,
+                            &paths,
+                            interpolation,
+                        ) {
                             let _ = result_tx.send(WorkerResult::LoadedSoundFont {
                                 channels,
                                 soundfonts,
@@ -1087,6 +1092,7 @@ pub fn spawn_cpal_audio(
     buffer_size: cpal::BufferSize,
     device_name: Option<&str>,
     synth_engine: SynthEngine,
+    interpolation: Interpolation,
 ) -> Result<CpalAudioHandle, String> {
     // 后端可用性收敛：YinheCpu 尚未实现；无 gpu feature 时 GPU 后端不可用。
     // 回退明确告警（不静默假装成功），renderer 只看到实际可用的后端。
@@ -1156,7 +1162,8 @@ pub fn spawn_cpal_audio(
     // 无效，根 Cargo.toml 必须保持 panic=unwind。
     let (engine, preview_engine) =
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let engine = crate::engine::AudioEngine::new(sample_rate, layout);
+            let mut engine = crate::engine::AudioEngine::new(sample_rate, layout);
+            engine.set_interpolation(interpolation);
             let preview = crate::preview_engine::PreviewEngine::new(
                 &engine.channel_layout,
                 engine.sample_rate,
@@ -1192,7 +1199,7 @@ pub fn spawn_cpal_audio(
     let (instrument_return_tx, instrument_return_rx) =
         unbounded::<(u8, Box<dyn InstrumentProcessor>)>();
 
-    let (worker_tx, prepared_rx) = spawn_worker(sample_rate)
+    let (worker_tx, prepared_rx) = spawn_worker(sample_rate, interpolation)
         .map_err(|e| format!("Failed to spawn audio worker thread: {e}"))?;
 
     let (ring_producer, mut ring_consumer) = AudioRing::new(RING_CAPACITY).split();
@@ -1236,6 +1243,7 @@ pub fn spawn_cpal_audio(
         instrument_return_tx,
         #[cfg(feature = "gpu")]
         synth_engine,
+        interpolation,
     )
     .map_err(|e| format!("Failed to spawn audio renderer thread: {e}"))?;
 

@@ -1,6 +1,6 @@
 use cpal::traits::{DeviceTrait, HostTrait};
 
-pub use yinhe_editor_core::audio_settings::{AudioSettings, SynthEngine};
+pub use yinhe_editor_core::audio_settings::{AudioSettings, Interpolation, SynthEngine};
 
 // `list_output_devices` / `discover_sample_rates` 由 yinhe-audio 统一导出，避免在 yinhe-egui 里再写一份 cpal
 // 枚举逻辑（设备切换对话框和设置面板都用这一个）。

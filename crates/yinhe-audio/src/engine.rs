@@ -9,7 +9,7 @@ use xsynth_core::{AudioStreamParams, ChannelCount};
 
 use yinhe_core::YinModel;
 use yinhe_mixer::{InsertProcessor, InstrumentProcessor, MixerGraph, MixerParams};
-use yinhe_types::KEY_COUNT;
+use yinhe_types::{Interpolation, KEY_COUNT};
 
 use crate::audio_model::{ActiveNote, AudibleNote, AudioModel, SortedCC};
 use crate::channel::ChaseSkip;
@@ -451,11 +451,20 @@ impl AudioEngine {
         }
     }
 
+    /// 采样插值方式（须在加载音色库之前设置；运行中切换不追溯已加载的
+    /// 音色库，重建音频/重新加载后生效）。
+    pub(crate) fn set_interpolation(&mut self, interpolation: Interpolation) {
+        self.sf_manager.set_interpolation(interpolation);
+    }
+
     pub(crate) fn load_soundfont_paths(
         sample_rate: u32,
         paths: &[String],
+        interpolation: Interpolation,
     ) -> Result<Vec<Arc<dyn SoundfontBase>>, String> {
-        SoundFontManager::new(sample_rate).load_paths(paths)
+        let mut manager = SoundFontManager::new(sample_rate);
+        manager.set_interpolation(interpolation);
+        manager.load_paths(paths)
     }
 }
 

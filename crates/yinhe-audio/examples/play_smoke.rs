@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use yinhe_audio::{AudioCommand, SynthEngine, spawn_cpal_audio};
 use yinhe_core::{ConductorData, NoteEvent, ProjectMeta, TrackData, YinModel};
+use yinhe_types::Interpolation;
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
 
 /// 4 拍、一个 C 大调和弦的模型（120 BPM / PPQ 480 → 2 秒）。
@@ -80,8 +81,15 @@ fn main() {
 
     let model = demo_model();
     let layout = yinhe_audio::channels_for_model(&model);
-    let handle = spawn_cpal_audio(48_000, layout, cpal::BufferSize::Default, None, engine)
-        .expect("spawn 音频系统失败");
+    let handle = spawn_cpal_audio(
+        48_000,
+        layout,
+        cpal::BufferSize::Default,
+        None,
+        engine,
+        Interpolation::default(),
+    )
+    .expect("spawn 音频系统失败");
 
     handle.handle.send(AudioCommand::LoadModel {
         model: Arc::clone(&model),

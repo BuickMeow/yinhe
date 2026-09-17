@@ -59,6 +59,8 @@ fn dense_channel(channel: usize) -> Option<usize> {
 /// 纯 CPU 合成器（API 与 GpuSynth 对等）。
 pub struct CpuSynth {
     sample_rate: u32,
+    /// 采样插值方式（`Interpolation::code()`；加载音色库时写入 KeyInfo）。
+    interpolation: u32,
     /// 每 dense 通道的音色库条目列表（dense 即槽位；与 GpuSynth 同结构）。
     /// `Arc` 共享：单音色库时直接指向进程级解析缓存，多通道零克隆。
     port_key_maps: Vec<Arc<Vec<KeyMapEntry>>>,
@@ -90,6 +92,7 @@ impl CpuSynth {
     pub fn new(sample_rate: u32) -> Self {
         Self {
             sample_rate,
+            interpolation: 0,
             port_key_maps: (0..MAX_CHANNELS).map(|_| Arc::new(Vec::new())).collect(),
             channels: [ChannelState::new(sample_rate); MAX_CHANNELS],
             voices: Vec::new(),
@@ -112,6 +115,11 @@ impl CpuSynth {
         (channel as usize) * 128 + key as usize
     }
 
+    /// 设置采样插值方式（`Interpolation::code()`；须在加载音色库之前设置）。
+    pub fn set_interpolation(&mut self, interp: u32) {
+        self.interpolation = interp;
+    }
+
     /// 加载某 dense 通道的音色库（登记 key map；CPU 无样本上传阶段）。
     pub fn load_dense_soundfonts(&mut self, dense: u32, paths: &[PathBuf]) -> Result<(), String> {
         let slot = dense as usize;
@@ -121,8 +129,11 @@ impl CpuSynth {
         // 走进程级缓存（与 GPU 路径共用）：worker 已预热的音色库在此只查缓存，
         // 避免在音频线程解析 400MB 级音色库阻塞命令处理（Play 延迟数秒）。
         // 单库直接共享缓存 Arc（零克隆）；多库才拼接一份。
-        self.port_key_maps[slot] =
-            crate::gpu_synth::cache::load_key_maps_merged(paths, self.sample_rate)?;
+        self.port_key_maps[slot] = crate::gpu_synth::cache::load_key_maps_merged(
+            paths,
+            self.sample_rate,
+            self.interpolation,
+        )?;
         Ok(())
     }
 

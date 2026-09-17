@@ -1,7 +1,7 @@
 use eframe::egui;
 use rust_i18n::t;
 
-use crate::audio_settings::{AudioSettings, SynthEngine};
+use crate::audio_settings::{AudioSettings, Interpolation, SynthEngine};
 use crate::dialogs::settings::setting_row;
 
 pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
@@ -246,6 +246,32 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                 "synth_engine",
                 &mut settings.synth_engine,
                 &engine_opt,
+            ) {
+                changed = true;
+            }
+        },
+    );
+
+    setting_row(
+        ui,
+        t!("settings.audio.interpolation").as_ref(),
+        t!("settings.audio.interpolation_desc").as_ref(),
+        |ui| {
+            let interp_opt = vec![
+                (
+                    Interpolation::Nearest,
+                    t!("settings.audio.interp_nearest").to_string(),
+                ),
+                (
+                    Interpolation::Linear,
+                    t!("settings.audio.interp_linear").to_string(),
+                ),
+            ];
+            if crate::widgets::combo::combo_select_auto(
+                ui,
+                "interpolation",
+                &mut settings.interpolation,
+                &interp_opt,
             ) {
                 changed = true;
             }

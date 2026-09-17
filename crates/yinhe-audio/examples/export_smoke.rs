@@ -17,6 +17,7 @@ use yinhe_audio::channel_layout::ChannelLayout;
 use yinhe_audio::export::{ExportProgress, WavBitDepth};
 use yinhe_audio::{AudioCommand, spawn_cpal_audio};
 use yinhe_core::{ConductorData, NoteEvent, ProjectMeta, TrackData, YinModel};
+use yinhe_types::Interpolation;
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
 
 /// 4 拍、一个 C 大调和弦的模型（120 BPM / PPQ 480 → 2 秒）。
@@ -81,6 +82,7 @@ fn spawn(sample_rate: u32, layout: ChannelLayout) -> Result<yinhe_audio::CpalAud
         cpal::BufferSize::Default,
         None,
         yinhe_audio::SynthEngine::XSynthCpu,
+        Interpolation::default(),
     )
 }
 

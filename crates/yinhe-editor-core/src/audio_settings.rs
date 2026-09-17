@@ -40,7 +40,7 @@ fn default_record_monitor() -> bool {
     true
 }
 
-pub use yinhe_types::SynthEngine;
+pub use yinhe_types::{Interpolation, SynthEngine};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -76,6 +76,9 @@ pub struct AudioSettings {
     pub midi_export_dedup_overlaps: bool,
     /// 合成后端选择（见 [`SynthEngine`]）。
     pub synth_engine: SynthEngine,
+    /// 采样插值方式（默认最近邻，与 xsynth 默认一致；见 [`Interpolation`]）。
+    #[serde(default)]
+    pub interpolation: Interpolation,
     pub use_gpu_cull: bool,
     pub locale: String,
     pub theme_base: yinhe_theme::base::BaseColors,
@@ -171,6 +174,7 @@ impl Default for AudioSettings {
             overlap_blocked_behavior: OverlapBlockedBehavior::default(),
             quick_delete_mode: QuickDeleteMode::default(),
             synth_engine: SynthEngine::default(),
+            interpolation: Interpolation::default(),
             use_gpu_cull: false,
             locale: "zh-CN".to_string(),
             theme_base: yinhe_theme::base::BaseColors::DARK,

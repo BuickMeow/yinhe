@@ -25,14 +25,46 @@ impl SynthEngine {
     }
 }
 
+/// 采样插值方式（变调时的音质/性能权衡）。
+///
+/// pitch bend 等变调通过改变采样播放速率实现：非整数播放位置需要插值。
+/// - `Nearest`（默认，与 xsynth `SoundfontInitOptions` 一致）：最快；变调时
+///   位置取整——向上跳采（混叠）、向下重复取点（阶梯/镜像），bend 越歪高频
+///   伪影越明显；
+/// - `Linear`：变调干净；每个样本多一次采样读取 + 混合（实测 352 voice
+///   密集段约 +7~8% 渲染耗时）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Interpolation {
+    #[default]
+    Nearest,
+    Linear,
+}
+
+impl Interpolation {
+    /// 渲染器编码（`KeyInfo.interp` / WGSL `interp` 字段：0=Nearest, 1=Linear）。
+    pub fn code(self) -> u32 {
+        match self {
+            Self::Nearest => 0,
+            Self::Linear => 1,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::SynthEngine;
+    use super::{Interpolation, SynthEngine};
 
     #[test]
     fn resolved_is_identity() {
         assert_eq!(SynthEngine::YinheCpu.resolved(), SynthEngine::YinheCpu);
         assert_eq!(SynthEngine::YinheGpu.resolved(), SynthEngine::YinheGpu);
         assert_eq!(SynthEngine::XSynthCpu.resolved(), SynthEngine::XSynthCpu);
+    }
+
+    #[test]
+    fn interpolation_codes() {
+        assert_eq!(Interpolation::default(), Interpolation::Nearest);
+        assert_eq!(Interpolation::Nearest.code(), 0);
+        assert_eq!(Interpolation::Linear.code(), 1);
     }
 }

@@ -139,7 +139,11 @@ pub struct KeyMapEntry {
 
 /// 根据文件扩展名自动检测格式并构建 key map 条目列表。
 /// `sample_rate` 为目标采样率：SFZ 的 wav 与 SF2 都在此采样率下加载/重采样一次。
-pub fn build_key_maps(path: &Path, sample_rate: u32) -> Result<Vec<KeyMapEntry>, String> {
+pub fn build_key_maps(
+    path: &Path,
+    sample_rate: u32,
+    interp: u32,
+) -> Result<Vec<KeyMapEntry>, String> {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
@@ -148,9 +152,9 @@ pub fn build_key_maps(path: &Path, sample_rate: u32) -> Result<Vec<KeyMapEntry>,
         Some("sfz") => Ok(vec![KeyMapEntry {
             bank: 0,
             preset: 0,
-            map: build_key_map_from_sfz(path, sample_rate)?,
+            map: build_key_map_from_sfz(path, sample_rate, interp)?,
         }]),
-        Some("sf2") => build_key_maps_from_sf2(path, sample_rate),
+        Some("sf2") => build_key_maps_from_sf2(path, sample_rate, interp),
         _ => Err(format!("Unsupported soundfont format: {:?}", path)),
     }
 }
@@ -209,7 +213,11 @@ pub fn select_key_info(key_map: &[Vec<KeyInfo>], key: u8, velocity: u8) -> Optio
 
 // ── SFZ ──
 
-fn build_key_map_from_sfz(sfz_path: &Path, sample_rate: u32) -> Result<Vec<Vec<KeyInfo>>, String> {
+fn build_key_map_from_sfz(
+    sfz_path: &Path,
+    sample_rate: u32,
+    interp: u32,
+) -> Result<Vec<Vec<KeyInfo>>, String> {
     let regions = xsynth_soundfonts::sfz::parse_soundfont(sfz_path)
         .map_err(|e| format!("SFZ parse error: {}", e))?;
 
@@ -309,7 +317,7 @@ fn build_key_map_from_sfz(sfz_path: &Path, sample_rate: u32) -> Result<Vec<Vec<K
                     sample_data: samples.clone(),
                     sample_rate,
                     is_stereo,
-                    interp: 0,
+                    interp,
                     speed_mult,
                     volume,
                     pan,
@@ -343,7 +351,11 @@ fn build_key_map_from_sfz(sfz_path: &Path, sample_rate: u32) -> Result<Vec<Vec<K
 
 // ── SF2 ──
 
-fn build_key_maps_from_sf2(sf2_path: &Path, sample_rate: u32) -> Result<Vec<KeyMapEntry>, String> {
+fn build_key_maps_from_sf2(
+    sf2_path: &Path,
+    sample_rate: u32,
+    interp: u32,
+) -> Result<Vec<KeyMapEntry>, String> {
     // 直接以目标采样率加载，一次重采样到位（避免先转 44100 再转目标的双重重采样）
     let presets = xsynth_soundfonts::sf2::load_soundfont(sf2_path, sample_rate)
         .map_err(|e| format!("SF2 parse error: {}", e))?;
@@ -407,7 +419,7 @@ fn build_key_maps_from_sf2(sf2_path: &Path, sample_rate: u32) -> Result<Vec<KeyM
                         sample_data: sample_data.clone(),
                         sample_rate,
                         is_stereo,
-                        interp: 0,
+                        interp,
                         speed_mult,
                         volume: np.volume,
                         pan,
@@ -550,7 +562,7 @@ mod tests {
         std::fs::write(&sfz_path, "<region>\nsample=tone.wav key=60\n").expect("sfz write");
 
         let dst_sr = 48_000u32;
-        let entries = build_key_maps(&sfz_path, dst_sr).expect("build key maps");
+        let entries = build_key_maps(&sfz_path, dst_sr, 0).expect("build key maps");
         let info = &entries[0].map[60][0];
         assert!(!info.is_stereo, "单声道样本必须标记为非立体声");
         assert_eq!(info.sample_rate, dst_sr);

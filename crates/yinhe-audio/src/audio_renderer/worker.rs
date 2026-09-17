@@ -126,7 +126,9 @@ impl AudioRenderer {
                                 continue;
                             }
                             if self.engine.cpu_synth.is_none() {
-                                self.engine.cpu_synth = Some(yinhe_synth::CpuSynth::new(sr));
+                                let mut cs = yinhe_synth::CpuSynth::new(sr);
+                                cs.set_interpolation(self.interpolation.code());
+                                self.engine.cpu_synth = Some(cs);
                                 play_log("[play] CpuSynth 初始化（yinhe CPU 后端）");
                             }
                             if let Some(cs) = self.engine.cpu_synth.as_mut()
@@ -154,6 +156,7 @@ impl AudioRenderer {
                                 let t_init = Instant::now();
                                 match yinhe_synth::GpuSynth::new_default(sr) {
                                     Ok(mut synth) => {
+                                        synth.set_interpolation(self.interpolation.code());
                                         let t_load = Instant::now();
                                         if let Err(e) =
                                             synth.load_dense_soundfonts(*dense, &gpu_paths)

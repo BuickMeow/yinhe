@@ -122,6 +122,8 @@ pub struct GpuSynth {
     /// 峰值 voice 数统计（诊断用）
     peak_voices: usize,
     sample_rate: u32,
+    /// 采样插值方式（`Interpolation::code()`；加载音色库时写入 KeyInfo）。
+    interpolation: u32,
     /// 排序好的事件列表（导出/Seek 用）
     events: Vec<SynthEvent>,
     event_cursor: usize,
@@ -175,6 +177,7 @@ impl GpuSynth {
             max_layers: Some(4),
             peak_voices: 0,
             sample_rate,
+            interpolation: 0,
             events: Vec::new(),
             event_cursor: 0,
             cc_scratch: Vec::new(),
@@ -203,7 +206,8 @@ impl GpuSynth {
         }
         self.sample_paths.extend(paths.iter().cloned());
         // 单库直接共享缓存 Arc（零克隆）；多库才拼接一份。
-        self.port_key_maps[slot] = load_key_maps_merged(paths, self.sample_rate)?;
+        self.port_key_maps[slot] =
+            load_key_maps_merged(paths, self.sample_rate, self.interpolation)?;
         self.channel_port[slot] = slot as u8;
         Ok(())
     }
@@ -308,6 +312,11 @@ impl GpuSynth {
     /// 设置全局 voice 上限（默认 8192）。超过时淘汰最老的 release 中 voice。
     pub fn set_max_voices(&mut self, max: usize) {
         self.max_voices = max;
+    }
+
+    /// 设置采样插值方式（`Interpolation::code()`；须在加载音色库之前设置）。
+    pub fn set_interpolation(&mut self, interp: u32) {
+        self.interpolation = interp;
     }
 
     /// 每 key layer 上限（`SetLayerCount`；None = 不限制；默认 4，对齐 xsynth）。
@@ -1013,7 +1022,7 @@ mod tests {
         ];
         // 验证 sfz 的 keyrange
         {
-            let maps = crate::sfz_parser::build_key_maps(&sfz_path, sr).expect("build maps");
+            let maps = crate::sfz_parser::build_key_maps(&sfz_path, sr, 0).expect("build maps");
             for key in [60u8, 61] {
                 let ok = crate::sfz_parser::select_key_info(&maps[0].map, key, 127).is_some();
                 eprintln!("  key={key} region存在={ok}");

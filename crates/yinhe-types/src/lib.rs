@@ -32,7 +32,7 @@ pub use palette::TRACK_PALETTE;
 pub use pc_event::PcEvent;
 pub use piano_roll_view::{Orientation, PianoRollView};
 pub use source::NoteSource;
-pub use synth::SynthEngine;
+pub use synth::{Interpolation, SynthEngine};
 pub use time_format::{
     build_time_sig_segments, compute_measure_divisor, measure_bounds_at_tick, measure_ticks,
 };

@@ -409,7 +409,14 @@ mod job_tests {
         assert_eq!(spec.channels, 2);
         assert_eq!(spec.bits_per_sample, 16);
         let frames = reader.len() as u64 / spec.channels as u64;
-        assert_eq!(frames, main_duration, "无尾音时帧数应等于主内容长度");
+        // finalize 会补齐前瞻限幅器的延迟线残留（约 3ms @48k）：WAV 总帧数
+        // = 主内容 + 前瞻帧数（实时输出同样有该延迟，不丢音频）。
+        let latency = VolumeLimiter::new(48_000).latency_frames() as u64;
+        assert_eq!(
+            frames,
+            main_duration + latency,
+            "帧数应等于主内容长度 + 限幅器前瞻"
+        );
 
         if let Ok(p) = progress.lock() {
             let expect = main_duration as f64 / 48000.0;

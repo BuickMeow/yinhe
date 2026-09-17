@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender};
 use yinhe_dsp::dsp::limiter::VolumeLimiter;
 #[cfg(feature = "gpu")]
-use yinhe_types::SynthEngine;
+use yinhe_types::{Interpolation, SynthEngine};
 
 use crate::export::ExportJob;
 
@@ -169,6 +169,8 @@ struct AudioRenderer {
     /// `YinheGpu` 时加载音色库会初始化 GpuSynth，渲染走 engine.gpu_synth。
     #[cfg(feature = "gpu")]
     synth_engine: SynthEngine,
+    /// 采样插值方式（初始化 CpuSynth/GpuSynth 时写入）。
+    interpolation: Interpolation,
     /// 播放启动诊断：Play 时刻与目标位置（首块渲染完成后打印一次耗时）。
     play_timing: Option<(Instant, u64)>,
     /// 导出任务（Some = 导出模式：不推 ring、不发布播放状态，连续离线渲染写 WAV）。
@@ -200,6 +202,7 @@ impl AudioRenderer {
         insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
         instrument_return_tx: Sender<(u8, Box<dyn yinhe_mixer::InstrumentProcessor>)>,
         #[cfg(feature = "gpu")] synth_engine: SynthEngine,
+        interpolation: Interpolation,
     ) -> Self {
         // GPU 模式用更大的渲染块（见 GPU_RENDER_CHUNK_FRAMES）。
         #[cfg(feature = "gpu")]
@@ -237,6 +240,7 @@ impl AudioRenderer {
             instrument_return_tx,
             #[cfg(feature = "gpu")]
             synth_engine,
+            interpolation,
             play_timing: None,
         }
     }
@@ -506,6 +510,7 @@ pub(crate) fn spawn_renderer(
     insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
     instrument_return_tx: Sender<(u8, Box<dyn yinhe_mixer::InstrumentProcessor>)>,
     #[cfg(feature = "gpu")] synth_engine: SynthEngine,
+    interpolation: Interpolation,
 ) -> Result<JoinHandle<()>, std::io::Error> {
     thread::Builder::new()
         .name("audio-renderer".into())
@@ -529,6 +534,7 @@ pub(crate) fn spawn_renderer(
                 instrument_return_tx.clone(),
                 #[cfg(feature = "gpu")]
                 synth_engine,
+                interpolation,
             );
             renderer.run();
             // 导出中引擎被拆除（切文档/关工程）：把导出标记为中断，
