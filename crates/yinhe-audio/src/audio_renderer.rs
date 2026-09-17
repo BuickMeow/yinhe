@@ -520,15 +520,32 @@ fn count_gpu_sf_pending(
     if !gpu_engine {
         return 0;
     }
-    configs
+    // 按分组计：每组只在最后一个有效通道登记完时触发一次样本上传。
+    group_sf_configs(configs)
         .iter()
-        .filter(|(channel, paths)| {
-            !paths.is_empty() && {
-                let dense = layout.dense_for(*channel as usize);
+        .filter(|(channels, _)| {
+            channels.iter().any(|ch| {
+                let dense = layout.dense_for(*ch as usize);
                 dense != u32::MAX && (dense as usize) < yinhe_synth::MAX_CHANNELS
-            }
+            })
         })
         .count()
+}
+
+/// 把 `(channel, paths)` 配置按 paths 分组：相同音色库集合的通道合并为一条
+/// `LoadSoundFont`（worker 只加载一次，key map Arc 跨通道共享）。
+pub(crate) fn group_sf_configs(configs: &[(u8, Vec<String>)]) -> Vec<(Vec<u8>, Vec<String>)> {
+    let mut groups: Vec<(Vec<u8>, Vec<String>)> = Vec::new();
+    for (channel, paths) in configs {
+        if paths.is_empty() {
+            continue;
+        }
+        match groups.iter_mut().find(|(_, p)| p == paths) {
+            Some((channels, _)) => channels.push(*channel),
+            None => groups.push((vec![*channel], paths.clone())),
+        }
+    }
+    groups
 }
 
 #[cfg(test)]

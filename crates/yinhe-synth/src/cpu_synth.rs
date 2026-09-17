@@ -15,6 +15,7 @@
 mod voice;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use rayon::prelude::*;
 use yinhe_mixer::ChannelBuffers;
@@ -51,7 +52,8 @@ fn dense_channel(channel: usize) -> Option<usize> {
 pub struct CpuSynth {
     sample_rate: u32,
     /// 每 dense 通道的音色库条目列表（dense 即槽位；与 GpuSynth 同结构）。
-    port_key_maps: Vec<Vec<KeyMapEntry>>,
+    /// `Arc` 共享：单音色库时直接指向进程级解析缓存，多通道零克隆。
+    port_key_maps: Vec<Arc<Vec<KeyMapEntry>>>,
     channels: [ChannelState; MAX_CHANNELS],
     voices: Vec<CpuVoice>,
     /// 排序好的事件列表（NoteOn 自带 end_sample）。
@@ -83,7 +85,7 @@ impl CpuSynth {
     pub fn new(sample_rate: u32) -> Self {
         Self {
             sample_rate,
-            port_key_maps: vec![Vec::new(); MAX_CHANNELS],
+            port_key_maps: (0..MAX_CHANNELS).map(|_| Arc::new(Vec::new())).collect(),
             channels: [ChannelState::new(sample_rate); MAX_CHANNELS],
             voices: Vec::new(),
             events: Vec::new(),
@@ -115,12 +117,9 @@ impl CpuSynth {
         }
         // 走进程级缓存（与 GPU 路径共用）：worker 已预热的音色库在此只查缓存，
         // 避免在音频线程解析 400MB 级音色库阻塞命令处理（Play 延迟数秒）。
-        let mut entries: Vec<KeyMapEntry> = Vec::new();
-        for path in paths {
-            let built = crate::gpu_synth::cache::load_key_maps(path, self.sample_rate)?;
-            entries.extend(built.iter().cloned());
-        }
-        self.port_key_maps[slot] = entries;
+        // 单库直接共享缓存 Arc（零克隆）；多库才拼接一份。
+        self.port_key_maps[slot] =
+            crate::gpu_synth::cache::load_key_maps_merged(paths, self.sample_rate)?;
         Ok(())
     }
 
@@ -383,7 +382,7 @@ impl CpuSynth {
             return;
         };
         let ch = self.channels[ch_idx];
-        let entries = &self.port_key_maps[ch_idx];
+        let entries = self.port_key_maps[ch_idx].as_slice();
         let t_sel = std::time::Instant::now();
         let Some(info) = sfz_parser::select_key_info_multi(entries, ch.bank, ch.program, key, vel)
         else {

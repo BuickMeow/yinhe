@@ -28,7 +28,7 @@ use schedule::{SegBuffers, Voice};
 pub(crate) mod cache;
 
 pub use cache::prefetch_key_maps;
-use cache::{SampleBundle, cached_sample_bundle, load_key_maps, store_sample_bundle};
+use cache::{SampleBundle, cached_sample_bundle, load_key_maps_merged, store_sample_bundle};
 
 /// MIDI 通道数（dense 通道 = port×16+ch，支持 2 端口 32 通道）。
 pub use crate::channel_state::MAX_CHANNELS;
@@ -94,7 +94,8 @@ pub enum ControlEvent {
 pub struct GpuSynth {
     renderer: GpuAudioRenderer,
     /// 每 port 的音色库条目列表（bank/preset → key map），`channel_port` 决定通道用哪个 port。
-    port_key_maps: Vec<Vec<sfz_parser::KeyMapEntry>>,
+    /// `Arc` 共享：单音色库时直接指向进程级解析缓存，多通道零克隆。
+    port_key_maps: Vec<Arc<Vec<sfz_parser::KeyMapEntry>>>,
     /// dense 通道 → port 映射（由 `load_port_soundfonts` 按 layout 填表）。
     channel_port: [u8; MAX_CHANNELS],
     /// 已加载过的音色库路径（拼接缓存的 key 组成，排序去重后使用）。
@@ -160,7 +161,7 @@ impl GpuSynth {
         Ok(Self {
             renderer,
             // 每 dense 通道一个音色库条目列表（dense = port×16+ch，最多 MAX_CHANNELS）
-            port_key_maps: vec![Vec::new(); MAX_CHANNELS],
+            port_key_maps: (0..MAX_CHANNELS).map(|_| Arc::new(Vec::new())).collect(),
             channel_port: [0; MAX_CHANNELS],
             sample_paths: Vec::new(),
             sample_offsets: HashMap::new(),
@@ -201,12 +202,8 @@ impl GpuSynth {
             return Err(format!("GPU 合成器仅支持 32 个通道（dense {dense} 超出）"));
         }
         self.sample_paths.extend(paths.iter().cloned());
-        let mut entries: Vec<sfz_parser::KeyMapEntry> = Vec::new();
-        for path in paths {
-            let built = load_key_maps(path, self.sample_rate)?;
-            entries.extend(built.iter().cloned());
-        }
-        self.port_key_maps[slot] = entries;
+        // 单库直接共享缓存 Arc（零克隆）；多库才拼接一份。
+        self.port_key_maps[slot] = load_key_maps_merged(paths, self.sample_rate)?;
         self.channel_port[slot] = slot as u8;
         Ok(())
     }
@@ -247,7 +244,7 @@ impl GpuSynth {
         let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
         let mut unique: Vec<&Arc<[f32]>> = Vec::new();
         for entries in &self.port_key_maps {
-            for entry in entries {
+            for entry in entries.iter() {
                 for key_layers in &entry.map {
                     for info in key_layers {
                         if seen.insert(info.sample_data.as_ptr() as usize) {

@@ -150,13 +150,12 @@ impl AudioRenderer {
                 let prefetch_keymaps = self.gpu_engine() || self.yinhe_cpu_engine();
                 #[cfg(not(feature = "gpu"))]
                 let prefetch_keymaps = false;
-                for (channel, paths) in configs.iter() {
-                    if paths.is_empty() {
-                        continue;
-                    }
+                // 按音色库集合分组：相同 paths 的通道只加载一次（worker 一次往返 +
+                // key map Arc 跨通道共享），避免 20 个通道重复加载同一音色库。
+                for (channels, paths) in super::group_sf_configs(&configs) {
                     let _ = self.worker_tx.send(WorkerCmd::LoadSoundFont {
-                        channel: *channel,
-                        paths: paths.clone(),
+                        channels,
+                        paths,
                         prefetch_keymaps,
                     });
                 }

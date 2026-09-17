@@ -26,7 +26,7 @@ pub fn prefetch_key_maps(path: &std::path::Path, sample_rate: u32) -> Result<(),
     let t = std::time::Instant::now();
     let built = Arc::new(sfz_parser::build_key_maps(path, sample_rate)?);
     eprintln!(
-        "[gpu] worker 预解析音色库={:?}：{}",
+        "[synth] worker 预解析音色库={:?}：{}",
         t.elapsed(),
         path.display()
     );
@@ -36,6 +36,22 @@ pub fn prefetch_key_maps(path: &std::path::Path, sample_rate: u32) -> Result<(),
         .entry(key)
         .or_insert(built);
     Ok(())
+}
+
+/// 加载一组音色库的 key map 并合并为一份（Arc 共享）：单库直接复用缓存
+/// Arc（零克隆），多库拼接一次。供 CPU/GPU 后端按通道登记。
+pub(crate) fn load_key_maps_merged(
+    paths: &[std::path::PathBuf],
+    sample_rate: u32,
+) -> Result<Arc<Vec<sfz_parser::KeyMapEntry>>, String> {
+    if paths.len() == 1 {
+        return load_key_maps(&paths[0], sample_rate);
+    }
+    let mut merged: Vec<sfz_parser::KeyMapEntry> = Vec::new();
+    for path in paths {
+        merged.extend(load_key_maps(path, sample_rate)?.iter().cloned());
+    }
+    Ok(Arc::new(merged))
 }
 
 /// 加载（未命中则解析并缓存）一个音色库的 key map。
@@ -50,13 +66,13 @@ pub(crate) fn load_key_maps(
         cache.get(&key).cloned()
     };
     if let Some(arc) = cached {
-        eprintln!("[gpu] 音色库解析缓存命中：{}", path.display());
+        eprintln!("[synth] 音色库解析缓存命中：{}", path.display());
         return Ok(arc);
     }
     let t = std::time::Instant::now();
     let built = Arc::new(sfz_parser::build_key_maps(path, sample_rate)?);
     eprintln!(
-        "[gpu] 音色库解析（未命中缓存）={:?}：{}",
+        "[synth] 音色库解析（未命中缓存）={:?}：{}",
         t.elapsed(),
         path.display()
     );

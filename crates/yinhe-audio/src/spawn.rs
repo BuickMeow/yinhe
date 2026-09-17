@@ -600,7 +600,8 @@ pub(crate) enum WorkerCmd {
         am_ms: Arc<AmMsMap>,
     },
     LoadSoundFont {
-        channel: u8,
+        /// 共享同一音色库集合的源通道（按 paths 分组后一条命令多个通道）。
+        channels: Vec<u8>,
         paths: Vec<String>,
         /// 在 worker 里预热 yinhe-synth 的进程级解析缓存（GPU 与 CPU 后端共用）：
         /// 音频线程随后命中缓存，不在音频线程解析（400MB 级音色库 3-6s）。
@@ -627,7 +628,7 @@ pub(crate) enum WorkerResult {
         generation: u64,
     },
     LoadedSoundFont {
-        channel: u8,
+        channels: Vec<u8>,
         soundfonts: Vec<Arc<dyn SoundfontBase>>,
         /// 原始路径列表 — GPU 路径用其初始化 GpuPlayer
         paths: Vec<String>,
@@ -775,7 +776,7 @@ pub(crate) fn spawn_worker(
                         });
                     }
                     WorkerCmd::LoadSoundFont {
-                        channel,
+                        channels,
                         paths,
                         prefetch_keymaps,
                     } => {
@@ -807,7 +808,7 @@ pub(crate) fn spawn_worker(
                             crate::engine::AudioEngine::load_soundfont_paths(sample_rate, &paths)
                         {
                             let _ = result_tx.send(WorkerResult::LoadedSoundFont {
-                                channel,
+                                channels,
                                 soundfonts,
                                 paths,
                             });
