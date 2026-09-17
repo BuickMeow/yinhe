@@ -38,3 +38,6 @@ pub use spawn::{
     PreviewNoteParams, channels_for_model, discover_sample_rates, list_input_devices,
     list_output_devices, spawn_cpal_audio,
 };
+/// 合成后端选择的统一入口（定义在 settings 层，引擎侧 re-export）；
+/// 下游（example/移动端）无需直接依赖 yinhe-editor-core。
+pub use yinhe_types::SynthEngine;

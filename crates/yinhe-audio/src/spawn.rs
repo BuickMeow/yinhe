@@ -12,6 +12,7 @@ use yinhe_mixer::{
     StripParams,
 };
 use yinhe_types::KEY_COUNT;
+use yinhe_types::SynthEngine;
 
 /// insert 链的目标位置。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1057,8 +1058,22 @@ pub fn spawn_cpal_audio(
     layout: ChannelLayout,
     buffer_size: cpal::BufferSize,
     device_name: Option<&str>,
-    #[cfg(feature = "gpu")] use_gpu_synth: bool,
+    synth_engine: SynthEngine,
 ) -> Result<CpalAudioHandle, String> {
+    // 后端可用性收敛：YinheCpu 尚未实现；无 gpu feature 时 GPU 后端不可用。
+    // 回退明确告警（不静默假装成功），renderer 只看到实际可用的后端。
+    let requested = synth_engine;
+    let synth_engine = if cfg!(feature = "gpu") {
+        requested.resolved()
+    } else {
+        SynthEngine::XSynthCpu
+    };
+    if synth_engine != requested {
+        tracing::warn!(
+            "合成后端 {requested:?} 当前不可用（未实现或未编译 gpu feature），回退 {synth_engine:?}"
+        );
+    }
+
     let (cmd_tx, cmd_rx) = bounded::<AudioCommand>(AUDIO_CMD_CHANNEL_CAPACITY);
     let (transport_tx, transport_rx) = unbounded::<AudioCommand>();
     let sample_position = Arc::new(AtomicU64::new(0));
@@ -1191,7 +1206,7 @@ pub fn spawn_cpal_audio(
         insert_return_tx,
         instrument_return_tx,
         #[cfg(feature = "gpu")]
-        use_gpu_synth,
+        synth_engine,
     )
     .map_err(|e| format!("Failed to spawn audio renderer thread: {e}"))?;
 

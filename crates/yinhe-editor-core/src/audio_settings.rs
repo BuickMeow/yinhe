@@ -40,6 +40,8 @@ fn default_record_monitor() -> bool {
     true
 }
 
+pub use yinhe_types::SynthEngine;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AudioSettings {
@@ -72,7 +74,8 @@ pub struct AudioSettings {
     pub midi_export_curve_interpolate: bool,
     pub midi_export_strip_empty_tracks: bool,
     pub midi_export_dedup_overlaps: bool,
-    pub use_gpu_synth: bool,
+    /// 合成后端选择（见 [`SynthEngine`]）。
+    pub synth_engine: SynthEngine,
     pub use_gpu_cull: bool,
     pub locale: String,
     pub theme_base: yinhe_theme::base::BaseColors,
@@ -167,7 +170,7 @@ impl Default for AudioSettings {
             allow_overlapping_notes: true,
             overlap_blocked_behavior: OverlapBlockedBehavior::default(),
             quick_delete_mode: QuickDeleteMode::default(),
-            use_gpu_synth: false,
+            synth_engine: SynthEngine::default(),
             use_gpu_cull: false,
             locale: "zh-CN".to_string(),
             theme_base: yinhe_theme::base::BaseColors::DARK,
@@ -225,10 +228,24 @@ mod tests {
 
     #[test]
     fn toast_enabled_roundtrips_when_off() {
-        let mut s = AudioSettings::default();
-        s.toast_enabled = false;
+        let s = AudioSettings {
+            toast_enabled: false,
+            ..Default::default()
+        };
         let json = serde_json::to_string(&s).expect("serialize");
         let back: AudioSettings = serde_json::from_str(&json).expect("deserialize");
         assert!(!back.toast_enabled);
+    }
+
+    /// 旧配置（`use_gpu_synth: bool` 字段）加载：未知字段忽略，synth_engine 取默认。
+    #[test]
+    fn legacy_use_gpu_synth_field_is_ignored() {
+        let mut v = serde_json::to_value(AudioSettings::default()).expect("serialize default");
+        v.as_object_mut()
+            .expect("settings serializes to object")
+            .insert("use_gpu_synth".into(), serde_json::Value::Bool(true));
+        let s: AudioSettings =
+            serde_json::from_value(v).expect("old save with use_gpu_synth loads");
+        assert_eq!(s.synth_engine, SynthEngine::XSynthCpu);
     }
 }

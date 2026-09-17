@@ -1,7 +1,7 @@
 use eframe::egui;
 use rust_i18n::t;
 
-use crate::audio_settings::AudioSettings;
+use crate::audio_settings::{AudioSettings, SynthEngine};
 use crate::dialogs::settings::setting_row;
 
 pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
@@ -228,13 +228,23 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         t!("settings.audio.synth_engine_desc").as_ref(),
         |ui| {
             let engine_opt = vec![
-                (false, t!("settings.audio.engine_cpu").to_string()),
-                (true, t!("settings.audio.engine_gpu").to_string()),
+                (
+                    SynthEngine::XSynthCpu,
+                    t!("settings.audio.engine_cpu").to_string(),
+                ),
+                (
+                    SynthEngine::YinheCpu,
+                    t!("settings.audio.engine_yinhe_cpu").to_string(),
+                ),
+                (
+                    SynthEngine::YinheGpu,
+                    t!("settings.audio.engine_gpu").to_string(),
+                ),
             ];
             if crate::widgets::combo::combo_select_auto(
                 ui,
                 "synth_engine",
-                &mut settings.use_gpu_synth,
+                &mut settings.synth_engine,
                 &engine_opt,
             ) {
                 changed = true;

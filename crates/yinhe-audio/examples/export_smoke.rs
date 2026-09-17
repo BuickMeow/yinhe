@@ -73,16 +73,15 @@ fn demo_model() -> Arc<YinModel> {
     Arc::new(model)
 }
 
-/// spawn 音频系统（兼容 gpu/非 gpu 构建的签名差异；导出走 CPU 混音路径）。
+/// spawn 音频系统（导出走 CPU 混音路径）。
 fn spawn(sample_rate: u32, layout: ChannelLayout) -> Result<yinhe_audio::CpalAudioHandle, String> {
-    #[cfg(feature = "gpu")]
-    {
-        spawn_cpal_audio(sample_rate, layout, cpal::BufferSize::Default, None, false)
-    }
-    #[cfg(not(feature = "gpu"))]
-    {
-        spawn_cpal_audio(sample_rate, layout, cpal::BufferSize::Default, None)
-    }
+    spawn_cpal_audio(
+        sample_rate,
+        layout,
+        cpal::BufferSize::Default,
+        None,
+        yinhe_audio::SynthEngine::XSynthCpu,
+    )
 }
 
 fn main() {

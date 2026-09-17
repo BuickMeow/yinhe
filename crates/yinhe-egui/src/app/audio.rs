@@ -195,8 +195,7 @@ impl App {
             cpal::BufferSize::Fixed(self.audio_settings.buffer_size)
         };
         let device_name = self.audio_settings.output_device_name.clone();
-        #[cfg(feature = "gpu")]
-        let use_gpu_synth = self.audio_settings.use_gpu_synth;
+        let synth_engine = self.audio_settings.synth_engine;
 
         // 后台线程执行 spawn（设备枚举/线程池创建/建流全不在 UI 线程）。
         // 结果经 mpsc 回传，UI 每帧 poll_audio_spawn 收取。
@@ -210,8 +209,7 @@ impl App {
                         layout,
                         buffer_size,
                         device_name.as_deref(),
-                        #[cfg(feature = "gpu")]
-                        use_gpu_synth,
+                        synth_engine,
                     )
                 }));
                 let result = match result {

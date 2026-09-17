@@ -139,7 +139,7 @@ impl YinheApp {
             layout,
             cpal::BufferSize::Fixed(2048),
             None,
-            false,
+            yinhe_audio::SynthEngine::XSynthCpu,
         ) {
             Ok(handle) => {
                 log::info!(

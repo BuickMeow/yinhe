@@ -6,6 +6,8 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use yinhe_dsp::dsp::limiter::VolumeLimiter;
+#[cfg(feature = "gpu")]
+use yinhe_types::SynthEngine;
 
 use crate::export::{ExportError, ExportJob, ExportProgress, WavBitDepth};
 
@@ -148,9 +150,10 @@ struct AudioRenderer {
     insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
     /// 被替换/移除的乐器处理器退回 UI 线程（渲染线程不做 deactivate）。
     instrument_return_tx: Sender<(u8, Box<dyn yinhe_mixer::InstrumentProcessor>)>,
-    /// 是否启用 GPU 合成器。启用后加载音色库时初始化 GpuSynth，渲染走 engine.gpu_synth。
+    /// 合成后端（spawn 时已收敛：不可用后端回退 XSynthCpu）。
+    /// `YinheGpu` 时加载音色库会初始化 GpuSynth，渲染走 engine.gpu_synth。
     #[cfg(feature = "gpu")]
-    use_gpu_synth: bool,
+    synth_engine: SynthEngine,
     /// 播放启动诊断：Play 时刻与目标位置（首块渲染完成后打印一次耗时）。
     play_timing: Option<(Instant, u64)>,
     /// 导出任务（Some = 导出模式：不推 ring、不发布播放状态，连续离线渲染写 WAV）。
@@ -182,11 +185,11 @@ impl AudioRenderer {
         callback_frames: usize,
         insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
         instrument_return_tx: Sender<(u8, Box<dyn yinhe_mixer::InstrumentProcessor>)>,
-        #[cfg(feature = "gpu")] use_gpu_synth: bool,
+        #[cfg(feature = "gpu")] synth_engine: SynthEngine,
     ) -> Self {
         // GPU 模式用更大的渲染块（见 GPU_RENDER_CHUNK_FRAMES）。
         #[cfg(feature = "gpu")]
-        let render_chunk_frames = if use_gpu_synth {
+        let render_chunk_frames = if synth_engine == SynthEngine::YinheGpu {
             GPU_RENDER_CHUNK_FRAMES
         } else {
             RENDER_CHUNK_FRAMES
@@ -217,9 +220,17 @@ impl AudioRenderer {
             insert_return_tx,
             instrument_return_tx,
             #[cfg(feature = "gpu")]
-            use_gpu_synth,
+            synth_engine,
             play_timing: None,
         }
+    }
+
+    /// 合成后端是否为 GPU 引擎（spawn 时已把不可用后端收敛掉，只可能是
+    /// `XSynthCpu` 或 `YinheGpu`）。块长/prefetch/事件表同步等 GPU 专用路径用它。
+    #[cfg(feature = "gpu")]
+    #[inline]
+    fn gpu_engine(&self) -> bool {
+        self.synth_engine == SynthEngine::YinheGpu
     }
 
     /// 标记音频就绪（幂等）：UI 的"加载完成"提示以此为准。
@@ -417,11 +428,11 @@ impl AudioRenderer {
                     self.gpu_sf_pending = count_gpu_sf_pending(
                         &configs,
                         &self.engine.channel_layout,
-                        self.use_gpu_synth,
+                        self.gpu_engine(),
                     );
                 }
                 #[cfg(feature = "gpu")]
-                let prefetch_gpu = self.use_gpu_synth;
+                let prefetch_gpu = self.gpu_engine();
                 #[cfg(not(feature = "gpu"))]
                 let prefetch_gpu = false;
                 for (channel, paths) in configs.iter() {
@@ -729,7 +740,7 @@ impl AudioRenderer {
                     // GPU 路径：首次加载音色库时初始化 GpuSynth，后续通道逐个加载；
                     // 样本统一在最后一个通道完成时上传一次（避免逐通道全量重传）。
                     #[cfg(feature = "gpu")]
-                    if self.use_gpu_synth
+                    if self.gpu_engine()
                         && dense != u32::MAX
                         && (dense as usize) < yinhe_synth::MAX_CHANNELS
                     {
@@ -925,7 +936,7 @@ impl AudioRenderer {
         }
         // 导出块长与实时渲染块一致（GPU 模式大块可显著减少提交/读回次数）。
         #[cfg(feature = "gpu")]
-        let export_chunk_frames = if self.use_gpu_synth {
+        let export_chunk_frames = if self.gpu_engine() {
             GPU_RENDER_CHUNK_FRAMES
         } else {
             crate::engine::ENGINE_BLOCK_FRAMES
@@ -1087,7 +1098,7 @@ pub(crate) fn spawn_renderer(
     callback_frames: usize,
     insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
     instrument_return_tx: Sender<(u8, Box<dyn yinhe_mixer::InstrumentProcessor>)>,
-    #[cfg(feature = "gpu")] use_gpu_synth: bool,
+    #[cfg(feature = "gpu")] synth_engine: SynthEngine,
 ) -> Result<JoinHandle<()>, std::io::Error> {
     thread::Builder::new()
         .name("audio-renderer".into())
@@ -1111,7 +1122,7 @@ pub(crate) fn spawn_renderer(
                 insert_return_tx.clone(),
                 instrument_return_tx.clone(),
                 #[cfg(feature = "gpu")]
-                use_gpu_synth,
+                synth_engine,
             );
             renderer.run();
             // 导出中引擎被拆除（切文档/关工程）：把导出标记为中断，
@@ -1152,16 +1163,16 @@ pub(crate) fn spawn_renderer(
 
 /// GPU 模式「待加载音色库」通道计数。
 ///
-/// 计数条件必须与 `LoadedSoundFont` 分支的递减条件（`use_gpu_synth` 且 dense
+/// 计数条件必须与 `LoadedSoundFont` 分支的递减条件（GPU 引擎且 dense
 /// 槽位有效）严格一致：多计一个不递减的通道，`gpu_sf_pending` 永远归不了零，
 /// `mark_audio_ready` 不触发，启动页卡在"初始化音频"（CPU 模式曾因此无法进入）。
 #[cfg(feature = "gpu")]
 fn count_gpu_sf_pending(
     configs: &[(u8, Vec<String>)],
     layout: &crate::channel_layout::ChannelLayout,
-    use_gpu_synth: bool,
+    gpu_engine: bool,
 ) -> usize {
-    if !use_gpu_synth {
+    if !gpu_engine {
         return 0;
     }
     configs

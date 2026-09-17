@@ -1,6 +1,7 @@
 //! Audio subsystem state — fields related to the audio engine and playback.
 
 use yinhe_audio::channel_layout::ChannelLayout;
+use yinhe_types::SynthEngine;
 
 /// 影响音频引擎 spawn 的设置字段快照。
 ///
@@ -11,14 +12,14 @@ use yinhe_audio::channel_layout::ChannelLayout;
 ///   要求其与当前设置一致。
 ///
 /// 覆盖 `rebuild_audio_if_needed` / `resolve_sf_config` 的全部 spawn 输入：
-/// 采样率、缓冲大小、输出设备、GPU 合成开关、全局音色库列表。
+/// 采样率、缓冲大小、输出设备、合成后端、全局音色库列表。
 /// `xsynth_layers` 由 `SetLayerCount` 在线应用，不参与。
 #[derive(Clone, PartialEq)]
 pub(crate) struct EngineSpawnKey {
     sample_rate: u32,
     buffer_size: u32,
     output_device_name: Option<String>,
-    use_gpu_synth: bool,
+    synth_engine: SynthEngine,
     sf_entries: Vec<(String, String, bool)>,
 }
 
@@ -28,7 +29,7 @@ impl EngineSpawnKey {
             sample_rate: settings.sample_rate,
             buffer_size: settings.buffer_size,
             output_device_name: settings.output_device_name.clone(),
-            use_gpu_synth: settings.use_gpu_synth,
+            synth_engine: settings.synth_engine,
             sf_entries: settings
                 .global_sf_config
                 .entries
