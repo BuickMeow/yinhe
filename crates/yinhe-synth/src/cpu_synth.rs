@@ -117,11 +117,15 @@ impl CpuSynth {
         self.peak_voices
     }
 
-    /// Seek 到指定位置：清 voice、重置通道状态、cursor 定位（与 GpuSynth 同语义）。
+    /// Seek 到指定位置：清 voice、重置通道状态，并**清空事件队列**。
+    ///
+    /// 与 GpuSynth（事件表预算好、seek 只定位 cursor）不同：CpuSynth 的事件由
+    /// 引擎 dispatch 增量投递；seek 后引擎会从新位置重放事件，清空队列保证不重复。
     pub fn seek(&mut self, sample: u64) {
         self.sample_position = sample;
-        self.event_cursor = self.events.partition_point(|e| e.sample() < sample);
-        self.chase_base = self.event_cursor;
+        self.events.clear();
+        self.event_cursor = 0;
+        self.chase_base = 0;
         self.voices.clear();
         self.channels = [ChannelState::new(self.sample_rate); MAX_CHANNELS];
     }
@@ -224,6 +228,13 @@ impl CpuSynth {
         self.voices.retain(|v| !v.finished());
         self.peak_voices = self.peak_voices.max(self.voice_count());
         self.sample_position = sample_start + frames as u64;
+
+        // 已消费事件周期性压缩（长播放不积累；chase_base 同步平移）。
+        if self.event_cursor > 4096 {
+            self.events.drain(..self.event_cursor);
+            self.chase_base = self.chase_base.saturating_sub(self.event_cursor);
+            self.event_cursor = 0;
+        }
     }
 
     /// 渲染一整块（offset = 0；对等 GpuSynth 的 `render_to_mixer`）。

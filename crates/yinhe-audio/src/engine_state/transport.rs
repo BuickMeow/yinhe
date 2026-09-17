@@ -79,6 +79,14 @@ impl AudioEngine {
                     ChannelAudioEvent::ResetControl,
                 )));
         }
+        // yinhe CPU 后端：清 voice/通道状态 + cursor 定位到 seek 点
+        #[cfg(feature = "gpu")]
+        {
+            if let Some(cs) = self.cpu_synth.as_mut() {
+                cs.seek(sample);
+            }
+            self.segment_start_sample = sample;
+        }
         // insert 效果器（delay 尾音/envelope 等）随 seek 清空内部状态
         self.mixer.reset_inserts();
         // 内置音源通道处理段随 seek 清空内部状态（filter 历史等）

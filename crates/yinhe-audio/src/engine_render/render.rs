@@ -88,11 +88,12 @@ impl AudioEngine {
             };
             let segment_frames = (next_sample - rendered_until_sample) as usize;
             if segment_frames > 0 {
-                self.channel_set.render_segment(
-                    self.mixer.buffers_mut(),
-                    offset_frames,
-                    segment_frames,
-                );
+                // 本段的事件 sample 依据（dispatch 在下一轮循环开头使用）
+                #[cfg(feature = "gpu")]
+                {
+                    self.segment_start_sample = rendered_until_sample;
+                }
+                self.render_cpu_segment(offset_frames, segment_frames);
                 rendered_until_sample = next_sample;
                 offset_frames += segment_frames;
             }
@@ -103,11 +104,11 @@ impl AudioEngine {
         // block_end_sample，剩余段无事件）。
         let remaining = block_end_sample - rendered_until_sample;
         if remaining > 0 {
-            self.channel_set.render_segment(
-                self.mixer.buffers_mut(),
-                offset_frames,
-                remaining as usize,
-            );
+            #[cfg(feature = "gpu")]
+            {
+                self.segment_start_sample = rendered_until_sample;
+            }
+            self.render_cpu_segment(offset_frames, remaining as usize);
         }
 
         // 乐器插件：把每块累积的事件喂给各自实例，输出写进对应乐器 dense 通道。
@@ -134,6 +135,18 @@ impl AudioEngine {
     /// 空闲渲染（停止/暂停）：不推进走带、不派发音符，只驱动乐器插件
     ///（GUI 键盘、插件预览、插件尾音）与混音输出。
     /// 存在已安装乐器时由渲染器持续调用（成熟 DAW 语义：乐器插件始终在跑）。
+    /// 渲染一个 CPU 段到混音台通道缓冲：yinhe `CpuSynth` 存在时走它，
+    /// 否则走 xsynth `ChannelSet`（GPU 模式不调用本方法）。
+    fn render_cpu_segment(&mut self, offset_frames: usize, frames: usize) {
+        #[cfg(feature = "gpu")]
+        if let Some(cs) = self.cpu_synth.as_mut() {
+            cs.render_range(self.mixer.buffers_mut(), offset_frames, frames);
+            return;
+        }
+        self.channel_set
+            .render_segment(self.mixer.buffers_mut(), offset_frames, frames);
+    }
+
     pub(crate) fn render_idle(&mut self, output: &mut [f32]) {
         let frames = output.len() / STEREO_CHANNELS;
         if frames == 0 {

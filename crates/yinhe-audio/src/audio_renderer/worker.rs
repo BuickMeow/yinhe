@@ -6,6 +6,8 @@ use std::time::Instant;
 use crossbeam_channel::TryRecvError;
 
 use crate::spawn::WorkerResult;
+#[cfg(feature = "gpu")]
+use yinhe_types::SynthEngine;
 
 use super::{AudioRenderer, play_log};
 
@@ -91,6 +93,26 @@ impl AudioRenderer {
                     let dense = self.engine.channel_layout.dense_for(channel as usize);
                     self.engine
                         .apply_loaded_soundfont_for_channel(channel, dense, soundfonts);
+                    // yinhe CPU 后端：首次加载音色库时创建 CpuSynth，后续通道逐个登记
+                    // key map（无样本上传阶段；引擎 dispatch 增量投递事件）。
+                    #[cfg(feature = "gpu")]
+                    if self.synth_engine == SynthEngine::YinheCpu
+                        && dense != u32::MAX
+                        && (dense as usize) < yinhe_synth::MAX_CHANNELS
+                    {
+                        let sr = self.engine.sample_rate;
+                        let cpu_paths: Vec<std::path::PathBuf> =
+                            paths.iter().map(std::path::PathBuf::from).collect();
+                        if self.engine.cpu_synth.is_none() {
+                            self.engine.cpu_synth = Some(yinhe_synth::CpuSynth::new(sr));
+                            play_log("[play] CpuSynth 初始化（yinhe CPU 后端）");
+                        }
+                        if let Some(cs) = self.engine.cpu_synth.as_mut()
+                            && let Err(e) = cs.load_dense_soundfonts(dense, &cpu_paths)
+                        {
+                            eprintln!("[yinhe-cpu] Failed to load soundfonts: {e}");
+                        }
+                    }
                     // GPU 路径：首次加载音色库时初始化 GpuSynth，后续通道逐个加载；
                     // 样本统一在最后一个通道完成时上传一次（避免逐通道全量重传）。
                     #[cfg(feature = "gpu")]

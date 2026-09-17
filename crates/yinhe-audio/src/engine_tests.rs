@@ -2199,7 +2199,7 @@ fn diag_cyber_night_channel_isolation() {
                 stats[4] += 1;
                 continue;
             }
-            if crate::engine_gpu::to_gpu_control_event(&cc.event).is_none() {
+            if crate::engine_gpu::to_backend_control_event(&cc.event).is_none() {
                 stats[5] += 1;
                 continue;
             }
@@ -4023,4 +4023,35 @@ fn source_level_cc_not_routed_to_channel_dsp() {
         skip.cc_mask[0] & (1u128 << 64) != 0,
         "CC64 应走常规路径并打点（xsynth 消费）"
     );
+}
+
+/// yinhe CPU 后端（CpuSynth）经完整引擎链路的冒烟：加载音色库 → Play →
+/// dispatch 投递事件 → 渲染出非零输出。
+#[cfg(feature = "gpu")]
+#[test]
+#[ignore = "需要本地 SoundFont"]
+fn yinhe_cpu_engine_render_smoke() {
+    let sfz = "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
+    let sr = 48_000u32;
+    let model = make_model_with_notes(vec![(60, 0, 4_800, 100, 0)]);
+    let layout = crate::spawn::channels_for_model(&model);
+    let mut engine = AudioEngine::new(sr, layout);
+    engine.handle_command(AudioCommand::LoadModel {
+        model: std::sync::Arc::new(model),
+    });
+
+    let mut synth = yinhe_synth::CpuSynth::new(sr);
+    synth
+        .load_dense_soundfonts(0, &[std::path::PathBuf::from(sfz)])
+        .expect("音色库加载");
+    engine.cpu_synth = Some(synth);
+
+    engine.handle_command(AudioCommand::Play { from_sample: 0 });
+    let mut out = vec![0.0f32; 512 * 2];
+    let mut peak = 0.0f32;
+    for _ in 0..10 {
+        engine.render(&mut out);
+        peak = peak.max(out.iter().fold(0.0f32, |m, v| m.max(v.abs())));
+    }
+    assert!(peak > 0.0, "yinhe CPU 后端应渲染出输出（peak={peak}）");
 }

@@ -94,7 +94,7 @@ impl AudioEngine {
             if dense == u32::MAX || (dense as usize) >= yinhe_synth::MAX_CHANNELS {
                 continue;
             }
-            let Some(event) = to_gpu_control_event(&cc.event) else {
+            let Some(event) = to_backend_control_event(&cc.event) else {
                 continue;
             };
             events.push(yinhe_synth::SynthEvent::Control {
@@ -187,26 +187,14 @@ impl AudioEngine {
     }
 
     /// 把 worker 算好的 chase 快照应用到 GpuSynth 的通道状态。
-    /// skip 掩码按 dense 通道翻译（GpuSynth 内部以 dense 索引通道）。
     pub(crate) fn apply_gpu_chase(&mut self, states: &[Option<crate::channel::ChannelState>; 256]) {
+        let skip = match self.gpu_synth.as_ref() {
+            Some(synth) => translate_backend_skip(&self.channel_layout, &synth.chase_skip()),
+            None => return,
+        };
         let Some(synth) = self.gpu_synth.as_mut() else {
             return;
         };
-        let synth_skip = synth.chase_skip();
-        let mut skip = ChaseSkip::default();
-        for ch in 0..256usize {
-            let dense = self.channel_layout.dense_for(ch);
-            if dense == u32::MAX || (dense as usize) >= yinhe_synth::MAX_CHANNELS {
-                continue;
-            }
-            let idx = dense as usize;
-            skip.cc_mask[ch] = synth_skip.cc_mask[idx];
-            skip.pitch_bend[ch] = synth_skip.pitch_bend[idx];
-            skip.pbs[ch] = synth_skip.pbs[idx];
-            skip.fine_tune[ch] = synth_skip.fine_tune[idx];
-            skip.coarse_tune[ch] = synth_skip.coarse_tune[idx];
-            skip.program[ch] = synth_skip.program[idx];
-        }
         for ch in 0..256u32 {
             let dense = self.channel_layout.dense_for(ch as usize);
             if dense == u32::MAX || (dense as usize) >= yinhe_synth::MAX_CHANNELS {
@@ -219,7 +207,7 @@ impl AudioEngine {
             let events: Vec<yinhe_synth::ControlEvent> = state
                 .events_to_send(ch as usize, &skip)
                 .iter()
-                .filter_map(to_gpu_control_event)
+                .filter_map(to_backend_control_event)
                 .collect();
             if !events.is_empty() {
                 synth.apply_chase(dense, &events);
@@ -228,8 +216,31 @@ impl AudioEngine {
     }
 }
 
-/// xsynth ChannelAudioEvent → GpuSynth 控制事件（播放事件构建与 chase 应用共用）。
-pub(crate) fn to_gpu_control_event(
+/// yinhe-synth 后端的 `ChaseSkip`（按 dense 槽位索引）→ audio 侧 `ChaseSkip`
+/// （按源通道 0..256 索引）。GPU 与 yinhe CPU 后端共用。
+pub(crate) fn translate_backend_skip(
+    layout: &crate::channel_layout::ChannelLayout,
+    backend_skip: &yinhe_synth::ChaseSkip,
+) -> ChaseSkip {
+    let mut skip = ChaseSkip::default();
+    for ch in 0..256usize {
+        let dense = layout.dense_for(ch);
+        if dense == u32::MAX || (dense as usize) >= yinhe_synth::MAX_CHANNELS {
+            continue;
+        }
+        let idx = dense as usize;
+        skip.cc_mask[ch] = backend_skip.cc_mask[idx];
+        skip.pitch_bend[ch] = backend_skip.pitch_bend[idx];
+        skip.pbs[ch] = backend_skip.pbs[idx];
+        skip.fine_tune[ch] = backend_skip.fine_tune[idx];
+        skip.coarse_tune[ch] = backend_skip.coarse_tune[idx];
+        skip.program[ch] = backend_skip.program[idx];
+    }
+    skip
+}
+
+/// xsynth ChannelAudioEvent → yinhe-synth 控制事件（GPU 事件构建与 CPU 分发共用）。
+pub(crate) fn to_backend_control_event(
     ev: &xsynth_core::channel::ChannelAudioEvent,
 ) -> Option<yinhe_synth::ControlEvent> {
     match *ev {

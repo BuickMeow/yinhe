@@ -2,12 +2,77 @@
 
 use std::cmp::Reverse;
 
-use xsynth_core::channel::{ChannelAudioEvent, ChannelEvent};
-use xsynth_core::channel_group::SynthEvent;
+use xsynth_core::channel::ChannelAudioEvent;
 use yinhe_mixer::PluginEvent;
 
 use crate::audio_model::ActiveNote;
 use crate::engine::AudioEngine;
+
+/// 把一个通道事件路由到当前 CPU 后端（字段级展开，避免 `&mut self` 与
+/// dispatch 循环持有的 `cc_events`/`audible_notes` 不可变借用冲突）：
+/// - yinhe `CpuSynth` 存在 → 转 `yinhe_synth::SynthEvent` 投递（按 sample 生效）；
+/// - GPU 模式 → no-op（事件由 `build_gpu_events` 在 seek/模型变化时重建）；
+/// - 否则 → xsynth `ChannelSet`。
+///
+/// 事件 sample 取 `segment_start_sample`（每段渲染前由 render 循环更新）。
+#[cfg(feature = "gpu")]
+macro_rules! route_cpu_event {
+    ($engine:ident, $dense:expr, $event:expr) => {{
+        if $engine.gpu_synth.is_some() {
+            // GPU：事件表管理，不投递。
+        } else if let Some(cs) = $engine.cpu_synth.as_mut() {
+            let sample = $engine.segment_start_sample;
+            let dense = $dense;
+            match $event {
+                xsynth_core::channel::ChannelAudioEvent::NoteOn { key, vel } => {
+                    // CPU 路径沿用显式 NoteOff（与 xsynth 同语义）；end_sample 不自行到期。
+                    cs.send_event(yinhe_synth::SynthEvent::NoteOn {
+                        sample,
+                        channel: dense as u8,
+                        key,
+                        velocity: vel,
+                        end_sample: u64::MAX,
+                    });
+                }
+                xsynth_core::channel::ChannelAudioEvent::NoteOff { key } => {
+                    cs.send_event(yinhe_synth::SynthEvent::NoteOff {
+                        sample,
+                        channel: dense as u8,
+                        key,
+                    });
+                }
+                other => {
+                    if let Some(ev) = $crate::engine_gpu::to_backend_control_event(&other) {
+                        cs.send_event(yinhe_synth::SynthEvent::Control {
+                            sample,
+                            channel: dense as u8,
+                            event: ev,
+                        });
+                    }
+                }
+            }
+        } else {
+            $engine.channel_set.send_event(
+                xsynth_core::channel_group::SynthEvent::Channel(
+                    $dense,
+                    xsynth_core::channel::ChannelEvent::Audio($event),
+                ),
+            );
+        }
+    }};
+}
+
+#[cfg(not(feature = "gpu"))]
+macro_rules! route_cpu_event {
+    ($engine:ident, $dense:expr, $event:expr) => {{
+        $engine
+            .channel_set
+            .send_event(xsynth_core::channel_group::SynthEvent::Channel(
+                $dense,
+                xsynth_core::channel::ChannelEvent::Audio($event),
+            ));
+    }};
+}
 
 use super::{cc_to_midi, raw_cc};
 
@@ -102,14 +167,8 @@ impl AudioEngine {
                     } else {
                         let dense = self.channel_layout.dense_for(cc.channel as usize);
                         if dense != u32::MAX {
-                            // GPU 合成器路径：事件由 GpuSynth 自己的事件列表管理，
-                            // 不喂 xsynth（避免缓存无界增长）。
-                            if !self.gpu_synth_active() {
-                                self.channel_set.send_event(SynthEvent::Channel(
-                                    dense,
-                                    ChannelEvent::Audio(cc.event),
-                                ));
-                            }
+                            // 路由到当前 CPU 后端（GPU 模式 no-op：事件由事件表管理）。
+                            route_cpu_event!(self, dense, cc.event);
                             self.dispatched_skip.mark(&cc.event, cc.channel as usize);
                         }
                     }
@@ -179,14 +238,15 @@ impl AudioEngine {
                                 }));
                             }
                         } else if !self.gpu_synth_active() {
-                            // GPU 路径：音符由 GpuSynth 事件列表处理（不喂 xsynth）。
-                            self.channel_set.send_event(SynthEvent::Channel(
+                            // GPU 路径：音符由 GpuSynth 事件列表处理（不喂 CPU 后端）。
+                            route_cpu_event!(
+                                self,
                                 dense,
-                                ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
+                                ChannelAudioEvent::NoteOn {
                                     key: key as u8,
                                     vel: note.velocity,
-                                }),
-                            ));
+                                }
+                            );
                             self.active_notes.push(Reverse(ActiveNote {
                                 key: key as u8,
                                 dense,
@@ -238,11 +298,8 @@ impl AudioEngine {
             } else {
                 let dense = an.dense;
                 if dense != u32::MAX && !self.gpu_synth_active() {
-                    // GPU 路径：音符由 GpuSynth 事件列表处理（不喂 xsynth）。
-                    self.channel_set.send_event(SynthEvent::Channel(
-                        dense,
-                        ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: an.key }),
-                    ));
+                    // GPU 路径：音符由 GpuSynth 事件列表处理（不喂 CPU 后端）。
+                    route_cpu_event!(self, dense, ChannelAudioEvent::NoteOff { key: an.key });
                 }
             }
         }

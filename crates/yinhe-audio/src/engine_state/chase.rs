@@ -38,10 +38,33 @@ impl AudioEngine {
             let Some(state) = &states[ch as usize] else {
                 continue;
             };
-            // GPU 模式的控制器恢复走 `apply_gpu_chase`（本函数末尾），
+            // GPU/CPU-synth 模式的控制器恢复走各自后端（本函数末尾/下方分支），
             // ChannelSet 不参与渲染。
             if self.cpu_synth_active() {
                 state.send_to(dense, &mut self.channel_set, &skip);
+            }
+            // yinhe CPU 后端：把同一份快照转成后端控制事件应用
+            //（skip 用 CpuSynth 自己的 [chase_base, cursor) 区间统计）。
+            #[cfg(feature = "gpu")]
+            if self.cpu_synth.is_some() {
+                let skip = {
+                    let backend_skip = self
+                        .cpu_synth
+                        .as_ref()
+                        .map(|c| c.chase_skip())
+                        .unwrap_or_default();
+                    crate::engine_gpu::translate_backend_skip(&self.channel_layout, &backend_skip)
+                };
+                let events: Vec<yinhe_synth::ControlEvent> = state
+                    .events_to_send(ch as usize, &skip)
+                    .iter()
+                    .filter_map(crate::engine_gpu::to_backend_control_event)
+                    .collect();
+                if !events.is_empty()
+                    && let Some(cs) = self.cpu_synth.as_mut()
+                {
+                    cs.apply_chase(dense, &events);
+                }
             }
             // 内置音源通道处理段回填（与 xsynth 的 skip 语义一致：已被
             // dispatch 的 CC 不覆盖，避免旧值打回新值）。插件通道的 CC 由

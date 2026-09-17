@@ -74,10 +74,32 @@ impl AudioEngine {
             return;
         }
         // GPU 模式：非插件音符的复活由事件表在 seek_pos 重建时完成，
-        // 这里不写 ChannelSet、也不入 active_notes（GPU 的 NoteOff 来自事件表）。
-        if !self.cpu_synth_active() {
+        // 这里不写 CPU 后端、也不入 active_notes（GPU 的 NoteOff 来自事件表）。
+        #[cfg(feature = "gpu")]
+        if self.gpu_synth.is_some() {
             return;
         }
+        #[cfg(feature = "gpu")]
+        let sample = self.sample_position;
+        #[cfg(feature = "gpu")]
+        if let Some(cs) = self.cpu_synth.as_mut() {
+            cs.send_event(yinhe_synth::SynthEvent::NoteOn {
+                sample,
+                channel: dense as u8,
+                key: key as u8,
+                velocity: n.velocity,
+                end_sample: u64::MAX,
+            });
+        } else {
+            self.channel_set.send_event(SynthEvent::Channel(
+                dense,
+                ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
+                    key: key as u8,
+                    vel: n.velocity,
+                }),
+            ));
+        }
+        #[cfg(not(feature = "gpu"))]
         self.channel_set.send_event(SynthEvent::Channel(
             dense,
             ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
@@ -114,11 +136,29 @@ impl AudioEngine {
                         velocity: 0.0,
                     });
                 }
-            } else if an.dense != u32::MAX && self.cpu_synth_active() {
-                self.channel_set.send_event(SynthEvent::Channel(
-                    an.dense,
-                    ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: an.key }),
-                ));
+            } else if an.dense != u32::MAX && !self.gpu_synth_active() {
+                #[cfg(feature = "gpu")]
+                let sample = self.sample_position;
+                #[cfg(feature = "gpu")]
+                if let Some(cs) = self.cpu_synth.as_mut() {
+                    cs.send_event(yinhe_synth::SynthEvent::NoteOff {
+                        sample,
+                        channel: an.dense as u8,
+                        key: an.key,
+                    });
+                } else {
+                    self.channel_set.send_event(SynthEvent::Channel(
+                        an.dense,
+                        ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: an.key }),
+                    ));
+                }
+                #[cfg(not(feature = "gpu"))]
+                {
+                    self.channel_set.send_event(SynthEvent::Channel(
+                        an.dense,
+                        ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: an.key }),
+                    ));
+                }
             }
         }
         self.active_notes = remaining;

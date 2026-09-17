@@ -118,8 +118,15 @@ impl AudioEngine {
     }
 
     fn setup_percussion(&mut self, model: &AudioModel) {
-        // GPU 模式的鼓组/乐器模式在 `build_gpu_events` 的 seek 注入中处理，
-        // ChannelSet 不参与渲染（与 CPU `setup_percussion` 同序的注入在那里）。
+        // GPU 模式的鼓组/乐器模式在 `build_gpu_events` 的 seek 注入中处理；
+        // yinhe CPU 后端经 `PercussionMode` 控制事件直接生效。
+        #[cfg(feature = "gpu")]
+        {
+            if self.cpu_synth.is_some() {
+                self.setup_percussion_cpu_synth(model);
+                return;
+            }
+        }
         if !self.cpu_synth_active() {
             return;
         }
@@ -155,6 +162,45 @@ impl AudioEngine {
                     dense,
                     ChannelEvent::Config(ChannelConfigEvent::SetPercussionMode(value >= 120)),
                 ));
+            }
+        }
+    }
+
+    /// yinhe CPU 后端的鼓组/乐器模式注入（与 ChannelSet 路径同序：
+    /// 先 GM 鼓通道，再模型 bank 声明，后者覆盖前者）。
+    #[cfg(feature = "gpu")]
+    fn setup_percussion_cpu_synth(&mut self, model: &AudioModel) {
+        let mut events: Vec<(u32, bool)> = Vec::new();
+        for src_ch in (9..256).step_by(16) {
+            let dense = self.channel_layout.dense_for(src_ch);
+            if dense != u32::MAX {
+                events.push((dense, true));
+            }
+        }
+        for (track_idx, banks) in model.track_banks.iter().enumerate() {
+            if banks.is_empty() {
+                continue;
+            }
+            let src_ch = model.track_channel(track_idx) as usize;
+            if src_ch >= 256 {
+                continue;
+            }
+            let dense = self.channel_layout.dense_for(src_ch);
+            if dense == u32::MAX {
+                continue;
+            }
+            for &(_, value) in banks {
+                events.push((dense, value >= 120));
+            }
+        }
+        let sample = self.sample_position;
+        if let Some(cs) = self.cpu_synth.as_mut() {
+            for (dense, on) in events {
+                cs.send_event(yinhe_synth::SynthEvent::Control {
+                    sample,
+                    channel: dense as u8,
+                    event: yinhe_synth::ControlEvent::PercussionMode(on),
+                });
             }
         }
     }
