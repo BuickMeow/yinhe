@@ -530,6 +530,16 @@ pub struct CpalAudioHandle {
 
 impl Drop for CpalAudioHandle {
     fn drop(&mut self) {
+        // 先暂停输出流：join 期间旧流仍在放音（ring 里最多 ~85ms），而调用方
+        // 通常已在后台线程 rebuild 新引擎——新流 build+play 会与旧流短暂重叠
+        //（设备被二次配置/双流混音），听感是一声"滋"。pause 立即静音
+        //（不销毁流），消除新旧流的重叠窗口。
+        if let Ok(guard) = self._stream.lock()
+            && let Some(stream) = guard.as_ref()
+            && let Err(e) = stream.pause()
+        {
+            tracing::debug!("Failed to pause audio stream during teardown: {e}");
+        }
         self.shutdown.store(true, Ordering::Release);
         // 同步 join renderer 线程。WAKE_SLEEP=1ms，renderer 最多 1ms 后退出，
         // join 阻塞时间可忽略。确保 AudioEngine → ChannelGroup → 2 个 rayon::ThreadPool
