@@ -1,0 +1,252 @@
+//! 事件分发：tick 域逐事件派发（CC/NoteOn/NoteOff）到合成后端/插件/DSP。
+
+use std::cmp::Reverse;
+
+use xsynth_core::channel::{ChannelAudioEvent, ChannelEvent};
+use xsynth_core::channel_group::SynthEvent;
+use yinhe_mixer::PluginEvent;
+
+use crate::audio_model::ActiveNote;
+use crate::engine::AudioEngine;
+
+use super::{cc_to_midi, raw_cc};
+
+impl AudioEngine {
+    /// GPU 路径：把一整块的事件派发到插件乐器并推进 `current_tick`。
+    /// CPU 路径在分段渲染循环里逐段 dispatch；GPU 由合成器自管音符/CC，
+    /// 这里只需把插件事件推完（`dispatch_and_find_next` 内部在 GPU 模式下
+    /// 跳过 xsynth 发送）。
+    #[cfg(feature = "gpu")]
+    pub(super) fn dispatch_block_events(&mut self, block_end_tick: u32) {
+        let mut t = self.current_tick;
+        while t < block_end_tick {
+            t = self
+                .dispatch_and_find_next(t, block_end_tick)
+                .unwrap_or(block_end_tick)
+                .min(block_end_tick);
+        }
+    }
+
+    /// 合并了原来 `next_event_sample`、`dispatch_cc_until`、`dispatch_notes_at`
+    /// 三个函数的职责，KEY_COUNT 桶只扫描一次。所有比较都在 tick 域，无需转换。
+    ///
+    pub(crate) fn dispatch_and_find_next(&mut self, tick: u32, block_end_tick: u32) -> Option<u32> {
+        let mut next: Option<u32> = None;
+
+        // ── CC 事件 ──
+        while self.cc_cursor < self.cc_events.len() && self.cc_events[self.cc_cursor].tick <= tick {
+            let cc = &self.cc_events[self.cc_cursor];
+            // mute 的音轨跳过其自动化事件（CC/PB/RPN/NRPN/PC）；
+            // AM M/S 动态掩码再跳过被旁通的 lane（PC 事件 lane==哨兵，天然不跳过）。
+            let track_skipped = self
+                .skip_track
+                .get(cc.track as usize)
+                .copied()
+                .unwrap_or(false);
+            let lane_skipped = self
+                .am_lane_skip
+                .get(cc.track as usize)
+                .and_then(|v| v.get(cc.lane as usize))
+                .copied()
+                .unwrap_or(false);
+            if !track_skipped && !lane_skipped {
+                if let Some(pp) = cc.plugin_param {
+                    // 插件参数自动化 → 该 MIDI 通道插件实例的 ParamValue。
+                    if let Some(dense) = self.channel_plugin_dense(pp.channel) {
+                        let time = self
+                            .tick_to_sample(cc.tick)
+                            .saturating_sub(self.block_start_sample)
+                            as u32;
+                        if let Some(Some(slot)) = self.instruments.get_mut(dense) {
+                            slot.events.push(PluginEvent::ParamValue {
+                                time,
+                                param_id: pp.param_id,
+                                value: f64::from(pp.value),
+                            });
+                        }
+                    }
+                } else {
+                    // 内置音源的通道处理段（CC7/10/11/71/74）；挂插件乐器的
+                    // 通道跳过（CC 透传插件，插件自己响应）。两层互斥：
+                    // CC 的消费者只有音源一侧，不存在广播/双发语义。
+                    if let Some((cc_num, cc_value)) = raw_cc(&cc.event) {
+                        let dense = self.channel_layout.dense_for(cc.channel as usize);
+                        if dense != u32::MAX
+                            && (dense as usize) < self.channel_layout.midi_compacted() as usize
+                            && self
+                                .instruments
+                                .get(dense as usize)
+                                .is_none_or(|s| s.is_none())
+                            && yinhe_dsp::cc::DSP_CHANNEL_CCS.contains(&cc_num)
+                            && let Some(chain) = self.channel_dsp.get_mut(dense as usize)
+                        {
+                            chain.apply_cc(cc_num, cc_value);
+                            // 实际发送 → 打点（chase 应用时跳过，避免旧值覆盖新值）。
+                            self.dispatched_skip.mark(&cc.event, cc.channel as usize);
+                        }
+                    }
+                    if let Some(dense) = self.channel_plugin_dense(cc.channel as u8) {
+                        // 该 MIDI 通道挂了插件 → CC/PB/RPN/PC 转原始 MIDI 字节喂实例；
+                        // 否则走 xsynth。
+                        // 先算 frame offset（只读），再取可变实例引用，避免整机借用冲突。
+                        let time = self
+                            .tick_to_sample(cc.tick)
+                            .saturating_sub(self.block_start_sample)
+                            as u32;
+                        if let Some(data) = cc_to_midi(&cc.event, cc.channel as u8)
+                            && let Some(Some(slot)) = self.instruments.get_mut(dense)
+                        {
+                            slot.events.push(PluginEvent::Midi { time, data });
+                            self.dispatched_skip.mark(&cc.event, cc.channel as usize);
+                        }
+                    } else {
+                        let dense = self.channel_layout.dense_for(cc.channel as usize);
+                        if dense != u32::MAX {
+                            // GPU 合成器路径：事件由 GpuSynth 自己的事件列表管理，
+                            // 不喂 xsynth（避免缓存无界增长）。
+                            if !self.gpu_synth_active() {
+                                self.channel_set.send_event(SynthEvent::Channel(
+                                    dense,
+                                    ChannelEvent::Audio(cc.event),
+                                ));
+                            }
+                            self.dispatched_skip.mark(&cc.event, cc.channel as usize);
+                        }
+                    }
+                }
+            }
+            self.cc_cursor += 1;
+        }
+        if self.cc_cursor < self.cc_events.len() {
+            let cc_tick = self.cc_events[self.cc_cursor].tick;
+            if cc_tick < block_end_tick {
+                next = Some(next.map_or(cc_tick, |t| t.min(cc_tick)));
+            }
+        }
+
+        // ── NoteOn + 找下一个 NoteOn 边界（单次 KEY_COUNT 桶扫描）──
+        // audible_notes 桶内 start_tick 升序（模型桶有序，无需 sort），
+        // 桶里只有 vel>1 的音符，无需运行时过滤。
+        for key in 0..yinhe_types::KEY_COUNT {
+            let notes = self.audible_notes[key].as_slice();
+            let mut cursor = self.note_cursor[key];
+
+            while cursor < notes.len() {
+                let note = &notes[cursor];
+                if note.start_tick > tick {
+                    // 该桶下一个待处理音符 → 记录为边界候选
+                    if note.start_tick < block_end_tick {
+                        next = Some(next.map_or(note.start_tick, |t| t.min(note.start_tick)));
+                    }
+                    break;
+                }
+                // start_tick ≤ tick → dispatch NoteOn
+                let track = note.track as usize;
+                let ch = self
+                    .model
+                    .as_ref()
+                    .map(|m| m.track_channel(track))
+                    .unwrap_or(0);
+                if !self.skip_track.get(track).copied().unwrap_or(false) {
+                    let dense = self.channel_layout.dense_for(ch as usize);
+                    if dense != u32::MAX {
+                        let has_plugin = self
+                            .instruments
+                            .get(dense as usize)
+                            .is_some_and(|s| s.is_some());
+                        if has_plugin {
+                            // 该通道挂了插件乐器：音符喂实例（插件通道 = MIDI 通道低 4 位）。
+                            // 先算 frame offset 与 CLAP 通道（只读），再取可变实例引用。
+                            let time = self
+                                .tick_to_sample(note.start_tick)
+                                .saturating_sub(self.block_start_sample)
+                                as u32;
+                            let clap_ch = ch & 0x0F;
+                            if let Some(Some(slot)) = self.instruments.get_mut(dense as usize) {
+                                slot.events.push(PluginEvent::NoteOn {
+                                    time,
+                                    channel: clap_ch,
+                                    key: key as u8,
+                                    velocity: note.velocity as f64 / 127.0,
+                                });
+                                self.active_notes.push(Reverse(ActiveNote {
+                                    key: key as u8,
+                                    dense,
+                                    clap_channel: clap_ch,
+                                    is_instrument: true,
+                                    end_tick: note.end_tick,
+                                    track: track as u16,
+                                }));
+                            }
+                        } else if !self.gpu_synth_active() {
+                            // GPU 路径：音符由 GpuSynth 事件列表处理（不喂 xsynth）。
+                            self.channel_set.send_event(SynthEvent::Channel(
+                                dense,
+                                ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
+                                    key: key as u8,
+                                    vel: note.velocity,
+                                }),
+                            ));
+                            self.active_notes.push(Reverse(ActiveNote {
+                                key: key as u8,
+                                dense,
+                                clap_channel: 0,
+                                is_instrument: false,
+                                end_tick: note.end_tick,
+                                track: track as u16,
+                            }));
+                        }
+                    }
+                }
+                cursor += 1;
+            }
+            self.note_cursor[key] = cursor;
+        }
+
+        // ── NoteOff + 找下一个 NoteOff 边界（min-heap 逐个 pop）──
+        // 堆顶 = end_tick 最小的活跃音符。
+        // ended 个音符每个 O(log V) pop，未结束的堆顶 O(1) peek 得下一边界。
+        // 之前是 Vec::retain 全扫 O(V_active)，高密度段 V 大时被多次调用形成 O(k×V) 正反馈。
+        self.ended_notes.clear();
+        while let Some(Reverse(an)) = self.active_notes.peek() {
+            if an.end_tick > tick {
+                break;
+            }
+            self.ended_notes.push(*an);
+            self.active_notes.pop();
+        }
+        // peek 堆顶（最早结束的未结束音符）作为下一 NoteOff 边界候选
+        if let Some(Reverse(an)) = self.active_notes.peek()
+            && an.end_tick < block_end_tick
+        {
+            next = Some(next.map_or(an.end_tick, |t| t.min(an.end_tick)));
+        }
+        for an in &self.ended_notes {
+            if an.is_instrument {
+                // 乐器音符 NoteOff → 喂乐器实例（含挂音恢复）。
+                let time = self
+                    .tick_to_sample(an.end_tick)
+                    .saturating_sub(self.block_start_sample) as u32;
+                if let Some(Some(slot)) = self.instruments.get_mut(an.dense as usize) {
+                    slot.events.push(PluginEvent::NoteOff {
+                        time,
+                        channel: an.clap_channel,
+                        key: an.key,
+                        velocity: 0.0,
+                    });
+                }
+            } else {
+                let dense = an.dense;
+                if dense != u32::MAX && !self.gpu_synth_active() {
+                    // GPU 路径：音符由 GpuSynth 事件列表处理（不喂 xsynth）。
+                    self.channel_set.send_event(SynthEvent::Channel(
+                        dense,
+                        ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: an.key }),
+                    ));
+                }
+            }
+        }
+
+        next
+    }
+}
