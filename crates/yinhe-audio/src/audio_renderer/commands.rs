@@ -144,10 +144,12 @@ impl AudioRenderer {
                         self.gpu_engine(),
                     );
                 }
+                // yinhe 后端（GPU 或 CPU）都在 worker 预热 key map 解析缓存；
+                // xsynth 后端不需要（自己的 GLOBAL_SF_CACHE 在 worker 里加载）。
                 #[cfg(feature = "gpu")]
-                let prefetch_gpu = self.gpu_engine();
+                let prefetch_keymaps = self.gpu_engine() || self.yinhe_cpu_engine();
                 #[cfg(not(feature = "gpu"))]
-                let prefetch_gpu = false;
+                let prefetch_keymaps = false;
                 for (channel, paths) in configs.iter() {
                     if paths.is_empty() {
                         continue;
@@ -155,7 +157,7 @@ impl AudioRenderer {
                     let _ = self.worker_tx.send(WorkerCmd::LoadSoundFont {
                         channel: *channel,
                         paths: paths.clone(),
-                        prefetch_gpu,
+                        prefetch_keymaps,
                     });
                 }
             }

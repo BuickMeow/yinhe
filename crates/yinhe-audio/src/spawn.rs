@@ -301,6 +301,9 @@ pub struct AudioHandle {
 /// - 结构性变更（insert 挂载/移除、乐器挂载、总线结构）：单次命令、无
 ///   重发路径（UI 发完即标记已发送），丢失即永久不一致（曾因此效果器
 ///   在渲染线程阻塞 4-5 秒时被丢，卡片在 UI 上但引擎里根本没挂上）。
+/// - `LoadModel`：同样单次、无重发（spawn/过户/切文档时各发一次）；
+///   丢失后模型永不加载 → Play 永远挂起等待（engine.model_loaded() 为
+///   false）而 UI 只看到"播放无响应"。命令通道仅由渲染线程短暂阻塞填满。
 fn is_reliable(cmd: &AudioCommand) -> bool {
     matches!(
         cmd,
@@ -309,6 +312,7 @@ fn is_reliable(cmd: &AudioCommand) -> bool {
             | AudioCommand::Pause
             | AudioCommand::Stop
             | AudioCommand::Seek { .. }
+            | AudioCommand::LoadModel { .. }
             | AudioCommand::InsertAdd { .. }
             | AudioCommand::InsertRemove { .. }
             | AudioCommand::InsertReplace { .. }
@@ -598,9 +602,9 @@ pub(crate) enum WorkerCmd {
     LoadSoundFont {
         channel: u8,
         paths: Vec<String>,
-        /// GPU 模式：在 worker 里预热 yinhe-synth 的解析缓存，
-        /// 音频线程随后命中缓存，不在音频线程解析（3-4s）。
-        prefetch_gpu: bool,
+        /// 在 worker 里预热 yinhe-synth 的进程级解析缓存（GPU 与 CPU 后端共用）：
+        /// 音频线程随后命中缓存，不在音频线程解析（400MB 级音色库 3-6s）。
+        prefetch_keymaps: bool,
     },
 }
 
@@ -773,7 +777,7 @@ pub(crate) fn spawn_worker(
                     WorkerCmd::LoadSoundFont {
                         channel,
                         paths,
-                        prefetch_gpu,
+                        prefetch_keymaps,
                     } => {
                         // 不合并，但把 try_recv 到的命令存到 pending 避免饿死
                         while let Ok(next) = cmd_rx.try_recv() {
@@ -782,7 +786,7 @@ pub(crate) fn spawn_worker(
                         // GPU 路径的 key map 解析（重采样 SFZ，未命中缓存时 3-4s）
                         // 移到 worker：音频线程随后只做缓存命中 + 登记。
                         #[cfg(feature = "gpu")]
-                        if prefetch_gpu {
+                        if prefetch_keymaps {
                             let t_prefetch = std::time::Instant::now();
                             for path in &paths {
                                 if let Err(e) = yinhe_synth::prefetch_key_maps(
@@ -798,7 +802,7 @@ pub(crate) fn spawn_worker(
                             ));
                         }
                         #[cfg(not(feature = "gpu"))]
-                        let _ = prefetch_gpu;
+                        let _ = prefetch_keymaps;
                         if let Ok(soundfonts) =
                             crate::engine::AudioEngine::load_soundfont_paths(sample_rate, &paths)
                         {
@@ -1358,6 +1362,9 @@ mod tests {
     #[test]
     fn structural_commands_use_reliable_channel() {
         assert!(is_reliable(&AudioCommand::Play { from_sample: 0 }));
+        assert!(is_reliable(&AudioCommand::LoadModel {
+            model: std::sync::Arc::new(yinhe_core::YinModel::default()),
+        }));
         assert!(is_reliable(&AudioCommand::InsertRemove {
             target: InsertTarget::Channel(0),
             slot: 0,

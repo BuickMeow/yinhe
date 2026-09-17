@@ -25,7 +25,7 @@ mod schedule;
 
 use schedule::{SegBuffers, Voice};
 
-mod cache;
+pub(crate) mod cache;
 
 pub use cache::prefetch_key_maps;
 use cache::{SampleBundle, cached_sample_bundle, load_key_maps, store_sample_bundle};

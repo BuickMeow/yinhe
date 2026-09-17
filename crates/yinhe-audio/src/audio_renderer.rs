@@ -230,11 +230,18 @@ impl AudioRenderer {
     }
 
     /// 合成后端是否为 GPU 引擎（spawn 时已把不可用后端收敛掉，只可能是
-    /// `XSynthCpu` 或 `YinheGpu`）。块长/prefetch/事件表同步等 GPU 专用路径用它。
+    /// `XSynthCpu`、`YinheCpu` 或 `YinheGpu`）。块长/事件表同步等 GPU 专用路径用它。
     #[cfg(feature = "gpu")]
     #[inline]
     fn gpu_engine(&self) -> bool {
         self.synth_engine == SynthEngine::YinheGpu
+    }
+
+    /// 合成后端是否为 yinhe CPU 引擎（key map 预解析等 yinhe 后端共用路径）。
+    #[cfg(feature = "gpu")]
+    #[inline]
+    fn yinhe_cpu_engine(&self) -> bool {
+        self.synth_engine == SynthEngine::YinheCpu
     }
 
     /// 标记音频就绪（幂等）：UI 的"加载完成"提示以此为准。

@@ -39,7 +39,8 @@ pub fn prefetch_key_maps(path: &std::path::Path, sample_rate: u32) -> Result<(),
 }
 
 /// 加载（未命中则解析并缓存）一个音色库的 key map。
-pub(super) fn load_key_maps(
+/// GPU 与 yinhe CPU 的 `load_dense_soundfonts` 共用（音频线程只查缓存）。
+pub(crate) fn load_key_maps(
     path: &std::path::Path,
     sample_rate: u32,
 ) -> Result<Arc<Vec<sfz_parser::KeyMapEntry>>, String> {

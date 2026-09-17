@@ -74,10 +74,12 @@ impl CpuSynth {
         if slot >= MAX_CHANNELS {
             return Err(format!("CPU 合成器仅支持 32 个通道（dense {dense} 超出）"));
         }
+        // 走进程级缓存（与 GPU 路径共用）：worker 已预热的音色库在此只查缓存，
+        // 避免在音频线程解析 400MB 级音色库阻塞命令处理（Play 延迟数秒）。
         let mut entries: Vec<KeyMapEntry> = Vec::new();
         for path in paths {
-            let built = sfz_parser::build_key_maps(path, self.sample_rate)?;
-            entries.extend(built);
+            let built = crate::gpu_synth::cache::load_key_maps(path, self.sample_rate)?;
+            entries.extend(built.iter().cloned());
         }
         self.port_key_maps[slot] = entries;
         Ok(())
