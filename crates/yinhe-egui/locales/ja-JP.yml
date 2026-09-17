@@ -285,6 +285,7 @@ settings.audio.record_offset_desc: "録音開始を前倒しして入出力レ�
 settings.audio.midi_no_device: "None (Disabled)"
 settings.audio.synth_engine: "シンセエンジン"
 settings.audio.engine_cpu: "XSynth (CPU)"
+settings.audio.engine_yinhe_cpu: "Yinhe-Synth (CPU)"
 settings.audio.engine_gpu: "Yinhe-Synth (GPU)"
 settings.render.heading: "レンダリング"
 settings.render.automation_density: "オートメーションイベント密度"
