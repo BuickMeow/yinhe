@@ -53,6 +53,7 @@ impl FileLoader {
         LoadToastSource {
             progress: self.load_progress().clone(),
             cancel: self.cancel_flag(),
+            title: t!("toast.loading").to_string(),
         }
     }
 
@@ -168,6 +169,8 @@ impl FileLoader {
 pub(crate) struct LoadToastSource {
     pub progress: SharedProgress,
     pub cancel: Option<Arc<AtomicBool>>,
+    /// 卡片标题（加载流程与引擎切换流程共用同一数据源，标题不同）。
+    pub title: String,
 }
 
 impl LoadToastSource {
@@ -184,7 +187,7 @@ impl LoadToastSource {
 
 impl ProgressSource for LoadToastSource {
     fn title(&self) -> String {
-        t!("toast.loading").to_string()
+        self.title.clone()
     }
     fn message(&self) -> String {
         self.active_stage().map(|s| s.label).unwrap_or_default()

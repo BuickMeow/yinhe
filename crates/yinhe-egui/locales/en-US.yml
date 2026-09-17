@@ -368,6 +368,9 @@ dialog.unsaved.back: "Back"
 
 # ── Load error dialog ──
 toast.loading: "Loading"
+toast.engine_switching: "Switching audio engine"
+toast.engine_ready: "Audio engine ready"
+toast.engine_failed: "Audio engine switch failed"
 toast.load_done: "Loaded"
 toast.open_failed: "Open Failed"
 toast.save_done: "Project Saved"

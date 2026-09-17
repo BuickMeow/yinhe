@@ -1,5 +1,10 @@
 use crate::app::App;
+use rust_i18n::t;
 use yinhe_editor_core::progress;
+
+use crate::widgets::toast::kind::ToastKind;
+use crate::widgets::toast::model::ProgressOutcome;
+use crate::widgets::toast::state::ENGINE_PROGRESS_ID;
 
 impl App {
     /// Notify the audio engine that the active document's model has changed (full
@@ -176,6 +181,21 @@ impl App {
         progress::set_stage(&self.load_progress, 1, progress::StageStatus::Active);
         progress::set_stage_progress(&self.load_progress, 1, 0.0, "初始化音频引擎".into());
 
+        // 引擎重建需要时间（spawn + 音色库/key map 加载，可能数秒）：建等待 toast。
+        // 文件加载流程已有自己的 toast（同一 SharedProgress），避免重复建卡。
+        if !self.file_loader.is_loading() {
+            self.audio_state.engine_toast = Some(std::time::Instant::now());
+            self.notifications.ensure_progress(
+                ENGINE_PROGRESS_ID,
+                ToastKind::Info,
+                std::sync::Arc::new(crate::file_loader::LoadToastSource {
+                    progress: self.load_progress.clone(),
+                    cancel: None,
+                    title: t!("toast.engine_switching").to_string(),
+                }),
+            );
+        }
+
         // Drop old audio (stops cpal stream, frees engine)
         // 走 teardown_audio：渲染线程关机退回的 insert 处理器要交还机架
         // deactivate，不能直接丢句柄。
@@ -323,8 +343,17 @@ impl App {
                 tracing::error!("Failed to create audio: {}", e);
                 self.audio_state.spawn_error = Some(e.clone());
                 self.audio_state.spawn_error_doc = spawn_for;
-                self.audio_state.device_switch_error = Some(e);
+                self.audio_state.device_switch_error = Some(e.clone());
                 progress::set_visible(&self.load_progress, false);
+                if self.audio_state.engine_toast.take().is_some() {
+                    self.notifications.finish_progress(
+                        ENGINE_PROGRESS_ID,
+                        ProgressOutcome::Failed,
+                        t!("toast.engine_failed").to_string(),
+                        e,
+                        None,
+                    );
+                }
             }
         }
     }
@@ -514,6 +543,15 @@ impl App {
             // handle 已丢（如 spawn 失败/重建中）：放弃本轮等待
             self.audio_state.sf_pending = false;
             progress::set_visible(&self.load_progress, false);
+            if self.audio_state.engine_toast.take().is_some() {
+                self.notifications.finish_progress(
+                    ENGINE_PROGRESS_ID,
+                    ProgressOutcome::Aborted,
+                    t!("toast.engine_failed").to_string(),
+                    String::new(),
+                    None,
+                );
+            }
             return;
         };
         let total = self.audio_state.sf_total;
@@ -535,6 +573,15 @@ impl App {
             self.audio_state.sf_pending = false;
             progress::set_stage(&self.load_progress, 2, progress::StageStatus::Done);
             progress::set_visible(&self.load_progress, false);
+            if let Some(t0) = self.audio_state.engine_toast.take() {
+                self.notifications.finish_progress(
+                    ENGINE_PROGRESS_ID,
+                    ProgressOutcome::Completed,
+                    t!("toast.engine_ready").to_string(),
+                    String::new(),
+                    Some(format!("{:.1}s", t0.elapsed().as_secs_f32())),
+                );
+            }
         } else {
             progress::set_stage_progress(
                 &self.load_progress,

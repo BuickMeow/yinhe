@@ -312,6 +312,9 @@ dialog.unsaved.back: "뒤로"
 
 # ── 로드 오류 대화상자 ──
 toast.loading: "로드 중"
+toast.engine_switching: "오디오 엔진 전환 중"
+toast.engine_ready: "오디오 엔진 준비 완료"
+toast.engine_failed: "오디오 엔진 전환 실패"
 toast.load_done: "로드 완료"
 toast.open_failed: "열기 실패"
 toast.save_done: "프로젝트 저장됨"

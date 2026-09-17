@@ -368,6 +368,9 @@ dialog.unsaved.back: "返回"
 
 # ── 加载错误对话框 ──
 toast.loading: "正在加载"
+toast.engine_switching: "正在切换音频引擎"
+toast.engine_ready: "音频引擎已就绪"
+toast.engine_failed: "音频引擎切换失败"
 toast.load_done: "加载完成"
 toast.open_failed: "打开失败"
 toast.save_done: "工程已保存"

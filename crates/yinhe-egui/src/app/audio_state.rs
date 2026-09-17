@@ -115,6 +115,9 @@ pub(crate) struct AudioState {
     /// `sf_pending = true` 时每帧 `poll_audio_progress` 轮询实际完成数。
     pub sf_total: usize,
     pub sf_pending: bool,
+    /// 引擎重建/切换的等待 toast 起始时刻（`Some` = 进行中）。
+    /// `rebuild_audio_if_needed` 建卡时置位，音频就绪/失败时收尾清空。
+    pub engine_toast: Option<std::time::Instant>,
     /// 上一次轮询设备列表的时间。每秒轮询一次，避免每帧调用 cpal 枚举。
     pub last_device_poll: Option<std::time::Instant>,
     /// spawn_cpal_audio 失败的错误信息。Some 表示失败，rebuild_audio_if_needed
@@ -151,6 +154,7 @@ impl AudioState {
             last_known_devices: Vec::new(),
             sf_total: 0,
             sf_pending: false,
+            engine_toast: None,
             last_device_poll: None,
             spawn_error: None,
             spawn_error_doc: None,
