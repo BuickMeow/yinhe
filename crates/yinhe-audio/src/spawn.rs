@@ -1222,7 +1222,6 @@ pub fn spawn_cpal_audio(
         preview_engine,
         ring_producer,
         renderer_state,
-        channels as u16,
         cmd_rx,
         transport_rx,
         worker_tx,

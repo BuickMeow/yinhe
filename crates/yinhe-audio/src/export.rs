@@ -157,7 +157,7 @@ impl ExportJob {
         Ok(Self {
             writer,
             bit_depth,
-            limiter: VolumeLimiter::new(STEREO_CHANNELS as u16),
+            limiter: VolumeLimiter::new(),
             buf: vec![0.0; chunk_frames * STEREO_CHANNELS],
             sample_rate,
             main_duration,

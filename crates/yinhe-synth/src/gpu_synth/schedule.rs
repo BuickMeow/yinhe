@@ -365,10 +365,10 @@ impl GpuSynth {
             return;
         }
 
-        // 声像：cos/sin 法则（无 1.42 等功率补偿）——与 CpuSynth 及 xsynth 实测
-        // 行为一致（见 cpu_synth/voice.rs 注释）。
+        // 音色库声像：等功率法则（xsynth stereo spawner 公式，左右各 1.42 补偿）。
         let angle = info.pan * std::f32::consts::FRAC_PI_2;
-        let (base_pan_l, base_pan_r) = (angle.cos().min(1.0), angle.sin().min(1.0));
+        let (base_pan_l, base_pan_r) =
+            ((angle.cos() * 1.42).min(1.0), (angle.sin() * 1.42).min(1.0));
         // 播放长度：SF2 的 sample_end（xsynth LoopParams.stop）封顶，SFZ 到采样末尾
         let sample_length = match info.stop {
             Some(stop) => stop
