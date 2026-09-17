@@ -166,3 +166,54 @@ fn render_matches_aos_multi_lane() {
         assert_eq!(out_soa[i], expected, "样本 {i} 不一致");
     }
 }
+
+/// 分片并行渲染与单线程整体渲染逐位一致（覆盖多视图/多通道/多状态）。
+#[test]
+fn par_views_match_single_thread_render() {
+    use crate::channel_state::MAX_CHANNELS;
+
+    let ch = ChannelState::new(SR);
+    let build_pool = || {
+        let mut soa = VoiceSoa::new();
+        let mut info_a = base_info(wave(500));
+        info_a.loop_mode = LoopMode::LoopContinuous;
+        info_a.loop_start = 20;
+        info_a.loop_end = 400;
+        let mut info_b = base_info(wave_stereo(500));
+        info_b.interp = 1;
+        info_b.cutoff = 3_000.0;
+        // 40 lane（覆盖 32/16 两种 chunk 下的多视图），参数混合
+        for i in 0..40u8 {
+            if i % 3 == 0 {
+                soa.init_lane(&info_a, i % 2, 480_000, 0, SR, &ch);
+            } else if i % 3 == 1 {
+                soa.init_lane(&info_b, i % 2, 480_000, 0, SR, &ch);
+            } else {
+                // 中途到期释放的 voice
+                soa.init_lane(&base_info(wave(500)), i % 2, 100, 0, SR, &ch);
+            }
+        }
+        soa
+    };
+
+    let frames = 256;
+    let stride = MAX_CHANNELS * frames * 2;
+    let mut out_whole = vec![0f32; stride];
+    let mut out_split = vec![0f32; stride];
+    let damper = [false; MAX_CHANNELS];
+
+    let mut pool_whole = build_pool();
+    let mut pool_split = build_pool();
+    let level = Level::new();
+    dispatch!(level, simd => {
+        pool_whole.render(simd, &mut out_whole, 0, frames, 0, &damper);
+        // 强制多个小视图：chunk = 16（每视图 16 lane）
+        let mut views = pool_split.par_views(LANES_ALIGN);
+        assert!(views.len() >= 2, "应切成多个视图（实际 {}）", views.len());
+        for v in views.iter_mut() {
+            v.render(simd, &mut out_split, 0, frames, 0, &damper);
+        }
+    });
+
+    assert_eq!(out_whole, out_split, "分片渲染必须与整体渲染逐位一致");
+}

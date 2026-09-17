@@ -825,5 +825,444 @@ impl VoiceSoa {
     }
 }
 
+/// 按 lane 范围切分的渲染视图（见 [`VoiceSoa::par_views`]）。
+///
+/// 生命周期绑定在 `&mut VoiceSoa` 上：视图存活期间池不可被访问（借用检查
+/// 保证），视图之间 lane 区间不相交（`chunks_mut` 保证），因此无需 unsafe
+/// 即可交给 Rayon 并行。
+pub struct VoiceSoaView<'a> {
+    /// 本视图的全局 lane 起始索引。
+    pub lane_base: usize,
+    pub envelope: &'a mut [f32],
+    pub env_stage: &'a mut [f32],
+    pub stage_progress: &'a mut [f32],
+    pub env_start: &'a mut [f32],
+    pub decay_start: &'a mut [f32],
+    pub flt_x1: &'a mut [f32],
+    pub flt_x2: &'a mut [f32],
+    pub flt_y1: &'a mut [f32],
+    pub flt_y2: &'a mut [f32],
+    pub flt_x1r: &'a mut [f32],
+    pub flt_x2r: &'a mut [f32],
+    pub flt_y1r: &'a mut [f32],
+    pub flt_y2r: &'a mut [f32],
+    pub released: &'a mut [f32],
+    pub held_by_damper: &'a mut [f32],
+    pub time: &'a mut [f64],
+    pub start_offset: &'a mut [u32],
+    pub sustain_level: &'a [f32],
+    pub env_level: &'a [f32],
+    pub delay_frames: &'a [f32],
+    pub attack_frames: &'a [f32],
+    pub hold_frames: &'a [f32],
+    pub decay_frames: &'a [f32],
+    pub release_frames: &'a [f32],
+    pub is_stereo: &'a [f32],
+    pub interp: &'a [f32],
+    pub speed: &'a [f32],
+    pub base_gain: &'a [f32],
+    pub pan_l: &'a [f32],
+    pub pan_r: &'a [f32],
+    pub loop_mode: &'a [f32],
+    pub flt_b0: &'a [f32],
+    pub flt_b1: &'a [f32],
+    pub flt_b2: &'a [f32],
+    pub flt_a1: &'a [f32],
+    pub flt_a2: &'a [f32],
+    pub sample_length: &'a [u32],
+    pub sample_offset: &'a [u32],
+    pub loop_start: &'a [u32],
+    pub loop_end: &'a [u32],
+    pub end_sample: &'a [u64],
+    pub channel: &'a [u8],
+    pub samples: &'a [Arc<[f32]>],
+}
+
+impl VoiceSoa {
+    /// 把池按 lane 范围切成可变异步视图（Rayon 分片单元）。
+    ///
+    /// `chunk` 向上对齐到 [`LANES_ALIGN`]（保证每个视图都是 native 宽度的
+    /// 整数倍，渲染无需尾部处理）。分片数 = `capacity / chunk`。
+    pub fn par_views(&mut self, chunk: usize) -> Vec<VoiceSoaView<'_>> {
+        let chunk = chunk.next_multiple_of(LANES_ALIGN).max(LANES_ALIGN);
+        let n = self.capacity().div_ceil(chunk);
+        if n == 0 {
+            return Vec::new();
+        }
+        let mut envelope: Vec<&mut [f32]> = self.envelope.chunks_mut(chunk).collect();
+        let mut env_stage: Vec<&mut [f32]> = self.env_stage.chunks_mut(chunk).collect();
+        let mut stage_progress: Vec<&mut [f32]> = self.stage_progress.chunks_mut(chunk).collect();
+        let mut env_start: Vec<&mut [f32]> = self.env_start.chunks_mut(chunk).collect();
+        let mut decay_start: Vec<&mut [f32]> = self.decay_start.chunks_mut(chunk).collect();
+        let mut flt_x1: Vec<&mut [f32]> = self.flt_x1.chunks_mut(chunk).collect();
+        let mut flt_x2: Vec<&mut [f32]> = self.flt_x2.chunks_mut(chunk).collect();
+        let mut flt_y1: Vec<&mut [f32]> = self.flt_y1.chunks_mut(chunk).collect();
+        let mut flt_y2: Vec<&mut [f32]> = self.flt_y2.chunks_mut(chunk).collect();
+        let mut flt_x1r: Vec<&mut [f32]> = self.flt_x1r.chunks_mut(chunk).collect();
+        let mut flt_x2r: Vec<&mut [f32]> = self.flt_x2r.chunks_mut(chunk).collect();
+        let mut flt_y1r: Vec<&mut [f32]> = self.flt_y1r.chunks_mut(chunk).collect();
+        let mut flt_y2r: Vec<&mut [f32]> = self.flt_y2r.chunks_mut(chunk).collect();
+        let mut released: Vec<&mut [f32]> = self.released.chunks_mut(chunk).collect();
+        let mut held_by_damper: Vec<&mut [f32]> = self.held_by_damper.chunks_mut(chunk).collect();
+        let mut time: Vec<&mut [f64]> = self.time.chunks_mut(chunk).collect();
+        let mut start_offset: Vec<&mut [u32]> = self.start_offset.chunks_mut(chunk).collect();
+        let sustain_level: Vec<&[f32]> = self.sustain_level.chunks(chunk).collect();
+        let env_level: Vec<&[f32]> = self.env_level.chunks(chunk).collect();
+        let delay_frames: Vec<&[f32]> = self.delay_frames.chunks(chunk).collect();
+        let attack_frames: Vec<&[f32]> = self.attack_frames.chunks(chunk).collect();
+        let hold_frames: Vec<&[f32]> = self.hold_frames.chunks(chunk).collect();
+        let decay_frames: Vec<&[f32]> = self.decay_frames.chunks(chunk).collect();
+        let release_frames: Vec<&[f32]> = self.release_frames.chunks(chunk).collect();
+        let is_stereo: Vec<&[f32]> = self.is_stereo.chunks(chunk).collect();
+        let interp: Vec<&[f32]> = self.interp.chunks(chunk).collect();
+        let speed: Vec<&[f32]> = self.speed.chunks(chunk).collect();
+        let base_gain: Vec<&[f32]> = self.base_gain.chunks(chunk).collect();
+        let pan_l: Vec<&[f32]> = self.pan_l.chunks(chunk).collect();
+        let pan_r: Vec<&[f32]> = self.pan_r.chunks(chunk).collect();
+        let loop_mode: Vec<&[f32]> = self.loop_mode.chunks(chunk).collect();
+        let flt_b0: Vec<&[f32]> = self.flt_b0.chunks(chunk).collect();
+        let flt_b1: Vec<&[f32]> = self.flt_b1.chunks(chunk).collect();
+        let flt_b2: Vec<&[f32]> = self.flt_b2.chunks(chunk).collect();
+        let flt_a1: Vec<&[f32]> = self.flt_a1.chunks(chunk).collect();
+        let flt_a2: Vec<&[f32]> = self.flt_a2.chunks(chunk).collect();
+        let sample_length: Vec<&[u32]> = self.sample_length.chunks(chunk).collect();
+        let sample_offset: Vec<&[u32]> = self.sample_offset.chunks(chunk).collect();
+        let loop_start: Vec<&[u32]> = self.loop_start.chunks(chunk).collect();
+        let loop_end: Vec<&[u32]> = self.loop_end.chunks(chunk).collect();
+        let end_sample: Vec<&[u64]> = self.end_sample.chunks(chunk).collect();
+        let channel: Vec<&[u8]> = self.channel.chunks(chunk).collect();
+        let samples: Vec<&[Arc<[f32]>]> = self.samples.chunks(chunk).collect();
+        (0..n)
+            .map(|i| VoiceSoaView {
+                lane_base: i * chunk,
+                envelope: std::mem::take(&mut envelope[i]),
+                env_stage: std::mem::take(&mut env_stage[i]),
+                stage_progress: std::mem::take(&mut stage_progress[i]),
+                env_start: std::mem::take(&mut env_start[i]),
+                decay_start: std::mem::take(&mut decay_start[i]),
+                flt_x1: std::mem::take(&mut flt_x1[i]),
+                flt_x2: std::mem::take(&mut flt_x2[i]),
+                flt_y1: std::mem::take(&mut flt_y1[i]),
+                flt_y2: std::mem::take(&mut flt_y2[i]),
+                flt_x1r: std::mem::take(&mut flt_x1r[i]),
+                flt_x2r: std::mem::take(&mut flt_x2r[i]),
+                flt_y1r: std::mem::take(&mut flt_y1r[i]),
+                flt_y2r: std::mem::take(&mut flt_y2r[i]),
+                released: std::mem::take(&mut released[i]),
+                held_by_damper: std::mem::take(&mut held_by_damper[i]),
+                time: std::mem::take(&mut time[i]),
+                start_offset: std::mem::take(&mut start_offset[i]),
+                sustain_level: sustain_level[i],
+                env_level: env_level[i],
+                delay_frames: delay_frames[i],
+                attack_frames: attack_frames[i],
+                hold_frames: hold_frames[i],
+                decay_frames: decay_frames[i],
+                release_frames: release_frames[i],
+                is_stereo: is_stereo[i],
+                interp: interp[i],
+                speed: speed[i],
+                base_gain: base_gain[i],
+                pan_l: pan_l[i],
+                pan_r: pan_r[i],
+                loop_mode: loop_mode[i],
+                flt_b0: flt_b0[i],
+                flt_b1: flt_b1[i],
+                flt_b2: flt_b2[i],
+                flt_a1: flt_a1[i],
+                flt_a2: flt_a2[i],
+                sample_length: sample_length[i],
+                sample_offset: sample_offset[i],
+                loop_start: loop_start[i],
+                loop_end: loop_end[i],
+                end_sample: end_sample[i],
+                channel: channel[i],
+                samples: samples[i],
+            })
+            .collect()
+    }
+}
+
+impl VoiceSoaView<'_> {
+    /// 本视图的 lane 数。
+    pub fn len(&self) -> usize {
+        self.envelope.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.envelope.is_empty()
+    }
+
+    /// 渲染本视图的 lane（块内所有帧），输出**累加**到分片 scratch
+    /// （每通道 `frames × 2` 交错立体声区域，通道 stride = `frames * 2`）。
+    ///
+    /// 语义与 `CpuVoice::render_block`（`profile_mode = 0`）逐位一致。
+    #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
+    pub fn render<S: Simd>(
+        &mut self,
+        simd: S,
+        out: &mut [f32],
+        fi_start: usize,
+        frames: usize,
+        sample_start: u64,
+        damper: &[bool],
+    ) {
+        let width = S::f32s::LEN;
+        let n = self.len();
+        let mut start = 0;
+        while start < n {
+            let w = width.min(n - start);
+            self.render_lanes(simd, start, w, out, fi_start, frames, sample_start, damper);
+            start += w;
+        }
+    }
+
+    /// 渲染本视图内 `[start, start + width)` 的 lane（块内所有帧）。
+    #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
+    fn render_lanes<S: Simd>(
+        &mut self,
+        simd: S,
+        start: usize,
+        width: usize,
+        out: &mut [f32],
+        fi_start: usize,
+        frames: usize,
+        sample_start: u64,
+        damper: &[bool],
+    ) {
+        let slot_of = |lane: usize| start + lane;
+
+        // ── 常数参数（帧不变，load 一次）──
+        let gain = S::f32s::from_slice(simd, &self.base_gain[start..start + width]);
+        let pan_l = S::f32s::from_slice(simd, &self.pan_l[start..start + width]);
+        let pan_r = S::f32s::from_slice(simd, &self.pan_r[start..start + width]);
+        let is_stereo = S::f32s::from_slice(simd, &self.is_stereo[start..start + width]);
+        let stereo_mask = is_stereo.simd_gt(0.5);
+        let b0 = S::f32s::from_slice(simd, &self.flt_b0[start..start + width]);
+        let b1 = S::f32s::from_slice(simd, &self.flt_b1[start..start + width]);
+        let b2 = S::f32s::from_slice(simd, &self.flt_b2[start..start + width]);
+        let a1 = S::f32s::from_slice(simd, &self.flt_a1[start..start + width]);
+        let a2 = S::f32s::from_slice(simd, &self.flt_a2[start..start + width]);
+
+        // ── 每帧状态 ──
+        let mut env = EnvVecs::load_view(simd, self, start, width);
+        let mut x1 = S::f32s::from_slice(simd, &self.flt_x1[start..start + width]);
+        let mut x2 = S::f32s::from_slice(simd, &self.flt_x2[start..start + width]);
+        let mut y1 = S::f32s::from_slice(simd, &self.flt_y1[start..start + width]);
+        let mut y2 = S::f32s::from_slice(simd, &self.flt_y2[start..start + width]);
+        let mut x1r = S::f32s::from_slice(simd, &self.flt_x1r[start..start + width]);
+        let mut x2r = S::f32s::from_slice(simd, &self.flt_x2r[start..start + width]);
+        let mut y1r = S::f32s::from_slice(simd, &self.flt_y1r[start..start + width]);
+        let mut y2r = S::f32s::from_slice(simd, &self.flt_y2r[start..start + width]);
+        let mut released = S::f32s::from_slice(simd, &self.released[start..start + width]);
+        let mut held = S::f32s::from_slice(simd, &self.held_by_damper[start..start + width]);
+
+        // ── 常数的 lane 参数（帧不变，标量栈数组）──
+        let mut begins = [0u32; MAX_LANES];
+        let mut release_ats = [0u32; MAX_LANES];
+        let mut damper_bits = 0u64;
+        for lane in 0..width {
+            let slot = slot_of(lane);
+            begins[lane] = self.start_offset[slot];
+            release_ats[lane] = if self.released[slot] != 0.0 || self.held_by_damper[slot] != 0.0 {
+                u32::MAX
+            } else {
+                self.end_sample[slot]
+                    .saturating_sub(sample_start)
+                    .min(u32::MAX as u64) as u32
+            };
+            if damper
+                .get(self.channel[slot] as usize)
+                .copied()
+                .unwrap_or(false)
+            {
+                damper_bits |= 1 << lane;
+            }
+        }
+        let begin_vec = S::u32s::from_slice(simd, &begins[..width]);
+        let release_at_vec = S::u32s::from_slice(simd, &release_ats[..width]);
+        let damper_mask = S::mask32s::from_bitmask(simd, damper_bits);
+        let mut pan_l_arr = [0f32; MAX_LANES];
+        let mut pan_r_arr = [0f32; MAX_LANES];
+        pan_l.store_slice(&mut pan_l_arr[..width]);
+        pan_r.store_slice(&mut pan_r_arr[..width]);
+
+        let zero = S::f32s::splat(simd, 0.0);
+        let one = S::f32s::splat(simd, 1.0);
+        let five = S::f32s::splat(simd, ENV_RELEASE);
+        let six = S::f32s::splat(simd, ENV_FINISHED);
+
+        // ── 帧循环 ──
+        for i in 0..frames {
+            let fi_abs = (fi_start + i) as u32;
+            let i_vec = S::u32s::splat(simd, i as u32);
+            let fi_vec = S::u32s::splat(simd, fi_abs);
+
+            // 释放触发（踏板按住时改为 held）
+            let rel_now = released.simd_eq(0.0) & held.simd_eq(0.0) & i_vec.simd_ge(release_at_vec);
+            let rel_mask = rel_now & !damper_mask;
+            let hold_mask = rel_now & damper_mask;
+            env.env_start = rel_mask.select(env.envelope, env.env_start);
+            env.stage = rel_mask.select(five, env.stage);
+            env.progress = rel_mask.select(zero, env.progress);
+            released = rel_mask.select(one, released);
+            held = hold_mask.select(one, held);
+
+            // 本帧活跃 lane：已开始且未结束
+            let begun = fi_vec.simd_ge(begin_vec);
+            let live = env.stage.simd_lt(six) & begun;
+            let live_bits = live.to_bitmask();
+
+            // ── 采样（逐 lane 标量：位置 f64、循环回绕、gather）──
+            let mut l0s = [0f32; MAX_LANES];
+            let mut r0s = [0f32; MAX_LANES];
+            let mut finished_bits = 0u64;
+            if live_bits != 0 {
+                let rel_stage_bits = env.stage.simd_ge(five).to_bitmask();
+                for lane in 0..width {
+                    if (live_bits >> lane) & 1 == 0 {
+                        continue;
+                    }
+                    let slot = slot_of(lane);
+                    let n = (fi_start + i - begins[lane] as usize) as f64;
+                    let t = self.time[slot] + n * f64::from(self.speed[slot]);
+                    let mut idx = t as u32;
+                    let frac = (t - f64::from(idx)) as f32;
+                    let sample_len = self.sample_length[slot];
+                    let max_idx = sample_len.saturating_sub(1);
+                    let is_released = ((rel_stage_bits >> lane) & 1) != 0;
+                    let loop_cont = self.loop_mode[slot] == 1.0;
+                    let loop_sus = self.loop_mode[slot] == 2.0 && !is_released;
+                    let has_loop =
+                        (loop_cont || loop_sus) && self.loop_end[slot] > self.loop_start[slot];
+                    if has_loop && idx > self.loop_end[slot] {
+                        let loop_len = self.loop_end[slot] - self.loop_start[slot];
+                        idx = (idx - self.loop_end[slot] - 1) % loop_len + self.loop_start[slot];
+                    }
+                    if idx < sample_len {
+                        let scale = 1 + self.is_stereo[slot] as u32;
+                        let si = (self.sample_offset[slot] + idx * scale) as usize;
+                        let sample = &self.samples[slot];
+                        let mut l0 = sample.get(si).copied().unwrap_or(0.0);
+                        let mut r0 = if self.is_stereo[slot] != 0.0 {
+                            sample.get(si + 1).copied().unwrap_or(0.0)
+                        } else {
+                            l0
+                        };
+                        if self.interp[slot] == 1.0 && idx < max_idx {
+                            let i1 = si + scale as usize;
+                            let l1 = sample.get(i1).copied().unwrap_or(0.0);
+                            let r1 = if self.is_stereo[slot] != 0.0 {
+                                sample.get(i1 + 1).copied().unwrap_or(0.0)
+                            } else {
+                                l1
+                            };
+                            l0 += (l1 - l0) * frac;
+                            r0 += (r1 - r0) * frac;
+                        }
+                        l0s[lane] = l0;
+                        r0s[lane] = r0;
+                    } else if !loop_cont {
+                        finished_bits |= 1 << lane;
+                    }
+                }
+            }
+
+            // ── 增益 / 插值结果 / biquad（向量）──
+            let raw_l = S::f32s::from_slice(simd, &l0s[..width]);
+            let raw_r = S::f32s::from_slice(simd, &r0s[..width]);
+            let mut s_l = raw_l * gain * env.envelope;
+            let mut s_r = raw_r * gain * env.envelope;
+
+            let out_l = b0 * s_l + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+            x2 = x1;
+            x1 = s_l;
+            y2 = y1;
+            y1 = out_l;
+            s_l = out_l;
+
+            let sr_in = s_r;
+            let out_r = b0 * s_r + b1 * x1r + b2 * x2r - a1 * y1r - a2 * y2r;
+            x2r = x1r;
+            x1r = sr_in;
+            y2r = y1r;
+            y1r = out_r;
+            s_r = stereo_mask.select(out_r, s_l);
+
+            // ── 输出（逐 lane 累加到通道区域）──
+            if live_bits != 0 {
+                let mut sl_arr = [0f32; MAX_LANES];
+                let mut sr_arr = [0f32; MAX_LANES];
+                s_l.store_slice(&mut sl_arr[..width]);
+                s_r.store_slice(&mut sr_arr[..width]);
+                let base_frame = i * 2;
+                for lane in 0..width {
+                    if (live_bits >> lane) & 1 == 0 {
+                        continue;
+                    }
+                    let ch = self.channel[slot_of(lane)] as usize;
+                    let base = ch * frames * 2 + base_frame;
+                    out[base] += sl_arr[lane] * pan_l_arr[lane];
+                    out[base + 1] += sr_arr[lane] * pan_r_arr[lane];
+                }
+            }
+
+            // 越界结束（本帧后不再输出）
+            if finished_bits != 0 {
+                env.stage = S::mask32s::from_bitmask(simd, finished_bits).select(six, env.stage);
+            }
+
+            // 包络推进（未开始的 lane 不推进）
+            advance_env_vectors(simd, &mut env, begun);
+        }
+
+        // ── 写回状态 ──
+        env.store_view(self, start, width);
+        x1.store_slice(&mut self.flt_x1[start..start + width]);
+        x2.store_slice(&mut self.flt_x2[start..start + width]);
+        y1.store_slice(&mut self.flt_y1[start..start + width]);
+        y2.store_slice(&mut self.flt_y2[start..start + width]);
+        x1r.store_slice(&mut self.flt_x1r[start..start + width]);
+        x2r.store_slice(&mut self.flt_x2r[start..start + width]);
+        y1r.store_slice(&mut self.flt_y1r[start..start + width]);
+        y2r.store_slice(&mut self.flt_y2r[start..start + width]);
+        released.store_slice(&mut self.released[start..start + width]);
+        held.store_slice(&mut self.held_by_damper[start..start + width]);
+    }
+}
+
+impl<S: Simd> EnvVecs<S> {
+    #[inline(always)]
+    fn load_view(simd: S, v: &VoiceSoaView, start: usize, width: usize) -> Self {
+        let r = start..start + width;
+        Self {
+            stage: S::f32s::from_slice(simd, &v.env_stage[r.clone()]),
+            progress: S::f32s::from_slice(simd, &v.stage_progress[r.clone()]),
+            envelope: S::f32s::from_slice(simd, &v.envelope[r.clone()]),
+            env_start: S::f32s::from_slice(simd, &v.env_start[r.clone()]),
+            decay_start: S::f32s::from_slice(simd, &v.decay_start[r.clone()]),
+            sustain_level: S::f32s::from_slice(simd, &v.sustain_level[r.clone()]),
+            peak: S::f32s::from_slice(simd, &v.env_level[r.clone()]),
+            delay_frames: S::f32s::from_slice(simd, &v.delay_frames[r.clone()]),
+            attack_frames: S::f32s::from_slice(simd, &v.attack_frames[r.clone()]),
+            hold_frames: S::f32s::from_slice(simd, &v.hold_frames[r.clone()]),
+            decay_frames: S::f32s::from_slice(simd, &v.decay_frames[r.clone()]),
+            release_frames: S::f32s::from_slice(simd, &v.release_frames[r]),
+        }
+    }
+
+    #[inline(always)]
+    fn store_view(&self, v: &mut VoiceSoaView, start: usize, width: usize) {
+        let r = start..start + width;
+        self.stage.store_slice(&mut v.env_stage[r.clone()]);
+        self.progress.store_slice(&mut v.stage_progress[r.clone()]);
+        self.envelope.store_slice(&mut v.envelope[r.clone()]);
+        self.env_start.store_slice(&mut v.env_start[r.clone()]);
+        self.decay_start.store_slice(&mut v.decay_start[r.clone()]);
+    }
+}
+
 #[cfg(test)]
 mod tests;
