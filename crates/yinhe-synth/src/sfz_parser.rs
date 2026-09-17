@@ -103,11 +103,15 @@ impl Default for KeyInfo {
             stop: None,
             ampeg_start: 0.0,
             ampeg_delay: 0.0,
-            ampeg_attack: 0.001,
+            // 默认对齐 xsynth（`AmpegEnvelopeParams::default`）：attack/release
+            // 10ms 而非 SFZ 规范的 1ms——音色库不写 ampeg_release 时（如 Starry
+            // Studio Grand），1ms 包络让每个音符结束都像硬切（密集音符连成
+            // click），xsynth 的 10ms 听感自然。
+            ampeg_attack: 0.01,
             ampeg_hold: 0.0,
             ampeg_decay: 0.001,
             ampeg_sustain: 1.0,
-            ampeg_release: 0.001,
+            ampeg_release: 0.01,
             lovel: 0,
             hivel: 127,
             loop_mode: LoopMode::NoLoop,
