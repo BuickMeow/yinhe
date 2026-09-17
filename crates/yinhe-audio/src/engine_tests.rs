@@ -4055,3 +4055,120 @@ fn yinhe_cpu_engine_render_smoke() {
     }
     assert!(peak > 0.0, "yinhe CPU 后端应渲染出输出（peak={peak}）");
 }
+
+/// 画像（本地 MIDI + SoundFont，ignored）：cyber-night 第 92 小节密集段，
+/// 三合成后端（xsynth CPU / yinhe CPU / yinhe GPU）的实时倍数与峰值 voice。
+///
+/// 输出可直接用于选择黑乐谱的优化方向（并行/分页/流水线）。
+#[cfg(feature = "gpu")]
+#[test]
+#[ignore = "需要本地 MIDI + SoundFont"]
+fn prof_cyber_night_dense_section() {
+    use std::time::Instant;
+
+    let midi = "/Users/jieneng/Music/MIDIs/cyber-night.mid";
+    let sfz = "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
+    let sr = 48_000u32;
+    let model = Arc::new(yinhe_midi::parse_path(midi).expect("parse cyber-night"));
+    let ppq = model.meta.ppq;
+    let bar92_tick = 91 * 4 * ppq; // 4/4：第 92 小节起点
+    let total_notes: usize = (0..128).map(|k| model.notes[k].len()).sum();
+    eprintln!("=== cyber-night: ppq={ppq} notes={total_notes} bar92_tick={bar92_tick}");
+
+    // 密度画像：bar92 前后各 8 小节的每拍音符数（找该段峰值）
+    let mut per_beat: std::collections::BTreeMap<u32, usize> = Default::default();
+    for k in 0..128 {
+        for n in model.notes[k].iter() {
+            let beat = n.start_tick / ppq;
+            if n.start_tick < bar92_tick + 16 * 4 * ppq && n.start_tick + 16 * 4 * ppq >= bar92_tick
+            {
+                *per_beat.entry(beat).or_default() += 1;
+            }
+        }
+    }
+    let peak = per_beat.iter().max_by_key(|(_, v)| **v);
+    if let Some((beat, count)) = peak {
+        eprintln!(
+            "  bar92 周围每拍音符峰值: beat={beat}（约第 {} 小节）count={count}",
+            beat / 4 + 1
+        );
+    }
+
+    let layout = crate::spawn::channels_for_model(&model);
+    let active: Vec<u8> = (0..16u8)
+        .filter(|c| layout.is_active(*c as usize))
+        .collect();
+    eprintln!("  active channels: {active:?}");
+
+    for (name, backend) in [("xsynth-cpu", 0u8), ("yinhe-cpu", 1), ("yinhe-gpu", 2)] {
+        let mut engine = AudioEngine::new(sr, layout.clone());
+        engine.handle_command(AudioCommand::LoadModel {
+            model: Arc::clone(&model),
+        });
+        // 音色库（三后端各自的加载路径）
+        let t_sf = Instant::now();
+        match backend {
+            0 => {
+                let configs: Vec<(u8, Vec<String>)> =
+                    active.iter().map(|c| (*c, vec![sfz.to_string()])).collect();
+                engine.handle_command(AudioCommand::SetSoundFonts {
+                    configs: Box::new(configs),
+                });
+            }
+            1 => {
+                let mut cs = yinhe_synth::CpuSynth::new(sr);
+                for c in &active {
+                    cs.load_dense_soundfonts(*c as u32, &[std::path::PathBuf::from(sfz)])
+                        .expect("cpu sf load");
+                }
+                engine.cpu_synth = Some(cs);
+            }
+            _ => {
+                let mut gs = yinhe_synth::GpuSynth::new_default(sr).expect("gpu init");
+                for c in &active {
+                    gs.load_dense_soundfonts(*c as u32, &[std::path::PathBuf::from(sfz)])
+                        .expect("gpu sf load");
+                }
+                gs.finish_soundfont_load();
+                engine.gpu_synth = Some(gs);
+            }
+        }
+        let sf_ms = t_sf.elapsed().as_secs_f64() * 1000.0;
+
+        // 从 92 小节前 1 秒开始（跳过 seek 后 chase 的静默期）
+        let target_tick = bar92_tick.saturating_sub(ppq * 2);
+        let start_sample = engine.tick_to_sample(target_tick);
+        engine.handle_command(AudioCommand::Play {
+            from_sample: start_sample,
+        });
+
+        // GPU 模式用 4096 块（引擎实际块长），CPU 用 512
+        let frames = if backend == 2 { 4096 } else { 512 };
+        let mut buf = vec![0.0f32; frames * 2];
+        let target: u64 = 3 * sr as u64;
+        let mut rendered = 0u64;
+        let mut peak_voice = 0u64;
+        let mut max_chunk_ms = 0.0f64;
+        let t0 = Instant::now();
+        while rendered < target {
+            // GPU：事件表同步（renderer 的 run 循环职责；测试路径手动调用）
+            #[cfg(feature = "gpu")]
+            if backend == 2 {
+                engine.sync_gpu_backend();
+            }
+            let tc = Instant::now();
+            engine.render(&mut buf);
+            let dt = tc.elapsed().as_secs_f64() * 1000.0;
+            rendered += frames as u64;
+            peak_voice = peak_voice.max(engine.voice_count());
+            if rendered > sr as u64 {
+                max_chunk_ms = max_chunk_ms.max(dt);
+            }
+        }
+        let el = t0.elapsed().as_secs_f64();
+        eprintln!(
+            "  {name:<10} 音色库={sf_ms:>6.0}ms 3s音频={el:>6.2}s ({:.2}x realtime) peak_voice={peak_voice} max_chunk={max_chunk_ms:.1}ms",
+            3.0 / el.max(1e-9)
+        );
+    }
+}

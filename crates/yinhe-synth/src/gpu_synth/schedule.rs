@@ -39,6 +39,8 @@ pub(super) struct Voice {
     pub(super) state: GpuVoiceState,
     pub(super) key: u8,
     pub(super) channel: u8,
+    /// NoteOn 力度（per-key layer 超限时按 xsynth 语义杀最弱 voice）。
+    pub(super) velocity: u8,
     /// 音符结束时间（绝对 sample）：voice 到期自行 release（NoteOn 携带）。
     /// 事件表因此不再需要 NoteOff 事件（分页装载时 NoteOff 归属会破坏事件顺序）。
     pub(super) end_sample: u64,
@@ -399,9 +401,11 @@ impl GpuSynth {
             Some(cc) => env_curve_frames(cc, orig_release_frames, self.sample_rate, true),
             None => orig_release_frames,
         };
+        let new_index = self.voices.len();
         self.voices.push(Voice {
             key,
             channel,
+            velocity: vel,
             end_sample,
             orig_attack_frames,
             orig_release_frames,
@@ -455,6 +459,42 @@ impl GpuSynth {
                 flt_y2r: 0.0,
             },
         });
+
+        // per-key layer 上限（SetLayerCount）：超限时反复杀该 key velocity 最低的
+        // 未释放 voice（xsynth pop_quietest_voice_group 语义；跳过刚加入的）。
+        if let Some(max) = self.max_layers {
+            loop {
+                let count = self
+                    .voices
+                    .iter()
+                    .filter(|v| v.channel == channel && v.key == key && v.state.env_stage < 6)
+                    .count();
+                if count <= max {
+                    break;
+                }
+                let victim = self
+                    .voices
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, v)| {
+                        *i != new_index
+                            && v.channel == channel
+                            && v.key == key
+                            && v.state.env_stage < 5
+                            && !v.release_pending
+                            && !v.held_by_damper
+                    })
+                    .min_by_key(|(_, v)| v.velocity)
+                    .map(|(i, _)| i);
+                let Some(idx) = victim else {
+                    break; // 其余已在 release 中，无候选
+                };
+                let v = &mut self.voices[idx];
+                v.state.env_stage = 6;
+                v.held_by_damper = false;
+                releases.push(kill_cmd(block_frame, idx));
+            }
+        }
 
         // 超限淘汰：优先杀最老的 release 中 voice（听感最弱），否则杀最老的 active。
         // 只预置 stage 6 + 发 kill 指令，不 remove——本块已生成的指令索引保持稳定。

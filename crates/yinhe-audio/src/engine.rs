@@ -339,6 +339,16 @@ impl AudioEngine {
             .send_event(SynthEvent::AllChannels(ChannelEvent::Config(
                 ChannelConfigEvent::SetLayerCount(count),
             )));
+        // yinhe 后端（GPU/CPU）各自的 per-key layer 语义（对齐 xsynth）
+        #[cfg(feature = "gpu")]
+        {
+            if let Some(cs) = self.cpu_synth.as_mut() {
+                cs.set_layer_count(count);
+            }
+            if let Some(gs) = self.gpu_synth.as_mut() {
+                gs.set_layer_count(count);
+            }
+        }
     }
 
     pub(crate) fn handle_command(&mut self, cmd: AudioCommand) {

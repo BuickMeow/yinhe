@@ -115,6 +115,9 @@ pub struct GpuSynth {
     /// 全局 voice 上限（黑乐谱长 sustain/无 note_off 的 voice 会累积，
     /// 超限时淘汰最老的 release 中 voice，否则最老的 active——与 xsynth voice 限制同思路）
     max_voices: usize,
+    /// 每 key 同时活跃 voice 上限（`SetLayerCount`；None = 不限制）。
+    /// xsynth 默认 4；超限时按 xsynth 语义杀该 key velocity 最低的 voice。
+    max_layers: Option<usize>,
     /// 峰值 voice 数统计（诊断用）
     peak_voices: usize,
     sample_rate: u32,
@@ -168,6 +171,7 @@ impl GpuSynth {
             channel_mix: Vec::new(),
             channels: [ChannelState::new(sample_rate); MAX_CHANNELS],
             max_voices: 8192,
+            max_layers: Some(4),
             peak_voices: 0,
             sample_rate,
             events: Vec::new(),
@@ -307,6 +311,11 @@ impl GpuSynth {
     /// 设置全局 voice 上限（默认 8192）。超过时淘汰最老的 release 中 voice。
     pub fn set_max_voices(&mut self, max: usize) {
         self.max_voices = max;
+    }
+
+    /// 每 key layer 上限（`SetLayerCount`；None = 不限制；默认 4，对齐 xsynth）。
+    pub fn set_layer_count(&mut self, count: Option<usize>) {
+        self.max_layers = count;
     }
 
     /// 渲染期间的峰值 voice 数（诊断用）
@@ -562,6 +571,42 @@ mod tests {
         assert_eq!(peak(&buffers), 0.0, "voices 清空后不得循环输出残留音频");
     }
 
+    /// layer 上限（对齐 xsynth）：同一 key 5 个递增力度音符 + layer=4 →
+    /// 活跃 voice 只 4 个（杀 velocity 最低的）。
+    #[test]
+    fn layer_limit_kills_quietest() {
+        let Some(sfz) = std::env::var_os("YINHE_TEST_SFZ") else {
+            return;
+        };
+        let path = std::path::PathBuf::from(&sfz);
+        let mut synth = GpuSynth::new_default(44_100).expect("GpuSynth");
+        synth
+            .load_dense_soundfonts(0, std::slice::from_ref(&path))
+            .expect("load");
+        synth.finish_soundfont_load();
+        synth.set_layer_count(Some(4));
+        let mut events = Vec::new();
+        for i in 0..5u8 {
+            events.push(SynthEvent::NoteOn {
+                sample: 0,
+                channel: 0,
+                key: 60,
+                velocity: 20 + i * 20,
+                end_sample: 44_100,
+            });
+        }
+        synth.load_events(events);
+        let frames = 512;
+        let mut bufs: Vec<yinhe_mixer::ChannelBuffers> = (0..1)
+            .map(|_| yinhe_mixer::ChannelBuffers {
+                left: vec![0.0; frames],
+                right: vec![0.0; frames],
+            })
+            .collect();
+        synth.render_to_mixer(&mut bufs);
+        assert_eq!(synth.voice_count(), 4, "layer=4 应限制同 key 活跃 voice 数");
+    }
+
     /// 回归：内部分段渲染（外层块 4096 = 8×512 段）与小块（512，单段）
     /// 输出一致，验证跨段 voice 状态（time/包络/滤波）与段间事件推进连续。
     #[test]
@@ -754,6 +799,7 @@ mod tests {
             },
             key: 60,
             channel: 0,
+            velocity: 0,
             end_sample: u64::MAX,
             orig_attack_frames: 0.0,
             orig_release_frames: 0.0,

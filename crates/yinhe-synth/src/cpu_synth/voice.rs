@@ -29,6 +29,8 @@ fn frame_count(info: &KeyInfo) -> u32 {
 pub(super) struct CpuVoice {
     pub(super) channel: u8,
     pub(super) key: u8,
+    /// NoteOn 力度（per-key layer 超限时按 xsynth 语义杀最弱 voice）。
+    pub(super) velocity: u8,
     /// 音符结束时间（绝对 sample；到期自释，NoteOn 携带）。
     pub(super) end_sample: u64,
     pub(super) held_by_damper: bool,
@@ -97,6 +99,7 @@ impl CpuVoice {
         info: &KeyInfo,
         channel: u8,
         key: u8,
+        velocity: u8,
         end_sample: u64,
         start_offset: u32,
         sample_rate: u32,
@@ -121,6 +124,7 @@ impl CpuVoice {
         let mut voice = Self {
             channel,
             key,
+            velocity,
             end_sample,
             held_by_damper: false,
             released: false,
