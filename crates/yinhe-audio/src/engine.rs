@@ -109,6 +109,11 @@ pub(crate) struct AudioEngine {
     /// GPU 合成器 — 启用后渲染走 GpuSynth 而非 xsynth
     #[cfg(feature = "gpu")]
     pub(crate) gpu_synth: Option<yinhe_synth::GpuSynth>,
+    /// GPU 后端需要与引擎状态重新同步（`seek_to` 位置跳变或事件表失效时置位）。
+    /// 渲染线程每轮渲染前由 `sync_gpu_backend` 消费一次，幂等；
+    /// 取代过去散落在 renderer 命令处理点上的显式 `sync_gpu_synth_events` 调用。
+    #[cfg(feature = "gpu")]
+    pub(crate) gpu_backend_dirty: bool,
 }
 
 /// 插件预览的一条活动音符（引擎侧调度 NoteOn/NoteOff）。
@@ -195,6 +200,8 @@ impl AudioEngine {
                 plugin_previews: Vec::new(),
                 #[cfg(feature = "gpu")]
                 gpu_synth: None,
+                #[cfg(feature = "gpu")]
+                gpu_backend_dirty: true,
             }
         })
     }
@@ -239,8 +246,27 @@ impl AudioEngine {
         self.duration_samples
     }
 
+    /// 当前活跃 voice 数（当前合成后端）。
+    /// 导出尾音判定用它（`export.rs`）：后端切换后语义保持不变。
     pub(crate) fn voice_count(&self) -> u64 {
+        #[cfg(feature = "gpu")]
+        if let Some(synth) = &self.gpu_synth {
+            return synth.voice_count() as u64;
+        }
         self.channel_set.voice_count()
+    }
+
+    /// CPU 合成器（xsynth `ChannelSet`）当前是否参与渲染。
+    ///
+    /// GPU 合成激活时 ChannelSet 永不渲染，对它的状态写入（NoteOn/NoteOff、
+    /// AllNotesOff/ResetControl、鼓组模式等）全是死路径——GPU 的等价状态由
+    /// `build_gpu_events` 在 seek 时重建。集中在这一个判据上，避免
+    /// `gpu_synth.is_some()` 散落到状态管理各分支。
+    ///
+    /// Step 2 后端收口后，这些写入会移入各自的 CPU 后端实现，本判据随之退场。
+    #[inline]
+    pub(crate) fn cpu_synth_active(&self) -> bool {
+        !self.gpu_synth_active()
     }
 
     pub(crate) fn model_loaded(&self) -> bool {

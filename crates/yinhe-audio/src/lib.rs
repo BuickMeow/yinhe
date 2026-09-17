@@ -9,6 +9,8 @@ pub mod channel_layout;
 mod channel_set;
 pub mod clap_insert;
 pub mod engine;
+#[cfg(feature = "gpu")]
+mod engine_gpu;
 mod engine_mixer;
 mod engine_render;
 mod engine_state;

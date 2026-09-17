@@ -151,7 +151,11 @@ impl AudioEngine {
             let Some(state) = &states[ch as usize] else {
                 continue;
             };
-            state.send_to(dense, &mut self.channel_set, &skip);
+            // GPU 模式的控制器恢复走 `apply_gpu_chase`（本函数末尾），
+            // ChannelSet 不参与渲染。
+            if self.cpu_synth_active() {
+                state.send_to(dense, &mut self.channel_set, &skip);
+            }
             // 内置音源通道处理段回填（与 xsynth 的 skip 语义一致：已被
             // dispatch 的 CC 不覆盖，避免旧值打回新值）。插件通道的 CC 由
             // 插件实例自身处理（透传语义），不经处理段。
@@ -183,9 +187,17 @@ impl AudioEngine {
                 });
             }
         }
+        // GPU 后端：同一份快照应用到 GpuSynth（skip 翻译与 dense 索引见 apply_gpu_chase）。
+        #[cfg(feature = "gpu")]
+        self.apply_gpu_chase(states);
     }
 
     fn setup_percussion(&mut self, model: &AudioModel) {
+        // GPU 模式的鼓组/乐器模式在 `build_gpu_events` 的 seek 注入中处理，
+        // ChannelSet 不参与渲染（与 CPU `setup_percussion` 同序的注入在那里）。
+        if !self.cpu_synth_active() {
+            return;
+        }
         // Drum channels in GM are channel 9 of each port (port*16 + 9).
         for src_ch in (9..256).step_by(16) {
             let dense = self.channel_layout.dense_for(src_ch);
@@ -344,6 +356,11 @@ impl AudioEngine {
         if dense == u32::MAX {
             return;
         }
+        // GPU 模式：非插件音符的复活由事件表在 seek_pos 重建时完成，
+        // 这里不写 ChannelSet、也不入 active_notes（GPU 的 NoteOff 来自事件表）。
+        if !self.cpu_synth_active() {
+            return;
+        }
         self.channel_set.send_event(SynthEvent::Channel(
             dense,
             ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
@@ -380,7 +397,7 @@ impl AudioEngine {
                         velocity: 0.0,
                     });
                 }
-            } else if an.dense != u32::MAX {
+            } else if an.dense != u32::MAX && self.cpu_synth_active() {
                 self.channel_set.send_event(SynthEvent::Channel(
                     an.dense,
                     ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: an.key }),
@@ -431,14 +448,18 @@ impl AudioEngine {
     }
 
     pub(crate) fn seek_to(&mut self, sample: u64) {
-        self.channel_set
-            .send_event(SynthEvent::AllChannels(ChannelEvent::Audio(
-                ChannelAudioEvent::AllNotesOff,
-            )));
-        self.channel_set
-            .send_event(SynthEvent::AllChannels(ChannelEvent::Audio(
-                ChannelAudioEvent::ResetControl,
-            )));
+        // GPU 模式下 ChannelSet 不参与渲染，重置/清音是死路径
+        //（GPU 的状态重置由事件表在 seek_pos 重建完成）。
+        if self.cpu_synth_active() {
+            self.channel_set
+                .send_event(SynthEvent::AllChannels(ChannelEvent::Audio(
+                    ChannelAudioEvent::AllNotesOff,
+                )));
+            self.channel_set
+                .send_event(SynthEvent::AllChannels(ChannelEvent::Audio(
+                    ChannelAudioEvent::ResetControl,
+                )));
+        }
         // insert 效果器（delay 尾音/envelope 等）随 seek 清空内部状态
         self.mixer.reset_inserts();
         // 内置音源通道处理段随 seek 清空内部状态（filter 历史等）
@@ -493,5 +514,11 @@ impl AudioEngine {
         // renderer 在 seek_to 返回后发 PrepareChase，worker 算完回传 ChaseResult，
         // 由 apply_chase_result 应用。期间 channel state 是 ResetControl 后的初始值，
         // 渲染短暂静音 —— 比 renderer 线程同步阻塞几十万次 ChannelState::apply 更好。
+
+        // GPU 后端位置跳变：置位同步标志，渲染线程渲染前统一重建事件表 + seek。
+        #[cfg(feature = "gpu")]
+        {
+            self.gpu_backend_dirty = true;
+        }
     }
 }

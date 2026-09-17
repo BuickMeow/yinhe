@@ -1994,6 +1994,7 @@ fn test_chase_query_matches_flattened_scan() {
 
 /// 诊断：cyber-night.mid 的 GPU 事件列表不变量（排序 / on-off 配对 / 同 sample 聚集）。
 /// 复现"大量短音符（3 tick 中位数）换算到 sample 域后的配对与时序"。
+#[cfg(feature = "gpu")]
 #[test]
 #[ignore = "需要本地 MIDI 文件"]
 fn diag_cyber_night_event_invariants() {
@@ -2005,7 +2006,7 @@ fn diag_cyber_night_event_invariants() {
     let mut engine = AudioEngine::new(48_000, ChannelLayout::from_mask(active));
     engine.handle_command(AudioCommand::LoadModel { model });
 
-    let events = crate::audio_renderer::build_gpu_synth_events(&engine, 0);
+    let events = engine.build_gpu_events(0);
     eprintln!("事件总数={}", events.len());
 
     let mut sorted = true;
@@ -2082,6 +2083,7 @@ fn diag_cyber_night_event_invariants() {
 
 /// 诊断：cyber-night 的 GPU vs xsynth 渲染对比（分通道隔离）。
 /// 用户反馈：mute 掉 "NOTE 4"（MIDI ch3，16116 音符 / 50806 pitch bend）后正常。
+#[cfg(feature = "gpu")]
 #[test]
 #[ignore = "需要本地 MIDI + SoundFont"]
 fn diag_cyber_night_channel_isolation() {
@@ -2162,7 +2164,7 @@ fn diag_cyber_night_channel_isolation() {
                 stats[4] += 1;
                 continue;
             }
-            if crate::audio_renderer::to_gpu_control_event(&cc.event).is_none() {
+            if crate::engine_gpu::to_gpu_control_event(&cc.event).is_none() {
                 stats[5] += 1;
                 continue;
             }
@@ -2172,7 +2174,7 @@ fn diag_cyber_night_channel_isolation() {
             stats[0], stats[1], stats[2], stats[3], stats[4], stats[5]
         );
     }
-    let all_events = crate::audio_renderer::build_gpu_synth_events(&engine, 0);
+    let all_events = engine.build_gpu_events(0);
     {
         let mut bytype: std::collections::BTreeMap<&str, usize> = Default::default();
         for e in &all_events {
@@ -2467,6 +2469,7 @@ fn diag_cyber_night_channel_isolation() {
 }
 
 /// 诊断：ch3 前 1 秒波形的 GPU vs xsynth 逐样本对比（定位首个差异点）。
+#[cfg(feature = "gpu")]
 #[test]
 #[ignore = "需要本地 MIDI + SoundFont"]
 fn diag_cyber_night_ch3_wave_dump() {
@@ -2491,7 +2494,7 @@ fn diag_cyber_night_ch3_wave_dump() {
         .to_vec();
     let mut engine = AudioEngine::new(sr, ChannelLayout::from_mask(active));
     engine.handle_command(AudioCommand::LoadModel { model });
-    let all_events = crate::audio_renderer::build_gpu_synth_events(&engine, 0);
+    let all_events = engine.build_gpu_events(0);
     let events: Vec<yinhe_synth::SynthEvent> = all_events
         .iter()
         .filter(|e| {
@@ -2799,6 +2802,7 @@ fn diag_cyber_night_ch3_wave_dump() {
 }
 
 /// 诊断：隔离渲染 ch3 高音刮奏（key 107-127 同时按/放），对比 GPU 与 xsynth。
+#[cfg(feature = "gpu")]
 #[test]
 #[ignore = "需要 SoundFont"]
 fn diag_high_cluster_isolated() {
@@ -3029,6 +3033,7 @@ fn diag_high_cluster_isolated() {
 }
 
 /// 诊断：单音符 + 密集 pitch bend（每 100 samples 一个）GPU vs xsynth 对比。
+#[cfg(feature = "gpu")]
 #[test]
 #[ignore = "需要 SoundFont"]
 fn diag_pitch_bend_dense() {
@@ -3217,6 +3222,7 @@ fn diag_pitch_bend_dense() {
 }
 
 /// 诊断：单个 PB 的最小复现（导出 wav 供频率分析）。
+#[cfg(feature = "gpu")]
 #[test]
 #[ignore = "需要 SoundFont"]
 fn diag_pitch_bend_single() {
@@ -3379,6 +3385,7 @@ fn diag_pitch_bend_single() {
 }
 
 /// 诊断：纯音符 + 单个 CC，找出让 GPU 崩坏的 CC。
+#[cfg(feature = "gpu")]
 #[test]
 #[ignore = "需要本地 MIDI + SoundFont"]
 fn diag_ch3_cc_bisect() {
@@ -3402,7 +3409,7 @@ fn diag_ch3_cc_bisect() {
         .to_vec();
     let mut engine = AudioEngine::new(sr, ChannelLayout::from_mask(active));
     engine.handle_command(AudioCommand::LoadModel { model });
-    let all = crate::audio_renderer::build_gpu_synth_events(&engine, 0);
+    let all = engine.build_gpu_events(0);
     // ch3 前 1 秒的纯音符
     let notes: Vec<yinhe_synth::SynthEvent> = all
         .iter()
@@ -3614,6 +3621,7 @@ fn diag_ch3_cc_bisect() {
 
 /// 诊断：走 AudioEngine::render（应用真实入口）与裸 GpuSynth 对比。
 /// 复现"测试找不到、应用出问题"——定位差异在 render 路径还是合成器。
+#[cfg(feature = "gpu")]
 #[test]
 #[ignore = "需要本地 MIDI + SoundFont"]
 fn diag_app_render_path() {
@@ -3634,7 +3642,7 @@ fn diag_app_render_path() {
     engine.handle_command(AudioCommand::LoadModel {
         model: Arc::clone(&model),
     });
-    let events = crate::audio_renderer::build_gpu_synth_events(&engine, 0);
+    let events = engine.build_gpu_events(0);
     eprintln!("事件数={}", events.len());
 
     // 裸 GpuSynth 参考（与既有测试相同）
@@ -3751,6 +3759,7 @@ fn diag_app_render_path() {
 
 /// 诊断：同一模型下 CPU 路径（xsynth）vs GPU 路径（GpuSynth）经完整 render 链路的输出对比。
 /// 这是"只有 GPU 出问题"的直接验证。
+#[cfg(feature = "gpu")]
 #[test]
 #[ignore = "需要本地 MIDI + SoundFont"]
 fn diag_engine_cpu_vs_gpu() {
@@ -3774,7 +3783,7 @@ fn diag_engine_cpu_vs_gpu() {
         });
 
         if use_gpu {
-            let events = crate::audio_renderer::build_gpu_synth_events(&engine, 0);
+            let events = engine.build_gpu_events(0);
             let sfz_path = std::path::PathBuf::from(sfz);
             let mut synth = yinhe_synth::GpuSynth::new_default(sr).unwrap();
             let mut used = std::collections::BTreeSet::new();

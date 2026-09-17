@@ -5,8 +5,6 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
-#[cfg(feature = "gpu")]
-use xsynth_core::channel::ControlEvent;
 use yinhe_dsp::dsp::limiter::VolumeLimiter;
 
 use crate::export::{ExportError, ExportJob, ExportProgress, WavBitDepth};
@@ -112,148 +110,6 @@ impl RendererSharedState {
     }
 }
 
-/// 从 engine 的当前 audible_notes + cc_events 构建 SynthEvent 列表（GPU 路径）
-/// 音符事件 + 通道控制事件（CC/pitch bend/RPN）统一转 sample 域并排序。
-///
-/// `seek_pos`：渲染起点（0 = 从头）。鼓组/乐器模式事件在起点注入（seek 后
-/// GpuSynth 通道状态重置，必须重建——CPU 路径 SetPercussionMode 在模型加载
-/// 时应用且 ResetControl 不重置 program.bank）；起点之前开始、之后才结束的
-/// 音符在起点重启（与 CPU seek_to 的跨点音符重启一致）。
-///
-/// 顺序：鼓组/CC 事件先于音符事件构建——stable sort 后同 sample 时 CC 先处理，
-/// 与 CPU 路径 dispatch（cc_cursor 循环在 note 循环之前）一致。
-#[cfg(feature = "gpu")]
-pub(crate) fn build_gpu_synth_events(
-    engine: &AudioEngine,
-    seek_pos: u64,
-) -> Vec<yinhe_synth::SynthEvent> {
-    let audio_model = match engine.model.as_ref() {
-        Some(m) => m,
-        None => return Vec::new(),
-    };
-
-    let mut events: Vec<yinhe_synth::SynthEvent> = Vec::new();
-
-    // ── 鼓组/乐器模式初始状态（渲染起点注入；与 CPU setup_percussion 同序）──
-    // 先 GM 鼓通道（每 port 的 9 通道），再模型 bank 声明（>=120 鼓组），
-    // 同通道多条声明后者覆盖前者。
-    for p in 0..16u8 {
-        let src = p as usize * 16 + 9;
-        let dense = engine.channel_layout.dense_for(src);
-        // GPU 合成器只支持前 MAX_CHANNELS 个 dense 槽位。
-        if dense != u32::MAX && (dense as usize) < yinhe_synth::MAX_CHANNELS {
-            events.push(yinhe_synth::SynthEvent::Control {
-                sample: seek_pos,
-                channel: dense as u8,
-                event: yinhe_synth::ControlEvent::PercussionMode(true),
-            });
-        }
-    }
-    for (track_idx, banks) in audio_model.track_banks.iter().enumerate() {
-        if banks.is_empty() {
-            continue;
-        }
-        let src = audio_model.track_channel(track_idx) as usize;
-        if src >= 256 {
-            continue;
-        }
-        let dense = engine.channel_layout.dense_for(src);
-        if dense == u32::MAX || (dense as usize) >= yinhe_synth::MAX_CHANNELS {
-            continue;
-        }
-        for &(_, value) in banks {
-            events.push(yinhe_synth::SynthEvent::Control {
-                sample: seek_pos,
-                channel: dense as u8,
-                event: yinhe_synth::ControlEvent::PercussionMode(value >= 120),
-            });
-        }
-    }
-
-    // ── 通道控制事件（CC/pitch bend/RPN），tick 域转 sample 域 ──
-    // 放在音符事件之前：同 sample 时 CC 先于 note 处理（与 CPU dispatch 一致）
-    for cc in engine.cc_events.iter() {
-        // mute 的音轨：跳过其自动化事件（与 CPU 路径 dispatch 一致）；
-        // AM M/S 动态掩码：跳过被旁通的 lane（PC 事件 lane==哨兵，天然不跳过）。
-        let track_skipped = engine
-            .skip_track
-            .get(cc.track as usize)
-            .copied()
-            .unwrap_or(false);
-        let lane_skipped = engine
-            .am_lane_skip
-            .get(cc.track as usize)
-            .and_then(|v| v.get(cc.lane as usize))
-            .copied()
-            .unwrap_or(false);
-        if track_skipped || lane_skipped {
-            continue;
-        }
-        // GPU 路径不经过混音台/插件：插件参数事件无接收方，跳过。
-        if cc.plugin_param.is_some() {
-            continue;
-        }
-        // 插件乐器通道的事件由 CPU dispatch 转 MIDI 喂插件，不进 GPU。
-        if engine.channel_plugin_dense(cc.channel as u8).is_some() {
-            continue;
-        }
-        let dense = engine.channel_layout.dense_for(cc.channel as usize);
-        if dense == u32::MAX || (dense as usize) >= yinhe_synth::MAX_CHANNELS {
-            continue;
-        }
-        let Some(event) = to_gpu_control_event(&cc.event) else {
-            continue;
-        };
-        events.push(yinhe_synth::SynthEvent::Control {
-            sample: engine.tick_to_sample(cc.tick),
-            channel: dense as u8,
-            event,
-        });
-    }
-
-    // ── 音符事件（带 dense channel）──
-    for key in 0..128usize {
-        for note in engine.audible_notes[key].iter() {
-            let track = note.track as usize;
-            if engine.skip_track.get(track).copied().unwrap_or(false) {
-                continue;
-            }
-            let ch = audio_model.track_channel(track) as usize;
-            // 插件乐器通道的音符由 CPU dispatch 喂插件，不进 GPU。
-            if engine.channel_plugin_dense(ch as u8).is_some() {
-                continue;
-            }
-            let dense = engine.channel_layout.dense_for(ch);
-            if dense == u32::MAX || (dense as usize) >= yinhe_synth::MAX_CHANNELS {
-                continue;
-            }
-
-            let start_sample = engine.tick_to_sample(note.start_tick);
-            let end_sample = engine.tick_to_sample(note.end_tick);
-            // 跨 seek 点的音符：在 seek 点重启（CPU seek_to 同语义）
-            let on_sample = if start_sample < seek_pos && end_sample > seek_pos {
-                seek_pos
-            } else {
-                start_sample
-            };
-            events.push(yinhe_synth::SynthEvent::NoteOn {
-                sample: on_sample,
-                channel: dense as u8,
-                key: key as u8,
-                velocity: note.velocity,
-            });
-            events.push(yinhe_synth::SynthEvent::NoteOff {
-                sample: end_sample,
-                channel: dense as u8,
-                key: key as u8,
-            });
-        }
-    }
-
-    events.sort_by_key(|e| e.sample());
-    events
-}
-
 struct AudioRenderer {
     engine: AudioEngine,
     ring: AudioRingProducer,
@@ -292,12 +148,6 @@ struct AudioRenderer {
     use_gpu_synth: bool,
     /// 播放启动诊断：Play 时刻与目标位置（首块渲染完成后打印一次耗时）。
     play_timing: Option<(Instant, u64)>,
-    /// GPU 事件列表需要重建（模型/跳过掩码变化时置位；Play/Stop/Seek 往返复用）。
-    #[cfg(feature = "gpu")]
-    gpu_events_dirty: bool,
-    /// GPU 事件列表上次构建时的位置（相同位置 + 非 dirty 时只 seek 不重建）。
-    #[cfg(feature = "gpu")]
-    gpu_events_last_pos: Option<u64>,
     /// 导出任务（Some = 导出模式：不推 ring、不发布播放状态，连续离线渲染写 WAV）。
     export: Option<ExportJob>,
     /// 导出结束后要恢复的 xsynth 层数（导出设置不污染用户设置）。
@@ -364,10 +214,6 @@ impl AudioRenderer {
             #[cfg(feature = "gpu")]
             use_gpu_synth,
             play_timing: None,
-            #[cfg(feature = "gpu")]
-            gpu_events_dirty: true,
-            #[cfg(feature = "gpu")]
-            gpu_events_last_pos: None,
         }
     }
 
@@ -406,6 +252,10 @@ impl AudioRenderer {
                 self.preview_engine.stop_all();
                 did_work = true;
             }
+            // GPU 后端统一同步：命令/worker 结果可能改变位置或使事件表失效，
+            // 渲染（或导出）前消费一次 dirty 标志。CPU 模式下是 no-op。
+            #[cfg(feature = "gpu")]
+            self.engine.sync_gpu_backend();
             if self.export.is_some() {
                 // 导出模式：不推 ring、不发布播放状态（UI 保持停止外观），
                 // 连续离线渲染；每轮仍处理命令（取消/参数/编辑）。
@@ -589,14 +439,8 @@ impl AudioRenderer {
                     self.engine
                         .handle_command(AudioCommand::Play { from_sample });
                     let dt_engine = t0.elapsed();
-                    // GPU 路径：重建事件（含鼓组/复活音符）并同步位置
-                    let t1 = Instant::now();
-                    #[cfg(feature = "gpu")]
-                    if self.engine.gpu_synth.is_some() {
-                        self.sync_gpu_synth_events();
-                    }
-                    let dt_sync = t1.elapsed();
                     // 显式 seek：ring 清空锚定引擎当前（=seek 后）位置。
+                    // GPU 后端的事件重建/seek 由 run 循环的 sync_gpu_backend 统一消费。
                     let t2 = Instant::now();
                     self.clear_buffered_audio(self.engine.sample_position());
                     let dt_clear = t2.elapsed();
@@ -605,7 +449,7 @@ impl AudioRenderer {
                     self.request_chase(self.engine.current_tick());
                     let dt_chase = t3.elapsed();
                     play_log(&format!(
-                        "[play] engine.seek={dt_engine:?} gpu_sync={dt_sync:?} clear_ring={dt_clear:?} chase_req={dt_chase:?} 命令处理总计={:?}",
+                        "[play] engine.seek={dt_engine:?} clear_ring={dt_clear:?} chase_req={dt_chase:?} 命令处理总计={:?}",
                         t0.elapsed()
                     ));
                     self.play_timing = Some((t0, from_sample));
@@ -621,10 +465,6 @@ impl AudioRenderer {
                 } else {
                     self.preview_engine.stop_all();
                     self.engine.handle_command(AudioCommand::Seek { sample });
-                    #[cfg(feature = "gpu")]
-                    if self.engine.gpu_synth.is_some() {
-                        self.sync_gpu_synth_events();
-                    }
                     // 显式 seek：ring 清空锚定引擎当前（=seek 后）位置。
                     self.clear_buffered_audio(self.engine.sample_position());
                     // 方案 B：seek 后异步 chase（current_tick 已由 seek 更新）
@@ -637,10 +477,6 @@ impl AudioRenderer {
                 } else {
                     self.preview_engine.stop_all();
                     self.engine.handle_command(AudioCommand::Stop);
-                    #[cfg(feature = "gpu")]
-                    if self.engine.gpu_synth.is_some() {
-                        self.sync_gpu_synth_events();
-                    }
                     // Stop = 显式 seek 到 0。
                     self.clear_buffered_audio(self.engine.sample_position());
                     // 方案 B：Stop 也 seek 到 0，需要 chase 恢复初始 channel state
@@ -755,12 +591,11 @@ impl AudioRenderer {
         // 覆盖新状态——GPU 路径的通道状态依赖 chase 恢复，影响更大。
         self.engine.chase_generation = self.engine.chase_generation.wrapping_add(1);
         // GPU 路径：事件列表按新 skip mask 重建（mute/solo 即时生效，
-        // 不再需要重启引擎）；重建 seek 到听音位置并清掉旧 voice，
-        // 位置不移动（与 CPU 路径第 4 层语义一致）。
+        // 不再需要重启引擎）；位置不移动（与 CPU 路径第 4 层语义一致）。
+        // 事件重建 + seek 由 run 循环消费 dirty 标志时统一执行。
         #[cfg(feature = "gpu")]
         if self.engine.gpu_synth.is_some() && self.engine.model_loaded() {
-            self.invalidate_gpu_events();
-            self.sync_gpu_synth_events();
+            self.engine.invalidate_gpu_events();
             let anchor = self.consumer_position.load(Ordering::Acquire);
             self.clear_buffered_audio(anchor);
         }
@@ -805,49 +640,6 @@ impl AudioRenderer {
         });
     }
 
-    /// GPU 路径：把 worker 算好的 chase 快照应用到 GpuSynth 的通道状态。
-    /// skip 掩码按 dense 通道翻译（GpuSynth 内部以 dense % 32 索引）。
-    #[cfg(feature = "gpu")]
-    fn apply_chase_to_gpu(
-        layout: &crate::channel_layout::ChannelLayout,
-        synth: &mut yinhe_synth::GpuSynth,
-        states: &[Option<crate::channel::ChannelState>; 256],
-    ) {
-        let synth_skip = synth.chase_skip();
-        let mut skip = crate::channel::ChaseSkip::default();
-        for ch in 0..256usize {
-            let dense = layout.dense_for(ch);
-            if dense == u32::MAX || (dense as usize) >= yinhe_synth::MAX_CHANNELS {
-                continue;
-            }
-            let idx = dense as usize;
-            skip.cc_mask[ch] = synth_skip.cc_mask[idx];
-            skip.pitch_bend[ch] = synth_skip.pitch_bend[idx];
-            skip.pbs[ch] = synth_skip.pbs[idx];
-            skip.fine_tune[ch] = synth_skip.fine_tune[idx];
-            skip.coarse_tune[ch] = synth_skip.coarse_tune[idx];
-            skip.program[ch] = synth_skip.program[idx];
-        }
-        for ch in 0..256u32 {
-            let dense = layout.dense_for(ch as usize);
-            if dense == u32::MAX || (dense as usize) >= yinhe_synth::MAX_CHANNELS {
-                continue;
-            }
-            // 无事件通道不触碰（与 CPU 路径 apply_chase_result 一致）。
-            let Some(state) = &states[ch as usize] else {
-                continue;
-            };
-            let events: Vec<yinhe_synth::ControlEvent> = state
-                .events_to_send(ch as usize, &skip)
-                .iter()
-                .filter_map(to_gpu_control_event)
-                .collect();
-            if !events.is_empty() {
-                synth.apply_chase(dense, &events);
-            }
-        }
-    }
-
     fn process_worker_results(&mut self) -> bool {
         let mut did_work = false;
         loop {
@@ -860,12 +652,9 @@ impl AudioRenderer {
                     // 锚定听音位置（非显式 reload 不移动播放位置）。
                     let anchor = self.consumer_position.load(Ordering::Acquire);
                     self.engine.apply_prepared_model(prepared, anchor);
-                    // GPU 路径：模型变化 → 事件列表失效并重建
+                    // GPU 路径：模型变化 → 事件列表失效（run 循环统一重建）
                     #[cfg(feature = "gpu")]
-                    {
-                        self.invalidate_gpu_events();
-                        self.sync_gpu_synth_events();
-                    }
+                    self.engine.invalidate_gpu_events();
                     self.clear_buffered_audio(anchor);
                     self.state.initialized.store(true, Ordering::Release);
                     // 方案 B：apply_prepared_model 内部 seek_to 不再 chase，
@@ -889,12 +678,9 @@ impl AudioRenderer {
                         .store(duration_samples, Ordering::Relaxed);
                     self.engine
                         .apply_notes_only(model, yin_model, audible_delta, duration_samples);
-                    // GPU 路径：音符变化 → 事件列表失效并重建
+                    // GPU 路径：音符变化 → 事件列表失效（run 循环统一重建）
                     #[cfg(feature = "gpu")]
-                    {
-                        self.invalidate_gpu_events();
-                        self.sync_gpu_synth_events();
-                    }
+                    self.engine.invalidate_gpu_events();
                     // 注意：这里**不**清 ring。UpdateNotes 不 seek、不改 cc_events，
                     // 已渲染的 ring 内容是"过去时"音频（新音符只影响未来 dispatch），
                     // 清空会把正在播放的预览余音/当前音频丢掉 → 松手停顿。
@@ -910,13 +696,9 @@ impl AudioRenderer {
                     let t_chase_apply = Instant::now();
                     // 丢弃过期结果：cc_events 已被新 PrepareModel 替换
                     if generation == self.engine.chase_generation {
+                        // GPU 路径的 chase 应用已并入 apply_chase_result 内部
+                        //（apply_gpu_chase），此处无需额外分支。
                         self.engine.apply_chase_result(&states, &plugin_params);
-                        // GPU 路径：把 chase 快照应用到 GpuSynth（跳过 seek 后
-                        // 已实时处理过的控制器，避免旧值覆盖新值）。
-                        #[cfg(feature = "gpu")]
-                        if let Some(synth) = self.engine.gpu_synth.as_mut() {
-                            Self::apply_chase_to_gpu(&self.engine.channel_layout, synth, &states);
-                        }
                         if self.play_timing.is_some() {
                             play_log(&format!(
                                 "[play] chase 快照应用={:?}",
@@ -953,28 +735,19 @@ impl AudioRenderer {
                             let t_init = Instant::now();
                             match yinhe_synth::GpuSynth::new_default(sr) {
                                 Ok(mut synth) => {
-                                    let t2 = Instant::now();
+                                    let t_load = Instant::now();
                                     if let Err(e) = synth.load_dense_soundfonts(dense, &gpu_paths) {
                                         eprintln!("[gpu] Failed to load soundfonts: {e}");
                                     }
-                                    let dt_load = t2.elapsed();
-                                    // 加载当前模型的事件
-                                    let t3 = Instant::now();
-                                    let events = build_gpu_synth_events(
-                                        &self.engine,
-                                        self.engine.sample_position(),
-                                    );
-                                    let n = events.len();
-                                    let dt_build = t3.elapsed();
-                                    let t4 = Instant::now();
-                                    synth.load_events(events);
-                                    synth.seek(self.engine.sample_position());
+                                    let dt_load = t_load.elapsed();
                                     self.engine.gpu_synth = Some(synth);
+                                    // 新后端实例：置位 dirty 后立即同步（构建事件表 + seek）。
+                                    self.engine.invalidate_gpu_events();
+                                    self.engine.sync_gpu_backend();
                                     eprintln!("[gpu] GpuSynth initialized (channel {channel})");
                                     play_log(&format!(
-                                        "[play] GpuSynth 初始化：new={:?} 音色库解析={dt_load:?} 事件构建={dt_build:?}（{n}）装载+seek={:?} 总={:?}",
-                                        t2.duration_since(t_init),
-                                        t4.elapsed(),
+                                        "[play] GpuSynth 初始化：new={:?} 音色库解析={dt_load:?} 总={:?}",
+                                        t_load.duration_since(t_init),
                                         t_init.elapsed()
                                     ));
                                 }
@@ -1016,47 +789,6 @@ impl AudioRenderer {
             }
         }
         did_work
-    }
-
-    /// GPU 路径：从 engine 当前模型构建事件列表并加载到 GpuSynth。
-    ///
-    /// 事件列表构建（几万音符的遍历+排序）在音频线程执行，是播放启动的主要成本；
-    /// 相同位置重复同步（Play/Stop/Seek 往返）且模型未变时只 `seek` 复用已有列表。
-    #[cfg(feature = "gpu")]
-    fn sync_gpu_synth_events(&mut self) {
-        if self.engine.gpu_synth.is_none() {
-            return;
-        }
-        // seek_pos 决定鼓组事件与跨点音符复活位置（与 CPU 路径 seek_to 语义一致）。
-        let pos = self.engine.sample_position();
-        let needs_rebuild = self.gpu_events_dirty || self.gpu_events_last_pos != Some(pos);
-        if needs_rebuild {
-            let t = Instant::now();
-            let events = build_gpu_synth_events(&self.engine, pos);
-            let n = events.len();
-            let dt_build = t.elapsed();
-            let t2 = Instant::now();
-            if let Some(ref mut synth) = self.engine.gpu_synth {
-                synth.load_events(events);
-            }
-            play_log(&format!(
-                "[play] gpu事件重建：构建={dt_build:?}（{n} 事件）装载={:?}",
-                t2.elapsed()
-            ));
-            self.gpu_events_last_pos = Some(pos);
-            self.gpu_events_dirty = false;
-        }
-        let t = Instant::now();
-        if let Some(ref mut synth) = self.engine.gpu_synth {
-            synth.seek(pos);
-        }
-        play_log(&format!("[play] gpu_synth.seek={:?}", t.elapsed()));
-    }
-
-    /// 标记 GPU 事件列表失效（模型/跳过掩码变化时调用；下一次同步重建）。
-    #[cfg(feature = "gpu")]
-    fn invalidate_gpu_events(&mut self) {
-        self.gpu_events_dirty = true;
     }
 
     fn render_if_needed(&mut self) -> bool {
@@ -1176,9 +908,7 @@ impl AudioRenderer {
         self.request_chase(0);
         // GPU 路径：事件列表按 seek 后位置（0）重建（与 AudioCommand::Stop 同语义）。
         #[cfg(feature = "gpu")]
-        if self.engine.gpu_synth.is_some() {
-            self.sync_gpu_synth_events();
-        }
+        self.engine.sync_gpu_backend();
         let main_duration = self.engine.duration_samples();
         if !self.engine.model_loaded() || main_duration == 0 {
             if let Ok(mut p) = progress.lock() {
@@ -1413,38 +1143,6 @@ pub(crate) fn spawn_renderer(
             tracing::error!("Failed to spawn audio renderer thread: {e}");
             e
         })
-}
-
-/// xsynth ChannelAudioEvent → GpuSynth 控制事件（播放事件构建与 chase 应用共用）。
-#[cfg(feature = "gpu")]
-pub(crate) fn to_gpu_control_event(
-    ev: &xsynth_core::channel::ChannelAudioEvent,
-) -> Option<yinhe_synth::ControlEvent> {
-    match *ev {
-        xsynth_core::channel::ChannelAudioEvent::Control(ControlEvent::Raw(c, v)) => {
-            // 通道级 DSP CC 由 yinhe-dsp 效果器处理，GPU 合成器不再接收。
-            if yinhe_dsp::cc::DSP_CHANNEL_CCS.contains(&c) {
-                return None;
-            }
-            Some(yinhe_synth::ControlEvent::Raw(c, v))
-        }
-        xsynth_core::channel::ChannelAudioEvent::Control(ControlEvent::PitchBendValue(v)) => {
-            Some(yinhe_synth::ControlEvent::PitchBend(v))
-        }
-        xsynth_core::channel::ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(v)) => {
-            Some(yinhe_synth::ControlEvent::PitchBendSensitivity(v))
-        }
-        xsynth_core::channel::ChannelAudioEvent::Control(ControlEvent::FineTune(v)) => {
-            Some(yinhe_synth::ControlEvent::FineTune(v))
-        }
-        xsynth_core::channel::ChannelAudioEvent::Control(ControlEvent::CoarseTune(v)) => {
-            Some(yinhe_synth::ControlEvent::CoarseTune(v))
-        }
-        xsynth_core::channel::ChannelAudioEvent::ProgramChange(p) => {
-            Some(yinhe_synth::ControlEvent::ProgramChange(p))
-        }
-        _ => None,
-    }
 }
 
 /// GPU 模式「待加载音色库」通道计数。

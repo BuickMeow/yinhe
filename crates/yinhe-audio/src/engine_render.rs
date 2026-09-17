@@ -140,7 +140,7 @@ impl AudioEngine {
     /// GPU 合成器是否启用（无 `gpu` feature 时恒 false）。
     /// dispatch 用它决定是否把事件喂给 xsynth（GPU 自管事件列表）。
     #[inline]
-    fn gpu_synth_active(&self) -> bool {
+    pub(crate) fn gpu_synth_active(&self) -> bool {
         #[cfg(feature = "gpu")]
         {
             self.gpu_synth.is_some()
