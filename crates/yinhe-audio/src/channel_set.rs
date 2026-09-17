@@ -35,40 +35,50 @@ pub(crate) struct ChannelSet {
     scratches: Box<[Vec<f32>]>,
     cached_event_count: u32,
     /// 跨通道并行池（AUTO_PER_CHANNEL 时存在）。
-    thread_pool: Option<rayon::ThreadPool>,
+    thread_pool: Option<Arc<rayon::ThreadPool>>,
     audio_params: xsynth_core::AudioStreamParams,
 }
 
 impl ChannelSet {
     /// 与 `ChannelGroup::new` 相同的配置入口；`max_frames` 决定暂存缓冲大小。
     pub(crate) fn new(config: ChannelGroupConfig, max_frames: usize) -> Self {
-        let channel_pool = match config.parallelism.key {
+        let group_pool = match config.parallelism.channel {
             ThreadCount::None => None,
             ThreadCount::Auto => Some(Arc::new(
                 rayon::ThreadPoolBuilder::new()
                     .build()
-                    .unwrap_or_else(|e| panic!("yinhe: 创建 key 渲染线程池失败: {e}")),
+                    .unwrap_or_else(|e| panic!("yinhe: 创建通道渲染线程池失败: {e}")),
             )),
             ThreadCount::Manual(threads) => Some(Arc::new(
                 rayon::ThreadPoolBuilder::new()
                     .num_threads(threads)
                     .build()
-                    .unwrap_or_else(|e| panic!("yinhe: 创建 key 渲染线程池失败: {e}")),
+                    .unwrap_or_else(|e| panic!("yinhe: 创建通道渲染线程池失败: {e}")),
             )),
         };
-        let group_pool = match config.parallelism.channel {
+        // key 池与通道池共享同一个线程池：两个独立池嵌套 install 时，外层 worker
+        // 阻塞等内层池被唤醒，双重调度延迟会吃掉全部并行收益（实测 PER_KEY 曾比
+        // PER_CHANNEL 慢 9 倍）。共享池时 rayon 的 work-stealing 让阻塞的 worker
+        // 参与内层任务，也不会线程超订。
+        let channel_pool = match config.parallelism.key {
             ThreadCount::None => None,
-            ThreadCount::Auto => Some(
-                rayon::ThreadPoolBuilder::new()
-                    .build()
-                    .unwrap_or_else(|e| panic!("yinhe: 创建通道渲染线程池失败: {e}")),
-            ),
-            ThreadCount::Manual(threads) => Some(
-                rayon::ThreadPoolBuilder::new()
-                    .num_threads(threads)
-                    .build()
-                    .unwrap_or_else(|e| panic!("yinhe: 创建通道渲染线程池失败: {e}")),
-            ),
+            ThreadCount::Auto => match group_pool.as_ref() {
+                Some(pool) => Some(Arc::clone(pool)),
+                None => Some(Arc::new(
+                    rayon::ThreadPoolBuilder::new()
+                        .build()
+                        .unwrap_or_else(|e| panic!("yinhe: 创建 key 渲染线程池失败: {e}")),
+                )),
+            },
+            ThreadCount::Manual(threads) => match group_pool.as_ref() {
+                Some(pool) => Some(Arc::clone(pool)),
+                None => Some(Arc::new(
+                    rayon::ThreadPoolBuilder::new()
+                        .num_threads(threads)
+                        .build()
+                        .unwrap_or_else(|e| panic!("yinhe: 创建 key 渲染线程池失败: {e}")),
+                )),
+            },
         };
 
         let channel_count = match config.format {
