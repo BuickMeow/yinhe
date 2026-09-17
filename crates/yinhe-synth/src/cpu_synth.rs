@@ -76,9 +76,6 @@ pub struct CpuSynth {
     /// note_on/note_off/enforce 的查找从 O(V) 降为 O(layer)（成本分解实测
     /// note_on+note_off 占 91% 渲染时间）；块末 retain 后重建。
     key_indices: Vec<Vec<u32>>,
-    /// 丢音统计（layer 超限淘汰次数）与上次日志位置（限流每秒最多一条）。
-    dropped_voices: u64,
-    last_drop_log_sample: u64,
 }
 
 impl CpuSynth {
@@ -98,8 +95,6 @@ impl CpuSynth {
             damper_flags: [false; MAX_CHANNELS],
             par_scratch: Vec::new(),
             key_indices: vec![Vec::new(); MAX_CHANNELS * 128],
-            dropped_voices: 0,
-            last_drop_log_sample: 0,
         }
     }
 
@@ -474,22 +469,6 @@ impl CpuSynth {
             let Some(victim) = victim else {
                 return;
             };
-            self.dropped_voices += 1;
-            if self
-                .sample_position
-                .saturating_sub(self.last_drop_log_sample)
-                >= self.sample_rate as u64
-            {
-                self.last_drop_log_sample = self.sample_position;
-                eprintln!(
-                    "[yinhe-cpu] 丢音：累计 {} 次（ch={} key={} vel={} 被淘汰，layer={}）",
-                    self.dropped_voices,
-                    slot / 128,
-                    slot % 128,
-                    victim_vel,
-                    max
-                );
-            }
             // 立即结束（xsynth 默认 fade_out_killing=false，同为立即杀）。
             self.voices[victim as usize].signal_release(ENV_FINISHED);
         }
