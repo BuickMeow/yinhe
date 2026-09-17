@@ -4353,3 +4353,181 @@ fn prof_blackmidi_cost_breakdown() {
         yinhe_synth::cpu_synth::CPU_PROFILE_MODE.store(0, Ordering::Relaxed);
     }
 }
+
+mod compare_tests {
+    use super::*;
+
+    /// EnchantedLove 对比渲染（CpuSynth vs xsynth）：输出 raw f32（交错立体声）
+    /// 供波形/频谱分析。用户报告连续同 key 高频音符处有 click，xsynth 无。
+    #[test]
+    #[ignore]
+    fn render_compare_enchanted_love() {
+        let sfz = "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
+        let midi = "/Users/jieneng/Music/MIDIs/EnchantedLove.mid";
+        let sr = 48_000u32;
+        let seconds = 300u64;
+        let model = Arc::new(yinhe_midi::parse_path(midi).expect("parse"));
+        let layout = crate::spawn::channels_for_model(&model);
+        let active: Vec<u8> = (0..16u8)
+            .filter(|c| layout.is_active(*c as usize))
+            .collect();
+        eprintln!("active channels: {active:?}");
+        // 定位"同 key 连续音符"密集段（用户报告的问题场景）
+        let ppq = model.meta.ppq.max(1);
+        for key in 0..128usize {
+            let notes = &model.notes[key];
+            if notes.len() < 10 {
+                continue;
+            }
+            let mut best = (0usize, 0u32);
+            let mut cur = 1usize;
+            let mut cur_start = notes[0].start_tick;
+            for w in 1..notes.len() {
+                if notes[w].start_tick.saturating_sub(notes[w - 1].start_tick) < ppq / 8 {
+                    cur += 1;
+                    if cur > best.0 {
+                        best = (cur, cur_start);
+                    }
+                } else {
+                    cur = 1;
+                    cur_start = notes[w].start_tick;
+                }
+            }
+            if best.0 >= 20 {
+                eprintln!(
+                    "  key={key} 最长同键密集段={} 个音符 起于 tick={}（约 {:.2}s @120bpm）",
+                    best.0,
+                    best.1,
+                    best.1 as f64 / ppq as f64 * 0.5
+                );
+            }
+        }
+        for (name, backend) in [("cpu", 1u8), ("xsynth", 0), ("cpu_l4", 2u8)] {
+            let mut e = AudioEngine::new(sr, layout.clone());
+            e.handle_command(AudioCommand::LoadModel {
+                model: Arc::clone(&model),
+            });
+            match backend {
+                0 => {
+                    let configs: Vec<(u8, Vec<String>)> =
+                        active.iter().map(|c| (*c, vec![sfz.to_string()])).collect();
+                    e.handle_command(AudioCommand::SetSoundFonts {
+                        configs: Box::new(configs),
+                    });
+                }
+                _ => {
+                    let mut cs = yinhe_synth::CpuSynth::new(sr);
+                    cs.set_layer_count(if backend == 2 { Some(4) } else { None });
+                    for c in &active {
+                        cs.load_dense_soundfonts(*c as u32, &[std::path::PathBuf::from(sfz)])
+                            .expect("sf");
+                    }
+                    e.cpu_synth = Some(cs);
+                }
+            }
+            e.handle_command(AudioCommand::Play { from_sample: 0 });
+            let frames = 512usize;
+            let mut buf = vec![0.0f32; frames * 2];
+            let target = seconds * sr as u64;
+            let mut out: Vec<f32> = Vec::new();
+            let t0 = std::time::Instant::now();
+            while (out.len() as u64 / 2) < target {
+                e.render(&mut buf);
+                out.extend_from_slice(&buf);
+            }
+            let mut bytes = Vec::with_capacity(out.len() * 4);
+            for f in &out {
+                bytes.extend_from_slice(&f.to_le_bytes());
+            }
+            let path = format!("/tmp/compare_{name}.raw");
+            std::fs::write(&path, &bytes).expect("write");
+            eprintln!(
+                "{name}: {} frames 耗时 {:?} -> {path}",
+                out.len() / 2,
+                t0.elapsed()
+            );
+        }
+    }
+
+    /// 单音符增益对比：同 key/vel 的一个音符，CpuSynth vs xsynth 的峰值/RMS。
+    /// 用于定位整体响度差异（多 voice 对比已排除 layer 因素）。
+    #[test]
+    #[ignore]
+    fn render_single_note_gain_compare() {
+        let sfz = "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
+        let sr = 48_000u32;
+        let mut mask = vec![false; 16];
+        mask[0] = true;
+        let layout = crate::channel_layout::ChannelLayout::from_mask(mask);
+        for (name, backend) in [("cpu", 1u8), ("xsynth", 0), ("gpu", 2u8)] {
+            let mut e = AudioEngine::new(sr, layout.clone());
+            match backend {
+                0 => {
+                    let configs: Vec<(u8, Vec<String>)> = vec![(0, vec![sfz.to_string()])];
+                    e.handle_command(AudioCommand::SetSoundFonts {
+                        configs: Box::new(configs),
+                    });
+                }
+                1 => {
+                    let mut cs = yinhe_synth::CpuSynth::new(sr);
+                    cs.load_dense_soundfonts(0, &[std::path::PathBuf::from(sfz)])
+                        .expect("sf");
+                    e.cpu_synth = Some(cs);
+                }
+                _ => {
+                    let mut gs = yinhe_synth::GpuSynth::new_default(sr).expect("gpu");
+                    gs.load_dense_soundfonts(0, &[std::path::PathBuf::from(sfz)])
+                        .expect("sf");
+                    gs.finish_soundfont_load();
+                    e.gpu_synth = Some(gs);
+                    e.invalidate_gpu_events();
+                }
+            }
+            // 直接投一个 note（不依赖模型）：CPU 用 send_event，xsynth 用 channel_set
+            if backend == 2 {
+                e.gpu_synth.as_mut().expect("gpu").load_events(vec![
+                    yinhe_synth::SynthEvent::NoteOn {
+                        sample: 0,
+                        channel: 0,
+                        key: 60,
+                        velocity: 100,
+                        end_sample: sr as u64,
+                    },
+                ]);
+            } else if let Some(cs) = e.cpu_synth.as_mut() {
+                cs.send_event(yinhe_synth::SynthEvent::NoteOn {
+                    sample: 0,
+                    channel: 0,
+                    key: 60,
+                    velocity: 100,
+                    end_sample: sr as u64,
+                });
+            } else {
+                e.channel_set
+                    .send_event(xsynth_core::channel_group::SynthEvent::Channel(
+                        0,
+                        xsynth_core::channel::ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
+                            key: 60,
+                            vel: 100,
+                        }),
+                    ));
+            }
+            e.playing = true;
+            let frames = 512usize;
+            let mut buf = vec![0.0f32; frames * 2];
+            let mut out: Vec<f32> = Vec::new();
+            for _ in 0..(sr / frames as u32) {
+                e.render(&mut buf);
+                out.extend_from_slice(&buf);
+            }
+            let peak = out.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+            let rms = (out.iter().map(|v| v * v).sum::<f32>() / out.len() as f32).sqrt();
+            eprintln!("single_note {name}: peak={peak:.4} rms={rms:.4}");
+            let mut bytes = Vec::with_capacity(out.len() * 4);
+            for f in &out {
+                bytes.extend_from_slice(&f.to_le_bytes());
+            }
+            std::fs::write(format!("/tmp/single_{name}.raw"), &bytes).expect("write");
+        }
+    }
+}

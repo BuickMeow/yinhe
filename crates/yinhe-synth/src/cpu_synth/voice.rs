@@ -107,8 +107,12 @@ impl CpuVoice {
         ch: &ChannelState,
     ) -> Self {
         // 音色库声像：等功率法则（与 GPU/xsynth stereo spawner 一致，左右各 1.42 补偿）
+        // 声像：cos/sin 法则（无 1.42 等功率补偿）。xsynth 源码里 stereo spawner
+        // 有 `(cos*1.42).min(1.0)`，但实测（单音符对比，左右声道）其实际输出为
+        // 无补偿的中心 pan（0.707）——补偿会让整体响度 +3dB（√2），多 voice 叠加
+        // 后削波（用户报告的 EnchantedLove/Ouranos 高频滋滋）。对齐实测行为。
         let angle = info.pan * std::f32::consts::FRAC_PI_2;
-        let (pan_l, pan_r) = ((angle.cos() * 1.42).min(1.0), (angle.sin() * 1.42).min(1.0));
+        let (pan_l, pan_r) = (angle.cos().min(1.0), angle.sin().min(1.0));
 
         let sr = sample_rate as f32;
         let orig_attack_frames = info.ampeg_attack * sr;

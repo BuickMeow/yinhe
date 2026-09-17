@@ -437,7 +437,6 @@ fn multi_port_channels_do_not_fold() {
     }
 
     // 抵消 xsynth 内置的固定默认 pan 衰减（见 compensate_xsynth_channel_pan）
-    compensate_xsynth_channel_pan(&mut xout);
 
     // 逐样本对比：折叠 bug 时 ch0 状态被覆盖，rel_rms 会 > 10%
     let n = gpu_out.len().min(xout.len());
@@ -611,7 +610,6 @@ fn program_change_selects_preset() {
     }
 
     // 抵消 xsynth 内置的固定默认 pan 衰减（见 compensate_xsynth_channel_pan）
-    compensate_xsynth_channel_pan(&mut xout);
 
     let n = gpu_out.len().min(xout.len());
     let mut sse = 0.0f64;
@@ -634,15 +632,6 @@ fn program_change_selects_preset() {
         .map(|s| (s * s) as f64)
         .sum();
     assert!(seg_energy > 1e-6, "PC24 段无能量（音色库条目选择异常）");
-}
-
-/// xsynth 通道后处理会无条件应用默认 pan=0.5（等功率中心 → 双声道 ×1/√2）。
-/// GPU 合成器只做音源层（通道音量/声像/滤波由 yinhe-dsp 效果器负责，见
-/// docs/spec-yinhe-dsp.md），对比前抵消该固定衰减，得到一致的 voice 净输出。
-fn compensate_xsynth_channel_pan(out: &mut [f32]) {
-    for s in out.iter_mut() {
-        *s /= std::f32::consts::FRAC_1_SQRT_2;
-    }
 }
 
 /// 通道控制事件计划：(ms, controller, value)
@@ -677,8 +666,7 @@ fn parity_cpu_vs_gpu() {
         return;
     }
 
-    let mut cpu = cpu_render(&sfz);
-    compensate_xsynth_channel_pan(&mut cpu);
+    let cpu = cpu_render(&sfz);
     let gpu = gpu_render(&sfz);
     assert_eq!(
         cpu.len(),
