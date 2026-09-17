@@ -182,6 +182,8 @@ impl AudioRenderer {
                         "[play] engine.seek={dt_engine:?} clear_ring={dt_clear:?} chase_req={dt_chase:?} 命令处理总计={:?}",
                         t0.elapsed()
                     ));
+                    // seek 后从新位置/新相位开始：首块 10ms 淡入。
+                    self.fade_in_frames = super::pause_fade_frames(self.engine.sample_rate);
                     self.play_timing = Some((t0, from_sample));
                 } else {
                     self.engine.set_pending_play(from_sample);
@@ -308,6 +310,17 @@ impl AudioRenderer {
                     cancel,
                     pause,
                 );
+            }
+            AudioCommand::Pause => {
+                // 先渲染 10ms 淡出推入 ring，再停渲染：否则 ring 里预渲染的
+                // 音频播完后与静音形成阶跃（暂停"滋"一下）。
+                self.render_pause_fade_out();
+                self.engine.handle_command(AudioCommand::Pause);
+            }
+            AudioCommand::Resume => {
+                // 恢复后从静音跳到冻结相位有阶跃：第一块做 10ms 淡入。
+                self.fade_in_frames = super::pause_fade_frames(self.engine.sample_rate);
+                self.engine.handle_command(AudioCommand::Resume);
             }
             other => self.engine.handle_command(other),
         }

@@ -21,6 +21,11 @@ mod export;
 mod worker;
 
 const STEREO_CHANNELS: usize = 2;
+/// 暂停淡出/恢复淡入时长（帧）：10ms。直接停渲染会让 ring 里的预渲染音频
+/// 播完后与静音形成阶跃（"滋"）；恢复/seek 后从静音跳到任意相位同样有阶跃。
+fn pause_fade_frames(sample_rate: u32) -> usize {
+    (sample_rate as usize / 100).max(1)
+}
 const RENDER_CHUNK_FRAMES: usize = 512;
 /// GPU 合成器模式的渲染块（帧）：GPU 每块有一次 submit + voice 状态读回
 /// 的 CPU↔GPU 往返，块越小往返越频繁、音符多时抖动越明显。
@@ -137,6 +142,8 @@ struct AudioRenderer {
     prepared_rx: Receiver<WorkerResult>,
     shutdown: Arc<AtomicBool>,
     scratch: Vec<f32>,
+    /// 恢复/seek 后剩余淡入帧数（见 `pause_fade_frames`）。
+    fade_in_frames: usize,
     /// 预览合成器（独立 ChannelGroup/音色/状态）：预览音不占主引擎 voice。
     preview_engine: PreviewEngine,
     /// 预览叠加用临时缓冲。
@@ -218,6 +225,7 @@ impl AudioRenderer {
             prepared_rx,
             shutdown,
             scratch: vec![0.0; render_chunk_frames * STEREO_CHANNELS],
+            fade_in_frames: 0,
             preview_engine,
             preview_scratch: vec![0.0; render_chunk_frames * STEREO_CHANNELS],
             preview_stop_flag,
@@ -333,6 +341,26 @@ impl AudioRenderer {
         }
     }
 
+    /// 暂停前渲染一段 10ms 淡出推入 ring：pause 立即停渲染会让 ring 里
+    /// 预渲染的音频（最多 ~85ms）播完后与静音形成阶跃（"滋"）。
+    fn render_pause_fade_out(&mut self) {
+        if !self.engine.playing() || !self.state.initialized.load(Ordering::Acquire) {
+            return;
+        }
+        let frames = pause_fade_frames(self.engine.sample_rate);
+        let mut buf = vec![0.0f32; frames * STEREO_CHANNELS];
+        self.engine.render(&mut buf);
+        self.limiter.limit(&mut buf);
+        let total = frames as f32;
+        for f in 0..frames {
+            let g = 1.0 - f as f32 / total;
+            let o = f * STEREO_CHANNELS;
+            buf[o] *= g;
+            buf[o + 1] *= g;
+        }
+        let _ = self.ring.push_slice(&buf);
+    }
+
     fn render_if_needed(&mut self) -> bool {
         // 预览组非空或有余音时强制渲染：未播放时也要输出。
         // 预览引擎是独立合成器（不依赖模型），所以预览时不需要 initialized。
@@ -393,6 +421,20 @@ impl AudioRenderer {
 
         // 输出限幅（GPU/CPU 路径统一在此处理；合成器内部不做 DSP）。
         self.limiter.limit(&mut self.scratch);
+
+        // 恢复/seek 后的淡入（10ms）：从静音或新相位直接开始有阶跃（"滋"）。
+        if self.fade_in_frames > 0 {
+            let frames = self.scratch.len() / STEREO_CHANNELS;
+            let n = self.fade_in_frames.min(frames);
+            let total = pause_fade_frames(self.engine.sample_rate) as f32;
+            for f in 0..n {
+                let g = 1.0 - (self.fade_in_frames - f) as f32 / total;
+                let o = f * STEREO_CHANNELS;
+                self.scratch[o] *= g;
+                self.scratch[o + 1] *= g;
+            }
+            self.fade_in_frames -= n;
+        }
 
         let pushed = self.ring.push_slice(&self.scratch);
         debug_assert_eq!(pushed, self.scratch.len());
