@@ -4172,3 +4172,172 @@ fn prof_cyber_night_dense_section() {
         );
     }
 }
+
+/// 画像（本地 MIDI + SoundFont，ignored）：经典黑乐谱成本分解。
+///
+/// - `tau2.5.9.mid`：628 万音符，经典布局（音符为主）
+/// - `cyber-night.mid`：CC 密集（控制器多的黑乐谱）
+///
+/// 每首曲子：三后端 baseline + CpuSynth 降级分解（全功能/无滤波/无采样/
+/// 仅包络）——差值即各阶段成本占比，用于决定块级重写的收益点。
+#[cfg(feature = "gpu")]
+#[test]
+#[ignore = "需要本地 MIDI + SoundFont"]
+fn prof_blackmidi_cost_breakdown() {
+    use std::sync::atomic::Ordering;
+    use std::time::Instant;
+
+    let sfz = "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
+    let sr = 48_000u32;
+
+    for midi in [
+        "/Users/jieneng/Music/MIDIs/tau2.5.9.mid",
+        "/Users/jieneng/Music/MIDIs/cyber-night.mid",
+    ] {
+        let t_parse = Instant::now();
+        let model = Arc::new(yinhe_midi::parse_path(midi).expect("parse"));
+        let total: usize = (0..128).map(|k| model.notes[k].len()).sum();
+        let ppq = model.meta.ppq;
+        // 密度峰值（每拍音符数）
+        let mut per_beat: std::collections::BTreeMap<u32, usize> = Default::default();
+        for k in 0..128 {
+            for n in model.notes[k].iter() {
+                *per_beat.entry(n.start_tick / ppq).or_default() += 1;
+            }
+        }
+        let (peak_beat, peak_count) = per_beat
+            .iter()
+            .max_by_key(|(_, v)| **v)
+            .map(|(b, c)| (*b, *c))
+            .expect("non-empty");
+        eprintln!(
+            "\n=== {}\n  parse={:.1}s notes={total} ppq={ppq} 峰值拍={peak_beat}（约第 {} 小节）count={peak_count}",
+            midi.rsplit('/').next().unwrap_or(midi),
+            t_parse.elapsed().as_secs_f64(),
+            peak_beat / 4 + 1
+        );
+        let layout = crate::spawn::channels_for_model(&model);
+        let active: Vec<u8> = (0..16u8)
+            .filter(|c| layout.is_active(*c as usize))
+            .collect();
+        let peak_tick = peak_beat.saturating_mul(ppq).saturating_sub(ppq * 2);
+        // tick→sample 必须用**加载模型后**的引擎（tempo map 来自模型；
+        // 空引擎会退化成默认 120BPM，seek 到错误位置）。
+        let start_sample = {
+            let mut probe = AudioEngine::new(sr, layout.clone());
+            probe.handle_command(AudioCommand::LoadModel {
+                model: Arc::clone(&model),
+            });
+            probe.tick_to_sample(peak_tick)
+        };
+
+        // 渲染 3 秒（调用方负责 Play/重置）
+        let render_3s = |engine: &mut AudioEngine, backend: u8| -> (f64, u64, f64) {
+            let frames = if backend == 2 { 4096 } else { 512 };
+            let mut buf = vec![0.0f32; frames * 2];
+            let target: u64 = 3 * sr as u64;
+            let mut rendered = 0u64;
+            let mut peak_voice = 0u64;
+            let mut max_chunk = 0.0f64;
+            #[cfg(feature = "gpu")]
+            if backend == 2 {
+                engine.sync_gpu_backend(); // 事件表构建（计时外）
+            }
+            let t0 = Instant::now();
+            while rendered < target {
+                #[cfg(feature = "gpu")]
+                if backend == 2 {
+                    engine.sync_gpu_backend();
+                }
+                let tc = Instant::now();
+                engine.render(&mut buf);
+                let dt = tc.elapsed().as_secs_f64() * 1000.0;
+                rendered += frames as u64;
+                peak_voice = peak_voice.max(engine.voice_count());
+                if rendered > sr as u64 {
+                    max_chunk = max_chunk.max(dt);
+                }
+            }
+            (t0.elapsed().as_secs_f64(), peak_voice, max_chunk)
+        };
+
+        // ── baseline：三后端 ──
+        for (name, backend) in [("xsynth-cpu", 0u8), ("yinhe-cpu", 1), ("yinhe-gpu", 2)] {
+            let mut engine = AudioEngine::new(sr, layout.clone());
+            engine.handle_command(AudioCommand::LoadModel {
+                model: Arc::clone(&model),
+            });
+            match backend {
+                0 => {
+                    let configs: Vec<(u8, Vec<String>)> =
+                        active.iter().map(|c| (*c, vec![sfz.to_string()])).collect();
+                    engine.handle_command(AudioCommand::SetSoundFonts {
+                        configs: Box::new(configs),
+                    });
+                }
+                1 => {
+                    let mut cs = yinhe_synth::CpuSynth::new(sr);
+                    for c in &active {
+                        cs.load_dense_soundfonts(*c as u32, &[std::path::PathBuf::from(sfz)])
+                            .expect("cpu sf");
+                    }
+                    engine.cpu_synth = Some(cs);
+                }
+                _ => {
+                    let mut gs = yinhe_synth::GpuSynth::new_default(sr).expect("gpu");
+                    for c in &active {
+                        gs.load_dense_soundfonts(*c as u32, &[std::path::PathBuf::from(sfz)])
+                            .expect("gpu sf");
+                    }
+                    gs.finish_soundfont_load();
+                    engine.gpu_synth = Some(gs);
+                }
+            }
+            engine.handle_command(AudioCommand::Play {
+                from_sample: start_sample,
+            });
+            let (el, pv, mc) = render_3s(&mut engine, backend);
+            eprintln!(
+                "  {name:<12} 3s音频={el:>6.2}s ({:.2}x) peak_voice={pv:>6} max_chunk={mc:>7.1}ms",
+                3.0 / el.max(1e-9)
+            );
+        }
+
+        // ── CpuSynth 降级分解（同一引擎，模式间 Play 重置）──
+        let mut cs_engine = AudioEngine::new(sr, layout.clone());
+        cs_engine.handle_command(AudioCommand::LoadModel {
+            model: Arc::clone(&model),
+        });
+        let mut cs = yinhe_synth::CpuSynth::new(sr);
+        for c in &active {
+            cs.load_dense_soundfonts(*c as u32, &[std::path::PathBuf::from(sfz)])
+                .expect("cpu sf");
+        }
+        cs_engine.cpu_synth = Some(cs);
+        for (name, mode) in [("全功能", 0u8), ("无滤波", 1), ("无采样", 2), ("仅包络", 3)]
+        {
+            yinhe_synth::cpu_synth::CPU_PROFILE_MODE.store(mode, Ordering::Relaxed);
+            use std::sync::atomic::AtomicU64;
+            let base = |a: &AtomicU64| a.load(Ordering::Relaxed);
+            let b_on = base(&yinhe_synth::cpu_synth::PROF_NOTE_ON_NS);
+            let b_off = base(&yinhe_synth::cpu_synth::PROF_NOTE_OFF_NS);
+            let b_render = base(&yinhe_synth::cpu_synth::PROF_RENDER_NS);
+            cs_engine.handle_command(AudioCommand::Play {
+                from_sample: start_sample,
+            });
+            let (el, pv, mc) = render_3s(&mut cs_engine, 1);
+            let d_on = base(&yinhe_synth::cpu_synth::PROF_NOTE_ON_NS) - b_on;
+            let d_off = base(&yinhe_synth::cpu_synth::PROF_NOTE_OFF_NS) - b_off;
+            let d_render = base(&yinhe_synth::cpu_synth::PROF_RENDER_NS) - b_render;
+            let total_ns = (el * 1e9) as u64;
+            eprintln!(
+                "  CpuSynth-{name:<6} 3s音频={el:>6.2}s ({:.2}x) peak_voice={pv:>6} max_chunk={mc:>7.1}ms | note_on={:.0}% note_off={:.0}% render={:.0}%",
+                3.0 / el.max(1e-9),
+                100.0 * d_on as f64 / total_ns as f64,
+                100.0 * d_off as f64 / total_ns as f64,
+                100.0 * d_render as f64 / total_ns as f64,
+            );
+        }
+        yinhe_synth::cpu_synth::CPU_PROFILE_MODE.store(0, Ordering::Relaxed);
+    }
+}

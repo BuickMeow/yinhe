@@ -24,6 +24,15 @@ use crate::cpu_synth::voice::{CpuVoice, ENV_FINISHED, ENV_RELEASE};
 use crate::gpu_synth::{ControlEvent, SynthEvent};
 use crate::sfz_parser::{self, KeyMapEntry};
 
+/// 成本分解开关（0=全功能；1=无滤波；2=无采样；3=只遍历）。
+///
+/// 供性能画像定位渲染成本构成；生产恒为 0，每块读一次（开销可忽略）。
+/// 所有模式共享同一控制流骨架，差值即各阶段的成本占比。
+pub static CPU_PROFILE_MODE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+/// 内部耗时累计（ns）：note_on / note_off / 渲染分片循环（诊断用，测试读取）。
+pub static PROF_NOTE_ON_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static PROF_NOTE_OFF_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static PROF_RENDER_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 /// 默认全局 voice 上限（与 GpuSynth 一致）。
 const DEFAULT_MAX_VOICES: usize = 8192;
 /// 默认每 key layer 上限（对齐 xsynth `VoiceChannelParams.layers`）。
@@ -57,6 +66,10 @@ pub struct CpuSynth {
     damper_flags: [bool; MAX_CHANNELS],
     /// 并行渲染的每分片输出 scratch（分片 × MAX_CHANNELS × frames × 2，复用）。
     par_scratch: Vec<f32>,
+    /// 每 (channel, key) 的活跃 voice 索引表（MAX_CHANNELS × 128 个 Vec）。
+    /// note_on/note_off/enforce 的查找从 O(V) 降为 O(layer)（成本分解实测
+    /// note_on+note_off 占 91% 渲染时间）；块末 retain 后重建。
+    key_indices: Vec<Vec<u32>>,
 }
 
 impl CpuSynth {
@@ -75,7 +88,14 @@ impl CpuSynth {
             peak_voices: 0,
             damper_flags: [false; MAX_CHANNELS],
             par_scratch: Vec::new(),
+            key_indices: vec![Vec::new(); MAX_CHANNELS * 128],
         }
+    }
+
+    /// (channel, key) → 索引表槽位。
+    #[inline]
+    fn key_slot(channel: u8, key: u8) -> usize {
+        (channel as usize) * 128 + key as usize
     }
 
     /// 加载某 dense 通道的音色库（登记 key map；CPU 无样本上传阶段）。
@@ -144,6 +164,9 @@ impl CpuSynth {
         self.event_cursor = 0;
         self.chase_base = 0;
         self.voices.clear();
+        for v in self.key_indices.iter_mut() {
+            v.clear();
+        }
         self.channels = [ChannelState::new(self.sample_rate); MAX_CHANNELS];
     }
 
@@ -189,6 +212,7 @@ impl CpuSynth {
     /// 与 `render_to_mixer` 的差异：由调用方（engine 的逐段 dispatch）提供区间，
     /// `sample_position` 按 `frames` 推进；区间起点处消费所有已到事件。
     pub fn render_range(&mut self, buffers: &mut [ChannelBuffers], offset: usize, frames: usize) {
+        let t_prof = std::time::Instant::now();
         if frames == 0 || buffers.is_empty() {
             return;
         }
@@ -243,9 +267,20 @@ impl CpuSynth {
             v.advance_block(frames as u32);
         }
         self.voices.retain(|v| !v.finished());
+        // 重建 per-key 索引表（O(V) 一次/段；保留 Vec 容量）
+        for v in self.key_indices.iter_mut() {
+            v.clear();
+        }
+        for (i, v) in self.voices.iter().enumerate() {
+            self.key_indices[Self::key_slot(v.channel, v.key)].push(i as u32);
+        }
         self.peak_voices = self.peak_voices.max(self.voice_count());
         self.sample_position = sample_start + frames as u64;
 
+        PROF_RENDER_NS.fetch_add(
+            t_prof.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         // 已消费事件周期性压缩（长播放不积累；chase_base 同步平移）。
         if self.event_cursor > 4096 {
             self.events.drain(..self.event_cursor);
@@ -285,30 +320,19 @@ impl CpuSynth {
         self.par_scratch.resize(n_chunks * stride, 0.0);
 
         let damper_flags = self.damper_flags;
+        let profile_mode = CPU_PROFILE_MODE.load(std::sync::atomic::Ordering::Relaxed);
         let scratch = &mut self.par_scratch;
         self.voices
             .par_chunks_mut(chunk)
             .zip(scratch.par_chunks_mut(stride))
             .for_each(|(voices, out)| {
-                for i in 0..frames {
-                    let fi = fi_start + i;
-                    let sample = sample_start + i as u64;
-                    for v in voices.iter_mut() {
-                        // 到期释放（NoteOn 自带 end_sample；延音踏板按住时只标记）
-                        if !v.released && !v.held_by_damper && v.end_sample <= sample {
-                            if damper_flags[v.channel as usize] {
-                                v.held_by_damper = true;
-                            } else {
-                                v.signal_release(ENV_RELEASE);
-                            }
-                        }
-                        let (l, r) = v.render_frame(fi as u32);
-                        if l != 0.0 || r != 0.0 {
-                            let base = (v.channel as usize * frames + i) * 2;
-                            out[base] += l;
-                            out[base + 1] += r;
-                        }
-                    }
+                // 块级渲染：每 voice 一次调用（到期释放在 render_block 内按
+                // 包络切片边界应用，无逐帧 O(V×frames) 扫描）。
+                for v in voices.iter_mut() {
+                    let damper = damper_flags[v.channel as usize];
+                    let ch_base = v.channel as usize * frames * 2;
+                    let ch_out = &mut out[ch_base..ch_base + frames * 2];
+                    v.render_block(ch_out, frames, fi_start, sample_start, damper, profile_mode);
                 }
             });
 
@@ -345,6 +369,7 @@ impl CpuSynth {
 
     /// NoteOn：从 key map 快照创建 voice；超限淘汰最老的 release 中 voice。
     fn note_on(&mut self, channel: u8, key: u8, vel: u8, end_sample: u64, frame: u32) {
+        let t_prof = std::time::Instant::now();
         let Some(ch_idx) = dense_channel(channel as usize) else {
             return;
         };
@@ -365,11 +390,13 @@ impl CpuSynth {
             self.sample_rate,
             &ch,
         ));
+        let slot = Self::key_slot(channel, key);
+        self.key_indices[slot].push(new_index as u32);
 
         // per-key layer 上限：超限时按 xsynth 语义杀该 key velocity 最低的 voice
         //（跳过刚加入的，保证新音符发声）。
         if let Some(max) = self.max_layers {
-            self.enforce_key_layers(channel, key, max, new_index);
+            self.enforce_key_layers(slot, max, new_index);
         }
 
         // 超限淘汰：优先杀最老的 release 中 voice，否则杀最老的（与 GpuSynth 同思路）
@@ -385,55 +412,59 @@ impl CpuSynth {
                 break; // 其余已被淘汰（块末统一清理）
             }
         }
+        PROF_NOTE_ON_NS.fetch_add(
+            t_prof.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
 
-    /// 该 (channel, key) 活跃 voice 超过 `max` 时，反复杀 velocity 最低的
+    /// 该 key 活跃 voice 超过 `max` 时，反复杀 velocity 最低的
     /// （xsynth `pop_quietest_voice_group` 语义；`keep` = 刚加入的索引不参与）。
-    fn enforce_key_layers(&mut self, channel: u8, key: u8, max: usize, keep: usize) {
+    /// 经 `key_indices` 只扫该 key 的 voice（O(layer)，非 O(V)）。
+    fn enforce_key_layers(&mut self, slot: usize, max: usize, keep: usize) {
         loop {
-            let count = self
-                .voices
+            // 该 key 的候选（未结束、未释放、非刚加入）——clone 小表避免借用冲突
+            let candidates: Vec<u32> = self.key_indices[slot]
                 .iter()
-                .filter(|v| v.channel == channel && v.key == key && !v.finished())
+                .copied()
+                .filter(|&i| {
+                    let i = i as usize;
+                    i != keep && !self.voices[i].finished() && !self.voices[i].released
+                })
+                .collect();
+            let active = self.key_indices[slot]
+                .iter()
+                .filter(|&&i| !self.voices[i as usize].finished())
                 .count();
-            if count <= max {
+            if active <= max {
                 break;
             }
-            let victim = self
-                .voices
-                .iter()
-                .enumerate()
-                .filter(|(i, v)| {
-                    *i != keep
-                        && v.channel == channel
-                        && v.key == key
-                        && !v.finished()
-                        && !v.released
-                })
-                .min_by_key(|(_, v)| v.velocity)
-                .map(|(i, _)| i);
-            let Some(idx) = victim else {
+            let Some(victim) = candidates
+                .into_iter()
+                .min_by_key(|&i| self.voices[i as usize].velocity)
+            else {
                 break; // 其余已在 release 中，无候选
             };
             // 立即结束（等同 GPU 的 kill 指令；xsynth 的 fade_out_killing 为 1ms
             // 淡出，CPU 路径暂用立即结束避免 click 之外的行为差异）。
-            self.voices[idx].signal_release(ENV_FINISHED);
+            self.voices[victim as usize].signal_release(ENV_FINISHED);
         }
     }
 
     /// NoteOff：释放该 (channel, key) 最老的未释放 voice（延音踏板按住时只标记）。
     fn note_off(&mut self, channel: u8, key: u8) {
+        let t_prof = std::time::Instant::now();
         let Some(ch_idx) = dense_channel(channel as usize) else {
             return;
         };
         let damper = self.channels[ch_idx].damper;
-        for v in self.voices.iter_mut() {
-            if v.channel == channel
-                && v.key == key
-                && !v.finished()
-                && !v.released
-                && !v.held_by_damper
-            {
+        let slot = Self::key_slot(channel, key);
+        // 索引表按创建顺序：正向找第一个未释放 = 最老未释放（O(layer)）
+        let idxs = std::mem::take(&mut self.key_indices[slot]);
+        for &i in idxs.iter() {
+            let i = i as usize;
+            let v = &mut self.voices[i];
+            if !v.finished() && !v.released && !v.held_by_damper {
                 if damper {
                     v.held_by_damper = true;
                 } else {
@@ -442,6 +473,11 @@ impl CpuSynth {
                 break;
             }
         }
+        self.key_indices[slot] = idxs;
+        PROF_NOTE_OFF_NS.fetch_add(
+            t_prof.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
 
     /// 控制事件：更新通道状态并把变化传播到该通道的活跃 voice。

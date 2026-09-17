@@ -255,93 +255,248 @@ impl CpuVoice {
         }
     }
 
-    /// 渲染一帧（`fi` = 块内帧索引），返回 (left, right)。
-    /// 复刻 WGSL `vs_main` 的帧循环体（采样 + 插值 + 滤波 + 声像 + 包络推进）。
-    pub(super) fn render_frame(&mut self, fi: u32) -> (f32, f32) {
-        if self.env_stage >= ENV_FINISHED || fi < self.start_offset {
-            return (0.0, 0.0);
+    /// 块级渲染：把 `[0, frames)`（区间内帧）按**包络阶段切片**渲染，
+    /// 输出**累加**到交错立体声缓冲 `out`（长度 = frames × 2）。
+    ///
+    /// 核心优化：Delay/Hold/Sustain 是**常数包络段**——整段一次跳过，不再逐帧
+    /// 调用 `advance_env`（成本分解实测：tau 峰值段 87% 成本在逐帧包络+控制流，
+    /// 采样只占 10%、滤波 5%）。Attack/Decay/Release 仍逐帧推进。
+    #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
+    pub(super) fn render_block(
+        &mut self,
+        out: &mut [f32],
+        frames: usize,
+        fi_start: usize,
+        sample_start: u64,
+        damper: bool,
+        profile_mode: u8,
+    ) {
+        if frames == 0 || self.env_stage >= ENV_FINISHED {
+            return;
         }
-        let mut my_l = 0.0f32;
-        let mut my_r = 0.0f32;
-
-        let t = self.time + f64::from(fi - self.start_offset) * f64::from(self.speed);
-        let mut idx = t as u32;
-        let frac = (t - f64::from(idx)) as f32;
-        let max_idx = self.sample_length.saturating_sub(1);
-
-        // 循环处理（与 xsynth 一致）：1=Continuous 恒循环；2=Sustain 仅未 release 循环
-        let released = self.env_stage >= ENV_RELEASE;
-        let loop_cont = self.loop_mode == 1;
-        let loop_sus = self.loop_mode == 2 && !released;
-        let has_loop = (loop_cont || loop_sus) && self.loop_end > self.loop_start;
-        if has_loop && idx > self.loop_end {
-            let loop_len = self.loop_end - self.loop_start;
-            idx = (idx - self.loop_end - 1) % loop_len + self.loop_start;
+        // `start_offset` 与 `fi_start` 同为"本次 render_range 调用内的帧坐标"：
+        // 段终点 = fi_start + frames；voice 从 begin 起渲染（之前未开始的帧跳过，
+        // 不推进包络——与逐帧语义一致）。start_offset 的跨段前移由调用方
+        // `advance_block` 统一处理。
+        let begin = self.start_offset as usize;
+        let seg_end = fi_start + frames;
+        if begin >= seg_end {
+            return;
         }
-
-        if idx < self.sample_length {
-            let scale = 1 + self.is_stereo as u32;
-            let i = (self.sample_offset + idx * scale) as usize;
-            let mut l0 = self.sample.get(i).copied().unwrap_or(0.0);
-            let mut r0 = if self.is_stereo {
-                self.sample.get(i + 1).copied().unwrap_or(0.0)
+        // 到期释放的段内帧（未释放且未被踏板保持时有效；<= 段首表示段首已到期）。
+        // 释放点在包络切片边界应用——取代逐帧 O(V×frames) 的到期扫描
+        //（8139 voice × 512 帧 × 1723 块 = 72 亿次比较，实测主导成本）。
+        let release_at: usize = if !self.released && !self.held_by_damper {
+            self.end_sample.saturating_sub(sample_start) as usize
+        } else {
+            usize::MAX
+        };
+        let mut done = begin.saturating_sub(fi_start);
+        if release_at <= done {
+            if damper {
+                self.held_by_damper = true;
             } else {
-                l0
-            };
-            if self.interp == 1 && idx < max_idx {
-                let i1 = i + scale as usize;
-                let l1 = self.sample.get(i1).copied().unwrap_or(0.0);
-                let r1 = if self.is_stereo {
-                    self.sample.get(i1 + 1).copied().unwrap_or(0.0)
-                } else {
-                    l1
-                };
-                l0 += (l1 - l0) * frac;
-                r0 += (r1 - r0) * frac;
+                self.signal_release(ENV_RELEASE);
             }
-            let mut s_l = l0 * self.base_gain * self.envelope;
-            let mut s_r = r0 * self.base_gain * self.envelope;
-            if self.cutoff > 0.0 {
-                // DirectForm1 biquad：y = b0*x + b1*x1 + b2*x2 - a1*y1 - a2*y2
-                let x1 = self.flt_x1;
-                let x2 = self.flt_x2;
-                let y1 = self.flt_y1;
-                let y2 = self.flt_y2;
-                let out_l = self.flt_b0 * s_l + self.flt_b1 * x1 + self.flt_b2 * x2
-                    - self.flt_a1 * y1
-                    - self.flt_a2 * y2;
-                self.flt_x1 = s_l;
-                self.flt_x2 = x1;
-                self.flt_y1 = out_l;
-                self.flt_y2 = y1;
-                s_l = out_l;
-                if self.is_stereo {
-                    let x1r = self.flt_x1r;
-                    let x2r = self.flt_x2r;
-                    let y1r = self.flt_y1r;
-                    let y2r = self.flt_y2r;
-                    let out_r = self.flt_b0 * s_r + self.flt_b1 * x1r + self.flt_b2 * x2r
-                        - self.flt_a1 * y1r
-                        - self.flt_a2 * y2r;
-                    self.flt_x1r = s_r;
-                    self.flt_x2r = x1r;
-                    self.flt_y1r = out_r;
-                    self.flt_y2r = y1r;
-                    s_r = out_r;
+        }
+        while done < frames {
+            let (mut sub, constant) = self.env_slice(frames - done);
+            if sub == 0 {
+                break;
+            }
+            let mut do_release = false;
+            if release_at != usize::MAX && release_at <= done + sub {
+                sub = release_at.saturating_sub(done).max(1);
+                do_release = true;
+            }
+            self.render_sub(out, done, sub, fi_start, begin, constant, profile_mode);
+            done += sub;
+            if do_release {
+                if damper {
+                    self.held_by_damper = true;
                 } else {
-                    // 单声道样本只用一组滤波器，右声道复用左输出（与 xsynth mono 一致）
-                    s_r = s_l;
+                    self.signal_release(ENV_RELEASE);
                 }
             }
-            my_l = s_l * self.pan_l;
-            my_r = s_r * self.pan_r;
-        } else if !loop_cont {
-            // 采样播完（NoLoop/OneShot/LoopSustain release 后）：结束 voice
-            self.env_stage = ENV_FINISHED;
         }
+    }
 
-        self.advance_env();
-        (my_l, my_r)
+    /// 包络推进到下一阶段边界：返回 `(子段帧数, 包络是否常数)`。
+    ///
+    /// 常数段（Delay/Hold/Sustain）在 `render_sub` 里不逐帧推进；非常数段
+    /// （Attack/Decay/Release）逐帧推进（增益逐帧变化）。逐帧语义与
+    /// `advance_env` 完全一致（子段边界 = 阶段切换的帧）。
+    fn env_slice(&mut self, frames_left: usize) -> (usize, bool) {
+        if self.env_stage >= ENV_FINISHED || frames_left == 0 {
+            return (0, true);
+        }
+        match self.env_stage {
+            0 => {
+                // Delay：包络不变
+                let remaining = (self.delay_frames - self.stage_progress).max(0.0);
+                let to_boundary = remaining.ceil() as usize;
+                let n = frames_left.min(to_boundary.max(1));
+                self.stage_progress += n as f32;
+                if self.stage_progress + 1.0 >= self.delay_frames {
+                    self.env_stage = 1;
+                    self.stage_progress = 0.0;
+                }
+                (n, true)
+            }
+            1 => {
+                // Attack：线性，逐帧
+                let remaining = (self.attack_frames - self.stage_progress).max(0.0);
+                let to_boundary = remaining.ceil() as usize;
+                (frames_left.min(to_boundary.max(1)), false)
+            }
+            2 => {
+                // Hold：包络不变
+                let remaining = (self.hold_frames - self.stage_progress).max(0.0);
+                let to_boundary = remaining.ceil() as usize;
+                let n = frames_left.min(to_boundary.max(1));
+                self.stage_progress += n as f32;
+                if self.stage_progress + 1.0 >= self.hold_frames {
+                    self.env_stage = 3;
+                    self.decay_start = self.envelope;
+                    self.stage_progress = 0.0;
+                }
+                (n, true)
+            }
+            3 => {
+                // Decay：指数，逐帧
+                let remaining = (self.decay_frames - self.stage_progress).max(0.0);
+                let to_boundary = remaining.ceil() as usize;
+                (frames_left.min(to_boundary.max(1)), false)
+            }
+            4 => {
+                // Sustain：常数，整段一次跳过（最大收益点）
+                let peak = self.env_level;
+                self.envelope = self.sustain_level * peak;
+                (frames_left, true)
+            }
+            5 => {
+                // Release：指数，逐帧
+                let remaining = (self.release_frames - self.stage_progress).max(0.0);
+                let to_boundary = remaining.ceil() as usize;
+                (frames_left.min(to_boundary.max(1)), false)
+            }
+            _ => (0, true),
+        }
+    }
+
+    /// 渲染一个子段：逐帧采样/插值/滤波/输出；非常数包络段逐帧推进包络。
+    #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
+    fn render_sub(
+        &mut self,
+        out: &mut [f32],
+        offset: usize,
+        n: usize,
+        fi_start: usize,
+        begin: usize,
+        constant_env: bool,
+        profile_mode: u8,
+    ) {
+        for i in 0..n {
+            let fi = (fi_start + offset + i) as u32;
+
+            // 成本分解：3 = 仅包络推进（无采样位置/循环控制流）
+            if profile_mode == 3 {
+                if !constant_env {
+                    self.advance_env();
+                }
+                continue;
+            }
+
+            let t = self.time + (fi as usize - begin) as f64 * f64::from(self.speed);
+            let mut idx = t as u32;
+            let frac = (t - f64::from(idx)) as f32;
+            let max_idx = self.sample_length.saturating_sub(1);
+
+            // 循环处理（与 xsynth 一致）：1=Continuous 恒循环；2=Sustain 仅未 release 循环
+            let released = self.env_stage >= ENV_RELEASE;
+            let loop_cont = self.loop_mode == 1;
+            let loop_sus = self.loop_mode == 2 && !released;
+            let has_loop = (loop_cont || loop_sus) && self.loop_end > self.loop_start;
+            if has_loop && idx > self.loop_end {
+                let loop_len = self.loop_end - self.loop_start;
+                idx = (idx - self.loop_end - 1) % loop_len + self.loop_start;
+            }
+
+            // 成本分解：2 = 保留采样位置/循环控制流，跳过数据读取/插值/滤波/输出
+            if profile_mode == 2 {
+                if !constant_env {
+                    self.advance_env();
+                }
+                continue;
+            }
+
+            if idx < self.sample_length {
+                let scale = 1 + self.is_stereo as u32;
+                let si = (self.sample_offset + idx * scale) as usize;
+                let mut l0 = self.sample.get(si).copied().unwrap_or(0.0);
+                let mut r0 = if self.is_stereo {
+                    self.sample.get(si + 1).copied().unwrap_or(0.0)
+                } else {
+                    l0
+                };
+                if self.interp == 1 && idx < max_idx {
+                    let i1 = si + scale as usize;
+                    let l1 = self.sample.get(i1).copied().unwrap_or(0.0);
+                    let r1 = if self.is_stereo {
+                        self.sample.get(i1 + 1).copied().unwrap_or(0.0)
+                    } else {
+                        l1
+                    };
+                    l0 += (l1 - l0) * frac;
+                    r0 += (r1 - r0) * frac;
+                }
+                let mut s_l = l0 * self.base_gain * self.envelope;
+                let mut s_r = r0 * self.base_gain * self.envelope;
+                // 成本分解：1 = 无滤波
+                if self.cutoff > 0.0 && profile_mode != 1 {
+                    // DirectForm1 biquad：y = b0*x + b1*x1 + b2*x2 - a1*y1 - a2*y2
+                    let x1 = self.flt_x1;
+                    let x2 = self.flt_x2;
+                    let y1 = self.flt_y1;
+                    let y2 = self.flt_y2;
+                    let out_l = self.flt_b0 * s_l + self.flt_b1 * x1 + self.flt_b2 * x2
+                        - self.flt_a1 * y1
+                        - self.flt_a2 * y2;
+                    self.flt_x1 = s_l;
+                    self.flt_x2 = x1;
+                    self.flt_y1 = out_l;
+                    self.flt_y2 = y1;
+                    s_l = out_l;
+                    if self.is_stereo {
+                        let x1r = self.flt_x1r;
+                        let x2r = self.flt_x2r;
+                        let y1r = self.flt_y1r;
+                        let y2r = self.flt_y2r;
+                        let out_r = self.flt_b0 * s_r + self.flt_b1 * x1r + self.flt_b2 * x2r
+                            - self.flt_a1 * y1r
+                            - self.flt_a2 * y2r;
+                        self.flt_x1r = s_r;
+                        self.flt_x2r = x1r;
+                        self.flt_y1r = out_r;
+                        self.flt_y2r = y1r;
+                        s_r = out_r;
+                    } else {
+                        // 单声道样本只用一组滤波器，右声道复用左输出（与 xsynth mono 一致）
+                        s_r = s_l;
+                    }
+                }
+                let oi = (offset + i) * 2;
+                out[oi] += s_l * self.pan_l;
+                out[oi + 1] += s_r * self.pan_r;
+            } else if !loop_cont {
+                // 采样播完（NoLoop/OneShot/LoopSustain release 后）：结束 voice
+                self.env_stage = ENV_FINISHED;
+            }
+
+            if !constant_env {
+                self.advance_env();
+            }
+        }
     }
 
     /// 推进 1 帧包络（与 WGSL `advance_env` 逐行等价）。
