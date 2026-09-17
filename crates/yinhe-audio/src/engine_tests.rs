@@ -4353,3 +4353,59 @@ fn prof_blackmidi_cost_breakdown() {
         yinhe_synth::cpu_synth::CPU_PROFILE_MODE.store(0, Ordering::Relaxed);
     }
 }
+
+/// Ouranos 结尾高潮段（用户报告 4:03 不自然切断）：layer=None 时的 voice
+/// 峰值与性能。CPU 侧全局 8192 上限已移除（voice 是动态 Vec；上限只在
+/// GPU 侧因固定 buffer 槽位保留），此测试验证高潮段不再淘汰 voice。
+#[test]
+#[ignore]
+fn prof_ouranos_peak_voices() {
+    use std::time::Instant;
+    let sfz = "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
+    let midi = "/Users/jieneng/Music/MIDIs/Ouranos - HDSQ & The Romanticist [v1.6.6].mid";
+    let sr = 48_000u32;
+    let t_parse = Instant::now();
+    let model = Arc::new(yinhe_midi::parse_path(midi).expect("parse"));
+    let total: usize = (0..128).map(|k| model.notes[k].len()).sum();
+    let layout = crate::spawn::channels_for_model(&model);
+    let active: Vec<u8> = (0..16u8)
+        .filter(|c| layout.is_active(*c as usize))
+        .collect();
+    let mut e = AudioEngine::new(sr, layout.clone());
+    e.handle_command(AudioCommand::LoadModel {
+        model: Arc::clone(&model),
+    });
+    let mut cs = yinhe_synth::CpuSynth::new(sr);
+    cs.set_layer_count(None);
+    for c in &active {
+        cs.load_dense_soundfonts(*c as u32, &[std::path::PathBuf::from(sfz)])
+            .expect("sf");
+    }
+    e.cpu_synth = Some(cs);
+    let start_tick = e.sample_to_tick(sr as u64 * 240);
+    let start_sample = e.tick_to_sample(start_tick);
+    eprintln!(
+        "\n=== Ouranos notes={total} parse={:.1}s 从 {:.1}s 起",
+        t_parse.elapsed().as_secs_f64(),
+        start_sample as f64 / sr as f64
+    );
+    e.handle_command(AudioCommand::Play {
+        from_sample: start_sample,
+    });
+    let frames = 512usize;
+    let mut buf = vec![0.0f32; frames * 2];
+    let target = 12 * sr as u64;
+    let mut rendered = 0u64;
+    let mut peak_voice = 0u64;
+    let t0 = Instant::now();
+    while rendered < target {
+        e.render(&mut buf);
+        rendered += frames as u64;
+        peak_voice = peak_voice.max(e.voice_count());
+    }
+    let el = t0.elapsed().as_secs_f64();
+    eprintln!(
+        "  Ouranos 240s起12s音频={el:.2}s ({:.2}x) peak_voice={peak_voice}",
+        12.0 / el.max(1e-9)
+    );
+}

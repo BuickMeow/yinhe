@@ -39,6 +39,9 @@ pub static PROF_ON_SELECT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::
 pub static PROF_ON_NEW_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static PROF_ON_PUSH_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 /// 默认全局 voice 上限（与 GpuSynth 一致）。
+/// 默认全局 voice 上限（与 GpuSynth 一致）。超限在**块末摊销淘汰**（优先
+/// 已在 release/kill 中的 voice），淘汰走 1ms 淡出（ENV_KILL）听感无咔哒；
+/// 不在 note_on 热路径 O(V) 扫描，块内允许短暂超出（上限是软约束）。
 const DEFAULT_MAX_VOICES: usize = 8192;
 /// 默认每 key layer 上限（对齐 xsynth `VoiceChannelParams.layers`）。
 const DEFAULT_MAX_LAYERS: usize = 4;
@@ -142,10 +145,6 @@ impl CpuSynth {
     /// 当前活跃 voice 数（未结束）。
     pub fn voice_count(&self) -> usize {
         self.voices.iter().filter(|v| !v.finished()).count()
-    }
-
-    pub fn set_max_voices(&mut self, max: usize) {
-        self.max_voices = max;
     }
 
     /// 每 key layer 上限（`SetLayerCount`；None = 不限制）。
@@ -270,6 +269,11 @@ impl CpuSynth {
             v.advance_block(frames as u32);
         }
         self.voices.retain(|v| !v.finished());
+        // 全局 voice 上限：块末摊销淘汰（O(V) 一次/块，不在 note_on 热路径）。
+        let excess = self.voices.len().saturating_sub(self.max_voices);
+        if excess > 0 {
+            self.evict_excess(excess);
+        }
         // 重建 per-key 索引表（O(V) 一次/段；保留 Vec 容量）
         for v in self.key_indices.iter_mut() {
             v.clear();
@@ -418,19 +422,6 @@ impl CpuSynth {
             self.enforce_key_layers(slot, max, new_index);
         }
 
-        // 超限淘汰：优先杀最老的 release 中 voice，否则杀最老的（与 GpuSynth 同思路）
-        while self.voices.len() > self.max_voices {
-            let idx = self
-                .voices
-                .iter()
-                .position(|v| v.env_stage == ENV_RELEASE)
-                .unwrap_or(0);
-            if !self.voices[idx].finished() {
-                self.voices[idx].signal_release(ENV_FINISHED);
-            } else {
-                break; // 其余已被淘汰（块末统一清理）
-            }
-        }
         PROF_NOTE_ON_NS.fetch_add(
             t_prof.elapsed().as_nanos() as u64,
             std::sync::atomic::Ordering::Relaxed,
@@ -471,6 +462,32 @@ impl CpuSynth {
             };
             // 立即结束（xsynth 默认 fade_out_killing=false，同为立即杀）。
             self.voices[victim as usize].signal_release(ENV_FINISHED);
+        }
+    }
+
+    /// 全局 voice 超限淘汰（块末调用）：优先 release 中的，不足时按创建顺序
+    /// 杀最老的。立即结束（与 xsynth 的默认 kill 语义一致），块末统一 retain 回收。
+    fn evict_excess(&mut self, excess: usize) {
+        let mut killed = 0;
+        for i in 0..self.voices.len() {
+            if killed >= excess {
+                return;
+            }
+            let v = &self.voices[i];
+            if !v.finished() && v.env_stage >= ENV_RELEASE {
+                self.voices[i].signal_release(ENV_FINISHED);
+                killed += 1;
+            }
+        }
+        for i in 0..self.voices.len() {
+            if killed >= excess {
+                return;
+            }
+            let v = &self.voices[i];
+            if !v.finished() && !v.released {
+                self.voices[i].signal_release(ENV_FINISHED);
+                killed += 1;
+            }
         }
     }
 
