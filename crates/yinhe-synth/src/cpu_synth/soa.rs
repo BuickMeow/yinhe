@@ -21,7 +21,6 @@
 //! 本模块正在分批移植（已含包络、采样、插值、滤波、输出；待接入渲染
 //! 路径与生命周期），接入后移除 `#[allow(dead_code)]`。
 
-use std::ops::Range;
 use std::sync::Arc;
 
 use fearless_simd::{Select, Simd, SimdBase, SimdMask};
@@ -65,6 +64,9 @@ pub struct VoiceSoa {
     pub hold_frames: Vec<f32>,
     pub decay_frames: Vec<f32>,
     pub release_frames: Vec<f32>,
+    /// region 原始 attack/release 时长（CC72/73 重算的基准）。
+    pub orig_attack_frames: Vec<f32>,
+    pub orig_release_frames: Vec<f32>,
 
     // ── 采样（`samples` 每 lane 持 Arc，保证样本存活；渲染用裸引用）──
     samples: Vec<Arc<[f32]>>,
@@ -118,8 +120,15 @@ pub struct VoiceSoa {
     pub released: Vec<f32>,
     /// 被延音踏板保持（1.0/0.0；damper 期间不释放）。
     pub held_by_damper: Vec<f32>,
+    /// 淘汰中（1ms 淡出；xsynth `Voice::is_killed()` 语义：不计入活跃数、
+    /// 不参与淘汰候选，避免 enforce 反复选中同一 voice 死循环）。
+    pub killed: Vec<f32>,
     /// 输出通道（dense 槽位）。
     pub channel: Vec<u8>,
+    /// MIDI key（索引重建用）。
+    pub key: Vec<u8>,
+    /// NoteOn 力度（layer 淘汰用）。
+    pub velocity: Vec<u8>,
 }
 
 impl Default for VoiceSoa {
@@ -144,6 +153,8 @@ impl VoiceSoa {
             hold_frames: Vec::new(),
             decay_frames: Vec::new(),
             release_frames: Vec::new(),
+            orig_attack_frames: Vec::new(),
+            orig_release_frames: Vec::new(),
             samples: Vec::new(),
             is_stereo: Vec::new(),
             interp: Vec::new(),
@@ -175,7 +186,10 @@ impl VoiceSoa {
             end_sample: Vec::new(),
             released: Vec::new(),
             held_by_damper: Vec::new(),
+            killed: Vec::new(),
             channel: Vec::new(),
+            key: Vec::new(),
+            velocity: Vec::new(),
         }
     }
 
@@ -213,10 +227,13 @@ impl VoiceSoa {
 
     /// 由 key map 快照构造一个 lane（与 `CpuVoice::new` 逐字一致）。
     /// 返回 slot 下标。
+    #[allow(clippy::too_many_arguments)] // 上下文透传，见 AGENTS 约定
     pub fn init_lane(
         &mut self,
         info: &KeyInfo,
         channel: u8,
+        key: u8,
+        velocity: u8,
         end_sample: u64,
         start_offset: u32,
         sample_rate: u32,
@@ -277,6 +294,8 @@ impl VoiceSoa {
         self.hold_frames[slot] = info.ampeg_hold * sr;
         self.decay_frames[slot] = info.ampeg_decay * sr;
         self.release_frames[slot] = release_frames;
+        self.orig_attack_frames[slot] = orig_attack_frames;
+        self.orig_release_frames[slot] = orig_release_frames;
 
         self.samples[slot] = Arc::clone(&info.sample_data);
         self.is_stereo[slot] = info.is_stereo as u8 as f32;
@@ -318,7 +337,10 @@ impl VoiceSoa {
         self.end_sample[slot] = end_sample;
         self.released[slot] = 0.0;
         self.held_by_damper[slot] = 0.0;
+        self.killed[slot] = 0.0;
         self.channel[slot] = channel;
+        self.key[slot] = key;
+        self.velocity[slot] = velocity;
 
         slot
     }
@@ -337,6 +359,8 @@ impl VoiceSoa {
         self.hold_frames[slot] = 0.0;
         self.decay_frames[slot] = 0.0;
         self.release_frames[slot] = 0.0;
+        self.orig_attack_frames[slot] = 0.0;
+        self.orig_release_frames[slot] = 0.0;
         self.samples[slot] = Arc::from([]);
         self.is_stereo[slot] = 0.0;
         self.interp[slot] = 0.0;
@@ -368,7 +392,10 @@ impl VoiceSoa {
         self.end_sample[slot] = u64::MAX;
         self.released[slot] = 0.0;
         self.held_by_damper[slot] = 0.0;
+        self.killed[slot] = 0.0;
         self.channel[slot] = 0;
+        self.key[slot] = 0;
+        self.velocity[slot] = 0;
     }
 
     /// 扩容（翻倍，最小 `LANES_ALIGN`），新增 slot 为哑 voice。
@@ -386,6 +413,8 @@ impl VoiceSoa {
         self.hold_frames.resize(new_cap, 0.0);
         self.decay_frames.resize(new_cap, 0.0);
         self.release_frames.resize(new_cap, 0.0);
+        self.orig_attack_frames.resize(new_cap, 0.0);
+        self.orig_release_frames.resize(new_cap, 0.0);
         self.samples.resize(new_cap, Arc::from([]));
         self.is_stereo.resize(new_cap, 0.0);
         self.interp.resize(new_cap, 0.0);
@@ -417,25 +446,10 @@ impl VoiceSoa {
         self.end_sample.resize(new_cap, u64::MAX);
         self.released.resize(new_cap, 0.0);
         self.held_by_damper.resize(new_cap, 0.0);
+        self.killed.resize(new_cap, 0.0);
         self.channel.resize(new_cap, 0);
-    }
-
-    /// 推进所有 lane 一帧包络（与 `CpuVoice::advance_env` 逐位等价）。
-    ///
-    /// 独立入口（非渲染路径）：活跃判定为"全部 lane 可推进"。
-    #[inline(always)]
-    pub fn advance_env<S: Simd>(&mut self, simd: S) {
-        let width = S::f32s::LEN;
-        let active_end = self.len.next_multiple_of(width);
-        let mut block = 0;
-        while block < active_end {
-            let range = block..block + width;
-            let mut env = EnvVecs::load(simd, self, range.clone());
-            let all = env.stage.simd_eq(env.stage);
-            advance_env_vectors(simd, &mut env, all);
-            env.store(self, range);
-            block += width;
-        }
+        self.key.resize(new_cap, 0);
+        self.velocity.resize(new_cap, 0);
     }
 }
 
@@ -453,40 +467,6 @@ struct EnvVecs<S: Simd> {
     hold_frames: S::f32s,
     decay_frames: S::f32s,
     release_frames: S::f32s,
-}
-
-impl<S: Simd> EnvVecs<S> {
-    #[inline(always)]
-    fn load(simd: S, soa: &VoiceSoa, range: Range<usize>) -> Self {
-        Self {
-            stage: S::f32s::from_slice(simd, &soa.env_stage[range.clone()]),
-            progress: S::f32s::from_slice(simd, &soa.stage_progress[range.clone()]),
-            envelope: S::f32s::from_slice(simd, &soa.envelope[range.clone()]),
-            env_start: S::f32s::from_slice(simd, &soa.env_start[range.clone()]),
-            decay_start: S::f32s::from_slice(simd, &soa.decay_start[range.clone()]),
-            sustain_level: S::f32s::from_slice(simd, &soa.sustain_level[range.clone()]),
-            peak: S::f32s::from_slice(simd, &soa.env_level[range.clone()]),
-            delay_frames: S::f32s::from_slice(simd, &soa.delay_frames[range.clone()]),
-            attack_frames: S::f32s::from_slice(simd, &soa.attack_frames[range.clone()]),
-            hold_frames: S::f32s::from_slice(simd, &soa.hold_frames[range.clone()]),
-            decay_frames: S::f32s::from_slice(simd, &soa.decay_frames[range.clone()]),
-            release_frames: S::f32s::from_slice(simd, &soa.release_frames[range]),
-        }
-    }
-
-    #[inline(always)]
-    fn store(&self, soa: &mut VoiceSoa, range: Range<usize>) {
-        self.stage.store_slice(&mut soa.env_stage[range.clone()]);
-        self.progress
-            .store_slice(&mut soa.stage_progress[range.clone()]);
-        self.envelope.store_slice(&mut soa.envelope[range.clone()]);
-        self.env_start
-            .store_slice(&mut soa.env_start[range.clone()]);
-        self.decay_start
-            .store_slice(&mut soa.decay_start[range.clone()]);
-        self.sustain_level
-            .store_slice(&mut soa.sustain_level[range]);
-    }
 }
 
 /// 推进一帧包络（`active` lane 才写回；与标量逐位等价）。
@@ -574,254 +554,181 @@ fn advance_env_vectors<S: Simd>(simd: S, env: &mut EnvVecs<S>, active: S::mask32
     env.decay_start = active.select(new_decay_start, decay_start);
 }
 
+/// 生命周期与状态推进（供 `CpuSynth` 声部管理调用；渲染外的低频路径）。
 impl VoiceSoa {
-    /// 渲染 `[fi_start, fi_start + frames)`（块内帧），输出**累加**到
-    /// 分片 scratch（每通道 `frames × 2` 交错立体声区域，通道 stride =
-    /// `frames * 2`）。
-    ///
-    /// 语义与 `CpuVoice::render_block`（`profile_mode = 0`）逐位一致。
-    #[allow(clippy::too_many_arguments)]
-    #[inline(always)]
-    pub fn render<S: Simd>(
-        &mut self,
-        simd: S,
-        out: &mut [f32],
-        fi_start: usize,
-        frames: usize,
-        sample_start: u64,
-        damper: &[bool],
-    ) {
-        let width = S::f32s::LEN;
-        let active_end = self.len.next_multiple_of(width);
-        let mut block = 0;
-        while block < active_end {
-            self.render_lanes(
-                simd,
-                block,
-                width,
-                out,
-                fi_start,
-                frames,
-                sample_start,
-                damper,
-            );
-            block += width;
+    /// 活跃 voice 数（未结束）。
+    pub fn voice_count(&self) -> usize {
+        self.env_stage[..self.len]
+            .iter()
+            .filter(|&&s| s < ENV_FINISHED)
+            .count()
+    }
+
+    /// 删除已结束的 voice（**保持创建顺序**压缩），返回删除数。
+    /// `key_indices` 的"最老 voice"语义依赖顺序，块末统一重建索引。
+    pub fn compact(&mut self) -> usize {
+        let mut write = 0usize;
+        for read in 0..self.len {
+            if self.env_stage[read] < ENV_FINISHED {
+                if write != read {
+                    self.copy_lane(read, write);
+                }
+                write += 1;
+            }
+        }
+        let removed = self.len - write;
+        for slot in write..self.len {
+            self.reset_lane(slot);
+        }
+        self.len = write;
+        removed
+    }
+
+    /// 把 `from` lane 的全部状态复制到 `to`（紧凑压缩用）。
+    fn copy_lane(&mut self, from: usize, to: usize) {
+        self.envelope[to] = self.envelope[from];
+        self.env_stage[to] = self.env_stage[from];
+        self.stage_progress[to] = self.stage_progress[from];
+        self.env_start[to] = self.env_start[from];
+        self.decay_start[to] = self.decay_start[from];
+        self.sustain_level[to] = self.sustain_level[from];
+        self.env_level[to] = self.env_level[from];
+        self.delay_frames[to] = self.delay_frames[from];
+        self.attack_frames[to] = self.attack_frames[from];
+        self.hold_frames[to] = self.hold_frames[from];
+        self.decay_frames[to] = self.decay_frames[from];
+        self.release_frames[to] = self.release_frames[from];
+        self.orig_attack_frames[to] = self.orig_attack_frames[from];
+        self.orig_release_frames[to] = self.orig_release_frames[from];
+        self.samples[to] = Arc::clone(&self.samples[from]);
+        self.is_stereo[to] = self.is_stereo[from];
+        self.interp[to] = self.interp[from];
+        self.sample_length[to] = self.sample_length[from];
+        self.sample_offset[to] = self.sample_offset[from];
+        self.speed[to] = self.speed[from];
+        self.base_speed[to] = self.base_speed[from];
+        self.base_gain[to] = self.base_gain[from];
+        self.pan_l[to] = self.pan_l[from];
+        self.pan_r[to] = self.pan_r[from];
+        self.time[to] = self.time[from];
+        self.start_offset[to] = self.start_offset[from];
+        self.loop_mode[to] = self.loop_mode[from];
+        self.loop_start[to] = self.loop_start[from];
+        self.loop_end[to] = self.loop_end[from];
+        self.flt_b0[to] = self.flt_b0[from];
+        self.flt_b1[to] = self.flt_b1[from];
+        self.flt_b2[to] = self.flt_b2[from];
+        self.flt_a1[to] = self.flt_a1[from];
+        self.flt_a2[to] = self.flt_a2[from];
+        self.flt_x1[to] = self.flt_x1[from];
+        self.flt_x2[to] = self.flt_x2[from];
+        self.flt_y1[to] = self.flt_y1[from];
+        self.flt_y2[to] = self.flt_y2[from];
+        self.flt_x1r[to] = self.flt_x1r[from];
+        self.flt_x2r[to] = self.flt_x2r[from];
+        self.flt_y1r[to] = self.flt_y1r[from];
+        self.flt_y2r[to] = self.flt_y2r[from];
+        self.end_sample[to] = self.end_sample[from];
+        self.released[to] = self.released[from];
+        self.held_by_damper[to] = self.held_by_damper[from];
+        self.killed[to] = self.killed[from];
+        self.channel[to] = self.channel[from];
+        self.key[to] = self.key[from];
+        self.velocity[to] = self.velocity[from];
+    }
+
+    /// release/kill：从当前幅度进入 release（与 `CpuVoice::signal_release` 一致）。
+    pub fn signal_release(&mut self, slot: usize, stage: f32) {
+        self.env_start[slot] = self.envelope[slot];
+        self.env_stage[slot] = stage;
+        self.stage_progress[slot] = 0.0;
+        if stage >= ENV_RELEASE {
+            self.released[slot] = 1.0;
         }
     }
 
-    /// 渲染一个 lane 块（块内所有帧）。
-    #[allow(clippy::too_many_arguments)]
-    #[inline(always)]
-    fn render_lanes<S: Simd>(
-        &mut self,
-        simd: S,
-        block: usize,
-        width: usize,
-        out: &mut [f32],
-        fi_start: usize,
-        frames: usize,
-        sample_start: u64,
-        damper: &[bool],
-    ) {
-        let range = block..block + width;
-        let slot_of = |lane: usize| block + lane;
+    /// kill：淘汰时 1ms 淡出（与 `CpuVoice::signal_kill` 一致）。
+    pub fn signal_kill(&mut self, slot: usize, sample_rate: u32) {
+        self.env_start[slot] = self.envelope[slot];
+        self.env_stage[slot] = ENV_RELEASE;
+        self.stage_progress[slot] = 0.0;
+        self.released[slot] = 1.0;
+        self.killed[slot] = 1.0;
+        self.release_frames[slot] = 0.001 * sample_rate as f32;
+    }
 
-        // ── 常数参数（帧不变，load 一次）──
-        let gain = S::f32s::from_slice(simd, &self.base_gain[range.clone()]);
-        let pan_l = S::f32s::from_slice(simd, &self.pan_l[range.clone()]);
-        let pan_r = S::f32s::from_slice(simd, &self.pan_r[range.clone()]);
-        let is_stereo = S::f32s::from_slice(simd, &self.is_stereo[range.clone()]);
-        let stereo_mask = is_stereo.simd_gt(0.5);
-        let b0 = S::f32s::from_slice(simd, &self.flt_b0[range.clone()]);
-        let b1 = S::f32s::from_slice(simd, &self.flt_b1[range.clone()]);
-        let b2 = S::f32s::from_slice(simd, &self.flt_b2[range.clone()]);
-        let a1 = S::f32s::from_slice(simd, &self.flt_a1[range.clone()]);
-        let a2 = S::f32s::from_slice(simd, &self.flt_a2[range.clone()]);
-
-        // ── 每帧状态 ──
-        let mut env = EnvVecs::load(simd, self, range.clone());
-        let mut x1 = S::f32s::from_slice(simd, &self.flt_x1[range.clone()]);
-        let mut x2 = S::f32s::from_slice(simd, &self.flt_x2[range.clone()]);
-        let mut y1 = S::f32s::from_slice(simd, &self.flt_y1[range.clone()]);
-        let mut y2 = S::f32s::from_slice(simd, &self.flt_y2[range.clone()]);
-        let mut x1r = S::f32s::from_slice(simd, &self.flt_x1r[range.clone()]);
-        let mut x2r = S::f32s::from_slice(simd, &self.flt_x2r[range.clone()]);
-        let mut y1r = S::f32s::from_slice(simd, &self.flt_y1r[range.clone()]);
-        let mut y2r = S::f32s::from_slice(simd, &self.flt_y2r[range.clone()]);
-        let mut released = S::f32s::from_slice(simd, &self.released[range.clone()]);
-        let mut held = S::f32s::from_slice(simd, &self.held_by_damper[range.clone()]);
-
-        // ── 常数的 lane 参数（帧不变，标量栈数组）──
-        let mut begins = [0u32; MAX_LANES];
-        let mut release_ats = [0u32; MAX_LANES];
-        let mut damper_bits = 0u64;
-        for lane in 0..width {
-            let slot = slot_of(lane);
-            begins[lane] = self.start_offset[slot];
-            release_ats[lane] = if self.released[slot] != 0.0 || self.held_by_damper[slot] != 0.0 {
-                u32::MAX
-            } else {
-                self.end_sample[slot]
-                    .saturating_sub(sample_start)
-                    .min(u32::MAX as u64) as u32
-            };
-            if damper
-                .get(self.channel[slot] as usize)
-                .copied()
-                .unwrap_or(false)
-            {
-                damper_bits |= 1 << lane;
-            }
+    /// 段边界换速（弯音/调音；含 time 校正，与 `CpuVoice::set_speed` 一致）。
+    pub fn set_speed(&mut self, slot: usize, multiplier: f32, block_frame: u32) {
+        let new_speed = self.base_speed[slot] * multiplier;
+        if new_speed == self.speed[slot] {
+            return;
         }
-        let begin_vec = S::u32s::from_slice(simd, &begins[..width]);
-        let release_at_vec = S::u32s::from_slice(simd, &release_ats[..width]);
-        let damper_mask = S::mask32s::from_bitmask(simd, damper_bits);
-        let mut pan_l_arr = [0f32; MAX_LANES];
-        let mut pan_r_arr = [0f32; MAX_LANES];
-        pan_l.store_slice(&mut pan_l_arr[..width]);
-        pan_r.store_slice(&mut pan_r_arr[..width]);
+        let old_speed = self.speed[slot];
+        self.speed[slot] = new_speed;
+        let n = block_frame.saturating_sub(self.start_offset[slot]) as f64;
+        self.time[slot] += (n - 1.0) * (old_speed - new_speed) as f64;
+    }
 
-        let zero = S::f32s::splat(simd, 0.0);
-        let one = S::f32s::splat(simd, 1.0);
-        let five = S::f32s::splat(simd, ENV_RELEASE);
-        let six = S::f32s::splat(simd, ENV_FINISHED);
+    /// CC72/73：重算 attack/release 时长并从当前幅度重走当前阶段
+    /// （与 `CpuVoice::apply_env_update` 一致）。
+    pub fn apply_env_update(&mut self, slot: usize, ch: &ChannelState, sample_rate: u32) {
+        self.attack_frames[slot] = match ch.env_attack {
+            Some(cc) => crate::channel_state::env_curve_frames(
+                cc,
+                self.orig_attack_frames[slot],
+                sample_rate,
+                false,
+            ),
+            None => self.orig_attack_frames[slot],
+        };
+        self.release_frames[slot] = match ch.env_release {
+            Some(cc) => crate::channel_state::env_curve_frames(
+                cc,
+                self.orig_release_frames[slot],
+                sample_rate,
+                true,
+            ),
+            None => self.orig_release_frames[slot],
+        };
+        match self.env_stage[slot] as u32 {
+            0 => self.stage_progress[slot] = 0.0,
+            1 => {
+                self.env_start[slot] = self.envelope[slot];
+                self.stage_progress[slot] = 0.0;
+            }
+            2 => self.stage_progress[slot] = 0.0,
+            3 => {
+                self.decay_start[slot] = self.envelope[slot];
+                self.stage_progress[slot] = 0.0;
+            }
+            5 => {
+                self.env_start[slot] = self.envelope[slot];
+                self.stage_progress[slot] = 0.0;
+            }
+            _ => {}
+        }
+    }
 
-        // ── 帧循环 ──
-        for i in 0..frames {
-            let fi_abs = (fi_start + i) as u32;
-            let i_vec = S::u32s::splat(simd, i as u32);
-            let fi_vec = S::u32s::splat(simd, fi_abs);
-
-            // 释放触发（踏板按住时改为 held）
-            let rel_now = released.simd_eq(0.0) & held.simd_eq(0.0) & i_vec.simd_ge(release_at_vec);
-            let rel_mask = rel_now & !damper_mask;
-            let hold_mask = rel_now & damper_mask;
-            env.env_start = rel_mask.select(env.envelope, env.env_start);
-            env.stage = rel_mask.select(five, env.stage);
-            env.progress = rel_mask.select(zero, env.progress);
-            released = rel_mask.select(one, released);
-            held = hold_mask.select(one, held);
-
-            // 本帧活跃 lane：已开始且未结束
-            let begun = fi_vec.simd_ge(begin_vec);
-            let live = env.stage.simd_lt(six) & begun;
-            let live_bits = live.to_bitmask();
-
-            // ── 采样（逐 lane 标量：位置 f64、循环回绕、gather）──
-            let mut l0s = [0f32; MAX_LANES];
-            let mut r0s = [0f32; MAX_LANES];
-            let mut finished_bits = 0u64;
-            if live_bits != 0 {
-                let rel_stage_bits = env.stage.simd_ge(five).to_bitmask();
-                for lane in 0..width {
-                    if (live_bits >> lane) & 1 == 0 {
-                        continue;
-                    }
-                    let slot = slot_of(lane);
-                    let n = (fi_start + i - begins[lane] as usize) as f64;
-                    let t = self.time[slot] + n * f64::from(self.speed[slot]);
-                    let mut idx = t as u32;
-                    let frac = (t - f64::from(idx)) as f32;
-                    let sample_len = self.sample_length[slot];
-                    let max_idx = sample_len.saturating_sub(1);
-                    let is_released = ((rel_stage_bits >> lane) & 1) != 0;
-                    let loop_cont = self.loop_mode[slot] == 1.0;
-                    let loop_sus = self.loop_mode[slot] == 2.0 && !is_released;
-                    let has_loop =
-                        (loop_cont || loop_sus) && self.loop_end[slot] > self.loop_start[slot];
-                    if has_loop && idx > self.loop_end[slot] {
-                        let loop_len = self.loop_end[slot] - self.loop_start[slot];
-                        idx = (idx - self.loop_end[slot] - 1) % loop_len + self.loop_start[slot];
-                    }
-                    if idx < sample_len {
-                        let scale = 1 + self.is_stereo[slot] as u32;
-                        let si = (self.sample_offset[slot] + idx * scale) as usize;
-                        let sample = &self.samples[slot];
-                        let mut l0 = sample.get(si).copied().unwrap_or(0.0);
-                        let mut r0 = if self.is_stereo[slot] != 0.0 {
-                            sample.get(si + 1).copied().unwrap_or(0.0)
-                        } else {
-                            l0
-                        };
-                        if self.interp[slot] == 1.0 && idx < max_idx {
-                            let i1 = si + scale as usize;
-                            let l1 = sample.get(i1).copied().unwrap_or(0.0);
-                            let r1 = if self.is_stereo[slot] != 0.0 {
-                                sample.get(i1 + 1).copied().unwrap_or(0.0)
-                            } else {
-                                l1
-                            };
-                            l0 += (l1 - l0) * frac;
-                            r0 += (r1 - r0) * frac;
-                        }
-                        l0s[lane] = l0;
-                        r0s[lane] = r0;
-                    } else if !loop_cont {
-                        finished_bits |= 1 << lane;
-                    }
+    /// 块末推进：`time += speed × 实际播放帧数` 并回绕
+    /// （与 `CpuVoice::advance_block` 一致）。
+    pub fn advance_block(&mut self, slot: usize, frames: u32) {
+        if frames > self.start_offset[slot] {
+            let act_frames = frames - self.start_offset[slot];
+            self.start_offset[slot] = 0;
+            if self.env_stage[slot] < ENV_FINISHED {
+                self.time[slot] += f64::from(self.speed[slot]) * f64::from(act_frames);
+                let looped = (self.loop_mode[slot] == 1.0
+                    || (self.loop_mode[slot] == 2.0 && self.env_stage[slot] < ENV_RELEASE))
+                    && self.loop_end[slot] > self.loop_start[slot];
+                if looped && self.time[slot] > f64::from(self.loop_end[slot]) {
+                    let loop_len = f64::from(self.loop_end[slot] - self.loop_start[slot]);
+                    let off = (self.time[slot] - f64::from(self.loop_end[slot]) - 1.0) % loop_len;
+                    self.time[slot] = f64::from(self.loop_end[slot]) + 1.0 + off;
                 }
             }
-
-            // ── 增益 / 插值结果 / biquad（向量）──
-            let raw_l = S::f32s::from_slice(simd, &l0s[..width]);
-            let raw_r = S::f32s::from_slice(simd, &r0s[..width]);
-            let mut s_l = raw_l * gain * env.envelope;
-            let mut s_r = raw_r * gain * env.envelope;
-
-            let out_l = b0 * s_l + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
-            x2 = x1;
-            x1 = s_l;
-            y2 = y1;
-            y1 = out_l;
-            s_l = out_l;
-
-            let sr_in = s_r;
-            let out_r = b0 * s_r + b1 * x1r + b2 * x2r - a1 * y1r - a2 * y2r;
-            x2r = x1r;
-            x1r = sr_in;
-            y2r = y1r;
-            y1r = out_r;
-            s_r = stereo_mask.select(out_r, s_l);
-
-            // ── 输出（逐 lane 累加到通道区域）──
-            if live_bits != 0 {
-                let mut sl_arr = [0f32; MAX_LANES];
-                let mut sr_arr = [0f32; MAX_LANES];
-                s_l.store_slice(&mut sl_arr[..width]);
-                s_r.store_slice(&mut sr_arr[..width]);
-                let base_frame = i * 2;
-                for lane in 0..width {
-                    if (live_bits >> lane) & 1 == 0 {
-                        continue;
-                    }
-                    let ch = self.channel[slot_of(lane)] as usize;
-                    let base = ch * frames * 2 + base_frame;
-                    out[base] += sl_arr[lane] * pan_l_arr[lane];
-                    out[base + 1] += sr_arr[lane] * pan_r_arr[lane];
-                }
-            }
-
-            // 越界结束（本帧后不再输出）
-            if finished_bits != 0 {
-                env.stage = S::mask32s::from_bitmask(simd, finished_bits).select(six, env.stage);
-            }
-
-            // 包络推进（未开始的 lane 不推进）
-            advance_env_vectors(simd, &mut env, begun);
+        } else {
+            self.start_offset[slot] -= frames;
         }
-
-        // ── 写回状态 ──
-        env.store(self, range.clone());
-        x1.store_slice(&mut self.flt_x1[range.clone()]);
-        x2.store_slice(&mut self.flt_x2[range.clone()]);
-        y1.store_slice(&mut self.flt_y1[range.clone()]);
-        y2.store_slice(&mut self.flt_y2[range.clone()]);
-        x1r.store_slice(&mut self.flt_x1r[range.clone()]);
-        x2r.store_slice(&mut self.flt_x2r[range.clone()]);
-        y1r.store_slice(&mut self.flt_y1r[range.clone()]);
-        y2r.store_slice(&mut self.flt_y2r[range.clone()]);
-        released.store_slice(&mut self.released[range.clone()]);
-        held.store_slice(&mut self.held_by_damper[range]);
     }
 }
 
@@ -831,8 +738,6 @@ impl VoiceSoa {
 /// 保证），视图之间 lane 区间不相交（`chunks_mut` 保证），因此无需 unsafe
 /// 即可交给 Rayon 并行。
 pub struct VoiceSoaView<'a> {
-    /// 本视图的全局 lane 起始索引。
-    pub lane_base: usize,
     pub envelope: &'a mut [f32],
     pub env_stage: &'a mut [f32],
     pub stage_progress: &'a mut [f32],
@@ -934,7 +839,6 @@ impl VoiceSoa {
         let samples: Vec<&[Arc<[f32]>]> = self.samples.chunks(chunk).collect();
         (0..n)
             .map(|i| VoiceSoaView {
-                lane_base: i * chunk,
                 envelope: std::mem::take(&mut envelope[i]),
                 env_stage: std::mem::take(&mut env_stage[i]),
                 stage_progress: std::mem::take(&mut stage_progress[i]),
@@ -987,10 +891,6 @@ impl VoiceSoaView<'_> {
     /// 本视图的 lane 数。
     pub fn len(&self) -> usize {
         self.envelope.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.envelope.is_empty()
     }
 
     /// 渲染本视图的 lane（块内所有帧），输出**累加**到分片 scratch
@@ -1217,6 +1117,19 @@ impl VoiceSoaView<'_> {
             // 包络推进（未开始的 lane 不推进）
             advance_env_vectors(simd, &mut env, begun);
         }
+
+        // 段末释放：标量在子段末检查 `release_at <= done + sub`，当释放点
+        // 恰为段末（frames）时在本段结束时触发（否则要等下一段段首）。
+        let end_rel = released.simd_eq(0.0)
+            & held.simd_eq(0.0)
+            & S::u32s::splat(simd, frames as u32).simd_ge(release_at_vec);
+        let end_rel_mask = end_rel & !damper_mask;
+        let end_hold_mask = end_rel & damper_mask;
+        env.env_start = end_rel_mask.select(env.envelope, env.env_start);
+        env.stage = end_rel_mask.select(five, env.stage);
+        env.progress = end_rel_mask.select(zero, env.progress);
+        released = end_rel_mask.select(one, released);
+        held = end_hold_mask.select(one, held);
 
         // ── 写回状态 ──
         env.store_view(self, start, width);

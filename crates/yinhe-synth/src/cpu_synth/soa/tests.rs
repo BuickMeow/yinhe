@@ -52,7 +52,7 @@ fn compare_with_aos(
     let ch = ChannelState::new(SR);
 
     let mut soa = VoiceSoa::new();
-    let slot = soa.init_lane(info, 0, end_sample, start_offset, SR, &ch);
+    let slot = soa.init_lane(info, 0, 60, 100, end_sample, start_offset, SR, &ch);
     assert_eq!(slot, 0);
 
     let mut aos = CpuVoice::new(info, 0, 60, 100, end_sample, start_offset, SR, &ch);
@@ -62,9 +62,13 @@ fn compare_with_aos(
 
     let level = Level::new();
     let damper_flags = [damper; 32];
-    dispatch!(level, simd => soa.render(
-        simd, &mut out_soa, 0, frames, sample_start, &damper_flags
-    ));
+    let cap = soa.capacity().max(LANES_ALIGN);
+    dispatch!(level, simd => {
+        let mut views = soa.par_views(cap);
+        for view in views.iter_mut() {
+            view.render(simd, &mut out_soa, 0, frames, sample_start, &damper_flags);
+        }
+    });
     aos.render_block(&mut out_aos, frames, 0, sample_start, damper, 0);
 
     for (i, (a, b)) in out_soa.iter().zip(&out_aos).enumerate() {
@@ -140,9 +144,9 @@ fn render_matches_aos_multi_lane() {
     info_c.loop_end = 90;
 
     let frames = 256;
-    soa.init_lane(&info_a, 0, 1_000_000, 0, SR, &ch);
-    soa.init_lane(&info_b, 0, 100, 0, SR, &ch);
-    soa.init_lane(&info_c, 0, 1_000_000, 30, SR, &ch);
+    soa.init_lane(&info_a, 0, 60, 100, 1_000_000, 0, SR, &ch);
+    soa.init_lane(&info_b, 0, 62, 100, 100, 0, SR, &ch);
+    soa.init_lane(&info_c, 0, 64, 100, 1_000_000, 30, SR, &ch);
 
     let mut aos_a = CpuVoice::new(&info_a, 0, 60, 100, 1_000_000, 0, SR, &ch);
     let mut aos_b = CpuVoice::new(&info_b, 0, 62, 100, 100, 0, SR, &ch);
@@ -154,9 +158,13 @@ fn render_matches_aos_multi_lane() {
     let mut out_c = vec![0f32; frames * 2];
 
     let level = Level::new();
-    dispatch!(level, simd => soa.render(
-        simd, &mut out_soa, 0, frames, 0, &[false; 32]
-    ));
+    let cap = soa.capacity().max(LANES_ALIGN);
+    dispatch!(level, simd => {
+        let mut views = soa.par_views(cap);
+        for view in views.iter_mut() {
+            view.render(simd, &mut out_soa, 0, frames, 0, &[false; 32]);
+        }
+    });
     aos_a.render_block(&mut out_a, frames, 0, 0, false, 0);
     aos_b.render_block(&mut out_b, frames, 0, 0, false, 0);
     aos_c.render_block(&mut out_c, frames, 0, 0, false, 0);
@@ -185,12 +193,12 @@ fn par_views_match_single_thread_render() {
         // 40 lane（覆盖 32/16 两种 chunk 下的多视图），参数混合
         for i in 0..40u8 {
             if i % 3 == 0 {
-                soa.init_lane(&info_a, i % 2, 480_000, 0, SR, &ch);
+                soa.init_lane(&info_a, i % 2, 40 + i, 100, 480_000, 0, SR, &ch);
             } else if i % 3 == 1 {
-                soa.init_lane(&info_b, i % 2, 480_000, 0, SR, &ch);
+                soa.init_lane(&info_b, i % 2, 50 + i, 90, 480_000, 0, SR, &ch);
             } else {
                 // 中途到期释放的 voice
-                soa.init_lane(&base_info(wave(500)), i % 2, 100, 0, SR, &ch);
+                soa.init_lane(&base_info(wave(500)), i % 2, 60 + i, 80, 100, 0, SR, &ch);
             }
         }
         soa
@@ -206,7 +214,11 @@ fn par_views_match_single_thread_render() {
     let mut pool_split = build_pool();
     let level = Level::new();
     dispatch!(level, simd => {
-        pool_whole.render(simd, &mut out_whole, 0, frames, 0, &damper);
+        let cap = pool_whole.capacity().max(LANES_ALIGN);
+        let mut whole_views = pool_whole.par_views(cap);
+        for v in whole_views.iter_mut() {
+            v.render(simd, &mut out_whole, 0, frames, 0, &damper);
+        }
         // 强制多个小视图：chunk = 16（每视图 16 lane）
         let mut views = pool_split.par_views(LANES_ALIGN);
         assert!(views.len() >= 2, "应切成多个视图（实际 {}）", views.len());
