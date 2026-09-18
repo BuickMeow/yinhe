@@ -193,6 +193,7 @@ pub(crate) fn show_viewport(
     }
 
     let prev_xsynth_layers = settings.xsynth_layers;
+    let prev_max_voices = settings.max_voices;
     let prev_ui_scale = settings.ui_scale;
     let prev_font_scale = settings.font_scale;
     let settings_rc = std::rc::Rc::new(std::cell::RefCell::new(Some(std::mem::take(settings))));
@@ -269,6 +270,18 @@ pub(crate) fn show_viewport(
             audio
                 .handle
                 .send(yinhe_audio::AudioCommand::SetLayerCount { count });
+        }
+        if settings.max_voices != prev_max_voices
+            && let Some(audio) = audio
+        {
+            let max = if settings.max_voices == 0 {
+                None
+            } else {
+                Some(settings.max_voices as usize)
+            };
+            audio
+                .handle
+                .send(yinhe_audio::AudioCommand::SetMaxVoices { max });
         }
         if (settings.ui_scale - prev_ui_scale).abs() > f32::EPSILON {
             crate::scaling::apply_ui_scale(ctx, settings.ui_scale);

@@ -27,7 +27,8 @@ pub use channel_state::{ChaseSkip, MAX_CHANNELS};
 /// ≈2.8ms；14336 ≈ 40ms，给低端设备与 UI 争抢留余量），与**容量**
 /// （`MAX_VOICE_SLOTS`，只决定内存和 note_on 可容纳量）解耦：
 /// 容量远大于本值时，`note_on` 不会因墓碑占位而拒绝新音（丢音）。
-pub(crate) const DEFAULT_MAX_VOICES: usize = 12288;
+/// 公开：设置界面显示"系统推荐值"用（换设备/音源库后按实测调整）。
+pub const DEFAULT_MAX_VOICES: usize = 12288;
 /// 默认每 key layer 上限（对齐 xsynth `VoiceChannelParams.layers`；共用）。
 pub(crate) const DEFAULT_MAX_LAYERS: usize = 4;
 pub use cpu_synth::CpuSynth;

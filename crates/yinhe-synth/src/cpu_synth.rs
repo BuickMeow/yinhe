@@ -215,6 +215,11 @@ impl CpuSynth {
     }
 
     /// 每 key layer 上限（`SetLayerCount`；None = 不限制）。
+    /// 设置全局 voice 上限（GPU 同名接口对齐；CPU 无槽位容量概念）。
+    pub fn set_max_voices(&mut self, max: usize) {
+        self.max_voices = max;
+    }
+
     pub fn set_layer_count(&mut self, count: Option<usize>) {
         self.max_layers = count;
     }

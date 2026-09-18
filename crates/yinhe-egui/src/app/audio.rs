@@ -505,6 +505,16 @@ impl App {
             .handle
             .send(yinhe_audio::AudioCommand::SetLayerCount { count: layers });
 
+        // 最大复音数（0 = 自动/系统推荐）
+        let max = if self.audio_settings.max_voices == 0 {
+            None
+        } else {
+            Some(self.audio_settings.max_voices as usize)
+        };
+        audio
+            .handle
+            .send(yinhe_audio::AudioCommand::SetMaxVoices { max });
+
         // Load SoundFonts — resolved from global + project config
         //
         // 进度改事件驱动：每个 port 的 `LoadedSoundFont` 结果回传时计数器 +1，

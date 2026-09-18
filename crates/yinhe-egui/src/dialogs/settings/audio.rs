@@ -252,6 +252,45 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         },
     );
 
+    if settings.synth_engine == SynthEngine::YinheGpu {
+        setting_row(
+            ui,
+            t!("settings.audio.max_voices").as_ref(),
+            t!("settings.audio.max_voices_desc").as_ref(),
+            |ui| {
+                let mut v = settings.max_voices as usize;
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(
+                            crate::widgets::numeric_input::decimal_drag_value(&mut v)
+                                .range(0..=65536)
+                                .speed(64.0),
+                        )
+                        .changed()
+                    {
+                        settings.max_voices = v as u32;
+                        changed = true;
+                    }
+                    if settings.max_voices == 0 {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} {})",
+                                t!("settings.audio.max_voices_auto").as_ref(),
+                                yinhe_audio::DEFAULT_MAX_VOICES
+                            ))
+                            .weak()
+                            .size(crate::scaling::scaled_font(
+                                ui.ctx(),
+                                crate::theme::SMALL_FONT,
+                            ))
+                            .color(crate::theme::text_secondary()),
+                        );
+                    }
+                });
+            },
+        );
+    }
+
     setting_row(
         ui,
         t!("settings.audio.interpolation").as_ref(),

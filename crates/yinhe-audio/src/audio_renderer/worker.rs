@@ -132,6 +132,7 @@ impl AudioRenderer {
                             cs.set_interpolation(self.interpolation.code());
                             // 创建晚于 SetLayerCount 命令：补应用当前设置
                             cs.set_layer_count(self.engine.layer_count);
+                            cs.set_max_voices(self.engine.max_voices);
                             self.engine.cpu_synth = Some(cs);
                             play_log("[play] CpuSynth 初始化（yinhe CPU 后端）");
                         }
@@ -164,6 +165,7 @@ impl AudioRenderer {
                                         synth.set_interpolation(self.interpolation.code());
                                         // 创建晚于 SetLayerCount 命令：补应用当前设置
                                         synth.set_layer_count(self.engine.layer_count);
+                                        synth.set_max_voices(self.engine.max_voices);
                                         let t_load = Instant::now();
                                         if let Err(e) =
                                             synth.load_dense_soundfonts_many(&denses, &gpu_paths)

@@ -24,6 +24,7 @@ pub mod spawn;
 // GPU 合成器从 yinhe-synth re-export
 #[cfg(feature = "gpu")]
 pub use yinhe_synth as synth;
+pub use yinhe_synth::DEFAULT_MAX_VOICES;
 
 pub use audio_model::effective_fades;
 pub use audio_source::{

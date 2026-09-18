@@ -67,6 +67,8 @@ pub(crate) struct AudioEngine {
     /// 当前 per-key layer 设置（`SetLayerCount` 保存；worker 创建 yinhe
     /// CPU/GPU 合成器后据此应用——创建晚于命令，不能只在线应用）。
     pub(crate) layer_count: Option<usize>,
+    /// 最大复音数（`SetMaxVoices` 保存；worker 创建合成器后补应用）。
+    pub(crate) max_voices: usize,
     /// dispatch 基准（tick 域）：与 sample_position 同步推进（每块末更新，
     /// seek/load 时由 sample→tick 初始化）。事件比较全在 tick 域。
     pub(crate) current_tick: u32,
@@ -206,6 +208,7 @@ impl AudioEngine {
                 sample_rate,
                 sample_position: 0,
                 layer_count: Some(4),
+                max_voices: crate::DEFAULT_MAX_VOICES,
                 current_tick: 0,
                 playing: false,
                 duration_samples: 0,
@@ -332,6 +335,21 @@ impl AudioEngine {
         self.mixer.has_inserts() || self.instruments.iter().any(|i| i.is_some())
     }
 
+    /// 最大复音数：0/None → 系统推荐（`DEFAULT_MAX_VOICES`）。GPU/CPU 合成器
+    /// 创建晚于命令，worker 创建后会补应用本字段。
+    pub(crate) fn set_max_voices(&mut self, max: Option<usize>) {
+        self.max_voices = max.unwrap_or(crate::DEFAULT_MAX_VOICES);
+        #[cfg(feature = "gpu")]
+        {
+            if let Some(cs) = self.cpu_synth.as_mut() {
+                cs.set_max_voices(self.max_voices);
+            }
+            if let Some(gs) = self.gpu_synth.as_mut() {
+                gs.set_max_voices(self.max_voices);
+            }
+        }
+    }
+
     pub(crate) fn set_pending_play(&mut self, from_sample: u64) {
         self.pending_play_from_sample = Some(from_sample);
     }
@@ -405,6 +423,9 @@ impl AudioEngine {
             }
             AudioCommand::SetLayerCount { count } => {
                 self.set_layer_count(count);
+            }
+            AudioCommand::SetMaxVoices { max } => {
+                self.set_max_voices(max);
             }
             AudioCommand::SetAutomationDensity { density } => {
                 self.automation_density = density.max(1);

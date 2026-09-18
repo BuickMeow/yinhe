@@ -60,6 +60,9 @@ pub struct AudioSettings {
     pub default_sf2_path: String,
     pub global_sf_config: GlobalSfConfig,
     pub xsynth_layers: u32,
+    /// 最大复音数（0 = 自动/系统推荐）。GPU 合成器的性能旋钮：渲染量 ∝ 该值。
+    #[serde(default)]
+    pub max_voices: u32,
     pub buffer_size: u32,
     pub automation_event_density: u32,
     pub note_outline: bool,
@@ -159,6 +162,7 @@ impl Default for AudioSettings {
             default_sf2_path: String::new(),
             global_sf_config: GlobalSfConfig::builtin_default(),
             xsynth_layers: 4,
+            max_voices: 0,
             buffer_size: 0,
             min_border_width: 0.0,
             midi_import_encoding: MidiImportEncoding::Utf8,

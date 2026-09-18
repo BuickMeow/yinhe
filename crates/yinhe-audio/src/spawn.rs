@@ -116,6 +116,10 @@ pub enum AudioCommand {
     SetLayerCount {
         count: Option<usize>,
     },
+    /// Set global max voices (None = automatic / system recommended).
+    SetMaxVoices {
+        max: Option<usize>,
+    },
     /// Set automation Linear/Curve intermediate event density (tick interval).
     /// Triggers a cc_events rebuild if a model is loaded.
     SetAutomationDensity {
