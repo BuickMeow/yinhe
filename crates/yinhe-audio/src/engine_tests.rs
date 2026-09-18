@@ -4952,6 +4952,9 @@ fn diag_ouranos_bar157_dropout() {
     let mut out = vec![0.0f32; frames * 2];
     let mut energy: Vec<f32> = Vec::new();
     let mut wav_all: Vec<f32> = Vec::new();
+    // 与实时输出一致：前瞻限幅（audio_renderer 同款），否则诊断 WAV 有削波假象。
+    let mut limiter = yinhe_dsp::dsp::limiter::VolumeLimiter::new(sr);
+    let mut raw_clip: usize = 0;
     let blocks = std::env::var("YINHE_DIAG_BLOCKS")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
@@ -4959,6 +4962,8 @@ fn diag_ouranos_bar157_dropout() {
     let w = 64usize;
     for b in 0..blocks {
         engine.render(&mut out);
+        raw_clip += out.iter().filter(|v| v.abs() > 1.0).count();
+        limiter.limit(&mut out);
         wav_all.extend_from_slice(&out);
         let be = out.iter().fold(0.0f32, |m, v| m.max(v.abs()));
         let mix_peak = engine
@@ -5142,6 +5147,11 @@ fn diag_ouranos_bar157_dropout() {
         // 削波统计（|v|>1.0 的比例；引擎最终输出应 <=1.0 基本不削）
         let g_clip = wav_all.iter().filter(|v| v.abs() > 1.0).count();
         let c_clip = cpu_all.iter().filter(|v| v.abs() > 1.0).count();
+        eprintln!(
+            "限幅前削波 GPU={raw_clip}/{}（{:.2}%）",
+            wav_all.len(),
+            raw_clip as f64 / wav_all.len().max(1) as f64 * 100.0
+        );
         eprintln!(
             "CPU 对照：窗口数={n_win} 非静音窗 GPU={g_eq} CPU={c_eq} 峰值 GPU={g_peak:.1} CPU={c_peak:.1} 能量比均值={:.3}\n  削波样本 GPU={g_clip}/{}（{:.1}%） CPU={c_clip}/{}（{:.1}%）",
             ratio_sum / ratio_n.max(1) as f64,

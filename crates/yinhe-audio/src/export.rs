@@ -222,10 +222,9 @@ impl ExportJob {
     fn render_block(&mut self, engine: &mut AudioEngine, n: usize) -> Result<(), ExportError> {
         let buf = &mut self.buf[..n * STEREO_CHANNELS];
         engine.render(buf);
-        // 非浮点输出需要限幅（与实时输出一致）；32-bit float 保留原始幅度。
-        if self.bit_depth != WavBitDepth::Bit32Float {
-            self.limiter.limit(buf);
-        }
+        // 与实时输出一致：无条件前瞻限幅（32-bit float 同样限幅，避免"同一工程
+        // 不同导出格式听感不同"；32f 的原始幅度可由用户自行关限幅后导出）。
+        self.limiter.limit(buf);
         write_samples(&mut self.writer, buf, self.bit_depth)?;
         Ok(())
     }
@@ -268,7 +267,7 @@ impl ExportJob {
     /// 收尾写盘（成功路径；取消路径不调用，保留不完整文件）。
     pub(crate) fn finalize(mut self) -> Result<(), ExportError> {
         // 补上限幅器延迟线残留（末段 lookahead，约 3ms），否则尾部缺一小段。
-        if self.bit_depth != WavBitDepth::Bit32Float {
+        {
             let latency = self.limiter.latency_frames();
             let mut buf = vec![0.0f32; latency * STEREO_CHANNELS];
             let frames = self.limiter.flush(&mut buf);
