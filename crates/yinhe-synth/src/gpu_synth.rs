@@ -300,6 +300,36 @@ impl GpuSynth {
         h
     }
 
+    /// 长寿 voice 数（活跃且创建时间早于 `current - threshold` 样本）。
+    /// 诊断 voice 泄漏：正常音符寿命 = gate + release（秒级），远超则没结束。
+    pub fn long_lived_voices(&self, current_sample: u64, threshold: u64) -> u32 {
+        self.voices
+            .iter()
+            .filter(|v| {
+                v.state.env_stage < 6 && current_sample.saturating_sub(v.start_sample) > threshold
+            })
+            .count() as u32
+    }
+
+    /// 活跃 voice 按 key 计数，返回 Top N 最多的 key（找异常堆积）。
+    pub fn top_keys(&self, n: usize) -> Vec<(u8, u32)> {
+        let mut counts = [0u32; 128];
+        for v in self.voices.iter() {
+            if v.state.env_stage < 6 {
+                counts[v.key as usize] += 1;
+            }
+        }
+        let mut v: Vec<(u8, u32)> = counts
+            .iter()
+            .enumerate()
+            .filter(|&(_, &c)| c > 0)
+            .map(|(k, &c)| (k as u8, c))
+            .collect();
+        v.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+        v.truncate(n);
+        v
+    }
+
     /// 设置采样插值方式（`Interpolation::code()`；须在加载音色库之前设置）。
     pub fn set_interpolation(&mut self, interp: u32) {
         self.interpolation = interp;

@@ -210,7 +210,15 @@ impl GpuSynth {
             if v.state.env_stage >= 5 || v.release_pending || v.held_by_damper {
                 continue;
             }
-            if v.end_sample < block_start || v.end_sample >= block_end {
+            if v.end_sample < block_start {
+                // 过期未释放（end_sample 落在已过去的窗口：事件跳跃/边界错位）：
+                // 立即释放。原逻辑直接 continue → 这类 voice 永远不再被扫描 →
+                // 永久存活占槽位（低潮段 alive 很低却仍按满槽位渲染的元凶之一）。
+                v.release_pending = true;
+                releases.push(release_cmd(0, i));
+                continue;
+            }
+            if v.end_sample >= block_end {
                 continue;
             }
             let Some(ch_idx) = dense_channel(v.channel as usize) else {
