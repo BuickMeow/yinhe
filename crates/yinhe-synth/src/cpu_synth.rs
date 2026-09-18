@@ -57,6 +57,29 @@ fn dense_channel(channel: usize) -> Option<usize> {
 }
 
 /// 纯 CPU 合成器（API 与 GpuSynth 对等）。
+/// 渲染并行线程数：macOS 取**性能核（P 核）数**——实测 M 系列 10 核
+/// (4P+6E) 下 4 线程比 10 线程快 15~25%（E 核分片成为长尾），6~10 线程
+/// 反而不如 4；其余平台用逻辑核数（不区分大小核，避免误伤全 P 核机器）。
+fn render_thread_count() -> usize {
+    static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *N.get_or_init(|| {
+        #[cfg(target_os = "macos")]
+        if let Some(n) = std::process::Command::new("sysctl")
+            .args(["-n", "hw.perflevel0.physicalcpu"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|s| s.trim().parse::<usize>().ok())
+            .filter(|n| *n > 0)
+        {
+            return n;
+        }
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    })
+}
+
 pub struct CpuSynth {
     sample_rate: u32,
     /// 采样插值方式（`Interpolation::code()`；加载音色库时写入 KeyInfo）。
@@ -86,6 +109,9 @@ pub struct CpuSynth {
     /// note_on/note_off/enforce 的查找从 O(V) 降为 O(layer)（成本分解实测
     /// note_on+note_off 占 91% 渲染时间）；块末 retain 后重建。
     key_indices: Vec<Vec<u32>>,
+    /// CpuSynth 专用 rayon 池（线程数 = 性能核数，见 `render_thread_count`）。
+    /// 专用池不影响其他 rayon 使用者；构建失败（资源不足）为 None，回退全局池。
+    par_pool: Option<rayon::ThreadPool>,
 }
 
 impl CpuSynth {
@@ -106,6 +132,11 @@ impl CpuSynth {
             damper_flags: [false; MAX_CHANNELS],
             par_scratch: Vec::new(),
             key_indices: vec![Vec::new(); MAX_CHANNELS * 128],
+            par_pool: rayon::ThreadPoolBuilder::new()
+                .num_threads(render_thread_count())
+                .thread_name(|i| format!("yinhe-synth-{i}"))
+                .build()
+                .ok(),
         }
     }
 
@@ -349,8 +380,13 @@ impl CpuSynth {
         // 并行策略：voice 按物理顺序 `par_chunks_mut` 分片（分片间 voice 数相同、
         // 单 voice 工作量近似 → 天然负载均衡，不依赖通道分布，黑乐谱通道集中
         // 也不失衡）。每分片累加到私有 scratch（分片 × 通道 × 帧 × 2），随后归约。
-        // 分片数 = 线程数：实测细分（×4）反而因调度开销略降（1.53x → 1.32x）。
-        let threads = rayon::current_num_threads().max(1);
+        // 分片数 = 线程数（实测细分反而因归约开销略降）。线程数 = 性能核数。
+        let threads = self
+            .par_pool
+            .as_ref()
+            .map(|p| p.current_num_threads())
+            .unwrap_or_else(rayon::current_num_threads)
+            .max(1);
         let chunk = self.voices.len().div_ceil(threads).max(1);
         let n_chunks = self.voices.len().div_ceil(chunk);
         let stride = MAX_CHANNELS * frames * 2;
@@ -363,21 +399,33 @@ impl CpuSynth {
         // （幂等；黑乐谱长尾衰减到 -100dB 后 x86 denormal 会拖慢 10~100 倍）。
         crate::denormals::enable_flush_denormals();
         let t_par = std::time::Instant::now();
-        let scratch = &mut self.par_scratch;
-        self.voices
-            .par_chunks_mut(chunk)
-            .zip(scratch.par_chunks_mut(stride))
-            .for_each(|(voices, out)| {
-                crate::denormals::enable_flush_denormals();
-                // 块级渲染：每 voice 一次调用（到期释放在 render_block 内按
-                // 包络切片边界应用，无逐帧 O(V×frames) 扫描）。
-                for v in voices.iter_mut() {
-                    let damper = damper_flags[v.channel as usize];
-                    let ch_base = v.channel as usize * frames * 2;
-                    let ch_out = &mut out[ch_base..ch_base + frames * 2];
-                    v.render_block(ch_out, frames, fi_start, sample_start, damper, profile_mode);
-                }
-            });
+        let run = |voices: &mut [CpuVoice], scratch: &mut [f32]| {
+            voices
+                .par_chunks_mut(chunk)
+                .zip(scratch.par_chunks_mut(stride))
+                .for_each(|(voices, out)| {
+                    crate::denormals::enable_flush_denormals();
+                    // 块级渲染：每 voice 一次调用（到期释放在 render_block 内按
+                    // 包络切片边界应用，无逐帧 O(V×frames) 扫描）。
+                    for v in voices.iter_mut() {
+                        let damper = damper_flags[v.channel as usize];
+                        let ch_base = v.channel as usize * frames * 2;
+                        let ch_out = &mut out[ch_base..ch_base + frames * 2];
+                        v.render_block(
+                            ch_out,
+                            frames,
+                            fi_start,
+                            sample_start,
+                            damper,
+                            profile_mode,
+                        );
+                    }
+                });
+        };
+        match self.par_pool.as_ref() {
+            Some(pool) => pool.install(|| run(&mut self.voices, &mut self.par_scratch)),
+            None => run(&mut self.voices, &mut self.par_scratch),
+        }
         PROF_PAR_NS.fetch_add(
             t_par.elapsed().as_nanos() as u64,
             std::sync::atomic::Ordering::Relaxed,
