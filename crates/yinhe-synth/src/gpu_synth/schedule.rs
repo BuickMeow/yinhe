@@ -329,13 +329,11 @@ impl GpuSynth {
         // 音色库选择：dense 通道 → port → (bank, preset) 条目（与 xsynth
         // ChannelSoundfont::rebuild_matrix 一致：主选 + 兜底，落空静音）。
         let Some(ch_idx) = dense_channel(channel as usize) else {
-            eprintln!("[dbg] note_on: dense_channel 失败 ch={channel}");
             return;
         };
         // voice 槽位上限（状态常驻 GPU，槽位固定）；超限时由 maybe_compact_voices
         // 在块边界压缩，这里防御性拒绝。
         if self.voices.len() >= MAX_VOICE_SLOTS as usize {
-            eprintln!("[dbg] note_on: slots 满");
             return;
         }
         let ch = self.channels[ch_idx];
@@ -343,10 +341,7 @@ impl GpuSynth {
         let info = match sfz_parser::select_key_info_multi(entries, ch.bank, ch.program, key, vel) {
             Some(i) => i,
             None => {
-                eprintln!(
-                    "[dbg] note_on: select 失败 key={key} vel={vel} bank={} prog={}",
-                    ch.bank, ch.program
-                );
+                // 选不到 region（如 key≥128 的扩展键）：静默，与 CPU 一致
                 return;
             }
         };
@@ -356,19 +351,16 @@ impl GpuSynth {
         {
             Some(&v) => v,
             None => {
-                eprintln!("[dbg] note_on: offsets 无该采样指针 key={key}");
                 return;
             }
         };
         if length == 0 {
-            eprintln!("[dbg] note_on: length=0 key={key}");
             return;
         }
 
-        // 音色库声像：等功率法则（xsynth stereo spawner 公式，左右各 1.42 补偿）。
-        let angle = info.pan * std::f32::consts::FRAC_PI_2;
-        let (base_pan_l, base_pan_r) =
-            ((angle.cos() * 1.42).min(1.0), (angle.sin() * 1.42).min(1.0));
+        // 音色库声像：加载期烘焙的等功率增益（与 CPU CpuVoice 同源同值，
+        // 不再每 note_on 算 cos/sin）。
+        let (base_pan_l, base_pan_r) = (info.pan_l, info.pan_r);
         // 播放长度：SF2 的 sample_end（xsynth LoopParams.stop）封顶，SFZ 到采样末尾
         let sample_length = match info.stop {
             Some(stop) => stop
@@ -377,16 +369,12 @@ impl GpuSynth {
             None => length.saturating_sub(info.offset),
         };
 
-        // per-voice biquad 系数（RBJ cookbook，与 xsynth 一致）；cutoff=0 时无滤波器
-        let (flt_b0, flt_b1, flt_b2, flt_a1, flt_a2) = if info.cutoff > 0.0 {
-            crate::synth::biquad_coeffs(
-                crate::sfz_parser::filter_type_code(info.filter_type),
-                info.cutoff,
-                info.resonance,
-                self.sample_rate as f32,
-            )
-        } else {
-            (0.0, 0.0, 0.0, 0.0, 0.0)
+        // per-voice biquad 系数：加载期烘焙（sfz_parser::bake_biquad，与 CPU
+        // 同源同值），不再每 note_on 调三角函数。cutoff 字段仍写入
+        // GpuVoiceState 供 shader 做"是否滤波"判断。
+        let (flt_b0, flt_b1, flt_b2, flt_a1, flt_a2) = match info.biquad {
+            Some([b0, b1, b2, a1, a2]) => (b0, b1, b2, a1, a2),
+            None => (0.0, 0.0, 0.0, 0.0, 0.0),
         };
 
         // CC72/73：用通道当前值缩放 region 原始时长（多次 CC 不累积）

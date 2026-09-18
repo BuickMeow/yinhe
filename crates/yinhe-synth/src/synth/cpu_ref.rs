@@ -249,7 +249,10 @@ pub(crate) fn cpu_render_voices(
             let max_idx = voice.sample_length.saturating_sub(1);
 
             // 循环回绕（与 shader/xsynth 一致：> loop_end，loop 区间含 end）
-            let has_loop = voice.loop_mode > 0 && voice.loop_end > voice.loop_start;
+            // loop_mode：1=Continuous，2=Sustain 循环；3=OneShot 不循环
+            // （此前 `> 0` 把 OneShot 当循环，参考对比在 mode=3 时失真）。
+            let has_loop =
+                (voice.loop_mode == 1 || voice.loop_mode == 2) && voice.loop_end > voice.loop_start;
             if has_loop && idx > voice.loop_end {
                 let loop_len = voice.loop_end - voice.loop_start;
                 if loop_len > 0 {
