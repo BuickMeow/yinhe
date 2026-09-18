@@ -153,12 +153,17 @@ impl App {
                     d
                 });
                 if let Some(doc) = result {
-                    // 自动保存恢复：绑定原路径/名称并删除备份（内容已在内存）
-                    let is_restored = self.finish_restore_one(&path);
+                    // 自动保存恢复：先取出条目，**push 之后**再作用到恢复文档
+                    // （此前在 push 前调用，会误改当时 active 的旧文档）。
+                    let restore = self.take_restore_entry(&path);
+                    let is_restored = restore.is_some();
                     // 同 ModelLoaded：先登记文档，音频就绪后再激活显示。
                     let replace_untitled = self.should_replace_initial_untitled();
                     let insert_idx = self.workspace.documents.len();
                     self.workspace.documents.push(doc);
+                    if let Some(entry) = restore {
+                        self.apply_restore_to(insert_idx, &entry);
+                    }
                     self.restore_mixer_rack(insert_idx);
                     self.restore_instrument_rack(insert_idx);
                     // 同 ModelLoaded：不在此 teardown，交给下一帧

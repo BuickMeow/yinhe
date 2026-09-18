@@ -402,14 +402,17 @@ impl App {
             .load_path(entry.file.clone(), self.audio_settings.midi_import_encoding);
     }
 
-    /// 加载完成后调用：绑定恢复文档的原路径/名称，删除备份，继续队列。
-    /// 返回该加载是否为恢复流程（调用方据此跳过"最近使用"记录）。
-    pub(crate) fn finish_restore_one(&mut self, path: &str) -> bool {
-        let Some(entry) = self.autosave.pending_restore.remove(path) else {
-            return false;
-        };
-        if let Some(idx) = self.workspace.active_doc {
-            let doc = &mut self.workspace.documents[idx];
+    /// 取回待恢复条目（仅从队列移除，**不改任何文档**）。恢复文档在加载
+    /// 完成回调里才 push 进 workspace，此前不能作用到当时 active 的旧文档
+    /// （旧实现会误改旧文档的路径/dirty，恢复文档反而 Cmd+S 写回备份目录）。
+    pub(crate) fn take_restore_entry(&mut self, path: &str) -> Option<AutoSaveEntry> {
+        self.autosave.pending_restore.remove(path)
+    }
+
+    /// 把恢复条目作用到**已登记**（push 之后）的恢复文档：绑定原路径/名称、
+    /// 保持未保存状态、删除备份并继续恢复队列。
+    pub(crate) fn apply_restore_to(&mut self, idx: usize, entry: &AutoSaveEntry) {
+        if let Some(doc) = self.workspace.documents.get_mut(idx) {
             if let Some(orig) = &entry.original {
                 doc.file_path = Some(orig.clone());
                 doc.file_name = entry.name.clone();
@@ -417,7 +420,7 @@ impl App {
             // 恢复内容来自备份而非原文件：保持"未保存"状态提醒用户落盘。
             doc.mark_loaded();
         }
-        delete_entry_file(&entry);
+        delete_entry_file(entry);
         self.autosave
             .manifest
             .entries
@@ -425,7 +428,6 @@ impl App {
         self.autosave.manifest.auto_recover = false;
         save_manifest(&self.autosave.manifest);
         self.pump_restore_queue();
-        true
     }
 
     // ── device lost 自动重启 ──
