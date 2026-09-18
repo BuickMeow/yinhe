@@ -155,11 +155,6 @@ mod pipeline;
 mod tests;
 mod upload;
 
-/// 流水线深度：已提交未收割的块数（提交与等待分离，见 `render_to_mixer`）。
-/// 2 = 收割当前块时下一块已在 GPU 上执行，同步等待被重叠（实测 352 voice
-/// 2.79ms→1.02ms，-63%）。
-const PIPELINE_DEPTH: usize = 2;
-
 /// 已提交未收割的块。
 struct PendingGpuBlock {
     readback: crate::synth::renderer::PendingReadback,

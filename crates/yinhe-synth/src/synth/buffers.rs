@@ -16,6 +16,11 @@ pub(crate) const MAX_VOICE_SLOTS: u32 = 8192;
 /// GPU/内存带宽抢占把 UI 渲染卡住。
 const SAMPLE_WRITE_SLICE: usize = 16 * 1024 * 1024;
 
+/// GPU 渲染流水线深度（在途块数）：收割当前块时后面已有 `PIPELINE_DEPTH-1`
+/// 块在 GPU 排队，UI（egui 与音频共享 GPU）抢占造成的抖动被提前量吸收；
+/// 输出延迟不变（收割即输出）。staging 缓冲数量必须 >= 本值。
+pub(crate) const PIPELINE_DEPTH: usize = 4;
+
 /// `ensure_buffers` 的容量需求（整块帧数与 partial 段长分开：分段渲染时
 /// partial 只按段长上界分配，channel_mix/staging 按整块）。
 pub(crate) struct BufferSpec {
@@ -62,14 +67,16 @@ pub(crate) struct GpuBuffers {
     pub(crate) release_by_frame_buf: wgpu::Buffer,
     pub(crate) release_cmds_buf: wgpu::Buffer,
     pub(crate) env_cmds_buf: wgpu::Buffer,
-    /// 读回 staging（一次 map：先 channel_mix 后 voice_stage）
-    pub(crate) staging: [wgpu::Buffer; 2],
+    /// 读回 staging（每在途块一个；一次 map：先 channel_mix 后 voice_stage）
+    pub(crate) staging: Vec<wgpu::Buffer>,
     /// staging 中 voice_stage 区的字节偏移（= channel_mix_size）
     pub(crate) staging_stage_offset: u64,
     /// staging 中全字段 voice states 区的字节偏移（测试路径用；生产不 copy）
     pub(crate) staging_full_offset: u64,
     pub(crate) staging_idx: usize,
-    pub(crate) bind_groups: [wgpu::BindGroup; 2],
+    /// pass1/pass2 共用的 bind group（曾按 staging 双缓冲存两份，但参数
+    /// 完全相同、与 staging 无关，合并为一份）。
+    pub(crate) bind_group: wgpu::BindGroup,
 }
 
 impl GpuAudioRenderer {
@@ -269,18 +276,16 @@ impl GpuAudioRenderer {
         // [channel_mix][voice_stage][full voice states（仅测试路径 copy，生产不读）]
         let staging_full_offset = channel_mix_size + voice_stage_size;
         let staging_size = staging_full_offset + voice_state_size;
-        let staging0 = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("staging_0"),
-            size: staging_size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let staging1 = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("staging_1"),
-            size: staging_size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let staging: Vec<wgpu::Buffer> = (0..PIPELINE_DEPTH)
+            .map(|i| {
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(&format!("staging_{i}")),
+                    size: staging_size,
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                })
+            })
+            .collect();
         // 块内段结构与指令缓冲（每块 write_buffer 覆盖）
         let segs_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("gpu_segs"),
@@ -396,38 +401,21 @@ impl GpuAudioRenderer {
         };
 
         self.buffers = Some(GpuBuffers {
-            bind_groups: [
-                make_bg(
-                    &params_buf,
-                    &voice_state_buf,
-                    &channel_mix_buf,
-                    &chunk_offsets_buf,
-                    &sample_chunks,
-                    &self.dummy_buf,
-                    &partial_buf,
-                    &segs_buf,
-                    &ch_updates_buf,
-                    &release_by_frame_buf,
-                    &release_cmds_buf,
-                    &env_cmds_buf,
-                    &voice_stage_buf,
-                ),
-                make_bg(
-                    &params_buf,
-                    &voice_state_buf,
-                    &channel_mix_buf,
-                    &chunk_offsets_buf,
-                    &sample_chunks,
-                    &self.dummy_buf,
-                    &partial_buf,
-                    &segs_buf,
-                    &ch_updates_buf,
-                    &release_by_frame_buf,
-                    &release_cmds_buf,
-                    &env_cmds_buf,
-                    &voice_stage_buf,
-                ),
-            ],
+            bind_group: make_bg(
+                &params_buf,
+                &voice_state_buf,
+                &channel_mix_buf,
+                &chunk_offsets_buf,
+                &sample_chunks,
+                &self.dummy_buf,
+                &partial_buf,
+                &segs_buf,
+                &ch_updates_buf,
+                &release_by_frame_buf,
+                &release_cmds_buf,
+                &env_cmds_buf,
+                &voice_stage_buf,
+            ),
             sample_chunks,
             chunk_offsets_buf,
             chunk_count,
@@ -448,7 +436,7 @@ impl GpuAudioRenderer {
             release_by_frame_buf,
             release_cmds_buf,
             env_cmds_buf,
-            staging: [staging0, staging1],
+            staging,
             staging_stage_offset: channel_mix_size,
             staging_full_offset,
             staging_idx: 0,

@@ -4,6 +4,7 @@
 //! seek/load_events 调用，故标 `pub(super)`，其余仅本模块内使用。
 
 use super::*;
+use crate::synth::buffers::PIPELINE_DEPTH;
 
 impl GpuSynth {
     /// 渲染一块到混音台的 planar 通道缓冲（覆盖写，与 CPU 路径

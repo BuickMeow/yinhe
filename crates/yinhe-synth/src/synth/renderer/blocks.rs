@@ -140,7 +140,7 @@ impl GpuAudioRenderer {
                     ..Default::default()
                 });
                 cpass.set_pipeline(&self.pipeline);
-                cpass.set_bind_group(0, &buf.bind_groups[idx], &[]);
+                cpass.set_bind_group(0, &buf.bind_group, &[]);
                 cpass.dispatch_workgroups(voice_wg_count, 1, 1);
             }
             // pass2：每帧一个 workgroup，把 partial 归约到 channel_mix 本段区间
@@ -150,7 +150,7 @@ impl GpuAudioRenderer {
                     ..Default::default()
                 });
                 cpass.set_pipeline(&self.mix_pipeline);
-                cpass.set_bind_group(0, &buf.bind_groups[idx], &[]);
+                cpass.set_bind_group(0, &buf.bind_group, &[]);
                 cpass.dispatch_workgroups(seg.frame_length, 1, 1);
             }
             // 最后一段：读回 channel_mix（整块）+ 紧凑 stage [+ 全字段]，
@@ -186,7 +186,7 @@ impl GpuAudioRenderer {
         // 分配 staging（双缓冲轮转；收割时 unmap 后归还）
         let idx = self.buffers.as_ref()?.staging_idx;
         if let Some(b) = self.buffers.as_mut() {
-            b.staging_idx = 1 - idx;
+            b.staging_idx = (idx + 1) % crate::synth::buffers::PIPELINE_DEPTH;
         }
         let (sender, receiver) = std::sync::mpsc::channel();
         {
