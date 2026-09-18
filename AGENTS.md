@@ -44,7 +44,8 @@
 3. 每次修改之后，都跑一次cargo clippy，消除warning。如果有既有warning，报告给用户。
 4. 每次修改代码后，都运行一次cargo fmt（默认代码风格即可）。大范围的格式化要单独提交，不要和功能改动混在一个commit里。
 5. 验证时不要跑整个 workspace 的测试/clippy（太慢）。默认只跑本次修改涉及的 crate 及其下游依赖：`cargo test -p <crate>`、`cargo clippy -p <crate>`。只有改动跨 crate 公共接口（如 serde 派生、类型定义、公共 API 签名）时才把下游 crate 一起跑。全量测试留给 CI 或大改动前。
-6. 每次修改代码后，顺便编译出release，这样方便用户在会话结束后直接开始测试功能。（不是fast release！）
+6. 每次修改代码后，即将提交给用户时，顺便编译出release（不是fast release！），这样方便用户在会话结束后直接开始测试功能。如果没必要，中途步骤时无需编译release。子Agent请勿执行该操作。
+7. 除用户特别豁免外，单项测试时长禁止超过120秒，如果有超过，比如MIDI太大，请换轻量的MIDI，或者向用户申请长时间测试。一旦超时直接视为测试失败。
 
 ## 六、工具与环境
 
