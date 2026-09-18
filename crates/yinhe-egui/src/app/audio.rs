@@ -405,9 +405,10 @@ impl App {
             return false;
         }
         let port_configs = self.resolve_sf_config(&self.workspace.documents[idx]);
-        if !sf_configs_cover(&self.audio_state.engine_sf_configs, &port_configs) {
-            return false;
-        }
+        // 音色库差异**不作为换流理由**：活引擎支持逐通道在线替换
+        // （SetSoundFonts，worker 解析走缓存），保留 cpal 流/渲染线程/采样
+        // 上传，不再为音色库差异 teardown + 重建整个引擎。
+        let sf_covered = sf_configs_cover(&self.audio_state.engine_sf_configs, &port_configs);
         if !self.racks_plugin_free(old_idx) || !self.racks_plugin_free(idx) {
             return false;
         }
@@ -432,15 +433,34 @@ impl App {
         self.audio_library.push_all_to_engine(&audio.handle);
         let sample_rate = audio.sample_rate;
         self.audio_library.ensure_decoded(&model, sample_rate);
+        if !sf_covered {
+            // 在线替换音色库（进度由 worker 的 LoadedSoundFont 事件驱动）
+            audio.handle.send(yinhe_audio::AudioCommand::SetSoundFonts {
+                configs: Box::new(port_configs.clone()),
+            });
+        }
 
         self.audio_state.active_doc = Some(idx);
         self.audio_state.playback_anchor = None;
         self.audio_state.pending_playback = false;
-        // 引擎与音色库都已就绪：不进入"等音色库加载"的进度卡阶段。
-        self.audio_state.sf_total = 0;
-        self.audio_state.sf_pending = false;
         progress::set_stage(&self.load_progress, 1, progress::StageStatus::Done);
-        progress::set_stage(&self.load_progress, 2, progress::StageStatus::Done);
+        if sf_covered {
+            // 引擎与音色库都已就绪：不进入"等音色库加载"的进度卡阶段。
+            self.audio_state.sf_total = 0;
+            self.audio_state.sf_pending = false;
+            progress::set_stage(&self.load_progress, 2, progress::StageStatus::Done);
+        } else {
+            self.audio_state.engine_sf_configs = port_configs;
+            self.audio_state.sf_total = self.audio_state.engine_sf_configs.len();
+            self.audio_state.sf_pending = true;
+            progress::set_stage(&self.load_progress, 2, progress::StageStatus::Active);
+            progress::set_stage_progress(
+                &self.load_progress,
+                2,
+                0.0,
+                format!("0/{}", self.audio_state.sf_total),
+            );
+        }
         true
     }
 
@@ -665,6 +685,12 @@ impl App {
                 let time = sample as f64 / audio.sample_rate as f64;
                 doc.edit.cursor_tick = Some(doc.data.model.tempo_map.tick_at_time(time));
                 doc.edit.playback.stop();
+            } else if !handle.audio_ready() {
+                // 音频引擎尚未就绪（音色库/采样/管线准备中）：直接告知用户，
+                // 不发送会排队等待的 Play 命令（否则 UI 只能转圈等确认，
+                // 1s 后才报"未被音频线程确认"）。
+                self.notifications
+                    .error(t!("toast.audio_not_ready").to_string(), String::new());
             } else {
                 let tick = doc.edit.cursor_tick.unwrap_or(0.0);
                 let cursor_sample = (doc.data.model.tempo_map.tick_to_seconds(tick as u64)
