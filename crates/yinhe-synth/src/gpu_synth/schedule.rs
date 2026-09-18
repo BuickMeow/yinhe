@@ -54,6 +54,11 @@ pub(super) struct Voice {
     /// 不预置 env_stage：预置会让 shader 在指令应用前就按 release 阶段推进
     /// （旧 env_start=0 会把 envelope 清零）。
     pub(super) release_pending: bool,
+    /// 槽位复用代号：harvest 状态回读的身份校验。读回状态属于"提交该块时的
+    /// voice"——若槽位已被 note_on 复用为新 voice（代号不同），读回的是旧
+    /// voice 的（可能已死亡）状态，必须丢弃而不是覆盖新 voice 的镜像
+    /// （否则新 voice 被误回收 → 槽位被反复复用覆盖 → 正在响的声音消失）。
+    pub(super) slot_gen: u32,
 }
 
 /// 一段的事件结构，render_to_mixer 内先按段 collect 保存所有权，
@@ -452,6 +457,7 @@ impl GpuSynth {
             orig_release_frames: p.orig_release_frames,
             held_by_damper: false,
             release_pending: false,
+            slot_gen: self.next_gen,
             state: GpuVoiceState {
                 // offset 是拼接内的**元素**起点；info.offset 是**帧**偏移
                 // → 立体声需 ×scale（此前直接相加，立体声样本起点错位）。
@@ -503,6 +509,8 @@ impl GpuSynth {
                 dup: 1,
             },
         };
+        self.next_gen = self.next_gen.wrapping_add(1);
+
         // 槽位分配：优先复用已结束 voice 的槽位（free list）；复用时**必须
         // 显式上传状态**（submit 的上传只覆盖本次新增的尾部区间）。原实现
         // 只能追加，墓碑累积顶到容量后 note_on 拒绝新音、且周期性 compact

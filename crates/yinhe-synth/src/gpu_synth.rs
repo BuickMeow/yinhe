@@ -179,6 +179,8 @@ pub struct GpuSynth {
     /// GPU 权威全字段 voice 状态（每次收割读回；compact 重传前用它覆盖
     /// CPU 镜像，否则重传过期位置/包络会把 voice 状态重置）。
     states_buf: Vec<GpuVoiceState>,
+    /// voice 槽位复用代号计数器（harvest 身份校验，见 `Voice::slot_gen`）。
+    next_gen: u32,
     /// 本块内创建的 voice 按 (dense 通道 × 128 key) 分桶（合批候选扫描用）。
     /// 跨块 voice 已渲染（参数/包络状态已推进）不可合批，故只需本块新建者；
     /// 每块 collect_block 开头清空。桶内索引 = 槽位索引。
@@ -204,6 +206,9 @@ struct PendingGpuBlock {
     frames: usize,
     /// 提交时的 voice 数（槽位一一对应；收割时只更新前 N 个）。
     voice_count: usize,
+    /// 提交时各槽位的 voice 代号快照：收割时逐槽校验，槽位已被复用（代号
+    /// 不同）则丢弃该槽位的读回状态（属于旧 voice）。
+    voice_gens: Vec<u32>,
 }
 
 impl GpuSynth {
@@ -253,6 +258,7 @@ impl GpuSynth {
             events: Vec::new(),
             event_cursor: 0,
             cc_scratch: Vec::new(),
+            next_gen: 1,
             batch_buckets: (0..MAX_CHANNELS * 128).map(|_| Vec::new()).collect(),
             seg_scratch: Vec::new(),
             sample_position: 0,

@@ -4956,7 +4956,11 @@ fn diag_ouranos_bar157_dropout() {
             }
         }
         let groups = seen.values().filter(|&&c| c > 1).count();
-        let redundant: usize = seen.values().filter(|&&c| c > 1).map(|&c| (c - 1) as usize).sum();
+        let redundant: usize = seen
+            .values()
+            .filter(|&&c| c > 1)
+            .map(|&c| (c - 1) as usize)
+            .sum();
         eprintln!(
             "可合批统计：NoteOn={note_ons} 完全重复组={groups} 冗余事件={redundant}（{:.1}%）",
             redundant as f64 / note_ons.max(1) as f64 * 100.0
@@ -4986,13 +4990,23 @@ fn diag_ouranos_bar157_dropout() {
     // 与实时输出一致：前瞻限幅（audio_renderer 同款），否则诊断 WAV 有削波假象。
     let mut limiter = yinhe_dsp::dsp::limiter::VolumeLimiter::new(sr);
     let mut raw_clip: usize = 0;
+    let mut raw_all: Vec<f32> = Vec::new();
     let blocks = std::env::var("YINHE_DIAG_BLOCKS")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(60);
     let w = 64usize;
+    let mut ring_short_sum: u64 = 0;
+    let mut ring_short_blocks: u64 = 0;
     for b in 0..blocks {
         engine.render(&mut out);
+        if let Some(g) = engine.gpu_synth.as_ref() {
+            let rs = g.diag_ring_short as u64;
+            if rs > 0 {
+                ring_short_sum += rs;
+                ring_short_blocks += 1;
+            }
+        }
         if b % 30 == 0 {
             let vc = engine
                 .gpu_synth
@@ -5002,6 +5016,7 @@ fn diag_ouranos_bar157_dropout() {
             eprintln!("voice 数 第{b}块：GPU={vc}");
         }
         raw_clip += out.iter().filter(|v| v.abs() > 1.0).count();
+        raw_all.extend_from_slice(&out);
         limiter.limit(&mut out);
         wav_all.extend_from_slice(&out);
         let be = out.iter().fold(0.0f32, |m, v| m.max(v.abs()));
@@ -5122,6 +5137,189 @@ fn diag_ouranos_bar157_dropout() {
         }
     }
 
+    // —— 单音符长漂移：人工长音（gate 11s）连续渲染 120 块 ——
+    // 隔离"时间/速度累积"与"音符/CC 交互"：导出 WAV 供离线测相位漂移。
+    {
+        // 多音符复现：1200 个 gate 0.5s 的音符（每 100ms 一个，跨 16 通道），
+        // 触发大量 voice 创建/结束/槽位回收复用——校准累积差异源（单音符无差异）。
+        // 单音符定位实验：sample=4000 落在块 0 的段 7（段 512 帧）内。
+        // 若"段内帧→块内帧"换算有误，GPU 起音会延迟整段数（>=512 帧）。
+        let single_long: Vec<yinhe_synth::SynthEvent> = vec![yinhe_synth::SynthEvent::NoteOn {
+            sample: 4000,
+            channel: 0,
+            key: 60,
+            velocity: 100,
+            end_sample: 4000 + (sr as u64 * 30) / 1000,
+        }];
+        let mut g3 = yinhe_synth::GpuSynth::new_default(sr).unwrap();
+        for ch in 0..16u32 {
+            g3.load_dense_soundfonts(ch, std::slice::from_ref(&sfz_path))
+                .unwrap();
+        }
+        g3.finish_soundfont_load();
+        g3.set_layer_count(None);
+        g3.load_events(single_long.clone());
+        g3.seek(0);
+        let mut c3 = yinhe_synth::CpuSynth::new(sr);
+        for ch in 0..16u32 {
+            c3.load_dense_soundfonts(ch, std::slice::from_ref(&sfz_path))
+                .unwrap();
+        }
+        c3.finish_soundfont_load();
+        c3.set_layer_count(None);
+        c3.seek(0);
+        c3.load_events(single_long);
+        g3.seek(0);
+        c3.set_sample_position(0);
+        let f3 = 4096usize;
+        let b3 = 30usize;
+        let mut gb3: Vec<yinhe_mixer::ChannelBuffers> = (0..16)
+            .map(|_| yinhe_mixer::ChannelBuffers {
+                left: vec![0.0; f3],
+                right: vec![0.0; f3],
+            })
+            .collect();
+        let mut cb3: Vec<yinhe_mixer::ChannelBuffers> = (0..16)
+            .map(|_| yinhe_mixer::ChannelBuffers {
+                left: vec![0.0; f3],
+                right: vec![0.0; f3],
+            })
+            .collect();
+        let mut g3_all: Vec<f32> = Vec::new();
+        let mut c3_all: Vec<f32> = Vec::new();
+        for _ in 0..b3 {
+            g3.render_to_mixer(&mut gb3);
+            c3.render_to_mixer(&mut cb3);
+            for i in 0..f3 {
+                g3_all.push(gb3[0].left[i]);
+                c3_all.push(cb3[0].left[i]);
+            }
+        }
+        let write_single = |path: &std::path::Path, data: &[f32]| {
+            if let Ok(mut w) = hound::WavWriter::create(
+                path,
+                hound::WavSpec {
+                    channels: 1,
+                    sample_rate: sr,
+                    bits_per_sample: 16,
+                    sample_format: hound::SampleFormat::Int,
+                },
+            ) {
+                for &v in data {
+                    let _ = w.write_sample((v.clamp(-1.0, 1.0) * 32767.0) as i16);
+                }
+                let _ = w.finalize();
+            }
+        };
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+        write_single(
+            std::path::Path::new(&format!("{home}/Desktop/single_gpu.wav")),
+            &g3_all,
+        );
+        write_single(
+            std::path::Path::new(&format!("{home}/Desktop/single_cpu.wav")),
+            &c3_all,
+        );
+        eprintln!(
+            "单音符长渲染 WAV 已导出（120 块，{:.1}s）",
+            g3_all.len() as f64 / sr as f64
+        );
+    }
+
+    // —— 子窗口隔离：1.5-2.0s（大 WAV 中 GPU/CPU 波形去相关区）单独重渲染 ——
+    // 判据：若子窗口相关也低 -> 内容差异（好定位）；若高 -> 长时间渲染累积问题。
+    {
+        let w_start = seek_sample + (1.5 * sr as f64) as u64;
+        let w_end = w_start + sr as u64 / 2;
+        let sub: Vec<yinhe_synth::SynthEvent> = engine
+            .build_gpu_events(w_start)
+            .into_iter()
+            .filter(|e| e.sample() >= w_start && e.sample() < w_end)
+            .collect();
+        let n_sub = sub.len();
+        let mut g2 = yinhe_synth::GpuSynth::new_default(sr).unwrap();
+        for ch in 0..16u32 {
+            g2.load_dense_soundfonts(ch, std::slice::from_ref(&sfz_path))
+                .unwrap();
+        }
+        g2.finish_soundfont_load();
+        g2.set_layer_count(None);
+        g2.load_events(sub.clone());
+        g2.seek(w_start);
+        let mut c2 = yinhe_synth::CpuSynth::new(sr);
+        for ch in 0..16u32 {
+            c2.load_dense_soundfonts(ch, std::slice::from_ref(&sfz_path))
+                .unwrap();
+        }
+        c2.finish_soundfont_load();
+        c2.set_layer_count(None);
+        c2.seek(w_start);
+        c2.load_events(sub);
+        c2.set_sample_position(w_start);
+        let mut gb2: Vec<yinhe_mixer::ChannelBuffers> = (0..16)
+            .map(|_| yinhe_mixer::ChannelBuffers {
+                left: vec![0.0; frames],
+                right: vec![0.0; frames],
+            })
+            .collect();
+        let mut cb2: Vec<yinhe_mixer::ChannelBuffers> = (0..16)
+            .map(|_| yinhe_mixer::ChannelBuffers {
+                left: vec![0.0; frames],
+                right: vec![0.0; frames],
+            })
+            .collect();
+        let blocks2 = 6usize;
+        let mut ga: Vec<f32> = Vec::new();
+        let mut ca: Vec<f32> = Vec::new();
+        let mut gv_peak = 0usize;
+        let mut cv_peak = 0usize;
+        for _ in 0..blocks2 {
+            g2.render_to_mixer(&mut gb2);
+            c2.render_to_mixer(&mut cb2);
+            gv_peak = gv_peak.max(g2.voice_count());
+            cv_peak = cv_peak.max(c2.voice_count());
+            for i in 0..frames {
+                let (mut l, mut r) = (0.0f32, 0.0f32);
+                for b in &gb2 {
+                    l += b.left[i];
+                    r += b.right[i];
+                }
+                ga.push(l);
+                ga.push(r);
+                let (mut l2, mut r2) = (0.0f32, 0.0f32);
+                for b in &cb2 {
+                    l2 += b.left[i];
+                    r2 += b.right[i];
+                }
+                ca.push(l2);
+                ca.push(r2);
+            }
+        }
+        let m = ga.len().min(ca.len());
+        let ag: Vec<f32> = ga[..m].iter().step_by(2).copied().collect();
+        let ac: Vec<f32> = ca[..m].iter().step_by(2).copied().collect();
+        let (mg, mc) = (
+            ag.iter().sum::<f32>() / ag.len() as f32,
+            ac.iter().sum::<f32>() / ac.len() as f32,
+        );
+        let mut num = 0.0f64;
+        let mut dg = 0.0f64;
+        let mut dc = 0.0f64;
+        for (a, b) in ag.iter().zip(ac.iter()) {
+            let (a, b) = ((a - mg) as f64, (b - mc) as f64);
+            num += a * b;
+            dg += a * a;
+            dc += b * b;
+        }
+        let corr = num / (dg.sqrt() * dc.sqrt()).max(1e-12);
+        let egr = ag.iter().map(|v| v * v).sum::<f32>().sqrt();
+        let ecr = ac.iter().map(|v| v * v).sum::<f32>().sqrt();
+        eprintln!(
+            "子窗口 1.5-2.0s（事件 {n_sub}）：相关={corr:.3} 能量比 G/C={:.3} 峰值voice GPU={gv_peak} CPU={cv_peak}",
+            egr / ecr.max(1e-9)
+        );
+    }
+
     // —— CPU 对照（yinhe CpuSynth，同一事件表/seek）：对比"音符是否被削短" ——
     {
         let events3 = engine.build_gpu_events(seek_sample);
@@ -5214,6 +5412,26 @@ fn diag_ouranos_bar157_dropout() {
         // 削波统计（|v|>1.0 的比例；引擎最终输出应 <=1.0 基本不削）
         let g_clip = wav_all.iter().filter(|v| v.abs() > 1.0).count();
         let c_clip = cpu_all.iter().filter(|v| v.abs() > 1.0).count();
+        eprintln!("ring 不足：块数={ring_short_blocks}/{blocks} 总缺帧={ring_short_sum}");
+        {
+            // 限幅前 GPU/CPU 直接相关（区分"渲染层累积差异"与"限幅器差异"）
+            let m = raw_all.len().min(cpu_raw_all.len());
+            let ag: Vec<f32> = raw_all[..m].iter().step_by(2).copied().collect();
+            let ac: Vec<f32> = cpu_raw_all[..m].iter().step_by(2).copied().collect();
+            let (mg, mc) = (
+                ag.iter().sum::<f32>() / ag.len() as f32,
+                ac.iter().sum::<f32>() / ac.len() as f32,
+            );
+            let (mut num, mut dg, mut dc) = (0.0f64, 0.0f64, 0.0f64);
+            for (a, b) in ag.iter().zip(ac.iter()) {
+                let (a, b) = ((a - mg) as f64, (b - mc) as f64);
+                num += a * b;
+                dg += a * a;
+                dc += b * b;
+            }
+            let corr = num / (dg.sqrt() * dc.sqrt()).max(1e-12);
+            eprintln!("限幅前相关 GPU/CPU（全段）={corr:.4}");
+        }
         eprintln!(
             "限幅前削波 GPU={raw_clip}/{}（{:.2}%）",
             wav_all.len(),

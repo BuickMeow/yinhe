@@ -239,6 +239,7 @@ impl GpuSynth {
                     readback,
                     frames,
                     voice_count: self.voices.len(),
+                    voice_gens: self.voices.iter().map(|v| v.slot_gen).collect(),
                 });
                 self.render_position = block_end;
                 true
@@ -284,6 +285,12 @@ impl GpuSynth {
             .zip(self.states_buf.iter())
             .enumerate()
         {
+            // 身份校验：槽位已被 note_on 复用为新 voice（代号不同）时，本块读回
+            // 的是旧 voice 的状态，丢弃（否则会把新 voice 镜像写成旧 voice 的
+            // 死亡状态 → 误回收 → 槽位被反复复用覆盖 → 声音消失/断续）。
+            if i < p.voice_gens.len() && v.slot_gen != p.voice_gens[i] {
+                continue;
+            }
             v.state = *st;
             if st.env_stage >= 6 {
                 // GPU 已确认结束（含 kill 淡出完成）→ 清除待确认标记
