@@ -4962,6 +4962,14 @@ fn diag_ouranos_bar157_dropout() {
     let w = 64usize;
     for b in 0..blocks {
         engine.render(&mut out);
+        if b % 30 == 0 {
+            let vc = engine
+                .gpu_synth
+                .as_ref()
+                .map(|g| g.voice_count())
+                .unwrap_or(0);
+            eprintln!("voice 数 第{b}块：GPU={vc}");
+        }
         raw_clip += out.iter().filter(|v| v.abs() > 1.0).count();
         limiter.limit(&mut out);
         wav_all.extend_from_slice(&out);
@@ -5091,9 +5099,11 @@ fn diag_ouranos_bar157_dropout() {
             .unwrap();
         cpu.finish_soundfont_load();
         cpu.set_layer_count(None);
-        // 注意顺序：seek 会清空事件表（与 GPU 的 seek 语义不同）
+        // 注意顺序：seek 清空事件表（与 GPU 的 seek 语义不同），load_events 又把
+        // 位置重置为 0；故 seek（清状态）→ load_events（灌事件）→ set 位置。
         cpu.seek(seek_sample);
         cpu.load_events(events3);
+        cpu.set_sample_position(seek_sample);
         let mut cbufs: Vec<yinhe_mixer::ChannelBuffers> = (0..16)
             .map(|_| yinhe_mixer::ChannelBuffers {
                 left: vec![0.0; frames],
@@ -5101,8 +5111,16 @@ fn diag_ouranos_bar157_dropout() {
             })
             .collect();
         let mut cpu_all: Vec<f32> = Vec::new();
-        for _ in 0..blocks.min(120) {
+        for bi in 0..blocks.min(120) {
             cpu.render_to_mixer(&mut cbufs);
+            if bi % 30 == 0 {
+                eprintln!(
+                    "voice 数 第{bi}块：CPU未结束={} CPU槽位={} 位置={}",
+                    cpu.voice_count(),
+                    cpu.debug_voices_len(),
+                    cpu.sample_position()
+                );
+            }
             for i in 0..frames {
                 let (mut l, mut r) = (0.0f32, 0.0f32);
                 for b in &cbufs {

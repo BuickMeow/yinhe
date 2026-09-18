@@ -209,9 +209,21 @@ impl CpuSynth {
         self.sample_position
     }
 
+    /// 仅设置渲染位置（不清事件/voice/channels）。
+    /// `load_events` 会把位置重置为 0；需要"载入完整事件表后从中间起播"的
+    /// 调用方（如离线对照渲染）在 load_events 之后调用本方法定位。
+    pub fn set_sample_position(&mut self, sample: u64) {
+        self.sample_position = sample;
+    }
+
     /// 当前活跃 voice 数（未结束）。
     pub fn voice_count(&self) -> usize {
         self.voices.iter().filter(|v| !v.finished()).count()
+    }
+
+    /// 诊断：voices 数组长度（retain 前的槽位数，含正在 release 的）。
+    pub fn debug_voices_len(&self) -> usize {
+        self.voices.len()
     }
 
     /// 每 key layer 上限（`SetLayerCount`；None = 不限制）。
