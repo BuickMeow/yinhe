@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::sfz_parser;
+use crate::sf_parser;
 use crate::synth::GpuAudioRenderer;
 use crate::synth::buffers::MAX_VOICE_SLOTS;
 use crate::synth::{GpuVoiceState, RENDER_SEGMENT_FRAMES, RenderSegment};
@@ -25,10 +25,10 @@ mod schedule;
 
 use schedule::{SegBuffers, Voice};
 
-pub(crate) mod cache;
-
-pub use cache::prefetch_key_maps;
-use cache::{SampleBundle, cached_sample_bundle, load_key_maps_merged, store_sample_bundle};
+pub use crate::sf_cache::prefetch_key_maps;
+use crate::sf_cache::{
+    SampleBundle, cached_sample_bundle, load_key_maps_merged, store_sample_bundle,
+};
 
 /// MIDI 通道数（dense 通道 = port×16+ch，支持 2 端口 32 通道）。
 pub use crate::channel_state::MAX_CHANNELS;
@@ -95,7 +95,7 @@ pub struct GpuSynth {
     renderer: GpuAudioRenderer,
     /// 每 port 的音色库条目列表（bank/preset → key map），`channel_port` 决定通道用哪个 port。
     /// `Arc` 共享：单音色库时直接指向进程级解析缓存，多通道零克隆。
-    port_key_maps: Vec<Arc<Vec<sfz_parser::KeyMapEntry>>>,
+    port_key_maps: Vec<Arc<Vec<sf_parser::KeyMapEntry>>>,
     /// dense 通道 → port 映射（由 `load_port_soundfonts` 按 layout 填表）。
     channel_port: [u8; MAX_CHANNELS],
     /// 已加载过的音色库路径（拼接缓存的 key 组成，排序去重后使用）。
@@ -1211,9 +1211,9 @@ mod tests {
         ];
         // 验证 sfz 的 keyrange
         {
-            let maps = crate::sfz_parser::build_key_maps(&sfz_path, sr, 0).expect("build maps");
+            let maps = crate::sf_parser::build_key_maps(&sfz_path, sr, 0).expect("build maps");
             for key in [60u8, 61] {
-                let ok = crate::sfz_parser::select_key_info(&maps[0].map, key, 127).is_some();
+                let ok = crate::sf_parser::select_key_info(&maps[0].map, key, 127).is_some();
                 eprintln!("  key={key} region存在={ok}");
             }
         }

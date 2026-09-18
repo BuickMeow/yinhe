@@ -190,7 +190,7 @@ fn diag_piano_cutoff_and_loop() {
         eprintln!("跳过：未设置 YINHE_TEST_SFZ");
         return;
     };
-    let entries = yinhe_synth::sfz_parser::build_key_maps(std::path::Path::new(&sfz), 48_000, 0)
+    let entries = yinhe_synth::sf_parser::build_key_maps(std::path::Path::new(&sfz), 48_000, 0)
         .expect("load soundfont");
     let (mut total, mut with_cut, mut loop_sus, mut loop_cont, mut no_loop) =
         (0u64, 0u64, 0u64, 0u64, 0u64);
@@ -202,8 +202,8 @@ fn diag_piano_cutoff_and_loop() {
                     with_cut += 1;
                 }
                 match info.loop_mode {
-                    yinhe_synth::sfz_parser::LoopMode::LoopSustain => loop_sus += 1,
-                    yinhe_synth::sfz_parser::LoopMode::LoopContinuous => loop_cont += 1,
+                    yinhe_synth::sf_parser::LoopMode::LoopSustain => loop_sus += 1,
+                    yinhe_synth::sf_parser::LoopMode::LoopContinuous => loop_cont += 1,
                     _ => no_loop += 1,
                 }
             }

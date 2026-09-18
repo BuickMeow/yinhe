@@ -15,7 +15,8 @@ pub mod channel_state;
 pub mod cpu_synth;
 pub mod denormals;
 pub mod gpu_synth;
-pub mod sfz_parser;
+pub(crate) mod sf_cache;
+pub mod sf_parser;
 pub mod synth;
 mod voice_params;
 
@@ -28,7 +29,7 @@ pub(crate) const DEFAULT_MAX_VOICES: usize = 8192;
 pub(crate) const DEFAULT_MAX_LAYERS: usize = 4;
 pub use cpu_synth::CpuSynth;
 pub use gpu_synth::{ControlEvent, GpuSynth, SynthEvent, prefetch_key_maps};
-pub use sfz_parser::{
+pub use sf_parser::{
     KeyInfo, KeyMapEntry, LoopMode, build_key_maps, load_wav_as_f32, select_key_info,
     select_key_info_multi,
 };

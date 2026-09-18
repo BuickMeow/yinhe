@@ -3,7 +3,7 @@
 //! 运行（release，否则数值无意义）：
 //! YINHE_TEST_SFZ=... cargo test --release -p yinhe-synth --test tmp_interp_bench -- --nocapture
 //!
-//! interp 由 sfz_parser 决定，需手动切换后跑两次对比。
+//! interp 由 sf_parser 决定，需手动切换后跑两次对比。
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -68,7 +68,7 @@ fn bench_render_interp() {
     let ms_per_block = best * 1000.0 / blocks as f64;
     let realtime = (blocks * frames) as f64 / 48_000.0 / best;
     println!(
-        "voice={} 块={}：{:.2}ms/块（512 帧），实时倍率 {:.2}x，插值见 sfz_parser",
+        "voice={} 块={}：{:.2}ms/块（512 帧），实时倍率 {:.2}x，插值见 sf_parser",
         voices, blocks, ms_per_block, realtime
     );
 }

@@ -1,6 +1,6 @@
 //! 事件调度：块内事件收集为段结构，note on/off 与通道释放指令，chase 应用。
 
-use crate::sfz_parser;
+use crate::sf_parser;
 use crate::synth::buffers::MAX_VOICE_SLOTS;
 use crate::synth::{ChState, EnvUpdateCmd, GpuVoiceState, ReleaseCmd, SegInfo};
 
@@ -333,7 +333,7 @@ impl GpuSynth {
         }
         let ch = self.channels[ch_idx];
         let entries = &self.port_key_maps[self.channel_port[ch_idx] as usize];
-        let info = match sfz_parser::select_key_info_multi(entries, ch.bank, ch.program, key, vel) {
+        let info = match sf_parser::select_key_info_multi(entries, ch.bank, ch.program, key, vel) {
             Some(i) => i,
             None => {
                 // 选不到 region（如 key≥128 的扩展键）：静默，与 CPU 一致
@@ -406,7 +406,7 @@ impl GpuSynth {
                 interp: p.interp,
                 cutoff: info.cutoff,
                 resonance: info.resonance,
-                filter_type: crate::sfz_parser::filter_type_code(info.filter_type),
+                filter_type: crate::sf_parser::filter_type_code(info.filter_type),
                 flt_b0: p.biquad.map(|b| b[0]).unwrap_or(0.0),
                 flt_b1: p.biquad.map(|b| b[1]).unwrap_or(0.0),
                 flt_b2: p.biquad.map(|b| b[2]).unwrap_or(0.0),

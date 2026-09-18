@@ -8,7 +8,7 @@
 //! 的计算仍留在各后端（长度来源不同），不在本结构内。
 
 use crate::channel_state::{ChannelState, env_curve_frames};
-use crate::sfz_parser::KeyInfo;
+use crate::sf_parser::KeyInfo;
 
 /// CC72/73 修正后的 attack/release 帧数（region 原始值 + 通道当前 CC）。
 pub(crate) fn env_frames_for(

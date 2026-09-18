@@ -3,13 +3,13 @@
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 
-use crate::sfz_parser;
+use crate::sf_parser;
 
 /// 进程级音色库解析缓存：key = (路径, 目标采样率)。
 /// 反复打开/切换工程不再重复解析（每次约 3-4s）；样本 `Arc` 跨引擎共享，
 /// 内存只存一份。缓存常驻（音色库条目数量有限）。
 type KeyMapCacheKey = (std::path::PathBuf, u32, u32);
-type KeyMapCacheValue = Arc<Vec<sfz_parser::KeyMapEntry>>;
+type KeyMapCacheValue = Arc<Vec<sf_parser::KeyMapEntry>>;
 static KEY_MAP_CACHE: LazyLock<Mutex<HashMap<KeyMapCacheKey, KeyMapCacheValue>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -28,7 +28,7 @@ pub fn prefetch_key_maps(
         }
     }
     let t = std::time::Instant::now();
-    let built = Arc::new(sfz_parser::build_key_maps(path, sample_rate, interp)?);
+    let built = Arc::new(sf_parser::build_key_maps(path, sample_rate, interp)?);
     eprintln!(
         "[synth] worker 预解析音色库={:?}：{}",
         t.elapsed(),
@@ -48,11 +48,11 @@ pub(crate) fn load_key_maps_merged(
     paths: &[std::path::PathBuf],
     sample_rate: u32,
     interp: u32,
-) -> Result<Arc<Vec<sfz_parser::KeyMapEntry>>, String> {
+) -> Result<Arc<Vec<sf_parser::KeyMapEntry>>, String> {
     if paths.len() == 1 {
         return load_key_maps(&paths[0], sample_rate, interp);
     }
-    let mut merged: Vec<sfz_parser::KeyMapEntry> = Vec::new();
+    let mut merged: Vec<sf_parser::KeyMapEntry> = Vec::new();
     for path in paths {
         merged.extend(load_key_maps(path, sample_rate, interp)?.iter().cloned());
     }
@@ -65,7 +65,7 @@ pub(crate) fn load_key_maps(
     path: &std::path::Path,
     sample_rate: u32,
     interp: u32,
-) -> Result<Arc<Vec<sfz_parser::KeyMapEntry>>, String> {
+) -> Result<Arc<Vec<sf_parser::KeyMapEntry>>, String> {
     let key = (path.to_path_buf(), sample_rate, interp);
     let cached = {
         let cache = KEY_MAP_CACHE.lock().unwrap_or_else(|e| e.into_inner());
@@ -76,7 +76,7 @@ pub(crate) fn load_key_maps(
         return Ok(arc);
     }
     let t = std::time::Instant::now();
-    let built = Arc::new(sfz_parser::build_key_maps(path, sample_rate, interp)?);
+    let built = Arc::new(sf_parser::build_key_maps(path, sample_rate, interp)?);
     eprintln!(
         "[synth] 音色库解析（未命中缓存）={:?}：{}",
         t.elapsed(),

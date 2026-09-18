@@ -2,7 +2,7 @@
 //!
 //! 目标：行为对齐 xsynth（`parity` 测试逐样本对比），日后替代 xsynth 承担
 //! CPU 合成。与 GPU 路径共用：
-//! - `sfz_parser`：音色库解析与 (key, vel) 参数快照（`KeyInfo`）；
+//! - `sf_parser`：音色库解析与 (key, vel) 参数快照（`KeyInfo`）；
 //! - `ChannelState`/`ChaseSkip`：CC/RPN/弯音/鼓组状态机与 chase 跳过；
 //! - `SynthEvent`/`ControlEvent` 事件模型；
 //! - `voice_render.wgsl` 的逐帧算法（CPU `voice.rs` 逐行复刻）。
@@ -26,7 +26,7 @@ use crate::channel_state::{
 };
 use crate::cpu_synth::voice::{CpuVoice, ENV_RELEASE};
 use crate::gpu_synth::{ControlEvent, SynthEvent};
-use crate::sfz_parser::{self, KeyMapEntry};
+use crate::sf_parser::{self, KeyMapEntry};
 use crate::{DEFAULT_MAX_LAYERS, DEFAULT_MAX_VOICES};
 
 /// 成本分解开关（0=全功能；1=无滤波；2=无采样；3=只遍历）。
@@ -164,11 +164,8 @@ impl CpuSynth {
         denses: &[u32],
         paths: &[PathBuf],
     ) -> Result<(), String> {
-        let maps = crate::gpu_synth::cache::load_key_maps_merged(
-            paths,
-            self.sample_rate,
-            self.interpolation,
-        )?;
+        let maps =
+            crate::sf_cache::load_key_maps_merged(paths, self.sample_rate, self.interpolation)?;
         for &dense in denses {
             let slot = dense as usize;
             if slot >= MAX_CHANNELS {
@@ -499,7 +496,7 @@ impl CpuSynth {
         let ch = self.channels[ch_idx];
         let entries = self.port_key_maps[ch_idx].as_slice();
         let t_sel = std::time::Instant::now();
-        let Some(info) = sfz_parser::select_key_info_multi(entries, ch.bank, ch.program, key, vel)
+        let Some(info) = sf_parser::select_key_info_multi(entries, ch.bank, ch.program, key, vel)
         else {
             return;
         };
@@ -744,7 +741,7 @@ mod tests {
         let sr = 48_000u32;
         for (i, &(d, a, h, dec, sus, rel, start)) in cases.iter().enumerate() {
             // 下限与 CpuVoice::new 一致
-            let info = crate::sfz_parser::KeyInfo {
+            let info = crate::sf_parser::KeyInfo {
                 ampeg_delay: d,
                 ampeg_attack: a.max(0.001),
                 ampeg_hold: h,
@@ -803,7 +800,7 @@ mod tests {
         eprintln!(
             "CpuVoice = {} B；KeyInfo = {} B",
             std::mem::size_of::<CpuVoice>(),
-            std::mem::size_of::<crate::sfz_parser::KeyInfo>()
+            std::mem::size_of::<crate::sf_parser::KeyInfo>()
         );
     }
     use super::*;

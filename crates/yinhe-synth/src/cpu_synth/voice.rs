@@ -14,7 +14,7 @@
 use std::sync::Arc;
 
 use crate::channel_state::{ChannelState, env_curve_frames};
-use crate::sfz_parser::KeyInfo;
+use crate::sf_parser::KeyInfo;
 
 /// 包络结束阶段。
 pub(super) const ENV_FINISHED: u32 = 6;
@@ -120,7 +120,7 @@ impl CpuVoice {
         // 声像说明：等功率法则（与 xsynth stereo spawner 一致，左右各 1.42
         // 补偿，中心 pan → 1.0）。xsynth 的净输出另被其通道层无条件 pan=0.5
         // 衰减 √2，我们不做该层（声像保持标准正确）；响度差由输出软限幅兜底。
-        // 增益在加载期烘焙（`sfz_parser::pan_gains`），运行期零三角函数。
+        // 增益在加载期烘焙（`sf_parser::pan_gains`），运行期零三角函数。
         let p = crate::voice_params::VoiceParams::from_key_info(info, ch, sample_rate);
 
         let mut voice = Self {
@@ -183,7 +183,7 @@ impl CpuVoice {
                 .min(total.saturating_sub(info.offset)),
             None => total.saturating_sub(info.offset),
         };
-        // per-voice biquad 系数：加载期烘焙（`sfz_parser::bake_biquad`，
+        // per-voice biquad 系数：加载期烘焙（`sf_parser::bake_biquad`，
         // RBJ cookbook 与 GPU/xsynth 一致）；cutoff=0 时无滤波器
         if let Some([b0, b1, b2, a1, a2]) = p.biquad {
             voice.flt_b0 = b0;
