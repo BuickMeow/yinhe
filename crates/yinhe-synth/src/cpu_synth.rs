@@ -427,6 +427,36 @@ impl CpuSynth {
             t_sel.elapsed().as_nanos() as u64,
             std::sync::atomic::Ordering::Relaxed,
         );
+        // 完全重复合批：先在最近创建的活跃 voice 里找同参数者（黑乐谱重复
+        // NoteOn 常态，tau 峰值段实测完全重复冗余 57.9%）。命中则只把该批次
+        // 的引用数 +1，不新建 voice；线性系统里两者数学等价。
+        let slot = Self::key_slot(channel, key);
+        let speed = info.speed_mult * ch.pitch_multiplier();
+        let scan = self.key_indices[slot].len().min(16);
+        let hit = self.key_indices[slot]
+            .iter()
+            .rev()
+            .take(scan)
+            .find(|&&i| {
+                self.voices[i as usize].matches_batch(
+                    &info.sample_data,
+                    info.offset,
+                    info.speed_mult,
+                    speed,
+                    vel,
+                    end_sample,
+                    frame,
+                )
+            })
+            .copied();
+        if let Some(i) = hit {
+            self.voices[i as usize].absorb();
+            PROF_NOTE_ON_NS.fetch_add(
+                t_prof.elapsed().as_nanos() as u64,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            return;
+        }
         let t_new = std::time::Instant::now();
         let voice = CpuVoice::new(
             info,
@@ -445,7 +475,6 @@ impl CpuSynth {
         let t_push = std::time::Instant::now();
         let new_index = self.voices.len();
         self.voices.push(voice);
-        let slot = Self::key_slot(channel, key);
         self.key_indices[slot].push(new_index as u32);
         PROF_ON_PUSH_NS.fetch_add(
             t_push.elapsed().as_nanos() as u64,
@@ -544,7 +573,10 @@ impl CpuSynth {
             let i = i as usize;
             let v = &mut self.voices[i];
             if !v.finished() && !v.released && !v.held_by_damper {
-                if damper {
+                // 合批 voice：每个 NoteOff 只消耗一个引用，归 1 才真正释放
+                if v.dup > 1 {
+                    v.dup -= 1;
+                } else if damper {
                     v.held_by_damper = true;
                 } else {
                     v.signal_release(ENV_RELEASE);
@@ -696,6 +728,95 @@ mod tests {
             short.is_none_or(|v| v.released || v.finished()),
             "短音符到期应已释放"
         );
+    }
+
+    /// 完全重复合批（黑乐谱重复 NoteOn）：同参数 NoteOn 合成一个 voice，
+    /// 输出 = 单个 × 2（线性等价）；不同参数不得误合并。
+    #[test]
+    fn duplicate_note_on_batches_into_one_voice() {
+        let Some(sfz) = std::env::var_os("YINHE_TEST_SFZ") else {
+            return;
+        };
+        let load = || {
+            let mut synth = CpuSynth::new(48_000);
+            synth
+                .load_dense_soundfonts(0, &[PathBuf::from(&sfz)])
+                .expect("load soundfont");
+            synth
+        };
+        let on = |velocity: u8, end_sample: u64| SynthEvent::NoteOn {
+            sample: 0,
+            channel: 0,
+            key: 60,
+            velocity,
+            end_sample,
+        };
+
+        let mut single = load();
+        single.load_events(vec![on(100, 48_000)]);
+        let mut bufs1 = buffers(512);
+        single.render_to_mixer(&mut bufs1);
+
+        let mut dup = load();
+        dup.load_events(vec![on(100, 48_000), on(100, 48_000)]);
+        let mut bufs2 = buffers(512);
+        dup.render_to_mixer(&mut bufs2);
+        assert_eq!(dup.voices.len(), 1, "完全重复 NoteOn 应合批为一个 voice");
+        assert_eq!(dup.voices[0].dup, 2);
+        for i in 0..512 {
+            assert!(
+                (bufs2[0].left[i] - 2.0 * bufs1[0].left[i]).abs() < 1e-4,
+                "合批输出应等于 2 倍单音（样本 {i}）"
+            );
+        }
+
+        let mut diff = load();
+        diff.load_events(vec![on(100, 48_000), on(100, 24_000), on(60, 48_000)]);
+        let mut bufs3 = buffers(512);
+        diff.render_to_mixer(&mut bufs3);
+        assert_eq!(diff.voices.len(), 3, "参数不同不得合并");
+    }
+
+    /// 合批 voice 的 NoteOff 引用消耗：逐个递减，归 1 才释放。
+    #[test]
+    fn batched_voice_needs_all_note_offs_to_release() {
+        let Some(sfz) = std::env::var_os("YINHE_TEST_SFZ") else {
+            return;
+        };
+        let load = || {
+            let mut synth = CpuSynth::new(48_000);
+            synth
+                .load_dense_soundfonts(0, &[PathBuf::from(&sfz)])
+                .expect("load soundfont");
+            synth
+        };
+        let on = SynthEvent::NoteOn {
+            sample: 0,
+            channel: 0,
+            key: 60,
+            velocity: 100,
+            end_sample: 192_000,
+        };
+        let off = |sample: u64| SynthEvent::NoteOff {
+            sample,
+            channel: 0,
+            key: 60,
+        };
+
+        let mut one_off = load();
+        one_off.load_events(vec![on, on, off(256)]);
+        let mut bufs1 = buffers(512);
+        one_off.render_to_mixer(&mut bufs1);
+        assert_eq!(one_off.voices.len(), 1);
+        assert_eq!(one_off.voices[0].dup, 1, "第一个 NoteOff 只消耗引用");
+        assert!(!one_off.voices[0].released, "尚有一个引用，不得释放");
+
+        let mut two_off = load();
+        two_off.load_events(vec![on, off(256), off(512)]);
+        let mut bufs2 = buffers(1024);
+        two_off.render_to_mixer(&mut bufs2);
+        assert_eq!(two_off.voices[0].dup, 1);
+        assert!(two_off.voices[0].released, "最后一个 NoteOff 应释放");
     }
 
     /// layer 上限（对齐 xsynth）：同一 key 5 个递增力度音符 + layer=4 →

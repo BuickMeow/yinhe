@@ -49,6 +49,9 @@ pub(super) struct CpuVoice {
     speed: f32,
     base_speed: f32,
     base_gain: f32,
+    /// 完全重复音符的合批引用数：N 个同参数 NoteOn 合成一个 voice，
+    /// note_off 逐个递减，归 1 才真正释放。有效增益 = base_gain × dup。
+    pub(super) dup: u32,
     time: f64,
     /// 块内起始帧（NoteOn 所在帧；块末清零）。
     start_offset: u32,
@@ -143,6 +146,7 @@ impl CpuVoice {
             speed: info.speed_mult * ch.pitch_multiplier(),
             base_speed: info.speed_mult,
             base_gain: info.volume,
+            dup: 1,
             time: 0.0,
             start_offset,
             envelope: info.ampeg_start,
@@ -211,6 +215,37 @@ impl CpuVoice {
     /// 淘汰中（1ms 淡出），xsynth `Voice::is_killed()` 语义。
     pub(super) fn is_killed(&self) -> bool {
         self.killed
+    }
+
+    /// 完全重复合批判定（黑乐谱重复 NoteOn 常态）：同采样/播放倍率/力度/
+    /// 结束时刻/起始帧且尚未渲染、未释放、未淡出时命中（线性系统里 N 个
+    /// 同相位同参数 voice 之和 = 单个 × N，无损）。
+    #[allow(clippy::too_many_arguments)] // 匹配键透传，见 AGENTS 约定
+    pub(super) fn matches_batch(
+        &self,
+        sample: &Arc<[f32]>,
+        sample_offset: u32,
+        base_speed: f32,
+        speed: f32,
+        velocity: u8,
+        end_sample: u64,
+        start_offset: u32,
+    ) -> bool {
+        if self.released || self.killed || self.finished() || self.time != 0.0 {
+            return false;
+        }
+        self.velocity == velocity
+            && self.end_sample == end_sample
+            && self.start_offset == start_offset
+            && self.sample_offset == sample_offset
+            && self.base_speed == base_speed
+            && self.speed == speed
+            && Arc::ptr_eq(&self.sample, sample)
+    }
+
+    /// 合并一个完全重复的 NoteOn：引用数 +1，不再新建 voice。
+    pub(super) fn absorb(&mut self) {
+        self.dup += 1;
     }
 
     /// 段边界换速（弯音/调音/音色切换）：复刻 WGSL 的 time 校正，
@@ -425,6 +460,7 @@ impl CpuVoice {
         constant_env: bool,
         profile_mode: u8,
     ) {
+        let gain = self.base_gain * self.dup as f32;
         for i in 0..n {
             let fi = (fi_start + offset + i) as u32;
 
@@ -479,8 +515,8 @@ impl CpuVoice {
                     l0 += (l1 - l0) * frac;
                     r0 += (r1 - r0) * frac;
                 }
-                let mut s_l = l0 * self.base_gain * self.envelope;
-                let mut s_r = r0 * self.base_gain * self.envelope;
+                let mut s_l = l0 * gain * self.envelope;
+                let mut s_r = r0 * gain * self.envelope;
                 // 成本分解：1 = 无滤波
                 if self.cutoff > 0.0 && profile_mode != 1 {
                     // DirectForm1 biquad：y = b0*x + b1*x1 + b2*x2 - a1*y1 - a2*y2

@@ -4361,6 +4361,91 @@ fn prof_blackmidi_cost_breakdown() {
     }
 }
 
+/// 分析（本地 MIDI，ignored）：黑乐谱重复音符分布 —— 评估"同参数音符合批"
+/// 的收益上限。
+///
+/// 统计峰值拍 ±8 拍窗口内的三档可合并比例：
+/// - 完全重复（key/vel/start/end 全同）：可无损合批（note_off refcount）；
+/// - 同起音（key/vel/start 同、长度可能不同）：可共享采样读取；
+/// - 同参数（key/vel 同、起音不同）：仅缓存友好（相位不同不可合并）。
+#[test]
+#[ignore = "需要本地 MIDI"]
+fn analyze_blackmidi_duplicates() {
+    use std::collections::HashMap;
+
+    let midis = [
+        "/Users/jieneng/Music/MIDIs/tau2.5.9.mid",
+        "/Users/jieneng/Music/MIDIs/cyber-night.mid",
+        "/Users/jieneng/Music/MIDIs/5K 5,555,555 notes by The Atom Bomb.mid",
+    ];
+    for midi in midis {
+        let Ok(model) = yinhe_midi::parse_path(midi) else {
+            eprintln!("跳过（解析失败）：{midi}");
+            continue;
+        };
+        let ppq = model.meta.ppq;
+        // 峰值拍（每拍音符数）
+        let mut per_beat: HashMap<u32, usize> = HashMap::new();
+        for k in 0..128 {
+            for n in model.notes[k].iter() {
+                *per_beat.entry(n.start_tick / ppq.max(1)).or_default() += 1;
+            }
+        }
+        let Some((&peak_beat, &peak_count)) = per_beat.iter().max_by_key(|(_, v)| **v) else {
+            continue;
+        };
+        // 窗口：峰值拍 ±8 拍
+        let win_start = peak_beat.saturating_sub(8).saturating_mul(ppq);
+        let win_end = (peak_beat + 8).saturating_mul(ppq);
+
+        let mut identical: HashMap<(u8, u8, u32, u32), u32> = HashMap::new();
+        let mut identical_ch: HashMap<(u8, u8, u8, u32, u32), u32> = HashMap::new();
+        let mut identical_peak: HashMap<(u8, u8, u8, u32, u32), u32> = HashMap::new();
+        let track_channels: Vec<u8> = model.tracks.iter().map(|t| t.global_channel()).collect();
+        let peak_start = peak_beat.saturating_mul(ppq);
+        let peak_end = peak_start.saturating_add(ppq);
+        let mut total = 0usize;
+        let mut total_peak = 0usize;
+        for k in 0..128u8 {
+            for n in model.notes[k as usize].iter() {
+                if n.start_tick < win_start || n.start_tick >= win_end || n.velocity <= 1 {
+                    continue;
+                }
+                let ch = track_channels.get(n.track as usize).copied().unwrap_or(0);
+                total += 1;
+                *identical
+                    .entry((k, n.velocity, n.start_tick, n.end_tick))
+                    .or_default() += 1;
+                *identical_ch
+                    .entry((ch, k, n.velocity, n.start_tick, n.end_tick))
+                    .or_default() += 1;
+                if n.start_tick >= peak_start && n.start_tick < peak_end {
+                    total_peak += 1;
+                    *identical_peak
+                        .entry((ch, k, n.velocity, n.start_tick, n.end_tick))
+                        .or_default() += 1;
+                }
+            }
+        }
+        // 冗余率 = 1 - 组数/总数（可省掉的 voice 比例）
+        let rate = |groups: usize| 1.0 - groups as f64 / total.max(1) as f64;
+        eprintln!(
+            "\n=== {}\n  峰值第 {} 拍 count={} 窗口(±8拍)音符={total}\n  完全重复(跨通道)组={} 冗余率={:.1}% 最大组={}\n  完全重复(同通道)组={} 冗余率={:.1}% 最大组={}\n  峰值拍同通道 音符={total_peak} 冗余率={:.1}% 最大组={}",
+            midi.rsplit('/').next().unwrap_or(midi),
+            peak_beat / 4 + 1,
+            peak_count,
+            identical.len(),
+            100.0 * rate(identical.len()),
+            identical.values().copied().max().unwrap_or(0),
+            identical_ch.len(),
+            100.0 * rate(identical_ch.len()),
+            identical_ch.values().copied().max().unwrap_or(0),
+            100.0 * (1.0 - identical_peak.len() as f64 / total_peak.max(1) as f64),
+            identical_peak.values().copied().max().unwrap_or(0),
+        );
+    }
+}
+
 mod compare_tests {
     use super::*;
 
