@@ -4934,6 +4934,34 @@ fn diag_ouranos_bar157_dropout() {
     });
     let events = engine.build_gpu_events(seek_sample);
     eprintln!("bar{bar} 事件数={} seek_sample={seek_sample}", events.len());
+    {
+        // 完全重复 NoteOn 统计（同 sample/channel/key/velocity/end_sample 分组）：
+        // 合批上限的先验测量——若这里冗余很少，说明数据本身无重复可省。
+        use std::collections::HashMap;
+        let mut seen: HashMap<(u64, u8, u8, u8, u64), u32> = HashMap::new();
+        let mut note_ons = 0usize;
+        for ev in &events {
+            if let yinhe_synth::SynthEvent::NoteOn {
+                sample,
+                channel,
+                key,
+                velocity,
+                end_sample,
+            } = ev
+            {
+                note_ons += 1;
+                *seen
+                    .entry((*sample, *channel, *key, *velocity, *end_sample))
+                    .or_insert(0) += 1;
+            }
+        }
+        let groups = seen.values().filter(|&&c| c > 1).count();
+        let redundant: usize = seen.values().filter(|&&c| c > 1).map(|&c| (c - 1) as usize).sum();
+        eprintln!(
+            "可合批统计：NoteOn={note_ons} 完全重复组={groups} 冗余事件={redundant}（{:.1}%）",
+            redundant as f64 / note_ons.max(1) as f64 * 100.0
+        );
+    }
 
     let mut synth = yinhe_synth::GpuSynth::new_default(sr).unwrap();
     let sfz_path = std::path::PathBuf::from(&sfz);
@@ -4943,6 +4971,9 @@ fn diag_ouranos_bar157_dropout() {
             .unwrap();
     }
     synth.finish_soundfont_load();
+    // 与 CPU 对照对齐：不限 per-key layer（默认 Some(4) 会杀弱音，导致
+    // GPU voice 数远小于 CPU、对照不公平）
+    synth.set_layer_count(None);
     synth.load_events(events);
     synth.seek(seek_sample);
     engine.gpu_synth = Some(synth);
@@ -5095,8 +5126,12 @@ fn diag_ouranos_bar157_dropout() {
     {
         let events3 = engine.build_gpu_events(seek_sample);
         let mut cpu = yinhe_synth::CpuSynth::new(sr);
-        cpu.load_dense_soundfonts(0, std::slice::from_ref(&sfz_path))
-            .unwrap();
+        // 与 GPU 对齐：16 个 dense 通道全部加载（此前只加载通道 0，
+        // 导致 CPU 只渲染 1/16 内容，对照不公平且听感认不出）
+        for ch in 0..16u32 {
+            cpu.load_dense_soundfonts(ch, std::slice::from_ref(&sfz_path))
+                .unwrap();
+        }
         cpu.finish_soundfont_load();
         cpu.set_layer_count(None);
         // 注意顺序：seek 清空事件表（与 GPU 的 seek 语义不同），load_events 又把
@@ -5111,6 +5146,11 @@ fn diag_ouranos_bar157_dropout() {
             })
             .collect();
         let mut cpu_all: Vec<f32> = Vec::new();
+        // 与实时一致：CPU 对照也经前瞻限幅（否则 WAV 不可听、且对照口径不同）
+        let mut cpu_limiter = yinhe_dsp::dsp::limiter::VolumeLimiter::new(sr);
+        let mut cpu_raw_clip: usize = 0;
+        let mut cpu_frame = vec![0.0f32; frames * 2];
+        let mut cpu_raw_all: Vec<f32> = Vec::new();
         for bi in 0..blocks.min(120) {
             cpu.render_to_mixer(&mut cbufs);
             if bi % 30 == 0 {
@@ -5127,10 +5167,19 @@ fn diag_ouranos_bar157_dropout() {
                     l += b.left[i];
                     r += b.right[i];
                 }
-                cpu_all.push(l);
-                cpu_all.push(r);
+                cpu_frame[i * 2] = l;
+                cpu_frame[i * 2 + 1] = r;
             }
+            cpu_raw_clip += cpu_frame.iter().filter(|v| v.abs() > 1.0).count();
+            cpu_raw_all.extend_from_slice(&cpu_frame);
+            cpu_limiter.limit(&mut cpu_frame);
+            cpu_all.extend_from_slice(&cpu_frame);
         }
+        eprintln!(
+            "CPU 限幅前削波={cpu_raw_clip}/{}（{:.1}%）",
+            cpu_raw_all.len(),
+            cpu_raw_clip as f64 / cpu_raw_all.len().max(1) as f64 * 100.0
+        );
         // 逐窗口能量对比（GPU 用 wav_all 前 120 块的同口径）
         let w = 64usize;
         let gpu_take = (blocks.min(120) * frames * 2).min(wav_all.len());
@@ -5215,8 +5264,9 @@ fn diag_ouranos_bar157_dropout() {
             }
             let _ = w.finalize();
             eprintln!(
-                "WAV 已导出：{wav_path}（{:.1}s）",
-                wav_all.len() as f64 / 2.0 / sr as f64
+                "WAV 已导出：{wav_path}（{:.1}s）合批命中={}",
+                wav_all.len() as f64 / 2.0 / sr as f64,
+                yinhe_synth::gpu_synth::BATCH_HITS.load(std::sync::atomic::Ordering::Relaxed)
             );
         }
         Err(e) => eprintln!("WAV 导出失败：{e}"),
