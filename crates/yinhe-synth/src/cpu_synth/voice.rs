@@ -461,8 +461,28 @@ impl CpuVoice {
         profile_mode: u8,
     ) {
         let gain = self.base_gain * self.dup as f32;
+        // 循环不变量提出：self 是 &mut 且循环内有 advance_env 调用，
+        // LLVM 无法证明这些字段不被改，逐帧字段 load 全部省掉。
+        let max_idx = self.sample_length.saturating_sub(1);
+        let loop_cont = self.loop_mode == 1;
+        let loop_sus_mode = self.loop_mode == 2;
+        let loop_avail = self.loop_end > self.loop_start;
+        let loop_start = self.loop_start;
+        let loop_end = self.loop_end;
+        let loop_len = loop_end.saturating_sub(loop_start);
+        let scale = 1 + self.is_stereo as u32;
+        let sample_offset = self.sample_offset;
+        let sample_length = self.sample_length;
+        let is_stereo = self.is_stereo;
+        let linear = self.interp == 1;
+        let cutoff_on = self.cutoff > 0.0;
+        let speed = f64::from(self.speed);
+        let time0 = self.time;
+        let pan_l = self.pan_l;
+        let pan_r = self.pan_r;
+        let fi0 = fi_start + offset;
         for i in 0..n {
-            let fi = (fi_start + offset + i) as u32;
+            let fi = (fi0 + i) as u32;
 
             // 成本分解：3 = 仅包络推进（无采样位置/循环控制流）
             if profile_mode == 3 {
@@ -472,19 +492,16 @@ impl CpuVoice {
                 continue;
             }
 
-            let t = self.time + (fi as usize - begin) as f64 * f64::from(self.speed);
+            let t = time0 + (fi as usize - begin) as f64 * speed;
             let mut idx = t as u32;
             let frac = (t - f64::from(idx)) as f32;
-            let max_idx = self.sample_length.saturating_sub(1);
 
             // 循环处理（与 xsynth 一致）：1=Continuous 恒循环；2=Sustain 仅未 release 循环
             let released = self.env_stage >= ENV_RELEASE;
-            let loop_cont = self.loop_mode == 1;
-            let loop_sus = self.loop_mode == 2 && !released;
-            let has_loop = (loop_cont || loop_sus) && self.loop_end > self.loop_start;
-            if has_loop && idx > self.loop_end {
-                let loop_len = self.loop_end - self.loop_start;
-                idx = (idx - self.loop_end - 1) % loop_len + self.loop_start;
+            let loop_sus = loop_sus_mode && !released;
+            let has_loop = (loop_cont || loop_sus) && loop_avail;
+            if has_loop && idx > loop_end {
+                idx = (idx - loop_end - 1) % loop_len + loop_start;
             }
 
             // 成本分解：2 = 保留采样位置/循环控制流，跳过数据读取/插值/滤波/输出
@@ -495,19 +512,18 @@ impl CpuVoice {
                 continue;
             }
 
-            if idx < self.sample_length {
-                let scale = 1 + self.is_stereo as u32;
-                let si = (self.sample_offset + idx * scale) as usize;
+            if idx < sample_length {
+                let si = (sample_offset + idx * scale) as usize;
                 let mut l0 = self.sample.get(si).copied().unwrap_or(0.0);
-                let mut r0 = if self.is_stereo {
+                let mut r0 = if is_stereo {
                     self.sample.get(si + 1).copied().unwrap_or(0.0)
                 } else {
                     l0
                 };
-                if self.interp == 1 && idx < max_idx {
+                if linear && idx < max_idx {
                     let i1 = si + scale as usize;
                     let l1 = self.sample.get(i1).copied().unwrap_or(0.0);
-                    let r1 = if self.is_stereo {
+                    let r1 = if is_stereo {
                         self.sample.get(i1 + 1).copied().unwrap_or(0.0)
                     } else {
                         l1
@@ -518,7 +534,7 @@ impl CpuVoice {
                 let mut s_l = l0 * gain * self.envelope;
                 let mut s_r = r0 * gain * self.envelope;
                 // 成本分解：1 = 无滤波
-                if self.cutoff > 0.0 && profile_mode != 1 {
+                if cutoff_on && profile_mode != 1 {
                     // DirectForm1 biquad：y = b0*x + b1*x1 + b2*x2 - a1*y1 - a2*y2
                     let x1 = self.flt_x1;
                     let x2 = self.flt_x2;
@@ -532,7 +548,7 @@ impl CpuVoice {
                     self.flt_y1 = out_l;
                     self.flt_y2 = y1;
                     s_l = out_l;
-                    if self.is_stereo {
+                    if is_stereo {
                         let x1r = self.flt_x1r;
                         let x2r = self.flt_x2r;
                         let y1r = self.flt_y1r;
@@ -551,8 +567,8 @@ impl CpuVoice {
                     }
                 }
                 let oi = (offset + i) * 2;
-                out[oi] += s_l * self.pan_l;
-                out[oi + 1] += s_r * self.pan_r;
+                out[oi] += s_l * pan_l;
+                out[oi + 1] += s_r * pan_r;
             } else if !loop_cont {
                 // 采样播完（NoLoop/OneShot/LoopSustain release 后）：结束 voice
                 self.env_stage = ENV_FINISHED;

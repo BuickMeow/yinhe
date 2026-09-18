@@ -290,18 +290,23 @@ impl CpuSynth {
         for v in self.voices.iter_mut() {
             v.advance_block(frames as u32);
         }
+        let before = self.voices.len();
         self.voices.retain(|v| !v.finished());
         // 全局 voice 上限：块末摊销淘汰（O(V) 一次/块，不在 note_on 热路径）。
         let excess = self.voices.len().saturating_sub(self.max_voices);
         if excess > 0 {
             self.evict_excess(excess);
         }
-        // 重建 per-key 索引表（O(V) 一次/段；保留 Vec 容量）
-        for v in self.key_indices.iter_mut() {
-            v.clear();
-        }
-        for (i, v) in self.voices.iter().enumerate() {
-            self.key_indices[Self::key_slot(v.channel, v.key)].push(i as u32);
+        // 重建 per-key 索引表（O(V) 一次/段；保留 Vec 容量）。仅当 retain
+        // 实际移除了 voice（保序搬移使旧位置失效）才需要；无结束 voice 的
+        // 段跳过整轮 O(V) 清空+重填。
+        if self.voices.len() != before {
+            for v in self.key_indices.iter_mut() {
+                v.clear();
+            }
+            for (i, v) in self.voices.iter().enumerate() {
+                self.key_indices[Self::key_slot(v.channel, v.key)].push(i as u32);
+            }
         }
         self.peak_voices = self.peak_voices.max(self.voice_count());
         self.sample_position = sample_start + frames as u64;
