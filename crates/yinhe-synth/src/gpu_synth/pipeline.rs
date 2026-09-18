@@ -20,22 +20,34 @@ impl GpuSynth {
         }
         let per_frame = MAX_CHANNELS * 2;
         let need = frames * per_frame;
+        self.diag_ms = [0.0; 6];
+        self.diag_blocks = 0;
         // 预渲染：ring 不足时提交/收割（提交超前、收割入 ring；块大小可变化）
         while self.ring.len() < need {
             if self.compact_needed() {
+                let t = std::time::Instant::now();
                 self.drain_pending(true);
                 self.compact_voices();
+                self.diag_ms[5] += t.elapsed().as_secs_f64() * 1000.0;
             }
             let mut progressed = false;
             while self.pending.len() < PIPELINE_DEPTH && self.has_content() {
-                if !self.submit_one_block(frames) {
+                let t = std::time::Instant::now();
+                let ok = self.submit_one_block(frames);
+                self.diag_ms[1] += t.elapsed().as_secs_f64() * 1000.0;
+                if !ok {
                     break;
                 }
+                self.diag_blocks += 1;
                 progressed = true;
             }
             if let Some(p) = self.pending.pop_front() {
+                let t = std::time::Instant::now();
                 self.harvest(&p);
+                self.diag_ms[2] += t.elapsed().as_secs_f64() * 1000.0;
+                let t = std::time::Instant::now();
                 self.push_block_to_ring(p.frames);
+                self.diag_ms[3] += t.elapsed().as_secs_f64() * 1000.0;
                 progressed = true;
             }
             if !progressed {
@@ -44,6 +56,7 @@ impl GpuSynth {
         }
 
         // 输出 frames 帧：ring 中的先给，不足部分静音补齐
+        let t_out = std::time::Instant::now();
         let avail = (self.ring.len() / per_frame).min(frames);
         for (ch_idx, buf) in buffers.iter_mut().enumerate() {
             if ch_idx < MAX_CHANNELS {
@@ -62,15 +75,16 @@ impl GpuSynth {
             }
         }
         self.ring.drain(..avail * per_frame);
+        self.diag_ms[4] = t_out.elapsed().as_secs_f64() * 1000.0;
         // 已输出位置（外部可见的播放进度）
         self.sample_position += frames as u64;
         // 无内容且 ring 已耗尽：提交游标与输出对齐（避免无限积压）
         if self.ring.is_empty() && !self.has_content() {
             self.render_position = self.sample_position;
         }
-        self.peak_voices = self
-            .peak_voices
-            .max(self.voices.iter().filter(|v| v.state.env_stage < 6).count());
+        let alive = self.voices.iter().filter(|v| v.state.env_stage < 6).count();
+        self.peak_voices = self.peak_voices.max(alive);
+        self.diag_alive = alive as u32;
     }
 
     /// 是否还有可渲染内容（活跃 voice 或未消费事件）。
@@ -123,6 +137,7 @@ impl GpuSynth {
             sb.releases.clear();
             sb.env_cmds.clear();
             let new_from = self.voices.len();
+            let t_collect = std::time::Instant::now();
             self.collect_block(
                 s0,
                 s1,
@@ -131,6 +146,7 @@ impl GpuSynth {
                 &mut sb.releases,
                 &mut sb.env_cmds,
             );
+            self.diag_ms[0] += t_collect.elapsed().as_secs_f64() * 1000.0;
             // 本段新建 voice 的 start_offset（段内帧）转**全局块内帧**：
             // shader 段末按段长右移未开始 voice 的偏移，跨段后回到段内相对值。
             for v in &mut self.voices[new_from..] {

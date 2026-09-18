@@ -125,6 +125,12 @@ pub struct GpuSynth {
     max_layers: Option<usize>,
     /// 峰值 voice 数统计（诊断用）
     peak_voices: usize,
+    /// 上一块耗时分解（ms）：[collect, submit(含 collect), harvest, ring, out, compact]
+    pub diag_ms: [f64; 6],
+    /// 上一块提交的 GPU 块数
+    pub diag_blocks: u32,
+    /// 上一块结束时的活跃 voice 数
+    pub diag_alive: u32,
     sample_rate: u32,
     /// 采样插值方式（`Interpolation::code()`；加载音色库时写入 KeyInfo）。
     interpolation: u32,
@@ -203,6 +209,9 @@ impl GpuSynth {
             max_voices: crate::DEFAULT_MAX_VOICES,
             max_layers: Some(crate::DEFAULT_MAX_LAYERS),
             peak_voices: 0,
+            diag_ms: [0.0; 6],
+            diag_blocks: 0,
+            diag_alive: 0,
             sample_rate,
             interpolation: 0,
             events: Vec::new(),
