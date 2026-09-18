@@ -219,7 +219,9 @@ impl App {
         let interpolation = self.audio_settings.interpolation;
 
         // 后台线程执行 spawn（设备枚举/线程池创建/建流全不在 UI 线程）。
-        // 结果经 mpsc 回传，UI 每帧 poll_audio_spawn 收取。
+        // 结果（+**发起时的设置快照**）经 mpsc 回传，UI 每帧 poll_audio_spawn
+        // 收取；快照与当前设置不一致时丢弃（在飞期间用户改了设置）。
+        let spawn_key = crate::app::audio_state::EngineSpawnKey::of(&self.audio_settings);
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::Builder::new()
             .name("audio-spawn".into())
@@ -235,7 +237,7 @@ impl App {
                     )
                 }));
                 let result = match result {
-                    Ok(r) => r,
+                    Ok(r) => r.map(|audio| (audio, spawn_key)),
                     Err(payload) => Err(format!("Audio spawn panicked: {payload:?}")),
                 };
                 let _ = tx.send(result);
@@ -274,7 +276,15 @@ impl App {
         };
 
         match result {
-            Ok(audio) => {
+            Ok((audio, spawn_key)) => {
+                // 在飞期间设置已变（改插值/采样率/后端/设备等）：丢弃该结果，
+                // 下一帧 rebuild_audio_if_needed 会按新设置重新 spawn。否则旧
+                // 设置的引擎会被安装并被误记为最新（新设置永不生效）。
+                if spawn_key != crate::app::audio_state::EngineSpawnKey::of(&self.audio_settings) {
+                    drop(audio);
+                    yinhe_memtrace::purge_free_pages();
+                    return;
+                }
                 // 目标文档：与 rebuild_audio_if_needed 一致——有待激活文档时
                 // 用它（加载完成但音频就绪前不切 active_doc），否则用当前文档。
                 let target = self
@@ -326,9 +336,8 @@ impl App {
                 self.audio_state.active_doc = Some(idx);
                 self.audio_state.last_channel_layout = pending_layout;
                 // 记录引擎创建快照：跨文档复用（try_adopt_engine）的判定依据。
-                self.audio_state.engine_key = Some(crate::app::audio_state::EngineSpawnKey::of(
-                    &self.audio_settings,
-                ));
+                // 用发起时快照（已校验与当前设置一致），而非完成时刻的再读取。
+                self.audio_state.engine_key = Some(spawn_key);
                 self.audio_state.engine_sf_configs = port_configs.clone();
                 // 成功后清失败状态，避免同文档下次 rebuild 被误拦
                 self.audio_state.spawn_error = None;

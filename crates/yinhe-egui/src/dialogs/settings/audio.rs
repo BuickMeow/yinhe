@@ -302,8 +302,8 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         if crate::widgets::flat::flat_button(ui, t!("settings.refresh_devices").as_ref()).clicked()
         {
             let devices = crate::audio_settings::list_output_devices();
-            let (default_rate, rates) = crate::audio_settings::discover_sample_rates();
-            settings.refresh_devices(devices, rates, default_rate);
+            let (_default_rate, rates) = crate::audio_settings::discover_sample_rates();
+            settings.refresh_devices(devices, rates);
             crate::audio_settings::refresh_midi_inputs(settings);
             changed = true;
         }

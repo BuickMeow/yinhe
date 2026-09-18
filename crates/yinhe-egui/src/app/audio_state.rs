@@ -1,7 +1,7 @@
 //! Audio subsystem state — fields related to the audio engine and playback.
 
 use yinhe_audio::channel_layout::ChannelLayout;
-use yinhe_types::SynthEngine;
+use yinhe_types::{Interpolation, SynthEngine};
 
 /// 影响音频引擎 spawn 的设置字段快照。
 ///
@@ -14,12 +14,13 @@ use yinhe_types::SynthEngine;
 /// 覆盖 `rebuild_audio_if_needed` / `resolve_sf_config` 的全部 spawn 输入：
 /// 采样率、缓冲大小、输出设备、合成后端、全局音色库列表。
 /// `xsynth_layers` 由 `SetLayerCount` 在线应用，不参与。
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct EngineSpawnKey {
     sample_rate: u32,
     buffer_size: u32,
     output_device_name: Option<String>,
     synth_engine: SynthEngine,
+    interpolation: Interpolation,
     sf_entries: Vec<(String, String, bool)>,
 }
 
@@ -30,6 +31,7 @@ impl EngineSpawnKey {
             buffer_size: settings.buffer_size,
             output_device_name: settings.output_device_name.clone(),
             synth_engine: settings.synth_engine,
+            interpolation: settings.interpolation,
             sf_entries: settings
                 .global_sf_config
                 .entries
@@ -128,7 +130,12 @@ pub(crate) struct AudioState {
     /// 后台 spawn 状态：spawn 是为哪个 doc 发起的（完成时对比 active_doc，
     /// 不一致则丢弃结果）与结果通道。Some = spawn 进行中。
     pub spawn_for_doc: Option<usize>,
-    pub spawn_rx: Option<std::sync::mpsc::Receiver<Result<yinhe_audio::CpalAudioHandle, String>>>,
+    /// spawn 结果携带**发起时的设置快照**：完成时与当前设置比对，不一致
+    /// （在飞期间用户改了插值/采样率/后端等）则丢弃重来，避免旧设置引擎被
+    /// 安装并被误记为最新（导致新设置永不生效）。
+    pub spawn_rx: Option<
+        std::sync::mpsc::Receiver<Result<(yinhe_audio::CpalAudioHandle, EngineSpawnKey), String>>,
+    >,
     /// 设备切换时保存的播放位置：spawn 完成后发送 Seek 恢复。
     pub spawn_restore_sample: Option<u64>,
     /// spawn 期间暂存的 layout 快照（flip 检测用），完成后写入 last_channel_layout。
@@ -163,5 +170,74 @@ impl AudioState {
             spawn_restore_sample: None,
             pending_layout: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio_settings::AudioSettings;
+
+    /// 回归：EngineSpawnKey 必须覆盖 spawn 的全部设置输入——任一输入变化都要
+    /// 让 key 不同。`interpolation` 曾漏出 key：改插值后关闭设置不重建、
+    /// 设置永不生效（用户报告「关闭设置无法重置音频流」的确定性原因）。
+    #[test]
+    fn engine_spawn_key_covers_spawn_inputs() {
+        let mk = AudioSettings::default;
+        let k0 = EngineSpawnKey::of(&mk());
+
+        let mut s = mk();
+        s.sample_rate = s.sample_rate.wrapping_add(1);
+        assert_ne!(
+            EngineSpawnKey::of(&s),
+            k0,
+            "sample_rate 必须纳入 EngineSpawnKey"
+        );
+
+        let mut s = mk();
+        s.buffer_size = s.buffer_size.wrapping_add(1);
+        assert_ne!(
+            EngineSpawnKey::of(&s),
+            k0,
+            "buffer_size 必须纳入 EngineSpawnKey"
+        );
+
+        let mut s = mk();
+        s.output_device_name = Some("__none__".into());
+        assert_ne!(
+            EngineSpawnKey::of(&s),
+            k0,
+            "output_device_name 必须纳入 EngineSpawnKey"
+        );
+
+        let mut s = mk();
+        s.synth_engine = match s.synth_engine {
+            SynthEngine::XSynthCpu => SynthEngine::YinheGpu,
+            _ => SynthEngine::XSynthCpu,
+        };
+        assert_ne!(
+            EngineSpawnKey::of(&s),
+            k0,
+            "synth_engine 必须纳入 EngineSpawnKey"
+        );
+
+        let mut s = mk();
+        s.interpolation = match s.interpolation {
+            Interpolation::Nearest => Interpolation::Linear,
+            _ => Interpolation::Nearest,
+        };
+        assert_ne!(
+            EngineSpawnKey::of(&s),
+            k0,
+            "interpolation 必须纳入 EngineSpawnKey"
+        );
+
+        let mut s = mk();
+        s.global_sf_config.entries.push(Default::default());
+        assert_ne!(
+            EngineSpawnKey::of(&s),
+            k0,
+            "global_sf_config 必须纳入 EngineSpawnKey"
+        );
     }
 }
