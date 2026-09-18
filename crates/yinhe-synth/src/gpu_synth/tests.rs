@@ -356,6 +356,7 @@ fn prewarm_then_render_ok() {
 /// 测试用 voice（sustain 阶段），只填被 chase 路径读取的字段。
 fn test_voice(stage: u32) -> Voice {
     Voice {
+        start_sample: 0,
         state: GpuVoiceState {
             env_stage: stage,
             ..Default::default()

@@ -33,6 +33,8 @@ fn release_cmd(frame: u32, vid: usize) -> ReleaseCmd {
 pub(super) struct Voice {
     pub(super) state: GpuVoiceState,
     pub(super) key: u8,
+    /// 音符起始（绝对 sample；gate = end_sample - start，淘汰按短优先）
+    pub(super) start_sample: u64,
     pub(super) channel: u8,
     /// NoteOn 力度（per-key layer 超限时按 xsynth 语义杀最弱 voice）。
     pub(super) velocity: u8,
@@ -140,9 +142,15 @@ impl GpuSynth {
                             velocity,
                             end_sample,
                             ..
-                        } => {
-                            self.note_on(channel, key, velocity, end_sample, block_frame, releases)
-                        }
+                        } => self.note_on(
+                            channel,
+                            key,
+                            velocity,
+                            end_sample,
+                            block_start + block_frame as u64,
+                            block_frame,
+                            releases,
+                        ),
                         SynthEvent::NoteOff { channel, key, .. } => {
                             self.note_off_to_cmd(channel, key, block_frame, releases);
                         }
@@ -232,7 +240,7 @@ impl GpuSynth {
                     velocity,
                     end_sample,
                     ..
-                } => self.note_on(channel, key, velocity, end_sample, frame, releases),
+                } => self.note_on(channel, key, velocity, end_sample, sample, frame, releases),
                 SynthEvent::NoteOff { channel, key, .. } => {
                     self.note_off_to_cmd(channel, key, frame, releases);
                 }
@@ -321,6 +329,7 @@ impl GpuSynth {
         key: u8,
         vel: u8,
         end_sample: u64,
+        start_sample: u64,
         block_frame: u32,
         releases: &mut Vec<ReleaseCmd>,
     ) {
@@ -378,6 +387,7 @@ impl GpuSynth {
         let voice = Voice {
             key,
             channel,
+            start_sample,
             velocity: vel,
             end_sample,
             orig_attack_frames: p.orig_attack_frames,
@@ -510,21 +520,29 @@ impl GpuSynth {
         //   ② 同力度下 release 中的先杀（尾巴优先于音头）；
         //   ③ 再按 envelope 升序（更听不见的优先）；
         //   ④ 并列取最早（创建顺序）。
-        let mut cands: Vec<(u8, bool, f32, usize)> = Vec::with_capacity(alive);
+        // 排序键（黑乐谱语义）：
+        //   ① **gate 升序**——音符画/装饰音这类**特别短**的音符先死，
+        //      正常演奏的长音符（gate 大）最后死、演奏中绝不被切；
+        //   ② velocity 升序（同样短的里，小力度先死）；
+        //   ③ release 中的优先（尾巴先于音头）；
+        //   ④ envelope 升序、创建顺序兜底。
+        let mut cands: Vec<(u64, u8, bool, f32, usize)> = Vec::with_capacity(alive);
         for (i, v) in self.voices.iter().enumerate() {
             if v.state.env_stage >= 6 {
                 continue;
             }
             let releasing = v.release_pending || v.state.env_stage == 5;
-            cands.push((v.velocity, !releasing, v.state.envelope, i));
+            let gate = v.end_sample.saturating_sub(v.start_sample);
+            cands.push((gate, v.velocity, !releasing, v.state.envelope, i));
         }
         cands.sort_unstable_by(|a, b| {
             a.0.cmp(&b.0)
                 .then(a.1.cmp(&b.1))
-                .then(a.2.total_cmp(&b.2))
-                .then(a.3.cmp(&b.3))
+                .then(a.2.cmp(&b.2))
+                .then(a.3.total_cmp(&b.3))
+                .then(a.4.cmp(&b.4))
         });
-        for &(vel, _, _, idx) in cands.iter().take(excess) {
+        for &(_, vel, _, _, idx) in cands.iter().take(excess) {
             let bucket = match vel {
                 0..=31 => &crate::gpu_synth::EVICT_VEL_LO,
                 32..=63 => &crate::gpu_synth::EVICT_VEL_MID,
