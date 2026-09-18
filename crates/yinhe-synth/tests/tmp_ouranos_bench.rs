@@ -110,6 +110,12 @@ fn ouranos_peak_gpu_bench() {
     gpu.finish_soundfont_load();
     gpu.prewarm(frames as u32);
     gpu.set_layer_count(None);
+    if let Some(mv) = std::env::var("YINHE_BENCH_MAXV")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+    {
+        gpu.set_max_voices(mv);
+    }
     let mut bufs = mk_bufs(frames);
     gpu.load_events(events);
     // 预热 2 块

@@ -466,38 +466,57 @@ impl GpuSynth {
         }
     }
 
-    /// 全局 voice 超限淘汰（**每渲染段一次**）：优先杀最老的 release 中 voice
-    /// （听感最弱），否则杀最老的 active；跳过墓碑（等块末 compact 清理）。
-    /// 只预置 stage 6 + 发 kill 指令，不 remove——本段已生成的指令索引保持稳定。
-    /// 淘汰量按**活跃数（非墓碑）**计算：墓碑只是占位，不应导致误杀活跃 voice。
+    /// 全局 voice 超限淘汰（**每渲染段一次**）。
+    ///
+    /// 选择顺序（黑乐谱高潮段的听感关键）：
+    /// 1. **release 中且 envelope 最小**的（按当前包络值排序——真正听不见的）；
+    /// 2. envelope 相同/不足时退回 release 中最老的（创建顺序）；
+    /// 3. 仍不足才杀最老的 active。
+    /// 原先只杀"最老的 release"：其 envelope 可能仍明显可闻，淘汰多了会听出
+    /// 尾音被削；按 envelope 排序后同样的淘汰量听感损失最小。
+    /// 跳过墓碑（等 compact 清理）；只预置 stage 6 + 发 kill，不 remove
+    /// （本段已生成的指令索引保持稳定）。淘汰量按活跃数（非墓碑）计算。
     pub(super) fn enforce_voice_limit(&mut self, block_frame: u32, releases: &mut Vec<ReleaseCmd>) {
         let alive = self.voices.iter().filter(|v| v.state.env_stage < 6).count();
-        let mut excess = alive.saturating_sub(self.max_voices);
-        while excess > 0 {
-            let mut victim = None;
-            let mut first_active = None;
-            for (i, v) in self.voices.iter().enumerate() {
-                if v.state.env_stage >= 6 {
-                    continue;
-                }
-                if v.release_pending || v.state.env_stage == 5 {
-                    victim = Some(i);
-                    break;
-                }
-                if first_active.is_none() {
-                    first_active = Some(i);
-                }
-            }
-            let Some(idx) = victim.or(first_active) else {
-                break;
-            };
-            let v = &mut self.voices[idx];
-            v.state.env_stage = 6;
-            v.held_by_damper = false;
-            releases.push(kill_cmd(block_frame, idx));
-            crate::gpu_synth::EVICT_KILLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            excess -= 1;
+        let excess = alive.saturating_sub(self.max_voices);
+        if excess == 0 {
+            return;
         }
+        // release 候选：(envelope, 索引)——索引单调对应创建顺序，并列时最老优先。
+        let mut releasing: Vec<(f32, usize)> = Vec::new();
+        let mut actives: Vec<usize> = Vec::new();
+        for (i, v) in self.voices.iter().enumerate() {
+            if v.state.env_stage >= 6 {
+                continue;
+            }
+            if v.release_pending || v.state.env_stage == 5 {
+                releasing.push((v.state.envelope, i));
+            } else {
+                actives.push(i);
+            }
+        }
+        releasing.sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        let mut killed = 0usize;
+        for &(_, idx) in releasing.iter().take(excess) {
+            self.kill_voice_for_evict(block_frame, idx, releases);
+            killed += 1;
+        }
+        for &idx in actives.iter().take(excess.saturating_sub(killed)) {
+            self.kill_voice_for_evict(block_frame, idx, releases);
+        }
+    }
+
+    fn kill_voice_for_evict(
+        &mut self,
+        block_frame: u32,
+        idx: usize,
+        releases: &mut Vec<ReleaseCmd>,
+    ) {
+        let v = &mut self.voices[idx];
+        v.state.env_stage = 6;
+        v.held_by_damper = false;
+        releases.push(kill_cmd(block_frame, idx));
+        crate::gpu_synth::EVICT_KILLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// NoteOff — 释放该 (channel, key) 最老的未释放 voice（与 xsynth `release_next_voice` 一致：
