@@ -3676,7 +3676,7 @@ fn diag_app_render_path() {
     // 裸 GpuSynth 参考（与既有测试相同）
     let mut bare = yinhe_synth::GpuSynth::new_default(sr).unwrap();
     let sfz_path = std::path::PathBuf::from(sfz);
-    for ch in 0..16u32 {
+    for ch in 0..32u32 {
         bare.load_dense_soundfonts(ch, std::slice::from_ref(&sfz_path))
             .unwrap();
     }
@@ -3686,7 +3686,7 @@ fn diag_app_render_path() {
 
     // 应用路径：engine + gpu_synth + AudioEngine::render
     let mut synth = yinhe_synth::GpuSynth::new_default(sr).unwrap();
-    for ch in 0..16u32 {
+    for ch in 0..32u32 {
         synth
             .load_dense_soundfonts(ch, std::slice::from_ref(&sfz_path))
             .unwrap();
@@ -4539,7 +4539,11 @@ fn analyze_ouranos_track13_dense() {
 fn diag_ouranos_gpu_dropout() {
     let sfz = std::env::var("YINHE_TEST_SFZ")
         .unwrap_or_else(|_| "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz".into());
-    let midi = "/Users/jieneng/Music/MIDIs/Ouranos - HDSQ & The Romanticist [v1.6.6].mid";
+    let midi = std::env::var("YINHE_DIAG_MIDI")
+        .unwrap_or_else(|_| {
+            "/Users/jieneng/Music/MIDIs/Ouranos - HDSQ & The Romanticist [v1.6.6].mid".into()
+        })
+        .leak();
     let model = yinhe_midi::parse_path(midi).expect("parse");
     let sr = 48_000u32;
     let ppq = model.meta.ppq as u64;
@@ -4910,17 +4914,22 @@ mod compare_tests {
 fn diag_ouranos_bar157_dropout() {
     use std::sync::Arc;
 
-    let midi = "/Users/jieneng/Music/MIDIs/Ouranos - HDSQ & The Romanticist [v1.6.6].mid";
+    let midi = std::env::var("YINHE_DIAG_MIDI").unwrap_or_else(|_| {
+        "/Users/jieneng/Music/MIDIs/Ouranos - HDSQ & The Romanticist [v1.6.6].mid".to_string()
+    });
     let sfz = std::env::var("YINHE_TEST_SFZ").unwrap_or_else(|_| {
         "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz".into()
     });
     let sr = 48_000u32;
-    let frames = 4096usize;
+    let frames = std::env::var("YINHE_DIAG_FRAMES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(4096);
     let bar = std::env::var("YINHE_BENCH_BAR")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(157);
-    let model = Arc::new(yinhe_midi::parse_path(midi).unwrap());
+    let model = Arc::new(yinhe_midi::parse_path(&midi).unwrap());
     let ppq = model.meta.ppq as u64;
     let seek_tick = bar.saturating_sub(1) * 4 * ppq;
     let seek_sample = (model.tempo_map.tick_to_seconds(seek_tick) * sr as f64) as u64;
@@ -4933,7 +4942,39 @@ fn diag_ouranos_bar157_dropout() {
         model: Arc::clone(&model),
     });
     let events = engine.build_gpu_events(seek_sample);
+    eprintln!("MIDI={midi}");
     eprintln!("bar{bar} 事件数={} seek_sample={seek_sample}", events.len());
+    {
+        let (mut n_on, mut n_cc, mut n_bend, mut n_other) = (0u64, 0u64, 0u64, 0u64);
+        for ev in &events {
+            match ev {
+                yinhe_synth::SynthEvent::NoteOn { .. } => n_on += 1,
+                yinhe_synth::SynthEvent::NoteOff { .. } => {}
+                yinhe_synth::SynthEvent::Control { event, .. } => match event {
+                    yinhe_synth::ControlEvent::Raw(..) => n_cc += 1,
+                    yinhe_synth::ControlEvent::PitchBend(..) => n_bend += 1,
+                    _ => n_other += 1,
+                },
+            }
+        }
+        eprintln!("事件类型：NoteOn={n_on} Raw(CC)={n_cc} PitchBend={n_bend} 其他={n_other}");
+        {
+            use std::collections::HashMap;
+            let mut cc_hist: HashMap<u8, u64> = HashMap::new();
+            for ev in &events {
+                if let yinhe_synth::SynthEvent::Control {
+                    event: yinhe_synth::ControlEvent::Raw(cc, _),
+                    ..
+                } = ev
+                {
+                    *cc_hist.entry(*cc).or_insert(0) += 1;
+                }
+            }
+            let mut hist: Vec<(u8, u64)> = cc_hist.into_iter().collect();
+            hist.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
+            eprintln!("CC 分布（top8）：{hist:?}");
+        }
+    }
     {
         // 完全重复 NoteOn 统计（同 sample/channel/key/velocity/end_sample 分组）：
         // 合批上限的先验测量——若这里冗余很少，说明数据本身无重复可省。
@@ -4969,7 +5010,7 @@ fn diag_ouranos_bar157_dropout() {
 
     let mut synth = yinhe_synth::GpuSynth::new_default(sr).unwrap();
     let sfz_path = std::path::PathBuf::from(&sfz);
-    for ch in 0..16u32 {
+    for ch in 0..32u32 {
         synth
             .load_dense_soundfonts(ch, std::slice::from_ref(&sfz_path))
             .unwrap();
@@ -5084,8 +5125,10 @@ fn diag_ouranos_bar157_dropout() {
             let note_sample = n.sample();
             let single = vec![*n];
             let mut g1 = yinhe_synth::GpuSynth::new_default(sr).unwrap();
-            g1.load_dense_soundfonts(0, std::slice::from_ref(&sfz_path))
-                .unwrap();
+            for ch in 0..32u32 {
+                g1.load_dense_soundfonts(ch, std::slice::from_ref(&sfz_path))
+                    .unwrap();
+            }
             g1.finish_soundfont_load();
             g1.set_layer_count(None);
             g1.load_events(single.clone());
@@ -5097,12 +5140,15 @@ fn diag_ouranos_bar157_dropout() {
                 })
                 .collect();
             let mut c1 = yinhe_synth::CpuSynth::new(sr);
-            c1.load_dense_soundfonts(0, std::slice::from_ref(&sfz_path))
-                .unwrap();
+            for ch in 0..32u32 {
+                c1.load_dense_soundfonts(ch, std::slice::from_ref(&sfz_path))
+                    .unwrap();
+            }
             c1.finish_soundfont_load();
             c1.set_layer_count(None);
             c1.seek(note_sample);
             c1.load_events(single);
+            c1.set_sample_position(note_sample);
             let mut cb: Vec<yinhe_mixer::ChannelBuffers> = (0..16)
                 .map(|_| yinhe_mixer::ChannelBuffers {
                     left: vec![0.0; frames],
@@ -5152,7 +5198,7 @@ fn diag_ouranos_bar157_dropout() {
             end_sample: 4000 + (sr as u64 * 30) / 1000,
         }];
         let mut g3 = yinhe_synth::GpuSynth::new_default(sr).unwrap();
-        for ch in 0..16u32 {
+        for ch in 0..32u32 {
             g3.load_dense_soundfonts(ch, std::slice::from_ref(&sfz_path))
                 .unwrap();
         }
@@ -5161,7 +5207,7 @@ fn diag_ouranos_bar157_dropout() {
         g3.load_events(single_long.clone());
         g3.seek(0);
         let mut c3 = yinhe_synth::CpuSynth::new(sr);
-        for ch in 0..16u32 {
+        for ch in 0..32u32 {
             c3.load_dense_soundfonts(ch, std::slice::from_ref(&sfz_path))
                 .unwrap();
         }
@@ -5238,7 +5284,7 @@ fn diag_ouranos_bar157_dropout() {
             .collect();
         let n_sub = sub.len();
         let mut g2 = yinhe_synth::GpuSynth::new_default(sr).unwrap();
-        for ch in 0..16u32 {
+        for ch in 0..32u32 {
             g2.load_dense_soundfonts(ch, std::slice::from_ref(&sfz_path))
                 .unwrap();
         }
@@ -5247,7 +5293,7 @@ fn diag_ouranos_bar157_dropout() {
         g2.load_events(sub.clone());
         g2.seek(w_start);
         let mut c2 = yinhe_synth::CpuSynth::new(sr);
-        for ch in 0..16u32 {
+        for ch in 0..32u32 {
             c2.load_dense_soundfonts(ch, std::slice::from_ref(&sfz_path))
                 .unwrap();
         }
@@ -5326,7 +5372,7 @@ fn diag_ouranos_bar157_dropout() {
         let mut cpu = yinhe_synth::CpuSynth::new(sr);
         // 与 GPU 对齐：16 个 dense 通道全部加载（此前只加载通道 0，
         // 导致 CPU 只渲染 1/16 内容，对照不公平且听感认不出）
-        for ch in 0..16u32 {
+        for ch in 0..32u32 {
             cpu.load_dense_soundfonts(ch, std::slice::from_ref(&sfz_path))
                 .unwrap();
         }
@@ -5492,7 +5538,7 @@ fn diag_ouranos_bar157_dropout() {
 
     // —— 对照：同一事件/seek 的裸 GpuSynth 路径，逐样本找差异起点 ——
     let mut synth2 = yinhe_synth::GpuSynth::new_default(sr).unwrap();
-    for ch in 0..16u32 {
+    for ch in 0..32u32 {
         synth2
             .load_dense_soundfonts(ch, std::slice::from_ref(&sfz_path))
             .unwrap();

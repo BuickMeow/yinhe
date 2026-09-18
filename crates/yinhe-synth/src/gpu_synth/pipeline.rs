@@ -139,11 +139,11 @@ impl GpuSynth {
             sb.ch_updates.clear();
             sb.releases.clear();
             sb.env_cmds.clear();
-            let new_from = self.voices.len();
             let t_collect = std::time::Instant::now();
             self.collect_block(
                 s0,
                 s1,
+                offset as u32,
                 &mut sb.segs,
                 &mut sb.ch_updates,
                 &mut sb.releases,
@@ -180,13 +180,6 @@ impl GpuSynth {
                 sb.active[slot] = i as u32;
             }
             sb.active_count = acc;
-            // 本段新建 voice 的 start_offset（段内帧）转**全局块内帧**：
-            // shader 段末按段长右移未开始 voice 的偏移，跨段后回到段内相对值。
-            // （pass1 保持全量遍历，含墓碑——墓碑参与渲染是既有语义，跳过会
-            // 引入 parity 差异；渲染量优化由 pass2 的按通道活跃分桶承担。）
-            for v in &mut self.voices[new_from..] {
-                v.state.start_offset += offset as u32;
-            }
             seg_used += 1;
             offset += seg_frames;
         }

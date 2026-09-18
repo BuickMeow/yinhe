@@ -92,6 +92,7 @@ impl GpuSynth {
         &mut self,
         block_start: u64,
         block_end: u64,
+        seg_base: u32,
         segs: &mut Vec<SegInfo>,
         ch_updates: &mut Vec<ChState>,
         releases: &mut Vec<ReleaseCmd>,
@@ -167,6 +168,7 @@ impl GpuSynth {
                             end_sample,
                             block_start + block_frame as u64,
                             block_frame,
+                            seg_base,
                             releases,
                         ),
                         SynthEvent::NoteOff { channel, key, .. } => {
@@ -184,7 +186,7 @@ impl GpuSynth {
             };
             let frame = (cc_sample - block_start) as u32;
             let seg_ch_off_before = seg_ch_off;
-            self.process_events_at(cc_sample, frame, ch_updates, releases, env_cmds);
+            self.process_events_at(cc_sample, frame, seg_base, ch_updates, releases, env_cmds);
             let ch_count = ch_updates.len() - seg_ch_off_before;
             // 同 sample 的重复 CC 项一并消费（事件已全部处理）
             while cc_idx < self.cc_scratch.len() && self.cc_scratch[cc_idx] <= cc_sample {
@@ -250,6 +252,7 @@ impl GpuSynth {
         &mut self,
         sample: u64,
         frame: u32,
+        seg_base: u32,
         ch_updates: &mut Vec<ChState>,
         releases: &mut Vec<ReleaseCmd>,
         env_cmds: &mut Vec<EnvUpdateCmd>,
@@ -266,7 +269,9 @@ impl GpuSynth {
                     velocity,
                     end_sample,
                     ..
-                } => self.note_on(channel, key, velocity, end_sample, sample, frame, releases),
+                } => self.note_on(
+                    channel, key, velocity, end_sample, sample, frame, seg_base, releases,
+                ),
                 SynthEvent::NoteOff { channel, key, .. } => {
                     self.note_off_to_cmd(channel, key, frame, releases);
                 }
@@ -358,6 +363,7 @@ impl GpuSynth {
         end_sample: u64,
         start_sample: u64,
         block_frame: u32,
+        seg_base: u32,
         releases: &mut Vec<ReleaseCmd>,
     ) {
         // 音色库选择：dense 通道 → port → (bank, preset) 条目（与 xsynth
@@ -434,7 +440,7 @@ impl GpuSynth {
                     && v.state.sample_length == sample_length
                     && v.state.speed == p.speed
                     && v.state.base_speed == p.base_speed
-                    && v.state.start_offset == block_frame
+                    && v.state.start_offset == block_frame + seg_base
             })
             .copied();
         if let Some(i) = hit {
@@ -467,7 +473,11 @@ impl GpuSynth {
                 base_speed: p.base_speed,
                 base_gain: p.base_gain,
                 time: 0.0,
-                start_offset: block_frame,
+                // 块内帧：段内帧 + 段在块内的偏移。**创建时就换算**——否则复用
+                // 槽位创建的 voice 会被"新增 voice 转换循环"漏掉（复用不改变
+                // 数组长度），start_offset 停留在段内帧语义，导致提前数段渲染、
+                // time 错误推进（越往后越乱的真身）。
+                start_offset: block_frame + seg_base,
                 // dense 通道号（note_on 已过滤 < MAX_CHANNELS）
                 channel: channel as u32,
                 envelope: p.env_start,

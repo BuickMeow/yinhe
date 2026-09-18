@@ -353,6 +353,73 @@ fn prewarm_then_render_ok() {
     assert!(peak > 0.0, "预热后正常渲染应有输出（peak={peak}）");
 }
 
+/// 回归：复用槽位（free list）创建的 voice 必须与新建一样把 start_offset
+/// 换算成块内帧——此前"段内帧→块内帧"只在"本段新增 voice"循环里做，复用
+/// 不改变数组长度被漏掉，导致复用音符提前数段渲染、time 错误推进
+/// （真实曲目"越往后越乱"的真身）。
+#[test]
+fn reused_slot_note_starts_on_time_in_later_segment() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let wav_path = dir.path().join("tone.wav");
+    let sfz_path = dir.path().join("tone.sfz");
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 44_100,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut w = hound::WavWriter::create(&wav_path, spec).expect("wav create");
+    for _ in 0..44_100 {
+        w.write_sample(16_000i16).expect("wav write");
+    }
+    w.finalize().expect("wav finalize");
+    std::fs::write(&sfz_path, "<region>\nsample=tone.wav key=60\n").expect("sfz write");
+
+    let mut synth = GpuSynth::new_default(44_100).expect("GpuSynth");
+    synth
+        .load_dense_soundfonts(0, std::slice::from_ref(&sfz_path))
+        .expect("load");
+    synth.finish_soundfont_load();
+    // 音符 1：首块短音（快速结束 → harvest 回收槽位进 free list）
+    // 音符 2：第 3 块、段 1 内（偏移 700）→ note_on 复用槽位
+    // 期望：onset ≈ 700（块内帧），若复用漏转段内帧会出现在 ≈188（早 512）。
+    synth.load_events(vec![
+        SynthEvent::NoteOn {
+            sample: 100,
+            channel: 0,
+            key: 60,
+            velocity: 127,
+            end_sample: 100 + 600,
+        },
+        SynthEvent::NoteOn {
+            sample: 2 * 2048 + 700,
+            channel: 0,
+            key: 60,
+            velocity: 127,
+            end_sample: 2 * 2048 + 700 + 44_100,
+        },
+    ]);
+    let frames = 2048usize;
+    let mut bufs: Vec<yinhe_mixer::ChannelBuffers> = (0..2)
+        .map(|_| yinhe_mixer::ChannelBuffers {
+            left: vec![0.0; frames],
+            right: vec![0.0; frames],
+        })
+        .collect();
+    let mut out = Vec::new();
+    for _ in 0..3 {
+        synth.render_to_mixer(&mut bufs);
+        out.extend(bufs[0].left.iter().copied());
+    }
+    // 第 3 块（偏移 2*2048..3*2048）内的 onset
+    let seg = &out[2 * 2048..3 * 2048];
+    let onset = seg.iter().position(|&x| x.abs() > 0.001).expect("应有输出");
+    assert!(
+        (onset as i64 - 700).abs() < 8,
+        "复用槽位音符 onset 应为 700（实际 {onset}）"
+    );
+}
+
 /// 测试用 voice（sustain 阶段），只填被 chase 路径读取的字段。
 fn test_voice(stage: u32) -> Voice {
     Voice {
