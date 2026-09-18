@@ -323,6 +323,7 @@ impl GpuSynth {
     /// NoteOn（block_frame = 块内起始帧）。
     /// key_map 已按 (key, vel) 展开为最终参数快照，这里零公式计算直接消费。
     /// 超 voice 上限时淘汰最老的 voice（发 kill 指令，不 remove——索引保持稳定）。
+    #[allow(clippy::too_many_arguments)] // 渲染上下文透传，见 AGENTS 约定
     pub fn note_on(
         &mut self,
         channel: u8,
@@ -520,29 +521,34 @@ impl GpuSynth {
         //   ② 同力度下 release 中的先杀（尾巴优先于音头）；
         //   ③ 再按 envelope 升序（更听不见的优先）；
         //   ④ 并列取最早（创建顺序）。
-        // 排序键（黑乐谱语义）：
-        //   ① **gate 升序**——音符画/装饰音这类**特别短**的音符先死，
-        //      正常演奏的长音符（gate 大）最后死、演奏中绝不被切；
-        //   ② velocity 升序（同样短的里，小力度先死）；
-        //   ③ release 中的优先（尾巴先于音头）；
-        //   ④ envelope 升序、创建顺序兜底。
-        let mut cands: Vec<(u64, u8, bool, f32, usize)> = Vec::with_capacity(alive);
+        // 排序键（黑乐谱听感语义）：
+        //   ① **release 中的优先**——正在演奏的音符（无论长短力度）绝不先动；
+        //   ② release 候选里 **envelope 升序**——几乎无声的尾巴最先回收；
+        //   ③ 演奏中候选里 **gate 升序**——真要牺牲时先牺牲音符画/装饰音；
+        //   ④ velocity 升序、创建顺序兜底。
+        let mut cands: Vec<(u8, f32, u64, u8, usize)> = Vec::with_capacity(alive);
         for (i, v) in self.voices.iter().enumerate() {
             if v.state.env_stage >= 6 {
                 continue;
             }
             let releasing = v.release_pending || v.state.env_stage == 5;
             let gate = v.end_sample.saturating_sub(v.start_sample);
-            cands.push((gate, v.velocity, !releasing, v.state.envelope, i));
+            cands.push((
+                if releasing { 0u8 } else { 1u8 },
+                v.state.envelope,
+                gate,
+                v.velocity,
+                i,
+            ));
         }
         cands.sort_unstable_by(|a, b| {
             a.0.cmp(&b.0)
-                .then(a.1.cmp(&b.1))
+                .then(a.1.total_cmp(&b.1))
                 .then(a.2.cmp(&b.2))
-                .then(a.3.total_cmp(&b.3))
+                .then(a.3.cmp(&b.3))
                 .then(a.4.cmp(&b.4))
         });
-        for &(_, vel, _, _, idx) in cands.iter().take(excess) {
+        for &(_, _, _, vel, idx) in cands.iter().take(excess) {
             let bucket = match vel {
                 0..=31 => &crate::gpu_synth::EVICT_VEL_LO,
                 32..=63 => &crate::gpu_synth::EVICT_VEL_MID,

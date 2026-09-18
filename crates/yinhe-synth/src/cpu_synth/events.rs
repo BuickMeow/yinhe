@@ -170,20 +170,24 @@ impl CpuSynth {
     /// 全局 voice 超限淘汰（块末调用）：优先 release 中的，不足时按创建顺序
     /// 杀最老的。立即结束（与 xsynth 的默认 kill 语义一致），块末统一 retain 回收。
     pub(super) fn evict_excess(&mut self, excess: usize) {
-        // 与 GPU 一致（kiva 式"过载时牺牲小力度"）：按
-        // (velocity, 非 release, envelope, 创建顺序) 排序，小力度先杀、
-        // 大力度最后——过载时绝不错切大力度音符。
-        let mut cands: Vec<(u8, bool, f32, usize)> = Vec::new();
+        // 与 GPU 同语义：**release 中优先**（envelope 越接近无声越先回收），
+        // 正在演奏的（无论长短力度）最后动；同为演奏中时小力度先牺牲。
+        let mut cands: Vec<(u8, f32, u8, usize)> = Vec::new();
         for (i, v) in self.voices.iter().enumerate() {
             if v.finished() || v.is_killed() {
                 continue;
             }
-            cands.push((v.velocity, !v.released, v.envelope, i));
+            cands.push((
+                if v.released { 0u8 } else { 1u8 },
+                v.envelope,
+                v.velocity,
+                i,
+            ));
         }
         cands.sort_unstable_by(|a, b| {
             a.0.cmp(&b.0)
-                .then(a.1.cmp(&b.1))
-                .then(a.2.total_cmp(&b.2))
+                .then(a.1.total_cmp(&b.1))
+                .then(a.2.cmp(&b.2))
                 .then(a.3.cmp(&b.3))
         });
         for &(_, _, _, i) in cands.iter().take(excess) {
