@@ -79,7 +79,7 @@ impl GpuAudioRenderer {
         self.flush_pending_voice_writes();
 
         let voice_wg_count = voice_count.div_ceil(WORKGROUP_SIZE);
-        let mut submit_index = None;
+
         let mix_size =
             (CHANNEL_COUNT * frame_count as usize * 2 * std::mem::size_of::<f32>()) as u64;
         let stage_size = (voice_count as usize * std::mem::size_of::<u32>()) as u64;
@@ -209,7 +209,7 @@ impl GpuAudioRenderer {
                 }
             }
         }
-        submit_index = Some(self.queue.submit(std::iter::once(encoder.finish())));
+        let submit_index = Some(self.queue.submit(std::iter::once(encoder.finish())));
 
         // 分配 staging（双缓冲轮转；收割时 unmap 后归还）
         let idx = self.buffers.as_ref()?.staging_idx;

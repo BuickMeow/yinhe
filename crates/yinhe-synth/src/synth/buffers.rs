@@ -75,8 +75,6 @@ pub(crate) struct GpuBuffers {
     /// 各段参数/指令互不覆盖（原实现每段一次 queue.submit，8 次/块的
     /// 命令缓冲提交与 pass 调度固定开销 ~90ms，与 voice 数无关）。
     pub(crate) params_bufs: Vec<wgpu::Buffer>,
-    /// 段数上限（ceil(块帧数 / RENDER_SEGMENT_FRAMES)）
-    pub(crate) seg_cap: usize,
     /// pass1 每 voice 每帧输出（voices × frames × 2 f32）
     #[allow(dead_code)] // 经 bind_groups 使用
     pub(crate) partial_buf: wgpu::Buffer,
@@ -449,7 +447,6 @@ impl GpuAudioRenderer {
                     )
                 })
                 .collect(),
-            seg_cap,
             sample_chunks,
             chunk_offsets_buf,
             chunk_count,
