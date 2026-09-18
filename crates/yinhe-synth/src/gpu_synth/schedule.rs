@@ -454,6 +454,7 @@ impl GpuSynth {
                 v.state.env_stage = 6;
                 v.held_by_damper = false;
                 releases.push(kill_cmd(block_frame, idx));
+                crate::gpu_synth::LAYER_KILLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         }
 
@@ -488,6 +489,7 @@ impl GpuSynth {
             v.state.env_stage = 6;
             v.held_by_damper = false;
             releases.push(kill_cmd(block_frame, idx));
+            crate::gpu_synth::EVICT_KILLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             excess -= 1;
         }
     }

@@ -158,6 +158,7 @@ impl CpuSynth {
             };
             // 1ms 淡出（硬切会产生 click，用户实测）。
             self.voices[victim].signal_kill(self.sample_rate);
+            crate::cpu_synth::LAYER_KILLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 

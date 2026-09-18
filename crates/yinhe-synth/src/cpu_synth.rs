@@ -82,6 +82,9 @@ mod events;
 #[cfg(test)]
 mod tests;
 
+/// layer 超限淘汰的杀音计数（诊断）。
+pub static LAYER_KILLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub struct CpuSynth {
     sample_rate: u32,
     /// 采样插值方式（`Interpolation::code()`；加载音色库时写入 KeyInfo）。

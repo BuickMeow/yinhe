@@ -4611,6 +4611,9 @@ fn diag_ouranos_gpu_dropout() {
     };
     eprintln!("事件通道={chans:?}");
 
+    yinhe_synth::cpu_synth::LAYER_KILLS.store(0, std::sync::atomic::Ordering::Relaxed);
+    yinhe_synth::gpu_synth::LAYER_KILLS.store(0, std::sync::atomic::Ordering::Relaxed);
+
     // CPU
     let mut cpu = yinhe_synth::CpuSynth::new(sr);
     cpu.load_dense_soundfonts_many(&chans, &[std::path::PathBuf::from(&sfz)])
@@ -4620,10 +4623,12 @@ fn diag_ouranos_gpu_dropout() {
     let mut cb = mk();
     let mut cpu_e = Vec::new();
     let mut cpu_voices = Vec::new();
+    let mut cpu_ch5: Vec<f32> = Vec::new();
     for _ in 0..blocks {
         cpu.render_to_mixer(&mut cb);
         cpu_e.push(energy(&cb));
         cpu_voices.push(cpu.voice_count());
+        cpu_ch5.extend_from_slice(&cb[5].left);
     }
     eprintln!(
         "CPU voices 峰值={:?} 末值={:?}",
@@ -4654,14 +4659,50 @@ fn diag_ouranos_gpu_dropout() {
     let mut gpu_e = Vec::new();
     let mut voices = Vec::new();
     let mut max_ms = 0.0f64;
+    let mut gpu_ch5: Vec<f32> = Vec::new();
     for _ in 0..blocks {
         let t = std::time::Instant::now();
         gpu.render_to_mixer(&mut gb);
         max_ms = max_ms.max(t.elapsed().as_secs_f64() * 1000.0);
         gpu_e.push(energy(&gb));
         voices.push(gpu.voice_count());
+        gpu_ch5.extend_from_slice(&gb[5].left);
+    }
+    // 逐样本对比（通道 5 = Track 13）：块能量会被平均掉，截断/尾巴差异
+    // 必须看逐样本
+    let n = cpu_ch5.len().min(gpu_ch5.len());
+    let mut diffs: Vec<(usize, f32, f32)> = Vec::new();
+    let mut diff_count = 0usize;
+    let mut first_diff = usize::MAX;
+    for i in 0..n {
+        let d = (cpu_ch5[i] - gpu_ch5[i]).abs();
+        if d > 1e-3 {
+            diff_count += 1;
+            if first_diff == usize::MAX {
+                first_diff = i;
+            }
+            if diffs.len() < 10 {
+                diffs.push((i, cpu_ch5[i], gpu_ch5[i]));
+            }
+        }
+    }
+    eprintln!(
+        "ch5 逐样本显著差异(|d|>1e-3)：{diff_count}/{n}（{:.3}%），首个@样本 {first_diff}（帧 {}）",
+        diff_count as f64 / n.max(1) as f64 * 100.0,
+        first_diff / 2
+    );
+    if first_diff != usize::MAX {
+        let lo = first_diff.saturating_sub(6);
+        let hi = (first_diff + 14).min(n);
+        eprintln!("  cpu[{lo}..{hi}]={:?}", &cpu_ch5[lo..hi]);
+        eprintln!("  gpu[{lo}..{hi}]={:?}", &gpu_ch5[lo..hi]);
     }
     eprintln!("GPU 单块最大耗时={max_ms:.2}ms（预算 10.67ms，块长 512/48k）");
+    eprintln!(
+        "layer 杀音计数：cpu={} gpu={}",
+        yinhe_synth::cpu_synth::LAYER_KILLS.load(std::sync::atomic::Ordering::Relaxed),
+        yinhe_synth::gpu_synth::LAYER_KILLS.load(std::sync::atomic::Ordering::Relaxed)
+    );
     let low: Vec<(usize, f64, f64)> = (0..blocks)
         .filter(|&i| cpu_e[i] > 1.0 && gpu_e[i] < cpu_e[i] * 0.5)
         .map(|i| (i, cpu_e[i], gpu_e[i]))
