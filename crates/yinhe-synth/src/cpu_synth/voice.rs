@@ -481,6 +481,100 @@ impl CpuVoice {
         let pan_l = self.pan_l;
         let pan_r = self.pan_r;
         let fi0 = fi_start + offset;
+        let loop_active =
+            (loop_cont || (loop_sus_mode && self.env_stage < ENV_RELEASE)) && loop_avail;
+        // 常数段快路径（Delay/Hold/Sustain，profile 采样关闭）：通用循环里的
+        // 包络/循环/profile 分支每帧都在判断，但条件在子段内恒定，编译器
+        // 无法从通用循环里消掉——这里独立一份精简循环，把采样 slice、包络
+        // 增益、滤波状态全部寄存器化（通用路径因 advance_env 的 &mut self
+        // 借用无法这样借）。循环回绕是否生效由循环外的 `loop_active` 布尔
+        // 控制（恒定分支，预测稳定）。
+        if constant_env && profile_mode == 0 {
+            let sample: &[f32] = &self.sample;
+            let env = self.envelope;
+            let (b0, b1, b2, a1, a2) = (
+                self.flt_b0,
+                self.flt_b1,
+                self.flt_b2,
+                self.flt_a1,
+                self.flt_a2,
+            );
+            let (mut x1, mut x2, mut y1, mut y2) =
+                (self.flt_x1, self.flt_x2, self.flt_y1, self.flt_y2);
+            let (mut x1r, mut x2r, mut y1r, mut y2r) =
+                (self.flt_x1r, self.flt_x2r, self.flt_y1r, self.flt_y2r);
+            let end_when_over = !loop_cont;
+            let mut finished = false;
+            for i in 0..n {
+                let fi = (fi0 + i) as u32;
+                let t = time0 + (fi as usize - begin) as f64 * speed;
+                let mut idx = t as u32;
+                if loop_active && idx > loop_end {
+                    idx = (idx - loop_end - 1) % loop_len + loop_start;
+                }
+                let frac = (t - f64::from(idx)) as f32;
+                if idx < sample_length {
+                    let si = (sample_offset + idx * scale) as usize;
+                    let mut l0 = sample.get(si).copied().unwrap_or(0.0);
+                    let mut r0 = if is_stereo {
+                        sample.get(si + 1).copied().unwrap_or(0.0)
+                    } else {
+                        l0
+                    };
+                    if linear && idx < max_idx {
+                        let i1 = si + scale as usize;
+                        let l1 = sample.get(i1).copied().unwrap_or(0.0);
+                        let r1 = if is_stereo {
+                            sample.get(i1 + 1).copied().unwrap_or(0.0)
+                        } else {
+                            l1
+                        };
+                        l0 += (l1 - l0) * frac;
+                        r0 += (r1 - r0) * frac;
+                    }
+                    let mut s_l = l0 * gain * env;
+                    let mut s_r = r0 * gain * env;
+                    if cutoff_on {
+                        let out_l = b0 * s_l + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+                        x2 = x1;
+                        x1 = s_l;
+                        y2 = y1;
+                        y1 = out_l;
+                        s_l = out_l;
+                        if is_stereo {
+                            let out_r = b0 * s_r + b1 * x1r + b2 * x2r - a1 * y1r - a2 * y2r;
+                            x2r = x1r;
+                            x1r = s_r;
+                            y2r = y1r;
+                            y1r = out_r;
+                            s_r = out_r;
+                        } else {
+                            s_r = s_l;
+                        }
+                    }
+                    let oi = (offset + i) * 2;
+                    out[oi] += s_l * pan_l;
+                    out[oi + 1] += s_r * pan_r;
+                } else if end_when_over {
+                    finished = true;
+                    break;
+                }
+            }
+            if cutoff_on {
+                self.flt_x1 = x1;
+                self.flt_x2 = x2;
+                self.flt_y1 = y1;
+                self.flt_y2 = y2;
+                self.flt_x1r = x1r;
+                self.flt_x2r = x2r;
+                self.flt_y1r = y1r;
+                self.flt_y2r = y2r;
+            }
+            if finished {
+                self.env_stage = ENV_FINISHED;
+            }
+            return;
+        }
         for i in 0..n {
             let fi = (fi0 + i) as u32;
 
