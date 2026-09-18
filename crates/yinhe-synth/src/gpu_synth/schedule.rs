@@ -472,6 +472,11 @@ impl GpuSynth {
                 if count <= max {
                     break;
                 }
+                // 候选条件与计数条件一致（env_stage < 6）：**包含 release 中的**
+                // voice——release 尾巴被截掉听感无害，这是 xsynth「几乎不丢音」
+                // 的关键（与 CPU enforce_key_layers 同语义）。若排除 release 中
+                // 的，连续同音时 4 层全在 release 会无候选 → 无限堆积 → 列表
+                // 超过 MAX_VOICE_SLOTS 后新 voice 无 GPU 槽位（永不发声）。
                 let victim = self
                     .voices
                     .iter()
@@ -480,9 +485,7 @@ impl GpuSynth {
                         *i != new_index
                             && v.channel == channel
                             && v.key == key
-                            && v.state.env_stage < 5
-                            && !v.release_pending
-                            && !v.held_by_damper
+                            && v.state.env_stage < 6
                     })
                     .min_by_key(|(_, v)| v.velocity)
                     .map(|(i, _)| i);
@@ -496,22 +499,33 @@ impl GpuSynth {
             }
         }
 
-        // 超限淘汰：优先杀最老的 release 中 voice（听感最弱），否则杀最老的 active。
+        // 超限淘汰：优先杀最老的 release 中 voice（听感最弱），否则杀最老的
+        // active；**跳过墓碑**（env_stage >= 6，等块末 compact 清理）——否则
+        // 首位是墓碑时会误判为「无可淘汰」直接 break，列表持续超限，新 voice
+        // 索引越过 MAX_VOICE_SLOTS 后无 GPU 槽位（永不发声）。
         // 只预置 stage 6 + 发 kill 指令，不 remove——本块已生成的指令索引保持稳定。
         while self.voices.len() > self.max_voices {
-            let idx = self
-                .voices
-                .iter()
-                .position(|v| v.state.env_stage == 5)
-                .unwrap_or(0);
-            let v = &mut self.voices[idx];
-            if v.state.env_stage < 6 {
-                v.state.env_stage = 6;
-                v.held_by_damper = false;
-                releases.push(kill_cmd(block_frame, idx));
-            } else {
-                break; // 其余已被淘汰（块末统一清理），不再继续
+            let mut victim = None;
+            let mut first_active = None;
+            for (i, v) in self.voices.iter().enumerate() {
+                if v.state.env_stage >= 6 {
+                    continue; // 墓碑跳过
+                }
+                if v.release_pending || v.state.env_stage == 5 {
+                    victim = Some(i);
+                    break; // 第一个 = 最老的 release 中
+                }
+                if first_active.is_none() {
+                    first_active = Some(i);
+                }
             }
+            let Some(idx) = victim.or(first_active) else {
+                break; // 全是墓碑：等 compact 清理
+            };
+            let v = &mut self.voices[idx];
+            v.state.env_stage = 6;
+            v.held_by_damper = false;
+            releases.push(kill_cmd(block_frame, idx));
         }
     }
 

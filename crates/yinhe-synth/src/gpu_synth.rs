@@ -699,6 +699,53 @@ mod tests {
         assert_eq!(peak(&buffers), 0.0, "voices 清空后不得循环输出残留音频");
     }
 
+    /// 回归：连续同 key 音符 + 短 end_sample（前一批还在 release 中就继续
+    /// 触发）——layer 淘汰候选必须包含 release 中的 voice，否则无候选会无限
+    /// 堆积，列表超过 MAX_VOICE_SLOTS 后新 voice 无 GPU 槽位（后面的音符永不
+    /// 发声，用户实测现象）。同时验证全局淘汰跳过墓碑。
+    #[test]
+    fn consecutive_same_key_notes_do_not_pile_up() {
+        let Some(sfz) = std::env::var_os("YINHE_TEST_SFZ") else {
+            eprintln!("YINHE_TEST_SFZ not set, skipping");
+            return;
+        };
+        let path = std::path::PathBuf::from(&sfz);
+        let mut synth = GpuSynth::new_default(44_100).expect("GpuSynth");
+        synth
+            .load_dense_soundfonts(0, std::slice::from_ref(&path))
+            .expect("load");
+        synth.finish_soundfont_load();
+        synth.set_layer_count(Some(4));
+        // 每 64 帧一个同 key 音符，128 帧后到期（release 尾巴 ~441 帧）→
+        // 任意时刻同 key 在 release 中的 voice 远多于 layer 上限。
+        let events: Vec<SynthEvent> = (0..600)
+            .map(|i| SynthEvent::NoteOn {
+                sample: i * 64,
+                channel: 0,
+                key: 60,
+                velocity: 100,
+                end_sample: i * 64 + 128,
+            })
+            .collect();
+        synth.load_events(events);
+        let frames = 512usize;
+        let mut bufs: Vec<yinhe_mixer::ChannelBuffers> = (0..2)
+            .map(|_| yinhe_mixer::ChannelBuffers {
+                left: vec![0.0; frames],
+                right: vec![0.0; frames],
+            })
+            .collect();
+        for _ in 0..80 {
+            synth.render_to_mixer(&mut bufs);
+        }
+        // 修复前：同 key voice 堆积数百（列表持续增长）
+        assert!(
+            synth.voice_count() <= 32,
+            "连续同 key 音符不应堆积（实际 {} 个 voice）",
+            synth.voice_count()
+        );
+    }
+
     /// layer 上限（对齐 xsynth）：同一 key 5 个递增力度音符 + layer=4 →
     /// 活跃 voice 只 4 个（杀 velocity 最低的）。
     #[test]
