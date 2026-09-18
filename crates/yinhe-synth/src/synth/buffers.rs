@@ -15,6 +15,10 @@ use super::types::{
 // 容量（partial/状态缓冲按此分配）：16384 × 512 帧 × 8B = 64MB。free list
 // 让结束槽位即时复用，容量不再需要覆盖"需求+墓碑"的峰值——partial 越大，
 // pass1/pass2 的读写工作集越超出 L2（实测 128MB 时 harvest 近乎翻倍）。
+// 容量（partial/状态缓冲按此分配）：24576 × 512 帧 × 8B = 96MB < 512MB limits。
+// partial 越大缓存工作集越大（实测 64MB~62ms / 96MB~71ms / 128MB~77ms 同量级
+// voice）；容量与 max_voices（渲染量）解耦。根治方案是活跃列表（pass1/2 只
+// 遍历活跃 voice，与槽位解耦），原型 27ms 但引入渲染 bug，待修。
 pub(crate) const MAX_VOICE_SLOTS: u32 = 24576;
 
 /// 采样数据分片写入的每片字节数（16MB）：写一片让路 1ms，避免长段
