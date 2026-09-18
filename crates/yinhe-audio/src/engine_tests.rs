@@ -4429,6 +4429,26 @@ fn analyze_blackmidi_duplicates() {
         }
         // 冗余率 = 1 - 组数/总数（可省掉的 voice 比例）
         let rate = |groups: usize| 1.0 - groups as f64 / total.max(1) as f64;
+        // 峰值时刻"活跃"音符（start <= t < end）：直接对应 voice 峰的可减量
+        let t_peak = peak_start.saturating_add(ppq / 2);
+        let mut act_all: HashMap<(u8, u8, u32, u32), u32> = HashMap::new();
+        let mut act_ch: HashMap<(u8, u8, u8, u32, u32), u32> = HashMap::new();
+        let mut act_total = 0usize;
+        for k in 0..128u8 {
+            for n in model.notes[k as usize].iter() {
+                if n.velocity <= 1 || n.start_tick > t_peak || n.end_tick <= t_peak {
+                    continue;
+                }
+                let ch = track_channels.get(n.track as usize).copied().unwrap_or(0);
+                act_total += 1;
+                *act_all
+                    .entry((k, n.velocity, n.start_tick, n.end_tick))
+                    .or_default() += 1;
+                *act_ch
+                    .entry((ch, k, n.velocity, n.start_tick, n.end_tick))
+                    .or_default() += 1;
+            }
+        }
         eprintln!(
             "\n=== {}\n  峰值第 {} 拍 count={} 窗口(±8拍)音符={total}\n  完全重复(跨通道)组={} 冗余率={:.1}% 最大组={}\n  完全重复(同通道)组={} 冗余率={:.1}% 最大组={}\n  峰值拍同通道 音符={total_peak} 冗余率={:.1}% 最大组={}",
             midi.rsplit('/').next().unwrap_or(midi),
@@ -4442,6 +4462,13 @@ fn analyze_blackmidi_duplicates() {
             identical_ch.values().copied().max().unwrap_or(0),
             100.0 * (1.0 - identical_peak.len() as f64 / total_peak.max(1) as f64),
             identical_peak.values().copied().max().unwrap_or(0),
+        );
+        eprintln!(
+            "  峰值时刻活跃音符={act_total} 跨通道冗余率={:.1}%（最大组={}）同通道冗余率={:.1}%（最大组={}）",
+            100.0 * (1.0 - act_all.len() as f64 / act_total.max(1) as f64),
+            act_all.values().copied().max().unwrap_or(0),
+            100.0 * (1.0 - act_ch.len() as f64 / act_total.max(1) as f64),
+            act_ch.values().copied().max().unwrap_or(0),
         );
     }
 }

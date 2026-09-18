@@ -6,8 +6,9 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender};
 use yinhe_dsp::dsp::limiter::VolumeLimiter;
+use yinhe_types::Interpolation;
 #[cfg(feature = "gpu")]
-use yinhe_types::{Interpolation, SynthEngine};
+use yinhe_types::SynthEngine;
 
 use crate::export::ExportJob;
 
@@ -515,6 +516,9 @@ pub(crate) fn spawn_renderer(
     thread::Builder::new()
         .name("audio-renderer".into())
         .spawn(move || {
+            // 长尾衰减防非规格化拖慢（x86；Arm no-op）。
+            #[cfg(feature = "gpu")]
+            yinhe_synth::denormals::enable_flush_denormals();
             let mut renderer = AudioRenderer::new(
                 engine,
                 preview_engine,

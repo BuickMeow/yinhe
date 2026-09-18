@@ -674,6 +674,8 @@ pub(crate) fn spawn_worker(
     thread::Builder::new()
         .name("audio-worker".into())
         .spawn(move || {
+            #[cfg(feature = "gpu")]
+            yinhe_synth::denormals::enable_flush_denormals();
             // 内部 pending 缓冲：处理某个命令时，try_recv 到的非同类型命令存这里。
             // 下次循环优先从 pending 取，避免饿死后续命令。
             let mut pending: std::collections::VecDeque<WorkerCmd> =

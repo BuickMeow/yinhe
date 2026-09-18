@@ -354,12 +354,16 @@ impl CpuSynth {
 
         let damper_flags = self.damper_flags;
         let profile_mode = CPU_PROFILE_MODE.load(std::sync::atomic::Ordering::Relaxed);
+        // 非规格化数抑制：MXCSR 是 per-thread，rayon worker 在闭包内各自设置
+        // （幂等；黑乐谱长尾衰减到 -100dB 后 x86 denormal 会拖慢 10~100 倍）。
+        crate::denormals::enable_flush_denormals();
         let t_par = std::time::Instant::now();
         let scratch = &mut self.par_scratch;
         self.voices
             .par_chunks_mut(chunk)
             .zip(scratch.par_chunks_mut(stride))
             .for_each(|(voices, out)| {
+                crate::denormals::enable_flush_denormals();
                 // 块级渲染：每 voice 一次调用（到期释放在 render_block 内按
                 // 包络切片边界应用，无逐帧 O(V×frames) 扫描）。
                 for v in voices.iter_mut() {

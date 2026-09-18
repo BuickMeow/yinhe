@@ -13,6 +13,7 @@
 
 pub mod channel_state;
 pub mod cpu_synth;
+pub mod denormals;
 pub mod gpu_synth;
 pub mod sfz_parser;
 pub mod synth;
