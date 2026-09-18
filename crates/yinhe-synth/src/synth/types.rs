@@ -8,6 +8,9 @@ pub const CHUNK_SIZE: usize = 30_000_000; // 30M f32 = 120MB per chunk
 /// 512 帧下 partial 满容量（8192 voice）= 32MB，dispatch 数 ×8。
 pub const RENDER_SEGMENT_FRAMES: u32 = 512;
 pub const WORKGROUP_SIZE: u32 = 256;
+/// pass2 每个 workgroup 处理的帧数：原实现"每帧一个 wg"（4096 帧 = 4096 个），
+/// wg 启动/调度是固定开销大头（实测 4096→1 wg 时块耗时 112→37ms）。
+pub const MIX_FRAMES_PER_WG: u32 = 8;
 /// MIDI 通道数（与 shader pass2 的归约布局对齐；dense = port×16+ch，
 /// 支持 2 端口）。与逻辑层的 `MAX_CHANNELS` 同值——单一来源，避免两个
 /// 常量今后各自漂移。

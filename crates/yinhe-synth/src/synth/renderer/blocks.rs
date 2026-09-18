@@ -3,6 +3,7 @@
 //! 拆自 renderer.rs（文件过长），含 `PendingReadback`。
 
 use super::*;
+use crate::synth::types::MIX_FRAMES_PER_WG;
 
 /// 已提交未收割的读回（`submit_block` → `finish_block`；流水线用）。
 pub struct PendingReadback {
@@ -85,6 +86,16 @@ impl GpuAudioRenderer {
         let full_size = (voice_count as usize * std::mem::size_of::<GpuVoiceState>()) as u64;
         let last = segments.len() - 1;
 
+        // 全部段共用同一个 command encoder，段循环结束后一次性 submit：
+        // 原实现每段一次 queue.submit（8 次/块），命令缓冲提交与 pass 调度的
+        // 固定开销 ~11ms/段（预热哑渲染 1 voice 也要 29ms 即铁证），与 voice
+        // 数无关——合并后整个块的固定开销只付一次。
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("audio_render"),
+            });
+
         for (seg_i, seg) in segments.iter().enumerate() {
             if seg.frame_length == 0 {
                 continue;
@@ -126,26 +137,30 @@ impl GpuAudioRenderer {
                 bytemuck::cast_slice(seg.active_ranges),
             );
             self.queue
-                .write_buffer(&buf.segs_buf, 0, bytemuck::cast_slice(seg.segs));
-            self.queue
-                .write_buffer(&buf.ch_updates_buf, 0, bytemuck::cast_slice(seg.ch_updates));
+                .write_buffer(&buf.segs_bufs[seg_i], 0, bytemuck::cast_slice(seg.segs));
             self.queue.write_buffer(
-                &buf.release_by_frame_buf,
+                &buf.ch_updates_bufs[seg_i],
+                0,
+                bytemuck::cast_slice(seg.ch_updates),
+            );
+            self.queue.write_buffer(
+                &buf.release_by_frame_bufs[seg_i],
                 0,
                 bytemuck::cast_slice(&self.release_by_frame_scratch),
             );
+            self.queue.write_buffer(
+                &buf.release_cmds_bufs[seg_i],
+                0,
+                bytemuck::cast_slice(seg.releases),
+            );
+            self.queue.write_buffer(
+                &buf.env_cmds_bufs[seg_i],
+                0,
+                bytemuck::cast_slice(seg.env_cmds),
+            );
             self.queue
-                .write_buffer(&buf.release_cmds_buf, 0, bytemuck::cast_slice(seg.releases));
-            self.queue
-                .write_buffer(&buf.env_cmds_buf, 0, bytemuck::cast_slice(seg.env_cmds));
-            self.queue
-                .write_buffer(&buf.params_buf, 0, bytemuck::bytes_of(&params));
+                .write_buffer(&buf.params_bufs[seg_i], 0, bytemuck::bytes_of(&params));
 
-            let mut encoder = self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("audio_render"),
-                });
             // pass1：每线程一个 voice，串行推进本段所有帧
             {
                 let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -153,7 +168,7 @@ impl GpuAudioRenderer {
                     ..Default::default()
                 });
                 cpass.set_pipeline(&self.pipeline);
-                cpass.set_bind_group(0, &buf.bind_group, &[]);
+                cpass.set_bind_group(0, &buf.bind_groups[seg_i], &[]);
                 cpass.dispatch_workgroups(voice_wg_count, 1, 1);
             }
             // pass2：每帧一个 workgroup，把 partial 归约到 channel_mix 本段区间
@@ -163,8 +178,8 @@ impl GpuAudioRenderer {
                     ..Default::default()
                 });
                 cpass.set_pipeline(&self.mix_pipeline);
-                cpass.set_bind_group(0, &buf.bind_group, &[]);
-                cpass.dispatch_workgroups(seg.frame_length, 1, 1);
+                cpass.set_bind_group(0, &buf.bind_groups[seg_i], &[]);
+                cpass.dispatch_workgroups(seg.frame_length.div_ceil(MIX_FRAMES_PER_WG), 1, 1);
             }
             // 最后一段：读回 channel_mix（整块）+ 紧凑 stage [+ 全字段]，
             // 由紧随其后的 submit 一并执行（此后不再有段需要该缓冲）。
@@ -193,8 +208,8 @@ impl GpuAudioRenderer {
                     );
                 }
             }
-            submit_index = Some(self.queue.submit(std::iter::once(encoder.finish())));
         }
+        submit_index = Some(self.queue.submit(std::iter::once(encoder.finish())));
 
         // 分配 staging（双缓冲轮转；收割时 unmap 后归还）
         let idx = self.buffers.as_ref()?.staging_idx;

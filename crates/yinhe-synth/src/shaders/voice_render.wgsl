@@ -152,8 +152,9 @@ struct ChunkOffsets {
 
 @group(0) @binding(8) var<uniform> chunk_off: ChunkOffsets;
 
-var<workgroup> shared_l: array<f32, 256>;
-var<workgroup> shared_r: array<f32, 256>;
+// pass2 每 workgroup 处理 MIX_FRAMES_PER_WG 帧，归约暂存按 [frame][thread] 展开
+var<workgroup> shared_l: array<f32, 256 * 8>;
+var<workgroup> shared_r: array<f32, 256 * 8>;
 
 fn chunk_offset(idx: u32) -> u32 {
     switch idx {
@@ -501,43 +502,64 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
 @compute @workgroup_size(256)
 fn mix_main(@builtin(workgroup_id) wid: vec3<u32>,
             @builtin(local_invocation_id) lid: vec3<u32>) {
-    let fi = wid.x;
+    // 每 wg 处理 MIX_FRAMES_PER_WG 帧：base_fi..base_fi+N（4096 帧 → 512 wg，
+    // 原实现 4096 wg 的启动/调度开销是块耗时的大头）。
+    const N: u32 = 8u;
+    let base_fi = wid.x * N;
     let fc = params.frame_count;
-    if fi >= fc { return; }
-    // 线程布局：ch = lid/8，slot = lid%8；每个 slot 扫 stride 8 的 voice。
-    // 32 通道 × 8 槽位 = 256 线程，所有 vid 恰好被一个线程扫描（vid ≡ s mod 8）。
+    if base_fi >= fc { return; }
     let ch = lid.x / 8u;
     let s = lid.x % 8u;
-    var sum_l = 0.0;
-    var sum_r = 0.0;
-    for (var vid = s; vid < params.voice_count; vid += 8u) {
-        if voice_states[vid].channel == ch {
-            let base = vid * params.partial_stride * 2u + fi * 2u;
-            sum_l += partial[base];
-            sum_r += partial[base + 1u];
+    var sum_l: array<f32, 8>;
+    var sum_r: array<f32, 8>;
+    for (var j = 0u; j < N; j++) {
+        sum_l[j] = 0.0;
+        sum_r[j] = 0.0;
+    }
+    // 每通道只遍历自己的活跃列表（CPU 已按通道分桶）
+    let range_off = params.ranges_off + ch * 2u;
+    let off = active_list[range_off];
+    let cnt = active_list[range_off + 1u];
+    for (var k = s; k < cnt; k += 8u) {
+        let vid = active_list[off + k];
+        for (var j = 0u; j < N; j++) {
+            let fi = base_fi + j;
+            if fi < fc {
+                let pbase = vid * params.partial_stride * 2u + fi * 2u;
+                sum_l[j] += partial[pbase];
+                sum_r[j] += partial[pbase + 1u];
+            }
         }
     }
 
-    shared_l[lid.x] = sum_l;
-    shared_r[lid.x] = sum_r;
+    for (var j = 0u; j < N; j++) {
+        shared_l[j * 256u + lid.x] = sum_l[j];
+        shared_r[j * 256u + lid.x] = sum_r[j];
+    }
     workgroupBarrier();
 
-    // 组内（8 槽位）树归约
+    // 组内（8 槽位）树归约，逐帧独立
     var stride = 4u;
     while stride > 0u {
         if s < stride {
-            shared_l[lid.x] += shared_l[lid.x + stride];
-            shared_r[lid.x] += shared_r[lid.x + stride];
+            for (var j = 0u; j < N; j++) {
+                let b = j * 256u + lid.x;
+                shared_l[b] += shared_l[b + stride];
+                shared_r[b] += shared_r[b + stride];
+            }
         }
         workgroupBarrier();
         stride /= 2u;
     }
 
     if s == 0u {
-        // 写整块 channel_mix 的对应帧区间（分段渲染：mix_offset 为该段起始帧，
-        // fc 为整块帧数而非段长）
-        let base = (ch * params.channel_mix_frames + params.mix_offset + fi) * 2u;
-        channel_mix[base] = shared_l[ch * 8u];
-        channel_mix[base + 1u] = shared_r[ch * 8u];
+        for (var j = 0u; j < N; j++) {
+            let fi = base_fi + j;
+            if fi < fc {
+                let base = (ch * params.channel_mix_frames + params.mix_offset + fi) * 2u;
+                channel_mix[base] = shared_l[j * 256u + ch * 8u];
+                channel_mix[base + 1u] = shared_r[j * 256u + ch * 8u];
+            }
+        }
     }
 }
