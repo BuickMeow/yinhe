@@ -4189,6 +4189,12 @@ fn prof_blackmidi_cost_breakdown() {
 
     let sfz = "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
     let sr = 48_000u32;
+    // 渲染秒数可配（`YINHE_PROF_SECS`，默认 3）：峰值段实时倍率低时
+    // 用 1 秒快速迭代（AGENTS 五-7 单项测试 ≤120s）。
+    let prof_secs: f64 = std::env::var("YINHE_PROF_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3.0);
 
     for midi in [
         "/Users/jieneng/Music/MIDIs/tau2.5.9.mid",
@@ -4231,11 +4237,11 @@ fn prof_blackmidi_cost_breakdown() {
             probe.tick_to_sample(peak_tick)
         };
 
-        // 渲染 3 秒（调用方负责 Play/重置）
-        let render_3s = |engine: &mut AudioEngine, backend: u8| -> (f64, u64, f64) {
+        // 渲染 prof_secs 秒（调用方负责 Play/重置）
+        let render_secs = |engine: &mut AudioEngine, backend: u8, secs: f64| -> (f64, u64, f64) {
             let frames = if backend == 2 { 4096 } else { 512 };
             let mut buf = vec![0.0f32; frames * 2];
-            let target: u64 = 3 * sr as u64;
+            let target: u64 = (secs * sr as f64) as u64;
             let mut rendered = 0u64;
             let mut peak_voice = 0u64;
             let mut max_chunk = 0.0f64;
@@ -4296,10 +4302,10 @@ fn prof_blackmidi_cost_breakdown() {
             engine.handle_command(AudioCommand::Play {
                 from_sample: start_sample,
             });
-            let (el, pv, mc) = render_3s(&mut engine, backend);
+            let (el, pv, mc) = render_secs(&mut engine, backend, prof_secs);
             eprintln!(
-                "  {name:<12} 3s音频={el:>6.2}s ({:.2}x) peak_voice={pv:>6} max_chunk={mc:>7.1}ms",
-                3.0 / el.max(1e-9)
+                "  {name:<12} {prof_secs}s音频={el:>6.2}s ({:.2}x) peak_voice={pv:>6} max_chunk={mc:>7.1}ms",
+                prof_secs / el.max(1e-9)
             );
         }
 
@@ -4325,29 +4331,17 @@ fn prof_blackmidi_cost_breakdown() {
             cs_engine.handle_command(AudioCommand::Play {
                 from_sample: start_sample,
             });
-            let (el, pv, mc) = render_3s(&mut cs_engine, 1);
-            let b_sel = base(&yinhe_synth::cpu_synth::PROF_ON_SELECT_NS);
-            let b_new = base(&yinhe_synth::cpu_synth::PROF_ON_NEW_NS);
-            let b_push = base(&yinhe_synth::cpu_synth::PROF_ON_PUSH_NS);
+            let (el, pv, mc) = render_secs(&mut cs_engine, 1, prof_secs);
             let d_on = base(&yinhe_synth::cpu_synth::PROF_NOTE_ON_NS) - b_on;
-            let d_sel = base(&yinhe_synth::cpu_synth::PROF_ON_SELECT_NS) - b_sel;
-            let d_new = base(&yinhe_synth::cpu_synth::PROF_ON_NEW_NS) - b_new;
-            let d_push = base(&yinhe_synth::cpu_synth::PROF_ON_PUSH_NS) - b_push;
             let d_off = base(&yinhe_synth::cpu_synth::PROF_NOTE_OFF_NS) - b_off;
             let d_render = base(&yinhe_synth::cpu_synth::PROF_RENDER_NS) - b_render;
             let total_ns = (el * 1e9) as u64;
             eprintln!(
-                "  CpuSynth-{name:<6} 3s音频={el:>6.2}s ({:.2}x) peak_voice={pv:>6} max_chunk={mc:>7.1}ms | note_on={:.0}% note_off={:.0}% render={:.0}%",
-                3.0 / el.max(1e-9),
+                "  CpuSynth-{name:<6} {prof_secs}s音频={el:>6.2}s ({:.2}x) peak_voice={pv:>6} max_chunk={mc:>7.1}ms | note_on={:.0}% note_off={:.0}% render={:.0}%",
+                prof_secs / el.max(1e-9),
                 100.0 * d_on as f64 / total_ns as f64,
                 100.0 * d_off as f64 / total_ns as f64,
                 100.0 * d_render as f64 / total_ns as f64,
-            );
-            eprintln!(
-                "    └ note_on 细分: select={:.0}% new={:.0}% push={:.0}%（占 note_on）",
-                100.0 * d_sel as f64 / d_on.max(1) as f64,
-                100.0 * d_new as f64 / d_on.max(1) as f64,
-                100.0 * d_push as f64 / d_on.max(1) as f64,
             );
         }
         yinhe_synth::cpu_synth::CPU_PROFILE_MODE.store(0, Ordering::Relaxed);
@@ -4454,8 +4448,8 @@ mod compare_tests {
     #[test]
     #[ignore]
     fn render_single_note_gain_compare() {
-        let sfz = "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
-        let sr = 48_000u32;
+    let sfz = "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
+    let sr = 48_000u32;
         let mut mask = vec![false; 16];
         mask[0] = true;
         let layout = crate::channel_layout::ChannelLayout::from_mask(mask);
