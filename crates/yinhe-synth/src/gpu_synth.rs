@@ -106,7 +106,6 @@ pub struct GpuSynth {
     /// 紧凑 env_stage 读回缓冲（voice 清理用；全长缓冲复用）
     voice_stage_buf: Vec<u32>,
     /// 压缩时的全字段读回缓冲（复用，避免每块分配）
-    states_buf: Vec<GpuVoiceState>,
     /// 每通道上次的 pitch_multiplier（块起点比对；变化才产生段 0 的 ChState）
     channel_speed_cache: [f32; MAX_CHANNELS],
     /// 32 通道混音缓冲（GPU 输出读回，CPU 通道滤波 + 求和）
@@ -134,10 +133,34 @@ pub struct GpuSynth {
     seg_scratch: Vec<SegBuffers>,
     /// 当前渲染位置
     sample_position: u64,
+    /// 提交游标（下一个待提交块的起点绝对 sample）。
+    render_position: u64,
+    /// 流水线：已提交未收割的块（FIFO）。
+    pending: std::collections::VecDeque<PendingGpuBlock>,
+    /// GPU 权威全字段 voice 状态（每次收割读回；compact 重传前用它覆盖
+    /// CPU 镜像，否则重传过期位置/包络会把 voice 状态重置）。
+    states_buf: Vec<GpuVoiceState>,
+    /// 输出 ring：已渲染（GPU 读回）但未交给调用方的交错 PCM
+    /// （帧 × MAX_CHANNELS × 2 f32）。预渲染的块先入 ring，调用方按所需
+    /// 帧数取用——因此支持块大小变化（测试尾块/导出块）。
+    ring: std::collections::VecDeque<f32>,
     /// 最近一次 seek 时的 event_cursor：`chase_skip` 用它计算"seek 后已处理
     /// 的控制事件区间"，chase 应用时跳过这些控制器（与 yinhe-audio 的
     /// `chase_cc_base` 对称，避免异步 chase 覆盖 seek 后已生效的新值）。
     chase_base: usize,
+}
+
+/// 流水线深度：已提交未收割的块数（提交与等待分离，见 `render_to_mixer`）。
+/// 2 = 收割当前块时下一块已在 GPU 上执行，同步等待被重叠（实测 352 voice
+/// 2.79ms→1.02ms，-63%）。
+const PIPELINE_DEPTH: usize = 2;
+
+/// 已提交未收割的块。
+struct PendingGpuBlock {
+    readback: crate::synth::renderer::PendingReadback,
+    frames: usize,
+    /// 提交时的 voice 数（槽位一一对应；收割时只更新前 N 个）。
+    voice_count: usize,
 }
 
 impl GpuSynth {
@@ -169,7 +192,6 @@ impl GpuSynth {
             sample_offsets: HashMap::new(),
             voices: Vec::new(),
             voice_stage_buf: Vec::new(),
-            states_buf: Vec::new(),
             channel_speed_cache: [0.0; MAX_CHANNELS],
             channel_mix: Vec::new(),
             channels: [ChannelState::new(sample_rate); MAX_CHANNELS],
@@ -183,6 +205,10 @@ impl GpuSynth {
             cc_scratch: Vec::new(),
             seg_scratch: Vec::new(),
             sample_position: 0,
+            render_position: 0,
+            pending: std::collections::VecDeque::new(),
+            states_buf: Vec::new(),
+            ring: std::collections::VecDeque::new(),
             chase_base: 0,
         })
     }
@@ -295,7 +321,10 @@ impl GpuSynth {
         self.voices.clear();
         self.channels = [ChannelState::new(self.sample_rate); MAX_CHANNELS];
         self.channel_speed_cache = [0.0; MAX_CHANNELS];
+        self.drain_pending(false);
+        self.ring.clear();
         self.sample_position = 0;
+        self.render_position = 0;
         self.chase_base = 0;
     }
 
@@ -331,7 +360,11 @@ impl GpuSynth {
 
     /// Seek 到指定位置
     pub fn seek(&mut self, sample: u64) {
+        // 丢弃在途块与 ring（seek 后不再输出旧内容）
+        self.drain_pending(false);
+        self.ring.clear();
         self.sample_position = sample;
+        self.render_position = sample;
         self.event_cursor = self.events.partition_point(|e| e.sample() < sample);
         // 记录 seek 点，供 chase_skip 计算"seek 后已处理的控制事件区间"。
         self.chase_base = self.event_cursor;
@@ -353,13 +386,69 @@ impl GpuSynth {
         if frames == 0 {
             return;
         }
+        let per_frame = MAX_CHANNELS * 2;
+        let need = frames * per_frame;
+        // 预渲染：ring 不足时提交/收割（提交超前、收割入 ring；块大小可变化）
+        while self.ring.len() < need {
+            if self.compact_needed() {
+                self.drain_pending(true);
+                self.compact_voices();
+            }
+            let mut progressed = false;
+            while self.pending.len() < PIPELINE_DEPTH && self.has_content() {
+                if !self.submit_one_block(frames) {
+                    break;
+                }
+                progressed = true;
+            }
+            if let Some(p) = self.pending.pop_front() {
+                self.harvest(&p);
+                self.push_block_to_ring(p.frames);
+                progressed = true;
+            }
+            if !progressed {
+                break;
+            }
+        }
 
-        let block_start = self.sample_position;
-        let block_end = block_start + frames as u64;
+        // 输出 frames 帧：ring 中的先给，不足部分静音补齐
+        let avail = (self.ring.len() / per_frame).min(frames);
+        for (ch_idx, buf) in buffers.iter_mut().enumerate() {
+            if ch_idx < MAX_CHANNELS {
+                for f in 0..avail {
+                    let base = f * per_frame + ch_idx * 2;
+                    buf.left[f] = self.ring[base];
+                    buf.right[f] = self.ring[base + 1];
+                }
+                for f in avail..frames {
+                    buf.left[f] = 0.0;
+                    buf.right[f] = 0.0;
+                }
+            } else {
+                buf.left.fill(0.0);
+                buf.right.fill(0.0);
+            }
+        }
+        self.ring.drain(..avail * per_frame);
+        // 已输出位置（外部可见的播放进度）
+        self.sample_position += frames as u64;
+        // 无内容且 ring 已耗尽：提交游标与输出对齐（避免无限积压）
+        if self.ring.is_empty() && !self.has_content() {
+            self.render_position = self.sample_position;
+        }
+        self.peak_voices = self
+            .peak_voices
+            .max(self.voices.iter().filter(|v| v.state.env_stage < 6).count());
+    }
 
-        // 压缩预判（基于上一块读回的 env_stage）：墓碑占多数或接近槽位上限。
-        // 压缩必须用 GPU 权威状态（time/envelope 由 GPU 推进），在本块读回后执行。
-        let need_compact = self.voices.len() >= MAX_VOICE_SLOTS as usize
+    /// 是否还有可渲染内容（活跃 voice 或未消费事件）。
+    fn has_content(&self) -> bool {
+        !self.voices.is_empty() || self.event_cursor < self.events.len()
+    }
+
+    /// 压缩预判（基于最近收割的 env_stage）：墓碑占多数或接近槽位上限。
+    fn compact_needed(&self) -> bool {
+        self.voices.len() >= MAX_VOICE_SLOTS as usize
             || (!self.voices.is_empty()
                 && self
                     .voices
@@ -367,11 +456,22 @@ impl GpuSynth {
                     .filter(|v| v.state.env_stage >= 6)
                     .count()
                     * 2
-                    >= self.voices.len());
+                    >= self.voices.len())
+    }
 
-        // 按渲染段 collect（段内帧索引相对段起点）：每段独立结构，
-        // 供 renderer 分段跑 pass1/pass2（partial 只需 voices × 段长）。
-        // 段缓冲跨块复用（take 出来，渲染完放回），只 clear 不重新分配。
+    /// 压缩：清理已结束 voice（tombstone）并全量重传槽位状态。
+    fn compact_voices(&mut self) {
+        self.voices.retain(|v| v.state.env_stage < 6);
+        for (i, v) in self.voices.iter().enumerate() {
+            self.renderer.write_voice_state(i as u32, &v.state);
+        }
+    }
+
+    /// 提交一个块（不等待）：collect + 上传新 voice + renderer.submit_block。
+    /// 返回 false 表示无可提交内容（无 voice / 无 GPU 缓冲）。
+    fn submit_one_block(&mut self, frames: usize) -> bool {
+        let block_start = self.render_position;
+        let block_end = block_start + frames as u64;
         let upload_from = self.voices.len();
         let mut seg_data = std::mem::take(&mut self.seg_scratch);
         let mut seg_used = 0usize;
@@ -414,14 +514,16 @@ impl GpuSynth {
         }
 
         self.channel_mix.resize(MAX_CHANNELS * frames * 2, 0.0);
-        if !self.voices.is_empty() {
+        if self.voices.is_empty() {
+            // 本块无 voice：输出静音，但提交游标必须前进（时间在流逝，事件可能
+            // 在后续块；原实现在无 voice 时也无条件推进 sample_position）。
+            self.channel_mix.fill(0.0);
+            self.render_position = block_end;
+            self.seg_scratch = seg_data;
+            return false;
+        }
+        let submitted = {
             self.voice_stage_buf.resize(self.voices.len(), 0);
-            // 需要压缩时额外读回全字段（GPU 权威状态），否则零开销紧凑读回。
-            if need_compact {
-                self.states_buf
-                    .resize(self.voices.len(), GpuVoiceState::default());
-            }
-            let readback = need_compact.then_some(self.states_buf.as_mut_slice());
             let segments: Vec<RenderSegment<'_>> = seg_data[..seg_used]
                 .iter()
                 .map(|s| RenderSegment {
@@ -433,67 +535,87 @@ impl GpuSynth {
                     env_cmds: &s.env_cmds,
                 })
                 .collect();
-            let n = self.renderer.render_block(
+            // 全字段读回：收割时用 GPU 权威状态覆盖 CPU 镜像。
+            let rb = self.renderer.submit_block(
                 self.voices.len() as u32,
-                readback,
-                &mut self.channel_mix,
-                &mut self.voice_stage_buf,
+                frames as u32,
+                true,
                 &segments,
                 self.sample_rate,
             );
-            debug_assert_eq!(n as usize, self.voices.len().min(MAX_VOICE_SLOTS as usize));
             drop(segments);
-            // 读回紧凑 env_stage（voice 清理/墓碑标记用；其余状态常驻 GPU）。
-            for (v, &stage) in self.voices.iter_mut().zip(self.voice_stage_buf.iter()) {
-                v.state.env_stage = stage;
-            }
-            // 块末压缩：以刚读回的全字段状态为准 retain + 全量重传（索引重排）。
-            if need_compact {
-                for (v, st) in self.voices.iter_mut().zip(self.states_buf.iter()) {
-                    v.state = *st;
-                }
-                self.voices.retain(|v| v.state.env_stage < 6);
-                for (i, v) in self.voices.iter().enumerate() {
-                    self.renderer.write_voice_state(i as u32, &v.state);
-                }
-            }
-        } else {
-            // voice 清空（seek/Stop 后到首音符之间）：必须清零复用缓冲，
-            // 否则上一块的残留音频会被原样重写进混音台（空白区一直响旧余韵，
-            // 直到下一个音符触发正常渲染覆盖它）。
-            self.channel_mix.fill(0.0);
-        }
-
-        // 各通道去交错写入混音台 planar 缓冲（覆盖写；dense >= MAX_CHANNELS 清零）。
-        let n = buffers.len().min(MAX_CHANNELS);
-        for (ch_idx, buf) in buffers.iter_mut().enumerate().take(n) {
-            let base = ch_idx * frames * 2;
-            let ch_mix = &self.channel_mix[base..base + frames * 2];
-            for i in 0..frames {
-                buf.left[i] = ch_mix[i * 2];
-                buf.right[i] = ch_mix[i * 2 + 1];
-            }
-        }
-        for buf in buffers.iter_mut().skip(n) {
-            buf.left.fill(0.0);
-            buf.right.fill(0.0);
-        }
-
-        // 注意：死 voice（env_stage >= 6）保留在列表中作为墓碑，索引与 GPU 槽位
-        // 严格一一对应；清理统一由块末压缩（need_compact）做 retain + 重传。
-        self.peak_voices = self
-            .peak_voices
-            .max(self.voices.iter().filter(|v| v.state.env_stage < 6).count());
-
-        // 段缓冲放回复用池（只保留容量，下块 clear 复用）
+            rb
+        };
         self.seg_scratch = seg_data;
-        self.sample_position = block_end;
+        match submitted {
+            Some(readback) => {
+                self.pending.push_back(PendingGpuBlock {
+                    readback,
+                    frames,
+                    voice_count: self.voices.len(),
+                });
+                self.render_position = block_end;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// 把一块已收割的 `channel_mix`（**通道优先** `[ch][frame][lr]`）重排为
+    /// ring 的**帧优先**布局 `[frame][ch][lr]`（ring 跨块拼接只按帧消费）。
+    fn push_block_to_ring(&mut self, frames: usize) {
+        let ch = MAX_CHANNELS;
+        for f in 0..frames {
+            for c in 0..ch {
+                let src = c * frames * 2 + f * 2;
+                if src + 1 < self.channel_mix.len() {
+                    self.ring.push_back(self.channel_mix[src]);
+                    self.ring.push_back(self.channel_mix[src + 1]);
+                } else {
+                    self.ring.push_back(0.0);
+                    self.ring.push_back(0.0);
+                }
+            }
+        }
+    }
+
+    /// 收割读回（等待 + 拷贝），并用 GPU 权威 env_stage 更新 CPU 镜像。
+    fn harvest(&mut self, p: &PendingGpuBlock) -> u32 {
+        self.states_buf
+            .resize(self.voices.len(), GpuVoiceState::default());
+        let n = self.renderer.finish_block(
+            &p.readback,
+            &mut self.channel_mix,
+            &mut self.voice_stage_buf,
+            Some(self.states_buf.as_mut_slice()),
+        );
+        let cnt = p.voice_count.min(self.voices.len());
+        // GPU 权威状态覆盖 CPU 镜像（仅该块提交时的前 N 个槽位；之后新 push 的
+        // voice 保持 CPU 侧初值）。compact 重传前必须一致。
+        for (v, st) in self.voices[..cnt].iter_mut().zip(self.states_buf.iter()) {
+            v.state = *st;
+        }
+        n
+    }
+
+    /// 排空流水线：`update_stage` 时收割入 ring（不丢音频），否则直接丢弃
+    /// （seek/换事件时旧内容不应再输出）。
+    fn drain_pending(&mut self, update_stage: bool) {
+        while let Some(p) = self.pending.pop_front() {
+            if update_stage {
+                self.harvest(&p);
+                self.push_block_to_ring(p.frames);
+            } else {
+                self.renderer.discard_block(&p.readback);
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::GpuVoiceState;
 
     fn first_sample_ptr(s: &GpuSynth) -> *const f32 {
         s.port_key_maps[0]
