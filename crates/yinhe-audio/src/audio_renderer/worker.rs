@@ -130,6 +130,8 @@ impl AudioRenderer {
                         if self.engine.cpu_synth.is_none() {
                             let mut cs = yinhe_synth::CpuSynth::new(sr);
                             cs.set_interpolation(self.interpolation.code());
+                            // 创建晚于 SetLayerCount 命令：补应用当前设置
+                            cs.set_layer_count(self.engine.layer_count);
                             self.engine.cpu_synth = Some(cs);
                             play_log("[play] CpuSynth 初始化（yinhe CPU 后端）");
                         }
@@ -160,6 +162,8 @@ impl AudioRenderer {
                                 match yinhe_synth::GpuSynth::new_default(sr) {
                                     Ok(mut synth) => {
                                         synth.set_interpolation(self.interpolation.code());
+                                        // 创建晚于 SetLayerCount 命令：补应用当前设置
+                                        synth.set_layer_count(self.engine.layer_count);
                                         let t_load = Instant::now();
                                         if let Err(e) =
                                             synth.load_dense_soundfonts_many(&denses, &gpu_paths)

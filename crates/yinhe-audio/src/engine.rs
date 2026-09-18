@@ -64,6 +64,9 @@ pub(crate) struct AudioEngine {
     pub(crate) sf_manager: SoundFontManager,
     pub(crate) sample_rate: u32,
     pub(crate) sample_position: u64,
+    /// 当前 per-key layer 设置（`SetLayerCount` 保存；worker 创建 yinhe
+    /// CPU/GPU 合成器后据此应用——创建晚于命令，不能只在线应用）。
+    pub(crate) layer_count: Option<usize>,
     /// dispatch 基准（tick 域）：与 sample_position 同步推进（每块末更新，
     /// seek/load 时由 sample→tick 初始化）。事件比较全在 tick 域。
     pub(crate) current_tick: u32,
@@ -202,6 +205,7 @@ impl AudioEngine {
                 sf_manager: SoundFontManager::new(sample_rate),
                 sample_rate,
                 sample_position: 0,
+                layer_count: Some(4),
                 current_tick: 0,
                 playing: false,
                 duration_samples: 0,
@@ -333,6 +337,10 @@ impl AudioEngine {
     }
 
     pub(crate) fn set_layer_count(&mut self, count: Option<usize>) {
+        // 保存设置：yinhe CPU/GPU 合成器在 worker 里**异步创建**（音色库加载
+        // 完成时），创建时刻晚于本命令 → 必须在创建后重新应用（否则设置被
+        // 静默丢弃、合成器永远用默认 layer=4；xsynth 因内部立即应用而无此问题）。
+        self.layer_count = count;
         use xsynth_core::channel::{ChannelConfigEvent, ChannelEvent};
         use xsynth_core::channel_group::SynthEvent;
         self.channel_set
