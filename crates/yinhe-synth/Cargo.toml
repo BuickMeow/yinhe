@@ -13,6 +13,7 @@ hound = "3.5"
 yinhe-mixer = { path = "../yinhe-mixer" }
 
 [dev-dependencies]
+yinhe-midi = { path = "../yinhe-midi" }
 tempfile = { workspace = true }
 xsynth-core = "0.4"
 biquad = "0.4"

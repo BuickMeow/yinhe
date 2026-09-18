@@ -38,6 +38,8 @@ pub struct GpuAudioRenderer {
     /// 待写入的 voice 槽位更新（buffer 未就绪时也不丢；render_block 在
     /// ensure_buffers 之后统一 flush）。
     pending_voice_writes: Vec<(u32, GpuVoiceState)>,
+    /// 批量写 staging（连续 vid 合并成一次 `write_buffer`；复用避免每块分配）
+    voice_write_scratch: Vec<GpuVoiceState>,
 }
 
 mod alt;
@@ -202,6 +204,7 @@ impl GpuAudioRenderer {
             mix_scratch: Vec::new(),
             release_by_frame_scratch: Vec::new(),
             pending_voice_writes: Vec::new(),
+            voice_write_scratch: Vec::new(),
         })
     }
 
@@ -311,15 +314,34 @@ impl GpuAudioRenderer {
             return;
         };
         let size = std::mem::size_of::<GpuVoiceState>() as u64;
-        for (vid, st) in self.pending_voice_writes.drain(..) {
-            if vid >= buf.voice_slots {
-                continue;
+        // 按 vid 排序后把**连续区间**合并成一次 `write_buffer`。原先逐条写：
+        // compact 重传 8192 个 voice = 8192 次小写，实测每块 ~16ms 级尖峰。
+        self.pending_voice_writes
+            .sort_unstable_by_key(|(vid, _)| *vid);
+        let mut i = 0usize;
+        while i < self.pending_voice_writes.len() {
+            let start = self.pending_voice_writes[i].0;
+            if start >= buf.voice_slots {
+                break;
             }
+            let mut j = i + 1;
+            while j < self.pending_voice_writes.len()
+                && self.pending_voice_writes[j].0 == self.pending_voice_writes[i].0 + (j - i) as u32
+            {
+                j += 1;
+            }
+            self.voice_write_scratch.clear();
+            self.voice_write_scratch
+                .extend(self.pending_voice_writes[i..j].iter().map(|(_, st)| *st));
+            let slots = (buf.voice_slots - start) as usize;
+            let n = self.voice_write_scratch.len().min(slots);
             self.queue.write_buffer(
                 &buf.voice_state_buf,
-                vid as u64 * size,
-                bytemuck::bytes_of(&st),
+                start as u64 * size,
+                bytemuck::cast_slice(&self.voice_write_scratch[..n]),
             );
+            i = j;
         }
+        self.pending_voice_writes.clear();
     }
 }
