@@ -8,8 +8,10 @@ pub const CHUNK_SIZE: usize = 30_000_000; // 30M f32 = 120MB per chunk
 /// 512 帧下 partial 满容量（8192 voice）= 32MB，dispatch 数 ×8。
 pub const RENDER_SEGMENT_FRAMES: u32 = 512;
 pub const WORKGROUP_SIZE: u32 = 256;
-/// MIDI 通道数（与 shader pass2 的 32 通道归约布局对齐；dense = port×16+ch，支持 2 端口）。
-pub const CHANNEL_COUNT: usize = 32;
+/// MIDI 通道数（与 shader pass2 的归约布局对齐；dense = port×16+ch，
+/// 支持 2 端口）。与逻辑层的 `MAX_CHANNELS` 同值——单一来源，避免两个
+/// 常量今后各自漂移。
+pub const CHANNEL_COUNT: usize = crate::channel_state::MAX_CHANNELS;
 
 /// Per-voice state that is uploaded to the GPU each block.
 /// 布局必须与 WGSL 的 VoiceState 结构体严格对应。
