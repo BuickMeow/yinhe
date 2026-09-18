@@ -1,0 +1,244 @@
+//! 渲染流水线：提交/收割两阶段、输出 ring、compact 与流水线排空。
+//!
+//! 拆自 gpu_synth.rs（文件过长）；`drain_pending` 被主文件的
+//! seek/load_events 调用，故标 `pub(super)`，其余仅本模块内使用。
+
+use super::*;
+
+impl GpuSynth {
+    /// 渲染一块到混音台的 planar 通道缓冲（覆盖写，与 CPU 路径
+    /// `ChannelSet::render_segment` 同格式）：GPU 槽位 `ch` 写入 `buffers[ch]`，
+    /// 超出 `MAX_CHANNELS` 的 dense 通道清零（GPU 合成器只支持前 32 个通道）。
+    ///
+    /// 块内事件（CC 段边界、note on/off、release/env 指令）在 CPU 收集为段结构，
+    /// **一次 GPU 提交**渲染整块；voice 状态在 GPU 内逐帧推进（块末全字段读回）。
+    pub fn render_to_mixer(&mut self, buffers: &mut [yinhe_mixer::ChannelBuffers]) {
+        let frames = buffers.first().map(|b| b.left.len()).unwrap_or(0);
+        if frames == 0 {
+            return;
+        }
+        let per_frame = MAX_CHANNELS * 2;
+        let need = frames * per_frame;
+        // 预渲染：ring 不足时提交/收割（提交超前、收割入 ring；块大小可变化）
+        while self.ring.len() < need {
+            if self.compact_needed() {
+                self.drain_pending(true);
+                self.compact_voices();
+            }
+            let mut progressed = false;
+            while self.pending.len() < PIPELINE_DEPTH && self.has_content() {
+                if !self.submit_one_block(frames) {
+                    break;
+                }
+                progressed = true;
+            }
+            if let Some(p) = self.pending.pop_front() {
+                self.harvest(&p);
+                self.push_block_to_ring(p.frames);
+                progressed = true;
+            }
+            if !progressed {
+                break;
+            }
+        }
+
+        // 输出 frames 帧：ring 中的先给，不足部分静音补齐
+        let avail = (self.ring.len() / per_frame).min(frames);
+        for (ch_idx, buf) in buffers.iter_mut().enumerate() {
+            if ch_idx < MAX_CHANNELS {
+                for f in 0..avail {
+                    let base = f * per_frame + ch_idx * 2;
+                    buf.left[f] = self.ring[base];
+                    buf.right[f] = self.ring[base + 1];
+                }
+                for f in avail..frames {
+                    buf.left[f] = 0.0;
+                    buf.right[f] = 0.0;
+                }
+            } else {
+                buf.left.fill(0.0);
+                buf.right.fill(0.0);
+            }
+        }
+        self.ring.drain(..avail * per_frame);
+        // 已输出位置（外部可见的播放进度）
+        self.sample_position += frames as u64;
+        // 无内容且 ring 已耗尽：提交游标与输出对齐（避免无限积压）
+        if self.ring.is_empty() && !self.has_content() {
+            self.render_position = self.sample_position;
+        }
+        self.peak_voices = self
+            .peak_voices
+            .max(self.voices.iter().filter(|v| v.state.env_stage < 6).count());
+    }
+
+    /// 是否还有可渲染内容（活跃 voice 或未消费事件）。
+    fn has_content(&self) -> bool {
+        !self.voices.is_empty() || self.event_cursor < self.events.len()
+    }
+
+    /// 压缩预判（基于最近收割的 env_stage）：墓碑占多数或接近槽位上限。
+    fn compact_needed(&self) -> bool {
+        self.voices.len() >= MAX_VOICE_SLOTS as usize
+            || (!self.voices.is_empty()
+                && self
+                    .voices
+                    .iter()
+                    .filter(|v| v.state.env_stage >= 6)
+                    .count()
+                    * 2
+                    >= self.voices.len())
+    }
+
+    /// 压缩：清理已结束 voice（tombstone）并全量重传槽位状态。
+    fn compact_voices(&mut self) {
+        self.voices.retain(|v| v.state.env_stage < 6);
+        for (i, v) in self.voices.iter().enumerate() {
+            self.renderer.write_voice_state(i as u32, &v.state);
+        }
+    }
+
+    /// 提交一个块（不等待）：collect + 上传新 voice + renderer.submit_block。
+    /// 返回 false 表示无可提交内容（无 voice / 无 GPU 缓冲）。
+    fn submit_one_block(&mut self, frames: usize) -> bool {
+        let block_start = self.render_position;
+        let block_end = block_start + frames as u64;
+        let upload_from = self.voices.len();
+        let mut seg_data = std::mem::take(&mut self.seg_scratch);
+        let mut seg_used = 0usize;
+        let mut offset = 0usize;
+        while offset < frames {
+            let seg_frames = (frames - offset).min(RENDER_SEGMENT_FRAMES as usize);
+            let s0 = block_start + offset as u64;
+            let s1 = s0 + seg_frames as u64;
+            if seg_used == seg_data.len() {
+                seg_data.push(SegBuffers::default());
+            }
+            let sb = &mut seg_data[seg_used];
+            sb.frame_start = offset as u32;
+            sb.frame_length = seg_frames as u32;
+            sb.segs.clear();
+            sb.ch_updates.clear();
+            sb.releases.clear();
+            sb.env_cmds.clear();
+            let new_from = self.voices.len();
+            self.collect_block(
+                s0,
+                s1,
+                &mut sb.segs,
+                &mut sb.ch_updates,
+                &mut sb.releases,
+                &mut sb.env_cmds,
+            );
+            // 本段新建 voice 的 start_offset（段内帧）转**全局块内帧**：
+            // shader 段末按段长右移未开始 voice 的偏移，跨段后回到段内相对值。
+            for v in &mut self.voices[new_from..] {
+                v.state.start_offset += offset as u32;
+            }
+            seg_used += 1;
+            offset += seg_frames;
+        }
+
+        // 只上传本块新增的 voice 槽位（状态常驻 GPU，不再整块重传）。
+        for (i, v) in self.voices.iter().enumerate().skip(upload_from) {
+            self.renderer.write_voice_state(i as u32, &v.state);
+        }
+
+        self.channel_mix.resize(MAX_CHANNELS * frames * 2, 0.0);
+        if self.voices.is_empty() {
+            // 本块无 voice：输出静音，但提交游标必须前进（时间在流逝，事件可能
+            // 在后续块；原实现在无 voice 时也无条件推进 sample_position）。
+            self.channel_mix.fill(0.0);
+            self.render_position = block_end;
+            self.seg_scratch = seg_data;
+            return false;
+        }
+        let submitted = {
+            self.voice_stage_buf.resize(self.voices.len(), 0);
+            let segments: Vec<RenderSegment<'_>> = seg_data[..seg_used]
+                .iter()
+                .map(|s| RenderSegment {
+                    frame_start: s.frame_start,
+                    frame_length: s.frame_length,
+                    segs: &s.segs,
+                    ch_updates: &s.ch_updates,
+                    releases: &s.releases,
+                    env_cmds: &s.env_cmds,
+                })
+                .collect();
+            // 全字段读回：收割时用 GPU 权威状态覆盖 CPU 镜像。
+            let rb = self.renderer.submit_block(
+                self.voices.len() as u32,
+                frames as u32,
+                true,
+                &segments,
+                self.sample_rate,
+            );
+            drop(segments);
+            rb
+        };
+        self.seg_scratch = seg_data;
+        match submitted {
+            Some(readback) => {
+                self.pending.push_back(PendingGpuBlock {
+                    readback,
+                    frames,
+                    voice_count: self.voices.len(),
+                });
+                self.render_position = block_end;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// 把一块已收割的 `channel_mix`（**通道优先** `[ch][frame][lr]`）重排为
+    /// ring 的**帧优先**布局 `[frame][ch][lr]`（ring 跨块拼接只按帧消费）。
+    fn push_block_to_ring(&mut self, frames: usize) {
+        let ch = MAX_CHANNELS;
+        for f in 0..frames {
+            for c in 0..ch {
+                let src = c * frames * 2 + f * 2;
+                if src + 1 < self.channel_mix.len() {
+                    self.ring.push_back(self.channel_mix[src]);
+                    self.ring.push_back(self.channel_mix[src + 1]);
+                } else {
+                    self.ring.push_back(0.0);
+                    self.ring.push_back(0.0);
+                }
+            }
+        }
+    }
+
+    /// 收割读回（等待 + 拷贝），并用 GPU 权威 env_stage 更新 CPU 镜像。
+    fn harvest(&mut self, p: &PendingGpuBlock) -> u32 {
+        self.states_buf
+            .resize(self.voices.len(), GpuVoiceState::default());
+        let n = self.renderer.finish_block(
+            &p.readback,
+            &mut self.channel_mix,
+            &mut self.voice_stage_buf,
+            Some(self.states_buf.as_mut_slice()),
+        );
+        let cnt = p.voice_count.min(self.voices.len());
+        // GPU 权威状态覆盖 CPU 镜像（仅该块提交时的前 N 个槽位；之后新 push 的
+        // voice 保持 CPU 侧初值）。compact 重传前必须一致。
+        for (v, st) in self.voices[..cnt].iter_mut().zip(self.states_buf.iter()) {
+            v.state = *st;
+        }
+        n
+    }
+
+    /// 排空流水线：`update_stage` 时收割入 ring（不丢音频），否则直接丢弃
+    /// （seek/换事件时旧内容不应再输出）。
+    pub(super) fn drain_pending(&mut self, update_stage: bool) {
+        while let Some(p) = self.pending.pop_front() {
+            if update_stage {
+                self.harvest(&p);
+                self.push_block_to_ring(p.frames);
+            } else {
+                self.renderer.discard_block(&p.readback);
+            }
+        }
+    }
+}
