@@ -92,22 +92,18 @@ impl GpuSynth {
         !self.voices.is_empty() || self.event_cursor < self.events.len()
     }
 
-    /// 压缩预判（基于最近收割的 env_stage）：墓碑占多数或接近槽位上限。
+    /// 压缩预判：free list 让结束槽位即时复用，仅在**没有任何空闲槽位且已达
+    /// 容量**时兜底压缩（原"墓碑过半"每块触发，每次排空流水线等待在途块）。
     fn compact_needed(&self) -> bool {
-        self.voices.len() >= MAX_VOICE_SLOTS as usize
-            || (!self.voices.is_empty()
-                && self
-                    .voices
-                    .iter()
-                    .filter(|v| v.state.env_stage >= 6)
-                    .count()
-                    * 2
-                    >= self.voices.len())
+        self.free_slots.is_empty() && self.voices.len() >= MAX_VOICE_SLOTS as usize
     }
 
     /// 压缩：清理已结束 voice（tombstone）并全量重传槽位状态。
     fn compact_voices(&mut self) {
         self.voices.retain(|v| v.state.env_stage < 6);
+        self.free_slots.clear();
+        self.freed_flags.clear();
+        self.freed_flags.resize(self.voices.len(), false);
         for (i, v) in self.voices.iter().enumerate() {
             self.renderer.write_voice_state(i as u32, &v.state);
         }
@@ -240,8 +236,19 @@ impl GpuSynth {
         let cnt = p.voice_count.min(self.voices.len());
         // GPU 权威状态覆盖 CPU 镜像（仅该块提交时的前 N 个槽位；之后新 push 的
         // voice 保持 CPU 侧初值）。compact 重传前必须一致。
-        for (v, st) in self.voices[..cnt].iter_mut().zip(self.states_buf.iter()) {
+        for (i, (v, st)) in self.voices[..cnt]
+            .iter_mut()
+            .zip(self.states_buf.iter())
+            .enumerate()
+        {
             v.state = *st;
+            // GPU 权威判定已结束 → 槽位立即回收到 free list（下次 note_on 复用）。
+            // 墓碑不再累积：note_on 不会因容量拒绝新音，compact 也不再每块排空
+            // 流水线（旧行为是丢音与 60-90ms 卡顿的来源）。
+            if st.env_stage >= 6 && !self.freed_flags[i] {
+                self.freed_flags[i] = true;
+                self.free_slots.push(i as u32);
+            }
         }
         n
     }

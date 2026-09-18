@@ -102,6 +102,10 @@ pub static EVICT_VEL_MID: std::sync::atomic::AtomicU64 = std::sync::atomic::Atom
 pub static EVICT_VEL_HI: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 /// `note_on` 因槽位满被拒绝（不发声）的计数——与淘汰不同，这是**丢音**。
 pub static NOTE_ON_REJECTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+// 被拒绝音符的力度分桶（诊断：确认丢的是小力度还是大力度）
+pub static REJECT_VEL_LO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static REJECT_VEL_MID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static REJECT_VEL_HI: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 pub struct GpuSynth {
     renderer: GpuAudioRenderer,
@@ -115,6 +119,12 @@ pub struct GpuSynth {
     /// 采样数据在 GPU 上传块中的 (offset, len)，按 Arc 身份（指针 as usize）去重
     sample_offsets: HashMap<usize, (u32, u32)>,
     voices: Vec<Voice>,
+    /// 空闲槽位（voice 结束、harvest 读回后即时回收）——`note_on` 优先复用，
+    /// 避免墓碑累积顶到容量上限、也避免周期性 compact 排空流水线（实测
+    /// 每块 compact 会等两个在途 GPU 块，60-90ms 级）。
+    free_slots: Vec<u32>,
+    /// 各槽位是否已回收进 `free_slots`（防重复入列；与 `voices` 等长）
+    freed_flags: Vec<bool>,
     /// 紧凑 env_stage 读回缓冲（voice 清理用；全长缓冲复用）
     voice_stage_buf: Vec<u32>,
     /// 压缩时的全字段读回缓冲（复用，避免每块分配）
@@ -209,6 +219,8 @@ impl GpuSynth {
             sample_paths: Vec::new(),
             sample_offsets: HashMap::new(),
             voices: Vec::new(),
+            free_slots: Vec::new(),
+            freed_flags: Vec::new(),
             voice_stage_buf: Vec::new(),
             channel_speed_cache: [0.0; MAX_CHANNELS],
             channel_mix: Vec::new(),
@@ -243,6 +255,8 @@ impl GpuSynth {
         self.events = events;
         self.event_cursor = 0;
         self.voices.clear();
+        self.free_slots.clear();
+        self.freed_flags.clear();
         self.channels = [ChannelState::new(self.sample_rate); MAX_CHANNELS];
         self.channel_speed_cache = [0.0; MAX_CHANNELS];
         self.drain_pending(false);
@@ -293,6 +307,8 @@ impl GpuSynth {
         // 记录 seek 点，供 chase_skip 计算"seek 后已处理的控制事件区间"。
         self.chase_base = self.event_cursor;
         self.voices.clear();
+        self.free_slots.clear();
+        self.freed_flags.clear();
         // 通道状态在 seek 时重置（chase 由 yinhe-audio 的 cc_events 重建保证）
         self.channels = [ChannelState::new(self.sample_rate); MAX_CHANNELS];
         // speed 缓存清空：下一块起点重新下发全部通道的 pitch_multiplier。

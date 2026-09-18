@@ -329,10 +329,17 @@ impl GpuSynth {
         let Some(ch_idx) = dense_channel(channel as usize) else {
             return;
         };
-        // voice 槽位上限（状态常驻 GPU，槽位固定）；超限时由 maybe_compact_voices
-        // 在块边界压缩，这里防御性拒绝。
-        if self.voices.len() >= MAX_VOICE_SLOTS as usize {
-            crate::gpu_synth::NOTE_ON_REJECTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // 容量上限：**有空闲槽位（free list）时不算满**——结束的 voice 槽位
+        // 由 harvest 即时回收、note_on 复用，不再依赖 compact 清墓碑。
+        if self.voices.len() >= MAX_VOICE_SLOTS as usize && self.free_slots.is_empty() {
+            use std::sync::atomic::Ordering::Relaxed;
+            crate::gpu_synth::NOTE_ON_REJECTED.fetch_add(1, Relaxed);
+            let bucket = match vel {
+                0..=31 => &crate::gpu_synth::REJECT_VEL_LO,
+                32..=63 => &crate::gpu_synth::REJECT_VEL_MID,
+                _ => &crate::gpu_synth::REJECT_VEL_HI,
+            };
+            bucket.fetch_add(1, Relaxed);
             return;
         }
         let ch = self.channels[ch_idx];
@@ -368,8 +375,7 @@ impl GpuSynth {
         // 展开共享参数（speed/增益/声像/滤波/包络时长；公式唯一实现在
         // `voice_params::VoiceParams`，与 CPU 同源同值，CC72/73 修正也在其中）。
         let p = crate::voice_params::VoiceParams::from_key_info(info, &ch, self.sample_rate);
-        let new_index = self.voices.len();
-        self.voices.push(Voice {
+        let voice = Voice {
             key,
             channel,
             velocity: vel,
@@ -427,7 +433,26 @@ impl GpuSynth {
                 flt_y1r: 0.0,
                 flt_y2r: 0.0,
             },
-        });
+        };
+        // 槽位分配：优先复用已结束 voice 的槽位（free list）；复用时**必须
+        // 显式上传状态**（submit 的上传只覆盖本次新增的尾部区间）。原实现
+        // 只能追加，墓碑累积顶到容量后 note_on 拒绝新音、且周期性 compact
+        // 需排空流水线等待在途 GPU 块（实测 60-90ms）。
+        let new_index = match self.free_slots.pop() {
+            Some(slot) => {
+                let slot = slot as usize;
+                self.freed_flags[slot] = false;
+                self.voices[slot] = voice;
+                let st = self.voices[slot].state;
+                self.renderer.write_voice_state(slot as u32, &st);
+                slot
+            }
+            None => {
+                self.voices.push(voice);
+                self.freed_flags.push(false);
+                self.voices.len() - 1
+            }
+        };
 
         // per-key layer 上限（SetLayerCount）：超限时反复杀该 key velocity 最低的
         // 未释放 voice（xsynth pop_quietest_voice_group 语义；跳过刚加入的）。

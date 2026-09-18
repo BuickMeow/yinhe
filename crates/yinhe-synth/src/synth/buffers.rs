@@ -12,11 +12,10 @@ use super::types::{
 /// 槽位固定分配一次，避免扩容重建导致状态丢失。超限由 GpuSynth 侧压缩/淘汰。
 // 容量（partial/状态缓冲按此分配）：24576 × 512 帧 × 8B = 96MB < 512MB limits。
 // 与 max_voices（性能目标）分离：容量决定"能装多少"，max_voices 决定"渲染多少"。
-// 容量（partial/状态缓冲按此分配）：32768 × 512 帧 × 8B = 128MB < 512MB limits。
-// 与 max_voices（性能目标）分离：容量决定"能装多少"，max_voices 决定"渲染多少"。
-// 需求实测 ~2.2 万（音符率 × release 时长）+ 块内墓碑，2.4 万会卡线拒绝新音，
-// 3.2 万有充足余量。
-pub(crate) const MAX_VOICE_SLOTS: u32 = 32768;
+// 容量（partial/状态缓冲按此分配）：16384 × 512 帧 × 8B = 64MB。free list
+// 让结束槽位即时复用，容量不再需要覆盖"需求+墓碑"的峰值——partial 越大，
+// pass1/pass2 的读写工作集越超出 L2（实测 128MB 时 harvest 近乎翻倍）。
+pub(crate) const MAX_VOICE_SLOTS: u32 = 24576;
 
 /// 采样数据分片写入的每片字节数（16MB）：写一片让路 1ms，避免长段
 /// GPU/内存带宽抢占把 UI 渲染卡住。
