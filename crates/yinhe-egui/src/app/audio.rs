@@ -101,7 +101,10 @@ impl App {
             .map(|p| p.to_string_lossy().to_string());
 
         let mut result: Vec<(u8, Vec<String>)> = Vec::new();
-        for ch in 0..layout.num_channels().min(256) as u8 {
+        // 注意：`num_channels().min(256) as u8` 在 256 时会截断为 0（全空）。
+        let channel_count = layout.num_channels().min(256);
+        for ch_raw in 0..channel_count {
+            let ch = ch_raw as u8;
             if !layout.is_active(ch as usize) {
                 continue;
             }

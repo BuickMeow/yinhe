@@ -72,7 +72,7 @@ pub(crate) fn load_key_maps(
         cache.get(&key).cloned()
     };
     if let Some(arc) = cached {
-        eprintln!("[synth] 音色库解析缓存命中：{}", path.display());
+        // 命中不打印：启动时按通道逐个查询会刷屏几十行（命中本身零成本）。
         return Ok(arc);
     }
     let t = std::time::Instant::now();

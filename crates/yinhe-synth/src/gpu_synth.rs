@@ -226,15 +226,31 @@ impl GpuSynth {
         dense: u32,
         paths: &[std::path::PathBuf],
     ) -> Result<(), String> {
-        let slot = dense as usize;
-        if slot >= MAX_CHANNELS {
-            return Err(format!("GPU 合成器仅支持 32 个通道（dense {dense} 超出）"));
+        self.load_dense_soundfonts_many(&[dense], paths)
+    }
+
+    /// 一组 dense 槽位共享同一份 key map（多库只合并一次、Arc 共享；
+    /// 逐通道调用会重复深拷贝合并，且 `sample_paths` 重复累积）。
+    pub fn load_dense_soundfonts_many(
+        &mut self,
+        denses: &[u32],
+        paths: &[std::path::PathBuf],
+    ) -> Result<(), String> {
+        let maps = load_key_maps_merged(paths, self.sample_rate, self.interpolation)?;
+        let mut any = false;
+        for &dense in denses {
+            let slot = dense as usize;
+            if slot >= MAX_CHANNELS {
+                continue;
+            }
+            any = true;
+            self.port_key_maps[slot] = Arc::clone(&maps);
+            self.channel_port[slot] = slot as u8;
         }
-        self.sample_paths.extend(paths.iter().cloned());
-        // 单库直接共享缓存 Arc（零克隆）；多库才拼接一份。
-        self.port_key_maps[slot] =
-            load_key_maps_merged(paths, self.sample_rate, self.interpolation)?;
-        self.channel_port[slot] = slot as u8;
+        if any {
+            // 每通道只累加一次路径（rebuild_sample_upload 内部去重）
+            self.sample_paths.extend(paths.iter().cloned());
+        }
         Ok(())
     }
 

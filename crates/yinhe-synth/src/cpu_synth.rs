@@ -156,18 +156,31 @@ impl CpuSynth {
 
     /// 加载某 dense 通道的音色库（登记 key map；CPU 无样本上传阶段）。
     pub fn load_dense_soundfonts(&mut self, dense: u32, paths: &[PathBuf]) -> Result<(), String> {
-        let slot = dense as usize;
-        if slot >= MAX_CHANNELS {
-            return Err(format!("CPU 合成器仅支持 32 个通道（dense {dense} 超出）"));
-        }
-        // 走进程级缓存（与 GPU 路径共用）：worker 已预热的音色库在此只查缓存，
-        // 避免在音频线程解析 400MB 级音色库阻塞命令处理（Play 延迟数秒）。
-        // 单库直接共享缓存 Arc（零克隆）；多库才拼接一份。
-        self.port_key_maps[slot] = crate::gpu_synth::cache::load_key_maps_merged(
+        self.load_dense_soundfonts_many(&[dense], paths)
+    }
+
+    /// 一组 dense 槽位共享同一份 key map（多库只合并一次、Arc 共享）。
+    /// 逐通道调用会重复深拷贝合并整份 KeyMapEntry（每通道 128×力度层个
+    /// KeyInfo），同一组 paths 时应一次登记。
+    /// 走进程级缓存（与 GPU 路径共用）：worker 已预热的音色库在此只查缓存，
+    /// 避免在音频线程解析 400MB 级音色库阻塞命令处理（Play 延迟数秒）。
+    pub fn load_dense_soundfonts_many(
+        &mut self,
+        denses: &[u32],
+        paths: &[PathBuf],
+    ) -> Result<(), String> {
+        let maps = crate::gpu_synth::cache::load_key_maps_merged(
             paths,
             self.sample_rate,
             self.interpolation,
         )?;
+        for &dense in denses {
+            let slot = dense as usize;
+            if slot >= MAX_CHANNELS {
+                continue;
+            }
+            self.port_key_maps[slot] = Arc::clone(&maps);
+        }
         Ok(())
     }
 

@@ -120,22 +120,24 @@ impl AudioRenderer {
                         let sr = self.engine.sample_rate;
                         let cpu_paths: Vec<std::path::PathBuf> =
                             paths.iter().map(std::path::PathBuf::from).collect();
-                        for (_, dense) in &dense_list {
-                            if *dense == u32::MAX || (*dense as usize) >= yinhe_synth::MAX_CHANNELS
-                            {
-                                continue;
-                            }
-                            if self.engine.cpu_synth.is_none() {
-                                let mut cs = yinhe_synth::CpuSynth::new(sr);
-                                cs.set_interpolation(self.interpolation.code());
-                                self.engine.cpu_synth = Some(cs);
-                                play_log("[play] CpuSynth 初始化（yinhe CPU 后端）");
-                            }
-                            if let Some(cs) = self.engine.cpu_synth.as_mut()
-                                && let Err(e) = cs.load_dense_soundfonts(*dense, &cpu_paths)
-                            {
-                                eprintln!("[yinhe-cpu] Failed to load soundfonts: {e}");
-                            }
+                        // 一次登记全部 dense：多库只合并一次、Arc 共享；逐通道
+                        // 调用会重复深拷贝合并整份 key map（每通道 128×力度层）。
+                        let denses: Vec<u32> = dense_list
+                            .iter()
+                            .map(|(_, dense)| *dense)
+                            .filter(|d| *d != u32::MAX && (*d as usize) < yinhe_synth::MAX_CHANNELS)
+                            .collect();
+                        if self.engine.cpu_synth.is_none() {
+                            let mut cs = yinhe_synth::CpuSynth::new(sr);
+                            cs.set_interpolation(self.interpolation.code());
+                            self.engine.cpu_synth = Some(cs);
+                            play_log("[play] CpuSynth 初始化（yinhe CPU 后端）");
+                        }
+                        if !denses.is_empty()
+                            && let Some(cs) = self.engine.cpu_synth.as_mut()
+                            && let Err(e) = cs.load_dense_soundfonts_many(&denses, &cpu_paths)
+                        {
+                            eprintln!("[yinhe-cpu] Failed to load soundfonts: {e}");
                         }
                     }
                     // GPU 路径：首次加载音色库时初始化 GpuSynth，逐通道登记；
@@ -145,13 +147,14 @@ impl AudioRenderer {
                         let sr = self.engine.sample_rate;
                         let gpu_paths: Vec<std::path::PathBuf> =
                             paths.iter().map(std::path::PathBuf::from).collect();
-                        let mut any_valid = false;
-                        for (_, dense) in &dense_list {
-                            if *dense == u32::MAX || (*dense as usize) >= yinhe_synth::MAX_CHANNELS
-                            {
-                                continue;
-                            }
-                            any_valid = true;
+                        // 一次登记全部 dense（多库只合并一次、Arc 共享）
+                        let denses: Vec<u32> = dense_list
+                            .iter()
+                            .map(|(_, dense)| *dense)
+                            .filter(|d| *d != u32::MAX && (*d as usize) < yinhe_synth::MAX_CHANNELS)
+                            .collect();
+                        let any_valid = !denses.is_empty();
+                        if any_valid {
                             if self.engine.gpu_synth.is_none() {
                                 let t_init = Instant::now();
                                 match yinhe_synth::GpuSynth::new_default(sr) {
@@ -159,7 +162,7 @@ impl AudioRenderer {
                                         synth.set_interpolation(self.interpolation.code());
                                         let t_load = Instant::now();
                                         if let Err(e) =
-                                            synth.load_dense_soundfonts(*dense, &gpu_paths)
+                                            synth.load_dense_soundfonts_many(&denses, &gpu_paths)
                                         {
                                             eprintln!("[gpu] Failed to load soundfonts: {e}");
                                         }
@@ -179,7 +182,8 @@ impl AudioRenderer {
                                     }
                                 }
                             } else if let Some(synth) = self.engine.gpu_synth.as_mut()
-                                && let Err(e) = synth.load_dense_soundfonts(*dense, &gpu_paths)
+                                && let Err(e) =
+                                    synth.load_dense_soundfonts_many(&denses, &gpu_paths)
                             {
                                 eprintln!("[gpu] Failed to load channel soundfonts: {e}");
                             }
