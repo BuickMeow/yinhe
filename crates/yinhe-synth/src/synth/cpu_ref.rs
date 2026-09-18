@@ -57,6 +57,7 @@ fn release_cmd_advances_envelope() {
         flt_x2r: 0.0,
         flt_y1r: 0.0,
         flt_y2r: 0.0,
+        dup: 1,
     };
     let releases = [ReleaseCmd {
         frame: 0,
@@ -149,6 +150,7 @@ fn release_progress_advances_full_block() {
         flt_x2r: 0.0,
         flt_y1r: 0.0,
         flt_y2r: 0.0,
+        dup: 1,
     };
     let mut voices = vec![make_voice(0), make_voice(1)];
     // 第一块：两个 release 指令（frame 100 / 500）

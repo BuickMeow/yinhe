@@ -24,6 +24,7 @@ fn make_voices(sample_len: u32, count: u32, speed: f32) -> Vec<GpuVoiceState> {
             sustain_level: 1.0,
             base_pan_l: 1.0,
             base_pan_r: 1.0,
+            dup: 1,
             ..Default::default()
         })
         .collect()
@@ -161,6 +162,7 @@ fn gpu_vs_cpu_correctness() {
                 flt_b2: biquad_coeffs(0, 1800.0, 2.0, 44100.0).2,
                 flt_a1: biquad_coeffs(0, 1800.0, 2.0, 44100.0).3,
                 flt_a2: biquad_coeffs(0, 1800.0, 2.0, 44100.0).4,
+                dup: 1,
                 ..Default::default()
             },
             // 单声道 + 无滤波器 + Linear 插值 + 循环
@@ -184,6 +186,7 @@ fn gpu_vs_cpu_correctness() {
                 loop_end: 2048,
                 is_stereo: 0,
                 interp: 1,
+                dup: 1,
                 ..Default::default()
             },
             // 立体声 + HighPass + 偏移起始
@@ -212,6 +215,7 @@ fn gpu_vs_cpu_correctness() {
                 flt_b2: biquad_coeffs(1, 4000.0, 3.0, 44100.0).2,
                 flt_a1: biquad_coeffs(1, 4000.0, 3.0, 44100.0).3,
                 flt_a2: biquad_coeffs(1, 4000.0, 3.0, 44100.0).4,
+                dup: 1,
                 ..Default::default()
             },
         ]
@@ -315,6 +319,7 @@ fn gpu_filter_matches_biquad_crate() {
         flt_b2: coeffs.b2,
         flt_a1: coeffs.a1,
         flt_a2: coeffs.a2,
+        dup: 1,
         ..Default::default()
     };
 

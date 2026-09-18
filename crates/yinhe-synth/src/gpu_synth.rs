@@ -102,6 +102,8 @@ pub static EVICT_VEL_MID: std::sync::atomic::AtomicU64 = std::sync::atomic::Atom
 pub static EVICT_VEL_HI: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 /// `note_on` 因槽位满被拒绝（不发声）的计数——与淘汰不同，这是**丢音**。
 pub static NOTE_ON_REJECTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// 完全重复 NoteOn 合批命中计数（诊断；合批省下的 voice 创建数）。
+pub static BATCH_HITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 // 被拒绝音符的力度分桶（诊断：确认丢的是小力度还是大力度）
 pub static REJECT_VEL_LO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static REJECT_VEL_MID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -177,6 +179,10 @@ pub struct GpuSynth {
     /// GPU 权威全字段 voice 状态（每次收割读回；compact 重传前用它覆盖
     /// CPU 镜像，否则重传过期位置/包络会把 voice 状态重置）。
     states_buf: Vec<GpuVoiceState>,
+    /// 本块内创建的 voice 按 (dense 通道 × 128 key) 分桶（合批候选扫描用）。
+    /// 跨块 voice 已渲染（参数/包络状态已推进）不可合批，故只需本块新建者；
+    /// 每块 collect_block 开头清空。桶内索引 = 槽位索引。
+    batch_buckets: Vec<Vec<u32>>,
     /// 输出 ring：已渲染（GPU 读回）但未交给调用方的交错 PCM
     /// （帧 × MAX_CHANNELS × 2 f32）。预渲染的块先入 ring，调用方按所需
     /// 帧数取用——因此支持块大小变化（测试尾块/导出块）。
@@ -247,6 +253,7 @@ impl GpuSynth {
             events: Vec::new(),
             event_cursor: 0,
             cc_scratch: Vec::new(),
+            batch_buckets: (0..MAX_CHANNELS * 128).map(|_| Vec::new()).collect(),
             seg_scratch: Vec::new(),
             sample_position: 0,
             render_position: 0,

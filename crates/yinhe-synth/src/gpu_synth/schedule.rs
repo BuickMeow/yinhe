@@ -96,6 +96,9 @@ impl GpuSynth {
         // 逐段重扫全部事件是 O(事件数 × CC 数)，黑乐谱密集事件块下不可忽略；
         // event_cursor 处事件恒 >= block_start（块末 cursor 停在 >= block_end 处）。
         self.cc_scratch.clear();
+        for b in &mut self.batch_buckets {
+            b.clear();
+        }
         for ev in &self.events[self.event_cursor..] {
             let s = ev.sample();
             if s >= block_end {
@@ -403,6 +406,41 @@ impl GpuSynth {
         // 展开共享参数（speed/增益/声像/滤波/包络时长；公式唯一实现在
         // `voice_params::VoiceParams`，与 CPU 同源同值，CC72/73 修正也在其中）。
         let p = crate::voice_params::VoiceParams::from_key_info(info, &ch, self.sample_rate);
+
+        // 完全重复 NoteOn 合批（对齐 CpuSynth `matches_batch`）：本块内创建的、
+        // 尚未渲染的、参数完全相同的活跃 voice 直接 dup+1 复用（线性系统里
+        // N 个同相位同参数 voice 之和 = 单个 ×N，无损）。黑乐谱重复 NoteOn
+        // 常态化时省 voice 并对齐 CPU 能量（release 尾巴仅一份）。
+        // 候选只扫本块新建的 voice（分桶），避免全表 O(voices) 扫描的热路径成本。
+        let new_sample_offset = offset + info.offset * (1 + info.is_stereo as u32);
+        let bucket = channel as usize * 128 + key as usize;
+        let hit = self.batch_buckets[bucket]
+            .iter()
+            .rev()
+            .find(|&&i| {
+                let v = &self.voices[i as usize];
+                v.velocity == vel
+                    && v.end_sample == end_sample
+                    && !v.kill_pending
+                    && !v.release_pending
+                    && !v.held_by_damper
+                    && v.state.env_stage < 6
+                    && v.state.sample_offset == new_sample_offset
+                    && v.state.sample_length == sample_length
+                    && v.state.speed == p.speed
+                    && v.state.base_speed == p.base_speed
+                    && v.state.start_offset == block_frame
+            })
+            .copied();
+        if let Some(i) = hit {
+            let i = i as usize;
+            self.voices[i].state.dup += 1;
+            let st = self.voices[i].state;
+            self.renderer.write_voice_state(i as u32, &st);
+            crate::gpu_synth::BATCH_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return;
+        }
+
         let voice = Voice {
             key,
             channel,
@@ -462,6 +500,7 @@ impl GpuSynth {
                 flt_x2r: 0.0,
                 flt_y1r: 0.0,
                 flt_y2r: 0.0,
+                dup: 1,
             },
         };
         // 槽位分配：优先复用已结束 voice 的槽位（free list）；复用时**必须
@@ -483,6 +522,8 @@ impl GpuSynth {
                 self.voices.len() - 1
             }
         };
+
+        self.batch_buckets[bucket].push(new_index as u32);
 
         // per-key layer 上限（SetLayerCount）：超限时反复杀该 key velocity 最低的
         // 未释放 voice（xsynth pop_quietest_voice_group 语义；跳过刚加入的）。
@@ -614,23 +655,29 @@ impl GpuSynth {
             return;
         };
         let damper = self.channels[ch_idx].damper;
-        for (i, v) in self.voices.iter_mut().enumerate() {
-            // 跳过已 held 的 voice（xsynth damper 分支只匹配 "isn't being held" 的
-            // voice：否则同 key 多个 off 会重复匹配同一个 held voice，其余 voice 永不释放）
-            if v.channel == channel
+        // 跳过已 held 的 voice（xsynth damper 分支只匹配 "isn't being held" 的
+        // voice：否则同 key 多个 off 会重复匹配同一个 held voice，其余 voice 永不释放）
+        let hit = self.voices.iter().position(|v| {
+            v.channel == channel
                 && v.key == key
                 && v.state.env_stage < 5
                 && !v.held_by_damper
                 && !v.release_pending
-            {
-                if damper {
-                    v.held_by_damper = true;
-                } else {
-                    v.release_pending = true;
-                    releases.push(release_cmd(frame, i));
-                }
-                break;
-            }
+        });
+        let Some(i) = hit else {
+            return;
+        };
+        let v = &mut self.voices[i];
+        // 合批 voice：每个 NoteOff 只消耗一个引用，归 1 才真正释放（与 CpuSynth 一致）
+        if v.state.dup > 1 {
+            v.state.dup -= 1;
+            let st = v.state;
+            self.renderer.write_voice_state(i as u32, &st);
+        } else if damper {
+            v.held_by_damper = true;
+        } else {
+            v.release_pending = true;
+            releases.push(release_cmd(frame, i));
         }
     }
 

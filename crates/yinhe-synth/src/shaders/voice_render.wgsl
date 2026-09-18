@@ -90,6 +90,8 @@ struct VoiceState {
     flt_x2r: f32,
     flt_y1r: f32,
     flt_y2r: f32,
+    // 完全重复 NoteOn 合批引用数（增益 ×dup；与 CpuSynth 的 dup 同语义）
+    dup: u32,
 };
 
 /// 段信息：块内段边界（第 0 段恒从帧 0 开始，最后一段到 frame_count）。
@@ -366,7 +368,7 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
         if is_active && st.env_stage < 6u && fi >= st.start_offset {
             // 通道音量/声像（CC7/10/11）已迁至 yinhe-dsp 效果器，
             // 此处只用音色库基础增益/声像。
-            let ch_gain = st.base_gain;
+            let ch_gain = st.base_gain * f32(st.dup);
             let ch_pan_l = st.base_pan_l;
             let ch_pan_r = st.base_pan_r;
 
