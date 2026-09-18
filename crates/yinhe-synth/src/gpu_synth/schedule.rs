@@ -205,6 +205,9 @@ impl GpuSynth {
                 releases.push(release_cmd((v.end_sample - block_start) as u32, i));
             }
         }
+
+        // 段末统一做一次全局超限淘汰（原先每个音符一次，见 enforce_voice_limit）
+        self.enforce_voice_limit(0, releases);
     }
 
     /// 处理段边界（同一 sample 位置）的所有事件：CC 更新通道状态并记录 ch_updates、
@@ -461,14 +464,13 @@ impl GpuSynth {
                 crate::gpu_synth::LAYER_KILLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         }
+    }
 
-        // 超限淘汰：优先杀最老的 release 中 voice（听感最弱），否则杀最老的
-        // active；**跳过墓碑**（env_stage >= 6，等块末 compact 清理）——否则
-        // 首位是墓碑时会误判为「无可淘汰」直接 break，列表持续超限，新 voice
-        // 索引越过 MAX_VOICE_SLOTS 后无 GPU 槽位（永不发声）。
-        // 只预置 stage 6 + 发 kill 指令，不 remove——本块已生成的指令索引保持稳定。
-        // 淘汰量按**活跃数（非墓碑）**计算：墓碑只是等 compact 清理的占位，
-        // 不应导致误杀活跃 voice（此前用含墓碑的 len() 与上限比较）。
+    /// 全局 voice 超限淘汰（**每渲染段一次**）：优先杀最老的 release 中 voice
+    /// （听感最弱），否则杀最老的 active；跳过墓碑（等块末 compact 清理）。
+    /// 只预置 stage 6 + 发 kill 指令，不 remove——本段已生成的指令索引保持稳定。
+    /// 淘汰量按**活跃数（非墓碑）**计算：墓碑只是占位，不应导致误杀活跃 voice。
+    pub(super) fn enforce_voice_limit(&mut self, block_frame: u32, releases: &mut Vec<ReleaseCmd>) {
         let alive = self.voices.iter().filter(|v| v.state.env_stage < 6).count();
         let mut excess = alive.saturating_sub(self.max_voices);
         while excess > 0 {
@@ -476,18 +478,18 @@ impl GpuSynth {
             let mut first_active = None;
             for (i, v) in self.voices.iter().enumerate() {
                 if v.state.env_stage >= 6 {
-                    continue; // 墓碑跳过
+                    continue;
                 }
                 if v.release_pending || v.state.env_stage == 5 {
                     victim = Some(i);
-                    break; // 第一个 = 最老的 release 中
+                    break;
                 }
                 if first_active.is_none() {
                     first_active = Some(i);
                 }
             }
             let Some(idx) = victim.or(first_active) else {
-                break; // 全是墓碑：等 compact 清理
+                break;
             };
             let v = &mut self.voices[idx];
             v.state.env_stage = 6;
