@@ -48,14 +48,19 @@ impl AudioEngine {
                 let last = LAST_LOG.load(std::sync::atomic::Ordering::Relaxed);
                 if now.saturating_sub(last) >= 1000 {
                     LAST_LOG.store(now, std::sync::atomic::Ordering::Relaxed);
-                    let (d, alive, blocks) = match self.gpu_synth.as_ref() {
-                        Some(s) => (s.diag_ms, s.diag_alive, s.diag_blocks),
-                        None => ([0.0; 6], 0, 0),
+                    let (d, alive, blocks, hist) = match self.gpu_synth.as_ref() {
+                        Some(s) => (
+                            s.diag_ms,
+                            s.diag_alive,
+                            s.diag_blocks,
+                            s.velocity_histogram(),
+                        ),
+                        None => ([0.0; 6], 0, 0, [0u32; 8]),
                     };
                     crate::audio_renderer::play_log(&format!(
                         "[gpu] 块超时：{gpu_ms:.2}ms > 预算 {budget_ms:.2}ms（frames={frames}）\
-                         collect={:.1} submit={:.1} harvest={:.1} ring={:.1} out={:.1} compact={:.1} alive={alive} blocks={blocks}",
-                        d[0], d[1], d[2], d[3], d[4], d[5]
+                         collect={:.1} submit={:.1} harvest={:.1} ring={:.1} out={:.1} compact={:.1} alive={alive} blocks={blocks} 力度[127-112/111-96/95-80/79-64/63-48/47-32/31-16/15-0]={:?}",
+                        d[0], d[1], d[2], d[3], d[4], d[5], hist
                     ));
                 }
             }

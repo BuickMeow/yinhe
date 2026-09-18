@@ -281,6 +281,20 @@ impl GpuSynth {
         self.max_voices = max;
     }
 
+    /// 活跃 voice 的力度直方图（8 桶，从高到低：127-112、111-96、…、15-0）。
+    /// 诊断用：确认高力度音符在实时的存活数量。
+    pub fn velocity_histogram(&self) -> [u32; 8] {
+        let mut h = [0u32; 8];
+        for v in self.voices.iter() {
+            if v.state.env_stage >= 6 {
+                continue;
+            }
+            let bucket = 7usize.saturating_sub((v.velocity as usize) / 16).min(7);
+            h[bucket] += 1;
+        }
+        h
+    }
+
     /// 设置采样插值方式（`Interpolation::code()`；须在加载音色库之前设置）。
     pub fn set_interpolation(&mut self, interp: u32) {
         self.interpolation = interp;
