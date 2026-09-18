@@ -4,6 +4,7 @@
 /.kilo
 /.trae
 /.mimocode
+/.commandcode
 
 # Android 构建产物（由 cargo-ndk / gradle 生成）
 /android/.gradle
