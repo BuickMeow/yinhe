@@ -12,11 +12,8 @@
 //! - 采样长度按帧计算（修正 GPU 立体声样本的 frames/elements 混用）；
 //! - 事件按帧边界分段同步渲染（无 GPU 的段/指令流水线）；并行留待后续分片。
 
-#[allow(dead_code)] // 渐进重构：SoA 接入后删除旧 AoS（voice.rs）
+// 渐进重构：SoA 内核接入渲染路径后删除这些 allow（见模块文档）
 mod voice;
-
-mod simd;
-mod soa;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -25,7 +22,7 @@ use rayon::prelude::*;
 use yinhe_mixer::ChannelBuffers;
 
 use crate::channel_state::{ChannelState, ChaseSkip, MAX_CHANNELS, is_env_effect_cc};
-use crate::cpu_synth::soa::{ENV_FINISHED, ENV_RELEASE, LANES_ALIGN, VoiceSoa};
+use crate::cpu_synth::voice::{CpuVoice, ENV_RELEASE};
 use crate::gpu_synth::{ControlEvent, SynthEvent};
 use crate::sfz_parser::{self, KeyMapEntry};
 
@@ -39,6 +36,9 @@ pub static PROF_NOTE_ON_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::At
 pub static PROF_NOTE_OFF_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static PROF_RENDER_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 /// note_on 内部细分：key map 查找 / voice 构造（含 biquad 系数）/ push。
+pub static PROF_ON_SELECT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static PROF_ON_NEW_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static PROF_ON_PUSH_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 /// 默认全局 voice 上限（与 GpuSynth 一致）。
 /// 默认全局 voice 上限（与 GpuSynth 一致）。超限在**块末摊销淘汰**（优先
 /// 已在 release/kill 中的 voice），淘汰走 1ms 淡出（ENV_KILL）听感无咔哒；
@@ -61,8 +61,7 @@ pub struct CpuSynth {
     /// `Arc` 共享：单音色库时直接指向进程级解析缓存，多通道零克隆。
     port_key_maps: Vec<Arc<Vec<KeyMapEntry>>>,
     channels: [ChannelState; MAX_CHANNELS],
-    /// SoA 声部池（voice 间 SIMD；索引表存 slot）。
-    soa: VoiceSoa,
+    voices: Vec<CpuVoice>,
     /// 排序好的事件列表（NoteOn 自带 end_sample）。
     events: Vec<SynthEvent>,
     event_cursor: usize,
@@ -92,7 +91,7 @@ impl CpuSynth {
             interpolation: 0,
             port_key_maps: (0..MAX_CHANNELS).map(|_| Arc::new(Vec::new())).collect(),
             channels: [ChannelState::new(sample_rate); MAX_CHANNELS],
-            soa: VoiceSoa::new(),
+            voices: Vec::new(),
             events: Vec::new(),
             event_cursor: 0,
             sample_position: 0,
@@ -145,7 +144,7 @@ impl CpuSynth {
         );
         self.events = events;
         self.event_cursor = 0;
-        self.soa.clear();
+        self.voices.clear();
         // 索引表与 voices 同生命周期：不清空则残留索引在后续 note_on/off
         // 的 enforce/查找中越界（重复 load_events 必崩；与 seek 一致）。
         for v in self.key_indices.iter_mut() {
@@ -162,7 +161,7 @@ impl CpuSynth {
 
     /// 当前活跃 voice 数（未结束）。
     pub fn voice_count(&self) -> usize {
-        self.soa.voice_count()
+        self.voices.iter().filter(|v| !v.finished()).count()
     }
 
     /// 每 key layer 上限（`SetLayerCount`；None = 不限制）。
@@ -183,7 +182,7 @@ impl CpuSynth {
         self.events.clear();
         self.event_cursor = 0;
         self.chase_base = 0;
-        self.soa.clear();
+        self.voices.clear();
         for v in self.key_indices.iter_mut() {
             v.clear();
         }
@@ -282,13 +281,13 @@ impl CpuSynth {
             fi += seg;
         }
 
-        // 段末：time 推进 + 清理结束 voice（保序压缩，索引随后重建）
-        for slot in 0..self.soa.len() {
-            self.soa.advance_block(slot, frames as u32);
+        // 段末：time 推进 + 清理结束 voice
+        for v in self.voices.iter_mut() {
+            v.advance_block(frames as u32);
         }
-        self.soa.compact();
+        self.voices.retain(|v| !v.finished());
         // 全局 voice 上限：块末摊销淘汰（O(V) 一次/块，不在 note_on 热路径）。
-        let excess = self.soa.len().saturating_sub(self.max_voices);
+        let excess = self.voices.len().saturating_sub(self.max_voices);
         if excess > 0 {
             self.evict_excess(excess);
         }
@@ -296,9 +295,8 @@ impl CpuSynth {
         for v in self.key_indices.iter_mut() {
             v.clear();
         }
-        for slot in 0..self.soa.len() {
-            let pos = Self::key_slot(self.soa.channel[slot], self.soa.key[slot]);
-            self.key_indices[pos].push(slot as u32);
+        for (i, v) in self.voices.iter().enumerate() {
+            self.key_indices[Self::key_slot(v.channel, v.key)].push(i as u32);
         }
         self.peak_voices = self.peak_voices.max(self.voice_count());
         self.sample_position = sample_start + frames as u64;
@@ -321,8 +319,8 @@ impl CpuSynth {
         self.render_range(buffers, 0, frames);
     }
 
-    /// 逐帧渲染 `[fi_start, fi_start + frames)`（区间内帧坐标）到分片
-    /// scratch，再归约写回目标缓冲。字段级分离借用。
+    /// 逐帧渲染 `[fi_start, fi_start + frames)`（区间内帧坐标，voice 的
+    /// `start_offset` 同坐标系），输出直接累加进目标缓冲。字段级分离借用。
     fn render_range_frames(
         &mut self,
         buffers: &mut [ChannelBuffers],
@@ -331,56 +329,49 @@ impl CpuSynth {
         frames: usize,
         sample_start: u64,
     ) {
-        if frames == 0 || self.soa.is_empty() {
+        if frames == 0 || self.voices.is_empty() {
             return;
         }
+        // 并行策略：voice 按物理顺序 `par_chunks_mut` 分片（分片间 voice 数相同、
+        // 单 voice 工作量近似 → 天然负载均衡，不依赖通道分布，黑乐谱通道集中
+        // 也不失衡）。每分片累加到私有 scratch（分片 × 通道 × 帧 × 2），随后归约。
+        // 分片数 = 线程数：实测细分（×4）反而因调度开销略降（1.53x → 1.32x）。
         let threads = rayon::current_num_threads().max(1);
-        let capacity = self.soa.capacity();
-        // 分片数 ≈ 线程数 ×2（细粒度让 Rayon 在大小核混合下负载均衡，粗分片
-        // 时能效核上的大任务会拖住整块；×4 实测归约成本反而更高）。
-        // 每片至少 LANES_ALIGN 个 lane。
-        let target_chunks = (threads * 2).min(capacity.div_ceil(LANES_ALIGN)).max(1);
-        let chunk = capacity
-            .div_ceil(target_chunks)
-            .next_multiple_of(LANES_ALIGN)
-            .max(LANES_ALIGN);
-        let n_chunks = capacity.div_ceil(chunk);
+        let chunk = self.voices.len().div_ceil(threads).max(1);
+        let n_chunks = self.voices.len().div_ceil(chunk);
         let stride = MAX_CHANNELS * frames * 2;
         self.par_scratch.clear();
         self.par_scratch.resize(n_chunks * stride, 0.0);
 
-        let soa = &mut self.soa;
+        let damper_flags = self.damper_flags;
+        let profile_mode = CPU_PROFILE_MODE.load(std::sync::atomic::Ordering::Relaxed);
         let scratch = &mut self.par_scratch;
-        let damper = &self.damper_flags;
-        let level = simd::level();
-        fearless_simd::dispatch!(level, simd => {
-            let mut views = soa.par_views(chunk);
-            debug_assert_eq!(views.len(), n_chunks);
-            views
-                .par_iter_mut()
-                .zip(scratch.par_chunks_mut(stride))
-                .for_each(|(view, out)| {
-                    view.render(simd, out, fi_start, frames, sample_start, damper);
-                });
-        });
-
-        // 归约：分片 scratch 按通道求和写入目标缓冲（调用方已清零本段区间）。
-        // 通道间并行；每通道内按分片顺序累加（与串行归约逐位一致）。
-        let n = buffers.len().min(MAX_CHANNELS);
-        buffers
-            .par_iter_mut()
-            .enumerate()
-            .take(n)
-            .for_each(|(ch, buf)| {
-                let ch_base = ch * frames * 2;
-                for b in 0..n_chunks {
-                    let base = b * stride + ch_base;
-                    for i in 0..frames {
-                        buf.left[out_offset + i] += scratch[base + i * 2];
-                        buf.right[out_offset + i] += scratch[base + i * 2 + 1];
-                    }
+        self.voices
+            .par_chunks_mut(chunk)
+            .zip(scratch.par_chunks_mut(stride))
+            .for_each(|(voices, out)| {
+                // 块级渲染：每 voice 一次调用（到期释放在 render_block 内按
+                // 包络切片边界应用，无逐帧 O(V×frames) 扫描）。
+                for v in voices.iter_mut() {
+                    let damper = damper_flags[v.channel as usize];
+                    let ch_base = v.channel as usize * frames * 2;
+                    let ch_out = &mut out[ch_base..ch_base + frames * 2];
+                    v.render_block(ch_out, frames, fi_start, sample_start, damper, profile_mode);
                 }
             });
+
+        // 归约：分片 scratch 按通道求和写入目标缓冲（调用方已清零本段区间）。
+        let n = buffers.len().min(MAX_CHANNELS);
+        for (ch, buf) in buffers.iter_mut().enumerate().take(n) {
+            let ch_base = ch * frames * 2;
+            for b in 0..n_chunks {
+                let base = b * stride + ch_base;
+                for i in 0..frames {
+                    buf.left[out_offset + i] += self.par_scratch[base + i * 2];
+                    buf.right[out_offset + i] += self.par_scratch[base + i * 2 + 1];
+                }
+            }
+        }
     }
 
     /// 事件派发（帧内；`frame` = 块内帧偏移）。
@@ -408,11 +399,17 @@ impl CpuSynth {
         };
         let ch = self.channels[ch_idx];
         let entries = self.port_key_maps[ch_idx].as_slice();
+        let t_sel = std::time::Instant::now();
         let Some(info) = sfz_parser::select_key_info_multi(entries, ch.bank, ch.program, key, vel)
         else {
             return;
         };
-        let slot = self.soa.init_lane(
+        PROF_ON_SELECT_NS.fetch_add(
+            t_sel.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        let t_new = std::time::Instant::now();
+        let voice = CpuVoice::new(
             info,
             channel,
             key,
@@ -421,14 +418,25 @@ impl CpuSynth {
             frame,
             self.sample_rate,
             &ch,
-        ) as u32;
-        let slot_pos = Self::key_slot(channel, key);
-        self.key_indices[slot_pos].push(slot);
+        );
+        PROF_ON_NEW_NS.fetch_add(
+            t_new.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        let t_push = std::time::Instant::now();
+        let new_index = self.voices.len();
+        self.voices.push(voice);
+        let slot = Self::key_slot(channel, key);
+        self.key_indices[slot].push(new_index as u32);
+        PROF_ON_PUSH_NS.fetch_add(
+            t_push.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
 
-        // per-key layer 上限：超限时按 xsynth 语义杀该 key velocity 最低的
-        // voice（跳过刚加入的，保证新音符发声）。
+        // per-key layer 上限：超限时按 xsynth 语义杀该 key velocity 最低的 voice
+        //（跳过刚加入的，保证新音符发声）。
         if let Some(max) = self.max_layers {
-            self.enforce_key_layers(slot_pos, max, slot);
+            self.enforce_key_layers(slot, max, new_index);
         }
 
         PROF_NOTE_ON_NS.fetch_add(
@@ -438,21 +446,21 @@ impl CpuSynth {
     }
 
     /// 该 key 活跃 voice 超过 `max` 时，反复杀 velocity 最低的
-    /// （xsynth `pop_quietest_voice_group` 语义；`keep` = 刚加入的 slot 不参与）。
+    /// （xsynth `pop_quietest_voice_group` 语义；`keep` = 刚加入的索引不参与）。
     /// 经 `key_indices` 只扫该 key 的 voice（O(layer)，非 O(V)）。
     ///
     /// 候选**不排除已 release 的 voice**：xsynth 的 `pop_quietest_voice_group`
     /// 只排除 killed，releasing 的 voice 同样在 `buffer` 里参与淘汰——且它们
     /// 创建最早，velocity 并列时优先被杀。release 尾巴被截掉听感无害，这是
     /// xsynth「几乎不丢音」的关键；只杀在响 voice 会造成明显丢音。
-    fn enforce_key_layers(&mut self, slot_pos: usize, max: usize, keep: u32) {
+    fn enforce_key_layers(&mut self, slot: usize, max: usize, keep: usize) {
         loop {
             // 先 O(layer) 数活跃数；未超限直接返回（多数 note_on 不分配、不扫候选）
-            let active = self.key_indices[slot_pos]
+            let active = self.key_indices[slot]
                 .iter()
                 .filter(|&&i| {
-                    let s = i as usize;
-                    self.soa.env_stage[s] < ENV_FINISHED && self.soa.killed[s] == 0.0
+                    let v = &self.voices[i as usize];
+                    !v.finished() && !v.is_killed()
                 })
                 .count();
             if active <= max {
@@ -461,14 +469,11 @@ impl CpuSynth {
             // 超限（罕见）：找 velocity 最低的候选（含 release 中；并列取最早）
             let mut victim: Option<u32> = None;
             let mut victim_vel = u8::MAX;
-            for &i in self.key_indices[slot_pos].iter() {
+            for &i in self.key_indices[slot].iter() {
                 let idx = i as usize;
-                if i != keep
-                    && self.soa.env_stage[idx] < ENV_FINISHED
-                    && self.soa.killed[idx] == 0.0
-                    && self.soa.velocity[idx] < victim_vel
-                {
-                    victim_vel = self.soa.velocity[idx];
+                let v = &self.voices[idx];
+                if idx != keep && !v.finished() && !v.is_killed() && v.velocity < victim_vel {
+                    victim_vel = v.velocity;
                     victim = Some(i);
                 }
             }
@@ -476,35 +481,31 @@ impl CpuSynth {
                 return;
             };
             // 1ms 淡出（硬切会产生 click，用户实测）。
-            self.soa.signal_kill(victim as usize, self.sample_rate);
+            self.voices[victim as usize].signal_kill(self.sample_rate);
         }
     }
 
     /// 全局 voice 超限淘汰（块末调用）：优先 release 中的，不足时按创建顺序
-    /// 杀最老的。立即结束（与 xsynth 的默认 kill 语义一致），块末统一回收。
+    /// 杀最老的。立即结束（与 xsynth 的默认 kill 语义一致），块末统一 retain 回收。
     fn evict_excess(&mut self, excess: usize) {
         let mut killed = 0;
-        for i in 0..self.soa.len() {
+        for i in 0..self.voices.len() {
             if killed >= excess {
                 return;
             }
-            if self.soa.env_stage[i] < ENV_FINISHED
-                && self.soa.killed[i] == 0.0
-                && self.soa.env_stage[i] >= ENV_RELEASE
-            {
-                self.soa.signal_kill(i, self.sample_rate);
+            let v = &self.voices[i];
+            if !v.finished() && !v.is_killed() && v.env_stage >= ENV_RELEASE {
+                self.voices[i].signal_kill(self.sample_rate);
                 killed += 1;
             }
         }
-        for i in 0..self.soa.len() {
+        for i in 0..self.voices.len() {
             if killed >= excess {
                 return;
             }
-            if self.soa.env_stage[i] < ENV_FINISHED
-                && self.soa.killed[i] == 0.0
-                && self.soa.released[i] == 0.0
-            {
-                self.soa.signal_kill(i, self.sample_rate);
+            let v = &self.voices[i];
+            if !v.finished() && !v.is_killed() && !v.released {
+                self.voices[i].signal_kill(self.sample_rate);
                 killed += 1;
             }
         }
@@ -517,24 +518,22 @@ impl CpuSynth {
             return;
         };
         let damper = self.channels[ch_idx].damper;
-        let slot_pos = Self::key_slot(channel, key);
+        let slot = Self::key_slot(channel, key);
         // 索引表按创建顺序：正向找第一个未释放 = 最老未释放（O(layer)）
-        let idxs = std::mem::take(&mut self.key_indices[slot_pos]);
+        let idxs = std::mem::take(&mut self.key_indices[slot]);
         for &i in idxs.iter() {
             let i = i as usize;
-            if self.soa.env_stage[i] < ENV_FINISHED
-                && self.soa.released[i] == 0.0
-                && self.soa.held_by_damper[i] == 0.0
-            {
+            let v = &mut self.voices[i];
+            if !v.finished() && !v.released && !v.held_by_damper {
                 if damper {
-                    self.soa.held_by_damper[i] = 1.0;
+                    v.held_by_damper = true;
                 } else {
-                    self.soa.signal_release(i, ENV_RELEASE);
+                    v.signal_release(ENV_RELEASE);
                 }
                 break;
             }
         }
-        self.key_indices[slot_pos] = idxs;
+        self.key_indices[slot] = idxs;
         PROF_NOTE_OFF_NS.fetch_add(
             t_prof.elapsed().as_nanos() as u64,
             std::sync::atomic::Ordering::Relaxed,
@@ -549,13 +548,10 @@ impl CpuSynth {
         let damper_released = self.channels[ch_idx].process_control(event);
         if damper_released {
             // 松开延音踏板：释放被保持的 voice（与 GpuSynth apply_chase 同语义）
-            for i in 0..self.soa.len() {
-                if self.soa.channel[i] == channel
-                    && self.soa.held_by_damper[i] != 0.0
-                    && self.soa.env_stage[i] < ENV_FINISHED
-                {
-                    self.soa.held_by_damper[i] = 0.0;
-                    self.soa.signal_release(i, ENV_RELEASE);
+            for v in self.voices.iter_mut() {
+                if v.channel == channel && v.held_by_damper && !v.finished() {
+                    v.held_by_damper = false;
+                    v.signal_release(ENV_RELEASE);
                 }
             }
         }
@@ -568,9 +564,9 @@ impl CpuSynth {
                 | ControlEvent::CoarseTune(_)
         ) {
             let mult = self.channels[ch_idx].pitch_multiplier();
-            for i in 0..self.soa.len() {
-                if self.soa.channel[i] == channel && self.soa.env_stage[i] < ENV_FINISHED {
-                    self.soa.set_speed(i, mult, frame);
+            for v in self.voices.iter_mut() {
+                if v.channel == channel && !v.finished() {
+                    v.set_speed(mult, frame);
                 }
             }
         }
@@ -578,9 +574,9 @@ impl CpuSynth {
         if is_env_effect_cc(&event) {
             let ch = self.channels[ch_idx];
             let sr = self.sample_rate;
-            for i in 0..self.soa.len() {
-                if self.soa.channel[i] == channel && self.soa.env_stage[i] < ENV_FINISHED {
-                    self.soa.apply_env_update(i, &ch, sr);
+            for v in self.voices.iter_mut() {
+                if v.channel == channel && !v.finished() {
+                    v.apply_env_update(&ch, sr);
                 }
             }
         }
@@ -670,22 +666,15 @@ mod tests {
         ]);
         let mut bufs = buffers(4_800);
         synth.render_to_mixer(&mut bufs);
-        // SoA 池按 lane 查询：长音符（100）不得被短音符的结束释放；
-        // 短音符（60）到期应已释放或已被清理。
-        let released_of = |vel: u8| -> Vec<bool> {
-            (0..synth.soa.len())
-                .filter(|&i| synth.soa.velocity[i] == vel)
-                .map(|i| synth.soa.released[i] != 0.0)
-                .collect()
-        };
-        let long = released_of(100);
+        let long = synth
+            .voices
+            .iter()
+            .find(|v| v.velocity == 100)
+            .expect("长音符应在响");
+        assert!(!long.released, "短音符结束不得释放长音符（FIFO 错位回归）");
+        let short = synth.voices.iter().find(|v| v.velocity == 60);
         assert!(
-            long.iter().all(|&r| !r),
-            "短音符结束不得释放长音符（FIFO 错位回归）"
-        );
-        let short = released_of(60);
-        assert!(
-            short.is_empty() || short.iter().all(|&r| r),
+            short.is_none_or(|v| v.released || v.finished()),
             "短音符到期应已释放"
         );
     }
