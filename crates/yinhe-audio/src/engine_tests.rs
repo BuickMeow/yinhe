@@ -4482,7 +4482,6 @@ fn analyze_blackmidi_duplicates() {
     }
 }
 
-
 /// 诊断（本地 MIDI，ignored）：Ouranos Track 13 第 33 小节起的音符模式
 /// （同 key 间隔/同帧重复/力度分布）——定位 GPU 丢音与 CPU 的差异来源。
 #[test]
@@ -4516,8 +4515,7 @@ fn analyze_ouranos_track13_dense() {
         }
         let keys: std::collections::BTreeSet<u8> = dense.iter().map(|n| n.0).collect();
         let vels: std::collections::BTreeSet<u8> = dense.iter().map(|n| n.1).collect();
-        let lens: std::collections::BTreeSet<u32> =
-            dense.iter().map(|n| n.3 - n.2).collect();
+        let lens: std::collections::BTreeSet<u32> = dense.iter().map(|n| n.3 - n.2).collect();
         eprintln!(
             "track[{track_idx}] 总={} 第33小节起取样={} keys={:?} vels={:?} 长度={:?}",
             notes.len(),
@@ -4534,7 +4532,6 @@ fn analyze_ouranos_track13_dense() {
     }
 }
 
-
 /// 诊断（本地 MIDI，ignored）：Ouranos Track 13 第 33 小节 GPU vs CPU 回放
 /// 对比（逐 512 帧块能量）——定位 GPU 丢音/断断续续的机制。
 #[test]
@@ -4548,9 +4545,8 @@ fn diag_ouranos_gpu_dropout() {
     let ppq = model.meta.ppq as u64;
     let bar33 = 32 * 4 * ppq;
     let end_tick = bar33 + 4 * ppq; // 1 小节，全轨负载（模拟真实播放）
-    let to_sample = |tick: u32| -> u64 {
-        (model.tempo_map.tick_to_seconds(tick as u64) * sr as f64) as u64
-    };
+    let to_sample =
+        |tick: u32| -> u64 { (model.tempo_map.tick_to_seconds(tick as u64) * sr as f64) as u64 };
     let mut events: Vec<yinhe_synth::SynthEvent> = Vec::new();
     for k in 0..128u8 {
         for n in model.notes[k as usize].iter() {
@@ -4568,16 +4564,39 @@ fn diag_ouranos_gpu_dropout() {
         }
     }
     events.sort_by_key(|e| e.sample());
-    eprintln!("事件数={} 首事件 sample={:?}", events.len(), events.first().map(|e| e.sample()));
+    eprintln!(
+        "事件数={} 首事件 sample={:?}",
+        events.len(),
+        events.first().map(|e| e.sample())
+    );
 
     let frames = 512usize;
     let blocks = 4700usize + 10 * 4 * (ppq as usize) * 48_000 / 1920 / 512 / 2; // 事件窗口全程（近似）
     // 事件在第 33 小节（sample 2.3M 级）：seek 到首事件前一块开始渲染
-    let seek_to = events.first().map(|e| e.sample()).unwrap_or(0).saturating_sub(frames as u64);
+    let seek_to = events
+        .first()
+        .map(|e| e.sample())
+        .unwrap_or(0)
+        .saturating_sub(frames as u64);
     // 事件在 channel 5：必须提供 32 个通道的 buffer（否则该通道输出被丢弃）
-    let mk = || (0..32).map(|_| yinhe_mixer::ChannelBuffers { left: vec![0.0; frames], right: vec![0.0; frames] }).collect::<Vec<_>>();
+    let mk = || {
+        (0..32)
+            .map(|_| yinhe_mixer::ChannelBuffers {
+                left: vec![0.0; frames],
+                right: vec![0.0; frames],
+            })
+            .collect::<Vec<_>>()
+    };
     let energy = |bufs: &[yinhe_mixer::ChannelBuffers]| -> f64 {
-        bufs.iter().map(|b| b.left.iter().chain(b.right.iter()).map(|v| (*v as f64).abs()).sum::<f64>()).sum()
+        bufs.iter()
+            .map(|b| {
+                b.left
+                    .iter()
+                    .chain(b.right.iter())
+                    .map(|v| (*v as f64).abs())
+                    .sum::<f64>()
+            })
+            .sum()
     };
 
     // 事件实际用到的通道（global_channel）→ 这些 dense 槽都要加载音色库
@@ -4594,7 +4613,8 @@ fn diag_ouranos_gpu_dropout() {
 
     // CPU
     let mut cpu = yinhe_synth::CpuSynth::new(sr);
-    cpu.load_dense_soundfonts_many(&chans, &[std::path::PathBuf::from(&sfz)]).expect("cpu sf");
+    cpu.load_dense_soundfonts_many(&chans, &[std::path::PathBuf::from(&sfz)])
+        .expect("cpu sf");
     cpu.load_events(events.clone());
     let _ = seek_to;
     let mut cb = mk();
@@ -4605,12 +4625,28 @@ fn diag_ouranos_gpu_dropout() {
         cpu_e.push(energy(&cb));
         cpu_voices.push(cpu.voice_count());
     }
-    eprintln!("CPU voices 峰值={:?} 末值={:?}", cpu_voices.iter().max(), cpu_voices.last());
-    eprintln!("CPU 能量峰值={:.1} @块{:?}", cpu_e.iter().cloned().fold(0.0f64, f64::max), cpu_e.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).map(|(i, _)| i));
+    eprintln!(
+        "CPU voices 峰值={:?} 末值={:?}",
+        cpu_voices.iter().max(),
+        cpu_voices.last()
+    );
+    eprintln!(
+        "CPU 能量峰值={:.1} @块{:?}",
+        cpu_e.iter().cloned().fold(0.0f64, f64::max),
+        cpu_e
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .map(|(i, _)| i)
+    );
 
     // GPU
-    let Ok(mut gpu) = yinhe_synth::GpuSynth::new_default(sr) else { eprintln!("无 GPU"); return };
-    gpu.load_dense_soundfonts_many(&chans, &[std::path::PathBuf::from(&sfz)]).expect("gpu sf");
+    let Ok(mut gpu) = yinhe_synth::GpuSynth::new_default(sr) else {
+        eprintln!("无 GPU");
+        return;
+    };
+    gpu.load_dense_soundfonts_many(&chans, &[std::path::PathBuf::from(&sfz)])
+        .expect("gpu sf");
     gpu.finish_soundfont_load();
     gpu.prewarm(frames as u32);
     gpu.load_events(events.clone());
@@ -4633,10 +4669,17 @@ fn diag_ouranos_gpu_dropout() {
         .collect();
     eprintln!("GPU 低能量块（cpu>1 且 gpu<50%）数={}", low.len());
     eprintln!("  前 12：{low:?}");
-    eprintln!("voices 峰值={:?} 末值={:?}", voices.iter().max(), voices.last());
+    eprintln!(
+        "voices 峰值={:?} 末值={:?}",
+        voices.iter().max(),
+        voices.last()
+    );
     let ce: f64 = cpu_e.iter().sum();
     let ge: f64 = gpu_e.iter().sum();
-    eprintln!("总能量 cpu={ce:.1} gpu={ge:.1} 比值={:.3}", ge / ce.max(1e-9));
+    eprintln!(
+        "总能量 cpu={ce:.1} gpu={ge:.1} 比值={:.3}",
+        ge / ce.max(1e-9)
+    );
 }
 
 mod compare_tests {

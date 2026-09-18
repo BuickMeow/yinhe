@@ -29,8 +29,29 @@ impl AudioEngine {
             self.block_start_sample = block_start_sample;
 
             // GPU 渲染（覆盖写 dense 0..MAX_CHANNELS，其余清零）。
+            // 实时块耗时诊断：超过本块时长预算（frames / sample_rate）即打印
+            // （限频每秒一条）——用于定位 GPU 后端断续是否由块超时（underrun）
+            // 引起，而非渲染语义差异。
+            let t_gpu = std::time::Instant::now();
             if let Some(synth) = self.gpu_synth.as_mut() {
                 synth.render_to_mixer(self.mixer.buffers_mut());
+            }
+            let gpu_ms = t_gpu.elapsed().as_secs_f64() * 1000.0;
+            let budget_ms = frames as f64 / self.sample_rate as f64 * 1000.0;
+            if gpu_ms > budget_ms {
+                static LAST_LOG: std::sync::atomic::AtomicU64 =
+                    std::sync::atomic::AtomicU64::new(0);
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                let last = LAST_LOG.load(std::sync::atomic::Ordering::Relaxed);
+                if now.saturating_sub(last) >= 1000 {
+                    LAST_LOG.store(now, std::sync::atomic::Ordering::Relaxed);
+                    crate::audio_renderer::play_log(&format!(
+                        "[gpu] 块超时：{gpu_ms:.2}ms > 预算 {budget_ms:.2}ms（frames={frames}）"
+                    ));
+                }
             }
             // 插件乐器事件：按块推进 tick（GPU 模式下非插件通道不喂 xsynth）。
             self.dispatch_block_events(block_end_tick);

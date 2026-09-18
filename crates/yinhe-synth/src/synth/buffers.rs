@@ -17,9 +17,9 @@ pub(crate) const MAX_VOICE_SLOTS: u32 = 8192;
 const SAMPLE_WRITE_SLICE: usize = 16 * 1024 * 1024;
 
 /// GPU 渲染流水线深度（在途块数）：收割当前块时后面已有 `PIPELINE_DEPTH-1`
-/// 块在 GPU 排队，UI（egui 与音频共享 GPU）抢占造成的抖动被提前量吸收；
-/// 输出延迟不变（收割即输出）。staging 缓冲数量必须 >= 本值。
-pub(crate) const PIPELINE_DEPTH: usize = 4;
+/// 块在 GPU 排队（提交与等待分离，见 gpu_synth/pipeline.rs）；输出延迟不变
+/// （收割即输出）。staging 缓冲数量必须 >= 本值。
+pub(crate) const PIPELINE_DEPTH: usize = 2;
 
 /// `ensure_buffers` 的容量需求（整块帧数与 partial 段长分开：分段渲染时
 /// partial 只按段长上界分配，channel_mix/staging 按整块）。
