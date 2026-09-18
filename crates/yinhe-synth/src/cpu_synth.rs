@@ -693,6 +693,15 @@ impl CpuSynth {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn report_voice_size() {
+        eprintln!(
+            "CpuVoice = {} B；KeyInfo = {} B",
+            std::mem::size_of::<CpuVoice>(),
+            std::mem::size_of::<crate::sfz_parser::KeyInfo>()
+        );
+    }
     use super::*;
 
     fn buffers(frames: usize) -> Vec<ChannelBuffers> {

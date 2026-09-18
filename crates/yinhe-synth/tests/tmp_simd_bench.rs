@@ -206,6 +206,134 @@ fn diag_piano_cutoff_and_loop() {
         "KeyInfo 总数={total} cutoff>0={with_cut}（{:.1}%） LoopSustain={loop_sus} LoopContinuous={loop_cont} 无循环={no_loop}",
         100.0 * with_cut as f64 / total.max(1) as f64
     );
+    // cutoff/resonance/filter_type 的"随 key/vel 变化"程度：决定能否把
+    // per-voice 滤波折叠为组级/通道级（线性系统：先求和后滤波等价）。
+    use std::collections::BTreeSet;
+    let mut all_cut = BTreeSet::new();
+    let mut keys_active = 0usize;
+    let mut per_vel_unique = 0usize;
+    let mut res_set = BTreeSet::new();
+    let mut ty_set = BTreeSet::new();
+    let mut cut_min = f32::MAX;
+    let mut cut_max = f32::MIN;
+    for e in &entries {
+        for key in 0..128usize {
+            if e.map[key].is_empty() {
+                continue;
+            }
+            keys_active += 1;
+            let mut key_vals = BTreeSet::new();
+            for info in &e.map[key] {
+                let bits = info.cutoff.to_bits();
+                all_cut.insert(bits);
+                key_vals.insert(bits);
+                res_set.insert(info.resonance.to_bits());
+                ty_set.insert(format!("{:?}", info.filter_type));
+                cut_min = cut_min.min(info.cutoff);
+                cut_max = cut_max.max(info.cutoff);
+            }
+            if key_vals.len() > 1 {
+                per_vel_unique += 1;
+            }
+        }
+    }
+    println!(
+        "cutoff 全局唯一值={}（范围 {:.1}~{:.1} Hz；活跃键 {}）| 键内随力度变化={} 键数 | resonance 唯一值={} | filter_type={:?}",
+        all_cut.len(),
+        cut_min,
+        cut_max,
+        keys_active,
+        per_vel_unique,
+        res_set.len(),
+        ty_set,
+    );
+}
+
+/// GPU vs CPU（同场景长音符，1/4 层力度）：GPU 路径每块有状态读回/段上传，
+/// 小复音下固定开销主导——量化当前差距与规模趋势。
+#[test]
+fn gpu_vs_cpu_scale() {
+    let Some(sfz) = std::env::var_os("YINHE_TEST_SFZ") else {
+        eprintln!("跳过：未设置 YINHE_TEST_SFZ");
+        return;
+    };
+    let frames = 512usize;
+    let mk_bufs = || {
+        (0..16)
+            .map(|_| yinhe_mixer::ChannelBuffers {
+                left: vec![0.0; frames],
+                right: vec![0.0; frames],
+            })
+            .collect::<Vec<_>>()
+    };
+    for &layers in &[1u8, 4, 16, 46] {
+        let events: Vec<yinhe_synth::SynthEvent> = (21..109u8)
+            .flat_map(|k| {
+                (0..layers).map(move |l| yinhe_synth::SynthEvent::NoteOn {
+                    sample: 0,
+                    channel: 0,
+                    key: k,
+                    velocity: 120u8.saturating_sub(l * 6).max(2),
+                    end_sample: 48_000 * 30,
+                })
+            })
+            .collect();
+        let voices = events.len();
+        // 预热用短事件序列（触发后保持响）
+        let mut cpu = yinhe_synth::CpuSynth::new(48_000);
+        cpu.load_dense_soundfonts(0, &[std::path::PathBuf::from(&sfz)])
+            .expect("load soundfont");
+        cpu.set_layer_count(None);
+        let mut bufs = mk_bufs();
+        cpu.load_events(events.clone());
+        for _ in 0..20 {
+            cpu.render_to_mixer(&mut bufs);
+        }
+        cpu.load_events(events.clone());
+        let t0 = std::time::Instant::now();
+        for _ in 0..200 {
+            cpu.render_to_mixer(&mut bufs);
+        }
+        let cpu_ms = t0.elapsed().as_secs_f64() * 1000.0 / 200.0;
+
+        let Ok(mut gpu) = yinhe_synth::GpuSynth::new_default(48_000) else {
+            eprintln!("跳过 GPU：不可用");
+            return;
+        };
+        gpu.load_dense_soundfonts(0, &[std::path::PathBuf::from(&sfz)])
+            .expect("load soundfont");
+        gpu.finish_soundfont_load();
+        gpu.prewarm(frames as u32);
+        gpu.set_layer_count(None);
+        let mut gbufs = mk_bufs();
+        gpu.load_events(events.clone());
+        for _ in 0..5 {
+            gpu.render_to_mixer(&mut gbufs);
+        }
+        gpu.load_events(events.clone());
+        let t1 = std::time::Instant::now();
+        for _ in 0..50 {
+            gpu.render_to_mixer(&mut gbufs);
+        }
+        let gpu_ms = t1.elapsed().as_secs_f64() * 1000.0 / 50.0;
+        println!("  （GPU voice_count = {}）", gpu.voice_count());
+        let energy: f32 = gbufs
+            .iter()
+            .map(|b| {
+                b.left
+                    .iter()
+                    .chain(b.right.iter())
+                    .map(|v| v.abs())
+                    .sum::<f32>()
+            })
+            .sum();
+        println!("  （GPU 输出能量 {energy:.3}，0 = 未实际渲染）");
+        println!(
+            "voice={voices:>5}: CPU {cpu_ms:>7.3} ms/块（{:.2}x）  GPU {gpu_ms:>7.2} ms/块（{:.2}x）  预算 10.67ms",
+            10.67 / cpu_ms,
+            10.67 / gpu_ms
+        );
+    }
 }
 
 #[test]
