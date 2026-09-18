@@ -325,7 +325,7 @@ impl GpuSynth {
             .filter(|&(_, &c)| c > 0)
             .map(|(k, &c)| (k as u8, c))
             .collect();
-        v.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+        v.sort_unstable_by_key(|x| std::cmp::Reverse(x.1));
         v.truncate(n);
         v
     }
