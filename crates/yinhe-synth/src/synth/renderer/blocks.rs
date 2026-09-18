@@ -6,6 +6,9 @@ use super::*;
 
 /// 已提交未收割的读回（`submit_block` → `finish_block`；流水线用）。
 pub struct PendingReadback {
+    /// 本块最后一段的提交序号：finish_block 用 `PollType::Wait` 精确等待它，
+    /// 避免 `yield_now` 轮询受 OS 调度粒度影响（小块实测固定 18ms 开销）。
+    submission_index: wgpu::SubmissionIndex,
     rx: std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
     staging_idx: usize,
     mix_size: usize,
@@ -75,6 +78,7 @@ impl GpuAudioRenderer {
         self.flush_pending_voice_writes();
 
         let voice_wg_count = voice_count.div_ceil(WORKGROUP_SIZE);
+        let mut submit_index = None;
         let mix_size =
             (CHANNEL_COUNT * frame_count as usize * 2 * std::mem::size_of::<f32>()) as u64;
         let stage_size = (voice_count as usize * std::mem::size_of::<u32>()) as u64;
@@ -180,7 +184,7 @@ impl GpuAudioRenderer {
                     );
                 }
             }
-            self.queue.submit(std::iter::once(encoder.finish()));
+            submit_index = Some(self.queue.submit(std::iter::once(encoder.finish())));
         }
 
         // 分配 staging（双缓冲轮转；收割时 unmap 后归还）
@@ -197,6 +201,7 @@ impl GpuAudioRenderer {
             });
         }
         Some(PendingReadback {
+            submission_index: submit_index?,
             rx: receiver,
             staging_idx: idx,
             mix_size: mix_size as usize,
@@ -219,25 +224,20 @@ impl GpuAudioRenderer {
             channel_mix.fill(0.0);
             return 0;
         };
-        // 只等**这一块**的 map 完成：用 Poll 推进回调 + 轮询 receiver。
-        // 不用 poll(Wait)——那会连带等待后续已提交块（流水线深度 >1 时
-        // 每次收割都要等全部在途块，重叠收益被吃掉）。
-        loop {
-            // map 失败（如设备丢失）：输出静音，不 unwrap 保命
-            match pending.rx.try_recv() {
-                Ok(Ok(())) => break,
-                Ok(Err(_)) => {
-                    channel_mix.fill(0.0);
-                    return 0;
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => {
-                    let _ = self.device.poll(wgpu::PollType::Poll);
-                    std::thread::yield_now();
-                }
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    channel_mix.fill(0.0);
-                    return 0;
-                }
+        // 只等**这一块**完成：`PollType::Wait { submission_index }` 精确等待本块
+        // 最后一段的提交（不带动后续在途块，保留流水线重叠）。原实现用
+        // `poll(Poll)` + `yield_now()` 忙等：macOS 调度粒度会把每轮 yield 拉长
+        // 到 ms 级，小块（441 帧）实测固定 18ms 开销。
+        let _ = self.device.poll(wgpu::PollType::Wait {
+            submission_index: Some(pending.submission_index.clone()),
+            timeout: None,
+        });
+        // Wait 返回后 map 回调必然已触发；失败（设备丢失等）输出静音保命
+        match pending.rx.try_recv() {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) | Err(_) => {
+                channel_mix.fill(0.0);
+                return 0;
             }
         }
         let buffer_slice = buf.staging[pending.staging_idx].slice(..);
