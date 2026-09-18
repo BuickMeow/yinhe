@@ -127,6 +127,7 @@ fn ouranos_peak_gpu_bench() {
     let mut max_alive = 0u32;
     let mut sum_blocks = 0u32;
     let t0 = Instant::now();
+    let mut gpu_bufs_energy: Vec<f32> = Vec::new();
     for _ in 0..blocks {
         gpu.render_to_mixer(&mut bufs);
         for (a, b) in sum.iter_mut().zip(gpu.diag_ms) {
@@ -134,8 +135,49 @@ fn ouranos_peak_gpu_bench() {
         }
         max_alive = max_alive.max(gpu.diag_alive);
         sum_blocks += gpu.diag_blocks;
+        // 每 64 帧窗口（约 1.3ms @48k）的能量：检测短到听感"断断续续"的静音
+        let w = 64usize;
+        let n = bufs[0].left.len() / w;
+        for i in 0..n {
+            let mut e = 0.0f32;
+            for ch in bufs.iter() {
+                for j in (i * w)..((i + 1) * w) {
+                    e += ch.left[j].abs() + ch.right[j].abs();
+                }
+            }
+            gpu_bufs_energy.push(e);
+        }
     }
     let wall = t0.elapsed().as_secs_f64() * 1000.0 / blocks as f64;
+
+    // —— 断音检测：按 512 帧（约 10.7ms）窗口算能量，列出"远低于邻域"的静音间隙 ——
+    {
+        let all: Vec<f32> = gpu_bufs_energy.clone();
+        let peak = all.iter().fold(0.0f32, |m, v| m.max(*v));
+        let floor = peak * 0.01;
+        let quiet: Vec<usize> = all
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| **e < floor)
+            .map(|(i, _)| i)
+            .collect();
+        // 骤降：前窗 > 峰值 8% 且当前窗 < 前窗 15%（能量断崖，听感"断"）
+        let mut drops: Vec<(usize, f32, f32)> = Vec::new();
+        for i in 1..all.len() {
+            let prev = all[i - 1];
+            let cur = all[i];
+            if prev > peak * 0.08 && cur < prev * 0.15 {
+                drops.push((i, prev, cur));
+            }
+        }
+        eprintln!(
+            "能量窗口（64帧≈1.3ms）峰值={peak:.2} 静音窗={} 骤降={}",
+            quiet.len(),
+            drops.len()
+        );
+        let show: Vec<&(usize, f32, f32)> = drops.iter().take(12).collect();
+        eprintln!("  骤降(窗序,前,后)：{:?}", show);
+    }
 
     let n = blocks as f64;
     eprintln!(

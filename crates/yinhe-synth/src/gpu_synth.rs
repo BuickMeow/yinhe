@@ -153,6 +153,10 @@ pub struct GpuSynth {
     pub diag_blocks: u32,
     /// 上一块结束时的活跃 voice 数
     pub diag_alive: u32,
+    /// 上一块输出时 ring 不足、静音补齐的帧数（>0 即输出被截断）
+    pub diag_ring_short: u32,
+    /// 最近一次 harvest 读回 GPU channel_mix 的峰值（0 = pass 产出就是静音）
+    pub diag_gpu_mix_peak: f32,
     sample_rate: u32,
     /// 采样插值方式（`Interpolation::code()`；加载音色库时写入 KeyInfo）。
     interpolation: u32,
@@ -236,6 +240,8 @@ impl GpuSynth {
             diag_ms: [0.0; 6],
             diag_blocks: 0,
             diag_alive: 0,
+            diag_ring_short: 0,
+            diag_gpu_mix_peak: 0.0,
             sample_rate,
             interpolation: 0,
             events: Vec::new(),
@@ -311,6 +317,25 @@ impl GpuSynth {
             .count() as u32
     }
 
+    /// 状态统计：(未开始 start_offset>0, release 中 stage>=5, 正常发声 stage<5)。
+    /// 诊断"有 voice 但输出为 0"：若大量 voice 未开始或早早 release，则整块静音。
+    pub fn state_stats(&self) -> (u32, u32, u32) {
+        let (mut not_started, mut releasing, mut sounding) = (0u32, 0u32, 0u32);
+        for v in self.voices.iter() {
+            if v.state.env_stage >= 6 {
+                continue;
+            }
+            if v.state.start_offset > 0 {
+                not_started += 1;
+            } else if v.state.env_stage >= 5 {
+                releasing += 1;
+            } else {
+                sounding += 1;
+            }
+        }
+        (not_started, releasing, sounding)
+    }
+
     /// 活跃 voice 按 key 计数，返回 Top N 最多的 key（找异常堆积）。
     pub fn top_keys(&self, n: usize) -> Vec<(u8, u32)> {
         let mut counts = [0u32; 128];
@@ -328,6 +353,16 @@ impl GpuSynth {
         v.sort_unstable_by_key(|x| std::cmp::Reverse(x.1));
         v.truncate(n);
         v
+    }
+
+    /// 诊断：输出游标 / 提交游标 / 事件游标 / 事件总数。
+    pub fn diag_cursors(&self) -> (u64, u64, usize, usize) {
+        (
+            self.sample_position,
+            self.render_position,
+            self.event_cursor,
+            self.events.len(),
+        )
     }
 
     /// 设置采样插值方式（`Interpolation::code()`；须在加载音色库之前设置）。

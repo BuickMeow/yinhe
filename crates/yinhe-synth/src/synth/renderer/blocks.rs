@@ -11,7 +11,11 @@ pub struct PendingReadback {
     /// 避免 `yield_now` 轮询受 OS 调度粒度影响（小块实测固定 18ms 开销）。
     submission_index: wgpu::SubmissionIndex,
     rx: std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
-    staging_idx: usize,
+    /// 提交该块时使用的 staging 缓冲（直接持有引用，而非索引）。
+    /// `ensure_buffers` 每块重建 staging 数组并把 `staging_idx` 归零——
+    /// 按索引读会让在途块读到"当前数组"里的另一只/未写入缓冲（偶发整块静音、
+    /// 交替断续的真身）。
+    staging_buf: wgpu::Buffer,
     mix_size: usize,
     stage_size: usize,
     full_size: usize,
@@ -217,17 +221,18 @@ impl GpuAudioRenderer {
             b.staging_idx = (idx + 1) % crate::synth::buffers::PIPELINE_DEPTH;
         }
         let (sender, receiver) = std::sync::mpsc::channel();
-        {
+        let staging_buf = {
             let buf = self.buffers.as_ref()?;
             let buffer_slice = buf.staging[idx].slice(..);
             buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
                 let _ = sender.send(result);
             });
-        }
+            buf.staging[idx].clone()
+        };
         Some(PendingReadback {
             submission_index: submit_index?,
             rx: receiver,
-            staging_idx: idx,
+            staging_buf,
             mix_size: mix_size as usize,
             stage_size: stage_size as usize,
             full_size: full_size as usize,
@@ -264,7 +269,7 @@ impl GpuAudioRenderer {
                 return 0;
             }
         }
-        let buffer_slice = buf.staging[pending.staging_idx].slice(..);
+        let buffer_slice = pending.staging_buf.slice(..);
         let data = match buffer_slice.get_mapped_range() {
             Ok(d) => d,
             Err(_) => {
@@ -292,7 +297,7 @@ impl GpuAudioRenderer {
             out[..n].copy_from_slice(&states[..n]);
         }
         drop(data);
-        buf.staging[pending.staging_idx].unmap();
+        pending.staging_buf.unmap();
         pending.voice_count
     }
 
@@ -325,15 +330,9 @@ impl GpuAudioRenderer {
             timeout: None,
         });
         let _ = pending.rx.recv();
-        if let Some(buf) = self.buffers.as_ref()
-            && let Ok(_) = buf.staging[pending.staging_idx]
-                .slice(..)
-                .get_mapped_range()
-        {
+        if pending.staging_buf.slice(..).get_mapped_range().is_ok() {
             // get_mapped_range 的借用在这里结束，立即 unmap
         }
-        if let Some(buf) = self.buffers.as_ref() {
-            buf.staging[pending.staging_idx].unmap();
-        }
+        pending.staging_buf.unmap();
     }
 }

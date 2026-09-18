@@ -58,6 +58,11 @@ impl GpuSynth {
         // 输出 frames 帧：ring 中的先给，不足部分静音补齐
         let t_out = std::time::Instant::now();
         let avail = (self.ring.len() / per_frame).min(frames);
+        self.diag_ring_short = if avail < frames {
+            (frames - avail) as u32
+        } else {
+            0
+        };
         for (ch_idx, buf) in buffers.iter_mut().enumerate() {
             if ch_idx < MAX_CHANNELS {
                 for f in 0..avail {
@@ -271,6 +276,7 @@ impl GpuSynth {
             Some(self.states_buf.as_mut_slice()),
         );
         let cnt = p.voice_count.min(self.voices.len());
+        self.diag_gpu_mix_peak = self.channel_mix.iter().fold(0.0f32, |m, v| m.max(v.abs()));
         // GPU 权威状态覆盖 CPU 镜像（仅该块提交时的前 N 个槽位；之后新 push 的
         // voice 保持 CPU 侧初值）。compact 重传前必须一致。
         for (i, (v, st)) in self.voices[..cnt]

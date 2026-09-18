@@ -4900,3 +4900,182 @@ mod compare_tests {
         }
     }
 }
+
+/// 诊断：Ouranos bar157 起的**引擎路径**断续检测（64 帧窗口能量 + 骤降）。
+/// 裸 GPU 基准复现不了（无静音窗/无骤降），差异疑在引擎路径（seek/chase/调度）。
+/// cargo test --release -p yinhe-audio --features gpu diag_ouranos_bar157_dropout -- --ignored --nocapture
+#[cfg(feature = "gpu")]
+#[test]
+#[ignore = "需要本地 MIDI + SoundFont"]
+fn diag_ouranos_bar157_dropout() {
+    use std::sync::Arc;
+
+    let midi = "/Users/jieneng/Music/MIDIs/Ouranos - HDSQ & The Romanticist [v1.6.6].mid";
+    let sfz = std::env::var("YINHE_TEST_SFZ").unwrap_or_else(|_| {
+        "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz".into()
+    });
+    let sr = 48_000u32;
+    let frames = 4096usize;
+    let bar = std::env::var("YINHE_BENCH_BAR")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(157);
+    let model = Arc::new(yinhe_midi::parse_path(midi).unwrap());
+    let ppq = model.meta.ppq as u64;
+    let seek_tick = bar.saturating_sub(1) * 4 * ppq;
+    let seek_sample = (model.tempo_map.tick_to_seconds(seek_tick) * sr as f64) as u64;
+
+    let active = crate::spawn::channels_for_model(&model)
+        .active_mask()
+        .to_vec();
+    let mut engine = AudioEngine::new(sr, ChannelLayout::from_mask(active));
+    engine.handle_command(AudioCommand::LoadModel {
+        model: Arc::clone(&model),
+    });
+    let events = engine.build_gpu_events(seek_sample);
+    eprintln!("bar{bar} 事件数={} seek_sample={seek_sample}", events.len());
+
+    let mut synth = yinhe_synth::GpuSynth::new_default(sr).unwrap();
+    let sfz_path = std::path::PathBuf::from(&sfz);
+    for ch in 0..16u32 {
+        synth
+            .load_dense_soundfonts(ch, std::slice::from_ref(&sfz_path))
+            .unwrap();
+    }
+    synth.finish_soundfont_load();
+    synth.load_events(events);
+    synth.seek(seek_sample);
+    engine.gpu_synth = Some(synth);
+    engine.playing = true;
+    engine.sample_position = seek_sample;
+
+    let mut out = vec![0.0f32; frames * 2];
+    let mut energy: Vec<f32> = Vec::new();
+    let blocks = 60usize;
+    let w = 64usize;
+    for b in 0..blocks {
+        engine.render(&mut out);
+        let be = out.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        let mix_peak = engine
+            .mixer
+            .buffers_mut()
+            .iter()
+            .map(|b| {
+                b.left
+                    .iter()
+                    .chain(b.right.iter())
+                    .fold(0.0f32, |m, v| m.max(v.abs()))
+            })
+            .fold(0.0f32, f32::max);
+        if let Some(gs) = engine.gpu_synth.as_ref() {
+            eprintln!(
+                "  块{b}: mixer={mix_peak:.4} out={be:.4} voices={} gpu_mix={:.4} 缺帧={} ms(采/提/收/环/出)={:?}",
+                gs.voice_count(),
+                gs.diag_gpu_mix_peak,
+                gs.diag_ring_short,
+                gs.diag_ms[..5]
+                    .iter()
+                    .map(|v| (v * 10.0).round() / 10.0)
+                    .collect::<Vec<_>>()
+            );
+        }
+        let n = out.len() / 2 / w;
+        for i in 0..n {
+            let mut e = 0.0f32;
+            for j in (i * w)..((i + 1) * w) {
+                e += out[j * 2].abs() + out[j * 2 + 1].abs();
+            }
+            energy.push(e);
+        }
+    }
+    let peak = energy.iter().fold(0.0f32, |m, v| m.max(*v));
+    let floor = peak * 0.01;
+    let quiet: Vec<usize> = energy
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| **e < floor)
+        .map(|(i, _)| i)
+        .collect();
+    let mut drops: Vec<(usize, f32, f32)> = Vec::new();
+    for i in 1..energy.len() {
+        if energy[i - 1] > peak * 0.08 && energy[i] < energy[i - 1] * 0.15 {
+            drops.push((i, energy[i - 1], energy[i]));
+        }
+    }
+    eprintln!(
+        "引擎路径 bar{bar}：峰值={peak:.3} 静音窗={} 骤降={}",
+        quiet.len(),
+        drops.len()
+    );
+    eprintln!("  静音窗前20={:?}", &quiet[..quiet.len().min(20)]);
+    eprintln!("  骤降前12={:?}", drops.iter().take(12).collect::<Vec<_>>());
+
+    // —— 对照：同一事件/seek 的裸 GpuSynth 路径，逐样本找差异起点 ——
+    let mut synth2 = yinhe_synth::GpuSynth::new_default(sr).unwrap();
+    for ch in 0..16u32 {
+        synth2
+            .load_dense_soundfonts(ch, std::slice::from_ref(&sfz_path))
+            .unwrap();
+    }
+    synth2.finish_soundfont_load();
+    // 注：事件已在前面 move 给引擎 synth，这里重取一份
+    let events2 = engine.build_gpu_events(seek_sample);
+    synth2.load_events(events2);
+    synth2.seek(seek_sample);
+    let mut bufs: Vec<yinhe_mixer::ChannelBuffers> = (0..16)
+        .map(|_| yinhe_mixer::ChannelBuffers {
+            left: vec![0.0; frames],
+            right: vec![0.0; frames],
+        })
+        .collect();
+    let mut bare_all: Vec<f32> = Vec::new();
+    for _ in 0..blocks {
+        synth2.render_to_mixer(&mut bufs);
+        for i in 0..frames {
+            let (mut l, mut r) = (0.0f32, 0.0f32);
+            for b in &bufs {
+                l += b.left[i];
+                r += b.right[i];
+            }
+            bare_all.push(l);
+            bare_all.push(r);
+        }
+    }
+    let m = bare_all.len().min(energy.len() * w);
+    let _ = m;
+    // energy 是每窗口绝对值和；裸路径同口径
+    let mut bare_energy: Vec<f32> = Vec::new();
+    let nw = bare_all.len() / 2 / w;
+    for i in 0..nw {
+        let mut e = 0.0f32;
+        for j in (i * w)..((i + 1) * w) {
+            e += bare_all[j * 2].abs() + bare_all[j * 2 + 1].abs();
+        }
+        bare_energy.push(e);
+    }
+    let bpeak = bare_energy.iter().fold(0.0f32, |m, v| m.max(*v));
+    let bquiet: Vec<usize> = bare_energy
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| **e < bpeak * 0.01)
+        .map(|(i, _)| i)
+        .collect();
+    eprintln!(
+        "裸路径 bar{bar}：峰值={bpeak:.3} 静音窗={}（窗口数={}）",
+        bquiet.len(),
+        bare_energy.len()
+    );
+    // 首差异窗口（引擎 vs 裸，能量口径）
+    let mut first = None;
+    for i in 0..bare_energy.len().min(energy.len()) {
+        if (energy[i] - bare_energy[i]).abs() > bpeak * 0.05 {
+            first = Some(i);
+            break;
+        }
+    }
+    eprintln!(
+        "  首差异窗={:?}（帧≈{}）",
+        first,
+        first.map(|i| i * w).unwrap_or(0)
+    );
+}
