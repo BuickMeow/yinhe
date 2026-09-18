@@ -35,6 +35,10 @@ pub static CPU_PROFILE_MODE: std::sync::atomic::AtomicU8 = std::sync::atomic::At
 pub static PROF_NOTE_ON_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static PROF_NOTE_OFF_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static PROF_RENDER_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// render_range 内部分解（ns）：并行 voice 渲染 / scratch 归约 / 段末收尾。
+pub static PROF_PAR_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static PROF_REDUCE_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static PROF_BLOCK_END_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 /// note_on 内部细分：key map 查找 / voice 构造（含 biquad 系数）/ push。
 pub static PROF_ON_SELECT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static PROF_ON_NEW_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -282,6 +286,7 @@ impl CpuSynth {
         }
 
         // 段末：time 推进 + 清理结束 voice
+        let t_end = std::time::Instant::now();
         for v in self.voices.iter_mut() {
             v.advance_block(frames as u32);
         }
@@ -300,6 +305,10 @@ impl CpuSynth {
         }
         self.peak_voices = self.peak_voices.max(self.voice_count());
         self.sample_position = sample_start + frames as u64;
+        PROF_BLOCK_END_NS.fetch_add(
+            t_end.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
 
         PROF_RENDER_NS.fetch_add(
             t_prof.elapsed().as_nanos() as u64,
@@ -345,6 +354,7 @@ impl CpuSynth {
 
         let damper_flags = self.damper_flags;
         let profile_mode = CPU_PROFILE_MODE.load(std::sync::atomic::Ordering::Relaxed);
+        let t_par = std::time::Instant::now();
         let scratch = &mut self.par_scratch;
         self.voices
             .par_chunks_mut(chunk)
@@ -359,8 +369,13 @@ impl CpuSynth {
                     v.render_block(ch_out, frames, fi_start, sample_start, damper, profile_mode);
                 }
             });
+        PROF_PAR_NS.fetch_add(
+            t_par.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
 
         // 归约：分片 scratch 按通道求和写入目标缓冲（调用方已清零本段区间）。
+        let t_red = std::time::Instant::now();
         let n = buffers.len().min(MAX_CHANNELS);
         for (ch, buf) in buffers.iter_mut().enumerate().take(n) {
             let ch_base = ch * frames * 2;
@@ -372,6 +387,10 @@ impl CpuSynth {
                 }
             }
         }
+        PROF_REDUCE_NS.fetch_add(
+            t_red.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
 
     /// 事件派发（帧内；`frame` = 块内帧偏移）。
