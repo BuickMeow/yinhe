@@ -149,7 +149,12 @@ impl CpuSynth {
             let victim = crate::channel_state::layer_victim(
                 self.key_indices[slot].iter().map(|&i| {
                     let v = &self.voices[i as usize];
-                    (i as usize, v.velocity, !v.finished() && !v.is_killed())
+                    (
+                        i as usize,
+                        v.velocity,
+                        v.released,
+                        !v.finished() && !v.is_killed(),
+                    )
                 }),
                 keep,
             );

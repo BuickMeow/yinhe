@@ -91,9 +91,9 @@ pub enum ControlEvent {
 /// 接口设计参照 xsynth ChannelGroup：
 /// - 播放时通过 `load_events` 加载预排序事件，`render` 逐块渲染
 /// - 通道状态机处理 CC7/10/11/64/100/101/6/38 + pitch bend + RPN
-/// layer 超限淘汰的杀音计数（诊断）。
+// layer 超限淘汰的杀音计数（诊断；破坏文档列表的 doc 注释已改普通注释）。
 pub static LAYER_KILLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-/// 全局上限（evict_excess）的杀音计数（诊断）。
+// 全局上限（evict_excess）的杀音计数（诊断）。
 pub static EVICT_KILLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 pub struct GpuSynth {

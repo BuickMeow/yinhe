@@ -442,8 +442,12 @@ impl GpuSynth {
                 // 的关键（判定与 CPU 共用 channel_state::layer_victim）。
                 let victim = crate::channel_state::layer_victim(
                     self.voices.iter().enumerate().filter_map(|(i, v)| {
-                        (v.channel == channel && v.key == key && v.state.env_stage < 6)
-                            .then_some((i, v.velocity, true))
+                        (v.channel == channel && v.key == key && v.state.env_stage < 6).then_some((
+                            i,
+                            v.velocity,
+                            v.release_pending || v.state.env_stage == 5,
+                            true,
+                        ))
                     }),
                     new_index,
                 );
