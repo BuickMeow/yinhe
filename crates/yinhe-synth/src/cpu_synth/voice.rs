@@ -370,7 +370,8 @@ impl CpuVoice {
             5 => {
                 // Release：指数 (1-t)^8
                 let n = self.stage_progress + 1.0;
-                if n >= self.release_frames {
+                // 与 shader 一致：envelope < 1e-4（-80dB，听不见）提前结束释放尾音
+                if n >= self.release_frames || self.envelope < 1e-4 {
                     self.envelope = 0.0;
                     self.env_stage = ENV_FINISHED;
                     self.stage_progress = 0.0;

@@ -232,7 +232,10 @@ fn advance_env(st: VoiceState) -> VoiceState {
         }
         case 5u: { // Release: 指数 (1-t)^8
             let n = s.stage_progress + 1.0;
-            if n >= s.release_frames {
+            // envelope < 1e-4（-80dB，16bit 下低于 1 LSB，物理上听不见）时提前
+            // 结束：release 尾音的最后约 32% 时长不再占用槽位，减少 voice 数
+            // （黑乐谱高潮段 GPU 时间的主要来源）。三处实现（shader/CPU/参考）同步。
+            if n >= s.release_frames || s.envelope < 1e-4 {
                 s.envelope = 0.0;
                 s.env_stage = 6u;
                 s.stage_progress = 0.0;

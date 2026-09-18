@@ -381,7 +381,8 @@ pub(crate) fn advance_env_cpu(v: &mut GpuVoiceState) {
         5 => {
             // Release: 指数 (1-t)^8
             let n = v.stage_progress + 1.0;
-            if n >= v.release_frames {
+            // 与 shader/CPU 一致：envelope < 1e-4（-80dB，听不见）提前结束
+            if n >= v.release_frames || v.envelope < 1e-4 {
                 v.envelope = 0.0;
                 v.env_stage = 6;
                 v.stage_progress = 0.0;
