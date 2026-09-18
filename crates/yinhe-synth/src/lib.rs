@@ -23,13 +23,11 @@ mod voice_params;
 pub use channel_state::{ChaseSkip, MAX_CHANNELS};
 
 /// 默认全局 voice 上限（CPU/GPU 共用；淘汰策略各自实现：CPU 块末淡出，
-/// GPU 指令 kill）。等于 GPU 槽位容量——单一来源：若小于该值，槽位未满就会
-/// 反复淘汰正在响的 voice（实测 Ouranos bar148 场景 40 块淘汰 67991 次）。
-/// 比槽位少 2048：`note_on` 在 `voices.len() >= MAX_VOICE_SLOTS` 时拒绝新音，
-/// 而 len 含未 compact 的墓碑。留出余量后，淘汰（保持 alive <= 本值）+
-/// 块首 compact（清墓碑）能保证新音符始终有槽位，不再被静默丢弃
-/// （实测 Ouranos bar148：8192 时丢 43% 能量，16384 时不丢但需求顶到槽位）。
-pub(crate) const DEFAULT_MAX_VOICES: usize = crate::synth::buffers::MAX_VOICE_SLOTS as usize - 2048;
+/// GPU 指令 kill）。**这是性能目标**（GPU 时间 ∝ 活跃数，实测每千 voice
+/// ≈2.8ms；14336 ≈ 40ms，给低端设备与 UI 争抢留余量），与**容量**
+/// （`MAX_VOICE_SLOTS`，只决定内存和 note_on 可容纳量）解耦：
+/// 容量远大于本值时，`note_on` 不会因墓碑占位而拒绝新音（丢音）。
+pub(crate) const DEFAULT_MAX_VOICES: usize = 14336;
 /// 默认每 key layer 上限（对齐 xsynth `VoiceChannelParams.layers`；共用）。
 pub(crate) const DEFAULT_MAX_LAYERS: usize = 4;
 pub use cpu_synth::CpuSynth;

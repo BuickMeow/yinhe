@@ -152,6 +152,13 @@ fn ouranos_peak_gpu_bench() {
         sum_blocks as f64 / n
     );
     eprintln!(
+        "  淘汰力度分桶（LO≤31/MID≤63/HI≥64）：{}/{}/{}  note_on 拒绝={}",
+        yinhe_synth::gpu_synth::EVICT_VEL_LO.load(std::sync::atomic::Ordering::Relaxed),
+        yinhe_synth::gpu_synth::EVICT_VEL_MID.load(std::sync::atomic::Ordering::Relaxed),
+        yinhe_synth::gpu_synth::EVICT_VEL_HI.load(std::sync::atomic::Ordering::Relaxed),
+        yinhe_synth::gpu_synth::NOTE_ON_REJECTED.load(std::sync::atomic::Ordering::Relaxed)
+    );
+    eprintln!(
         "  淘汰计数（累计到此刻）：layer={} evict={}",
         yinhe_synth::gpu_synth::LAYER_KILLS.load(std::sync::atomic::Ordering::Relaxed),
         yinhe_synth::gpu_synth::EVICT_KILLS.load(std::sync::atomic::Ordering::Relaxed)

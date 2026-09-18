@@ -170,26 +170,24 @@ impl CpuSynth {
     /// 全局 voice 超限淘汰（块末调用）：优先 release 中的，不足时按创建顺序
     /// 杀最老的。立即结束（与 xsynth 的默认 kill 语义一致），块末统一 retain 回收。
     pub(super) fn evict_excess(&mut self, excess: usize) {
-        let mut killed = 0;
-        for i in 0..self.voices.len() {
-            if killed >= excess {
-                return;
+        // 与 GPU 一致（kiva 式"过载时牺牲小力度"）：按
+        // (velocity, 非 release, envelope, 创建顺序) 排序，小力度先杀、
+        // 大力度最后——过载时绝不错切大力度音符。
+        let mut cands: Vec<(u8, bool, f32, usize)> = Vec::new();
+        for (i, v) in self.voices.iter().enumerate() {
+            if v.finished() || v.is_killed() {
+                continue;
             }
-            let v = &self.voices[i];
-            if !v.finished() && !v.is_killed() && v.env_stage >= ENV_RELEASE {
-                self.voices[i].signal_kill(self.sample_rate);
-                killed += 1;
-            }
+            cands.push((v.velocity, !v.released, v.envelope, i));
         }
-        for i in 0..self.voices.len() {
-            if killed >= excess {
-                return;
-            }
-            let v = &self.voices[i];
-            if !v.finished() && !v.is_killed() && !v.released {
-                self.voices[i].signal_kill(self.sample_rate);
-                killed += 1;
-            }
+        cands.sort_unstable_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then(a.1.cmp(&b.1))
+                .then(a.2.total_cmp(&b.2))
+                .then(a.3.cmp(&b.3))
+        });
+        for &(_, _, _, i) in cands.iter().take(excess) {
+            self.voices[i].signal_kill(self.sample_rate);
         }
     }
 

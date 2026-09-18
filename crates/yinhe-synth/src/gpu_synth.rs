@@ -95,6 +95,13 @@ pub enum ControlEvent {
 pub static LAYER_KILLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 // 全局上限（evict_excess）的杀音计数（诊断）。
 pub static EVICT_KILLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+// 被淘汰 voice 的力度分桶（诊断：确认过载时牺牲的是小力度而非大力度）。
+// 桶：0..=31 / 32..=63 / 64..=127。
+pub static EVICT_VEL_LO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static EVICT_VEL_MID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static EVICT_VEL_HI: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// `note_on` 因槽位满被拒绝（不发声）的计数——与淘汰不同，这是**丢音**。
+pub static NOTE_ON_REJECTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 pub struct GpuSynth {
     renderer: GpuAudioRenderer,

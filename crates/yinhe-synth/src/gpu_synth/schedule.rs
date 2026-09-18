@@ -332,6 +332,7 @@ impl GpuSynth {
         // voice 槽位上限（状态常驻 GPU，槽位固定）；超限时由 maybe_compact_voices
         // 在块边界压缩，这里防御性拒绝。
         if self.voices.len() >= MAX_VOICE_SLOTS as usize {
+            crate::gpu_synth::NOTE_ON_REJECTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return;
         }
         let ch = self.channels[ch_idx];
@@ -468,40 +469,43 @@ impl GpuSynth {
 
     /// 全局 voice 超限淘汰（**每渲染段一次**）。
     ///
-    /// 选择顺序（黑乐谱高潮段的听感关键）：
-    /// 1. **release 中且 envelope 最小**的（按当前包络值排序——真正听不见的）；
-    /// 2. envelope 相同/不足时退回 release 中最老的（创建顺序）；
-    /// 3. 仍不足才杀最老的 active。
-    /// 原先只杀"最老的 release"：其 envelope 可能仍明显可闻，淘汰多了会听出
-    /// 尾音被削；按 envelope 排序后同样的淘汰量听感损失最小。
-    /// 跳过墓碑（等 compact 清理）；只预置 stage 6 + 发 kill，不 remove
-    /// （本段已生成的指令索引保持稳定）。淘汰量按活跃数（非墓碑）计算。
+    /// 选择顺序（黑乐谱高潮段的听感关键，kiva 式"过载时牺牲小力度"）：
+    /// 先按 velocity 升序（大力度音符永远最后、绝不错切），同力度下 release
+    /// 中的优先（尾巴先于音头），再按 envelope 升序（更听不见的优先），
+    /// 并列取创建顺序。淘汰量按活跃数（非墓碑）计算；跳过墓碑（等 compact
+    /// 清理）；只预置 stage 6 + 发 kill，不 remove（本段指令索引保持稳定）。
     pub(super) fn enforce_voice_limit(&mut self, block_frame: u32, releases: &mut Vec<ReleaseCmd>) {
         let alive = self.voices.iter().filter(|v| v.state.env_stage < 6).count();
         let excess = alive.saturating_sub(self.max_voices);
         if excess == 0 {
             return;
         }
-        // release 候选：(envelope, 索引)——索引单调对应创建顺序，并列时最老优先。
-        let mut releasing: Vec<(f32, usize)> = Vec::new();
-        let mut actives: Vec<usize> = Vec::new();
+        // 排序键（kiva 式"过载时牺牲小力度"）：
+        //   ① velocity 升序——**大力度音符永远最后被杀**，绝不被错误切断；
+        //   ② 同力度下 release 中的先杀（尾巴优先于音头）；
+        //   ③ 再按 envelope 升序（更听不见的优先）；
+        //   ④ 并列取最早（创建顺序）。
+        let mut cands: Vec<(u8, bool, f32, usize)> = Vec::with_capacity(alive);
         for (i, v) in self.voices.iter().enumerate() {
             if v.state.env_stage >= 6 {
                 continue;
             }
-            if v.release_pending || v.state.env_stage == 5 {
-                releasing.push((v.state.envelope, i));
-            } else {
-                actives.push(i);
-            }
+            let releasing = v.release_pending || v.state.env_stage == 5;
+            cands.push((v.velocity, !releasing, v.state.envelope, i));
         }
-        releasing.sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        let mut killed = 0usize;
-        for &(_, idx) in releasing.iter().take(excess) {
-            self.kill_voice_for_evict(block_frame, idx, releases);
-            killed += 1;
-        }
-        for &idx in actives.iter().take(excess.saturating_sub(killed)) {
+        cands.sort_unstable_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then(a.1.cmp(&b.1))
+                .then(a.2.total_cmp(&b.2))
+                .then(a.3.cmp(&b.3))
+        });
+        for &(vel, _, _, idx) in cands.iter().take(excess) {
+            let bucket = match vel {
+                0..=31 => &crate::gpu_synth::EVICT_VEL_LO,
+                32..=63 => &crate::gpu_synth::EVICT_VEL_MID,
+                _ => &crate::gpu_synth::EVICT_VEL_HI,
+            };
+            bucket.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             self.kill_voice_for_evict(block_frame, idx, releases);
         }
     }

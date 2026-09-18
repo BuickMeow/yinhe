@@ -10,7 +10,13 @@ use super::types::{
 
 /// GPU voice 槽位上限：voice 状态常驻 GPU（不再每块读回/重传），
 /// 槽位固定分配一次，避免扩容重建导致状态丢失。超限由 GpuSynth 侧压缩/淘汰。
-pub(crate) const MAX_VOICE_SLOTS: u32 = 16384;
+// 容量（partial/状态缓冲按此分配）：24576 × 512 帧 × 8B = 96MB < 512MB limits。
+// 与 max_voices（性能目标）分离：容量决定"能装多少"，max_voices 决定"渲染多少"。
+// 容量（partial/状态缓冲按此分配）：32768 × 512 帧 × 8B = 128MB < 512MB limits。
+// 与 max_voices（性能目标）分离：容量决定"能装多少"，max_voices 决定"渲染多少"。
+// 需求实测 ~2.2 万（音符率 × release 时长）+ 块内墓碑，2.4 万会卡线拒绝新音，
+// 3.2 万有充足余量。
+pub(crate) const MAX_VOICE_SLOTS: u32 = 32768;
 
 /// 采样数据分片写入的每片字节数（16MB）：写一片让路 1ms，避免长段
 /// GPU/内存带宽抢占把 UI 渲染卡住。
