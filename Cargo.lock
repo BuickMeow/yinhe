@@ -7741,6 +7741,7 @@ dependencies = [
  "wgpu",
  "xsynth-core",
  "xsynth-soundfonts",
+ "yinhe-midi",
  "yinhe-mixer",
 ]
 
