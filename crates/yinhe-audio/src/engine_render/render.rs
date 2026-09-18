@@ -49,6 +49,13 @@ impl AudioEngine {
                 if now.saturating_sub(last) >= 1000 {
                     LAST_LOG.store(now, std::sync::atomic::Ordering::Relaxed);
                     let now_sample = self.sample_position;
+                    use yinhe_synth::gpu_synth::{
+                        EVICT_VEL_HI, EVICT_VEL_LO, EVICT_VEL_MID, NOTE_ON_REJECTED, REJECT_VEL_HI,
+                        REJECT_VEL_LO, REJECT_VEL_MID,
+                    };
+                    let ak = |v: &std::sync::atomic::AtomicU64| {
+                        v.load(std::sync::atomic::Ordering::Relaxed)
+                    };
                     let (d, alive, blocks, hist, aged, topk) = match self.gpu_synth.as_ref() {
                         Some(s) => (
                             s.diag_ms,
@@ -62,8 +69,18 @@ impl AudioEngine {
                     };
                     crate::audio_renderer::play_log(&format!(
                         "[gpu] 块超时：{gpu_ms:.2}ms > 预算 {budget_ms:.2}ms（frames={frames}）\
-                         collect={:.1} submit={:.1} harvest={:.1} ring={:.1} out={:.1} compact={:.1} alive={alive} blocks={blocks} 力度[127-112/111-96/95-80/79-64/63-48/47-32/31-16/15-0]={:?} 长寿(>10s)={aged} top键={topk:?}",
-                        d[0], d[1], d[2], d[3], d[4], d[5], hist
+                         collect={:.1} submit={:.1} harvest={:.1} ring={:.1} out={:.1} compact={:.1} alive={alive} blocks={blocks} 力度[127-112/111-96/95-80/79-64/63-48/47-32/31-16/15-0]={:?} 长寿(>10s)={aged} top键={topk:?} 淘汰力度累计[小/中/大]={:?} 累计{} 拒绝[小/中/大]={:?} 累计={}",
+                        d[0],
+                        d[1],
+                        d[2],
+                        d[3],
+                        d[4],
+                        d[5],
+                        hist,
+                        [ak(&EVICT_VEL_LO), ak(&EVICT_VEL_MID), ak(&EVICT_VEL_HI)],
+                        ak(&EVICT_VEL_LO) + ak(&EVICT_VEL_MID) + ak(&EVICT_VEL_HI),
+                        [ak(&REJECT_VEL_LO), ak(&REJECT_VEL_MID), ak(&REJECT_VEL_HI)],
+                        ak(&NOTE_ON_REJECTED)
                     ));
                 }
             }
