@@ -27,6 +27,7 @@ use crate::channel_state::{
 use crate::cpu_synth::voice::{CpuVoice, ENV_RELEASE};
 use crate::gpu_synth::{ControlEvent, SynthEvent};
 use crate::sfz_parser::{self, KeyMapEntry};
+use crate::{DEFAULT_MAX_LAYERS, DEFAULT_MAX_VOICES};
 
 /// 成本分解开关（0=全功能；1=无滤波；2=无采样；3=只遍历）。
 ///
@@ -48,13 +49,10 @@ pub static PROF_REBUILD_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::At
 pub static PROF_ON_SELECT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static PROF_ON_NEW_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static PROF_ON_PUSH_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-/// 默认全局 voice 上限（与 GpuSynth 一致）。
-/// 默认全局 voice 上限（与 GpuSynth 一致）。超限在**块末摊销淘汰**（优先
-/// 已在 release/kill 中的 voice），淘汰走 1ms 淡出（ENV_KILL）听感无咔哒；
-/// 不在 note_on 热路径 O(V) 扫描，块内允许短暂超出（上限是软约束）。
-const DEFAULT_MAX_VOICES: usize = 8192;
-/// 默认每 key layer 上限（对齐 xsynth `VoiceChannelParams.layers`）。
-const DEFAULT_MAX_LAYERS: usize = 4;
+// 默认全局 voice 上限 / layer 上限见 `crate::{DEFAULT_MAX_VOICES,
+// DEFAULT_MAX_LAYERS}`（与 GpuSynth 共用）。超限在**块末摊销淘汰**（优先
+// 已在 release/kill 中的 voice），淘汰走 1ms 淡出（ENV_KILL）听感无咔哒；
+// 不在 note_on 热路径 O(V) 扫描，块内允许短暂超出（上限是软约束）。
 
 /// 纯 CPU 合成器（API 与 GpuSynth 对等）。
 /// 渲染并行线程数：macOS 取**性能核（P 核）数**——实测 M 系列 10 核
@@ -597,22 +595,20 @@ impl CpuSynth {
             if active <= max {
                 return;
             }
-            // 超限（罕见）：找 velocity 最低的候选（含 release 中；并列取最早）
-            let mut victim: Option<u32> = None;
-            let mut victim_vel = u8::MAX;
-            for &i in self.key_indices[slot].iter() {
-                let idx = i as usize;
-                let v = &self.voices[idx];
-                if idx != keep && !v.finished() && !v.is_killed() && v.velocity < victim_vel {
-                    victim_vel = v.velocity;
-                    victim = Some(i);
-                }
-            }
+            // 超限（罕见）：velocity 最低的候选（含 release 中；并列取最早；
+            // 判定与 GPU 共用 channel_state::layer_victim，避免再次分叉）
+            let victim = crate::channel_state::layer_victim(
+                self.key_indices[slot].iter().map(|&i| {
+                    let v = &self.voices[i as usize];
+                    (i as usize, v.velocity, !v.finished() && !v.is_killed())
+                }),
+                keep,
+            );
             let Some(victim) = victim else {
                 return;
             };
             // 1ms 淡出（硬切会产生 click，用户实测）。
-            self.voices[victim as usize].signal_kill(self.sample_rate);
+            self.voices[victim].signal_kill(self.sample_rate);
         }
     }
 

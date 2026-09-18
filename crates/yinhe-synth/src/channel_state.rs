@@ -158,6 +158,19 @@ pub fn dense_channel(channel: usize) -> Option<usize> {
     (channel < MAX_CHANNELS).then_some(channel)
 }
 
+/// layer 超限时选被杀的 voice：候选为 `(索引, velocity, 可杀)`，返回
+/// velocity 最低（并列取最早）且索引不等于 `keep` 的候选。CPU/GPU 共用
+/// （此前两份各自实现，语义分叉过一次：release 中的 voice 是否参与候选）。
+pub(crate) fn layer_victim(
+    candidates: impl Iterator<Item = (usize, u8, bool)>,
+    keep: usize,
+) -> Option<usize> {
+    candidates
+        .filter(|(i, _, killable)| *i != keep && *killable)
+        .min_by_key(|(_, v, _)| *v)
+        .map(|(i, _, _)| i)
+}
+
 /// 扫描一段事件，得出"哪些通道/控制类型已被 chase 覆盖"的位掩码
 /// （CPU/GPU 共用；此前两份逐字重复）。
 pub fn chase_skip(events: &[crate::SynthEvent]) -> ChaseSkip {

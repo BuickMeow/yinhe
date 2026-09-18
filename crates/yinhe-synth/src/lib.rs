@@ -20,6 +20,12 @@ pub mod synth;
 mod voice_params;
 
 pub use channel_state::{ChaseSkip, MAX_CHANNELS};
+
+/// 默认全局 voice 上限（CPU/GPU 共用；淘汰策略各自实现：CPU 块末淡出，
+/// GPU 指令 kill）。
+pub(crate) const DEFAULT_MAX_VOICES: usize = 8192;
+/// 默认每 key layer 上限（对齐 xsynth `VoiceChannelParams.layers`；共用）。
+pub(crate) const DEFAULT_MAX_LAYERS: usize = 4;
 pub use cpu_synth::CpuSynth;
 pub use gpu_synth::{ControlEvent, GpuSynth, SynthEvent, prefetch_key_maps};
 pub use sfz_parser::{

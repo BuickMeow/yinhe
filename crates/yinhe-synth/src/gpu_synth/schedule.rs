@@ -6,7 +6,7 @@ use crate::synth::{ChState, EnvUpdateCmd, GpuVoiceState, ReleaseCmd, SegInfo};
 
 use super::{ControlEvent, GpuSynth, MAX_CHANNELS, SynthEvent};
 use crate::channel_state::ChaseSkip;
-use crate::channel_state::{ChannelState, dense_channel, env_curve_frames, is_env_effect_cc};
+use crate::channel_state::{ChannelState, dense_channel, is_env_effect_cc};
 
 /// 立即结束 voice 的 kill 指令（mode 6），vid 为 voices 列表索引。
 fn kill_cmd(frame: u32, vid: usize) -> ReleaseCmd {
@@ -437,21 +437,14 @@ impl GpuSynth {
                 }
                 // 候选条件与计数条件一致（env_stage < 6）：**包含 release 中的**
                 // voice——release 尾巴被截掉听感无害，这是 xsynth「几乎不丢音」
-                // 的关键（与 CPU enforce_key_layers 同语义）。若排除 release 中
-                // 的，连续同音时 4 层全在 release 会无候选 → 无限堆积 → 列表
-                // 超过 MAX_VOICE_SLOTS 后新 voice 无 GPU 槽位（永不发声）。
-                let victim = self
-                    .voices
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, v)| {
-                        *i != new_index
-                            && v.channel == channel
-                            && v.key == key
-                            && v.state.env_stage < 6
-                    })
-                    .min_by_key(|(_, v)| v.velocity)
-                    .map(|(i, _)| i);
+                // 的关键（判定与 CPU 共用 channel_state::layer_victim）。
+                let victim = crate::channel_state::layer_victim(
+                    self.voices.iter().enumerate().filter_map(|(i, v)| {
+                        (v.channel == channel && v.key == key && v.state.env_stage < 6)
+                            .then_some((i, v.velocity, true))
+                    }),
+                    new_index,
+                );
                 let Some(idx) = victim else {
                     break; // 其余已在 release 中，无候选
                 };
@@ -467,7 +460,11 @@ impl GpuSynth {
         // 首位是墓碑时会误判为「无可淘汰」直接 break，列表持续超限，新 voice
         // 索引越过 MAX_VOICE_SLOTS 后无 GPU 槽位（永不发声）。
         // 只预置 stage 6 + 发 kill 指令，不 remove——本块已生成的指令索引保持稳定。
-        while self.voices.len() > self.max_voices {
+        // 淘汰量按**活跃数（非墓碑）**计算：墓碑只是等 compact 清理的占位，
+        // 不应导致误杀活跃 voice（此前用含墓碑的 len() 与上限比较）。
+        let alive = self.voices.iter().filter(|v| v.state.env_stage < 6).count();
+        let mut excess = alive.saturating_sub(self.max_voices);
+        while excess > 0 {
             let mut victim = None;
             let mut first_active = None;
             for (i, v) in self.voices.iter().enumerate() {
@@ -489,6 +486,7 @@ impl GpuSynth {
             v.state.env_stage = 6;
             v.held_by_damper = false;
             releases.push(kill_cmd(block_frame, idx));
+            excess -= 1;
         }
     }
 
