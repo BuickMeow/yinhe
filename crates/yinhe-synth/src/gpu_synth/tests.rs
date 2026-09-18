@@ -370,6 +370,7 @@ fn test_voice(stage: u32) -> Voice {
         orig_release_frames: 0.0,
         held_by_damper: false,
         release_pending: false,
+        slot_gen: 1,
     }
 }
 
