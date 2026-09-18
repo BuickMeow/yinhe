@@ -115,23 +115,13 @@ impl CpuVoice {
         ch: &ChannelState,
         block_start_abs: u64,
     ) -> Self {
-        // 音色库声像：等功率法则（与 xsynth stereo spawner 一致，左右各 1.42
+        // 展开共享参数（speed/增益/声像/滤波/包络时长；公式唯一实现在
+        // `voice_params::VoiceParams`，CPU/GPU 不再各写一份）。
+        // 声像说明：等功率法则（与 xsynth stereo spawner 一致，左右各 1.42
         // 补偿，中心 pan → 1.0）。xsynth 的净输出另被其通道层无条件 pan=0.5
         // 衰减 √2，我们不做该层（声像保持标准正确）；响度差由输出软限幅兜底。
         // 增益在加载期烘焙（`sfz_parser::pan_gains`），运行期零三角函数。
-        let (pan_l, pan_r) = (info.pan_l, info.pan_r);
-
-        let sr = sample_rate as f32;
-        let orig_attack_frames = info.ampeg_attack * sr;
-        let orig_release_frames = info.ampeg_release * sr;
-        let attack_frames = match ch.env_attack {
-            Some(cc) => env_curve_frames(cc, orig_attack_frames, sample_rate, false),
-            None => orig_attack_frames,
-        };
-        let release_frames = match ch.env_release {
-            Some(cc) => env_curve_frames(cc, orig_release_frames, sample_rate, true),
-            None => orig_release_frames,
-        };
+        let p = crate::voice_params::VoiceParams::from_key_info(info, ch, sample_rate);
 
         let mut voice = Self {
             channel,
@@ -142,35 +132,35 @@ impl CpuVoice {
             released: false,
             killed: false,
             sample: Arc::clone(&info.sample_data),
-            is_stereo: info.is_stereo,
-            interp: info.interp,
+            is_stereo: p.is_stereo,
+            interp: p.interp,
             sample_length: 0,
             sample_offset: info.offset,
-            speed: info.speed_mult * ch.pitch_multiplier(),
-            base_speed: info.speed_mult,
-            base_gain: info.volume,
+            speed: p.speed,
+            base_speed: p.base_speed,
+            base_gain: p.base_gain,
             dup: 1,
             started: false,
             // 锚点 = 起音绝对位置（t = 0 处）；`start_offset` 仅用于跳过起音前帧
             anchor_abs: block_start_abs + u64::from(start_offset),
             anchor_time: 0.0,
             start_offset,
-            envelope: info.ampeg_start,
+            envelope: p.env_start,
             env_stage: 0,
             stage_progress: 0.0,
             env_level: 1.0,
-            sustain_level: info.ampeg_sustain,
-            env_start: info.ampeg_start,
-            decay_start: info.ampeg_start,
-            delay_frames: info.ampeg_delay * sr,
-            attack_frames,
-            hold_frames: info.ampeg_hold * sr,
-            decay_frames: info.ampeg_decay * sr,
-            release_frames,
-            orig_attack_frames,
-            orig_release_frames,
-            pan_l,
-            pan_r,
+            sustain_level: p.sustain_level,
+            env_start: p.env_start,
+            decay_start: p.env_start,
+            delay_frames: p.delay_frames,
+            attack_frames: p.attack_frames,
+            hold_frames: p.hold_frames,
+            decay_frames: p.decay_frames,
+            release_frames: p.release_frames,
+            orig_attack_frames: p.orig_attack_frames,
+            orig_release_frames: p.orig_release_frames,
+            pan_l: p.pan_l,
+            pan_r: p.pan_r,
             cutoff: info.cutoff,
             flt_b0: 0.0,
             flt_b1: 0.0,
@@ -181,9 +171,9 @@ impl CpuVoice {
             flt_s2: 0.0,
             flt_s1r: 0.0,
             flt_s2r: 0.0,
-            loop_mode: info.loop_mode as u32,
-            loop_start: info.loop_start,
-            loop_end: info.loop_end,
+            loop_mode: p.loop_mode,
+            loop_start: p.loop_start,
+            loop_end: p.loop_end,
         };
         // 播放长度（帧）：min(采样帧数, stop) - offset。
         let total = frame_count(info);
@@ -195,7 +185,7 @@ impl CpuVoice {
         };
         // per-voice biquad 系数：加载期烘焙（`sfz_parser::bake_biquad`，
         // RBJ cookbook 与 GPU/xsynth 一致）；cutoff=0 时无滤波器
-        if let Some([b0, b1, b2, a1, a2]) = info.biquad {
+        if let Some([b0, b1, b2, a1, a2]) = p.biquad {
             voice.flt_b0 = b0;
             voice.flt_b1 = b1;
             voice.flt_b2 = b2;

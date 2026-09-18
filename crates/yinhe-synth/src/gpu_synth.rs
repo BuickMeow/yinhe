@@ -1035,6 +1035,10 @@ mod tests {
         v.state.attack_frames = 1000.0;
         v.state.release_frames = 2000.0;
         v.orig_attack_frames = 4410.0;
+        // region 原值：无 CC74 生效时重算应回到它（此前 GPU 的 None 分支
+        // 保留 state 旧值、CPU 回到 orig——统一到 CPU 语义：无 CC = region
+        // 原值，CC 被 121 清除时也应回退到它）
+        v.orig_release_frames = 2000.0;
         synth.voices.push(v);
 
         synth.apply_chase(0, &[ControlEvent::Raw(0x49, 100)]);

@@ -17,6 +17,7 @@ pub mod denormals;
 pub mod gpu_synth;
 pub mod sfz_parser;
 pub mod synth;
+mod voice_params;
 
 pub use channel_state::{ChaseSkip, MAX_CHANNELS};
 pub use cpu_synth::CpuSynth;

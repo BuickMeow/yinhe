@@ -353,9 +353,6 @@ impl GpuSynth {
             return;
         }
 
-        // 音色库声像：加载期烘焙的等功率增益（与 CPU CpuVoice 同源同值，
-        // 不再每 note_on 算 cos/sin）。
-        let (base_pan_l, base_pan_r) = (info.pan_l, info.pan_r);
         // 播放长度：SF2 的 sample_end（xsynth LoopParams.stop）封顶，SFZ 到采样末尾
         let sample_length = match info.stop {
             Some(stop) => stop
@@ -364,74 +361,57 @@ impl GpuSynth {
             None => length.saturating_sub(info.offset),
         };
 
-        // per-voice biquad 系数：加载期烘焙（sfz_parser::bake_biquad，与 CPU
-        // 同源同值），不再每 note_on 调三角函数。cutoff 字段仍写入
-        // GpuVoiceState 供 shader 做"是否滤波"判断。
-        let (flt_b0, flt_b1, flt_b2, flt_a1, flt_a2) = match info.biquad {
-            Some([b0, b1, b2, a1, a2]) => (b0, b1, b2, a1, a2),
-            None => (0.0, 0.0, 0.0, 0.0, 0.0),
-        };
-
-        // CC72/73：用通道当前值缩放 region 原始时长（多次 CC 不累积）
-        let sr = self.sample_rate as f32;
-        let orig_attack_frames = info.ampeg_attack * sr;
-        let orig_release_frames = info.ampeg_release * sr;
-        let attack_frames = match ch.env_attack {
-            Some(cc) => env_curve_frames(cc, orig_attack_frames, self.sample_rate, false),
-            None => orig_attack_frames,
-        };
-        let release_frames = match ch.env_release {
-            Some(cc) => env_curve_frames(cc, orig_release_frames, self.sample_rate, true),
-            None => orig_release_frames,
-        };
+        // 展开共享参数（speed/增益/声像/滤波/包络时长；公式唯一实现在
+        // `voice_params::VoiceParams`，与 CPU 同源同值，CC72/73 修正也在其中）。
+        let p = crate::voice_params::VoiceParams::from_key_info(info, &ch, self.sample_rate);
         let new_index = self.voices.len();
         self.voices.push(Voice {
             key,
             channel,
             velocity: vel,
             end_sample,
-            orig_attack_frames,
-            orig_release_frames,
+            orig_attack_frames: p.orig_attack_frames,
+            orig_release_frames: p.orig_release_frames,
             held_by_damper: false,
             release_pending: false,
             state: GpuVoiceState {
                 sample_offset: offset + info.offset,
                 sample_length,
-                speed: info.speed_mult * ch.pitch_multiplier(),
-                base_speed: info.speed_mult,
-                base_gain: info.volume,
+                speed: p.speed,
+                base_speed: p.base_speed,
+                base_gain: p.base_gain,
                 time: 0.0,
                 start_offset: block_frame,
                 // dense 通道号（note_on 已过滤 < MAX_CHANNELS）
                 channel: channel as u32,
-                envelope: info.ampeg_start,
+                envelope: p.env_start,
                 env_stage: 0,
                 stage_progress: 0.0,
                 // envelope 归一化 0..1，增益由 gain 单独乘（xsynth 语义）
                 env_level: 1.0,
-                sustain_level: info.ampeg_sustain,
-                env_start: info.ampeg_start,
-                decay_start: info.ampeg_start,
-                delay_frames: info.ampeg_delay * sr,
-                attack_frames,
-                hold_frames: info.ampeg_hold * sr,
-                decay_frames: info.ampeg_decay * sr,
-                release_frames,
-                base_pan_l,
-                base_pan_r,
-                loop_start: info.loop_start,
-                loop_end: info.loop_end,
-                loop_mode: info.loop_mode as u32,
-                is_stereo: info.is_stereo as u32,
-                interp: info.interp,
+                sustain_level: p.sustain_level,
+                env_start: p.env_start,
+                decay_start: p.env_start,
+                delay_frames: p.delay_frames,
+                attack_frames: p.attack_frames,
+                hold_frames: p.hold_frames,
+                decay_frames: p.decay_frames,
+                release_frames: p.release_frames,
+                base_pan_l: p.pan_l,
+                base_pan_r: p.pan_r,
+                loop_start: p.loop_start,
+                loop_end: p.loop_end,
+                loop_mode: p.loop_mode,
+                is_stereo: p.is_stereo as u32,
+                interp: p.interp,
                 cutoff: info.cutoff,
                 resonance: info.resonance,
                 filter_type: crate::sfz_parser::filter_type_code(info.filter_type),
-                flt_b0,
-                flt_b1,
-                flt_b2,
-                flt_a1,
-                flt_a2,
+                flt_b0: p.biquad.map(|b| b[0]).unwrap_or(0.0),
+                flt_b1: p.biquad.map(|b| b[1]).unwrap_or(0.0),
+                flt_b2: p.biquad.map(|b| b[2]).unwrap_or(0.0),
+                flt_a1: p.biquad.map(|b| b[3]).unwrap_or(0.0),
+                flt_a2: p.biquad.map(|b| b[4]).unwrap_or(0.0),
                 flt_x1: 0.0,
                 flt_x2: 0.0,
                 flt_y1: 0.0,
@@ -549,15 +529,13 @@ impl GpuSynth {
 
     /// CC72/73 重算单个 voice 的 attack/release 帧数（基于 region 原始值，多次 CC 不累积）。
     fn env_frames_for(ch: &ChannelState, v: &Voice, sample_rate: u32) -> (f32, f32) {
-        let attack_frames = match ch.env_attack {
-            Some(cc) => env_curve_frames(cc, v.orig_attack_frames, sample_rate, false),
-            None => v.state.attack_frames,
-        };
-        let release_frames = match ch.env_release {
-            Some(cc) => env_curve_frames(cc, v.orig_release_frames, sample_rate, true),
-            None => v.state.release_frames,
-        };
-        (attack_frames, release_frames)
+        // 共享实现：voice_params::env_frames_for（此前 CPU/GPU 各一份）
+        crate::voice_params::env_frames_for(
+            ch,
+            v.orig_attack_frames,
+            v.orig_release_frames,
+            sample_rate,
+        )
     }
 
     /// 计算 seek 后已处理的控制事件跳过掩码（事件区间 [chase_base, event_cursor)）。
