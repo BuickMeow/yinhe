@@ -5023,7 +5023,7 @@ fn diag_ouranos_bar157_dropout() {
             .find(|e| matches!(e, yinhe_synth::SynthEvent::NoteOn { .. }))
         {
             let note_sample = n.sample();
-            let single = vec![n.clone()];
+            let single = vec![*n];
             let mut g1 = yinhe_synth::GpuSynth::new_default(sr).unwrap();
             g1.load_dense_soundfonts(0, std::slice::from_ref(&sfz_path))
                 .unwrap();
