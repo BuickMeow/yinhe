@@ -92,10 +92,21 @@ impl GpuSynth {
         !self.voices.is_empty() || self.event_cursor < self.events.len()
     }
 
-    /// 压缩预判：free list 让结束槽位即时复用，仅在**没有任何空闲槽位且已达
-    /// 容量**时兜底压缩（原"墓碑过半"每块触发，每次排空流水线等待在途块）。
+    /// 压缩预判：free list 复用 + 尾部截断后，仅在**墓碑过半**（索引碎片化，
+    /// 无法靠截断收回）或**无空闲槽位且已达容量**时兜底压缩（compact 需排空
+    /// 流水线，应低频）。
     fn compact_needed(&self) -> bool {
-        self.free_slots.is_empty() && self.voices.len() >= MAX_VOICE_SLOTS as usize
+        if self.free_slots.is_empty() && self.voices.len() >= MAX_VOICE_SLOTS as usize {
+            return true;
+        }
+        !self.voices.is_empty()
+            && self
+                .voices
+                .iter()
+                .filter(|v| v.state.env_stage >= 6)
+                .count()
+                * 2
+                >= self.voices.len()
     }
 
     /// 压缩：清理已结束 voice（tombstone）并全量重传槽位状态。
@@ -250,6 +261,19 @@ impl GpuSynth {
                 self.free_slots.push(i as u32);
             }
         }
+        // 尾部截断：末尾连续墓碑直接 pop（索引不变、无需重传 GPU 状态）。
+        // 若不截断，`voices.len()`（= 提交给 shader 的 voice_count）会停在
+        // 高水位，pass2 每块仍扫全部槽位——实测 alive 4300 时 harvest 仍 92ms。
+        while let Some(v) = self.voices.last() {
+            if v.state.env_stage < 6 {
+                break;
+            }
+            self.voices.pop();
+            self.freed_flags.pop();
+        }
+        // 被 pop 掉的槽位不在 free list 中的需补入（它们已不在 voices 里）
+        self.free_slots
+            .retain(|&s| (s as usize) < self.voices.len());
         n
     }
 
