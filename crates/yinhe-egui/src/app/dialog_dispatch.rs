@@ -363,16 +363,31 @@ impl App {
         let ctx = ui.ctx().clone();
 
         // ── Unsaved changes confirmation ──
-        let action =
-            crate::dialogs::unsaved::show_viewport(&ctx, &self.pending_unsaved, &self.save_rx);
+        let action = crate::dialogs::unsaved::show_viewport(
+            &ctx,
+            &self.pending_unsaved,
+            self.save_rx.is_some(),
+        );
         match action {
             crate::dialogs::unsaved::Action::Save => {
-                if let Some(idx) = self.workspace.active_doc {
-                    if let Some(path) = self.workspace.documents[idx].file_path.clone() {
-                        self.save_project_async(idx, path);
-                    } else {
-                        self.save_as_dialog();
-                    }
+                // 保存**确认弹窗的目标文档**（关非 active 标签页时此前会保存
+                // 错文档并把目标直接关掉）；无目标信息时回退 active。
+                let idx = match &self.pending_unsaved {
+                    Some(crate::app::PendingFileAction::CloseDocument(i)) => *i,
+                    _ => match self.workspace.active_doc {
+                        Some(i) => i,
+                        None => return,
+                    },
+                };
+                if let Some(path) = self
+                    .workspace
+                    .documents
+                    .get(idx)
+                    .and_then(|d| d.file_path.clone())
+                {
+                    self.save_project_async(idx, path);
+                } else {
+                    self.save_as_dialog_for(idx);
                 }
             }
             crate::dialogs::unsaved::Action::Discard => {

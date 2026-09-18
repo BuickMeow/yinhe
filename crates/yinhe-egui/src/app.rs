@@ -46,6 +46,9 @@ pub(crate) struct PasteChain {
     offset: u32,
 }
 
+/// 异步保存结果通道：`(目标文档 idx, 发起时撤销栈长度, 路径, 结果)`。
+pub(crate) type SaveResultRx = mpsc::Receiver<(usize, usize, String, Result<(), String>)>;
+
 pub struct App {
     // ── Pianoroll (shared GPU resources + global view state) ──
     pub(crate) render_ctx: RenderContext,
@@ -85,7 +88,8 @@ pub struct App {
     pub(crate) transport_panel_width: f32,
     pub(crate) file_loader: FileLoader,
     // ── Async save ──
-    pub(crate) save_rx: Option<mpsc::Receiver<()>>,
+    /// 异步保存结果：`(目标文档 idx, 发起时撤销栈长度, 路径, 结果)`。
+    pub(crate) save_rx: Option<SaveResultRx>,
     /// 保存进度（阶段 + 阶段内 0.0~1.0），由保存线程经 channel 推送、
     /// poll 写入共享状态，toast 渲染时 pull 读取。
     pub(crate) save_progress: crate::dialogs::save_overlay::SharedSaveProgress,

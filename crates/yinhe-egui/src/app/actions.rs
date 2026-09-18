@@ -822,6 +822,13 @@ impl App {
     pub(crate) fn save_project_async(&mut self, idx: usize, path: String) {
         let snap = self.take_save_snapshot(idx);
         let path_for_thread = path.clone();
+        // 发起时的撤销栈长度快照：保存期间的新编辑不应被误标为已保存
+        let saved_past_len = self
+            .workspace
+            .documents
+            .get(idx)
+            .map(|d| d.undo_past_len())
+            .unwrap_or(0);
 
         let (tx, rx) = mpsc::channel();
         let (progress_tx, progress_rx) = mpsc::channel();
@@ -836,22 +843,30 @@ impl App {
                     let _ = progress_tx.send(p);
                 },
             );
-            if let Err(e) = result {
+            let result = result.map_err(|e| e.to_string());
+            if let Err(e) = &result {
                 tracing::error!("Failed to save project: {}", e);
             }
-            let _ = tx.send(());
+            // 回传 (目标文档, 版本快照, 路径, 结果)：失败不得标记已保存/
+            // 不得改路径/不得执行延迟动作（此前失败被当成功，可能丢数据）。
+            let _ = tx.send((idx, saved_past_len, path_for_thread, result));
         });
 
-        if let Some(doc) = self.workspace.documents.get_mut(idx) {
-            doc.file_path = Some(path);
-        }
         self.save_rx = Some(rx);
         self.save_progress_rx = Some(progress_rx);
     }
 
     pub(crate) fn save_as_dialog(&mut self) {
-        let default_name = if let Some(idx) = self.workspace.active_doc {
-            format!("{}.yin", self.workspace.documents[idx].file_name)
+        if let Some(idx) = self.workspace.active_doc {
+            self.save_as_dialog_for(idx);
+        }
+    }
+
+    /// 另存为（指定文档；未保存确认弹窗的目标可能是非 active 文档）。
+    /// 路径/文件名在**保存成功后**才写入（见 poll 的保存完成处理）。
+    pub(crate) fn save_as_dialog_for(&mut self, idx: usize) {
+        let default_name = if let Some(doc) = self.workspace.documents.get(idx) {
+            format!("{}.yin", doc.file_name)
         } else {
             t!("file_dialog.untitled").to_string()
         };
@@ -865,18 +880,7 @@ impl App {
             if !path_str.ends_with(".yin") {
                 path_str.push_str(".yin");
             }
-            if let Some(idx) = self.workspace.active_doc {
-                let path2 = path_str.clone();
-                self.save_project_async(idx, path2);
-                // Update file_name
-                if let Some(doc) = self.workspace.documents.get_mut(idx) {
-                    doc.file_name = path
-                        .file_stem()
-                        .and_then(|n| n.to_str())
-                        .map(|s| s.to_string())
-                        .unwrap_or_default();
-                }
-            }
+            self.save_project_async(idx, path_str);
         }
     }
 

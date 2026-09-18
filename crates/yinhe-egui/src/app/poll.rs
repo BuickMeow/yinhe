@@ -207,41 +207,83 @@ impl App {
         }
 
         // Poll async save completion
-        if let Some(rx) = &self.save_rx
-            && rx.try_recv().is_ok()
-        {
-            self.save_rx = None;
-            self.save_progress_rx = None;
-            if let Ok(mut s) = self.save_progress.lock() {
-                *s = None;
-            }
-            // Mark the active document as saved
-            let saved_name = if let Some(idx) = self.workspace.active_doc {
-                let doc_id = self.workspace.documents[idx].doc_id;
-                self.workspace.documents[idx].mark_saved();
-                // 已正常保存：该文档的崩溃备份可删
-                self.discard_autosave_for(doc_id);
-                // 保存成功 → 记录到「最近修改的文件」
-                if let Some(path) = self.workspace.documents[idx].file_path.clone()
-                    && self.audio_settings.push_recent_file(&path)
-                {
-                    self.audio_settings.save();
+        if let Some(rx) = self.save_rx.take() {
+            match rx.try_recv() {
+                Ok((idx, past_len, path, result)) => {
+                    self.save_rx = None;
+                    self.save_progress_rx = None;
+                    if let Ok(mut s) = self.save_progress.lock() {
+                        *s = None;
+                    }
+                    match result {
+                        Ok(()) => {
+                            // 成功：写入路径/文件名 + 按**发起时版本**标记已保存
+                            // （保存期间的新编辑保持 dirty，不会丢）
+                            let (doc_id, saved_name) =
+                                if let Some(doc) = self.workspace.documents.get_mut(idx) {
+                                    doc.file_path = Some(path.clone());
+                                    if let Some(stem) = std::path::Path::new(&path)
+                                        .file_stem()
+                                        .and_then(|n| n.to_str())
+                                    {
+                                        doc.file_name = stem.to_string();
+                                    }
+                                    doc.mark_saved_at(past_len);
+                                    (doc.doc_id, doc.file_name.clone())
+                                } else {
+                                    (0, String::new())
+                                };
+                            if doc_id != 0 {
+                                self.discard_autosave_for(doc_id);
+                            }
+                            if self.audio_settings.push_recent_file(&path) {
+                                self.audio_settings.save();
+                            }
+                            self.notifications.finish_progress(
+                                crate::widgets::toast::SAVE_PROGRESS_ID,
+                                crate::widgets::toast::ProgressOutcome::Completed,
+                                t!("toast.save_done").to_string(),
+                                saved_name,
+                                None,
+                            );
+                            // 保存成功才执行延迟动作（关闭/退出等）
+                            if self.pending_unsaved.is_some() {
+                                let ctx = egui::Context::default();
+                                self.execute_pending_file_action(&ctx);
+                            }
+                        }
+                        Err(e) => {
+                            // 失败：不标记已保存、不改路径、不执行延迟动作，
+                            // 保留确认弹窗让用户重试/取消（此前失败被当成功，
+                            // 可能出现「假保存后退出」丢数据）。
+                            self.notifications.finish_progress(
+                                crate::widgets::toast::SAVE_PROGRESS_ID,
+                                crate::widgets::toast::ProgressOutcome::Failed,
+                                t!("toast.save_failed").to_string(),
+                                e,
+                                None,
+                            );
+                        }
+                    }
                 }
-                Some(self.workspace.documents[idx].file_name.clone())
-            } else {
-                None
-            };
-            self.notifications.finish_progress(
-                crate::widgets::toast::SAVE_PROGRESS_ID,
-                crate::widgets::toast::ProgressOutcome::Completed,
-                t!("toast.save_done").to_string(),
-                saved_name.unwrap_or_default(),
-                None,
-            );
-            // If there's a deferred action, execute it now
-            if self.pending_unsaved.is_some() {
-                let ctx = egui::Context::default();
-                self.execute_pending_file_action(&ctx);
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    // 还在跑：放回状态，下帧再查
+                    self.save_rx = Some(rx);
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.save_rx = None;
+                    self.save_progress_rx = None;
+                    if let Ok(mut s) = self.save_progress.lock() {
+                        *s = None;
+                    }
+                    self.notifications.finish_progress(
+                        crate::widgets::toast::SAVE_PROGRESS_ID,
+                        crate::widgets::toast::ProgressOutcome::Failed,
+                        t!("toast.save_failed").to_string(),
+                        String::new(),
+                        None,
+                    );
+                }
             }
         } else if let Some(rx) = &self.save_progress_rx {
             while let Ok(p) = rx.try_recv() {

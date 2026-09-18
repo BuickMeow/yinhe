@@ -13,9 +13,9 @@ pub(crate) enum Action {
 pub(crate) fn show_viewport(
     ctx: &egui::Context,
     pending_unsaved: &Option<PendingFileAction>,
-    save_rx: &Option<std::sync::mpsc::Receiver<()>>,
+    saving: bool,
 ) -> Action {
-    if pending_unsaved.is_none() || save_rx.is_some() {
+    if pending_unsaved.is_none() || saving {
         return Action::None;
     }
     let viewport_id = egui::ViewportId::from_hash_of("unsaved_dialog");
@@ -95,6 +95,11 @@ pub(crate) fn show_viewport(
                         });
                 });
             if close {
+                // 自绘关闭（X）等同取消：否则仅隐藏、pending 未清，下一帧会
+                // 再次弹出（非 macOS 用户无法关掉对话框）。
+                if action_cb.borrow().is_none() {
+                    *action_cb.borrow_mut() = Some(Action::Cancel);
+                }
                 vctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
             }
         },

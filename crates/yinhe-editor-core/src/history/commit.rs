@@ -77,7 +77,13 @@ impl UndoStack {
 
     /// Mark the current state as saved (called after a successful save).
     pub fn mark_saved(&mut self) {
-        self.saved_past_len = self.past.len();
+        self.mark_saved_at(self.past.len());
+    }
+
+    /// 按**指定撤销栈长度**标记已保存（异步保存用：发起保存时的长度快照，
+    /// 保存期间的新编辑不应被误标为已保存）。
+    pub fn mark_saved_at(&mut self, past_len: usize) {
+        self.saved_past_len = past_len;
         self.has_saved_base = true;
     }
 

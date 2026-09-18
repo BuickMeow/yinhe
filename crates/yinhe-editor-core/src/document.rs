@@ -90,6 +90,18 @@ impl Document {
         self.mixer_dirty = false;
     }
 
+    /// 异步保存完成：按发起保存时的撤销栈长度标记（保存期间的新编辑保持
+    /// dirty）。
+    pub fn mark_saved_at(&mut self, past_len: usize) {
+        self.history.mark_saved_at(past_len);
+        self.mixer_dirty = false;
+    }
+
+    /// 当前撤销栈长度（异步保存的版本快照用）。
+    pub fn undo_past_len(&self) -> usize {
+        self.history.past_len()
+    }
+
     /// 修改混音台参数的入口（MIX 界面）：写入并标脏，同时由调用方同步音频引擎。
     pub fn mixer_mut(&mut self) -> &mut MixerParams {
         self.mixer_dirty = true;
