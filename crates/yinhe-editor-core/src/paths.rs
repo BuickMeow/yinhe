@@ -56,3 +56,11 @@ pub fn app_config_file() -> PathBuf {
     std::fs::create_dir_all(&dir).ok();
     dir.join("yinhe_settings.json")
 }
+
+/// 插件扫描缓存（bundle 指纹 + 上次扫描元数据）：mtime/size 未变的 bundle
+/// 启动时直接复用，不再起子进程重复加载。
+pub fn plugin_scan_cache_file() -> PathBuf {
+    let dir = app_config_dir();
+    std::fs::create_dir_all(&dir).ok();
+    dir.join("yinhe_plugin_scan_cache.json")
+}

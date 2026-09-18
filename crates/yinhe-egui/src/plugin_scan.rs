@@ -29,6 +29,8 @@ const BEGIN: &str = "###YINHE_SCAN_BEGIN###";
 const END: &str = "###YINHE_SCAN_END###";
 /// 并发扫描 worker 数（每个 worker 串行起子进程）。
 const SCAN_WORKERS: usize = 4;
+/// 单个 bundle 扫描子进程超时：挂死/无响应的插件此前会让启动页永不就绪。
+const SCAN_JOB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// 一个待扫描的 bundle。
 #[derive(Clone)]
@@ -65,6 +67,54 @@ pub(crate) enum ScanProgress {
     Batch(Vec<PluginEntry>),
     /// 全部完成。
     Finished { errors: usize },
+}
+
+/// 扫描缓存：每个 bundle 的文件指纹（mtime/size）+ 上次扫描的条目。
+/// 指纹未变的 bundle 启动时直接复用（"加载过一次就不再重复加载"），
+/// 只对新增/更新的 bundle 起子进程。
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+pub(crate) struct ScanCache {
+    pub bundles: Vec<CachedBundle>,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct CachedBundle {
+    pub path: String,
+    pub mtime_secs: u64,
+    pub size: u64,
+    pub entries: Vec<PluginEntry>,
+}
+
+/// bundle 指纹（mtime 秒 + 文件大小）；读元数据失败返回 None（视为需重扫）。
+fn bundle_fingerprint(path: &Path) -> Option<(u64, u64)> {
+    let meta = std::fs::metadata(path).ok()?;
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    Some((mtime, meta.len()))
+}
+
+fn load_scan_cache() -> ScanCache {
+    let path = yinhe_editor_core::paths::plugin_scan_cache_file();
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_scan_cache(cache: &ScanCache) {
+    let path = yinhe_editor_core::paths::plugin_scan_cache_file();
+    match serde_json::to_string(cache) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(&path, json) {
+                tracing::warn!("写入插件扫描缓存失败: {e}");
+            }
+        }
+        Err(e) => tracing::warn!("序列化插件扫描缓存失败: {e}"),
+    }
 }
 
 /// 子进程入口：扫描单个 bundle 并输出 JSON（main 在 GUI 初始化前调用）。
@@ -140,10 +190,17 @@ pub(crate) fn spawn_scan_worker() -> Option<Receiver<ScanProgress>> {
     let spawn_result = std::thread::Builder::new()
         .name("plugin-scan".into())
         .spawn(move || {
-            let jobs: Vec<ScanJob> = collect_jobs();
+            let cache = load_scan_cache();
+            let (jobs, reused_entries, reused_bundles) = collect_jobs(&cache);
+            // 缓存命中的条目先发（UI 立即有完整列表，只等新增/更新的 bundle）
+            if !reused_entries.is_empty() {
+                let _ = tx.send(ScanProgress::Batch(reused_entries));
+            }
             let total = jobs.len();
             let errors = Arc::new(AtomicUsize::new(0));
             let queue = Arc::new(std::sync::Mutex::new(jobs));
+            let scanned_bundles: Arc<std::sync::Mutex<Vec<CachedBundle>>> =
+                Arc::new(std::sync::Mutex::new(reused_bundles));
 
             let worker_count = SCAN_WORKERS.min(total.max(1));
             let mut handles = Vec::new();
@@ -151,6 +208,7 @@ pub(crate) fn spawn_scan_worker() -> Option<Receiver<ScanProgress>> {
                 let queue = Arc::clone(&queue);
                 let tx = tx.clone();
                 let errors = Arc::clone(&errors);
+                let scanned_bundles = Arc::clone(&scanned_bundles);
                 handles.push(std::thread::spawn(move || {
                     loop {
                         let job = {
@@ -161,6 +219,20 @@ pub(crate) fn spawn_scan_worker() -> Option<Receiver<ScanProgress>> {
                         let (entries, failed) = run_scan_job(&job);
                         if failed > 0 {
                             errors.fetch_add(1, Ordering::Relaxed);
+                        } else {
+                            // 只缓存成功扫描：失败的 bundle 每次重试（插件修复后
+                            // 能自愈），不固化失败结果。
+                            if let Some((mtime, size)) = bundle_fingerprint(job.path()) {
+                                let bundle = CachedBundle {
+                                    path: job.path().to_string_lossy().into_owned(),
+                                    mtime_secs: mtime,
+                                    size,
+                                    entries: entries.clone(),
+                                };
+                                let mut all =
+                                    scanned_bundles.lock().unwrap_or_else(|e| e.into_inner());
+                                all.push(bundle);
+                            }
                         }
                         let _ = tx.send(ScanProgress::Batch(entries));
                     }
@@ -168,6 +240,13 @@ pub(crate) fn spawn_scan_worker() -> Option<Receiver<ScanProgress>> {
             }
             for handle in handles {
                 let _ = handle.join();
+            }
+            // 写回缓存（命中 + 新扫的成功项）
+            {
+                let all = scanned_bundles.lock().unwrap_or_else(|e| e.into_inner());
+                save_scan_cache(&ScanCache {
+                    bundles: all.clone(),
+                });
             }
             let _ = tx.send(ScanProgress::Finished {
                 errors: errors.load(Ordering::Relaxed),
@@ -182,16 +261,44 @@ pub(crate) fn spawn_scan_worker() -> Option<Receiver<ScanProgress>> {
     }
 }
 
-/// 收集全部待扫描 bundle（纯文件系统，不加载）。
-fn collect_jobs() -> Vec<ScanJob> {
-    let mut jobs: Vec<ScanJob> = Vec::new();
+/// 收集待扫描 bundle（纯文件系统）：缓存指纹（mtime/size）命中的 bundle
+/// 直接复用条目、不重扫。返回 `(待扫任务, 复用的条目, 复用的缓存项)`。
+fn collect_jobs(cache: &ScanCache) -> (Vec<ScanJob>, Vec<PluginEntry>, Vec<CachedBundle>) {
+    let mut all: Vec<(PluginFormat, PathBuf)> = Vec::new();
     for path in yinhe_clap::scan::collect_bundles(&yinhe_clap::scan::default_plugin_dirs()) {
-        jobs.push(ScanJob::Clap(path));
+        all.push((PluginFormat::Clap, path));
     }
     for path in yinhe_vst3::scan::collect_bundle_paths(&yinhe_vst3::scan::default_plugin_dirs()) {
-        jobs.push(ScanJob::Vst3(path));
+        all.push((PluginFormat::Vst3, path));
     }
-    jobs
+
+    let mut jobs: Vec<ScanJob> = Vec::new();
+    let mut reused_entries: Vec<PluginEntry> = Vec::new();
+    let mut reused_bundles: Vec<CachedBundle> = Vec::new();
+    for (format, path) in all {
+        let path_str = path.to_string_lossy().into_owned();
+        let hit = bundle_fingerprint(&path).and_then(|(mtime, size)| {
+            cache
+                .bundles
+                .iter()
+                .find(|b| b.path == path_str && b.mtime_secs == mtime && b.size == size)
+        });
+        match hit {
+            Some(b) => {
+                reused_entries.extend(b.entries.iter().cloned());
+                reused_bundles.push(b.clone());
+            }
+            None => {
+                let job = match format {
+                    PluginFormat::Clap => ScanJob::Clap(path),
+                    PluginFormat::Vst3 => ScanJob::Vst3(path),
+                    PluginFormat::Builtin => continue,
+                };
+                jobs.push(job);
+            }
+        }
+    }
+    (jobs, reused_entries, reused_bundles)
 }
 
 /// 跑一个 bundle 的扫描子进程；返回 `(条目, 失败数)`。
@@ -206,27 +313,83 @@ fn run_scan_job(job: &ScanJob) -> (Vec<PluginEntry>, usize) {
             1,
         );
     };
-    let output = std::process::Command::new(exe)
+    // spawn + 轮询（带超时）：插件挂死时 kill，绝不让扫描永久卡住。
+    // stdout 用独立线程读取，避免插件大量噪声输出塞满管道导致死锁。
+    let mut child = match std::process::Command::new(exe)
         .arg(SCAN_CHILD_ARG)
         .arg(job.format_arg())
         .arg(job.path())
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
-        .output();
-    match output {
-        Ok(out) if out.status.success() => match parse_scan_output(&out.stdout) {
-            Ok(result) => result,
-            Err(e) => (vec![PluginEntry::failed(job.format(), job.path(), e)], 1),
-        },
-        Ok(out) => (
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                vec![PluginEntry::failed(
+                    job.format(),
+                    job.path(),
+                    format!("启动扫描子进程失败: {e}"),
+                )],
+                1,
+            );
+        }
+    };
+    let mut stdout = child.stdout.take();
+    let reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(s) = stdout.as_mut() {
+            use std::io::Read;
+            let _ = s.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let deadline = std::time::Instant::now() + SCAN_JOB_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break Some(st),
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return (
+                    vec![PluginEntry::failed(
+                        job.format(),
+                        job.path(),
+                        format!("等待扫描子进程失败: {e}"),
+                    )],
+                    1,
+                );
+            }
+        }
+    };
+    let bytes = reader.join().unwrap_or_default();
+    let Some(status) = status else {
+        return (
+            vec![PluginEntry::failed(
+                job.format(),
+                job.path(),
+                format!("扫描超时（>{:?}，插件可能挂死）", SCAN_JOB_TIMEOUT),
+            )],
+            1,
+        );
+    };
+    if !status.success() {
+        return (
             vec![PluginEntry::failed(
                 job.format(),
                 job.path(),
                 format!(
-                    "扫描子进程异常退出（{}{}），插件可能已崩溃",
-                    out.status,
-                    if out.status.code().is_none() {
+                    "扫描子进程异常退出（{status}{}），插件可能已崩溃",
+                    if status.code().is_none() {
                         " / 信号终止"
                     } else {
                         ""
@@ -234,15 +397,11 @@ fn run_scan_job(job: &ScanJob) -> (Vec<PluginEntry>, usize) {
                 ),
             )],
             1,
-        ),
-        Err(e) => (
-            vec![PluginEntry::failed(
-                job.format(),
-                job.path(),
-                format!("启动扫描子进程失败: {e}"),
-            )],
-            1,
-        ),
+        );
+    }
+    match parse_scan_output(&bytes) {
+        Ok(result) => result,
+        Err(e) => (vec![PluginEntry::failed(job.format(), job.path(), e)], 1),
     }
 }
 

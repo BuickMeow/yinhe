@@ -49,18 +49,18 @@ pub(crate) struct StartupShared {
 ///
 /// - 音频引擎 spawn 失败直接放行（主界面会显示错误），避免卡死在启动页；
 /// - 文件加载 / 待激活文档未完成前不放行（经命令行打开的工程也在启动页里加载完）；
-/// - 其余要求音频就绪且插件扫描完成。
+/// - 其余只要求音频就绪。**插件扫描不再阻塞启动**：它只服务插件选择器，
+///   后台完成后 UI 自动刷新（插件多/坏插件不再拖住主界面与启动耗时）。
 fn startup_ready(
     audio_ready: bool,
     audio_failed: bool,
-    scan_done: bool,
     file_loading: bool,
     pending_doc: bool,
 ) -> bool {
     if audio_failed {
         return true;
     }
-    !file_loading && !pending_doc && audio_ready && scan_done
+    !file_loading && !pending_doc && audio_ready
 }
 
 impl App {
@@ -120,12 +120,10 @@ impl App {
             .as_ref()
             .is_some_and(|a| a.handle.audio_ready());
         let audio_failed = self.audio_state.spawn_error.is_some();
-        let scan_done = !self.mix.scan_in_progress && self.mix.scanned.is_some();
 
         if startup_ready(
             audio_ready,
             audio_failed,
-            scan_done,
             self.file_loader.is_loading(),
             self.audio_state.pending_doc_activate.is_some(),
         ) {
@@ -285,23 +283,24 @@ fn draw_splash(ui: &mut egui::Ui, shared: &StartupShared) {
 mod tests {
     use super::startup_ready;
 
+    /// 插件扫描不再阻塞启动：未扫描完成也应放行（旧行为会卡在启动页，
+    /// 坏插件子进程挂死时永不进入主界面）。
     #[test]
-    fn startup_ready_requires_audio_and_scan() {
-        assert!(startup_ready(true, false, true, false, false));
-        assert!(!startup_ready(false, false, true, false, false));
-        assert!(!startup_ready(true, false, false, false, false));
+    fn startup_ready_requires_audio_only() {
+        assert!(startup_ready(true, false, false, false));
+        assert!(!startup_ready(false, false, false, false));
     }
 
     #[test]
     fn startup_ready_waits_for_loading_and_pending_doc() {
-        assert!(!startup_ready(true, false, true, true, false));
-        assert!(!startup_ready(true, false, true, false, true));
+        assert!(!startup_ready(true, false, true, false));
+        assert!(!startup_ready(true, false, false, true));
     }
 
     #[test]
     fn startup_ready_releases_on_audio_failure() {
         // spawn 失败必须放行，否则启动页永远等不到 audio_ready。
-        assert!(startup_ready(false, true, false, false, false));
-        assert!(startup_ready(false, true, false, true, true));
+        assert!(startup_ready(false, true, false, false));
+        assert!(startup_ready(false, true, true, true));
     }
 }
