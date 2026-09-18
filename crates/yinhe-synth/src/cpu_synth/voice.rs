@@ -1,11 +1,11 @@
 //! CPU voice：采样播放（loop/插值）+ 7 阶段包络 + per-voice biquad。
 //!
 //! 逐帧语义与 WGSL shader（`shaders/voice_render.wgsl`）逐行对齐：
-//! - 采样位置用**解析式** `t = time + (fi - start_offset) * speed`，
+//! - 采样位置用**锚点解析式** `t = anchor_time + (绝对位置 − anchor_abs) × speed`，
 //!   段边界换速时按 WGSL 公式校正 `time` 保持位置连续；
 //! - 循环回绕 `idx > loop_end → (idx - end - 1) % len + start`（与 xsynth 一致）；
 //! - 包络 7 阶段：Attack 线性、Decay/Release 指数 `(1-t)^8`；
-//! - biquad DirectForm1，单声道样本右声道复用左声道输出；
+//! - biquad **Transposed DirectForm2**（状态 2 个/声道），单声道样本右声道复用左声道输出；
 //! - 块末 `time += speed * act_frames` 并回绕（避免长曲 f32 精度漂移）。
 //!
 //! 与 GPU 的差异（有意）：`time` 用 f64（对齐 xsynth 的 `position: f64`，
@@ -52,7 +52,13 @@ pub(super) struct CpuVoice {
     /// 完全重复音符的合批引用数：N 个同参数 NoteOn 合成一个 voice，
     /// note_off 逐个递减，归 1 才真正释放。有效增益 = base_gain × dup。
     pub(super) dup: u32,
-    time: f64,
+    /// 已开始渲染（合批判定：同帧未开始才能合并；替代旧的 time != 0 检查）。
+    started: bool,
+    /// 位置锚点：`anchor_abs`（绝对 sample，锚定时的块首）处采样进度为
+    /// `anchor_time`。渲染时 `t = anchor_time + (当前绝对位置 − anchor_abs) ×
+    /// speed` 解析计算——块末不再需要 O(V) 的 time 累加/回绕（WGSL 同语义）。
+    anchor_abs: u64,
+    anchor_time: f64,
     /// 块内起始帧（NoteOn 所在帧；块末清零）。
     start_offset: u32,
 
@@ -76,21 +82,17 @@ pub(super) struct CpuVoice {
     pan_l: f32,
     pan_r: f32,
 
-    // per-voice biquad（cutoff > 0 启用）
+    // per-voice biquad（Transposed DirectForm2；cutoff > 0 启用，状态 2 个/声道）
     cutoff: f32,
     flt_b0: f32,
     flt_b1: f32,
     flt_b2: f32,
     flt_a1: f32,
     flt_a2: f32,
-    flt_x1: f32,
-    flt_x2: f32,
-    flt_y1: f32,
-    flt_y2: f32,
-    flt_x1r: f32,
-    flt_x2r: f32,
-    flt_y1r: f32,
-    flt_y2r: f32,
+    flt_s1: f32,
+    flt_s2: f32,
+    flt_s1r: f32,
+    flt_s2r: f32,
 
     // 循环
     loop_mode: u32,
@@ -111,6 +113,7 @@ impl CpuVoice {
         start_offset: u32,
         sample_rate: u32,
         ch: &ChannelState,
+        block_start_abs: u64,
     ) -> Self {
         // 音色库声像：等功率法则（与 xsynth stereo spawner 一致，左右各 1.42
         // 补偿，中心 pan → 1.0）。xsynth 的净输出另被其通道层无条件 pan=0.5
@@ -147,7 +150,10 @@ impl CpuVoice {
             base_speed: info.speed_mult,
             base_gain: info.volume,
             dup: 1,
-            time: 0.0,
+            started: false,
+            // 锚点 = 起音绝对位置（t = 0 处）；`start_offset` 仅用于跳过起音前帧
+            anchor_abs: block_start_abs + u64::from(start_offset),
+            anchor_time: 0.0,
             start_offset,
             envelope: info.ampeg_start,
             env_stage: 0,
@@ -171,14 +177,10 @@ impl CpuVoice {
             flt_b2: 0.0,
             flt_a1: 0.0,
             flt_a2: 0.0,
-            flt_x1: 0.0,
-            flt_x2: 0.0,
-            flt_y1: 0.0,
-            flt_y2: 0.0,
-            flt_x1r: 0.0,
-            flt_x2r: 0.0,
-            flt_y1r: 0.0,
-            flt_y2r: 0.0,
+            flt_s1: 0.0,
+            flt_s2: 0.0,
+            flt_s1r: 0.0,
+            flt_s2r: 0.0,
             loop_mode: info.loop_mode as u32,
             loop_start: info.loop_start,
             loop_end: info.loop_end,
@@ -226,7 +228,7 @@ impl CpuVoice {
         end_sample: u64,
         start_offset: u32,
     ) -> bool {
-        if self.released || self.killed || self.finished() || self.time != 0.0 {
+        if self.released || self.killed || self.finished() || self.started {
             return false;
         }
         self.velocity == velocity
@@ -244,16 +246,23 @@ impl CpuVoice {
     }
 
     /// 段边界换速（弯音/调音/音色切换）：复刻 WGSL 的 time 校正，
-    /// 保持"上一帧末 + 新速度"的位置连续。
-    pub(super) fn set_speed(&mut self, multiplier: f32, block_frame: u32) {
+    /// 保持"上一帧末 + 新速度"的位置连续（`(n−1)(old−new)` 逐字保留）。
+    /// 锚点版：把校正结果记为新的 `(anchor_abs = 块首, anchor_time)`。
+    pub(super) fn set_speed(&mut self, multiplier: f32, block_frame: u32, sample_start: u64) {
         let new_speed = self.base_speed * multiplier;
         if new_speed == self.speed {
             return;
         }
         let old_speed = self.speed;
         self.speed = new_speed;
-        let n = block_frame.saturating_sub(self.start_offset) as f64;
-        self.time += (n - 1.0) * (old_speed - new_speed) as f64;
+        // 块首进度（旧速度外推）→ 应用校正 → 重新锚定到块首
+        let time_at_block_start =
+            self.anchor_time + (sample_start - self.anchor_abs) as f64 * f64::from(old_speed);
+        // n 基准：创建块用 start_offset（此后 start_offset 已是历史值，忽略）
+        let base = if self.started { 0 } else { self.start_offset };
+        let n = block_frame.saturating_sub(base) as f64;
+        self.anchor_time = time_at_block_start + (n - 1.0) * (old_speed - new_speed) as f64;
+        self.anchor_abs = sample_start;
     }
 
     /// kill：淘汰时 1ms 淡出（xsynth `ReleaseType::Kill` 语义——把 release 时长
@@ -332,11 +341,20 @@ impl CpuVoice {
         // 段终点 = fi_start + frames；voice 从 begin 起渲染（之前未开始的帧跳过，
         // 不推进包络——与逐帧语义一致）。start_offset 的跨段前移由调用方
         // `advance_block` 统一处理。
-        let begin = self.start_offset as usize;
+        // 创建块用 start_offset 跳过起音前帧；此后 begin 恒 0（渲染后已 started）
+        let begin = if self.started {
+            0
+        } else {
+            self.start_offset as usize
+        };
         let seg_end = fi_start + frames;
         if begin >= seg_end {
             return;
         }
+        self.started = true;
+        // 锚点解析出块首进度（替代块末 advance_block 的逐 voice 累加）
+        let time0 =
+            self.anchor_time + (sample_start - self.anchor_abs) as f64 * f64::from(self.speed);
         // 到期释放的段内帧（未释放且未被踏板保持时有效；<= 段首表示段首已到期）。
         // 释放点在包络切片边界应用——取代逐帧 O(V×frames) 的到期扫描
         //（8139 voice × 512 帧 × 1723 块 = 72 亿次比较，实测主导成本）。
@@ -367,7 +385,7 @@ impl CpuVoice {
                 sub = release_at.saturating_sub(done).max(1);
                 do_release = true;
             }
-            self.render_sub(out, done, sub, fi_start, begin, constant, profile_mode);
+            self.render_sub(out, done, sub, fi_start, time0, constant, profile_mode);
             done += sub;
             if do_release {
                 if damper {
@@ -451,7 +469,7 @@ impl CpuVoice {
         offset: usize,
         n: usize,
         fi_start: usize,
-        begin: usize,
+        time0: f64,
         constant_env: bool,
         profile_mode: u8,
     ) {
@@ -472,7 +490,6 @@ impl CpuVoice {
         let linear = self.interp == 1;
         let cutoff_on = self.cutoff > 0.0;
         let speed = f64::from(self.speed);
-        let time0 = self.time;
         let pan_l = self.pan_l;
         let pan_r = self.pan_r;
         let fi0 = fi_start + offset;
@@ -494,29 +511,28 @@ impl CpuVoice {
                 self.flt_a1,
                 self.flt_a2,
             );
-            let (mut x1, mut x2, mut y1, mut y2) =
-                (self.flt_x1, self.flt_x2, self.flt_y1, self.flt_y2);
-            let (mut x1r, mut x2r, mut y1r, mut y2r) =
-                (self.flt_x1r, self.flt_x2r, self.flt_y1r, self.flt_y2r);
+            let (mut s1, mut s2) = (self.flt_s1, self.flt_s2);
+            let (mut s1r, mut s2r) = (self.flt_s1r, self.flt_s2r);
             let end_when_over = !loop_cont;
             let mut finished = false;
             for i in 0..n {
                 let fi = (fi0 + i) as u32;
-                let t = time0 + (fi as usize - begin) as f64 * speed;
-                let mut idx = t as u32;
-                if loop_active && idx > loop_end {
-                    idx = (idx - loop_end - 1) % loop_len + loop_start;
+                // t 以段起点为基准（time0 对齐到 sample_start；fi 为块内坐标）
+                let t = time0 + (fi as usize - fi_start) as f64 * speed;
+                let mut idx = t as u64;
+                if loop_active && idx > loop_end as u64 {
+                    idx = (idx - loop_end as u64 - 1) % loop_len as u64 + loop_start as u64;
                 }
-                let frac = (t - f64::from(idx)) as f32;
-                if idx < sample_length {
-                    let si = (sample_offset + idx * scale) as usize;
+                let frac = (t - idx as f64) as f32;
+                if idx < sample_length as u64 {
+                    let si = (sample_offset as u64 + idx * scale as u64) as usize;
                     let mut l0 = sample.get(si).copied().unwrap_or(0.0);
                     let mut r0 = if is_stereo {
                         sample.get(si + 1).copied().unwrap_or(0.0)
                     } else {
                         l0
                     };
-                    if linear && idx < max_idx {
+                    if linear && idx < max_idx as u64 {
                         let i1 = si + scale as usize;
                         let l1 = sample.get(i1).copied().unwrap_or(0.0);
                         let r1 = if is_stereo {
@@ -530,18 +546,14 @@ impl CpuVoice {
                     let mut s_l = l0 * gain * env;
                     let mut s_r = r0 * gain * env;
                     if cutoff_on {
-                        let out_l = b0 * s_l + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
-                        x2 = x1;
-                        x1 = s_l;
-                        y2 = y1;
-                        y1 = out_l;
+                        let out_l = b0 * s_l + s1;
+                        s1 = b1 * s_l - a1 * out_l + s2;
+                        s2 = b2 * s_l - a2 * out_l;
                         s_l = out_l;
                         if is_stereo {
-                            let out_r = b0 * s_r + b1 * x1r + b2 * x2r - a1 * y1r - a2 * y2r;
-                            x2r = x1r;
-                            x1r = s_r;
-                            y2r = y1r;
-                            y1r = out_r;
+                            let out_r = b0 * s_r + s1r;
+                            s1r = b1 * s_r - a1 * out_r + s2r;
+                            s2r = b2 * s_r - a2 * out_r;
                             s_r = out_r;
                         } else {
                             s_r = s_l;
@@ -556,14 +568,10 @@ impl CpuVoice {
                 }
             }
             if cutoff_on {
-                self.flt_x1 = x1;
-                self.flt_x2 = x2;
-                self.flt_y1 = y1;
-                self.flt_y2 = y2;
-                self.flt_x1r = x1r;
-                self.flt_x2r = x2r;
-                self.flt_y1r = y1r;
-                self.flt_y2r = y2r;
+                self.flt_s1 = s1;
+                self.flt_s2 = s2;
+                self.flt_s1r = s1r;
+                self.flt_s2r = s2r;
             }
             if finished {
                 self.env_stage = ENV_FINISHED;
@@ -581,16 +589,16 @@ impl CpuVoice {
                 continue;
             }
 
-            let t = time0 + (fi as usize - begin) as f64 * speed;
-            let mut idx = t as u32;
-            let frac = (t - f64::from(idx)) as f32;
+            let t = time0 + (fi as usize - fi_start) as f64 * speed;
+            let mut idx = t as u64;
+            let frac = (t - idx as f64) as f32;
 
             // 循环处理（与 xsynth 一致）：1=Continuous 恒循环；2=Sustain 仅未 release 循环
             let released = self.env_stage >= ENV_RELEASE;
             let loop_sus = loop_sus_mode && !released;
             let has_loop = (loop_cont || loop_sus) && loop_avail;
-            if has_loop && idx > loop_end {
-                idx = (idx - loop_end - 1) % loop_len + loop_start;
+            if has_loop && idx > loop_end as u64 {
+                idx = (idx - loop_end as u64 - 1) % loop_len as u64 + loop_start as u64;
             }
 
             // 成本分解：2 = 保留采样位置/循环控制流，跳过数据读取/插值/滤波/输出
@@ -601,15 +609,15 @@ impl CpuVoice {
                 continue;
             }
 
-            if idx < sample_length {
-                let si = (sample_offset + idx * scale) as usize;
+            if idx < sample_length as u64 {
+                let si = (sample_offset as u64 + idx * scale as u64) as usize;
                 let mut l0 = self.sample.get(si).copied().unwrap_or(0.0);
                 let mut r0 = if is_stereo {
                     self.sample.get(si + 1).copied().unwrap_or(0.0)
                 } else {
                     l0
                 };
-                if linear && idx < max_idx {
+                if linear && idx < max_idx as u64 {
                     let i1 = si + scale as usize;
                     let l1 = self.sample.get(i1).copied().unwrap_or(0.0);
                     let r1 = if is_stereo {
@@ -624,31 +632,16 @@ impl CpuVoice {
                 let mut s_r = r0 * gain * self.envelope;
                 // 成本分解：1 = 无滤波
                 if cutoff_on && profile_mode != 1 {
-                    // DirectForm1 biquad：y = b0*x + b1*x1 + b2*x2 - a1*y1 - a2*y2
-                    let x1 = self.flt_x1;
-                    let x2 = self.flt_x2;
-                    let y1 = self.flt_y1;
-                    let y2 = self.flt_y2;
-                    let out_l = self.flt_b0 * s_l + self.flt_b1 * x1 + self.flt_b2 * x2
-                        - self.flt_a1 * y1
-                        - self.flt_a2 * y2;
-                    self.flt_x1 = s_l;
-                    self.flt_x2 = x1;
-                    self.flt_y1 = out_l;
-                    self.flt_y2 = y1;
+                    // Transposed DirectForm2 biquad：y = b0*x + s1;
+                    // s1 = b1*x - a1*y + s2; s2 = b2*x - a2*y（状态 2 个/声道）
+                    let out_l = self.flt_b0 * s_l + self.flt_s1;
+                    self.flt_s1 = self.flt_b1 * s_l - self.flt_a1 * out_l + self.flt_s2;
+                    self.flt_s2 = self.flt_b2 * s_l - self.flt_a2 * out_l;
                     s_l = out_l;
                     if is_stereo {
-                        let x1r = self.flt_x1r;
-                        let x2r = self.flt_x2r;
-                        let y1r = self.flt_y1r;
-                        let y2r = self.flt_y2r;
-                        let out_r = self.flt_b0 * s_r + self.flt_b1 * x1r + self.flt_b2 * x2r
-                            - self.flt_a1 * y1r
-                            - self.flt_a2 * y2r;
-                        self.flt_x1r = s_r;
-                        self.flt_x2r = x1r;
-                        self.flt_y1r = out_r;
-                        self.flt_y2r = y1r;
+                        let out_r = self.flt_b0 * s_r + self.flt_s1r;
+                        self.flt_s1r = self.flt_b1 * s_r - self.flt_a1 * out_r + self.flt_s2r;
+                        self.flt_s2r = self.flt_b2 * s_r - self.flt_a2 * out_r;
                         s_r = out_r;
                     } else {
                         // 单声道样本只用一组滤波器，右声道复用左输出（与 xsynth mono 一致）
@@ -743,25 +736,16 @@ impl CpuVoice {
         }
     }
 
-    /// 块末推进：`time += speed × 实际播放帧数` 并回绕（复刻 WGSL 块末语义）；
-    /// 未开始的 voice start_offset 前移。
+    /// 块末：仅**尚未渲染过**的 voice（事件在块末、本块无渲染区间）需要把
+    /// `start_offset` 前移一整个块；已渲染 voice 直接跳过（单布尔分支）。
+    /// 位置进度由锚点解析计算，无需逐 voice 累加 time。
     pub(super) fn advance_block(&mut self, frames: u32) {
-        if frames > self.start_offset {
-            let act_frames = frames - self.start_offset;
-            self.start_offset = 0;
-            if self.env_stage < ENV_FINISHED {
-                self.time += f64::from(self.speed) * f64::from(act_frames);
-                let looped = (self.loop_mode == 1
-                    || (self.loop_mode == 2 && self.env_stage < ENV_RELEASE))
-                    && self.loop_end > self.loop_start;
-                if looped && self.time > f64::from(self.loop_end) {
-                    let loop_len = f64::from(self.loop_end - self.loop_start);
-                    let off = (self.time - f64::from(self.loop_end) - 1.0) % loop_len;
-                    self.time = f64::from(self.loop_end) + 1.0 + off;
-                }
+        if !self.started {
+            if frames > self.start_offset {
+                self.start_offset = 0;
+            } else {
+                self.start_offset -= frames;
             }
-        } else {
-            self.start_offset -= frames;
         }
     }
 }

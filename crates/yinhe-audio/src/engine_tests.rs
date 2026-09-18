@@ -4331,6 +4331,9 @@ fn prof_blackmidi_cost_breakdown() {
             let b_par = base(&yinhe_synth::cpu_synth::PROF_PAR_NS);
             let b_red = base(&yinhe_synth::cpu_synth::PROF_REDUCE_NS);
             let b_end = base(&yinhe_synth::cpu_synth::PROF_BLOCK_END_NS);
+            let b_adv = base(&yinhe_synth::cpu_synth::PROF_ADVANCE_NS);
+            let b_ret = base(&yinhe_synth::cpu_synth::PROF_RETAIN_NS);
+            let b_reb = base(&yinhe_synth::cpu_synth::PROF_REBUILD_NS);
             cs_engine.handle_command(AudioCommand::Play {
                 from_sample: start_sample,
             });
@@ -4341,6 +4344,9 @@ fn prof_blackmidi_cost_breakdown() {
             let d_par = base(&yinhe_synth::cpu_synth::PROF_PAR_NS) - b_par;
             let d_red = base(&yinhe_synth::cpu_synth::PROF_REDUCE_NS) - b_red;
             let d_end = base(&yinhe_synth::cpu_synth::PROF_BLOCK_END_NS) - b_end;
+            let d_adv = base(&yinhe_synth::cpu_synth::PROF_ADVANCE_NS) - b_adv;
+            let d_ret = base(&yinhe_synth::cpu_synth::PROF_RETAIN_NS) - b_ret;
+            let d_reb = base(&yinhe_synth::cpu_synth::PROF_REBUILD_NS) - b_reb;
             let total_ns = (el * 1e9) as u64;
             let r = d_render.max(1) as f64;
             eprintln!(
@@ -4351,10 +4357,13 @@ fn prof_blackmidi_cost_breakdown() {
                 100.0 * d_render as f64 / total_ns as f64,
             );
             eprintln!(
-                "    └ render 细分: par={:.0}% reduce={:.0}% block_end={:.0}%（占总渲染）",
+                "    └ render 细分: par={:.0}% reduce={:.0}% block_end={:.0}%（占总渲染）| block_end 内: advance={:.0}% retain={:.0}% rebuild={:.0}%",
                 100.0 * d_par as f64 / r,
                 100.0 * d_red as f64 / r,
                 100.0 * d_end as f64 / r,
+                100.0 * d_adv as f64 / d_end.max(1) as f64,
+                100.0 * d_ret as f64 / d_end.max(1) as f64,
+                100.0 * d_reb as f64 / d_end.max(1) as f64,
             );
         }
         yinhe_synth::cpu_synth::CPU_PROFILE_MODE.store(0, Ordering::Relaxed);

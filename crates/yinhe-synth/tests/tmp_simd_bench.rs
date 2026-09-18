@@ -123,7 +123,14 @@ unsafe fn simd4_frames(
     }
 }
 
-fn bench(label: &str, voices: usize, frames: usize, rounds: usize, speeds: &[f64], simd: bool) -> f64 {
+fn bench(
+    label: &str,
+    voices: usize,
+    frames: usize,
+    rounds: usize,
+    speeds: &[f64],
+    simd: bool,
+) -> f64 {
     let sample = make_sample(32768);
     let mut out = vec![0f32; frames * 2];
     let bases: Vec<f64> = (0..voices).map(|v| (v % 3000) as f64 + 100.0).collect();
@@ -183,10 +190,10 @@ fn diag_piano_cutoff_and_loop() {
         eprintln!("跳过：未设置 YINHE_TEST_SFZ");
         return;
     };
-    let entries =
-        yinhe_synth::sfz_parser::build_key_maps(std::path::Path::new(&sfz), 48_000, 0)
-            .expect("load soundfont");
-    let (mut total, mut with_cut, mut loop_sus, mut loop_cont, mut no_loop) = (0u64, 0u64, 0u64, 0u64, 0u64);
+    let entries = yinhe_synth::sfz_parser::build_key_maps(std::path::Path::new(&sfz), 48_000, 0)
+        .expect("load soundfont");
+    let (mut total, mut with_cut, mut loop_sus, mut loop_cont, mut no_loop) =
+        (0u64, 0u64, 0u64, 0u64, 0u64);
     for e in &entries {
         for key in 0..128usize {
             for info in &e.map[key] {
@@ -347,9 +354,7 @@ fn simd4_vs_scalar_sustain() {
     let rounds = 30;
     // 同 pitch（speed=1，位置近连续）与变调（0.5~2.0，gather）两种场景
     let same = vec![1.0f64; voices];
-    let varied: Vec<f64> = (0..voices)
-        .map(|v| 0.5 + (v % 37) as f64 * 0.04)
-        .collect();
+    let varied: Vec<f64> = (0..voices).map(|v| 0.5 + (v % 37) as f64 * 0.04).collect();
     println!("—— 同 pitch（speed=1）——");
     let a = bench("标量", voices, frames, rounds, &same, false);
     let b = bench("SIMD4", voices, frames, rounds, &same, true);

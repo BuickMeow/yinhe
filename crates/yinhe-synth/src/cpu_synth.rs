@@ -39,6 +39,9 @@ pub static PROF_RENDER_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::Ato
 pub static PROF_PAR_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static PROF_REDUCE_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static PROF_BLOCK_END_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static PROF_ADVANCE_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static PROF_RETAIN_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static PROF_REBUILD_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 /// note_on 内部细分：key map 查找 / voice 构造（含 biquad 系数）/ push。
 pub static PROF_ON_SELECT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static PROF_ON_NEW_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -250,7 +253,7 @@ impl CpuSynth {
     /// 应用 chase 通道状态快照（seek 后由外部驱动；frame = 0 → 下一块开头生效）。
     pub fn apply_chase(&mut self, dense: u32, events: &[ControlEvent]) {
         for &ev in events {
-            self.process_control_channel(dense as u8, ev, 0);
+            self.process_control_channel(dense as u8, ev, 0, self.sample_position);
         }
     }
 
@@ -297,7 +300,7 @@ impl CpuSynth {
             {
                 let ev = self.events[self.event_cursor];
                 self.event_cursor += 1;
-                self.dispatch_event(&ev, fi as u32);
+                self.dispatch_event(&ev, fi as u32, sample_start);
             }
             let next = self
                 .events
@@ -318,9 +321,15 @@ impl CpuSynth {
 
         // 段末：time 推进 + 清理结束 voice
         let t_end = std::time::Instant::now();
+        let t_adv = std::time::Instant::now();
         for v in self.voices.iter_mut() {
             v.advance_block(frames as u32);
         }
+        PROF_ADVANCE_NS.fetch_add(
+            t_adv.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        let t_ret = std::time::Instant::now();
         let before = self.voices.len();
         self.voices.retain(|v| !v.finished());
         // 全局 voice 上限：块末摊销淘汰（O(V) 一次/块，不在 note_on 热路径）。
@@ -328,6 +337,11 @@ impl CpuSynth {
         if excess > 0 {
             self.evict_excess(excess);
         }
+        PROF_RETAIN_NS.fetch_add(
+            t_ret.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        let t_reb = std::time::Instant::now();
         // 重建 per-key 索引表（O(V) 一次/段；保留 Vec 容量）。仅当 retain
         // 实际移除了 voice（保序搬移使旧位置失效）才需要；无结束 voice 的
         // 段跳过整轮 O(V) 清空+重填。
@@ -339,6 +353,10 @@ impl CpuSynth {
                 self.key_indices[Self::key_slot(v.channel, v.key)].push(i as u32);
             }
         }
+        PROF_REBUILD_NS.fetch_add(
+            t_reb.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         self.peak_voices = self.peak_voices.max(self.voice_count());
         self.sample_position = sample_start + frames as u64;
         PROF_BLOCK_END_NS.fetch_add(
@@ -450,8 +468,8 @@ impl CpuSynth {
         );
     }
 
-    /// 事件派发（帧内；`frame` = 块内帧偏移）。
-    fn dispatch_event(&mut self, ev: &SynthEvent, frame: u32) {
+    /// 事件派发（帧内；`frame` = 块内帧偏移，`block_start_abs` = 块首绝对位置）。
+    fn dispatch_event(&mut self, ev: &SynthEvent, frame: u32, block_start_abs: u64) {
         match ev {
             SynthEvent::NoteOn {
                 channel,
@@ -459,16 +477,31 @@ impl CpuSynth {
                 velocity,
                 end_sample,
                 ..
-            } => self.note_on(*channel, *key, *velocity, *end_sample, frame),
+            } => self.note_on(
+                *channel,
+                *key,
+                *velocity,
+                *end_sample,
+                frame,
+                block_start_abs,
+            ),
             SynthEvent::NoteOff { channel, key, .. } => self.note_off(*channel, *key),
             SynthEvent::Control { channel, event, .. } => {
-                self.process_control_channel(*channel, *event, frame);
+                self.process_control_channel(*channel, *event, frame, block_start_abs);
             }
         }
     }
 
     /// NoteOn：从 key map 快照创建 voice；超限淘汰最老的 release 中 voice。
-    fn note_on(&mut self, channel: u8, key: u8, vel: u8, end_sample: u64, frame: u32) {
+    fn note_on(
+        &mut self,
+        channel: u8,
+        key: u8,
+        vel: u8,
+        end_sample: u64,
+        frame: u32,
+        block_start_abs: u64,
+    ) {
         let t_prof = std::time::Instant::now();
         let Some(ch_idx) = dense_channel(channel as usize) else {
             return;
@@ -524,6 +557,7 @@ impl CpuSynth {
             frame,
             self.sample_rate,
             &ch,
+            block_start_abs,
         );
         PROF_ON_NEW_NS.fetch_add(
             t_new.elapsed().as_nanos() as u64,
@@ -649,7 +683,13 @@ impl CpuSynth {
     }
 
     /// 控制事件：更新通道状态并把变化传播到该通道的活跃 voice。
-    fn process_control_channel(&mut self, channel: u8, event: ControlEvent, frame: u32) {
+    fn process_control_channel(
+        &mut self,
+        channel: u8,
+        event: ControlEvent,
+        frame: u32,
+        block_start_abs: u64,
+    ) {
         let Some(ch_idx) = dense_channel(channel as usize) else {
             return;
         };
@@ -674,7 +714,7 @@ impl CpuSynth {
             let mult = self.channels[ch_idx].pitch_multiplier();
             for v in self.voices.iter_mut() {
                 if v.channel == channel && !v.finished() {
-                    v.set_speed(mult, frame);
+                    v.set_speed(mult, frame, block_start_abs);
                 }
             }
         }
