@@ -4951,10 +4951,15 @@ fn diag_ouranos_bar157_dropout() {
 
     let mut out = vec![0.0f32; frames * 2];
     let mut energy: Vec<f32> = Vec::new();
-    let blocks = 60usize;
+    let mut wav_all: Vec<f32> = Vec::new();
+    let blocks = std::env::var("YINHE_DIAG_BLOCKS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(60);
     let w = 64usize;
     for b in 0..blocks {
         engine.render(&mut out);
+        wav_all.extend_from_slice(&out);
         let be = out.iter().fold(0.0f32, |m, v| m.max(v.abs()));
         let mix_peak = engine
             .mixer
@@ -5009,6 +5014,185 @@ fn diag_ouranos_bar157_dropout() {
     );
     eprintln!("  静音窗前20={:?}", &quiet[..quiet.len().min(20)]);
     eprintln!("  骤降前12={:?}", drops.iter().take(12).collect::<Vec<_>>());
+
+    // —— 单音符幅度对比（排除叠加：同事件、同 seek，各渲染 8 块）——
+    {
+        let ev1 = engine.build_gpu_events(seek_sample);
+        if let Some(n) = ev1
+            .iter()
+            .find(|e| matches!(e, yinhe_synth::SynthEvent::NoteOn { .. }))
+        {
+            let note_sample = n.sample();
+            let single = vec![n.clone()];
+            let mut g1 = yinhe_synth::GpuSynth::new_default(sr).unwrap();
+            g1.load_dense_soundfonts(0, std::slice::from_ref(&sfz_path))
+                .unwrap();
+            g1.finish_soundfont_load();
+            g1.set_layer_count(None);
+            g1.load_events(single.clone());
+            g1.seek(note_sample);
+            let mut gb: Vec<yinhe_mixer::ChannelBuffers> = (0..16)
+                .map(|_| yinhe_mixer::ChannelBuffers {
+                    left: vec![0.0; frames],
+                    right: vec![0.0; frames],
+                })
+                .collect();
+            let mut c1 = yinhe_synth::CpuSynth::new(sr);
+            c1.load_dense_soundfonts(0, std::slice::from_ref(&sfz_path))
+                .unwrap();
+            c1.finish_soundfont_load();
+            c1.set_layer_count(None);
+            c1.seek(note_sample);
+            c1.load_events(single);
+            let mut cb: Vec<yinhe_mixer::ChannelBuffers> = (0..16)
+                .map(|_| yinhe_mixer::ChannelBuffers {
+                    left: vec![0.0; frames],
+                    right: vec![0.0; frames],
+                })
+                .collect();
+            let (mut gp, mut cp) = (0.0f32, 0.0f32);
+            for _ in 0..8 {
+                g1.render_to_mixer(&mut gb);
+                c1.render_to_mixer(&mut cb);
+                for i in 0..frames {
+                    for b in &gb {
+                        gp = gp.max(b.left[i].abs().max(b.right[i].abs()));
+                    }
+                    for b in &cb {
+                        cp = cp.max(b.left[i].abs().max(b.right[i].abs()));
+                    }
+                }
+            }
+            let kv = match n {
+                yinhe_synth::SynthEvent::NoteOn { key, velocity, .. } => {
+                    format!("{key}/{velocity}")
+                }
+                _ => "?".into(),
+            };
+            eprintln!(
+                "单音符对比（{kv}）：GPU 峰值={gp:.5} voices={}  CPU 峰值={cp:.5} voices={}  比值={:.2}",
+                g1.voice_count(),
+                c1.voice_count(),
+                gp / cp.max(1e-9)
+            );
+        }
+    }
+
+    // —— CPU 对照（yinhe CpuSynth，同一事件表/seek）：对比"音符是否被削短" ——
+    {
+        let events3 = engine.build_gpu_events(seek_sample);
+        let mut cpu = yinhe_synth::CpuSynth::new(sr);
+        cpu.load_dense_soundfonts(0, std::slice::from_ref(&sfz_path))
+            .unwrap();
+        cpu.finish_soundfont_load();
+        cpu.set_layer_count(None);
+        // 注意顺序：seek 会清空事件表（与 GPU 的 seek 语义不同）
+        cpu.seek(seek_sample);
+        cpu.load_events(events3);
+        let mut cbufs: Vec<yinhe_mixer::ChannelBuffers> = (0..16)
+            .map(|_| yinhe_mixer::ChannelBuffers {
+                left: vec![0.0; frames],
+                right: vec![0.0; frames],
+            })
+            .collect();
+        let mut cpu_all: Vec<f32> = Vec::new();
+        for _ in 0..blocks.min(120) {
+            cpu.render_to_mixer(&mut cbufs);
+            for i in 0..frames {
+                let (mut l, mut r) = (0.0f32, 0.0f32);
+                for b in &cbufs {
+                    l += b.left[i];
+                    r += b.right[i];
+                }
+                cpu_all.push(l);
+                cpu_all.push(r);
+            }
+        }
+        // 逐窗口能量对比（GPU 用 wav_all 前 120 块的同口径）
+        let w = 64usize;
+        let gpu_take = (blocks.min(120) * frames * 2).min(wav_all.len());
+        let cpu_take = cpu_all.len();
+        let n_win = (gpu_take / 2 / w).min(cpu_take / 2 / w);
+        let mut g_peak = 0.0f32;
+        let mut c_peak = 0.0f32;
+        let mut g_eq = 0usize;
+        let mut c_eq = 0usize;
+        let mut ratio_sum = 0.0f64;
+        let mut ratio_n = 0usize;
+        for i in 0..n_win {
+            let mut ge = 0.0f32;
+            let mut ce = 0.0f32;
+            for j in (i * w)..((i + 1) * w) {
+                ge += wav_all[j * 2].abs() + wav_all[j * 2 + 1].abs();
+                ce += cpu_all[j * 2].abs() + cpu_all[j * 2 + 1].abs();
+            }
+            g_peak = g_peak.max(ge);
+            c_peak = c_peak.max(ce);
+            if ge > g_peak * 0.0 && ge > 1e-6 {
+                g_eq += 1;
+            }
+            if ce > 1e-6 {
+                c_eq += 1;
+            }
+            if ce > 1e-6 {
+                ratio_sum += (ge as f64) / (ce as f64);
+                ratio_n += 1;
+            }
+        }
+        // 削波统计（|v|>1.0 的比例；引擎最终输出应 <=1.0 基本不削）
+        let g_clip = wav_all.iter().filter(|v| v.abs() > 1.0).count();
+        let c_clip = cpu_all.iter().filter(|v| v.abs() > 1.0).count();
+        eprintln!(
+            "CPU 对照：窗口数={n_win} 非静音窗 GPU={g_eq} CPU={c_eq} 峰值 GPU={g_peak:.1} CPU={c_peak:.1} 能量比均值={:.3}\n  削波样本 GPU={g_clip}/{}（{:.1}%） CPU={c_clip}/{}（{:.1}%）",
+            ratio_sum / ratio_n.max(1) as f64,
+            wav_all.len(),
+            g_clip as f64 / wav_all.len().max(1) as f64 * 100.0,
+            cpu_all.len(),
+            c_clip as f64 / cpu_all.len().max(1) as f64 * 100.0
+        );
+        let cpu_wav = format!("/Users/jieneng/Desktop/yinhe_bar{bar}_cpu.wav");
+        if let Ok(mut wtr) = hound::WavWriter::create(
+            &cpu_wav,
+            hound::WavSpec {
+                channels: 2,
+                sample_rate: sr,
+                bits_per_sample: 16,
+                sample_format: hound::SampleFormat::Int,
+            },
+        ) {
+            for &v in &cpu_all {
+                let _ = wtr.write_sample((v.clamp(-1.0, 1.0) * 32767.0) as i16);
+            }
+            let _ = wtr.finalize();
+            eprintln!("CPU WAV：{cpu_wav}");
+        }
+    }
+
+    // 导出本段为 WAV（供人耳确认"断续"是否存在于引擎路径输出）
+    let wav_path = std::env::var("YINHE_DIAG_WAV")
+        .unwrap_or_else(|_| format!("/Users/jieneng/Desktop/yinhe_bar{bar}.wav"));
+    match hound::WavWriter::create(
+        &wav_path,
+        hound::WavSpec {
+            channels: 2,
+            sample_rate: sr,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        },
+    ) {
+        Ok(mut w) => {
+            for &v in &wav_all {
+                let s = (v.clamp(-1.0, 1.0) * 32767.0) as i16;
+                let _ = w.write_sample(s);
+            }
+            let _ = w.finalize();
+            eprintln!(
+                "WAV 已导出：{wav_path}（{:.1}s）",
+                wav_all.len() as f64 / 2.0 / sr as f64
+            );
+        }
+        Err(e) => eprintln!("WAV 导出失败：{e}"),
+    }
 
     // —— 对照：同一事件/seek 的裸 GpuSynth 路径，逐样本找差异起点 ——
     let mut synth2 = yinhe_synth::GpuSynth::new_default(sr).unwrap();
