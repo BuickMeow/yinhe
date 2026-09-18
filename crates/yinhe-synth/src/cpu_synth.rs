@@ -21,6 +21,7 @@ mod soa;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use rayon::prelude::*;
 use yinhe_mixer::ChannelBuffers;
 
 use crate::channel_state::{ChannelState, ChaseSkip, MAX_CHANNELS, is_env_effect_cc};
@@ -333,31 +334,53 @@ impl CpuSynth {
         if frames == 0 || self.soa.is_empty() {
             return;
         }
+        let threads = rayon::current_num_threads().max(1);
+        let capacity = self.soa.capacity();
+        // 分片数 ≈ 线程数 ×2（细粒度让 Rayon 在大小核混合下负载均衡，粗分片
+        // 时能效核上的大任务会拖住整块；×4 实测归约成本反而更高）。
+        // 每片至少 LANES_ALIGN 个 lane。
+        let target_chunks = (threads * 2).min(capacity.div_ceil(LANES_ALIGN)).max(1);
+        let chunk = capacity
+            .div_ceil(target_chunks)
+            .next_multiple_of(LANES_ALIGN)
+            .max(LANES_ALIGN);
+        let n_chunks = capacity.div_ceil(chunk);
         let stride = MAX_CHANNELS * frames * 2;
         self.par_scratch.clear();
-        self.par_scratch.resize(stride, 0.0);
+        self.par_scratch.resize(n_chunks * stride, 0.0);
 
-        let chunk = self.soa.capacity().max(LANES_ALIGN);
         let soa = &mut self.soa;
         let scratch = &mut self.par_scratch;
         let damper = &self.damper_flags;
         let level = simd::level();
         fearless_simd::dispatch!(level, simd => {
             let mut views = soa.par_views(chunk);
-            for view in views.iter_mut() {
-                view.render(simd, scratch, fi_start, frames, sample_start, damper);
-            }
+            debug_assert_eq!(views.len(), n_chunks);
+            views
+                .par_iter_mut()
+                .zip(scratch.par_chunks_mut(stride))
+                .for_each(|(view, out)| {
+                    view.render(simd, out, fi_start, frames, sample_start, damper);
+                });
         });
 
         // 归约：分片 scratch 按通道求和写入目标缓冲（调用方已清零本段区间）。
+        // 通道间并行；每通道内按分片顺序累加（与串行归约逐位一致）。
         let n = buffers.len().min(MAX_CHANNELS);
-        for (ch, buf) in buffers.iter_mut().enumerate().take(n) {
-            let ch_base = ch * frames * 2;
-            for i in 0..frames {
-                buf.left[out_offset + i] += scratch[ch_base + i * 2];
-                buf.right[out_offset + i] += scratch[ch_base + i * 2 + 1];
-            }
-        }
+        buffers
+            .par_iter_mut()
+            .enumerate()
+            .take(n)
+            .for_each(|(ch, buf)| {
+                let ch_base = ch * frames * 2;
+                for b in 0..n_chunks {
+                    let base = b * stride + ch_base;
+                    for i in 0..frames {
+                        buf.left[out_offset + i] += scratch[base + i * 2];
+                        buf.right[out_offset + i] += scratch[base + i * 2 + 1];
+                    }
+                }
+            });
     }
 
     /// 事件派发（帧内；`frame` = 块内帧偏移）。
