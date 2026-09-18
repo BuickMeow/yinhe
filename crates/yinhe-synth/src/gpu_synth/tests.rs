@@ -357,6 +357,7 @@ fn prewarm_then_render_ok() {
 fn test_voice(stage: u32) -> Voice {
     Voice {
         start_sample: 0,
+        kill_pending: false,
         state: GpuVoiceState {
             env_stage: stage,
             ..Default::default()

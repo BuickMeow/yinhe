@@ -92,26 +92,17 @@ impl GpuSynth {
         !self.voices.is_empty() || self.event_cursor < self.events.len()
     }
 
-    /// 压缩预判：free list 复用 + 尾部截断后，仅在**墓碑过半**（索引碎片化，
-    /// 无法靠截断收回）或**无空闲槽位且已达容量**时兜底压缩（compact 需排空
-    /// 流水线，应低频）。
+    /// 压缩预判：仅**无空闲槽位且已达容量**时兜底压缩。compact 会排空流水线
+    /// 等待在途 GPU 块（用户实测 117ms 尖峰），必须低频；碎片化由 free list
+    /// 复用与 harvest 尾部截断控制，不靠墓碑比例触发。
     fn compact_needed(&self) -> bool {
-        if self.free_slots.is_empty() && self.voices.len() >= MAX_VOICE_SLOTS as usize {
-            return true;
-        }
-        !self.voices.is_empty()
-            && self
-                .voices
-                .iter()
-                .filter(|v| v.state.env_stage >= 6)
-                .count()
-                * 2
-                >= self.voices.len()
+        self.free_slots.is_empty() && self.voices.len() >= MAX_VOICE_SLOTS as usize
     }
 
     /// 压缩：清理已结束 voice（tombstone）并全量重传槽位状态。
     fn compact_voices(&mut self) {
-        self.voices.retain(|v| v.state.env_stage < 6);
+        self.voices
+            .retain(|v| v.state.env_stage < 6 || v.kill_pending);
         self.free_slots.clear();
         self.freed_flags.clear();
         self.freed_flags.resize(self.voices.len(), false);
@@ -154,8 +145,40 @@ impl GpuSynth {
                 &mut sb.env_cmds,
             );
             self.diag_ms[0] += t_collect.elapsed().as_secs_f64() * 1000.0;
+            // 活跃 voice 列表（每段重建）：pass1/pass2 只遍历活跃槽位，
+            // 渲染量与 `voices.len()`（槽位高水位/墓碑）彻底解耦。
+            sb.active.clear();
+            sb.active_ranges.clear();
+            sb.active_ranges.resize(MAX_CHANNELS * 2, 0);
+            let mut counts = [0u32; MAX_CHANNELS];
+            for v in self.voices.iter() {
+                // kill_pending 的仍需渲染（应用 1ms 淡出，见 Voice::kill_pending）
+                if v.state.env_stage < 6 || v.kill_pending {
+                    counts[v.state.channel as usize] += 1;
+                }
+            }
+            let mut acc = 0u32;
+            for (c, &n) in counts.iter().enumerate() {
+                sb.active_ranges[c * 2] = acc;
+                sb.active_ranges[c * 2 + 1] = n;
+                acc += n;
+            }
+            let mut cursor: [u32; MAX_CHANNELS] = std::array::from_fn(|c| sb.active_ranges[c * 2]);
+            sb.active.resize(acc as usize, 0);
+            for (i, v) in self.voices.iter().enumerate() {
+                if v.state.env_stage >= 6 && !v.kill_pending {
+                    continue;
+                }
+                let c = v.state.channel as usize;
+                let slot = cursor[c] as usize;
+                cursor[c] += 1;
+                sb.active[slot] = i as u32;
+            }
+            sb.active_count = acc;
             // 本段新建 voice 的 start_offset（段内帧）转**全局块内帧**：
             // shader 段末按段长右移未开始 voice 的偏移，跨段后回到段内相对值。
+            // （pass1 保持全量遍历，含墓碑——墓碑参与渲染是既有语义，跳过会
+            // 引入 parity 差异；渲染量优化由 pass2 的按通道活跃分桶承担。）
             for v in &mut self.voices[new_from..] {
                 v.state.start_offset += offset as u32;
             }
@@ -188,6 +211,9 @@ impl GpuSynth {
                     ch_updates: &s.ch_updates,
                     releases: &s.releases,
                     env_cmds: &s.env_cmds,
+                    active_count: s.active_count,
+                    active_data: &s.active,
+                    active_ranges: &s.active_ranges,
                 })
                 .collect();
             // 全字段读回：收割时用 GPU 权威状态覆盖 CPU 镜像。
@@ -253,6 +279,10 @@ impl GpuSynth {
             .enumerate()
         {
             v.state = *st;
+            if st.env_stage >= 6 {
+                // GPU 已确认结束（含 kill 淡出完成）→ 清除待确认标记
+                v.kill_pending = false;
+            }
             // GPU 权威判定已结束 → 槽位立即回收到 free list（下次 note_on 复用）。
             // 墓碑不再累积：note_on 不会因容量拒绝新音，compact 也不再每块排空
             // 流水线（旧行为是丢音与 60-90ms 卡顿的来源）。
@@ -265,7 +295,7 @@ impl GpuSynth {
         // 若不截断，`voices.len()`（= 提交给 shader 的 voice_count）会停在
         // 高水位，pass2 每块仍扫全部槽位——实测 alive 4300 时 harvest 仍 92ms。
         while let Some(v) = self.voices.last() {
-            if v.state.env_stage < 6 {
+            if v.state.env_stage < 6 || v.kill_pending {
                 break;
             }
             self.voices.pop();

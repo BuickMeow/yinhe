@@ -95,6 +95,10 @@ pub struct RenderParams {
     pub channel_mix_frames: u32,
     /// 本渲染段的帧在整块 channel_mix 中的起始偏移（pass2 写入位置）
     pub mix_offset: u32,
+    /// 活跃 voice 数（pass1 dispatch 与 pass2 扫描上限；active_buf 前段）
+    pub active_count: u32,
+    /// active_buf 中每通道 (off,count) 区间的起始 u32 索引
+    pub ranges_off: u32,
 }
 
 /// 一个渲染段：外层块内的帧区间 + 该段的事件结构。
@@ -109,6 +113,12 @@ pub struct RenderSegment<'a> {
     pub ch_updates: &'a [ChState],
     pub releases: &'a [ReleaseCmd],
     pub env_cmds: &'a [EnvUpdateCmd],
+    /// 活跃 voice 数（pass1 dispatch 与 pass2 扫描上限）
+    pub active_count: u32,
+    /// 活跃槽位列表（按通道分桶）
+    pub active_data: &'a [u32],
+    /// 每通道 `[off, count]`
+    pub active_ranges: &'a [u32],
 }
 
 /// 段信息：块内段边界（与 WGSL `SegInfo` 对应）。

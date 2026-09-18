@@ -56,6 +56,9 @@ pub(crate) struct GpuBuffers {
     pub(crate) voice_slots: u32,
     /// 紧凑 env_stage（pass1 写、CPU 读回做 voice 清理）
     pub(crate) voice_stage_buf: wgpu::Buffer,
+    /// 活跃 voice 列表 + 每通道区间（每段由 CPU 重建；pass1/pass2 只扫活跃，
+    /// 渲染量与槽位长度/墓碑彻底解耦）
+    pub(crate) active_buf: wgpu::Buffer,
     /// partial 分配容量（每 voice 帧数；不足时重建）
     pub(crate) partial_frames: u32,
     /// partial 分配使用的 voice 容量（releases/env_cmds cap 用）
@@ -257,6 +260,12 @@ impl GpuAudioRenderer {
                 }),
             ),
         };
+        let active_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_active_ids"),
+            size: ((slots + CHANNEL_COUNT * 2) * std::mem::size_of::<u32>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         // per-channel 混音：32 通道 × frames × 2
         let channel_mix_size =
             (CHANNEL_COUNT * frame_count.max(1) as usize * 2 * std::mem::size_of::<f32>()) as u64;
@@ -341,7 +350,8 @@ impl GpuAudioRenderer {
                        rbf: &wgpu::Buffer,
                        rc: &wgpu::Buffer,
                        ec: &wgpu::Buffer,
-                       vst: &wgpu::Buffer| {
+                       vst: &wgpu::Buffer,
+                       act: &wgpu::Buffer| {
             let mut bg_entries = vec![
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -402,6 +412,10 @@ impl GpuAudioRenderer {
                 binding: 15,
                 resource: vst.as_entire_binding(),
             });
+            bg_entries.push(wgpu::BindGroupEntry {
+                binding: 17,
+                resource: act.as_entire_binding(),
+            });
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("audio_bg"),
                 layout: &self.bind_group_layout,
@@ -424,12 +438,14 @@ impl GpuAudioRenderer {
                 &release_cmds_buf,
                 &env_cmds_buf,
                 &voice_stage_buf,
+                &active_buf,
             ),
             sample_chunks,
             chunk_offsets_buf,
             chunk_count,
             voice_state_buf,
             voice_slots: MAX_VOICE_SLOTS,
+            active_buf,
             voice_stage_buf,
             partial_frames,
             max_voices: rounded_voices,

@@ -115,7 +115,16 @@ impl GpuAudioRenderer {
                 partial_stride: partial_frames,
                 channel_mix_frames: frame_count,
                 mix_offset: seg.frame_start,
+                active_count: seg.active_count,
+                ranges_off: crate::synth::buffers::MAX_VOICE_SLOTS,
             };
+            self.queue
+                .write_buffer(&buf.active_buf, 0, bytemuck::cast_slice(seg.active_data));
+            self.queue.write_buffer(
+                &buf.active_buf,
+                crate::synth::buffers::MAX_VOICE_SLOTS as u64 * 4,
+                bytemuck::cast_slice(seg.active_ranges),
+            );
             self.queue
                 .write_buffer(&buf.segs_buf, 0, bytemuck::cast_slice(seg.segs));
             self.queue

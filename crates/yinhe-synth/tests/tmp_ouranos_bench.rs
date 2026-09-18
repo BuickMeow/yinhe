@@ -136,6 +136,7 @@ fn ouranos_peak_gpu_bench() {
         sum_blocks += gpu.diag_blocks;
     }
     let wall = t0.elapsed().as_secs_f64() * 1000.0 / blocks as f64;
+
     let n = blocks as f64;
     eprintln!(
         "GPU {blocks} 块（{frames}帧, 预算 {:.2}ms）：墙钟 {wall:.2}ms/块",
@@ -174,4 +175,112 @@ fn ouranos_peak_gpu_bench() {
         })
         .sum();
     eprintln!("  末块输出能量 {energy:.3}");
+}
+
+/// 轻量 GPU vs CPU（yinhe-cpu）逐样本对比：Ouranos 高潮窗口、20 块（约 1.7s 音频）。
+/// YINHE_TEST_SFZ=... YINHE_BENCH_BAR=148 cargo test --release -p yinhe-synth --test tmp_ouranos_bench gpu_vs_cpu_light -- --ignored --nocapture
+#[test]
+#[ignore]
+fn gpu_vs_cpu_light() {
+    let Some(sfz) = std::env::var_os("YINHE_TEST_SFZ") else {
+        eprintln!("跳过：未设置 YINHE_TEST_SFZ");
+        return;
+    };
+    let sr = 48_000u32;
+    let frames = 4096usize;
+    let bar = std::env::var("YINHE_BENCH_BAR")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(148);
+    let model = yinhe_midi::parse_path(OURANOS).expect("parse");
+    let ppq = model.meta.ppq as u64;
+    let win_start = bar.saturating_sub(1) * 4 * ppq;
+    let win_end = (bar + 3) * 4 * ppq;
+    let win_start_sample = (model.tempo_map.tick_to_seconds(win_start) * sr as f64) as u64;
+    let mut events: Vec<SynthEvent> = Vec::new();
+    for k in 0..128usize {
+        for n in model.notes[k].iter() {
+            let st = n.start_tick as u64;
+            if n.velocity <= 1 || st < win_start || st >= win_end {
+                continue;
+            }
+            let ss = (model.tempo_map.tick_to_seconds(st) * sr as f64) as u64;
+            let es = (model.tempo_map.tick_to_seconds(n.end_tick as u64) * sr as f64) as u64;
+            let sample = ss.saturating_sub(win_start_sample);
+            events.push(SynthEvent::NoteOn {
+                sample,
+                channel: (n.track % 16) as u8,
+                key: k as u8,
+                velocity: n.velocity,
+                end_sample: sample + (es - ss),
+            });
+        }
+    }
+    events.sort_by_key(|e| e.sample());
+    eprintln!("窗口 bar{bar}：事件={}", events.len());
+
+    let path = std::path::PathBuf::from(&sfz);
+    let Ok(mut gpu) = yinhe_synth::GpuSynth::new_default(sr) else {
+        eprintln!("跳过 GPU");
+        return;
+    };
+    gpu.load_dense_soundfonts(0, std::slice::from_ref(&path))
+        .expect("gpu load");
+    gpu.finish_soundfont_load();
+    gpu.prewarm(frames as u32);
+    gpu.set_layer_count(None);
+    gpu.load_events(events.clone());
+
+    let mut cpu = yinhe_synth::CpuSynth::new(sr);
+    cpu.load_dense_soundfonts(0, std::slice::from_ref(&path))
+        .expect("cpu load");
+    cpu.finish_soundfont_load();
+    cpu.set_layer_count(None);
+    cpu.load_events(events);
+
+    let mut gbufs = mk_bufs(16);
+    let mut cbufs = mk_bufs(16);
+    let _ = frames;
+    let mut max_diff = 0.0f64;
+    let mut sq = 0.0f64;
+    let mut n = 0usize;
+    let mut worst = 0usize;
+    let blocks = 20usize;
+    let t = Instant::now();
+    for b in 0..blocks {
+        gpu.render_to_mixer(&mut gbufs);
+        cpu.render_to_mixer(&mut cbufs);
+        for ch in 0..gbufs.len() {
+            for i in 0..gbufs[ch].left.len() {
+                let g = gbufs[ch].left[i] as f64;
+                let c = cbufs[ch].left[i] as f64;
+                let d = (g - c).abs();
+                if d > max_diff {
+                    max_diff = d;
+                    worst = b * gbufs[ch].left.len() + i;
+                }
+                sq += d * d;
+                n += 1;
+            }
+        }
+    }
+    let rmse = (sq / n as f64).sqrt();
+    let cpeak = cbufs
+        .iter()
+        .map(|b| b.left.iter().fold(0.0f32, |m, v| m.max(v.abs())))
+        .fold(0.0f32, f32::max);
+    let gpeak = gbufs
+        .iter()
+        .map(|b| b.left.iter().fold(0.0f32, |m, v| m.max(v.abs())))
+        .fold(0.0f32, f32::max);
+    eprintln!("末块峰值：gpu={gpeak:.4} cpu={cpeak:.4}");
+    let peak = gbufs
+        .iter()
+        .map(|b| b.left.iter().fold(0.0f32, |m, v| m.max(v.abs())))
+        .fold(0.0f32, f32::max) as f64;
+    eprintln!(
+        "GPU vs CPU：{blocks} 块用 {:.1}s  max_diff={max_diff:.5}（峰值 {peak:.3}，{:.2}%）rmse={rmse:.5} worst@block_frame={worst}",
+        t.elapsed().as_secs_f64(),
+        max_diff / peak.max(1e-9) * 100.0
+    );
 }

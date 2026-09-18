@@ -152,6 +152,18 @@ impl GpuAudioRenderer {
             count: None,
         });
 
+        // 活跃 voice 列表 + 每通道区间（binding 17，storage read）
+        entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 17,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        });
+
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("audio_render_bgl"),
             entries: &entries,
@@ -275,6 +287,10 @@ impl GpuAudioRenderer {
         let mut stage = vec![0u32; 1];
         // 哑渲染只跑一个段长：目的是触发 shader/管线/派发路径的首次执行，
         // 不是跑满整块（少占 GPU，减轻与 UI 渲染的竞争）。
+        let dummy_active: [u32; 1] = [0];
+        let mut dummy_ranges = vec![0u32; CHANNEL_COUNT * 2];
+        dummy_ranges[0] = 0;
+        dummy_ranges[1] = 1;
         let seg = RenderSegment {
             frame_start: 0,
             frame_length: RENDER_SEGMENT_FRAMES.min(frames),
@@ -282,6 +298,9 @@ impl GpuAudioRenderer {
             ch_updates: &[],
             releases: &[],
             env_cmds: &[],
+            active_count: 1,
+            active_data: &dummy_active,
+            active_ranges: &dummy_ranges,
         };
         let t = std::time::Instant::now();
         let _ = self.render_block(1, None, &mut mix, &mut stage, &[seg], sample_rate);

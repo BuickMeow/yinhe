@@ -19,6 +19,11 @@ impl GpuAudioRenderer {
         sample_rate: u32,
     ) -> u32 {
         let frame_count = (channel_mix.len() / 2 / CHANNEL_COUNT) as u32;
+        // 测试/参考路径：全量活跃列表（无通道信息，全部归通道 0）。
+        let active: Vec<u32> = (0..voice_count).collect();
+        let mut ranges = vec![0u32; CHANNEL_COUNT * 2];
+        ranges[0] = 0;
+        ranges[1] = voice_count;
         let seg = RenderSegment {
             frame_start: 0,
             frame_length: frame_count,
@@ -26,6 +31,9 @@ impl GpuAudioRenderer {
             ch_updates,
             releases,
             env_cmds,
+            active_count: voice_count,
+            active_data: &active,
+            active_ranges: &ranges,
         };
         self.render_block(
             voice_count,
@@ -57,6 +65,27 @@ impl GpuAudioRenderer {
         // 测试路径：先全量上传（状态自包含），再渲染 + 全字段读回。
         self.upload_voice_states(voices);
         let mut stage = vec![0u32; voices.len()];
+        // 测试路径：全量活跃列表（按各 voice 的 channel 分桶）
+        let mut active: Vec<u32> = Vec::with_capacity(voices.len());
+        let mut ranges = vec![0u32; CHANNEL_COUNT * 2];
+        for ch in 0..CHANNEL_COUNT {
+            let mut c = 0u32;
+            for (i, v) in voices.iter().enumerate() {
+                if v.channel as usize == ch {
+                    active.push(i as u32);
+                    c += 1;
+                }
+            }
+            ranges[ch * 2] = 0;
+            ranges[ch * 2 + 1] = c;
+        }
+        // 修正 ranges 的 off（上面按通道收集后 active 已按通道顺序排列）
+        let mut acc = 0u32;
+        for ch in 0..CHANNEL_COUNT {
+            let c = ranges[ch * 2 + 1];
+            ranges[ch * 2] = acc;
+            acc += c;
+        }
         // 测试路径单段：整块一次 pass1+pass2
         let seg = RenderSegment {
             frame_start: 0,
@@ -65,6 +94,9 @@ impl GpuAudioRenderer {
             ch_updates: &[],
             releases: &[],
             env_cmds: &[],
+            active_count: active.len() as u32,
+            active_data: &active,
+            active_ranges: &ranges,
         };
         let n = self.render_block(
             voices.len() as u32,

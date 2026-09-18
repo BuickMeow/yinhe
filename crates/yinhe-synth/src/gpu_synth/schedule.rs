@@ -35,6 +35,10 @@ pub(super) struct Voice {
     pub(super) key: u8,
     /// 音符起始（绝对 sample；gate = end_sample - start，淘汰按短优先）
     pub(super) start_sample: u64,
+    /// 已发 kill 但 GPU 尚未确认结束：仍需参与渲染让 1ms 淡出真正执行。
+    /// （若直接从活跃列表排除，kill 指令不会被 pass1 应用，harvest 读回的
+    /// GPU 旧状态还会覆盖 CPU 镜像 → voice 复活 + 硬切 click。）
+    pub(super) kill_pending: bool,
     pub(super) channel: u8,
     /// NoteOn 力度（per-key layer 超限时按 xsynth 语义杀最弱 voice）。
     pub(super) velocity: u8,
@@ -63,6 +67,12 @@ pub(super) struct SegBuffers {
     pub(super) ch_updates: Vec<ChState>,
     pub(super) releases: Vec<ReleaseCmd>,
     pub(super) env_cmds: Vec<EnvUpdateCmd>,
+    /// 活跃 voice 的槽位索引（按通道分桶、每段重建；pass1/pass2 只遍历活跃）
+    pub(super) active: Vec<u32>,
+    /// 每通道区间 `[off, count]`（与 active 对应）
+    pub(super) active_ranges: Vec<u32>,
+    /// 活跃 voice 数（= active.len()）
+    pub(super) active_count: u32,
 }
 
 /// xsynth FilterType → shader 滤波器类型编号（与 voice_render.wgsl 一致）
@@ -389,6 +399,7 @@ impl GpuSynth {
             key,
             channel,
             start_sample,
+            kill_pending: false,
             velocity: vel,
             end_sample,
             orig_attack_frames: p.orig_attack_frames,
@@ -496,6 +507,7 @@ impl GpuSynth {
                 };
                 let v = &mut self.voices[idx];
                 v.state.env_stage = 6;
+                v.kill_pending = true;
                 v.held_by_damper = false;
                 releases.push(kill_cmd(block_frame, idx));
                 crate::gpu_synth::LAYER_KILLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -573,6 +585,7 @@ impl GpuSynth {
     ) {
         let v = &mut self.voices[idx];
         v.state.env_stage = 6;
+        v.kill_pending = true;
         v.held_by_damper = false;
         releases.push(kill_cmd(block_frame, idx));
         crate::gpu_synth::EVICT_KILLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

@@ -27,6 +27,10 @@ struct RenderParams {
     channel_mix_frames: u32,
     // 本渲染段的帧在整块 channel_mix 中的起始偏移（pass2 写入位置）
     mix_offset: u32,
+    // 活跃 voice 数（pass1 dispatch 与 pass2 扫描上限）
+    active_count: u32,
+    // active_list 中每通道 (off,count) 区间的起始索引
+    ranges_off: u32,
 };
 
 struct VoiceState {
@@ -136,6 +140,10 @@ struct EnvUpdateCmd {
 /// 紧凑活跃状态：pass1 写 env_stage（CPU 只读回这一个数组做 voice 清理，
 /// 不再读回全字段状态 —— 状态常驻 GPU）。
 @group(0) @binding(15) var<storage, read_write> voice_stage: array<u32>;
+// 活跃 voice 列表（CPU 每段重建）：前段为按通道分桶的槽位索引，后段
+// （params.ranges_off 起）为每通道 [off, count]。pass1/pass2 只遍历活跃，
+// 渲染量与槽位长度/墓碑无关。
+@group(0) @binding(17) var<storage, read> active_list: array<u32>;
 
 struct ChunkOffsets {
     o0: u32, o1: u32, o2: u32, o3: u32, o4: u32, total: u32,
