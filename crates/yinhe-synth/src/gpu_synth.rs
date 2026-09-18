@@ -122,7 +122,12 @@ pub struct GpuSynth {
     /// 空闲槽位（voice 结束、harvest 读回后即时回收）——`note_on` 优先复用，
     /// 避免墓碑累积顶到容量上限、也避免周期性 compact 排空流水线（实测
     /// 每块 compact 会等两个在途 GPU 块，60-90ms 级）。
-    free_slots: Vec<u32>,
+    ///
+    /// **FIFO（最低索引优先）**：harvest 按索引升序回收，front 即最小空闲槽位。
+    /// 若用 LIFO，新音会填回最近释放的高索引，活跃 voice 全部沉在高位，
+    /// 尾部截断失效、`voices.len()` 高水位不降（实测低潮段 alive=214 时
+    /// pass1 仍按 1.7 万槽位渲染，harvest 固定 ~95ms）。
+    free_slots: std::collections::VecDeque<u32>,
     /// 各槽位是否已回收进 `free_slots`（防重复入列；与 `voices` 等长）
     freed_flags: Vec<bool>,
     /// 紧凑 env_stage 读回缓冲（voice 清理用；全长缓冲复用）
@@ -219,7 +224,7 @@ impl GpuSynth {
             sample_paths: Vec::new(),
             sample_offsets: HashMap::new(),
             voices: Vec::new(),
-            free_slots: Vec::new(),
+            free_slots: std::collections::VecDeque::new(),
             freed_flags: Vec::new(),
             voice_stage_buf: Vec::new(),
             channel_speed_cache: [0.0; MAX_CHANNELS],

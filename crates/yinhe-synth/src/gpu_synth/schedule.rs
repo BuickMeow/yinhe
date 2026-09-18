@@ -460,7 +460,7 @@ impl GpuSynth {
         // 显式上传状态**（submit 的上传只覆盖本次新增的尾部区间）。原实现
         // 只能追加，墓碑累积顶到容量后 note_on 拒绝新音、且周期性 compact
         // 需排空流水线等待在途 GPU 块（实测 60-90ms）。
-        let new_index = match self.free_slots.pop() {
+        let new_index = match self.free_slots.pop_front() {
             Some(slot) => {
                 let slot = slot as usize;
                 self.freed_flags[slot] = false;

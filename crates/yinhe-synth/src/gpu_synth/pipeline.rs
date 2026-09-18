@@ -288,7 +288,7 @@ impl GpuSynth {
             // 流水线（旧行为是丢音与 60-90ms 卡顿的来源）。
             if st.env_stage >= 6 && !self.freed_flags[i] {
                 self.freed_flags[i] = true;
-                self.free_slots.push(i as u32);
+                self.free_slots.push_back(i as u32);
             }
         }
         // 尾部截断：末尾连续墓碑直接 pop（索引不变、无需重传 GPU 状态）。
