@@ -323,7 +323,7 @@ pub(crate) fn cpu_render_voices(
 
 /// 逐帧推进 envelope（与 shader `advance_env` 完全对应）。
 #[cfg(test)]
-fn advance_env_cpu(v: &mut GpuVoiceState) {
+pub(crate) fn advance_env_cpu(v: &mut GpuVoiceState) {
     if v.env_stage >= 6 {
         return;
     }

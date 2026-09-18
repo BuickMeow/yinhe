@@ -62,19 +62,19 @@ pub(super) struct CpuVoice {
     /// 块内起始帧（NoteOn 所在帧；块末清零）。
     start_offset: u32,
 
-    // 包络（字段与 WGSL VoiceState 对应）
-    envelope: f32,
+    // 包络（字段与 WGSL VoiceState 对应；pub(super) 供交叉测试比对）
+    pub(super) envelope: f32,
     pub(super) env_stage: u32,
-    stage_progress: f32,
-    env_level: f32,
-    sustain_level: f32,
-    env_start: f32,
-    decay_start: f32,
-    delay_frames: f32,
-    attack_frames: f32,
-    hold_frames: f32,
-    decay_frames: f32,
-    release_frames: f32,
+    pub(super) stage_progress: f32,
+    pub(super) env_level: f32,
+    pub(super) sustain_level: f32,
+    pub(super) env_start: f32,
+    pub(super) decay_start: f32,
+    pub(super) delay_frames: f32,
+    pub(super) attack_frames: f32,
+    pub(super) hold_frames: f32,
+    pub(super) decay_frames: f32,
+    pub(super) release_frames: f32,
     orig_attack_frames: f32,
     orig_release_frames: f32,
 
@@ -663,7 +663,7 @@ impl CpuVoice {
     }
 
     /// 推进 1 帧包络（与 WGSL `advance_env` 逐行等价）。
-    fn advance_env(&mut self) {
+    pub(super) fn advance_env(&mut self) {
         if self.env_stage >= ENV_FINISHED {
             return;
         }

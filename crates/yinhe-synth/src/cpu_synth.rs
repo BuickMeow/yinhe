@@ -726,6 +726,82 @@ impl CpuSynth {
 #[cfg(test)]
 mod tests {
 
+    /// 回归（无 GPU/无音色库）：`CpuVoice::advance_env` 与参考实现
+    /// `cpu_ref::advance_env_cpu` 逐帧一致。此前只有 shader↔cpu_ref 的对比，
+    /// Rust 两份实现之间没有直接防线（指数 8、阶段阈值、Hold→Decay 起点等
+    /// 公式分叉会漏网）；索引 8/5 等常量分叉同理受益。
+    #[test]
+    fn advance_env_matches_cpu_ref() {
+        use crate::channel_state::ChannelState;
+        use crate::synth::GpuVoiceState;
+        use crate::synth::cpu_ref::advance_env_cpu;
+
+        // (delay, attack, hold, decay, sustain, release, start)，覆盖 7 阶段转换
+        let cases: [(f32, f32, f32, f32, f32, f32, f32); 6] = [
+            (0.0, 0.001, 0.0, 0.001, 1.0, 0.001, 0.0),
+            (0.01, 0.05, 0.02, 0.1, 0.7, 0.2, 0.0),
+            (0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0),
+            (0.001, 0.2, 0.001, 0.3, 0.25, 0.5, 0.1),
+            (0.02, 0.001, 0.03, 0.001, 0.9, 0.001, 0.5),
+            (0.0, 1.0, 0.5, 1.0, 0.0, 1.0, 0.0),
+        ];
+        let sr = 48_000u32;
+        for (i, &(d, a, h, dec, sus, rel, start)) in cases.iter().enumerate() {
+            // 下限与 CpuVoice::new 一致
+            let info = crate::sfz_parser::KeyInfo {
+                ampeg_delay: d,
+                ampeg_attack: a.max(0.001),
+                ampeg_hold: h,
+                ampeg_decay: dec.max(0.001),
+                ampeg_sustain: sus,
+                ampeg_release: rel.max(0.001),
+                ampeg_start: start,
+                ..Default::default()
+            };
+            let ch = ChannelState::new(sr);
+            let mut v = CpuVoice::new(&info, 0, 60, 100, u64::MAX, 0, sr, &ch, 0);
+            let mut gs = GpuVoiceState {
+                delay_frames: info.ampeg_delay * sr as f32,
+                attack_frames: info.ampeg_attack * sr as f32,
+                hold_frames: info.ampeg_hold * sr as f32,
+                decay_frames: info.ampeg_decay * sr as f32,
+                release_frames: info.ampeg_release * sr as f32,
+                sustain_level: info.ampeg_sustain,
+                env_start: info.ampeg_start,
+                decay_start: info.ampeg_start,
+                envelope: info.ampeg_start,
+                env_level: 1.0,
+                env_stage: 0,
+                stage_progress: 0.0,
+                ..Default::default()
+            };
+            for frame in 0..2000 {
+                if frame == 240 {
+                    // 走 Release：两侧都用"当前 amp 重走 release"的语义
+                    v.signal_release(crate::cpu_synth::voice::ENV_RELEASE);
+                    gs.env_start = gs.envelope;
+                    gs.env_stage = 5;
+                    gs.stage_progress = 0.0;
+                }
+                v.advance_env();
+                advance_env_cpu(&mut gs);
+                assert_eq!(v.env_stage, gs.env_stage, "case {i} frame {frame}: stage");
+                assert!(
+                    (v.stage_progress - gs.stage_progress).abs() < 1e-3,
+                    "case {i} frame {frame}: progress {} vs {}",
+                    v.stage_progress,
+                    gs.stage_progress
+                );
+                assert!(
+                    (v.envelope - gs.envelope).abs() < 1e-5,
+                    "case {i} frame {frame}: envelope {} vs {}",
+                    v.envelope,
+                    gs.envelope
+                );
+            }
+        }
+    }
+
     #[test]
     fn report_voice_size() {
         eprintln!(
