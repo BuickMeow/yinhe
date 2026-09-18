@@ -21,7 +21,9 @@ use std::sync::Arc;
 use rayon::prelude::*;
 use yinhe_mixer::ChannelBuffers;
 
-use crate::channel_state::{ChannelState, ChaseSkip, MAX_CHANNELS, is_env_effect_cc};
+use crate::channel_state::{
+    ChannelState, ChaseSkip, MAX_CHANNELS, dense_channel, is_env_effect_cc,
+};
 use crate::cpu_synth::voice::{CpuVoice, ENV_RELEASE};
 use crate::gpu_synth::{ControlEvent, SynthEvent};
 use crate::sfz_parser::{self, KeyMapEntry};
@@ -53,11 +55,6 @@ pub static PROF_ON_PUSH_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::At
 const DEFAULT_MAX_VOICES: usize = 8192;
 /// 默认每 key layer 上限（对齐 xsynth `VoiceChannelParams.layers`）。
 const DEFAULT_MAX_LAYERS: usize = 4;
-
-/// dense 通道号 → 槽位索引；>= MAX_CHANNELS 返回 None（只支持 32 槽位）。
-fn dense_channel(channel: usize) -> Option<usize> {
-    (channel < MAX_CHANNELS).then_some(channel)
-}
 
 /// 纯 CPU 合成器（API 与 GpuSynth 对等）。
 /// 渲染并行线程数：macOS 取**性能核（P 核）数**——实测 M 系列 10 核
@@ -242,25 +239,7 @@ impl CpuSynth {
 
     /// chase 跳过掩码（seek 后已实时处理的控制事件区间 `[chase_base, cursor)`）。
     pub fn chase_skip(&self) -> ChaseSkip {
-        let mut skip = ChaseSkip::default();
-        for ev in &self.events[self.chase_base..self.event_cursor] {
-            let SynthEvent::Control { channel, event, .. } = ev else {
-                continue;
-            };
-            let Some(ch) = dense_channel(*channel as usize) else {
-                continue;
-            };
-            match event {
-                ControlEvent::Raw(cc, _) => skip.cc_mask[ch] |= 1u128 << cc,
-                ControlEvent::PitchBend(_) => skip.pitch_bend[ch] = true,
-                ControlEvent::PitchBendSensitivity(_) => skip.pbs[ch] = true,
-                ControlEvent::FineTune(_) => skip.fine_tune[ch] = true,
-                ControlEvent::CoarseTune(_) => skip.coarse_tune[ch] = true,
-                ControlEvent::ProgramChange(_) => skip.program[ch] = true,
-                ControlEvent::PercussionMode(_) => {}
-            }
-        }
-        skip
+        crate::channel_state::chase_skip(&self.events[self.chase_base..self.event_cursor])
     }
 
     /// 应用 chase 通道状态快照（seek 后由外部驱动；frame = 0 → 下一块开头生效）。

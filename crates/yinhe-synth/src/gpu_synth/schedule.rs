@@ -6,12 +6,7 @@ use crate::synth::{ChState, EnvUpdateCmd, GpuVoiceState, ReleaseCmd, SegInfo};
 
 use super::{ControlEvent, GpuSynth, MAX_CHANNELS, SynthEvent};
 use crate::channel_state::ChaseSkip;
-use crate::channel_state::{ChannelState, env_curve_frames, is_env_effect_cc};
-
-/// dense 通道号 → 槽位索引；>= MAX_CHANNELS 返回 None（GPU 合成器只支持 32 槽位）。
-fn dense_channel(channel: usize) -> Option<usize> {
-    (channel < MAX_CHANNELS).then_some(channel)
-}
+use crate::channel_state::{ChannelState, dense_channel, env_curve_frames, is_env_effect_cc};
 
 /// 立即结束 voice 的 kill 指令（mode 6），vid 为 voices 列表索引。
 fn kill_cmd(frame: u32, vid: usize) -> ReleaseCmd {
@@ -568,25 +563,7 @@ impl GpuSynth {
     /// 计算 seek 后已处理的控制事件跳过掩码（事件区间 [chase_base, event_cursor)）。
     /// 由 yinhe-audio 在 `ChaseResult` 到达时调用，跳过的控制器不再被 chase 覆盖。
     pub fn chase_skip(&self) -> ChaseSkip {
-        let mut skip = ChaseSkip::default();
-        for ev in &self.events[self.chase_base..self.event_cursor] {
-            let SynthEvent::Control { channel, event, .. } = ev else {
-                continue;
-            };
-            let Some(ch) = dense_channel(*channel as usize) else {
-                continue;
-            };
-            match event {
-                ControlEvent::Raw(cc, _) => skip.cc_mask[ch] |= 1u128 << cc,
-                ControlEvent::PitchBend(_) => skip.pitch_bend[ch] = true,
-                ControlEvent::PitchBendSensitivity(_) => skip.pbs[ch] = true,
-                ControlEvent::FineTune(_) => skip.fine_tune[ch] = true,
-                ControlEvent::CoarseTune(_) => skip.coarse_tune[ch] = true,
-                ControlEvent::ProgramChange(_) => skip.program[ch] = true,
-                ControlEvent::PercussionMode(_) => {}
-            }
-        }
-        skip
+        crate::channel_state::chase_skip(&self.events[self.chase_base..self.event_cursor])
     }
 
     /// 应用 chase 通道状态快照（yinhe-audio 在 `ChaseResult` 到达时调用）。

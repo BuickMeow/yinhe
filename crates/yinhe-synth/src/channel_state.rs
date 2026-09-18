@@ -152,6 +152,36 @@ pub struct ChaseSkip {
     pub program: [bool; MAX_CHANNELS],
 }
 
+/// dense 通道号 → 槽位索引；>= MAX_CHANNELS 返回 None（两个后端都只支持
+/// 32 槽位）。CPU/GPU 共用（此前两份逐字重复）。
+pub fn dense_channel(channel: usize) -> Option<usize> {
+    (channel < MAX_CHANNELS).then_some(channel)
+}
+
+/// 扫描一段事件，得出"哪些通道/控制类型已被 chase 覆盖"的位掩码
+/// （CPU/GPU 共用；此前两份逐字重复）。
+pub fn chase_skip(events: &[crate::SynthEvent]) -> ChaseSkip {
+    let mut skip = ChaseSkip::default();
+    for ev in events {
+        let crate::SynthEvent::Control { channel, event, .. } = ev else {
+            continue;
+        };
+        let Some(ch) = dense_channel(*channel as usize) else {
+            continue;
+        };
+        match event {
+            crate::ControlEvent::Raw(cc, _) => skip.cc_mask[ch] |= 1u128 << cc,
+            crate::ControlEvent::PitchBend(_) => skip.pitch_bend[ch] = true,
+            crate::ControlEvent::PitchBendSensitivity(_) => skip.pbs[ch] = true,
+            crate::ControlEvent::FineTune(_) => skip.fine_tune[ch] = true,
+            crate::ControlEvent::CoarseTune(_) => skip.coarse_tune[ch] = true,
+            crate::ControlEvent::ProgramChange(_) => skip.program[ch] = true,
+            crate::ControlEvent::PercussionMode(_) => {}
+        }
+    }
+    skip
+}
+
 /// xsynth `calculate_curve`：CC72/73 值缩放 region 原始时长（秒）。
 /// v<=64: (v/64)^5 × dur；v>64: dur + ((v-64)/64)^3 × 15
 /// release 有 0.02s 下限；attack 无下限。返回帧数。
