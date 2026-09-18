@@ -48,7 +48,13 @@ fn ouranos_peak_gpu_bench() {
             peak_tick = *t;
         }
     }
-    let bar = peak_tick / (4 * ppq);
+    let mut bar = peak_tick / (4 * ppq);
+    if let Some(b) = std::env::var("YINHE_BENCH_BAR")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        bar = b;
+    }
     eprintln!(
         "全曲峰值：bar={}（第 {} 小节）tick={peak_tick} 同时发声={peak}",
         bar,
@@ -138,6 +144,11 @@ fn ouranos_peak_gpu_bench() {
         sum[4] / n,
         sum[5] / n,
         sum_blocks as f64 / n
+    );
+    eprintln!(
+        "  淘汰计数（累计到此刻）：layer={} evict={}",
+        yinhe_synth::gpu_synth::LAYER_KILLS.load(std::sync::atomic::Ordering::Relaxed),
+        yinhe_synth::gpu_synth::EVICT_KILLS.load(std::sync::atomic::Ordering::Relaxed)
     );
     let energy: f32 = bufs
         .iter()

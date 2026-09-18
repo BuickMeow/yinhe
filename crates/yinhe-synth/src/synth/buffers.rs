@@ -10,7 +10,7 @@ use super::types::{
 
 /// GPU voice 槽位上限：voice 状态常驻 GPU（不再每块读回/重传），
 /// 槽位固定分配一次，避免扩容重建导致状态丢失。超限由 GpuSynth 侧压缩/淘汰。
-pub(crate) const MAX_VOICE_SLOTS: u32 = 8192;
+pub(crate) const MAX_VOICE_SLOTS: u32 = 16384;
 
 /// 采样数据分片写入的每片字节数（16MB）：写一片让路 1ms，避免长段
 /// GPU/内存带宽抢占把 UI 渲染卡住。
