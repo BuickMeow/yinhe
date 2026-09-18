@@ -375,7 +375,9 @@ impl GpuSynth {
             held_by_damper: false,
             release_pending: false,
             state: GpuVoiceState {
-                sample_offset: offset + info.offset,
+                // offset 是拼接内的**元素**起点；info.offset 是**帧**偏移
+                // → 立体声需 ×scale（此前直接相加，立体声样本起点错位）。
+                sample_offset: offset + info.offset * (1 + info.is_stereo as u32),
                 sample_length,
                 speed: p.speed,
                 base_speed: p.base_speed,

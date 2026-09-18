@@ -289,13 +289,17 @@ impl GpuSynth {
         let t = std::time::Instant::now();
         let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
         let mut unique: Vec<&Arc<[f32]>> = Vec::new();
+        // ptr → is_stereo（同一 Arc 的采样布局一致，加载期决定）
+        let mut stereo: HashMap<usize, bool> = HashMap::new();
         for entries in &self.port_key_maps {
             for entry in entries.iter() {
                 for key_layers in &entry.map {
                     for info in key_layers {
-                        if seen.insert(info.sample_data.as_ptr() as usize) {
+                        let ptr = info.sample_data.as_ptr() as usize;
+                        if seen.insert(ptr) {
                             unique.push(&info.sample_data);
                         }
+                        stereo.entry(ptr).or_insert(info.is_stereo);
                     }
                 }
             }
@@ -303,10 +307,15 @@ impl GpuSynth {
         let mut data: Vec<f32> = Vec::with_capacity(unique.iter().map(|s| s.len()).sum());
         let mut offsets: HashMap<usize, (u32, u32)> = HashMap::with_capacity(unique.len());
         for sample in &unique {
+            let ptr = sample.as_ptr() as usize;
             let offset = data.len() as u32;
-            let len = sample.len() as u32;
+            // **帧数**而非元素数：schedule.rs 的 sample_length/info.offset 都是
+            // 帧语义（此前立体声样本这里按元素存，sample_length 偏大一倍，
+            // 播放尾巴越界读到相邻采样）。
+            let scale = 1 + u32::from(*stereo.get(&ptr).unwrap_or(&false));
+            let len = sample.len() as u32 / scale;
             data.extend_from_slice(sample);
-            offsets.insert(sample.as_ptr() as usize, (offset, len));
+            offsets.insert(ptr, (offset, len));
         }
         let mb = data.len() as f64 * 4.0 / (1024.0 * 1024.0);
         let chunk_count = data.len().div_ceil(crate::synth::types::CHUNK_SIZE);
