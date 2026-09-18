@@ -1,0 +1,315 @@
+//! 渲染块的提交/收割（流水线两阶段）与同步包装、读回丢弃。
+//!
+//! 拆自 renderer.rs（文件过长），含 `PendingReadback`。
+
+use super::*;
+
+/// 已提交未收割的读回（`submit_block` → `finish_block`；流水线用）。
+pub struct PendingReadback {
+    rx: std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
+    staging_idx: usize,
+    mix_size: usize,
+    stage_size: usize,
+    full_size: usize,
+    want_full: bool,
+    voice_count: u32,
+}
+
+impl GpuAudioRenderer {
+    /// 渲染一块音频的 per-channel 混音（32 通道 × frames × 2 f32，立体声交错）。
+    ///
+    /// **分段渲染**：外层块在内部按 [`RenderSegment`] 切段，每段独立跑 pass1
+    /// （voice 状态推进 + partial）与 pass2（归约到该段的 channel_mix 区间）；
+    /// partial 只按段长上界 [`RENDER_SEGMENT_FRAMES`] 分配（满容量 8192 voice
+    /// 也只有 ~32MB，加载阶段预热后不再重建）。每段的 uniform/指令写入后立即
+    /// submit（缓冲只有一份，避免后段覆盖前段），最后一段统一读回，
+    /// CPU↔GPU 往返仍为一次。
+    ///
+    /// **voice 状态常驻 GPU**：新 voice 的状态由调用方在 dispatch 前通过
+    /// [`write_voice_state`] 写入槽位；本方法只读回紧凑的 `voice_stage_out`。
+    ///
+    /// 返回实际 voice 数量（0 表示静音）。
+    #[allow(clippy::too_many_arguments)] // 渲染上下文透传，见 AGENTS 约定
+    /// 提交一个块（流水线：写完命令 + submit + 发起 map，**不等待**）。
+    ///
+    /// 返回 `None` 表示无 GPU 缓冲/零 voice/零段（调用方输出静音）；
+    /// 否则用 [`Self::finish_block`] 收割（此时再等 GPU 完成）。
+    /// 与 `render_block` 的区别：提交与等待分离，让下一块的 CPU 准备与
+    /// 本块的 GPU 执行重叠。
+    #[allow(clippy::too_many_arguments)] // 透传上下文，见 AGENTS 约定
+    pub fn submit_block(
+        &mut self,
+        voice_count: u32,
+        frame_count: u32,
+        want_full: bool,
+        segments: &[RenderSegment<'_>],
+        sample_rate: u32,
+    ) -> Option<PendingReadback> {
+        let voice_count = voice_count.min(crate::synth::buffers::MAX_VOICE_SLOTS);
+        if voice_count == 0 || frame_count == 0 || segments.is_empty() {
+            return None;
+        }
+
+        // 容量按所有段的最大需求（避免逐段扩容重建）
+        let max_segs = segments.iter().map(|s| s.segs.len()).max().unwrap_or(0);
+        let max_ch = segments
+            .iter()
+            .map(|s| s.ch_updates.len())
+            .max()
+            .unwrap_or(0);
+        let max_rel = segments.iter().map(|s| s.releases.len()).max().unwrap_or(0);
+        let max_env = segments.iter().map(|s| s.env_cmds.len()).max().unwrap_or(0);
+        let partial_frames = segments.iter().map(|s| s.frame_length).max().unwrap_or(0);
+        self.ensure_buffers(&BufferSpec {
+            voice_count,
+            frame_count,
+            partial_frames,
+            segs_len: max_segs,
+            ch_updates_len: max_ch,
+            releases_len: max_rel,
+            env_cmds_len: max_env,
+        });
+        // 未 upload 采样时（音色库为空）直接输出静音，绝不 panic
+        self.buffers.as_ref()?;
+        // 首块/重建后：把待写槽位 flush（buffer 就绪前调用的 write 不丢）。
+        self.flush_pending_voice_writes();
+
+        let voice_wg_count = voice_count.div_ceil(WORKGROUP_SIZE);
+        let mix_size =
+            (CHANNEL_COUNT * frame_count as usize * 2 * std::mem::size_of::<f32>()) as u64;
+        let stage_size = (voice_count as usize * std::mem::size_of::<u32>()) as u64;
+        let full_size = (voice_count as usize * std::mem::size_of::<GpuVoiceState>()) as u64;
+        let last = segments.len() - 1;
+
+        for (seg_i, seg) in segments.iter().enumerate() {
+            if seg.frame_length == 0 {
+                continue;
+            }
+            let Some(buf) = self.buffers.as_ref() else {
+                break;
+            };
+            let idx = buf.staging_idx;
+            // release 按帧前缀和（段内帧；scratch 复用，clear 后全量填零）
+            self.release_by_frame_scratch.clear();
+            self.release_by_frame_scratch
+                .resize(seg.frame_length as usize + 2, 0);
+            for r in seg.releases {
+                self.release_by_frame_scratch[r.frame as usize + 1] += 1;
+            }
+            for i in 1..self.release_by_frame_scratch.len() {
+                self.release_by_frame_scratch[i] += self.release_by_frame_scratch[i - 1];
+            }
+            let params = RenderParams {
+                frame_count: seg.frame_length,
+                voice_count,
+                sample_rate,
+                sample_chunk_count: buf.chunk_count,
+                voice_wg_count,
+                seg_count: seg.segs.len() as u32,
+                release_count: seg.releases.len() as u32,
+                env_update_count: seg.env_cmds.len() as u32,
+                partial_stride: partial_frames,
+                channel_mix_frames: frame_count,
+                mix_offset: seg.frame_start,
+            };
+            self.queue
+                .write_buffer(&buf.segs_buf, 0, bytemuck::cast_slice(seg.segs));
+            self.queue
+                .write_buffer(&buf.ch_updates_buf, 0, bytemuck::cast_slice(seg.ch_updates));
+            self.queue.write_buffer(
+                &buf.release_by_frame_buf,
+                0,
+                bytemuck::cast_slice(&self.release_by_frame_scratch),
+            );
+            self.queue
+                .write_buffer(&buf.release_cmds_buf, 0, bytemuck::cast_slice(seg.releases));
+            self.queue
+                .write_buffer(&buf.env_cmds_buf, 0, bytemuck::cast_slice(seg.env_cmds));
+            self.queue
+                .write_buffer(&buf.params_buf, 0, bytemuck::bytes_of(&params));
+
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("audio_render"),
+                });
+            // pass1：每线程一个 voice，串行推进本段所有帧
+            {
+                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("voice_pass"),
+                    ..Default::default()
+                });
+                cpass.set_pipeline(&self.pipeline);
+                cpass.set_bind_group(0, &buf.bind_groups[idx], &[]);
+                cpass.dispatch_workgroups(voice_wg_count, 1, 1);
+            }
+            // pass2：每帧一个 workgroup，把 partial 归约到 channel_mix 本段区间
+            {
+                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("mix_pass"),
+                    ..Default::default()
+                });
+                cpass.set_pipeline(&self.mix_pipeline);
+                cpass.set_bind_group(0, &buf.bind_groups[idx], &[]);
+                cpass.dispatch_workgroups(seg.frame_length, 1, 1);
+            }
+            // 最后一段：读回 channel_mix（整块）+ 紧凑 stage [+ 全字段]，
+            // 由紧随其后的 submit 一并执行（此后不再有段需要该缓冲）。
+            if seg_i == last {
+                encoder.copy_buffer_to_buffer(
+                    &buf.channel_mix_buf,
+                    0,
+                    &buf.staging[idx],
+                    0,
+                    mix_size,
+                );
+                encoder.copy_buffer_to_buffer(
+                    &buf.voice_stage_buf,
+                    0,
+                    &buf.staging[idx],
+                    buf.staging_stage_offset,
+                    stage_size,
+                );
+                if want_full {
+                    encoder.copy_buffer_to_buffer(
+                        &buf.voice_state_buf,
+                        0,
+                        &buf.staging[idx],
+                        buf.staging_full_offset,
+                        full_size,
+                    );
+                }
+            }
+            self.queue.submit(std::iter::once(encoder.finish()));
+        }
+
+        // 分配 staging（双缓冲轮转；收割时 unmap 后归还）
+        let idx = self.buffers.as_ref()?.staging_idx;
+        if let Some(b) = self.buffers.as_mut() {
+            b.staging_idx = 1 - idx;
+        }
+        let (sender, receiver) = std::sync::mpsc::channel();
+        {
+            let buf = self.buffers.as_ref()?;
+            let buffer_slice = buf.staging[idx].slice(..);
+            buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+                let _ = sender.send(result);
+            });
+        }
+        Some(PendingReadback {
+            rx: receiver,
+            staging_idx: idx,
+            mix_size: mix_size as usize,
+            stage_size: stage_size as usize,
+            full_size: full_size as usize,
+            want_full,
+            voice_count,
+        })
+    }
+
+    /// 收割 [`Self::submit_block`] 的读回（等待 GPU 完成 + 拷贝 + unmap）。
+    pub fn finish_block(
+        &mut self,
+        pending: &PendingReadback,
+        channel_mix: &mut [f32],
+        voice_stage_out: &mut [u32],
+        readback_states: Option<&mut [GpuVoiceState]>,
+    ) -> u32 {
+        let Some(buf) = self.buffers.as_ref() else {
+            channel_mix.fill(0.0);
+            return 0;
+        };
+        // 只等**这一块**的 map 完成：用 Poll 推进回调 + 轮询 receiver。
+        // 不用 poll(Wait)——那会连带等待后续已提交块（流水线深度 >1 时
+        // 每次收割都要等全部在途块，重叠收益被吃掉）。
+        loop {
+            // map 失败（如设备丢失）：输出静音，不 unwrap 保命
+            match pending.rx.try_recv() {
+                Ok(Ok(())) => break,
+                Ok(Err(_)) => {
+                    channel_mix.fill(0.0);
+                    return 0;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    let _ = self.device.poll(wgpu::PollType::Poll);
+                    std::thread::yield_now();
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    channel_mix.fill(0.0);
+                    return 0;
+                }
+            }
+        }
+        let buffer_slice = buf.staging[pending.staging_idx].slice(..);
+        let data = match buffer_slice.get_mapped_range() {
+            Ok(d) => d,
+            Err(_) => {
+                channel_mix.fill(0.0);
+                return 0;
+            }
+        };
+        // channel_mix
+        let mix_bytes = pending.mix_size.min(data.len());
+        let gpu_mix: &[f32] = bytemuck::cast_slice(&data[..mix_bytes]);
+        let n_mix = gpu_mix.len().min(channel_mix.len());
+        channel_mix[..n_mix].copy_from_slice(&gpu_mix[..n_mix]);
+        // 紧凑 stage
+        let stage_start = buf.staging_stage_offset as usize;
+        let stage_end = (stage_start + pending.stage_size).min(data.len());
+        let stage: &[u32] = bytemuck::cast_slice(&data[stage_start..stage_end]);
+        let n_stage = stage.len().min(voice_stage_out.len());
+        voice_stage_out[..n_stage].copy_from_slice(&stage[..n_stage]);
+        // 全字段读回
+        if let (Some(out), true) = (readback_states, pending.want_full) {
+            let full_start = buf.staging_full_offset as usize;
+            let full_end = (full_start + pending.full_size).min(data.len());
+            let states: &[GpuVoiceState] = bytemuck::cast_slice(&data[full_start..full_end]);
+            let n = states.len().min(out.len());
+            out[..n].copy_from_slice(&states[..n]);
+        }
+        drop(data);
+        buf.staging[pending.staging_idx].unmap();
+        pending.voice_count
+    }
+
+    /// 提交并立即收割（等价旧的同步路径；供测试/参考路径使用）。
+    #[allow(clippy::too_many_arguments)] // 透传上下文，见 AGENTS 约定
+    pub fn render_block(
+        &mut self,
+        voice_count: u32,
+        readback_states: Option<&mut [GpuVoiceState]>,
+        channel_mix: &mut [f32],
+        voice_stage_out: &mut [u32],
+        segments: &[RenderSegment<'_>],
+        sample_rate: u32,
+    ) -> u32 {
+        let frame_count = (channel_mix.len() / 2 / CHANNEL_COUNT) as u32;
+        let want_full = readback_states.is_some();
+        let Some(pending) =
+            self.submit_block(voice_count, frame_count, want_full, segments, sample_rate)
+        else {
+            channel_mix.fill(0.0);
+            return 0;
+        };
+        self.finish_block(&pending, channel_mix, voice_stage_out, readback_states)
+    }
+
+    /// 丢弃一个已提交未收割的块（等待完成 + unmap，不取数据）。
+    pub fn discard_block(&mut self, pending: &PendingReadback) {
+        let _ = self.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
+        let _ = pending.rx.recv();
+        if let Some(buf) = self.buffers.as_ref()
+            && let Ok(_) = buf.staging[pending.staging_idx]
+                .slice(..)
+                .get_mapped_range()
+        {
+            // get_mapped_range 的借用在这里结束，立即 unmap
+        }
+        if let Some(buf) = self.buffers.as_ref() {
+            buf.staging[pending.staging_idx].unmap();
+        }
+    }
+}
