@@ -78,6 +78,37 @@ pub struct KeyInfo {
     pub cutoff: f32,    // Hz，已含 fil_veltrack/keytrack 修正并 clamp
     pub resonance: f32, // 线性（db_to_amp(dB) × Q_BUTTERWORTH）
     pub filter_type: FilterType,
+
+    // ── 加载期烘焙（运行期每 note_on 零三角函数）──
+    /// per-voice biquad 系数 `[b0,b1,b2,a1,a2]`（cutoff<=0 时 None）。
+    pub biquad: Option<[f32; 5]>,
+    /// 等功率声像增益（`pan` 的 cos/sin 预计算，与 CpuVoice::new 原公式一致）。
+    pub pan_l: f32,
+    pub pan_r: f32,
+}
+
+/// 加载期烘焙：等功率声像增益（`CpuVoice::new` 原公式的预计算）。
+fn pan_gains(pan: f32) -> (f32, f32) {
+    let angle = pan * std::f32::consts::FRAC_PI_2;
+    ((angle.cos() * 1.42).min(1.0), (angle.sin() * 1.42).min(1.0))
+}
+
+/// 加载期烘焙：biquad 系数（cutoff<=0 → None，与 `CpuVoice::new` 一致）。
+fn bake_biquad(
+    cutoff: f32,
+    resonance: f32,
+    filter_type: FilterType,
+    sample_rate: u32,
+) -> Option<[f32; 5]> {
+    (cutoff > 0.0).then(|| {
+        let (b0, b1, b2, a1, a2) = crate::synth::biquad_coeffs(
+            filter_type_code(filter_type),
+            cutoff,
+            resonance,
+            sample_rate as f32,
+        );
+        [b0, b1, b2, a1, a2]
+    })
 }
 
 /// 采样循环模式
@@ -120,6 +151,9 @@ impl Default for KeyInfo {
             cutoff: 0.0,
             resonance: Q_BUTTERWORTH,
             filter_type: FilterType::default(),
+            biquad: None,
+            pan_l: 1.0,
+            pan_r: 1.0,
         }
     }
 }
@@ -313,6 +347,8 @@ fn build_key_map_from_sfz(
                     convert_loop_mode(region.loop_mode)
                 };
 
+                let (pan_l, pan_r) = pan_gains(pan);
+                let biquad = bake_biquad(cutoff, resonance, region.filter_type, sample_rate);
                 key_map[key as usize].push(KeyInfo {
                     sample_data: samples.clone(),
                     sample_rate,
@@ -338,6 +374,9 @@ fn build_key_map_from_sfz(
                     cutoff,
                     resonance,
                     filter_type: region.filter_type,
+                    biquad,
+                    pan_l,
+                    pan_r,
                 });
             }
         }
@@ -409,6 +448,10 @@ fn build_key_maps_from_sf2(
                         .map(|c| c.clamp(1.0, sample_rate as f32 / 2.0 - 100.0))
                         .unwrap_or(0.0);
                     let pan = ((np.pan as f32 / 500.0) + 1.0) / 2.0;
+                    let resonance = 10.0f32.powf(np.resonance / 20.0) * Q_BUTTERWORTH;
+                    let filter_type = FilterType::LowPass;
+                    let (pan_l, pan_r) = pan_gains(pan);
+                    let biquad = bake_biquad(cutoff, resonance, filter_type, sample_rate);
                     let loop_mode = if region.loop_start == region.loop_end {
                         LoopMode::NoLoop
                     } else {
@@ -438,8 +481,11 @@ fn build_key_maps_from_sf2(
                         loop_end: region.loop_end,
                         stop: Some(region.sample_end),
                         cutoff,
-                        resonance: 10.0f32.powf(np.resonance / 20.0) * Q_BUTTERWORTH,
-                        filter_type: FilterType::LowPass,
+                        resonance,
+                        filter_type,
+                        biquad,
+                        pan_l,
+                        pan_r,
                     });
                 }
             }
