@@ -323,6 +323,79 @@ impl GpuSynth {
         self.voices.iter().filter(|v| v.state.env_stage < 6).count()
     }
 
+    /// 诊断：各 dense 通道当前 (bank, program)。
+    pub fn debug_channel_banks(&self) -> Vec<(u8, u8)> {
+        self.channels.iter().map(|c| (c.bank, c.program)).collect()
+    }
+
+    /// 诊断：CPU 侧某采样区间的峰值（判断采样数据是否本身为静音）。
+    pub fn debug_sample_peak(&self, start: usize, len: usize) -> f32 {
+        let d = &self.renderer.sample_data;
+        let end = (start + len).min(d.len());
+        d.get(start..end)
+            .map(|s| s.iter().fold(0.0f32, |m, &v| m.max(v.abs())))
+            .unwrap_or(0.0)
+    }
+
+    /// 诊断：CPU 侧拼接采样的原始值 + 总长度。
+    pub fn debug_sample_value(&self, idx: usize) -> (usize, f32) {
+        (
+            self.renderer.sample_data.len(),
+            self.renderer
+                .sample_data
+                .get(idx)
+                .copied()
+                .unwrap_or(f32::NAN),
+        )
+    }
+
+    /// 诊断：voice 关键字段 (offset, length, gain, time, envelope, stage)。
+    pub fn debug_voice_tuple(&self, idx: usize) -> Option<(u32, u32, f32, f32, f32, u32)> {
+        self.voices.get(idx).map(|v| {
+            (
+                v.state.sample_offset,
+                v.state.sample_length,
+                v.state.base_gain,
+                v.state.time,
+                v.state.envelope,
+                v.state.env_stage,
+            )
+        })
+    }
+
+    /// 诊断：某 port 的音色库条目摘要：总条目数 + 鼓组（bank 128）条目。
+    pub fn port_entries(&self, port: usize) -> (usize, Vec<(u8, u8, usize)>) {
+        self.port_key_maps
+            .get(port)
+            .map(|m| {
+                (
+                    m.len(),
+                    m.iter()
+                        .filter(|e| e.bank == 128)
+                        .map(|e| {
+                            (
+                                e.bank,
+                                e.preset,
+                                e.map.iter().filter(|l| !l.is_empty()).count(),
+                            )
+                        })
+                        .collect(),
+                )
+            })
+            .unwrap_or_default()
+    }
+
+    /// 诊断：按 dense 通道统计活跃 voice 数（判断各通道是否真的在发声）。
+    pub fn voice_count_by_channel(&self) -> [u32; MAX_CHANNELS] {
+        let mut out = [0u32; MAX_CHANNELS];
+        for v in self.voices.iter() {
+            if v.state.env_stage < 6 && (v.channel as usize) < MAX_CHANNELS {
+                out[v.channel as usize] += 1;
+            }
+        }
+        out
+    }
+
     /// 设置全局 voice 上限（默认 8192）。超过时淘汰最老的 release 中 voice。
     pub fn set_max_voices(&mut self, max: usize) {
         self.max_voices = max;

@@ -5041,16 +5041,67 @@ fn diag_ouranos_bar157_dropout() {
             "窗口可合批：NoteOn={w_on} 冗余={w_red}（{:.1}%）",
             w_red as f64 / w_on.max(1) as f64 * 100.0
         );
+        // 窗口内 ProgramChange 与每通道 NoteOn 数（判断该段实际使用的乐器）
+        let mut progs: HashMap<(u8, u8, u8), u32> = HashMap::new();
+        let mut ch_notes: HashMap<u8, u32> = HashMap::new();
+        for ev in &events {
+            match ev {
+                yinhe_synth::SynthEvent::Control {
+                    sample,
+                    channel,
+                    event: yinhe_synth::ControlEvent::ProgramChange(p),
+                } => {
+                    if *sample >= seek_sample && *sample < win_end {
+                        *progs.entry((*channel, 0, *p)).or_insert(0) += 1;
+                    }
+                }
+                yinhe_synth::SynthEvent::NoteOn {
+                    sample, channel, ..
+                } => {
+                    if *sample >= seek_sample && *sample < win_end {
+                        *ch_notes.entry(*channel).or_insert(0) += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut pl: Vec<_> = progs.into_iter().collect();
+        pl.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
+        let mut cl: Vec<_> = ch_notes.into_iter().collect();
+        cl.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
+        eprintln!(
+            "窗口 ProgramChange（通道,bank,程序）top10={:?}",
+            &pl[..pl.len().min(10)]
+        );
+        eprintln!("窗口 NoteOn 按通道 top10={:?}", &cl[..cl.len().min(10)]);
     }
 
     let mut synth = yinhe_synth::GpuSynth::new_default(sr).unwrap();
     let sfz_path = std::path::PathBuf::from(&sfz);
+    // 可选第二个音色库（主选+回滚语义，复现真实播放的双库配置）
+    let mut sf_paths = vec![sfz_path.clone()];
+    if let Ok(p2) = std::env::var("YINHE_DIAG_SFZ2") {
+        sf_paths.push(std::path::PathBuf::from(p2));
+    }
+    // 可选：打击乐通道（源通道 9）单独用回滚库。钢琴库没有鼓组，真实播放
+    // 必然回滚到 GUGS；诊断若只加载钢琴会让 41% 的鼓音符静音、严重低估负载。
+    let drum_sfz = std::env::var("YINHE_DIAG_DRUM_SFZ").ok();
+    let drum_dense = engine.channel_layout.dense_for(9);
+    if drum_sfz.is_some() {
+        eprintln!("打击乐通道 源9→dense={drum_dense}");
+    }
     for ch in 0..32u32 {
-        synth
-            .load_dense_soundfonts(ch, std::slice::from_ref(&sfz_path))
-            .unwrap();
+        let paths: Vec<std::path::PathBuf> = match &drum_sfz {
+            Some(p) if drum_dense != u32::MAX && ch == drum_dense => {
+                vec![std::path::PathBuf::from(p)]
+            }
+            _ => sf_paths.clone(),
+        };
+        synth.load_dense_soundfonts(ch, &paths).unwrap();
     }
     synth.finish_soundfont_load();
+    eprintln!("port0 (总条目,鼓组)= {:?}", synth.port_entries(0));
+    eprintln!("port9 (总条目,鼓组)= {:?}", synth.port_entries(9));
     // 与 CPU 对照对齐：不限 per-key layer（默认 Some(4) 会杀弱音，导致
     // GPU voice 数远小于 CPU、对照不公平）
     synth.set_layer_count(None);
@@ -5129,6 +5180,10 @@ fn diag_ouranos_bar157_dropout() {
             }
             energy.push(e);
         }
+    }
+    if let Some(gs) = engine.gpu_synth.as_ref() {
+        eprintln!("按通道 voice 数={:?}", gs.voice_count_by_channel());
+        eprintln!("各通道(bank,program)={:?}", gs.debug_channel_banks());
     }
     let peak = energy.iter().fold(0.0f32, |m, v| m.max(*v));
     let floor = peak * 0.01;

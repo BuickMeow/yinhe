@@ -357,6 +357,57 @@ fn prewarm_then_render_ok() {
 /// 换算成块内帧——此前"段内帧→块内帧"只在"本段新增 voice"循环里做，复用
 /// 不改变数组长度被漏掉，导致复用音符提前数段渲染、time 错误推进
 /// （真实曲目"越往后越乱"的真身）。
+/// 诊断：鼓通道（源 9）能否选中 GUGS 的 bank 128 鼓组并发声。
+/// 若此测试失败，说明合成器/选音层有 bug（真实曲目里 41% 的鼓音符会静音）。
+#[test]
+#[ignore = "需要本地 GeneralUser-GS.sf2"]
+fn drum_channel_selects_percussion_bank() {
+    let path = std::path::PathBuf::from("/Users/jieneng/Music/Soundfonts/GeneralUser-GS.sf2");
+    if !path.exists() {
+        eprintln!("跳过：GUGS 不存在");
+        return;
+    }
+    let mut synth = GpuSynth::new_default(48_000).unwrap();
+    synth
+        .load_dense_soundfonts(9, std::slice::from_ref(&path))
+        .unwrap();
+    synth.finish_soundfont_load();
+    synth.load_events(vec![
+        SynthEvent::Control {
+            sample: 0,
+            channel: 9,
+            event: crate::ControlEvent::PercussionMode(true),
+        },
+        SynthEvent::NoteOn {
+            sample: 0,
+            channel: 9,
+            key: 36,
+            velocity: 100,
+            end_sample: 9_600,
+        },
+    ]);
+    let frames = 1024usize;
+    let mut bufs: Vec<yinhe_mixer::ChannelBuffers> = (0..2)
+        .map(|_| yinhe_mixer::ChannelBuffers {
+            left: vec![0.0; frames],
+            right: vec![0.0; frames],
+        })
+        .collect();
+    let mut peak = 0.0f32;
+    for _ in 0..8 {
+        synth.render_to_mixer(&mut bufs);
+        peak = peak.max(bufs[0].left.iter().fold(0.0f32, |m, &v| m.max(v.abs())));
+    }
+    let (total, sv) = synth.debug_sample_value(22_499_343);
+    eprintln!(
+        "鼓测试：voices={} peak={peak:.5} 采样总长={total} 该处值={sv} 区间CPU峰值={:.5}",
+        synth.voice_count(),
+        synth.debug_sample_peak(22_499_343, 6813)
+    );
+    assert!(synth.voice_count() > 0, "鼓音符应选中鼓组（voice>0）");
+    assert!(peak > 0.0, "鼓应有非零输出");
+}
+
 #[test]
 fn reused_slot_note_starts_on_time_in_later_segment() {
     let dir = tempfile::tempdir().expect("tempdir");
