@@ -104,9 +104,12 @@ impl GpuAudioRenderer {
         // write_buffer），这里逐连续区间做 GPU 端拷贝落位（copy 记录 ~1µs，
         // 比每区间一次 write_buffer 的固定开销低一个数量级）。轮转区域保证
         // 复用前该块已 harvest，无覆盖竞态。
+        // 拷贝列表按"每块一次性消费"语义 take：读取后即清空，空闲块（flush
+        // 无 pending）绝不会重放上一块的拷贝把 GPU 已推进的状态回退。
+        let state_copies = std::mem::take(&mut self.pending_state_copies);
         if let (Some(staging), Some(b)) = (self.voice_staging_buf.as_ref(), self.buffers.as_ref()) {
             let size = std::mem::size_of::<GpuVoiceState>() as u64;
-            for &(src, dst, cnt) in &self.pending_state_copies {
+            for &(src, dst, cnt) in &state_copies {
                 encoder.copy_buffer_to_buffer(
                     staging,
                     src as u64 * size,

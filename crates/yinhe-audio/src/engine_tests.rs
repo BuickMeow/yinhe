@@ -5186,10 +5186,7 @@ fn diag_ouranos_bar157_dropout() {
         eprintln!("各通道(bank,program)={:?}", gs.debug_channel_banks());
         eprintln!(
             "长寿 voice 详情(通道,键,阶段,待释放,踏板,循环)={:?}",
-            gs.long_lived_detail(
-                engine.sample_position,
-                sr as u64 * 10
-            )
+            gs.long_lived_detail(engine.sample_position, sr as u64 * 10)
         );
     }
     let peak = energy.iter().fold(0.0f32, |m, v| m.max(*v));

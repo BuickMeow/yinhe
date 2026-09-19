@@ -471,6 +471,70 @@ fn reused_slot_note_starts_on_time_in_later_segment() {
     );
 }
 
+/// 回归：空闲块不得重放上一块提交的 voice 状态拷贝。
+/// `flush_pending_voice_writes` 在无 pending 时提前 return 却未清
+/// `pending_state_copies`，且 submit 读取拷贝列表后不清——结果后续每个
+/// 块都会重放上一块的 staging 拷贝，把 GPU 已推进的 voice 状态回退到旧
+/// 快照。表现为音符稀疏的曲目（小 MIDI、高潮后的低潮段）时间/采样错乱。
+#[test]
+fn idle_blocks_do_not_replay_staging_copies() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let wav_path = dir.path().join("tone.wav");
+    let sfz_path = dir.path().join("tone.sfz");
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 44_100,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut w = hound::WavWriter::create(&wav_path, spec).expect("wav create");
+    for _ in 0..44_100 {
+        w.write_sample(16_000i16).expect("wav write");
+    }
+    w.finalize().expect("wav finalize");
+    std::fs::write(&sfz_path, "<region>\nsample=tone.wav key=60\n").expect("sfz write");
+
+    let mut synth = GpuSynth::new_default(44_100).expect("GpuSynth");
+    synth
+        .load_dense_soundfonts(0, std::slice::from_ref(&sfz_path))
+        .expect("load");
+    synth.finish_soundfont_load();
+    // 仅首块有一个长音符，后续块无任何事件（空闲块 → flush 无 pending）。
+    synth.load_events(vec![SynthEvent::NoteOn {
+        sample: 0,
+        channel: 0,
+        key: 60,
+        velocity: 127,
+        end_sample: 44_100,
+    }]);
+    let frames = 1024usize;
+    let mut bufs: Vec<yinhe_mixer::ChannelBuffers> = (0..2)
+        .map(|_| yinhe_mixer::ChannelBuffers {
+            left: vec![0.0; frames],
+            right: vec![0.0; frames],
+        })
+        .collect();
+    let time = |s: &GpuSynth| s.debug_voice_tuple(0).expect("voice 应在").3;
+    synth.render_to_mixer(&mut bufs);
+    let t1 = time(&synth);
+    synth.render_to_mixer(&mut bufs);
+    let t2 = time(&synth);
+    synth.render_to_mixer(&mut bufs);
+    let t3 = time(&synth);
+    assert!(
+        (t1 - 1024.0).abs() < 1.0,
+        "块 1 末 time 应为 1024（实际 {t1}）"
+    );
+    assert!(
+        (t2 - 2048.0).abs() < 1.0,
+        "空闲块 2 末 time 应为 2048（实际 {t2}）——重放了旧的 staging 拷贝？"
+    );
+    assert!(
+        (t3 - 3072.0).abs() < 1.0,
+        "空闲块 3 末 time 应为 3072（实际 {t3}）——重放了旧的 staging 拷贝？"
+    );
+}
+
 /// 测试用 voice（sustain 阶段），只填被 chase 路径读取的字段。
 fn test_voice(stage: u32) -> Voice {
     Voice {
