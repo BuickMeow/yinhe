@@ -331,6 +331,21 @@ mod tests {
     }
 
     #[test]
+    fn search_matches_heteronym_readings() {
+        let it = item("去重重叠音符");
+        // 全拼：多音字每种读音组合都能命中
+        assert!(item_matches(it, "quchongchongdie"));
+        assert!(item_matches(it, "quzhongzhongdie"));
+        assert!(item_matches(it, "chongdie"));
+        assert!(item_matches(it, "zhongdie"));
+        // 首字母缩写：多音字各读音组合
+        assert!(item_matches(it, "qccd"));
+        assert!(item_matches(it, "qzzd"));
+        // 不存在的组合仍不命中
+        assert!(!item_matches(it, "quchongchongdiex"));
+    }
+
+    #[test]
     fn shortcut_rows_align() {
         let mut first_x = 0.0f32;
         let mut second_x = 0.0f32;
