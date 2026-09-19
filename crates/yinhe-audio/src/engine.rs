@@ -335,23 +335,6 @@ impl AudioEngine {
         self.mixer.has_inserts() || self.instruments.iter().any(|i| i.is_some())
     }
 
-    /// 导出：按事件流峰值需求扩容 voice 槽位（GPU 路径返回实际容量）。
-    /// 调用时须无活跃 voice（导出前的 Stop/seek 之后）。
-    #[cfg(feature = "gpu")]
-    pub(crate) fn prepare_export_voices(&mut self, frames: u32) -> Option<usize> {
-        self.gpu_synth
-            .as_mut()
-            .map(|gs| gs.prepare_export_voices(frames))
-    }
-
-    /// 导出结束：恢复实时槽位容量（缓冲下次渲染时重建）。
-    #[cfg(feature = "gpu")]
-    pub(crate) fn restore_realtime_voices(&mut self) {
-        if let Some(gs) = self.gpu_synth.as_mut() {
-            gs.restore_realtime_voices();
-        }
-    }
-
     /// 最大复音数：0/None → 系统推荐（`DEFAULT_MAX_VOICES`）。GPU/CPU 合成器
     /// 创建晚于命令，worker 创建后会补应用本字段。
     pub(crate) fn set_max_voices(&mut self, max: Option<usize>) {

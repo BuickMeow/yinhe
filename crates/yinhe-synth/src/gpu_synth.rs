@@ -9,8 +9,7 @@
 //!
 //! voice 管理、通道状态、ADSR 推进封装在内部。
 
-use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::sf_parser;
@@ -166,8 +165,6 @@ pub struct GpuSynth {
     /// 全局 voice 上限（黑乐谱长 sustain/无 note_off 的 voice 会累积，
     /// 超限时淘汰最老的 release 中 voice，否则最老的 active——与 xsynth voice 限制同思路）
     max_voices: usize,
-    /// voice 槽位容量（实时默认；导出按需扩容，见 prepare_export_voices）。
-    voice_capacity: usize,
     /// 每 key 同时活跃 voice 上限（`SetLayerCount`；None = 不限制）。
     /// xsynth 默认 4；超限时按 xsynth 语义杀该 key velocity 最低的 voice。
     max_layers: Option<usize>,
@@ -277,7 +274,6 @@ impl GpuSynth {
             channel_mix: Vec::new(),
             channels: [ChannelState::new(sample_rate); MAX_CHANNELS],
             max_voices: crate::DEFAULT_MAX_VOICES,
-            voice_capacity: MAX_VOICE_SLOTS as usize,
             max_layers: Some(crate::DEFAULT_MAX_LAYERS),
             layer_counts: vec![0u32; MAX_CHANNELS * 128].into_boxed_slice(),
             key_slots: (0..MAX_CHANNELS * 128)
@@ -443,72 +439,6 @@ impl GpuSynth {
     /// 设置全局 voice 上限（默认 8192）。超过时淘汰最老的 release 中 voice。
     pub fn set_max_voices(&mut self, max: usize) {
         self.max_voices = max;
-    }
-
-    /// 导出前按事件流估算峰值同时存活 voice（gate + 音色库最长 release），
-    /// 按需扩容槽位并预热重建；返回实际容量（上限 MAX_EXPORT_VOICE_SLOTS）。
-    /// 调用时须无活跃 voice（导出前的 Stop/seek 之后）。
-    pub fn prepare_export_voices(&mut self, frames: u32) -> usize {
-        let peak = self.estimate_peak_voices().max(1) as u32;
-        let limit = self.renderer.max_voice_capacity();
-        let capacity = peak.min(limit);
-        if peak > limit {
-            eprintln!(
-                "[gpu] 导出提示：峰值需要 {peak} voice，设备上限 {limit}（按单 binding 推导），超出部分按淘汰策略处理"
-            );
-        }
-        self.voice_capacity = capacity as usize;
-        self.renderer.set_voice_capacity(capacity);
-        self.prewarm(frames);
-        capacity as usize
-    }
-
-    /// 设备可容纳的 voice 槽位上限（诊断/导出提示用；由 device limits 推导）。
-    pub fn max_voice_capacity(&self) -> u32 {
-        self.renderer.max_voice_capacity()
-    }
-
-    /// 恢复实时槽位容量（导出结束后调用；缓冲在下次渲染时重建）。
-    pub fn restore_realtime_voices(&mut self) {
-        self.voice_capacity = MAX_VOICE_SLOTS as usize;
-        self.renderer.set_voice_capacity(MAX_VOICE_SLOTS);
-    }
-
-    /// 估算事件流峰值同时存活 voice：voice 存活 = note_on 到
-    /// end_sample + 最长 release（保守上界；合批/踏板复用只会更少）。
-    fn estimate_peak_voices(&self) -> usize {
-        let sr = self.sample_rate as f32;
-        let max_release = self
-            .port_key_maps
-            .iter()
-            .flat_map(|entries| entries.iter())
-            .flat_map(|entry| entry.map.iter())
-            .flat_map(|layers| layers.iter())
-            .map(|info| info.ampeg_release)
-            .fold(0.0f32, f32::max);
-        let release_frames = (max_release * sr).ceil() as u64;
-        let mut heap: BinaryHeap<Reverse<u64>> = BinaryHeap::new();
-        let mut alive = 0usize;
-        let mut peak = 0usize;
-        for ev in &self.events {
-            if let SynthEvent::NoteOn {
-                sample, end_sample, ..
-            } = ev
-            {
-                heap.push(Reverse(end_sample.saturating_add(release_frames)));
-                alive += 1;
-                while let Some(&Reverse(t)) = heap.peek() {
-                    if t <= *sample {
-                        heap.pop();
-                        alive -= 1;
-                    } else {
-                        break;
-                    }
-                }
-                peak = peak.max(alive);
-            }
-        }
-        peak
     }
 
     /// 活跃 voice 的力度直方图（8 桶，从高到低：127-112、111-96、…、15-0）。

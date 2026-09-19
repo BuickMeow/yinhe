@@ -60,9 +60,9 @@ pub(super) fn build_key_maps_from_sf2(
             };
 
             let sample_ptr = sample_data.as_ptr() as usize;
-            let peak = *peak_cache
-                .entry(sample_ptr)
-                .or_insert_with(|| sample_data.iter().fold(0.0f32, |m, &v| m.max(v.abs())));
+            let peak = *peak_cache.entry(sample_ptr).or_insert_with(|| {
+                sample_data.iter().fold(0.0f32, |m, &v| m.max(v.abs()))
+            });
             if peak == 0.0 {
                 continue;
             }

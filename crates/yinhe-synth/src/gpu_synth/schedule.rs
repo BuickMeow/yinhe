@@ -1,6 +1,7 @@
 //! 事件调度：块内事件收集为段结构，note on/off 与通道释放指令，chase 应用。
 
 use crate::sf_parser;
+use crate::synth::buffers::MAX_VOICE_SLOTS;
 use crate::synth::{ChState, EnvUpdateCmd, GpuVoiceState, ReleaseCmd, SegInfo};
 
 use super::{ControlEvent, GpuSynth, MAX_CHANNELS, SynthEvent};
@@ -377,7 +378,7 @@ impl GpuSynth {
         };
         // 容量上限：**有空闲槽位（free list）时不算满**——结束的 voice 槽位
         // 由 harvest 即时回收、note_on 复用，不再依赖 compact 清墓碑。
-        if self.voices.len() >= self.voice_capacity && self.free_slots.is_empty() {
+        if self.voices.len() >= MAX_VOICE_SLOTS as usize && self.free_slots.is_empty() {
             use std::sync::atomic::Ordering::Relaxed;
             crate::gpu_synth::NOTE_ON_REJECTED.fetch_add(1, Relaxed);
             let bucket = match vel {

@@ -37,7 +37,6 @@ impl AudioRenderer {
         self.engine.handle_command(AudioCommand::Stop);
         self.clear_buffered_audio(0);
         self.engine.set_layer_count(layer_count);
-
         self.request_chase(0);
         // GPU 路径：事件列表按 seek 后位置（0）重建（与 AudioCommand::Stop 同语义）。
         #[cfg(feature = "gpu")]
@@ -60,21 +59,6 @@ impl AudioRenderer {
         };
         #[cfg(not(feature = "gpu"))]
         let export_chunk_frames = crate::engine::ENGINE_BLOCK_FRAMES;
-        // 导出模式：按事件流峰值需求扩容 voice 槽位（离线渲染不限时，听感完整
-        // 优先；实时播放仍按用户设置/默认容量）。导出结束后恢复。
-        #[cfg(feature = "gpu")]
-        {
-            self.export_prev_max_voices = Some(self.engine.max_voices);
-            match self
-                .engine
-                .prepare_export_voices(export_chunk_frames as u32)
-            {
-                Some(capacity) => self.engine.set_max_voices(Some(capacity)),
-                None => self
-                    .engine
-                    .set_max_voices(Some(yinhe_synth::MAX_VOICE_SLOTS as usize)),
-            }
-        }
         match ExportJob::new(
             &path,
             bit_depth,
@@ -185,16 +169,6 @@ impl AudioRenderer {
         } else {
             // 无记录：恢复为 None（清空导出设定的层数限制）。
             self.engine.set_layer_count(None);
-        }
-        #[cfg(feature = "gpu")]
-        {
-            // 槽位容量与最大复音数都恢复到导出前（缓冲下次渲染时重建）。
-            self.engine.restore_realtime_voices();
-            if let Some(prev) = self.export_prev_max_voices.take() {
-                // 恢复为导出前的等效值（0 = 自动 → None）。
-                self.engine
-                    .set_max_voices(if prev == 0 { None } else { Some(prev) });
-            }
         }
         self.clear_buffered_audio(0);
         self.publish_state();
