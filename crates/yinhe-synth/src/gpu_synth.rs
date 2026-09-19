@@ -333,8 +333,7 @@ impl GpuSynth {
         self.voices
             .iter()
             .filter(|v| {
-                v.state.env_stage < 6
-                    && current_sample.saturating_sub(v.start_sample) > threshold
+                v.state.env_stage < 6 && current_sample.saturating_sub(v.start_sample) > threshold
             })
             .take(8)
             .map(|v| {
