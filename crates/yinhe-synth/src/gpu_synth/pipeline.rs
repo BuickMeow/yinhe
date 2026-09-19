@@ -101,7 +101,7 @@ impl GpuSynth {
     /// 等待在途 GPU 块（用户实测 117ms 尖峰），必须低频；碎片化由 free list
     /// 复用与 harvest 尾部截断控制，不靠墓碑比例触发。
     fn compact_needed(&self) -> bool {
-        self.free_slots.is_empty() && self.voices.len() >= MAX_VOICE_SLOTS as usize
+        self.free_slots.is_empty() && self.voices.len() >= self.voice_capacity
     }
 
     /// 压缩：清理已结束 voice（tombstone）并全量重传槽位状态。

@@ -106,8 +106,10 @@ impl GpuAudioRenderer {
             releases_len,
             env_cmds_len,
         } = *spec;
-        // voice 数超槽位上限：调用方（GpuSynth）负责压缩/淘汰；这里仅防御。
-        let voice_count = voice_count.min(MAX_VOICE_SLOTS);
+        // 槽位容量：实时默认 MAX_VOICE_SLOTS，导出按需扩容（set_voice_capacity）。
+        let capacity = self.voice_capacity;
+        // voice 数超槽位容量：调用方（GpuSynth）负责压缩/淘汰；这里仅防御。
+        let voice_count = voice_count.min(capacity);
         // 幂增长策略：向上取整到 2 的幂次，避免每个 block 都重建缓冲区
         let rounded_voices = voice_count.max(64).next_power_of_two();
         // 指令/段缓冲按实际需求（块内事件数 × voice 数）分配，与 voice/帧数无关：
@@ -243,15 +245,15 @@ impl GpuAudioRenderer {
             usage: wgpu::BufferUsages::UNIFORM,
         });
 
-        // voice 状态/紧凑 stage：固定 MAX_VOICE_SLOTS 分配并**跨重建复用**
+        // voice 状态/紧凑 stage：按槽位容量分配并**跨重建复用**
         // （voice 状态常驻 GPU；扩容 partial 等缓冲时不能丢状态）。
-        let slots = MAX_VOICE_SLOTS as usize;
+        let slots = capacity as usize;
         let voice_state_size = (slots * std::mem::size_of::<GpuVoiceState>()) as u64;
         // pass1 每 voice 每帧输出（pack2x16float 打包 l/r 为一个 u32：读写
         // 带宽减半）：分段渲染只按段长上界分配（与整块帧数无关，且跨重建复用）
         let partial_size = (slots * partial_frames as usize * std::mem::size_of::<u32>()) as u64;
         let (voice_state_buf, partial_buf) = match self.buffers.take() {
-            Some(b) if b.voice_slots >= MAX_VOICE_SLOTS && b.partial_frames >= partial_frames => {
+            Some(b) if b.voice_slots >= capacity && b.partial_frames >= partial_frames => {
                 (b.voice_state_buf, b.partial_buf)
             }
             _ => (
@@ -272,8 +274,8 @@ impl GpuAudioRenderer {
                 }),
             ),
         };
-        // 状态上传 staging + scatter 项（固定 MAX_VOICE_SLOTS × PIPELINE_DEPTH 轮转）
-        let staging_slots = MAX_VOICE_SLOTS as usize;
+        // 状态上传 staging + scatter 项（槽位容量 × PIPELINE_DEPTH 轮转）
+        let staging_slots = capacity as usize;
         let voice_staging_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("voice_staging"),
             size: (staging_slots
@@ -485,7 +487,7 @@ impl GpuAudioRenderer {
             chunk_offsets_buf,
             chunk_count,
             voice_state_buf,
-            voice_slots: MAX_VOICE_SLOTS,
+            voice_slots: capacity,
             active_buf,
             voice_staging_buf,
             scatter_items_buf,

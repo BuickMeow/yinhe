@@ -32,6 +32,8 @@ pub struct GpuAudioRenderer {
     #[cfg(test)]
     pub(crate) sample_upload_count: usize,
     pub(crate) frame_count: u32,
+    /// voice 槽位容量（实时默认 MAX_VOICE_SLOTS；导出按需扩容）。
+    pub(crate) voice_capacity: u32,
     /// render_into 的 per-channel 混音临时缓冲（复用，避免每块分配）
     pub(crate) mix_scratch: Vec<f32>,
     /// 每段 release 指令的按帧前缀和（复用，避免每段分配）
@@ -237,6 +239,7 @@ impl GpuAudioRenderer {
             #[cfg(test)]
             sample_upload_count: 0,
             frame_count: 0,
+            voice_capacity: super::buffers::MAX_VOICE_SLOTS,
             mix_scratch: Vec::new(),
             release_by_frame_scratch: Vec::new(),
             voice_state_mirror: Vec::new(),
@@ -277,8 +280,8 @@ impl GpuAudioRenderer {
                 max_storage_buffer_binding_size: adapter_limits.max_storage_buffer_binding_size,
                 max_buffer_size: adapter_limits.max_buffer_size,
                 // GPU 合成器需要 16 个 storage buffer（采样块 + 段结构 + 指令）
-                max_storage_buffers_per_shader_stage: adapter_limits
-                    .max_storage_buffers_per_shader_stage,
+                max_storage_buffers_per_shader_stage:
+                    adapter_limits.max_storage_buffers_per_shader_stage,
                 ..wgpu::Limits::default()
             },
             memory_hints: wgpu::MemoryHints::default(),
@@ -297,6 +300,29 @@ impl GpuAudioRenderer {
         self.buffers = None;
     }
 
+    /// 设备可容纳的 voice 槽位上限：partial 缓冲是每槽位 `段长 × 4` 字节的
+    /// 单 binding，必须同时满足设备单 buffer 大小与 storage binding 视图
+    /// 两个上限；voice 状态/staging 等其他缓冲按同容量分配且每槽位字节数
+    /// 远小（~百字节级），不构成瓶颈。设备 limits 已在 request_device 时取
+    /// adapter 最大值，无需额外常量。
+    pub fn max_voice_capacity(&self) -> u32 {
+        let per_slot = RENDER_SEGMENT_FRAMES as u64 * std::mem::size_of::<u32>() as u64;
+        let limits = self.device.limits();
+        let base = limits
+            .max_buffer_size
+            .min(limits.max_storage_buffer_binding_size);
+        (base / per_slot).min(u32::MAX as u64) as u32
+    }
+
+    /// 设置 voice 槽位容量（导出按需扩容 / 结束后恢复）。变化时置空缓冲，
+    /// 下次渲染重建（重建会清 GPU 侧 voice 状态，调用方须在无活跃 voice 时用）。
+    pub fn set_voice_capacity(&mut self, capacity: u32) {
+        if self.voice_capacity != capacity {
+            self.voice_capacity = capacity;
+            self.buffers = None;
+        }
+    }
+
     /// 预热 GPU 缓冲与渲染管线（音色库加载完成后调用）：
     /// 1. 按最大 voice 容量与段长分配全部缓冲（播放中不再因 voice 增长重建）；
     /// 2. 跑一次**哑渲染**（1 个零状态 voice + 整块帧数），触发 shader/管线/
@@ -307,7 +333,7 @@ impl GpuAudioRenderer {
     pub fn prewarm(&mut self, frames: u32, sample_rate: u32) {
         let frames = frames.max(1);
         self.ensure_buffers(&BufferSpec {
-            voice_count: super::buffers::MAX_VOICE_SLOTS,
+            voice_count: self.voice_capacity,
             frame_count: frames,
             partial_frames: RENDER_SEGMENT_FRAMES,
             segs_len: 0,
@@ -384,7 +410,7 @@ impl GpuAudioRenderer {
         };
         let buf_slots = buf.voice_slots;
         let size = std::mem::size_of::<GpuVoiceState>();
-        let staging_slots = crate::synth::buffers::MAX_VOICE_SLOTS as usize;
+        let staging_slots = self.voice_capacity as usize;
         let t_flush = std::time::Instant::now();
         let n_slots = self.dirty_vids.len() as u64;
         // 脏 vid 天然去重（每槽位只入列一次），升序后合并连续区间
