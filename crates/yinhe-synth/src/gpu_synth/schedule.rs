@@ -655,13 +655,21 @@ impl GpuSynth {
             let (k1, k2, k3) = (vel, end as f64, env);
             cands.push((if releasing { 0u8 } else { 1u8 }, k1, k2, k3, i));
         }
-        cands.sort_unstable_by(|a, b| {
+        // 只取最小的 excess 个：select_nth 是 O(n)，满排序是 O(n log n)；
+        // 高潮段 excess 小（几百）而 alive 大（1.5 万+），每段省的比较量可观。
+        // 被选中的集合与排序无关（kill 顺序不影响听感），无需全序。
+        let cmp = |a: &(u8, f64, f64, f64, usize), b: &(u8, f64, f64, f64, usize)| {
             a.0.cmp(&b.0)
                 .then(a.1.total_cmp(&b.1))
                 .then(a.2.total_cmp(&b.2))
                 .then(a.3.total_cmp(&b.3))
                 .then(a.4.cmp(&b.4))
-        });
+        };
+        if excess < cands.len() {
+            cands.select_nth_unstable_by(excess, cmp);
+        } else {
+            cands.sort_unstable_by(cmp);
+        }
         for &(rel, k1, _, _, idx) in cands.iter().take(excess) {
             let vel = if rel == 0 {
                 k1 as u8
