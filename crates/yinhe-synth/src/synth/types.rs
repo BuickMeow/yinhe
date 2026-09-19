@@ -1,7 +1,6 @@
 //! 共享类型与常量：GpuVoiceState/RenderParams/SegInfo 等。
 
 pub const MAX_CHUNKS: usize = 5;
-pub const CHUNK_SIZE: usize = 30_000_000; // 30M f32 = 120MB per chunk
 
 /// 内部分段渲染的段长（帧）：外层块（4096）在 renderer 内部切成若干段，
 /// 每段独立 pass1+pass2（partial 只需 voices × 段长），一次 submit/读回。

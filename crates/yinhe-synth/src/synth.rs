@@ -14,7 +14,7 @@ mod tests;
 
 pub use filter::biquad_coeffs;
 pub use renderer::GpuAudioRenderer;
-pub use types::{CHANNEL_COUNT, CHUNK_SIZE, MAX_CHUNKS, WORKGROUP_SIZE};
+pub use types::{CHANNEL_COUNT, MAX_CHUNKS, WORKGROUP_SIZE};
 pub use types::{
     ChState, EnvUpdateCmd, GpuVoiceState, RENDER_SEGMENT_FRAMES, ReleaseCmd, RenderParams,
     RenderSegment, SegInfo,

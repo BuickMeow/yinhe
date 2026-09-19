@@ -5,7 +5,7 @@ use wgpu::util::DeviceExt;
 
 use super::renderer::GpuAudioRenderer;
 use super::types::{
-    CHANNEL_COUNT, CHUNK_SIZE, ChState, EnvUpdateCmd, GpuVoiceState, MAX_CHUNKS, ReleaseCmd,
+    CHANNEL_COUNT, ChState, EnvUpdateCmd, GpuVoiceState, MAX_CHUNKS, ReleaseCmd,
     RenderParams, SegInfo,
 };
 
@@ -144,7 +144,23 @@ impl GpuAudioRenderer {
 
         let t_create = std::time::Instant::now();
         let device = &self.device;
-        let chunk_count = self.sample_data.len().div_ceil(CHUNK_SIZE).min(MAX_CHUNKS) as u32;
+        // 采样分片：binding 数固定 MAX_CHUNKS，每片大小按数据量均分（偶数元素
+        // 对齐：shader 的 vec2 读不能跨片）。旧实现固定 30M 元素/片 → 最多
+        // 600MB，超出的采样静默丢失（大型音色库整库无声）。
+        let total_len = self.sample_data.len();
+        let chunk_len = total_len.div_ceil(MAX_CHUNKS).max(1).next_multiple_of(2);
+        let chunk_count = total_len.div_ceil(chunk_len).min(MAX_CHUNKS) as u32;
+        let chunk_bytes = chunk_len as u64 * std::mem::size_of::<f32>() as u64;
+        let max_buf = device.limits().max_buffer_size;
+        if chunk_bytes > max_buf {
+            eprintln!(
+                "[gpu] 警告：音色库采样 {:.0}MB 超出 GPU 单缓冲上限 {:.0}MB（分 {} 片仍装不下），\
+                 超出部分将静音；请换更小的音色库",
+                total_len as f64 * 4.0 / (1024.0 * 1024.0),
+                max_buf as f64 / (1024.0 * 1024.0),
+                MAX_CHUNKS
+            );
+        }
 
         // 采样 chunk buffer：数据未变时复用已有 GPU buffer（voice/帧数扩容
         // 触发的重建不重传采样数据）。仅 `upload_samples` 后重建并上传一次。
@@ -156,7 +172,7 @@ impl GpuAudioRenderer {
                 let created: Vec<wgpu::Buffer> = self
                     .sample_data
                     .as_slice()
-                    .chunks(CHUNK_SIZE)
+                    .chunks(chunk_len)
                     .take(MAX_CHUNKS)
                     .map(|data| {
                         let buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -210,7 +226,7 @@ impl GpuAudioRenderer {
         for chunk in self
             .sample_data
             .as_slice()
-            .chunks(CHUNK_SIZE)
+            .chunks(chunk_len)
             .take(MAX_CHUNKS)
         {
             offsets.push(acc);

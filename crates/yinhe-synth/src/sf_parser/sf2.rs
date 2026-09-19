@@ -19,6 +19,12 @@ pub(super) fn build_key_maps_from_sf2(
 
     // 每个 preset 一个条目（bank, preset）→ key map，program 切换直接索引。
     // preset 间采样数据 Arc 共享，上传 GPU 时按 Arc 身份去重，无重复拷贝。
+    //
+    // 立体声交错缓存：同一对 (left, right) 样本可能被多个 preset/region
+    // 引用（GM 库常态），必须复用同一份交错数据——否则每个 region 各拷一份
+    // （实测 TWGMD Ultimate 311MB 的 sf2 膨胀到 15GB，且前 600MB 之外的
+    // 采样被 chunk 上限截断导致整库静音）。
+    let mut stereo_cache: HashMap<(usize, usize), Arc<[f32]>> = HashMap::new();
     let mut entries = Vec::with_capacity(presets.len());
     for preset in &presets {
         let mut key_map: Vec<Vec<KeyInfo>> = vec![Vec::new(); 128];
@@ -27,13 +33,23 @@ pub(super) fn build_key_maps_from_sf2(
             let (sample_data, is_stereo): (Arc<[f32]>, bool) = if region.sample.len() == 2 {
                 let left = &region.sample[0];
                 let right = &region.sample[1];
-                let len = left.len().min(right.len());
-                let mut interleaved = Vec::with_capacity(len * 2);
-                for i in 0..len {
-                    interleaved.push(left[i]);
-                    interleaved.push(right[i]);
+                let key = (
+                    Arc::as_ptr(left) as *const f32 as usize,
+                    Arc::as_ptr(right) as *const f32 as usize,
+                );
+                if let Some(cached) = stereo_cache.get(&key) {
+                    (Arc::clone(cached), true)
+                } else {
+                    let len = left.len().min(right.len());
+                    let mut interleaved = Vec::with_capacity(len * 2);
+                    for i in 0..len {
+                        interleaved.push(left[i]);
+                        interleaved.push(right[i]);
+                    }
+                    let arc: Arc<[f32]> = Arc::from(interleaved);
+                    stereo_cache.insert(key, Arc::clone(&arc));
+                    (arc, true)
                 }
-                (Arc::from(interleaved), true)
             } else if region.sample.len() == 1 {
                 (Arc::clone(&region.sample[0]), false)
             } else {

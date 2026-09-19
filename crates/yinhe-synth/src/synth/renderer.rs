@@ -266,14 +266,19 @@ impl GpuAudioRenderer {
             apply_limit_buckets: false,
         }))
         .map_err(|_| "No GPU adapter found")?;
+        // 采样库可达 GB 级（大型 GM 音色库）：storage binding 与单 buffer 上限
+        // 取 adapter 支持的最大值，而不是固定 512MB——固定上限配合旧的分片
+        // 逻辑会把超出部分静默丢弃（表现为整库无声）。
+        let adapter_limits = adapter.limits();
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("gpu_audio"),
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits {
-                max_storage_buffer_binding_size: 512 * 1024 * 1024,
-                max_buffer_size: 512 * 1024 * 1024,
-                // GPU 合成器需要 13 个 storage buffer（采样块 + 段结构 + 指令）
-                max_storage_buffers_per_shader_stage: 16,
+                max_storage_buffer_binding_size: adapter_limits.max_storage_buffer_binding_size,
+                max_buffer_size: adapter_limits.max_buffer_size,
+                // GPU 合成器需要 16 个 storage buffer（采样块 + 段结构 + 指令）
+                max_storage_buffers_per_shader_stage: adapter_limits
+                    .max_storage_buffers_per_shader_stage,
                 ..wgpu::Limits::default()
             },
             memory_hints: wgpu::MemoryHints::default(),

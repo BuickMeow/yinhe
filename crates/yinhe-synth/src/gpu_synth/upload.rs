@@ -113,7 +113,6 @@ impl GpuSynth {
             offsets.insert(ptr, (offset, len));
         }
         let mb = data.len() as f64 * 4.0 / (1024.0 * 1024.0);
-        let chunk_count = data.len().div_ceil(crate::synth::types::CHUNK_SIZE);
         let data = Arc::new(data);
         self.sample_offsets = offsets.clone();
         store_sample_bundle(
@@ -124,9 +123,6 @@ impl GpuSynth {
             },
         );
         self.renderer.upload_samples(data);
-        eprintln!(
-            "[gpu] 采样拼接={:?}（{chunk_count} 个 chunk，{mb:.0}MB），已缓存复用",
-            t.elapsed()
-        );
+        eprintln!("[gpu] 采样拼接={:?}（{mb:.0}MB），已缓存复用", t.elapsed());
     }
 }
