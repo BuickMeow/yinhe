@@ -290,6 +290,8 @@ impl GpuSynth {
                                     // 与淘汰 kill 同语义：等待 GPU 确认 1ms 淡出结束，
                                     // 期间 harvest 不得用旧状态覆盖（否则 voice 复活）。
                                     v.kill_pending = true;
+                                    let b = v.channel as usize * 128 + v.key as usize;
+                                    self.layer_counts[b] = self.layer_counts[b].saturating_sub(1);
                                     releases.push(kill_cmd(frame, i));
                                 }
                             }
@@ -585,16 +587,12 @@ impl GpuSynth {
 
         // per-key layer 上限（SetLayerCount）：超限时反复杀该 key velocity 最低的
         // 未释放 voice（xsynth pop_quietest_voice_group 语义；跳过刚加入的）。
+        // 活跃计数用增量维护的 `layer_counts`（O(1) 判定，替代每音一次 O(V)
+        // 全扫——黑乐谱密集 NoteOn 下这是 CPU 侧最大热点）；仅超限时才扫描
+        // 该 key 的 voice 选 victim。
+        self.layer_counts[bucket] += 1;
         if let Some(max) = self.max_layers {
-            loop {
-                let count = self
-                    .voices
-                    .iter()
-                    .filter(|v| v.channel == channel && v.key == key && v.state.env_stage < 6)
-                    .count();
-                if count <= max {
-                    break;
-                }
+            while self.layer_counts[bucket] as usize > max {
                 // 候选条件与计数条件一致（env_stage < 6）：**包含 release 中的**
                 // voice——release 尾巴被截掉听感无害，这是 xsynth「几乎不丢音」
                 // 的关键（判定与 CPU 共用 channel_state::layer_victim）。
@@ -617,6 +615,7 @@ impl GpuSynth {
                 v.kill_pending = true;
                 v.held_by_damper = false;
                 releases.push(kill_cmd(block_frame, idx));
+                self.layer_counts[bucket] -= 1;
                 crate::gpu_synth::LAYER_KILLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         }
@@ -751,6 +750,8 @@ impl GpuSynth {
         v.state.env_stage = 6;
         v.kill_pending = true;
         v.held_by_damper = false;
+        let b = v.channel as usize * 128 + v.key as usize;
+        self.layer_counts[b] = self.layer_counts[b].saturating_sub(1);
         releases.push(kill_cmd(block_frame, idx));
         crate::gpu_synth::EVICT_KILLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }

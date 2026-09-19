@@ -170,6 +170,9 @@ pub struct GpuSynth {
     /// 每 key 同时活跃 voice 上限（`SetLayerCount`；None = 不限制）。
     /// xsynth 默认 4；超限时按 xsynth 语义杀该 key velocity 最低的 voice。
     max_layers: Option<usize>,
+    /// 每 (dense 通道 × 128 key) 的活跃 voice 计数（per-key layer 限制用）。
+    /// 增量维护：note_on +1，kill / GPU 确认结束 -1——替代每音一次 O(V) 全扫。
+    layer_counts: Box<[u32]>,
     /// 峰值 voice 数统计（诊断用）
     peak_voices: usize,
     /// 上一块耗时分解（ms）：[collect, submit(含 collect), harvest, ring, out, compact]
@@ -270,6 +273,7 @@ impl GpuSynth {
             channels: [ChannelState::new(sample_rate); MAX_CHANNELS],
             max_voices: crate::DEFAULT_MAX_VOICES,
             max_layers: Some(crate::DEFAULT_MAX_LAYERS),
+            layer_counts: vec![0u32; MAX_CHANNELS * 128].into_boxed_slice(),
             peak_voices: 0,
             diag_ms: [0.0; 8],
             diag_blocks: 0,
@@ -304,6 +308,7 @@ impl GpuSynth {
         self.voices.clear();
         self.free_slots.clear();
         self.freed_flags.clear();
+        self.layer_counts.fill(0);
         self.channels = [ChannelState::new(self.sample_rate); MAX_CHANNELS];
         self.channel_speed_cache = [0.0; MAX_CHANNELS];
         self.drain_pending(false);
@@ -528,6 +533,7 @@ impl GpuSynth {
         self.voices.clear();
         self.free_slots.clear();
         self.freed_flags.clear();
+        self.layer_counts.fill(0);
         // 通道状态在 seek 时重置（chase 由 yinhe-audio 的 cc_events 重建保证）
         self.channels = [ChannelState::new(self.sample_rate); MAX_CHANNELS];
         // speed 缓存清空：下一块起点重新下发全部通道的 pitch_multiplier。

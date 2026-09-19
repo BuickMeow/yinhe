@@ -107,7 +107,7 @@ impl GpuSynth {
             data.extend_from_slice(sample);
             // 每个样本起始对齐到偶数元素：shader 用 vec2 视图一次读 (l,r)
             //（立体声）或相邻两元素（单声道），pair 不得跨样本错位。
-            if data.len() % 2 != 0 {
+            if !data.len().is_multiple_of(2) {
                 data.push(0.0);
             }
             offsets.insert(ptr, (offset, len));

@@ -294,10 +294,16 @@ impl GpuSynth {
             if v.kill_pending && st.env_stage < 6 {
                 continue;
             }
+            let was_active = v.state.env_stage < 6;
             v.state = *st;
             if st.env_stage >= 6 {
                 // GPU 已确认结束（含 kill 淡出完成）→ 清除待确认标记
                 v.kill_pending = false;
+                if was_active {
+                    // GPU 自然结束（非 CPU kill）：per-key layer 活跃计数 -1
+                    let b = v.channel as usize * 128 + v.key as usize;
+                    self.layer_counts[b] = self.layer_counts[b].saturating_sub(1);
+                }
             }
             // GPU 权威判定已结束 → 槽位立即回收到 free list（下次 note_on 复用）。
             // 墓碑不再累积：note_on 不会因容量拒绝新音，compact 也不再每块排空
