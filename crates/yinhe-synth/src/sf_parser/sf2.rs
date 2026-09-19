@@ -25,6 +25,9 @@ pub(super) fn build_key_maps_from_sf2(
     // （实测 TWGMD Ultimate 311MB 的 sf2 膨胀到 15GB，且前 600MB 之外的
     // 采样被 chunk 上限截断导致整库静音）。
     let mut stereo_cache: HashMap<(usize, usize), Arc<[f32]>> = HashMap::new();
+    // 样本峰值缓存：peak==0 的全静音层跳过（有些库把静音样本放在
+    // 同 key/vel 的候选前面，只取第一个匹配层时会选中它导致整音静音）
+    let mut peak_cache: HashMap<usize, f32> = HashMap::new();
     let mut entries = Vec::with_capacity(presets.len());
     for preset in &presets {
         let mut key_map: Vec<Vec<KeyInfo>> = vec![Vec::new(); 128];
@@ -55,6 +58,14 @@ pub(super) fn build_key_maps_from_sf2(
             } else {
                 continue;
             };
+
+            let sample_ptr = sample_data.as_ptr() as usize;
+            let peak = *peak_cache.entry(sample_ptr).or_insert_with(|| {
+                sample_data.iter().fold(0.0f32, |m, &v| m.max(v.abs()))
+            });
+            if peak == 0.0 {
+                continue;
+            }
 
             for key in region.keyrange.clone() {
                 let key_f = key as f32;

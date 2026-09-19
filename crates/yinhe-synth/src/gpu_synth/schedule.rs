@@ -411,12 +411,14 @@ impl GpuSynth {
             return;
         }
 
-        // 播放长度：SF2 的 sample_end（xsynth LoopParams.stop）封顶，SFZ 到采样末尾
+        // 播放长度（绝对帧语义）：SF2 的 sample_end（xsynth LoopParams.stop）
+        // 封顶，SFZ 到采样末尾。voice 的 time/idx 都是"样本内绝对帧"，
+        // 与 loop_start/loop_end（绝对帧）一致——旧实现把 info.offset 同时
+        // 加进 sample_offset 又保留 loop 回绕的绝对帧，造成双重偏移：
+        // 带循环且 offset>0 的样本（如立体声钢琴库）回绕后读到静音区。
         let sample_length = match info.stop {
-            Some(stop) => stop
-                .saturating_sub(info.offset)
-                .min(length.saturating_sub(info.offset)),
-            None => length.saturating_sub(info.offset),
+            Some(stop) => stop.min(length),
+            None => length,
         };
 
         // 展开共享参数（speed/增益/声像/滤波/包络时长；公式唯一实现在
@@ -428,7 +430,7 @@ impl GpuSynth {
         // N 个同相位同参数 voice 之和 = 单个 ×N，无损）。黑乐谱重复 NoteOn
         // 常态化时省 voice 并对齐 CPU 能量（release 尾巴仅一份）。
         // 候选只扫本块新建的 voice（分桶），避免全表 O(voices) 扫描的热路径成本。
-        let new_sample_offset = offset + info.offset * (1 + info.is_stereo as u32);
+        let new_sample_offset = offset;
         let bucket = channel as usize * 128 + key as usize;
         let hit = self.batch_buckets[bucket]
             .iter()
@@ -509,12 +511,14 @@ impl GpuSynth {
             state: GpuVoiceState {
                 // offset 是拼接内的**元素**起点；info.offset 是**帧**偏移
                 // → 立体声需 ×scale（此前直接相加，立体声样本起点错位）。
-                sample_offset: offset + info.offset * (1 + info.is_stereo as u32),
+                // 拼接元素偏移（不含样本内起始偏移；起始偏移体现在 time 上）
+                sample_offset: offset,
                 sample_length,
                 speed: p.speed,
                 base_speed: p.base_speed,
                 base_gain: p.base_gain,
-                time: 0.0,
+                // 样本内绝对帧起点（xsynth 语义：播放位置 = 样本内绝对帧）
+                time: info.offset as f32,
                 // 块内帧：段内帧 + 段在块内的偏移。**创建时就换算**——否则复用
                 // 槽位创建的 voice 会被"新增 voice 转换循环"漏掉（复用不改变
                 // 数组长度），start_offset 停留在段内帧语义，导致提前数段渲染、
