@@ -66,6 +66,11 @@ fn merge_transport_batch(batch: Vec<AudioCommand>) -> Vec<AudioCommand> {
 
 /// 播放启动诊断日志：stderr + `/tmp/yinhe-play.log`（GUI 双击启动时 stderr
 /// 不可见）。诊断用，定位后删除。
+/// 记录当前播放的 MIDI 文件名（诊断日志；UI 在发送 Play 前调用）。
+pub fn log_playing_midi(name: &str) {
+    play_log(&format!("[play] 播放 MIDI：{name}"));
+}
+
 pub(crate) fn play_log(msg: &str) {
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

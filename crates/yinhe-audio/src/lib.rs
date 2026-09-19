@@ -27,6 +27,7 @@ pub use yinhe_synth as synth;
 pub use yinhe_synth::DEFAULT_MAX_VOICES;
 
 pub use audio_model::effective_fades;
+pub use audio_renderer::log_playing_midi;
 pub use audio_source::{
     AudioInfo, DecodedAudio, WavePeaks, decode_audio, encode_wav_bytes, probe_audio_info,
     resample_channel,

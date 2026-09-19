@@ -710,6 +710,7 @@ impl App {
                 if cursor_sample.abs_diff(engine_sample) < (audio.sample_rate as u64 / 10) {
                     handle.send(yinhe_audio::AudioCommand::Resume);
                 } else {
+                    yinhe_audio::log_playing_midi(&doc.file_name);
                     handle.send(yinhe_audio::AudioCommand::Play {
                         from_sample: cursor_sample,
                     });
