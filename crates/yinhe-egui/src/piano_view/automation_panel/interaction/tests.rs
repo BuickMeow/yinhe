@@ -115,12 +115,17 @@ fn run_frame_full(
     panel: &AutomationPanelView,
     lane: &AutomationLane,
     tool: Tool,
-) -> (Vec<AutomationEdit>, Option<egui::Rect>, Option<SelOp>) {
-    let (mut edits, mut marquee, mut sel_op) = (Vec::new(), None, None);
+) -> (
+    Vec<AutomationEdit>,
+    Option<egui::Rect>,
+    Option<SelOp>,
+    Option<u32>,
+) {
+    let (mut edits, mut marquee, mut sel_op, mut click_tick) = (Vec::new(), None, None, None);
     ctx.run_ui(raw, |ui| {
         let mut info: Option<InfoContent> = None;
         let mut right_tab: Option<RightTab> = None;
-        let (e, _g, _di, _hi, m, so) = handle_automation_interaction(
+        let (e, _g, _di, _hi, m, so, ct) = handle_automation_interaction(
             ui,
             panel_rect(),
             panel_rect(),
@@ -138,10 +143,11 @@ fn run_frame_full(
         edits = e;
         marquee = m;
         sel_op = so;
+        click_tick = ct;
     })
     .textures_delta
     .clear();
-    (edits, marquee, sel_op)
+    (edits, marquee, sel_op, click_tick)
 }
 
 fn drag_event(pos: egui::Pos2) -> egui::RawInput {
@@ -203,8 +209,8 @@ fn select_tool_marquee_is_vertical() {
     let start = egui::pos2(100.0, 10.0);
     let end = egui::pos2(300.0, 70.0);
     let _ = run_frame_full(&ctx, press_event(start), &panel, &lane, Tool::Select);
-    let (_, marquee, _) = run_frame_full(&ctx, drag_event(end), &panel, &lane, Tool::Select);
-    let (_, _, sel_op) = run_frame_full(&ctx, release_event(end), &panel, &lane, Tool::Select);
+    let (_, marquee, _, _) = run_frame_full(&ctx, drag_event(end), &panel, &lane, Tool::Select);
+    let (_, _, sel_op, _) = run_frame_full(&ctx, release_event(end), &panel, &lane, Tool::Select);
     let rect = marquee.expect("拖拽中应产生 marquee_rect");
     assert_eq!(rect.min.y, 0.0);
     assert_eq!(rect.max.y, 80.0);
@@ -229,11 +235,32 @@ fn select_tool_double_click_anchor_deletes() {
     let _ = run_frame_full(&ctx, press_event(pos), &panel, &lane, Tool::Select);
     let _ = run_frame_full(&ctx, release_event(pos), &panel, &lane, Tool::Select);
     let _ = run_frame_full(&ctx, press_event(pos), &panel, &lane, Tool::Select);
-    let (edits, _, _) = run_frame_full(&ctx, release_event(pos), &panel, &lane, Tool::Select);
+    let (edits, _, _, _) = run_frame_full(&ctx, release_event(pos), &panel, &lane, Tool::Select);
     assert!(
         edits
             .iter()
             .any(|e| matches!(e, AutomationEdit::Delete { tick: 120, .. })),
         "选择工具双击锚点应删除，实际 {edits:?}"
     );
+}
+
+/// 回归（AR 点击自动化区域跳转光标）：空白单击必须输出吸附后的 tick；
+/// 点击锚点不输出，保证移动锚点的已有交互不受影响。
+#[test]
+fn blank_click_returns_cursor_tick_but_anchor_click_does_not() {
+    let ctx = egui::Context::default();
+    let panel = tempo_panel();
+    let lane = tempo_lane(vec![(120, 120.0)]);
+
+    // 空白处（远离锚点 (120, y=0)）：tick = 360，落在 1/16 网格上（ppu=1）。
+    let blank = egui::pos2(360.0, 40.0);
+    let _ = run_frame_full(&ctx, press_event(blank), &panel, &lane, Tool::Select);
+    let (_, _, _, tick) = run_frame_full(&ctx, release_event(blank), &panel, &lane, Tool::Select);
+    assert_eq!(tick, Some(360), "点击空白应输出吸附后的 tick（移动光标用）");
+
+    // 锚点位置单击：不输出 tick（保留锚点选择/移动）。
+    let anchor = egui::pos2(120.0, 0.0);
+    let _ = run_frame_full(&ctx, press_event(anchor), &panel, &lane, Tool::Select);
+    let (_, _, _, tick) = run_frame_full(&ctx, release_event(anchor), &panel, &lane, Tool::Select);
+    assert_eq!(tick, None, "点击锚点不得输出 tick（不跳转，保留移动锚点）");
 }

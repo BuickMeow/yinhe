@@ -252,6 +252,11 @@ pub fn show(
             super::am_lanes::interact_all(ui, &am_rows, view, rect, music_rect, &am_ctx, &mut io);
         am_ghost = out.ghost;
         am_marquee = out.marquee;
+        // 点击自动化 lane 空白（未命中锚点）→ 移动播放光标，与非自动化区域一致。
+        if let Some(tick) = out.cursor_tick {
+            *edit.cursor_tick = Some(tick as f64);
+            view.base.dirty = true;
+        }
     }
     render::prepare_automation(
         renderer,

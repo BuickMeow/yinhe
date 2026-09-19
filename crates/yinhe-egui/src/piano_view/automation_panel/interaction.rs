@@ -68,6 +68,10 @@ pub(crate) struct InteractionCtx<'a> {
     pub hover_ctrl_id: egui::Id,
 }
 
+/// 返回 `(edits, ghost, drag_info, hover_info, marquee, sel_op, blank_click_tick)`。
+/// `blank_click_tick`：空白单击（无拖动、未命中锚点/控制点）的吸附 tick，
+/// AR 用它移动播放光标（与点击非自动化区域一致）；PR 忽略。锚点点击不产生
+/// 该输出，保证移动锚点等已有交互不受影响。
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn handle_automation_interaction(
     ui: &mut egui::Ui,
@@ -90,11 +94,12 @@ pub(crate) fn handle_automation_interaction(
     Option<HoverTooltip>,
     Option<egui::Rect>,
     Option<SelOp>,
+    Option<u32>,
 ) {
     let mut edits = Vec::new();
     let target = panel.selected_target.clone();
     if target == AutomationTarget::Tempo && tempo_lane.is_none() {
-        return (edits, None, None, None, None, None);
+        return (edits, None, None, None, None, None, None);
     }
     let max_val = match tempo_lane {
         Some(tl) => panel_max_val(panel, tl),
@@ -102,7 +107,7 @@ pub(crate) fn handle_automation_interaction(
         None => 1.0,
     };
     if max_val == 0.0 {
-        return (edits, None, None, None, None, None);
+        return (edits, None, None, None, None, None, None);
     }
     let value_cap = if target == yinhe_types::AutomationTarget::Tempo {
         TEMPO_DISPLAY_MAX
@@ -210,6 +215,15 @@ pub(crate) fn handle_automation_interaction(
     let hover_anchor_id = ui.id().with("auto_hover_anchor").with(id_base);
     let hover_ctrl_id = ui.id().with("auto_hover_ctrl").with(id_base);
 
+    // 空白单击（无拖动、未命中锚点/控制点）→ 输出点击 tick（AR 移动播放光标用）。
+    // 各工具在空白处的原有语义不受影响：Pencil 新建锚点、Select 清空锚点选框照旧。
+    let blank_click_tick =
+        if pointer_clicked && in_grid && hit_anchor.is_none() && hit_ctrl.is_none() {
+            mouse_info.map(|(_, tick, _)| tick)
+        } else {
+            None
+        };
+
     // 拖拽中/悬停光标
     if let Some(drag) = drag_state {
         match drag {
@@ -275,25 +289,57 @@ pub(crate) fn handle_automation_interaction(
         Tool::Pencil => match pencil::handle_pencil(&mut ictx, &mut edits, info_content, right_tab)
         {
             ToolResult::Break(g) => {
-                return (edits, g, None, None, ictx.marquee_rect, ictx.sel_op);
+                return (
+                    edits,
+                    g,
+                    None,
+                    None,
+                    ictx.marquee_rect,
+                    ictx.sel_op,
+                    blank_click_tick,
+                );
             }
             ToolResult::Continue => {}
         },
         Tool::Curve => match curve::handle_curve(&mut ictx, &mut edits) {
             ToolResult::Break(g) => {
-                return (edits, g, None, None, ictx.marquee_rect, ictx.sel_op);
+                return (
+                    edits,
+                    g,
+                    None,
+                    None,
+                    ictx.marquee_rect,
+                    ictx.sel_op,
+                    blank_click_tick,
+                );
             }
             ToolResult::Continue => {}
         },
         Tool::Select | Tool::SelectVertical => match select::handle_select(&mut ictx, &mut edits) {
             ToolResult::Break(g) => {
-                return (edits, g, None, None, ictx.marquee_rect, ictx.sel_op);
+                return (
+                    edits,
+                    g,
+                    None,
+                    None,
+                    ictx.marquee_rect,
+                    ictx.sel_op,
+                    blank_click_tick,
+                );
             }
             ToolResult::Continue => {}
         },
         Tool::Eraser => match eraser::handle_eraser(&mut ictx, &mut edits) {
             ToolResult::Break(g) => {
-                return (edits, g, None, None, ictx.marquee_rect, ictx.sel_op);
+                return (
+                    edits,
+                    g,
+                    None,
+                    None,
+                    ictx.marquee_rect,
+                    ictx.sel_op,
+                    blank_click_tick,
+                );
             }
             ToolResult::Continue => {}
         },
@@ -339,6 +385,7 @@ pub(crate) fn handle_automation_interaction(
         hover_info,
         ictx.marquee_rect,
         ictx.sel_op,
+        blank_click_tick,
     )
 }
 

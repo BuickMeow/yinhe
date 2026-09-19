@@ -77,7 +77,7 @@ pub(crate) fn dispatch_edit_interaction(
             // Tempo 不依赖 active_track：无论编辑目标是哪个轨道（甚至没有编辑目标）
             // 都可编辑。document 层忽略 track_idx，直接操作 conductor.tempo，
             // 所以这里传 0。非 Tempo 事件绝不能落进 Conductor（曾导致弯音写入别的轨道）。
-            let (panel_edits, ghost, drag_info, hover_info, marquee_rect, sel_op) =
+            let (panel_edits, ghost, drag_info, hover_info, marquee_rect, sel_op, _blank_click) =
                 interaction::handle_automation_interaction(
                     ui,
                     grid_area,
@@ -103,7 +103,7 @@ pub(crate) fn dispatch_edit_interaction(
             }
             tooltip = drag_info.or(hover_info);
         } else if let Some(track) = ctx.active_track {
-            let (panel_edits, ghost, drag_info, hover_info, marquee_rect, sel_op) =
+            let (panel_edits, ghost, drag_info, hover_info, marquee_rect, sel_op, _blank_click) =
                 interaction::handle_automation_interaction(
                     ui,
                     grid_area,

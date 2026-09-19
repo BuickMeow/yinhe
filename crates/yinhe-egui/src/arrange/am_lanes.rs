@@ -124,6 +124,8 @@ pub(crate) struct AmInteractionOut {
     /// (ghost, 所在行顶部纹理 y, 行高, max_val)。
     pub ghost: Option<(AutomationGhost, f32, f32, f32)>,
     pub marquee: Option<egui::Rect>,
+    /// 空白单击的吸附 tick（未命中锚点），view_ui 用它移动播放光标。
+    pub cursor_tick: Option<u32>,
 }
 
 /// 对所有可见 AM 行跑一遍编辑交互（Pencil/Select/SelectVertical/Curve/Eraser）。
@@ -188,7 +190,7 @@ pub(crate) fn interact_all(
         let id_base = ui.id().with(("arr_am_lane", r.track, r.sub));
         // AR conductor 主行 Tempo 空白处不产生锚点框选（交给 sel_drag 选中/跳转）
         let suppress_blank = r.sub.is_none();
-        let (edits, ghost, drag_info, hover_info, marquee, sel_op) =
+        let (edits, ghost, drag_info, hover_info, marquee, sel_op, blank_click_tick) =
             interaction::handle_automation_interaction(
                 ui,
                 lane_rect,
@@ -205,6 +207,9 @@ pub(crate) fn interact_all(
                 suppress_blank,
             );
         io.edits.extend(edits);
+        if let Some(tick) = blank_click_tick {
+            out.cursor_tick = Some(tick);
+        }
 
         // 应用 Select 工具的选区变更（与 PR show_panels 一致）
         if let Some(op) = sel_op {
