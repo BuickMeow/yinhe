@@ -451,6 +451,43 @@ impl GpuSynth {
             crate::gpu_synth::BATCH_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return;
         }
+        // 诊断：合批失配原因（宽松找同 (vel,end_sample) 的候选，记录第一失配字段）
+        if crate::gpu_synth::PROBE_ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
+            use std::sync::atomic::Ordering::Relaxed;
+            let miss = self.batch_buckets[bucket]
+                .iter()
+                .rev()
+                .find(|&&i| {
+                    let v = &self.voices[i as usize];
+                    v.velocity == vel && v.end_sample == end_sample
+                })
+                .map(|&i| {
+                    let v = &self.voices[i as usize];
+                    if v.kill_pending {
+                        0
+                    } else if v.release_pending {
+                        1
+                    } else if v.held_by_damper {
+                        2
+                    } else if v.state.env_stage >= 6 {
+                        3
+                    } else if v.state.sample_offset != new_sample_offset {
+                        4
+                    } else if v.state.sample_length != sample_length {
+                        5
+                    } else if v.state.speed != p.speed {
+                        6
+                    } else if v.state.base_speed != p.base_speed {
+                        7
+                    } else if v.state.start_offset != block_frame + seg_base {
+                        8
+                    } else {
+                        9
+                    }
+                })
+                .unwrap_or(10);
+            crate::gpu_synth::PROBE_BATCH_MISS[miss].fetch_add(1, Relaxed);
+        }
 
         let voice = Voice {
             key,

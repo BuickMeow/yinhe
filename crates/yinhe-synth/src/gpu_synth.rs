@@ -119,6 +119,11 @@ pub static PROBE_END_AGE: [std::sync::atomic::AtomicU64; 8] =
     [const { std::sync::atomic::AtomicU64::new(0) }; 8];
 /// 探针"结束最久优先"选中者中已结束（now >= end_sample）的数量。
 pub static PROBE_END_RELEASED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// 合批失配原因探针：bucket 内存在同 (vel,end_sample) 候选但某项失配的次数。
+/// 0=kill_pending 1=release_pending 2=held 3=env>=6 4=sample_offset 5=length
+/// 6=speed 7=base_speed 8=start_offset 9=不应发生 10=无同 vel/end_sample 候选
+pub static PROBE_BATCH_MISS: [std::sync::atomic::AtomicU64; 11] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 11];
 /// voice 状态上传的 write_buffer 调用次数 / 覆盖槽位数 / 累计微秒（诊断）。
 pub static FLUSH_WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static FLUSH_SLOTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

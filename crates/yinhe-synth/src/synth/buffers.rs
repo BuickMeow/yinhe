@@ -11,7 +11,7 @@ use super::types::{
 
 /// GPU voice 槽位上限：voice 状态常驻 GPU（不再每块读回/重传），
 /// 槽位固定分配一次，避免扩容重建导致状态丢失。超限由 GpuSynth 侧压缩/淘汰。
-// 容量（partial/状态缓冲按此分配）：24576 × 512 帧 × 8B = 96MB < 512MB limits。
+// 容量（partial/状态缓冲按此分配）：40960 × 512 帧 × 8B = 160MB < 512MB limits。
 // 与 max_voices（性能目标）分离：容量决定"能装多少"，max_voices 决定"渲染多少"。
 // 容量（partial/状态缓冲按此分配）：16384 × 512 帧 × 8B = 64MB。free list
 // 让结束槽位即时复用，容量不再需要覆盖"需求+墓碑"的峰值——partial 越大，
@@ -20,7 +20,7 @@ use super::types::{
 // partial 越大缓存工作集越大（实测 64MB~62ms / 96MB~71ms / 128MB~77ms 同量级
 // voice）；容量与 max_voices（渲染量）解耦。根治方案是活跃列表（pass1/2 只
 // 遍历活跃 voice，与槽位解耦），原型 27ms 但引入渲染 bug，待修。
-pub(crate) const MAX_VOICE_SLOTS: u32 = 24576;
+pub(crate) const MAX_VOICE_SLOTS: u32 = 40960;
 
 /// 采样数据分片写入的每片字节数（16MB）：写一片让路 1ms，避免长段
 /// GPU/内存带宽抢占把 UI 渲染卡住。

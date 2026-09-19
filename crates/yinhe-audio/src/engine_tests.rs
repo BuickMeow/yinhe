@@ -5006,6 +5006,41 @@ fn diag_ouranos_bar157_dropout() {
             "可合批统计：NoteOn={note_ons} 完全重复组={groups} 冗余事件={redundant}（{:.1}%）",
             redundant as f64 / note_ons.max(1) as f64 * 100.0
         );
+        // 本次渲染窗口内的冗余（合批只在同段同帧生效，全曲均值不代表本段）
+        let win_frames = std::env::var("YINHE_DIAG_BLOCKS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(60)
+            * frames;
+        let win_end = seek_sample + win_frames as u64;
+        let mut wseen: HashMap<(u64, u8, u8, u8, u64), u32> = HashMap::new();
+        let mut w_on = 0usize;
+        for ev in &events {
+            if let yinhe_synth::SynthEvent::NoteOn {
+                sample,
+                channel,
+                key,
+                velocity,
+                end_sample,
+            } = ev
+            {
+                if *sample >= seek_sample && *sample < win_end {
+                    w_on += 1;
+                    *wseen
+                        .entry((*sample, *channel, *key, *velocity, *end_sample))
+                        .or_insert(0) += 1;
+                }
+            }
+        }
+        let w_red: usize = wseen
+            .values()
+            .filter(|&&c| c > 1)
+            .map(|&c| (c - 1) as usize)
+            .sum();
+        eprintln!(
+            "窗口可合批：NoteOn={w_on} 冗余={w_red}（{:.1}%）",
+            w_red as f64 / w_on.max(1) as f64 * 100.0
+        );
     }
 
     let mut synth = yinhe_synth::GpuSynth::new_default(sr).unwrap();
@@ -5143,6 +5178,11 @@ fn diag_ouranos_bar157_dropout() {
             yinhe_synth::gpu_synth::EVICT_KILLS.load(Relaxed),
             yinhe_synth::gpu_synth::NOTE_ON_REJECTED.load(Relaxed)
         );
+        let bm: Vec<u64> = yinhe_synth::gpu_synth::PROBE_BATCH_MISS
+            .iter()
+            .map(|a| a.load(Relaxed))
+            .collect();
+        eprintln!("合批失配原因[kill,rel,held,env6,off,len,speed,bspeed,start,?,无候选]={bm:?}");
         eprintln!(
             "flush: {} 次 write_buffer / {} 槽 / {}us（累计）",
             yinhe_synth::gpu_synth::FLUSH_WRITES.load(Relaxed),
