@@ -197,8 +197,8 @@ fn compute_follow_scroll_continuous_mode() {
 #[test]
 fn compute_follow_scroll_page_mode_turns_page_at_edge() {
     let result = compute_follow_scroll(900.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0, 0.0);
-    // 新逻辑提前翻页 + inset 80 => 900-80=820
-    assert_eq!(result, Some(820.0), "cursor past right edge turns a page");
+    // 提前翻页 + inset = max(800*0.001, 2) = 2 => 900-2=898
+    assert_eq!(result, Some(898.0), "cursor past right edge turns a page");
 }
 
 #[test]

@@ -572,7 +572,7 @@ pub fn show(
         let sb_drag_dy = crate::widgets::scrollbar::show(
             ui,
             sb_rect,
-            gpu_rect.width(),
+            music_rect.width(),
             &mut arr_view.base.scroll_x,
             &mut arr_view.base.pixels_per_tick,
             total_ticks,
