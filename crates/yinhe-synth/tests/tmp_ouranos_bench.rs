@@ -6,6 +6,10 @@ use yinhe_synth::SynthEvent;
 
 const OURANOS: &str = "/Users/jieneng/Music/MIDIs/Ouranos - HDSQ & The Romanticist [v1.6.6].mid";
 
+fn bench_midi() -> String {
+    std::env::var("YINHE_BENCH_MIDI").unwrap_or_else(|_| OURANOS.to_string())
+}
+
 fn mk_bufs(frames: usize) -> Vec<yinhe_mixer::ChannelBuffers> {
     (0..16)
         .map(|_| yinhe_mixer::ChannelBuffers {
@@ -25,41 +29,44 @@ fn ouranos_peak_gpu_bench() {
     let sr = 48_000u32;
     let frames = 4096usize;
     let t_parse = Instant::now();
-    let model = yinhe_midi::parse_path(OURANOS).expect("parse");
+    let model = yinhe_midi::parse_path(&bench_midi()).expect("parse");
     let ppq = model.meta.ppq as u64;
     eprintln!("解析 {:.2}s ppq={ppq}", t_parse.elapsed().as_secs_f64());
 
-    // 全曲扫描线：活跃音符峰值（同时发声数）
-    let mut points: Vec<(u64, i64)> = Vec::new();
-    for k in 0..128usize {
-        for n in model.notes[k].iter() {
-            if n.velocity > 1 {
-                points.push((n.start_tick as u64, 1));
-                points.push((n.end_tick as u64, -1));
-            }
-        }
-    }
-    points.sort_unstable();
-    let (mut alive, mut peak, mut peak_tick) = (0i64, 0i64, 0u64);
-    for (t, d) in &points {
-        alive += d;
-        if alive > peak {
-            peak = alive;
-            peak_tick = *t;
-        }
-    }
-    let mut bar = peak_tick / (4 * ppq);
-    if let Some(b) = std::env::var("YINHE_BENCH_BAR")
+    // 全曲扫描线：活跃音符峰值（同时发声数）。指定 YINHE_BENCH_BAR 时跳过
+    //（超大 MIDI 的百万级点排序很慢）。
+    let bar = if let Some(b) = std::env::var("YINHE_BENCH_BAR")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
     {
-        bar = b;
-    }
-    eprintln!(
-        "全曲峰值：bar={}（第 {} 小节）tick={peak_tick} 同时发声={peak}",
-        bar,
-        bar + 1
-    );
+        eprintln!("指定 bar={b}（跳过全曲峰值扫描）");
+        b
+    } else {
+        let mut points: Vec<(u64, i64)> = Vec::new();
+        for k in 0..128usize {
+            for n in model.notes[k].iter() {
+                if n.velocity > 1 {
+                    points.push((n.start_tick as u64, 1));
+                    points.push((n.end_tick as u64, -1));
+                }
+            }
+        }
+        points.sort_unstable();
+        let (mut alive, mut peak, mut peak_tick) = (0i64, 0i64, 0u64);
+        for (t, d) in &points {
+            alive += d;
+            if alive > peak {
+                peak = alive;
+                peak_tick = *t;
+            }
+        }
+        eprintln!(
+            "全曲峰值：bar={}（第 {} 小节）tick={peak_tick} 同时发声={peak}",
+            peak_tick / (4 * ppq),
+            peak_tick / (4 * ppq) + 1
+        );
+        peak_tick / (4 * ppq)
+    };
 
     // 取峰值小节前 1 后 3 小节窗口
     let win_start = bar.saturating_sub(1) * 4 * ppq;
@@ -109,7 +116,10 @@ fn ouranos_peak_gpu_bench() {
         .expect("load soundfont");
     gpu.finish_soundfont_load();
     gpu.prewarm(frames as u32);
-    gpu.set_layer_count(None);
+    let layers = std::env::var("YINHE_BENCH_LAYERS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok());
+    gpu.set_layer_count(layers);
     if let Some(mv) = std::env::var("YINHE_BENCH_MAXV")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
@@ -122,7 +132,10 @@ fn ouranos_peak_gpu_bench() {
     for _ in 0..2 {
         gpu.render_to_mixer(&mut bufs);
     }
-    let blocks = 40usize;
+    let blocks = std::env::var("YINHE_BENCH_BLOCKS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(40);
     let mut sum = [0.0f64; 6];
     let mut max_alive = 0u32;
     let mut sum_blocks = 0u32;
@@ -234,7 +247,7 @@ fn gpu_vs_cpu_light() {
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(148);
-    let model = yinhe_midi::parse_path(OURANOS).expect("parse");
+    let model = yinhe_midi::parse_path(&bench_midi()).expect("parse");
     let ppq = model.meta.ppq as u64;
     let win_start = bar.saturating_sub(1) * 4 * ppq;
     let win_end = (bar + 3) * 4 * ppq;
