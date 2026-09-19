@@ -587,6 +587,8 @@ impl GpuSynth {
         };
 
         self.batch_buckets[bucket].push(new_index as u32);
+        // per-key FIFO：layer 超限时从队首弹最旧的杀（"保最新"）。
+        self.key_fifo[bucket].push_back((new_index as u32, self.voices[new_index].slot_gen));
 
         // per-key layer 上限（SetLayerCount）：超限时反复杀该 key velocity 最低的
         // 未释放 voice（xsynth pop_quietest_voice_group 语义；跳过刚加入的）。
@@ -596,22 +598,12 @@ impl GpuSynth {
         self.layer_counts[bucket] += 1;
         if let Some(max) = self.max_layers {
             while self.layer_counts[bucket] as usize > max {
-                // 候选条件与计数条件一致（env_stage < 6）：**包含 release 中的**
-                // voice——release 尾巴被截掉听感无害，这是 xsynth「几乎不丢音」
-                // 的关键（判定与 CPU 共用 channel_state::layer_victim）。
-                let victim = crate::channel_state::layer_victim(
-                    self.voices.iter().enumerate().filter_map(|(i, v)| {
-                        (v.channel == channel && v.key == key && v.state.env_stage < 6).then_some((
-                            i,
-                            v.velocity,
-                            v.release_pending || v.state.env_stage == 5,
-                            true,
-                        ))
-                    }),
-                    new_index,
-                );
-                let Some(idx) = victim else {
-                    break; // 其余已在 release 中，无候选
+                // "保最新"：从 per-key FIFO 队首弹最旧的活跃 voice（release
+                // 尾巴与在响的音符同等参与，最旧的先死），失效项（已回收/
+                // 已在淡出/代际不符）顺手清理。O(1) 均摊，替代此前每音一次
+                // O(全表) 的扫描。
+                let Some(idx) = self.pop_oldest_key_voice(bucket, new_index) else {
+                    break;
                 };
                 let v = &mut self.voices[idx];
                 v.state.env_stage = 6;
@@ -622,6 +614,24 @@ impl GpuSynth {
                 crate::gpu_synth::LAYER_KILLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         }
+    }
+
+    /// 从 per-key FIFO 弹出最旧的活跃 voice（layer 超限的 victim）。
+    /// 弹到刚创建的 `keep` 就放回并停止（它必然在队尾——创建顺序——弹到它
+    /// 说明队里其余都已失效）；失效项直接丢弃（顺手清理，队列不会无限膨胀）。
+    fn pop_oldest_key_voice(&mut self, bucket: usize, keep: usize) -> Option<usize> {
+        while let Some((i, sg)) = self.key_fifo[bucket].pop_front() {
+            let i = i as usize;
+            if i == keep {
+                self.key_fifo[bucket].push_back((i as u32, sg));
+                return None;
+            }
+            let v = &self.voices[i];
+            if v.slot_gen == sg && v.state.env_stage < 6 && !v.kill_pending {
+                return Some(i);
+            }
+        }
+        None
     }
 
     /// 全局 voice 超限淘汰（**每渲染段一次**）。
@@ -648,31 +658,34 @@ impl GpuSynth {
         if excess == 0 {
             return;
         }
-        // 排序键（用户定稿策略："小力度优先，其次 noteoff 优先"）：
-        //   组序：release 中的优先——正在演奏的音符不先动（探针实测该曲
-        //   可杀候选 100% 均为 release 尾巴，组序与组内键在真实数据上等价）；
-        //   组内（两组同键）：① velocity 升序（小力度先死，大力度永远最后）；
-        //   ② end_sample 升序（noteoff 早的先死，"结束最久"优先）；
-        //   ③ envelope 升序（更听不见的优先）；④ 并列取创建顺序。
-        let mut cands: Vec<(u8, f64, f64, f64, usize)> = Vec::with_capacity(alive);
+        // 排序键（策略："保最新"——最旧的先死，保留音墙最前沿的触发）：
+        //   组序：release 中的优先——正在演奏的音符不先动；
+        //   组内：① start_sample 升序（触发最早的先死）；
+        //   ② end_sample 升序（早结束的先死）；③ envelope 升序（更听不见的
+        //   优先）；④ 并列取槽位顺序。超密黑乐谱（每秒数万音符 + 长 release
+        //   尾巴/踏板保持）下按力度淘汰会优先清空占 97% 的低力度内容，听感
+        //   与"全保留"差异过大；按新旧淘汰只丢尾巴、保留最新触发的质感。
+        let mut cands: Vec<(u8, u64, u64, f64, usize)> = Vec::with_capacity(alive);
         for (i, v) in self.voices.iter().enumerate() {
             if v.state.env_stage >= 6 || v.kill_pending {
                 continue;
             }
             let releasing = v.release_pending || v.state.env_stage == 5;
-            let end = v.end_sample;
-            let env = v.state.envelope as f64;
-            let vel = v.velocity as f64;
-            let (k1, k2, k3) = (vel, end as f64, env);
-            cands.push((if releasing { 0u8 } else { 1u8 }, k1, k2, k3, i));
+            cands.push((
+                if releasing { 0u8 } else { 1u8 },
+                v.start_sample,
+                v.end_sample,
+                v.state.envelope as f64,
+                i,
+            ));
         }
         // 只取最小的 excess 个：select_nth 是 O(n)，满排序是 O(n log n)；
         // 高潮段 excess 小（几百）而 alive 大（1.5 万+），每段省的比较量可观。
         // 被选中的集合与排序无关（kill 顺序不影响听感），无需全序。
-        let cmp = |a: &(u8, f64, f64, f64, usize), b: &(u8, f64, f64, f64, usize)| {
+        let cmp = |a: &(u8, u64, u64, f64, usize), b: &(u8, u64, u64, f64, usize)| {
             a.0.cmp(&b.0)
-                .then(a.1.total_cmp(&b.1))
-                .then(a.2.total_cmp(&b.2))
+                .then(a.1.cmp(&b.1))
+                .then(a.2.cmp(&b.2))
                 .then(a.3.total_cmp(&b.3))
                 .then(a.4.cmp(&b.4))
         };
@@ -681,12 +694,8 @@ impl GpuSynth {
         } else {
             cands.sort_unstable_by(cmp);
         }
-        for &(rel, k1, _, _, idx) in cands.iter().take(excess) {
-            let vel = if rel == 0 {
-                k1 as u8
-            } else {
-                self.voices[idx].velocity
-            };
+        for &(_, _, _, _, idx) in cands.iter().take(excess) {
+            let vel = self.voices[idx].velocity;
             let bucket = match vel {
                 0..=31 => &crate::gpu_synth::EVICT_VEL_LO,
                 32..=63 => &crate::gpu_synth::EVICT_VEL_MID,
