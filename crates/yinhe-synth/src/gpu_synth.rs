@@ -174,11 +174,11 @@ pub struct GpuSynth {
     /// 每 (dense 通道 × 128 key) 的活跃 voice 计数（per-key layer 限制用）。
     /// 增量维护：note_on +1，kill / GPU 确认结束 -1——替代每音一次 O(V) 全扫。
     layer_counts: Box<[u32]>,
-    /// per-key 槽位 FIFO（`channel×128+key` → `(槽位, 槽位代际)`，创建顺序）：
-    /// layer 超限时从队首弹出最旧的活跃 voice 杀（"保最新"语义），失效项
-    /// 顺手清理；替代此前每音一次 O(全表) 找最弱的扫描（超密黑乐谱——每秒
-    /// 数万 NoteOn——这是 CPU 侧最大热点）。
-    key_fifo: Box<[std::collections::VecDeque<(u32, u32)>]>,
+    /// per-key 槽位桶（`channel×128+key` → `(槽位, 槽位代际)`）：layer 超限时
+    /// 只在该 key 的桶内选最弱 voice 杀（保大力度），失效项顺手清理；替代
+    /// 此前每音一次 O(全表) 的扫描（超密黑乐谱每秒数万 NoteOn 时是 CPU 侧
+    /// 最大热点）。桶内活跃数受 layer 上限约束，选择为 O(1)。
+    key_slots: Box<[Vec<(u32, u32)>]>,
     /// 峰值 voice 数统计（诊断用）
     peak_voices: usize,
     /// 上一块耗时分解（ms）：[collect, submit(含 collect), harvest, ring, out, compact]
@@ -280,8 +280,8 @@ impl GpuSynth {
             voice_capacity: MAX_VOICE_SLOTS as usize,
             max_layers: Some(crate::DEFAULT_MAX_LAYERS),
             layer_counts: vec![0u32; MAX_CHANNELS * 128].into_boxed_slice(),
-            key_fifo: (0..MAX_CHANNELS * 128)
-                .map(|_| std::collections::VecDeque::new())
+            key_slots: (0..MAX_CHANNELS * 128)
+                .map(|_| Vec::new())
                 .collect::<Vec<_>>()
                 .into_boxed_slice(),
             peak_voices: 0,
@@ -319,7 +319,7 @@ impl GpuSynth {
         self.free_slots.clear();
         self.freed_flags.clear();
         self.layer_counts.fill(0);
-        for q in self.key_fifo.iter_mut() {
+        for q in self.key_slots.iter_mut() {
             q.clear();
         }
         self.channels = [ChannelState::new(self.sample_rate); MAX_CHANNELS];
@@ -613,7 +613,7 @@ impl GpuSynth {
         self.free_slots.clear();
         self.freed_flags.clear();
         self.layer_counts.fill(0);
-        for q in self.key_fifo.iter_mut() {
+        for q in self.key_slots.iter_mut() {
             q.clear();
         }
         // 通道状态在 seek 时重置（chase 由 yinhe-audio 的 cc_events 重建保证）

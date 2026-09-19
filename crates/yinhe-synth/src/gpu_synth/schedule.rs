@@ -587,8 +587,8 @@ impl GpuSynth {
         };
 
         self.batch_buckets[bucket].push(new_index as u32);
-        // per-key FIFO：layer 超限时从队首弹最旧的杀（"保最新"）。
-        self.key_fifo[bucket].push_back((new_index as u32, self.voices[new_index].slot_gen));
+        // per-key 槽位桶：layer 超限时桶内选最弱的杀（保大力度）。
+        self.key_slots[bucket].push((new_index as u32, self.voices[new_index].slot_gen));
 
         // per-key layer 上限（SetLayerCount）：超限时反复杀该 key velocity 最低的
         // 未释放 voice（xsynth pop_quietest_voice_group 语义；跳过刚加入的）。
@@ -598,11 +598,12 @@ impl GpuSynth {
         self.layer_counts[bucket] += 1;
         if let Some(max) = self.max_layers {
             while self.layer_counts[bucket] as usize > max {
-                // "保最新"：从 per-key FIFO 队首弹最旧的活跃 voice（release
-                // 尾巴与在响的音符同等参与，最旧的先死），失效项（已回收/
-                // 已在淡出/代际不符）顺手清理。O(1) 均摊，替代此前每音一次
-                // O(全表) 的扫描。
-                let Some(idx) = self.pop_oldest_key_voice(bucket, new_index) else {
+                // "保大力度"：同 key 里最弱的先死（release 尾巴优先，其次
+                // 力度升序，再取触发更早的=保最新）；**候选含刚创建的 voice**
+                // ——新音符若最弱就直接丢弃，宁可不发也不吞更响的旧音符。
+                // 桶内活跃数受 max 约束（≤ max+1），O(1)，替代每音一次
+                // O(全表) 的扫描；失效项顺手清理。
+                let Some(idx) = self.weakest_key_voice(bucket) else {
                     break;
                 };
                 let v = &mut self.voices[idx];
@@ -616,22 +617,28 @@ impl GpuSynth {
         }
     }
 
-    /// 从 per-key FIFO 弹出最旧的活跃 voice（layer 超限的 victim）。
-    /// 弹到刚创建的 `keep` 就放回并停止（它必然在队尾——创建顺序——弹到它
-    /// 说明队里其余都已失效）；失效项直接丢弃（顺手清理，队列不会无限膨胀）。
-    fn pop_oldest_key_voice(&mut self, bucket: usize, keep: usize) -> Option<usize> {
-        while let Some((i, sg)) = self.key_fifo[bucket].pop_front() {
-            let i = i as usize;
-            if i == keep {
-                self.key_fifo[bucket].push_back((i as u32, sg));
-                return None;
+    /// 从 per-key 槽位桶选出最弱的活跃 voice（layer 超限的 victim）。
+    /// 排序：release 尾巴优先 → 力度升序 → 触发更早优先（保最新）。
+    /// **候选包含刚创建的 voice**（新音符若最弱就丢弃它，保大力度不吞响的）；
+    /// 失效项（已回收/淡出中/代际不符）顺手清理。
+    fn weakest_key_voice(&mut self, bucket: usize) -> Option<usize> {
+        let slots = std::mem::take(&mut self.key_slots[bucket]);
+        let mut kept: Vec<(u32, u32)> = Vec::with_capacity(slots.len());
+        let mut best: Option<(u8, u8, u64, u32)> = None;
+        for &(i, sg) in slots.iter() {
+            let v = &self.voices[i as usize];
+            if v.slot_gen != sg || v.state.env_stage >= 6 || v.kill_pending {
+                continue;
             }
-            let v = &self.voices[i];
-            if v.slot_gen == sg && v.state.env_stage < 6 && !v.kill_pending {
-                return Some(i);
+            kept.push((i, sg));
+            let released = v.release_pending || v.state.env_stage == 5;
+            let cand = (u8::from(!released), v.velocity, v.start_sample, i);
+            if best.is_none_or(|b| cand < b) {
+                best = Some(cand);
             }
         }
-        None
+        self.key_slots[bucket] = kept;
+        best.map(|(_, _, _, i)| i as usize)
     }
 
     /// 全局 voice 超限淘汰（**每渲染段一次**）。
@@ -658,14 +665,12 @@ impl GpuSynth {
         if excess == 0 {
             return;
         }
-        // 排序键（策略："保最新"——最旧的先死，保留音墙最前沿的触发）：
+        // 排序键（策略："保大力度最重要，其次保最新"）：
         //   组序：release 中的优先——正在演奏的音符不先动；
-        //   组内：① start_sample 升序（触发最早的先死）；
-        //   ② end_sample 升序（早结束的先死）；③ envelope 升序（更听不见的
-        //   优先）；④ 并列取槽位顺序。超密黑乐谱（每秒数万音符 + 长 release
-        //   尾巴/踏板保持）下按力度淘汰会优先清空占 97% 的低力度内容，听感
-        //   与"全保留"差异过大；按新旧淘汰只丢尾巴、保留最新触发的质感。
-        let mut cands: Vec<(u8, u64, u64, f64, usize)> = Vec::with_capacity(alive);
+        //   组内：① velocity 升序（力度小的先死，响的永远最后）；
+        //   ② start_sample 升序（同力度触发最早的先死=保最新）；
+        //   ③ end_sample 升序；④ envelope 升序；⑤ 并列取槽位顺序。
+        let mut cands: Vec<(u8, u8, u64, u64, f64, usize)> = Vec::with_capacity(alive);
         for (i, v) in self.voices.iter().enumerate() {
             if v.state.env_stage >= 6 || v.kill_pending {
                 continue;
@@ -673,6 +678,7 @@ impl GpuSynth {
             let releasing = v.release_pending || v.state.env_stage == 5;
             cands.push((
                 if releasing { 0u8 } else { 1u8 },
+                v.velocity,
                 v.start_sample,
                 v.end_sample,
                 v.state.envelope as f64,
@@ -682,19 +688,20 @@ impl GpuSynth {
         // 只取最小的 excess 个：select_nth 是 O(n)，满排序是 O(n log n)；
         // 高潮段 excess 小（几百）而 alive 大（1.5 万+），每段省的比较量可观。
         // 被选中的集合与排序无关（kill 顺序不影响听感），无需全序。
-        let cmp = |a: &(u8, u64, u64, f64, usize), b: &(u8, u64, u64, f64, usize)| {
+        let cmp = |a: &(u8, u8, u64, u64, f64, usize), b: &(u8, u8, u64, u64, f64, usize)| {
             a.0.cmp(&b.0)
                 .then(a.1.cmp(&b.1))
                 .then(a.2.cmp(&b.2))
-                .then(a.3.total_cmp(&b.3))
-                .then(a.4.cmp(&b.4))
+                .then(a.3.cmp(&b.3))
+                .then(a.4.total_cmp(&b.4))
+                .then(a.5.cmp(&b.5))
         };
         if excess < cands.len() {
             cands.select_nth_unstable_by(excess, cmp);
         } else {
             cands.sort_unstable_by(cmp);
         }
-        for &(_, _, _, _, idx) in cands.iter().take(excess) {
+        for &(_, _, _, _, _, idx) in cands.iter().take(excess) {
             let vel = self.voices[idx].velocity;
             let bucket = match vel {
                 0..=31 => &crate::gpu_synth::EVICT_VEL_LO,
@@ -715,8 +722,8 @@ impl GpuSynth {
             let mut probe_end: Vec<(bool, u64, u8, usize)> = cands
                 .iter()
                 .map(|c| {
-                    let v = &self.voices[c.4];
-                    (v.end_sample > now_sample, v.end_sample, v.velocity, c.4)
+                    let v = &self.voices[c.5];
+                    (v.end_sample > now_sample, v.end_sample, v.velocity, c.5)
                 })
                 .collect();
             probe_end.sort_unstable();
@@ -741,8 +748,8 @@ impl GpuSynth {
             let mut probe_vel: Vec<(u8, u64, usize)> = cands
                 .iter()
                 .map(|c| {
-                    let v = &self.voices[c.4];
-                    (v.velocity, v.end_sample, c.4)
+                    let v = &self.voices[c.5];
+                    (v.velocity, v.end_sample, c.5)
                 })
                 .collect();
             probe_vel.sort_unstable();

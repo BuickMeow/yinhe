@@ -996,3 +996,47 @@ fn note_starts_on_time_in_later_segments() {
         );
     }
 }
+
+/// layer 超限淘汰「保大力度」：同 key 交替强弱触发，弱者（含新来的）先死，
+/// 最终活跃的应全是强力度。
+#[test]
+fn layer_limit_keeps_louder_notes() {
+    let Some(sfz) = std::env::var_os("YINHE_TEST_SFZ") else {
+        eprintln!("YINHE_TEST_SFZ not set, skipping");
+        return;
+    };
+    let path = std::path::PathBuf::from(&sfz);
+    let sr = 44_100u32;
+    let mut synth = GpuSynth::new_default(sr).expect("GpuSynth");
+    synth
+        .load_dense_soundfonts(0, std::slice::from_ref(&path))
+        .expect("load");
+    synth.finish_soundfont_load();
+    synth.set_layer_count(Some(2));
+    let mut events = Vec::new();
+    for k in 0..8u64 {
+        events.push(SynthEvent::NoteOn {
+            sample: k,
+            channel: 0,
+            key: 60,
+            velocity: if k % 2 == 0 { 100 } else { 10 },
+            end_sample: sr as u64,
+        });
+    }
+    synth.load_events(events);
+    synth.prewarm(512);
+    let frames = 512;
+    let mut bufs: Vec<yinhe_mixer::ChannelBuffers> = (0..2)
+        .map(|_| yinhe_mixer::ChannelBuffers {
+            left: vec![0.0; frames],
+            right: vec![0.0; frames],
+        })
+        .collect();
+    for _ in 0..8 {
+        synth.render_to_mixer(&mut bufs);
+    }
+    let h = synth.velocity_histogram();
+    eprintln!("力度直方图（高→低）: {h:?}");
+    assert_eq!(h[7], 0, "小力度音符应被优先淘汰");
+    assert!(h[1] >= 1, "大力度音符应保留");
+}
