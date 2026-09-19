@@ -38,8 +38,13 @@ pub struct GpuAudioRenderer {
     /// 待写入的 voice 槽位更新（buffer 未就绪时也不丢；render_block 在
     /// ensure_buffers 之后统一 flush）。
     pending_voice_writes: Vec<(u32, GpuVoiceState)>,
-    /// 批量写 staging（连续 vid 合并成一次 `write_buffer`；复用避免每块分配）
+    /// 批量写 staging（连续 vid 合并后紧凑暂存；复用避免每块分配）
     voice_write_scratch: Vec<GpuVoiceState>,
+    /// voice 状态暂存缓冲：flush 时紧凑写一次，GPU 端按连续区间拷贝到槽位。
+    voice_staging_buf: Option<wgpu::Buffer>,
+    voice_staging_slots: usize,
+    /// 本块待执行的 GPU 拷贝 (staging 元素起, 目标槽位起, 槽位数)。
+    pending_state_copies: Vec<(u32, u32, u32)>,
 }
 
 mod alt;
@@ -217,6 +222,9 @@ impl GpuAudioRenderer {
             release_by_frame_scratch: Vec::new(),
             pending_voice_writes: Vec::new(),
             voice_write_scratch: Vec::new(),
+            voice_staging_buf: None,
+            voice_staging_slots: 0,
+            pending_state_copies: Vec::new(),
         })
     }
 
@@ -329,20 +337,34 @@ impl GpuAudioRenderer {
         if self.pending_voice_writes.is_empty() {
             return;
         }
-        let Some(buf) = &self.buffers else {
+        let Some(buf_slots) = self.buffers.as_ref().map(|b| b.voice_slots) else {
             return;
         };
-        let size = std::mem::size_of::<GpuVoiceState>() as u64;
+        let size = std::mem::size_of::<GpuVoiceState>();
         let t_flush = std::time::Instant::now();
         let n_slots = self.pending_voice_writes.len() as u64;
-        // 按 vid 排序后把**连续区间**合并成一次 `write_buffer`。原先逐条写：
-        // compact 重传 8192 个 voice = 8192 次小写，实测每块 ~16ms 级尖峰。
+        // 按 vid 排序后合并**连续区间**，状态紧凑写入 staging（整个块只一次
+        // write_buffer），真正落位由 GPU 端 `copy_buffer_to_buffer` 完成。
+        // 原实现每个区间一次 write_buffer：每次 ~10µs 固定开销，高潮段每块
+        // 数千次小写是 CPU 侧最大头（实测 39s 播放累计 10.3s）。
         self.pending_voice_writes
             .sort_unstable_by_key(|(vid, _)| *vid);
+        let cap = self.pending_voice_writes.len().next_power_of_two().max(64);
+        if self.voice_staging_slots < cap {
+            self.voice_staging_buf = Some(self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("voice_staging"),
+                size: (cap * size) as u64,
+                usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+            self.voice_staging_slots = cap;
+        }
+        self.voice_write_scratch.clear();
+        self.pending_state_copies.clear();
         let mut i = 0usize;
         while i < self.pending_voice_writes.len() {
             let start = self.pending_voice_writes[i].0;
-            if start >= buf.voice_slots {
+            if start >= buf_slots {
                 break;
             }
             let mut j = i + 1;
@@ -351,18 +373,17 @@ impl GpuAudioRenderer {
             {
                 j += 1;
             }
-            self.voice_write_scratch.clear();
+            let src_elem = self.voice_write_scratch.len() as u32;
             self.voice_write_scratch
                 .extend(self.pending_voice_writes[i..j].iter().map(|(_, st)| *st));
-            let slots = (buf.voice_slots - start) as usize;
-            let n = self.voice_write_scratch.len().min(slots);
-            self.queue.write_buffer(
-                &buf.voice_state_buf,
-                start as u64 * size,
-                bytemuck::cast_slice(&self.voice_write_scratch[..n]),
-            );
+            let count = ((j - i) as u32).min(buf_slots - start);
+            self.pending_state_copies.push((src_elem, start, count));
             crate::gpu_synth::FLUSH_WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             i = j;
+        }
+        if let Some(staging) = &self.voice_staging_buf {
+            self.queue
+                .write_buffer(staging, 0, bytemuck::cast_slice(&self.voice_write_scratch));
         }
         let sl = &crate::gpu_synth::FLUSH_SLOTS;
         sl.fetch_add(n_slots, std::sync::atomic::Ordering::Relaxed);

@@ -100,6 +100,22 @@ impl GpuAudioRenderer {
                 label: Some("audio_render"),
             });
 
+        // voice 状态：flush 已把状态紧凑写入 staging（一次 write_buffer），这里
+        // 逐连续区间做 GPU 端拷贝落位（copy 记录 ~1µs，比每区间一次
+        // write_buffer 的 ~10µs 固定开销省一个数量级；高潮段每块数千区间）。
+        if let (Some(staging), Some(b)) = (self.voice_staging_buf.as_ref(), self.buffers.as_ref()) {
+            let size = std::mem::size_of::<GpuVoiceState>() as u64;
+            for &(src, dst, cnt) in &self.pending_state_copies {
+                encoder.copy_buffer_to_buffer(
+                    staging,
+                    src as u64 * size,
+                    &b.voice_state_buf,
+                    dst as u64 * size,
+                    cnt as u64 * size,
+                );
+            }
+        }
+
         for (seg_i, seg) in segments.iter().enumerate() {
             if seg.frame_length == 0 {
                 continue;
