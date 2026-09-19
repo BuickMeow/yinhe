@@ -31,6 +31,11 @@ struct RenderParams {
     active_count: u32,
     // active_list 中每通道 (off,count) 区间的起始索引
     ranges_off: u32,
+    // scatter 拷贝项数（每项 2 个 u32：staging 元素索引、目标槽位）
+    scatter_count: u32,
+    // scatter 项数组在 scatter_items_buf 中的 u32 起始索引（轮转区域）
+    scatter_items_base: u32,
+    _pad: u32,
 };
 
 struct VoiceState {
@@ -144,13 +149,17 @@ struct EnvUpdateCmd {
 @group(0) @binding(12) var<storage, read> release_by_frame: array<u32>;
 @group(0) @binding(13) var<storage, read> release_cmds: array<ReleaseCmd>;
 @group(0) @binding(14) var<storage, read> env_cmds: array<EnvUpdateCmd>;
-/// 紧凑活跃状态：pass1 写 env_stage（CPU 只读回这一个数组做 voice 清理，
-/// 不再读回全字段状态 —— 状态常驻 GPU）。
-@group(0) @binding(15) var<storage, read_write> voice_stage: array<u32>;
 // 活跃 voice 列表（CPU 每段重建）：前段为按通道分桶的槽位索引，后段
 // （params.ranges_off 起）为每通道 [off, count]。pass1/pass2 只遍历活跃，
 // 渲染量与槽位长度/墓碑无关。
 @group(0) @binding(17) var<storage, read> active_list: array<u32>;
+
+/// scatter 拷贝项（每项 2 个 u32）：[staging 元素索引, 目标槽位]。
+/// 一次 dispatch 把 CPU 修改的 voice 状态散写进 voice_states，
+/// 替代每块数千条 copy_buffer_to_buffer 命令的编码开销。
+@group(0) @binding(18) var<storage, read> scatter_items: array<u32>;
+/// 状态上传 staging（CPU 紧凑写入；轮转区域见 PIPELINE_DEPTH）
+@group(0) @binding(19) var<storage, read> staging_states: array<VoiceState>;
 
 struct ChunkOffsets {
     o0: u32, o1: u32, o2: u32, o3: u32, o4: u32, total: u32,
@@ -521,8 +530,6 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
             st.start_offset -= fc;
         }
         voice_states[vid] = st;
-        // 紧凑状态：CPU 只读回 env_stage（voice 结束清理用）。
-        voice_stage[vid] = st.env_stage;
     }
 }
 
@@ -591,4 +598,18 @@ fn mix_main(@builtin(workgroup_id) wid: vec3<u32>,
             }
         }
     }
+}
+
+/// Scatter：把 staging 中 CPU 修改的 voice 状态散写到目标槽位。
+/// 只写 CPU 指定的槽位（不覆盖 GPU 自行推进的其他槽位），
+/// 因此在多块流水线在途时也安全。
+@compute @workgroup_size(256)
+fn scatter_main(@builtin(workgroup_id) wid: vec3<u32>,
+                @builtin(local_invocation_id) lid: vec3<u32>) {
+    let i = wid.x * 256u + lid.x;
+    if i >= params.scatter_count { return; }
+    let base = params.scatter_items_base + i * 2u;
+    let src = scatter_items[base];
+    let dst = scatter_items[base + 1u];
+    voice_states[dst] = staging_states[src];
 }

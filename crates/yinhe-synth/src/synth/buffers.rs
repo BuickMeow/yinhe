@@ -55,8 +55,6 @@ pub(crate) struct GpuBuffers {
     pub(crate) voice_state_buf: wgpu::Buffer,
     /// 固定槽位数（voice 状态常驻，扩容不重建）
     pub(crate) voice_slots: u32,
-    /// 紧凑 env_stage（pass1 写、CPU 读回做 voice 清理）
-    pub(crate) voice_stage_buf: wgpu::Buffer,
     /// 活跃 voice 列表 + 每通道区间（每段由 CPU 重建；pass1/pass2 只扫活跃，
     /// 渲染量与槽位长度/墓碑彻底解耦）
     pub(crate) active_buf: wgpu::Buffer,
@@ -64,6 +62,10 @@ pub(crate) struct GpuBuffers {
     pub(crate) partial_frames: u32,
     /// partial 分配使用的 voice 容量（releases/env_cmds cap 用）
     pub(crate) max_voices: u32,
+    /// voice 状态上传 staging（轮转 PIPELINE_DEPTH 个区域；scatter 从这里读）
+    pub(crate) voice_staging_buf: wgpu::Buffer,
+    /// scatter 拷贝项（每项 2 u32；轮转 PIPELINE_DEPTH 个区域）
+    pub(crate) scatter_items_buf: wgpu::Buffer,
     /// 段/指令缓冲的容量（按块内实际需求幂等增长）
     pub(crate) segs_cap: usize,
     pub(crate) ch_updates_cap: usize,
@@ -83,11 +85,9 @@ pub(crate) struct GpuBuffers {
     pub(crate) release_by_frame_bufs: Vec<wgpu::Buffer>,
     pub(crate) release_cmds_bufs: Vec<wgpu::Buffer>,
     pub(crate) env_cmds_bufs: Vec<wgpu::Buffer>,
-    /// 读回 staging（每在途块一个；一次 map：先 channel_mix 后 voice_stage）
+    /// 读回 staging（每在途块一个；一次 map：先 channel_mix 后全字段 voice states）
     pub(crate) staging: Vec<wgpu::Buffer>,
-    /// staging 中 voice_stage 区的字节偏移（= channel_mix_size）
-    pub(crate) staging_stage_offset: u64,
-    /// staging 中全字段 voice states 区的字节偏移（测试路径用；生产不 copy）
+    /// staging 中全字段 voice states 区的字节偏移（= channel_mix_size）
     pub(crate) staging_full_offset: u64,
     pub(crate) staging_idx: usize,
     /// pass1/pass2 共用的 bind group（曾按 staging 双缓冲存两份，但参数
@@ -231,13 +231,12 @@ impl GpuAudioRenderer {
         // （voice 状态常驻 GPU；扩容 partial 等缓冲时不能丢状态）。
         let slots = MAX_VOICE_SLOTS as usize;
         let voice_state_size = (slots * std::mem::size_of::<GpuVoiceState>()) as u64;
-        let voice_stage_size = (slots * std::mem::size_of::<u32>()) as u64;
         // pass1 每 voice 每帧输出（pack2x16float 打包 l/r 为一个 u32：读写
         // 带宽减半）：分段渲染只按段长上界分配（与整块帧数无关，且跨重建复用）
         let partial_size = (slots * partial_frames as usize * std::mem::size_of::<u32>()) as u64;
-        let (voice_state_buf, voice_stage_buf, partial_buf) = match self.buffers.take() {
+        let (voice_state_buf, partial_buf) = match self.buffers.take() {
             Some(b) if b.voice_slots >= MAX_VOICE_SLOTS && b.partial_frames >= partial_frames => {
-                (b.voice_state_buf, b.voice_stage_buf, b.partial_buf)
+                (b.voice_state_buf, b.partial_buf)
             }
             _ => (
                 device.create_buffer(&wgpu::BufferDescriptor {
@@ -250,12 +249,6 @@ impl GpuAudioRenderer {
                     mapped_at_creation: false,
                 }),
                 device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("gpu_voice_stage"),
-                    size: voice_stage_size,
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-                    mapped_at_creation: false,
-                }),
-                device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("gpu_partial"),
                     size: partial_size,
                     usage: wgpu::BufferUsages::STORAGE,
@@ -263,6 +256,25 @@ impl GpuAudioRenderer {
                 }),
             ),
         };
+        // 状态上传 staging + scatter 项（固定 MAX_VOICE_SLOTS × PIPELINE_DEPTH 轮转）
+        let staging_slots = MAX_VOICE_SLOTS as usize;
+        let voice_staging_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("voice_staging"),
+            size: (staging_slots
+                * crate::synth::buffers::PIPELINE_DEPTH
+                * std::mem::size_of::<GpuVoiceState>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let scatter_items_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("scatter_items"),
+            size: (staging_slots
+                * 2
+                * crate::synth::buffers::PIPELINE_DEPTH
+                * std::mem::size_of::<u32>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let active_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("gpu_active_ids"),
             size: ((slots + CHANNEL_COUNT * 2) * std::mem::size_of::<u32>()) as u64,
@@ -301,8 +313,8 @@ impl GpuAudioRenderer {
             })
             .collect();
         // 读回 staging 三区（一次 map/poll）：
-        // [channel_mix][voice_stage][full voice states（仅测试路径 copy，生产不读）]
-        let staging_full_offset = channel_mix_size + voice_stage_size;
+        // [channel_mix][full voice states]
+        let staging_full_offset = channel_mix_size;
         let staging_size = staging_full_offset + voice_state_size;
         let staging: Vec<wgpu::Buffer> = (0..PIPELINE_DEPTH)
             .map(|i| {
@@ -340,6 +352,7 @@ impl GpuAudioRenderer {
 
         // Build bind group entries
         #[allow(clippy::too_many_arguments)]
+        #[allow(clippy::too_many_arguments)]
         let make_bg = |p: &wgpu::Buffer,
                        v: &wgpu::Buffer,
                        f: &wgpu::Buffer,
@@ -352,8 +365,9 @@ impl GpuAudioRenderer {
                        rbf: &wgpu::Buffer,
                        rc: &wgpu::Buffer,
                        ec: &wgpu::Buffer,
-                       vst: &wgpu::Buffer,
-                       act: &wgpu::Buffer| {
+                       act: &wgpu::Buffer,
+                       sit: &wgpu::Buffer,
+                       vstg: &wgpu::Buffer| {
             let mut bg_entries = vec![
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -411,12 +425,16 @@ impl GpuAudioRenderer {
                 resource: ec.as_entire_binding(),
             });
             bg_entries.push(wgpu::BindGroupEntry {
-                binding: 15,
-                resource: vst.as_entire_binding(),
-            });
-            bg_entries.push(wgpu::BindGroupEntry {
                 binding: 17,
                 resource: act.as_entire_binding(),
+            });
+            bg_entries.push(wgpu::BindGroupEntry {
+                binding: 18,
+                resource: sit.as_entire_binding(),
+            });
+            bg_entries.push(wgpu::BindGroupEntry {
+                binding: 19,
+                resource: vstg.as_entire_binding(),
             });
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("audio_bg"),
@@ -441,8 +459,9 @@ impl GpuAudioRenderer {
                         &release_by_frame_bufs[i],
                         &release_cmds_bufs[i],
                         &env_cmds_bufs[i],
-                        &voice_stage_buf,
                         &active_buf,
+                        &scatter_items_buf,
+                        &voice_staging_buf,
                     )
                 })
                 .collect(),
@@ -452,7 +471,8 @@ impl GpuAudioRenderer {
             voice_state_buf,
             voice_slots: MAX_VOICE_SLOTS,
             active_buf,
-            voice_stage_buf,
+            voice_staging_buf,
+            scatter_items_buf,
             partial_frames,
             max_voices: rounded_voices,
             segs_cap,
@@ -468,7 +488,6 @@ impl GpuAudioRenderer {
             release_cmds_bufs,
             env_cmds_bufs,
             staging,
-            staging_stage_offset: channel_mix_size,
             staging_full_offset,
             staging_idx: 0,
         });

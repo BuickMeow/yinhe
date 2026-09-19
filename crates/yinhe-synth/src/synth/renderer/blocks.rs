@@ -17,7 +17,6 @@ pub struct PendingReadback {
     /// 交替断续的真身）。
     staging_buf: wgpu::Buffer,
     mix_size: usize,
-    stage_size: usize,
     full_size: usize,
     want_full: bool,
     voice_count: u32,
@@ -34,7 +33,7 @@ impl GpuAudioRenderer {
     /// CPU↔GPU 往返仍为一次。
     ///
     /// **voice 状态常驻 GPU**：新 voice 的状态由调用方在 dispatch 前通过
-    /// [`write_voice_state`] 写入槽位；本方法只读回紧凑的 `voice_stage_out`。
+    /// [`write_voice_state`] 写入槽位；本方法读回全字段状态供调用方镜像。
     ///
     /// 返回实际 voice 数量（0 表示静音）。
     #[allow(clippy::too_many_arguments)] // 渲染上下文透传，见 AGENTS 约定
@@ -86,7 +85,6 @@ impl GpuAudioRenderer {
 
         let mix_size =
             (CHANNEL_COUNT * frame_count as usize * 2 * std::mem::size_of::<f32>()) as u64;
-        let stage_size = (voice_count as usize * std::mem::size_of::<u32>()) as u64;
         let full_size = (voice_count as usize * std::mem::size_of::<GpuVoiceState>()) as u64;
         let last = segments.len() - 1;
 
@@ -100,24 +98,21 @@ impl GpuAudioRenderer {
                 label: Some("audio_render"),
             });
 
-        // voice 状态：flush 已把状态紧凑写入 staging 的当前轮转区域（一次
-        // write_buffer），这里逐连续区间做 GPU 端拷贝落位（copy 记录 ~1µs，
-        // 比每区间一次 write_buffer 的固定开销低一个数量级）。轮转区域保证
-        // 复用前该块已 harvest，无覆盖竞态。
-        // 拷贝列表按"每块一次性消费"语义 take：读取后即清空，空闲块（flush
-        // 无 pending）绝不会重放上一块的拷贝把 GPU 已推进的状态回退。
-        let state_copies = std::mem::take(&mut self.pending_state_copies);
-        if let (Some(staging), Some(b)) = (self.voice_staging_buf.as_ref(), self.buffers.as_ref()) {
-            let size = std::mem::size_of::<GpuVoiceState>() as u64;
-            for &(src, dst, cnt) in &state_copies {
-                encoder.copy_buffer_to_buffer(
-                    staging,
-                    src as u64 * size,
-                    &b.voice_state_buf,
-                    dst as u64 * size,
-                    cnt as u64 * size,
-                );
-            }
+        // voice 状态：flush 已把状态紧凑写入 staging 的当前轮转区域，
+        // 这里一次 scatter dispatch 把脏槽位散写进 voice_state_buf
+        // （只写 CPU 指定的槽位，不覆盖 GPU 推进中的其他槽位；多块在途安全）。
+        // 计数按"每块一次性消费"语义 take：编码后清零，空闲块不会重放。
+        let scatter_count = std::mem::take(&mut self.scatter_count);
+        let scatter_items_base = self.scatter_items_base;
+        if scatter_count > 0 {
+            let buf = self.buffers.as_ref()?;
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("scatter_pass"),
+                ..Default::default()
+            });
+            cpass.set_pipeline(&self.scatter_pipeline);
+            cpass.set_bind_group(0, &buf.bind_groups[0], &[]);
+            cpass.dispatch_workgroups(scatter_count.div_ceil(WORKGROUP_SIZE), 1, 1);
         }
 
         for (seg_i, seg) in segments.iter().enumerate() {
@@ -152,6 +147,9 @@ impl GpuAudioRenderer {
                 mix_offset: seg.frame_start,
                 active_count: seg.active_count,
                 ranges_off: crate::synth::buffers::MAX_VOICE_SLOTS,
+                scatter_count,
+                scatter_items_base,
+                _pad: 0,
             };
             self.queue
                 .write_buffer(&buf.active_buf, 0, bytemuck::cast_slice(seg.active_data));
@@ -205,7 +203,7 @@ impl GpuAudioRenderer {
                 cpass.set_bind_group(0, &buf.bind_groups[seg_i], &[]);
                 cpass.dispatch_workgroups(seg.frame_length.div_ceil(MIX_FRAMES_PER_WG), 1, 1);
             }
-            // 最后一段：读回 channel_mix（整块）+ 紧凑 stage [+ 全字段]，
+            // 最后一段：读回 channel_mix（整块）+ 全字段 voice states，
             // 由紧随其后的 submit 一并执行（此后不再有段需要该缓冲）。
             if seg_i == last {
                 encoder.copy_buffer_to_buffer(
@@ -214,13 +212,6 @@ impl GpuAudioRenderer {
                     &buf.staging[idx],
                     0,
                     mix_size,
-                );
-                encoder.copy_buffer_to_buffer(
-                    &buf.voice_stage_buf,
-                    0,
-                    &buf.staging[idx],
-                    buf.staging_stage_offset,
-                    stage_size,
                 );
                 if want_full {
                     encoder.copy_buffer_to_buffer(
@@ -254,7 +245,6 @@ impl GpuAudioRenderer {
             rx: receiver,
             staging_buf,
             mix_size: mix_size as usize,
-            stage_size: stage_size as usize,
             full_size: full_size as usize,
             want_full,
             voice_count,
@@ -266,7 +256,7 @@ impl GpuAudioRenderer {
         &mut self,
         pending: &PendingReadback,
         channel_mix: &mut [f32],
-        voice_stage_out: &mut [u32],
+        _voice_stage_out: &mut [u32],
         readback_states: Option<&mut [GpuVoiceState]>,
     ) -> u32 {
         let Some(buf) = self.buffers.as_ref() else {
@@ -302,12 +292,6 @@ impl GpuAudioRenderer {
         let gpu_mix: &[f32] = bytemuck::cast_slice(&data[..mix_bytes]);
         let n_mix = gpu_mix.len().min(channel_mix.len());
         channel_mix[..n_mix].copy_from_slice(&gpu_mix[..n_mix]);
-        // 紧凑 stage
-        let stage_start = buf.staging_stage_offset as usize;
-        let stage_end = (stage_start + pending.stage_size).min(data.len());
-        let stage: &[u32] = bytemuck::cast_slice(&data[stage_start..stage_end]);
-        let n_stage = stage.len().min(voice_stage_out.len());
-        voice_stage_out[..n_stage].copy_from_slice(&stage[..n_stage]);
         // 全字段读回
         if let (Some(out), true) = (readback_states, pending.want_full) {
             let full_start = buf.staging_full_offset as usize;

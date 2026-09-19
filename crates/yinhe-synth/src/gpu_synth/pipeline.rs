@@ -203,7 +203,6 @@ impl GpuSynth {
             return false;
         }
         let submitted = {
-            self.voice_stage_buf.resize(self.voices.len(), 0);
             let segments: Vec<RenderSegment<'_>> = seg_data[..seg_used]
                 .iter()
                 .map(|s| RenderSegment {
@@ -270,7 +269,7 @@ impl GpuSynth {
         let n = self.renderer.finish_block(
             &p.readback,
             &mut self.channel_mix,
-            &mut self.voice_stage_buf,
+            &mut [],
             Some(self.states_buf.as_mut_slice()),
         );
         let cnt = p.voice_count.min(self.voices.len());

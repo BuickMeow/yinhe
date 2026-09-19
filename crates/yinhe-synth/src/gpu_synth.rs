@@ -155,8 +155,6 @@ pub struct GpuSynth {
     free_slots: std::collections::VecDeque<u32>,
     /// 各槽位是否已回收进 `free_slots`（防重复入列；与 `voices` 等长）
     freed_flags: Vec<bool>,
-    /// 紧凑 env_stage 读回缓冲（voice 清理用；全长缓冲复用）
-    voice_stage_buf: Vec<u32>,
     /// 压缩时的全字段读回缓冲（复用，避免每块分配）
     /// 每通道上次的 pitch_multiplier（块起点比对；变化才产生段 0 的 ChState）
     channel_speed_cache: [f32; MAX_CHANNELS],
@@ -267,7 +265,6 @@ impl GpuSynth {
             voices: Vec::new(),
             free_slots: std::collections::VecDeque::new(),
             freed_flags: Vec::new(),
-            voice_stage_buf: Vec::new(),
             channel_speed_cache: [0.0; MAX_CHANNELS],
             channel_mix: Vec::new(),
             channels: [ChannelState::new(sample_rate); MAX_CHANNELS],

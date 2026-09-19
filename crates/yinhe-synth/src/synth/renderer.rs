@@ -16,6 +16,7 @@ pub struct GpuAudioRenderer {
     pub(crate) queue: Arc<wgpu::Queue>,
     pub(crate) pipeline: wgpu::ComputePipeline, // pass1: 每 voice 串行帧
     pub(crate) mix_pipeline: wgpu::ComputePipeline, // pass2: 归约 partial
+    pub(crate) scatter_pipeline: wgpu::ComputePipeline, // 状态散写（替代逐区间 copy）
     #[allow(dead_code)]
     pub(crate) pipeline_layout: wgpu::PipelineLayout,
     pub(crate) bind_group_layout: wgpu::BindGroupLayout,
@@ -35,22 +36,23 @@ pub struct GpuAudioRenderer {
     pub(crate) mix_scratch: Vec<f32>,
     /// 每段 release 指令的按帧前缀和（复用，避免每段分配）
     pub(crate) release_by_frame_scratch: Vec<u32>,
-    /// 待写入的 voice 槽位更新（buffer 未就绪时也不丢；render_block 在
-    /// ensure_buffers 之后统一 flush）。
-    pending_voice_writes: Vec<(u32, GpuVoiceState)>,
+    /// 按槽位索引的 voice 状态镜像（write_voice_state 直接更新；
+    /// 同一 vid 多次写入天然去重，flush 只处理脏列表）。
+    voice_state_mirror: Vec<GpuVoiceState>,
+    /// 各槽位是否在脏列表中（与 mirror 等长）
+    voice_dirty: Vec<bool>,
+    /// 本块被修改过的槽位（升序去重后使用；复用避免每块分配）
+    dirty_vids: Vec<u32>,
     /// 批量写 staging（连续 vid 合并后紧凑暂存；复用避免每块分配）
     voice_write_scratch: Vec<GpuVoiceState>,
-    /// voice 状态暂存缓冲：flush 紧凑写一次，GPU 端按连续区间拷贝到槽位。
-    /// **内含 PIPELINE_DEPTH 个轮转区域**——`render_to_mixer` 保证最多
-    /// PIPELINE_DEPTH 个提交在途（收割等待最老块完成），因此区域复用时
-    /// 使用它的块必然已 harvest（GPU 已消费完），无覆盖竞态。
-    voice_staging_buf: Option<wgpu::Buffer>,
-    /// 每个轮转区域的槽位容量（元素数）
-    voice_staging_slots: usize,
+    /// scatter 项（每项 2 u32：staging 元素索引、目标槽位；复用避免每块分配）
+    scatter_items: Vec<u32>,
     /// 下一个使用的轮转区域（0..PIPELINE_DEPTH）
     voice_staging_turn: usize,
-    /// 本块待执行的 GPU 拷贝 (staging 元素起, 目标槽位起, 槽位数)。
-    pending_state_copies: Vec<(u32, u32, u32)>,
+    /// 本块 scatter 拷贝项数（submit_block 编码 dispatch 后清零）
+    scatter_count: u32,
+    /// 本块 scatter 项数组在 scatter_items_buf 中的 u32 起始索引
+    scatter_items_base: u32,
 }
 
 mod alt;
@@ -151,18 +153,6 @@ impl GpuAudioRenderer {
                 count: None,
             });
         }
-        // 紧凑 voice_stage（binding 15，pass1 写、CPU 读回）
-        entries.push(wgpu::BindGroupLayoutEntry {
-            binding: 15,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only: false },
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        });
-
         // 活跃 voice 列表 + 每通道区间（binding 17，storage read）
         entries.push(wgpu::BindGroupLayoutEntry {
             binding: 17,
@@ -174,6 +164,19 @@ impl GpuAudioRenderer {
             },
             count: None,
         });
+        // scatter 拷贝项（binding 18）与状态上传 staging（binding 19），storage read
+        for binding in [18u32, 19u32] {
+            entries.push(wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            });
+        }
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("audio_render_bgl"),
@@ -202,6 +205,14 @@ impl GpuAudioRenderer {
             compilation_options: Default::default(),
             cache: None,
         });
+        let scatter_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("audio_scatter_pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader_module,
+            entry_point: Some("scatter_main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
 
         // Dummy buffer for unused sample chunks（shader 用 vec2 视图读采样，
         // 最小绑定 8 字节：1 个 vec2<f32>）
@@ -216,6 +227,7 @@ impl GpuAudioRenderer {
             queue,
             pipeline,
             mix_pipeline,
+            scatter_pipeline,
             pipeline_layout,
             bind_group_layout,
             dummy_buf,
@@ -227,12 +239,14 @@ impl GpuAudioRenderer {
             frame_count: 0,
             mix_scratch: Vec::new(),
             release_by_frame_scratch: Vec::new(),
-            pending_voice_writes: Vec::new(),
+            voice_state_mirror: Vec::new(),
+            voice_dirty: Vec::new(),
+            dirty_vids: Vec::new(),
             voice_write_scratch: Vec::new(),
-            voice_staging_buf: None,
-            voice_staging_slots: 0,
+            scatter_items: Vec::new(),
             voice_staging_turn: 0,
-            pending_state_copies: Vec::new(),
+            scatter_count: 0,
+            scatter_items_base: 0,
         })
     }
 
@@ -328,9 +342,19 @@ impl GpuAudioRenderer {
     /// 调用点可能在 buffer 尚未创建时（首块）：入队，`render_block` 在
     /// ensure_buffers 之后统一 flush。
     pub fn write_voice_state(&mut self, vid: u32, state: &GpuVoiceState) {
-        // 一律入队：buffer 可能还没创建，或将在本块 render_block 里因扩容重建，
-        // flush 统一发生在 ensure_buffers 之后，写入不会丢。
-        self.pending_voice_writes.push((vid, *state));
+        // 写镜像 + 脏标记：buffer 可能还没创建（首块），flush 统一发生在
+        // ensure_buffers 之后；同一 vid 多次写入只保留最后一份。
+        let vid = vid as usize;
+        if vid >= self.voice_state_mirror.len() {
+            self.voice_state_mirror
+                .resize(vid + 1, GpuVoiceState::default());
+            self.voice_dirty.resize(vid + 1, false);
+        }
+        self.voice_state_mirror[vid] = *state;
+        if !self.voice_dirty[vid] {
+            self.voice_dirty[vid] = true;
+            self.dirty_vids.push(vid as u32);
+        }
     }
 
     /// 全量上传 voice 状态（测试路径；生产用 `write_voice_state` 增量写）。
@@ -341,68 +365,78 @@ impl GpuAudioRenderer {
     }
 
     /// 把待写 voice 槽位 flush 到 GPU（render_block 在 ensure_buffers 之后调用）。
+    ///
+    /// 状态按 vid 排序合并**连续区间**后紧凑写入 staging 的当前轮转区域；
+    /// 真正落位由 `scatter_main` 一次 dispatch 完成（替代原先每区间一条
+    /// `copy_buffer_to_buffer`：高潮段每块数千条命令的编码是 CPU 侧大头）。
+    /// 轮转区域保证复用前该块已 harvest（GPU 已消费完），无覆盖竞态。
     fn flush_pending_voice_writes(&mut self) {
-        if self.pending_voice_writes.is_empty() {
+        if self.dirty_vids.is_empty() {
             return;
         }
-        let Some(buf_slots) = self.buffers.as_ref().map(|b| b.voice_slots) else {
+        let Some(buf) = self.buffers.as_ref() else {
             return;
         };
+        let buf_slots = buf.voice_slots;
         let size = std::mem::size_of::<GpuVoiceState>();
+        let staging_slots = crate::synth::buffers::MAX_VOICE_SLOTS as usize;
         let t_flush = std::time::Instant::now();
-        let n_slots = self.pending_voice_writes.len() as u64;
-        // 按 vid 排序后合并**连续区间**，状态紧凑写入 staging 的当前轮转区域
-        // （一次 write_buffer），真正落位由 GPU 端 `copy_buffer_to_buffer`
-        // 完成（copy 记录 ~1µs vs write_buffer 每次 ~2.5µs~10µs 固定开销；
-        // 高潮段每块上千区间是 CPU 侧最大头）。
-        self.pending_voice_writes
-            .sort_unstable_by_key(|(vid, _)| *vid);
-        let cap = self.pending_voice_writes.len().next_power_of_two().max(64);
-        if self.voice_staging_slots < cap {
-            // 区域重建：旧 buffer 可能仍被在途块引用——wgpu 保证其存活，
-            // 新 buffer 从 0 轮转，两代互不干扰。
-            self.voice_staging_buf = Some(self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("voice_staging"),
-                size: (cap * crate::synth::buffers::PIPELINE_DEPTH * size) as u64,
-                usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }));
-            self.voice_staging_slots = cap;
-            self.voice_staging_turn = 0;
-        }
+        let n_slots = self.dirty_vids.len() as u64;
+        // 脏 vid 天然去重（每槽位只入列一次），升序后合并连续区间
+        self.dirty_vids.sort_unstable();
         self.voice_staging_turn =
             (self.voice_staging_turn + 1) % crate::synth::buffers::PIPELINE_DEPTH;
-        let base = self.voice_staging_turn * self.voice_staging_slots;
+        let base = self.voice_staging_turn * staging_slots;
+        let items_base = self.voice_staging_turn * staging_slots * 2;
         self.voice_write_scratch.clear();
-        self.pending_state_copies.clear();
+        self.scatter_items.clear();
         let mut i = 0usize;
-        while i < self.pending_voice_writes.len() {
-            let start = self.pending_voice_writes[i].0;
+        while i < self.dirty_vids.len() {
+            let start = self.dirty_vids[i];
             if start >= buf_slots {
+                // 超出槽位（防御）：清除剩余脏标记，避免下次写入被漏掉
+                for &vid in &self.dirty_vids[i..] {
+                    self.voice_dirty[vid as usize] = false;
+                }
                 break;
             }
             let mut j = i + 1;
-            while j < self.pending_voice_writes.len()
-                && self.pending_voice_writes[j].0 == self.pending_voice_writes[i].0 + (j - i) as u32
-            {
+            while j < self.dirty_vids.len() && self.dirty_vids[j] == self.dirty_vids[j - 1] + 1 {
                 j += 1;
             }
             let src_elem = self.voice_write_scratch.len() as u32;
-            self.voice_write_scratch
-                .extend(self.pending_voice_writes[i..j].iter().map(|(_, st)| *st));
-            let count = ((j - i) as u32).min(buf_slots - start);
-            self.pending_state_copies
-                .push((base as u32 + src_elem, start, count));
+            for &vid in &self.dirty_vids[i..j] {
+                let vid_usize = vid as usize;
+                self.voice_write_scratch
+                    .push(self.voice_state_mirror[vid_usize]);
+                self.voice_dirty[vid_usize] = false;
+            }
+            let count = (j - i) as u32;
+            // 展开为逐槽位 scatter 项 (staging 元素索引, 目标槽位)
+            for k in 0..count {
+                self.scatter_items.push(base as u32 + src_elem + k);
+                self.scatter_items.push(start + k);
+            }
             crate::gpu_synth::FLUSH_WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             i = j;
         }
-        if let Some(staging) = &self.voice_staging_buf {
+        self.dirty_vids.clear();
+        if !self.voice_write_scratch.is_empty() {
             self.queue.write_buffer(
-                staging,
+                &buf.voice_staging_buf,
                 (base * size) as u64,
                 bytemuck::cast_slice(&self.voice_write_scratch),
             );
         }
+        if !self.scatter_items.is_empty() {
+            self.queue.write_buffer(
+                &buf.scatter_items_buf,
+                (items_base * std::mem::size_of::<u32>()) as u64,
+                bytemuck::cast_slice(&self.scatter_items),
+            );
+        }
+        self.scatter_count = (self.scatter_items.len() / 2) as u32;
+        self.scatter_items_base = items_base as u32;
         let sl = &crate::gpu_synth::FLUSH_SLOTS;
         sl.fetch_add(n_slots, std::sync::atomic::Ordering::Relaxed);
         let us = &crate::gpu_synth::FLUSH_US;
@@ -410,6 +444,5 @@ impl GpuAudioRenderer {
             t_flush.elapsed().as_micros() as u64,
             std::sync::atomic::Ordering::Relaxed,
         );
-        self.pending_voice_writes.clear();
     }
 }

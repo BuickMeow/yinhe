@@ -106,6 +106,12 @@ pub struct RenderParams {
     pub active_count: u32,
     /// active_buf 中每通道 (off,count) 区间的起始 u32 索引
     pub ranges_off: u32,
+    /// scatter 拷贝项数（每项 2 个 u32：staging 元素索引、目标槽位）
+    pub scatter_count: u32,
+    /// scatter 项数组在 scatter_items_buf 中的 u32 起始索引（轮转区域）
+    pub scatter_items_base: u32,
+    /// 对齐填充（uniform struct 16 字节对齐）
+    pub _pad: u32,
 }
 
 /// 一个渲染段：外层块内的帧区间 + 该段的事件结构。
