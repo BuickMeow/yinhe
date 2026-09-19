@@ -262,6 +262,22 @@ pub struct ArrAutomationLane<'a> {
     pub highlight_ticks: &'a [u32],
 }
 
+/// 可见 lane 集合 + 位置 hash（混入 AR 自动化数据层的缓存键）。
+///
+/// 展开/收起只改变行布局，不 bump Document revision；调用方的 offsets_hash
+/// 又只在后续轨道偏移变化时改变（单轨展开/收起时不变），因此必须单独检测
+/// lane 集合与 y_top，否则缓存不失效、曲线不刷新。
+fn lane_set_hash(lanes: &[ArrAutomationLane]) -> u64 {
+    lanes.iter().fold(0u64, |acc, l| {
+        acc.wrapping_mul(0x9e3779b97f4a7c15)
+            .wrapping_add(target_hash(&l.lane.target))
+            .wrapping_mul(0x9e3779b97f4a7c15)
+            .wrapping_add(u64::from(l.lane.track))
+            .wrapping_mul(0x9e3779b97f4a7c15)
+            .wrapping_add(l.y_top.to_bits() as u64)
+    })
+}
+
 /// Prepare AR 展开自动化 lane 的曲线渲染（画在 AR 共享走带纹理上）。
 ///
 /// Layers:
@@ -273,7 +289,8 @@ pub struct ArrAutomationLane<'a> {
 ///
 /// cache_key：调用方算（含 render 相关 hash + revision——任何编辑都 bump
 /// revision，展开/布局变化进布局 hash）。ghost 覆盖 lane 的内容 hash 在本函数
-/// 内部额外混入数据层 key（拖拽不 bump revision，见 prepare 的 ghost_lane_hash）。
+/// 内部额外混入数据层 key（拖拽不 bump revision，见 prepare 的 ghost_lane_hash）；
+/// 可见 lane 集合/位置 hash 也由本函数内部混入（展开/收起不一定改变调用方 hash）。
 ///
 /// ghost：(ghost, y_top, height, max_val)——ghost lane 画在哪个子行。
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
@@ -308,7 +325,11 @@ pub fn prepare_arr_automation(
         }
         h
     };
-    let data_key = layer_cache_key(&[cache_key, ghost_lane_hash, tc_hash]);
+    // 可见 lane 集合 + 位置 hash：展开/收起只改变 AR 行布局，不 bump Document
+    // revision；调用方的 offsets_hash 又只在后续轨道偏移变化时改变（单轨展开/
+    // 收起时不变）。缺此 hash 会导致数据层缓存不失效（回归：单轨展开/收起
+    // 自动化不刷新 GPU、lane 曲线不出现）。
+    let data_key = layer_cache_key(&[cache_key, ghost_lane_hash, tc_hash, lane_set_hash(lanes)]);
 
     // 数据层 skip_lane：ghost 为 Move 时被覆盖的 lane 由 ghost 层完整重画。
     let skip_lane = ghost.as_ref().and_then(|(g, ..)| match g {
@@ -459,5 +480,32 @@ mod tests {
             target_hash(&make(ParamDevice::ChannelInstrument { channel: 0 }, 3)),
             target_hash(&make(ParamDevice::PluginInstrument { channel: 0 }, 3))
         );
+    }
+
+    /// 回归：单轨展开/收起自动化（如 CC64 踏板）只改变可见 lane 集合与
+    /// y_top，不改变 Document revision、也不改变单轨的 track_offsets。
+    /// lane_set_hash 必须随展开/收起变化，否则数据层缓存不失效、曲线不显示。
+    #[test]
+    fn lane_set_hash_changes_on_expand_collapse() {
+        let lane = AutomationLane {
+            target: AutomationTarget::CC { controller: 64 },
+            track: 0,
+            events: Vec::new(),
+        };
+        let make = |y_top: f32| ArrAutomationLane {
+            lane: &lane,
+            y_top,
+            height: 40.0,
+            max_val: 1.0,
+            highlight_ticks: &[],
+        };
+        let collapsed = lane_set_hash(&[]);
+        let expanded = lane_set_hash(std::slice::from_ref(&make(40.0)));
+        assert_ne!(
+            collapsed, expanded,
+            "展开 lane 后 hash 必须变化（触发数据层重建）"
+        );
+        let moved = lane_set_hash(std::slice::from_ref(&make(0.0)));
+        assert_ne!(expanded, moved, "lane 行位置（y_top）变化必须使 hash 变化");
     }
 }
