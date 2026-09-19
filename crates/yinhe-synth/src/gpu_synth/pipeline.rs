@@ -288,6 +288,12 @@ impl GpuSynth {
             if i < p.voice_gens.len() && v.slot_gen != p.voice_gens[i] {
                 continue;
             }
+            // 待确认 kill 的 voice：GPU 还在 1ms 淡出（读回 env_stage=5），
+            // 该状态是提交本块前的旧值；覆盖会把 CPU 的"已判死"复活，
+            // 导致下段重复淘汰同一 voice。等 GPU 确认 >=6 再同步并回收。
+            if v.kill_pending && st.env_stage < 6 {
+                continue;
+            }
             v.state = *st;
             if st.env_stage >= 6 {
                 // GPU 已确认结束（含 kill 淡出完成）→ 清除待确认标记

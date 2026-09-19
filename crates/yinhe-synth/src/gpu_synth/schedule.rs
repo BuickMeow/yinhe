@@ -287,6 +287,9 @@ impl GpuSynth {
                             for (i, v) in self.voices.iter_mut().enumerate() {
                                 if v.state.env_stage < 6 && (all || !v.held_by_damper) {
                                     v.state.env_stage = 6;
+                                    // 与淘汰 kill 同语义：等待 GPU 确认 1ms 淡出结束，
+                                    // 期间 harvest 不得用旧状态覆盖（否则 voice 复活）。
+                                    v.kill_pending = true;
                                     releases.push(kill_cmd(frame, i));
                                 }
                             }
@@ -632,7 +635,13 @@ impl GpuSynth {
         now_sample: u64,
         releases: &mut Vec<ReleaseCmd>,
     ) {
-        let alive = self.voices.iter().filter(|v| v.state.env_stage < 6).count();
+        // 待确认 kill 的 voice 已判死（GPU 淡出中）：不计入 alive、不作候选，
+        // 否则 harvest 读回淡出中的旧状态会把它"复活"，下段重复淘汰同一 voice。
+        let alive = self
+            .voices
+            .iter()
+            .filter(|v| v.state.env_stage < 6 && !v.kill_pending)
+            .count();
         let excess = alive.saturating_sub(self.max_voices);
         if excess == 0 {
             return;
@@ -645,7 +654,7 @@ impl GpuSynth {
         //   ③ envelope 升序（更听不见的优先）；④ 并列取创建顺序。
         let mut cands: Vec<(u8, f64, f64, f64, usize)> = Vec::with_capacity(alive);
         for (i, v) in self.voices.iter().enumerate() {
-            if v.state.env_stage >= 6 {
+            if v.state.env_stage >= 6 || v.kill_pending {
                 continue;
             }
             let releasing = v.release_pending || v.state.env_stage == 5;
