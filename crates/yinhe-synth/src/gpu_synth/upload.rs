@@ -105,6 +105,11 @@ impl GpuSynth {
             let scale = 1 + u32::from(*stereo.get(&ptr).unwrap_or(&false));
             let len = sample.len() as u32 / scale;
             data.extend_from_slice(sample);
+            // 每个样本起始对齐到偶数元素：shader 用 vec2 视图一次读 (l,r)
+            //（立体声）或相邻两元素（单声道），pair 不得跨样本错位。
+            if data.len() % 2 != 0 {
+                data.push(0.0);
+            }
             offsets.insert(ptr, (offset, len));
         }
         let mb = data.len() as f64 * 4.0 / (1024.0 * 1024.0);

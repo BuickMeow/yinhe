@@ -203,10 +203,11 @@ impl GpuAudioRenderer {
             cache: None,
         });
 
-        // Dummy 1-element buffer for unused sample chunks
+        // Dummy buffer for unused sample chunks（shader 用 vec2 视图读采样，
+        // 最小绑定 8 字节：1 个 vec2<f32>）
         let dummy_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("dummy"),
-            contents: bytemuck::bytes_of(&0.0f32),
+            contents: bytemuck::bytes_of(&[0.0f32; 2]),
             usage: wgpu::BufferUsages::STORAGE,
         });
 

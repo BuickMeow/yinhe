@@ -128,12 +128,17 @@ struct EnvUpdateCmd {
 @group(0) @binding(0) var<uniform> params: RenderParams;
 @group(0) @binding(1) var<storage, read_write> voice_states: array<VoiceState>;
 @group(0) @binding(2) var<storage, read_write> channel_mix: array<f32>;
-@group(0) @binding(3) var<storage, read> chunk_0: array<f32>;
-@group(0) @binding(4) var<storage, read> chunk_1: array<f32>;
-@group(0) @binding(5) var<storage, read> chunk_2: array<f32>;
-@group(0) @binding(6) var<storage, read> chunk_3: array<f32>;
-@group(0) @binding(7) var<storage, read> chunk_4: array<f32>;
-@group(0) @binding(9) var<storage, read_write> partial: array<f32>;
+// 采样 chunk 用 vec2 视图：立体声样本 (l,r) 一次读；单声道按索引奇偶取分量。
+// 拼接时每个样本起始对齐到偶数元素（upload.rs padding 保证 pair 不跨样本）。
+@group(0) @binding(3) var<storage, read> chunk_0: array<vec2<f32>>;
+@group(0) @binding(4) var<storage, read> chunk_1: array<vec2<f32>>;
+@group(0) @binding(5) var<storage, read> chunk_2: array<vec2<f32>>;
+@group(0) @binding(6) var<storage, read> chunk_3: array<vec2<f32>>;
+@group(0) @binding(7) var<storage, read> chunk_4: array<vec2<f32>>;
+// partial 用 pack2x16float 打包 (l,r) 为一个 u32：pass1 写、pass2 读的
+// 显存带宽减半（每 voice 每帧 4B）。单个 voice 的瞬时值用 f16 精度足够，
+// 多 voice 求和时量化误差随机不累积。
+@group(0) @binding(9) var<storage, read_write> partial: array<u32>;
 @group(0) @binding(10) var<storage, read> segs: array<SegInfo>;
 @group(0) @binding(11) var<storage, read> ch_updates: array<ChState>;
 @group(0) @binding(12) var<storage, read> release_by_frame: array<u32>;
@@ -169,9 +174,10 @@ fn chunk_offset(idx: u32) -> u32 {
     }
 }
 
-/// 采样读取（带线程内 chunk 游标）：voice 的采样位置逐帧单调前进，几乎总在
-/// 同一 chunk 内——游标命中时省掉二分（每帧 2~4 次调用的热路径）。
-fn sample_at(global_idx: u32, cursor: ptr<function, u32>) -> f32 {
+/// 采样 pair 读取（带线程内 chunk 游标）：voice 的采样位置逐帧单调前进，
+/// 几乎总在同一 chunk 内——游标命中时省掉二分（每帧 1~2 次调用的热路径）。
+/// `global_idx` 为元素索引且必须偶数；返回 (s[global_idx], s[global_idx+1])。
+fn sample_pair(global_idx: u32, cursor: ptr<function, u32>) -> vec2<f32> {
     var chunk_idx = *cursor;
     let start = chunk_offset(chunk_idx);
     let end = chunk_offset(chunk_idx + 1u);
@@ -185,16 +191,22 @@ fn sample_at(global_idx: u32, cursor: ptr<function, u32>) -> f32 {
         chunk_idx = lo - 1u;
         *cursor = chunk_idx;
     }
-    let local_idx = global_idx - chunk_offset(chunk_idx);
+    let local = (global_idx - chunk_offset(chunk_idx)) / 2u;
 
     switch chunk_idx {
-        case 0u: { return chunk_0[local_idx]; }
-        case 1u: { return chunk_1[local_idx]; }
-        case 2u: { return chunk_2[local_idx]; }
-        case 3u: { return chunk_3[local_idx]; }
-        case 4u: { return chunk_4[local_idx]; }
-        default: { return 0.0; }
+        case 0u: { return chunk_0[local]; }
+        case 1u: { return chunk_1[local]; }
+        case 2u: { return chunk_2[local]; }
+        case 3u: { return chunk_3[local]; }
+        case 4u: { return chunk_4[local]; }
+        default: { return vec2<f32>(0.0, 0.0); }
     }
+}
+
+/// 单声道样本按元素索引取一个采样值（vec2 视图的偶/奇分量）。
+fn mono_at(global_idx: u32, cursor: ptr<function, u32>) -> f32 {
+    let p = sample_pair(global_idx & 0xFFFFFFFEu, cursor);
+    return select(p.y, p.x, (global_idx & 1u) == 0u);
 }
 
 /// 推进 1 帧 envelope（与 CPU 参考实现 cpu_ref::advance_env_cpu 逐帧等价）。
@@ -407,19 +419,26 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
             if idx < st.sample_length {
                 let scale = 1u + st.is_stereo;
                 let i = st.sample_offset + idx * scale;
-                var l0 = sample_at(i, &sample_cursor);
-                var r0 = l0;
+                var l0: f32;
+                var r0: f32;
                 if st.is_stereo == 1u {
-                    r0 = sample_at(i + 1u, &sample_cursor);
+                    let p0 = sample_pair(i, &sample_cursor);
+                    l0 = p0.x;
+                    r0 = p0.y;
+                } else {
+                    l0 = mono_at(i, &sample_cursor);
+                    r0 = l0;
                 }
                 if st.interp == 1u && idx < max_idx {
-                    var l1 = sample_at(i + scale, &sample_cursor);
-                    var r1 = l1;
                     if st.is_stereo == 1u {
-                        r1 = sample_at(i + scale + 1u, &sample_cursor);
+                        let p1 = sample_pair(i + scale, &sample_cursor);
+                        l0 = mix(l0, p1.x, frac);
+                        r0 = mix(r0, p1.y, frac);
+                    } else {
+                        let l1 = mono_at(i + 1u, &sample_cursor);
+                        l0 = mix(l0, l1, frac);
+                        r0 = l0;
                     }
-                    l0 = mix(l0, l1, frac);
-                    r0 = mix(r0, r1, frac);
                 }
 
                 var s_l = l0 * ch_gain * st.envelope;
@@ -467,8 +486,7 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
         // 直写自己的 slot（pass2 按通道归约；无 workgroup 同步）。
         // stride 用 partial_stride（段长上界）而非 fc：分段渲染时各段共用
         // 同一 partial 区域，保证索引不串位。
-        partial[vid * params.partial_stride * 2u + fi * 2u] = my_l;
-        partial[vid * params.partial_stride * 2u + fi * 2u + 1u] = my_r;
+        partial[vid * params.partial_stride + fi] = pack2x16float(vec2<f32>(my_l, my_r));
     }
 
     // 全字段写回（CPU 读回为下一块起点状态；flt_* 亦在其中）。
@@ -536,9 +554,9 @@ fn mix_main(@builtin(workgroup_id) wid: vec3<u32>,
         for (var j = 0u; j < N; j++) {
             let fi = base_fi + j;
             if fi < fc {
-                let pbase = vid * params.partial_stride * 2u + fi * 2u;
-                sum_l[j] += partial[pbase];
-                sum_r[j] += partial[pbase + 1u];
+                let p = unpack2x16float(partial[vid * params.partial_stride + fi]);
+                sum_l[j] += p.x;
+                sum_r[j] += p.y;
             }
         }
     }
