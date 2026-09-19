@@ -65,22 +65,27 @@ impl AudioEngine {
                             s.long_lived_voices(now_sample, self.sample_rate as u64 * 10),
                             s.top_keys(3),
                         ),
-                        None => ([0.0; 6], 0, 0, [0u32; 8], 0, Vec::new()),
+                        None => ([0.0; 8], 0, 0, [0u32; 8], 0, Vec::new()),
                     };
                     crate::audio_renderer::play_log(&format!(
                         "[gpu] 块超时：{gpu_ms:.2}ms > 预算 {budget_ms:.2}ms（frames={frames}）\
-                         collect={:.1} submit={:.1} harvest={:.1} ring={:.1} out={:.1} compact={:.1} alive={alive} blocks={blocks} 力度[127-112/111-96/95-80/79-64/63-48/47-32/31-16/15-0]={:?} 长寿(>10s)={aged} top键={topk:?} 淘汰力度累计[小/中/大]={:?} 累计{} 拒绝[小/中/大]={:?} 累计={}",
+                         collect={:.1} submit={:.1} harvest={:.1} ring={:.1} out={:.1} compact={:.1} active={:.1} upload={:.1} alive={alive} blocks={blocks} 力度[127-112/111-96/95-80/79-64/63-48/47-32/31-16/15-0]={:?} 长寿(>10s)={aged} top键={topk:?} 淘汰力度累计[小/中/大]={:?} 累计{} 拒绝[小/中/大]={:?} 累计={} flush={}次/{}槽/{}us",
                         d[0],
                         d[1],
                         d[2],
                         d[3],
                         d[4],
                         d[5],
+                        d[6],
+                        d[7],
                         hist,
                         [ak(&EVICT_VEL_LO), ak(&EVICT_VEL_MID), ak(&EVICT_VEL_HI)],
                         ak(&EVICT_VEL_LO) + ak(&EVICT_VEL_MID) + ak(&EVICT_VEL_HI),
                         [ak(&REJECT_VEL_LO), ak(&REJECT_VEL_MID), ak(&REJECT_VEL_HI)],
-                        ak(&NOTE_ON_REJECTED)
+                        ak(&NOTE_ON_REJECTED),
+                        ak(&yinhe_synth::gpu_synth::FLUSH_WRITES),
+                        ak(&yinhe_synth::gpu_synth::FLUSH_SLOTS),
+                        ak(&yinhe_synth::gpu_synth::FLUSH_US)
                     ));
                 }
             }

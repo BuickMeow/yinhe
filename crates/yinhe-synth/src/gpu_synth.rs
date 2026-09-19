@@ -109,6 +109,24 @@ pub static REJECT_VEL_LO: std::sync::atomic::AtomicU64 = std::sync::atomic::Atom
 pub static REJECT_VEL_MID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static REJECT_VEL_HI: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// 反事实淘汰探针开关（诊断；不影响实际淘汰选择，仅在超限时额外统计）。
+pub static PROBE_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// 探针累计的淘汰事件数（每次超限一段算一次）。
+pub static PROBE_EVENTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// 探针"结束最久优先"策略选中 voice 距 NoteOff 的 age 分桶。
+/// 0=结束还早(>2s) 1=2~0.5s 2=0.5~0.1s 3=0.1~0s 4=已结束0~0.1s 5=0.1~0.5s 6=0.5~2s 7=>2s
+pub static PROBE_END_AGE: [std::sync::atomic::AtomicU64; 8] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 8];
+/// 探针"结束最久优先"选中者中已结束（now >= end_sample）的数量。
+pub static PROBE_END_RELEASED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// voice 状态上传的 write_buffer 调用次数 / 覆盖槽位数 / 累计微秒（诊断）。
+pub static FLUSH_WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static FLUSH_SLOTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static FLUSH_US: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// 探针"力度优先"策略选中 voice 的力度 16 档直方图（vel/8）。
+pub static PROBE_VEL16: [std::sync::atomic::AtomicU64; 16] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 16];
+
 pub struct GpuSynth {
     renderer: GpuAudioRenderer,
     /// 每 port 的音色库条目列表（bank/preset → key map），`channel_port` 决定通道用哪个 port。
@@ -150,7 +168,7 @@ pub struct GpuSynth {
     /// 峰值 voice 数统计（诊断用）
     peak_voices: usize,
     /// 上一块耗时分解（ms）：[collect, submit(含 collect), harvest, ring, out, compact]
-    pub diag_ms: [f64; 6],
+    pub diag_ms: [f64; 8],
     /// 上一块提交的 GPU 块数
     pub diag_blocks: u32,
     /// 上一块结束时的活跃 voice 数
@@ -248,7 +266,7 @@ impl GpuSynth {
             max_voices: crate::DEFAULT_MAX_VOICES,
             max_layers: Some(crate::DEFAULT_MAX_LAYERS),
             peak_voices: 0,
-            diag_ms: [0.0; 6],
+            diag_ms: [0.0; 8],
             diag_blocks: 0,
             diag_alive: 0,
             diag_ring_short: 0,

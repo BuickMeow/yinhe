@@ -20,7 +20,7 @@ impl GpuSynth {
         }
         let per_frame = MAX_CHANNELS * 2;
         let need = frames * per_frame;
-        self.diag_ms = [0.0; 6];
+        self.diag_ms = [0.0; 8];
         self.diag_blocks = 0;
         // 预渲染：ring 不足时提交/收割（提交超前、收割入 ring；块大小可变化）
         while self.ring.len() < need {
@@ -152,6 +152,7 @@ impl GpuSynth {
             self.diag_ms[0] += t_collect.elapsed().as_secs_f64() * 1000.0;
             // 活跃 voice 列表（每段重建）：pass1/pass2 只遍历活跃槽位，
             // 渲染量与 `voices.len()`（槽位高水位/墓碑）彻底解耦。
+            let t_active = std::time::Instant::now();
             sb.active.clear();
             sb.active_ranges.clear();
             sb.active_ranges.resize(MAX_CHANNELS * 2, 0);
@@ -180,14 +181,17 @@ impl GpuSynth {
                 sb.active[slot] = i as u32;
             }
             sb.active_count = acc;
+            self.diag_ms[6] += t_active.elapsed().as_secs_f64() * 1000.0;
             seg_used += 1;
             offset += seg_frames;
         }
 
         // 只上传本块新增的 voice 槽位（状态常驻 GPU，不再整块重传）。
+        let t_upload = std::time::Instant::now();
         for (i, v) in self.voices.iter().enumerate().skip(upload_from) {
             self.renderer.write_voice_state(i as u32, &v.state);
         }
+        self.diag_ms[7] += t_upload.elapsed().as_secs_f64() * 1000.0;
 
         self.channel_mix.resize(MAX_CHANNELS * frames * 2, 0.0);
         if self.voices.is_empty() {

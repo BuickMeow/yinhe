@@ -333,6 +333,8 @@ impl GpuAudioRenderer {
             return;
         };
         let size = std::mem::size_of::<GpuVoiceState>() as u64;
+        let t_flush = std::time::Instant::now();
+        let n_slots = self.pending_voice_writes.len() as u64;
         // 按 vid 排序后把**连续区间**合并成一次 `write_buffer`。原先逐条写：
         // compact 重传 8192 个 voice = 8192 次小写，实测每块 ~16ms 级尖峰。
         self.pending_voice_writes
@@ -359,8 +361,16 @@ impl GpuAudioRenderer {
                 start as u64 * size,
                 bytemuck::cast_slice(&self.voice_write_scratch[..n]),
             );
+            crate::gpu_synth::FLUSH_WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             i = j;
         }
+        let sl = &crate::gpu_synth::FLUSH_SLOTS;
+        sl.fetch_add(n_slots, std::sync::atomic::Ordering::Relaxed);
+        let us = &crate::gpu_synth::FLUSH_US;
+        us.fetch_add(
+            t_flush.elapsed().as_micros() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         self.pending_voice_writes.clear();
     }
 }

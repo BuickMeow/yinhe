@@ -5039,6 +5039,8 @@ fn diag_ouranos_bar157_dropout() {
     let w = 64usize;
     let mut ring_short_sum: u64 = 0;
     let mut ring_short_blocks: u64 = 0;
+    // 打开反事实淘汰探针（只统计，不改行为）
+    yinhe_synth::gpu_synth::PROBE_ENABLED.store(true, std::sync::atomic::Ordering::Relaxed);
     for b in 0..blocks {
         engine.render(&mut out);
         if let Some(g) = engine.gpu_synth.as_ref() {
@@ -5078,7 +5080,7 @@ fn diag_ouranos_bar157_dropout() {
                 gs.voice_count(),
                 gs.diag_gpu_mix_peak,
                 gs.diag_ring_short,
-                gs.diag_ms[..5]
+                gs.diag_ms[..8]
                     .iter()
                     .map(|v| (v * 10.0).round() / 10.0)
                     .collect::<Vec<_>>()
@@ -5114,6 +5116,40 @@ fn diag_ouranos_bar157_dropout() {
     );
     eprintln!("  静音窗前20={:?}", &quiet[..quiet.len().min(20)]);
     eprintln!("  骤降前12={:?}", drops.iter().take(12).collect::<Vec<_>>());
+
+    // —— 反事实淘汰探针：同批候选用两种策略分别会杀谁 ——
+    {
+        use std::sync::atomic::Ordering::Relaxed;
+        let age: Vec<u64> = yinhe_synth::gpu_synth::PROBE_END_AGE
+            .iter()
+            .map(|a| a.load(Relaxed))
+            .collect();
+        let vel: Vec<u64> = yinhe_synth::gpu_synth::PROBE_VEL16
+            .iter()
+            .map(|a| a.load(Relaxed))
+            .collect();
+        eprintln!(
+            "探针（{} 次超限样本，每次取 excess 个 victim）：",
+            yinhe_synth::gpu_synth::PROBE_EVENTS.load(Relaxed)
+        );
+        eprintln!(
+            "  结束优先 age 桶[结束还早>2s/2~.5s/.5~.1s/.1~0s/已结束0~.1s/.1~.5s/.5~2s/>2s]={age:?} 其中已结束={}",
+            yinhe_synth::gpu_synth::PROBE_END_RELEASED.load(Relaxed)
+        );
+        eprintln!("  力度优先 16 档[0-7/8-15/.../120-127]={vel:?}");
+        eprintln!(
+            "合批命中={} 淘汰={} 拒绝={}",
+            yinhe_synth::gpu_synth::BATCH_HITS.load(Relaxed),
+            yinhe_synth::gpu_synth::EVICT_KILLS.load(Relaxed),
+            yinhe_synth::gpu_synth::NOTE_ON_REJECTED.load(Relaxed)
+        );
+        eprintln!(
+            "flush: {} 次 write_buffer / {} 槽 / {}us（累计）",
+            yinhe_synth::gpu_synth::FLUSH_WRITES.load(Relaxed),
+            yinhe_synth::gpu_synth::FLUSH_SLOTS.load(Relaxed),
+            yinhe_synth::gpu_synth::FLUSH_US.load(Relaxed)
+        );
+    }
 
     // —— 单音符幅度对比（排除叠加：同事件、同 seek，各渲染 8 块）——
     {
