@@ -234,8 +234,7 @@ impl GpuAudioRenderer {
         let voice_stage_size = (slots * std::mem::size_of::<u32>()) as u64;
         // pass1 每 voice 每帧输出（pack2x16float 打包 l/r 为一个 u32：读写
         // 带宽减半）：分段渲染只按段长上界分配（与整块帧数无关，且跨重建复用）
-        let partial_size =
-            (slots * partial_frames as usize * std::mem::size_of::<u32>()) as u64;
+        let partial_size = (slots * partial_frames as usize * std::mem::size_of::<u32>()) as u64;
         let (voice_state_buf, voice_stage_buf, partial_buf) = match self.buffers.take() {
             Some(b) if b.voice_slots >= MAX_VOICE_SLOTS && b.partial_frames >= partial_frames => {
                 (b.voice_state_buf, b.voice_stage_buf, b.partial_buf)
