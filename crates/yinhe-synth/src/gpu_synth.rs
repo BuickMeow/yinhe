@@ -323,6 +323,33 @@ impl GpuSynth {
         self.voices.iter().filter(|v| v.state.env_stage < 6).count()
     }
 
+    /// 诊断：长寿 voice 详情（channel, key, env_stage, release_pending,
+    /// held_by_damper, loop_mode），最多 8 个——判断是踏板按住还是泄漏。
+    pub fn long_lived_detail(
+        &self,
+        current_sample: u64,
+        threshold: u64,
+    ) -> Vec<(u8, u8, u32, bool, bool, u32)> {
+        self.voices
+            .iter()
+            .filter(|v| {
+                v.state.env_stage < 6
+                    && current_sample.saturating_sub(v.start_sample) > threshold
+            })
+            .take(8)
+            .map(|v| {
+                (
+                    v.channel,
+                    v.key,
+                    v.state.env_stage,
+                    v.release_pending,
+                    v.held_by_damper,
+                    v.state.loop_mode,
+                )
+            })
+            .collect()
+    }
+
     /// 诊断：各 dense 通道当前 (bank, program)。
     pub fn debug_channel_banks(&self) -> Vec<(u8, u8)> {
         self.channels.iter().map(|c| (c.bank, c.program)).collect()
