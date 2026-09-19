@@ -169,14 +169,22 @@ fn chunk_offset(idx: u32) -> u32 {
     }
 }
 
-fn sample_at(global_idx: u32) -> f32 {
-    var lo = 0u;
-    var hi = params.sample_chunk_count;
-    while lo < hi {
-        let mid = (lo + hi) / 2u;
-        if chunk_offset(mid) <= global_idx { lo = mid + 1u; } else { hi = mid; }
+/// 采样读取（带线程内 chunk 游标）：voice 的采样位置逐帧单调前进，几乎总在
+/// 同一 chunk 内——游标命中时省掉二分（每帧 2~4 次调用的热路径）。
+fn sample_at(global_idx: u32, cursor: ptr<function, u32>) -> f32 {
+    var chunk_idx = *cursor;
+    let start = chunk_offset(chunk_idx);
+    let end = chunk_offset(chunk_idx + 1u);
+    if global_idx < start || global_idx >= end {
+        var lo = 0u;
+        var hi = params.sample_chunk_count;
+        while lo < hi {
+            let mid = (lo + hi) / 2u;
+            if chunk_offset(mid) <= global_idx { lo = mid + 1u; } else { hi = mid; }
+        }
+        chunk_idx = lo - 1u;
+        *cursor = chunk_idx;
     }
-    let chunk_idx = lo - 1u;
     let local_idx = global_idx - chunk_offset(chunk_idx);
 
     switch chunk_idx {
@@ -296,6 +304,7 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
         }
     }
     var seg_idx = 0u;
+    var sample_cursor = 0u;
 
     for (var fi: u32 = 0u; fi < fc; fi++) {
         // 跨段：应用该段边界的通道状态更新
@@ -398,16 +407,16 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
             if idx < st.sample_length {
                 let scale = 1u + st.is_stereo;
                 let i = st.sample_offset + idx * scale;
-                var l0 = sample_at(i);
+                var l0 = sample_at(i, &sample_cursor);
                 var r0 = l0;
                 if st.is_stereo == 1u {
-                    r0 = sample_at(i + 1u);
+                    r0 = sample_at(i + 1u, &sample_cursor);
                 }
                 if st.interp == 1u && idx < max_idx {
-                    var l1 = sample_at(i + scale);
+                    var l1 = sample_at(i + scale, &sample_cursor);
                     var r1 = l1;
                     if st.is_stereo == 1u {
-                        r1 = sample_at(i + scale + 1u);
+                        r1 = sample_at(i + scale + 1u, &sample_cursor);
                     }
                     l0 = mix(l0, l1, frac);
                     r0 = mix(r0, r1, frac);
