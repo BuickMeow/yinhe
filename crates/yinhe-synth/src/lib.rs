@@ -40,6 +40,8 @@ pub use sf_parser::{
     KeyInfo, KeyMapEntry, LoopMode, build_key_maps, load_wav_as_f32, select_key_info,
     select_key_info_multi,
 };
+/// GPU voice 槽位硬上限（导出模式自动拉满用；实时由用户设置控制）。
+pub use synth::buffers::MAX_VOICE_SLOTS;
 pub use synth::{
     GpuAudioRenderer, GpuVoiceState, RENDER_SEGMENT_FRAMES, RenderParams, RenderSegment,
     biquad_coeffs,

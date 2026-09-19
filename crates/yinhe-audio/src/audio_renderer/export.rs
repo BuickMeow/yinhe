@@ -37,6 +37,15 @@ impl AudioRenderer {
         self.engine.handle_command(AudioCommand::Stop);
         self.clear_buffered_audio(0);
         self.engine.set_layer_count(layer_count);
+        // 导出模式：最大复音数拉满到 GPU 槽位上限——导出离线渲染不受实时预算
+        // 约束，voice 保留越完整听感越接近参考（密集段长 release 尾巴不丢）。
+        // 实时播放仍由用户设置控制（导出设置不污染用户设置）。
+        #[cfg(feature = "gpu")]
+        {
+            self.export_prev_max_voices = Some(self.engine.max_voices);
+            self.engine
+                .set_max_voices(Some(yinhe_synth::MAX_VOICE_SLOTS as usize));
+        }
         self.request_chase(0);
         // GPU 路径：事件列表按 seek 后位置（0）重建（与 AudioCommand::Stop 同语义）。
         #[cfg(feature = "gpu")]
@@ -169,6 +178,12 @@ impl AudioRenderer {
         } else {
             // 无记录：恢复为 None（清空导出设定的层数限制）。
             self.engine.set_layer_count(None);
+        }
+        #[cfg(feature = "gpu")]
+        if let Some(prev) = self.export_prev_max_voices.take() {
+            // 恢复为导出前的等效值（0 = 自动 → None）。
+            self.engine
+                .set_max_voices(if prev == 0 { None } else { Some(prev) });
         }
         self.clear_buffered_audio(0);
         self.publish_state();

@@ -183,6 +183,9 @@ struct AudioRenderer {
     export: Option<ExportJob>,
     /// 导出结束后要恢复的 xsynth 层数（导出设置不污染用户设置）。
     export_prev_layer_count: Option<Option<usize>>,
+    /// 导出结束后要恢复的最大复音数（导出模式拉满上限保听感完整）。
+    #[cfg(feature = "gpu")]
+    export_prev_max_voices: Option<usize>,
     /// GPU 模式待加载音色库的通道数（全部完成后统一上传样本）。
     gpu_sf_pending: usize,
 }
@@ -228,6 +231,8 @@ impl AudioRenderer {
             transport_rx,
             export: None,
             export_prev_layer_count: None,
+            #[cfg(feature = "gpu")]
+            export_prev_max_voices: None,
             gpu_sf_pending: 0,
             cmd_rx,
             worker_tx,

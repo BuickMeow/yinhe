@@ -5,8 +5,8 @@ use wgpu::util::DeviceExt;
 
 use super::renderer::GpuAudioRenderer;
 use super::types::{
-    CHANNEL_COUNT, ChState, EnvUpdateCmd, GpuVoiceState, MAX_CHUNKS, ReleaseCmd,
-    RenderParams, SegInfo,
+    CHANNEL_COUNT, ChState, EnvUpdateCmd, GpuVoiceState, MAX_CHUNKS, ReleaseCmd, RenderParams,
+    SegInfo,
 };
 
 /// GPU voice 槽位上限：voice 状态常驻 GPU（不再每块读回/重传），
@@ -20,7 +20,7 @@ use super::types::{
 // partial 越大缓存工作集越大（实测 64MB~62ms / 96MB~71ms / 128MB~77ms 同量级
 // voice）；容量与 max_voices（渲染量）解耦。根治方案是活跃列表（pass1/2 只
 // 遍历活跃 voice，与槽位解耦），原型 27ms 但引入渲染 bug，待修。
-pub(crate) const MAX_VOICE_SLOTS: u32 = 40960;
+pub const MAX_VOICE_SLOTS: u32 = 40960;
 
 /// 采样数据分片写入的每片字节数（16MB）：写一片让路 1ms，避免长段
 /// GPU/内存带宽抢占把 UI 渲染卡住。
