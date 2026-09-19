@@ -32,9 +32,6 @@ use yinhe_types::{ArrangementView, PianoRollView};
 #[derive(Clone, Debug)]
 pub(crate) enum PendingFileAction {
     NewProject,
-    Open,
-    /// 打开「最近修改的文件」子菜单选中的路径。
-    OpenRecent(String),
     CloseDocument(usize),
     Exit,
 }

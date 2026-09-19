@@ -646,7 +646,6 @@ impl App {
         {
             let pending = match action {
                 transport_bar::FileAction::NewProject => PendingFileAction::NewProject,
-                transport_bar::FileAction::Open => PendingFileAction::Open,
                 transport_bar::FileAction::CloseDocument => PendingFileAction::CloseDocument(idx),
                 transport_bar::FileAction::Exit => PendingFileAction::Exit,
                 _ => unreachable!(), // filtered above
@@ -665,8 +664,11 @@ impl App {
     }
 
     /// 打开「最近修改的文件」（transport bar 子菜单 / macOS 菜单栏共用）。
-    /// 文件已被移动/删除时从列表移除并报错；有未保存修改时先走确认流程。
-    pub(crate) fn open_recent_file(&mut self, path: &str, ctx: &egui::Context) {
+    /// 文件已被移动/删除时从列表移除并报错。
+    ///
+    /// 打开是**追加新文档**（不取代/关闭现有文档），因此不检查未保存修改：
+    /// 触发保存确认只在会丢失当前文档的场景（关闭文档 / 新建 / 退出）。
+    pub(crate) fn open_recent_file(&mut self, path: &str) {
         if !std::path::Path::new(path).exists() {
             self.audio_settings.remove_recent_file(path);
             self.audio_settings.save();
@@ -677,17 +679,6 @@ impl App {
             self.show_error(
                 t!("toast.file_missing"),
                 t!("file_dialog.not_found", name = name),
-            );
-            return;
-        }
-        if let Some(idx) = self.workspace.active_doc
-            && self.workspace.documents[idx].is_dirty()
-        {
-            self.pending_unsaved = Some(PendingFileAction::OpenRecent(path.to_string()));
-            // 与 handle_file_action 一致：主动触发的操作立刻把 unsaved 弹窗拉到前台
-            crate::chrome::dialog::raise_viewport(
-                ctx,
-                egui::ViewportId::from_hash_of("unsaved_dialog"),
             );
             return;
         }
@@ -756,14 +747,6 @@ impl App {
         match pending {
             PendingFileAction::NewProject => {
                 self.new_project();
-            }
-            PendingFileAction::Open => {
-                self.file_loader
-                    .pick_file(self.audio_settings.midi_import_encoding);
-            }
-            PendingFileAction::OpenRecent(path) => {
-                self.file_loader
-                    .load_path(path, self.audio_settings.midi_import_encoding);
             }
             PendingFileAction::CloseDocument(idx) => {
                 self.close_document(idx);

@@ -303,7 +303,7 @@ impl eframe::App for App {
                     continue;
                 }
                 MenuAction::OpenRecent(path) => {
-                    self.open_recent_file(&path, ui.ctx());
+                    self.open_recent_file(&path);
                     continue;
                 }
                 MenuAction::Settings => {
@@ -648,7 +648,7 @@ impl eframe::App for App {
         }
         // 文件菜单「最近修改的文件」子菜单点击
         if let Some(path) = transport_response.pending_open_path {
-            self.open_recent_file(&path, ui.ctx());
+            self.open_recent_file(&path);
         }
 
         // ── MIDI encoding change ──
