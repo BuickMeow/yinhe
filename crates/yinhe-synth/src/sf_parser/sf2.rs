@@ -133,8 +133,23 @@ pub(super) fn build_key_maps_from_sf2(
             }
         }
 
+        // 排序：lovel 升序；同 lovel 时**峰值大的层优先**——同 key/vel 有多个
+        // 候选（多层采样）时，只取第一个匹配层会选中轻层/静音层（已过滤静音），
+        // 优先取最强层使单层播放尽量接近 xsynth 的多层叠加响度。
         for layers in key_map.iter_mut() {
-            layers.sort_by_key(|info| info.lovel);
+            layers.sort_by(|a, b| {
+                a.lovel.cmp(&b.lovel).then_with(|| {
+                    let pa = peak_cache
+                        .get(&(a.sample_data.as_ptr() as usize))
+                        .copied()
+                        .unwrap_or(0.0);
+                    let pb = peak_cache
+                        .get(&(b.sample_data.as_ptr() as usize))
+                        .copied()
+                        .unwrap_or(0.0);
+                    pb.total_cmp(&pa)
+                })
+            });
         }
         entries.push(KeyMapEntry {
             bank: preset.bank as u8,
