@@ -45,7 +45,7 @@ impl AudioEngine {
         self.note_cursor = [0; KEY_COUNT];
         self.current_tick = 0;
         self.yin_model = Some(Arc::clone(model));
-        self.audible_notes = build_audible_notes(model);
+        self.audible_notes = build_audible_notes(model, self.ignore_velocity);
         self.model = Some(audio_model);
     }
 

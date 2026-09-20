@@ -67,13 +67,12 @@ pub(crate) fn single_note_move_frame(
             }
 
             // 音符预览：每变化 1 key 触发一次（gate 长度，原力度）。
-            // vel <= 1 的音符（黑乐谱隐藏音符）不预览，与播放筛除一致。
+            // 力度阈值过滤统一在 `send_note_previews`。
             if dk != last_dk {
                 state.sel_note_move =
                     Some((trk, orig_start, orig_key, orig_end, press_tick, dk, alt));
                 if let Some(vel) =
                     crate::piano_view::pencil::note_velocity(midi, trk, orig_start, orig_key)
-                    && vel > 1
                 {
                     state.preview_reqs.push(crate::piano_view::PreviewReq::Note(
                         crate::piano_view::NotePreview {

@@ -304,10 +304,8 @@ pub(crate) fn pencil_frame(
     if pointer.primary_pressed() {
         if let Some(hit) = hit_note {
             // 点击音符出声（像键盘预览一样）：播放该音符（gate 长度，原力度）。
-            // vel <= 1 的音符（黑乐谱隐藏音符）不响，与播放筛除一致。
-            if let Some(vel) = note_velocity(midi, hit.track, hit.start_tick, hit.key)
-                && vel > 1
-            {
+            // 力度阈值过滤统一在 `send_note_previews`。
+            if let Some(vel) = note_velocity(midi, hit.track, hit.start_tick, hit.key) {
                 preview_req = Some(super::PreviewReq::Note(super::NotePreview {
                     track: hit.track,
                     key: hit.key,
@@ -448,13 +446,11 @@ pub(crate) fn pencil_frame(
                 let dk = (key as i32) - (*orig_key as i32);
 
                 // 音符预览：每变化 1 key 触发一次，长度 = 音符 gate，力度 = 音符原值。
-                // vel <= 1 的音符（黑乐谱隐藏音符）不预览，与播放筛除一致。
+                // 力度阈值过滤统一在 `send_note_previews`。
                 if dk != *last_dk {
                     *last_dk = dk;
                     persist_state = true;
-                    if let Some(vel) = note_velocity(midi, *trk, *orig_tick, *orig_key)
-                        && vel > 1
-                    {
+                    if let Some(vel) = note_velocity(midi, *trk, *orig_tick, *orig_key) {
                         preview_req = Some(super::PreviewReq::Note(super::NotePreview {
                             track: *trk,
                             key: (*orig_key as i32 + dk).clamp(0, yinhe_types::MAX_KEY as i32)
@@ -834,23 +830,6 @@ mod tests {
         assert_eq!(p.velocity, Some(100));
         assert_eq!(p.target_tick, 120);
         assert_eq!(p.duration_ticks, 120, "gate = end - start");
-    }
-
-    /// vel <= 1 的音符（黑乐谱隐藏音符）点击不预览。
-    #[test]
-    fn click_on_vel1_note_does_not_preview() {
-        let ctx = egui::Context::default();
-        let midi = MockNotes::new().with_note(120, 240, 122, 1);
-        let mut view = test_view();
-        let key_y = view.key_to_y(122) + view.key_height / 2.0;
-
-        let (_, preview) = run_frame(
-            &ctx,
-            press_event(egui::pos2(150.0, key_y)),
-            &mut view,
-            &midi,
-        );
-        assert!(preview.is_none(), "vel=1 隐藏音符不预览");
     }
 
     /// 新建音符：向右拖不超过一个量化时，上下拖动可改变 key，并像移动音符那样出声。

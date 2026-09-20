@@ -474,7 +474,8 @@ impl App {
     }
 
     /// Send the initial state to a freshly spawned audio handle:
-    /// automation density, model, layer count, soundfonts, mute/solo.
+    /// automation density, velocity ignore threshold, model, layer count,
+    /// soundfonts, mute/solo.
     ///
     /// 拆分自 `rebuild_audio_if_needed`，让 spawn 路径与初始状态注入解耦。
     fn send_initial_audio_state(
@@ -488,6 +489,13 @@ impl App {
             .handle
             .send(yinhe_audio::AudioCommand::SetAutomationDensity {
                 density: self.audio_settings.automation_event_density,
+            });
+
+        // 力度忽略阈值同样要在 LoadModel 前应用（首次 prepare 即生效）
+        audio
+            .handle
+            .send(yinhe_audio::AudioCommand::SetIgnoreVelocity {
+                threshold: self.audio_settings.ignore_velocity,
             });
 
         // Load MIDI
@@ -867,6 +875,11 @@ impl App {
                     let velocity = p
                         .velocity
                         .unwrap_or_else(|| doc.edit.default_velocity(p.track));
+                    // 忽略力度 ≤ 设置阈值的音符（黑乐谱隐藏音符），与播放筛除一致。
+                    // 统一在此过滤：所有预览产生点（PR 点击/拖动/铅笔/MIDI 直通）共用。
+                    if !self.audio_settings.is_velocity_audible(velocity) {
+                        continue;
+                    }
                     let plugin_channel = rack
                         .is_some_and(|r| r.has_instance(track.global_channel()))
                         .then_some(track.global_channel());

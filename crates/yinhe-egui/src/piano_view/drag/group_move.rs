@@ -77,10 +77,9 @@ pub(crate) fn note_drag_frame(
             // 长度 = 音符 gate，时长换算用目标位置 Tempo）。
             if dk != state.preview_last_dk {
                 state.preview_last_dk = dk;
-                // vel <= 1 的音符（黑乐谱隐藏音符）不预览，与播放筛除一致。
+                // 力度阈值过滤统一在 `send_note_previews`。
                 state.preview_reqs = notes
                     .iter()
-                    .filter(|info| info.velocity > 1)
                     .map(|info| {
                         crate::piano_view::PreviewReq::Note(crate::piano_view::NotePreview {
                             track: info.track,

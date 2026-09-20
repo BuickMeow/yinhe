@@ -126,6 +126,13 @@ pub const SETTING_ITEMS: &[SettingItem] = &[
     },
     SettingItem {
         cat: 3,
+        zh: "忽略力度",
+        en: "Ignore velocity",
+        ja: "ベロシティ無視",
+        ko: "벨로시티 무시",
+    },
+    SettingItem {
+        cat: 3,
         zh: "合成引擎",
         en: "Synth engine",
         ja: "シンセエンジン",

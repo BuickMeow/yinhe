@@ -116,6 +116,10 @@ pub enum AudioCommand {
     SetLayerCount {
         count: Option<usize>,
     },
+    /// 忽略力度 ≤ threshold 的音符（0 = 不忽略）。触发 audible_notes 重建。
+    SetIgnoreVelocity {
+        threshold: u8,
+    },
     /// Set global max voices (None = automatic / system recommended).
     SetMaxVoices {
         max: Option<usize>,
@@ -342,6 +346,7 @@ fn cmd_kind(cmd: &AudioCommand) -> &'static str {
         AudioCommand::SkipTracks { .. } => "SkipTracks",
         AudioCommand::SetAmMs { .. } => "SetAmMs",
         AudioCommand::SetLayerCount { .. } => "SetLayerCount",
+        AudioCommand::SetIgnoreVelocity { .. } => "SetIgnoreVelocity",
         AudioCommand::InsertAdd { .. } => "InsertAdd",
         AudioCommand::InsertRemove { .. } => "InsertRemove",
         AudioCommand::InsertReplace { .. } => "InsertReplace",
@@ -611,9 +616,10 @@ pub fn channels_for_model(model: &YinModel) -> ChannelLayout {
 /// Internal command sent from the renderer thread to the worker thread.
 pub(crate) enum WorkerCmd {
     /// Full prepare: cc_events + audible_notes + duration (LoadModel / ReloadNotes).
-    PrepareModel(Arc<YinModel>, u32),
+    PrepareModel(Arc<YinModel>, u32, u8),
     /// Notes-only prepare: audible_notes + duration (UpdateNotes). No cc_events rebuild.
-    PrepareNotes(Arc<YinModel>),
+    /// 末位为 `ignore_velocity`：与上次不同则强制全量重建全部 key 桶。
+    PrepareNotes(Arc<YinModel>, u8),
     /// Compute channel-state snapshot at `target_tick` by **querying the model
     /// automation lanes**（每 lane 二分 + 曲线实时插值，不再从曲首逐条累计）。
     /// `generation` matches `AudioEngine::chase_generation` so the renderer can
@@ -688,6 +694,8 @@ pub(crate) fn spawn_worker(
             // 使 PrepareNotes 只重建变化的 key 桶（1 亿音符工程编辑不再全量扫描）。
             // None = 尚未同步过（首次 PrepareNotes 全量）。
             let mut last_synced_revisions: Option<[u64; KEY_COUNT]> = None;
+            // 上次 prepare 时的力度忽略阈值：与本次不同则所有桶都可能变化，强制全量。
+            let mut last_ignore_velocity: Option<u8> = None;
             loop {
                 let cmd = match pending.pop_front() {
                     Some(c) => c,
@@ -697,15 +705,17 @@ pub(crate) fn spawn_worker(
                     },
                 };
                 match cmd {
-                    WorkerCmd::PrepareModel(model, density) => {
+                    WorkerCmd::PrepareModel(model, density, ignore_velocity) => {
                         // 合并连续 PrepareModel，只保留最新
                         let mut latest = model;
                         let mut latest_density = density;
+                        let mut latest_ignore = ignore_velocity;
                         while let Ok(next) = cmd_rx.try_recv() {
                             match next {
-                                WorkerCmd::PrepareModel(m, d) => {
+                                WorkerCmd::PrepareModel(m, d, iv) => {
                                     latest = m;
                                     latest_density = d;
+                                    latest_ignore = iv;
                                 }
                                 other => {
                                     pending.push_back(other);
@@ -717,24 +727,28 @@ pub(crate) fn spawn_worker(
                             &latest,
                             sample_rate,
                             latest_density,
+                            latest_ignore,
                         );
                         crate::audio_renderer::play_log(&format!(
                             "[play] worker prepare_model={:?}",
                             t_prepare.elapsed()
                         ));
                         last_synced_revisions = Some(latest.note_revisions);
+                        last_ignore_velocity = Some(latest_ignore);
                         let _ = result_tx.send(WorkerResult::PreparedModel(prepared));
                         // 构建 audible_notes/cc_events 的临时内存已释放：归还空闲页，
                         // 避免 RSS 跨阶段累积（大工程峰值内存只涨不跌的根因之一）。
                         yinhe_memtrace::purge_free_pages();
                     }
-                    WorkerCmd::PrepareNotes(model) => {
+                    WorkerCmd::PrepareNotes(model, ignore_velocity) => {
                         // 合并连续 PrepareNotes，只保留最新
                         let mut latest = model;
+                        let mut latest_ignore = ignore_velocity;
                         while let Ok(next) = cmd_rx.try_recv() {
                             match next {
-                                WorkerCmd::PrepareNotes(m) => {
+                                WorkerCmd::PrepareNotes(m, iv) => {
                                     latest = m;
+                                    latest_ignore = iv;
                                 }
                                 other => {
                                     pending.push_back(other);
@@ -743,16 +757,22 @@ pub(crate) fn spawn_worker(
                         }
                         // 对比 note_revisions 算 dirty 桶：只重建变化的 key 桶。
                         // rebuild() 会 bump 全部 KEY_COUNT 个 revision（全量变化），
-                        // 与模型侧 dirty 语义一致。
+                        // 与模型侧 dirty 语义一致。阈值变化时所有桶都可能变，强制全量。
                         let dirty: [bool; KEY_COUNT] = match &last_synced_revisions {
-                            Some(prev) => {
+                            Some(prev) if last_ignore_velocity == Some(latest_ignore) => {
                                 core::array::from_fn(|k| prev[k] != latest.note_revisions[k])
                             }
-                            None => [true; KEY_COUNT], // 首次同步：全量
+                            _ => [true; KEY_COUNT], // 首次同步或阈值变化：全量
                         };
                         let (audio_model, yin_model, audible_delta, duration_samples) =
-                            crate::prepare_model::prepare_notes_dirty(&latest, sample_rate, &dirty);
+                            crate::prepare_model::prepare_notes_dirty(
+                                &latest,
+                                sample_rate,
+                                &dirty,
+                                latest_ignore,
+                            );
                         last_synced_revisions = Some(latest.note_revisions);
+                        last_ignore_velocity = Some(latest_ignore);
                         let _ = result_tx.send(WorkerResult::PreparedNotes {
                             model: audio_model,
                             yin_model,

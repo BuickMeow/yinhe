@@ -979,7 +979,7 @@ fn test_notes_delta_incremental_apply_keeps_clean_bucket_cursor() {
     assert!(!dirty[64]);
 
     let (audio_model, yin_model, delta, _dur) =
-        crate::prepare_model::prepare_notes_dirty(&doc.data.model, sample_rate, &dirty);
+        crate::prepare_model::prepare_notes_dirty(&doc.data.model, sample_rate, &dirty, 1);
     assert_eq!(
         delta[60].as_ref().map(|b| b.len()),
         Some(2),
@@ -1800,7 +1800,7 @@ fn test_audible_buckets_sorted_without_sort() {
         vec![(0, 120.0)],
         vec![(60, 960, 1440), (60, 0, 480), (60, 480, 960)], // 乱序插入
     );
-    let audible = crate::prepare_model::build_audible_notes(&model);
+    let audible = crate::prepare_model::build_audible_notes(&model, 1);
     for key in 0..128usize {
         let bucket = &audible[key];
         for w in bucket.windows(2) {
@@ -1813,6 +1813,27 @@ fn test_audible_buckets_sorted_without_sort() {
     assert_eq!(audible[60].len(), 3, "三个音符都进桶");
     assert_eq!(audible[60][0].start_tick, 0);
     assert_eq!(audible[60][2].start_tick, 960);
+}
+
+/// 力度忽略阈值：0 = 全保留；2 = 过滤力度 ≤2；默认 1 = 过滤力度 ≤1。
+#[test]
+fn test_audible_notes_respect_ignore_velocity() {
+    let model = make_model_with_notes(vec![
+        (60, 0, 480, 1, 0),
+        (60, 480, 960, 2, 0),
+        (60, 960, 1440, 3, 0),
+    ]);
+
+    let v0 = crate::prepare_model::build_audible_notes(&model, 0);
+    assert_eq!(v0[60].len(), 3, "阈值 0 不忽略任何音符");
+
+    let v1 = crate::prepare_model::build_audible_notes(&model, 1);
+    assert_eq!(v1[60].len(), 2, "阈值 1 过滤力度 ≤1");
+    assert_eq!(v1[60][0].velocity, 2);
+
+    let v2 = crate::prepare_model::build_audible_notes(&model, 2);
+    assert_eq!(v2[60].len(), 1, "阈值 2 过滤力度 ≤2");
+    assert_eq!(v2[60][0].velocity, 3);
 }
 
 // ---------------------------------------------------------------------------

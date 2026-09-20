@@ -122,10 +122,10 @@ pub(crate) fn sel_press(
                             }
                         }
                     }
-                    // 点击音符出声（gate 长度，原力度）。vel <= 1 隐藏音符不响。
+                    // 点击音符出声（gate 长度，原力度）。力度阈值过滤统一在
+                    // `send_note_previews` 做（忽略力度设置可变）。
                     if let Some(vel) =
                         crate::piano_view::pencil::note_velocity(midi, track, start_tick, key)
-                        && vel > 1
                     {
                         state.preview_reqs.push(crate::piano_view::PreviewReq::Note(
                             crate::piano_view::NotePreview {
@@ -189,11 +189,10 @@ pub(crate) fn sel_press(
                             )
                         });
                         // 点击选中音符出声：立即预览整组（dk=0，与移动时同组预览一致）。
-                        // vel <= 1 的音符（黑乐谱隐藏音符）不响，与播放筛除一致。
+                        // 力度阈值过滤统一在 `send_note_previews`。
                         if let Some(notes) = state.drag_notes.as_ref() {
                             state.preview_reqs = notes
                                 .iter()
-                                .filter(|info| info.velocity > 1)
                                 .map(|info| {
                                     crate::piano_view::PreviewReq::Note(
                                         crate::piano_view::NotePreview {

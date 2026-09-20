@@ -67,6 +67,9 @@ pub(crate) struct AudioEngine {
     /// 当前 per-key layer 设置（`SetLayerCount` 保存；worker 创建 yinhe
     /// CPU/GPU 合成器后据此应用——创建晚于命令，不能只在线应用）。
     pub(crate) layer_count: Option<usize>,
+    /// 忽略力度 ≤ 该值的音符（0 = 不忽略）。`SetIgnoreVelocity` 保存；
+    /// worker 据此构建 `audible_notes`（阈值变化时全量重建）。
+    pub(crate) ignore_velocity: u8,
     /// 最大复音数（`SetMaxVoices` 保存；worker 创建合成器后补应用）。
     pub(crate) max_voices: usize,
     /// dispatch 基准（tick 域）：与 sample_position 同步推进（每块末更新，
@@ -77,9 +80,9 @@ pub(crate) struct AudioEngine {
 
     pub(crate) note_cursor: [usize; KEY_COUNT],
     /// Reference to the full YinModel. 保留供 GPU 路径和 PrepareModel 命令合并使用；
-    /// 音频 dispatch/seek 改读 `audible_notes`（已过滤 vel≤1 + tick→sample 预转换）。
+    /// 音频 dispatch/seek 改读 `audible_notes`（已按 `ignore_velocity` 过滤 + tick→sample 预转换）。
     pub(crate) yin_model: Option<Arc<YinModel>>,
-    /// KEY_COUNT 个 key 桶的可听音事件（vel > 1），由 worker 线程预构建。
+    /// KEY_COUNT 个 key 桶的可听音事件（力度 > `ignore_velocity`），由 worker 线程预构建。
     /// 音频线程的 seek / dispatch 只读这份列表。
     pub(crate) audible_notes: Box<[Vec<AudibleNote>; KEY_COUNT]>,
 
@@ -208,6 +211,7 @@ impl AudioEngine {
                 sample_rate,
                 sample_position: 0,
                 layer_count: Some(4),
+                ignore_velocity: 1,
                 max_voices: crate::DEFAULT_MAX_VOICES,
                 current_tick: 0,
                 playing: false,
@@ -423,6 +427,9 @@ impl AudioEngine {
             }
             AudioCommand::SetLayerCount { count } => {
                 self.set_layer_count(count);
+            }
+            AudioCommand::SetIgnoreVelocity { threshold } => {
+                self.ignore_velocity = threshold;
             }
             AudioCommand::SetMaxVoices { max } => {
                 self.set_max_voices(max);

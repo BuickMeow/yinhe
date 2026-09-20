@@ -40,6 +40,10 @@ fn default_record_monitor() -> bool {
     true
 }
 
+fn default_ignore_velocity() -> u8 {
+    1
+}
+
 pub use yinhe_types::{Interpolation, SynthEngine};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,6 +61,10 @@ pub struct AudioSettings {
     pub record_offset_ms: f32,
     pub midi_input_device: Option<String>,
     pub sample_rate: u32,
+    /// 忽略力度 ≤ 该值的音符（不发声）：0 = 不忽略，2 = 忽略力度 0~2。
+    /// 默认 1（黑乐谱隐藏音符，对齐 xsynth-realtime 的 `ignore_range`）。
+    #[serde(default = "default_ignore_velocity")]
+    pub ignore_velocity: u8,
     pub default_sf2_path: String,
     pub global_sf_config: GlobalSfConfig,
     pub xsynth_layers: u32,
@@ -159,6 +167,7 @@ impl Default for AudioSettings {
             record_offset_ms: 0.0,
             midi_input_device: None,
             sample_rate: 48000,
+            ignore_velocity: default_ignore_velocity(),
             default_sf2_path: String::new(),
             global_sf_config: GlobalSfConfig::builtin_default(),
             xsynth_layers: 4,
@@ -219,6 +228,13 @@ impl Default for AudioSettings {
     }
 }
 
+impl AudioSettings {
+    /// 力度是否可听：≤ `ignore_velocity` 的音符不发声（播放与编辑器试听一致）。
+    pub fn is_velocity_audible(&self, velocity: u8) -> bool {
+        velocity > self.ignore_velocity
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,6 +248,29 @@ mod tests {
             .remove("toast_enabled");
         let s: AudioSettings = serde_json::from_value(v).expect("old save without flag loads");
         assert!(s.toast_enabled);
+    }
+
+    #[test]
+    fn ignore_velocity_defaults_to_one_for_old_saves() {
+        // 旧存档缺字段必须能反序列化，且默认为 1（忽略力度 ≤1）
+        let mut v = serde_json::to_value(AudioSettings::default()).expect("serialize default");
+        v.as_object_mut()
+            .expect("settings serializes to object")
+            .remove("ignore_velocity");
+        let s: AudioSettings = serde_json::from_value(v).expect("old save without flag loads");
+        assert_eq!(s.ignore_velocity, 1);
+    }
+
+    #[test]
+    fn velocity_audible_follows_ignore_threshold() {
+        let mut s = AudioSettings::default();
+        assert!(!s.is_velocity_audible(1), "默认忽略力度 1");
+        assert!(s.is_velocity_audible(2));
+        s.ignore_velocity = 0;
+        assert!(s.is_velocity_audible(1), "0 = 不忽略");
+        s.ignore_velocity = 2;
+        assert!(!s.is_velocity_audible(2), "忽略力度 ≤2");
+        assert!(s.is_velocity_audible(3));
     }
 
     #[test]

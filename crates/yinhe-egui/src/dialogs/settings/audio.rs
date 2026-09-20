@@ -224,6 +224,26 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
 
     setting_row(
         ui,
+        t!("settings.audio.ignore_velocity").as_ref(),
+        t!("settings.audio.ignore_velocity_desc").as_ref(),
+        |ui| {
+            let mut threshold = settings.ignore_velocity as usize;
+            if ui
+                .add(
+                    crate::widgets::numeric_input::decimal_drag_value(&mut threshold)
+                        .range(0..=127)
+                        .speed(0.2),
+                )
+                .changed()
+            {
+                settings.ignore_velocity = threshold.min(127) as u8;
+                changed = true;
+            }
+        },
+    );
+
+    setting_row(
+        ui,
         t!("settings.audio.synth_engine").as_ref(),
         t!("settings.audio.synth_engine_desc").as_ref(),
         |ui| {

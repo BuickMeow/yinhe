@@ -79,19 +79,27 @@ impl AudioRenderer {
             // 不提前清 ring / 不 seek：已渲染（旧模型）音频继续播到 PreparedModel
             // 应用时，由 apply_prepared_model(consumer) 无缝接新模型——位置不移动。
             let density = self.engine.automation_density;
-            let _ = self.worker_tx.send(WorkerCmd::PrepareModel(model, density));
-            did_work = true;
-        } else if let Some(model) = pending_update_notes {
-            // 只更新音符，不重建 cc_events，不 chase
-            let _ = self.worker_tx.send(WorkerCmd::PrepareNotes(model));
+            let ignore = self.engine.ignore_velocity;
+            let _ = self
+                .worker_tx
+                .send(WorkerCmd::PrepareModel(model, density, ignore));
             did_work = true;
         } else if pending_density_rebuild {
-            // density 改变后用当前模型重建 cc_events
+            // density 改变后用当前模型重建 cc_events。优先于 notes-only：全量
+            // PrepareModel 也会按最新阈值重建 audible_notes，避免只做一半。
             if let Some(model) = self.engine.yin_model.clone() {
                 let density = self.engine.automation_density;
-                let _ = self.worker_tx.send(WorkerCmd::PrepareModel(model, density));
+                let ignore = self.engine.ignore_velocity;
+                let _ = self
+                    .worker_tx
+                    .send(WorkerCmd::PrepareModel(model, density, ignore));
                 did_work = true;
             }
+        } else if let Some(model) = pending_update_notes {
+            // 只更新音符，不重建 cc_events，不 chase（阈值变化由 worker 侧全量）
+            let ignore = self.engine.ignore_velocity;
+            let _ = self.worker_tx.send(WorkerCmd::PrepareNotes(model, ignore));
+            did_work = true;
         }
 
         did_work
@@ -118,7 +126,19 @@ impl AudioRenderer {
                 // 首次加载：消费位置 == 前沿 == 0，锚定无差别。
                 self.clear_buffered_audio(self.engine.sample_position());
                 let density = self.engine.automation_density;
-                let _ = self.worker_tx.send(WorkerCmd::PrepareModel(model, density));
+                let ignore = self.engine.ignore_velocity;
+                let _ = self
+                    .worker_tx
+                    .send(WorkerCmd::PrepareModel(model, density, ignore));
+            }
+            AudioCommand::SetIgnoreVelocity { threshold } => {
+                self.engine.ignore_velocity = threshold;
+                // 若已加载模型，重建 audible_notes（阈值变化 → worker 侧全量）。
+                if let Some(model) = self.engine.yin_model.clone()
+                    && pending_reload.is_none()
+                {
+                    *pending_update_notes = Some(model);
+                }
             }
             AudioCommand::ReloadNotes { model } => {
                 // 全量重建优先于只更新音符 —— 丢弃 pending UpdateNotes

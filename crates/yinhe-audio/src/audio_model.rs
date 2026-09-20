@@ -86,7 +86,7 @@ impl Ord for ActiveNote {
     }
 }
 
-/// 音频线程消费的可听音事件（vel > 1），时刻存 **tick**（u32，与模型一致）。
+/// 音频线程消费的可听音事件（力度 > 忽略阈值），时刻存 **tick**（u32，与模型一致）。
 /// 桶内按 `start_tick` 严格升序（YinModel.notes[key] 本身按 start_tick 排序，
 /// tick 天然单调，**无需再 sort**）。
 ///
