@@ -338,7 +338,9 @@ fn bench_synthetic_scale() {
     );
     for &div in &divisors {
         let tos = (total_ticks / div).max(64);
-        let ppu = main_w / tos as f32;
+        // 真实 app 的 view 缩放下限为 0.001（view_base.rs），基准同样 clamp，
+        // 否则会测出真实不可达的 ppu（大档位被删后那种档宽会严重亚像素）。
+        let ppu = (main_w / tos as f32).max(0.001);
         let scroll_x = ((total_ticks as f32 * ppu - main_w) / 2.0).max(0.0);
 
         let mut min_cpu = f64::MAX;
@@ -411,7 +413,7 @@ fn bench_synthetic_scale() {
             height: ph as f32,
             scroll_x: 0.0,
             scroll_y: 0.0,
-            pixels_per_tick: main_w / total_ticks as f32,
+            pixels_per_tick: (main_w / total_ticks as f32).max(0.001),
             key_height: 1000.0, // 纵向只覆盖 1 个 key
             keyboard_width: kb_w,
             mode: 1,
@@ -598,7 +600,9 @@ fn bench_real_midi() {
     );
     for &div in &[1u32, 4, 16, 32, 64, 128, 256, 1024, 4096, 16384] {
         let tos = (total_ticks / u64::from(div)).max(64);
-        let ppu = main_w / tos as f32;
+        // 真实 app 的 view 缩放下限为 0.001（view_base.rs），基准同样 clamp，
+        // 否则会测出真实不可达的 ppu（大档位被删后那种档宽会严重亚像素）。
+        let ppu = (main_w / tos as f32).max(0.001);
         let scroll_x = ((total_ticks as f32 * ppu - main_w) / 2.0).max(0.0);
         let mut min_cpu = f64::MAX;
         let mut min_gpu = f64::MAX;
@@ -678,7 +682,9 @@ fn bench_real_midi() {
     );
     for &div in &[1u32, 4, 16, 32, 64, 256, 1024] {
         let tos = (total_ticks / u64::from(div)).max(64);
-        let ppu = main_w / tos as f32;
+        // 真实 app 的 view 缩放下限为 0.001（view_base.rs），基准同样 clamp，
+        // 否则会测出真实不可达的 ppu（大档位被删后那种档宽会严重亚像素）。
+        let ppu = (main_w / tos as f32).max(0.001);
         let scroll_x = ((total_ticks as f32 * ppu - main_w) / 2.0).max(0.0);
         let view = AutomationPanelView {
             base: TimelineViewBase {

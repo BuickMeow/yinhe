@@ -15,20 +15,16 @@ use rayon::prelude::*;
 use yinhe_types::KEY_COUNT;
 
 use crate::vertex::NoteInstance;
-/// 摘要档位（tick 块宽），由大到小，取 2 的幂的完整序列。
+/// 摘要档位（tick 块宽），由大到小，取 2 的幂，上限 1024。
 ///
-/// 完整序列让任意 ppu 下选中的档位块宽都落在 (1, 2] px，缩放过程档位
-/// 切换平滑（相邻档只差 2 倍）；缺档会让某些 ppu 区间的块宽掉到 0.5px
-/// 或被迫用更粗的档。
+/// 上限依据：ppu 的最小值是 0.001（view 缩放 clamp），选择条件
+/// `block × ppu ≤ SUMMARY_MAX_PX` 推出可达的最大 block = 2000，
+/// 因此 1024 是实际可用最粗的档；2048 及以上永远不会被选中（已删除，
+/// 若将来放宽缩放下限或加入「全曲 fit」再恢复）。
 ///
-/// 覆盖范围：
-/// - 超长曲全曲视图（总长上亿 tick）用 262144/131072/65536；
-/// - 短而极密的曲子（ReptilianDarkRitual：51 万 tick / 4000 万音符）
-///   从全曲到 1px=1tick 的连续缩放区间需要 2~256 全部档位；
-/// - 1 及以下没有意义：ppu > 2 时原始层每音符本来就有像素级宽度。
-pub const SUMMARY_BLOCK_TICKS: [u32; 18] = [
-    262144, 131072, 65536, 32768, 16384, 8192, 4096, 2048, 1024, 512, 256, 128, 64, 32, 16, 8, 4, 2,
-];
+/// 完整 2 的幂序列让任意可达 ppu 下选中的档位块宽都落在 (1, 2] px，
+/// 缩放过程档位切换平滑（相邻档只差 2 倍）。
+pub const SUMMARY_BLOCK_TICKS: [u32; 10] = [1024, 512, 256, 128, 64, 32, 16, 8, 4, 2];
 /// 摘要块在屏幕上的最大像素宽。块内空隙 ≤ 该宽度时被合并不可见。
 pub const SUMMARY_MAX_PX: f32 = 2.0;
 
@@ -172,20 +168,19 @@ mod tests {
 
     #[test]
     fn select_level_by_pixels() {
-        // 完整 2 的幂序列：任意 ppu 下选中档的块宽 ∈ (1, 2] px。
-        assert_eq!(select_summary_level(2.0 / 262144.0), Some(0));
-        assert_eq!(select_summary_level(3.0 / 262144.0), Some(1));
-        assert_eq!(select_summary_level(1.0 / 1024.0), Some(7)); // 2048 档
-        assert_eq!(select_summary_level(2.0e-3), Some(9)); // 512 档
-        assert_eq!(select_summary_level(3.0 / 1024.0), Some(9));
-        assert_eq!(select_summary_level(3.0 / 256.0), Some(11)); // 128 档
-        assert_eq!(select_summary_level(0.05), Some(13)); // 32 档
-        assert_eq!(select_summary_level(0.1), Some(14)); // 16 档
-        assert_eq!(select_summary_level(0.125), Some(14));
-        assert_eq!(select_summary_level(0.2), Some(15)); // 8 档
-        assert_eq!(select_summary_level(0.5), Some(16)); // 4 档
-        assert_eq!(select_summary_level(0.9), Some(17)); // 2 档
-        assert_eq!(select_summary_level(1.0), Some(17));
+        // 完整 2 的幂序列（1024..2）：可达 ppu 下选中档的块宽 ∈ (1, 2] px。
+        assert_eq!(select_summary_level(2.0 / 1024.0), Some(0));
+        assert_eq!(select_summary_level(1.0 / 1024.0), Some(0));
+        assert_eq!(select_summary_level(2.0e-3), Some(1)); // 512 档
+        assert_eq!(select_summary_level(3.0 / 1024.0), Some(1));
+        assert_eq!(select_summary_level(3.0 / 256.0), Some(3)); // 128 档
+        assert_eq!(select_summary_level(0.05), Some(5)); // 32 档
+        assert_eq!(select_summary_level(0.1), Some(6)); // 16 档
+        assert_eq!(select_summary_level(0.125), Some(6));
+        assert_eq!(select_summary_level(0.2), Some(7)); // 8 档
+        assert_eq!(select_summary_level(0.5), Some(8)); // 4 档
+        assert_eq!(select_summary_level(0.9), Some(9)); // 2 档
+        assert_eq!(select_summary_level(1.0), Some(9));
         // 1px < 1 tick（ppu > 2）才回原始层。
         assert_eq!(select_summary_level(2.5), None);
         assert_eq!(select_summary_level(0.0), None);
