@@ -10,7 +10,7 @@ common.move_up: "上移"
 common.move_down: "下移"
 common.clear: "清空"
 common.add: "新增"
-common.exit_app: "結束 yinhe"
+common.exit_app: "結束 Yinhe"
 common.clear_selection: "清除選取"
 
 # ── 模式栏 ──

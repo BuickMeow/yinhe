@@ -2,7 +2,7 @@
 name = "yinhe-android"
 version = "0.1.0"
 edition = "2024"
-description = "Yinhe MIDI editor Android UI (touch-first rewrite)"
+description = "Yinhe Android UI (touch-first rewrite)"
 
 [lib]
 name = "yinhe_android"

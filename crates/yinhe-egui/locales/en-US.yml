@@ -10,7 +10,7 @@ common.move_up: "Move Up"
 common.move_down: "Move Down"
 common.clear: "Clear"
 common.add: "Add"
-common.exit_app: "Exit yinhe"
+common.exit_app: "Exit Yinhe"
 common.clear_selection: "Clear Selection"
 
 # ── Mode bar ──

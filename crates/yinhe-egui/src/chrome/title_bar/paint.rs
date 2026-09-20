@@ -94,7 +94,7 @@ pub(super) fn paint_tabs(
     painter.text(
         egui::pos2(m.bar_rect.center().x, m.bar_rect.center().y),
         egui::Align2::CENTER_CENTER,
-        "Yinhe MIDI Editor",
+        "Yinhe",
         egui::FontId::proportional(crate::theme::SUB_TITLE_FONT),
         crate::theme::text_secondary(),
     );

@@ -145,7 +145,7 @@ fn main() {
     };
 
     eframe::run_native(
-        "Yinhe MIDI Editor",
+        "Yinhe",
         options,
         Box::new(|cc| Ok(Box::new(app::App::new(cc)))),
     )
