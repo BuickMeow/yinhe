@@ -617,9 +617,7 @@ impl InstanceRenderer {
         if self.cull.use_indirect() {
             // ppu 很小（块宽 ≤ SUMMARY_MAX_PX）时改走 LOD 摘要层：cull 与
             // 绘制量从「原始音符数」降到「摘要段数」。选择是 ppu 的连续函数；
-            // 最细档还会向上兜底一档（块宽 ≤ SUMMARY_TAIL_MAX_PX），避免极端
-            // 放大时直接掉回原始层；目标档未上传（异常/显存降级）时向更细的
-            // 档回退，再不行用原始层。
+            // 目标档未上传（异常/显存降级）时向更细的档回退，再不行用原始层。
             let summary_level = if self.cull.summary_ready() {
                 crate::pianoroll::select_summary_level(uniforms.pixels_per_tick).and_then(|best| {
                     (best..crate::pianoroll::SUMMARY_BLOCK_TICKS.len())

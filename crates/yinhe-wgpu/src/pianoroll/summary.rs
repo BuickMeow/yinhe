@@ -7,9 +7,7 @@
 //!
 //! 档位（block_ticks）与选择规则都是连续公式，无行为阈值：
 //! 从大到小取第一个满足 `block_ticks * ppu <= SUMMARY_MAX_PX` 的档位；
-//! 都不满足时，最细档的块宽若仍不超过 `SUMMARY_TAIL_MAX_PX`（2 倍上限），
-//! 由它顶替更细档的位置（块宽 2~4px，极端放大时才发生）；再细则用原始
-//! 音符层（此时可见音符数本来就不大）。
+//! 都不满足则用原始音符层（此时可见音符数本来就不大）。
 
 use std::collections::HashMap;
 
@@ -19,43 +17,36 @@ use yinhe_types::KEY_COUNT;
 use crate::vertex::NoteInstance;
 /// 摘要档位（tick 块宽），由大到小，取 2 的幂，最细 16。
 ///
+/// 档位间隔 4 倍（1024/256/64/16）：每档覆盖的 X（1px 覆盖的 tick）区间
+/// 宽 4 倍，块宽落在 (1, 4] px。相比 2 倍间隔的 7 档，省去约 1/3 显存
+/// （1.64 亿音符曲目约 670MB → 450MB），代价是部分缩放区间块宽由 ≤2px
+/// 放宽到 ≤4px（音符略粗，仍远细于原始层）。
+///
 /// 范围依据：
 /// - 最粗 1024：ppu 最小值 0.001（view 缩放 clamp）下选择条件
-///   `block × ppu ≤ SUMMARY_MAX_PX` 推出可达最大 block = 2000，1024 已够；
-/// - 最细 16：更细的档（8/4/2）段数会趋近音符数（摘要退化成原始数据），
+///   `block × ppu ≤ SUMMARY_MAX_PX` 推出可达最大 block = 4000，1024 已够；
+/// - 最细 16：更细的档段数会趋近音符数（摘要退化成原始数据），
 ///   且它们生效的缩放区间原始层本来只有几十万可见音符（几 ms），
-///   收益为零还吃显存，因此删除；16 档可再向下顶替一档（见
-///   `SUMMARY_TAIL_MAX_PX`）。
+///   收益为零还吃显存，因此删除。
 ///
 /// 不设段数上限：段数超限的档会被静默跳过，导致缩放时「细档凭空消失」
 /// （32 直接跳原始层）。显存安全由 `GpuBudget` 兜底（上传失败即清空该档
 /// 并回退到更粗档/原始层）。
-pub const SUMMARY_BLOCK_TICKS: [u32; 7] = [1024, 512, 256, 128, 64, 32, 16];
+pub const SUMMARY_BLOCK_TICKS: [u32; 4] = [1024, 256, 64, 16];
 /// 摘要块在屏幕上的最大像素宽。块内空隙 ≤ 该宽度时被合并不可见。
-pub const SUMMARY_MAX_PX: f32 = 2.0;
-/// 最细档的兜底块宽上限：没有档位满足 `SUMMARY_MAX_PX` 时，允许最细档
-/// 放大到该宽度继续顶替更细的档（对应原 8/4 档的位置），避免直接掉回
-/// 原始层（可见音符多一个数量级）。再细则回原始层。
-pub const SUMMARY_TAIL_MAX_PX: f32 = SUMMARY_MAX_PX * 2.0;
+pub const SUMMARY_MAX_PX: f32 = 4.0;
 
 /// 根据 ppu 选择摘要档位索引（`None` = 用原始音符层）。
 ///
 /// 取满足 `block * ppu <= SUMMARY_MAX_PX` 的最大 block（列表从大到小，
-/// 第一个满足即最大）；无满足项时由最细档兜底（块宽 ≤ `SUMMARY_TAIL_MAX_PX`
-/// 时继续用），否则返回 None。
+/// 第一个满足即最大）；无满足项时返回 None（此时可见音符数本来就不大）。
 pub fn select_summary_level(ppu: f32) -> Option<usize> {
     if !ppu.is_finite() || ppu <= 0.0 {
         return None;
     }
-    if let Some(level) = SUMMARY_BLOCK_TICKS
+    SUMMARY_BLOCK_TICKS
         .iter()
         .position(|&block| block as f32 * ppu <= SUMMARY_MAX_PX)
-    {
-        return Some(level);
-    }
-    let finest = SUMMARY_BLOCK_TICKS.len() - 1;
-    let block = SUMMARY_BLOCK_TICKS[finest] as f32;
-    (block * ppu <= SUMMARY_TAIL_MAX_PX).then_some(finest)
 }
 
 /// 块内 track 计数取主导（次数最多；并列取 track 索引最小）。
@@ -159,20 +150,18 @@ mod tests {
 
     #[test]
     fn select_level_by_pixels() {
-        // 2 的幂序列（1024..16）：可达 ppu 下选中档的块宽 ∈ (1, 2] px。
-        assert_eq!(select_summary_level(2.0 / 1024.0), Some(0));
+        // 档位间隔 4 倍：block 生效 X ∈ [block/4, ...)，块宽 ∈ (1, 4] px。
         assert_eq!(select_summary_level(1.0 / 1024.0), Some(0));
-        assert_eq!(select_summary_level(2.0e-3), Some(1)); // 512 档
-        assert_eq!(select_summary_level(3.0 / 1024.0), Some(1));
-        assert_eq!(select_summary_level(3.0 / 256.0), Some(3)); // 128 档
-        assert_eq!(select_summary_level(0.05), Some(5)); // 32 档
-        assert_eq!(select_summary_level(0.1), Some(6)); // 16 档
-        assert_eq!(select_summary_level(0.125), Some(6));
-        // 16 块 > 2px（ppu > 0.125）→ 最细档顶替（块宽 ≤ 4px，X ≥ 4）。
-        assert_eq!(select_summary_level(0.2), Some(6));
-        assert_eq!(select_summary_level(0.25), Some(6)); // X=4，块宽正好 4px
-        // 16 块 > 4px（ppu > 0.25）→ 原始层（更细档已移除）。
-        assert_eq!(select_summary_level(0.26), None);
+        assert_eq!(select_summary_level(1.0 / 300.0), Some(0));
+        assert_eq!(select_summary_level(1.0 / 256.0), Some(0)); // 边界：1024/X = 4
+        assert_eq!(select_summary_level(1.0 / 200.0), Some(1)); // 256 档
+        assert_eq!(select_summary_level(1.0 / 64.0), Some(1)); // 边界：256/X = 4
+        assert_eq!(select_summary_level(1.0 / 50.0), Some(2)); // 64 档
+        assert_eq!(select_summary_level(1.0 / 16.0), Some(2)); // 边界：64/X = 4
+        assert_eq!(select_summary_level(1.0 / 10.0), Some(3)); // 16 档
+        assert_eq!(select_summary_level(1.0 / 4.0), Some(3)); // 边界：16/X = 4
+        // 16 块 > 4px（X < 4）→ 原始层（此时视口内可见音符不多）。
+        assert_eq!(select_summary_level(0.3), None);
         assert_eq!(select_summary_level(0.5), None);
         assert_eq!(select_summary_level(1.0), None);
         assert_eq!(select_summary_level(2.5), None);
