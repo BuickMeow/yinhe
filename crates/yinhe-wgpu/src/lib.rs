@@ -24,8 +24,9 @@ pub use yinhe_theme::GpuTheme;
 // Re-export types that were previously provided by the separate crates
 pub use arrangement::{build_ghost_notes, build_notes as build_arr_notes};
 pub use automation::{
-    ArrAutomationLane, AutomationGhost, build_lane_multi_copy, build_lane_multi_move,
-    build_lane_override, build_lane_shape_override, prepare_arr_automation, prepare_automation,
+    ArrAutomationLane, AutomationGhost, VelocityBlock, VelocitySummary, build_lane_multi_copy,
+    build_lane_multi_move, build_lane_override, build_lane_shape_override, prepare_arr_automation,
+    prepare_automation,
 };
 pub use pianoroll::{
     PianorollRenderJob, SUMMARY_BLOCK_TICKS, SUMMARY_MAX_PX, SUMMARY_MAX_SEGMENTS, build_all_notes,

@@ -56,6 +56,17 @@ pub(crate) fn upload_and_prepare(
     perf_on: bool,
     t_prepare_end: &mut Option<Instant>,
 ) -> (bool, yinhe_theme::GpuTheme) {
+    // ── AM 力度条 LOD 摘要：编辑/切轨后后台防抖重建 ──
+    // 与 GPU cull 无关（AM 面板无论哪条路径都可能走摘要），放在 cull 分支外。
+    {
+        let tv_hash = yinhe_wgpu::hash_bools(track_visible);
+        pianoroll.poll_velocity_summary(
+            midi_arc,
+            track_visible,
+            revision ^ tv_hash.rotate_left(32),
+        );
+    }
+
     // ── Upload all notes to GPU cull buffer ──
     if use_gpu_cull {
         gpu_upload::upload(gpu_upload::GpuUploadState {

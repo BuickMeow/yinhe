@@ -661,4 +661,62 @@ fn bench_real_midi() {
             1000.0 / frame_ms.max(0.001)
         );
     }
+
+    // ── AM 力度条 LOD：摘要构建 + 各缩放档位的切片构建成本 ──
+    use yinhe_types::{AutomationPanelView, TimelineViewBase};
+    let track_visible_all = vec![true; model.tracks.len()];
+    let t = std::time::Instant::now();
+    let vsum = crate::automation::VelocitySummary::build(&model, &track_visible_all);
+    println!(
+        "\n力度条摘要构建（全量音符）: {:.0}ms",
+        t.elapsed().as_secs_f64() * 1e3
+    );
+    println!(
+        "{:>11} {:>11} {:>11} {:>6} {:>10}",
+        "屏上tick", "ppu", "bars", "档", "构建/ms"
+    );
+    for &div in &[1u32, 4, 16, 64, 256, 1024] {
+        let tos = (total_ticks / u64::from(div)).max(64);
+        let ppu = main_w / tos as f32;
+        let scroll_x = ((total_ticks as f32 * ppu - main_w) / 2.0).max(0.0);
+        let view = AutomationPanelView {
+            base: TimelineViewBase {
+                pixels_per_tick: ppu,
+                scroll_x,
+                scroll_y: 0.0,
+                left_panel_width: kb_w,
+                dirty: true,
+                track_panel_row_height: 40.0,
+                track_panel_scroll_y: 0.0,
+                follow_target: None,
+                follow_anim_start: 0.0,
+                follow_anim_elapsed: 0.0,
+            },
+            ..Default::default()
+        };
+        let level = vsum.level_for_ppu(ppu);
+        let mut bars = Vec::new();
+        let mut min_ms = f64::MAX;
+        for _ in 0..3 {
+            bars.clear();
+            let t = std::time::Instant::now();
+            crate::automation::velocity_bars::build_velocity_bars(
+                &mut bars,
+                main_w,
+                &model,
+                &view,
+                &track_visible_all,
+                Some(&vsum),
+            );
+            min_ms = min_ms.min(t.elapsed().as_secs_f64() * 1e3);
+        }
+        println!(
+            "{:>11} {:>11.5} {:>11} {:>6} {:>10.2}",
+            tos,
+            ppu,
+            bars.len(),
+            level.map(|l| format!("L{l}")).unwrap_or_default(),
+            min_ms
+        );
+    }
 }

@@ -210,8 +210,17 @@ pub fn prepare(
     if is_velocity {
         // Velocity bars via velocity pipeline (VelocityBarInstance, 16B)
         if let Some(midi) = midi {
+            // LOD 摘要（Arc clone，不借用 renderer，闭包内可安全使用）。
+            let summary = renderer.velocity_summary();
             renderer.upload_velocity_layer(0, bars_key, |out| {
-                velocity_bars::build_velocity_bars(out, w, midi, view, track_visible);
+                velocity_bars::build_velocity_bars(
+                    out,
+                    w,
+                    midi,
+                    view,
+                    track_visible,
+                    summary.as_deref(),
+                );
             });
         }
     } else {

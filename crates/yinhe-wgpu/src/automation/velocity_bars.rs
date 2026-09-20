@@ -34,8 +34,34 @@ pub fn build_velocity_bars(
     midi: &dyn NoteSource,
     view: &AutomationPanelView,
     track_visible: &[bool],
+    summary: Option<&super::velocity_summary::VelocitySummary>,
 ) {
     let (tick_start, tick_end) = view.base.visible_tick_range(w);
+
+    // LOD：ppu 很小（块宽 ≤ SUMMARY_MAX_PX）时从预计算摘要切片，
+    // 每块最多一条 bar（块内最大 velocity）。数据量与音符数无关，
+    // 避免逐音符构建 + 全局排序去重的数百 ms/帧。
+    if let Some(summary) = summary
+        && let Some(level) = summary.level_for_ppu(view.base.pixels_per_tick)
+    {
+        let block_ticks = crate::pianoroll::SUMMARY_BLOCK_TICKS[level];
+        for b in summary.level(level) {
+            if f64::from(b.start_tick) > tick_end {
+                break;
+            }
+            if f64::from(b.start_tick + block_ticks) <= tick_start {
+                continue;
+            }
+            out.push(VelocityBarInstance {
+                tick: b.start_tick,
+                length: block_ticks,
+                packed: VelocityBarInstance::pack(b.track, b.velocity),
+                reserved: 0,
+            });
+        }
+        return;
+    }
+
     let pad_start = tick_start.max(0.0) as u32;
     let pad_end = tick_end.max(0.0) as u32;
 
@@ -237,7 +263,7 @@ mod tests {
         let view = AutomationPanelView::default();
         let tv = vec![true; 4];
         let mut out = Vec::new();
-        build_velocity_bars(&mut out, 800.0, &src, &view, &tv);
+        build_velocity_bars(&mut out, 800.0, &src, &view, &tv, None);
         out.into_iter()
             .map(|b| (b.tick, b.length, b.velocity(), b.track()))
             .collect()
@@ -360,7 +386,7 @@ mod tests {
             .sum();
         let t0 = std::time::Instant::now();
         let mut out = Vec::new();
-        build_velocity_bars(&mut out, w, &model, &view, &tv);
+        build_velocity_bars(&mut out, w, &model, &view, &tv, None);
         let ms = t0.elapsed().as_secs_f64() * 1e3;
         println!(
             "{}: 去重前 bar={before} 去重后={} 保留率={:.1}% 构建+去重耗时={ms:.0}ms",
@@ -392,12 +418,12 @@ mod tests {
         };
         let mut out2 = Vec::new();
         // 暖机 1 次后取最优（3 次）。
-        build_velocity_bars(&mut out2, w2, &model, &view2, &tv);
+        build_velocity_bars(&mut out2, w2, &model, &view2, &tv, None);
         let mut frame_ms = f64::MAX;
         for _ in 0..3 {
             out2.clear();
             let t = std::time::Instant::now();
-            build_velocity_bars(&mut out2, w2, &model, &view2, &tv);
+            build_velocity_bars(&mut out2, w2, &model, &view2, &tv, None);
             frame_ms = frame_ms.min(t.elapsed().as_secs_f64() * 1e3);
         }
         println!(

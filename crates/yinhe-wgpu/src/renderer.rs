@@ -11,6 +11,8 @@
 //! Layers are stored in z-order; `draw` switches pipelines as needed when
 //! traversing layers.
 
+use std::sync::Arc;
+
 use wgpu::*;
 
 use yinhe_types::KEY_COUNT;
@@ -40,6 +42,15 @@ pub struct InstanceRenderer {
     cached_selection: Option<SelectionUniform>,
     layers: Vec<AnyLayer>,
     pub(crate) cull: CullState,
+    /// AM 力度条 LOD 摘要（CPU 侧，随文档/编辑后台重建）。
+    velocity_summary: Option<Arc<crate::automation::VelocitySummary>>,
+    /// 摘要对应的一致性键（revision ^ tv_hash）；与当前键不同则需重建。
+    velocity_summary_revision: u64,
+    /// 后台摘要构建任务：`(接收端, 构建时的一致性键)`。进行中不重启（防抖）。
+    velocity_rebuild: Option<(
+        std::sync::mpsc::Receiver<Arc<crate::automation::VelocitySummary>>,
+        u64,
+    )>,
 }
 
 /// Generates a typed `upload_*_layer` method for one layer variant.
@@ -97,6 +108,9 @@ impl InstanceRenderer {
                 cached_selection: None,
                 layers: Vec::new(),
                 cull,
+                velocity_summary: None,
+                velocity_summary_revision: 0,
+                velocity_rebuild: None,
             }
         })
     }
@@ -364,6 +378,73 @@ impl InstanceRenderer {
         &self.render
     }
 
+    /// AM 力度条摘要：按 ppu 缩小时 `prepare_automation` 用它切片生成 bar。
+    pub fn velocity_summary(&self) -> Option<Arc<crate::automation::VelocitySummary>> {
+        self.velocity_summary.clone()
+    }
+
+    /// 摘要对应的一致性键（后台构建完成后写入）。
+    pub fn velocity_summary_revision(&self) -> u64 {
+        self.velocity_summary_revision
+    }
+
+    /// 后台构建完成后设置摘要及其一致性键。
+    pub fn set_velocity_summary(
+        &mut self,
+        summary: Arc<crate::automation::VelocitySummary>,
+        revision: u64,
+    ) {
+        self.velocity_summary = Some(summary);
+        self.velocity_summary_revision = revision;
+    }
+
+    /// 推进 AM 力度条摘要的后台构建：先收集已完成的结果，再按需启动新任务。
+    ///
+    /// `vs_key` = revision ^ tv_hash（hash 由调用方算）。编辑或切轨会让摘要
+    /// 过期；任务进行中不重启（防抖），完成后若键再变化则下一帧再启动。
+    /// 放入口而非由 UI 层管理，避免穿透多级参数链。
+    pub fn poll_velocity_summary(
+        &mut self,
+        midi: Option<&Arc<yinhe_core::YinModel>>,
+        track_visible: &[bool],
+        vs_key: u64,
+    ) {
+        if let Some((rx, _)) = self.velocity_rebuild.as_ref() {
+            match rx.try_recv() {
+                Ok(summary) => {
+                    let key = self.velocity_rebuild.take().map(|(_, k)| k).unwrap_or(0);
+                    self.velocity_summary = Some(summary);
+                    self.velocity_summary_revision = key;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.velocity_rebuild = None;
+                }
+            }
+        }
+        if self.velocity_rebuild.is_none()
+            && self.velocity_summary_revision != vs_key
+            && let Some(model) = midi
+        {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let model = Arc::clone(model);
+            let track_visible = track_visible.to_vec();
+            let spawned = std::thread::Builder::new()
+                .name("yinhe-velocity-summary".into())
+                .stack_size(8 * 1024 * 1024)
+                .spawn(move || {
+                    let summary = Arc::new(crate::automation::VelocitySummary::build(
+                        model.as_ref(),
+                        &track_visible,
+                    ));
+                    let _ = tx.send(summary);
+                });
+            if spawned.is_ok() {
+                self.velocity_rebuild = Some((rx, vs_key));
+            }
+        }
+    }
+
     /// Drop all per-key GPU cull buffers and reset tracking so the next render
     /// treats the document as fresh (forces full upload on the next frame).
     ///
@@ -371,6 +452,9 @@ impl InstanceRenderer {
     /// note buffers from the previous document don't leak into the next render.
     pub fn clear_cull(&mut self) {
         self.cull.clear_cull();
+        self.velocity_summary = None;
+        self.velocity_summary_revision = 0;
+        self.velocity_rebuild = None;
     }
 
     /// Whether GPU cull note buffers are uploaded (draw will use compute cull).
