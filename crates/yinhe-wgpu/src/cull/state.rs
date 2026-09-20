@@ -510,11 +510,6 @@ impl CullState {
         Ok(())
     }
 
-    /// Whether a per-key buffer exists for `key` (incremental upload precondition).
-    pub(crate) fn has_key_buffer(&self, key: u8) -> bool {
-        self.per_key_buffers[key as usize].is_some()
-    }
-
     pub(crate) fn use_indirect(&self) -> bool {
         self.use_indirect
     }

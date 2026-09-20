@@ -300,17 +300,17 @@ impl InstanceRenderer {
 
     /// Incrementally upload a single key's notes. Grows the key's buffer and
     /// recreates its bind group on demand, so this handles count changes too.
-    /// Returns false only if the key was never uploaded before (caller should
-    /// fall back to `upload_all_notes_for_cull`).
+    ///
+    /// 该 key 此前为空（buffer 已释放）时也直接新建 buffer 上传：切轨重建
+    /// 会先清空「主轨无音符」的 key，返回时若因无 buffer 拒绝增量，会导致
+    /// 这些 key 永久缺失（「从下向上隐去」）。
+    /// 返回 false 仅表示真错误（如显存预算失败），调用方应回退全量。
     pub fn try_incremental_key_upload(
         &mut self,
         key: u8,
         notes: &[NoteInstance],
         revision: u64,
     ) -> bool {
-        if !self.cull.has_key_buffer(key) {
-            return false;
-        }
         if let Err(e) = self.cull.upload_one_key(
             &self.device,
             &self.queue,

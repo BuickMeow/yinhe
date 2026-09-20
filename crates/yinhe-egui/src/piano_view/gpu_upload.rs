@@ -233,10 +233,9 @@ pub(crate) fn advance_rebuild(
                         &data.notes[lo..hi],
                         data.revisions[key as usize],
                     ) {
-                        // key buffer 不存在（pending 前必有全量上传，正常不会到）；
-                        // 防御：标记完成，让调用方走同步路径。
-                        *next_key = 128;
-                        break;
+                        // 真错误（显存预算失败等）：数据不完整，必须回退全量，
+                        // 不能提前标记完成（否则该 key 及其后所有 key 静默缺失）。
+                        return Advance::Failed;
                     }
                     // 摘要层随音符同步增量（全量上传已建立各档）。
                     let mut ok = true;
@@ -359,8 +358,20 @@ pub fn upload(state: GpuUploadState) {
                 }
                 Advance::Failed => {
                     *rebuild = None;
-                    // 数据不完整：强制全量兜底。
-                    *last_cull_revision = 0;
+                    // 数据不完整：直接同步全量兜底（只清 last_cull_revision
+                    // 会再次落入 tv 变化分支启动重建，失败时形成无限重启）。
+                    if let Some(midi_src) = midi {
+                        let (all_notes, offsets) =
+                            yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
+                        upload_all_with_summaries(pianoroll, &all_notes, &offsets, note_revisions);
+                        *last_cull_revision = note_key.value();
+                        *last_cull_revision_only = revision;
+                        *last_hidden_hash = hidden_hash;
+                        *last_hidden_keys = hidden_key_mask(hidden_notes);
+                    } else {
+                        *last_cull_revision = 0;
+                    }
+                    return;
                 }
             }
         }
@@ -1127,5 +1138,181 @@ mod tests {
         let start = offsets_empty[100] as usize;
         let end = offsets_empty[101] as usize;
         assert_eq!(key_notes, full_empty[start..end]);
+    }
+
+    /// 回归：从「仅主轨」切回「全部轨道」时，主轨无音符的 key（其 GPU
+    /// buffer 在仅主轨数据下被清空）必须恢复显示。
+    ///
+    /// 旧实现：重建分帧上传对「无 buffer 的 key」判定增量失败并提前标记
+    /// 完成，导致切回全部轨道后这些 key 及其后所有 key 永不恢复
+    /// （用户现象：切换显示其他音轨后靠下的 key 消失，CPU 路径正常）。
+    #[test]
+    fn switch_back_to_all_tracks_restores_cleared_keys() {
+        use yinhe_core::{ConductorData, NoteEvent, ProjectMeta, TrackData, YinModel};
+        let Some((device, queue)) = (|| {
+            let instance = wgpu::Instance::default();
+            let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
+            let (device, queue) =
+                pollster::block_on(adapter.request_device(&Default::default())).ok()?;
+            Some((device, queue))
+        })() else {
+            return;
+        };
+        let mut renderer = InstanceRenderer::new(
+            device.clone(),
+            queue.clone(),
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+        );
+        let pw = 800u32;
+        let ph = 600u32;
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("switch_back_target"),
+            size: wgpu::Extent3d {
+                width: pw,
+                height: ph,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let target_view = target.create_view(&Default::default());
+
+        // track 0（主轨）只有 key 20；track 1 占低音 key 0/1。
+        // 切「仅主轨」后 key 0/1 变空并被清 buffer；切回时必须恢复。
+        let note = |tick: u32, key: u8| NoteEvent {
+            id: tick,
+            start_tick: tick,
+            end_tick: tick + 100,
+            key,
+            velocity: 80,
+        };
+        let tracks = vec![
+            Arc::new(TrackData::new(0, 0)),
+            Arc::new(TrackData::new(0, 1)),
+        ];
+        let mut model = YinModel {
+            conductor: Arc::new(ConductorData::default()),
+            tracks,
+            meta: ProjectMeta {
+                ppq: 480,
+                ..ProjectMeta::default()
+            },
+            ..Default::default()
+        };
+        model.load_track_notes(vec![vec![note(0, 20)], vec![note(0, 0), note(200, 1)]]);
+        model.rebuild();
+        let model = Arc::new(model);
+        let hidden = HashSet::new();
+        let note_revisions = model.note_revisions;
+
+        let mut last_cull_revision = 0u64;
+        let mut last_cull_revision_only = 0u64;
+        let mut last_hidden_hash = 0u64;
+        let mut last_tv_hash = 0u64;
+        let mut last_hidden_keys: HiddenKeyMask = [0; KEY_COUNT / 64];
+        let mut rebuild: Option<CullRebuild> = None;
+
+        // 多帧推进（重建分帧上传 + 收尾）。
+        let feed = |tv: &[bool],
+                    renderer: &mut InstanceRenderer,
+                    last_cull_revision: &mut u64,
+                    last_cull_revision_only: &mut u64,
+                    last_hidden_hash: &mut u64,
+                    last_tv_hash: &mut u64,
+                    last_hidden_keys: &mut HiddenKeyMask,
+                    rebuild: &mut Option<CullRebuild>| {
+            for _ in 0..100 {
+                upload(GpuUploadState {
+                    pianoroll: renderer,
+                    midi: Some(model.as_ref() as &dyn NoteSource),
+                    midi_arc: Some(&model),
+                    revision: 1,
+                    note_revisions: &note_revisions,
+                    track_visible: tv,
+                    hidden_notes: &hidden,
+                    last_cull_revision,
+                    last_cull_revision_only,
+                    last_hidden_hash,
+                    last_tv_hash,
+                    last_hidden_keys,
+                    rebuild,
+                });
+                // 模拟真实帧间隔：给后台重建线程完成构建的机会
+                // （紧凑循环会让 Building 一直 InProgress，测不出上传路径）。
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        };
+
+        feed(
+            &[true, true],
+            &mut renderer,
+            &mut last_cull_revision,
+            &mut last_cull_revision_only,
+            &mut last_hidden_hash,
+            &mut last_tv_hash,
+            &mut last_hidden_keys,
+            &mut rebuild,
+        );
+        let (_, red0) = render_pixel_count(
+            &mut renderer,
+            &device,
+            &queue,
+            &target,
+            &target_view,
+            pw,
+            ph,
+        );
+        assert!(red0 > 0, "初始 track1 的低音音符应可见: {red0}");
+
+        // 仅主轨：key 0/1 被过滤为空。
+        feed(
+            &[true, false],
+            &mut renderer,
+            &mut last_cull_revision,
+            &mut last_cull_revision_only,
+            &mut last_hidden_hash,
+            &mut last_tv_hash,
+            &mut last_hidden_keys,
+            &mut rebuild,
+        );
+        let (_, red1) = render_pixel_count(
+            &mut renderer,
+            &device,
+            &queue,
+            &target,
+            &target_view,
+            pw,
+            ph,
+        );
+        assert_eq!(red1, 0, "仅主轨时 track1 不应可见");
+        // 切回全轨：低音区必须恢复。
+        feed(
+            &[true, true],
+            &mut renderer,
+            &mut last_cull_revision,
+            &mut last_cull_revision_only,
+            &mut last_hidden_hash,
+            &mut last_tv_hash,
+            &mut last_hidden_keys,
+            &mut rebuild,
+        );
+        let (blue2, red2) = render_pixel_count(
+            &mut renderer,
+            &device,
+            &queue,
+            &target,
+            &target_view,
+            pw,
+            ph,
+        );
+        assert!(blue2 > 0, "主轨音符应始终可见: {blue2}");
+        assert!(
+            red2 > 0,
+            "切回全部轨道后低音区 track1 音符必须恢复（低音区永久空白 bug）: {red2}"
+        );
     }
 }
