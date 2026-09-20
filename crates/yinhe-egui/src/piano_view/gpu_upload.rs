@@ -17,11 +17,62 @@ use yinhe_core::YinModel;
 use yinhe_types::{KEY_COUNT, NoteSource};
 use yinhe_wgpu::{InstanceRenderer, NoteInstance};
 
-/// 后台构建的产物：全量过滤后的音符 + per-key offsets + 构建时的 key revisions。
+/// 后台构建的产物：全量过滤后的音符 + per-key offsets + 构建时的 key revisions
+/// + LOD 摘要（每档 `SUMMARY_BLOCK_TICKS` 一份）。
 pub(crate) struct BuildResult {
     pub notes: Vec<NoteInstance>,
     pub offsets: [u32; KEY_COUNT + 1],
     pub revisions: [u64; KEY_COUNT],
+    pub summaries: Vec<(Vec<NoteInstance>, [u32; KEY_COUNT + 1])>,
+}
+
+/// 按 `SUMMARY_BLOCK_TICKS` 的每个档位构建摘要。
+pub(crate) fn build_summaries(
+    notes: &[NoteInstance],
+    offsets: &[u32; KEY_COUNT + 1],
+) -> Vec<(Vec<NoteInstance>, [u32; KEY_COUNT + 1])> {
+    yinhe_wgpu::SUMMARY_BLOCK_TICKS
+        .iter()
+        .map(|&block| yinhe_wgpu::build_summary(notes, offsets, block))
+        .collect()
+}
+
+/// 单 key 的全档位摘要（编辑增量路径）。
+fn build_key_summaries(key: u8, notes: &[NoteInstance]) -> Vec<Vec<NoteInstance>> {
+    yinhe_wgpu::SUMMARY_BLOCK_TICKS
+        .iter()
+        .map(|&block| yinhe_wgpu::build_key_summary(key, notes, block))
+        .collect()
+}
+
+/// 全量上传音符 + 摘要（保证两层数据来自同一次构建）。
+pub(crate) fn upload_all_with_summaries(
+    pianoroll: &mut InstanceRenderer,
+    notes: &[NoteInstance],
+    offsets: &[u32; KEY_COUNT + 1],
+    revisions: &[u64; KEY_COUNT],
+) {
+    let summaries = build_summaries(notes, offsets);
+    pianoroll.upload_all_notes_for_cull(notes, offsets, revisions);
+    pianoroll.upload_summary_for_cull(&summaries);
+}
+
+/// 单 key 增量上传音符 + 摘要。返回 false 表示需回退全量（key 或摘要层缺失）。
+pub(crate) fn upload_key_with_summaries(
+    pianoroll: &mut InstanceRenderer,
+    key: u8,
+    notes: &[NoteInstance],
+    revision: u64,
+) -> bool {
+    if !pianoroll.try_incremental_key_upload(key, notes, revision) {
+        return false;
+    }
+    for (level, summary) in build_key_summaries(key, notes).iter().enumerate() {
+        if !pianoroll.try_incremental_summary_key(level, key, summary) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Track 显隐后台重建状态机。
@@ -55,6 +106,7 @@ pub(crate) struct UploadData {
     pub notes: Vec<NoteInstance>,
     pub offsets: [u32; KEY_COUNT + 1],
     pub revisions: [u64; KEY_COUNT],
+    pub summaries: Vec<(Vec<NoteInstance>, [u32; KEY_COUNT + 1])>,
 }
 
 /// 每帧上传的 key 数量。1.64 亿音符全量约 2GB，128 key 分 32 帧传完，
@@ -106,10 +158,12 @@ pub(crate) fn start_rebuild(
         .spawn(move || {
             let (notes, offsets) =
                 yinhe_wgpu::build_all_notes(model.as_ref(), &hidden_notes, &track_visible);
+            let summaries = build_summaries(&notes, &offsets);
             let _ = tx.send(BuildResult {
                 notes,
                 offsets,
                 revisions: note_revisions,
+                summaries,
             });
         })
         .expect("failed to spawn cull rebuild thread");
@@ -153,6 +207,7 @@ pub(crate) fn advance_rebuild(
                             notes: result.notes,
                             offsets: result.offsets,
                             revisions: result.revisions,
+                            summaries: result.summaries,
                         }),
                         revision: *revision,
                         hidden_hash: *hidden_hash,
@@ -173,17 +228,38 @@ pub(crate) fn advance_rebuild(
                 let mut n = 0u8;
                 while n < KEYS_PER_FRAME && *next_key < 128 {
                     let key = *next_key;
-                    let slice = &data.notes[data.offsets[key as usize] as usize
-                        ..data.offsets[key as usize + 1] as usize];
+                    let lo = data.offsets[key as usize] as usize;
+                    let hi = data.offsets[key as usize + 1] as usize;
                     if !pianoroll.try_incremental_key_upload(
                         key,
-                        slice,
+                        &data.notes[lo..hi],
                         data.revisions[key as usize],
                     ) {
                         // key buffer 不存在（pending 前必有全量上传，正常不会到）；
                         // 防御：标记完成，让调用方走同步路径。
                         *next_key = 128;
                         break;
+                    }
+                    // 摘要层随音符同步增量（全量上传已建立各档）。
+                    let mut ok = true;
+                    for (level, (summary_notes, summary_offsets)) in
+                        data.summaries.iter().enumerate()
+                    {
+                        let slo = summary_offsets[key as usize] as usize;
+                        let shi = summary_offsets[key as usize + 1] as usize;
+                        if !pianoroll.try_incremental_summary_key(
+                            level,
+                            key,
+                            &summary_notes[slo..shi],
+                        ) {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if !ok {
+                        // 摘要层缺失/写入失败：摘要数据会与音符数据脱节，
+                        // 不能静默继续（渲染会用到过期摘要）。回退全量。
+                        return Advance::Failed;
                     }
                     *next_key += 1;
                     n += 1;
@@ -317,7 +393,7 @@ pub fn upload(state: GpuUploadState) {
         // First-time upload or MIDI just loaded: force full upload.
         let (all_notes, offsets) =
             yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
-        pianoroll.upload_all_notes_for_cull(&all_notes, &offsets, note_revisions);
+        upload_all_with_summaries(pianoroll, &all_notes, &offsets, note_revisions);
     } else {
         let revision_changed = revision != *last_cull_revision_only;
         let hidden_changed = hidden_hash != *last_hidden_hash;
@@ -337,7 +413,8 @@ pub fn upload(state: GpuUploadState) {
                 }
                 let key_notes =
                     yinhe_wgpu::build_key_notes(midi_src, key, hidden_notes, track_visible);
-                if !pianoroll.try_incremental_key_upload(
+                if !upload_key_with_summaries(
+                    pianoroll,
                     key,
                     &key_notes,
                     note_revisions[key as usize],
@@ -351,7 +428,7 @@ pub fn upload(state: GpuUploadState) {
                 // Fallback: full upload (some key's buffer was never created).
                 let (all_notes, offsets) =
                     yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
-                pianoroll.upload_all_notes_for_cull(&all_notes, &offsets, note_revisions);
+                upload_all_with_summaries(pianoroll, &all_notes, &offsets, note_revisions);
             }
         } else if revision_changed {
             // Revision changed → try incremental per-key upload
@@ -366,7 +443,8 @@ pub fn upload(state: GpuUploadState) {
                 for &key in &dirty_keys {
                     let key_notes =
                         yinhe_wgpu::build_key_notes(midi_src, key, hidden_notes, track_visible);
-                    if !pianoroll.try_incremental_key_upload(
+                    if !upload_key_with_summaries(
+                        pianoroll,
                         key,
                         &key_notes,
                         note_revisions[key as usize],
@@ -380,7 +458,7 @@ pub fn upload(state: GpuUploadState) {
                     // Fallback: full upload (some key's count changed)
                     let (all_notes, offsets) =
                         yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
-                    pianoroll.upload_all_notes_for_cull(&all_notes, &offsets, note_revisions);
+                    upload_all_with_summaries(pianoroll, &all_notes, &offsets, note_revisions);
                 }
             }
             // dirty_keys.is_empty(): revision bumped but no key revisions changed
@@ -393,7 +471,7 @@ pub fn upload(state: GpuUploadState) {
                 // 无 Arc 句柄（理论上只有 midi 为 None 时）→ 同步全量兜底。
                 let (all_notes, offsets) =
                     yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
-                pianoroll.upload_all_notes_for_cull(&all_notes, &offsets, note_revisions);
+                upload_all_with_summaries(pianoroll, &all_notes, &offsets, note_revisions);
                 return;
             };
             *rebuild = Some(start_rebuild(
@@ -825,6 +903,11 @@ mod tests {
         assert_eq!(result.notes, sync_notes);
         assert_eq!(result.offsets, sync_offsets);
         assert_eq!(result.revisions, revisions);
+        assert_eq!(
+            result.summaries.len(),
+            yinhe_wgpu::SUMMARY_BLOCK_TICKS.len(),
+            "后台构建必须产出全部摘要档位"
+        );
     }
 
     /// 完整状态机：Building → 分帧上传（每帧 KEYS_PER_FRAME 个 key）→ Done，
@@ -842,9 +925,9 @@ mod tests {
             *r = i as u64 + 1;
         }
 
-        // 首帧全量上传（模拟初次加载：128 个 key 都有 GPU buffer）。
+        // 首帧全量上传（模拟初次加载：128 个 key 都有 GPU buffer + 摘要层）。
         let (all_notes, offsets) = yinhe_wgpu::build_all_notes(model.as_ref(), &hidden, &tv);
-        renderer.upload_all_notes_for_cull(&all_notes, &offsets, &revisions);
+        upload_all_with_summaries(&mut renderer, &all_notes, &offsets, &revisions);
 
         // 模拟 track_visible 变化 → 启动后台重建（tv_hash = 99）。
         let tv2 = vec![true, true, true, true];

@@ -9,6 +9,7 @@ use crate::resource::{GpuBudget, GpuBudgetError, TrackedBuffer};
 use crate::vertex::{NoteInstance, Uniforms};
 
 use super::KeyBucketIndex;
+use super::summary::{CullShared, SummaryLevel};
 
 pub(crate) fn culling_relevant_eq(a: &Uniforms, b: &Uniforms) -> bool {
     a.width == b.width
@@ -129,6 +130,14 @@ pub(crate) struct CullState {
     /// `visible_notes` + `indirect_args` are still valid and the dispatch can
     /// be skipped entirely.
     last_cull_uniforms: Option<Uniforms>,
+
+    /// 上一次 dispatch 用的是哪一层：`None` = 原始音符层，
+    /// `Some(i)` = 摘要档位 i。切层必须重新 dispatch（输出 buffer 不同）。
+    last_cull_level: Option<usize>,
+
+    /// LOD 摘要档位（与 `pianoroll::SUMMARY_BLOCK_TICKS` 对齐）。
+    /// 每档持有自己的 per-key buffers/bind groups；数据量远小于原始层。
+    pub(crate) summary_levels: Vec<SummaryLevel>,
 
     /// True when note data has been uploaded (full or incremental) since the
     /// last cull dispatch. Set by `upload_all_notes` / `upload_one_key`;
@@ -288,6 +297,10 @@ impl CullState {
             && device
                 .features()
                 .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE);
+        let summary_levels = crate::pianoroll::SUMMARY_BLOCK_TICKS
+            .iter()
+            .map(|_| SummaryLevel::new())
+            .collect();
         Self {
             pipeline,
             bind_group_layout,
@@ -306,6 +319,8 @@ impl CullState {
             budget: GpuBudget::new(device),
             uploaded_key_revisions: [0; KEY_COUNT],
             last_cull_uniforms: None,
+            last_cull_level: None,
+            summary_levels,
             notes_dirty: false,
             use_indirect,
         }
@@ -603,7 +618,11 @@ impl CullState {
         self.bucket_indexes.fill(None);
         self.per_key_draw_args_cpu.iter_mut().for_each(Vec::clear);
         self.uploaded_key_revisions.fill(0);
+        for level in &mut self.summary_levels {
+            level.clear();
+        }
         self.last_cull_uniforms = None;
+        self.last_cull_level = None;
         self.notes_dirty = false;
     }
 
@@ -635,8 +654,10 @@ impl CullState {
         key_hi: u8,
         uniforms: &Uniforms,
     ) -> bool {
-        // Skip if nothing changed since last cull.
+        // Skip if nothing changed since last cull (and the last dispatch used
+        // this same raw layer — a summary layer switch must re-dispatch).
         if !self.notes_dirty
+            && self.last_cull_level.is_none()
             && self
                 .last_cull_uniforms
                 .as_ref()
@@ -708,6 +729,7 @@ impl CullState {
         drop(cull_pass);
 
         self.last_cull_uniforms = Some(*uniforms);
+        self.last_cull_level = None;
         self.notes_dirty = false;
         true
     }
@@ -882,6 +904,176 @@ impl CullState {
                 continue;
             }
             let Some(bg) = self.per_key_all_bind_group(key) else {
+                continue;
+            };
+            pass.set_bind_group(1, bg, &[]);
+            pass.set_vertex_buffer(0, vis_buf.slice(..));
+            pass.multi_draw_indexed_indirect(args_buf, 0, chunk_count);
+        }
+    }
+
+    // ── LOD 摘要层 ────────────────────────────────────────────────────────
+    // 摘要层与原始层共享 cull pipeline / layout / track mask / dispatch args，
+    // 各自持有 per-key 数据 buffer、visible 索引、draw args 与 bind group。
+    // 数据量小（全曲视图约几十万段），无 tick 桶索引：dispatch 全量 chunk。
+
+    /// 是否至少有一个摘要档位已上传（renderer 选择摘要路径的前提）。
+    pub(crate) fn summary_ready(&self) -> bool {
+        self.summary_levels.iter().any(|level| level.is_ready())
+    }
+
+    /// 指定摘要档位是否已上传（选择档位时逐档回退用）。
+    pub(crate) fn summary_level_ready(&self, level: usize) -> bool {
+        self.summary_levels.get(level).is_some_and(|l| l.is_ready())
+    }
+
+    /// 全量上传所有摘要档位。`summaries[i]` 对应 `SUMMARY_BLOCK_TICKS[i]`。
+    pub(crate) fn upload_summary_all(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        uniform_buffer: &Buffer,
+        summaries: &[(Vec<NoteInstance>, [u32; KEY_COUNT + 1])],
+    ) -> Result<(), GpuBudgetError> {
+        let shared = CullShared {
+            uniform_buffer,
+            cull_layout: &self.bind_group_layout,
+            all_layout: &self.all_bind_group_layout,
+            track_mask: &self.track_mask_buffer,
+            dispatch_args: &self.dispatch_args_buffer,
+        };
+        for (level_idx, (notes, offsets)) in summaries.iter().enumerate() {
+            let Some(level) = self.summary_levels.get_mut(level_idx) else {
+                break;
+            };
+            for key in 0u8..=MAX_KEY {
+                let start = offsets[key as usize] as usize;
+                let end = offsets[key as usize + 1] as usize;
+                level.upload_key(
+                    device,
+                    queue,
+                    &shared,
+                    &self.budget,
+                    key,
+                    &notes[start..end],
+                )?;
+            }
+        }
+        self.notes_dirty = true;
+        Ok(())
+    }
+
+    /// 增量上传单 key 单档摘要（编辑后重建）。返回 false 表示该档未上传过
+    /// （调用方应回退全量摘要上传）。
+    pub(crate) fn upload_summary_key(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        uniform_buffer: &Buffer,
+        level: usize,
+        key: u8,
+        notes: &[NoteInstance],
+    ) -> bool {
+        let shared = CullShared {
+            uniform_buffer,
+            cull_layout: &self.bind_group_layout,
+            all_layout: &self.all_bind_group_layout,
+            track_mask: &self.track_mask_buffer,
+            dispatch_args: &self.dispatch_args_buffer,
+        };
+        let Some(level_ref) = self.summary_levels.get_mut(level) else {
+            return false;
+        };
+        match level_ref.upload_key(device, queue, &shared, &self.budget, key, notes) {
+            Ok(()) => {
+                self.notes_dirty = true;
+                true
+            }
+            Err(e) => {
+                tracing::error!("[cull] 摘要 key {key} 上传失败：{e}");
+                false
+            }
+        }
+    }
+
+    /// Dispatch 摘要层 cull（全量 chunk，无桶索引）。skip 逻辑与原始层一致，
+    /// 但切层（`last_cull_level` 不同）时必须重跑。
+    pub(crate) fn dispatch_summary(
+        &mut self,
+        encoder: &mut CommandEncoder,
+        queue: &Queue,
+        key_lo: u8,
+        key_hi: u8,
+        level: usize,
+        uniforms: &Uniforms,
+    ) -> bool {
+        if !self.notes_dirty
+            && self.last_cull_level == Some(level)
+            && self
+                .last_cull_uniforms
+                .as_ref()
+                .is_some_and(|last| culling_relevant_eq(last, uniforms))
+        {
+            return false;
+        }
+        let Some(summary) = self.summary_levels.get(level) else {
+            return false;
+        };
+        summary.write_dispatch_info(queue, &self.dispatch_args_buffer);
+
+        let mut cull_pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+            label: Some("summary_cull"),
+            timestamp_writes: None,
+        });
+        cull_pass.set_pipeline(&self.pipeline);
+        for key in key_lo..=key_hi {
+            let Some(bg) = &summary.per_key_bind_groups[key as usize] else {
+                continue;
+            };
+            if summary.per_key_chunks[key as usize] == 0 {
+                continue;
+            }
+            cull_pass.set_bind_group(0, bg, &[]);
+            cull_pass.dispatch_workgroups_indirect(&self.dispatch_args_buffer, key as u64 * 256);
+        }
+        drop(cull_pass);
+
+        self.last_cull_uniforms = Some(*uniforms);
+        self.last_cull_level = Some(level);
+        self.notes_dirty = false;
+        true
+    }
+
+    /// 绘制摘要层：per-key 一次 multi_draw（与原始层 indirect 路径相同）。
+    #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
+    pub(crate) fn draw_summary_indirect(
+        &self,
+        pass: &mut RenderPass<'_>,
+        note_pipeline: &RenderPipeline,
+        bind_group: &BindGroup,
+        index_buffer: &Buffer,
+        key_lo: u8,
+        key_hi: u8,
+        level: usize,
+    ) {
+        let Some(summary) = self.summary_levels.get(level) else {
+            return;
+        };
+        pass.set_pipeline(note_pipeline);
+        pass.set_bind_group(0, bind_group, &[]);
+        pass.set_index_buffer(index_buffer.slice(..), IndexFormat::Uint32);
+        for key in key_lo..=key_hi {
+            let Some(vis_buf) = &summary.per_key_visible_buffers[key as usize] else {
+                continue;
+            };
+            let Some(args_buf) = &summary.per_key_draw_args_buffers[key as usize] else {
+                continue;
+            };
+            let chunk_count = summary.per_key_chunks[key as usize];
+            if chunk_count == 0 {
+                continue;
+            }
+            let Some(bg) = &summary.per_key_all_bind_groups[key as usize] else {
                 continue;
             };
             pass.set_bind_group(1, bg, &[]);

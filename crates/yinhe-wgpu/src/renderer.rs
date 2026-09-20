@@ -312,6 +312,47 @@ impl InstanceRenderer {
         &self.cull.uploaded_key_revisions
     }
 
+    /// Upload all LOD summary levels. `summaries[i]` corresponds to
+    /// `pianoroll::SUMMARY_BLOCK_TICKS[i]`. Small data (a few MB); called on
+    /// MIDI load / full rebuild alongside `upload_all_notes_for_cull`.
+    pub fn upload_summary_for_cull(
+        &mut self,
+        summaries: &[(Vec<NoteInstance>, [u32; KEY_COUNT + 1])],
+    ) {
+        if let Err(e) = self.cull.upload_summary_all(
+            &self.device,
+            &self.queue,
+            &self.render.uniform_buffer,
+            summaries,
+        ) {
+            tracing::error!("[cull] 摘要全量上传失败（显存预算不足，已降级跳过）：{e}");
+        }
+    }
+
+    /// Incrementally upload one key's summary for one level (after an edit).
+    /// Returns false when the level was never uploaded (caller falls back to a
+    /// full summary upload).
+    pub fn try_incremental_summary_key(
+        &mut self,
+        level: usize,
+        key: u8,
+        notes: &[NoteInstance],
+    ) -> bool {
+        self.cull.upload_summary_key(
+            &self.device,
+            &self.queue,
+            &self.render.uniform_buffer,
+            level,
+            key,
+            notes,
+        )
+    }
+
+    /// Whether any LOD summary level is uploaded.
+    pub fn summary_ready(&self) -> bool {
+        self.cull.summary_ready()
+    }
+
     /// Whether GPU compute cull is ready (all notes have been uploaded).
     pub fn cull_ready(&self) -> bool {
         self.cull.is_ready()
@@ -472,10 +513,57 @@ impl InstanceRenderer {
         let uniforms = self.cached_uniforms.unwrap_or_default();
         // 桌面间接绘制（零回读）vs Adreno 回读分支
         if self.cull.use_indirect() {
-            // 单 encoder：compute cull → render pass，GPU 内 barrier，无 CPU 同步
+            // ppu 很小（块宽 ≤ SUMMARY_MAX_PX）时改走 LOD 摘要层：cull 与
+            // 绘制量从「原始音符数」降到「摘要段数」。选择是 ppu 的连续函数；
+            // 目标档未上传（异常/显存降级）时向更细的档回退，再不行用原始层。
+            let summary_level = if self.cull.summary_ready() {
+                crate::pianoroll::select_summary_level(uniforms.pixels_per_tick).and_then(|best| {
+                    (best..crate::pianoroll::SUMMARY_BLOCK_TICKS.len())
+                        .find(|&level| self.cull.summary_level_ready(level))
+                })
+            } else {
+                None
+            };
             let mut enc = self
                 .device
                 .create_command_encoder(&CommandEncoderDescriptor::default());
+            if let Some(level) = summary_level {
+                let _ = self.cull.dispatch_summary(
+                    &mut enc,
+                    &self.queue,
+                    key_lo,
+                    key_hi,
+                    level,
+                    &uniforms,
+                );
+                let mut pass = crate::util::begin_pianoroll_pass(
+                    &mut enc,
+                    target,
+                    &self.render.pipeline,
+                    &self.render.bind_group,
+                    width,
+                    height,
+                );
+                self.draw_static_layers(&mut pass);
+                self.cull.draw_summary_indirect(
+                    &mut pass,
+                    &self.render.note_pipeline,
+                    &self.render.bind_group,
+                    &self.render.index_buffer,
+                    key_lo,
+                    key_hi,
+                    level,
+                );
+                let ghost = self.layers.iter().rfind(|l| l.kind() == LayerKind::Note);
+                if let Some(ghost) = ghost {
+                    pass.set_pipeline(&self.render.note_direct_pipeline);
+                    ghost.draw(&mut pass, 0, Some(&self.render.index_buffer));
+                }
+                drop(pass);
+                self.queue.submit([enc.finish()]);
+                return;
+            }
+            // 单 encoder：compute cull → render pass，GPU 内 barrier，无 CPU 同步
             let _ = self
                 .cull
                 .dispatch_cull(&mut enc, &self.queue, key_lo, key_hi, &uniforms);

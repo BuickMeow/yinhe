@@ -3159,3 +3159,175 @@ fn cull_arr_mode_lane_height_vs_cpu() {
         "AR GPU cull 与 CPU 判定不一致: GPU={gpu_total} CPU={cpu_visible}"
     );
 }
+
+/// 读回渲染目标并统计非黑像素数。
+fn count_nonblack_pixels(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    target: &wgpu::Texture,
+    width: u32,
+    height: u32,
+) -> u64 {
+    let bytes_per_row = width * 4;
+    let aligned_row = bytes_per_row.div_ceil(256) * 256;
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("summary_pixel_readback"),
+        size: u64::from(aligned_row) * u64::from(height),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut enc = device.create_command_encoder(&Default::default());
+    enc.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture: target,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(aligned_row),
+                rows_per_image: Some(height),
+            },
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+    queue.submit([enc.finish()]);
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let done2 = done.clone();
+    buffer.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+        done2.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .expect("poll failed");
+    assert!(done.load(std::sync::atomic::Ordering::SeqCst));
+    let mapped = buffer.slice(..).get_mapped_range().expect("readback map");
+    let mut count = 0u64;
+    for row in 0..height {
+        let start = row as usize * aligned_row as usize;
+        for px in mapped[start..start + bytes_per_row as usize].chunks_exact(4) {
+            if px[0] > 8 || px[1] > 8 || px[2] > 8 {
+                count += 1;
+            }
+        }
+    }
+    drop(mapped);
+    buffer.unmap();
+    count
+}
+
+/// 摘要层渲染正确性：同一批摘要段经 GPU cull 摘要路径与 CPU legacy 直画，
+/// 像素应基本一致（可见性 AABB 数学相同，数据同源）。
+/// 前两档摘要留空，只有 block=4096 档有数据，同时验证档位选择与未上传
+/// 档位的回退。
+#[test]
+fn summary_layer_matches_legacy_pixels() {
+    use yinhe_test_helpers::make_midi;
+    let Some((device, queue)) = headless_device() else {
+        return;
+    };
+
+    let model = make_midi(vec![
+        (60, 0, 100, 0, 100),
+        (60, 4096, 4200, 1, 100),
+        (62, 10, 20, 0, 100),
+        (64, 0, 50000, 0, 100),
+    ]);
+    let hidden = std::collections::HashSet::new();
+    let track_visible = vec![true, true];
+    let (all_notes, offsets) = crate::pianoroll::build_all_notes(&model, &hidden, &track_visible);
+    let (summary, summary_offsets) = crate::pianoroll::build_summary(&all_notes, &offsets, 4096);
+    assert!(!summary.is_empty(), "摘要不应为空");
+
+    let ppu = 4e-4f32;
+    assert_eq!(
+        crate::pianoroll::select_summary_level(ppu),
+        Some(2),
+        "4e-4 应选 block=4096 档（索引 2）"
+    );
+    let empty_offsets = [0u32; KEY_COUNT + 1];
+    let levels: Vec<(Vec<NoteInstance>, [u32; KEY_COUNT + 1])> = vec![
+        (Vec::new(), empty_offsets),
+        (Vec::new(), empty_offsets),
+        (summary.clone(), summary_offsets),
+    ];
+
+    let (pw, ph) = (400u32, 200u32);
+    let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+    let colors = [[0.2f32, 0.7, 1.0, 1.0], [1.0, 0.4, 0.2, 1.0]];
+    let uniforms = Uniforms {
+        width: pw as f32,
+        height: ph as f32,
+        scroll_x: 0.0,
+        scroll_y: 0.0,
+        pixels_per_tick: ppu,
+        key_height: 0.8,
+        keyboard_width: 0.0,
+        mode: 1,
+        track_count: 2,
+        ..Default::default()
+    };
+    let make_target = || {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("summary_test_target"),
+            size: wgpu::Extent3d {
+                width: pw,
+                height: ph,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        })
+    };
+
+    // 摘要路径（cull + LOD 层）
+    let target1 = make_target();
+    let view1 = target1.create_view(&Default::default());
+    let mut r1 = crate::InstanceRenderer::new(device.clone(), queue.clone(), format);
+    r1.upload_all_notes_for_cull(&all_notes, &offsets, &[0; KEY_COUNT]);
+    r1.upload_summary_for_cull(&levels);
+    r1.upload_track_colors(&colors);
+    r1.upload_selection(&crate::vertex::SelectionUniform {
+        rects: [[0; 4]; crate::vertex::MAX_SEL_RECTS * 2],
+    });
+    r1.upload_uniforms(uniforms);
+    assert!(r1.summary_ready());
+    let mut enc = device.create_command_encoder(&Default::default());
+    r1.draw(&mut enc, &view1, pw, ph);
+    queue.submit([enc.finish()]);
+    let px1 = count_nonblack_pixels(&device, &queue, &target1, pw, ph);
+
+    // legacy 直画同一批摘要段
+    let target2 = make_target();
+    let view2 = target2.create_view(&Default::default());
+    let mut r2 = crate::InstanceRenderer::new(device.clone(), queue.clone(), format);
+    r2.upload_uniforms(uniforms);
+    r2.upload_track_colors(&colors);
+    r2.upload_selection(&crate::vertex::SelectionUniform {
+        rects: [[0; 4]; crate::vertex::MAX_SEL_RECTS * 2],
+    });
+    r2.ensure_layers(1);
+    r2.upload_note_layer(0, 0, |out| out.extend(summary.iter().copied()));
+    let mut enc2 = device.create_command_encoder(&Default::default());
+    r2.draw(&mut enc2, &view2, pw, ph);
+    queue.submit([enc2.finish()]);
+    let px2 = count_nonblack_pixels(&device, &queue, &target2, pw, ph);
+
+    assert!(px1 > 0, "摘要路径应画出像素");
+    let diff = px1.abs_diff(px2);
+    assert!(
+        diff * 10 <= px2.max(1),
+        "摘要路径与 legacy 像素差过大: cull={px1} legacy={px2}"
+    );
+}

@@ -15,6 +15,7 @@
 
 mod bucket;
 mod state;
+mod summary;
 
 #[cfg(test)]
 mod tests;

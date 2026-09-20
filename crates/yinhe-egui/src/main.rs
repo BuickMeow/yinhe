@@ -102,6 +102,15 @@ fn main() {
             wgpu_setup: {
                 use eframe::egui_wgpu::wgpu;
                 let mut setup = eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle();
+                // 关闭 wgpu 的 indirect args CPU 校验：release 构建默认开启
+                // VALIDATION_INDIRECT_CALL，会为每条 indirect draw/dispatch 做
+                // CPU 侧检查（全曲视图 39 万条 args 约 20ms/帧）。本程序的
+                // indirect args 全部由受控的 cull shader 写入（instance_count
+                // 有界、first_instance 在槽位内），无需该保护。
+                setup.instance_descriptor.flags = setup
+                    .instance_descriptor
+                    .flags
+                    .difference(wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL);
                 setup.device_descriptor = std::sync::Arc::new(|adapter| {
                     let base_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
                         wgpu::Limits::downlevel_webgl2_defaults()
