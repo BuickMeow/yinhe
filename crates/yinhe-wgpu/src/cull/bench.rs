@@ -246,13 +246,23 @@ fn bench_synthetic_scale() {
         let t = std::time::Instant::now();
         let (s, so) = crate::pianoroll::build_summary(&all, &offsets, bt);
         summary_build_ms += t.elapsed().as_secs_f64() * 1e3;
+        let skipped = s.len() > crate::pianoroll::SUMMARY_MAX_SEGMENTS;
         println!(
-            "摘要 block={bt:>6}: {:>9} 段 {:>7.1}MB 构建 {:>4}ms",
+            "摘要 block={bt:>6}: {:>9} 段 {:>7.1}MB 构建 {:>4}ms{}",
             s.len(),
             s.len() as f64 * 12.0 / 1e6,
-            t.elapsed().as_secs_f64() * 1e3
+            t.elapsed().as_secs_f64() * 1e3,
+            if skipped {
+                "（超段数上限，跳过）"
+            } else {
+                ""
+            }
         );
-        summaries.push((s, so));
+        if skipped {
+            summaries.push((Vec::new(), [0u32; KEY_COUNT + 1]));
+        } else {
+            summaries.push((s, so));
+        }
     }
     println!("摘要构建合计 {summary_build_ms:.0}ms（加载时一次，后台线程）");
 
@@ -464,4 +474,191 @@ fn bench_synthetic_scale() {
 
     // ── A/B 方案：args 数量 → CPU 提交成本（大 chunk / 紧凑输出）──
     bench_args_scaling(&device, &queue, &renderer, &target_view, pw, ph);
+}
+
+/// 真实 MIDI 端到端基准：解析 → 构建音符 + 摘要 → 上传 → 多缩放档位
+/// 实测 CPU/GPU 帧时间。用生产渲染路径（含 LOD 摘要层自动选档）。
+///
+/// 运行：
+///   YIN_BENCH_MIDI=/path/to.mid cargo test -p yinhe-wgpu --release \
+///     bench_real_midi -- --ignored --nocapture
+#[test]
+#[ignore]
+fn bench_real_midi() {
+    let path = std::env::var("YIN_BENCH_MIDI")
+        .unwrap_or_else(|_| "/Users/jieneng/Music/MIDIs/ReptilianDarkRitual.mid".into());
+    let t = std::time::Instant::now();
+    let model = yinhe_midi::parse_path(&path).expect("解析 MIDI 失败");
+    println!(
+        "解析: {:.0}ms, {} 音符, 总长 {} tick, {} 轨道",
+        t.elapsed().as_secs_f64() * 1e3,
+        model.note_count,
+        model.tick_length,
+        model.tracks.len()
+    );
+
+    let hidden = std::collections::HashSet::new();
+    let track_visible: Vec<bool> = vec![true; model.tracks.len()];
+    let t = std::time::Instant::now();
+    let (all, offsets) = crate::pianoroll::build_all_notes(&model, &hidden, &track_visible);
+    println!(
+        "build_all_notes: {:.0}ms, {} 音符 ({:.0}MB)",
+        t.elapsed().as_secs_f64() * 1e3,
+        all.len(),
+        all.len() as f64 * 12.0 / 1e6
+    );
+
+    let mut summaries: Vec<(Vec<NoteInstance>, [u32; KEY_COUNT + 1])> =
+        Vec::with_capacity(crate::pianoroll::SUMMARY_BLOCK_TICKS.len());
+    for &bt in &crate::pianoroll::SUMMARY_BLOCK_TICKS {
+        let t = std::time::Instant::now();
+        let (s, so) = crate::pianoroll::build_summary(&all, &offsets, bt);
+        let skipped = s.len() > crate::pianoroll::SUMMARY_MAX_SEGMENTS;
+        println!(
+            "摘要 block={bt:>6}: {:>9} 段 {:>7.1}MB 构建 {:>5}ms{}",
+            s.len(),
+            s.len() as f64 * 12.0 / 1e6,
+            t.elapsed().as_secs_f64() * 1e3,
+            if skipped { "（超上限跳过）" } else { "" }
+        );
+        if skipped {
+            summaries.push((Vec::new(), [0u32; KEY_COUNT + 1]));
+        } else {
+            summaries.push((s, so));
+        }
+    }
+
+    let Some((device, queue)) = bench_device() else {
+        eprintln!("无可用 GPU 适配器，跳过");
+        return;
+    };
+    let format = TextureFormat::Rgba8UnormSrgb;
+    let mut renderer = crate::InstanceRenderer::new(device.clone(), queue.clone(), format);
+    let t = std::time::Instant::now();
+    renderer.upload_all_notes_for_cull(&all, &offsets, &[0; KEY_COUNT]);
+    renderer.upload_summary_for_cull(&summaries);
+    println!(
+        "全量上传（音符 + 摘要）: {:.0}ms, cull_ready={}",
+        t.elapsed().as_secs_f64() * 1e3,
+        renderer.cull_ready()
+    );
+    drop(all);
+
+    let colors: Vec<[f32; 4]> = (0..model.tracks.len().max(1))
+        .map(|i| {
+            let f = (i % 16) as f32 / 16.0;
+            [0.2 + 0.6 * f, 0.5, 1.0 - 0.5 * f, 1.0]
+        })
+        .collect();
+    renderer.upload_track_colors(&colors);
+    renderer.upload_selection(&SelectionUniform {
+        rects: [[0; 4]; MAX_SEL_RECTS * 2],
+    });
+
+    queue.submit([device.create_command_encoder(&Default::default()).finish()]);
+    device
+        .poll(PollType::wait_indefinitely())
+        .expect("poll failed");
+    let mut empty_poll_ms = f64::MAX;
+    for _ in 0..5 {
+        let t = std::time::Instant::now();
+        queue.submit([device.create_command_encoder(&Default::default()).finish()]);
+        device
+            .poll(PollType::wait_indefinitely())
+            .expect("poll failed");
+        empty_poll_ms = empty_poll_ms.min(t.elapsed().as_secs_f64() * 1e3);
+    }
+
+    let (pw, ph) = (1520u32, 900u32);
+    let target = device.create_texture(&TextureDescriptor {
+        label: Some("real_midi_target"),
+        size: Extent3d {
+            width: pw,
+            height: ph,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: TextureDimension::D2,
+        format,
+        usage: TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let target_view = target.create_view(&Default::default());
+
+    let kb_w = 80.0f32;
+    let kh = 7.0f32;
+    let main_w = pw as f32 - kb_w;
+    let total_ticks = model.tick_length.max(1);
+    let frames = env_usize("YIN_BENCH_FRAMES", 3).max(2);
+    println!(
+        "\n{:>11} {:>11} {:>11} {:>6} {:>9} {:>9} {:>9} {:>9}",
+        "屏上tick", "ppu", "实例/段", "层", "CPU/ms", "GPU/ms", "帧/ms", "FPS"
+    );
+    for &div in &[1u32, 4, 16, 64, 256, 1024, 4096, 16384] {
+        let tos = (total_ticks / u64::from(div)).max(64);
+        let ppu = main_w / tos as f32;
+        let scroll_x = ((total_ticks as f32 * ppu - main_w) / 2.0).max(0.0);
+        let mut min_cpu = f64::MAX;
+        let mut min_gpu = f64::MAX;
+        for f in 0..frames {
+            let u = Uniforms {
+                width: pw as f32,
+                height: ph as f32,
+                scroll_x: scroll_x + f as f32,
+                scroll_y: 0.0,
+                pixels_per_tick: ppu,
+                key_height: kh,
+                keyboard_width: kb_w,
+                mode: 1,
+                track_count: colors.len() as u32,
+                ..Default::default()
+            };
+            renderer.upload_uniforms(u);
+            let t = std::time::Instant::now();
+            let mut enc = device.create_command_encoder(&Default::default());
+            renderer.draw(&mut enc, &target_view, pw, ph);
+            queue.submit([enc.finish()]);
+            let cpu_ms = t.elapsed().as_secs_f64() * 1e3;
+            let t = std::time::Instant::now();
+            device
+                .poll(PollType::wait_indefinitely())
+                .expect("poll failed");
+            let gpu_ms = (t.elapsed().as_secs_f64() * 1e3 - empty_poll_ms).max(0.0);
+            if f > 0 {
+                min_cpu = min_cpu.min(cpu_ms);
+                min_gpu = min_gpu.min(gpu_ms);
+            }
+        }
+        let active_level = crate::pianoroll::select_summary_level(ppu).and_then(|best| {
+            (best..crate::pianoroll::SUMMARY_BLOCK_TICKS.len())
+                .find(|&level| renderer.cull.summary_level_ready(level))
+        });
+        let (visible, tag) = match active_level {
+            Some(level) => (
+                renderer.cull.summary_levels[level]
+                    .per_key_counts
+                    .iter()
+                    .map(|&c| c as u64)
+                    .sum(),
+                format!("L{level}"),
+            ),
+            None => (
+                count_visible_instances(&device, &queue, &renderer.cull),
+                String::new(),
+            ),
+        };
+        let frame_ms = min_cpu.max(min_gpu);
+        println!(
+            "{:>11} {:>11.5} {:>11} {:>6} {:>9.2} {:>9.2} {:>9.2} {:>9.1}",
+            tos,
+            ppu,
+            visible,
+            tag,
+            min_cpu,
+            min_gpu,
+            frame_ms,
+            1000.0 / frame_ms.max(0.001)
+        );
+    }
 }

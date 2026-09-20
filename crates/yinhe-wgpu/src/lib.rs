@@ -28,7 +28,7 @@ pub use automation::{
     build_lane_override, build_lane_shape_override, prepare_arr_automation, prepare_automation,
 };
 pub use pianoroll::{
-    PianorollRenderJob, SUMMARY_BLOCK_TICKS, SUMMARY_MAX_PX, build_all_notes, build_ghost_note,
-    build_key_notes, build_key_summary, build_notes, build_render_job, build_summary,
-    select_summary_level,
+    PianorollRenderJob, SUMMARY_BLOCK_TICKS, SUMMARY_MAX_PX, SUMMARY_MAX_SEGMENTS, build_all_notes,
+    build_ghost_note, build_key_notes, build_key_summary, build_notes, build_render_job,
+    build_summary, select_summary_level,
 };

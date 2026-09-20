@@ -27,13 +27,22 @@ pub(crate) struct BuildResult {
 }
 
 /// 按 `SUMMARY_BLOCK_TICKS` 的每个档位构建摘要。
+/// 段数超过 `SUMMARY_MAX_SEGMENTS` 的档位用空数据占位（不构建、不占用
+/// 显存，渲染时向更细档或原始层回退）。
 pub(crate) fn build_summaries(
     notes: &[NoteInstance],
     offsets: &[u32; KEY_COUNT + 1],
 ) -> Vec<(Vec<NoteInstance>, [u32; KEY_COUNT + 1])> {
     yinhe_wgpu::SUMMARY_BLOCK_TICKS
         .iter()
-        .map(|&block| yinhe_wgpu::build_summary(notes, offsets, block))
+        .map(|&block| {
+            let (summary, summary_offsets) = yinhe_wgpu::build_summary(notes, offsets, block);
+            if summary.len() > yinhe_wgpu::SUMMARY_MAX_SEGMENTS {
+                (Vec::new(), [0u32; KEY_COUNT + 1])
+            } else {
+                (summary, summary_offsets)
+            }
+        })
         .collect()
 }
 

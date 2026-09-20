@@ -949,14 +949,18 @@ impl CullState {
             for key in 0u8..=MAX_KEY {
                 let start = offsets[key as usize] as usize;
                 let end = offsets[key as usize + 1] as usize;
-                level.upload_key(
+                if let Err(e) = level.upload_key(
                     device,
                     queue,
                     &shared,
                     &self.budget,
                     key,
                     &notes[start..end],
-                )?;
+                ) {
+                    // 部分上传失败：清空该档，避免新旧数据混用（选择时回退）。
+                    level.clear();
+                    return Err(e);
+                }
             }
         }
         self.notes_dirty = true;
@@ -984,6 +988,11 @@ impl CullState {
         let Some(level_ref) = self.summary_levels.get_mut(level) else {
             return false;
         };
+        if !level_ref.is_ready() {
+            // 该档未启用（全量构建时超段数上限被跳过）：无操作视为成功，
+            // 渲染会回退到更细档或原始层。
+            return true;
+        }
         match level_ref.upload_key(device, queue, &shared, &self.budget, key, notes) {
             Ok(()) => {
                 self.notes_dirty = true;

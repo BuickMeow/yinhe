@@ -15,12 +15,22 @@ use rayon::prelude::*;
 use yinhe_types::KEY_COUNT;
 
 use crate::vertex::NoteInstance;
-
-/// 摘要档位（tick 块宽），由大到小。64K tick ≈ 全曲视图下的 1~2 px。
-pub const SUMMARY_BLOCK_TICKS: [u32; 3] = [65536, 16384, 4096];
+/// 摘要档位（tick 块宽），由大到小。覆盖范围：
+/// - 超长曲全曲视图（总长上亿 tick）用 262144/65536；
+/// - 短而极密的曲子（ReptilianDarkRitual：51 万 tick / 4000 万音符）
+///   在 ppu 0.003~0.06 的连续缩放区间内需要 32~256 档才能让块宽 ≤ 2px，
+///   否则中等缩放级别会退回原始层（可见 500 万+ 音符，掉到 19 FPS）；
+/// - 更细的档位（16 以下）段数会超 `SUMMARY_MAX_SEGMENTS`，由上限保护跳过。
+pub const SUMMARY_BLOCK_TICKS: [u32; 9] = [262144, 65536, 16384, 4096, 1024, 256, 128, 64, 32];
 
 /// 摘要块在屏幕上的最大像素宽。块内空隙 ≤ 该宽度时被合并不可见。
 pub const SUMMARY_MAX_PX: f32 = 2.0;
+
+/// 单个档位的段数上限（约 48MB/档）。超过则该档不构建（选择时向更细档
+/// 或原始层回退），避免超长曲的小块档位把显存撑爆。
+/// 段数与总 tick 成正比、与音符数无关：总长 5e7 tick 时 256 档就有
+/// 2500 万段，必须设上限；而短曲（几十万 tick）所有档位都在上限内。
+pub const SUMMARY_MAX_SEGMENTS: usize = 4_000_000;
 
 /// 根据 ppu 选择摘要档位索引（`None` = 用原始音符层）。
 ///
@@ -122,15 +132,18 @@ mod tests {
 
     #[test]
     fn select_level_by_pixels() {
-        // 全曲视图：64K 块 ≈ 2px → 选最大档。
-        assert_eq!(select_summary_level(3e-5), Some(0));
-        assert_eq!(select_summary_level(2.0 / 65536.0), Some(0));
-        // 略大：64K 块 > 2px → 选 16K 档。
-        assert_eq!(select_summary_level(3.0 / 65536.0), Some(1));
-        // 16K 块 > 2px → 选 4K 档。
-        assert_eq!(select_summary_level(3.0 / 16384.0), Some(2));
-        // 4K 块 > 2px → 原始层。
-        assert_eq!(select_summary_level(3.0 / 4096.0), None);
+        // 超长曲全曲视图：最大档 262144 块 ≈ 2px 才够，否则选小一档。
+        assert_eq!(select_summary_level(2.0 / 262144.0), Some(0));
+        assert_eq!(select_summary_level(3.0 / 262144.0), Some(1));
+        // 短密曲全曲视图（ppu≈2e-3）：4096 档块宽 8px 太大，256 档 0.5px。
+        assert_eq!(select_summary_level(2.0e-3), Some(5));
+        assert_eq!(select_summary_level(1.0 / 1024.0), Some(4));
+        assert_eq!(select_summary_level(3.0 / 1024.0), Some(5));
+        // 中等缩放：256 块 > 2px 时依次下探 128 / 32。
+        assert_eq!(select_summary_level(3.0 / 256.0), Some(6));
+        assert_eq!(select_summary_level(0.05), Some(8));
+        // 32 块 > 2px → 原始层（此时可见音符数已不大）。
+        assert_eq!(select_summary_level(0.1), None);
         assert_eq!(select_summary_level(1.0), None);
         assert_eq!(select_summary_level(0.0), None);
     }
