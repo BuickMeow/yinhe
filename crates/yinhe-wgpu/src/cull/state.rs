@@ -1025,10 +1025,11 @@ impl CullState {
         {
             return false;
         }
-        let Some(summary) = self.summary_levels.get(level) else {
+        let Some(summary) = self.summary_levels.get_mut(level) else {
             return false;
         };
-        summary.write_dispatch_info(queue, &self.dispatch_args_buffer);
+        let (tick_start, tick_end) = visible_tick_range(uniforms);
+        summary.write_dispatch_info(queue, &self.dispatch_args_buffer, tick_start, tick_end);
 
         let mut cull_pass = encoder.begin_compute_pass(&ComputePassDescriptor {
             label: Some("summary_cull"),
@@ -1039,7 +1040,7 @@ impl CullState {
             let Some(bg) = &summary.per_key_bind_groups[key as usize] else {
                 continue;
             };
-            if summary.per_key_chunks[key as usize] == 0 {
+            if summary.frame_chunks[key as usize] == 0 {
                 continue;
             }
             cull_pass.set_bind_group(0, bg, &[]);
@@ -1078,7 +1079,7 @@ impl CullState {
             let Some(args_buf) = &summary.per_key_draw_args_buffers[key as usize] else {
                 continue;
             };
-            let chunk_count = summary.per_key_chunks[key as usize];
+            let chunk_count = summary.frame_chunks[key as usize];
             if chunk_count == 0 {
                 continue;
             }

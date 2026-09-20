@@ -13,6 +13,8 @@ use yinhe_types::KEY_COUNT;
 use crate::resource::{GpuBudget, GpuBudgetError, TrackedBuffer};
 use crate::vertex::NoteInstance;
 
+use super::KeyBucketIndex;
+
 /// CullState 与摘要层共享的 GPU 资源。
 pub(crate) struct CullShared<'a> {
     pub uniform_buffer: &'a Buffer,
@@ -33,7 +35,13 @@ pub(crate) struct SummaryLevel {
     pub(crate) per_key_bind_groups: Vec<Option<BindGroup>>,
     pub(crate) per_key_all_bind_groups: Vec<Option<BindGroup>>,
     pub(crate) per_key_counts: [u32; KEY_COUNT],
+    /// 每 key 的总 chunk 数（buffer 容量单位）。
     pub(crate) per_key_chunks: [u32; KEY_COUNT],
+    /// 本帧实际 dispatch 的 chunk 数（桶索引裁剪后），draw 的 multi_draw
+    /// count 用它；args 每帧从 0 开始写。
+    pub(crate) frame_chunks: [u32; KEY_COUNT],
+    /// 每 key 的 tick 桶索引：只 dispatch 与视口相交的 chunk（与原始层同款）。
+    pub(crate) bucket_indexes: Vec<Option<KeyBucketIndex>>,
 }
 
 impl SummaryLevel {
@@ -46,6 +54,8 @@ impl SummaryLevel {
             per_key_all_bind_groups: (0..KEY_COUNT).map(|_| None).collect(),
             per_key_counts: [0; KEY_COUNT],
             per_key_chunks: [0; KEY_COUNT],
+            frame_chunks: [0; KEY_COUNT],
+            bucket_indexes: (0..KEY_COUNT).map(|_| None).collect(),
         }
     }
 
@@ -67,6 +77,8 @@ impl SummaryLevel {
         self.per_key_all_bind_groups.fill(None);
         self.per_key_counts.fill(0);
         self.per_key_chunks.fill(0);
+        self.frame_chunks.fill(0);
+        self.bucket_indexes.fill(None);
     }
 
     /// 上传单 key 的摘要段（空则释放该 key 的资源）。
@@ -92,6 +104,8 @@ impl SummaryLevel {
             self.per_key_all_bind_groups[key as usize] = None;
             self.per_key_counts[key as usize] = 0;
             self.per_key_chunks[key as usize] = 0;
+            self.frame_chunks[key as usize] = 0;
+            self.bucket_indexes[key as usize] = None;
             return Ok(());
         }
 
@@ -165,6 +179,7 @@ impl SummaryLevel {
         }
         self.per_key_counts[key as usize] = notes.len() as u32;
         self.per_key_chunks[key as usize] = chunk_total as u32;
+        self.bucket_indexes[key as usize] = Some(KeyBucketIndex::build(notes));
         Ok(())
     }
 
@@ -224,27 +239,35 @@ impl SummaryLevel {
             }));
     }
 
-    /// 把本层所有 key 的 dispatch 参数（全量 chunk，c_lo=0）写入共享
-    /// dispatch args buffer。
-    pub(crate) fn write_dispatch_info(&self, queue: &Queue, dispatch_args: &TrackedBuffer) {
+    /// 把本帧各 key 的 dispatch 参数写入共享 dispatch args buffer。
+    ///
+    /// 用 tick 桶索引把 dispatch 限制在视口相交的 chunk（与原始层同款）：
+    /// 细档（2/4/8）全量段数可达千万，逐帧全量 dispatch 的 compute 成本
+    /// 会让放大到局部时反而比原始层慢。`tick_start/tick_end` 由调用方用
+    /// `visible_tick_range(uniforms)` 计算。
+    pub(crate) fn write_dispatch_info(
+        &mut self,
+        queue: &Queue,
+        dispatch_args: &TrackedBuffer,
+        tick_start: u32,
+        tick_end: u32,
+    ) {
         let mut info = [0u32; KEY_COUNT * 64];
-        let mut dispatched = 0u32;
         for key in 0..KEY_COUNT {
             let slot = key * 64;
-            let chunks = self.per_key_chunks[key];
-            if chunks == 0 {
-                continue;
-            }
+            let (c_lo, c_hi) = self.bucket_indexes[key]
+                .as_ref()
+                .and_then(|idx| idx.visible_chunk_range(tick_start, tick_end))
+                .unwrap_or((0, 0));
+            let chunks = c_hi - c_lo;
+            self.frame_chunks[key] = chunks;
             info[slot] = chunks.min(65535);
             info[slot + 1] = chunks.div_ceil(65535);
             info[slot + 2] = 1;
             info[slot + 3] = self.per_key_counts[key];
-            info[slot + 4] = 0; // c_lo = 0：摘要层无桶索引，全量 dispatch
-            dispatched += 1;
+            info[slot + 4] = c_lo;
         }
-        if dispatched > 0 {
-            queue.write_buffer(dispatch_args, 0, bytemuck::cast_slice(&info));
-        }
+        queue.write_buffer(dispatch_args, 0, bytemuck::cast_slice(&info));
     }
 }
 

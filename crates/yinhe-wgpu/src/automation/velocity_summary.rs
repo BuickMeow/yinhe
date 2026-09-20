@@ -198,11 +198,12 @@ mod tests {
         assert_eq!(s.level(level)[0].velocity, 60);
     }
 
-    /// 全曲视图 ppu 很小时能选到档位。
+    /// 全曲视图 ppu 很小时能选到档位；1px ≥ 1 tick 前都走摘要。
     #[test]
     fn level_selected_for_small_ppu() {
         let s = build(vec![make(0, 100, 0)]);
         assert!(s.level_for_ppu(2.0e-3).is_some());
-        assert!(s.level_for_ppu(1.0).is_none(), "放大后走原始路径");
+        assert!(s.level_for_ppu(1.0).is_some(), "ppu=1（1px=1tick）仍走摘要");
+        assert!(s.level_for_ppu(2.5).is_none(), "1px < 1 tick 才回原始路径");
     }
 }

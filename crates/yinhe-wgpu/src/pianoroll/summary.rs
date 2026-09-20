@@ -15,23 +15,23 @@ use rayon::prelude::*;
 use yinhe_types::KEY_COUNT;
 
 use crate::vertex::NoteInstance;
-
 /// 摘要档位（tick 块宽），由大到小。覆盖范围：
 /// - 超长曲全曲视图（总长上亿 tick）用 262144/65536；
 /// - 短而极密的曲子（ReptilianDarkRitual：51 万 tick / 4000 万音符）
 ///   在 ppu 0.003~0.06 的连续缩放区间内需要 32~256 档才能让块宽 ≤ 2px；
-/// - 16 档把 LOD 分界推进到「1px = 8~16 tick」（ppu ≤ 0.125），
-///   此前该区间走原始层（约百万级可见音符）；
-/// - 更细的档位（8 及以下）段数会超 `SUMMARY_MAX_SEGMENTS`，由上限保护跳过。
-pub const SUMMARY_BLOCK_TICKS: [u32; 10] = [262144, 65536, 16384, 4096, 1024, 256, 128, 64, 32, 16];
+/// - 16/8/4/2 档把 LOD 分界一路推进到 ppu ≤ 1（1px ≥ 1 tick），
+///   密曲在较大缩放下也走摘要（块内最多合并 2 tick 的空隙）。
+/// - 更细的档位（1 及以下）没有意义：此时原始层每音符本来就有像素级宽度。
+pub const SUMMARY_BLOCK_TICKS: [u32; 13] = [
+    262144, 65536, 16384, 4096, 1024, 256, 128, 64, 32, 16, 8, 4, 2,
+];
 /// 摘要块在屏幕上的最大像素宽。块内空隙 ≤ 该宽度时被合并不可见。
 pub const SUMMARY_MAX_PX: f32 = 2.0;
 
-/// 单个档位的段数上限（约 48MB/档）。超过则该档不构建（选择时向更细档
-/// 或原始层回退），避免超长曲的小块档位把显存撑爆。
-/// 段数与总 tick 成正比、与音符数无关：总长 5e7 tick 时 256 档就有
-/// 2500 万段，必须设上限；而短曲（几十万 tick）所有档位都在上限内。
-pub const SUMMARY_MAX_SEGMENTS: usize = 4_000_000;
+/// 单个档位的段数上限（约 192MB/档）。超过则该档不构建（选择时向更细档
+/// 或原始层回退）。段数与总 tick 成正比、与音符数无关：4/2 这类细档只对
+/// 「短而极密」的曲子有意义；长曲上细档段数可达上亿，必须设上限。
+pub const SUMMARY_MAX_SEGMENTS: usize = 16_000_000;
 
 /// 根据 ppu 选择摘要档位索引（`None` = 用原始音符层）。
 ///
@@ -157,11 +157,15 @@ mod tests {
         // 中等缩放：256 块 > 2px 时依次下探 128 / 32 / 16。
         assert_eq!(select_summary_level(3.0 / 256.0), Some(6));
         assert_eq!(select_summary_level(0.05), Some(8));
-        // 16 档（L9）：1px = 8~16 tick 区间；ppu > 0.125 回原始层。
+        // 16/8/4/2 档：分界一路到 ppu ≤ 1（1px ≥ 1 tick）。
         assert_eq!(select_summary_level(0.1), Some(9));
         assert_eq!(select_summary_level(0.125), Some(9));
-        assert_eq!(select_summary_level(0.2), None);
-        assert_eq!(select_summary_level(1.0), None);
+        assert_eq!(select_summary_level(0.2), Some(10));
+        assert_eq!(select_summary_level(0.5), Some(11));
+        assert_eq!(select_summary_level(0.9), Some(12));
+        assert_eq!(select_summary_level(1.0), Some(12));
+        // 1px < 1 tick（ppu > 2）才回原始层。
+        assert_eq!(select_summary_level(2.5), None);
         assert_eq!(select_summary_level(0.0), None);
     }
 
