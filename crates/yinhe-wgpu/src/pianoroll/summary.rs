@@ -15,14 +15,15 @@ use rayon::prelude::*;
 use yinhe_types::KEY_COUNT;
 
 use crate::vertex::NoteInstance;
+
 /// 摘要档位（tick 块宽），由大到小。覆盖范围：
 /// - 超长曲全曲视图（总长上亿 tick）用 262144/65536；
 /// - 短而极密的曲子（ReptilianDarkRitual：51 万 tick / 4000 万音符）
-///   在 ppu 0.003~0.06 的连续缩放区间内需要 32~256 档才能让块宽 ≤ 2px，
-///   否则中等缩放级别会退回原始层（可见 500 万+ 音符，掉到 19 FPS）；
-/// - 更细的档位（16 以下）段数会超 `SUMMARY_MAX_SEGMENTS`，由上限保护跳过。
-pub const SUMMARY_BLOCK_TICKS: [u32; 9] = [262144, 65536, 16384, 4096, 1024, 256, 128, 64, 32];
-
+///   在 ppu 0.003~0.06 的连续缩放区间内需要 32~256 档才能让块宽 ≤ 2px；
+/// - 16 档把 LOD 分界推进到「1px = 8~16 tick」（ppu ≤ 0.125），
+///   此前该区间走原始层（约百万级可见音符）；
+/// - 更细的档位（8 及以下）段数会超 `SUMMARY_MAX_SEGMENTS`，由上限保护跳过。
+pub const SUMMARY_BLOCK_TICKS: [u32; 10] = [262144, 65536, 16384, 4096, 1024, 256, 128, 64, 32, 16];
 /// 摘要块在屏幕上的最大像素宽。块内空隙 ≤ 该宽度时被合并不可见。
 pub const SUMMARY_MAX_PX: f32 = 2.0;
 
@@ -92,19 +93,33 @@ pub fn build_key_summary(key: u8, notes: &[NoteInstance], block_ticks: u32) -> V
 }
 
 /// 全量构建：`offsets` 把 `notes` 切成 per-key 段，逐 key 聚合。
+///
+/// 总段数超过 `SUMMARY_MAX_SEGMENTS` 时返回空（该档不构建，渲染回退）。
+/// 累计计数在并行构建中检查，超限后剩余 key 直接跳过（早停）。
 pub fn build_summary(
     notes: &[NoteInstance],
     offsets: &[u32; KEY_COUNT + 1],
     block_ticks: u32,
 ) -> (Vec<NoteInstance>, [u32; KEY_COUNT + 1]) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let total = AtomicUsize::new(0);
     let buckets: Vec<Vec<NoteInstance>> = (0..KEY_COUNT)
         .into_par_iter()
         .map(|key| {
+            if total.load(Ordering::Relaxed) > SUMMARY_MAX_SEGMENTS {
+                return Vec::new();
+            }
             let start = offsets[key] as usize;
             let end = offsets[key + 1] as usize;
-            build_key_summary(key as u8, &notes[start..end], block_ticks)
+            let bucket = build_key_summary(key as u8, &notes[start..end], block_ticks);
+            total.fetch_add(bucket.len(), Ordering::Relaxed);
+            bucket
         })
         .collect();
+
+    if total.load(Ordering::Relaxed) > SUMMARY_MAX_SEGMENTS {
+        return (Vec::new(), [0u32; KEY_COUNT + 1]);
+    }
 
     let mut summary_offsets = [0u32; KEY_COUNT + 1];
     let mut summary = Vec::new();
@@ -139,11 +154,13 @@ mod tests {
         assert_eq!(select_summary_level(2.0e-3), Some(5));
         assert_eq!(select_summary_level(1.0 / 1024.0), Some(4));
         assert_eq!(select_summary_level(3.0 / 1024.0), Some(5));
-        // 中等缩放：256 块 > 2px 时依次下探 128 / 32。
+        // 中等缩放：256 块 > 2px 时依次下探 128 / 32 / 16。
         assert_eq!(select_summary_level(3.0 / 256.0), Some(6));
         assert_eq!(select_summary_level(0.05), Some(8));
-        // 32 块 > 2px → 原始层（此时可见音符数已不大）。
-        assert_eq!(select_summary_level(0.1), None);
+        // 16 档（L9）：1px = 8~16 tick 区间；ppu > 0.125 回原始层。
+        assert_eq!(select_summary_level(0.1), Some(9));
+        assert_eq!(select_summary_level(0.125), Some(9));
+        assert_eq!(select_summary_level(0.2), None);
         assert_eq!(select_summary_level(1.0), None);
         assert_eq!(select_summary_level(0.0), None);
     }

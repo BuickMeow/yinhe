@@ -595,7 +595,7 @@ fn bench_real_midi() {
         "\n{:>11} {:>11} {:>11} {:>6} {:>9} {:>9} {:>9} {:>9}",
         "屏上tick", "ppu", "实例/段", "层", "CPU/ms", "GPU/ms", "帧/ms", "FPS"
     );
-    for &div in &[1u32, 4, 16, 64, 256, 1024, 4096, 16384] {
+    for &div in &[1u32, 4, 16, 32, 64, 256, 1024, 4096, 16384] {
         let tos = (total_ticks / u64::from(div)).max(64);
         let ppu = main_w / tos as f32;
         let scroll_x = ((total_ticks as f32 * ppu - main_w) / 2.0).max(0.0);
@@ -675,7 +675,7 @@ fn bench_real_midi() {
         "{:>11} {:>11} {:>11} {:>6} {:>10}",
         "屏上tick", "ppu", "bars", "档", "构建/ms"
     );
-    for &div in &[1u32, 4, 16, 64, 256, 1024] {
+    for &div in &[1u32, 4, 16, 32, 64, 256, 1024] {
         let tos = (total_ticks / u64::from(div)).max(64);
         let ppu = main_w / tos as f32;
         let scroll_x = ((total_ticks as f32 * ppu - main_w) / 2.0).max(0.0);
