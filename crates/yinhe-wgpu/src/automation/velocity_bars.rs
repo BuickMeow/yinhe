@@ -39,22 +39,20 @@ pub fn build_velocity_bars(
     let (tick_start, tick_end) = view.base.visible_tick_range(w);
 
     // LOD：ppu 很小（块宽 ≤ SUMMARY_MAX_PX）时从预计算摘要切片，
-    // 每块最多一条 bar（块内最大 velocity）。数据量与音符数无关，
-    // 避免逐音符构建 + 全局排序去重的数百 ms/帧。
+    // 每块一条 bar = 该块「gate 最长音符」的真实区间（长度仍指示 gate）。
     if let Some(summary) = summary
         && let Some(level) = summary.level_for_ppu(view.base.pixels_per_tick)
     {
-        let block_ticks = crate::pianoroll::SUMMARY_BLOCK_TICKS[level];
         for b in summary.level(level) {
             if f64::from(b.start_tick) > tick_end {
                 break;
             }
-            if f64::from(b.start_tick + block_ticks) <= tick_start {
+            if f64::from(b.end_tick) <= tick_start {
                 continue;
             }
             out.push(VelocityBarInstance {
                 tick: b.start_tick,
-                length: block_ticks,
+                length: b.end_tick.saturating_sub(b.start_tick),
                 packed: VelocityBarInstance::pack(b.track, b.velocity),
                 reserved: 0,
             });

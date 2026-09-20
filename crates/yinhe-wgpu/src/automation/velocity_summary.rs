@@ -1,9 +1,10 @@
-//! AM 力度条的 LOD 摘要：按 tick 块聚合「块内最大 velocity + 代表 track」。
+//! AM 力度条的 LOD 摘要：按 tick 块聚合「块内 gate 最长的音符」。
 //!
 //! 缩小时同一条像素列有海量力度条，逐音符构建（读 + 全局排序 + 去重）会到
 //! 数百 ms/帧（ReptilianDarkRitual 全曲 1.6s/帧、常规滚动视口 434ms/帧）。
 //! 摘要把数据量压到「块数」（与音符数无关）：缩小时直接从摘要切片生成 bar，
-//! 每块最多一条（取块内最大 velocity，保证强音可见）。
+//! 每块一条 = 块内最长音符的真实区间——bar 宽度仍指示音符 gate（长音符是
+//! 长条，短音符是细条），高度/颜色取该音符自身的 velocity/track。
 //!
 //! 档位复用 `pianoroll` 的 `SUMMARY_BLOCK_TICKS` / `SUMMARY_MAX_PX`：
 //! 块宽 ≤ 2px 时启用；更细的档位由 `SUMMARY_MAX_SEGMENTS` 上限保护。
@@ -14,13 +15,18 @@ use yinhe_types::{MAX_KEY, NoteSource};
 use crate::pianoroll::{SUMMARY_BLOCK_TICKS, SUMMARY_MAX_SEGMENTS, select_summary_level};
 
 /// 摘要中的一个块（tick 升序存放）。
+///
+/// 代表音符 = 块内 gate 最长的音符（gate 相同取 velocity 大者）：
+/// 缩小时长音符仍显示为真实长度的长条，短音符为细条——保留「bar 宽度
+/// 指示音符长度」的语义（若只按最大 velocity 取代表，bar 宽度会退化成
+/// 固定块宽，失去长度信息）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VelocityBlock {
-    /// 块起点 tick（= block_index * block_ticks）。
+    /// 代表音符的起点 tick。
     pub start_tick: u32,
-    /// 块内最大 velocity（构建时已过滤 ≤1）。
+    /// 代表音符的终点 tick（bar 长度 = end - start）。
+    pub end_tick: u32,
     pub velocity: u8,
-    /// 取到最大 velocity 的代表 track。
     pub track: u16,
 }
 
@@ -45,7 +51,13 @@ impl VelocitySummary {
             .par_iter()
             .map(|&block_ticks| {
                 let nblocks = (total_ticks / block_ticks + 1) as usize;
-                let mut best = vec![0u32; nblocks];
+                // 段数 ≤ 块数：块数已超上限时该档必不构建（也避免分配大数组）。
+                if nblocks > SUMMARY_MAX_SEGMENTS {
+                    return Vec::new();
+                }
+                // 每块 [start, end, packed]；packed == 0 表示空块。
+                // 维护块内 gate 最长的音符（gate 相同取 packed 大者）。
+                let mut best = vec![[0u32; 3]; nblocks];
                 for key in 0u8..=MAX_KEY {
                     for note in midi.key_notes(key).iter() {
                         if note.velocity <= 1 {
@@ -60,27 +72,30 @@ impl VelocitySummary {
                         }
                         let idx = (note.start_tick / block_ticks) as usize;
                         let packed = (u32::from(note.velocity) << 16) | u32::from(note.track);
-                        if packed > best[idx] {
-                            best[idx] = packed;
+                        let gate = note.end_tick.saturating_sub(note.start_tick);
+                        let cur = &mut best[idx];
+                        let cur_gate = if cur[2] != 0 {
+                            cur[1].saturating_sub(cur[0])
+                        } else {
+                            0
+                        };
+                        if cur[2] == 0 || gate > cur_gate || (gate == cur_gate && packed > cur[2]) {
+                            *cur = [note.start_tick, note.end_tick, packed];
                         }
                     }
                 }
                 let mut out = Vec::new();
-                for (i, packed) in best.into_iter().enumerate() {
-                    if packed != 0 {
+                for a in best {
+                    if a[2] != 0 {
                         out.push(VelocityBlock {
-                            start_tick: i as u32 * block_ticks,
-                            velocity: (packed >> 16) as u8,
-                            track: packed as u16,
+                            start_tick: a[0],
+                            end_tick: a[1],
+                            velocity: (a[2] >> 16) as u8,
+                            track: a[2] as u16,
                         });
                     }
                 }
-                // 段数超上限：该档不构建（渲染向更细档/原始层回退）。
-                if out.len() > SUMMARY_MAX_SEGMENTS {
-                    Vec::new()
-                } else {
-                    out
-                }
+                out
             })
             .collect();
         Self { levels }
@@ -138,6 +153,16 @@ mod tests {
         }
     }
 
+    fn make_gate(tick: u32, gate: u32, vel: u8, track: u16) -> Note {
+        Note {
+            id: 0,
+            start_tick: tick,
+            end_tick: tick + gate,
+            velocity: vel,
+            track,
+        }
+    }
+
     fn build(notes: Vec<Note>) -> VelocitySummary {
         let mut notes = notes;
         notes.sort_by_key(|n| n.start_tick);
@@ -149,24 +174,46 @@ mod tests {
         )
     }
 
-    /// 输出必须跨 key 聚合且按 tick 升序（块索引升序）。
+    /// 每块取 gate 最长的音符为代表（gate 相同取 velocity 大者），
+    /// bar 保留代表音符的真实区间（长度指示 gate）。
     #[test]
-    fn blocks_are_sorted_and_take_max_velocity() {
+    fn blocks_take_longest_note_with_real_gate() {
         let s = build(vec![
             make(0, 50, 0),
-            make(100, 90, 1), // 同一 block 内（ppu=0.005 → block=256）
+            make(100, 90, 1), // 同一 block 内（ppu=0.005 → block=256），同 gate 取 vel 大者
             make(300, 70, 2), // 下一块
         ]);
         let level = s.level_for_ppu(0.005).expect("应触发摘要档");
         let blocks = s.level(level);
-        let block_ticks = SUMMARY_BLOCK_TICKS[level];
-        assert_eq!(block_ticks, 256);
+        assert_eq!(SUMMARY_BLOCK_TICKS[level], 256);
         assert_eq!(blocks.len(), 2);
-        assert_eq!(blocks[0].start_tick, 0);
-        assert_eq!(blocks[0].velocity, 90, "取块内最大 velocity");
+        // 代表音符是 tick=100 的那个（gate 同为 10，velocity 更大）。
+        assert_eq!((blocks[0].start_tick, blocks[0].end_tick), (100, 110));
+        assert_eq!(blocks[0].velocity, 90);
         assert_eq!(blocks[0].track, 1);
-        assert_eq!(blocks[1].start_tick, 256);
+        // 第二块的代表音符不从块边界开始，而是音符真实起点。
+        assert_eq!((blocks[1].start_tick, blocks[1].end_tick), (300, 310));
         assert_eq!(blocks[1].velocity, 70);
+        assert!(
+            blocks[0].start_tick < blocks[1].start_tick,
+            "输出按 tick 升序"
+        );
+    }
+
+    /// 长音符优先于短强音：bar 用长音符的真实长度（恢复长度指示），
+    /// 高度/颜色取该代表音符自身的值。
+    #[test]
+    fn longest_note_beats_short_loud_note() {
+        let s = build(vec![
+            make_gate(10, 5, 120, 0),  // 短强音
+            make_gate(20, 200, 40, 1), // 长弱音
+        ]);
+        let level = s.level_for_ppu(0.005).expect("摘要档");
+        let blocks = s.level(level);
+        assert_eq!(blocks.len(), 1, "同一块只输出一个代表");
+        assert_eq!((blocks[0].start_tick, blocks[0].end_tick), (20, 220));
+        assert_eq!(blocks[0].velocity, 40);
+        assert_eq!(blocks[0].track, 1);
     }
 
     /// velocity ≤ 1 与隐藏轨道不参与摘要（与渲染过滤一致）→ 无可用档位。
