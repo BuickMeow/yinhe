@@ -348,13 +348,13 @@ pub fn show(
                                 icon_hint = Some(t!("hint.mem").to_string());
                             }
                             ui.add_space(12.0);
-                            metric(ui, "FPS", &format!("{:.1}", fps));
-                            ui.add_space(12.0);
                             let lod_text = match lod_block {
                                 Some(block) => format!("{block}"),
-                                None => "原".to_string(),
+                                None => "0".to_string(),
                             };
                             metric_clickable(ui, "LOD", &lod_text, || {});
+                            ui.add_space(12.0);
+                            metric(ui, "FPS", &format!("{:.1}", fps));
                         });
 
                         icon_hint
