@@ -314,7 +314,7 @@ pub(super) fn paint_drag_overlay(
         return;
     }
 
-    // ── 排序态：插入竖线 + 跟随 ghost ──
+    // ── 排序态：插入竖线 ──
     let tmp = crate::widgets::reorder::DragReorder {
         indices: vec![drag.from],
         insert_idx: drag.insert_idx,
@@ -327,34 +327,6 @@ pub(super) fn paint_drag_overlay(
         painter.line_segment(
             [egui::pos2(x_clamped, y1), egui::pos2(x_clamped, y2)],
             egui::Stroke::new(2.5, crate::theme::accent_active()),
-        );
-        // 顶部小圆点装饰
-        painter.circle_filled(
-            egui::pos2(x_clamped, y1),
-            3.0,
-            crate::theme::accent_active(),
-        );
-        painter.circle_filled(
-            egui::pos2(x_clamped, y2),
-            3.0,
-            crate::theme::accent_active(),
-        );
-    }
-    // 跟随指针的半透明 ghost（轻量）
-    if let Some(cur) = pointer_pos {
-        let ghost_rect = egui::Rect::from_center_size(cur, egui::vec2(m.tab_w * 0.92, m.tab_h));
-        let name = documents[drag.from].file_name.as_str();
-        painter.rect_filled(
-            ghost_rect,
-            4.0,
-            tint(crate::theme::control_selected_bg(), 0.55),
-        );
-        painter.text(
-            ghost_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            name,
-            font_id.clone(),
-            tint(crate::theme::text_primary(), 0.55),
         );
     }
 }
