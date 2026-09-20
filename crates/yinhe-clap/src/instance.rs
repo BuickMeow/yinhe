@@ -422,6 +422,31 @@ impl ClapPluginInstance {
         self.gui_created = false;
     }
 
+    /// 插件 GUI 是否允许宿主/用户调整尺寸（CLAP `gui.can_resize`）。
+    /// 需在 `create_gui` 之后调用。
+    pub fn gui_can_resize(&mut self) -> bool {
+        use clack_extensions::gui::PluginGui;
+        let mut handle = self.instance.plugin_handle();
+        handle
+            .get_extension::<PluginGui>()
+            .is_some_and(|gui| gui.can_resize(&mut handle))
+    }
+
+    /// 把宿主给出的新尺寸交给插件（`gui.adjust_size` 取插件接受的最接近值，
+    /// 再 `gui.set_size` 应用）。用户在宿主窗口拖动缩放时调用。
+    pub fn gui_set_size(&mut self, width: u32, height: u32) -> (u32, u32) {
+        use clack_extensions::gui::{GuiSize, PluginGui};
+        let mut handle = self.instance.plugin_handle();
+        let Some(gui) = handle.get_extension::<PluginGui>() else {
+            return (width, height);
+        };
+        let requested = GuiSize { width, height };
+        // adjust_size 返回 ≤ 请求值的合法尺寸；插件未实现时 None（按请求值走）。
+        let adjusted = gui.adjust_size(&mut handle, requested).unwrap_or(requested);
+        let _ = gui.set_size(&mut handle, adjusted);
+        (adjusted.width, adjusted.height)
+    }
+
     /// 插件侧报告过窗口关闭（取出即清除）。
     pub fn take_gui_closed(&mut self) -> bool {
         self.instance

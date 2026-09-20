@@ -102,28 +102,33 @@ impl InstrumentRack {
             return Ok(false);
         }
         // 打开：创建插件 view + 宿主窗口 + 嵌入。
-        let (name, size_result): (String, Result<(u32, u32), String>) = match rt.instance.as_mut() {
-            Some(PluginInstance::Clap(inst)) => (
-                inst.info().name.clone(),
-                inst.create_gui().map_err(|e| format!("{e}")),
-            ),
-            Some(PluginInstance::Vst3 { instance, name, .. }) => (
-                name.clone(),
-                instance.create_view().map_err(|e| format!("{e}")),
-            ),
-            Some(PluginInstance::Builtin { .. }) => {
-                return Err(PluginLoadError(
-                    "内置效果器不是乐器，无法打开乐器界面".into(),
-                ));
-            }
-            None => return Err(PluginLoadError("插件未加载成功，无法打开界面".into())),
-        };
+        // resizable = 插件能力（CLAP can_resize / VST3 canResize）：不支持时
+        // 窗口去掉缩放样式，避免拖大后插件 GUI 不跟随、露出空白背景。
+        let (name, size_result, resizable): (String, Result<(u32, u32), String>, bool) =
+            match rt.instance.as_mut() {
+                Some(PluginInstance::Clap(inst)) => {
+                    let result = inst.create_gui().map_err(|e| format!("{e}"));
+                    let can_resize = result.is_ok() && inst.gui_can_resize();
+                    (inst.info().name.clone(), result, can_resize)
+                }
+                Some(PluginInstance::Vst3 { instance, name, .. }) => {
+                    let result = instance.create_view().map_err(|e| format!("{e}"));
+                    let can_resize = result.is_ok() && instance.view_can_resize();
+                    (name.clone(), result, can_resize)
+                }
+                Some(PluginInstance::Builtin { .. }) => {
+                    return Err(PluginLoadError(
+                        "内置效果器不是乐器，无法打开乐器界面".into(),
+                    ));
+                }
+                None => return Err(PluginLoadError("插件未加载成功，无法打开界面".into())),
+            };
         let (w, h) = size_result.map_err(|e| {
             tracing::warn!("乐器界面创建失败 ({name}): {e}");
             PluginLoadError(e)
         })?;
-        tracing::info!("乐器界面创建中: {name} {w}x{h}");
-        let Some(win) = super::gui_window::PluginGuiWindow::new(&name, w, h) else {
+        tracing::info!("乐器界面创建中: {name} {w}x{h} resizable={resizable}");
+        let Some(win) = super::gui_window::PluginGuiWindow::new(&name, w, h, resizable) else {
             close_plugin_view(rt);
             tracing::warn!("乐器窗口创建失败: {name}");
             return Err(PluginLoadError("创建插件窗口失败".into()));
@@ -309,6 +314,15 @@ impl InstrumentRack {
         let mut param_changes: Vec<(u8, u32, f64)> = Vec::new();
         let mut editing_now: Vec<(u8, bool)> = Vec::new();
         for rt in self.slots.iter_mut() {
+            // 插件原生 GUI 轮询（主题同步 / 用户缩放 / 插件改尺寸 / 关窗）。
+            #[cfg(target_os = "macos")]
+            if rt.gui_open
+                && !super::gui_window::poll_plugin_gui(rt.instance.as_mut(), &mut rt.gui_window)
+            {
+                close_plugin_view(rt);
+                rt.gui_window = None;
+                rt.gui_open = false;
+            }
             let Some(instance) = rt.instance.as_mut() else {
                 continue;
             };

@@ -313,6 +313,33 @@ impl Vst3PluginInstance {
         self.plug_frame = None;
     }
 
+    /// 编辑器是否允许宿主/用户调整尺寸（VST3 `IPlugView::canResize`）。
+    pub fn view_can_resize(&self) -> bool {
+        self.view
+            .as_ref()
+            .is_some_and(|view| unsafe { view.canResize() } == vst3::Steinberg::kResultTrue)
+    }
+
+    /// 插件约束下的合法尺寸（`checkSizeConstraint`）：插件限制宽高比/范围时
+    /// 会修正传入的 rect，宿主应把窗口调整到修正后的尺寸。
+    pub fn adjust_view_size(&self, width: u32, height: u32) -> (u32, u32) {
+        let Some(view) = &self.view else {
+            return (width, height);
+        };
+        let mut rect = ViewRect {
+            left: 0,
+            top: 0,
+            right: width as i32,
+            bottom: height as i32,
+        };
+        if unsafe { view.checkSizeConstraint(&mut rect) } == kResultOk {
+            let w = (rect.right - rect.left).max(1) as u32;
+            let h = (rect.bottom - rect.top).max(1) as u32;
+            return (w, h);
+        }
+        (width, height)
+    }
+
     /// 插件请求的窗口尺寸（取出即清除）。
     pub fn take_view_resize(&self) -> Option<(u32, u32)> {
         self.plug_frame.as_ref().and_then(|f| f.take_resize())

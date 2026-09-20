@@ -295,49 +295,17 @@ impl MixerRack {
                 .all(|rt| rt.instance.is_none() && !rt.sent)
     }
 
-    /// 插件 GUI 状态轮询：插件主动关窗 / 用户关宿主窗口 / 尺寸请求。
+    /// 插件 GUI 状态轮询：插件主动关窗 / 用户关宿主窗口 / 尺寸请求 / 主题同步。
     #[cfg(target_os = "macos")]
     fn poll_gui(rt: &mut SlotRuntime) {
         if !rt.gui_open {
             return;
         }
-        // 用户点了宿主窗口的关闭按钮：关闭插件 GUI。
-        if let Some(win) = rt.gui_window.as_ref()
-            && !win.is_visible()
-        {
+        if !super::gui_window::poll_plugin_gui(rt.instance.as_mut(), &mut rt.gui_window) {
+            // 用户点了宿主窗口的关闭按钮（或插件侧断开）：关闭插件 GUI 并清窗口。
             close_plugin_view(rt);
             rt.gui_window = None;
             rt.gui_open = false;
-            return;
-        }
-        match rt.instance.as_mut() {
-            Some(PluginInstance::Clap(instance)) => {
-                // 插件侧主动断开（closed 回调）：host destroy 确认 + 释放窗口。
-                if instance.take_gui_closed() {
-                    instance.on_gui_closed();
-                    rt.gui_window = None;
-                    rt.gui_open = false;
-                    return;
-                }
-                // 插件请求调整尺寸（如编辑器内部布局变化）。
-                if let Some((w, h)) = instance.take_gui_resize()
-                    && let Some(win) = rt.gui_window.as_ref()
-                {
-                    win.set_content_size(w, h);
-                }
-            }
-            Some(PluginInstance::Vst3 { instance, .. }) => {
-                // 插件请求调整尺寸：调窗口 + 回调 onSize（VST3 规范）。
-                if let Some((w, h)) = instance.take_view_resize() {
-                    if let Some(win) = rt.gui_window.as_ref() {
-                        win.set_content_size(w, h);
-                    }
-                    instance.notify_view_resize(w, h);
-                }
-            }
-            // 内置效果器无原生 GUI。
-            Some(PluginInstance::Builtin { .. }) => {}
-            None => {}
         }
     }
 
@@ -397,29 +365,34 @@ impl MixerRack {
             return Ok(false);
         }
         // 打开：创建插件 view + 宿主窗口 + 嵌入。
-        let (name, size_result): (String, Result<(u32, u32), String>) = match rt.instance.as_mut() {
-            Some(PluginInstance::Clap(inst)) => (
-                inst.info().name.clone(),
-                inst.create_gui().map_err(|e| format!("{e}")),
-            ),
-            Some(PluginInstance::Vst3 { instance, name, .. }) => (
-                name.clone(),
-                instance.create_view().map_err(|e| format!("{e}")),
-            ),
-            Some(PluginInstance::Builtin { kind, .. }) => {
-                return Err(PluginLoadError(format!(
-                    "内置效果器 {} 没有原生界面（参数由 CC 控制）",
-                    kind.name()
-                )));
-            }
-            None => return Err(PluginLoadError("插件未加载成功，无法打开界面".into())),
-        };
+        // resizable = 插件能力（CLAP can_resize / VST3 canResize）：不支持时
+        // 窗口去掉缩放样式，避免拖大后插件 GUI 不跟随、露出空白背景。
+        let (name, size_result, resizable): (String, Result<(u32, u32), String>, bool) =
+            match rt.instance.as_mut() {
+                Some(PluginInstance::Clap(inst)) => {
+                    let result = inst.create_gui().map_err(|e| format!("{e}"));
+                    let can_resize = result.is_ok() && inst.gui_can_resize();
+                    (inst.info().name.clone(), result, can_resize)
+                }
+                Some(PluginInstance::Vst3 { instance, name, .. }) => {
+                    let result = instance.create_view().map_err(|e| format!("{e}"));
+                    let can_resize = result.is_ok() && instance.view_can_resize();
+                    (name.clone(), result, can_resize)
+                }
+                Some(PluginInstance::Builtin { kind, .. }) => {
+                    return Err(PluginLoadError(format!(
+                        "内置效果器 {} 没有原生界面（参数由 CC 控制）",
+                        kind.name()
+                    )));
+                }
+                None => return Err(PluginLoadError("插件未加载成功，无法打开界面".into())),
+            };
         let (w, h) = size_result.map_err(|e| {
             tracing::warn!("插件界面创建失败 ({name}): {e}");
             PluginLoadError(e)
         })?;
-        tracing::info!("插件界面创建中: {name} {w}x{h}");
-        let Some(win) = super::gui_window::PluginGuiWindow::new(&name, w, h) else {
+        tracing::info!("插件界面创建中: {name} {w}x{h} resizable={resizable}");
+        let Some(win) = super::gui_window::PluginGuiWindow::new(&name, w, h, resizable) else {
             close_plugin_view(rt);
             tracing::warn!("插件窗口创建失败: {name}");
             return Err(PluginLoadError("创建插件窗口失败".into()));
