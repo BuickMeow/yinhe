@@ -239,32 +239,42 @@ pub(crate) fn translate_backend_skip(
     skip
 }
 
-/// xsynth ChannelAudioEvent → yinhe-synth 控制事件（GPU 事件构建与 CPU 分发共用）。
+/// 事件流 `AudioEvent` → yinhe-synth 控制事件（GPU 事件构建与 CPU 分发共用）。
 pub(crate) fn to_backend_control_event(
-    ev: &xsynth_core::channel::ChannelAudioEvent,
+    ev: &crate::audio_model::AudioEvent,
 ) -> Option<yinhe_synth::ControlEvent> {
+    use crate::audio_model::AudioEvent;
     match *ev {
-        xsynth_core::channel::ChannelAudioEvent::Control(ControlEvent::Raw(c, v)) => {
+        AudioEvent::Channel(xsynth_core::channel::ChannelAudioEvent::Control(
+            ControlEvent::Raw(c, v),
+        )) => {
             // 通道级 DSP CC 由 yinhe-dsp 效果器处理，GPU 合成器不再接收。
             if yinhe_dsp::cc::DSP_CHANNEL_CCS.contains(&c) {
                 return None;
             }
             Some(yinhe_synth::ControlEvent::Raw(c, v))
         }
-        xsynth_core::channel::ChannelAudioEvent::Control(ControlEvent::PitchBendValue(v)) => {
-            Some(yinhe_synth::ControlEvent::PitchBend(v))
-        }
-        xsynth_core::channel::ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(v)) => {
-            Some(yinhe_synth::ControlEvent::PitchBendSensitivity(v))
-        }
-        xsynth_core::channel::ChannelAudioEvent::Control(ControlEvent::FineTune(v)) => {
-            Some(yinhe_synth::ControlEvent::FineTune(v))
-        }
-        xsynth_core::channel::ChannelAudioEvent::Control(ControlEvent::CoarseTune(v)) => {
-            Some(yinhe_synth::ControlEvent::CoarseTune(v))
-        }
-        xsynth_core::channel::ChannelAudioEvent::ProgramChange(p) => {
+        AudioEvent::Channel(xsynth_core::channel::ChannelAudioEvent::Control(
+            ControlEvent::PitchBendValue(v),
+        )) => Some(yinhe_synth::ControlEvent::PitchBend(v)),
+        AudioEvent::Channel(xsynth_core::channel::ChannelAudioEvent::Control(
+            ControlEvent::PitchBendSensitivity(v),
+        )) => Some(yinhe_synth::ControlEvent::PitchBendSensitivity(v)),
+        AudioEvent::Channel(xsynth_core::channel::ChannelAudioEvent::Control(
+            ControlEvent::FineTune(v),
+        )) => Some(yinhe_synth::ControlEvent::FineTune(v)),
+        AudioEvent::Channel(xsynth_core::channel::ChannelAudioEvent::Control(
+            ControlEvent::CoarseTune(v),
+        )) => Some(yinhe_synth::ControlEvent::CoarseTune(v)),
+        AudioEvent::Channel(xsynth_core::channel::ChannelAudioEvent::ProgramChange(p)) => {
             Some(yinhe_synth::ControlEvent::ProgramChange(p))
+        }
+        // 原生 RPN/NRPN：yinhe-synth 一等事件（u16 参数号），不拆 CC。
+        AudioEvent::Rpn { parameter, value } => {
+            Some(yinhe_synth::ControlEvent::Rpn { parameter, value })
+        }
+        AudioEvent::Nrpn { parameter, value } => {
+            Some(yinhe_synth::ControlEvent::Nrpn { parameter, value })
         }
         _ => None,
     }

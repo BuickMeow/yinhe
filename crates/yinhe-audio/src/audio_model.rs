@@ -8,6 +8,25 @@ use yinhe_core::YinModel;
 use yinhe_types::automation::{MidiBinding, ParamDevice, binding_max, builtin_param};
 use yinhe_types::{AutomationLane, AutomationTarget, KEY_COUNT, SegmentShape};
 
+/// 播放事件流里的一条通道控制事件。
+///
+/// RPN/NRPN 不再在生成端特化成高层事件或拆 CC 序列：以原生 u16 参数号
+/// 为一等事件，由 dispatch 按后端能力适配（详见各适配函数）：
+/// - yinhe-synth：原生 `ControlEvent::Rpn/Nrpn`（f32 全链路，无量化）；
+/// - XSynth：0/1/2 → 高层 f32 事件，其余 → CC 序列（出口量化）；
+/// - VST/CLAP 插件：标准 CC 序列（101/100/6/38 或 99/98/6/38，出口量化）。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum AudioEvent {
+    /// 直接透传的 xsynth 通道事件（Raw CC / PitchBend / ProgramChange；
+    /// 高层 PBS/FineTune/CoarseTune 仅供历史兼容，事件流不再生成）。
+    Channel(ChannelAudioEvent),
+    /// 原生 RPN：`parameter` u16 参数号，`value` 归一化 f32（0..=1，
+    /// 与自动化 lane 同值域——全链路浮点，出口才按参数值域量化）。
+    Rpn { parameter: u16, value: f32 },
+    /// 原生 NRPN：`parameter` u16 参数号，`value` 归一化 f32。
+    Nrpn { parameter: u16, value: f32 },
+}
+
 pub(crate) struct SortedCC {
     /// 事件时刻（tick 域，u32——模型 NoteEvent/AutomationEvent 的 tick 上限）。
     /// 音频内部统一 tick 域：dispatch/chase 比较不再需要 sample 转换。
@@ -20,7 +39,7 @@ pub(crate) struct SortedCC {
     /// dispatch 时用它查 AM M/S 动态掩码（与 skip_track 并列），
     /// 使旁通切换不再需要重建事件流。
     pub(crate) lane: u16,
-    pub(crate) event: ChannelAudioEvent,
+    pub(crate) event: AudioEvent,
     /// 插件参数事件：`Some` 时 `event` 为占位（不影响 xsynth 路径），
     /// dispatch 走乐器通道的 `PluginEvent::ParamValue`。
     pub(crate) plugin_param: Option<PluginParamEvent>,
@@ -394,7 +413,10 @@ pub(crate) fn push_program_change(
             track,
             lane: PC_LANE,
             plugin_param: None,
-            event: ChannelAudioEvent::Control(ControlEvent::Raw(0, pc.bank_msb)),
+            event: AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(
+                0,
+                pc.bank_msb,
+            ))),
         });
     }
     if pc.bank_lsb != 0xFF {
@@ -404,7 +426,10 @@ pub(crate) fn push_program_change(
             track,
             lane: PC_LANE,
             plugin_param: None,
-            event: ChannelAudioEvent::Control(ControlEvent::Raw(32, pc.bank_lsb)),
+            event: AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(
+                32,
+                pc.bank_lsb,
+            ))),
         });
     }
     out.push(SortedCC {
@@ -413,16 +438,16 @@ pub(crate) fn push_program_change(
         track,
         lane: PC_LANE,
         plugin_param: None,
-        event: ChannelAudioEvent::ProgramChange(pc.program),
+        event: AudioEvent::Channel(ChannelAudioEvent::ProgramChange(pc.program)),
     });
 }
 
 /// 同 tick 同 channel 内的分发优先级：0 = 参数/控制类（RPN、CC、PC），
 /// 1 = PitchBendValue。数值小的先发，保证 PBS/FineTune/CoarseTune 等 RPN
 /// 参数在 PB 使用它们之前就位。
-pub(crate) fn dispatch_priority(event: &ChannelAudioEvent) -> u8 {
+pub(crate) fn dispatch_priority(event: &AudioEvent) -> u8 {
     match event {
-        ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)) => 1,
+        AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_))) => 1,
         _ => 0,
     }
 }
@@ -456,7 +481,7 @@ pub(crate) fn emit_automation_event(
                     channel: u32::from(*plugin_channel),
                     track,
                     lane,
-                    event: ChannelAudioEvent::Control(ControlEvent::Raw(0, 0)),
+                    event: AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(0, 0))),
                     plugin_param: Some(PluginParamEvent {
                         channel: *plugin_channel,
                         param_id: *id,
@@ -495,42 +520,31 @@ pub(crate) fn emit_automation_event(
             );
         }
         AutomationTarget::Rpn { parameter } => {
-            emit_midi_binding(
-                MidiBinding::Rpn(*parameter),
-                value,
+            push_event(
+                out,
                 tick,
                 channel,
                 track,
                 lane,
-                out,
+                AudioEvent::Rpn {
+                    parameter: *parameter,
+                    // 归一化 f32 原样进入事件流：不在此处量化，出口按值域换算。
+                    value: value.clamp(0.0, 1.0),
+                },
             );
         }
         AutomationTarget::Nrpn { parameter } => {
-            let msb = ((parameter >> 8) & 0x7F) as u8;
-            let lsb = (parameter & 0x7F) as u8;
-            let v = restore_raw(value, 16383.0);
-            let data_msb = ((v >> 7) & 0x7F) as u8;
-            let data_lsb = (v & 0x7F) as u8;
-            push_control(out, tick, channel, track, lane, ControlEvent::Raw(99, msb));
-            push_control(out, tick, channel, track, lane, ControlEvent::Raw(98, lsb));
-            push_control(
+            push_event(
                 out,
                 tick,
                 channel,
                 track,
                 lane,
-                ControlEvent::Raw(6, data_msb),
+                AudioEvent::Nrpn {
+                    parameter: *parameter,
+                    value: value.clamp(0.0, 1.0),
+                },
             );
-            if data_lsb != 0 {
-                push_control(
-                    out,
-                    tick,
-                    channel,
-                    track,
-                    lane,
-                    ControlEvent::Raw(38, data_lsb),
-                );
-            }
         }
         // Tempo 走 `conductor.tempo` 而非 `track.automation_lanes`，
         // 由 `build_tempo_map` 消费，不进入 CC 事件流。
@@ -538,7 +552,26 @@ pub(crate) fn emit_automation_event(
     }
 }
 
-/// 推入一条非插件参数的 SortedCC。
+/// 推入一条非插件参数的事件。
+fn push_event(
+    out: &mut Vec<SortedCC>,
+    tick: u32,
+    channel: u32,
+    track: u16,
+    lane: u16,
+    event: AudioEvent,
+) {
+    out.push(SortedCC {
+        tick,
+        channel,
+        track,
+        lane,
+        plugin_param: None,
+        event,
+    });
+}
+
+/// 推入一条 xsynth 通道事件（Raw CC / PitchBend / ProgramChange 等）。
 fn push_control(
     out: &mut Vec<SortedCC>,
     tick: u32,
@@ -547,14 +580,23 @@ fn push_control(
     lane: u16,
     event: ControlEvent,
 ) {
-    out.push(SortedCC {
+    push_event(
+        out,
         tick,
         channel,
         track,
         lane,
-        plugin_param: None,
-        event: ChannelAudioEvent::Control(event),
-    });
+        AudioEvent::Channel(ChannelAudioEvent::Control(event)),
+    );
+}
+
+/// RPN/NRPN 参数号的原始整数上限：RPN 0/2 是 7-bit，其余 14-bit
+/// （与 `yinhe_types::automation::display_max` 同一规则，出口量化用）。
+pub(crate) fn rpn_raw_max(parameter: u16) -> f32 {
+    match parameter {
+        0 | 2 => 127.0,
+        _ => 16383.0,
+    }
 }
 
 /// 归一化值 → 原始整数（四舍五入 + 钳制）。
@@ -594,63 +636,18 @@ fn emit_midi_binding(
                 ControlEvent::PitchBendValue((raw as f32 - 8192.0) / 8192.0),
             );
         }
-        MidiBinding::Rpn(0) => {
-            push_control(
-                out,
-                tick,
-                channel,
-                track,
-                lane,
-                ControlEvent::PitchBendSensitivity(raw as f32),
-            );
-        }
-        MidiBinding::Rpn(1) => {
-            let fine = (raw as f32 - 8192.0) / 8192.0 * 100.0;
-            push_control(
-                out,
-                tick,
-                channel,
-                track,
-                lane,
-                ControlEvent::FineTune(fine),
-            );
-        }
-        MidiBinding::Rpn(2) => {
-            push_control(
-                out,
-                tick,
-                channel,
-                track,
-                lane,
-                ControlEvent::CoarseTune(raw as f32 - 64.0),
-            );
-        }
-        // 非标准 RPN：RPN 选择（CC101/100）+ Data Entry（CC6/38）序列。
         MidiBinding::Rpn(parameter) => {
-            let msb = ((parameter >> 8) & 0x7F) as u8;
-            let lsb = (parameter & 0x7F) as u8;
-            let data_msb = ((raw >> 7) & 0x7F) as u8;
-            let data_lsb = (raw & 0x7F) as u8;
-            push_control(out, tick, channel, track, lane, ControlEvent::Raw(101, msb));
-            push_control(out, tick, channel, track, lane, ControlEvent::Raw(100, lsb));
-            push_control(
+            push_event(
                 out,
                 tick,
                 channel,
                 track,
                 lane,
-                ControlEvent::Raw(6, data_msb),
+                AudioEvent::Rpn {
+                    parameter,
+                    value: value.clamp(0.0, 1.0),
+                },
             );
-            if data_lsb != 0 {
-                push_control(
-                    out,
-                    tick,
-                    channel,
-                    track,
-                    lane,
-                    ControlEvent::Raw(38, data_lsb),
-                );
-            }
         }
     }
 }
@@ -733,7 +730,7 @@ mod tests {
     /// 在 `cc_events` 中找第一个匹配 `pred` 事件的索引。
     fn index_of<F>(events: &[SortedCC], pred: F) -> Option<usize>
     where
-        F: Fn(&ChannelAudioEvent) -> bool,
+        F: Fn(&AudioEvent) -> bool,
     {
         events.iter().position(|e| pred(&e.event))
     }
@@ -813,7 +810,7 @@ mod tests {
             // 占位 event 恒为 Raw(0,0)：dispatch 按 plugin_param 分支优先处理。
             assert!(matches!(
                 e.event,
-                ChannelAudioEvent::Control(ControlEvent::Raw(0, 0))
+                AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(0, 0)))
             ));
         }
         assert_eq!(events[0].plugin_param.map(|p| p.value), Some(0.25));
@@ -837,7 +834,7 @@ mod tests {
         assert_eq!(events[0].channel, 0);
         assert!(matches!(
             events[0].event,
-            ChannelAudioEvent::Control(ControlEvent::Raw(7, 100))
+            AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)))
         ));
     }
 
@@ -883,7 +880,9 @@ mod tests {
         let pb_values: Vec<f32> = events
             .iter()
             .filter_map(|e| match e.event {
-                ChannelAudioEvent::Control(ControlEvent::PitchBendValue(v)) => Some(v),
+                AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
+                    v,
+                ))) => Some(v),
                 _ => None,
             })
             .collect();
@@ -895,11 +894,18 @@ mod tests {
             pb_values[1]
         );
 
+        // RPN0（PBS 内置参数）：原生 Rpn 事件，归一化 f32（2 半音 → 2/127）。
         let pbs = events.iter().find_map(|e| match e.event {
-            ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(v)) => Some(v),
+            AudioEvent::Rpn {
+                parameter: 0,
+                value,
+            } => Some(value),
             _ => None,
         });
-        assert_eq!(pbs, Some(2.0), "RPN0 半音数 2 应还原为 2.0");
+        assert!(
+            pbs.is_some_and(|v| (v - 2.0 / 127.0).abs() < 1e-6),
+            "RPN0 半音数 2 应归一化为 2/127，实际 {pbs:?}"
+        );
     }
 
     #[test]
@@ -969,15 +975,12 @@ mod tests {
         let events = flatten_automation_to_cc_events(&model, 1);
 
         let pbs_idx = index_of(&events, |e| {
-            matches!(
-                e,
-                ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(_))
-            )
+            matches!(e, AudioEvent::Rpn { parameter: 0, .. })
         });
         let pb_idx = index_of(&events, |e| {
             matches!(
                 e,
-                ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_))
+                AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)))
             )
         });
 
@@ -1052,10 +1055,9 @@ mod tests {
         assert_eq!(mask_for(&solos), vec![vec![true, false]]);
     }
 
-    /// 覆盖非标准 RPN（走 raw CC101/100/6 序列）：同 tick 上 RPN 选择 + DataEntry
-    /// 也必须排在 PB 之前。
+    /// 非标准 RPN（原生 Rpn 事件，不再拆 CC 序列）：同 tick 上必须排在 PB 之前。
     #[test]
-    fn nonstandard_rpn_cc_sequence_must_precede_pitch_bend() {
+    fn nonstandard_rpn_native_event_must_precede_pitch_bend() {
         let lanes = vec![
             AutomationLane {
                 target: AutomationTarget::Param {
@@ -1070,7 +1072,7 @@ mod tests {
                     shape: SegmentShape::Step,
                 }],
             },
-            // RPN 5（非标准）→ 走 raw CC101/100/6 序列
+            // RPN 5（非标准）→ 原生 Rpn 事件
             AutomationLane {
                 target: AutomationTarget::Rpn { parameter: 5 },
                 track: 0,
@@ -1084,29 +1086,29 @@ mod tests {
         let model = model_with_lanes(lanes);
         let events = flatten_automation_to_cc_events(&model, 1);
 
-        let rpn_cc101_idx = index_of(&events, |e| {
-            matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(101, _)))
+        let rpn_idx = index_of(&events, |e| {
+            matches!(e, AudioEvent::Rpn { parameter: 5, .. })
         });
         let pb_idx = index_of(&events, |e| {
             matches!(
                 e,
-                ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_))
+                AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)))
             )
         });
 
-        let rpn_cc101_idx = rpn_cc101_idx.expect("RPN CC101 selector should exist");
+        let rpn_idx = rpn_idx.expect("RPN 5 event should exist");
         let pb_idx = pb_idx.expect("PitchBend event should exist");
         assert!(
-            rpn_cc101_idx < pb_idx,
-            "RPN selector CC101 (index {}) must precede PitchBend (index {}) at the same tick",
-            rpn_cc101_idx,
+            rpn_idx < pb_idx,
+            "RPN 5 (index {}) must precede PitchBend (index {}) at the same tick",
+            rpn_idx,
             pb_idx
         );
     }
 
-    /// 覆盖 NRPN：同 tick 上 NRPN 的 CC99/98/6 序列也必须排在 PB 之前。
+    /// 覆盖 NRPN（原生 Nrpn 事件）：同 tick 上必须排在 PB 之前。
     #[test]
-    fn nrpn_cc_sequence_must_precede_pitch_bend() {
+    fn nrpn_native_event_must_precede_pitch_bend() {
         let lanes = vec![
             AutomationLane {
                 target: AutomationTarget::Param {
@@ -1134,22 +1136,22 @@ mod tests {
         let model = model_with_lanes(lanes);
         let events = flatten_automation_to_cc_events(&model, 1);
 
-        let nrpn_cc99_idx = index_of(&events, |e| {
-            matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(99, _)))
+        let nrpn_idx = index_of(&events, |e| {
+            matches!(e, AudioEvent::Nrpn { parameter: 10, .. })
         });
         let pb_idx = index_of(&events, |e| {
             matches!(
                 e,
-                ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_))
+                AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)))
             )
         });
 
-        let nrpn_cc99_idx = nrpn_cc99_idx.expect("NRPN CC99 selector should exist");
+        let nrpn_idx = nrpn_idx.expect("NRPN event should exist");
         let pb_idx = pb_idx.expect("PitchBend event should exist");
         assert!(
-            nrpn_cc99_idx < pb_idx,
-            "NRPN selector CC99 (index {}) must precede PitchBend (index {}) at the same tick",
-            nrpn_cc99_idx,
+            nrpn_idx < pb_idx,
+            "NRPN (index {}) must precede PitchBend (index {}) at the same tick",
+            nrpn_idx,
             pb_idx
         );
     }
@@ -1202,15 +1204,15 @@ mod tests {
         let events = flatten_automation_to_cc_events(&model, 1);
 
         let fine_idx = index_of(&events, |e| {
-            matches!(e, ChannelAudioEvent::Control(ControlEvent::FineTune(_)))
+            matches!(e, AudioEvent::Rpn { parameter: 1, .. })
         });
         let coarse_idx = index_of(&events, |e| {
-            matches!(e, ChannelAudioEvent::Control(ControlEvent::CoarseTune(_)))
+            matches!(e, AudioEvent::Rpn { parameter: 2, .. })
         });
         let pb_idx = index_of(&events, |e| {
             matches!(
                 e,
-                ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_))
+                AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)))
             )
         });
 

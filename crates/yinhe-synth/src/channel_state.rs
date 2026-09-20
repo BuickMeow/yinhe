@@ -131,10 +131,26 @@ impl ChannelState {
             ControlEvent::PitchBendSensitivity(value) => self.pitch_bend_sensitivity = value,
             ControlEvent::FineTune(value) => self.fine_tune = value,
             ControlEvent::CoarseTune(value) => self.coarse_tune = value,
+            ControlEvent::Rpn { parameter, value } => self.apply_rpn(parameter, value),
+            // NRPN：协议已是一等 u16 事件，当前无标准语义（留待扩展参数）。
+            ControlEvent::Nrpn { .. } => {}
             ControlEvent::ProgramChange(value) => self.program = value,
             ControlEvent::PercussionMode(set) => self.bank = if set { 128 } else { 0 },
         }
         false
+    }
+
+    /// 原生 RPN（归一化 f32 0..=1）→ 内部参数。0/1/2 是 MIDI 标准：
+    /// 0 = 弯音灵敏度（半音）、1 = 微调（±100 音分）、2 = 粗调（±64 半音）。
+    /// 其余号是扩展位，在各自分支里实现（全 f32，无量化）。
+    fn apply_rpn(&mut self, parameter: u16, value: f32) {
+        let v = value.clamp(0.0, 1.0);
+        match parameter {
+            0 => self.pitch_bend_sensitivity = v * 127.0,
+            1 => self.fine_tune = (v - 0.5) * 200.0,
+            2 => self.coarse_tune = v * 127.0 - 64.0,
+            _ => {}
+        }
     }
 }
 
@@ -195,6 +211,14 @@ pub fn chase_skip(events: &[crate::SynthEvent]) -> ChaseSkip {
             crate::ControlEvent::PitchBendSensitivity(_) => skip.pbs[ch] = true,
             crate::ControlEvent::FineTune(_) => skip.fine_tune[ch] = true,
             crate::ControlEvent::CoarseTune(_) => skip.coarse_tune[ch] = true,
+            // 原生 RPN 0/1/2 与三个高层参数同语义（chase 跳过粒度一致）。
+            crate::ControlEvent::Rpn { parameter, .. } => match parameter {
+                0 => skip.pbs[ch] = true,
+                1 => skip.fine_tune[ch] = true,
+                2 => skip.coarse_tune[ch] = true,
+                _ => {}
+            },
+            crate::ControlEvent::Nrpn { .. } => {}
             crate::ControlEvent::ProgramChange(_) => skip.program[ch] = true,
             crate::ControlEvent::PercussionMode(_) => {}
         }
@@ -281,5 +305,76 @@ mod tests {
         assert!(ch.process_control(ControlEvent::Raw(0x79, 0)));
         assert_eq!(ch.pitch_bend_sensitivity, 2.0);
         assert_eq!(ch.coarse_tune, 0.0);
+    }
+
+    /// 原生 RPN 事件（归一化 f32）与标准 MIDI 语义一致：
+    /// 0 = 弯音灵敏度、1 = 微调（±100 音分）、2 = 粗调（±64 半音）。全 f32 无量化。
+    #[test]
+    fn native_rpn_matches_standard_midi_semantics() {
+        let mut ch = ChannelState::new(44100);
+
+        // RPN0：5.5 半音
+        ch.process_control(ControlEvent::Rpn {
+            parameter: 0,
+            value: 5.5 / 127.0,
+        });
+        assert!((ch.pitch_bend_sensitivity - 5.5).abs() < 1e-5);
+
+        // RPN1：0.5 = 中心（0 音分）；0.75 = +50 音分
+        ch.process_control(ControlEvent::Rpn {
+            parameter: 1,
+            value: 0.5,
+        });
+        assert!(ch.fine_tune.abs() < 1e-5);
+        ch.process_control(ControlEvent::Rpn {
+            parameter: 1,
+            value: 0.75,
+        });
+        assert!((ch.fine_tune - 50.0).abs() < 1e-3);
+
+        // RPN2：0 半音对应 64/127 → +6 半音
+        ch.process_control(ControlEvent::Rpn {
+            parameter: 2,
+            value: 70.0 / 127.0,
+        });
+        assert!((ch.coarse_tune - 6.0).abs() < 1e-5);
+
+        // 扩展 RPN 号：当前无内部参数，安全忽略且不影响既有状态。
+        ch.process_control(ControlEvent::Rpn {
+            parameter: 77,
+            value: 0.9,
+        });
+        assert!((ch.pitch_bend_sensitivity - 5.5).abs() < 1e-5);
+        assert!((ch.coarse_tune - 6.0).abs() < 1e-5);
+
+        // ChaseSkip：0/1/2 分别映射到 pbs/fine/coarse 跳过位。
+        let events = vec![
+            crate::SynthEvent::Control {
+                sample: 0,
+                channel: 0,
+                event: ControlEvent::Rpn {
+                    parameter: 0,
+                    value: 0.0,
+                },
+            },
+            crate::SynthEvent::Control {
+                sample: 0,
+                channel: 0,
+                event: ControlEvent::Rpn {
+                    parameter: 1,
+                    value: 0.0,
+                },
+            },
+            crate::SynthEvent::Control {
+                sample: 0,
+                channel: 0,
+                event: ControlEvent::Rpn {
+                    parameter: 2,
+                    value: 0.0,
+                },
+            },
+        ];
+        let skip = chase_skip(&events);
+        assert!(skip.pbs[0] && skip.fine_tune[0] && skip.coarse_tune[0]);
     }
 }

@@ -1,6 +1,8 @@
 use xsynth_core::channel::{ChannelAudioEvent, ChannelEvent, ControlEvent};
 use xsynth_core::channel_group::{ChannelGroup, SynthEvent};
 
+use crate::audio_model::AudioEvent;
+
 /// 接收 SynthEvent 的通道组抽象：主引擎用自有 ChannelSet（分通道渲染），
 /// 预览引擎仍用 xsynth ChannelGroup（直接混成立体声），两者共用 chase 回放逻辑。
 pub(crate) trait EventSink {
@@ -56,6 +58,11 @@ pub(crate) struct ChannelState {
     pub(crate) fine_tune: f32,
     /// Resolved Coarse Tune in semitones (RPN 2). Default 0.0.
     pub(crate) coarse_tune: f32,
+    /// RPN 0/1/2 的归一化 f32 值（0..=1，与自动化 lane 同值域；chase 无损重放）。
+    /// 默认 2 半音 / 中心 / 0 半音。
+    pub(crate) rpn0_value: f32,
+    pub(crate) rpn1_value: f32,
+    pub(crate) rpn2_value: f32,
     /// Tracks whether attack/release were explicitly set by MIDI events.
     /// If false, send_to skips CC 73/72 to avoid overriding xsynth's `None`.
     pub(crate) env_set: bool,
@@ -88,6 +95,9 @@ impl Default for ChannelState {
             pitch_bend_sensitivity: 2.0,
             fine_tune: 0.0,
             coarse_tune: 0.0,
+            rpn0_value: 2.0 / 127.0,
+            rpn1_value: 0.5,
+            rpn2_value: 64.0 / 127.0,
             env_set: false,
             cc_values: [0; 128],
         }
@@ -131,30 +141,73 @@ impl Default for ChaseSkip {
 }
 
 impl ChaseSkip {
-    /// 标记一个已 dispatch 的 CC 事件，chase 应用时跳过对应控制器。
-    pub(crate) fn mark(&mut self, event: &ChannelAudioEvent, channel: usize) {
+    /// 标记一个已 dispatch 的事件，chase 应用时跳过对应控制器。
+    pub(crate) fn mark(&mut self, event: &AudioEvent, channel: usize) {
         match event {
-            ChannelAudioEvent::Control(ControlEvent::Raw(cc, _)) => {
-                self.cc_mask[channel] |= 1u128 << cc;
-            }
-            ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)) => {
-                self.pitch_bend[channel] = true;
-            }
-            ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(_)) => {
-                self.pbs[channel] = true;
-            }
-            ChannelAudioEvent::Control(ControlEvent::FineTune(_)) => self.fine_tune[channel] = true,
-            ChannelAudioEvent::Control(ControlEvent::CoarseTune(_)) => {
-                self.coarse_tune[channel] = true;
-            }
-            ChannelAudioEvent::ProgramChange(_) => self.program[channel] = true,
-            _ => {}
+            AudioEvent::Channel(ev) => match ev {
+                ChannelAudioEvent::Control(ControlEvent::Raw(cc, _)) => {
+                    self.cc_mask[channel] |= 1u128 << cc;
+                }
+                ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)) => {
+                    self.pitch_bend[channel] = true;
+                }
+                ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(_)) => {
+                    self.pbs[channel] = true;
+                }
+                ChannelAudioEvent::Control(ControlEvent::FineTune(_)) => {
+                    self.fine_tune[channel] = true;
+                }
+                ChannelAudioEvent::Control(ControlEvent::CoarseTune(_)) => {
+                    self.coarse_tune[channel] = true;
+                }
+                ChannelAudioEvent::ProgramChange(_) => self.program[channel] = true,
+                _ => {}
+            },
+            // 原生 RPN 0/1/2 与三个高层参数同语义（chase 跳过粒度一致）。
+            AudioEvent::Rpn { parameter, .. } => match parameter {
+                0 => self.pbs[channel] = true,
+                1 => self.fine_tune[channel] = true,
+                2 => self.coarse_tune[channel] = true,
+                _ => {}
+            },
+            AudioEvent::Nrpn { .. } => {}
         }
     }
 }
 
 impl ChannelState {
-    pub(crate) fn apply(&mut self, event: &ChannelAudioEvent) {
+    /// 应用一条事件流事件（原生 RPN/NRPN 或 xsynth 通道事件）。
+    pub(crate) fn apply(&mut self, event: &AudioEvent) {
+        match event {
+            AudioEvent::Channel(ev) => self.apply_channel_event(ev),
+            AudioEvent::Rpn { parameter, value } => self.apply_native_rpn(*parameter, *value),
+            // NRPN：协议已是一等事件，当前无内部参数语义（留待扩展参数）。
+            AudioEvent::Nrpn { .. } => {}
+        }
+    }
+
+    /// 原生 RPN（归一化 f32 0..=1）→ 内部参数，与 MIDI 标准语义一致；
+    /// 同时记录归一化值，chase 无损重放。
+    fn apply_native_rpn(&mut self, parameter: u16, value: f32) {
+        let v = value.clamp(0.0, 1.0);
+        match parameter {
+            0 => {
+                self.rpn0_value = v;
+                self.pitch_bend_sensitivity = v * 127.0;
+            }
+            1 => {
+                self.rpn1_value = v;
+                self.fine_tune = (v - 0.5) * 200.0;
+            }
+            2 => {
+                self.rpn2_value = v;
+                self.coarse_tune = v * 127.0 - 64.0;
+            }
+            _ => {}
+        }
+    }
+
+    fn apply_channel_event(&mut self, event: &ChannelAudioEvent) {
         match event {
             ChannelAudioEvent::Control(ControlEvent::Raw(cc, val)) => {
                 let cc_idx = *cc as usize;
@@ -213,13 +266,16 @@ impl ChannelState {
             0 => {
                 self.pitch_bend_sensitivity =
                     self.data_entry_msb as f32 + self.data_entry_lsb as f32 / 100.0;
+                self.rpn0_value = (self.pitch_bend_sensitivity / 127.0).clamp(0.0, 1.0);
             }
             1 => {
                 let val = ((self.data_entry_msb as u16) << 7) + self.data_entry_lsb as u16;
                 self.fine_tune = (val as f32 - 8192.0) / 8192.0 * 100.0;
+                self.rpn1_value = (val as f32 / 16383.0).clamp(0.0, 1.0);
             }
             2 => {
                 self.coarse_tune = self.data_entry_msb as f32 - 64.0;
+                self.rpn2_value = (self.data_entry_msb as f32 / 127.0).clamp(0.0, 1.0);
             }
             _ => {}
         }
@@ -227,15 +283,13 @@ impl ChannelState {
 
     /// 计算 chase 应用时要发送的事件列表；`skip` 中标记的控制器跳过。
     /// 独立为纯函数，便于单元测试直接观察跳过行为。
-    pub(crate) fn events_to_send(
-        &self,
-        channel: usize,
-        skip: &ChaseSkip,
-    ) -> Vec<ChannelAudioEvent> {
+    pub(crate) fn events_to_send(&self, channel: usize, skip: &ChaseSkip) -> Vec<AudioEvent> {
         let mut out = Vec::with_capacity(24);
         let mut push_raw = |cc: u8, val: u8| {
             if skip.cc_mask[channel] & (1u128 << cc) == 0 {
-                out.push(ChannelAudioEvent::Control(ControlEvent::Raw(cc, val)));
+                out.push(AudioEvent::Channel(ChannelAudioEvent::Control(
+                    ControlEvent::Raw(cc, val),
+                )));
             }
         };
         push_raw(0, self.bank_msb);
@@ -248,33 +302,39 @@ impl ChannelState {
         // 通道级 DSP CC（7/10/11/71/74）由 yinhe-dsp 模块处理，不再发合成器；
         // chase 回填见 `AudioEngine::apply_chase_result`。
         if !skip.program[channel] {
-            out.push(ChannelAudioEvent::ProgramChange(self.program));
+            out.push(AudioEvent::Channel(ChannelAudioEvent::ProgramChange(
+                self.program,
+            )));
         }
+        // RPN 0/1/2：以原生事件重放（按后端适配），原始 14-bit 值无损。
         if !skip.pbs[channel] {
-            out.push(ChannelAudioEvent::Control(
-                ControlEvent::PitchBendSensitivity(self.pitch_bend_sensitivity),
-            ));
+            out.push(AudioEvent::Rpn {
+                parameter: 0,
+                value: self.rpn0_value,
+            });
         }
         if !skip.fine_tune[channel] {
-            out.push(ChannelAudioEvent::Control(ControlEvent::FineTune(
-                self.fine_tune,
-            )));
+            out.push(AudioEvent::Rpn {
+                parameter: 1,
+                value: self.rpn1_value,
+            });
         }
         if !skip.coarse_tune[channel] {
-            out.push(ChannelAudioEvent::Control(ControlEvent::CoarseTune(
-                self.coarse_tune,
-            )));
+            out.push(AudioEvent::Rpn {
+                parameter: 2,
+                value: self.rpn2_value,
+            });
         }
         if !skip.pitch_bend[channel] {
-            out.push(ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
-                self.pitch_bend,
+            out.push(AudioEvent::Channel(ChannelAudioEvent::Control(
+                ControlEvent::PitchBendValue(self.pitch_bend),
             )));
         }
 
         // 通用 CC：发送未被特定字段覆盖、未被 dispatch 覆盖且非 0 的控制器。
         // CCs already sent: 0, 7, 10, 11, 32, 64, 71, 72, 73, 74.
-        // RPN-related CCs (100, 101, 6, 38) are handled by the high-level
-        // PitchBendSensitivity / FineTune / CoarseTune events above.
+        // RPN-related CCs (100, 101, 6, 38) are carried by the native RPN
+        // events above (never replayed as raw CC).
         const ALREADY_SENT: [u8; 12] = [0, 6, 7, 10, 11, 32, 38, 64, 71, 72, 73, 74];
         for cc in 0u8..128u8 {
             let val = self.cc_values[cc as usize];
@@ -284,7 +344,9 @@ impl ChannelState {
                 && cc != 101
                 && skip.cc_mask[channel] & (1u128 << cc) == 0
             {
-                out.push(ChannelAudioEvent::Control(ControlEvent::Raw(cc, val)));
+                out.push(AudioEvent::Channel(ChannelAudioEvent::Control(
+                    ControlEvent::Raw(cc, val),
+                )));
             }
         }
         out
@@ -292,7 +354,10 @@ impl ChannelState {
 
     pub(crate) fn send_to(&self, ch: u32, cg: &mut impl EventSink, skip: &ChaseSkip) {
         for event in self.events_to_send(ch as usize, skip) {
-            cg.send_event(SynthEvent::Channel(ch, ChannelEvent::Audio(event)));
+            // xsynth 没有 RPN 事件：0/1/2 → 高层事件，其余拆 CC 序列。
+            for ev in crate::engine_render::xsynth_events(&event).as_slice() {
+                cg.send_event(SynthEvent::Channel(ch, ChannelEvent::Audio(*ev)));
+            }
         }
     }
 
@@ -316,26 +381,26 @@ mod tests {
     #[test]
     fn test_channel_state_apply() {
         let mut state = ChannelState::default();
-        state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)));
+        state.apply_channel_event(&ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)));
         assert_eq!(state.volume, 100);
         assert_eq!(state.cc_values[7], 100);
-        state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(10, 100)));
+        state.apply_channel_event(&ChannelAudioEvent::Control(ControlEvent::Raw(10, 100)));
         assert_eq!(state.pan, 100);
         assert_eq!(state.cc_values[10], 100);
 
-        state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(101, 0)));
+        state.apply_channel_event(&ChannelAudioEvent::Control(ControlEvent::Raw(101, 0)));
         assert_eq!(state.rpn_msb, Some(0));
 
-        state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(100, 0)));
+        state.apply_channel_event(&ChannelAudioEvent::Control(ControlEvent::Raw(100, 0)));
         assert_eq!(state.rpn_lsb, Some(0));
 
-        state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(6, 12)));
+        state.apply_channel_event(&ChannelAudioEvent::Control(ControlEvent::Raw(6, 12)));
         assert_eq!(state.data_entry_msb, 12);
 
-        state.apply(&ChannelAudioEvent::ProgramChange(42));
+        state.apply_channel_event(&ChannelAudioEvent::ProgramChange(42));
         assert_eq!(state.program, 42);
 
-        state.apply(&ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
+        state.apply_channel_event(&ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
             0.5,
         )));
         assert!((state.pitch_bend - 0.5).abs() < f32::EPSILON);
@@ -361,29 +426,29 @@ mod tests {
     #[test]
     fn test_rpn_pitch_bend_sensitivity() {
         let mut state = ChannelState::default();
-        state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(101, 0)));
-        state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(100, 0)));
-        state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(6, 5)));
+        state.apply_channel_event(&ChannelAudioEvent::Control(ControlEvent::Raw(101, 0)));
+        state.apply_channel_event(&ChannelAudioEvent::Control(ControlEvent::Raw(100, 0)));
+        state.apply_channel_event(&ChannelAudioEvent::Control(ControlEvent::Raw(6, 5)));
         assert!((state.pitch_bend_sensitivity - 5.0).abs() < f32::EPSILON);
     }
 
     #[test]
     fn test_rpn_pitch_bend_sensitivity_with_lsb() {
         let mut state = ChannelState::default();
-        state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(101, 0)));
-        state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(100, 0)));
-        state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(6, 2)));
-        state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(38, 50)));
+        state.apply_channel_event(&ChannelAudioEvent::Control(ControlEvent::Raw(101, 0)));
+        state.apply_channel_event(&ChannelAudioEvent::Control(ControlEvent::Raw(100, 0)));
+        state.apply_channel_event(&ChannelAudioEvent::Control(ControlEvent::Raw(6, 2)));
+        state.apply_channel_event(&ChannelAudioEvent::Control(ControlEvent::Raw(38, 50)));
         assert!((state.pitch_bend_sensitivity - 2.5).abs() < f32::EPSILON);
     }
 
     #[test]
     fn test_rpn_fine_tune() {
         let mut state = ChannelState::default();
-        state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(101, 0)));
-        state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(100, 1)));
-        state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(6, 64)));
-        state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(38, 0)));
+        state.apply_channel_event(&ChannelAudioEvent::Control(ControlEvent::Raw(101, 0)));
+        state.apply_channel_event(&ChannelAudioEvent::Control(ControlEvent::Raw(100, 1)));
+        state.apply_channel_event(&ChannelAudioEvent::Control(ControlEvent::Raw(6, 64)));
+        state.apply_channel_event(&ChannelAudioEvent::Control(ControlEvent::Raw(38, 0)));
         let expected = ((64u16 << 6) as f32 - 4096.0) / 4096.0 * 100.0;
         assert!((state.fine_tune - expected).abs() < 0.01);
     }
@@ -391,21 +456,26 @@ mod tests {
     #[test]
     fn test_rpn_coarse_tune() {
         let mut state = ChannelState::default();
-        state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(101, 0)));
-        state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(100, 2)));
-        state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(6, 70)));
+        state.apply_channel_event(&ChannelAudioEvent::Control(ControlEvent::Raw(101, 0)));
+        state.apply_channel_event(&ChannelAudioEvent::Control(ControlEvent::Raw(100, 2)));
+        state.apply_channel_event(&ChannelAudioEvent::Control(ControlEvent::Raw(6, 70)));
         assert!((state.coarse_tune - 6.0).abs() < f32::EPSILON);
     }
 
     #[test]
     fn test_chase_skip_mark() {
         let mut skip = ChaseSkip::default();
-        skip.mark(&ChannelAudioEvent::Control(ControlEvent::Raw(64, 1)), 3);
         skip.mark(
-            &ChannelAudioEvent::Control(ControlEvent::PitchBendValue(0.5)),
+            &AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(64, 1))),
             3,
         );
-        skip.mark(&ChannelAudioEvent::ProgramChange(5), 3);
+        skip.mark(
+            &AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
+                0.5,
+            ))),
+            3,
+        );
+        skip.mark(&AudioEvent::Channel(ChannelAudioEvent::ProgramChange(5)), 3);
         assert_ne!(skip.cc_mask[3] & (1u128 << 64), 0);
         assert_eq!(skip.cc_mask[3] & (1u128 << 7), 0);
         assert!(skip.pitch_bend[3]);
@@ -432,53 +502,100 @@ mod tests {
         skip.pitch_bend[0] = true; // PitchBendValue 已 dispatch
 
         let events = state.events_to_send(0, &skip);
-        // 通道级 DSP CC（7/10/11/71/74）不走 xsynth 事件（由 yinhe-dsp 模块处理）。
+        let has_raw_cc = |cc: u8| {
+            events.iter().any(
+                |e| matches!(e, AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(c, _))) if *c == cc),
+            )
+        };
+        // 通道级 DSP CC（7/10/11/71/74）不走合成器事件（由 yinhe-dsp 模块处理）。
         for cc in [7u8, 10, 11, 71, 74] {
-            assert!(
-                !events.iter().any(
-                    |e| matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(c, _)) if *c == cc)
-                ),
-                "DSP CC{cc} 不应出现在 xsynth chase 事件中"
-            );
+            assert!(!has_raw_cc(cc), "DSP CC{cc} 不应出现在 chase 事件中");
         }
         // skip 标记的 CC 不发送
+        assert!(!has_raw_cc(1));
+        assert!(!has_raw_cc(91));
+        // skip 标记的 RPN 0 不发送
         assert!(
             !events
                 .iter()
-                .any(|e| matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(1, _))))
-        );
-        assert!(
-            !events
-                .iter()
-                .any(|e| matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(91, _))))
+                .any(|e| matches!(e, AudioEvent::Rpn { parameter: 0, .. }))
         );
         assert!(!events.iter().any(|e| matches!(
             e,
-            ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(_))
-        )));
-        assert!(!events.iter().any(|e| matches!(
-            e,
-            ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_))
+            AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)))
         )));
         // 未跳过的控制器仍在
         assert!(
             events
                 .iter()
-                .any(|e| matches!(e, ChannelAudioEvent::ProgramChange(_)))
+                .any(|e| matches!(e, AudioEvent::Channel(ChannelAudioEvent::ProgramChange(_))))
         );
         // 其他 channel 不受跳过影响
         let other = state.events_to_send(1, &skip);
-        assert!(
-            other
-                .iter()
-                .any(|e| matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(1, 64))))
-        );
+        assert!(other.iter().any(|e| matches!(
+            e,
+            AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(1, 64)))
+        )));
+    }
+
+    /// RPN 0/1/2 chase 以归一化 f32 无损重放（不经过整数往返）。
+    #[test]
+    fn rpn_chase_replays_normalized_values() {
+        let state = ChannelState {
+            rpn0_value: 0.4,
+            rpn1_value: 0.75,
+            rpn2_value: 0.6,
+            ..Default::default()
+        };
+        let events = state.events_to_send(0, &ChaseSkip::default());
+        assert!(events.iter().any(
+            |e| matches!(e, AudioEvent::Rpn { parameter: 0, value } if (*value - 0.4).abs() < 1e-6)
+        ));
+        assert!(events.iter().any(
+            |e| matches!(e, AudioEvent::Rpn { parameter: 1, value } if (*value - 0.75).abs() < 1e-6)
+        ));
+        assert!(events.iter().any(
+            |e| matches!(e, AudioEvent::Rpn { parameter: 2, value } if (*value - 0.6).abs() < 1e-6)
+        ));
+    }
+
+    /// 原生 RPN 事件：与 MIDI 标准语义一致（全 f32），并更新归一化值。
+    #[test]
+    fn native_rpn_updates_state_and_normalized_values() {
+        let mut state = ChannelState::default();
+        state.apply(&AudioEvent::Rpn {
+            parameter: 0,
+            value: 5.5 / 127.0,
+        });
+        assert!((state.pitch_bend_sensitivity - 5.5).abs() < 1e-5);
+        assert!((state.rpn0_value - 5.5 / 127.0).abs() < 1e-6);
+
+        state.apply(&AudioEvent::Rpn {
+            parameter: 1,
+            value: 0.5,
+        });
+        assert!(state.fine_tune.abs() < 1e-5);
+        assert!((state.rpn1_value - 0.5).abs() < 1e-6);
+
+        state.apply(&AudioEvent::Rpn {
+            parameter: 2,
+            value: 70.0 / 127.0,
+        });
+        assert!((state.coarse_tune - 6.0).abs() < 1e-5);
+        assert!((state.rpn2_value - 70.0 / 127.0).abs() < 1e-6);
+
+        // 扩展号安全忽略
+        state.apply(&AudioEvent::Rpn {
+            parameter: 77,
+            value: 1.0,
+        });
+        assert!((state.pitch_bend_sensitivity - 5.5).abs() < 1e-5);
     }
 
     #[test]
     fn test_rpn_no_selection_no_resolve() {
         let mut state = ChannelState::default();
-        state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(6, 10)));
+        state.apply_channel_event(&ChannelAudioEvent::Control(ControlEvent::Raw(6, 10)));
         assert!((state.pitch_bend_sensitivity - 2.0).abs() < f32::EPSILON);
         assert!((state.fine_tune - 0.0).abs() < f32::EPSILON);
         assert!((state.coarse_tune - 0.0).abs() < f32::EPSILON);

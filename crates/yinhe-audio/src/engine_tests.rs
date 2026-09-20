@@ -7,6 +7,7 @@ use yinhe_editor_core::document::Document;
 use yinhe_types::automation::{ParamDevice, xsynth_param};
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, KEY_COUNT, SegmentShape};
 
+use crate::audio_model::AudioEvent;
 use crate::channel_layout::ChannelLayout;
 
 /// GPU 事件流（NoteOn 自带 `end_sample`）→ 展开出独立 NoteOff，供 xsynth 对比
@@ -100,7 +101,7 @@ fn test_sorted_cc_ordering() {
             track: 0,
             lane: 0,
             plugin_param: None,
-            event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 80)),
+            event: AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(7, 80))),
         },
         SortedCC {
             tick: 50,
@@ -108,7 +109,7 @@ fn test_sorted_cc_ordering() {
             track: 0,
             lane: 0,
             plugin_param: None,
-            event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)),
+            event: AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(7, 100))),
         },
         SortedCC {
             tick: 200,
@@ -116,7 +117,7 @@ fn test_sorted_cc_ordering() {
             track: 0,
             lane: 0,
             plugin_param: None,
-            event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 60)),
+            event: AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(7, 60))),
         },
     ];
     cc.sort_by_key(|e| e.tick);
@@ -1146,7 +1147,7 @@ fn test_muted_track_cc_skipped_in_dispatch() {
             track: 0,
             lane: 0,
             plugin_param: None,
-            event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 40)),
+            event: AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(7, 40))),
         },
         SortedCC {
             tick: 0,
@@ -1154,7 +1155,7 @@ fn test_muted_track_cc_skipped_in_dispatch() {
             track: 1,
             lane: 0,
             plugin_param: None,
-            event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)),
+            event: AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(7, 100))),
         },
     ]);
     engine.cc_cursor = 0;
@@ -1200,7 +1201,7 @@ fn test_unmute_chase_skip_excludes_events_missed_while_muted() {
             track: 0,
             lane: 0,
             plugin_param: None,
-            event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 40)),
+            event: AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(7, 40))),
         },
         SortedCC {
             tick: 300,
@@ -1208,7 +1209,7 @@ fn test_unmute_chase_skip_excludes_events_missed_while_muted() {
             track: 0,
             lane: 0,
             plugin_param: None,
-            event: ChannelAudioEvent::Control(ControlEvent::Raw(1, 80)),
+            event: AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(1, 80))),
         },
     ]);
 
@@ -1489,7 +1490,7 @@ fn test_chase_channel_states_incremental() {
             track: 0,
             lane: 0,
             plugin_param: None,
-            event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)),
+            event: AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(7, 100))),
         },
         // ch1 的 CC7=50（不应影响 ch0）
         SortedCC {
@@ -1498,7 +1499,7 @@ fn test_chase_channel_states_incremental() {
             track: 1,
             lane: 0,
             plugin_param: None,
-            event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 50)),
+            event: AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(7, 50))),
         },
         // ch0 的 CC10=80（pan）
         SortedCC {
@@ -1507,7 +1508,7 @@ fn test_chase_channel_states_incremental() {
             track: 0,
             lane: 0,
             plugin_param: None,
-            event: ChannelAudioEvent::Control(ControlEvent::Raw(10, 80)),
+            event: AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(10, 80))),
         },
         // ch0 的 CC7=90（最新）
         SortedCC {
@@ -1516,7 +1517,7 @@ fn test_chase_channel_states_incremental() {
             track: 0,
             lane: 0,
             plugin_param: None,
-            event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 90)),
+            event: AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(7, 90))),
         },
         // ch0 的 PBS=48（PB 参数，非 DSP CC，走常规 apply）
         SortedCC {
@@ -1525,7 +1526,9 @@ fn test_chase_channel_states_incremental() {
             track: 0,
             lane: 0,
             plugin_param: None,
-            event: ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(48.0)),
+            event: AudioEvent::Channel(ChannelAudioEvent::Control(
+                ControlEvent::PitchBendSensitivity(48.0),
+            )),
         },
         // 边界：tick == target 参与（预览无 dispatch 兜底，Bug 8 回归）
         SortedCC {
@@ -1534,7 +1537,7 @@ fn test_chase_channel_states_incremental() {
             track: 0,
             lane: 0,
             plugin_param: None,
-            event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 10)),
+            event: AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(7, 10))),
         },
     ];
     // 同一 channel 三个升序目标：增量 chase 一次扫完
@@ -1571,7 +1574,7 @@ fn test_preview_chase_includes_jump_at_target_tick() {
             track: 0,
             lane: 0,
             plugin_param: None,
-            event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 0)),
+            event: AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(7, 0))),
         },
         SortedCC {
             tick: 1920,
@@ -1579,7 +1582,7 @@ fn test_preview_chase_includes_jump_at_target_tick() {
             track: 0,
             lane: 0,
             plugin_param: None,
-            event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 127)),
+            event: AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(7, 127))),
         },
     ];
     let before = chase_channel_states(&jump, 0, &[1919]);
@@ -2170,12 +2173,24 @@ fn diag_cyber_night_channel_isolation() {
         let mut bych: std::collections::BTreeMap<u32, usize> = Default::default();
         for cc in engine.cc_events.iter() {
             let k = match &cc.event {
-                ChannelAudioEvent::Control(ControlEvent::Raw(c, _)) => format!("CC{c}"),
-                ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)) => "PB".into(),
-                ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(_)) => "PBS".into(),
-                ChannelAudioEvent::Control(ControlEvent::FineTune(_)) => "FineTune".into(),
-                ChannelAudioEvent::Control(ControlEvent::CoarseTune(_)) => "CoarseTune".into(),
-                ChannelAudioEvent::ProgramChange(_) => "PC".into(),
+                AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(c, _))) => {
+                    format!("CC{c}")
+                }
+                AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
+                    _,
+                ))) => "PB".into(),
+                AudioEvent::Channel(ChannelAudioEvent::Control(
+                    ControlEvent::PitchBendSensitivity(_),
+                )) => "PBS".into(),
+                AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::FineTune(_))) => {
+                    "FineTune".into()
+                }
+                AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::CoarseTune(_))) => {
+                    "CoarseTune".into()
+                }
+                AudioEvent::Channel(ChannelAudioEvent::ProgramChange(_)) => "PC".into(),
+                AudioEvent::Rpn { parameter, .. } => format!("RPN{parameter}"),
+                AudioEvent::Nrpn { parameter, .. } => format!("NRPN{parameter}"),
                 _ => "other".into(),
             };
             *bytype.entry(k).or_insert(0) += 1;
@@ -2384,6 +2399,10 @@ fn diag_cyber_night_channel_isolation() {
                                 ControlEvent::CoarseTune(*v)
                             }
                             yinhe_synth::ControlEvent::PercussionMode(_) => ControlEvent::Raw(0, 0),
+                            // 原生 RPN/NRPN：xsynth 侧无对应事件类型。parity 用的
+                            // 测试 MIDI 不含 RPN lane；真出现按占位事件对比（不参与）。
+                            yinhe_synth::ControlEvent::Rpn { .. }
+                            | yinhe_synth::ControlEvent::Nrpn { .. } => ControlEvent::Raw(0, 0),
                             yinhe_synth::ControlEvent::ProgramChange(_) => unreachable!(),
                         })),
                     };

@@ -248,13 +248,18 @@ impl CpuSynth {
                 }
             }
         }
-        // 弯音/调音变化：更新该通道活跃 voice 的速度（含 time 校正）
+        // 弯音/调音变化：更新该通道活跃 voice 的速度（含 time 校正）。
+        // 原生 RPN 中 0/1/2 是弯音灵敏度/微调/粗调，同样影响音高。
         if matches!(
             event,
             ControlEvent::PitchBend(_)
                 | ControlEvent::PitchBendSensitivity(_)
                 | ControlEvent::FineTune(_)
                 | ControlEvent::CoarseTune(_)
+                | ControlEvent::Rpn {
+                    parameter: 0..=2,
+                    ..
+                }
         ) {
             let mult = self.channels[ch_idx].pitch_multiplier();
             for v in self.voices.iter_mut() {

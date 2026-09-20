@@ -79,6 +79,12 @@ pub enum ControlEvent {
     FineTune(f32),
     /// 粗调（半音）。
     CoarseTune(f32),
+    /// 原生 RPN：`parameter` u16 参数号，`value` 归一化 f32（0..=1）。
+    /// 由 yinhe-audio 的原生 RPN 事件流直接投递（不再拆 CC 序列）；
+    /// 0/1/2 解析为弯音灵敏度/微调/粗调，其余号保留给扩展参数。
+    Rpn { parameter: u16, value: f32 },
+    /// 原生 NRPN：`parameter` u16 参数号，`value` 归一化 f32（0..=1）。
+    Nrpn { parameter: u16, value: f32 },
     /// 音色更换：选择该通道的音色库条目（bank, preset 语义见 `PercussionMode`）。
     ProgramChange(u8),
     /// 鼓组模式（等价 xsynth `SetPercussionMode` 配置）：true 置 bank=128，false 置 bank=0。

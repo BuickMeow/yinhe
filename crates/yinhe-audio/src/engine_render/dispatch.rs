@@ -24,7 +24,9 @@ macro_rules! route_cpu_event {
             let sample = $engine.segment_start_sample;
             let dense = $dense;
             match $event {
-                xsynth_core::channel::ChannelAudioEvent::NoteOn { key, vel } => {
+                $crate::audio_model::AudioEvent::Channel(
+                    xsynth_core::channel::ChannelAudioEvent::NoteOn { key, vel },
+                ) => {
                     // CPU 路径沿用显式 NoteOff（与 xsynth 同语义）；end_sample 不自行到期。
                     cs.send_event(yinhe_synth::SynthEvent::NoteOn {
                         sample,
@@ -34,13 +36,17 @@ macro_rules! route_cpu_event {
                         end_sample: u64::MAX,
                     });
                 }
-                xsynth_core::channel::ChannelAudioEvent::NoteOff { .. } => {
+                $crate::audio_model::AudioEvent::Channel(
+                    xsynth_core::channel::ChannelAudioEvent::NoteOff { .. },
+                ) => {
                     // yinhe CPU：NoteOn 带精确 `end_sample`（音符自身 end_tick）到期
                     // 自释（含 damper 快照），显式 NoteOff 不再投递——它是 FIFO 语义
                     // （释放该 key 最老未释放 voice），被 enforce 杀掉的 voice 会让
                     // 后续 NoteOff 错位释放下一个音符（听感上音符被逐个截短）。
                 }
                 other => {
+                    // 原生 RPN/NRPN 由 `to_backend_control_event` 映射为
+                    // yinhe-synth 的一等 `ControlEvent::Rpn/Nrpn`。
                     if let Some(ev) = $crate::engine_gpu::to_backend_control_event(&other) {
                         cs.send_event(yinhe_synth::SynthEvent::Control {
                             sample,
@@ -51,12 +57,15 @@ macro_rules! route_cpu_event {
                 }
             }
         } else {
-            $engine.channel_set.send_event(
-                xsynth_core::channel_group::SynthEvent::Channel(
-                    $dense,
-                    xsynth_core::channel::ChannelEvent::Audio($event),
-                ),
-            );
+            // XSynth 没有 RPN 事件：0/1/2 → 高层事件，其余拆 CC 序列。
+            for ev in $crate::engine_render::xsynth_events(&$event).as_slice() {
+                $engine.channel_set.send_event(
+                    xsynth_core::channel_group::SynthEvent::Channel(
+                        $dense,
+                        xsynth_core::channel::ChannelEvent::Audio(*ev),
+                    ),
+                );
+            }
         }
     }};
 }
@@ -64,16 +73,18 @@ macro_rules! route_cpu_event {
 #[cfg(not(feature = "gpu"))]
 macro_rules! route_cpu_event {
     ($engine:ident, $dense:expr, $event:expr) => {{
-        $engine
-            .channel_set
-            .send_event(xsynth_core::channel_group::SynthEvent::Channel(
-                $dense,
-                xsynth_core::channel::ChannelEvent::Audio($event),
-            ));
+        for ev in $crate::engine_render::xsynth_events(&$event).as_slice() {
+            $engine
+                .channel_set
+                .send_event(xsynth_core::channel_group::SynthEvent::Channel(
+                    $dense,
+                    xsynth_core::channel::ChannelEvent::Audio(*ev),
+                ));
+        }
     }};
 }
 
-use super::{cc_to_midi, raw_cc};
+use super::{MidiMessages, event_to_midi, raw_cc};
 
 impl AudioEngine {
     /// GPU 路径：把一整块的事件派发到插件乐器并推进 `current_tick`。
@@ -151,16 +162,21 @@ impl AudioEngine {
                     }
                     if let Some(dense) = self.channel_plugin_dense(cc.channel as u8) {
                         // 该 MIDI 通道挂了插件 → CC/PB/RPN/PC 转原始 MIDI 字节喂实例；
-                        // 否则走 xsynth。
+                        // 否则走 xsynth/yinhe。RPN/NRPN 在这里拆成标准 CC 序列
+                        // （MIDI 1.0 插件只认 CC，没有 RPN 报文类型）。
                         // 先算 frame offset（只读），再取可变实例引用，避免整机借用冲突。
                         let time = self
                             .tick_to_sample(cc.tick)
                             .saturating_sub(self.block_start_sample)
                             as u32;
-                        if let Some(data) = cc_to_midi(&cc.event, cc.channel as u8)
+                        let mut midi = MidiMessages::default();
+                        event_to_midi(&cc.event, cc.channel as u8, &mut midi);
+                        if !midi.is_empty()
                             && let Some(Some(slot)) = self.instruments.get_mut(dense)
                         {
-                            slot.events.push(PluginEvent::Midi { time, data });
+                            for data in midi.as_slice() {
+                                slot.events.push(PluginEvent::Midi { time, data: *data });
+                            }
                             self.dispatched_skip.mark(&cc.event, cc.channel as usize);
                         }
                     } else {
@@ -256,10 +272,12 @@ impl AudioEngine {
                                 route_cpu_event!(
                                     self,
                                     dense,
-                                    ChannelAudioEvent::NoteOn {
-                                        key: key as u8,
-                                        vel,
-                                    }
+                                    crate::audio_model::AudioEvent::Channel(
+                                        ChannelAudioEvent::NoteOn {
+                                            key: key as u8,
+                                            vel,
+                                        }
+                                    )
                                 );
                             }
                             self.active_notes.push(Reverse(ActiveNote {
@@ -314,7 +332,13 @@ impl AudioEngine {
                 let dense = an.dense;
                 if dense != u32::MAX && !self.gpu_synth_active() {
                     // GPU 路径：音符由 GpuSynth 事件列表处理（不喂 CPU 后端）。
-                    route_cpu_event!(self, dense, ChannelAudioEvent::NoteOff { key: an.key });
+                    route_cpu_event!(
+                        self,
+                        dense,
+                        crate::audio_model::AudioEvent::Channel(ChannelAudioEvent::NoteOff {
+                            key: an.key
+                        })
+                    );
                 }
             }
         }
