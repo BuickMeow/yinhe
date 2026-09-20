@@ -7,7 +7,9 @@
 //!
 //! 档位（block_ticks）与选择规则都是连续公式，无行为阈值：
 //! 从大到小取第一个满足 `block_ticks * ppu <= SUMMARY_MAX_PX` 的档位；
-//! 都不满足则用原始音符层（此时可见音符数本来就不大）。
+//! 都不满足时，最细档的块宽若仍不超过 `SUMMARY_TAIL_MAX_PX`（2 倍上限），
+//! 由它顶替更细档的位置（块宽 2~4px，极端放大时才发生）；再细则用原始
+//! 音符层（此时可见音符数本来就不大）。
 
 use std::collections::HashMap;
 
@@ -22,7 +24,8 @@ use crate::vertex::NoteInstance;
 ///   `block × ppu ≤ SUMMARY_MAX_PX` 推出可达最大 block = 2000，1024 已够；
 /// - 最细 16：更细的档（8/4/2）段数会趋近音符数（摘要退化成原始数据），
 ///   且它们生效的缩放区间原始层本来只有几十万可见音符（几 ms），
-///   收益为零还吃显存，因此删除。
+///   收益为零还吃显存，因此删除；16 档可再向下顶替一档（见
+///   `SUMMARY_TAIL_MAX_PX`）。
 ///
 /// 不设段数上限：段数超限的档会被静默跳过，导致缩放时「细档凭空消失」
 /// （32 直接跳原始层）。显存安全由 `GpuBudget` 兜底（上传失败即清空该档
@@ -30,18 +33,29 @@ use crate::vertex::NoteInstance;
 pub const SUMMARY_BLOCK_TICKS: [u32; 7] = [1024, 512, 256, 128, 64, 32, 16];
 /// 摘要块在屏幕上的最大像素宽。块内空隙 ≤ 该宽度时被合并不可见。
 pub const SUMMARY_MAX_PX: f32 = 2.0;
+/// 最细档的兜底块宽上限：没有档位满足 `SUMMARY_MAX_PX` 时，允许最细档
+/// 放大到该宽度继续顶替更细的档（对应原 8/4 档的位置），避免直接掉回
+/// 原始层（可见音符多一个数量级）。再细则回原始层。
+pub const SUMMARY_TAIL_MAX_PX: f32 = SUMMARY_MAX_PX * 2.0;
 
 /// 根据 ppu 选择摘要档位索引（`None` = 用原始音符层）。
 ///
 /// 取满足 `block * ppu <= SUMMARY_MAX_PX` 的最大 block（列表从大到小，
-/// 第一个满足即最大）；无满足项时返回 None。
+/// 第一个满足即最大）；无满足项时由最细档兜底（块宽 ≤ `SUMMARY_TAIL_MAX_PX`
+/// 时继续用），否则返回 None。
 pub fn select_summary_level(ppu: f32) -> Option<usize> {
     if !ppu.is_finite() || ppu <= 0.0 {
         return None;
     }
-    SUMMARY_BLOCK_TICKS
+    if let Some(level) = SUMMARY_BLOCK_TICKS
         .iter()
         .position(|&block| block as f32 * ppu <= SUMMARY_MAX_PX)
+    {
+        return Some(level);
+    }
+    let finest = SUMMARY_BLOCK_TICKS.len() - 1;
+    let block = SUMMARY_BLOCK_TICKS[finest] as f32;
+    (block * ppu <= SUMMARY_TAIL_MAX_PX).then_some(finest)
 }
 
 /// 块内 track 计数取主导（次数最多；并列取 track 索引最小）。
@@ -154,8 +168,11 @@ mod tests {
         assert_eq!(select_summary_level(0.05), Some(5)); // 32 档
         assert_eq!(select_summary_level(0.1), Some(6)); // 16 档
         assert_eq!(select_summary_level(0.125), Some(6));
-        // 16 块 > 2px（ppu > 0.125）→ 原始层（更细档已移除）。
-        assert_eq!(select_summary_level(0.2), None);
+        // 16 块 > 2px（ppu > 0.125）→ 最细档顶替（块宽 ≤ 4px，X ≥ 4）。
+        assert_eq!(select_summary_level(0.2), Some(6));
+        assert_eq!(select_summary_level(0.25), Some(6)); // X=4，块宽正好 4px
+        // 16 块 > 4px（ppu > 0.25）→ 原始层（更细档已移除）。
+        assert_eq!(select_summary_level(0.26), None);
         assert_eq!(select_summary_level(0.5), None);
         assert_eq!(select_summary_level(1.0), None);
         assert_eq!(select_summary_level(2.5), None);
