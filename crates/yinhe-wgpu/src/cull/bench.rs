@@ -240,12 +240,19 @@ fn bench_synthetic_scale() {
 
     // ── LOD 摘要层（生产函数）的段数与构建成本 ──
     let t = std::time::Instant::now();
-    let summaries = crate::pianoroll::build_summaries(&all, &offsets);
+    let summaries = crate::pianoroll::build_summaries_up_to(
+        &all,
+        &offsets,
+        crate::pianoroll::SUMMARY_BLOCK_TICKS.len() - 1,
+    );
     println!(
         "摘要构建合计 {:.0}ms（生产路径，加载时一次）",
         t.elapsed().as_secs_f64() * 1e3
     );
-    for (i, (s, _)) in summaries.iter().enumerate() {
+    for (i, summary) in summaries.iter().enumerate() {
+        let Some((s, _)) = summary else {
+            continue;
+        };
         println!(
             "摘要 block={:>6}: {:>9} 段 {:>7.1}MB",
             crate::pianoroll::SUMMARY_BLOCK_TICKS[i],
@@ -499,12 +506,19 @@ fn bench_real_midi() {
     );
 
     let t = std::time::Instant::now();
-    let summaries = crate::pianoroll::build_summaries(&all, &offsets);
+    let summaries = crate::pianoroll::build_summaries_up_to(
+        &all,
+        &offsets,
+        crate::pianoroll::SUMMARY_BLOCK_TICKS.len() - 1,
+    );
     println!(
         "摘要构建合计 {:.0}ms（档内并行，生产路径，加载时一次）",
         t.elapsed().as_secs_f64() * 1e3
     );
-    for (i, (s, _)) in summaries.iter().enumerate() {
+    for (i, summary) in summaries.iter().enumerate() {
+        let Some((s, _)) = summary else {
+            continue;
+        };
         let tag = if s.is_empty() {
             "（空/超上限跳过）"
         } else {

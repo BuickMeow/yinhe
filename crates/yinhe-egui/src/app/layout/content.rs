@@ -554,6 +554,7 @@ impl App {
                     &mut self.last_tv_hash,
                     &mut self.last_hidden_keys,
                     &mut self.cull_rebuild,
+                    &mut self.summary_load,
                     midi_source,
                     Some(&doc.data.model),
                     &mut doc.edit.selected,

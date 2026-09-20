@@ -31,5 +31,5 @@ pub use automation::{
 pub use pianoroll::{
     PianorollRenderJob, SUMMARY_BLOCK_TICKS, SUMMARY_MAX_PX, build_all_notes, build_ghost_note,
     build_key_notes, build_key_summary, build_notes, build_render_job, build_summaries,
-    build_summary, select_summary_level,
+    build_summaries_up_to, build_summary, select_summary_level,
 };

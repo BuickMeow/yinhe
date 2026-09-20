@@ -3249,12 +3249,11 @@ fn summary_layer_matches_legacy_pixels() {
     let ppu = 4e-4f32;
     let selected = crate::pianoroll::select_summary_level(ppu).expect("4e-4 应触发摘要档位");
     // 只在选中档位放数据（其余留空），同时验证档位选择与未上传档位的回退。
-    let empty_offsets = [0u32; KEY_COUNT + 1];
-    let mut levels: Vec<(Vec<NoteInstance>, [u32; KEY_COUNT + 1])> = (0
+    let mut levels: Vec<Option<(Vec<NoteInstance>, [u32; KEY_COUNT + 1])>> = (0
         ..crate::pianoroll::SUMMARY_BLOCK_TICKS.len())
-        .map(|_| (Vec::new(), empty_offsets))
+        .map(|_| None)
         .collect();
-    levels[selected] = (summary.clone(), summary_offsets);
+    levels[selected] = Some((summary.clone(), summary_offsets));
 
     let (pw, ph) = (400u32, 200u32);
     let format = wgpu::TextureFormat::Rgba8UnormSrgb;

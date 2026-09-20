@@ -47,6 +47,7 @@ pub(crate) fn upload_and_prepare(
     last_tv_hash: &mut u64,
     last_hidden_keys: &mut gpu_upload::HiddenKeyMask,
     cull_rebuild: &mut Option<gpu_upload::CullRebuild>,
+    summary_load: &mut gpu_upload::SummaryLoadState,
     ghost_notes: &[(u32, u32, u8, u16)],
     w: u32,
     h: u32,
@@ -69,6 +70,8 @@ pub(crate) fn upload_and_prepare(
 
     // ── Upload all notes to GPU cull buffer ──
     if use_gpu_cull {
+        // 当前 ppu 对应的摘要目标档（None = 原始层区间，无需摘要）。
+        let summary_target = yinhe_wgpu::select_summary_level(view.base.pixels_per_tick);
         gpu_upload::upload(gpu_upload::GpuUploadState {
             pianoroll,
             midi,
@@ -83,6 +86,8 @@ pub(crate) fn upload_and_prepare(
             last_tv_hash,
             last_hidden_keys,
             rebuild: cull_rebuild,
+            summary_target,
+            summary: summary_load,
         });
     }
 

@@ -131,6 +131,22 @@ pub fn build_summaries(
         .collect()
 }
 
+/// 按 `SUMMARY_BLOCK_TICKS` 构建到 `max_level`（含）；更细的档位返回 `None`。
+///
+/// 懒构建（1C）：加载时只构建「当前档 + 更粗档」（数据量小、缩小立即可用），
+/// 更细的档在首次被选中时后台构建。
+pub fn build_summaries_up_to(
+    notes: &[NoteInstance],
+    offsets: &[u32; KEY_COUNT + 1],
+    max_level: usize,
+) -> Vec<Option<(Vec<NoteInstance>, [u32; KEY_COUNT + 1])>> {
+    SUMMARY_BLOCK_TICKS
+        .iter()
+        .enumerate()
+        .map(|(level, &block)| (level <= max_level).then(|| build_summary(notes, offsets, block)))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,5 +230,21 @@ mod tests {
         assert_eq!(summary_offsets[61], 1);
         assert_eq!(summary_offsets[62], 1);
         assert_eq!(summary_offsets[63], 2);
+    }
+
+    #[test]
+    fn lazy_build_skips_levels_above_max() {
+        let notes = vec![note(60, 0, 0, 10)];
+        let mut offsets = [0u32; KEY_COUNT + 1];
+        offsets[61] = 1;
+        for v in offsets.iter_mut().skip(61) {
+            *v = 1;
+        }
+        let built = build_summaries_up_to(&notes, &offsets, 2);
+        assert_eq!(built.len(), SUMMARY_BLOCK_TICKS.len());
+        assert!(built[0].is_some(), "档 0（更粗）应已构建");
+        assert!(built[2].is_some(), "档 2 应已构建");
+        assert!(built[3].is_none(), "档 3（更细）应懒构建");
+        assert!(built[6].is_none());
     }
 }
