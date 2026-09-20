@@ -19,6 +19,9 @@ mod state;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod bench;
+
 pub(crate) use bucket::KeyBucketIndex;
 pub(crate) use state::CullState;
 

@@ -1,0 +1,374 @@
+//! 合成大规模音符基准：现状 GPU cull + 渲染路径（无 LOD）的每帧成本。
+//!
+//! 目的：拿到「可见音符数 → 帧时间」的真实曲线，判断 1 亿音符全曲视图
+//! 离 60fps 有多远、瓶颈在 CPU 命令录制还是 GPU。
+//!
+//! 运行：
+//!   cargo test -p yinhe-wgpu --release bench_synthetic_scale -- --ignored --nocapture
+//!
+//! 环境变量：
+//!   YIN_BENCH_NOTES  总音符数（默认 100_000_000）
+//!   YIN_BENCH_STEP   同一 key 内相邻音符 start_tick 间距（默认 64）
+//!   YIN_BENCH_FRAMES 每个缩放档位的测量帧数（默认 3）
+//!   YIN_BENCH_TRACKS 轨道数（默认 8）
+
+use super::CullState;
+use super::tests::headless_device;
+use crate::vertex::{MAX_SEL_RECTS, NoteInstance, SelectionUniform, Uniforms};
+use wgpu::*;
+use yinhe_types::{KEY_COUNT, MAX_KEY};
+
+fn env_usize(name: &str, default: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
+/// 合成音符：每个 key 内按 start_tick 升序，start = i * step + key 偏移，
+/// 长度 1 + i%8 tick，track 在 0..tracks 间轮转（模拟多轨密集黑乐谱）。
+///
+/// 只用 MIDI 的 128 个 key（shader 纵向硬编码 128 key），
+/// 返回 `(notes, per_key_offsets, total_ticks)`。
+fn synth_notes(n: usize, step: u32, tracks: u16) -> (Vec<NoteInstance>, [u32; KEY_COUNT + 1], u32) {
+    use rayon::prelude::*;
+    const MIDI_KEYS: usize = 128;
+    let keys = MIDI_KEYS;
+    let per_key = n / keys;
+    let buckets: Vec<Vec<NoteInstance>> = (0..keys)
+        .into_par_iter()
+        .map(|k| {
+            let mut v = Vec::with_capacity(per_key);
+            // key 之间错开，避免所有 key 挤在同一 tick；key 内保持升序。
+            let phase = k as u32 % step.max(1);
+            for i in 0..per_key as u32 {
+                let start = i * step + phase;
+                v.push(NoteInstance {
+                    start_tick: start,
+                    end_tick: start + 1 + i % 8,
+                    packed: NoteInstance::pack(k as u8, (i as u16) % tracks.max(1), 100),
+                });
+            }
+            v
+        })
+        .collect();
+
+    let mut offsets = [0u32; KEY_COUNT + 1];
+    let mut all = Vec::with_capacity(per_key * keys);
+    let mut total = 0u32;
+    for (k, bucket) in buckets.into_iter().enumerate() {
+        offsets[k] = total;
+        total += bucket.len() as u32;
+        all.extend(bucket);
+    }
+    // 128..KEY_COUNT 的 key 为空：offsets 尾部全部指向 total。
+    for v in offsets.iter_mut().skip(keys) {
+        *v = total;
+    }
+    let total_ticks = per_key as u32 * step;
+    (all, offsets, total_ticks.max(1))
+}
+
+/// 读回各 key 的 draw args，累加 instance_count（可见实例总数）。
+/// 只在测量帧之后调用；读回本身不计入帧时间。
+fn count_visible_instances(device: &Device, queue: &Queue, cull: &CullState) -> u64 {
+    let mut total_bytes = 0u64;
+    for key in 0u8..=MAX_KEY {
+        let cc = cull.frame_chunk_counts[key as usize] as u64;
+        if cc > 0 && cull.per_key_draw_args_buffers[key as usize].is_some() {
+            total_bytes += cc * 20;
+        }
+    }
+    if total_bytes == 0 {
+        return 0;
+    }
+    let readback = device.create_buffer(&BufferDescriptor {
+        label: Some("bench_args_readback"),
+        size: total_bytes,
+        usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut enc = device.create_command_encoder(&Default::default());
+    let mut offset = 0u64;
+    for key in 0u8..=MAX_KEY {
+        let cc = cull.frame_chunk_counts[key as usize] as u64;
+        if cc == 0 {
+            continue;
+        }
+        let Some(src) = &cull.per_key_draw_args_buffers[key as usize] else {
+            continue;
+        };
+        enc.copy_buffer_to_buffer(src, 0, &readback, offset, cc * 20);
+        offset += cc * 20;
+    }
+    queue.submit([enc.finish()]);
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let done2 = done.clone();
+    readback.slice(..).map_async(MapMode::Read, move |_| {
+        done2.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+    if device.poll(PollType::wait_indefinitely()).is_err() {
+        return 0;
+    }
+    if !done.load(std::sync::atomic::Ordering::SeqCst) {
+        return 0;
+    }
+    let Ok(view) = readback.slice(..).get_mapped_range() else {
+        return 0;
+    };
+    let mut visible = 0u64;
+    for chunk in view.chunks_exact(20) {
+        visible += u32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]) as u64;
+    }
+    drop(view);
+    readback.unmap();
+    visible
+}
+
+#[test]
+#[ignore]
+fn bench_synthetic_scale() {
+    let n = env_usize("YIN_BENCH_NOTES", 100_000_000);
+    let step = env_usize("YIN_BENCH_STEP", 64) as u32;
+    let frames = env_usize("YIN_BENCH_FRAMES", 3).max(2);
+    let tracks = env_usize("YIN_BENCH_TRACKS", 8) as u16;
+
+    println!("== 合成规模基准（现状：无 LOD） ==");
+    println!("目标音符 {n}，step {step} tick，tracks {tracks}，每档 {frames} 帧");
+
+    let t = std::time::Instant::now();
+    let (all, offsets, total_ticks) = synth_notes(n, step, tracks);
+    println!(
+        "合成 {} 音符（{:.0}MB CPU）: {:.0}ms，时间轴 {total_ticks} ticks",
+        all.len(),
+        all.len() as f64 * 12.0 / 1e6,
+        t.elapsed().as_secs_f64() * 1e3
+    );
+
+    let Some((device, queue)) = headless_device() else {
+        eprintln!("无可用 GPU 适配器，跳过");
+        return;
+    };
+    let has_indirect_exec;
+    {
+        let inst = Instance::default();
+        has_indirect_exec = pollster::block_on(inst.request_adapter(&Default::default()))
+            .ok()
+            .map(|ad| {
+                let caps = ad.get_downlevel_capabilities();
+                println!(
+                    "adapter: INDIRECT_EXECUTION={} MULTI_DRAW_INDIRECT_COUNT={}",
+                    caps.flags.contains(DownlevelFlags::INDIRECT_EXECUTION),
+                    ad.features().contains(Features::MULTI_DRAW_INDIRECT_COUNT),
+                );
+                caps.flags.contains(DownlevelFlags::INDIRECT_EXECUTION)
+            })
+            .unwrap_or(false);
+    }
+
+    let format = TextureFormat::Rgba8UnormSrgb;
+    let mut renderer = crate::InstanceRenderer::new(device.clone(), queue.clone(), format);
+
+    let t = std::time::Instant::now();
+    renderer.upload_all_notes_for_cull(&all, &offsets, &[0; KEY_COUNT]);
+    println!(
+        "全量上传: {:.0}ms, cull_ready={}",
+        t.elapsed().as_secs_f64() * 1e3,
+        renderer.cull_ready()
+    );
+    assert!(renderer.cull_ready(), "cull 未就绪（显存预算失败？）");
+    drop(all);
+
+    let colors: Vec<[f32; 4]> = (0..tracks.max(1))
+        .map(|i| {
+            let f = i as f32 / tracks.max(1) as f32;
+            [0.2 + 0.6 * f, 0.5, 1.0 - 0.5 * f, 1.0]
+        })
+        .collect();
+    renderer.upload_track_colors(&colors);
+    renderer.upload_selection(&SelectionUniform {
+        rects: [[0; 4]; MAX_SEL_RECTS * 2],
+    });
+
+    // 清空队列（write_buffer 的拷贝在 submit 时才发生），并测空 submit+poll 开销。
+    queue.submit([device.create_command_encoder(&Default::default()).finish()]);
+    device
+        .poll(PollType::wait_indefinitely())
+        .expect("poll failed");
+    let mut empty_poll_ms = f64::MAX;
+    for _ in 0..5 {
+        let t = std::time::Instant::now();
+        queue.submit([device.create_command_encoder(&Default::default()).finish()]);
+        device
+            .poll(PollType::wait_indefinitely())
+            .expect("poll failed");
+        empty_poll_ms = empty_poll_ms.min(t.elapsed().as_secs_f64() * 1e3);
+    }
+    println!("空 submit+poll 固定开销: {empty_poll_ms:.3}ms");
+
+    let (pw, ph) = (1600u32, 900u32);
+    let target = device.create_texture(&TextureDescriptor {
+        label: Some("bench_target"),
+        size: Extent3d {
+            width: pw,
+            height: ph,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: TextureDimension::D2,
+        format,
+        usage: TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let target_view = target.create_view(&Default::default());
+
+    let kb_w = 80.0f32;
+    // 只考虑 MIDI 的 128 key；key_height=7 让 128 个 key 全部落在 900px
+    // 视口内，测量最坏的「全 key + 全曲」可见情况。
+    let kh = 7.0f32;
+    let main_w = pw as f32 - kb_w;
+
+    // 屏上可见 tick 数逐档 ×8：从全曲到放大到 1 tick ≈ 1px 以上。
+    let divisors = [1u32, 8, 64, 512, 4096, 32768, 131072];
+    println!(
+        "\n{:>11} {:>11} {:>11} {:>9} {:>9} {:>9} {:>9}",
+        "屏上tick", "ppu", "可见实例", "CPU/ms", "GPU/ms", "帧/ms", "FPS"
+    );
+    for &div in &divisors {
+        let tos = (total_ticks / div).max(64);
+        let ppu = main_w / tos as f32;
+        let scroll_x = ((total_ticks as f32 * ppu - main_w) / 2.0).max(0.0);
+
+        let mut min_cpu = f64::MAX;
+        let mut min_gpu = f64::MAX;
+        for f in 0..frames {
+            let u = Uniforms {
+                width: pw as f32,
+                height: ph as f32,
+                scroll_x: scroll_x + f as f32,
+                scroll_y: 0.0,
+                pixels_per_tick: ppu,
+                key_height: kh,
+                keyboard_width: kb_w,
+                mode: 1,
+                track_count: tracks as u32,
+                ..Default::default()
+            };
+            renderer.upload_uniforms(u);
+            let t = std::time::Instant::now();
+            let mut enc = device.create_command_encoder(&Default::default());
+            renderer.draw(&mut enc, &target_view, pw, ph);
+            queue.submit([enc.finish()]);
+            let cpu_ms = t.elapsed().as_secs_f64() * 1e3;
+            let t = std::time::Instant::now();
+            device
+                .poll(PollType::wait_indefinitely())
+                .expect("poll failed");
+            let gpu_ms = (t.elapsed().as_secs_f64() * 1e3 - empty_poll_ms).max(0.0);
+            if f > 0 {
+                min_cpu = min_cpu.min(cpu_ms);
+                min_gpu = min_gpu.min(gpu_ms);
+            }
+        }
+        let visible = count_visible_instances(&device, &queue, &renderer.cull);
+        let frame_ms = min_cpu.max(min_gpu);
+        println!(
+            "{:>11} {:>11.5} {:>11} {:>9.2} {:>9.2} {:>9.2} {:>9.1}",
+            tos,
+            ppu,
+            visible,
+            min_cpu,
+            min_gpu,
+            frame_ms,
+            1000.0 / frame_ms.max(0.001)
+        );
+    }
+
+    // 静止帧（uniforms 不变 → cull dispatch skip）：测量纯 draw 录制 + 上帧 args 的绘制。
+    let u = Uniforms {
+        width: pw as f32,
+        height: ph as f32,
+        scroll_x: 0.0,
+        scroll_y: 0.0,
+        pixels_per_tick: main_w / total_ticks as f32,
+        key_height: kh,
+        keyboard_width: kb_w,
+        mode: 1,
+        track_count: tracks as u32,
+        ..Default::default()
+    };
+    renderer.upload_uniforms(u);
+    let mut enc = device.create_command_encoder(&Default::default());
+    renderer.draw(&mut enc, &target_view, pw, ph);
+    queue.submit([enc.finish()]);
+    device
+        .poll(PollType::wait_indefinitely())
+        .expect("poll failed");
+    let t = std::time::Instant::now();
+    let mut enc = device.create_command_encoder(&Default::default());
+    renderer.draw(&mut enc, &target_view, pw, ph);
+    queue.submit([enc.finish()]);
+    let idle_cpu = t.elapsed().as_secs_f64() * 1e3;
+    let t = std::time::Instant::now();
+    device
+        .poll(PollType::wait_indefinitely())
+        .expect("poll failed");
+    let idle_gpu = (t.elapsed().as_secs_f64() * 1e3 - empty_poll_ms).max(0.0);
+    println!("\n静止帧（全曲视图，cull skip）: CPU {idle_cpu:.2}ms, GPU {idle_gpu:.2}ms");
+
+    // ── draw call 合并实验：per-key 一次 multi_draw_indexed_indirect ──
+    // 现状是每 chunk 一次 draw_indexed_indirect（全曲视图约 39 万次）。
+    // multi_draw 把每个 key 的 chunk args 一次提交（128 次调用）。
+    if has_indirect_exec {
+        let rs = renderer.render_state();
+        let t = std::time::Instant::now();
+        let mut enc = device.create_command_encoder(&Default::default());
+        let mut calls = 0u32;
+        let mut chunks = 0u32;
+        {
+            let mut pass = crate::util::begin_pianoroll_pass(
+                &mut enc,
+                &target_view,
+                &rs.pipeline,
+                &rs.bind_group,
+                pw,
+                ph,
+            );
+            pass.set_pipeline(&rs.note_pipeline);
+            pass.set_bind_group(0, &rs.bind_group, &[]);
+            pass.set_index_buffer(rs.index_buffer.slice(..), IndexFormat::Uint32);
+            for key in 0u8..=MAX_KEY {
+                let cc = renderer.cull.frame_chunk_counts[key as usize];
+                if cc == 0 {
+                    continue;
+                }
+                let Some(args) = &renderer.cull.per_key_draw_args_buffers[key as usize] else {
+                    continue;
+                };
+                let Some(vis) = &renderer.cull.per_key_visible_buffers[key as usize] else {
+                    continue;
+                };
+                let Some(bg) = renderer.cull.per_key_all_bind_group(key) else {
+                    continue;
+                };
+                pass.set_bind_group(1, bg, &[]);
+                pass.set_vertex_buffer(0, vis.slice(..));
+                pass.multi_draw_indexed_indirect(args, 0, cc);
+                calls += 1;
+                chunks += cc;
+            }
+            drop(pass);
+        }
+        let record_ms = t.elapsed().as_secs_f64() * 1e3;
+        queue.submit([enc.finish()]);
+        let t = std::time::Instant::now();
+        device
+            .poll(PollType::wait_indefinitely())
+            .expect("poll failed");
+        let gpu_ms = (t.elapsed().as_secs_f64() * 1e3 - empty_poll_ms).max(0.0);
+        println!(
+            "multi_draw（{calls} 次调用 / {chunks} chunks）: 录制 {record_ms:.2}ms, submit+poll {gpu_ms:.2}ms"
+        );
+    }
+}

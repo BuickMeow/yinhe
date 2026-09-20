@@ -317,6 +317,12 @@ impl InstanceRenderer {
         self.cull.is_ready()
     }
 
+    /// Test/bench 专用：暴露渲染管线状态（draw call 录制实验用）。
+    #[cfg(test)]
+    pub(crate) fn render_state(&self) -> &RenderPipelineState {
+        &self.render
+    }
+
     /// Drop all per-key GPU cull buffers and reset tracking so the next render
     /// treats the document as fresh (forces full upload on the next frame).
     ///

@@ -7,7 +7,7 @@ use yinhe_types::{KEY_COUNT, NoteSource};
 /// Headless GPU device for cull integration tests.
 /// Returns None when no adapter is available (e.g. CI without a GPU),
 /// which skips the test.
-fn headless_device() -> Option<(Device, Queue)> {
+pub(super) fn headless_device() -> Option<(Device, Queue)> {
     let instance = Instance::default();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
     // cull 已改为 CPU 读回 args + 直接 draw_indexed（Adreno indirect
