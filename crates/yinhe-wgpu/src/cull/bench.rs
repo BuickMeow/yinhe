@@ -13,10 +13,37 @@
 //!   YIN_BENCH_TRACKS 轨道数（默认 8）
 
 use super::CullState;
-use super::tests::headless_device;
 use crate::vertex::{MAX_SEL_RECTS, NoteInstance, SelectionUniform, Uniforms};
 use wgpu::*;
 use yinhe_types::{KEY_COUNT, MAX_KEY};
+
+/// 基准专用 device：关闭 `VALIDATION_INDIRECT_CALL`，与生产配置
+/// （main.rs 的 instance flags）一致。默认 release 构建仍带此 flag，
+/// wgpu-core 会对每条 indirect args 做 CPU 校验（multi_draw 时逐条
+/// `DrawBatcher::add`），1 亿音符全曲视图下约 28ms/帧，掩盖真实成本。
+fn bench_device() -> Option<(Device, Queue)> {
+    let mut desc = InstanceDescriptor::new_without_display_handle();
+    desc.flags = InstanceFlags::from_build_config()
+        .with_env()
+        .difference(InstanceFlags::VALIDATION_INDIRECT_CALL);
+    let instance = Instance::new(desc);
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
+    let caps = adapter.get_downlevel_capabilities();
+    println!(
+        "adapter: {:?} INDIRECT_EXECUTION={} MULTI_DRAW_INDIRECT_COUNT={}",
+        adapter.get_info().backend,
+        caps.flags.contains(DownlevelFlags::INDIRECT_EXECUTION),
+        adapter
+            .features()
+            .contains(Features::MULTI_DRAW_INDIRECT_COUNT),
+    );
+    let desc = DeviceDescriptor {
+        required_features: adapter.features() & Features::INDIRECT_FIRST_INSTANCE,
+        ..Default::default()
+    };
+    let (device, queue) = pollster::block_on(adapter.request_device(&desc)).ok()?;
+    Some((device, queue))
+}
 
 fn env_usize(name: &str, default: usize) -> usize {
     std::env::var(name)
@@ -145,26 +172,10 @@ fn bench_synthetic_scale() {
         t.elapsed().as_secs_f64() * 1e3
     );
 
-    let Some((device, queue)) = headless_device() else {
+    let Some((device, queue)) = bench_device() else {
         eprintln!("无可用 GPU 适配器，跳过");
         return;
     };
-    let has_indirect_exec;
-    {
-        let inst = Instance::default();
-        has_indirect_exec = pollster::block_on(inst.request_adapter(&Default::default()))
-            .ok()
-            .map(|ad| {
-                let caps = ad.get_downlevel_capabilities();
-                println!(
-                    "adapter: INDIRECT_EXECUTION={} MULTI_DRAW_INDIRECT_COUNT={}",
-                    caps.flags.contains(DownlevelFlags::INDIRECT_EXECUTION),
-                    ad.features().contains(Features::MULTI_DRAW_INDIRECT_COUNT),
-                );
-                caps.flags.contains(DownlevelFlags::INDIRECT_EXECUTION)
-            })
-            .unwrap_or(false);
-    }
 
     let format = TextureFormat::Rgba8UnormSrgb;
     let mut renderer = crate::InstanceRenderer::new(device.clone(), queue.clone(), format);
@@ -285,6 +296,43 @@ fn bench_synthetic_scale() {
         );
     }
 
+    // ── 诊断：全曲视图但只显示 1 个 key（绘制量≈0，buffer 规模不变）──
+    // 区分 CPU 帧时间是与「绘制规模」相关还是与「buffer 总规模 / 提交」相关。
+    {
+        let u = Uniforms {
+            width: pw as f32,
+            height: ph as f32,
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+            pixels_per_tick: main_w / total_ticks as f32,
+            key_height: 1000.0, // 纵向只覆盖 1 个 key
+            keyboard_width: kb_w,
+            mode: 1,
+            track_count: tracks as u32,
+            ..Default::default()
+        };
+        renderer.upload_uniforms(u);
+        let mut min_cpu = f64::MAX;
+        for f in 0..frames.max(2) {
+            let mut u2 = u;
+            u2.scroll_x = f as f32;
+            renderer.upload_uniforms(u2);
+            let t = std::time::Instant::now();
+            let mut enc = device.create_command_encoder(&Default::default());
+            renderer.draw(&mut enc, &target_view, pw, ph);
+            queue.submit([enc.finish()]);
+            let cpu_ms = t.elapsed().as_secs_f64() * 1e3;
+            device
+                .poll(PollType::wait_indefinitely())
+                .expect("poll failed");
+            if f > 0 {
+                min_cpu = min_cpu.min(cpu_ms);
+            }
+        }
+        let visible = count_visible_instances(&device, &queue, &renderer.cull);
+        println!("诊断（全曲视图 / 1 key，可见 {visible}）: CPU {min_cpu:.2}ms");
+    }
+
     // 静止帧（uniforms 不变 → cull dispatch skip）：测量纯 draw 录制 + 上帧 args 的绘制。
     let u = Uniforms {
         width: pw as f32,
@@ -316,59 +364,4 @@ fn bench_synthetic_scale() {
         .expect("poll failed");
     let idle_gpu = (t.elapsed().as_secs_f64() * 1e3 - empty_poll_ms).max(0.0);
     println!("\n静止帧（全曲视图，cull skip）: CPU {idle_cpu:.2}ms, GPU {idle_gpu:.2}ms");
-
-    // ── draw call 合并实验：per-key 一次 multi_draw_indexed_indirect ──
-    // 现状是每 chunk 一次 draw_indexed_indirect（全曲视图约 39 万次）。
-    // multi_draw 把每个 key 的 chunk args 一次提交（128 次调用）。
-    if has_indirect_exec {
-        let rs = renderer.render_state();
-        let t = std::time::Instant::now();
-        let mut enc = device.create_command_encoder(&Default::default());
-        let mut calls = 0u32;
-        let mut chunks = 0u32;
-        {
-            let mut pass = crate::util::begin_pianoroll_pass(
-                &mut enc,
-                &target_view,
-                &rs.pipeline,
-                &rs.bind_group,
-                pw,
-                ph,
-            );
-            pass.set_pipeline(&rs.note_pipeline);
-            pass.set_bind_group(0, &rs.bind_group, &[]);
-            pass.set_index_buffer(rs.index_buffer.slice(..), IndexFormat::Uint32);
-            for key in 0u8..=MAX_KEY {
-                let cc = renderer.cull.frame_chunk_counts[key as usize];
-                if cc == 0 {
-                    continue;
-                }
-                let Some(args) = &renderer.cull.per_key_draw_args_buffers[key as usize] else {
-                    continue;
-                };
-                let Some(vis) = &renderer.cull.per_key_visible_buffers[key as usize] else {
-                    continue;
-                };
-                let Some(bg) = renderer.cull.per_key_all_bind_group(key) else {
-                    continue;
-                };
-                pass.set_bind_group(1, bg, &[]);
-                pass.set_vertex_buffer(0, vis.slice(..));
-                pass.multi_draw_indexed_indirect(args, 0, cc);
-                calls += 1;
-                chunks += cc;
-            }
-            drop(pass);
-        }
-        let record_ms = t.elapsed().as_secs_f64() * 1e3;
-        queue.submit([enc.finish()]);
-        let t = std::time::Instant::now();
-        device
-            .poll(PollType::wait_indefinitely())
-            .expect("poll failed");
-        let gpu_ms = (t.elapsed().as_secs_f64() * 1e3 - empty_poll_ms).max(0.0);
-        println!(
-            "multi_draw（{calls} 次调用 / {chunks} chunks）: 录制 {record_ms:.2}ms, submit+poll {gpu_ms:.2}ms"
-        );
-    }
 }

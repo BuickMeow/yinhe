@@ -847,7 +847,17 @@ impl CullState {
         }
     }
 
-    /// 桌面间接绘制：零回读，直接 `draw_indexed_indirect`（需 INDIRECT_FIRST_INSTANCE）
+    /// 桌面间接绘制：零回读，每个 key 一次 `multi_draw_indexed_indirect`。
+    ///
+    /// cull shader 每帧从 args[0] 开始按 chunk 顺序写入本帧 dispatch 的
+    /// chunk args（相对 workgroup id），因此 `[0, frame_chunk_counts[key])`
+    /// 是连续的、可直接一次提交。逐 chunk 的 `draw_indexed_indirect` 循环在
+    /// 全曲视图下会产生约 39 万次命令录制（实测 50ms/帧），multi_draw
+    /// 按 key 合并为 128 次（实测 0.02ms），GPU 执行时间不变。
+    ///
+    /// 安全性：`multi_draw_indexed_indirect` 要求 `INDIRECT_EXECUTION`
+    /// downlevel flag；而本路径的 cull dispatch（`dispatch_workgroups_indirect`）
+    /// 本身已要求该 flag，故不需要额外能力探测。
     pub(crate) fn draw_visible_notes_indirect(
         &self,
         pass: &mut RenderPass<'_>,
@@ -867,7 +877,7 @@ impl CullState {
             let Some(args_buf) = &self.per_key_draw_args_buffers[key as usize] else {
                 continue;
             };
-            let chunk_count = self.frame_chunk_counts[key as usize] as usize;
+            let chunk_count = self.frame_chunk_counts[key as usize];
             if chunk_count == 0 {
                 continue;
             }
@@ -876,9 +886,7 @@ impl CullState {
             };
             pass.set_bind_group(1, bg, &[]);
             pass.set_vertex_buffer(0, vis_buf.slice(..));
-            for chunk in 0..chunk_count {
-                pass.draw_indexed_indirect(args_buf, chunk as u64 * 20);
-            }
+            pass.multi_draw_indexed_indirect(args_buf, 0, chunk_count);
         }
     }
 }
