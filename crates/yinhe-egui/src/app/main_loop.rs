@@ -679,6 +679,7 @@ impl eframe::App for App {
             self.sys_monitor.cpu_usage,
             mem_mb,
             self.fps,
+            self.pianoroll.lod_block(),
             &mut self.show_mem_breakdown,
             &self.status_hint,
             &mut self.notifications,

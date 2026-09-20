@@ -42,6 +42,9 @@ pub struct InstanceRenderer {
     cached_selection: Option<SelectionUniform>,
     layers: Vec<AnyLayer>,
     pub(crate) cull: CullState,
+    /// 最近一帧 PR 音符走的层：`Some(block_ticks)` = LOD 摘要档，
+    /// `None` = 原始音符层（供状态栏显示当前 LOD 档位）。
+    last_lod_block: Option<u32>,
     /// AM 力度条 LOD 摘要（CPU 侧，随文档/编辑后台重建）。
     velocity_summary: Option<Arc<crate::automation::VelocitySummary>>,
     /// 摘要对应的一致性键（revision ^ tv_hash）；与当前键不同则需重建。
@@ -108,6 +111,7 @@ impl InstanceRenderer {
                 cached_selection: None,
                 layers: Vec::new(),
                 cull,
+                last_lod_block: None,
                 velocity_summary: None,
                 velocity_summary_revision: 0,
                 velocity_rebuild: None,
@@ -378,6 +382,11 @@ impl InstanceRenderer {
         &self.render
     }
 
+    /// 最近一帧 PR 音符的 LOD 块宽（tick）；`None` = 原始层。
+    pub fn lod_block(&self) -> Option<u32> {
+        self.last_lod_block
+    }
+
     /// AM 力度条摘要：按 ppu 缩小时 `prepare_automation` 用它切片生成 bar。
     pub fn velocity_summary(&self) -> Option<Arc<crate::automation::VelocitySummary>> {
         self.velocity_summary.clone()
@@ -485,6 +494,7 @@ impl InstanceRenderer {
             self.cull.is_ready(),
             self.layers.len()
         );
+        self.last_lod_block = None;
         if self.cull.is_ready() {
             self.draw_with_cull(encoder, target, width, height);
         } else {
@@ -620,6 +630,7 @@ impl InstanceRenderer {
                 .device
                 .create_command_encoder(&CommandEncoderDescriptor::default());
             if let Some(level) = summary_level {
+                self.last_lod_block = crate::pianoroll::SUMMARY_BLOCK_TICKS.get(level).copied();
                 let _ = self.cull.dispatch_summary(
                     &mut enc,
                     &self.queue,
@@ -655,6 +666,7 @@ impl InstanceRenderer {
                 self.queue.submit([enc.finish()]);
                 return;
             }
+            self.last_lod_block = None;
             // 单 encoder：compute cull → render pass，GPU 内 barrier，无 CPU 同步
             let _ = self
                 .cull

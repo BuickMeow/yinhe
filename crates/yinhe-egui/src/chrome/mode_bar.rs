@@ -167,6 +167,8 @@ pub fn show(
     cpu_usage: f32,
     mem_mb: f64,
     fps: f32,
+    // 当前 PR 音符 LOD 块宽（tick）；None = 原始音符层。
+    lod_block: Option<u32>,
     show_mem_breakdown: &mut bool,
     status_hint: &Option<String>,
     notifications: &mut crate::widgets::toast::Notifications,
@@ -347,6 +349,12 @@ pub fn show(
                             }
                             ui.add_space(12.0);
                             metric(ui, "FPS", &format!("{:.1}", fps));
+                            ui.add_space(12.0);
+                            let lod_text = match lod_block {
+                                Some(block) => format!("{block}"),
+                                None => "原".to_string(),
+                            };
+                            metric_clickable(ui, "LOD", &lod_text, || {});
                         });
 
                         icon_hint
