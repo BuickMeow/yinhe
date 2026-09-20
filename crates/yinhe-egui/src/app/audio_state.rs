@@ -5,15 +5,16 @@ use yinhe_types::{Interpolation, SynthEngine};
 
 /// 影响音频引擎 spawn 的设置字段快照。
 ///
-/// 两处使用：
-/// - 设置对话框：区分「设置真的改了」与「只是关掉了设置窗口」（`show_viewport`
-///   的返回值是"窗口关闭"而非"有修改"）；
+/// 三处使用：
+/// - 设置对话框关闭：当前设置与引擎创建快照不一致 → teardown 重建；
 /// - 引擎复用：`AudioState::engine_key` 记录引擎创建时的输入，跨文档复用前
-///   要求其与当前设置一致。
+///   要求其与当前设置一致；
+/// - spawn 在飞期间设置变化：结果快照与当前设置比对，不一致丢弃重来。
 ///
-/// 覆盖 `rebuild_audio_if_needed` / `resolve_sf_config` 的全部 spawn 输入：
-/// 采样率、缓冲大小、输出设备、合成后端、全局音色库列表。
-/// `xsynth_layers` 由 `SetLayerCount` 在线应用，不参与。
+/// 覆盖 `spawn_cpal_audio` 的全部设置输入：采样率、缓冲大小、输出设备、
+/// 合成后端、插值。**不含全局音色库**——音色库可在活引擎上在线替换
+/// （`SetSoundFonts`），改库不需要重建引擎。`xsynth_layers` / `max_voices` /
+/// `ignore_velocity` 由命令在线应用，不参与。
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct EngineSpawnKey {
     sample_rate: u32,
@@ -21,7 +22,6 @@ pub(crate) struct EngineSpawnKey {
     output_device_name: Option<String>,
     synth_engine: SynthEngine,
     interpolation: Interpolation,
-    sf_entries: Vec<(String, String, bool)>,
 }
 
 impl EngineSpawnKey {
@@ -32,12 +32,6 @@ impl EngineSpawnKey {
             output_device_name: settings.output_device_name.clone(),
             synth_engine: settings.synth_engine,
             interpolation: settings.interpolation,
-            sf_entries: settings
-                .global_sf_config
-                .entries
-                .iter()
-                .map(|e| (e.path.clone(), e.name.clone(), e.enabled))
-                .collect(),
         }
     }
 }
@@ -117,6 +111,13 @@ pub(crate) struct AudioState {
     /// `sf_pending = true` 时每帧 `poll_audio_progress` 轮询实际完成数。
     pub sf_total: usize,
     pub sf_pending: bool,
+    /// `sf_loaded` 计数基准：引擎生命周期内音色库会多次在线替换，进度应看
+    /// "本轮起点之后的完成数"（`sf_loaded_count - sf_loaded_base`）。
+    pub sf_loaded_base: usize,
+    /// 引擎当前已应用的力度忽略阈值（`SetIgnoreVelocity` 发送后更新）。
+    /// `None` = 引擎未就绪。阈值变化要全量重建 audible_notes，必须去重：
+    /// 仅在真正变化时发送，避免每次关闭设置都重扫 1 亿音符。
+    pub applied_ignore_velocity: Option<u8>,
     /// 引擎重建/切换的等待 toast 起始时刻（`Some` = 进行中）。
     /// `rebuild_audio_if_needed` 建卡时置位，音频就绪/失败时收尾清空。
     pub engine_toast: Option<std::time::Instant>,
@@ -161,6 +162,8 @@ impl AudioState {
             last_known_devices: Vec::new(),
             sf_total: 0,
             sf_pending: false,
+            sf_loaded_base: 0,
+            applied_ignore_velocity: None,
             engine_toast: None,
             last_device_poll: None,
             spawn_error: None,
@@ -170,6 +173,19 @@ impl AudioState {
             spawn_restore_sample: None,
             pending_layout: None,
         }
+    }
+}
+
+impl AudioState {
+    /// 引擎创建快照与当前设置不一致（需要 teardown 重建，调用方先确认引擎存在）。
+    ///
+    /// 判断用「引擎创建时的快照 vs 当前设置」，不能用「帧间 diff」：
+    /// 设置在设置窗口打开期间就已改好，关闭帧的 prev 已是新值，diff 恒等。
+    pub(crate) fn engine_spawn_key_stale(
+        &self,
+        settings: &crate::audio_settings::AudioSettings,
+    ) -> bool {
+        self.engine_key.as_ref() != Some(&EngineSpawnKey::of(settings))
     }
 }
 
@@ -232,12 +248,44 @@ mod tests {
             "interpolation 必须纳入 EngineSpawnKey"
         );
 
+        // 全局音色库**不**纳入 EngineSpawnKey：改库走活引擎在线替换
+        // （`SetSoundFonts`），不应触发 teardown + 重开 cpal 流。
         let mut s = mk();
         s.global_sf_config.entries.push(Default::default());
-        assert_ne!(
+        assert_eq!(
             EngineSpawnKey::of(&s),
             k0,
-            "global_sf_config 必须纳入 EngineSpawnKey"
+            "global_sf_config 不应纳入 EngineSpawnKey（在线替换）"
+        );
+    }
+
+    /// 回归：设置窗口关闭时的重建判定必须对比「引擎创建快照 vs 当前设置」。
+    /// 曾经用「关闭帧的帧间 diff」判定——设置值在窗口打开期间就改好了，
+    /// 关闭帧 diff 恒等 → 永远不重建，表现为"改设置必须重启 App"。
+    #[test]
+    fn stale_spawn_key_is_detected_after_settings_change() {
+        let settings = AudioSettings::default();
+        let mut state = AudioState::new();
+        state.engine_key = Some(EngineSpawnKey::of(&settings));
+        assert!(
+            !state.engine_spawn_key_stale(&settings),
+            "设置未变：引擎快照不 stale"
+        );
+
+        let mut changed = settings.clone();
+        changed.synth_engine = match changed.synth_engine {
+            SynthEngine::XSynthCpu => SynthEngine::YinheGpu,
+            _ => SynthEngine::XSynthCpu,
+        };
+        assert!(
+            state.engine_spawn_key_stale(&changed),
+            "设置已变：引擎快照 stale（关闭设置时必须重建）"
+        );
+
+        state.engine_key = None;
+        assert!(
+            state.engine_spawn_key_stale(&settings),
+            "无引擎快照视为 stale（由调用方结合 handle 存在性判断）"
         );
     }
 }

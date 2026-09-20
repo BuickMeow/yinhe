@@ -315,6 +315,11 @@ impl App {
                 let port_configs = self.resolve_sf_config(doc);
                 self.audio_state.sf_total = port_configs.len();
                 self.audio_state.sf_pending = true;
+                // 新引擎的 sf_loaded 从 0 起算；力度阈值已由
+                // `send_initial_audio_state` 发出。
+                self.audio_state.sf_loaded_base = 0;
+                self.audio_state.applied_ignore_velocity =
+                    Some(self.audio_settings.ignore_velocity);
 
                 // 音频素材：按实际采样率重新解码（若未解码过），并把已有 PCM
                 // 重推给新引擎（引擎重建后 audio_sources 为空）。
@@ -377,7 +382,7 @@ impl App {
     /// 换文档的常规路径是"拆引擎 + 重开 cpal 流 + 重建 GpuSynth + 重传采样"，
     /// 即使音色库/设备/采样率毫无变化也要全量重来（数百 ms 到数秒）。满足
     /// 以下条件时直接把新文档的模型与通道状态推给现有引擎即可（毫秒级）：
-    /// 1. 引擎活着且设置快照未变（采样率/缓冲/设备/GPU 开关/全局音色库）；
+    /// 1. 引擎活着且设置快照未变（采样率/缓冲/设备/合成后端/插值）；
     /// 2. 引擎布局覆盖新文档的通道需求（`ChannelLayout::covers_model`）；
     /// 3. 新文档需要的音色库配置逐通道与引擎已加载的完全一致；
     /// 4. 新旧文档的机架都没有插件 insert / 插件乐器（引擎内部状态干净，
@@ -471,6 +476,64 @@ impl App {
                 .instrument_racks
                 .get(idx)
                 .is_none_or(|r| r.is_plugin_free())
+    }
+
+    /// 关闭设置窗口时让所有设置落地（设置必生效）：
+    /// - 力度阈值：命令在线应用（全量 audible 重建，按已应用值去重）；
+    /// - spawn 输入（采样率/缓冲/设备/后端/插值）：与引擎创建快照不一致 →
+    ///   teardown，下一帧自动重建（重开流 + 重载音色库，带等待提示）；
+    /// - 全局音色库：活引擎上在线替换（`SetSoundFonts`），不重建、不断播。
+    pub(crate) fn apply_settings_on_close(&mut self) {
+        // 力度阈值：只在真正变化时发送（重扫 1 亿音符的代价不能重复付）。
+        if let Some(audio) = self.audio_state.handle.as_ref()
+            && self.audio_state.applied_ignore_velocity != Some(self.audio_settings.ignore_velocity)
+        {
+            audio
+                .handle
+                .send(yinhe_audio::AudioCommand::SetIgnoreVelocity {
+                    threshold: self.audio_settings.ignore_velocity,
+                });
+            self.audio_state.applied_ignore_velocity = Some(self.audio_settings.ignore_velocity);
+        }
+
+        // spawn 输入变化：拆掉重建（下一帧 `rebuild_audio_if_needed` 按新设置
+        // 重新 spawn 并注入初始状态）。
+        if self.audio_state.handle.is_some()
+            && self
+                .audio_state
+                .engine_spawn_key_stale(&self.audio_settings)
+        {
+            self.teardown_audio();
+            return;
+        }
+
+        self.sync_soundfonts_online();
+    }
+
+    /// 全局音色库设置变化：在活引擎上在线替换（不 teardown、不中断播放）。
+    /// 文档切换路径 `try_adopt_engine` 已用同一命令做在线替换。
+    fn sync_soundfonts_online(&mut self) {
+        let (Some(audio), Some(idx)) =
+            (self.audio_state.handle.as_ref(), self.workspace.active_doc)
+        else {
+            return;
+        };
+        let configs = self.resolve_sf_config(&self.workspace.documents[idx]);
+        // 现引擎音色库覆盖新配置（逐通道完全相同或超集）→ 无需重载。
+        if sf_configs_cover(&self.audio_state.engine_sf_configs, &configs) {
+            return;
+        }
+        audio.handle.send(yinhe_audio::AudioCommand::SetSoundFonts {
+            configs: Box::new(configs.clone()),
+        });
+        self.audio_state.engine_sf_configs = configs.clone();
+        self.audio_state.sf_total = configs.len();
+        // 进度按"本轮起点之后的完成数"计（sf_loaded 是引擎生命周期累计值）。
+        self.audio_state.sf_loaded_base = audio.handle.sf_loaded_count();
+        self.audio_state.sf_pending = true;
+        progress::set_stage(&self.load_progress, 2, progress::StageStatus::Active);
+        progress::set_stage_progress(&self.load_progress, 2, 0.0, format!("0/{}", configs.len()));
+        progress::set_visible(&self.load_progress, true);
     }
 
     /// Send the initial state to a freshly spawned audio handle:
@@ -607,7 +670,10 @@ impl App {
             return;
         };
         let total = self.audio_state.sf_total;
-        let loaded = audio.handle.sf_loaded_count();
+        let loaded = audio
+            .handle
+            .sf_loaded_count()
+            .saturating_sub(self.audio_state.sf_loaded_base);
         if total == 0 || loaded >= total {
             // 音色库已加载完，但音频可能还在做 GpuSynth 初始化/采样上传/管线
             // 预热（约数百 ms）：等 audio_ready 再宣布"加载完成"，保证用户
@@ -1017,6 +1083,8 @@ impl App {
         self.audio_state.last_channel_layout = None;
         self.audio_state.engine_key = None;
         self.audio_state.engine_sf_configs.clear();
+        self.audio_state.sf_loaded_base = 0;
+        self.audio_state.applied_ignore_velocity = None;
         self.audio_state.spawn_error = None;
         self.audio_state.spawn_error_doc = None;
     }

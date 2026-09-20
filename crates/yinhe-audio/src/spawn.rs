@@ -310,6 +310,8 @@ pub struct AudioHandle {
 /// - 结构性变更（insert 挂载/移除、乐器挂载、总线结构）：单次命令、无
 ///   重发路径（UI 发完即标记已发送），丢失即永久不一致（曾因此效果器
 ///   在渲染线程阻塞 4-5 秒时被丢，卡片在 UI 上但引擎里根本没挂上）。
+/// - 设置类（层数/复音数/力度忽略/自动化密度）：同属单次命令、无重发路径，
+///   丢弃后 UI 不再发（diff 已归零）→ 设置永不生效、用户以为"必须重启"。
 /// - `LoadModel`：同样单次、无重发（spawn/过户/切文档时各发一次）；
 ///   丢失后模型永不加载 → Play 永远挂起等待（engine.model_loaded() 为
 ///   false）而 UI 只看到"播放无响应"。命令通道仅由渲染线程短暂阻塞填满。
@@ -328,6 +330,10 @@ fn is_reliable(cmd: &AudioCommand) -> bool {
             | AudioCommand::SetInstrument { .. }
             | AudioCommand::SetMixerParams { .. }
             | AudioCommand::SyncBusConfig { .. }
+            | AudioCommand::SetLayerCount { .. }
+            | AudioCommand::SetMaxVoices { .. }
+            | AudioCommand::SetIgnoreVelocity { .. }
+            | AudioCommand::SetAutomationDensity { .. }
     )
 }
 
@@ -1422,6 +1428,9 @@ mod tests {
     /// 回归：结构性变更命令必须走可靠通道。渲染线程曾因音色库/采样上传
     /// 阻塞 4-5 秒导致命令通道（容量 16）满，InsertAdd 被静默丢弃 ——
     /// UI 标记已发送、无重发路径，效果器永远不生效。
+    ///
+    /// 设置类命令（层数/复音数/力度忽略/自动化密度）同属"单次、无重发"：
+    /// 走普通通道被丢后 UI 的 diff 已归零不再重发，设置永不生效。
     #[test]
     fn structural_commands_use_reliable_channel() {
         assert!(is_reliable(&AudioCommand::Play { from_sample: 0 }));
@@ -1435,6 +1444,14 @@ mod tests {
         assert!(is_reliable(&AudioCommand::SetInstrument {
             channel: 0,
             processor: None,
+        }));
+        assert!(is_reliable(&AudioCommand::SetLayerCount { count: Some(4) }));
+        assert!(is_reliable(&AudioCommand::SetMaxVoices { max: None }));
+        assert!(is_reliable(&AudioCommand::SetIgnoreVelocity {
+            threshold: 1
+        }));
+        assert!(is_reliable(&AudioCommand::SetAutomationDensity {
+            density: 1,
         }));
         // 可重发/可合并的普通命令仍走有界通道（满了丢弃、下一次操作自愈）。
         assert!(!is_reliable(&AudioCommand::RefreshLatency));

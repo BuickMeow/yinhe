@@ -193,7 +193,6 @@ pub(crate) fn show_viewport(
     }
 
     let prev_xsynth_layers = settings.xsynth_layers;
-    let prev_ignore_velocity = settings.ignore_velocity;
     let prev_max_voices = settings.max_voices;
     let prev_ui_scale = settings.ui_scale;
     let prev_font_scale = settings.font_scale;
@@ -283,15 +282,6 @@ pub(crate) fn show_viewport(
             audio
                 .handle
                 .send(yinhe_audio::AudioCommand::SetMaxVoices { max });
-        }
-        if settings.ignore_velocity != prev_ignore_velocity
-            && let Some(audio) = audio
-        {
-            audio
-                .handle
-                .send(yinhe_audio::AudioCommand::SetIgnoreVelocity {
-                    threshold: settings.ignore_velocity,
-                });
         }
         if (settings.ui_scale - prev_ui_scale).abs() > f32::EPSILON {
             crate::scaling::apply_ui_scale(ctx, settings.ui_scale);

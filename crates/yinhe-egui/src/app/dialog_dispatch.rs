@@ -135,18 +135,20 @@ impl App {
         // ── Settings dialog ──
         let prev_allow = self.audio_settings.allow_overlapping_notes;
         let prev_behavior = self.audio_settings.overlap_blocked_behavior;
-        // show_viewport 的返回值语义是「设置窗口已关闭」（dialogs/settings.rs 末尾
-        // `!settings.show_settings`），不是「有修改」：直接用它会变成"开关一下
-        // 设置窗口就重建音频引擎"（音色库解析/采样上传/预热全部重来）。
-        // 只有真正影响 spawn 的设置变化才 teardown。
-        let prev_engine = crate::app::audio_state::EngineSpawnKey::of(&self.audio_settings);
-        if crate::dialogs::settings::show_viewport(
+        // show_viewport 的返回值语义是「设置窗口已关闭」（dialogs/settings.rs
+        // 末尾 `!settings.show_settings`）。关闭时必须让设置落地：spawn 输入
+        // （采样率/缓冲/设备/后端/插值）与引擎创建快照比对，不一致则 teardown
+        // 重建；全局音色库在活引擎上在线替换；力度阈值等参数发命令应用。
+        // 注意：不能拿"关闭帧开始时的设置"做 diff——设置值在窗口打开期间就已
+        // 改好，关闭帧的 prev 已经是新值，diff 恒等 → 永远不重建（曾经的
+        // 「改设置必须重启 App」根因）。
+        let settings_closed = crate::dialogs::settings::show_viewport(
             &ctx,
             &mut self.audio_settings,
             &self.audio_state.handle,
-        ) && prev_engine != crate::app::audio_state::EngineSpawnKey::of(&self.audio_settings)
-        {
-            self.teardown_audio();
+        );
+        if settings_closed {
+            self.apply_settings_on_close();
         }
         if self.audio_settings.allow_overlapping_notes != prev_allow
             || self.audio_settings.overlap_blocked_behavior != prev_behavior
