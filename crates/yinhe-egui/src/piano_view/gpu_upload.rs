@@ -26,12 +26,8 @@ pub(crate) struct BuildResult {
     pub summaries: Vec<(Vec<NoteInstance>, [u32; KEY_COUNT + 1])>,
 }
 
-/// 按 `SUMMARY_BLOCK_TICKS` 的每个档位构建摘要。
-/// 段数超过 `SUMMARY_MAX_SEGMENTS` 的档位用空数据占位（不构建、不占用
-/// 显存，渲染时向更细档或原始层回退）。
-///
-/// 档位之间并行（档内再按 key 并行，rayon 嵌套调度）：18 档串行构建会
-/// 让加载后的后台构建时间线性叠加。
+/// 按 `SUMMARY_BLOCK_TICKS` 的每个档位构建摘要（转发到 wgpu crate）。
+/// 不设段数上限：细档（16）必须可用；显存由 `GpuBudget` 兜底。
 pub(crate) fn build_summaries(
     notes: &[NoteInstance],
     offsets: &[u32; KEY_COUNT + 1],

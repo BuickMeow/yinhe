@@ -7,12 +7,12 @@
 //! 长条，短音符是细条），高度/颜色取该音符自身的 velocity/track。
 //!
 //! 档位复用 `pianoroll` 的 `SUMMARY_BLOCK_TICKS` / `SUMMARY_MAX_PX`：
-//! 块宽 ≤ 2px 时启用；更细的档位由 `SUMMARY_MAX_SEGMENTS` 上限保护。
+//! 块宽 ≤ 2px 时启用；最细档 16 tick（更细档段数会趋近音符数，已移除）。
 
 use rayon::prelude::*;
 use yinhe_types::{MAX_KEY, NoteSource};
 
-use crate::pianoroll::{SUMMARY_BLOCK_TICKS, SUMMARY_MAX_SEGMENTS, select_summary_level};
+use crate::pianoroll::{SUMMARY_BLOCK_TICKS, select_summary_level};
 
 /// 摘要中的一个块（tick 升序存放）。
 ///
@@ -51,10 +51,6 @@ impl VelocitySummary {
             .par_iter()
             .map(|&block_ticks| {
                 let nblocks = (total_ticks / block_ticks + 1) as usize;
-                // 段数 ≤ 块数：块数已超上限时该档必不构建（也避免分配大数组）。
-                if nblocks > SUMMARY_MAX_SEGMENTS {
-                    return Vec::new();
-                }
                 // 每块 [start, end, packed]；packed == 0 表示空块。
                 // 维护块内 gate 最长的音符（gate 相同取 packed 大者）。
                 let mut best = vec![[0u32; 3]; nblocks];
@@ -245,12 +241,12 @@ mod tests {
         assert_eq!(s.level(level)[0].velocity, 60);
     }
 
-    /// 全曲视图 ppu 很小时能选到档位；1px ≥ 1 tick 前都走摘要。
+    /// 全曲视图 ppu 很小时能选到档位；最细 16 档覆盖到 ppu=0.125。
     #[test]
     fn level_selected_for_small_ppu() {
         let s = build(vec![make(0, 100, 0)]);
         assert!(s.level_for_ppu(2.0e-3).is_some());
-        assert!(s.level_for_ppu(1.0).is_some(), "ppu=1（1px=1tick）仍走摘要");
-        assert!(s.level_for_ppu(2.5).is_none(), "1px < 1 tick 才回原始路径");
+        assert!(s.level_for_ppu(0.1).is_some(), "16 档区间仍走摘要");
+        assert!(s.level_for_ppu(1.0).is_none(), "16 块 > 2px 回原始路径");
     }
 }

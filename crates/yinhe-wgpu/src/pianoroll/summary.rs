@@ -15,23 +15,21 @@ use rayon::prelude::*;
 use yinhe_types::KEY_COUNT;
 
 use crate::vertex::NoteInstance;
-/// 摘要档位（tick 块宽），由大到小，取 2 的幂，上限 1024。
+/// 摘要档位（tick 块宽），由大到小，取 2 的幂，最细 16。
 ///
-/// 上限依据：ppu 的最小值是 0.001（view 缩放 clamp），选择条件
-/// `block × ppu ≤ SUMMARY_MAX_PX` 推出可达的最大 block = 2000，
-/// 因此 1024 是实际可用最粗的档；2048 及以上永远不会被选中（已删除，
-/// 若将来放宽缩放下限或加入「全曲 fit」再恢复）。
+/// 范围依据：
+/// - 最粗 1024：ppu 最小值 0.001（view 缩放 clamp）下选择条件
+///   `block × ppu ≤ SUMMARY_MAX_PX` 推出可达最大 block = 2000，1024 已够；
+/// - 最细 16：更细的档（8/4/2）段数会趋近音符数（摘要退化成原始数据），
+///   且它们生效的缩放区间原始层本来只有几十万可见音符（几 ms），
+///   收益为零还吃显存，因此删除。
 ///
-/// 完整 2 的幂序列让任意可达 ppu 下选中的档位块宽都落在 (1, 2] px，
-/// 缩放过程档位切换平滑（相邻档只差 2 倍）。
-pub const SUMMARY_BLOCK_TICKS: [u32; 10] = [1024, 512, 256, 128, 64, 32, 16, 8, 4, 2];
+/// 不设段数上限：段数超限的档会被静默跳过，导致缩放时「细档凭空消失」
+/// （32 直接跳原始层）。显存安全由 `GpuBudget` 兜底（上传失败即清空该档
+/// 并回退到更粗档/原始层）。
+pub const SUMMARY_BLOCK_TICKS: [u32; 7] = [1024, 512, 256, 128, 64, 32, 16];
 /// 摘要块在屏幕上的最大像素宽。块内空隙 ≤ 该宽度时被合并不可见。
 pub const SUMMARY_MAX_PX: f32 = 2.0;
-
-/// 单个档位的段数上限（约 192MB/档）。超过则该档不构建（选择时向更细档
-/// 或原始层回退）。段数与总 tick 成正比、与音符数无关：4/2 这类细档只对
-/// 「短而极密」的曲子有意义；长曲上细档段数可达上亿，必须设上限。
-pub const SUMMARY_MAX_SEGMENTS: usize = 16_000_000;
 
 /// 根据 ppu 选择摘要档位索引（`None` = 用原始音符层）。
 ///
@@ -93,33 +91,19 @@ pub fn build_key_summary(key: u8, notes: &[NoteInstance], block_ticks: u32) -> V
 }
 
 /// 全量构建：`offsets` 把 `notes` 切成 per-key 段，逐 key 聚合。
-///
-/// 总段数超过 `SUMMARY_MAX_SEGMENTS` 时返回空（该档不构建，渲染回退）。
-/// 累计计数在并行构建中检查，超限后剩余 key 直接跳过（早停）。
 pub fn build_summary(
     notes: &[NoteInstance],
     offsets: &[u32; KEY_COUNT + 1],
     block_ticks: u32,
 ) -> (Vec<NoteInstance>, [u32; KEY_COUNT + 1]) {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    let total = AtomicUsize::new(0);
     let buckets: Vec<Vec<NoteInstance>> = (0..KEY_COUNT)
         .into_par_iter()
         .map(|key| {
-            if total.load(Ordering::Relaxed) > SUMMARY_MAX_SEGMENTS {
-                return Vec::new();
-            }
             let start = offsets[key] as usize;
             let end = offsets[key + 1] as usize;
-            let bucket = build_key_summary(key as u8, &notes[start..end], block_ticks);
-            total.fetch_add(bucket.len(), Ordering::Relaxed);
-            bucket
+            build_key_summary(key as u8, &notes[start..end], block_ticks)
         })
         .collect();
-
-    if total.load(Ordering::Relaxed) > SUMMARY_MAX_SEGMENTS {
-        return (Vec::new(), [0u32; KEY_COUNT + 1]);
-    }
 
     let mut summary_offsets = [0u32; KEY_COUNT + 1];
     let mut summary = Vec::new();
@@ -143,14 +127,7 @@ pub fn build_summaries(
 ) -> Vec<(Vec<NoteInstance>, [u32; KEY_COUNT + 1])> {
     SUMMARY_BLOCK_TICKS
         .iter()
-        .map(|&block| {
-            let (summary, summary_offsets) = build_summary(notes, offsets, block);
-            if summary.len() > SUMMARY_MAX_SEGMENTS {
-                (Vec::new(), [0u32; KEY_COUNT + 1])
-            } else {
-                (summary, summary_offsets)
-            }
-        })
+        .map(|&block| build_summary(notes, offsets, block))
         .collect()
 }
 
@@ -168,7 +145,7 @@ mod tests {
 
     #[test]
     fn select_level_by_pixels() {
-        // 完整 2 的幂序列（1024..2）：可达 ppu 下选中档的块宽 ∈ (1, 2] px。
+        // 2 的幂序列（1024..16）：可达 ppu 下选中档的块宽 ∈ (1, 2] px。
         assert_eq!(select_summary_level(2.0 / 1024.0), Some(0));
         assert_eq!(select_summary_level(1.0 / 1024.0), Some(0));
         assert_eq!(select_summary_level(2.0e-3), Some(1)); // 512 档
@@ -177,11 +154,10 @@ mod tests {
         assert_eq!(select_summary_level(0.05), Some(5)); // 32 档
         assert_eq!(select_summary_level(0.1), Some(6)); // 16 档
         assert_eq!(select_summary_level(0.125), Some(6));
-        assert_eq!(select_summary_level(0.2), Some(7)); // 8 档
-        assert_eq!(select_summary_level(0.5), Some(8)); // 4 档
-        assert_eq!(select_summary_level(0.9), Some(9)); // 2 档
-        assert_eq!(select_summary_level(1.0), Some(9));
-        // 1px < 1 tick（ppu > 2）才回原始层。
+        // 16 块 > 2px（ppu > 0.125）→ 原始层（更细档已移除）。
+        assert_eq!(select_summary_level(0.2), None);
+        assert_eq!(select_summary_level(0.5), None);
+        assert_eq!(select_summary_level(1.0), None);
         assert_eq!(select_summary_level(2.5), None);
         assert_eq!(select_summary_level(0.0), None);
     }

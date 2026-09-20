@@ -238,33 +238,21 @@ fn bench_synthetic_scale() {
         return;
     };
 
-    // ── C 方案：LOD 摘要层（生产函数）的段数与构建成本 ──
-    let mut summaries: Vec<(Vec<NoteInstance>, [u32; KEY_COUNT + 1])> =
-        Vec::with_capacity(crate::pianoroll::SUMMARY_BLOCK_TICKS.len());
-    let mut summary_build_ms = 0.0f64;
-    for &bt in &crate::pianoroll::SUMMARY_BLOCK_TICKS {
-        let t = std::time::Instant::now();
-        let (s, so) = crate::pianoroll::build_summary(&all, &offsets, bt);
-        summary_build_ms += t.elapsed().as_secs_f64() * 1e3;
-        let skipped = s.len() > crate::pianoroll::SUMMARY_MAX_SEGMENTS;
+    // ── LOD 摘要层（生产函数）的段数与构建成本 ──
+    let t = std::time::Instant::now();
+    let summaries = crate::pianoroll::build_summaries(&all, &offsets);
+    println!(
+        "摘要构建合计 {:.0}ms（生产路径，加载时一次）",
+        t.elapsed().as_secs_f64() * 1e3
+    );
+    for (i, (s, _)) in summaries.iter().enumerate() {
         println!(
-            "摘要 block={bt:>6}: {:>9} 段 {:>7.1}MB 构建 {:>4}ms{}",
+            "摘要 block={:>6}: {:>9} 段 {:>7.1}MB",
+            crate::pianoroll::SUMMARY_BLOCK_TICKS[i],
             s.len(),
-            s.len() as f64 * 12.0 / 1e6,
-            t.elapsed().as_secs_f64() * 1e3,
-            if skipped {
-                "（超段数上限，跳过）"
-            } else {
-                ""
-            }
+            s.len() as f64 * 12.0 / 1e6
         );
-        if skipped {
-            summaries.push((Vec::new(), [0u32; KEY_COUNT + 1]));
-        } else {
-            summaries.push((s, so));
-        }
     }
-    println!("摘要构建合计 {summary_build_ms:.0}ms（串行逐档；生产为档间并行，加载时一次）");
 
     let format = TextureFormat::Rgba8UnormSrgb;
     let mut renderer = crate::InstanceRenderer::new(device.clone(), queue.clone(), format);
@@ -598,7 +586,7 @@ fn bench_real_midi() {
         "\n{:>11} {:>11} {:>11} {:>6} {:>9} {:>9} {:>9} {:>9}",
         "屏上tick", "ppu", "实例/段", "层", "CPU/ms", "GPU/ms", "帧/ms", "FPS"
     );
-    for &div in &[1u32, 4, 16, 32, 64, 128, 256, 1024, 4096, 16384] {
+    for &div in &[1u32, 4, 16, 32, 64, 128, 192, 256, 1024, 4096, 16384] {
         let tos = (total_ticks / u64::from(div)).max(64);
         // 真实 app 的 view 缩放下限为 0.001（view_base.rs），基准同样 clamp，
         // 否则会测出真实不可达的 ppu（大档位被删后那种档宽会严重亚像素）。
