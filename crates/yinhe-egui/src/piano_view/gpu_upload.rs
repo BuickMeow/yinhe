@@ -23,23 +23,16 @@ pub(crate) struct BuildResult {
     pub notes: Vec<NoteInstance>,
     pub offsets: [u32; KEY_COUNT + 1],
     pub revisions: [u64; KEY_COUNT],
-    pub summaries: Vec<Option<(Vec<NoteInstance>, [u32; KEY_COUNT + 1])>>,
+    pub summaries: Vec<(Vec<NoteInstance>, [u32; KEY_COUNT + 1])>,
 }
 
-/// 构建摘要到 `max_level`（含；`None` = 不构建任何档）；更细的档位留 `None`
-/// 由懒构建（1C）在首次被选中时生成。不设段数上限：细档（16）必须可用；
-/// 显存由 `GpuBudget` 兜底。
+/// 按 `SUMMARY_BLOCK_TICKS` 的每个档位构建摘要（转发到 wgpu crate）。
+/// 不设段数上限：细档（16）必须可用；显存由 `GpuBudget` 兜底。
 pub(crate) fn build_summaries(
     notes: &[NoteInstance],
     offsets: &[u32; KEY_COUNT + 1],
-    max_level: Option<usize>,
-) -> Vec<Option<(Vec<NoteInstance>, [u32; KEY_COUNT + 1])>> {
-    match max_level {
-        Some(level) => yinhe_wgpu::build_summaries_up_to(notes, offsets, level),
-        None => (0..yinhe_wgpu::SUMMARY_BLOCK_TICKS.len())
-            .map(|_| None)
-            .collect(),
-    }
+) -> Vec<(Vec<NoteInstance>, [u32; KEY_COUNT + 1])> {
+    yinhe_wgpu::build_summaries(notes, offsets)
 }
 
 /// 单 key 的全档位摘要（编辑增量路径）。
@@ -51,21 +44,13 @@ fn build_key_summaries(key: u8, notes: &[NoteInstance]) -> Vec<Vec<NoteInstance>
 }
 
 /// 全量上传音符 + 摘要（保证两层数据来自同一次构建）。
-///
-/// 更细的懒档基于旧状态构建、已过期：丢弃进行中的懒构建并清空（下次选中
-/// 时用新状态重建）。
 pub(crate) fn upload_all_with_summaries(
     pianoroll: &mut InstanceRenderer,
     notes: &[NoteInstance],
     offsets: &[u32; KEY_COUNT + 1],
     revisions: &[u64; KEY_COUNT],
-    max_level: Option<usize>,
-    summary: &mut SummaryLoadState,
 ) {
-    summary.load = None;
-    pianoroll.set_summary_loading(None);
-    pianoroll.clear_summaries_above(max_level);
-    let summaries = build_summaries(notes, offsets, max_level);
+    let summaries = build_summaries(notes, offsets);
     pianoroll.upload_all_notes_for_cull(notes, offsets, revisions);
     pianoroll.upload_summary_for_cull(&summaries);
 }
@@ -119,7 +104,7 @@ pub(crate) struct UploadData {
     pub notes: Vec<NoteInstance>,
     pub offsets: [u32; KEY_COUNT + 1],
     pub revisions: [u64; KEY_COUNT],
-    pub summaries: Vec<Option<(Vec<NoteInstance>, [u32; KEY_COUNT + 1])>>,
+    pub summaries: Vec<(Vec<NoteInstance>, [u32; KEY_COUNT + 1])>,
 }
 
 /// 每帧上传的 key 数量。1.64 亿音符全量约 2GB，128 key 分 32 帧传完，
@@ -155,7 +140,6 @@ impl CullRebuild {
 /// 启动后台全量重建。构建在独立线程执行（`build_all_notes` 内部 rayon 并行），
 /// 完成后通过 channel 送回 UI 线程分帧上传。构建线程持有 `model` 的 Arc，
 /// 期间模型被替换/关闭时旧数据仍安全（revision 变化会让 pending 被丢弃）。
-#[allow(clippy::too_many_arguments)] // 后台重建快照参数，见 AGENTS 约定
 pub(crate) fn start_rebuild(
     model: Arc<YinModel>,
     hidden_notes: HashSet<(u16, u32, u8)>,
@@ -164,7 +148,6 @@ pub(crate) fn start_rebuild(
     revision: u64,
     hidden_hash: u64,
     tv_hash: u64,
-    max_level: Option<usize>,
 ) -> CullRebuild {
     let (tx, rx) = mpsc::channel();
     std::thread::Builder::new()
@@ -173,7 +156,7 @@ pub(crate) fn start_rebuild(
         .spawn(move || {
             let (notes, offsets) =
                 yinhe_wgpu::build_all_notes(model.as_ref(), &hidden_notes, &track_visible);
-            let summaries = build_summaries(&notes, &offsets, max_level);
+            let summaries = build_summaries(&notes, &offsets);
             let _ = tx.send(BuildResult {
                 notes,
                 offsets,
@@ -187,187 +170,6 @@ pub(crate) fn start_rebuild(
         revision,
         hidden_hash,
         tv_hash,
-    }
-}
-
-/// 懒构建（1C）的单个摘要档位载荷。
-pub(crate) struct SummaryLevelData {
-    pub notes: Vec<NoteInstance>,
-    pub offsets: [u32; KEY_COUNT + 1],
-}
-
-/// 后台线程送回的懒档构建结果。
-pub(crate) struct SummaryLevelResult {
-    pub level: usize,
-    pub data: SummaryLevelData,
-}
-
-/// 懒构建档位的状态机：后台构建整档 → 分帧上传 → 就绪。
-///
-/// 构建/上传期间 revision/hidden/track_visible 变化 → 数据过期，作废并
-/// 清空该档（调用方随后按新状态重新请求）。
-pub(crate) enum SummaryLevelLoad {
-    Building {
-        level: usize,
-        rx: Receiver<SummaryLevelResult>,
-        revision: u64,
-        hidden_hash: u64,
-        tv_hash: u64,
-    },
-    Uploading {
-        level: usize,
-        data: Box<SummaryLevelData>,
-        next_key: u8,
-        revision: u64,
-        hidden_hash: u64,
-        tv_hash: u64,
-    },
-}
-
-/// 懒构建状态机的推进结果。
-pub(crate) enum SummaryAdvance {
-    InProgress,
-    Done,
-    /// 显存预算等真错误（该档已清空；调用方应记入失败黑名单）。
-    Failed(usize),
-    /// 数据过期或目标切换（该档已清空；可按新状态重新请求）。
-    Stale,
-}
-
-/// 懒构建档位的跨帧状态（App 持有）。
-pub struct SummaryLoadState {
-    pub(crate) load: Option<SummaryLevelLoad>,
-    /// 本轮目标档下构建失败的档位（显存预算不足），避免无限重试。
-    pub(crate) failed: [bool; yinhe_wgpu::SUMMARY_BLOCK_TICKS.len()],
-    pub(crate) last_target: Option<usize>,
-}
-
-impl Default for SummaryLoadState {
-    fn default() -> Self {
-        Self {
-            load: None,
-            failed: [false; yinhe_wgpu::SUMMARY_BLOCK_TICKS.len()],
-            last_target: None,
-        }
-    }
-}
-
-/// 启动单档懒构建：后台重新构建 all_notes 并聚合该档（整曲）。
-fn start_summary_level_build(
-    model: Arc<YinModel>,
-    hidden_notes: HashSet<(u16, u32, u8)>,
-    track_visible: Vec<bool>,
-    level: usize,
-    revision: u64,
-    hidden_hash: u64,
-    tv_hash: u64,
-) -> SummaryLevelLoad {
-    let (tx, rx) = mpsc::channel();
-    std::thread::Builder::new()
-        .name("yinhe-cull-summary".into())
-        .stack_size(8 * 1024 * 1024)
-        .spawn(move || {
-            let (notes, offsets) =
-                yinhe_wgpu::build_all_notes(model.as_ref(), &hidden_notes, &track_visible);
-            let block = yinhe_wgpu::SUMMARY_BLOCK_TICKS[level];
-            let (snotes, soffsets) = yinhe_wgpu::build_summary(&notes, &offsets, block);
-            let _ = tx.send(SummaryLevelResult {
-                level,
-                data: SummaryLevelData {
-                    notes: snotes,
-                    offsets: soffsets,
-                },
-            });
-        })
-        .expect("failed to spawn cull summary thread");
-    SummaryLevelLoad::Building {
-        level,
-        rx,
-        revision,
-        hidden_hash,
-        tv_hash,
-    }
-}
-
-/// 推进懒构建状态机一帧（每帧最多上传 `KEYS_PER_FRAME` 个 key）。
-///
-/// `target` = 当前 ppu 需要的档：目标切换（缩放）时立即作废进行中的档，
-/// 只构建最终停留的档。
-pub(crate) fn advance_summary_level(
-    load: &mut SummaryLevelLoad,
-    pianoroll: &mut InstanceRenderer,
-    revision: u64,
-    hidden_hash: u64,
-    tv_hash: u64,
-    target: Option<usize>,
-) -> SummaryAdvance {
-    loop {
-        match load {
-            SummaryLevelLoad::Building {
-                level,
-                rx,
-                revision: r,
-                hidden_hash: h,
-                tv_hash: t,
-            } => {
-                if target != Some(*level) || revision != *r || hidden_hash != *h || tv_hash != *t {
-                    return SummaryAdvance::Stale;
-                }
-                match rx.try_recv() {
-                    Ok(result) => {
-                        if result.level != *level {
-                            return SummaryAdvance::Stale;
-                        }
-                        pianoroll.set_summary_loading(Some(*level));
-                        *load = SummaryLevelLoad::Uploading {
-                            level: *level,
-                            data: Box::new(result.data),
-                            next_key: 0,
-                            revision: *r,
-                            hidden_hash: *h,
-                            tv_hash: *t,
-                        };
-                        continue;
-                    }
-                    Err(mpsc::TryRecvError::Empty) => return SummaryAdvance::InProgress,
-                    // 后台线程异常退出（发送失败）：按过期处理，允许重试。
-                    // 后台线程异常退出（发送失败）：按过期处理，允许重试。
-                    Err(mpsc::TryRecvError::Disconnected) => return SummaryAdvance::Stale,
-                }
-            }
-            SummaryLevelLoad::Uploading {
-                level,
-                data,
-                next_key,
-                revision: r,
-                hidden_hash: h,
-                tv_hash: t,
-            } => {
-                if target != Some(*level) || revision != *r || hidden_hash != *h || tv_hash != *t {
-                    pianoroll.clear_summary_level(*level);
-                    return SummaryAdvance::Stale;
-                }
-                let mut n = 0u8;
-                // MIDI key 范围 0..=127（KEY_COUNT=256 是 buffer 容量）。
-                while n < KEYS_PER_FRAME && *next_key < 128 {
-                    let key = *next_key;
-                    let lo = data.offsets[key as usize] as usize;
-                    let hi = data.offsets[key as usize + 1] as usize;
-                    if !pianoroll.upload_summary_level_key(*level, key, &data.notes[lo..hi]) {
-                        let level = *level;
-                        pianoroll.clear_summary_level(level);
-                        return SummaryAdvance::Failed(level);
-                    }
-                    *next_key += 1;
-                    n += 1;
-                }
-                if *next_key >= 128 {
-                    pianoroll.set_summary_loading(None);
-                    return SummaryAdvance::Done;
-                }
-                return SummaryAdvance::InProgress;
-            }
-        }
     }
 }
 
@@ -437,10 +239,9 @@ pub(crate) fn advance_rebuild(
                     }
                     // 摘要层随音符同步增量（全量上传已建立各档）。
                     let mut ok = true;
-                    for (level, summary) in data.summaries.iter().enumerate() {
-                        let Some((summary_notes, summary_offsets)) = summary else {
-                            continue;
-                        };
+                    for (level, (summary_notes, summary_offsets)) in
+                        data.summaries.iter().enumerate()
+                    {
                         let slo = summary_offsets[key as usize] as usize;
                         let shi = summary_offsets[key as usize + 1] as usize;
                         if !pianoroll.try_incremental_summary_key(
@@ -492,10 +293,6 @@ pub struct GpuUploadState<'a> {
     pub last_hidden_keys: &'a mut HiddenKeyMask,
     /// 跨帧：track 显隐后台重建状态机（None = 无进行中的重建）。
     pub rebuild: &'a mut Option<CullRebuild>,
-    /// 当前 ppu 对应的摘要目标档（`None` = 原始层区间，无需摘要）。
-    pub summary_target: Option<usize>,
-    /// 跨帧：更细档的懒构建状态（1C）。
-    pub summary: &'a mut SummaryLoadState,
 }
 
 /// 执行 GPU cull buffer 上传（仅 `use_gpu_cull = true` 时调用）。
@@ -514,61 +311,11 @@ pub fn upload(state: GpuUploadState) {
         last_tv_hash,
         last_hidden_keys,
         rebuild,
-        summary_target,
-        summary,
     } = state;
 
     let tv_hash = yinhe_wgpu::hash_bools(track_visible);
     let hidden_hash = yinhe_wgpu::hash_hidden(hidden_notes);
     let note_key = yinhe_wgpu::NoteBufferKey::new(revision, track_visible, hidden_notes);
-
-    // 0. LOD 细档懒构建（1C）：目标档变化时重置失败黑名单；推进进行中的
-    //    构建/上传；无进行中构建且目标档不可用时启动后台构建。
-    if summary.last_target != summary_target {
-        summary.failed.fill(false);
-        summary.last_target = summary_target;
-    }
-    if let Some(load) = summary.load.as_mut() {
-        match advance_summary_level(
-            load,
-            pianoroll,
-            revision,
-            hidden_hash,
-            tv_hash,
-            summary_target,
-        ) {
-            SummaryAdvance::InProgress => {}
-            SummaryAdvance::Done => summary.load = None,
-            SummaryAdvance::Failed(level) => {
-                summary.load = None;
-                summary.failed[level] = true;
-                tracing::error!(
-                    "[cull] LOD 档 {level} 懒构建上传失败（显存预算不足），回退到更粗档"
-                );
-            }
-            SummaryAdvance::Stale => summary.load = None,
-        }
-    }
-    match (
-        summary.load.is_none() && rebuild.is_none(),
-        summary_target,
-        midi_arc,
-    ) {
-        (true, Some(target), Some(model))
-            if !summary.failed[target] && !pianoroll.summary_level_ready(target) =>
-        {
-            summary.load = Some(start_summary_level_build(
-                Arc::clone(model),
-                hidden_notes.clone(),
-                track_visible.to_vec(),
-                target,
-                revision,
-                hidden_hash,
-                tv_hash,
-            ));
-        }
-        _ => {}
-    }
 
     // 1. Track 显隐 mask 同步：任何变化立即上传（~8KB 写入，让 cull shader
     //    立刻过滤隐藏轨道的音符）。mask 始终等于当前 track_visible，与
@@ -616,14 +363,7 @@ pub fn upload(state: GpuUploadState) {
                     if let Some(midi_src) = midi {
                         let (all_notes, offsets) =
                             yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
-                        upload_all_with_summaries(
-                            pianoroll,
-                            &all_notes,
-                            &offsets,
-                            note_revisions,
-                            summary_target,
-                            summary,
-                        );
+                        upload_all_with_summaries(pianoroll, &all_notes, &offsets, note_revisions);
                         *last_cull_revision = note_key.value();
                         *last_cull_revision_only = revision;
                         *last_hidden_hash = hidden_hash;
@@ -662,14 +402,7 @@ pub fn upload(state: GpuUploadState) {
         // First-time upload or MIDI just loaded: force full upload.
         let (all_notes, offsets) =
             yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
-        upload_all_with_summaries(
-            pianoroll,
-            &all_notes,
-            &offsets,
-            note_revisions,
-            summary_target,
-            summary,
-        );
+        upload_all_with_summaries(pianoroll, &all_notes, &offsets, note_revisions);
     } else {
         let revision_changed = revision != *last_cull_revision_only;
         let hidden_changed = hidden_hash != *last_hidden_hash;
@@ -704,14 +437,7 @@ pub fn upload(state: GpuUploadState) {
                 // Fallback: full upload (some key's buffer was never created).
                 let (all_notes, offsets) =
                     yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
-                upload_all_with_summaries(
-                    pianoroll,
-                    &all_notes,
-                    &offsets,
-                    note_revisions,
-                    summary_target,
-                    summary,
-                );
+                upload_all_with_summaries(pianoroll, &all_notes, &offsets, note_revisions);
             }
         } else if revision_changed {
             // Revision changed → try incremental per-key upload
@@ -741,14 +467,7 @@ pub fn upload(state: GpuUploadState) {
                     // Fallback: full upload (some key's count changed)
                     let (all_notes, offsets) =
                         yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
-                    upload_all_with_summaries(
-                        pianoroll,
-                        &all_notes,
-                        &offsets,
-                        note_revisions,
-                        summary_target,
-                        summary,
-                    );
+                    upload_all_with_summaries(pianoroll, &all_notes, &offsets, note_revisions);
                 }
             }
             // dirty_keys.is_empty(): revision bumped but no key revisions changed
@@ -761,21 +480,9 @@ pub fn upload(state: GpuUploadState) {
                 // 无 Arc 句柄（理论上只有 midi 为 None 时）→ 同步全量兜底。
                 let (all_notes, offsets) =
                     yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
-                upload_all_with_summaries(
-                    pianoroll,
-                    &all_notes,
-                    &offsets,
-                    note_revisions,
-                    summary_target,
-                    summary,
-                );
+                upload_all_with_summaries(pianoroll, &all_notes, &offsets, note_revisions);
                 return;
             };
-            // 懒档数据基于旧 track_visible：作废并清掉更细档（重建只覆盖
-            // 0..=目标档）。
-            summary.load = None;
-            pianoroll.set_summary_loading(None);
-            pianoroll.clear_summaries_above(summary_target);
             *rebuild = Some(start_rebuild(
                 Arc::clone(model),
                 hidden_notes.clone(),
@@ -784,7 +491,6 @@ pub fn upload(state: GpuUploadState) {
                 revision,
                 hidden_hash,
                 tv_hash,
-                summary_target,
             ));
             // 不更新 last_cull_revision：pending 完成时更新。
             return;
@@ -998,7 +704,6 @@ mod tests {
         let mut last_tv_hash = 0u64;
         let mut last_hidden_keys: HiddenKeyMask = [0; KEY_COUNT / 64];
         let mut rebuild: Option<CullRebuild> = None;
-        let mut summary = SummaryLoadState::default();
 
         // 首帧：只显示 track 0（模拟打开 Master 轨）。
         let tv0 = vec![true, false];
@@ -1016,8 +721,6 @@ mod tests {
             last_tv_hash: &mut last_tv_hash,
             last_hidden_keys: &mut last_hidden_keys,
             rebuild: &mut rebuild,
-            summary_target: None,
-            summary: &mut summary,
         });
         let px0 = render_pixel_count(
             &mut renderer,
@@ -1049,8 +752,6 @@ mod tests {
             last_tv_hash: &mut last_tv_hash,
             last_hidden_keys: &mut last_hidden_keys,
             rebuild: &mut rebuild,
-            summary_target: None,
-            summary: &mut summary,
         });
         let px1 = render_pixel_count(
             &mut renderer,
@@ -1083,8 +784,6 @@ mod tests {
                 last_tv_hash: &mut last_tv_hash,
                 last_hidden_keys: &mut last_hidden_keys,
                 rebuild: &mut rebuild,
-                summary_target: None,
-                summary: &mut summary,
             });
         }
         let mid = render_pixel_count(
@@ -1116,8 +815,6 @@ mod tests {
             last_tv_hash: &mut last_tv_hash,
             last_hidden_keys: &mut last_hidden_keys,
             rebuild: &mut rebuild,
-            summary_target: None,
-            summary: &mut summary,
         });
         let mut reds = Vec::new();
         for _ in 0..4 {
@@ -1135,8 +832,6 @@ mod tests {
                 last_tv_hash: &mut last_tv_hash,
                 last_hidden_keys: &mut last_hidden_keys,
                 rebuild: &mut rebuild,
-                summary_target: None,
-                summary: &mut summary,
             });
             reds.push(
                 render_pixel_count(
@@ -1173,8 +868,6 @@ mod tests {
                 last_tv_hash: &mut last_tv_hash,
                 last_hidden_keys: &mut last_hidden_keys,
                 rebuild: &mut rebuild,
-                summary_target: None,
-                summary: &mut summary,
             });
             guard += 1;
             assert!(guard < 100, "后台重建未在 100 帧内完成");
@@ -1208,7 +901,7 @@ mod tests {
         }
 
         let (sync_notes, sync_offsets) = yinhe_wgpu::build_all_notes(model.as_ref(), &hidden, &tv);
-        let mut rb = start_rebuild(model, hidden, tv, revisions, 42, 7, 9, Some(0));
+        let mut rb = start_rebuild(model, hidden, tv, revisions, 42, 7, 9);
         let result = match &mut rb {
             CullRebuild::Building { rx, .. } => match rx.recv() {
                 Ok(r) => r,
@@ -1243,18 +936,11 @@ mod tests {
 
         // 首帧全量上传（模拟初次加载：128 个 key 都有 GPU buffer + 摘要层）。
         let (all_notes, offsets) = yinhe_wgpu::build_all_notes(model.as_ref(), &hidden, &tv);
-        upload_all_with_summaries(
-            &mut renderer,
-            &all_notes,
-            &offsets,
-            &revisions,
-            None,
-            &mut SummaryLoadState::default(),
-        );
+        upload_all_with_summaries(&mut renderer, &all_notes, &offsets, &revisions);
 
         // 模拟 track_visible 变化 → 启动后台重建（tv_hash = 99）。
         let tv2 = vec![true, true, true, true];
-        let mut rb = start_rebuild(model, hidden, tv2, revisions, 42, 7, 99, Some(0));
+        let mut rb = start_rebuild(model, hidden, tv2, revisions, 42, 7, 99);
 
         let mut guard = 0u32;
         let done_tv = loop {
@@ -1322,7 +1008,6 @@ mod tests {
         let mut last_tv_hash = 0u64;
         let mut last_hidden_keys: HiddenKeyMask = [0; KEY_COUNT / 64];
         let mut rebuild: Option<CullRebuild> = None;
-        let mut summary = SummaryLoadState::default();
 
         // 首帧：hidden 为空 → 全量上传，全部音符可见。
         let empty = HashSet::new();
@@ -1340,8 +1025,6 @@ mod tests {
             last_tv_hash: &mut last_tv_hash,
             last_hidden_keys: &mut last_hidden_keys,
             rebuild: &mut rebuild,
-            summary_target: None,
-            summary: &mut summary,
         });
         let px0 = render_pixel_count(
             &mut renderer,
@@ -1374,8 +1057,6 @@ mod tests {
             last_tv_hash: &mut last_tv_hash,
             last_hidden_keys: &mut last_hidden_keys,
             rebuild: &mut rebuild,
-            summary_target: None,
-            summary: &mut summary,
         });
         let px1 = render_pixel_count(
             &mut renderer,
@@ -1407,8 +1088,6 @@ mod tests {
             last_tv_hash: &mut last_tv_hash,
             last_hidden_keys: &mut last_hidden_keys,
             rebuild: &mut rebuild,
-            summary_target: None,
-            summary: &mut summary,
         });
         let px2 = render_pixel_count(
             &mut renderer,
@@ -1536,17 +1215,16 @@ mod tests {
         let mut last_tv_hash = 0u64;
         let mut last_hidden_keys: HiddenKeyMask = [0; KEY_COUNT / 64];
         let mut rebuild: Option<CullRebuild> = None;
-        let mut summary = SummaryLoadState::default();
 
         // 多帧推进（重建分帧上传 + 收尾）。
-        let mut feed = |tv: &[bool],
-                        renderer: &mut InstanceRenderer,
-                        last_cull_revision: &mut u64,
-                        last_cull_revision_only: &mut u64,
-                        last_hidden_hash: &mut u64,
-                        last_tv_hash: &mut u64,
-                        last_hidden_keys: &mut HiddenKeyMask,
-                        rebuild: &mut Option<CullRebuild>| {
+        let feed = |tv: &[bool],
+                    renderer: &mut InstanceRenderer,
+                    last_cull_revision: &mut u64,
+                    last_cull_revision_only: &mut u64,
+                    last_hidden_hash: &mut u64,
+                    last_tv_hash: &mut u64,
+                    last_hidden_keys: &mut HiddenKeyMask,
+                    rebuild: &mut Option<CullRebuild>| {
             for _ in 0..100 {
                 upload(GpuUploadState {
                     pianoroll: renderer,
@@ -1562,8 +1240,6 @@ mod tests {
                     last_tv_hash,
                     last_hidden_keys,
                     rebuild,
-                    summary_target: None,
-                    summary: &mut summary,
                 });
                 // 模拟真实帧间隔：给后台重建线程完成构建的机会
                 // （紧凑循环会让 Building 一直 InProgress，测不出上传路径）。
@@ -1638,232 +1314,5 @@ mod tests {
             red2 > 0,
             "切回全部轨道后低音区 track1 音符必须恢复（低音区永久空白 bug）: {red2}"
         );
-    }
-
-    /// 测试辅助：跑一帧 `upload` 并指定摘要目标档。
-    #[allow(clippy::too_many_arguments)]
-    fn feed_summary_target(
-        renderer: &mut InstanceRenderer,
-        model: &Arc<YinModel>,
-        revision: u64,
-        note_revisions: &[u64; KEY_COUNT],
-        tv: &[bool],
-        hidden: &HashSet<(u16, u32, u8)>,
-        last_cull_revision: &mut u64,
-        last_cull_revision_only: &mut u64,
-        last_hidden_hash: &mut u64,
-        last_tv_hash: &mut u64,
-        last_hidden_keys: &mut HiddenKeyMask,
-        rebuild: &mut Option<CullRebuild>,
-        summary: &mut SummaryLoadState,
-        summary_target: Option<usize>,
-    ) {
-        upload(GpuUploadState {
-            pianoroll: renderer,
-            midi: Some(model.as_ref() as &dyn NoteSource),
-            midi_arc: Some(model),
-            revision,
-            note_revisions,
-            track_visible: tv,
-            hidden_notes: hidden,
-            last_cull_revision,
-            last_cull_revision_only,
-            last_hidden_hash,
-            last_tv_hash,
-            last_hidden_keys,
-            rebuild,
-            summary_target,
-            summary,
-        });
-    }
-
-    /// 懒构建（1C）：初始只建粗档；首次选中细档时后台构建 + 分帧上传。
-    #[test]
-    fn lazy_summary_level_builds_on_demand() {
-        let Some((device, queue)) = (|| {
-            let instance = wgpu::Instance::default();
-            let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
-            let (device, queue) =
-                pollster::block_on(adapter.request_device(&Default::default())).ok()?;
-            Some((device, queue))
-        })() else {
-            return;
-        };
-        let mut renderer = InstanceRenderer::new(
-            device.clone(),
-            queue.clone(),
-            wgpu::TextureFormat::Rgba8UnormSrgb,
-        );
-        let model = Arc::new(make_stress_model(1, 4000));
-        let hidden = HashSet::new();
-        let note_revisions = model.note_revisions;
-        let tv = vec![true];
-
-        let (all_notes, offsets) = yinhe_wgpu::build_all_notes(model.as_ref(), &hidden, &tv);
-        let mut summary = SummaryLoadState::default();
-        // 模拟加载：只构建最粗档（1024），细档留给懒构建。
-        upload_all_with_summaries(
-            &mut renderer,
-            &all_notes,
-            &offsets,
-            &note_revisions,
-            Some(0),
-            &mut summary,
-        );
-        assert!(renderer.summary_level_ready(0), "粗档应立即就绪");
-        assert!(
-            !renderer.summary_level_ready(6),
-            "细档（16）应懒构建（初始未构建）"
-        );
-
-        let revision = 1u64;
-        let mut last_cull_revision = yinhe_wgpu::NoteBufferKey::new(revision, &tv, &hidden).value();
-        let mut last_cull_revision_only = revision;
-        let mut last_hidden_hash = yinhe_wgpu::hash_hidden(&hidden);
-        let mut last_tv_hash = yinhe_wgpu::hash_bools(&tv);
-        let mut last_hidden_keys: HiddenKeyMask = [0; KEY_COUNT / 64];
-        let mut rebuild: Option<CullRebuild> = None;
-
-        // 目标细档：启动懒构建。
-        feed_summary_target(
-            &mut renderer,
-            &model,
-            revision,
-            &note_revisions,
-            &tv,
-            &hidden,
-            &mut last_cull_revision,
-            &mut last_cull_revision_only,
-            &mut last_hidden_hash,
-            &mut last_tv_hash,
-            &mut last_hidden_keys,
-            &mut rebuild,
-            &mut summary,
-            Some(6),
-        );
-        assert!(summary.load.is_some(), "选中未构建的细档应启动懒构建");
-        assert!(
-            !renderer.summary_level_ready(6),
-            "构建/上传完成前该档不可用"
-        );
-
-        for _ in 0..400 {
-            std::thread::sleep(std::time::Duration::from_millis(2));
-            feed_summary_target(
-                &mut renderer,
-                &model,
-                revision,
-                &note_revisions,
-                &tv,
-                &hidden,
-                &mut last_cull_revision,
-                &mut last_cull_revision_only,
-                &mut last_hidden_hash,
-                &mut last_tv_hash,
-                &mut last_hidden_keys,
-                &mut rebuild,
-                &mut summary,
-                Some(6),
-            );
-            if renderer.summary_level_ready(6) {
-                break;
-            }
-        }
-        assert!(renderer.summary_level_ready(6), "懒构建完成后细档应可用");
-        assert!(summary.load.is_none(), "完成后状态机应清空");
-    }
-
-    /// 懒构建期间编辑（revision 变化）→ 快照过期作废，按新状态重新构建。
-    #[test]
-    fn lazy_summary_discards_stale_build() {
-        let Some((device, queue)) = (|| {
-            let instance = wgpu::Instance::default();
-            let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
-            let (device, queue) =
-                pollster::block_on(adapter.request_device(&Default::default())).ok()?;
-            Some((device, queue))
-        })() else {
-            return;
-        };
-        let mut renderer = InstanceRenderer::new(
-            device.clone(),
-            queue.clone(),
-            wgpu::TextureFormat::Rgba8UnormSrgb,
-        );
-        let model = Arc::new(make_stress_model(1, 4000));
-        let hidden = HashSet::new();
-        let note_revisions = model.note_revisions;
-        let tv = vec![true];
-
-        let (all_notes, offsets) = yinhe_wgpu::build_all_notes(model.as_ref(), &hidden, &tv);
-        let mut summary = SummaryLoadState::default();
-        upload_all_with_summaries(
-            &mut renderer,
-            &all_notes,
-            &offsets,
-            &note_revisions,
-            Some(0),
-            &mut summary,
-        );
-
-        let revision = 1u64;
-        let mut last_cull_revision = yinhe_wgpu::NoteBufferKey::new(revision, &tv, &hidden).value();
-        let mut last_cull_revision_only = revision;
-        let mut last_hidden_hash = yinhe_wgpu::hash_hidden(&hidden);
-        let mut last_tv_hash = yinhe_wgpu::hash_bools(&tv);
-        let mut last_hidden_keys: HiddenKeyMask = [0; KEY_COUNT / 64];
-        let mut rebuild: Option<CullRebuild> = None;
-
-        feed_summary_target(
-            &mut renderer,
-            &model,
-            revision,
-            &note_revisions,
-            &tv,
-            &hidden,
-            &mut last_cull_revision,
-            &mut last_cull_revision_only,
-            &mut last_hidden_hash,
-            &mut last_tv_hash,
-            &mut last_hidden_keys,
-            &mut rebuild,
-            &mut summary,
-            Some(6),
-        );
-        assert!(
-            matches!(
-                summary.load,
-                Some(SummaryLevelLoad::Building { revision: 1, .. })
-            ),
-            "未编辑时应以 revision 1 启动懒构建"
-        );
-
-        // 编辑：revision 与 key 60 的 note_revision 变化。
-        let revision2 = 2u64;
-        let mut note_revisions2 = note_revisions;
-        note_revisions2[60] += 1;
-        feed_summary_target(
-            &mut renderer,
-            &model,
-            revision2,
-            &note_revisions2,
-            &tv,
-            &hidden,
-            &mut last_cull_revision,
-            &mut last_cull_revision_only,
-            &mut last_hidden_hash,
-            &mut last_tv_hash,
-            &mut last_hidden_keys,
-            &mut rebuild,
-            &mut summary,
-            Some(6),
-        );
-        match &summary.load {
-            Some(SummaryLevelLoad::Building { revision, .. }) => assert_eq!(
-                *revision, revision2,
-                "过期懒构建应被丢弃并按新 revision 重新构建"
-            ),
-            _ => panic!("编辑后懒构建应重新启动（当前状态缺失）"),
-        }
     }
 }

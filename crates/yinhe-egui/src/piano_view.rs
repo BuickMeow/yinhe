@@ -57,7 +57,6 @@ pub fn show(
     last_tv_hash: &mut u64,       // last track_visible hash (track_mask 变化检测)
     last_hidden_keys: &mut crate::piano_view::gpu_upload::HiddenKeyMask, // last hidden_notes key 位图（hidden 增量重建判定）
     cull_rebuild: &mut Option<crate::piano_view::gpu_upload::CullRebuild>, // 后台重建状态机
-    summary_load: &mut crate::piano_view::gpu_upload::SummaryLoadState,  // LOD 细档懒构建状态
     midi: Option<&dyn yinhe_types::NoteSource>,
     midi_arc: Option<&std::sync::Arc<yinhe_core::YinModel>>,
     selected: &mut yinhe_core::Selection,
@@ -259,7 +258,6 @@ pub fn show(
         last_tv_hash,
         last_hidden_keys,
         cull_rebuild,
-        summary_load,
         &ghost_notes,
         w,
         h,

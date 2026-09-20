@@ -60,8 +60,6 @@ pub struct App {
     pub(crate) last_hidden_keys: crate::piano_view::gpu_upload::HiddenKeyMask,
     /// Track 显隐后台重建状态机（见 gpu_upload::CullRebuild）。
     pub(crate) cull_rebuild: Option<crate::piano_view::gpu_upload::CullRebuild>,
-    /// LOD 更细档的懒构建状态（1C，见 gpu_upload::SummaryLoadState）。
-    pub(crate) summary_load: crate::piano_view::gpu_upload::SummaryLoadState,
 
     // ── Arrangement (shared GPU resources + global view state) ──
     pub(crate) arr_render_ctx: RenderContext,
@@ -364,7 +362,6 @@ impl App {
             last_tv_hash: 0,
             last_hidden_keys: [0; yinhe_types::KEY_COUNT / 64],
             cull_rebuild: None,
-            summary_load: crate::piano_view::gpu_upload::SummaryLoadState::default(),
 
             arr_render_ctx,
             arr_renderer: yinhe_wgpu::InstanceRenderer::new(device, queue, format),
@@ -565,7 +562,6 @@ impl App {
         // 丢弃进行中的后台重建（旧文档数据不得上传到新文档；
         // 后台线程 send 失败自动退出）。
         self.cull_rebuild = None;
-        self.summary_load = crate::piano_view::gpu_upload::SummaryLoadState::default();
         self.last_cull_revision = 0;
         self.last_cull_revision_only = 0;
         self.last_hidden_hash = 0;

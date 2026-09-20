@@ -139,10 +139,6 @@ pub(crate) struct CullState {
     /// 每档持有自己的 per-key buffers/bind groups；数据量远小于原始层。
     pub(crate) summary_levels: Vec<SummaryLevel>,
 
-    /// 正在懒构建（后台构建 + 分帧上传）的档位；该档在上传完成前不可用于
-    /// 渲染（部分 key 会导致音符缺失），编辑增量也跳过它（由状态校验兜底）。
-    summary_loading: Option<usize>,
-
     /// True when note data has been uploaded (full or incremental) since the
     /// last cull dispatch. Set by `upload_all_notes` / `upload_one_key`;
     /// cleared by `dispatch_cull`.
@@ -325,7 +321,6 @@ impl CullState {
             last_cull_uniforms: None,
             last_cull_level: None,
             summary_levels,
-            summary_loading: None,
             notes_dirty: false,
             use_indirect,
         }
@@ -621,7 +616,6 @@ impl CullState {
         for level in &mut self.summary_levels {
             level.clear();
         }
-        self.summary_loading = None;
         self.last_cull_uniforms = None;
         self.last_cull_level = None;
         self.notes_dirty = false;
@@ -920,68 +914,21 @@ impl CullState {
 
     /// 是否至少有一个摘要档位已上传（renderer 选择摘要路径的前提）。
     pub(crate) fn summary_ready(&self) -> bool {
-        self.summary_levels
-            .iter()
-            .enumerate()
-            .any(|(level, l)| l.is_ready() && self.summary_loading != Some(level))
+        self.summary_levels.iter().any(|level| level.is_ready())
     }
 
-    /// 指定摘要档位是否可立即用于渲染（已上传且不在懒构建中；选择档位时
-    /// 逐档回退用）。
+    /// 指定摘要档位是否已上传（选择档位时逐档回退用）。
     pub(crate) fn summary_level_ready(&self, level: usize) -> bool {
-        self.summary_loading != Some(level)
-            && self.summary_levels.get(level).is_some_and(|l| l.is_ready())
+        self.summary_levels.get(level).is_some_and(|l| l.is_ready())
     }
 
-    /// 标记/清除「正在懒构建」的档位（该档未就绪，渲染不选它）。
-    pub(crate) fn set_summary_loading(&mut self, level: Option<usize>) {
-        self.summary_loading = level;
-    }
-
-    /// 该档是否正在懒构建。
-    pub(crate) fn summary_level_loading(&self, level: usize) -> bool {
-        self.summary_loading == Some(level)
-    }
-
-    /// 清空指定摘要档位（释放显存；用于数据过期/懒构建作废）。
-    pub(crate) fn clear_summary_level(&mut self, level: usize) {
-        if let Some(l) = self.summary_levels.get_mut(level) {
-            l.clear();
-        }
-        if self.summary_loading == Some(level) {
-            self.summary_loading = None;
-        }
-        self.notes_dirty = true;
-    }
-
-    /// 清空所有比 `level` 更细的摘要档位（懒档数据已过期时调用）。
-    pub(crate) fn clear_summaries_above(&mut self, level: usize) {
-        for idx in (level + 1)..self.summary_levels.len() {
-            self.summary_levels[idx].clear();
-            if self.summary_loading == Some(idx) {
-                self.summary_loading = None;
-            }
-        }
-        self.notes_dirty = true;
-    }
-
-    /// 清空所有摘要档位。
-    pub(crate) fn clear_summaries(&mut self) {
-        for level in &mut self.summary_levels {
-            level.clear();
-        }
-        self.summary_loading = None;
-        self.notes_dirty = true;
-    }
-
-    /// 全量上传已构建的摘要档位（`None` = 该档懒构建，跳过）。
-    /// `summaries[i]` 对应 `SUMMARY_BLOCK_TICKS[i]`。
+    /// 全量上传所有摘要档位。`summaries[i]` 对应 `SUMMARY_BLOCK_TICKS[i]`。
     pub(crate) fn upload_summary_all(
         &mut self,
         device: &Device,
         queue: &Queue,
         uniform_buffer: &Buffer,
-        summaries: &[Option<(Vec<NoteInstance>, [u32; KEY_COUNT + 1])>],
+        summaries: &[(Vec<NoteInstance>, [u32; KEY_COUNT + 1])],
     ) -> Result<(), GpuBudgetError> {
         let shared = CullShared {
             uniform_buffer,
@@ -990,10 +937,7 @@ impl CullState {
             track_mask: &self.track_mask_buffer,
             dispatch_args: &self.dispatch_args_buffer,
         };
-        for (level_idx, summary) in summaries.iter().enumerate() {
-            let Some((notes, offsets)) = summary else {
-                continue;
-            };
+        for (level_idx, (notes, offsets)) in summaries.iter().enumerate() {
             let Some(level) = self.summary_levels.get_mut(level_idx) else {
                 break;
             };
@@ -1029,32 +973,6 @@ impl CullState {
         key: u8,
         notes: &[NoteInstance],
     ) -> bool {
-        // 懒构建中的档位：跳过增量（该档正在整档上传，混写会产生新旧混合；
-        // 构建期间的状态变化由懒构建状态机校验后作废重建）。
-        if self.summary_loading == Some(level) {
-            return true;
-        }
-        let Some(level_ref) = self.summary_levels.get(level) else {
-            return false;
-        };
-        if !level_ref.is_ready() {
-            // 该档未构建（懒档）：无操作视为成功，渲染会回退到更粗/更细档
-            // 或原始层。
-            return true;
-        }
-        self.upload_summary_key_raw(device, queue, uniform_buffer, level, key, notes)
-    }
-
-    /// 懒构建整档上传用：不做「未就绪跳过」检查，直接创建/写入该 key。
-    pub(crate) fn upload_summary_key_raw(
-        &mut self,
-        device: &Device,
-        queue: &Queue,
-        uniform_buffer: &Buffer,
-        level: usize,
-        key: u8,
-        notes: &[NoteInstance],
-    ) -> bool {
         let shared = CullShared {
             uniform_buffer,
             cull_layout: &self.bind_group_layout,
@@ -1065,6 +983,11 @@ impl CullState {
         let Some(level_ref) = self.summary_levels.get_mut(level) else {
             return false;
         };
+        if !level_ref.is_ready() {
+            // 该档未启用（全量构建时超段数上限被跳过）：无操作视为成功，
+            // 渲染会回退到更细档或原始层。
+            return true;
+        }
         match level_ref.upload_key(device, queue, &shared, &self.budget, key, notes) {
             Ok(()) => {
                 self.notes_dirty = true;

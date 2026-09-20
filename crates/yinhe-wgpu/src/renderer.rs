@@ -330,12 +330,12 @@ impl InstanceRenderer {
         &self.cull.uploaded_key_revisions
     }
 
-    /// Upload all built LOD summary levels (`None` = lazy level, skipped).
-    /// `summaries[i]` corresponds to `pianoroll::SUMMARY_BLOCK_TICKS[i]`.
-    /// Called on MIDI load / full rebuild alongside `upload_all_notes_for_cull`.
+    /// Upload all LOD summary levels. `summaries[i]` corresponds to
+    /// `pianoroll::SUMMARY_BLOCK_TICKS[i]`. Small data (a few MB); called on
+    /// MIDI load / full rebuild alongside `upload_all_notes_for_cull`.
     pub fn upload_summary_for_cull(
         &mut self,
-        summaries: &[Option<(Vec<NoteInstance>, [u32; KEY_COUNT + 1])>],
+        summaries: &[(Vec<NoteInstance>, [u32; KEY_COUNT + 1])],
     ) {
         if let Err(e) = self.cull.upload_summary_all(
             &self.device,
@@ -369,54 +369,6 @@ impl InstanceRenderer {
     /// Whether any LOD summary level is uploaded.
     pub fn summary_ready(&self) -> bool {
         self.cull.summary_ready()
-    }
-
-    /// Whether the given LOD level can be rendered right now (uploaded and not
-    /// mid lazy build). Used by the caller to decide lazy-build requests.
-    pub fn summary_level_ready(&self, level: usize) -> bool {
-        self.cull.summary_level_ready(level)
-    }
-
-    /// Whether the given level is currently being lazily built (background
-    /// build + frame-split upload).
-    pub fn summary_level_loading(&self, level: usize) -> bool {
-        self.cull.summary_level_loading(level)
-    }
-
-    /// Mark/clear the level currently being lazily built.
-    pub fn set_summary_loading(&mut self, level: Option<usize>) {
-        self.cull.set_summary_loading(level);
-    }
-
-    /// Lazy level upload: one key per call, creating GPU buffers as needed.
-    pub fn upload_summary_level_key(
-        &mut self,
-        level: usize,
-        key: u8,
-        notes: &[NoteInstance],
-    ) -> bool {
-        self.cull.upload_summary_key_raw(
-            &self.device,
-            &self.queue,
-            &self.render.uniform_buffer,
-            level,
-            key,
-            notes,
-        )
-    }
-
-    /// Clear one summary level (release its GPU resources after it went stale).
-    pub fn clear_summary_level(&mut self, level: usize) {
-        self.cull.clear_summary_level(level);
-    }
-
-    /// Clear all summary levels finer than `level` (their data is stale after a
-    /// state change; they will be lazily rebuilt when selected again).
-    pub fn clear_summaries_above(&mut self, level: Option<usize>) {
-        match level {
-            Some(level) => self.cull.clear_summaries_above(level),
-            None => self.cull.clear_summaries(),
-        }
     }
 
     /// Whether GPU compute cull is ready (all notes have been uploaded).
@@ -665,21 +617,15 @@ impl InstanceRenderer {
         if self.cull.use_indirect() {
             // ppu 很小（块宽 ≤ SUMMARY_MAX_PX）时改走 LOD 摘要层：cull 与
             // 绘制量从「原始音符数」降到「摘要段数」。选择是 ppu 的连续函数；
-            // 目标档未就绪（懒构建中/显存降级）时先退到更粗档（块宽略大、
-            // 段更少，性能安全），再退到更细档，最后用原始层。
-            let summary_level = crate::pianoroll::select_summary_level(uniforms.pixels_per_tick)
-                .and_then(|best| {
-                    if self.cull.summary_level_ready(best) {
-                        return Some(best);
-                    }
-                    (0..best)
-                        .rev()
+            // 目标档未上传（异常/显存降级）时向更细的档回退，再不行用原始层。
+            let summary_level = if self.cull.summary_ready() {
+                crate::pianoroll::select_summary_level(uniforms.pixels_per_tick).and_then(|best| {
+                    (best..crate::pianoroll::SUMMARY_BLOCK_TICKS.len())
                         .find(|&level| self.cull.summary_level_ready(level))
-                        .or_else(|| {
-                            ((best + 1)..crate::pianoroll::SUMMARY_BLOCK_TICKS.len())
-                                .find(|&level| self.cull.summary_level_ready(level))
-                        })
-                });
+                })
+            } else {
+                None
+            };
             let mut enc = self
                 .device
                 .create_command_encoder(&CommandEncoderDescriptor::default());
