@@ -15,15 +15,19 @@ use rayon::prelude::*;
 use yinhe_types::KEY_COUNT;
 
 use crate::vertex::NoteInstance;
-/// 摘要档位（tick 块宽），由大到小。覆盖范围：
-/// - 超长曲全曲视图（总长上亿 tick）用 262144/65536；
+/// 摘要档位（tick 块宽），由大到小，取 2 的幂的完整序列。
+///
+/// 完整序列让任意 ppu 下选中的档位块宽都落在 (1, 2] px，缩放过程档位
+/// 切换平滑（相邻档只差 2 倍）；缺档会让某些 ppu 区间的块宽掉到 0.5px
+/// 或被迫用更粗的档。
+///
+/// 覆盖范围：
+/// - 超长曲全曲视图（总长上亿 tick）用 262144/131072/65536；
 /// - 短而极密的曲子（ReptilianDarkRitual：51 万 tick / 4000 万音符）
-///   在 ppu 0.003~0.06 的连续缩放区间内需要 32~256 档才能让块宽 ≤ 2px；
-/// - 16/8/4/2 档把 LOD 分界一路推进到 ppu ≤ 1（1px ≥ 1 tick），
-///   密曲在较大缩放下也走摘要（块内最多合并 2 tick 的空隙）。
-/// - 更细的档位（1 及以下）没有意义：此时原始层每音符本来就有像素级宽度。
-pub const SUMMARY_BLOCK_TICKS: [u32; 13] = [
-    262144, 65536, 16384, 4096, 1024, 256, 128, 64, 32, 16, 8, 4, 2,
+///   从全曲到 1px=1tick 的连续缩放区间需要 2~256 全部档位；
+/// - 1 及以下没有意义：ppu > 2 时原始层每音符本来就有像素级宽度。
+pub const SUMMARY_BLOCK_TICKS: [u32; 18] = [
+    262144, 131072, 65536, 32768, 16384, 8192, 4096, 2048, 1024, 512, 256, 128, 64, 32, 16, 8, 4, 2,
 ];
 /// 摘要块在屏幕上的最大像素宽。块内空隙 ≤ 该宽度时被合并不可见。
 pub const SUMMARY_MAX_PX: f32 = 2.0;
@@ -133,6 +137,27 @@ pub fn build_summary(
     (summary, summary_offsets)
 }
 
+/// 按 `SUMMARY_BLOCK_TICKS` 全档位构建。
+///
+/// 档间串行、档内按 key 并行（`build_summary` 内部）：实测嵌套并行
+/// （档间也 rayon）会超订线程池，反而比串行档间慢 ~30%。
+pub fn build_summaries(
+    notes: &[NoteInstance],
+    offsets: &[u32; KEY_COUNT + 1],
+) -> Vec<(Vec<NoteInstance>, [u32; KEY_COUNT + 1])> {
+    SUMMARY_BLOCK_TICKS
+        .iter()
+        .map(|&block| {
+            let (summary, summary_offsets) = build_summary(notes, offsets, block);
+            if summary.len() > SUMMARY_MAX_SEGMENTS {
+                (Vec::new(), [0u32; KEY_COUNT + 1])
+            } else {
+                (summary, summary_offsets)
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,23 +172,20 @@ mod tests {
 
     #[test]
     fn select_level_by_pixels() {
-        // 超长曲全曲视图：最大档 262144 块 ≈ 2px 才够，否则选小一档。
+        // 完整 2 的幂序列：任意 ppu 下选中档的块宽 ∈ (1, 2] px。
         assert_eq!(select_summary_level(2.0 / 262144.0), Some(0));
         assert_eq!(select_summary_level(3.0 / 262144.0), Some(1));
-        // 短密曲全曲视图（ppu≈2e-3）：4096 档块宽 8px 太大，256 档 0.5px。
-        assert_eq!(select_summary_level(2.0e-3), Some(5));
-        assert_eq!(select_summary_level(1.0 / 1024.0), Some(4));
-        assert_eq!(select_summary_level(3.0 / 1024.0), Some(5));
-        // 中等缩放：256 块 > 2px 时依次下探 128 / 32 / 16。
-        assert_eq!(select_summary_level(3.0 / 256.0), Some(6));
-        assert_eq!(select_summary_level(0.05), Some(8));
-        // 16/8/4/2 档：分界一路到 ppu ≤ 1（1px ≥ 1 tick）。
-        assert_eq!(select_summary_level(0.1), Some(9));
-        assert_eq!(select_summary_level(0.125), Some(9));
-        assert_eq!(select_summary_level(0.2), Some(10));
-        assert_eq!(select_summary_level(0.5), Some(11));
-        assert_eq!(select_summary_level(0.9), Some(12));
-        assert_eq!(select_summary_level(1.0), Some(12));
+        assert_eq!(select_summary_level(1.0 / 1024.0), Some(7)); // 2048 档
+        assert_eq!(select_summary_level(2.0e-3), Some(9)); // 512 档
+        assert_eq!(select_summary_level(3.0 / 1024.0), Some(9));
+        assert_eq!(select_summary_level(3.0 / 256.0), Some(11)); // 128 档
+        assert_eq!(select_summary_level(0.05), Some(13)); // 32 档
+        assert_eq!(select_summary_level(0.1), Some(14)); // 16 档
+        assert_eq!(select_summary_level(0.125), Some(14));
+        assert_eq!(select_summary_level(0.2), Some(15)); // 8 档
+        assert_eq!(select_summary_level(0.5), Some(16)); // 4 档
+        assert_eq!(select_summary_level(0.9), Some(17)); // 2 档
+        assert_eq!(select_summary_level(1.0), Some(17));
         // 1px < 1 tick（ppu > 2）才回原始层。
         assert_eq!(select_summary_level(2.5), None);
         assert_eq!(select_summary_level(0.0), None);

@@ -72,7 +72,7 @@ pub fn show(
     follow_mode: &mut super::view_interaction::FollowMode,
     active_tool: &Tool,
     // Automation panel data (all-or-nothing)
-    auto_ctx: Option<AutomationPanelsCtx<'_>>,
+    mut auto_ctx: Option<AutomationPanelsCtx<'_>>,
     min_border_width: f32,
     content_opacity: f32,
     note_outline: bool,
@@ -336,6 +336,16 @@ pub fn show(
     // 在本帧透传负值而右移，下一帧才被 compute_layout clamp 回来，形成分层抖动。
     // 这里在 AM 同步前补一次 clamp，保证 PR/AR/AM 三层同帧同值。
     view.clamp_scroll(w as f32, h as f32, total_ticks);
+
+    // ── AM 力度条摘要共享 ──
+    // AM 面板用每个面板独立的 renderer；摘要由主 renderer 后台构建，
+    // 这里把 Arc 共享给各 AM renderer（只读，不触发重建）。
+    if let Some(ctx) = auto_ctx.as_mut() {
+        let summary = pianoroll.velocity_summary();
+        for (renderer, _) in ctx.renderers.iter_mut() {
+            renderer.set_velocity_summary_shared(summary.clone());
+        }
+    }
 
     // ── Automation panels ──
     let panels_y = content_rect.max.y;

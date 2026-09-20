@@ -154,10 +154,10 @@ mod tests {
     fn blocks_are_sorted_and_take_max_velocity() {
         let s = build(vec![
             make(0, 50, 0),
-            make(100, 90, 1), // 同一 block 内（ppu=0.003 → block=256）
+            make(100, 90, 1), // 同一 block 内（ppu=0.005 → block=256）
             make(300, 70, 2), // 下一块
         ]);
-        let level = s.level_for_ppu(0.003).expect("应触发摘要档");
+        let level = s.level_for_ppu(0.005).expect("应触发摘要档");
         let blocks = s.level(level);
         let block_ticks = SUMMARY_BLOCK_TICKS[level];
         assert_eq!(block_ticks, 256);

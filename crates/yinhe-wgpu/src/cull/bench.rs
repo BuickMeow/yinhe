@@ -264,7 +264,7 @@ fn bench_synthetic_scale() {
             summaries.push((s, so));
         }
     }
-    println!("摘要构建合计 {summary_build_ms:.0}ms（加载时一次，后台线程）");
+    println!("摘要构建合计 {summary_build_ms:.0}ms（串行逐档；生产为档间并行，加载时一次）");
 
     let format = TextureFormat::Rgba8UnormSrgb;
     let mut renderer = crate::InstanceRenderer::new(device.clone(), queue.clone(), format);
@@ -508,24 +508,25 @@ fn bench_real_midi() {
         all.len() as f64 * 12.0 / 1e6
     );
 
-    let mut summaries: Vec<(Vec<NoteInstance>, [u32; KEY_COUNT + 1])> =
-        Vec::with_capacity(crate::pianoroll::SUMMARY_BLOCK_TICKS.len());
-    for &bt in &crate::pianoroll::SUMMARY_BLOCK_TICKS {
-        let t = std::time::Instant::now();
-        let (s, so) = crate::pianoroll::build_summary(&all, &offsets, bt);
-        let skipped = s.len() > crate::pianoroll::SUMMARY_MAX_SEGMENTS;
+    let t = std::time::Instant::now();
+    let summaries = crate::pianoroll::build_summaries(&all, &offsets);
+    println!(
+        "摘要构建合计 {:.0}ms（档内并行，生产路径，加载时一次）",
+        t.elapsed().as_secs_f64() * 1e3
+    );
+    for (i, (s, _)) in summaries.iter().enumerate() {
+        let tag = if s.is_empty() {
+            "（空/超上限跳过）"
+        } else {
+            ""
+        };
         println!(
-            "摘要 block={bt:>6}: {:>9} 段 {:>7.1}MB 构建 {:>5}ms{}",
+            "摘要 block={:>6}: {:>9} 段 {:>7.1}MB{}",
+            crate::pianoroll::SUMMARY_BLOCK_TICKS[i],
             s.len(),
             s.len() as f64 * 12.0 / 1e6,
-            t.elapsed().as_secs_f64() * 1e3,
-            if skipped { "（超上限跳过）" } else { "" }
+            tag
         );
-        if skipped {
-            summaries.push((Vec::new(), [0u32; KEY_COUNT + 1]));
-        } else {
-            summaries.push((s, so));
-        }
     }
 
     let Some((device, queue)) = bench_device() else {

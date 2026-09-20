@@ -398,6 +398,14 @@ impl InstanceRenderer {
         self.velocity_summary_revision = revision;
     }
 
+    /// 共享另一实例的力度条摘要（AM 面板用独立 renderer，只读不重建）。
+    pub fn set_velocity_summary_shared(
+        &mut self,
+        summary: Option<Arc<crate::automation::VelocitySummary>>,
+    ) {
+        self.velocity_summary = summary;
+    }
+
     /// 推进 AM 力度条摘要的后台构建：先收集已完成的结果，再按需启动新任务。
     ///
     /// `vs_key` = revision ^ tv_hash（hash 由调用方算）。编辑或切轨会让摘要
