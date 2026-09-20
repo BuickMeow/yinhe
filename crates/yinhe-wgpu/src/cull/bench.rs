@@ -152,6 +152,120 @@ fn count_visible_instances(device: &Device, queue: &Queue, cull: &CullState) -> 
     visible
 }
 
+/// 模拟 LOD 摘要层：按 (key, block_ticks) 把音符聚合成 min_start/max_end/
+/// 代表 track 的段。用于测「预计算摘要」的构建成本与摘要规模。
+fn build_summary(
+    notes: &[NoteInstance],
+    offsets: &[u32; KEY_COUNT + 1],
+    block_ticks: u32,
+) -> (Vec<NoteInstance>, [u32; KEY_COUNT + 1]) {
+    use rayon::prelude::*;
+    let buckets: Vec<Vec<NoteInstance>> = (0..KEY_COUNT)
+        .into_par_iter()
+        .map(|k| {
+            let start = offsets[k] as usize;
+            let end = offsets[k + 1] as usize;
+            let key_notes = &notes[start..end];
+            let Some(last_end) = key_notes.iter().map(|n| n.end_tick).max() else {
+                return Vec::new();
+            };
+            let nblocks = (last_end / block_ticks + 1) as usize;
+            let mut min_s = vec![u32::MAX; nblocks];
+            let mut max_e = vec![0u32; nblocks];
+            let mut tk = vec![0u16; nblocks];
+            for note in key_notes {
+                let b = (note.start_tick / block_ticks) as usize;
+                min_s[b] = min_s[b].min(note.start_tick);
+                max_e[b] = max_e[b].max(note.end_tick);
+                tk[b] = ((note.packed >> 8) & 0xFFFF) as u16;
+            }
+            let mut out = Vec::new();
+            for b in 0..nblocks {
+                if min_s[b] != u32::MAX {
+                    out.push(NoteInstance {
+                        start_tick: min_s[b],
+                        end_tick: max_e[b],
+                        packed: NoteInstance::pack(k as u8, tk[b], 100),
+                    });
+                }
+            }
+            out
+        })
+        .collect();
+
+    let mut summary_offsets = [0u32; KEY_COUNT + 1];
+    let mut summary = Vec::new();
+    let mut total = 0u32;
+    for (k, bucket) in buckets.into_iter().enumerate() {
+        summary_offsets[k] = total;
+        total += bucket.len() as u32;
+        summary.extend(bucket);
+    }
+    summary_offsets[KEY_COUNT] = total;
+    (summary, summary_offsets)
+}
+
+/// args 数量 → CPU 提交成本曲线（A 大 chunk / B 紧凑输出的收益来源）。
+/// 每条 args 的 instance_count=0，GPU 不执行绘制，只测命令编码成本。
+fn bench_args_scaling(
+    device: &Device,
+    queue: &Queue,
+    renderer: &crate::InstanceRenderer,
+    target_view: &TextureView,
+    pw: u32,
+    ph: u32,
+) {
+    let max_args = 390_625u32; // 1e8 / 256
+    let mut args_data = vec![0u32; max_args as usize * 5];
+    for chunk in args_data.chunks_exact_mut(5) {
+        chunk[0] = 6; // index_count；instance_count = 0
+    }
+    let args_buf = device.create_buffer(&BufferDescriptor {
+        label: Some("bench_fake_args"),
+        size: max_args as u64 * 20,
+        usage: BufferUsages::INDIRECT | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&args_buf, 0, bytemuck::cast_slice(&args_data));
+
+    let rs = renderer.render_state();
+    let vis = renderer.cull.per_key_visible_buffers[0]
+        .as_ref()
+        .expect("key0 visible buffer");
+    let bg = renderer.cull.per_key_all_bind_group(0).expect("key0 bg");
+
+    println!("\nargs 数量 → CPU 提交成本（multi_draw，instance_count=0）");
+    for &n in &[390_625u32, 24_414, 12_207, 3_052, 765, 128] {
+        let mut min_cpu = f64::MAX;
+        for _ in 0..3 {
+            let t = std::time::Instant::now();
+            let mut enc = device.create_command_encoder(&Default::default());
+            {
+                let mut pass = crate::util::begin_pianoroll_pass(
+                    &mut enc,
+                    target_view,
+                    &rs.pipeline,
+                    &rs.bind_group,
+                    pw,
+                    ph,
+                );
+                pass.set_pipeline(&rs.note_pipeline);
+                pass.set_bind_group(0, &rs.bind_group, &[]);
+                pass.set_index_buffer(rs.index_buffer.slice(..), IndexFormat::Uint32);
+                pass.set_bind_group(1, bg, &[]);
+                pass.set_vertex_buffer(0, vis.slice(..));
+                pass.multi_draw_indexed_indirect(&args_buf, 0, n);
+            }
+            queue.submit([enc.finish()]);
+            min_cpu = min_cpu.min(t.elapsed().as_secs_f64() * 1e3);
+        }
+        println!("{n:>8} args: CPU {min_cpu:.2}ms");
+    }
+    device
+        .poll(PollType::wait_indefinitely())
+        .expect("poll failed");
+}
+
 #[test]
 #[ignore]
 fn bench_synthetic_scale() {
@@ -176,6 +290,17 @@ fn bench_synthetic_scale() {
         eprintln!("无可用 GPU 适配器，跳过");
         return;
     };
+
+    // ── C 方案模拟：LOD 摘要层的构建成本与规模 ──
+    // 按 (key, 32768 tick 块) 聚合 min_start/max_end/代表 track。
+    let t = std::time::Instant::now();
+    let (summary, summary_offsets) = build_summary(&all, &offsets, 32768);
+    println!(
+        "LOD 摘要构建（block=32768 tick）: {} 段（{:.1}MB）{:.0}ms",
+        summary.len(),
+        summary.len() as f64 * 12.0 / 1e6,
+        t.elapsed().as_secs_f64() * 1e3
+    );
 
     let format = TextureFormat::Rgba8UnormSrgb;
     let mut renderer = crate::InstanceRenderer::new(device.clone(), queue.clone(), format);
@@ -364,4 +489,57 @@ fn bench_synthetic_scale() {
         .expect("poll failed");
     let idle_gpu = (t.elapsed().as_secs_f64() * 1e3 - empty_poll_ms).max(0.0);
     println!("\n静止帧（全曲视图，cull skip）: CPU {idle_cpu:.2}ms, GPU {idle_gpu:.2}ms");
+
+    // ── A/B 方案：args 数量 → CPU 提交成本（大 chunk / 紧凑输出）──
+    bench_args_scaling(&device, &queue, &renderer, &target_view, pw, ph);
+
+    // ── C 方案模拟：LOD 摘要层（约 20 万段）的完整帧时间 ──
+    {
+        let mut sr = crate::InstanceRenderer::new(device.clone(), queue.clone(), format);
+        sr.upload_all_notes_for_cull(&summary, &summary_offsets, &[0; KEY_COUNT]);
+        sr.upload_track_colors(&colors);
+        sr.upload_selection(&SelectionUniform {
+            rects: [[0; 4]; MAX_SEL_RECTS * 2],
+        });
+        let u = Uniforms {
+            width: pw as f32,
+            height: ph as f32,
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+            pixels_per_tick: main_w / total_ticks as f32,
+            key_height: kh,
+            keyboard_width: kb_w,
+            mode: 1,
+            track_count: tracks as u32,
+            ..Default::default()
+        };
+        let mut min_cpu = f64::MAX;
+        let mut min_gpu = f64::MAX;
+        for f in 0..frames {
+            let mut u2 = u;
+            u2.scroll_x = f as f32;
+            sr.upload_uniforms(u2);
+            let t = std::time::Instant::now();
+            let mut enc = device.create_command_encoder(&Default::default());
+            sr.draw(&mut enc, &target_view, pw, ph);
+            queue.submit([enc.finish()]);
+            let cpu_ms = t.elapsed().as_secs_f64() * 1e3;
+            let t = std::time::Instant::now();
+            device
+                .poll(PollType::wait_indefinitely())
+                .expect("poll failed");
+            let gpu_ms = (t.elapsed().as_secs_f64() * 1e3 - empty_poll_ms).max(0.0);
+            if f > 0 {
+                min_cpu = min_cpu.min(cpu_ms);
+                min_gpu = min_gpu.min(gpu_ms);
+            }
+        }
+        let visible = count_visible_instances(&device, &queue, &sr.cull);
+        let frame_ms = min_cpu.max(min_gpu);
+        println!(
+            "LOD 摘要帧（全曲视图，{} 段，可见 {visible}）: CPU {min_cpu:.2}ms, GPU {min_gpu:.2}ms, 帧 {frame_ms:.2}ms ({:.0} FPS)",
+            summary.len(),
+            1000.0 / frame_ms.max(0.001)
+        );
+    }
 }

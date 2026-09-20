@@ -317,7 +317,7 @@ impl InstanceRenderer {
         self.cull.is_ready()
     }
 
-    /// Test/bench 专用：暴露渲染管线状态（draw call 录制实验用）。
+    /// Test/bench 专用：暴露渲染管线状态（draw args 缩放实验用）。
     #[cfg(test)]
     pub(crate) fn render_state(&self) -> &RenderPipelineState {
         &self.render
