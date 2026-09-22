@@ -26,6 +26,10 @@ pub enum PianoViewEvent {
         start_tick: u32,
         key: u8,
     },
+    /// 剪刀切割：逐行切点 `(key, cut_tick)`。
+    ScissorsSplit {
+        cuts: Vec<(u8, u32)>,
+    },
 }
 
 /// Automation panel 上下文（all-or-nothing：要么全 Some 要么全 None）。

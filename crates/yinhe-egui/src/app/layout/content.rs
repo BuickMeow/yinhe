@@ -674,6 +674,9 @@ impl App {
                         doc.delete_single_note(track, start_tick, key)
                     });
                 }
+                PianoViewEvent::ScissorsSplit { cuts } => {
+                    self.scissors_split(cuts);
+                }
             }
         }
 

@@ -499,6 +499,13 @@ impl App {
         });
     }
 
+    /// 剪刀切割：按逐行切点切开音符，一次拖拽一个 undo entry。
+    pub(crate) fn scissors_split(&mut self, cuts: Vec<(u8, u32)>) {
+        self.with_undo(t!("undo.scissors_split").as_ref(), |doc| {
+            doc.split_notes_at(&cuts)
+        });
+    }
+
     /// Run an edit closure, recording an undo entry from the returned action
     /// and notifying audio afterwards.
     ///

@@ -23,6 +23,7 @@ mod overlay;
 mod panels;
 mod pencil;
 mod perf;
+mod scissors;
 mod scrollbar;
 mod status;
 mod tool;
@@ -161,6 +162,8 @@ pub fn show(
         pencil_event,
         eraser_event,
         quick_delete_event,
+        scissors_event,
+        scissors_preview,
     } = interaction::dispatch(
         ui,
         view,
@@ -324,6 +327,7 @@ pub fn show(
         &bar,
         feedback,
         selected,
+        scissors_preview.as_deref(),
     );
     let t_paint_end = if perf_on {
         Some(std::time::Instant::now())
@@ -425,4 +429,5 @@ pub fn show(
         .or(quick_delete_event)
         .or(pencil_event)
         .or(eraser_event)
+        .or(scissors_event)
 }

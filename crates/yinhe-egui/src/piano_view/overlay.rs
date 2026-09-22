@@ -40,6 +40,7 @@ pub(crate) fn draw_overlays(
     bar: &control_bar::PrBarData<'_>,
     feedback: &mut PianoViewFeedback<'_>,
     selected: &mut yinhe_core::Selection,
+    scissors_preview: Option<&[(u8, u32)]>,
 ) -> Option<crate::widgets::selection_actions::SelectionAction> {
     // 兼容任务要求的形参（部分由 midi 派生，此处透传占位，避免未使用警告）
     let _ = tpb;
@@ -194,6 +195,11 @@ pub(crate) fn draw_overlays(
             crate::theme::danger_text_bright(),
             false,
         );
+    }
+
+    // ── Scissors 切割线预览（吸附后的逐行切点台阶线）──
+    if let Some(cuts) = scissors_preview {
+        super::scissors::paint_preview(painter, content_rect, view, cuts);
     }
     // 已提交的持久选框：任意工具下均保持可见
     {

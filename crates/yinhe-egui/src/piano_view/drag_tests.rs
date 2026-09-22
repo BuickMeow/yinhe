@@ -1247,3 +1247,97 @@ fn sel_drag_in_progress_reflects_persisted_state() {
     });
     assert!(result, "选区 Alt 克隆拖拽进行中应为 true");
 }
+
+/// 跑一帧 scissors_frame（Scissors 工具），返回 release 事件与拖拽预览切点。
+fn run_scissors_frame(
+    ctx: &egui::Context,
+    raw: egui::RawInput,
+    view: &yinhe_types::PianoRollView,
+) -> (
+    Option<crate::piano_view::PianoViewEvent>,
+    Option<crate::piano_view::scissors::ScissorsCuts>,
+) {
+    let mut out = (None, None);
+    // run_ui 返回的 FullOutput 含字体纹理 delta，丢弃前必须 clear（epaint 断言）。
+    ctx.run_ui(raw, |ui| {
+        out = crate::piano_view::scissors::scissors_frame(
+            ui,
+            content(),
+            content(),
+            view,
+            QuantizePreset::Fraction(1, 16),
+            480,
+            None,
+        );
+    })
+    .textures_delta
+    .clear();
+    out
+}
+
+/// 剪刀工具：单击（无音高跨度）在吸附刻度处全列切一刀。
+#[test]
+fn scissors_click_emits_whole_column_cuts() {
+    let ctx = egui::Context::default();
+    let view = test_view();
+    let pos = egui::pos2(500.0, 300.0);
+
+    let (event, preview) = run_scissors_frame(&ctx, press_event(pos), &view);
+    assert!(event.is_none(), "按下帧不产生切割事件");
+    let preview = preview.expect("按下帧应产生预览切点");
+    assert_eq!(preview.len(), yinhe_types::KEY_COUNT, "预览覆盖全列");
+    assert!(
+        preview.iter().all(|&(_, t)| t == 480),
+        "1/16 网格：500 吸附到 480"
+    );
+
+    let (event, preview) = run_scissors_frame(&ctx, release_event(pos), &view);
+    assert!(preview.is_none(), "释放帧不再有预览");
+    match event {
+        Some(crate::piano_view::PianoViewEvent::ScissorsSplit { cuts }) => {
+            assert_eq!(cuts.len(), yinhe_types::KEY_COUNT);
+            assert!(cuts.iter().all(|&(_, t)| t == 480));
+        }
+        _ => panic!("单击释放应产生 ScissorsSplit"),
+    }
+}
+
+/// 剪刀工具：斜线拖拽按行插值并逐行吸附（1px/tick、10px/key、1/16 网格）。
+#[test]
+fn scissors_slanted_drag_emits_per_row_cuts() {
+    let ctx = egui::Context::default();
+    let view = test_view();
+    // y=300 → key 97；y=280 → key 99。
+    let start = egui::pos2(100.0, 300.0);
+    let end = egui::pos2(400.0, 280.0);
+
+    run_scissors_frame(&ctx, press_event(start), &view);
+    let (_, preview) = run_scissors_frame(&ctx, drag_event(end), &view);
+    assert_eq!(
+        preview.as_deref(),
+        Some(&[(97u8, 120u32), (98, 240), (99, 360)][..]),
+        "拖拽预览 = 逐行吸附切点"
+    );
+
+    let (event, _) = run_scissors_frame(&ctx, release_event(end), &view);
+    match event {
+        Some(crate::piano_view::PianoViewEvent::ScissorsSplit { cuts }) => {
+            assert_eq!(cuts, vec![(97, 120), (98, 240), (99, 360)]);
+        }
+        _ => panic!("斜线释放应产生 ScissorsSplit"),
+    }
+}
+
+/// 剪刀工具：音乐区外按下/释放不建立拖拽，也不产生切割。
+#[test]
+fn scissors_press_outside_music_rect_is_ignored() {
+    let ctx = egui::Context::default();
+    let view = test_view();
+    let pos = egui::pos2(100.0, 700.0);
+
+    let (event, preview) = run_scissors_frame(&ctx, press_event(pos), &view);
+    assert!(event.is_none() && preview.is_none(), "音乐区外按下无效果");
+
+    let (event, _) = run_scissors_frame(&ctx, release_event(pos), &view);
+    assert!(event.is_none(), "音乐区外释放不产生切割");
+}

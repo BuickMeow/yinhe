@@ -21,6 +21,8 @@ pub(crate) struct InteractionOutput {
     pub(crate) pencil_event: Option<PianoViewEvent>,
     pub(crate) eraser_event: Option<PianoViewEvent>,
     pub(crate) quick_delete_event: Option<PianoViewEvent>,
+    pub(crate) scissors_event: Option<PianoViewEvent>,
+    pub(crate) scissors_preview: Option<super::scissors::ScissorsCuts>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -66,6 +68,8 @@ pub(crate) fn dispatch(
     let mut quick_delete_event: Option<PianoViewEvent> = None;
     let mut pencil_event: Option<PianoViewEvent> = None;
     let mut eraser_event: Option<PianoViewEvent> = None;
+    let mut scissors_event: Option<PianoViewEvent> = None;
+    let mut scissors_preview: Option<super::scissors::ScissorsCuts> = None;
     if effective_tool == Tool::Select || effective_tool == Tool::SelectVertical {
         let vertical = effective_tool == Tool::SelectVertical;
         let (sel_ghosts, sel_hidden, sel_previews, sel_note_event, sel_pencil_drag, sel_quick) =
@@ -157,6 +161,18 @@ pub(crate) fn dispatch(
             total_ticks,
             track_selected,
         );
+    } else if effective_tool == Tool::Scissors {
+        let (event, preview) = super::scissors::scissors_frame(
+            ui,
+            content_rect,
+            music_rect,
+            view,
+            quantize,
+            ppq,
+            bar_line_data,
+        );
+        scissors_event = event;
+        scissors_preview = preview;
     }
     InteractionOutput {
         effective_tool,
@@ -165,6 +181,8 @@ pub(crate) fn dispatch(
         pencil_event,
         eraser_event,
         quick_delete_event,
+        scissors_event,
+        scissors_preview,
     }
 }
 
@@ -234,5 +252,13 @@ pub(crate) fn update_hover_cursor(
                 }
             }
         }
+    }
+
+    if effective_tool == Tool::Scissors
+        && !crate::view_interaction::pointer_over_popup(ui.ctx())
+        && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
+        && music_rect.contains(pos)
+    {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
     }
 }
