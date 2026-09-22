@@ -1128,6 +1128,75 @@ impl Document {
             after: vec![],
         }))
     }
+
+    /// 剪刀切割：对每个 `(key, cut)`，切开该行中跨过 `cut` 的音符。
+    ///
+    /// 只切 `track_selected`（空 = 全部）∩ `track_pianoroll_visible` 的轨道；
+    /// 切点在音符边界上或音符外时不切。左半保留原 id，右半分配新 id。
+    /// 返回副本制 undo（before = 原音符，after = 两半）。
+    pub fn split_notes_at(&mut self, cuts: &[(u8, u32)]) -> Option<UndoAction> {
+        if cuts.is_empty() {
+            return None;
+        }
+        let mut before: Vec<(yinhe_types::Note, u8)> = Vec::new();
+        let mut after: Vec<(yinhe_types::Note, u8)> = Vec::new();
+        {
+            let selected = &self.edit.track_selected;
+            let visible = &self.edit.track_pianoroll_visible;
+            let model = Arc::make_mut(&mut self.data.model);
+            let max_len = model.max_note_len;
+            for &(key, cut) in cuts {
+                if key as usize >= yinhe_types::KEY_COUNT {
+                    continue;
+                }
+                let targets = {
+                    let bucket = Arc::make_mut(&mut model.notes[key as usize]);
+                    // 左界用全曲最长音符收紧：start < cut 且 end > cut 的音符
+                    // 必然落在 [cut - max_len, cut] 内。
+                    bucket.drain_range_filtered(
+                        cut.saturating_sub(max_len),
+                        cut.saturating_add(1),
+                        |n| {
+                            n.start_tick < cut
+                                && n.end_tick > cut
+                                && (selected.is_empty() || selected.contains(&n.track))
+                                && visible.get(n.track as usize).copied().unwrap_or(true)
+                        },
+                    )
+                };
+                if targets.is_empty() {
+                    continue;
+                }
+                let new_ids: Vec<u32> = (0..targets.len()).map(|_| model.alloc_note_id()).collect();
+                let mut halves = Vec::with_capacity(targets.len() * 2);
+                for (n, new_id) in targets.iter().zip(new_ids) {
+                    let left = yinhe_types::Note {
+                        end_tick: cut,
+                        ..*n
+                    };
+                    let right = yinhe_types::Note {
+                        id: new_id,
+                        start_tick: cut,
+                        end_tick: n.end_tick,
+                        velocity: n.velocity,
+                        track: n.track,
+                    };
+                    before.push((*n, key));
+                    after.push((left, key));
+                    after.push((right, key));
+                    halves.push(left);
+                    halves.push(right);
+                }
+                Arc::make_mut(&mut model.notes[key as usize]).insert_batch_sorted(halves);
+                model.mark_dirty(key);
+            }
+        }
+        if after.is_empty() {
+            return None;
+        }
+        self.data.rebuild_model_dirty();
+        Some(UndoAction::Notes(NoteDelta { before, after }))
+    }
 }
 
 #[cfg(test)]
@@ -1991,6 +2060,101 @@ mod tests {
         assert!(
             doc.data.model.notes[62].iter().any(|n| n.start_tick == 100),
             "k62 从未移动"
+        );
+    }
+
+    /// 剪刀切割：切点切开跨过它的音符（原 id 留左半、新 id 给右半），
+    /// 边界/范围外不切，undo/redo 完整回放。
+    #[test]
+    fn split_notes_at_cuts_crossing_notes_and_undo_roundtrip() {
+        let mut doc = make_doc_with_note(); // k60 [100,200)
+        doc.add_note(0, ev(300, 400, 60)); // 不跨切点
+        doc.add_note(0, ev(100, 400, 62)); // 另一行的跨切点音符
+        let before_snap = doc.capture_snapshot();
+        let action = doc.split_notes_at(&[(60, 150), (62, 150)]).expect("应切割");
+
+        // k60: [100,150) + [150,200) + [300,400)
+        assert_eq!(doc.data.model.notes[60].len(), 3);
+        assert!(
+            doc.data.model.notes[60]
+                .iter()
+                .any(|n| n.start_tick == 100 && n.end_tick == 150)
+        );
+        assert!(
+            doc.data.model.notes[60]
+                .iter()
+                .any(|n| n.start_tick == 150 && n.end_tick == 200)
+        );
+        // k62: [100,150) + [150,400)
+        assert_eq!(doc.data.model.notes[62].len(), 2);
+        assert!(
+            doc.data.model.notes[62]
+                .iter()
+                .any(|n| n.start_tick == 150 && n.end_tick == 400)
+        );
+        // 左半保留原 id
+        let orig_id = doc.data.model.notes[60]
+            .iter()
+            .find(|n| n.start_tick == 100 && n.end_tick == 150)
+            .map(|n| n.id);
+        assert!(orig_id.is_some());
+
+        match &action {
+            UndoAction::Notes(delta) => {
+                assert_eq!(delta.before.len(), 2, "两个原音符");
+                assert_eq!(delta.after.len(), 4, "切出四半");
+            }
+            other => panic!("期望副本制 Notes，实际 {other:?}"),
+        }
+
+        doc.push_undo(action, "split", before_snap);
+        assert!(doc.undo(), "undo 应成功");
+        assert_eq!(doc.data.model.notes[60].len(), 2);
+        assert!(
+            doc.data.model.notes[60]
+                .iter()
+                .any(|n| n.start_tick == 100 && n.end_tick == 200)
+        );
+        assert_eq!(doc.data.model.notes[62].len(), 1);
+        assert!(doc.redo(), "redo 应成功");
+        assert_eq!(doc.data.model.notes[60].len(), 3);
+        assert_eq!(doc.data.model.notes[62].len(), 2);
+    }
+
+    /// 切点在音符边界（start/end）上或音符外：不切，返回 None。
+    #[test]
+    fn split_notes_at_skips_boundary_and_outside_cuts() {
+        let mut doc = make_doc_with_note(); // k60 [100,200)
+        assert!(
+            doc.split_notes_at(&[(60, 100)]).is_none(),
+            "cut == start 不切"
+        );
+        assert!(
+            doc.split_notes_at(&[(60, 200)]).is_none(),
+            "cut == end 不切"
+        );
+        assert!(doc.split_notes_at(&[(60, 50)]).is_none(), "音符左侧不切");
+        assert!(doc.split_notes_at(&[(60, 500)]).is_none(), "音符右侧不切");
+        assert!(doc.split_notes_at(&[]).is_none(), "空切点表");
+        assert_eq!(doc.data.model.notes[60].len(), 1);
+    }
+
+    /// 作用域过滤：不可见轨、选中其他轨都不切；选中为空 = 全部可见轨。
+    #[test]
+    fn split_notes_at_respects_track_scope() {
+        let mut doc = make_doc_with_note(); // track 0, k60 [100,200)
+        doc.edit.track_pianoroll_visible = vec![false];
+        assert!(doc.split_notes_at(&[(60, 150)]).is_none(), "不可见轨不切");
+        doc.edit.track_pianoroll_visible = vec![true];
+        doc.edit.track_selected.insert(5);
+        assert!(
+            doc.split_notes_at(&[(60, 150)]).is_none(),
+            "选中其他轨时不切"
+        );
+        doc.edit.track_selected.clear();
+        assert!(
+            doc.split_notes_at(&[(60, 150)]).is_some(),
+            "清空选中 = 全部可见轨"
         );
     }
 }
