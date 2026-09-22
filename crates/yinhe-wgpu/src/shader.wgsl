@@ -326,13 +326,15 @@ fn note_geometry(
     }
     out.color = base_color;
 
-    // 填充色：选中 = 纯黑；未选中按力度向白变浅（力度 0 最浅，127 = 原色）。
+    // 填充色：仅 PR（mode==1）按选中/力度变化；AR 等其它模式保持原色。
     // ghost / LOD 摘要层打包 vel=127 → 原色，不参与着色。
-    if selected {
+    if u.mode == 1u && selected {
         out.fill_color = vec3<f32>(0.0, 0.0, 0.0);
-    } else {
+    } else if u.mode == 1u {
         let lighten = (1.0 - f32(vel) / 127.0) * MAX_FILL_LIGHTEN;
         out.fill_color = mix(base_color.rgb, vec3<f32>(1.0, 1.0, 1.0), lighten);
+    } else {
+        out.fill_color = base_color.rgb;
     }
 
     // No rounded corners; border based on vertical dimension (key/lane height).
