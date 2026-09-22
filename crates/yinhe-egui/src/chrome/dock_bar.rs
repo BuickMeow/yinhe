@@ -1066,6 +1066,7 @@ fn upsert_automation_event(app: &mut App, idx: usize, drag: &mut KnobDrag, norm:
                     drag.track_idx,
                     drag.target.clone(),
                     AutomationEvent {
+                        id: 0,
                         tick: drag.tick,
                         value: norm,
                         shape: drag.target.default_shape(),
@@ -1078,6 +1079,7 @@ fn upsert_automation_event(app: &mut App, idx: usize, drag: &mut KnobDrag, norm:
                 drag.track_idx,
                 drag.target.clone(),
                 AutomationEvent {
+                    id: 0,
                     tick: drag.tick,
                     value: norm,
                     shape: drag.target.default_shape(),

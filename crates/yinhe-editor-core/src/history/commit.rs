@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use yinhe_core::Selection;
-use yinhe_types::AnchorSelRect;
+use yinhe_types::{AnchorSelRect, AutomationPanelView};
 
 use crate::document::Document;
 use crate::edit_state::SelRectState;
@@ -24,6 +24,11 @@ pub struct EditSnapshot {
     pub arr_sel_rect: Vec<(f64, f64, usize, usize)>,
     /// 每面板的 AM 选框（controller_panels 顺序）。
     pub anchor_sel_rects: Vec<Vec<AnchorSelRect>>,
+    /// 每面板的 AM 锚点成员位图（与 `anchor_sel_rects` 对齐；None = 矩形态）。
+    pub anchor_members: Vec<Option<yinhe_types::NoteBitset>>,
+    /// AR 展开 lane 的 AM 视图（选框 + 成员），按 (track, target) 键。
+    pub arr_am_views:
+        std::collections::HashMap<(u16, yinhe_types::AutomationTarget), AutomationPanelView>,
 }
 
 /// A single entry on the undo/redo stack.

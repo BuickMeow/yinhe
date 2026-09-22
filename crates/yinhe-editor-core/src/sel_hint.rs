@@ -13,21 +13,10 @@ pub struct SelHintInfo {
     pub span: String,
 }
 
-fn selected_am_events(
-    doc: &Document,
-    panel: &yinhe_types::AutomationPanelView,
-    rects: &[AnchorSelRect],
-) -> Vec<(u32, f32)> {
+fn selected_am_events(doc: &Document, panel: &yinhe_types::AutomationPanelView) -> Vec<(u32, f32)> {
     let target = &panel.selected_target;
-    let events: Vec<(u32, f32)> = if matches!(target, AutomationTarget::Tempo) {
-        doc.data
-            .model
-            .conductor
-            .tempo
-            .events
-            .iter()
-            .map(|e| (e.tick, e.value))
-            .collect()
+    let events: Vec<&yinhe_types::AutomationEvent> = if matches!(target, AutomationTarget::Tempo) {
+        doc.data.model.conductor.tempo.events.iter().collect()
     } else {
         let Some(track) = doc
             .edit
@@ -39,11 +28,13 @@ fn selected_am_events(
         let Some(lane) = track.automation_lanes.iter().find(|l| l.target == *target) else {
             return Vec::new();
         };
-        lane.events.iter().map(|e| (e.tick, e.value)).collect()
+        lane.events.iter().collect()
     };
+    // 成员态按 id 判定；矩形态回退选框几何（与拖动/删除口径一致）。
     events
         .into_iter()
-        .filter(|(t, v)| rects.iter().any(|r| r.contains(*t, *v)))
+        .filter(|e| panel.accepts_anchor(e))
+        .map(|e| (e.tick, e.value))
         .collect()
 }
 
@@ -96,7 +87,7 @@ pub fn compute_sel_hint(doc: &Document) -> Option<SelHintInfo> {
             .controller_panels
             .iter()
             .filter(|p| !p.show_velocity && !p.anchor_sel_rects.is_empty())
-            .map(|p| selected_am_events(doc, p, &p.anchor_sel_rects).len())
+            .map(|p| selected_am_events(doc, p).len())
             .sum();
         Some(SelHintInfo {
             count: count as u64,

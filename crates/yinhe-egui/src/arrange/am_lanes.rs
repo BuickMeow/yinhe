@@ -20,7 +20,7 @@ use yinhe_types::{ArrangementView, AutomationEdit};
 use yinhe_wgpu::AutomationGhost;
 
 use crate::piano_view::automation_panel::AutomationEditCtx;
-use crate::piano_view::automation_panel::interaction::{self, SelOp, SelRectOp};
+use crate::piano_view::automation_panel::interaction::{self, SelOp};
 use crate::right_panel::{InfoContent, RightTab};
 
 /// 一条需要交互/渲染的 AM 行。
@@ -215,13 +215,14 @@ pub(crate) fn interact_all(
         if let Some(op) = sel_op {
             let lview = io.am_views.entry(key).or_default();
             match op {
-                SelOp::Set(rect_op) => match rect_op {
-                    SelRectOp::Set(r) => lview.anchor_sel_rects = vec![r],
-                    SelRectOp::Append(r) => lview.anchor_sel_rects.push(r),
-                    SelRectOp::ReplaceAll(rects) => lview.anchor_sel_rects = rects,
-                    SelRectOp::Keep => {}
-                },
-                SelOp::Clear => lview.anchor_sel_rects.clear(),
+                SelOp::Set(rect_op) => {
+                    let lane = interaction::panel_lane(lview, lanes, tempo_lane);
+                    interaction::apply_sel_rect_op(lview, rect_op, lane);
+                }
+                SelOp::Clear => {
+                    lview.clear_anchor_selection();
+                    lview.dirty = true;
+                }
                 SelOp::ClearNoteSelection => {
                     // 三视图选框互斥：开始新框选时清空共享音符选区
                     io.selected.clear();

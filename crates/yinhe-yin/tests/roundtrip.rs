@@ -14,11 +14,13 @@ fn build_complex_model() -> YinModel {
             track: 0,
             events: vec![
                 AutomationEvent {
+                    id: 0,
                     tick: 0,
                     value: 120.0,
                     shape: SegmentShape::Step,
                 },
                 AutomationEvent {
+                    id: 0,
                     tick: 1920,
                     value: 60.0,
                     shape: SegmentShape::Step,
@@ -95,11 +97,13 @@ fn build_complex_model() -> YinModel {
             track: 0,
             events: vec![
                 AutomationEvent {
+                    id: 0,
                     tick: 0,
                     value: 100.0 / 127.0,
                     shape: SegmentShape::Step,
                 },
                 AutomationEvent {
+                    id: 0,
                     tick: 480,
                     value: 80.0 / 127.0,
                     shape: SegmentShape::Step,
@@ -110,6 +114,7 @@ fn build_complex_model() -> YinModel {
             target: AutomationTarget::CC { controller: 11 },
             track: 0,
             events: vec![AutomationEvent {
+                id: 0,
                 tick: 100,
                 value: 64.0 / 127.0,
                 shape: SegmentShape::Step,
@@ -124,11 +129,13 @@ fn build_complex_model() -> YinModel {
             track: 0,
             events: vec![
                 AutomationEvent {
+                    id: 0,
                     tick: 200,
                     value: 2000.0 / 16383.0,
                     shape: SegmentShape::Step,
                 },
                 AutomationEvent {
+                    id: 0,
                     tick: 400,
                     value: 1000.0 / 16383.0,
                     shape: SegmentShape::Step,
@@ -139,6 +146,7 @@ fn build_complex_model() -> YinModel {
             target: AutomationTarget::Rpn { parameter: 0x0000 },
             track: 0,
             events: vec![AutomationEvent {
+                id: 0,
                 tick: 100,
                 value: 2.0 / 127.0,
                 shape: SegmentShape::Step,
@@ -148,6 +156,7 @@ fn build_complex_model() -> YinModel {
             target: AutomationTarget::Rpn { parameter: 0x0001 },
             track: 0,
             events: vec![AutomationEvent {
+                id: 0,
                 tick: 200,
                 value: 8192.0 / 16383.0,
                 shape: SegmentShape::Step,
@@ -385,6 +394,7 @@ fn track_order_preserved_when_ports_interleave() {
         target: AutomationTarget::CC { controller: 7 },
         track: 0,
         events: vec![AutomationEvent {
+            id: 0,
             tick: 0,
             value: 100.0 / 127.0,
             shape: SegmentShape::Step,

@@ -288,6 +288,8 @@ pub(crate) fn sel_drag_frame_arrange(
                     if let Some(midi) = data.midi {
                         edit.selected.materialize_pending(midi);
                     }
+                    // 自动化事件同理（id 成员集）。
+                    edit.selected.materialize_automation_pending(data.tracks);
                     edit.arr_sel_rect
                         .push((b.t_start, b.t_end, b.track_lo, b.track_hi));
                 } else if !additive {

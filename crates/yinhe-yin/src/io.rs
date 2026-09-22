@@ -816,6 +816,8 @@ fn load_yin_bytes_inner(
         ..Default::default()
     };
     model.load_bucket_notes(bucket_notes);
+    // 自动化事件 id 不落盘：加载后统一发号（会话内身份，选择集/undo 用）。
+    model.renumber_automation_ids();
     model.rebuild();
     // 片段 id 发号器推进到已用最大值 +1（避免新建片段撞 id）。
     model.next_audio_clip_id = model

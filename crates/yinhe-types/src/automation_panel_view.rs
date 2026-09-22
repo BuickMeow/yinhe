@@ -1,4 +1,4 @@
-use crate::{AutomationTarget, TimelineViewBase};
+use crate::{AutomationEvent, AutomationLane, AutomationTarget, NoteBitset, TimelineViewBase};
 
 /// Default panel height in pixels.
 pub const DEFAULT_PANEL_HEIGHT: f32 = 80.0;
@@ -71,6 +71,12 @@ pub struct AutomationPanelView {
     /// 选中状态由锚点是否在任一选框范围内决定（类似 PR/AR 的 sel_rect）。
     /// 框选完成后追加，点击选框外或清空选区时清空全部。
     pub anchor_sel_rects: Vec<AnchorSelRect>,
+    /// 锚点成员集（按 `AutomationEvent.id`）。框选/点选提交时物化。
+    /// `Some` = 成员态：命中以位图为准，`anchor_sel_rects` 退化为扫描范围/
+    /// 选框显示，拖动/复制到落点不会吸收其他锚点；`None` = 矩形态。
+    pub anchor_members: Option<NoteBitset>,
+    /// 已物化的 `anchor_sel_rects` 前缀长度（语义同 `Selection::materialized_rects`）。
+    pub materialized_anchor_rects: usize,
 }
 
 impl Default for AutomationPanelView {
@@ -97,6 +103,8 @@ impl Default for AutomationPanelView {
             value_scroll: 0.0,
             y_offset: 0.0,
             anchor_sel_rects: Vec::new(),
+            anchor_members: None,
+            materialized_anchor_rects: 0,
         }
     }
 }
@@ -169,6 +177,71 @@ impl AutomationPanelView {
         let visible_range = max_val / self.value_zoom;
         let max_scroll = (max_val - visible_range).max(0.0);
         self.value_scroll = self.value_scroll.clamp(0.0, max_scroll);
+    }
+
+    /// 是否处于锚点成员态（框选/点选物化后）。
+    pub fn has_anchor_members(&self) -> bool {
+        self.anchor_members.is_some()
+    }
+
+    /// 锚点成员数量（矩形态返回 `None`）。
+    pub fn anchor_member_count(&self) -> Option<u64> {
+        self.anchor_members.as_ref().map(NoteBitset::count)
+    }
+
+    /// 把尚未物化的选框（`anchor_sel_rects[materialized_anchor_rects..]`）
+    /// 采样为该 lane 的锚点成员（AM 框选/点选提交时调用）。
+    /// id=0（未分配）的锚点跳过；属性筛选不在此应用（保持动态谓词）。
+    pub fn materialize_anchor_pending(&mut self, lane: &AutomationLane) {
+        if self.materialized_anchor_rects >= self.anchor_sel_rects.len() {
+            return;
+        }
+        let pending: Vec<AnchorSelRect> =
+            self.anchor_sel_rects[self.materialized_anchor_rects..].to_vec();
+        let bits = self.anchor_members.get_or_insert_with(NoteBitset::default);
+        for rect in pending {
+            // 先按 tick 范围二分缩小扫描窗口（选框是闭区间，右端 +1 变半开）。
+            let ts = rect.tick_start.min(rect.tick_end).max(0.0);
+            let te = rect.tick_start.max(rect.tick_end).max(0.0);
+            let lo = ts as u32;
+            let hi = (te.ceil() as u64 + 1).min(u32::MAX as u64) as u32;
+            for evt in lane.events_in_range(lo, hi) {
+                if evt.id != 0 && rect.contains(evt.tick, evt.value) {
+                    bits.insert(evt.id);
+                }
+            }
+        }
+        self.materialized_anchor_rects = self.anchor_sel_rects.len();
+    }
+
+    /// 锚点是否被选中：成员态查位图，矩形态查选框几何。
+    pub fn accepts_anchor(&self, ev: &AutomationEvent) -> bool {
+        match &self.anchor_members {
+            Some(bits) => bits.contains(ev.id),
+            None => self
+                .anchor_sel_rects
+                .iter()
+                .any(|r| r.contains(ev.tick, ev.value)),
+        }
+    }
+
+    /// 用给定 id 重建锚点成员集（复制/粘贴后让选择跟随副本）。
+    pub fn set_anchor_members(&mut self, ids: impl IntoIterator<Item = u32>) {
+        let mut bits = NoteBitset::default();
+        for id in ids {
+            if id != 0 {
+                bits.insert(id);
+            }
+        }
+        self.anchor_members = Some(bits);
+        self.materialized_anchor_rects = self.anchor_sel_rects.len();
+    }
+
+    /// 清空锚点选择（选框 + 成员）。
+    pub fn clear_anchor_selection(&mut self) {
+        self.anchor_sel_rects.clear();
+        self.anchor_members = None;
+        self.materialized_anchor_rects = 0;
     }
 }
 

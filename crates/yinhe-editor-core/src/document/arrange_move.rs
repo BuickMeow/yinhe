@@ -212,7 +212,7 @@ impl Document {
         }
         let mut lane_moves: Vec<LaneMove> = Vec::new();
 
-        for &(tick_start, tick_end, _key_lo, _key_hi, track_lo, track_hi) in &selection.rects {
+        for &(_tick_start, _tick_end, _key_lo, _key_hi, track_lo, track_hi) in &selection.rects {
             for track_idx in track_lo..=track_hi {
                 let track_idx = track_idx as usize;
                 if track_idx >= model.tracks.len() {
@@ -224,10 +224,9 @@ impl Document {
                     let mut in_range: Vec<AutomationEvent> = Vec::new();
                     let mut out_of_range: Vec<AutomationEvent> = Vec::new();
                     for evt in lane.events.iter() {
-                        if evt.tick >= tick_start
-                            && evt.tick < tick_end
-                            && selection.filter.accepts_automation(&lane.target, evt.value)
-                        {
+                        // 成员态按事件 id 判定（落点锚点不被重收集），
+                        // 矩形态按 rect + 属性筛选判定；rect 循环只提供扫描范围。
+                        if selection.accepts_automation_event(track_idx as u16, &lane.target, evt) {
                             let mut moved = *evt;
                             moved.tick = (moved.tick as i64 + delta_ticks).max(0) as u32;
                             in_range.push(moved);
@@ -432,7 +431,7 @@ impl Document {
             events: Vec<AutomationEvent>,
         }
         let mut lane_collects: Vec<LaneCollect> = Vec::new();
-        for &(tick_start, tick_end, _key_lo, _key_hi, track_lo, track_hi) in &selection.rects {
+        for &(_ts, _te, _kl, _kh, track_lo, track_hi) in &selection.rects {
             for track_idx in track_lo..=track_hi {
                 let track_idx = track_idx as usize;
                 if track_idx >= model.tracks.len() {
@@ -445,9 +444,8 @@ impl Document {
                         .events
                         .iter()
                         .filter(|evt| {
-                            evt.tick >= tick_start
-                                && evt.tick < tick_end
-                                && selection.filter.accepts_automation(&lane.target, evt.value)
+                            // 成员态按事件 id 判定；矩形态按 rect + 属性筛选。
+                            selection.accepts_automation_event(track_idx as u16, &lane.target, evt)
                         })
                         .copied()
                         .collect();
@@ -463,15 +461,19 @@ impl Document {
             }
         }
 
+        let mut dup_event_ids: Vec<u32> = Vec::new();
         for lc in &lane_collects {
             let copies: Vec<AutomationEvent> = lc
                 .events
                 .iter()
                 .map(|e| AutomationEvent {
+                    // 副本发新 id（会话内身份，选择集跟随副本）。
+                    id: model.alloc_automation_id(),
                     tick: (e.tick as i64 + delta_ticks).max(0) as u32,
                     ..*e
                 })
                 .collect();
+            dup_event_ids.extend(copies.iter().map(|e| e.id));
             if delta_tracks == 0 {
                 // Same track: append copies to the source lane.
                 let src_track = Arc::make_mut(&mut model.tracks[lc.src_track]);
@@ -540,6 +542,10 @@ impl Document {
         // 选区精确跟随副本音符（新 id），落点处的其他音符不纳入。
         if !dup_note_ids.is_empty() {
             self.edit.selected.set_members(dup_note_ids);
+        }
+        // 自动化同理：选区跟随副本事件（新 id）。
+        if !dup_event_ids.is_empty() {
+            self.edit.selected.set_automation_members(dup_event_ids);
         }
 
         model.rebuild_dirty();
@@ -748,5 +754,55 @@ mod tests {
             doc.data.model.notes[60].iter().any(|n| n.start_tick == 100),
             "原件应保留"
         );
+    }
+
+    /// 回归：AR 自动化成员态下移动两次，不吃落点处的锚点。
+    #[test]
+    fn materialized_arrange_automation_stable_across_moves() {
+        let mut doc = make_doc();
+        // track 0 加一条 CC lane：id1@100（被框选）、id2@300（落点路人）。
+        {
+            let model = Arc::make_mut(&mut doc.data.model);
+            let track = Arc::make_mut(&mut model.tracks[0]);
+            track.automation_lanes.push(yinhe_types::AutomationLane {
+                target: yinhe_types::AutomationTarget::CC { controller: 7 },
+                track: 0,
+                events: vec![
+                    yinhe_types::AutomationEvent {
+                        id: 1,
+                        tick: 100,
+                        value: 0.5,
+                        shape: yinhe_types::SegmentShape::Step,
+                    },
+                    yinhe_types::AutomationEvent {
+                        id: 2,
+                        tick: 300,
+                        value: 0.7,
+                        shape: yinhe_types::SegmentShape::Step,
+                    },
+                ],
+            });
+            model.next_automation_id = 10;
+        }
+
+        // AR 框选 [100,200) 全 key：物化自动化成员 = {id1}。
+        doc.edit
+            .selected
+            .add_rect_track(100, 200, 0, yinhe_types::MAX_KEY, 0, 0);
+        let tracks = doc.data.model.tracks.clone();
+        doc.edit.selected.materialize_automation_pending(&tracks);
+        assert_eq!(doc.edit.selected.automation_member_count(), Some(1));
+
+        // 第一次移动 +150：id1 → 250，选框平移到 [250,350)（覆盖 id2@300）。
+        doc.move_selected_arrange(150, 0)
+            .expect("第一次移动应产生 undo");
+        // 第二次移动 +40：成员态只搬 id1（250→290），不得带上 id2@300。
+        doc.move_selected_arrange(40, 0)
+            .expect("第二次移动应产生 undo");
+
+        let lane = &doc.data.model.tracks[0].automation_lanes[0];
+        let ticks: Vec<(u32, u32)> = lane.events.iter().map(|e| (e.id, e.tick)).collect();
+        assert!(ticks.contains(&(1, 290)), "id1 应移到 290，实际 {ticks:?}");
+        assert!(ticks.contains(&(2, 300)), "id2 应留在 300，实际 {ticks:?}");
     }
 }

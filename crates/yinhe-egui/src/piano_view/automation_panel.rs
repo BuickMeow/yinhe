@@ -202,19 +202,18 @@ pub fn show_panels(
         let velocity_preview = out.preview;
         let marquee_rect = out.marquee_rect;
         if let Some(op) = out.sel_op {
-            use interaction::{SelOp, SelRectOp};
+            use interaction::{SelOp, apply_sel_rect_op, panel_lane};
             match op {
                 SelOp::Set(rect_op) => {
-                    match rect_op {
-                        SelRectOp::Set(r) => panel.anchor_sel_rects = vec![r],
-                        SelRectOp::Append(r) => panel.anchor_sel_rects.push(r),
-                        SelRectOp::ReplaceAll(rects) => panel.anchor_sel_rects = rects,
-                        SelRectOp::Keep => {}
-                    }
-                    panel.dirty = true;
+                    let lane = if panel.show_velocity {
+                        None
+                    } else {
+                        panel_lane(panel, data.automation_lanes, Some(data.tempo_lane))
+                    };
+                    apply_sel_rect_op(panel, rect_op, lane);
                 }
                 SelOp::Clear => {
-                    panel.anchor_sel_rects.clear();
+                    panel.clear_anchor_selection();
                     panel.dirty = true;
                 }
                 SelOp::ClearNoteSelection => {
@@ -355,6 +354,7 @@ mod tests {
             events: events
                 .into_iter()
                 .map(|(tick, value)| AutomationEvent {
+                    id: 0,
                     tick,
                     value,
                     shape: SegmentShape::Step,

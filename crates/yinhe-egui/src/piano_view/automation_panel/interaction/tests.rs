@@ -33,6 +33,7 @@ fn tempo_lane(events: Vec<(u32, f32)>) -> AutomationLane {
         events: events
             .into_iter()
             .map(|(tick, value)| AutomationEvent {
+                id: 0,
                 tick,
                 value,
                 shape: SegmentShape::Step,

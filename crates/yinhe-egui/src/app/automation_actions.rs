@@ -55,10 +55,28 @@ struct AnchorCtx {
     track_idx: u16,
     /// lane 在 tracks[track].automation_lanes 中的索引（Tempo 用 0）。
     lane_idx: usize,
-    /// lane 的 events 快照（用于查找选中锚点的 value/shape）。
-    events: Vec<(u32, f32, SegmentShape)>,
-    /// 面板的选中矩形快照（复制时在其中筛锚点）。
-    sel_rects: Vec<AnchorSelRect>,
+    /// 选中锚点快照 `(id, tick, value, shape)`，按 tick 升序。
+    /// 成员态按 id 判定，矩形态回退选框几何（`panel.accepts_anchor`）。
+    selected: Vec<(u32, u32, f32, SegmentShape)>,
+}
+
+/// 从 `apply_automation_edits` 返回的动作里按 target 汇总新增事件 id
+/// （Add 的 after；用于粘贴/重复后让选区跟随副本）。
+fn added_ids_by_target(
+    actions: &[yinhe_editor_core::UndoAction],
+) -> std::collections::HashMap<AutomationTarget, Vec<u32>> {
+    let mut map: std::collections::HashMap<AutomationTarget, Vec<u32>> =
+        std::collections::HashMap::new();
+    for action in actions {
+        if let yinhe_editor_core::UndoAction::Automation(delta) = action
+            && delta.before.is_empty()
+        {
+            map.entry(delta.target.clone())
+                .or_default()
+                .extend(delta.after.iter().map(|e| e.id));
+        }
+    }
+    map
 }
 
 impl App {
@@ -98,6 +116,7 @@ impl App {
             .map(|p| AutomationSelection {
                 target: p.selected_target.clone(),
                 sel_rects: p.anchor_sel_rects.clone(),
+                members: p.anchor_members.clone(),
             })
             .collect();
         if selections.is_empty() {
@@ -198,6 +217,7 @@ impl App {
         if actions.is_empty() {
             return None;
         }
+        let added = added_ids_by_target(&actions);
         doc.edit.pianoroll_view.base.dirty = true;
         crate::right_panel::automation_undo::push_automation_actions(
             doc,
@@ -207,11 +227,15 @@ impl App {
         );
         // 粘贴后选中改为根据新锚点范围设置 sel_rect（音符粘贴的选区跟随对齐）
         for (panel_idx, anchors) in &panel_anchors {
-            doc.edit.controller_panels[*panel_idx].anchor_sel_rects =
-                sel_rect_from_anchors(anchors, vertical)
-                    .map(|r| vec![r])
-                    .unwrap_or_default();
-            doc.edit.controller_panels[*panel_idx].dirty = true;
+            let panel = &mut doc.edit.controller_panels[*panel_idx];
+            panel.anchor_sel_rects = sel_rect_from_anchors(anchors, vertical)
+                .map(|r| vec![r])
+                .unwrap_or_default();
+            // 选区精确跟随副本（新 id），落点已有锚点不纳入。
+            if let Some(ids) = added.get(&panel.selected_target) {
+                panel.set_anchor_members(ids.iter().copied());
+            }
+            panel.dirty = true;
         }
         self.notify_audio_model_changed();
         Some(max_span)
@@ -231,21 +255,16 @@ impl App {
         let ppq = doc.data.model.meta.ppq;
         let quantize = doc.edit.quantize_pianoroll;
 
-        // 收集落在任一 sel_rect 内的选中锚点（按 tick 升序）
-        let mut selected: Vec<(u32, f32, SegmentShape)> = ctx
-            .events
-            .iter()
-            .filter(|(tick, value, _)| ctx.sel_rects.iter().any(|r| r.contains(*tick, *value)))
-            .copied()
-            .collect();
+        // 选中锚点（成员态按 id，矩形态按选框几何）
+        let mut selected: Vec<(u32, u32, f32, SegmentShape)> = ctx.selected.clone();
         if selected.is_empty() {
             return;
         }
-        selected.sort_by_key(|(t, _, _)| *t);
+        selected.sort_by_key(|(_, t, _, _)| *t);
 
         // 偏移：选区跨度，单锚点时用量化间隔
-        let min_tick = selected.first().map(|(t, _, _)| *t).unwrap_or(0);
-        let max_tick = selected.last().map(|(t, _, _)| *t).unwrap_or(0);
+        let min_tick = selected.first().map(|(_, t, _, _)| *t).unwrap_or(0);
+        let max_tick = selected.last().map(|(_, t, _, _)| *t).unwrap_or(0);
         let span = max_tick.saturating_sub(min_tick);
         let offset = if span == 0 {
             quantize.tick_interval(ppq).max(1)
@@ -256,7 +275,7 @@ impl App {
         // 生成副本
         let mut edits = Vec::with_capacity(selected.len());
         let mut new_anchors: Vec<(u32, f32)> = Vec::new();
-        for (tick, value, shape) in &selected {
+        for (_, tick, value, shape) in &selected {
             let new_tick = (*tick as i64 + offset as i64).max(0) as u32;
             edits.push(yinhe_types::AutomationEdit::Add {
                 track_idx: ctx.track_idx,
@@ -271,6 +290,7 @@ impl App {
         let before = doc.capture_snapshot();
         let actions = doc.apply_automation_edits(edits);
         if !actions.is_empty() {
+            let added = added_ids_by_target(&actions);
             doc.edit.pianoroll_view.base.dirty = true;
             crate::right_panel::automation_undo::push_automation_actions(
                 doc,
@@ -278,13 +298,16 @@ impl App {
                 t!("undo.duplicate_automation").as_ref(),
                 before,
             );
-            // 重复后选中改为根据新锚点范围设置 sel_rect
+            // 重复后选中改为根据新锚点范围设置 sel_rect + 新 id 成员。
             let vertical = self.active_tool == Tool::SelectVertical;
-            doc.edit.controller_panels[ctx.panel_idx].anchor_sel_rects =
-                sel_rect_from_anchors(&new_anchors, vertical)
-                    .map(|r| vec![r])
-                    .unwrap_or_default();
-            doc.edit.controller_panels[ctx.panel_idx].dirty = true;
+            let panel = &mut doc.edit.controller_panels[ctx.panel_idx];
+            panel.anchor_sel_rects = sel_rect_from_anchors(&new_anchors, vertical)
+                .map(|r| vec![r])
+                .unwrap_or_default();
+            if let Some(ids) = added.get(&ctx.target) {
+                panel.set_anchor_members(ids.iter().copied());
+            }
+            panel.dirty = true;
             self.notify_audio_model_changed();
         }
     }
@@ -300,17 +323,15 @@ impl App {
             return;
         };
 
-        // 收集落在任一 sel_rect 内的锚点 tick
+        // 删除选中锚点（ctx.selected 已是成员/几何判定后的选中集）
         let mut edits = Vec::new();
-        for (tick, value, _) in &ctx.events {
-            if ctx.sel_rects.iter().any(|r| r.contains(*tick, *value)) {
-                edits.push(yinhe_types::AutomationEdit::Delete {
-                    track_idx: ctx.track_idx,
-                    lane_idx: ctx.lane_idx,
-                    target: ctx.target.clone(),
-                    tick: *tick,
-                });
-            }
+        for (_, tick, _, _) in &ctx.selected {
+            edits.push(yinhe_types::AutomationEdit::Delete {
+                track_idx: ctx.track_idx,
+                lane_idx: ctx.lane_idx,
+                target: ctx.target.clone(),
+                tick: *tick,
+            });
         }
 
         let before = doc.capture_snapshot();
@@ -323,10 +344,9 @@ impl App {
                 t!("undo.delete_automation").as_ref(),
                 before,
             );
-            doc.edit.controller_panels[ctx.panel_idx]
-                .anchor_sel_rects
-                .clear();
-            doc.edit.controller_panels[ctx.panel_idx].dirty = true;
+            let panel = &mut doc.edit.controller_panels[ctx.panel_idx];
+            panel.clear_anchor_selection();
+            panel.dirty = true;
             self.notify_audio_model_changed();
         }
     }
@@ -345,19 +365,21 @@ impl App {
                 continue;
             };
 
-            // 获取 lane events + lane_idx
-            let (lane_idx, events): (usize, Vec<(u32, f32, SegmentShape)>) =
+            // 选中锚点快照 (id, tick, value, shape)：成员态按 id 判定，
+            // 矩形态回退选框几何（`panel.accepts_anchor`）。
+            let (lane_idx, selected): (usize, Vec<(u32, u32, f32, SegmentShape)>) =
                 if matches!(target, AutomationTarget::Tempo) {
-                    let events = doc
+                    let selected = doc
                         .data
                         .model
                         .conductor
                         .tempo
                         .events
                         .iter()
-                        .map(|e| (e.tick, e.value, e.shape))
+                        .filter(|e| panel.accepts_anchor(e))
+                        .map(|e| (e.id, e.tick, e.value, e.shape))
                         .collect();
-                    (0, events)
+                    (0, selected)
                 } else {
                     let Some(track) = doc.data.model.tracks.get(track_idx as usize) else {
                         continue;
@@ -370,21 +392,24 @@ impl App {
                     else {
                         continue;
                     };
-                    let events = lane
+                    let selected = lane
                         .events
                         .iter()
-                        .map(|e| (e.tick, e.value, e.shape))
+                        .filter(|e| panel.accepts_anchor(e))
+                        .map(|e| (e.id, e.tick, e.value, e.shape))
                         .collect();
-                    (lane_idx, events)
+                    (lane_idx, selected)
                 };
+            if selected.is_empty() {
+                continue;
+            }
 
             result.push(AnchorCtx {
                 panel_idx,
                 target,
                 track_idx,
                 lane_idx,
-                events,
-                sel_rects: panel.anchor_sel_rects.clone(),
+                selected,
             });
         }
         result

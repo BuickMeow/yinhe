@@ -544,6 +544,13 @@ fn cc_name(cc: u8) -> &'static str {
 /// owning `AutomationLane` (which mirrors `TrackData`'s per-track design).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AutomationEvent {
+    /// 全局唯一身份（0 = 未分配）。
+    ///
+    /// 不落盘（`serde(skip)`）：postcard 非自描述，新增序列化字段会破坏旧
+    /// `.yin` 文件；加载后由 `YinModel::renumber_automation_ids` 统一发号，
+    /// 与 note id 的"会话内身份（选择集/undo/音频匹配）"设计一致。
+    #[serde(skip)]
+    pub id: u32,
     pub tick: u32,
     /// 归一化值 0..1（统一参数模型）；Tempo 例外，存 bpm（如 120.0）。
     /// 原始整数语义（CC 0..127、PB 0..16383）在导入时归一化，导出/回放时
@@ -680,6 +687,7 @@ mod tests {
             events: ticks
                 .iter()
                 .map(|&t| AutomationEvent {
+                    id: 0,
                     tick: t,
                     value: 64.0,
                     shape: SegmentShape::Step,

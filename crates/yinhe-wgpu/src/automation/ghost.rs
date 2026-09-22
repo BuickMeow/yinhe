@@ -41,6 +41,7 @@ pub fn build_lane_override(
     events.insert(
         insert_idx,
         AutomationEvent {
+            id: 0,
             tick: new_tick,
             value: new_value,
             shape: old_shape,
@@ -110,6 +111,7 @@ pub fn build_lane_multi_move(lane: &AutomationLane, moves: &[(u32, u32, f32)]) -
         events.insert(
             insert_idx,
             AutomationEvent {
+                id: 0,
                 tick: new_tick,
                 value: new_value,
                 shape,
@@ -159,6 +161,7 @@ pub fn build_lane_multi_copy(lane: &AutomationLane, copies: &[(u32, u32, f32)]) 
         events.insert(
             insert_idx,
             AutomationEvent {
+                id: 0,
                 tick: new_tick,
                 value: new_value,
                 shape,

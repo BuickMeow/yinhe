@@ -129,6 +129,8 @@ pub fn parse_bytes_with_encoding(
             ..Default::default()
         };
         model.load_track_notes(per_track_notes);
+        // 自动化事件 id 不落盘：解析后统一发号（会话内身份，选择集/undo 用）。
+        model.renumber_automation_ids();
         model.rebuild();
 
         // Ensure a conductor track exists at index 0. This does an O(n)
@@ -220,6 +222,7 @@ fn collect_conductor(
                     };
                     // MIDI 导入一律使用 Step（保留 MIDI 原生语义）。
                     tempo_events.push(AutomationEvent {
+                        id: 0,
                         tick,
                         value: bpm as f32,
                         shape: SegmentShape::Step,

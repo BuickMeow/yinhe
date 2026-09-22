@@ -13,7 +13,9 @@
 //! 成员位图 1 bit/音符（1 亿 ≈ 12.5MB），远低于旧的 `HashSet` (800MB)。
 //! 属性筛选 `filter` 始终是动态谓词，叠加在矩形/成员判定之上。
 
-use yinhe_types::{AutomationTarget, MAX_KEY, Note, NoteSource};
+use std::sync::Arc;
+
+use yinhe_types::{AutomationEvent, AutomationTarget, MAX_KEY, Note, NoteSource};
 
 use crate::NoteBitset;
 
@@ -129,6 +131,12 @@ pub struct Selection {
     /// 矩形（不动该计数），`materialize_pending` 采样未物化部分并推进；
     /// 这样"全选（矩形态）+ shift 加选"不会丢掉旧范围。
     materialized_rects: usize,
+    /// 自动化事件成员集（按 `AutomationEvent.id`，与音符 id 空间独立）。
+    /// `Some` = 成员态（AR 框选物化，见 [`Selection::materialize_automation_pending`]）：
+    /// AR 自动化搬运按位图判定；`None` = 矩形态（按 tick/track 范围判定）。
+    automation_members: Option<NoteBitset>,
+    /// `rects[..materialized_automation_rects]` 已采样进自动化成员位图。
+    materialized_automation_rects: usize,
 }
 
 impl Selection {
@@ -141,6 +149,8 @@ impl Selection {
         self.filter = SelectionFilter::default();
         self.members = None;
         self.materialized_rects = 0;
+        self.automation_members = None;
+        self.materialized_automation_rects = 0;
     }
 
     /// Clear only the rectangles, keeping the attribute filter.
@@ -149,6 +159,8 @@ impl Selection {
         self.rects.clear();
         self.members = None;
         self.materialized_rects = 0;
+        self.automation_members = None;
+        self.materialized_automation_rects = 0;
     }
 
     /// 是否处于成员态（框选物化后）。
@@ -212,6 +224,82 @@ impl Selection {
     pub fn drop_members(&mut self) {
         self.members = None;
         self.materialized_rects = 0;
+        self.automation_members = None;
+        self.materialized_automation_rects = 0;
+    }
+
+    /// 是否处于自动化成员态（AR 框选物化后）。
+    pub fn has_explicit_automation_members(&self) -> bool {
+        self.automation_members.is_some()
+    }
+
+    /// 自动化成员数量（矩形态返回 `None`）。
+    pub fn automation_member_count(&self) -> Option<u64> {
+        self.automation_members.as_ref().map(NoteBitset::count)
+    }
+
+    /// 把尚未物化的矩形采样为自动化事件成员（AR 框选提交时调用）。
+    ///
+    /// 覆盖 `rects[materialized_automation_rects..]` 的 tick × track 范围内的
+    /// 全部 lane 事件（不含 `conductor.tempo`，与 AR 搬运范围一致）。
+    /// 只按空间采样，属性筛选保持动态谓词。
+    pub fn materialize_automation_pending(&mut self, tracks: &[Arc<crate::TrackData>]) {
+        if self.materialized_automation_rects >= self.rects.len() {
+            return;
+        }
+        let Some(last_track) = tracks.len().checked_sub(1) else {
+            return;
+        };
+        let pending: Vec<(u32, u32, u8, u8, u16, u16)> =
+            self.rects[self.materialized_automation_rects..].to_vec();
+        let bits = self
+            .automation_members
+            .get_or_insert_with(NoteBitset::default);
+        for (tick_start, tick_end, _, _, track_lo, track_hi) in pending {
+            let hi = (track_hi as usize).min(last_track);
+            for track_idx in track_lo as usize..=hi {
+                let Some(track) = tracks.get(track_idx) else {
+                    continue;
+                };
+                for lane in &track.automation_lanes {
+                    for evt in lane.events_in_range(tick_start, tick_end) {
+                        if evt.id != 0 {
+                            bits.insert(evt.id);
+                        }
+                    }
+                }
+            }
+        }
+        self.materialized_automation_rects = self.rects.len();
+    }
+
+    /// 自动化事件是否被选中：成员态查位图，矩形态按 rect 的 tick/track
+    /// 范围判定；两种情况都叠加属性筛选。
+    pub fn accepts_automation_event(
+        &self,
+        track: u16,
+        target: &AutomationTarget,
+        ev: &AutomationEvent,
+    ) -> bool {
+        let hit = match &self.automation_members {
+            Some(bits) => bits.contains(ev.id),
+            None => self.rects.iter().any(|&(ts, te, _, _, tl, th)| {
+                track >= tl && track <= th && ev.tick >= ts && ev.tick < te
+            }),
+        };
+        hit && self.filter.accepts_automation(target, ev.value)
+    }
+
+    /// 用给定 id 重建自动化成员集（复制后让选择跟随副本）。
+    pub fn set_automation_members(&mut self, ids: impl IntoIterator<Item = u32>) {
+        let mut bits = NoteBitset::default();
+        for id in ids {
+            if id != 0 {
+                bits.insert(id);
+            }
+        }
+        self.automation_members = Some(bits);
+        self.materialized_automation_rects = self.rects.len();
     }
 
     /// 渲染缓存用的选择状态指纹：矩形 + 音符属性边界 + 成员位图。
@@ -346,6 +434,8 @@ impl Selection {
         if self.rects.len() != before {
             self.members = None;
             self.materialized_rects = 0;
+            self.automation_members = None;
+            self.materialized_automation_rects = 0;
         }
     }
 
@@ -365,6 +455,8 @@ impl Selection {
         if self.rects.len() != before {
             self.members = None;
             self.materialized_rects = 0;
+            self.automation_members = None;
+            self.materialized_automation_rects = 0;
         }
     }
 }

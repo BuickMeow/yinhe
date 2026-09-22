@@ -67,11 +67,13 @@ pub fn make_test_model() -> YinModel {
             track: 0,
             events: vec![
                 AutomationEvent {
+                    id: 0,
                     tick: 0,
                     value: 120.0,
                     shape: SegmentShape::Step,
                 },
                 AutomationEvent {
+                    id: 0,
                     tick: 1920,
                     value: 140.0,
                     shape: SegmentShape::Step,
@@ -103,11 +105,13 @@ pub fn make_test_model() -> YinModel {
         track: 0,
         events: vec![
             AutomationEvent {
+                id: 0,
                 tick: 0,
                 value: 100.0 / 127.0,
                 shape: SegmentShape::Step,
             },
             AutomationEvent {
+                id: 0,
                 tick: 240,
                 value: 80.0 / 127.0,
                 shape: SegmentShape::Step,
@@ -125,6 +129,7 @@ pub fn make_test_model() -> YinModel {
         },
         track: 1,
         events: vec![AutomationEvent {
+            id: 0,
             tick: 100,
             // 9216 = 1024 + 8192（14-bit 原始值），lane 存归一化值。
             value: 9216.0 / 16383.0,

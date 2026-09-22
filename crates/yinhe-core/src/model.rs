@@ -314,6 +314,11 @@ pub struct YinModel {
     pub audio_sources: Vec<Arc<AudioSource>>,
     /// 全局音频片段 id 发号器（0 保留为哨兵，实际从 1 开始）。
     pub next_audio_clip_id: u32,
+
+    /// 全局自动化事件 id 发号器（0 保留为哨兵，实际从 1 开始）。
+    /// 编辑时调 `alloc_automation_id()`，加载后由
+    /// [`YinModel::renumber_automation_ids`] 统一分配（id 不落盘）。
+    pub next_automation_id: u32,
 }
 
 impl Default for YinModel {
@@ -337,6 +342,7 @@ impl Default for YinModel {
             next_note_id: 1,
             audio_sources: Vec::new(),
             next_audio_clip_id: 1,
+            next_automation_id: 1,
         }
     }
 }
@@ -354,6 +360,7 @@ impl YinModel {
                 target: AutomationTarget::Tempo,
                 track: 0,
                 events: vec![yinhe_types::AutomationEvent {
+                    id: 1,
                     tick: 0,
                     value: 120.0,
                     shape: yinhe_types::SegmentShape::Step,
@@ -385,6 +392,7 @@ impl YinModel {
         Self {
             conductor,
             tracks,
+            next_automation_id: 2,
             ..Default::default()
         }
     }
@@ -480,6 +488,38 @@ impl YinModel {
         let id = self.next_audio_clip_id.max(1);
         self.next_audio_clip_id = id.wrapping_add(1);
         id
+    }
+
+    /// 分配一个新的自动化事件 id。
+    pub fn alloc_automation_id(&mut self) -> u32 {
+        let id = self.next_automation_id.max(1);
+        self.next_automation_id = id.wrapping_add(1);
+        id
+    }
+
+    /// 加载后统一为自动化事件发号（conductor tempo + 每轨每条 lane）。
+    ///
+    /// id 不落盘（见 `AutomationEvent::id` 注释），旧 `.yin`/MIDI 导入的事件
+    /// id 均为 0；加载完成时调用本方法分配会话内唯一 id。
+    /// 顺带把同 tick 重复事件去重（保留首个），维持"同一 lane 内 tick 唯一"
+    /// 不变量（否则按 tick 定位的编辑/undo 会歧义）。
+    pub fn renumber_automation_ids(&mut self) {
+        let mut next = 1u32;
+        let mut assign = |lane: &mut yinhe_types::AutomationLane| {
+            lane.events.dedup_by_key(|e| e.tick);
+            for evt in &mut lane.events {
+                evt.id = next;
+                next = next.wrapping_add(1);
+            }
+        };
+        assign(&mut Arc::make_mut(&mut self.conductor).tempo);
+        for track in &mut self.tracks {
+            let track = Arc::make_mut(track);
+            for lane in &mut track.automation_lanes {
+                assign(lane);
+            }
+        }
+        self.next_automation_id = next.max(1);
     }
 
     /// 按 uuid 查找音频素材。
@@ -645,11 +685,13 @@ mod tests {
     fn rebuild_builds_tempo_map_from_conductor() {
         let mut conductor = ConductorData::default();
         conductor.tempo.events.push(yinhe_types::AutomationEvent {
+            id: 0,
             tick: 0,
             value: 120.0,
             shape: yinhe_types::SegmentShape::Step,
         });
         conductor.tempo.events.push(yinhe_types::AutomationEvent {
+            id: 0,
             tick: 1920,
             value: 60.0,
             shape: yinhe_types::SegmentShape::Step,
@@ -673,6 +715,7 @@ mod tests {
         // tempo find something.
         let mut conductor = ConductorData::default();
         conductor.tempo.events.push(yinhe_types::AutomationEvent {
+            id: 0,
             tick: 1920,
             value: 60.0,
             shape: yinhe_types::SegmentShape::Step,
@@ -936,6 +979,7 @@ mod tests {
         };
         let mut conductor = ConductorData::default();
         conductor.tempo.events.push(AutomationEvent {
+            id: 0,
             tick: 480,
             value: 120.0,
             shape: SegmentShape::Step,
@@ -951,6 +995,7 @@ mod tests {
             target: AutomationTarget::CC { controller: 7 },
             track: 0,
             events: vec![AutomationEvent {
+                id: 0,
                 tick: 240,
                 value: 100.0,
                 shape: SegmentShape::Step,

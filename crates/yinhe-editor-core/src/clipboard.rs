@@ -76,11 +76,14 @@ pub struct AutomationClip {
     pub events: Vec<(u32, f32, SegmentShape)>,
 }
 
-/// 一个面板的自动化选择范围（复制时的选框）。
+/// 一个面板的自动化选择范围（复制时的选框 + 可选成员身份）。
 #[derive(Clone, Debug)]
 pub struct AutomationSelection {
     pub target: AutomationTarget,
     pub sel_rects: Vec<AnchorSelRect>,
+    /// 锚点成员位图（按 `AutomationEvent.id`）。`Some` = 成员态（AM 框选
+    /// 物化后）：复制按 id 精确筛选，不吸收落点处的其他锚点。
+    pub members: Option<yinhe_types::NoteBitset>,
 }
 
 /// 自动化剪贴板的数据来源。
@@ -138,13 +141,13 @@ impl AutomationClipboard {
             } => selections
                 .iter()
                 .filter_map(|sel| {
-                    let events: Vec<(u32, f32, SegmentShape)> =
+                    let events: Vec<(u32, u32, f32, SegmentShape)> =
                         if matches!(sel.target, AutomationTarget::Tempo) {
                             conductor
                                 .tempo
                                 .events
                                 .iter()
-                                .map(|e| (e.tick, e.value, e.shape))
+                                .map(|e| (e.id, e.tick, e.value, e.shape))
                                 .collect()
                         } else {
                             tracks
@@ -153,14 +156,17 @@ impl AutomationClipboard {
                                 .find(|l| l.target == sel.target)?
                                 .events
                                 .iter()
-                                .map(|e| (e.tick, e.value, e.shape))
+                                .map(|e| (e.id, e.tick, e.value, e.shape))
                                 .collect()
                         };
                     let mut hit: Vec<(u32, f32, SegmentShape)> = events
                         .into_iter()
-                        .filter(|(tick, value, _)| {
-                            sel.sel_rects.iter().any(|r| r.contains(*tick, *value))
+                        .filter(|(id, tick, value, _)| match &sel.members {
+                            // 成员态按 id 判定；矩形态回退选框几何。
+                            Some(bits) => bits.contains(*id),
+                            None => sel.sel_rects.iter().any(|r| r.contains(*tick, *value)),
                         })
+                        .map(|(_, tick, value, shape)| (tick, value, shape))
                         .collect();
                     if hit.is_empty() {
                         return None;
@@ -224,6 +230,7 @@ mod tests {
             events: events
                 .into_iter()
                 .map(|(tick, value)| AutomationEvent {
+                    id: 0,
                     tick,
                     value,
                     shape: SegmentShape::Step,
@@ -255,10 +262,12 @@ mod tests {
         });
         let selections = vec![
             AutomationSelection {
+                members: None,
                 target: cc.clone(),
                 sel_rects: vec![rect(50.0, 250.0)],
             },
             AutomationSelection {
+                members: None,
                 target: AutomationTarget::Tempo,
                 sel_rects: vec![rect(400.0, 600.0)],
             },
@@ -284,6 +293,7 @@ mod tests {
         let tracks = vec![Arc::new(track)];
         let conductor = Arc::new(ConductorData::default());
         let selections = vec![AutomationSelection {
+            members: None,
             target: cc,
             sel_rects: vec![rect(0.0, 1000.0)],
         }];
@@ -310,6 +320,7 @@ mod tests {
             vec![Arc::new(track)],
             Arc::new(ConductorData::default()),
             vec![AutomationSelection {
+                members: None,
                 target: cc,
                 sel_rects: vec![rect(500.0, 600.0)],
             }],

@@ -701,6 +701,7 @@ mod tests {
                 target: AutomationTarget::Tempo,
                 track: 0,
                 events: vec![AutomationEvent {
+                    id: 0,
                     tick: 0,
                     value: 120.0,
                     shape: SegmentShape::Step,
@@ -746,6 +747,7 @@ mod tests {
             target: AutomationTarget::CC { controller: 0 },
             track: 0,
             events: vec![AutomationEvent {
+                id: 0,
                 tick: 100,
                 value: 0.0, // 乐器 bank
                 shape: SegmentShape::Step,
@@ -790,11 +792,13 @@ mod tests {
             track: 0,
             events: vec![
                 AutomationEvent {
+                    id: 0,
                     tick: 0,
                     value: 0.25,
                     shape: SegmentShape::Step,
                 },
                 AutomationEvent {
+                    id: 0,
                     tick: 10,
                     value: 1.7, // 越界：展平钳制到 1.0
                     shape: SegmentShape::Step,
@@ -824,6 +828,7 @@ mod tests {
             target: AutomationTarget::CC { controller: 7 },
             track: 0,
             events: vec![AutomationEvent {
+                id: 0,
                 tick: 0,
                 value: 100.0 / 127.0,
                 shape: SegmentShape::Step,
@@ -850,11 +855,13 @@ mod tests {
             track: 0,
             events: vec![
                 AutomationEvent {
+                    id: 0,
                     tick: 0,
                     value: 8192.0 / 16383.0,
                     shape: SegmentShape::Step,
                 },
                 AutomationEvent {
+                    id: 0,
                     tick: 10,
                     value: 1.0,
                     shape: SegmentShape::Step,
@@ -869,6 +876,7 @@ mod tests {
             },
             track: 0,
             events: vec![AutomationEvent {
+                id: 0,
                 tick: 0,
                 value: 2.0 / 127.0,
                 shape: SegmentShape::Step,
@@ -952,6 +960,7 @@ mod tests {
                 },
                 track: 0,
                 events: vec![AutomationEvent {
+                    id: 0,
                     tick: 0,
                     value: 1.0,
                     shape: SegmentShape::Step,
@@ -965,6 +974,7 @@ mod tests {
                 },
                 track: 0,
                 events: vec![AutomationEvent {
+                    id: 0,
                     tick: 0,
                     value: 24.0 / 127.0,
                     shape: SegmentShape::Step,
@@ -1006,6 +1016,7 @@ mod tests {
                 target: AutomationTarget::CC { controller: 7 },
                 track: 0,
                 events: vec![AutomationEvent {
+                    id: 0,
                     tick: 0,
                     value: 100.0 / 127.0,
                     shape: SegmentShape::Step,
@@ -1015,6 +1026,7 @@ mod tests {
                 target: AutomationTarget::CC { controller: 10 },
                 track: 0,
                 events: vec![AutomationEvent {
+                    id: 0,
                     tick: 0,
                     value: 64.0 / 127.0,
                     shape: SegmentShape::Step,
@@ -1067,6 +1079,7 @@ mod tests {
                 },
                 track: 0,
                 events: vec![AutomationEvent {
+                    id: 0,
                     tick: 0,
                     value: 1.0,
                     shape: SegmentShape::Step,
@@ -1077,6 +1090,7 @@ mod tests {
                 target: AutomationTarget::Rpn { parameter: 5 },
                 track: 0,
                 events: vec![AutomationEvent {
+                    id: 0,
                     tick: 0,
                     value: 100.0 / 16383.0,
                     shape: SegmentShape::Step,
@@ -1118,6 +1132,7 @@ mod tests {
                 },
                 track: 0,
                 events: vec![AutomationEvent {
+                    id: 0,
                     tick: 0,
                     value: 1.0,
                     shape: SegmentShape::Step,
@@ -1127,6 +1142,7 @@ mod tests {
                 target: AutomationTarget::Nrpn { parameter: 10 },
                 track: 0,
                 events: vec![AutomationEvent {
+                    id: 0,
                     tick: 0,
                     value: 100.0 / 16383.0,
                     shape: SegmentShape::Step,
@@ -1168,6 +1184,7 @@ mod tests {
                 },
                 track: 0,
                 events: vec![AutomationEvent {
+                    id: 0,
                     tick: 0,
                     value: 1.0,
                     shape: SegmentShape::Step,
@@ -1181,6 +1198,7 @@ mod tests {
                 },
                 track: 0,
                 events: vec![AutomationEvent {
+                    id: 0,
                     tick: 0,
                     value: 9000.0 / 16383.0,
                     shape: SegmentShape::Step,
@@ -1194,6 +1212,7 @@ mod tests {
                 },
                 track: 0,
                 events: vec![AutomationEvent {
+                    id: 0,
                     tick: 0,
                     value: 70.0 / 127.0,
                     shape: SegmentShape::Step,

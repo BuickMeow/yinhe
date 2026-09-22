@@ -31,8 +31,12 @@ impl Document {
         &mut self,
         track_idx: usize,
         target: yinhe_types::AutomationTarget,
-        event: yinhe_types::AutomationEvent,
+        mut event: yinhe_types::AutomationEvent,
     ) -> Option<(usize, usize, UndoAction)> {
+        // id 0 = 未分配：所有新增事件统一在此发号（UI 构造点传 0 即可）。
+        if event.id == 0 {
+            event.id = Arc::make_mut(&mut self.data.model).alloc_automation_id();
+        }
         if matches!(target, yinhe_types::AutomationTarget::Tempo) {
             let model = Arc::make_mut(&mut self.data.model);
             let conductor = Arc::make_mut(&mut model.conductor);
@@ -203,7 +207,7 @@ impl Document {
         let after = vec![AutomationEvent {
             tick: new_tick,
             value: new_value,
-            shape: before[0].shape,
+            ..before[0] // 保留原 id/shape
         }];
 
         if matches!(target, yinhe_types::AutomationTarget::Tempo) {
@@ -260,30 +264,33 @@ impl Document {
             }
         }
 
-        // 收集每个 old_tick 对应的 shape，并从 events 移除
-        let mut shapes: Vec<yinhe_types::SegmentShape> = Vec::with_capacity(moves.len());
+        // 收集每个 old_tick 对应的 (shape, id)，并从 events 移除。
+        // id 随事件移动保留（选择集成员身份不变）。
+        let mut bases: Vec<(yinhe_types::SegmentShape, u32)> = Vec::with_capacity(moves.len());
         for (old_tick, _, _) in moves {
             if let Some(idx) = events.iter().position(|e| e.tick == *old_tick) {
-                shapes.push(events.remove(idx).shape);
+                let e = events.remove(idx);
+                bases.push((e.shape, e.id));
             } else {
-                shapes.push(target.default_shape());
+                bases.push((target.default_shape(), 0));
             }
         }
         // 按 new_tick 排序后插入（冲突时后者覆盖）
-        let mut sorted: Vec<(u32, f32, yinhe_types::SegmentShape)> = moves
+        let mut sorted: Vec<(u32, f32, yinhe_types::SegmentShape, u32)> = moves
             .iter()
-            .zip(shapes.iter())
-            .map(|((_, new, val), shape)| (*new, *val, *shape))
+            .zip(bases.iter())
+            .map(|((_, new, val), (shape, id))| (*new, *val, *shape, *id))
             .collect();
-        sorted.sort_by_key(|(new, _, _)| *new);
+        sorted.sort_by_key(|(new, _, _, _)| *new);
         let mut after: Vec<AutomationEvent> = Vec::with_capacity(sorted.len());
-        for (new_tick, new_value, shape) in sorted {
+        for (new_tick, new_value, shape, id) in sorted {
             // 移除 new_tick 处可能残留的旧事件
             if let Some(idx) = events.iter().position(|e| e.tick == new_tick) {
                 events.remove(idx);
             }
             let insert_idx = events.partition_point(|e| e.tick < new_tick);
             let evt = AutomationEvent {
+                id,
                 tick: new_tick,
                 value: new_value,
                 shape,
@@ -411,7 +418,12 @@ impl Document {
                     value,
                     shape,
                 } => {
-                    let event = yinhe_types::AutomationEvent { tick, value, shape };
+                    let event = yinhe_types::AutomationEvent {
+                        id: 0,
+                        tick,
+                        value,
+                        shape,
+                    };
                     self.add_automation_event(track_idx as usize, target, event)
                         .map(|(_, _, action)| action)
                 }
@@ -509,7 +521,6 @@ impl Document {
             return None;
         }
         let target = panel.selected_target.clone();
-        let rects = panel.anchor_sel_rects.clone();
 
         // 定位 lane（与 app 层 collect_anchor_ctx 同规则）：
         // Tempo → conductor.tempo；其他 → 主音轨的 target 匹配 lane。
@@ -550,7 +561,8 @@ impl Document {
         let mut uniform_tick: Option<i64> = None;
         let mut uniform_value: Option<f32> = None;
         for ev in events {
-            if !rects.iter().any(|r| r.contains(ev.tick, ev.value)) {
+            // 成员态按 id 判定（落点锚点不纳入）；矩形态回退选框几何。
+            if !panel.accepts_anchor(ev) {
                 continue;
             }
             let (new_tick, new_value) = match field {
@@ -662,7 +674,8 @@ impl Document {
         };
         let mut moves: Vec<(u32, u32, f32)> = Vec::new();
         for ev in events {
-            if !rects.iter().any(|r| r.contains(ev.tick, ev.value)) {
+            // 成员态按 id 判定；矩形态回退选框几何。
+            if !panel.accepts_anchor(ev) {
                 continue;
             }
             let new_tick = scale_tick(ev.tick);
@@ -699,6 +712,7 @@ mod tests {
                     target: AutomationTarget::Tempo,
                     track: 0,
                     events: vec![AutomationEvent {
+                        id: 0,
                         tick: 0,
                         value: 120.0,
                         shape: SegmentShape::Step,
@@ -722,11 +736,13 @@ mod tests {
                     track: 0,
                     events: vec![
                         AutomationEvent {
+                            id: 0,
                             tick: 100,
                             value: 64.0 / 127.0,
                             shape: SegmentShape::Step,
                         },
                         AutomationEvent {
+                            id: 0,
                             tick: 200,
                             value: 96.0 / 127.0,
                             shape: SegmentShape::Step,
@@ -864,5 +880,55 @@ mod tests {
         let rect = doc.edit.controller_panels[0].anchor_sel_rects[0];
         assert_eq!(rect.tick_start, 0.0, "AM 选框恢复");
         assert_eq!(rect.tick_end, 250.0);
+    }
+
+    /// 给 lane 事件分配 id（生产路径由加载/编辑发号；直接构造的模型手动指定）。
+    fn assign_lane_ids(doc: &mut Document) {
+        let model = Arc::make_mut(&mut doc.data.model);
+        let track = Arc::make_mut(&mut model.tracks[0]);
+        for (i, e) in track.automation_lanes[0].events.iter_mut().enumerate() {
+            e.id = i as u32 + 1;
+        }
+        model.next_automation_id = 10;
+    }
+
+    /// 回归：锚点成员态下选框平移到落点后再拖动，不会吸收落点处的锚点。
+    /// （修复前逐次按选框几何重收集，落点路人锚点会被一起搬走。）
+    #[test]
+    fn materialized_anchor_selection_stable_across_moves() {
+        let mut doc = make_doc_with_anchor();
+        assign_lane_ids(&mut doc);
+        // lane: id1@100（被框选）、id2@200（落点路人）。
+        // 框选 [100,150) → 物化成员 = {id1}。
+        doc.edit.controller_panels[0].anchor_sel_rects = vec![AnchorSelRect {
+            tick_start: 100.0,
+            tick_end: 150.0,
+            value_range: None,
+        }];
+        let lane = &doc.data.model.tracks[0].automation_lanes[0];
+        doc.edit.controller_panels[0].materialize_anchor_pending(lane);
+        assert_eq!(doc.edit.controller_panels[0].anchor_member_count(), Some(1));
+
+        // 拖动提交：id1 100→250（避免与 id2@200 同 tick 覆盖），选框平移到落点。
+        let target = AutomationTarget::CC { controller: 7 };
+        doc.move_automation_events_batch(0, 0, &target, &[(100, 250, 64.0 / 127.0)])
+            .expect("移动应成功");
+        // 落点选框扩大覆盖到 id2@200（模拟第二轮拖动时的选框范围）。
+        doc.edit.controller_panels[0].anchor_sel_rects[0].tick_start = 150.0;
+        doc.edit.controller_panels[0].anchor_sel_rects[0].tick_end = 320.0;
+
+        // 第二次拖动收集：成员态只认 id1，落点选框内的 id2 不得被吸收。
+        let lane = &doc.data.model.tracks[0].automation_lanes[0];
+        let selected: Vec<u32> = lane
+            .events
+            .iter()
+            .filter(|e| doc.edit.controller_panels[0].accepts_anchor(e))
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(selected, vec![1], "落点选框内的 id2 不得被选中");
+        assert!(
+            lane.events.iter().any(|e| e.id == 2 && e.tick == 200),
+            "id2 应留在原处"
+        );
     }
 }

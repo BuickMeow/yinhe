@@ -47,11 +47,11 @@ pub(crate) fn handle_select(
                 .and_then(|l| l.events.get(event_idx))
                 .map(|e| e.value)
                 .unwrap_or(0.0);
+            // 成员态按 id 判定（比几何判定精确）；矩形态回退选框几何。
             let anchor_in_sel = ctx
-                .panel
-                .anchor_sel_rects
-                .iter()
-                .any(|r| r.contains(tick, anchor_value));
+                .lane
+                .and_then(|l| l.events.get(event_idx))
+                .is_some_and(|e| ctx.panel.accepts_anchor(e));
             if ctx.cmd || ctx.shift {
                 let point_rect = AnchorSelRect {
                     tick_start: tick as f64,
@@ -243,12 +243,8 @@ pub(crate) fn handle_select(
                             .events
                             .iter()
                             .filter_map(|e| {
-                                if !ctx
-                                    .panel
-                                    .anchor_sel_rects
-                                    .iter()
-                                    .any(|r| r.contains(e.tick, e.value))
-                                {
+                                // 成员态按 id 判定；矩形态回退选框几何。
+                                if !ctx.panel.accepts_anchor(e) {
                                     return None;
                                 }
                                 let new_tick = (e.tick as i64 + d_tick).max(0) as u32;
@@ -305,7 +301,14 @@ pub(crate) fn handle_select(
                                     }),
                                 })
                                 .collect();
-                            ctx.sel_op = Some(SelOp::Set(SelRectOp::ReplaceAll(new_rects)));
+                            ctx.sel_op = Some(SelOp::Set(if alt {
+                                // Alt 复制：原件保留，选区在视觉上平移到副本；
+                                // 副本 id 在 core 分配，这里退回矩形态重采样落点选框。
+                                SelRectOp::ReplaceAllResetMembers(new_rects)
+                            } else {
+                                // 普通拖动：成员 id 不变，选区平移后仍只命中原成员。
+                                SelRectOp::ReplaceAll(new_rects)
+                            }));
                         }
                     }
                 }

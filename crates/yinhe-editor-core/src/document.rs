@@ -177,6 +177,9 @@ impl Document {
                 .unwrap_or_default();
 
             let mut model = model;
+            // 自动化事件 id 不落盘：文档构建时兜底统一发号（幂等，已发号的
+            // 只是重新编号；覆盖各平台加载路径与直接构造模型的调用方）。
+            model.renumber_automation_ids();
 
             // Detect conductor track; insert one if missing.
             let conductor_track_idx = detect_conductor_from_model(&model);
@@ -315,6 +318,13 @@ impl Document {
                 .iter()
                 .map(|p| p.anchor_sel_rects.clone())
                 .collect(),
+            anchor_members: self
+                .edit
+                .controller_panels
+                .iter()
+                .map(|p| p.anchor_members.clone())
+                .collect(),
+            arr_am_views: self.edit.arr_am_views.clone(),
         }
     }
 
@@ -328,22 +338,30 @@ impl Document {
     }
 
     /// 把快照恢复到 edit 状态（undo/redo 共用）。
-    /// AM 选框按面板索引对齐恢复，面板数量变化时防御跳过。
+    /// AM 选框/成员按面板索引对齐恢复，面板数量变化时防御跳过。
     fn restore_snapshot(edit: &mut EditState, snapshot: &EditSnapshot) {
         edit.selected = snapshot.selected.clone();
         edit.track_selected = snapshot.track_selected.clone();
         edit.sel_rect = snapshot.sel_rect.clone();
         edit.arr_sel_rect = snapshot.arr_sel_rect.clone();
-        for (panel, rects) in edit
-            .controller_panels
-            .iter_mut()
-            .zip(&snapshot.anchor_sel_rects)
-        {
-            panel.anchor_sel_rects = rects.clone();
+        for (i, panel) in edit.controller_panels.iter_mut().enumerate() {
+            if let Some(rects) = snapshot.anchor_sel_rects.get(i) {
+                panel.anchor_sel_rects = rects.clone();
+            }
+            if let Some(members) = snapshot.anchor_members.get(i) {
+                panel.anchor_members = members.clone();
+                // 成员由快照精确恢复，视为全部 rects 已物化。
+                panel.materialized_anchor_rects = if members.is_some() {
+                    panel.anchor_sel_rects.len()
+                } else {
+                    0
+                };
+            }
             if !panel.anchor_sel_rects.is_empty() {
                 panel.dirty = true;
             }
         }
+        edit.arr_am_views = snapshot.arr_am_views.clone();
     }
 
     /// Undo the most recent operation. Returns true if something was undone.
@@ -839,11 +857,13 @@ mod tests {
                 track: 1,
                 events: vec![
                     AutomationEvent {
+                        id: 0,
                         tick: 0,
                         value: 64.0,
                         shape: SegmentShape::Step,
                     },
                     AutomationEvent {
+                        id: 0,
                         tick: 480,
                         value: 80.0,
                         shape: SegmentShape::Step,
@@ -921,11 +941,13 @@ mod tests {
                 track: 1,
                 events: vec![
                     AutomationEvent {
+                        id: 0,
                         tick: 0,
                         value: 64.0,
                         shape: SegmentShape::Step,
                     },
                     AutomationEvent {
+                        id: 0,
                         tick: 480,
                         value: 80.0,
                         shape: SegmentShape::Step,
@@ -996,6 +1018,7 @@ mod tests {
                 target: AutomationTarget::CC { controller: 7 },
                 track: 1,
                 events: vec![AutomationEvent {
+                    id: 0,
                     tick: 0,
                     value: 64.0,
                     shape: SegmentShape::Step,

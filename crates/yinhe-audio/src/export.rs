@@ -332,6 +332,7 @@ mod job_tests {
                 target: AutomationTarget::Tempo,
                 track: 0,
                 events: vec![AutomationEvent {
+                    id: 0,
                     tick: 0,
                     value: 120.0,
                     shape: SegmentShape::Step,

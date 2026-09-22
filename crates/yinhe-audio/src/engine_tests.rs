@@ -51,6 +51,7 @@ fn make_model_with_notes(notes: Vec<(u8, u32, u32, u8, u8)>) -> YinModel {
             target: AutomationTarget::Tempo,
             track: 0,
             events: vec![AutomationEvent {
+                id: 0,
                 tick: 0,
                 value: 120.0,
                 shape: SegmentShape::Step,
@@ -160,6 +161,7 @@ fn test_audible_index_filters_vel_and_inactive_channel() {
             target: AutomationTarget::Tempo,
             track: 0,
             events: vec![AutomationEvent {
+                id: 0,
                 tick: 0,
                 value: 120.0,
                 shape: SegmentShape::Step,
@@ -266,11 +268,13 @@ fn test_audible_index_uses_per_key_tempo_cursor() {
             track: 0,
             events: vec![
                 AutomationEvent {
+                    id: 0,
                     tick: 0,
                     value: 120.0,
                     shape: SegmentShape::Step,
                 },
                 AutomationEvent {
+                    id: 0,
                     tick: 1000,
                     value: 60.0,
                     shape: SegmentShape::Step,
@@ -432,6 +436,7 @@ fn make_model_with_controls(
             target: AutomationTarget::Tempo,
             track: 0,
             events: vec![AutomationEvent {
+                id: 0,
                 tick: 0,
                 value: 120.0,
                 shape: SegmentShape::Step,
@@ -454,6 +459,7 @@ fn make_model_with_controls(
                 .entry(controller)
                 .or_default()
                 .push(AutomationEvent {
+                    id: 0,
                     tick,
                     value: value as f32 / 127.0,
                     shape: SegmentShape::Step,
@@ -473,6 +479,7 @@ fn make_model_with_controls(
         let events: Vec<AutomationEvent> = pb
             .into_iter()
             .map(|(tick, value)| AutomationEvent {
+                id: 0,
                 tick,
                 value: (value + 8192) as f32 / 16383.0,
                 shape: SegmentShape::Step,
@@ -497,6 +504,7 @@ fn make_model_with_controls(
             target,
             track: 0,
             events: vec![AutomationEvent {
+                id: 0,
                 tick,
                 value: value / max,
                 shape: SegmentShape::Step,
@@ -615,6 +623,7 @@ fn make_bench_model(tracks: usize, notes_per_track: usize) -> YinModel {
             target: AutomationTarget::Tempo,
             track: 0,
             events: vec![AutomationEvent {
+                id: 0,
                 tick: 0,
                 value: 120.0,
                 shape: SegmentShape::Step,
@@ -1297,6 +1306,7 @@ fn test_muted_track_cc_skipped_in_chase() {
         target: cc_target(7),
         track: 0,
         events: vec![AutomationEvent {
+            id: 0,
             tick: 100,
             value: 40.0 / 127.0,
             shape: SegmentShape::Step,
@@ -1307,6 +1317,7 @@ fn test_muted_track_cc_skipped_in_chase() {
         target: cc_target(7),
         track: 1,
         events: vec![AutomationEvent {
+            id: 0,
             tick: 200,
             value: 100.0 / 127.0,
             shape: SegmentShape::Step,
@@ -1341,6 +1352,7 @@ fn make_chase_model() -> YinModel {
             target: AutomationTarget::Tempo,
             track: 0,
             events: vec![AutomationEvent {
+                id: 0,
                 tick: 0,
                 value: 120.0,
                 shape: SegmentShape::Step,
@@ -1360,11 +1372,13 @@ fn make_chase_model() -> YinModel {
             track: 0,
             events: vec![
                 AutomationEvent {
+                    id: 0,
                     tick: 0,
                     value: 2.0 / 127.0,
                     shape: SegmentShape::Step,
                 },
                 AutomationEvent {
+                    id: 0,
                     tick: 768,
                     value: 48.0 / 127.0,
                     shape: SegmentShape::Step,
@@ -1376,11 +1390,13 @@ fn make_chase_model() -> YinModel {
             track: 0,
             events: vec![
                 AutomationEvent {
+                    id: 0,
                     tick: 336,
                     value: 8192.0 / 16383.0,
                     shape: SegmentShape::Step,
                 },
                 AutomationEvent {
+                    id: 0,
                     tick: 1536,
                     value: 10892.0 / 16383.0,
                     shape: SegmentShape::Step,
@@ -1392,11 +1408,13 @@ fn make_chase_model() -> YinModel {
             track: 0,
             events: vec![
                 AutomationEvent {
+                    id: 0,
                     tick: 192,
                     value: 100.0 / 127.0,
                     shape: SegmentShape::Step,
                 },
                 AutomationEvent {
+                    id: 0,
                     tick: 768,
                     value: 80.0 / 127.0,
                     shape: SegmentShape::Step,
@@ -1607,6 +1625,7 @@ fn make_model_with_tempo(
             events: tempo_events
                 .into_iter()
                 .map(|(tick, value)| AutomationEvent {
+                    id: 0,
                     tick,
                     value,
                     shape: SegmentShape::Step,
@@ -1869,6 +1888,7 @@ fn test_chase_query_linear_interpolation() {
         track: 0,
         events: vec![
             AutomationEvent {
+                id: 0,
                 tick: 0,
                 value: 100.0 / 127.0,
                 shape: SegmentShape::Curve {
@@ -1879,6 +1899,7 @@ fn test_chase_query_linear_interpolation() {
                 },
             },
             AutomationEvent {
+                id: 0,
                 tick: 480,
                 value: 60.0 / 127.0,
                 shape: SegmentShape::Curve {
@@ -1932,11 +1953,13 @@ fn test_chase_query_step_keeps_last_value() {
         track: 0,
         events: vec![
             AutomationEvent {
+                id: 0,
                 tick: 0,
                 value: 100.0 / 127.0,
                 shape: SegmentShape::Step,
             },
             AutomationEvent {
+                id: 0,
                 tick: 480,
                 value: 20.0 / 127.0,
                 shape: SegmentShape::Step,
@@ -4013,6 +4036,7 @@ fn low_level_cc_routes_to_channel_dsp() {
             target: AutomationTarget::CC { controller: 7 },
             track: 1,
             events: vec![AutomationEvent {
+                id: 0,
                 tick: 0,
                 value: 100.0 / 127.0,
                 shape: SegmentShape::Step,
@@ -4045,6 +4069,7 @@ fn source_level_cc_not_routed_to_channel_dsp() {
             target: AutomationTarget::CC { controller: 64 },
             track: 1,
             events: vec![AutomationEvent {
+                id: 0,
                 tick: 0,
                 value: 1.0,
                 shape: SegmentShape::Step,

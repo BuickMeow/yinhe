@@ -104,6 +104,7 @@ impl App {
                         track_idx as usize,
                         target.clone(),
                         AutomationEvent {
+                            id: 0,
                             tick,
                             value,
                             shape: target.default_shape(),

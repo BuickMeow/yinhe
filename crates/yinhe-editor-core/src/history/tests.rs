@@ -16,6 +16,7 @@ fn make_doc(name: &str) -> Document {
                 target: AutomationTarget::Tempo,
                 track: 0,
                 events: vec![AutomationEvent {
+                    id: 0,
                     tick: 0,
                     value: 120.0,
                     shape: SegmentShape::Step,
@@ -393,16 +394,19 @@ fn make_doc_with_cc_lane() -> Document {
         track: 0,
         events: vec![
             AutomationEvent {
+                id: 0,
                 tick: 100,
                 value: 64.0,
                 shape: SegmentShape::Step,
             },
             AutomationEvent {
+                id: 0,
                 tick: 200,
                 value: 32.0,
                 shape: SegmentShape::Step,
             },
             AutomationEvent {
+                id: 0,
                 tick: 300,
                 value: 96.0,
                 shape: SegmentShape::linear_curve(),
@@ -421,6 +425,7 @@ fn automation_add_roundtrips() {
             0,
             target.clone(),
             AutomationEvent {
+                id: 0,
                 tick: 150,
                 value: 50.0,
                 shape: SegmentShape::Step,
@@ -434,6 +439,7 @@ fn automation_add_roundtrips() {
             0,
             target,
             AutomationEvent {
+                id: 0,
                 tick: 250,
                 value: 70.0,
                 shape: SegmentShape::Step,
@@ -459,6 +465,7 @@ fn automation_add_tempo_roundtrips() {
             0,
             AutomationTarget::Tempo,
             AutomationEvent {
+                id: 0,
                 tick: 480,
                 value: 140.0,
                 shape: SegmentShape::Step,
@@ -622,6 +629,7 @@ fn automation_mixed_sequence_roundtrips() {
             0,
             target.clone(),
             AutomationEvent {
+                id: 0,
                 tick: 150,
                 value: 50.0,
                 shape: SegmentShape::Step,

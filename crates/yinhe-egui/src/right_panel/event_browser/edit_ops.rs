@@ -516,6 +516,7 @@ pub fn apply_automation_ops(
         EditRequest::InsertAbove { tick } | EditRequest::InsertBelow { tick } => {
             // 默认值由 target 提供（Tempo=120 BPM，其余为归一化默认值）。
             let event = yinhe_types::AutomationEvent {
+                id: 0,
                 tick,
                 value: target.default_value(),
                 shape: yinhe_types::SegmentShape::Step,
@@ -532,6 +533,7 @@ pub fn apply_automation_ops(
             let tick = current_tick(doc);
             // 默认值由 target 提供（Tempo=120 BPM，其余为归一化默认值）。
             let event = yinhe_types::AutomationEvent {
+                id: 0,
                 tick,
                 value: target.default_value(),
                 shape: yinhe_types::SegmentShape::Step,

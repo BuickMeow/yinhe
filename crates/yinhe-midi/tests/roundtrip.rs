@@ -63,6 +63,7 @@ fn model_with_point(target: AutomationTarget, tick: u32, value: f32) -> YinModel
     model_with_lane(
         target,
         vec![AutomationEvent {
+            id: 0,
             tick,
             value,
             shape: SegmentShape::Step,
@@ -264,11 +265,13 @@ fn build_complex_model() -> YinModel {
             track: 0,
             events: vec![
                 AutomationEvent {
+                    id: 0,
                     tick: 0,
                     value: 120.0,
                     shape: SegmentShape::Step,
                 },
                 AutomationEvent {
+                    id: 0,
                     tick: 1920,
                     value: 60.0,
                     shape: SegmentShape::Step,
@@ -331,11 +334,13 @@ fn build_complex_model() -> YinModel {
             track: 0,
             events: vec![
                 AutomationEvent {
+                    id: 0,
                     tick: 0,
                     value: 100.0 / 127.0,
                     shape: SegmentShape::Step,
                 },
                 AutomationEvent {
+                    id: 0,
                     tick: 480,
                     value: 80.0 / 127.0,
                     shape: SegmentShape::Step,
@@ -346,6 +351,7 @@ fn build_complex_model() -> YinModel {
             target: xsynth_target(0, xsynth_param::PITCH_BEND),
             track: 0,
             events: vec![AutomationEvent {
+                id: 0,
                 tick: 200,
                 value: 2000.0 / 16383.0,
                 shape: SegmentShape::Step,
@@ -355,6 +361,7 @@ fn build_complex_model() -> YinModel {
             target: xsynth_target(0, xsynth_param::PB_SENSITIVITY),
             track: 0,
             events: vec![AutomationEvent {
+                id: 0,
                 tick: 100,
                 value: 2.0 / 127.0,
                 shape: SegmentShape::Step,
@@ -597,6 +604,7 @@ fn pb_and_rpn_roundtrip() {
             target: xsynth_target(0, xsynth_param::PITCH_BEND),
             track: 0,
             events: vec![AutomationEvent {
+                id: 0,
                 tick: 0,
                 value: 8192.0 / 16383.0,
                 shape: SegmentShape::Step,
@@ -606,6 +614,7 @@ fn pb_and_rpn_roundtrip() {
             target: xsynth_target(0, xsynth_param::PB_SENSITIVITY),
             track: 0,
             events: vec![AutomationEvent {
+                id: 0,
                 tick: 10,
                 value: 2.0 / 127.0,
                 shape: SegmentShape::Step,
@@ -615,6 +624,7 @@ fn pb_and_rpn_roundtrip() {
             target: xsynth_target(0, xsynth_param::FINE_TUNE),
             track: 0,
             events: vec![AutomationEvent {
+                id: 0,
                 tick: 20,
                 value: 8192.0 / 16383.0,
                 shape: SegmentShape::Step,
