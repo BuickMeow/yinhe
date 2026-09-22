@@ -12,6 +12,13 @@ pub mod velocity_gate;
 
 pub use sel_rect::{ResizeSide, SelRectState};
 
+/// 锚点线（直线/剪刀工具）：两个吸附后的 `(tick, key)` 锚点。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AnchorLine {
+    pub start: (f64, u8),
+    pub end: (f64, u8),
+}
+
 /// 瞬态编辑状态（不落盘）
 /// Selection 参与 undo 快照，其余多为 UI 状态
 pub struct EditState {
@@ -37,6 +44,10 @@ pub struct EditState {
     pub conductor_track_idx: Option<u16>,
     pub editing_track: Option<u16>,
     pub sel_rect: SelRectState,
+    /// 直线工具待确认的锚点线（✓ 生成音符后清空）。
+    pub line_tool_line: Option<AnchorLine>,
+    /// 剪刀工具待确认的锚点线（✓ 切割后清空）。
+    pub scissors_line: Option<AnchorLine>,
     pub arr_sel_rect: Vec<(f64, f64, usize, usize)>,
     pub recent_velocity: Vec<Option<(u32, u8)>>,
     pub recent_gate: Vec<Option<(u32, u32)>>,
@@ -78,6 +89,8 @@ impl Default for EditState {
             conductor_track_idx: None,
             editing_track: None,
             sel_rect: SelRectState::default(),
+            line_tool_line: None,
+            scissors_line: None,
             arr_sel_rect: Vec::new(),
             recent_velocity: Vec::new(),
             recent_gate: Vec::new(),

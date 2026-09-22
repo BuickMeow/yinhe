@@ -1290,6 +1290,118 @@ impl Document {
         self.data.rebuild_model_dirty();
         Some(UndoAction::Notes(NoteDelta { before, after }))
     }
+
+    /// 批量添加音符到指定 track（直线/刷子工具）。
+    ///
+    /// 「允许新重叠音符」关闭时逐个过滤与已有音符重叠的新音符；
+    /// 批次内部互不影响（与 `duplicate_selected` 语义一致）。
+    /// 返回副本制 undo（before 空，after = 实际添加的音符）。
+    pub fn add_notes_batch(&mut self, track: u16, notes: &[NoteEvent]) -> Option<UndoAction> {
+        if notes.is_empty() || track as usize >= self.data.model.tracks.len() {
+            return None;
+        }
+        if Some(track) == self.edit.conductor_track_idx {
+            return None;
+        }
+        let allow_overlap = self.edit.allow_overlapping_notes;
+        let mut after: Vec<(yinhe_types::Note, u8)> = Vec::new();
+        {
+            let model = Arc::make_mut(&mut self.data.model);
+            let mut by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
+                std::collections::HashMap::new();
+            for ev in notes {
+                if !allow_overlap
+                    && batch_ops::has_overlapping_note(
+                        model,
+                        track,
+                        ev.key,
+                        ev.start_tick,
+                        ev.end_tick,
+                    )
+                {
+                    continue;
+                }
+                let note = yinhe_types::Note {
+                    id: model.alloc_note_id(),
+                    start_tick: ev.start_tick,
+                    end_tick: ev.end_tick.max(ev.start_tick.saturating_add(1)),
+                    velocity: ev.velocity,
+                    track,
+                };
+                by_key.entry(ev.key).or_default().push(note);
+            }
+            if by_key.is_empty() {
+                return None;
+            }
+            for (key, group) in &by_key {
+                after.extend(group.iter().map(|n| (*n, *key)));
+            }
+            batch_ops::insert_batch(model, by_key);
+        }
+        self.data.rebuild_model_dirty();
+        self.data.bump_revision();
+        Some(UndoAction::Notes(NoteDelta {
+            before: vec![],
+            after,
+        }))
+    }
+
+    /// 直线工具确认：沿音高行生成音符（每行一个，gate = 一个量化间隔）。
+    ///
+    /// start = 线在该行的 tick 吸附量化（含小节感知）；力度 = 该轨记忆力度。
+    /// 目标轨 = 主音轨（与 PR 铅笔/选框一致），无主音轨/Conductor 时返回 None。
+    pub fn generate_line_notes(&mut self) -> Option<UndoAction> {
+        let line = self.edit.line_tool_line?;
+        let track = self.edit.main_track()?;
+        if Some(track) == self.edit.conductor_track_idx {
+            return None;
+        }
+        let ppq = self.data.model.meta.ppq;
+        let quantize = self.edit.quantize_pianoroll;
+        let interval = quantize.tick_interval(ppq);
+        if interval == 0 {
+            return None;
+        }
+        let (tpb, num, den, events) = pr_bar_line_data(&self.data.model);
+        let bar = Some((tpb, num, den, events.as_slice()));
+        let (_, k1) = line.start;
+        let (_, k2) = line.end;
+        let (lo, hi) = (k1.min(k2), k1.max(k2));
+        let velocity = self.edit.default_velocity(track);
+        let mut notes = Vec::with_capacity(hi as usize - lo as usize + 1);
+        for key in lo..=hi {
+            let raw = crate::quantize::line_tick_at_key(line.start, line.end, key);
+            let start = crate::quantize::snap_tick(raw, quantize, ppq, bar).max(0.0) as u32;
+            notes.push(NoteEvent {
+                id: 0,
+                start_tick: start,
+                end_tick: start.saturating_add(interval),
+                key,
+                velocity,
+            });
+        }
+        self.add_notes_batch(track, &notes)
+    }
+
+    /// 剪刀工具确认：按待确认锚点线切开音符（切完由调用方清空线）。
+    pub fn split_scissors_line(&mut self) -> Option<UndoAction> {
+        let line = self.edit.scissors_line?;
+        let ppq = self.data.model.meta.ppq;
+        let quantize = self.edit.quantize_pianoroll;
+        let (tpb, num, den, events) = pr_bar_line_data(&self.data.model);
+        let bar = Some((tpb, num, den, events.as_slice()));
+        let cuts = crate::quantize::line_cuts(line.start, line.end, quantize, ppq, bar);
+        self.split_notes_at(&cuts)
+    }
+}
+
+/// 构造 PR 的小节线感知 snap 参数（与 content.rs 传给钢琴卷帘的一致）。
+fn pr_bar_line_data(model: &yinhe_core::YinModel) -> (u32, u8, u8, Vec<yinhe_types::TimeSigEvent>) {
+    let tpb = model.meta.ppq;
+    let first = model.conductor.time_sig.first();
+    let num = first.map(|t| t.numerator).unwrap_or(4);
+    let den = first.map(|t| t.denominator).unwrap_or(2);
+    (tpb, num, den, model.conductor.time_sig.clone())
 }
 
 /// 音符在 `[t0, t1]` 内、严格处于音符内部的量化网格切点（升序）。
@@ -2365,5 +2477,107 @@ mod tests {
         doc.edit.quantize_pianoroll = crate::quantize::QuantizePreset::Absolute(0);
         assert!(doc.split_selection_by_grid().is_none(), "interval 0 不切");
         assert_eq!(doc.data.model.notes[60].len(), 1, "模型未被改动");
+    }
+
+    /// 直线生成：沿音高行逐行、gate=量化间隔、力度=记忆力度，undo/redo 回放。
+    #[test]
+    fn generate_line_notes_per_row_with_memory_velocity_and_undo() {
+        let mut doc = make_doc_with_note(); // k60 [100,200)
+        doc.edit.track_selected.insert(0);
+        doc.edit.quantize_pianoroll = crate::quantize::QuantizePreset::Absolute(120);
+        doc.edit.remember_velocity(0, 0, 77);
+        // 线 (0,62) → (480,64)：key 62→0、63→240、64→480
+        doc.edit.line_tool_line = Some(crate::edit_state::AnchorLine {
+            start: (0.0, 62),
+            end: (480.0, 64),
+        });
+
+        let before_snap = doc.capture_snapshot();
+        let action = doc.generate_line_notes().expect("应生成");
+        assert_eq!(doc.data.model.notes[62].len(), 1);
+        assert_eq!(doc.data.model.notes[63].len(), 1);
+        assert_eq!(doc.data.model.notes[64].len(), 1);
+        let n62 = doc.data.model.notes[62][0];
+        assert_eq!((n62.start_tick, n62.end_tick, n62.velocity), (0, 120, 77));
+        let n63 = doc.data.model.notes[63][0];
+        assert_eq!((n63.start_tick, n63.end_tick), (240, 360));
+        let n64 = doc.data.model.notes[64][0];
+        assert_eq!((n64.start_tick, n64.end_tick), (480, 600));
+
+        match &action {
+            UndoAction::Notes(delta) => {
+                assert!(delta.before.is_empty());
+                assert_eq!(delta.after.len(), 3);
+            }
+            other => panic!("期望副本制 Notes，实际 {other:?}"),
+        }
+        doc.push_undo(action, "line", before_snap);
+        assert!(doc.undo(), "undo 应成功");
+        assert!(doc.data.model.notes[62].is_empty());
+        assert!(doc.redo(), "redo 应成功");
+        assert_eq!(doc.data.model.notes[62].len(), 1);
+    }
+
+    /// 直线生成：无主音轨时返回 None（与 PR 铅笔一致）。
+    #[test]
+    fn generate_line_notes_requires_main_track() {
+        let mut doc = make_doc_with_note();
+        doc.edit.line_tool_line = Some(crate::edit_state::AnchorLine {
+            start: (0.0, 60),
+            end: (0.0, 60),
+        });
+        assert!(doc.generate_line_notes().is_none(), "无主音轨不生成");
+    }
+
+    /// 批量添加：「允许新重叠音符」关闭时过滤与已有音符重叠的项。
+    #[test]
+    fn add_notes_batch_filters_overlap_when_disabled() {
+        let mut doc = make_doc_with_note(); // k60 [100,200)
+        doc.edit.allow_overlapping_notes = false;
+        let notes = vec![
+            NoteEvent {
+                id: 0,
+                start_tick: 150,
+                end_tick: 250,
+                key: 60,
+                velocity: 100,
+            },
+            NoteEvent {
+                id: 0,
+                start_tick: 300,
+                end_tick: 400,
+                key: 60,
+                velocity: 100,
+            },
+        ];
+        let action = doc.add_notes_batch(0, &notes).expect("应添加 1 个");
+        assert_eq!(doc.data.model.notes[60].len(), 2);
+        match action {
+            UndoAction::Notes(delta) => assert_eq!(delta.after.len(), 1),
+            other => panic!("期望副本制 Notes，实际 {other:?}"),
+        }
+
+        doc.edit.allow_overlapping_notes = true;
+        assert!(doc.add_notes_batch(0, &notes).is_some());
+        assert_eq!(doc.data.model.notes[60].len(), 4, "允许重叠时全部添加");
+    }
+
+    /// 剪刀确认：按锚点线逐行切割（复用 split_notes_at 的作用域与 undo）。
+    #[test]
+    fn split_scissors_line_cuts_via_anchor_line() {
+        let mut doc = make_doc_with_note(); // k60 [100,200)
+        doc.edit.quantize_pianoroll = crate::quantize::QuantizePreset::Absolute(120);
+        doc.add_note(0, ev(0, 600, 62));
+        doc.edit.scissors_line = Some(crate::edit_state::AnchorLine {
+            start: (240.0, 60),
+            end: (240.0, 62),
+        });
+        let action = doc.split_scissors_line().expect("应切割");
+        assert_eq!(doc.data.model.notes[62].len(), 2, "k62 在 240 处切开");
+        assert_eq!(doc.data.model.notes[60].len(), 1, "k60 切点在音符外不切");
+        assert!(matches!(action, UndoAction::Notes(_)));
+
+        doc.edit.scissors_line = None;
+        assert!(doc.split_scissors_line().is_none(), "无线时返回 None");
     }
 }

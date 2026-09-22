@@ -173,6 +173,42 @@ pub fn snap_tick_floor(
     }
 }
 
+// ── 锚点线（直线/剪刀工具） ──
+
+/// 线在 `key` 行处的时间坐标（两个锚点同 key 时返回起点 tick）。
+pub fn line_tick_at_key(start: (f64, u8), end: (f64, u8), key: u8) -> f64 {
+    let (t1, k1) = start;
+    let (t2, k2) = end;
+    if k1 == k2 {
+        return t1;
+    }
+    t1 + (t2 - t1) * (key as f64 - k1 as f64) / (k2 as f64 - k1 as f64)
+}
+
+/// 剪刀锚点线的逐行切点：`(key, cut_tick)`，按 key 升序。
+///
+/// - 同 key（单击/水平）：在该 tick 全列切一刀；
+/// - 跨 key：每行取线与该行相交的 tick，吸附量化（含小节感知）。
+pub fn line_cuts(
+    start: (f64, u8),
+    end: (f64, u8),
+    quantize: QuantizePreset,
+    ppq: u32,
+    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+) -> Vec<(u8, u32)> {
+    let snap = |t: f64| -> u32 { snap_tick(t, quantize, ppq, bar_line_data).max(0.0) as u32 };
+    let (t1, k1) = start;
+    let (_, k2) = end;
+    if k1 == k2 {
+        let cut = snap(t1);
+        return (0..=yinhe_types::MAX_KEY).map(|k| (k, cut)).collect();
+    }
+    let (lo, hi) = (k1.min(k2), k1.max(k2));
+    (lo..=hi)
+        .map(|k| (k, snap(line_tick_at_key(start, end, k))))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -319,5 +355,67 @@ mod tests {
                 preset.label()
             );
         }
+    }
+
+    #[test]
+    fn line_cuts_vertical_same_tick_across_rows() {
+        let c = line_cuts(
+            (125.0, 60),
+            (125.0, 63),
+            QuantizePreset::Fraction(1, 16),
+            480,
+            None,
+        );
+        assert_eq!(c, vec![(60, 120), (61, 120), (62, 120), (63, 120)]);
+    }
+
+    #[test]
+    fn line_cuts_slanted_interpolates_per_row() {
+        let c = line_cuts(
+            (0.0, 60),
+            (480.0, 63),
+            QuantizePreset::Fraction(1, 16),
+            480,
+            None,
+        );
+        assert_eq!(c, vec![(60, 0), (61, 120), (62, 360), (63, 480)]);
+    }
+
+    #[test]
+    fn line_cuts_click_cuts_whole_column() {
+        let c = line_cuts(
+            (100.0, 42),
+            (100.0, 42),
+            QuantizePreset::Fraction(1, 16),
+            480,
+            None,
+        );
+        assert_eq!(c.len(), yinhe_types::KEY_COUNT, "单击 = 全列所有键");
+        assert!(c.iter().all(|&(_, t)| t == 120));
+    }
+
+    #[test]
+    fn line_cuts_horizontal_uses_start_tick() {
+        let c = line_cuts(
+            (100.0, 42),
+            (700.0, 42),
+            QuantizePreset::Fraction(1, 16),
+            480,
+            None,
+        );
+        assert_eq!(c.len(), yinhe_types::KEY_COUNT);
+        assert!(c.iter().all(|&(_, t)| t == 120));
+    }
+
+    #[test]
+    fn line_tick_at_key_interpolates() {
+        assert_eq!(line_tick_at_key((0.0, 60), (480.0, 64), 60), 0.0);
+        assert_eq!(line_tick_at_key((0.0, 60), (480.0, 64), 62), 240.0);
+        assert_eq!(line_tick_at_key((0.0, 60), (480.0, 64), 64), 480.0);
+        assert_eq!(
+            line_tick_at_key((100.0, 60), (700.0, 60), 60),
+            100.0,
+            "同 key 返回起点 tick"
+        );
     }
 }
