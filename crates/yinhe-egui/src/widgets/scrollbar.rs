@@ -260,21 +260,19 @@ pub(crate) fn show(
 
 // ── Vertical scrollbar (pixel-space) ──
 
+/// 把连续 cell 尺寸吸附到离散档位（`Some(step)` 时）或仅做范围 clamp（`None`）。
+/// 档位 = min + k·step，再 clamp 到 [min, max]。
+fn snap_cell_size(cs: f32, min: f32, max: f32, step: Option<f32>) -> f32 {
+    match step {
+        Some(step) => {
+            let k = ((cs - min) / step).round();
+            (min + k * step).clamp(min, max)
+        }
+        None => cs.clamp(min, max),
+    }
+}
+
 /// 垂直滚动条（像素空间）：用于 AR（lane_height + scroll_y）和 PR（key_height + scroll_y）。
-///
-/// 总范围 = `num_cells * cell_size`（如 `num_tracks * lane_height` 或 `128 * key_height`）。
-/// 视口 = `view_height` 像素。`cell_size` = 每个单元的像素高度（lane_height / key_height）。
-///
-/// 三区交互（与水平滚动条对称）：
-/// - 中间拖动 → 平移 scroll_y
-/// - 顶边拖动 → 缩放 cell_size，锚定 thumb 底边 sb 位置
-/// - 底边拖动 → 缩放 cell_size，锚定 thumb 顶边 sb 位置
-///
-/// `cell_min` / `cell_max` = cell_size 的最小/最大值。
-/// `scroll_y` / `cell_size` 会被原地修改；`dirty` 标记视图为脏。
-///
-/// 即使 `total_pixels <= view_height`（内容一屏装下），也会绘制占满滚动条的 thumb，
-/// 用户仍可拖动边缘缩放。只有 `max_scroll_y == 0` 时 pan 无效。
 /// Paint a scrollbar for a discrete-cell axis（音高/轨道）沿其主轴方向。
 ///
 /// 总范围 = `num_cells * cell_size`（如 `num_tracks * lane_height` 或 `128 * key_height`）。
@@ -287,6 +285,8 @@ pub(crate) fn show(
 ///
 /// `orientation` 决定条形走向：横向视图 = 右侧竖条（主轴 Y）；纵向瀑布流 = 底部横条（主轴 X）。
 /// `cell_min` / `cell_max` = cell_size 的最小/最大值。
+/// `cell_step` = `Some(step)` 时 cell_size 只在 min + k·step 的离散档位上取值（AR 行高），
+/// `None` 为连续缩放（PR 音高）。
 /// `scroll` / `cell_size` 会被原地修改；`dirty` 标记视图为脏。
 ///
 /// 即使 `total_pixels <= view_height`（内容一屏装下），也会绘制占满滚动条的 thumb，
@@ -301,6 +301,7 @@ pub(crate) fn show_vertical(
     num_cells: usize,
     cell_min: f32,
     cell_max: f32,
+    cell_step: Option<f32>,
     dirty: &mut bool,
     orientation: yinhe_types::Orientation,
 ) -> f32 {
@@ -434,7 +435,7 @@ pub(crate) fn show_vertical(
         let new_thumb_start_sb = (rect_top + drag_main(start_resp.drag_delta()))
             .clamp(0.0, rect_bottom - 2.0 * EDGE_WIDTH);
         let new_thumb_len_sb = (rect_bottom - new_thumb_start_sb).max(2.0 * EDGE_WIDTH);
-        let new_cs = (k_constant / new_thumb_len_sb).clamp(cell_min, cell_max);
+        let new_cs = snap_cell_size(k_constant / new_thumb_len_sb, cell_min, cell_max, cell_step);
         let new_scale = sb_h / (num_cells_f * new_cs);
         let new_scroll = rect_bottom / new_scale - view_height;
         let new_total_pixels = num_cells_f * new_cs;
@@ -451,7 +452,7 @@ pub(crate) fn show_vertical(
         let new_thumb_end_sb = (rect_bottom + drag_main(end_resp.drag_delta()))
             .clamp(rect_top + 2.0 * EDGE_WIDTH, sb_h);
         let new_thumb_len_sb = (new_thumb_end_sb - rect_top).max(2.0 * EDGE_WIDTH);
-        let new_cs = (k_constant / new_thumb_len_sb).clamp(cell_min, cell_max);
+        let new_cs = snap_cell_size(k_constant / new_thumb_len_sb, cell_min, cell_max, cell_step);
         let new_scale = sb_h / (num_cells_f * new_cs);
         let new_scroll = rect_top / new_scale;
         let new_total_pixels = num_cells_f * new_cs;
@@ -639,6 +640,18 @@ pub(crate) fn show_vertical_value(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snap_cell_size_continuous_or_stepped() {
+        // 连续：仅 clamp。
+        assert_eq!(snap_cell_size(37.3, 16.0, 120.0, None), 37.3);
+        assert_eq!(snap_cell_size(5.0, 16.0, 120.0, None), 16.0);
+        // 离散：吸附到 min + k·step，并 clamp。
+        assert_eq!(snap_cell_size(37.3, 16.0, 120.0, Some(8.0)), 40.0);
+        assert_eq!(snap_cell_size(42.0, 16.0, 120.0, Some(8.0)), 40.0);
+        assert_eq!(snap_cell_size(0.0, 16.0, 120.0, Some(8.0)), 16.0);
+        assert_eq!(snap_cell_size(200.0, 16.0, 120.0, Some(8.0)), 120.0);
+    }
 
     /// 跑一帧滚动条，返回背景拖拽返回值。
     fn run_frame(
@@ -1014,6 +1027,7 @@ mod tests {
                 200,
                 0.5,
                 8.0,
+                None,
                 dirty,
                 yinhe_types::Orientation::Horizontal,
             );

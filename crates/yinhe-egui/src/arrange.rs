@@ -302,14 +302,21 @@ pub fn show(
             && tp_rect.contains(hover)
         {
             let pointer_y = hover.y - tp_rect.min.y;
-            let old = doc.edit.arrange_view.base.track_panel_row_height;
-            doc.edit.arrange_view.base.track_panel_row_height =
-                (doc.edit.arrange_view.base.track_panel_row_height * zoom_delta).clamp(16.0, 120.0);
-            let track_frac = (pointer_y + doc.edit.arrange_view.base.track_panel_scroll_y) / old;
-            doc.edit.arrange_view.base.track_panel_scroll_y =
-                (track_frac * doc.edit.arrange_view.base.track_panel_row_height - pointer_y)
-                    .max(0.0);
-            doc.edit.arrange_view.base.dirty = true;
+            let base = doc.edit.arrange_view.base.track_panel_row_height;
+            let step = if zoom_delta > 1.0 {
+                yinhe_types::LANE_HEIGHT_STEP
+            } else {
+                -yinhe_types::LANE_HEIGHT_STEP
+            };
+            let new_h = yinhe_types::snap_lane_height(base + step);
+            if new_h != base {
+                doc.edit.arrange_view.base.track_panel_row_height = new_h;
+                let track_frac =
+                    (pointer_y + doc.edit.arrange_view.base.track_panel_scroll_y) / base;
+                doc.edit.arrange_view.base.track_panel_scroll_y =
+                    (track_frac * new_h - pointer_y).max(0.0);
+                doc.edit.arrange_view.base.dirty = true;
+            }
         }
 
         // Ensure parallel arrays are correctly sized (track count may have grown).
@@ -617,8 +624,9 @@ pub fn show(
                     &mut doc.edit.arrange_view.base.scroll_y,
                     &mut doc.edit.arrange_view.base.track_panel_row_height,
                     row_layout.total_rows(),
-                    16.0,
-                    120.0,
+                    yinhe_types::LANE_HEIGHT_MIN,
+                    yinhe_types::LANE_HEIGHT_MAX,
+                    Some(yinhe_types::LANE_HEIGHT_STEP),
                     &mut doc.edit.arrange_view.base.dirty,
                     yinhe_types::Orientation::Horizontal,
                 )

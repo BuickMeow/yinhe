@@ -1,5 +1,18 @@
 use crate::TimelineViewBase;
 
+/// AR 垂直缩放（行高）的最小档：16px（与改造前的最小值一致）。
+pub const LANE_HEIGHT_MIN: f32 = 16.0;
+/// AR 垂直缩放每档步进：8px（等差数列 16, 24, …, 120）。
+pub const LANE_HEIGHT_STEP: f32 = 8.0;
+/// AR 垂直缩放的最大档：120px（落在等差序列上）。
+pub const LANE_HEIGHT_MAX: f32 = 120.0;
+
+/// 把任意行高吸附到最近的离散档位（16 + k·8，clamp 到 [16, 120]）。
+pub fn snap_lane_height(h: f32) -> f32 {
+    let k = ((h - LANE_HEIGHT_MIN) / LANE_HEIGHT_STEP).round();
+    (LANE_HEIGHT_MIN + k * LANE_HEIGHT_STEP).clamp(LANE_HEIGHT_MIN, LANE_HEIGHT_MAX)
+}
+
 /// Arrangement view state: manages coordinate transforms between
 /// tick/track-space and screen pixel space.
 #[derive(Clone, Debug)]
@@ -109,9 +122,22 @@ impl ArrangementView {
     }
 
     /// Zoom lane height around a pointer y position (vertical).
+    /// 行高离散档位：factor > 1 放大一档，< 1 缩小一档（已在边界则不动）。
     pub fn zoom_lane_height(&mut self, pointer_y: f32, factor: f32) {
         let old = self.lane_height();
-        let new_h = (old * factor).clamp(16.0, 120.0);
+        let k = ((old - LANE_HEIGHT_MIN) / LANE_HEIGHT_STEP).round();
+        let k = if factor > 1.0 {
+            k + 1.0
+        } else if factor < 1.0 {
+            k - 1.0
+        } else {
+            k
+        };
+        let new_h =
+            (LANE_HEIGHT_MIN + k * LANE_HEIGHT_STEP).clamp(LANE_HEIGHT_MIN, LANE_HEIGHT_MAX);
+        if new_h == old {
+            return;
+        }
         self.base.track_panel_row_height = new_h;
 
         let track_frac = (pointer_y + self.base.scroll_y) / old;
@@ -130,5 +156,44 @@ impl ArrangementView {
             self.base.left_panel_width,
             self.lane_height(),
         ])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snap_lane_height_quantizes_to_step() {
+        assert_eq!(snap_lane_height(16.0), 16.0);
+        assert_eq!(snap_lane_height(19.0), 16.0);
+        assert_eq!(snap_lane_height(21.0), 24.0);
+        assert_eq!(snap_lane_height(40.0), 40.0);
+        assert_eq!(snap_lane_height(0.0), LANE_HEIGHT_MIN);
+        assert_eq!(snap_lane_height(200.0), LANE_HEIGHT_MAX);
+    }
+
+    #[test]
+    fn zoom_lane_height_steps_one_notch_and_stops_at_bounds() {
+        let mut v = ArrangementView::default(); // 40px
+        v.zoom_lane_height(100.0, 1.1);
+        assert_eq!(v.lane_height(), 48.0);
+        v.zoom_lane_height(100.0, 0.9);
+        assert_eq!(v.lane_height(), 40.0);
+
+        v.base.track_panel_row_height = LANE_HEIGHT_MIN;
+        v.zoom_lane_height(0.0, 0.9);
+        assert_eq!(v.lane_height(), LANE_HEIGHT_MIN);
+
+        v.base.track_panel_row_height = LANE_HEIGHT_MAX;
+        v.zoom_lane_height(0.0, 1.1);
+        assert_eq!(v.lane_height(), LANE_HEIGHT_MAX);
+    }
+
+    /// 等差档位恰好覆盖到最大档：16 + k·8 = 120。
+    #[test]
+    fn lane_height_max_lies_on_step_grid() {
+        let k = (LANE_HEIGHT_MAX - LANE_HEIGHT_MIN) / LANE_HEIGHT_STEP;
+        assert_eq!(k, k.round());
     }
 }

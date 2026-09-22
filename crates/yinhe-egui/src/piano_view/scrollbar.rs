@@ -92,6 +92,7 @@ pub(crate) fn show_scrollbars(
                     128,
                     cell_min,
                     cell_max,
+                    None,
                     &mut view.base.dirty,
                     pr_orientation,
                 )
@@ -168,6 +169,7 @@ pub(crate) fn show_scrollbars(
                     128,
                     cell_min,
                     cell_max,
+                    None,
                     &mut view.base.dirty,
                     pr_orientation,
                 )
