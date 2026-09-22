@@ -11,6 +11,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// 每页覆盖 2^16 = 65536 个连续 id（8KB）。
 const PAGE_SHIFT: u32 = 16;
@@ -19,10 +20,30 @@ const PAGE_WORDS: usize = (PAGE_BITS / 64) as usize;
 
 type Page = [u64; PAGE_WORDS];
 
-#[derive(Clone, Default)]
+/// 状态版本发号器：每次内容变化取新值，供渲染缓存比较（`state_hash`）。
+static NEXT_VERSION: AtomicU64 = AtomicU64::new(1);
+
+fn next_version() -> u64 {
+    NEXT_VERSION.fetch_add(1, Ordering::Relaxed)
+}
+
+#[derive(Clone)]
 pub struct NoteBitset {
     pages: BTreeMap<u32, Arc<Page>>,
     count: u64,
+    /// 内容版本：insert/remove/clear 改变内容时分配新值。
+    /// clone 保留（内容相同 → 版本相同）；不同实例的初始版本全局唯一。
+    version: u64,
+}
+
+impl Default for NoteBitset {
+    fn default() -> Self {
+        Self {
+            pages: BTreeMap::new(),
+            count: 0,
+            version: next_version(),
+        }
+    }
 }
 
 impl NoteBitset {
@@ -32,6 +53,11 @@ impl NoteBitset {
 
     pub fn is_empty(&self) -> bool {
         self.count == 0
+    }
+
+    /// 状态指纹（渲染缓存 key 用）：内容变化则变化，O(1)。
+    pub fn state_hash(&self) -> u64 {
+        self.version ^ self.count.wrapping_mul(0x9e37_79b9_7f4a_7c15)
     }
 
     pub fn contains(&self, id: u32) -> bool {
@@ -56,6 +82,7 @@ impl NoteBitset {
         }
         page[word] |= mask;
         self.count += 1;
+        self.version = next_version();
         true
     }
 
@@ -72,12 +99,17 @@ impl NoteBitset {
         }
         page[word] &= !mask;
         self.count -= 1;
+        self.version = next_version();
         true
     }
 
     pub fn clear(&mut self) {
+        let had_members = self.count > 0;
         self.pages.clear();
         self.count = 0;
+        if had_members {
+            self.version = next_version();
+        }
     }
 }
 
@@ -172,5 +204,31 @@ mod tests {
         ));
         assert_eq!(a.count(), 2);
         assert_eq!(b.count(), 3);
+    }
+
+    #[test]
+    fn state_hash_tracks_content_and_clone() {
+        let mut a = NoteBitset::default();
+        let h_empty = a.state_hash();
+        a.insert(5);
+        let h1 = a.state_hash();
+        assert_ne!(h_empty, h1, "内容变化后指纹必须变化");
+
+        let b = a.clone();
+        assert_eq!(a.state_hash(), b.state_hash(), "clone 内容相同指纹相同");
+
+        let mut c = a.clone();
+        c.insert(6);
+        assert_ne!(a.state_hash(), c.state_hash(), "副本变化不影响源指纹");
+        assert_eq!(a.count(), 1);
+
+        a.remove(5);
+        assert_ne!(a.state_hash(), h1, "移除后指纹变化");
+
+        // 空位图重复清空不改变指纹（无内容变化）
+        let mut d = NoteBitset::default();
+        let h0 = d.state_hash();
+        d.clear();
+        assert_eq!(h0, d.state_hash());
     }
 }

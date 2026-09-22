@@ -984,12 +984,13 @@ impl PrView {
         if self.ghost_dirty {
             self.ghost_dirty = false;
             // ghost 层（draw 的 Z 序最上层 Note 层）：CPU 直传 NoteInstance。
+            // vel=127 = 原色（不参与力度着色）。
             renderer.upload_note_layer(0, 0, |out| {
                 for &(s, e, k, tr) in &self.ghost_notes {
                     out.push(NoteInstance {
                         start_tick: s,
                         end_tick: e,
-                        packed: NoteInstance::pack(k, tr, 0),
+                        packed: NoteInstance::pack(k, tr, 127),
                     });
                 }
             });

@@ -170,7 +170,8 @@ pub fn build_notes(
 /// 子像素合并、tick/track 视口裁剪、track_visible 过滤，像素级与固定层一致。
 ///
 /// `ghost_notes`：`(start_tick, end_tick, key, track)`，会被原地按
-/// (key, track, start_tick) 排序以供合并。vel 恒为 0（AR 不使用 velocity）。
+/// (key, track, start_tick) 排序以供合并。vel 恒为 127（= 原色，
+/// 不参与力度着色，见 shader `MAX_FILL_LIGHTEN`）。
 pub fn build_ghost_notes(
     out: &mut Vec<NoteInstance>,
     ghost_notes: &mut [(u32, u32, u8, u16)],
@@ -201,7 +202,7 @@ pub fn build_ghost_notes(
         }
         let bucket = ghost_notes[i..j]
             .iter()
-            .map(|&(s, e, _, _)| (s, e.max(s), 0u8));
+            .map(|&(s, e, _, _)| (s, e.max(s), 127u8));
         flush_track_bucket(
             out,
             bucket,

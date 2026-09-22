@@ -1,4 +1,5 @@
 use rayon::prelude::*;
+use yinhe_core::Selection;
 use yinhe_theme::GpuTheme;
 use yinhe_types::{KEY_COUNT, MAX_KEY, NoteSource};
 
@@ -17,6 +18,9 @@ const STACK_SIZE: usize = 1024 * 1024; // 1MB per segment
 ///
 /// `range` 为 `Some((ts, te))` 时只输出与视口 tick 范围相交的音符，`None`
 /// 输出该 key 的全部音符。notes 必须按 start_tick 升序。
+///
+/// `selected` 非空时逐音符查询成员位图，命中的实例打上选中位
+/// （shader 填充纯黑；只有桌面可见层的 B 路径传入，GPU cull 全曲层不传）。
 fn build_key_instances(
     out: &mut Vec<NoteInstance>,
     midi: &dyn NoteSource,
@@ -24,6 +28,7 @@ fn build_key_instances(
     track_visible: &[bool],
     hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
     range: Option<(f64, f64)>,
+    selected: Option<&Selection>,
 ) {
     // 单音符过滤 + 输出（range 迭代器已精确到 [ts, te)，无需再 break）。
     let emit = |out: &mut Vec<NoteInstance>, note: &yinhe_types::Note| {
@@ -37,11 +42,17 @@ fn build_key_instances(
         if hidden_notes.contains(&(note.track, note.start_tick, key)) {
             return;
         }
-        out.push(NoteInstance {
+        let mut inst = NoteInstance {
             start_tick: note.start_tick,
             end_tick: note.end_tick,
             packed: NoteInstance::pack(key, note.track, note.velocity),
-        });
+        };
+        if let Some(sel) = selected
+            && sel.accepts_note(note, key)
+        {
+            inst.set_selected(true);
+        }
+        out.push(inst);
     };
     match range {
         Some((ts, te)) => {
@@ -75,6 +86,7 @@ fn build_key_instances(
 /// when the current stack is close to overflowing. This prevents
 /// STATUS_STACK_BUFFER_OVERRUN on Windows when rendering millions of notes
 /// at very low zoom levels.
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub fn build_notes(
     out: &mut Vec<NoteInstance>,
     w: f32,
@@ -83,6 +95,7 @@ pub fn build_notes(
     view: &PianoRollView,
     hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
+    selected: Option<&Selection>,
 ) {
     let (tick_start, tick_end) = view.visible_main_range(view.main_axis_len(w, h));
     let (key_lo, key_hi) = view.visible_cross_range(view.cross_axis_len(w, h));
@@ -97,7 +110,15 @@ pub fn build_notes(
         .filter_map(|key| {
             stacker::maybe_grow(STACK_RED_ZONE, STACK_SIZE, || {
                 let mut local = Vec::new();
-                build_key_instances(&mut local, midi, key, track_visible, hidden_notes, range);
+                build_key_instances(
+                    &mut local,
+                    midi,
+                    key,
+                    track_visible,
+                    hidden_notes,
+                    range,
+                    selected,
+                );
                 if local.is_empty() { None } else { Some(local) }
             })
         })
@@ -127,7 +148,17 @@ pub fn build_all_notes(
         .map(|key| {
             stacker::maybe_grow(STACK_RED_ZONE, STACK_SIZE, || {
                 let mut local = Vec::new();
-                build_key_instances(&mut local, midi, key, track_visible, hidden_notes, None);
+                build_key_instances(
+                    &mut local,
+                    midi,
+                    key,
+                    track_visible,
+                    hidden_notes,
+                    None,
+                    // GPU cull 全曲层是持久 buffer，选中位变化需按 key 增量重传，
+                    // 本轮暂不支持（桌面默认走可见层 B 路径）。
+                    None,
+                );
                 local
             })
         })
@@ -154,7 +185,15 @@ pub fn build_key_notes(
     track_visible: &[bool],
 ) -> Vec<NoteInstance> {
     let mut local = Vec::new();
-    build_key_instances(&mut local, midi, key, track_visible, hidden_notes, None);
+    build_key_instances(
+        &mut local,
+        midi,
+        key,
+        track_visible,
+        hidden_notes,
+        None,
+        None,
+    );
     local
 }
 
@@ -162,6 +201,8 @@ pub fn build_key_notes(
 /// Uses the note's track color at full opacity so it appears as a solid preview
 /// on top of the existing notes. Color is fetched from track_colors storage
 /// buffer in the shader (same as regular notes).
+///
+/// `vel=127` 表示"不参与力度着色"（填充 = 原色），见 shader `MAX_FILL_LIGHTEN`。
 pub fn build_ghost_note(
     out: &mut Vec<NoteInstance>,
     start_tick: u32,
@@ -173,7 +214,7 @@ pub fn build_ghost_note(
     out.push(NoteInstance {
         start_tick,
         end_tick,
-        packed: NoteInstance::pack(key, track, 0),
+        packed: NoteInstance::pack(key, track, 127),
     });
 }
 
@@ -220,6 +261,7 @@ mod tests {
             &view,
             &hidden,
             &track_visible,
+            None,
         );
         assert!(!out.is_empty(), "should produce note instances");
         let note = &out[0];
@@ -247,6 +289,7 @@ mod tests {
             &view,
             &hidden,
             &track_visible,
+            None,
         );
         assert!(out.is_empty(), "notes on hidden track should be skipped");
     }
@@ -268,6 +311,7 @@ mod tests {
             &view,
             &hidden,
             &track_visible,
+            None,
         );
         assert_eq!((out[0].packed >> 8) & 0xFFFF, 2, "track should be 2");
     }
@@ -289,6 +333,7 @@ mod tests {
             &view,
             &hidden,
             &track_visible,
+            None,
         );
         assert_eq!((out[0].packed >> 8) & 0xFFFF, 0, "track should be 0");
     }
@@ -313,6 +358,7 @@ mod tests {
             &view,
             &hidden,
             &track_visible,
+            None,
         );
         assert_eq!(out.len(), 3, "should produce 3 note instances");
     }
@@ -339,6 +385,7 @@ mod tests {
             &view,
             &hidden,
             &track_visible,
+            None,
         );
         assert!(
             !out.is_empty(),
@@ -364,7 +411,46 @@ mod tests {
             &view,
             &hidden,
             &track_visible,
+            None,
         );
         assert!(out.is_empty(), "note fully off-screen-left must be culled");
+    }
+
+    /// 选中位：传入 Selection 后，成员音符实例带 SELECTED_BIT，力度不被污染。
+    #[test]
+    fn test_build_notes_marks_selected_members() {
+        let mut out: Vec<NoteInstance> = Vec::new();
+        let midi = make_midi(vec![(100, 0, 480, 0, 100), (100, 600, 960, 0, 80)]);
+        let view = make_view();
+        let track_visible = vec![true];
+        let hidden = std::collections::HashSet::new();
+
+        let mut sel = yinhe_core::Selection::default();
+        sel.add_rect(0, 480, 100, 100);
+        sel.materialize_rect(&midi, 0, 480, 100, 100, 0, u16::MAX);
+
+        build_notes(
+            &mut out,
+            800.0,
+            500.0,
+            &midi,
+            &view,
+            &hidden,
+            &track_visible,
+            Some(&sel),
+        );
+        assert_eq!(out.len(), 2);
+        assert_eq!(
+            out.iter().filter(|n| n.is_selected()).count(),
+            1,
+            "只有成员音符带选中位"
+        );
+        let sel_inst = out.iter().find(|n| n.is_selected()).unwrap();
+        assert_eq!(sel_inst.start_tick, 0);
+        assert_eq!(sel_inst.velocity(), 100, "选中位不得污染力度字段");
+        assert_eq!(
+            out.iter().find(|n| !n.is_selected()).unwrap().velocity(),
+            80
+        );
     }
 }

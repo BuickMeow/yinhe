@@ -89,7 +89,8 @@ pub fn build_key_summary(key: u8, notes: &[NoteInstance], block_ticks: u32) -> V
         out.push(NoteInstance {
             start_tick: min_s,
             end_tick: max_e,
-            packed: NoteInstance::pack(key, dominant_track(&counts), 100),
+            // vel=127 = 原色：LOD 摘要层不参与力度/选中着色，避免缩小时颜色跳变。
+            packed: NoteInstance::pack(key, dominant_track(&counts), 127),
         });
     }
     out

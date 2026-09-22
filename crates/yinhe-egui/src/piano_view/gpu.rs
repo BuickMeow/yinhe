@@ -139,6 +139,7 @@ pub(crate) fn upload_and_prepare(
                 view,
                 hidden_notes,
                 track_visible,
+                Some(selected),
             );
         }
         let mut ghost_instances = Vec::new();
@@ -165,6 +166,9 @@ pub(crate) fn upload_and_prepare(
             tv_hash,
             revision,
             hidden_hash,
+            // 选中状态影响实例内的选中位（填充黑），必须进缓存 key，
+            // 否则框选/清空后 GPU 层因 key 相同跳过后上传。
+            selected.state_hash(),
         ]);
         let note_layers = vec![
             yinhe_wgpu::NoteLayerData {

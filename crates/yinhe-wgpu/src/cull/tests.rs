@@ -681,6 +681,7 @@ fn cull_real_midi_vs_cpu() {
             &view,
             &hidden,
             &track_visible,
+            None,
         );
         // CPU 输出按 key 统计
         let mut cpu_by_key = [0u32; 128];
@@ -1983,7 +1984,7 @@ fn cull_render_pixel_check() {
 
         // CPU 模式（legacy）：build_notes + note layer
         let mut instances = Vec::new();
-        crate::pianoroll::build_notes(&mut instances, w, h, &model, &view, &hidden, &tv);
+        crate::pianoroll::build_notes(&mut instances, w, h, &model, &view, &hidden, &tv, None);
         // 每 key 的 CPU 实例数
         let mut cpu_by_key = [0u32; 128];
         for n in &instances {
@@ -2208,7 +2209,7 @@ fn cull_visible_buffer_content_check() {
         },
     };
     let mut cpu_instances = Vec::new();
-    crate::pianoroll::build_notes(&mut cpu_instances, w, h, &model, &view, &hidden, &tv);
+    crate::pianoroll::build_notes(&mut cpu_instances, w, h, &model, &view, &hidden, &tv, None);
     let cpu_key60: Vec<_> = cpu_instances
         .iter()
         .filter(|n| n.packed & 0xFF == 60)
@@ -2914,6 +2915,7 @@ fn cull_bench_vs_cpu_start_mid() {
                 &view,
                 &hidden,
                 &track_visible,
+                None,
             );
             let mut cpu_ms = f64::MAX;
             for _ in 0..3 {
@@ -2927,6 +2929,7 @@ fn cull_bench_vs_cpu_start_mid() {
                     &view,
                     &hidden,
                     &track_visible,
+                    None,
                 );
                 cpu_ms = cpu_ms.min(t.elapsed().as_secs_f64() * 1e3);
             }

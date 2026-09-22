@@ -71,6 +71,9 @@ pub struct DrawInstance {
 ///   d0 = start_tick (u32)
 ///   d1 = end_tick   (u32)
 ///   d2 = packed: key(u8) | track(u16) | vel(u8)
+///
+/// `vel` 字段拆位：bit7 = 选中（渲染填充纯黑），bit0..7 = MIDI 力度
+/// （0..=127，渲染时向白变浅；127 = 原色）。见 [`NoteInstance::SELECTED_BIT`]。
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct NoteInstance {
@@ -81,8 +84,31 @@ pub struct NoteInstance {
 }
 
 impl NoteInstance {
+    /// packed 的 bit31（vel 字段最高位）：选中标记。
+    pub const SELECTED_BIT: u32 = 1 << 31;
+
+    /// 打包实例。`vel` 只取低 7 位（MIDI 力度语义），bit7 由
+    /// [`NoteInstance::set_selected`] 控制。
     pub fn pack(key: u8, track: u16, vel: u8) -> u32 {
-        key as u32 | ((track as u32) << 8) | ((vel as u32) << 24)
+        key as u32 | ((track as u32) << 8) | (((vel & 0x7F) as u32) << 24)
+    }
+
+    /// 设置选中标记（填充纯黑；仅桌面可见层的 CPU 构建路径会设置）。
+    pub fn set_selected(&mut self, selected: bool) {
+        if selected {
+            self.packed |= Self::SELECTED_BIT;
+        } else {
+            self.packed &= !Self::SELECTED_BIT;
+        }
+    }
+
+    pub fn is_selected(&self) -> bool {
+        self.packed & Self::SELECTED_BIT != 0
+    }
+
+    /// MIDI 力度 0..=127（去掉选中位）。
+    pub fn velocity(&self) -> u8 {
+        ((self.packed >> 24) & 0x7F) as u8
     }
 }
 
@@ -341,5 +367,37 @@ mod tests {
         assert_pod::<NoteInstance>();
         assert_pod::<VelocityBarInstance>();
         assert_pod::<CurveInstance>();
+    }
+
+    /// vel 字段拆位：高 7 位（bit24..31）是力度，bit31 是选中标记。
+    #[test]
+    fn test_note_instance_selected_bit() {
+        let mut inst = NoteInstance {
+            start_tick: 10,
+            end_tick: 20,
+            packed: NoteInstance::pack(60, 3, 100),
+        };
+        assert!(!inst.is_selected());
+        assert_eq!(inst.velocity(), 100);
+        assert_eq!((inst.packed >> 8) & 0xFFFF, 3, "track 不受影响");
+        assert_eq!(inst.packed & 0xFF, 60, "key 不受影响");
+
+        inst.set_selected(true);
+        assert!(inst.is_selected());
+        assert_eq!(inst.velocity(), 100, "选中位不得污染力度");
+        assert!(inst.packed & NoteInstance::SELECTED_BIT != 0);
+
+        inst.set_selected(false);
+        assert!(!inst.is_selected());
+        assert_eq!(inst.velocity(), 100);
+
+        // 力度只取低 7 位：高位（bit31）不会被力度值污染
+        let inst = NoteInstance {
+            start_tick: 0,
+            end_tick: 1,
+            packed: NoteInstance::pack(60, 0, 0xFF),
+        };
+        assert!(!inst.is_selected(), "力度入参的高位必须被掩掉");
+        assert_eq!(inst.velocity(), 127);
     }
 }

@@ -205,6 +205,24 @@ impl Selection {
         self.members = None;
     }
 
+    /// 渲染缓存用的选择状态指纹：矩形 + 音符属性边界 + 成员位图。
+    /// 只包含影响音符判定的字段（automation 筛选不影响音符渲染）。
+    pub fn state_hash(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.rects.hash(&mut h);
+        self.filter.key.hash(&mut h);
+        self.filter.track.hash(&mut h);
+        self.filter.velocity.hash(&mut h);
+        self.filter.gate.hash(&mut h);
+        self.filter.invert.hash(&mut h);
+        self.members
+            .as_ref()
+            .map(NoteBitset::state_hash)
+            .hash(&mut h);
+        h.finish()
+    }
+
     /// Add a rect with full (tick, key, track) range.
     /// Defaults track_lo=0, track_hi=65535 (match all tracks).
     pub fn add_rect(&mut self, tick_start: u32, tick_end: u32, key_lo: u8, key_hi: u8) {
@@ -490,6 +508,23 @@ mod tests {
             "成员态不受矩形限制"
         );
         assert!(!sel.accepts_note(&note_id(30, 0, 50, 100, 0), 60));
+    }
+
+    /// 渲染缓存指纹：矩形/成员/筛选变化都会改变。
+    #[test]
+    fn state_hash_tracks_selection_changes() {
+        let n = note_id(1, 0, 100, 100, 0);
+        let source = MockSource::new(&[(60, n)]);
+        let mut sel = Selection::default();
+        let h_empty = sel.state_hash();
+        sel.add_rect(0, 100, 60, 60);
+        let h_rect = sel.state_hash();
+        assert_ne!(h_empty, h_rect);
+        sel.materialize_rect(&source, 0, 100, 60, 60, 0, u16::MAX);
+        let h_members = sel.state_hash();
+        assert_ne!(h_rect, h_members, "物化成员后指纹变化");
+        sel.filter.velocity = Some((10, 20));
+        assert_ne!(h_members, sel.state_hash(), "筛选变化后指纹变化");
     }
 
     #[test]

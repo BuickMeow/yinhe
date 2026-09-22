@@ -1,6 +1,9 @@
 // ── Rendering constants ───────────────────────────────────────────────────
 const BORDER_DARKEN_FACTOR: f32 = 0.4;
 const MAX_SEL_RECTS: u32 = 32u;
+// 填充色的力度变浅上限：力度 0 → 向白混合 80%，力度 127 → 原色。
+// 仅用于 PR/AR 音符（note_geometry）；ghost 与 LOD 摘要层 vel=127 即原色。
+const MAX_FILL_LIGHTEN: f32 = 0.8;
 
 struct Uniforms {
     width: f32,
@@ -82,6 +85,8 @@ struct VertexOutput {
     @location(2) half_size: vec2<f32>,
     @location(3) radius: f32,
     @location(4) border_width: f32,
+    /// 填充色（描边仍用 color）：PR/AR 音符按选中/力度计算，其余等于 color.rgb。
+    @location(5) fill_color: vec3<f32>,
 }
 
 @group(0) @binding(0)
@@ -186,6 +191,7 @@ fn vs_main(
         base_color.a = f32((rgba >> 24u) & 0xFFu) / 255.0;
     }
     out.color = base_color;
+    out.fill_color = base_color.rgb; // 非音符管线不做选中/力度着色
 
     // Unpack props from packed u32 (2x f16), or compute for PR notes
     let props = instance.packed.y;
@@ -234,6 +240,10 @@ fn note_geometry(
 
     let key = packed & 0xFFu;
     let track = (packed >> 8u) & 0xFFFFu;
+    // vel 字段拆位：bit7 = 选中（填充纯黑），bit0..7 = MIDI 力度。
+    let vel_raw = (packed >> 24u) & 0xFFu;
+    let selected = (vel_raw & 0x80u) != 0u;
+    let vel = vel_raw & 0x7Fu;
 
     let ppu = u.pixels_per_tick;
 
@@ -315,6 +325,15 @@ fn note_geometry(
         base_color = vec4<f32>(0.5, 0.5, 0.5, 1.0);
     }
     out.color = base_color;
+
+    // 填充色：选中 = 纯黑；未选中按力度向白变浅（力度 0 最浅，127 = 原色）。
+    // ghost / LOD 摘要层打包 vel=127 → 原色，不参与着色。
+    if selected {
+        out.fill_color = vec3<f32>(0.0, 0.0, 0.0);
+    } else {
+        let lighten = (1.0 - f32(vel) / 127.0) * MAX_FILL_LIGHTEN;
+        out.fill_color = mix(base_color.rgb, vec3<f32>(1.0, 1.0, 1.0), lighten);
+    }
 
     // No rounded corners; border based on vertical dimension (key/lane height).
     // PR (mode==1): border = 0.05 * pixel_h (narrowed from 0.1).
@@ -422,6 +441,7 @@ fn vs_main_velocity(
         base_color = vec4<f32>(0.5, 0.5, 0.5, 1.0);
     }
     out.color = base_color;
+    out.fill_color = base_color.rgb; // 力度条不做选中/力度着色
 
     // Unified border width: fixed 1px, independent of zoom level
     // so users can scale freely without border thickness changing.
@@ -443,7 +463,12 @@ fn sd_rounded_box(p: vec2<f32>, half_size: vec2<f32>, r: f32) -> f32 {
 // Border + fill alpha compositing — 音符全不透明（轨道色 alpha=1 时）
 // 相邻音符共享边界 right==next.left 时，若外缘用 smoothstep 0.5 会与透明 clear
 // 混合出 0.25 漏底细线；此处用硬边 select 保证内侧 alpha=1。
-fn composite_border_fill(fill_a: f32, border_a: f32, base_color: vec4<f32>) -> vec4<f32> {
+fn composite_border_fill(
+    fill_a: f32,
+    border_a: f32,
+    base_color: vec4<f32>,
+    fill_color: vec3<f32>,
+) -> vec4<f32> {
     let total_a = fill_a + border_a;
     if total_a <= 0.0 {
         discard;
@@ -451,7 +476,7 @@ fn composite_border_fill(fill_a: f32, border_a: f32, base_color: vec4<f32>) -> v
     let border_color = base_color.rgb * BORDER_DARKEN_FACTOR;
     var rgb = border_color;
     if fill_a > 0.0 {
-        rgb = (base_color.rgb * fill_a + border_color * border_a) / total_a;
+        rgb = (fill_color * fill_a + border_color * border_a) / total_a;
     }
     return vec4(rgb, base_color.a * total_a);
 }
@@ -478,7 +503,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             border_a = outer_a - inner_a;
         }
 
-        return composite_border_fill(fill_a, border_a, base_color);
+        return composite_border_fill(fill_a, border_a, base_color, in.fill_color);
     }
 
     // Slow path: SDF rounded rectangle — 同上
@@ -498,7 +523,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         border_a = outer_a - inner_a;
     }
 
-    return composite_border_fill(fill_a, border_a, base_color);
+    return composite_border_fill(fill_a, border_a, base_color, in.fill_color);
 }
 
 // ── Curve / line pipeline ─────────────────────────────────────────────────
