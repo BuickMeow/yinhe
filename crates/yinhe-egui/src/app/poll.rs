@@ -360,7 +360,7 @@ impl App {
                         crate::widgets::toast::EXPORT_PROGRESS_ID,
                         crate::widgets::toast::ProgressOutcome::Completed,
                         t!("toast.export_done").to_string(),
-                        format!("{} ({:.1}s, {:.1}x)", fname, elapsed, speed),
+                        format!("{} ({:.1}s, {:.2}x)", fname, elapsed, speed),
                         None,
                     );
                     if let Some(p) = out_path {

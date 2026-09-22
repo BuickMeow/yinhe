@@ -88,7 +88,7 @@ impl ProgressSource for ExportToastSource {
             .map(|st| {
                 if st.render_speed > 0.0 {
                     format!(
-                        "已渲染{} · 当前{:.1}x",
+                        "已渲染{} · 当前{:.2}x",
                         format_duration(st.rendered_secs),
                         st.render_speed
                     )
