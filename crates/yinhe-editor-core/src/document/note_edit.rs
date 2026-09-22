@@ -1197,6 +1197,118 @@ impl Document {
         self.data.rebuild_model_dirty();
         Some(UndoAction::Notes(NoteDelta { before, after }))
     }
+
+    /// 网格工具确认：把选框内（含边界）的音符按当前量化网格切开。
+    ///
+    /// - 只切选框与音符的交集区段：框外的音符头/尾保留；
+    /// - 切点 = 落在 `[t0, t1]` 且严格处于音符内部的量化网格点；
+    /// - 作用域与其它 PR 编辑一致：`track_selected`（空 = 全部）∩ PR 可见轨。
+    ///
+    /// 返回副本制 undo（before = 原音符，after = 各段）。
+    pub fn split_selection_by_grid(&mut self) -> Option<UndoAction> {
+        let interval = self
+            .edit
+            .quantize_pianoroll
+            .tick_interval(self.data.model.meta.ppq);
+        if interval == 0 || self.edit.sel_rect.rects.is_empty() {
+            return None;
+        }
+        let rects: Vec<(f64, f64, u8, u8)> = self.edit.sel_rect.rects.clone();
+        let interval = interval as u64;
+        let mut before: Vec<(yinhe_types::Note, u8)> = Vec::new();
+        let mut after: Vec<(yinhe_types::Note, u8)> = Vec::new();
+        {
+            let selected = &self.edit.track_selected;
+            let visible = &self.edit.track_pianoroll_visible;
+            let model = Arc::make_mut(&mut self.data.model);
+            let max_len = model.max_note_len;
+            for &(t0f, t1f, key_lo, key_hi) in &rects {
+                let t0 = t0f.max(0.0) as u32;
+                let t1 = t1f.max(0.0) as u32;
+                if t1 <= t0 {
+                    continue;
+                }
+                for key in key_lo..=key_hi {
+                    let targets = {
+                        let bucket = Arc::make_mut(&mut model.notes[key as usize]);
+                        bucket.drain_range_filtered(
+                            t0.saturating_sub(max_len),
+                            t1.saturating_add(1),
+                            |n| {
+                                n.start_tick < t1
+                                    && n.end_tick > t0
+                                    && (selected.is_empty() || selected.contains(&n.track))
+                                    && visible.get(n.track as usize).copied().unwrap_or(true)
+                                    && !grid_cuts_in_note(n, t0, t1, interval).is_empty()
+                            },
+                        )
+                    };
+                    if targets.is_empty() {
+                        continue;
+                    }
+                    let per_note: Vec<(yinhe_types::Note, Vec<u32>)> = targets
+                        .into_iter()
+                        .map(|n| {
+                            let cuts = grid_cuts_in_note(&n, t0, t1, interval);
+                            (n, cuts)
+                        })
+                        .collect();
+                    // 首段沿用原 id，其余段各分配一个新 id。
+                    let mut halves = Vec::new();
+                    for (n, cuts) in &per_note {
+                        before.push((*n, key));
+                        let mut seg_start = n.start_tick;
+                        for (i, &cut) in cuts.iter().enumerate() {
+                            let id = if i == 0 { n.id } else { model.alloc_note_id() };
+                            let seg = yinhe_types::Note {
+                                id,
+                                start_tick: seg_start,
+                                end_tick: cut,
+                                ..*n
+                            };
+                            seg_start = cut;
+                            after.push((seg, key));
+                            halves.push(seg);
+                        }
+                        let tail = yinhe_types::Note {
+                            id: model.alloc_note_id(),
+                            start_tick: seg_start,
+                            end_tick: n.end_tick,
+                            ..*n
+                        };
+                        after.push((tail, key));
+                        halves.push(tail);
+                    }
+                    Arc::make_mut(&mut model.notes[key as usize]).insert_batch_sorted(halves);
+                    model.mark_dirty(key);
+                }
+            }
+        }
+        if after.is_empty() {
+            return None;
+        }
+        self.data.rebuild_model_dirty();
+        Some(UndoAction::Notes(NoteDelta { before, after }))
+    }
+}
+
+/// 音符在 `[t0, t1]` 内、严格处于音符内部的量化网格切点（升序）。
+///
+/// 无切点时返回空。`interval` 已保证 > 0。
+fn grid_cuts_in_note(n: &yinhe_types::Note, t0: u32, t1: u32, interval: u64) -> Vec<u32> {
+    let lower = (n.start_tick as u64 + 1).max(t0 as u64);
+    let upper = (n.end_tick as u64).saturating_sub(1).min(t1 as u64);
+    let mut cuts = Vec::new();
+    if lower > upper {
+        return cuts;
+    }
+    let first = lower.div_ceil(interval) * interval;
+    let mut t = first;
+    while t <= upper {
+        cuts.push(t as u32);
+        t += interval;
+    }
+    cuts
 }
 
 #[cfg(test)]
@@ -2156,5 +2268,102 @@ mod tests {
             doc.split_notes_at(&[(60, 150)]).is_some(),
             "清空选中 = 全部可见轨"
         );
+    }
+
+    /// 网格切割：只切选框内的区段（含边界切点），框外头尾保留，
+    /// 无切点的音符不动；undo/redo 完整回放。
+    #[test]
+    fn split_selection_by_grid_cuts_inside_box_only() {
+        let mut doc = make_doc_with_note(); // k60 [100,200)
+        doc.edit.quantize_pianoroll = crate::quantize::QuantizePreset::Absolute(480);
+        doc.add_note(0, ev(0, 960, 62)); // 跨框边界的长音
+        doc.add_note(0, ev(100, 300, 64)); // 不跨任何网格点
+        doc.edit.sel_rect.rects = vec![(480.0, 960.0, 60, 64)];
+
+        let before_snap = doc.capture_snapshot();
+        let action = doc.split_selection_by_grid().expect("应切割");
+        // k62 [0,960) → [0,480) + [480,960)：480 同时在框边界与音符内部
+        assert_eq!(doc.data.model.notes[62].len(), 2);
+        assert!(
+            doc.data.model.notes[62]
+                .iter()
+                .any(|n| n.start_tick == 0 && n.end_tick == 480)
+        );
+        assert!(
+            doc.data.model.notes[62]
+                .iter()
+                .any(|n| n.start_tick == 480 && n.end_tick == 960)
+        );
+        // k60 [100,200)、k64 [100,300)：框内无网格点 → 不切
+        assert_eq!(doc.data.model.notes[60].len(), 1);
+        assert_eq!(doc.data.model.notes[64].len(), 1);
+
+        match &action {
+            UndoAction::Notes(delta) => {
+                assert_eq!(delta.before.len(), 1);
+                assert_eq!(delta.after.len(), 2);
+            }
+            other => panic!("期望副本制 Notes，实际 {other:?}"),
+        }
+
+        doc.push_undo(action, "grid", before_snap);
+        assert!(doc.undo(), "undo 应成功");
+        assert_eq!(doc.data.model.notes[62].len(), 1);
+        assert!(doc.redo(), "redo 应成功");
+        assert_eq!(doc.data.model.notes[62].len(), 2);
+    }
+
+    /// 网格切割：框完全包含音符时切成多段（首段保留原 id），
+    /// 框外部分越出时只切到框边界。
+    #[test]
+    fn split_selection_by_grid_multi_segments() {
+        let mut doc = make_doc_with_note(); // k60 [100,200)
+        doc.edit.quantize_pianoroll = crate::quantize::QuantizePreset::Absolute(120);
+        doc.add_note(0, ev(0, 600, 62));
+        doc.edit.sel_rect.rects = vec![(120.0, 480.0, 62, 62)];
+        // 切点：240, 360, 480 → [0,240) 跨框左界？不对：切点含框边界 120 吗？
+        // 120 在音符内部 (0<120<600) 且 t0<=120<=t1 → 是切点；
+        // 240、360、480 同理 → 段：[0,120) [120,240) [240,360) [360,480) [480,600)
+        let action = doc.split_selection_by_grid().expect("应切割");
+        assert_eq!(doc.data.model.notes[62].len(), 5);
+        let starts: Vec<u32> = doc.data.model.notes[62]
+            .iter()
+            .map(|n| n.start_tick)
+            .collect();
+        assert_eq!(starts, vec![0, 120, 240, 360, 480]);
+        let orig_id = doc.data.model.notes[62]
+            .iter()
+            .find(|n| n.start_tick == 0)
+            .map(|n| n.id);
+        assert!(orig_id.is_some(), "首段保留原音符 id");
+        match &action {
+            UndoAction::Notes(delta) => {
+                assert_eq!(delta.before.len(), 1);
+                assert_eq!(delta.after.len(), 5);
+            }
+            other => panic!("期望副本制 Notes，实际 {other:?}"),
+        }
+    }
+
+    /// 网格切割：空选框 / 不可见轨 / interval 0 都返回 None。
+    #[test]
+    fn split_selection_by_grid_returns_none_when_scope_blocks() {
+        let mut doc = make_doc_with_note();
+        doc.edit.quantize_pianoroll = crate::quantize::QuantizePreset::Absolute(480);
+        assert!(doc.split_selection_by_grid().is_none(), "无选框");
+
+        // 框与 k60 [100,200) 相交且含切点 120（边界）。
+        doc.edit.sel_rect.rects = vec![(120.0, 480.0, 60, 60)];
+        doc.edit.track_pianoroll_visible = vec![false];
+        assert!(doc.split_selection_by_grid().is_none(), "不可见轨不切");
+
+        doc.edit.track_pianoroll_visible = vec![true];
+        doc.edit.track_selected.insert(5);
+        assert!(doc.split_selection_by_grid().is_none(), "选中其他轨时不切");
+
+        doc.edit.track_selected.clear();
+        doc.edit.quantize_pianoroll = crate::quantize::QuantizePreset::Absolute(0);
+        assert!(doc.split_selection_by_grid().is_none(), "interval 0 不切");
+        assert_eq!(doc.data.model.notes[60].len(), 1, "模型未被改动");
     }
 }
