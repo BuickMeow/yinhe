@@ -90,7 +90,6 @@ impl App {
             let arr_quantize = arrange::show(
                 ui,
                 guard.as_mut(),
-                &mut self.arrange_view,
                 crate::arrange::ArrangeLayout {
                     remaining: layout.remaining,
                     arr_h: layout.arr_h,
@@ -547,7 +546,7 @@ impl App {
                     &mut self.pianoroll,
                     &mut self.render_ctx,
                     self.render_thread.as_ref(),
-                    &mut self.pianoroll_view,
+                    &mut doc.edit.pianoroll_view,
                     &mut self.last_cull_revision,
                     &mut self.last_cull_revision_only,
                     &mut self.last_hidden_hash,
@@ -756,7 +755,7 @@ impl App {
         let doc = &mut self.workspace.documents[idx];
         let before = doc.capture_snapshot();
         if let Some(action) = doc.set_notes_velocity(&filtered) {
-            self.pianoroll_view.base.dirty = true;
+            doc.edit.pianoroll_view.base.dirty = true;
             doc.push_undo(action, t!("undo.edit_velocity").as_ref(), before);
             // 纯音符 velocity 修改：只更新 audible_notes，不重建 CC，不 chase
             self.notify_notes_changed();
@@ -776,7 +775,7 @@ impl App {
         let before = doc.capture_snapshot();
         let actions = doc.apply_automation_edits(edits);
         if !actions.is_empty() {
-            self.pianoroll_view.base.dirty = true;
+            doc.edit.pianoroll_view.base.dirty = true;
             push_automation_actions(doc, actions, t!("undo.edit_automation").as_ref(), before);
             self.notify_audio_model_changed();
         }
@@ -816,7 +815,10 @@ impl App {
 
         // 4. 滚动到中心（参考 follow.rs Page 模式公式）
         // remaining 已由 Panel 扣掉右栏/dock，此处不能再减右栏宽（原双重扣减）。
-        let view = &mut self.pianoroll_view;
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let view = &mut self.workspace.documents[idx].edit.pianoroll_view;
         let viewport_w = layout.remaining.width();
         let content_w = viewport_w - view.base.left_panel_width;
         let target_x = req.tick as f32 * view.base.pixels_per_tick;
@@ -843,7 +845,7 @@ impl App {
                 )
             };
             if let Some(action) = action {
-                self.pianoroll_view.base.dirty = true;
+                doc.edit.pianoroll_view.base.dirty = true;
                 doc.push_undo(action, &label, before);
                 // 纯音符移动/复制：只更新 audible_notes，不重建 CC，不 chase
                 self.notify_notes_changed();
@@ -864,7 +866,7 @@ impl App {
             let doc = &mut self.workspace.documents[idx];
             let before = doc.capture_snapshot();
             if let Some(action) = doc.resize_selected_notes(side, dt) {
-                self.pianoroll_view.base.dirty = true;
+                doc.edit.pianoroll_view.base.dirty = true;
                 doc.push_undo(action, t!("undo.resize_notes").as_ref(), before);
                 self.notify_notes_changed();
             }
@@ -880,7 +882,7 @@ impl App {
         let doc = &mut self.workspace.documents[idx];
         let before = doc.capture_snapshot();
         if let Some(action) = doc.pencil_drag_note(&drag) {
-            self.pianoroll_view.base.dirty = true;
+            doc.edit.pianoroll_view.base.dirty = true;
             let label = match &drag {
                 crate::piano_view::PencilNoteDrag::Move { .. } => t!("undo.move_note").to_string(),
                 _ => t!("undo.resize_note").to_string(),
@@ -915,7 +917,7 @@ impl App {
             )
         };
         if let Some(action) = action {
-            self.arrange_view.base.dirty = true;
+            doc.edit.arrange_view.base.dirty = true;
             doc.push_undo(action, &label, before);
             self.notify_audio_model_changed();
         }

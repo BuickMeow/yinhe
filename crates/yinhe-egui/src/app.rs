@@ -26,7 +26,6 @@ use crate::dialogs::system_monitor::SystemMonitor;
 use crate::file_loader::FileLoader;
 use crate::render_context::RenderContext;
 use yinhe_editor_core::document::Document;
-use yinhe_types::{ArrangementView, PianoRollView};
 
 /// A file action that was deferred because the current document has unsaved changes.
 #[derive(Clone, Debug)]
@@ -47,11 +46,10 @@ pub(crate) struct PasteChain {
 pub(crate) type SaveResultRx = mpsc::Receiver<(usize, usize, String, Result<(), String>)>;
 
 pub struct App {
-    // ── Pianoroll (shared GPU resources + global view state) ──
+    // ── Pianoroll (shared GPU resources；视口状态在 Document.edit 内，每文档独立) ──
     pub(crate) render_ctx: RenderContext,
     pub(crate) pianoroll: yinhe_wgpu::InstanceRenderer,
     pub(crate) render_thread: Option<yinhe_wgpu::RenderThreadHandle>,
-    pub(crate) pianoroll_view: PianoRollView,
     pub(crate) last_cull_revision: u64, // revision ^ hidden_hash
     pub(crate) last_cull_revision_only: u64, // last revision (for incremental detection)
     pub(crate) last_hidden_hash: u64,   // last hidden_hash (for incremental detection)
@@ -61,10 +59,9 @@ pub struct App {
     /// Track 显隐后台重建状态机（见 gpu_upload::CullRebuild）。
     pub(crate) cull_rebuild: Option<crate::piano_view::gpu_upload::CullRebuild>,
 
-    // ── Arrangement (shared GPU resources + global view state) ──
+    // ── Arrangement (shared GPU resources) ──
     pub(crate) arr_render_ctx: RenderContext,
     pub(crate) arr_renderer: yinhe_wgpu::InstanceRenderer,
-    pub(crate) arrange_view: ArrangementView,
     pub(crate) arr_split: f32,
 
     // ── Automation panel GPU resources (per-document, per-panel) ──
@@ -355,7 +352,6 @@ impl App {
             render_ctx,
             pianoroll: yinhe_wgpu::InstanceRenderer::new(device.clone(), queue.clone(), format),
             render_thread: None,
-            pianoroll_view: PianoRollView::default(),
             last_cull_revision: 0,
             last_cull_revision_only: 0,
             last_hidden_hash: 0,
@@ -365,7 +361,6 @@ impl App {
 
             arr_render_ctx,
             arr_renderer: yinhe_wgpu::InstanceRenderer::new(device, queue, format),
-            arrange_view: ArrangementView::default(),
             arr_split: audio_settings.layout.arr_split,
 
             controller_renderers: Vec::new(),

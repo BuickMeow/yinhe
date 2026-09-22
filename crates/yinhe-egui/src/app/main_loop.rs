@@ -333,8 +333,10 @@ impl eframe::App for App {
 
         // ── Detect document switch → invalidate GPU caches ──
         if self.workspace.active_doc != self.workspace.prev_active_doc {
-            self.arrange_view.base.dirty = true;
-            self.pianoroll_view.base.dirty = true;
+            if let Some(doc) = self.workspace.active_doc_mut() {
+                doc.edit.arrange_view.base.dirty = true;
+                doc.edit.pianoroll_view.base.dirty = true;
+            }
             // 筛选弹窗绑定当前文档的选区，切换文档时关闭避免作用错对象。
             self.filter_dialog.open = false;
             // 全局 GPU cull buffer 是跨文档共享的，切换后必须清空 + 重置跟踪键，
@@ -565,7 +567,8 @@ impl eframe::App for App {
                 settings: &mut self.audio_settings,
                 is_recording: self.recording.is_some() || self.audio_recording.is_some(),
                 step_input: self.step_input,
-                orientation: &mut self.pianoroll_view.orientation,
+                orientation_vertical: active_doc
+                    .is_some_and(|d| d.edit.pianoroll_view.is_vertical()),
             },
         );
 
@@ -595,9 +598,11 @@ impl eframe::App for App {
         }
 
         // ── 钢琴卷帘方向切换（横向 / 纵向瀑布流二选一）──
-        if transport_response.toggle_orientation {
-            self.pianoroll_view
-                .set_orientation(self.pianoroll_view.orientation().toggled());
+        if transport_response.toggle_orientation
+            && let Some(doc) = self.workspace.active_doc_mut()
+        {
+            let toggled = doc.edit.pianoroll_view.orientation().toggled();
+            doc.edit.pianoroll_view.set_orientation(toggled);
         }
 
         // ── MIDI/音频录音切换（REC 按钮 / macOS 播放菜单）──

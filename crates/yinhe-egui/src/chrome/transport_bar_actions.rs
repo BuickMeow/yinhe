@@ -383,7 +383,8 @@ pub struct TransportContext<'a> {
     pub step_input: bool,
     pub status_hint: &'a mut Option<String>,
     pub settings: &'a mut crate::audio_settings::AudioSettings,
-    pub orientation: &'a mut yinhe_types::Orientation,
+    /// 当前文档 PR 是否为纵向瀑布流（只读，切换由 main_loop 落地到文档视口）。
+    pub orientation_vertical: bool,
 }
 
 pub struct TransportResponse {

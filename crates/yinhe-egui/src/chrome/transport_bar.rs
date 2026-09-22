@@ -194,7 +194,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                         crate::theme::TRANSPORT_BTN_FONT,
                         orientation_icon.font_family(),
                     );
-                    let is_vertical = *ctx.orientation == yinhe_types::Orientation::Vertical;
+                    let is_vertical = ctx.orientation_vertical;
                     let ori_resp = if is_vertical {
                         crate::widgets::hover::hover_button_rotated(
                             ui,

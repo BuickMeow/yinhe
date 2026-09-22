@@ -131,7 +131,6 @@ fn make_transport_harness<'a>(doc: Option<&'a Document>) -> Harness<'a, ()> {
                     ui.ctx().add_font(egui_material_icons::font_insert());
                     return;
                 }
-                let mut ori = yinhe_types::Orientation::Horizontal;
                 let mut ctx = TransportContext {
                     file_loader: &mut file_loader,
                     doc,
@@ -141,7 +140,7 @@ fn make_transport_harness<'a>(doc: Option<&'a Document>) -> Harness<'a, ()> {
                     settings: &mut settings,
                     is_recording: false,
                     step_input: false,
-                    orientation: &mut ori,
+                    orientation_vertical: false,
                 };
                 show(ui, &mut ctx);
             },
@@ -169,7 +168,6 @@ fn make_harness_with_hidden_button<'a>(doc: Option<&'a Document>) -> Harness<'a,
                     ui.ctx().add_font(egui_material_icons::font_insert());
                     return;
                 }
-                let mut ori = yinhe_types::Orientation::Horizontal;
                 let mut ctx = TransportContext {
                     file_loader: &mut file_loader,
                     doc,
@@ -179,7 +177,7 @@ fn make_harness_with_hidden_button<'a>(doc: Option<&'a Document>) -> Harness<'a,
                     settings: &mut settings,
                     is_recording: false,
                     step_input: false,
-                    orientation: &mut ori,
+                    orientation_vertical: false,
                 };
                 show(ui, &mut ctx);
                 // 透明隐藏按钮：位于 x 1150..1174、y 8..32

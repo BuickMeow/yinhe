@@ -429,8 +429,8 @@ impl App {
             self.workspace.documents[idx].select_all_ar();
         }
         self.workspace.documents[idx].data.bump_revision();
-        self.pianoroll_view.base.dirty = true;
-        self.arrange_view.base.dirty = true;
+        self.workspace.documents[idx].edit.pianoroll_view.base.dirty = true;
+        self.workspace.documents[idx].edit.arrange_view.base.dirty = true;
     }
 
     /// 「仅选择音符」：清除所有自动化锚点选择（PR 面板 + AR 展开 lane），
@@ -456,8 +456,8 @@ impl App {
             }
         }
         if changed {
-            self.pianoroll_view.base.dirty = true;
-            self.arrange_view.base.dirty = true;
+            doc.edit.pianoroll_view.base.dirty = true;
+            doc.edit.arrange_view.base.dirty = true;
         }
     }
 
@@ -477,8 +477,8 @@ impl App {
         };
         let doc = &mut self.workspace.documents[idx];
         doc.edit.selected.filter = self.filter_dialog.build_filter();
-        self.pianoroll_view.base.dirty = true;
-        self.arrange_view.base.dirty = true;
+        doc.edit.pianoroll_view.base.dirty = true;
+        doc.edit.arrange_view.base.dirty = true;
     }
 
     /// 清除筛选边界（保留选框与已收窄的空间范围）。
@@ -488,8 +488,8 @@ impl App {
         };
         let doc = &mut self.workspace.documents[idx];
         doc.edit.selected.filter = Default::default();
-        self.pianoroll_view.base.dirty = true;
-        self.arrange_view.base.dirty = true;
+        doc.edit.pianoroll_view.base.dirty = true;
+        doc.edit.arrange_view.base.dirty = true;
     }
 
     /// Add a single note to the given track and record an undo entry.
@@ -523,8 +523,8 @@ impl App {
         let doc = &mut self.workspace.documents[idx];
         doc.push_undo(action, label, before);
         doc.data.bump_revision();
-        self.pianoroll_view.base.dirty = true;
-        self.arrange_view.base.dirty = true;
+        doc.edit.pianoroll_view.base.dirty = true;
+        doc.edit.arrange_view.base.dirty = true;
         // 所有 with_undo 调用方目前都是纯音符操作（delete/duplicate/transpose/
         // paste/add_note/eraser/recode_track_names），不触碰 automation lanes，
         // 所以用便宜的 UpdateNotes 路径（不重建 CC，不 chase）。
@@ -542,7 +542,7 @@ impl App {
         let changed = doc.undo();
         if changed {
             doc.data.bump_revision();
-            self.pianoroll_view.base.dirty = true;
+            doc.edit.pianoroll_view.base.dirty = true;
             self.notify_audio_model_changed();
         }
     }
@@ -556,7 +556,7 @@ impl App {
         let changed = doc.redo();
         if changed {
             doc.data.bump_revision();
-            self.pianoroll_view.base.dirty = true;
+            doc.edit.pianoroll_view.base.dirty = true;
             self.notify_audio_model_changed();
         }
     }

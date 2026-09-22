@@ -123,8 +123,8 @@ impl App {
             state.before_snapshot,
         );
         doc.data.bump_revision();
-        self.pianoroll_view.base.dirty = true;
-        self.arrange_view.base.dirty = true;
+        doc.edit.pianoroll_view.base.dirty = true;
+        doc.edit.arrange_view.base.dirty = true;
         self.notify_notes_changed();
     }
 
@@ -225,8 +225,8 @@ impl App {
         state.undo_actions.push(action);
         let doc = &mut self.workspace.documents[idx];
         doc.data.bump_revision();
-        self.pianoroll_view.base.dirty = true;
-        self.arrange_view.base.dirty = true;
+        doc.edit.pianoroll_view.base.dirty = true;
+        doc.edit.arrange_view.base.dirty = true;
         self.notify_notes_changed();
     }
 
@@ -259,8 +259,8 @@ impl App {
         }
         let doc = &mut self.workspace.documents[idx];
         doc.data.bump_revision();
-        self.pianoroll_view.base.dirty = true;
-        self.arrange_view.base.dirty = true;
+        doc.edit.pianoroll_view.base.dirty = true;
+        doc.edit.arrange_view.base.dirty = true;
         self.notify_notes_changed();
     }
 

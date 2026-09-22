@@ -198,7 +198,7 @@ impl App {
         if actions.is_empty() {
             return None;
         }
-        self.pianoroll_view.base.dirty = true;
+        doc.edit.pianoroll_view.base.dirty = true;
         crate::right_panel::automation_undo::push_automation_actions(
             doc,
             actions,
@@ -271,7 +271,7 @@ impl App {
         let before = doc.capture_snapshot();
         let actions = doc.apply_automation_edits(edits);
         if !actions.is_empty() {
-            self.pianoroll_view.base.dirty = true;
+            doc.edit.pianoroll_view.base.dirty = true;
             crate::right_panel::automation_undo::push_automation_actions(
                 doc,
                 actions,
@@ -316,7 +316,7 @@ impl App {
         let before = doc.capture_snapshot();
         let actions = doc.apply_automation_edits(edits);
         if !actions.is_empty() {
-            self.pianoroll_view.base.dirty = true;
+            doc.edit.pianoroll_view.base.dirty = true;
             crate::right_panel::automation_undo::push_automation_actions(
                 doc,
                 actions,

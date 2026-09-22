@@ -47,6 +47,10 @@ pub struct EditState {
     pub arr_am_ms: HashMap<(u16, yinhe_types::AutomationTarget), yinhe_types::AmMsState>,
     /// AR 已选中的音频片段 (轨道索引, 片段 id)。会话态，不落盘。
     pub selected_audio_clips: HashSet<(u16, u32)>,
+    /// PR 钢琴卷帘视口（滚动/缩放），每文档独立，不落盘。
+    pub pianoroll_view: yinhe_types::PianoRollView,
+    /// AR 工程走带视口（滚动/缩放），每文档独立，不落盘。
+    pub arrange_view: yinhe_types::ArrangementView,
 }
 
 impl Default for EditState {
@@ -82,6 +86,8 @@ impl Default for EditState {
             arr_am_selected: HashSet::new(),
             arr_am_ms: HashMap::new(),
             selected_audio_clips: HashSet::new(),
+            pianoroll_view: yinhe_types::PianoRollView::default(),
+            arrange_view: yinhe_types::ArrangementView::default(),
         }
     }
 }
@@ -162,5 +168,27 @@ mod tests {
         state.remember_gate(0, 100, 70);
         state.remember_gate(0, 100, 80);
         assert_eq!(state.default_gate(0, 120), 80);
+    }
+
+    /// 回归：PR/AR 视口随文档走，两个文档的滚动/缩放互不影响。
+    #[test]
+    fn views_are_independent_per_document() {
+        let mut a = crate::document::Document::empty();
+        let mut b = crate::document::Document::empty();
+
+        a.edit.pianoroll_view.base.scroll_x = 100.0;
+        a.edit.pianoroll_view.base.pixels_per_tick = 0.5;
+        b.edit.pianoroll_view.base.scroll_x = 900.0;
+        b.edit.pianoroll_view.base.pixels_per_tick = 2.0;
+
+        assert_eq!(a.edit.pianoroll_view.base.scroll_x, 100.0);
+        assert_eq!(b.edit.pianoroll_view.base.scroll_x, 900.0);
+        assert_eq!(a.edit.pianoroll_view.base.pixels_per_tick, 0.5);
+        assert_eq!(b.edit.pianoroll_view.base.pixels_per_tick, 2.0);
+
+        // PR 与 AR 视口互不干扰（同一文档内也是两份独立状态）。
+        a.edit.arrange_view.base.scroll_y = 42.0;
+        assert_eq!(a.edit.pianoroll_view.base.scroll_y, 0.0);
+        assert_eq!(b.edit.arrange_view.base.scroll_y, 0.0);
     }
 }

@@ -7,7 +7,6 @@ mod view_ui;
 use eframe::egui;
 use rust_i18n::t;
 
-use yinhe_types::ArrangementView;
 use yinhe_types::time_format::format_tick_bar_beat_with_time_sig;
 
 use crate::render_context::RenderContext;
@@ -101,7 +100,6 @@ pub(crate) struct ArrangeLayout<'a> {
 pub fn show(
     ui: &mut egui::Ui,
     doc: &mut Document,
-    arr_view: &mut ArrangementView,
     layout: ArrangeLayout<'_>,
     arr_renderer: &mut yinhe_wgpu::InstanceRenderer,
     arr_render_ctx: &mut RenderContext,
@@ -176,7 +174,7 @@ pub fn show(
 
     // 轨道面板宽度同步进视图坐标模型：left_panel_width = 面板宽 + 分屏条宽
     // （纹理左缘到音乐区左缘的距离），tick_to_x/x_to_tick/clamp_scroll 全部基于它。
-    arr_view.base.left_panel_width = tp_w + crate::theme::SPLIT_HANDLE_W;
+    doc.edit.arrange_view.base.left_panel_width = tp_w + crate::theme::SPLIT_HANDLE_W;
 
     // Clamp scroll BEFORE drawing the ruler, so the ruler and GPU content
     // always see the same (clamped) scroll_x.  Otherwise when scroll_x is
@@ -234,7 +232,7 @@ pub fn show(
             .get(t as usize)
             .is_some_and(|tr| tr.automation_lanes.iter().any(|l| &l.target == target))
     });
-    arr_view.clamp_scroll(
+    doc.edit.arrange_view.clamp_scroll(
         gpu_rect.width(),
         gpu_rect.height(),
         total_ticks,
@@ -267,7 +265,7 @@ pub fn show(
         let ruler_jumped = crate::widgets::time_ruler::interactive_ruler(
             ui,
             ruler_rect,
-            arr_view,
+            &mut doc.edit.arrange_view,
             tpb,
             def_num,
             def_den,
@@ -296,7 +294,7 @@ pub fn show(
         ui.painter()
             .rect_filled(ui.max_rect(), 0.0, crate::theme::app_bg());
 
-        arr_view.base.track_panel_scroll_y = arr_view.base.scroll_y;
+        doc.edit.arrange_view.base.track_panel_scroll_y = doc.edit.arrange_view.base.scroll_y;
 
         let zoom_delta = ui.input(|i| i.zoom_delta());
         if (zoom_delta - 1.0).abs() > 0.001
@@ -304,13 +302,14 @@ pub fn show(
             && tp_rect.contains(hover)
         {
             let pointer_y = hover.y - tp_rect.min.y;
-            let old = arr_view.base.track_panel_row_height;
-            arr_view.base.track_panel_row_height =
-                (arr_view.base.track_panel_row_height * zoom_delta).clamp(16.0, 120.0);
-            let track_frac = (pointer_y + arr_view.base.track_panel_scroll_y) / old;
-            arr_view.base.track_panel_scroll_y =
-                (track_frac * arr_view.base.track_panel_row_height - pointer_y).max(0.0);
-            arr_view.base.dirty = true;
+            let old = doc.edit.arrange_view.base.track_panel_row_height;
+            doc.edit.arrange_view.base.track_panel_row_height =
+                (doc.edit.arrange_view.base.track_panel_row_height * zoom_delta).clamp(16.0, 120.0);
+            let track_frac = (pointer_y + doc.edit.arrange_view.base.track_panel_scroll_y) / old;
+            doc.edit.arrange_view.base.track_panel_scroll_y =
+                (track_frac * doc.edit.arrange_view.base.track_panel_row_height - pointer_y)
+                    .max(0.0);
+            doc.edit.arrange_view.base.dirty = true;
         }
 
         // Ensure parallel arrays are correctly sized (track count may have grown).
@@ -344,8 +343,8 @@ pub fn show(
             selection_anchor,
             doc.edit.conductor_track_idx,
             &doc.edit.track_colors_cache,
-            &mut arr_view.base.track_panel_row_height,
-            &mut arr_view.base.track_panel_scroll_y,
+            &mut doc.edit.arrange_view.base.track_panel_row_height,
+            &mut doc.edit.arrange_view.base.track_panel_scroll_y,
             request_pianoroll,
             info_content,
             &row_layout,
@@ -465,14 +464,14 @@ pub fn show(
 
         // 展开状态 / lane 数可能刚变：重建行布局并重新 clamp。
         row_layout = build_row_layout(&doc.edit, &doc.data.model);
-        arr_view.clamp_scroll(
+        doc.edit.arrange_view.clamp_scroll(
             gpu_rect.width(),
             gpu_rect.height(),
             total_ticks,
             row_layout.total_rows(),
         );
 
-        arr_view.base.scroll_y = arr_view.base.track_panel_scroll_y;
+        doc.edit.arrange_view.base.scroll_y = doc.edit.arrange_view.base.track_panel_scroll_y;
     });
 
     // ── Arrangement GPU view (below ruler) ──
@@ -526,7 +525,7 @@ pub fn show(
             gpu_size,
             arr_renderer,
             arr_render_ctx,
-            arr_view,
+            &mut doc.edit.arrange_view,
             &row_layout,
             data,
             &mut edit,
@@ -573,11 +572,11 @@ pub fn show(
             ui,
             sb_rect,
             music_rect.width(),
-            &mut arr_view.base.scroll_x,
-            &mut arr_view.base.pixels_per_tick,
+            &mut doc.edit.arrange_view.base.scroll_x,
+            &mut doc.edit.arrange_view.base.pixels_per_tick,
             total_ticks,
             doc.edit.cursor_tick,
-            &mut arr_view.base.dirty,
+            &mut doc.edit.arrange_view.base.dirty,
             yinhe_types::Orientation::Horizontal,
         );
         // 水平滚动条：thumb 拖 = 平移（x）+ 垂直位移 → x 轴缩放
@@ -585,7 +584,7 @@ pub fn show(
         if sb_drag_dy != 0.0 {
             let factor = 1.0 - sb_drag_dy * 0.005;
             let anchor_x = sb_rect.center().x - arr_rect.min.x;
-            arr_view.zoom_around_x(anchor_x, factor);
+            doc.edit.arrange_view.zoom_around_x(anchor_x, factor);
             ui.ctx().request_repaint();
         }
 
@@ -596,7 +595,7 @@ pub fn show(
             if scroll_y.abs() > 0.5 {
                 let factor = if scroll_y > 0.0 { 1.0 / 1.1 } else { 1.1 };
                 let anchor_x = sb_rect.center().x - arr_rect.min.x;
-                arr_view.zoom_around_x(anchor_x, factor);
+                doc.edit.arrange_view.zoom_around_x(anchor_x, factor);
                 ui.ctx().request_repaint();
             }
         }
@@ -615,12 +614,12 @@ pub fn show(
                     ui,
                     vsb_rect,
                     gpu_rect.height(),
-                    &mut arr_view.base.scroll_y,
-                    &mut arr_view.base.track_panel_row_height,
+                    &mut doc.edit.arrange_view.base.scroll_y,
+                    &mut doc.edit.arrange_view.base.track_panel_row_height,
                     row_layout.total_rows(),
                     16.0,
                     120.0,
-                    &mut arr_view.base.dirty,
+                    &mut doc.edit.arrange_view.base.dirty,
                     yinhe_types::Orientation::Horizontal,
                 )
             })
@@ -630,7 +629,7 @@ pub fn show(
         if vsb_drag_dx != 0.0 {
             let factor = 1.0 - vsb_drag_dx * 0.005;
             let anchor_y = vsb_rect.center().y - arr_rect.min.y;
-            arr_view.zoom_lane_height(anchor_y, factor);
+            doc.edit.arrange_view.zoom_lane_height(anchor_y, factor);
             ui.ctx().request_repaint();
         }
 
@@ -641,7 +640,7 @@ pub fn show(
             if scroll_y.abs() > 0.5 {
                 let factor = if scroll_y > 0.0 { 1.0 / 1.1 } else { 1.1 };
                 let anchor_y = vsb_rect.center().y - arr_rect.min.y;
-                arr_view.zoom_lane_height(anchor_y, factor);
+                doc.edit.arrange_view.zoom_lane_height(anchor_y, factor);
                 ui.ctx().request_repaint();
             }
         }
@@ -739,8 +738,8 @@ pub fn show(
         let tpb = model.meta.ppq;
         let (def_num, def_den) = model.tempo_map.time_sig_default;
         let sig_events = model.tempo_map.time_sig_events.as_slice();
-        let lh = arr_view.lane_height();
-        let scroll_y = arr_view.base.scroll_y;
+        let lh = doc.edit.arrange_view.lane_height();
+        let scroll_y = doc.edit.arrange_view.base.scroll_y;
         // hover_pos 是全局坐标，需先减去 tp_rect.min.y（title bar + transport
         // bar + ruler 的高度），否则音轨号会整体偏大。
         // 行布局命中：AM 子行附带 target 名（如「CC 007」）。
@@ -775,7 +774,11 @@ pub fn show(
             None
         };
         if music_rect.contains(pos) {
-            let tick = arr_view.x_to_tick(pos.x - gpu_rect.min.x).max(0.0);
+            let tick = doc
+                .edit
+                .arrange_view
+                .x_to_tick(pos.x - gpu_rect.min.x)
+                .max(0.0);
             let pos_str =
                 format_tick_bar_beat_with_time_sig(tick, tpb, sig_events, def_num, def_den);
             *status_hint = Some(if let Some(s) = sel_text {
