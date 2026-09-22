@@ -1627,3 +1627,63 @@ fn grid_press_blank_clears_rect() {
     assert!(sel_rect.rects.is_empty(), "空白按下应清空旧选框");
     assert!(selected.rects.is_empty(), "选区同步清空");
 }
+
+/// 回归测试：框选物化后选区平移到落点，第二次拖动收集不得把落点处的
+/// 路人音符（同 key 同 tick 区间）收编进拖动组。
+/// （修复前 `Selection` 是纯矩形，移动提交 `offset` 后矩形覆盖到路人，
+/// 再次按下拖动就把路人一起搬走。）
+#[test]
+fn marquee_members_not_hijacked_by_bystanders_after_move() {
+    let ctx = egui::Context::default();
+    let mut view = test_view();
+    view.viewport_h = 600.0;
+    // A: key 90, tick 100..200, v100（被框选）；B: key 90, tick 300..400, v80（落点路人）
+    let midi = make_midi(vec![(90, 100, 200, 0, 100), (90, 300, 400, 0, 80)]);
+    let mut selected = yinhe_core::Selection::default();
+    let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+    let mut cursor_tick: Option<f64> = None;
+    let mut note_drag_delta: Option<(i64, i32, bool)> = None;
+    let mut note_resize_delta: Option<(yinhe_editor_core::ResizeSide, i64)> = None;
+
+    // 从空白（tick 10）拖到 tick 250：选框 [0,240) 覆盖 A，press 点不命中音符。
+    // key 90 → y ∈ [370,380]（music_rect 高 600）。
+    let start = egui::pos2(10.0, 375.0);
+    let end = egui::pos2(250.0, 375.0);
+    for raw in [press_event(start), drag_event(end), release_event(end)] {
+        let _ = run_sel_frame(
+            &ctx,
+            raw,
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            &std::collections::HashSet::new(),
+            None,
+        );
+    }
+    assert_eq!(
+        selected.explicit_member_count(),
+        Some(1),
+        "PR 框选提交应物化成员位图（恰好命中 A）"
+    );
+
+    // 模拟第一次移动提交：选区矩形跟随到落点（+200 tick）。
+    selected.offset(200, 0);
+    // 移动后的模型：A 移到 300..400（id 不变、v100），B 仍在 300..400。
+    let moved_midi = make_midi(vec![(90, 300, 400, 0, 100), (90, 300, 400, 0, 80)]);
+
+    let collected = crate::selection::drag::collect_selected_notes(
+        &selected,
+        Some(&moved_midi as &dyn yinhe_types::NoteSource),
+        &[true],
+        &std::collections::HashSet::new(),
+    );
+    assert_eq!(collected.len(), 1, "第二次拖动只能收集成员音符");
+    assert_eq!(
+        collected[0].velocity, 100,
+        "收集到的必须是被框选的 A（v100），不能是落点路人 B（v80）"
+    );
+}

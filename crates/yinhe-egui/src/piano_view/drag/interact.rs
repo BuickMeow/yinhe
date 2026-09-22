@@ -160,6 +160,7 @@ pub(crate) fn handle_sel_marquee(
             key_lo,
             key_hi,
             track_selected,
+            midi,
         );
         sel_rect.push_rect(
             (result.t_start, result.t_end, key_lo, key_hi),

@@ -194,6 +194,10 @@ impl Document {
         self.edit
             .selected
             .add_rect_track(min_tick, max_end + 1, 0, MAX_KEY, track_lo, track_hi);
+        // 选区精确跟随粘贴出的副本（新 id），bbox 内的其他音符不纳入。
+        self.edit
+            .selected
+            .set_members(after.iter().map(|(n, _)| n.id));
 
         self.data.rebuild_model_dirty();
         Some((

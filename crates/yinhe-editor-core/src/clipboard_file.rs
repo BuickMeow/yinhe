@@ -232,15 +232,10 @@ fn invalid(msg: &str) -> io::Error {
 }
 
 fn count_selected(model: &yinhe_core::YinModel, selection: &yinhe_core::Selection) -> u64 {
+    // 与写入路径（`for_each_selected`）同源：成员位图 + 属性筛选一致，
+    // 避免文件头计数与实际写出的音符数分裂。
     let mut count = 0u64;
-    for &(tick_start, tick_end, key_lo, key_hi, track_lo, track_hi) in &selection.rects {
-        for key in key_lo..=key_hi {
-            count += model.notes[key as usize]
-                .range(tick_start, tick_end)
-                .filter(|n| n.track >= track_lo && n.track <= track_hi)
-                .count() as u64;
-        }
-    }
+    crate::batch_ops::for_each_selected(model, selection, |_, _| count += 1);
     count
 }
 

@@ -1,15 +1,21 @@
 //! Unified selection model for notes.
 //!
-//! Replaces the old `HashSet<(u16, u32, u8)>` with a compact representation:
-//! a list of rectangular ranges in (tick, key, track) space plus an optional
-//! attribute filter (velocity / gate / automation target+value).
-//! A note is selected iff it falls within at least one rectangle AND passes
-//! the attribute filter.
+//! 选区由两部分组成：
+//! - `rects`：矩形范围 (tick, key, track)，负责框选输入、选框显示与扫描范围；
+//! - `members`：可选的显式成员位图（按 note id）。PR 框选提交时物化，
+//!   之后命中判定以成员为准，音符移动/复制后成员身份不变，落点处的
+//!   其他音符不会被"顶替"进选区。
 //!
-//! Memory: 1000 万音符的矩形选择 = 1 个 rect (~40 bytes) vs 800MB HashSet.
-//! 筛选只是在矩形上再加几个边界值，不物化匹配音符，内存仍是 O(rect 数)。
+//! 矩形态（`members = None`）保留给全选 / AR 轨道选择 / 临时删除指令等
+//! 无法（或无需）按 id 物化的场景，判定语义与旧版一致。
+//!
+//! Memory: 1 亿音符全选（矩形态）= 1 个 rect (~40 bytes)；框选物化后
+//! 成员位图 1 bit/音符（1 亿 ≈ 12.5MB），远低于旧的 `HashSet` (800MB)。
+//! 属性筛选 `filter` 始终是动态谓词，叠加在矩形/成员判定之上。
 
-use yinhe_types::{AutomationTarget, MAX_KEY, Note};
+use yinhe_types::{AutomationTarget, MAX_KEY, Note, NoteSource};
+
+use crate::NoteBitset;
 
 /// 选区属性边界（作用于选中判定的附加约束）。
 ///
@@ -115,6 +121,10 @@ pub struct Selection {
     pub rects: Vec<(u32, u32, u8, u8, u16, u16)>,
     /// 属性边界（筛选）。空 = 只按矩形空间判定。
     pub filter: SelectionFilter,
+    /// 显式成员集（按 note id，见 [`Selection::materialize_rect`]）。
+    /// `Some` = 成员态：命中以位图为准，`rects` 退化为扫描范围/选框显示；
+    /// `None` = 矩形态：全选 / AR 轨道选择 / 临时删除指令等按矩形判定。
+    members: Option<NoteBitset>,
 }
 
 impl Selection {
@@ -125,12 +135,74 @@ impl Selection {
     pub fn clear(&mut self) {
         self.rects.clear();
         self.filter = SelectionFilter::default();
+        self.members = None;
     }
 
     /// Clear only the rectangles, keeping the attribute filter.
     /// Used by操作式 undo 重建选择集时（filter 属于"筛选器"状态，不随操作回滚）。
     pub fn clear_rects(&mut self) {
         self.rects.clear();
+        self.members = None;
+    }
+
+    /// 是否处于成员态（框选物化后）。
+    pub fn has_explicit_members(&self) -> bool {
+        self.members.is_some()
+    }
+
+    /// 显式成员数量（矩形态返回 `None`）。
+    pub fn explicit_member_count(&self) -> Option<u64> {
+        self.members.as_ref().map(NoteBitset::count)
+    }
+
+    /// 把一个矩形范围物化为显式成员（PR 框选提交时调用）。
+    ///
+    /// 只按空间采样（`start_tick` 起点 ∈ 范围 + key + track），不应用属性
+    /// 筛选——`filter` 保持动态谓词，由 [`Selection::accepts_note`] 叠加。
+    #[allow(clippy::too_many_arguments)] // 矩形坐标透传，见 AGENTS 约定
+    pub fn materialize_rect(
+        &mut self,
+        source: &dyn NoteSource,
+        tick_start: u32,
+        tick_end: u32,
+        key_lo: u8,
+        key_hi: u8,
+        track_lo: u16,
+        track_hi: u16,
+    ) {
+        let bits = self.members.get_or_insert_with(NoteBitset::default);
+        for key in key_lo..=key_hi {
+            for n in source.key_notes_in_range(key, tick_start, tick_end) {
+                // `key_notes_in_range` 左边界按 max_note_len 保守外扩，需精确过滤。
+                if n.start_tick < tick_start || n.start_tick >= tick_end {
+                    continue;
+                }
+                if n.track < track_lo || n.track > track_hi {
+                    continue;
+                }
+                if n.id == 0 {
+                    continue; // 发号器哨兵（未分配），不进位图
+                }
+                bits.insert(n.id);
+            }
+        }
+    }
+
+    /// 用给定 id 重建显式成员集（复制/粘贴后让选区跟随新音符）。
+    pub fn set_members(&mut self, ids: impl IntoIterator<Item = u32>) {
+        let mut bits = NoteBitset::default();
+        for id in ids {
+            if id != 0 {
+                bits.insert(id);
+            }
+        }
+        self.members = Some(bits);
+    }
+
+    /// 丢弃显式成员集，退回矩形态。供"纯几何查询"使用（目标位置重叠
+    /// 检测等内部场景），不是用户可见的选择操作。
+    pub fn drop_members(&mut self) {
+        self.members = None;
     }
 
     /// Add a rect with full (tick, key, track) range.
@@ -157,9 +229,8 @@ impl Selection {
 
     /// Check if a specific note is selected **by space only** (filter ignored).
     ///
-    /// Prefer [`Selection::accepts_note`] in edit paths so the attribute
-    /// filter is honored; this remains for callers that already apply the
-    /// filter themselves.
+    /// 纯矩形判定（成员态也走矩形）——选框绘制/hit-test/Android 等几何
+    /// 场景专用。编辑路径请用 [`Selection::accepts_note`]，它优先成员位图。
     pub fn contains(&self, track: u16, start_tick: u32, key: u8) -> bool {
         self.rects.iter().any(|&(ts, te, kl, kh, tl, th)| {
             track >= tl
@@ -171,12 +242,16 @@ impl Selection {
         })
     }
 
-    /// Full note acceptance: space hit AND attribute filter pass.
+    /// Full note acceptance: 成员态查位图，矩形态查矩形；再叠加属性筛选。
     pub fn accepts_note(&self, note: &Note, key: u8) -> bool {
+        let hit = match &self.members {
+            Some(bits) => bits.contains(note.id),
+            None => self.contains(note.track, note.start_tick, key),
+        };
         if !self.filter.has_note_bounds() {
-            return self.contains(note.track, note.start_tick, key);
+            return hit;
         }
-        self.contains(note.track, note.start_tick, key) && self.filter.accepts_note(note, key)
+        hit && self.filter.accepts_note(note, key)
     }
 
     /// 是否设置了任何筛选边界。
@@ -230,12 +305,19 @@ impl Selection {
     /// Remove rects matching the given PR selection-box rects
     /// `(tick_start, tick_end, key_lo, key_hi)`. Used by cross-view selection
     /// exclusivity (PR/AR/AM 三视图选框互斥).
+    ///
+    /// 摘除任何 rect 都会整体丢弃成员位图（被摘 rect 对应的成员无法精确
+    /// 识别），退回矩形态——保守但不会错删。
     pub fn remove_rects(&mut self, rects: &[(u32, u32, u8, u8)]) {
+        let before = self.rects.len();
         self.rects.retain(|r| {
             !rects
                 .iter()
                 .any(|q| q.0 == r.0 && q.1 == r.1 && q.2 == r.2 && q.3 == r.3)
         });
+        if self.rects.len() != before {
+            self.members = None;
+        }
     }
 
     /// Remove rects matching the given AR selection-box rects
@@ -243,6 +325,7 @@ impl Selection {
     ///
     /// AR 的 rect 在 Selection 中总是 key 全范围 (kl=0, kh=MAX_KEY)，据此匹配避免误伤 PR 的 rect。
     pub fn remove_rects_track(&mut self, rects: &[(u32, u32, u16, u16)]) {
+        let before = self.rects.len();
         self.rects.retain(|r| {
             !(r.2 == 0
                 && r.3 == MAX_KEY
@@ -250,20 +333,9 @@ impl Selection {
                     .iter()
                     .any(|q| q.0 == r.0 && q.1 == r.1 && q.2 == r.4 && q.3 == r.5))
         });
-    }
-
-    /// Compute an order-independent XOR hash of all rects (for GPU cache keys).
-    pub fn hash(&self) -> u64 {
-        let mut h: u64 = 0;
-        for &(ts, te, kl, kh, tl, th) in &self.rects {
-            h ^= (ts as u64).wrapping_mul(0x9e3779b97f4a7c15);
-            h ^= (te as u64).wrapping_mul(0x9e3779b97f4a7c15);
-            h ^= (kl as u64).wrapping_mul(0x9e3779b97f4a7c15);
-            h ^= (kh as u64).wrapping_mul(0x9e3779b97f4a7c15);
-            h ^= (tl as u64).wrapping_mul(0x9e3779b97f4a7c15);
-            h ^= (th as u64).wrapping_mul(0x9e3779b97f4a7c15);
+        if self.rects.len() != before {
+            self.members = None;
         }
-        h
     }
 }
 
@@ -279,6 +351,145 @@ mod tests {
             velocity,
             track,
         }
+    }
+
+    fn note_id(id: u32, start: u32, end: u32, velocity: u8, track: u16) -> Note {
+        Note {
+            id,
+            start_tick: start,
+            end_tick: end,
+            velocity,
+            track,
+        }
+    }
+
+    /// 测试用音符源：按 key 分桶。
+    struct MockSource {
+        buckets: Vec<yinhe_types::NoteBucket>,
+    }
+
+    impl MockSource {
+        fn new(notes: &[(u8, Note)]) -> Self {
+            let mut by_key: Vec<Vec<Note>> = (0..128).map(|_| Vec::new()).collect();
+            for (key, n) in notes {
+                by_key[*key as usize].push(*n);
+            }
+            Self {
+                buckets: by_key
+                    .into_iter()
+                    .map(yinhe_types::NoteBucket::from_sorted)
+                    .collect(),
+            }
+        }
+    }
+
+    impl yinhe_types::NoteSource for MockSource {
+        fn key_notes(&self, key: u8) -> &yinhe_types::NoteBucket {
+            &self.buckets[key as usize]
+        }
+        fn duration(&self) -> f64 {
+            0.0
+        }
+    }
+
+    /// 核心回归：框选物化后，选区平移到落点不会把落点处未被选中的音符
+    /// 拉进选区（修复"拖动两次拐卖路人"）。
+    #[test]
+    fn materialized_members_stay_stable_across_move() {
+        let n1 = note_id(1, 0, 100, 100, 0);
+        let n2 = note_id(2, 300, 400, 100, 0);
+        let source = MockSource::new(&[(60, n1), (60, n2)]);
+
+        let mut sel = Selection::default();
+        sel.materialize_rect(&source, 0, 100, 60, 60, 0, u16::MAX);
+        assert!(sel.has_explicit_members());
+        assert_eq!(sel.explicit_member_count(), Some(1));
+        assert!(sel.accepts_note(&n1, 60));
+        assert!(!sel.accepts_note(&n2, 60));
+
+        // 模拟移动提交：选区矩形平移到落点（+300），n1 也移动到 300..400。
+        sel.offset(300, 0);
+        let moved_n1 = note_id(1, 300, 400, 100, 0);
+        assert!(sel.accepts_note(&moved_n1, 60), "移动后的成员仍被选中");
+        assert!(!sel.accepts_note(&n2, 60), "落点处的路人音符不得被选中");
+    }
+
+    /// 物化只采样矩形内按起点判定的音符：长音符起点在范围外不入选，
+    /// track 范围外的音符不入选。
+    #[test]
+    fn materialize_rect_respects_tick_and_track_bounds() {
+        let long = note_id(1, 0, 500, 100, 0); // 起点在查询范围 [200,300) 之前
+        let inside = note_id(2, 250, 260, 100, 0);
+        let other_track = note_id(3, 250, 260, 100, 5);
+        let source = MockSource::new(&[(60, long), (60, inside), (60, other_track)]);
+
+        let mut sel = Selection::default();
+        sel.materialize_rect(&source, 200, 300, 60, 60, 0, 0);
+
+        assert!(!sel.accepts_note(&long, 60), "起点在范围外不入选");
+        assert!(sel.accepts_note(&inside, 60));
+        assert!(!sel.accepts_note(&other_track, 60), "track 范围外不入选");
+        assert_eq!(sel.explicit_member_count(), Some(1));
+    }
+
+    /// filter 仍是动态谓词：物化后改筛选只收窄/翻转，不改变成员位图。
+    #[test]
+    fn filter_stays_dynamic_on_top_of_members() {
+        let loud = note_id(1, 0, 100, 100, 0);
+        let quiet = note_id(2, 10, 100, 30, 0);
+        let source = MockSource::new(&[(60, loud), (60, quiet)]);
+
+        let mut sel = Selection::default();
+        sel.materialize_rect(&source, 0, 200, 60, 60, 0, u16::MAX);
+        assert_eq!(sel.explicit_member_count(), Some(2));
+
+        sel.filter.velocity = Some((90, 127));
+        assert!(sel.accepts_note(&loud, 60));
+        assert!(!sel.accepts_note(&quiet, 60));
+        assert_eq!(
+            sel.explicit_member_count(),
+            Some(2),
+            "筛选不物化、不收缩成员位图"
+        );
+    }
+
+    /// 矩形态（未物化）的判定语义与旧版一致。
+    #[test]
+    fn rect_mode_unchanged_without_members() {
+        let mut sel = Selection::default();
+        sel.add_rect(100, 200, 60, 60);
+        assert!(sel.accepts_note(&note_id(9, 150, 160, 100, 0), 60));
+        assert!(!sel.accepts_note(&note_id(9, 250, 260, 100, 0), 60));
+    }
+
+    /// 摘除矩形时成员位图整体失效（保守降级，避免残留过期成员）。
+    #[test]
+    fn remove_rects_drops_members() {
+        let n = note_id(1, 0, 100, 100, 0);
+        let source = MockSource::new(&[(60, n)]);
+        let mut sel = Selection::default();
+        sel.add_rect(0, 100, 60, 60);
+        sel.materialize_rect(&source, 0, 100, 60, 60, 0, u16::MAX);
+        assert!(sel.has_explicit_members());
+
+        sel.remove_rects(&[(0, 100, 60, 60)]);
+        assert!(!sel.has_explicit_members());
+        assert!(sel.rects.is_empty());
+    }
+
+    /// set_members 用新 id 重建成员（复制/粘贴后跟随副本）。
+    #[test]
+    fn set_members_rebuilds_member_set() {
+        let mut sel = Selection::default();
+        sel.add_rect(0, 100, 60, 60);
+        sel.set_members([10, 20, 20, 0]);
+        assert_eq!(sel.explicit_member_count(), Some(2), "重复与哨兵 0 不计入");
+        assert!(sel.accepts_note(&note_id(10, 0, 50, 100, 0), 60));
+        assert!(
+            sel.accepts_note(&note_id(20, 999, 1050, 100, 0), 60),
+            "成员态不受矩形限制"
+        );
+        assert!(!sel.accepts_note(&note_id(30, 0, 50, 100, 0), 60));
     }
 
     #[test]

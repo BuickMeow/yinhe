@@ -214,6 +214,10 @@ impl Document {
 
             // Offset selection rects to cover the duplicated notes.
             self.edit.offset_sel_ticks(offset as i64);
+            // 选区精确跟随副本（新 id），落点处的其他音符不纳入。
+            self.edit
+                .selected
+                .set_members(after.iter().map(|(n, _)| n.id));
             after
         };
         self.data.rebuild_model_dirty();
@@ -291,6 +295,10 @@ impl Document {
 
             // 选区跟随副本，便于连续 Alt+拖动
             self.edit.selected.offset(delta_ticks, delta_keys);
+            // 选区精确跟随副本（新 id），落点处的其他音符不纳入。
+            self.edit
+                .selected
+                .set_members(after.iter().map(|(n, _)| n.id));
             after
         };
         self.data.rebuild_model_dirty();
@@ -342,6 +350,7 @@ impl Document {
                     .collect();
                 let mut dest_sel = selection_before.clone();
                 dest_sel.rects = dest_rects;
+                dest_sel.drop_members(); // 纯几何查询：重叠检测不认成员位图
                 !batch_ops::collect_selected(model, &dest_sel).is_empty()
             };
 
@@ -434,6 +443,7 @@ impl Document {
                 .collect();
             let mut dest_sel = selection_before.clone();
             dest_sel.rects = dest_rects;
+            dest_sel.drop_members(); // 纯几何查询：重叠检测不认成员位图
             !batch_ops::collect_selected(model, &dest_sel).is_empty()
         };
         let allow_overlap = self.edit.allow_overlapping_notes;
@@ -727,14 +737,11 @@ impl Document {
         let mut uniform_delta: Option<i64> = None; // 全部变化项相同 delta 时 Some（gate 加减）
         {
             let model = &self.data.model;
-            for &(ts, te, kl, kh, tl, th) in &self.edit.selected.rects {
+            for &(ts, te, kl, kh, _tl, _th) in &self.edit.selected.rects {
                 for key in kl..=kh {
                     let k = key as usize;
                     for n in model.notes[k].range(ts, te) {
-                        if n.track < tl || n.track > th {
-                            continue;
-                        }
-                        if !self.edit.selected.filter.accepts_note(n, key) {
+                        if !self.edit.selected.accepts_note(n, key) {
                             continue;
                         }
                         let new = match field {
@@ -1035,7 +1042,8 @@ impl Document {
         // 检测选区内是否还有非选中音符：若目标选框内已有音符，
         // 操作式 Flip 在撤销时会把这些 B 音符也一起翻转，造成误搬。
         let has_dest_overlap = {
-            let sel = self.edit.selected.clone();
+            let mut sel = self.edit.selected.clone();
+            sel.drop_members(); // 纯几何查询：目标选框内是否有非选中音符
             !batch_ops::collect_selected(model, &sel).is_empty()
         };
         batch_ops::insert_batch(model, new_by_key);

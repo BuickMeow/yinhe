@@ -9,6 +9,10 @@
 //! Selection is always rectangular (from marquee). For each rect, iterate
 //! the key range and use `partition_point` to find the tick range, then
 //! `drain` or collect in a single pass per bucket.
+//!
+//! 框选物化后 `Selection` 带显式成员位图：谓词统一走
+//! `Selection::accepts_note`（成员态查位图，矩形态查矩形 + 筛选），
+//! 连续 drain 快路径只在矩形态、无属性边界且全轨时可用。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -21,27 +25,25 @@ use yinhe_types::{MAX_KEY, Note, NoteBucket};
 /// For each rect × key range, deletes `start_tick ∈ [tick_start, tick_end)`
 /// within the track range and passing the selection's attribute filter,
 /// in a single pass per bucket (chunked: only hit chunks are scanned).
-/// 无属性边界且全轨选中 → 连续 `drain_range`；否则 `drain_range_filtered`。
+/// 矩形态且无属性边界、全轨选中 → 连续 `drain_range`；否则逐音符判定。
 ///
 /// Returns the removed notes with their original key, so callers can
 /// re-insert them at a new position (move/transpose) or discard them (delete).
 pub fn remove_selected(model: &mut YinModel, selection: &Selection) -> Vec<(Note, u8)> {
     let mut removed: Vec<(Note, u8)> = Vec::new();
-    let filter = &selection.filter;
-    let has_bounds = filter.has_note_bounds();
+    let explicit = selection.has_explicit_members();
+    let has_bounds = selection.filter.has_note_bounds();
 
     for &(tick_start, tick_end, key_lo, key_hi, track_lo, track_hi) in &selection.rects {
         for key in key_lo..=key_hi {
             let k = key as usize;
             let bucket = Arc::make_mut(&mut model.notes[k]);
-            // Fast path: all tracks selected and no attribute bounds
-            // → contiguous span drain.
-            let out = if track_lo == 0 && track_hi == u16::MAX && !has_bounds {
+            // Fast path: 矩形态 + 全轨 + 无属性边界 → contiguous span drain.
+            let out = if !explicit && track_lo == 0 && track_hi == u16::MAX && !has_bounds {
                 bucket.drain_range(tick_start, tick_end)
             } else {
-                bucket.drain_range_filtered(tick_start, tick_end, |n| {
-                    n.track >= track_lo && n.track <= track_hi && filter.accepts_note(n, key)
-                })
+                bucket
+                    .drain_range_filtered(tick_start, tick_end, |n| selection.accepts_note(n, key))
             };
             if !out.is_empty() {
                 removed.extend(out.into_iter().map(|n| (n, key)));
@@ -77,18 +79,13 @@ pub fn append_notes_ordered(bucket: &mut NoteBucket, new_notes: Vec<Note>) {
 ///
 /// Streaming variant of [`collect_selected`] for callers that must not
 /// materialize the whole selection (e.g. writing huge clipboards to disk).
-/// Honors the selection's attribute filter.
+/// Honors explicit members and the selection's attribute filter.
 pub fn for_each_selected(model: &YinModel, selection: &Selection, mut f: impl FnMut(&Note, u8)) {
-    let filter = &selection.filter;
-    let has_bounds = filter.has_note_bounds();
-    for &(tick_start, tick_end, key_lo, key_hi, track_lo, track_hi) in &selection.rects {
+    for &(tick_start, tick_end, key_lo, key_hi, _track_lo, _track_hi) in &selection.rects {
         for key in key_lo..=key_hi {
             let k = key as usize;
             for n in model.notes[k].range(tick_start, tick_end) {
-                if n.track < track_lo || n.track > track_hi {
-                    continue;
-                }
-                if has_bounds && !filter.accepts_note(n, key) {
+                if !selection.accepts_note(n, key) {
                     continue;
                 }
                 f(n, key);
@@ -168,10 +165,11 @@ pub struct SelectedNoteSummary {
 /// `note_count`，避免全选 1 亿音符时扫描）；uniform 字段扫描遇到第一个
 /// 不同值即短路为 None（绝大多数 mixed 情况无需遍历完整选区）。
 pub fn summarize_selected(model: &YinModel, selection: &Selection) -> SelectedNoteSummary {
-    let filter = &selection.filter;
-    let has_bounds = filter.has_note_bounds();
-    // 全选快路径：无属性边界时，单个 rect 覆盖全部 key/track 与全部 tick
-    let full = !has_bounds
+    let explicit = selection.has_explicit_members();
+    let has_bounds = selection.filter.has_note_bounds();
+    // 全选快路径：矩形态 + 无属性边界 + 单个 rect 覆盖全部 key/track 与全部 tick
+    let full = !explicit
+        && !has_bounds
         && selection.rects.iter().any(|&(ts, te, kl, kh, tl, th)| {
             kl == 0
                 && kh == MAX_KEY
@@ -185,14 +183,11 @@ pub fn summarize_selected(model: &YinModel, selection: &Selection) -> SelectedNo
         ..Default::default()
     };
     let mut first = true;
-    for &(ts, te, kl, kh, tl, th) in &selection.rects {
+    for &(ts, te, kl, kh, _tl, _th) in &selection.rects {
         for key in kl..=kh {
             let k = key as usize;
             for n in model.notes[k].range(ts, te) {
-                if n.track < tl || n.track > th {
-                    continue;
-                }
-                if has_bounds && !filter.accepts_note(n, key) {
+                if !selection.accepts_note(n, key) {
                     continue;
                 }
                 if !full {
@@ -475,6 +470,80 @@ mod tests {
         assert_eq!(s.count, 2, "有筛选时全选快路径必须禁用");
         assert_eq!(s.velocity, Some(100));
         assert_eq!(s.gate, None, "两条命中音符 gate 480/240 混合");
+    }
+
+    /// 成员态删除：rect 覆盖范围内但不在成员位图里的音符不得被删。
+    #[test]
+    fn remove_selected_with_members_leaves_bystanders() {
+        let mut m = model_with_notes();
+        let mut sel = Selection::default();
+        sel.add_rect(0, u32::MAX, 0, MAX_KEY);
+        sel.set_members([2]); // 只选中 k60 的 id=2
+
+        let removed = remove_selected(&mut m, &sel);
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0].0.id, 2);
+        assert_eq!(m.notes[60].len(), 1, "同 rect 内的 id=1 应保留");
+        assert_eq!(m.notes[60][0].id, 1);
+        assert_eq!(m.notes[64].len(), 1, "其他 key 的 id=3 应保留");
+    }
+
+    /// 回归：框选物化 → 移动提交（选区平移）→ 再次收集，
+    /// 落点处同 key 同 tick 区间的路人音符不得被收编。
+    #[test]
+    fn materialized_selection_survives_move_without_bystanders() {
+        // k60: id=1 (0..100, v100) 被框选；id=2 (200..300, v80) 落点路人
+        let mut m = YinModel {
+            tracks: vec![Arc::new(TrackData::new(0, 0))],
+            ..Default::default()
+        };
+        m.load_track_notes(vec![vec![
+            NoteEvent {
+                id: 1,
+                start_tick: 0,
+                end_tick: 100,
+                key: 60,
+                velocity: 100,
+            },
+            NoteEvent {
+                id: 2,
+                start_tick: 200,
+                end_tick: 300,
+                key: 60,
+                velocity: 80,
+            },
+        ]]);
+        m.rebuild();
+
+        let mut sel = Selection::default();
+        sel.add_rect(0, 100, 60, 60);
+        sel.materialize_rect(&m, 0, 100, 60, 60, 0, u16::MAX);
+        assert_eq!(sel.explicit_member_count(), Some(1));
+
+        // 模拟 move_selected_notes：移除成员（只删 id=1）并插到落点 200..300。
+        let removed = remove_selected(&mut m, &sel);
+        assert_eq!(removed.len(), 1, "成员态移动只取成员");
+        assert_eq!(removed[0].0.id, 1);
+        let mut by_key: HashMap<u8, Vec<Note>> = HashMap::new();
+        by_key.insert(
+            60,
+            vec![Note {
+                id: 1,
+                start_tick: 200,
+                end_tick: 300,
+                velocity: 100,
+                track: 0,
+            }],
+        );
+        insert_batch(&mut m, by_key);
+
+        // 移动提交后选区矩形跟随平移。
+        sel.offset(200, 0);
+
+        let collected = collect_selected(&m, &sel);
+        assert_eq!(collected.len(), 1, "落点路人不得进入拖动组");
+        assert_eq!(collected[0].0.id, 1, "只能是被框选的 id=1");
+        assert_eq!(collected[0].0.velocity, 100);
     }
 
     /// 重叠判定：相交/相接/跨轨/跨 key/长音符起点远早于窗口（靠 max_note_len 左扩命中）。

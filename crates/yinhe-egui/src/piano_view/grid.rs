@@ -197,6 +197,8 @@ pub(crate) fn grid_frame(
                     result.key_lo,
                     result.key_hi,
                     track_selected,
+                    // 网格工具的选择只服务 split（用 sel_rect 几何），不物化成员。
+                    None,
                 );
                 sel_rect.push_rect(
                     (result.t_start, result.t_end, result.key_lo, result.key_hi),

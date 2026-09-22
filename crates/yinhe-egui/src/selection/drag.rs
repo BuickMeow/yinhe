@@ -166,6 +166,9 @@ fn pr_single_track(track_selected: &std::collections::HashSet<u16>) -> Option<u1
 ///
 /// track_selected 空 → 全部轨道；单轨 → 只加该轨；
 /// 多轨选中 → 逐轨添加（避免 [min,max] 连续范围误伤中间未选中的轨道）。
+///
+/// `midi` 存在时同时把命中音符物化为显式成员：此后选区跟着这批音符走，
+/// 移动/复制到落点不会把落点处的其他音符拉进选区（不再是"矩形重新查询"）。
 pub fn add_pr_selection_rect(
     selected: &mut yinhe_core::Selection,
     t_start: u32,
@@ -173,14 +176,21 @@ pub fn add_pr_selection_rect(
     key_lo: u8,
     key_hi: u8,
     track_selected: &std::collections::HashSet<u16>,
+    midi: Option<&dyn NoteSource>,
 ) {
+    let add = |selected: &mut yinhe_core::Selection, track_lo: u16, track_hi: u16| {
+        selected.add_rect_track(t_start, t_end, key_lo, key_hi, track_lo, track_hi);
+        if let Some(source) = midi {
+            selected.materialize_rect(source, t_start, t_end, key_lo, key_hi, track_lo, track_hi);
+        }
+    };
     if let Some(t) = pr_single_track(track_selected) {
-        selected.add_rect_track(t_start, t_end, key_lo, key_hi, t, t);
+        add(selected, t, t);
     } else if track_selected.is_empty() {
-        selected.add_rect_track(t_start, t_end, key_lo, key_hi, 0, u16::MAX);
+        add(selected, 0, u16::MAX);
     } else {
         for &t in track_selected {
-            selected.add_rect_track(t_start, t_end, key_lo, key_hi, t, t);
+            add(selected, t, t);
         }
     }
 }

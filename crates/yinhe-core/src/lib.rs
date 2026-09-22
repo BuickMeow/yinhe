@@ -13,6 +13,7 @@
 mod events;
 mod model;
 mod model_stats;
+mod note_bitset;
 mod selection;
 mod source;
 mod tempo_map;
@@ -23,6 +24,7 @@ pub use model::{
     AudioClip, AudioSource, ConductorData, ProjectMeta, TrackData, TrackInfo, TrackKind, YinModel,
 };
 pub use model_stats::RescaleProgress;
+pub use note_bitset::NoteBitset;
 pub use selection::{Selection, SelectionFilter};
 pub use tempo_map::{
     DEFAULT_BPM, DEFAULT_MPQ, TempoMap, TempoSegment, bar_at_tick, bar_divide, bpm_from_mpq,
