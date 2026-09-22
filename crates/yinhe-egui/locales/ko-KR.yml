@@ -47,6 +47,7 @@ hint.tool.pencil: "연필 · 클릭/드래그로 노트 그리기"
 hint.tool.curve: "곡선 · 드래그로 자동화 곡선 그리기"
 hint.tool.scissors: "가위 · 노트 자르기"
 hint.tool.eraser: "지우개 · 드래그하여 노트 삭제"
+hint.tool.grid: "그리드 · 범위 선택 후 그리드로 자르기"
 
 # ── 도구 ──
 tool.select: "선택"
@@ -588,6 +589,7 @@ undo.add_note: "노트 추가"
 undo.eraser_arrange: "지우개 삭제 (편곡)"
 undo.eraser_delete: "지우개 삭제"
 undo.scissors_split: "가위 자르기"
+undo.grid_split: "그리드 자르기"
 undo.edit_automation: "자동화 편집"
 undo.edit_plugin_param: "플러그인 파라미터 편집"
 undo.delete_automation: "자동화 앵커 삭제"
@@ -776,6 +778,7 @@ shortcuts.tool_pencil: "연필 도구"
 shortcuts.tool_curve: "곡선 도구"
 shortcuts.tool_scissors: "가위 도구"
 shortcuts.tool_eraser: "지우개 도구"
+shortcuts.tool_grid: "그리드 도구"
 shortcuts.unknown: "알 수 없는 동작"
 
 # ── MIDI 내보내기 ──

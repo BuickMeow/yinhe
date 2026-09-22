@@ -6,16 +6,18 @@ use yinhe_types::TimeSigEvent;
 use crate::selection::drag::{main_cross_x_y, main_px_to_tick_dir};
 
 /// 指针是否在选框浮动工具条（selection_actions bar）上。
+/// `btn_count` 与显示时一致（选择工具 6，网格工具 1）。
 pub(crate) fn on_action_bar(
     pos: egui::Pos2,
     music_rect: egui::Rect,
     view: &yinhe_types::PianoRollView,
     eff_rects: &[(f64, f64, u8, u8)],
+    btn_count: usize,
 ) -> bool {
     eff_rects.iter().any(|&(t_start, t_end, key_lo, key_hi)| {
         let pixel_rect =
             crate::selection::drag::music_sel_to_pixel_rect(view, t_start, t_end, key_lo, key_hi);
-        crate::widgets::selection_actions::compute_bar_rect(music_rect, pixel_rect)
+        crate::widgets::selection_actions::bar_rect(music_rect, pixel_rect, btn_count)
             .is_some_and(|bar| bar.contains(pos))
     })
 }
@@ -35,7 +37,15 @@ pub(crate) fn cursor_tick_from_click(
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
 ) -> Option<f64> {
-    if !music_rect.contains(pos) || on_action_bar(pos, music_rect, view, eff_rects) {
+    if !music_rect.contains(pos)
+        || on_action_bar(
+            pos,
+            music_rect,
+            view,
+            eff_rects,
+            crate::widgets::selection_actions::SELECT_BAR_BUTTONS.len(),
+        )
+    {
         return None;
     }
     let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);

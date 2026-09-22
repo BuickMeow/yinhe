@@ -116,6 +116,7 @@ pub fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bo
                 shortcuts::ACTION_TOOL_CURVE,
                 shortcuts::ACTION_TOOL_SCISSORS,
                 shortcuts::ACTION_TOOL_ERASER,
+                shortcuts::ACTION_TOOL_GRID,
             ],
         ),
     ];

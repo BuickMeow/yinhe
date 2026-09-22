@@ -172,6 +172,7 @@ pub(crate) fn marquee_drag_frame(
 /// Must be called AFTER `render_ctx.paint` so the box is not covered by the texture.
 /// `id_suffix` — persisted drag state key (e.g. "sel_drag" or "eraser_drag").
 /// `fill_color` / `stroke_color` — base colors for the marquee.
+/// `grid_interval` — Some 时在框内叠加量化网格线（网格工具用）。
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub(crate) fn draw_marquee_box(
     ui: &mut egui::Ui,
@@ -185,6 +186,7 @@ pub(crate) fn draw_marquee_box(
     fill_color: egui::Color32,
     stroke_color: egui::Color32,
     vertical: bool,
+    grid_interval: Option<u32>,
 ) {
     let drag_id = ui.id().with(id_suffix);
     let drag: Option<((f64, f32), egui::Pos2, egui::Pos2)> =
@@ -207,7 +209,7 @@ pub(crate) fn draw_marquee_box(
                 start_music.1 - view.base.scroll_y,
             )
         };
-        let (x0, x1, y0, y1, _, _, _, _) =
+        let (x0, x1, y0, y1, t_start, t_end, key_lo, key_hi) =
             piano_snapped_bounds(start, end, view, quantize, ppq, bar_line_data);
         let kb_w = music_rect.min.x - content_rect.min.x;
         // 垂直全选模式：y 范围用 music_rect 全高，x 范围不变
@@ -220,6 +222,25 @@ pub(crate) fn draw_marquee_box(
             egui::Rect::from_min_max(egui::pos2(x0 - kb_w, y0), egui::pos2(x1 - kb_w, y1))
         };
         crate::selection::draw::draw(ui.painter(), music_rect, snapped, fill_color, stroke_color);
+        if let Some(interval) = grid_interval {
+            let (klo, khi) = if vertical { (0, 127) } else { (key_lo, key_hi) };
+            let main_len = if view.is_vertical() {
+                music_rect.height()
+            } else {
+                music_rect.width()
+            };
+            super::grid::paint_rect_grid(
+                ui.painter(),
+                content_rect,
+                view,
+                t_start,
+                t_end,
+                klo,
+                khi,
+                interval,
+                main_len,
+            );
+        }
     }
 }
 

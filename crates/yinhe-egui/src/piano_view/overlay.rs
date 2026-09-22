@@ -1,9 +1,11 @@
 use eframe::egui;
+use egui_material_icons::icons::ICON_CHECK;
 
 use yinhe_types::{KeySigEvent, PianoRollView, TimeSigEvent};
 
 use super::control_bar;
 use super::types::{PianoViewFeedback, RULER_H};
+use crate::widgets::selection_actions::{BarButton, SELECT_BAR_BUTTONS, SelectionAction};
 
 /// 覆盖层绘制：背景、音阶背景、网格线、wgpu 纹理、键盘、游标、选框、标尺、控制栏。
 ///
@@ -180,6 +182,7 @@ pub(crate) fn draw_overlays(
             crate::theme::contrast_fg(),
             crate::theme::contrast_fg(),
             vertical,
+            None,
         );
     } else if effective_tool == crate::widgets::tools_panel::Tool::Eraser {
         super::marquee::draw_marquee_box(
@@ -194,6 +197,23 @@ pub(crate) fn draw_overlays(
             crate::theme::danger_text_bright(),
             crate::theme::danger_text_bright(),
             false,
+            None,
+        );
+    } else if effective_tool == crate::widgets::tools_panel::Tool::Grid {
+        // 网格工具：拖拽中的框内直接显示量化网格（与松手后的持久框一致）。
+        super::marquee::draw_marquee_box(
+            ui,
+            content_rect,
+            music_rect,
+            view,
+            quantize,
+            ppq,
+            bar_line_data,
+            "grid_drag",
+            crate::theme::accent_active(),
+            crate::theme::accent_active(),
+            false,
+            Some(quantize.tick_interval(ppq)),
         );
     }
 
@@ -239,12 +259,42 @@ pub(crate) fn draw_overlays(
                     }
                 }
             }
-            if (effective_tool == crate::widgets::tools_panel::Tool::Select
-                || effective_tool == crate::widgets::tools_panel::Tool::SelectVertical)
+            // 网格工具：持久选框内叠加量化网格线。
+            if effective_tool == crate::widgets::tools_panel::Tool::Grid {
+                let interval = quantize.tick_interval(ppq);
+                let main_len = if view.is_vertical() {
+                    music_rect.height()
+                } else {
+                    music_rect.width()
+                };
+                for &(t0, t1, kl, kh) in &eff_rects {
+                    super::grid::paint_rect_grid(
+                        painter,
+                        content_rect,
+                        view,
+                        t0,
+                        t1,
+                        kl,
+                        kh,
+                        interval,
+                        main_len,
+                    );
+                }
+            }
+            // 浮动工具条：选择工具 6 按钮 / 网格工具仅确认 ✓。
+            let grid_buttons = [(ICON_CHECK, SelectionAction::GridConfirm)];
+            let bar_buttons: Option<&[BarButton]> = match effective_tool {
+                crate::widgets::tools_panel::Tool::Select
+                | crate::widgets::tools_panel::Tool::SelectVertical => Some(&SELECT_BAR_BUTTONS),
+                crate::widgets::tools_panel::Tool::Grid => Some(&grid_buttons),
+                _ => None,
+            };
+            if let Some(buttons) = bar_buttons
                 && let Some(action) = crate::widgets::selection_actions::show(
                     ui,
                     music_rect,
                     persisted_pixel_rects.last().copied(),
+                    buttons,
                 )
             {
                 sel_action = Some(action);

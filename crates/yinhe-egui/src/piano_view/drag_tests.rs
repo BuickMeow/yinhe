@@ -45,7 +45,7 @@ fn click_on_action_bar_does_not_move_playhead() {
     let eff = [(0.0, 100.0, 60, 70)];
     let pos = bar_point(&view);
     assert!(
-        on_action_bar(pos, content(), &view, &eff),
+        on_action_bar(pos, content(), &view, &eff, 6),
         "测试前提：该点应在工具条上"
     );
     let result = cursor_tick_from_click(
@@ -67,7 +67,7 @@ fn click_outside_bar_moves_playhead() {
     let eff = [(0.0, 100.0, 60, 70)];
     // 选框左侧远处、仍在 music_rect 内的点
     let pos = egui::pos2(200.0, 300.0);
-    assert!(!on_action_bar(pos, content(), &view, &eff));
+    assert!(!on_action_bar(pos, content(), &view, &eff, 6));
     let result = cursor_tick_from_click(
         pos,
         content(),
@@ -1340,4 +1340,160 @@ fn scissors_press_outside_music_rect_is_ignored() {
 
     let (event, _) = run_scissors_frame(&ctx, release_event(pos), &view);
     assert!(event.is_none(), "音乐区外释放不产生切割");
+}
+
+/// 跑一帧 grid_frame（网格工具）。
+fn run_grid_frame(
+    ctx: &egui::Context,
+    raw: egui::RawInput,
+    view: &mut yinhe_types::PianoRollView,
+    selected: &mut yinhe_core::Selection,
+    sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
+    track_selected: &std::collections::HashSet<u16>,
+) {
+    ctx.run_ui(raw, |ui| {
+        crate::piano_view::grid::grid_frame(
+            ui,
+            content(),
+            content(),
+            view,
+            selected,
+            sel_rect,
+            QuantizePreset::Fraction(1, 16),
+            480,
+            None,
+            10000.0,
+            track_selected,
+        );
+    })
+    .textures_delta
+    .clear();
+}
+
+/// 网格工具：框选 release 后选框提交到 SelRectState 与 Selection。
+#[test]
+fn grid_marquee_release_commits_rect() {
+    let ctx = egui::Context::default();
+    let mut view = test_view();
+    // 预初始化视口，避免 clamp_scroll 首次初始化重算 key_height/scroll。
+    view.viewport_h = 600.0;
+    let mut selected = yinhe_core::Selection::default();
+    let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+    let empty = std::collections::HashSet::new();
+
+    // (100,300) → key 97；(400,280) → key 99；x 按 1/16 吸附：120 / 360。
+    run_grid_frame(
+        &ctx,
+        press_event(egui::pos2(100.0, 300.0)),
+        &mut view,
+        &mut selected,
+        &mut sel_rect,
+        &empty,
+    );
+    run_grid_frame(
+        &ctx,
+        drag_event(egui::pos2(400.0, 280.0)),
+        &mut view,
+        &mut selected,
+        &mut sel_rect,
+        &empty,
+    );
+    run_grid_frame(
+        &ctx,
+        release_event(egui::pos2(400.0, 280.0)),
+        &mut view,
+        &mut selected,
+        &mut sel_rect,
+        &empty,
+    );
+
+    assert_eq!(
+        sel_rect.rects,
+        vec![(120.0, 360.0, 97, 99)],
+        "选框应为吸附后的矩形"
+    );
+    assert_eq!(selected.rects.len(), 1, "Selection 同步（track 空 = 全部）");
+    let (ts, te, kl, kh, tlo, thi) = selected.rects[0];
+    assert_eq!((ts, te, kl, kh), (120, 360, 97, 99));
+    assert_eq!((tlo, thi), (0, u16::MAX));
+}
+
+/// 网格工具：拖动已提交选框内部 → 整体平移（按量化吸附）。
+#[test]
+fn grid_move_drag_offsets_committed_rect() {
+    let ctx = egui::Context::default();
+    let mut view = test_view();
+    // 预初始化视口，避免 clamp_scroll 首次初始化重算 key_height/scroll。
+    view.viewport_h = 600.0;
+    let mut selected = yinhe_core::Selection::default();
+    let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+    sel_rect.rects.push((120.0, 360.0, 97, 99));
+    let empty = std::collections::HashSet::new();
+
+    // 框像素范围：x 120..360，y 280..310（key99 顶到 key97 底）。
+    // 从框内 (240,300) 拖到 (360,290)：dt=+120 tick，dk=+1。
+    run_grid_frame(
+        &ctx,
+        press_event(egui::pos2(240.0, 300.0)),
+        &mut view,
+        &mut selected,
+        &mut sel_rect,
+        &empty,
+    );
+    run_grid_frame(
+        &ctx,
+        drag_event(egui::pos2(360.0, 290.0)),
+        &mut view,
+        &mut selected,
+        &mut sel_rect,
+        &empty,
+    );
+    run_grid_frame(
+        &ctx,
+        release_event(egui::pos2(360.0, 290.0)),
+        &mut view,
+        &mut selected,
+        &mut sel_rect,
+        &empty,
+    );
+
+    assert_eq!(
+        sel_rect.rects,
+        vec![(240.0, 480.0, 98, 100)],
+        "选框应整体平移 dt=120, dk=1"
+    );
+}
+
+/// 网格工具：在选框外按下 → 清空旧选框（随后 marquee 以 <3px 结束不产生新框）。
+#[test]
+fn grid_press_blank_clears_rect() {
+    let ctx = egui::Context::default();
+    let mut view = test_view();
+    // 预初始化视口，避免 clamp_scroll 首次初始化重算 key_height/scroll。
+    view.viewport_h = 600.0;
+    let mut selected = yinhe_core::Selection::default();
+    let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+    sel_rect.rects.push((120.0, 360.0, 97, 99));
+    let empty = std::collections::HashSet::new();
+
+    let pos = egui::pos2(600.0, 300.0);
+    run_grid_frame(
+        &ctx,
+        press_event(pos),
+        &mut view,
+        &mut selected,
+        &mut sel_rect,
+        &empty,
+    );
+    run_grid_frame(
+        &ctx,
+        release_event(pos),
+        &mut view,
+        &mut selected,
+        &mut sel_rect,
+        &empty,
+    );
+
+    assert!(sel_rect.rects.is_empty(), "空白按下应清空旧选框");
+    assert!(selected.rects.is_empty(), "选区同步清空");
 }

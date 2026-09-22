@@ -237,6 +237,7 @@ pub(crate) fn handle_input(
         && *active_tool != Tool::Curve
         && *active_tool != Tool::Pan
         && *active_tool != Tool::Scissors
+        && *active_tool != Tool::Grid
         && let Some(pos) = content_resp.interact_pointer_pos()
     {
         let pointer_x = pos.x - rect.min.x;

@@ -173,6 +173,20 @@ pub(crate) fn dispatch(
         );
         scissors_event = event;
         scissors_preview = preview;
+    } else if effective_tool == Tool::Grid {
+        super::grid::grid_frame(
+            ui,
+            content_rect,
+            music_rect,
+            view,
+            selected,
+            sel_rect,
+            quantize,
+            ppq,
+            bar_line_data,
+            total_ticks,
+            track_selected,
+        );
     }
     InteractionOutput {
         effective_tool,
@@ -254,7 +268,7 @@ pub(crate) fn update_hover_cursor(
         }
     }
 
-    if effective_tool == Tool::Scissors
+    if (effective_tool == Tool::Scissors || effective_tool == Tool::Grid)
         && !crate::view_interaction::pointer_over_popup(ui.ctx())
         && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
         && music_rect.contains(pos)

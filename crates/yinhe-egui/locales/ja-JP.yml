@@ -47,6 +47,7 @@ hint.tool.pencil: "鉛筆 · クリック/ドラッグで音符を描画"
 hint.tool.curve: "曲線 · ドラッグでオートメーション曲線を描画"
 hint.tool.scissors: "ハサミ · 音符を分割"
 hint.tool.eraser: "消しゴム · なぞって音符を削除"
+hint.tool.grid: "グリッド · 範囲選択してグリッドでカット"
 
 # ── ツール ──
 tool.select: "選択"
@@ -600,6 +601,7 @@ undo.add_note: "ノートを追加"
 undo.eraser_arrange: "消しゴム削除 (アレンジ)"
 undo.eraser_delete: "消しゴム削除"
 undo.scissors_split: "はさみカット"
+undo.grid_split: "グリッドカット"
 undo.edit_automation: "オートメーションを編集"
 undo.edit_plugin_param: "プラグインパラメータを編集"
 undo.delete_automation: "オートメーションアンカーを削除"
@@ -777,6 +779,7 @@ shortcuts.tool_pencil: "鉛筆ツール"
 shortcuts.tool_curve: "曲線ツール"
 shortcuts.tool_scissors: "ハサミツール"
 shortcuts.tool_eraser: "消しゴムツール"
+shortcuts.tool_grid: "グリッドツール"
 shortcuts.unknown: "不明な操作"
 
 # MIDI エクスポート設定

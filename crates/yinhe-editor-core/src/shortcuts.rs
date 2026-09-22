@@ -63,6 +63,7 @@ pub const ACTION_TOOL_PENCIL: &str = "tool_pencil";
 pub const ACTION_TOOL_CURVE: &str = "tool_curve";
 pub const ACTION_TOOL_SCISSORS: &str = "tool_scissors";
 pub const ACTION_TOOL_ERASER: &str = "tool_eraser";
+pub const ACTION_TOOL_GRID: &str = "tool_grid";
 
 /// 全部可配置动作（设置页展示与默认值完整性检查共用）。
 pub const ALL_ACTION_IDS: &[&str] = &[
@@ -102,6 +103,7 @@ pub const ALL_ACTION_IDS: &[&str] = &[
     ACTION_TOOL_CURVE,
     ACTION_TOOL_SCISSORS,
     ACTION_TOOL_ERASER,
+    ACTION_TOOL_GRID,
 ];
 
 /// 快捷键表：动作 id → 快捷键列表（空列表 = 无快捷键）。
@@ -180,7 +182,7 @@ fn default_combo(action_id: &str) -> Option<KeyCombo> {
         ACTION_TRANSPOSE_DOWN => combo(false, true, false, "ArrowDown"),
         ACTION_TOGGLE_PLAY => combo(false, false, false, "Space"),
         ACTION_STOP => combo(false, false, false, "Escape"),
-        // 工具切换默认用主键盘数字键 1-7（按工具栏显示顺序）。
+        // 工具切换默认用主键盘数字键 1-8（按工具栏显示顺序）。
         ACTION_TOOL_SELECT => combo(false, false, false, "1"),
         ACTION_TOOL_SELECT_VERTICAL => combo(false, false, false, "2"),
         ACTION_TOOL_PAN => combo(false, false, false, "3"),
@@ -188,6 +190,7 @@ fn default_combo(action_id: &str) -> Option<KeyCombo> {
         ACTION_TOOL_CURVE => combo(false, false, false, "5"),
         ACTION_TOOL_SCISSORS => combo(false, false, false, "6"),
         ACTION_TOOL_ERASER => combo(false, false, false, "7"),
+        ACTION_TOOL_GRID => combo(false, false, false, "8"),
         _ => None,
     }
 }

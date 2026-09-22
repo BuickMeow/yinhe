@@ -1,4 +1,5 @@
 use eframe::egui;
+use egui_material_icons::MaterialIcon;
 use egui_material_icons::icons::*;
 
 /// Actions that can be triggered from the floating action bar.
@@ -10,7 +11,22 @@ pub enum SelectionAction {
     TransposeDown,
     FlipHorizontal,
     FlipVertical,
+    /// 网格工具：确认按网格切割框内音符。
+    GridConfirm,
 }
+
+/// 浮动工具条按钮：`(icon, action)`。
+pub type BarButton = (MaterialIcon, SelectionAction);
+
+/// 选择工具的浮动条按钮（删除/复制/移调/翻转）。
+pub const SELECT_BAR_BUTTONS: [BarButton; 6] = [
+    (ICON_DELETE, SelectionAction::Delete),
+    (ICON_CONTENT_COPY, SelectionAction::Duplicate),
+    (ICON_KEYBOARD_ARROW_UP, SelectionAction::TransposeUp),
+    (ICON_KEYBOARD_ARROW_DOWN, SelectionAction::TransposeDown),
+    (ICON_FLIP, SelectionAction::FlipHorizontal),
+    (ICON_FLIP, SelectionAction::FlipVertical),
+];
 
 /// Gap between selection box right edge and the floating bar.
 const GAP: f32 = 8.0;
@@ -25,8 +41,12 @@ const BTN_SPACING: f32 = 4.0;
 
 /// Compute the screen-space rect of the floating action bar for a given
 /// selection rect, or `None` if the bar would be clipped / off-screen.
-/// This is used by `sel_drag_frame` to detect clicks on the bar.
-pub fn compute_bar_rect(content_rect: egui::Rect, sel_view_rect: egui::Rect) -> Option<egui::Rect> {
+/// `btn_count` 决定条高（选择工具 6 个按钮，网格工具仅 ✓ 1 个）。
+pub fn bar_rect(
+    content_rect: egui::Rect,
+    sel_view_rect: egui::Rect,
+    btn_count: usize,
+) -> Option<egui::Rect> {
     let sel_screen = egui::Rect::from_min_max(
         egui::pos2(
             content_rect.min.x + sel_view_rect.min.x,
@@ -38,9 +58,10 @@ pub fn compute_bar_rect(content_rect: egui::Rect, sel_view_rect: egui::Rect) -> 
         ),
     );
 
-    let btn_count = 6;
     let bar_w = ICON_SIZE + H_PAD * 2.0;
-    let bar_h = ICON_SIZE * btn_count as f32 + V_PAD * 2.0 + (btn_count - 1) as f32 * BTN_SPACING;
+    let bar_h = ICON_SIZE * btn_count as f32
+        + V_PAD * 2.0
+        + btn_count.saturating_sub(1) as f32 * BTN_SPACING;
 
     let bar_x = sel_screen.max.x + GAP;
     let bar_y = sel_screen.center().y - bar_h / 2.0;
@@ -64,15 +85,26 @@ pub fn compute_bar_rect(content_rect: egui::Rect, sel_view_rect: egui::Rect) -> 
     Some(bar_rect)
 }
 
+/// [`bar_rect`] 的选择工具封装（6 个按钮）。
+pub fn compute_bar_rect(content_rect: egui::Rect, sel_view_rect: egui::Rect) -> Option<egui::Rect> {
+    bar_rect(content_rect, sel_view_rect, SELECT_BAR_BUTTONS.len())
+}
+
 /// Show a vertical floating action bar to the right of the selection box.
 ///
+/// `buttons` 决定按钮数量与动作（选择工具 6 个，网格工具仅确认）。
 /// Returns the action that was clicked, if any.
 pub fn show(
     ui: &mut egui::Ui,
     content_rect: egui::Rect,
     sel_view_rect: Option<egui::Rect>,
+    buttons: &[BarButton],
 ) -> Option<SelectionAction> {
     let sel = sel_view_rect?;
+    let btn_count = buttons.len();
+    if btn_count == 0 {
+        return None;
+    }
 
     // Convert view-local to screen coordinates
     let sel_screen = egui::Rect::from_min_max(
@@ -87,9 +119,10 @@ pub fn show(
     );
 
     // Bar dimensions
-    let btn_count = 6;
     let bar_w = ICON_SIZE + H_PAD * 2.0;
-    let bar_h = ICON_SIZE * btn_count as f32 + V_PAD * 2.0 + (btn_count - 1) as f32 * BTN_SPACING;
+    let bar_h = ICON_SIZE * btn_count as f32
+        + V_PAD * 2.0
+        + btn_count.saturating_sub(1) as f32 * BTN_SPACING;
 
     // Position: right of selection, vertically centered
     let bar_x = sel_screen.max.x + GAP;
@@ -118,24 +151,6 @@ pub fn show(
     let corner_radius = bar_w / 2.0;
     ui.painter().rect_filled(bar_rect, corner_radius, bg_color);
 
-    // Draw buttons
-    let icons = [
-        ICON_DELETE,
-        ICON_CONTENT_COPY,
-        ICON_KEYBOARD_ARROW_UP,
-        ICON_KEYBOARD_ARROW_DOWN,
-        ICON_FLIP,
-        ICON_FLIP,
-    ];
-    let actions = [
-        SelectionAction::Delete,
-        SelectionAction::Duplicate,
-        SelectionAction::TransposeUp,
-        SelectionAction::TransposeDown,
-        SelectionAction::FlipHorizontal,
-        SelectionAction::FlipVertical,
-    ];
-
     let mut result = None;
     let pointer_pos = ui.input(|i| i.pointer.hover_pos());
     let released = ui.input(|i| i.pointer.primary_released());
@@ -163,7 +178,7 @@ pub fn show(
         ui.data_mut(|d| d.insert_persisted(press_btn_id, press_btn));
     }
 
-    for (i, (&icon, action)) in icons.iter().zip(actions.iter()).enumerate() {
+    for (i, &(icon, action)) in buttons.iter().enumerate() {
         let btn_rect = btn_rects[i];
 
         // Hover detection（hover 变白 + 统一增益底色，与全项目图标按钮基准风格一致）
@@ -185,7 +200,7 @@ pub fn show(
 
         // Draw icon
         let icon_font_id = egui::FontId::new(ICON_SIZE, icon.font_family());
-        if action == &SelectionAction::FlipVertical {
+        if action == SelectionAction::FlipVertical {
             // ICON_FLIP 旋转 90° = 垂直翻转（绕按钮中心）
             let galley =
                 ui.painter()
@@ -212,7 +227,7 @@ pub fn show(
         // Manual click detection: press and release on the same button,
         // with release still hovering it (press 起点记录防拖拽穿透误触)。
         if released && hovered && press_btn == Some(i) {
-            result = Some(*action);
+            result = Some(action);
         }
     }
 

@@ -506,6 +506,20 @@ impl App {
         });
     }
 
+    /// 网格工具确认：按量化网格切开选框内音符，然后清空选框（一个 undo entry）。
+    pub(crate) fn grid_split_selection(&mut self) {
+        self.with_undo(t!("undo.grid_split").as_ref(), |doc| {
+            doc.split_selection_by_grid()
+        });
+        // 确认后清空选框与选区（无论是否切到音符）。
+        if let Some(idx) = self.workspace.active_doc {
+            let doc = &mut self.workspace.documents[idx];
+            doc.edit.sel_rect.clear();
+            doc.edit.selected.clear();
+            doc.edit.pianoroll_view.base.dirty = true;
+        }
+    }
+
     /// Run an edit closure, recording an undo entry from the returned action
     /// and notifying audio afterwards.
     ///

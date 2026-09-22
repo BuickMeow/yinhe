@@ -620,6 +620,7 @@ impl App {
                         SelectionAction::FlipVertical => {
                             self.flip_selected_notes(yinhe_editor_core::FlipAxis::Vertical)
                         }
+                        SelectionAction::GridConfirm => self.grid_split_selection(),
                     }
                 }
                 PianoViewEvent::AddNote { track, note } => {

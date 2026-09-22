@@ -54,9 +54,15 @@ pub(crate) fn sel_drag_frame(
         return (Vec::new(), Vec::new(), Vec::new(), None, None, None);
     }
     let eff_rects = sel_rect.effective_rects();
-    let press_on_bar = ui
-        .input(|i| i.pointer.hover_pos())
-        .is_some_and(|pos| on_action_bar(pos, music_rect, view, &eff_rects));
+    let press_on_bar = ui.input(|i| i.pointer.hover_pos()).is_some_and(|pos| {
+        on_action_bar(
+            pos,
+            music_rect,
+            view,
+            &eff_rects,
+            crate::widgets::selection_actions::SELECT_BAR_BUTTONS.len(),
+        )
+    });
     let can_edit =
         crate::piano_view::pencil::valid_pencil_track(write_track, track_visible, conductor_idx)
             .is_some();
