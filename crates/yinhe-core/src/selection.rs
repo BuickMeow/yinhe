@@ -121,10 +121,14 @@ pub struct Selection {
     pub rects: Vec<(u32, u32, u8, u8, u16, u16)>,
     /// 属性边界（筛选）。空 = 只按矩形空间判定。
     pub filter: SelectionFilter,
-    /// 显式成员集（按 note id，见 [`Selection::materialize_rect`]）。
+    /// 显式成员集（按 note id，见 [`Selection::materialize_pending`]）。
     /// `Some` = 成员态：命中以位图为准，`rects` 退化为扫描范围/选框显示；
     /// `None` = 矩形态：全选 / AR 轨道选择 / 临时删除指令等按矩形判定。
     members: Option<NoteBitset>,
+    /// `rects[..materialized_rects]` 已采样进成员位图。`add_rect*` 只追加
+    /// 矩形（不动该计数），`materialize_pending` 采样未物化部分并推进；
+    /// 这样"全选（矩形态）+ shift 加选"不会丢掉旧范围。
+    materialized_rects: usize,
 }
 
 impl Selection {
@@ -136,6 +140,7 @@ impl Selection {
         self.rects.clear();
         self.filter = SelectionFilter::default();
         self.members = None;
+        self.materialized_rects = 0;
     }
 
     /// Clear only the rectangles, keeping the attribute filter.
@@ -143,6 +148,7 @@ impl Selection {
     pub fn clear_rects(&mut self) {
         self.rects.clear();
         self.members = None;
+        self.materialized_rects = 0;
     }
 
     /// 是否处于成员态（框选物化后）。
@@ -155,37 +161,37 @@ impl Selection {
         self.members.as_ref().map(NoteBitset::count)
     }
 
-    /// 把一个矩形范围物化为显式成员（PR 框选提交时调用）。
+    /// 把尚未物化的矩形（`rects[materialized_rects..]`）采样为显式成员
+    /// （PR/AR 框选提交时调用）。
     ///
     /// 只按空间采样（`start_tick` 起点 ∈ 范围 + key + track），不应用属性
     /// 筛选——`filter` 保持动态谓词，由 [`Selection::accepts_note`] 叠加。
-    #[allow(clippy::too_many_arguments)] // 矩形坐标透传，见 AGENTS 约定
-    pub fn materialize_rect(
-        &mut self,
-        source: &dyn NoteSource,
-        tick_start: u32,
-        tick_end: u32,
-        key_lo: u8,
-        key_hi: u8,
-        track_lo: u16,
-        track_hi: u16,
-    ) {
+    /// 之前处于矩形态的选择（全选等）会在首次加选时一并物化。
+    pub fn materialize_pending(&mut self, source: &dyn NoteSource) {
+        if self.materialized_rects >= self.rects.len() {
+            return;
+        }
+        let pending: Vec<(u32, u32, u8, u8, u16, u16)> =
+            self.rects[self.materialized_rects..].to_vec();
         let bits = self.members.get_or_insert_with(NoteBitset::default);
-        for key in key_lo..=key_hi {
-            for n in source.key_notes_in_range(key, tick_start, tick_end) {
-                // `key_notes_in_range` 左边界按 max_note_len 保守外扩，需精确过滤。
-                if n.start_tick < tick_start || n.start_tick >= tick_end {
-                    continue;
+        for (tick_start, tick_end, key_lo, key_hi, track_lo, track_hi) in pending {
+            for key in key_lo..=key_hi {
+                for n in source.key_notes_in_range(key, tick_start, tick_end) {
+                    // `key_notes_in_range` 左边界按 max_note_len 保守外扩，需精确过滤。
+                    if n.start_tick < tick_start || n.start_tick >= tick_end {
+                        continue;
+                    }
+                    if n.track < track_lo || n.track > track_hi {
+                        continue;
+                    }
+                    if n.id == 0 {
+                        continue; // 发号器哨兵（未分配），不进位图
+                    }
+                    bits.insert(n.id);
                 }
-                if n.track < track_lo || n.track > track_hi {
-                    continue;
-                }
-                if n.id == 0 {
-                    continue; // 发号器哨兵（未分配），不进位图
-                }
-                bits.insert(n.id);
             }
         }
+        self.materialized_rects = self.rects.len();
     }
 
     /// 用给定 id 重建显式成员集（复制/粘贴后让选区跟随新音符）。
@@ -197,12 +203,15 @@ impl Selection {
             }
         }
         self.members = Some(bits);
+        // 现有 rects 视作已物化（成员由调用方精确给出）。
+        self.materialized_rects = self.rects.len();
     }
 
     /// 丢弃显式成员集，退回矩形态。供"纯几何查询"使用（目标位置重叠
     /// 检测等内部场景），不是用户可见的选择操作。
     pub fn drop_members(&mut self) {
         self.members = None;
+        self.materialized_rects = 0;
     }
 
     /// 渲染缓存用的选择状态指纹：矩形 + 音符属性边界 + 成员位图。
@@ -216,6 +225,7 @@ impl Selection {
         self.filter.velocity.hash(&mut h);
         self.filter.gate.hash(&mut h);
         self.filter.invert.hash(&mut h);
+        self.materialized_rects.hash(&mut h);
         self.members
             .as_ref()
             .map(NoteBitset::state_hash)
@@ -335,6 +345,7 @@ impl Selection {
         });
         if self.rects.len() != before {
             self.members = None;
+            self.materialized_rects = 0;
         }
     }
 
@@ -353,6 +364,7 @@ impl Selection {
         });
         if self.rects.len() != before {
             self.members = None;
+            self.materialized_rects = 0;
         }
     }
 }
@@ -388,7 +400,7 @@ mod tests {
 
     impl MockSource {
         fn new(notes: &[(u8, Note)]) -> Self {
-            let mut by_key: Vec<Vec<Note>> = (0..128).map(|_| Vec::new()).collect();
+            let mut by_key: Vec<Vec<Note>> = vec![Vec::new(); yinhe_types::KEY_COUNT];
             for (key, n) in notes {
                 by_key[*key as usize].push(*n);
             }
@@ -419,7 +431,8 @@ mod tests {
         let source = MockSource::new(&[(60, n1), (60, n2)]);
 
         let mut sel = Selection::default();
-        sel.materialize_rect(&source, 0, 100, 60, 60, 0, u16::MAX);
+        sel.add_rect(0, 100, 60, 60);
+        sel.materialize_pending(&source);
         assert!(sel.has_explicit_members());
         assert_eq!(sel.explicit_member_count(), Some(1));
         assert!(sel.accepts_note(&n1, 60));
@@ -435,14 +448,15 @@ mod tests {
     /// 物化只采样矩形内按起点判定的音符：长音符起点在范围外不入选，
     /// track 范围外的音符不入选。
     #[test]
-    fn materialize_rect_respects_tick_and_track_bounds() {
+    fn materialize_pending_respects_tick_and_track_bounds() {
         let long = note_id(1, 0, 500, 100, 0); // 起点在查询范围 [200,300) 之前
         let inside = note_id(2, 250, 260, 100, 0);
         let other_track = note_id(3, 250, 260, 100, 5);
         let source = MockSource::new(&[(60, long), (60, inside), (60, other_track)]);
 
         let mut sel = Selection::default();
-        sel.materialize_rect(&source, 200, 300, 60, 60, 0, 0);
+        sel.add_rect_track(200, 300, 60, 60, 0, 0);
+        sel.materialize_pending(&source);
 
         assert!(!sel.accepts_note(&long, 60), "起点在范围外不入选");
         assert!(sel.accepts_note(&inside, 60));
@@ -458,7 +472,8 @@ mod tests {
         let source = MockSource::new(&[(60, loud), (60, quiet)]);
 
         let mut sel = Selection::default();
-        sel.materialize_rect(&source, 0, 200, 60, 60, 0, u16::MAX);
+        sel.add_rect(0, 200, 60, 60);
+        sel.materialize_pending(&source);
         assert_eq!(sel.explicit_member_count(), Some(2));
 
         sel.filter.velocity = Some((90, 127));
@@ -487,7 +502,7 @@ mod tests {
         let source = MockSource::new(&[(60, n)]);
         let mut sel = Selection::default();
         sel.add_rect(0, 100, 60, 60);
-        sel.materialize_rect(&source, 0, 100, 60, 60, 0, u16::MAX);
+        sel.materialize_pending(&source);
         assert!(sel.has_explicit_members());
 
         sel.remove_rects(&[(0, 100, 60, 60)]);
@@ -510,6 +525,25 @@ mod tests {
         assert!(!sel.accepts_note(&note_id(30, 0, 50, 100, 0), 60));
     }
 
+    /// 全选（矩形态）后 shift 加选：物化必须覆盖旧矩形，否则旧选择失效。
+    #[test]
+    fn materialize_pending_covers_previous_rects() {
+        let a = note_id(1, 0, 100, 100, 0);
+        let b = note_id(2, 500, 600, 100, 0);
+        let source = MockSource::new(&[(60, a), (60, b)]);
+        let mut sel = Selection::default();
+        sel.add_rect(0, u32::MAX, 0, MAX_KEY); // 全选（矩形态，未物化）
+        sel.add_rect(500, 600, 60, 60); // shift 加选
+        sel.materialize_pending(&source);
+        assert_eq!(
+            sel.explicit_member_count(),
+            Some(2),
+            "全选与加选矩形都要物化"
+        );
+        assert!(sel.accepts_note(&a, 60), "全选范围内的旧音符不得丢失");
+        assert!(sel.accepts_note(&b, 60));
+    }
+
     /// 渲染缓存指纹：矩形/成员/筛选变化都会改变。
     #[test]
     fn state_hash_tracks_selection_changes() {
@@ -520,7 +554,7 @@ mod tests {
         sel.add_rect(0, 100, 60, 60);
         let h_rect = sel.state_hash();
         assert_ne!(h_empty, h_rect);
-        sel.materialize_rect(&source, 0, 100, 60, 60, 0, u16::MAX);
+        sel.materialize_pending(&source);
         let h_members = sel.state_hash();
         assert_ne!(h_rect, h_members, "物化成员后指纹变化");
         sel.filter.velocity = Some((10, 20));

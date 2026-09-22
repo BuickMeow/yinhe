@@ -427,7 +427,7 @@ mod tests {
 
         let mut sel = yinhe_core::Selection::default();
         sel.add_rect(0, 480, 100, 100);
-        sel.materialize_rect(&midi, 0, 480, 100, 100, 0, u16::MAX);
+        sel.materialize_pending(&midi);
 
         build_notes(
             &mut out,

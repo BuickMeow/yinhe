@@ -517,7 +517,7 @@ mod tests {
 
         let mut sel = Selection::default();
         sel.add_rect(0, 100, 60, 60);
-        sel.materialize_rect(&m, 0, 100, 60, 60, 0, u16::MAX);
+        sel.materialize_pending(&m);
         assert_eq!(sel.explicit_member_count(), Some(1));
 
         // 模拟 move_selected_notes：移除成员（只删 id=1）并插到落点 200..300。

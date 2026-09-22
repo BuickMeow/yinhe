@@ -371,6 +371,7 @@ impl Document {
 
         // ── 1. 复制音符（原音符保留，副本平移到新 tick/新轨）──
         let selected_data = batch_ops::collect_selected(model, &self.edit.selected);
+        let mut dup_note_ids: Vec<u32> = Vec::new();
         if !selected_data.is_empty() {
             let allow_overlap = self.edit.allow_overlapping_notes;
             let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
@@ -413,6 +414,7 @@ impl Document {
                     .iter()
                     .flat_map(|(key, notes)| notes.iter().map(|n| (*n, *key)))
                     .collect();
+                dup_note_ids.extend(after.iter().map(|(n, _)| n.id));
                 batch_ops::insert_batch(model, new_by_key);
                 sub_actions.push(UndoAction::Notes(NoteDelta {
                     before: vec![],
@@ -534,6 +536,10 @@ impl Document {
         self.edit.selected.offset_ticks(delta_ticks);
         if delta_tracks != 0 {
             self.edit.selected.offset_tracks(delta_tracks);
+        }
+        // 选区精确跟随副本音符（新 id），落点处的其他音符不纳入。
+        if !dup_note_ids.is_empty() {
+            self.edit.selected.set_members(dup_note_ids);
         }
 
         model.rebuild_dirty();
@@ -680,6 +686,67 @@ mod tests {
             doc.data.model.notes[60]
                 .iter()
                 .any(|n| n.start_tick == 500 && n.end_tick == 600),
+        );
+    }
+
+    /// 回归：AR 框选物化后，移动提交再拖动不会把落点的路人音符吸进选区。
+    /// （框选提交在 UI 层物化，这里直接构造物化态 Selection。）
+    #[test]
+    fn materialized_arrange_selection_stable_across_moves() {
+        let mut doc = make_doc();
+        add(&mut doc, 100, 200, 60); // A（被框选）
+        add(&mut doc, 300, 400, 60); // B（落点路人）
+        doc.edit.allow_overlapping_notes = true;
+
+        // 模拟 AR 框选提交：[100,201) 全 key，物化成员。
+        doc.edit
+            .selected
+            .add_rect_track(100, 201, 0, yinhe_types::MAX_KEY, 0, 0);
+        doc.edit.selected.materialize_pending(&*doc.data.model);
+        assert_eq!(doc.edit.selected.explicit_member_count(), Some(1));
+
+        // 第一次移动 +200：A 到 [300,400)，与 B 重叠（允许重叠）。
+        doc.move_selected_arrange(200, 0)
+            .expect("第一次移动应产生 undo");
+        // 第二次移动 +100：只应搬 A（成员），不得带上 B。
+        doc.move_selected_arrange(100, 0)
+            .expect("第二次移动应产生 undo");
+
+        let k60: Vec<(u32, u32)> = doc.data.model.notes[60]
+            .iter()
+            .map(|n| (n.start_tick, n.end_tick))
+            .collect();
+        assert!(k60.contains(&(400, 500)), "A 应移到 [400,500)");
+        assert!(k60.contains(&(300, 400)), "B 应留在 [300,400)");
+        assert_eq!(
+            doc.edit.selected.explicit_member_count(),
+            Some(1),
+            "成员集合保持只有 A"
+        );
+    }
+
+    /// AR Alt 拖动复制后选区精确跟随副本，不吸收落点处的其他音符。
+    #[test]
+    fn duplicate_selected_arrange_selection_follows_copies() {
+        let mut doc = make_doc();
+        add(&mut doc, 100, 200, 60); // A（被框选）
+        add(&mut doc, 500, 600, 60); // C（落点已有音符）
+        doc.edit.allow_overlapping_notes = true;
+        doc.edit
+            .selected
+            .add_rect_track(100, 201, 0, yinhe_types::MAX_KEY, 0, 0);
+        doc.edit.selected.materialize_pending(&*doc.data.model);
+
+        // Alt+拖动复制 +400：副本落点 [500,600) 与 C 重叠。
+        doc.duplicate_selected_arrange(400, 0)
+            .expect("复制应产生 undo");
+
+        let collected = batch_ops::collect_selected(&doc.data.model, &doc.edit.selected);
+        assert_eq!(collected.len(), 1, "落点已有音符 C 不得被选区吸收");
+        assert_eq!(collected[0].0.start_tick, 500, "选区应指向副本");
+        assert!(
+            doc.data.model.notes[60].iter().any(|n| n.start_tick == 100),
+            "原件应保留"
         );
     }
 }

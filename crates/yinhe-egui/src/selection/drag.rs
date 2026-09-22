@@ -178,20 +178,18 @@ pub fn add_pr_selection_rect(
     track_selected: &std::collections::HashSet<u16>,
     midi: Option<&dyn NoteSource>,
 ) {
-    let add = |selected: &mut yinhe_core::Selection, track_lo: u16, track_hi: u16| {
-        selected.add_rect_track(t_start, t_end, key_lo, key_hi, track_lo, track_hi);
-        if let Some(source) = midi {
-            selected.materialize_rect(source, t_start, t_end, key_lo, key_hi, track_lo, track_hi);
-        }
-    };
     if let Some(t) = pr_single_track(track_selected) {
-        add(selected, t, t);
+        selected.add_rect_track(t_start, t_end, key_lo, key_hi, t, t);
     } else if track_selected.is_empty() {
-        add(selected, 0, u16::MAX);
+        selected.add_rect_track(t_start, t_end, key_lo, key_hi, 0, u16::MAX);
     } else {
         for &t in track_selected {
-            add(selected, t, t);
+            selected.add_rect_track(t_start, t_end, key_lo, key_hi, t, t);
         }
+    }
+    // 追加的矩形统一物化（包括此前矩形态未物化的旧矩形，如全选）。
+    if let Some(source) = midi {
+        selected.materialize_pending(source);
     }
 }
 
