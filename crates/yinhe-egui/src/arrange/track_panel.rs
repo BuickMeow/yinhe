@@ -18,6 +18,10 @@ mod types;
 pub(crate) use interaction::plugin_instrument_of;
 pub(crate) use types::TrackAction;
 
+/// 色带图标（chevron / 加号）命中区高 16px，其底边距行底（色带底）1px，
+/// 因此中心距行底 16 / 2 + 1 = 9px。
+const BADGE_ICON_BOTTOM_INSET: f32 = 9.0;
+
 /// Render the track list using a painter (unified component for both
 /// pianoroll and transport contexts).
 ///
@@ -239,12 +243,14 @@ pub(crate) fn show(
                 .is_some_and(|t| sub + 1 == t.automation_lanes.len());
             if is_last_lane && hover_track == Some(track) {
                 let plus_color = hover::icon_contrast_color(color);
-                // 加号放在色带列底部（与主行 chevron 同位置 lh*0.62）。
-                let badge_center_x = row_rect.min.x + 14.0 * 0.5;
+                // 加号放在色带列底部（与主行 chevron 同位置：底边距行底 1px）。
                 // 点击加号：直接打开「添加自动化」窗口（设备维度，不再弹菜单）。
                 if badge::badge_icon_button(
                     ui,
-                    egui::pos2(badge_center_x, row_rect.min.y + lh * 0.62),
+                    egui::pos2(
+                        badge_rect.center().x,
+                        badge_rect.max.y - BADGE_ICON_BOTTOM_INSET,
+                    ),
                     ICON_ADD.codepoint,
                     ICON_ADD.font_family(),
                     plus_color,
@@ -289,7 +295,10 @@ pub(crate) fn show(
                 if family_hovered
                     && badge::badge_icon_button(
                         ui,
-                        egui::pos2(badge_rect.center().x, badge_rect.min.y + lh * 0.62),
+                        egui::pos2(
+                            badge_rect.center().x,
+                            badge_rect.max.y - BADGE_ICON_BOTTOM_INSET,
+                        ),
                         ICON_ADD.codepoint,
                         ICON_ADD.font_family(),
                         icon_color,
@@ -306,7 +315,10 @@ pub(crate) fn show(
                 };
                 // chevron 仅在该轨家族被悬浮时显示；颜色按音轨颜色亮度选黑/白保证对比度。
                 let icon_rect = egui::Rect::from_center_size(
-                    egui::pos2(badge_rect.center().x, badge_rect.min.y + lh * 0.62),
+                    egui::pos2(
+                        badge_rect.center().x,
+                        badge_rect.max.y - BADGE_ICON_BOTTOM_INSET,
+                    ),
                     egui::vec2(12.0, lh.min(16.0)),
                 );
                 let chev_resp = ui.interact(
