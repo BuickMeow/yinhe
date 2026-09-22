@@ -574,6 +574,8 @@ impl App {
                     self.audio_settings.use_gpu_cull,
                     &doc.data.model.conductor.tempo,
                     &mut doc.edit.sel_rect,
+                    &mut doc.edit.line_tool_line,
+                    &mut doc.edit.scissors_line,
                     &doc.edit.track_selected,
                     doc.edit.conductor_track_idx,
                     write_track,
@@ -621,6 +623,8 @@ impl App {
                             self.flip_selected_notes(yinhe_editor_core::FlipAxis::Vertical)
                         }
                         SelectionAction::GridConfirm => self.grid_split_selection(),
+                        SelectionAction::LineConfirm => self.line_tool_confirm(),
+                        SelectionAction::ScissorsConfirm => self.scissors_confirm(),
                     }
                 }
                 PianoViewEvent::AddNote { track, note } => {
@@ -675,8 +679,8 @@ impl App {
                         doc.delete_single_note(track, start_tick, key)
                     });
                 }
-                PianoViewEvent::ScissorsSplit { cuts } => {
-                    self.scissors_split(cuts);
+                PianoViewEvent::AddNotes { track, notes } => {
+                    self.add_notes_with_undo(track, notes);
                 }
             }
         }

@@ -8,8 +8,10 @@ use yinhe_editor_core::audio_settings::QuickDeleteMode;
 use yinhe_editor_core::quantize::QuantizePreset;
 pub use yinhe_types::PencilNoteDrag;
 
+mod anchor_line;
 pub mod automation_panel;
 mod bg;
+mod brush;
 pub mod control_bar;
 pub(crate) mod drag;
 mod follow;
@@ -24,7 +26,6 @@ mod overlay;
 mod panels;
 mod pencil;
 mod perf;
-mod scissors;
 mod scrollbar;
 mod status;
 mod tool;
@@ -81,6 +82,8 @@ pub fn show(
     use_gpu_cull: bool,
     tempo_lane: &AutomationLane,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
+    line_tool_line: &mut Option<yinhe_editor_core::edit_state::AnchorLine>,
+    scissors_line: &mut Option<yinhe_editor_core::edit_state::AnchorLine>,
     track_selected: &std::collections::HashSet<u16>,
     conductor_idx: Option<u16>,
     // 写入目标轨 = 主音轨或回退轨（无选中时第一个非 Conductor 轨），由 layout 计算。
@@ -163,8 +166,7 @@ pub fn show(
         pencil_event,
         eraser_event,
         quick_delete_event,
-        scissors_event,
-        scissors_preview,
+        brush_event,
     } = interaction::dispatch(
         ui,
         view,
@@ -181,6 +183,8 @@ pub fn show(
         bar_line_data,
         total_ticks,
         sel_rect,
+        line_tool_line,
+        scissors_line,
         track_selected,
         write_track,
         conductor_idx,
@@ -328,7 +332,8 @@ pub fn show(
         &bar,
         feedback,
         selected,
-        scissors_preview.as_deref(),
+        line_tool_line.as_ref(),
+        scissors_line.as_ref(),
     );
     let t_paint_end = if perf_on {
         Some(std::time::Instant::now())
@@ -430,5 +435,5 @@ pub fn show(
         .or(quick_delete_event)
         .or(pencil_event)
         .or(eraser_event)
-        .or(scissors_event)
+        .or(brush_event)
 }

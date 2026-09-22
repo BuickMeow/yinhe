@@ -42,7 +42,8 @@ pub(crate) fn draw_overlays(
     bar: &control_bar::PrBarData<'_>,
     feedback: &mut PianoViewFeedback<'_>,
     selected: &mut yinhe_core::Selection,
-    scissors_preview: Option<&[(u8, u32)]>,
+    line_tool_line: Option<&yinhe_editor_core::edit_state::AnchorLine>,
+    scissors_line: Option<&yinhe_editor_core::edit_state::AnchorLine>,
 ) -> Option<crate::widgets::selection_actions::SelectionAction> {
     // 兼容任务要求的形参（部分由 midi 派生，此处透传占位，避免未使用警告）
     let _ = tpb;
@@ -217,11 +218,51 @@ pub(crate) fn draw_overlays(
         );
     }
 
-    // ── Scissors 切割线预览（吸附后的逐行切点台阶线）──
-    if let Some(cuts) = scissors_preview {
-        super::scissors::paint_preview(painter, content_rect, view, cuts);
+    // ── 锚点线工具（直线/剪刀）：线、锚点与生成/切割位置预览 ──
+    match effective_tool {
+        crate::widgets::tools_panel::Tool::Line => {
+            if let Some(line) = line_tool_line {
+                super::anchor_line::paint_line(
+                    painter,
+                    content_rect,
+                    view,
+                    line,
+                    crate::theme::accent_active(),
+                );
+                super::anchor_line::paint_snap_marks(
+                    painter,
+                    content_rect,
+                    view,
+                    line,
+                    quantize,
+                    ppq,
+                    bar_line_data,
+                );
+            }
+        }
+        crate::widgets::tools_panel::Tool::Scissors => {
+            if let Some(line) = scissors_line {
+                super::anchor_line::paint_line(
+                    painter,
+                    content_rect,
+                    view,
+                    line,
+                    crate::theme::accent_active(),
+                );
+                let cuts = yinhe_editor_core::quantize::line_cuts(
+                    line.start,
+                    line.end,
+                    quantize,
+                    ppq,
+                    bar_line_data,
+                );
+                super::anchor_line::paint_scissors_cuts(painter, content_rect, view, &cuts);
+            }
+        }
+        _ => {}
     }
     // 已提交的持久选框：任意工具下均保持可见
+    let mut persisted_last: Option<egui::Rect> = None;
     {
         let eff_rects = sel_rect.effective_rects();
         if !eff_rects.is_empty() {
@@ -233,6 +274,7 @@ pub(crate) fn draw_overlays(
                     )
                 })
                 .collect();
+            persisted_last = persisted_pixel_rects.last().copied();
             {
                 let kb_w_shift = if view.is_vertical() {
                     0.0
@@ -281,25 +323,37 @@ pub(crate) fn draw_overlays(
                     );
                 }
             }
-            // 浮动工具条：选择工具 6 按钮 / 网格工具仅确认 ✓。
-            let grid_buttons = [(ICON_CHECK, SelectionAction::GridConfirm)];
-            let bar_buttons: Option<&[BarButton]> = match effective_tool {
-                crate::widgets::tools_panel::Tool::Select
-                | crate::widgets::tools_panel::Tool::SelectVertical => Some(&SELECT_BAR_BUTTONS),
-                crate::widgets::tools_panel::Tool::Grid => Some(&grid_buttons),
-                _ => None,
-            };
-            if let Some(buttons) = bar_buttons
-                && let Some(action) = crate::widgets::selection_actions::show(
-                    ui,
-                    music_rect,
-                    persisted_pixel_rects.last().copied(),
-                    buttons,
-                )
-            {
-                sel_action = Some(action);
-            }
         }
+    }
+
+    // ── 浮动工具条：选择/网格用选框定位，直线/剪刀用锚点线 bbox 定位 ──
+    let grid_buttons = [(ICON_CHECK, SelectionAction::GridConfirm)];
+    let line_buttons = [(ICON_CHECK, SelectionAction::LineConfirm)];
+    let scissors_buttons = [(ICON_CHECK, SelectionAction::ScissorsConfirm)];
+    let bar_spec: Option<(&[BarButton], Option<egui::Rect>)> = match effective_tool {
+        crate::widgets::tools_panel::Tool::Select
+        | crate::widgets::tools_panel::Tool::SelectVertical => {
+            Some((&SELECT_BAR_BUTTONS[..], persisted_last))
+        }
+        crate::widgets::tools_panel::Tool::Grid => Some((&grid_buttons[..], persisted_last)),
+        crate::widgets::tools_panel::Tool::Line => line_tool_line.map(|l| {
+            (
+                &line_buttons[..],
+                Some(super::anchor_line::pixel_bbox(view, l)),
+            )
+        }),
+        crate::widgets::tools_panel::Tool::Scissors => scissors_line.map(|l| {
+            (
+                &scissors_buttons[..],
+                Some(super::anchor_line::pixel_bbox(view, l)),
+            )
+        }),
+        _ => None,
+    };
+    if let Some((buttons, rect)) = bar_spec
+        && let Some(action) = crate::widgets::selection_actions::show(ui, music_rect, rect, buttons)
+    {
+        sel_action = Some(action);
     }
 
     // ── Time ruler ──（横向：control_bar 在最上，ruler 在其下贴内容，更贴近音符便于查看/跳转）

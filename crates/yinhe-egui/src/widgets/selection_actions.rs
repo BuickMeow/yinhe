@@ -13,6 +13,10 @@ pub enum SelectionAction {
     FlipVertical,
     /// 网格工具：确认按网格切割框内音符。
     GridConfirm,
+    /// 直线工具：确认按锚点线生成音符。
+    LineConfirm,
+    /// 剪刀工具：确认按锚点线切割音符。
+    ScissorsConfirm,
 }
 
 /// 浮动工具条按钮：`(icon, action)`。

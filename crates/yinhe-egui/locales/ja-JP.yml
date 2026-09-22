@@ -48,6 +48,8 @@ hint.tool.curve: "曲線 · ドラッグでオートメーション曲線を描�
 hint.tool.scissors: "ハサミ · 音符を分割"
 hint.tool.eraser: "消しゴム · なぞって音符を削除"
 hint.tool.grid: "グリッド · 範囲選択してグリッドでカット"
+hint.tool.line: "ライン · アンカーをドラッグして音符生成"
+hint.tool.brush: "ブラシ · ドラッグでグリッドに音符を描画"
 
 # ── ツール ──
 tool.select: "選択"
@@ -780,6 +782,8 @@ shortcuts.tool_curve: "曲線ツール"
 shortcuts.tool_scissors: "ハサミツール"
 shortcuts.tool_eraser: "消しゴムツール"
 shortcuts.tool_grid: "グリッドツール"
+shortcuts.tool_line: "ラインツール"
+shortcuts.tool_brush: "ブラシツール"
 shortcuts.unknown: "不明な操作"
 
 # MIDI エクスポート設定

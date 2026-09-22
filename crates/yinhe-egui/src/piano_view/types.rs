@@ -26,9 +26,10 @@ pub enum PianoViewEvent {
         start_tick: u32,
         key: u8,
     },
-    /// 剪刀切割：逐行切点 `(key, cut_tick)`。
-    ScissorsSplit {
-        cuts: Vec<(u8, u32)>,
+    /// 批量添加音符（刷子绘制）：力度由 App 层填充为该轨记忆力度。
+    AddNotes {
+        track: u16,
+        notes: Vec<yinhe_core::NoteEvent>,
     },
 }
 

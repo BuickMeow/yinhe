@@ -499,11 +499,51 @@ impl App {
         });
     }
 
-    /// 剪刀切割：按逐行切点切开音符，一次拖拽一个 undo entry。
-    pub(crate) fn scissors_split(&mut self, cuts: Vec<(u8, u32)>) {
-        self.with_undo(t!("undo.scissors_split").as_ref(), |doc| {
-            doc.split_notes_at(&cuts)
+    /// 批量添加音符（刷子绘制）：力度 = 该轨记忆力度，一次落笔一个 undo entry。
+    pub(crate) fn add_notes_with_undo(
+        &mut self,
+        track_idx: u16,
+        mut notes: Vec<yinhe_core::NoteEvent>,
+    ) {
+        if notes.is_empty() {
+            return;
+        }
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let velocity = self.workspace.documents[idx]
+            .edit
+            .default_velocity(track_idx);
+        for n in &mut notes {
+            n.velocity = velocity;
+        }
+        self.with_undo(t!("undo.add_note").as_ref(), |doc| {
+            doc.add_notes_batch(track_idx, &notes)
         });
+    }
+
+    /// 直线工具确认：沿音高行生成音符，然后清空锚点线（一个 undo entry）。
+    pub(crate) fn line_tool_confirm(&mut self) {
+        self.with_undo(t!("undo.add_note").as_ref(), |doc| {
+            doc.generate_line_notes()
+        });
+        if let Some(idx) = self.workspace.active_doc {
+            let doc = &mut self.workspace.documents[idx];
+            doc.edit.line_tool_line = None;
+            doc.edit.pianoroll_view.base.dirty = true;
+        }
+    }
+
+    /// 剪刀确认：按锚点线切割，然后清空线（一个 undo entry）。
+    pub(crate) fn scissors_confirm(&mut self) {
+        self.with_undo(t!("undo.scissors_split").as_ref(), |doc| {
+            doc.split_scissors_line()
+        });
+        if let Some(idx) = self.workspace.active_doc {
+            let doc = &mut self.workspace.documents[idx];
+            doc.edit.scissors_line = None;
+            doc.edit.pianoroll_view.base.dirty = true;
+        }
     }
 
     /// 网格工具确认：按量化网格切开选框内音符，然后清空选框（一个 undo entry）。

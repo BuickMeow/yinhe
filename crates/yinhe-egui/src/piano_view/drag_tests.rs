@@ -1248,98 +1248,228 @@ fn sel_drag_in_progress_reflects_persisted_state() {
     assert!(result, "选区 Alt 克隆拖拽进行中应为 true");
 }
 
-/// 跑一帧 scissors_frame（Scissors 工具），返回 release 事件与拖拽预览切点。
-fn run_scissors_frame(
+/// 跑一帧锚点线工具（直线/剪刀共用状态机）。
+fn run_anchor_frame(
     ctx: &egui::Context,
     raw: egui::RawInput,
-    view: &yinhe_types::PianoRollView,
-) -> (
-    Option<crate::piano_view::PianoViewEvent>,
-    Option<crate::piano_view::scissors::ScissorsCuts>,
+    view: &mut yinhe_types::PianoRollView,
+    line: &mut Option<yinhe_editor_core::edit_state::AnchorLine>,
+    clear_on_click: bool,
+    id_suffix: &'static str,
 ) {
-    let mut out = (None, None);
     // run_ui 返回的 FullOutput 含字体纹理 delta，丢弃前必须 clear（epaint 断言）。
     ctx.run_ui(raw, |ui| {
-        out = crate::piano_view::scissors::scissors_frame(
+        crate::piano_view::anchor_line::frame(
             ui,
             content(),
             content(),
             view,
+            line,
             QuantizePreset::Fraction(1, 16),
             480,
             None,
+            10000.0,
+            id_suffix,
+            clear_on_click,
         );
+    })
+    .textures_delta
+    .clear();
+}
+
+/// 直线工具：拖出两个锚点（x 吸附量化、y 取行中心）后线保留，终点锚点可再拖。
+#[test]
+fn line_drag_creates_anchor_line_and_anchor_drags() {
+    let ctx = egui::Context::default();
+    let mut view = test_view();
+    // 预初始化视口，避免 clamp_scroll 首次初始化重算 key_height/scroll。
+    view.viewport_h = 600.0;
+    let mut line = None;
+
+    // (100,300) → key 97；(400,280) → key 99；x 吸附 120/360。
+    run_anchor_frame(
+        &ctx,
+        press_event(egui::pos2(100.0, 300.0)),
+        &mut view,
+        &mut line,
+        false,
+        "line_tool_drag",
+    );
+    run_anchor_frame(
+        &ctx,
+        drag_event(egui::pos2(400.0, 280.0)),
+        &mut view,
+        &mut line,
+        false,
+        "line_tool_drag",
+    );
+    run_anchor_frame(
+        &ctx,
+        release_event(egui::pos2(400.0, 280.0)),
+        &mut view,
+        &mut line,
+        false,
+        "line_tool_drag",
+    );
+    assert_eq!(
+        line,
+        Some(yinhe_editor_core::edit_state::AnchorLine {
+            start: (120.0, 97),
+            end: (360.0, 99),
+        }),
+        "拖拽后线保留且锚点吸附"
+    );
+
+    // 终点锚点（key 99 行中心 y=285）拖到 (480,290) → key 98。
+    run_anchor_frame(
+        &ctx,
+        press_event(egui::pos2(360.0, 285.0)),
+        &mut view,
+        &mut line,
+        false,
+        "line_tool_drag",
+    );
+    run_anchor_frame(
+        &ctx,
+        drag_event(egui::pos2(480.0, 290.0)),
+        &mut view,
+        &mut line,
+        false,
+        "line_tool_drag",
+    );
+    run_anchor_frame(
+        &ctx,
+        release_event(egui::pos2(480.0, 290.0)),
+        &mut view,
+        &mut line,
+        false,
+        "line_tool_drag",
+    );
+    assert_eq!(
+        line,
+        Some(yinhe_editor_core::edit_state::AnchorLine {
+            start: (120.0, 97),
+            end: (480.0, 98),
+        }),
+        "终点锚点应可再拖动"
+    );
+}
+
+/// 剪刀：单击空白清空线；直线：单击保留单点线。
+#[test]
+fn scissors_click_clears_line_but_line_tool_keeps_it() {
+    let ctx = egui::Context::default();
+    let mut view = test_view();
+    view.viewport_h = 600.0;
+    let existing = Some(yinhe_editor_core::edit_state::AnchorLine {
+        start: (120.0, 97),
+        end: (360.0, 99),
+    });
+    let pos = egui::pos2(600.0, 300.0);
+
+    // 剪刀：空白单击（按下、原地松开）→ 清空。
+    let mut line = existing;
+    run_anchor_frame(
+        &ctx,
+        press_event(pos),
+        &mut view,
+        &mut line,
+        true,
+        "scissors_drag",
+    );
+    run_anchor_frame(
+        &ctx,
+        release_event(pos),
+        &mut view,
+        &mut line,
+        true,
+        "scissors_drag",
+    );
+    assert!(line.is_none(), "剪刀单击空白应清空线");
+
+    // 直线：同样操作保留单点线（✓ 时生成一个音符）。
+    let mut line = None;
+    run_anchor_frame(
+        &ctx,
+        press_event(pos),
+        &mut view,
+        &mut line,
+        false,
+        "line_tool_drag",
+    );
+    run_anchor_frame(
+        &ctx,
+        release_event(pos),
+        &mut view,
+        &mut line,
+        false,
+        "line_tool_drag",
+    );
+    assert_eq!(
+        line,
+        Some(yinhe_editor_core::edit_state::AnchorLine {
+            start: (600.0, 97),
+            end: (600.0, 97),
+        }),
+        "直线单击保留单点线"
+    );
+}
+
+/// 跑一帧刷子，返回 (ghost 数, release 事件)。
+fn run_brush_frame(
+    ctx: &egui::Context,
+    raw: egui::RawInput,
+    view: &mut yinhe_types::PianoRollView,
+) -> (usize, Option<crate::piano_view::PianoViewEvent>) {
+    let mut out = (0usize, None);
+    ctx.run_ui(raw, |ui| {
+        let (ghosts, event) = crate::piano_view::brush::brush_frame(
+            ui,
+            content(),
+            content(),
+            view,
+            Some(0),
+            &[true],
+            None,
+            QuantizePreset::Fraction(1, 16),
+            480,
+            10000.0,
+        );
+        out = (ghosts.len(), event);
     })
     .textures_delta
     .clear();
     out
 }
 
-/// 剪刀工具：单击（无音高跨度）在吸附刻度处全列切一刀。
+/// 刷子：按住拖动按量化格落音符（Bresenham 补格），松手批量提交。
 #[test]
-fn scissors_click_emits_whole_column_cuts() {
+fn brush_drag_emits_grid_notes_on_release() {
     let ctx = egui::Context::default();
-    let view = test_view();
-    let pos = egui::pos2(500.0, 300.0);
+    let mut view = test_view();
+    view.viewport_h = 600.0;
 
-    let (event, preview) = run_scissors_frame(&ctx, press_event(pos), &view);
-    assert!(event.is_none(), "按下帧不产生切割事件");
-    let preview = preview.expect("按下帧应产生预览切点");
-    assert_eq!(preview.len(), yinhe_types::KEY_COUNT, "预览覆盖全列");
-    assert!(
-        preview.iter().all(|&(_, t)| t == 480),
-        "1/16 网格：500 吸附到 480"
-    );
+    // 1/16 = 120 tick：press (100,300) → 格 1（start 120）；drag (350,300) → 格 3（start 360）。
+    let (ghosts, event) = run_brush_frame(&ctx, press_event(egui::pos2(100.0, 300.0)), &mut view);
+    assert_eq!(ghosts, 1, "按下即预览 1 格");
+    assert!(event.is_none());
 
-    let (event, preview) = run_scissors_frame(&ctx, release_event(pos), &view);
-    assert!(preview.is_none(), "释放帧不再有预览");
+    let (ghosts, event) = run_brush_frame(&ctx, drag_event(egui::pos2(350.0, 300.0)), &mut view);
+    assert_eq!(ghosts, 3, "路径填充 3 格（120/240/360）");
+    assert!(event.is_none());
+
+    let (_, event) = run_brush_frame(&ctx, release_event(egui::pos2(350.0, 300.0)), &mut view);
     match event {
-        Some(crate::piano_view::PianoViewEvent::ScissorsSplit { cuts }) => {
-            assert_eq!(cuts.len(), yinhe_types::KEY_COUNT);
-            assert!(cuts.iter().all(|&(_, t)| t == 480));
+        Some(crate::piano_view::PianoViewEvent::AddNotes { track, notes }) => {
+            assert_eq!(track, 0);
+            assert_eq!(notes.len(), 3);
+            assert_eq!(notes[0].start_tick, 120);
+            assert_eq!(notes[0].end_tick, 240);
+            assert_eq!(notes[0].key, 97);
+            assert_eq!(notes[2].start_tick, 360);
         }
-        _ => panic!("单击释放应产生 ScissorsSplit"),
+        _ => panic!("刷子松手应产生 AddNotes"),
     }
-}
-
-/// 剪刀工具：斜线拖拽按行插值并逐行吸附（1px/tick、10px/key、1/16 网格）。
-#[test]
-fn scissors_slanted_drag_emits_per_row_cuts() {
-    let ctx = egui::Context::default();
-    let view = test_view();
-    // y=300 → key 97；y=280 → key 99。
-    let start = egui::pos2(100.0, 300.0);
-    let end = egui::pos2(400.0, 280.0);
-
-    run_scissors_frame(&ctx, press_event(start), &view);
-    let (_, preview) = run_scissors_frame(&ctx, drag_event(end), &view);
-    assert_eq!(
-        preview.as_deref(),
-        Some(&[(97u8, 120u32), (98, 240), (99, 360)][..]),
-        "拖拽预览 = 逐行吸附切点"
-    );
-
-    let (event, _) = run_scissors_frame(&ctx, release_event(end), &view);
-    match event {
-        Some(crate::piano_view::PianoViewEvent::ScissorsSplit { cuts }) => {
-            assert_eq!(cuts, vec![(97, 120), (98, 240), (99, 360)]);
-        }
-        _ => panic!("斜线释放应产生 ScissorsSplit"),
-    }
-}
-
-/// 剪刀工具：音乐区外按下/释放不建立拖拽，也不产生切割。
-#[test]
-fn scissors_press_outside_music_rect_is_ignored() {
-    let ctx = egui::Context::default();
-    let view = test_view();
-    let pos = egui::pos2(100.0, 700.0);
-
-    let (event, preview) = run_scissors_frame(&ctx, press_event(pos), &view);
-    assert!(event.is_none() && preview.is_none(), "音乐区外按下无效果");
-
-    let (event, _) = run_scissors_frame(&ctx, release_event(pos), &view);
-    assert!(event.is_none(), "音乐区外释放不产生切割");
 }
 
 /// 跑一帧 grid_frame（网格工具）。

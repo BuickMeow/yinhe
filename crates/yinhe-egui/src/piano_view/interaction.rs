@@ -21,8 +21,7 @@ pub(crate) struct InteractionOutput {
     pub(crate) pencil_event: Option<PianoViewEvent>,
     pub(crate) eraser_event: Option<PianoViewEvent>,
     pub(crate) quick_delete_event: Option<PianoViewEvent>,
-    pub(crate) scissors_event: Option<PianoViewEvent>,
-    pub(crate) scissors_preview: Option<super::scissors::ScissorsCuts>,
+    pub(crate) brush_event: Option<PianoViewEvent>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -42,6 +41,8 @@ pub(crate) fn dispatch(
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     total_ticks: f64,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
+    line_tool_line: &mut Option<yinhe_editor_core::edit_state::AnchorLine>,
+    scissors_line: &mut Option<yinhe_editor_core::edit_state::AnchorLine>,
     track_selected: &HashSet<u16>,
     write_track: Option<u16>,
     conductor_idx: Option<u16>,
@@ -68,8 +69,7 @@ pub(crate) fn dispatch(
     let mut quick_delete_event: Option<PianoViewEvent> = None;
     let mut pencil_event: Option<PianoViewEvent> = None;
     let mut eraser_event: Option<PianoViewEvent> = None;
-    let mut scissors_event: Option<PianoViewEvent> = None;
-    let mut scissors_preview: Option<super::scissors::ScissorsCuts> = None;
+    let mut brush_event: Option<PianoViewEvent> = None;
     if effective_tool == Tool::Select || effective_tool == Tool::SelectVertical {
         let vertical = effective_tool == Tool::SelectVertical;
         let (sel_ghosts, sel_hidden, sel_previews, sel_note_event, sel_pencil_drag, sel_quick) =
@@ -161,18 +161,6 @@ pub(crate) fn dispatch(
             total_ticks,
             track_selected,
         );
-    } else if effective_tool == Tool::Scissors {
-        let (event, preview) = super::scissors::scissors_frame(
-            ui,
-            content_rect,
-            music_rect,
-            view,
-            quantize,
-            ppq,
-            bar_line_data,
-        );
-        scissors_event = event;
-        scissors_preview = preview;
     } else if effective_tool == Tool::Grid {
         super::grid::grid_frame(
             ui,
@@ -187,6 +175,49 @@ pub(crate) fn dispatch(
             total_ticks,
             track_selected,
         );
+    } else if effective_tool == Tool::Scissors {
+        super::anchor_line::frame(
+            ui,
+            content_rect,
+            music_rect,
+            view,
+            scissors_line,
+            quantize,
+            ppq,
+            bar_line_data,
+            total_ticks,
+            "scissors_drag",
+            true,
+        );
+    } else if effective_tool == Tool::Line {
+        super::anchor_line::frame(
+            ui,
+            content_rect,
+            music_rect,
+            view,
+            line_tool_line,
+            quantize,
+            ppq,
+            bar_line_data,
+            total_ticks,
+            "line_tool_drag",
+            false,
+        );
+    } else if effective_tool == Tool::Brush {
+        let (ghosts, event) = super::brush::brush_frame(
+            ui,
+            content_rect,
+            music_rect,
+            view,
+            write_track,
+            track_visible,
+            conductor_idx,
+            quantize,
+            ppq,
+            total_ticks,
+        );
+        ghost_notes = ghosts;
+        brush_event = event;
     }
     InteractionOutput {
         effective_tool,
@@ -195,8 +226,7 @@ pub(crate) fn dispatch(
         pencil_event,
         eraser_event,
         quick_delete_event,
-        scissors_event,
-        scissors_preview,
+        brush_event,
     }
 }
 
@@ -268,7 +298,10 @@ pub(crate) fn update_hover_cursor(
         }
     }
 
-    if (effective_tool == Tool::Scissors || effective_tool == Tool::Grid)
+    if (effective_tool == Tool::Scissors
+        || effective_tool == Tool::Grid
+        || effective_tool == Tool::Line
+        || effective_tool == Tool::Brush)
         && !crate::view_interaction::pointer_over_popup(ui.ctx())
         && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
         && music_rect.contains(pos)

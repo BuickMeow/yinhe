@@ -10,10 +10,12 @@ pub enum Tool {
     Scissors,
     Eraser,
     Grid,
+    Line,
+    Brush,
 }
 
 /// All currently available tools — shown on the transport bar (right of the timecode).
-pub const ALL_TOOLS: [Tool; 8] = [
+pub const ALL_TOOLS: [Tool; 10] = [
     Tool::Select,
     Tool::SelectVertical,
     Tool::Pan,
@@ -22,6 +24,8 @@ pub const ALL_TOOLS: [Tool; 8] = [
     Tool::Scissors,
     Tool::Eraser,
     Tool::Grid,
+    Tool::Line,
+    Tool::Brush,
 ];
 
 impl Tool {
@@ -35,6 +39,8 @@ impl Tool {
             Tool::Scissors => ICON_CONTENT_CUT,
             Tool::Eraser => ICON_INK_ERASER,
             Tool::Grid => ICON_GRID_ON,
+            Tool::Line => ICON_TIMELINE,
+            Tool::Brush => ICON_BRUSH,
         }
     }
 
@@ -50,6 +56,8 @@ impl Tool {
             Tool::Scissors => sc::ACTION_TOOL_SCISSORS,
             Tool::Eraser => sc::ACTION_TOOL_ERASER,
             Tool::Grid => sc::ACTION_TOOL_GRID,
+            Tool::Line => sc::ACTION_TOOL_LINE,
+            Tool::Brush => sc::ACTION_TOOL_BRUSH,
         }
     }
 }
