@@ -6,6 +6,9 @@ pub const LANE_HEIGHT_MIN: f32 = 16.0;
 pub const LANE_HEIGHT_STEP: f32 = 8.0;
 /// AR 垂直缩放的最大档：120px（落在等差序列上）。
 pub const LANE_HEIGHT_MAX: f32 = 120.0;
+/// 跳一档所需的累积缩放倍率：单帧 `factor` 先累乘到此值（或倒数）才跳一档。
+/// 1.1 ≈ 原来一次滚轮/一次可见缩放的量，避免触控板微小输入连跳多档。
+pub const LANE_ZOOM_STEP_RATIO: f32 = 1.1;
 
 /// 把任意行高吸附到最近的离散档位（16 + k·8，clamp 到 [16, 120]）。
 pub fn snap_lane_height(h: f32) -> f32 {
@@ -22,6 +25,9 @@ pub struct ArrangementView {
     /// Lane height (AR vertical scale) is `base.track_panel_row_height`,
     /// the single source of truth shared with the track panel.
     pub base: TimelineViewBase,
+    /// 离散行高缩放的输入累积器：乘积达到 `LANE_ZOOM_STEP_RATIO`（或其倒数）
+    /// 才跳一档；1.0 = 无累积。见 `zoom_lane_height`。
+    lane_zoom_accum: f32,
 }
 
 impl Default for ArrangementView {
@@ -39,6 +45,7 @@ impl Default for ArrangementView {
                 follow_anim_start: 0.0,
                 follow_anim_elapsed: 0.0,
             },
+            lane_zoom_accum: 1.0,
         }
     }
 }
@@ -122,19 +129,26 @@ impl ArrangementView {
     }
 
     /// Zoom lane height around a pointer y position (vertical).
-    /// 行高离散档位：factor > 1 放大一档，< 1 缩小一档（已在边界则不动）。
+    /// 行高离散档位：输入先累积，达到 `LANE_ZOOM_STEP_RATIO` 才放大/缩小一档
+    /// （已在边界则不动）。单次滚轮（factor ≈ 1.1）恰好一档。
     pub fn zoom_lane_height(&mut self, pointer_y: f32, factor: f32) {
+        if factor <= 0.0 || factor == 1.0 {
+            return;
+        }
+        self.lane_zoom_accum *= factor;
+        let dir = if self.lane_zoom_accum >= LANE_ZOOM_STEP_RATIO {
+            1.0
+        } else if self.lane_zoom_accum <= 1.0 / LANE_ZOOM_STEP_RATIO {
+            -1.0
+        } else {
+            return;
+        };
+        self.lane_zoom_accum = 1.0;
+
         let old = self.lane_height();
         let k = ((old - LANE_HEIGHT_MIN) / LANE_HEIGHT_STEP).round();
-        let k = if factor > 1.0 {
-            k + 1.0
-        } else if factor < 1.0 {
-            k - 1.0
-        } else {
-            k
-        };
-        let new_h =
-            (LANE_HEIGHT_MIN + k * LANE_HEIGHT_STEP).clamp(LANE_HEIGHT_MIN, LANE_HEIGHT_MAX);
+        let new_h = (LANE_HEIGHT_MIN + (k + dir) * LANE_HEIGHT_STEP)
+            .clamp(LANE_HEIGHT_MIN, LANE_HEIGHT_MAX);
         if new_h == old {
             return;
         }
@@ -188,6 +202,39 @@ mod tests {
         v.base.track_panel_row_height = LANE_HEIGHT_MAX;
         v.zoom_lane_height(0.0, 1.1);
         assert_eq!(v.lane_height(), LANE_HEIGHT_MAX);
+    }
+
+    /// 细微连续输入不跳档，累积到阈值才跳一档（触控板微操作回归）。
+    #[test]
+    fn zoom_lane_height_accumulates_small_inputs() {
+        let mut v = ArrangementView::default(); // 40px
+        // 5 次 1%：1.051 < 1.1，不跳档
+        for _ in 0..5 {
+            v.zoom_lane_height(0.0, 1.01);
+        }
+        assert_eq!(v.lane_height(), 40.0);
+        // 再 6%：累积 1.114 ≥ 1.1 → 跳一档
+        v.zoom_lane_height(0.0, 1.06);
+        assert_eq!(v.lane_height(), 48.0);
+        // 单次滚轮 1.1 恰好一档
+        v.zoom_lane_height(0.0, 1.1);
+        assert_eq!(v.lane_height(), 56.0);
+        // 反向同理：累积到倒数阈值才缩一档
+        v.zoom_lane_height(0.0, 0.95);
+        v.zoom_lane_height(0.0, 0.95);
+        assert_eq!(v.lane_height(), 48.0, "0.9025 ≤ 1/1.1 才缩档");
+    }
+
+    /// 到达边界时累积器被消费重置，不会卡住后续反向缩放。
+    #[test]
+    fn zoom_lane_height_boundary_consumes_accumulator() {
+        let mut v = ArrangementView::default();
+        v.base.track_panel_row_height = LANE_HEIGHT_MAX;
+        v.zoom_lane_height(0.0, 2.0); // 到顶：边界不动，累积器应被消费
+        assert_eq!(v.lane_height(), LANE_HEIGHT_MAX);
+        // 若累积器残留（2.0 × 0.9 = 1.8）会被误判为放大而卡在顶部；正确应缩一档。
+        v.zoom_lane_height(0.0, 0.9);
+        assert_eq!(v.lane_height(), LANE_HEIGHT_MAX - LANE_HEIGHT_STEP);
     }
 
     /// 等差档位恰好覆盖到最大档：16 + k·8 = 120。

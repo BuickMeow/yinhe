@@ -142,6 +142,7 @@ impl ArView {
                     follow_anim_start: 0.0,
                     follow_anim_elapsed: 0.0,
                 },
+                ..Default::default()
             },
             model: None,
             status: String::new(),

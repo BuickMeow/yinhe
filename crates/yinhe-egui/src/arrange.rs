@@ -302,20 +302,16 @@ pub fn show(
             && tp_rect.contains(hover)
         {
             let pointer_y = hover.y - tp_rect.min.y;
-            let base = doc.edit.arrange_view.base.track_panel_row_height;
-            let step = if zoom_delta > 1.0 {
-                yinhe_types::LANE_HEIGHT_STEP
-            } else {
-                -yinhe_types::LANE_HEIGHT_STEP
-            };
-            let new_h = yinhe_types::snap_lane_height(base + step);
-            if new_h != base {
-                doc.edit.arrange_view.base.track_panel_row_height = new_h;
-                let track_frac =
-                    (pointer_y + doc.edit.arrange_view.base.track_panel_scroll_y) / base;
+            let prev_h = doc.edit.arrange_view.lane_height();
+            // 与滚轮/滚动条共用同一套累积器：细微输入不跳档。
+            doc.edit
+                .arrange_view
+                .zoom_lane_height(pointer_y, zoom_delta);
+            if doc.edit.arrange_view.lane_height() != prev_h {
+                // zoom_lane_height 锚定的是 base.scroll_y，写回面板滚动值
+                // （面板 scope 结束处会把 track_panel_scroll_y 同步回 scroll_y）。
                 doc.edit.arrange_view.base.track_panel_scroll_y =
-                    (track_frac * new_h - pointer_y).max(0.0);
-                doc.edit.arrange_view.base.dirty = true;
+                    doc.edit.arrange_view.base.scroll_y;
             }
         }
 
