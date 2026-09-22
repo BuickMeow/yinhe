@@ -385,9 +385,12 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         let mut picked: Option<DockContext> = None;
         ui.menu_button(
-            egui::RichText::new(format!("{} \u{25be}", context_label(context)))
-                .size(crate::theme::SMALL_FONT + 1.0)
-                .color(crate::theme::text_primary()),
+            crate::widgets::icon_text::text_icon(
+                &context_label(context),
+                egui_material_icons::icons::ICON_ARROW_DROP_DOWN,
+                crate::theme::SMALL_FONT + 1.0,
+                crate::theme::text_primary(),
+            ),
             |ui| {
                 egui::ScrollArea::vertical()
                     .max_height(320.0)

@@ -36,3 +36,35 @@ pub(crate) fn icon_text(
     );
     job
 }
+
+/// [`icon_text`] 的反向混排：普通文本在前、Material 图标在后。
+/// 用于下拉框标题等「文字 + 展开箭头」场景（同样必须拆 section，
+/// 否则 PUA 码点会被普通字体抢占，显示成方框）。
+pub(crate) fn text_icon(
+    text: &str,
+    icon: egui_material_icons::MaterialIcon,
+    size: f32,
+    color: Color32,
+) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    let text = format!("{text} ");
+    job.append(
+        &text,
+        0.0,
+        TextFormat {
+            font_id: FontId::proportional(size),
+            color,
+            ..Default::default()
+        },
+    );
+    job.append(
+        icon.codepoint,
+        0.0,
+        TextFormat {
+            font_id: FontId::new(size, icon.font_family()),
+            color,
+            ..Default::default()
+        },
+    );
+    job
+}
