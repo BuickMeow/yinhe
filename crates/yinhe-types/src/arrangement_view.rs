@@ -51,6 +51,15 @@ impl Default for ArrangementView {
 }
 
 impl ArrangementView {
+    /// 用给定 base 构造（其余字段默认）。跨 crate 无法用结构体字面量
+    /// 构造含私有字段的类型（如 `lane_zoom_accum`），移动端初始化用。
+    pub fn with_base(base: TimelineViewBase) -> Self {
+        Self {
+            base,
+            ..Default::default()
+        }
+    }
+
     /// Lane height in pixels (single source of truth shared with the track panel).
     #[inline]
     pub fn lane_height(&self) -> f32 {

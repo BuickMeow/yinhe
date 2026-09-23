@@ -22,7 +22,7 @@ fn save_and_reopen(doc: &mut Document, path: &str) -> Result<Document, String> {
     let (model2, sf, mapping2, _mixer) =
         yinhe_yin::load_yin_with_sf(path).map_err(|e| format!("load failed: {e}"))?;
     let project_file2 =
-        yinhe_yin::ProjectFile::from_meta_with_sf(&model2.meta, sf.mode, sf.overrides.clone());
+        yinhe_yin::ProjectFile::from_meta_with_sf(&model2.meta, sf.overrides.clone());
     let doc2 = Document::from_model(
         path,
         model2,
