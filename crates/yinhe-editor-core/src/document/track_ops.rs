@@ -94,18 +94,7 @@ impl Document {
 
         let tracks_after: Vec<Arc<yinhe_core::TrackData>> = model.tracks.clone();
 
-        // Apply remap to notes
-        for bucket in model.notes.iter_mut() {
-            let bucket = Arc::make_mut(bucket);
-            for note in bucket.iter_mut() {
-                // 越界音符按删除处理（unwrap_or(u16::MAX)），避免 panic（规则 17）。
-                note.track = note_remap
-                    .get(note.track as usize)
-                    .copied()
-                    .unwrap_or(u16::MAX);
-            }
-        }
-
+        model.apply_track_remap(&note_remap);
         model.rebuild();
         self.data.bump_revision();
 
@@ -238,28 +227,8 @@ impl Document {
 
         let tracks_after: Vec<Arc<yinhe_core::TrackData>> = model.tracks.clone();
 
-        // Apply remap: delete notes on removed track, shift others
-        for bucket in model.notes.iter_mut() {
-            let bucket = Arc::make_mut(bucket);
-            // 越界音符按删除处理（unwrap_or(u16::MAX)），避免 panic（规则 17）。
-            bucket.retain(|n| {
-                note_remap
-                    .get(n.track as usize)
-                    .copied()
-                    .unwrap_or(u16::MAX)
-                    != u16::MAX
-            });
-            for note in bucket.iter_mut() {
-                note.track = note_remap
-                    .get(note.track as usize)
-                    .copied()
-                    .unwrap_or(u16::MAX);
-            }
-        }
-        // Mark all buckets dirty since we may have removed notes from any
-        for k in 0..128 {
-            model.mark_dirty(k as u8);
-        }
+        // 删除被删轨音符 + 其余轨号 -1（rebuild 会重建统计与全量 revision）。
+        model.apply_track_remap(&note_remap);
         model.rebuild();
         let num_tracks = model.tracks.len();
         self.data.bump_revision();
@@ -345,18 +314,7 @@ impl Document {
 
         let tracks_after: Vec<Arc<yinhe_core::TrackData>> = model.tracks.clone();
 
-        // Apply remap to notes
-        for bucket in model.notes.iter_mut() {
-            let bucket = Arc::make_mut(bucket);
-            for note in bucket.iter_mut() {
-                // 越界音符按删除处理（unwrap_or(u16::MAX)），避免 panic（规则 17）。
-                note.track = note_remap
-                    .get(note.track as usize)
-                    .copied()
-                    .unwrap_or(u16::MAX);
-            }
-        }
-
+        model.apply_track_remap(&note_remap);
         model.rebuild();
         self.data.bump_revision();
 

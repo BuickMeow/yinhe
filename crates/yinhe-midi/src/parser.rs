@@ -11,7 +11,6 @@
 //! Event values are normalized 0..1 (raw / binding max).
 
 use std::path::Path;
-use std::sync::Arc;
 
 use rayon::prelude::*;
 
@@ -136,7 +135,9 @@ pub fn parse_bytes_with_encoding(
         // Ensure a conductor track exists at index 0. This does an O(n)
         // track-index shift if one is missing — kept in the background thread
         // so the UI doesn't freeze on large files.
-        ensure_conductor_track(&mut model);
+        if model.ensure_conductor_track() {
+            model.rebuild();
+        }
 
         // Purge mimalloc free pages: after load_track_notes drops the
         // per-track temporary Vecs, many pages are idle in mimalloc's
@@ -146,38 +147,6 @@ pub fn parse_bytes_with_encoding(
 
         Ok(model)
     })
-}
-
-/// If track 0 is not a conductor track (no notes, no automation, no PC),
-/// insert one and shift all existing track indices by 1.
-///
-/// This replicates the logic from `Document::from_model` but runs in the
-/// background parse thread, avoiding O(n) note iteration on the UI thread.
-fn ensure_conductor_track(model: &mut YinModel) {
-    let has_conductor = model.track_note_count.first().copied().unwrap_or(0) == 0
-        && model
-            .tracks
-            .first()
-            .is_some_and(|t| t.automation_lanes.is_empty() && t.program_change.is_empty());
-    if has_conductor || model.tracks.is_empty() {
-        return;
-    }
-
-    let mut conductor = TrackData::new(0, 0);
-    conductor.name = "Conductor".to_string();
-    for bucket in model.notes.iter_mut() {
-        for n in Arc::make_mut(bucket).iter_mut() {
-            n.track += 1;
-        }
-    }
-    for track in model.tracks.iter_mut() {
-        let track = Arc::make_mut(track);
-        for lane in track.automation_lanes.iter_mut() {
-            lane.track += 1;
-        }
-    }
-    model.tracks.insert(0, Arc::new(conductor));
-    model.rebuild();
 }
 
 // =========================================================

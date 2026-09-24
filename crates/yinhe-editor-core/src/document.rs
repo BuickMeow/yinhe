@@ -182,27 +182,14 @@ impl Document {
             model.renumber_automation_ids();
 
             // Detect conductor track; insert one if missing.
-            let conductor_track_idx = detect_conductor_from_model(&model);
-            if conductor_track_idx.is_none() {
-                let mut conductor = TrackData::new(0, 0);
-                conductor.name = "Conductor".to_string();
-                // Shift all existing note track indices by 1 to make room.
-                for bucket in model.notes.iter_mut() {
-                    for n in Arc::make_mut(bucket).iter_mut() {
-                        n.track += 1;
-                    }
-                }
-                // Shift automation lane track indices by 1 to match.
-                for track in model.tracks.iter_mut() {
-                    let track = Arc::make_mut(track);
-                    for lane in track.automation_lanes.iter_mut() {
-                        lane.track += 1;
-                    }
-                }
-                model.tracks.insert(0, Arc::new(conductor));
+            //（插入后需 rebuild 让 `track_note_count` 与轨号一致；新建的
+            // conductor 一定在 0 号位，无需再判定。）
+            let conductor_track_idx = if model.ensure_conductor_track() {
                 model.rebuild();
-            }
-            let conductor_track_idx = detect_conductor_from_model(&model);
+                Some(0)
+            } else {
+                detect_conductor_from_model(&model)
+            };
 
             let num_tracks = model.tracks.len();
             let track_colors_cache = (0..num_tracks)
@@ -518,17 +505,8 @@ impl Document {
 
 /// Detect the conductor track: track 0 with no notes and no control data.
 pub fn detect_conductor_from_model(model: &YinModel) -> Option<u16> {
-    if model.tracks.is_empty() {
-        return None;
-    }
-    let first = &model.tracks[0];
-    if model.track_note_count.first().copied().unwrap_or(0) > 0 {
-        return None;
-    }
-    if !first.automation_lanes.is_empty() || !first.program_change.is_empty() {
-        return None;
-    }
-    Some(0)
+    // 判定逻辑统一在 `YinModel::has_conductor_track`（与 ensure 共用同一不变量）。
+    model.has_conductor_track().then_some(0)
 }
 
 /// Track display color: prefers `TrackData.color` (when set, i.e. not the
