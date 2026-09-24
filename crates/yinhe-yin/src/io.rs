@@ -255,10 +255,7 @@ fn read_varint(bytes: &[u8], pos: &mut usize) -> Result<u64, YinError> {
         }
         shift += 7;
         if shift >= 64 {
-            return Err(YinError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "varint too long",
-            )));
+            return Err(invalid_data("varint too long"));
         }
     }
 }
@@ -636,13 +633,9 @@ fn decompress_data(
             (i as f32 + 1.0) / 6.0,
         );
     }
-    let [meta_p, delta_p, key_p, vel_p, gate_p, id_p]: [Vec<u8>; 6] =
-        plains.try_into().map_err(|_| {
-            YinError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "data section must contain exactly 6 streams",
-            ))
-        })?;
+    let [meta_p, delta_p, key_p, vel_p, gate_p, id_p]: [Vec<u8>; 6] = plains
+        .try_into()
+        .map_err(|_| invalid_data("data section must contain exactly 6 streams"))?;
     let meta: MetaPayload = deserialize_postcard(&meta_p)?;
     let delta: Vec<u32> = deserialize_postcard(&delta_p)?;
     let key: Vec<u8> = deserialize_postcard(&key_p)?;
@@ -651,15 +644,12 @@ fn decompress_data(
 
     let n = key.len();
     if delta.len() != n || vel.len() != n || gate.len() != n {
-        return Err(YinError::Io(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!(
-                "note stream length mismatch: delta={} key={} vel={} gate={}",
-                delta.len(),
-                n,
-                vel.len(),
-                gate.len()
-            ),
+        return Err(invalid_data(&format!(
+            "note stream length mismatch: delta={} key={} vel={} gate={}",
+            delta.len(),
+            n,
+            vel.len(),
+            gate.len()
         )));
     }
     let s = NoteStreams {
@@ -900,13 +890,10 @@ fn load_yin_bytes_inner(
     // 无法表达 model 的全局音轨顺序（同 port 音轨必须连续存放）。
     let flat: Vec<(u8, u8, &crate::mapping::TrackMap)> = mapping.flat_tracks().collect();
     if flat.len() != model_data.tracks.len() {
-        return Err(YinError::Io(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!(
-                "mapping has {} tracks but data has {}",
-                flat.len(),
-                model_data.tracks.len()
-            ),
+        return Err(invalid_data(&format!(
+            "mapping has {} tracks but data has {}",
+            flat.len(),
+            model_data.tracks.len()
         )));
     }
     let mut by_uuid: std::collections::HashMap<&str, (u8, u8, &crate::mapping::TrackMap)> =
@@ -918,12 +905,9 @@ fn load_yin_bytes_inner(
     let mut tracks: Vec<Arc<TrackData>> = Vec::with_capacity(model_data.tracks.len());
     for payload in model_data.tracks {
         let Some(&(port, channel, tm)) = by_uuid.get(payload.uuid.as_str()) else {
-            return Err(YinError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "track UUID mismatch: mapping has no track with payload uuid {}",
-                    payload.uuid
-                ),
+            return Err(invalid_data(&format!(
+                "track UUID mismatch: mapping has no track with payload uuid {}",
+                payload.uuid
             )));
         };
         let td = TrackData {
