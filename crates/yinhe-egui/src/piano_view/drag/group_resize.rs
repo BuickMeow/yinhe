@@ -51,30 +51,50 @@ pub(crate) fn sel_resize_frame(
                 bar_line_data,
             );
 
-            // 生成 ghost/hidden：每个音符独立 clamp（end > start + 1）
-            for info in notes {
+            // 生成 ghost/hidden：每个音符独立 clamp（end > start + 1）。
+            // 视口裁剪：视口外的 ghost/hidden 不影响渲染（每帧重建）。
+            let (tick_lo, tick_hi) = view.visible_tick_range(music_rect.width());
+            let (key_lo, key_hi) = view.visible_cross_range(music_rect.height());
+            for info in notes.iter() {
+                if info.key < key_lo || info.key > key_hi {
+                    continue;
+                }
                 match side {
                     ResizeSide::Right => {
                         let new_end =
                             (info.end_tick as i64 + dt).max(info.start_tick as i64 + 1) as u32;
-                        state
-                            .ghost_notes
-                            .push((info.start_tick, new_end, info.key, info.track));
-                        state
-                            .hidden_notes
-                            .push((info.track, info.start_tick, info.key));
+                        if (new_end as f64) > tick_lo && (info.start_tick as f64) < tick_hi {
+                            state.ghost_notes.push((
+                                info.start_tick,
+                                new_end,
+                                info.key,
+                                info.track,
+                            ));
+                        }
+                        if (info.start_tick as f64) < tick_hi && (info.end_tick as f64) > tick_lo {
+                            state
+                                .hidden_notes
+                                .push((info.track, info.start_tick, info.key));
+                        }
                     }
                     ResizeSide::Left => {
                         let new_start = (info.start_tick as i64 + dt)
                             .max(0)
                             .min(info.end_tick as i64 - 1)
                             as u32;
-                        state
-                            .ghost_notes
-                            .push((new_start, info.end_tick, info.key, info.track));
-                        state
-                            .hidden_notes
-                            .push((info.track, info.start_tick, info.key));
+                        if (info.end_tick as f64) > tick_lo && (new_start as f64) < tick_hi {
+                            state.ghost_notes.push((
+                                new_start,
+                                info.end_tick,
+                                info.key,
+                                info.track,
+                            ));
+                        }
+                        if (info.start_tick as f64) < tick_hi && (info.end_tick as f64) > tick_lo {
+                            state
+                                .hidden_notes
+                                .push((info.track, info.start_tick, info.key));
+                        }
                     }
                 }
             }
@@ -108,36 +128,53 @@ pub(crate) fn sel_resize_frame(
                 *note_resize_delta = Some((side, dt));
                 sel_rect.update_resize(dt);
 
-                // Keep ghost/hidden alive on the release frame
-                for info in notes {
+                // Keep ghost/hidden alive on the release frame（同样视口裁剪）
+                let (tick_lo, tick_hi) = view.visible_tick_range(music_rect.width());
+                let (key_lo, key_hi) = view.visible_cross_range(music_rect.height());
+                for info in notes.iter() {
+                    if info.key < key_lo || info.key > key_hi {
+                        continue;
+                    }
                     match side {
                         ResizeSide::Right => {
                             let new_end =
                                 (info.end_tick as i64 + dt).max(info.start_tick as i64 + 1) as u32;
-                            state.ghost_notes.push((
-                                info.start_tick,
-                                new_end,
-                                info.key,
-                                info.track,
-                            ));
-                            state
-                                .hidden_notes
-                                .push((info.track, info.start_tick, info.key));
+                            if (new_end as f64) > tick_lo && (info.start_tick as f64) < tick_hi {
+                                state.ghost_notes.push((
+                                    info.start_tick,
+                                    new_end,
+                                    info.key,
+                                    info.track,
+                                ));
+                            }
+                            if (info.start_tick as f64) < tick_hi
+                                && (info.end_tick as f64) > tick_lo
+                            {
+                                state
+                                    .hidden_notes
+                                    .push((info.track, info.start_tick, info.key));
+                            }
                         }
                         ResizeSide::Left => {
                             let new_start = (info.start_tick as i64 + dt)
                                 .max(0)
                                 .min(info.end_tick as i64 - 1)
                                 as u32;
-                            state.ghost_notes.push((
-                                new_start,
-                                info.end_tick,
-                                info.key,
-                                info.track,
-                            ));
-                            state
-                                .hidden_notes
-                                .push((info.track, info.start_tick, info.key));
+                            if (info.end_tick as f64) > tick_lo && (new_start as f64) < tick_hi {
+                                state.ghost_notes.push((
+                                    new_start,
+                                    info.end_tick,
+                                    info.key,
+                                    info.track,
+                                ));
+                            }
+                            if (info.start_tick as f64) < tick_hi
+                                && (info.end_tick as f64) > tick_lo
+                            {
+                                state
+                                    .hidden_notes
+                                    .push((info.track, info.start_tick, info.key));
+                            }
                         }
                     }
                 }

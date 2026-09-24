@@ -61,7 +61,7 @@ pub(crate) fn sel_press(
                 if let Some((side, origin, other)) = edge_hit {
                     state.sel_resize_state = Some((side, origin, other));
                     sel_rect.start_resize(side);
-                    state.drag_notes = Some(Vec::new());
+                    state.drag_notes = Some(std::sync::Arc::new(Vec::new()));
                 } else if in_sel_rect {
                     let (main_px, cross_px) = main_cross_x_y(view, (local.x, local.y));
                     let raw_tick = main_px_to_tick_dir(view, main_px);
@@ -71,7 +71,7 @@ pub(crate) fn sel_press(
                     let alt = ui.input(|i| i.modifiers.alt);
                     state.note_drag_origin = Some((tick, key, alt));
                     sel_rect.start_drag();
-                    state.drag_notes = Some(Vec::new());
+                    state.drag_notes = Some(std::sync::Arc::new(Vec::new()));
                     state.preview_last_dk = 0;
                     state.note_drag_had_moved = false;
                     ui.data_mut(|d| {
@@ -152,12 +152,12 @@ pub(crate) fn sel_press(
                     state.sel_resize_state =
                         Some((side, origin_boundary_tick, other_boundary_tick));
                     sel_rect.start_resize(side);
-                    state.drag_notes = Some(collect_selected_notes(
+                    state.drag_notes = Some(std::sync::Arc::new(collect_selected_notes(
                         selected,
                         midi,
                         track_visible,
                         track_selected,
-                    ));
+                    )));
                 } else if state.sel_note_resize.is_none() && state.sel_note_move.is_none() {
                     if in_sel_rect {
                         let (main_px, cross_px) = main_cross_x_y(view, (local.x, local.y));
@@ -174,12 +174,12 @@ pub(crate) fn sel_press(
                         let alt = ui.input(|i| i.modifiers.alt);
                         state.note_drag_origin = Some((tick, key, alt));
                         sel_rect.start_drag();
-                        state.drag_notes = Some(collect_selected_notes(
+                        state.drag_notes = Some(std::sync::Arc::new(collect_selected_notes(
                             selected,
                             midi,
                             track_visible,
                             track_selected,
-                        ));
+                        )));
                         state.preview_last_dk = 0;
                         state.note_drag_had_moved = false;
                         ui.data_mut(|d| {
@@ -189,10 +189,11 @@ pub(crate) fn sel_press(
                             )
                         });
                         // 点击选中音符出声：立即预览整组（dk=0，与移动时同组预览一致）。
-                        // 力度阈值过滤统一在 `send_note_previews`。
+                        // 先剔除哑音（vel ≤ 1），精确力度阈值过滤在 `send_note_previews`。
                         if let Some(notes) = state.drag_notes.as_ref() {
                             state.preview_reqs = notes
                                 .iter()
+                                .filter(|info| info.velocity > 1)
                                 .map(|info| {
                                     crate::piano_view::PreviewReq::Note(
                                         crate::piano_view::NotePreview {

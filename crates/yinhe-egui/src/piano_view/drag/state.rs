@@ -12,7 +12,9 @@ pub(crate) struct SelDragFrameState {
     /// 选区整体移动：(origin_tick, origin_key, alt)。None = 未在移动。
     pub(crate) note_drag_origin: Option<(f64, f64, bool)>,
     /// 拖拽中预计算的选中音符（选区移动/选区缩放共用，press 时构建一次）。
-    pub(crate) drag_notes: Option<Vec<SelDragNoteInfo>>,
+    /// `Arc` 存储：状态经 egui persisted data 跨帧保存，而 `get_persisted`
+    /// 返回 clone——全选拖拽时 Vec 每帧 clone 是 GB 级开销，Arc 化后 O(1)。
+    pub(crate) drag_notes: Option<std::sync::Arc<Vec<SelDragNoteInfo>>>,
     /// 拖拽中已触发预览的 key delta（每变化 1 key 触发一次整组预览）。
     pub(crate) preview_last_dk: i32,
     /// 选区移动是否曾产生过位移（用于 Alt 复制：点一下不复制，拖动回原位也算移动）。

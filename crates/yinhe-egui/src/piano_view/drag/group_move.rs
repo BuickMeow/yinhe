@@ -56,15 +56,32 @@ pub(crate) fn note_drag_frame(
             }
 
             // O(N) — just apply delta to pre-computed data, no midi lookup.
+            // 视口裁剪：视口外的 ghost/hidden 不影响渲染，不构建
+            //（全选拖拽每帧从 GB 级降到可见音符数）。每帧重建，滚动后
+            // 新进入视口的音符在当帧即被纳入。
             // Alt（复制模式）：原音符保留可见，不 push hidden_notes。
-            for info in notes {
+            let (tick_lo, tick_hi) = view.visible_tick_range(music_rect.width());
+            let (key_lo, key_hi) = view.visible_cross_range(music_rect.height());
+            for info in notes.iter() {
                 let new_tick = (info.start_tick as i64 + dt).max(0) as u32;
                 let new_key = ((info.key as i32) + dk).clamp(0, yinhe_types::MAX_KEY as i32) as u8;
                 let length = info.end_tick - info.start_tick;
-                state
-                    .ghost_notes
-                    .push((new_tick, new_tick + length, new_key, info.track));
-                if !alt {
+                let new_end = new_tick + length;
+                if new_key >= key_lo
+                    && new_key <= key_hi
+                    && (new_tick as f64) < tick_hi
+                    && (new_end as f64) > tick_lo
+                {
+                    state
+                        .ghost_notes
+                        .push((new_tick, new_end, new_key, info.track));
+                }
+                if !alt
+                    && info.key >= key_lo
+                    && info.key <= key_hi
+                    && (info.start_tick as f64) < tick_hi
+                    && (info.end_tick as f64) > tick_lo
+                {
                     state
                         .hidden_notes
                         .push((info.track, info.start_tick, info.key));
@@ -77,9 +94,11 @@ pub(crate) fn note_drag_frame(
             // 长度 = 音符 gate，时长换算用目标位置 Tempo）。
             if dk != state.preview_last_dk {
                 state.preview_last_dk = dk;
-                // 力度阈值过滤统一在 `send_note_previews`。
+                // 哑音（vel ≤ 1）不参与预览：精确力度阈值过滤在 `send_note_previews`，
+                // 这里先剔除 99% 以上的隐藏音符，避免全选拖拽构建 GB 级预览列表。
                 state.preview_reqs = notes
                     .iter()
+                    .filter(|info| info.velocity > 1)
                     .map(|info| {
                         crate::piano_view::PreviewReq::Note(crate::piano_view::NotePreview {
                             track: info.track,
@@ -133,15 +152,29 @@ pub(crate) fn note_drag_frame(
                 sel_rect.update_drag(dt, dk);
                 let has_notes = !notes.is_empty();
                 if has_notes {
-                    for info in notes {
+                    let (tick_lo, tick_hi) = view.visible_tick_range(music_rect.width());
+                    let (key_lo, key_hi) = view.visible_cross_range(music_rect.height());
+                    for info in notes.iter() {
                         let new_tick = (info.start_tick as i64 + dt).max(0) as u32;
                         let new_key =
                             ((info.key as i32) + dk).clamp(0, yinhe_types::MAX_KEY as i32) as u8;
                         let length = info.end_tick - info.start_tick;
-                        state
-                            .ghost_notes
-                            .push((new_tick, new_tick + length, new_key, info.track));
-                        if !alt {
+                        let new_end = new_tick + length;
+                        if new_key >= key_lo
+                            && new_key <= key_hi
+                            && (new_tick as f64) < tick_hi
+                            && (new_end as f64) > tick_lo
+                        {
+                            state
+                                .ghost_notes
+                                .push((new_tick, new_end, new_key, info.track));
+                        }
+                        if !alt
+                            && info.key >= key_lo
+                            && info.key <= key_hi
+                            && (info.start_tick as f64) < tick_hi
+                            && (info.end_tick as f64) > tick_lo
+                        {
                             state
                                 .hidden_notes
                                 .push((info.track, info.start_tick, info.key));
