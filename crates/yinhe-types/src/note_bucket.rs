@@ -35,9 +35,12 @@ pub struct NoteBucket {
 
 impl NoteBucket {
     /// 从已按 `start_tick` 排序的音符构建（O(N) 逐元素移动，无额外复制）。
+    ///
+    /// 尾块按实际长度缩容：满块预分配 65536 容量，若最后一个块只装少量音符，
+    /// 不缩容会白占近 1MB（88 个 key 桶共 ~90MB）。
     pub fn from_sorted(notes: Vec<Note>) -> Self {
-        let mut chunks = Vec::new();
-        let mut starts = Vec::new();
+        let mut chunks = Vec::with_capacity(notes.len().div_ceil(BUCKET_CHUNK_CAP));
+        let mut starts = Vec::with_capacity(chunks.capacity());
         let iter = notes.into_iter();
         let mut current: Vec<Note> = Vec::with_capacity(BUCKET_CHUNK_CAP);
         for n in iter {
@@ -46,11 +49,14 @@ impl NoteBucket {
             }
             current.push(n);
             if current.len() == BUCKET_CHUNK_CAP {
-                chunks.push(Arc::new(current));
-                current = Vec::with_capacity(BUCKET_CHUNK_CAP);
+                chunks.push(Arc::new(std::mem::replace(
+                    &mut current,
+                    Vec::with_capacity(BUCKET_CHUNK_CAP),
+                )));
             }
         }
         if !current.is_empty() {
+            current.shrink_to_fit();
             chunks.push(Arc::new(current));
         }
         Self { chunks, starts }

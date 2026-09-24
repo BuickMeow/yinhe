@@ -24,9 +24,9 @@ use super::state::{
     EditRequest, EventBrowserState, JumpRequest, NoteRef, SelectedItem, TextEventKind,
 };
 use super::table::{
-    AutomationEventOwned, build_table, cell_editable, cell_position, cell_row_header, cell_text,
-    curve_points_text, empty_state_add_button, handle_delete_key, paginate, render_pager,
-    shape_text, take_row_click, total_pages,
+    AutomationEventOwned, EVENT_PAGE_SIZE, build_table, cell_editable, cell_position,
+    cell_row_header, cell_text, curve_points_text, empty_state_add_button, handle_delete_key,
+    paginate, render_pager, shape_text, take_row_click, total_pages,
 };
 
 /// 根据选中的 item 渲染详情面板，返回可能的跳转请求。
@@ -625,34 +625,51 @@ fn show_notes_detail(
     state: &mut EventBrowserState,
     track: u16,
 ) -> Option<JumpRequest> {
-    let model = &doc.data.model;
-    let track_count = model
-        .track_note_count
-        .get(track as usize)
-        .copied()
-        .unwrap_or(0) as usize;
-    let mut notes: Vec<(yinhe_core::NoteEvent, u8, u16)> = Vec::with_capacity(track_count);
-    for (key, bucket) in model.notes.iter().enumerate() {
-        if !model.bucket_track_stats[key].contains_key(&track) {
-            continue;
-        }
-        for n in bucket.iter().filter(|n| n.track == track) {
-            notes.push((
-                yinhe_core::NoteEvent {
+    // 全轨音符收集 + 排序是 3GB 级开销（1.64 亿场景），按 (doc_id, track,
+    // revision) 缓存；任何编辑 bump revision 后自动重建。
+    let revision = doc.data.revision;
+    let cache_valid = matches!(
+        &state.notes_cache,
+        Some((d, t, r, _)) if *d == doc.doc_id && *t == track && *r == revision
+    );
+    if !cache_valid {
+        let model = &doc.data.model;
+        let track_count = model
+            .track_note_count
+            .get(track as usize)
+            .copied()
+            .unwrap_or(0) as usize;
+        let mut notes: Vec<yinhe_core::NoteEvent> = Vec::with_capacity(track_count);
+        for (key, bucket) in model.notes.iter().enumerate() {
+            if !model.bucket_track_stats[key].contains_key(&track) {
+                continue;
+            }
+            for n in bucket.iter().filter(|n| n.track == track) {
+                notes.push(yinhe_core::NoteEvent {
                     id: n.id,
                     start_tick: n.start_tick,
                     end_tick: n.end_tick,
                     key: key as u8,
                     velocity: n.velocity,
-                },
-                key as u8,
-                track,
-            ));
+                });
+            }
         }
+        notes.sort_by_key(|n| n.start_tick);
+        state.notes_cache = Some((doc.doc_id, track, revision, notes));
     }
-    notes.sort_by_key(|(n, _, _)| n.start_tick);
-    let (page, page_start, page_notes) = paginate(state, &notes);
-    let total = notes.len();
+    let Some(cache) = &state.notes_cache else {
+        return None;
+    };
+    let total = cache.3.len();
+    let tp = total_pages(total);
+    if state.event_page >= tp {
+        state.event_page = tp - 1;
+    }
+    let page = state.event_page;
+    let page_start = page * EVENT_PAGE_SIZE;
+    let page_end = (page_start + EVENT_PAGE_SIZE).min(total);
+    // 页内数据拷贝（≤ EVENT_PAGE_SIZE 条），避免与 state.event_page 的可变借用冲突。
+    let page_notes: Vec<yinhe_core::NoteEvent> = cache.3[page_start..page_end].to_vec();
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         ui.label(
@@ -668,7 +685,7 @@ fn show_notes_detail(
     if total == 0 {
         empty_state_add_button(ui, "eb_notes_edit");
     } else {
-        let page_ticks: Vec<u32> = page_notes.iter().map(|(n, _, _)| n.start_tick).collect();
+        let page_ticks: Vec<u32> = page_notes.iter().map(|n| n.start_tick).collect();
         build_table(
             ui,
             "eb_notes",
@@ -686,7 +703,7 @@ fn show_notes_detail(
             page_notes.len(),
             |i, row, click_key| {
                 row.set_selected(state.selected_ticks.contains(&page_ticks[i]));
-                let (n, _key, _trk) = &page_notes[i];
+                let n = &page_notes[i];
                 let note_ref = NoteRef {
                     id: n.id,
                     start_tick: n.start_tick,
@@ -785,7 +802,7 @@ fn show_notes_detail(
     apply_notes_ops(ui, doc, state, "eb_notes_edit", track);
     // 音符：切到音符所在 track
     take_row_click(ui, "eb_notes").map(|i| {
-        let (n, _key, _trk) = &page_notes[i];
+        let n = &page_notes[i];
         JumpRequest {
             tick: n.start_tick,
             note: Some((track, n.key)),

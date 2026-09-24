@@ -102,14 +102,24 @@ impl Document {
     ) -> Option<(UndoAction, u32)> {
         use crate::clipboard::PasteMode;
 
-        let notes = clipboard.collect();
-
-        if notes.is_empty() {
+        if clipboard.is_empty() {
             return None;
         }
 
-        let src_min_start = notes.iter().map(|(n, _)| n.start_tick).min().unwrap_or(0);
-        let src_max_end = notes.iter().map(|(n, _)| n.end_tick).max().unwrap_or(0);
+        // 第一遍：流式扫源范围（不物化全量；1.64 亿选区下 collect 会多一份 3GB）。
+        let mut src_min_start = u32::MAX;
+        let mut src_max_end = 0u32;
+        let mut src_min_track = u16::MAX;
+        let mut src_count = 0usize;
+        clipboard.for_each_note(|note, _| {
+            src_min_start = src_min_start.min(note.start_tick);
+            src_max_end = src_max_end.max(note.end_tick);
+            src_min_track = src_min_track.min(note.track);
+            src_count += 1;
+        });
+        if src_count == 0 {
+            return None;
+        }
         let span = src_max_end.saturating_sub(src_min_start);
 
         // AtCursor/Flipped 以光标为基准；AtOriginal 保持源坐标。
@@ -119,7 +129,6 @@ impl Document {
         // If no track is selected, keep original track positions.
         // AtOriginal 完全原位，不做轨道偏移。
         let track_offset: i32 = if !track_selected.is_empty() && mode != PasteMode::AtOriginal {
-            let src_min_track = notes.iter().map(|(n, _)| n.track).min().unwrap_or(0);
             let first_selected = track_selected.iter().min().copied().unwrap_or(0);
             first_selected as i32 - src_min_track as i32
         } else {
@@ -130,11 +139,14 @@ impl Document {
         let allow_overlap = self.edit.allow_overlapping_notes;
         let model = Arc::make_mut(&mut self.data.model);
 
+        // 第二遍：一次遍历同时构建「按 key 分组的插入批次」与「undo 的 after」，
+        // 两者内容同源但不共享（insert_batch 会消耗分组表）。
         let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
             std::collections::HashMap::new();
-        for (note, key) in &notes {
+        let mut after: Vec<(yinhe_types::Note, u8)> = Vec::with_capacity(src_count);
+        clipboard.for_each_note(|note, key| {
             if Some(note.track) == conductor {
-                continue;
+                return;
             }
             let (new_start, new_end) = match mode {
                 PasteMode::AtOriginal => (note.start_tick, note.end_tick),
@@ -156,9 +168,9 @@ impl Document {
             // 「允许新重叠音符」关闭：粘贴副本与已有音符重叠 → 跳过该副本。
             // 检查在批量插入前进行，批次内部互不影响（含剪贴板源音符）。
             if !allow_overlap
-                && batch_ops::has_overlapping_note(model, new_track, *key, new_start, new_end)
+                && batch_ops::has_overlapping_note(model, new_track, key, new_start, new_end)
             {
-                continue;
+                return;
             }
             let new_note = yinhe_types::Note {
                 id: model.alloc_note_id(),
@@ -167,17 +179,13 @@ impl Document {
                 velocity: note.velocity,
                 track: new_track,
             };
-            new_by_key.entry(*key).or_default().push(new_note);
-        }
+            new_by_key.entry(key).or_default().push(new_note);
+            after.push((new_note, key));
+        });
 
         if new_by_key.is_empty() {
             return None;
         }
-
-        let after: Vec<(yinhe_types::Note, u8)> = new_by_key
-            .iter()
-            .flat_map(|(key, notes)| notes.iter().map(|n| (*n, *key)))
-            .collect();
 
         batch_ops::insert_batch(model, new_by_key);
 

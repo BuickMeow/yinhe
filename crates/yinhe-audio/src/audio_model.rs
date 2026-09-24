@@ -109,17 +109,16 @@ impl Ord for ActiveNote {
 /// 桶内按 `start_tick` 严格升序（YinModel.notes[key] 本身按 start_tick 排序，
 /// tick 天然单调，**无需再 sort**）。
 ///
-/// `key` 不存（桶索引即 key）。`id` 用于 undo/redo 后跨 prepared model
-/// 引用同一音符（暂未使用，预留）。
+/// `key` 不存（桶索引即 key），`id` 不存（音频 dispatch/seek 不需要，
+/// 主模型的 `NoteBucket` 已持有同一 `Arc`）。
 ///
-/// tick 域化：1 亿音符下每条约 24→16 字节（-0.8GB），且 dispatch 比较
+/// tick 域化：1 亿音符下每条约 24→12 字节，且 dispatch 比较
 /// 不再需要 tick→sample 转换；只有"渲染段边界"才转 sample（每块少量）。
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct AudibleNote {
     pub start_tick: u32,
     pub end_tick: u32,
-    pub id: u32,
     pub track: u16,
     pub velocity: u8,
 }

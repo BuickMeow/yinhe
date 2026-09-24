@@ -25,6 +25,10 @@ pub struct EventBrowserState {
     pub last_clicked_tick: Option<u32>,
     pub(super) fingerprint: Option<u64>,
     pub(super) split_ratio: f32,
+    /// 音符列表缓存：`(doc_id, track, doc revision, 按 start_tick 排序的音符)`。
+    /// 全轨音符收集 + 排序在 1.64 亿场景下是 3GB 级开销，不能每帧重做；
+    /// 键含 doc_id 与 revision，文档切换/任何编辑自动失效。
+    pub(super) notes_cache: Option<(u64, u16, u64, Vec<yinhe_core::NoteEvent>)>,
 }
 
 /// 事件浏览器中选中的条目。
@@ -167,6 +171,7 @@ impl Default for EventBrowserState {
             last_clicked_tick: None,
             fingerprint: None,
             split_ratio: 0.45,
+            notes_cache: None,
         }
     }
 }

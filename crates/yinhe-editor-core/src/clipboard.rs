@@ -59,6 +59,22 @@ impl NotesClipboard {
         }
     }
 
+    /// 流式遍历选中音符（不物化全量）：大选区粘贴时先扫一遍范围、
+    /// 再扫一遍构建，避免 `collect()` 的 3GB 级中间副本。
+    pub fn for_each_note(&self, mut f: impl FnMut(Note, u8)) {
+        match &self.data {
+            NotesClipboardData::Snapshot {
+                snapshot,
+                selection,
+            } => crate::batch_ops::for_each_selected(snapshot, selection, |n, k| f(*n, k)),
+            NotesClipboardData::Materialized(notes) => {
+                for (n, k) in notes {
+                    f(*n, *k);
+                }
+            }
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         match &self.data {
             NotesClipboardData::Snapshot { selection, .. } => selection.is_empty(),

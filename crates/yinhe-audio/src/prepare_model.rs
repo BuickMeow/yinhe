@@ -81,7 +81,6 @@ fn build_bucket(model: &YinModel, key: usize, ignore_velocity: u8) -> Vec<Audibl
         dst.push(AudibleNote {
             start_tick: n.start_tick,
             end_tick: n.end_tick,
-            id: n.id,
             track: n.track,
             velocity: n.velocity,
         });
