@@ -7835,6 +7835,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
  "yinhe-core",
+ "yinhe-memtrace",
  "yinhe-midi",
  "yinhe-mixer",
  "yinhe-types",

@@ -17,12 +17,12 @@ mod selection;
 mod source;
 mod tempo_map;
 
-pub use events::{BucketNote, NoteEvent};
+pub use events::NoteEvent;
 pub use model::DEFAULT_TRACK_COLOR;
 pub use model::{
     AudioClip, AudioSource, ConductorData, ProjectMeta, TrackData, TrackInfo, TrackKind, YinModel,
 };
-pub use model_stats::RescaleProgress;
+pub use model_stats::{NoteLoader, RescaleProgress};
 pub use selection::{Selection, SelectionFilter};
 pub use tempo_map::{
     DEFAULT_BPM, DEFAULT_MPQ, TempoMap, TempoSegment, bar_at_tick, bar_divide, bpm_from_mpq,

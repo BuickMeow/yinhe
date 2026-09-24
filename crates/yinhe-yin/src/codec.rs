@@ -2,7 +2,7 @@
 
 use std::io::Cursor;
 
-use crate::error::{YinError, invalid_data};
+use crate::error::YinError;
 
 /// 编码带版本头的段：version u32 LE + zstd(payload)。
 pub(crate) fn encode_versioned_section(
@@ -41,29 +41,6 @@ pub(crate) fn push_varint(out: &mut Vec<u8>, mut v: u64) {
     }
 }
 
-/// 读 varint（LEB128），游标前进。
-pub(crate) fn read_varint(bytes: &[u8], pos: &mut usize) -> Result<u64, YinError> {
-    let mut v: u64 = 0;
-    let mut shift = 0u32;
-    loop {
-        let Some(&b) = bytes.get(*pos) else {
-            return Err(YinError::Truncated {
-                needed: 1,
-                available: 0,
-            });
-        };
-        *pos += 1;
-        v |= ((b & 0x7F) as u64) << shift;
-        if b & 0x80 == 0 {
-            return Ok(v);
-        }
-        shift += 7;
-        if shift >= 64 {
-            return Err(invalid_data("varint too long"));
-        }
-    }
-}
-
 /// zigzag：有符号 → 无符号（小绝对值映射到小值）。
 pub(crate) fn zigzag(v: i64) -> u64 {
     ((v << 1) ^ (v >> 63)) as u64
@@ -77,28 +54,6 @@ pub(crate) fn unzigzag(v: u64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn varint_roundtrip() {
-        let mut buf = Vec::new();
-        for v in [
-            0u64,
-            1,
-            127,
-            128,
-            300,
-            16383,
-            16384,
-            u32::MAX as u64,
-            u64::MAX,
-        ] {
-            buf.clear();
-            push_varint(&mut buf, v);
-            let mut pos = 0;
-            assert_eq!(read_varint(&buf, &mut pos).unwrap(), v);
-            assert_eq!(pos, buf.len(), "游标应停在编码末尾");
-        }
-    }
 
     #[test]
     fn zigzag_roundtrip() {
@@ -115,16 +70,6 @@ mod tests {
         ] {
             assert_eq!(unzigzag(zigzag(v)), v);
         }
-    }
-
-    #[test]
-    fn read_varint_rejects_truncated_and_overlong() {
-        let mut pos = 0;
-        assert!(read_varint(&[], &mut pos).is_err());
-        // 连续 continuation 超过 64 位。
-        let buf = vec![0xFFu8; 11];
-        let mut pos = 0;
-        assert!(read_varint(&buf, &mut pos).is_err());
     }
 
     #[test]

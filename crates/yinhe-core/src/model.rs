@@ -540,7 +540,7 @@ impl YinModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::BucketNote;
+    use crate::model_stats::NoteLoader;
 
     fn note(start: u32, end: u32, key: u8) -> NoteEvent {
         NoteEvent {
@@ -585,34 +585,16 @@ mod tests {
     }
 
     #[test]
-    fn load_bucket_notes_fills_buckets_and_assigns_ids() {
-        // .yin 加载路径：直接按 key 桶填，track 取自 BucketNote；
+    fn note_loader_fills_buckets_and_assigns_ids() {
+        // 流式加载路径（.yin v9）：逐音符喂 NoteLoader；
         // id=0 重新分配，非 0 保留。
-        let mut all: Vec<Vec<BucketNote>> = Vec::with_capacity(KEY_COUNT);
-        all.push(vec![BucketNote {
-            id: 0,
-            track: 1,
-            start_tick: 0,
-            end_tick: 480,
-            velocity: 100,
-        }]);
-        all.push(vec![
-            BucketNote {
-                id: 9,
-                track: 0,
-                start_tick: 960,
-                end_tick: 1440,
-                velocity: 90,
-            },
-            BucketNote {
-                id: 0,
-                track: 1,
-                start_tick: 960,
-                end_tick: 1920,
-                velocity: 80,
-            },
-        ]);
-        all.resize(KEY_COUNT, Vec::new());
+        let mut counts = [0u32; KEY_COUNT];
+        counts[0] = 1;
+        counts[1] = 2;
+        let mut loader = NoteLoader::new(2, 1, counts);
+        loader.feed(0, 1, 0, 480, 100, 0);
+        loader.feed(1, 0, 960, 1440, 90, 9);
+        loader.feed(1, 1, 960, 1920, 80, 0);
 
         let mut m = YinModel {
             tracks: vec![
@@ -621,7 +603,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        m.load_bucket_notes(all);
+        loader.finish(&mut m);
 
         assert_eq!(m.note_count, 3);
         assert_eq!(m.notes[0][0].track, 1);

@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use yinhe_types::{KEY_COUNT, Note, NoteBucket};
 
-use crate::events::{BucketNote, NoteEvent};
+use crate::events::NoteEvent;
 
 use super::YinModel;
 
@@ -36,32 +36,8 @@ impl YinModel {
         for (track_idx, notes) in per_track_notes.into_iter().enumerate() {
             for note in notes {
                 loader.feed(
-                    note.key as usize,
+                    note.key,
                     track_idx as u16,
-                    note.start_tick,
-                    note.end_tick,
-                    note.velocity,
-                    note.id,
-                );
-            }
-        }
-        loader.finish(self);
-    }
-
-    /// `.yin` 加载路径：直接按 key 桶填（桶内已按 start_tick 排序）。
-    ///
-    /// 与 `load_track_notes` 的区别：输入是 KEY_COUNT 个 key 桶而非 per-track 列表，
-    /// 省去“按 track 分组存 → 加载再分桶”的多余转换（`.yin` 新格式直接按桶存）。
-    /// 每个音符的 `track` 取自 `BucketNote.track`；`id` 非 0 保留（v8 起落盘），
-    /// 0 由发号器重新分配。
-    pub fn load_bucket_notes(&mut self, bucket_notes: Vec<Vec<BucketNote>>) {
-        let mut loader =
-            NoteLoader::with_capacity(self.tracks.len(), self.next_note_id, &bucket_notes);
-        for (key, notes) in bucket_notes.into_iter().enumerate() {
-            for note in notes {
-                loader.feed(
-                    key,
-                    note.track,
                     note.start_tick,
                     note.end_tick,
                     note.velocity,
@@ -471,9 +447,12 @@ pub struct RescaleProgress {
     pub label: String,
 }
 
-/// `load_track_notes` / `load_bucket_notes` 的共享装载状态：
-/// 分配 id、入桶、统计（单趟，避免 rebuild 二次扫描）。
-struct NoteLoader {
+/// 音符装载器：分配 id、入桶、统计（单趟，避免 rebuild 二次扫描）。
+///
+/// `load_track_notes` 的底层状态；`.yin` 流式加载直接使用：
+/// `feed` 逐音符喂入（乱序 OK），`finish` 时统一排序分块。
+/// 传入 `per_key_count` 可精确预分配各 key 桶容量（避免 Vec 动态翻倍）。
+pub struct NoteLoader {
     key_notes: [Vec<Note>; KEY_COUNT],
     note_count: u64,
     max_tick: u64,
@@ -487,8 +466,8 @@ struct NoteLoader {
 }
 
 impl NoteLoader {
-    /// 按每 key 预估容量精确分配（MIDI 解析路径，先扫一遍数数）。
-    fn new(track_count: usize, next_note_id: u32, per_key_count: [u32; KEY_COUNT]) -> Self {
+    /// 按每 key 预估容量精确分配（MIDI 解析/流式加载路径，先扫一遍数数）。
+    pub fn new(track_count: usize, next_note_id: u32, per_key_count: [u32; KEY_COUNT]) -> Self {
         Self {
             key_notes: core::array::from_fn(|k| Vec::with_capacity(per_key_count[k] as usize)),
             note_count: 0,
@@ -503,38 +482,17 @@ impl NoteLoader {
         }
     }
 
-    /// 容量直接取自各桶长度（.yin 加载路径，桶已就位）。
-    fn with_capacity(
-        track_count: usize,
-        next_note_id: u32,
-        bucket_notes: &[Vec<BucketNote>],
-    ) -> Self {
-        Self {
-            key_notes: core::array::from_fn(|k| {
-                Vec::with_capacity(bucket_notes.get(k).map_or(0, |b| b.len()))
-            }),
-            note_count: 0,
-            max_tick: 0,
-            max_len: 0,
-            track_counts: vec![0u64; track_count],
-            track_audible: vec![0u64; track_count],
-            bucket_stats: core::array::from_fn(|_| HashMap::new()),
-            bucket_max_end: [0; KEY_COUNT],
-            max_id_seen: 0,
-            next_note_id,
-        }
-    }
-
     /// 处理单个音符：发号（0=未分配）+ 入桶 + 统计。
-    fn feed(
+    pub fn feed(
         &mut self,
-        key: usize,
+        key: u8,
         track: u16,
         start_tick: u32,
         end_tick: u32,
         velocity: u8,
         id: u32,
     ) {
+        let key = key as usize;
         let end = end_tick as u64;
         if end > self.max_tick {
             self.max_tick = end;
@@ -576,17 +534,21 @@ impl NoteLoader {
     }
 
     /// 写回模型：统计字段 + 发号器（保留 id 时推进到 max+1）。
-    fn finish(mut self, model: &mut YinModel) {
+    ///
+    /// 逐桶 take → 排序 → 分块 → 立即写入模型：已处理桶的源 Vec 随即释放，
+    /// 峰值内存 ≈ 单桶两份，而不是全部桶两份（1.64 亿音符省 ~2.6GB）。
+    pub fn finish(mut self, model: &mut YinModel) {
         if self.max_id_seen + 1 > self.next_note_id {
             self.next_note_id = self.max_id_seen + 1;
         }
         model.next_note_id = self.next_note_id;
 
-        *model.notes = self.key_notes.map(|mut v| {
+        for key in 0..KEY_COUNT {
+            let mut v = std::mem::take(&mut self.key_notes[key]);
             // 加载路径统一在此排序（乱序输入），随后按 65536 切块。
             v.sort_by_key(|n| n.start_tick);
-            Arc::new(NoteBucket::from_sorted(v))
-        });
+            model.notes[key] = Arc::new(NoteBucket::from_sorted(v));
+        }
         model.note_count = self.note_count;
         model.tick_length = self.max_tick;
         model.max_note_len = self.max_len;

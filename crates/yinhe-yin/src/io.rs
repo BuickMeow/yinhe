@@ -10,14 +10,13 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use yinhe_core::{ProjectMeta, TrackData, YinModel};
+use yinhe_core::{NoteLoader, ProjectMeta, TrackData, YinModel};
 use yinhe_mixer::MixerParams;
 
 use crate::audio_section::{decode_audio_section, encode_audio_section};
 use crate::container::{Sections, pack, unpack};
 use crate::data_section::{
-    MetaPayload, TrackPayload, bucket_from_streams, compress_data, decompress_data,
-    encode_note_streams,
+    MetaPayload, TrackPayload, compress_data, encode_note_streams, open_note_streams,
 };
 use crate::error::{YinError, invalid_data};
 use crate::mapping::MappingFile;
@@ -64,10 +63,10 @@ fn save_yin_bytes_with_files_inner(
     let project_json = serde_json::to_vec_pretty(project)?;
     let mapping_json = serde_json::to_vec_pretty(mapping)?;
 
-    // data 段：meta（conductor + tracks payload + 轨段表）+ 5 列音符流，
-    // 每流独立 zstd。音符 id 以 zigzag varint delta 落盘（与轨段布局同序，
-    // 压缩后近零开销），加载时保留。
-    let (notes, segments) = encode_note_streams(model, on_progress)?;
+    // data 段：meta（conductor + tracks payload + 轨段表）+ 5 列音符流
+    //（分帧 zstd）。音符 id 以 zigzag varint delta 落盘（段内独立，与轨段
+    // 布局同序，压缩后近零开销），加载时保留。
+    let (notes, segments) = encode_note_streams(model, model.meta.compression_level, on_progress)?;
     let meta = MetaPayload {
         conductor: (*model.conductor).clone(),
         // payload 按 model.tracks 顺序写，与音符流的 track 索引（model 索引）同空间；
@@ -100,6 +99,8 @@ fn save_yin_bytes_with_files_inner(
         mixer,
         audio,
     });
+    // 编码/压缩的临时缓冲已释放，把空闲页归还 OS（1.64 亿音符可降 RSS ~1GB）。
+    yinhe_memtrace::purge_free_pages();
     Ok(bytes)
 }
 
@@ -180,7 +181,7 @@ fn load_yin_bytes_inner(
     let project: ProjectFile = serde_json::from_slice(&sections.project_json)?;
     let mapping: MappingFile = serde_json::from_slice(&sections.mapping_json)?;
 
-    let (model_data, note_streams) = decompress_data(&sections.data, on_progress)?;
+    let (model_data, mut note_streams) = open_note_streams(&sections.data, on_progress)?;
 
     // 按 payload 顺序（保存时的 model.tracks 顺序）重建 TrackData；
     // 音轨的 port/channel/元数据取自 mapping（uuid 关联），
@@ -220,7 +221,7 @@ fn load_yin_bytes_inner(
             kind: tm.kind,
             audio_channel: tm.audio_channel,
             audio_clips: tm.audio_clips.clone(),
-            notes: Vec::new(), // notes loaded via load_bucket_notes
+            notes: Vec::new(), // notes loaded via NoteLoader
             automation_lanes: payload.automation_lanes,
             program_change: payload.program_change,
             lyrics: payload.lyrics,
@@ -228,10 +229,6 @@ fn load_yin_bytes_inner(
         };
         tracks.push(Arc::new(td));
     }
-
-    // 轨段流 → KEY_COUNT 桶（桶内按 start 排序），再由 load_bucket_notes 入模型。
-    // id 已随流落盘（非 0 保留，跨会话稳定）。
-    let bucket_notes = bucket_from_streams(&note_streams, &model_data.segments, on_progress)?;
 
     let mut model = YinModel {
         conductor: Arc::new(model_data.conductor),
@@ -246,7 +243,12 @@ fn load_yin_bytes_inner(
         audio_sources,
         ..Default::default()
     };
-    model.load_bucket_notes(bucket_notes);
+    // 流式加载：第一遍只解压 key 列统计每桶容量，第二遍 5 列同步解析直接
+    // 喂 NoteLoader（id 已随流落盘，非 0 保留），finish 逐桶排序分块。
+    let key_counts = note_streams.key_counts()?;
+    let mut loader = NoteLoader::new(model.tracks.len(), model.next_note_id, key_counts);
+    note_streams.feed(&model_data.segments, &mut loader, on_progress)?;
+    loader.finish(&mut model);
     // 自动化事件 id 不落盘：加载后统一发号（会话内身份，选择集/undo 用）。
     model.renumber_automation_ids();
     model.rebuild();
@@ -258,6 +260,8 @@ fn load_yin_bytes_inner(
         .max()
         .map(|m| m.saturating_add(1))
         .unwrap_or(1);
+    // 流式加载的帧缓冲/装载临时内存已释放，把空闲页归还 OS。
+    yinhe_memtrace::purge_free_pages();
     Ok((model, project, mapping, mixer))
 }
 
