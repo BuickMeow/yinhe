@@ -37,60 +37,22 @@ impl Document {
         if event.id == 0 {
             event.id = Arc::make_mut(&mut self.data.model).alloc_automation_id();
         }
-        if matches!(target, yinhe_types::AutomationTarget::Tempo) {
-            let model = Arc::make_mut(&mut self.data.model);
-            let conductor = Arc::make_mut(&mut model.conductor);
-            let lane = &mut conductor.tempo;
-            let insert_pos = lane.events.partition_point(|e| e.tick < event.tick);
-            lane.events.insert(insert_pos, event);
-            self.data.rebuild_tempo_map();
-            self.data.bump_revision();
-            return Some((
-                0,
-                0,
-                UndoAction::Automation(AutomationDelta {
-                    track_idx: 0,
-                    lane_idx: 0,
-                    target,
-                    // 增量 delta：只存被编辑的事件（before 空 = 纯新增）。
-                    before: vec![],
-                    after: vec![event],
-                }),
-            ));
-        }
+        let is_tempo = matches!(target, yinhe_types::AutomationTarget::Tempo);
+        // Tempo 无视 track_idx（conductor 持有），delta 里统一记 0/0。
+        let result_track = if is_tempo { 0 } else { track_idx };
         let model = Arc::make_mut(&mut self.data.model);
-        let track = model.tracks.get_mut(track_idx)?;
-        let track = Arc::make_mut(track);
-
-        // 找或创建 lane
-        let lane_idx = match track
-            .automation_lanes
-            .iter()
-            .position(|l| l.target == target)
-        {
-            Some(idx) => idx,
-            None => {
-                track.automation_lanes.push(yinhe_types::AutomationLane {
-                    target: target.clone(),
-                    track: track_idx as u16,
-                    events: Vec::new(),
-                });
-                track.automation_lanes.len() - 1
-            }
-        };
-        let lane = &mut track.automation_lanes[lane_idx];
-
-        let insert_pos = lane.events.partition_point(|e| e.tick < event.tick);
-        lane.events.insert(insert_pos, event);
-
+        let (lane, lane_idx) = model.ensure_automation_lane_mut(track_idx, target.clone())?;
+        lane.insert_sorted(event);
+        model.commit_automation(&target);
         self.data.bump_revision();
         Some((
-            track_idx,
+            result_track,
             lane_idx,
             UndoAction::Automation(AutomationDelta {
-                track_idx,
+                track_idx: result_track,
                 lane_idx,
                 target,
+                // 增量 delta：只存被编辑的事件（before 空 = 纯新增）。
                 before: vec![],
                 after: vec![event],
             }),
@@ -173,14 +135,8 @@ impl Document {
         new_value: f32,
     ) -> Option<UndoAction> {
         let model = Arc::make_mut(&mut self.data.model);
-        let events = if matches!(target, yinhe_types::AutomationTarget::Tempo) {
-            let conductor = Arc::make_mut(&mut model.conductor);
-            &mut conductor.tempo.events
-        } else {
-            let track = model.tracks.get_mut(track_idx)?;
-            let track = Arc::make_mut(track);
-            &mut track.automation_lanes.get_mut(lane_idx)?.events
-        };
+        let (lane, _) = model.automation_lane_mut(track_idx, target)?;
+        let events = &mut lane.events;
 
         let mut before = Vec::with_capacity(2);
         // 原事件（操作前值）必须进 before，undo 才能恢复。
@@ -210,9 +166,7 @@ impl Document {
             ..before[0] // 保留原 id/shape
         }];
 
-        if matches!(target, yinhe_types::AutomationTarget::Tempo) {
-            self.data.rebuild_tempo_map();
-        }
+        model.commit_automation(target);
         self.data.bump_revision();
         Some(UndoAction::Automation(AutomationDelta {
             track_idx,
@@ -239,14 +193,8 @@ impl Document {
             return None;
         }
         let model = Arc::make_mut(&mut self.data.model);
-        let events = if matches!(target, yinhe_types::AutomationTarget::Tempo) {
-            let conductor = Arc::make_mut(&mut model.conductor);
-            &mut conductor.tempo.events
-        } else {
-            let track = model.tracks.get_mut(track_idx)?;
-            let track = Arc::make_mut(track);
-            &mut track.automation_lanes.get_mut(lane_idx)?.events
-        };
+        let (lane, _) = model.automation_lane_mut(track_idx, target)?;
+        let events = &mut lane.events;
 
         // 增量 before：原事件（old_tick 处）+ 冲突项（new_tick 处非本次移动的事件）。
         // 冲突项定义：插入时会移除 new_tick 残留事件——残留 = tick ∈ new_ticks
@@ -298,9 +246,7 @@ impl Document {
             events.insert(insert_idx, evt);
             after.push(evt);
         }
-        if matches!(target, yinhe_types::AutomationTarget::Tempo) {
-            self.data.rebuild_tempo_map();
-        }
+        model.commit_automation(target);
         self.data.bump_revision();
         Some(UndoAction::Automation(AutomationDelta {
             track_idx,
@@ -323,27 +269,22 @@ impl Document {
         tick: u32,
     ) -> Option<UndoAction> {
         let model = Arc::make_mut(&mut self.data.model);
-        let events = if matches!(target, yinhe_types::AutomationTarget::Tempo) {
-            let conductor = Arc::make_mut(&mut model.conductor);
-            &mut conductor.tempo.events
-        } else {
-            let track = model.tracks.get_mut(track_idx)?;
-            let track = Arc::make_mut(track);
-            &mut track.automation_lanes.get_mut(lane_idx)?.events
-        };
+        let (lane, _) = model.automation_lane_mut(track_idx, target)?;
 
         // 增量 delta：before = 被删事件（undo 恢复的唯一信息源）。
-        let before: Vec<AutomationEvent> =
-            events.iter().filter(|e| e.tick == tick).copied().collect();
+        let before: Vec<AutomationEvent> = lane
+            .events
+            .iter()
+            .filter(|e| e.tick == tick)
+            .copied()
+            .collect();
         if before.is_empty() {
             return None;
         }
-        events.retain(|e| e.tick != tick);
+        lane.events.retain(|e| e.tick != tick);
         let after = Vec::new();
 
-        if matches!(target, yinhe_types::AutomationTarget::Tempo) {
-            self.data.rebuild_tempo_map();
-        }
+        model.commit_automation(target);
         self.data.bump_revision();
         Some(UndoAction::Automation(AutomationDelta {
             track_idx,
@@ -367,31 +308,26 @@ impl Document {
         shape: yinhe_types::SegmentShape,
     ) -> Option<UndoAction> {
         let model = Arc::make_mut(&mut self.data.model);
-        let events = if matches!(target, yinhe_types::AutomationTarget::Tempo) {
-            let conductor = Arc::make_mut(&mut model.conductor);
-            &mut conductor.tempo.events
-        } else {
-            let track = model.tracks.get_mut(track_idx)?;
-            let track = Arc::make_mut(track);
-            &mut track.automation_lanes.get_mut(lane_idx)?.events
-        };
+        let (lane, _) = model.automation_lane_mut(track_idx, target)?;
 
         // 增量 delta：before = 原事件，after = 改后事件（单事件对）。
-        let before: Vec<AutomationEvent> =
-            events.iter().filter(|e| e.tick == tick).copied().collect();
+        let before: Vec<AutomationEvent> = lane
+            .events
+            .iter()
+            .filter(|e| e.tick == tick)
+            .copied()
+            .collect();
         if before.is_empty() {
             return None;
         }
-        let evt = events.iter_mut().find(|e| e.tick == tick)?;
+        let evt = lane.events.iter_mut().find(|e| e.tick == tick)?;
         if evt.shape == shape {
             return None;
         }
         evt.shape = shape;
         let after = vec![*evt];
 
-        if matches!(target, yinhe_types::AutomationTarget::Tempo) {
-            self.data.rebuild_tempo_map();
-        }
+        model.commit_automation(target);
         self.data.bump_revision();
         Some(UndoAction::Automation(AutomationDelta {
             track_idx,

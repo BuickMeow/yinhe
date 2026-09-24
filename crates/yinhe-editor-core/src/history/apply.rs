@@ -390,26 +390,18 @@ pub(crate) fn apply_note_flip(
 pub(crate) fn apply_automation_delta(
     doc: &mut Document,
     track_idx: usize,
-    lane_idx: usize,
+    _lane_idx: usize,
     target: &yinhe_types::AutomationTarget,
     remove: &[AutomationEvent],
     insert: &[AutomationEvent],
 ) {
+    // 按 target 定位（比 delta 里的 lane_idx 稳：lane 增删后索引可能过期）。
     let model = Arc::make_mut(&mut doc.data.model);
-    if matches!(target, yinhe_types::AutomationTarget::Tempo) {
-        let conductor = Arc::make_mut(&mut model.conductor);
-        let lane = &mut conductor.tempo;
+    if let Some((lane, _)) = model.automation_lane_mut(track_idx, target) {
         apply_event_diff(&mut lane.events, remove, insert);
-    } else if let Some(track) = model.tracks.get_mut(track_idx) {
-        let track = Arc::make_mut(track);
-        if let Some(lane) = track.automation_lanes.get_mut(lane_idx) {
-            apply_event_diff(&mut lane.events, remove, insert);
-        }
     }
     // Tempo 改了要重建 tempo_map（否则音频引擎和播放光标都用旧 tempo）
-    if matches!(target, yinhe_types::AutomationTarget::Tempo) {
-        doc.data.rebuild_tempo_map();
-    }
+    model.commit_automation(target);
     doc.data.bump_revision();
 }
 

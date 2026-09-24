@@ -583,6 +583,43 @@ impl AutomationLane {
         &self.events[lo..hi]
     }
 
+    /// 按 tick 有序插入（**不覆盖**同 tick 既有事件；用于"新增锚点"语义，
+    /// 覆盖会丢失 undo 所需的旧事件信息）。要覆盖请用 [`Self::upsert`]。
+    pub fn insert_sorted(&mut self, evt: AutomationEvent) -> usize {
+        let pos = self.events.partition_point(|e| e.tick < evt.tick);
+        self.events.insert(pos, evt);
+        pos
+    }
+
+    /// 按 tick 有序 upsert：同 tick 覆盖旧事件并返回它（无序插入会破坏二分前提）。
+    ///
+    /// 所有自动化写入路径的统一入口（lane 内 tick 唯一且有序是模型不变量）。
+    pub fn upsert(&mut self, evt: AutomationEvent) -> Option<AutomationEvent> {
+        let pos = self.events.partition_point(|e| e.tick < evt.tick);
+        if self.events.get(pos).is_some_and(|e| e.tick == evt.tick) {
+            Some(std::mem::replace(&mut self.events[pos], evt))
+        } else {
+            self.events.insert(pos, evt);
+            None
+        }
+    }
+
+    /// 移除 `tick` 处事件（返回被移除的）。
+    pub fn remove_at(&mut self, tick: u32) -> Option<AutomationEvent> {
+        let pos = self.events.partition_point(|e| e.tick < tick);
+        if self.events.get(pos).is_some_and(|e| e.tick == tick) {
+            Some(self.events.remove(pos))
+        } else {
+            None
+        }
+    }
+
+    /// 整体替换事件列表并保持有序（undo 回放/批量搬运用）。返回旧列表。
+    pub fn replace_all(&mut self, mut events: Vec<AutomationEvent>) -> Vec<AutomationEvent> {
+        events.sort_by_key(|e| e.tick);
+        std::mem::replace(&mut self.events, events)
+    }
+
     /// 求 `target` 处的值（chase/预览/UI 共用）：
     /// - Step：最后一条 `tick < target` 的事件值（保持语义）；
     /// - Linear/Curve：target 落在段内时**实时插值**（真实值，与 flatten 的 density 无关）；

@@ -10,6 +10,7 @@
 //! - C1 模式：tracks 为 Vec<Arc<TrackData>>，编辑时只 clone 受影响的 track
 //! - 派生索引 (key_notes_cache 等) 在 rebuild() 时全量重建
 
+mod automation;
 mod events;
 mod model;
 mod model_stats;
