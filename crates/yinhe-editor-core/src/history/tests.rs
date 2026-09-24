@@ -715,6 +715,57 @@ fn move_notes_uses_operational_undo_and_roundtrips() {
     assert_eq!(n.get(0).unwrap().end_tick, 500);
 }
 
+/// 回归：同 key 原地移动路径必须与 for_each_selected 的命中判定一致
+///（rects 的 tick/key/track 范围 + 属性筛选），且移动后桶内保持有序。
+#[test]
+fn move_notes_in_place_respects_rects_and_filter() {
+    let mut doc = make_doc_with_notes();
+    // 只覆盖 key 60 音符（tick 100-200），key 64（tick 400-500）在范围外。
+    doc.edit
+        .selected
+        .add_rect_track(0, 300, 60, 60, 0, u16::MAX);
+    let action = doc.move_selected_notes(50, 0).expect("move 应成功");
+    assert!(matches!(action, UndoAction::MoveNotes { .. }));
+    doc.push_undo(action, "move-rect", doc.capture_snapshot());
+
+    assert_eq!(doc.data.model.notes[60].get(0).unwrap().start_tick, 150);
+    assert_eq!(doc.data.model.notes[60].get(0).unwrap().end_tick, 250);
+    assert_eq!(
+        doc.data.model.notes[64].get(0).unwrap().start_tick,
+        400,
+        "范围外的 key 64 不应被移动"
+    );
+    assert!(doc.data.model.notes[60].is_sorted(), "移动后桶内应有序");
+
+    assert!(doc.undo());
+    assert_eq!(doc.data.model.notes[60].get(0).unwrap().start_tick, 100);
+    assert!(doc.redo());
+    assert_eq!(doc.data.model.notes[60].get(0).unwrap().start_tick, 150);
+}
+
+/// 回归：属性筛选（velocity）在原地路径生效。
+#[test]
+fn move_notes_in_place_respects_velocity_filter() {
+    let mut doc = make_doc_with_notes();
+    doc.edit
+        .selected
+        .add_rect_track(0, 1000, 0, 255, 0, u16::MAX);
+    doc.edit.selected.filter.velocity = Some((95, 127));
+    let action = doc.move_selected_notes(50, 0).expect("move 应成功");
+    assert!(matches!(action, UndoAction::MoveNotes { .. }));
+    doc.push_undo(action, "move-filter", doc.capture_snapshot());
+
+    assert_eq!(doc.data.model.notes[60].get(0).unwrap().start_tick, 150);
+    assert_eq!(
+        doc.data.model.notes[64].get(0).unwrap().start_tick,
+        400,
+        "vel=90 不满足筛选，不应被移动"
+    );
+
+    assert!(doc.undo());
+    assert_eq!(doc.data.model.notes[60].get(0).unwrap().start_tick, 100);
+}
+
 #[test]
 fn move_notes_clamp_falls_back_to_snapshot() {
     let mut doc = make_doc_with_notes();

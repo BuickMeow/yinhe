@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use yinhe_core::Selection;
-use yinhe_types::{AutomationEvent, MAX_KEY, Note};
+use yinhe_types::{AutomationEvent, KEY_COUNT, MAX_KEY, Note};
 
 use crate::document::{Document, track_color};
 
@@ -242,6 +242,48 @@ pub(crate) fn apply_note_shift(
         return;
     }
     let model = Arc::make_mut(&mut doc.data.model);
+
+    // 同 key 平移（最常见：拖动/整体 tick 平移）：逐桶原地改 + 失序桶重排。
+    // 只深拷贝含选中音符的块，不需要 collect/remove/insert 的全量临时
+    //（1.64 亿全选下省 ~6GB 峰值）。跨 key（移调）走下方副本路径。
+    //
+    // 命中判定必须与 `for_each_selected` 等价：rects 提供 tick/key/track
+    // 扫描范围（`accepts_note` 只判属性边界，不含 tick 范围）。
+    if delta_keys == 0 {
+        let mut any = false;
+        for key in 0..KEY_COUNT {
+            let k = key as u8;
+            let bucket = Arc::make_mut(&mut model.notes[key]);
+            let touched = bucket.update_matching(
+                |n| {
+                    selection.rects.iter().any(|&(ts, te, kl, kh, tl, th)| {
+                        n.start_tick >= ts
+                            && n.start_tick < te
+                            && k >= kl
+                            && k <= kh
+                            && n.track >= tl
+                            && n.track <= th
+                    }) && selection.accepts_note(n, k)
+                },
+                |n| {
+                    let length = n.end_tick - n.start_tick;
+                    n.start_tick = (n.start_tick as i64 + delta_ticks).max(0) as u32;
+                    n.end_tick = n.start_tick + length;
+                },
+            );
+            if touched {
+                bucket.sort();
+                model.mark_dirty(k);
+                any = true;
+            }
+        }
+        if any {
+            model.rebuild_dirty();
+            doc.data.bump_revision();
+        }
+        return;
+    }
+
     let originals = crate::batch_ops::collect_selected(model, selection);
     if originals.is_empty() {
         return;

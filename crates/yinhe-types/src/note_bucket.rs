@@ -347,6 +347,32 @@ impl NoteBucket {
         chunk.iter_mut().find(|n| n.id == id)
     }
 
+    /// 对匹配 `pred` 的音符原地应用 `f`，**只深拷贝含匹配音符的块**。
+    /// 返回是否有改动。修改可能破坏排序，调用方负责随后 [`sort`](Self::sort)。
+    ///
+    /// 与 `iter_mut()`（无条件深拷贝全部块）的区别：小选区编辑时只触达
+    /// 少数块；大选区时与 iter_mut 等价。`pred` 会被调用两遍
+    ///（块级预检 + 逐音符应用），只读扫描成本远低于深拷贝。
+    pub fn update_matching(
+        &mut self,
+        mut pred: impl FnMut(&Note) -> bool,
+        mut f: impl FnMut(&mut Note),
+    ) -> bool {
+        let mut touched = false;
+        for chunk in &mut self.chunks {
+            if !chunk.iter().any(&mut pred) {
+                continue;
+            }
+            for n in Arc::make_mut(chunk).iter_mut() {
+                if pred(n) {
+                    f(n);
+                    touched = true;
+                }
+            }
+        }
+        touched
+    }
+
     /// 全量重建：排平排序后重新切块（O(N log N) + 一次 O(N) 拷贝）。
     /// 已有序时是 O(N) 检测，直接跳过。加载/rescale/结构变化后调用。
     pub fn sort(&mut self) {
