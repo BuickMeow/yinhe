@@ -292,6 +292,10 @@ impl Document {
             remaining: Vec<AutomationEvent>,
         }
         let mut lane_moves: Vec<LaneMove> = Vec::new();
+        // 判定（accepts_automation_event）本身覆盖整个选区，每个 lane 只需处理
+        // 一次——多个重叠 rect 命中同一 lane 时不得重复搬运/重复记 undo。
+        let mut seen_lanes: std::collections::HashSet<(usize, usize)> =
+            std::collections::HashSet::new();
 
         for &(_tick_start, _tick_end, _key_lo, _key_hi, track_lo, track_hi) in &selection.rects {
             for track_idx in track_lo..=track_hi {
@@ -299,8 +303,12 @@ impl Document {
                 if track_idx >= model.tracks.len() {
                     continue;
                 }
-                let track = Arc::make_mut(&mut model.tracks[track_idx]);
-                for lane_idx in 0..track.automation_lanes.len() {
+                let num_lanes = model.tracks[track_idx].automation_lanes.len();
+                for lane_idx in 0..num_lanes {
+                    if !seen_lanes.insert((track_idx, lane_idx)) {
+                        continue;
+                    }
+                    let track = Arc::make_mut(&mut model.tracks[track_idx]);
                     let lane = &track.automation_lanes[lane_idx];
                     let mut in_range: Vec<AutomationEvent> = Vec::new();
                     let mut out_of_range: Vec<AutomationEvent> = Vec::new();
@@ -333,12 +341,14 @@ impl Document {
             let src_track = Arc::make_mut(&mut model.tracks[lm.src_track]);
             let src_lane = &mut src_track.automation_lanes[lm.lane_idx];
             let before_src = src_lane.events.clone();
-            src_lane.events = lm.remaining.clone();
 
             if delta_tracks == 0 {
-                // Same lane: add moved events back with offset ticks
-                src_lane.events.extend(lm.events.iter().copied());
-                src_lane.events.sort_by_key(|e| e.tick);
+                // Same lane: add moved events back with offset ticks（整体保持有序）
+                let mut merged = lm.remaining.clone();
+                merged.extend(lm.events.iter().copied());
+                src_lane.replace_all(merged);
+            } else {
+                src_lane.events = lm.remaining.clone();
             }
             sub_actions.push(UndoAction::Automation(AutomationDelta {
                 track_idx: lm.src_track,
@@ -366,8 +376,9 @@ impl Document {
                     let src_track = Arc::make_mut(&mut model.tracks[lm.src_track]);
                     let src_lane = &mut src_track.automation_lanes[lm.lane_idx];
                     let before_readd = src_lane.events.clone();
-                    src_lane.events.extend(lm.events.iter().copied());
-                    src_lane.events.sort_by_key(|e| e.tick);
+                    let mut merged = std::mem::take(&mut src_lane.events);
+                    merged.extend(lm.events.iter().copied());
+                    src_lane.replace_all(merged);
                     sub_actions.push(UndoAction::Automation(AutomationDelta {
                         track_idx: lm.src_track,
                         lane_idx: lm.lane_idx,
@@ -377,28 +388,15 @@ impl Document {
                     }));
                     continue;
                 }
-                let dst_track = Arc::make_mut(&mut model.tracks[dst_track_idx]);
-                let dst_lane_idx = match dst_track
-                    .automation_lanes
-                    .iter()
-                    .position(|l| l.target == lm.target)
-                {
-                    Some(idx) => idx,
-                    None => {
-                        dst_track
-                            .automation_lanes
-                            .push(yinhe_types::AutomationLane {
-                                target: lm.target.clone(),
-                                track: dst_track_idx as u16,
-                                events: Vec::new(),
-                            });
-                        dst_track.automation_lanes.len() - 1
-                    }
+                let Some((dst_lane, dst_lane_idx)) =
+                    model.ensure_automation_lane_mut(dst_track_idx, lm.target.clone())
+                else {
+                    continue; // 轨道不存在（防御，不 panic）
                 };
-                let dst_lane = &mut dst_track.automation_lanes[dst_lane_idx];
                 let before_dst = dst_lane.events.clone();
-                dst_lane.events.extend(lm.events.iter().copied());
-                dst_lane.events.sort_by_key(|e| e.tick);
+                let mut merged = dst_lane.events.clone();
+                merged.extend(lm.events.iter().copied());
+                dst_lane.replace_all(merged);
                 sub_actions.push(UndoAction::Automation(AutomationDelta {
                     track_idx: dst_track_idx,
                     lane_idx: dst_lane_idx,
@@ -942,5 +940,121 @@ mod tests {
         let ticks: Vec<(u32, u32)> = lane.events.iter().map(|e| (e.id, e.tick)).collect();
         assert!(ticks.contains(&(1, 290)), "id1 应移到 290，实际 {ticks:?}");
         assert!(ticks.contains(&(2, 300)), "id2 应留在 300，实际 {ticks:?}");
+    }
+
+    /// 多轨测试文档（track_visible 长度与轨道数一致）。
+    fn make_doc_tracks(n: usize) -> Document {
+        let mut doc = make_doc();
+        let model = Arc::make_mut(&mut doc.data.model);
+        while model.tracks.len() < n {
+            let i = model.tracks.len();
+            model.tracks.push(Arc::new(TrackData::new(0, i as u8)));
+        }
+        doc.edit.track_visible = vec![true; n];
+        doc.edit.track_pianoroll_visible = vec![true; n];
+        doc
+    }
+
+    /// 往指定轨塞一条 CC7 lane（事件 id/tick 给定）。
+    fn add_cc_lane(doc: &mut Document, track_idx: usize, evts: Vec<(u32, u32)>) {
+        let model = Arc::make_mut(&mut doc.data.model);
+        let track = Arc::make_mut(&mut model.tracks[track_idx]);
+        track.automation_lanes.push(yinhe_types::AutomationLane {
+            target: yinhe_types::AutomationTarget::CC { controller: 7 },
+            track: track_idx as u16,
+            events: evts
+                .into_iter()
+                .map(|(id, tick)| yinhe_types::AutomationEvent {
+                    id,
+                    tick,
+                    value: 0.5,
+                    shape: yinhe_types::SegmentShape::Step,
+                })
+                .collect(),
+        });
+        model.next_automation_id = 1000;
+    }
+
+    fn cc7_lane(doc: &Document, track_idx: usize) -> Option<&yinhe_types::AutomationLane> {
+        doc.data.model.tracks[track_idx]
+            .automation_lanes
+            .iter()
+            .find(|l| {
+                matches!(
+                    l.target,
+                    yinhe_types::AutomationTarget::CC { controller: 7 }
+                )
+            })
+    }
+
+    /// AR 跨轨拖动：源 lane 事件搬到目标轨的同名 lane（不存在则创建）；
+    /// undo 撤销目标轨写入并恢复源轨，redo 再现。
+    #[test]
+    fn arrange_automation_cross_track_move_and_undo() {
+        let mut doc = make_doc_tracks(2);
+        add_cc_lane(&mut doc, 0, vec![(1, 100), (2, 300)]);
+        // 框选 [100,101) track 0：只选中 tick=100 的锚点。
+        doc.edit
+            .selected
+            .add_rect_track(100, 101, 0, yinhe_types::MAX_KEY, 0, 0);
+        let tracks = doc.data.model.tracks.clone();
+        doc.edit.selected.materialize_automation_pending(&tracks);
+
+        let before = doc.capture_snapshot();
+        let action = doc
+            .move_selected_arrange(0, 1)
+            .expect("跨轨搬运应产生 undo");
+        doc.push_undo(action, "arrange_move", before);
+
+        let dst = cc7_lane(&doc, 1).expect("目标轨应懒创建 CC7 lane");
+        assert_eq!(dst.events.len(), 1);
+        assert_eq!(dst.events[0].tick, 100, "被选锚点搬到目标轨");
+        let src = &doc.data.model.tracks[0].automation_lanes[0];
+        assert_eq!(src.events.len(), 1, "源轨只剩未选锚点");
+        assert_eq!(src.events[0].tick, 300);
+
+        assert!(doc.undo(), "undo 应成功");
+        let dst = cc7_lane(&doc, 1).expect("目标 lane 结构不随事件 delta 撤销");
+        assert!(dst.events.is_empty(), "undo 应移除目标轨事件");
+        assert_eq!(
+            doc.data.model.tracks[0].automation_lanes[0].events.len(),
+            2,
+            "undo 应恢复源轨两条锚点"
+        );
+
+        assert!(doc.redo(), "redo 应成功");
+        assert_eq!(
+            cc7_lane(&doc, 1).expect("目标 lane").events.len(),
+            1,
+            "redo 再现目标轨写入"
+        );
+    }
+
+    /// 回归：两个重叠 rect 命中同一 lane 时，同一锚点只搬一次
+    /// （曾会按 rect 重复收集 LaneMove，跨轨时把事件重复插入目标轨）。
+    #[test]
+    fn arrange_automation_overlapping_rects_move_once() {
+        let mut doc = make_doc_tracks(2);
+        add_cc_lane(&mut doc, 0, vec![(1, 100)]);
+        // 两个重叠 rect 均覆盖 tick=100。
+        doc.edit
+            .selected
+            .add_rect_track(50, 150, 0, yinhe_types::MAX_KEY, 0, 0);
+        doc.edit
+            .selected
+            .add_rect_track(100, 200, 0, yinhe_types::MAX_KEY, 0, 0);
+
+        let before = doc.capture_snapshot();
+        let action = doc.move_selected_arrange(0, 1).expect("搬运应产生 undo");
+        doc.push_undo(action, "arrange_move", before);
+
+        let dst = cc7_lane(&doc, 1).expect("目标轨应有 CC7 lane");
+        assert_eq!(
+            dst.events.len(),
+            1,
+            "同一锚点只能搬一次，实际 {:?}",
+            dst.events
+        );
+        assert_eq!(dst.events[0].tick, 100);
     }
 }
