@@ -36,19 +36,25 @@
 //! - 压缩级别存 `project.json`（compression_level，默认 3，UI 可调）
 //! - 不兼容旧文件（v1-v7 不提供读取，快速迭代期）
 
+mod audio_section;
+mod codec;
 mod container;
+mod data_section;
 mod error;
 mod io;
 mod mapping;
+mod mixer_section;
+mod progress;
 mod project_meta;
 
 pub use error::YinError;
 pub use io::{
-    ProjectSoundFonts, YinProgress, YinProgressStage, load_yin, load_yin_bytes,
-    load_yin_bytes_with_sf, load_yin_with_sf, load_yin_with_sf_progress, save_yin, save_yin_bytes,
-    save_yin_bytes_with_sf, save_yin_with_files, save_yin_with_files_progress, save_yin_with_sf,
+    ProjectSoundFonts, load_yin, load_yin_bytes, load_yin_bytes_with_sf, load_yin_with_sf,
+    load_yin_with_sf_progress, save_yin, save_yin_bytes, save_yin_bytes_with_sf,
+    save_yin_with_files, save_yin_with_files_progress, save_yin_with_sf,
 };
 pub use mapping::{ChannelMap, MappingFile, PortMap, TrackMap};
+pub use progress::{YinProgress, YinProgressStage};
 pub use project_meta::{ProjectFile, SfChannelOverride, SfEntryJson};
 
 pub const MAGIC: &[u8; 4] = b"YINH";

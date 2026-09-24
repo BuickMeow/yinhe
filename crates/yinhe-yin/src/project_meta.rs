@@ -77,14 +77,4 @@ impl ProjectFile {
             sf_channel_overrides,
         }
     }
-
-    pub fn into_meta(self) -> ProjectMeta {
-        ProjectMeta {
-            name: self.name,
-            artist: self.artist,
-            description: self.description,
-            ppq: self.ppq,
-            compression_level: self.compression_level,
-        }
-    }
 }

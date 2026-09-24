@@ -1,4 +1,7 @@
-//! Container framing: header + 3 length-prefixed sections.
+//! Container framing: header + length-prefixed sections.
+//!
+//! 固定 3 段（project.json / mapping.json / data）+ 2 个可选段
+//! （mixer / audio，老文件没有，读取器按尾部剩余字节惰性识别）。
 
 use crate::error::YinError;
 use crate::{MAGIC, VERSION};
@@ -18,9 +21,9 @@ pub(crate) struct Sections {
 
 /// Pack header + sections into the final byte buffer.
 pub(crate) fn pack(sections: Sections) -> Vec<u8> {
-    // 有音频段时必须先写 mixer 段占位（老读取器把第 4 段当 mixer；
-    // 空 mixer 段解码为 None，不丢任何设置），否则老读取器会把音频段
-    // 当作 mixer 段读取。当前保存路径 mixer 恒为 Some，占位仅防御未来变化。
+    // 段序由位置隐含（无段 id）：有音频段而 mixer 段为 None 时，必须写一个
+    // 长度为 0 的 mixer 占位，否则读取侧会把音频段当作 mixer 段。
+    // 空 mixer 段解码为 None，不丢任何设置。
     let mixer_len = sections.mixer.as_ref().map_or(0, |m| 4 + m.len());
     let audio_len = sections.audio.as_ref().map_or(0, |a| 4 + a.len());
     let mixer_placeholder = if sections.audio.is_some() && sections.mixer.is_none() {

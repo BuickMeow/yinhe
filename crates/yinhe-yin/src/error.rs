@@ -10,10 +10,16 @@ pub enum YinError {
     BadVersion(u16),
     #[error("truncated file: needed {needed} bytes, only {available} remain")]
     Truncated { needed: usize, available: usize },
-    #[error("invalid utf-8 in JSON section: {0}")]
-    Utf8(#[from] std::str::Utf8Error),
     #[error("json parse error: {0}")]
     Json(#[from] serde_json::Error),
     #[error("postcard error: {0}")]
     Postcard(#[from] postcard::Error),
+}
+
+/// 构造 InvalidData 错误（损坏的段数据统一入口）。
+pub(crate) fn invalid_data(msg: impl Into<String>) -> YinError {
+    YinError::Io(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        msg.into(),
+    ))
 }
