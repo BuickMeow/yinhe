@@ -200,7 +200,7 @@ pub fn summarize_selected(model: &YinModel, selection: &Selection) -> SelectedNo
         ..Default::default()
     };
     let mut first = true;
-    for &(ts, te, kl, kh, _tl, _th) in &selection.rects {
+    'outer: for &(ts, te, kl, kh, _tl, _th) in &selection.rects {
         for key in kl..=kh {
             let k = key as usize;
             for n in model.notes[k].range(ts, te) {
@@ -228,6 +228,17 @@ pub fn summarize_selected(model: &YinModel, selection: &Selection) -> SelectedNo
                     }
                     if summary.tick.is_some() && summary.tick != Some(n.start_tick) {
                         summary.tick = None;
+                    }
+                    // 全选快路径：count 已 O(1) 就绪，四个 uniform 字段全部确定为
+                    // mixed 后不会再变 → 提前结束（全选 1.6 亿实测 0.33s → ~0）。
+                    // 非全选时 count 必须遍历完，不能提前退出。
+                    if full
+                        && summary.velocity.is_none()
+                        && summary.gate.is_none()
+                        && summary.key.is_none()
+                        && summary.tick.is_none()
+                    {
+                        break 'outer;
                     }
                 }
             }
