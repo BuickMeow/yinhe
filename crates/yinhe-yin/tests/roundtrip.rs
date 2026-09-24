@@ -902,3 +902,57 @@ fn extended_keys_roundtrip() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+//  音频段（可选第 5 段）roundtrip
+// ---------------------------------------------------------------------------
+
+#[test]
+fn audio_sources_persist_without_mixer_section() {
+    // 有音频段、无混音段：pack 写长度为 0 的 mixer 占位，加载时 mixer 为 None、
+    // 音频素材完整还原（覆盖段序占位路径）。
+    let mut m = build_complex_model();
+    m.audio_sources = vec![
+        Arc::new(yinhe_core::AudioSource {
+            uuid: "src-a".into(),
+            name: "kick.wav".into(),
+            data: Arc::new(vec![1, 2, 3, 4, 5]),
+            duration_seconds: 1.25,
+        }),
+        Arc::new(yinhe_core::AudioSource {
+            uuid: "src-b".into(),
+            name: "snare.wav".into(),
+            data: Arc::new(vec![9, 9, 9]),
+            duration_seconds: 0.5,
+        }),
+    ];
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("audio.yin");
+    let project = yinhe_yin::ProjectFile::from_meta(&m.meta);
+    let mapping = yinhe_yin::MappingFile::from_tracks(&m.tracks);
+    yinhe_yin::save_yin_with_files(&m, &path, &project, &mapping, None).unwrap();
+
+    let (m2, _sf, _mapping, mixer) = yinhe_yin::load_yin_with_sf(&path).unwrap();
+    assert!(mixer.is_none());
+    assert_eq!(m2.audio_sources.len(), 2);
+    assert_eq!(m2.audio_sources[0].uuid, "src-a");
+    assert_eq!(m2.audio_sources[0].name, "kick.wav");
+    assert_eq!(&*m2.audio_sources[0].data, &[1, 2, 3, 4, 5]);
+    assert!((m2.audio_sources[0].duration_seconds - 1.25).abs() < 1e-9);
+    assert_eq!(m2.audio_sources[1].uuid, "src-b");
+    assert_eq!(&*m2.audio_sources[1].data, &[9, 9, 9]);
+}
+
+#[test]
+fn no_audio_sources_writes_no_trailing_sections() {
+    let m = build_complex_model();
+    let bytes = save_yin_bytes(&m).unwrap();
+    // 手工走容器：magic(4) + version(2) + 3 个 length-prefixed 段。
+    let mut pos = 6;
+    for _ in 0..3 {
+        let len = u32::from_le_bytes(bytes[pos..pos + 4].try_into().unwrap()) as usize;
+        pos += 4 + len;
+    }
+    assert_eq!(pos, bytes.len(), "无混音/音频素材时不应写尾部段");
+}
