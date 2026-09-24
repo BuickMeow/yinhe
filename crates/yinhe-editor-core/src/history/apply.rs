@@ -30,6 +30,11 @@ impl UndoAction {
                 delta_ticks,
                 delta_tracks,
             } => apply_arrange_note_shift(doc, selection, *delta_ticks, *delta_tracks),
+            UndoAction::ResizeNotes {
+                selection,
+                side,
+                delta_ticks,
+            } => apply_note_resize(doc, selection, *side, *delta_ticks),
             UndoAction::FlipNotes {
                 selection,
                 bounds,
@@ -309,6 +314,56 @@ pub(crate) fn apply_note_shift(
     crate::batch_ops::insert_batch(model, new_by_key);
     model.rebuild_dirty();
     doc.data.bump_revision();
+}
+
+/// 操作式 undo：按 selection 重放单边拉伸（左改 start、右改 end，统一偏移）。
+///
+/// 前提：生成端已保证无 clamp、无目标重叠（任一不满足时回退 `Notes` 副本制）。
+/// 左拉伸改 start 会破坏桶内序 → 重排；右拉伸只改 end，保持有序。
+pub(crate) fn apply_note_resize(
+    doc: &mut Document,
+    selection: &Selection,
+    side: crate::edit_state::ResizeSide,
+    delta_ticks: i64,
+) {
+    if delta_ticks == 0 {
+        return;
+    }
+    let model = Arc::make_mut(&mut doc.data.model);
+    let mut any = false;
+    for key in 0..KEY_COUNT {
+        let k = key as u8;
+        let bucket = Arc::make_mut(&mut model.notes[key]);
+        let touched = bucket.update_matching(
+            |n| {
+                selection.rects.iter().any(|&(ts, te, kl, kh, tl, th)| {
+                    n.start_tick >= ts
+                        && n.start_tick < te
+                        && k >= kl
+                        && k <= kh
+                        && n.track >= tl
+                        && n.track <= th
+                }) && selection.accepts_note(n, k)
+            },
+            |n| match side {
+                crate::edit_state::ResizeSide::Left => {
+                    n.start_tick = (n.start_tick as i64 + delta_ticks).max(0) as u32;
+                }
+                crate::edit_state::ResizeSide::Right => {
+                    n.end_tick = (n.end_tick as i64 + delta_ticks).max(0) as u32;
+                }
+            },
+        );
+        if touched {
+            bucket.sort();
+            model.mark_dirty(k);
+            any = true;
+        }
+    }
+    if any {
+        model.rebuild_dirty();
+        doc.data.bump_revision();
+    }
 }
 
 /// 操作式 undo：AR 拖动按 selection 重放 tick + track 平移（逐桶原地改）。

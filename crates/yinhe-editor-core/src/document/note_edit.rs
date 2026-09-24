@@ -694,6 +694,139 @@ impl Document {
             return None;
         }
 
+        // ── 快速路径：无 clamp、目标无重叠 → 逐桶原地改（操作式 undo）──
+        // 判定全部流式只读（不物化）；target 区域用平移后的选框近似
+        //（命中区间的超集，宁可回退也不漏报重叠）。
+        let selection_before = self.edit.selected.clone();
+        let allow_overlap = self.edit.allow_overlapping_notes;
+        let mut hit_any = false;
+        let fast_ok = {
+            let model = &self.data.model;
+            let mut ok = true;
+            batch_ops::for_each_selected(model, &selection_before, |n, _| {
+                hit_any = true;
+                match side {
+                    ResizeSide::Left => {
+                        let ns = n.start_tick as i64 + dt;
+                        if ns < 0 || ns > n.end_tick as i64 - 1 {
+                            ok = false;
+                        }
+                    }
+                    ResizeSide::Right => {
+                        let ne = n.end_tick as i64 + dt;
+                        if ne < n.start_tick as i64 + 1 || ne > u32::MAX as i64 {
+                            ok = false;
+                        }
+                    }
+                }
+            });
+            if !ok {
+                false
+            } else if allow_overlap {
+                true
+            } else {
+                let mut dest_sel = selection_before.clone();
+                for r in &mut dest_sel.rects {
+                    match side {
+                        ResizeSide::Left => {
+                            r.0 = (r.0 as i64 + dt).max(0) as u32;
+                        }
+                        ResizeSide::Right => {
+                            r.1 = (r.1 as i64 + dt).max(0) as u32;
+                        }
+                    }
+                }
+                dest_sel.drop_members(); // 纯几何查询
+                let mut overlap = false;
+                batch_ops::for_each_selected(model, &dest_sel, |n, k| {
+                    let in_original =
+                        selection_before
+                            .rects
+                            .iter()
+                            .any(|&(ts, te, kl, kh, tl, th)| {
+                                n.start_tick >= ts
+                                    && n.start_tick < te
+                                    && k >= kl
+                                    && k <= kh
+                                    && n.track >= tl
+                                    && n.track <= th
+                            })
+                            && selection_before.accepts_note(n, k);
+                    if !in_original {
+                        overlap = true;
+                    }
+                });
+                !overlap
+            }
+        };
+        if fast_ok {
+            let model = Arc::make_mut(&mut self.data.model);
+            for key in 0..yinhe_types::KEY_COUNT {
+                let k = key as u8;
+                let bucket = Arc::make_mut(&mut model.notes[key]);
+                let touched = bucket.update_matching(
+                    |n| {
+                        selection_before
+                            .rects
+                            .iter()
+                            .any(|&(ts, te, kl, kh, tl, th)| {
+                                n.start_tick >= ts
+                                    && n.start_tick < te
+                                    && k >= kl
+                                    && k <= kh
+                                    && n.track >= tl
+                                    && n.track <= th
+                            })
+                            && selection_before.accepts_note(n, k)
+                    },
+                    |n| {
+                        let old_start = n.start_tick;
+                        match side {
+                            ResizeSide::Left => {
+                                n.start_tick = (n.start_tick as i64 + dt) as u32;
+                            }
+                            ResizeSide::Right => {
+                                n.end_tick = (n.end_tick as i64 + dt) as u32;
+                            }
+                        }
+                        // 记录"最近修改长度"（同轨取时间最晚，左拉伸用原 start 比较）
+                        let gate = n.end_tick - n.start_tick;
+                        self.edit.remember_gate(n.track, old_start, gate);
+                    },
+                );
+                if touched {
+                    bucket.sort();
+                    model.mark_dirty(k);
+                }
+            }
+            // 选区单边跟随（与副本路径一致）
+            match side {
+                ResizeSide::Left => {
+                    for r in &mut self.edit.selected.rects {
+                        let new_ts = (r.0 as i64 + dt).max(0) as u32;
+                        if new_ts < r.1 {
+                            r.0 = new_ts;
+                        }
+                    }
+                }
+                ResizeSide::Right => {
+                    for r in &mut self.edit.selected.rects {
+                        r.1 = (r.1 as i64 + dt).max(r.0 as i64 + 1) as u32;
+                    }
+                }
+            }
+            model.rebuild_dirty();
+            self.data.bump_revision();
+            if hit_any {
+                return Some(UndoAction::ResizeNotes {
+                    selection: selection_before,
+                    side,
+                    delta_ticks: dt,
+                });
+            }
+            return None;
+        }
+
         let model = Arc::make_mut(&mut self.data.model);
         let originals = batch_ops::remove_selected(model, &self.edit.selected);
         let allow_overlap = self.edit.allow_overlapping_notes;
@@ -1690,6 +1823,7 @@ mod tests {
     fn resize_selected_notes_right_extends_end_tick() {
         let mut doc = make_doc_with_note();
         // 原音符: tick 100~200, key 60
+        let snap = doc.capture_snapshot();
         let action = doc
             .resize_selected_notes(ResizeSide::Right, 50)
             .expect("应产生 UndoAction");
@@ -1702,16 +1836,22 @@ mod tests {
         assert_eq!(ts, 100, "选区 ts 不变");
         assert_eq!(te, 251, "选区 te += 50 (原 201)");
 
-        // UndoAction
-        match action {
-            UndoAction::Notes(delta) => {
-                assert_eq!(delta.before.len(), 1);
-                assert_eq!(delta.before[0].0.end_tick, 200);
-                assert_eq!(delta.after.len(), 1);
-                assert_eq!(delta.after[0].0.end_tick, 250);
+        // 无 clamp/无重叠 → 操作式（O(1) undo）
+        match &action {
+            UndoAction::ResizeNotes {
+                side, delta_ticks, ..
+            } => {
+                assert_eq!(*side, ResizeSide::Right);
+                assert_eq!(*delta_ticks, 50);
             }
-            _ => panic!("期望 UndoAction::Notes"),
+            other => panic!("期望 UndoAction::ResizeNotes，实际 {other:?}"),
         }
+        // undo/redo 精确
+        doc.push_undo(action, "resize-right", snap);
+        assert!(doc.undo());
+        assert_eq!(doc.data.model.notes[60][0].end_tick, 200);
+        assert!(doc.redo());
+        assert_eq!(doc.data.model.notes[60][0].end_tick, 250);
     }
 
     #[test]
@@ -1728,6 +1868,61 @@ mod tests {
         let (ts, te, _kl, _kh, _tl, _th) = doc.edit.selected.rects[0];
         assert_eq!(ts, 70, "选区 ts -= 30");
         assert_eq!(te, 201, "选区 te 不变");
+    }
+
+    /// 左拉伸快速路径 round-trip：undo/redo 的音符与选区单边跟随都精确。
+    #[test]
+    fn resize_selected_notes_left_fast_path_roundtrips() {
+        let mut doc = make_doc_with_note();
+        let snap = doc.capture_snapshot();
+        let action = doc
+            .resize_selected_notes(ResizeSide::Left, -30)
+            .expect("应产生 UndoAction");
+        assert!(
+            matches!(
+                action,
+                UndoAction::ResizeNotes {
+                    side: ResizeSide::Left,
+                    ..
+                }
+            ),
+            "无 clamp/无重叠应走操作式"
+        );
+        doc.push_undo(action, "resize-left", snap);
+
+        assert!(doc.undo());
+        assert_eq!(doc.data.model.notes[60][0].start_tick, 100);
+        assert_eq!(doc.edit.selected.rects[0].0, 100, "undo 后选区左边界回位");
+        assert!(doc.redo());
+        assert_eq!(doc.data.model.notes[60][0].start_tick, 70);
+        assert_eq!(doc.edit.selected.rects[0].0, 70, "redo 后选区左边界跟随");
+    }
+
+    /// 拉伸目标与非选中音符重叠（禁止重叠）→ 回退副本路径并按 behavior 拦截
+    ///（默认 KeepOriginal 且全拦 → 返回 None、音符保持原样）。
+    #[test]
+    fn resize_selected_notes_overlap_falls_back_to_blocked() {
+        let mut doc = make_doc_with_note(); // t100~200, key 60, 选区 t100~201
+        doc.edit.allow_overlapping_notes = false;
+        doc.add_note(
+            0,
+            yinhe_core::NoteEvent {
+                id: 0,
+                start_tick: 300,
+                end_tick: 400,
+                key: 60,
+                velocity: 90,
+            },
+        );
+        // 右拉伸 +150 → 目标 [100,350) 与 [300,400) 重叠 → 全拦。
+        assert!(
+            doc.resize_selected_notes(ResizeSide::Right, 150).is_none(),
+            "全拦应返回 None"
+        );
+        assert_eq!(
+            doc.data.model.notes[60][0].end_tick, 200,
+            "被拦音符保持原样"
+        );
     }
 
     #[test]

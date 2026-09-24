@@ -191,6 +191,13 @@ pub enum UndoAction {
         delta_ticks: i64,
         delta_tracks: i32,
     },
+    /// 拉伸（resize）的操作式 undo：单边统一偏移（左改 start、右改 end），
+    /// 无 clamp、无目标重叠时生效；否则生成端回退 `Notes` 副本制。
+    ResizeNotes {
+        selection: Selection,
+        side: crate::edit_state::ResizeSide,
+        delta_ticks: i64,
+    },
     /// 镜像翻转（flip）的操作式 undo：两次镜像恒等，自逆操作。
     /// `bounds` = 镜像边界 (t0, t1, kl, kh)（选框整体范围，翻转后不变）。
     /// 前提：音符都在选框内（跨出选框的音符镜像会触发 clamp，生成端
@@ -337,6 +344,33 @@ impl UndoAction {
                     selection,
                     delta_ticks: -delta_ticks,
                     delta_tracks: -delta_tracks,
+                }
+            }
+            UndoAction::ResizeNotes {
+                mut selection,
+                side,
+                delta_ticks,
+            } => {
+                // 逆操作：rects 平移到操作后位置（复刻生成端的单边跟随），delta 取反。
+                match side {
+                    crate::edit_state::ResizeSide::Left => {
+                        for r in &mut selection.rects {
+                            let new_ts = (r.0 as i64 + delta_ticks).max(0) as u32;
+                            if new_ts < r.1 {
+                                r.0 = new_ts;
+                            }
+                        }
+                    }
+                    crate::edit_state::ResizeSide::Right => {
+                        for r in &mut selection.rects {
+                            r.1 = (r.1 as i64 + delta_ticks).max(r.0 as i64 + 1) as u32;
+                        }
+                    }
+                }
+                UndoAction::ResizeNotes {
+                    selection,
+                    side,
+                    delta_ticks: -delta_ticks,
                 }
             }
             // 两次镜像恒等：自逆，原样返回。
