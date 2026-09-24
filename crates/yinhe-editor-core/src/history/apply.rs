@@ -25,6 +25,11 @@ impl UndoAction {
                 delta_ticks,
                 delta_keys,
             } => apply_note_shift(doc, selection, *delta_ticks, *delta_keys),
+            UndoAction::ArrangeMoveNotes {
+                selection,
+                delta_ticks,
+                delta_tracks,
+            } => apply_arrange_note_shift(doc, selection, *delta_ticks, *delta_tracks),
             UndoAction::FlipNotes {
                 selection,
                 bounds,
@@ -304,6 +309,61 @@ pub(crate) fn apply_note_shift(
     crate::batch_ops::insert_batch(model, new_by_key);
     model.rebuild_dirty();
     doc.data.bump_revision();
+}
+
+/// 操作式 undo：AR 拖动按 selection 重放 tick + track 平移（逐桶原地改）。
+///
+/// 前提：生成端已保证无 tick clamp、无轨道夹取/跳过 conductor、无目标重叠
+///（任一不满足时生成端回退 `Notes` 副本制）。
+pub(crate) fn apply_arrange_note_shift(
+    doc: &mut Document,
+    selection: &Selection,
+    delta_ticks: i64,
+    delta_tracks: i32,
+) {
+    if delta_ticks == 0 && delta_tracks == 0 {
+        return;
+    }
+    let conductor = doc.edit.conductor_track_idx;
+    let num_tracks = doc.data.model.tracks.len() as i32;
+    let model = Arc::make_mut(&mut doc.data.model);
+    let mut any = false;
+    for key in 0..KEY_COUNT {
+        let k = key as u8;
+        let bucket = Arc::make_mut(&mut model.notes[key]);
+        let touched = bucket.update_matching(
+            |n| {
+                selection.rects.iter().any(|&(ts, te, kl, kh, tl, th)| {
+                    n.start_tick >= ts
+                        && n.start_tick < te
+                        && k >= kl
+                        && k <= kh
+                        && n.track >= tl
+                        && n.track <= th
+                }) && selection.accepts_note(n, k)
+            },
+            |n| {
+                let length = n.end_tick - n.start_tick;
+                n.start_tick = (n.start_tick as i64 + delta_ticks).max(0) as u32;
+                n.end_tick = n.start_tick + length;
+                n.track = crate::document::arrange_move::offset_track_skip_conductor(
+                    n.track as i32 + delta_tracks,
+                    delta_tracks,
+                    num_tracks,
+                    conductor,
+                );
+            },
+        );
+        if touched {
+            bucket.sort();
+            model.mark_dirty(k);
+            any = true;
+        }
+    }
+    if any {
+        model.rebuild_dirty();
+        doc.data.bump_revision();
+    }
 }
 
 /// 操作式 undo：按 selection 收集音符，以 bounds 为镜像边界翻转（两次镜像恒等）。

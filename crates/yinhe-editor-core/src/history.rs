@@ -182,6 +182,15 @@ pub enum UndoAction {
         delta_ticks: i64,
         delta_keys: i32,
     },
+    /// AR 拖动（tick + track 平移）的操作式 undo：与 `MoveNotes` 同构，
+    /// 额外支持整轨平移（音符 `track` 字段原地改，不换桶）。
+    /// 前提：无 tick clamp、无轨道夹取/跳过 conductor、无目标重叠——
+    /// 任一不满足时生成端回退 `Notes` 副本制。
+    ArrangeMoveNotes {
+        selection: Selection,
+        delta_ticks: i64,
+        delta_tracks: i32,
+    },
     /// 镜像翻转（flip）的操作式 undo：两次镜像恒等，自逆操作。
     /// `bounds` = 镜像边界 (t0, t1, kl, kh)（选框整体范围，翻转后不变）。
     /// 前提：音符都在选框内（跨出选框的音符镜像会触发 clamp，生成端
@@ -312,6 +321,22 @@ impl UndoAction {
                     selection,
                     delta_ticks: -delta_ticks,
                     delta_keys: -delta_keys,
+                }
+            }
+            UndoAction::ArrangeMoveNotes {
+                mut selection,
+                delta_ticks,
+                delta_tracks,
+            } => {
+                // 逆操作：rects 平移到操作后位置（undo 时音符在此），delta 取反。
+                selection.offset_ticks(delta_ticks);
+                if delta_tracks != 0 {
+                    selection.offset_tracks(delta_tracks);
+                }
+                UndoAction::ArrangeMoveNotes {
+                    selection,
+                    delta_ticks: -delta_ticks,
+                    delta_tracks: -delta_tracks,
                 }
             }
             // 两次镜像恒等：自逆，原样返回。
