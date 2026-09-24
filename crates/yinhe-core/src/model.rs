@@ -464,6 +464,62 @@ impl YinModel {
         self.tempo_map = Arc::new(self.build_tempo_map());
     }
 
+    /// 应用轨号重映射：`remap[旧轨号] = 新轨号`，`u16::MAX` = 删除该轨音符；
+    /// 越界旧轨号同样按删除处理（不 panic）。
+    ///
+    /// 一趟 `retain_mut` 同时完成删除与重编号（track 不是排序键，桶仍有序）。
+    /// 与 `mark_dirty` 模式一致：不自动 rebuild，调用方随后调用
+    /// [`YinModel::rebuild`] 重建统计与 revision。
+    pub fn apply_track_remap(&mut self, remap: &[u16]) {
+        for bucket in self.notes.iter_mut() {
+            let bucket = Arc::make_mut(bucket);
+            bucket.retain_mut(|n| match remap.get(n.track as usize) {
+                Some(&new) if new != u16::MAX => {
+                    n.track = new;
+                    true
+                }
+                _ => false,
+            });
+        }
+    }
+
+    /// 头部是否为 conductor 轨（无音符、无自动化 lane、无 program change）。
+    /// 空模型返回 false。
+    pub fn has_conductor_track(&self) -> bool {
+        !self.tracks.is_empty()
+            && self.track_note_count.first().copied().unwrap_or(0) == 0
+            && self
+                .tracks
+                .first()
+                .is_some_and(|t| t.automation_lanes.is_empty() && t.program_change.is_empty())
+    }
+
+    /// 确保头部有 conductor 轨：无则在 0 号位插入「Conductor」，并把所有
+    /// 音符与自动化 lane 的轨号 +1（幂等；空模型不插入）。
+    ///
+    /// 返回是否真的插入了（调用方据此决定是否 `rebuild`；与
+    /// [`YinModel::apply_track_remap`] 一致不自动 rebuild）。
+    pub fn ensure_conductor_track(&mut self) -> bool {
+        if self.tracks.is_empty() || self.has_conductor_track() {
+            return false;
+        }
+        let mut conductor = TrackData::new(0, 0);
+        conductor.name = "Conductor".to_string();
+        for bucket in self.notes.iter_mut() {
+            for n in Arc::make_mut(bucket).iter_mut() {
+                n.track += 1;
+            }
+        }
+        for track in self.tracks.iter_mut() {
+            let track = Arc::make_mut(track);
+            for lane in track.automation_lanes.iter_mut() {
+                lane.track += 1;
+            }
+        }
+        self.tracks.insert(0, Arc::new(conductor));
+        true
+    }
+
     /// Iterate all notes belonging to a specific track.
     ///
     /// Scans all KEY_COUNT key buckets and yields notes where `note.track == track_idx`.
@@ -582,6 +638,55 @@ mod tests {
         assert_eq!(m.notes[60][1].id, 42);
         assert_eq!(m.notes[64][0].id, 7);
         assert_eq!(m.next_note_id, 43, "发号器应推进到 max+1");
+    }
+
+    /// apply_track_remap：删除轨（u16::MAX）与重编号一趟完成，越界按删除。
+    #[test]
+    fn apply_track_remap_deletes_and_shifts() {
+        let mut m = YinModel {
+            tracks: vec![
+                Arc::new(TrackData::new(0, 0)),
+                Arc::new(TrackData::new(0, 1)),
+                Arc::new(TrackData::new(0, 2)),
+            ],
+            ..Default::default()
+        };
+        m.load_track_notes(vec![
+            vec![note(0, 480, 60)],
+            vec![note(0, 480, 62)],
+            vec![note(0, 480, 64)],
+        ]);
+        m.rebuild();
+        // 删 track0，track1→0，track2→1。
+        m.apply_track_remap(&[u16::MAX, 0, 1]);
+        m.rebuild();
+        assert_eq!(m.notes[60].len(), 0, "被删轨的音符应移除");
+        assert_eq!(m.notes[62][0].track, 0);
+        assert_eq!(m.notes[64][0].track, 1);
+        assert_eq!(m.track_note_count, vec![1, 1, 0]);
+        assert!(m.notes.iter().all(|b| b.is_sorted()));
+    }
+
+    /// ensure_conductor_track：非 conductor 头部 → 插入并全轨号 +1；幂等。
+    #[test]
+    fn ensure_conductor_track_inserts_and_shifts() {
+        let mut m = YinModel {
+            tracks: vec![Arc::new(TrackData::new(0, 0))],
+            ..Default::default()
+        };
+        m.load_track_notes(vec![vec![note(0, 480, 60)]]);
+        m.rebuild();
+        assert!(!m.has_conductor_track(), "头部有音符 → 不是 conductor");
+        assert!(m.ensure_conductor_track());
+        m.rebuild();
+        assert!(m.has_conductor_track());
+        assert_eq!(m.tracks.len(), 2);
+        assert_eq!(m.tracks[0].name, "Conductor");
+        assert_eq!(m.notes[60][0].track, 1, "原音符轨号 +1");
+        assert!(!m.ensure_conductor_track(), "幂等：已有 conductor 不再插入");
+
+        let mut empty = YinModel::default();
+        assert!(!empty.ensure_conductor_track(), "空模型不插入");
     }
 
     #[test]

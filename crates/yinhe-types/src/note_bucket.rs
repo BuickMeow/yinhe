@@ -296,6 +296,24 @@ impl NoteBucket {
         self.rebuild_starts();
     }
 
+    /// 可变 retain：`f` 返回 false 的音符被移除，返回 true 的可就地修改。
+    ///
+    /// 与 [`NoteBucket::retain`] 相同语义，但省一遍遍历（轨号 remap 这类
+    /// "删除 + 重编号"场景一趟完成）。调用方需保证修改不破坏 start_tick 序。
+    pub fn retain_mut(&mut self, mut f: impl FnMut(&mut Note) -> bool) {
+        let mut i = 0;
+        while i < self.chunks.len() {
+            let chunk = Arc::make_mut(&mut self.chunks[i]);
+            chunk.retain_mut(&mut f);
+            if chunk.is_empty() {
+                self.chunks.remove(i);
+            } else {
+                i += 1;
+            }
+        }
+        self.rebuild_starts();
+    }
+
     /// 按全局唯一 `id` 删除单个音符，返回被删音符。
     /// 先只读定位所在块，再深拷贝该块（不碰其他块）。
     pub fn remove_by_id(&mut self, id: u32) -> Option<Note> {
@@ -532,6 +550,25 @@ mod tests {
         assert_sorted(&b);
         assert_eq!(b.len(), BUCKET_CHUNK_CAP + 1);
         assert!(b.iter().any(|n| n.id == 999_999));
+    }
+
+    /// retain_mut：删除与就地重编号一趟完成，空块被移除且 starts 重算。
+    #[test]
+    fn retain_mut_remaps_and_removes_empty_chunks() {
+        let mut b =
+            NoteBucket::from_sorted((0..3u32).map(|i| note(i, i * 100)).collect::<Vec<_>>());
+        b.retain_mut(|n| {
+            if n.id == 1 {
+                return false; // 删除
+            }
+            n.track = 7; // 重编号
+            true
+        });
+        assert_eq!(b.len(), 2);
+        assert!(b.iter().all(|n| n.track == 7));
+        assert!(b.iter().all(|n| n.id != 1));
+        assert_sorted(&b);
+        assert_eq!(b.first().unwrap().start_tick, 0);
     }
 
     #[test]
