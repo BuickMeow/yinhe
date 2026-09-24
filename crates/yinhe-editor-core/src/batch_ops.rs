@@ -94,6 +94,45 @@ pub fn for_each_selected(model: &YinModel, selection: &Selection, mut f: impl Fn
     }
 }
 
+/// 原地更新选中音符：逐桶 `update_matching`（按块预检、只深拷贝命中块）+
+/// 命中桶 `sort`（`is_sorted` 早退，未破坏排序键时零重排）+ `mark_dirty`。
+///
+/// 统一生成端（note_edit/arrange_move）与 undo 回放端（history/apply）的 7 处
+/// 手写骨架，谓词与原实现逐字一致（矩形空间判定 ∩ [`Selection::accepts_note`]），
+/// 避免两端漂移。调用方随后调用 `rebuild_dirty()` 重建统计
+/// （多次操作可合并为一次）。
+///
+/// 返回是否有音符被修改。
+pub fn update_selected_in_place(
+    model: &mut YinModel,
+    selection: &Selection,
+    mut f: impl FnMut(&mut Note, u8),
+) -> bool {
+    let mut any = false;
+    for &(tick_start, tick_end, key_lo, key_hi, track_lo, track_hi) in &selection.rects {
+        for key in key_lo..=key_hi {
+            let k = key as usize;
+            let bucket = Arc::make_mut(&mut model.notes[k]);
+            let touched = bucket.update_matching(
+                |n| {
+                    n.start_tick >= tick_start
+                        && n.start_tick < tick_end
+                        && n.track >= track_lo
+                        && n.track <= track_hi
+                        && selection.accepts_note(n, key)
+                },
+                |n| f(n, key),
+            );
+            if touched {
+                bucket.sort();
+                model.mark_dirty(key);
+                any = true;
+            }
+        }
+    }
+    any
+}
+
 /// 流式判定选区是否命中至少一个音符（早停、零分配）。
 ///
 /// 与 `collect_selected(...).is_empty()` 等价，但 1.64 亿选区下不物化 3GB。
@@ -372,6 +411,43 @@ mod tests {
         insert_batch(&mut m, by_key);
         assert_sorted(&m.notes[60]);
         assert_eq!(m.notes[60].len(), 3);
+    }
+
+    /// 原地更新：矩形态命中 + 排序键被破坏后内部 sort 兜底 + 只标脏命中桶。
+    #[test]
+    fn update_selected_in_place_keeps_sorted_and_marks_dirty() {
+        let mut m = model_with_notes();
+        let mut sel = Selection::default();
+        sel.add_rect(0, u32::MAX, 60, 60);
+        let mut hits = 0;
+        let touched = update_selected_in_place(&mut m, &sel, |n, _k| {
+            n.start_tick = 1000 - n.start_tick; // 故意反转顺序
+            hits += 1;
+        });
+        assert!(touched);
+        assert_eq!(hits, 2);
+        assert_sorted(&m.notes[60]);
+        assert!(m.dirty_keys[60]);
+        assert!(!m.dirty_keys[64], "未命中的桶不得标脏");
+    }
+
+    /// 原地更新：成员态按位图命中；空选区零命中返回 false。
+    #[test]
+    fn update_selected_in_place_members_and_no_hit() {
+        let mut m = model_with_notes();
+        let mut sel = Selection::default();
+        sel.add_rect(0, u32::MAX, 0, MAX_KEY);
+        sel.set_members([2]);
+        let touched = update_selected_in_place(&mut m, &sel, |n, _k| n.velocity = 42);
+        assert!(touched);
+        assert_eq!(m.notes[60][0].velocity, 100, "id=1 不在成员位图");
+        assert_eq!(m.notes[60][1].velocity, 42, "id=2 命中");
+        assert_eq!(m.notes[64][0].velocity, 100, "id=3 不在成员位图");
+
+        let untouched = update_selected_in_place(&mut m, &Selection::default(), |_, _| {
+            panic!("空选区不应命中任何音符")
+        });
+        assert!(!untouched);
     }
 
     fn model_with_notes() -> YinModel {

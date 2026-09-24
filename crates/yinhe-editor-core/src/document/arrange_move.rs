@@ -120,37 +120,17 @@ impl Document {
         // ── 1. Move notes (tick + track in one pass) ──
         if fast_ok {
             // 原地改：track 只是 Note 字段，不换桶；start 变化后重排桶。
-            for key in 0..yinhe_types::KEY_COUNT {
-                let k = key as u8;
-                let bucket = Arc::make_mut(&mut model.notes[key]);
-                let touched = bucket.update_matching(
-                    |n| {
-                        selection.rects.iter().any(|&(ts, te, kl, kh, tl, th)| {
-                            n.start_tick >= ts
-                                && n.start_tick < te
-                                && k >= kl
-                                && k <= kh
-                                && n.track >= tl
-                                && n.track <= th
-                        }) && selection.accepts_note(n, k)
-                    },
-                    |n| {
-                        let length = n.end_tick - n.start_tick;
-                        n.start_tick = (n.start_tick as i64 + delta_ticks) as u32;
-                        n.end_tick = n.start_tick + length;
-                        n.track = offset_track_skip_conductor(
-                            n.track as i32 + delta_tracks,
-                            delta_tracks,
-                            num_tracks,
-                            conductor,
-                        );
-                    },
+            batch_ops::update_selected_in_place(model, &selection, |n, _k| {
+                let length = n.end_tick - n.start_tick;
+                n.start_tick = (n.start_tick as i64 + delta_ticks) as u32;
+                n.end_tick = n.start_tick + length;
+                n.track = offset_track_skip_conductor(
+                    n.track as i32 + delta_tracks,
+                    delta_tracks,
+                    num_tracks,
+                    conductor,
                 );
-                if touched {
-                    bucket.sort();
-                    model.mark_dirty(k);
-                }
-            }
+            });
             if hit_any {
                 sub_actions.push(UndoAction::ArrangeMoveNotes {
                     selection: selection.clone(),

@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use yinhe_core::Selection;
-use yinhe_types::{AutomationEvent, KEY_COUNT, MAX_KEY, Note};
+use yinhe_types::{AutomationEvent, MAX_KEY, Note};
 
 use crate::document::{Document, track_color};
 
@@ -260,33 +260,11 @@ pub(crate) fn apply_note_shift(
     // 命中判定必须与 `for_each_selected` 等价：rects 提供 tick/key/track
     // 扫描范围（`accepts_note` 只判属性边界，不含 tick 范围）。
     if delta_keys == 0 {
-        let mut any = false;
-        for key in 0..KEY_COUNT {
-            let k = key as u8;
-            let bucket = Arc::make_mut(&mut model.notes[key]);
-            let touched = bucket.update_matching(
-                |n| {
-                    selection.rects.iter().any(|&(ts, te, kl, kh, tl, th)| {
-                        n.start_tick >= ts
-                            && n.start_tick < te
-                            && k >= kl
-                            && k <= kh
-                            && n.track >= tl
-                            && n.track <= th
-                    }) && selection.accepts_note(n, k)
-                },
-                |n| {
-                    let length = n.end_tick - n.start_tick;
-                    n.start_tick = (n.start_tick as i64 + delta_ticks).max(0) as u32;
-                    n.end_tick = n.start_tick + length;
-                },
-            );
-            if touched {
-                bucket.sort();
-                model.mark_dirty(k);
-                any = true;
-            }
-        }
+        let any = crate::batch_ops::update_selected_in_place(model, selection, |n, _k| {
+            let length = n.end_tick - n.start_tick;
+            n.start_tick = (n.start_tick as i64 + delta_ticks).max(0) as u32;
+            n.end_tick = n.start_tick + length;
+        });
         if any {
             model.rebuild_dirty();
             doc.data.bump_revision();
@@ -330,36 +308,14 @@ pub(crate) fn apply_note_resize(
         return;
     }
     let model = Arc::make_mut(&mut doc.data.model);
-    let mut any = false;
-    for key in 0..KEY_COUNT {
-        let k = key as u8;
-        let bucket = Arc::make_mut(&mut model.notes[key]);
-        let touched = bucket.update_matching(
-            |n| {
-                selection.rects.iter().any(|&(ts, te, kl, kh, tl, th)| {
-                    n.start_tick >= ts
-                        && n.start_tick < te
-                        && k >= kl
-                        && k <= kh
-                        && n.track >= tl
-                        && n.track <= th
-                }) && selection.accepts_note(n, k)
-            },
-            |n| match side {
-                crate::edit_state::ResizeSide::Left => {
-                    n.start_tick = (n.start_tick as i64 + delta_ticks).max(0) as u32;
-                }
-                crate::edit_state::ResizeSide::Right => {
-                    n.end_tick = (n.end_tick as i64 + delta_ticks).max(0) as u32;
-                }
-            },
-        );
-        if touched {
-            bucket.sort();
-            model.mark_dirty(k);
-            any = true;
+    let any = crate::batch_ops::update_selected_in_place(model, selection, |n, _k| match side {
+        crate::edit_state::ResizeSide::Left => {
+            n.start_tick = (n.start_tick as i64 + delta_ticks).max(0) as u32;
         }
-    }
+        crate::edit_state::ResizeSide::Right => {
+            n.end_tick = (n.end_tick as i64 + delta_ticks).max(0) as u32;
+        }
+    });
     if any {
         model.rebuild_dirty();
         doc.data.bump_revision();
@@ -382,39 +338,17 @@ pub(crate) fn apply_arrange_note_shift(
     let conductor = doc.edit.conductor_track_idx;
     let num_tracks = doc.data.model.tracks.len() as i32;
     let model = Arc::make_mut(&mut doc.data.model);
-    let mut any = false;
-    for key in 0..KEY_COUNT {
-        let k = key as u8;
-        let bucket = Arc::make_mut(&mut model.notes[key]);
-        let touched = bucket.update_matching(
-            |n| {
-                selection.rects.iter().any(|&(ts, te, kl, kh, tl, th)| {
-                    n.start_tick >= ts
-                        && n.start_tick < te
-                        && k >= kl
-                        && k <= kh
-                        && n.track >= tl
-                        && n.track <= th
-                }) && selection.accepts_note(n, k)
-            },
-            |n| {
-                let length = n.end_tick - n.start_tick;
-                n.start_tick = (n.start_tick as i64 + delta_ticks).max(0) as u32;
-                n.end_tick = n.start_tick + length;
-                n.track = crate::document::arrange_move::offset_track_skip_conductor(
-                    n.track as i32 + delta_tracks,
-                    delta_tracks,
-                    num_tracks,
-                    conductor,
-                );
-            },
+    let any = crate::batch_ops::update_selected_in_place(model, selection, |n, _k| {
+        let length = n.end_tick - n.start_tick;
+        n.start_tick = (n.start_tick as i64 + delta_ticks).max(0) as u32;
+        n.end_tick = n.start_tick + length;
+        n.track = crate::document::arrange_move::offset_track_skip_conductor(
+            n.track as i32 + delta_tracks,
+            delta_tracks,
+            num_tracks,
+            conductor,
         );
-        if touched {
-            bucket.sort();
-            model.mark_dirty(k);
-            any = true;
-        }
-    }
+    });
     if any {
         model.rebuild_dirty();
         doc.data.bump_revision();

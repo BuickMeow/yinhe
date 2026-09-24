@@ -467,35 +467,11 @@ impl Document {
             };
             if fast {
                 let model = Arc::make_mut(&mut self.data.model);
-                for key in 0..yinhe_types::KEY_COUNT {
-                    let k = key as u8;
-                    let bucket = Arc::make_mut(&mut model.notes[key]);
-                    let touched = bucket.update_matching(
-                        |n| {
-                            selection_before
-                                .rects
-                                .iter()
-                                .any(|&(ts, te, kl, kh, tl, th)| {
-                                    n.start_tick >= ts
-                                        && n.start_tick < te
-                                        && k >= kl
-                                        && k <= kh
-                                        && n.track >= tl
-                                        && n.track <= th
-                                })
-                                && selection_before.accepts_note(n, k)
-                        },
-                        |n| {
-                            let length = n.end_tick - n.start_tick;
-                            n.start_tick = (n.start_tick as i64 + delta_ticks) as u32;
-                            n.end_tick = n.start_tick + length;
-                        },
-                    );
-                    if touched {
-                        bucket.sort();
-                        model.mark_dirty(k);
-                    }
-                }
+                crate::batch_ops::update_selected_in_place(model, &selection_before, |n, _k| {
+                    let length = n.end_tick - n.start_tick;
+                    n.start_tick = (n.start_tick as i64 + delta_ticks) as u32;
+                    n.end_tick = n.start_tick + length;
+                });
                 model.rebuild_dirty();
                 self.edit.selected.offset(delta_ticks, 0);
                 self.data.bump_revision();
@@ -761,44 +737,20 @@ impl Document {
         };
         if fast_ok {
             let model = Arc::make_mut(&mut self.data.model);
-            for key in 0..yinhe_types::KEY_COUNT {
-                let k = key as u8;
-                let bucket = Arc::make_mut(&mut model.notes[key]);
-                let touched = bucket.update_matching(
-                    |n| {
-                        selection_before
-                            .rects
-                            .iter()
-                            .any(|&(ts, te, kl, kh, tl, th)| {
-                                n.start_tick >= ts
-                                    && n.start_tick < te
-                                    && k >= kl
-                                    && k <= kh
-                                    && n.track >= tl
-                                    && n.track <= th
-                            })
-                            && selection_before.accepts_note(n, k)
-                    },
-                    |n| {
-                        let old_start = n.start_tick;
-                        match side {
-                            ResizeSide::Left => {
-                                n.start_tick = (n.start_tick as i64 + dt) as u32;
-                            }
-                            ResizeSide::Right => {
-                                n.end_tick = (n.end_tick as i64 + dt) as u32;
-                            }
-                        }
-                        // 记录"最近修改长度"（同轨取时间最晚，左拉伸用原 start 比较）
-                        let gate = n.end_tick - n.start_tick;
-                        self.edit.remember_gate(n.track, old_start, gate);
-                    },
-                );
-                if touched {
-                    bucket.sort();
-                    model.mark_dirty(k);
+            crate::batch_ops::update_selected_in_place(model, &selection_before, |n, _k| {
+                let old_start = n.start_tick;
+                match side {
+                    ResizeSide::Left => {
+                        n.start_tick = (n.start_tick as i64 + dt) as u32;
+                    }
+                    ResizeSide::Right => {
+                        n.end_tick = (n.end_tick as i64 + dt) as u32;
+                    }
                 }
-            }
+                // 记录"最近修改长度"（同轨取时间最晚，左拉伸用原 start 比较）
+                let gate = n.end_tick - n.start_tick;
+                self.edit.remember_gate(n.track, old_start, gate);
+            });
             // 选区单边跟随（与副本路径一致）
             match side {
                 ResizeSide::Left => {
