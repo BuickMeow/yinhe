@@ -245,21 +245,31 @@ fn roundtrip_in_memory() {
         yinhe_types::ScaleType::NaturalMinor
     );
 
-    // id 不序列化：加载后重新分配，从 1 开始且全局唯一（发号器推进到 max+1）
-    let mut ids: Vec<u32> = m2
-        .notes
-        .iter()
-        .flat_map(|b| b.iter().map(|n| n.id))
-        .collect();
-    let id_count = ids.len();
-    ids.sort_unstable();
-    assert_eq!(ids.first(), Some(&1), "id 应从 1 开始重新分配");
-    ids.dedup();
+    // v8：id 随文件落盘，加载后保留（不再重新分配）。
+    let ids_of = |m: &YinModel| {
+        let mut v: Vec<u32> = m
+            .notes
+            .iter()
+            .flat_map(|b| b.iter().map(|n| n.id))
+            .collect();
+        v.sort_unstable();
+        v
+    };
+    let ids1 = ids_of(&m1);
+    let mut ids2 = ids_of(&m2);
+    let id_count = ids2.len();
+    assert_eq!(ids1, ids2, "id 应在 roundtrip 后逐音符保留");
+    assert_eq!(
+        ids2.first(),
+        Some(&1),
+        "build_complex_model 的 id 从 1 开始"
+    );
+    ids2.dedup();
     assert_eq!(id_count, m2.note_count as usize);
-    assert_eq!(ids.len(), id_count, "id 必须全局唯一");
+    assert_eq!(ids2.len(), id_count, "id 必须全局唯一");
     assert_eq!(
         m2.next_note_id,
-        m2.note_count as u32 + 1,
+        *ids2.last().unwrap() + 1,
         "发号器应推进到 max+1"
     );
 
@@ -526,6 +536,82 @@ fn mapping_json_carries_track_metadata() {
     assert!(mapping_str.contains("\"port\": 1"));
 }
 
+/// v8 回归：id 落盘后加载保留；空洞/乱序 id（zigzag 负 delta）与跨轨段
+/// 连续累加都不丢。
+#[test]
+fn note_ids_with_holes_persist_across_roundtrip() {
+    let mut t0 = TrackData::new(0, 0);
+    t0.name = "A".into();
+    let mut t1 = TrackData::new(0, 1);
+    t1.name = "B".into();
+    let t0_notes = vec![
+        NoteEvent {
+            id: 1000,
+            start_tick: 0,
+            end_tick: 10,
+            key: 60,
+            velocity: 100,
+        },
+        NoteEvent {
+            id: 5,
+            start_tick: 10,
+            end_tick: 20,
+            key: 60,
+            velocity: 100,
+        },
+        NoteEvent {
+            id: 0,
+            start_tick: 20,
+            end_tick: 30,
+            key: 61,
+            velocity: 100,
+        },
+    ];
+    let t1_notes = vec![
+        NoteEvent {
+            id: 777,
+            start_tick: 0,
+            end_tick: 10,
+            key: 40,
+            velocity: 100,
+        },
+        NoteEvent {
+            id: 0,
+            start_tick: 10,
+            end_tick: 20,
+            key: 40,
+            velocity: 100,
+        },
+    ];
+    let mut m1 = YinModel {
+        tracks: vec![Arc::new(t0), Arc::new(t1)],
+        ..Default::default()
+    };
+    m1.load_track_notes(vec![t0_notes, t1_notes]);
+    m1.rebuild();
+
+    let bytes = save_yin_bytes(&m1).unwrap();
+    let m2 = load_yin_bytes(&bytes).unwrap();
+
+    let snapshot = |m: &YinModel| {
+        let mut v: Vec<(u16, u32, u32, u8)> = m
+            .notes
+            .iter()
+            .enumerate()
+            .flat_map(|(k, b)| {
+                b.iter()
+                    .map(move |n| (n.track, n.start_tick, n.id, k as u8))
+            })
+            .collect();
+        v.sort_unstable();
+        v
+    };
+    assert_eq!(snapshot(&m1), snapshot(&m2), "id/位置应在 roundtrip 后一致");
+
+    // id=0 的两个音符重新分配（1、2），发号器推进到已用最大 id + 1。
+    assert_eq!(m2.next_note_id, 1001);
+}
+
 #[test]
 fn dense_score_compresses_well() {
     let t = TrackData::new(0, 0);
@@ -549,12 +635,11 @@ fn dense_score_compresses_well() {
     model.rebuild();
 
     let bytes = save_yin_bytes(&model).unwrap();
-    // 100k * 16B = ~1.6 MB raw postcard（Note 含 id:u32 后）。
-    // zstd 应至少压到 50% 以下：id 序列高度可压缩（差分=常量 1），
-    // key/vel 都是常量，tick 单调递增。
+    // v8 轨段列式 raw ~= 5 列 × 100k ≈ 500KB（delta/key/vel/gate/id delta）。
+    // zstd 应压到远小于 50%：id delta 恒为 1、key/vel 常量、tick 单调递增。
     assert!(
         bytes.len() < 800_000,
-        ".yin compression unexpectedly poor: {} bytes (raw ~1.6 MB)",
+        ".yin compression unexpectedly poor: {} bytes (raw ~500 KB)",
         bytes.len()
     );
 

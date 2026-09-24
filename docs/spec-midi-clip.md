@@ -138,7 +138,8 @@ pub struct RiffInstance {
 要求：
 
 - 全曲唯一的两个 id 都**不复用**（删除后不回收），避免悬垂引用；
-- 局部 ID **不落盘**，加载时按桶顺序重新分配（与现状 note id 不落盘一致，`crates/yinhe-yin/src/io.rs:632`）；
+- 局部 ID **落盘**（v8 起全局 note id 已落盘，局部 ID 同样按 delta 编码近零开销，
+  `crates/yinhe-yin/src/io.rs`），加载后身份稳定；发号器推进到 max+1；
 - 选区的全选走实例级 O(1) 表示，仅部分选择才物化每实例的局部 ID 位图（局部 ID 连续，位图页利用率高，无 u64 稀疏问题）。
 
 ## 实例放置与轨道
@@ -255,15 +256,18 @@ RiffDefSwap { instance_id: u32, before: Arc<RiffDef>, after: Arc<RiffDef> },
 
 ## 持久化
 
-- 容器版本 bump 到 v8（`crates/yinhe-yin/src/lib.rs:56`，不等即拒绝，沿用项目策略）；
+- 容器版本 bump 到 v9（v8 已用于轨段列式 + note id 落盘；
+  `crates/yinhe-yin/src/lib.rs:56`，不等即拒绝，沿用项目策略）；
 - 实例列表放 `mapping.json`（自描述、可容错加字段，参照 `audio_clips`，
   `crates/yinhe-yin/src/mapping.rs:33`）：每轨 `riff_instances: Vec<{ id, def_id, start_tick }>`；
 - 定义放 data 段：每个定义一条记录
   `{ id, name, tick_len, note_count, next_local_id, note_streams, automation }`，
-  音符流复用现有列式编码 `NoteStreams { delta, key, vel, gate }`
-  （`crates/yinhe-yin/src/io.rs:319`），按定义内 256 桶归并；`local_track` 已在定义外，无需编码 track；
+  音符流复用现有列式编码 `NoteStreams { delta, key, vel, gate, id_delta }`
+  （`crates/yinhe-yin/src/io.rs`，v8 轨段格式即单轨形态），按定义内 256 桶归并；
+  `local_track` 已在定义外，无需编码 track；
 - 加载：先读定义表建 `id -> Arc<RiffDef>`，再按实例列表重建并排序；
-- 局部 ID 不落盘；`next_local_id` 落盘或加载时重算均可（实施时取更简者）。
+- 局部 ID 落盘（同 v8 note id 的 zigzag delta 编码，跨定义连续累加即可近零开销）；
+  `next_local_id` 由 max+1 重算（实施时取更简者）。
 
 ## 重复识别
 
@@ -351,7 +355,7 @@ pub struct RepeatGroup {
 - `yinhe-editor-core`：实例编辑命令（复制/粘贴/移动/删除/编辑即脱离）、undo、剪贴板；
 - `yinhe-wgpu` + `yinhe-egui`：PR / AR 渲染改为实例展开路径；
 - `yinhe-audio`：实例展开；
-- `yinhe-yin`：v8 存取；
+- `yinhe-yin`：v9 存取；
 - `yinhe-midi`：导出展开；
 - 自动化一并进入定义（若需缩小首批范围可后置，但会出现两个并存来源，不推荐）；
 - 验收：打开 / 显示 / 播放 / 编辑 / 保存 / 加载 / 导出 / undo / 选区全部可用，

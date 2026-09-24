@@ -586,9 +586,11 @@ mod tests {
 
     #[test]
     fn load_bucket_notes_fills_buckets_and_assigns_ids() {
-        // .yin v3 加载路径：直接按 key 桶填，track 取自 BucketNote，id 一律重新分配
+        // .yin 加载路径：直接按 key 桶填，track 取自 BucketNote；
+        // id=0 重新分配，非 0 保留。
         let mut all: Vec<Vec<BucketNote>> = Vec::with_capacity(KEY_COUNT);
         all.push(vec![BucketNote {
+            id: 0,
             track: 1,
             start_tick: 0,
             end_tick: 480,
@@ -596,12 +598,14 @@ mod tests {
         }]);
         all.push(vec![
             BucketNote {
+                id: 9,
                 track: 0,
                 start_tick: 960,
                 end_tick: 1440,
                 velocity: 90,
             },
             BucketNote {
+                id: 0,
                 track: 1,
                 start_tick: 960,
                 end_tick: 1920,
@@ -625,16 +629,16 @@ mod tests {
         assert_eq!(m.notes[1].len(), 2);
         assert_eq!(m.notes[1][0].track, 0);
         assert_eq!(m.notes[1][1].track, 1);
-        // id 从 1 开始重新分配
+        // id=0 的从 1 开始分配，不与已保留的 id=9 冲突
         let mut ids: Vec<u32> = m
             .notes
             .iter()
             .flat_map(|b| b.iter().map(|n| n.id))
             .collect();
         ids.sort_unstable();
-        assert_eq!(ids, vec![1, 2, 3]);
+        assert_eq!(ids, vec![1, 2, 9]);
         assert_eq!(m.track_note_count[1], 2);
-        assert_eq!(m.next_note_id, 4);
+        assert_eq!(m.next_note_id, 10);
     }
 
     #[test]

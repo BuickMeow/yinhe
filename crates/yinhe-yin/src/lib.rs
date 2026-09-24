@@ -15,28 +15,26 @@
 //! `project.json` 和 `mapping.json` 携带人类可读元数据，不压缩；
 //! `data` 段 = 6 个 (len u32 LE + zstd 块)：
 //! ```text
-//! 0: postcard(conductor + tracks payload)   ← 非音符部分
-//! 1: delta 列（varint u32：第一音符绝对 start，其余 = start - prev）
+//! 0: postcard(conductor + tracks payload + segments)  ← 非音符部分
+//! 1: delta 列（varint u32：轨段首为绝对 start，其余 = start - prev）
 //! 2: key   列（u8 × N）
-//! 3: track 列（varint u16）
-//! 4: vel   列（u8 × N）
-//! 5: gate  列（varint u32）
+//! 3: vel   列（u8 × N）
+//! 4: gate  列（varint u32）
+//! 5: id delta 列（zigzag varint 字节流，跨段连续累加）
 //! ```
 //!
-//! v7：`AutomationTarget` 迁移统一参数模型（`Param{device,id,name}`），
-//! 不兼容 v6（旧档拒绝加载，重新导入 MIDI）。
-//!
-//! v6 设计：
-//! - 音符全局按 (start, track, key) 排序后**列式**存储：黑乐谱的重复单元是
-//!   同一 tick 全轨齐发的图案，该排序让图案整块重复；按字段拆列后每列独立
-//!   zstd，避免交错流互相稀释。实测 1.64 亿音符（start.mid）：v4 key 桶
-//!   75MB → 列式 40.8MB（zstd3）/ 13.5MB（zstd19）；4444 万音符
-//!   （Broken World）37.3MB → 10.5MB / 4.65MB
-//! - 不序列化音符 id：id 是会话内身份（undo/selection/音频匹配），加载时
-//!   由 `load_bucket_notes` 重新分配；全局递增 id 在 zstd 下几乎压不动
+//! v8：音符改按 **(track, start, key)** 排序的轨段布局（段表在 meta 流），
+//! 并落盘音符 id：
+//! - 黑乐谱的重复单元是「单轨内乐句复现」，v6 的全局 (start, track, key)
+//!   排序会把同一轨的音符隔到全曲其他轨之后（重复距离 ≈ 全曲音符数），
+//!   超出 zstd 窗口；轨内串行后重复在轨内近距离匹配。实测 start.mid
+//!   1.64 亿音符：v7 同款布局 38.9MB → 轨段列式 5.0MB（zstd3，-87%），
+//!   4444 万音符（Broken World）10.1MB → 2.2MB
+//! - id 落盘：导入时 id 按 track 顺序分配，与轨段布局同序 → delta 恒为 1，
+//!   zigzag varint + zstd 后 1.64 亿音符仅 ~5KB（+0.1%）。id 不再每次
+//!   加载重分配（跨会话稳定），但发号器仍推进到 max+1 供编辑新增使用
 //! - 压缩级别存 `project.json`（compression_level，默认 3，UI 可调）
-//! - v6 起二进制段由 `bincode` 切 `postcard`（`bincode` 已停止维护）；不兼容 v5 及更早文件
-//! - 不兼容旧文件（v1-v5 不提供读取，快速迭代期）
+//! - 不兼容旧文件（v1-v7 不提供读取，快速迭代期）
 
 mod container;
 mod error;
@@ -54,4 +52,4 @@ pub use mapping::{ChannelMap, MappingFile, PortMap, TrackMap};
 pub use project_meta::{ProjectFile, SfChannelOverride, SfEntryJson};
 
 pub const MAGIC: &[u8; 4] = b"YINH";
-pub const VERSION: u16 = 7;
+pub const VERSION: u16 = 8;

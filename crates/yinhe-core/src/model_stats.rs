@@ -52,7 +52,8 @@ impl YinModel {
     ///
     /// 与 `load_track_notes` 的区别：输入是 KEY_COUNT 个 key 桶而非 per-track 列表，
     /// 省去“按 track 分组存 → 加载再分桶”的多余转换（`.yin` 新格式直接按桶存）。
-    /// 每个音符的 `track` 取自 `BucketNote.track`；id 一律重新分配（`id` 不落盘）。
+    /// 每个音符的 `track` 取自 `BucketNote.track`；`id` 非 0 保留（v8 起落盘），
+    /// 0 由发号器重新分配。
     pub fn load_bucket_notes(&mut self, bucket_notes: Vec<Vec<BucketNote>>) {
         let mut loader =
             NoteLoader::with_capacity(self.tracks.len(), self.next_note_id, &bucket_notes);
@@ -64,7 +65,7 @@ impl YinModel {
                     note.start_tick,
                     note.end_tick,
                     note.velocity,
-                    0, // id 不落盘，一律重新分配
+                    note.id,
                 );
             }
         }
