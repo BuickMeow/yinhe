@@ -351,7 +351,7 @@ impl Document {
                 let mut dest_sel = selection_before.clone();
                 dest_sel.rects = dest_rects;
                 dest_sel.drop_members(); // 纯几何查询：重叠检测不认成员位图
-                !batch_ops::collect_selected(model, &dest_sel).is_empty()
+                batch_ops::any_selected(model, &dest_sel)
             };
 
             let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
@@ -415,6 +415,98 @@ impl Document {
             return None;
         }
 
+        // ── 快速路径：同 key、无 clamp、目标无重叠 → 逐桶原地改 ──
+        // 判定全部流式只读（不物化）；任一不满足回退下方副本路径。
+        // 1.64 亿全选移动的峰值从 ~6.5GB（remove+副本+insert）降到桶级。
+        if delta_keys == 0 {
+            let selection_before = self.edit.selected.clone();
+            let allow_overlap = self.edit.allow_overlapping_notes;
+            let fast = {
+                let model = &self.data.model;
+                let mut clamp_free = true;
+                batch_ops::for_each_selected(model, &selection_before, |n, _| {
+                    let ns = n.start_tick as i64 + delta_ticks;
+                    let ne = n.end_tick as i64 + delta_ticks;
+                    if ns < 0 || ne > u32::MAX as i64 {
+                        clamp_free = false;
+                    }
+                });
+                if !clamp_free {
+                    false
+                } else if allow_overlap {
+                    true
+                } else {
+                    // 目标区域是否有「不属于本次移动集合」的音符（否则撤销会误搬）。
+                    let mut dest_sel = selection_before.clone();
+                    for r in &mut dest_sel.rects {
+                        r.0 = (r.0 as i64 + delta_ticks).max(0) as u32;
+                        r.1 = (r.1 as i64 + delta_ticks).max(0) as u32;
+                    }
+                    dest_sel.drop_members(); // 纯几何查询
+                    let mut overlap = false;
+                    batch_ops::for_each_selected(model, &dest_sel, |n, k| {
+                        let in_original =
+                            selection_before
+                                .rects
+                                .iter()
+                                .any(|&(ts, te, kl, kh, tl, th)| {
+                                    n.start_tick >= ts
+                                        && n.start_tick < te
+                                        && k >= kl
+                                        && k <= kh
+                                        && n.track >= tl
+                                        && n.track <= th
+                                })
+                                && selection_before.accepts_note(n, k);
+                        if !in_original {
+                            overlap = true;
+                        }
+                    });
+                    !overlap
+                }
+            };
+            if fast {
+                let model = Arc::make_mut(&mut self.data.model);
+                for key in 0..yinhe_types::KEY_COUNT {
+                    let k = key as u8;
+                    let bucket = Arc::make_mut(&mut model.notes[key]);
+                    let touched = bucket.update_matching(
+                        |n| {
+                            selection_before
+                                .rects
+                                .iter()
+                                .any(|&(ts, te, kl, kh, tl, th)| {
+                                    n.start_tick >= ts
+                                        && n.start_tick < te
+                                        && k >= kl
+                                        && k <= kh
+                                        && n.track >= tl
+                                        && n.track <= th
+                                })
+                                && selection_before.accepts_note(n, k)
+                        },
+                        |n| {
+                            let length = n.end_tick - n.start_tick;
+                            n.start_tick = (n.start_tick as i64 + delta_ticks) as u32;
+                            n.end_tick = n.start_tick + length;
+                        },
+                    );
+                    if touched {
+                        bucket.sort();
+                        model.mark_dirty(k);
+                    }
+                }
+                model.rebuild_dirty();
+                self.edit.selected.offset(delta_ticks, 0);
+                self.data.bump_revision();
+                return Some(UndoAction::MoveNotes {
+                    selection: selection_before,
+                    delta_ticks,
+                    delta_keys: 0,
+                });
+            }
+        }
+
         let model = Arc::make_mut(&mut self.data.model);
 
         // Batch removal + collect removed notes.
@@ -444,7 +536,7 @@ impl Document {
             let mut dest_sel = selection_before.clone();
             dest_sel.rects = dest_rects;
             dest_sel.drop_members(); // 纯几何查询：重叠检测不认成员位图
-            !batch_ops::collect_selected(model, &dest_sel).is_empty()
+            batch_ops::any_selected(model, &dest_sel)
         };
         let allow_overlap = self.edit.allow_overlapping_notes;
         let behavior = self.edit.overlap_blocked_behavior;
@@ -726,96 +818,91 @@ impl Document {
     }
 
     /// Velocity/Gate：就地修改，不换桶。Gate 加减 uniform 时选框 te 跟随。
+    ///
+    /// 单趟完成：原地改音符 + 收集 before/after + remember_*（不再先物化
+    /// `targets` 中间层——1.64 亿全选下那会多占 ~6GB）。选区先 clone 解开
+    /// `self.edit` 与 `self.data.model` 的借用冲突（Selection clone 只深拷
+    /// 少量 rects / 位图 BTreeMap，页 Arc 共享）。
     fn edit_note_props(&mut self, field: NoteField, ops: &[NumOp]) -> Option<UndoAction> {
-        struct Target {
-            key: u8,
-            id: u32,
-            old: yinhe_types::Note,
-            new: yinhe_types::Note,
-        }
-        let mut targets: Vec<Target> = Vec::new();
+        let selection = self.edit.selected.clone();
+        let model = Arc::make_mut(&mut self.data.model);
+        let mut before: Vec<(yinhe_types::Note, u8)> = Vec::new();
+        let mut after: Vec<(yinhe_types::Note, u8)> = Vec::new();
         let mut uniform_delta: Option<i64> = None; // 全部变化项相同 delta 时 Some（gate 加减）
-        {
-            let model = &self.data.model;
-            for &(ts, te, kl, kh, _tl, _th) in &self.edit.selected.rects {
-                for key in kl..=kh {
-                    let k = key as usize;
-                    for n in model.notes[k].range(ts, te) {
-                        if !self.edit.selected.accepts_note(n, key) {
-                            continue;
+        let mut any = false;
+
+        for key in 0..yinhe_types::KEY_COUNT {
+            let k = key as u8;
+            let bucket = Arc::make_mut(&mut model.notes[key]);
+            let touched = bucket.update_matching(
+                |n| {
+                    selection.rects.iter().any(|&(ts, te, kl, kh, tl, th)| {
+                        n.start_tick >= ts
+                            && n.start_tick < te
+                            && k >= kl
+                            && k <= kh
+                            && n.track >= tl
+                            && n.track <= th
+                    }) && selection.accepts_note(n, k)
+                },
+                |n| {
+                    let new = match field {
+                        NoteField::Velocity => {
+                            let v = apply_ops_round(ops, n.velocity as f64).clamp(0.0, 127.0) as u8;
+                            yinhe_types::Note { velocity: v, ..*n }
                         }
-                        let new = match field {
-                            NoteField::Velocity => {
-                                let v =
-                                    apply_ops_round(ops, n.velocity as f64).clamp(0.0, 127.0) as u8;
-                                yinhe_types::Note { velocity: v, ..*n }
+                        NoteField::Gate => {
+                            let gate = (n.end_tick - n.start_tick) as f64;
+                            let new_gate =
+                                apply_ops_round(ops, gate).clamp(1.0, u32::MAX as f64) as u32;
+                            yinhe_types::Note {
+                                end_tick: n.start_tick + new_gate,
+                                ..*n
                             }
-                            NoteField::Gate => {
-                                let gate = (n.end_tick - n.start_tick) as f64;
-                                let new_gate =
-                                    apply_ops_round(ops, gate).clamp(1.0, u32::MAX as f64) as u32;
-                                yinhe_types::Note {
-                                    end_tick: n.start_tick + new_gate,
-                                    ..*n
-                                }
-                            }
-                            _ => unreachable!(),
-                        };
-                        // Note 无 PartialEq，按变更字段比较
-                        let changed = match field {
-                            NoteField::Velocity => new.velocity != n.velocity,
-                            NoteField::Gate => new.end_tick != n.end_tick,
-                            _ => unreachable!(),
-                        };
-                        if changed {
-                            if field == NoteField::Gate {
-                                let d = new.end_tick as i64 - n.end_tick as i64;
-                                match uniform_delta {
-                                    None => uniform_delta = Some(d),
-                                    Some(u) if u != d => uniform_delta = None,
-                                    _ => {}
-                                }
-                            }
-                            targets.push(Target {
-                                key,
-                                id: n.id,
-                                old: *n,
-                                new,
-                            });
+                        }
+                        _ => unreachable!(),
+                    };
+                    // Note 无 PartialEq，按变更字段比较
+                    let changed = match field {
+                        NoteField::Velocity => new.velocity != n.velocity,
+                        NoteField::Gate => new.end_tick != n.end_tick,
+                        _ => unreachable!(),
+                    };
+                    if !changed {
+                        return;
+                    }
+                    if field == NoteField::Gate {
+                        let d = new.end_tick as i64 - n.end_tick as i64;
+                        match uniform_delta {
+                            None => uniform_delta = Some(d),
+                            Some(u) if u != d => uniform_delta = None,
+                            _ => {}
                         }
                     }
-                }
+                    match field {
+                        // 记录"最近修改"：新音符默认值跟随最近一次修改（同轨取时间最晚）。
+                        NoteField::Velocity => {
+                            self.edit
+                                .remember_velocity(n.track, n.start_tick, new.velocity);
+                        }
+                        NoteField::Gate => {
+                            let gate = new.end_tick - new.start_tick;
+                            self.edit.remember_gate(n.track, n.start_tick, gate);
+                        }
+                        _ => unreachable!(),
+                    }
+                    before.push((*n, k));
+                    after.push((new, k));
+                    *n = new;
+                    any = true;
+                },
+            );
+            if touched {
+                model.mark_dirty(k);
             }
         }
-        if targets.is_empty() {
+        if !any {
             return None;
-        }
-
-        if field == NoteField::Velocity {
-            // 记录"最近修改力度"：新音符默认力度跟随最近一次修改（同轨取时间最晚的音符）。
-            for t in &targets {
-                self.edit
-                    .remember_velocity(t.old.track, t.old.start_tick, t.new.velocity);
-            }
-        } else if field == NoteField::Gate {
-            // 记录"最近修改长度"：新音符默认长度跟随最近一次修改（同轨取时间最晚的音符）。
-            for t in &targets {
-                let gate = t.new.end_tick - t.new.start_tick;
-                self.edit.remember_gate(t.old.track, t.old.start_tick, gate);
-            }
-        }
-
-        let model = Arc::make_mut(&mut self.data.model);
-        let mut before = Vec::with_capacity(targets.len());
-        let mut after = Vec::with_capacity(targets.len());
-        for t in &targets {
-            let bucket = Arc::make_mut(&mut model.notes[t.key as usize]);
-            // 收集阶段与修改阶段之间无并发修改，目标必然存在。
-            let n = bucket.find_mut(t.id).expect("edit target vanished");
-            *n = t.new;
-            before.push((t.old, t.key));
-            after.push((t.new, t.key));
-            model.mark_dirty(t.key);
         }
         model.rebuild_dirty();
         self.data.bump_revision();
@@ -1933,6 +2020,34 @@ mod tests {
         );
         // 记录时间最晚（t200）的 60
         assert_eq!(doc.edit.default_velocity(0), 60);
+    }
+
+    /// 回归：多个重叠 rect 命中同一音符时，单趟原地路径不重复收集
+    ///（旧实现按 rect×key 遍历会 push 重复项，undo 数据膨胀）。
+    #[test]
+    fn apply_note_field_edit_overlapping_rects_dedup() {
+        let mut doc = make_doc_with_note(); // key 60, t100-200, vel 100
+        doc.edit.selected.clear();
+        doc.edit.selected.add_rect_track(0, 300, 60, 60, 0, 0);
+        doc.edit.selected.add_rect_track(100, 400, 60, 60, 0, 0);
+        let ops = crate::num_expr::parse_num_expr("50").unwrap(); // 赋值 50
+        let action = doc
+            .apply_note_field_edit(NoteField::Velocity, &ops)
+            .expect("应命中");
+        match &action {
+            UndoAction::Notes(delta) => {
+                assert_eq!(delta.before.len(), 1, "重叠 rect 不应重复收集");
+                assert_eq!(delta.after.len(), 1);
+                assert_eq!(delta.after[0].0.velocity, 50);
+            }
+            other => panic!("expected Notes, got {other:?}"),
+        }
+        let snap = doc.capture_snapshot();
+        doc.push_undo(action, "vel-dedup", snap);
+        assert!(doc.undo());
+        assert_eq!(doc.data.model.notes[60][0].velocity, 100);
+        assert!(doc.redo());
+        assert_eq!(doc.data.model.notes[60][0].velocity, 50);
     }
 
     #[test]

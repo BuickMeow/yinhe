@@ -94,6 +94,23 @@ pub fn for_each_selected(model: &YinModel, selection: &Selection, mut f: impl Fn
     }
 }
 
+/// 流式判定选区是否命中至少一个音符（早停、零分配）。
+///
+/// 与 `collect_selected(...).is_empty()` 等价，但 1.64 亿选区下不物化 3GB。
+pub fn any_selected(model: &YinModel, selection: &Selection) -> bool {
+    for &(tick_start, tick_end, key_lo, key_hi, _track_lo, _track_hi) in &selection.rects {
+        for key in key_lo..=key_hi {
+            let k = key as usize;
+            for n in model.notes[k].range(tick_start, tick_end) {
+                if selection.accepts_note(n, key) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Collect notes matching `selection` from the model (read-only, no removal).
 ///
 /// For each rect × key range, iterates `start_tick ∈ [tick_start, tick_end)`.
