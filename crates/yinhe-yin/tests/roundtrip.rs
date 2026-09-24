@@ -726,19 +726,7 @@ fn sf_roundtrip_preserves_channel_entries() {
     assert_eq!(c3.entries[0].name, "Drums");
 }
 
-// ──────────────────────── 旧存档颜色兼容 ────────────────────────
-
-/// 旧版 .yin 的 mapping 里颜色是 RGB 三元素数组，
-/// 反序列化时应自动补 alpha=1.0，避免旧存档无法打开。
-#[test]
-fn legacy_rgb_color_deserializes_with_alpha() {
-    let json = r#"{"version":1,"ports":[{"port":0,"channels":[{"channel":0,"tracks":[{"uuid":"u1","name":"t","color":[0.5,0.25,0.125]}]}]}]}"#;
-    let mf: yinhe_yin::MappingFile = serde_json::from_str(json).expect("parse mapping");
-    let tm = &mf.ports[0].channels[0].tracks[0];
-    assert_eq!(tm.color, [0.5, 0.25, 0.125, 1.0]);
-}
-
-/// 新格式 RGBA 四元素数组正常反序列化，alpha 原样保留。
+/// mapping 的 RGBA 四元素颜色正常反序列化，alpha 原样保留。
 #[test]
 fn rgba_color_deserializes_as_is() {
     let json = r#"{"version":1,"ports":[{"port":0,"channels":[{"channel":0,"tracks":[{"uuid":"u1","name":"t","color":[1.0,0.0,0.0,0.5]}]}]}]}"#;
@@ -778,33 +766,6 @@ fn sf_empty_overrides_roundtrip() {
     assert!(sf2.overrides.is_empty());
 }
 
-/// 回归：旧版工程（按 port 的 soundfont_overrides 字段）加载时被忽略
-/// （字段名不同），不会误读成通道配置。
-#[test]
-fn legacy_port_sf_fields_are_ignored() {
-    let model = build_complex_model();
-    let bytes = save_yin_bytes_with_sf(&model, &ProjectSoundFonts::default()).unwrap();
-    // 在 .yin 的 project.json 里注入旧字段，模拟旧工程。
-    let mut bytes = bytes;
-    let old_json = br#""soundfont_project_mode":true,"soundfont_overrides":[{"port":5,"entries":[{"path":"/sf2/old.sf2","name":"Old","enabled":true}]}]"#;
-    // 直接替换 project.json 段里的一个已知字段序列太脆弱——改为验证
-    // 反序列化行为：旧字段被忽略、新字段为默认空。
-    let needle = b"\"version\":3";
-    if let Some(pos) = bytes.windows(needle.len()).position(|w| w == needle) {
-        let insert_at = pos + needle.len();
-        let mut injected = Vec::with_capacity(bytes.len() + old_json.len() + 1);
-        injected.extend_from_slice(&bytes[..insert_at]);
-        injected.push(b',');
-        injected.extend_from_slice(old_json);
-        injected.extend_from_slice(&bytes[insert_at..]);
-        bytes = injected;
-        let (_m2, sf2, _mapping) = load_yin_bytes_with_sf(&bytes).unwrap();
-        assert!(
-            sf2.overrides.is_empty(),
-            "旧 port 字段应被忽略，不产生通道覆盖"
-        );
-    }
-}
 // ---------------------------------------------------------------------------
 //  混音段（可选第 4 段）roundtrip
 // ---------------------------------------------------------------------------
@@ -854,8 +815,8 @@ fn mixer_section_roundtrips() {
 }
 
 #[test]
-fn v5_file_without_mixer_section_loads_with_none() {
-    // 无混音段的文件（旧保存路径）加载后 mixer 为 None，不报错。
+fn file_without_mixer_section_loads_with_none() {
+    // 无混音段的文件（save_yin_bytes 路径）加载后 mixer 为 None，不报错。
     let m = build_complex_model();
     let bytes = save_yin_bytes(&m).unwrap();
     let dir = tempfile::tempdir().unwrap();

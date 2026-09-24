@@ -20,7 +20,7 @@ fn default_true() -> bool {
     true
 }
 
-/// Project-level soundfont override for one source channel (0..256).
+/// Project-level soundfont override for one source channel (0..=255).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SfChannelOverride {
     pub channel: u8,
@@ -38,12 +38,7 @@ pub struct ProjectFile {
     pub compression_level: i32,
 
     // ── SoundFont state ──
-    //
-    // `#[serde(default)]` so older `.yin` files still load cleanly. 旧版按
-    // port 的字段（soundfont_project_mode / soundfont_overrides）已废弃：
-    // 新格式用 `sf_channel_overrides`（每源通道覆盖），旧字段名不同会被
-    // serde 忽略（旧工程回退为全局音色库）。
-    /// 每源通道（0..256）的音色库覆盖；未列出的通道用全局音色库。
+    /// 每源通道（0..=255，共 256 条）的音色库覆盖；未列出的通道用全局音色库。
     #[serde(default)]
     pub sf_channel_overrides: Vec<SfChannelOverride>,
 }
