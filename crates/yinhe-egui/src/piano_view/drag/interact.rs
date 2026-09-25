@@ -93,6 +93,9 @@ pub(crate) fn clamped_local(
 pub(crate) fn handle_sel_marquee(
     ui: &mut egui::Ui,
     state: &super::state::SelDragFrameState,
+    // 未选音轨（false）时禁止框选：不启动 marquee，仅保留 release 的
+    // 点击定位/清空分支（与"不允许选择与拖拽"的规则一致）。
+    can_marquee: bool,
     content_rect: egui::Rect,
     music_rect: egui::Rect,
     view: &mut yinhe_types::PianoRollView,
@@ -125,18 +128,20 @@ pub(crate) fn handle_sel_marquee(
     }
     let release_was_drag =
         note_drag_delta.is_some() || note_resize_delta.is_some() || pencil_note_drag.is_some();
-    if let Some(result) = crate::piano_view::marquee::marquee_drag_frame(
-        ui,
-        content_rect,
-        music_rect,
-        view,
-        quantize,
-        ppq,
-        bar_line_data,
-        total_ticks,
-        "sel_drag",
-        press_on_bar,
-    ) {
+    if can_marquee
+        && let Some(result) = crate::piano_view::marquee::marquee_drag_frame(
+            ui,
+            content_rect,
+            music_rect,
+            view,
+            quantize,
+            ppq,
+            bar_line_data,
+            total_ticks,
+            "sel_drag",
+            press_on_bar,
+        )
+    {
         let (track_lo, track_hi) = crate::selection::drag::pr_track_range(track_selected);
         let auto_vertical = !vertical
             && !super::hit::rect_has_notes(

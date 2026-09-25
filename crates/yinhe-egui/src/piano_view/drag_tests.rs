@@ -513,7 +513,7 @@ fn empty_marquee_becomes_vertical_selection() {
         &mut note_resize_delta,
         &mut sel_rect,
         &std::collections::HashSet::new(),
-        None,
+        Some(0),
     );
     let _ = run_sel_frame(
         &ctx,
@@ -526,7 +526,7 @@ fn empty_marquee_becomes_vertical_selection() {
         &mut note_resize_delta,
         &mut sel_rect,
         &std::collections::HashSet::new(),
-        None,
+        Some(0),
     );
     let _ = run_sel_frame(
         &ctx,
@@ -539,7 +539,7 @@ fn empty_marquee_becomes_vertical_selection() {
         &mut note_resize_delta,
         &mut sel_rect,
         &std::collections::HashSet::new(),
-        None,
+        Some(0),
     );
 
     assert_eq!(sel_rect.rects.len(), 1, "应有一个选框");
@@ -727,7 +727,7 @@ fn marquee_with_notes_stays_rectangular() {
         &mut note_resize_delta,
         &mut sel_rect,
         &std::collections::HashSet::new(),
-        None,
+        Some(0),
     );
     let _ = run_sel_frame(
         &ctx,
@@ -740,7 +740,7 @@ fn marquee_with_notes_stays_rectangular() {
         &mut note_resize_delta,
         &mut sel_rect,
         &std::collections::HashSet::new(),
-        None,
+        Some(0),
     );
     let _ = run_sel_frame(
         &ctx,
@@ -753,7 +753,7 @@ fn marquee_with_notes_stays_rectangular() {
         &mut note_resize_delta,
         &mut sel_rect,
         &std::collections::HashSet::new(),
-        None,
+        Some(0),
     );
 
     assert_eq!(sel_rect.rects.len(), 1);
@@ -1074,7 +1074,7 @@ fn marquee_respects_track_selected() {
         &mut note_resize_delta,
         &mut sel_rect,
         &[5u16].into_iter().collect(),
-        None,
+        Some(0),
     );
     let _ = run_sel_frame(
         &ctx,
@@ -1087,7 +1087,7 @@ fn marquee_respects_track_selected() {
         &mut note_resize_delta,
         &mut sel_rect,
         &[5u16].into_iter().collect(),
-        None,
+        Some(0),
     );
     let _ = run_sel_frame(
         &ctx,
@@ -1100,7 +1100,7 @@ fn marquee_respects_track_selected() {
         &mut note_resize_delta,
         &mut sel_rect,
         &[5u16].into_iter().collect(),
-        None,
+        Some(0),
     );
 
     assert_eq!(selected.rects.len(), 1, "框选应只产生一个选区 rect");
@@ -1661,7 +1661,7 @@ fn marquee_members_not_hijacked_by_bystanders_after_move() {
             &mut note_resize_delta,
             &mut sel_rect,
             &std::collections::HashSet::new(),
-            None,
+            Some(0),
         );
     }
     assert_eq!(
@@ -1685,6 +1685,68 @@ fn marquee_members_not_hijacked_by_bystanders_after_move() {
     assert_eq!(
         collected[0].velocity, 100,
         "收集到的必须是被框选的 A（v100），不能是落点路人 B（v80）"
+    );
+}
+
+/// 新规则：未选音轨（write_track=None）时禁止框选与选框拖动——只保留点击空白清空。
+#[test]
+fn no_track_selection_blocks_marquee_and_drag() {
+    let ctx = egui::Context::default();
+    let mut view = test_view();
+    let midi = make_midi(vec![(90, 100, 200, 0, 100)]);
+    let mut selected = yinhe_core::Selection::default();
+    let mut cursor_tick = None;
+    let mut note_drag_delta = None;
+    let mut note_resize_delta = None;
+    let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+    let track_selected = std::collections::HashSet::new();
+
+    // 1) 框选（press → drag → release），全程未选音轨 → 不得产生选区/选框。
+    let start = egui::pos2(50.0, 300.0);
+    let end = egui::pos2(300.0, 400.0);
+    for raw in [press_event(start), drag_event(end), release_event(end)] {
+        let _ = run_sel_frame(
+            &ctx,
+            raw,
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            &track_selected,
+            None,
+        );
+    }
+    assert!(selected.is_empty(), "未选音轨时框选不得产生选区");
+    assert!(sel_rect.is_empty(), "未选音轨时不得画出选框");
+
+    // 2) 预置选框后在选框内拖动 → 不得启动选区拖动（release 也不产生 delta）。
+    sel_rect.push_rect((100.0, 200.0, 80, 100), false);
+    selected.add_rect_track(100, 200, 80, 100, 0, 0);
+    let press = egui::pos2(150.0, 370.0); // tick 150 / key 90（选框内）
+    let moved = egui::pos2(200.0, 370.0);
+    for raw in [press_event(press), drag_event(moved), release_event(moved)] {
+        let _ = run_sel_frame(
+            &ctx,
+            raw,
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            &track_selected,
+            None,
+        );
+    }
+    assert!(note_drag_delta.is_none(), "未选音轨时不得启动选区拖动");
+    assert_eq!(
+        sel_rect.effective_rects()[0].0,
+        100.0,
+        "选框不得被拖动（新规则禁拖拽）"
     );
 }
 

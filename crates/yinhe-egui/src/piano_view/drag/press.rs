@@ -56,31 +56,9 @@ pub(crate) fn sel_press(
             });
 
             if !can_edit {
-                // 无编辑目标：选框本身仍可拖动/缩放（仅移动选框，不涉及音符预览与音符 hit-test）
-                let edge_hit = hit_test_sel_edge(eff_rects, view, local);
-                if let Some((side, origin, other)) = edge_hit {
-                    state.sel_resize_state = Some((side, origin, other));
-                    sel_rect.start_resize(side);
-                    state.drag_notes = Some(std::sync::Arc::new(Vec::new()));
-                } else if in_sel_rect {
-                    let (main_px, cross_px) = main_cross_x_y(view, (local.x, local.y));
-                    let raw_tick = main_px_to_tick_dir(view, main_px);
-                    let tick =
-                        crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
-                    let key = view.cross_px_to_key(cross_px) as f64;
-                    let alt = ui.input(|i| i.modifiers.alt);
-                    state.note_drag_origin = Some((tick, key, alt));
-                    sel_rect.start_drag();
-                    state.drag_notes = Some(std::sync::Arc::new(Vec::new()));
-                    state.preview_last_dk = 0;
-                    state.note_drag_had_moved = false;
-                    ui.data_mut(|d| {
-                        d.insert_persisted(
-                            ui.id().with("note_drag_preview_dk"),
-                            state.preview_last_dk,
-                        )
-                    });
-                } else if !additive {
+                // 未选音轨（无编辑目标）：按规则不允许选择/拖拽/缩放——
+                // 不启动框选、不拖动选框；仅保留点击空白清空选区。
+                if !in_sel_rect && !additive {
                     selected.clear();
                     sel_rect.clear();
                 }

@@ -180,6 +180,7 @@ pub(crate) fn sel_drag_frame(
     handle_sel_marquee(
         ui,
         &state,
+        can_edit,
         content_rect,
         music_rect,
         view,
