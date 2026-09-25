@@ -136,35 +136,22 @@ impl Document {
     ) -> Option<UndoAction> {
         let model = Arc::make_mut(&mut self.data.model);
         let (lane, _) = model.automation_lane_mut(track_idx, target)?;
-        let events = &mut lane.events;
 
-        let mut before = Vec::with_capacity(2);
-        // 原事件（操作前值）必须进 before，undo 才能恢复。
-        let orig = *events.iter().find(|e| e.tick == old_tick)?;
-        before.push(orig);
-
-        if old_tick == new_tick {
-            // 只改 value，不改 tick：直接原地修改，避免 retain 误删原事件
-            let evt = events.iter_mut().find(|e| e.tick == old_tick)?;
-            evt.value = new_value;
-        } else {
-            // 目标 tick 上已有的事件（冲突项）会被移除——必须进 before，
-            // 否则 undo 丢失它（增量 delta 的前提：before 覆盖全部被移除项）。
-            if let Some(conflict) = events.iter().find(|e| e.tick == new_tick) {
-                before.push(*conflict);
-            }
-            events.retain(|e| e.tick != new_tick);
-            // 找到原事件并修改
-            let evt = events.iter_mut().find(|e| e.tick == old_tick)?;
-            evt.tick = new_tick;
-            evt.value = new_value;
-            events.sort_by_key(|e| e.tick);
-        }
-        let after = vec![AutomationEvent {
+        // 原事件（操作前值）必须进 before，undo 才能恢复；old_tick == new_tick
+        // 时 remove + upsert 回同位置，等价于原地改 value。
+        let orig = lane.remove_at(old_tick)?;
+        let mut before = vec![orig];
+        let new_evt = AutomationEvent {
             tick: new_tick,
             value: new_value,
-            ..before[0] // 保留原 id/shape
-        }];
+            ..orig // 保留原 id/shape
+        };
+        // 目标 tick 上已有的事件（冲突项）会被替换——必须进 before，
+        // 否则 undo 丢失它（增量 delta 的前提：before 覆盖全部被替换项）。
+        if let Some(conflict) = lane.upsert(new_evt) {
+            before.push(conflict);
+        }
+        let after = vec![new_evt];
 
         model.commit_automation(target);
         self.data.bump_revision();

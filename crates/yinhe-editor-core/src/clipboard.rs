@@ -157,13 +157,19 @@ impl AutomationClipboard {
             } => selections
                 .iter()
                 .filter_map(|sel| {
-                    let events: Vec<(u32, u32, f32, SegmentShape)> =
+                    // 成员态按 id 判定；矩形态回退选框几何。
+                    let selected_at = |id: u32, tick: u32, value: f32| match &sel.members {
+                        Some(bits) => bits.contains(id),
+                        None => sel.sel_rects.iter().any(|r| r.contains(tick, value)),
+                    };
+                    let mut hit: Vec<(u32, f32, SegmentShape)> =
                         if matches!(sel.target, AutomationTarget::Tempo) {
                             conductor
                                 .tempo
                                 .events
                                 .iter()
-                                .map(|e| (e.id, e.tick, e.value, e.shape))
+                                .filter(|e| selected_at(e.id, e.tick, e.value))
+                                .map(|e| (e.tick, e.value, e.shape))
                                 .collect()
                         } else {
                             tracks
@@ -172,18 +178,10 @@ impl AutomationClipboard {
                                 .find(|l| l.target == sel.target)?
                                 .events
                                 .iter()
-                                .map(|e| (e.id, e.tick, e.value, e.shape))
+                                .filter(|e| selected_at(e.id, e.tick, e.value))
+                                .map(|e| (e.tick, e.value, e.shape))
                                 .collect()
                         };
-                    let mut hit: Vec<(u32, f32, SegmentShape)> = events
-                        .into_iter()
-                        .filter(|(id, tick, value, _)| match &sel.members {
-                            // 成员态按 id 判定；矩形态回退选框几何。
-                            Some(bits) => bits.contains(*id),
-                            None => sel.sel_rects.iter().any(|r| r.contains(*tick, *value)),
-                        })
-                        .map(|(_, tick, value, shape)| (tick, value, shape))
-                        .collect();
                     if hit.is_empty() {
                         return None;
                     }

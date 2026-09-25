@@ -188,10 +188,12 @@ impl Selection {
         if self.materialized_rects >= self.rects.len() {
             return;
         }
-        let pending: Vec<(u32, u32, u8, u8, u16, u16)> =
-            self.rects[self.materialized_rects..].to_vec();
+        let pending_from = self.materialized_rects;
         let bits = self.members.get_or_insert_with(NoteBitset::default);
-        for (tick_start, tick_end, key_lo, key_hi, track_lo, track_hi) in pending {
+        // 直接按索引读取 rects（与 members 是不同字段，可同时借用），
+        // 避免为绕借用把待物化 rect 整段拷贝一份。
+        for i in pending_from..self.rects.len() {
+            let (tick_start, tick_end, key_lo, key_hi, track_lo, track_hi) = self.rects[i];
             for key in key_lo..=key_hi {
                 for n in source.key_notes_in_range(key, tick_start, tick_end) {
                     // `key_notes_in_range` 左边界按 max_note_len 保守外扩，需精确过滤。

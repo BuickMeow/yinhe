@@ -204,7 +204,7 @@ pub(crate) fn upload_and_prepare(
             uniforms: job.uniforms,
             track_colors: job.track_colors,
             selection: job.selection,
-            exclude_table: job.exclude_table.clone(),
+            exclude_table: job.exclude_table,
             note_layers,
         });
         ghost_upload_done = true;
