@@ -14,11 +14,14 @@
 //! `Selection::accepts_note`（成员态查位图，矩形态查矩形 + 筛选），
 //! 连续 drain 快路径只在矩形态、无属性边界且全轨时可用。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use yinhe_core::{Selection, YinModel};
 use yinhe_types::{MAX_KEY, Note, NoteBucket};
+
+use crate::audio_settings::OverlapBlockedBehavior;
+use crate::history::NoteDelta;
 
 /// Remove all notes matching `selection` from the model.
 ///
@@ -67,6 +70,17 @@ pub fn insert_batch(model: &mut YinModel, notes_by_key: HashMap<u8, Vec<Note>>) 
         Arc::make_mut(&mut model.notes[k]).insert_batch_sorted(notes);
         model.mark_dirty(key);
     }
+}
+
+/// 把 `key → 音符` 分组展平成 `(音符, key)` 列表（副本制 undo 的 `after`）。
+///
+/// HashMap 遍历顺序与旧内联 `iter().flat_map` 逐字一致；`insert_batch`
+/// 内部按 key 归并，展平顺序不影响落桶结果。
+pub(crate) fn flatten_by_key(notes_by_key: &HashMap<u8, Vec<Note>>) -> Vec<(Note, u8)> {
+    notes_by_key
+        .iter()
+        .flat_map(|(key, notes)| notes.iter().map(|n| (*n, *key)))
+        .collect()
 }
 
 /// Append `new_notes` to a bucket keeping it sorted (chunked merge).
@@ -156,6 +170,39 @@ pub fn any_selected(model: &YinModel, selection: &Selection) -> bool {
     false
 }
 
+/// 落点重叠判定：`dest_sel` 为落点纯几何选区（成员位图已丢弃）。
+///
+/// - `originals = Some`：本次操作集合仍在模型内（快速路径未移除），命中
+///   「不属于 `originals`」的音符才算重叠（操作式 undo 撤销时会误搬 B）；
+/// - `originals = None`：操作集合已从模型移除，落点任何命中都算重叠
+///   （等价 [`any_selected`]）。
+///
+/// 判定谓词（矩形空间判定 ∩ `accepts_note`）与旧内联实现逐字一致。
+pub(crate) fn compute_dest_overlap(
+    model: &YinModel,
+    dest_sel: &Selection,
+    originals: Option<&Selection>,
+) -> bool {
+    let Some(originals) = originals else {
+        return any_selected(model, dest_sel);
+    };
+    let mut overlap = false;
+    for_each_selected(model, dest_sel, |n, k| {
+        let in_original = originals.rects.iter().any(|&(ts, te, kl, kh, tl, th)| {
+            n.start_tick >= ts
+                && n.start_tick < te
+                && k >= kl
+                && k <= kh
+                && n.track >= tl
+                && n.track <= th
+        }) && originals.accepts_note(n, k);
+        if !in_original {
+            overlap = true;
+        }
+    });
+    overlap
+}
+
 /// Collect notes matching `selection` from the model (read-only, no removal).
 ///
 /// For each rect × key range, iterates `start_tick ∈ [tick_start, tick_end)`.
@@ -204,6 +251,134 @@ pub fn has_overlapping_note_excluding(
     model.notes[key as usize]
         .range(lo, end)
         .any(|n| n.id != exclude_id && n.track == track && n.end_tick > start)
+}
+
+/// 搬运类操作的收集状态（被拦三分支与原/目标音符的 undo 记录）。
+///
+/// `note_edit::move_selected_notes` 与 `arrange_move::move_selected_arrange`
+/// 的副本制回退路径共用：三分支行为只在 [`move_one_note_blocked`] 里实现一份。
+#[derive(Default)]
+pub(crate) struct MoveTally {
+    /// 落点分组：key → 实际写入模型的音符（含 KeepOriginal 原样留回的原音符）。
+    pub new_by_key: HashMap<u8, Vec<Note>>,
+    /// 真正搬迁的原音符。
+    pub moved_before: Vec<(Note, u8)>,
+    /// 真正搬迁后的音符。
+    pub moved_after: Vec<(Note, u8)>,
+    /// `DeleteOriginal` 被拦：原地删除的原音符。
+    pub deleted_before: Vec<(Note, u8)>,
+    /// `ReplaceTarget` 被拦：落点被删掉的目标音符。
+    pub replaced_before: Vec<(Note, u8)>,
+    /// 是否出现过 `KeepOriginal` 被拦（原音符原样留回）。
+    pub blocked_any: bool,
+}
+
+impl MoveTally {
+    /// 常规搬运：原音符进 `moved_before`，落点进 `moved_after` / `new_by_key`。
+    pub(crate) fn push_moved(
+        &mut self,
+        original: &(Note, u8),
+        new_key: u8,
+        new_tick: u32,
+        new_track: u16,
+    ) {
+        let (note, old_key) = *original;
+        let length = note.end_tick - note.start_tick;
+        let moved = Note {
+            id: note.id,
+            start_tick: new_tick,
+            end_tick: new_tick + length,
+            velocity: note.velocity,
+            track: new_track,
+        };
+        self.moved_before.push((note, old_key));
+        self.moved_after.push((moved, new_key));
+        self.new_by_key.entry(new_key).or_default().push(moved);
+    }
+
+    /// 全部被 `KeepOriginal` 拦下（模型内容无实际变化）。
+    pub(crate) fn no_change(&self) -> bool {
+        self.blocked_any
+            && self.moved_before.is_empty()
+            && self.deleted_before.is_empty()
+            && self.replaced_before.is_empty()
+    }
+
+    /// 展平 `new_by_key` 为 `(音符, key)`（顺序与旧内联展平一致）。
+    pub(crate) fn flatten_after(&self) -> Vec<(Note, u8)> {
+        flatten_by_key(&self.new_by_key)
+    }
+}
+
+/// 「禁止重叠」关闭时的被拦处理：落点 `[new_tick, new_tick + gate)` 与非本次
+/// 搬运的已有音符重叠（原音符已由调用方移出模型）时，按 `behavior` 执行
+/// KeepOriginal / DeleteOriginal / ReplaceTarget。
+///
+/// 返回 true 表示该音符已被处理（调用方 continue）；未重叠返回 false，
+/// 调用方随后走 [`MoveTally::push_moved`]。
+///
+/// - KeepOriginal：原音符原样留回（`blocked_any` 标记）；
+/// - DeleteOriginal：原音符删除（进 `deleted_before`）；
+/// - ReplaceTarget：删除落点重叠音符（进 `replaced_before`）后再搬运。
+pub(crate) fn move_one_note_blocked(
+    model: &mut YinModel,
+    original: &(Note, u8),
+    new_key: u8,
+    new_tick: u32,
+    new_track: u16,
+    behavior: OverlapBlockedBehavior,
+    tally: &mut MoveTally,
+) -> bool {
+    let (note, old_key) = *original;
+    let length = note.end_tick - note.start_tick;
+    if !has_overlapping_note(model, new_track, new_key, new_tick, new_tick + length) {
+        return false;
+    }
+    match behavior {
+        OverlapBlockedBehavior::KeepOriginal => {
+            tally.blocked_any = true;
+            tally.new_by_key.entry(old_key).or_default().push(note);
+        }
+        OverlapBlockedBehavior::DeleteOriginal => {
+            tally.deleted_before.push((note, old_key));
+        }
+        OverlapBlockedBehavior::ReplaceTarget => {
+            let lo = new_tick.saturating_sub(model.max_note_len);
+            let overlapping: Vec<Note> = model.notes[new_key as usize]
+                .range(lo, new_tick + length)
+                .filter(|n| n.track == new_track && n.end_tick > new_tick)
+                .cloned()
+                .collect();
+            if !overlapping.is_empty() {
+                let ids: HashSet<u32> = overlapping.iter().map(|n| n.id).collect();
+                let bucket = Arc::make_mut(&mut model.notes[new_key as usize]);
+                bucket.remove_by_ids(&ids);
+                model.mark_dirty(new_key);
+                for t in overlapping {
+                    tally.replaced_before.push((t, new_key));
+                }
+            }
+            tally.push_moved(original, new_key, new_tick, new_track);
+        }
+    }
+    true
+}
+
+/// 组合搬运类操作的副本制 undo delta：`before = moved + deleted + replaced`。
+///
+/// `after` 由调用方传入（KeepOriginal 被拦时仅真正移动的音符，否则为
+/// `new_by_key` 展平）。全被 KeepOriginal 拦下时 `before` 为空，调用方
+/// 据此判断无需 undo。
+pub(crate) fn compose_move_delta(
+    moved_before: Vec<(Note, u8)>,
+    deleted_before: Vec<(Note, u8)>,
+    replaced_before: Vec<(Note, u8)>,
+    after: Vec<(Note, u8)>,
+) -> NoteDelta {
+    let mut before = moved_before;
+    before.extend(deleted_before);
+    before.extend(replaced_before);
+    NoteDelta { before, after }
 }
 
 /// 选中音符的统计信息（Info 面板选框信息显示）。
@@ -713,5 +888,54 @@ mod tests {
         assert!(!has_overlapping_note(&m, 0, 61, 1000, 1100));
         // 零长区间防御
         assert!(!has_overlapping_note(&m, 0, 60, 150, 150));
+    }
+
+    /// 展平：key 与音符配对，内容与分组一致（HashMap 顺序不保证）。
+    #[test]
+    fn flatten_by_key_pairs_keys_with_notes() {
+        let mut by_key: HashMap<u8, Vec<Note>> = HashMap::new();
+        by_key.insert(60, vec![note(1, 100, 200), note(2, 300, 400)]);
+        by_key.insert(64, vec![note(3, 500, 600)]);
+
+        let mut flat = flatten_by_key(&by_key);
+        flat.sort_by_key(|(n, k)| (n.start_tick, *k));
+        let paired: Vec<((u32, u32, u32), u8)> = flat
+            .iter()
+            .map(|(n, k)| ((n.id, n.start_tick, n.end_tick), *k))
+            .collect();
+        assert_eq!(
+            paired,
+            vec![
+                ((1, 100, 200), 60),
+                ((2, 300, 400), 60),
+                ((3, 500, 600), 64),
+            ]
+        );
+    }
+
+    /// 组合 delta：before = moved + deleted + replaced；三份全空时 before 为空。
+    #[test]
+    fn compose_move_delta_combines_before() {
+        let moved = vec![(note(1, 0, 10), 60)];
+        let deleted = vec![(note(2, 20, 30), 61)];
+        let replaced = vec![(note(3, 40, 50), 62)];
+        let after = vec![(note(9, 100, 110), 60)];
+
+        let delta = compose_move_delta(
+            moved.clone(),
+            deleted.clone(),
+            replaced.clone(),
+            after.clone(),
+        );
+        let before: Vec<(u32, u8)> = delta.before.iter().map(|(n, k)| (n.id, *k)).collect();
+        assert_eq!(before, vec![(1, 60), (2, 61), (3, 62)], "before 顺序固定");
+        let after_ids: Vec<(u32, u8)> = delta.after.iter().map(|(n, k)| (n.id, *k)).collect();
+        assert_eq!(after_ids, vec![(9, 60)]);
+
+        let empty = compose_move_delta(vec![], vec![], vec![], after);
+        assert!(
+            empty.before.is_empty(),
+            "全 KeepOriginal 拦下时 before 为空（调用方据此跳过 undo）"
+        );
     }
 }

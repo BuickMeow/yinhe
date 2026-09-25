@@ -461,6 +461,32 @@ impl Selection {
         }
     }
 
+    /// 目标重叠检测用的「落点选区」：矩形按 `(delta_ticks, delta_keys,
+    /// delta_tracks)` 平移（tick 下限 0；key clamp `[0, MAX_KEY]`；track
+    /// clamp `[0, track_max]`），并丢弃成员位图（落点检测只看几何范围）。
+    ///
+    /// `track_max = i32::MAX` 表示 track 不参与平移（`delta_tracks = 0` 时
+    /// 恒等）。返回新选区，不改动自身。
+    pub fn dest_overlap_selection(
+        &self,
+        delta_ticks: i64,
+        delta_keys: i32,
+        delta_tracks: i32,
+        track_max: i32,
+    ) -> Selection {
+        let mut dest = self.clone();
+        for r in &mut dest.rects {
+            r.0 = (r.0 as i64 + delta_ticks).max(0) as u32;
+            r.1 = (r.1 as i64 + delta_ticks).max(0) as u32;
+            r.2 = (r.2 as i32 + delta_keys).clamp(0, MAX_KEY as i32) as u8;
+            r.3 = (r.3 as i32 + delta_keys).clamp(0, MAX_KEY as i32) as u8;
+            r.4 = (r.4 as i32 + delta_tracks).clamp(0, track_max) as u16;
+            r.5 = (r.5 as i32 + delta_tracks).clamp(0, track_max) as u16;
+        }
+        dest.drop_members();
+        dest
+    }
+
     /// Remove rects matching the given PR selection-box rects
     /// `(tick_start, tick_end, key_lo, key_hi)`. Used by cross-view selection
     /// exclusivity (PR/AR/AM 三视图选框互斥).
@@ -836,5 +862,28 @@ mod tests {
         sel.clear();
         assert!(sel.rects.is_empty());
         assert!(sel.filter.is_empty());
+    }
+
+    /// 落点选区：tick/key/track 平移 + clamp，并丢弃成员位图；自身不变。
+    #[test]
+    fn dest_overlap_selection_shifts_and_drops_members() {
+        let n = note_id(1, 0, 100, 100, 0);
+        let source = MockSource::new(&[(60, n)]);
+        let mut sel = Selection::default();
+        sel.add_rect_track(100, 200, 60, 62, 0, 0);
+        sel.materialize_pending(&source);
+        assert!(sel.has_explicit_members());
+
+        // tick +50；key -100 双向 clamp 到 0；track +2（上限 5）。
+        let dest = sel.dest_overlap_selection(50, -100, 2, 5);
+        assert_eq!(dest.rects, vec![(150, 250, 0, 0, 2, 2)]);
+        assert!(!dest.has_explicit_members(), "落点选区必须是纯几何态");
+        assert!(sel.has_explicit_members(), "原选区不受影响");
+        assert_eq!(sel.rects[0], (100, 200, 60, 62, 0, 0));
+
+        // track_max = i32::MAX 且 delta_tracks = 0 → track 恒等。
+        let same = sel.dest_overlap_selection(0, 0, 0, i32::MAX);
+        assert_eq!(same.rects, sel.rects);
+        assert!(!same.has_explicit_members());
     }
 }

@@ -89,29 +89,9 @@ impl Document {
                 true
             } else {
                 // 目标区域（tick + track 平移后的选区）是否有「不属于本次移动集合」的音符。
-                let mut dest_sel = selection.clone();
-                for r in &mut dest_sel.rects {
-                    r.0 = (r.0 as i64 + delta_ticks).max(0) as u32;
-                    r.1 = (r.1 as i64 + delta_ticks).max(0) as u32;
-                    r.4 = (r.4 as i32 + delta_tracks).clamp(0, num_tracks - 1) as u16;
-                    r.5 = (r.5 as i32 + delta_tracks).clamp(0, num_tracks - 1) as u16;
-                }
-                dest_sel.drop_members(); // 纯几何查询
-                let mut overlap = false;
-                batch_ops::for_each_selected(model, &dest_sel, |n, k| {
-                    let in_original = selection.rects.iter().any(|&(ts, te, kl, kh, tl, th)| {
-                        n.start_tick >= ts
-                            && n.start_tick < te
-                            && k >= kl
-                            && k <= kh
-                            && n.track >= tl
-                            && n.track <= th
-                    }) && selection.accepts_note(n, k);
-                    if !in_original {
-                        overlap = true;
-                    }
-                });
-                !overlap
+                let dest_sel =
+                    selection.dest_overlap_selection(delta_ticks, 0, delta_tracks, num_tracks - 1);
+                !batch_ops::compute_dest_overlap(model, &dest_sel, Some(&selection))
             }
         };
 
@@ -143,13 +123,7 @@ impl Document {
             let originals = batch_ops::remove_selected(model, &self.edit.selected);
             if !originals.is_empty() {
                 let behavior = self.edit.overlap_blocked_behavior;
-                let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
-                    std::collections::HashMap::new();
-                let mut moved_before: Vec<(yinhe_types::Note, u8)> = Vec::new();
-                let mut moved_after: Vec<(yinhe_types::Note, u8)> = Vec::new();
-                let mut deleted_before: Vec<(yinhe_types::Note, u8)> = Vec::new();
-                let mut replaced_before: Vec<(yinhe_types::Note, u8)> = Vec::new();
-                let mut blocked_any = false;
+                let mut tally = batch_ops::MoveTally::default();
                 for (note, old_key) in &originals {
                     let new_tick = (note.start_tick as i64 + delta_ticks).max(0) as u32;
                     // Skip over conductor track: notes cannot land on it.
@@ -159,125 +133,28 @@ impl Document {
                         num_tracks,
                         self.edit.conductor_track_idx,
                     );
-                    let length = note.end_tick - note.start_tick;
+                    let original = (*note, *old_key);
                     // 「允许新重叠音符」关闭：目标位置与非本次移动的已有音符重叠
                     // （移动集合已先移除，检查看不到它们）→ 按 behavior 处理。
                     if !allow_overlap
-                        && batch_ops::has_overlapping_note(
-                            model,
-                            new_track,
-                            *old_key,
-                            new_tick,
-                            new_tick + length,
+                        && batch_ops::move_one_note_blocked(
+                            model, &original, *old_key, new_tick, new_track, behavior, &mut tally,
                         )
                     {
-                        match behavior {
-                            crate::audio_settings::OverlapBlockedBehavior::KeepOriginal => {
-                                blocked_any = true;
-                                new_by_key.entry(*old_key).or_default().push(*note);
-                            }
-                            crate::audio_settings::OverlapBlockedBehavior::DeleteOriginal => {
-                                deleted_before.push((*note, *old_key));
-                                // 不插入，原音符消失
-                            }
-                            crate::audio_settings::OverlapBlockedBehavior::ReplaceTarget => {
-                                let lo = new_tick.saturating_sub(model.max_note_len);
-                                let overlapping: Vec<yinhe_types::Note> = model.notes
-                                    [*old_key as usize]
-                                    .range(lo, new_tick + length)
-                                    .filter(|n| n.track == new_track && n.end_tick > new_tick)
-                                    .cloned()
-                                    .collect();
-                                if !overlapping.is_empty() {
-                                    let ids: std::collections::HashSet<u32> =
-                                        overlapping.iter().map(|n| n.id).collect();
-                                    let bucket = Arc::make_mut(&mut model.notes[*old_key as usize]);
-                                    bucket.remove_by_ids(&ids);
-                                    model.mark_dirty(*old_key);
-                                    for t in overlapping {
-                                        replaced_before.push((t, *old_key));
-                                    }
-                                }
-                                let moved = yinhe_types::Note {
-                                    id: note.id,
-                                    start_tick: new_tick,
-                                    end_tick: new_tick + length,
-                                    velocity: note.velocity,
-                                    track: new_track,
-                                };
-                                moved_before.push((*note, *old_key));
-                                moved_after.push((moved, *old_key));
-                                new_by_key.entry(*old_key).or_default().push(moved);
-                            }
-                        }
                         continue;
                     }
-                    let moved = yinhe_types::Note {
-                        id: note.id,
-                        start_tick: new_tick,
-                        end_tick: new_tick + length,
-                        velocity: note.velocity,
-                        track: new_track,
-                    };
-                    moved_before.push((*note, *old_key));
-                    moved_after.push((moved, *old_key));
-                    new_by_key.entry(*old_key).or_default().push(moved);
+                    tally.push_moved(&original, *old_key, new_tick, new_track);
                 }
-                batch_ops::insert_batch(model, new_by_key);
-                // 全部被拦且 KeepOriginal：无变化
-                if blocked_any
-                    && moved_before.is_empty()
-                    && deleted_before.is_empty()
-                    && replaced_before.is_empty()
-                {
-                    // 无移动也无删除/替换，保持原样
-                } else if !moved_before.is_empty()
-                    || !deleted_before.is_empty()
-                    || !replaced_before.is_empty()
-                {
-                    // KeepOriginal：仅真正移动的进 delta；Delete/Replace 需合并
-                    if matches!(
-                        behavior,
-                        crate::audio_settings::OverlapBlockedBehavior::KeepOriginal
-                    ) && blocked_any
-                    {
-                        sub_actions.push(UndoAction::Notes(NoteDelta {
-                            before: moved_before,
-                            after: moved_after,
-                        }));
-                    } else if !replaced_before.is_empty() {
-                        let mut before_all = moved_before.clone();
-                        before_all.extend(deleted_before.clone());
-                        before_all.extend(replaced_before.clone());
-                        // 对于 KeepOriginal 的 blocked 情况已在上分支处理，此处 before 含被删/被替换
-                        // 但 moved_before 已含移动的原音符，deleted/replaced 额外
-                        // 需要把原始的 originals 中未移动的也纳入？对于 DeleteOriginal，deleted_before 即原音符
-                        // 对于 ReplaceTarget，before 需含原移动音符 + 被替换目标
-                        // 这里 before_all 已含 moved_before + replaced + deleted
-                        // 但 moved_before 已含原移动音符的 before，deleted 额外
-                        // 为避免重复，before 应为 moved_before + deleted + replaced
-                        // 而 moved_before 已含部分 originals，deleted 含剩余
-                        // 所以 before_all 如上即完整
-                        let mut before_combined = moved_before.clone();
-                        before_combined.extend(deleted_before.clone());
-                        before_combined.extend(replaced_before.clone());
-                        sub_actions.push(UndoAction::Notes(NoteDelta {
-                            before: before_combined,
-                            after: moved_after,
-                        }));
-                    } else if !deleted_before.is_empty() {
-                        let mut before_combined = moved_before.clone();
-                        before_combined.extend(deleted_before.clone());
-                        sub_actions.push(UndoAction::Notes(NoteDelta {
-                            before: before_combined,
-                            after: moved_after,
-                        }));
-                    } else {
-                        sub_actions.push(UndoAction::Notes(NoteDelta {
-                            before: moved_before,
-                            after: moved_after,
-                        }));
-                    }
+                batch_ops::insert_batch(model, tally.new_by_key);
+                let delta = batch_ops::compose_move_delta(
+                    tally.moved_before,
+                    tally.deleted_before,
+                    tally.replaced_before,
+                    tally.moved_after,
+                );
+                // KeepOriginal 全拦 → before 为空（无 moved/deleted/replaced），无需 undo。
+                if !delta.before.is_empty() {
+                    sub_actions.push(UndoAction::Notes(delta));
                 }
             }
         }
@@ -488,10 +365,7 @@ impl Document {
                     });
             }
             if !new_by_key.is_empty() {
-                let after: Vec<(yinhe_types::Note, u8)> = new_by_key
-                    .iter()
-                    .flat_map(|(key, notes)| notes.iter().map(|n| (*n, *key)))
-                    .collect();
+                let after = batch_ops::flatten_by_key(&new_by_key);
                 dup_note_ids.extend(after.iter().map(|(n, _)| n.id));
                 batch_ops::insert_batch(model, new_by_key);
                 sub_actions.push(UndoAction::Notes(NoteDelta {
@@ -730,6 +604,57 @@ mod tests {
                 .any(|n| n.start_tick == 100 && n.end_tick == 150),
             "undo 后 B 应回到 [100,150)"
         );
+    }
+
+    /// AR 跨轨 ReplaceTarget：落点轨的目标音符被替换删除、音符搬到目标轨，
+    /// undo/redo 精确（同时覆盖 helper 的 new_track 传参路径）。
+    #[test]
+    fn move_selected_arrange_cross_track_replace_target() {
+        let mut doc = make_doc_tracks(2);
+        add(&mut doc, 100, 200, 60); // A track0（选中）
+        doc.add_note(
+            1,
+            NoteEvent {
+                id: 0,
+                start_tick: 100,
+                end_tick: 150,
+                key: 60,
+                velocity: 100,
+            },
+        ); // C track1 落点
+        doc.edit.selected.add_rect_track(100, 201, 60, 60, 0, 0);
+        doc.edit.allow_overlapping_notes = false;
+        doc.edit.overlap_blocked_behavior =
+            crate::audio_settings::OverlapBlockedBehavior::ReplaceTarget;
+        let before_snap = doc.capture_snapshot();
+        let action = doc.move_selected_arrange(0, 1).expect("应产生 undo");
+
+        match &action {
+            UndoAction::Notes(delta) => {
+                assert_eq!(delta.before.len(), 2, "before = A + 被替换的 C");
+                assert_eq!(delta.after.len(), 1);
+            }
+            other => panic!("期望副本制 Notes，实际 {other:?}"),
+        }
+        assert_eq!(doc.data.model.notes[60].len(), 1, "只剩搬过去的 A");
+        let n = doc.data.model.notes[60][0];
+        assert_eq!((n.track, n.start_tick, n.end_tick), (1, 100, 200));
+
+        doc.push_undo(action, "arrange-replace", before_snap);
+        assert!(doc.undo(), "undo 应恢复 A(track0) 与 C(track1)");
+        assert_eq!(doc.data.model.notes[60].len(), 2);
+        assert!(
+            doc.data.model.notes[60]
+                .iter()
+                .any(|n| n.track == 0 && n.start_tick == 100 && n.end_tick == 200)
+        );
+        assert!(
+            doc.data.model.notes[60]
+                .iter()
+                .any(|n| n.track == 1 && n.start_tick == 100 && n.end_tick == 150)
+        );
+        assert!(doc.redo(), "redo 应再次替换");
+        assert_eq!(doc.data.model.notes[60].len(), 1);
     }
 
     /// 无重叠/无 clamp 时走操作式 ArrangeMoveNotes（原地路径），undo/redo 精确。
