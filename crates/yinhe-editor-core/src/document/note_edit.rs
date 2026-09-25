@@ -249,9 +249,11 @@ impl Document {
             } else {
                 self.edit.selected.offset(delta_ticks, delta_keys);
             }
-            self.edit
-                .selected
-                .set_members(after.iter().map(|(n, _)| n.id));
+            let mut copy_ids = yinhe_types::NoteBitsetBuilder::new();
+            for (n, _) in &after {
+                copy_ids.insert(n.id);
+            }
+            self.edit.selected.set_members_bitset(copy_ids.build());
             after
         };
         self.data.rebuild_model_dirty();
@@ -420,13 +422,23 @@ impl Document {
             };
             if fast {
                 let model = Arc::make_mut(&mut self.data.model);
+                // 矩形态：顺手收集实际被移动的音符 id，提交后物化为精确成员集
+                //（否则移动后矩形覆盖落点路人 → 被误高亮）。
+                let needs_materialize = !selection_before.has_explicit_members();
+                let mut moved_ids = yinhe_types::NoteBitsetBuilder::new();
                 crate::batch_ops::update_selected_in_place(model, &selection_before, |n, _k| {
+                    if needs_materialize {
+                        moved_ids.insert(n.id);
+                    }
                     let length = n.end_tick - n.start_tick;
                     n.start_tick = (n.start_tick as i64 + delta_ticks) as u32;
                     n.end_tick = n.start_tick + length;
                 });
                 model.rebuild_dirty();
                 self.edit.selected.offset(delta_ticks, 0);
+                if needs_materialize {
+                    self.edit.selected.set_members_bitset(moved_ids.build());
+                }
                 self.data.bump_revision();
                 return Some(UndoAction::MoveNotes {
                     selection: selection_before,
@@ -690,7 +702,13 @@ impl Document {
         };
         if fast_ok {
             let model = Arc::make_mut(&mut self.data.model);
+            // 矩形态：收集实际被拉伸的音符 id，提交后物化为精确成员集。
+            let needs_materialize = !selection_before.has_explicit_members();
+            let mut resized_ids = yinhe_types::NoteBitsetBuilder::new();
             crate::batch_ops::update_selected_in_place(model, &selection_before, |n, _k| {
+                if needs_materialize {
+                    resized_ids.insert(n.id);
+                }
                 let old_start = n.start_tick;
                 match side {
                     ResizeSide::Left => {
@@ -719,6 +737,9 @@ impl Document {
                         r.1 = (r.1 as i64 + dt).max(r.0 as i64 + 1) as u32;
                     }
                 }
+            }
+            if needs_materialize {
+                self.edit.selected.set_members_bitset(resized_ids.build());
             }
             model.rebuild_dirty();
             self.data.bump_revision();
@@ -1627,6 +1648,45 @@ mod tests {
         // 选中它
         doc.edit.selected.add_rect_track(100, 201, 60, 60, 0, 0);
         doc
+    }
+
+    /// 回归：矩形态选区（全选/轨道选择等）移动后，成员集物化为「实际被移动
+    /// 的音符」——移动后的矩形若覆盖落点路人，路人不得被高亮（旧实现只平移
+    /// 矩形，矩形近似会把路人算作选中）。
+    #[test]
+    fn move_from_rect_selection_materializes_moved_ids() {
+        let mut doc = make_doc_with_note(); // A: tick 100-200 key60
+        // 落点路人 B：同 key，起点 350（A 移动 +150 后为 250-350，矩形 [250,351)
+        // 恰好覆盖 B 的起点，但两者相接不算重叠 → 走快速路径）。
+        doc.add_note(
+            0,
+            NoteEvent {
+                id: 0,
+                start_tick: 350,
+                end_tick: 450,
+                key: 60,
+                velocity: 100,
+            },
+        );
+        doc.edit.selected.clear();
+        doc.edit.selected.add_rect_track(100, 201, 60, 60, 0, 0);
+        assert!(
+            !doc.edit.selected.has_explicit_members(),
+            "前提：矩形态选区"
+        );
+
+        doc.move_selected_notes(150, 0).expect("移动应产生 undo");
+        assert!(
+            doc.edit.selected.has_explicit_members(),
+            "矩形态移动后应物化成员位图"
+        );
+        let collected = batch_ops::collect_selected(&doc.data.model, &doc.edit.selected);
+        assert_eq!(
+            collected.len(),
+            1,
+            "成员只含被移动的 A，不含矩形覆盖的落点路人 B：{collected:?}"
+        );
+        assert_eq!(collected[0].0.start_tick, 250, "A 应移到 250");
     }
 
     /// 回归：重叠选框下同一音符只移动一次（位移小、移动后仍落在另一 rect

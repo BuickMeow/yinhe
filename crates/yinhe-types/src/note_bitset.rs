@@ -46,6 +46,66 @@ impl Default for NoteBitset {
     }
 }
 
+/// 页位图批量构建器：流式置位（按页号索引，O(1)/id，无 BTreeMap 查找），
+/// 完成后一次性组装为 [`NoteBitset`]。
+///
+/// 用于大规模收集（如 1.64 亿音符全选移动后把选区物化为精确成员集）：
+/// 逐个 `NoteBitset::insert` 在大集合下要多次树查找，本构建器直接
+/// `Vec<Option<Box<Page>>>` 索引 + 置位，峰值内存与位图本身同量级。
+pub struct NoteBitsetBuilder {
+    /// 页号（id >> 16）索引的稀疏页表。
+    pages: Vec<Option<Box<Page>>>,
+    count: u64,
+}
+
+impl Default for NoteBitsetBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl NoteBitsetBuilder {
+    pub fn new() -> Self {
+        Self {
+            pages: Vec::new(),
+            count: 0,
+        }
+    }
+
+    /// 置位（id 0 = 发号器哨兵，忽略）。
+    pub fn insert(&mut self, id: u32) {
+        if id == 0 {
+            return;
+        }
+        let page_idx = (id >> PAGE_SHIFT) as usize;
+        if page_idx >= self.pages.len() {
+            self.pages.resize_with(page_idx + 1, || None);
+        }
+        let page = self.pages[page_idx].get_or_insert_with(|| Box::new([0u64; PAGE_WORDS]));
+        let word = ((id & (PAGE_BITS - 1)) >> 6) as usize;
+        let mask = 1u64 << (id & 63);
+        if page[word] & mask == 0 {
+            page[word] |= mask;
+            self.count += 1;
+        }
+    }
+
+    /// 组装为位图（只保留非空页）。
+    pub fn build(self) -> NoteBitset {
+        let mut pages = BTreeMap::new();
+        for (idx, page) in self.pages.into_iter().enumerate() {
+            if let Some(p) = page {
+                pages.insert(idx as u32, Arc::new(*p));
+            }
+        }
+        NoteBitset {
+            pages,
+            count: self.count,
+            version: next_version(),
+        }
+    }
+}
+
 impl NoteBitset {
     pub fn count(&self) -> u64 {
         self.count
@@ -204,6 +264,31 @@ mod tests {
         ));
         assert_eq!(a.count(), 2);
         assert_eq!(b.count(), 3);
+    }
+
+    /// 批量构建器：与逐个 insert 等价（跨页、重复 id、id 0 忽略）。
+    #[test]
+    fn builder_matches_individual_inserts() {
+        let ids: Vec<u32> = vec![1, 2, 63, 64, 65, 65535, 65536, 65537, 200_000, 2, 0];
+        let mut direct = NoteBitset::default();
+        let mut builder = NoteBitsetBuilder::new();
+        for &id in &ids {
+            if id != 0 {
+                direct.insert(id); // 调用方语义：跳过 id 0 哨兵
+            }
+            builder.insert(id);
+        }
+        let built = builder.build();
+        assert_eq!(
+            built.count(),
+            direct.count(),
+            "count 应一致（含重复与 id 0）"
+        );
+        for &id in &[1u32, 2, 63, 64, 65, 65535, 65536, 65537, 200_000] {
+            assert!(built.contains(id), "id {id} 应置位");
+        }
+        assert!(!built.contains(0), "id 0 哨兵不入位图");
+        assert!(!built.contains(3), "未置位 id 不应命中");
     }
 
     #[test]

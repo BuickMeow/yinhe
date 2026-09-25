@@ -30,7 +30,7 @@ pub use automation_panel_view::{AnchorSelRect, AutomationPanelView};
 pub use hash::*;
 pub use metadata::{ChordEvent, KeySigEvent, LyricsEvent, MarkerEvent, ScaleType, from_midi_sf_mi};
 pub use note::{Note, PencilNoteDrag, TimeSigEvent, VelocityEdit};
-pub use note_bitset::NoteBitset;
+pub use note_bitset::{NoteBitset, NoteBitsetBuilder};
 pub use note_bucket::{BUCKET_CHUNK_CAP, NoteBucket, NoteRangeIter};
 pub use palette::TRACK_PALETTE;
 pub use pc_event::PcEvent;

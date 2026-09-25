@@ -211,6 +211,14 @@ impl Selection {
         self.materialized_rects = self.rects.len();
     }
 
+    /// 用批量构建的成员位图替换当前成员集（移动/复制/拉伸提交后让选区
+    /// 精确跟随「实际被操作音符」，不吸收落点路人）。
+    pub fn set_members_bitset(&mut self, bits: NoteBitset) {
+        self.members = Some(bits);
+        // 现有 rects 视作已物化（成员由调用方精确给出）。
+        self.materialized_rects = self.rects.len();
+    }
+
     /// 用给定 id 重建显式成员集（复制/粘贴后让选区跟随新音符）。
     pub fn set_members(&mut self, ids: impl IntoIterator<Item = u32>) {
         let mut bits = NoteBitset::default();
