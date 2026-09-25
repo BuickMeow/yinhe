@@ -9,6 +9,7 @@
 
 use std::sync::Arc;
 
+use super::event_edit::{conductor_delete_events, conductor_insert_event, conductor_set_event};
 use super::Document;
 
 impl Document {
@@ -24,21 +25,11 @@ impl Document {
         new_numerator: u8,
         new_denominator: u8,
     ) {
-        let model = Arc::make_mut(&mut self.data.model);
-        let conductor = Arc::make_mut(&mut model.conductor);
-        let Some(idx) = conductor.time_sig.iter().position(|e| e.tick == old_tick) else {
-            return;
-        };
-        {
-            let event = &mut conductor.time_sig[idx];
+        conductor_set_event!(rebuild tempo_map; self, time_sig, old_tick, |event| {
             event.tick = new_tick;
             event.numerator = new_numerator;
             event.denominator = new_denominator;
-        }
-        conductor.time_sig.sort_by_key(|e| e.tick);
-        // conductor 借用已释放（NLL），可重建 tempo_map
-        model.rebuild_tempo_map();
-        self.data.bump_revision();
+        });
     }
 
     /// 按 `old_tick` 找到 `conductor.key_sig` 事件并修改其字段。
@@ -50,70 +41,38 @@ impl Document {
         new_root: u8,
         new_scale: yinhe_types::ScaleType,
     ) {
-        let model = Arc::make_mut(&mut self.data.model);
-        let conductor = Arc::make_mut(&mut model.conductor);
-        let Some(idx) = conductor.key_sig.iter().position(|e| e.tick == old_tick) else {
-            return;
-        };
-        {
-            let event = &mut conductor.key_sig[idx];
+        conductor_set_event!(self, key_sig, old_tick, |event| {
             event.tick = new_tick;
             event.root = new_root;
             event.scale = new_scale;
-        }
-        conductor.key_sig.sort_by_key(|e| e.tick);
-        self.data.bump_revision();
+        });
     }
 
     /// 按 `old_tick` 找到 `conductor.markers` 事件并修改其字段。
     /// 未找到对应 tick 的事件时静默返回。
     pub fn set_marker_event(&mut self, old_tick: u32, new_tick: u32, new_text: String) {
-        let model = Arc::make_mut(&mut self.data.model);
-        let conductor = Arc::make_mut(&mut model.conductor);
-        let Some(idx) = conductor.markers.iter().position(|e| e.tick == old_tick) else {
-            return;
-        };
-        {
-            let event = &mut conductor.markers[idx];
+        conductor_set_event!(self, markers, old_tick, |event| {
             event.tick = new_tick;
             event.text = new_text;
-        }
-        conductor.markers.sort_by_key(|e| e.tick);
-        self.data.bump_revision();
+        });
     }
 
     /// 按 `old_tick` 找到 `conductor.lyrics` 事件并修改其字段。
     /// 未找到对应 tick 的事件时静默返回。
     pub fn set_conductor_lyrics_event(&mut self, old_tick: u32, new_tick: u32, new_text: String) {
-        let model = Arc::make_mut(&mut self.data.model);
-        let conductor = Arc::make_mut(&mut model.conductor);
-        let Some(idx) = conductor.lyrics.iter().position(|e| e.tick == old_tick) else {
-            return;
-        };
-        {
-            let event = &mut conductor.lyrics[idx];
+        conductor_set_event!(self, lyrics, old_tick, |event| {
             event.tick = new_tick;
             event.text = new_text;
-        }
-        conductor.lyrics.sort_by_key(|e| e.tick);
-        self.data.bump_revision();
+        });
     }
 
     /// 按 `old_tick` 找到 `conductor.chord` 事件并修改其字段。
     /// 未找到对应 tick 的事件时静默返回。
     pub fn set_conductor_chord_event(&mut self, old_tick: u32, new_tick: u32, new_text: String) {
-        let model = Arc::make_mut(&mut self.data.model);
-        let conductor = Arc::make_mut(&mut model.conductor);
-        let Some(idx) = conductor.chord.iter().position(|e| e.tick == old_tick) else {
-            return;
-        };
-        {
-            let event = &mut conductor.chord[idx];
+        conductor_set_event!(self, chord, old_tick, |event| {
             event.tick = new_tick;
             event.text = new_text;
-        }
-        conductor.chord.sort_by_key(|e| e.tick);
-        self.data.bump_revision();
+        });
     }
 
     // ── 批量删除（配合 event browser 多选）──
@@ -127,14 +86,7 @@ impl Document {
         Vec<yinhe_types::TimeSigEvent>,
         Vec<yinhe_types::TimeSigEvent>,
     ) {
-        let model = Arc::make_mut(&mut self.data.model);
-        let conductor = Arc::make_mut(&mut model.conductor);
-        let before = conductor.time_sig.clone();
-        conductor.time_sig.retain(|e| !ticks.contains(&e.tick));
-        let after = conductor.time_sig.clone();
-        model.rebuild_tempo_map();
-        self.data.bump_revision();
-        (before, after)
+        conductor_delete_events!(rebuild tempo_map; self, time_sig, ticks)
     }
 
     /// 删除 `conductor.key_sig` 中所有 tick 在 `ticks` 集合内的事件。
@@ -142,13 +94,7 @@ impl Document {
         &mut self,
         ticks: &std::collections::HashSet<u32>,
     ) -> (Vec<yinhe_types::KeySigEvent>, Vec<yinhe_types::KeySigEvent>) {
-        let model = Arc::make_mut(&mut self.data.model);
-        let conductor = Arc::make_mut(&mut model.conductor);
-        let before = conductor.key_sig.clone();
-        conductor.key_sig.retain(|e| !ticks.contains(&e.tick));
-        let after = conductor.key_sig.clone();
-        self.data.bump_revision();
-        (before, after)
+        conductor_delete_events!(self, key_sig, ticks)
     }
 
     /// 删除 `conductor.markers` 中所有 tick 在 `ticks` 集合内的事件。
@@ -156,13 +102,7 @@ impl Document {
         &mut self,
         ticks: &std::collections::HashSet<u32>,
     ) -> (Vec<yinhe_types::MarkerEvent>, Vec<yinhe_types::MarkerEvent>) {
-        let model = Arc::make_mut(&mut self.data.model);
-        let conductor = Arc::make_mut(&mut model.conductor);
-        let before = conductor.markers.clone();
-        conductor.markers.retain(|e| !ticks.contains(&e.tick));
-        let after = conductor.markers.clone();
-        self.data.bump_revision();
-        (before, after)
+        conductor_delete_events!(self, markers, ticks)
     }
 
     /// 删除 `conductor.lyrics` 中所有 tick 在 `ticks` 集合内的事件。
@@ -170,13 +110,7 @@ impl Document {
         &mut self,
         ticks: &std::collections::HashSet<u32>,
     ) -> (Vec<yinhe_types::LyricsEvent>, Vec<yinhe_types::LyricsEvent>) {
-        let model = Arc::make_mut(&mut self.data.model);
-        let conductor = Arc::make_mut(&mut model.conductor);
-        let before = conductor.lyrics.clone();
-        conductor.lyrics.retain(|e| !ticks.contains(&e.tick));
-        let after = conductor.lyrics.clone();
-        self.data.bump_revision();
-        (before, after)
+        conductor_delete_events!(self, lyrics, ticks)
     }
 
     /// 删除 `conductor.chord` 中所有 tick 在 `ticks` 集合内的事件。
@@ -184,77 +118,71 @@ impl Document {
         &mut self,
         ticks: &std::collections::HashSet<u32>,
     ) -> (Vec<yinhe_types::ChordEvent>, Vec<yinhe_types::ChordEvent>) {
-        let model = Arc::make_mut(&mut self.data.model);
-        let conductor = Arc::make_mut(&mut model.conductor);
-        let before = conductor.chord.clone();
-        conductor.chord.retain(|e| !ticks.contains(&e.tick));
-        let after = conductor.chord.clone();
-        self.data.bump_revision();
-        (before, after)
+        conductor_delete_events!(self, chord, ticks)
     }
 
     // ── 插入新事件（默认值）──
 
     /// 插入一个 TimeSig 事件（默认 4/4）。
     pub fn insert_time_sig_event(&mut self, tick: u32) {
-        let model = Arc::make_mut(&mut self.data.model);
-        let conductor = Arc::make_mut(&mut model.conductor);
-        conductor.time_sig.push(yinhe_types::TimeSigEvent {
-            tick,
-            numerator: 4,
-            denominator: 4,
-        });
-        conductor.time_sig.sort_by_key(|e| e.tick);
-        model.rebuild_tempo_map();
-        self.data.bump_revision();
+        conductor_insert_event!(
+            rebuild tempo_map;
+            self,
+            time_sig,
+            yinhe_types::TimeSigEvent {
+                tick,
+                numerator: 4,
+                denominator: 4,
+            }
+        );
     }
 
     /// 插入一个 KeySig 事件（默认 C 大调）。
     pub fn insert_key_sig_event(&mut self, tick: u32) {
-        let model = Arc::make_mut(&mut self.data.model);
-        let conductor = Arc::make_mut(&mut model.conductor);
-        conductor.key_sig.push(yinhe_types::KeySigEvent {
-            tick,
-            root: 0,
-            scale: yinhe_types::ScaleType::Major,
-        });
-        conductor.key_sig.sort_by_key(|e| e.tick);
-        self.data.bump_revision();
+        conductor_insert_event!(
+            self,
+            key_sig,
+            yinhe_types::KeySigEvent {
+                tick,
+                root: 0,
+                scale: yinhe_types::ScaleType::Major,
+            }
+        );
     }
 
     /// 插入一个 Marker 事件（默认空文本）。
     pub fn insert_marker_event(&mut self, tick: u32) {
-        let model = Arc::make_mut(&mut self.data.model);
-        let conductor = Arc::make_mut(&mut model.conductor);
-        conductor.markers.push(yinhe_types::MarkerEvent {
-            tick,
-            text: String::new(),
-        });
-        conductor.markers.sort_by_key(|e| e.tick);
-        self.data.bump_revision();
+        conductor_insert_event!(
+            self,
+            markers,
+            yinhe_types::MarkerEvent {
+                tick,
+                text: String::new(),
+            }
+        );
     }
 
     /// 插入一个 conductor 歌词事件（默认空文本）。
     pub fn insert_conductor_lyrics_event(&mut self, tick: u32) {
-        let model = Arc::make_mut(&mut self.data.model);
-        let conductor = Arc::make_mut(&mut model.conductor);
-        conductor.lyrics.push(yinhe_types::LyricsEvent {
-            tick,
-            text: String::new(),
-        });
-        conductor.lyrics.sort_by_key(|e| e.tick);
-        self.data.bump_revision();
+        conductor_insert_event!(
+            self,
+            lyrics,
+            yinhe_types::LyricsEvent {
+                tick,
+                text: String::new(),
+            }
+        );
     }
 
     /// 插入一个 conductor 和弦事件（默认空文本）。
     pub fn insert_conductor_chord_event(&mut self, tick: u32) {
-        let model = Arc::make_mut(&mut self.data.model);
-        let conductor = Arc::make_mut(&mut model.conductor);
-        conductor.chord.push(yinhe_types::ChordEvent {
-            tick,
-            text: String::new(),
-        });
-        conductor.chord.sort_by_key(|e| e.tick);
-        self.data.bump_revision();
+        conductor_insert_event!(
+            self,
+            chord,
+            yinhe_types::ChordEvent {
+                tick,
+                text: String::new(),
+            }
+        );
     }
 }

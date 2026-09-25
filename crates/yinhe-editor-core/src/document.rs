@@ -24,6 +24,7 @@ pub mod arrange_move;
 pub mod audio_clip_edit;
 pub mod automation_edit;
 pub mod conductor_edit;
+pub(crate) mod event_edit;
 pub mod note_edit;
 pub mod note_pencil;
 pub mod selection;
