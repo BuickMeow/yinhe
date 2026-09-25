@@ -8,6 +8,7 @@ const EDGE_THRESHOLD_PX: f32 = 6.0;
 
 /// 一次拖拽中收集的选中音符信息（move / resize 共用）。
 #[derive(Clone)]
+#[derive(Debug)]
 pub struct CollectedNote {
     pub track: u16,
     pub start_tick: u32,
@@ -119,29 +120,38 @@ pub fn collect_selected_notes(
     track_visible: &[bool],
     track_selected: &std::collections::HashSet<u16>,
 ) -> Vec<CollectedNote> {
-    selected
-        .rects
-        .iter()
-        .flat_map(|&(ts, te, kl, kh, _tl, _th)| {
-            (kl..=kh).flat_map(move |key| {
-                midi.map(|m| {
-                    m.key_notes_in_range(key, ts, te)
-                        .filter(|n| selected.accepts_note(n, key))
-                        .filter(|n| track_selected.is_empty() || track_selected.contains(&n.track))
-                        .filter(|n| track_visible.get(n.track as usize).copied().unwrap_or(true))
-                        .map(|n| CollectedNote {
-                            track: n.track,
-                            start_tick: n.start_tick,
-                            end_tick: n.end_tick,
-                            key,
-                            velocity: n.velocity,
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default()
-            })
-        })
-        .collect()
+    let Some(midi) = midi else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    // 与 batch_ops::for_each_selected 相同的「合并 tick 区间」遍历：重叠选框下
+    // 同一音符只收集一次（此前逐 rect 遍历会重复收集，导致 ghost/hidden 与
+    // 拖拽预览重复构建）。
+    let ranges = selected.merged_tick_ranges_by_key();
+    for (key, key_ranges) in ranges.iter().enumerate() {
+        let key = key as u8;
+        for &(ts, te) in key_ranges {
+            for n in midi.key_notes_in_range(key, ts, te) {
+                if !selected.accepts_note(n, key) {
+                    continue;
+                }
+                if !track_selected.is_empty() && !track_selected.contains(&n.track) {
+                    continue;
+                }
+                if !track_visible.get(n.track as usize).copied().unwrap_or(true) {
+                    continue;
+                }
+                out.push(CollectedNote {
+                    track: n.track,
+                    start_tick: n.start_tick,
+                    end_tick: n.end_tick,
+                    key,
+                    velocity: n.velocity,
+                });
+            }
+        }
+    }
+    out
 }
 
 /// PR 工具的轨道作用范围：track_selected（空 = 全部轨道，否则 min..=max）。
@@ -286,5 +296,43 @@ pub fn compute_resize_dt(
             dt = dt.min(dt_max);
             (origin_boundary_tick + dt as f64, dt)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yinhe_core::Selection;
+
+    /// 回归：重叠选框下同一音符只收集一次（此前逐 rect 遍历会重复收集）。
+    #[test]
+    fn collect_selected_notes_dedups_overlapping_rects() {
+        let midi = yinhe_test_helpers::make_midi(vec![(60, 0, 480, 0, 100)]);
+        let mut sel = Selection::default();
+        sel.add_rect_track(0, 480, 0, 127, 0, 0);
+        sel.add_rect_track(240, 720, 0, 127, 0, 0); // 与第一个重叠
+
+        let notes = collect_selected_notes(&sel, Some(&midi), &[true], &Default::default());
+        assert_eq!(notes.len(), 1, "重叠选框不得重复收集：{notes:?}");
+        assert_eq!(notes[0].start_tick, 0);
+    }
+
+    /// 轨道过滤与可见性过滤保持原语义（track_selected 空 = 不过滤）。
+    #[test]
+    fn collect_selected_notes_filters_track_and_visibility() {
+        let midi = yinhe_test_helpers::make_midi(vec![(60, 0, 480, 0, 100), (60, 0, 480, 1, 100)]);
+        let mut sel = Selection::default();
+        sel.add_rect_track(0, 480, 0, 127, 0, 1);
+
+        // 空 track_selected：不过滤轨道，但 track_visible[0]=false 会过滤掉轨 0
+        let notes = collect_selected_notes(&sel, Some(&midi), &[false, true], &Default::default());
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].track, 1);
+
+        // 显式 track_selected 只留轨 1
+        let only1: std::collections::HashSet<u16> = [1u16].into_iter().collect();
+        let notes = collect_selected_notes(&sel, Some(&midi), &[true, true], &only1);
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].track, 1);
     }
 }
