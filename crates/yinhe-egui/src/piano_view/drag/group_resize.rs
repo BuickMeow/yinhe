@@ -53,8 +53,10 @@ pub(crate) fn sel_resize_frame(
 
             // 生成 ghost/hidden：每个音符独立 clamp（end > start + 1）。
             // 视口裁剪：视口外的 ghost/hidden 不影响渲染（每帧重建）。
-            let (tick_lo, tick_hi) = view.visible_tick_range(music_rect.width());
-            let (key_lo, key_hi) = view.visible_cross_range(music_rect.height());
+            let main_len = view.main_axis_len(content_rect.width(), content_rect.height());
+            let (tick_lo, tick_hi) = view.visible_main_range(main_len);
+            let cross_len = view.cross_axis_len(content_rect.width(), content_rect.height());
+            let (key_lo, key_hi) = view.visible_cross_range(cross_len);
             for info in notes.iter() {
                 if info.key < key_lo || info.key > key_hi {
                     continue;
@@ -129,8 +131,10 @@ pub(crate) fn sel_resize_frame(
                 sel_rect.update_resize(dt);
 
                 // Keep ghost/hidden alive on the release frame（同样视口裁剪）
-                let (tick_lo, tick_hi) = view.visible_tick_range(music_rect.width());
-                let (key_lo, key_hi) = view.visible_cross_range(music_rect.height());
+                let main_len = view.main_axis_len(content_rect.width(), content_rect.height());
+                let (tick_lo, tick_hi) = view.visible_main_range(main_len);
+                let cross_len = view.cross_axis_len(content_rect.width(), content_rect.height());
+                let (key_lo, key_hi) = view.visible_cross_range(cross_len);
                 for info in notes.iter() {
                     if info.key < key_lo || info.key > key_hi {
                         continue;

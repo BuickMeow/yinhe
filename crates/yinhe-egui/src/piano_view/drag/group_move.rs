@@ -60,8 +60,10 @@ pub(crate) fn note_drag_frame(
             //（全选拖拽每帧从 GB 级降到可见音符数）。每帧重建，滚动后
             // 新进入视口的音符在当帧即被纳入。
             // Alt（复制模式）：原音符保留可见，不 push hidden_notes。
-            let (tick_lo, tick_hi) = view.visible_tick_range(music_rect.width());
-            let (key_lo, key_hi) = view.visible_cross_range(music_rect.height());
+            let main_len = view.main_axis_len(content_rect.width(), content_rect.height());
+            let (tick_lo, tick_hi) = view.visible_main_range(main_len);
+            let cross_len = view.cross_axis_len(content_rect.width(), content_rect.height());
+            let (key_lo, key_hi) = view.visible_cross_range(cross_len);
             for info in notes.iter() {
                 let new_tick = (info.start_tick as i64 + dt).max(0) as u32;
                 let new_key = ((info.key as i32) + dk).clamp(0, yinhe_types::MAX_KEY as i32) as u8;
@@ -152,8 +154,11 @@ pub(crate) fn note_drag_frame(
                 sel_rect.update_drag(dt, dk);
                 let has_notes = !notes.is_empty();
                 if has_notes {
-                    let (tick_lo, tick_hi) = view.visible_tick_range(music_rect.width());
-                    let (key_lo, key_hi) = view.visible_cross_range(music_rect.height());
+                    let main_len = view.main_axis_len(content_rect.width(), content_rect.height());
+                    let (tick_lo, tick_hi) = view.visible_main_range(main_len);
+                    let cross_len =
+                        view.cross_axis_len(content_rect.width(), content_rect.height());
+                    let (key_lo, key_hi) = view.visible_cross_range(cross_len);
                     for info in notes.iter() {
                         let new_tick = (info.start_tick as i64 + dt).max(0) as u32;
                         let new_key =

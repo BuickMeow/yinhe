@@ -1687,3 +1687,98 @@ fn marquee_members_not_hijacked_by_bystanders_after_move() {
         "收集到的必须是被框选的 A（v100），不能是落点路人 B（v80）"
     );
 }
+
+/// 回归：拖动 ghost 的视口裁剪必须与渲染层同源（方向感知 API + 内容区尺寸）。
+/// 曾误用 `visible_tick_range(music_rect.width())` / `visible_cross_range(...height())`
+/// —— music_rect 比 content_rect 少一个面板宽度，对应 tick 被当作视口外，
+/// 缩小视图时 ghost 被大量误裁（表现为"拖动没有预览/ghost 不动"）。
+#[test]
+fn note_drag_ghost_survives_viewport_cull() {
+    let ctx = egui::Context::default();
+    let mut view = test_view();
+    // 左侧键盘/轨道面板宽 200：music_rect 比 content_rect 窄（旧代码在此暴露）。
+    view.base.left_panel_width = 200.0;
+    let content_rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1400.0, 600.0));
+    let music_rect = egui::Rect::from_min_size(egui::pos2(200.0, 0.0), egui::vec2(1200.0, 600.0));
+    // 音符在 tick 1100（> 旧代码的 1000 视口右界，< 新代码的 1200）。
+    let midi = make_midi(vec![(70, 1100, 1400, 0, 100)]);
+    let mut selected = yinhe_core::Selection::default();
+    selected.add_rect_track(0, 2000, 0, 127, 0, 0);
+    let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+    sel_rect.push_rect((0.0, 2000.0, 0, 127), false);
+    let mut cursor_tick = None;
+    let mut note_drag_delta = None;
+    let mut note_resize_delta = None;
+    let track_selected = std::collections::HashSet::new();
+
+    // 屏幕坐标：tick 1100 → x = 200 + 1100 = 1300；key 70 → y = (127-70)*10 = 570。
+    let press = egui::pos2(1300.0, 570.0);
+    // 拖到视口内（避免触发 auto-scroll）：tick 1080→1050，位移 -30。
+    let drag = egui::pos2(1250.0, 570.0);
+    let (ghost_count, hidden_count);
+    let mut run = |raw: egui::RawInput, inject: bool| {
+        let mut out = (0usize, 0usize);
+        ctx.run_ui(raw, |ui| {
+            let (ghosts, hidden, _, _, _, _) = sel_drag_frame(
+                ui,
+                content_rect,
+                music_rect,
+                &mut view,
+                Some(&midi as &dyn yinhe_types::NoteSource),
+                &mut selected,
+                QuantizePreset::Fraction(1, 16),
+                480,
+                None,
+                10000.0,
+                &mut cursor_tick,
+                &mut note_drag_delta,
+                &mut note_resize_delta,
+                &mut sel_rect,
+                &[[0.5, 0.5, 0.5, 1.0]],
+                &[true],
+                &track_selected,
+                // write_track = Some → can_edit，走选区拖动分支（drag_notes 非空）。
+                Some(0),
+                None,
+                false,
+                yinhe_editor_core::audio_settings::QuickDeleteMode::Off,
+                None,
+            );
+            out = (ghosts.len(), hidden.len());
+            if inject {
+                // 在 sel_drag_frame 之后注入拖拽状态（覆盖本帧 save 的空状态）：
+                // 绕开 press 分支细节，聚焦被测点——拖动帧的 ghost 视口裁剪。
+                ui.data_mut(|d| {
+                    d.insert_persisted(
+                        ui.id().with("note_drag_origin"),
+                        Some((1100.0f64, 70.0f64, false)),
+                    );
+                    d.insert_persisted(
+                        ui.id().with("drag_notes"),
+                        Some(std::sync::Arc::new(vec![
+                            crate::selection::drag::CollectedNote {
+                                track: 0,
+                                start_tick: 1100,
+                                end_tick: 1400,
+                                key: 70,
+                                velocity: 100,
+                            },
+                        ])),
+                    );
+                });
+            }
+        })
+        .textures_delta
+        .clear();
+        out
+    };
+    // 帧 1：press 建立 pointer down 状态 + 注入拖拽状态。
+    let _ = run(press_event(press), true);
+    // 帧 2：拖动 → 产出 ghost/hidden。
+    (ghost_count, hidden_count) = run(drag_event(drag), false);
+    assert!(
+        ghost_count > 0,
+        "拖动帧必须产生 ghost 预览（视口裁剪不得误裁面板宽度对应的 tick）"
+    );
+    assert!(hidden_count > 0, "拖动帧必须隐藏原音符");
+}
