@@ -151,7 +151,8 @@ impl UndoAction {
                     }
                     crate::batch_ops::insert_batch(model, by_key);
                 }
-                model.rebuild();
+                // 轨道重映射保序（track 非排序键），统计重建无需全量 sort。
+                model.rebuild_stats_only();
                 doc.data.bump_revision();
                 doc.sync_track_caches();
                 // AM 试听/选中键随轨道结构同步重映射（undo/redo 方向由

@@ -471,6 +471,10 @@ impl YinModel {
     /// 与 `mark_dirty` 模式一致：不自动 rebuild，调用方随后调用
     /// [`YinModel::rebuild`] 重建统计与 revision。
     pub fn apply_track_remap(&mut self, remap: &[u16]) {
+        // 恒等重映射（末尾追加新轨等）无需遍历任何音符。
+        if remap.iter().enumerate().all(|(i, &new)| i as u16 == new) {
+            return;
+        }
         for bucket in self.notes.iter_mut() {
             let bucket = Arc::make_mut(bucket);
             bucket.retain_mut(|n| match remap.get(n.track as usize) {
@@ -481,6 +485,32 @@ impl YinModel {
                 _ => false,
             });
         }
+    }
+
+    /// 一趟完成轨号重映射并收集被删除的音符（含 key），供 undo 恢复。
+    ///
+    /// 语义与 [`YinModel::apply_track_remap`] 相同，但额外返回 `(Note, key)`；
+    /// 调用方仍需自行重建统计（推荐 [`YinModel::rebuild_stats_only`]，
+    /// remap 不破坏桶内排序，无需全量 sort）。
+    pub fn apply_track_remap_collect(&mut self, remap: &[u16]) -> Vec<(yinhe_types::Note, u8)> {
+        let mut deleted = Vec::new();
+        if remap.iter().enumerate().all(|(i, &new)| i as u16 == new) {
+            return deleted;
+        }
+        for (key, bucket) in self.notes.iter_mut().enumerate() {
+            let bucket = Arc::make_mut(bucket);
+            bucket.retain_mut(|n| match remap.get(n.track as usize) {
+                Some(&new) if new != u16::MAX => {
+                    n.track = new;
+                    true
+                }
+                _ => {
+                    deleted.push((*n, key as u8));
+                    false
+                }
+            });
+        }
+        deleted
     }
 
     /// 头部是否为 conductor 轨（无音符、无自动化 lane、无 program change）。
@@ -638,6 +668,110 @@ mod tests {
         assert_eq!(m.notes[60][1].id, 42);
         assert_eq!(m.notes[64][0].id, 7);
         assert_eq!(m.next_note_id, 43, "发号器应推进到 max+1");
+    }
+
+    /// remap_track_stats：纯重排时轨道级/桶级统计按 remap 搬移（零音符遍历）。
+    #[test]
+    fn remap_track_stats_moves_track_counts() {
+        let mut m = YinModel {
+            tracks: vec![
+                Arc::new(TrackData::new(0, 0)),
+                Arc::new(TrackData::new(0, 1)),
+                Arc::new(TrackData::new(0, 2)),
+            ],
+            ..Default::default()
+        };
+        m.load_track_notes(vec![
+            vec![note(0, 100, 60), note(200, 300, 60)],
+            vec![note(0, 100, 61)],
+            vec![note(0, 100, 60)],
+        ]);
+        m.rebuild();
+        assert_eq!(m.track_note_count, vec![2, 1, 1]);
+        assert_eq!(m.tick_length, 300);
+
+        // 旧 0→新 1、旧 1→新 2、旧 2→新 0
+        let remap = [1u16, 2, 0];
+        m.apply_track_remap(&remap);
+        m.remap_track_stats(&remap);
+
+        assert_eq!(m.track_note_count, vec![1, 2, 1], "统计应随轨号搬移");
+        assert_eq!(m.track_audible_count, vec![1, 2, 1]);
+        assert_eq!(m.note_count, 4, "音符总数不变");
+        assert_eq!(m.tick_length, 300, "tick_length 不变");
+        assert_eq!(m.bucket_note_count[60], 3, "桶计数不变");
+        assert_eq!(m.bucket_track_stats[60].get(&1), Some(&(2, 2)));
+        assert_eq!(m.bucket_track_stats[60].get(&0), Some(&(1, 1)));
+        assert_eq!(m.bucket_track_stats[61].get(&2), Some(&(1, 1)));
+        assert_eq!(m.bucket_track_stats[61].get(&1), None, "旧键应消失");
+    }
+
+    /// remap_track_stats：中间插入新轨时，新轨槽位统计为 0（max 新轨号 + 1）。
+    #[test]
+    fn remap_track_stats_insert_leaves_new_slot_empty() {
+        let mut m = YinModel {
+            tracks: vec![
+                Arc::new(TrackData::new(0, 0)),
+                Arc::new(TrackData::new(0, 1)),
+            ],
+            ..Default::default()
+        };
+        m.load_track_notes(vec![vec![note(0, 100, 60)], vec![note(0, 100, 61)]]);
+        m.rebuild();
+
+        // 在 idx 1 插入新轨：旧 0→0、旧 1→2
+        m.tracks.insert(1, Arc::new(TrackData::new(0, 2)));
+        let remap = [0u16, 2];
+        m.apply_track_remap(&remap);
+        m.remap_track_stats(&remap);
+
+        assert_eq!(m.track_note_count, vec![1, 0, 1], "新轨槽位为 0");
+        assert_eq!(m.bucket_track_stats[60].get(&0), Some(&(1, 1)));
+        assert_eq!(m.bucket_track_stats[61].get(&2), Some(&(1, 1)));
+        assert_eq!(m.bucket_track_stats[61].get(&1), None);
+    }
+
+    /// push_empty_track_stats：末尾追加空轨槽位（旧统计不变）。
+    #[test]
+    fn push_empty_track_stats_appends_zero_slots() {
+        let mut m = YinModel {
+            tracks: vec![Arc::new(TrackData::new(0, 0))],
+            ..Default::default()
+        };
+        m.load_track_notes(vec![vec![note(0, 100, 60)]]);
+        m.rebuild();
+        assert_eq!(m.track_note_count, vec![1]);
+
+        m.tracks.push(Arc::new(TrackData::new(0, 1)));
+        m.tracks.push(Arc::new(TrackData::new(0, 2)));
+        m.push_empty_track_stats(2);
+
+        assert_eq!(m.track_note_count, vec![1, 0, 0]);
+        assert_eq!(m.track_audible_count, vec![1, 0, 0]);
+        assert_eq!(m.note_count, 1);
+        assert_eq!(m.tick_length, 100);
+    }
+
+    /// apply_track_remap：恒等 remap 是 no-op（不触碰音符）。
+    #[test]
+    fn apply_track_remap_identity_is_noop() {
+        let mut m = YinModel {
+            tracks: vec![
+                Arc::new(TrackData::new(0, 0)),
+                Arc::new(TrackData::new(0, 1)),
+            ],
+            ..Default::default()
+        };
+        m.load_track_notes(vec![vec![note(0, 100, 60)], vec![note(0, 100, 61)]]);
+        m.rebuild();
+        let before_ids: Vec<u32> = m.notes[60].iter().map(|n| n.id).collect();
+
+        m.apply_track_remap(&[0, 1]);
+
+        assert_eq!(m.notes[60][0].track, 0);
+        assert_eq!(m.notes[61][0].track, 1);
+        let after_ids: Vec<u32> = m.notes[60].iter().map(|n| n.id).collect();
+        assert_eq!(before_ids, after_ids);
     }
 
     /// apply_track_remap：删除轨（u16::MAX）与重编号一趟完成，越界按删除。

@@ -94,8 +94,14 @@ impl Document {
 
         let tracks_after: Vec<Arc<yinhe_core::TrackData>> = model.tracks.clone();
 
-        model.apply_track_remap(&note_remap);
-        model.rebuild();
+        if insert_idx == tracks_before.len() {
+            // 末尾追加：remap 恒等（apply_track_remap 自动跳过），只补统计槽位。
+            model.push_empty_track_stats(1);
+        } else {
+            // 中间插入：音符轨号平移（remap 保序），统计按 remap 搬移。
+            model.apply_track_remap(&note_remap);
+            model.remap_track_stats(&note_remap);
+        }
         self.data.bump_revision();
 
         // Update edit state
@@ -155,7 +161,8 @@ impl Document {
         let tracks_after: Vec<Arc<yinhe_core::TrackData>> = model.tracks.clone();
         let total_tracks = model.tracks.len();
 
-        model.rebuild();
+        // 末尾追加：既有音符轨号不变（恒等 remap），新轨无音符 → 只补统计槽位。
+        model.push_empty_track_stats(specs.len());
         self.data.bump_revision();
 
         // Update edit state：选中本批新建的全部音轨。
@@ -192,20 +199,6 @@ impl Document {
 
         let tracks_before: Vec<Arc<yinhe_core::TrackData>> = model.tracks.clone();
 
-        // 先捕获被删轨道上的音符（含 key），供 undo 恢复。
-        // 必须在 make_mut + retain 之前从只读 model 读取，否则音符已被删。
-        let deleted_notes: Vec<(yinhe_types::Note, u8)> = model
-            .notes
-            .iter()
-            .enumerate()
-            .flat_map(|(key, bucket)| {
-                bucket
-                    .iter()
-                    .filter(|n| n.track as usize == idx)
-                    .map(move |n| (*n, key as u8))
-            })
-            .collect();
-
         let model = Arc::make_mut(&mut self.data.model);
         model.tracks.remove(idx);
 
@@ -227,9 +220,11 @@ impl Document {
 
         let tracks_after: Vec<Arc<yinhe_core::TrackData>> = model.tracks.clone();
 
-        // 删除被删轨音符 + 其余轨号 -1（rebuild 会重建统计与全量 revision）。
-        model.apply_track_remap(&note_remap);
-        model.rebuild();
+        // 一趟完成删除 + 重编号 + 收集被删音符（供 undo）；remap 保序，
+        // 统计重建无需全量 sort。
+        let deleted_notes: Vec<(yinhe_types::Note, u8)> =
+            model.apply_track_remap_collect(&note_remap);
+        model.rebuild_stats_only();
         let num_tracks = model.tracks.len();
         self.data.bump_revision();
 
@@ -315,7 +310,8 @@ impl Document {
         let tracks_after: Vec<Arc<yinhe_core::TrackData>> = model.tracks.clone();
 
         model.apply_track_remap(&note_remap);
-        model.rebuild();
+        // 纯重排：音符 tick 分布不变，统计按 remap 搬移（零音符遍历）。
+        model.remap_track_stats(&note_remap);
         self.data.bump_revision();
 
         // Update edit state
@@ -461,6 +457,75 @@ mod tests {
         action.reversed().redo(&mut doc);
         assert_eq!(doc.model().tracks.len(), 17);
         assert_eq!(doc.model().tracks[16].name, "Track 16");
+    }
+
+    /// 轨道结构变更（追加/删除）后统计保持一致，undo 回放后同样正确。
+    #[test]
+    fn track_structure_ops_keep_stats_consistent() {
+        let mut doc = Document::empty();
+        doc.add_note(
+            1,
+            yinhe_core::NoteEvent {
+                id: 0,
+                start_tick: 100,
+                end_tick: 200,
+                key: 60,
+                velocity: 100,
+            },
+        );
+        doc.add_note(
+            2,
+            yinhe_core::NoteEvent {
+                id: 0,
+                start_tick: 300,
+                end_tick: 400,
+                key: 61,
+                velocity: 100,
+            },
+        );
+        {
+            let m = doc.model();
+            assert_eq!(m.track_note_count[1], 1);
+            assert_eq!(m.track_note_count[2], 1);
+            assert_eq!(m.note_count, 2);
+            assert_eq!(m.tick_length, 400);
+        }
+
+        // 末尾追加：统计只补 0 槽位（新轨无音符）。
+        doc.add_tracks_batch(&[NewTrackSpec {
+            kind: yinhe_core::TrackKind::Midi,
+            port: 0,
+            channel: 0,
+            audio_channel: None,
+        }])
+        .expect("批量创建应成功");
+        {
+            let m = doc.model();
+            assert_eq!(m.track_note_count.len(), m.tracks.len());
+            assert_eq!(m.track_note_count[17], 0, "新轨统计为 0");
+            assert_eq!(m.note_count, 2);
+            assert_eq!(m.tick_length, 400);
+        }
+
+        // 删除 idx 1（含音符的轨）：note_count 减少、统计长度 -1。
+        let action = doc.remove_track(1).expect("删除应产生 undo");
+        {
+            let m = doc.model();
+            assert_eq!(m.track_note_count.len(), m.tracks.len());
+            assert_eq!(m.note_count, 1, "被删轨音符应从 note_count 移除");
+            assert_eq!(m.tick_length, 400, "原 Track 2 的音符仍是最大 end");
+            assert_eq!(m.track_note_count[1], 1, "原 Track 2 现在 idx 1");
+        }
+
+        // undo 回放（TrackStructure 路径）后统计恢复。
+        action.reversed().redo(&mut doc);
+        {
+            let m = doc.model();
+            assert_eq!(m.note_count, 2, "undo 后音符与统计应恢复");
+            assert_eq!(m.track_note_count[1], 1);
+            assert_eq!(m.track_note_count[2], 1);
+            assert_eq!(m.tick_length, 400);
+        }
     }
 
     /// 空批次是 no-op，不产生 undo。

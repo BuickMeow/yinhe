@@ -80,7 +80,15 @@ impl YinModel {
         self.notes.par_iter_mut().for_each(|bucket| {
             Arc::make_mut(bucket).sort();
         });
+        self.rebuild_stats_only();
+    }
 
+    /// 只重建统计与 revision，不排序。
+    ///
+    /// 用于不破坏桶内 `start_tick` 顺序的结构变更（轨道重映射、轨号平移等：
+    /// track 不是排序键，`retain_mut` 保持有序）。比 [`YinModel::rebuild`]
+    /// 省掉 1.64 亿音符级别的全桶排序。
+    pub fn rebuild_stats_only(&mut self) {
         // Bump all note_revisions (full rebuild = all keys changed).
         for r in &mut self.note_revisions {
             *r = r.wrapping_add(1);
@@ -135,6 +143,59 @@ impl YinModel {
 
         // Rebuild tempo_map (depends on tick_length we just computed).
         self.tempo_map = Arc::new(self.build_tempo_map());
+    }
+
+    /// 按 `remap` 搬移轨道级统计（`remap[旧轨] = 新轨`，`u16::MAX` = 删除）。
+    ///
+    /// 仅适用于**纯重排/中间插入**场景：音符总数、`tick_length`、`max_note_len`、
+    /// 每桶计数与桶内最大 end 都不变（remap 不改音符的 tick）。零音符遍历，
+    /// 成本 O(轨道数 + KEY_COUNT × 桶内轨道数)。
+    ///
+    /// 删除轨（remap 含 `u16::MAX`）不要用本方法，请走
+    /// [`YinModel::rebuild_stats_only`]（note_count/tick_length 需要重算）。
+    pub fn remap_track_stats(&mut self, remap: &[u16]) {
+        // 新轨数 = 最大新轨号 + 1（中间插入时新轨槽位在 remap 中无旧轨对应）。
+        let new_len = remap
+            .iter()
+            .filter(|&&v| v != u16::MAX)
+            .max()
+            .map_or(0, |&m| m as usize + 1);
+        let mut counts = vec![0u64; new_len];
+        let mut audible = vec![0u64; new_len];
+        for (old, &new) in remap.iter().enumerate() {
+            if new == u16::MAX {
+                continue;
+            }
+            counts[new as usize] += self.track_note_count.get(old).copied().unwrap_or(0);
+            audible[new as usize] += self.track_audible_count.get(old).copied().unwrap_or(0);
+        }
+        self.track_note_count = counts;
+        self.track_audible_count = audible;
+        for k in 0..KEY_COUNT {
+            let mut new_map = HashMap::with_capacity(self.bucket_track_stats[k].len());
+            for (&old, &(count, aud)) in &self.bucket_track_stats[k] {
+                let Some(&new) = remap.get(old as usize) else {
+                    continue;
+                };
+                if new == u16::MAX {
+                    continue;
+                }
+                let e = new_map.entry(new).or_insert((0, 0));
+                e.0 += count;
+                e.1 += aud;
+            }
+            self.bucket_track_stats[k] = new_map;
+        }
+    }
+
+    /// 末尾追加 `n` 条空轨的统计槽位（新轨无音符，无需任何音符遍历）。
+    ///
+    /// 调用方必须已把轨道 push 到 `tracks` 末尾（`add_tracks_batch` 场景）。
+    pub fn push_empty_track_stats(&mut self, n: usize) {
+        self.track_note_count
+            .resize(self.track_note_count.len() + n, 0);
+        self.track_audible_count
+            .resize(self.track_audible_count.len() + n, 0);
     }
 
     /// Rebuild statistics for the dirty buckets incrementally.
