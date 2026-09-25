@@ -178,6 +178,7 @@ impl App {
 
     fn poll_autosave_batch_result(&mut self) {
         let recv = self
+            .jobs
             .autosave
             .rx
             .as_ref()
@@ -192,12 +193,13 @@ impl App {
         let Some(new_entries) = recv else {
             return;
         };
-        self.autosave.rx = None;
-        self.autosave.in_flight = false;
-        self.autosave.last_run = Some(Instant::now());
+        self.jobs.autosave.rx = None;
+        self.jobs.autosave.in_flight = false;
+        self.jobs.autosave.last_run = Some(Instant::now());
         // 同一文档的旧备份文件（路径可能因 doc_id 复用而不同）先删再合并
         for e in &new_entries {
             let stale: Vec<AutoSaveEntry> = self
+                .jobs
                 .autosave
                 .manifest
                 .entries
@@ -208,20 +210,22 @@ impl App {
             for old in &stale {
                 delete_entry_file(old);
             }
-            self.autosave
+            self.jobs
+                .autosave
                 .manifest
                 .entries
                 .retain(|o| o.doc_id != e.doc_id);
-            self.autosave.manifest.entries.push(e.clone());
+            self.jobs.autosave.manifest.entries.push(e.clone());
         }
-        save_manifest(&self.autosave.manifest);
+        save_manifest(&self.jobs.autosave.manifest);
     }
 
     fn poll_autosave_trigger(&mut self) {
-        if self.autosave.in_flight || !self.audio_settings.auto_save_enabled {
+        if self.jobs.autosave.in_flight || !self.audio_settings.auto_save_enabled {
             return;
         }
         if !self
+            .jobs
             .autosave
             .interval_due(self.audio_settings.auto_save_interval_secs)
         {
@@ -232,8 +236,8 @@ impl App {
 
     /// 触发一轮自动保存（只处理脏文档；无脏文档时仅重置计时）。
     pub(crate) fn run_autosave_batch(&mut self) {
-        self.autosave.last_run = Some(Instant::now());
-        if self.autosave.in_flight {
+        self.jobs.autosave.last_run = Some(Instant::now());
+        if self.jobs.autosave.in_flight {
             return;
         }
         let dirty: Vec<usize> = self
@@ -286,7 +290,7 @@ impl App {
                     });
                     let _ = tx.send(ok);
                 });
-                self.autosave.lost_rx = Some(rx);
+                self.jobs.autosave.lost_rx = Some(rx);
             }
             None => {
                 let (tx, rx) = mpsc::channel::<Vec<AutoSaveEntry>>();
@@ -294,8 +298,8 @@ impl App {
                     let (entries, _) = save_jobs(jobs);
                     let _ = tx.send(entries);
                 });
-                self.autosave.in_flight = true;
-                self.autosave.rx = Some(rx);
+                self.jobs.autosave.in_flight = true;
+                self.jobs.autosave.rx = Some(rx);
             }
         }
     }
@@ -303,6 +307,7 @@ impl App {
     /// 删除某文档的自动保存备份（用户正常保存成功/关闭文档时调用）。
     pub(crate) fn discard_autosave_for(&mut self, doc_id: u64) {
         let Some(pos) = self
+            .jobs
             .autosave
             .manifest
             .entries
@@ -311,35 +316,35 @@ impl App {
         else {
             return;
         };
-        let entry = self.autosave.manifest.entries.remove(pos);
+        let entry = self.jobs.autosave.manifest.entries.remove(pos);
         delete_entry_file(&entry);
-        save_manifest(&self.autosave.manifest);
+        save_manifest(&self.jobs.autosave.manifest);
     }
 
     /// 清空全部自动保存（正常退出时调用）。
     pub(crate) fn clear_autosave(&mut self) {
-        let entries = std::mem::take(&mut self.autosave.manifest.entries);
+        let entries = std::mem::take(&mut self.jobs.autosave.manifest.entries);
         for e in &entries {
             delete_entry_file(e);
         }
-        self.autosave.manifest.auto_recover = false;
-        self.autosave.manifest.reopen.clear();
-        save_manifest(&self.autosave.manifest);
+        self.jobs.autosave.manifest.auto_recover = false;
+        self.jobs.autosave.manifest.reopen.clear();
+        save_manifest(&self.jobs.autosave.manifest);
     }
 
     // ── 启动恢复 ──
 
     /// 首次 poll 时处理启动残留：自动重启直接恢复，否则弹询问窗。
     fn poll_recovery_start(&mut self) {
-        if self.autosave.recovery_handled {
+        if self.jobs.autosave.recovery_handled {
             return;
         }
-        let Some(entries) = self.autosave.recovery.clone() else {
+        let Some(entries) = self.jobs.autosave.recovery.clone() else {
             return;
         };
-        self.autosave.recovery_handled = true;
-        if self.autosave.recovery_auto {
-            let reopen = std::mem::take(&mut self.autosave.recovery_reopen);
+        self.jobs.autosave.recovery_handled = true;
+        if self.jobs.autosave.recovery_auto {
+            let reopen = std::mem::take(&mut self.jobs.autosave.recovery_reopen);
             let mut queue: Vec<AutoSaveEntry> = entries;
             for path in reopen {
                 let name = std::path::Path::new(&path)
@@ -358,16 +363,16 @@ impl App {
             }
             self.restore_autosave_entries(queue);
         } else {
-            self.autosave.show_recovery_dialog = true;
+            self.jobs.autosave.show_recovery_dialog = true;
         }
     }
 
     /// 开始恢复给定记录（顺序加载）。
     pub(crate) fn restore_autosave_entries(&mut self, entries: Vec<AutoSaveEntry>) {
-        self.autosave.recovery = None;
-        self.autosave.show_recovery_dialog = false;
-        self.autosave.restore_in_flight = true;
-        self.autosave.restore_queue.extend(entries);
+        self.jobs.autosave.recovery = None;
+        self.jobs.autosave.show_recovery_dialog = false;
+        self.jobs.autosave.restore_in_flight = true;
+        self.jobs.autosave.restore_queue.extend(entries);
         self.pump_restore_queue();
     }
 
@@ -376,12 +381,12 @@ impl App {
         for e in entries {
             delete_entry_file(e);
         }
-        self.autosave.manifest.entries.clear();
-        self.autosave.manifest.auto_recover = false;
-        self.autosave.manifest.reopen.clear();
-        save_manifest(&self.autosave.manifest);
-        self.autosave.recovery = None;
-        self.autosave.show_recovery_dialog = false;
+        self.jobs.autosave.manifest.entries.clear();
+        self.jobs.autosave.manifest.auto_recover = false;
+        self.jobs.autosave.manifest.reopen.clear();
+        save_manifest(&self.jobs.autosave.manifest);
+        self.jobs.autosave.recovery = None;
+        self.jobs.autosave.show_recovery_dialog = false;
     }
 
     /// 队列推进：空闲时加载下一个恢复文件。
@@ -389,13 +394,14 @@ impl App {
         if self.file_loader.is_loading() {
             return;
         }
-        let Some(entry) = self.autosave.restore_queue.pop_front() else {
-            if self.autosave.restore_in_flight {
-                self.autosave.restore_in_flight = false;
+        let Some(entry) = self.jobs.autosave.restore_queue.pop_front() else {
+            if self.jobs.autosave.restore_in_flight {
+                self.jobs.autosave.restore_in_flight = false;
             }
             return;
         };
-        self.autosave
+        self.jobs
+            .autosave
             .pending_restore
             .insert(entry.file.clone(), entry.clone());
         self.file_loader
@@ -406,7 +412,7 @@ impl App {
     /// 完成回调里才 push 进 workspace，此前不能作用到当时 active 的旧文档
     /// （旧实现会误改旧文档的路径/dirty，恢复文档反而 Cmd+S 写回备份目录）。
     pub(crate) fn take_restore_entry(&mut self, path: &str) -> Option<AutoSaveEntry> {
-        self.autosave.pending_restore.remove(path)
+        self.jobs.autosave.pending_restore.remove(path)
     }
 
     /// 把恢复条目作用到**已登记**（push 之后）的恢复文档：绑定原路径/名称、
@@ -421,12 +427,13 @@ impl App {
             doc.mark_loaded();
         }
         delete_entry_file(entry);
-        self.autosave
+        self.jobs
+            .autosave
             .manifest
             .entries
             .retain(|e| e.doc_id != entry.doc_id);
-        self.autosave.manifest.auto_recover = false;
-        save_manifest(&self.autosave.manifest);
+        self.jobs.autosave.manifest.auto_recover = false;
+        save_manifest(&self.jobs.autosave.manifest);
         self.pump_restore_queue();
     }
 
@@ -435,15 +442,15 @@ impl App {
     /// device lost 处理：保全未保存文档 → spawn 新进程自动恢复 → 退出。
     /// 任一环节失败时回退到手动重启弹窗。
     pub(crate) fn handle_device_lost(&mut self, ctx: &egui::Context) {
-        if !self.autosave.lost_started {
-            self.autosave.lost_started = true;
+        if !self.jobs.autosave.lost_started {
+            self.jobs.autosave.lost_started = true;
             self.begin_lost_recovery();
             return;
         }
-        if let Some(rx) = self.autosave.lost_rx.as_ref() {
+        if let Some(rx) = self.jobs.autosave.lost_rx.as_ref() {
             match rx.try_recv() {
                 Ok(true) => {
-                    self.autosave.lost_rx = None;
+                    self.jobs.autosave.lost_rx = None;
                     match std::env::current_exe() {
                         Ok(exe) => {
                             let spawn = std::process::Command::new(exe)
@@ -456,28 +463,28 @@ impl App {
                                 }
                                 Err(e) => {
                                     tracing::error!("[autosave] 恢复进程启动失败: {e}");
-                                    self.autosave.lost_failed = true;
+                                    self.jobs.autosave.lost_failed = true;
                                 }
                             }
                         }
                         Err(e) => {
                             tracing::error!("[autosave] 无法定位可执行文件: {e}");
-                            self.autosave.lost_failed = true;
+                            self.jobs.autosave.lost_failed = true;
                         }
                     }
                 }
                 Ok(false) => {
-                    self.autosave.lost_rx = None;
-                    self.autosave.lost_failed = true;
+                    self.jobs.autosave.lost_rx = None;
+                    self.jobs.autosave.lost_failed = true;
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    self.autosave.lost_rx = None;
-                    self.autosave.lost_failed = true;
+                    self.jobs.autosave.lost_rx = None;
+                    self.jobs.autosave.lost_failed = true;
                 }
             }
         }
-        if self.autosave.lost_failed && crate::dialogs::gpu_device_lost::show_viewport(ctx) {
+        if self.jobs.autosave.lost_failed && crate::dialogs::gpu_device_lost::show_viewport(ctx) {
             self.should_exit = true;
         }
     }
@@ -495,7 +502,7 @@ impl App {
             }
         }
         if jobs.is_empty() && reopen.is_empty() {
-            self.autosave.lost_failed = true;
+            self.jobs.autosave.lost_failed = true;
             return;
         }
         if jobs.is_empty() {
@@ -507,7 +514,7 @@ impl App {
             });
             let (tx, rx) = mpsc::channel();
             let _ = tx.send(true);
-            self.autosave.lost_rx = Some(rx);
+            self.jobs.autosave.lost_rx = Some(rx);
             return;
         }
         let jobs: Vec<AutoSaveJob> = jobs.into_iter().map(|idx| self.autosave_job(idx)).collect();

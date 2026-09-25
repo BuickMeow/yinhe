@@ -1081,6 +1081,226 @@ mod tests {
         assert_eq!(cell_size, 2.0, "背景拖拽不应缩放 cell_size");
     }
 
+    /// 像素空间垂直滚动条：thumb 中间拖动 → 沿主轴平移 scroll_y，不改变 cell_size。
+    /// 配置：total=200×2=400px，view=100px → scale=0.25，下拖 30px = 平移 120px。
+    #[test]
+    fn vertical_thumb_drag_pans_scroll_y() {
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(16.0, 100.0));
+        let mut scroll_y = 0.0f32;
+        let mut cell_size = 2.0f32;
+        let mut dirty = false;
+
+        // thumb 占 [0,25]，middle 区 [4,21]；按下 (8,12) 下拖到 (8,42)。
+        let start = egui::pos2(8.0, 12.0);
+        let end = egui::pos2(8.0, 42.0);
+        let _ = run_frame_vertical(
+            &ctx,
+            drag_event(start),
+            rect,
+            &mut scroll_y,
+            &mut cell_size,
+            &mut dirty,
+        );
+        let _ = run_frame_vertical(
+            &ctx,
+            press_event(start),
+            rect,
+            &mut scroll_y,
+            &mut cell_size,
+            &mut dirty,
+        );
+        let dx = run_frame_vertical(
+            &ctx,
+            drag_event(end),
+            rect,
+            &mut scroll_y,
+            &mut cell_size,
+            &mut dirty,
+        );
+
+        assert_eq!(dx, 0.0, "纯主轴拖动不应返回副轴 dx，实际 {dx}");
+        assert!(
+            (scroll_y - 120.0).abs() < 0.5,
+            "thumb 下拖 30px 应平移 scroll_y≈120，实际 {scroll_y}"
+        );
+        assert_eq!(cell_size, 2.0, "平移不应改变 cell_size");
+    }
+
+    /// 与 `run_frame_vertical` 相同，但可指定 cell 离散档位（测试吸附）。
+    fn run_frame_vertical_stepped(
+        ctx: &egui::Context,
+        raw: egui::RawInput,
+        rect: egui::Rect,
+        scroll_y: &mut f32,
+        cell_size: &mut f32,
+        cell_step: Option<f32>,
+        dirty: &mut bool,
+    ) -> f32 {
+        let mut out = 0.0f32;
+        ctx.run_ui(raw, |ui| {
+            out = show_vertical(
+                ui,
+                rect,
+                100.0,
+                scroll_y,
+                cell_size,
+                200,
+                0.5,
+                8.0,
+                cell_step,
+                dirty,
+                yinhe_types::Orientation::Horizontal,
+            );
+        })
+        .textures_delta
+        .clear();
+        out
+    }
+
+    /// 像素空间垂直滚动条：拖终点边缩放 cell_size，并吸附到离散档位。
+    /// total=200×2=400px，view=100px，k=50；拖边使 thumb 长 47px → 原始 cell≈1.064，
+    /// 0.5 档位吸附到 1.0（锚定 thumb 起点 0，不产生滚动）。
+    #[test]
+    fn vertical_end_edge_drag_snaps_cell_size() {
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(16.0, 100.0));
+        let mut scroll_y = 0.0f32;
+        let mut cell_size = 2.0f32;
+        let mut dirty = false;
+        let step = Some(0.5f32);
+
+        // thumb 占 [0,25]，终点边 [21,25]；按下 (8,23) 下拖到 (8,45)。
+        let start = egui::pos2(8.0, 23.0);
+        let end = egui::pos2(8.0, 45.0);
+        let _ = run_frame_vertical_stepped(
+            &ctx,
+            drag_event(start),
+            rect,
+            &mut scroll_y,
+            &mut cell_size,
+            step,
+            &mut dirty,
+        );
+        let _ = run_frame_vertical_stepped(
+            &ctx,
+            press_event(start),
+            rect,
+            &mut scroll_y,
+            &mut cell_size,
+            step,
+            &mut dirty,
+        );
+        let _ = run_frame_vertical_stepped(
+            &ctx,
+            drag_event(end),
+            rect,
+            &mut scroll_y,
+            &mut cell_size,
+            step,
+            &mut dirty,
+        );
+
+        assert_eq!(
+            cell_size, 1.0,
+            "终点边下拖应缩放并吸附到 0.5 档位，实际 {cell_size}"
+        );
+        assert_eq!(
+            scroll_y, 0.0,
+            "锚定 thumb 起点应保持 scroll_y=0，实际 {scroll_y}"
+        );
+    }
+
+    /// 值空间垂直滚动条：thumb 中间拖动 → 平移 value_scroll，不改变 value_zoom。
+    /// total=127，zoom=2 → visible=63.5，thumb 占 [100,200]；上拖 30px 使 scroll 增大。
+    #[test]
+    fn value_thumb_drag_scrolls_without_zoom() {
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(24.0, 200.0));
+        let mut value_scroll = 0.0f32;
+        let mut value_zoom = 2.0f32;
+        let mut dirty = false;
+
+        // thumb [100,200]，middle [104,196]；按下 (12,150) 上拖到 (12,120)。
+        let start = egui::pos2(12.0, 150.0);
+        let end = egui::pos2(12.0, 120.0);
+        run_frame_value(
+            &ctx,
+            drag_event(start),
+            rect,
+            &mut value_scroll,
+            &mut value_zoom,
+            &mut dirty,
+        );
+        run_frame_value(
+            &ctx,
+            press_event(start),
+            rect,
+            &mut value_scroll,
+            &mut value_zoom,
+            &mut dirty,
+        );
+        run_frame_value(
+            &ctx,
+            drag_event(end),
+            rect,
+            &mut value_scroll,
+            &mut value_zoom,
+            &mut dirty,
+        );
+
+        assert!(
+            (value_scroll - 19.05).abs() < 0.1,
+            "上拖 30px 应平移 value_scroll≈19.05（30/1.5748），实际 {value_scroll}"
+        );
+        assert_eq!(value_zoom, 2.0, "平移不应缩放 value_zoom");
+    }
+
+    /// 值空间垂直滚动条：拖顶边 → 缩放 value_zoom，锚定底边值。
+    /// 顶边上拖 22px：visible 63.5→77.47，zoom 2→1.639，底边值固定 0。
+    #[test]
+    fn value_top_edge_zoom_anchors_bottom() {
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(24.0, 200.0));
+        let mut value_scroll = 0.0f32;
+        let mut value_zoom = 2.0f32;
+        let mut dirty = false;
+
+        // 顶边 [100,104]；按下 (12,102) 上拖到 (12,80)。
+        let start = egui::pos2(12.0, 102.0);
+        let end = egui::pos2(12.0, 80.0);
+        run_frame_value(
+            &ctx,
+            drag_event(start),
+            rect,
+            &mut value_scroll,
+            &mut value_zoom,
+            &mut dirty,
+        );
+        run_frame_value(
+            &ctx,
+            press_event(start),
+            rect,
+            &mut value_scroll,
+            &mut value_zoom,
+            &mut dirty,
+        );
+        run_frame_value(
+            &ctx,
+            drag_event(end),
+            rect,
+            &mut value_scroll,
+            &mut value_zoom,
+            &mut dirty,
+        );
+
+        assert!(
+            (value_zoom - 1.6393).abs() < 0.01,
+            "顶边上拖应缩小 zoom 到 ≈1.639，实际 {value_zoom}"
+        );
+        assert_eq!(value_scroll, 0.0, "锚定底边时 value_scroll 应保持 0");
+    }
+
     /// 垂直滚动条：鼠标在 band 外按下拖动（interact_radius 范围内）→ 不应平移/缩放。
     /// 回归：拖动自动化锚点时鼠标靠近垂直滚动条 band。
     #[test]

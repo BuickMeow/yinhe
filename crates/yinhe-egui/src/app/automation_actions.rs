@@ -423,11 +423,11 @@ impl App {
         target: &AutomationTarget,
     ) -> Option<u16> {
         if matches!(target, AutomationTarget::Tempo) {
-            doc.edit.conductor_track_idx
+            doc.edit.track_cache.conductor_idx
         } else {
             doc.edit
                 .main_track()
-                .filter(|&t| Some(t) != doc.edit.conductor_track_idx)
+                .filter(|&t| Some(t) != doc.edit.track_cache.conductor_idx)
         }
     }
 }

@@ -191,7 +191,7 @@ pub fn show(
     // ── AM 展开状态与行布局：音轨面板与 GPU 视图共用（子行高 = 音轨行高）──
     // Conductor 不展开（主行直显 Tempo）。
     doc.edit.arr_am_expanded.resize(num_tracks, false);
-    let conductor_idx = doc.edit.conductor_track_idx;
+    let conductor_idx = doc.edit.track_cache.conductor_idx;
     let build_row_layout = |edit: &yinhe_editor_core::edit_state::EditState,
                             model: &yinhe_core::YinModel| {
         yinhe_types::ArRowLayout::new((0..num_tracks).map(|i| {
@@ -316,7 +316,7 @@ pub fn show(
         }
 
         // Ensure parallel arrays are correctly sized (track count may have grown).
-        let n = doc.edit.track_info_cache.len();
+        let n = doc.edit.track_cache.info.len();
         if doc.edit.track_pianoroll_visible.len() < n {
             doc.edit.track_pianoroll_visible.resize(n, true);
         }
@@ -325,27 +325,19 @@ pub fn show(
                 .track_overrides
                 .resize(n, yinhe_editor_core::document::TrackOverride::default());
         }
-        if doc.edit.track_colors_cache.len() < n {
-            for i in doc.edit.track_colors_cache.len()..n {
-                doc.edit
-                    .track_colors_cache
-                    .push(yinhe_editor_core::document::track_color(
-                        &doc.data.model.tracks[i],
-                        i,
-                        doc.edit.conductor_track_idx,
-                    ));
-            }
+        if doc.edit.track_cache.colors.len() < n {
+            doc.edit.track_cache.ensure_colors_len(&doc.data.model, n);
         }
 
         let (audio_dirty, am_ms_dirty, track_actions) = track_panel::show(
             ui,
-            &doc.edit.track_info_cache,
+            &doc.edit.track_cache.info,
             &doc.edit.track_visible,
             &mut doc.edit.track_overrides,
             &mut doc.edit.track_selected,
             selection_anchor,
-            doc.edit.conductor_track_idx,
-            &doc.edit.track_colors_cache,
+            doc.edit.track_cache.conductor_idx,
+            &doc.edit.track_cache.colors,
             &mut doc.edit.arrange_view.base.track_panel_row_height,
             &mut doc.edit.arrange_view.base.track_panel_scroll_y,
             request_pianoroll,
@@ -382,7 +374,8 @@ pub fn show(
                 track_panel::TrackAction::ShowProperties { idx } => {
                     let track_idx = doc
                         .edit
-                        .track_info_cache
+                        .track_cache
+                        .info
                         .get(*idx)
                         .map(|t| t.index)
                         .unwrap_or(*idx as u16);
@@ -489,8 +482,8 @@ pub fn show(
         let data = ArrangeData {
             midi: Some(model as &dyn yinhe_types::NoteSource),
             track_visible: &doc.edit.track_visible,
-            track_colors: &doc.edit.track_colors_cache,
-            track_info: &doc.edit.track_info_cache,
+            track_colors: &doc.edit.track_cache.colors,
+            track_info: &doc.edit.track_cache.info,
             quantize: doc.edit.quantize_arrange,
             ppq: model.meta.ppq,
             bar_line_data: Some((
@@ -503,7 +496,7 @@ pub fn show(
             num_tracks,
             tracks: &model.tracks,
             tempo_lane: &model.conductor.tempo,
-            conductor_track_idx: doc.edit.conductor_track_idx,
+            conductor_track_idx: doc.edit.track_cache.conductor_idx,
             tempo_map: &model.tempo_map,
             audio_library,
             audio_sources: &model.audio_sources,

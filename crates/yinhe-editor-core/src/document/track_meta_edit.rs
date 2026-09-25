@@ -8,8 +8,8 @@
 
 use std::sync::Arc;
 
-use super::event_edit::{track_delete_events, track_insert_event, track_set_event};
 use super::Document;
+use super::event_edit::{track_delete_events, track_insert_event, track_set_event};
 
 impl Document {
     /// 按 `old_tick` 找到 `track.lyrics` 事件并修改其字段。

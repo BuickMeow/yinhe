@@ -250,4 +250,23 @@ mod tests {
         let (up, _) = build_ghosts_for_move(0, 5, false, &notes, (0.0, 1000.0), 4);
         assert_eq!(up[1].3, 3, "上移越界 clamp 到 num_tracks-1");
     }
+
+    /// snapped_delta 对 origin 与 current 分别吸附后再取差（1/16 = 120 tick）。
+    #[test]
+    fn snapped_delta_quantizes_both_ends() {
+        use yinhe_editor_core::quantize::QuantizePreset;
+
+        let d = snapped_delta(130.0, 370.0, QuantizePreset::Fraction(1, 16), 480, None);
+        assert_eq!(d, 240, "130→120、370→360，delta=240");
+        let d = snapped_delta(130.0, 130.0, QuantizePreset::Fraction(1, 16), 480, None);
+        assert_eq!(d, 0, "同一位置吸附后 delta=0");
+    }
+
+    /// delta_tracks：纵向视图恒 0（无轨道轴）；横向按行号差四舍五入。
+    #[test]
+    fn delta_tracks_is_zero_when_vertical() {
+        assert_eq!(delta_tracks(1.0, 3.0, true), 0, "纵向无轨道位移");
+        assert_eq!(delta_tracks(1.0, 3.4, false), 2, "横向向上移动 2 行");
+        assert_eq!(delta_tracks(3.0, 1.0, false), -2, "横向向下移动 2 行");
+    }
 }

@@ -55,8 +55,8 @@ impl App {
         // 设置窗口打开或快捷键录制期间同样让位：设置页里不允许任何快捷键触发动作
         // （Esc 例外：由设置页录制器消费用于取消录制）。
         if ui.ctx().egui_wants_keyboard_input()
-            || self.audio_settings.show_settings
-            || self.audio_settings.shortcut_recording
+            || self.audio_settings.ui_session.show_settings
+            || self.audio_settings.ui_session.shortcut_recording
         {
             return actions;
         }
@@ -788,7 +788,7 @@ impl App {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             transport_bar::FileAction::Settings => {
-                self.audio_settings.show_settings = true;
+                self.audio_settings.ui_session.show_settings = true;
                 crate::chrome::dialog::raise_viewport(
                     ctx,
                     egui::ViewportId::from_hash_of("settings_dialog"),
@@ -896,8 +896,8 @@ impl App {
             let _ = tx.send((idx, saved_past_len, path_for_thread, result));
         });
 
-        self.save_rx = Some(rx);
-        self.save_progress_rx = Some(progress_rx);
+        self.jobs.save_rx = Some(rx);
+        self.jobs.save_progress_rx = Some(progress_rx);
     }
 
     pub(crate) fn save_as_dialog(&mut self) {
@@ -978,12 +978,12 @@ impl App {
             return;
         }
 
-        if self.export.running {
+        if self.jobs.is_exporting() {
             return; // already exporting
         }
 
         // Show export settings dialog first
-        self.export.show_bit_depth = true;
+        self.jobs.export.show_bit_depth = true;
         crate::chrome::dialog::raise_viewport(
             ctx,
             egui::ViewportId::from_hash_of("export_settings_dialog"),
@@ -1017,8 +1017,8 @@ impl App {
             path_str.push_str(".wav");
         }
 
-        let sr = if self.export.sample_rate > 0 {
-            self.export.sample_rate
+        let sr = if self.jobs.export.sample_rate > 0 {
+            self.jobs.export.sample_rate
         } else {
             self.audio_settings.sample_rate
         };
@@ -1035,17 +1035,17 @@ impl App {
             return;
         }
 
-        let bit_depth = self.export.bit_depth;
-        let layer_count = if self.export.layer_count == 0 {
+        let bit_depth = self.jobs.export.bit_depth;
+        let layer_count = if self.jobs.export.layer_count == 0 {
             None
         } else {
-            Some(self.export.layer_count as usize)
+            Some(self.jobs.export.layer_count as usize)
         };
-        let export_progress = self.export.progress.clone();
-        let cancel_flag = self.export.cancel.clone();
-        let pause_flag = self.export.pause.clone();
+        let export_progress = self.jobs.export.progress.clone();
+        let cancel_flag = self.jobs.export.cancel.clone();
+        let pause_flag = self.jobs.export.pause.clone();
         // 记下输出路径：中止卡“打开文件夹”按钮用。
-        self.export.last_output_path = Some(path_str.clone());
+        self.jobs.export.last_output_path = Some(path_str.clone());
         cancel_flag.store(false, std::sync::atomic::Ordering::Relaxed);
         pause_flag.store(false, std::sync::atomic::Ordering::Relaxed);
         // Reset progress state（计时起点为按钮点击时刻，保证壁钟时间真实）。
@@ -1071,7 +1071,7 @@ impl App {
                 cancel: cancel_flag,
                 pause: pause_flag,
             });
-            self.export.running = true;
+            self.jobs.export.running = true;
         }
     }
 }

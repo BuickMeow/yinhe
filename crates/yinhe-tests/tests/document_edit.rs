@@ -62,7 +62,7 @@ fn document_detect_conductor() {
     let doc = doc_with_notes();
     // make_test_midi track 0 has notes → detect_conductor returns None → conductor added
     // So conductor_track_idx should be Some(0)
-    assert!(doc.edit.conductor_track_idx.is_some());
+    assert!(doc.edit.track_cache.conductor_idx.is_some());
 }
 
 #[test]
@@ -287,7 +287,7 @@ fn document_recode_track_names() {
 fn document_pc_map_cache() {
     let doc = doc_with_notes();
     // After from_midi, track 2 becomes track 3 (Conductor added at 0), channel 16
-    assert!(!doc.edit.pc_map_cache.is_empty());
+    assert!(!doc.edit.track_cache.pc_map.is_empty());
 }
 
 #[test]

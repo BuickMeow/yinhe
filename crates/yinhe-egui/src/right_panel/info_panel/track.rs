@@ -71,7 +71,7 @@ pub(crate) fn show_track_info(
     let track_idx = track_idx.min(num_tracks - 1);
 
     // ── Conductor track ──
-    if Some(track_idx as u16) == doc.edit.conductor_track_idx {
+    if Some(track_idx as u16) == doc.edit.track_cache.conductor_idx {
         ui.add_space(4.0);
         ui.label(
             egui::RichText::new(t!("track.conductor").as_ref())
@@ -160,11 +160,11 @@ pub(crate) fn show_track_info(
         }
         if let Some(new_name) = name_change {
             // 唯一权威源是 model.tracks[].name（保存时 sync_mapping_file 读它）；
-            // track_info_cache 是显示缓存，同步更新（undo 由 apply.rs 反向同步）。
+            // track_cache.info 是显示缓存，同步更新（undo 由 apply.rs 反向同步）。
             if let Some(td) = Arc::make_mut(&mut doc.data.model).tracks.get_mut(track_idx) {
                 Arc::make_mut(td).name = new_name.clone();
             }
-            if let Some(ti_mut) = doc.edit.track_info_cache.get_mut(track_idx) {
+            if let Some(ti_mut) = doc.edit.track_cache.info.get_mut(track_idx) {
                 ti_mut.name = new_name;
             }
         }
@@ -174,7 +174,7 @@ pub(crate) fn show_track_info(
         }
     }
     // 快照一份 track_info（避免借用与后续颜色 undo 的 &mut doc 冲突）。
-    let ti = doc.edit.track_info_cache[track_idx].clone();
+    let ti = doc.edit.track_cache.info[track_idx].clone();
 
     ui.add_space(4.0);
 
@@ -218,8 +218,8 @@ pub(crate) fn show_track_info(
             }
         }
         doc.data.rebuild_model();
-        doc.edit.track_info_cache = doc.data.track_info();
-        doc.edit.pc_map_cache = doc.data.pc_map_cache();
+        doc.edit.track_cache.rebuild_info(&doc.data);
+        doc.edit.track_cache.rebuild_pc_map(&doc.data);
         doc.data.bump_revision();
         return true;
     }
@@ -236,11 +236,12 @@ pub(crate) fn show_track_info(
     let was_editing = ui.data(|d| d.get_temp::<bool>(edit_id)).unwrap_or(false);
     ui.horizontal(|ui| {
         ui.label("颜色:");
-        let cur = if Some(track_idx as u16) == doc.edit.conductor_track_idx {
+        let cur = if Some(track_idx as u16) == doc.edit.track_cache.conductor_idx {
             crate::theme::conductor_color_f32()
         } else {
             doc.edit
-                .track_colors_cache
+                .track_cache
+                .colors
                 .get(track_idx)
                 .copied()
                 .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR)
@@ -281,7 +282,7 @@ pub(crate) fn show_track_info(
                     td.color = new;
                 }
             }
-            if let Some(c) = doc.edit.track_colors_cache.get_mut(track_idx) {
+            if let Some(c) = doc.edit.track_cache.colors.get_mut(track_idx) {
                 *c = new;
             }
             doc.data.bump_revision();
@@ -295,11 +296,11 @@ pub(crate) fn show_track_info(
                     td.color = yinhe_core::DEFAULT_TRACK_COLOR;
                 }
             }
-            if let Some(c) = doc.edit.track_colors_cache.get_mut(track_idx) {
+            if let Some(c) = doc.edit.track_cache.colors.get_mut(track_idx) {
                 *c = yinhe_editor_core::document::track_color(
                     &doc.data.model.tracks[track_idx],
                     track_idx,
-                    doc.edit.conductor_track_idx,
+                    doc.edit.track_cache.conductor_idx,
                 );
             }
             doc.data.bump_revision();
@@ -312,7 +313,8 @@ pub(crate) fn show_track_info(
                 .unwrap_or(cur);
             let new = doc
                 .edit
-                .track_colors_cache
+                .track_cache
+                .colors
                 .get(track_idx)
                 .copied()
                 .unwrap_or(cur);
@@ -435,7 +437,7 @@ pub(crate) fn show_track_info(
 
     // Program Change
     let global_ch = ti.port as u32 * 16 + (ti.channel as u32 - 1);
-    if let Some(pc) = doc.edit.pc_map_cache.get(&(global_ch as u8)) {
+    if let Some(pc) = doc.edit.track_cache.pc_map.get(&(global_ch as u8)) {
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new(t!("track.program").as_ref())

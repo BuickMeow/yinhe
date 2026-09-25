@@ -212,12 +212,12 @@ impl App {
         }
 
         // Poll async save completion
-        if let Some(rx) = self.save_rx.take() {
+        if let Some(rx) = self.jobs.save_rx.take() {
             match rx.try_recv() {
                 Ok((idx, past_len, path, result)) => {
-                    self.save_rx = None;
-                    self.save_progress_rx = None;
-                    if let Ok(mut s) = self.save_progress.lock() {
+                    self.jobs.save_rx = None;
+                    self.jobs.save_progress_rx = None;
+                    if let Ok(mut s) = self.jobs.save_progress.lock() {
                         *s = None;
                     }
                     match result {
@@ -273,12 +273,12 @@ impl App {
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {
                     // 还在跑：放回状态，下帧再查
-                    self.save_rx = Some(rx);
+                    self.jobs.save_rx = Some(rx);
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    self.save_rx = None;
-                    self.save_progress_rx = None;
-                    if let Ok(mut s) = self.save_progress.lock() {
+                    self.jobs.save_rx = None;
+                    self.jobs.save_progress_rx = None;
+                    if let Ok(mut s) = self.jobs.save_progress.lock() {
                         *s = None;
                     }
                     self.notifications.finish_progress(
@@ -290,9 +290,9 @@ impl App {
                     );
                 }
             }
-        } else if let Some(rx) = &self.save_progress_rx {
+        } else if let Some(rx) = &self.jobs.save_progress_rx {
             while let Ok(p) = rx.try_recv() {
-                if let Ok(mut s) = self.save_progress.lock() {
+                if let Ok(mut s) = self.jobs.save_progress.lock() {
                     *s = Some((p.stage, p.fraction));
                 }
             }
@@ -300,8 +300,8 @@ impl App {
 
         // 导出完成轮询（复用实时引擎，含混音台/PDC）：
         // `progress.finished` 置位即收尾（取消/失败/成功三态）。
-        if self.export.running {
-            let finished = self.export.progress.lock().ok().and_then(|p| {
+        if self.jobs.is_exporting() {
+            let finished = self.jobs.export.progress.lock().ok().and_then(|p| {
                 p.finished.then(|| {
                     (
                         p.error.clone(),
@@ -313,9 +313,10 @@ impl App {
                 })
             });
             if let Some((error, speed, elapsed)) = finished {
-                self.export.running = false;
-                let out_path = self.export.last_output_path.clone();
+                self.jobs.export.running = false;
+                let out_path = self.jobs.export.last_output_path.clone();
                 let cancelled = self
+                    .jobs
                     .export
                     .cancel
                     .load(std::sync::atomic::Ordering::Relaxed);
@@ -327,7 +328,8 @@ impl App {
                     .unwrap_or_else(|| t!("toast.export_label").to_string());
                 if cancelled {
                     // 中止：转“已中止”卡（清理暂停 flag，下次导出开始时亦会复位）。
-                    self.export
+                    self.jobs
+                        .export
                         .pause
                         .store(false, std::sync::atomic::Ordering::Relaxed);
                     let aborted = self.notifications.finish_progress(

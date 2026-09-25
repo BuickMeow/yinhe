@@ -7,7 +7,7 @@ use crate::audio_settings::AudioSettings;
 /// 快捷键配置页：列出全部可配置动作。
 /// 每个动作可绑定多个快捷键：第一个快捷键与动作名同行，其余各占一行；
 /// 点击快捷键按钮重新录制，点击 + 追加一个，点击 × 移除。
-/// 录制期间 `settings.shortcut_recording` 置位，让全局快捷键让位给录制器。
+/// 录制期间 `settings.ui_session.shortcut_recording` 置位，让全局快捷键让位给录制器。
 pub fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     let mut changed = false;
 
@@ -54,7 +54,7 @@ pub fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bo
                 changed = true;
             }
             ui.data_mut(|d| d.remove::<(String, usize)>(rec_id));
-            settings.shortcut_recording = false;
+            settings.ui_session.shortcut_recording = false;
         }
     }
 
@@ -165,7 +165,7 @@ pub fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bo
                     .clicked()
                 {
                     ui.data_mut(|d| d.insert_temp(rec_id, (id.to_string(), add_idx)));
-                    settings.shortcut_recording = true;
+                    settings.ui_session.shortcut_recording = true;
                     ui.ctx().request_repaint();
                 }
             });
@@ -207,7 +207,7 @@ pub fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bo
                 settings.keybindings.reset_to_defaults();
                 // 同时取消进行中的录制，避免残留状态干扰
                 ui.data_mut(|d| d.remove::<(String, usize)>(rec_id));
-                settings.shortcut_recording = false;
+                settings.ui_session.shortcut_recording = false;
                 changed = true;
             }
         });
@@ -243,7 +243,7 @@ fn shortcut_combo_ui(
         && !is_recording
     {
         ui.data_mut(|d| d.insert_temp(rec_id, (action_id.to_string(), idx)));
-        settings.shortcut_recording = true;
+        settings.ui_session.shortcut_recording = true;
         ui.ctx().request_repaint();
     }
 

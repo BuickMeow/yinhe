@@ -1,5 +1,3 @@
-use std::sync::mpsc;
-
 use rust_i18n::t;
 
 pub(crate) mod actions;
@@ -13,6 +11,7 @@ pub(crate) mod autosave;
 pub(crate) mod clipboard_sync;
 pub(crate) mod dialog_dispatch;
 pub(crate) mod export_state;
+pub(crate) mod jobs;
 pub(crate) mod layout;
 pub(crate) mod main_loop;
 pub(crate) mod midi_input;
@@ -41,9 +40,6 @@ pub(crate) struct PasteChain {
     cursor_tick: f64,
     offset: u32,
 }
-
-/// 异步保存结果通道：`(目标文档 idx, 发起时撤销栈长度, 路径, 结果)`。
-pub(crate) type SaveResultRx = mpsc::Receiver<(usize, usize, String, Result<(), String>)>;
 
 pub struct App {
     // ── Pianoroll (shared GPU resources；视口状态在 Document.edit 内，每文档独立) ──
@@ -81,15 +77,8 @@ pub struct App {
     // ── Shared state ──
     pub(crate) transport_panel_width: f32,
     pub(crate) file_loader: FileLoader,
-    // ── Async save ──
-    /// 异步保存结果：`(目标文档 idx, 发起时撤销栈长度, 路径, 结果)`。
-    pub(crate) save_rx: Option<SaveResultRx>,
-    /// 保存进度（阶段 + 阶段内 0.0~1.0），由保存线程经 channel 推送、
-    /// poll 写入共享状态，toast 渲染时 pull 读取。
-    pub(crate) save_progress: crate::dialogs::save_overlay::SharedSaveProgress,
-    /// 自动保存运行时状态（定时备份 + 崩溃恢复）。
-    pub(crate) autosave: autosave::AutoSaveState,
-    pub(crate) save_progress_rx: Option<mpsc::Receiver<yinhe_yin::YinProgress>>,
+    /// 异步任务运行时状态（保存 / 加载 / 导出 / 重采样 / 自动保存）。
+    pub(crate) jobs: jobs::JobCenter,
 
     // ── Unsaved changes confirmation ──
     /// A file action deferred until the user chooses save/discard/cancel.
@@ -203,17 +192,8 @@ pub struct App {
     // ── Event browser ──
     pub(crate) event_browser_state: crate::right_panel::event_browser::EventBrowserState,
 
-    // ── Multi-stage loading progress ──
-    pub(crate) load_progress: yinhe_editor_core::progress::SharedProgress,
-
     // ── 启动阶段（主窗口隐藏 + 独立启动页；音频/插件就绪后进主界面）──
     pub(crate) startup: startup::StartupState,
-
-    // ── Async audio export ──
-    pub(crate) export: export_state::ExportState,
-
-    // ── Async PPQ rescale ──
-    pub(crate) rescale: rescale_state::RescaleState,
 
     // ── 新建音轨对话框状态（AR「+」按钮触发）──
     pub(crate) new_track_dialog: crate::dialogs::new_track::NewTrackDialogState,
@@ -332,7 +312,7 @@ impl App {
         let queue = render_ctx.queue().clone();
         let format = render_ctx.target_format();
 
-        let load_progress = yinhe_editor_core::progress::new_shared();
+        let jobs = jobs::JobCenter::new();
 
         let audio_settings = crate::audio_settings::load_audio_settings();
         rust_i18n::set_locale(&audio_settings.locale);
@@ -371,17 +351,11 @@ impl App {
             instrument_racks: vec![crate::mix::InstrumentRack::default()],
 
             transport_panel_width: audio_settings.layout.transport_panel_width,
-            load_progress: load_progress.clone(),
             startup: startup::StartupState::new(),
-            file_loader: FileLoader::new(load_progress.clone()),
-            save_rx: None,
-            save_progress: Default::default(),
-            autosave: autosave::AutoSaveState::new(),
-            save_progress_rx: None,
+            file_loader: FileLoader::new(jobs.load_progress.clone()),
+            jobs,
             pending_unsaved: None,
             should_exit: false,
-            export: export_state::ExportState::new(),
-            rescale: rescale_state::RescaleState::new(),
             new_track_dialog: crate::dialogs::new_track::NewTrackDialogState::default(),
             automation_picker: crate::dialogs::automation_picker::AutomationPickerState::default(),
             tap_tempo_dialog: crate::dialogs::tap_tempo::TapTempoDialogState::default(),

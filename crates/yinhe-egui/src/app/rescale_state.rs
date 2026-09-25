@@ -120,7 +120,7 @@ impl App {
     /// 请求由 `project_info.rs` 弹框确认"是（缩放音符）"后写入。
     pub(in crate::app) fn start_rescale_if_requested(&mut self, ctx: &egui::Context) {
         // 已有 rescale 在跑：拒绝新请求（防重入）。
-        if self.rescale.is_running() {
+        if self.jobs.is_rescaling() {
             return;
         }
         let req: Option<RescaleRequest> =
@@ -141,15 +141,16 @@ impl App {
         let new_ppq = req.new_ppq;
 
         // 重置 progress + cancel。
-        if let Ok(mut p) = self.rescale.progress.lock() {
+        if let Ok(mut p) = self.jobs.rescale.progress.lock() {
             *p = RescaleProgress::default();
         }
-        self.rescale
+        self.jobs
+            .rescale
             .cancel
             .store(false, std::sync::atomic::Ordering::Relaxed);
 
-        let progress = self.rescale.progress.clone();
-        let cancel = self.rescale.cancel.clone();
+        let progress = self.jobs.rescale.progress.clone();
+        let cancel = self.jobs.rescale.cancel.clone();
         let (tx, rx) = mpsc::channel();
 
         std::thread::spawn(move || {
@@ -158,22 +159,24 @@ impl App {
             let _ = tx.send(result);
         });
 
-        self.rescale.rx = Some(rx);
-        self.rescale.pending = Some((req.old_ppq, req.new_ppq, req.dragvalue_id, doc_idx));
+        self.jobs.rescale.rx = Some(rx);
+        self.jobs.rescale.pending = Some((req.old_ppq, req.new_ppq, req.dragvalue_id, doc_idx));
     }
 
     /// 检测异步 rescale 是否完成，若完成则把新 model 写回 doc 并 commit undo。
     ///
     /// 由 `poll_async_operations` 调用。
     pub(in crate::app) fn poll_rescale_completion(&mut self) {
-        let Some(rx) = &self.rescale.rx else { return };
+        let Some(rx) = &self.jobs.rescale.rx else {
+            return;
+        };
         let result = match rx.try_recv() {
             Ok(r) => r,
             Err(mpsc::TryRecvError::Empty) => return,
             Err(mpsc::TryRecvError::Disconnected) => {
                 // 子线程 panic 或异常退出：清理状态，还原 meta.ppq。
-                self.rescale.rx = None;
-                let pending = self.rescale.pending.take();
+                self.jobs.rescale.rx = None;
+                let pending = self.jobs.rescale.pending.take();
                 if let Some((old_ppq, _new_ppq, _id, doc_idx)) = pending
                     && let Some(doc) = self.workspace.documents.get_mut(doc_idx)
                 {
@@ -192,8 +195,9 @@ impl App {
             }
         };
         // 收到结果：清理 rx。
-        self.rescale.rx = None;
+        self.jobs.rescale.rx = None;
         let (old_ppq, new_ppq, dragvalue_id, doc_idx) = self
+            .jobs
             .rescale
             .pending
             .take()

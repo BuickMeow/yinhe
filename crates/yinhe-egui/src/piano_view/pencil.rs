@@ -863,4 +863,165 @@ mod tests {
         assert_eq!(note.key, 125);
         assert_eq!(note.start_tick, 120);
     }
+
+    /// 跑一帧 pencil_frame，返回完整输出（供拖拽状态机测试检查 pencil_note_drag）。
+    fn run_frame_full(
+        ctx: &egui::Context,
+        raw: egui::RawInput,
+        view: &mut yinhe_types::PianoRollView,
+        midi: &MockNotes,
+    ) -> PencilFrameOut {
+        let mut out = (None, Vec::new(), Vec::new(), None, None, None);
+        ctx.run_ui(raw, |ui| {
+            out = pencil_frame(
+                ui,
+                frame_rect(),
+                frame_rect(),
+                view,
+                QuantizePreset::Fraction(1, 16),
+                480,
+                None,
+                Some(0),
+                &[true],
+                None,
+                Some(midi),
+                &[],
+                1000.0,
+                yinhe_editor_core::audio_settings::QuickDeleteMode::Off,
+                None,
+            );
+        })
+        .textures_delta
+        .clear();
+        out
+    }
+
+    /// 写轨合法性：None / conductor / 隐藏 / 索引越界一律不可编辑。
+    #[test]
+    fn valid_pencil_track_filters_conductor_and_hidden() {
+        assert_eq!(
+            valid_pencil_track(None, &[true], None),
+            None,
+            "无写轨不可编辑"
+        );
+        assert_eq!(
+            valid_pencil_track(Some(0), &[true], Some(0)),
+            None,
+            "conductor 不可放音符"
+        );
+        assert_eq!(
+            valid_pencil_track(Some(1), &[true, false], None),
+            None,
+            "隐藏轨不可编辑"
+        );
+        assert_eq!(
+            valid_pencil_track(Some(2), &[true, true], None),
+            None,
+            "索引越界不可编辑"
+        );
+        assert_eq!(
+            valid_pencil_track(Some(1), &[true, true], None),
+            Some(1),
+            "可见非 conductor 轨可编辑"
+        );
+    }
+
+    /// velocity 按 (track, start_tick, key) 三元组精确定位。
+    #[test]
+    fn note_velocity_matches_track_and_start_tick() {
+        let midi = MockNotes::new().with_note(120, 240, 122, 100);
+        assert_eq!(note_velocity(Some(&midi), 0, 120, 122), Some(100));
+        assert_eq!(
+            note_velocity(Some(&midi), 1, 120, 122),
+            None,
+            "其他轨不命中"
+        );
+        assert_eq!(
+            note_velocity(Some(&midi), 0, 121, 122),
+            None,
+            "起点不同不命中"
+        );
+        assert_eq!(
+            note_velocity(Some(&midi), 0, 120, 121),
+            None,
+            "key 不同不命中"
+        );
+        assert_eq!(
+            note_velocity(None, 0, 120, 122),
+            None,
+            "无音符源时返回 None"
+        );
+    }
+
+    /// 拖动已有音符：拖动中不提交，松手才提交 Move；tick 与 key 的
+    /// delta 分别相对按下位置和原点计算（quantize=1/16=120 tick）。
+    #[test]
+    fn move_drag_commits_snapped_delta_on_release() {
+        let ctx = egui::Context::default();
+        let midi = MockNotes::new().with_note(120, 240, 122, 100);
+        let mut view = test_view();
+        // 预置视口高度：拖拽帧的 drag_scroll_and_clamp 会调用 clamp_scroll，
+        // viewport_h=0 会触发"首次初始化"重算 key_height/scroll_y，导致坐标漂移。
+        view.viewport_h = frame_rect().height();
+        let y0 = view.key_to_y(122) + view.key_height / 2.0;
+        let y1 = view.key_to_y(125) + view.key_height / 2.0;
+
+        // 按下音符中部（x=150 → snap 120），进入 Move 状态。
+        let out = run_frame_full(&ctx, press_event(egui::pos2(150.0, y0)), &mut view, &midi);
+        assert!(out.3.is_none(), "按下不应提交拖拽");
+
+        // 拖到 tick 360、key 125：拖动中只画 ghost，不提交。
+        let out = run_frame_full(&ctx, drag_event(egui::pos2(360.0, y1)), &mut view, &midi);
+        assert!(out.3.is_none(), "拖动中不应提交，松手才提交");
+
+        // 松手：提交 Move(120→360, key 122→125)。
+        let out = run_frame_full(&ctx, release_event(egui::pos2(360.0, y1)), &mut view, &midi);
+        match out.3.expect("松手应提交 Move") {
+            PencilNoteDrag::Move {
+                track,
+                start_tick,
+                key,
+                delta_ticks,
+                delta_keys,
+            } => {
+                assert_eq!(track, 0);
+                assert_eq!(start_tick, 120, "提交起点应为音符原起点");
+                assert_eq!(key, 122, "提交 key 应为音符原 key");
+                assert_eq!(delta_ticks, 240, "press tick 150→120，release tick 360");
+                assert_eq!(delta_keys, 3, "key 122→125");
+            }
+            other => panic!("应为 Move，实际 {other:?}"),
+        }
+    }
+
+    /// 拖动右边缘：release 提交 ceil 吸附后的新终点，且不短于一个量化。
+    #[test]
+    fn resize_right_drag_commits_ceil_snapped_end() {
+        let ctx = egui::Context::default();
+        let midi = MockNotes::new().with_note(120, 240, 122, 100);
+        let mut view = test_view();
+        // 同 move 测试：避免 drag_scroll_and_clamp 触发视口首次初始化。
+        view.viewport_h = frame_rect().height();
+        let y = view.key_to_y(122) + view.key_height / 2.0;
+
+        // 右边缘（x=237 距尾 240 仅 3px < 6px 阈值）按下。
+        let out = run_frame_full(&ctx, press_event(egui::pos2(237.0, y)), &mut view, &midi);
+        assert!(out.3.is_none(), "按下不应提交");
+
+        // 拖到 tick 300（round 吸附到 360）后松手。
+        let out = run_frame_full(&ctx, release_event(egui::pos2(300.0, y)), &mut view, &midi);
+        match out.3.expect("松手应提交 ResizeRight") {
+            PencilNoteDrag::ResizeRight {
+                start_tick,
+                key,
+                new_end_tick,
+                ..
+            } => {
+                assert_eq!(start_tick, 120);
+                assert_eq!(key, 122);
+                assert_eq!(new_end_tick, 360, "300 吸附到 120 网格的高位边界");
+            }
+            other => panic!("应为 ResizeRight，实际 {other:?}"),
+        }
+    }
 }

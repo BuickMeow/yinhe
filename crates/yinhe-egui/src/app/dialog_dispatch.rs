@@ -70,7 +70,7 @@ impl App {
                     self.audio_state.device_switch_error = None;
                 }
                 self.audio_state.last_known_devices = devices.clone();
-                self.audio_settings.available_devices = devices;
+                self.audio_settings.ui_session.available_devices = devices;
                 self.audio_state.last_device_poll = Some(now);
                 ctx.request_repaint_after(std::time::Duration::from_secs(1));
             } else {
@@ -82,7 +82,7 @@ impl App {
             use crate::dialogs::audio_device_switch::AudioDeviceSwitchAction;
             match crate::dialogs::audio_device_switch::show_viewport(
                 &ctx,
-                &self.audio_settings.available_devices,
+                &self.audio_settings.ui_session.available_devices,
                 self.audio_state.device_switch_error.as_deref(),
                 !self.audio_state.device_switch_required,
             ) {
@@ -93,7 +93,7 @@ impl App {
                 AudioDeviceSwitchAction::Refresh => {
                     let devices = yinhe_audio::list_output_devices();
                     self.audio_state.last_known_devices = devices.clone();
-                    self.audio_settings.available_devices = devices;
+                    self.audio_settings.ui_session.available_devices = devices;
                 }
                 AudioDeviceSwitchAction::KeepCurrent => {
                     // 用户选择保持当前设备：关闭对话框，更新 last_known_devices
@@ -101,7 +101,7 @@ impl App {
                     self.audio_state.device_switch_pending = false;
                     self.audio_state.device_switch_error = None;
                     self.audio_state.last_known_devices =
-                        self.audio_settings.available_devices.clone();
+                        self.audio_settings.ui_session.available_devices.clone();
                 }
                 AudioDeviceSwitchAction::Exit => {
                     self.should_exit = true;
@@ -115,12 +115,12 @@ impl App {
         }
 
         // ── 自动保存恢复询问 ──
-        if self.autosave.show_recovery_dialog {
-            let entries = self.autosave.recovery.clone().unwrap_or_default();
+        if self.jobs.autosave.show_recovery_dialog {
+            let entries = self.jobs.autosave.recovery.clone().unwrap_or_default();
             match crate::dialogs::autosave_recovery::show_viewport(
                 &ctx,
                 &entries,
-                &mut self.autosave.show_recovery_dialog,
+                &mut self.jobs.autosave.show_recovery_dialog,
             ) {
                 crate::dialogs::autosave_recovery::RecoveryAction::Restore => {
                     self.restore_autosave_entries(entries);
@@ -219,9 +219,9 @@ impl App {
             .notifications
             .is_leaving(crate::widgets::toast::SAVE_PROGRESS_ID)
         {
-        } else if self.save_rx.is_some() {
+        } else if self.jobs.is_saving() {
             let src = std::sync::Arc::new(crate::dialogs::save_overlay::SaveToastSource {
-                state: self.save_progress.clone(),
+                state: self.jobs.save_progress.clone(),
             });
             self.notifications.ensure_progress(
                 crate::widgets::toast::SAVE_PROGRESS_ID,
@@ -284,7 +284,7 @@ impl App {
         {
             // 用户点了 X（»）只是收起卡片，不置 cancel 标志，任务继续后台跑；
             // 只有 stop 按钮才会置位 cancel flag（下一帧 poll 线程退出）。
-        } else if self.export.running {
+        } else if self.jobs.is_exporting() {
             // 若 toast 侧点了取消，已置位则不再建卡，直接让线程退出
             let cancelled = self
                 .notifications
@@ -292,9 +292,9 @@ impl App {
                 .is_some_and(|f| f.load(std::sync::atomic::Ordering::Relaxed));
             if !cancelled {
                 let src = std::sync::Arc::new(crate::app::export_state::ExportToastSource {
-                    progress: self.export.progress.clone(),
-                    cancel: self.export.cancel.clone(),
-                    pause: self.export.pause.clone(),
+                    progress: self.jobs.export.progress.clone(),
+                    cancel: self.jobs.export.cancel.clone(),
+                    pause: self.jobs.export.pause.clone(),
                 });
                 self.notifications.ensure_progress(
                     crate::widgets::toast::EXPORT_PROGRESS_ID,
@@ -309,15 +309,15 @@ impl App {
             .notifications
             .is_leaving(crate::widgets::toast::RESCALE_PROGRESS_ID)
         {
-        } else if self.rescale.rx.is_some() {
+        } else if self.jobs.is_rescaling() {
             let cancelled = self
                 .notifications
                 .get_cancel_flag(crate::widgets::toast::RESCALE_PROGRESS_ID)
                 .is_some_and(|f| f.load(std::sync::atomic::Ordering::Relaxed));
             if !cancelled {
                 let src = std::sync::Arc::new(crate::app::rescale_state::RescaleToastSource {
-                    progress: self.rescale.progress.clone(),
-                    cancel: self.rescale.cancel.clone(),
+                    progress: self.jobs.rescale.progress.clone(),
+                    cancel: self.jobs.rescale.cancel.clone(),
                 });
                 self.notifications.ensure_progress(
                     crate::widgets::toast::RESCALE_PROGRESS_ID,
@@ -350,11 +350,11 @@ impl App {
         // ── Export settings ──
         if crate::dialogs::export::show_settings_viewport(
             &ctx,
-            &mut self.export.show_bit_depth,
+            &mut self.jobs.export.show_bit_depth,
             self.audio_settings.sample_rate,
-            &mut self.export.bit_depth,
-            &mut self.export.layer_count,
-            &mut self.export.sample_rate,
+            &mut self.jobs.export.bit_depth,
+            &mut self.jobs.export.layer_count,
+            &mut self.jobs.export.sample_rate,
         ) {
             self.start_export();
         }
@@ -368,7 +368,7 @@ impl App {
         let action = crate::dialogs::unsaved::show_viewport(
             &ctx,
             &self.pending_unsaved,
-            self.save_rx.is_some(),
+            self.jobs.is_saving(),
         );
         match action {
             crate::dialogs::unsaved::Action::Save => {

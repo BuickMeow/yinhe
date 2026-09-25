@@ -19,7 +19,7 @@ pub(super) fn render_tree(
     state: &mut EventBrowserState,
 ) {
     let model = &doc.data.model;
-    let conductor_idx = doc.edit.conductor_track_idx;
+    let conductor_idx = doc.edit.track_cache.conductor_idx;
     let groups = group_tracks_by_port_channel(model, conductor_idx);
 
     render_leaf_item(

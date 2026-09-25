@@ -454,7 +454,7 @@ impl Document {
             let track_idx = self
                 .edit
                 .main_track()
-                .filter(|&t| Some(t) != self.edit.conductor_track_idx)?;
+                .filter(|&t| Some(t) != self.edit.track_cache.conductor_idx)?;
             let lane_idx = self
                 .data
                 .model
@@ -568,7 +568,7 @@ impl Document {
             let track_idx = self
                 .edit
                 .main_track()
-                .filter(|&t| Some(t) != self.edit.conductor_track_idx)?;
+                .filter(|&t| Some(t) != self.edit.track_cache.conductor_idx)?;
             let lane_idx = self
                 .data
                 .model

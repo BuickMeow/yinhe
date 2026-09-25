@@ -42,7 +42,7 @@ impl Document {
         if t >= self.data.model.tracks.len() {
             return None;
         }
-        if Some(track_idx) == self.edit.conductor_track_idx {
+        if Some(track_idx) == self.edit.track_cache.conductor_idx {
             return None;
         }
         let key = note.key;
@@ -1288,7 +1288,7 @@ impl Document {
         if notes.is_empty() || track as usize >= self.data.model.tracks.len() {
             return None;
         }
-        if Some(track) == self.edit.conductor_track_idx {
+        if Some(track) == self.edit.track_cache.conductor_idx {
             return None;
         }
         let allow_overlap = self.edit.allow_overlapping_notes;
@@ -1339,7 +1339,7 @@ impl Document {
     pub fn generate_line_notes(&mut self) -> Option<UndoAction> {
         let line = self.edit.line_tool_line?;
         let track = self.edit.main_track()?;
-        if Some(track) == self.edit.conductor_track_idx {
+        if Some(track) == self.edit.track_cache.conductor_idx {
             return None;
         }
         let ppq = self.data.model.meta.ppq;

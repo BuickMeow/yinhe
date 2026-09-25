@@ -56,7 +56,7 @@ impl Document {
         let num_tracks = self.data.model.tracks.len() as i32;
         let selection = self.edit.selected.clone();
         let allow_overlap = self.edit.allow_overlapping_notes;
-        let conductor = self.edit.conductor_track_idx;
+        let conductor = self.edit.track_cache.conductor_idx;
 
         // ── 0. 快速路径判定（流式只读，不物化）──
         // 条件：无 tick clamp、轨道未被夹取/跳过 conductor、目标无重叠。
@@ -131,7 +131,7 @@ impl Document {
                         note.track as i32 + delta_tracks,
                         delta_tracks,
                         num_tracks,
-                        self.edit.conductor_track_idx,
+                        self.edit.track_cache.conductor_idx,
                     );
                     let original = (*note, *old_key);
                     // 「允许新重叠音符」关闭：目标位置与非本次移动的已有音符重叠
@@ -244,7 +244,7 @@ impl Document {
                     lm.src_track as i32 + delta_tracks,
                     delta_tracks,
                     num_tracks,
-                    self.edit.conductor_track_idx,
+                    self.edit.track_cache.conductor_idx,
                 ) as usize;
                 if dst_track_idx == lm.src_track {
                     // 被夹回原轨：phase 1 已把被拖事件从源 lane 剔除（换成 remaining），
@@ -338,7 +338,7 @@ impl Document {
                     note.track as i32 + delta_tracks,
                     delta_tracks,
                     num_tracks,
-                    self.edit.conductor_track_idx,
+                    self.edit.track_cache.conductor_idx,
                 );
                 let length = note.end_tick - note.start_tick;
                 // 「允许新重叠音符」关闭：副本与已有音符重叠 → 跳过该副本。
@@ -447,7 +447,7 @@ impl Document {
                     lc.src_track as i32 + delta_tracks,
                     delta_tracks,
                     num_tracks,
-                    self.edit.conductor_track_idx,
+                    self.edit.track_cache.conductor_idx,
                 ) as usize;
                 let dst_track = Arc::make_mut(&mut model.tracks[dst_track_idx]);
                 let dst_lane_idx = match dst_track

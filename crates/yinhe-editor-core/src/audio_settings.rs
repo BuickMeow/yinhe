@@ -8,10 +8,12 @@ pub mod edit;
 pub mod layout;
 pub mod persistence;
 pub mod theme;
+pub mod ui_session;
 
 pub use edit::{OverlapBlockedBehavior, QuickDeleteMode};
 pub use layout::LayoutSettings;
 pub use theme::CustomTheme;
+pub use ui_session::SettingsUiSession;
 
 /// "最近修改的文件"列表上限
 pub const RECENT_FILES_LIMIT: usize = 10;
@@ -98,10 +100,6 @@ pub struct AudioSettings {
     pub custom_themes: Vec<CustomTheme>,
     #[serde(default)]
     pub favorite_themes: Vec<String>,
-    #[serde(skip)]
-    pub rename_custom_id: Option<u64>,
-    #[serde(skip)]
-    pub rename_buffer: String,
     pub ui_scale: f32,
     pub font_scale: f32,
     pub content_opacity: f32,
@@ -139,23 +137,9 @@ pub struct AudioSettings {
     #[serde(default)]
     pub pinned_automation_write: bool,
     pub recent_files: Vec<String>,
+    /// 运行时 UI 会话态（设置窗口/快捷键录制/设备枚举），不落盘。
     #[serde(skip)]
-    pub show_settings: bool,
-    #[serde(skip)]
-    pub settings_tab: usize,
-    #[serde(skip)]
-    pub settings_search: String,
-    #[serde(skip)]
-    pub shortcut_recording: bool,
-    #[serde(skip)]
-    pub available_devices: Vec<String>,
-    /// 可用录音输入设备（运行时刷新，不落盘）。
-    #[serde(skip)]
-    pub available_input_devices: Vec<String>,
-    #[serde(skip)]
-    pub available_sample_rates: Vec<u32>,
-    #[serde(skip)]
-    pub available_midi_inputs: Vec<String>,
+    pub ui_session: SettingsUiSession,
 }
 
 impl Default for AudioSettings {
@@ -194,8 +178,6 @@ impl Default for AudioSettings {
             theme_preset: "ink-wash".to_string(),
             custom_themes: Vec::new(),
             favorite_themes: Vec::new(),
-            rename_custom_id: None,
-            rename_buffer: String::new(),
             ui_scale: 1.0,
             font_scale: 1.0,
             content_opacity: 0.7,
@@ -216,14 +198,7 @@ impl Default for AudioSettings {
             automation_write: false,
             pinned_automation_write: false,
             recent_files: Vec::new(),
-            show_settings: false,
-            settings_tab: 0,
-            settings_search: String::new(),
-            shortcut_recording: false,
-            available_devices: Vec::new(),
-            available_input_devices: Vec::new(),
-            available_sample_rates: Vec::new(),
-            available_midi_inputs: Vec::new(),
+            ui_session: SettingsUiSession::default(),
         }
     }
 }

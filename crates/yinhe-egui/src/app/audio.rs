@@ -180,9 +180,9 @@ impl App {
             return;
         }
 
-        progress::set_visible(&self.load_progress, true);
-        progress::set_stage(&self.load_progress, 1, progress::StageStatus::Active);
-        progress::set_stage_progress(&self.load_progress, 1, 0.0, "初始化音频引擎".into());
+        progress::set_visible(&self.jobs.load_progress, true);
+        progress::set_stage(&self.jobs.load_progress, 1, progress::StageStatus::Active);
+        progress::set_stage_progress(&self.jobs.load_progress, 1, 0.0, "初始化音频引擎".into());
 
         // 引擎重建需要时间（spawn + 音色库/key map 加载，可能数秒）：建等待 toast。
         // 文件加载流程已有自己的 toast（同一 SharedProgress），避免重复建卡。
@@ -192,7 +192,7 @@ impl App {
                 ENGINE_PROGRESS_ID,
                 ToastKind::Info,
                 std::sync::Arc::new(crate::file_loader::LoadToastSource {
-                    progress: self.load_progress.clone(),
+                    progress: self.jobs.load_progress.clone(),
                     cancel: None,
                     title: t!("toast.engine_switching").to_string(),
                 }),
@@ -308,7 +308,7 @@ impl App {
                     return;
                 }
 
-                progress::set_stage(&self.load_progress, 1, progress::StageStatus::Done);
+                progress::set_stage(&self.jobs.load_progress, 1, progress::StageStatus::Done);
 
                 let doc = &self.workspace.documents[idx];
                 // 音色库完成计数基准（事件驱动进度：每完成一 port +1）
@@ -363,7 +363,7 @@ impl App {
                 self.audio_state.spawn_error = Some(e.clone());
                 self.audio_state.spawn_error_doc = spawn_for;
                 self.audio_state.device_switch_error = Some(e.clone());
-                progress::set_visible(&self.load_progress, false);
+                progress::set_visible(&self.jobs.load_progress, false);
                 if self.audio_state.engine_toast.take().is_some() {
                     self.notifications.finish_progress(
                         ENGINE_PROGRESS_ID,
@@ -448,19 +448,19 @@ impl App {
         self.audio_state.active_doc = Some(idx);
         self.audio_state.playback_anchor = None;
         self.audio_state.pending_playback = false;
-        progress::set_stage(&self.load_progress, 1, progress::StageStatus::Done);
+        progress::set_stage(&self.jobs.load_progress, 1, progress::StageStatus::Done);
         if sf_covered {
             // 引擎与音色库都已就绪：不进入"等音色库加载"的进度卡阶段。
             self.audio_state.sf_total = 0;
             self.audio_state.sf_pending = false;
-            progress::set_stage(&self.load_progress, 2, progress::StageStatus::Done);
+            progress::set_stage(&self.jobs.load_progress, 2, progress::StageStatus::Done);
         } else {
             self.audio_state.engine_sf_configs = port_configs;
             self.audio_state.sf_total = self.audio_state.engine_sf_configs.len();
             self.audio_state.sf_pending = true;
-            progress::set_stage(&self.load_progress, 2, progress::StageStatus::Active);
+            progress::set_stage(&self.jobs.load_progress, 2, progress::StageStatus::Active);
             progress::set_stage_progress(
-                &self.load_progress,
+                &self.jobs.load_progress,
                 2,
                 0.0,
                 format!("0/{}", self.audio_state.sf_total),
@@ -531,9 +531,14 @@ impl App {
         // 进度按"本轮起点之后的完成数"计（sf_loaded 是引擎生命周期累计值）。
         self.audio_state.sf_loaded_base = audio.handle.sf_loaded_count();
         self.audio_state.sf_pending = true;
-        progress::set_stage(&self.load_progress, 2, progress::StageStatus::Active);
-        progress::set_stage_progress(&self.load_progress, 2, 0.0, format!("0/{}", configs.len()));
-        progress::set_visible(&self.load_progress, true);
+        progress::set_stage(&self.jobs.load_progress, 2, progress::StageStatus::Active);
+        progress::set_stage_progress(
+            &self.jobs.load_progress,
+            2,
+            0.0,
+            format!("0/{}", configs.len()),
+        );
+        progress::set_visible(&self.jobs.load_progress, true);
     }
 
     /// Send the initial state to a freshly spawned audio handle:
@@ -591,9 +596,9 @@ impl App {
         // 进度改事件驱动：每个 port 的 `LoadedSoundFont` 结果回传时计数器 +1，
         // UI 每帧轮询（见 `poll_audio_progress`）更新 stage 2 —— 不再发完命令
         // 就预填 100%（异步加载还没开始，是假进度）。
-        progress::set_stage(&self.load_progress, 2, progress::StageStatus::Active);
+        progress::set_stage(&self.jobs.load_progress, 2, progress::StageStatus::Active);
         progress::set_stage_progress(
-            &self.load_progress,
+            &self.jobs.load_progress,
             2,
             0.0,
             format!("0/{}", port_configs.len()),
@@ -657,7 +662,7 @@ impl App {
         let Some(audio) = &self.audio_state.handle else {
             // handle 已丢（如 spawn 失败/重建中）：放弃本轮等待
             self.audio_state.sf_pending = false;
-            progress::set_visible(&self.load_progress, false);
+            progress::set_visible(&self.jobs.load_progress, false);
             if self.audio_state.engine_toast.take().is_some() {
                 self.notifications.finish_progress(
                     ENGINE_PROGRESS_ID,
@@ -680,17 +685,17 @@ impl App {
             // 看到完成时点播放能立即响应。
             if !audio.handle.audio_ready() {
                 progress::set_stage_progress(
-                    &self.load_progress,
+                    &self.jobs.load_progress,
                     2,
                     total as f32,
                     "初始化音频".to_string(),
                 );
-                progress::set_visible(&self.load_progress, true);
+                progress::set_visible(&self.jobs.load_progress, true);
                 return;
             }
             self.audio_state.sf_pending = false;
-            progress::set_stage(&self.load_progress, 2, progress::StageStatus::Done);
-            progress::set_visible(&self.load_progress, false);
+            progress::set_stage(&self.jobs.load_progress, 2, progress::StageStatus::Done);
+            progress::set_visible(&self.jobs.load_progress, false);
             if let Some(t0) = self.audio_state.engine_toast.take() {
                 self.notifications.finish_progress(
                     ENGINE_PROGRESS_ID,
@@ -702,13 +707,13 @@ impl App {
             }
         } else {
             progress::set_stage_progress(
-                &self.load_progress,
+                &self.jobs.load_progress,
                 2,
                 loaded as f32 / total as f32,
                 format!("{}/{}", loaded, total),
             );
             // 进度条还在跑：保持可见（set_stage_progress 会把 stage 置 Active）
-            progress::set_visible(&self.load_progress, true);
+            progress::set_visible(&self.jobs.load_progress, true);
         }
     }
 

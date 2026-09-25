@@ -29,7 +29,7 @@ pub enum PrBarEvent {
 pub struct PrBarData<'a> {
     pub ppq: u32,
     pub quantize: QuantizePreset,
-    /// 轨道显示信息缓存（edit.track_info_cache，含 Conductor 行）。
+    /// 轨道显示信息缓存（edit.track_cache.info，含 Conductor 行）。
     pub track_infos: &'a [yinhe_core::TrackInfo],
     /// PR 显示音轨勾选状态（edit.track_pianoroll_visible，popup 右半写它）。
     /// 与 AR 显隐（track_visible）分离，互不影响。

@@ -64,7 +64,7 @@ impl UndoAction {
                     let track = Arc::make_mut(track);
                     track.name = new.clone();
                     // 同步显示缓存（AR/PR 轨道列表、info panel 读它）。
-                    if let Some(ti) = doc.edit.track_info_cache.get_mut(*track_idx) {
+                    if let Some(ti) = doc.edit.track_cache.info.get_mut(*track_idx) {
                         ti.name = new.clone();
                     }
                     // SMF 标准：track 0 的 TrackName = song title。
@@ -85,8 +85,8 @@ impl UndoAction {
                     track.color = *new;
                     // 显示缓存：显式颜色优先，默认占位色回落调色板
                     // （与 document::track_color 一致，重置颜色后 undo/redo 也正确）。
-                    if let Some(c) = doc.edit.track_colors_cache.get_mut(*track_idx) {
-                        *c = track_color(track, *track_idx, doc.edit.conductor_track_idx);
+                    if let Some(c) = doc.edit.track_cache.colors.get_mut(*track_idx) {
+                        *c = track_color(track, *track_idx, doc.edit.track_cache.conductor_idx);
                     }
                 }
                 doc.data.bump_revision();
@@ -98,7 +98,7 @@ impl UndoAction {
                 // 编辑 project name 时同步到 track 0 name，保持一致。
                 if let Some(track) = model.tracks.get_mut(0) {
                     Arc::make_mut(track).name = new.clone();
-                    if let Some(ti) = doc.edit.track_info_cache.get_mut(0) {
+                    if let Some(ti) = doc.edit.track_cache.info.get_mut(0) {
                         ti.name = new.clone();
                     }
                 }
@@ -320,7 +320,7 @@ pub(crate) fn apply_arrange_note_shift(
     if delta_ticks == 0 && delta_tracks == 0 {
         return;
     }
-    let conductor = doc.edit.conductor_track_idx;
+    let conductor = doc.edit.track_cache.conductor_idx;
     let num_tracks = doc.data.model.tracks.len() as i32;
     let model = Arc::make_mut(&mut doc.data.model);
     let any = crate::batch_ops::update_selected_in_place(model, selection, |n, _k| {

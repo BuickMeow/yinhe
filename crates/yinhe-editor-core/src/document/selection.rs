@@ -23,7 +23,7 @@ impl Document {
             return;
         }
 
-        let conductor = self.edit.conductor_track_idx;
+        let conductor = self.edit.track_cache.conductor_idx;
         let tracks: Vec<u16> = if self.edit.track_selected.is_empty() {
             // 没有预选 track 时，全选所有非 conductor track
             let num_tracks = model.tracks.len() as u16;
@@ -60,7 +60,7 @@ impl Document {
         if max_end == 0 {
             return;
         }
-        let conductor = self.edit.conductor_track_idx;
+        let conductor = self.edit.track_cache.conductor_idx;
         let num_tracks = model.tracks.len() as u16;
 
         self.edit.selected.clear();
@@ -135,7 +135,7 @@ impl Document {
             0
         };
 
-        let conductor = self.edit.conductor_track_idx;
+        let conductor = self.edit.track_cache.conductor_idx;
         let allow_overlap = self.edit.allow_overlapping_notes;
         let model = Arc::make_mut(&mut self.data.model);
 

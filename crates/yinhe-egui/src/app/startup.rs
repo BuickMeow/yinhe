@@ -164,6 +164,7 @@ impl App {
     /// 启动页显示的当前活动描述。
     fn startup_status_text(&self) -> String {
         let active_stage = self
+            .jobs
             .load_progress
             .lock()
             .unwrap_or_else(|e| e.into_inner())

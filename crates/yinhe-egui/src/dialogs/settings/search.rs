@@ -95,9 +95,9 @@ pub fn show_search_results(
     settings: &mut AudioSettings,
     main_ctx: &egui::Context,
 ) -> bool {
-    let query = settings.settings_search.trim().to_string();
+    let query = settings.ui_session.settings_search.trim().to_string();
     if query.is_empty() {
-        return match settings.settings_tab {
+        return match settings.ui_session.settings_tab {
             0 => show_theme_tab(ui, settings, main_ctx),
             1 => show_appearance_tab(ui, settings, main_ctx),
             2 => show_language_tab(ui, settings),
@@ -131,8 +131,8 @@ pub fn show_search_results(
             ))
             .clicked()
         {
-            settings.settings_tab = cat;
-            settings.settings_search.clear();
+            settings.ui_session.settings_tab = cat;
+            settings.ui_session.settings_search.clear();
         }
     }
     if matched == 0 {

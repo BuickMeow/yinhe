@@ -189,7 +189,7 @@ impl Document {
             return None;
         }
         // Don't remove conductor track
-        if self.edit.conductor_track_idx == Some(idx as u16) {
+        if self.edit.track_cache.conductor_idx == Some(idx as u16) {
             return None;
         }
         // Don't remove if only 2 tracks (conductor + 1)
@@ -267,8 +267,8 @@ impl Document {
             return None;
         }
         // Don't move conductor track
-        if self.edit.conductor_track_idx == Some(from_idx as u16)
-            || self.edit.conductor_track_idx == Some(to_idx as u16)
+        if self.edit.track_cache.conductor_idx == Some(from_idx as u16)
+            || self.edit.track_cache.conductor_idx == Some(to_idx as u16)
         {
             return None;
         }
@@ -315,7 +315,7 @@ impl Document {
         self.data.bump_revision();
 
         // Update edit state
-        self.edit.track_info_cache = self.data.track_info();
+        self.edit.track_cache.rebuild_info(&self.data);
         self.edit.track_selected.clear();
         self.edit.track_selected.insert(to_idx as u16);
         // 移动 track 后，editing_track 用同样的 remap 规则更新

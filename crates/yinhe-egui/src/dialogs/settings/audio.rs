@@ -50,7 +50,7 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             let no_device = t!("settings.audio.midi_no_device").to_string();
             let current_midi = settings.midi_input_device.clone().unwrap_or(no_device);
             crate::widgets::combo::combo_box(ui, "midi_input_device", current_midi, 200.0, |ui| {
-                for device_name in settings.available_midi_inputs.clone() {
+                for device_name in settings.ui_session.available_midi_inputs.clone() {
                     let selected = settings.midi_input_device.as_ref() == Some(&device_name);
                     if crate::widgets::combo::combo_item(ui, selected, &device_name).clicked() {
                         settings.midi_input_device = Some(device_name);
@@ -80,7 +80,7 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             let default_input = t!("settings.audio.default_input").to_string();
             let current_input = settings.input_device_name.clone().unwrap_or(default_input);
             crate::widgets::combo::combo_box(ui, "input_device", current_input, 200.0, |ui| {
-                for device_name in settings.available_input_devices.clone() {
+                for device_name in settings.ui_session.available_input_devices.clone() {
                     let selected = settings.input_device_name.as_ref() == Some(&device_name);
                     if crate::widgets::combo::combo_item(ui, selected, &device_name).clicked() {
                         settings.input_device_name = Some(device_name);

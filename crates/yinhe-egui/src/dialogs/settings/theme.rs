@@ -388,7 +388,8 @@ pub fn show_theme_tab(
                 } else {
                     egui::Stroke::new(1.0, cur_line.gamma_multiply(0.45))
                 };
-                let is_renaming = item.is_custom && settings.rename_custom_id == item.custom_id;
+                let is_renaming =
+                    item.is_custom && settings.ui_session.rename_custom_id == item.custom_id;
                 if ui.is_rect_visible(card_rect) {
                     let painter = ui.painter_at(card_rect);
                     painter.rect_filled(card_rect, egui::CornerRadius::same(8), preview.app_bg);
@@ -492,7 +493,7 @@ pub fn show_theme_tab(
                         egui::pos2(card_rect.max.x - 28.0, card_rect.min.y + 24.0),
                     );
                     let title_id = ui.id().with(format!("rename_{}", item.id_str));
-                    let mut buf = settings.rename_buffer.clone();
+                    let mut buf = settings.ui_session.rename_buffer.clone();
                     let resp = ui.put(
                         title_rect,
                         egui::TextEdit::singleline(&mut buf)
@@ -508,7 +509,7 @@ pub fn show_theme_tab(
                         // 已聚焦
                     }
                     // 请求聚焦（首次）
-                    if settings.rename_buffer == item.display {
+                    if settings.ui_session.rename_buffer == item.display {
                         ui.memory_mut(|mem| {
                             if mem.focused().is_none() {
                                 mem.request_focus(title_id);
@@ -516,12 +517,12 @@ pub fn show_theme_tab(
                         });
                     }
                     if resp.changed() {
-                        settings.rename_buffer = buf.clone();
+                        settings.ui_session.rename_buffer = buf.clone();
                     }
                     let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
                     let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
                     if enter {
-                        let new_name = settings.rename_buffer.trim().to_string();
+                        let new_name = settings.ui_session.rename_buffer.trim().to_string();
                         if !new_name.is_empty()
                             && let Some(cid) = item.custom_id
                             && let Some(ct) =
@@ -530,14 +531,14 @@ pub fn show_theme_tab(
                             ct.name = new_name;
                             changed = true;
                         }
-                        settings.rename_custom_id = None;
-                        settings.rename_buffer.clear();
+                        settings.ui_session.rename_custom_id = None;
+                        settings.ui_session.rename_buffer.clear();
                     } else if esc {
-                        settings.rename_custom_id = None;
-                        settings.rename_buffer.clear();
+                        settings.ui_session.rename_custom_id = None;
+                        settings.ui_session.rename_buffer.clear();
                     } else if resp.lost_focus() && !enter && !esc {
                         // 失焦视为确认（点击别处）
-                        let new_name = settings.rename_buffer.trim().to_string();
+                        let new_name = settings.ui_session.rename_buffer.trim().to_string();
                         if !new_name.is_empty()
                             && let Some(cid) = item.custom_id
                             && let Some(ct) =
@@ -546,8 +547,8 @@ pub fn show_theme_tab(
                             ct.name = new_name;
                             changed = true;
                         }
-                        settings.rename_custom_id = None;
-                        settings.rename_buffer.clear();
+                        settings.ui_session.rename_custom_id = None;
+                        settings.ui_session.rename_buffer.clear();
                     }
                 }
                 let card_clicked = !is_renaming && card_resp.clicked() && !star_resp.clicked();
@@ -705,8 +706,8 @@ pub fn show_theme_tab(
     if let Some(id) = to_rename
         && let Some(ct) = settings.custom_themes.iter().find(|c| c.id == id)
     {
-        settings.rename_custom_id = Some(id);
-        settings.rename_buffer = ct.name.clone();
+        settings.ui_session.rename_custom_id = Some(id);
+        settings.ui_session.rename_buffer = ct.name.clone();
     }
 
     let _ = main_ctx;

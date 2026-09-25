@@ -470,8 +470,8 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
     // 颜色作为通道条色条（与 AR/PR 轨道色同源，含 Conductor 主题色）。
     // Conductor 是 Master 轨（AR 里不显示通道号），不归入任何通道条。
     let edit = &app.workspace.documents[idx].edit;
-    let track_colors = &edit.track_colors_cache;
-    let conductor_idx = edit.conductor_track_idx;
+    let track_colors = &edit.track_cache.colors;
+    let conductor_idx = edit.track_cache.conductor_idx;
     let (names, colors): (Vec<Vec<String>>, Vec<egui::Color32>) = active
         .iter()
         .map(|&ch| {

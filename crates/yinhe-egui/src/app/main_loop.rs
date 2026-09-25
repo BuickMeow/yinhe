@@ -48,7 +48,7 @@ impl eframe::App for App {
     /// 正常退出：清理自动保存备份（异常退出时保留，供下次启动恢复）。
     /// device lost 自动重启例外：备份要留给新进程恢复，绝不能删。
     fn on_exit(&mut self) {
-        if self.autosave.lost_started {
+        if self.jobs.autosave.lost_started {
             return;
         }
         self.clear_autosave();
@@ -152,8 +152,8 @@ impl eframe::App for App {
         // - 输入框聚焦：同样会被 AppKit 拦截（TextEdit 收不到 Cmd+A/C/V 等），
         //   必须清空加速键让按键直达 egui，由输入框自身消费（全选/复制/粘贴文本）。
         let wants_keyboard_input = ui.ctx().egui_wants_keyboard_input();
-        let suspend_menu_accels = self.audio_settings.show_settings
-            || self.audio_settings.shortcut_recording
+        let suspend_menu_accels = self.audio_settings.ui_session.show_settings
+            || self.audio_settings.ui_session.shortcut_recording
             || wants_keyboard_input;
         // 播放菜单触发的播放/暂停/停止（与键盘、transport bar 合并处理）
         let mut menu_toggle_play = false;
@@ -307,7 +307,7 @@ impl eframe::App for App {
                     continue;
                 }
                 MenuAction::Settings => {
-                    self.audio_settings.show_settings = true;
+                    self.audio_settings.ui_session.show_settings = true;
                     crate::chrome::dialog::raise_viewport(
                         ui.ctx(),
                         egui::ViewportId::from_hash_of("settings_dialog"),

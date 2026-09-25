@@ -9,8 +9,8 @@
 
 use std::sync::Arc;
 
-use super::event_edit::{conductor_delete_events, conductor_insert_event, conductor_set_event};
 use super::Document;
+use super::event_edit::{conductor_delete_events, conductor_insert_event, conductor_set_event};
 
 impl Document {
     /// 按 `old_tick` 找到 `conductor.time_sig` 事件并修改其字段。

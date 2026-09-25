@@ -503,12 +503,12 @@ impl App {
                     main,
                     &pr_visible,
                     &doc.edit.track_overrides,
-                    doc.edit.conductor_track_idx,
+                    doc.edit.track_cache.conductor_idx,
                 );
                 let bar_data = piano_view::control_bar::PrBarData {
                     ppq: tpb,
                     quantize: doc.edit.quantize_pianoroll,
-                    track_infos: &doc.edit.track_info_cache,
+                    track_infos: &doc.edit.track_cache.info,
                     pr_track_visible: &doc.edit.track_pianoroll_visible,
                     // 主音轨纯派生自选中集合：无选中时为空，不显示回退轨。
                     main_track: main,
@@ -557,7 +557,7 @@ impl App {
                     Some(&doc.data.model),
                     &mut doc.edit.selected,
                     &pr_visible,
-                    &doc.edit.track_colors_cache,
+                    &doc.edit.track_cache.colors,
                     &mut doc.edit.cursor_tick,
                     is_playing,
                     doc.edit.quantize_pianoroll,
@@ -577,7 +577,7 @@ impl App {
                     &mut doc.edit.line_tool_line,
                     &mut doc.edit.scissors_line,
                     &doc.edit.track_selected,
-                    doc.edit.conductor_track_idx,
+                    doc.edit.track_cache.conductor_idx,
                     write_track,
                     bar_data,
                     doc.data.revision,
@@ -809,7 +809,7 @@ impl App {
         // Conductor 跳过（不作为写入目标）；Tempo 编辑不依赖选中。
         if let Some((track, _key)) = req.note
             && let Some(idx) = self.workspace.active_doc
-            && self.workspace.documents[idx].edit.conductor_track_idx != Some(track)
+            && self.workspace.documents[idx].edit.track_cache.conductor_idx != Some(track)
         {
             let sel = &mut self.workspace.documents[idx].edit.track_selected;
             sel.clear();

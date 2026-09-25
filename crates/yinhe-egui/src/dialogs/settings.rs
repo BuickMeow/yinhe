@@ -111,7 +111,7 @@ pub fn show_content(
                     ui.spacing_mut().item_spacing.y = 4.0;
                     ui.add_sized(
                         [132.0, 24.0],
-                        egui::TextEdit::singleline(&mut settings.settings_search)
+                        egui::TextEdit::singleline(&mut settings.ui_session.settings_search)
                             .hint_text(t!("settings.search_hint").as_ref())
                             .id_salt("settings_search")
                             .desired_width(132.0)
@@ -123,18 +123,18 @@ pub fn show_content(
                                     .inner_margin(egui::Margin::symmetric(6, 4)),
                             ),
                     );
-                    if !settings.settings_search.is_empty()
+                    if !settings.ui_session.settings_search.is_empty()
                         && crate::widgets::flat::flat_button(
                             ui,
                             t!("settings.search_clear").as_ref(),
                         )
                         .clicked()
                     {
-                        settings.settings_search.clear();
+                        settings.ui_session.settings_search.clear();
                     }
 
                     for (i, key) in CATEGORY_KEYS.iter().enumerate() {
-                        let selected = settings.settings_tab == i;
+                        let selected = settings.ui_session.settings_tab == i;
                         if ui
                             .add(crate::widgets::menu::menu_item_button(
                                 ui,
@@ -148,7 +148,7 @@ pub fn show_content(
                             ))
                             .clicked()
                         {
-                            settings.settings_tab = i;
+                            settings.ui_session.settings_tab = i;
                         }
                     }
                 });
@@ -188,7 +188,7 @@ pub(crate) fn show_viewport(
     audio: &Option<yinhe_audio::CpalAudioHandle>,
 ) -> bool {
     let viewport_id = eframe::egui::ViewportId::from_hash_of("settings_dialog");
-    if !settings.show_settings {
+    if !settings.ui_session.show_settings {
         return false;
     }
 
@@ -249,8 +249,8 @@ pub(crate) fn show_viewport(
                     });
                 if close {
                     vctx.send_viewport_cmd(eframe::egui::ViewportCommand::Visible(false));
-                    s.show_settings = false;
-                    s.shortcut_recording = false;
+                    s.ui_session.show_settings = false;
+                    s.ui_session.shortcut_recording = false;
                 }
             }
             *settings_cb.borrow_mut() = slot;
@@ -289,7 +289,7 @@ pub(crate) fn show_viewport(
         if (settings.font_scale - prev_font_scale).abs() > f32::EPSILON {
             crate::scaling::apply_font_scale(ctx, settings.font_scale);
         }
-        !settings.show_settings
+        !settings.ui_session.show_settings
     } else {
         false
     }

@@ -8,7 +8,7 @@ use yinhe_mixer::MixerParams;
 use yinhe_types::TRACK_PALETTE;
 use yinhe_yin::{MappingFile, ProjectFile};
 
-use crate::edit_state::EditState;
+use crate::edit_state::{EditState, TrackCache};
 use crate::history::{EditSnapshot, UndoAction, UndoEntry, UndoStack};
 use crate::project_data::ProjectData;
 use crate::quantize::QuantizePreset;
@@ -74,7 +74,7 @@ impl Document {
     }
 
     pub fn track_info_cache(&self) -> &[yinhe_core::TrackInfo] {
-        &self.edit.track_info_cache
+        &self.edit.track_cache.info
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -142,11 +142,14 @@ impl Document {
                         soloed: t.soloed,
                     })
                     .collect(),
-                track_info_cache,
-                track_colors_cache: (0..num_tracks)
-                    .map(|i| track_color(&model.tracks[i], i, conductor_track_idx))
-                    .collect(),
-                conductor_track_idx,
+                track_cache: TrackCache {
+                    info: track_info_cache,
+                    colors: (0..num_tracks)
+                        .map(|i| track_color(&model.tracks[i], i, conductor_track_idx))
+                        .collect(),
+                    conductor_idx: conductor_track_idx,
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             history: UndoStack::new(),
@@ -222,10 +225,12 @@ impl Document {
                     track_visible: vec![true; num_tracks],
                     track_pianoroll_visible: vec![true; num_tracks],
                     track_overrides,
-                    track_info_cache,
-                    pc_map_cache,
-                    track_colors_cache,
-                    conductor_track_idx,
+                    track_cache: TrackCache {
+                        info: track_info_cache,
+                        colors: track_colors_cache,
+                        pc_map: pc_map_cache,
+                        conductor_idx: conductor_track_idx,
+                    },
                     ..Default::default()
                 },
                 history: UndoStack::new(),
@@ -402,8 +407,9 @@ impl Document {
         true
     }
 
-    /// Rebuild track_info_cache, track_colors_cache, and resize track_visible/
-    /// track_pianoroll_visible/track_overrides to match current track count.
+    /// Rebuild the track caches (`track_cache.info` / `track_cache.colors`) and
+    /// resize track_visible/track_pianoroll_visible/track_overrides to match
+    /// current track count.
     /// Called after track structure changes (add/remove/move/undo/redo).
     pub(crate) fn sync_track_caches(&mut self) {
         self.sync_track_caches_with_dark(true);
@@ -433,23 +439,8 @@ impl Document {
 
     /// `sync_track_caches` with precise Conductor color (`text_primary` from theme).
     pub fn sync_track_caches_with_conductor_color(&mut self, conductor_color: [f32; 4]) {
-        self.edit.track_info_cache = self.data.track_info();
+        self.edit.track_cache.rebuild(&self.data, conductor_color);
         let num_tracks = self.data.model.tracks.len();
-        self.edit.track_colors_cache = self
-            .data
-            .model
-            .tracks
-            .iter()
-            .enumerate()
-            .map(|(i, t)| {
-                track_color_with_conductor_color(
-                    t,
-                    i,
-                    self.edit.conductor_track_idx,
-                    conductor_color,
-                )
-            })
-            .collect();
         while self.edit.track_visible.len() < num_tracks {
             self.edit.track_visible.push(true);
         }
@@ -581,7 +572,7 @@ mod tests {
         assert_eq!(doc.model().tracks[0].name, "Conductor");
         assert_eq!(doc.model().tracks[1].name, "Track 1");
         assert_eq!(doc.model().tracks[16].name, "Track 16");
-        assert_eq!(doc.edit.conductor_track_idx, Some(0));
+        assert_eq!(doc.edit.track_cache.conductor_idx, Some(0));
         assert_eq!(doc.edit.track_visible.len(), 17);
         assert_eq!(doc.edit.track_pianoroll_visible.len(), 17);
         assert_eq!(doc.file_name, "Untitled");
@@ -1034,7 +1025,7 @@ mod tests {
             1.0,
         ];
         assert_eq!(
-            doc.edit.track_colors_cache[0], dark_f,
+            doc.edit.track_cache.colors[0], dark_f,
             "新建文档 Conductor 应为暗色主文字"
         );
         let light_c = yinhe_theme::base::BaseColors::LIGHT.text;
@@ -1046,15 +1037,15 @@ mod tests {
         ];
         doc.sync_track_caches_with_conductor_color(light_f);
         assert_eq!(
-            doc.edit.track_colors_cache[0], light_f,
+            doc.edit.track_cache.colors[0], light_f,
             "切换主题后缓存应跟随主文字"
         );
         let custom = [0.345, 0.305, 0.235, 1.0];
         doc.sync_track_caches_with_conductor_color(custom);
-        assert_eq!(doc.edit.track_colors_cache[0], custom);
+        assert_eq!(doc.edit.track_cache.colors[0], custom);
         // 非 Conductor 轨道不受 Conductor 颜色影响，仍走调色板
         assert_eq!(
-            doc.edit.track_colors_cache[1],
+            doc.edit.track_cache.colors[1],
             [
                 yinhe_theme::palette::TRACK_PALETTE[0][0],
                 yinhe_theme::palette::TRACK_PALETTE[0][1],

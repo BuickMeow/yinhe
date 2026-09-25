@@ -538,3 +538,305 @@ fn hit_zone(
         HitZone::Body
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yinhe_editor_core::quantize::QuantizePreset;
+
+    fn test_view() -> ArrangementView {
+        ArrangementView::with_base(yinhe_types::TimelineViewBase {
+            pixels_per_tick: 1.0,
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+            left_panel_width: 0.0,
+            dirty: false,
+            track_panel_row_height: 40.0,
+            track_panel_scroll_y: 0.0,
+            follow_target: None,
+            follow_anim_start: 0.0,
+            follow_anim_elapsed: 0.0,
+        })
+    }
+
+    fn clip(id: u32, start_seconds: f64, duration_seconds: f64) -> AudioClip {
+        AudioClip {
+            id,
+            source: "src".into(),
+            start_seconds,
+            offset_seconds: 0.0,
+            duration_seconds,
+            gain: 1.0,
+            fade_in_seconds: 0.0,
+            fade_out_seconds: 0.3,
+            reversed: false,
+        }
+    }
+
+    fn audio_track(clips: Vec<AudioClip>) -> yinhe_core::TrackData {
+        let mut t = yinhe_core::TrackData::new(0, 0);
+        t.kind = TrackKind::Audio;
+        t.audio_clips = clips;
+        t
+    }
+
+    fn drag_state(mode: DragMode, start_clip: AudioClip) -> DragState {
+        DragState {
+            track: 0,
+            id: start_clip.id,
+            mode,
+            start_clip,
+            alt_copy: false,
+        }
+    }
+
+    /// 持有 ArrangeData 的全部借用数据，供纯函数测试构造只读视图。
+    struct Harness {
+        tracks: Vec<std::sync::Arc<yinhe_core::TrackData>>,
+        visible: Vec<bool>,
+        colors: Vec<[f32; 4]>,
+        tempo_lane: yinhe_types::AutomationLane,
+        tempo_map: yinhe_core::TempoMap,
+        library: crate::app::audio_library::AudioLibrary,
+    }
+
+    impl Harness {
+        fn new(tracks: Vec<yinhe_core::TrackData>) -> Self {
+            let tracks: Vec<_> = tracks.into_iter().map(std::sync::Arc::new).collect();
+            let visible = tracks.iter().map(|_| true).collect();
+            let colors = tracks.iter().map(|t| t.color).collect();
+            Self {
+                tracks,
+                visible,
+                colors,
+                tempo_lane: yinhe_types::AutomationLane {
+                    target: yinhe_types::AutomationTarget::CC { controller: 1 },
+                    track: 0,
+                    events: Vec::new(),
+                },
+                tempo_map: yinhe_core::TempoMap::default(),
+                library: crate::app::audio_library::AudioLibrary::new(),
+            }
+        }
+
+        fn data(&self) -> ArrangeData<'_> {
+            ArrangeData {
+                midi: None,
+                track_visible: &self.visible,
+                track_colors: &self.colors,
+                track_info: &[],
+                quantize: QuantizePreset::Fraction(1, 4),
+                ppq: 480,
+                bar_line_data: None,
+                total_ticks: 100_000.0,
+                num_tracks: self.tracks.len(),
+                tracks: &self.tracks,
+                tempo_lane: &self.tempo_lane,
+                conductor_track_idx: None,
+                tempo_map: &self.tempo_map,
+                audio_library: &self.library,
+                audio_sources: &[],
+            }
+        }
+    }
+
+    fn frame() -> egui::Rect {
+        egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(4000.0, 300.0))
+    }
+
+    /// 淡入/淡出拖动：指针在片段宽度上的比例 → 时长；另一侧保持原值；越界 clamp。
+    #[test]
+    fn fade_from_pointer_maps_position_to_fraction_and_clamps() {
+        let h = Harness::new(vec![audio_track(vec![clip(7, 1.0, 2.0)])]);
+        let view = test_view();
+        let data = h.data();
+        let rect = frame();
+        let c = clip(7, 1.0, 2.0);
+        let x0 = view.tick_to_x(data.tempo_map.tick_at_time(c.start_seconds));
+        let x1 = view.tick_to_x(data.tempo_map.tick_at_time(c.end_seconds()));
+        let width = x1 - x0;
+
+        // 淡入拖到宽度中点 → fade_in = 50% × 2s = 1.0，fade_out 保持 0.3。
+        let state = drag_state(DragMode::FadeIn, c.clone());
+        let (fi, fo) = fade_from_pointer(
+            &state,
+            egui::pos2(x0 + width * 0.5, 10.0),
+            rect,
+            &view,
+            &data,
+        )
+        .expect("FadeIn 应返回新淡入淡出");
+        assert!((fi - 1.0).abs() < 1e-6, "淡入应为 1.0s，实际 {fi}");
+        assert!((fo - 0.3).abs() < 1e-6, "淡出应保持原值 0.3s，实际 {fo}");
+
+        // 淡出拖到右侧 1/4 → fade_out = 25% × 2s = 0.5，fade_in 保持 0。
+        let state = DragState {
+            mode: DragMode::FadeOut,
+            ..state
+        };
+        let (fi, fo) = fade_from_pointer(
+            &state,
+            egui::pos2(x1 - width * 0.25, 10.0),
+            rect,
+            &view,
+            &data,
+        )
+        .expect("FadeOut 应返回新淡入淡出");
+        assert!((fo - 0.5).abs() < 1e-6, "淡出应为 0.5s，实际 {fo}");
+        assert_eq!(fi, 0.0, "淡入应保持原值 0");
+
+        // 指针在片段左侧越界 → frac clamp 到 0。
+        let (fi, _) = fade_from_pointer(&state, egui::pos2(x0 - 100.0, 10.0), rect, &view, &data)
+            .expect("越界仍应返回（clamp）");
+        assert_eq!(fi, 0.0, "越界应 clamp 到 0");
+    }
+
+    /// 松手换算：Move 产生位移命令，Alt 变 Duplicate，零位移不产生命令。
+    #[test]
+    fn finish_drag_move_emits_delta_and_alt_duplicates() {
+        let h = Harness::new(vec![audio_track(vec![clip(7, 1.0, 2.0)])]);
+        let view = test_view();
+        let data = h.data();
+        let rect = frame();
+        let c = clip(7, 1.0, 2.0);
+        let state = drag_state(DragMode::Move, c.clone());
+        // 指针落在时间线 2.0s（吸附后），相对起点 1.0s 位移 1.0s。
+        let pos = egui::pos2(view.tick_to_x(data.tempo_map.tick_at_time(2.0)), 10.0);
+
+        match finish_drag(&state, pos, rect, &view, &data) {
+            Some(AudioEditCmd::Move {
+                track,
+                ids,
+                delta_seconds,
+            }) => {
+                assert_eq!(track, 0);
+                assert_eq!(ids, vec![7]);
+                assert!(
+                    (delta_seconds - 1.0).abs() < 1e-9,
+                    "位移应为 1.0s（2.0 - 1.0），实际 {delta_seconds}"
+                );
+            }
+            other => panic!("应产生 Move 命令，实际 {other:?}"),
+        }
+
+        let alt = DragState {
+            alt_copy: true,
+            ..state.clone()
+        };
+        match finish_drag(&alt, pos, rect, &view, &data) {
+            Some(AudioEditCmd::Duplicate { delta_seconds, .. }) => {
+                assert!((delta_seconds - 1.0).abs() < 1e-9);
+            }
+            other => panic!("Alt 拖动应产生 Duplicate 命令，实际 {other:?}"),
+        }
+
+        // 指针仍在起点（1.0s）→ 零位移，不产生命令。
+        let pos0 = egui::pos2(view.tick_to_x(data.tempo_map.tick_at_time(1.0)), 10.0);
+        assert!(
+            finish_drag(&state, pos0, rect, &view, &data).is_none(),
+            "零位移不应产生命令"
+        );
+    }
+
+    /// 命中分区：上角淡入/淡出手柄优先于左右边缘，其余为片段主体。
+    #[test]
+    fn hit_zone_prioritizes_fade_handles_over_edges() {
+        let h = Harness::new(vec![audio_track(vec![clip(7, 1.0, 2.0)])]);
+        let view = test_view();
+        let data = h.data();
+        let layout = ArRowLayout::new([0]);
+        let rect = frame();
+        let c = clip(7, 1.0, 2.0);
+        let x0 = view.tick_to_x(data.tempo_map.tick_at_time(1.0));
+        let x1 = view.tick_to_x(data.tempo_map.tick_at_time(3.0));
+
+        assert_eq!(
+            hit_zone(
+                &view,
+                &layout,
+                &data,
+                egui::pos2(x0 + 2.0, 5.0),
+                rect,
+                0,
+                &c
+            ),
+            HitZone::FadeInHandle,
+            "上角左端为淡入手柄"
+        );
+        assert_eq!(
+            hit_zone(
+                &view,
+                &layout,
+                &data,
+                egui::pos2(x1 - 2.0, 5.0),
+                rect,
+                0,
+                &c
+            ),
+            HitZone::FadeOutHandle,
+            "上角右端为淡出手柄"
+        );
+        assert_eq!(
+            hit_zone(
+                &view,
+                &layout,
+                &data,
+                egui::pos2(x0 + 2.0, 20.0),
+                rect,
+                0,
+                &c
+            ),
+            HitZone::LeftEdge,
+            "行中部的左端为左边缘"
+        );
+        assert_eq!(
+            hit_zone(
+                &view,
+                &layout,
+                &data,
+                egui::pos2(x1 - 2.0, 20.0),
+                rect,
+                0,
+                &c
+            ),
+            HitZone::RightEdge,
+            "行中部的右端为右边缘"
+        );
+        assert_eq!(
+            hit_zone(
+                &view,
+                &layout,
+                &data,
+                egui::pos2((x0 + x1) * 0.5, 20.0),
+                rect,
+                0,
+                &c
+            ),
+            HitZone::Body,
+            "中间区域为主体"
+        );
+    }
+
+    /// 命中测试只认音频轨：MIDI 轨即使挂着片段数据也不参与命中。
+    #[test]
+    fn hit_test_only_returns_audio_tracks() {
+        let mut midi = yinhe_core::TrackData::new(0, 0);
+        midi.audio_clips = vec![clip(9, 1.0, 2.0)];
+        let h = Harness::new(vec![audio_track(vec![clip(7, 1.0, 2.0)]), midi]);
+        let view = test_view();
+        let data = h.data();
+        let layout = ArRowLayout::new([0, 0]);
+        let rect = frame();
+        let x = view.tick_to_x(data.tempo_map.tick_at_time(1.0)) + 10.0;
+
+        let (track, hit) = hit_test(&view, &layout, &data, egui::pos2(x, 20.0), rect)
+            .expect("音频轨上的片段应命中");
+        assert_eq!(track, 0);
+        assert_eq!(hit.id, 7);
+
+        assert!(
+            hit_test(&view, &layout, &data, egui::pos2(x, 60.0), rect).is_none(),
+            "MIDI 轨不参与音频命中"
+        );
+    }
+}

@@ -74,19 +74,19 @@ impl AudioSettings {
     }
 
     pub fn available_devices(&self) -> &[String] {
-        &self.available_devices
+        &self.ui_session.available_devices
     }
 
     pub fn available_sample_rates(&self) -> &[u32] {
-        &self.available_sample_rates
+        &self.ui_session.available_sample_rates
     }
 
     /// 刷新设备/采样率列表：**绝不修改用户设置**。此前当前采样率不在新设备
     /// 支持列表时会静默改成默认值，导致「只是刷新设备/拔插耳机」也触发引擎
     /// 全量重建。采样率是否被设备支持由 spawn 阶段处理或用户显式选择。
     pub fn refresh_devices(&mut self, devices: Vec<String>, rates: Vec<u32>) {
-        self.available_devices = devices;
-        self.available_sample_rates = rates;
+        self.ui_session.available_devices = devices;
+        self.ui_session.available_sample_rates = rates;
     }
 }
 
@@ -120,6 +120,6 @@ mod tests {
         // 新设备列表不支持当前采样率：也不得静默改写（零改动触发全量重建的根因）
         s.refresh_devices(vec!["dev".into()], vec![44_100]);
         assert_eq!(s.sample_rate, 48_000, "刷新设备不得静默改写采样率");
-        assert_eq!(s.available_sample_rates, vec![44_100]);
+        assert_eq!(s.ui_session.available_sample_rates, vec![44_100]);
     }
 }

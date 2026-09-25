@@ -4,6 +4,7 @@ use crate::config::ProjectSfConfig;
 use crate::document::TrackOverride;
 use crate::history::PendingEdits;
 use crate::playback::PlaybackState;
+use crate::project_data::ProjectData;
 use crate::quantize::QuantizePreset;
 
 pub mod sel_rect;
@@ -17,6 +18,72 @@ pub use sel_rect::{ResizeSide, SelRectState};
 pub struct AnchorLine {
     pub start: (f64, u8),
     pub end: (f64, u8),
+}
+
+/// 轨道相关派生缓存的聚合容器。
+///
+/// 全部字段都是权威数据（`ProjectData` / `YinModel`）的派生视图，可安全重建；
+/// 不参与 undo 快照，也不落盘。
+#[derive(Default)]
+pub struct TrackCache {
+    /// 每轨显示色（Conductor 用主题主文字色）。
+    pub colors: Vec<[f32; 4]>,
+    /// 每轨显示信息（名称/音符数/事件数/端口/通道）。
+    pub info: Vec<yinhe_core::TrackInfo>,
+    /// 源通道 → 该通道首个 program change。
+    pub pc_map: HashMap<u8, u8>,
+    /// Conductor 轨索引（由模型结构派生）。
+    pub conductor_idx: Option<u16>,
+}
+
+impl TrackCache {
+    /// 从权威数据全量重建 `info` + `colors`（轨道结构变化后调用）。
+    /// `conductor_color` 由调用方按当前主题给出。
+    pub fn rebuild(&mut self, data: &ProjectData, conductor_color: [f32; 4]) {
+        self.rebuild_info(data);
+        self.rebuild_colors(data, conductor_color);
+    }
+
+    /// 只重建 `info`（改名、增删轨后）。
+    pub fn rebuild_info(&mut self, data: &ProjectData) {
+        self.info = data.track_info();
+    }
+
+    /// 只重建 `colors`（改色、换主题后）。
+    pub fn rebuild_colors(&mut self, data: &ProjectData, conductor_color: [f32; 4]) {
+        self.colors = data
+            .model
+            .tracks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                crate::document::track_color_with_conductor_color(
+                    t,
+                    i,
+                    self.conductor_idx,
+                    conductor_color,
+                )
+            })
+            .collect();
+    }
+
+    /// 只重建 `pc_map`（program change 变化后）。
+    pub fn rebuild_pc_map(&mut self, data: &ProjectData) {
+        self.pc_map = data.pc_map_cache();
+    }
+
+    /// 懒补齐 `colors` 到 `len`（新增轨用调色板兜底，已有元素不动）。
+    pub fn ensure_colors_len(&mut self, model: &yinhe_core::YinModel, len: usize) {
+        let conductor_idx = self.conductor_idx;
+        while self.colors.len() < len {
+            let i = self.colors.len();
+            self.colors.push(crate::document::track_color(
+                &model.tracks[i],
+                i,
+                conductor_idx,
+            ));
+        }
+    }
 }
 
 /// 瞬态编辑状态（不落盘）
@@ -38,10 +105,8 @@ pub struct EditState {
     pub soundfont_selected_port: u8,
     pub project_sf: ProjectSfConfig,
     pub pending_edits: PendingEdits,
-    pub track_colors_cache: Vec<[f32; 4]>,
-    pub track_info_cache: Vec<yinhe_core::TrackInfo>,
-    pub pc_map_cache: HashMap<u8, u8>,
-    pub conductor_track_idx: Option<u16>,
+    /// 轨道派生缓存（颜色/信息/PC 映射/Conductor 索引）。
+    pub track_cache: TrackCache,
     pub editing_track: Option<u16>,
     pub sel_rect: SelRectState,
     /// 直线工具待确认的锚点线（✓ 生成音符后清空）。
@@ -83,10 +148,7 @@ impl Default for EditState {
             soundfont_selected_port: 0,
             project_sf: ProjectSfConfig::default(),
             pending_edits: PendingEdits::default(),
-            track_colors_cache: Vec::new(),
-            track_info_cache: Vec::new(),
-            pc_map_cache: HashMap::new(),
-            conductor_track_idx: None,
+            track_cache: TrackCache::default(),
             editing_track: None,
             sel_rect: SelRectState::default(),
             line_tool_line: None,
@@ -114,7 +176,8 @@ impl EditState {
     /// 写入目标轨 = 主音轨，无选中时回退到首个非 Conductor 轨
     pub fn write_track(&self) -> Option<u16> {
         self.main_track().or_else(|| {
-            (0..self.track_visible.len() as u16).find(|&i| Some(i) != self.conductor_track_idx)
+            (0..self.track_visible.len() as u16)
+                .find(|&i| Some(i) != self.track_cache.conductor_idx)
         })
     }
 }

@@ -15,7 +15,7 @@ mod tests {
             main,
             &doc.edit.track_pianoroll_visible,
             &doc.edit.track_overrides,
-            doc.edit.conductor_track_idx,
+            doc.edit.track_cache.conductor_idx,
         )
     }
 

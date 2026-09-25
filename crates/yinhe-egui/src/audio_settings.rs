@@ -41,9 +41,13 @@ pub(crate) fn load_audio_settings() -> AudioSettings {
     settings.refresh_devices(devices, rates);
     refresh_midi_inputs(&mut settings);
     // 录音输入设备：刷新列表；上次选的设备已拔出时清空（回退系统默认）。
-    settings.available_input_devices = list_input_devices();
+    settings.ui_session.available_input_devices = list_input_devices();
     if let Some(name) = settings.input_device_name.as_ref()
-        && !settings.available_input_devices.iter().any(|d| d == name)
+        && !settings
+            .ui_session
+            .available_input_devices
+            .iter()
+            .any(|d| d == name)
     {
         settings.input_device_name = None;
     }
@@ -52,9 +56,14 @@ pub(crate) fn load_audio_settings() -> AudioSettings {
 
 /// 枚举系统 MIDI 输入端口并同步到设置；上次选的设备已拔出时清空选择。
 pub(crate) fn refresh_midi_inputs(settings: &mut AudioSettings) {
-    settings.available_midi_inputs = yinhe_midi_io::list_input_ports().unwrap_or_default();
+    settings.ui_session.available_midi_inputs =
+        yinhe_midi_io::list_input_ports().unwrap_or_default();
     if let Some(name) = settings.midi_input_device.as_ref()
-        && !settings.available_midi_inputs.iter().any(|d| d == name)
+        && !settings
+            .ui_session
+            .available_midi_inputs
+            .iter()
+            .any(|d| d == name)
     {
         settings.midi_input_device = None;
     }

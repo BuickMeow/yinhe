@@ -97,7 +97,7 @@ fn track_names_survive_save_and_reopen() {
         if let Some(td) = model.tracks.get_mut(1) {
             Arc::make_mut(td).name = "Lead Guitar".to_string();
         }
-        if let Some(ti) = doc.edit.track_info_cache.get_mut(1) {
+        if let Some(ti) = doc.edit.track_cache.info.get_mut(1) {
             ti.name = "Lead Guitar".to_string();
         }
     }
