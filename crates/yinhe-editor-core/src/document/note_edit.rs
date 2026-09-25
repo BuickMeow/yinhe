@@ -69,12 +69,7 @@ impl Document {
                 track: track_idx,
             }
         };
-        {
-            let model = Arc::make_mut(&mut self.data.model);
-            let k = key as usize;
-            Arc::make_mut(&mut model.notes[k]).insert_sorted(typed_note);
-            model.mark_dirty(key);
-        }
+        Arc::make_mut(&mut self.data.model).insert_note(key, typed_note);
         self.data.rebuild_model_dirty();
         Some(UndoAction::Notes(NoteDelta {
             before: vec![],
@@ -92,17 +87,14 @@ impl Document {
         note_id: u32,
         end_tick: u32,
     ) -> Option<UndoAction> {
-        let model = Arc::make_mut(&mut self.data.model);
-        let bucket = Arc::make_mut(&mut model.notes[key as usize]);
-        let orig = *bucket.find_mut(note_id)?;
+        let orig = *self.data.model.note_by_id(key, note_id)?;
         let new_end = end_tick.max(orig.start_tick + 1);
         if orig.end_tick == new_end {
             return None;
         }
-        let mut new_note = orig;
-        new_note.end_tick = new_end;
-        *bucket.find_mut(note_id)? = new_note;
-        model.mark_dirty(key);
+        let new_note =
+            Arc::make_mut(&mut self.data.model)
+                .update_note_by_id(key, note_id, |n| n.end_tick = new_end)?;
         self.data.rebuild_model_dirty();
         Some(UndoAction::Notes(NoteDelta {
             before: vec![(orig, key)],
@@ -122,8 +114,7 @@ impl Document {
             .range(start_tick, start_tick.saturating_add(1))
             .find(|n| n.track == track && n.start_tick == start_tick)?;
         let model = Arc::make_mut(&mut self.data.model);
-        let removed = Arc::make_mut(&mut model.notes[key as usize]).remove_by_id(note.id)?;
-        model.mark_dirty(key);
+        let removed = model.remove_note_by_id(key, note.id)?;
         model.rebuild_dirty();
         self.data.bump_revision();
         Some(UndoAction::Notes(NoteDelta {
@@ -137,20 +128,17 @@ impl Document {
         if self.edit.selected.is_empty() {
             return None;
         }
-        // Collect before any mutation.
-        let matched = batch_ops::collect_selected(&self.data.model, &self.edit.selected);
-        if matched.is_empty() {
-            self.edit.selected.clear();
+        // 一次遍历完成「判空 + 删除」：remove_selected 的返回值即 undo 的 before
+        //（原实现先 collect 判空、再 remove 遍历，全选删除会多物化一份 ~3GB）。
+        let model = Arc::make_mut(&mut self.data.model);
+        let removed = batch_ops::remove_selected(model, &self.edit.selected);
+        self.edit.selected.clear();
+        if removed.is_empty() {
             return None;
-        }
-        {
-            let model = Arc::make_mut(&mut self.data.model);
-            batch_ops::remove_selected(model, &self.edit.selected);
-            self.edit.selected.clear();
         }
         self.data.rebuild_model_dirty();
         Some(UndoAction::Notes(NoteDelta {
-            before: matched,
+            before: removed,
             after: vec![],
         }))
     }
