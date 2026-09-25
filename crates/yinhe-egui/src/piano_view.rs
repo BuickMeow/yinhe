@@ -162,6 +162,7 @@ pub fn show(
     let interaction::InteractionOutput {
         effective_tool,
         ghost_notes,
+        ghost_selected,
         hidden_notes,
         pencil_event,
         eraser_event,
@@ -267,6 +268,7 @@ pub fn show(
         last_hidden_keys,
         cull_rebuild,
         &ghost_notes,
+        ghost_selected,
         w,
         h,
         min_border_width,

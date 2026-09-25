@@ -17,6 +17,9 @@ use super::types::{PianoViewEvent, PianoViewFeedback};
 pub(crate) struct InteractionOutput {
     pub(crate) effective_tool: Tool,
     pub(crate) ghost_notes: Vec<(u32, u32, u8, u16)>,
+    /// ghost 是否为「选中态预览」（选择工具拖动）：渲染时按选中样式加深，
+    /// 与选框/深色选区一起移动（铅笔/刷子预览保持原色）。
+    pub(crate) ghost_selected: bool,
     pub(crate) hidden_notes: HashSet<(u16, u32, u8)>,
     pub(crate) pencil_event: Option<PianoViewEvent>,
     pub(crate) eraser_event: Option<PianoViewEvent>,
@@ -52,6 +55,7 @@ pub(crate) fn dispatch(
     default_gate: Option<u32>,
 ) -> InteractionOutput {
     let mut ghost_notes: Vec<(u32, u32, u8, u16)> = Vec::new();
+    let mut ghost_selected = false;
     let mut hidden_notes: HashSet<(u16, u32, u8)> = HashSet::new();
     let effective_tool = super::tool::effective_tool(
         ui,
@@ -98,6 +102,7 @@ pub(crate) fn dispatch(
                 default_gate,
             );
         ghost_notes = sel_ghosts;
+        ghost_selected = true;
         hidden_notes = sel_hidden.into_iter().collect();
         feedback.preview_reqs.extend(sel_previews);
         if let Some((track, start_tick, key)) = sel_quick {
@@ -222,6 +227,7 @@ pub(crate) fn dispatch(
     InteractionOutput {
         effective_tool,
         ghost_notes,
+        ghost_selected,
         hidden_notes,
         pencil_event,
         eraser_event,

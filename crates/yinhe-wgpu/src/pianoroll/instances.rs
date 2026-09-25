@@ -209,13 +209,18 @@ pub fn build_ghost_note(
     end_tick: u32,
     key: u8,
     track: u16,
+    // true = 选中态预览（选择工具拖动）：按选中样式加深，与选框同步移动；
+    // false = 新建预览（铅笔/刷子）：保持原色。
+    selected: bool,
     _theme: &GpuTheme,
 ) {
-    out.push(NoteInstance {
+    let mut inst = NoteInstance {
         start_tick,
         end_tick,
         packed: NoteInstance::pack(key, track, 127),
-    });
+    };
+    inst.set_selected(selected);
+    out.push(inst);
 }
 
 #[cfg(test)]
@@ -414,6 +419,19 @@ mod tests {
             None,
         );
         assert!(out.is_empty(), "note fully off-screen-left must be culled");
+    }
+
+    /// ghost 选中位：选择工具的拖动预览带 SELECTED_BIT（与选框同步的深色），
+    /// 铅笔/刷子预览保持原色。
+    #[test]
+    fn ghost_note_selected_bit() {
+        let theme = GpuTheme::from_base(yinhe_theme::base::BaseColors::DARK);
+        let mut out = Vec::new();
+        build_ghost_note(&mut out, 100, 200, 60, 0, true, &theme);
+        build_ghost_note(&mut out, 300, 400, 62, 0, false, &theme);
+        assert!(out[0].is_selected(), "选择工具拖动的 ghost 应为选中态");
+        assert!(!out[1].is_selected(), "铅笔/刷子预览保持非选中");
+        assert_eq!(out[0].velocity(), 127, "ghost 力度位仍为原色基准");
     }
 
     /// 选中位：传入 Selection 后，成员音符实例带 SELECTED_BIT，力度不被污染。

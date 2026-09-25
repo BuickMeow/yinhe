@@ -48,6 +48,7 @@ pub(crate) fn upload_and_prepare(
     last_hidden_keys: &mut gpu_upload::HiddenKeyMask,
     cull_rebuild: &mut Option<gpu_upload::CullRebuild>,
     ghost_notes: &[(u32, u32, u8, u16)],
+    ghost_selected: bool,
     w: u32,
     h: u32,
     min_border_width: f32,
@@ -114,7 +115,15 @@ pub(crate) fn upload_and_prepare(
         pianoroll.ensure_layers(1);
         pianoroll.upload_note_layer(0, 0, |out| {
             for &(start_tick, end_tick, key, track) in ghost_notes {
-                yinhe_wgpu::build_ghost_note(out, start_tick, end_tick, key, track, &theme);
+                yinhe_wgpu::build_ghost_note(
+                    out,
+                    start_tick,
+                    end_tick,
+                    key,
+                    track,
+                    ghost_selected,
+                    &theme,
+                );
             }
         });
         ghost_upload_done = true;
@@ -150,6 +159,7 @@ pub(crate) fn upload_and_prepare(
                 end_tick,
                 key,
                 track,
+                ghost_selected,
                 &theme,
             );
         }
