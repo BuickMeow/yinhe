@@ -8,10 +8,12 @@
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_audio::InsertTarget;
-use yinhe_mixer::{MasterParams, StripParams};
+use yinhe_mixer::{InsertRef, MasterParams, MixerParams, StripParams};
 
 use crate::app::App;
 
+use super::plugin_instance::PluginEntry;
+use super::rack::SlotRuntime;
 use super::{MixAction, channel_label, db_to_gain, gain_to_db};
 
 /// 通道条宽度（px）。
@@ -49,6 +51,71 @@ const BOTTOM_H: f32 = 80.0;
 /// dB 值 → 纵向占比（0 = DB_MIN，1 = DB_MAX）。
 fn db_frac(db: f32) -> f32 {
     ((db - DB_MIN) / (DB_MAX - DB_MIN)).clamp(0.0, 1.0)
+}
+
+/// 推子：线性增益 → 推子矩形内的 y 坐标（top = 最大 dB）。
+fn fader_y(gain: f32, top: f32, bottom: f32) -> f32 {
+    bottom - db_frac(gain_to_db(gain)) * (bottom - top)
+}
+
+/// 推子：推子矩形内的 y 坐标 → 线性增益（超出范围夹到两端）。
+fn fader_gain_at_y(y: f32, top: f32, bottom: f32) -> f32 {
+    let t = ((bottom - y) / (bottom - top)).clamp(0.0, 1.0);
+    db_to_gain(DB_MIN + t * (DB_MAX - DB_MIN))
+}
+
+/// 声像：声像值（-1..1）→ 声像条矩形内的 x 坐标。
+fn pan_x(pan: f32, center: f32, half_width: f32) -> f32 {
+    center + pan.clamp(-1.0, 1.0) * half_width
+}
+
+/// 声像：声像条矩形内的 x 坐标 → 声像值（超出范围夹到 -1..1）。
+fn pan_value_at_x(x: f32, center: f32, half_width: f32) -> f32 {
+    ((x - center) / half_width).clamp(-1.0, 1.0)
+}
+
+/// insert 链的展示视图：名称/旁通借用自持久化链，GUI 状态借用自机架。
+/// 避免每帧为每个 strip 克隆 insert 名称。
+struct InsertView<'a> {
+    refs: &'a [InsertRef],
+    runtime: &'a [SlotRuntime],
+}
+
+impl InsertView<'_> {
+    /// 某槽位的插件 GUI 是否打开（机架槽位缺失时 false）。
+    fn gui_open(&self, slot: usize) -> bool {
+        self.runtime.get(slot).is_some_and(|rt| rt.gui_open)
+    }
+}
+
+/// 采集某目标的 insert 展示视图（链或机架槽位缺失时为空）。
+fn insert_view<'a>(
+    mixer: &'a MixerParams,
+    rack: Option<&'a super::MixerRack>,
+    target: InsertTarget,
+) -> InsertView<'a> {
+    let refs: &[InsertRef] = match target {
+        InsertTarget::Channel(ch) => mixer
+            .channel_inserts
+            .get(ch as usize)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]),
+        InsertTarget::Audio(ch) => mixer
+            .audio_inserts
+            .get(ch as usize)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]),
+        InsertTarget::Bus(bus) => mixer
+            .bus_inserts
+            .get(bus as usize)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]),
+        InsertTarget::Master => &mixer.master_inserts,
+    };
+    InsertView {
+        refs,
+        runtime: rack.map(|r| r.chain(target)).unwrap_or(&[]),
+    }
 }
 
 /// 顶部工具条：扫描插件 + 状态信息。
@@ -111,25 +178,12 @@ pub(crate) fn channel_strip(
 ) {
     let params = app.workspace.documents[idx].mixer.strip(channel);
     let names = track_names.join(", ");
-    let insert_names: Vec<String> = app.workspace.documents[idx].mixer.channel_inserts
-        [channel as usize]
-        .iter()
-        .map(|r| r.name.clone())
-        .collect();
-    let bypassed: Vec<bool> = app.workspace.documents[idx].mixer.channel_inserts[channel as usize]
-        .iter()
-        .map(|r| r.bypassed)
-        .collect();
-    let gui_open: Vec<bool> = app
-        .mixer_racks
-        .get(idx)
-        .map(|rack| {
-            rack.chain(InsertTarget::Channel(channel))
-                .iter()
-                .map(|rt| rt.gui_open)
-                .collect()
-        })
-        .unwrap_or_default();
+    let target = InsertTarget::Channel(channel);
+    let view = insert_view(
+        &app.workspace.documents[idx].mixer,
+        app.mixer_racks.get(idx),
+        target,
+    );
     let send_count = app.workspace.documents[idx]
         .mixer
         .sends
@@ -150,19 +204,26 @@ pub(crate) fn channel_strip(
 
         strip_body(
             ui,
-            InsertTarget::Channel(channel),
-            params,
+            target,
+            params.gain,
             peak,
-            &insert_names,
-            &bypassed,
-            &gui_open,
-            |p| MixAction::SetStrip { channel, params: p },
+            &view,
+            |ui, _| ui.add_space(4.0),
+            |g| MixAction::SetStrip {
+                channel,
+                params: StripParams { gain: g, ..params },
+            },
             actions,
         );
-        ui.add_space(4.0);
-        send_button(ui, channel, send_count, actions);
-        ui.add_space(4.0);
-        db_label(ui, params.gain);
+        if strip_bottom(
+            ui,
+            params.gain,
+            BottomMs::Pan(&params),
+            SendSlot::Button { send_count },
+            |p| actions.push(MixAction::SetStrip { channel, params: p }),
+        ) {
+            actions.push(MixAction::OpenSends { channel });
+        }
     });
 }
 
@@ -217,37 +278,80 @@ fn instrument_slot(
     });
 }
 
-/// 通道条主体（insert 链 + 推子/电平 + M/S/声像），三种命名空间（MIDI/乐器/音频）
-/// 共用。`on_strip` 把新 StripParams 转成对应命名空间的 MixAction 变体。
+/// 通道条主体（insert 链 + 推子），四种条（MIDI/音频/总线/主输出）共用。
+/// `pre_insert` 画 insert 前的条头（总线的删除按钮；其余仅留 4px 间距），
+/// `on_strip` 把新 StripParams 转成对应命名空间的 MixAction 变体。
 #[allow(clippy::too_many_arguments)] // strip 渲染上下文透传
 fn strip_body(
     ui: &mut egui::Ui,
     target: InsertTarget,
-    params: StripParams,
+    gain: f32,
     peak: (f32, f32),
-    insert_names: &[String],
-    bypassed: &[bool],
-    gui_open: &[bool],
-    mut on_strip: impl FnMut(StripParams) -> MixAction,
+    insert: &InsertView<'_>,
+    mut pre_insert: impl FnMut(&mut egui::Ui, &mut Vec<MixAction>),
+    mut on_gain: impl FnMut(f32) -> MixAction,
     actions: &mut Vec<MixAction>,
 ) {
-    ui.add_space(4.0);
-    insert_area(ui, target, insert_names, bypassed, gui_open, actions);
+    pre_insert(ui, actions);
+    insert_area(ui, target, insert, actions);
     ui.add_space(4.0);
 
     // 推子占满 insert 之下的剩余空间（底部固定区之外），
     // 因此 insert 高度变化只影响推子顶部，底部对齐不变。
     let fader_h = (ui.available_height() - BOTTOM_H).max(FADER_MIN_H);
-    let base = params;
-    fader_and_meter(ui, params.gain, peak, fader_h, |gain| {
-        let mut p = base;
-        p.gain = gain;
-        actions.push(on_strip(p));
-    });
+    fader_and_meter(ui, gain, peak, fader_h, |g| actions.push(on_gain(g)));
+}
+
+/// 底部 M/S/声像区模式。
+enum BottomMs<'a> {
+    /// M/S 按钮 + 声像条（用该 strip 的参数）。
+    Pan(&'a StripParams),
+    /// 无 M/S/声像：按 `ms_pan_block` 实际高度占位（主输出）。
+    Placeholder,
+}
+
+/// 发送槽模式。
+enum SendSlot {
+    /// 发送按钮（通道条）。
+    Button { send_count: usize },
+    /// 与发送按钮同高占位（总线/主输出）。
+    Placeholder,
+    /// 无发送槽（音频条）。
+    None,
+}
+
+/// 推子之后的底部固定区：M/S/声像（或等高占位）→ 发送槽 → dB 读数。
+/// 返回发送按钮是否被点击。
+fn strip_bottom(
+    ui: &mut egui::Ui,
+    gain: f32,
+    ms: BottomMs<'_>,
+    send: SendSlot,
+    mut on_change: impl FnMut(StripParams),
+) -> bool {
     ui.add_space(4.0);
-    ms_pan_block(ui, &params, |new_params| {
-        actions.push(on_strip(new_params));
-    });
+    match ms {
+        BottomMs::Pan(params) => ms_pan_block(ui, params, &mut on_change),
+        BottomMs::Placeholder => {
+            let ms_h = BTN + ui.spacing().item_spacing.y + 14.0;
+            ui.allocate_space(egui::vec2(CONTENT_W, ms_h));
+        }
+    }
+    ui.add_space(4.0);
+    let mut send_clicked = false;
+    match send {
+        SendSlot::Button { send_count } => {
+            send_clicked = send_button(ui, send_count);
+            ui.add_space(4.0);
+        }
+        SendSlot::Placeholder => {
+            ui.allocate_space(egui::vec2(CONTENT_W, 16.0));
+            ui.add_space(4.0);
+        }
+        SendSlot::None => {}
+    }
+    db_label(ui, gain);
+    send_clicked
 }
 
 /// 总线条（bus / return）：与通道条同构（insert 链 + 推子 + M/S/声像）。
@@ -267,79 +371,56 @@ pub(crate) fn bus_strip(
         .get(bus as usize)
         .copied()
         .unwrap_or_default();
-    let insert_names: Vec<String> = app.workspace.documents[idx]
-        .mixer
-        .bus_inserts
-        .get(bus as usize)
-        .map(|chain| chain.iter().map(|r| r.name.clone()).collect())
-        .unwrap_or_default();
-    let bypassed: Vec<bool> = app.workspace.documents[idx]
-        .mixer
-        .bus_inserts
-        .get(bus as usize)
-        .map(|chain| chain.iter().map(|r| r.bypassed).collect())
-        .unwrap_or_default();
-    let gui_open: Vec<bool> = app
-        .mixer_racks
-        .get(idx)
-        .map(|rack| {
-            rack.chain(InsertTarget::Bus(bus))
-                .iter()
-                .map(|rt| rt.gui_open)
-                .collect()
-        })
-        .unwrap_or_default();
+    let target = InsertTarget::Bus(bus);
+    let view = insert_view(
+        &app.workspace.documents[idx].mixer,
+        app.mixer_racks.get(idx),
+        target,
+    );
 
     strip_frame(ui, crate::theme::accent_active(), height, |ui| {
         label_block(ui, format!("BUS {}", bus + 1), "");
-
-        // 删除总线（右上角小按钮；其 send 清理、更高索引前移）。
-        ui.horizontal(|ui| {
-            ui.add_space(CONTENT_W - BTN);
-            if toggle_button(
-                ui,
-                egui_material_icons::icons::ICON_DELETE.codepoint,
-                false,
-                crate::theme::danger_text(),
-            ) {
-                actions.push(MixAction::RemoveBus { bus });
-            }
-        });
-        ui.add_space(2.0);
-
-        insert_area(
+        strip_body(
             ui,
-            InsertTarget::Bus(bus),
-            &insert_names,
-            &bypassed,
-            &gui_open,
+            target,
+            params.gain,
+            peak,
+            &view,
+            |ui, actions| {
+                // 删除总线（右上角小按钮；其 send 清理、更高索引前移）。
+                ui.horizontal(|ui| {
+                    ui.add_space(CONTENT_W - BTN);
+                    if toggle_button(
+                        ui,
+                        egui_material_icons::icons::ICON_DELETE.codepoint,
+                        false,
+                        crate::theme::danger_text(),
+                    ) {
+                        actions.push(MixAction::RemoveBus { bus });
+                    }
+                });
+                ui.add_space(2.0);
+            },
+            |g| MixAction::SetBusStrip {
+                bus,
+                params: StripParams { gain: g, ..params },
+            },
             actions,
         );
-        ui.add_space(4.0);
-
-        let fader_h = (ui.available_height() - BOTTOM_H).max(FADER_MIN_H);
-        fader_and_meter(ui, params.gain, peak, fader_h, |gain| {
-            let mut p = params;
-            p.gain = gain;
-            actions.push(MixAction::SetBusStrip { bus, params: p });
-        });
-        ui.add_space(4.0);
-        ms_pan_block(ui, &params, |new_params| {
-            actions.push(MixAction::SetBusStrip {
-                bus,
-                params: new_params,
-            });
-        });
-        ui.add_space(4.0);
-        // 与通道条发送按钮同高占位，保持底部对齐。
-        ui.allocate_space(egui::vec2(CONTENT_W, 16.0));
-        ui.add_space(4.0);
-        db_label(ui, params.gain);
+        strip_bottom(
+            ui,
+            params.gain,
+            BottomMs::Pan(&params),
+            SendSlot::Placeholder,
+            |p| {
+                actions.push(MixAction::SetBusStrip { bus, params: p });
+            },
+        );
     });
 }
 
-/// 发送入口按钮（通道条底部）：点击打开该通道的发送面板；有发送时显示数量。
-fn send_button(ui: &mut egui::Ui, channel: u8, send_count: usize, actions: &mut Vec<MixAction>) {
+/// 发送入口按钮（通道条底部）：有发送时显示数量；返回是否点击。
+fn send_button(ui: &mut egui::Ui, send_count: usize) -> bool {
     let label = if send_count > 0 {
         format!("SEND ({send_count})")
     } else {
@@ -350,16 +431,14 @@ fn send_button(ui: &mut egui::Ui, channel: u8, send_count: usize, actions: &mut 
     } else {
         crate::theme::text_secondary()
     };
-    let resp = crate::widgets::flat::flat_button_fixed(
+    crate::widgets::flat::flat_button_fixed(
         ui,
         egui::RichText::new(label)
             .size(crate::theme::SMALL_FONT - 1.0)
             .color(color),
         egui::vec2(CONTENT_W, 16.0),
-    );
-    if resp.clicked() {
-        actions.push(MixAction::OpenSends { channel });
-    }
+    )
+    .clicked()
 }
 
 /// 发送面板（某源通道对各总线的发送量 / 推子前推子后）。
@@ -485,53 +564,33 @@ pub(crate) fn master_strip(
     actions: &mut Vec<MixAction>,
 ) {
     let params = app.workspace.documents[idx].mixer.master;
-    let insert_names: Vec<String> = app.workspace.documents[idx]
-        .mixer
-        .master_inserts
-        .iter()
-        .map(|r| r.name.clone())
-        .collect();
-    let bypassed: Vec<bool> = app.workspace.documents[idx]
-        .mixer
-        .master_inserts
-        .iter()
-        .map(|r| r.bypassed)
-        .collect();
-    let gui_open: Vec<bool> = app
-        .mixer_racks
-        .get(idx)
-        .map(|rack| rack.chain(None).iter().map(|rt| rt.gui_open).collect())
-        .unwrap_or_default();
+    let view = insert_view(
+        &app.workspace.documents[idx].mixer,
+        app.mixer_racks.get(idx),
+        InsertTarget::Master,
+    );
 
     strip_frame(ui, crate::theme::accent_active(), height, |ui| {
         label_block(ui, t!("mix.master").to_string(), "");
-
-        ui.add_space(4.0);
-        insert_area(
+        strip_body(
             ui,
             InsertTarget::Master,
-            &insert_names,
-            &bypassed,
-            &gui_open,
+            params.gain,
+            peak,
+            &view,
+            |ui, _| ui.add_space(4.0),
+            |g| MixAction::SetMaster {
+                params: MasterParams { gain: g },
+            },
             actions,
         );
-        ui.add_space(4.0);
-
-        let fader_h = (ui.available_height() - BOTTOM_H).max(FADER_MIN_H);
-        fader_and_meter(ui, params.gain, peak, fader_h, |gain| {
-            actions.push(MixAction::SetMaster {
-                params: MasterParams { gain },
-            });
-        });
-        ui.add_space(4.0);
-        // master 无 M/S/声像：按 ms_pan_block 实际高度占位，dB 与通道条对齐。
-        let ms_h = BTN + ui.spacing().item_spacing.y + 14.0;
-        ui.allocate_space(egui::vec2(CONTENT_W, ms_h));
-        ui.add_space(4.0);
-        // 与通道条的发送按钮同高占位，保持底部对齐。
-        ui.allocate_space(egui::vec2(CONTENT_W, 16.0));
-        ui.add_space(4.0);
-        db_label(ui, params.gain);
+        strip_bottom(
+            ui,
+            params.gain,
+            BottomMs::Placeholder,
+            SendSlot::Placeholder,
+            |_| {},
+        );
     });
 }
 
@@ -606,16 +665,13 @@ fn label_block(ui: &mut egui::Ui, title: String, names: &str) {
 }
 
 /// insert 槽位区：空态收缩为一行「+」；有内容时紧凑列表（最多 INSERT_MAX_H）。
-#[allow(clippy::too_many_arguments)] // 通道条渲染上下文透传
 fn insert_area(
     ui: &mut egui::Ui,
     target: InsertTarget,
-    names: &[String],
-    bypassed: &[bool],
-    gui_open: &[bool],
+    insert: &InsertView<'_>,
     actions: &mut Vec<MixAction>,
 ) {
-    if names.is_empty() {
+    if insert.refs.is_empty() {
         // 空态：一行弱框 + 居中「+」，点击打开插件选择器。
         let (rect, resp) =
             ui.allocate_exact_size(egui::vec2(CONTENT_W, INSERT_ROW_H), egui::Sense::click());
@@ -656,14 +712,14 @@ fn insert_area(
                 .max_height(INSERT_MAX_H)
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
-                    for (slot, name) in names.iter().enumerate() {
+                    for (slot, r) in insert.refs.iter().enumerate() {
                         insert_row(
                             ui,
                             target,
                             slot,
-                            name,
-                            bypassed.get(slot).copied().unwrap_or(false),
-                            gui_open.get(slot).copied().unwrap_or(false),
+                            &r.name,
+                            r.bypassed,
+                            insert.gui_open(slot),
                             actions,
                         );
                     }
@@ -895,7 +951,7 @@ fn pan_bar(ui: &mut egui::Ui, pan: f32) -> Option<f32> {
         bar.y_range(),
         egui::Stroke::new(1.0, crate::theme::text_muted().gamma_multiply(0.6)),
     );
-    let x = rect.center().x + pan.clamp(-1.0, 1.0) * rect.width() / 2.0;
+    let x = pan_x(pan, rect.center().x, rect.width() / 2.0);
     let handle =
         egui::Rect::from_center_size(egui::pos2(x, rect.center().y), egui::vec2(6.0, 14.0));
     let handle_color = if resp.dragged() {
@@ -916,7 +972,7 @@ fn pan_bar(ui: &mut egui::Ui, pan: f32) -> Option<f32> {
     };
     if resp.dragged() {
         if let Some(pos) = resp.interact_pointer_pos() {
-            return Some(((pos.x - rect.center().x) / (rect.width() / 2.0)).clamp(-1.0, 1.0));
+            return Some(pan_value_at_x(pos.x, rect.center().x, rect.width() / 2.0));
         }
     } else if resp.double_clicked() {
         return Some(0.0);
@@ -962,8 +1018,7 @@ fn fader(ui: &mut egui::Ui, gain: f32, height: f32, mut on_gain: impl FnMut(f32)
         egui::vec2(FADER_HANDLE_W, height),
         egui::Sense::click_and_drag(),
     );
-    let frac = db_frac(gain_to_db(gain));
-    let y = rect.max.y - frac * rect.height();
+    let y = fader_y(gain, rect.min.y, rect.max.y);
 
     let painter = ui.painter();
     // 凹槽。
@@ -1016,8 +1071,7 @@ fn fader(ui: &mut egui::Ui, gain: f32, height: f32, mut on_gain: impl FnMut(f32)
 
     if resp.dragged() {
         if let Some(pos) = resp.interact_pointer_pos() {
-            let t = ((rect.max.y - pos.y) / rect.height()).clamp(0.0, 1.0);
-            on_gain(db_to_gain(DB_MIN + t * (DB_MAX - DB_MIN)));
+            on_gain(fader_gain_at_y(pos.y, rect.min.y, rect.max.y));
         }
     } else if resp.double_clicked() {
         on_gain(1.0);
@@ -1061,16 +1115,98 @@ fn meter(ui: &mut egui::Ui, peak: (f32, f32), height: f32) {
     );
 }
 
-/// 插件选择器窗口（独立 OS 窗口；列出扫描到的效果器，按名称过滤）。
-pub(crate) fn plugin_picker(
+/// 选择器用途：效果器（insert 链）或乐器（MIDI 通道挂载）。
+#[derive(Clone, Copy)]
+enum PickerKind {
+    /// 效果器：选中插件加到 `target` 的 insert 链。
+    Effect { target: InsertTarget },
+    /// 乐器：选中插件挂到 MIDI 通道；内置 XSynth 项 = 清除插件挂载。
+    Instrument { channel: u8 },
+}
+
+impl PickerKind {
+    fn viewport_id(self) -> egui::ViewportId {
+        match self {
+            Self::Effect { .. } => egui::ViewportId::from_hash_of("mix_plugin_picker"),
+            Self::Instrument { .. } => egui::ViewportId::from_hash_of("mix_instrument_picker"),
+        }
+    }
+
+    fn title(self) -> String {
+        match self {
+            Self::Effect { .. } => t!("mix.picker_title").to_string(),
+            Self::Instrument { .. } => t!("mix.instrument_picker_title").to_string(),
+        }
+    }
+
+    /// 列表滚动区的 id_salt（两个窗口可能同时打开，滚动状态需区分）。
+    fn list_id(self) -> &'static str {
+        match self {
+            Self::Effect { .. } => "mix_plugin_picker_list",
+            Self::Instrument { .. } => "mix_instrument_picker_list",
+        }
+    }
+
+    fn empty_text(self) -> String {
+        match self {
+            Self::Effect { .. } => t!("mix.no_plugins").to_string(),
+            Self::Instrument { .. } => t!("mix.no_instruments").to_string(),
+        }
+    }
+
+    /// 该插件是否属于本选择器。
+    fn matches(self, plugin: &PluginEntry) -> bool {
+        match self {
+            Self::Effect { .. } => plugin.is_effect,
+            Self::Instrument { .. } => plugin.is_instrument,
+        }
+    }
+
+    /// 是否显示内置 XSynth 项（仅乐器选择器）。
+    fn shows_xsynth(self) -> bool {
+        matches!(self, Self::Instrument { .. })
+    }
+
+    /// 选中一个插件条目。
+    fn pick_plugin(self, plugin: &PluginEntry, actions: &mut Vec<MixAction>) {
+        match self {
+            Self::Effect { target } => actions.push(MixAction::AddInsert {
+                target,
+                plugin: plugin.clone(),
+            }),
+            Self::Instrument { channel } => actions.push(MixAction::AssignInstrument {
+                channel,
+                plugin: plugin.clone(),
+            }),
+        }
+    }
+
+    /// 点击内置 XSynth（仅乐器）：清除该通道的插件挂载。
+    fn pick_builtin(self, actions: &mut Vec<MixAction>) {
+        if let Self::Instrument { channel } = self {
+            actions.push(MixAction::RemoveInstrument { channel });
+        }
+    }
+
+    /// 窗口关闭后清理对应的打开标记。
+    fn clear_open(self, app: &mut App) {
+        match self {
+            Self::Effect { .. } => app.mix.picker_for = None,
+            Self::Instrument { .. } => app.mix.instrument_picker_for = None,
+        }
+    }
+}
+
+/// 插件/乐器选择器的公共窗口实现（仅过滤、选中行为与文案不同）。
+fn picker_window(
     app: &mut App,
     ctx: &egui::Context,
-    target: InsertTarget,
+    kind: PickerKind,
     actions: &mut Vec<MixAction>,
 ) {
-    let id = egui::ViewportId::from_hash_of("mix_plugin_picker");
+    let id = kind.viewport_id();
     crate::chrome::dialog::raise_on_open(ctx, id);
-    let title = t!("mix.picker_title");
+    let title = kind.title();
     let mut close = false;
     ctx.show_viewport_immediate(
         id,
@@ -1103,13 +1239,26 @@ pub(crate) fn plugin_picker(
                             let filter = app.mix.picker_filter.to_lowercase();
                             let plugins = app.mix.scanned.as_ref();
                             egui::ScrollArea::vertical()
-                                .id_salt("mix_plugin_picker_list")
+                                .id_salt(kind.list_id())
                                 .auto_shrink([false, false])
                                 .max_height(ui.available_height())
                                 .show(ui, |ui| {
                                     let mut any = false;
+                                    // 内置 XSynth：默认乐器（选择 = 清除插件挂载）。
+                                    if kind.shows_xsynth()
+                                        && (filter.is_empty() || "xsynth".contains(&filter))
+                                    {
+                                        any = true;
+                                        if ui
+                                            .selectable_label(false, "XSynth")
+                                            .on_hover_text(t!("soundfont.title"))
+                                            .clicked()
+                                        {
+                                            kind.pick_builtin(actions);
+                                        }
+                                    }
                                     if let Some(plugins) = plugins {
-                                        for p in plugins.iter().filter(|p| p.is_effect) {
+                                        for p in plugins.iter().filter(|p| kind.matches(p)) {
                                             if !filter.is_empty()
                                                 && !p.name.to_lowercase().contains(&filter)
                                             {
@@ -1126,16 +1275,13 @@ pub(crate) fn plugin_picker(
                                                 .on_hover_text(&p.id)
                                                 .clicked()
                                             {
-                                                actions.push(MixAction::AddInsert {
-                                                    target,
-                                                    plugin: p.clone(),
-                                                });
+                                                kind.pick_plugin(p, actions);
                                             }
                                         }
                                     }
                                     if !any {
                                         ui.label(
-                                            egui::RichText::new(t!("mix.no_plugins"))
+                                            egui::RichText::new(kind.empty_text())
                                                 .color(crate::theme::text_muted()),
                                         );
                                     }
@@ -1149,8 +1295,18 @@ pub(crate) fn plugin_picker(
     );
     if close {
         crate::chrome::dialog::mark_viewport_closed(ctx, id);
-        app.mix.picker_for = None;
+        kind.clear_open(app);
     }
+}
+
+/// 插件选择器窗口（独立 OS 窗口；列出扫描到的效果器，按名称过滤）。
+pub(crate) fn plugin_picker(
+    app: &mut App,
+    ctx: &egui::Context,
+    target: InsertTarget,
+    actions: &mut Vec<MixAction>,
+) {
+    picker_window(app, ctx, PickerKind::Effect { target }, actions);
 }
 
 /// 音频通道条：标签 + insert 链 + 推子/M/S/声像。
@@ -1165,44 +1321,37 @@ pub(crate) fn audio_strip(
     actions: &mut Vec<MixAction>,
 ) {
     let params = app.workspace.documents[idx].mixer.audio_strip(channel);
-    let insert_names: Vec<String> = app.workspace.documents[idx]
-        .mixer
-        .audio_inserts
-        .get(channel as usize)
-        .map(|chain| chain.iter().map(|r| r.name.clone()).collect())
-        .unwrap_or_default();
-    let bypassed: Vec<bool> = app.workspace.documents[idx]
-        .mixer
-        .audio_inserts
-        .get(channel as usize)
-        .map(|chain| chain.iter().map(|r| r.bypassed).collect())
-        .unwrap_or_default();
-    let gui_open: Vec<bool> = app
-        .mixer_racks
-        .get(idx)
-        .map(|rack| {
-            rack.chain(InsertTarget::Audio(channel))
-                .iter()
-                .map(|rt| rt.gui_open)
-                .collect()
-        })
-        .unwrap_or_default();
+    let target = InsertTarget::Audio(channel);
+    let view = insert_view(
+        &app.workspace.documents[idx].mixer,
+        app.mixer_racks.get(idx),
+        target,
+    );
 
     strip_frame(ui, crate::theme::accent_active(), height, |ui| {
         label_block(ui, crate::mix::audio_label(channel), "");
         strip_body(
             ui,
-            InsertTarget::Audio(channel),
-            params,
+            target,
+            params.gain,
             peak,
-            &insert_names,
-            &bypassed,
-            &gui_open,
-            |p| MixAction::SetAudioStrip { channel, params: p },
+            &view,
+            |ui, _| ui.add_space(4.0),
+            |g| MixAction::SetAudioStrip {
+                channel,
+                params: StripParams { gain: g, ..params },
+            },
             actions,
         );
-        ui.add_space(4.0);
-        db_label(ui, params.gain);
+        strip_bottom(
+            ui,
+            params.gain,
+            BottomMs::Pan(&params),
+            SendSlot::None,
+            |p| {
+                actions.push(MixAction::SetAudioStrip { channel, params: p });
+            },
+        );
     });
 }
 
@@ -1270,97 +1419,84 @@ pub(crate) fn instrument_picker(
     channel: u8,
     actions: &mut Vec<MixAction>,
 ) {
-    let id = egui::ViewportId::from_hash_of("mix_instrument_picker");
-    crate::chrome::dialog::raise_on_open(ctx, id);
-    let title = t!("mix.instrument_picker_title");
-    let mut close = false;
-    ctx.show_viewport_immediate(
-        id,
-        crate::chrome::dialog::viewport_builder(title.as_ref(), [340.0, 420.0], true),
-        |vctx, _class| {
-            if vctx.input(|i| i.viewport().close_requested()) {
-                close = true;
-            }
-            let mut closed = close;
-            egui::CentralPanel::default()
-                .frame(egui::Frame {
-                    fill: crate::theme::app_bg(),
-                    ..Default::default()
-                })
-                .show(vctx, |ui| {
-                    crate::chrome::dialog::title_bar(ui, title.as_ref(), &mut closed, false);
-                    egui::Frame::new()
-                        .inner_margin(egui::Margin {
-                            left: 12,
-                            right: 12,
-                            top: 0,
-                            bottom: 12,
-                        })
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(t!("mix.search"));
-                                ui.text_edit_singleline(&mut app.mix.picker_filter);
-                            });
-                            ui.separator();
-                            let filter = app.mix.picker_filter.to_lowercase();
-                            let plugins = app.mix.scanned.as_ref();
-                            egui::ScrollArea::vertical()
-                                .id_salt("mix_instrument_picker_list")
-                                .auto_shrink([false, false])
-                                .max_height(ui.available_height())
-                                .show(ui, |ui| {
-                                    let mut any = false;
-                                    // 内置 XSynth：默认乐器（选择 = 清除插件挂载）。
-                                    if filter.is_empty() || "xsynth".contains(&filter) {
-                                        any = true;
-                                        if ui
-                                            .selectable_label(false, "XSynth")
-                                            .on_hover_text(t!("soundfont.title"))
-                                            .clicked()
-                                        {
-                                            actions.push(MixAction::RemoveInstrument { channel });
-                                        }
-                                    }
-                                    if let Some(plugins) = plugins {
-                                        for p in plugins.iter().filter(|p| p.is_instrument) {
-                                            if !filter.is_empty()
-                                                && !p.name.to_lowercase().contains(&filter)
-                                            {
-                                                continue;
-                                            }
-                                            any = true;
-                                            if let Some(err) = &p.error {
-                                                plugin_row(ui, &p.display_name(), p.format, false)
-                                                    .on_hover_text(err);
-                                                continue;
-                                            }
-                                            if plugin_row(ui, &p.name, p.format, true)
-                                                .on_hover_text(&p.id)
-                                                .clicked()
-                                            {
-                                                actions.push(MixAction::AssignInstrument {
-                                                    channel,
-                                                    plugin: p.clone(),
-                                                });
-                                            }
-                                        }
-                                    }
-                                    if !any {
-                                        ui.label(
-                                            egui::RichText::new(t!("mix.no_instruments"))
-                                                .color(crate::theme::text_muted()),
-                                        );
-                                    }
-                                });
-                        });
-                });
-            if closed {
-                close = true;
-            }
-        },
-    );
-    if close {
-        crate::chrome::dialog::mark_viewport_closed(ctx, id);
-        app.mix.instrument_picker_for = None;
+    picker_window(app, ctx, PickerKind::Instrument { channel }, actions);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 推子矩形：y 从 0（顶 = +6dB）到 100（底 = -60dB）。
+    const TOP: f32 = 0.0;
+    const BOTTOM: f32 = 100.0;
+
+    fn approx(a: f32, b: f32) -> bool {
+        (a - b).abs() <= 1e-3
+    }
+
+    #[test]
+    fn fader_y_boundaries() {
+        // 静音（≤ -60dB）= 最底部。
+        assert!(approx(fader_y(0.0, TOP, BOTTOM), BOTTOM));
+        // 0dB（gain = 1）位于 DB_MIN..DB_MAX 的 60/66 处。
+        assert!(approx(
+            fader_y(1.0, TOP, BOTTOM),
+            BOTTOM - 60.0 / 66.0 * 100.0
+        ));
+        // 超过 DB_MAX 的增益顶格。
+        assert!(approx(fader_y(db_to_gain(DB_MAX), TOP, BOTTOM), TOP));
+        assert!(approx(fader_y(10.0, TOP, BOTTOM), TOP));
+    }
+
+    #[test]
+    fn fader_gain_at_y_boundaries() {
+        assert_eq!(fader_gain_at_y(BOTTOM, TOP, BOTTOM), 0.0);
+        assert!(approx(
+            fader_gain_at_y(TOP, TOP, BOTTOM),
+            db_to_gain(DB_MAX)
+        ));
+        // y 超出矩形：夹到两端。
+        assert_eq!(fader_gain_at_y(BOTTOM + 50.0, TOP, BOTTOM), 0.0);
+        assert!(approx(
+            fader_gain_at_y(TOP - 50.0, TOP, BOTTOM),
+            db_to_gain(DB_MAX)
+        ));
+    }
+
+    #[test]
+    fn fader_gain_position_round_trip() {
+        for gain in [0.0, 0.01, 0.1, 0.5, 1.0, 1.5, db_to_gain(DB_MAX)] {
+            let y = fader_y(gain, TOP, BOTTOM);
+            let back = fader_gain_at_y(y, TOP, BOTTOM);
+            assert!(approx(back, gain), "gain={gain} y={y} back={back}");
+        }
+    }
+
+    #[test]
+    fn pan_x_boundaries_and_clamp() {
+        assert!(approx(pan_x(0.0, 100.0, 50.0), 100.0));
+        assert!(approx(pan_x(-1.0, 100.0, 50.0), 50.0));
+        assert!(approx(pan_x(1.0, 100.0, 50.0), 150.0));
+        // 越界值夹到左右端。
+        assert!(approx(pan_x(-2.0, 100.0, 50.0), 50.0));
+        assert!(approx(pan_x(2.0, 100.0, 50.0), 150.0));
+    }
+
+    #[test]
+    fn pan_value_at_x_boundaries_and_clamp() {
+        assert!(approx(pan_value_at_x(100.0, 100.0, 50.0), 0.0));
+        assert!(approx(pan_value_at_x(50.0, 100.0, 50.0), -1.0));
+        assert!(approx(pan_value_at_x(150.0, 100.0, 50.0), 1.0));
+        // 超出声像条：夹到 -1..1。
+        assert!(approx(pan_value_at_x(0.0, 100.0, 50.0), -1.0));
+        assert!(approx(pan_value_at_x(200.0, 100.0, 50.0), 1.0));
+    }
+
+    #[test]
+    fn pan_round_trip() {
+        for pan in [-1.0, -0.5, -0.01, 0.0, 0.25, 1.0] {
+            let x = pan_x(pan, 100.0, 50.0);
+            assert!(approx(pan_value_at_x(x, 100.0, 50.0), pan), "pan={pan}");
+        }
     }
 }
