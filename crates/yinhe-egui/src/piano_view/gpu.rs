@@ -49,6 +49,9 @@ pub(crate) fn upload_and_prepare(
     cull_rebuild: &mut Option<gpu_upload::CullRebuild>,
     ghost_notes: &[(u32, u32, u8, u16)],
     ghost_selected: bool,
+    // 选中高亮排除表（成员态「矩形内非成员」键，空 = 禁用）。
+    exclude_table: &[[u32; 2]],
+    exclude_mask: u32,
     w: u32,
     h: u32,
     min_border_width: f32,
@@ -100,7 +103,7 @@ pub(crate) fn upload_and_prepare(
     let mut ghost_upload_done = false;
     if cull_ready {
         // GPU cull path: upload ghost layer (GPU cull handles notes)
-        let job = yinhe_wgpu::build_render_job(
+        let mut job = yinhe_wgpu::build_render_job(
             w,
             h,
             view,
@@ -109,6 +112,8 @@ pub(crate) fn upload_and_prepare(
             min_border_width,
             note_outline,
         );
+        job.uniforms.exclude_mask = exclude_mask;
+        job.exclude_table = exclude_table.to_vec();
         pianoroll.upload_uniforms(job.uniforms);
         pianoroll.upload_track_colors(&job.track_colors);
         pianoroll.upload_selection(&job.selection);
@@ -129,7 +134,7 @@ pub(crate) fn upload_and_prepare(
         ghost_upload_done = true;
     } else if let Some(rt) = render_thread {
         // Async path (no cull): build instances on this thread, send to render thread
-        let job = yinhe_wgpu::build_render_job(
+        let mut job = yinhe_wgpu::build_render_job(
             w,
             h,
             view,
@@ -138,6 +143,8 @@ pub(crate) fn upload_and_prepare(
             min_border_width,
             note_outline,
         );
+        job.uniforms.exclude_mask = exclude_mask;
+        job.exclude_table = exclude_table.to_vec();
         let mut notes_instances = Vec::new();
         if let Some(midi) = midi {
             yinhe_wgpu::build_notes(
@@ -198,6 +205,7 @@ pub(crate) fn upload_and_prepare(
             uniforms: job.uniforms,
             track_colors: job.track_colors,
             selection: job.selection,
+            exclude_table: job.exclude_table.clone(),
             note_layers,
         });
         ghost_upload_done = true;

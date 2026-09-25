@@ -33,6 +33,9 @@ pub struct Uniforms {
     pub filter_gate_hi: u32,
     /// bit0=key, bit1=track, bit2=velocity, bit3=gate, bit4=invert。
     pub filter_flags: u32,
+
+    /// 排除表掩码（容量-1；0 = 禁用查表）。排除表见 `SelectionUniform` 注释。
+    pub exclude_mask: u32,
 }
 
 /// Maximum number of tracks supported. Track indices are u16, so 65536 is the

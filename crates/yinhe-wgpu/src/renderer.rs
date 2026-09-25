@@ -40,6 +40,8 @@ pub struct InstanceRenderer {
     cached_track_colors: Option<Vec<[f32; 4]>>,
     cached_track_offsets: Option<Vec<f32>>,
     cached_selection: Option<SelectionUniform>,
+    /// 排除表上传去重缓存。
+    cached_exclude: Option<Vec<[u32; 2]>>,
     layers: Vec<AnyLayer>,
     pub(crate) cull: CullState,
     /// 最近一帧 PR 音符走的层：`Some(block_ticks)` = LOD 摘要档，
@@ -109,6 +111,7 @@ impl InstanceRenderer {
                 cached_track_colors: None,
                 cached_track_offsets: None,
                 cached_selection: None,
+                cached_exclude: None,
                 layers: Vec::new(),
                 cull,
                 last_lod_block: None,
@@ -161,36 +164,9 @@ impl InstanceRenderer {
         self.render.track_colors_buffer = new_buffer;
         self.render.track_colors_capacity = new_capacity;
         // Recreate bind group with the new buffer.
-        self.rebuild_render_bind_group();
+        self.render.rebuild_bind_group(&self.device);
         // Invalidate cache to force re-upload with the new buffer.
         self.cached_track_colors = None;
-    }
-
-    /// Recreate the shared render bind group（storage buffer 增长后必须重建，
-    /// 否则 bind group 仍指向旧 buffer）。track_colors / track_offsets 共用。
-    fn rebuild_render_bind_group(&mut self) {
-        self.render.bind_group = self.device.create_bind_group(&BindGroupDescriptor {
-            label: Some("render_bind_group"),
-            layout: &self.render.bind_group_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: self.render.uniform_buffer.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: self.render.track_colors_buffer.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: self.render.selection_buffer.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: self.render.track_offsets_buffer.as_entire_binding(),
-                },
-            ],
-        });
     }
 
     /// Upload AR 每轨主行 y 偏移表（音乐坐标像素）。Skips the write when unchanged.
@@ -225,12 +201,40 @@ impl InstanceRenderer {
         self.render.track_offsets_buffer = new_buffer;
         self.render.track_offsets_capacity = new_capacity;
         // Recreate bind group with the new buffer.
-        self.rebuild_render_bind_group();
+        self.render.rebuild_bind_group(&self.device);
         // Invalidate cache to force re-upload with the new buffer.
         self.cached_track_offsets = None;
     }
 
     /// Upload selection rects to the GPU.  Skips the write when the value is unchanged.
+    /// 上传选中高亮排除表（成员态「矩形内非成员」键）。空表 = 禁用（mask=0
+    /// 由 uniforms 传入）。容量不足时扩容并重建 bind group。
+    pub fn upload_selection_exclude(&mut self, table: &[[u32; 2]]) {
+        if self.cached_exclude.as_deref() == Some(table) {
+            return;
+        }
+        let need = table.len().max(1) as u32;
+        if need > self.render.exclude_capacity {
+            let cap = need.next_power_of_two().max(16);
+            self.render.exclude_buffer = TrackedBuffer::new(
+                &self.device,
+                &BufferDescriptor {
+                    label: Some("selection_exclude"),
+                    size: (cap as u64) * 8,
+                    usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            );
+            self.render.exclude_capacity = cap;
+            self.render.rebuild_bind_group(&self.device);
+        }
+        if !table.is_empty() {
+            self.queue
+                .write_buffer(&self.render.exclude_buffer, 0, bytemuck::cast_slice(table));
+        }
+        self.cached_exclude = Some(table.to_vec());
+    }
+
     pub fn upload_selection(&mut self, sel: &SelectionUniform) {
         if self.cached_selection.as_ref() != Some(sel) {
             self.queue

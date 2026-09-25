@@ -32,6 +32,7 @@ struct Uniforms {
     filter_gate_lo: u32,
     filter_gate_hi: u32,
     filter_flags: u32, // bit0=key, bit1=track, bit2=velocity, bit3=gate, bit4=invert
+    exclude_mask: u32, // 排除表掩码（容量-1；0 = 禁用）
 }
 
 // Track colors: runtime-sized storage buffer (allocated dynamically to actual
@@ -74,6 +75,31 @@ fn selection_filter_passes(key: u32, track: u32, vel: u32, gate: u32) -> bool {
     }
     let invert = (u.filter_flags & 16u) != 0u;
     return m != invert;
+}
+
+// 排除表（binding 4）：成员态下「矩形内但不在成员位图」的音符键
+// （lo = key | track<<8，hi = start_tick），开放寻址、空槽 = u32::MAX。
+// 哈希函数必须与 CPU `exclude_hash` 一致。
+@group(0) @binding(4)
+var<storage, read> exclude_table: array<vec2<u32>>;
+
+fn in_exclude_table(lo: u32, hi: u32) -> bool {
+    if u.exclude_mask == 0u {
+        return false;
+    }
+    // WGSL 整数乘法即 wrapping（与 CPU 的 wrapping_mul 一致）。
+    var slot = ((lo * 2654435761u) ^ (hi * 2246822519u)) & u.exclude_mask;
+    for (var i = 0u; i <= u.exclude_mask; i = i + 1u) {
+        let e = exclude_table[slot];
+        if e.x == 0xFFFFFFFFu {
+            return false; // 空槽（键的 lo 高位恒 0，不可能为 MAX）
+        }
+        if e.x == lo && e.y == hi {
+            return true;
+        }
+        slot = (slot + 1u) & u.exclude_mask;
+    }
+    return false;
 }
 
 /// 矩形选区命中（tick 半开、key/track 闭区间，与 CPU `Selection::contains` 一致）。
@@ -303,6 +329,7 @@ fn note_geometry(
     if u.mode == 1u && !selected {
         let gate = end_tick - min(start_tick, end_tick);
         selected = in_selection_rects(start_tick, key, track)
+            && !in_exclude_table(key | (track << 8u), start_tick)
             && selection_filter_passes(key, track, vel, gate);
     }
 

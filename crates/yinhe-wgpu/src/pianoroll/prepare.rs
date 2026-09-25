@@ -12,6 +12,8 @@ pub struct PianorollRenderJob {
     /// The GPU storage buffer is allocated dynamically to this length.
     pub track_colors: Vec<[f32; 4]>,
     pub selection: SelectionUniform,
+    /// 选中高亮排除表（空 = 禁用；mask 由 `uniforms.exclude_mask` 传入）。
+    pub exclude_table: Vec<[u32; 2]>,
     pub build_time: std::time::Duration,
 }
 
@@ -102,6 +104,8 @@ pub fn build_render_job(
             }
             flags
         },
+        // 排除表掩码由调用方（egui）按上传的排除表设置；默认禁用。
+        exclude_mask: 0,
     };
 
     // Grid lines 已迁移到 egui（widgets::grid_lines），wgpu 只负责 notes 层。
@@ -114,6 +118,7 @@ pub fn build_render_job(
         uniforms,
         track_colors: tc_colors,
         selection: sel_uniform,
+        exclude_table: Vec::new(),
         build_time,
     }
 }

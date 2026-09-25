@@ -168,6 +168,11 @@ impl Selection {
         self.members.is_some()
     }
 
+    /// 成员位图是否包含该 id（矩形态恒 false）。
+    pub fn members_contains(&self, id: u32) -> bool {
+        self.members.as_ref().is_some_and(|bits| bits.contains(id))
+    }
+
     /// 显式成员数量（矩形态返回 `None`）。
     pub fn explicit_member_count(&self) -> Option<u64> {
         self.members.as_ref().map(NoteBitset::count)

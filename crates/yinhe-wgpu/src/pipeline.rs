@@ -33,6 +33,10 @@ pub struct RenderPipelineState {
     /// Current capacity (in f32 entries) of `track_offsets_buffer`.
     pub track_offsets_capacity: u32,
     pub selection_buffer: TrackedBuffer,
+    /// 选中高亮排除表（成员态「矩形内非成员」键，`array<vec2<u32>>`，binding 4）。
+    pub exclude_buffer: TrackedBuffer,
+    /// `exclude_buffer` 当前容量（vec2<u32> 项数）。
+    pub exclude_capacity: u32,
     pub bind_group: BindGroup,
     pub bind_group_layout: BindGroupLayout,
     /// 共享 index buffer：矩形四角 [0,1,2, 1,3,2]（0=TL,1=TR,2=BL,3=BR）。
@@ -98,6 +102,18 @@ impl RenderPipelineState {
             },
         );
 
+        // 排除表 buffer（初始容量 16 项，按需扩容重建 bind group）
+        let exclude_capacity = 16u32;
+        let exclude_buffer = TrackedBuffer::new(
+            device,
+            &BufferDescriptor {
+                label: Some("selection_exclude"),
+                size: (exclude_capacity as u64) * 8,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
+
         let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("render_bind_group_layout"),
             entries: &[
@@ -141,6 +157,16 @@ impl RenderPipelineState {
                     },
                     count: None,
                 },
+                BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -163,6 +189,10 @@ impl RenderPipelineState {
                 BindGroupEntry {
                     binding: 3,
                     resource: track_offsets_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: exclude_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -404,9 +434,41 @@ impl RenderPipelineState {
             track_offsets_buffer,
             track_offsets_capacity: 4,
             selection_buffer,
+            exclude_buffer,
+            exclude_capacity,
             bind_group,
             bind_group_layout,
             index_buffer,
         }
+    }
+
+    /// 重建共享 bind group（排除表 buffer 扩容后调用；layout 与其余 buffer 不变）。
+    pub fn rebuild_bind_group(&mut self, device: &Device) {
+        self.bind_group = device.create_bind_group(&BindGroupDescriptor {
+            label: Some("render_bind_group"),
+            layout: &self.bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: self.uniform_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: self.track_colors_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: self.selection_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: self.track_offsets_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: self.exclude_buffer.as_entire_binding(),
+                },
+            ],
+        });
     }
 }

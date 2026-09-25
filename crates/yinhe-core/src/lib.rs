@@ -16,6 +16,7 @@ mod model;
 mod model_stats;
 mod note_write;
 mod selection;
+mod selection_highlight;
 mod source;
 mod tempo_map;
 
@@ -26,6 +27,9 @@ pub use model::{
 };
 pub use model_stats::{NoteLoader, RescaleProgress};
 pub use selection::{Selection, SelectionFilter};
+pub use selection_highlight::{
+    build_exclude_table_gpu, build_selection_exclude_set, exclude_hash, exclude_key,
+};
 pub use tempo_map::{
     DEFAULT_BPM, DEFAULT_MPQ, TempoMap, TempoSegment, bar_at_tick, bar_divide, bpm_from_mpq,
     mpq_from_bpm, recompute_tempo_start_times, seconds_to_ticks, ticks_to_seconds, total_bars,

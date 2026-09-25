@@ -23,6 +23,8 @@ pub struct RenderJob {
     /// Track colors as `Vec<[f32; 4]>` (RGBA per track).
     pub track_colors: Vec<[f32; 4]>,
     pub selection: crate::vertex::SelectionUniform,
+    /// 选中高亮排除表（空 = 禁用；mask 由 uniforms.exclude_mask 传入）。
+    pub exclude_table: Vec<[u32; 2]>,
     pub note_layers: Vec<NoteLayerData>,
 }
 
@@ -117,6 +119,7 @@ impl RenderThreadHandle {
                     renderer.upload_uniforms(job.uniforms);
                     renderer.upload_track_colors(&job.track_colors);
                     renderer.upload_selection(&job.selection);
+                    renderer.upload_selection_exclude(&job.exclude_table);
 
                     // Ensure enough layers
                     let total_layers = job.note_layers.len();

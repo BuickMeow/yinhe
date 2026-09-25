@@ -247,6 +247,27 @@ pub fn show(
         None
     };
 
+    // 选中高亮排除表（成员态精确高亮）：按 (revision, 选区指纹) 缓存，
+    // 拖动中选区不变 → 命中缓存，不重复遍历。
+    let (exclude_table, exclude_mask) = {
+        let cache_id = ui.id().with("sel_exclude_cache");
+        let cached = ui.data_mut(|d| d.get_persisted::<(u64, u64, Vec<[u32; 2]>, u32)>(cache_id));
+        let sel_hash = selected.state_hash();
+        match cached {
+            Some((r, h, table, mask)) if r == revision && h == sel_hash => (table, mask),
+            _ => {
+                let set = midi
+                    .map(|m| yinhe_core::build_selection_exclude_set(m, selected))
+                    .unwrap_or_default();
+                let (table, mask) = yinhe_core::build_exclude_table_gpu(&set);
+                ui.data_mut(|d| {
+                    d.insert_persisted(cache_id, (revision, sel_hash, table.clone(), mask))
+                });
+                (table, mask)
+            }
+        }
+    };
+
     let mut t_prepare_end = None;
     let (cull_ready, theme) = gpu::upload_and_prepare(
         pianoroll,
@@ -269,6 +290,8 @@ pub fn show(
         cull_rebuild,
         &ghost_notes,
         ghost_selected,
+        &exclude_table,
+        exclude_mask,
         w,
         h,
         min_border_width,
