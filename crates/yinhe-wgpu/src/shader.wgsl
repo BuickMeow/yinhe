@@ -2,8 +2,10 @@
 const BORDER_DARKEN_FACTOR: f32 = 0.4;
 const MAX_SEL_RECTS: u32 = 32u;
 // 填充色的力度变浅上限：力度 0 → 向白混合 80%，力度 127 → 原色。
-// 仅用于 PR/AR 音符（note_geometry）；ghost 与 LOD 摘要层 vel=127 即原色。
+// 仅用于 PR 音符（mode==1）；ghost 层 vel=127 保持原色。
 const MAX_FILL_LIGHTEN: f32 = 0.8;
+// 选中填充：原色向黑加深的比例（不纯黑，避免过深难辨）。
+const SELECTED_DARKEN: f32 = 0.5;
 
 struct Uniforms {
     width: f32,
@@ -36,6 +38,27 @@ var<storage, read> track_offsets: array<f32>;
 
 struct SelectionUniform {
     rects: array<vec4<u32>, MAX_SEL_RECTS * 2u>, // 2 vec4 per rect: (tick_start, tick_end, key_lo, key_hi) + (track_lo, track_hi, 0, 0)
+}
+
+// 选中矩形（binding 2）：GPU cull 全曲层实例不随选区重传（bit31 恒 0），
+// 由此 uniform 在顶点着色器实时判定补选中位。
+@group(0) @binding(2)
+var<uniform> selection: SelectionUniform;
+
+/// 矩形选区命中（tick 半开、key/track 闭区间，与 CPU `Selection::contains` 一致）。
+/// GPU 侧仅为矩形近似（成员态/属性筛选仍由 CPU 位图路径精确处理）。
+fn in_selection_rects(start_tick: u32, key: u32, track: u32) -> bool {
+    let n = min(u.sel_rect_count, MAX_SEL_RECTS);
+    for (var i = 0u; i < n; i = i + 1u) {
+        let a = selection.rects[i * 2u];
+        let b = selection.rects[i * 2u + 1u];
+        if start_tick >= a.x && start_tick < a.y
+            && key >= a.z && key <= a.w
+            && track >= b.x && track <= b.y {
+            return true;
+        }
+    }
+    return false;
 }
 
 struct DrawInstance {
@@ -240,10 +263,15 @@ fn note_geometry(
 
     let key = packed & 0xFFu;
     let track = (packed >> 8u) & 0xFFFFu;
-    // vel 字段拆位：bit7 = 选中（填充纯黑），bit0..7 = MIDI 力度。
+    // vel 字段拆位：bit7 = 选中（填充加深），bit0..7 = MIDI 力度。
     let vel_raw = (packed >> 24u) & 0xFFu;
-    let selected = (vel_raw & 0x80u) != 0u;
+    var selected = (vel_raw & 0x80u) != 0u;
     let vel = vel_raw & 0x7Fu;
+    // GPU cull 全曲层的实例不随选区重传（bit31 恒 0）→ 用矩形选区 uniform
+    // 实时补位；B 路径已带 CPU 精确位（含成员态）则取或。
+    if u.mode == 1u && !selected {
+        selected = in_selection_rects(start_tick, key, track);
+    }
 
     let ppu = u.pixels_per_tick;
 
@@ -327,9 +355,9 @@ fn note_geometry(
     out.color = base_color;
 
     // 填充色：仅 PR（mode==1）按选中/力度变化；AR 等其它模式保持原色。
-    // ghost / LOD 摘要层打包 vel=127 → 原色，不参与着色。
+    // 选中 = 原色向黑加深（不纯黑）；LOD 摘要层的 vel 为段内最大力度。
     if u.mode == 1u && selected {
-        out.fill_color = vec3<f32>(0.0, 0.0, 0.0);
+        out.fill_color = mix(base_color.rgb, vec3<f32>(0.0, 0.0, 0.0), SELECTED_DARKEN);
     } else if u.mode == 1u {
         let lighten = (1.0 - f32(vel) / 127.0) * MAX_FILL_LIGHTEN;
         out.fill_color = mix(base_color.rgb, vec3<f32>(1.0, 1.0, 1.0), lighten);

@@ -72,8 +72,10 @@ pub struct DrawInstance {
 ///   d1 = end_tick   (u32)
 ///   d2 = packed: key(u8) | track(u16) | vel(u8)
 ///
-/// `vel` 字段拆位：bit7 = 选中（渲染填充纯黑），bit0..7 = MIDI 力度
+/// `vel` 字段拆位：bit7 = 选中（渲染填充加深），bit0..7 = MIDI 力度
 /// （0..=127，渲染时向白变浅；127 = 原色）。见 [`NoteInstance::SELECTED_BIT`]。
+/// GPU cull 全曲层的实例不带该位（不随选区重传），由 shader 用
+/// `SelectionUniform` 矩形判定实时补位。
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct NoteInstance {
@@ -93,7 +95,8 @@ impl NoteInstance {
         key as u32 | ((track as u32) << 8) | (((vel & 0x7F) as u32) << 24)
     }
 
-    /// 设置选中标记（填充纯黑；仅桌面可见层的 CPU 构建路径会设置）。
+    /// 设置选中标记（填充加深）。CPU 可见层构建时按成员位图精确设置；
+    /// cull 全曲层不走这里（shader 用矩形 uniform 补位）。
     pub fn set_selected(&mut self, selected: bool) {
         if selected {
             self.packed |= Self::SELECTED_BIT;

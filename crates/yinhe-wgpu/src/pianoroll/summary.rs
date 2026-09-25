@@ -76,11 +76,13 @@ pub fn build_key_summary(key: u8, notes: &[NoteInstance], block_ticks: u32) -> V
         let block = notes[i].start_tick / block_ticks;
         let mut min_s = notes[i].start_tick;
         let mut max_e = notes[i].end_tick;
+        let mut max_vel = 0u8;
         counts.clear();
         while i < notes.len() && notes[i].start_tick / block_ticks == block {
             let note = &notes[i];
             min_s = min_s.min(note.start_tick);
             max_e = max_e.max(note.end_tick);
+            max_vel = max_vel.max(note.velocity());
             *counts
                 .entry(((note.packed >> 8) & 0xFFFF) as u16)
                 .or_insert(0) += 1;
@@ -89,8 +91,9 @@ pub fn build_key_summary(key: u8, notes: &[NoteInstance], block_ticks: u32) -> V
         out.push(NoteInstance {
             start_tick: min_s,
             end_tick: max_e,
-            // vel=127 = 原色：LOD 摘要层不参与力度/选中着色，避免缩小时颜色跳变。
-            packed: NoteInstance::pack(key, dominant_track(&counts), 127),
+            // 段力度 = 段内最大值：哑音段自然为 1（最浅），响音段取最响者，
+            // 无需区分「可听/哑音」的特殊判断。
+            packed: NoteInstance::pack(key, dominant_track(&counts), max_vel),
         });
     }
     out
