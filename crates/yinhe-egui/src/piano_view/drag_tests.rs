@@ -1715,9 +1715,8 @@ fn note_drag_ghost_survives_viewport_cull() {
     let press = egui::pos2(1300.0, 570.0);
     // 拖到视口内（避免触发 auto-scroll）：tick 1080→1050，位移 -30。
     let drag = egui::pos2(1250.0, 570.0);
-    let (ghost_count, hidden_count);
     let mut run = |raw: egui::RawInput, inject: bool| {
-        let mut out = (0usize, 0usize);
+        let mut out = (0usize, 0usize, Vec::<(u32, u32, u8, u16)>::new());
         ctx.run_ui(raw, |ui| {
             let (ghosts, hidden, _, _, _, _) = sel_drag_frame(
                 ui,
@@ -1744,7 +1743,7 @@ fn note_drag_ghost_survives_viewport_cull() {
                 yinhe_editor_core::audio_settings::QuickDeleteMode::Off,
                 None,
             );
-            out = (ghosts.len(), hidden.len());
+            out = (ghosts.len(), hidden.len(), ghosts.clone());
             if inject {
                 // 在 sel_drag_frame 之后注入拖拽状态（覆盖本帧 save 的空状态）：
                 // 绕开 press 分支细节，聚焦被测点——拖动帧的 ghost 视口裁剪。
@@ -1775,10 +1774,18 @@ fn note_drag_ghost_survives_viewport_cull() {
     // 帧 1：press 建立 pointer down 状态 + 注入拖拽状态。
     let _ = run(press_event(press), true);
     // 帧 2：拖动 → 产出 ghost/hidden。
-    (ghost_count, hidden_count) = run(drag_event(drag), false);
+    let (ghost_count, hidden_count, ghosts) = run(drag_event(drag), false);
     assert!(
         ghost_count > 0,
         "拖动帧必须产生 ghost 预览（视口裁剪不得误裁面板宽度对应的 tick）"
     );
     assert!(hidden_count > 0, "拖动帧必须隐藏原音符");
+    // ghost 必须跟随拖动（tick/key 随指针/auto-scroll 变化，而非停在原位）。
+    // 原位快照为 (1080, 1380, 70, 0)（press 帧）；拖动到 (1250, 570) 后
+    // tick/key 都应改变。
+    assert_ne!(
+        ghosts[0],
+        (1080, 1380, 70, 0),
+        "ghost 应随拖动移动，实际 {ghosts:?}"
+    );
 }
