@@ -158,6 +158,7 @@ pub fn show(
         value_zoom: 0.0,
         value_scroll: 0.0,
         orientation: 0,
+        ..Default::default()
     };
     view.base.dirty = false;
     renderer.upload_uniforms(uniforms);

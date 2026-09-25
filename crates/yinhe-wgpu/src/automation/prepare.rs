@@ -149,6 +149,7 @@ pub fn prepare(
         value_zoom: view.value_zoom,
         value_scroll: view.value_scroll,
         orientation: 0, // automation 面板恒为横向像素模式
+        ..Default::default()
     };
 
     renderer.upload_uniforms(uniforms);

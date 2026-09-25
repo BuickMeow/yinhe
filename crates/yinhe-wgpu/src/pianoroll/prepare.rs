@@ -47,6 +47,7 @@ pub fn build_render_job(
 
     // Build selection rects uniform
     let sel_rect_count = selected.rects.len().min(MAX_SEL_RECTS) as u32;
+    let f = &selected.filter;
     let mut sel_uniform = SelectionUniform {
         rects: [[0; 4]; MAX_SEL_RECTS * 2],
     };
@@ -73,6 +74,34 @@ pub fn build_render_job(
         value_zoom: 0.0,   // PR unused (automation panel only)
         value_scroll: 0.0, // PR unused (automation panel only)
         orientation: u32::from(view.is_vertical()),
+        filter_key: f.key.map_or(0, |(lo, hi)| lo as u32 | ((hi as u32) << 8)),
+        filter_track: f
+            .track
+            .map_or(0, |(lo, hi)| lo as u32 | ((hi as u32) << 16)),
+        filter_velocity: f
+            .velocity
+            .map_or(0, |(lo, hi)| lo as u32 | ((hi as u32) << 8)),
+        filter_gate_lo: f.gate.map_or(0, |(lo, _)| lo),
+        filter_gate_hi: f.gate.map_or(0, |(_, hi)| hi),
+        filter_flags: {
+            let mut flags = 0u32;
+            if f.key.is_some() {
+                flags |= 1;
+            }
+            if f.track.is_some() {
+                flags |= 2;
+            }
+            if f.velocity.is_some() {
+                flags |= 4;
+            }
+            if f.gate.is_some() {
+                flags |= 8;
+            }
+            if f.invert {
+                flags |= 16;
+            }
+            flags
+        },
     };
 
     // Grid lines 已迁移到 egui（widgets::grid_lines），wgpu 只负责 notes 层。

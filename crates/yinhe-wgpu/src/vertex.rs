@@ -22,6 +22,17 @@ pub struct Uniforms {
     /// PR 视图方向：0=横向（时间轴=X，音高=Y），1=纵向瀑布流（时间轴=Y，音高=X）。
     /// 仅 PR 音符（mode==1）使用；AR / AM / pixel 模式应保持 0。
     pub orientation: u32,
+
+    // ── 选区属性筛选（SelectionFilter，shader 端精确判定选中高亮）──
+    // 范围编码：key/track/velocity = lo | hi<<8(16)；gate 用两个 u32。
+    // 未设置的边界由 `filter_flags` 对应位为 0 表示（shader 不读取该范围）。
+    pub filter_key: u32,
+    pub filter_track: u32,
+    pub filter_velocity: u32,
+    pub filter_gate_lo: u32,
+    pub filter_gate_hi: u32,
+    /// bit0=key, bit1=track, bit2=velocity, bit3=gate, bit4=invert。
+    pub filter_flags: u32,
 }
 
 /// Maximum number of tracks supported. Track indices are u16, so 65536 is the

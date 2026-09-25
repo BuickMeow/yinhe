@@ -24,6 +24,14 @@ struct Uniforms {
     value_zoom: f32, // Automation panel: vertical zoom
     value_scroll: f32, // Automation panel: vertical scroll in value space
     orientation: u32, // PR 视图方向：0=横向（时间轴=X，音高=Y），1=纵向瀑布流（时间轴=Y，音高=X）
+
+    // 选区属性筛选（与 Rust `SelectionFilter` 一致；未设置边界 = flags 位为 0）
+    filter_key: u32,
+    filter_track: u32,
+    filter_velocity: u32,
+    filter_gate_lo: u32,
+    filter_gate_hi: u32,
+    filter_flags: u32, // bit0=key, bit1=track, bit2=velocity, bit3=gate, bit4=invert
 }
 
 // Track colors: runtime-sized storage buffer (allocated dynamically to actual
@@ -45,8 +53,31 @@ struct SelectionUniform {
 @group(0) @binding(2)
 var<uniform> selection: SelectionUniform;
 
+/// 选区属性筛选（与 CPU `SelectionFilter::accepts_note` 同语义）。
+/// 无任何边界（flags==0）时恒通过（invert 无对象，与 CPU 一致）。
+fn selection_filter_passes(key: u32, track: u32, vel: u32, gate: u32) -> bool {
+    if u.filter_flags == 0u {
+        return true;
+    }
+    var m = true;
+    if (u.filter_flags & 1u) != 0u {
+        m = m && key >= (u.filter_key & 0xFFu) && key <= ((u.filter_key >> 8u) & 0xFFu);
+    }
+    if (u.filter_flags & 2u) != 0u {
+        m = m && track >= (u.filter_track & 0xFFFFu) && track <= (u.filter_track >> 16u);
+    }
+    if (u.filter_flags & 4u) != 0u {
+        m = m && vel >= (u.filter_velocity & 0xFFu) && vel <= ((u.filter_velocity >> 8u) & 0xFFu);
+    }
+    if (u.filter_flags & 8u) != 0u {
+        m = m && gate >= u.filter_gate_lo && gate <= u.filter_gate_hi;
+    }
+    let invert = (u.filter_flags & 16u) != 0u;
+    return m != invert;
+}
+
 /// 矩形选区命中（tick 半开、key/track 闭区间，与 CPU `Selection::contains` 一致）。
-/// GPU 侧仅为矩形近似（成员态/属性筛选仍由 CPU 位图路径精确处理）。
+/// GPU 侧为矩形 + 属性筛选判定；成员态另由排除表（CPU 位图差集）修正。
 fn in_selection_rects(start_tick: u32, key: u32, track: u32) -> bool {
     let n = min(u.sel_rect_count, MAX_SEL_RECTS);
     for (var i = 0u; i < n; i = i + 1u) {
@@ -270,7 +301,9 @@ fn note_geometry(
     // GPU cull 全曲层的实例不随选区重传（bit31 恒 0）→ 用矩形选区 uniform
     // 实时补位；B 路径已带 CPU 精确位（含成员态）则取或。
     if u.mode == 1u && !selected {
-        selected = in_selection_rects(start_tick, key, track);
+        let gate = end_tick - min(start_tick, end_tick);
+        selected = in_selection_rects(start_tick, key, track)
+            && selection_filter_passes(key, track, vel, gate);
     }
 
     let ppu = u.pixels_per_tick;

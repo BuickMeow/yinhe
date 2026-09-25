@@ -527,6 +527,7 @@ impl ArView {
                 value_zoom: 0.0,
                 value_scroll: 0.0,
                 orientation: 0,
+                ..Default::default()
             };
             renderer.upload_uniforms(uniforms);
             let tc = crate::track_colors_for(&model);
