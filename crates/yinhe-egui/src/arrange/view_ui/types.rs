@@ -130,31 +130,36 @@ pub(crate) fn is_on_am_row(
     })
 }
 
+/// 用拖拽开始时缓存的选中音符构建 ghost/hidden（每帧只做视口裁剪）。
+///
+/// `notes` 由调用方在拖拽启动时用 `collect_selected_notes` 收集一次并缓存；
+/// 全选拖拽时每帧从「全选区重扫 + GB 级构建」降到可见音符数。
+/// `tick_range` 为当前可见 tick 范围（半开）。
 pub(crate) fn build_ghosts_for_move(
     dt: i64,
     dtr: i32,
     alt: bool,
-    data: &crate::arrange::ArrangeData<'_>,
-    selected: &yinhe_core::Selection,
+    notes: &[crate::selection::drag::CollectedNote],
+    tick_range: (f64, f64),
+    num_tracks: u16,
 ) -> (Vec<GhostNote>, HashSet<HiddenNote>) {
     let mut ghosts = Vec::new();
     let mut hidden = HashSet::new();
     if dt == 0 && dtr == 0 {
         return (ghosts, hidden);
     }
-    let max_track = (data.num_tracks as i32 - 1).max(0) as u16;
-    let notes = crate::selection::drag::collect_selected_notes(
-        selected,
-        data.midi,
-        data.track_visible,
-        &HashSet::new(),
-    );
+    let max_track = (num_tracks as i32 - 1).max(0) as u16;
+    let (tick_lo, tick_hi) = tick_range;
     for note in notes {
         let new_tick = (note.start_tick as i64 + dt).max(0) as u32;
         let len = note.end_tick - note.start_tick;
+        let new_end = new_tick + len;
         let new_track = (note.track as i32 + dtr).max(0).min(max_track as i32) as u16;
-        ghosts.push((new_tick, new_tick + len, note.key, new_track));
-        if !alt {
+        // ghost 按新位置裁剪，hidden 按原位置裁剪（视口外不参与渲染）。
+        if (new_tick as f64) < tick_hi && (new_end as f64) > tick_lo {
+            ghosts.push((new_tick, new_end, note.key, new_track));
+        }
+        if !alt && (note.start_tick as f64) < tick_hi && (note.end_tick as f64) > tick_lo {
             hidden.insert((note.track, note.start_tick, note.key));
         }
     }
@@ -196,5 +201,53 @@ pub(crate) fn delta_tracks(origin_tr: f32, current_tr: f32, vertical: bool) -> i
         0
     } else {
         (current_tr - origin_tr).round() as i32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::selection::drag::CollectedNote;
+
+    fn note(track: u16, start: u32, end: u32, key: u8) -> CollectedNote {
+        CollectedNote {
+            track,
+            start_tick: start,
+            end_tick: end,
+            key,
+            velocity: 100,
+        }
+    }
+
+    /// ghost 按新位置做视口裁剪并叠加位移；hidden 按原位置裁剪。
+    #[test]
+    fn build_ghosts_culls_outside_tick_range_and_offsets() {
+        let notes = vec![note(0, 100, 200, 60), note(0, 5000, 5100, 61)];
+        let (ghosts, hidden) = build_ghosts_for_move(50, 0, false, &notes, (0.0, 1000.0), 4);
+        assert_eq!(ghosts, vec![(150, 250, 60, 0)]);
+        assert_eq!(hidden.len(), 1, "只有视口内的原音符产生 hidden");
+        assert!(hidden.contains(&(0, 100, 60)));
+        assert!(!hidden.contains(&(0, 5000, 61)));
+    }
+
+    /// alt（复制）模式不产生 hidden；零位移无 ghost/hidden。
+    #[test]
+    fn build_ghosts_alt_keeps_originals_and_zero_delta_is_empty() {
+        let notes = vec![note(0, 100, 200, 60)];
+        let (ghosts, hidden) = build_ghosts_for_move(10, 0, true, &notes, (0.0, 1000.0), 4);
+        assert_eq!(ghosts.len(), 1);
+        assert!(hidden.is_empty(), "alt 模式不隐藏原音符");
+        let (g0, h0) = build_ghosts_for_move(0, 0, false, &notes, (0.0, 1000.0), 4);
+        assert!(g0.is_empty() && h0.is_empty(), "零位移无 ghost/hidden");
+    }
+
+    /// 轨道位移 clamp 到 [0, num_tracks-1]。
+    #[test]
+    fn build_ghosts_clamps_track_delta() {
+        let notes = vec![note(0, 100, 200, 60), note(3, 100, 200, 61)];
+        let (down, _) = build_ghosts_for_move(0, -5, false, &notes, (0.0, 1000.0), 4);
+        assert_eq!(down[0].3, 0, "下移越界 clamp 到 0");
+        let (up, _) = build_ghosts_for_move(0, 5, false, &notes, (0.0, 1000.0), 4);
+        assert_eq!(up[1].3, 3, "上移越界 clamp 到 num_tracks-1");
     }
 }

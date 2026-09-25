@@ -41,6 +41,12 @@ pub(crate) fn sel_drag_frame_arrange(
     let mut move_had_moved: bool = ui
         .data_mut(|d| d.get_persisted(move_had_moved_id))
         .unwrap_or(false);
+    // 拖拽启动时收集一次的选中音符（每帧只做视口裁剪，避免全选区重扫）。
+    type ArrMoveNotes = std::sync::Arc<Vec<crate::selection::drag::CollectedNote>>;
+    let move_notes_id = ui.id().with("arr_move_notes");
+    let mut move_notes: Option<ArrMoveNotes> = ui
+        .data_mut(|d| d.get_persisted(move_notes_id))
+        .unwrap_or(None);
     let pointer = ui.input(|i| i.pointer.clone());
     let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
     let additive = cmd || ui.input(|i| i.modifiers.shift);
@@ -51,12 +57,14 @@ pub(crate) fn sel_drag_frame_arrange(
         move_drag = None;
         move_orig_sel.clear();
         move_had_moved = false;
+        move_notes = None;
     }
     if crate::view_interaction::pointer_over_popup(ui.ctx()) {
         ui.data_mut(|d| d.insert_persisted(sel_id, drag));
         ui.data_mut(|d| d.insert_persisted(move_drag_id, move_drag));
         ui.data_mut(|d| d.insert_persisted(move_orig_id, move_orig_sel));
         ui.data_mut(|d| d.insert_persisted(move_had_moved_id, move_had_moved));
+        ui.data_mut(|d| d.insert_persisted(move_notes_id, move_notes));
         return (ghost_notes, hidden_notes, drag_rect);
     }
     let inside_sel_rect = is_inside_sel_rect(
@@ -89,6 +97,15 @@ pub(crate) fn sel_drag_frame_arrange(
             .map(|h| h.track() as f32)
             .unwrap_or(0.0);
         if inside_sel_rect && !additive {
+            // 先按当前选区收集一次（下一行会清空选区）。
+            move_notes = Some(std::sync::Arc::new(
+                crate::selection::drag::collect_selected_notes(
+                    edit.selected,
+                    data.midi,
+                    data.track_visible,
+                    &HashSet::new(),
+                ),
+            ));
             move_orig_sel = edit.arr_sel_rect.clone();
             edit.arr_sel_rect.clear();
             let origin = (click_tick, click_track_f);
@@ -165,7 +182,10 @@ pub(crate) fn sel_drag_frame_arrange(
             move_had_moved = true;
         }
         {
-            let (g, h) = build_ghosts_for_move(dt, dtr, alt, data, edit.selected);
+            let notes = move_notes.as_deref().map(Vec::as_slice).unwrap_or(&[]);
+            let tick_range = view.visible_tick_range(content_rect.width());
+            let (g, h) =
+                build_ghosts_for_move(dt, dtr, alt, notes, tick_range, data.num_tracks as u16);
             ghost_notes.extend(g);
             hidden_notes.extend(h);
         }
@@ -209,6 +229,7 @@ pub(crate) fn sel_drag_frame_arrange(
         move_drag = None;
         move_orig_sel.clear();
         move_had_moved = false;
+        move_notes = None;
         drag_rect = None;
     }
     if let Some((start_music, _)) = drag {
@@ -306,6 +327,7 @@ pub(crate) fn sel_drag_frame_arrange(
     ui.data_mut(|d| d.insert_persisted(move_drag_id, move_drag));
     ui.data_mut(|d| d.insert_persisted(move_orig_id, move_orig_sel));
     ui.data_mut(|d| d.insert_persisted(move_had_moved_id, move_had_moved));
+    ui.data_mut(|d| d.insert_persisted(move_notes_id, move_notes));
     (ghost_notes, hidden_notes, drag_rect)
 }
 
