@@ -266,6 +266,63 @@ pub struct InstrumentPreviewNote {
     pub duration_ticks: u32,
 }
 
+/// 混音台电平表读数端聚合（引擎创建时收集，Arc 共享、随引擎重建换新）。
+struct MixerMeters {
+    /// 各 dense 通道的读数端。
+    channels: Vec<MeterReading>,
+    /// 主输出读数端。
+    master: MeterReading,
+    /// 总线读数端（动态：增删总线由渲染线程更新此槽）。
+    buses: Arc<Mutex<Vec<MeterReading>>>,
+}
+
+impl MixerMeters {
+    /// 从引擎收集全部读数端。引擎随后 move 进渲染线程；layout 冻结，
+    /// 通道数不变（resize 只重建缓冲不换 meter），读数端整个引擎生命周期有效。
+    fn collect(engine: &crate::engine::AudioEngine) -> Self {
+        Self {
+            channels: (0..engine.mixer.channel_count())
+                .filter_map(|i| engine.mixer.channel_meter_reading(i))
+                .collect(),
+            master: engine.mixer.master_meter_reading(),
+            buses: Arc::new(Mutex::new(
+                (0..engine.mixer.bus_count())
+                    .filter_map(|i| engine.mixer.bus_meter_reading(i))
+                    .collect(),
+            )),
+        }
+    }
+
+    /// 总线读数端共享句柄（渲染线程在 SyncBusConfig 后刷新此槽）。
+    fn bus_readings(&self) -> Arc<Mutex<Vec<MeterReading>>> {
+        Arc::clone(&self.buses)
+    }
+
+    /// dense 通道数（= 引擎 compacted 通道数）。
+    fn channel_count(&self) -> usize {
+        self.channels.len()
+    }
+
+    /// 读某 dense 通道的电平（L, R 峰值，0 起）。
+    fn channel_read(&self, dense: usize) -> Option<(f32, f32)> {
+        self.channels.get(dense).map(|r| r.read())
+    }
+
+    /// 读总线电平（bus 索引；不存在返回静音）。
+    fn bus_read(&self, bus: usize) -> (f32, f32) {
+        self.buses
+            .lock()
+            .ok()
+            .and_then(|r| r.get(bus).map(|m| m.read()))
+            .unwrap_or((0.0, 0.0))
+    }
+
+    /// 读主输出电平。
+    fn master_read(&self) -> (f32, f32) {
+        self.master.read()
+    }
+}
+
 /// Handle used by the UI to control audio playback.
 pub struct AudioHandle {
     pub(crate) cmd_tx: Sender<AudioCommand>,
@@ -292,83 +349,94 @@ pub struct AudioHandle {
     pending_skip: Arc<Mutex<Option<Vec<bool>>>>,
     /// latest-wins：AM lane M/S 试听旁通集必达。
     pending_am_ms: Arc<Mutex<Option<Arc<AmMsMap>>>>,
-    /// 混音台各 dense 通道的电平表读数端（引擎创建时收集，Arc 共享、随引擎重建换新）。
-    mixer_channel_readings: Vec<MeterReading>,
-    /// 主输出电平表读数端。
-    mixer_master_reading: MeterReading,
-    /// 总线电平表读数端（动态：增删总线由渲染线程更新此槽）。
-    mixer_bus_readings: Arc<Mutex<Vec<MeterReading>>>,
+    /// 混音台电平表读数端。
+    meters: MixerMeters,
     /// 渲染线程退回的 insert 处理器（插件 deactivate 必须在 UI/管理线程做）。
     insert_return_rx: crossbeam_channel::Receiver<Vec<Box<dyn InsertProcessor>>>,
     /// 渲染线程退回的乐器处理器（deactivate 同样必须在 UI/管理线程做）。
     instrument_return_rx: crossbeam_channel::Receiver<(u8, Box<dyn InstrumentProcessor>)>,
 }
 
-/// 可靠命令（走独立无界通道，保序、永不丢）。
-///
-/// - 传输控制：UI 时钟对齐依赖，丢失会造成播放/暂停状态错位。
-/// - 结构性变更（insert 挂载/移除、乐器挂载、总线结构）：单次命令、无
-///   重发路径（UI 发完即标记已发送），丢失即永久不一致（曾因此效果器
-///   在渲染线程阻塞 4-5 秒时被丢，卡片在 UI 上但引擎里根本没挂上）。
-/// - 设置类（层数/复音数/力度忽略/自动化密度）：同属单次命令、无重发路径，
-///   丢弃后 UI 不再发（diff 已归零）→ 设置永不生效、用户以为"必须重启"。
-/// - `LoadModel`：同样单次、无重发（spawn/过户/切文档时各发一次）；
-///   丢失后模型永不加载 → Play 永远挂起等待（engine.model_loaded() 为
-///   false）而 UI 只看到"播放无响应"。命令通道仅由渲染线程短暂阻塞填满。
-fn is_reliable(cmd: &AudioCommand) -> bool {
-    matches!(
-        cmd,
-        AudioCommand::Play { .. }
-            | AudioCommand::Resume
-            | AudioCommand::Pause
-            | AudioCommand::Stop
-            | AudioCommand::Seek { .. }
-            | AudioCommand::LoadModel { .. }
-            | AudioCommand::InsertAdd { .. }
-            | AudioCommand::InsertRemove { .. }
-            | AudioCommand::InsertReplace { .. }
-            | AudioCommand::SetInstrument { .. }
-            | AudioCommand::SetMixerParams { .. }
-            | AudioCommand::SyncBusConfig { .. }
-            | AudioCommand::SetLayerCount { .. }
-            | AudioCommand::SetMaxVoices { .. }
-            | AudioCommand::SetIgnoreVelocity { .. }
-            | AudioCommand::SetAutomationDensity { .. }
-    )
+/// 命令分类结果：可靠通道标志 + 诊断名。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CmdMeta {
+    /// 可靠命令（走独立无界通道，保序、永不丢）。
+    ///
+    /// - 传输控制：UI 时钟对齐依赖，丢失会造成播放/暂停状态错位。
+    /// - 结构性变更（insert 挂载/移除、乐器挂载、总线结构）：单次命令、无
+    ///   重发路径（UI 发完即标记已发送），丢失即永久不一致（曾因此效果器
+    ///   在渲染线程阻塞 4-5 秒时被丢，卡片在 UI 上但引擎里根本没挂上）。
+    /// - 设置类（层数/复音数/力度忽略/自动化密度）：同属单次命令、无重发路径，
+    ///   丢弃后 UI 不再发（diff 已归零）→ 设置永不生效、用户以为"必须重启"。
+    /// - `LoadModel`：同样单次、无重发（spawn/过户/切文档时各发一次）；
+    ///   丢失后模型永不加载 → Play 永远挂起等待（engine.model_loaded() 为
+    ///   false）而 UI 只看到"播放无响应"。命令通道仅由渲染线程短暂阻塞填满。
+    reliable: bool,
+    /// 诊断日志用类型名。
+    name: &'static str,
 }
 
-/// 命令类型名（诊断日志用）。
-fn cmd_kind(cmd: &AudioCommand) -> &'static str {
-    match cmd {
-        AudioCommand::Play { .. } => "Play",
-        AudioCommand::Resume => "Resume",
-        AudioCommand::Pause => "Pause",
-        AudioCommand::Stop => "Stop",
-        AudioCommand::Seek { .. } => "Seek",
-        AudioCommand::LoadModel { .. } => "LoadModel",
-        AudioCommand::ReloadNotes { .. } => "ReloadNotes",
-        AudioCommand::UpdateNotes { .. } => "UpdateNotes",
-        AudioCommand::SetSoundFonts { .. } => "SetSoundFonts",
-        AudioCommand::SkipTracks { .. } => "SkipTracks",
-        AudioCommand::SetAmMs { .. } => "SetAmMs",
-        AudioCommand::SetLayerCount { .. } => "SetLayerCount",
-        AudioCommand::SetIgnoreVelocity { .. } => "SetIgnoreVelocity",
-        AudioCommand::InsertAdd { .. } => "InsertAdd",
-        AudioCommand::InsertRemove { .. } => "InsertRemove",
-        AudioCommand::InsertReplace { .. } => "InsertReplace",
-        AudioCommand::SetInstrument { .. } => "SetInstrument",
-        AudioCommand::SyncBusConfig { .. } => "SyncBusConfig",
-        AudioCommand::PreviewStop => "PreviewStop",
-        AudioCommand::RefreshLatency => "RefreshLatency",
-        _ => "Other",
+impl AudioCommand {
+    /// 命令分类的**唯一**入口：一次 match 同时推导可靠性与诊断名。
+    ///
+    /// 刻意不写 `_` 通配分支：新增 `AudioCommand` 变体时编译器强制在此
+    /// 声明分类，杜绝此前 `is_reliable` / `cmd_kind` 两份 match 靠人工同步、
+    /// 新命令漏进可靠通道（或类型名落 "Other"）的隐患。
+    fn meta(&self) -> CmdMeta {
+        let (name, reliable) = match self {
+            AudioCommand::Play { .. } => ("Play", true),
+            AudioCommand::Resume => ("Resume", true),
+            AudioCommand::Pause => ("Pause", true),
+            AudioCommand::Stop => ("Stop", true),
+            AudioCommand::Seek { .. } => ("Seek", true),
+            AudioCommand::LoadModel { .. } => ("LoadModel", true),
+            AudioCommand::ReloadNotes { .. } => ("ReloadNotes", false),
+            AudioCommand::UpdateNotes { .. } => ("UpdateNotes", false),
+            AudioCommand::SetSoundFonts { .. } => ("SetSoundFonts", false),
+            AudioCommand::SkipTracks { .. } => ("SkipTracks", false),
+            AudioCommand::SetAmMs { .. } => ("SetAmMs", false),
+            AudioCommand::SetLayerCount { .. } => ("SetLayerCount", true),
+            AudioCommand::SetIgnoreVelocity { .. } => ("SetIgnoreVelocity", true),
+            AudioCommand::SetMaxVoices { .. } => ("SetMaxVoices", true),
+            AudioCommand::SetAutomationDensity { .. } => ("SetAutomationDensity", true),
+            AudioCommand::PreviewNotes { .. } => ("PreviewNotes", false),
+            AudioCommand::PreviewStop => ("PreviewStop", false),
+            AudioCommand::PreviewStopKey { .. } => ("PreviewStopKey", false),
+            AudioCommand::PreviewInstrumentNotes { .. } => ("PreviewInstrumentNotes", false),
+            AudioCommand::PreviewInstrumentStop { .. } => ("PreviewInstrumentStop", false),
+            AudioCommand::SetMixerParams { .. } => ("SetMixerParams", true),
+            AudioCommand::SetChannelStrip { .. } => ("SetChannelStrip", false),
+            AudioCommand::SetAudioStrip { .. } => ("SetAudioStrip", false),
+            AudioCommand::SetMasterParams { .. } => ("SetMasterParams", false),
+            AudioCommand::InsertAdd { .. } => ("InsertAdd", true),
+            AudioCommand::InsertRemove { .. } => ("InsertRemove", true),
+            AudioCommand::InsertReplace { .. } => ("InsertReplace", true),
+            AudioCommand::SetBusStrip { .. } => ("SetBusStrip", false),
+            AudioCommand::SyncBusConfig { .. } => ("SyncBusConfig", true),
+            AudioCommand::SetInstrument { .. } => ("SetInstrument", true),
+            AudioCommand::SetAudioSource { .. } => ("SetAudioSource", false),
+            AudioCommand::RefreshLatency => ("RefreshLatency", false),
+            AudioCommand::ExportStart { .. } => ("ExportStart", false),
+        };
+        CmdMeta { reliable, name }
+    }
+
+    /// 是否走可靠（无界、保序、永不丢）通道。
+    fn is_reliable(&self) -> bool {
+        self.meta().reliable
+    }
+
+    /// 诊断日志用类型名。
+    fn kind(&self) -> &'static str {
+        self.meta().name
     }
 }
 
 impl AudioHandle {
     /// 发命令给 renderer 线程。
     ///
-    /// 可靠命令（传输控制 + 结构性变更，见 [`is_reliable`]）走独立无界通道，
-    /// 保序永不丢。其余走容量 `AUDIO_CMD_CHANNEL_CAPACITY`（16）的通道，
+    /// 可靠命令（传输控制 + 结构性变更，见 [`AudioCommand::is_reliable`]）走独立
+    /// 无界通道，保序永不丢。其余走容量 `AUDIO_CMD_CHANNEL_CAPACITY`（16）的通道，
     /// 满时 `try_send` 失败 → 丢弃新命令 + `warn!` 日志，绝不阻塞 UI 线程。
     /// - `Full`：renderer 处理不过来。renderer 已对 `ReloadNotes`/`UpdateNotes`
     ///   做同类型合并，worker 对 `PrepareModel`/`PrepareNotes`/`PrepareChase`
@@ -376,7 +444,7 @@ impl AudioHandle {
     /// - `Disconnected`：renderer 线程已退出。仅记日志，不 panic ——
     ///   渲染线程死亡不应该让 UI 也跟着崩。
     pub fn send(&self, cmd: AudioCommand) {
-        if is_reliable(&cmd) {
+        if cmd.is_reliable() {
             // 无界通道：除渲染线程退出外不会失败。
             let _ = self.transport_tx.send(cmd);
             return;
@@ -384,7 +452,7 @@ impl AudioHandle {
         match self.cmd_tx.try_send(cmd) {
             Ok(()) => {}
             Err(crossbeam_channel::TrySendError::Full(cmd)) => {
-                let kind = cmd_kind(&cmd);
+                let kind = cmd.kind();
                 tracing::warn!("AudioHandle::send: channel full, dropping {kind}");
                 crate::audio_renderer::play_log(&format!("[play] 命令通道满，丢弃 {kind}"));
             }
@@ -463,26 +531,22 @@ impl AudioHandle {
 
     /// 混音台 dense 通道数（= 引擎 compacted 通道数）。
     pub fn mixer_channel_count(&self) -> usize {
-        self.mixer_channel_readings.len()
+        self.meters.channel_count()
     }
 
     /// 读某 dense 通道的电平（L, R 峰值，0 起）。
     pub fn channel_meter_read(&self, dense: usize) -> Option<(f32, f32)> {
-        self.mixer_channel_readings.get(dense).map(|r| r.read())
+        self.meters.channel_read(dense)
+    }
+
+    /// 读总线电平表读数（bus 索引；不存在返回静音）。
+    pub fn bus_meter_read(&self, bus: usize) -> (f32, f32) {
+        self.meters.bus_read(bus)
     }
 
     /// 读主输出电平。
-    /// 总线电平表读数（bus 索引；不存在返回静音）。
-    pub fn bus_meter_read(&self, bus: usize) -> (f32, f32) {
-        self.mixer_bus_readings
-            .lock()
-            .ok()
-            .and_then(|r| r.get(bus).map(|m| m.read()))
-            .unwrap_or((0.0, 0.0))
-    }
-
     pub fn master_meter_read(&self) -> (f32, f32) {
-        self.mixer_master_reading.read()
+        self.meters.master_read()
     }
 
     /// 取回渲染线程退回的 insert 处理器（每帧轮询；插件 deactivate 在 UI 线程做）。
@@ -675,6 +739,28 @@ pub(crate) enum WorkerResult {
     },
 }
 
+/// 三种 Prepare 命令共用的合并骨架：非阻塞取尽 `cmd_rx`，`try_merge` 返回
+/// `Ok(latest)` 表示命中正在合并的同类型命令（用最新值覆盖），`Err(other)` 表示
+/// 异类命令（塞回 `pending`，下次循环优先处理，避免饿死）。
+///
+/// 与原先逐个 `while let + match` 循环行为逐字一致：连续同类型只保留最新，
+/// 遇到异类立即停止本轮合并。
+fn merge_pending_commands<T>(
+    cmd_rx: &crossbeam_channel::Receiver<WorkerCmd>,
+    pending: &mut std::collections::VecDeque<WorkerCmd>,
+    initial: T,
+    mut try_merge: impl FnMut(WorkerCmd) -> Result<T, WorkerCmd>,
+) -> T {
+    let mut latest = initial;
+    while let Ok(next) = cmd_rx.try_recv() {
+        match try_merge(next) {
+            Ok(merged) => latest = merged,
+            Err(other) => pending.push_back(other),
+        }
+    }
+    latest
+}
+
 /// Spawn a background worker thread that processes heavy commands
 /// (model preparation, soundfont loading) off the renderer thread.
 ///
@@ -713,21 +799,15 @@ pub(crate) fn spawn_worker(
                 match cmd {
                     WorkerCmd::PrepareModel(model, density, ignore_velocity) => {
                         // 合并连续 PrepareModel，只保留最新
-                        let mut latest = model;
-                        let mut latest_density = density;
-                        let mut latest_ignore = ignore_velocity;
-                        while let Ok(next) = cmd_rx.try_recv() {
-                            match next {
-                                WorkerCmd::PrepareModel(m, d, iv) => {
-                                    latest = m;
-                                    latest_density = d;
-                                    latest_ignore = iv;
-                                }
-                                other => {
-                                    pending.push_back(other);
-                                }
-                            }
-                        }
+                        let (latest, latest_density, latest_ignore) = merge_pending_commands(
+                            &cmd_rx,
+                            &mut pending,
+                            (model, density, ignore_velocity),
+                            |cmd| match cmd {
+                                WorkerCmd::PrepareModel(m, d, iv) => Ok((m, d, iv)),
+                                other => Err(other),
+                            },
+                        );
                         let t_prepare = std::time::Instant::now();
                         let prepared = crate::prepare_model::prepare_model(
                             &latest,
@@ -748,19 +828,15 @@ pub(crate) fn spawn_worker(
                     }
                     WorkerCmd::PrepareNotes(model, ignore_velocity) => {
                         // 合并连续 PrepareNotes，只保留最新
-                        let mut latest = model;
-                        let mut latest_ignore = ignore_velocity;
-                        while let Ok(next) = cmd_rx.try_recv() {
-                            match next {
-                                WorkerCmd::PrepareNotes(m, iv) => {
-                                    latest = m;
-                                    latest_ignore = iv;
-                                }
-                                other => {
-                                    pending.push_back(other);
-                                }
-                            }
-                        }
+                        let (latest, latest_ignore) = merge_pending_commands(
+                            &cmd_rx,
+                            &mut pending,
+                            (model, ignore_velocity),
+                            |cmd| match cmd {
+                                WorkerCmd::PrepareNotes(m, iv) => Ok((m, iv)),
+                                other => Err(other),
+                            },
+                        );
                         // 对比 note_revisions 算 dirty 桶：只重建变化的 key 桶。
                         // rebuild() 会 bump 全部 KEY_COUNT 个 revision（全量变化），
                         // 与模型侧 dirty 语义一致。阈值变化时所有桶都可能变，强制全量。
@@ -795,31 +871,22 @@ pub(crate) fn spawn_worker(
                         am_ms,
                     } => {
                         // 合并连续 PrepareChase，只保留最新（同 generation 或不同 generation 都只留最新）
-                        let mut latest_model = model;
-                        let mut latest_target = target_tick;
-                        let mut latest_gen = generation;
-                        let mut latest_mask = skip_mask;
-                        let mut latest_am_ms = am_ms;
-                        while let Ok(next) = cmd_rx.try_recv() {
-                            match next {
-                                WorkerCmd::PrepareChase {
-                                    model,
-                                    target_tick,
-                                    generation,
-                                    skip_mask,
-                                    am_ms,
-                                } => {
-                                    latest_model = model;
-                                    latest_target = target_tick;
-                                    latest_gen = generation;
-                                    latest_mask = skip_mask;
-                                    latest_am_ms = am_ms;
-                                }
-                                other => {
-                                    pending.push_back(other);
-                                }
-                            }
-                        }
+                        let (latest_model, latest_target, latest_gen, latest_mask, latest_am_ms) =
+                            merge_pending_commands(
+                                &cmd_rx,
+                                &mut pending,
+                                (model, target_tick, generation, skip_mask, am_ms),
+                                |cmd| match cmd {
+                                    WorkerCmd::PrepareChase {
+                                        model,
+                                        target_tick,
+                                        generation,
+                                        skip_mask,
+                                        am_ms,
+                                    } => Ok((model, target_tick, generation, skip_mask, am_ms)),
+                                    other => Err(other),
+                                },
+                            );
                         let (states, plugin_params) = compute_chase_states(
                             &latest_model,
                             latest_target,
@@ -998,13 +1065,25 @@ pub(crate) fn compute_chase_states_for_test(
     compute_chase_states(model, target_tick, skip_mask, &crate::spawn::AmMsMap::new()).0
 }
 
-/// 列出系统所有可用输出设备的描述名（cpal `Device::description()`）。
+/// 设备枚举方向。
+#[derive(Clone, Copy)]
+enum DeviceDirection {
+    Input,
+    Output,
+}
+
+/// 列出系统所有可用设备的描述名（cpal `Device::description()`）。
 ///
-/// 用于设置面板和"音频设备切换"对话框。任何错误都被吞掉返回空 Vec ——
-/// 列设备是 UI 辅助，失败不应阻塞音频引擎本身。
-pub fn list_output_devices() -> Vec<String> {
+/// 用于设置面板、"音频设备切换"对话框与录音输入选择。任何错误都被吞掉
+/// 返回空 Vec —— 列设备是 UI 辅助，失败不应阻塞音频引擎本身。
+fn list_devices(direction: DeviceDirection) -> Vec<String> {
     let host = cpal::default_host();
-    host.output_devices()
+    // input_devices/output_devices 返回同一类型（DevicesFiltered），仅过滤器不同。
+    let devices = match direction {
+        DeviceDirection::Input => host.input_devices(),
+        DeviceDirection::Output => host.output_devices(),
+    };
+    devices
         .map(|devices| {
             devices
                 .filter_map(|d| d.description().ok().map(|desc| desc.to_string()))
@@ -1013,17 +1092,14 @@ pub fn list_output_devices() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// 列出系统所有可用输出设备的描述名。
+pub fn list_output_devices() -> Vec<String> {
+    list_devices(DeviceDirection::Output)
+}
+
 /// 列出系统所有可用输入设备的描述名（录音输入选择用）。
-/// 错误同样吞掉返回空 Vec（UI 辅助，不阻塞引擎）。
 pub fn list_input_devices() -> Vec<String> {
-    let host = cpal::default_host();
-    host.input_devices()
-        .map(|devices| {
-            devices
-                .filter_map(|d| d.description().ok().map(|desc| desc.to_string()))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default()
+    list_devices(DeviceDirection::Input)
 }
 
 /// 查询系统默认输出设备的默认采样率与所有支持的标准采样率。
@@ -1069,13 +1145,32 @@ pub fn discover_sample_rates() -> (u32, Vec<u32>) {
 /// 协商采样率：请求值不在设备任何 f32 输出配置的支持范围内时，
 /// 回退到设备默认采样率。枚举失败时不做判断，交给 cpal 建流时报错。
 fn negotiate_sample_rate(device: &cpal::Device, requested: u32, device_default: u32) -> u32 {
-    let supported = match device.supported_output_configs() {
-        Ok(configs) => configs
-            .filter(|c| c.sample_format() == cpal::SampleFormat::F32)
-            .any(|c| requested >= c.min_sample_rate() && requested <= c.max_sample_rate()),
-        Err(_) => return requested,
+    let ranges: Option<Vec<(u32, u32)>> = match device.supported_output_configs() {
+        Ok(configs) => Some(
+            configs
+                .filter(|c| c.sample_format() == cpal::SampleFormat::F32)
+                .map(|c| (c.min_sample_rate(), c.max_sample_rate()))
+                .collect(),
+        ),
+        Err(_) => None,
     };
-    if supported {
+    negotiate_sample_rate_in(requested, device_default, ranges.as_deref())
+}
+
+/// `negotiate_sample_rate` 的纯逻辑部分：`Some(范围)` = 设备 f32 输出配置，
+/// `None` = 枚举失败（不做判断，保持请求值）。
+fn negotiate_sample_rate_in(
+    requested: u32,
+    device_default: u32,
+    ranges: Option<&[(u32, u32)]>,
+) -> u32 {
+    let Some(ranges) = ranges else {
+        return requested;
+    };
+    if ranges
+        .iter()
+        .any(|&(min, max)| requested >= min && requested <= max)
+    {
         requested
     } else {
         tracing::warn!(
@@ -1110,6 +1205,338 @@ fn negotiate_buffer_size(
     }
 }
 
+/// 合成后端可用性收敛：YinheCpu 尚未实现；无 gpu feature 时 GPU 后端不可用。
+/// 回退明确告警（不静默假装成功），renderer 只看到实际可用的后端。
+fn resolve_synth_engine(requested: SynthEngine) -> SynthEngine {
+    let resolved = if cfg!(feature = "gpu") {
+        requested.resolved()
+    } else {
+        SynthEngine::XSynthCpu
+    };
+    if resolved != requested {
+        tracing::warn!(
+            "合成后端 {requested:?} 当前不可用（未实现或未编译 gpu feature），回退 {resolved:?}"
+        );
+    }
+    resolved
+}
+
+/// 按名字查找输出设备；`None` = 系统默认输出设备。
+fn select_output_device(device_name: Option<&str>) -> Result<cpal::Device, String> {
+    let host = cpal::default_host();
+    match device_name {
+        Some(name) => host
+            .output_devices()
+            .map_err(|e| format!("Failed to enumerate output devices: {e}"))?
+            .find(|d| {
+                d.description()
+                    .ok()
+                    .is_some_and(|desc| desc.to_string() == name)
+            })
+            .ok_or_else(|| format!("Output device not found: {name}")),
+        None => host
+            .default_output_device()
+            .ok_or_else(|| "No output device".to_string()),
+    }
+}
+
+/// `init_engine` 的产物：引擎、预览引擎、电平表读数端与插件退回通道。
+struct EngineInit {
+    engine: crate::engine::AudioEngine,
+    preview_engine: crate::preview_engine::PreviewEngine,
+    meters: MixerMeters,
+    /// 渲染线程 → UI 的 insert 处理器退回通道（替换/移除/拆除时回收 deactivate）。
+    insert_return_tx: Sender<Vec<Box<dyn InsertProcessor>>>,
+    insert_return_rx: crossbeam_channel::Receiver<Vec<Box<dyn InsertProcessor>>>,
+    /// 渲染线程 → UI 的乐器处理器退回通道（替换/移除/拆除时回收 deactivate）。
+    instrument_return_tx: Sender<(u8, Box<dyn InstrumentProcessor>)>,
+    instrument_return_rx: crossbeam_channel::Receiver<(u8, Box<dyn InstrumentProcessor>)>,
+}
+
+/// 初始化引擎与预览引擎，并收集 UI 侧读数端/退回通道。
+///
+/// catch_unwind 包住 AudioEngine::new + PreviewEngine::new：两者内部都调用
+/// ChannelGroup::new，其内部 `rayon::ThreadPoolBuilder::build().unwrap()` 在
+/// 进程线程数超限时会 panic（macOS EAGAIN / code 35）。捕获后返回 Err，
+/// 让上层弹对话框而不是 abort 进程。注意：panic=abort 配置下 catch_unwind
+/// 无效，根 Cargo.toml 必须保持 panic=unwind。
+fn init_engine(
+    sample_rate: u32,
+    layout: ChannelLayout,
+    interpolation: Interpolation,
+) -> Result<EngineInit, String> {
+    let (engine, preview_engine) =
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut engine = crate::engine::AudioEngine::new(sample_rate, layout);
+            engine.set_interpolation(interpolation);
+            let preview = crate::preview_engine::PreviewEngine::new(
+                &engine.channel_layout,
+                engine.sample_rate,
+            );
+            (engine, preview)
+        })) {
+            Ok(pair) => pair,
+            Err(payload) => {
+                let msg = payload
+                    .downcast_ref::<String>()
+                    .map(|s| s.as_str())
+                    .or_else(|| payload.downcast_ref::<&str>().copied())
+                    .unwrap_or("unknown panic");
+                return Err(format!("Audio engine initialization failed: {msg}"));
+            }
+        };
+    let meters = MixerMeters::collect(&engine);
+    let (insert_return_tx, insert_return_rx) = unbounded::<Vec<Box<dyn InsertProcessor>>>();
+    let (instrument_return_tx, instrument_return_rx) =
+        unbounded::<(u8, Box<dyn InstrumentProcessor>)>();
+    Ok(EngineInit {
+        engine,
+        preview_engine,
+        meters,
+        insert_return_tx,
+        insert_return_rx,
+        instrument_return_tx,
+        instrument_return_rx,
+    })
+}
+
+/// cpal 输出回调所需的跨线程状态（ring 消费端 + 与 UI/renderer 共享的原子量）。
+struct StreamCallback {
+    ring: crate::audio_ring::AudioRingConsumer,
+    reset_generation: Arc<AtomicU64>,
+    clear_ring_write: Arc<AtomicUsize>,
+    clear_base_sample: Arc<AtomicU64>,
+    underrun_samples: Arc<AtomicU64>,
+    /// 回调把 renderer 侧播放状态/位置/时长镜像到 UI 侧原子量。
+    playing: Arc<AtomicBool>,
+    renderer_playing: Arc<AtomicBool>,
+    sample_position: Arc<AtomicU64>,
+    duration_samples: Arc<AtomicU64>,
+    renderer_duration: Arc<AtomicU64>,
+    /// 录音监听缓冲（交错立体声）：输入回调 push、输出回调混入。
+    monitor: Arc<Mutex<std::collections::VecDeque<f32>>>,
+}
+
+/// `init_renderer` 的产物：join 句柄、UI 侧镜像原子量、cpal 回调状态、监听缓冲。
+struct RendererStarted {
+    handle: std::thread::JoinHandle<()>,
+    /// UI 播放指示线的上限：渲染器已推入 ring 的采样位置（producer）。
+    producer_sample_position: Arc<AtomicU64>,
+    /// 已完成加载的音色库 port 数。
+    sf_loaded: Arc<AtomicUsize>,
+    /// 音频完全就绪（模型 + 音色库 + 采样上传 + 管线预热）。
+    audio_ready: Arc<AtomicBool>,
+    stream_callback: StreamCallback,
+    monitor: Arc<Mutex<std::collections::VecDeque<f32>>>,
+}
+
+/// 启动 renderer 线程：组装 ring + `RendererSharedState`，在 state 被 move 前
+/// clone 出 UI 侧与 cpal 回调侧的全部镜像，再 spawn。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
+fn init_renderer(
+    engine: crate::engine::AudioEngine,
+    preview_engine: crate::preview_engine::PreviewEngine,
+    cmd_rx: crossbeam_channel::Receiver<AudioCommand>,
+    transport_rx: crossbeam_channel::Receiver<AudioCommand>,
+    worker_tx: Sender<WorkerCmd>,
+    prepared_rx: crossbeam_channel::Receiver<WorkerResult>,
+    shutdown: Arc<AtomicBool>,
+    preview_stop_flag: Arc<AtomicBool>,
+    sample_position: Arc<AtomicU64>,
+    playing: Arc<AtomicBool>,
+    duration_samples: Arc<AtomicU64>,
+    pending_skip: Arc<Mutex<Option<Vec<bool>>>>,
+    pending_am_ms: Arc<Mutex<Option<Arc<AmMsMap>>>>,
+    callback_frames: usize,
+    insert_return_tx: Sender<Vec<Box<dyn InsertProcessor>>>,
+    instrument_return_tx: Sender<(u8, Box<dyn InstrumentProcessor>)>,
+    bus_readings: Arc<Mutex<Vec<MeterReading>>>,
+    #[cfg(feature = "gpu")] synth_engine: SynthEngine,
+    interpolation: Interpolation,
+) -> Result<RendererStarted, String> {
+    let (ring_producer, ring_consumer) = AudioRing::new(RING_CAPACITY).split();
+    let mut renderer_state = RendererSharedState::new();
+    renderer_state.bus_readings = bus_readings;
+
+    let producer_sample_position = Arc::clone(&renderer_state.producer_sample_position);
+    let sf_loaded = Arc::clone(&renderer_state.sf_loaded);
+    let audio_ready = Arc::clone(&renderer_state.audio_ready);
+    // 监听缓冲：容量上限由输入侧（yinhe-egui 的录音回调）控制，
+    // 保证监听延迟不随录音时长增长。
+    let monitor: Arc<Mutex<std::collections::VecDeque<f32>>> =
+        Arc::new(Mutex::new(std::collections::VecDeque::new()));
+    let stream_callback = StreamCallback {
+        ring: ring_consumer,
+        reset_generation: Arc::clone(&renderer_state.reset_generation),
+        // 清空边界：ack 时丢弃边界前的旧音频、保留新音频（竞态安全清空）。
+        clear_ring_write: Arc::clone(&renderer_state.clear_ring_write),
+        clear_base_sample: Arc::clone(&renderer_state.clear_base_sample),
+        // 欠载计数（cpal 回调写；renderer_state 即将 move，先 clone）。
+        underrun_samples: Arc::clone(&renderer_state.underrun_samples),
+        playing,
+        renderer_playing: Arc::clone(&renderer_state.playing),
+        sample_position: Arc::clone(&sample_position),
+        duration_samples,
+        renderer_duration: Arc::clone(&renderer_state.duration_samples),
+        monitor: Arc::clone(&monitor),
+    };
+
+    let handle = spawn_renderer(
+        engine,
+        preview_engine,
+        ring_producer,
+        renderer_state,
+        cmd_rx,
+        transport_rx,
+        worker_tx,
+        prepared_rx,
+        shutdown,
+        preview_stop_flag,
+        sample_position,
+        pending_skip,
+        pending_am_ms,
+        callback_frames,
+        insert_return_tx,
+        instrument_return_tx,
+        #[cfg(feature = "gpu")]
+        synth_engine,
+        interpolation,
+    )
+    .map_err(|e| format!("Failed to spawn audio renderer thread: {e}"))?;
+
+    Ok(RendererStarted {
+        handle,
+        producer_sample_position,
+        sf_loaded,
+        audio_ready,
+        stream_callback,
+        monitor,
+    })
+}
+
+/// 构建 cpal 输出流。回调只消费 ring 中已渲染的连续样本；错误回调在设备
+/// 采样率变化（macOS SRC 场景）时恢复流，其余不可恢复错误置位 `stream_error`。
+///
+/// 错误回调注释（原样保留）：用 tracing 而不是 eprintln!，UI 每帧查询错误标志。
+/// 例外：macOS 上 cpal 0.18 会给设备注册全局采样率监听，任何其他 app 改变
+/// 设备采样率（视频/音乐播放、蓝牙 A2DP↔HFP 切换）都会暂停本流并报
+/// "Device sample rate changed"。设备没坏，CoreAudio 会自动做采样率转换
+///（SRC），恢复流即可，不该弹"重新选择设备"。真正不可恢复的错误（设备
+/// 移除、驱动崩溃等）才置位 stream_error。
+fn build_output_stream(
+    device: &cpal::Device,
+    config: cpal::StreamConfig,
+    callback: StreamCallback,
+    stream_holder_weak: std::sync::Weak<Mutex<Option<cpal::Stream>>>,
+    stream_error: Arc<AtomicBool>,
+) -> Result<cpal::Stream, String> {
+    let StreamCallback {
+        mut ring,
+        reset_generation,
+        clear_ring_write,
+        clear_base_sample,
+        underrun_samples,
+        playing,
+        renderer_playing,
+        sample_position,
+        duration_samples,
+        renderer_duration,
+        monitor,
+    } = callback;
+    let mut consumer_sample_position = 0u64;
+    let mut acknowledged_generation = 0u64;
+
+    device
+        .build_output_stream(
+            config,
+            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Audio, || {
+                    let generation = reset_generation.load(Ordering::Acquire);
+                    if generation != acknowledged_generation {
+                        // 丢弃边界前的旧音频，保留边界后渲染器已推入的新音频
+                        // （整体 clear 会把新播放位置的开头一起丢掉）。
+                        ring.discard_before(clear_ring_write.load(Ordering::Acquire));
+                        consumer_sample_position = clear_base_sample.load(Ordering::Acquire);
+                        acknowledged_generation = generation;
+                    }
+
+                    // ring 有音频就读，没有就填静音（含未加载模型时的纯预览场景）。
+                    let popped = ring.pop_into(data);
+                    if popped < data.len() {
+                        data[popped..].fill(0.0);
+                        // 欠载计数：仅播放中（未播放时 ring 空是正常静音）。
+                        if playing.load(Ordering::Relaxed) {
+                            underrun_samples
+                                .fetch_add((data.len() - popped) as u64, Ordering::Relaxed);
+                        }
+                    }
+                    consumer_sample_position =
+                        consumer_sample_position.saturating_add((popped / STEREO_CHANNELS) as u64);
+
+                    // 监听混入（try_lock：失败跳过，绝不阻塞实时回调）。
+                    if let Ok(mut mon) = monitor.try_lock()
+                        && !mon.is_empty()
+                    {
+                        let n = mon.len().min(data.len());
+                        for (dst, src) in data.iter_mut().zip(mon.drain(..n)) {
+                            *dst += src;
+                        }
+                    }
+
+                    sample_position.store(consumer_sample_position, Ordering::Relaxed);
+                    playing.store(renderer_playing.load(Ordering::Relaxed), Ordering::Relaxed);
+                    duration_samples
+                        .store(renderer_duration.load(Ordering::Relaxed), Ordering::Relaxed);
+                })
+            },
+            move |err| {
+                let is_rate_change = err.kind() == cpal::ErrorKind::StreamInvalidated
+                    && err
+                        .message()
+                        .is_some_and(|m| m.contains("sample rate changed"));
+                if is_rate_change {
+                    // cpal 已把流暂停；设备还活着，CoreAudio 会做 SRC，恢复即可。
+                    tracing::warn!(
+                        "Audio stream paused by device sample rate change, resuming: {err}"
+                    );
+                    if let Some(holder) = stream_holder_weak.upgrade() {
+                        let guard = holder.lock().unwrap_or_else(|e| e.into_inner());
+                        if let Some(stream) = guard.as_ref()
+                            && let Err(e) = stream.play()
+                        {
+                            tracing::error!("Failed to resume audio stream: {e}");
+                            stream_error.store(true, Ordering::Release);
+                        }
+                    }
+                } else {
+                    tracing::error!("Audio stream error: {err}");
+                    stream_error.store(true, Ordering::Release);
+                }
+            },
+            None,
+        )
+        .map_err(|e| format!("Failed to build stream: {e}"))
+}
+
+/// 把建好的流放入共享句柄并启动（store→play 顺序：若启动前就发生采样率变化，
+/// 错误回调也能从句柄拿到流恢复）。
+fn start_output_stream(
+    stream_holder: &Arc<Mutex<Option<cpal::Stream>>>,
+    stream: cpal::Stream,
+) -> Result<(), String> {
+    *stream_holder.lock().unwrap_or_else(|e| e.into_inner()) = Some(stream);
+    match stream_holder
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .map(|s| s.play())
+    {
+        Some(Ok(())) => Ok(()),
+        Some(Err(e)) => Err(format!("Failed to start stream: {e}")),
+        None => Err("Audio stream unexpectedly missing after build".to_string()),
+    }
+}
+
 /// Spawn a CPAL audio stream backed by a producer/consumer audio FIFO.
 ///
 /// The CPAL callback only consumes already-rendered contiguous samples from the
@@ -1126,19 +1553,7 @@ pub fn spawn_cpal_audio(
     synth_engine: SynthEngine,
     interpolation: Interpolation,
 ) -> Result<CpalAudioHandle, String> {
-    // 后端可用性收敛：YinheCpu 尚未实现；无 gpu feature 时 GPU 后端不可用。
-    // 回退明确告警（不静默假装成功），renderer 只看到实际可用的后端。
-    let requested = synth_engine;
-    let synth_engine = if cfg!(feature = "gpu") {
-        requested.resolved()
-    } else {
-        SynthEngine::XSynthCpu
-    };
-    if synth_engine != requested {
-        tracing::warn!(
-            "合成后端 {requested:?} 当前不可用（未实现或未编译 gpu feature），回退 {synth_engine:?}"
-        );
-    }
+    let synth_engine = resolve_synth_engine(synth_engine);
 
     let (cmd_tx, cmd_rx) = bounded::<AudioCommand>(AUDIO_CMD_CHANNEL_CAPACITY);
     let (transport_tx, transport_rx) = unbounded::<AudioCommand>();
@@ -1148,19 +1563,7 @@ pub fn spawn_cpal_audio(
     let stream_error = Arc::new(AtomicBool::new(false));
     let preview_stop_flag = Arc::new(AtomicBool::new(false));
 
-    let host = cpal::default_host();
-    let device = match device_name {
-        Some(name) => host
-            .output_devices()
-            .map_err(|e| format!("Failed to enumerate output devices: {e}"))?
-            .find(|d| {
-                d.description()
-                    .ok()
-                    .is_some_and(|desc| desc.to_string() == name)
-            })
-            .ok_or_else(|| format!("Output device not found: {name}"))?,
-        None => host.default_output_device().ok_or("No output device")?,
-    };
+    let device = select_output_device(device_name)?;
     let supported = device.default_output_config().map_err(|e| e.to_string())?;
     // 强制立体声：xsynth 是立体声合成器，ring buffer 和位置计算也硬编码 2 声道。
     // 不取设备默认声道数，避免多声道设备（HDMI/聚合设备 6/8 声道）导致声道映射错乱。
@@ -1187,80 +1590,33 @@ pub fn spawn_cpal_audio(
         cpal::BufferSize::Default => 1024,
     };
 
-    // catch_unwind 包住 AudioEngine::new + PreviewEngine::new：两者内部都调用
-    // ChannelGroup::new，其内部 `rayon::ThreadPoolBuilder::build().unwrap()` 在
-    // 进程线程数超限时会 panic（macOS EAGAIN / code 35）。捕获后返回 Err，
-    // 让上层弹对话框而不是 abort 进程。注意：panic=abort 配置下 catch_unwind
-    // 无效，根 Cargo.toml 必须保持 panic=unwind。
-    let (engine, preview_engine) =
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut engine = crate::engine::AudioEngine::new(sample_rate, layout);
-            engine.set_interpolation(interpolation);
-            let preview = crate::preview_engine::PreviewEngine::new(
-                &engine.channel_layout,
-                engine.sample_rate,
-            );
-            (engine, preview)
-        })) {
-            Ok(pair) => pair,
-            Err(payload) => {
-                let msg = payload
-                    .downcast_ref::<String>()
-                    .map(|s| s.as_str())
-                    .or_else(|| payload.downcast_ref::<&str>().copied())
-                    .unwrap_or("unknown panic");
-                return Err(format!("Audio engine initialization failed: {msg}"));
-            }
-        };
-    // 混音台电平表读数端：引擎即将 move 进渲染线程，先把 Arc 读数端收集给 UI。
-    // 引擎生命周期内通道数不变（layout 冻结），resize 只重建缓冲不换 meter，
-    // 这些读数端在整个引擎生命周期内有效。
-    let mixer_channel_readings: Vec<MeterReading> = (0..engine.mixer.channel_count())
-        .filter_map(|i| engine.mixer.channel_meter_reading(i))
-        .collect();
-    let mixer_master_reading = engine.mixer.master_meter_reading();
-    // 总线读数端随增删总线动态变化：渲染线程在 SyncBusConfig 后刷新此槽。
-    let mixer_bus_readings: Arc<Mutex<Vec<MeterReading>>> = Arc::new(Mutex::new(
-        (0..engine.mixer.bus_count())
-            .filter_map(|i| engine.mixer.bus_meter_reading(i))
-            .collect(),
-    ));
-    // 渲染线程 → UI 的 insert 处理器退回通道（替换/移除/拆除时回收 deactivate）。
-    let (insert_return_tx, insert_return_rx) = unbounded::<Vec<Box<dyn InsertProcessor>>>();
-    // 渲染线程 → UI 的乐器处理器退回通道（替换/移除/拆除时回收 deactivate）。
-    let (instrument_return_tx, instrument_return_rx) =
-        unbounded::<(u8, Box<dyn InstrumentProcessor>)>();
+    let EngineInit {
+        engine,
+        preview_engine,
+        meters,
+        insert_return_tx,
+        insert_return_rx,
+        instrument_return_tx,
+        instrument_return_rx,
+    } = init_engine(sample_rate, layout, interpolation)?;
 
     let (worker_tx, prepared_rx) = spawn_worker(sample_rate, interpolation)
         .map_err(|e| format!("Failed to spawn audio worker thread: {e}"))?;
-
-    let (ring_producer, mut ring_consumer) = AudioRing::new(RING_CAPACITY).split();
-
-    let mut renderer_state = RendererSharedState::new();
-    renderer_state.bus_readings = Arc::clone(&mixer_bus_readings);
-    // UI 播放指示线的上限：渲染器已推入 ring 的采样位置（producer）。
-    let handle_producer_position = Arc::clone(&renderer_state.producer_sample_position);
-    let renderer_playing = Arc::clone(&renderer_state.playing);
-    let renderer_duration = Arc::clone(&renderer_state.duration_samples);
-    let reset_generation = Arc::clone(&renderer_state.reset_generation);
-    // 清空边界：ack 时丢弃边界前的旧音频、保留新音频（竞态安全清空）。
-    let clear_base_sample = Arc::clone(&renderer_state.clear_base_sample);
-    let clear_ring_write = Arc::clone(&renderer_state.clear_ring_write);
-    // 音色库完成计数（renderer_state 即将 move 进 renderer，先 clone 给 handle）。
-    let handle_sf_loaded = Arc::clone(&renderer_state.sf_loaded);
-    let handle_audio_ready = Arc::clone(&renderer_state.audio_ready);
-    // 欠载计数（cpal 回调写；renderer_state 即将 move，先 clone）。
-    let underrun_counter = Arc::clone(&renderer_state.underrun_samples);
 
     let shutdown = Arc::new(AtomicBool::new(false));
     // latest-wins 槽：M/S 掩码必达（UI 写、renderer 每轮消费最新值）。
     let pending_skip: Arc<Mutex<Option<Vec<bool>>>> = Arc::new(Mutex::new(None));
     let pending_am_ms: Arc<Mutex<Option<Arc<AmMsMap>>>> = Arc::new(Mutex::new(None));
-    let renderer_handle = spawn_renderer(
+    let RendererStarted {
+        handle: renderer_handle,
+        producer_sample_position,
+        sf_loaded,
+        audio_ready,
+        stream_callback,
+        monitor,
+    } = init_renderer(
         engine,
         preview_engine,
-        ring_producer,
-        renderer_state,
         cmd_rx,
         transport_rx,
         worker_tx,
@@ -1268,129 +1624,41 @@ pub fn spawn_cpal_audio(
         Arc::clone(&shutdown),
         Arc::clone(&preview_stop_flag),
         Arc::clone(&sample_position),
+        Arc::clone(&playing),
+        Arc::clone(&duration_samples),
         Arc::clone(&pending_skip),
         Arc::clone(&pending_am_ms),
         callback_frames,
         insert_return_tx,
         instrument_return_tx,
+        meters.bus_readings(),
         #[cfg(feature = "gpu")]
         synth_engine,
         interpolation,
-    )
-    .map_err(|e| format!("Failed to spawn audio renderer thread: {e}"))?;
+    )?;
 
-    let sp = Arc::clone(&sample_position);
-    let pl = Arc::clone(&playing);
-    let dur = Arc::clone(&duration_samples);
-    let mut consumer_sample_position = 0u64;
-    let mut acknowledged_generation = 0u64;
-
-    // cpal 流错误回调：用 tracing 而不是 eprintln!，同时置 stream_error 标志，
-    // UI 每帧查询后弹出对话框。错误不可逆，置位后不再清零。
-    //
-    // 例外：macOS 上 cpal 0.18 会给设备注册全局采样率监听，任何其他 app 改变
-    // 设备采样率（视频/音乐播放、蓝牙 A2DP↔HFP 切换）都会暂停本流并报
-    // "Device sample rate changed"。设备没坏，CoreAudio 会自动做采样率转换
-    //（SRC），恢复流即可，不该弹"重新选择设备"。真正不可恢复的错误（设备
-    // 移除、驱动崩溃等）才置位 stream_error。
-    let stream_error_flag = Arc::clone(&stream_error);
-    // 监听缓冲：录音输入 → 输出直通（DAW 监听）。容量上限由输入侧
-    // （yinhe-egui 的录音回调）控制，保证监听延迟不随录音时长增长。
-    let monitor: Arc<Mutex<std::collections::VecDeque<f32>>> =
-        Arc::new(Mutex::new(std::collections::VecDeque::new()));
-    let monitor_out = Arc::clone(&monitor);
     // 流在回调注册之后才创建，用 Arc<Mutex<Option>> 共享给错误回调；
     // 回调只持 Weak，handle 释放时不会形成循环引用。
     let stream_holder: Arc<Mutex<Option<cpal::Stream>>> = Arc::new(Mutex::new(None));
-    let stream_holder_weak = Arc::downgrade(&stream_holder);
-    let stream = match device.build_output_stream(
+    let stream = match build_output_stream(
+        &device,
         config,
-        move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-            yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Audio, || {
-                let generation = reset_generation.load(Ordering::Acquire);
-                if generation != acknowledged_generation {
-                    // 丢弃边界前的旧音频，保留边界后渲染器已推入的新音频
-                    // （整体 clear 会把新播放位置的开头一起丢掉）。
-                    ring_consumer.discard_before(clear_ring_write.load(Ordering::Acquire));
-                    consumer_sample_position = clear_base_sample.load(Ordering::Acquire);
-                    acknowledged_generation = generation;
-                }
-
-                // ring 有音频就读，没有就填静音（含未加载模型时的纯预览场景）。
-                let popped = ring_consumer.pop_into(data);
-                if popped < data.len() {
-                    data[popped..].fill(0.0);
-                    // 欠载计数：仅播放中（未播放时 ring 空是正常静音）。
-                    if pl.load(Ordering::Relaxed) {
-                        underrun_counter.fetch_add((data.len() - popped) as u64, Ordering::Relaxed);
-                    }
-                }
-                consumer_sample_position =
-                    consumer_sample_position.saturating_add((popped / STEREO_CHANNELS) as u64);
-
-                // 监听混入（try_lock：失败跳过，绝不阻塞实时回调）。
-                if let Ok(mut mon) = monitor_out.try_lock()
-                    && !mon.is_empty()
-                {
-                    let n = mon.len().min(data.len());
-                    for (dst, src) in data.iter_mut().zip(mon.drain(..n)) {
-                        *dst += src;
-                    }
-                }
-
-                sp.store(consumer_sample_position, Ordering::Relaxed);
-                pl.store(renderer_playing.load(Ordering::Relaxed), Ordering::Relaxed);
-                dur.store(renderer_duration.load(Ordering::Relaxed), Ordering::Relaxed);
-            })
-        },
-        move |err| {
-            let is_rate_change = err.kind() == cpal::ErrorKind::StreamInvalidated
-                && err
-                    .message()
-                    .is_some_and(|m| m.contains("sample rate changed"));
-            if is_rate_change {
-                // cpal 已把流暂停；设备还活着，CoreAudio 会做 SRC，恢复即可。
-                tracing::warn!("Audio stream paused by device sample rate change, resuming: {err}");
-                if let Some(holder) = stream_holder_weak.upgrade() {
-                    let guard = holder.lock().unwrap_or_else(|e| e.into_inner());
-                    if let Some(stream) = guard.as_ref()
-                        && let Err(e) = stream.play()
-                    {
-                        tracing::error!("Failed to resume audio stream: {e}");
-                        stream_error_flag.store(true, Ordering::Release);
-                    }
-                }
-            } else {
-                tracing::error!("Audio stream error: {err}");
-                stream_error_flag.store(true, Ordering::Release);
-            }
-        },
-        None,
+        stream_callback,
+        Arc::downgrade(&stream_holder),
+        Arc::clone(&stream_error),
     ) {
-        Ok(s) => s,
+        Ok(stream) => stream,
         Err(e) => {
             // build stream 失败 —— 清理已 spawn 的 renderer 线程，避免泄漏
             shutdown.store(true, Ordering::Release);
             let _ = renderer_handle.join();
-            return Err(format!("Failed to build stream: {e}"));
+            return Err(e);
         }
     };
-    // 流创建完成，放入共享句柄供错误回调恢复使用；启动也走同一句柄
-    // （store→play 顺序：若启动前就发生采样率变化，错误回调也能从句柄拿到流恢复）。
-    *stream_holder.lock().unwrap_or_else(|e| e.into_inner()) = Some(stream);
-    match stream_holder
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .as_ref()
-        .map(|s| s.play())
-    {
-        Some(Ok(())) => {}
-        Some(Err(e)) => {
-            shutdown.store(true, Ordering::Release);
-            let _ = renderer_handle.join();
-            return Err(format!("Failed to start stream: {e}"));
-        }
-        None => return Err("Audio stream unexpectedly missing after build".to_string()),
+    if let Err(e) = start_output_stream(&stream_holder, stream) {
+        shutdown.store(true, Ordering::Release);
+        let _ = renderer_handle.join();
+        return Err(e);
     }
 
     Ok(CpalAudioHandle {
@@ -1398,18 +1666,16 @@ pub fn spawn_cpal_audio(
             cmd_tx,
             transport_tx,
             sample_position,
-            producer_sample_position: handle_producer_position,
+            producer_sample_position,
             playing,
             duration_samples,
             stream_error,
             preview_stop_flag,
-            sf_loaded: handle_sf_loaded,
-            audio_ready: handle_audio_ready,
+            sf_loaded,
+            audio_ready,
             pending_skip,
             pending_am_ms,
-            mixer_channel_readings,
-            mixer_bus_readings,
-            mixer_master_reading,
+            meters,
             insert_return_rx,
             instrument_return_rx,
         },
@@ -1425,6 +1691,17 @@ pub fn spawn_cpal_audio(
 mod tests {
     use super::*;
 
+    /// 测试用最小 insert 处理器。
+    struct TestInsert;
+
+    impl InsertProcessor for TestInsert {
+        fn process(&mut self, _left: &mut [f32], _right: &mut [f32]) {}
+
+        fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+            self
+        }
+    }
+
     /// 回归：结构性变更命令必须走可靠通道。渲染线程曾因音色库/采样上传
     /// 阻塞 4-5 秒导致命令通道（容量 16）满，InsertAdd 被静默丢弃 ——
     /// UI 标记已发送、无重发路径，效果器永远不生效。
@@ -1433,28 +1710,334 @@ mod tests {
     /// 走普通通道被丢后 UI 的 diff 已归零不再重发，设置永不生效。
     #[test]
     fn structural_commands_use_reliable_channel() {
-        assert!(is_reliable(&AudioCommand::Play { from_sample: 0 }));
-        assert!(is_reliable(&AudioCommand::LoadModel {
-            model: std::sync::Arc::new(yinhe_core::YinModel::default()),
-        }));
-        assert!(is_reliable(&AudioCommand::InsertRemove {
-            target: InsertTarget::Channel(0),
-            slot: 0,
-        }));
-        assert!(is_reliable(&AudioCommand::SetInstrument {
-            channel: 0,
-            processor: None,
-        }));
-        assert!(is_reliable(&AudioCommand::SetLayerCount { count: Some(4) }));
-        assert!(is_reliable(&AudioCommand::SetMaxVoices { max: None }));
-        assert!(is_reliable(&AudioCommand::SetIgnoreVelocity {
-            threshold: 1
-        }));
-        assert!(is_reliable(&AudioCommand::SetAutomationDensity {
-            density: 1,
-        }));
+        assert!(AudioCommand::Play { from_sample: 0 }.is_reliable());
+        assert!(
+            AudioCommand::LoadModel {
+                model: std::sync::Arc::new(yinhe_core::YinModel::default()),
+            }
+            .is_reliable()
+        );
+        assert!(
+            AudioCommand::InsertRemove {
+                target: InsertTarget::Channel(0),
+                slot: 0,
+            }
+            .is_reliable()
+        );
+        assert!(
+            AudioCommand::SetInstrument {
+                channel: 0,
+                processor: None,
+            }
+            .is_reliable()
+        );
+        assert!(AudioCommand::SetLayerCount { count: Some(4) }.is_reliable());
+        assert!(AudioCommand::SetMaxVoices { max: None }.is_reliable());
+        assert!(AudioCommand::SetIgnoreVelocity { threshold: 1 }.is_reliable());
+        assert!(AudioCommand::SetAutomationDensity { density: 1 }.is_reliable());
         // 可重发/可合并的普通命令仍走有界通道（满了丢弃、下一次操作自愈）。
-        assert!(!is_reliable(&AudioCommand::RefreshLatency));
-        assert!(!is_reliable(&AudioCommand::PreviewStop));
+        assert!(!AudioCommand::RefreshLatency.is_reliable());
+        assert!(!AudioCommand::PreviewStop.is_reliable());
+    }
+
+    /// 命令分类单点定义回归：每个变体都必须有具体诊断名（不再有 "Other"
+    /// 兜底）且可靠通道分类符合预期。新增变体时编译器先强制补 `meta()`
+    /// 分支，本表再锁住分类结果，防止新命令被漏进有界通道。
+    #[test]
+    fn command_meta_classifies_every_variant() {
+        let model = || Arc::new(yinhe_core::YinModel::default());
+        let insert = || -> Box<dyn InsertProcessor> { Box::new(TestInsert) };
+        let cases: Vec<(AudioCommand, &str, bool)> = vec![
+            (AudioCommand::Play { from_sample: 0 }, "Play", true),
+            (AudioCommand::Resume, "Resume", true),
+            (AudioCommand::Pause, "Pause", true),
+            (AudioCommand::Stop, "Stop", true),
+            (AudioCommand::Seek { sample: 0 }, "Seek", true),
+            (
+                AudioCommand::LoadModel { model: model() },
+                "LoadModel",
+                true,
+            ),
+            (
+                AudioCommand::ReloadNotes { model: model() },
+                "ReloadNotes",
+                false,
+            ),
+            (
+                AudioCommand::UpdateNotes { model: model() },
+                "UpdateNotes",
+                false,
+            ),
+            (
+                AudioCommand::SetSoundFonts {
+                    configs: Box::new(Vec::new()),
+                },
+                "SetSoundFonts",
+                false,
+            ),
+            (
+                AudioCommand::SkipTracks { skip: Vec::new() },
+                "SkipTracks",
+                false,
+            ),
+            (
+                AudioCommand::SetAmMs {
+                    am_ms: Arc::new(AmMsMap::new()),
+                },
+                "SetAmMs",
+                false,
+            ),
+            (
+                AudioCommand::SetLayerCount { count: None },
+                "SetLayerCount",
+                true,
+            ),
+            (
+                AudioCommand::SetIgnoreVelocity { threshold: 0 },
+                "SetIgnoreVelocity",
+                true,
+            ),
+            (
+                AudioCommand::SetMaxVoices { max: None },
+                "SetMaxVoices",
+                true,
+            ),
+            (
+                AudioCommand::SetAutomationDensity { density: 1 },
+                "SetAutomationDensity",
+                true,
+            ),
+            (
+                AudioCommand::PreviewNotes {
+                    notes: Vec::new(),
+                    exclusive: false,
+                },
+                "PreviewNotes",
+                false,
+            ),
+            (AudioCommand::PreviewStop, "PreviewStop", false),
+            (
+                AudioCommand::PreviewStopKey { key: 60 },
+                "PreviewStopKey",
+                false,
+            ),
+            (
+                AudioCommand::PreviewInstrumentNotes {
+                    channel: 0,
+                    notes: Vec::new(),
+                    exclusive: false,
+                },
+                "PreviewInstrumentNotes",
+                false,
+            ),
+            (
+                AudioCommand::PreviewInstrumentStop {
+                    channel: None,
+                    key: None,
+                },
+                "PreviewInstrumentStop",
+                false,
+            ),
+            (
+                AudioCommand::SetMixerParams {
+                    params: Box::new(MixerParams::default()),
+                },
+                "SetMixerParams",
+                true,
+            ),
+            (
+                AudioCommand::SetChannelStrip {
+                    channel: 0,
+                    params: StripParams::default(),
+                },
+                "SetChannelStrip",
+                false,
+            ),
+            (
+                AudioCommand::SetAudioStrip {
+                    channel: 0,
+                    params: StripParams::default(),
+                },
+                "SetAudioStrip",
+                false,
+            ),
+            (
+                AudioCommand::SetMasterParams {
+                    params: MasterParams::default(),
+                },
+                "SetMasterParams",
+                false,
+            ),
+            (
+                AudioCommand::InsertAdd {
+                    target: InsertTarget::Master,
+                    slot: 0,
+                    processor: insert(),
+                },
+                "InsertAdd",
+                true,
+            ),
+            (
+                AudioCommand::InsertRemove {
+                    target: InsertTarget::Master,
+                    slot: 0,
+                },
+                "InsertRemove",
+                true,
+            ),
+            (
+                AudioCommand::InsertReplace {
+                    target: InsertTarget::Master,
+                    slot: 0,
+                    processor: insert(),
+                },
+                "InsertReplace",
+                true,
+            ),
+            (
+                AudioCommand::SetBusStrip {
+                    bus: 0,
+                    params: StripParams::default(),
+                },
+                "SetBusStrip",
+                false,
+            ),
+            (
+                AudioCommand::SyncBusConfig {
+                    buses: Box::new(Vec::new()),
+                    sends: Box::new(Vec::new()),
+                },
+                "SyncBusConfig",
+                true,
+            ),
+            (
+                AudioCommand::SetInstrument {
+                    channel: 0,
+                    processor: None,
+                },
+                "SetInstrument",
+                true,
+            ),
+            (
+                AudioCommand::SetAudioSource {
+                    uuid: String::new(),
+                    decoded: Arc::new(crate::audio_source::DecodedAudio {
+                        sample_rate: 0,
+                        frames: 0,
+                        left: Arc::from(Vec::<f32>::new()),
+                        right: Arc::from(Vec::<f32>::new()),
+                        peaks: crate::audio_source::WavePeaks {
+                            base_bucket: 0,
+                            levels: Vec::new(),
+                        },
+                    }),
+                },
+                "SetAudioSource",
+                false,
+            ),
+            (AudioCommand::RefreshLatency, "RefreshLatency", false),
+            (
+                AudioCommand::ExportStart {
+                    path: std::path::PathBuf::new(),
+                    bit_depth: crate::export::WavBitDepth::Bit16,
+                    layer_count: None,
+                    restore_layer_count: None,
+                    progress: crate::export::ExportProgress::new(),
+                    cancel: Arc::new(AtomicBool::new(false)),
+                    pause: Arc::new(AtomicBool::new(false)),
+                },
+                "ExportStart",
+                false,
+            ),
+        ];
+        for (cmd, name, reliable) in &cases {
+            let meta = cmd.meta();
+            assert_eq!(meta.name, *name, "命令诊断名不符");
+            assert_eq!(meta.reliable, *reliable, "{name} 的可靠通道分类不符");
+        }
+    }
+
+    #[test]
+    fn negotiate_buffer_size_clamps_fixed_into_device_range() {
+        let range = cpal::SupportedBufferSize::Range { min: 64, max: 1024 };
+        assert_eq!(
+            negotiate_buffer_size(cpal::BufferSize::Fixed(4096), &range),
+            cpal::BufferSize::Fixed(1024)
+        );
+        assert_eq!(
+            negotiate_buffer_size(cpal::BufferSize::Fixed(16), &range),
+            cpal::BufferSize::Fixed(64)
+        );
+        assert_eq!(
+            negotiate_buffer_size(cpal::BufferSize::Fixed(512), &range),
+            cpal::BufferSize::Fixed(512)
+        );
+    }
+
+    #[test]
+    fn negotiate_buffer_size_keeps_default_and_unknown_support() {
+        let range = cpal::SupportedBufferSize::Range { min: 64, max: 1024 };
+        assert_eq!(
+            negotiate_buffer_size(cpal::BufferSize::Default, &range),
+            cpal::BufferSize::Default
+        );
+        assert_eq!(
+            negotiate_buffer_size(
+                cpal::BufferSize::Fixed(4096),
+                &cpal::SupportedBufferSize::Unknown
+            ),
+            cpal::BufferSize::Fixed(4096)
+        );
+    }
+
+    #[test]
+    fn negotiate_sample_rate_falls_back_outside_supported_ranges() {
+        let ranges = [(44100u32, 48000u32), (88200, 96000)];
+        assert_eq!(negotiate_sample_rate_in(48000, 44100, Some(&ranges)), 48000);
+        assert_eq!(negotiate_sample_rate_in(96000, 44100, Some(&ranges)), 96000);
+        assert_eq!(
+            negotiate_sample_rate_in(192000, 44100, Some(&ranges)),
+            44100
+        );
+        assert_eq!(negotiate_sample_rate_in(22050, 44100, Some(&[])), 44100);
+    }
+
+    #[test]
+    fn negotiate_sample_rate_keeps_request_when_ranges_unknown() {
+        // 枚举失败（None）不做判断，交给 cpal 建流时报错。
+        assert_eq!(negotiate_sample_rate_in(22050, 44100, None), 22050);
+    }
+
+    /// 命令合并语义：连续同类型只保留最新（latest 覆盖先前命令），
+    /// 异类命令回填 pending 防饿死，且不丢弃。
+    #[test]
+    fn merge_pending_commands_keeps_latest_and_defers_others() {
+        let (tx, rx) = unbounded::<WorkerCmd>();
+        let m_old = Arc::new(yinhe_core::YinModel::default());
+        let m_new = Arc::new(yinhe_core::YinModel::default());
+        tx.send(WorkerCmd::PrepareModel(Arc::clone(&m_old), 1, 1))
+            .unwrap();
+        tx.send(WorkerCmd::PrepareModel(Arc::clone(&m_new), 2, 2))
+            .unwrap();
+        tx.send(WorkerCmd::PrepareNotes(Arc::clone(&m_old), 3))
+            .unwrap();
+
+        let mut pending = std::collections::VecDeque::new();
+        let (latest, density, ignore) =
+            merge_pending_commands(&rx, &mut pending, (Arc::clone(&m_old), 0u32, 0u8), |cmd| {
+                match cmd {
+                    WorkerCmd::PrepareModel(m, d, iv) => Ok((m, d, iv)),
+                    other => Err(other),
+                }
+            });
+
+        assert!(
+            Arc::ptr_eq(&latest, &m_new),
+            "latest 必须被最新的 PrepareModel 覆盖"
+        );
+        assert_eq!((density, ignore), (2, 2));
+        assert_eq!(pending.len(), 1, "异类命令应回填 pending");
+        assert!(matches!(pending[0], WorkerCmd::PrepareNotes(..)));
+        assert!(rx.is_empty(), "合并应取尽通道内命令");
     }
 }
