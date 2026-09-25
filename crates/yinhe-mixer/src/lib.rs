@@ -19,6 +19,8 @@ mod params;
 mod plugin;
 mod strip;
 
+#[doc(hidden)]
+pub use graph::ChannelChain;
 pub use graph::{ChannelBuffers, InsertProcessor, MixerGraph};
 pub use meter::{MeterReading, MeterTap};
 pub use param_queue::ParamQueue;

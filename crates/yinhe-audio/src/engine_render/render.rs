@@ -241,13 +241,14 @@ impl AudioEngine {
             instruments,
             ..
         } = self;
-        for (dense, buf) in mixer.buffers_mut().iter_mut().enumerate().take(midi_count) {
+        for (dense, chain) in mixer.buffers_mut().iter_mut().enumerate().take(midi_count) {
             if instruments.get(dense).is_some_and(|s| s.is_some()) {
                 continue;
             }
-            if let Some(chain) = channel_dsp.get_mut(dense) {
+            if let Some(dsp) = channel_dsp.get_mut(dense) {
+                let buf = &mut **chain;
                 let f = frames.min(buf.left.len()).min(buf.right.len());
-                chain.process(&mut buf.left[..f], &mut buf.right[..f]);
+                dsp.process(&mut buf.left[..f], &mut buf.right[..f]);
             }
         }
     }

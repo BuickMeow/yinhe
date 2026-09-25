@@ -15,6 +15,7 @@
 // 渐进重构：SoA 内核接入渲染路径后删除这些 allow（见模块文档）
 mod voice;
 
+use std::borrow::BorrowMut;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -279,7 +280,12 @@ impl CpuSynth {
     ///
     /// 与 `render_to_mixer` 的差异：由调用方（engine 的逐段 dispatch）提供区间，
     /// `sample_position` 按 `frames` 推进；区间起点处消费所有已到事件。
-    pub fn render_range(&mut self, buffers: &mut [ChannelBuffers], offset: usize, frames: usize) {
+    pub fn render_range<B: BorrowMut<ChannelBuffers>>(
+        &mut self,
+        buffers: &mut [B],
+        offset: usize,
+        frames: usize,
+    ) {
         let t_prof = std::time::Instant::now();
         if frames == 0 || buffers.is_empty() {
             return;
@@ -289,10 +295,12 @@ impl CpuSynth {
         // 覆盖语义：清零本段区间（与 ChannelSet::render_segment 一致）
         let n = buffers.len().min(MAX_CHANNELS);
         for buf in buffers.iter_mut().take(n) {
+            let buf = buf.borrow_mut();
             buf.left[offset..offset + frames].fill(0.0);
             buf.right[offset..offset + frames].fill(0.0);
         }
         for buf in buffers.iter_mut().skip(n) {
+            let buf = buf.borrow_mut();
             buf.left[offset..offset + frames].fill(0.0);
             buf.right[offset..offset + frames].fill(0.0);
         }
@@ -388,16 +396,19 @@ impl CpuSynth {
     }
 
     /// 渲染一整块（offset = 0；对等 GpuSynth 的 `render_to_mixer`）。
-    pub fn render_to_mixer(&mut self, buffers: &mut [ChannelBuffers]) {
-        let frames = buffers.first().map(|b| b.left.len()).unwrap_or(0);
+    pub fn render_to_mixer<B: BorrowMut<ChannelBuffers>>(&mut self, buffers: &mut [B]) {
+        let frames = buffers
+            .first_mut()
+            .map(|b| b.borrow_mut().left.len())
+            .unwrap_or(0);
         self.render_range(buffers, 0, frames);
     }
 
     /// 逐帧渲染 `[fi_start, fi_start + frames)`（区间内帧坐标，voice 的
     /// `start_offset` 同坐标系），输出直接累加进目标缓冲。字段级分离借用。
-    fn render_range_frames(
+    fn render_range_frames<B: BorrowMut<ChannelBuffers>>(
         &mut self,
-        buffers: &mut [ChannelBuffers],
+        buffers: &mut [B],
         out_offset: usize,
         fi_start: usize,
         frames: usize,
@@ -464,6 +475,7 @@ impl CpuSynth {
         let t_red = std::time::Instant::now();
         let n = buffers.len().min(MAX_CHANNELS);
         for (ch, buf) in buffers.iter_mut().enumerate().take(n) {
+            let buf = buf.borrow_mut();
             let ch_base = ch * frames * 2;
             for b in 0..n_chunks {
                 let base = b * stride + ch_base;

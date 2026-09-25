@@ -13,8 +13,14 @@ impl GpuSynth {
     ///
     /// 块内事件（CC 段边界、note on/off、release/env 指令）在 CPU 收集为段结构，
     /// **一次 GPU 提交**渲染整块；voice 状态在 GPU 内逐帧推进（块末全字段读回）。
-    pub fn render_to_mixer(&mut self, buffers: &mut [yinhe_mixer::ChannelBuffers]) {
-        let frames = buffers.first().map(|b| b.left.len()).unwrap_or(0);
+    pub fn render_to_mixer<B: std::borrow::BorrowMut<yinhe_mixer::ChannelBuffers>>(
+        &mut self,
+        buffers: &mut [B],
+    ) {
+        let frames = buffers
+            .first_mut()
+            .map(|b| b.borrow_mut().left.len())
+            .unwrap_or(0);
         if frames == 0 {
             return;
         }
@@ -64,6 +70,7 @@ impl GpuSynth {
             0
         };
         for (ch_idx, buf) in buffers.iter_mut().enumerate() {
+            let buf = buf.borrow_mut();
             if ch_idx < MAX_CHANNELS {
                 for f in 0..avail {
                     let base = f * per_frame + ch_idx * 2;

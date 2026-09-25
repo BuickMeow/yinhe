@@ -6,6 +6,7 @@
 //! 分通道渲染进混音台的 planar 缓冲。事件语义（`SynthEvent`）与
 //! `ChannelGroup` 完全对齐，上层调用点只需换类型名。
 
+use std::borrow::BorrowMut;
 use std::sync::Arc;
 
 use rayon::prelude::*;
@@ -197,9 +198,9 @@ impl ChannelSet {
     /// 渲染进交错暂存 + deinterleave 进混音台 planar 缓冲（覆盖写，调用方无需清零）。
     ///
     /// `buffers.len()` 必须等于通道数（混音台按 compacted 通道数创建）。
-    pub(crate) fn render_segment(
+    pub(crate) fn render_segment<B: BorrowMut<ChannelBuffers> + Send>(
         &mut self,
-        buffers: &mut [ChannelBuffers],
+        buffers: &mut [B],
         offset_frames: usize,
         frames: usize,
     ) {
@@ -218,11 +219,12 @@ impl ChannelSet {
 
         // 并行/串行两路共用的单通道渲染闭包（参数类型抽别名，过 clippy type_complexity）。
         type ChannelItem<'a> = (&'a mut VoiceChannel, &'a mut Vec<ChannelAudioEvent>);
-        type OutputItem<'a> = (&'a mut Vec<f32>, &'a mut ChannelBuffers);
+        type OutputItem<'a, B> = (&'a mut Vec<f32>, &'a mut B);
         let render_one =
-            move |((channel, events), (scratch, buf)): (ChannelItem<'_>, OutputItem<'_>)| {
+            move |((channel, events), (scratch, buf)): (ChannelItem<'_>, OutputItem<'_, B>)| {
                 channel.push_events_iter(events.drain(..).map(ChannelEvent::Audio));
                 channel.read_samples(&mut scratch[..interleaved_len]);
+                let buf = buf.borrow_mut();
                 for (i, s) in scratch[..interleaved_len].chunks_exact(2).enumerate() {
                     buf.left[offset_frames + i] = s[0];
                     buf.right[offset_frames + i] = s[1];

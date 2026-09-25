@@ -6,8 +6,9 @@
 //!
 //! 所有缓冲在 [`MixerGraph::resize`] 时一次性分配，之后处理不再分配。
 //!
-//! 内部按「平行数组」组织（buffers/strips/inserts/meters 四个等长 Vec），
-//! 以便渲染线程把 buffers 整体借出做跨通道并行渲染（rayon）。
+//! 内部按「链」组织：`ChannelChain` / `BusChain` / `MasterChain` 各自持有
+//! 缓冲与处理状态，[`MixerGraph`] 只聚合 master + 通道 + 总线。通道缓冲仍是
+//! 一段连续内存（[`MixerGraph::buffers_mut`] 整体借出做跨通道并行渲染）。
 
 use crate::meter::{MeterReading, MeterTap};
 use crate::params::{MasterParams, SendParams, StripParams};
@@ -117,61 +118,190 @@ pub struct ChannelBuffers {
     pub right: Vec<f32>,
 }
 
+impl ChannelBuffers {
+    fn clear(&mut self) {
+        self.left.fill(0.0);
+        self.right.fill(0.0);
+    }
+}
+
+/// 向 insert 链槽位插入处理器（越界则追加）。
+fn insert_processor(
+    chain: &mut Vec<Box<dyn InsertProcessor>>,
+    slot: usize,
+    p: Box<dyn InsertProcessor>,
+) {
+    chain.insert(slot.min(chain.len()), p);
+}
+
+/// 移除并返回 insert 链槽位的处理器（越界返回 `None`）。
+fn remove_processor(
+    chain: &mut Vec<Box<dyn InsertProcessor>>,
+    slot: usize,
+) -> Option<Box<dyn InsertProcessor>> {
+    (slot < chain.len()).then(|| chain.remove(slot))
+}
+
+/// 替换 insert 链槽位的处理器，返回旧的（越界返回 `None`）。
+fn replace_processor(
+    chain: &mut Vec<Box<dyn InsertProcessor>>,
+    slot: usize,
+    p: Box<dyn InsertProcessor>,
+) -> Option<Box<dyn InsertProcessor>> {
+    chain.get_mut(slot).map(|old| std::mem::replace(old, p))
+}
+
+/// 单条通道的完整信号链：缓冲 + strip + insert 链 + PDC + 电平表 + 发送。
+///
+/// 公开仅为让上层渲染器（yinhe-synth）能接收 [`MixerGraph::buffers_mut`]
+/// 借出的连续切片；字段不公开，外部只能把它当 `ChannelBuffers` 用。
+pub struct ChannelChain {
+    buffers: ChannelBuffers,
+    strip: StripState,
+    inserts: Vec<Box<dyn InsertProcessor>>,
+    /// PDC 对齐延迟线（补偿到最长路径；长度 0 = 直通）。
+    delay: DelayLine,
+    /// 基础延迟（乐器插件上报的采样数，由引擎设置）。
+    base_latency: u32,
+    meter: MeterTap,
+    /// 与 meter 一一对应的 UI 侧读数端（引擎创建时被上层取走克隆）。
+    reading: MeterReading,
+    /// 该通道（dense）的发送列表（源通道 → 总线）。
+    sends: Vec<SendParams>,
+}
+
+impl ChannelChain {
+    fn new(frames: usize, params: StripParams) -> Self {
+        let (meter, reading) = MeterTap::new();
+        Self {
+            buffers: ChannelBuffers {
+                left: vec![0.0; frames],
+                right: vec![0.0; frames],
+            },
+            strip: StripState::new(params),
+            inserts: Vec::new(),
+            delay: DelayLine::new(),
+            base_latency: 0,
+            meter,
+            reading,
+            sends: Vec::new(),
+        }
+    }
+
+    /// 重建缓冲帧长（块长变化时调用；会分配内存）。
+    fn resize_frames(&mut self, frames: usize) {
+        self.buffers.left = vec![0.0; frames];
+        self.buffers.right = vec![0.0; frames];
+    }
+}
+
+impl std::ops::Deref for ChannelChain {
+    type Target = ChannelBuffers;
+
+    fn deref(&self) -> &ChannelBuffers {
+        &self.buffers
+    }
+}
+
+impl std::ops::DerefMut for ChannelChain {
+    fn deref_mut(&mut self) -> &mut ChannelBuffers {
+        &mut self.buffers
+    }
+}
+
+impl std::borrow::Borrow<ChannelBuffers> for ChannelChain {
+    fn borrow(&self) -> &ChannelBuffers {
+        &self.buffers
+    }
+}
+
+impl std::borrow::BorrowMut<ChannelBuffers> for ChannelChain {
+    fn borrow_mut(&mut self) -> &mut ChannelBuffers {
+        &mut self.buffers
+    }
+}
+
+/// 单条总线（bus / return）的完整信号链：缓冲 + strip + insert 链 + 电平表。
+/// 总线无 PDC 与发送。
+struct BusChain {
+    buffers: ChannelBuffers,
+    strip: StripState,
+    inserts: Vec<Box<dyn InsertProcessor>>,
+    meter: MeterTap,
+    reading: MeterReading,
+}
+
+impl BusChain {
+    fn new(frames: usize, params: StripParams) -> Self {
+        let (meter, reading) = MeterTap::new();
+        Self {
+            buffers: ChannelBuffers {
+                left: vec![0.0; frames],
+                right: vec![0.0; frames],
+            },
+            strip: StripState::new(params),
+            inserts: Vec::new(),
+            meter,
+            reading,
+        }
+    }
+
+    fn resize_frames(&mut self, frames: usize) {
+        self.buffers.left.resize(frames, 0.0);
+        self.buffers.right.resize(frames, 0.0);
+    }
+}
+
+/// master 输出链：立体声缓冲 + insert 链 + 增益斜坡 + 电平表。
+struct MasterChain {
+    l: Vec<f32>,
+    r: Vec<f32>,
+    gain: f32,
+    prev_gain: f32,
+    inserts: Vec<Box<dyn InsertProcessor>>,
+    meter: MeterTap,
+    reading: MeterReading,
+}
+
+impl MasterChain {
+    fn new(frames: usize) -> Self {
+        let (meter, reading) = MeterTap::new();
+        Self {
+            l: vec![0.0; frames],
+            r: vec![0.0; frames],
+            gain: 1.0,
+            prev_gain: 1.0,
+            inserts: Vec::new(),
+            meter,
+            reading,
+        }
+    }
+
+    fn resize_frames(&mut self, frames: usize) {
+        self.l = vec![0.0; frames];
+        self.r = vec![0.0; frames];
+    }
+
+    fn take_inserts(&mut self, out: &mut Vec<Box<dyn InsertProcessor>>) {
+        out.append(&mut self.inserts);
+    }
+}
+
 /// 混音处理图。只在渲染线程使用，不实现 Clone。
 pub struct MixerGraph {
-    buffers: Vec<ChannelBuffers>,
-    strips: Vec<StripState>,
-    inserts: Vec<Vec<Box<dyn InsertProcessor>>>,
-    /// 每通道的 PDC 对齐延迟线（补偿到最长路径；长度 0 = 直通）。
-    delays: Vec<DelayLine>,
-    /// 每通道的基础延迟（乐器插件上报的采样数，由引擎设置）。
-    base_latency: Vec<u32>,
-    meters: Vec<MeterTap>,
-    /// 与 meters 一一对应的 UI 侧读数端（引擎创建时被上层取走克隆）。
-    meter_readings: Vec<MeterReading>,
-    master_l: Vec<f32>,
-    master_r: Vec<f32>,
-    master_gain: f32,
-    master_prev_gain: f32,
-    master_inserts: Vec<Box<dyn InsertProcessor>>,
-    master_meter: MeterTap,
-    master_reading: MeterReading,
-    /// 总线（bus / return）缓冲：每 bus 一对立体声（求和点在 master 之前）。
-    bus_buffers: Vec<ChannelBuffers>,
-    bus_strips: Vec<StripState>,
-    bus_inserts: Vec<Vec<Box<dyn InsertProcessor>>>,
-    bus_meters: Vec<MeterTap>,
-    bus_readings: Vec<MeterReading>,
-    /// 每通道（dense）的发送列表（源通道 → 总线）。
-    sends: Vec<Vec<SendParams>>,
+    master: MasterChain,
+    channels: Vec<ChannelChain>,
+    buses: Vec<BusChain>,
     frames: usize,
 }
 
 impl MixerGraph {
     /// 创建空图（0 通道）。通道数/块长变化走 [`resize`](Self::resize)。
     pub fn new(frames: usize) -> Self {
-        let (master_meter, master_reading) = MeterTap::new();
         Self {
-            buffers: Vec::new(),
-            strips: Vec::new(),
-            inserts: Vec::new(),
-            delays: Vec::new(),
-            base_latency: Vec::new(),
-            meters: Vec::new(),
-            meter_readings: Vec::new(),
-            master_l: vec![0.0; frames],
-            master_r: vec![0.0; frames],
-            master_gain: 1.0,
-            master_prev_gain: 1.0,
-            master_inserts: Vec::new(),
-            master_meter,
-            master_reading,
-            bus_buffers: Vec::new(),
-            bus_strips: Vec::new(),
-            bus_inserts: Vec::new(),
-            bus_meters: Vec::new(),
-            bus_readings: Vec::new(),
-            sends: Vec::new(),
+            master: MasterChain::new(frames),
+            channels: Vec::new(),
+            buses: Vec::new(),
             frames,
         }
     }
@@ -182,46 +312,25 @@ impl MixerGraph {
     /// `strips`（不足补默认值）。master 参数用 [`set_master`](Self::set_master) 单独推。
     pub fn resize(&mut self, channel_count: usize, frames: usize, strips: &[StripParams]) {
         self.frames = frames;
-        self.master_l = vec![0.0; frames];
-        self.master_r = vec![0.0; frames];
+        self.master.resize_frames(frames);
 
-        let n_old = self.buffers.len().min(channel_count);
-        let mut buffers = Vec::with_capacity(channel_count);
-        buffers.append(&mut self.buffers);
-        buffers.truncate(n_old);
-        for b in buffers.iter_mut() {
-            b.left = vec![0.0; frames];
-            b.right = vec![0.0; frames];
+        let n_old = self.channels.len().min(channel_count);
+        self.channels.truncate(n_old);
+        for chain in &mut self.channels {
+            chain.resize_frames(frames);
         }
-        self.strips.truncate(n_old);
-        self.inserts.truncate(n_old);
-        self.delays.truncate(n_old);
-        self.base_latency.truncate(n_old);
-        self.meters.truncate(n_old);
-        self.meter_readings.truncate(n_old);
-        self.sends.truncate(n_old);
         for i in n_old..channel_count {
-            buffers.push(ChannelBuffers {
-                left: vec![0.0; frames],
-                right: vec![0.0; frames],
-            });
-            self.strips
-                .push(StripState::new(strips.get(i).copied().unwrap_or_default()));
-            self.inserts.push(Vec::new());
-            self.delays.push(DelayLine::new());
-            self.base_latency.push(0);
-            self.sends.push(Vec::new());
-            let (tap, reading) = MeterTap::new();
-            self.meters.push(tap);
-            self.meter_readings.push(reading);
+            self.channels.push(ChannelChain::new(
+                frames,
+                strips.get(i).copied().unwrap_or_default(),
+            ));
         }
-        self.buffers = buffers;
         self.refresh_pdc();
     }
 
     /// 通道数。
     pub fn channel_count(&self) -> usize {
-        self.buffers.len()
+        self.channels.len()
     }
 
     /// 当前块长（帧）。
@@ -231,40 +340,39 @@ impl MixerGraph {
 
     /// 是否有任何 insert 处理器（含 master；导出的尾音判断用）。
     pub fn has_inserts(&self) -> bool {
-        !self.master_inserts.is_empty()
-            || self.inserts.iter().any(|c| !c.is_empty())
-            || self.bus_inserts.iter().any(|c| !c.is_empty())
+        !self.master.inserts.is_empty()
+            || self.channels.iter().any(|c| !c.inserts.is_empty())
+            || self.buses.iter().any(|b| !b.inserts.is_empty())
     }
 
     /// 整体借出通道缓冲：渲染线程跨通道并行写入音源（每通道一个 rayon 任务）。
     /// 每块开始前上层应自行清零或完全覆盖。
-    pub fn buffers_mut(&mut self) -> &mut [ChannelBuffers] {
-        &mut self.buffers
+    pub fn buffers_mut(&mut self) -> &mut [ChannelChain] {
+        &mut self.channels
     }
 
     /// 取单条通道缓冲供音源写入（非并行路径用）。
     pub fn channel_buffers_mut(&mut self, channel: usize) -> Option<&mut ChannelBuffers> {
-        self.buffers.get_mut(channel)
+        self.channels.get_mut(channel).map(|c| &mut c.buffers)
     }
 
     /// 清空全部通道缓冲。空闲渲染（停止状态驱动乐器插件）用：
     /// 该路径没有 xsynth/音频轨覆盖写，只有插件写自己的通道缓冲。
     pub fn clear_channel_buffers(&mut self) {
-        for cb in &mut self.buffers {
-            cb.left.fill(0.0);
-            cb.right.fill(0.0);
+        for chain in &mut self.channels {
+            chain.buffers.clear();
         }
     }
 
     /// 更新某通道的 strip 目标参数（推子拖动等高频操作直接调这个，幂等）。
     pub fn set_strip(&mut self, channel: usize, params: StripParams) {
-        if let Some(s) = self.strips.get_mut(channel) {
-            s.set_params(params);
+        if let Some(chain) = self.channels.get_mut(channel) {
+            chain.strip.set_params(params);
         }
     }
 
     pub fn set_master(&mut self, params: MasterParams) {
-        self.master_gain = params.gain;
+        self.master.gain = params.gain;
     }
 
     /// 替换某通道 insert 链（新链在上层构建好后整体换入），返回旧链。
@@ -275,8 +383,8 @@ impl MixerGraph {
         channel: usize,
         inserts: Vec<Box<dyn InsertProcessor>>,
     ) -> Vec<Box<dyn InsertProcessor>> {
-        let old = if let Some(slot) = self.inserts.get_mut(channel) {
-            std::mem::replace(slot, inserts)
+        let old = if let Some(chain) = self.channels.get_mut(channel) {
+            std::mem::replace(&mut chain.inserts, inserts)
         } else {
             inserts
         };
@@ -288,40 +396,39 @@ impl MixerGraph {
         &mut self,
         inserts: Vec<Box<dyn InsertProcessor>>,
     ) -> Vec<Box<dyn InsertProcessor>> {
-        std::mem::replace(&mut self.master_inserts, inserts)
+        std::mem::replace(&mut self.master.inserts, inserts)
     }
 
-    /// 在槽位 `slot` 处插入一个处理器（链尾之后则追加）。
+    /// 在通道槽位 `slot` 处插入一个处理器（链尾之后则追加）。
     pub fn insert_insert(&mut self, channel: usize, slot: usize, p: Box<dyn InsertProcessor>) {
-        if let Some(chain) = self.inserts.get_mut(channel) {
-            chain.insert(slot.min(chain.len()), p);
+        if let Some(chain) = self.channels.get_mut(channel) {
+            insert_processor(&mut chain.inserts, slot, p);
             self.refresh_pdc();
         }
     }
 
-    /// 移除并返回槽位 `slot` 的处理器（上层回收 deactivate）。
+    /// 移除并返回通道槽位 `slot` 的处理器（上层回收 deactivate）。
     pub fn remove_insert(
         &mut self,
         channel: usize,
         slot: usize,
     ) -> Option<Box<dyn InsertProcessor>> {
-        let chain = self.inserts.get_mut(channel)?;
-        let removed = (slot < chain.len()).then(|| chain.remove(slot));
+        let removed = remove_processor(&mut self.channels.get_mut(channel)?.inserts, slot);
         if removed.is_some() {
             self.refresh_pdc();
         }
         removed
     }
 
-    /// 替换槽位 `slot` 的处理器，返回旧的（插件请求 restart 时用）。
+    /// 替换通道槽位 `slot` 的处理器，返回旧的（插件请求 restart 时用）。
     pub fn replace_insert(
         &mut self,
         channel: usize,
         slot: usize,
         p: Box<dyn InsertProcessor>,
     ) -> Option<Box<dyn InsertProcessor>> {
-        let chain = self.inserts.get_mut(channel)?;
-        let old = chain.get_mut(slot).map(|old| std::mem::replace(old, p));
+        let chain = self.channels.get_mut(channel)?;
+        let old = replace_processor(&mut chain.inserts, slot, p);
         if old.is_some() {
             self.refresh_pdc();
         }
@@ -330,13 +437,12 @@ impl MixerGraph {
 
     /// 在 master 链槽位 `slot` 处插入处理器（越界则追加）。
     pub fn insert_master_insert(&mut self, slot: usize, p: Box<dyn InsertProcessor>) {
-        self.master_inserts
-            .insert(slot.min(self.master_inserts.len()), p);
+        insert_processor(&mut self.master.inserts, slot, p);
     }
 
     /// 移除并返回 master 链槽位 `slot` 的处理器。
     pub fn remove_master_insert(&mut self, slot: usize) -> Option<Box<dyn InsertProcessor>> {
-        (slot < self.master_inserts.len()).then(|| self.master_inserts.remove(slot))
+        remove_processor(&mut self.master.inserts, slot)
     }
 
     /// 替换 master 链槽位 `slot` 的处理器，返回旧的。
@@ -345,68 +451,52 @@ impl MixerGraph {
         slot: usize,
         p: Box<dyn InsertProcessor>,
     ) -> Option<Box<dyn InsertProcessor>> {
-        self.master_inserts
-            .get_mut(slot)
-            .map(|old| std::mem::replace(old, p))
+        replace_processor(&mut self.master.inserts, slot, p)
     }
 
     /// 重建总线数量/块长（增删总线或块长变化时调用；会分配内存）。
     /// 已有总线的 strip 状态按索引保留，新增总线用 `params`（不足补默认）。
     pub fn resize_buses(&mut self, count: usize, frames: usize, params: &[StripParams]) {
-        while self.bus_buffers.len() > count {
-            self.bus_buffers.pop();
-            self.bus_strips.pop();
-            self.bus_inserts.pop();
-            self.bus_meters.pop();
-            self.bus_readings.pop();
+        self.buses.truncate(count);
+        for bus in &mut self.buses {
+            bus.resize_frames(frames);
         }
-        for b in &mut self.bus_buffers {
-            b.left.resize(frames, 0.0);
-            b.right.resize(frames, 0.0);
-        }
-        while self.bus_buffers.len() < count {
-            self.bus_buffers.push(ChannelBuffers {
-                left: vec![0.0; frames],
-                right: vec![0.0; frames],
-            });
-            let i = self.bus_strips.len();
-            self.bus_strips
-                .push(StripState::new(params.get(i).copied().unwrap_or_default()));
-            self.bus_inserts.push(Vec::new());
-            let (tap, reading) = MeterTap::new();
-            self.bus_meters.push(tap);
-            self.bus_readings.push(reading);
+        for i in self.buses.len()..count {
+            self.buses.push(BusChain::new(
+                frames,
+                params.get(i).copied().unwrap_or_default(),
+            ));
         }
     }
 
     /// 总线数量。
     pub fn bus_count(&self) -> usize {
-        self.bus_buffers.len()
+        self.buses.len()
     }
 
     /// 更新某总线的 strip 参数（推子拖动高频路径，幂等）。
     pub fn set_bus_strip(&mut self, bus: usize, params: StripParams) {
-        if let Some(s) = self.bus_strips.get_mut(bus) {
-            s.set_params(params);
+        if let Some(chain) = self.buses.get_mut(bus) {
+            chain.strip.set_params(params);
         }
     }
 
     /// 总线电平表读数端（UI 线程持有克隆）。
     pub fn bus_meter_reading(&self, bus: usize) -> Option<MeterReading> {
-        self.bus_readings.get(bus).cloned()
+        self.buses.get(bus).map(|b| b.reading.clone())
     }
 
     /// 设置某通道（dense）的发送列表（结构性变化时全量推）。
     pub fn set_sends(&mut self, channel: usize, sends: Vec<SendParams>) {
-        if let Some(slot) = self.sends.get_mut(channel) {
-            *slot = sends;
+        if let Some(chain) = self.channels.get_mut(channel) {
+            chain.sends = sends;
         }
     }
 
     /// 在总线链槽位插入处理器（越界则追加）。
     pub fn insert_bus_insert(&mut self, bus: usize, slot: usize, p: Box<dyn InsertProcessor>) {
-        if let Some(chain) = self.bus_inserts.get_mut(bus) {
-            chain.insert(slot.min(chain.len()), p);
+        if let Some(chain) = self.buses.get_mut(bus) {
+            insert_processor(&mut chain.inserts, slot, p);
         }
     }
 
@@ -416,8 +506,7 @@ impl MixerGraph {
         bus: usize,
         slot: usize,
     ) -> Option<Box<dyn InsertProcessor>> {
-        let chain = self.bus_inserts.get_mut(bus)?;
-        (slot < chain.len()).then(|| chain.remove(slot))
+        remove_processor(&mut self.buses.get_mut(bus)?.inserts, slot)
     }
 
     /// 替换总线链槽位的处理器，返回旧的。
@@ -427,17 +516,16 @@ impl MixerGraph {
         slot: usize,
         p: Box<dyn InsertProcessor>,
     ) -> Option<Box<dyn InsertProcessor>> {
-        let chain = self.bus_inserts.get_mut(bus)?;
-        chain.get_mut(slot).map(|old| std::mem::replace(old, p))
+        replace_processor(&mut self.buses.get_mut(bus)?.inserts, slot, p)
     }
 
     /// 设置某通道的基础延迟（乐器插件上报的采样数；0 = 无延迟）。
     /// 变化时重算 PDC 对齐（重建延迟线缓冲）。
     pub fn set_channel_latency(&mut self, channel: usize, samples: u32) {
-        if let Some(slot) = self.base_latency.get_mut(channel)
-            && *slot != samples
+        if let Some(chain) = self.channels.get_mut(channel)
+            && chain.base_latency != samples
         {
-            *slot = samples;
+            chain.base_latency = samples;
             self.refresh_pdc();
         }
     }
@@ -449,87 +537,89 @@ impl MixerGraph {
     /// master 链的延迟对所有通道相同，不影响通道间对齐，不参与补偿。
     /// 仅命令处理阶段调用（延迟线缓冲重建会分配内存）。
     pub fn refresh_pdc(&mut self) {
-        let mut total: Vec<u32> = self.base_latency.clone();
-        for (i, chain) in self.inserts.iter().enumerate() {
-            total[i] =
-                total[i].saturating_add(chain.iter().map(|p| p.latency_samples()).sum::<u32>());
-        }
+        let total: Vec<u32> = self
+            .channels
+            .iter()
+            .map(|c| {
+                c.base_latency
+                    .saturating_add(c.inserts.iter().map(|p| p.latency_samples()).sum::<u32>())
+            })
+            .collect();
         let align = total.iter().copied().max().unwrap_or(0);
-        for (i, delay) in self.delays.iter_mut().enumerate() {
-            delay.set_delay(align.saturating_sub(total[i]) as usize);
+        for (chain, &t) in self.channels.iter_mut().zip(total.iter()) {
+            chain.delay.set_delay(align.saturating_sub(t) as usize);
         }
     }
 
     /// 通道电平表读数端（UI 线程持有克隆，Arc 共享）。
     pub fn channel_meter_reading(&self, channel: usize) -> Option<MeterReading> {
-        self.meter_readings.get(channel).cloned()
+        self.channels.get(channel).map(|c| c.reading.clone())
     }
 
     pub fn master_meter_reading(&self) -> MeterReading {
-        self.master_reading.clone()
+        self.master.reading.clone()
     }
 
     /// 取所有 insert（引擎拆除时整体回收，所有权交还上层）。
     pub fn take_all_inserts(&mut self) -> Vec<Box<dyn InsertProcessor>> {
         let mut out = Vec::new();
-        for slot in &mut self.inserts {
-            out.append(slot);
+        for chain in &mut self.channels {
+            out.append(&mut chain.inserts);
         }
-        for slot in &mut self.bus_inserts {
-            out.append(slot);
+        for chain in &mut self.buses {
+            out.append(&mut chain.inserts);
         }
-        out.append(&mut self.master_inserts);
+        self.master.take_inserts(&mut out);
         out
     }
 
     /// 暂停/停止时把待发参数经各 insert 送达插件（输出丢弃；播放时无需调用）。
     pub fn flush_pending_insert_params(&mut self, position_samples: u64) {
-        for chain in &mut self.inserts {
-            for insert in chain {
+        for chain in &mut self.channels {
+            for insert in &mut chain.inserts {
                 insert.flush_pending_params(position_samples);
             }
         }
-        for chain in &mut self.bus_inserts {
-            for insert in chain {
+        for chain in &mut self.buses {
+            for insert in &mut chain.inserts {
                 insert.flush_pending_params(position_samples);
             }
         }
-        for insert in &mut self.master_inserts {
+        for insert in &mut self.master.inserts {
             insert.flush_pending_params(position_samples);
         }
     }
 
     /// 通道电平表 tap（用于 UI 端读取）。
     pub fn channel_meter(&self, channel: usize) -> Option<MeterTap> {
-        self.meters.get(channel).cloned()
+        self.channels.get(channel).map(|c| c.meter.clone())
     }
 
     pub fn master_meter(&self) -> MeterTap {
-        self.master_meter.clone()
+        self.master.meter.clone()
     }
 
     /// seek 后清空所有 insert 的处理状态（delay 尾音/envelope 等）
     /// 与 PDC 延迟线内容。
     pub fn reset_inserts(&mut self) {
-        for chain in &mut self.inserts {
-            for insert in chain {
+        for chain in &mut self.channels {
+            for insert in &mut chain.inserts {
                 insert.reset();
             }
         }
-        for chain in &mut self.bus_inserts {
-            for insert in chain {
+        for chain in &mut self.buses {
+            for insert in &mut chain.inserts {
                 insert.reset();
             }
         }
-        for insert in &mut self.master_inserts {
+        for insert in &mut self.master.inserts {
             insert.reset();
         }
-        for delay in &mut self.delays {
-            delay.clear();
+        for chain in &mut self.channels {
+            chain.delay.clear();
         }
-        for b in &mut self.bus_buffers {
-            b.left.fill(0.0);
-            b.right.fill(0.0);
+        for chain in &mut self.buses {
+            chain.buffers.clear();
         }
     }
 
@@ -547,160 +637,196 @@ impl MixerGraph {
     /// 对齐（总线通常挂不要求严格相位对齐的效果，如混响）。
     pub fn process(&mut self) -> (&[f32], &[f32]) {
         let frames = self.frames;
-        for bus in &mut self.bus_buffers {
-            bus.left.fill(0.0);
-            bus.right.fill(0.0);
+        for bus in &mut self.buses {
+            bus.buffers.clear();
         }
-        self.master_l.fill(0.0);
-        self.master_r.fill(0.0);
+        self.master.l.fill(0.0);
+        self.master.r.fill(0.0);
 
-        let any_channel_solo = self.strips.iter().any(|s| s.params.solo);
-        let any_bus_solo = self.bus_strips.iter().any(|s| s.params.solo);
+        let any_channel_solo = self.channels.iter().any(|c| c.strip.params.solo);
+        let any_bus_solo = self.buses.iter().any(|b| b.strip.params.solo);
         let any_solo = any_channel_solo || any_bus_solo;
-        let any_solo_flag = any_solo;
 
-        for i in 0..self.buffers.len() {
+        Self::process_channels(
+            &mut self.channels,
+            &mut self.buses,
+            &mut self.master.l,
+            &mut self.master.r,
+            frames,
+            any_solo,
+        );
+        Self::process_buses(&mut self.buses, &mut self.master, frames, any_solo);
+        Self::process_master(&mut self.master, frames);
+        (&self.master.l, &self.master.r)
+    }
+
+    /// 通道段：insert 链 → PDC → 电平表 → 推子前 send → 推子 → 推子后
+    /// send → master 累加。
+    fn process_channels(
+        channels: &mut [ChannelChain],
+        buses: &mut [BusChain],
+        master_l: &mut [f32],
+        master_r: &mut [f32],
+        frames: usize,
+        any_solo: bool,
+    ) {
+        for chain in channels.iter_mut() {
             // insert 链 → PDC 延迟线。
-            {
-                let (buffers, inserts) = (&mut self.buffers[i], &mut self.inserts[i]);
-                for insert in inserts {
-                    // 插件能力可能小于引擎块长（按 512 激活的插件遇到 4096 的块）：
-                    // 按能力分段调用，等效连续处理（原地、无事件，分段安全）。
-                    let max = insert.max_block_frames().max(1);
-                    if max >= frames {
-                        insert.process(&mut buffers.left, &mut buffers.right);
-                        continue;
-                    }
-                    let mut start = 0;
-                    while start < frames {
-                        let end = (start + max).min(frames);
-                        insert.process(
-                            &mut buffers.left[start..end],
-                            &mut buffers.right[start..end],
-                        );
-                        start = end;
-                    }
+            for insert in &mut chain.inserts {
+                // 插件能力可能小于引擎块长（按 512 激活的插件遇到 4096 的块）：
+                // 按能力分段调用，等效连续处理（原地、无事件，分段安全）。
+                let max = insert.max_block_frames().max(1);
+                if max >= frames {
+                    insert.process(&mut chain.buffers.left, &mut chain.buffers.right);
+                    continue;
+                }
+                let mut start = 0;
+                while start < frames {
+                    let end = (start + max).min(frames);
+                    insert.process(
+                        &mut chain.buffers.left[start..end],
+                        &mut chain.buffers.right[start..end],
+                    );
+                    start = end;
                 }
             }
-            {
-                let (buffers, delay) = (&mut self.buffers[i], &mut self.delays[i]);
-                delay.process(&mut buffers.left, &mut buffers.right);
-            }
+            chain
+                .delay
+                .process(&mut chain.buffers.left, &mut chain.buffers.right);
 
-            let p = self.strips[i].params;
-            let to_master = !p.mute && (!any_solo_flag || p.solo);
+            let p = chain.strip.params;
+            let to_master = !p.mute && (!any_solo || p.solo);
 
             // 电平表取 post-insert、pre-fader（推子会原地改缓冲，先发布）。
             if to_master {
-                let (buffers, meter) = (&self.buffers[i], &mut self.meters[i]);
-                meter.publish(&buffers.left[..frames], &buffers.right[..frames]);
+                chain.meter.publish(
+                    &chain.buffers.left[..frames],
+                    &chain.buffers.right[..frames],
+                );
             } else {
-                self.meters[i].publish(&[0.0; 0], &[0.0; 0]);
+                chain.meter.publish(&[0.0; 0], &[0.0; 0]);
             }
 
             // 推子前 send（insert 后、fader 前的信号）。
-            for send in &self.sends[i] {
-                if !send.pre_fader || send.amount == 0.0 {
-                    continue;
-                }
-                let bus_solo = self
-                    .bus_strips
-                    .get(send.bus as usize)
-                    .is_some_and(|s| s.params.solo);
-                if p.mute || (any_solo_flag && !p.solo && !bus_solo) {
-                    continue;
-                }
-                let Some(bus) = self.bus_buffers.get_mut(send.bus as usize) else {
-                    continue;
-                };
-                let src = &self.buffers[i];
-                for f in 0..frames {
-                    bus.left[f] += src.left[f] * send.amount;
-                    bus.right[f] += src.right[f] * send.amount;
-                }
-            }
+            route_send(
+                true,
+                &chain.buffers,
+                &chain.sends,
+                &chain.strip,
+                any_solo,
+                buses,
+                frames,
+            );
 
             // 推子（原地应用；静音/未 solo 时也照常推进斜坡）。
-            {
-                let (buffers, strip) = (&mut self.buffers[i], &mut self.strips[i]);
-                strip.apply_fader(&mut buffers.left, &mut buffers.right);
-            }
+            chain
+                .strip
+                .apply_fader(&mut chain.buffers.left, &mut chain.buffers.right);
 
             // 推子后 send 与 master 累加。
-            for send in &self.sends[i] {
-                if send.pre_fader || send.amount == 0.0 {
-                    continue;
-                }
-                let bus_solo = self
-                    .bus_strips
-                    .get(send.bus as usize)
-                    .is_some_and(|s| s.params.solo);
-                if p.mute || (any_solo_flag && !p.solo && !bus_solo) {
-                    continue;
-                }
-                let Some(bus) = self.bus_buffers.get_mut(send.bus as usize) else {
-                    continue;
-                };
-                let src = &self.buffers[i];
-                for f in 0..frames {
-                    bus.left[f] += src.left[f] * send.amount;
-                    bus.right[f] += src.right[f] * send.amount;
-                }
-            }
+            route_send(
+                false,
+                &chain.buffers,
+                &chain.sends,
+                &chain.strip,
+                any_solo,
+                buses,
+                frames,
+            );
             if to_master {
-                let src = &self.buffers[i];
+                let src = &chain.buffers;
                 for f in 0..frames {
-                    self.master_l[f] += src.left[f];
-                    self.master_r[f] += src.right[f];
+                    master_l[f] += src.left[f];
+                    master_r[f] += src.right[f];
                 }
             }
         }
+    }
 
-        // 总线：insert 链 → 电平表（pre-fader）→ 推子 → master。
-        for b in 0..self.bus_buffers.len() {
-            {
-                let (bus, inserts) = (&mut self.bus_buffers[b], &mut self.bus_inserts[b]);
-                for insert in inserts {
-                    insert.process(&mut bus.left, &mut bus.right);
-                }
+    /// 总线段：insert 链 → 电平表（pre-fader）→ 推子 → master 累加。
+    fn process_buses(
+        buses: &mut [BusChain],
+        master: &mut MasterChain,
+        frames: usize,
+        any_solo: bool,
+    ) {
+        for chain in buses.iter_mut() {
+            for insert in &mut chain.inserts {
+                insert.process(&mut chain.buffers.left, &mut chain.buffers.right);
             }
-            let p = self.bus_strips[b].params;
-            let audible = !p.mute && (!any_solo_flag || p.solo);
+            let p = chain.strip.params;
+            let audible = !p.mute && (!any_solo || p.solo);
             if audible {
-                let bus = &self.bus_buffers[b];
-                self.bus_meters[b].publish(&bus.left[..frames], &bus.right[..frames]);
+                chain.meter.publish(
+                    &chain.buffers.left[..frames],
+                    &chain.buffers.right[..frames],
+                );
             } else {
-                self.bus_meters[b].publish(&[0.0; 0], &[0.0; 0]);
+                chain.meter.publish(&[0.0; 0], &[0.0; 0]);
             }
-            {
-                let (bus, strip) = (&mut self.bus_buffers[b], &mut self.bus_strips[b]);
-                strip.apply_fader(&mut bus.left, &mut bus.right);
-            }
+            chain
+                .strip
+                .apply_fader(&mut chain.buffers.left, &mut chain.buffers.right);
             if audible {
-                let src = &self.bus_buffers[b];
+                let src = &chain.buffers;
                 for f in 0..frames {
-                    self.master_l[f] += src.left[f];
-                    self.master_r[f] += src.right[f];
+                    master.l[f] += src.left[f];
+                    master.r[f] += src.right[f];
                 }
             }
         }
+    }
 
-        for insert in &mut self.master_inserts {
-            insert.process(&mut self.master_l, &mut self.master_r);
+    /// master 段：insert 链 → 增益斜坡 → 电平表。
+    fn process_master(master: &mut MasterChain, frames: usize) {
+        for insert in &mut master.inserts {
+            insert.process(&mut master.l, &mut master.r);
         }
 
         // master 增益斜坡（复用通道同款逐样本线性插值）。
-        let gain_start = self.master_prev_gain;
-        let gain_step = (self.master_gain - gain_start) / frames as f32;
+        let gain_start = master.prev_gain;
+        let gain_step = (master.gain - gain_start) / frames as f32;
         for i in 0..frames {
             let g = gain_start + gain_step * (i + 1) as f32;
-            self.master_l[i] *= g;
-            self.master_r[i] *= g;
+            master.l[i] *= g;
+            master.r[i] *= g;
         }
-        self.master_prev_gain = self.master_gain;
+        master.prev_gain = master.gain;
 
-        self.master_meter.publish(&self.master_l, &self.master_r);
-        (&self.master_l, &self.master_r)
+        master.meter.publish(&master.l, &master.r);
+    }
+}
+
+/// 把源通道的 send 列表累加进目标总线缓冲。
+///
+/// 推子前/后两段仅 `send.pre_fader` 的筛选相反，其余（mute/solo 判定、总线
+/// 查找、逐样本累加）完全一致，故以 `pre_fader` 参数合并。
+fn route_send(
+    pre_fader: bool,
+    src: &ChannelBuffers,
+    sends: &[SendParams],
+    strip: &StripState,
+    any_solo: bool,
+    buses: &mut [BusChain],
+    frames: usize,
+) {
+    for send in sends {
+        if send.pre_fader != pre_fader || send.amount == 0.0 {
+            continue;
+        }
+        let bus_solo = buses
+            .get(send.bus as usize)
+            .is_some_and(|b| b.strip.params.solo);
+        if strip.params.mute || (any_solo && !strip.params.solo && !bus_solo) {
+            continue;
+        }
+        let Some(bus) = buses.get_mut(send.bus as usize) else {
+            continue;
+        };
+        for f in 0..frames {
+            bus.buffers.left[f] += src.left[f] * send.amount;
+            bus.buffers.right[f] += src.right[f] * send.amount;
+        }
     }
 }
 
@@ -910,7 +1036,7 @@ mod tests {
         g.resize(2, 4, &[]);
         assert_eq!(g.channel_count(), 2);
         // 0 号通道增益状态保留。
-        assert_eq!(g.strips[0].params.gain, 0.3);
+        assert_eq!(g.channels[0].strip.params.gain, 0.3);
     }
 
     #[test]
@@ -918,7 +1044,7 @@ mod tests {
         let mut g = graph_with(&[StripParams::default()], 4);
         g.resize(1, 8, &[]);
         assert_eq!(g.frames(), 8);
-        assert_eq!(g.buffers[0].left.len(), 8);
+        assert_eq!(g.channels[0].buffers.left.len(), 8);
     }
 
     /// 报告延迟 N 且实际延迟 N 个样本的 insert（PDC 测试用）。
@@ -1016,7 +1142,7 @@ mod tests {
     fn pdc_keeps_single_channel_alignment_when_no_latency() {
         // 没有延迟插入时延迟线全为 0（直通），输出与无 PDC 时一致。
         let mut g = graph_with(&[StripParams::default(), StripParams::default()], 4);
-        assert!(g.delays.iter().all(|d| d.delay() == 0));
+        assert!(g.channels.iter().all(|c| c.delay.delay() == 0));
         fill(&mut g, 0, 0.5);
         let (l, _r) = g.process();
         let expect = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
@@ -1028,9 +1154,9 @@ mod tests {
         // 移除延迟 insert 后对齐回退为 0（延迟线长度归零）。
         let mut g = graph_with(&[StripParams::default(), StripParams::default()], 4);
         g.set_inserts(1, vec![Box::new(DelayInsert::new(3))]);
-        assert_eq!(g.delays[0].delay(), 3);
+        assert_eq!(g.channels[0].delay.delay(), 3);
         g.set_inserts(1, Vec::new());
-        assert!(g.delays.iter().all(|d| d.delay() == 0));
+        assert!(g.channels.iter().all(|c| c.delay.delay() == 0));
     }
 
     #[test]
@@ -1173,7 +1299,7 @@ mod tests {
         );
         g.resize_buses(3, 4, &[]);
         assert_eq!(g.bus_count(), 3);
-        assert_eq!(g.bus_strips[1].params.gain, 0.25);
+        assert_eq!(g.buses[1].strip.params.gain, 0.25);
     }
 
     #[test]
