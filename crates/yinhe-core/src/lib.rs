@@ -24,6 +24,7 @@ pub use events::NoteEvent;
 pub use model::DEFAULT_TRACK_COLOR;
 pub use model::{
     AudioClip, AudioSource, ConductorData, ProjectMeta, TrackData, TrackInfo, TrackKind, YinModel,
+    effective_fades,
 };
 pub use model_stats::{NoteLoader, RescaleProgress};
 pub use selection::{Selection, SelectionFilter};

@@ -26,7 +26,6 @@ pub mod spawn;
 pub use yinhe_synth as synth;
 pub use yinhe_synth::DEFAULT_MAX_VOICES;
 
-pub use audio_model::effective_fades;
 pub use audio_renderer::log_playing_midi;
 pub use audio_source::{
     AudioInfo, DecodedAudio, WavePeaks, decode_audio, encode_wav_bytes, probe_audio_info,
@@ -40,6 +39,8 @@ pub use spawn::{
     PreviewNoteParams, channels_for_model, discover_sample_rates, list_input_devices,
     list_output_devices, spawn_cpal_audio,
 };
+/// 音频片段有效淡入/淡出（纯片段几何逻辑，实现在 `yinhe-core` 的 `AudioClip` 旁）。
+pub use yinhe_core::effective_fades;
 /// 合成后端选择的统一入口（定义在 settings 层，引擎侧 re-export）；
 /// 下游（example/移动端）无需直接依赖 yinhe-editor-core。
 pub use yinhe_types::SynthEngine;

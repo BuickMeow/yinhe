@@ -157,6 +157,10 @@ pub(crate) struct AudioModel {
     /// tick. Values >= 120 select a drum kit (GS/XG convention), values < 120
     /// select a melodic bank. Empty Vec for tracks with no bank declaration.
     pub track_banks: Vec<Vec<(u32, u8)>>,
+    /// 每条音轨各片段的有效淡入/淡出（秒），`[track][clip]` 与
+    /// `YinModel.tracks[].audio_clips` 索引对齐。模型准备阶段一次性算好，
+    /// 播放线程按索引 O(1) 查询。随 AudioModel 快照整体替换而失效。
+    pub clip_fades: Vec<Vec<(f64, f64)>>,
 }
 
 impl AudioModel {
@@ -190,9 +194,15 @@ impl AudioModel {
                 banks
             })
             .collect();
+        let clip_fades: Vec<Vec<(f64, f64)>> = model
+            .tracks
+            .iter()
+            .map(|t| effective_fades_all(&t.audio_clips))
+            .collect();
         Self {
             track_channels,
             track_banks,
+            clip_fades,
         }
     }
 
@@ -244,12 +254,16 @@ pub(crate) fn sample_to_tick(
     } else {
         seg.micros_per_quarter as f64 / (tpb as f64 * 1_000_000.0)
     };
-    let mut t = if secs_per_tick > 0.0 {
-        ((time - seg.start_time) / secs_per_tick).floor() as i64 + seg.start_tick as i64
-    } else {
-        seg.start_tick as i64
-    };
-    t = t.max(0);
+    // 退化 tempo（ppq/mpq = 0）：tick 与 sample 无映射关系，返回段起点。
+    // 旧实现会进入下面的回补循环：每步 tick_to_sample 都返回同一值，
+    // 最坏需要 ~2^32 次迭代才退出。
+    if secs_per_tick <= 0.0 {
+        return seg.start_tick;
+    }
+    // clamp 到 tick 上限：超出 u32 tick 域的大 sample 不再经 i64→u32 截断
+    // 成任意值（旧值因 `t < u32::MAX` 守卫不会进入回补循环）。
+    let mut t = (((time - seg.start_time) / secs_per_tick).floor() as i64 + seg.start_tick as i64)
+        .clamp(0, u32::MAX as i64);
     // 向上校验：确保返回最大满足 tick_to_sample(t) <= sample 的 t。
     // 若 floor 因浮点误差低估，这里补到真实边界（循环最多几次）。
     while tick_to_sample(t as u32, segments, tpb, sr) <= sample && t < u32::MAX as i64 {
@@ -468,46 +482,82 @@ pub(crate) fn emit_automation_event(
     out: &mut Vec<SortedCC>,
 ) {
     match target {
-        AutomationTarget::Param { device, id, .. } => match device {
-            // 第三方乐器插件参数：占位 event 只保证排序/去重键完整；dispatch 按
-            // `plugin_param` 分支走 `PluginEvent::ParamValue`（值保持归一化）。
-            ParamDevice::PluginInstrument {
-                channel: plugin_channel,
-            } => {
-                out.push(SortedCC {
-                    tick,
-                    // 排序键用 MIDI 通道（占位 event 无 xsynth 语义，只求稳定顺序）。
-                    channel: u32::from(*plugin_channel),
-                    track,
-                    lane,
-                    event: AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(0, 0))),
-                    plugin_param: Some(PluginParamEvent {
-                        channel: *plugin_channel,
-                        param_id: *id,
-                        value: value.clamp(0.0, 1.0),
-                    }),
-                });
-            }
-            // 内置设备参数（XSynth）：按 MIDI 绑定还原为对应的原始整数事件。
-            // 回放时 dispatch 统一"广播给 insert 链上订阅的效果器 + 走常规
-            // 路径透传乐器插件"（CC 广播方案）。
-            ParamDevice::ChannelInstrument {
-                channel: device_channel,
-            } => {
-                let Some(info) = builtin_param(device, *id) else {
-                    return; // 表外 id：无 MIDI 绑定，不产生事件。
-                };
-                emit_midi_binding(
-                    info.midi,
-                    value,
-                    tick,
-                    u32::from(*device_channel),
-                    track,
-                    lane,
-                    out,
-                );
-            }
-        },
+        AutomationTarget::Param { .. } => {
+            emit_param_event(target, value, tick, track, lane, out);
+        }
+        // Tempo 走 `conductor.tempo` 而非 `track.automation_lanes`，
+        // 由 `build_tempo_map` 消费，不进入 CC 事件流。
+        AutomationTarget::Tempo => {}
+        _ => emit_midi_event(target, value, tick, channel, track, lane, out),
+    }
+}
+
+/// `AutomationTarget::Param`（乐器/内置设备参数）事件：按设备类型还原为
+/// 插件参数事件或 MIDI 绑定事件。
+fn emit_param_event(
+    target: &AutomationTarget,
+    value: f32,
+    tick: u32,
+    track: u16,
+    lane: u16,
+    out: &mut Vec<SortedCC>,
+) {
+    let AutomationTarget::Param { device, id, .. } = target else {
+        return;
+    };
+    match device {
+        // 第三方乐器插件参数：占位 event 只保证排序/去重键完整；dispatch 按
+        // `plugin_param` 分支走 `PluginEvent::ParamValue`（值保持归一化）。
+        ParamDevice::PluginInstrument {
+            channel: plugin_channel,
+        } => {
+            out.push(SortedCC {
+                tick,
+                // 排序键用 MIDI 通道（占位 event 无 xsynth 语义，只求稳定顺序）。
+                channel: u32::from(*plugin_channel),
+                track,
+                lane,
+                event: AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(0, 0))),
+                plugin_param: Some(PluginParamEvent {
+                    channel: *plugin_channel,
+                    param_id: *id,
+                    value: value.clamp(0.0, 1.0),
+                }),
+            });
+        }
+        // 内置设备参数（XSynth）：按 MIDI 绑定还原为对应的原始整数事件。
+        // 回放时 dispatch 统一"广播给 insert 链上订阅的效果器 + 走常规
+        // 路径透传乐器插件"（CC 广播方案）。
+        ParamDevice::ChannelInstrument {
+            channel: device_channel,
+        } => {
+            let Some(info) = builtin_param(device, *id) else {
+                return; // 表外 id：无 MIDI 绑定，不产生事件。
+            };
+            emit_midi_binding(
+                info.midi,
+                value,
+                tick,
+                u32::from(*device_channel),
+                track,
+                lane,
+                out,
+            );
+        }
+    }
+}
+
+/// `AutomationTarget::CC / Rpn / Nrpn`（MIDI 原生通路）事件。
+fn emit_midi_event(
+    target: &AutomationTarget,
+    value: f32,
+    tick: u32,
+    channel: u32,
+    track: u16,
+    lane: u16,
+    out: &mut Vec<SortedCC>,
+) {
+    match target {
         AutomationTarget::CC { controller } => {
             push_control(
                 out,
@@ -545,9 +595,7 @@ pub(crate) fn emit_automation_event(
                 },
             );
         }
-        // Tempo 走 `conductor.tempo` 而非 `track.automation_lanes`，
-        // 由 `build_tempo_map` 消费，不进入 CC 事件流。
-        AutomationTarget::Tempo => {}
+        _ => {}
     }
 }
 
@@ -651,39 +699,14 @@ fn emit_midi_binding(
     }
 }
 
-/// 计算片段的有效淡入/淡出时长（秒）：合并自身参数与同轨重叠片段的自动交叉淡化。
+/// 预计算一条音轨全部片段的有效淡入/淡出（秒），索引与 `audio_clips` 对齐。
 ///
-/// 自动交叉淡化规则（同轨两两重叠）：
-/// - 另一片段在本片段内部结束（`o.end < c.end`）→ 本片段从自身起点淡入到 `o.end`；
-/// - 另一片段在本片段内部开始（`o.start > c.start`）→ 本片段从 `o.start` 淡出到自身终点。
-///
-/// 同起点重叠不交叉（并排叠加）。结果不超过片段时长。
-pub fn effective_fades(clips: &[yinhe_core::AudioClip], index: usize) -> (f64, f64) {
-    let Some(c) = clips.get(index) else {
-        return (0.0, 0.0);
-    };
-    let mut fade_in = c.fade_in_seconds.max(0.0);
-    let mut fade_out = c.fade_out_seconds.max(0.0);
-    for (j, o) in clips.iter().enumerate() {
-        if j == index {
-            continue;
-        }
-        let overlap_start = c.start_seconds.max(o.start_seconds);
-        let overlap_end = c.end_seconds().min(o.end_seconds());
-        if overlap_end <= overlap_start {
-            continue;
-        }
-        if o.start_seconds > c.start_seconds {
-            fade_out = fade_out.max(c.end_seconds() - overlap_start);
-        }
-        if o.end_seconds() < c.end_seconds() {
-            fade_in = fade_in.max(overlap_end - c.start_seconds);
-        }
-    }
-    (
-        fade_in.min(c.duration_seconds.max(0.0)),
-        fade_out.min(c.duration_seconds.max(0.0)),
-    )
+/// 纯离线/模型准备阶段使用：播放线程改为按索引 O(1) 查 `AudioModel.clip_fades`，
+/// 不再对每个片段做整轨线性扫描（旧实现为每块 O(n²)）。
+pub(crate) fn effective_fades_all(clips: &[yinhe_core::AudioClip]) -> Vec<(f64, f64)> {
+    (0..clips.len())
+        .map(|i| yinhe_core::effective_fades(clips, i))
+        .collect()
 }
 
 #[cfg(test)]
@@ -915,8 +938,10 @@ mod tests {
         );
     }
 
+    /// 回归对照：`effective_fades_all`（预计算，进 AudioModel 快照）必须与
+    /// 旧逐 index 调用的结果逐位一致——含空/单片段、重叠方向、包含、同起点叠加。
     #[test]
-    fn crossfade_overlap_computes_effective_fades() {
+    fn fade_precompute_matches_per_index() {
         let clip = |id, start, dur, fade_in, fade_out| yinhe_core::AudioClip {
             id,
             source: "s".into(),
@@ -928,22 +953,110 @@ mod tests {
             fade_out_seconds: fade_out,
             reversed: false,
         };
-        // A [0,4) 与 B [3,5) 重叠 [3,4)：A 在重叠区淡出 1s，B 从 3s 处淡入到 4s（1s）。
-        let clips = vec![clip(1, 0.0, 4.0, 0.0, 0.0), clip(2, 3.0, 2.0, 0.0, 0.0)];
-        assert_eq!(effective_fades(&clips, 0), (0.0, 1.0));
-        assert_eq!(effective_fades(&clips, 1), (1.0, 0.0));
-        // 自身淡入淡出更大时保留自身。
-        let clips = vec![clip(1, 0.0, 4.0, 2.0, 2.0)];
-        assert_eq!(effective_fades(&clips, 0), (2.0, 2.0));
-        // 不重叠：保持自身（0）。
-        let clips = vec![clip(1, 0.0, 2.0, 0.0, 0.0), clip(2, 3.0, 2.0, 0.0, 0.0)];
-        assert_eq!(effective_fades(&clips, 0), (0.0, 0.0));
-        assert_eq!(effective_fades(&clips, 1), (0.0, 0.0));
-        // 完全包含：外片段获得淡入（到内片段尾）+ 淡出（从内片段头到自身尾）。
-        let clips = vec![clip(1, 0.0, 10.0, 0.0, 0.0), clip(2, 3.0, 2.0, 0.0, 0.0)];
-        let (fi, fo) = effective_fades(&clips, 0);
-        assert!((fi - 5.0).abs() < 1e-9, "fi={fi}");
-        assert!((fo - 7.0).abs() < 1e-9, "fo={fo}");
+        let cases: Vec<Vec<yinhe_core::AudioClip>> = vec![
+            vec![],
+            vec![clip(1, 0.0, 4.0, 2.0, 2.0)],
+            vec![clip(1, 0.0, 4.0, 0.0, 0.0), clip(2, 3.0, 2.0, 0.0, 0.0)],
+            vec![clip(1, 0.0, 10.0, 0.0, 0.0), clip(2, 3.0, 2.0, 0.0, 0.0)],
+            vec![
+                clip(1, 0.0, 4.0, 0.0, 0.0),
+                clip(2, 3.0, 2.0, 0.0, 0.0),
+                clip(3, 3.0, 3.0, 0.5, 0.0),
+                clip(4, 5.0, 2.0, 0.0, 1.5),
+            ],
+            vec![clip(1, 0.0, 2.0, 0.0, 0.0), clip(2, 3.0, 2.0, 0.0, 0.0)],
+        ];
+        for clips in &cases {
+            let all = effective_fades_all(clips);
+            assert_eq!(all.len(), clips.len());
+            for (i, fade) in all.iter().enumerate() {
+                assert_eq!(
+                    *fade,
+                    yinhe_core::effective_fades(clips, i),
+                    "片段 {i} 的预计算结果应与逐次计算一致"
+                );
+            }
+        }
+    }
+
+    /// `sample_to_tick`：空 tempo map / sample 0 / 精确边界。
+    #[test]
+    fn sample_to_tick_zero_and_exact_boundaries() {
+        assert_eq!(sample_to_tick(0, &[], 480, 48_000.0), 0);
+        // 120 BPM + 60 BPM 两段：48000 sample 前 50 sample/tick，之后 100 sample/tick。
+        let segments = vec![
+            yinhe_core::TempoSegment {
+                start_tick: 0,
+                start_time: 0.0,
+                micros_per_quarter: 500_000,
+            },
+            yinhe_core::TempoSegment {
+                start_tick: 960,
+                start_time: 1.0,
+                micros_per_quarter: 1_000_000,
+            },
+        ];
+        assert_eq!(sample_to_tick(0, &segments, 480, 48_000.0), 0);
+        assert_eq!(sample_to_tick(49, &segments, 480, 48_000.0), 0);
+        assert_eq!(sample_to_tick(50, &segments, 480, 48_000.0), 1);
+        // tempo 段边界：tick 960 == sample 48000，两侧各差 1 sample。
+        assert_eq!(sample_to_tick(47_999, &segments, 480, 48_000.0), 959);
+        assert_eq!(sample_to_tick(48_000, &segments, 480, 48_000.0), 960);
+        assert_eq!(sample_to_tick(48_001, &segments, 480, 48_000.0), 960);
+    }
+
+    /// `sample_to_tick` 单调不降：跨变速段密集采样。
+    #[test]
+    fn sample_to_tick_monotonic_across_tempo_change() {
+        let segments = vec![
+            yinhe_core::TempoSegment {
+                start_tick: 0,
+                start_time: 0.0,
+                micros_per_quarter: 500_000,
+            },
+            yinhe_core::TempoSegment {
+                start_tick: 960,
+                start_time: 1.0,
+                micros_per_quarter: 250_000,
+            },
+        ];
+        let mut prev = 0u32;
+        for sample in (0..240_000u64).step_by(37) {
+            let t = sample_to_tick(sample, &segments, 480, 48_000.0);
+            assert!(
+                t >= prev,
+                "sample {sample}: t={t} < prev={prev}（必须单调不降）"
+            );
+            prev = t;
+        }
+    }
+
+    /// 极值：
+    /// - ppq/mpq 退化（0）时立即返回段起点（旧实现会 ~2^32 次空转）；
+    /// - sample 超出 u32 tick 域时饱和，不经 i64→u32 截断返回任意值。
+    #[test]
+    fn sample_to_tick_extremes_saturate() {
+        let degenerate = vec![yinhe_core::TempoSegment {
+            start_tick: 123,
+            start_time: 0.0,
+            micros_per_quarter: 0,
+        }];
+        assert_eq!(sample_to_tick(0, &degenerate, 480, 48_000.0), 123);
+        assert_eq!(sample_to_tick(u64::MAX, &degenerate, 480, 48_000.0), 123);
+        assert_eq!(sample_to_tick(1_000_000, &degenerate, 0, 48_000.0), 123);
+
+        let segments = vec![yinhe_core::TempoSegment {
+            start_tick: 0,
+            start_time: 0.0,
+            micros_per_quarter: 500_000,
+        }];
+        let tick_ceiling_sample = tick_to_sample(u32::MAX, &segments, 480, 48_000.0);
+        // 超出 tick 域的 sample 与 tick 上限处的查询同值（饱和到 u32::MAX 附近），
+        // 而不是旧实现的 i64→u32 截断垃圾值。
+        assert_eq!(
+            sample_to_tick(u64::MAX, &segments, 480, 48_000.0),
+            sample_to_tick(tick_ceiling_sample, &segments, 480, 48_000.0),
+        );
     }
 
     /// 回归测试：同 tick 上 RPN 0 (PBS) 必须排在 PitchBend 之前。

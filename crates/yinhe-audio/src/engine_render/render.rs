@@ -263,6 +263,11 @@ impl AudioEngine {
         let Some(model) = self.yin_model.clone() else {
             return;
         };
+        // `AudioModel` 与 `yin_model` 由同一次模型快照原子替换，clip_fades 索引对齐；
+        // 取不到（未加载模型）时与 yin_model 缺失同义，直接跳过音频轨。
+        let Some(audio_model) = self.model.as_ref() else {
+            return;
+        };
         for &ach in self.channel_layout.audio_channels() {
             let dense = self.channel_layout.audio_dense_for(ach) as usize;
             if let Some(cb) = self.mixer.channel_buffers_mut(dense) {
@@ -303,8 +308,14 @@ impl AudioEngine {
                 if to <= from {
                     continue;
                 }
-                let (fade_in, fade_out) =
-                    crate::audio_model::effective_fades(&track.audio_clips, ci);
+                // 预计算的 (淡入, 淡出)：索引与 audio_clips 对齐，O(1) 无扫描。
+                let Some(&(fade_in, fade_out)) = audio_model
+                    .clip_fades
+                    .get(track_idx)
+                    .and_then(|f| f.get(ci))
+                else {
+                    continue;
+                };
                 let Some(cb) = self.mixer.channel_buffers_mut(dense) else {
                     continue;
                 };
