@@ -140,6 +140,9 @@ impl CullRebuild {
 /// 启动后台全量重建。构建在独立线程执行（`build_all_notes` 内部 rayon 并行），
 /// 完成后通过 channel 送回 UI 线程分帧上传。构建线程持有 `model` 的 Arc，
 /// 期间模型被替换/关闭时旧数据仍安全（revision 变化会让 pending 被丢弃）。
+///
+/// 返回 `None` 表示线程 spawn 失败（栈内存不足等）：调用方降级为同步全量，
+/// 绝不 panic。
 pub(crate) fn start_rebuild(
     model: Arc<YinModel>,
     hidden_notes: HashSet<(u16, u32, u8)>,
@@ -148,7 +151,7 @@ pub(crate) fn start_rebuild(
     revision: u64,
     hidden_hash: u64,
     tv_hash: u64,
-) -> CullRebuild {
+) -> Option<CullRebuild> {
     let (tx, rx) = mpsc::channel();
     std::thread::Builder::new()
         .name("yinhe-cull-rebuild".into())
@@ -164,13 +167,13 @@ pub(crate) fn start_rebuild(
                 summaries,
             });
         })
-        .expect("failed to spawn cull rebuild thread");
-    CullRebuild::Building {
+        .ok()?;
+    Some(CullRebuild::Building {
         rx,
         revision,
         hidden_hash,
         tv_hash,
-    }
+    })
 }
 
 /// 重建状态机的推进结果。
@@ -280,6 +283,10 @@ pub struct GpuUploadState<'a> {
     pub note_revisions: &'a [u64; KEY_COUNT],
     pub track_visible: &'a [bool],
     pub hidden_notes: &'a HashSet<(u16, u32, u8)>,
+    /// 调用方预先算好的 `track_visible` hash（mask 同步与 note_key 共用）。
+    pub tv_hash: u64,
+    /// 调用方预先算好的 `hidden_notes` hash（增量判定与 note_key 共用）。
+    pub hidden_hash: u64,
     /// 跨帧缓存：上次完整上传的 note_key.value()。变化时触发上传。
     pub last_cull_revision: &'a mut u64,
     /// 跨帧缓存：上次 revision（用于增量检测）。
@@ -295,6 +302,207 @@ pub struct GpuUploadState<'a> {
     pub rebuild: &'a mut Option<CullRebuild>,
 }
 
+/// 一帧上传判定所需的不可变上下文。
+struct FrameCtx<'a> {
+    midi: Option<&'a dyn NoteSource>,
+    midi_arc: Option<&'a Arc<YinModel>>,
+    revision: u64,
+    note_revisions: &'a [u64; KEY_COUNT],
+    track_visible: &'a [bool],
+    hidden_notes: &'a HashSet<(u16, u32, u8)>,
+    tv_hash: u64,
+    hidden_hash: u64,
+}
+
+/// 跨帧上传追踪：统一收尾时写入的 4 个缓存字段。
+struct UploadTracking<'a> {
+    last_cull_revision: &'a mut u64,
+    last_cull_revision_only: &'a mut u64,
+    last_hidden_hash: &'a mut u64,
+    last_hidden_keys: &'a mut HiddenKeyMask,
+}
+
+impl UploadTracking<'_> {
+    /// 记录「当前 revision/hidden 已完整上传到 GPU」。
+    fn mark_uploaded(
+        &mut self,
+        note_key_value: u64,
+        revision: u64,
+        hidden_hash: u64,
+        hidden_notes: &HashSet<(u16, u32, u8)>,
+    ) {
+        *self.last_cull_revision = note_key_value;
+        *self.last_cull_revision_only = revision;
+        *self.last_hidden_hash = hidden_hash;
+        *self.last_hidden_keys = hidden_key_mask(hidden_notes);
+    }
+}
+
+/// 本帧应走的上传路径（纯逻辑判定，无 GPU）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UploadPath {
+    /// cull 未 ready（初次启用/MIDI 刚加载）：强制同步全量。
+    FirstFull,
+    /// 仅 hidden_notes 变化：按受影响 key 增量重建。
+    HiddenIncremental,
+    /// revision 变化：按 dirty key 增量上传。
+    RevisionIncremental,
+    /// 仅 track_visible 变化：后台重建 + 分帧上传。
+    TrackRebuild,
+}
+
+/// 数据变化判定（纯函数，便于无 GPU 测试）。
+fn decide_upload_path(
+    cull_was_ready: bool,
+    revision: u64,
+    hidden_hash: u64,
+    last_revision_only: u64,
+    last_hidden_hash: u64,
+) -> UploadPath {
+    if !cull_was_ready {
+        UploadPath::FirstFull
+    } else if hidden_hash != last_hidden_hash && revision == last_revision_only {
+        UploadPath::HiddenIncremental
+    } else if revision != last_revision_only {
+        UploadPath::RevisionIncremental
+    } else {
+        UploadPath::TrackRebuild
+    }
+}
+
+/// 本帧是否可跳过上传（纯函数）。cull 未 ready 时即使 note_key 命中初始
+/// 值也绝不早退：`hash_bools([true]) == 1` 时单轨首帧
+/// `note_key = revision(1) ^ 1 ^ 0 = 0`，0 == 0 碰撞会把「强制失效」
+/// 抵消掉，导致首帧跳过全量上传而空屏。
+fn can_skip_upload(cull_was_ready: bool, note_key_value: u64, last_cull_revision: u64) -> bool {
+    cull_was_ready && note_key_value == last_cull_revision
+}
+
+/// Track 显隐 mask 同步：任何变化立即上传（~8KB 写入，让 cull shader
+/// 立刻过滤隐藏轨道的音符）。mask 始终等于当前 track_visible，与
+/// buffer 数据的「构建时 track_visible 过滤」双重过滤无害。
+fn sync_track_mask(
+    pianoroll: &mut InstanceRenderer,
+    track_visible: &[bool],
+    tv_hash: u64,
+    last_tv_hash: &mut u64,
+) {
+    if tv_hash != *last_tv_hash {
+        pianoroll.upload_track_mask(track_visible);
+        *last_tv_hash = tv_hash;
+    }
+}
+
+/// 同步全量构建 + 上传（所有兜底路径的统一入口）。
+fn full_upload(
+    pianoroll: &mut InstanceRenderer,
+    midi_src: &dyn NoteSource,
+    hidden_notes: &HashSet<(u16, u32, u8)>,
+    track_visible: &[bool],
+    note_revisions: &[u64; KEY_COUNT],
+) {
+    let (all_notes, offsets) = yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
+    upload_all_with_summaries(pianoroll, &all_notes, &offsets, note_revisions);
+}
+
+/// 对给定 key 逐个构建 + 增量上传（音符 + 摘要）。
+/// 返回 false 表示需回退全量（任一 key 或摘要层缺失）。
+fn upload_dirty_keys(
+    pianoroll: &mut InstanceRenderer,
+    midi_src: &dyn NoteSource,
+    hidden_notes: &HashSet<(u16, u32, u8)>,
+    track_visible: &[bool],
+    note_revisions: &[u64; KEY_COUNT],
+    keys: impl Iterator<Item = u8>,
+) -> bool {
+    for key in keys {
+        let key_notes = yinhe_wgpu::build_key_notes(midi_src, key, hidden_notes, track_visible);
+        if !upload_key_with_summaries(pianoroll, key, &key_notes, note_revisions[key as usize]) {
+            return false;
+        }
+    }
+    true
+}
+
+/// `drive_rebuild` 对调用方的信号。
+enum RebuildStep {
+    /// 无 pending 或已丢弃/完成，继续正常路径。
+    Continue,
+    /// 本帧已处理完毕（重建推进中或已收尾），调用方直接返回。
+    Finished,
+}
+
+/// 推进（或丢弃）进行中的后台重建。`Finished` 表示本帧已处理完毕。
+fn drive_rebuild(
+    pianoroll: &mut InstanceRenderer,
+    rebuild: &mut Option<CullRebuild>,
+    ctx: &FrameCtx<'_>,
+    note_key_value: u64,
+    tracking: &mut UploadTracking<'_>,
+) -> RebuildStep {
+    // track_visible 变化也必须丢弃：旧重建的数据基于旧 tv，继续上传
+    // 会把 GPU 上「上次完整上传」的数据从 key 0 开始逐 key 覆盖成错误
+    // 内容（表现为从下向上隐去），且完成后 note_key 可能仍等于
+    // last_cull_revision 导致永不恢复。
+    let Some(rb) = rebuild.as_mut() else {
+        return RebuildStep::Continue;
+    };
+    let stale = ctx.revision != rb.revision()
+        || ctx.hidden_hash != rb.hidden_hash()
+        || ctx.tv_hash != rb.tv_hash();
+    if stale {
+        // 丢弃 pending（后台线程 send 失败自动退出），并强制失效
+        // last_cull_revision：GPU 数据可能已被旧重建部分污染，必须让
+        // 本帧落入正常路径重新评估（启动基于当前 tv 的重建）。
+        *rebuild = None;
+        *tracking.last_cull_revision = 0;
+        return RebuildStep::Continue;
+    }
+    match advance_rebuild(rb, pianoroll) {
+        Advance::InProgress => RebuildStep::Finished, // 还在重建，本帧不做其他上传
+        Advance::Done(done_tv) => {
+            *rebuild = None;
+            if ctx.tv_hash == done_tv {
+                // 重建期间 track_visible 未再变化：收尾。
+                tracking.mark_uploaded(
+                    note_key_value,
+                    ctx.revision,
+                    ctx.hidden_hash,
+                    ctx.hidden_notes,
+                );
+                return RebuildStep::Finished;
+            }
+            // 重建数据基于旧 tv（期间切过轨）：GPU 已被旧 tv 数据
+            // 替换，强制本帧重新评估（用新 tv 重启重建）。
+            *tracking.last_cull_revision = 0;
+            RebuildStep::Continue
+        }
+        Advance::Failed => {
+            *rebuild = None;
+            // 数据不完整：直接同步全量兜底（只清 last_cull_revision
+            // 会再次落入 tv 变化分支启动重建，失败时形成无限重启）。
+            if let Some(midi_src) = ctx.midi {
+                full_upload(
+                    pianoroll,
+                    midi_src,
+                    ctx.hidden_notes,
+                    ctx.track_visible,
+                    ctx.note_revisions,
+                );
+                tracking.mark_uploaded(
+                    note_key_value,
+                    ctx.revision,
+                    ctx.hidden_hash,
+                    ctx.hidden_notes,
+                );
+            } else {
+                *tracking.last_cull_revision = 0;
+            }
+            RebuildStep::Finished
+        }
+    }
+}
+
 /// 执行 GPU cull buffer 上传（仅 `use_gpu_cull = true` 时调用）。
 pub fn upload(state: GpuUploadState) {
     let GpuUploadState {
@@ -305,6 +513,8 @@ pub fn upload(state: GpuUploadState) {
         note_revisions,
         track_visible,
         hidden_notes,
+        tv_hash,
+        hidden_hash,
         last_cull_revision,
         last_cull_revision_only,
         last_hidden_hash,
@@ -313,177 +523,133 @@ pub fn upload(state: GpuUploadState) {
         rebuild,
     } = state;
 
-    let tv_hash = yinhe_wgpu::hash_bools(track_visible);
-    let hidden_hash = yinhe_wgpu::hash_hidden(hidden_notes);
-    let note_key = yinhe_wgpu::NoteBufferKey::new(revision, track_visible, hidden_notes);
+    let note_key_value =
+        yinhe_wgpu::NoteBufferKey::from_hashes(revision, tv_hash, hidden_hash).value();
+    let ctx = FrameCtx {
+        midi,
+        midi_arc,
+        revision,
+        note_revisions,
+        track_visible,
+        hidden_notes,
+        tv_hash,
+        hidden_hash,
+    };
+    let mut tracking = UploadTracking {
+        last_cull_revision,
+        last_cull_revision_only,
+        last_hidden_hash,
+        last_hidden_keys,
+    };
 
-    // 1. Track 显隐 mask 同步：任何变化立即上传（~8KB 写入，让 cull shader
-    //    立刻过滤隐藏轨道的音符）。mask 始终等于当前 track_visible，与
-    //    buffer 数据的「构建时 track_visible 过滤」双重过滤无害。
-    if tv_hash != *last_tv_hash {
-        pianoroll.upload_track_mask(track_visible);
-        *last_tv_hash = tv_hash;
-    }
+    // 1. Track 显隐 mask 同步：任何变化立即上传。
+    sync_track_mask(pianoroll, track_visible, tv_hash, last_tv_hash);
 
     // 2. 推进（或丢弃）进行中的后台重建。
-    if let Some(rb) = rebuild.as_mut() {
-        // track_visible 变化也必须丢弃：旧重建的数据基于旧 tv，继续上传
-        // 会把 GPU 上「上次完整上传」的数据从 key 0 开始逐 key 覆盖成错误
-        // 内容（表现为从下向上隐去），且完成后 note_key 可能仍等于
-        // last_cull_revision 导致永不恢复。
-        let stale =
-            revision != rb.revision() || hidden_hash != rb.hidden_hash() || tv_hash != rb.tv_hash();
-        if stale {
-            // 丢弃 pending（后台线程 send 失败自动退出），并强制失效
-            // last_cull_revision：GPU 数据可能已被旧重建部分污染，必须让
-            // 本帧落入下方正常路径重新评估（启动基于当前 tv 的重建）。
-            *rebuild = None;
-            *last_cull_revision = 0;
-        } else {
-            match advance_rebuild(rb, pianoroll) {
-                Advance::InProgress => return, // 还在重建，本帧不做其他上传
-                Advance::Done(done_tv) => {
-                    *rebuild = None;
-                    if tv_hash == done_tv {
-                        // 重建期间 track_visible 未再变化：收尾。
-                        *last_cull_revision = note_key.value();
-                        *last_cull_revision_only = revision;
-                        *last_hidden_hash = hidden_hash;
-                        *last_hidden_keys = hidden_key_mask(hidden_notes);
-                        return;
-                    }
-                    // 重建数据基于旧 tv（期间切过轨）：GPU 已被旧 tv 数据
-                    // 替换，强制本帧重新评估（用新 tv 重启重建）。
-                    *last_cull_revision = 0;
-                }
-                Advance::Failed => {
-                    *rebuild = None;
-                    // 数据不完整：直接同步全量兜底（只清 last_cull_revision
-                    // 会再次落入 tv 变化分支启动重建，失败时形成无限重启）。
-                    if let Some(midi_src) = midi {
-                        let (all_notes, offsets) =
-                            yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
-                        upload_all_with_summaries(pianoroll, &all_notes, &offsets, note_revisions);
-                        *last_cull_revision = note_key.value();
-                        *last_cull_revision_only = revision;
-                        *last_hidden_hash = hidden_hash;
-                        *last_hidden_keys = hidden_key_mask(hidden_notes);
-                    } else {
-                        *last_cull_revision = 0;
-                    }
-                    return;
-                }
-            }
-        }
+    if matches!(
+        drive_rebuild(pianoroll, rebuild, &ctx, note_key_value, &mut tracking),
+        RebuildStep::Finished
+    ) {
+        return;
     }
 
     // If cull isn't ready yet (e.g. just enabled, or MIDI just loaded),
     // force a full upload by invalidating the last revision.
     let cull_was_ready = pianoroll.cull_ready();
     if !cull_was_ready {
-        *last_cull_revision = 0;
+        *tracking.last_cull_revision = 0;
     }
-    // cull 未 ready 时即使 note_key == 0（初始 last_cull_revision）也绝不早退：
-    // hash_bools([true]) == 1 时单轨首帧 note_key = revision(1) ^ 1 ^ 0 = 0，
-    // 0 == 0 碰撞会把「强制失效」抵消掉，导致首帧跳过全量上传而空屏。
-    if cull_was_ready && note_key.value() == *last_cull_revision {
+    if can_skip_upload(cull_was_ready, note_key_value, *tracking.last_cull_revision) {
         return;
     }
 
-    let Some(midi_src) = midi else {
-        *last_cull_revision = note_key.value();
-        *last_cull_revision_only = revision;
-        *last_hidden_hash = hidden_hash;
-        *last_hidden_keys = hidden_key_mask(hidden_notes);
+    let Some(midi_src) = ctx.midi else {
+        tracking.mark_uploaded(note_key_value, revision, hidden_hash, hidden_notes);
         return;
     };
 
-    if !cull_was_ready {
+    match decide_upload_path(
+        cull_was_ready,
+        revision,
+        hidden_hash,
+        *tracking.last_cull_revision_only,
+        *tracking.last_hidden_hash,
+    ) {
         // First-time upload or MIDI just loaded: force full upload.
-        let (all_notes, offsets) =
-            yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
-        upload_all_with_summaries(pianoroll, &all_notes, &offsets, note_revisions);
-    } else {
-        let revision_changed = revision != *last_cull_revision_only;
-        let hidden_changed = hidden_hash != *last_hidden_hash;
-
-        if hidden_changed && !revision_changed {
-            // Only hidden_notes changed → rebuild only the affected keys.
+        UploadPath::FirstFull => {
+            full_upload(
+                pianoroll,
+                midi_src,
+                hidden_notes,
+                track_visible,
+                note_revisions,
+            );
+        }
+        UploadPath::HiddenIncremental => {
             // 受影响 key = 当前 hidden ∪ 上次 hidden 的 key 并集：并集外的
             // key 在两种 hidden 下的过滤输出逐字节相同，无需重建。
             // （拖拽按下/取消时 hidden 变化但 revision 不动，旧实现会同步
             // 全量重建——亿级音符下数百 ms 冻结；这里降到 O(受影响 key)。）
-            let cur_mask = hidden_key_mask(hidden_notes);
-            let affected = mask_union(&cur_mask, last_hidden_keys);
-            let mut all_ok = true;
-            for key in 0u8..=yinhe_types::MAX_KEY {
-                if !mask_contains(&affected, key) {
-                    continue;
-                }
-                let key_notes =
-                    yinhe_wgpu::build_key_notes(midi_src, key, hidden_notes, track_visible);
-                if !upload_key_with_summaries(
-                    pianoroll,
-                    key,
-                    &key_notes,
-                    note_revisions[key as usize],
-                ) {
-                    all_ok = false;
-                    break;
-                }
-            }
-
-            if !all_ok {
+            let affected = mask_union(&hidden_key_mask(hidden_notes), tracking.last_hidden_keys);
+            let keys = (0u8..=yinhe_types::MAX_KEY).filter(|&k| mask_contains(&affected, k));
+            if !upload_dirty_keys(
+                pianoroll,
+                midi_src,
+                hidden_notes,
+                track_visible,
+                note_revisions,
+                keys,
+            ) {
                 // Fallback: full upload (some key's buffer was never created).
-                let (all_notes, offsets) =
-                    yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
-                upload_all_with_summaries(pianoroll, &all_notes, &offsets, note_revisions);
+                full_upload(
+                    pianoroll,
+                    midi_src,
+                    hidden_notes,
+                    track_visible,
+                    note_revisions,
+                );
             }
-        } else if revision_changed {
-            // Revision changed → try incremental per-key upload
+        }
+        UploadPath::RevisionIncremental => {
             let uploaded = pianoroll.uploaded_key_revisions();
-            let dirty_keys: Vec<u8> = (0u8..128)
+            let dirty_keys: Vec<u8> = (0u8..KEY_COUNT as u8)
                 .filter(|&k| note_revisions[k as usize] != uploaded[k as usize])
                 .collect();
-
-            if !dirty_keys.is_empty() {
-                // Try incremental: build + upload each dirty key
-                let mut all_ok = true;
-                for &key in &dirty_keys {
-                    let key_notes =
-                        yinhe_wgpu::build_key_notes(midi_src, key, hidden_notes, track_visible);
-                    if !upload_key_with_summaries(
-                        pianoroll,
-                        key,
-                        &key_notes,
-                        note_revisions[key as usize],
-                    ) {
-                        all_ok = false;
-                        break;
-                    }
-                }
-
-                if !all_ok {
-                    // Fallback: full upload (some key's count changed)
-                    let (all_notes, offsets) =
-                        yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
-                    upload_all_with_summaries(pianoroll, &all_notes, &offsets, note_revisions);
-                }
+            // dirty_keys 为空：revision bumped 但无 key revision 变化
+            // （如仅 conductor 编辑）→ 只更新 tracking，不重传。
+            if !dirty_keys.is_empty()
+                && !upload_dirty_keys(
+                    pianoroll,
+                    midi_src,
+                    hidden_notes,
+                    track_visible,
+                    note_revisions,
+                    dirty_keys.into_iter(),
+                )
+            {
+                // Fallback: full upload (some key's count changed).
+                full_upload(
+                    pianoroll,
+                    midi_src,
+                    hidden_notes,
+                    track_visible,
+                    note_revisions,
+                );
             }
-            // dirty_keys.is_empty(): revision bumped but no key revisions changed
-            // (e.g. conductor-only edit) → 只更新 tracking，不重传。
-        } else {
-            // Only track_visible changed (note_key differs but revision and
-            // hidden_notes are unchanged) → background full rebuild:
-            // build on a worker thread, upload incrementally over frames.
-            let Some(model) = midi_arc else {
+        }
+        UploadPath::TrackRebuild => {
+            let Some(model) = ctx.midi_arc else {
                 // 无 Arc 句柄（理论上只有 midi 为 None 时）→ 同步全量兜底。
-                let (all_notes, offsets) =
-                    yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
-                upload_all_with_summaries(pianoroll, &all_notes, &offsets, note_revisions);
+                full_upload(
+                    pianoroll,
+                    midi_src,
+                    hidden_notes,
+                    track_visible,
+                    note_revisions,
+                );
                 return;
             };
-            *rebuild = Some(start_rebuild(
+            match start_rebuild(
                 Arc::clone(model),
                 hidden_notes.clone(),
                 track_visible.to_vec(),
@@ -491,16 +657,27 @@ pub fn upload(state: GpuUploadState) {
                 revision,
                 hidden_hash,
                 tv_hash,
-            ));
-            // 不更新 last_cull_revision：pending 完成时更新。
-            return;
+            ) {
+                Some(rb) => {
+                    *rebuild = Some(rb);
+                    // 不更新 last_cull_revision：pending 完成时更新。
+                    return;
+                }
+                // spawn 失败（栈内存不足等）：降级同步全量，不 panic。
+                None => {
+                    full_upload(
+                        pianoroll,
+                        midi_src,
+                        hidden_notes,
+                        track_visible,
+                        note_revisions,
+                    );
+                }
+            }
         }
     }
 
-    *last_cull_revision = note_key.value();
-    *last_cull_revision_only = revision;
-    *last_hidden_hash = hidden_hash;
-    *last_hidden_keys = hidden_key_mask(hidden_notes);
+    tracking.mark_uploaded(note_key_value, revision, hidden_hash, hidden_notes);
 }
 
 /// hidden_notes 集合的 key 位图（bit k = key k 有 hidden 音符）。
@@ -533,6 +710,59 @@ mod tests {
     use super::*;
     use std::sync::atomic::Ordering;
     use yinhe_test_helpers::make_stress_model;
+
+    /// 纯决策：路径选择覆盖全部条件组合（不依赖 GPU adapter）。
+    #[test]
+    fn decide_upload_path_covers_all_transitions() {
+        // cull 未 ready（首帧/MIDI 刚加载）→ 强制全量。
+        assert_eq!(decide_upload_path(false, 5, 7, 5, 7), UploadPath::FirstFull);
+        // 仅 hidden 变化 → hidden 增量。
+        assert_eq!(
+            decide_upload_path(true, 5, 8, 5, 7),
+            UploadPath::HiddenIncremental
+        );
+        // revision 变化 → revision 增量（hidden 同时变化也优先此路径）。
+        assert_eq!(
+            decide_upload_path(true, 6, 7, 5, 7),
+            UploadPath::RevisionIncremental
+        );
+        assert_eq!(
+            decide_upload_path(true, 6, 8, 5, 7),
+            UploadPath::RevisionIncremental
+        );
+        // revision/hidden 都不变（仅 track_visible 变）→ 后台重建。
+        assert_eq!(
+            decide_upload_path(true, 5, 7, 5, 7),
+            UploadPath::TrackRebuild
+        );
+    }
+
+    /// 纯决策：note_key 早退条件（含 cull 未 ready 的 0 碰撞回归）。
+    #[test]
+    fn can_skip_upload_requires_cull_ready() {
+        assert!(can_skip_upload(true, 123, 123));
+        assert!(!can_skip_upload(true, 124, 123));
+        // hash_bools([true]) == 1 时单轨首帧 note_key 可能为 0，与初始
+        // last_cull_revision 碰撞：cull 未 ready 时绝不早退。
+        assert!(!can_skip_upload(false, 0, 0));
+    }
+
+    /// 纯决策：hash 组合入口 `from_hashes` 与按输入现算等价。
+    #[test]
+    fn note_buffer_key_from_hashes_matches_new() {
+        let tv = vec![true, false, true];
+        let hidden: HashSet<(u16, u32, u8)> = [(0, 120, 1), (1, 240, 2)].into_iter().collect();
+        let tv_hash = yinhe_wgpu::hash_bools(&tv);
+        let hidden_hash = yinhe_wgpu::hash_hidden(&hidden);
+        assert_eq!(
+            yinhe_wgpu::NoteBufferKey::from_hashes(42, tv_hash, hidden_hash).value(),
+            42 ^ tv_hash ^ hidden_hash
+        );
+        assert_eq!(
+            yinhe_wgpu::NoteBufferKey::from_hashes(42, tv_hash, hidden_hash).value(),
+            yinhe_wgpu::NoteBufferKey::new(42, &tv, &hidden).value()
+        );
+    }
 
     /// Headless GPU renderer for state-machine integration tests.
     /// Returns None when no adapter is available (e.g. CI without a GPU).
@@ -715,6 +945,8 @@ mod tests {
             note_revisions: &note_revisions,
             track_visible: &tv0,
             hidden_notes: &hidden,
+            tv_hash: yinhe_wgpu::hash_bools(&tv0),
+            hidden_hash: yinhe_wgpu::hash_hidden(&hidden),
             last_cull_revision: &mut last_cull_revision,
             last_cull_revision_only: &mut last_cull_revision_only,
             last_hidden_hash: &mut last_hidden_hash,
@@ -746,6 +978,8 @@ mod tests {
             note_revisions: &note_revisions,
             track_visible: &tv1,
             hidden_notes: &hidden,
+            tv_hash: yinhe_wgpu::hash_bools(&tv1),
+            hidden_hash: yinhe_wgpu::hash_hidden(&hidden),
             last_cull_revision: &mut last_cull_revision,
             last_cull_revision_only: &mut last_cull_revision_only,
             last_hidden_hash: &mut last_hidden_hash,
@@ -778,6 +1012,8 @@ mod tests {
                 note_revisions: &note_revisions,
                 track_visible: &tv1,
                 hidden_notes: &hidden,
+                tv_hash: yinhe_wgpu::hash_bools(&tv1),
+                hidden_hash: yinhe_wgpu::hash_hidden(&hidden),
                 last_cull_revision: &mut last_cull_revision,
                 last_cull_revision_only: &mut last_cull_revision_only,
                 last_hidden_hash: &mut last_hidden_hash,
@@ -809,6 +1045,8 @@ mod tests {
             note_revisions: &note_revisions,
             track_visible: &tv0b,
             hidden_notes: &hidden,
+            tv_hash: yinhe_wgpu::hash_bools(&tv0b),
+            hidden_hash: yinhe_wgpu::hash_hidden(&hidden),
             last_cull_revision: &mut last_cull_revision,
             last_cull_revision_only: &mut last_cull_revision_only,
             last_hidden_hash: &mut last_hidden_hash,
@@ -826,6 +1064,8 @@ mod tests {
                 note_revisions: &note_revisions,
                 track_visible: &tv0b,
                 hidden_notes: &hidden,
+                tv_hash: yinhe_wgpu::hash_bools(&tv0b),
+                hidden_hash: yinhe_wgpu::hash_hidden(&hidden),
                 last_cull_revision: &mut last_cull_revision,
                 last_cull_revision_only: &mut last_cull_revision_only,
                 last_hidden_hash: &mut last_hidden_hash,
@@ -862,6 +1102,8 @@ mod tests {
                 note_revisions: &note_revisions,
                 track_visible: &tv0b,
                 hidden_notes: &hidden,
+                tv_hash: yinhe_wgpu::hash_bools(&tv0b),
+                hidden_hash: yinhe_wgpu::hash_hidden(&hidden),
                 last_cull_revision: &mut last_cull_revision,
                 last_cull_revision_only: &mut last_cull_revision_only,
                 last_hidden_hash: &mut last_hidden_hash,
@@ -901,7 +1143,8 @@ mod tests {
         }
 
         let (sync_notes, sync_offsets) = yinhe_wgpu::build_all_notes(model.as_ref(), &hidden, &tv);
-        let mut rb = start_rebuild(model, hidden, tv, revisions, 42, 7, 9);
+        let mut rb = start_rebuild(model, hidden, tv, revisions, 42, 7, 9)
+            .expect("测试环境 spawn 重建线程不应失败");
         let result = match &mut rb {
             CullRebuild::Building { rx, .. } => match rx.recv() {
                 Ok(r) => r,
@@ -940,7 +1183,8 @@ mod tests {
 
         // 模拟 track_visible 变化 → 启动后台重建（tv_hash = 99）。
         let tv2 = vec![true, true, true, true];
-        let mut rb = start_rebuild(model, hidden, tv2, revisions, 42, 7, 99);
+        let mut rb = start_rebuild(model, hidden, tv2, revisions, 42, 7, 99)
+            .expect("测试环境 spawn 重建线程不应失败");
 
         let mut guard = 0u32;
         let done_tv = loop {
@@ -1019,6 +1263,8 @@ mod tests {
             note_revisions: &note_revisions,
             track_visible: &tv,
             hidden_notes: &empty,
+            tv_hash: yinhe_wgpu::hash_bools(&tv),
+            hidden_hash: yinhe_wgpu::hash_hidden(&empty),
             last_cull_revision: &mut last_cull_revision,
             last_cull_revision_only: &mut last_cull_revision_only,
             last_hidden_hash: &mut last_hidden_hash,
@@ -1051,6 +1297,8 @@ mod tests {
             note_revisions: &note_revisions,
             track_visible: &tv,
             hidden_notes: &hidden,
+            tv_hash: yinhe_wgpu::hash_bools(&tv),
+            hidden_hash: yinhe_wgpu::hash_hidden(&hidden),
             last_cull_revision: &mut last_cull_revision,
             last_cull_revision_only: &mut last_cull_revision_only,
             last_hidden_hash: &mut last_hidden_hash,
@@ -1082,6 +1330,8 @@ mod tests {
             note_revisions: &note_revisions,
             track_visible: &tv,
             hidden_notes: &empty,
+            tv_hash: yinhe_wgpu::hash_bools(&tv),
+            hidden_hash: yinhe_wgpu::hash_hidden(&empty),
             last_cull_revision: &mut last_cull_revision,
             last_cull_revision_only: &mut last_cull_revision_only,
             last_hidden_hash: &mut last_hidden_hash,
@@ -1234,6 +1484,8 @@ mod tests {
                     note_revisions: &note_revisions,
                     track_visible: tv,
                     hidden_notes: &hidden,
+                    tv_hash: yinhe_wgpu::hash_bools(tv),
+                    hidden_hash: yinhe_wgpu::hash_hidden(&hidden),
                     last_cull_revision,
                     last_cull_revision_only,
                     last_hidden_hash,

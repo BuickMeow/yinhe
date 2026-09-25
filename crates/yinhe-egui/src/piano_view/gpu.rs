@@ -62,14 +62,9 @@ pub(crate) fn upload_and_prepare(
 ) -> (bool, yinhe_theme::GpuTheme) {
     // ── AM 力度条 LOD 摘要：编辑/切轨后后台防抖重建 ──
     // 与 GPU cull 无关（AM 面板无论哪条路径都可能走摘要），放在 cull 分支外。
-    {
-        let tv_hash = yinhe_wgpu::hash_bools(track_visible);
-        pianoroll.poll_velocity_summary(
-            midi_arc,
-            track_visible,
-            revision ^ tv_hash.rotate_left(32),
-        );
-    }
+    // track_visible hash 每帧只算一次，AM 摘要与下方 GPU 上传共用。
+    let tv_hash = yinhe_wgpu::hash_bools(track_visible);
+    pianoroll.poll_velocity_summary(midi_arc, track_visible, revision ^ tv_hash.rotate_left(32));
 
     // ── Upload all notes to GPU cull buffer ──
     if use_gpu_cull {
@@ -81,6 +76,8 @@ pub(crate) fn upload_and_prepare(
             note_revisions,
             track_visible,
             hidden_notes,
+            tv_hash,
+            hidden_hash: yinhe_wgpu::hash_hidden(hidden_notes),
             last_cull_revision,
             last_cull_revision_only,
             last_hidden_hash,
@@ -176,7 +173,6 @@ pub(crate) fn upload_and_prepare(
         let (tick_start, tick_end) =
             view.visible_main_range(view.main_axis_len(w as f32, h as f32));
         let (key_lo, key_hi) = view.visible_cross_range(view.cross_axis_len(w as f32, h as f32));
-        let tv_hash = yinhe_wgpu::hash_bools(track_visible);
         let hidden_hash = yinhe_wgpu::hash_hidden(hidden_notes);
         let notes_cache_key = yinhe_wgpu::layer_cache_key(&[
             tick_start.to_bits(),

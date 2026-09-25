@@ -24,8 +24,19 @@ impl NoteBufferKey {
         track_visible: &[bool],
         hidden_notes: &HashSet<(u16, u32, u8)>,
     ) -> Self {
-        let tv_hash = hash_bools(track_visible);
-        let hidden_hash = hash_hidden(hidden_notes);
+        Self::from_hashes(
+            revision,
+            hash_bools(track_visible),
+            hash_hidden(hidden_notes),
+        )
+    }
+
+    /// Compute the cache key from precomputed hashes.
+    ///
+    /// Lets callers that already hashed `track_visible`/`hidden_notes`
+    /// (e.g. for mask sync or another cache key) reuse the values instead
+    /// of hashing the same inputs again.
+    pub fn from_hashes(revision: u64, tv_hash: u64, hidden_hash: u64) -> Self {
         Self(revision ^ tv_hash ^ hidden_hash)
     }
 
