@@ -81,10 +81,14 @@ pub fn append_notes_ordered(bucket: &mut NoteBucket, new_notes: Vec<Note>) {
 /// materialize the whole selection (e.g. writing huge clipboards to disk).
 /// Honors explicit members and the selection's attribute filter.
 pub fn for_each_selected(model: &YinModel, selection: &Selection, mut f: impl FnMut(&Note, u8)) {
-    for &(tick_start, tick_end, key_lo, key_hi, _track_lo, _track_hi) in &selection.rects {
-        for key in key_lo..=key_hi {
-            let k = key as usize;
-            for n in model.notes[k].range(tick_start, tick_end) {
+    // 每 key 合并扫描区间：重叠选框下同一音符只回调一次（否则复制会重复）。
+    for (k, ranges) in selection.merged_tick_ranges_by_key().iter().enumerate() {
+        if ranges.is_empty() {
+            continue;
+        }
+        let key = k as u8;
+        for &(lo, hi) in ranges {
+            for n in model.notes[k].range(lo, hi) {
                 if !selection.accepts_note(n, key) {
                     continue;
                 }
@@ -109,25 +113,27 @@ pub fn update_selected_in_place(
     mut f: impl FnMut(&mut Note, u8),
 ) -> bool {
     let mut any = false;
-    for &(tick_start, tick_end, key_lo, key_hi, track_lo, track_hi) in &selection.rects {
-        for key in key_lo..=key_hi {
-            let k = key as usize;
-            let bucket = Arc::make_mut(&mut model.notes[k]);
-            let touched = bucket.update_matching(
-                |n| {
-                    n.start_tick >= tick_start
-                        && n.start_tick < tick_end
-                        && n.track >= track_lo
-                        && n.track <= track_hi
-                        && selection.accepts_note(n, key)
-                },
-                |n| f(n, key),
-            );
-            if touched {
-                bucket.sort();
-                model.mark_dirty(key);
-                any = true;
-            }
+    // 每 key 合并扫描区间：重叠选框下同一音符只更新一次（否则会被移动两次）。
+    // track/成员/筛选判定由 `accepts_note` 完成（矩形判定含 track）。
+    for (k, ranges) in selection.merged_tick_ranges_by_key().iter().enumerate() {
+        if ranges.is_empty() {
+            continue;
+        }
+        let key = k as u8;
+        let bucket = Arc::make_mut(&mut model.notes[k]);
+        let touched = bucket.update_matching(
+            |n| {
+                ranges
+                    .iter()
+                    .any(|&(lo, hi)| n.start_tick >= lo && n.start_tick < hi)
+                    && selection.accepts_note(n, key)
+            },
+            |n| f(n, key),
+        );
+        if touched {
+            bucket.sort();
+            model.mark_dirty(key);
+            any = true;
         }
     }
     any

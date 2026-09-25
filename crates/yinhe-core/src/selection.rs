@@ -358,6 +358,36 @@ impl Selection {
         })
     }
 
+    /// 按 key 合并各 rect 的 tick 区间（升序、并集），供流式遍历去重。
+    ///
+    /// 按 rect 循环的遍历（`for_each_selected` 等）在**重叠选框**下会把同一
+    /// 音符回调多次（重复复制/重复移动）。遍历前先取每 key 的不重叠扫描区间，
+    /// 命中判定仍由 [`Selection::accepts_note`] 负责（track/成员/筛选精确判定）。
+    pub fn merged_tick_ranges_by_key(&self) -> [Vec<(u32, u32)>; yinhe_types::KEY_COUNT] {
+        let mut by_key: [Vec<(u32, u32)>; yinhe_types::KEY_COUNT] =
+            std::array::from_fn(|_| Vec::new());
+        for &(ts, te, kl, kh, _, _) in &self.rects {
+            for key in kl..=kh {
+                by_key[key as usize].push((ts, te));
+            }
+        }
+        for ranges in &mut by_key {
+            if ranges.len() <= 1 {
+                continue;
+            }
+            ranges.sort_unstable();
+            let mut merged: Vec<(u32, u32)> = Vec::with_capacity(ranges.len());
+            for &(lo, hi) in ranges.iter() {
+                match merged.last_mut() {
+                    Some(last) if lo <= last.1 => last.1 = last.1.max(hi),
+                    _ => merged.push((lo, hi)),
+                }
+            }
+            *ranges = merged;
+        }
+        by_key
+    }
+
     /// Full note acceptance: 成员态查位图，矩形态查矩形；再叠加属性筛选。
     pub fn accepts_note(&self, note: &Note, key: u8) -> bool {
         let hit = match &self.members {
@@ -634,6 +664,20 @@ mod tests {
         );
         assert!(sel.accepts_note(&a, 60), "全选范围内的旧音符不得丢失");
         assert!(sel.accepts_note(&b, 60));
+    }
+
+    /// 重叠 rect 的区间并集：同一 key 的重叠区间合并、独立区间保留。
+    #[test]
+    fn merged_tick_ranges_dedups_overlaps() {
+        let mut sel = Selection::default();
+        sel.add_rect(50, 150, 60, 60);
+        sel.add_rect(100, 200, 60, 60); // 与第一个重叠 → 并成 (50, 200)
+        sel.add_rect(300, 400, 60, 60); // 独立区间
+        sel.add_rect(0, 10, 64, 64);
+        let merged = sel.merged_tick_ranges_by_key();
+        assert_eq!(merged[60], vec![(50, 200), (300, 400)]);
+        assert_eq!(merged[64], vec![(0, 10)]);
+        assert!(merged[0].is_empty(), "未覆盖的 key 无区间");
     }
 
     /// 渲染缓存指纹：矩形/成员/筛选变化都会改变。

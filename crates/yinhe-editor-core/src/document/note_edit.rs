@@ -157,77 +157,7 @@ impl Document {
 
     /// Duplicate all selected notes. Returns an `UndoAction` if any notes were duplicated.
     pub fn duplicate_selected(&mut self) -> Option<UndoAction> {
-        if self.edit.selected.is_empty() {
-            return None;
-        }
-        let allow_overlap = self.edit.allow_overlapping_notes;
-        let after = {
-            let model = Arc::make_mut(&mut self.data.model);
-
-            let selected_data = batch_ops::collect_selected(model, &self.edit.selected);
-            if selected_data.is_empty() {
-                return None;
-            }
-
-            let min_start = selected_data
-                .iter()
-                .map(|(n, _)| n.start_tick)
-                .min()
-                .unwrap();
-            let max_end = selected_data.iter().map(|(n, _)| n.end_tick).max().unwrap();
-            let offset = (max_end - min_start).max(1);
-
-            let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
-                std::collections::HashMap::new();
-            for (note, key) in &selected_data {
-                let new_start = note.start_tick + offset;
-                let new_end = note.end_tick + offset;
-                // 「允许新重叠音符」关闭：副本与操作前已有音符重叠 → 跳过该副本。
-                // 检查在批量插入前进行，批次内部互不影响（含各副本的原音符）。
-                if !allow_overlap
-                    && batch_ops::has_overlapping_note(model, note.track, *key, new_start, new_end)
-                {
-                    continue;
-                }
-                let new_note = yinhe_types::Note {
-                    id: model.alloc_note_id(),
-                    start_tick: new_start,
-                    end_tick: new_end,
-                    velocity: note.velocity,
-                    track: note.track,
-                };
-                new_by_key.entry(*key).or_default().push(new_note);
-            }
-
-            // 全部被跳过：不动选区、不产生 undo。
-            if new_by_key.is_empty() {
-                return None;
-            }
-
-            // Build after vec before moving new_by_key.
-            let after: Vec<(yinhe_types::Note, u8)> = new_by_key
-                .iter()
-                .flat_map(|(key, notes)| notes.iter().map(|n| (*n, *key)))
-                .collect();
-
-            batch_ops::insert_batch(model, new_by_key);
-
-            // Offset selection rects to cover the duplicated notes.
-            self.edit.offset_sel_ticks(offset as i64);
-            // 选区精确跟随副本（新 id），落点处的其他音符不纳入。
-            self.edit
-                .selected
-                .set_members(after.iter().map(|(n, _)| n.id));
-            after
-        };
-        self.data.rebuild_model_dirty();
-        // 复制会改变音符数据但 per-key revision 的变化不足以让 GPU 层缓存
-        // 失效（gpu_upload 先查 data.revision），必须同步 bump 文档 revision。
-        self.data.bump_revision();
-        Some(UndoAction::Notes(NoteDelta {
-            before: vec![],
-            after,
-        }))
+        self.duplicate_impl(0, 0, true)
     }
 
     /// Duplicate selected notes and offset the copies by `(delta_ticks, delta_keys)`.
@@ -239,23 +169,49 @@ impl Document {
         delta_ticks: i64,
         delta_keys: i32,
     ) -> Option<UndoAction> {
+        self.duplicate_impl(delta_ticks, delta_keys, false)
+    }
+
+    /// 复制的公共实现（`duplicate_selected` / `duplicate_selected_to`）。
+    ///
+    /// 流式两遍（不物化 `collect_selected`）：`auto_span` 时先求选区跨度作偏移，
+    /// 再逐音符构建副本批次。1.64 亿全选下省去一份 ~3GB 中间 `Vec`。
+    /// 「允许新重叠音符」关闭时，与操作前已有音符重叠的副本逐个跳过；
+    /// 全部被跳过则不动选区、不产生 undo。
+    fn duplicate_impl(
+        &mut self,
+        delta_ticks: i64,
+        delta_keys: i32,
+        auto_span: bool,
+    ) -> Option<UndoAction> {
         if self.edit.selected.is_empty() {
             return None;
         }
         let allow_overlap = self.edit.allow_overlapping_notes;
         let after = {
-            let model = Arc::make_mut(&mut self.data.model);
+            let model = &self.data.model;
 
-            let selected_data = batch_ops::collect_selected(model, &self.edit.selected);
-            if selected_data.is_empty() {
-                return None;
-            }
+            // 自动偏移（duplicate_selected）：取选区跨度（流式，不物化）。
+            let (delta_ticks, delta_keys) = if auto_span {
+                let mut min_start = u32::MAX;
+                let mut max_end = 0u32;
+                batch_ops::for_each_selected(model, &self.edit.selected, |n, _| {
+                    min_start = min_start.min(n.start_tick);
+                    max_end = max_end.max(n.end_tick);
+                });
+                if min_start == u32::MAX {
+                    return None;
+                }
+                ((((max_end - min_start).max(1)) as i64), 0)
+            } else {
+                (delta_ticks, delta_keys)
+            };
 
             let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
                 std::collections::HashMap::new();
-            for (note, old_key) in &selected_data {
+            batch_ops::for_each_selected(model, &self.edit.selected, |note, old_key| {
                 let new_key =
-                    ((*old_key as i32) + delta_keys).clamp(0, yinhe_types::MAX_KEY as i32) as u8;
+                    ((old_key as i32) + delta_keys).clamp(0, yinhe_types::MAX_KEY as i32) as u8;
                 let new_start = (note.start_tick as i64 + delta_ticks).max(0) as u32;
                 let length = note.end_tick - note.start_tick;
                 // 「允许新重叠音符」关闭：副本与操作前已有音符重叠 → 跳过该副本。
@@ -269,41 +225,50 @@ impl Document {
                         new_start + length,
                     )
                 {
-                    continue;
+                    return;
                 }
-                let new_note = yinhe_types::Note {
-                    id: model.alloc_note_id(),
-                    start_tick: new_start,
-                    end_tick: new_start + length,
-                    velocity: note.velocity,
-                    track: note.track,
-                };
-                new_by_key.entry(new_key).or_default().push(new_note);
-            }
+                // id 延后到插入前统一发号（流式阶段借用 &model，无法 alloc）。
+                new_by_key
+                    .entry(new_key)
+                    .or_default()
+                    .push(yinhe_types::Note {
+                        id: 0,
+                        start_tick: new_start,
+                        end_tick: new_start + length,
+                        velocity: note.velocity,
+                        track: note.track,
+                    });
+            });
 
             // 全部被跳过：不动选区、不产生 undo。
             if new_by_key.is_empty() {
                 return None;
             }
 
-            let after: Vec<(yinhe_types::Note, u8)> = new_by_key
-                .iter()
-                .flat_map(|(key, notes)| notes.iter().map(|n| (*n, *key)))
-                .collect();
-
+            let model = Arc::make_mut(&mut self.data.model);
+            let mut after: Vec<(yinhe_types::Note, u8)> = Vec::new();
+            for (key, notes) in new_by_key.iter_mut() {
+                for n in notes.iter_mut() {
+                    n.id = model.alloc_note_id();
+                    after.push((*n, *key));
+                }
+            }
             batch_ops::insert_batch(model, new_by_key);
 
-            // 选区跟随副本，便于连续 Alt+拖动
-            self.edit.selected.offset(delta_ticks, delta_keys);
-            // 选区精确跟随副本（新 id），落点处的其他音符不纳入。
+            // 选区跟随副本（新 id 精确跟随，落点处的其他音符不纳入）。
+            if auto_span {
+                self.edit.offset_sel_ticks(delta_ticks);
+            } else {
+                self.edit.selected.offset(delta_ticks, delta_keys);
+            }
             self.edit
                 .selected
                 .set_members(after.iter().map(|(n, _)| n.id));
             after
         };
         self.data.rebuild_model_dirty();
-        // Bug 修复：缺少 bump_revision 导致框选 Alt+拖动复制后 GPU 层缓存
-        // 不失效（note_key 不变），画面不更新。与 move_selected_notes 保持一致。
+        // 复制会改变音符数据但 per-key revision 的变化不足以让 GPU 层缓存
+        // 失效（gpu_upload 先查 data.revision），必须同步 bump 文档 revision。
         self.data.bump_revision();
         Some(UndoAction::Notes(NoteDelta {
             before: vec![],
@@ -1674,6 +1639,34 @@ mod tests {
         // 选中它
         doc.edit.selected.add_rect_track(100, 201, 60, 60, 0, 0);
         doc
+    }
+
+    /// 回归：重叠选框下同一音符只移动一次（位移小、移动后仍落在另一 rect
+    /// 内时，曾按 rect 重复命中导致两倍位移）。
+    #[test]
+    fn overlapping_rects_move_applies_once() {
+        let mut doc = make_doc_with_note();
+        // 追加一个与原选区重叠的 rect，两 rect 都覆盖 tick=100 的音符；
+        // 移动 +10 后 110 仍落在 [50,150) 内（重复命中场景）。
+        doc.edit.selected.add_rect_track(50, 150, 60, 60, 0, 0);
+        doc.move_selected_notes(10, 0).expect("移动应产生 undo");
+        let ticks: Vec<u32> = doc.data.model.notes[60]
+            .iter()
+            .map(|n| n.start_tick)
+            .collect();
+        assert_eq!(ticks, vec![110], "只应移动一次（+10），实际 {ticks:?}");
+    }
+
+    /// 回归：重叠选框下复制不产生重复副本。
+    #[test]
+    fn overlapping_rects_duplicate_once() {
+        let mut doc = make_doc_with_note();
+        doc.edit.selected.add_rect_track(50, 150, 60, 60, 0, 0);
+        doc.duplicate_selected().expect("复制应产生 undo");
+        let total: usize = (0..yinhe_types::KEY_COUNT)
+            .map(|k| doc.data.model.notes[k].len())
+            .sum();
+        assert_eq!(total, 2, "原件 + 恰好一份副本");
     }
 
     #[test]
