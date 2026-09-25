@@ -117,6 +117,9 @@ pub(crate) fn upload_and_prepare(
         pianoroll.upload_uniforms(job.uniforms);
         pianoroll.upload_track_colors(&job.track_colors);
         pianoroll.upload_selection(&job.selection);
+        // cull 路径（桌面默认）必须显式上传排除表：此前只在异步路径的
+        // render_thread 里上传，导致桌面高亮一直按空表（矩形近似）判定。
+        pianoroll.upload_selection_exclude(&job.exclude_table);
         pianoroll.ensure_layers(1);
         pianoroll.upload_note_layer(0, 0, |out| {
             for &(start_tick, end_tick, key, track) in ghost_notes {
