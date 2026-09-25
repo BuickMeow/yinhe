@@ -13,6 +13,7 @@
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_core::TrackKind;
+use yinhe_editor_core::document::Document;
 use yinhe_types::automation::{CHANNEL_DSP_PARAMS, XSYNTH_PARAMS};
 use yinhe_types::{AutomationEvent, AutomationTarget};
 
@@ -214,8 +215,56 @@ fn track_context(t: &yinhe_core::TrackData) -> DockContext {
     }
 }
 
-/// 设备链 + 参数区。
+/// dock 单帧快照：收集阶段读出、绘制阶段只读、应用阶段回查的数据。
+struct DockState {
+    context: DockContext,
+    midi_channel: Option<u8>,
+    insert_target: yinhe_audio::InsertTarget,
+    instrument_plugin: Option<String>,
+    inserts: Vec<DockInsert>,
+    lane_track_tis: Vec<usize>,
+    powered_tracks: Vec<usize>,
+    inst_powered: bool,
+    /// 写入位置（编辑光标 tick）。
+    tick: u32,
+    lane_current: Vec<DockParam>,
+    track_names: Vec<String>,
+    midi_active: Vec<u8>,
+    audio_active: Vec<u16>,
+    selected: Option<DockDevice>,
+}
+
+/// 单帧收集到的 dock 动作（绘制后按原顺序统一应用，避开借用冲突）。
+enum DockAction {
+    SetContext(DockContext),
+    SetSelected(Option<DockDevice>),
+    OpenInsertPicker,
+    Knob(KnobAction),
+    OpenParams(DockDevice),
+    OpenInstrumentPicker(u8),
+    ToggleInstrument(bool),
+    ToggleBypass(usize, bool),
+    OpenGui(DockDevice),
+}
+
+/// 设备链 + 参数区（收集 → 绘制 → 应用）。
 fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
+    let Some(state) = collect_dock_state(app, idx) else {
+        ui.centered_and_justified(|ui| {
+            ui.label(
+                egui::RichText::new(t!("dock.select_channel"))
+                    .color(crate::theme::text_muted())
+                    .size(crate::theme::SMALL_FONT),
+            );
+        });
+        return;
+    };
+    let actions = draw_dock(ui, &state, &mut app.dock_param_search);
+    apply_dock_actions(app, idx, &state, actions);
+}
+
+/// 收集阶段：同步选中轨语境，读出设备链/参数/通道选择数据。
+fn collect_dock_state(app: &mut App, idx: usize) -> Option<DockState> {
     // ── 通道选择（Studio One 风格：设备链按通道组织；三类通道独立）──
     let selected_track = {
         let doc = &app.workspace.documents[idx];
@@ -239,16 +288,7 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
             app.dock_selected = None;
         }
     }
-    let Some(context) = app.dock_context else {
-        ui.centered_and_justified(|ui| {
-            ui.label(
-                egui::RichText::new(t!("dock.select_channel"))
-                    .color(crate::theme::text_muted())
-                    .size(crate::theme::SMALL_FONT),
-            );
-        });
-        return;
-    };
+    let context = app.dock_context?;
 
     // ── 收集链数据（后续 UI 不再借 workspace）──
     let model = app.workspace.documents[idx].data.model.clone();
@@ -369,24 +409,47 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
         DockDevice::Instrument => midi_channel.is_some(),
         DockDevice::Insert(slot) => *slot < inserts.len(),
     };
-    let mut selected: Option<DockDevice> = app
+    let selected: Option<DockDevice> = app
         .dock_selected
         .filter(|sel| valid(sel))
         .or(default_device);
-    let mut open_picker = false;
+
+    Some(DockState {
+        context,
+        midi_channel,
+        insert_target,
+        instrument_plugin,
+        inserts,
+        lane_track_tis,
+        powered_tracks,
+        inst_powered,
+        tick,
+        lane_current,
+        track_names,
+        midi_active,
+        audio_active,
+        selected,
+    })
+}
+
+/// 绘制阶段：顶部通道选择 + 设备链卡片，返回本帧动作。
+fn draw_dock(ui: &mut egui::Ui, state: &DockState, search: &mut String) -> Vec<DockAction> {
+    let mut actions: Vec<DockAction> = Vec::new();
+    let mut selected = state.selected;
     let mut knob_actions: Vec<KnobAction> = Vec::new();
     let mut open_params: Option<DockDevice> = None;
     let mut toggle_bypass: Option<(usize, bool)> = None;
     let mut toggle_instrument: Option<bool> = None;
     let mut open_gui: Option<DockDevice> = None;
     let mut open_instrument_picker: Option<u8> = None;
+    let mut open_picker = false;
 
     // ── 顶部：通道选择 + 使用该通道的轨道 ──
     ui.horizontal(|ui| {
         let mut picked: Option<DockContext> = None;
         ui.menu_button(
             crate::widgets::icon_text::text_icon(
-                &context_label(context),
+                &context_label(state.context),
                 egui_material_icons::icons::ICON_ARROW_DROP_DOWN,
                 crate::theme::SMALL_FONT + 1.0,
                 crate::theme::text_primary(),
@@ -395,10 +458,10 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
                 egui::ScrollArea::vertical()
                     .max_height(320.0)
                     .show(ui, |ui| {
-                        for ch in &midi_active {
+                        for ch in &state.midi_active {
                             if ui
                                 .selectable_label(
-                                    context == DockContext::Midi(*ch),
+                                    state.context == DockContext::Midi(*ch),
                                     crate::mix::channel_label(*ch),
                                 )
                                 .clicked()
@@ -407,12 +470,12 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
                                 ui.close();
                             }
                         }
-                        if !audio_active.is_empty() {
+                        if !state.audio_active.is_empty() {
                             ui.separator();
-                            for ach in &audio_active {
+                            for ach in &state.audio_active {
                                 if ui
                                     .selectable_label(
-                                        context == DockContext::Audio(*ach),
+                                        state.context == DockContext::Audio(*ach),
                                         crate::mix::audio_label(*ach),
                                     )
                                     .clicked()
@@ -426,12 +489,11 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
             },
         );
         if let Some(ctx) = picked {
-            app.dock_context = Some(ctx);
-            app.dock_selected = None;
+            actions.push(DockAction::SetContext(ctx));
         }
-        if !track_names.is_empty() {
+        if !state.track_names.is_empty() {
             ui.label(
-                egui::RichText::new(track_names.join(", "))
+                egui::RichText::new(state.track_names.join(", "))
                     .size(crate::theme::SMALL_FONT)
                     .color(crate::theme::text_muted()),
             );
@@ -452,17 +514,17 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
             |ui| {
                 instrument_card(
                     ui,
-                    context,
-                    instrument_plugin.as_deref(),
-                    &lane_current,
-                    &mut app.dock_param_search,
-                    inst_powered,
+                    state.context,
+                    state.instrument_plugin.as_deref(),
+                    &state.lane_current,
+                    search,
+                    state.inst_powered,
                     &mut knob_actions,
                     &mut open_params,
                     &mut toggle_instrument,
                     &mut open_gui,
                     &mut open_instrument_picker,
-                    midi_channel,
+                    state.midi_channel,
                 );
             },
         );
@@ -479,7 +541,7 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
                     .show(ui, |ui| {
                         ui.horizontal_top(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
-                            for (slot, ins) in inserts.iter().enumerate() {
+                            for (slot, ins) in state.inserts.iter().enumerate() {
                                 ui.allocate_ui_with_layout(
                                     egui::vec2(CARD_W, avail.y),
                                     egui::Layout::top_down(egui::Align::LEFT),
@@ -509,87 +571,123 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
         }
     });
 
-    // ── 应用动作 ──
-    app.dock_selected = selected;
+    actions.push(DockAction::SetSelected(selected));
     if open_picker {
-        app.mix.picker_for = Some(insert_target);
+        actions.push(DockAction::OpenInsertPicker);
     }
-    for action in knob_actions {
-        apply_knob_action(app, idx, &lane_track_tis, tick, action);
-    }
+    actions.extend(knob_actions.into_iter().map(DockAction::Knob));
     if let Some(device) = open_params {
-        match open_param_panel(app, idx, device, insert_target, midi_channel) {
-            Some(panel) => app.mix.param_panel = Some(panel),
-            None => {
-                // 实例不可用（未加载成功）：在 MIX 状态行提示，避免"点了没反应"。
-                let msg = t!("dock.plugin_unavailable").to_string();
-                match device {
-                    DockDevice::Instrument => {
-                        if let Some(rack) = app.instrument_racks.get_mut(idx) {
-                            rack.last_error = Some(msg);
-                        }
-                    }
-                    _ => {
-                        let rack = app.mixer_rack_mut(idx);
-                        rack.last_error = Some(msg);
-                    }
-                }
-            }
-        }
+        actions.push(DockAction::OpenParams(device));
     }
     if let Some(ch) = open_instrument_picker {
-        app.mix.instrument_picker_for = Some(ch);
+        actions.push(DockAction::OpenInstrumentPicker(ch));
     }
     if let Some(muted) = toggle_instrument {
-        // 旁通 = 该通道所有轨道 mute（AR 读 track_overrides，自动同步）。
-        let doc = &mut app.workspace.documents[idx];
-        for &ti in &powered_tracks {
-            if let Some(ov) = doc.edit.track_overrides.get_mut(ti) {
-                ov.muted = muted;
-            }
-        }
-        let audio = app.audio_state.handle.as_ref();
-        crate::right_panel::info_panel::send_skip_tracks(doc, audio);
+        actions.push(DockAction::ToggleInstrument(muted));
     }
     if let Some((slot, bypassed)) = toggle_bypass {
-        if let Some(r) =
-            crate::mix::insert_refs(&mut app.workspace.documents[idx].mixer, insert_target)
-                .and_then(|chain| chain.get_mut(slot))
-        {
-            r.bypassed = bypassed;
-        }
-        if let Some(rack) = app.mixer_racks.get_mut(idx) {
-            rack.set_bypass(insert_target, slot, bypassed);
-        }
+        actions.push(DockAction::ToggleBypass(slot, bypassed));
     }
-    match open_gui {
-        Some(DockDevice::Insert(slot)) => {
-            #[cfg(target_os = "macos")]
-            if let Err(e) = app.mixer_rack_mut(idx).toggle_gui(insert_target, slot) {
-                app.mixer_rack_mut(idx).last_error = Some(e.0);
+    if let Some(device) = open_gui {
+        actions.push(DockAction::OpenGui(device));
+    }
+    actions
+}
+
+/// 应用阶段：按绘制收集的动作顺序统一写回 app。
+fn apply_dock_actions(app: &mut App, idx: usize, state: &DockState, actions: Vec<DockAction>) {
+    for action in actions {
+        match action {
+            DockAction::SetContext(ctx) => {
+                app.dock_context = Some(ctx);
+                app.dock_selected = None;
             }
-            #[cfg(not(target_os = "macos"))]
-            let _ = slot;
-        }
-        // MIDI 通道乐器：挂插件 → 插件原生界面；默认 XSynth → 音色库配置窗口。
-        Some(DockDevice::Instrument) => {
-            let Some(ch) = midi_channel else { return };
-            if instrument_plugin.is_some() {
-                let result = app
-                    .instrument_racks
-                    .get_mut(idx)
-                    .map(|rack| rack.toggle_gui(ch));
-                if let Some(Err(e)) = result
-                    && let Some(rack) = app.instrument_racks.get_mut(idx)
-                {
-                    rack.last_error = Some(e.0);
+            DockAction::SetSelected(selected) => app.dock_selected = selected,
+            DockAction::OpenInsertPicker => {
+                app.mix.picker_for = Some(state.insert_target);
+            }
+            DockAction::Knob(action) => {
+                apply_knob_action(app, idx, &state.lane_track_tis, state.tick, action);
+            }
+            DockAction::OpenParams(device) => {
+                match open_param_panel(app, idx, device, state.insert_target, state.midi_channel) {
+                    Some(panel) => app.mix.param_panel = Some(panel),
+                    None => {
+                        // 实例不可用（未加载成功）：在 MIX 状态行提示，避免"点了没反应"。
+                        let msg = t!("dock.plugin_unavailable").to_string();
+                        match device {
+                            DockDevice::Instrument => {
+                                if let Some(rack) = app.instrument_racks.get_mut(idx) {
+                                    rack.last_error = Some(msg);
+                                }
+                            }
+                            _ => {
+                                let rack = app.mixer_rack_mut(idx);
+                                rack.last_error = Some(msg);
+                            }
+                        }
+                    }
                 }
-            } else {
-                // 内置 XSynth 的"界面"就是音色库配置窗口。
-                app.mix.xsynth_config_for = Some(ch);
             }
+            DockAction::OpenInstrumentPicker(ch) => app.mix.instrument_picker_for = Some(ch),
+            DockAction::ToggleInstrument(muted) => {
+                // 旁通 = 该通道所有轨道 mute（AR 读 track_overrides，自动同步）。
+                let doc = &mut app.workspace.documents[idx];
+                for &ti in &state.powered_tracks {
+                    if let Some(ov) = doc.edit.track_overrides.get_mut(ti) {
+                        ov.muted = muted;
+                    }
+                }
+                let audio = app.audio_state.handle.as_ref();
+                crate::right_panel::info_panel::send_skip_tracks(doc, audio);
+            }
+            DockAction::ToggleBypass(slot, bypassed) => {
+                if let Some(r) = crate::mix::insert_refs(
+                    &mut app.workspace.documents[idx].mixer,
+                    state.insert_target,
+                )
+                .and_then(|chain| chain.get_mut(slot))
+                {
+                    r.bypassed = bypassed;
+                }
+                if let Some(rack) = app.mixer_racks.get_mut(idx) {
+                    rack.set_bypass(state.insert_target, slot, bypassed);
+                }
+            }
+            DockAction::OpenGui(device) => match device {
+                DockDevice::Insert(slot) => {
+                    #[cfg(target_os = "macos")]
+                    if let Err(e) = app
+                        .mixer_rack_mut(idx)
+                        .toggle_gui(state.insert_target, slot)
+                    {
+                        app.mixer_rack_mut(idx).last_error = Some(e.0);
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    let _ = slot;
+                }
+                // MIDI 通道乐器：挂插件 → 插件原生界面；默认 XSynth → 音色库配置窗口。
+                DockDevice::Instrument => {
+                    let Some(ch) = state.midi_channel else {
+                        continue;
+                    };
+                    if state.instrument_plugin.is_some() {
+                        let result = app
+                            .instrument_racks
+                            .get_mut(idx)
+                            .map(|rack| rack.toggle_gui(ch));
+                        if let Some(Err(e)) = result
+                            && let Some(rack) = app.instrument_racks.get_mut(idx)
+                        {
+                            rack.last_error = Some(e.0);
+                        }
+                    } else {
+                        // 内置 XSynth 的"界面"就是音色库配置窗口。
+                        app.mix.xsynth_config_for = Some(ch);
+                    }
+                }
+            },
         }
-        None => {}
     }
 }
 
@@ -599,6 +697,25 @@ fn context_label(context: DockContext) -> String {
         DockContext::Midi(ch) => crate::mix::channel_label(ch),
         DockContext::Audio(ach) => crate::mix::audio_label(ach),
     }
+}
+
+/// 无边框 Material 图标按钮（尺寸/颜色/提示可调）。
+fn icon_button(
+    ui: &mut egui::Ui,
+    icon: egui_material_icons::MaterialIcon,
+    size: f32,
+    color: egui::Color32,
+    hover: impl Into<egui::WidgetText>,
+) -> egui::Response {
+    let resp = ui.add(
+        egui::Button::new(
+            egui::RichText::new(icon.codepoint)
+                .font(egui::FontId::new(size, icon.font_family()))
+                .color(color),
+        )
+        .frame(false),
+    );
+    resp.on_hover_text(hover)
 }
 
 /// 效果器大卡片：插件效果器显示参数面板 / 原生界面入口。
@@ -627,24 +744,22 @@ fn effect_card(
 
         // ── 标题行：电源（旁通）+ 名称 + 插件入口 ──
         ui.horizontal(|ui| {
-            let power = egui_material_icons::icons::ICON_POWER_SETTINGS_NEW;
             let power_color = if ins.bypassed {
                 crate::theme::text_muted()
             } else {
                 crate::theme::accent_active()
             };
-            let power_resp = ui.add(
-                egui::Button::new(
-                    egui::RichText::new(power.codepoint)
-                        .font(egui::FontId::new(14.0, power.font_family()))
-                        .color(power_color),
-                )
-                .frame(false),
-            );
-            if power_resp.clicked() {
+            if icon_button(
+                ui,
+                egui_material_icons::icons::ICON_POWER_SETTINGS_NEW,
+                14.0,
+                power_color,
+                t!("mix.bypass"),
+            )
+            .clicked()
+            {
                 *toggle_bypass = Some((slot, !ins.bypassed));
             }
-            power_resp.on_hover_text(t!("mix.bypass"));
 
             let name_resp = ui.add(
                 egui::Label::new(
@@ -658,33 +773,29 @@ fn effect_card(
                 clicked = true;
             }
 
-            let params = egui_material_icons::icons::ICON_TUNE;
-            let presp = ui.add(
-                egui::Button::new(
-                    egui::RichText::new(params.codepoint)
-                        .font(egui::FontId::new(13.0, params.font_family()))
-                        .color(crate::theme::text_secondary()),
-                )
-                .frame(false),
-            );
-            if presp.clicked() {
+            if icon_button(
+                ui,
+                egui_material_icons::icons::ICON_TUNE,
+                13.0,
+                crate::theme::text_secondary(),
+                t!("dock.open_params"),
+            )
+            .clicked()
+            {
                 *open_params = Some(DockDevice::Insert(slot));
             }
-            presp.on_hover_text(t!("dock.open_params"));
 
-            let gui = egui_material_icons::icons::ICON_HOME_STORAGE;
-            let gresp = ui.add(
-                egui::Button::new(
-                    egui::RichText::new(gui.codepoint)
-                        .font(egui::FontId::new(13.0, gui.font_family()))
-                        .color(crate::theme::text_secondary()),
-                )
-                .frame(false),
-            );
-            if gresp.clicked() {
+            if icon_button(
+                ui,
+                egui_material_icons::icons::ICON_HOME_STORAGE,
+                13.0,
+                crate::theme::text_secondary(),
+                t!("mix.toggle_gui"),
+            )
+            .clicked()
+            {
                 *open_gui = Some(DockDevice::Insert(slot));
             }
-            gresp.on_hover_text(t!("mix.toggle_gui"));
         });
         ui.add_space(6.0);
 
@@ -767,25 +878,23 @@ fn instrument_card(
                     return;
                 }
 
-                let power = egui_material_icons::icons::ICON_POWER_SETTINGS_NEW;
                 let power_color = if inst_powered {
                     crate::theme::accent_active()
                 } else {
                     crate::theme::text_muted()
                 };
-                let power_resp = ui.add(
-                    egui::Button::new(
-                        egui::RichText::new(power.codepoint)
-                            .font(egui::FontId::new(14.0, power.font_family()))
-                            .color(power_color),
-                    )
-                    .frame(false),
-                );
-                if power_resp.clicked() {
+                if icon_button(
+                    ui,
+                    egui_material_icons::icons::ICON_POWER_SETTINGS_NEW,
+                    14.0,
+                    power_color,
+                    t!("mix.bypass"),
+                )
+                .clicked()
+                {
                     // 目标 muted 值 = 当前是否开着（true→全 mute，false→全恢复）。
                     *toggle_instrument = Some(inst_powered);
                 }
-                power_resp.on_hover_text(t!("mix.bypass"));
 
                 let name = instrument_plugin
                     .map(str::to_string)
@@ -810,59 +919,47 @@ fn instrument_card(
                 }
 
                 // 界面按钮：插件设备打开原生 GUI；XSynth 打开音色库配置窗口。
-                let icon = if use_xsynth {
-                    egui_material_icons::icons::ICON_LIBRARY_MUSIC
-                } else {
-                    egui_material_icons::icons::ICON_HOME_STORAGE
-                };
-                let resp = ui.add(
-                    egui::Button::new(
-                        egui::RichText::new(icon.codepoint)
-                            .font(egui::FontId::new(14.0, icon.font_family()))
-                            .color(crate::theme::text_secondary()),
+                let (icon, hover) = if use_xsynth {
+                    (
+                        egui_material_icons::icons::ICON_LIBRARY_MUSIC,
+                        t!("soundfont.title").to_string(),
                     )
-                    .frame(false),
-                );
-                if resp.clicked() {
+                } else {
+                    (
+                        egui_material_icons::icons::ICON_HOME_STORAGE,
+                        t!("mix.toggle_gui").to_string(),
+                    )
+                };
+                if icon_button(ui, icon, 14.0, crate::theme::text_secondary(), hover).clicked() {
                     *open_gui = Some(DockDevice::Instrument);
                 }
-                resp.on_hover_text(if use_xsynth {
-                    t!("soundfont.title").to_string()
-                } else {
-                    t!("mix.toggle_gui").to_string()
-                });
 
                 // 插件乐器的参数面板入口。
-                if !use_xsynth {
-                    let params = egui_material_icons::icons::ICON_TUNE;
-                    let presp = ui.add(
-                        egui::Button::new(
-                            egui::RichText::new(params.codepoint)
-                                .font(egui::FontId::new(14.0, params.font_family()))
-                                .color(crate::theme::text_secondary()),
-                        )
-                        .frame(false),
-                    );
-                    if presp.clicked() {
-                        *open_params = Some(DockDevice::Instrument);
-                    }
-                    presp.on_hover_text(t!("dock.open_params"));
+                if !use_xsynth
+                    && icon_button(
+                        ui,
+                        egui_material_icons::icons::ICON_TUNE,
+                        14.0,
+                        crate::theme::text_secondary(),
+                        t!("dock.open_params"),
+                    )
+                    .clicked()
+                {
+                    *open_params = Some(DockDevice::Instrument);
                 }
 
                 // 更换乐器：内置 XSynth 与 VST/CLAP 插件在同一个选择器里切换。
-                let swap = egui_material_icons::icons::ICON_SWAP_HORIZ;
-                let resp = ui.add(
-                    egui::Button::new(
-                        egui::RichText::new(swap.codepoint)
-                            .font(egui::FontId::new(14.0, swap.font_family()))
-                            .color(crate::theme::text_secondary()),
-                    )
-                    .frame(false),
-                );
-                if resp.clicked() {
+                if icon_button(
+                    ui,
+                    egui_material_icons::icons::ICON_SWAP_HORIZ,
+                    14.0,
+                    crate::theme::text_secondary(),
+                    t!("mix.pick_instrument"),
+                )
+                .clicked()
+                {
                     *open_instrument_picker = midi_channel;
                 }
-                resp.on_hover_text(t!("mix.pick_instrument"));
             });
             ui.add_space(6.0);
 
@@ -953,7 +1050,7 @@ fn knob_row(ui: &mut egui::Ui, param: &DockParam, actions: &mut Vec<KnobAction>)
     ui.add_space(6.0);
 }
 
-/// 应用单帧旋钮动作：拖动中 upsert 事件，松手 push 一条 undo。
+/// 应用单帧旋钮动作：拖动中记录会话，松手写事件并 push 一条 undo。
 fn apply_knob_action(
     app: &mut App,
     idx: usize,
@@ -965,32 +1062,9 @@ fn apply_knob_action(
         KnobAction::DragStart(target) => {
             // 这里只记录会话（松手才可能落 lane）。
             let doc = &mut app.workspace.documents[idx];
-            // 目标轨：优先已有该 target lane 的轨（保持导入的 "CC xx" 轨结构）。
-            let track_idx = lane_write_track(&doc.data.model, track_tis, &target);
-            if track_idx >= doc.data.model.tracks.len() {
-                return;
+            if let Some(drag) = begin_knob_drag(doc, track_tis, target, tick) {
+                app.knob_drag = Some(drag);
             }
-            let lane_pos = doc.data.model.tracks[track_idx]
-                .automation_lanes
-                .iter()
-                .position(|l| l.target == target);
-            let before = lane_pos
-                .map(|li| {
-                    doc.data.model.tracks[track_idx].automation_lanes[li]
-                        .events
-                        .clone()
-                })
-                .unwrap_or_default();
-            app.knob_drag = Some(KnobDrag {
-                last_norm: 0.0,
-                moved: false,
-                track_idx,
-                target,
-                tick,
-                snapshot: doc.capture_snapshot(),
-                before,
-                lane_idx: lane_pos,
-            });
         }
         KnobAction::Drag(target, norm) => {
             // 无实时预览通道，拖动中不写模型（松手落 lane，避免每帧重 flatten 卡顿）。
@@ -1006,75 +1080,96 @@ fn apply_knob_action(
             app.knob_drag = Some(drag);
         }
         KnobAction::DragStop(target) => {
-            let Some(mut drag) = app.knob_drag.take_if(|d| d.target == target) else {
+            let Some(drag) = app.knob_drag.take_if(|d| d.target == target) else {
                 return;
             };
             // 用松手时的最终值写一条事件（拖动过程不写模型，避免每帧重 flatten）。
-            // 拖动值本身就是归一化值（统一参数模型），直接写入。
-            let norm = drag.last_norm;
-            upsert_automation_event(app, idx, &mut drag, norm);
-            app.notify_audio_model_changed();
-            let Some(lane_idx) = drag.lane_idx else {
-                return;
-            };
             let doc = &mut app.workspace.documents[idx];
-            let after = crate::right_panel::automation_undo::snapshot_lane_events(
-                doc,
-                drag.track_idx as u16,
-                lane_idx,
-                &drag.target,
-            );
-            crate::right_panel::automation_undo::push_automation_undo(
-                doc,
-                drag.track_idx as u16,
-                lane_idx,
-                &drag.target,
-                drag.before,
-                after,
-                t!("undo.edit_automation").as_ref(),
-                drag.snapshot,
-            );
+            finish_knob_drag(doc, drag);
+            app.notify_audio_model_changed();
         }
     }
 }
 
+/// 开始旋钮拖动会话：记录目标轨与 lane 编辑前状态（undo 用）。
+fn begin_knob_drag(
+    doc: &mut Document,
+    track_tis: &[usize],
+    target: AutomationTarget,
+    tick: u32,
+) -> Option<KnobDrag> {
+    // 目标轨：优先已有该 target lane 的轨（保持导入的 "CC xx" 轨结构）。
+    let track_idx = lane_write_track(&doc.data.model, track_tis, &target);
+    if track_idx >= doc.data.model.tracks.len() {
+        return None;
+    }
+    let lane_pos = doc.data.model.tracks[track_idx]
+        .automation_lanes
+        .iter()
+        .position(|l| l.target == target);
+    let before = lane_pos
+        .map(|li| {
+            doc.data.model.tracks[track_idx].automation_lanes[li]
+                .events
+                .clone()
+        })
+        .unwrap_or_default();
+    Some(KnobDrag {
+        last_norm: 0.0,
+        moved: false,
+        track_idx,
+        target,
+        tick,
+        snapshot: doc.capture_snapshot(),
+        before,
+        lane_idx: lane_pos,
+    })
+}
+
+/// 结束拖动会话：按 `drag.last_norm` 写事件并 push 一条 undo。
+fn finish_knob_drag(doc: &mut Document, mut drag: KnobDrag) {
+    let norm = drag.last_norm;
+    upsert_automation_event(doc, &mut drag, norm);
+    let Some(lane_idx) = drag.lane_idx else {
+        return;
+    };
+    let after = crate::right_panel::automation_undo::snapshot_lane_events(
+        doc,
+        drag.track_idx as u16,
+        lane_idx,
+        &drag.target,
+    );
+    crate::right_panel::automation_undo::push_automation_undo(
+        doc,
+        drag.track_idx as u16,
+        lane_idx,
+        &drag.target,
+        drag.before,
+        after,
+        t!("undo.edit_automation").as_ref(),
+        drag.snapshot,
+    );
+}
+
 /// 在拖动会话的 tick 处写入/覆盖自动化事件（lane 懒创建）。
-fn upsert_automation_event(app: &mut App, idx: usize, drag: &mut KnobDrag, norm: f32) {
-    let doc = &mut app.workspace.documents[idx];
-    let lane_pos = doc.data.model.tracks[drag.track_idx]
+fn upsert_automation_event(doc: &mut Document, drag: &mut KnobDrag, norm: f32) {
+    let lane_idx = doc.data.model.tracks[drag.track_idx]
         .automation_lanes
         .iter()
         .position(|l| l.target == drag.target);
-    match lane_pos {
-        Some(lane_idx) => {
-            drag.lane_idx = Some(lane_idx);
-            let has_event = doc.data.model.tracks[drag.track_idx].automation_lanes[lane_idx]
-                .events
-                .iter()
-                .any(|e| e.tick == drag.tick);
-            if has_event {
-                doc.move_automation_event(
-                    drag.track_idx,
-                    lane_idx,
-                    &drag.target,
-                    drag.tick,
-                    drag.tick,
-                    norm,
-                );
-            } else {
-                doc.add_automation_event(
-                    drag.track_idx,
-                    drag.target.clone(),
-                    AutomationEvent {
-                        id: 0,
-                        tick: drag.tick,
-                        value: norm,
-                        shape: drag.target.default_shape(),
-                    },
-                );
-            }
+    // 已有同 tick 事件时只更新其值（保留 id/shape），否则新增。
+    let has_event = lane_idx.is_some_and(|li| {
+        doc.data.model.tracks[drag.track_idx].automation_lanes[li]
+            .events
+            .iter()
+            .any(|e| e.tick == drag.tick)
+    });
+    match lane_idx {
+        Some(li) if has_event => {
+            drag.lane_idx = Some(li);
+            doc.move_automation_event(drag.track_idx, li, &drag.target, drag.tick, drag.tick, norm);
         }
-        None => {
+        _ => {
             doc.add_automation_event(
                 drag.track_idx,
                 drag.target.clone(),
@@ -1193,5 +1288,81 @@ mod tests {
             !targets.contains(&inst(xsynth_param::SUSTAIN)),
             "CC 绑定参数不再生成设备参数条目"
         );
+    }
+
+    /// 拖动会话（空 lane）：松手写事件并 push undo，undo/redo 往返一致。
+    #[test]
+    fn knob_drag_writes_event_and_undo_roundtrip() {
+        let mut doc = Document::empty();
+        let target = AutomationTarget::CC { controller: 1 };
+        let lane = |doc: &Document| -> Vec<AutomationEvent> {
+            doc.data.model.tracks[0]
+                .automation_lanes
+                .iter()
+                .find(|l| l.target == target)
+                .map(|l| l.events.clone())
+                .unwrap_or_default()
+        };
+
+        let mut drag = begin_knob_drag(&mut doc, &[0], target.clone(), 240).expect("目标轨存在");
+        assert!(drag.lane_idx.is_none(), "空 lane 无索引");
+        assert!(drag.before.is_empty(), "编辑前无事件");
+
+        drag.last_norm = 0.75;
+        drag.moved = true;
+        finish_knob_drag(&mut doc, drag);
+
+        let events = lane(&doc);
+        assert_eq!(events.len(), 1, "lane 懒创建并写入事件");
+        assert_eq!(events[0].tick, 240);
+        assert_eq!(events[0].value, 0.75);
+        assert!(doc.history.can_undo());
+
+        assert!(doc.undo());
+        assert!(lane(&doc).is_empty(), "undo 应移除新增事件");
+
+        assert!(doc.redo());
+        let events = lane(&doc);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].value, 0.75);
+    }
+
+    /// 拖动会话（已有同 tick 事件）：只更新值并保留 id，undo 恢复旧值。
+    #[test]
+    fn knob_drag_updates_existing_event_and_undo_restores() {
+        let mut doc = Document::empty();
+        let target = AutomationTarget::CC { controller: 7 };
+        doc.add_automation_event(
+            0,
+            target.clone(),
+            AutomationEvent {
+                id: 0,
+                tick: 100,
+                value: 0.2,
+                shape: target.default_shape(),
+            },
+        )
+        .expect("lane 懒创建");
+        let old_id = doc.data.model.tracks[0].automation_lanes[0].events[0].id;
+        assert_ne!(old_id, 0, "新增事件应已发号");
+
+        let mut drag = begin_knob_drag(&mut doc, &[0], target.clone(), 100).expect("目标轨存在");
+        assert!(drag.lane_idx.is_some(), "已有 lane 应记录索引");
+        assert_eq!(drag.before.len(), 1, "编辑前快照应含已有事件");
+
+        drag.last_norm = 0.9;
+        drag.moved = true;
+        finish_knob_drag(&mut doc, drag);
+
+        let events = doc.data.model.tracks[0].automation_lanes[0].events.clone();
+        assert_eq!(events.len(), 1, "同 tick 只更新不新增");
+        assert_eq!(events[0].value, 0.9);
+        assert_eq!(events[0].id, old_id, "更新保留事件 id");
+
+        assert!(doc.undo());
+        let events = doc.data.model.tracks[0].automation_lanes[0].events.clone();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].value, 0.2, "undo 恢复旧值");
+        assert_eq!(events[0].id, old_id);
     }
 }
