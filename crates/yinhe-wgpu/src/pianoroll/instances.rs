@@ -21,6 +21,46 @@ const STACK_SIZE: usize = 1024 * 1024; // 1MB per segment
 ///
 /// `selected` 非空时逐音符查询成员位图，命中的实例打上选中位
 /// （shader 填充纯黑；只有桌面可见层的 B 路径传入，GPU cull 全曲层不传）。
+/// 遍历某个 key 的音符（`range` 为半开区间，`None` = 全部）。
+#[inline]
+fn for_each_key_note(
+    midi: &dyn NoteSource,
+    key: u8,
+    range: Option<(f64, f64)>,
+    mut f: impl FnMut(&yinhe_types::Note),
+) {
+    match range {
+        Some((ts, te)) => {
+            for note in midi.key_notes_in_range(key, ts as u32, te as u32) {
+                if (note.end_tick as f64) < ts {
+                    continue;
+                }
+                f(note);
+            }
+        }
+        None => {
+            for note in midi.key_notes(key).iter() {
+                f(note);
+            }
+        }
+    }
+}
+
+/// 单音符可见性过滤：轨道可见且不在 hidden 集合中。
+#[inline]
+fn instance_visible(
+    note: &yinhe_types::Note,
+    key: u8,
+    track_visible: &[bool],
+    hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
+) -> bool {
+    track_visible
+        .get(note.track as usize)
+        .copied()
+        .unwrap_or(true)
+        && !hidden_notes.contains(&(note.track, note.start_tick, key))
+}
+
 fn build_key_instances(
     out: &mut Vec<NoteInstance>,
     midi: &dyn NoteSource,
@@ -30,16 +70,8 @@ fn build_key_instances(
     range: Option<(f64, f64)>,
     selected: Option<&Selection>,
 ) {
-    // 单音符过滤 + 输出（range 迭代器已精确到 [ts, te)，无需再 break）。
-    let emit = |out: &mut Vec<NoteInstance>, note: &yinhe_types::Note| {
-        if !track_visible
-            .get(note.track as usize)
-            .copied()
-            .unwrap_or(true)
-        {
-            return;
-        }
-        if hidden_notes.contains(&(note.track, note.start_tick, key)) {
+    for_each_key_note(midi, key, range, |note| {
+        if !instance_visible(note, key, track_visible, hidden_notes) {
             return;
         }
         let mut inst = NoteInstance {
@@ -53,22 +85,46 @@ fn build_key_instances(
             inst.set_selected(true);
         }
         out.push(inst);
-    };
-    match range {
-        Some((ts, te)) => {
-            for note in midi.key_notes_in_range(key, ts as u32, te as u32) {
-                if (note.end_tick as f64) < ts {
-                    continue;
-                }
-                emit(out, note);
-            }
+    });
+}
+
+/// 统计某 key 的可见实例数（不构造实例，供全量构建预分配）。
+fn count_key_instances(
+    midi: &dyn NoteSource,
+    key: u8,
+    track_visible: &[bool],
+    hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
+) -> usize {
+    let mut n = 0;
+    for_each_key_note(midi, key, None, |note| {
+        if instance_visible(note, key, track_visible, hidden_notes) {
+            n += 1;
         }
-        None => {
-            for note in midi.key_notes(key).iter() {
-                emit(out, note);
-            }
+    });
+    n
+}
+
+/// 把某 key 的可见实例写入预分配切片，返回写入数量。
+fn fill_key_instances(
+    out: &mut [NoteInstance],
+    midi: &dyn NoteSource,
+    key: u8,
+    track_visible: &[bool],
+    hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
+) -> usize {
+    let mut i = 0;
+    for_each_key_note(midi, key, None, |note| {
+        if i >= out.len() || !instance_visible(note, key, track_visible, hidden_notes) {
+            return;
         }
-    }
+        out[i] = NoteInstance {
+            start_tick: note.start_tick,
+            end_tick: note.end_tick,
+            packed: NoteInstance::pack(key, note.track, note.velocity),
+        };
+        i += 1;
+    });
+    i
 }
 
 /// Build a single ghost note
@@ -143,36 +199,44 @@ pub fn build_all_notes(
     hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
 ) -> (Vec<NoteInstance>, [u32; KEY_COUNT + 1]) {
-    let results: Vec<Vec<NoteInstance>> = (0u8..=MAX_KEY)
+    // 计数（无实例构造）→ 前缀和一次分配 → 按 key 并行分段写入：
+    // 旧实现「每 key 一个 Vec + 串行 extend」在 1.64 亿音符时中间结果与最终
+    // 缓冲同时存在（峰值约 5GB），现在峰值只有最终缓冲一份（约 2.6GB）。
+    let counts: Vec<usize> = (0u8..=MAX_KEY)
         .into_par_iter()
-        .map(|key| {
-            stacker::maybe_grow(STACK_RED_ZONE, STACK_SIZE, || {
-                let mut local = Vec::new();
-                build_key_instances(
-                    &mut local,
-                    midi,
-                    key,
-                    track_visible,
-                    hidden_notes,
-                    None,
-                    // GPU cull 全曲层是持久 buffer，选中位变化需按 key 增量重传，
-                    // 本轮暂不支持（桌面默认走可见层 B 路径）。
-                    None,
-                );
-                local
-            })
-        })
+        .map(|key| count_key_instances(midi, key, track_visible, hidden_notes))
         .collect();
 
     let mut offsets = [0u32; KEY_COUNT + 1];
-    let mut total = 0u32;
-    let mut all = Vec::new();
-    for (k, bucket) in results.into_iter().enumerate() {
-        offsets[k] = total;
-        total += bucket.len() as u32;
-        all.extend(bucket);
+    let mut total = 0usize;
+    for (k, &c) in counts.iter().enumerate() {
+        offsets[k] = total as u32;
+        total += c;
     }
-    offsets[KEY_COUNT] = total;
+    offsets[KEY_COUNT] = total as u32;
+
+    let mut all = vec![
+        NoteInstance {
+            start_tick: 0,
+            end_tick: 0,
+            packed: 0,
+        };
+        total
+    ];
+    let mut rest = all.as_mut_slice();
+    let mut slices: Vec<(&mut [NoteInstance], u8)> = Vec::with_capacity(KEY_COUNT);
+    for (k, &c) in counts.iter().enumerate() {
+        let (head, tail) = rest.split_at_mut(c);
+        slices.push((head, k as u8));
+        rest = tail;
+    }
+    slices.into_par_iter().for_each(|(slice, key)| {
+        stacker::maybe_grow(STACK_RED_ZONE, STACK_SIZE, || {
+            let written = fill_key_instances(slice, midi, key, track_visible, hidden_notes);
+            debug_assert_eq!(written, slice.len(), "计数与写入数量不一致");
+        });
+    });
+
     (all, offsets)
 }
 
@@ -248,6 +312,36 @@ mod tests {
 
             orientation: yinhe_types::Orientation::Horizontal,
         }
+    }
+
+    /// 全量构建：多 key 的 offsets/总数正确，分段内容与单 key 构建一致，
+    /// 且 track_visible/hidden 过滤在计数与写入两遍中一致。
+    #[test]
+    fn test_build_all_notes_multi_key_offsets_and_filters() {
+        let midi = make_midi(vec![
+            (0, 0, 480, 0, 100),
+            (0, 480, 960, 0, 100),
+            (60, 0, 480, 1, 100),
+            (64, 0, 480, 0, 100),
+        ]);
+        let track_visible = vec![true, true];
+        let mut hidden = std::collections::HashSet::new();
+        hidden.insert((0u16, 0u32, 64u8));
+
+        let (all, offsets) = build_all_notes(&midi, &hidden, &track_visible);
+        assert_eq!(offsets[0], 0);
+        assert_eq!(offsets[1], 2, "key 0 两个实例");
+        assert_eq!(offsets[61], 3, "key 60 一个实例");
+        assert_eq!(offsets[64], 3, "key 64 被 hidden 过滤");
+        assert_eq!(offsets[KEY_COUNT], 3);
+        assert_eq!(all.len(), 3);
+
+        let k60 = build_key_notes(&midi, 60, &hidden, &track_visible);
+        assert_eq!(
+            &all[offsets[60] as usize..offsets[61] as usize],
+            k60.as_slice(),
+            "分段内容应与单 key 构建一致"
+        );
     }
 
     #[test]
