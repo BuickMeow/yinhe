@@ -14,6 +14,7 @@ mod automation;
 mod events;
 mod model;
 mod model_stats;
+mod note_write;
 mod selection;
 mod source;
 mod tempo_map;

@@ -54,25 +54,15 @@ impl Document {
                         }
                     }
                     let model = Arc::make_mut(&mut self.data.model);
-                    // Remove original from old key bucket by id
-                    Arc::make_mut(&mut model.notes[*key as usize]).remove_by_id(orig_note.id);
-                    model.mark_dirty(*key);
-                    // Insert moved note at new key bucket（保留原 id）
-                    let length = orig_note.end_tick - orig_note.start_tick;
-                    let moved = yinhe_types::Note {
-                        id: orig_note.id,
-                        start_tick: new_tick,
-                        end_tick: new_tick + length,
-                        velocity: orig_note.velocity,
-                        track: *track,
+                    let Some((before, moved)) =
+                        model.move_note(*key, orig_note.id, new_key, new_tick)
+                    else {
+                        return None; // 刚定位到，理论不可达（防御，不 panic）
                     };
-                    let nk = new_key as usize;
-                    Arc::make_mut(&mut model.notes[nk]).insert_sorted(moved);
-                    model.mark_dirty(new_key);
                     model.rebuild_dirty();
                     self.data.bump_revision();
                     return Some(UndoAction::Notes(NoteDelta {
-                        before: vec![(orig_note, *key)],
+                        before: vec![(before, *key)],
                         after: vec![(moved, new_key)],
                     }));
                 }
@@ -106,20 +96,18 @@ impl Document {
                         }
                     }
                     let model = Arc::make_mut(&mut self.data.model);
-                    if let Some(n) = Arc::make_mut(&mut model.notes[k]).find_mut(before.id) {
+                    let after = model.update_note_by_id(*key, before.id, |n| {
                         n.end_tick = (*new_end_tick).max(n.start_tick + 1);
-                        let after = *n;
-                        model.mark_dirty(*key);
-                        model.rebuild_dirty();
-                        self.data.bump_revision();
-                        let gate = after.end_tick - after.start_tick;
-                        self.edit
-                            .remember_gate(before.track, before.start_tick, gate);
-                        return Some(UndoAction::Notes(NoteDelta {
-                            before: vec![(before, *key)],
-                            after: vec![(after, *key)],
-                        }));
-                    }
+                    })?;
+                    model.rebuild_dirty();
+                    self.data.bump_revision();
+                    let gate = after.end_tick - after.start_tick;
+                    self.edit
+                        .remember_gate(before.track, before.start_tick, gate);
+                    return Some(UndoAction::Notes(NoteDelta {
+                        before: vec![(before, *key)],
+                        after: vec![(after, *key)],
+                    }));
                 }
                 None
             }
@@ -151,13 +139,10 @@ impl Document {
                         }
                     }
                     let model = Arc::make_mut(&mut self.data.model);
-                    let bucket = Arc::make_mut(&mut model.notes[k]);
-                    let mut moved = bucket.remove_by_id(before.id)?;
-                    moved.start_tick = (*new_start_tick).min(moved.end_tick - 1);
-                    // start_tick 是排序键：改值后按排序键重新插入。
-                    bucket.insert_sorted(moved);
-                    let after = moved;
-                    model.mark_dirty(*key);
+                    // start_tick 是排序键：内部 `update_note_by_id` 会 sort 兜底。
+                    let after = model.update_note_by_id(*key, before.id, |n| {
+                        n.start_tick = (*new_start_tick).min(n.end_tick - 1);
+                    })?;
                     model.rebuild_dirty();
                     self.data.bump_revision();
                     let gate = after.end_tick - after.start_tick;
@@ -224,21 +209,18 @@ impl Document {
         let mut before = Vec::with_capacity(targets.len());
         let mut after = Vec::with_capacity(targets.len());
         for (key, id, old_vel, new_vel) in targets {
-            let k = key as usize;
-            // 收集阶段与修改阶段之间无并发修改，目标必然存在。
-            let n = Arc::make_mut(&mut model.notes[k])
-                .find_mut(id)
-                .expect("velocity target vanished");
-            n.velocity = new_vel;
+            // 收集阶段与修改阶段之间无并发修改，目标必然存在（防御跳过，不 panic）。
+            let Some(updated) = model.update_note_by_id(key, id, |n| n.velocity = new_vel) else {
+                continue;
+            };
             before.push((
                 yinhe_types::Note {
                     velocity: old_vel,
-                    ..*n
+                    ..updated
                 },
                 key,
             ));
-            after.push((*n, key));
-            model.mark_dirty(key);
+            after.push((updated, key));
         }
         if before.is_empty() {
             return None;
