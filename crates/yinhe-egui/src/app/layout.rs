@@ -100,8 +100,8 @@ impl App {
         }
     }
 
-    /// 维护聚焦视图：指针悬停在 AR/PR 上时更新；焦点视图不可见时切到可见的那个。
-    /// Ctrl+A 等依赖视图上下文的快捷键按 `view_focus` 路由。
+    /// 维护聚焦视图：记录最近一次鼠标按下（"最近点过哪里"）所在的视图；
+    /// 焦点视图不可见时切到可见的那个。Ctrl+A 等快捷键按 `view_focus` 路由。
     pub(in crate::app) fn update_view_focus(&mut self, ui: &egui::Ui, layout: &LayoutInfo) {
         let has_doc = self.workspace.active_doc.is_some();
         let has_arr = has_doc && self.view_mode.show_transport();
@@ -120,9 +120,17 @@ impl App {
             egui::pos2(layout.remaining.min.x, layout.bottom_y),
             layout.remaining.max,
         );
+        // 仅在按下的那一帧读取按下位置：指针移动/拖拽不会漂移焦点。
+        let press_pos = ui.input(|i| {
+            if i.pointer.any_pressed() {
+                i.pointer.press_origin()
+            } else {
+                None
+            }
+        });
         self.view_focus = resolve_view_focus(
             self.view_focus,
-            ui.ctx().pointer_hover_pos(),
+            press_pos,
             arr_rect,
             pr_rect,
             has_arr,
@@ -132,16 +140,16 @@ impl App {
 }
 
 /// 聚焦视图决策（纯函数，便于测试）：
-/// 指针在可见视图内 → 该视图；否则保持当前焦点；焦点视图不可见 → 切到可见视图。
+/// 最近一次按下在可见视图内 → 该视图；否则保持当前焦点；焦点视图不可见 → 切到可见视图。
 pub(in crate::app) fn resolve_view_focus(
     current: ViewFocus,
-    pointer: Option<egui::Pos2>,
+    press_pos: Option<egui::Pos2>,
     arr_rect: egui::Rect,
     pr_rect: egui::Rect,
     has_arr: bool,
     has_piano: bool,
 ) -> ViewFocus {
-    if let Some(pos) = pointer {
+    if let Some(pos) = press_pos {
         if has_piano && pr_rect.contains(pos) {
             return ViewFocus::Pianoroll;
         }
@@ -160,7 +168,7 @@ pub(in crate::app) fn resolve_view_focus(
 mod tests {
     use super::*;
 
-    /// 聚焦视图决策：指针所在视图优先；焦点不可见时自动切换；MIX 下保持。
+    /// 聚焦视图决策：最近按下所在视图优先；焦点不可见时自动切换；MIX 下保持。
     #[test]
     fn view_focus_resolution() {
         let arr = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 300.0));

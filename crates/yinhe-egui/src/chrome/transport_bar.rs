@@ -171,13 +171,24 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 }
 
                 if let Some(doc) = ctx.doc {
-                    // ── 量化按钮（时间码左侧；显示/写入聚焦视图的量化）──
+                    // ── 量化按钮：紧贴时间码左侧（时间码居中，把本栏分成左右两半）──
                     if let Some(pr) = ctx.pr.as_ref() {
                         let (ppq, quantize) = if ctx.focus_is_pianoroll {
                             (pr.ppq, pr.quantize)
                         } else {
                             (doc.data.model.meta.ppq, ctx.quantize_arrange)
                         };
+                        let label = quantize.label();
+                        let quant_w = transport_bar_pr::measure(
+                            ui,
+                            &label,
+                            egui::FontId::proportional(crate::theme::SMALL_FONT),
+                        );
+                        let timecode_l = ui.max_rect().center().x
+                            - crate::widgets::timecode::TIMECODE_WIDTH * 0.5;
+                        let target = timecode_l - 4.0 - quant_w;
+                        let pad = (target - ui.cursor().min.x).max(0.0);
+                        ui.add_space(pad);
                         quantize_button(ui, ppq, quantize, &mut pending_quantize);
                         ui.add_space(4.0);
                     }

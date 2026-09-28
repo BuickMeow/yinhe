@@ -2,6 +2,10 @@ use eframe::egui;
 use yinhe_editor_core::document::Document;
 use yinhe_types::time_format;
 
+/// 时间码控件宽度（两列：BPM/小节 + 拍号/时间；与 `col_widths` 之和一致）。
+/// transport bar 用它计算时间码左缘（量化按钮紧贴其左侧）。
+pub const TIMECODE_WIDTH: f32 = 166.0;
+
 /// 传输栏时间码显示（BPM/拍号/时间/小节），居中显示
 pub fn show_timecode_display(ui: &mut egui::Ui, doc: &Document) -> egui::Rect {
     let tick = doc.edit.cursor_tick.unwrap_or(0.0);
@@ -28,7 +32,7 @@ pub fn show_timecode_display(ui: &mut egui::Ui, doc: &Document) -> egui::Rect {
 
     let col_widths = [76.0, 90.0];
     let rect_h = 36.0;
-    let rect_w = col_widths.iter().sum::<f32>();
+    let rect_w = TIMECODE_WIDTH;
     let bar_cx = ui.max_rect().center().x;
     let cursor_x = ui.cursor().min.x;
     let rect_l = bar_cx - rect_w * 0.5;
