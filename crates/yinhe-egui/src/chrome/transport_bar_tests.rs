@@ -156,6 +156,8 @@ fn make_transport_harness<'a>(doc: Option<&'a Document>) -> Harness<'a, ()> {
                     is_recording: false,
                     step_input: false,
                     orientation_vertical: false,
+                    focus_is_pianoroll: false,
+                    quantize_arrange: Default::default(),
                     pr: pr_bar_data(doc),
                 };
                 show(ui, &mut ctx);
@@ -194,6 +196,8 @@ fn make_harness_with_hidden_button<'a>(doc: Option<&'a Document>) -> Harness<'a,
                     is_recording: false,
                     step_input: false,
                     orientation_vertical: false,
+                    focus_is_pianoroll: false,
+                    quantize_arrange: Default::default(),
                     pr: pr_bar_data(doc),
                 };
                 show(ui, &mut ctx);

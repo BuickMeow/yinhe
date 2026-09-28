@@ -416,12 +416,13 @@ impl App {
             .max(1)
     }
 
-    /// Select all notes — PR or AR depending on current view mode.
+    /// Select all notes — PR or AR depending on the focused view.
+    /// Arrange 模式下底部同时显示 PR 时，以鼠标所在视图为准。
     pub(crate) fn select_all(&mut self) {
         let Some(idx) = self.workspace.active_doc else {
             return;
         };
-        let is_pr = self.view_mode == crate::chrome::mode_bar::ViewMode::Edit;
+        let is_pr = self.view_focus == crate::app::ViewFocus::Pianoroll;
         if is_pr {
             self.workspace.documents[idx].select_all_pr();
         } else {

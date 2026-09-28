@@ -91,9 +91,6 @@ pub(crate) struct ArrangeLayout<'a> {
     pub drag_ended: &'a mut bool,
 }
 
-/// Returns `Some(new_preset)` if the user picked a new quantize preset
-/// from the corner AR button.
-///
 /// 编排视图协调器：聚合 doc/布局/渲染/配置/编辑原料/信号六个职责面的输入，
 /// 内部按只读数据、可变编辑状态、视图配置三轴分发（见 ArrangeData 等）。
 #[allow(clippy::too_many_arguments)]
@@ -126,7 +123,7 @@ pub fn show(
     float_panel_req: &mut Option<crate::right_panel::FloatPanel>,
     // 「添加自动化」：请求打开设备参数选择窗口（由调用方落地）。
     automation_picker_req: &mut Option<usize>,
-) -> Option<QuantizePreset> {
+) {
     *last_cursor_tick = doc.edit.cursor_tick;
 
     let arr_total_w = layout.remaining.width();
@@ -643,19 +640,15 @@ pub fn show(
         }
     }
 
-    // ── AR quantize button in the top-left corner (left of ruler, above track panel) ──
-    // 与 PR 共用 quantize_button 组件（角落矩形 + 弹窗逻辑一致）。
-    let pending_quantize = crate::widgets::quantize_button::show(
-        ui,
-        crate::widgets::quantize_button::QuantizeBtnCtx {
-            corner_rect: egui::Rect::from_min_size(
-                egui::pos2(arr_rect.min.x, arr_rect.min.y),
-                egui::vec2(tp_w, RULER_H),
-            ),
-            id_salt: "arr_quantize_btn",
-            ppq: doc.data.model.meta.ppq,
-            quantize: doc.edit.quantize_arrange,
-        },
+    // ── 左上角角落（音轨面板上方、标尺左侧）：仅铺背景 ──
+    // （量化按钮已移至 transport bar 时间码左侧，按聚焦视图显示 AR/PR 量化）
+    ui.painter().rect_filled(
+        egui::Rect::from_min_size(
+            egui::pos2(arr_rect.min.x, arr_rect.min.y),
+            egui::vec2(tp_w, RULER_H),
+        ),
+        0.0,
+        crate::theme::track_bg(),
     );
 
     // ── "+" track add button in the corner (below track panel, left of scrollbar) ──
@@ -794,8 +787,6 @@ pub fn show(
             *status_hint = None;
         }
     }
-
-    pending_quantize
 }
 
 /// 应用音频片段编辑命令：逐条执行 Document 操作并 push undo。

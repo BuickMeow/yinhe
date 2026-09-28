@@ -601,6 +601,10 @@ impl eframe::App for App {
                 step_input: self.step_input,
                 orientation_vertical: active_doc
                     .is_some_and(|d| d.edit.pianoroll_view.is_vertical()),
+                focus_is_pianoroll: self.view_focus == crate::app::ViewFocus::Pianoroll,
+                quantize_arrange: active_doc
+                    .map(|d| d.edit.quantize_arrange)
+                    .unwrap_or_default(),
                 pr: pr_bar,
             },
         );
@@ -637,14 +641,26 @@ impl eframe::App for App {
             doc.edit.pianoroll_view.set_orientation(orientation);
         }
 
-        // ── PR 控制组事件（量化 / 主音轨 / 显示音轨；原 control bar 功能）──
+        // ── 量化按钮（时间码左侧）：写入聚焦视图（AR / PR）的量化 ──
+        if let Some(preset) = transport_response.set_quantize
+            && let Some(idx) = self.workspace.active_doc
+        {
+            let focus = self.view_focus;
+            let edit = &mut self.workspace.documents[idx].edit;
+            if focus == crate::app::ViewFocus::Pianoroll {
+                edit.quantize_pianoroll = preset;
+            } else {
+                edit.quantize_arrange = preset;
+            }
+        }
+
+        // ── PR 控制组事件（主音轨 / 显示音轨；原 control bar 功能）──
         if !transport_response.pr_events.is_empty()
             && let Some(idx) = self.workspace.active_doc
         {
             let edit = &mut self.workspace.documents[idx].edit;
             for ev in transport_response.pr_events {
                 match ev {
-                    transport_bar::PrBarEvent::Quantize(preset) => edit.quantize_pianoroll = preset,
                     transport_bar::PrBarEvent::SwitchMainTrack(t) => {
                         edit.track_selected.clear();
                         edit.track_selected.insert(t);

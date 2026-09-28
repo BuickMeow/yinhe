@@ -1,7 +1,8 @@
 //! transport bar 右侧的 PR 控制组（原 PR 顶部 control bar 功能迁入，control bar 已删除）：
-//! 量化 / 音轨名称（主音轨切换 + 显示音轨勾选）/ 多轨道显示（幽灵）/ 瀑布流方向 / 和弦指示器。
+//! 音轨名称（主音轨切换 + 显示音轨勾选）/ 多轨道显示（幽灵）/ 瀑布流方向 / 和弦指示器。
+//! 量化按钮在时间码左侧，按聚焦视图显示 AR/PR 量化（见 transport_bar）。
 //!
-//! 布局（视觉从左到右）：量化、音轨名、幽灵、III（纵向）、三（横向）、和弦；
+//! 布局（视觉从左到右）：音轨名、幽灵、III（纵向）、三（横向）、和弦；
 //! 在 `right_to_left` 布局中绘制，整组贴右且不参与工具收拢。
 //!
 //! 本模块不持有/修改文档状态，只产生 [PrBarEvent]，由 main_loop 应用。
@@ -19,8 +20,6 @@ pub(crate) const GAP: f32 = 4.0;
 
 /// PR 控制事件（由 main_loop 应用到 doc.edit）。
 pub enum PrBarEvent {
-    /// 量化预设变更。
-    Quantize(QuantizePreset),
     /// 切换主音轨：track_selected 替换为仅此轨。
     SwitchMainTrack(u16),
     /// 设置某轨显示开关（track_pianoroll_visible[t]）。
@@ -92,7 +91,6 @@ fn track_name(data: &PrBarData<'_>) -> String {
 /// 右侧控制组总宽（含元素间距）：供工具区判断是否收拢。
 pub(crate) fn right_group_width(ui: &egui::Ui, data: &PrBarData<'_>) -> f32 {
     let mut widths = vec![
-        measure(ui, &data.quantize.label(), small_font()),
         measure(ui, &track_name(data), small_font())
             + 6.0
             + measure(
@@ -176,40 +174,7 @@ pub(crate) fn show_right_group(
 
         // ── 音轨名称（点击弹出主音轨/显示音轨 popup）──
         track_button(ui, data, events);
-        ui.add_space(GAP);
-
-        // ── 量化预设（点击弹出量化 popup）──
-        quantize_button(ui, data, events);
     });
-}
-
-/// 量化文字按钮：无背景，hover 变色；点击弹出量化 popup。
-fn quantize_button(
-    ui: &mut egui::Ui,
-    data: &PrBarData<'_>,
-    events: &mut Vec<PrBarEvent>,
-) -> egui::Response {
-    let label = data.quantize.label();
-    let mut resp = crate::widgets::hover::hover_button(
-        ui,
-        &label,
-        small_font(),
-        crate::theme::text_label(),
-        false,
-    );
-    let mut pending_q = None;
-    egui::Popup::from_toggle_button_response(&resp)
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .show(|ui| {
-            crate::widgets::quantize_popup::show(ui, data.ppq, data.quantize, &mut pending_q);
-        });
-    if let Some(q) = pending_q {
-        events.push(PrBarEvent::Quantize(q));
-    }
-    if resp.hovered() {
-        resp = resp.on_hover_text(label);
-    }
-    resp
 }
 
 /// 多轨道显示（幽灵）按钮：有任意非主轨可见 = 开（高亮），点击批量显/隐。

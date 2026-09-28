@@ -2,6 +2,8 @@ use eframe::egui;
 use egui_material_icons::icons::*;
 use rust_i18n::t;
 
+use yinhe_editor_core::quantize::QuantizePreset;
+
 use crate::widgets::action_menu::pinned_action_buttons;
 use crate::widgets::timecode::show_timecode_display;
 use crate::widgets::tools_panel::ALL_TOOLS;
@@ -29,6 +31,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
     let mut pending_edit_action = None;
     let mut pending_open_path = None;
     let mut set_orientation = None;
+    let mut pending_quantize: Option<QuantizePreset> = None;
     let mut pr_events: Vec<PrBarEvent> = Vec::new();
 
     egui::Panel::top("transport_bar")
@@ -168,6 +171,17 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 }
 
                 if let Some(doc) = ctx.doc {
+                    // ── 量化按钮（时间码左侧；显示/写入聚焦视图的量化）──
+                    if let Some(pr) = ctx.pr.as_ref() {
+                        let (ppq, quantize) = if ctx.focus_is_pianoroll {
+                            (pr.ppq, pr.quantize)
+                        } else {
+                            (doc.data.model.meta.ppq, ctx.quantize_arrange)
+                        };
+                        quantize_button(ui, ppq, quantize, &mut pending_quantize);
+                        ui.add_space(4.0);
+                    }
+
                     timecode_rect = Some(show_timecode_display(ui, doc));
                     ui.add_space(4.0);
 
@@ -311,11 +325,42 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
         step_toggle: play_actions.step,
         tap_tempo: play_actions.tap_tempo,
         set_orientation,
+        set_quantize: pending_quantize,
         pr_events,
         pending_file_action,
         pending_edit_action,
         pending_open_path,
     }
+}
+
+/// 时间码左侧的量化按钮：显示/写入聚焦视图（AR 或 PR）的量化预设。
+fn quantize_button(
+    ui: &mut egui::Ui,
+    ppq: u32,
+    quantize: QuantizePreset,
+    pending: &mut Option<QuantizePreset>,
+) -> egui::Response {
+    let label = quantize.label();
+    let mut resp = crate::widgets::hover::hover_button(
+        ui,
+        &label,
+        egui::FontId::proportional(crate::theme::SMALL_FONT),
+        crate::theme::text_label(),
+        false,
+    );
+    let mut pending_q = None;
+    egui::Popup::from_toggle_button_response(&resp)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            crate::widgets::quantize_popup::show(ui, ppq, quantize, &mut pending_q);
+        });
+    if let Some(q) = pending_q {
+        *pending = Some(q);
+    }
+    if resp.hovered() {
+        resp = resp.on_hover_text(label);
+    }
+    resp
 }
 
 /// 工具收拢菜单按钮：窗口太窄、工具一行放不下时替代整排工具。

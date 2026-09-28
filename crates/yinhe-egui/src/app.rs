@@ -41,6 +41,13 @@ pub(crate) struct PasteChain {
     offset: u32,
 }
 
+/// 当前聚焦的编辑视图：鼠标悬停在哪个视图，快捷键（如 Ctrl+A）就作用于哪个。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ViewFocus {
+    Arrange,
+    Pianoroll,
+}
+
 pub struct App {
     // ── Pianoroll (shared GPU resources；视口状态在 Document.edit 内，每文档独立) ──
     pub(crate) render_ctx: RenderContext,
@@ -88,6 +95,9 @@ pub struct App {
 
     // ── View mode ──
     pub(crate) view_mode: ViewMode,
+    /// 当前聚焦的编辑视图（鼠标所在视图；Ctrl+A 等快捷键按它路由）。
+    /// 由 `update_view_focus` 每帧根据指针位置与视图可见性维护。
+    pub(crate) view_focus: ViewFocus,
 
     // ── Right panel ──
     pub(crate) right_panel_width: f32,
@@ -362,6 +372,7 @@ impl App {
             filter_dialog: crate::dialogs::filter::FilterDialogState::default(),
 
             view_mode: ViewMode::Arrange,
+            view_focus: ViewFocus::Arrange,
             show_pianoroll_in_arrange: audio_settings.layout.show_pianoroll_in_arrange,
             show_bottom_dock: audio_settings.layout.show_bottom_dock,
             bottom_dock_height: audio_settings.layout.bottom_dock_height,

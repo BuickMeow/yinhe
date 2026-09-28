@@ -41,6 +41,8 @@ impl App {
         };
         // 三视图选框互斥：先于任何渲染执行，保证同一时刻只有一个视图拥有选框。
         self.enforce_sel_rect_exclusivity(idx);
+        // 聚焦视图（指针悬停决定；Ctrl+A 等快捷键按它路由）。
+        self.update_view_focus(ui, layout);
 
         let is_playing = self
             .audio_state
@@ -61,76 +63,70 @@ impl App {
         type ArrOutputs = (
             Option<crate::arrange::ArrDragDelta>,
             Option<crate::arrange::ArrSelRect>,
-            Option<yinhe_editor_core::quantize::QuantizePreset>,
             Option<crate::right_panel::FloatPanel>,
             Option<usize>,
         );
-        let (
-            arr_drag_delta,
-            arr_eraser_rect,
-            arr_quantize,
-            float_panel_req,
-            automation_picker_req,
-        ): ArrOutputs = if self.view_mode.show_transport() {
-            let mut request_pianoroll = false;
-            let mut arr_drag_delta: Option<crate::arrange::ArrDragDelta> = None;
-            let mut arr_eraser_rect: Option<crate::arrange::ArrSelRect> = None;
-            let mut float_panel_req: Option<crate::right_panel::FloatPanel> = None;
-            let mut automation_picker_req: Option<usize> = None;
-            let mut guard =
-                crate::app::main_loop::ReplaceGuard::new(&mut self.workspace.documents[idx]);
-            let cfg = crate::arrange::ArrangeViewCfg {
-                is_playing,
-                follow_mode: &mut follow_mode,
-                active_tool: &self.active_tool,
-                min_border_width: self.audio_settings.min_border_width,
-                revision: guard.as_ref().data.revision,
-            };
-            let arr_quantize = arrange::show(
-                ui,
-                guard.as_mut(),
-                crate::arrange::ArrangeLayout {
-                    remaining: layout.remaining,
-                    arr_h: layout.arr_h,
-                    transport_panel_width: &mut self.transport_panel_width,
-                    drag_ended: &mut self.layout_needs_save,
-                },
-                &mut self.arr_renderer,
-                &mut self.arr_render_ctx,
-                cfg,
-                &mut self.last_cursor_tick,
-                self.audio_state.handle.as_ref(),
-                &self.audio_library,
-                &mut request_pianoroll,
-                &mut self.track_selection_anchor,
-                &mut arr_drag_delta,
-                &mut arr_eraser_rect,
-                &mut self.info_content,
-                &mut self.right_tab,
-                &mut needs_audio_rebuild,
-                &mut needs_audio_notify,
-                &mut self.status_hint,
-                sel_hint.as_ref(),
-                &mut float_panel_req,
-                &mut automation_picker_req,
-            );
-            if request_pianoroll {
-                crate::chrome::mode_bar::set_pianoroll_visible(
-                    &mut self.show_pianoroll_in_arrange,
-                    &mut self.show_bottom_dock,
-                    true,
+        let (arr_drag_delta, arr_eraser_rect, float_panel_req, automation_picker_req): ArrOutputs =
+            if self.view_mode.show_transport() {
+                let mut request_pianoroll = false;
+                let mut arr_drag_delta: Option<crate::arrange::ArrDragDelta> = None;
+                let mut arr_eraser_rect: Option<crate::arrange::ArrSelRect> = None;
+                let mut float_panel_req: Option<crate::right_panel::FloatPanel> = None;
+                let mut automation_picker_req: Option<usize> = None;
+                let mut guard =
+                    crate::app::main_loop::ReplaceGuard::new(&mut self.workspace.documents[idx]);
+                let cfg = crate::arrange::ArrangeViewCfg {
+                    is_playing,
+                    follow_mode: &mut follow_mode,
+                    active_tool: &self.active_tool,
+                    min_border_width: self.audio_settings.min_border_width,
+                    revision: guard.as_ref().data.revision,
+                };
+                arrange::show(
+                    ui,
+                    guard.as_mut(),
+                    crate::arrange::ArrangeLayout {
+                        remaining: layout.remaining,
+                        arr_h: layout.arr_h,
+                        transport_panel_width: &mut self.transport_panel_width,
+                        drag_ended: &mut self.layout_needs_save,
+                    },
+                    &mut self.arr_renderer,
+                    &mut self.arr_render_ctx,
+                    cfg,
+                    &mut self.last_cursor_tick,
+                    self.audio_state.handle.as_ref(),
+                    &self.audio_library,
+                    &mut request_pianoroll,
+                    &mut self.track_selection_anchor,
+                    &mut arr_drag_delta,
+                    &mut arr_eraser_rect,
+                    &mut self.info_content,
+                    &mut self.right_tab,
+                    &mut needs_audio_rebuild,
+                    &mut needs_audio_notify,
+                    &mut self.status_hint,
+                    sel_hint.as_ref(),
+                    &mut float_panel_req,
+                    &mut automation_picker_req,
                 );
-            }
-            (
-                arr_drag_delta,
-                arr_eraser_rect,
-                arr_quantize,
-                float_panel_req,
-                automation_picker_req,
-            ) // guard dropped here
-        } else {
-            (None, None, None, None, None)
-        };
+                if request_pianoroll {
+                    crate::chrome::mode_bar::set_pianoroll_visible(
+                        &mut self.show_pianoroll_in_arrange,
+                        &mut self.show_bottom_dock,
+                        true,
+                    );
+                }
+                (
+                    arr_drag_delta,
+                    arr_eraser_rect,
+                    float_panel_req,
+                    automation_picker_req,
+                )
+                // guard dropped here
+            } else {
+                (None, None, None, None)
+            };
         // 方案 A：音轨结构变化（add/remove track）→ drop 旧引擎。
         // ChannelLayout 在引擎创建时冻结，旧引擎无法 dispatch 新增通道。
         // 必须在 guard 被释放后调用 —— teardown_audio 借用 &mut self，
@@ -176,13 +172,6 @@ impl App {
         // Handle AR drag after guard is dropped (no outstanding borrow on self.workspace.documents)
         if let Some((delta_ticks, delta_tracks, alt)) = arr_drag_delta {
             self.handle_arr_drag(delta_ticks, delta_tracks, alt);
-        }
-
-        // Handle AR quantize preset change from corner button
-        if let Some(new_preset) = arr_quantize
-            && let Some(doc) = self.workspace.documents.get_mut(idx)
-        {
-            doc.edit.quantize_arrange = new_preset;
         }
 
         // Pianoroll area

@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use crate::app::App;
+use crate::app::{App, ViewFocus};
 
 pub mod chord;
 pub mod content;
@@ -99,11 +99,114 @@ impl App {
             right_panel_rect,
         }
     }
+
+    /// 维护聚焦视图：指针悬停在 AR/PR 上时更新；焦点视图不可见时切到可见的那个。
+    /// Ctrl+A 等依赖视图上下文的快捷键按 `view_focus` 路由。
+    pub(in crate::app) fn update_view_focus(&mut self, ui: &egui::Ui, layout: &LayoutInfo) {
+        let has_doc = self.workspace.active_doc.is_some();
+        let has_arr = has_doc && self.view_mode.show_transport();
+        let has_piano = has_doc
+            && self
+                .view_mode
+                .show_pianoroll(self.show_pianoroll_in_arrange);
+        let arr_rect = egui::Rect::from_min_max(
+            layout.remaining.min,
+            egui::pos2(
+                layout.remaining.max.x,
+                layout.remaining.min.y + layout.arr_h,
+            ),
+        );
+        let pr_rect = egui::Rect::from_min_max(
+            egui::pos2(layout.remaining.min.x, layout.bottom_y),
+            layout.remaining.max,
+        );
+        self.view_focus = resolve_view_focus(
+            self.view_focus,
+            ui.ctx().pointer_hover_pos(),
+            arr_rect,
+            pr_rect,
+            has_arr,
+            has_piano,
+        );
+    }
+}
+
+/// 聚焦视图决策（纯函数，便于测试）：
+/// 指针在可见视图内 → 该视图；否则保持当前焦点；焦点视图不可见 → 切到可见视图。
+pub(in crate::app) fn resolve_view_focus(
+    current: ViewFocus,
+    pointer: Option<egui::Pos2>,
+    arr_rect: egui::Rect,
+    pr_rect: egui::Rect,
+    has_arr: bool,
+    has_piano: bool,
+) -> ViewFocus {
+    if let Some(pos) = pointer {
+        if has_piano && pr_rect.contains(pos) {
+            return ViewFocus::Pianoroll;
+        }
+        if has_arr && arr_rect.contains(pos) {
+            return ViewFocus::Arrange;
+        }
+    }
+    match current {
+        ViewFocus::Arrange if !has_arr && has_piano => ViewFocus::Pianoroll,
+        ViewFocus::Pianoroll if !has_piano && has_arr => ViewFocus::Arrange,
+        _ => current,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 聚焦视图决策：指针所在视图优先；焦点不可见时自动切换；MIX 下保持。
+    #[test]
+    fn view_focus_resolution() {
+        let arr = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 300.0));
+        let pr = egui::Rect::from_min_max(egui::pos2(0.0, 300.0), egui::pos2(800.0, 600.0));
+        let in_arr = Some(egui::pos2(400.0, 150.0));
+        let in_pr = Some(egui::pos2(400.0, 450.0));
+        let outside = Some(egui::pos2(900.0, 100.0));
+
+        // 指针在 PR / AR 内 → 对应视图
+        assert_eq!(
+            resolve_view_focus(ViewFocus::Arrange, in_pr, arr, pr, true, true),
+            ViewFocus::Pianoroll
+        );
+        assert_eq!(
+            resolve_view_focus(ViewFocus::Pianoroll, in_arr, arr, pr, true, true),
+            ViewFocus::Arrange
+        );
+        // 指针在外 / 无指针 → 保持
+        assert_eq!(
+            resolve_view_focus(ViewFocus::Arrange, outside, arr, pr, true, true),
+            ViewFocus::Arrange
+        );
+        assert_eq!(
+            resolve_view_focus(ViewFocus::Pianoroll, None, arr, pr, true, true),
+            ViewFocus::Pianoroll
+        );
+        // 焦点视图不可见 → 切到可见视图
+        assert_eq!(
+            resolve_view_focus(ViewFocus::Arrange, None, arr, pr, false, true),
+            ViewFocus::Pianoroll
+        );
+        assert_eq!(
+            resolve_view_focus(ViewFocus::Pianoroll, None, arr, pr, true, false),
+            ViewFocus::Arrange
+        );
+        // 都不可见（MIX）→ 保持
+        assert_eq!(
+            resolve_view_focus(ViewFocus::Pianoroll, in_pr, arr, pr, false, false),
+            ViewFocus::Pianoroll
+        );
+        // 指针落在不可见视图区域内 → 忽略
+        assert_eq!(
+            resolve_view_focus(ViewFocus::Arrange, in_pr, arr, pr, true, false),
+            ViewFocus::Arrange
+        );
+    }
 
     /// 回归：右栏占位（Panel::right）先于 dock（Panel::bottom）时，
     /// 右栏占整条高度、dock 只占右栏左侧（与 PR 同规则）。
