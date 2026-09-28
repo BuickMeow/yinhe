@@ -83,15 +83,16 @@ impl QuantizePreset {
         (tick / interval).floor() * interval
     }
 
-    /// Display string for the dropdown list, e.g. `"1/8  (60 刻度)"` or `"3 刻度"`.
+    /// Display string for the dropdown list, e.g. `"1/8  (60 tick)"` or `"3 tick"`.
+    /// tick 是专有名词，所有语言统一使用，不做本地化。
     pub fn display_item(&self, ppq: u32) -> String {
         match self {
             QuantizePreset::Fraction(_, _) => {
                 let ticks = self.tick_interval(ppq);
-                format!("{}  ({} 刻度)", self.label(), ticks)
+                format!("{}  ({} tick)", self.label(), ticks)
             }
             QuantizePreset::Absolute(n) => {
-                format!("{} 刻度", n)
+                format!("{} tick", n)
             }
         }
     }

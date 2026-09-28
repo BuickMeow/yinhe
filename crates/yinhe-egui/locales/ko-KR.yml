@@ -511,8 +511,8 @@ pencil.tick: "틱 %{n}"
 pencil.gate: "게이트 %{n}"
 
 # ── 퀀타이즈 ──
-quantize.absolute: "%{n} 틱"
-quantize.custom_tick: "사용자 정의 틱"
+quantize.absolute: "%{n} tick"
+quantize.custom_tick: "사용자 정의 tick"
 quantize.custom_fraction: "사용자 정의 분수"
 quantize.numerator: "n:"
 quantize.denominator: "d:"

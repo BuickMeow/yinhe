@@ -178,7 +178,11 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                         };
                         let (tc_rect, tc_events) = show_timecode_display(
                             ui,
-                            crate::widgets::timecode::TimecodeData { doc, quantize },
+                            crate::widgets::timecode::TimecodeData {
+                                doc,
+                                quantize,
+                                quantize_is_pr: ctx.focus_is_pianoroll,
+                            },
                         );
                         timecode_rect = Some(tc_rect);
                         timecode_events.extend(tc_events);

@@ -523,8 +523,8 @@ pencil.tick: "ティック %{n}"
 pencil.gate: "ゲート %{n}"
 
 # ── クオンタイズ ──
-quantize.absolute: "%{n} ティック"
-quantize.custom_tick: "カスタムティック"
+quantize.absolute: "%{n} tick"
+quantize.custom_tick: "カスタム tick"
 quantize.custom_fraction: "カスタム分数"
 quantize.numerator: "n:"
 quantize.denominator: "d:"

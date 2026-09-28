@@ -592,8 +592,8 @@ pencil.tick: "Tick %{n}"
 pencil.gate: "Gate %{n}"
 
 # ── Quantize ──
-quantize.absolute: "%{n} ticks"
-quantize.custom_tick: "Custom Tick"
+quantize.absolute: "%{n} tick"
+quantize.custom_tick: "Custom tick"
 quantize.custom_fraction: "Custom Fraction"
 quantize.numerator: "n:"
 quantize.denominator: "d:"
