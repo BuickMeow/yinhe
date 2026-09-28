@@ -7,8 +7,7 @@ use yinhe_types::{NoteSource, PianoRollView, TimeSigEvent};
 const EDGE_THRESHOLD_PX: f32 = 6.0;
 
 /// 一次拖拽中收集的选中音符信息（move / resize 共用）。
-#[derive(Clone)]
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CollectedNote {
     pub track: u16,
     pub start_tick: u32,
