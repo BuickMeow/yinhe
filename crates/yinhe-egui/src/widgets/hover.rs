@@ -31,19 +31,15 @@ pub(crate) fn hover_button_rotated(
     hover_button_impl(ui, text, font_id, inactive_color, is_active, angle)
 }
 
-fn hover_button_impl(
-    ui: &mut egui::Ui,
-    text: &str,
-    font_id: egui::FontId,
+/// hover 类控件的统一四态配色：active = accent_active；按下/悬停按暗色/亮色分支；
+/// 常态 = 传入基色。`hover_button` 与自绘组合按钮（文字+图标，如音轨名）共用同一
+/// 逻辑，保证时间码右侧控件配色方案一致。
+pub(crate) fn hover_button_color(
+    resp: &egui::Response,
     inactive_color: egui::Color32,
     is_active: bool,
-    angle: f32,
-) -> egui::Response {
-    let galley =
-        ui.painter()
-            .layout_no_wrap(text.to_owned(), font_id.clone(), egui::Color32::WHITE);
-    let (rect, resp) = ui.allocate_exact_size(galley.size(), egui::Sense::click());
-    let color = if is_active {
+) -> egui::Color32 {
+    if is_active {
         crate::theme::accent_active()
     } else if resp.is_pointer_button_down_on() {
         if crate::theme::dark_mode() {
@@ -59,7 +55,24 @@ fn hover_button_impl(
         }
     } else {
         inactive_color
-    };
+    }
+}
+
+fn hover_button_impl(
+    ui: &mut egui::Ui,
+    text: &str,
+    font_id: egui::FontId,
+    inactive_color: egui::Color32,
+    is_active: bool,
+    angle: f32,
+) -> egui::Response {
+    // 用 PLACEHOLDER 排版：glyph 不带固定色，绘制时由 TextShape 的 fallback
+    // 颜色统一着色（旋转分支与自绘组合按钮复用该 galley 时不会残留白色）。
+    let galley =
+        ui.painter()
+            .layout_no_wrap(text.to_owned(), font_id.clone(), egui::Color32::PLACEHOLDER);
+    let (rect, resp) = ui.allocate_exact_size(galley.size(), egui::Sense::click());
+    let color = hover_button_color(&resp, inactive_color, is_active);
     if angle == 0.0 {
         ui.painter().text(
             rect.center(),

@@ -556,6 +556,38 @@ impl eframe::App for App {
             .workspace
             .active_doc
             .and_then(|idx| self.workspace.documents.get(idx));
+        let is_playing = self
+            .audio_state
+            .handle
+            .as_ref()
+            .map(|a| a.handle.is_playing())
+            .unwrap_or(false);
+        // PR 控制组数据（量化 / 音轨 / 幽灵 / 和弦），随文档只读借用。
+        let pr_bar = active_doc.map(|doc| {
+            let main = doc.edit.main_track();
+            // 和弦识别用「PR 实际可见集合」（主音轨强制可见，与渲染一致）。
+            let pr_visible: Vec<bool> = (0..doc.edit.track_pianoroll_visible.len())
+                .map(|i| doc.edit.track_pianoroll_visible[i] || main == Some(i as u16))
+                .collect();
+            let chord = crate::app::layout::chord::chord_indicator_text(
+                &self.midi_thru_keys,
+                is_playing,
+                doc.edit.cursor_tick,
+                Some(&*doc.data.model),
+                main,
+                &pr_visible,
+                &doc.edit.track_overrides,
+                doc.edit.track_cache.conductor_idx,
+            );
+            transport_bar::PrBarData {
+                ppq: doc.data.model.meta.ppq,
+                quantize: doc.edit.quantize_pianoroll,
+                track_infos: &doc.edit.track_cache.info,
+                pr_track_visible: &doc.edit.track_pianoroll_visible,
+                main_track: main,
+                chord,
+            }
+        });
         let transport_response = transport_bar::show(
             ui,
             &mut transport_bar::TransportContext {
@@ -569,6 +601,7 @@ impl eframe::App for App {
                 step_input: self.step_input,
                 orientation_vertical: active_doc
                     .is_some_and(|d| d.edit.pianoroll_view.is_vertical()),
+                pr: pr_bar,
             },
         );
 
@@ -597,12 +630,36 @@ impl eframe::App for App {
             self.open_tap_tempo_dialog(ui.ctx());
         }
 
-        // ── 钢琴卷帘方向切换（横向 / 纵向瀑布流二选一）──
-        if transport_response.toggle_orientation
+        // ── 钢琴卷帘方向切换（III / 三 两个按钮直接设定方向）──
+        if let Some(orientation) = transport_response.set_orientation
             && let Some(doc) = self.workspace.active_doc_mut()
         {
-            let toggled = doc.edit.pianoroll_view.orientation().toggled();
-            doc.edit.pianoroll_view.set_orientation(toggled);
+            doc.edit.pianoroll_view.set_orientation(orientation);
+        }
+
+        // ── PR 控制组事件（量化 / 主音轨 / 显示音轨；原 control bar 功能）──
+        if !transport_response.pr_events.is_empty()
+            && let Some(idx) = self.workspace.active_doc
+        {
+            let edit = &mut self.workspace.documents[idx].edit;
+            for ev in transport_response.pr_events {
+                match ev {
+                    transport_bar::PrBarEvent::Quantize(preset) => edit.quantize_pianoroll = preset,
+                    transport_bar::PrBarEvent::SwitchMainTrack(t) => {
+                        edit.track_selected.clear();
+                        edit.track_selected.insert(t);
+                    }
+                    // PR 显示开关只写 track_pianoroll_visible，不影响 AR（track_visible）。
+                    transport_bar::PrBarEvent::SetTrackVisible(t, v) => {
+                        if let Some(slot) = edit.track_pianoroll_visible.get_mut(t as usize) {
+                            *slot = v;
+                        }
+                    }
+                    transport_bar::PrBarEvent::SetAllVisible(v) => {
+                        edit.track_pianoroll_visible.fill(v)
+                    }
+                }
+            }
         }
 
         // ── MIDI/音频录音切换（REC 按钮 / macOS 播放菜单）──

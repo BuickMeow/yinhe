@@ -6,6 +6,21 @@ use crate::widgets::action_menu::{PopupRowSpec, measure_menu_width, popup_menu_r
 use crate::widgets::tools_panel::Tool;
 use yinhe_editor_core::document::Document;
 
+/// 为测试文档构造 PR 控制组数据（与 main_loop 组装一致）。
+fn pr_bar_data(doc: Option<&Document>) -> Option<crate::chrome::transport_bar_pr::PrBarData<'_>> {
+    doc.map(|doc| {
+        let main = doc.edit.main_track();
+        crate::chrome::transport_bar_pr::PrBarData {
+            ppq: doc.data.model.meta.ppq,
+            quantize: doc.edit.quantize_pianoroll,
+            track_infos: &doc.edit.track_cache.info,
+            pr_track_visible: &doc.edit.track_pianoroll_visible,
+            main_track: main,
+            chord: None,
+        }
+    })
+}
+
 /// 回归测试：三个动作菜单宽度按内容测量（不同菜单各自定宽），
 /// 中文环境实测 文件≈141 / 编辑≈133 / 播放≈160（旧固定值 220），
 /// 长标签语言会自动撑宽。断言落在合理范围，防止测量逻辑回归
@@ -141,6 +156,7 @@ fn make_transport_harness<'a>(doc: Option<&'a Document>) -> Harness<'a, ()> {
                     is_recording: false,
                     step_input: false,
                     orientation_vertical: false,
+                    pr: pr_bar_data(doc),
                 };
                 show(ui, &mut ctx);
             },
@@ -178,6 +194,7 @@ fn make_harness_with_hidden_button<'a>(doc: Option<&'a Document>) -> Harness<'a,
                     is_recording: false,
                     step_input: false,
                     orientation_vertical: false,
+                    pr: pr_bar_data(doc),
                 };
                 show(ui, &mut ctx);
                 // 透明隐藏按钮：位于 x 1150..1174、y 8..32
@@ -461,4 +478,56 @@ fn drag_on_hidden_button_does_not_start_drag() {
         "隐藏按钮上拖动不应启动窗口拖动"
     );
     release_at_state(&mut h, start + egui::vec2(10.0, 0.0), 2.15);
+}
+
+/// 回归：右侧 PR 控制组的文字/图标必须由统一的前景色着色。
+/// 曾出现预排版 galley 固化白色 glyph，导致旋转的 III 图标与
+/// Track 音轨名/箭头在浅色主题下整段发白（fallback 色被白色覆盖）。
+#[test]
+fn right_group_text_shapes_use_fallback_color() {
+    let ctx = egui::Context::default();
+    ctx.add_font(egui_material_icons::font_insert());
+    // 先跑两帧：add_font 下一 pass 才生效，且 fonts 需 run() 初始化
+    ctx.run_ui(Default::default(), |_| {})
+        .drop_without_applying_deltas();
+    ctx.run_ui(Default::default(), |_| {})
+        .drop_without_applying_deltas();
+    let data = crate::chrome::transport_bar_pr::PrBarData {
+        ppq: 480,
+        quantize: yinhe_editor_core::quantize::QuantizePreset::default(),
+        track_infos: &[],
+        pr_track_visible: &[],
+        main_track: None,
+        chord: Some("Cmaj7".to_string()),
+    };
+    let output = ctx.run_ui(Default::default(), |ui| {
+        let mut events = Vec::new();
+        let mut set_orientation = None;
+        let mut hovered_hint = None;
+        crate::chrome::transport_bar_pr::show_right_group(
+            ui,
+            &data,
+            false,
+            &mut events,
+            &mut set_orientation,
+            &mut hovered_hint,
+        );
+    });
+    let mut checked = 0;
+    for cs in &output.shapes {
+        if let egui::Shape::Text(t) = &cs.shape {
+            for section in &t.galley.job.sections {
+                assert!(
+                    section.format.color == t.fallback_color
+                        || section.format.color == egui::Color32::PLACEHOLDER,
+                    "glyph 颜色固化为 {:?}，覆盖 fallback {:?}（应相同或 PLACEHOLDER）",
+                    section.format.color,
+                    t.fallback_color
+                );
+            }
+            checked += 1;
+        }
+    }
+    assert!(checked >= 4, "右侧组文字/图标数量异常: {checked}");
+    output.drop_without_applying_deltas();
 }

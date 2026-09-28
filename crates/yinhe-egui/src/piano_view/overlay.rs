@@ -3,11 +3,10 @@ use egui_material_icons::icons::ICON_CHECK;
 
 use yinhe_types::{KeySigEvent, PianoRollView, TimeSigEvent};
 
-use super::control_bar;
-use super::types::{PianoViewFeedback, RULER_H};
+use super::types::RULER_H;
 use crate::widgets::selection_actions::{BarButton, SELECT_BAR_BUTTONS, SelectionAction};
 
-/// 覆盖层绘制：背景、音阶背景、网格线、wgpu 纹理、键盘、游标、选框、标尺、控制栏。
+/// 覆盖层绘制：背景、音阶背景、网格线、wgpu 纹理、键盘、游标、选框、标尺。
 ///
 /// 抽取自 `piano_view.rs` 570-842 行（现 276-548 段），保持原绘制顺序与坐标系：
 /// content_rect 含键盘列、music_rect 为纯音乐区（横向不含 kb_w）。
@@ -39,8 +38,6 @@ pub(crate) fn draw_overlays(
     quantize: yinhe_editor_core::quantize::QuantizePreset,
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
-    bar: &control_bar::PrBarData<'_>,
-    feedback: &mut PianoViewFeedback<'_>,
     selected: &mut yinhe_core::Selection,
     line_tool_line: Option<&yinhe_editor_core::edit_state::AnchorLine>,
     scissors_line: Option<&yinhe_editor_core::edit_state::AnchorLine>,
@@ -356,7 +353,7 @@ pub(crate) fn draw_overlays(
         sel_action = Some(action);
     }
 
-    // ── Time ruler ──（横向：control_bar 在最上，ruler 在其下贴内容，更贴近音符便于查看/跳转）
+    // ── Time ruler ──（ruler 贴内容顶部，便于查看/跳转）
     // time_ruler::interactive_ruler
     if let Some(midi) = midi
         && let Some(tpb_val) = midi.ticks_per_beat()
@@ -366,15 +363,14 @@ pub(crate) fn draw_overlays(
         let content_y = content_rect.min.y;
         let content_bottom = content_rect.max.y;
         let content_right_x = rect.max.x - crate::widgets::scrollbar::SCROLLBAR_W;
-        let ruler_band_y = rect.min.y;
         let ruler_rect = if view.is_vertical() {
             egui::Rect::from_min_max(
                 egui::pos2(rect.min.x, content_y),
                 egui::pos2(rect.min.x + RULER_H, content_bottom),
             )
         } else {
-            // 横向 ruler 下移 PR_BAR_H，紧贴内容；键盘与右上角空白相应下移
-            let ruler_y0 = ruler_band_y + crate::theme::PR_BAR_H;
+            // 横向：ruler 从 PR 顶部开始；键盘与右上角空白同带。
+            let ruler_y0 = rect.min.y;
             let ruler_y1 = ruler_y0 + RULER_H;
             let left_corner = egui::Rect::from_min_max(
                 egui::pos2(rect.min.x, ruler_y0),
@@ -410,17 +406,6 @@ pub(crate) fn draw_overlays(
             sel_rect.clear();
         }
         let _ = tpb_val;
-    }
-
-    // ── PR 控制栏（最顶部：量化/音轨名称/和弦指示器；横向时在标尺上方）──
-    // control_bar::show
-    {
-        let bar_y0 = rect.min.y;
-        let bar_rect = egui::Rect::from_min_max(
-            egui::pos2(rect.min.x, bar_y0),
-            egui::pos2(rect.max.x, bar_y0 + crate::theme::PR_BAR_H),
-        );
-        super::control_bar::show(ui, bar_rect, bar, feedback.bar_events);
     }
 
     sel_action

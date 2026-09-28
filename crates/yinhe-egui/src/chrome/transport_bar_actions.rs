@@ -385,6 +385,8 @@ pub struct TransportContext<'a> {
     pub settings: &'a mut crate::audio_settings::AudioSettings,
     /// 当前文档 PR 是否为纵向瀑布流（只读，切换由 main_loop 落地到文档视口）。
     pub orientation_vertical: bool,
+    /// PR 控制组数据（量化/音轨/幽灵/和弦；无活动文档 = None，右侧组不显示）。
+    pub pr: Option<super::transport_bar_pr::PrBarData<'a>>,
 }
 
 pub struct TransportResponse {
@@ -394,7 +396,10 @@ pub struct TransportResponse {
     pub record_toggle: bool,
     pub step_toggle: bool,
     pub tap_tempo: bool,
-    pub toggle_orientation: bool,
+    /// 直接设定钢琴卷帘方向（III/三 两个按钮；None = 未点击）。
+    pub set_orientation: Option<yinhe_types::Orientation>,
+    /// PR 控制组事件（量化 / 主音轨 / 显示音轨）。
+    pub pr_events: Vec<super::transport_bar_pr::PrBarEvent>,
     pub pending_file_action: Option<FileAction>,
     pub pending_edit_action: Option<EditAction>,
     pub pending_open_path: Option<String>,

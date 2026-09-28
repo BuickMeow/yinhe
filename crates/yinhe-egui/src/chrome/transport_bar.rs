@@ -8,10 +8,12 @@ use crate::widgets::tools_panel::ALL_TOOLS;
 
 use super::transport_bar_actions::{PlayActions, PlayMenuAction, tool_hint};
 use super::transport_bar_menus::{show_edit_menu, show_file_menu, show_play_menu};
+use super::transport_bar_pr;
 
 pub use super::transport_bar_actions::{
     EDIT_GROUPS, EditAction, FILE_GROUPS, FileAction, TransportContext, TransportResponse,
 };
+pub use super::transport_bar_pr::{PrBarData, PrBarEvent};
 pub(crate) use super::transport_bar_recent::recent_display_name;
 pub use crate::widgets::action_menu::PopupRow;
 
@@ -26,7 +28,8 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
     let mut pending_file_action = None;
     let mut pending_edit_action = None;
     let mut pending_open_path = None;
-    let mut toggle_orientation = false;
+    let mut set_orientation = None;
+    let mut pr_events: Vec<PrBarEvent> = Vec::new();
 
     egui::Panel::top("transport_bar")
         .frame(egui::Frame {
@@ -166,64 +169,56 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 
                 if let Some(doc) = ctx.doc {
                     timecode_rect = Some(show_timecode_display(ui, doc));
-
                     ui.add_space(4.0);
-                    for tool in ALL_TOOLS {
-                        let is_active = *ctx.active_tool == tool;
-                        let icon = tool.icon();
-                        let resp = crate::widgets::hover::hover_button(
-                            ui,
-                            icon.codepoint,
-                            egui::FontId::new(crate::theme::TRANSPORT_BTN_FONT, icon.font_family()),
-                            crate::theme::text_label(),
-                            is_active,
-                        );
-                        if resp.clicked() {
-                            *ctx.active_tool = tool;
-                        }
-                        if resp.hovered() {
-                            hovered_hint = Some(tool_hint(tool));
-                        }
-                        ui.add_space(2.0);
-                    }
 
-                    ui.add_space(4.0);
-                    use egui_material_icons::icons::ICON_DEHAZE;
-                    let orientation_icon = ICON_DEHAZE;
-                    let ori_font = egui::FontId::new(
-                        crate::theme::TRANSPORT_BTN_FONT,
-                        orientation_icon.font_family(),
-                    );
-                    let is_vertical = ctx.orientation_vertical;
-                    let ori_resp = if is_vertical {
-                        crate::widgets::hover::hover_button_rotated(
-                            ui,
-                            orientation_icon.codepoint,
-                            ori_font,
-                            crate::theme::text_label(),
-                            true,
-                            std::f32::consts::FRAC_PI_2,
-                        )
-                    } else {
-                        crate::widgets::hover::hover_button(
-                            ui,
-                            orientation_icon.codepoint,
-                            ori_font,
-                            crate::theme::text_label(),
-                            true,
-                        )
-                    };
-                    if ori_resp.clicked() {
-                        toggle_orientation = true;
-                    }
-                    if ori_resp.hovered() {
-                        hovered_hint = Some(if is_vertical {
-                            t!("hint.orientation.vertical").to_string()
+                    if let Some(pr) = ctx.pr.as_ref() {
+                        // ── 工具区（弹性）──
+                        // 右侧 PR 控制组宽度已知：放下全部工具时逐个显示；
+                        // 放不下则整组收拢为一个工具菜单按钮（图标 = 当前工具）。
+                        let tools_w: f32 = ALL_TOOLS
+                            .iter()
+                            .map(|tool| transport_bar_pr::icon_width(ui, tool.icon()) + 2.0)
+                            .sum();
+                        let right_w = transport_bar_pr::right_group_width(ui, pr);
+                        if ui.available_width() >= tools_w + 8.0 + right_w {
+                            for tool in ALL_TOOLS {
+                                let is_active = *ctx.active_tool == tool;
+                                let icon = tool.icon();
+                                let resp = crate::widgets::hover::hover_button(
+                                    ui,
+                                    icon.codepoint,
+                                    egui::FontId::new(
+                                        crate::theme::TRANSPORT_BTN_FONT,
+                                        icon.font_family(),
+                                    ),
+                                    crate::theme::text_label(),
+                                    is_active,
+                                );
+                                if resp.clicked() {
+                                    *ctx.active_tool = tool;
+                                }
+                                if resp.hovered() {
+                                    hovered_hint = Some(tool_hint(tool));
+                                }
+                                ui.add_space(2.0);
+                            }
                         } else {
-                            t!("hint.orientation.horizontal").to_string()
-                        });
+                            tool_menu_button(ui, ctx.active_tool, &mut hovered_hint);
+                            ui.add_space(2.0);
+                        }
+
+                        ui.add_space(4.0);
+
+                        // ── 右侧 PR 控制组（靠右，永不收拢）：量化 / Track / 幽灵 / III 三 / 和弦 ──
+                        transport_bar_pr::show_right_group(
+                            ui,
+                            pr,
+                            ctx.orientation_vertical,
+                            &mut pr_events,
+                            &mut set_orientation,
+                            &mut hovered_hint,
+                        );
                     }
-                    ui.add_space(2.0);
                 }
             });
 
@@ -315,11 +310,67 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
         record_toggle: play_actions.record,
         step_toggle: play_actions.step,
         tap_tempo: play_actions.tap_tempo,
-        toggle_orientation,
+        set_orientation,
+        pr_events,
         pending_file_action,
         pending_edit_action,
         pending_open_path,
     }
+}
+
+/// 工具收拢菜单按钮：窗口太窄、工具一行放不下时替代整排工具。
+/// 图标 = 当前激活工具（窄窗口下仍可见当前工具），点击弹出全部工具。
+fn tool_menu_button(
+    ui: &mut egui::Ui,
+    active_tool: &mut crate::widgets::tools_panel::Tool,
+    hovered_hint: &mut Option<String>,
+) -> egui::Response {
+    let icon = active_tool.icon();
+    let btn_size = egui::vec2(
+        crate::theme::TRANSPORT_BTN_SIZE,
+        crate::theme::TRANSPORT_BTN_SIZE,
+    );
+    let resp = ui
+        .push_id("tool_menu", |ui| {
+            crate::widgets::flat::flat_button_filled(
+                ui,
+                icon.rich_text()
+                    .size(crate::theme::TRANSPORT_BTN_FONT)
+                    .color(crate::theme::text_primary()),
+                btn_size,
+                None,
+                true,
+            )
+        })
+        .inner;
+    if resp.hovered() {
+        *hovered_hint = Some(tool_hint(*active_tool));
+    }
+    egui::Popup::from_toggle_button_response(&resp)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            ui.horizontal(|ui| {
+                for tool in ALL_TOOLS {
+                    let t_icon = tool.icon();
+                    let r = crate::widgets::hover::hover_button(
+                        ui,
+                        t_icon.codepoint,
+                        egui::FontId::new(crate::theme::TRANSPORT_BTN_FONT, t_icon.font_family()),
+                        crate::theme::text_label(),
+                        *active_tool == tool,
+                    );
+                    if r.clicked() {
+                        *active_tool = tool;
+                        ui.close();
+                    }
+                    if r.hovered() {
+                        r.on_hover_text(tool_hint(tool));
+                    }
+                }
+            });
+        });
+    resp
 }
 
 fn menu_button(

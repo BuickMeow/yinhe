@@ -40,29 +40,24 @@ pub(crate) fn compute_layout(
 
     // AM 面板可用高度（横向：content 之下；纵向：content 之下、键盘之上）
     let avail_h = if vertical {
-        (rect.height() - crate::theme::PR_BAR_H - crate::widgets::scrollbar::SCROLLBAR_H - kb_w)
-            .max(0.0)
+        (rect.height() - crate::widgets::scrollbar::SCROLLBAR_H - kb_w).max(0.0)
     } else {
-        (rect.height()
-            - super::types::RULER_H
-            - crate::theme::PR_BAR_H
-            - crate::widgets::scrollbar::SCROLLBAR_H)
-            .max(0.0)
+        (rect.height() - super::types::RULER_H - crate::widgets::scrollbar::SCROLLBAR_H).max(0.0)
     };
     let panels_max_h = (avail_h * 0.65).max(0.0);
     let panels_total_h = panels_natural_h.min(panels_max_h);
 
-    // 音乐区位置：横向顶部从 control_bar+ruler 之下开始（control 在上、ruler 贴内容更易操作）；纵向顶部从 control_bar 之下。
+    // 音乐区位置：横向顶部从 ruler 之下开始；纵向顶部从内容顶部开始。
     let ruler_band_y = rect.min.y;
     let (content_y, content_bottom, content_left_x, music_left_x) = if vertical {
-        let top = rect.min.y + crate::theme::PR_BAR_H;
+        let top = rect.min.y;
         // 底部：key 滚动条 + 键盘条（高 kb_w）
         let keyboard_top = rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H - kb_w;
         let bottom = keyboard_top - panels_total_h;
         let left = rect.min.x + super::types::RULER_H; // 竖 ruler 列
         (top, bottom.max(top), left, left)
     } else {
-        let top = rect.min.y + crate::theme::PR_BAR_H + super::types::RULER_H;
+        let top = rect.min.y + super::types::RULER_H;
         let bottom = top + (avail_h - panels_total_h).max(0.0);
         (top, bottom, rect.min.x, rect.min.x + kb_w)
     };
@@ -104,13 +99,10 @@ pub(crate) fn compute_layout(
             egui::pos2(rect.min.x + super::types::RULER_H, content_bottom),
         )
     } else {
-        // 横向：control_bar 在最上（ruler_band_y .. +PR_BAR_H），ruler 在其下贴内容
+        // 横向：ruler 贴在 PR 内容顶部（其上方为 transport bar，无 control_bar）
         egui::Rect::from_min_max(
-            egui::pos2(rect.min.x + kb_w, ruler_band_y + crate::theme::PR_BAR_H),
-            egui::pos2(
-                content_right_x,
-                ruler_band_y + crate::theme::PR_BAR_H + super::types::RULER_H,
-            ),
+            egui::pos2(rect.min.x + kb_w, ruler_band_y),
+            egui::pos2(content_right_x, ruler_band_y + super::types::RULER_H),
         )
     };
 

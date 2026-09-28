@@ -12,7 +12,6 @@ mod anchor_line;
 pub mod automation_panel;
 mod bg;
 mod brush;
-pub mod control_bar;
 pub(crate) mod drag;
 mod follow;
 mod gpu;
@@ -88,8 +87,6 @@ pub fn show(
     conductor_idx: Option<u16>,
     // 写入目标轨 = 主音轨或回退轨（无选中时第一个非 Conductor 轨），由 layout 计算。
     write_track: Option<u16>,
-    // 控制栏输入（最顶部一栏：量化/音轨名称/和弦指示器；横向时在标尺上方）。
-    bar: control_bar::PrBarData<'_>,
     revision: u64,
     note_revisions: &[u64; yinhe_types::KEY_COUNT],
     feedback: &mut PianoViewFeedback<'_>,
@@ -354,8 +351,6 @@ pub fn show(
         quantize,
         ppq,
         bar_line_data,
-        &bar,
-        feedback,
         selected,
         line_tool_line.as_ref(),
         scissors_line.as_ref(),

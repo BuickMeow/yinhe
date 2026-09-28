@@ -11,7 +11,6 @@ use yinhe_editor_core::batch_ops::summarize_selected;
 use yinhe_types::time_format::{format_tick_bar_beat_with_time_sig, measure_ticks};
 use yinhe_types::{AnchorSelRect, NoteSource, VelocityEdit};
 
-use super::chord::chord_indicator_text;
 use super::{LayoutInfo, sel_hint::SelHintInfo};
 
 impl App {
@@ -393,14 +392,7 @@ impl App {
             Vec::new();
         let mut velocity_edits: Vec<yinhe_types::VelocityEdit> = Vec::new();
 
-        let (
-            piano_event,
-            note_drag_delta,
-            pencil_note_drag,
-            note_resize_delta,
-            preview_reqs,
-            bar_events,
-        ) = {
+        let (piano_event, note_drag_delta, pencil_note_drag, note_resize_delta, preview_reqs) = {
             let mut guard =
                 crate::app::main_loop::ReplaceGuard::new(&mut self.workspace.documents[idx]);
             let doc = guard.as_mut();
@@ -415,7 +407,6 @@ impl App {
             let mut pencil_note_drag: Option<crate::piano_view::PencilNoteDrag> = None;
             let mut note_resize_delta: Option<(crate::piano_view::ResizeSide, i64)> = None;
             let mut preview_reqs: Vec<crate::piano_view::PreviewReq> = Vec::new();
-            let mut bar_events: Vec<crate::piano_view::control_bar::PrBarEvent> = Vec::new();
             ui.scope_builder(egui::UiBuilder::new().max_rect(piano_rect), |ui| {
                 let _piano_total_start = if yinhe_memtrace::perf_probe::enabled() {
                     Some(std::time::Instant::now())
@@ -493,27 +484,6 @@ impl App {
                     .filter(|(i, _)| pr_visible.get(*i).copied().unwrap_or(false))
                     .flat_map(|(_, t)| t.automation_lanes.iter())
                     .collect();
-                // 和弦指示器文本：实时 MIDI 按键优先；无按键且播放中 → 播放头和弦。
-                // 逐轨识别：主轨优先、PR 可见次之，跳过静音/不可见/力度≤1，择最完善的多音和弦。
-                let chord_text = chord_indicator_text(
-                    &self.midi_thru_keys,
-                    is_playing,
-                    doc.edit.cursor_tick,
-                    Some(&*doc.data.model),
-                    main,
-                    &pr_visible,
-                    &doc.edit.track_overrides,
-                    doc.edit.track_cache.conductor_idx,
-                );
-                let bar_data = piano_view::control_bar::PrBarData {
-                    ppq: tpb,
-                    quantize: doc.edit.quantize_pianoroll,
-                    track_infos: &doc.edit.track_cache.info,
-                    pr_track_visible: &doc.edit.track_pianoroll_visible,
-                    // 主音轨纯派生自选中集合：无选中时为空，不显示回退轨。
-                    main_track: main,
-                    chord: chord_text.as_deref(),
-                };
                 // 新建音符默认长度：该轨 gate 记忆，无记忆回退量化间隔
                 let default_gate = write_track.map(|t| {
                     let fallback = doc.edit.quantize_pianoroll.tick_interval(tpb);
@@ -538,7 +508,6 @@ impl App {
                     velocity_edits: &mut velocity_edits,
                     preview_reqs: &mut preview_reqs,
                     status_hint: &mut self.status_hint,
-                    bar_events: &mut bar_events,
                 };
                 event = piano_view::show(
                     ui,
@@ -579,7 +548,6 @@ impl App {
                     &doc.edit.track_selected,
                     doc.edit.track_cache.conductor_idx,
                     write_track,
-                    bar_data,
                     doc.data.revision,
                     doc.data.note_revisions(),
                     &mut feedback,
@@ -597,7 +565,6 @@ impl App {
                 pencil_note_drag,
                 note_resize_delta,
                 preview_reqs,
-                bar_events,
             )
         };
 
@@ -682,29 +649,6 @@ impl App {
                 PianoViewEvent::AddNotes { track, notes } => {
                     self.add_notes_with_undo(track, notes);
                 }
-            }
-        }
-
-        // PR 控制栏事件：量化 / 切换主音轨 / 显示音轨勾选
-        for ev in bar_events {
-            use crate::piano_view::control_bar::PrBarEvent;
-            let Some(idx) = self.workspace.active_doc else {
-                break;
-            };
-            let edit = &mut self.workspace.documents[idx].edit;
-            match ev {
-                PrBarEvent::Quantize(preset) => edit.quantize_pianoroll = preset,
-                PrBarEvent::SwitchMainTrack(t) => {
-                    edit.track_selected.clear();
-                    edit.track_selected.insert(t);
-                }
-                // PR 显示开关只写 track_pianoroll_visible，不影响 AR（track_visible）。
-                PrBarEvent::SetTrackVisible(t, v) => {
-                    if let Some(slot) = edit.track_pianoroll_visible.get_mut(t as usize) {
-                        *slot = v;
-                    }
-                }
-                PrBarEvent::SetAllVisible(v) => edit.track_pianoroll_visible.fill(v),
             }
         }
 

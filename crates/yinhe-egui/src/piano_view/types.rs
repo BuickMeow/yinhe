@@ -85,8 +85,6 @@ pub struct PianoViewFeedback<'a> {
     pub preview_reqs: &'a mut Vec<PreviewReq>,
     /// 状态栏讲解行：钢琴卷帘悬停提示（位置 + 音高）。
     pub status_hint: &'a mut Option<String>,
-    /// 控制栏事件（量化/切换主音轨/显示音轨勾选），由 layout 应用。
-    pub bar_events: &'a mut Vec<super::control_bar::PrBarEvent>,
 }
 
 /// 钢琴卷帘顶部时间标尺高度（占位常量，实际值来自 theme）。
