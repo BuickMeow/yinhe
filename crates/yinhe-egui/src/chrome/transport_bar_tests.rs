@@ -11,7 +11,6 @@ fn pr_bar_data(doc: Option<&Document>) -> Option<crate::chrome::transport_bar_pr
     doc.map(|doc| {
         let main = doc.edit.main_track();
         crate::chrome::transport_bar_pr::PrBarData {
-            ppq: doc.data.model.meta.ppq,
             quantize: doc.edit.quantize_pianoroll,
             track_infos: &doc.edit.track_cache.info,
             pr_track_visible: &doc.edit.track_pianoroll_visible,
@@ -497,7 +496,6 @@ fn right_group_text_shapes_use_fallback_color() {
     ctx.run_ui(Default::default(), |_| {})
         .drop_without_applying_deltas();
     let data = crate::chrome::transport_bar_pr::PrBarData {
-        ppq: 480,
         quantize: yinhe_editor_core::quantize::QuantizePreset::default(),
         track_infos: &[],
         pr_track_visible: &[],

@@ -80,6 +80,25 @@ impl ScaleType {
         Self::WholeTone,
     ];
 
+    /// 英文名（时间码调式显示用，如 `C Major`）。
+    pub const fn english_name(&self) -> &'static str {
+        match self {
+            Self::Major => "Major",
+            Self::NaturalMinor => "Minor",
+            Self::HarmonicMinor => "Harmonic Minor",
+            Self::MelodicMinor => "Melodic Minor",
+            Self::Dorian => "Dorian",
+            Self::Phrygian => "Phrygian",
+            Self::Lydian => "Lydian",
+            Self::Mixolydian => "Mixolydian",
+            Self::Locrian => "Locrian",
+            Self::MajorPentatonic => "Major Pentatonic",
+            Self::MinorPentatonic => "Minor Pentatonic",
+            Self::Blues => "Blues",
+            Self::WholeTone => "Whole Tone",
+        }
+    }
+
     pub const fn display_name(&self) -> &'static str {
         match self {
             Self::Major => "自然大调",

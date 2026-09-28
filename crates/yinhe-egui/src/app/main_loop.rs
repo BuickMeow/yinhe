@@ -580,7 +580,6 @@ impl eframe::App for App {
                 doc.edit.track_cache.conductor_idx,
             );
             transport_bar::PrBarData {
-                ppq: doc.data.model.meta.ppq,
                 quantize: doc.edit.quantize_pianoroll,
                 track_infos: &doc.edit.track_cache.info,
                 pr_track_visible: &doc.edit.track_pianoroll_visible,
@@ -641,17 +640,10 @@ impl eframe::App for App {
             doc.edit.pianoroll_view.set_orientation(orientation);
         }
 
-        // ── 量化按钮（时间码左侧）：写入聚焦视图（AR / PR）的量化 ──
-        if let Some(preset) = transport_response.set_quantize
-            && let Some(idx) = self.workspace.active_doc
-        {
-            let focus = self.view_focus;
-            let edit = &mut self.workspace.documents[idx].edit;
-            if focus == crate::app::ViewFocus::Pianoroll {
-                edit.quantize_pianoroll = preset;
-            } else {
-                edit.quantize_arrange = preset;
-            }
+        // ── 时间码编辑事件（BPM/拍号/PPQ/位置/调式/量化）──
+        if !transport_response.timecode_events.is_empty() {
+            let ctx = ui.ctx().clone();
+            self.apply_timecode_events(&ctx, transport_response.timecode_events);
         }
 
         // ── PR 控制组事件（主音轨 / 显示音轨；原 control bar 功能）──

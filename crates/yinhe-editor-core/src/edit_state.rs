@@ -127,6 +127,11 @@ pub struct EditState {
     pub pianoroll_view: yinhe_types::PianoRollView,
     /// AR 工程走带视口（滚动/缩放），每文档独立，不落盘。
     pub arrange_view: yinhe_types::ArrangementView,
+    /// 调式覆盖显示（时间码第三列）：Some 时优先于工程 key_sig 事件。
+    /// 仅覆盖显示，不改工程数据；不落盘。
+    pub key_sig_override: Option<(u8, yinhe_types::ScaleType)>,
+    /// 调式显示是否采用工程内 key_sig 事件（时间码第三列）。
+    pub key_sig_use_events: bool,
 }
 
 impl Default for EditState {
@@ -163,6 +168,8 @@ impl Default for EditState {
             selected_audio_clips: HashSet::new(),
             pianoroll_view: yinhe_types::PianoRollView::default(),
             arrange_view: yinhe_types::ArrangementView::default(),
+            key_sig_override: None,
+            key_sig_use_events: true,
         }
     }
 }

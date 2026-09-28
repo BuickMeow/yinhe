@@ -20,6 +20,47 @@ pub fn format_time_sig(numerator: u8, denominator_power: u8) -> String {
     format!("{}/{}", numerator, denom)
 }
 
+/// 解析拍号输入：中间一个标点（`/`、`.` 或 `。`），两边是数字。
+///
+/// 返回 `(numerator, denominator_power)`，如 `"4/4"` / `"4.4"` / `"4。4"` → `(4, 2)`。
+/// 分母必须是 2 的幂（1..=64），分子 1..=64。
+pub fn parse_time_sig(s: &str) -> Option<(u8, u8)> {
+    let normalized = s.trim().replace('。', ".");
+    let sep = normalized.find(['/', '.'])?;
+    let (num_str, rest) = normalized.split_at(sep);
+    let den_str = &rest[1..];
+    let numerator: u32 = num_str.trim().parse().ok()?;
+    let denominator: u32 = den_str.trim().parse().ok()?;
+    if !(1..=64).contains(&numerator) || !(1..=64).contains(&denominator) {
+        return None;
+    }
+    if !denominator.is_power_of_two() {
+        return None;
+    }
+    Some((numerator as u8, denominator.ilog2() as u8))
+}
+
+/// 解析时间输入 `m:ss.mmm`（分:秒.毫秒），接受 `。` 代替 `.`。
+///
+/// 无冒号时按纯秒数解析；秒数部分支持小数（如 `"0:01.500"` → 1.5）。
+pub fn parse_time(s: &str) -> Option<f64> {
+    let normalized = s.trim().replace('。', ".");
+    match normalized.split_once(':') {
+        Some((m, rest)) => {
+            let mins: f64 = m.trim().parse().ok()?;
+            let secs: f64 = rest.trim().parse().ok()?;
+            if secs < 0.0 || mins < 0.0 {
+                return None;
+            }
+            Some(mins * 60.0 + secs)
+        }
+        None => {
+            let secs: f64 = normalized.parse().ok()?;
+            (secs >= 0.0).then_some(secs)
+        }
+    }
+}
+
 /// Convert tick to `bar.beat.tick_in_beat` format (all 1-indexed).
 ///
 /// NOTE: This function assumes a single uniform time signature throughout the
@@ -293,5 +334,38 @@ mod tests {
         assert_eq!(parse_bar_beat_tick("0.1.000", 480, &[], 4, 2), None);
         assert_eq!(parse_bar_beat_tick("1.0.000", 480, &[], 4, 2), None);
         assert_eq!(parse_bar_beat_tick("abc.1.000", 480, &[], 4, 2), None);
+    }
+
+    /// 拍号解析：接受 `/`、`.`、`。` 分隔，分母必须 2 的幂。
+    #[test]
+    fn test_parse_time_sig() {
+        assert_eq!(parse_time_sig("4/4"), Some((4, 2)));
+        assert_eq!(parse_time_sig("4.4"), Some((4, 2)));
+        assert_eq!(parse_time_sig("4。4"), Some((4, 2)));
+        assert_eq!(parse_time_sig(" 3 / 8 "), Some((3, 3)));
+        assert_eq!(parse_time_sig("6/8"), Some((6, 3)));
+        assert_eq!(parse_time_sig("7/16"), Some((7, 4)));
+        // 非法：非 2 的幂分母 / 缺分隔符 / 越界 / 空
+        assert_eq!(parse_time_sig("4/3"), None);
+        assert_eq!(parse_time_sig("44"), None);
+        assert_eq!(parse_time_sig("0/4"), None);
+        assert_eq!(parse_time_sig("4/0"), None);
+        assert_eq!(parse_time_sig("4/128"), None);
+        assert_eq!(parse_time_sig(""), None);
+        assert_eq!(parse_time_sig("a/b"), None);
+    }
+
+    /// 时间解析：`m:ss.mmm`，接受 `。`；无冒号按纯秒数。
+    #[test]
+    fn test_parse_time() {
+        assert_eq!(parse_time("0:01.500"), Some(1.5));
+        assert_eq!(parse_time("0:01。500"), Some(1.5));
+        assert_eq!(parse_time("1:30"), Some(90.0));
+        assert_eq!(parse_time("2:00.000"), Some(120.0));
+        assert_eq!(parse_time("90"), Some(90.0));
+        assert_eq!(parse_time("1.5"), Some(1.5));
+        assert_eq!(parse_time("-1"), None);
+        assert_eq!(parse_time("a:b"), None);
+        assert_eq!(parse_time(""), None);
     }
 }

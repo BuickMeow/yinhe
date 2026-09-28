@@ -30,7 +30,6 @@ pub enum PrBarEvent {
 
 /// PR 控制数据（全部只读；状态修改走事件）。
 pub struct PrBarData<'a> {
-    pub ppq: u32,
     pub quantize: QuantizePreset,
     /// 轨道显示信息缓存（edit.track_cache.info，含 Conductor 行）。
     pub track_infos: &'a [yinhe_core::TrackInfo],

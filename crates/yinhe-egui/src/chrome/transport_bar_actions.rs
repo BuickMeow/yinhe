@@ -402,8 +402,8 @@ pub struct TransportResponse {
     pub tap_tempo: bool,
     /// 直接设定钢琴卷帘方向（III/三 两个按钮；None = 未点击）。
     pub set_orientation: Option<yinhe_types::Orientation>,
-    /// 量化按钮选择的新预设（main_loop 按聚焦视图写入 AR/PR 量化）。
-    pub set_quantize: Option<yinhe_editor_core::quantize::QuantizePreset>,
+    /// 时间码编辑事件（BPM/拍号/PPQ/位置/调式/量化）。
+    pub timecode_events: Vec<crate::widgets::timecode::TimecodeEvent>,
     /// PR 控制组事件（量化 / 主音轨 / 显示音轨）。
     pub pr_events: Vec<super::transport_bar_pr::PrBarEvent>,
     pub pending_file_action: Option<FileAction>,
