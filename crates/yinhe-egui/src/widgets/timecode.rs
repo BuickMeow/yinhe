@@ -101,6 +101,22 @@ fn key_sig_text(key: Option<(u8, ScaleType)>) -> String {
     }
 }
 
+/// 聚焦时全选文本：点击字段后直接输入即可覆盖原值（否则是追加，解析必失败）。
+fn select_all_on_focus(ui: &egui::Ui, resp: &egui::Response, id: egui::Id, text: &str) {
+    if !resp.gained_focus() {
+        return;
+    }
+    let len = text.chars().count();
+    let mut state = egui::TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::two(
+            egui::text::CCursor::new(0),
+            egui::text::CCursor::new(len),
+        )));
+    state.store(ui.ctx(), id);
+}
+
 /// 无框单行输入（时间码字段共用样式，文字在格内垂直居中）。
 fn text_edit<'a>(id: egui::Id, buf: &'a mut String, width: f32, height: f32) -> egui::TextEdit<'a> {
     egui::TextEdit::singleline(buf)
@@ -203,6 +219,7 @@ pub fn show_timecode_display(
         cell(0, 0),
         text_edit(bpm_id, &mut bufs.bpm, COL_WIDTHS[0] - 8.0, ROW_H),
     );
+    select_all_on_focus(ui, &resp, bpm_id, &bufs.bpm);
     if resp.lost_focus()
         && let Ok(v) = bufs.bpm.trim().parse::<f64>()
         && v.is_finite()
@@ -224,6 +241,7 @@ pub fn show_timecode_display(
         sig_rect,
         text_edit(sig_id, &mut bufs.time_sig, sig_w - 4.0, ROW_H),
     );
+    select_all_on_focus(ui, &resp, sig_id, &bufs.time_sig);
     if resp.lost_focus()
         && let Some((numerator, denominator_power)) = time_format::parse_time_sig(&bufs.time_sig)
     {
@@ -237,6 +255,7 @@ pub fn show_timecode_display(
         ppq_rect,
         text_edit(ppq_id, &mut bufs.ppq, ppq_rect.width() - 4.0, ROW_H),
     );
+    select_all_on_focus(ui, &resp, ppq_id, &bufs.ppq);
     if resp.lost_focus()
         && let Ok(v) = bufs.ppq.trim().parse::<u32>()
         && (1..=32767).contains(&v)
@@ -253,16 +272,24 @@ pub fn show_timecode_display(
         cell(1, 0),
         text_edit(pos_id, &mut bufs.pos, COL_WIDTHS[1] - 8.0, ROW_H),
     );
+    select_all_on_focus(ui, &resp, pos_id, &bufs.pos);
     if resp.lost_focus() {
         let normalized = bufs.pos.trim().replace('。', ".");
-        if let Some(t) = time_format::parse_bar_beat_tick(
-            &normalized,
-            ppq,
-            &model.tempo_map.time_sig_events,
-            def_num,
-            def_den,
-        ) {
-            events.push(TimecodeEvent::CursorTick(t as f64));
+        // `bar.beat.tick`（如 `5.1.000`）；纯数字按绝对 tick 解析（如 `7680`）
+        let tick = if normalized.contains('.') {
+            time_format::parse_bar_beat_tick(
+                &normalized,
+                ppq,
+                &model.tempo_map.time_sig_events,
+                def_num,
+                def_den,
+            )
+            .map(|t| t as f64)
+        } else {
+            normalized.parse::<u64>().ok().map(|t| t as f64)
+        };
+        if let Some(t) = tick {
+            events.push(TimecodeEvent::CursorTick(t));
         }
     }
 
@@ -272,6 +299,7 @@ pub fn show_timecode_display(
         cell(1, 1),
         text_edit(time_id, &mut bufs.time, COL_WIDTHS[1] - 8.0, ROW_H),
     );
+    select_all_on_focus(ui, &resp, time_id, &bufs.time);
     if resp.lost_focus()
         && let Some(secs) = time_format::parse_time(&bufs.time)
     {
@@ -352,15 +380,18 @@ pub fn show_timecode_display(
 }
 
 /// 秒 → tick（tempo_map 单调，二分反查）。
+///
+/// 上限用 `u32::MAX`（不能用 `tick_length`：空工程/光标超出工程末尾时
+/// tick_length 会截断跳转结果）。
 fn seconds_to_tick(tempo_map: &yinhe_core::TempoMap, seconds: f64) -> f64 {
     if seconds <= 0.0 {
         return 0.0;
     }
-    let end = tempo_map.tick_length as f64;
-    if tempo_map.tick_to_seconds(tempo_map.tick_length) <= seconds {
-        return end;
+    let max_tick = u32::MAX as u64;
+    if tempo_map.tick_to_seconds(max_tick) <= seconds {
+        return max_tick as f64;
     }
-    let (mut lo, mut hi) = (0.0f64, end);
+    let (mut lo, mut hi) = (0.0f64, max_tick as f64);
     for _ in 0..48 {
         let mid = (lo + hi) * 0.5;
         if tempo_map.tick_to_seconds(mid as u64) < seconds {
@@ -465,5 +496,23 @@ fn key_sig_popup(
             r#override: override_on.then_some(current.unwrap_or((0, ScaleType::Major))),
             use_events: ue,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 回归：空工程（tick_length = 0）时秒数换算不能返回 0——
+    /// 旧实现以 tick_length 为二分上限，空工程/光标超出末尾会被截断成 0。
+    #[test]
+    fn seconds_to_tick_works_on_empty_project() {
+        let mut model = yinhe_core::YinModel::default();
+        model.rebuild_tempo_map();
+        assert_eq!(model.tick_length, 0);
+        // 默认 480 PPQ / 120 BPM：1 秒 = 960 tick
+        assert_eq!(seconds_to_tick(&model.tempo_map, 1.0), 960.0);
+        assert_eq!(seconds_to_tick(&model.tempo_map, 0.5), 480.0);
+        assert_eq!(seconds_to_tick(&model.tempo_map, 0.0), 0.0);
     }
 }
