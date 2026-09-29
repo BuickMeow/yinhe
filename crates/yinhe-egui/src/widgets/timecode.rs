@@ -444,32 +444,28 @@ fn key_sig_popup(
         ui.separator();
         // ── 右列：音阶 ──
         ui.vertical(|ui| {
-            ui.set_min_width(104.0);
-            ui.set_max_width(104.0);
+            ui.set_min_width(130.0);
+            ui.set_max_width(130.0);
             ui.label(t!("timecode.scale"));
             ui.separator();
-            egui::ScrollArea::vertical()
-                .id_salt("timecode_scale_list")
-                .max_height(300.0)
-                .show(ui, |ui| {
-                    for scale in ScaleType::ALL {
-                        let selected = current.is_some_and(|(_, s)| s == *scale);
-                        if ui
-                            .add(crate::widgets::menu::menu_item_button(
-                                ui,
-                                selected,
-                                scale.english_name(),
-                            ))
-                            .clicked()
-                        {
-                            events.push(TimecodeEvent::KeySig {
-                                r#override: Some((cur_root, *scale)),
-                                use_events,
-                            });
-                            ui.close();
-                        }
-                    }
-                });
+            // 不做滚动限制：音阶变体数量固定（13 个），全部展示避免"少一行"。
+            for scale in ScaleType::ALL {
+                let selected = current.is_some_and(|(_, s)| s == *scale);
+                if ui
+                    .add(crate::widgets::menu::menu_item_button(
+                        ui,
+                        selected,
+                        scale.english_name(),
+                    ))
+                    .clicked()
+                {
+                    events.push(TimecodeEvent::KeySig {
+                        r#override: Some((cur_root, *scale)),
+                        use_events,
+                    });
+                    ui.close();
+                }
+            }
         });
     });
     ui.separator();
