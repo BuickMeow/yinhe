@@ -168,6 +168,29 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     }
                 }
 
+                // ── 工具区（第四个菜单，与文件/编辑/播放并排）──
+                // 一个工具菜单按钮（图标 = 当前工具，右下角三角提示下拉）；
+                // 被图钉钉住的工具以图标按钮平铺在其右侧，供快速切换。
+                if ctx.pr.is_some() {
+                    if tool_menu_button(
+                        ui,
+                        ctx.active_tool,
+                        &mut ctx.settings.pinned_tools,
+                        &ctx.settings.keybindings,
+                        &mut hovered_hint,
+                    ) {
+                        tool_pins_changed = true;
+                    }
+                    ui.add_space(2.0);
+                    pinned_tool_buttons(
+                        ui,
+                        ctx.active_tool,
+                        &ctx.settings.pinned_tools,
+                        &mut hovered_hint,
+                    );
+                    ui.add_space(4.0);
+                }
+
                 if let Some(doc) = ctx.doc {
                     // ── 时间码（三列居中：BPM/拍号+PPQ | 位置/时间 | 量化/调式）──
                     if let Some(pr) = ctx.pr.as_ref() {
@@ -190,27 +213,6 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     ui.add_space(4.0);
 
                     if let Some(pr) = ctx.pr.as_ref() {
-                        // ── 工具区 ──
-                        // 一个工具菜单按钮（图标 = 当前工具，右下角三角提示下拉）；
-                        // 被图钉钉住的工具以图标按钮平铺在其右侧，供快速切换。
-                        if tool_menu_button(
-                            ui,
-                            ctx.active_tool,
-                            &mut ctx.settings.pinned_tools,
-                            &ctx.settings.keybindings,
-                            &mut hovered_hint,
-                        ) {
-                            tool_pins_changed = true;
-                        }
-                        ui.add_space(2.0);
-                        pinned_tool_buttons(
-                            ui,
-                            ctx.active_tool,
-                            &ctx.settings.pinned_tools,
-                            &mut hovered_hint,
-                        );
-                        ui.add_space(4.0);
-
                         // ── 右侧 PR 控制组（靠右，永不收缩）：量化 / Track / 幽灵 / III 三 / 和弦 ──
                         transport_bar_pr::show_right_group(
                             ui,
@@ -343,23 +345,7 @@ fn tool_menu_button(
         crate::theme::TRANSPORT_BTN_SIZE,
         crate::theme::TRANSPORT_BTN_SIZE,
     );
-    let resp = ui
-        .push_id("tool_menu", |ui| {
-            crate::widgets::flat::flat_button_filled(
-                ui,
-                icon.rich_text()
-                    .size(crate::theme::TRANSPORT_BTN_FONT)
-                    .color(crate::theme::text_primary()),
-                btn_size,
-                None,
-                true,
-            )
-        })
-        .inner;
-    // 右下角三角：颜色取按钮此刻的图标色（hover/按下与图标一致）。
-    let tri_color =
-        crate::widgets::hover::hover_button_color(&resp, crate::theme::text_primary(), false);
-    draw_corner_triangle(ui.painter(), resp.rect, tri_color);
+    let resp = menu_button(ui, "tool_menu", icon, btn_size);
     if resp.hovered() {
         *hovered_hint = Some(tool_hint(*active_tool));
     }
@@ -499,16 +485,22 @@ fn menu_button(
     icon: egui_material_icons::MaterialIcon,
     btn_size: egui::Vec2,
 ) -> egui::Response {
-    ui.push_id(id, |ui| {
-        crate::widgets::flat::flat_button_filled(
-            ui,
-            icon.rich_text()
-                .size(crate::theme::TRANSPORT_BTN_FONT)
-                .color(crate::theme::text_primary()),
-            btn_size,
-            None,
-            true,
-        )
-    })
-    .inner
+    let resp = ui
+        .push_id(id, |ui| {
+            crate::widgets::flat::flat_button_filled(
+                ui,
+                icon.rich_text()
+                    .size(crate::theme::TRANSPORT_BTN_FONT)
+                    .color(crate::theme::text_primary()),
+                btn_size,
+                None,
+                true,
+            )
+        })
+        .inner;
+    // 右下角三角：颜色取按钮此刻的图标色（hover/按下与图标一致），提示这是下拉菜单。
+    let tri_color =
+        crate::widgets::hover::hover_button_color(&resp, crate::theme::text_primary(), false);
+    draw_corner_triangle(ui.painter(), resp.rect, tri_color);
+    resp
 }
