@@ -208,20 +208,25 @@ pub fn show(
 
     // ── Content interaction (zoom/pan/cursor/drag/reset) ──
     let left_zone = if view.is_vertical() { 0.0 } else { kb_w };
-    crate::view_interaction::handle_input(
-        ui,
-        content_rect,
-        view,
-        cursor_tick,
-        left_zone,
-        Some((quantize, ppq)),
-        bar_line_data,
-        None,
-        None,
-        is_playing,
-        follow_mode,
-        active_tool,
-    );
+    // push_id 隔离 PR 内容交互的内部 id（`__content_drag__`）：AR 与 PR 同帧
+    // 渲染，若共用同一 id，egui 的 WidgetRects 会把两者合并成一个 widget，
+    // 导致抓手拖动互相干扰（只能拖 PR，且拖 PR 会带着 AR 视角一起动）。
+    ui.push_id("pr_content_interaction", |ui| {
+        crate::view_interaction::handle_input(
+            ui,
+            content_rect,
+            view,
+            cursor_tick,
+            left_zone,
+            Some((quantize, ppq)),
+            bar_line_data,
+            None,
+            None,
+            is_playing,
+            follow_mode,
+            active_tool,
+        );
+    });
 
     // 键盘宽度固定，不再提供左右拖拽缩放（handle_kb_resize 已移除）
     // ── Clamp scroll after all interactions ──

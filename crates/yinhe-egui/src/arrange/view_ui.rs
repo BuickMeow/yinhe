@@ -389,20 +389,25 @@ pub fn show(
             col,
         );
     }
-    crate::view_interaction::handle_input(
-        ui,
-        rect,
-        view,
-        edit.cursor_tick,
-        0.0,
-        Some((data.quantize, data.ppq)),
-        data.bar_line_data,
-        None,
-        Some(music_rect),
-        cfg.is_playing,
-        cfg.follow_mode,
-        cfg.active_tool,
-    );
+    // push_id 隔离 AR 内容交互的内部 id（`__content_drag__`）：AR 与 PR 同帧
+    // 渲染，若共用同一 id，egui 的 WidgetRects 会把两者合并成一个 widget，
+    // 导致抓手拖动互相干扰（只能拖 PR，且拖 PR 会带着 AR 视角一起动）。
+    ui.push_id("arr_content_interaction", |ui| {
+        crate::view_interaction::handle_input(
+            ui,
+            rect,
+            view,
+            edit.cursor_tick,
+            0.0,
+            Some((data.quantize, data.ppq)),
+            data.bar_line_data,
+            None,
+            Some(music_rect),
+            cfg.is_playing,
+            cfg.follow_mode,
+            cfg.active_tool,
+        );
+    });
     view.clamp_scroll(
         w as f32,
         h as f32,
