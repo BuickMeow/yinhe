@@ -807,7 +807,9 @@ impl CullState {
             // 每 chunk 20B：(index_count=6, instance_count, first_index=0,
             // base_vertex=0, first_instance) → 只留 draw 需要的两个字段。
             let args: Vec<(u32, u32)> = view
-                .chunks_exact(20)
+                .as_chunks::<20>()
+                .0
+                .iter()
                 .map(|c| {
                     (
                         u32::from_le_bytes([c[4], c[5], c[6], c[7]]),

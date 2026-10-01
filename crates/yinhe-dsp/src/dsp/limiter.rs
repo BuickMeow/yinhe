@@ -64,7 +64,7 @@ impl VolumeLimiter {
     /// 限幅交错立体声缓冲（原地）。
     pub fn limit(&mut self, sample: &mut [f32]) {
         let frames = self.latency_frames();
-        for frame in sample.chunks_exact_mut(2) {
+        for frame in sample.as_chunks_mut::<2>().0 {
             let in_l = frame[0];
             let in_r = frame[1];
 
