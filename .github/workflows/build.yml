@@ -24,7 +24,7 @@ jobs:
         run: cargo install cargo-bundle --version 0.11.0
 
       - name: Bundle, sign and package dmg
-        run: ./scripts/bundle-macos.sh
+        run: cargo xtask package macos
 
       - name: Upload dmg
         uses: actions/upload-artifact@v4
@@ -41,12 +41,8 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build release
-        run: cargo build --release -p yinhe-egui
-
       - name: Package zip
-        shell: pwsh
-        run: Compress-Archive -Path target/release/yinhe-egui.exe -DestinationPath Yinhe-windows.zip
+        run: cargo xtask package windows
 
       - name: Upload zip
         uses: actions/upload-artifact@v4
@@ -66,11 +62,8 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build release
-        run: cargo build --release -p yinhe-egui
-
       - name: Package tarball
-        run: tar -czf Yinhe-linux.tar.gz -C target/release yinhe-egui
+        run: cargo xtask package linux
 
       - name: Upload tarball
         uses: actions/upload-artifact@v4

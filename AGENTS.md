@@ -52,6 +52,7 @@
 1. 电脑里有ripgrep，想用可以随时用。
 2. /Users/jieneng/Music/MIDIs 是我们常见的MIDI测试用例目录。/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz 是我们常用的音色库。如果需要进行实际测试，一般使用这两个目录。
 3. 如果要查找库，请优先查找本地。其次是网络。
+4. 跨平台打包等重复流程已收编为 xtask（`cargo xtask help` 看用法）：`bundle-macos` 打包 macOS .app+.dmg；`package <macos|windows|linux>` 三平台打包（CI 用）；`verify [crate..]` 跑 fmt --check + clippy + test + release。不要再用老的 shell 脚本。
 
 ## 七、协作与工作方式
 

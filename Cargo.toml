@@ -21,6 +21,7 @@ members = [
     "crates/yinhe-tests",
     "crates/yinhe-test-helpers",
     "crates/yinhe-theme",
+    "xtask",
 ]
 resolver = "2"
 
