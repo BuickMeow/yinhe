@@ -52,19 +52,6 @@ pub(crate) fn icon_font(icon: MaterialIcon) -> egui::FontId {
     egui::FontId::new(crate::theme::TRANSPORT_BTN_FONT, icon.font_family())
 }
 
-/// 测量文本/图标排版宽度（与 hover_button 的分配尺寸同源，保证收拢判断准确）。
-pub(crate) fn measure(ui: &egui::Ui, text: &str, font: egui::FontId) -> f32 {
-    ui.painter()
-        .layout_no_wrap(text.to_owned(), font, egui::Color32::PLACEHOLDER)
-        .size()
-        .x
-}
-
-/// 单个图标按钮宽度。
-pub(crate) fn icon_width(ui: &egui::Ui, icon: MaterialIcon) -> f32 {
-    measure(ui, icon.codepoint, icon_font(icon))
-}
-
 /// 轨道行显示名：未命名轨用「轨道 #n (未命名)」。
 fn track_label(info: &yinhe_core::TrackInfo) -> String {
     if info.name.is_empty() {
@@ -85,26 +72,6 @@ fn track_name(data: &PrBarData<'_>) -> String {
         .and_then(|t| data.track_infos.iter().find(|i| i.index == t))
         .map(track_label)
         .unwrap_or_else(|| t!("pr_bar.no_track").to_string())
-}
-
-/// 右侧控制组总宽（含元素间距）：供工具区判断是否收拢。
-pub(crate) fn right_group_width(ui: &egui::Ui, data: &PrBarData<'_>) -> f32 {
-    let mut widths = vec![
-        measure(ui, &track_name(data), small_font())
-            + 6.0
-            + measure(
-                ui,
-                ICON_KEYBOARD_ARROW_DOWN.codepoint,
-                icon_font(ICON_KEYBOARD_ARROW_DOWN),
-            ),
-        icon_width(ui, ICON_MASKED_TRANSITIONS),
-        icon_width(ui, ICON_DEHAZE),
-        icon_width(ui, ICON_DEHAZE),
-    ];
-    if let Some(chord) = &data.chord {
-        widths.push(measure(ui, chord, chord_font()));
-    }
-    widths.iter().sum::<f32>() + GAP * (widths.len() - 1) as f32
 }
 
 fn chord_font() -> egui::FontId {

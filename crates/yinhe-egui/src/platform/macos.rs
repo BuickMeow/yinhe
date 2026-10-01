@@ -43,6 +43,7 @@ pub(crate) struct MenuBarInner {
     accelerators_suspended: bool,
     last_recent_files: Vec<String>,
     last_follow_mode: Option<FollowMode>,
+    last_active_tool: Option<crate::widgets::tools_panel::Tool>,
 }
 
 impl MenuBarInner {
@@ -61,6 +62,7 @@ impl MenuBarInner {
             accelerators_suspended: false,
             last_recent_files: Vec::new(),
             last_follow_mode: None,
+            last_active_tool: None,
         }
     }
 
@@ -70,6 +72,7 @@ impl MenuBarInner {
         suspend: bool,
         recent_files: &[String],
         follow_mode: FollowMode,
+        active_tool: crate::widgets::tools_panel::Tool,
     ) -> Vec<MenuAction> {
         if recent_files != self.last_recent_files {
             self.last_recent_files = recent_files.to_vec();
@@ -78,6 +81,10 @@ impl MenuBarInner {
         if self.last_follow_mode != Some(follow_mode) {
             self.last_follow_mode = Some(follow_mode);
             menu_refresh::refresh_follow_checks(follow_mode);
+        }
+        if self.last_active_tool != Some(active_tool) {
+            self.last_active_tool = Some(active_tool);
+            menu_refresh::refresh_tool_checks(active_tool);
         }
         let locale = rust_i18n::locale();
         if *locale != self.last_locale {

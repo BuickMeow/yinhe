@@ -11,6 +11,12 @@ pub(super) fn menu_action_id(label_key: &str) -> Option<&'static str> {
     if let Some(a) = EditAction::ALL.iter().find(|a| a.label_key() == label_key) {
         return Some(a.action_id());
     }
+    if let Some(tool) = crate::widgets::tools_panel::ALL_TOOLS
+        .iter()
+        .find(|t| t.label_key() == label_key)
+    {
+        return Some(tool.action_id());
+    }
     match label_key {
         "shortcuts.play_toggle" => Some(sc::ACTION_TOGGLE_PLAY),
         "shortcuts.stop" => Some(sc::ACTION_STOP),

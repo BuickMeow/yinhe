@@ -63,6 +63,17 @@ pub(super) fn refresh_follow_checks(mode: FollowMode) {
     });
 }
 
+/// 同步工具子菜单的单选勾选（与当前激活工具一致）。
+pub(super) fn refresh_tool_checks(active: crate::widgets::tools_panel::Tool) {
+    NATIVE_MENU.with(|cell| {
+        if let Some(native) = cell.get() {
+            for (tool, item) in &native.tool_checks {
+                item.set_checked(*tool == active);
+            }
+        }
+    });
+}
+
 /// 供 accelerator.rs 或 menu.rs 使用的辅助：检查 map
 #[allow(dead_code)]
 pub(super) fn menu_map_ref() -> Option<&'static Mutex<HashMap<MenuId, super::MenuAction>>> {

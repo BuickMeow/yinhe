@@ -104,6 +104,7 @@ impl App {
             false,
             &self.audio_settings.recent_files,
             self.follow_mode,
+            self.active_tool,
         ) {
             if matches!(action, crate::platform::MenuAction::Exit) {
                 self.should_exit = true;

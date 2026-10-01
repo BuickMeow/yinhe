@@ -19,6 +19,7 @@ impl MenuBarInner {
         _suspend: bool,
         _recent_files: &[String],
         _follow_mode: yinhe_editor_core::follow::FollowMode,
+        _active_tool: crate::widgets::tools_panel::Tool,
     ) -> Vec<MenuAction> {
         Vec::new()
     }

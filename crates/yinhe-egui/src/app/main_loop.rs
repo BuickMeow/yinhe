@@ -166,6 +166,7 @@ impl eframe::App for App {
             suspend_menu_accels,
             &self.audio_settings.recent_files,
             self.follow_mode,
+            self.active_tool,
         ) {
             use crate::platform::MenuAction;
             // 输入框聚焦时编辑类菜单动作让位给文本编辑（与 handle_keyboard_shortcuts
@@ -300,6 +301,10 @@ impl eframe::App for App {
                 }
                 MenuAction::SetFollowMode(mode) => {
                     self.follow_mode = mode;
+                    continue;
+                }
+                MenuAction::SetTool(tool) => {
+                    self.active_tool = tool;
                     continue;
                 }
                 MenuAction::OpenRecent(path) => {

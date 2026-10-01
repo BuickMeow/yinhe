@@ -45,6 +45,8 @@ pub enum MenuAction {
     TapTempo,
     /// 播放菜单「播放跟随」四档单选。
     SetFollowMode(yinhe_editor_core::follow::FollowMode),
+    /// 工具菜单：切换当前工具。
+    SetTool(crate::widgets::tools_panel::Tool),
     /// 文件菜单「最近修改的文件」子菜单选中的路径。
     OpenRecent(String),
     /// App 菜单「设置…」（⌘,），打开应用设置对话框。
@@ -84,9 +86,10 @@ impl MenuBar {
         suspend: bool,
         recent_files: &[String],
         follow_mode: yinhe_editor_core::follow::FollowMode,
+        active_tool: crate::widgets::tools_panel::Tool,
     ) -> Vec<MenuAction> {
         self.inner
-            .poll(keybindings, suspend, recent_files, follow_mode)
+            .poll(keybindings, suspend, recent_files, follow_mode, active_tool)
     }
 
     /// Poll for file paths passed in by the OS (Finder "Open With" on macOS).

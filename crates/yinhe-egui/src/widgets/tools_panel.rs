@@ -60,4 +60,25 @@ impl Tool {
             Tool::Brush => sc::ACTION_TOOL_BRUSH,
         }
     }
+
+    /// 在 [`ALL_TOOLS`] 中的下标（图钉等按固定下标存储）。
+    pub fn pin_index(self) -> usize {
+        ALL_TOOLS.iter().position(|&t| t == self).unwrap_or(0)
+    }
+
+    /// 工具在工具菜单/提示里显示的名称 i18n key。
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Tool::Select => "tool.select",
+            Tool::SelectVertical => "tool.select_vertical",
+            Tool::Pan => "tool.pan",
+            Tool::Pencil => "tool.pencil",
+            Tool::Curve => "tool.curve",
+            Tool::Scissors => "tool.scissors",
+            Tool::Eraser => "tool.eraser",
+            Tool::Grid => "tool.grid",
+            Tool::Line => "tool.line",
+            Tool::Brush => "tool.brush",
+        }
+    }
 }

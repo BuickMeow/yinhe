@@ -136,6 +136,9 @@ pub struct AudioSettings {
     /// 「写入自动化」图钉（显示在 transport bar）。
     #[serde(default)]
     pub pinned_automation_write: bool,
+    /// 工具图钉（显示在 transport bar；下标对应 `ALL_TOOLS`，见 tools_panel.rs）。
+    #[serde(default)]
+    pub pinned_tools: Vec<bool>,
     pub recent_files: Vec<String>,
     /// 运行时 UI 会话态（设置窗口/快捷键录制/设备枚举），不落盘。
     #[serde(skip)]
@@ -197,6 +200,7 @@ impl Default for AudioSettings {
             pinned_tap_tempo: false,
             automation_write: false,
             pinned_automation_write: false,
+            pinned_tools: vec![false; 10],
             recent_files: Vec::new(),
             ui_session: SettingsUiSession::default(),
         }

@@ -48,12 +48,24 @@ impl MenuText for PredefinedMenuItem {
     fn update_accelerator(&self, _accelerator: Option<Accelerator>) {}
 }
 
+impl MenuText for CheckMenuItem {
+    fn set_text(&self, text: &str) {
+        CheckMenuItem::set_text(self, text);
+    }
+    fn update_accelerator(&self, accelerator: Option<Accelerator>) {
+        if let Err(e) = CheckMenuItem::set_accelerator(self, accelerator) {
+            tracing::warn!("Failed to update menu accelerator: {e:?}");
+        }
+    }
+}
+
 pub(super) struct NativeMenu {
     pub(super) _menu: Menu,
     pub(super) _items: Vec<(&'static str, Box<dyn MenuText>)>,
     pub(super) recent_submenu: Submenu,
     pub(super) recent_items: std::cell::RefCell<Vec<MenuItem>>,
     pub(super) follow_checks: Vec<(FollowMode, &'static str, CheckMenuItem)>,
+    pub(super) tool_checks: Vec<(crate::widgets::tools_panel::Tool, CheckMenuItem)>,
 }
 
 pub(super) trait MenuActionFrom {
@@ -256,7 +268,26 @@ pub(super) fn init_native_menu() -> muda::Result<()> {
     }
     let play_menu = Submenu::with_items(t!("menu.playback"), true, &play_items)?;
 
-    let menu_items: Vec<&dyn IsMenuItem> = vec![&app_menu, &file_menu, &edit_menu, &play_menu];
+    // ── 工具子菜单（单选勾选；与 transport bar 工具菜单保持一致）──
+    let mut tool_checks: Vec<(crate::widgets::tools_panel::Tool, CheckMenuItem)> = Vec::new();
+    for tool in crate::widgets::tools_panel::ALL_TOOLS {
+        let accel = default_kb
+            .get(tool.action_id())
+            .first()
+            .and_then(combo_to_accelerator);
+        let item = CheckMenuItem::new(t!(tool.label_key()), true, false, accel);
+        map.insert(item.id().clone(), MenuAction::SetTool(tool));
+        items.push((tool.label_key(), Box::new(item.clone())));
+        tool_checks.push((tool, item));
+    }
+    let tool_refs: Vec<&dyn IsMenuItem> = tool_checks
+        .iter()
+        .map(|(_, i)| i as &dyn IsMenuItem)
+        .collect();
+    let tools_menu = Submenu::with_items(t!("menu.tools"), true, &tool_refs)?;
+
+    let menu_items: Vec<&dyn IsMenuItem> =
+        vec![&app_menu, &file_menu, &edit_menu, &play_menu, &tools_menu];
     let menu = Menu::with_items(&menu_items)?;
     menu.init_for_nsapp();
 
@@ -274,6 +305,7 @@ pub(super) fn init_native_menu() -> muda::Result<()> {
     items.push(("menu.file", Box::new(file_menu)));
     items.push(("menu.edit", Box::new(edit_menu)));
     items.push(("menu.playback", Box::new(play_menu)));
+    items.push(("menu.tools", Box::new(tools_menu)));
     items.push(("menu.app", Box::new(app_menu)));
 
     let _ = MENU_MAP.set(Mutex::new(map));
@@ -284,6 +316,7 @@ pub(super) fn init_native_menu() -> muda::Result<()> {
             recent_submenu,
             recent_items: std::cell::RefCell::new(Vec::new()),
             follow_checks,
+            tool_checks,
         });
     });
 

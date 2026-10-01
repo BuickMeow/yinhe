@@ -22,6 +22,9 @@ impl AudioSettings {
                         if s.pinned_edit_actions.len() < 12 {
                             s.pinned_edit_actions.resize(12, false);
                         }
+                        if s.pinned_tools.len() < 10 {
+                            s.pinned_tools.resize(10, false);
+                        }
                         let before_len = s.recent_files.len();
                         s.recent_files
                             .retain(|p| std::path::Path::new(p).is_absolute());
