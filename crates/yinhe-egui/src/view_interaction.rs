@@ -101,14 +101,9 @@ impl ViewInteraction for yinhe_types::ArrangementView {
 
 /// Handle zoom/pan/cursor input for a view that implements ViewInteraction.
 ///
-/// When `existing_resp` is `Some`, it is used directly for click/drag
-/// detection instead of creating a new `click_and_drag` interact.  This avoids
-/// egui interaction conflicts when the caller's `allocate_painter` already owns
-/// the same rect (e.g. arrangement view inside a child UI).
-///
-/// When `existing_resp` is `None` (e.g. piano roll, where the interaction rect
-/// differs from the painter rect), a dedicated `click_and_drag` interact is
-/// created internally.
+/// A dedicated `click_and_drag` interact is created internally（id = `hit_rect`
+/// 作用域下的 `__content_drag__`）。调用方必须用 `push_id` 为 AR/PR 各自隔离
+/// 该 id，否则两者同帧渲染时 id 相同会被 egui 合并成一个 widget。
 ///
 /// `left_zone_width`: pixels from the left edge where vertical zoom is
 ///   allowed (piano_view uses `keyboard_width`, arrangement uses `0.0`).
@@ -127,7 +122,6 @@ pub(crate) fn handle_input(
     left_zone_width: f32,
     quantize: Option<(QuantizePreset, u32)>,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
-    existing_resp: Option<&egui::Response>,
     // 命中区域（鼠标 containment / 自建 interact 的范围），None = rect。
     // AR 全宽纹理下 rect 含左列（轨道面板），交互必须限制在音乐区。
     hit_rect: Option<egui::Rect>,
@@ -137,19 +131,12 @@ pub(crate) fn handle_input(
 ) {
     let hit_rect = hit_rect.unwrap_or(rect);
     let vertical = view.orientation() == yinhe_types::Orientation::Vertical;
-    // Use caller-supplied response when painter and interact rect are the
-    // same; otherwise create a dedicated click_and_drag interact.
-    let owned_resp;
-    let content_resp: &egui::Response = if let Some(resp) = existing_resp {
-        resp
-    } else {
-        owned_resp = ui.interact(
-            hit_rect,
-            ui.id().with("__content_drag__"),
-            egui::Sense::click_and_drag(),
-        );
-        &owned_resp
-    };
+    let content_resp = ui.interact(
+        hit_rect,
+        ui.id().with("__content_drag__"),
+        egui::Sense::click_and_drag(),
+    );
+    let content_resp = &content_resp;
 
     // Hover, zoom, and scroll use a raw pointer-in-rect check instead of
     // content_resp.hovered().  The enclosing allocate_painter(Sense::hover())

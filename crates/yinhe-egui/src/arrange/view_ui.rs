@@ -401,7 +401,6 @@ pub fn show(
             0.0,
             Some((data.quantize, data.ppq)),
             data.bar_line_data,
-            None,
             Some(music_rect),
             cfg.is_playing,
             cfg.follow_mode,

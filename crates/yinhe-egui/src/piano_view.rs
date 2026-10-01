@@ -221,7 +221,6 @@ pub fn show(
             Some((quantize, ppq)),
             bar_line_data,
             None,
-            None,
             is_playing,
             follow_mode,
             active_tool,
