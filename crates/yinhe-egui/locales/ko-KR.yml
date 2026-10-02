@@ -52,7 +52,7 @@ hint.tool.curve: "곡선 · 드래그로 자동화 곡선 그리기"
 hint.tool.scissors: "가위 · 노트 자르기"
 hint.tool.eraser: "지우개 · 드래그하여 노트 삭제"
 hint.tool.grid: "그리드 · 범위 선택 후 그리드로 자르기"
-hint.tool.line: "라인 · 앵커를 드래그해 노트 생성"
+hint.tool.line: "펜 · 클릭으로 앵커 추가, 드래그로 핸들"
 hint.tool.brush: "브러시 · 드래그로 그리드에 노트 그리기"
 
 # ── 도구 ──
@@ -64,7 +64,7 @@ tool.curve: "곡선"
 tool.scissors: "가위"
 tool.eraser: "지우개"
 tool.grid: "그리드"
-tool.line: "라인"
+tool.line: "펜"
 tool.brush: "브러시"
 
 # ── 팔로우 모드 ──
@@ -791,7 +791,7 @@ shortcuts.tool_curve: "곡선 도구"
 shortcuts.tool_scissors: "가위 도구"
 shortcuts.tool_eraser: "지우개 도구"
 shortcuts.tool_grid: "그리드 도구"
-shortcuts.tool_line: "라인 도구"
+shortcuts.tool_line: "펜 도구"
 shortcuts.tool_brush: "브러시 도구"
 shortcuts.unknown: "알 수 없는 동작"
 
