@@ -224,9 +224,6 @@ pub(crate) fn draw_overlays(
                     content_rect,
                     view,
                     path,
-                    quantize,
-                    ppq,
-                    bar_line_data,
                     super::pen_tool::is_drawing(ui),
                     ui.input(|i| i.pointer.hover_pos()),
                 );

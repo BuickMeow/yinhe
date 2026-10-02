@@ -194,7 +194,7 @@ pub(crate) fn dispatch(
             "scissors_drag",
         );
     } else if effective_tool == Tool::Line {
-        super::pen_tool::frame(
+        ghost_notes = super::pen_tool::frame(
             ui,
             content_rect,
             music_rect,
@@ -204,6 +204,7 @@ pub(crate) fn dispatch(
             ppq,
             bar_line_data,
             total_ticks,
+            write_track,
         );
     } else if effective_tool == Tool::Brush {
         let (ghosts, event) = super::brush::brush_frame(

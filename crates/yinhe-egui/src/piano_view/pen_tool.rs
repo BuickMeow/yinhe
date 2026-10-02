@@ -20,6 +20,8 @@ use super::drag;
 
 /// 锚点 / 手柄命中半径（px）。
 const HIT_PX: f32 = 7.0;
+/// 绘制中首锚点的闭合命中半径（px，更大以提升可发现性）。
+const CLOSE_HIT_PX: f32 = 11.0;
 /// 单击判定：释放时鼠标位移小于此值视为单击（而非拖拽）。
 const CLICK_PX: f32 = 4.0;
 
@@ -253,12 +255,13 @@ pub(crate) fn frame(
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     total_ticks: f64,
-) {
+    write_track: Option<u16>,
+) -> Vec<(u32, u32, u8, u16)> {
     let mem_id = ui.id().with("pen_tool");
     let mut mem: PenMemory = ui.data_mut(|d| d.get_persisted(mem_id)).unwrap_or_default();
 
     if crate::view_interaction::pointer_over_popup(ui.ctx()) {
-        return;
+        return Vec::new();
     }
     let pointer = ui.input(|i| i.pointer.clone());
     let alt = ui.input(|i| i.modifiers.alt);
@@ -291,51 +294,60 @@ pub(crate) fn frame(
         && music_rect.contains(pos)
     {
         let local = local_of(content_rect, pos);
-        let hit = path.as_ref().and_then(|p| hit_test(view, p, local));
-        match hit {
-            Some(PenHit::Handle(index, side)) => {
-                mem.drag = Some(PenDrag::Handle { index, side });
+        // 绘制中点击首锚点附近（较大命中半径）→ 闭合路径。
+        let close_hit = mem.drawing
+            && path.as_ref().is_some_and(|p| {
+                p.len() >= 2
+                    && local.distance(point_px(view, p.anchors[0].tick, p.anchors[0].key))
+                        <= CLOSE_HIT_PX
+            });
+        if close_hit {
+            if let Some(p) = path.as_mut() {
+                p.closed = true;
             }
-            Some(PenHit::Anchor(index)) => {
-                if index == 0 && mem.drawing {
-                    if let Some(p) = path.as_mut() {
-                        p.closed = true;
-                    }
-                    mem.drawing = false;
-                } else if alt {
-                    if let Some(p) = path.as_mut() {
-                        convert_anchor(&mut p.anchors, index, p.closed);
-                    }
-                } else {
-                    mem.drag = Some(PenDrag::Anchor {
-                        index,
-                        start_mouse: (pos.x, pos.y),
-                    });
+            mem.drawing = false;
+        } else {
+            let hit = path.as_ref().and_then(|p| hit_test(view, p, local));
+            match hit {
+                Some(PenHit::Handle(index, side)) => {
+                    mem.drag = Some(PenDrag::Handle { index, side });
                 }
-            }
-            Some(PenHit::Segment(seg, point)) => {
-                // 只插入锚点，不进入拖拽态：避免原地松手被当成单击而删除。
-                if let Some(p) = path.as_mut() {
-                    p.anchors.insert(seg + 1, PenAnchor::new(point.0, point.1));
-                }
-            }
-            None => {
-                let p = snapped_point(view, content_rect, quantize, ppq, bar_line_data, pos);
-                let index = match path.as_mut() {
-                    Some(existing) if mem.drawing => {
-                        existing.anchors.push(PenAnchor::new(p.0, p.1));
-                        existing.anchors.len() - 1
-                    }
-                    _ => {
-                        *path = Some(PenPath {
-                            anchors: vec![PenAnchor::new(p.0, p.1)],
-                            closed: false,
+                Some(PenHit::Anchor(index)) => {
+                    if alt {
+                        if let Some(p) = path.as_mut() {
+                            convert_anchor(&mut p.anchors, index, p.closed);
+                        }
+                    } else {
+                        mem.drag = Some(PenDrag::Anchor {
+                            index,
+                            start_mouse: (pos.x, pos.y),
                         });
-                        mem.drawing = true;
-                        0
                     }
-                };
-                mem.drag = Some(PenDrag::NewAnchor { index });
+                }
+                Some(PenHit::Segment(seg, point)) => {
+                    // 只插入锚点，不进入拖拽态：避免原地松手被当成单击而删除。
+                    if let Some(p) = path.as_mut() {
+                        p.anchors.insert(seg + 1, PenAnchor::new(point.0, point.1));
+                    }
+                }
+                None => {
+                    let p = snapped_point(view, content_rect, quantize, ppq, bar_line_data, pos);
+                    let index = match path.as_mut() {
+                        Some(existing) if mem.drawing => {
+                            existing.anchors.push(PenAnchor::new(p.0, p.1));
+                            existing.anchors.len() - 1
+                        }
+                        _ => {
+                            *path = Some(PenPath {
+                                anchors: vec![PenAnchor::new(p.0, p.1)],
+                                closed: false,
+                            });
+                            mem.drawing = true;
+                            0
+                        }
+                    };
+                    mem.drag = Some(PenDrag::NewAnchor { index });
+                }
             }
         }
         // 空路径（删空）清理。
@@ -412,18 +424,25 @@ pub(crate) fn frame(
         }
     }
     ui.data_mut(|d| d.insert_persisted(mem_id, mem));
+
+    // 预览音符：与生成共用 note_slots，保证落盘一致。
+    match (path.as_ref(), write_track) {
+        (Some(p), Some(track)) => {
+            yinhe_editor_core::pen::note_slots(p, quantize, ppq, bar_line_data)
+                .into_iter()
+                .map(|(key, start, end)| (start, end, key, track))
+                .collect()
+        }
+        _ => Vec::new(),
+    }
 }
 
-/// 绘制路径、锚点、手柄、生成位置预览与橡皮筋。
-#[allow(clippy::too_many_arguments)]
+/// 绘制路径、锚点、手柄与橡皮筋（预览音符走 ghost，由 GPU 层渲染）。
 pub(crate) fn paint(
     painter: &egui::Painter,
     content_rect: egui::Rect,
     view: &PianoRollView,
     path: &PenPath,
-    quantize: QuantizePreset,
-    ppq: u32,
-    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     drawing: bool,
     mouse_pos: Option<egui::Pos2>,
 ) {
@@ -467,16 +486,10 @@ pub(crate) fn paint(
         }
     }
 
-    // 生成位置预览（吸附后的行中心小圆点）。
-    let interval = quantize.tick_interval(ppq);
-    if interval > 0 {
-        // 预览用较粗采样（生成走精确 interval），降低每帧开销。
-        for (key, tick) in path.note_points(interval as f64 * 4.0) {
-            let snapped =
-                crate::view_interaction::snap_tick(tick, quantize, ppq, bar_line_data).max(0.0);
-            let p = screen(content_rect, point_px(view, snapped, key as f64));
-            painter.circle_filled(p, 2.5, color.gamma_multiply(0.85));
-        }
+    // 绘制中高亮首锚点，提示可点击闭合。
+    if drawing && let Some(first) = path.anchors.first() {
+        let p = screen(content_rect, point_px(view, first.tick, first.key));
+        painter.circle_stroke(p, 8.0, egui::Stroke::new(1.5, color));
     }
 
     // 橡皮筋：绘制中从末锚点到鼠标。

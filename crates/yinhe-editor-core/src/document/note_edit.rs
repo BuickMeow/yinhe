@@ -1345,25 +1345,19 @@ impl Document {
         }
         let ppq = self.data.model.meta.ppq;
         let quantize = self.edit.quantize_pianoroll;
-        let interval = quantize.tick_interval(ppq);
-        if interval == 0 {
-            return None;
-        }
         let (tpb, num, den, events) = pr_bar_line_data(&self.data.model);
         let bar = Some((tpb, num, den, events.as_slice()));
         let velocity = self.edit.default_velocity(track);
-        let points = path.note_points(interval as f64);
-        let mut notes = Vec::with_capacity(points.len());
-        for (key, raw) in points {
-            let start = crate::quantize::snap_tick(raw, quantize, ppq, bar).max(0.0) as u32;
-            notes.push(NoteEvent {
+        let notes: Vec<NoteEvent> = crate::pen::note_slots(&path, quantize, ppq, bar)
+            .into_iter()
+            .map(|(key, start, end)| NoteEvent {
                 id: 0,
                 start_tick: start,
-                end_tick: start.saturating_add(interval),
+                end_tick: end,
                 key,
                 velocity,
-            });
-        }
+            })
+            .collect();
         self.add_notes_batch(track, &notes)
     }
 

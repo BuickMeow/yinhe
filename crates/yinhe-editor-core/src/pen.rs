@@ -5,7 +5,8 @@
 //! 把曲线映射为钢琴卷帘音符的 `(key, tick)`：曲线每经过一个整数音高行就产生
 //! 一个音符；非单调曲线同一行会经过多次，因此允许同一行出现多个音符。
 
-use yinhe_types::MAX_KEY;
+use crate::quantize::QuantizePreset;
+use yinhe_types::{MAX_KEY, TimeSigEvent};
 
 /// 逻辑坐标点：`(tick, key)`。
 pub type Pt = (f64, f64);
@@ -193,6 +194,28 @@ impl PenPath {
         }
         out
     }
+}
+
+/// 路径 → 音符槽位 `(key, start_tick, end_tick)`，起点已吸附量化（小节感知），
+/// gate = 一个量化间隔。生成与预览共用，保证两者完全一致。
+pub fn note_slots(
+    path: &PenPath,
+    quantize: QuantizePreset,
+    ppq: u32,
+    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+) -> Vec<(u8, u32, u32)> {
+    let interval = quantize.tick_interval(ppq);
+    if interval == 0 {
+        return Vec::new();
+    }
+    path.note_points(interval as f64)
+        .into_iter()
+        .map(|(key, raw)| {
+            let start =
+                crate::quantize::snap_tick(raw, quantize, ppq, bar_line_data).max(0.0) as u32;
+            (key, start, start.saturating_add(interval))
+        })
+        .collect()
 }
 
 /// 追加一个音符点；与上一个（同 key）点几乎重合时忽略。

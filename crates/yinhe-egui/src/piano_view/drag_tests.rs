@@ -1304,15 +1304,16 @@ fn scissors_click_clears_line() {
     assert!(line.is_none(), "剪刀单击空白应清空线");
 }
 
-/// 跑一帧钢笔工具。
+/// 跑一帧钢笔工具，返回该帧的预览 ghost 音符。
 fn run_pen_frame(
     ctx: &egui::Context,
     raw: egui::RawInput,
     view: &mut yinhe_types::PianoRollView,
     path: &mut Option<yinhe_editor_core::pen::PenPath>,
-) {
+) -> Vec<(u32, u32, u8, u16)> {
+    let mut ghosts = Vec::new();
     ctx.run_ui(raw, |ui| {
-        crate::piano_view::pen_tool::frame(
+        ghosts = crate::piano_view::pen_tool::frame(
             ui,
             content(),
             content(),
@@ -1322,10 +1323,12 @@ fn run_pen_frame(
             480,
             None,
             10000.0,
+            Some(0),
         );
     })
     .textures_delta
     .clear();
+    ghosts
 }
 
 /// 连点两下：产生两个角点，坐标按量化/行吸附。
@@ -1455,6 +1458,85 @@ fn pen_click_anchor_deletes_it() {
     );
     assert_eq!(path.as_ref().unwrap().anchors.len(), 1);
     assert_eq!(path.as_ref().unwrap().anchors[0].pos(), (240.0, 98.0));
+}
+
+/// 绘制中点击首个锚点：闭合路径。
+#[test]
+fn pen_click_first_anchor_closes_path() {
+    let ctx = egui::Context::default();
+    let mut view = test_view();
+    view.viewport_h = 600.0;
+    let mut path = None;
+    for pos in [
+        egui::pos2(240.0, 295.0),
+        egui::pos2(480.0, 255.0),
+        egui::pos2(360.0, 175.0),
+    ] {
+        run_pen_frame(&ctx, press_event(pos), &mut view, &mut path);
+        run_pen_frame(&ctx, release_event(pos), &mut view, &mut path);
+    }
+    assert_eq!(path.as_ref().unwrap().anchors.len(), 3);
+
+    run_pen_frame(
+        &ctx,
+        press_event(egui::pos2(240.0, 295.0)),
+        &mut view,
+        &mut path,
+    );
+    run_pen_frame(
+        &ctx,
+        release_event(egui::pos2(240.0, 295.0)),
+        &mut view,
+        &mut path,
+    );
+    assert!(path.as_ref().unwrap().closed, "点击首锚点应闭合路径");
+    assert_eq!(path.as_ref().unwrap().anchors.len(), 3);
+}
+
+/// 预览 ghost 音符与生成用的 note_slots 完全一致。
+#[test]
+fn pen_preview_ghosts_match_generated_slots() {
+    let ctx = egui::Context::default();
+    let mut view = test_view();
+    view.viewport_h = 600.0;
+    let mut path = None;
+
+    run_pen_frame(
+        &ctx,
+        press_event(egui::pos2(240.0, 295.0)),
+        &mut view,
+        &mut path,
+    );
+    run_pen_frame(
+        &ctx,
+        release_event(egui::pos2(240.0, 295.0)),
+        &mut view,
+        &mut path,
+    );
+    run_pen_frame(
+        &ctx,
+        press_event(egui::pos2(480.0, 255.0)),
+        &mut view,
+        &mut path,
+    );
+    let ghosts = run_pen_frame(
+        &ctx,
+        release_event(egui::pos2(480.0, 255.0)),
+        &mut view,
+        &mut path,
+    );
+
+    assert!(!ghosts.is_empty(), "两锚点线段应产生预览 ghost");
+    let expected: Vec<(u32, u32, u8, u16)> = yinhe_editor_core::pen::note_slots(
+        path.as_ref().unwrap(),
+        QuantizePreset::Fraction(1, 16),
+        480,
+        None,
+    )
+    .into_iter()
+    .map(|(key, start, end)| (start, end, key, 0))
+    .collect();
+    assert_eq!(ghosts, expected, "预览应与生成完全一致");
 }
 
 /// 点击线段：插入锚点，松手后保留（不被当作单击删除）。
