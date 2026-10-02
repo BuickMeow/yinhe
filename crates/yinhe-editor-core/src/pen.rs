@@ -119,7 +119,11 @@ impl PenPath {
     pub fn flatten(&self, step_ticks: f64) -> Vec<Pt> {
         let segs = self.segment_count();
         if segs == 0 {
-            return self.anchors.first().map(|a| vec![a.pos()]).unwrap_or_default();
+            return self
+                .anchors
+                .first()
+                .map(|a| vec![a.pos()])
+                .unwrap_or_default();
         }
         let step = step_ticks.max(0.25);
         let mut pts: Vec<Pt> = Vec::new();

@@ -32,7 +32,10 @@ pub(crate) enum HandleSide {
 #[derive(Clone, Copy, Debug)]
 enum PenDrag {
     /// 拖动锚点（记录起始鼠标，用于区分单击删除）。
-    Anchor { index: usize, start_mouse: (f32, f32) },
+    Anchor {
+        index: usize,
+        start_mouse: (f32, f32),
+    },
     /// 拖动某锚点的方向手柄。
     Handle { index: usize, side: HandleSide },
     /// 新按下的锚点（尚未确定是否拖出手柄）。
@@ -131,7 +134,10 @@ fn dist_seg(p: egui::Pos2, a: egui::Pos2, b: egui::Pos2) -> f32 {
 /// 命中检测：手柄 > 锚点 > 线段。
 fn hit_test(view: &PianoRollView, path: &PenPath, local: egui::Pos2) -> Option<PenHit> {
     for (i, a) in path.anchors.iter().enumerate() {
-        for (side, h) in [(HandleSide::Out, a.out_handle), (HandleSide::In, a.in_handle)] {
+        for (side, h) in [
+            (HandleSide::Out, a.out_handle),
+            (HandleSide::In, a.in_handle),
+        ] {
             if let Some(h) = h {
                 let p = point_px(view, a.tick + h.0, a.key + h.1);
                 if local.distance(p) <= HIT_PX {
@@ -351,7 +357,8 @@ pub(crate) fn frame(
             let clamped = pos.clamp(music_rect.min, music_rect.max);
             match drag_kind {
                 PenDrag::Anchor { index, .. } => {
-                    let p = snapped_point(view, content_rect, quantize, ppq, bar_line_data, clamped);
+                    let p =
+                        snapped_point(view, content_rect, quantize, ppq, bar_line_data, clamped);
                     if let Some(a) = path.as_mut().and_then(|p| p.anchors.get_mut(index)) {
                         a.tick = p.0;
                         a.key = p.1;
@@ -452,7 +459,11 @@ pub(crate) fn paint(
         if a.is_smooth() {
             painter.circle_filled(p, 4.0, color);
         } else {
-            painter.rect_filled(egui::Rect::from_center_size(p, egui::vec2(7.0, 7.0)), 0.0, color);
+            painter.rect_filled(
+                egui::Rect::from_center_size(p, egui::vec2(7.0, 7.0)),
+                0.0,
+                color,
+            );
         }
     }
 

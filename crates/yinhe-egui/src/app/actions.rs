@@ -641,9 +641,7 @@ impl App {
 
     /// 钢笔工具确认：沿曲线逐行生成音符，然后清空路径（一个 undo entry）。
     pub(crate) fn line_tool_confirm(&mut self) {
-        self.with_undo(t!("undo.add_note").as_ref(), |doc| {
-            doc.generate_pen_notes()
-        });
+        self.with_undo(t!("undo.add_note").as_ref(), |doc| doc.generate_pen_notes());
         if let Some(idx) = self.workspace.active_doc {
             let doc = &mut self.workspace.documents[idx];
             doc.edit.pen_path = None;
