@@ -1287,9 +1287,174 @@ fn scissors_click_clears_line() {
     });
     let pos = egui::pos2(600.0, 300.0);
 
-    run_anchor_frame(&ctx, press_event(pos), &mut view, &mut line, "scissors_drag");
-    run_anchor_frame(&ctx, release_event(pos), &mut view, &mut line, "scissors_drag");
+    run_anchor_frame(
+        &ctx,
+        press_event(pos),
+        &mut view,
+        &mut line,
+        "scissors_drag",
+    );
+    run_anchor_frame(
+        &ctx,
+        release_event(pos),
+        &mut view,
+        &mut line,
+        "scissors_drag",
+    );
     assert!(line.is_none(), "剪刀单击空白应清空线");
+}
+
+/// 跑一帧钢笔工具。
+fn run_pen_frame(
+    ctx: &egui::Context,
+    raw: egui::RawInput,
+    view: &mut yinhe_types::PianoRollView,
+    path: &mut Option<yinhe_editor_core::pen::PenPath>,
+) {
+    ctx.run_ui(raw, |ui| {
+        crate::piano_view::pen_tool::frame(
+            ui,
+            content(),
+            content(),
+            view,
+            path,
+            QuantizePreset::Fraction(1, 16),
+            480,
+            None,
+            10000.0,
+        );
+    })
+    .textures_delta
+    .clear();
+}
+
+/// 连点两下：产生两个角点，坐标按量化/行吸附。
+#[test]
+fn pen_click_creates_two_corner_anchors() {
+    let ctx = egui::Context::default();
+    let mut view = test_view();
+    view.viewport_h = 600.0;
+    let mut path = None;
+
+    // key 68 行中心 y=595；key 72 行中心 y=555；tick 吸附 1/16@480 = 120。
+    run_pen_frame(
+        &ctx,
+        press_event(egui::pos2(240.0, 295.0)),
+        &mut view,
+        &mut path,
+    );
+    run_pen_frame(
+        &ctx,
+        release_event(egui::pos2(240.0, 295.0)),
+        &mut view,
+        &mut path,
+    );
+    run_pen_frame(
+        &ctx,
+        press_event(egui::pos2(480.0, 255.0)),
+        &mut view,
+        &mut path,
+    );
+    run_pen_frame(
+        &ctx,
+        release_event(egui::pos2(480.0, 255.0)),
+        &mut view,
+        &mut path,
+    );
+
+    let p = path.expect("应有路径");
+    assert_eq!(p.anchors.len(), 2);
+    assert_eq!(p.anchors[0].pos(), (240.0, 98.0));
+    assert_eq!(p.anchors[1].pos(), (480.0, 102.0));
+    assert!(
+        p.anchors
+            .iter()
+            .all(|a| a.in_handle.is_none() && a.out_handle.is_none())
+    );
+}
+
+/// press 后拖拽：新锚点成为平滑点，拖出对称手柄。
+#[test]
+fn pen_drag_creates_smooth_anchor_with_handles() {
+    let ctx = egui::Context::default();
+    let mut view = test_view();
+    view.viewport_h = 600.0;
+    let mut path = None;
+
+    run_pen_frame(
+        &ctx,
+        press_event(egui::pos2(240.0, 295.0)),
+        &mut view,
+        &mut path,
+    );
+    run_pen_frame(
+        &ctx,
+        drag_event(egui::pos2(360.0, 285.0)),
+        &mut view,
+        &mut path,
+    );
+    run_pen_frame(
+        &ctx,
+        release_event(egui::pos2(360.0, 285.0)),
+        &mut view,
+        &mut path,
+    );
+
+    let a = path.expect("应有路径").anchors[0];
+    assert_eq!(a.pos(), (240.0, 98.0));
+    assert_eq!(a.out_handle, Some((120.0, 1.0)));
+    assert_eq!(a.in_handle, Some((-120.0, -1.0)));
+}
+
+/// 单击已有锚点（非首个）：删除该锚点。
+#[test]
+fn pen_click_anchor_deletes_it() {
+    let ctx = egui::Context::default();
+    let mut view = test_view();
+    view.viewport_h = 600.0;
+    let mut path = None;
+
+    run_pen_frame(
+        &ctx,
+        press_event(egui::pos2(240.0, 295.0)),
+        &mut view,
+        &mut path,
+    );
+    run_pen_frame(
+        &ctx,
+        release_event(egui::pos2(240.0, 295.0)),
+        &mut view,
+        &mut path,
+    );
+    run_pen_frame(
+        &ctx,
+        press_event(egui::pos2(480.0, 255.0)),
+        &mut view,
+        &mut path,
+    );
+    run_pen_frame(
+        &ctx,
+        release_event(egui::pos2(480.0, 255.0)),
+        &mut view,
+        &mut path,
+    );
+    assert_eq!(path.as_ref().unwrap().anchors.len(), 2);
+
+    // 单击第二个锚点（原地松手）→ 删除。
+    run_pen_frame(
+        &ctx,
+        press_event(egui::pos2(480.0, 255.0)),
+        &mut view,
+        &mut path,
+    );
+    run_pen_frame(
+        &ctx,
+        release_event(egui::pos2(480.0, 255.0)),
+        &mut view,
+        &mut path,
+    );
+    assert_eq!(path.as_ref().unwrap().anchors.len(), 1);
+    assert_eq!(path.as_ref().unwrap().anchors[0].pos(), (240.0, 98.0));
 }
 
 /// 跑一帧刷子，返回 (ghost 数, release 事件)。
