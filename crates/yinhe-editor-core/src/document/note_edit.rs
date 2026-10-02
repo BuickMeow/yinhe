@@ -1332,12 +1332,13 @@ impl Document {
         }))
     }
 
-    /// 直线工具确认：沿音高行生成音符（每行一个，gate = 一个量化间隔）。
+    /// 钢笔工具确认：曲线每经过一个整数音高行生成一个音符（gate = 一个量化
+    /// 间隔），非单调曲线同一行可出现多个音符。
     ///
-    /// start = 线在该行的 tick 吸附量化（含小节感知）；力度 = 该轨记忆力度。
-    /// 目标轨 = 主音轨（与 PR 铅笔/选框一致），无主音轨/Conductor 时返回 None。
-    pub fn generate_line_notes(&mut self) -> Option<UndoAction> {
-        let line = self.edit.line_tool_line?;
+    /// start = 曲线与该行交点的 tick 吸附量化（含小节感知）；力度 = 该轨记忆
+    /// 力度。目标轨 = 主音轨，无主音轨/Conductor 时返回 None。
+    pub fn generate_pen_notes(&mut self) -> Option<UndoAction> {
+        let path = self.edit.pen_path.clone()?;
         let track = self.edit.main_track()?;
         if Some(track) == self.edit.track_cache.conductor_idx {
             return None;
@@ -1350,13 +1351,10 @@ impl Document {
         }
         let (tpb, num, den, events) = pr_bar_line_data(&self.data.model);
         let bar = Some((tpb, num, den, events.as_slice()));
-        let (_, k1) = line.start;
-        let (_, k2) = line.end;
-        let (lo, hi) = (k1.min(k2), k1.max(k2));
         let velocity = self.edit.default_velocity(track);
-        let mut notes = Vec::with_capacity(hi as usize - lo as usize + 1);
-        for key in lo..=hi {
-            let raw = crate::quantize::line_tick_at_key(line.start, line.end, key);
+        let points = path.note_points(interval as f64);
+        let mut notes = Vec::with_capacity(points.len());
+        for (key, raw) in points {
             let start = crate::quantize::snap_tick(raw, quantize, ppq, bar).max(0.0) as u32;
             notes.push(NoteEvent {
                 id: 0,
@@ -2698,21 +2696,24 @@ mod tests {
         assert_eq!(doc.data.model.notes[60].len(), 1, "模型未被改动");
     }
 
-    /// 直线生成：沿音高行逐行、gate=量化间隔、力度=记忆力度，undo/redo 回放。
+    /// 钢笔生成：沿音高行逐行、gate=量化间隔、力度=记忆力度，undo/redo 回放。
     #[test]
-    fn generate_line_notes_per_row_with_memory_velocity_and_undo() {
+    fn generate_pen_notes_per_row_with_memory_velocity_and_undo() {
         let mut doc = make_doc_with_note(); // k60 [100,200)
         doc.edit.track_selected.insert(0);
         doc.edit.quantize_pianoroll = crate::quantize::QuantizePreset::Absolute(120);
         doc.edit.remember_velocity(0, 0, 77);
         // 线 (0,62) → (480,64)：key 62→0、63→240、64→480
-        doc.edit.line_tool_line = Some(crate::edit_state::AnchorLine {
-            start: (0.0, 62),
-            end: (480.0, 64),
+        doc.edit.pen_path = Some(crate::pen::PenPath {
+            anchors: vec![
+                crate::pen::PenAnchor::new(0.0, 62.0),
+                crate::pen::PenAnchor::new(480.0, 64.0),
+            ],
+            closed: false,
         });
 
         let before_snap = doc.capture_snapshot();
-        let action = doc.generate_line_notes().expect("应生成");
+        let action = doc.generate_pen_notes().expect("应生成");
         assert_eq!(doc.data.model.notes[62].len(), 1);
         assert_eq!(doc.data.model.notes[63].len(), 1);
         assert_eq!(doc.data.model.notes[64].len(), 1);
@@ -2737,15 +2738,15 @@ mod tests {
         assert_eq!(doc.data.model.notes[62].len(), 1);
     }
 
-    /// 直线生成：无主音轨时返回 None（与 PR 铅笔一致）。
+    /// 钢笔生成：无主音轨时返回 None（与 PR 铅笔一致）。
     #[test]
-    fn generate_line_notes_requires_main_track() {
+    fn generate_pen_notes_requires_main_track() {
         let mut doc = make_doc_with_note();
-        doc.edit.line_tool_line = Some(crate::edit_state::AnchorLine {
-            start: (0.0, 60),
-            end: (0.0, 60),
+        doc.edit.pen_path = Some(crate::pen::PenPath {
+            anchors: vec![crate::pen::PenAnchor::new(0.0, 60.0)],
+            closed: false,
         });
-        assert!(doc.generate_line_notes().is_none(), "无主音轨不生成");
+        assert!(doc.generate_pen_notes().is_none(), "无主音轨不生成");
     }
 
     /// 批量添加：「允许新重叠音符」关闭时过滤与已有音符重叠的项。

@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use crate::config::ProjectSfConfig;
 use crate::document::TrackOverride;
 use crate::history::PendingEdits;
+use crate::pen::PenPath;
 use crate::playback::PlaybackState;
 use crate::project_data::ProjectData;
 use crate::quantize::QuantizePreset;
@@ -13,7 +14,7 @@ pub mod velocity_gate;
 
 pub use sel_rect::{ResizeSide, SelRectState};
 
-/// 锚点线（直线/剪刀工具）：两个吸附后的 `(tick, key)` 锚点。
+/// 锚点线（剪刀工具）：两个吸附后的 `(tick, key)` 锚点。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AnchorLine {
     pub start: (f64, u8),
@@ -109,8 +110,8 @@ pub struct EditState {
     pub track_cache: TrackCache,
     pub editing_track: Option<u16>,
     pub sel_rect: SelRectState,
-    /// 直线工具待确认的锚点线（✓ 生成音符后清空）。
-    pub line_tool_line: Option<AnchorLine>,
+    /// 钢笔工具待确认的路径（✓ 生成音符后清空）。
+    pub pen_path: Option<PenPath>,
     /// 剪刀工具待确认的锚点线（✓ 切割后清空）。
     pub scissors_line: Option<AnchorLine>,
     pub arr_sel_rect: Vec<(f64, f64, usize, usize)>,
@@ -156,7 +157,7 @@ impl Default for EditState {
             track_cache: TrackCache::default(),
             editing_track: None,
             sel_rect: SelRectState::default(),
-            line_tool_line: None,
+            pen_path: None,
             scissors_line: None,
             arr_sel_rect: Vec::new(),
             recent_velocity: Vec::new(),
