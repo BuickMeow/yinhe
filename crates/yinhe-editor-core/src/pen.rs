@@ -128,7 +128,9 @@ impl PenPath {
         let step = step_ticks.max(0.25);
         let mut pts: Vec<Pt> = Vec::new();
         for i in 0..segs {
-            let (p0, c0, c1, p1) = self.segment(i).expect("segment in range");
+            let Some((p0, c0, c1, p1)) = self.segment(i) else {
+                continue;
+            };
             let dtick = (p1.0 - p0.0).abs();
             let dkey = (p1.1 - p0.1)
                 .abs()
@@ -142,11 +144,13 @@ impl PenPath {
             }
         }
         let end = if self.closed {
-            self.anchors[0].pos()
+            self.anchors.first()
         } else {
-            self.anchors.last().expect("non-empty").pos()
+            self.anchors.last()
         };
-        pts.push(end);
+        if let Some(a) = end {
+            pts.push(a.pos());
+        }
         pts
     }
 

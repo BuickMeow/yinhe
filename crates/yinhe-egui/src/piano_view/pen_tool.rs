@@ -154,7 +154,9 @@ fn hit_test(view: &PianoRollView, path: &PenPath, local: egui::Pos2) -> Option<P
     // 线段：逐段采样折线，找最近点。
     let mut best: Option<(f32, usize, Pt)> = None;
     for i in 0..path.segment_count() {
-        let (p0, c0, c1, p1) = path.segment(i).expect("segment in range");
+        let Some((p0, c0, c1, p1)) = path.segment(i) else {
+            continue;
+        };
         let n = 24;
         let mut prev = point_px(view, p0.0, p0.1);
         for j in 1..=n {
@@ -430,7 +432,9 @@ pub(crate) fn paint(
 
     // 路径（逐段贝塞尔）。
     for i in 0..path.segment_count() {
-        let (p0, c0, c1, p1) = path.segment(i).expect("segment in range");
+        let Some((p0, c0, c1, p1)) = path.segment(i) else {
+            continue;
+        };
         painter.add(egui::epaint::CubicBezierShape::from_points_stroke(
             [s(p0), s(c0), s(c1), s(p1)],
             false,
