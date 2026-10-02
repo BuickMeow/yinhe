@@ -312,13 +312,9 @@ pub(crate) fn frame(
                 }
             }
             Some(PenHit::Segment(seg, point)) => {
+                // 只插入锚点，不进入拖拽态：避免原地松手被当成单击而删除。
                 if let Some(p) = path.as_mut() {
-                    let at = seg + 1;
-                    p.anchors.insert(at, PenAnchor::new(point.0, point.1));
-                    mem.drag = Some(PenDrag::Anchor {
-                        index: at,
-                        start_mouse: (pos.x, pos.y),
-                    });
+                    p.anchors.insert(seg + 1, PenAnchor::new(point.0, point.1));
                 }
             }
             None => {
@@ -470,7 +466,8 @@ pub(crate) fn paint(
     // 生成位置预览（吸附后的行中心小圆点）。
     let interval = quantize.tick_interval(ppq);
     if interval > 0 {
-        for (key, tick) in path.note_points(interval as f64) {
+        // 预览用较粗采样（生成走精确 interval），降低每帧开销。
+        for (key, tick) in path.note_points(interval as f64 * 4.0) {
             let snapped =
                 crate::view_interaction::snap_tick(tick, quantize, ppq, bar_line_data).max(0.0);
             let p = screen(content_rect, point_px(view, snapped, key as f64));

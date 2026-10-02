@@ -1457,6 +1457,56 @@ fn pen_click_anchor_deletes_it() {
     assert_eq!(path.as_ref().unwrap().anchors[0].pos(), (240.0, 98.0));
 }
 
+/// 点击线段：插入锚点，松手后保留（不被当作单击删除）。
+#[test]
+fn pen_click_segment_inserts_anchor() {
+    let ctx = egui::Context::default();
+    let mut view = test_view();
+    view.viewport_h = 600.0;
+    let mut path = None;
+
+    run_pen_frame(
+        &ctx,
+        press_event(egui::pos2(240.0, 295.0)),
+        &mut view,
+        &mut path,
+    );
+    run_pen_frame(
+        &ctx,
+        release_event(egui::pos2(240.0, 295.0)),
+        &mut view,
+        &mut path,
+    );
+    run_pen_frame(
+        &ctx,
+        press_event(egui::pos2(480.0, 255.0)),
+        &mut view,
+        &mut path,
+    );
+    run_pen_frame(
+        &ctx,
+        release_event(egui::pos2(480.0, 255.0)),
+        &mut view,
+        &mut path,
+    );
+    assert_eq!(path.as_ref().unwrap().anchors.len(), 2);
+
+    // 线中点 (360, 275) → 插入第三个锚点。
+    run_pen_frame(
+        &ctx,
+        press_event(egui::pos2(360.0, 275.0)),
+        &mut view,
+        &mut path,
+    );
+    run_pen_frame(
+        &ctx,
+        release_event(egui::pos2(360.0, 275.0)),
+        &mut view,
+        &mut path,
+    );
+    assert_eq!(path.as_ref().unwrap().anchors.len(), 3);
+}
+
 /// 跑一帧刷子，返回 (ghost 数, release 事件)。
 fn run_brush_frame(
     ctx: &egui::Context,
