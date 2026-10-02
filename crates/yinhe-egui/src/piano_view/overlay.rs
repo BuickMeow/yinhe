@@ -39,7 +39,7 @@ pub(crate) fn draw_overlays(
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     selected: &mut yinhe_core::Selection,
-    line_tool_line: Option<&yinhe_editor_core::edit_state::AnchorLine>,
+    pen_path: Option<&yinhe_editor_core::pen::PenPath>,
     scissors_line: Option<&yinhe_editor_core::edit_state::AnchorLine>,
 ) -> Option<crate::widgets::selection_actions::SelectionAction> {
     // 兼容任务要求的形参（部分由 midi 派生，此处透传占位，避免未使用警告）
@@ -218,22 +218,17 @@ pub(crate) fn draw_overlays(
     // ── 锚点线工具（直线/剪刀）：线、锚点与生成/切割位置预览 ──
     match effective_tool {
         crate::widgets::tools_panel::Tool::Line => {
-            if let Some(line) = line_tool_line {
-                super::anchor_line::paint_line(
+            if let Some(path) = pen_path {
+                super::pen_tool::paint(
                     painter,
                     content_rect,
                     view,
-                    line,
-                    crate::theme::accent_active(),
-                );
-                super::anchor_line::paint_snap_marks(
-                    painter,
-                    content_rect,
-                    view,
-                    line,
+                    path,
                     quantize,
                     ppq,
                     bar_line_data,
+                    super::pen_tool::is_drawing(ui),
+                    ui.input(|i| i.pointer.hover_pos()),
                 );
             }
         }
@@ -333,10 +328,10 @@ pub(crate) fn draw_overlays(
             Some((&SELECT_BAR_BUTTONS[..], persisted_last))
         }
         crate::widgets::tools_panel::Tool::Grid => Some((&grid_buttons[..], persisted_last)),
-        crate::widgets::tools_panel::Tool::Line => line_tool_line.map(|l| {
+        crate::widgets::tools_panel::Tool::Line => pen_path.map(|p| {
             (
                 &line_buttons[..],
-                Some(super::anchor_line::pixel_bbox(view, l)),
+                Some(super::pen_tool::pixel_bbox(view, p)),
             )
         }),
         crate::widgets::tools_panel::Tool::Scissors => scissors_line.map(|l| {

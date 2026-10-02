@@ -639,14 +639,14 @@ impl App {
         });
     }
 
-    /// 直线工具确认：沿音高行生成音符，然后清空锚点线（一个 undo entry）。
+    /// 钢笔工具确认：沿曲线逐行生成音符，然后清空路径（一个 undo entry）。
     pub(crate) fn line_tool_confirm(&mut self) {
         self.with_undo(t!("undo.add_note").as_ref(), |doc| {
-            doc.generate_line_notes()
+            doc.generate_pen_notes()
         });
         if let Some(idx) = self.workspace.active_doc {
             let doc = &mut self.workspace.documents[idx];
-            doc.edit.line_tool_line = None;
+            doc.edit.pen_path = None;
             doc.edit.pianoroll_view.base.dirty = true;
         }
     }

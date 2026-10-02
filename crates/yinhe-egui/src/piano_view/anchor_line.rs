@@ -1,8 +1,7 @@
-//! 锚点线工具（直线 / 剪刀）：两个 `(tick, key)` 锚点，可拖动调整。
+//! 剪刀工具的锚点线：两个 `(tick, key)` 锚点，可拖动调整。
 //!
-//! 两者共用同一个交互：拖出新线 → 线保留、锚点可再拖 → 点浮动条 ✓ 由
-//! App 层执行（直线生成音符 / 剪刀切割）。单击（未拖动）时剪刀清空线、
-//! 直线保留（单点线可生成一个音符）。
+//! 拖出新线 → 线保留、锚点可再拖 → 点浮动条 ✓ 由 App 层执行切割。
+//! 单击（未拖动）时清空线。
 
 use eframe::egui;
 
@@ -88,8 +87,6 @@ fn point_at(
 }
 
 /// 锚点线编辑帧：press 命中锚点 → 拖该端点；否则从按下点重新划线。
-///
-/// `clear_on_click`：未拖动的单击是否清空线（剪刀 true / 直线 false）。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn frame(
     ui: &mut egui::Ui,
@@ -102,7 +99,6 @@ pub(crate) fn frame(
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     total_ticks: f64,
     id_suffix: &'static str,
-    clear_on_click: bool,
 ) {
     let state_id = ui.id().with(id_suffix);
     let mut drag: Option<AnchorDrag> = ui.data_mut(|d| d.get_persisted(state_id)).unwrap_or(None);
@@ -168,10 +164,7 @@ pub(crate) fn frame(
             }
         }
         if pointer.primary_released() {
-            if clear_on_click
-                && matches!(mode, AnchorDrag::Draw)
-                && line.is_some_and(|l| l.start == l.end)
-            {
+            if matches!(mode, AnchorDrag::Draw) && line.is_some_and(|l| l.start == l.end) {
                 *line = None;
             }
             ui.data_mut(|d| d.insert_persisted(state_id, Option::<AnchorDrag>::None));
@@ -192,32 +185,6 @@ pub(crate) fn paint_line(
     painter.line_segment([a, b], egui::Stroke::new(1.5, color));
     for p in [a, b] {
         painter.circle_filled(p, 4.0, color);
-    }
-}
-
-/// 直线工具预览：每行实际生成位置（吸附后的行中心小圆点）。
-pub(crate) fn paint_snap_marks(
-    painter: &egui::Painter,
-    content_rect: egui::Rect,
-    view: &PianoRollView,
-    line: &AnchorLine,
-    quantize: QuantizePreset,
-    ppq: u32,
-    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
-) {
-    if quantize.tick_interval(ppq) == 0 {
-        return;
-    }
-    let color = crate::theme::accent_active();
-    let (_, k1) = line.start;
-    let (_, k2) = line.end;
-    let (lo, hi) = (k1.min(k2), k1.max(k2));
-    for key in lo..=hi {
-        let raw = yinhe_editor_core::quantize::line_tick_at_key(line.start, line.end, key);
-        let tick =
-            yinhe_editor_core::quantize::snap_tick(raw, quantize, ppq, bar_line_data).max(0.0);
-        let p = screen_pos(content_rect, point_px(view, tick, key));
-        painter.circle_filled(p, 2.5, color);
     }
 }
 

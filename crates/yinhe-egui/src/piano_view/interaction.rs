@@ -44,7 +44,7 @@ pub(crate) fn dispatch(
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     total_ticks: f64,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
-    line_tool_line: &mut Option<yinhe_editor_core::edit_state::AnchorLine>,
+    pen_path: &mut Option<yinhe_editor_core::pen::PenPath>,
     scissors_line: &mut Option<yinhe_editor_core::edit_state::AnchorLine>,
     track_selected: &HashSet<u16>,
     write_track: Option<u16>,
@@ -192,21 +192,18 @@ pub(crate) fn dispatch(
             bar_line_data,
             total_ticks,
             "scissors_drag",
-            true,
         );
     } else if effective_tool == Tool::Line {
-        super::anchor_line::frame(
+        super::pen_tool::frame(
             ui,
             content_rect,
             music_rect,
             view,
-            line_tool_line,
+            pen_path,
             quantize,
             ppq,
             bar_line_data,
             total_ticks,
-            "line_tool_drag",
-            false,
         );
     } else if effective_tool == Tool::Brush {
         let (ghosts, event) = super::brush::brush_frame(

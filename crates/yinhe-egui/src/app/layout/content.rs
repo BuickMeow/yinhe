@@ -532,7 +532,7 @@ impl App {
                     self.audio_settings.use_gpu_cull,
                     &doc.data.model.conductor.tempo,
                     &mut doc.edit.sel_rect,
-                    &mut doc.edit.line_tool_line,
+                    &mut doc.edit.pen_path,
                     &mut doc.edit.scissors_line,
                     &doc.edit.track_selected,
                     doc.edit.track_cache.conductor_idx,

@@ -1248,13 +1248,12 @@ fn sel_drag_in_progress_reflects_persisted_state() {
     assert!(result, "选区 Alt 克隆拖拽进行中应为 true");
 }
 
-/// 跑一帧锚点线工具（直线/剪刀共用状态机）。
+/// 跑一帧剪刀锚点线工具。
 fn run_anchor_frame(
     ctx: &egui::Context,
     raw: egui::RawInput,
     view: &mut yinhe_types::PianoRollView,
     line: &mut Option<yinhe_editor_core::edit_state::AnchorLine>,
-    clear_on_click: bool,
     id_suffix: &'static str,
 ) {
     // run_ui 返回的 FullOutput 含字体纹理 delta，丢弃前必须 clear（epaint 断言）。
@@ -1270,149 +1269,27 @@ fn run_anchor_frame(
             None,
             10000.0,
             id_suffix,
-            clear_on_click,
         );
     })
     .textures_delta
     .clear();
 }
 
-/// 直线工具：拖出两个锚点（x 吸附量化、y 取行中心）后线保留，终点锚点可再拖。
+/// 剪刀：单击空白清空线。
 #[test]
-fn line_drag_creates_anchor_line_and_anchor_drags() {
-    let ctx = egui::Context::default();
-    let mut view = test_view();
-    // 预初始化视口，避免 clamp_scroll 首次初始化重算 key_height/scroll。
-    view.viewport_h = 600.0;
-    let mut line = None;
-
-    // (100,300) → key 97；(400,280) → key 99；x 吸附 120/360。
-    run_anchor_frame(
-        &ctx,
-        press_event(egui::pos2(100.0, 300.0)),
-        &mut view,
-        &mut line,
-        false,
-        "line_tool_drag",
-    );
-    run_anchor_frame(
-        &ctx,
-        drag_event(egui::pos2(400.0, 280.0)),
-        &mut view,
-        &mut line,
-        false,
-        "line_tool_drag",
-    );
-    run_anchor_frame(
-        &ctx,
-        release_event(egui::pos2(400.0, 280.0)),
-        &mut view,
-        &mut line,
-        false,
-        "line_tool_drag",
-    );
-    assert_eq!(
-        line,
-        Some(yinhe_editor_core::edit_state::AnchorLine {
-            start: (120.0, 97),
-            end: (360.0, 99),
-        }),
-        "拖拽后线保留且锚点吸附"
-    );
-
-    // 终点锚点（key 99 行中心 y=285）拖到 (480,290) → key 98。
-    run_anchor_frame(
-        &ctx,
-        press_event(egui::pos2(360.0, 285.0)),
-        &mut view,
-        &mut line,
-        false,
-        "line_tool_drag",
-    );
-    run_anchor_frame(
-        &ctx,
-        drag_event(egui::pos2(480.0, 290.0)),
-        &mut view,
-        &mut line,
-        false,
-        "line_tool_drag",
-    );
-    run_anchor_frame(
-        &ctx,
-        release_event(egui::pos2(480.0, 290.0)),
-        &mut view,
-        &mut line,
-        false,
-        "line_tool_drag",
-    );
-    assert_eq!(
-        line,
-        Some(yinhe_editor_core::edit_state::AnchorLine {
-            start: (120.0, 97),
-            end: (480.0, 98),
-        }),
-        "终点锚点应可再拖动"
-    );
-}
-
-/// 剪刀：单击空白清空线；直线：单击保留单点线。
-#[test]
-fn scissors_click_clears_line_but_line_tool_keeps_it() {
+fn scissors_click_clears_line() {
     let ctx = egui::Context::default();
     let mut view = test_view();
     view.viewport_h = 600.0;
-    let existing = Some(yinhe_editor_core::edit_state::AnchorLine {
+    let mut line = Some(yinhe_editor_core::edit_state::AnchorLine {
         start: (120.0, 97),
         end: (360.0, 99),
     });
     let pos = egui::pos2(600.0, 300.0);
 
-    // 剪刀：空白单击（按下、原地松开）→ 清空。
-    let mut line = existing;
-    run_anchor_frame(
-        &ctx,
-        press_event(pos),
-        &mut view,
-        &mut line,
-        true,
-        "scissors_drag",
-    );
-    run_anchor_frame(
-        &ctx,
-        release_event(pos),
-        &mut view,
-        &mut line,
-        true,
-        "scissors_drag",
-    );
+    run_anchor_frame(&ctx, press_event(pos), &mut view, &mut line, "scissors_drag");
+    run_anchor_frame(&ctx, release_event(pos), &mut view, &mut line, "scissors_drag");
     assert!(line.is_none(), "剪刀单击空白应清空线");
-
-    // 直线：同样操作保留单点线（✓ 时生成一个音符）。
-    let mut line = None;
-    run_anchor_frame(
-        &ctx,
-        press_event(pos),
-        &mut view,
-        &mut line,
-        false,
-        "line_tool_drag",
-    );
-    run_anchor_frame(
-        &ctx,
-        release_event(pos),
-        &mut view,
-        &mut line,
-        false,
-        "line_tool_drag",
-    );
-    assert_eq!(
-        line,
-        Some(yinhe_editor_core::edit_state::AnchorLine {
-            start: (600.0, 97),
-            end: (600.0, 97),
-        }),
-        "直线单击保留单点线"
-    );
 }
 
 /// 跑一帧刷子，返回 (ghost 数, release 事件)。

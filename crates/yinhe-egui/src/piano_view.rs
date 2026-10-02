@@ -23,6 +23,7 @@ mod layout;
 mod marquee;
 mod overlay;
 mod panels;
+mod pen_tool;
 mod pencil;
 mod perf;
 mod scrollbar;
@@ -81,7 +82,7 @@ pub fn show(
     use_gpu_cull: bool,
     tempo_lane: &AutomationLane,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
-    line_tool_line: &mut Option<yinhe_editor_core::edit_state::AnchorLine>,
+    pen_path: &mut Option<yinhe_editor_core::pen::PenPath>,
     scissors_line: &mut Option<yinhe_editor_core::edit_state::AnchorLine>,
     track_selected: &std::collections::HashSet<u16>,
     conductor_idx: Option<u16>,
@@ -181,7 +182,7 @@ pub fn show(
         bar_line_data,
         total_ticks,
         sel_rect,
-        line_tool_line,
+        pen_path,
         scissors_line,
         track_selected,
         write_track,
@@ -356,7 +357,7 @@ pub fn show(
         ppq,
         bar_line_data,
         selected,
-        line_tool_line.as_ref(),
+        pen_path.as_ref(),
         scissors_line.as_ref(),
     );
     let t_paint_end = if perf_on {
