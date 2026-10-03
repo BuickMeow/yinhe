@@ -7,6 +7,8 @@
 //! 无选择时显示空态提示；工程设置只在独立浮窗（见 `dialogs::prop_panels`）。
 
 mod anchor;
+mod history;
+mod layers;
 pub(crate) mod selection;
 mod track;
 
@@ -20,8 +22,6 @@ use super::InfoContent;
 
 // re-export：arrange.rs 通过 `crate::right_panel::info_panel::send_skip_tracks` 调用
 pub(crate) use track::send_skip_tracks;
-// re-export：dialogs/prop_panels 浮窗复用同一渲染函数（独立 viewport id 链，不冲突）。
-pub(crate) use track::show_track_info;
 
 /// Show the Info panel.
 ///
@@ -42,7 +42,7 @@ pub fn show(
     // 记录初始 revision：编辑 automation / shape / ctrl 后会 bump_revision，
     // 退出时若发现 revision 变了就通知音频线程 reload。
     let rev_before = doc.data.revision;
-    let port_changed = render(ui, doc, audio, info_content, automation_drag_ghost);
+    let port_changed = render(ui, doc, info_content, automation_drag_ghost);
     let rev_after = doc.data.revision;
     if rev_after != rev_before
         && let Some(audio) = audio
@@ -55,7 +55,6 @@ pub fn show(
 fn render(
     ui: &mut egui::Ui,
     doc: &mut Document,
-    audio: Option<&yinhe_audio::CpalAudioHandle>,
     info_content: &mut Option<InfoContent>,
     automation_drag_ghost: Option<(u32, f32)>,
 ) -> bool {
@@ -113,7 +112,7 @@ fn render(
         }
 
         // ── 音轨信息 ──
-        Some(InfoContent::Track) => track::show_track_info(ui, doc, audio, info_content),
+        Some(InfoContent::Track) => track::show_track_info(ui, doc),
 
         // ── 无选择 → 空态提示（工程设置请从菜单打开浮窗） ──
         None => {

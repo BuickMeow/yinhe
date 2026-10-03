@@ -122,6 +122,16 @@ impl UndoStack {
         !self.future.is_empty()
     }
 
+    /// 撤销栈内每步操作的标签，按**从旧到新**排列（`past` 顺序）。
+    pub fn past_labels(&self) -> Vec<&str> {
+        self.past.iter().map(|e| e.label.as_str()).collect()
+    }
+
+    /// 重做栈内每步操作的标签，按**从旧到新**排列（`future` 顺序）。
+    pub fn future_labels(&self) -> Vec<&str> {
+        self.future.iter().map(|e| e.label.as_str()).collect()
+    }
+
     pub fn clear(&mut self) {
         self.past.clear();
         self.future.clear();

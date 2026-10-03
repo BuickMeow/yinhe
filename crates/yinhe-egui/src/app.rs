@@ -482,43 +482,11 @@ impl App {
         panel: Option<crate::right_panel::FloatPanel>,
     ) {
         use crate::right_panel::FloatPanel;
-        if let Some(panel) = panel {
-            let id = match panel {
-                FloatPanel::TrackProps { .. } => {
-                    egui::ViewportId::from_hash_of("track_props_dialog")
-                }
-                FloatPanel::ProjectSettings => {
-                    egui::ViewportId::from_hash_of("project_settings_dialog")
-                }
-            };
+        if let Some(FloatPanel::ProjectSettings) = panel {
+            let id = egui::ViewportId::from_hash_of("project_settings_dialog");
             crate::chrome::dialog::raise_viewport(ctx, id);
         }
-        if matches!(panel, Some(FloatPanel::TrackProps { .. }))
-            && self.right_tab == Some(crate::right_panel::RightTab::Info)
-        {
-            self.right_tab = None;
-        }
         self.float_panel = panel;
-    }
-
-    /// 把音轨属性浮窗停靠回右侧栏：关弹窗、开 Info tab、并恢复 info_content。
-    /// （工程设置浮窗无停靠入口，不会走到这里。）
-    pub(crate) fn dock_float_panel(&mut self, panel: crate::right_panel::FloatPanel) {
-        use crate::right_panel::{FloatPanel, InfoContent, RightTab};
-        let FloatPanel::TrackProps { track_idx } = panel else {
-            return;
-        };
-        self.float_panel = None;
-        self.right_tab = Some(RightTab::Info);
-        // 弹窗内下拉选择器已跟踪 track_selected，这里兜底选中目标轨。
-        if let Some(idx) = self.workspace.active_doc {
-            self.workspace.documents[idx].edit.track_selected.clear();
-            self.workspace.documents[idx]
-                .edit
-                .track_selected
-                .insert(track_idx);
-        }
-        self.info_content = Some(InfoContent::Track);
     }
 
     pub(crate) fn close_document(&mut self, index: usize) {

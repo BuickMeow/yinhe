@@ -134,6 +134,7 @@ impl Document {
             edit: EditState {
                 track_visible: vec![true; num_tracks],
                 track_pianoroll_visible: vec![true; num_tracks],
+                track_locked: vec![false; num_tracks],
                 track_overrides: model
                     .tracks
                     .iter()
@@ -224,6 +225,7 @@ impl Document {
                     quantize_pianoroll,
                     track_visible: vec![true; num_tracks],
                     track_pianoroll_visible: vec![true; num_tracks],
+                    track_locked: vec![false; num_tracks],
                     track_overrides,
                     track_cache: TrackCache {
                         info: track_info_cache,
@@ -357,6 +359,16 @@ impl Document {
         edit.arr_am_views = snapshot.arr_am_views.clone();
     }
 
+    /// 撤销栈内每步操作的标签（旧→新），供历史记录面板显示。
+    pub fn undo_labels(&self) -> Vec<&str> {
+        self.history.past_labels()
+    }
+
+    /// 重做栈内每步操作的标签（旧→新）。
+    pub fn redo_labels(&self) -> Vec<&str> {
+        self.history.future_labels()
+    }
+
     /// Undo the most recent operation. Returns true if something was undone.
     pub fn undo(&mut self) -> bool {
         let Some(entry) = self.history.past.pop_back() else {
@@ -447,6 +459,9 @@ impl Document {
         while self.edit.track_pianoroll_visible.len() < num_tracks {
             self.edit.track_pianoroll_visible.push(true);
         }
+        while self.edit.track_locked.len() < num_tracks {
+            self.edit.track_locked.push(false);
+        }
         while self.edit.track_overrides.len() < num_tracks {
             self.edit.track_overrides.push(Default::default());
         }
@@ -455,6 +470,9 @@ impl Document {
         }
         while self.edit.track_pianoroll_visible.len() > num_tracks {
             self.edit.track_pianoroll_visible.pop();
+        }
+        while self.edit.track_locked.len() > num_tracks {
+            self.edit.track_locked.pop();
         }
         while self.edit.track_overrides.len() > num_tracks {
             self.edit.track_overrides.pop();

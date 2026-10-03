@@ -119,8 +119,6 @@ pub fn show(
     needs_audio_notify: &mut bool,
     status_hint: &mut Option<String>,
     sel_hint: Option<&crate::app::layout::SelHintInfo>,
-    // 右键「音轨属性」等请求：请求打开属性浮窗（由调用方 set_float_panel 落地）。
-    float_panel_req: &mut Option<crate::right_panel::FloatPanel>,
     // 「添加自动化」：请求打开设备参数选择窗口（由调用方落地）。
     automation_picker_req: &mut Option<usize>,
 ) {
@@ -378,9 +376,9 @@ pub fn show(
                         .unwrap_or(*idx as u16);
                     doc.edit.track_selected.clear();
                     doc.edit.track_selected.insert(track_idx);
+                    // 音轨属性迁入右侧栏 Info tab（浮窗已移除）。
                     *info_content = Some(crate::right_panel::InfoContent::Track);
-                    *float_panel_req =
-                        Some(crate::right_panel::FloatPanel::TrackProps { track_idx });
+                    *right_tab = Some(crate::right_panel::RightTab::Info);
                     (None, String::new())
                 }
                 track_panel::TrackAction::DeleteAutomation { idx, lane_idx } => {

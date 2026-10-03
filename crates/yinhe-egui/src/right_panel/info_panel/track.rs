@@ -1,92 +1,151 @@
-//! 音轨信息面板。
+//! 音轨信息面板（上下分区）。
 //!
-//! 显示选中音轨的名称 / 端口 / 通道 / Mute / Solo / 属性摘要，
-//! 以及 Conductor 轨和多多选汇总。
+//! - 「音轨」：当前选中轨的名称 / 端口 / 通道 / 颜色。
+//! - 「图层」：每轨的选中 / 可见 / 锁定（见 [`super::layers`]）。
+//! - 底部横向标签：[历史记录] / [属性概要]，点击切换页。
 
 use std::sync::Arc;
 
 use eframe::egui;
-use egui_material_icons::icons::{ICON_FORMAT_COLOR_RESET, ICON_HEADPHONES, ICON_VOLUME_OFF};
+use egui_material_icons::icons::ICON_FORMAT_COLOR_RESET;
 
 use yinhe_editor_core::document::Document;
 
 use rust_i18n::t;
 
-use super::InfoContent;
+use super::{history, layers};
+
+/// 底部标签页。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BottomTab {
+    History,
+    Summary,
+}
 
 /// 显示音轨信息编辑器。返回 `true` 表示端口/通道改变（需重建音频引擎）。
-/// `info_content` 在“无选中音轨”等分支被写为 None（侧栏会回落显示工程设置；
-/// 浮窗调用方传局部占位即可，不接入全局选择状态）。
-pub(crate) fn show_track_info(
-    ui: &mut egui::Ui,
-    doc: &mut Document,
-    audio: Option<&yinhe_audio::CpalAudioHandle>,
-    info_content: &mut Option<InfoContent>,
-) -> bool {
+pub(crate) fn show_track_info(ui: &mut egui::Ui, doc: &mut Document) -> bool {
     let num_tracks = doc.data.model.tracks.len();
     if num_tracks == 0 {
         crate::widgets::hint::empty_hint(ui, t!("track.no_tracks").as_ref());
         return false;
     }
 
-    // ── Track selector ──
-    // 轨道号 0-based：Conductor = 000（与 AR 面板一致）。
-    let track_names: Vec<String> = doc
-        .data
-        .model
-        .tracks
-        .iter()
-        .enumerate()
-        .map(|(i, t)| format!("{:03} – {}", i, t.name))
-        .collect();
+    let mut port_changed = false;
 
-    let sel_idx = doc
+    // ── 分栏 1：音轨属性 ──
+    section_header(ui, t!("panel.section.track").as_ref());
+    ui.add_space(2.0);
+    let track_idx = doc
         .edit
         .track_selected
         .iter()
         .next()
         .copied()
-        .map(|i| (i as usize).min(num_tracks - 1))
-        .unwrap_or(0);
-
-    let track_opt: Vec<(usize, String)> = track_names
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (i, n.clone()))
-        .collect();
-    let mut sel = sel_idx;
-    if crate::widgets::combo::combo_select_auto(ui, "info_track_sel", &mut sel, &track_opt) {
-        doc.edit.track_selected.clear();
-        doc.edit.track_selected.insert(sel as u16);
+        .map(|i| (i as usize).min(num_tracks - 1));
+    if let Some(track_idx) = track_idx {
+        port_changed |= show_track_fields(ui, doc, track_idx);
+    } else {
+        crate::widgets::hint::empty_hint(ui, t!("panel.select_track_hint").as_ref());
     }
 
     ui.add_space(6.0);
 
-    let Some(&track_idx) = doc.edit.track_selected.iter().next() else {
-        // 未选中音轨 → 回退到项目设置（由父级 None 分支处理）。
-        *info_content = None;
-        return false;
-    };
-    let track_idx = track_idx as usize;
+    // ── 分栏 2：图层 ──
+    section_header(ui, t!("panel.section.layers").as_ref());
+    ui.add_space(2.0);
+    layers::show(ui, doc);
+
+    ui.add_space(6.0);
+
+    // ── 分栏 3：底部横向标签 [历史记录 | 属性概要] ──
+    let tab_id = ui.id().with("track_info_bottom_tab");
+    let mut tab: BottomTab = ui
+        .data_mut(|d| d.get_temp(tab_id))
+        .unwrap_or(BottomTab::History);
+
+    ui.horizontal(|ui| {
+        bottom_tab_button(
+            ui,
+            &mut tab,
+            BottomTab::History,
+            t!("panel.tab.history").as_ref(),
+        );
+        bottom_tab_button(
+            ui,
+            &mut tab,
+            BottomTab::Summary,
+            t!("panel.tab.summary").as_ref(),
+        );
+    });
+    ui.data_mut(|d| d.insert_temp(tab_id, tab));
+    ui.add_space(2.0);
+
+    match tab {
+        BottomTab::History => history::show(ui, doc),
+        BottomTab::Summary => {
+            if let Some(track_idx) = track_idx {
+                let ti = doc.edit.track_cache.info.get(track_idx).cloned();
+                show_summary(ui, doc, track_idx, ti);
+            } else {
+                crate::widgets::hint::empty_hint(ui, t!("panel.select_track_hint").as_ref());
+            }
+        }
+    }
+
+    port_changed
+}
+
+/// 分栏小标签卡标题。
+fn section_header(ui: &mut egui::Ui, title: &str) {
+    ui.label(
+        egui::RichText::new(title)
+            .size(crate::theme::PANEL_TITLE_FONT)
+            .strong()
+            .color(crate::theme::text_primary()),
+    );
+}
+
+/// 底部横向标签按钮；选中态用淡色强调色底。
+fn bottom_tab_button(ui: &mut egui::Ui, tab: &mut BottomTab, value: BottomTab, label: &str) {
+    let selected = *tab == value;
+    let text = egui::RichText::new(label)
+        .size(crate::theme::BODY_FONT)
+        .color(if selected {
+            crate::theme::text_bright()
+        } else {
+            crate::theme::text_label()
+        });
+    let resp = crate::widgets::flat::flat_button(ui, text);
+    if selected {
+        ui.painter().rect_filled(
+            resp.rect.expand2(egui::vec2(4.0, 2.0)),
+            4.0,
+            crate::theme::control_selected_bg(),
+        );
+    }
+    if resp.clicked() {
+        *tab = value;
+    }
+}
+
+/// 音轨字段（名称 / 端口 / 通道 / 颜色）。返回端口/通道是否改变。
+fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) -> bool {
+    let num_tracks = doc.data.model.tracks.len();
     let track_idx = track_idx.min(num_tracks - 1);
 
-    // ── Conductor track ──
+    // ── Conductor 轨 ──
     if Some(track_idx as u16) == doc.edit.track_cache.conductor_idx {
-        ui.add_space(4.0);
         ui.label(
             egui::RichText::new(t!("track.conductor").as_ref())
                 .strong()
-                .size(crate::theme::PANEL_TITLE_FONT)
                 .color(crate::theme::text_primary()),
         );
-        ui.add_space(2.0);
         ui.label(
             egui::RichText::new(t!("track.conductor_hint").as_ref())
                 .size(crate::theme::SMALL_FONT)
                 .color(crate::theme::text_label()),
         );
-        ui.add_space(8.0);
-
+        ui.add_space(4.0);
         if !doc.data.model.meta.name.is_empty() {
             ui.horizontal(|ui| {
                 ui.label(t!("track.song_title").as_ref());
@@ -96,42 +155,25 @@ pub(crate) fn show_track_info(
                         .size(crate::theme::SUB_TITLE_FONT),
                 );
             });
-            ui.add_space(2.0);
         }
-
         ui.horizontal(|ui| {
             ui.label(t!("track.tempo_count").as_ref());
-            ui.label(
-                egui::RichText::new(format!("{}", doc.data.model.conductor.tempo.events.len()))
-                    .color(crate::theme::text_secondary())
-                    .size(crate::theme::SUB_TITLE_FONT),
-            );
+            ui.label(egui::RichText::new(format!(
+                "{}",
+                doc.data.model.conductor.tempo.events.len()
+            )));
         });
         ui.horizontal(|ui| {
             ui.label(t!("track.timesig_count").as_ref());
-            ui.label(
-                egui::RichText::new(format!("{}", doc.data.model.conductor.time_sig.len()))
-                    .color(crate::theme::text_secondary())
-                    .size(crate::theme::SUB_TITLE_FONT),
-            );
+            ui.label(egui::RichText::new(format!(
+                "{}",
+                doc.data.model.conductor.time_sig.len()
+            )));
         });
-
-        ui.add_space(8.0);
-        ui.separator();
-        ui.add_space(6.0);
-        if crate::widgets::flat::flat_button(
-            ui,
-            egui::RichText::new(t!("common.clear_selection").as_ref())
-                .size(crate::theme::BODY_FONT),
-        )
-        .clicked()
-        {
-            *info_content = None;
-        }
         return false;
     }
 
-    // ── Track name ──
+    // ── 名称 ──
     let mut name_change: Option<String> = None;
     let mut name_resp_id: Option<egui::Id> = None;
     let mut name_gained_focus = false;
@@ -159,8 +201,6 @@ pub(crate) fn show_track_info(
             );
         }
         if let Some(new_name) = name_change {
-            // 唯一权威源是 model.tracks[].name（保存时 sync_mapping_file 读它）；
-            // track_cache.info 是显示缓存，同步更新（undo 由 apply.rs 反向同步）。
             if let Some(td) = Arc::make_mut(&mut doc.data.model).tracks.get_mut(track_idx) {
                 Arc::make_mut(td).name = new_name.clone();
             }
@@ -173,19 +213,16 @@ pub(crate) fn show_track_info(
             yinhe_editor_core::history::commit_track_name(doc, id.value(), track_idx, &name);
         }
     }
-    // 快照一份 track_info（避免借用与后续颜色 undo 的 &mut doc 冲突）。
     let ti = doc.edit.track_cache.info[track_idx].clone();
 
     ui.add_space(4.0);
 
-    // ── Port / Channel ──
+    // ── 端口 / 通道 ──
     let mut port_changed = false;
     let mut new_port = ti.port;
     let mut new_ch = ti.channel;
-
     ui.horizontal(|ui| {
-        ui.label("端口/通道:");
-
+        ui.label(t!("track.port_channel").as_ref());
         let port_options: Vec<(usize, String)> = (0..16)
             .map(|p| (p, format!("Port {}", (b'A' + p as u8) as char)))
             .collect();
@@ -195,9 +232,7 @@ pub(crate) fn show_track_info(
             new_port = port_sel as u8;
             port_changed = true;
         }
-
         ui.add_space(4.0);
-
         let ch_options: Vec<(usize, String)> =
             (0..16).map(|c| (c, format!("{:02}", c + 1))).collect();
         let mut ch_sel = ti.channel as usize;
@@ -207,7 +242,6 @@ pub(crate) fn show_track_info(
             port_changed = true;
         }
     });
-
     if port_changed {
         {
             let model = Arc::make_mut(&mut doc.data.model);
@@ -221,36 +255,60 @@ pub(crate) fn show_track_info(
         doc.edit.track_cache.rebuild_info(&doc.data);
         doc.edit.track_cache.rebuild_pc_map(&doc.data);
         doc.data.bump_revision();
-        return true;
     }
 
-    ui.add_space(6.0);
+    ui.add_space(4.0);
 
-    // ── 音轨颜色（ImageToMidi 颜色事件兼容）──
-    // 显示当前实际颜色（缓存：显式颜色优先，否则调色板），
-    // 编辑后写入 TrackData.color 并刷新缓存（无需重建音频引擎）。
-    // undo：颜色编辑会话（滑块拖动/弹窗连续变化）开始记录旧色，
-    // 会话结束（连续两帧无变化）时若有变化提交一条 undo。
-    let mut undo_color: Option<([f32; 4], [f32; 4])> = None; // (old, new)
+    // ── 颜色（行高一致的小色块 + 重置）──
+    show_color_row(ui, doc, track_idx);
+
+    port_changed
+}
+
+/// 颜色行：小色块（与其他行同高）+ 重置按钮。
+fn show_color_row(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) {
+    let mut undo_color: Option<([f32; 4], [f32; 4])> = None;
     let edit_id = ui.id().with("track_color_edit");
     let was_editing = ui.data(|d| d.get_temp::<bool>(edit_id)).unwrap_or(false);
+
     ui.horizontal(|ui| {
-        ui.label("颜色:");
-        let cur = if Some(track_idx as u16) == doc.edit.track_cache.conductor_idx {
-            crate::theme::conductor_color_f32()
-        } else {
-            doc.edit
-                .track_cache
-                .colors
-                .get(track_idx)
-                .copied()
-                .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR)
-        };
+        ui.label(t!("track.color").as_ref());
+        let cur = doc
+            .edit
+            .track_cache
+            .colors
+            .get(track_idx)
+            .copied()
+            .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
         let mut srgba = crate::theme::rgba_to_color32((cur[0], cur[1], cur[2], cur[3]));
+        // 小色块：高度与行一致（18px），宽度稍大便于命中。
         let mut changed = false;
-        changed |= crate::widgets::color_picker::color_edit_button(ui, &mut srgba).changed();
-        // 重置为默认颜色：清除显式颜色事件（写入占位色），
-        // 显示回落到调色板；轨道已是默认色时禁用。
+        let (rect, resp) = ui.allocate_exact_size(egui::vec2(36.0, 18.0), egui::Sense::click());
+        ui.painter().rect_filled(rect, 3.0, srgba);
+        let picker_id = ui.id().with("track_color_picker");
+        if resp.clicked() {
+            ui.data_mut(|d| d.insert_temp(edit_id.with("popup_open"), true));
+        }
+        let open = ui
+            .data_mut(|d| d.get_temp::<bool>(edit_id.with("popup_open")))
+            .unwrap_or(false);
+        if open {
+            egui::Area::new(picker_id)
+                .order(egui::Order::Foreground)
+                .fixed_pos(rect.left_bottom() + egui::vec2(0.0, 4.0))
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        if crate::widgets::color_picker::color_edit_button(ui, &mut srgba).changed()
+                        {
+                            changed = true;
+                        }
+                    });
+                });
+            if ui.input(|i| i.pointer.any_click()) && !open_contains(ui, rect) {
+                // 点击别处关闭（简单处理）。
+            }
+        }
+
         let stored_color = doc.data.model.tracks[track_idx].color;
         let reset_btn = crate::widgets::flat::flat_button_sized(
             ui,
@@ -260,12 +318,12 @@ pub(crate) fn show_track_info(
                 12.0,
                 crate::theme::text_label(),
             ),
-            egui::vec2(68.0, 24.0),
+            egui::vec2(68.0, 18.0),
             stored_color != yinhe_core::DEFAULT_TRACK_COLOR,
         );
+
         let editing = changed;
         if editing && !was_editing {
-            // 会话开始：记录编辑前颜色
             ui.data_mut(|d| d.insert_temp(edit_id.with("old"), cur));
         }
         if changed {
@@ -307,7 +365,6 @@ pub(crate) fn show_track_info(
             undo_color = Some((old, yinhe_core::DEFAULT_TRACK_COLOR));
         }
         if !editing && was_editing {
-            // 会话结束：颜色有变则提交一条 undo
             let old = ui
                 .data(|d| d.get_temp::<[f32; 4]>(edit_id.with("old")))
                 .unwrap_or(cur);
@@ -324,6 +381,7 @@ pub(crate) fn show_track_info(
         }
         ui.data_mut(|d| d.insert_temp(edit_id, editing));
     });
+
     if let Some((old, new)) = undo_color {
         let snapshot = doc.capture_snapshot();
         doc.push_undo(
@@ -336,88 +394,21 @@ pub(crate) fn show_track_info(
             snapshot,
         );
     }
+}
 
-    ui.add_space(6.0);
+/// 颜色弹窗是否仍包含指针（用于简单关闭判断）。
+fn open_contains(ui: &egui::Ui, rect: egui::Rect) -> bool {
+    ui.input(|i| i.pointer.hover_pos().is_some_and(|p| rect.contains(p)))
+}
 
-    // ── Mute / Solo ──
-    while doc.edit.track_overrides.len() <= track_idx {
-        doc.edit
-            .track_overrides
-            .push(yinhe_editor_core::document::TrackOverride::default());
-    }
-
-    let muted = doc.edit.track_overrides[track_idx].muted;
-    let soloed = doc.edit.track_overrides[track_idx].soloed;
-
-    let mut mute_clicked = false;
-    let mut solo_clicked = false;
-
-    ui.horizontal(|ui| {
-        // 静音：始终显示 ICON_VOLUME_OFF + 文字，颜色区分激活状态
-        // 图标走 material-icons 家族（否则 PUA 码点被 Pretendard/MiSans 抢占）
-        let mute_color = if muted {
-            crate::theme::mute_active()
-        } else {
-            crate::theme::text_label()
-        };
-        let r1 = crate::widgets::flat::flat_button_sized(
-            ui,
-            crate::widgets::icon_text::icon_text(
-                ICON_VOLUME_OFF,
-                t!("track.mute").as_ref(),
-                12.0,
-                mute_color,
-            ),
-            egui::vec2(60.0, 24.0),
-            true,
-        );
-
-        ui.add_space(4.0);
-
-        // 独奏：始终显示 ICON_HEADPHONES + 文字，颜色区分激活状态
-        let solo_color = if soloed {
-            crate::theme::solo_active()
-        } else {
-            crate::theme::text_label()
-        };
-        let r2 = crate::widgets::flat::flat_button_sized(
-            ui,
-            crate::widgets::icon_text::icon_text(
-                ICON_HEADPHONES,
-                t!("track.solo").as_ref(),
-                12.0,
-                solo_color,
-            ),
-            egui::vec2(60.0, 24.0),
-            true,
-        );
-
-        mute_clicked = r1.clicked();
-        solo_clicked = r2.clicked();
-    });
-
-    if mute_clicked || solo_clicked {
-        if mute_clicked {
-            doc.edit.track_overrides[track_idx].muted = !muted;
-        }
-        if solo_clicked {
-            doc.edit.track_overrides[track_idx].soloed = !soloed;
-        }
-        send_skip_tracks(doc, audio);
-    }
-
-    ui.add_space(8.0);
-
-    // ── 摘要 ──
-    ui.separator();
-    ui.add_space(4.0);
-    ui.label(
-        egui::RichText::new(t!("track.properties").as_ref())
-            .size(crate::theme::SMALL_FONT)
-            .strong(),
-    );
-    ui.add_space(2.0);
-
+/// 属性概要页。
+fn show_summary(
+    ui: &mut egui::Ui,
+    doc: &Document,
+    track_idx: usize,
+    ti: Option<yinhe_core::TrackInfo>,
+) {
+    let Some(ti) = ti else { return };
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(t!("track.note_count").as_ref())
@@ -434,8 +425,6 @@ pub(crate) fn show_track_info(
         );
         ui.label(egui::RichText::new(format!("{}", ti.event_count)).size(crate::theme::SMALL_FONT));
     });
-
-    // Program Change
     let global_ch = ti.port as u32 * 16 + (ti.channel as u32 - 1);
     if let Some(pc) = doc.edit.track_cache.pc_map.get(&(global_ch as u8)) {
         ui.horizontal(|ui| {
@@ -447,20 +436,7 @@ pub(crate) fn show_track_info(
             ui.label(egui::RichText::new(format!("PC {}", pc)).size(crate::theme::SMALL_FONT));
         });
     }
-
-    ui.add_space(8.0);
-    ui.separator();
-    ui.add_space(6.0);
-    if crate::widgets::flat::flat_button(
-        ui,
-        egui::RichText::new(t!("track.clear_selection").as_ref()).size(crate::theme::BODY_FONT),
-    )
-    .clicked()
-    {
-        *info_content = None;
-    }
-
-    false
+    let _ = track_idx;
 }
 
 /// 计算每轨 skip mask 并发给音频引擎。

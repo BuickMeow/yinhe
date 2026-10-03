@@ -144,6 +144,7 @@ fn run_sel_frame(
             &[[0.5, 0.5, 0.5, 1.0]],
             &[true],
             track_selected,
+            &[],
             write_track,
             None,
             false,
@@ -1854,6 +1855,7 @@ fn marquee_members_not_hijacked_by_bystanders_after_move() {
         Some(&moved_midi as &dyn yinhe_types::NoteSource),
         &[true],
         &std::collections::HashSet::new(),
+        &[],
     );
     assert_eq!(collected.len(), 1, "第二次拖动只能收集成员音符");
     assert_eq!(
@@ -1972,6 +1974,7 @@ fn note_drag_ghost_survives_viewport_cull() {
                 &[[0.5, 0.5, 0.5, 1.0]],
                 &[true],
                 &track_selected,
+                &[],
                 // write_track = Some → can_edit，走选区拖动分支（drag_notes 非空）。
                 Some(0),
                 None,

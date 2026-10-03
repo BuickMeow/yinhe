@@ -63,15 +63,13 @@ impl App {
         type ArrOutputs = (
             Option<crate::arrange::ArrDragDelta>,
             Option<crate::arrange::ArrSelRect>,
-            Option<crate::right_panel::FloatPanel>,
             Option<usize>,
         );
-        let (arr_drag_delta, arr_eraser_rect, float_panel_req, automation_picker_req): ArrOutputs =
+        let (arr_drag_delta, arr_eraser_rect, automation_picker_req): ArrOutputs =
             if self.view_mode.show_transport() {
                 let mut request_pianoroll = false;
                 let mut arr_drag_delta: Option<crate::arrange::ArrDragDelta> = None;
                 let mut arr_eraser_rect: Option<crate::arrange::ArrSelRect> = None;
-                let mut float_panel_req: Option<crate::right_panel::FloatPanel> = None;
                 let mut automation_picker_req: Option<usize> = None;
                 let mut guard =
                     crate::app::main_loop::ReplaceGuard::new(&mut self.workspace.documents[idx]);
@@ -107,7 +105,6 @@ impl App {
                     &mut needs_audio_notify,
                     &mut self.status_hint,
                     sel_hint.as_ref(),
-                    &mut float_panel_req,
                     &mut automation_picker_req,
                 );
                 if request_pianoroll {
@@ -117,15 +114,10 @@ impl App {
                         true,
                     );
                 }
-                (
-                    arr_drag_delta,
-                    arr_eraser_rect,
-                    float_panel_req,
-                    automation_picker_req,
-                )
+                (arr_drag_delta, arr_eraser_rect, automation_picker_req)
                 // guard dropped here
             } else {
-                (None, None, None, None)
+                (None, None, None)
             };
         // 方案 A：音轨结构变化（add/remove track）→ drop 旧引擎。
         // ChannelLayout 在引擎创建时冻结，旧引擎无法 dispatch 新增通道。
@@ -134,10 +126,6 @@ impl App {
         // 下一帧 rebuild_audio_if_needed 会用新 model 重新 spawn 引擎和 ChannelLayout。
         if needs_audio_rebuild {
             self.teardown_audio();
-        }
-        // 右键「音轨属性」/ 其他浮动面板请求：设浮窗并收起侧栏 Info（互斥）。
-        if let Some(panel) = float_panel_req {
-            self.set_float_panel(ui.ctx(), Some(panel));
         }
         // 右键「添加插件参数自动化…」：打开参数选择窗口。
         if let Some(track_idx) = automation_picker_req {
@@ -412,6 +400,10 @@ impl App {
                 let pr_visible: Vec<bool> = (0..doc.edit.track_pianoroll_visible.len())
                     .map(|i| doc.edit.track_pianoroll_visible[i] || main == Some(i as u16))
                     .collect();
+                // 锁定掩码：长度对齐轨道数，缺省 false。
+                let pr_locked: Vec<bool> = (0..doc.data.model.tracks.len())
+                    .map(|i| doc.edit.track_locked.get(i).copied().unwrap_or(false))
+                    .collect();
                 let tpb = doc.data.model.meta.ppq;
                 let ts_num = doc
                     .data
@@ -515,6 +507,7 @@ impl App {
                     Some(&doc.data.model),
                     &mut doc.edit.selected,
                     &pr_visible,
+                    &pr_locked,
                     &doc.edit.track_cache.colors,
                     &mut doc.edit.cursor_tick,
                     is_playing,
@@ -870,11 +863,6 @@ impl App {
         ui: &mut egui::Ui,
         layout: &LayoutInfo,
     ) {
-        // 互斥切换：用户主动打开右侧栏 Info tab 时收回浮动面板（弹窗内容回到侧栏态）。
-        if self.float_panel.is_some() && self.right_tab == Some(crate::right_panel::RightTab::Info)
-        {
-            self.float_panel = None;
-        }
         // Right panel（rect 来自 Panel::right 占位：整条，dock 不截断）
         if self.right_tab.is_some() {
             let right_rect = layout.right_panel_rect;
@@ -893,7 +881,6 @@ impl App {
                 &mut self.info_content,
                 self.automation_drag_ghost,
                 &mut self.status_hint,
-                &mut self.float_panel,
             );
             if changed {
                 self.teardown_audio();

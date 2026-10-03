@@ -101,6 +101,8 @@ pub struct EditState {
     pub track_overrides: Vec<TrackOverride>,
     pub track_visible: Vec<bool>,
     pub track_pianoroll_visible: Vec<bool>,
+    /// 音轨锁定：锁定的轨道音符不可选择/编辑（仍照常播放）。会话态，不落盘。
+    pub track_locked: Vec<bool>,
     pub controller_panels: Vec<yinhe_types::AutomationPanelView>,
     pub show_controller_panels: bool,
     pub soundfont_selected_port: u8,
@@ -149,6 +151,7 @@ impl Default for EditState {
             track_overrides: vec![TrackOverride::default()],
             track_visible: Vec::new(),
             track_pianoroll_visible: Vec::new(),
+            track_locked: Vec::new(),
             controller_panels: vec![yinhe_types::AutomationPanelView::default()],
             show_controller_panels: true,
             soundfont_selected_port: 0,

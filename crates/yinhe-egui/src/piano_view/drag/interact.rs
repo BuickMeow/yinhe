@@ -111,6 +111,7 @@ pub(crate) fn handle_sel_marquee(
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
     midi: Option<&dyn yinhe_types::NoteSource>,
     track_selected: &std::collections::HashSet<u16>,
+    track_locked: &[bool],
     vertical: bool,
     press_on_bar: bool,
     eff_rects: &[(f64, f64, u8, u8)],
@@ -166,6 +167,7 @@ pub(crate) fn handle_sel_marquee(
             key_hi,
             track_selected,
             midi,
+            track_locked,
         );
         sel_rect.push_rect(
             (result.t_start, result.t_end, key_lo, key_hi),

@@ -6,8 +6,6 @@ pub mod sf_list;
 
 use eframe::egui;
 
-use rust_i18n::t;
-
 use yinhe_editor_core::audio_settings::LayoutSettings;
 use yinhe_editor_core::document::Document;
 use yinhe_types::AutomationTarget;
@@ -18,15 +16,9 @@ pub enum RightTab {
     EventBrowser,
 }
 
-/// 浮动属性面板（独立视口子窗口）。
-///
-/// 音轨属性与右侧栏 Info 内容互斥切换：内容要么显示在侧栏、要么显示在浮窗，
-/// 不会两边同时出现（避免两份实例互相拉扯同一份模型状态）。
-/// 工程设置只在浮窗显示（侧栏不再承载）。
+/// 工程设置独立窗口的打开状态（浮动 viewport，保留为独立窗口）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FloatPanel {
-    /// 音轨属性浮窗。打开时把目标轨写入 track_selected（弹窗内下拉选择器可换轨）。
-    TrackProps { track_idx: u16 },
     /// 工程设置浮窗（唯一入口）。
     ProjectSettings,
 }
@@ -64,7 +56,6 @@ pub fn show(
     info_content: &mut Option<InfoContent>,
     automation_drag_ghost: Option<(u32, f32)>,
     status_hint: &mut Option<String>,
-    float_panel: &mut Option<FloatPanel>,
 ) -> (bool, Option<event_browser::JumpRequest>, bool) {
     let tab = *right_tab;
     if tab.is_none() {
@@ -129,29 +120,6 @@ pub fn show(
             if let Some(tab) = tab {
                 match tab {
                     RightTab::Info => {
-                        // 音轨属性顶部提供「弹出为窗口」按钮：把侧栏内容搬进
-                        // 独立浮窗并收起侧栏（与弹窗互斥）。Anchor 是上下文临时
-                        // 信息、空态是提示文字，均不提供弹出。
-                        let pop_out = match info_content {
-                            Some(InfoContent::Track) => doc
-                                .as_ref()
-                                .and_then(|d| d.edit.track_selected.iter().next().copied())
-                                .map(|t| FloatPanel::TrackProps { track_idx: t }),
-                            _ => None,
-                        };
-                        if let Some(panel) = pop_out
-                            && float_panel.is_none()
-                            && ui
-                                .add(crate::widgets::menu::menu_item_button(
-                                    ui,
-                                    false,
-                                    t!("panel.pop_out").as_ref(),
-                                ))
-                                .clicked()
-                        {
-                            *float_panel = Some(panel);
-                            *right_tab = None;
-                        }
                         changed |=
                             info_panel::show(ui, doc, audio, info_content, automation_drag_ghost);
                     }

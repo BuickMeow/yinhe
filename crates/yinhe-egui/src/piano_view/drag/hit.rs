@@ -52,7 +52,7 @@ pub(crate) fn double_click_note(
     ))
 }
 
-/// 音符 hit-test：边缘→伸缩，中部→移动；作用域 = track_selected(空=全部)∩track_visible。
+/// 音符 hit-test：边缘→伸缩，中部→移动；作用域 = track_selected(空=全部)∩track_visible∩未锁定。
 pub(crate) fn hit_test_note(
     midi: Option<&dyn yinhe_types::NoteSource>,
     view: &yinhe_types::PianoRollView,

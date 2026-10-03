@@ -31,6 +31,7 @@ pub(crate) fn sel_press(
     eff_rects: &[(f64, f64, u8, u8)],
     track_visible: &[bool],
     track_selected: &std::collections::HashSet<u16>,
+    track_locked: &[bool],
     additive: bool,
     press_on_bar: bool,
     pointer: &egui::PointerState,
@@ -135,6 +136,7 @@ pub(crate) fn sel_press(
                         midi,
                         track_visible,
                         track_selected,
+                        track_locked,
                     )));
                 } else if state.sel_note_resize.is_none() && state.sel_note_move.is_none() {
                     if in_sel_rect {
@@ -157,6 +159,7 @@ pub(crate) fn sel_press(
                             midi,
                             track_visible,
                             track_selected,
+                            track_locked,
                         )));
                         state.preview_last_dk = 0;
                         state.note_drag_had_moved = false;

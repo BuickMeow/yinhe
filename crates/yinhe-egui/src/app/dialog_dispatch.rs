@@ -729,29 +729,17 @@ impl App {
         let doc = &mut self.workspace.documents[idx];
         let audio = self.audio_state.handle.as_ref();
         let mut open = true;
-        let mut dock = false;
-        let mut port_changed = false;
+        let _ = audio;
 
         use crate::right_panel::FloatPanel;
         match panel {
-            FloatPanel::TrackProps { track_idx } => {
-                port_changed = crate::dialogs::prop_panels::show_track_props_viewport(
-                    ctx, doc, audio, &mut open, track_idx, &mut dock,
-                );
-            }
             FloatPanel::ProjectSettings => {
                 crate::dialogs::prop_panels::show_project_settings_viewport(ctx, doc, &mut open);
             }
         }
 
-        if dock {
-            self.dock_float_panel(panel);
-        } else if !open {
-            // 用户点 X：只关闭弹窗，侧栏保持原状。
+        if !open {
             self.float_panel = None;
-        }
-        if port_changed {
-            self.teardown_audio();
         }
     }
 }

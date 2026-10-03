@@ -118,6 +118,7 @@ pub fn collect_selected_notes(
     midi: Option<&dyn NoteSource>,
     track_visible: &[bool],
     track_selected: &std::collections::HashSet<u16>,
+    track_locked: &[bool],
 ) -> Vec<CollectedNote> {
     let Some(midi) = midi else {
         return Vec::new();
@@ -138,6 +139,9 @@ pub fn collect_selected_notes(
                     continue;
                 }
                 if !track_visible.get(n.track as usize).copied().unwrap_or(true) {
+                    continue;
+                }
+                if track_locked.get(n.track as usize).copied().unwrap_or(false) {
                     continue;
                 }
                 out.push(CollectedNote {
@@ -178,6 +182,7 @@ fn pr_single_track(track_selected: &std::collections::HashSet<u16>) -> Option<u1
 ///
 /// `midi` 存在时同时把命中音符物化为显式成员：此后选区跟着这批音符走，
 /// 移动/复制到落点不会把落点处的其他音符拉进选区（不再是"矩形重新查询"）。
+#[allow(clippy::too_many_arguments)]
 pub fn add_pr_selection_rect(
     selected: &mut yinhe_core::Selection,
     t_start: u32,
@@ -186,14 +191,37 @@ pub fn add_pr_selection_rect(
     key_hi: u8,
     track_selected: &std::collections::HashSet<u16>,
     midi: Option<&dyn NoteSource>,
+    track_locked: &[bool],
 ) {
-    if let Some(t) = pr_single_track(track_selected) {
-        selected.add_rect_track(t_start, t_end, key_lo, key_hi, t, t);
-    } else if track_selected.is_empty() {
-        selected.add_rect_track(t_start, t_end, key_lo, key_hi, 0, u16::MAX);
-    } else {
-        for &t in track_selected {
+    // 无锁定信息（长度 0）时保持原有「全轨范围」语义。
+    if track_locked.is_empty() {
+        if let Some(t) = pr_single_track(track_selected) {
             selected.add_rect_track(t_start, t_end, key_lo, key_hi, t, t);
+        } else if track_selected.is_empty() {
+            selected.add_rect_track(t_start, t_end, key_lo, key_hi, 0, u16::MAX);
+        } else {
+            for &t in track_selected {
+                selected.add_rect_track(t_start, t_end, key_lo, key_hi, t, t);
+            }
+        }
+    } else {
+        let locked = |t: u16| track_locked.get(t as usize).copied().unwrap_or(false);
+        if let Some(t) = pr_single_track(track_selected) {
+            if !locked(t) {
+                selected.add_rect_track(t_start, t_end, key_lo, key_hi, t, t);
+            }
+        } else if track_selected.is_empty() {
+            for t in 0..track_locked.len() as u16 {
+                if !locked(t) {
+                    selected.add_rect_track(t_start, t_end, key_lo, key_hi, t, t);
+                }
+            }
+        } else {
+            for &t in track_selected {
+                if !locked(t) {
+                    selected.add_rect_track(t_start, t_end, key_lo, key_hi, t, t);
+                }
+            }
         }
     }
     // 追加的矩形统一物化（包括此前矩形态未物化的旧矩形，如全选）。
@@ -311,7 +339,7 @@ mod tests {
         sel.add_rect_track(0, 480, 0, 127, 0, 0);
         sel.add_rect_track(240, 720, 0, 127, 0, 0); // 与第一个重叠
 
-        let notes = collect_selected_notes(&sel, Some(&midi), &[true], &Default::default());
+        let notes = collect_selected_notes(&sel, Some(&midi), &[true], &Default::default(), &[]);
         assert_eq!(notes.len(), 1, "重叠选框不得重复收集：{notes:?}");
         assert_eq!(notes[0].start_tick, 0);
     }
@@ -324,14 +352,55 @@ mod tests {
         sel.add_rect_track(0, 480, 0, 127, 0, 1);
 
         // 空 track_selected：不过滤轨道，但 track_visible[0]=false 会过滤掉轨 0
-        let notes = collect_selected_notes(&sel, Some(&midi), &[false, true], &Default::default());
+        let notes =
+            collect_selected_notes(&sel, Some(&midi), &[false, true], &Default::default(), &[]);
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].track, 1);
 
         // 显式 track_selected 只留轨 1
         let only1: std::collections::HashSet<u16> = [1u16].into_iter().collect();
-        let notes = collect_selected_notes(&sel, Some(&midi), &[true, true], &only1);
+        let notes = collect_selected_notes(&sel, Some(&midi), &[true, true], &only1, &[]);
         assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].track, 1);
+    }
+
+    /// 锁定轨的音符不被收集（不可移动/编辑）。
+    #[test]
+    fn collect_selected_notes_skips_locked_tracks() {
+        let midi = yinhe_test_helpers::make_midi(vec![(60, 0, 480, 0, 100), (60, 0, 480, 1, 100)]);
+        let mut sel = Selection::default();
+        sel.add_rect_track(0, 480, 0, 127, 0, 1);
+
+        // 轨 0 锁定：只剩轨 1。
+        let notes = collect_selected_notes(
+            &sel,
+            Some(&midi),
+            &[true, true],
+            &Default::default(),
+            &[true, false],
+        );
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].track, 1);
+    }
+
+    /// 锁定轨不进入 PR 框选（add_pr_selection_rect）。
+    #[test]
+    fn add_pr_selection_rect_skips_locked_tracks() {
+        let midi = yinhe_test_helpers::make_midi(vec![(60, 0, 480, 0, 100), (60, 0, 480, 1, 100)]);
+        let mut sel = Selection::default();
+        add_pr_selection_rect(
+            &mut sel,
+            0,
+            480,
+            0,
+            127,
+            &Default::default(),
+            Some(&midi),
+            &[true, false],
+        );
+        let notes =
+            collect_selected_notes(&sel, Some(&midi), &[true, true], &Default::default(), &[]);
+        assert_eq!(notes.len(), 1, "锁定轨 0 不应被框选中");
         assert_eq!(notes[0].track, 1);
     }
 }

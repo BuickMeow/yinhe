@@ -104,6 +104,7 @@ pub(crate) fn sel_drag_frame_arrange(
                     data.midi,
                     data.track_visible,
                     &HashSet::new(),
+                    &[],
                 ),
             ));
             move_orig_sel = edit.arr_sel_rect.clone();
