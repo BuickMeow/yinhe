@@ -10,11 +10,15 @@ use yinhe_editor_core::right_panel_layout::{PanelColumn, PanelKind, RightPanelLa
 use crate::theme;
 
 /// 选项卡头高度。
-const TAB_H: f32 = 24.0;
+const TAB_H: f32 = 20.0;
 /// 栏间分割线厚度。
-const SPLIT_H: f32 = 6.0;
-/// 选项卡水平内边距。
-const TAB_PAD: f32 = 10.0;
+const SPLIT_H: f32 = 4.0;
+/// 选项卡文字左右内边距。
+const TAB_PAD: f32 = 8.0;
+/// 标签栏 / 内容区与栏边缘的水平边距（分割线不缩进）。
+const PAD_X: f32 = 8.0;
+/// 内容区上下边距。
+const PAD_Y: f32 = 4.0;
 /// 每栏内容区最小高度（分配高度时的下限）。
 const COL_MIN_H: f32 = 60.0;
 
@@ -41,8 +45,10 @@ struct ColumnGeom {
     rect: egui::Rect,
     /// 选项卡头矩形。
     header: egui::Rect,
-    /// 内容区矩形。
+    /// 内容区矩形（含边距）。
     content: egui::Rect,
+    /// 内容区实际可用矩形（已扣左右/上下边距）。
+    content_inner: egui::Rect,
 }
 
 /// 按权重把 `rect` 垂直分配给各栏（栏间预留分割线）。
@@ -66,10 +72,12 @@ fn compute_geoms(rect: egui::Rect, n: usize, weights: &[f32]) -> Vec<ColumnGeom>
             egui::pos2(col_rect.min.x, col_rect.min.y + TAB_H),
             col_rect.max,
         );
+        let content_inner = content.shrink2(egui::vec2(PAD_X, PAD_Y));
         geoms.push(ColumnGeom {
             rect: col_rect,
             header,
             content,
+            content_inner,
         });
         y = col_rect.max.y + SPLIT_H;
     }
@@ -109,11 +117,11 @@ pub(crate) fn show(
     for (ci, col) in layout.columns.iter_mut().enumerate() {
         let g = &geoms[ci];
 
-        // 内容区（先画，头覆盖其上无妨）。
-        ui.scope_builder(egui::UiBuilder::new().max_rect(g.content), |ui| {
+        // 内容区（先画，头覆盖其上无妨）。边距留给标签卡/内容，分割线不缩进。
+        ui.scope_builder(egui::UiBuilder::new().max_rect(g.content_inner), |ui| {
             ui.set_clip_rect(g.content);
             if let Some(kind) = col.active_kind() {
-                render_content(ui, kind, g.content);
+                render_content(ui, kind, g.content_inner);
             }
         });
 
@@ -213,7 +221,7 @@ fn paint_header(
     ui.painter().rect_filled(g.header, 0.0, theme::control_bg());
 
     let font = egui::FontId::proportional(theme::SMALL_FONT);
-    let mut x = g.header.min.x + 2.0;
+    let mut x = g.header.min.x + PAD_X;
     for (ti, &kind) in col.tabs.iter().enumerate() {
         let label = tab_label(kind);
         // 宽度按文字自适应：量出 galley 宽度 + 左右内边距。
@@ -222,7 +230,7 @@ fn paint_header(
             .layout_no_wrap(label.clone(), font.clone(), theme::text_secondary())
             .size()
             .x;
-        let remaining = g.header.max.x - x - 2.0;
+        let remaining = g.header.max.x - PAD_X - x;
         let tab_w = (text_w + TAB_PAD * 2.0).min(remaining.max(0.0));
         if tab_w < 16.0 {
             break;

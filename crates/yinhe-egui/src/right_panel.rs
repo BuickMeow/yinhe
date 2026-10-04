@@ -114,18 +114,13 @@ pub fn show(
     let mut port_changed = false;
     let mut jump_request: Option<event_browser::JumpRequest> = None;
 
-    // 内容区左右收缩 8px，避免文字贴边。
-    let inner = egui::Rect::from_min_max(
-        egui::pos2(content_rect.min.x + 8.0, content_rect.min.y),
-        egui::pos2(content_rect.max.x - 8.0, content_rect.max.y),
-    );
-
+    // 边距由 dock 按「标签卡 / 内容」分别施加：分割线因此能铺满整宽。
     let mut layout_changed = false;
     ui.painter()
         .rect_filled(content_rect, 0.0, crate::theme::app_bg());
 
     let doc_ref = &mut doc;
-    layout_changed |= dock::show(ui, inner, layout, |ui, kind, _content| {
+    layout_changed |= dock::show(ui, content_rect, layout, |ui, kind, _content| {
         match kind {
             PanelKind::Track => {
                 port_changed |= info_panel::show_track(

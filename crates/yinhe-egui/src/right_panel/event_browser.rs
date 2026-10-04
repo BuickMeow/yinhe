@@ -72,8 +72,8 @@ pub fn show_tree(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut Even
     };
     let _ = maintain_state(doc, state);
 
-    // 不画背景（right_panel 已铺 app_bg，再 fill 叠两层）；只保留内边距
-    let frame_bg = egui::Frame::NONE.inner_margin(egui::Margin::symmetric(4, 2));
+    // 不画背景（right_panel 已铺 app_bg，再 fill 叠两层）；边距由 dock 统一施加
+    let frame_bg = egui::Frame::NONE;
     egui::ScrollArea::both()
         .id_salt("eb_tree")
         .auto_shrink([false, false])
@@ -101,8 +101,8 @@ pub fn show_events(
     let (ppq, default_num, ts, _) = maintain_state(doc, state);
     let bar_lookup = bar_lookup::BarLookup::build(ppq, default_num, &ts);
 
-    // 不画背景（right_panel 已铺 app_bg，再 fill 叠两层）；只保留内边距
-    let frame_bg = egui::Frame::NONE.inner_margin(egui::Margin::symmetric(4, 2));
+    // 不画背景（right_panel 已铺 app_bg，再 fill 叠两层）；边距由 dock 统一施加
+    let frame_bg = egui::Frame::NONE;
     let mut jump_request: Option<JumpRequest> = None;
     egui::ScrollArea::both()
         .id_salt("eb_detail")
