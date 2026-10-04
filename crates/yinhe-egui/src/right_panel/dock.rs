@@ -11,8 +11,8 @@ use crate::theme;
 
 /// 选项卡头高度。
 const TAB_H: f32 = 20.0;
-/// 栏间分割线厚度。
-const SPLIT_H: f32 = 4.0;
+/// 栏间分割线厚度（与项目其它分割线一致）。
+const SPLIT_H: f32 = theme::SPLIT_GAP;
 /// 选项卡文字左右内边距。
 const TAB_PAD: f32 = 8.0;
 /// 标签栏 / 内容区与栏边缘的水平边距（分割线不缩进）。
