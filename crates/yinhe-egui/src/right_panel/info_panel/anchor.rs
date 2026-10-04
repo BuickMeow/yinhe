@@ -36,15 +36,6 @@ pub(super) fn show_anchor_info(
 
     ui.add_space(4.0);
 
-    // ── 标题 ──
-    ui.label(
-        egui::RichText::new(t!("anchor.title").as_ref())
-            .strong()
-            .size(crate::theme::PANEL_TITLE_FONT)
-            .color(crate::theme::text_primary()),
-    );
-    ui.add_space(2.0);
-
     // ── 目标名称（只读） ──
     ui.horizontal(|ui| {
         ui.label(

@@ -17,7 +17,6 @@ pub const BODY_FONT: f32 = 12.0; // 正文/字段值/事件标题
 pub const TOOLTIP_FONT: f32 = 12.0; // 拖拽 tooltip（monospace）
 pub const ICON_FONT_SM: f32 = 12.0; // 小图标（关闭按钮）
 pub const SUB_TITLE_FONT: f32 = 13.0; // 子标题/对话框标题
-pub const PANEL_TITLE_FONT: f32 = 14.0; // 面板标题（文字）
 pub const ICON_FONT: f32 = 14.0; // 常规图标
 pub const ICON_FONT_LG: f32 = 16.0; // 大图标（密码可见性等）
 pub const ICON_BTN_FONT: f32 = 18.0; // 图标按钮（transport/轨道 + 等）

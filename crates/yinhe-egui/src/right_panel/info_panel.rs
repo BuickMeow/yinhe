@@ -1,7 +1,8 @@
 //! 右侧 Info 面板入口（多栏停靠内容源）。
 //!
 //! 由右栏多栏布局按选项卡类型分发：
-//! - `Track` → [`show_track`]：选框/锚点信息优先，否则音轨属性 + 图层。
+//! - `Track` → [`show_track`]：选框/锚点信息优先，否则音轨属性。
+//! - `Layers` → [`show_layers`]：每轨的选中 / 可见 / 锁定。
 //! - `History` → [`show_history`]：撤销/重做栈标签。
 //! - `Summary` → [`show_summary`]：当前选中轨的统计。
 //!
@@ -96,6 +97,11 @@ fn render_track(
         }
         Some(InfoContent::Track) | None => track::show_track_info(ui, doc),
     }
+}
+
+/// 「图层」选项卡。
+pub(crate) fn show_layers(ui: &mut egui::Ui, doc: &mut Document) {
+    layers::show(ui, doc);
 }
 
 /// 「历史记录」选项卡。

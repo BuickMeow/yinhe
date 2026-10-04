@@ -96,13 +96,6 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
 
     // ── 渲染 ──
     ui.add_space(4.0);
-    ui.label(
-        egui::RichText::new(t!("sel.title").as_ref())
-            .strong()
-            .size(crate::theme::PANEL_TITLE_FONT)
-            .color(crate::theme::text_primary()),
-    );
-    ui.add_space(2.0);
 
     let pos_label = match view {
         SelView::Pr => t!("sel.pos_pr"),

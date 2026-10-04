@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 pub enum PanelKind {
     /// 音轨属性。
     Track,
+    /// 图层（每轨选中/可见/锁定）。
+    Layers,
     /// 树图（工程总览）。
     ProjectTree,
     /// 事件浏览器表格。
@@ -29,6 +31,7 @@ impl PanelKind {
     pub fn label_key(self) -> &'static str {
         match self {
             PanelKind::Track => "panel.section.track",
+            PanelKind::Layers => "panel.section.layers",
             PanelKind::ProjectTree => "panel.section.tree",
             PanelKind::EventBrowser => "panel.section.events",
             PanelKind::History => "panel.tab.history",
@@ -76,12 +79,16 @@ pub struct RightPanelLayout {
 
 impl Default for RightPanelLayout {
     fn default() -> Self {
-        // 默认：上[音轨] / 中[树图,事件] / 下[历史记录,属性概要]。
+        // 默认：上[音轨] / 中[树图,事件,图层] / 下[历史记录,属性概要]。
         Self {
             columns: vec![
                 PanelColumn::single(PanelKind::Track),
                 PanelColumn {
-                    tabs: vec![PanelKind::ProjectTree, PanelKind::EventBrowser],
+                    tabs: vec![
+                        PanelKind::ProjectTree,
+                        PanelKind::EventBrowser,
+                        PanelKind::Layers,
+                    ],
                     active: 0,
                     height_weight: 1.0,
                 },
@@ -172,7 +179,11 @@ mod tests {
         assert_eq!(l.columns[0].tabs, vec![PanelKind::Track]);
         assert_eq!(
             l.columns[1].tabs,
-            vec![PanelKind::ProjectTree, PanelKind::EventBrowser]
+            vec![
+                PanelKind::ProjectTree,
+                PanelKind::EventBrowser,
+                PanelKind::Layers
+            ]
         );
         assert_eq!(
             l.columns[2].tabs,

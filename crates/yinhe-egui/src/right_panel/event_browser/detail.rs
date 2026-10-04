@@ -1167,12 +1167,6 @@ fn summarize_targets(lanes: &[AutomationLane]) -> TargetSummary {
 }
 
 pub(super) fn show_overview(ui: &mut egui::Ui, model: &yinhe_core::YinModel) {
-    ui.label(
-        egui::RichText::new("工程概览")
-            .size(crate::theme::PANEL_TITLE_FONT)
-            .strong(),
-    );
-    ui.add_space(4.0);
     let name = if model.meta.name.is_empty() {
         "(未命名)"
     } else {

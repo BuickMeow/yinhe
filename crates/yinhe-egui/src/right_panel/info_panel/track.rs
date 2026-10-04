@@ -1,10 +1,9 @@
 //! 音轨信息面板。
 //!
-//! 顶部分栏「音轨」：当前选中轨的名称 / 端口 / 通道 / 颜色。
-//! 下部分栏「图层」：每轨的选中 / 可见 / 锁定（见 [`super::layers`]）。
+//! 「音轨」选项卡：当前选中轨的名称 / 端口 / 通道 / 颜色。
 //!
-//! 历史记录 / 属性概要已拆为独立顶层选项卡（见 [`super::history`] /
-//! [`show_summary_panel`]），由右栏多栏布局统一停靠。
+//! 图层 / 历史记录 / 属性概要已拆为独立顶层选项卡（见 [`super::layers`] /
+//! [`super::history`] / [`show_summary_panel`]），由右栏多栏布局统一停靠。
 
 use std::sync::Arc;
 
@@ -15,9 +14,7 @@ use yinhe_editor_core::document::Document;
 
 use rust_i18n::t;
 
-use super::layers;
-
-/// 显示音轨属性 + 图层（「音轨」选项卡）。返回 `true` 表示端口/通道改变。
+/// 显示音轨属性（「音轨」选项卡）。返回 `true` 表示端口/通道改变。
 pub(crate) fn show_track_info(ui: &mut egui::Ui, doc: &mut Document) -> bool {
     let num_tracks = doc.data.model.tracks.len();
     if num_tracks == 0 {
@@ -25,11 +22,6 @@ pub(crate) fn show_track_info(ui: &mut egui::Ui, doc: &mut Document) -> bool {
         return false;
     }
 
-    let mut port_changed = false;
-
-    // ── 分栏 1：音轨属性 ──
-    section_header(ui, t!("panel.section.track").as_ref());
-    ui.add_space(2.0);
     let track_idx = doc
         .edit
         .track_selected
@@ -38,19 +30,11 @@ pub(crate) fn show_track_info(ui: &mut egui::Ui, doc: &mut Document) -> bool {
         .copied()
         .map(|i| (i as usize).min(num_tracks - 1));
     if let Some(track_idx) = track_idx {
-        port_changed |= show_track_fields(ui, doc, track_idx);
+        show_track_fields(ui, doc, track_idx)
     } else {
         crate::widgets::hint::empty_hint(ui, t!("panel.select_track_hint").as_ref());
+        false
     }
-
-    ui.add_space(6.0);
-
-    // ── 分栏 2：图层 ──
-    section_header(ui, t!("panel.section.layers").as_ref());
-    ui.add_space(2.0);
-    layers::show(ui, doc);
-
-    port_changed
 }
 
 /// 「属性概要」选项卡：当前选中轨的音符数 / 事件数 / 音色。
@@ -75,16 +59,6 @@ pub(crate) fn show_summary_panel(ui: &mut egui::Ui, doc: &Document) {
     show_summary(ui, doc, track_idx, ti);
 }
 
-/// 分栏小标签卡标题。
-fn section_header(ui: &mut egui::Ui, title: &str) {
-    ui.label(
-        egui::RichText::new(title)
-            .size(crate::theme::PANEL_TITLE_FONT)
-            .strong()
-            .color(crate::theme::text_primary()),
-    );
-}
-
 /// 音轨字段（名称 / 端口 / 通道 / 颜色）。返回端口/通道是否改变。
 fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) -> bool {
     let num_tracks = doc.data.model.tracks.len();
@@ -96,11 +70,6 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
             egui::RichText::new(t!("track.conductor").as_ref())
                 .strong()
                 .color(crate::theme::text_primary()),
-        );
-        ui.label(
-            egui::RichText::new(t!("track.conductor_hint").as_ref())
-                .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::text_label()),
         );
         ui.add_space(4.0);
         if !doc.data.model.meta.name.is_empty() {

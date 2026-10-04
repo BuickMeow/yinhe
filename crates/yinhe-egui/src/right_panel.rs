@@ -142,6 +142,11 @@ pub fn show(
                 jump_request =
                     event_browser::show_events(ui, doc_ref.as_deref_mut(), event_browser_state);
             }
+            PanelKind::Layers => {
+                if let Some(doc) = doc_ref.as_deref_mut() {
+                    info_panel::show_layers(ui, doc);
+                }
+            }
             PanelKind::History => {
                 if let Some(doc) = doc_ref.as_deref_mut() {
                     info_panel::show_history(ui, doc);
