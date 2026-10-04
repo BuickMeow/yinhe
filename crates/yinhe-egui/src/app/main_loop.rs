@@ -586,9 +586,6 @@ impl eframe::App for App {
             );
             transport_bar::PrBarData {
                 quantize: doc.edit.quantize_pianoroll,
-                track_infos: &doc.edit.track_cache.info,
-                pr_track_visible: &doc.edit.track_pianoroll_visible,
-                main_track: main,
                 chord,
             }
         });
@@ -649,30 +646,6 @@ impl eframe::App for App {
         if !transport_response.timecode_events.is_empty() {
             let ctx = ui.ctx().clone();
             self.apply_timecode_events(&ctx, transport_response.timecode_events);
-        }
-
-        // ── PR 控制组事件（主音轨 / 显示音轨；原 control bar 功能）──
-        if !transport_response.pr_events.is_empty()
-            && let Some(idx) = self.workspace.active_doc
-        {
-            let edit = &mut self.workspace.documents[idx].edit;
-            for ev in transport_response.pr_events {
-                match ev {
-                    transport_bar::PrBarEvent::SwitchMainTrack(t) => {
-                        edit.track_selected.clear();
-                        edit.track_selected.insert(t);
-                    }
-                    // PR 显示开关只写 track_pianoroll_visible，不影响 AR（track_visible）。
-                    transport_bar::PrBarEvent::SetTrackVisible(t, v) => {
-                        if let Some(slot) = edit.track_pianoroll_visible.get_mut(t as usize) {
-                            *slot = v;
-                        }
-                    }
-                    transport_bar::PrBarEvent::SetAllVisible(v) => {
-                        edit.track_pianoroll_visible.fill(v)
-                    }
-                }
-            }
         }
 
         // ── MIDI/音频录音切换（REC 按钮 / macOS 播放菜单）──

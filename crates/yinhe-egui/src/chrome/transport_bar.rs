@@ -12,7 +12,7 @@ use super::transport_bar_pr;
 pub use super::transport_bar_actions::{
     EDIT_GROUPS, EditAction, FILE_GROUPS, FileAction, TransportContext, TransportResponse,
 };
-pub use super::transport_bar_pr::{PrBarData, PrBarEvent};
+pub use super::transport_bar_pr::PrBarData;
 pub(crate) use super::transport_bar_recent::recent_display_name;
 pub use crate::widgets::action_menu::PopupRow;
 
@@ -29,7 +29,6 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
     let mut pending_open_path = None;
     let mut set_orientation = None;
     let mut timecode_events: Vec<crate::widgets::timecode::TimecodeEvent> = Vec::new();
-    let mut pr_events: Vec<PrBarEvent> = Vec::new();
     let mut tool_pins_changed = false;
 
     egui::Panel::top("transport_bar")
@@ -213,12 +212,11 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     ui.add_space(4.0);
 
                     if let Some(pr) = ctx.pr.as_ref() {
-                        // ── 右侧 PR 控制组（靠右，永不收缩）：量化 / Track / 幽灵 / III 三 / 和弦 ──
+                        // ── 右侧 PR 控制组（靠右，永不收缩）：III / 三 / 和弦 ──
                         transport_bar_pr::show_right_group(
                             ui,
                             pr,
                             ctx.orientation_vertical,
-                            &mut pr_events,
                             &mut set_orientation,
                             &mut hovered_hint,
                         );
@@ -321,7 +319,6 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
         tap_tempo: play_actions.tap_tempo,
         set_orientation,
         timecode_events,
-        pr_events,
         pending_file_action,
         pending_edit_action,
         pending_open_path,

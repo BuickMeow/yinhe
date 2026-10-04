@@ -846,14 +846,8 @@ workspace.placeholder_hint: "새 프로젝트를 만들거나 열어 편집을 �
 workspace.placeholder_shortcuts: "제목 표시줄 / 메뉴 표시줄에서 새 프로젝트를 만들거나 여세요"
 
 # ── PR 제어 바 (최상단, 시간 눈금 위) ──
-pr_bar.main_track: "메인 트랙"
-pr_bar.show_tracks: "트랙 표시"
-pr_bar.select_all: "전체 선택"
-pr_bar.no_track: "(트랙 없음)"
 pr_bar.allow_overlap_on: "새 겹침 노트 허용: 켬 (클릭하면 끔)"
 pr_bar.allow_overlap_off: "새 겹침 노트 허용: 끔 (클릭하면 켬)"
-pr_bar.show_others_on: "다른 트랙 표시: 켬 (클릭하면 메인 트랙만 표시)"
-pr_bar.show_others_off: "다른 트랙 표시: 끔 (클릭하면 전체 표시)"
 pr_bar.blocked_replace: "원래 노트를 삭제하고 대상 노트로 교체"
 pr_bar.blocked_delete: "원래 노트를 삭제하고 대상은 교체하지 않음"
 pr_bar.blocked_keep: "겹친 노트 되돌리기"

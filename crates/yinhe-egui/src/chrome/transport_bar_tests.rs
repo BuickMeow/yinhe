@@ -7,16 +7,10 @@ use crate::widgets::tools_panel::Tool;
 use yinhe_editor_core::document::Document;
 
 /// 为测试文档构造 PR 控制组数据（与 main_loop 组装一致）。
-fn pr_bar_data(doc: Option<&Document>) -> Option<crate::chrome::transport_bar_pr::PrBarData<'_>> {
-    doc.map(|doc| {
-        let main = doc.edit.main_track();
-        crate::chrome::transport_bar_pr::PrBarData {
-            quantize: doc.edit.quantize_pianoroll,
-            track_infos: &doc.edit.track_cache.info,
-            pr_track_visible: &doc.edit.track_pianoroll_visible,
-            main_track: main,
-            chord: None,
-        }
+fn pr_bar_data(doc: Option<&Document>) -> Option<crate::chrome::transport_bar_pr::PrBarData> {
+    doc.map(|doc| crate::chrome::transport_bar_pr::PrBarData {
+        quantize: doc.edit.quantize_pianoroll,
+        chord: None,
     })
 }
 
@@ -485,7 +479,7 @@ fn drag_on_hidden_button_does_not_start_drag() {
 
 /// 回归：右侧 PR 控制组的文字/图标必须由统一的前景色着色。
 /// 曾出现预排版 galley 固化白色 glyph，导致旋转的 III 图标与
-/// Track 音轨名/箭头在浅色主题下整段发白（fallback 色被白色覆盖）。
+/// 和弦文字在浅色主题下整段发白（fallback 色被白色覆盖）。
 #[test]
 fn right_group_text_shapes_use_fallback_color() {
     let ctx = egui::Context::default();
@@ -497,20 +491,15 @@ fn right_group_text_shapes_use_fallback_color() {
         .drop_without_applying_deltas();
     let data = crate::chrome::transport_bar_pr::PrBarData {
         quantize: yinhe_editor_core::quantize::QuantizePreset::default(),
-        track_infos: &[],
-        pr_track_visible: &[],
-        main_track: None,
         chord: Some("Cmaj7".to_string()),
     };
     let output = ctx.run_ui(Default::default(), |ui| {
-        let mut events = Vec::new();
         let mut set_orientation = None;
         let mut hovered_hint = None;
         crate::chrome::transport_bar_pr::show_right_group(
             ui,
             &data,
             false,
-            &mut events,
             &mut set_orientation,
             &mut hovered_hint,
         );
@@ -530,6 +519,6 @@ fn right_group_text_shapes_use_fallback_color() {
             checked += 1;
         }
     }
-    assert!(checked >= 4, "右侧组文字/图标数量异常: {checked}");
+    assert!(checked >= 3, "右侧组文字/图标数量异常: {checked}");
     output.drop_without_applying_deltas();
 }

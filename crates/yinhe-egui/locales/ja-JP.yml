@@ -847,14 +847,8 @@ workspace.placeholder_hint: "新規作成またはプロジェクトを開いて
 workspace.placeholder_shortcuts: "タイトルバー / メニューバーをクリックしてプロジェクトを新規作成または開く"
 
 # PR コントロールバー
-pr_bar.main_track: "メイントラック"
-pr_bar.show_tracks: "トラックを表示"
-pr_bar.select_all: "すべて選択"
-pr_bar.no_track: "（トラックなし）"
 pr_bar.allow_overlap_on: "新しい重複ノートを許可：オン（クリックでオフ）"
 pr_bar.allow_overlap_off: "新しい重複ノートを許可：オフ（クリックでオン）"
-pr_bar.show_others_on: "他のトラックを表示：オン（クリックでメイントラックのみ）"
-pr_bar.show_others_off: "他のトラックを表示：オフ（クリックですべて表示）"
 pr_bar.blocked_replace: "元のノートを削除して対象ノートを置換"
 pr_bar.blocked_delete: "元のノートを削除し、対象は置換しない"
 pr_bar.blocked_keep: "重複ノートを押し戻す"

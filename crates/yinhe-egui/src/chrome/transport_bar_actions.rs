@@ -389,8 +389,8 @@ pub struct TransportContext<'a> {
     pub focus_is_pianoroll: bool,
     /// AR 量化（PR 量化在 `pr.quantize`）。
     pub quantize_arrange: yinhe_editor_core::quantize::QuantizePreset,
-    /// PR 控制组数据（量化/音轨/幽灵/和弦；无活动文档 = None，右侧组不显示）。
-    pub pr: Option<super::transport_bar_pr::PrBarData<'a>>,
+    /// PR 控制组数据（量化/和弦；无活动文档 = None，右侧组不显示）。
+    pub pr: Option<super::transport_bar_pr::PrBarData>,
 }
 
 pub struct TransportResponse {
@@ -404,8 +404,6 @@ pub struct TransportResponse {
     pub set_orientation: Option<yinhe_types::Orientation>,
     /// 时间码编辑事件（BPM/拍号/PPQ/位置/调式/量化）。
     pub timecode_events: Vec<crate::widgets::timecode::TimecodeEvent>,
-    /// PR 控制组事件（量化 / 主音轨 / 显示音轨）。
-    pub pr_events: Vec<super::transport_bar_pr::PrBarEvent>,
     pub pending_file_action: Option<FileAction>,
     pub pending_edit_action: Option<EditAction>,
     pub pending_open_path: Option<String>,
