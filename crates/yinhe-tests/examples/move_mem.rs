@@ -4,8 +4,8 @@
 //! 全量物化）。用法:
 //!   cargo run --release -p yinhe-tests --example move_mem -- <yin路径> [delta_ticks]
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use yinhe_editor_core::document::Document;
@@ -17,10 +17,7 @@ fn main() {
         .get(1)
         .cloned()
         .unwrap_or_else(|| "/tmp/start_v9.yin".to_string());
-    let delta: i64 = args
-        .get(2)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1000);
+    let delta: i64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(1000);
 
     let t = Instant::now();
     let model = yinhe_yin::load_yin(&path).expect("load yin");

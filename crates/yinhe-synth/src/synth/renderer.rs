@@ -277,8 +277,8 @@ impl GpuAudioRenderer {
                 max_storage_buffer_binding_size: adapter_limits.max_storage_buffer_binding_size,
                 max_buffer_size: adapter_limits.max_buffer_size,
                 // GPU 合成器需要 16 个 storage buffer（采样块 + 段结构 + 指令）
-                max_storage_buffers_per_shader_stage: adapter_limits
-                    .max_storage_buffers_per_shader_stage,
+                max_storage_buffers_per_shader_stage:
+                    adapter_limits.max_storage_buffers_per_shader_stage,
                 ..wgpu::Limits::default()
             },
             memory_hints: wgpu::MemoryHints::default(),

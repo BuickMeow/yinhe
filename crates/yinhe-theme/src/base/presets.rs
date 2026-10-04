@@ -2,7 +2,7 @@
 //!
 //! 全部为 `BaseColors` 关联常量，公共路径仍为 `yinhe_theme::base::BaseColors::XXX`。
 
-use super::{BaseColors, Rgba, FIXED_DANGER, FIXED_WARNING};
+use super::{BaseColors, FIXED_DANGER, FIXED_WARNING, Rgba};
 
 impl BaseColors {
     /// 默认暗色主题（与主题系统落地前的原始配色一致）。

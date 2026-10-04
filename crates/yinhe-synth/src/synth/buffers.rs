@@ -5,8 +5,8 @@ use wgpu::util::DeviceExt;
 
 use super::renderer::GpuAudioRenderer;
 use super::types::{
-    CHANNEL_COUNT, ChState, EnvUpdateCmd, GpuVoiceState, MAX_CHUNKS, ReleaseCmd,
-    RenderParams, SegInfo,
+    CHANNEL_COUNT, ChState, EnvUpdateCmd, GpuVoiceState, MAX_CHUNKS, ReleaseCmd, RenderParams,
+    SegInfo,
 };
 
 /// GPU voice 槽位上限：voice 状态常驻 GPU（不再每块读回/重传），
