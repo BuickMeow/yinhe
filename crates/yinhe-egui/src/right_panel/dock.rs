@@ -9,7 +9,9 @@ use yinhe_editor_core::right_panel_layout::{PanelColumn, PanelKind, RightPanelLa
 
 use crate::theme;
 
-/// 选项卡头高度。
+/// 选项卡栏高度（比选项卡本身高，选项卡在其中垂直居中）。
+const TAB_BAR_H: f32 = 24.0;
+/// 选项卡本身高度。
 const TAB_H: f32 = 20.0;
 /// 栏间分割线厚度（与项目其它分割线一致）。
 const SPLIT_H: f32 = theme::SPLIT_GAP;
@@ -67,9 +69,10 @@ fn compute_geoms(rect: egui::Rect, n: usize, weights: &[f32]) -> Vec<ColumnGeom>
         let h = (total_h * w / wsum).max(COL_MIN_H);
         let col_rect =
             egui::Rect::from_min_size(egui::pos2(rect.min.x, y), egui::vec2(rect.width(), h));
-        let header = egui::Rect::from_min_size(col_rect.min, egui::vec2(col_rect.width(), TAB_H));
+        let header =
+            egui::Rect::from_min_size(col_rect.min, egui::vec2(col_rect.width(), TAB_BAR_H));
         let content = egui::Rect::from_min_max(
-            egui::pos2(col_rect.min.x, col_rect.min.y + TAB_H),
+            egui::pos2(col_rect.min.x, col_rect.min.y + TAB_BAR_H),
             col_rect.max,
         );
         let content_inner = content.shrink2(egui::vec2(PAD_X, PAD_Y));
@@ -235,8 +238,9 @@ fn paint_header(
         if tab_w < 16.0 {
             break;
         }
-        let tab_rect =
-            egui::Rect::from_min_size(egui::pos2(x, g.header.min.y), egui::vec2(tab_w, TAB_H));
+        // 选项卡在栏内垂直居中（栏比选项卡高）。
+        let chip_y = g.header.center().y - TAB_H * 0.5;
+        let tab_rect = egui::Rect::from_min_size(egui::pos2(x, chip_y), egui::vec2(tab_w, TAB_H));
         x += tab_w + 2.0;
 
         let selected = ti == col.active;
