@@ -101,6 +101,11 @@ pub fn show(
     let (resp, painter) = ui.allocate_painter(available, egui::Sense::hover());
     let rect = resp.rect;
 
+    // 纵向瀑布流不提供自动化（AM）视图：忽略 auto_ctx（不渲染面板、不画 AUTO 开关）。
+    if view.is_vertical() {
+        auto_ctx = None;
+    }
+
     // Compute automation panel natural total height.
     // First panel has no leading handle; subsequent panels have SPLIT_H above them.
     let panels_natural_h: f32 = match &auto_ctx {

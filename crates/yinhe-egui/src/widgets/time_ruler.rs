@@ -178,12 +178,13 @@ pub(crate) fn interactive_ruler(
         time_sig_events,
     );
 
-    // 相对 ruler 起点的主轴像素：横向 = X 偏移；纵向 = Y 偏移。
+    // 相对主轴原点的主轴像素：横向 = 距左缘 X；纵向瀑布流 = 距**底缘** Y
+    //（时间轴反转：tick 0 在底部、越大越靠上）。
     let orientation = view.orientation();
     let main_px = |pos: egui::Pos2| -> f32 {
         match orientation {
             Orientation::Horizontal => pos.x - ruler_rect.min.x,
-            Orientation::Vertical => pos.y - ruler_rect.min.y,
+            Orientation::Vertical => ruler_rect.max.y - pos.y,
         }
     };
     // 主轴视口长度：横向为宽、纵向为高（供 zoom_main_around 锚定计算）。
@@ -319,8 +320,11 @@ fn paint_labels(
         Orientation::Horizontal => rect.width(),
         Orientation::Vertical => rect.height(),
     };
-    let tick_start = view.main_px_to_tick(0.0).max(0.0);
-    let tick_end = view.main_px_to_tick(main_size);
+    // 纵向时间轴反转后 main_px_to_tick(0) 是最大 tick，故取 min/max 排序。
+    let ta = view.main_px_to_tick(0.0);
+    let tb = view.main_px_to_tick(main_size);
+    let tick_start = ta.min(tb).max(0.0);
+    let tick_end = ta.max(tb);
     // 文字中线：横向 = 竖直居中、纵向 = 水平居中。
     let text_cross_center = match orientation {
         Orientation::Horizontal => rect.min.y + rect.height() / 2.0,

@@ -389,11 +389,11 @@ fn paint_scale_background_v(
         };
 
         if seg_start < tick_end && seg_end > tick_start {
-            // 区间 y 范围（clamp 到 content 区域）
-            let y_start =
-                (content_rect.min.y + view.tick_to_main_px(seg_start)).max(content_rect.min.y);
-            let y_end =
-                (content_rect.min.y + view.tick_to_main_px(seg_end)).min(content_rect.max.y);
+            // 区间 y 范围（时间轴反转：seg_start 在下、seg_end 在上；取 min/max 再 clamp）
+            let y_a = content_rect.min.y + view.tick_to_main_px(seg_start);
+            let y_b = content_rect.min.y + view.tick_to_main_px(seg_end);
+            let y_start = y_a.min(y_b).max(content_rect.min.y);
+            let y_end = y_a.max(y_b).min(content_rect.max.y);
             let seg_h = y_end - y_start;
 
             if seg_h > 0.0 {
@@ -444,9 +444,11 @@ fn paint_black_key_rows_v(
     if seg_end <= seg_start {
         return;
     }
-    // 区间 y 范围（clamp 到 content 区域）
-    let y_start = (content_rect.min.y + view.tick_to_main_px(seg_start)).max(content_rect.min.y);
-    let y_end = (content_rect.min.y + view.tick_to_main_px(seg_end)).min(content_rect.max.y);
+    // 区间 y 范围（时间轴反转：seg_start 在下、seg_end 在上；取 min/max 再 clamp）
+    let y_a = content_rect.min.y + view.tick_to_main_px(seg_start);
+    let y_b = content_rect.min.y + view.tick_to_main_px(seg_end);
+    let y_start = y_a.min(y_b).max(content_rect.min.y);
+    let y_end = y_a.max(y_b).min(content_rect.max.y);
     let seg_h = y_end - y_start;
     if seg_h <= 0.0 {
         return;

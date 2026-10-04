@@ -44,6 +44,23 @@ pub(crate) fn show_scrollbars(
         .rect_filled(corner_rect, 0.0, theme::track_bg());
 
     if view.is_vertical() {
+        // 补齐两处夹角背景（与横向同样的 chrome 底色）：
+        // - 标尺列下方：键盘条与底部滚动条所在的左边带
+        // - 右侧滚动条列下方：键盘条所在的右边带
+        let left_strip = egui::Rect::from_min_max(
+            egui::pos2(rect.min.x, content_bottom),
+            egui::pos2(content_rect.min.x, rect.max.y),
+        );
+        ui.painter().rect_filled(left_strip, 0.0, theme::track_bg());
+        let right_strip = egui::Rect::from_min_max(
+            egui::pos2(content_right_x, content_bottom),
+            egui::pos2(rect.max.x, sb_y),
+        );
+        ui.painter()
+            .rect_filled(right_strip, 0.0, theme::track_bg());
+    }
+
+    if view.is_vertical() {
         // ── 纵向瀑布流：时间滚动条竖在右侧（绑 scroll_y / ppt），音高滚动条横在底部（绑 scroll_x / key_height）──
         // 时间竖条
         let tick_sb_rect = egui::Rect::from_min_max(

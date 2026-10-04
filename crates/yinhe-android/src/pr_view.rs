@@ -199,6 +199,7 @@ impl PrView {
                 },
                 key_height: 12.0,
                 viewport_h: 0.0,
+                main_size: 0.0,
                 orientation: yinhe_types::Orientation::Horizontal,
             },
             model: None,

@@ -171,10 +171,11 @@ pub fn paint_grid_lines(
         let mut tick = first;
         while (tick as f64) <= tick_end && tick < seg_end {
             let local = tick - seg_start;
-            // 主轴位置：横向 = 屏幕 x（offset_x + tick_to_x）；纵向 = 屏幕 y（相对内容区顶部）。
+            // 主轴位置：横向 = 屏幕 x（offset_x + tick_to_x）；
+            // 纵向瀑布流 = 屏幕 y，时间轴反转（tick 越大越靠上，tick0 在底部）。
             let main_pos = match orientation {
                 Orientation::Horizontal => offset_x + base.tick_to_x(tick as f64),
-                Orientation::Vertical => painter_rect.min.y + (tick as f32 * ppu - base.scroll_y),
+                Orientation::Vertical => painter_rect.max.y - (tick as f32 * ppu - base.scroll_y),
             };
 
             if main_pos >= main_lo && main_pos <= main_hi {

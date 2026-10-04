@@ -128,6 +128,11 @@ pub(crate) fn draw_overlays(
     };
     super::keyboard::paint(painter, keyboard_rect_computed, kb_w, kh, view, theme);
 
+    // 纵向：底部键盘条上滚轮/触控板缩放音高轴（横向由 handle_input 的左区处理）。
+    if view.is_vertical() {
+        keyboard_zoom(ui, view, keyboard_rect_computed, content_rect);
+    }
+
     // ── Playback cursor (drawn by egui on top of the wgpu texture) ──
     // line_segment
     if let Some(ct) = *cursor_tick {
@@ -401,4 +406,36 @@ pub(crate) fn draw_overlays(
     }
 
     sel_action
+}
+
+/// 纵向瀑布流：指针在底部键盘条上时，滚轮/触控板沿音高轴（屏幕 X）缩放。
+fn keyboard_zoom(
+    ui: &egui::Ui,
+    view: &mut PianoRollView,
+    kb_rect: egui::Rect,
+    content_rect: egui::Rect,
+) {
+    if !crate::view_interaction::pointer_hits(ui, kb_rect) {
+        return;
+    }
+    let pos = ui.input(|i| i.pointer.hover_pos().unwrap_or_default());
+    let anchor = pos.x - content_rect.min.x;
+    let mut changed = false;
+
+    let pinch = ui.input(|i| i.zoom_delta());
+    if (pinch - 1.0).abs() > 0.001 {
+        view.zoom_around_x(anchor, pinch);
+        changed = true;
+    }
+    let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+    if scroll.abs() > 0.5 {
+        let factor = if scroll > 0.0 { 1.0 / 1.1 } else { 1.1 };
+        view.zoom_around_x(anchor, factor);
+        changed = true;
+    }
+
+    if changed {
+        view.base.dirty = true;
+        ui.ctx().request_repaint();
+    }
 }

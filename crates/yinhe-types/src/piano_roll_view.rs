@@ -43,6 +43,11 @@ pub struct PianoRollView {
     /// key_height/副轴 scroll，保持屏幕上显示的键数不变。
     /// 0.0 表示尚未初始化（首次渲染时默认显示 64 键并居中）。
     pub viewport_h: f32,
+    /// 上次记录的**主轴视口尺寸**（横向 = 音乐区宽度；纵向 = 音乐区高度）。
+    /// 纵向瀑布流下主轴（时间）屏幕坐标为「越大越靠上」（tick 0 在底部、
+    /// 音符自上而下落，键盘在底部 = 当前时刻），换算需要视口高度。
+    /// `clamp_scroll` 每帧写入。
+    pub main_size: f32,
 }
 
 impl Default for PianoRollView {
@@ -62,6 +67,7 @@ impl Default for PianoRollView {
             },
             key_height: 12.0,
             viewport_h: 0.0,
+            main_size: 0.0,
             orientation: Orientation::Horizontal,
         }
     }
@@ -147,16 +153,30 @@ impl PianoRollView {
         }
     }
 
-    /// tick → 主轴像素（相对音乐区左缘 / 内容区顶部，0 = 时间轴起点）。
+    /// tick → 主轴像素。
+    ///
+    /// 横向：√相对音乐区左缘，0 = 时间轴起点（左）。
+    /// 纵向瀑布流：相对内容区**底部**，tick 越大越靠上（键盘在底部 = 当前时刻，
+    /// 音符自上而下落）；因此为 `main_size - (tick*ppt - scroll)`。
     #[inline]
     pub fn tick_to_main_px(&self, tick: f64) -> f32 {
-        tick as f32 * self.base.pixels_per_tick - self.main_scroll_val()
+        let base = tick as f32 * self.base.pixels_per_tick - self.main_scroll_val();
+        if self.is_vertical() {
+            self.main_size - base
+        } else {
+            base
+        }
     }
 
-    /// 主轴像素 → tick。
+    /// 主轴像素 → tick（与 [`Self::tick_to_main_px`] 互逆）。
     #[inline]
     pub fn main_px_to_tick(&self, px: f32) -> f64 {
-        ((px + self.main_scroll_val()) / self.base.pixels_per_tick) as f64
+        let base = if self.is_vertical() {
+            self.main_size - px
+        } else {
+            px
+        };
+        ((base + self.main_scroll_val()) / self.base.pixels_per_tick) as f64
     }
 
     /// 主轴滚动值（&mut）：横向 = scroll_x（tick 滚动），纵向 = scroll_y。
@@ -177,18 +197,24 @@ impl PianoRollView {
 
     /// 主轴可见 tick 范围（给定主轴视口长度）。
     pub fn visible_main_range(&self, main_size: f32) -> (f64, f64) {
-        let start = self.main_px_to_tick(0.0).max(0.0);
-        let end = self.main_px_to_tick(main_size);
-        (start, end)
+        let a = self.main_px_to_tick(0.0);
+        let b = self.main_px_to_tick(main_size);
+        (a.min(b).max(0.0), a.max(b))
     }
 
     /// 主轴上围绕 `px` 缩放（时间轴缩放）。
     pub fn zoom_main_around(&mut self, px: f32, factor: f32) {
         let old = self.base.pixels_per_tick;
         self.base.pixels_per_tick = (self.base.pixels_per_tick * factor).clamp(0.001, 10.0);
+        // 锚点对应的「未滚动」主轴坐标：纵向镜像后取 main_size - px。
+        let base = if self.is_vertical() {
+            self.main_size - px
+        } else {
+            px
+        };
         // Keep the tick under the pointer stationary
-        let tick = (px + self.main_scroll_val()) / old;
-        *self.main_scroll() = tick * self.base.pixels_per_tick - px;
+        let tick = (base + self.main_scroll_val()) / old;
+        *self.main_scroll() = tick * self.base.pixels_per_tick - base;
         self.base.dirty = true;
     }
 
@@ -312,6 +338,7 @@ impl PianoRollView {
 
         let main_size = self.main_axis_len(width, height);
         let cross_size = self.cross_axis_len(width, height);
+        self.main_size = main_size;
 
         // 主轴（时间）
         self.clamp_main_scroll(main_size, total_ticks);
@@ -398,6 +425,7 @@ mod tests {
             },
             key_height: 12.0,
             viewport_h: 0.0,
+            main_size: 0.0,
             orientation: Orientation::Horizontal,
         }
     }
@@ -487,6 +515,7 @@ mod tests {
         let mut v = make_vertical();
         v.base.pixels_per_tick = 0.15;
         v.base.scroll_y = 100.0;
+        v.main_size = 500.0;
         for tick in [0.0, 480.0, 960.0, 12345.0] {
             let px = v.tick_to_main_px(tick);
             let back = v.main_px_to_tick(px);
@@ -495,14 +524,16 @@ mod tests {
     }
 
     #[test]
-    fn test_vertical_tick0_at_top() {
-        let v = make_vertical();
-        // 纵向：tick 0 在主轴原点（顶部），tick 增大朝下（y 增大）。
+    fn test_vertical_tick0_at_bottom() {
+        let mut v = make_vertical();
+        v.main_size = 500.0;
+        v.base.pixels_per_tick = 0.15;
+        // 纵向瀑布流：tick 0 在底部（y 最大），tick 增大朝上（y 减小）。
         let px0 = v.tick_to_main_px(0.0);
         let px1 = v.tick_to_main_px(480.0);
-        assert!((px0 - 0.0).abs() < 0.01);
-        assert!((px1 - 480.0 * 0.15).abs() < 0.01);
-        assert!(px1 > px0);
+        assert!((px0 - 500.0).abs() < 0.01);
+        assert!((px1 - (500.0 - 480.0 * 0.15)).abs() < 0.01);
+        assert!(px1 < px0);
     }
 
     #[test]
@@ -530,6 +561,7 @@ mod tests {
     #[test]
     fn test_vertical_visible_main_range() {
         let mut v = make_vertical();
+        v.main_size = 500.0;
         v.base.pixels_per_tick = 0.15;
         v.base.scroll_y = 150.0;
         let (start, end) = v.visible_main_range(500.0);

@@ -76,6 +76,17 @@ pub(crate) fn show(
         return 0.0;
     }
 
+    // 纵向瀑布流的时间轴屏幕坐标是镜像的（tick0 在底部）：把主轴内容坐标 a
+    // 映射到屏幕上沿坐标。横向 = 恒等。
+    let to_screen = |a: f32| if vertical { sb_w - a } else { a };
+    // 内容区间 [a0,a1] → 屏幕矩形（纵向镜像后端点交换，故取 min/max）。
+    let screen_rect = |a0: f32, a1: f32| {
+        let (s0, s1) = (to_screen(a0), to_screen(a1));
+        along_rect(s0.min(s1), s0.max(s1))
+    };
+    // 屏幕拖拽位移 → 主轴内容位移（纵向镜像取反）。
+    let signed = |v: f32| if vertical { -v } else { v };
+
     // Clamp scroll_x BEFORE computing the rectangle visual, so the
     // scrollbar never renders an out-of-bounds position.  Without this,
     // momentum/inertia scrolling from `handle_input` can push scroll_x
@@ -102,12 +113,13 @@ pub(crate) fn show(
     ui.painter().rect_filled(rect, 0.0, bg_color);
 
     // ── Rectangle visual ──
-    let rect_rect = along_rect(rect_left, rect_right.min(sb_w));
+    let th_right = rect_right.min(sb_w);
+    let rect_rect = screen_rect(rect_left, th_right);
 
-    // Three interaction zones
-    let left_edge_rect = along_rect(rect_left, (rect_left + EDGE_WIDTH).min(rect_right));
-    let right_edge_rect = along_rect((rect_right - EDGE_WIDTH).max(rect_left), rect_right);
-    let middle_rect = along_rect(
+    // Three interaction zones（镜像后 start=底部/左端均正确）
+    let left_edge_rect = screen_rect(rect_left, (rect_left + EDGE_WIDTH).min(rect_right));
+    let right_edge_rect = screen_rect((rect_right - EDGE_WIDTH).max(rect_left), rect_right);
+    let middle_rect = screen_rect(
         (rect_left + EDGE_WIDTH).min(rect_right),
         (rect_right - EDGE_WIDTH).max(rect_left),
     );
@@ -164,8 +176,8 @@ pub(crate) fn show(
         if px >= 0.0 && px <= sb_w {
             let (a, b) = if vertical {
                 (
-                    egui::pos2(rect.min.x, rect.min.y + px),
-                    egui::pos2(rect.max.x, rect.min.y + px),
+                    egui::pos2(rect.min.x, rect.min.y + to_screen(px)),
+                    egui::pos2(rect.max.x, rect.min.y + to_screen(px)),
                 )
             } else {
                 (
@@ -183,13 +195,13 @@ pub(crate) fn show(
     // ── Cursor ──
     if left_hovered {
         ui.ctx().set_cursor_icon(if vertical {
-            egui::CursorIcon::ResizeNorth
+            egui::CursorIcon::ResizeSouth
         } else {
             egui::CursorIcon::ResizeWest
         });
     } else if right_hovered {
         ui.ctx().set_cursor_icon(if vertical {
-            egui::CursorIcon::ResizeSouth
+            egui::CursorIcon::ResizeNorth
         } else {
             egui::CursorIcon::ResizeEast
         });
@@ -204,7 +216,7 @@ pub(crate) fn show(
     // Drag middle → pan（x 方向）；垂直位移 → 返回 dy 供调用处缩放对面轴。
     // 斜拖 = 平移 + 缩放同时进行。
     if press_on_sb && middle_resp.dragged() {
-        let delta = drag_main(middle_resp.drag_delta());
+        let delta = signed(drag_main(middle_resp.drag_delta()));
         let delta_ticks = delta as f64 / scale;
         *scroll_x = (*scroll_x as f64 + delta_ticks * *pixels_per_tick as f64) as f32;
         *scroll_x = scroll_x.clamp(0.0, max_scroll_x(*pixels_per_tick));
@@ -228,7 +240,7 @@ pub(crate) fn show(
 
     // Drag left edge → zoom, anchoring at right edge
     if press_on_sb && left_resp.dragged() {
-        let new_left = (rect_left + drag_main(left_resp.drag_delta()))
+        let new_left = (rect_left + signed(drag_main(left_resp.drag_delta())))
             .clamp(0.0, rect_right - 2.0 * EDGE_WIDTH);
         let new_start_tick = new_left as f64 / scale;
         let right_tick = start_tick + viewport_ticks;
@@ -245,7 +257,7 @@ pub(crate) fn show(
 
     // Drag right edge → zoom, anchoring at left edge
     if press_on_sb && right_resp.dragged() {
-        let new_right = (rect_right + drag_main(right_resp.drag_delta()))
+        let new_right = (rect_right + signed(drag_main(right_resp.drag_delta())))
             .clamp(rect_left + 2.0 * EDGE_WIDTH, sb_w);
         let new_right_tick = new_right as f64 / scale;
         let new_viewport_ticks = (new_right_tick - start_tick).max(1.0);

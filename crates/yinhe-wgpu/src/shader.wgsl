@@ -343,13 +343,14 @@ fn note_geometry(
 
     if u.orientation == 1u {
         // 纵向瀑布流：音高沿 X（key * key_height - scroll_x，从 0 开始），
-        // 时间沿 Y（tick * ppu - scroll_y，tick 0 在顶部）。
+        // 时间沿 Y 反转（tick 0 在底部、越大越靠上，键盘在底部 = 当前时刻）。
         pixel_x = f32(key) * u.key_height - u.scroll_x;
         right = pixel_x + u.key_height;
         pixel_w = u.key_height;
-        pixel_y = f32(start_tick) * ppu - u.scroll_y;
-        let y_bottom = f32(end_tick) * ppu - u.scroll_y;
-        pixel_h = max(y_bottom - pixel_y, 2.0);
+        let y_a = u.height - (f32(start_tick) * ppu - u.scroll_y);
+        let y_b = u.height - (f32(end_tick) * ppu - u.scroll_y);
+        pixel_y = min(y_a, y_b);
+        pixel_h = max(max(y_a, y_b) - pixel_y, 2.0);
     } else {
         let x_offset = u.keyboard_width - u.scroll_x;
 

@@ -653,6 +653,7 @@ fn cull_real_midi_vs_cpu() {
         let view = yinhe_types::PianoRollView {
             key_height: kh,
             viewport_h: height,
+            main_size: 0.0,
 
             orientation: yinhe_types::Orientation::Horizontal,
             base: yinhe_types::TimelineViewBase {
@@ -1948,6 +1949,7 @@ fn cull_render_pixel_check() {
         let view = yinhe_types::PianoRollView {
             key_height: kh,
             viewport_h: h,
+            main_size: 0.0,
 
             orientation: yinhe_types::Orientation::Horizontal,
             base: yinhe_types::TimelineViewBase {
@@ -2193,6 +2195,7 @@ fn cull_visible_buffer_content_check() {
     let view = yinhe_types::PianoRollView {
         key_height: kh,
         viewport_h: h,
+        main_size: 0.0,
 
         orientation: yinhe_types::Orientation::Horizontal,
         base: yinhe_types::TimelineViewBase {
@@ -2409,6 +2412,7 @@ fn cull_draw_c_lo_nonzero_minimal() {
         let view = yinhe_types::PianoRollView {
             key_height: kh,
             viewport_h: h,
+            main_size: 0.0,
 
             orientation: yinhe_types::Orientation::Horizontal,
             base: yinhe_types::TimelineViewBase {
@@ -2666,6 +2670,7 @@ fn note_boundary_no_gap_large_tick() {
         let view = yinhe_types::PianoRollView {
             key_height: kh,
             viewport_h: h,
+            main_size: 0.0,
 
             orientation: yinhe_types::Orientation::Horizontal,
             base: yinhe_types::TimelineViewBase {
@@ -2889,6 +2894,7 @@ fn cull_bench_vs_cpu_start_mid() {
             let view = yinhe_types::PianoRollView {
                 key_height: kh,
                 viewport_h: height,
+                main_size: 0.0,
 
                 orientation: yinhe_types::Orientation::Horizontal,
                 base: yinhe_types::TimelineViewBase {
