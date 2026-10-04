@@ -160,8 +160,10 @@ pub(crate) fn show(
                 layout.columns[i].height_weight,
                 layout.columns[i + 1].height_weight,
             );
+            // 权重增量需按「两栏像素总高」换算：单栏高度会让位移被放大。
+            let pair_h = g.rect.height() + geoms[i + 1].rect.height();
             let total = (a + b).max(0.001);
-            let unit = total / g.rect.height().max(1.0);
+            let unit = total / pair_h.max(1.0);
             layout.columns[i].height_weight = (a + dy * unit).max(0.05);
             layout.columns[i + 1].height_weight = (b - dy * unit).max(0.05);
             changed = true;
