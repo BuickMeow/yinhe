@@ -125,7 +125,7 @@ pub fn show(
         .rect_filled(content_rect, 0.0, crate::theme::app_bg());
 
     let doc_ref = &mut doc;
-    layout_changed |= dock::show(ui, inner, layout, |ui, kind, content| {
+    layout_changed |= dock::show(ui, inner, layout, |ui, kind, _content| {
         match kind {
             PanelKind::Track => {
                 port_changed |= info_panel::show_track(
@@ -136,12 +136,11 @@ pub fn show(
                 );
             }
             PanelKind::ProjectTree => {
-                if let Some(doc) = doc_ref.as_deref_mut() {
-                    projection(ui, content, doc);
-                }
+                event_browser::show_tree(ui, doc_ref.as_deref_mut(), event_browser_state);
             }
             PanelKind::EventBrowser => {
-                jump_request = event_browser::show(ui, doc_ref.as_deref_mut(), event_browser_state);
+                jump_request =
+                    event_browser::show_events(ui, doc_ref.as_deref_mut(), event_browser_state);
             }
             PanelKind::History => {
                 if let Some(doc) = doc_ref.as_deref_mut() {
@@ -162,14 +161,4 @@ pub fn show(
         jump_request,
         width_drag_ended || layout_changed,
     )
-}
-
-/// 树图（工程总览）内容渲染：滚动区 + 内边距。
-fn projection(ui: &mut egui::Ui, _content: egui::Rect, doc: &mut Document) {
-    egui::ScrollArea::vertical()
-        .id_salt("project_tree_scroll")
-        .auto_shrink([false; 2])
-        .show(ui, |ui| {
-            project_info::show(ui, doc);
-        });
 }

@@ -13,6 +13,7 @@ pub struct JumpRequest {
     pub note: Option<(u16, u8)>,
 }
 
+#[derive(Default)]
 pub struct EventBrowserState {
     pub expanded_keys: std::collections::HashSet<ArchiveKey>,
     pub selected_item: Option<SelectedItem>,
@@ -24,7 +25,6 @@ pub struct EventBrowserState {
     /// 上次单击的 tick（用于 Shift 范围选择锚点）。
     pub last_clicked_tick: Option<u32>,
     pub(super) fingerprint: Option<u64>,
-    pub(super) split_ratio: f32,
     /// 音符列表缓存：`(doc_id, track, doc revision, 按 start_tick 排序的音符)`。
     /// 全轨音符收集 + 排序在 1.64 亿场景下是 3GB 级开销，不能每帧重做；
     /// 键含 doc_id 与 revision，文档切换/任何编辑自动失效。
@@ -158,20 +158,4 @@ pub enum TextEventKind {
     Lyrics { track: u16 },
     /// Per-track 和弦
     Chord { track: u16 },
-}
-
-impl Default for EventBrowserState {
-    fn default() -> Self {
-        Self {
-            expanded_keys: Default::default(),
-            selected_item: None,
-            selected_track: None,
-            event_page: 0,
-            selected_ticks: Default::default(),
-            last_clicked_tick: None,
-            fingerprint: None,
-            split_ratio: 0.45,
-            notes_cache: None,
-        }
-    }
 }

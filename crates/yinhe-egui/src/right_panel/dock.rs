@@ -13,8 +13,6 @@ use crate::theme;
 const TAB_H: f32 = 24.0;
 /// 栏间分割线厚度。
 const SPLIT_H: f32 = 6.0;
-/// 单个选项卡最小宽度。
-const TAB_MIN_W: f32 = 64.0;
 /// 选项卡水平内边距。
 const TAB_PAD: f32 = 10.0;
 /// 每栏内容区最小高度（分配高度时的下限）。
@@ -214,14 +212,19 @@ fn paint_header(
     // 头背景。
     ui.painter().rect_filled(g.header, 0.0, theme::control_bg());
 
+    let font = egui::FontId::proportional(theme::SMALL_FONT);
     let mut x = g.header.min.x + 2.0;
     for (ti, &kind) in col.tabs.iter().enumerate() {
         let label = tab_label(kind);
-        let text_w = label.chars().count() as f32 * 7.0 + TAB_PAD * 2.0;
-        let tab_w = text_w
-            .max(TAB_MIN_W)
-            .min(g.header.width() - (x - g.header.min.x) - 2.0);
-        if tab_w < 24.0 {
+        // 宽度按文字自适应：量出 galley 宽度 + 左右内边距。
+        let text_w = ui
+            .painter()
+            .layout_no_wrap(label.clone(), font.clone(), theme::text_secondary())
+            .size()
+            .x;
+        let remaining = g.header.max.x - x - 2.0;
+        let tab_w = (text_w + TAB_PAD * 2.0).min(remaining.max(0.0));
+        if tab_w < 16.0 {
             break;
         }
         let tab_rect =
@@ -236,20 +239,12 @@ fn paint_header(
         );
         let hovered = resp.hovered();
 
-        // 底色：选中 = 强调色底；否则 hover 增益。
+        // 无强调色：选中 = 淡色底；hover = 轻微增益底。
         if selected {
             ui.painter().rect_filled(
                 tab_rect,
                 egui::CornerRadius::same(4),
                 theme::control_selected_bg(),
-            );
-            // 顶部强调条。
-            ui.painter().line_segment(
-                [
-                    egui::pos2(tab_rect.min.x + 3.0, tab_rect.min.y + 1.0),
-                    egui::pos2(tab_rect.max.x - 3.0, tab_rect.min.y + 1.0),
-                ],
-                egui::Stroke::new(2.0, theme::accent_active()),
             );
         } else if hovered {
             ui.painter().rect_filled(
@@ -268,7 +263,7 @@ fn paint_header(
             tab_rect.center(),
             egui::Align2::CENTER_CENTER,
             &label,
-            egui::FontId::proportional(theme::SMALL_FONT),
+            font.clone(),
             color,
         );
 

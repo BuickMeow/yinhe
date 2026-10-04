@@ -24,29 +24,16 @@ use eframe::egui;
 use yinhe_core::YinModel;
 use yinhe_editor_core::document::Document;
 
-use crate::theme;
-use crate::widgets::split_handle;
-
 use state::ArchiveKey;
 
 // 对外暴露的公共类型（right_panel 通过 `event_browser::` 引用）
 pub use state::{EventBrowserState, JumpRequest};
 
-/// 渲染事件浏览器，返回可能的跳转请求。
-pub fn show(
-    ui: &mut egui::Ui,
-    doc: Option<&mut Document>,
+/// 状态维护：revision 变化时清理展开/选中态。返回 model 基本信息。
+fn maintain_state(
+    doc: &Document,
     state: &mut EventBrowserState,
-) -> Option<JumpRequest> {
-    let Some(doc) = doc else {
-        crate::widgets::hint::empty_hint(
-            ui,
-            "\u{ff08}\u{672a}\u{6253}\u{5f00}\u{6587}\u{6863}\u{ff09}",
-        );
-        return None;
-    };
-
-    // 提前取出构造 BarLookup 所需的数据，避免 model 借用阻塞后续 &mut doc。
+) -> (u32, u8, Vec<(u32, u8)>, usize) {
     let (ppq, default_num, ts, tracks_len) = {
         let m = &doc.data.model;
         (
@@ -56,8 +43,6 @@ pub fn show(
             m.tracks.len(),
         )
     };
-    let bar_lookup = bar_lookup::BarLookup::build(ppq, default_num, &ts);
-
     let fingerprint = doc.data.revision;
     if state.fingerprint != Some(fingerprint) {
         if state.fingerprint.is_none() {
@@ -73,72 +58,75 @@ pub fn show(
         }
         state.fingerprint = Some(fingerprint);
     }
+    (ppq, default_num, ts, tracks_len)
+}
+
+/// 「树图」选项卡：文件夹树视图（事件浏览器的上栏）。
+pub fn show_tree(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrowserState) {
+    let Some(doc) = doc else {
+        crate::widgets::hint::empty_hint(
+            ui,
+            "\u{ff08}\u{672a}\u{6253}\u{5f00}\u{6587}\u{6863}\u{ff09}",
+        );
+        return;
+    };
+    let _ = maintain_state(doc, state);
 
     // 不画背景（right_panel 已铺 app_bg，再 fill 叠两层）；只保留内边距
     let frame_bg = egui::Frame::NONE.inner_margin(egui::Margin::symmetric(4, 2));
-
-    let total_rect = ui.available_rect_before_wrap();
-    let total_h = total_rect.height();
-    let gap = theme::SPLIT_GAP;
-    let split_y = total_rect.min.y + (total_h * state.split_ratio).round();
-
-    let top_rect = egui::Rect::from_min_max(total_rect.min, egui::pos2(total_rect.max.x, split_y));
-    let handle_rect = egui::Rect::from_min_max(
-        egui::pos2(total_rect.min.x, split_y),
-        egui::pos2(total_rect.max.x, split_y + gap),
-    );
-    let bot_rect =
-        egui::Rect::from_min_max(egui::pos2(total_rect.min.x, split_y + gap), total_rect.max);
-
-    ui.scope_builder(egui::UiBuilder::new().max_rect(top_rect), |ui| {
-        egui::ScrollArea::both()
-            .id_salt("eb_tree")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                frame_bg.show(ui, |ui| {
-                    ui.set_min_width(ui.available_width());
-                    ui.vertical(|ui| tree::render_tree(ui, doc, state));
-                });
+    egui::ScrollArea::both()
+        .id_salt("eb_tree")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            frame_bg.show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.vertical(|ui| tree::render_tree(ui, doc, state));
             });
-    });
+        });
+}
 
-    let resp = split_handle::horizontal(ui, "__eb_split__", handle_rect);
-    if resp.dragged() {
-        let new_ratio = ((split_y + resp.drag_delta().y - total_rect.min.y) / total_h)
-            .clamp(theme::SPLIT_CLAMP_MIN, theme::SPLIT_CLAMP_MAX);
-        state.split_ratio = new_ratio;
-    }
-    if resp.double_clicked() {
-        // 双击分割线 → 还原事件浏览器默认分割比例
-        state.split_ratio = EventBrowserState::default().split_ratio;
-    }
+/// 「事件」选项卡：事件表格 / 详情（事件浏览器的下栏）。返回跳转请求。
+pub fn show_events(
+    ui: &mut egui::Ui,
+    doc: Option<&mut Document>,
+    state: &mut EventBrowserState,
+) -> Option<JumpRequest> {
+    let Some(doc) = doc else {
+        crate::widgets::hint::empty_hint(
+            ui,
+            "\u{ff08}\u{672a}\u{6253}\u{5f00}\u{6587}\u{6863}\u{ff09}",
+        );
+        return None;
+    };
+    let (ppq, default_num, ts, _) = maintain_state(doc, state);
+    let bar_lookup = bar_lookup::BarLookup::build(ppq, default_num, &ts);
 
+    // 不画背景（right_panel 已铺 app_bg，再 fill 叠两层）；只保留内边距
+    let frame_bg = egui::Frame::NONE.inner_margin(egui::Margin::symmetric(4, 2));
     let mut jump_request: Option<JumpRequest> = None;
-    ui.scope_builder(egui::UiBuilder::new().max_rect(bot_rect), |ui| {
-        egui::ScrollArea::both()
-            .id_salt("eb_detail")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                frame_bg.show(ui, |ui| {
-                    ui.set_min_width(ui.available_width());
-                    let sel = state.selected_item.clone();
-                    let track_idx = state.selected_track;
-                    if let Some(ref sel) = sel {
-                        jump_request = detail::show_event_detail(ui, sel, doc, &bar_lookup, state);
-                    } else if let Some(idx) = track_idx {
-                        let model = &doc.data.model;
-                        if let Some(track) = model.tracks.get(idx as usize) {
-                            detail::show_track_detail(ui, idx, track, model);
-                        } else {
-                            detail::show_overview(ui, model);
-                        }
+    egui::ScrollArea::both()
+        .id_salt("eb_detail")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            frame_bg.show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                let sel = state.selected_item.clone();
+                let track_idx = state.selected_track;
+                if let Some(ref sel) = sel {
+                    jump_request = detail::show_event_detail(ui, sel, doc, &bar_lookup, state);
+                } else if let Some(idx) = track_idx {
+                    let model = &doc.data.model;
+                    if let Some(track) = model.tracks.get(idx as usize) {
+                        detail::show_track_detail(ui, idx, track, model);
                     } else {
-                        let model = &doc.data.model;
                         detail::show_overview(ui, model);
                     }
-                });
+                } else {
+                    let model = &doc.data.model;
+                    detail::show_overview(ui, model);
+                }
             });
-    });
+        });
     jump_request
 }
 
