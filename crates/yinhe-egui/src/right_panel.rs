@@ -1,4 +1,5 @@
 pub mod automation_undo;
+pub mod dock;
 pub mod event_browser;
 pub mod info_panel;
 pub mod project_info;
@@ -8,8 +9,11 @@ use eframe::egui;
 
 use yinhe_editor_core::audio_settings::LayoutSettings;
 use yinhe_editor_core::document::Document;
+use yinhe_editor_core::right_panel_layout::{PanelKind, RightPanelLayout};
 use yinhe_types::AutomationTarget;
 
+/// 兼容旧接口：哪一类内容需要展示（用于右键/快捷键定位到对应选项卡）。
+/// 新的多栏布局里，它映射到 `PanelKind` 并 focus 对应标签。
 #[derive(PartialEq, Clone, Copy)]
 pub enum RightTab {
     Info,
@@ -50,16 +54,27 @@ pub fn show(
     rect: egui::Rect,
     right_panel_width: &mut f32,
     right_tab: &mut Option<RightTab>,
-    doc: Option<&mut Document>,
+    layout: &mut RightPanelLayout,
+    mut doc: Option<&mut Document>,
     audio: Option<&yinhe_audio::CpalAudioHandle>,
     event_browser_state: &mut event_browser::EventBrowserState,
     info_content: &mut Option<InfoContent>,
     automation_drag_ghost: Option<(u32, f32)>,
     status_hint: &mut Option<String>,
 ) -> (bool, Option<event_browser::JumpRequest>, bool) {
-    let tab = *right_tab;
-    if tab.is_none() {
+    let Some(tab) = *right_tab else {
         return (false, None, false);
+    };
+    // 旧入口（右键/快捷键 focus Info/EventBrowser）→ 仅在切换的那一帧定位选项卡，
+    // 避免每帧重置用户手动选择的选项卡。
+    let focus_id = ui.id().with("rpanel_focus_hint");
+    let last: Option<RightTab> = ui.data_mut(|d| d.get_temp(focus_id));
+    if last != Some(tab) {
+        match tab {
+            RightTab::Info => layout.focus_tab(PanelKind::Track),
+            RightTab::EventBrowser => layout.focus_tab(PanelKind::EventBrowser),
+        }
+        ui.data_mut(|d| d.insert_temp(focus_id, tab));
     }
 
     // 状态栏讲解行：鼠标在右面板上时清空（右面板不属于可讲解区域）
@@ -91,45 +106,70 @@ pub fn show(
     }
 
     // ── Panel content area: full width after the split handle ──
-    // 背景铺满整个面板（不再往内收缩，避免两侧 0 层缝隙）；
-    // 文字等内容由下方统一收缩 8px，各 tab 内部可再调整。
     let content_rect = egui::Rect::from_min_max(
         egui::pos2(rect.min.x + crate::theme::SPLIT_HANDLE_W, rect.min.y),
         egui::pos2(rect.max.x, rect.max.y),
     );
 
-    let mut changed = false;
+    let mut port_changed = false;
     let mut jump_request: Option<event_browser::JumpRequest> = None;
 
-    ui.scope_builder(egui::UiBuilder::new().max_rect(content_rect), |ui| {
-        ui.set_clip_rect(content_rect);
+    // 内容区左右收缩 8px，避免文字贴边。
+    let inner = egui::Rect::from_min_max(
+        egui::pos2(content_rect.min.x + 8.0, content_rect.min.y),
+        egui::pos2(content_rect.max.x - 8.0, content_rect.max.y),
+    );
 
-        // Background
-        ui.painter()
-            .rect_filled(ui.max_rect(), 0.0, crate::theme::app_bg());
+    let mut layout_changed = false;
+    ui.painter()
+        .rect_filled(content_rect, 0.0, crate::theme::app_bg());
 
-        // 内容区收缩 8px（左右），避免文字贴边
-        let inner = egui::Rect::from_min_max(
-            egui::pos2(content_rect.min.x + 8.0, content_rect.min.y),
-            egui::pos2(content_rect.max.x - 8.0, content_rect.max.y),
-        );
-        ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
-            ui.set_clip_rect(inner);
-
-            // ── Content ──
-            if let Some(tab) = tab {
-                match tab {
-                    RightTab::Info => {
-                        changed |=
-                            info_panel::show(ui, doc, audio, info_content, automation_drag_ghost);
-                    }
-                    RightTab::EventBrowser => {
-                        jump_request = event_browser::show(ui, doc, event_browser_state);
-                    }
+    let doc_ref = &mut doc;
+    layout_changed |= dock::show(ui, inner, layout, |ui, kind, content| {
+        match kind {
+            PanelKind::Track => {
+                port_changed |= info_panel::show_track(
+                    ui,
+                    doc_ref.as_deref_mut(),
+                    info_content,
+                    automation_drag_ghost,
+                );
+            }
+            PanelKind::ProjectTree => {
+                if let Some(doc) = doc_ref.as_deref_mut() {
+                    projection(ui, content, doc);
                 }
             }
-        });
+            PanelKind::EventBrowser => {
+                jump_request = event_browser::show(ui, doc_ref.as_deref_mut(), event_browser_state);
+            }
+            PanelKind::History => {
+                if let Some(doc) = doc_ref.as_deref_mut() {
+                    info_panel::show_history(ui, doc);
+                }
+            }
+            PanelKind::Summary => {
+                if let Some(doc) = doc_ref.as_deref_mut() {
+                    info_panel::show_summary(ui, doc);
+                }
+            }
+        }
+        let _ = audio;
     });
 
-    (changed, jump_request, width_drag_ended)
+    (
+        port_changed,
+        jump_request,
+        width_drag_ended || layout_changed,
+    )
+}
+
+/// 树图（工程总览）内容渲染：滚动区 + 内边距。
+fn projection(ui: &mut egui::Ui, _content: egui::Rect, doc: &mut Document) {
+    egui::ScrollArea::vertical()
+        .id_salt("project_tree_scroll")
+        .auto_shrink([false; 2])
+        .show(ui, |ui| {
+            project_info::show(ui, doc);
+        });
 }

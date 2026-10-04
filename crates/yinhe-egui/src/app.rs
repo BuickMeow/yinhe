@@ -102,6 +102,8 @@ pub struct App {
     // ── Right panel ──
     pub(crate) right_panel_width: f32,
     pub(crate) right_tab: Option<crate::right_panel::RightTab>,
+    /// 右栏多栏选项卡布局（跨会话持久化到 LayoutSettings）。
+    pub(crate) right_panel_layout: yinhe_editor_core::right_panel_layout::RightPanelLayout,
     pub(crate) info_content: Option<crate::right_panel::InfoContent>,
     // 浮动属性面板（独立视口子窗口）。与侧栏 Info 内容互斥切换，见 set_float_panel。
     pub(crate) float_panel: Option<crate::right_panel::FloatPanel>,
@@ -384,7 +386,8 @@ impl App {
             track_selection_anchor: None,
 
             right_panel_width: audio_settings.layout.right_panel_width,
-            right_tab: None,
+            right_tab: Some(crate::right_panel::RightTab::Info),
+            right_panel_layout: audio_settings.layout.right_panel_layout.clone(),
             info_content: None,
             float_panel: None,
             automation_drag_ghost: None,

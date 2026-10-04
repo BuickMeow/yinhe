@@ -875,6 +875,7 @@ impl App {
                 right_rect,
                 &mut self.right_panel_width,
                 &mut self.right_tab,
+                &mut self.right_panel_layout,
                 doc,
                 self.audio_state.handle.as_ref(),
                 &mut self.event_browser_state,
@@ -925,6 +926,7 @@ impl App {
         l.show_pianoroll_in_arrange = self.show_pianoroll_in_arrange;
         l.show_bottom_dock = self.show_bottom_dock;
         l.bottom_dock_height = self.bottom_dock_height;
+        l.right_panel_layout = self.right_panel_layout.clone();
         if self.layout_needs_save {
             self.audio_settings.save();
             self.layout_needs_save = false;

@@ -1,10 +1,11 @@
-//! 右侧 Info 面板入口。
+//! 右侧 Info 面板入口（多栏停靠内容源）。
 //!
-//! 按 `InfoContent` 分发到子模块：
-//! - [`anchor`] — 自动化锚点信息（Tick / Value / Shape / Ctrl X / Ctrl Y）
-//! - [`track`] — 音轨信息（名称 / 端口 / 通道 / Mute / Solo / 摘要）
+//! 由右栏多栏布局按选项卡类型分发：
+//! - `Track` → [`show_track`]：选框/锚点信息优先，否则音轨属性 + 图层。
+//! - `History` → [`show_history`]：撤销/重做栈标签。
+//! - `Summary` → [`show_summary`]：当前选中轨的统计。
 //!
-//! 无选择时显示空态提示；工程设置只在独立浮窗（见 `dialogs::prop_panels`）。
+//! 工程设置只在独立浮窗（见 `dialogs::prop_panels`）。
 
 mod anchor;
 mod history;
@@ -23,14 +24,12 @@ use super::InfoContent;
 // re-export：arrange.rs 通过 `crate::right_panel::info_panel::send_skip_tracks` 调用
 pub(crate) use track::send_skip_tracks;
 
-/// Show the Info panel.
+/// 「音轨」选项卡。返回 `true` 表示端口/通道改变（需重建音频引擎）。
 ///
-/// Returns `true` if the port or channel was changed (caller should tear
-/// down the audio engine so it gets rebuilt with the new channel map).
-pub fn show(
+/// 选框信息 / 自动化锚点信息优先于音轨属性。
+pub(crate) fn show_track(
     ui: &mut egui::Ui,
     doc: Option<&mut Document>,
-    audio: Option<&yinhe_audio::CpalAudioHandle>,
     info_content: &mut Option<InfoContent>,
     automation_drag_ghost: Option<(u32, f32)>,
 ) -> bool {
@@ -38,21 +37,13 @@ pub fn show(
         crate::widgets::hint::empty_hint(ui, t!("common.no_document").as_ref());
         return false;
     };
-
-    // 记录初始 revision：编辑 automation / shape / ctrl 后会 bump_revision，
-    // 退出时若发现 revision 变了就通知音频线程 reload。
     let rev_before = doc.data.revision;
-    let port_changed = render(ui, doc, info_content, automation_drag_ghost);
-    let rev_after = doc.data.revision;
-    if rev_after != rev_before
-        && let Some(audio) = audio
-    {
-        audio.reload_notes(doc.data.model.clone());
-    }
+    let port_changed = render_track(ui, doc, info_content, automation_drag_ghost);
+    let _ = rev_before;
     port_changed
 }
 
-fn render(
+fn render_track(
     ui: &mut egui::Ui,
     doc: &mut Document,
     info_content: &mut Option<InfoContent>,
@@ -65,14 +56,12 @@ fn render(
     }
 
     match info_content.clone() {
-        // ── 锚点信息 ──
         Some(InfoContent::Anchor {
             track_idx,
             lane_idx,
             event_idx,
             target,
         }) => {
-            // Tempo 走 conductor.tempo；其他走 track.automation_lanes
             let lane_events: Option<&[AutomationEvent]> =
                 if matches!(target, AutomationTarget::Tempo) {
                     Some(&doc.data.model.conductor.tempo.events)
@@ -85,14 +74,9 @@ fn render(
                         .map(|l| l.events.as_slice())
                 };
             let live_event = lane_events.and_then(|events| events.get(event_idx));
-
             if let Some(evt) = live_event {
-                let (live_tick, live_value) = if let Some((g_tick, g_value)) = automation_drag_ghost
-                {
-                    (g_tick, g_value)
-                } else {
-                    (evt.tick, evt.value)
-                };
+                let (live_tick, live_value) =
+                    automation_drag_ghost.unwrap_or((evt.tick, evt.value));
                 anchor::show_anchor_info(
                     ui,
                     doc,
@@ -110,14 +94,16 @@ fn render(
             }
             false
         }
-
-        // ── 音轨信息 ──
-        Some(InfoContent::Track) => track::show_track_info(ui, doc),
-
-        // ── 无选择 → 空态提示（工程设置请从菜单打开浮窗） ──
-        None => {
-            crate::widgets::hint::empty_hint(ui, t!("panel.no_selection").as_ref());
-            false
-        }
+        Some(InfoContent::Track) | None => track::show_track_info(ui, doc),
     }
+}
+
+/// 「历史记录」选项卡。
+pub(crate) fn show_history(ui: &mut egui::Ui, doc: &mut Document) {
+    history::show(ui, doc);
+}
+
+/// 「属性概要」选项卡。
+pub(crate) fn show_summary(ui: &mut egui::Ui, doc: &mut Document) {
+    track::show_summary_panel(ui, doc);
 }

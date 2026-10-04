@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::right_panel_layout::RightPanelLayout;
+
 /// 用户可拖拽调整的布局状态（跨会话持久化）
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -12,6 +14,8 @@ pub struct LayoutSettings {
     pub show_bottom_dock: bool,
     /// 底部设备栏高度（px）。
     pub bottom_dock_height: f32,
+    /// 右栏多栏选项卡布局。
+    pub right_panel_layout: RightPanelLayout,
 }
 
 impl Default for LayoutSettings {
@@ -23,6 +27,7 @@ impl Default for LayoutSettings {
             show_pianoroll_in_arrange: false,
             show_bottom_dock: false,
             bottom_dock_height: 200.0,
+            right_panel_layout: RightPanelLayout::default(),
         }
     }
 }

@@ -1,8 +1,10 @@
-//! 音轨信息面板（上下分区）。
+//! 音轨信息面板。
 //!
-//! - 「音轨」：当前选中轨的名称 / 端口 / 通道 / 颜色。
-//! - 「图层」：每轨的选中 / 可见 / 锁定（见 [`super::layers`]）。
-//! - 底部横向标签：[历史记录] / [属性概要]，点击切换页。
+//! 顶部分栏「音轨」：当前选中轨的名称 / 端口 / 通道 / 颜色。
+//! 下部分栏「图层」：每轨的选中 / 可见 / 锁定（见 [`super::layers`]）。
+//!
+//! 历史记录 / 属性概要已拆为独立顶层选项卡（见 [`super::history`] /
+//! [`show_summary_panel`]），由右栏多栏布局统一停靠。
 
 use std::sync::Arc;
 
@@ -13,16 +15,9 @@ use yinhe_editor_core::document::Document;
 
 use rust_i18n::t;
 
-use super::{history, layers};
+use super::layers;
 
-/// 底部标签页。
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum BottomTab {
-    History,
-    Summary,
-}
-
-/// 显示音轨信息编辑器。返回 `true` 表示端口/通道改变（需重建音频引擎）。
+/// 显示音轨属性 + 图层（「音轨」选项卡）。返回 `true` 表示端口/通道改变。
 pub(crate) fn show_track_info(ui: &mut egui::Ui, doc: &mut Document) -> bool {
     let num_tracks = doc.data.model.tracks.len();
     if num_tracks == 0 {
@@ -55,44 +50,29 @@ pub(crate) fn show_track_info(ui: &mut egui::Ui, doc: &mut Document) -> bool {
     ui.add_space(2.0);
     layers::show(ui, doc);
 
-    ui.add_space(6.0);
-
-    // ── 分栏 3：底部横向标签 [历史记录 | 属性概要] ──
-    let tab_id = ui.id().with("track_info_bottom_tab");
-    let mut tab: BottomTab = ui
-        .data_mut(|d| d.get_temp(tab_id))
-        .unwrap_or(BottomTab::History);
-
-    ui.horizontal(|ui| {
-        bottom_tab_button(
-            ui,
-            &mut tab,
-            BottomTab::History,
-            t!("panel.tab.history").as_ref(),
-        );
-        bottom_tab_button(
-            ui,
-            &mut tab,
-            BottomTab::Summary,
-            t!("panel.tab.summary").as_ref(),
-        );
-    });
-    ui.data_mut(|d| d.insert_temp(tab_id, tab));
-    ui.add_space(2.0);
-
-    match tab {
-        BottomTab::History => history::show(ui, doc),
-        BottomTab::Summary => {
-            if let Some(track_idx) = track_idx {
-                let ti = doc.edit.track_cache.info.get(track_idx).cloned();
-                show_summary(ui, doc, track_idx, ti);
-            } else {
-                crate::widgets::hint::empty_hint(ui, t!("panel.select_track_hint").as_ref());
-            }
-        }
-    }
-
     port_changed
+}
+
+/// 「属性概要」选项卡：当前选中轨的音符数 / 事件数 / 音色。
+pub(crate) fn show_summary_panel(ui: &mut egui::Ui, doc: &Document) {
+    let num_tracks = doc.data.model.tracks.len();
+    if num_tracks == 0 {
+        crate::widgets::hint::empty_hint(ui, t!("track.no_tracks").as_ref());
+        return;
+    }
+    let Some(track_idx) = doc
+        .edit
+        .track_selected
+        .iter()
+        .next()
+        .copied()
+        .map(|i| (i as usize).min(num_tracks - 1))
+    else {
+        crate::widgets::hint::empty_hint(ui, t!("panel.select_track_hint").as_ref());
+        return;
+    };
+    let ti = doc.edit.track_cache.info.get(track_idx).cloned();
+    show_summary(ui, doc, track_idx, ti);
 }
 
 /// 分栏小标签卡标题。
@@ -103,29 +83,6 @@ fn section_header(ui: &mut egui::Ui, title: &str) {
             .strong()
             .color(crate::theme::text_primary()),
     );
-}
-
-/// 底部横向标签按钮；选中态用淡色强调色底。
-fn bottom_tab_button(ui: &mut egui::Ui, tab: &mut BottomTab, value: BottomTab, label: &str) {
-    let selected = *tab == value;
-    let text = egui::RichText::new(label)
-        .size(crate::theme::BODY_FONT)
-        .color(if selected {
-            crate::theme::text_bright()
-        } else {
-            crate::theme::text_label()
-        });
-    let resp = crate::widgets::flat::flat_button(ui, text);
-    if selected {
-        ui.painter().rect_filled(
-            resp.rect.expand2(egui::vec2(4.0, 2.0)),
-            4.0,
-            crate::theme::control_selected_bg(),
-        );
-    }
-    if resp.clicked() {
-        *tab = value;
-    }
 }
 
 /// 音轨字段（名称 / 端口 / 通道 / 颜色）。返回端口/通道是否改变。
