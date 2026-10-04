@@ -227,12 +227,15 @@ impl PianoRollView {
 
     // ── 副轴（音高轴）语义访问器 ────────────────────────────────────────────
 
-    /// 副轴视口长度：横向 = 内容区高度；纵向 = 音乐区宽度。
+    /// 副轴视口长度：横向 = 内容区高度；纵向 = 内容区宽度。
+    ///
+    /// 纵向瀑布流下键盘在底部，音高轴（X）铺满整个内容宽度，**不扣键盘列宽**
+    /// （`w` 已是不含标尺/滚动条的内容区宽度）。
     #[inline]
     pub fn cross_axis_len(&self, w: f32, h: f32) -> f32 {
         match self.orientation {
             Orientation::Horizontal => h,
-            Orientation::Vertical => (w - self.keyboard_width()).max(0.0),
+            Orientation::Vertical => w.max(0.0),
         }
     }
 
@@ -507,7 +510,8 @@ mod tests {
     fn test_axis_lens_vertical() {
         let v = make_vertical();
         assert!((v.main_axis_len(1100.0, 500.0) - 500.0).abs() < 0.01);
-        assert!((v.cross_axis_len(1100.0, 500.0) - 1040.0).abs() < 0.01);
+        // 纵向音高轴铺满内容宽度，不扣键盘列宽。
+        assert!((v.cross_axis_len(1100.0, 500.0) - 1100.0).abs() < 0.01);
     }
 
     #[test]
@@ -624,8 +628,8 @@ mod tests {
         v.clamp_scroll(1100.0, 500.0, 10000.0);
         // 主轴（scroll_y）clamp 到总 tick 域
         assert!(v.base.scroll_y <= 10000.0 * 0.15 - 500.0 + 0.01);
-        // 副轴（scroll_x）首次初始化为 64 键居中
-        let cross_size = 1100.0 - 60.0;
+        // 副轴（scroll_x）首次初始化为 64 键居中（纵向音高轴铺满内容宽度，不扣键盘列宽）
+        let cross_size = 1100.0;
         assert!((v.key_height - cross_size / 64.0).abs() < 0.01);
         assert!(v.base.scroll_x <= (128.0 * v.key_height - cross_size) / 2.0 + 0.01);
     }
@@ -652,7 +656,7 @@ mod tests {
         v.clamp_scroll(1100.0, 600.0, 10000.0);
         v.set_orientation(Orientation::Vertical);
         v.clamp_scroll(1100.0, 600.0, 10000.0);
-        let cross_size = 1100.0 - 60.0;
+        let cross_size = 1100.0;
         assert!((v.key_height - cross_size / 64.0).abs() < 0.01);
         assert!(v.base.scroll_x >= 0.0);
     }

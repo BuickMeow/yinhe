@@ -193,12 +193,19 @@ pub(crate) fn handle_input(
             } else {
                 // 右区纯滚轮: 平移。字段语义随方向成立：横向滚轮 x→时间/y→音高；
                 // 纵向滚轮 y→时间（scroll_y）/x→音高（scroll_x）。
+                // 纵向时间轴已镜像（tick0 在底部），时间平移方向随之取反。
                 *view.scroll_x() -= scroll.x;
-                *view.scroll_y() -= scroll.y;
+                if vertical {
+                    *view.scroll_y() += scroll.y;
+                } else {
+                    *view.scroll_y() -= scroll.y;
+                }
                 *view.dirty() = true;
                 // Manual horizontal scroll during playback escapes follow mode.
                 // Pure vertical scroll does not break follow.
-                if is_playing && *follow_mode != FollowMode::None && scroll.x.abs() > 0.5 {
+                // 纵向时间轴是 Y，主轴位移取 scroll.y。
+                let main_scroll = if vertical { scroll.y } else { scroll.x };
+                if is_playing && *follow_mode != FollowMode::None && main_scroll.abs() > 0.5 {
                     *follow_mode = FollowMode::None;
                 }
             }
@@ -250,7 +257,11 @@ pub(crate) fn handle_input(
     if pointer_in_rect && ui.input(|i| i.pointer.middle_down()) {
         let delta = ui.input(|i| i.pointer.delta());
         *view.scroll_x() -= delta.x;
-        *view.scroll_y() -= delta.y;
+        if vertical {
+            *view.scroll_y() += delta.y;
+        } else {
+            *view.scroll_y() -= delta.y;
+        }
         *view.dirty() = true;
         if is_playing && *follow_mode != FollowMode::None {
             *follow_mode = FollowMode::None;
@@ -262,7 +273,11 @@ pub(crate) fn handle_input(
     if *active_tool == Tool::Pan && content_resp.dragged() {
         let delta = content_resp.drag_delta();
         *view.scroll_x() -= delta.x;
-        *view.scroll_y() -= delta.y;
+        if vertical {
+            *view.scroll_y() += delta.y;
+        } else {
+            *view.scroll_y() -= delta.y;
+        }
         *view.dirty() = true;
         // Manual drag during playback escapes follow mode.
         if is_playing && *follow_mode != FollowMode::None {
