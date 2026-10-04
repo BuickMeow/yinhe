@@ -12,14 +12,18 @@ use egui::{Mesh, Pos2, Rect, Sense, Shape, Stroke, StrokeKind};
 /// [SV 色板]        ← 饱和度/明度平面（点击/拖动取色）
 /// [色相条]         ← 横向渐变（点击/拖动取色）
 /// ```
-pub(crate) fn color_edit_button(ui: &mut egui::Ui, color: &mut egui::Color32) -> egui::Response {
+pub(crate) fn color_edit_button(
+    ui: &mut egui::Ui,
+    color: &mut egui::Color32,
+    size: egui::Vec2,
+) -> egui::Response {
     let popup_id = ui.auto_id_with("color_picker_popup");
 
     let mut btn = ui.add(
         egui::Button::new("  ")
             .fill(*color)
             .stroke(Stroke::new(1.0, egui::Color32::from_gray(100)))
-            .min_size(egui::vec2(28.0, 24.0))
+            .min_size(size)
             .corner_radius(3.0),
     );
 

@@ -1239,8 +1239,6 @@ pub(super) fn show_overview(ui: &mut egui::Ui, model: &yinhe_core::YinModel) {
             format!("标记: {} 个", model.conductor.markers.len()),
         );
     }
-    ui.add_space(8.0);
-    ui.colored_label(crate::theme::text_disabled(), "← 点击左侧条目查看详情");
 }
 
 pub(super) fn show_track_detail(

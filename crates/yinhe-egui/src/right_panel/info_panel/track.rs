@@ -14,6 +14,22 @@ use yinhe_editor_core::document::Document;
 
 use rust_i18n::t;
 
+/// 字段标签列宽：让不同字数的标签后，各行的值起始 x 对齐。
+const FIELD_LABEL_W: f32 = 72.0;
+/// 字段行高。
+const FIELD_ROW_H: f32 = 18.0;
+
+/// 固定宽度的字段标签（左对齐、垂直居中）。
+fn field_label(ui: &mut egui::Ui, text: &str) {
+    ui.allocate_ui_with_layout(
+        egui::vec2(FIELD_LABEL_W, FIELD_ROW_H),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.label(text);
+        },
+    );
+}
+
 /// 显示音轨属性（「音轨」选项卡）。返回 `true` 表示端口/通道改变。
 pub(crate) fn show_track_info(ui: &mut egui::Ui, doc: &mut Document) -> bool {
     let num_tracks = doc.data.model.tracks.len();
@@ -52,7 +68,7 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
         ui.add_space(4.0);
         if !doc.data.model.meta.name.is_empty() {
             ui.horizontal(|ui| {
-                ui.label(t!("track.song_title").as_ref());
+                field_label(ui, t!("track.song_title").as_ref());
                 ui.label(
                     egui::RichText::new(&doc.data.model.meta.name)
                         .color(crate::theme::text_bright())
@@ -61,14 +77,14 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
             });
         }
         ui.horizontal(|ui| {
-            ui.label(t!("track.tempo_count").as_ref());
+            field_label(ui, t!("track.tempo_count").as_ref());
             ui.label(egui::RichText::new(format!(
                 "{}",
                 doc.data.model.conductor.tempo.events.len()
             )));
         });
         ui.horizontal(|ui| {
-            ui.label(t!("track.timesig_count").as_ref());
+            field_label(ui, t!("track.timesig_count").as_ref());
             ui.label(egui::RichText::new(format!(
                 "{}",
                 doc.data.model.conductor.time_sig.len()
@@ -83,10 +99,10 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
     let mut name_gained_focus = false;
     let mut name_lost_focus = false;
     ui.horizontal(|ui| {
-        ui.label(t!("track.name").as_ref());
+        field_label(ui, t!("track.name").as_ref());
         let mut name = doc.data.model.tracks[track_idx].name.clone();
         let resp = ui.add_sized(
-            egui::vec2(ui.available_width().max(60.0), 18.0),
+            egui::vec2(ui.available_width().max(60.0), FIELD_ROW_H),
             egui::TextEdit::singleline(&mut name).id_salt(("track_name", track_idx)),
         );
         if resp.changed() {
@@ -126,7 +142,7 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
     let mut new_port = ti.port;
     let mut new_ch = ti.channel;
     ui.horizontal(|ui| {
-        ui.label(t!("track.port_channel").as_ref());
+        field_label(ui, t!("track.port_channel").as_ref());
         let port_options: Vec<(usize, String)> = (0..16)
             .map(|p| (p, format!("Port {}", (b'A' + p as u8) as char)))
             .collect();
@@ -169,14 +185,14 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
     port_changed
 }
 
-/// 颜色行：小色块（与其他行同高）+ 重置按钮。
+/// 颜色行：色块（点击直接弹出取色器）+ 重置按钮。
 fn show_color_row(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) {
     let mut undo_color: Option<([f32; 4], [f32; 4])> = None;
     let edit_id = ui.id().with("track_color_edit");
     let was_editing = ui.data(|d| d.get_temp::<bool>(edit_id)).unwrap_or(false);
 
     ui.horizontal(|ui| {
-        ui.label(t!("track.color").as_ref());
+        field_label(ui, t!("track.color").as_ref());
         let cur = doc
             .edit
             .track_cache
@@ -185,33 +201,13 @@ fn show_color_row(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) {
             .copied()
             .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
         let mut srgba = crate::theme::rgba_to_color32((cur[0], cur[1], cur[2], cur[3]));
-        // 小色块：高度与行一致（18px），宽度稍大便于命中。
-        let mut changed = false;
-        let (rect, resp) = ui.allocate_exact_size(egui::vec2(36.0, 18.0), egui::Sense::click());
-        ui.painter().rect_filled(rect, 3.0, srgba);
-        let picker_id = ui.id().with("track_color_picker");
-        if resp.clicked() {
-            ui.data_mut(|d| d.insert_temp(edit_id.with("popup_open"), true));
-        }
-        let open = ui
-            .data_mut(|d| d.get_temp::<bool>(edit_id.with("popup_open")))
-            .unwrap_or(false);
-        if open {
-            egui::Area::new(picker_id)
-                .order(egui::Order::Foreground)
-                .fixed_pos(rect.left_bottom() + egui::vec2(0.0, 4.0))
-                .show(ui.ctx(), |ui| {
-                    egui::Frame::popup(ui.style()).show(ui, |ui| {
-                        if crate::widgets::color_picker::color_edit_button(ui, &mut srgba).changed()
-                        {
-                            changed = true;
-                        }
-                    });
-                });
-            if ui.input(|i| i.pointer.any_click()) && !open_contains(ui, rect) {
-                // 点击别处关闭（简单处理）。
-            }
-        }
+        // 色块即取色器按钮：点击一次直接展开调色板。
+        let resp = crate::widgets::color_picker::color_edit_button(
+            ui,
+            &mut srgba,
+            egui::vec2(36.0, FIELD_ROW_H),
+        );
+        let changed = resp.changed();
 
         let stored_color = doc.data.model.tracks[track_idx].color;
         let reset_btn = crate::widgets::flat::flat_button_sized(
@@ -298,11 +294,6 @@ fn show_color_row(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) {
             snapshot,
         );
     }
-}
-
-/// 颜色弹窗是否仍包含指针（用于简单关闭判断）。
-fn open_contains(ui: &egui::Ui, rect: egui::Rect) -> bool {
-    ui.input(|i| i.pointer.hover_pos().is_some_and(|p| rect.contains(p)))
 }
 
 /// 计算每轨 skip mask 并发给音频引擎。

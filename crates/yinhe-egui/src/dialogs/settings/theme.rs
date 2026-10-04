@@ -11,7 +11,9 @@ use yinhe_editor_core::audio_settings::CustomTheme;
 fn edit_std_color(ui: &mut egui::Ui, label: &str, rgba: &mut Rgba) -> bool {
     ui.label(label);
     let mut c = rgba.to_color32();
-    let changed = crate::widgets::color_picker::color_edit_button(ui, &mut c).changed();
+    let changed =
+        crate::widgets::color_picker::color_edit_button(ui, &mut c, egui::vec2(28.0, 24.0))
+            .changed();
     if changed {
         *rgba = Rgba::from_color32(c);
     }
@@ -194,21 +196,27 @@ pub fn show_theme_tab(
             ui.add_space(8.0);
             ui.label(t!("settings.theme.bg").as_ref());
             let mut c = new_base.bg.to_color32();
-            if crate::widgets::color_picker::color_edit_button(ui, &mut c).changed() {
+            if crate::widgets::color_picker::color_edit_button(ui, &mut c, egui::vec2(28.0, 24.0))
+                .changed()
+            {
                 new_base.bg = Rgba::from_color32(c);
                 color_changed = true;
             }
             ui.add_space(12.0);
             ui.label(t!("settings.theme.text").as_ref());
             let mut c2 = new_base.text.to_color32();
-            if crate::widgets::color_picker::color_edit_button(ui, &mut c2).changed() {
+            if crate::widgets::color_picker::color_edit_button(ui, &mut c2, egui::vec2(28.0, 24.0))
+                .changed()
+            {
                 new_base.text = Rgba::from_color32(c2);
                 color_changed = true;
             }
             ui.add_space(12.0);
             ui.label(t!("settings.theme.accent").as_ref());
             let mut c3 = new_base.accent.to_color32();
-            if crate::widgets::color_picker::color_edit_button(ui, &mut c3).changed() {
+            if crate::widgets::color_picker::color_edit_button(ui, &mut c3, egui::vec2(28.0, 24.0))
+                .changed()
+            {
                 new_base.accent = Rgba::from_color32(c3);
                 color_changed = true;
             }
