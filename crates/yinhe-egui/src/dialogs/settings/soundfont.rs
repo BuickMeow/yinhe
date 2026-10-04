@@ -48,6 +48,6 @@ pub fn show_soundfont_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bo
     ui.add_space(4.0);
 
     changed |=
-        crate::right_panel::sf_list::sf_list(ui, &mut settings.global_sf_config.entries, "global");
+        crate::dialogs::sf_list::sf_list(ui, &mut settings.global_sf_config.entries, "global");
     changed
 }

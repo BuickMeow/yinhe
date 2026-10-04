@@ -596,7 +596,7 @@ impl App {
         if has_notes {
             ctx.data_mut(|d| {
                 d.insert_temp(
-                    egui::Id::new(crate::right_panel::project_info::PPQ_RESCALE_PENDING_ID),
+                    egui::Id::new(crate::dialogs::project_info::PPQ_RESCALE_PENDING_ID),
                     (old, value, id),
                 )
             });

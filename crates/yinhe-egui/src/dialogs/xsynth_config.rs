@@ -194,7 +194,7 @@ pub(crate) fn show_viewport(app: &mut App, ctx: &egui::Context) -> bool {
                                     .find(|(c, _)| *c == channel)
                                     .map(|(_, e)| e);
                                 if let Some(entries) = entries
-                                    && crate::right_panel::sf_list::sf_list(ui, entries, &salt)
+                                    && crate::dialogs::sf_list::sf_list(ui, entries, &salt)
                                 {
                                     *changed_rc.borrow_mut() = true;
                                 }

@@ -66,7 +66,7 @@ pub(crate) fn show_project_settings_viewport(
                                 .show(ui, |ui| {
                                     ui.spacing_mut().interact_size.y = 24.0;
                                     ui.spacing_mut().item_spacing.y = 4.0;
-                                    crate::right_panel::project_info::show(ui, doc);
+                                    crate::dialogs::project_info::show(ui, doc);
                                 });
                         });
                 });

@@ -2,8 +2,6 @@ pub mod automation_undo;
 pub mod dock;
 pub mod event_browser;
 pub mod info_panel;
-pub mod project_info;
-pub mod sf_list;
 
 use eframe::egui;
 

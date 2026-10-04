@@ -12,6 +12,7 @@ mod anchor;
 mod history;
 mod layers;
 pub(crate) mod selection;
+mod summary;
 mod track;
 
 use eframe::egui;
@@ -111,5 +112,5 @@ pub(crate) fn show_history(ui: &mut egui::Ui, doc: &mut Document) {
 
 /// 「属性概要」选项卡。
 pub(crate) fn show_summary(ui: &mut egui::Ui, doc: &mut Document) {
-    track::show_summary_panel(ui, doc);
+    summary::show_summary_panel(ui, doc);
 }

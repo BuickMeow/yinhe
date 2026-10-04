@@ -412,7 +412,7 @@ impl App {
     fn show_ppq_rescale_confirm(&mut self, ctx: &egui::Context) {
         let pending: Option<(u32, u32, u64)> = ctx.data(|d| {
             d.get_temp(egui::Id::new(
-                crate::right_panel::project_info::PPQ_RESCALE_PENDING_ID,
+                crate::dialogs::project_info::PPQ_RESCALE_PENDING_ID,
             ))
         });
         let Some((old_val, new_val, dragvalue_id)) = pending else {
@@ -468,7 +468,7 @@ impl App {
         // 清除 pending（dialog_dispatch 已处理完，避免下帧重复弹）。
         ctx.data_mut(|d| {
             d.remove::<(u32, u32, u64)>(egui::Id::new(
-                crate::right_panel::project_info::PPQ_RESCALE_PENDING_ID,
+                crate::dialogs::project_info::PPQ_RESCALE_PENDING_ID,
             ))
         });
     }
