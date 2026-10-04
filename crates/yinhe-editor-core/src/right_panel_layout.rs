@@ -27,6 +27,16 @@ pub enum PanelKind {
 }
 
 impl PanelKind {
+    /// 全部面板类型（用于旧布局迁移补齐）。
+    pub const ALL: [PanelKind; 6] = [
+        PanelKind::Track,
+        PanelKind::ProjectTree,
+        PanelKind::EventBrowser,
+        PanelKind::Layers,
+        PanelKind::History,
+        PanelKind::Summary,
+    ];
+
     /// 选项卡标题 i18n key。
     pub fn label_key(self) -> &'static str {
         match self {
@@ -106,6 +116,45 @@ impl RightPanelLayout {
     /// 是否任意栏包含该选项卡。
     pub fn contains(&self, kind: PanelKind) -> bool {
         self.columns.iter().any(|c| c.tabs.contains(&kind))
+    }
+
+    /// 补齐缺失的选项卡（旧持久化布局迁移用）。返回是否有改动。
+    ///
+    /// 新增选项卡后，老配置里不会自动出现；补齐保证所有 [`PanelKind`] 都可访问。
+    pub fn ensure_all(&mut self) -> bool {
+        let mut changed = false;
+        for kind in PanelKind::ALL {
+            if self.contains(kind) {
+                continue;
+            }
+            match self.sibling_column(kind) {
+                Some(i) => self.move_tab(kind, i, usize::MAX),
+                None => {
+                    let at = match kind {
+                        PanelKind::Track => 0,
+                        PanelKind::History | PanelKind::Summary => self.columns.len(),
+                        _ => self.columns.len().min(1),
+                    };
+                    self.split_new_column(kind, at);
+                }
+            }
+            changed = true;
+        }
+        changed
+    }
+
+    /// 与 `kind` 同属一组、且已存在的栏下标（用于把缺失选项卡补到同类栏）。
+    fn sibling_column(&self, kind: PanelKind) -> Option<usize> {
+        let siblings: &[PanelKind] = match kind {
+            PanelKind::Layers => &[PanelKind::ProjectTree, PanelKind::EventBrowser],
+            PanelKind::ProjectTree | PanelKind::EventBrowser => &[PanelKind::Layers],
+            PanelKind::History => &[PanelKind::Summary],
+            PanelKind::Summary => &[PanelKind::History],
+            PanelKind::Track => &[],
+        };
+        self.columns
+            .iter()
+            .position(|c| siblings.iter().any(|s| c.tabs.contains(s)))
     }
 
     /// 把某选项卡从所有栏移除；返回其原所属栏下标。
@@ -268,6 +317,36 @@ mod tests {
         l.split_new_column(PanelKind::EventBrowser, 1);
         assert_eq!(l.columns.len(), 4);
         assert_eq!(l.columns[1].tabs, vec![PanelKind::EventBrowser]);
+    }
+
+    #[test]
+    fn ensure_all_adds_missing_layers() {
+        let mut l = RightPanelLayout {
+            columns: vec![
+                PanelColumn::single(PanelKind::Track),
+                PanelColumn {
+                    tabs: vec![PanelKind::ProjectTree, PanelKind::EventBrowser],
+                    active: 0,
+                    height_weight: 1.0,
+                },
+                PanelColumn {
+                    tabs: vec![PanelKind::History, PanelKind::Summary],
+                    active: 0,
+                    height_weight: 1.0,
+                },
+            ],
+        };
+        assert!(l.ensure_all());
+        assert_eq!(
+            l.columns[1].tabs,
+            vec![
+                PanelKind::ProjectTree,
+                PanelKind::EventBrowser,
+                PanelKind::Layers
+            ]
+        );
+        // 已齐全时不再改动。
+        assert!(!l.ensure_all());
     }
 
     #[test]

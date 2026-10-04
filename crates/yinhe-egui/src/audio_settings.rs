@@ -9,6 +9,10 @@ pub(crate) use yinhe_audio::{discover_sample_rates, list_input_devices, list_out
 /// Load AudioSettings and populate device lists from the system.
 pub(crate) fn load_audio_settings() -> AudioSettings {
     let mut settings = AudioSettings::load();
+    // 右栏布局迁移：旧配置缺少后来新增的选项卡（如「图层」）时补齐。
+    if settings.layout.right_panel_layout.ensure_all() {
+        settings.save();
+    }
     // locale 名迁移：旧的非区域代码（en/ja/ko）统一为新格式，避免回退到中文。
     // 已删除的小语种（`locales/` 仅保留中英日韩）→ 回退到 zh-CN（rust-i18n fallback）。
     let legacy = match settings.locale.as_str() {
