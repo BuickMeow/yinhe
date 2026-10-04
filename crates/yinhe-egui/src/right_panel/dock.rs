@@ -15,6 +15,8 @@ const TAB_BAR_H: f32 = 24.0;
 const TAB_H: f32 = 20.0;
 /// 栏间分割线厚度（与项目其它分割线一致）。
 const SPLIT_H: f32 = theme::SPLIT_GAP;
+/// 判定「分裂出新栏」的边界命中带（上一行底端附近）。
+const SPLIT_ZONE: f32 = 12.0;
 /// 选项卡文字左右内边距。
 const TAB_PAD: f32 = 8.0;
 /// 标签栏 / 内容区与栏边缘的水平边距（分割线不缩进）。
@@ -35,10 +37,19 @@ struct DragTab {
 /// 拖动落点。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DropTarget {
-    /// 并入第 `column` 栏（追加为选项卡）。
-    Merge(usize),
+    /// 并入第 `column` 栏、插到第 `insert` 个选项卡处（0..=tabs.len()）。
+    Merge { column: usize, insert: usize },
     /// 在第 `at` 处分裂出新栏（插到该栏上方；`at == columns.len()` 插到末尾）。
     Split(usize),
+}
+
+/// 第 `at` 处分裂线的 y 坐标：上一行底端；`at == 0` 取右栏外顶部。
+fn boundary_y(geoms: &[ColumnGeom], content_rect: egui::Rect, at: usize) -> f32 {
+    if at == 0 {
+        content_rect.min.y
+    } else {
+        geoms[at - 1].rect.max.y
+    }
 }
 
 /// 一栏的布局几何。
@@ -116,6 +127,9 @@ pub(crate) fn show(
     let pointer = ui.input(|i| i.pointer.clone());
     let pointer_pos = pointer.hover_pos();
 
+    // 各栏选项卡 chip 矩形（本帧绘制时收集，供落点判定/插入线使用）。
+    let mut tab_rects: Vec<Vec<egui::Rect>> = vec![Vec::new(); n];
+
     // ── 各栏：选项卡头 + 内容 ──
     for (ci, col) in layout.columns.iter_mut().enumerate() {
         let g = &geoms[ci];
@@ -129,7 +143,7 @@ pub(crate) fn show(
         });
 
         // 选项卡头。
-        paint_header(ui, g, col, ci, &mut drag, &mut changed);
+        paint_header(ui, g, col, ci, &mut drag, &mut changed, &mut tab_rects[ci]);
     }
 
     // ── 栏间分割线（拖动改权重） ──
@@ -157,22 +171,29 @@ pub(crate) fn show(
     // ── 拖动落点预览 ──
     if drag.is_some() {
         if let Some(pos) = pointer_pos {
-            let drop = compute_drop(&geoms, pos);
+            let drop = compute_drop(&geoms, content_rect, &tab_rects, pos);
             // 只画合并/分裂高亮。
             match drop {
-                Some(DropTarget::Merge(ci)) => {
+                Some(DropTarget::Merge { column, insert }) => {
+                    // 目标栏轻描边 + 插入位置竖线。
                     ui.painter().rect_stroke(
-                        geoms[ci].rect,
+                        geoms[column].header,
                         3.0,
-                        egui::Stroke::new(2.0, theme::accent_active()),
+                        egui::Stroke::new(1.0, theme::accent_active()),
                         egui::StrokeKind::Inside,
+                    );
+                    let x = insert_x(&geoms[column].header, &tab_rects[column], insert);
+                    let cy = geoms[column].header.center().y;
+                    ui.painter().line_segment(
+                        [
+                            egui::pos2(x, cy - TAB_H * 0.5),
+                            egui::pos2(x, cy + TAB_H * 0.5),
+                        ],
+                        egui::Stroke::new(2.0, theme::accent_active()),
                     );
                 }
                 Some(DropTarget::Split(at)) => {
-                    let y = geoms
-                        .get(at)
-                        .map(|g| g.rect.min.y)
-                        .unwrap_or_else(|| content_rect.max.y);
+                    let y = boundary_y(&geoms, content_rect, at);
                     ui.painter().line_segment(
                         [
                             egui::pos2(content_rect.min.x, y),
@@ -194,7 +215,7 @@ pub(crate) fn show(
             if let Some(target) = drop {
                 let kind = drag.unwrap().kind;
                 match target {
-                    DropTarget::Merge(ci) => layout.insert_tab(kind, ci),
+                    DropTarget::Merge { column, insert } => layout.move_tab(kind, column, insert),
                     DropTarget::Split(at) => layout.split_new_column(kind, at),
                 }
                 changed = true;
@@ -211,7 +232,7 @@ pub(crate) fn show(
     changed
 }
 
-/// 画一栏的选项卡头并处理点击/拖动。
+/// 画一栏的选项卡头并处理点击/拖动；`chips` 收集本栏选项卡矩形。
 fn paint_header(
     ui: &mut egui::Ui,
     g: &ColumnGeom,
@@ -219,6 +240,7 @@ fn paint_header(
     ci: usize,
     drag: &mut Option<DragTab>,
     changed: &mut bool,
+    chips: &mut Vec<egui::Rect>,
 ) {
     // 头背景。
     ui.painter().rect_filled(g.header, 0.0, theme::control_bg());
@@ -241,6 +263,7 @@ fn paint_header(
         // 选项卡在栏内垂直居中（栏比选项卡高）。
         let chip_y = g.header.center().y - TAB_H * 0.5;
         let tab_rect = egui::Rect::from_min_size(egui::pos2(x, chip_y), egui::vec2(tab_w, TAB_H));
+        chips.push(tab_rect);
         x += tab_w + 2.0;
 
         let selected = ti == col.active;
@@ -290,18 +313,62 @@ fn paint_header(
     }
 }
 
-/// 根据指针位置计算落点：栏内 → 合并；栏顶部/底部缝隙 → 分裂。
-fn compute_drop(geoms: &[ColumnGeom], pos: egui::Pos2) -> Option<DropTarget> {
-    for (i, g) in geoms.iter().enumerate() {
+/// 插入位置竖线的 x：按 `insert` 落在相邻两 chip 之间（或首尾）。
+fn insert_x(header: &egui::Rect, chips: &[egui::Rect], insert: usize) -> f32 {
+    if chips.is_empty() {
+        return header.min.x + PAD_X;
+    }
+    if insert == 0 {
+        chips[0].left() - 1.0
+    } else if insert >= chips.len() {
+        chips[chips.len() - 1].right() + 1.0
+    } else {
+        (chips[insert - 1].right() + chips[insert].left()) * 0.5
+    }
+}
+
+/// 根据指针位置计算落点：
+/// - 指针停在某栏标签栏 → 并入该栏，并按 chip 中点求插入位置（优先）；
+/// - 否则落在「上一行底端」附近（第一行取右栏外顶部）→ 分裂出新栏；
+/// - 兜底：落在某栏内容区 → 追加到该栏末尾。
+fn compute_drop(
+    geoms: &[ColumnGeom],
+    content_rect: egui::Rect,
+    tab_rects: &[Vec<egui::Rect>],
+    pos: egui::Pos2,
+) -> Option<DropTarget> {
+    // 1. 标签栏优先：移动到该栏并找插入位置。
+    for (ci, g) in geoms.iter().enumerate() {
+        if g.header.contains(pos) {
+            let insert = tab_rects[ci]
+                .iter()
+                .filter(|r| r.center().x < pos.x)
+                .count();
+            return Some(DropTarget::Merge { column: ci, insert });
+        }
+    }
+
+    // 2. 两栏中间：拖出标签栏后，落在上一行底端（第一行按右栏外顶部）。
+    let mut best: Option<(usize, f32)> = None;
+    for at in 0..=geoms.len() {
+        let d = (pos.y - boundary_y(geoms, content_rect, at)).abs();
+        if best.is_none_or(|(_, bd)| d < bd) {
+            best = Some((at, d));
+        }
+    }
+    if let Some((at, d)) = best
+        && d <= SPLIT_ZONE
+    {
+        return Some(DropTarget::Split(at));
+    }
+
+    // 3. 兜底：内容区追加到该栏末尾。
+    for (ci, g) in geoms.iter().enumerate() {
         if g.content.contains(pos) {
-            // 中间 60% → 合并；上/下 20% → 分裂到该栏上/下。
-            let rel = (pos.y - g.content.min.y) / g.content.height().max(1.0);
-            if rel < 0.25 {
-                return Some(DropTarget::Split(i));
-            } else if rel > 0.75 {
-                return Some(DropTarget::Split(i + 1));
-            }
-            return Some(DropTarget::Merge(i));
+            return Some(DropTarget::Merge {
+                column: ci,
+                insert: tab_rects[ci].len(),
+            });
         }
     }
     None

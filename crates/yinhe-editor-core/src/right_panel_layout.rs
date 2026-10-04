@@ -129,13 +129,36 @@ impl RightPanelLayout {
         removed_from
     }
 
-    /// 在 `column_idx` 栏内追加选项卡并选中（若已存在于别处先移除）。
-    pub fn insert_tab(&mut self, kind: PanelKind, column_idx: usize) {
+    /// 把 `kind` 移到 `column_idx` 栏的 `insert_idx` 位置（同栏内即重排）。
+    ///
+    /// `insert_idx` 按**移动前**该栏的选项卡顺序计算（0..=len）；移除源选项卡后
+    /// 会自动修正插入点与目标栏下标（源栏可能因搬空而被删除）。
+    pub fn move_tab(&mut self, kind: PanelKind, mut column_idx: usize, mut insert_idx: usize) {
+        let src = self.columns.iter().position(|c| c.tabs.contains(&kind));
+        let src_pos = src.map(|ci| {
+            self.columns[ci]
+                .tabs
+                .iter()
+                .position(|&k| k == kind)
+                .unwrap_or(0)
+        });
+        if let (Some(si), Some(sp)) = (src, src_pos) {
+            let src_single = self.columns[si].tabs.len() == 1;
+            // 同栏：移除后插入点前移。
+            if si == column_idx && sp < insert_idx {
+                insert_idx = insert_idx.saturating_sub(1);
+            }
+            // 源栏被搬空删除后，目标栏下标前移。
+            if src_single && si < column_idx {
+                column_idx = column_idx.saturating_sub(1);
+            }
+        }
         self.remove_tab(kind);
         let idx = column_idx.min(self.columns.len().saturating_sub(1));
         if let Some(col) = self.columns.get_mut(idx) {
-            col.tabs.push(kind);
-            col.active = col.tabs.len() - 1;
+            let pos = insert_idx.min(col.tabs.len());
+            col.tabs.insert(pos, kind);
+            col.active = pos;
         } else {
             self.columns.push(PanelColumn::single(kind));
         }
@@ -192,10 +215,10 @@ mod tests {
     }
 
     #[test]
-    fn insert_tab_moves_between_columns() {
+    fn move_tab_moves_between_columns() {
         let mut l = RightPanelLayout::default();
-        // 把 History 从第 3 栏移入第 1 栏。
-        l.insert_tab(PanelKind::History, 0);
+        // 把 History 从第 3 栏移到第 1 栏末尾。
+        l.move_tab(PanelKind::History, 0, usize::MAX);
         assert!(l.columns[0].tabs.contains(&PanelKind::History));
         // History 应只剩一处。
         let count = l
@@ -204,6 +227,39 @@ mod tests {
             .filter(|c| c.tabs.contains(&PanelKind::History))
             .count();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn move_tab_reorders_within_column() {
+        let mut l = RightPanelLayout::default();
+        // 中间栏 [Tree, Events, Layers]：把 Layers 移到最前。
+        l.move_tab(PanelKind::Layers, 1, 0);
+        assert_eq!(
+            l.columns[1].tabs,
+            vec![
+                PanelKind::Layers,
+                PanelKind::ProjectTree,
+                PanelKind::EventBrowser
+            ]
+        );
+        assert_eq!(l.columns[1].active, 0);
+    }
+
+    #[test]
+    fn move_tab_moves_single_tab_column_forward() {
+        let mut l = RightPanelLayout::default();
+        // 第 0 栏只有 Track：移到第 1 栏末尾（源栏会消失，目标下标需前移）。
+        l.move_tab(PanelKind::Track, 1, 3);
+        assert_eq!(l.columns.len(), 2);
+        assert_eq!(
+            l.columns[0].tabs,
+            vec![
+                PanelKind::ProjectTree,
+                PanelKind::EventBrowser,
+                PanelKind::Layers,
+                PanelKind::Track
+            ]
+        );
     }
 
     #[test]
