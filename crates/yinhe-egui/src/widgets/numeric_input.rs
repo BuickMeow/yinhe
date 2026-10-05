@@ -93,6 +93,9 @@ impl<Num: egui::emath::Numeric> egui::Widget for ControlDragValue<'_, Num> {
                 // 编辑态 TextEdit 的填充取自 extreme_bg_color，必须一并透明。
                 let visuals = &mut ui.style_mut().visuals;
                 visuals.extreme_bg_color = egui::Color32::TRANSPARENT;
+                visuals.text_edit_bg_color = Some(egui::Color32::TRANSPARENT);
+                // 编辑态 TextEdit 聚焦时用 selection.stroke 画内框，必须一并关掉。
+                visuals.selection.stroke = egui::Stroke::NONE;
                 let widgets = &mut visuals.widgets;
                 for v in [
                     &mut widgets.noninteractive,

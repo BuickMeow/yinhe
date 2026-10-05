@@ -1,6 +1,7 @@
-//! 自绘拖动条（Slider）：统一 `widgets::control` 的高度/配色。
+//! 自绘拖动条（Slider）：开关式长胶囊。
 //!
-//! 轨道 + 已填充段 + 圆形滑块；点击/拖动轨道即设值，可选步进吸附与右侧数值。
+//! 左侧已填充为强调色、右侧未填充为白色，圆形滑块；无缓动（值由用户直接拖定）。
+//! 数值绘制在轨道内部（偏滑块的另一侧），两端为纯半圆。
 
 use std::ops::RangeInclusive;
 
@@ -8,7 +9,7 @@ use eframe::egui;
 
 use super::control;
 
-/// 自绘拖动条。`width` 为整体宽度（含右侧数值区），`step` 为可选吸附步长。
+/// 自绘拖动条。`width` 为整体宽度，`step` 为可选吸附步长。
 pub fn control_slider<Num: egui::emath::Numeric>(
     ui: &mut egui::Ui,
     value: &mut Num,
@@ -21,37 +22,16 @@ pub fn control_slider<Num: egui::emath::Numeric>(
     let max = range.end().to_f64();
     let span = (max - min).max(f64::EPSILON);
 
-    // 开关式长轨道：胶囊底 + 圆形滑块。无缓动（值由用户直接拖定）。
     let track_h = 18.0;
     let radius = track_h * 0.5;
-
-    let value_font = egui::FontId::proportional(crate::theme::BODY_FONT);
-    let value_galley = ui.painter().layout_no_wrap(
-        format!("{:.2}", value.to_f64()),
-        value_font,
-        crate::theme::text_primary(),
-    );
-    let value_w = if show_value {
-        value_galley.size().x + 8.0
-    } else {
-        0.0
-    };
-    // 右侧放不下数字时放左侧。
-    let value_left = show_value && (width - value_w) < 80.0;
-    let track_w = (width - value_w).max(30.0);
 
     let (rect, mut resp) = ui.allocate_exact_size(
         egui::vec2(width, control::CONTROL_H),
         egui::Sense::click_and_drag(),
     );
-    let track_x = if value_left && show_value {
-        rect.min.x + value_w
-    } else {
-        rect.min.x
-    };
     let track = egui::Rect::from_min_size(
-        egui::pos2(track_x, rect.center().y - track_h * 0.5),
-        egui::vec2(track_w.min(rect.max.x - track_x).max(1.0), track_h),
+        egui::pos2(rect.min.x, rect.center().y - track_h * 0.5),
+        egui::vec2(width, track_h),
     );
 
     let mut v = value.to_f64();
@@ -80,19 +60,39 @@ pub fn control_slider<Num: egui::emath::Numeric>(
         } else {
             crate::theme::text_disabled().gamma_multiply(0.6)
         };
-        let white = crate::theme::contrast_fg();
+        let white = egui::Color32::WHITE;
+        let painter = ui.painter();
 
-        // 未填充段（右白）
-        ui.painter().rect_filled(track, radius, white);
-        // 已填充段（左蓝，到滑块中心）
-        let thumb_cx = track.min.x + radius + (track.width() - 2.0 * radius).max(1.0) * t;
-        let fill = egui::Rect::from_min_size(
-            track.min,
-            egui::vec2((thumb_cx - track.min.x).max(radius), track_h),
-        );
-        ui.painter().rect_filled(fill, radius, accent);
+        // 未填充段：白色胶囊（两端纯半圆）。
+        painter.rect_filled(track, radius, white);
 
-        // 圆形滑块（白 + 描边，蓝白底上都可见）
+        // 滑块中心（两端各内缩一个半径，使圆形滑块始终落在胶囊内）。
+        let travel = (track.width() - 2.0 * radius).max(1.0);
+        let thumb_cx = track.min.x + radius + travel * t;
+
+        // 已填充段：从胶囊左端到滑块中心；左端半圆、右端直角（被滑块遮住）。
+        if t > 0.0 {
+            let fill_w = thumb_cx - track.min.x;
+            let fill = egui::Rect::from_min_size(track.min, egui::vec2(fill_w, track_h));
+            let r = radius.round() as u8;
+            let radius_left = egui::CornerRadius {
+                nw: r,
+                sw: r,
+                ne: 0,
+                se: 0,
+            };
+            painter.rect_filled(
+                fill,
+                if t >= 1.0 {
+                    egui::CornerRadius::same(r)
+                } else {
+                    radius_left
+                },
+                accent,
+            );
+        }
+
+        // 圆形滑块：白底 + 描边（蓝白底上都可见）。
         let hc = egui::pos2(thumb_cx, rect.center().y);
         let handle = if !enabled {
             crate::theme::text_disabled()
@@ -103,24 +103,36 @@ pub fn control_slider<Num: egui::emath::Numeric>(
         } else {
             white
         };
-        ui.painter().circle_filled(hc, radius, handle);
-        ui.painter()
-            .circle_stroke(hc, radius, egui::Stroke::new(1.0, crate::theme::line_fg()));
+        painter.circle_filled(hc, radius, handle);
+        painter.circle_stroke(hc, radius, egui::Stroke::new(1.0, crate::theme::line_fg()));
 
+        // 数值：画在轨道内部偏滑块的另一侧；文字随底色调明暗。
         if show_value {
-            let vx = if value_left {
-                rect.min.x
-            } else {
-                track.max.x + 8.0
-            };
-            ui.painter().galley(
-                egui::pos2(vx, rect.center().y - value_galley.size().y * 0.5),
-                value_galley,
+            let value_galley = painter.layout_no_wrap(
+                format!("{:.2}", value.to_f64()),
+                egui::FontId::proportional(crate::theme::BODY_FONT),
                 crate::theme::text_primary(),
             );
+            let value_left = thumb_cx > track.center().x;
+            let vx = if value_left {
+                track.min.x + 8.0
+            } else {
+                track.max.x - 8.0 - value_galley.size().x
+            };
+            let color = if value_left {
+                crate::theme::contrast_fg()
+            } else {
+                crate::theme::text_primary()
+            };
+            painter.galley(
+                egui::pos2(vx, rect.center().y - value_galley.size().y * 0.5),
+                value_galley,
+                color,
+            );
         }
+
         if resp.has_focus() {
-            ui.painter().rect_stroke(
+            painter.rect_stroke(
                 rect,
                 control::CONTROL_RADIUS,
                 control::control_stroke(true, true),
