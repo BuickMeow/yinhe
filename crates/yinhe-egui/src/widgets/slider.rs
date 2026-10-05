@@ -60,48 +60,32 @@ pub fn control_slider<Num: egui::emath::Numeric>(
         } else {
             crate::theme::text_disabled().gamma_multiply(0.6)
         };
-        let white = egui::Color32::WHITE;
+        // 未填充段：主题表面色胶囊（浅色主题浅、深色主题深，两端纯半圆）。
+        let surface = crate::theme::control_bg();
+        let knob = crate::theme::app_bg();
         let painter = ui.painter();
-
-        // 未填充段：白色胶囊（两端纯半圆）。
-        painter.rect_filled(track, radius, white);
+        painter.rect_filled(track, radius, surface);
 
         // 滑块中心（两端各内缩一个半径，使圆形滑块始终落在胶囊内）。
         let travel = (track.width() - 2.0 * radius).max(1.0);
         let thumb_cx = track.min.x + radius + travel * t;
 
-        // 已填充段：从胶囊左端到滑块中心；左端半圆、右端直角（被滑块遮住）。
-        if t > 0.0 {
-            let fill_w = thumb_cx - track.min.x;
-            let fill = egui::Rect::from_min_size(track.min, egui::vec2(fill_w, track_h));
-            let r = radius.round() as u8;
-            let radius_left = egui::CornerRadius {
-                nw: r,
-                sw: r,
-                ne: 0,
-                se: 0,
-            };
-            painter.rect_filled(
-                fill,
-                if t >= 1.0 {
-                    egui::CornerRadius::same(r)
-                } else {
-                    radius_left
-                },
-                accent,
-            );
-        }
+        // 已填充段：从胶囊左端到「滑块中心 + 一个半径」，两端都是半圆的胶囊；
+        // 右端半圆恰被圆形滑块整块盖住，所以不会漏色。
+        let fill_right = (thumb_cx + radius).min(track.max.x);
+        let fill = egui::Rect::from_min_max(track.min, egui::pos2(fill_right, track.max.y));
+        painter.rect_filled(fill, radius, accent);
 
-        // 圆形滑块：白底 + 描边（蓝白底上都可见）。
+        // 圆形滑块：主题基色 + 描边（蓝底/表面底上都可见）。
         let hc = egui::pos2(thumb_cx, rect.center().y);
         let handle = if !enabled {
             crate::theme::text_disabled()
         } else if resp.is_pointer_button_down_on() {
-            crate::theme::pressed_color(white)
+            crate::theme::pressed_color(knob)
         } else if resp.hovered() {
-            crate::theme::hover_color(white)
+            crate::theme::hover_color(knob)
         } else {
-            white
+            knob
         };
         painter.circle_filled(hc, radius, handle);
         painter.circle_stroke(hc, radius, egui::Stroke::new(1.0, crate::theme::line_fg()));
