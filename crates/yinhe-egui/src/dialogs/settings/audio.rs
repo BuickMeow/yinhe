@@ -120,10 +120,12 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         |ui| {
             if ui
                 .add(
-                    egui::DragValue::new(&mut settings.record_offset_ms)
-                        .range(0.0..=500.0)
-                        .speed(1.0)
-                        .suffix(" ms"),
+                    crate::widgets::numeric_input::decimal_drag_value(
+                        &mut settings.record_offset_ms,
+                    )
+                    .range(0.0..=500.0)
+                    .speed(1.0)
+                    .suffix(" ms"),
                 )
                 .changed()
             {

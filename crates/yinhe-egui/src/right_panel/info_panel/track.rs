@@ -101,9 +101,12 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
     ui.horizontal(|ui| {
         field_label(ui, t!("track.name").as_ref());
         let mut name = doc.data.model.tracks[track_idx].name.clone();
-        let resp = ui.add_sized(
-            egui::vec2(ui.available_width().max(60.0), FIELD_ROW_H),
-            egui::TextEdit::singleline(&mut name).id_salt(("track_name", track_idx)),
+        let resp = crate::widgets::text_input::control_text_input(
+            ui,
+            &mut name,
+            ui.available_width().max(60.0),
+            ("track_name", track_idx),
+            None,
         );
         if resp.changed() {
             name_change = Some(name);

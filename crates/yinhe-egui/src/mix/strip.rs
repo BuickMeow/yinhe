@@ -503,10 +503,13 @@ pub(crate) fn send_popup(
                                 ui.horizontal(|ui| {
                                     ui.label(format!("BUS {}", b + 1));
                                     let mut val = *amount;
-                                    let slider = ui.add(
-                                        egui::Slider::new(&mut val, 0.0..=2.0)
-                                            .show_value(false)
-                                            .clamping(egui::SliderClamping::Always),
+                                    let slider = crate::widgets::slider::control_slider(
+                                        ui,
+                                        &mut val,
+                                        0.0..=2.0,
+                                        ui.available_width().min(160.0),
+                                        None,
+                                        false,
                                     );
                                     if slider.changed() {
                                         actions.push(MixAction::SetSend {

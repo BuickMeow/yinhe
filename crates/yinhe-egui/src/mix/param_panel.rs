@@ -299,10 +299,18 @@ fn param_row(
             .truncate(),
         );
         let mut value = live;
-        let slider = ui.add_enabled(
-            !p.read_only,
-            egui::Slider::new(&mut value, p.min..=p.max).show_value(false),
-        );
+        let slider = ui
+            .add_enabled_ui(!p.read_only, |ui| {
+                crate::widgets::slider::control_slider(
+                    ui,
+                    &mut value,
+                    p.min..=p.max,
+                    ui.available_width().min(180.0),
+                    None,
+                    false,
+                )
+            })
+            .inner;
         if slider.changed() {
             editing.insert(p.id, value);
             // ParamQueue 统一归一化语义（与 AM 曲线一致）；按参数范围换算。

@@ -155,13 +155,14 @@ pub(crate) fn show_viewport(
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
-                                        if ui
-                                            .add(
-                                                egui::TextEdit::singleline(&mut state.search)
-                                                    .desired_width(140.0)
-                                                    .hint_text(t!("mix.search")),
-                                            )
-                                            .changed()
+                                        if crate::widgets::text_input::control_text_input(
+                                            ui,
+                                            &mut state.search,
+                                            140.0,
+                                            "auto_picker_search",
+                                            Some(t!("mix.search").as_ref()),
+                                        )
+                                        .changed()
                                         {
                                             state.filter_dirty = true;
                                         }
@@ -249,7 +250,7 @@ pub(crate) fn show_viewport(
                                         |ui| {
                                             if ui
                                                 .add(
-                                                    egui::DragValue::new(&mut state.custom_cc)
+                                                    crate::widgets::numeric_input::decimal_drag_value(&mut state.custom_cc)
                                                         .range(0..=127),
                                                 )
                                                 .changed()

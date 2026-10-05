@@ -30,9 +30,12 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document) {
         t!("project.name_desc").as_ref(),
         |ui| {
             let mut name = doc.data.model.meta.name.clone();
-            let resp = ui.add_sized(
-                egui::vec2(220.0, 24.0),
-                egui::TextEdit::singleline(&mut name).id_salt("proj_name"),
+            let resp = crate::widgets::text_input::control_text_input(
+                ui,
+                &mut name,
+                220.0,
+                "proj_name",
+                None,
             );
             if resp.gained_focus() {
                 begin_edit(
@@ -63,9 +66,12 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document) {
         t!("project.artist_desc").as_ref(),
         |ui| {
             let mut artist = doc.data.model.meta.artist.clone();
-            let resp = ui.add_sized(
-                egui::vec2(220.0, 24.0),
-                egui::TextEdit::singleline(&mut artist).id_salt("proj_artist"),
+            let resp = crate::widgets::text_input::control_text_input(
+                ui,
+                &mut artist,
+                220.0,
+                "proj_artist",
+                None,
             );
             if resp.gained_focus() {
                 begin_edit(
@@ -191,9 +197,12 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document) {
         t!("project.description_desc").as_ref(),
         |ui| {
             let mut desc = doc.data.model.meta.description.clone();
-            let resp = ui.add_sized(
-                egui::vec2(220.0, 60.0),
-                egui::TextEdit::multiline(&mut desc).id_salt("proj_desc"),
+            let resp = crate::widgets::text_input::control_text_input_multiline(
+                ui,
+                &mut desc,
+                220.0,
+                60.0,
+                "proj_desc",
             );
             if resp.gained_focus() {
                 begin_edit(

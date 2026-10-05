@@ -907,14 +907,12 @@ fn instrument_card(
 
                 // 搜索（仅内置 XSynth 的旋钮参数列表）。
                 if use_xsynth {
-                    let search_font = egui::FontId::proportional(crate::theme::SMALL_FONT);
-                    ui.add(
-                        egui::TextEdit::singleline(search)
-                            .desired_width(88.0)
-                            .hint_text(
-                                egui::RichText::new(t!("mix.search")).font(search_font.clone()),
-                            )
-                            .font(search_font),
+                    crate::widgets::text_input::control_text_input(
+                        ui,
+                        search,
+                        88.0,
+                        "mix_search",
+                        Some(t!("mix.search").as_ref()),
                     );
                 }
 

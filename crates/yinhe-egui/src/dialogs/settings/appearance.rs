@@ -20,10 +20,13 @@ pub fn show_appearance_tab(
         t!("settings.appearance.ui_scale_desc").as_ref(),
         |ui| {
             let mut scale = settings.ui_scale;
-            let resp = ui.add(
-                egui::Slider::new(&mut scale, 0.75..=2.0)
-                    .step_by(0.05)
-                    .show_value(true),
+            let resp = crate::widgets::slider::control_slider(
+                ui,
+                &mut scale,
+                0.75..=2.0,
+                220.0,
+                Some(0.05),
+                true,
             );
             if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
                 settings.ui_scale = scale;
@@ -48,10 +51,13 @@ pub fn show_appearance_tab(
         t!("settings.appearance.font_scale_desc").as_ref(),
         |ui| {
             let mut fscale = settings.font_scale;
-            let resp = ui.add(
-                egui::Slider::new(&mut fscale, 0.75..=2.0)
-                    .step_by(0.05)
-                    .show_value(true),
+            let resp = crate::widgets::slider::control_slider(
+                ui,
+                &mut fscale,
+                0.75..=2.0,
+                220.0,
+                Some(0.05),
+                true,
             );
             if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
                 settings.font_scale = fscale;

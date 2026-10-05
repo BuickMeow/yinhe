@@ -143,13 +143,15 @@ pub(crate) fn show(
                         .size(crate::theme::ICON_FONT)
                         .color(crate::theme::text_label()),
                 );
-                ui.add(
-                    eframe::egui::TextEdit::singleline(&mut picker.search_query)
-                        .hint_text(t!("dialog.archive.search_hint").as_ref())
-                        .desired_width(f32::INFINITY),
+                crate::widgets::text_input::control_text_input(
+                    ui,
+                    &mut picker.search_query,
+                    ui.available_width(),
+                    "archive_search",
+                    Some(t!("dialog.archive.search_hint").as_ref()),
                 )
             });
-            if search_response.response.changed() {
+            if search_response.inner.changed() {
                 picker.recompute_filter();
             }
             ui.add_space(4.0);

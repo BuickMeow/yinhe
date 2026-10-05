@@ -6,6 +6,9 @@
 //! 导致的宽度抖动与 `Area::get_best_align` 翻转。
 
 use eframe::egui;
+use egui_material_icons::icons::ICON_UNFOLD_MORE;
+
+use super::control;
 
 /// 默认宽度（与设置页常用下拉一致，统一等宽），调用方可按内容选 70/160/200。
 pub const DEFAULT_WIDTH: f32 = 200.0;
@@ -37,17 +40,66 @@ pub fn combo_box(
     //   用调用方行距会在设置页（局部 4.0）算出 196 而 popup 实际步长 27，仍留 7px 半截；
     // - 取 7 行：与原来可视行数相当（200px 放 7 整行 + 半截），内容不足一屏时
     //   `ScrollArea::auto_shrink` 收缩到内容高度，天然无半截，无需特殊处理。
-    let row_step = 24.0 + ui.ctx().global_style().spacing.item_spacing.y;
-    let height = 7.0 * row_step;
-    egui::ComboBox::from_id_salt(id)
-        .selected_text(selected_text)
+    // popup 高度取整行：viewport 高 = 可见行数 ×（行高 + 行距），底部恰好顶着下一行上沿。
+    let row_step = control::CONTROL_H + ui.ctx().global_style().spacing.item_spacing.y;
+    let popup_h = 7.0 * row_step;
+
+    // 自绘按钮（替代 egui ComboBox 的原生按钮，才能用 Material unfold_more）。
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(width, control::CONTROL_H), egui::Sense::hover());
+    let resp = ui.interact(rect, ui.id().with(id), egui::Sense::click());
+
+    if ui.is_rect_visible(rect) {
+        let fill = control::state_fill(
+            crate::theme::btn_bg(),
+            ui.is_enabled(),
+            resp.hovered(),
+            resp.is_pointer_button_down_on(),
+        );
+        let stroke = control::control_stroke(ui.is_enabled(), resp.has_focus());
+        control::paint_bg(ui.painter(), rect, fill, stroke);
+
+        let icon_w = 18.0;
+        let text_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.min.x + control::CONTROL_PAD_X, rect.min.y),
+            egui::pos2(rect.max.x - control::CONTROL_PAD_X - icon_w, rect.max.y),
+        );
+        let galley = selected_text.into().into_galley(
+            ui,
+            Some(egui::TextWrapMode::Truncate),
+            text_rect.width(),
+            egui::TextStyle::Body,
+        );
+        ui.painter().galley(
+            egui::pos2(text_rect.min.x, rect.center().y - galley.size().y * 0.5),
+            galley,
+            crate::theme::text_primary(),
+        );
+        ui.painter().text(
+            egui::pos2(rect.max.x - control::CONTROL_PAD_X - 6.0, rect.center().y),
+            egui::Align2::CENTER_CENTER,
+            ICON_UNFOLD_MORE.codepoint,
+            egui::FontId::new(crate::theme::ICON_FONT, ICON_UNFOLD_MORE.font_family()),
+            crate::theme::text_secondary(),
+        );
+    }
+
+    let popup = egui::Popup::from_toggle_button_response(&resp)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
         .width(width)
-        .height(height)
-        .show_ui(ui, |ui| {
+        .show(|ui| {
             ui.set_min_width(width);
             ui.set_max_width(width);
-            add_contents(ui);
-        })
+            egui::ScrollArea::vertical()
+                .max_height(popup_h)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.set_min_width(width);
+                    add_contents(ui);
+                });
+        });
+
+    egui::InnerResponse::new(popup.map(|_| ()), resp)
 }
 
 /// 下拉项：无边框、铺满整行，与 `menu::menu_item_button` 同样式。

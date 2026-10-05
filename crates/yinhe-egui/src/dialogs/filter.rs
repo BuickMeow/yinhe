@@ -316,7 +316,11 @@ fn bound_row(
 }
 
 fn drag_u32(ui: &mut egui::Ui, v: &mut u32, max: u32) {
-    ui.add(egui::DragValue::new(v).range(0..=max).speed(1.0));
+    ui.add(
+        crate::widgets::numeric_input::decimal_drag_value(v)
+            .range(0..=max)
+            .speed(1.0),
+    );
 }
 
 fn show_note_section(ui: &mut egui::Ui, state: &mut FilterDialogState, num_tracks: usize) {
@@ -371,13 +375,13 @@ fn show_note_section(ui: &mut egui::Ui, state: &mut FilterDialogState, num_track
         &mut state.gate_enabled,
         |ui| {
             ui.add(
-                egui::DragValue::new(&mut state.gate_hi)
+                crate::widgets::numeric_input::decimal_drag_value(&mut state.gate_hi)
                     .range(1..=u32::MAX)
                     .speed(1.0),
             );
             ui.label("~");
             ui.add(
-                egui::DragValue::new(&mut state.gate_lo)
+                crate::widgets::numeric_input::decimal_drag_value(&mut state.gate_lo)
                     .range(1..=u32::MAX)
                     .speed(1.0),
             );
@@ -431,13 +435,13 @@ fn show_automation_section(ui: &mut egui::Ui, state: &mut FilterDialogState) {
         &mut state.automation_value_enabled,
         |ui| {
             ui.add(
-                egui::DragValue::new(&mut state.automation_value_hi)
+                crate::widgets::numeric_input::decimal_drag_value(&mut state.automation_value_hi)
                     .speed(0.01)
                     .fixed_decimals(3),
             );
             ui.label("~");
             ui.add(
-                egui::DragValue::new(&mut state.automation_value_lo)
+                crate::widgets::numeric_input::decimal_drag_value(&mut state.automation_value_lo)
                     .speed(0.01)
                     .fixed_decimals(3),
             );

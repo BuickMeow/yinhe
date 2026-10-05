@@ -41,7 +41,10 @@ pub(crate) fn color_edit_button(
                 for (i, name) in ["R", "G", "B", "A"].iter().enumerate() {
                     ui.label(*name);
                     changed |= ui
-                        .add(egui::DragValue::new(&mut rgba[i]).range(0..=255))
+                        .add(
+                            crate::widgets::numeric_input::decimal_drag_value(&mut rgba[i])
+                                .range(0..=255),
+                        )
                         .changed();
                 }
             });
@@ -55,19 +58,31 @@ pub(crate) fn color_edit_button(
                 ui.label("H");
                 let mut h = hsva.h * 360.0;
                 changed |= ui
-                    .add(egui::DragValue::new(&mut h).range(0.0..=360.0).suffix("°"))
+                    .add(
+                        crate::widgets::numeric_input::decimal_drag_value(&mut h)
+                            .range(0.0..=360.0)
+                            .suffix("°"),
+                    )
                     .changed();
                 hsva.h = h / 360.0;
                 ui.label("S");
                 let mut s = hsva.s * 100.0;
                 changed |= ui
-                    .add(egui::DragValue::new(&mut s).range(0.0..=100.0).suffix("%"))
+                    .add(
+                        crate::widgets::numeric_input::decimal_drag_value(&mut s)
+                            .range(0.0..=100.0)
+                            .suffix("%"),
+                    )
                     .changed();
                 hsva.s = s / 100.0;
                 ui.label("V");
                 let mut v = hsva.v * 100.0;
                 changed |= ui
-                    .add(egui::DragValue::new(&mut v).range(0.0..=100.0).suffix("%"))
+                    .add(
+                        crate::widgets::numeric_input::decimal_drag_value(&mut v)
+                            .range(0.0..=100.0)
+                            .suffix("%"),
+                    )
                     .changed();
                 hsva.v = v / 100.0;
             });
