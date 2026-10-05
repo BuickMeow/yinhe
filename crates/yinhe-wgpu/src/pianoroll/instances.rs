@@ -183,6 +183,60 @@ pub fn build_notes(
     out.extend(results.into_iter().flatten());
 }
 
+/// 构建 LOD 摘要层的可见实例（用于 **CPU 渲染路径**，即 GPU cull 关闭时）。
+///
+/// 复用 GPU 摘要的聚合函数 [`super::build_key_summary`]：对可见 key 取与可见
+/// tick 范围相交的**完整块**聚合（块对齐全局网格、不随视图抖动），再按可见
+/// tick 范围过滤。方向无关（横向/纵向共用同一份语义数据，像素由 shader 计算）。
+///
+/// 选中高亮不在实例里逐音符标记：CPU 路径的 shader 会用矩形选区 uniform
+/// 实时补位（与 GPU cull 摘要路径一致）。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
+pub fn build_summary_notes(
+    out: &mut Vec<NoteInstance>,
+    w: f32,
+    h: f32,
+    midi: &dyn NoteSource,
+    view: &PianoRollView,
+    hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
+    track_visible: &[bool],
+    block_ticks: u32,
+) {
+    let (tick_start, tick_end) = view.visible_main_range(view.main_axis_len(w, h));
+    let (key_lo, key_hi) = view.visible_cross_range(view.cross_axis_len(w, h));
+    let lo = tick_start.max(0.0);
+    let block = block_ticks.max(1);
+    // 只扫「与可见 tick 范围相交的完整块」：[floor(lo/block), ceil(hi/block)+1)，
+    // 避免为聚合而扫全曲每个 key 的全部音符；`key_notes_in_range` 会回看长音符。
+    let block_f = block as f64;
+    let scan_lo = (lo / block_f).floor() * block_f;
+    let scan_hi = ((tick_end / block_f).ceil() + 1.0) * block_f;
+    let scan = Some((scan_lo, scan_hi));
+
+    let results: Vec<Vec<NoteInstance>> = (key_lo..=key_hi)
+        .into_par_iter()
+        .filter_map(|key| {
+            stacker::maybe_grow(STACK_RED_ZONE, STACK_SIZE, || {
+                let mut local = Vec::new();
+                build_key_instances(
+                    &mut local,
+                    midi,
+                    key,
+                    track_visible,
+                    hidden_notes,
+                    scan,
+                    None,
+                );
+                let mut segs = super::build_key_summary(key, &local, block);
+                segs.retain(|s| (s.start_tick as f64) < tick_end && (s.end_tick as f64) > lo);
+                if segs.is_empty() { None } else { Some(segs) }
+            })
+        })
+        .collect();
+
+    out.extend(results.into_iter().flatten());
+}
+
 /// Build ALL note instances (no viewport culling) for GPU compute cull.
 /// Upload once on MIDI load/change; the GPU cull shader handles per-frame
 /// viewport culling.
@@ -371,6 +425,37 @@ mod tests {
         assert_eq!(note.packed & 0xFF, 100, "key");
         assert_eq!((note.packed >> 8) & 0xFFFF, 0, "track");
         assert_eq!((note.packed >> 24) & 0xFF, 100, "velocity");
+    }
+
+    /// CPU LOD：同一 block 内的音符合并为一段，跨 block 另起一段。
+    #[test]
+    fn test_build_summary_notes_merges_blocks() {
+        let mut out: Vec<NoteInstance> = Vec::new();
+        let midi = make_midi(vec![
+            (60, 0, 10, 0, 100),
+            (60, 100, 110, 0, 100), // 与上一条同属 block(256)
+            (60, 300, 310, 0, 100), // 下一 block
+        ]);
+        let mut view = make_view();
+        // 让 key 60 进入横向可见范围。
+        view.base.scroll_y = 500.0;
+        let track_visible = vec![true];
+        let hidden = std::collections::HashSet::new();
+
+        build_summary_notes(
+            &mut out,
+            1000.0,
+            500.0,
+            &midi,
+            &view,
+            &hidden,
+            &track_visible,
+            256,
+        );
+        assert_eq!(out.len(), 2, "两个 block 各一段");
+        assert_eq!(out[0].packed & 0xFF, 60, "key 保留");
+        assert_eq!((out[0].start_tick, out[0].end_tick), (0, 110), "块内合并");
+        assert_eq!((out[1].start_tick, out[1].end_tick), (300, 310));
     }
 
     #[test]

@@ -146,18 +146,41 @@ pub(crate) fn upload_and_prepare(
         job.uniforms.exclude_mask = exclude_mask;
         job.exclude_table = exclude_table.to_vec();
         let mut notes_instances = Vec::new();
+        // LOD：缩小到摘要档时复用摘要聚合（与 GPU cull 同一档位公式 / 聚合函数），
+        // 只上传可见摘要段，避免全量音符实例的构建 / 带宽 / 绘制开销。
+        let lod_block = yinhe_wgpu::select_summary_level(view.base.pixels_per_tick)
+            .map(|level| yinhe_wgpu::SUMMARY_BLOCK_TICKS[level]);
         if let Some(midi) = midi {
-            yinhe_wgpu::build_notes(
-                &mut notes_instances,
-                w as f32,
-                h as f32,
-                midi,
-                view,
-                hidden_notes,
-                track_visible,
-                Some(selected),
-            );
+            match lod_block {
+                Some(block) => yinhe_wgpu::build_summary_notes(
+                    &mut notes_instances,
+                    w as f32,
+                    h as f32,
+                    midi,
+                    view,
+                    hidden_notes,
+                    track_visible,
+                    block,
+                ),
+                None => yinhe_wgpu::build_notes(
+                    &mut notes_instances,
+                    w as f32,
+                    h as f32,
+                    midi,
+                    view,
+                    hidden_notes,
+                    track_visible,
+                    Some(selected),
+                ),
+            }
         }
+        // 摘要档的选中高亮由 shader 用矩形选区 uniform 实时补位，实例不随选区变化，
+        // 故摘要档不把选区指纹计入缓存 key（避免选区变化导致整层重传）。
+        let sel_hash = if lod_block.is_some() {
+            0
+        } else {
+            selected.state_hash()
+        };
         let mut ghost_instances = Vec::new();
         for &(start_tick, end_tick, key, track) in ghost_notes {
             yinhe_wgpu::build_ghost_note(
@@ -182,9 +205,11 @@ pub(crate) fn upload_and_prepare(
             tv_hash,
             revision,
             hidden_hash,
-            // 选中状态影响实例内的选中位（填充黑），必须进缓存 key，
+            // 摘要档位（tick 块宽）决定聚合格，必须进 key，否则换档时不重建。
+            lod_block.unwrap_or(0) as u64,
+            // 选中状态影响原始实例的选中位（填充黑），必须进缓存 key，
             // 否则框选/清空后 GPU 层因 key 相同跳过后上传。
-            selected.state_hash(),
+            sel_hash,
         ]);
         let note_layers = vec![
             yinhe_wgpu::NoteLayerData {
