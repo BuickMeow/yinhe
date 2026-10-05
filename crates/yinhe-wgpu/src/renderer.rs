@@ -621,27 +621,15 @@ impl InstanceRenderer {
         if self.cull.use_indirect() {
             // ppu 很小（块宽 ≤ SUMMARY_MAX_PX）时改走 LOD 摘要层：cull 与
             // 绘制量从「原始音符数」降到「摘要段数」。选择是 ppu 的连续函数；
-            // 目标档未上传（异常/显存降级）时向**更粗**的档回退（段数更少、
-            // 更可能已上传），全部缺失才用原始音符层。
+            // 目标档未上传（异常/显存降级）时向更细的档回退，再不行用原始层。
             let summary_level = if self.cull.summary_ready() {
                 crate::pianoroll::select_summary_level(uniforms.pixels_per_tick).and_then(|best| {
-                    (0..=best)
-                        .rev()
+                    (best..crate::pianoroll::SUMMARY_BLOCK_TICKS.len())
                         .find(|&level| self.cull.summary_level_ready(level))
                 })
             } else {
                 None
             };
-            if std::env::var_os("YINHE_LOD_DEBUG").is_some() {
-                tracing::info!(
-                    "[lod] orient={} ppu={:.4} indirect={} summary_ready={} level={:?}",
-                    uniforms.orientation,
-                    uniforms.pixels_per_tick,
-                    self.cull.use_indirect(),
-                    self.cull.summary_ready(),
-                    summary_level,
-                );
-            }
             let mut enc = self
                 .device
                 .create_command_encoder(&CommandEncoderDescriptor::default());
