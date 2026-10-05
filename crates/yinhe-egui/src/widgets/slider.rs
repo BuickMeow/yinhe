@@ -22,8 +22,10 @@ pub fn control_slider<Num: egui::emath::Numeric>(
     let max = range.end().to_f64();
     let span = (max - min).max(f64::EPSILON);
 
-    let track_h = 18.0;
+    // 与 `switch` 完全同尺寸：高 22、圆角 11、滑块半径 = 圆角 - 2（内缩 2px）。
+    let track_h = 22.0;
     let radius = track_h * 0.5;
+    let thumb_r = radius - 2.0;
 
     let (rect, mut resp) = ui.allocate_exact_size(
         egui::vec2(width, control::CONTROL_H),
@@ -52,6 +54,8 @@ pub fn control_slider<Num: egui::emath::Numeric>(
         resp.mark_changed();
     }
     let t = (((value.to_f64() - min) / span).clamp(0.0, 1.0)) as f32;
+    // 缓动：目标值跳变（点击/吸附一格）时滑块平滑滑过去；拖动时也顺滑跟随。
+    let disp = ui.ctx().animate_value_with_time(resp.id, t, 0.15);
 
     if ui.is_rect_visible(rect) {
         let enabled = ui.is_enabled();
@@ -68,7 +72,7 @@ pub fn control_slider<Num: egui::emath::Numeric>(
 
         // 滑块中心（两端各内缩一个半径，使圆形滑块始终落在胶囊内）。
         let travel = (track.width() - 2.0 * radius).max(1.0);
-        let thumb_cx = track.min.x + radius + travel * t;
+        let thumb_cx = track.min.x + radius + travel * disp;
 
         // 已填充段：从胶囊左端到「滑块中心 + 一个半径」，两端都是半圆的胶囊；
         // 右端半圆恰被圆形滑块整块盖住，所以不会漏色。
@@ -76,7 +80,7 @@ pub fn control_slider<Num: egui::emath::Numeric>(
         let fill = egui::Rect::from_min_max(track.min, egui::pos2(fill_right, track.max.y));
         painter.rect_filled(fill, radius, accent);
 
-        // 圆形滑块：主题基色 + 描边（蓝底/表面底上都可见）。
+        // 圆形滑块：主题基色 + 阴影 + 描边（与 switch 的 thumb 同款处理）。
         let hc = egui::pos2(thumb_cx, rect.center().y);
         let handle = if !enabled {
             crate::theme::text_disabled()
@@ -87,9 +91,13 @@ pub fn control_slider<Num: egui::emath::Numeric>(
         } else {
             knob
         };
-        painter.circle_filled(hc, radius, handle);
-        painter.circle_stroke(hc, radius, egui::Stroke::new(1.0, crate::theme::line_fg()));
-
+        painter.circle_filled(
+            hc + egui::vec2(0.0, 1.0),
+            thumb_r,
+            egui::Color32::from_black_alpha(40),
+        );
+        painter.circle_filled(hc, thumb_r, handle);
+        painter.circle_stroke(hc, thumb_r, egui::Stroke::new(1.0, crate::theme::line_fg()));
         // 数值：画在轨道内部偏滑块的另一侧；文字随底色调明暗。
         if show_value {
             let value_galley = painter.layout_no_wrap(
