@@ -56,6 +56,24 @@ pub(crate) fn flat_button_filled(
     )
 }
 
+/// 有底按钮（标准 `btn_bg`，宽度自适应文字）：设置页等需要与背景区分的按钮。
+pub(crate) fn flat_button_filled_auto(
+    ui: &mut egui::Ui,
+    text: impl Into<egui::WidgetText>,
+    enabled: bool,
+) -> egui::Response {
+    flat_button_ex(
+        ui,
+        text,
+        None,
+        None,
+        enabled,
+        false,
+        Some(crate::theme::btn_bg()),
+        FILLED_RADIUS,
+    )
+}
+
 /// 无边框选项按钮：`selected` 时用选中背景 + 强调色文字（替代 `selectable_label`）。
 pub(crate) fn flat_selected(
     ui: &mut egui::Ui,

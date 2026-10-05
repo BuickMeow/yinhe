@@ -154,10 +154,11 @@ pub fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bo
                 }
 
                 // 追加新快捷键（录制中时末尾不再额外显示录制块，仅保留下一行的占位行）
-                let add_btn = crate::widgets::flat::flat_button_sized(
+                let add_btn = crate::widgets::flat::flat_button_filled(
                     ui,
                     egui::RichText::new("+").strong(),
                     egui::vec2(28.0, 24.0),
+                    None,
                     !is_adding,
                 );
                 if add_btn
@@ -184,10 +185,11 @@ pub fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bo
             if is_adding {
                 ui.horizontal(|ui| {
                     ui.allocate_exact_size(egui::vec2(150.0, 24.0), egui::Sense::hover());
-                    let _ = crate::widgets::flat::flat_button_sized(
+                    let _ = crate::widgets::flat::flat_button_filled(
                         ui,
                         t!("settings.shortcuts.recording").as_ref(),
                         egui::vec2(140.0, 24.0),
+                        None,
                         true,
                     );
                 });
@@ -201,8 +203,12 @@ pub fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bo
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if crate::widgets::flat::flat_button(ui, t!("settings.shortcuts.reset").as_ref())
-                .clicked()
+            if crate::widgets::flat::flat_button_filled_auto(
+                ui,
+                t!("settings.shortcuts.reset").as_ref(),
+                true,
+            )
+            .clicked()
             {
                 settings.keybindings.reset_to_defaults();
                 // 同时取消进行中的录制，避免残留状态干扰
@@ -238,7 +244,7 @@ fn shortcut_combo_ui(
     } else {
         crate::shortcuts::display_combo(combo)
     };
-    if crate::widgets::flat::flat_button_sized(ui, btn_text, egui::vec2(140.0, 24.0), true)
+    if crate::widgets::flat::flat_button_filled(ui, btn_text, egui::vec2(140.0, 24.0), None, true)
         .clicked()
         && !is_recording
     {
@@ -248,10 +254,11 @@ fn shortcut_combo_ui(
     }
 
     if !is_recording
-        && crate::widgets::flat::flat_button_sized(
+        && crate::widgets::flat::flat_button_filled(
             ui,
             egui::RichText::new("×").strong(),
             egui::vec2(28.0, 24.0),
+            None,
             true,
         )
         .on_hover_text(t!("settings.shortcuts.clear").as_ref())
