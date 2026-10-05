@@ -16,6 +16,8 @@ pub struct LayoutSettings {
     pub bottom_dock_height: f32,
     /// 右栏多栏选项卡布局。
     pub right_panel_layout: RightPanelLayout,
+    /// PR 视图方向是否为纵向瀑布流（跨会话持久化，打开新文档时沿用）。
+    pub pr_vertical: bool,
 }
 
 impl Default for LayoutSettings {
@@ -28,6 +30,7 @@ impl Default for LayoutSettings {
             show_bottom_dock: false,
             bottom_dock_height: 200.0,
             right_panel_layout: RightPanelLayout::default(),
+            pr_vertical: false,
         }
     }
 }

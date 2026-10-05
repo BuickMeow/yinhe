@@ -87,13 +87,16 @@ impl PianoRollView {
         self.orientation == Orientation::Vertical
     }
 
-    /// 切换方向。会重置副轴视口初始化状态，让下一帧 `clamp_scroll` 重新初始化。
+    /// 切换方向。保留用户的缩放（`pixels_per_tick`/`key_height`）与视角位置：
+    /// - 交换 `scroll_x`/`scroll_y`（横向 time=scroll_x/key=scroll_y；纵向相反）；
+    /// - 不重置 `viewport_h`，让下一帧 `clamp_scroll` 按新副轴尺寸等比换算
+    ///   `key_height`，从而保持屏幕上显示的键数不变。
     pub fn set_orientation(&mut self, o: Orientation) {
         if self.orientation == o {
             return;
         }
+        std::mem::swap(&mut self.base.scroll_x, &mut self.base.scroll_y);
         self.orientation = o;
-        self.viewport_h = 0.0;
         self.base.dirty = true;
     }
 
@@ -635,17 +638,23 @@ mod tests {
     }
 
     #[test]
-    fn test_set_orientation_resets_viewport() {
+    fn test_set_orientation_swaps_scrolls_and_keeps_viewport() {
         let mut v = make_view();
         v.viewport_h = 800.0;
+        v.base.scroll_x = 123.0;
+        v.base.scroll_y = 456.0;
         v.set_orientation(Orientation::Vertical);
         assert_eq!(v.orientation, Orientation::Vertical);
-        assert_eq!(v.viewport_h, 0.0);
+        // 主/副轴滚动值互换（保持时间/音高位置连续）
+        assert_eq!(v.base.scroll_x, 456.0);
+        assert_eq!(v.base.scroll_y, 123.0);
+        // 不重置副轴视口：下一帧 clamp_scroll 据此等比换算，保持缩放
+        assert_eq!(v.viewport_h, 800.0);
         assert!(v.base.dirty);
-        // set 相同方向不重置
+        // set 相同方向不变
         let dirty = v.base.dirty;
         v.set_orientation(Orientation::Vertical);
-        assert_eq!(v.viewport_h, 0.0);
+        assert_eq!(v.base.scroll_x, 456.0);
         assert_eq!(v.base.dirty, dirty);
     }
 

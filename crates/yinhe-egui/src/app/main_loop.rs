@@ -636,10 +636,16 @@ impl eframe::App for App {
         }
 
         // ── 钢琴卷帘方向切换（III / 三 两个按钮直接设定方向）──
-        if let Some(orientation) = transport_response.set_orientation
-            && let Some(doc) = self.workspace.active_doc_mut()
-        {
-            doc.edit.pianoroll_view.set_orientation(orientation);
+        if let Some(orientation) = transport_response.set_orientation {
+            // 持久化：打开新文档时沿用用户选择的方向。
+            let vertical = orientation == yinhe_types::Orientation::Vertical;
+            if self.audio_settings.layout.pr_vertical != vertical {
+                self.audio_settings.layout.pr_vertical = vertical;
+                self.audio_settings.save();
+            }
+            if let Some(doc) = self.workspace.active_doc_mut() {
+                doc.edit.pianoroll_view.set_orientation(orientation);
+            }
         }
 
         // ── 时间码编辑事件（BPM/拍号/PPQ/位置/调式/量化）──

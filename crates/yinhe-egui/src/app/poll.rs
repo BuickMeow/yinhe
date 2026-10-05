@@ -38,6 +38,7 @@ impl App {
                     None,
                 ) {
                     Ok(mut doc) => {
+                        self.apply_saved_pr_orientation(&mut doc);
                         doc.sync_track_caches_with_conductor_color(
                             crate::theme::conductor_color_f32(),
                         );
@@ -152,7 +153,8 @@ impl App {
 
                     d
                 });
-                if let Some(doc) = result {
+                if let Some(mut doc) = result {
+                    self.apply_saved_pr_orientation(&mut doc);
                     // 自动保存恢复：先取出条目，**push 之后**再作用到恢复文档
                     // （此前在 push 前调用，会误改当时 active 的旧文档）。
                     let restore = self.take_restore_entry(&path);
