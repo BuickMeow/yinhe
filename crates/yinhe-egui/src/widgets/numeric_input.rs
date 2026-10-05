@@ -89,8 +89,13 @@ impl<Num: egui::emath::Numeric> egui::Widget for ControlDragValue<'_, Num> {
         let inner = frame.show(ui, |ui| {
             ui.spacing_mut().interact_size.y = control::CONTROL_H;
             ui.scope(|ui| {
-                let widgets = &mut ui.style_mut().visuals.widgets;
+                // 彻底关掉 DragValue 内部（含编辑态 TextEdit）的底与描边：
+                // 编辑态 TextEdit 的填充取自 extreme_bg_color，必须一并透明。
+                let visuals = &mut ui.style_mut().visuals;
+                visuals.extreme_bg_color = egui::Color32::TRANSPARENT;
+                let widgets = &mut visuals.widgets;
                 for v in [
+                    &mut widgets.noninteractive,
                     &mut widgets.inactive,
                     &mut widgets.hovered,
                     &mut widgets.active,

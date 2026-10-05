@@ -109,22 +109,13 @@ pub fn show_content(
                 .show(ui, |ui| {
                     ui.spacing_mut().interact_size.y = 24.0;
                     ui.spacing_mut().item_spacing.y = 4.0;
-                    crate::widgets::text_input::control_text_input(
+                    crate::widgets::text_input::control_text_input_clearable(
                         ui,
                         &mut settings.ui_session.settings_search,
                         132.0,
                         "settings_search",
                         Some(t!("settings.search_hint").as_ref()),
                     );
-                    if !settings.ui_session.settings_search.is_empty()
-                        && crate::widgets::flat::flat_button(
-                            ui,
-                            t!("settings.search_clear").as_ref(),
-                        )
-                        .clicked()
-                    {
-                        settings.ui_session.settings_search.clear();
-                    }
 
                     for (i, key) in CATEGORY_KEYS.iter().enumerate() {
                         let selected = settings.ui_session.settings_tab == i;

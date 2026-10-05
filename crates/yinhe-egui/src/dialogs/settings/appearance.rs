@@ -33,9 +33,12 @@ pub fn show_appearance_tab(
                 crate::scaling::apply_ui_scale(main_ctx, scale);
                 changed = true;
             }
-            if ui
-                .button(t!("settings.appearance.reset_scale").as_ref())
-                .clicked()
+            if crate::widgets::flat::flat_button_filled_auto(
+                ui,
+                t!("settings.appearance.reset_scale").as_ref(),
+                true,
+            )
+            .clicked()
             {
                 settings.ui_scale = 1.0;
                 crate::scaling::apply_ui_scale(main_ctx, 1.0);
@@ -64,9 +67,12 @@ pub fn show_appearance_tab(
                 crate::scaling::apply_font_scale(main_ctx, fscale);
                 changed = true;
             }
-            if ui
-                .button(t!("settings.appearance.reset_scale").as_ref())
-                .clicked()
+            if crate::widgets::flat::flat_button_filled_auto(
+                ui,
+                t!("settings.appearance.reset_scale").as_ref(),
+                true,
+            )
+            .clicked()
             {
                 settings.font_scale = 1.0;
                 crate::scaling::apply_font_scale(main_ctx, 1.0);
