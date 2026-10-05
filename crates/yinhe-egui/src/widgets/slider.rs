@@ -9,6 +9,81 @@ use eframe::egui;
 
 use super::control;
 
+/// 拖动条位置动画（存 `ctx.data` temp槽，按 widget Id 隔离）。
+///
+/// 与 `switch` 同样处理「非交互变化」：切页/换行复用同一 Id 时直接落位，
+/// 不播放过渡动画，避免从上一页的值滑到当前页。
+#[derive(Clone, Copy)]
+struct SliderAnim {
+    from: f32,
+    to: f32,
+    start: f64,
+    duration: f32,
+}
+
+/// 可打断的 eased 动画：目标翻转时从当前位置重起；`interacted=false` 时直接落位。
+/// 时长随跨度增长（大跳更快、细小刻度更短），用 `cubic_out`。
+fn animate_slider(ctx: &egui::Context, id: egui::Id, target: f32, interacted: bool) -> f32 {
+    let now = ctx.input(|i| i.time);
+    let pred = ctx.input(|i| i.predicted_dt) as f64 * 0.5;
+    let now_eff = now + pred;
+
+    let (disp, repaint) = ctx.data_mut(|d| match d.get_temp::<SliderAnim>(id) {
+        Some(a) => {
+            let elapsed = (now_eff - a.start) as f32;
+            let tt = (elapsed / a.duration.max(1e-4)).clamp(0.0, 1.0);
+            let cur = egui::lerp(a.from..=a.to, egui::emath::easing::cubic_out(tt));
+            if (a.to - target).abs() > f32::EPSILON {
+                if interacted {
+                    let delta = (target - cur).abs();
+                    let duration = (0.05 + 0.10 * delta.sqrt()).min(0.18);
+                    d.insert_temp(
+                        id,
+                        SliderAnim {
+                            from: cur,
+                            to: target,
+                            start: now_eff,
+                            duration,
+                        },
+                    );
+                    (cur, true)
+                } else {
+                    d.insert_temp(
+                        id,
+                        SliderAnim {
+                            from: target,
+                            to: target,
+                            start: now_eff,
+                            duration: 0.0,
+                        },
+                    );
+                    (target, false)
+                }
+            } else if tt < 1.0 {
+                (cur, true)
+            } else {
+                (target, false)
+            }
+        }
+        None => {
+            d.insert_temp(
+                id,
+                SliderAnim {
+                    from: target,
+                    to: target,
+                    start: now_eff,
+                    duration: 0.0,
+                },
+            );
+            (target, false)
+        }
+    });
+    if repaint {
+        ctx.request_repaint();
+    }
+    disp
+}
+
 /// 自绘拖动条。`width` 为整体宽度，`step` 为可选吸附步长。
 pub fn control_slider<Num: egui::emath::Numeric>(
     ui: &mut egui::Ui,
@@ -54,8 +129,9 @@ pub fn control_slider<Num: egui::emath::Numeric>(
         resp.mark_changed();
     }
     let t = (((value.to_f64() - min) / span).clamp(0.0, 1.0)) as f32;
-    // 缓动：目标值跳变（点击/吸附一格）时滑块平滑滑过去；拖动时也顺滑跟随。
-    let disp = ui.ctx().animate_value_with_time(resp.id, t, 0.15);
+    // 缓动：用户交互（点击/拖动/吸附一格）平滑过渡；切页等非交互变化直接落位。
+    let interacted = resp.dragged() || resp.clicked();
+    let disp = animate_slider(ui.ctx(), resp.id, t, interacted);
 
     if ui.is_rect_visible(rect) {
         let enabled = ui.is_enabled();
@@ -97,7 +173,6 @@ pub fn control_slider<Num: egui::emath::Numeric>(
             egui::Color32::from_black_alpha(40),
         );
         painter.circle_filled(hc, thumb_r, handle);
-        painter.circle_stroke(hc, thumb_r, egui::Stroke::new(1.0, crate::theme::line_fg()));
         // 数值：画在轨道内部偏滑块的另一侧；文字随底色调明暗。
         if show_value {
             let value_galley = painter.layout_no_wrap(
