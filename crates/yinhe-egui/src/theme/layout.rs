@@ -6,6 +6,8 @@ pub const SCROLLBAR_H: f32 = 24.0;
 pub const SCROLLBAR_W: f32 = 24.0;
 pub const SPLIT_GAP: f32 = 2.0;
 pub const SPLIT_HANDLE_W: f32 = 2.0;
+/// 钢琴卷帘内容层（调式色带等）不透明度。固定值，不再暴露为设置项。
+pub const CONTENT_OPACITY: f32 = 0.7;
 
 // ── 字号体系 ──
 // 所有 UI 字号集中于此。高 DPI 铺垫：未来支持高分屏时在此统一乘缩放因子，

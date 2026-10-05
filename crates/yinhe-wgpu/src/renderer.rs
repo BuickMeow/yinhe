@@ -47,6 +47,8 @@ pub struct InstanceRenderer {
     /// 最近一帧 PR 音符走的层：`Some(block_ticks)` = LOD 摘要档，
     /// `None` = 原始音符层（供状态栏显示当前 LOD 档位）。
     last_lod_block: Option<u32>,
+    /// 是否启用 LOD 摘要（设置项）。false 时始终走原始音符层。
+    lod_enabled: bool,
     /// AM 力度条 LOD 摘要（CPU 侧，随文档/编辑后台重建）。
     velocity_summary: Option<Arc<crate::automation::VelocitySummary>>,
     /// 摘要对应的一致性键（revision ^ tv_hash）；与当前键不同则需重建。
@@ -115,6 +117,7 @@ impl InstanceRenderer {
                 layers: Vec::new(),
                 cull,
                 last_lod_block: None,
+                lod_enabled: true,
                 velocity_summary: None,
                 velocity_summary_revision: 0,
                 velocity_rebuild: None,
@@ -391,6 +394,11 @@ impl InstanceRenderer {
         self.last_lod_block
     }
 
+    /// 设置是否启用 LOD 摘要层（设置项）。
+    pub fn set_lod_enabled(&mut self, enabled: bool) {
+        self.lod_enabled = enabled;
+    }
+
     /// AM 力度条摘要：按 ppu 缩小时 `prepare_automation` 用它切片生成 bar。
     pub fn velocity_summary(&self) -> Option<Arc<crate::automation::VelocitySummary>> {
         self.velocity_summary.clone()
@@ -622,7 +630,7 @@ impl InstanceRenderer {
             // ppu 很小（块宽 ≤ SUMMARY_MAX_PX）时改走 LOD 摘要层：cull 与
             // 绘制量从「原始音符数」降到「摘要段数」。选择是 ppu 的连续函数；
             // 目标档未上传（异常/显存降级）时向更细的档回退，再不行用原始层。
-            let summary_level = if self.cull.summary_ready() {
+            let summary_level = if self.lod_enabled && self.cull.summary_ready() {
                 crate::pianoroll::select_summary_level(uniforms.pixels_per_tick).and_then(|best| {
                     (best..crate::pianoroll::SUMMARY_BLOCK_TICKS.len())
                         .find(|&level| self.cull.summary_level_ready(level))

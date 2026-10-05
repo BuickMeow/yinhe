@@ -57,9 +57,12 @@ pub(crate) fn upload_and_prepare(
     min_border_width: f32,
     note_outline: bool,
     use_gpu_cull: bool,
+    lod_enabled: bool,
     perf_on: bool,
     t_prepare_end: &mut Option<Instant>,
 ) -> (bool, yinhe_theme::GpuTheme) {
+    // LOD 开关同步到主 renderer（决定 GPU cull 路径是否选摘要层）。
+    pianoroll.set_lod_enabled(lod_enabled);
     // ── AM 力度条 LOD 摘要：编辑/切轨后后台防抖重建 ──
     // 与 GPU cull 无关（AM 面板无论哪条路径都可能走摘要），放在 cull 分支外。
     // track_visible hash 每帧只算一次，AM 摘要与下方 GPU 上传共用。
@@ -148,8 +151,12 @@ pub(crate) fn upload_and_prepare(
         let mut notes_instances = Vec::new();
         // LOD：缩小到摘要档时复用摘要聚合（与 GPU cull 同一档位公式 / 聚合函数），
         // 只上传可见摘要段，避免全量音符实例的构建 / 带宽 / 绘制开销。
-        let lod_block = yinhe_wgpu::select_summary_level(view.base.pixels_per_tick)
-            .map(|level| yinhe_wgpu::SUMMARY_BLOCK_TICKS[level]);
+        let lod_block = if lod_enabled {
+            yinhe_wgpu::select_summary_level(view.base.pixels_per_tick)
+                .map(|level| yinhe_wgpu::SUMMARY_BLOCK_TICKS[level])
+        } else {
+            None
+        };
         if let Some(midi) = midi {
             match lod_block {
                 Some(block) => yinhe_wgpu::build_summary_notes(

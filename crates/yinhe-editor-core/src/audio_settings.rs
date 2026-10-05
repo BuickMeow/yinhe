@@ -30,6 +30,10 @@ fn default_toast_enabled() -> bool {
     true
 }
 
+fn default_lod_enabled() -> bool {
+    true
+}
+
 fn default_auto_save_enabled() -> bool {
     true
 }
@@ -102,7 +106,9 @@ pub struct AudioSettings {
     pub favorite_themes: Vec<String>,
     pub ui_scale: f32,
     pub font_scale: f32,
-    pub content_opacity: f32,
+    /// 是否启用 LOD 摘要层（缩小视图时用摘要段替代逐音符绘制）。
+    #[serde(default = "default_lod_enabled")]
+    pub lod_enabled: bool,
     /// 完成通知自动收起秒数（None=不自动收起）
     #[serde(default = "default_toast_collapse_secs")]
     pub toast_collapse_secs: Option<u32>,
@@ -183,7 +189,7 @@ impl Default for AudioSettings {
             favorite_themes: Vec::new(),
             ui_scale: 1.0,
             font_scale: 1.0,
-            content_opacity: 0.7,
+            lod_enabled: true,
             toast_collapse_secs: default_toast_collapse_secs(),
             toast_action_collapse_secs: default_toast_action_collapse_secs(),
             toast_enabled: default_toast_enabled(),

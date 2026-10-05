@@ -38,12 +38,10 @@ pub fn show_render_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool 
 
     setting_row(
         ui,
-        t!("settings.render.content_opacity").as_ref(),
-        t!("settings.render.content_opacity_desc").as_ref(),
+        t!("settings.render.gpu_cull").as_ref(),
+        t!("settings.render.gpu_cull_desc").as_ref(),
         |ui| {
-            let mut op = settings.content_opacity;
-            if ui.add(egui::Slider::new(&mut op, 0.0..=1.0)).changed() {
-                settings.content_opacity = op;
+            if crate::widgets::switch::switch(ui, &mut settings.use_gpu_cull).changed() {
                 changed = true;
             }
         },
@@ -51,10 +49,10 @@ pub fn show_render_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool 
 
     setting_row(
         ui,
-        t!("settings.render.gpu_cull").as_ref(),
-        t!("settings.render.gpu_cull_desc").as_ref(),
+        t!("settings.render.lod").as_ref(),
+        t!("settings.render.lod_desc").as_ref(),
         |ui| {
-            if crate::widgets::switch::switch(ui, &mut settings.use_gpu_cull).changed() {
+            if crate::widgets::switch::switch(ui, &mut settings.lod_enabled).changed() {
                 changed = true;
             }
         },

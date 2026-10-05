@@ -81,6 +81,7 @@ pub fn show(
     content_opacity: f32,
     note_outline: bool,
     use_gpu_cull: bool,
+    lod_enabled: bool,
     tempo_lane: &AutomationLane,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
     pen_path: &mut Option<yinhe_editor_core::pen::PenPath>,
@@ -306,6 +307,7 @@ pub fn show(
         min_border_width,
         note_outline,
         use_gpu_cull,
+        lod_enabled,
         perf_on,
         &mut t_prepare_end,
     );
