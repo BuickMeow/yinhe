@@ -111,17 +111,15 @@ pub fn stepper<Num: egui::emath::Numeric>(
             );
         }
 
-        // 数值区两侧的细分隔线（与加减号同色）。
-        let inset = crate::scaling::scaled_font(&ctx, 4.0);
-        let sep = egui::Stroke::new(crate::scaling::scaled_font(&ctx, 1.0), icon_color);
+        // 数值区两侧的细分隔线：占满整个高度，用面板背景色画，
+        // 视觉上像在胶囊上开了一道「透出背景」的缝（egui 无法真正擦除像素）。
+        let sep = egui::Stroke::new(
+            crate::scaling::scaled_font(&ctx, 1.0),
+            crate::theme::app_bg(),
+        );
         for x in [mid_rect.min.x, mid_rect.max.x] {
-            ui.painter().line_segment(
-                [
-                    egui::pos2(x, rect.min.y + inset),
-                    egui::pos2(x, rect.max.y - inset),
-                ],
-                sep,
-            );
+            ui.painter()
+                .line_segment([egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)], sep);
         }
     }
 
