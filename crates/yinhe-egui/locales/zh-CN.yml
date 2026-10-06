@@ -345,6 +345,7 @@ settings.midi_export.strip_empty_desc: "导出时跳过无音符且无自动化�
 settings.midi_export.dedup_overlaps: "导出时去重重叠音符"
 settings.midi_export.dedup_overlaps_desc: "导出时自动剔除同轨同键的重叠音符，保留最早音符，不改工程"
 settings.refresh_devices: "刷新设备列表"
+settings.refresh: "刷新"
 settings.factory_reset: "恢复出厂设置"
 settings.general.heading: "通用"
 settings.auto_save: "自动保存"

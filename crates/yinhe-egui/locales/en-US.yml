@@ -345,6 +345,7 @@ settings.midi_export.strip_empty_desc: "Skip tracks with no notes and no automat
 settings.midi_export.dedup_overlaps: "Dedup Overlapping Notes on Export"
 settings.midi_export.dedup_overlaps_desc: "Remove overlapping notes on same track/key during export, keep earliest, project unchanged"
 settings.refresh_devices: "Refresh Device List"
+settings.refresh: "Refresh"
 settings.factory_reset: "Factory Reset"
 settings.general.heading: "General"
 settings.auto_save: "Auto Save"

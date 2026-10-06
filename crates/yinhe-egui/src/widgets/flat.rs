@@ -14,7 +14,7 @@ const FILLED_RADIUS: f32 = 6.0;
 
 /// 无边框按钮：宽度自适应文字，居中显示；hover/按下只变背景。
 pub(crate) fn flat_button(ui: &mut egui::Ui, text: impl Into<egui::WidgetText>) -> egui::Response {
-    flat_button_ex(ui, text, None, None, true, false, None, 4.0, false)
+    flat_button_ex(ui, text, None, None, true, false, None, 4.0, false, None)
 }
 
 /// 无边框按钮（可设最小尺寸；`enabled = false` 置灰不可点）。
@@ -34,6 +34,7 @@ pub(crate) fn flat_button_sized(
         None,
         4.0,
         false,
+        None,
     )
 }
 
@@ -43,7 +44,18 @@ pub(crate) fn flat_button_fixed(
     text: impl Into<egui::WidgetText>,
     size: egui::Vec2,
 ) -> egui::Response {
-    flat_button_ex(ui, text, Some(size), None, true, true, None, 4.0, false)
+    flat_button_ex(
+        ui,
+        text,
+        Some(size),
+        None,
+        true,
+        true,
+        None,
+        4.0,
+        false,
+        None,
+    )
 }
 
 /// 无边框按钮（固定尺寸 + 常态底色；transport 菜单/图钉图标按钮用）。
@@ -66,6 +78,7 @@ pub(crate) fn flat_button_filled(
         Some(crate::theme::btn_bg()),
         FILLED_RADIUS,
         false,
+        None,
     )
 }
 
@@ -87,6 +100,27 @@ pub(crate) fn flat_button_filled_stroked(
         Some(crate::theme::btn_bg()),
         FILLED_RADIUS,
         true,
+        None,
+    )
+}
+
+/// 有底、带轻描边、文字用危险色的按钮（恢复出厂设置等破坏性操作，宽度自适应）。
+pub(crate) fn flat_button_filled_stroked_danger(
+    ui: &mut egui::Ui,
+    text: impl Into<egui::WidgetText>,
+    enabled: bool,
+) -> egui::Response {
+    flat_button_ex(
+        ui,
+        text,
+        None,
+        None,
+        enabled,
+        false,
+        Some(crate::theme::btn_bg()),
+        FILLED_RADIUS,
+        true,
+        Some(crate::theme::danger_text_bright()),
     )
 }
 
@@ -106,6 +140,7 @@ pub(crate) fn flat_button_filled_auto(
         Some(crate::theme::btn_bg()),
         FILLED_RADIUS,
         true,
+        None,
     )
 }
 
@@ -125,6 +160,7 @@ pub(crate) fn flat_selected(
         None,
         4.0,
         false,
+        None,
     )
 }
 
@@ -155,6 +191,7 @@ fn flat_button_ex(
     base_bg: Option<egui::Color32>,
     radius: f32,
     stroked: bool,
+    fg: Option<egui::Color32>,
 ) -> egui::Response {
     let ctx = ui.ctx().clone();
     let scale = |v: f32| crate::scaling::scaled_font(&ctx, v);
@@ -215,6 +252,8 @@ fn flat_button_ex(
         }
         let color = if !enabled {
             crate::theme::text_disabled()
+        } else if let Some(fg) = fg {
+            fg
         } else if selected_bg.is_some() {
             crate::theme::accent_active()
         } else {

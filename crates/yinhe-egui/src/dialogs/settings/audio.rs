@@ -353,8 +353,9 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     );
 
     // 设备列表变更（热插拔等）后手动刷新
-    ui.horizontal(|ui| {
-        if crate::widgets::flat::flat_button(ui, t!("settings.refresh_devices").as_ref()).clicked()
+    setting_row(ui, t!("settings.refresh_devices").as_ref(), "", |ui| {
+        if crate::widgets::flat::flat_button_filled_auto(ui, t!("settings.refresh").as_ref(), true)
+            .clicked()
         {
             let devices = crate::audio_settings::list_output_devices();
             let (_default_rate, rates) = crate::audio_settings::discover_sample_rates();

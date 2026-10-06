@@ -14,12 +14,12 @@ pub fn show_general_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool
         t!("settings.factory_reset").as_ref(),
         t!("settings.factory_reset_desc").as_ref(),
         |ui| {
-            if ui
-                .button(
-                    egui::RichText::new(t!("settings.factory_reset").as_ref())
-                        .color(crate::theme::danger_text()),
-                )
-                .clicked()
+            if crate::widgets::flat::flat_button_filled_stroked_danger(
+                ui,
+                t!("settings.factory_reset").as_ref(),
+                true,
+            )
+            .clicked()
             {
                 let default_settings = AudioSettings::default();
                 let devices = std::mem::take(&mut settings.ui_session.available_devices);
