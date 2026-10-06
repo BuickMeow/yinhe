@@ -60,13 +60,37 @@ pub fn stepper<Num: egui::emath::Numeric>(
         let base = crate::theme::btn_bg();
         let fill = control::state_fill(base, enabled, false, false);
         let stroke = control::control_stroke(enabled, false);
-        // 三段各自独立的圆角矩形（段间留缝，缝隙里就是真实背景）。
-        for seg in [minus_rect, mid_rect, plus_rect] {
-            control::paint_bg(ui.painter(), seg, radius, fill, stroke);
+        // 只有最左段的左两角、最右段的右两角是圆角，其余全为直角。
+        let r = radius as u8;
+        let corner_left = egui::CornerRadius {
+            nw: r,
+            sw: r,
+            ne: 0,
+            se: 0,
+        };
+        let corner_mid = egui::CornerRadius::ZERO;
+        let corner_right = egui::CornerRadius {
+            nw: 0,
+            sw: 0,
+            ne: r,
+            se: r,
+        };
+        // 三段各自独立绘制（段间留缝，缝隙里就是真实背景）。
+        for (seg, corners) in [
+            (minus_rect, corner_left),
+            (mid_rect, corner_mid),
+            (plus_rect, corner_right),
+        ] {
+            ui.painter().rect_filled(seg, corners, fill);
+            ui.painter()
+                .rect_stroke(seg, corners, stroke, egui::StrokeKind::Inside);
         }
 
         // 两侧按钮的 hover/按下底。
-        for (btn_rect, btn) in [(minus_rect, &minus), (plus_rect, &plus)] {
+        for (btn_rect, corners, btn) in [
+            (minus_rect, corner_left, &minus),
+            (plus_rect, corner_right, &plus),
+        ] {
             let fill = if !enabled {
                 crate::theme::text_disabled().gamma_multiply(0.25)
             } else if btn.is_pointer_button_down_on() {
@@ -76,7 +100,7 @@ pub fn stepper<Num: egui::emath::Numeric>(
             } else {
                 continue;
             };
-            ui.painter().rect_filled(btn_rect, radius, fill);
+            ui.painter().rect_filled(btn_rect, corners, fill);
         }
 
         // 加减图标。
