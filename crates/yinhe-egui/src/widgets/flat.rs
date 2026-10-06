@@ -195,9 +195,21 @@ fn flat_button_ex(
 ) -> egui::Response {
     let ctx = ui.ctx().clone();
     let scale = |v: f32| crate::scaling::scaled_font(&ctx, v);
-    let galley = text
-        .into()
-        .into_galley(ui, None, f32::INFINITY, egui::TextStyle::Button);
+    // 主题设置了 `override_text_color`，galley 会把颜色烤进去，painter 的 fallback
+    // 颜色不会生效；因此文字色覆盖必须写进文本本身。
+    let mut text: egui::WidgetText = text.into();
+    if let Some(fg) = fg {
+        text = match text {
+            egui::WidgetText::RichText(rt) => {
+                egui::WidgetText::RichText(std::sync::Arc::new(rt.as_ref().clone().color(fg)))
+            }
+            egui::WidgetText::Text(s) => {
+                egui::WidgetText::RichText(std::sync::Arc::new(egui::RichText::new(s).color(fg)))
+            }
+            other => other,
+        };
+    }
+    let galley = text.into_galley(ui, None, f32::INFINITY, egui::TextStyle::Button);
     let pad_x = scale(10.0);
     // 标准按钮高度锁定为 `control::h`（与输入框/ComboBox 一致），文字垂直居中。
     let mut size = egui::vec2(galley.size().x + pad_x * 2.0, control::h(&ctx));

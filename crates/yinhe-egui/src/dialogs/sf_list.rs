@@ -80,26 +80,6 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                 let row_id = ui.id().with(("sf_row", i));
                 let resp = ui.interact(row_rect, row_id, egui::Sense::click_and_drag());
 
-                // ── 行内容：复选框 + 名称 + 路径 ──
-                let cb_rect = egui::Rect::from_min_max(
-                    egui::pos2(row_rect.min.x + 4.0, row_rect.center().y - 9.0),
-                    egui::pos2(row_rect.min.x + 22.0, row_rect.center().y + 9.0),
-                );
-                // 每行的 ui.id() 相同，push_id 保证 checkbox 的自动 id 唯一。
-                let cb_changed = ui
-                    .push_id(("sf_cb", i), |ui| {
-                        crate::widgets::checkbox::check_scope(ui, |ui| {
-                            ui.put(cb_rect, egui::Checkbox::new(&mut entries[i].enabled, ""))
-                        })
-                        .inner
-                    })
-                    .inner
-                    .changed();
-                if cb_changed {
-                    changed = true;
-                }
-
-                let text_x = row_rect.min.x + 22.0;
                 // 选中行文字切白，与 tree/table 惯例一致
                 let name_color = if is_selected {
                     crate::theme::contrast_fg()
@@ -111,6 +91,18 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                 } else {
                     crate::theme::text_label()
                 };
+
+                // ── 左侧拖拽手柄（Material 图标）──
+                ui.painter().text(
+                    egui::pos2(row_rect.min.x + 12.0, row_rect.center().y),
+                    egui::Align2::CENTER_CENTER,
+                    ICON_DRAG_INDICATOR.codepoint,
+                    egui::FontId::new(crate::theme::ICON_FONT, ICON_DRAG_INDICATOR.font_family()),
+                    label_color,
+                );
+
+                // ── 名称 + 路径 ──
+                let text_x = row_rect.min.x + 26.0;
                 ui.painter().text(
                     egui::pos2(text_x, row_rect.min.y + 10.0),
                     egui::Align2::LEFT_CENTER,
@@ -126,14 +118,29 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                     label_color,
                 );
 
-                // ── 右侧拖拽手柄（Material 图标）──
-                ui.painter().text(
-                    egui::pos2(row_rect.max.x - 10.0, row_rect.center().y),
-                    egui::Align2::CENTER_CENTER,
-                    ICON_DRAG_INDICATOR.codepoint,
-                    egui::FontId::new(crate::theme::ICON_FONT, ICON_DRAG_INDICATOR.font_family()),
-                    label_color,
+                // ── 右侧：自绘开关（替代复选框）──
+                let sw_w = crate::scaling::scaled_font(ui.ctx(), 38.0);
+                let sw_h = crate::scaling::scaled_font(ui.ctx(), 22.0);
+                let sw_rect = egui::Rect::from_min_size(
+                    egui::pos2(
+                        row_rect.max.x - 8.0 - sw_w,
+                        row_rect.center().y - sw_h * 0.5,
+                    ),
+                    egui::vec2(sw_w, sw_h),
                 );
+                // 每行的 ui.id() 相同，push_id 保证开关的自动 id 唯一。
+                let sw_changed = ui
+                    .push_id(("sf_sw", i), |ui| {
+                        ui.scope_builder(egui::UiBuilder::new().max_rect(sw_rect), |ui| {
+                            crate::widgets::switch::switch(ui, &mut entries[i].enabled)
+                        })
+                        .inner
+                    })
+                    .inner
+                    .changed();
+                if sw_changed {
+                    changed = true;
+                }
 
                 // ── 点击选择（拖拽中不响应）──
                 if resp.clicked() && !dragging {

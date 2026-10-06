@@ -154,9 +154,10 @@ pub(crate) fn show_viewport(app: &mut App, ctx: &egui::Context) -> bool {
                                     let Some(entries) = entries else {
                                         return;
                                     };
-                                    if crate::widgets::flat::flat_button(
+                                    if crate::widgets::flat::flat_button_filled_auto(
                                         ui,
                                         t!("soundfont.add").as_ref(),
+                                        true,
                                     )
                                     .clicked()
                                         && let Some(paths) = rfd::FileDialog::new()
@@ -177,9 +178,10 @@ pub(crate) fn show_viewport(app: &mut App, ctx: &egui::Context) -> bool {
                                         }
                                         *changed_rc.borrow_mut() = true;
                                     }
-                                    if crate::widgets::flat::flat_button(
+                                    if crate::widgets::flat::flat_button_filled_auto(
                                         ui,
                                         t!("common.clear").as_ref(),
+                                        true,
                                     )
                                     .clicked()
                                     {
