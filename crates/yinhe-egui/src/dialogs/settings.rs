@@ -85,6 +85,8 @@ pub fn show_content(
                         "settings_search",
                         Some(t!("settings.search_hint").as_ref()),
                     );
+                    // 搜索框与分类列表之间留出间距（自绘输入框自身无外边距）。
+                    ui.add_space(6.0);
 
                     for (i, key) in CATEGORY_KEYS.iter().enumerate() {
                         let selected = settings.ui_session.settings_tab == i;
@@ -315,22 +317,14 @@ mod tests {
                         .selectable(false)
                         .wrap_mode(egui::TextWrapMode::Extend),
                 );
-                let resp = crate::widgets::flat::flat_button_sized(
-                    ui,
-                    "⌘S",
-                    egui::vec2(140.0, 24.0),
-                    true,
-                );
+                let resp =
+                    crate::widgets::flat::flat_button_fixed(ui, "⌘S", egui::vec2(140.0, 24.0));
                 first_x = resp.rect.min.x;
             });
             ui.horizontal(|ui| {
                 ui.allocate_exact_size(egui::vec2(150.0, 24.0), egui::Sense::hover());
-                let resp = crate::widgets::flat::flat_button_sized(
-                    ui,
-                    "⌘S",
-                    egui::vec2(140.0, 24.0),
-                    true,
-                );
+                let resp =
+                    crate::widgets::flat::flat_button_fixed(ui, "⌘S", egui::vec2(140.0, 24.0));
                 second_x = resp.rect.min.x;
             });
         });

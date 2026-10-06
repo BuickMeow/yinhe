@@ -17,27 +17,6 @@ pub(crate) fn flat_button(ui: &mut egui::Ui, text: impl Into<egui::WidgetText>) 
     flat_button_ex(ui, text, None, None, true, false, None, 4.0, false, None)
 }
 
-/// 无边框按钮（可设最小尺寸；`enabled = false` 置灰不可点）。
-pub(crate) fn flat_button_sized(
-    ui: &mut egui::Ui,
-    text: impl Into<egui::WidgetText>,
-    min_size: egui::Vec2,
-    enabled: bool,
-) -> egui::Response {
-    flat_button_ex(
-        ui,
-        text,
-        Some(min_size),
-        None,
-        enabled,
-        false,
-        None,
-        4.0,
-        false,
-        None,
-    )
-}
-
 /// 无边框按钮（固定尺寸，内容居中；MIX 条等紧凑布局用）。
 pub(crate) fn flat_button_fixed(
     ui: &mut egui::Ui,

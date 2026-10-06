@@ -142,7 +142,7 @@ pub(crate) fn list_row(
     selected: bool,
     add_contents: impl FnOnce(&mut egui::Ui),
 ) -> egui::Response {
-    let h = scaled_font(ui.ctx(), theme::ROW_H_LIST);
+    let h = super::control::h(ui.ctx());
     let (rect, resp) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), h), egui::Sense::click());
     if selected {

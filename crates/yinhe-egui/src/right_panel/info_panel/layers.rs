@@ -15,7 +15,11 @@ use crate::theme;
 const ICON_SIZE: f32 = 16.0;
 
 /// 显示图层列表。
-pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) {
+pub(crate) fn show(
+    ui: &mut egui::Ui,
+    doc: &mut Document,
+    audio: Option<&yinhe_audio::CpalAudioHandle>,
+) {
     let num_tracks = doc.data.model.tracks.len();
     if num_tracks == 0 {
         crate::widgets::hint::empty_hint(ui, rust_i18n::t!("track.no_tracks").as_ref());
@@ -31,7 +35,7 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) {
     }
 
     let conductor_idx = doc.edit.track_cache.conductor_idx;
-    let row_h = scaled_font(ui.ctx(), theme::ROW_H_LIST);
+    let row_h = crate::widgets::control::h(ui.ctx());
     let pad_x = scaled_font(ui.ctx(), theme::PAD_X);
     let icon_gap = scaled_font(ui.ctx(), 6.0);
     crate::widgets::scroll::rows_scroll(ui, "layers_scroll", row_h, None, |ui| {
@@ -168,6 +172,17 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) {
                     if vis_resp.clicked() {
                         doc.edit.track_pianoroll_visible[i] = !visible;
                         doc.edit.pianoroll_view.base.dirty = true;
+                    }
+                    // 右击眼睛图标 = 独奏（SOLO）。
+                    if vis_resp.secondary_clicked() {
+                        let mut toggled = false;
+                        if let Some(ov) = doc.edit.track_overrides.get_mut(i) {
+                            ov.soloed = !ov.soloed;
+                            toggled = true;
+                        }
+                        if toggled {
+                            super::send_skip_tracks(doc, audio);
+                        }
                     }
                 }
 

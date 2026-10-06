@@ -27,7 +27,7 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &Document) {
     crate::widgets::scroll::rows_scroll(
         ui,
         "history_scroll",
-        crate::scaling::scaled_font(ui.ctx(), crate::theme::ROW_H_LIST),
+        crate::widgets::control::h(ui.ctx()),
         None,
         |ui| {
             // 最新的撤销步骤在最上方。
