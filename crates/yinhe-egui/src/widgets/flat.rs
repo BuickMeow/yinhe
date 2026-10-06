@@ -14,7 +14,7 @@ const FILLED_RADIUS: f32 = 6.0;
 
 /// 无边框按钮：宽度自适应文字，居中显示；hover/按下只变背景。
 pub(crate) fn flat_button(ui: &mut egui::Ui, text: impl Into<egui::WidgetText>) -> egui::Response {
-    flat_button_ex(ui, text, None, None, true, false, None, 4.0)
+    flat_button_ex(ui, text, None, None, true, false, None, 4.0, false)
 }
 
 /// 无边框按钮（可设最小尺寸；`enabled = false` 置灰不可点）。
@@ -24,7 +24,17 @@ pub(crate) fn flat_button_sized(
     min_size: egui::Vec2,
     enabled: bool,
 ) -> egui::Response {
-    flat_button_ex(ui, text, Some(min_size), None, enabled, false, None, 4.0)
+    flat_button_ex(
+        ui,
+        text,
+        Some(min_size),
+        None,
+        enabled,
+        false,
+        None,
+        4.0,
+        false,
+    )
 }
 
 /// 无边框按钮（固定尺寸，内容居中；MIX 条等紧凑布局用）。
@@ -33,7 +43,7 @@ pub(crate) fn flat_button_fixed(
     text: impl Into<egui::WidgetText>,
     size: egui::Vec2,
 ) -> egui::Response {
-    flat_button_ex(ui, text, Some(size), None, true, true, None, 4.0)
+    flat_button_ex(ui, text, Some(size), None, true, true, None, 4.0, false)
 }
 
 /// 无边框按钮（固定尺寸 + 常态底色；transport 菜单/图钉图标按钮用）。
@@ -55,10 +65,32 @@ pub(crate) fn flat_button_filled(
         true,
         Some(crate::theme::btn_bg()),
         FILLED_RADIUS,
+        false,
     )
 }
 
-/// 有底按钮（标准 `btn_bg`，宽度自适应文字）：设置页等需要与背景区分的按钮。
+/// 同 [`flat_button_filled`]，但带轻描边（设置页按钮与输入框/步进框统一）。
+pub(crate) fn flat_button_filled_stroked(
+    ui: &mut egui::Ui,
+    text: impl Into<egui::WidgetText>,
+    size: egui::Vec2,
+    selected_bg: Option<egui::Color32>,
+    enabled: bool,
+) -> egui::Response {
+    flat_button_ex(
+        ui,
+        text,
+        Some(size),
+        selected_bg,
+        enabled,
+        true,
+        Some(crate::theme::btn_bg()),
+        FILLED_RADIUS,
+        true,
+    )
+}
+
+/// 有底按钮（标准 `btn_bg`，宽度自适应文字，带轻描边）：设置页等需要与背景区分的按钮。
 pub(crate) fn flat_button_filled_auto(
     ui: &mut egui::Ui,
     text: impl Into<egui::WidgetText>,
@@ -73,6 +105,7 @@ pub(crate) fn flat_button_filled_auto(
         false,
         Some(crate::theme::btn_bg()),
         FILLED_RADIUS,
+        true,
     )
 }
 
@@ -91,6 +124,7 @@ pub(crate) fn flat_selected(
         false,
         None,
         4.0,
+        false,
     )
 }
 
@@ -120,6 +154,7 @@ fn flat_button_ex(
     fixed_size: bool,
     base_bg: Option<egui::Color32>,
     radius: f32,
+    stroked: bool,
 ) -> egui::Response {
     let ctx = ui.ctx().clone();
     let scale = |v: f32| crate::scaling::scaled_font(&ctx, v);
@@ -167,7 +202,16 @@ fn flat_button_ex(
             base_bg.unwrap_or(egui::Color32::TRANSPARENT)
         };
         if bg != egui::Color32::TRANSPARENT {
-            ui.painter().rect_filled(rect, scale(radius), bg);
+            let cr = scale(radius);
+            ui.painter().rect_filled(rect, cr, bg);
+            if stroked {
+                ui.painter().rect_stroke(
+                    rect,
+                    cr,
+                    control::control_stroke(enabled, false),
+                    egui::StrokeKind::Inside,
+                );
+            }
         }
         let color = if !enabled {
             crate::theme::text_disabled()

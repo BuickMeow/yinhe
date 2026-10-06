@@ -27,8 +27,7 @@ pub fn stepper<Num: egui::emath::Numeric>(
     let (rect, mut resp) = ui.allocate_exact_size(egui::vec2(width, h), egui::Sense::hover());
     let id = resp.id;
 
-    // 左中右三段各自独立绘制，段间留缝（真实透出背景，而非画背景色）。
-    let gap = crate::scaling::scaled_font(&ctx, 2.0);
+    // 左中右三段紧贴，仅靠描边分界。
     let btn_w = h;
     let minus_rect = egui::Rect::from_min_size(rect.min, egui::vec2(btn_w, h));
     let plus_rect = egui::Rect::from_min_size(
@@ -36,8 +35,8 @@ pub fn stepper<Num: egui::emath::Numeric>(
         egui::vec2(btn_w, h),
     );
     let mid_rect = egui::Rect::from_min_max(
-        egui::pos2(minus_rect.max.x + gap, rect.min.y),
-        egui::pos2(plus_rect.min.x - gap, rect.max.y),
+        egui::pos2(minus_rect.max.x, rect.min.y),
+        egui::pos2(plus_rect.min.x, rect.max.y),
     );
 
     let minus = ui.interact(minus_rect, id.with("minus"), egui::Sense::click());
@@ -60,7 +59,10 @@ pub fn stepper<Num: egui::emath::Numeric>(
         let base = crate::theme::btn_bg();
         let fill = control::state_fill(base, enabled, false, false);
         let stroke = control::control_stroke(enabled, false);
-        // 只有最左段的左两角、最右段的右两角是圆角，其余全为直角。
+        // 整块胶囊（四角圆角）。
+        control::paint_bg(ui.painter(), rect, radius, fill, stroke);
+
+        // 两侧按钮的 hover/按下底：只圆外侧两角，贴合胶囊。
         let r = radius as u8;
         let corner_left = egui::CornerRadius {
             nw: r,
@@ -68,25 +70,12 @@ pub fn stepper<Num: egui::emath::Numeric>(
             ne: 0,
             se: 0,
         };
-        let corner_mid = egui::CornerRadius::ZERO;
         let corner_right = egui::CornerRadius {
             nw: 0,
             sw: 0,
             ne: r,
             se: r,
         };
-        // 三段各自独立绘制（段间留缝，缝隙里就是真实背景）。
-        for (seg, corners) in [
-            (minus_rect, corner_left),
-            (mid_rect, corner_mid),
-            (plus_rect, corner_right),
-        ] {
-            ui.painter().rect_filled(seg, corners, fill);
-            ui.painter()
-                .rect_stroke(seg, corners, stroke, egui::StrokeKind::Inside);
-        }
-
-        // 两侧按钮的 hover/按下底。
         for (btn_rect, corners, btn) in [
             (minus_rect, corner_left, &minus),
             (plus_rect, corner_right, &plus),
@@ -101,6 +90,14 @@ pub fn stepper<Num: egui::emath::Numeric>(
                 continue;
             };
             ui.painter().rect_filled(btn_rect, corners, fill);
+        }
+
+        // 段间分隔线：与描边同色同宽，占满整个高度。
+        for x in [mid_rect.min.x, mid_rect.max.x] {
+            ui.painter().line_segment(
+                [egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)],
+                stroke,
+            );
         }
 
         // 加减图标。

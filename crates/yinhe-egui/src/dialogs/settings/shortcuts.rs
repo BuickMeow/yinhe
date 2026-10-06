@@ -154,7 +154,7 @@ pub fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bo
                 }
 
                 // 追加新快捷键（录制中时末尾不再额外显示录制块，仅保留下一行的占位行）
-                let add_btn = crate::widgets::flat::flat_button_filled(
+                let add_btn = crate::widgets::flat::flat_button_filled_stroked(
                     ui,
                     egui::RichText::new("+").strong(),
                     egui::vec2(28.0, 24.0),
@@ -185,7 +185,7 @@ pub fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bo
             if is_adding {
                 ui.horizontal(|ui| {
                     ui.allocate_exact_size(egui::vec2(150.0, 24.0), egui::Sense::hover());
-                    let _ = crate::widgets::flat::flat_button_filled(
+                    let _ = crate::widgets::flat::flat_button_filled_stroked(
                         ui,
                         t!("settings.shortcuts.recording").as_ref(),
                         egui::vec2(140.0, 24.0),
@@ -244,8 +244,14 @@ fn shortcut_combo_ui(
     } else {
         crate::shortcuts::display_combo(combo)
     };
-    if crate::widgets::flat::flat_button_filled(ui, btn_text, egui::vec2(140.0, 24.0), None, true)
-        .clicked()
+    if crate::widgets::flat::flat_button_filled_stroked(
+        ui,
+        btn_text,
+        egui::vec2(140.0, 24.0),
+        None,
+        true,
+    )
+    .clicked()
         && !is_recording
     {
         ui.data_mut(|d| d.insert_temp(rec_id, (action_id.to_string(), idx)));
@@ -254,7 +260,7 @@ fn shortcut_combo_ui(
     }
 
     if !is_recording
-        && crate::widgets::flat::flat_button_filled(
+        && crate::widgets::flat::flat_button_filled_stroked(
             ui,
             egui::RichText::new("×").strong(),
             egui::vec2(28.0, 24.0),
