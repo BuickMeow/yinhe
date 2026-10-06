@@ -1,4 +1,4 @@
-//! 语言文件一致性测试：6 个 locale 的 key 集合必须完全一致。
+//! 语言文件一致性测试：15 个 locale 的 key 集合必须完全一致。
 //!
 //! 只做静态文本解析（`^key:` 非缩进行），不依赖 YAML 库：
 //! 项目内文案均为单行 `key: "value"` 格式，无需处理块语法。
@@ -6,13 +6,22 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-const LOCALES: [&str; 6] = [
+const LOCALES: [&str; 15] = [
     "en-US.yml",
     "zh-CN.yml",
     "zh-HK.yml",
     "zh-TW.yml",
     "ja-JP.yml",
     "ko-KR.yml",
+    "fr-FR.yml",
+    "de-DE.yml",
+    "es-ES.yml",
+    "it-IT.yml",
+    "pt-BR.yml",
+    "ru-RU.yml",
+    "pl-PL.yml",
+    "cs-CZ.yml",
+    "tr-TR.yml",
 ];
 
 /// 提取一个 locale 文件的所有 key。

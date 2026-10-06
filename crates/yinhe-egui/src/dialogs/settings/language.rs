@@ -21,6 +21,15 @@ pub fn show_language_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> boo
                 ("en-US", "English"),
                 ("ja-JP", "日本語"),
                 ("ko-KR", "한국어"),
+                ("fr-FR", "Français"),
+                ("de-DE", "Deutsch"),
+                ("es-ES", "Español"),
+                ("it-IT", "Italiano"),
+                ("pt-BR", "Português (Brasil)"),
+                ("ru-RU", "Русский"),
+                ("pl-PL", "Polski"),
+                ("cs-CZ", "Čeština"),
+                ("tr-TR", "Türkçe"),
             ];
             let locale_opt: Vec<(String, String)> = locales
                 .iter()
@@ -33,6 +42,8 @@ pub fn show_language_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> boo
                 &locale_opt,
             ) {
                 rust_i18n::set_locale(&settings.locale);
+                // 按新语言重装系统字体（CJK 主字体随语言变化）。
+                yinhe_fonts::install(ui.ctx(), yinhe_fonts::WEIGHT_MEDIUM, &settings.locale);
                 changed = true;
             }
         },
