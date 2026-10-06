@@ -47,43 +47,9 @@ pub use soundfont::show_soundfont_tab;
 #[allow(unused_imports)]
 pub use theme::show_theme_tab;
 
-/// Zed 风格设置行：标题+描述左，控件靠右，行间分割线。
-pub(crate) fn setting_row(
-    ui: &mut egui::Ui,
-    title: &str,
-    desc: &str,
-    add_control: impl FnOnce(&mut egui::Ui),
-) {
-    ui.horizontal(|ui| {
-        ui.vertical(|ui| {
-            ui.label(
-                egui::RichText::new(title)
-                    .strong()
-                    .size(crate::scaling::scaled_font(
-                        ui.ctx(),
-                        crate::theme::SUB_TITLE_FONT,
-                    )),
-            );
-            if !desc.is_empty() {
-                ui.add_space(2.0);
-                ui.label(
-                    egui::RichText::new(desc)
-                        .size(crate::scaling::scaled_font(
-                            ui.ctx(),
-                            crate::theme::SMALL_FONT,
-                        ))
-                        .color(crate::theme::text_secondary()),
-                );
-            }
-        });
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            add_control(ui);
-        });
-    });
-    ui.add_space(8.0);
-    ui.separator();
-    ui.add_space(8.0);
-}
+/// Zed 风格设置行（标题+描述左、控件右、行间分割线）——统一下沉到
+/// [`crate::widgets::rows::setting_row`]，设置页与右栏面板共用同一实现。
+pub(crate) use crate::widgets::rows::setting_row;
 
 /// Show the settings dialog content inside an existing Ui.
 /// Returns `true` if settings were changed.

@@ -294,7 +294,7 @@ pub(super) fn show_position_popup(
                 let mut tib_f = tick_in_bar as f64;
                 ui.horizontal(|ui| {
                     ui.label(
-                        egui::RichText::new("小节")
+                        egui::RichText::new(t!("event_browser.position.bar").to_string())
                             .size(crate::scaling::scaled_font(
                                 ui.ctx(),
                                 crate::theme::SMALL_FONT,

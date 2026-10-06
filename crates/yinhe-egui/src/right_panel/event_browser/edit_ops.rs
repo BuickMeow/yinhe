@@ -127,9 +127,9 @@ pub fn apply_timesig_ops(
                 doc.delete_time_sig_events(ticks);
             }),
             insert: Box::new(|doc, tick| doc.insert_time_sig_event(tick)),
-            delete_label: "删除拍号事件",
-            insert_label: "插入拍号事件",
-            first_label: "新建拍号事件",
+            delete_label: "undo.delete_timesig_event",
+            insert_label: "undo.insert_timesig_event",
+            first_label: "undo.create_timesig_event",
         },
     );
 }
@@ -163,9 +163,9 @@ pub fn apply_keysig_ops(
                 doc.delete_key_sig_events(ticks);
             }),
             insert: Box::new(|doc, tick| doc.insert_key_sig_event(tick)),
-            delete_label: "删除调号事件",
-            insert_label: "插入调号事件",
-            first_label: "新建调号事件",
+            delete_label: "undo.delete_keysig_event",
+            insert_label: "undo.insert_keysig_event",
+            first_label: "undo.create_keysig_event",
         },
     );
 }
@@ -199,9 +199,9 @@ pub fn apply_marker_ops(
                 doc.delete_marker_events(ticks);
             }),
             insert: Box::new(|doc, tick| doc.insert_marker_event(tick)),
-            delete_label: "删除标记事件",
-            insert_label: "插入标记事件",
-            first_label: "新建标记事件",
+            delete_label: "undo.delete_marker_event",
+            insert_label: "undo.insert_marker_event",
+            first_label: "undo.create_marker_event",
         },
     );
 }
@@ -235,9 +235,9 @@ pub fn apply_conductor_lyrics_ops(
                 doc.delete_conductor_lyrics_events(ticks);
             }),
             insert: Box::new(|doc, tick| doc.insert_conductor_lyrics_event(tick)),
-            delete_label: "删除歌词事件",
-            insert_label: "插入歌词事件",
-            first_label: "新建歌词事件",
+            delete_label: "undo.delete_lyrics_event",
+            insert_label: "undo.insert_lyrics_event",
+            first_label: "undo.create_lyrics_event",
         },
     );
 }
@@ -271,9 +271,9 @@ pub fn apply_conductor_chord_ops(
                 doc.delete_conductor_chord_events(ticks);
             }),
             insert: Box::new(|doc, tick| doc.insert_conductor_chord_event(tick)),
-            delete_label: "删除和弦事件",
-            insert_label: "插入和弦事件",
-            first_label: "新建和弦事件",
+            delete_label: "undo.delete_chord_event",
+            insert_label: "undo.insert_chord_event",
+            first_label: "undo.create_chord_event",
         },
     );
 }
@@ -312,9 +312,9 @@ pub fn apply_lyrics_ops(
                 doc.delete_lyrics_events(track, ticks);
             }),
             insert: Box::new(move |doc, tick| doc.insert_lyrics_event(track, tick)),
-            delete_label: "删除歌词事件",
-            insert_label: "插入歌词事件",
-            first_label: "新建歌词事件",
+            delete_label: "undo.delete_lyrics_event",
+            insert_label: "undo.insert_lyrics_event",
+            first_label: "undo.create_lyrics_event",
         },
     );
 }
@@ -347,9 +347,9 @@ pub fn apply_chord_ops(
                 doc.delete_chord_events(track, ticks);
             }),
             insert: Box::new(move |doc, tick| doc.insert_chord_event(track, tick)),
-            delete_label: "删除和弦事件",
-            insert_label: "插入和弦事件",
-            first_label: "新建和弦事件",
+            delete_label: "undo.delete_chord_event",
+            insert_label: "undo.insert_chord_event",
+            first_label: "undo.create_chord_event",
         },
     );
 }
@@ -388,9 +388,9 @@ pub fn apply_pc_ops(
                 doc.delete_program_change_events(track, ticks);
             }),
             insert: Box::new(move |doc, tick| doc.insert_program_change_event(track, tick)),
-            delete_label: "删除音色变更事件",
-            insert_label: "插入音色变更事件",
-            first_label: "新建音色变更事件",
+            delete_label: "undo.delete_pc_event",
+            insert_label: "undo.insert_pc_event",
+            first_label: "undo.create_pc_event",
         },
     );
 }
@@ -425,7 +425,7 @@ pub fn apply_notes_ops(
                     );
                 }
                 if let Some(action) = doc.delete_selected() {
-                    doc.push_undo(action, "删除音符", before);
+                    doc.push_undo(action, "undo.delete_notes", before);
                 }
                 cleanup(state, ui, salt);
             } else {
@@ -444,7 +444,7 @@ pub fn apply_notes_ops(
             };
             let before = doc.capture_snapshot();
             if let Some(action) = doc.add_note(track, note) {
-                doc.push_undo(action, "插入音符", before);
+                doc.push_undo(action, "undo.insert_note", before);
             }
             remove_edit_request(ui, salt);
         }
@@ -460,7 +460,7 @@ pub fn apply_notes_ops(
             };
             let before = doc.capture_snapshot();
             if let Some(action) = doc.add_note(track, note) {
-                doc.push_undo(action, "新建音符", before);
+                doc.push_undo(action, "undo.add_note", before);
             }
             remove_edit_request(ui, salt);
         }
@@ -506,7 +506,11 @@ pub fn apply_automation_ops(
                     }
                 }
                 if !actions.is_empty() {
-                    doc.push_undo(UndoAction::Composite(actions), "删除自动化事件", before);
+                    doc.push_undo(
+                        UndoAction::Composite(actions),
+                        "undo.delete_automation_event",
+                        before,
+                    );
                 }
                 cleanup(state, ui, salt);
             } else {
@@ -525,7 +529,7 @@ pub fn apply_automation_ops(
             if let Some((_, _, action)) =
                 doc.add_automation_event(track as usize, target.clone(), event)
             {
-                doc.push_undo(action, "插入自动化事件", before);
+                doc.push_undo(action, "undo.insert_automation_event", before);
             }
             remove_edit_request(ui, salt);
         }
@@ -542,7 +546,7 @@ pub fn apply_automation_ops(
             if let Some((_, _, action)) =
                 doc.add_automation_event(track as usize, target.clone(), event)
             {
-                doc.push_undo(action, "新建自动化事件", before);
+                doc.push_undo(action, "undo.create_automation_event", before);
             }
             remove_edit_request(ui, salt);
         }

@@ -63,7 +63,7 @@ pub(super) fn show_event_detail(
             bar_lookup,
             state,
             "eb_marker",
-            "标记",
+            t!("event_browser.title.marker").as_ref(),
             TextEventKind::Marker,
         ),
         SelectedItem::ConductorLyrics => show_text_events_detail(
@@ -72,7 +72,7 @@ pub(super) fn show_event_detail(
             bar_lookup,
             state,
             "eb_cond_lyrics",
-            "歌词",
+            t!("event_browser.title.lyrics").as_ref(),
             TextEventKind::ConductorLyrics,
         ),
         SelectedItem::ConductorChord => show_text_events_detail(
@@ -81,7 +81,7 @@ pub(super) fn show_event_detail(
             bar_lookup,
             state,
             "eb_cond_chord",
-            "和弦",
+            t!("event_browser.title.chord").as_ref(),
             TextEventKind::ConductorChord,
         ),
         SelectedItem::Notes { track } => show_notes_detail(ui, doc, bar_lookup, state, *track),
@@ -95,7 +95,7 @@ pub(super) fn show_event_detail(
             bar_lookup,
             state,
             "eb_lyrics",
-            "歌词",
+            t!("event_browser.title.lyrics").as_ref(),
             TextEventKind::Lyrics { track: *track },
         ),
         SelectedItem::Chord { track } => show_text_events_detail(
@@ -104,7 +104,7 @@ pub(super) fn show_event_detail(
             bar_lookup,
             state,
             "eb_chord",
-            "和弦",
+            t!("event_browser.title.chord").as_ref(),
             TextEventKind::Chord { track: *track },
         ),
     }
@@ -357,13 +357,17 @@ fn event_table_section<T>(
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         ui.label(
-            egui::RichText::new(format!("{} {} 个", title_prefix, total))
-                .strong()
-                .size(crate::scaling::scaled_font(
-                    ui.ctx(),
-                    crate::theme::SUB_TITLE_FONT,
-                ))
-                .color(crate::theme::text_bright()),
+            egui::RichText::new(t!(
+                "event_browser.table_title",
+                title = title_prefix,
+                n = total
+            ))
+            .strong()
+            .size(crate::scaling::scaled_font(
+                ui.ctx(),
+                crate::theme::SUB_TITLE_FONT,
+            ))
+            .color(crate::theme::text_bright()),
         );
         if let Some(np) = render_pager(ui, page, total_pages(total)) {
             state.event_page = np;
@@ -514,14 +518,14 @@ fn show_timesig_detail(
         ui,
         state,
         "eb_ts",
-        "拍号",
+        t!("event_browser.title.timesig").as_ref(),
         &sorted,
         &[
             ("#", 40.0),
             (t!("event_browser.header.tick").as_ref(), 70.0),
             (t!("event_browser.header.position").as_ref(), 80.0),
-            ("分子", 50.0),
-            ("分母", 50.0),
+            (t!("event_browser.header.numerator").as_ref(), 50.0),
+            (t!("event_browser.header.denominator").as_ref(), 50.0),
         ],
         |e| e.tick,
         |i, row, click_key, state, e, page_ticks, page_start| {
@@ -594,15 +598,15 @@ fn show_keysig_detail(
         ui,
         state,
         "eb_ks",
-        "调号",
+        t!("event_browser.title.keysig").as_ref(),
         &sorted,
         &[
             ("#", 40.0),
             (t!("event_browser.header.tick").as_ref(), 70.0),
             (t!("event_browser.header.position").as_ref(), 80.0),
-            ("调号", 100.0),
-            ("根音", 60.0),
-            ("音阶", 80.0),
+            (t!("event_browser.header.keysig").as_ref(), 100.0),
+            (t!("event_browser.header.root").as_ref(), 60.0),
+            (t!("event_browser.header.scale").as_ref(), 80.0),
         ],
         |e| e.tick,
         |i, row, click_key, state, e, page_ticks, page_start| {
@@ -794,7 +798,7 @@ fn show_notes_detail(
         ui,
         state,
         "eb_notes",
-        "音符",
+        t!("event_browser.title.notes").as_ref(),
         &notes,
         &[
             ("#", 40.0),
@@ -803,9 +807,9 @@ fn show_notes_detail(
             (t!("event_browser.header.position").as_ref(), 80.0),
             ("gate", 60.0),
             (t!("event_browser.header.end_tick").as_ref(), 80.0),
-            ("结束位置", 90.0),
-            ("键位", 50.0),
-            ("力度", 50.0),
+            (t!("event_browser.header.end_position").as_ref(), 90.0),
+            (t!("event_browser.header.key").as_ref(), 50.0),
+            (t!("event_browser.header.velocity").as_ref(), 50.0),
         ],
         |n| n.start_tick,
         |i, row, click_key, state, n, page_ticks, page_start| {
@@ -929,13 +933,13 @@ fn show_pc_detail(
             ui,
             state,
             "eb_pc",
-            "音色变更",
+            t!("event_browser.title.program_change").as_ref(),
             events,
             &[
                 ("#", 40.0),
                 (t!("event_browser.header.tick").as_ref(), 70.0),
                 (t!("event_browser.header.position").as_ref(), 80.0),
-                ("音色", 50.0),
+                (t!("event_browser.header.program").as_ref(), 50.0),
             ],
             |e| e.tick,
             |i, row, click_key, state, e, page_ticks, page_start| {
@@ -1160,59 +1164,90 @@ fn summarize_targets(lanes: &[AutomationLane]) -> TargetSummary {
 
 pub(super) fn show_overview(ui: &mut egui::Ui, model: &yinhe_core::YinModel) {
     let name = if model.meta.name.is_empty() {
-        "(未命名)"
+        t!("event_browser.meta.untitled").to_string()
     } else {
-        &model.meta.name
+        model.meta.name.clone()
     };
     let artist = if model.meta.artist.is_empty() {
-        "(未填)"
+        t!("event_browser.meta.unfilled").to_string()
     } else {
-        &model.meta.artist
+        model.meta.artist.clone()
     };
-    crate::widgets::rows::value_row(ui, "名称:", name);
-    crate::widgets::rows::value_row(ui, "作者:", artist);
+    crate::widgets::rows::value_row(ui, t!("event_browser.meta.name"), name);
+    crate::widgets::rows::value_row(ui, t!("event_browser.meta.artist"), artist);
     crate::widgets::rows::value_row(ui, "PPQ:", format!("{}", model.meta.ppq));
     crate::widgets::rows::value_row(
         ui,
-        "zstd 等级:",
+        t!("event_browser.meta.zstd_level"),
         format!("{}", model.meta.compression_level),
     );
     let groups = super::group_tracks_by_port_channel(model, None);
-    crate::widgets::rows::value_row(ui, "活跃 port 数:", format!("{}", groups.len()));
-    crate::widgets::rows::value_row(ui, "轨道:", format!("{} 个", model.tracks.len()));
-    crate::widgets::rows::value_row(ui, "音符:", format!("{} 个", model.note_count));
+    crate::widgets::rows::value_row(
+        ui,
+        t!("event_browser.meta.active_ports"),
+        format!("{}", groups.len()),
+    );
+    crate::widgets::rows::value_row(
+        ui,
+        t!("event_browser.meta.tracks"),
+        t!("event_browser.count", n = model.tracks.len()),
+    );
+    crate::widgets::rows::value_row(
+        ui,
+        t!("event_browser.meta.notes"),
+        t!("event_browser.count", n = model.note_count),
+    );
     let mut summary = TargetSummary::default();
     let mut pc = 0usize;
     for t in &model.tracks {
         summary.merge(summarize_targets(&t.automation_lanes));
         pc += t.program_change.len();
     }
-    crate::widgets::rows::value_row(ui, "CC:", format!("{} 个", summary.cc_total));
-    crate::widgets::rows::value_row(ui, "设备参数:", format!("{} 个", summary.param_total));
-    crate::widgets::rows::value_row(ui, "弯音:", format!("{} 个", summary.pb_total));
-    crate::widgets::rows::value_row(ui, "音色变更:", format!("{} 个", pc));
     crate::widgets::rows::value_row(
         ui,
-        "Tempo:",
-        format!("{} 个", model.conductor.tempo.events.len()),
+        t!("event_browser.meta.cc"),
+        t!("event_browser.count", n = summary.cc_total),
     );
     crate::widgets::rows::value_row(
         ui,
-        "拍号:",
-        format!("{} 个", model.conductor.time_sig.len()),
+        t!("event_browser.meta.params"),
+        t!("event_browser.count", n = summary.param_total),
+    );
+    crate::widgets::rows::value_row(
+        ui,
+        t!("event_browser.meta.pitch_bend"),
+        t!("event_browser.count", n = summary.pb_total),
+    );
+    crate::widgets::rows::value_row(
+        ui,
+        t!("event_browser.meta.program_change"),
+        t!("event_browser.count", n = pc),
+    );
+    crate::widgets::rows::value_row(
+        ui,
+        t!("event_browser.meta.tempo"),
+        t!(
+            "event_browser.count",
+            n = model.conductor.tempo.events.len()
+        ),
+    );
+    crate::widgets::rows::value_row(
+        ui,
+        t!("event_browser.meta.timesig"),
+        t!("event_browser.count", n = model.conductor.time_sig.len()),
     );
     if !model.conductor.key_sig.is_empty() {
         crate::widgets::rows::value_row(
             ui,
-            "调号:",
-            format!("{} 个", model.conductor.key_sig.len()),
+            t!("event_browser.meta.keysig"),
+            t!("event_browser.count", n = model.conductor.key_sig.len()),
         );
     }
     if !model.conductor.markers.is_empty() {
         crate::widgets::rows::value_row(
             ui,
-            "标记:",
-            format!("{} 个", model.conductor.markers.len()),
+            t!("event_browser.meta.markers"),
+            t!("event_browser.count", n = model.conductor.markers.len()),
         );
     }
 }
@@ -1259,7 +1294,7 @@ pub(super) fn show_track_detail(
     );
     ui.add_space(crate::theme::GAP_SM);
     ui.label(
-        egui::RichText::new("事件计数")
+        egui::RichText::new(t!("event_browser.event_counts"))
             .strong()
             .size(crate::scaling::scaled_font(
                 ui.ctx(),
@@ -1302,7 +1337,11 @@ pub(super) fn show_track_detail(
     }
     kv(ui, "Pitch Bend", format!("{}", summary.pb_total));
     if summary.param_total > 0 {
-        kv(ui, "设备参数", format!("{}", summary.param_total));
+        kv(
+            ui,
+            t!("event_browser.params").as_ref(),
+            format!("{}", summary.param_total),
+        );
     }
     kv(
         ui,

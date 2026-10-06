@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 pub enum PanelKind {
     /// 音轨属性。
     Track,
+    /// 选框批处理（力度/键位/变速/翻转等）。
+    Batch,
     /// 图层（每轨选中/可见/锁定）。
     Layers,
     /// 树图（工程总览）。
@@ -24,28 +26,34 @@ pub enum PanelKind {
     History,
     /// 属性概要。
     Summary,
+    /// 选框属性（选框位置/数量/跨度等只读信息）。
+    Selection,
 }
 
 impl PanelKind {
     /// 全部面板类型（用于旧布局迁移补齐）。
-    pub const ALL: [PanelKind; 6] = [
+    pub const ALL: [PanelKind; 8] = [
         PanelKind::Track,
+        PanelKind::Batch,
         PanelKind::ProjectTree,
         PanelKind::EventBrowser,
         PanelKind::Layers,
         PanelKind::History,
         PanelKind::Summary,
+        PanelKind::Selection,
     ];
 
     /// 选项卡标题 i18n key。
     pub fn label_key(self) -> &'static str {
         match self {
             PanelKind::Track => "panel.section.track",
+            PanelKind::Batch => "panel.tab.batch",
             PanelKind::Layers => "panel.section.layers",
             PanelKind::ProjectTree => "panel.section.tree",
             PanelKind::EventBrowser => "panel.section.events",
             PanelKind::History => "panel.tab.history",
             PanelKind::Summary => "panel.tab.summary",
+            PanelKind::Selection => "panel.tab.selection",
         }
     }
 }
@@ -89,10 +97,14 @@ pub struct RightPanelLayout {
 
 impl Default for RightPanelLayout {
     fn default() -> Self {
-        // 默认：上[音轨] / 中[树图,事件,图层] / 下[历史记录,属性概要]。
+        // 默认：上[音轨,批处理] / 中[树图,事件,图层] / 下[历史记录,属性概要,选框属性]。
         Self {
             columns: vec![
-                PanelColumn::single(PanelKind::Track),
+                PanelColumn {
+                    tabs: vec![PanelKind::Track, PanelKind::Batch],
+                    active: 0,
+                    height_weight: 1.0,
+                },
                 PanelColumn {
                     tabs: vec![
                         PanelKind::ProjectTree,
@@ -103,7 +115,7 @@ impl Default for RightPanelLayout {
                     height_weight: 1.0,
                 },
                 PanelColumn {
-                    tabs: vec![PanelKind::History, PanelKind::Summary],
+                    tabs: vec![PanelKind::History, PanelKind::Summary, PanelKind::Selection],
                     active: 0,
                     height_weight: 1.0,
                 },
@@ -131,8 +143,10 @@ impl RightPanelLayout {
                 Some(i) => self.move_tab(kind, i, usize::MAX),
                 None => {
                     let at = match kind {
-                        PanelKind::Track => 0,
-                        PanelKind::History | PanelKind::Summary => self.columns.len(),
+                        PanelKind::Track | PanelKind::Batch => 0,
+                        PanelKind::History | PanelKind::Summary | PanelKind::Selection => {
+                            self.columns.len()
+                        }
                         _ => self.columns.len().min(1),
                     };
                     self.split_new_column(kind, at);
@@ -148,9 +162,11 @@ impl RightPanelLayout {
         let siblings: &[PanelKind] = match kind {
             PanelKind::Layers => &[PanelKind::ProjectTree, PanelKind::EventBrowser],
             PanelKind::ProjectTree | PanelKind::EventBrowser => &[PanelKind::Layers],
-            PanelKind::History => &[PanelKind::Summary],
-            PanelKind::Summary => &[PanelKind::History],
-            PanelKind::Track => &[],
+            PanelKind::History => &[PanelKind::Summary, PanelKind::Selection],
+            PanelKind::Summary => &[PanelKind::History, PanelKind::Selection],
+            PanelKind::Selection => &[PanelKind::Summary, PanelKind::History],
+            PanelKind::Batch => &[PanelKind::Track],
+            PanelKind::Track => &[PanelKind::Batch],
         };
         self.columns
             .iter()
@@ -248,7 +264,10 @@ mod tests {
     fn default_has_three_columns_with_expected_tabs() {
         let l = RightPanelLayout::default();
         assert_eq!(l.columns.len(), 3);
-        assert_eq!(l.columns[0].tabs, vec![PanelKind::Track]);
+        assert_eq!(
+            l.columns[0].tabs,
+            vec![PanelKind::Track, PanelKind::Batch]
+        );
         assert_eq!(
             l.columns[1].tabs,
             vec![
@@ -259,7 +278,11 @@ mod tests {
         );
         assert_eq!(
             l.columns[2].tabs,
-            vec![PanelKind::History, PanelKind::Summary]
+            vec![
+                PanelKind::History,
+                PanelKind::Summary,
+                PanelKind::Selection
+            ]
         );
     }
 
@@ -296,10 +319,23 @@ mod tests {
 
     #[test]
     fn move_tab_moves_single_tab_column_forward() {
-        let mut l = RightPanelLayout::default();
-        // 第 0 栏只有 Track：移到第 1 栏末尾（源栏会消失，目标下标需前移）。
+        // 自造一个单选项卡栏，验证搬空后源栏消失、目标栏下标前移。
+        let mut l = RightPanelLayout {
+            columns: vec![
+                PanelColumn::single(PanelKind::Track),
+                PanelColumn {
+                    tabs: vec![
+                        PanelKind::ProjectTree,
+                        PanelKind::EventBrowser,
+                        PanelKind::Layers,
+                    ],
+                    active: 0,
+                    height_weight: 1.0,
+                },
+            ],
+        };
         l.move_tab(PanelKind::Track, 1, 3);
-        assert_eq!(l.columns.len(), 2);
+        assert_eq!(l.columns.len(), 1);
         assert_eq!(
             l.columns[0].tabs,
             vec![

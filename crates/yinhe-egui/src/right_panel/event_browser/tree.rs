@@ -187,6 +187,7 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
                         ))
                         .color(crate::theme::text_secondary()),
                 )
+                .selectable(false)
                 .sense(egui::Sense::click()),
             )
             .clicked()
@@ -348,6 +349,7 @@ fn render_dir_row(
                         ))
                         .color(crate::theme::text_secondary()),
                 )
+                .selectable(false)
                 .sense(egui::Sense::click()),
             )
             .clicked()
@@ -370,6 +372,7 @@ fn render_dir_row(
                         ))
                         .color(crate::theme::warning_gold()),
                 )
+                .selectable(false)
                 .sense(egui::Sense::click()),
             )
             .clicked()

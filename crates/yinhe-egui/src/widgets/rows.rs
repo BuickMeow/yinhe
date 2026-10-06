@@ -64,6 +64,38 @@ pub(crate) fn form_row(ui: &mut egui::Ui, label: &str, add_control: impl FnOnce(
     });
 }
 
+/// 设置行：左侧标题（+可选描述），右侧控件；行尾分隔。与设置对话框同款。
+pub(crate) fn setting_row(
+    ui: &mut egui::Ui,
+    title: &str,
+    desc: &str,
+    add_control: impl FnOnce(&mut egui::Ui),
+) {
+    ui.horizontal(|ui| {
+        ui.vertical(|ui| {
+            ui.label(
+                egui::RichText::new(title)
+                    .strong()
+                    .size(scaled_font(ui.ctx(), theme::SUB_TITLE_FONT)),
+            );
+            if !desc.is_empty() {
+                ui.add_space(theme::GAP_TIGHT);
+                ui.label(
+                    egui::RichText::new(desc)
+                        .size(scaled_font(ui.ctx(), theme::SMALL_FONT))
+                        .color(theme::text_secondary()),
+                );
+            }
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            add_control(ui);
+        });
+    });
+    ui.add_space(theme::GAP);
+    ui.separator();
+    ui.add_space(theme::GAP);
+}
+
 /// 列表/树行：整行可点，选中/悬停底色 + 圆角。
 ///
 /// 返回行 [`egui::Response`]；内容由 `add_contents` 在行内水平排布（垂直居中）。

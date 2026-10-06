@@ -17,6 +17,8 @@ use egui_material_icons::icons::{
 
 use yinhe_types::SegmentShape;
 
+use rust_i18n::t;
+
 use super::bar_lookup::BarLookup;
 use super::state::{EditRequest, EventBrowserState};
 
@@ -213,7 +215,7 @@ pub(super) fn cell_row_header(
                 .add(crate::widgets::menu::menu_item_button(
                     ui,
                     false,
-                    "在上方插入",
+                    t!("event_browser.menu.insert_above").to_string(),
                 ))
                 .clicked()
             {
@@ -227,7 +229,7 @@ pub(super) fn cell_row_header(
                 .add(crate::widgets::menu::menu_item_button(
                     ui,
                     false,
-                    "在下方插入",
+                    t!("event_browser.menu.insert_below").to_string(),
                 ))
                 .clicked()
             {
@@ -239,7 +241,11 @@ pub(super) fn cell_row_header(
             }
             ui.separator();
             if ui
-                .add(crate::widgets::menu::menu_item_button(ui, false, "删除"))
+                .add(crate::widgets::menu::menu_item_button(
+                    ui,
+                    false,
+                    t!("common.delete").to_string(),
+                ))
                 .clicked()
             {
                 ui.ctx().memory_mut(|m| {
@@ -331,7 +337,7 @@ pub(super) fn empty_state_add_button(ui: &mut egui::Ui, id_salt: &str) -> bool {
             clicked = true;
         }
         ui.label(
-            egui::RichText::new("点击新建第一个事件")
+            egui::RichText::new(t!("event_browser.empty_add_hint").to_string())
                 .size(crate::scaling::scaled_font(
                     ui.ctx(),
                     crate::theme::SMALL_FONT,

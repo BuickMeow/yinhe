@@ -128,6 +128,11 @@ pub fn show(
                     automation_drag_ghost,
                 );
             }
+            PanelKind::Batch => {
+                if let Some(doc) = doc_ref.as_deref_mut() {
+                    info_panel::show_batch(ui, doc);
+                }
+            }
             PanelKind::ProjectTree => {
                 event_browser::show_tree(ui, doc_ref.as_deref_mut(), event_browser_state);
             }
@@ -148,6 +153,11 @@ pub fn show(
             PanelKind::Summary => {
                 if let Some(doc) = doc_ref.as_deref_mut() {
                     info_panel::show_summary(ui, doc);
+                }
+            }
+            PanelKind::Selection => {
+                if let Some(doc) = doc_ref.as_deref() {
+                    info_panel::show_selection_info(ui, doc);
                 }
             }
         }

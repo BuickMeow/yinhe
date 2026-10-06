@@ -8,7 +8,7 @@
 use eframe::egui;
 use rust_i18n::t;
 
-use yinhe_editor_core::batch_ops::summarize_selected;
+use yinhe_editor_core::batch_ops::{SelectedNoteSummary, summarize_selected};
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::document::automation_edit::AnchorField;
 use yinhe_editor_core::document::note_edit::{FlipAxis, NoteField};
@@ -27,20 +27,20 @@ enum SelView {
     Am,
 }
 
-/// 任一视图存在选框？
-pub(super) fn has_any_selection(doc: &Document) -> bool {
-    !doc.edit.sel_rect.is_empty()
-        || !doc.edit.arr_sel_rect.is_empty()
-        || doc
-            .edit
-            .controller_panels
-            .iter()
-            .any(|p| !p.show_velocity && !p.anchor_sel_rects.is_empty())
+/// 选框的公共数据（「选框属性」与「批处理」两个面板共用）。
+struct SelData {
+    view: SelView,
+    pr_rects: Vec<(f64, f64, u8, u8)>,
+    ar_rects: Vec<(f64, f64, usize, usize)>,
+    am_rects: Vec<(usize, Vec<AnchorSelRect>)>,
+    summary: Option<SelectedNoteSummary>,
+    am: AmAnchors,
+    t0: f64,
+    t1: f64,
 }
 
-/// 显示选框信息 + 批量编辑。
-pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
-    // ── 检测选框视图与矩形 ──
+/// 采集当前选框数据；无选框时返回 `None`。
+fn compute(doc: &Document) -> Option<SelData> {
     let pr_rects = doc.edit.sel_rect.effective_rects();
     let ar_rects = doc.edit.arr_sel_rect.clone();
     let am_rects: Vec<(usize, Vec<AnchorSelRect>)> = doc
@@ -58,10 +58,9 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
     } else if !am_rects.is_empty() {
         SelView::Am
     } else {
-        return;
+        return None;
     };
 
-    // ── 统计 ──
     let summary = match view {
         SelView::Pr | SelView::Ar => Some(summarize_selected(&doc.data.model, &doc.edit.selected)),
         SelView::Am => None,
@@ -71,7 +70,6 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
         _ => AmAnchors::default(),
     };
 
-    // ── 时间跨度 / 视图特有跨度 ──
     let (t0, t1) = match view {
         SelView::Pr => pr_rects
             .iter()
@@ -93,6 +91,35 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
                 (a.min(x), b.max(y))
             }),
     };
+
+    Some(SelData {
+        view,
+        pr_rects,
+        ar_rects,
+        am_rects,
+        summary,
+        am,
+        t0,
+        t1,
+    })
+}
+
+/// 「选框属性」：只读的选框位置 / 数量 / 跨度。
+pub(super) fn show_info(ui: &mut egui::Ui, doc: &Document) {
+    let Some(d) = compute(doc) else {
+        crate::widgets::hint::empty_hint(ui, t!("panel.select_hint").as_ref());
+        return;
+    };
+    let SelData {
+        view,
+        pr_rects,
+        ar_rects,
+        am_rects,
+        summary,
+        am,
+        t0,
+        t1,
+    } = d;
 
     // ── 渲染 ──
     ui.add_space(4.0);
@@ -201,8 +228,23 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
             info_row(ui, t!("sel.value_span"), text);
         }
     }
+}
 
-    crate::widgets::rows::divider(ui);
+/// 「批处理」：对选框批量改值（力度/键位/…）、变速、翻转。
+pub(super) fn show_batch(ui: &mut egui::Ui, doc: &mut Document) {
+    let Some(d) = compute(doc) else {
+        crate::widgets::hint::empty_hint(ui, t!("panel.select_hint").as_ref());
+        return;
+    };
+    let SelData {
+        view,
+        am_rects,
+        summary,
+        am,
+        t0,
+        t1,
+        ..
+    } = d;
 
     // ── 编辑区 ──
     match view {

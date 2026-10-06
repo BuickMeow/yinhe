@@ -84,7 +84,7 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
     let mut name_resp_id: Option<egui::Id> = None;
     let mut name_gained_focus = false;
     let mut name_lost_focus = false;
-    crate::widgets::rows::form_row(ui, t!("track.name").as_ref(), |ui| {
+    crate::widgets::rows::setting_row(ui, t!("track.name").as_ref(), "", |ui| {
         let mut name = doc.data.model.tracks[track_idx].name.clone();
         let resp = crate::widgets::text_input::control_text_input(
             ui,
@@ -129,23 +129,29 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
     let mut port_changed = false;
     let mut new_port = ti.port;
     let mut new_ch = ti.channel;
-    crate::widgets::rows::form_row(ui, t!("track.port_channel").as_ref(), |ui| {
+    crate::widgets::rows::setting_row(ui, t!("track.port_channel").as_ref(), "", |ui| {
+        // right_to_left：先放右侧的通道，再放左侧的端口。
+        let ch_options: Vec<(usize, String)> =
+            (0..16).map(|c| (c, format!("{:02}", c + 1))).collect();
+        let mut ch_sel = ti.channel as usize;
+        if crate::widgets::combo::combo_select(ui, "track_channel", &mut ch_sel, 60.0, &ch_options)
+        {
+            new_ch = ch_sel as u8;
+            port_changed = true;
+        }
+        ui.add_space(4.0);
         let port_options: Vec<(usize, String)> = (0..16)
             .map(|p| (p, format!("Port {}", (b'A' + p as u8) as char)))
             .collect();
         let mut port_sel = ti.port as usize;
-        if crate::widgets::combo::combo_select(ui, "track_port", &mut port_sel, 70.0, &port_options)
-        {
+        if crate::widgets::combo::combo_select(
+            ui,
+            "track_port",
+            &mut port_sel,
+            120.0,
+            &port_options,
+        ) {
             new_port = port_sel as u8;
-            port_changed = true;
-        }
-        ui.add_space(4.0);
-        let ch_options: Vec<(usize, String)> =
-            (0..16).map(|c| (c, format!("{:02}", c + 1))).collect();
-        let mut ch_sel = ti.channel as usize;
-        if crate::widgets::combo::combo_select(ui, "track_channel", &mut ch_sel, 50.0, &ch_options)
-        {
-            new_ch = ch_sel as u8;
             port_changed = true;
         }
     });
@@ -178,7 +184,7 @@ fn show_color_row(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) {
     let edit_id = ui.id().with("track_color_edit");
     let was_editing = ui.data(|d| d.get_temp::<bool>(edit_id)).unwrap_or(false);
 
-    crate::widgets::rows::form_row(ui, t!("track.color").as_ref(), |ui| {
+    crate::widgets::rows::setting_row(ui, t!("track.color").as_ref(), "", |ui| {
         let cur = doc
             .edit
             .track_cache
@@ -186,6 +192,19 @@ fn show_color_row(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) {
             .get(track_idx)
             .copied()
             .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
+        let stored_color = doc.data.model.tracks[track_idx].color;
+        // right_to_left：先放右侧的重置按钮，再放左侧的色块。
+        let reset_btn = crate::widgets::flat::flat_button_filled_auto(
+            ui,
+            crate::widgets::icon_text::icon_text(
+                ICON_FORMAT_COLOR_RESET,
+                t!("track.reset_color").as_ref(),
+                12.0,
+                crate::theme::text_label(),
+            ),
+            stored_color != yinhe_core::DEFAULT_TRACK_COLOR,
+        );
+        ui.add_space(crate::theme::GAP_SM);
         let mut srgba = crate::theme::rgba_to_color32((cur[0], cur[1], cur[2], cur[3]));
         // 色块即取色器按钮：点击一次直接展开调色板。
         let resp = crate::widgets::color_picker::color_edit_button(
@@ -197,19 +216,6 @@ fn show_color_row(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) {
             ),
         );
         let changed = resp.changed();
-
-        let stored_color = doc.data.model.tracks[track_idx].color;
-        let reset_btn = crate::widgets::flat::flat_button_sized(
-            ui,
-            crate::widgets::icon_text::icon_text(
-                ICON_FORMAT_COLOR_RESET,
-                t!("track.reset_color").as_ref(),
-                12.0,
-                crate::theme::text_label(),
-            ),
-            egui::vec2(68.0, crate::scaling::scaled_font(ui.ctx(), 18.0)),
-            stored_color != yinhe_core::DEFAULT_TRACK_COLOR,
-        );
 
         let editing = changed;
         if editing && !was_editing {
