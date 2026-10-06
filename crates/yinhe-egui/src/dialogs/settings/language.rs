@@ -43,7 +43,7 @@ pub fn show_language_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> boo
             ) {
                 rust_i18n::set_locale(&settings.locale);
                 // 按新语言重装系统字体（CJK 主字体随语言变化）。
-                yinhe_fonts::install(ui.ctx(), yinhe_fonts::WEIGHT_MEDIUM, &settings.locale);
+                crate::fonts::install(ui.ctx(), yinhe_fonts::WEIGHT_MEDIUM, &settings.locale);
                 changed = true;
             }
         },

@@ -257,18 +257,11 @@ impl App {
         let audio_settings = crate::audio_settings::load_audio_settings();
         rust_i18n::set_locale(&audio_settings.locale);
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Ui, || {
-            yinhe_fonts::install(
+            crate::fonts::install(
                 &cc.egui_ctx,
                 yinhe_fonts::WEIGHT_MEDIUM,
                 &audio_settings.locale,
             );
-
-            // Initialize Material Icons font with adjusted metrics
-            let mut font_insert = egui_material_icons::font_insert();
-            // Default y_offset_factor=0.05 shifts glyphs down, causing them to
-            // appear off-center toward bottom-right. Set to 0 for proper centering.
-            font_insert.data.tweak.y_offset_factor = 0.0;
-            cc.egui_ctx.add_font(font_insert);
         });
 
         let default_w = 1920u32;
