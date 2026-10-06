@@ -41,12 +41,16 @@ pub fn combo_box(
     // - 取 7 行：与原来可视行数相当（200px 放 7 整行 + 半截），内容不足一屏时
     //   `ScrollArea::auto_shrink` 收缩到内容高度，天然无半截，无需特殊处理。
     // popup 高度取整行：viewport 高 = 可见行数 ×（行高 + 行距），底部恰好顶着下一行上沿。
-    let row_step = control::CONTROL_H + ui.ctx().global_style().spacing.item_spacing.y;
+    let ctx = ui.ctx().clone();
+    let scale = |v: f32| crate::scaling::scaled_font(&ctx, v);
+    let radius = control::radius(&ctx);
+    let pad_x = control::pad_x(&ctx);
+    let row_step = control::h(&ctx) + ctx.global_style().spacing.item_spacing.y;
     let popup_h = 7.0 * row_step;
 
     // 自绘按钮（替代 egui ComboBox 的原生按钮，才能用 Material unfold_more）。
     let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(width, control::CONTROL_H), egui::Sense::hover());
+        ui.allocate_exact_size(egui::vec2(width, control::h(&ctx)), egui::Sense::hover());
     let resp = ui.interact(rect, ui.id().with(id), egui::Sense::click());
 
     if ui.is_rect_visible(rect) {
@@ -57,12 +61,12 @@ pub fn combo_box(
             resp.is_pointer_button_down_on(),
         );
         let stroke = control::control_stroke(ui.is_enabled(), resp.has_focus());
-        control::paint_bg(ui.painter(), rect, fill, stroke);
+        control::paint_bg(ui.painter(), rect, radius, fill, stroke);
 
-        let icon_w = 18.0;
+        let icon_w = scale(18.0);
         let text_rect = egui::Rect::from_min_max(
-            egui::pos2(rect.min.x + control::CONTROL_PAD_X, rect.min.y),
-            egui::pos2(rect.max.x - control::CONTROL_PAD_X - icon_w, rect.max.y),
+            egui::pos2(rect.min.x + pad_x, rect.min.y),
+            egui::pos2(rect.max.x - pad_x - icon_w, rect.max.y),
         );
         let galley = selected_text.into().into_galley(
             ui,
@@ -76,7 +80,7 @@ pub fn combo_box(
             crate::theme::text_primary(),
         );
         ui.painter().text(
-            egui::pos2(rect.max.x - control::CONTROL_PAD_X - 6.0, rect.center().y),
+            egui::pos2(rect.max.x - pad_x - scale(6.0), rect.center().y),
             egui::Align2::CENTER_CENTER,
             ICON_UNFOLD_MORE.codepoint,
             egui::FontId::new(crate::theme::ICON_FONT, ICON_UNFOLD_MORE.font_family()),

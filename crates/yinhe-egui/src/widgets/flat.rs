@@ -7,6 +7,8 @@
 
 use eframe::egui;
 
+use super::control;
+
 /// 有底按钮的圆角：与 `dialog_buttons::BTN_RADIUS` 保持一致（样式统一）。
 const FILLED_RADIUS: f32 = 6.0;
 
@@ -125,9 +127,8 @@ fn flat_button_ex(
         .into()
         .into_galley(ui, None, f32::INFINITY, egui::TextStyle::Button);
     let pad_x = scale(10.0);
-    let pad_y = scale(5.0);
-    let mut size = egui::vec2(galley.size().x + pad_x * 2.0, galley.size().y + pad_y * 2.0);
-    size.y = size.y.max(scale(24.0));
+    // 标准按钮高度锁定为 `control::h`（与输入框/ComboBox 一致），文字垂直居中。
+    let mut size = egui::vec2(galley.size().x + pad_x * 2.0, control::h(&ctx));
     if let Some(min) = min_size {
         if fixed_size {
             // 固定尺寸：忽略内容自然尺寸（紧凑条用），内容居中可能超出。

@@ -22,13 +22,15 @@ pub fn control_slider<Num: egui::emath::Numeric>(
     let max = range.end().to_f64();
     let span = (max - min).max(f64::EPSILON);
 
-    // 与 `switch` 完全同尺寸：高 22、圆角 11、滑块半径 = 圆角 - 2（内缩 2px）。
-    let track_h = 22.0;
+    let ctx = ui.ctx().clone();
+    let scale = |v: f32| crate::scaling::scaled_font(&ctx, v);
+    // 与 `switch` 完全同尺寸：高 22、圆角 11、滑块半径 = 圆角 - 2（内缩 2px），随字体缩放。
+    let track_h = scale(22.0);
     let radius = track_h * 0.5;
-    let thumb_r = radius - 2.0;
+    let thumb_r = radius - scale(2.0);
 
     let (rect, mut resp) = ui.allocate_exact_size(
-        egui::vec2(width, control::CONTROL_H),
+        egui::vec2(width, control::h(&ctx)),
         egui::Sense::click_and_drag(),
     );
     let track = egui::Rect::from_min_size(
@@ -101,14 +103,14 @@ pub fn control_slider<Num: egui::emath::Numeric>(
         if show_value {
             let value_galley = painter.layout_no_wrap(
                 format!("{:.2}", value.to_f64()),
-                egui::FontId::proportional(crate::theme::BODY_FONT),
+                egui::FontId::proportional(scale(crate::theme::BODY_FONT)),
                 crate::theme::text_primary(),
             );
             let value_left = thumb_cx > track.center().x;
             let vx = if value_left {
-                track.min.x + 8.0
+                track.min.x + scale(8.0)
             } else {
-                track.max.x - 8.0 - value_galley.size().x
+                track.max.x - scale(8.0) - value_galley.size().x
             };
             painter.galley(
                 egui::pos2(vx, rect.center().y - value_galley.size().y * 0.5),
@@ -120,7 +122,7 @@ pub fn control_slider<Num: egui::emath::Numeric>(
         if resp.has_focus() {
             painter.rect_stroke(
                 rect,
-                control::CONTROL_RADIUS,
+                control::radius(&ctx),
                 control::control_stroke(true, true),
                 egui::StrokeKind::Inside,
             );

@@ -81,21 +81,25 @@ impl<Num: egui::emath::Numeric> egui::Widget for ControlDragValue<'_, Num> {
         }
 
         // 外框自绘；内部 DragValue 关掉自带底/描边，避免双层。
+        let ctx = ui.ctx().clone();
+        let radius = control::radius(&ctx);
+        let pad_x = crate::scaling::scaled_font(&ctx, 6.0).round() as i8;
         let frame = egui::Frame::new()
             .fill(crate::theme::control_bg())
             .stroke(control::control_stroke(ui.is_enabled(), false))
-            .corner_radius(control::CONTROL_RADIUS)
-            .inner_margin(egui::Margin::symmetric(6, 0));
+            .corner_radius(radius)
+            .inner_margin(egui::Margin::symmetric(pad_x, 0));
         let inner = frame.show(ui, |ui| {
-            ui.spacing_mut().interact_size.y = control::CONTROL_H;
+            ui.spacing_mut().interact_size.y = control::h(ui.ctx());
             ui.scope(|ui| {
                 // 彻底关掉 DragValue 内部（含编辑态 TextEdit）的底与描边：
                 // 编辑态 TextEdit 的填充取自 extreme_bg_color，必须一并透明。
                 let visuals = &mut ui.style_mut().visuals;
                 visuals.extreme_bg_color = egui::Color32::TRANSPARENT;
                 visuals.text_edit_bg_color = Some(egui::Color32::TRANSPARENT);
-                // 编辑态 TextEdit 聚焦时用 selection.stroke 画内框，必须一并关掉。
-                visuals.selection.stroke = egui::Stroke::NONE;
+                // 编辑态 TextEdit 聚焦时用 selection.stroke 画内框。宽度设 0 关掉内框，
+                // 但颜色仍用于「选中文字」着色，必须给可读色（否则选中文字透明不可见）。
+                visuals.selection.stroke = egui::Stroke::new(0.0, crate::theme::text_primary());
                 let widgets = &mut visuals.widgets;
                 for v in [
                     &mut widgets.noninteractive,
@@ -116,7 +120,7 @@ impl<Num: egui::emath::Numeric> egui::Widget for ControlDragValue<'_, Num> {
         if resp.has_focus() {
             ui.painter().rect_stroke(
                 inner.response.rect,
-                control::CONTROL_RADIUS,
+                radius,
                 control::control_stroke(true, true),
                 egui::StrokeKind::Inside,
             );

@@ -142,9 +142,11 @@ pub fn apply_to_ctx(ctx: &egui::Context) {
         // 弹窗/面板背景色统一为程序背景色（egui 默认 gray(27) 与主题不符）
         visuals.window_fill = app_bg();
         visuals.panel_fill = app_bg();
-        // 选中高亮色统一为 ROW_SELECTED_BG；选中描边与输入光标改用强调色
+        // 选中高亮色统一为 ROW_SELECTED_BG。
+        // `selection.stroke` 在 egui 里同时充当「选中文字色」与「聚焦 TextEdit 外框色」，
+        // 取主文字色才能保证选中文字可见（取强调色会蓝字叠蓝底 → 看不见）。
         visuals.selection.bg_fill = selected_bg();
-        visuals.selection.stroke = egui::Stroke::new(1.5, accent_active());
+        visuals.selection.stroke = egui::Stroke::new(1.5, text_primary());
         // 闪烁竖线（光标）与 IME 下划线改用强调色
         let accent = accent_active();
         visuals.text_cursor.stroke = egui::Stroke::new(2.0, accent);

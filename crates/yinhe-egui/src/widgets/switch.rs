@@ -83,7 +83,9 @@ fn animate_switch(ctx: &egui::Context, id: egui::Id, target: bool, animate: bool
 
 /// iOS 风格开关。点击切换 `checked`，返回 `Response`（`changed()` 可判定是否切换）。
 pub fn switch(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
-    let desired = egui::vec2(38.0, 22.0);
+    let ctx = ui.ctx().clone();
+    let scale = |v: f32| crate::scaling::scaled_font(&ctx, v);
+    let desired = egui::vec2(scale(38.0), scale(22.0));
     let (rect, mut resp) = ui.allocate_exact_size(desired, egui::Sense::click());
     let mut toggled = false;
     if resp.clicked() {
@@ -181,14 +183,14 @@ pub fn switch(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
         painter.rect_stroke(
             rect,
             radius,
-            egui::Stroke::new(1.0, stroke_col),
+            egui::Stroke::new(scale(1.0), stroke_col),
             egui::StrokeKind::Inside,
         );
 
         // thumb
-        let thumb_r = radius - 2.0;
+        let thumb_r = radius - scale(2.0);
         let thumb_x = egui::lerp(
-            (rect.left() + thumb_r + 2.0)..=(rect.right() - thumb_r - 2.0),
+            (rect.left() + thumb_r + scale(2.0))..=(rect.right() - thumb_r - scale(2.0)),
             how_on,
         );
         let thumb_center = egui::pos2(thumb_x, rect.center().y);
@@ -202,9 +204,12 @@ pub fn switch(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
         // 焦点环
         if resp.has_focus() {
             painter.rect_stroke(
-                rect.expand(1.5),
-                radius + 1.5,
-                egui::Stroke::new(1.5, crate::theme::accent_active().gamma_multiply(0.9)),
+                rect.expand(scale(1.5)),
+                radius + scale(1.5),
+                egui::Stroke::new(
+                    scale(1.5),
+                    crate::theme::accent_active().gamma_multiply(0.9),
+                ),
                 egui::StrokeKind::Inside,
             );
         }
