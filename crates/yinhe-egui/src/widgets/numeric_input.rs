@@ -91,6 +91,10 @@ impl<Num: egui::emath::Numeric> egui::Widget for ControlDragValue<'_, Num> {
             .corner_radius(radius)
             .inner_margin(egui::Margin::symmetric(pad_x, 0));
         let inner = frame.show(ui, |ui| {
+            // 在 `right_to_left(Align::Center)` 等布局里，`Frame` 会把内容撑满
+            // 父容器的可用高度（实测行高 35），必须显式锁死最大高度，才能与
+            // 其它 `allocate_exact_size(control::h)` 的控件等高。
+            ui.set_max_height(control::h(ui.ctx()));
             ui.spacing_mut().interact_size.y = control::h(ui.ctx());
             ui.scope(|ui| {
                 // 彻底关掉 DragValue 内部（含编辑态 TextEdit）的底与描边：
