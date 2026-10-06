@@ -71,6 +71,8 @@ fn control_text_input_impl(
     );
     let mut te = egui::TextEdit::singleline(text)
         .frame(egui::Frame::NONE)
+        // TextEdit 默认 LEFT_TOP（贴顶），这里垂直居中，与外框居中对齐。
+        .vertical_align(egui::Align::Center)
         .id(te_id);
     if let Some(h) = hint {
         te = te.hint_text(h);
