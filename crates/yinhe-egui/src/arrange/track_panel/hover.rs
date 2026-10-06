@@ -29,12 +29,14 @@ pub fn is_row_hovered(ui: &egui::Ui, rect: egui::Rect) -> bool {
 }
 
 /// 图标对比色：按轨道颜色亮度选黑/白，保证 chevron/+ 在色带上可读。
-/// 原来在 AM 末行与无自动化主行两处重复，此处 DRY。
+///
+/// 复用 [`crate::theme::contrast_text`]（拖动条轨道内数值也用同一逻辑）。
 pub fn icon_contrast_color(color: [f32; 4]) -> egui::Color32 {
-    let lum = color[0] * 0.299 + color[1] * 0.587 + color[2] * 0.114;
-    if lum > 0.55 {
-        egui::Color32::BLACK
-    } else {
-        egui::Color32::WHITE
-    }
+    let c = egui::Color32::from_rgba_unmultiplied(
+        (color[0] * 255.0).round() as u8,
+        (color[1] * 255.0).round() as u8,
+        (color[2] * 255.0).round() as u8,
+        (color[3] * 255.0).round() as u8,
+    );
+    crate::theme::contrast_text(c)
 }

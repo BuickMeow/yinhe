@@ -3,7 +3,7 @@ use std::sync::{OnceLock, RwLock};
 use yinhe_theme::base::BaseColors;
 use yinhe_theme::egui_colors::Theme;
 
-pub use yinhe_theme::egui_colors::{derive_theme, rgb_to_color32, rgba_to_color32};
+pub use yinhe_theme::egui_colors::{contrast_text, derive_theme, rgb_to_color32, rgba_to_color32};
 
 /// 当前应用主题（阶段 2 运行时层）。启动/设置页通过 [`set_theme`] 更新。
 static CURRENT: OnceLock<RwLock<Theme>> = OnceLock::new();

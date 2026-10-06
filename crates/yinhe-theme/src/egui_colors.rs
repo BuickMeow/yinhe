@@ -112,7 +112,10 @@ fn luminance(c: Color32) -> f32 {
 }
 
 /// 与背景对比的"高对比"颜色：暗底白字、亮底深字（对比度惯例）。
-fn contrast_text(bg: Color32) -> Color32 {
+///
+/// 供任意"叠在给定底色上的文字/图标"选取可读颜色（如轨道色带上的 +/chevron、
+/// 拖动条轨道内的数值）。
+pub fn contrast_text(bg: Color32) -> Color32 {
     if luminance(bg) > 0.5 {
         Color32::from_gray(20)
     } else {
