@@ -8,14 +8,42 @@ use eframe::egui;
 
 /// 标准控件高度（逻辑像素基准，随字体缩放由 [`h`] 读取）。
 pub const CONTROL_H: f32 = 24.0;
+/// 紧凑控件高度（右栏面板等窄区域用，见 [`compact_scope`]）。
+pub const CONTROL_H_COMPACT: f32 = 20.0;
 /// 标准控件圆角（与 `flat::FILLED_RADIUS` 一致）。
 pub const CONTROL_RADIUS: f32 = 6.0;
 /// 标准控件水平内边距。
 pub const CONTROL_PAD_X: f32 = 8.0;
 
+/// 控件高度覆盖值的作用域 key。
+fn height_override_id() -> egui::Id {
+    egui::Id::new("control_height_override")
+}
+
 /// 随字体缩放的标准控件高度（DPI 由 egui zoom 全局处理）。
+/// 处于 [`compact_scope`] 内时返回紧凑高度。
 pub fn h(ctx: &egui::Context) -> f32 {
-    crate::scaling::scaled_font(ctx, CONTROL_H)
+    let base = ctx
+        .data(|d| d.get_temp::<f32>(height_override_id()))
+        .unwrap_or(CONTROL_H);
+    crate::scaling::scaled_font(ctx, base)
+}
+
+/// 在此作用域内把所有自绘控件（输入框/下拉框/按钮等）切到 [`CONTROL_H_COMPACT`]。
+/// 退出时恢复原值，支持嵌套。
+pub fn compact_scope<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let prev = ui.data(|d| d.get_temp::<f32>(height_override_id()));
+    ui.data_mut(|d| d.insert_temp(height_override_id(), CONTROL_H_COMPACT));
+    let out = add(ui);
+    match prev {
+        Some(p) => {
+            ui.data_mut(|d| d.insert_temp(height_override_id(), p));
+        }
+        None => {
+            ui.data_mut(|d| d.remove::<f32>(height_override_id()));
+        }
+    }
+    out
 }
 
 /// 随字体缩放的标准控件圆角。

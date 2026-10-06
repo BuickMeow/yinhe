@@ -129,7 +129,7 @@ fn row_impl(
         ui.separator();
         ui.add_space(theme::GAP);
     } else {
-        ui.add_space(theme::GAP_SM);
+        ui.add_space(theme::GAP_TIGHT);
     }
 }
 

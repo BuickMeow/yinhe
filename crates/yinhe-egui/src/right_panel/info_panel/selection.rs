@@ -362,12 +362,13 @@ pub(super) fn show_batch(ui: &mut egui::Ui, doc: &mut Document) {
         crate::widgets::rows::divider(ui);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             // right_to_left：先放右侧的「垂直翻转」，再放左侧的「水平翻转」。
-            if crate::widgets::flat::flat_button(
+            if crate::widgets::flat::flat_button_filled_auto(
                 ui,
                 egui::RichText::new(t!("sel.flip_vertical")).size(crate::scaling::scaled_font(
                     ui.ctx(),
                     crate::theme::BODY_FONT,
                 )),
+                true,
             )
             .clicked()
             {
@@ -377,12 +378,13 @@ pub(super) fn show_batch(ui: &mut egui::Ui, doc: &mut Document) {
                 }
             }
             ui.add_space(crate::theme::GAP_SM);
-            if crate::widgets::flat::flat_button(
+            if crate::widgets::flat::flat_button_filled_auto(
                 ui,
                 egui::RichText::new(t!("sel.flip_horizontal")).size(crate::scaling::scaled_font(
                     ui.ctx(),
                     crate::theme::BODY_FONT,
                 )),
+                true,
             )
             .clicked()
             {
