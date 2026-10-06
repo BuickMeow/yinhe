@@ -103,6 +103,10 @@ pub struct EditState {
     pub track_pianoroll_visible: Vec<bool>,
     /// 音轨锁定：锁定的轨道音符不可选择/编辑（仍照常播放）。会话态，不落盘。
     pub track_locked: Vec<bool>,
+    /// 图层独奏：仅该轨在钢琴卷帘可见（右击眼睛图标切换）。会话态，不落盘。
+    pub layer_solo: Option<u16>,
+    /// 进入图层独奏前的 `track_pianoroll_visible` 快照，退出时还原。
+    pub layer_solo_prev: Vec<bool>,
     pub controller_panels: Vec<yinhe_types::AutomationPanelView>,
     pub show_controller_panels: bool,
     pub soundfont_selected_port: u8,
@@ -152,6 +156,8 @@ impl Default for EditState {
             track_visible: Vec::new(),
             track_pianoroll_visible: Vec::new(),
             track_locked: Vec::new(),
+            layer_solo: None,
+            layer_solo_prev: Vec::new(),
             controller_panels: vec![yinhe_types::AutomationPanelView::default()],
             show_controller_panels: true,
             soundfont_selected_port: 0,

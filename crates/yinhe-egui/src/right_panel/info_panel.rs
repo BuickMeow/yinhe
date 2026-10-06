@@ -97,12 +97,8 @@ fn render_track(
 }
 
 /// 「图层」选项卡。
-pub(crate) fn show_layers(
-    ui: &mut egui::Ui,
-    doc: &mut Document,
-    audio: Option<&yinhe_audio::CpalAudioHandle>,
-) {
-    layers::show(ui, doc, audio);
+pub(crate) fn show_layers(ui: &mut egui::Ui, doc: &mut Document) {
+    layers::show(ui, doc);
 }
 
 /// 「历史记录」选项卡。

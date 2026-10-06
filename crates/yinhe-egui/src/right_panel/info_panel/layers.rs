@@ -15,11 +15,7 @@ use crate::theme;
 const ICON_SIZE: f32 = 16.0;
 
 /// 显示图层列表。
-pub(crate) fn show(
-    ui: &mut egui::Ui,
-    doc: &mut Document,
-    audio: Option<&yinhe_audio::CpalAudioHandle>,
-) {
+pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) {
     let num_tracks = doc.data.model.tracks.len();
     if num_tracks == 0 {
         crate::widgets::hint::empty_hint(ui, rust_i18n::t!("track.no_tracks").as_ref());
@@ -149,7 +145,10 @@ pub(crate) fn show(
                 } else {
                     ICON_VISIBILITY_OFF
                 };
-                let vis_color = if visible {
+                let soloed = doc.edit.layer_solo == Some(i as u16);
+                let vis_color = if soloed {
+                    theme::accent_active()
+                } else if visible {
                     theme::text_secondary()
                 } else if vis_hover {
                     theme::text_bright()
@@ -171,18 +170,34 @@ pub(crate) fn show(
                     );
                     if vis_resp.clicked() {
                         doc.edit.track_pianoroll_visible[i] = !visible;
+                        // 手动切换可见性时退出图层独奏，避免残留还原状态。
+                        doc.edit.layer_solo = None;
+                        doc.edit.layer_solo_prev.clear();
                         doc.edit.pianoroll_view.base.dirty = true;
                     }
-                    // 右击眼睛图标 = 独奏（SOLO）。
+                    // 右击眼睛图标 = 图层独奏（只显示这一轨）。
                     if vis_resp.secondary_clicked() {
-                        let mut toggled = false;
-                        if let Some(ov) = doc.edit.track_overrides.get_mut(i) {
-                            ov.soloed = !ov.soloed;
-                            toggled = true;
+                        if doc.edit.layer_solo == Some(i as u16) {
+                            // 退出独奏：还原进入前的可见性快照。
+                            if doc.edit.layer_solo_prev.len()
+                                == doc.edit.track_pianoroll_visible.len()
+                            {
+                                doc.edit.track_pianoroll_visible = doc.edit.layer_solo_prev.clone();
+                            } else {
+                                doc.edit.track_pianoroll_visible.fill(true);
+                            }
+                            doc.edit.layer_solo = None;
+                            doc.edit.layer_solo_prev.clear();
+                        } else {
+                            // 进入独奏：保存快照，只保留本轨可见。
+                            doc.edit.layer_solo_prev = doc.edit.track_pianoroll_visible.clone();
+                            doc.edit.track_pianoroll_visible.fill(false);
+                            if i < doc.edit.track_pianoroll_visible.len() {
+                                doc.edit.track_pianoroll_visible[i] = true;
+                            }
+                            doc.edit.layer_solo = Some(i as u16);
                         }
-                        if toggled {
-                            super::send_skip_tracks(doc, audio);
-                        }
+                        doc.edit.pianoroll_view.base.dirty = true;
                     }
                 }
 

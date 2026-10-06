@@ -153,7 +153,7 @@ pub fn show(
             }
             PanelKind::Layers => {
                 if let Some(doc) = doc_ref.as_deref_mut() {
-                    info_panel::show_layers(ui, doc, audio);
+                    info_panel::show_layers(ui, doc);
                 }
             }
             PanelKind::History => {
