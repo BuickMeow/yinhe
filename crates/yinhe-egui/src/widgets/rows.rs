@@ -86,15 +86,26 @@ fn row_impl(
     divider: bool,
     add_control: impl FnOnce(&mut egui::Ui),
 ) {
-    ui.horizontal(|ui| {
-        if desc.is_empty() {
-            // 单行标题：直接放进 horizontal，与控制垂直居中（嵌套 vertical 会错位）。
-            ui.label(
-                egui::RichText::new(title)
-                    .strong()
-                    .size(scaled_font(ui.ctx(), theme::SUB_TITLE_FONT)),
-            );
-        } else {
+    if desc.is_empty() {
+        // 单行：先固定行高为控件高再布局，保证标题与右侧控件垂直居中对齐。
+        // （直接 horizontal 会因为标题先于控件落位、行高后变，导致标题偏上。）
+        let h = super::control::h(ui.ctx());
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), h),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.label(
+                    egui::RichText::new(title)
+                        .strong()
+                        .size(scaled_font(ui.ctx(), theme::SUB_TITLE_FONT)),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    add_control(ui);
+                });
+            },
+        );
+    } else {
+        ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.label(
                     egui::RichText::new(title)
@@ -108,11 +119,11 @@ fn row_impl(
                         .color(theme::text_secondary()),
                 );
             });
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            add_control(ui);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                add_control(ui);
+            });
         });
-    });
+    }
     if divider {
         ui.add_space(theme::GAP);
         ui.separator();

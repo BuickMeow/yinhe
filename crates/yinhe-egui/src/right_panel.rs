@@ -121,17 +121,27 @@ pub fn show(
     layout_changed |= dock::show(ui, content_rect, layout, |ui, kind, _content| {
         match kind {
             PanelKind::Track => {
-                port_changed |= info_panel::show_track(
-                    ui,
-                    doc_ref.as_deref_mut(),
-                    info_content,
-                    automation_drag_ghost,
-                );
+                egui::ScrollArea::vertical()
+                    .id_salt("rpanel_track_scroll")
+                    .auto_shrink([false; 2])
+                    .show(ui, |ui| {
+                        port_changed |= info_panel::show_track(
+                            ui,
+                            doc_ref.as_deref_mut(),
+                            info_content,
+                            automation_drag_ghost,
+                        );
+                    });
             }
             PanelKind::Batch => {
-                if let Some(doc) = doc_ref.as_deref_mut() {
-                    info_panel::show_batch(ui, doc);
-                }
+                egui::ScrollArea::vertical()
+                    .id_salt("rpanel_batch_scroll")
+                    .auto_shrink([false; 2])
+                    .show(ui, |ui| {
+                        if let Some(doc) = doc_ref.as_deref_mut() {
+                            info_panel::show_batch(ui, doc);
+                        }
+                    });
             }
             PanelKind::ProjectTree => {
                 event_browser::show_tree(ui, doc_ref.as_deref_mut(), event_browser_state);
@@ -151,14 +161,24 @@ pub fn show(
                 }
             }
             PanelKind::Summary => {
-                if let Some(doc) = doc_ref.as_deref_mut() {
-                    info_panel::show_summary(ui, doc);
-                }
+                egui::ScrollArea::vertical()
+                    .id_salt("rpanel_summary_scroll")
+                    .auto_shrink([false; 2])
+                    .show(ui, |ui| {
+                        if let Some(doc) = doc_ref.as_deref_mut() {
+                            info_panel::show_summary(ui, doc);
+                        }
+                    });
             }
             PanelKind::Selection => {
-                if let Some(doc) = doc_ref.as_deref() {
-                    info_panel::show_selection_info(ui, doc);
-                }
+                egui::ScrollArea::vertical()
+                    .id_salt("rpanel_selection_scroll")
+                    .auto_shrink([false; 2])
+                    .show(ui, |ui| {
+                        if let Some(doc) = doc_ref.as_deref() {
+                            info_panel::show_selection_info(ui, doc);
+                        }
+                    });
             }
         }
         let _ = audio;
