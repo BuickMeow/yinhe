@@ -71,29 +71,55 @@ pub(crate) fn setting_row(
     desc: &str,
     add_control: impl FnOnce(&mut egui::Ui),
 ) {
+    row_impl(ui, title, desc, true, add_control);
+}
+
+/// 面板行：左侧标题、右侧控件、垂直居中；**无**行间分隔线（右栏面板用，省空间）。
+pub(crate) fn panel_row(ui: &mut egui::Ui, title: &str, add_control: impl FnOnce(&mut egui::Ui)) {
+    row_impl(ui, title, "", false, add_control);
+}
+
+fn row_impl(
+    ui: &mut egui::Ui,
+    title: &str,
+    desc: &str,
+    divider: bool,
+    add_control: impl FnOnce(&mut egui::Ui),
+) {
     ui.horizontal(|ui| {
-        ui.vertical(|ui| {
+        if desc.is_empty() {
+            // 单行标题：直接放进 horizontal，与控制垂直居中（嵌套 vertical 会错位）。
             ui.label(
                 egui::RichText::new(title)
                     .strong()
                     .size(scaled_font(ui.ctx(), theme::SUB_TITLE_FONT)),
             );
-            if !desc.is_empty() {
+        } else {
+            ui.vertical(|ui| {
+                ui.label(
+                    egui::RichText::new(title)
+                        .strong()
+                        .size(scaled_font(ui.ctx(), theme::SUB_TITLE_FONT)),
+                );
                 ui.add_space(theme::GAP_TIGHT);
                 ui.label(
                     egui::RichText::new(desc)
                         .size(scaled_font(ui.ctx(), theme::SMALL_FONT))
                         .color(theme::text_secondary()),
                 );
-            }
-        });
+            });
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             add_control(ui);
         });
     });
-    ui.add_space(theme::GAP);
-    ui.separator();
-    ui.add_space(theme::GAP);
+    if divider {
+        ui.add_space(theme::GAP);
+        ui.separator();
+        ui.add_space(theme::GAP);
+    } else {
+        ui.add_space(theme::GAP_SM);
+    }
 }
 
 /// 列表/树行：整行可点，选中/悬停底色 + 圆角。

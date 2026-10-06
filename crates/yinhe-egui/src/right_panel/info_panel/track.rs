@@ -84,7 +84,7 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
     let mut name_resp_id: Option<egui::Id> = None;
     let mut name_gained_focus = false;
     let mut name_lost_focus = false;
-    crate::widgets::rows::setting_row(ui, t!("track.name").as_ref(), "", |ui| {
+    crate::widgets::rows::panel_row(ui, t!("track.name").as_ref(), |ui| {
         let mut name = doc.data.model.tracks[track_idx].name.clone();
         let resp = crate::widgets::text_input::control_text_input(
             ui,
@@ -129,7 +129,7 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
     let mut port_changed = false;
     let mut new_port = ti.port;
     let mut new_ch = ti.channel;
-    crate::widgets::rows::setting_row(ui, t!("track.port_channel").as_ref(), "", |ui| {
+    crate::widgets::rows::panel_row(ui, t!("track.port_channel").as_ref(), |ui| {
         // right_to_left：先放右侧的通道，再放左侧的端口。
         let ch_options: Vec<(usize, String)> =
             (0..16).map(|c| (c, format!("{:02}", c + 1))).collect();
@@ -184,7 +184,7 @@ fn show_color_row(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) {
     let edit_id = ui.id().with("track_color_edit");
     let was_editing = ui.data(|d| d.get_temp::<bool>(edit_id)).unwrap_or(false);
 
-    crate::widgets::rows::setting_row(ui, t!("track.color").as_ref(), "", |ui| {
+    crate::widgets::rows::panel_row(ui, t!("track.color").as_ref(), |ui| {
         let cur = doc
             .edit
             .track_cache

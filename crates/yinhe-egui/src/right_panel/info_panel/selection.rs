@@ -360,21 +360,8 @@ pub(super) fn show_batch(ui: &mut egui::Ui, doc: &mut Document) {
     // ── 翻转（音符镜像；AM 锚点无 key 概念，不显示） ──
     if view != SelView::Am {
         crate::widgets::rows::divider(ui);
-        ui.horizontal(|ui| {
-            if crate::widgets::flat::flat_button(
-                ui,
-                egui::RichText::new(t!("sel.flip_horizontal")).size(crate::scaling::scaled_font(
-                    ui.ctx(),
-                    crate::theme::BODY_FONT,
-                )),
-            )
-            .clicked()
-            {
-                let before = doc.capture_snapshot();
-                if let Some(action) = doc.flip_selected_notes(FlipAxis::Horizontal) {
-                    doc.push_undo(action, t!("undo.flip_horizontal").as_ref(), before);
-                }
-            }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // right_to_left：先放右侧的「垂直翻转」，再放左侧的「水平翻转」。
             if crate::widgets::flat::flat_button(
                 ui,
                 egui::RichText::new(t!("sel.flip_vertical")).size(crate::scaling::scaled_font(
@@ -387,6 +374,21 @@ pub(super) fn show_batch(ui: &mut egui::Ui, doc: &mut Document) {
                 let before = doc.capture_snapshot();
                 if let Some(action) = doc.flip_selected_notes(FlipAxis::Vertical) {
                     doc.push_undo(action, t!("undo.flip_vertical").as_ref(), before);
+                }
+            }
+            ui.add_space(crate::theme::GAP_SM);
+            if crate::widgets::flat::flat_button(
+                ui,
+                egui::RichText::new(t!("sel.flip_horizontal")).size(crate::scaling::scaled_font(
+                    ui.ctx(),
+                    crate::theme::BODY_FONT,
+                )),
+            )
+            .clicked()
+            {
+                let before = doc.capture_snapshot();
+                if let Some(action) = doc.flip_selected_notes(FlipAxis::Horizontal) {
+                    doc.push_undo(action, t!("undo.flip_horizontal").as_ref(), before);
                 }
             }
         });
@@ -421,7 +423,7 @@ fn field_row(
     on_apply: impl FnOnce(Vec<NumOp>),
 ) {
     let label = label.into();
-    crate::widgets::rows::form_row(ui, &label, |ui| {
+    crate::widgets::rows::panel_row(ui, &label, |ui| {
         let id = ui.id().with(key);
         let buf_id = id.with("buf");
         let is_editing = ui.ctx().memory(|m| m.has_focus(id));
@@ -567,7 +569,7 @@ fn tempo_field(
 ) -> Option<u64> {
     let label = label.into();
     let mut result = None;
-    crate::widgets::rows::form_row(ui, &label, |ui| {
+    crate::widgets::rows::panel_row(ui, &label, |ui| {
         let id = ui.id().with(key);
         let buf_id = id.with("buf");
         let is_editing = ui.ctx().memory(|m| m.has_focus(id));
