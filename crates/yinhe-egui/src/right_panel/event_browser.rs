@@ -74,15 +74,13 @@ pub fn show_tree(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut Even
 
     // 不画背景（right_panel 已铺 app_bg，再 fill 叠两层）；边距由 dock 统一施加
     let frame_bg = egui::Frame::NONE;
-    egui::ScrollArea::both()
-        .id_salt("eb_tree")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            frame_bg.show(ui, |ui| {
-                ui.set_min_width(ui.available_width());
-                ui.vertical(|ui| tree::render_tree(ui, doc, state));
-            });
+    let row_h = crate::scaling::scaled_font(ui.ctx(), crate::theme::ROW_H_LIST);
+    crate::widgets::scroll::rows_scroll_both(ui, "eb_tree", row_h, None, |ui| {
+        frame_bg.show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.vertical(|ui| tree::render_tree(ui, doc, state));
         });
+    });
 }
 
 /// 「事件」选项卡：事件表格 / 详情（事件浏览器的下栏）。返回跳转请求。

@@ -157,7 +157,8 @@ pub(crate) fn show(
             ui.add_space(4.0);
 
             let row_height = 24.0;
-            let available_height = ui.available_height() - 40.0;
+            let available_height =
+                crate::widgets::scroll::snap_rows(ui.available_height() - 40.0, row_height, None);
             eframe::egui::ScrollArea::vertical()
                 .max_height(available_height)
                 .show_rows(ui, row_height, picker.filtered.len(), |ui, row_range| {

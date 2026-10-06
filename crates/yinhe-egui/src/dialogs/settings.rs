@@ -69,10 +69,13 @@ pub fn show_content(
             ui.set_height(full_height);
             ui.spacing_mut().interact_size.y = 24.0;
             ui.spacing_mut().item_spacing.y = 4.0;
-            egui::ScrollArea::vertical()
-                .id_salt("settings_left_scroll")
-                .auto_shrink([false; 2])
-                .show(ui, |ui| {
+            let nav_row_h = crate::widgets::control::h(ui.ctx());
+            crate::widgets::scroll::rows_scroll(
+                ui,
+                "settings_left_scroll",
+                nav_row_h,
+                None,
+                |ui| {
                     ui.spacing_mut().interact_size.y = 24.0;
                     ui.spacing_mut().item_spacing.y = 4.0;
                     crate::widgets::text_input::control_text_input_clearable(
@@ -101,7 +104,8 @@ pub fn show_content(
                             settings.ui_session.settings_tab = i;
                         }
                     }
-                });
+                },
+            );
         });
 
         ui.add_space(4.0);
@@ -125,6 +129,8 @@ pub fn show_content(
                     ui.spacing_mut().item_spacing.y = 4.0;
                     ui.spacing_mut().item_spacing.x = 4.0;
                     changed |= show_search_results(ui, settings, main_ctx);
+                    // 变高内容无法按行对齐，底部留白避免最后一项贴边。
+                    ui.add_space(8.0);
                 });
         });
     });

@@ -31,22 +31,11 @@ pub fn combo_box(
     width: f32,
     add_contents: impl FnOnce(&mut egui::Ui),
 ) -> egui::InnerResponse<Option<()>> {
-    // popup 高度取整行：viewport 高 = 可见行数 ×（行高 + 行距），底部恰好顶着下一行上沿，
-    // 永不切出半截行（默认 200px 下 200 = 7×27+11，会把第 8 行切出 11px 的半截窄行）。
-    // - 行高 24：`menu::menu_item_button` 的固定高度；
-    // - 行距必须读全局 style（`ctx.global_style()`）：popup 是挂在 ctx 根上的独立 Area，
-    //   只继承全局 style，调用方 `ui` 上的局部 `spacing_mut` 覆盖传不进去
-    //  （`Popup::menu` 套的 `menu_style` 也只改 padding/描边，不动 `item_spacing`），
-    //   用调用方行距会在设置页（局部 4.0）算出 196 而 popup 实际步长 27，仍留 7px 半截；
-    // - 取 7 行：与原来可视行数相当（200px 放 7 整行 + 半截），内容不足一屏时
-    //   `ScrollArea::auto_shrink` 收缩到内容高度，天然无半截，无需特殊处理。
-    // popup 高度取整行：viewport 高 = 可见行数 ×（行高 + 行距），底部恰好顶着下一行上沿。
+    // popup 高度由 `rows_scroll` 按整行取（视口底边压在行边界，永不切半截行）。
     let ctx = ui.ctx().clone();
     let scale = |v: f32| crate::scaling::scaled_font(&ctx, v);
     let radius = control::radius(&ctx);
     let pad_x = control::pad_x(&ctx);
-    let row_step = control::h(&ctx) + ctx.global_style().spacing.item_spacing.y;
-    let popup_h = 7.0 * row_step;
 
     // 自绘按钮（替代 egui ComboBox 的原生按钮，才能用 Material unfold_more）。
     let (rect, _) =
@@ -94,13 +83,16 @@ pub fn combo_box(
         .show(|ui| {
             ui.set_min_width(width);
             ui.set_max_width(width);
-            egui::ScrollArea::vertical()
-                .max_height(popup_h)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
+            crate::widgets::scroll::rows_scroll(
+                ui,
+                "combo_popup_scroll",
+                control::h(&ctx),
+                Some(7),
+                |ui| {
                     ui.set_min_width(width);
                     add_contents(ui);
-                });
+                },
+            );
         });
 
     egui::InnerResponse::new(popup.map(|_| ()), resp)

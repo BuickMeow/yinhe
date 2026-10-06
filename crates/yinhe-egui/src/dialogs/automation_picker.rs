@@ -186,10 +186,15 @@ pub(crate) fn show_viewport(
                             } else {
                                 // 设置菜单样式的行：左标题（无描述）+ 右开关（= 已添加自动化）。
                                 let row_h = 40.0;
+                                let max_h = crate::widgets::scroll::snap_rows(
+                                    ui.available_height() - 40.0,
+                                    row_h,
+                                    None,
+                                );
                                 egui::ScrollArea::vertical()
                                     .id_salt("automation_picker_list")
                                     .auto_shrink([false, false])
-                                    .max_height(ui.available_height() - 40.0)
+                                    .max_height(max_h)
                                     .show_rows(ui, row_h, state.filtered.len(), |ui, range| {
                                         for &pi in &state.filtered[range] {
                                             let label = state.entries[pi].label.clone();

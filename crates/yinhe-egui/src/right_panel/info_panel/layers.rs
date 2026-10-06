@@ -34,157 +34,152 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) {
     let row_h = scaled_font(ui.ctx(), theme::ROW_H_LIST);
     let pad_x = scaled_font(ui.ctx(), theme::PAD_X);
     let icon_gap = scaled_font(ui.ctx(), 6.0);
-    egui::ScrollArea::vertical()
-        .id_salt("layers_scroll")
-        .auto_shrink([false; 2])
-        .show(ui, |ui| {
-            for i in 0..num_tracks {
-                let selected = doc.edit.track_selected.contains(&(i as u16));
-                let visible = doc
-                    .edit
-                    .track_pianoroll_visible
-                    .get(i)
-                    .copied()
-                    .unwrap_or(true);
-                let locked = doc.edit.track_locked.get(i).copied().unwrap_or(false);
-                let name = doc.data.model.tracks[i].name.clone();
-                let color = doc
-                    .edit
-                    .track_cache
-                    .colors
-                    .get(i)
-                    .copied()
-                    .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
+    crate::widgets::scroll::rows_scroll(ui, "layers_scroll", row_h, None, |ui| {
+        for i in 0..num_tracks {
+            let selected = doc.edit.track_selected.contains(&(i as u16));
+            let visible = doc
+                .edit
+                .track_pianoroll_visible
+                .get(i)
+                .copied()
+                .unwrap_or(true);
+            let locked = doc.edit.track_locked.get(i).copied().unwrap_or(false);
+            let name = doc.data.model.tracks[i].name.clone();
+            let color = doc
+                .edit
+                .track_cache
+                .colors
+                .get(i)
+                .copied()
+                .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
 
-                let (rect, resp) = ui.allocate_exact_size(
-                    egui::vec2(ui.available_width(), row_h),
-                    egui::Sense::click(),
-                );
+            let (rect, resp) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width(), row_h),
+                egui::Sense::click(),
+            );
 
-                // 选中底色。
-                if selected {
-                    ui.painter()
-                        .rect_filled(rect, theme::ROW_RADIUS, theme::selected_bg());
-                } else if resp.hovered() {
-                    ui.painter().rect_filled(
-                        rect,
-                        theme::ROW_RADIUS,
-                        theme::hover_color(theme::app_bg()),
-                    );
-                }
-
-                // 左侧色块（行高一致）。
-                let swatch = egui::Rect::from_min_size(
-                    egui::pos2(rect.min.x + pad_x, rect.min.y + 3.0),
-                    egui::vec2(6.0, row_h - 6.0),
-                );
+            // 选中底色。
+            if selected {
+                ui.painter()
+                    .rect_filled(rect, theme::ROW_RADIUS, theme::selected_bg());
+            } else if resp.hovered() {
                 ui.painter().rect_filled(
-                    swatch,
-                    2.0,
-                    theme::rgba_to_color32((color[0], color[1], color[2], color[3])),
+                    rect,
+                    theme::ROW_RADIUS,
+                    theme::hover_color(theme::app_bg()),
                 );
+            }
 
-                // 轨名。
-                let text_color = if selected {
+            // 左侧色块（行高一致）。
+            let swatch = egui::Rect::from_min_size(
+                egui::pos2(rect.min.x + pad_x, rect.min.y + 3.0),
+                egui::vec2(6.0, row_h - 6.0),
+            );
+            ui.painter().rect_filled(
+                swatch,
+                2.0,
+                theme::rgba_to_color32((color[0], color[1], color[2], color[3])),
+            );
+
+            // 轨名。
+            let text_color = if selected {
+                theme::text_bright()
+            } else {
+                theme::text_secondary()
+            };
+            ui.painter().text(
+                egui::pos2(swatch.max.x + icon_gap, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                format!("{:03} {}", i, name),
+                egui::FontId::proportional(scaled_font(ui.ctx(), theme::SMALL_FONT)),
+                text_color,
+            );
+
+            // 右侧 可见 / 锁定 图标（Conductor 轨不提供）。
+            if Some(i as u16) != conductor_idx {
+                let icon_font =
+                    egui::FontId::new(scaled_font(ui.ctx(), ICON_SIZE), ICON_LOCK.font_family());
+
+                // 锁定。
+                let lock_rect = egui::Rect::from_center_size(
+                    egui::pos2(rect.max.x - scaled_font(ui.ctx(), 14.0), rect.center().y),
+                    egui::vec2(row_h, row_h),
+                );
+                let lock_hover =
+                    ui.input(|i| i.pointer.hover_pos().is_some_and(|p| lock_rect.contains(p)));
+                let lock_icon = if locked { ICON_LOCK } else { ICON_LOCK_OPEN };
+                let lock_color = if locked {
+                    theme::accent_active()
+                } else if lock_hover {
                     theme::text_bright()
                 } else {
-                    theme::text_secondary()
+                    theme::text_label()
                 };
                 ui.painter().text(
-                    egui::pos2(swatch.max.x + icon_gap, rect.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    format!("{:03} {}", i, name),
-                    egui::FontId::proportional(scaled_font(ui.ctx(), theme::SMALL_FONT)),
-                    text_color,
+                    lock_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    lock_icon.codepoint,
+                    icon_font.clone(),
+                    lock_color,
                 );
-
-                // 右侧 可见 / 锁定 图标（Conductor 轨不提供）。
-                if Some(i as u16) != conductor_idx {
-                    let icon_font = egui::FontId::new(
-                        scaled_font(ui.ctx(), ICON_SIZE),
-                        ICON_LOCK.font_family(),
+                if lock_hover {
+                    let lock_resp = ui.interact(
+                        lock_rect,
+                        ui.id().with(("layer_lock", i)),
+                        egui::Sense::click(),
                     );
-
-                    // 锁定。
-                    let lock_rect = egui::Rect::from_center_size(
-                        egui::pos2(rect.max.x - scaled_font(ui.ctx(), 14.0), rect.center().y),
-                        egui::vec2(row_h, row_h),
-                    );
-                    let lock_hover =
-                        ui.input(|i| i.pointer.hover_pos().is_some_and(|p| lock_rect.contains(p)));
-                    let lock_icon = if locked { ICON_LOCK } else { ICON_LOCK_OPEN };
-                    let lock_color = if locked {
-                        theme::accent_active()
-                    } else if lock_hover {
-                        theme::text_bright()
-                    } else {
-                        theme::text_label()
-                    };
-                    ui.painter().text(
-                        lock_rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        lock_icon.codepoint,
-                        icon_font.clone(),
-                        lock_color,
-                    );
-                    if lock_hover {
-                        let lock_resp = ui.interact(
-                            lock_rect,
-                            ui.id().with(("layer_lock", i)),
-                            egui::Sense::click(),
-                        );
-                        if lock_resp.clicked() {
-                            doc.edit.track_locked[i] = !locked;
-                        }
+                    if lock_resp.clicked() {
+                        doc.edit.track_locked[i] = !locked;
                     }
+                }
 
-                    // 可见。
-                    let vis_rect = egui::Rect::from_center_size(
-                        egui::pos2(rect.max.x - scaled_font(ui.ctx(), 34.0), rect.center().y),
-                        egui::vec2(row_h, row_h),
+                // 可见。
+                let vis_rect = egui::Rect::from_center_size(
+                    egui::pos2(rect.max.x - scaled_font(ui.ctx(), 34.0), rect.center().y),
+                    egui::vec2(row_h, row_h),
+                );
+                let vis_hover =
+                    ui.input(|i| i.pointer.hover_pos().is_some_and(|p| vis_rect.contains(p)));
+                let vis_icon = if visible {
+                    ICON_VISIBILITY
+                } else {
+                    ICON_VISIBILITY_OFF
+                };
+                let vis_color = if visible {
+                    theme::text_secondary()
+                } else if vis_hover {
+                    theme::text_bright()
+                } else {
+                    theme::text_label()
+                };
+                ui.painter().text(
+                    vis_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    vis_icon.codepoint,
+                    icon_font,
+                    vis_color,
+                );
+                if vis_hover {
+                    let vis_resp = ui.interact(
+                        vis_rect,
+                        ui.id().with(("layer_vis", i)),
+                        egui::Sense::click(),
                     );
-                    let vis_hover =
-                        ui.input(|i| i.pointer.hover_pos().is_some_and(|p| vis_rect.contains(p)));
-                    let vis_icon = if visible {
-                        ICON_VISIBILITY
-                    } else {
-                        ICON_VISIBILITY_OFF
-                    };
-                    let vis_color = if visible {
-                        theme::text_secondary()
-                    } else if vis_hover {
-                        theme::text_bright()
-                    } else {
-                        theme::text_label()
-                    };
-                    ui.painter().text(
-                        vis_rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        vis_icon.codepoint,
-                        icon_font,
-                        vis_color,
-                    );
-                    if vis_hover {
-                        let vis_resp = ui.interact(
-                            vis_rect,
-                            ui.id().with(("layer_vis", i)),
-                            egui::Sense::click(),
-                        );
-                        if vis_resp.clicked() {
-                            doc.edit.track_pianoroll_visible[i] = !visible;
-                            doc.edit.pianoroll_view.base.dirty = true;
-                        }
+                    if vis_resp.clicked() {
+                        doc.edit.track_pianoroll_visible[i] = !visible;
+                        doc.edit.pianoroll_view.base.dirty = true;
                     }
+                }
 
-                    // 行点击（避开图标区）→ 单选该轨。
-                    if resp.clicked() && !lock_hover && !vis_hover {
-                        doc.edit.track_selected.clear();
-                        doc.edit.track_selected.insert(i as u16);
-                    }
-                } else if resp.clicked() {
+                // 行点击（避开图标区）→ 单选该轨。
+                if resp.clicked() && !lock_hover && !vis_hover {
                     doc.edit.track_selected.clear();
                     doc.edit.track_selected.insert(i as u16);
                 }
+            } else if resp.clicked() {
+                doc.edit.track_selected.clear();
+                doc.edit.track_selected.insert(i as u16);
             }
-        });
+        }
+    });
 }

@@ -24,10 +24,12 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &Document) {
         return;
     }
 
-    egui::ScrollArea::vertical()
-        .id_salt("history_scroll")
-        .auto_shrink([false; 2])
-        .show(ui, |ui| {
+    crate::widgets::scroll::rows_scroll(
+        ui,
+        "history_scroll",
+        crate::scaling::scaled_font(ui.ctx(), crate::theme::ROW_H_LIST),
+        None,
+        |ui| {
             // 最新的撤销步骤在最上方。
             for label in past.iter().rev() {
                 draw_row(ui, &label_text(label), false);
@@ -36,7 +38,8 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &Document) {
             for label in future.iter().rev() {
                 draw_row(ui, &label_text(label), true);
             }
-        });
+        },
+    );
 }
 
 fn draw_row(ui: &mut egui::Ui, text: &str, dimmed: bool) {
