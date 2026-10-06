@@ -10,19 +10,19 @@ use yinhe_editor_core::right_panel_layout::{PanelColumn, PanelKind, RightPanelLa
 use crate::theme;
 
 /// 选项卡栏高度（比选项卡本身高，选项卡在其中垂直居中）。
-const TAB_BAR_H: f32 = 24.0;
+const TAB_BAR_H: f32 = theme::ROW_H_LIST;
 /// 选项卡本身高度。
-const TAB_H: f32 = 20.0;
+const TAB_H: f32 = theme::ROW_H_COMPACT;
 /// 栏间分割线厚度（与项目其它分割线一致）。
 const SPLIT_H: f32 = theme::SPLIT_GAP;
 /// 判定「分裂出新栏」的边界命中带（上一行底端附近）。
 const SPLIT_ZONE: f32 = 12.0;
 /// 选项卡文字左右内边距。
-const TAB_PAD: f32 = 8.0;
+const TAB_PAD: f32 = theme::PAD_X;
 /// 标签栏 / 内容区与栏边缘的水平边距（分割线不缩进）。
-const PAD_X: f32 = 8.0;
+const PAD_X: f32 = theme::PAD_X;
 /// 内容区上下边距。
-const PAD_Y: f32 = 4.0;
+const PAD_Y: f32 = theme::PAD_Y;
 /// 每栏内容区最小高度（分配高度时的下限）。
 const COL_MIN_H: f32 = 60.0;
 
@@ -247,7 +247,7 @@ fn paint_header(
     // 头背景。
     ui.painter().rect_filled(g.header, 0.0, theme::control_bg());
 
-    let font = egui::FontId::proportional(theme::SMALL_FONT);
+    let font = egui::FontId::proportional(crate::scaling::scaled_font(ui.ctx(), theme::SMALL_FONT));
     let mut x = g.header.min.x + PAD_X;
     for (ti, &kind) in col.tabs.iter().enumerate() {
         let label = tab_label(kind);

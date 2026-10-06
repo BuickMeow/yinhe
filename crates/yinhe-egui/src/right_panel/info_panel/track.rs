@@ -14,20 +14,18 @@ use yinhe_editor_core::document::Document;
 
 use rust_i18n::t;
 
-/// 字段标签列宽：让不同字数的标签后，各行的值起始 x 对齐。
-const FIELD_LABEL_W: f32 = 72.0;
-/// 字段行高。
-const FIELD_ROW_H: f32 = 18.0;
-
-/// 固定宽度的字段标签（左对齐、垂直居中）。
-fn field_label(ui: &mut egui::Ui, text: &str) {
-    ui.allocate_ui_with_layout(
-        egui::vec2(FIELD_LABEL_W, FIELD_ROW_H),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.label(text);
-        },
-    );
+/// 固定标签列 + 只读值（`BODY_FONT` + `text_bright`）。
+fn field_value(ui: &mut egui::Ui, label: &str, value: impl Into<String>) {
+    crate::widgets::rows::form_row(ui, label, |ui| {
+        ui.label(
+            egui::RichText::new(value.into())
+                .size(crate::scaling::scaled_font(
+                    ui.ctx(),
+                    crate::theme::BODY_FONT,
+                ))
+                .color(crate::theme::text_bright()),
+        );
+    });
 }
 
 /// 显示音轨属性（「音轨」选项卡）。返回 `true` 表示端口/通道改变。
@@ -60,36 +58,24 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
 
     // ── Conductor 轨 ──
     if Some(track_idx as u16) == doc.edit.track_cache.conductor_idx {
-        ui.label(
-            egui::RichText::new(t!("track.conductor").as_ref())
-                .strong()
-                .color(crate::theme::text_primary()),
-        );
-        ui.add_space(4.0);
+        crate::widgets::rows::section_header(ui, t!("track.conductor").as_ref());
         if !doc.data.model.meta.name.is_empty() {
-            ui.horizontal(|ui| {
-                field_label(ui, t!("track.song_title").as_ref());
-                ui.label(
-                    egui::RichText::new(&doc.data.model.meta.name)
-                        .color(crate::theme::text_bright())
-                        .size(crate::theme::SUB_TITLE_FONT),
-                );
-            });
+            field_value(
+                ui,
+                t!("track.song_title").as_ref(),
+                doc.data.model.meta.name.clone(),
+            );
         }
-        ui.horizontal(|ui| {
-            field_label(ui, t!("track.tempo_count").as_ref());
-            ui.label(egui::RichText::new(format!(
-                "{}",
-                doc.data.model.conductor.tempo.events.len()
-            )));
-        });
-        ui.horizontal(|ui| {
-            field_label(ui, t!("track.timesig_count").as_ref());
-            ui.label(egui::RichText::new(format!(
-                "{}",
-                doc.data.model.conductor.time_sig.len()
-            )));
-        });
+        field_value(
+            ui,
+            t!("track.tempo_count").as_ref(),
+            format!("{}", doc.data.model.conductor.tempo.events.len()),
+        );
+        field_value(
+            ui,
+            t!("track.timesig_count").as_ref(),
+            format!("{}", doc.data.model.conductor.time_sig.len()),
+        );
         return false;
     }
 
@@ -98,8 +84,7 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
     let mut name_resp_id: Option<egui::Id> = None;
     let mut name_gained_focus = false;
     let mut name_lost_focus = false;
-    ui.horizontal(|ui| {
-        field_label(ui, t!("track.name").as_ref());
+    crate::widgets::rows::form_row(ui, t!("track.name").as_ref(), |ui| {
         let mut name = doc.data.model.tracks[track_idx].name.clone();
         let resp = crate::widgets::text_input::control_text_input(
             ui,
@@ -144,8 +129,7 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
     let mut port_changed = false;
     let mut new_port = ti.port;
     let mut new_ch = ti.channel;
-    ui.horizontal(|ui| {
-        field_label(ui, t!("track.port_channel").as_ref());
+    crate::widgets::rows::form_row(ui, t!("track.port_channel").as_ref(), |ui| {
         let port_options: Vec<(usize, String)> = (0..16)
             .map(|p| (p, format!("Port {}", (b'A' + p as u8) as char)))
             .collect();
@@ -194,8 +178,7 @@ fn show_color_row(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) {
     let edit_id = ui.id().with("track_color_edit");
     let was_editing = ui.data(|d| d.get_temp::<bool>(edit_id)).unwrap_or(false);
 
-    ui.horizontal(|ui| {
-        field_label(ui, t!("track.color").as_ref());
+    crate::widgets::rows::form_row(ui, t!("track.color").as_ref(), |ui| {
         let cur = doc
             .edit
             .track_cache
@@ -208,7 +191,10 @@ fn show_color_row(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) {
         let resp = crate::widgets::color_picker::color_edit_button(
             ui,
             &mut srgba,
-            egui::vec2(36.0, FIELD_ROW_H),
+            egui::vec2(
+                36.0,
+                crate::scaling::scaled_font(ui.ctx(), crate::theme::ROW_H_COMPACT),
+            ),
         );
         let changed = resp.changed();
 
@@ -221,7 +207,7 @@ fn show_color_row(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) {
                 12.0,
                 crate::theme::text_label(),
             ),
-            egui::vec2(68.0, 18.0),
+            egui::vec2(68.0, crate::scaling::scaled_font(ui.ctx(), 18.0)),
             stored_color != yinhe_core::DEFAULT_TRACK_COLOR,
         );
 

@@ -14,6 +14,7 @@ pub(crate) mod menu;
 pub mod numeric_input;
 pub mod quantize_popup;
 pub(crate) mod reorder;
+pub(crate) mod rows;
 pub mod scrollbar;
 pub mod selection_actions;
 pub(crate) mod slider;

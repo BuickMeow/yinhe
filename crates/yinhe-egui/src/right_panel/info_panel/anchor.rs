@@ -37,29 +37,13 @@ pub(super) fn show_anchor_info(
     ui.add_space(4.0);
 
     // ── 目标名称（只读） ──
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(t!("anchor.target").as_ref())
-                .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::text_label()),
-        );
-        ui.label(
-            egui::RichText::new(target.display_name())
-                .size(crate::theme::BODY_FONT)
-                .color(crate::theme::text_bright()),
-        );
-    });
+    crate::widgets::rows::value_row(ui, t!("anchor.target"), target.display_name());
     ui.add_space(4.0);
 
     // ── Tick ──
     let guard = LaneUndoGuard::new(ui, "tick", track_idx, lane_idx, target);
     let mut edit_tick = tick as f64;
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(t!("anchor.tick").as_ref())
-                .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::text_label()),
-        );
+    crate::widgets::rows::form_row(ui, t!("anchor.tick").as_ref(), |ui| {
         let resp = ui.add(
             crate::widgets::numeric_input::decimal_drag_value(&mut edit_tick)
                 .range(0..=u32::MAX as i64)
@@ -90,12 +74,7 @@ pub(super) fn show_anchor_info(
     // ── Value ──
     let guard = LaneUndoGuard::new(ui, "val", track_idx, lane_idx, target);
     let mut edit_value = target.to_display_value(value) as f64;
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(t!("anchor.value").as_ref())
-                .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::text_label()),
-        );
+    crate::widgets::rows::form_row(ui, t!("anchor.value").as_ref(), |ui| {
         let resp = ui.add(
             crate::widgets::numeric_input::decimal_drag_value(&mut edit_value)
                 .range(0.0..=max_val as f64)
@@ -125,14 +104,8 @@ pub(super) fn show_anchor_info(
     ui.add_space(6.0);
 
     // ── Shape（离散/曲线切换） ──
-    ui.separator();
-    ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(t!("anchor.shape").as_ref())
-                .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::text_label()),
-        );
+    crate::widgets::rows::divider(ui);
+    crate::widgets::rows::form_row(ui, t!("anchor.shape").as_ref(), |ui| {
         let is_step = matches!(shape, SegmentShape::Step);
         let mut discrete = is_step;
         let resp =
@@ -164,12 +137,7 @@ pub(super) fn show_anchor_info(
         // X1
         let guard = LaneUndoGuard::new(ui, "x1", track_idx, lane_idx, target);
         let mut edit = x1;
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(t!("anchor.x1").as_ref())
-                    .size(crate::theme::SMALL_FONT)
-                    .color(crate::theme::text_label()),
-            );
+        crate::widgets::rows::form_row(ui, t!("anchor.x1").as_ref(), |ui| {
             let resp = ui.add(
                 crate::widgets::numeric_input::decimal_drag_value(&mut edit)
                     .range(0.0..=0.25)
@@ -202,12 +170,7 @@ pub(super) fn show_anchor_info(
         // Y1
         let guard = LaneUndoGuard::new(ui, "y1", track_idx, lane_idx, target);
         let mut edit = y1;
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(t!("anchor.y1").as_ref())
-                    .size(crate::theme::SMALL_FONT)
-                    .color(crate::theme::text_label()),
-            );
+        crate::widgets::rows::form_row(ui, t!("anchor.y1").as_ref(), |ui| {
             let resp = ui.add(
                 crate::widgets::numeric_input::decimal_drag_value(&mut edit)
                     .range(-0.5..=0.5)
@@ -240,12 +203,7 @@ pub(super) fn show_anchor_info(
         // X2
         let guard = LaneUndoGuard::new(ui, "x2", track_idx, lane_idx, target);
         let mut edit = x2;
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(t!("anchor.x2").as_ref())
-                    .size(crate::theme::SMALL_FONT)
-                    .color(crate::theme::text_label()),
-            );
+        crate::widgets::rows::form_row(ui, t!("anchor.x2").as_ref(), |ui| {
             let resp = ui.add(
                 crate::widgets::numeric_input::decimal_drag_value(&mut edit)
                     .range(-0.25..=0.0)
@@ -278,12 +236,7 @@ pub(super) fn show_anchor_info(
         // Y2
         let guard = LaneUndoGuard::new(ui, "y2", track_idx, lane_idx, target);
         let mut edit = y2;
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(t!("anchor.y2").as_ref())
-                    .size(crate::theme::SMALL_FONT)
-                    .color(crate::theme::text_label()),
-            );
+        crate::widgets::rows::form_row(ui, t!("anchor.y2").as_ref(), |ui| {
             let resp = ui.add(
                 crate::widgets::numeric_input::decimal_drag_value(&mut edit)
                     .range(-0.5..=0.5)
@@ -326,17 +279,20 @@ pub(super) fn show_anchor_info(
     };
     ui.label(
         egui::RichText::new(shape_desc.as_ref())
-            .size(crate::theme::SMALL_LABEL_FONT)
+            .size(crate::scaling::scaled_font(
+                ui.ctx(),
+                crate::theme::SMALL_LABEL_FONT,
+            ))
             .color(crate::theme::text_label()),
     );
 
-    ui.add_space(8.0);
-    ui.separator();
-    ui.add_space(6.0);
+    crate::widgets::rows::divider(ui);
 
     if crate::widgets::flat::flat_button(
         ui,
-        egui::RichText::new(t!("common.clear_selection").as_ref()).size(crate::theme::BODY_FONT),
+        egui::RichText::new(t!("common.clear_selection").as_ref()).size(
+            crate::scaling::scaled_font(ui.ctx(), crate::theme::BODY_FONT),
+        ),
     )
     .clicked()
     {

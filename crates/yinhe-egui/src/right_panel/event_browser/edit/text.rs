@@ -164,13 +164,19 @@ fn show_text_edit_popup(
                 ui.label(
                     egui::RichText::new(title)
                         .strong()
-                        .size(crate::theme::SMALL_FONT),
+                        .size(crate::scaling::scaled_font(
+                            ui.ctx(),
+                            crate::theme::SMALL_FONT,
+                        )),
                 );
                 ui.add_space(2.0);
                 let resp = ui.add(
                     egui::TextEdit::singleline(&mut state)
                         .desired_width(200.0)
-                        .font(egui::FontId::proportional(11.0)),
+                        .font(egui::FontId::proportional(crate::scaling::scaled_font(
+                            ui.ctx(),
+                            crate::theme::SMALL_FONT,
+                        ))),
                 );
                 if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     open = false;

@@ -166,85 +166,88 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
         pc_count
     );
 
-    // 行背景由固定行高空间判定 hover（选中优先），
-    // 不能用 available_rect_before_wrap：那是剩余区域，会把 1..N 行同时判为 hover。
-    let row_rect = tree_row_background(ui, is_selected);
-
     let mut toggled = false;
     let mut selected = false;
 
-    ui.scope_builder(egui::UiBuilder::new().max_rect(row_rect), |ui| {
-        egui::Frame::NONE
-            .inner_margin(egui::Margin::symmetric(2, 1))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
-                    ui.add_space(2.0 * 14.0);
+    crate::widgets::rows::list_row(ui, is_selected, |ui| {
+        ui.add_space(crate::theme::INDENT_STEP * 2.0);
 
-                    let chev = if expanded {
-                        ICON_EXPAND_MORE
+        let chev = if expanded {
+            ICON_EXPAND_MORE
+        } else {
+            ICON_CHEVRON_RIGHT
+        };
+        if ui
+            .add(
+                egui::Label::new(
+                    chev.rich_text()
+                        .size(crate::scaling::scaled_font(
+                            ui.ctx(),
+                            crate::theme::SUB_TITLE_FONT,
+                        ))
+                        .color(crate::theme::text_secondary()),
+                )
+                .sense(egui::Sense::click()),
+            )
+            .clicked()
+        {
+            toggled = true;
+        }
+
+        ui.add(
+            egui::Label::new(
+                ICON_AUDIOTRACK
+                    .rich_text()
+                    .size(crate::scaling::scaled_font(
+                        ui.ctx(),
+                        crate::theme::BODY_FONT,
+                    ))
+                    .color(if is_selected {
+                        crate::theme::contrast_fg()
                     } else {
-                        ICON_CHEVRON_RIGHT
-                    };
-                    if ui
-                        .add(
-                            egui::Label::new(
-                                chev.rich_text()
-                                    .size(crate::theme::SUB_TITLE_FONT)
-                                    .color(crate::theme::text_secondary()),
-                            )
-                            .sense(egui::Sense::click()),
-                        )
-                        .clicked()
-                    {
-                        toggled = true;
-                    }
+                        crate::theme::text_muted()
+                    }),
+            )
+            .selectable(false),
+        );
 
-                    ui.add(
-                        egui::Label::new(
-                            ICON_AUDIOTRACK
-                                .rich_text()
-                                .size(crate::theme::BODY_FONT)
-                                .color(if is_selected {
-                                    crate::theme::contrast_fg()
-                                } else {
-                                    crate::theme::text_muted()
-                                }),
-                        )
-                        .selectable(false),
-                    );
+        if ui
+            .add(
+                egui::Label::new(
+                    egui::RichText::new(&label_text)
+                        .size(crate::scaling::scaled_font(
+                            ui.ctx(),
+                            crate::theme::SMALL_FONT,
+                        ))
+                        .color(if is_selected {
+                            crate::theme::contrast_fg()
+                        } else {
+                            crate::theme::text_primary()
+                        }),
+                )
+                .selectable(false)
+                .sense(egui::Sense::click()),
+            )
+            .clicked()
+        {
+            selected = true;
+        }
 
-                    let name_resp = ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(&label_text)
-                                .size(crate::theme::SMALL_FONT)
-                                .color(if is_selected {
-                                    crate::theme::contrast_fg()
-                                } else {
-                                    crate::theme::text_primary()
-                                }),
-                        )
-                        .selectable(false)
-                        .sense(egui::Sense::click()),
-                    );
-                    if name_resp.clicked() {
-                        selected = true;
-                    }
-
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(format!("[{}]", summary))
-                                .size(crate::theme::SMALL_LABEL_FONT)
-                                .color(if is_selected {
-                                    crate::theme::contrast_fg()
-                                } else {
-                                    crate::theme::text_label()
-                                }),
-                        )
-                        .selectable(false),
-                    );
-                });
-            });
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(format!("[{}]", summary))
+                    .size(crate::scaling::scaled_font(
+                        ui.ctx(),
+                        crate::theme::SMALL_LABEL_FONT,
+                    ))
+                    .color(if is_selected {
+                        crate::theme::contrast_fg()
+                    } else {
+                        crate::theme::text_label()
+                    }),
+            )
+            .selectable(false),
+        );
     });
 
     if toggled {
@@ -319,33 +322,6 @@ fn automation_icon(target: &AutomationTarget) -> egui_material_icons::MaterialIc
 
 // ── Tree row renderers ──
 
-/// 树行统一行高（内容 SMALL_FONT~SUB_TITLE_FONT 加边距）。
-const TREE_ROW_H: f32 = 24.0;
-
-/// 分配一行树行空间并绘制背景（选中优先于 hover，透明兜底）。
-///
-/// 关键：hover 用「当前行」的 rect 判定，不能用 available_rect_before_wrap()
-/// —— 那是光标位置到容器底部的整个剩余区域，会把鼠标所在行之前的
-/// 所有行（1..N）同时判为 hover，导致多行同亮。
-fn tree_row_background(ui: &mut egui::Ui, selected: bool) -> egui::Rect {
-    let (row_rect, _resp) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), TREE_ROW_H),
-        egui::Sense::hover(),
-    );
-    // 几何判定 hover：不依赖 egui 的 hover 抢占机制（行内 chevron/label 的
-    // interact 会顶掉行级 hovered()），鼠标在行内即高亮，与选中态并存。
-    let hovered = ui.rect_contains_pointer(row_rect);
-    let row_bg = if selected {
-        crate::theme::selected_bg()
-    } else if hovered {
-        crate::theme::hover_color(crate::theme::app_bg())
-    } else {
-        egui::Color32::TRANSPARENT
-    };
-    ui.painter().rect_filled(row_rect, 4.0, row_bg);
-    row_rect
-}
-
 fn render_dir_row(
     ui: &mut egui::Ui,
     name: &str,
@@ -355,69 +331,73 @@ fn render_dir_row(
 ) -> bool {
     let mut toggled = false;
     // 目录行无选中态，仅 hover 时给底色反馈
-    let row_rect = tree_row_background(ui, false);
-    ui.scope_builder(egui::UiBuilder::new().max_rect(row_rect), |ui| {
-        egui::Frame::NONE
-            .inner_margin(egui::Margin::symmetric(2, 1))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
-                    ui.add_space(depth as f32 * 14.0);
-                    let chev = if expanded {
-                        ICON_EXPAND_MORE
-                    } else {
-                        ICON_CHEVRON_RIGHT
-                    };
-                    if ui
-                        .add(
-                            egui::Label::new(
-                                chev.rich_text()
-                                    .size(crate::theme::SUB_TITLE_FONT)
-                                    .color(crate::theme::text_secondary()),
-                            )
-                            .sense(egui::Sense::click()),
-                        )
-                        .clicked()
-                    {
-                        toggled = true;
-                    }
-                    let folder = if expanded {
-                        ICON_FOLDER_OPEN
-                    } else {
-                        ICON_FOLDER
-                    };
-                    if ui
-                        .add(
-                            egui::Label::new(
-                                folder
-                                    .rich_text()
-                                    .size(crate::theme::SUB_TITLE_FONT)
-                                    .color(crate::theme::warning_gold()),
-                            )
-                            .sense(egui::Sense::click()),
-                        )
-                        .clicked()
-                    {
-                        toggled = true;
-                    }
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(name)
-                                .size(crate::theme::SMALL_FONT)
-                                .color(crate::theme::text_primary()),
-                        )
-                        .selectable(false),
-                    );
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(format!("({})", child_count))
-                                .size(crate::theme::SMALL_LABEL_FONT)
-                                .color(crate::theme::text_label()),
-                        )
-                        .selectable(false),
-                    );
-                });
-            });
+    crate::widgets::rows::list_row(ui, false, |ui| {
+        ui.add_space(depth as f32 * crate::theme::INDENT_STEP);
+        let chev = if expanded {
+            ICON_EXPAND_MORE
+        } else {
+            ICON_CHEVRON_RIGHT
+        };
+        if ui
+            .add(
+                egui::Label::new(
+                    chev.rich_text()
+                        .size(crate::scaling::scaled_font(
+                            ui.ctx(),
+                            crate::theme::SUB_TITLE_FONT,
+                        ))
+                        .color(crate::theme::text_secondary()),
+                )
+                .sense(egui::Sense::click()),
+            )
+            .clicked()
+        {
+            toggled = true;
+        }
+        let folder = if expanded {
+            ICON_FOLDER_OPEN
+        } else {
+            ICON_FOLDER
+        };
+        if ui
+            .add(
+                egui::Label::new(
+                    folder
+                        .rich_text()
+                        .size(crate::scaling::scaled_font(
+                            ui.ctx(),
+                            crate::theme::SUB_TITLE_FONT,
+                        ))
+                        .color(crate::theme::warning_gold()),
+                )
+                .sense(egui::Sense::click()),
+            )
+            .clicked()
+        {
+            toggled = true;
+        }
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(name)
+                    .size(crate::scaling::scaled_font(
+                        ui.ctx(),
+                        crate::theme::SMALL_FONT,
+                    ))
+                    .color(crate::theme::text_primary()),
+            )
+            .selectable(false),
+        );
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(format!("({})", child_count))
+                    .size(crate::scaling::scaled_font(
+                        ui.ctx(),
+                        crate::theme::SMALL_LABEL_FONT,
+                    ))
+                    .color(crate::theme::text_label()),
+            )
+            .selectable(false),
+        );
     });
     toggled
 }
@@ -431,47 +411,40 @@ fn render_leaf_item(
     state: &mut EventBrowserState,
 ) {
     let is_selected = state.selected_item.as_ref() == Some(&item);
-    // 行背景由固定行高空间判定 hover（选中优先），不能用 available_rect_before_wrap。
-    let row_rect = tree_row_background(ui, is_selected);
-    ui.scope_builder(egui::UiBuilder::new().max_rect(row_rect), |ui| {
-        egui::Frame::NONE
-            .inner_margin(egui::Margin::symmetric(2, 1))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
-                    ui.add_space(depth as f32 * 14.0);
-                    ui.add_space(14.0);
-                    ui.add(
-                        egui::Label::new(icon.rich_text().size(crate::theme::BODY_FONT).color(
-                            if is_selected {
-                                crate::theme::contrast_fg()
-                            } else {
-                                crate::theme::text_muted()
-                            },
-                        ))
-                        .selectable(false),
-                    );
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(name)
-                                .size(crate::theme::SMALL_FONT)
-                                .color(if is_selected {
-                                    crate::theme::contrast_fg()
-                                } else {
-                                    crate::theme::text_bright()
-                                }),
-                        )
-                        .selectable(false),
-                    );
-                });
-            });
+    let resp = crate::widgets::rows::list_row(ui, is_selected, |ui| {
+        ui.add_space(depth as f32 * crate::theme::INDENT_STEP + crate::theme::INDENT_STEP);
+        ui.add(
+            egui::Label::new(
+                icon.rich_text()
+                    .size(crate::scaling::scaled_font(
+                        ui.ctx(),
+                        crate::theme::BODY_FONT,
+                    ))
+                    .color(if is_selected {
+                        crate::theme::contrast_fg()
+                    } else {
+                        crate::theme::text_muted()
+                    }),
+            )
+            .selectable(false),
+        );
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(name)
+                    .size(crate::scaling::scaled_font(
+                        ui.ctx(),
+                        crate::theme::SMALL_FONT,
+                    ))
+                    .color(if is_selected {
+                        crate::theme::contrast_fg()
+                    } else {
+                        crate::theme::text_bright()
+                    }),
+            )
+            .selectable(false),
+        );
     });
-    // 行级点击（id 用行位置保证唯一：同一 frame 内两行 y 坐标必不同）。
-    let hit_id = ui.id().with(("row_hit", row_rect.min.y.to_bits()));
-    if ui
-        .interact(row_rect, hit_id, egui::Sense::click())
-        .clicked()
-    {
+    if resp.clicked() {
         state.selected_item = Some(item);
         state.selected_track = None;
         state.event_page = 0;

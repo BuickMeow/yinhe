@@ -7,8 +7,6 @@ use eframe::egui;
 
 use yinhe_editor_core::document::Document;
 
-const ROW_H: f32 = 20.0;
-
 /// 标签 key（如 "undo.add_note"）→ 本地化文案；已是纯文本则原样返回。
 fn label_text(label: &str) -> String {
     let text = rust_i18n::t!(label).to_string();
@@ -42,20 +40,19 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &Document) {
 }
 
 fn draw_row(ui: &mut egui::Ui, text: &str, dimmed: bool) {
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), ROW_H),
-        egui::Sense::hover(),
-    );
     let color = if dimmed {
         crate::theme::text_label()
     } else {
         crate::theme::text_secondary()
     };
-    ui.painter().text(
-        egui::pos2(rect.min.x + 4.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        text,
-        egui::FontId::proportional(crate::theme::SMALL_FONT),
-        color,
-    );
+    crate::widgets::rows::list_row(ui, false, |ui| {
+        ui.label(
+            egui::RichText::new(text)
+                .size(crate::scaling::scaled_font(
+                    ui.ctx(),
+                    crate::theme::SMALL_FONT,
+                ))
+                .color(color),
+        );
+    });
 }

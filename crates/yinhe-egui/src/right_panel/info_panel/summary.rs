@@ -36,32 +36,11 @@ fn show_summary(
     ti: Option<yinhe_core::TrackInfo>,
 ) {
     let Some(ti) = ti else { return };
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(t!("track.note_count").as_ref())
-                .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::text_label()),
-        );
-        ui.label(egui::RichText::new(format!("{}", ti.note_count)).size(crate::theme::SMALL_FONT));
-    });
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(t!("track.event_count").as_ref())
-                .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::text_label()),
-        );
-        ui.label(egui::RichText::new(format!("{}", ti.event_count)).size(crate::theme::SMALL_FONT));
-    });
+    crate::widgets::rows::value_row(ui, t!("track.note_count"), format!("{}", ti.note_count));
+    crate::widgets::rows::value_row(ui, t!("track.event_count"), format!("{}", ti.event_count));
     let global_ch = ti.port as u32 * 16 + (ti.channel as u32 - 1);
     if let Some(pc) = doc.edit.track_cache.pc_map.get(&(global_ch as u8)) {
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(t!("track.program").as_ref())
-                    .size(crate::theme::SMALL_FONT)
-                    .color(crate::theme::text_label()),
-            );
-            ui.label(egui::RichText::new(format!("PC {}", pc)).size(crate::theme::SMALL_FONT));
-        });
+        crate::widgets::rows::value_row(ui, t!("track.program"), format!("PC {}", pc));
     }
     let _ = track_idx;
 }

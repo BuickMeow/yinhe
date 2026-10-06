@@ -202,9 +202,7 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
         }
     }
 
-    ui.add_space(4.0);
-    ui.separator();
-    ui.add_space(4.0);
+    crate::widgets::rows::divider(ui);
 
     // ── 编辑区 ──
     match view {
@@ -313,27 +311,20 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
     }
 
     // ── 变速（时间跨度编辑，可 undo；音符/事件与选框一起缩放） ──
-    ui.add_space(4.0);
-    ui.separator();
-    ui.add_space(4.0);
-    ui.label(
-        egui::RichText::new(t!("sel.tempo_title").as_ref())
-            .strong()
-            .size(crate::theme::SUB_TITLE_FONT)
-            .color(crate::theme::text_bright()),
-    );
-    ui.add_space(2.0);
+    crate::widgets::rows::divider(ui);
+    crate::widgets::rows::section_header(ui, t!("sel.tempo_title").as_ref());
     tempo_section(ui, doc, view, t0, t1);
 
     // ── 翻转（音符镜像；AM 锚点无 key 概念，不显示） ──
     if view != SelView::Am {
-        ui.add_space(4.0);
-        ui.separator();
-        ui.add_space(4.0);
+        crate::widgets::rows::divider(ui);
         ui.horizontal(|ui| {
             if crate::widgets::flat::flat_button(
                 ui,
-                egui::RichText::new(t!("sel.flip_horizontal")).size(crate::theme::BODY_FONT),
+                egui::RichText::new(t!("sel.flip_horizontal")).size(crate::scaling::scaled_font(
+                    ui.ctx(),
+                    crate::theme::BODY_FONT,
+                )),
             )
             .clicked()
             {
@@ -344,7 +335,10 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
             }
             if crate::widgets::flat::flat_button(
                 ui,
-                egui::RichText::new(t!("sel.flip_vertical")).size(crate::theme::BODY_FONT),
+                egui::RichText::new(t!("sel.flip_vertical")).size(crate::scaling::scaled_font(
+                    ui.ctx(),
+                    crate::theme::BODY_FONT,
+                )),
             )
             .clicked()
             {
@@ -361,20 +355,9 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
 // 工具函数
 // ────────────────────────────────────────────────────────────────
 
-/// 只读信息行：label（灰 11px）+ 值（白 12px）。
+/// 只读信息行：标签（灰小字）+ 值（亮色）——统一走 [`crate::widgets::rows`]。
 fn info_row(ui: &mut egui::Ui, label: impl Into<String>, value: impl Into<String>) {
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(label.into())
-                .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::text_label()),
-        );
-        ui.label(
-            egui::RichText::new(value.into())
-                .size(crate::theme::BODY_FONT)
-                .color(crate::theme::text_bright()),
-        );
-    });
+    crate::widgets::rows::value_row(ui, label, value);
 }
 
 /// 表达式输入框的提示函数：输入非法时返回提示文本。
@@ -395,24 +378,21 @@ fn field_row(
     hint: Option<&HintFn>,
     on_apply: impl FnOnce(Vec<NumOp>),
 ) {
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(label.into())
-                .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::text_label()),
-        );
+    let label = label.into();
+    crate::widgets::rows::form_row(ui, &label, |ui| {
         let id = ui.id().with(key);
         let buf_id = id.with("buf");
         let is_editing = ui.ctx().memory(|m| m.has_focus(id));
         let mut text: String = ui.ctx().data(|d| d.get_temp(buf_id).unwrap_or_default());
         if !is_editing && text.is_empty() {
-            text = uniform.map(fmt).unwrap_or_default();
+            text = uniform.map(&fmt).unwrap_or_default();
         }
-        let resp = ui.add(
-            egui::TextEdit::singleline(&mut text)
-                .id(id)
-                .desired_width(90.0)
-                .hint_text(if uniform.is_none() { "—" } else { "" }),
+        let resp = crate::widgets::text_input::control_text_input(
+            ui,
+            &mut text,
+            90.0,
+            key,
+            if uniform.is_none() { Some("—") } else { None },
         );
         // 实时提示（如 Key 框的音程名）：聚焦且有输入时显示
         if let Some(h) = hint
@@ -422,7 +402,10 @@ fn field_row(
         {
             ui.label(
                 egui::RichText::new(s)
-                    .size(crate::theme::SMALL_FONT)
+                    .size(crate::scaling::scaled_font(
+                        ui.ctx(),
+                        crate::theme::SMALL_FONT,
+                    ))
                     .color(crate::theme::text_label()),
             );
         }
@@ -528,12 +511,7 @@ fn tempo_section(ui: &mut egui::Ui, doc: &mut Document, view: SelView, t0: f64, 
                 }
             }
         }
-        // 清空三个输入框，下帧恢复显示新跨度
-        let base = ui.id();
-        for k in ["span_ticks", "span_bar_beat", "span_ratio"] {
-            ui.ctx()
-                .data_mut(|d| d.insert_temp::<String>(base.with(k).with("buf"), String::new()));
-        }
+        // 各输入框在提交时已自行清空缓冲，下帧恢复显示新跨度。
     }
 }
 
@@ -545,25 +523,17 @@ fn tempo_field(
     display: String,
     parse: impl Fn(&str) -> Option<u64>,
 ) -> Option<u64> {
-    let id = ui.id().with(key);
-    let buf_id = id.with("buf");
+    let label = label.into();
     let mut result = None;
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(label.into())
-                .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::text_label()),
-        );
+    crate::widgets::rows::form_row(ui, &label, |ui| {
+        let id = ui.id().with(key);
+        let buf_id = id.with("buf");
         let is_editing = ui.ctx().memory(|m| m.has_focus(id));
         let mut text: String = ui.ctx().data(|d| d.get_temp(buf_id).unwrap_or_default());
         if !is_editing && text.is_empty() {
             text = display;
         }
-        let resp = ui.add(
-            egui::TextEdit::singleline(&mut text)
-                .id(id)
-                .desired_width(90.0),
-        );
+        let resp = crate::widgets::text_input::control_text_input(ui, &mut text, 90.0, key, None);
         ui.ctx().data_mut(|d| d.insert_temp(buf_id, text.clone()));
         let submit = resp.lost_focus()
             || (resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));

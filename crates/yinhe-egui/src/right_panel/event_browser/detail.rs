@@ -11,6 +11,7 @@ use std::cell::RefCell;
 
 use eframe::egui;
 use egui_extras::TableRow;
+use egui_material_icons::icons::{ICON_CANCEL, ICON_CHECK_CIRCLE};
 
 use rust_i18n::t;
 use yinhe_editor_core::document::Document;
@@ -357,14 +358,18 @@ fn event_table_section<T>(
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(format!("{} {} 个", title_prefix, total))
-                .size(crate::theme::BODY_FONT)
-                .strong(),
+                .strong()
+                .size(crate::scaling::scaled_font(
+                    ui.ctx(),
+                    crate::theme::SUB_TITLE_FONT,
+                ))
+                .color(crate::theme::text_bright()),
         );
         if let Some(np) = render_pager(ui, page, total_pages(total)) {
             state.event_page = np;
         }
     });
-    ui.add_space(2.0);
+    ui.add_space(crate::theme::GAP_TIGHT);
     if total == 0 {
         empty_state_add_button(ui, &edit_salt);
     } else {
@@ -985,29 +990,12 @@ fn show_pc_detail(
 
 /// 键值行（project.json / mapping.json / track_detail 共用）。
 fn kv(ui: &mut egui::Ui, k: &str, v: String) {
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(k)
-                .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::text_label()),
-        );
-        ui.label(
-            egui::RichText::new(v)
-                .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::text_primary()),
-        );
-    });
+    crate::widgets::rows::value_row(ui, k, v);
 }
 
 fn show_project_json(ui: &mut egui::Ui, doc: &Document) {
     let pf = &doc.data.project_file;
-    ui.add_space(4.0);
-    ui.label(
-        egui::RichText::new("project.json")
-            .size(crate::theme::SUB_TITLE_FONT)
-            .strong(),
-    );
-    ui.add_space(6.0);
+    crate::widgets::rows::section_header(ui, "project.json");
 
     kv(ui, "version", format!("{}", pf.version));
     kv(ui, "name", pf.name.clone());
@@ -1022,34 +1010,42 @@ fn show_project_json(ui: &mut egui::Ui, doc: &Document) {
     );
 
     if !pf.sf_channel_overrides.is_empty() {
-        ui.add_space(6.0);
+        ui.add_space(crate::theme::GAP_SM);
         ui.label(
             egui::RichText::new("soundfont_overrides")
-                .size(crate::theme::SMALL_FONT)
-                .strong(),
+                .strong()
+                .size(crate::scaling::scaled_font(
+                    ui.ctx(),
+                    crate::theme::SMALL_FONT,
+                ))
+                .color(crate::theme::text_bright()),
         );
         for po in &pf.sf_channel_overrides {
             ui.horizontal(|ui| {
-                ui.add_space(14.0);
+                ui.add_space(crate::theme::INDENT_STEP);
                 ui.label(
                     egui::RichText::new(format!("channel {}:", po.channel))
-                        .size(crate::theme::SMALL_FONT)
+                        .size(crate::scaling::scaled_font(
+                            ui.ctx(),
+                            crate::theme::SMALL_FONT,
+                        ))
                         .color(crate::theme::text_label()),
                 );
             });
             for entry in &po.entries {
                 ui.horizontal(|ui| {
-                    ui.add_space(28.0);
-                    let status = if entry.enabled {
-                        "\u{2705}"
+                    ui.add_space(crate::theme::INDENT_STEP * 2.0);
+                    let (icon, color) = if entry.enabled {
+                        (ICON_CHECK_CIRCLE, crate::theme::accent_active())
                     } else {
-                        "\u{274c}"
+                        (ICON_CANCEL, crate::theme::text_disabled())
                     };
-                    ui.label(
-                        egui::RichText::new(format!("{} {} ({})", status, entry.name, entry.path))
-                            .size(crate::theme::SMALL_LABEL_FONT)
-                            .color(crate::theme::text_secondary()),
-                    );
+                    ui.label(crate::widgets::icon_text::icon_text(
+                        icon,
+                        &format!("{} ({})", entry.name, entry.path),
+                        crate::scaling::scaled_font(ui.ctx(), crate::theme::SMALL_LABEL_FONT),
+                        color,
+                    ));
                 });
             }
         }
@@ -1058,21 +1054,19 @@ fn show_project_json(ui: &mut egui::Ui, doc: &Document) {
 
 fn show_mapping_json(ui: &mut egui::Ui, doc: &Document) {
     let mf = &doc.data.mapping_file;
-    ui.add_space(4.0);
-    ui.label(
-        egui::RichText::new("mapping.json")
-            .size(crate::theme::SUB_TITLE_FONT)
-            .strong(),
-    );
-    ui.add_space(6.0);
+    crate::widgets::rows::section_header(ui, "mapping.json");
 
     kv(ui, "version", format!("{}", mf.version));
 
-    ui.add_space(6.0);
+    ui.add_space(crate::theme::GAP_SM);
     ui.label(
         egui::RichText::new("ports")
-            .size(crate::theme::SMALL_FONT)
-            .strong(),
+            .strong()
+            .size(crate::scaling::scaled_font(
+                ui.ctx(),
+                crate::theme::SMALL_FONT,
+            ))
+            .color(crate::theme::text_bright()),
     );
     for p in &mf.ports {
         for ch in &p.channels {
@@ -1175,66 +1169,50 @@ pub(super) fn show_overview(ui: &mut egui::Ui, model: &yinhe_core::YinModel) {
     } else {
         &model.meta.artist
     };
-    ui.colored_label(crate::theme::text_label(), format!("名称: {}", name));
-    ui.colored_label(crate::theme::text_label(), format!("作者: {}", artist));
-    ui.colored_label(
-        crate::theme::text_label(),
-        format!("PPQ: {}", model.meta.ppq),
-    );
-    ui.colored_label(
-        crate::theme::text_label(),
-        format!("zstd 等级: {}", model.meta.compression_level),
+    crate::widgets::rows::value_row(ui, "名称:", name);
+    crate::widgets::rows::value_row(ui, "作者:", artist);
+    crate::widgets::rows::value_row(ui, "PPQ:", format!("{}", model.meta.ppq));
+    crate::widgets::rows::value_row(
+        ui,
+        "zstd 等级:",
+        format!("{}", model.meta.compression_level),
     );
     let groups = super::group_tracks_by_port_channel(model, None);
-    ui.colored_label(
-        crate::theme::text_label(),
-        format!("活跃 port 数: {}", groups.len()),
-    );
-    ui.colored_label(
-        crate::theme::text_label(),
-        format!("轨道: {} 个", model.tracks.len()),
-    );
-    ui.colored_label(
-        crate::theme::text_label(),
-        format!("音符: {} 个", model.note_count),
-    );
+    crate::widgets::rows::value_row(ui, "活跃 port 数:", format!("{}", groups.len()));
+    crate::widgets::rows::value_row(ui, "轨道:", format!("{} 个", model.tracks.len()));
+    crate::widgets::rows::value_row(ui, "音符:", format!("{} 个", model.note_count));
     let mut summary = TargetSummary::default();
     let mut pc = 0usize;
     for t in &model.tracks {
         summary.merge(summarize_targets(&t.automation_lanes));
         pc += t.program_change.len();
     }
-    ui.colored_label(
-        crate::theme::text_label(),
-        format!("CC: {} 个", summary.cc_total),
+    crate::widgets::rows::value_row(ui, "CC:", format!("{} 个", summary.cc_total));
+    crate::widgets::rows::value_row(ui, "设备参数:", format!("{} 个", summary.param_total));
+    crate::widgets::rows::value_row(ui, "弯音:", format!("{} 个", summary.pb_total));
+    crate::widgets::rows::value_row(ui, "音色变更:", format!("{} 个", pc));
+    crate::widgets::rows::value_row(
+        ui,
+        "Tempo:",
+        format!("{} 个", model.conductor.tempo.events.len()),
     );
-    ui.colored_label(
-        crate::theme::text_label(),
-        format!("设备参数: {} 个", summary.param_total),
-    );
-    ui.colored_label(
-        crate::theme::text_label(),
-        format!("弯音: {} 个", summary.pb_total),
-    );
-    ui.colored_label(crate::theme::text_label(), format!("音色变更: {} 个", pc));
-    ui.colored_label(
-        crate::theme::text_label(),
-        format!("Tempo: {} 个", model.conductor.tempo.events.len()),
-    );
-    ui.colored_label(
-        crate::theme::text_label(),
-        format!("拍号: {} 个", model.conductor.time_sig.len()),
+    crate::widgets::rows::value_row(
+        ui,
+        "拍号:",
+        format!("{} 个", model.conductor.time_sig.len()),
     );
     if !model.conductor.key_sig.is_empty() {
-        ui.colored_label(
-            crate::theme::text_label(),
-            format!("调号: {} 个", model.conductor.key_sig.len()),
+        crate::widgets::rows::value_row(
+            ui,
+            "调号:",
+            format!("{} 个", model.conductor.key_sig.len()),
         );
     }
     if !model.conductor.markers.is_empty() {
-        ui.colored_label(
-            crate::theme::text_label(),
-            format!("标记: {} 个", model.conductor.markers.len()),
+        crate::widgets::rows::value_row(
+            ui,
+            "标记:",
+            format!("{} 个", model.conductor.markers.len()),
         );
     }
 }
@@ -1245,18 +1223,12 @@ pub(super) fn show_track_detail(
     track: &yinhe_core::TrackData,
     model: &yinhe_core::YinModel,
 ) {
-    ui.add_space(4.0);
     let header = if track.name.is_empty() {
         t!("event_browser.track_unnamed", n = idx).to_string()
     } else {
         t!("event_browser.track_named", n = idx, name = &track.name).to_string()
     };
-    ui.label(
-        egui::RichText::new(header)
-            .size(crate::theme::SUB_TITLE_FONT)
-            .strong(),
-    );
-    ui.add_space(4.0);
+    crate::widgets::rows::section_header(ui, &header);
 
     kv(ui, "UUID", track.uuid.clone());
     kv(
@@ -1285,11 +1257,15 @@ pub(super) fn show_track_detail(
         t!("event_browser.muted_soloed").as_ref(),
         format!("{} / {}", track.muted, track.soloed),
     );
-    ui.add_space(6.0);
+    ui.add_space(crate::theme::GAP_SM);
     ui.label(
         egui::RichText::new("事件计数")
-            .size(crate::theme::BODY_FONT)
-            .strong(),
+            .strong()
+            .size(crate::scaling::scaled_font(
+                ui.ctx(),
+                crate::theme::BODY_FONT,
+            ))
+            .color(crate::theme::text_bright()),
     );
     kv(
         ui,

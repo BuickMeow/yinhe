@@ -44,6 +44,28 @@ pub const CURSOR_WIDTH: f32 = 2.0;
 // ── Right panel ──
 pub const RIGHT_PANEL_MIN_WIDTH: f32 = 160.0;
 
+// ── 面板排版 token（右栏/信息面板统一，见 widgets::rows）──
+/// 标准水平内边距（列表行/栏内容）。
+pub const PAD_X: f32 = 8.0;
+/// 标准垂直内边距。
+pub const PAD_Y: f32 = 4.0;
+/// 间距梯级：紧凑（控件行内）。
+pub const GAP_TIGHT: f32 = 2.0;
+/// 间距梯级：小（相邻字段）。
+pub const GAP_SM: f32 = 4.0;
+/// 间距梯级：段（章节之间/分隔线两侧）。
+pub const GAP: f32 = 8.0;
+/// 列表/树行高（与控制高一致）。
+pub const ROW_H_LIST: f32 = 24.0;
+/// 紧凑行高：表格单元格 / 键值行。
+pub const ROW_H_COMPACT: f32 = 20.0;
+/// 列表行高亮圆角。
+pub const ROW_RADIUS: f32 = 4.0;
+/// 表单固定标签列宽（让各行值起始 x 对齐）。
+pub const FIELD_LABEL_W: f32 = 72.0;
+/// 树/层级缩进步长。
+pub const INDENT_STEP: f32 = 16.0;
+
 // ── Automation panel ──
 pub const AUTO_PANEL_SPLIT_H: f32 = SPLIT_HANDLE_W;
 pub const AUTO_PANEL_COMBO_WIDTH_RATIO: f32 = 1.0;

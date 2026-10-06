@@ -9,8 +9,9 @@ use egui_material_icons::icons::{ICON_LOCK, ICON_LOCK_OPEN, ICON_VISIBILITY, ICO
 
 use yinhe_editor_core::document::Document;
 
-/// 行高（与其他属性行一致）。
-const ROW_H: f32 = 22.0;
+use crate::scaling::scaled_font;
+use crate::theme;
+
 const ICON_SIZE: f32 = 16.0;
 
 /// 显示图层列表。
@@ -30,6 +31,9 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) {
     }
 
     let conductor_idx = doc.edit.track_cache.conductor_idx;
+    let row_h = scaled_font(ui.ctx(), theme::ROW_H_LIST);
+    let pad_x = scaled_font(ui.ctx(), theme::PAD_X);
+    let icon_gap = scaled_font(ui.ctx(), 6.0);
     egui::ScrollArea::vertical()
         .id_salt("layers_scroll")
         .auto_shrink([false; 2])
@@ -53,70 +57,68 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) {
                     .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
 
                 let (rect, resp) = ui.allocate_exact_size(
-                    egui::vec2(ui.available_width(), ROW_H),
+                    egui::vec2(ui.available_width(), row_h),
                     egui::Sense::click(),
                 );
 
                 // 选中底色。
                 if selected {
                     ui.painter()
-                        .rect_filled(rect, 4.0, crate::theme::selected_bg());
+                        .rect_filled(rect, theme::ROW_RADIUS, theme::selected_bg());
                 } else if resp.hovered() {
                     ui.painter().rect_filled(
                         rect,
-                        4.0,
-                        crate::theme::hover_color(crate::theme::app_bg()),
+                        theme::ROW_RADIUS,
+                        theme::hover_color(theme::app_bg()),
                     );
                 }
 
                 // 左侧色块（行高一致）。
                 let swatch = egui::Rect::from_min_size(
-                    egui::pos2(rect.min.x + 2.0, rect.min.y + 3.0),
-                    egui::vec2(6.0, ROW_H - 6.0),
+                    egui::pos2(rect.min.x + pad_x, rect.min.y + 3.0),
+                    egui::vec2(6.0, row_h - 6.0),
                 );
                 ui.painter().rect_filled(
                     swatch,
                     2.0,
-                    egui::Color32::from_rgba_unmultiplied(
-                        (color[0] * 255.0) as u8,
-                        (color[1] * 255.0) as u8,
-                        (color[2] * 255.0) as u8,
-                        (color[3] * 255.0) as u8,
-                    ),
+                    theme::rgba_to_color32((color[0], color[1], color[2], color[3])),
                 );
 
                 // 轨名。
                 let text_color = if selected {
-                    crate::theme::text_bright()
+                    theme::text_bright()
                 } else {
-                    crate::theme::text_secondary()
+                    theme::text_secondary()
                 };
                 ui.painter().text(
-                    egui::pos2(swatch.max.x + 6.0, rect.center().y),
+                    egui::pos2(swatch.max.x + icon_gap, rect.center().y),
                     egui::Align2::LEFT_CENTER,
                     format!("{:03} {}", i, name),
-                    egui::FontId::proportional(crate::theme::SMALL_FONT),
+                    egui::FontId::proportional(scaled_font(ui.ctx(), theme::SMALL_FONT)),
                     text_color,
                 );
 
                 // 右侧 可见 / 锁定 图标（Conductor 轨不提供）。
                 if Some(i as u16) != conductor_idx {
-                    let icon_font = egui::FontId::new(ICON_SIZE, ICON_LOCK.font_family());
+                    let icon_font = egui::FontId::new(
+                        scaled_font(ui.ctx(), ICON_SIZE),
+                        ICON_LOCK.font_family(),
+                    );
 
                     // 锁定。
                     let lock_rect = egui::Rect::from_center_size(
-                        egui::pos2(rect.max.x - 14.0, rect.center().y),
-                        egui::vec2(ROW_H, ROW_H),
+                        egui::pos2(rect.max.x - scaled_font(ui.ctx(), 14.0), rect.center().y),
+                        egui::vec2(row_h, row_h),
                     );
                     let lock_hover =
                         ui.input(|i| i.pointer.hover_pos().is_some_and(|p| lock_rect.contains(p)));
                     let lock_icon = if locked { ICON_LOCK } else { ICON_LOCK_OPEN };
                     let lock_color = if locked {
-                        crate::theme::accent_active()
+                        theme::accent_active()
                     } else if lock_hover {
-                        crate::theme::text_bright()
+                        theme::text_bright()
                     } else {
-                        crate::theme::text_label()
+                        theme::text_label()
                     };
                     ui.painter().text(
                         lock_rect.center(),
@@ -138,8 +140,8 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) {
 
                     // 可见。
                     let vis_rect = egui::Rect::from_center_size(
-                        egui::pos2(rect.max.x - 34.0, rect.center().y),
-                        egui::vec2(ROW_H, ROW_H),
+                        egui::pos2(rect.max.x - scaled_font(ui.ctx(), 34.0), rect.center().y),
+                        egui::vec2(row_h, row_h),
                     );
                     let vis_hover =
                         ui.input(|i| i.pointer.hover_pos().is_some_and(|p| vis_rect.contains(p)));
@@ -149,11 +151,11 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) {
                         ICON_VISIBILITY_OFF
                     };
                     let vis_color = if visible {
-                        crate::theme::text_secondary()
+                        theme::text_secondary()
                     } else if vis_hover {
-                        crate::theme::text_bright()
+                        theme::text_bright()
                     } else {
-                        crate::theme::text_label()
+                        theme::text_label()
                     };
                     ui.painter().text(
                         vis_rect.center(),
