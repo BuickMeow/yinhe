@@ -25,18 +25,14 @@ pub fn show_render_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool 
         t!("settings.render.min_border_width").as_ref(),
         t!("settings.render.min_border_width_desc").as_ref(),
         |ui| {
-            let mut bw = settings.min_border_width;
-            if crate::widgets::slider::control_slider(
-                ui,
-                &mut bw,
-                0.0..=5.0,
-                220.0,
-                Some(0.5),
-                true,
-            )
-            .changed()
+            if crate::widgets::stepper::stepper(&mut settings.min_border_width)
+                .range(0.0..=5.0)
+                .step(0.1)
+                .decimals(2)
+                .width(110.0)
+                .show(ui)
+                .changed()
             {
-                settings.min_border_width = bw;
                 changed = true;
             }
         },

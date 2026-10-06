@@ -72,7 +72,7 @@ fn tick_frame(n: &mut Notifications, ctx: &egui::Context, focused: bool) {
 #[test]
 fn push_classifies_collapse_tier() {
     let mut n = Notifications::new();
-    n.set_collapse_durations(Some(5), Some(60));
+    n.set_collapse_durations(Some(5.0), Some(60.0));
     let ok = n.success("t", "m");
     let err = n.error("t", "m");
     let t_ok = find(&n, ok);
@@ -106,7 +106,7 @@ fn never_means_sticky() {
 #[test]
 fn expired_toast_starts_leaving_but_keeps_entry() {
     let mut n = Notifications::new();
-    n.set_collapse_durations(Some(0), Some(0));
+    n.set_collapse_durations(Some(0.0), Some(0.0));
     let id = n.success("t", "m");
     // 0 秒档下帧即到期
     std::thread::sleep(Duration::from_millis(2));
@@ -122,7 +122,7 @@ fn expired_toast_starts_leaving_but_keeps_entry() {
 #[test]
 fn ensure_does_not_collapse_running_task() {
     let mut n = Notifications::new();
-    n.set_collapse_durations(Some(0), Some(0));
+    n.set_collapse_durations(Some(0.0), Some(0.0));
     n.ensure_progress(
         LOADING_PROGRESS_ID,
         ToastKind::Info,
@@ -137,7 +137,7 @@ fn ensure_does_not_collapse_running_task() {
 #[test]
 fn hover_pauses_collapse_deadline() {
     let mut n = Notifications::new();
-    n.set_collapse_durations(Some(60), Some(60));
+    n.set_collapse_durations(Some(60.0), Some(60.0));
     let id = n.success("t", "m");
     let before = find(&n, id).collapse_at;
     n.tick(&ctx()); // 首 tick 只记录 last_tick，不顺延
@@ -158,7 +158,7 @@ fn hover_pauses_collapse_deadline() {
 fn window_blur_pauses_collapse_deadline() {
     let ctx = ctx();
     let mut n = Notifications::new();
-    n.set_collapse_durations(Some(60), Some(60));
+    n.set_collapse_durations(Some(60.0), Some(60.0));
     let id = n.success("t", "m");
     n.tick(&ctx); // 首 tick 只记录 last_tick
     std::thread::sleep(Duration::from_millis(5));
@@ -176,7 +176,7 @@ fn window_blur_pauses_collapse_deadline() {
 #[test]
 fn hover_does_not_extend_leaving_toast() {
     let mut n = Notifications::new();
-    n.set_collapse_durations(Some(60), Some(60));
+    n.set_collapse_durations(Some(60.0), Some(60.0));
     let id = n.success("t", "m");
     n.dismiss(id);
     n.items.iter_mut().find(|x| x.id == id).unwrap().hovered = true;
@@ -190,7 +190,7 @@ fn hover_does_not_extend_leaving_toast() {
 #[test]
 fn action_button_escalates_tier() {
     let mut n = Notifications::new();
-    n.set_collapse_durations(Some(5), Some(60));
+    n.set_collapse_durations(Some(5.0), Some(60.0));
     n.ensure_progress(
         EXPORT_PROGRESS_ID,
         ToastKind::Info,
@@ -514,7 +514,7 @@ fn disable_notifications_auto_resumes_paused() {
 #[test]
 fn center_open_skips_auto_collapse() {
     let mut n = Notifications::new();
-    n.set_collapse_durations(Some(0), Some(0));
+    n.set_collapse_durations(Some(0.0), Some(0.0));
     let id = n.success("t", "m");
     std::thread::sleep(Duration::from_millis(2));
     // 列表开着时到期也不收

@@ -118,15 +118,13 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         t!("settings.audio.record_offset").as_ref(),
         t!("settings.audio.record_offset_desc").as_ref(),
         |ui| {
-            if ui
-                .add(
-                    crate::widgets::numeric_input::decimal_drag_value(
-                        &mut settings.record_offset_ms,
-                    )
-                    .range(0.0..=500.0)
-                    .speed(1.0)
-                    .suffix(" ms"),
-                )
+            if crate::widgets::stepper::stepper(&mut settings.record_offset_ms)
+                .range(0.0..=500.0)
+                .step(10.0)
+                .suffix(" ms")
+                .decimals(1)
+                .width(140.0)
+                .show(ui)
                 .changed()
             {
                 changed = true;
@@ -198,6 +196,17 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         |ui| {
             let mut layers = settings.xsynth_layers as usize;
             ui.horizontal(|ui| {
+                // 右侧布局下先加的在最右；先放步进框，再放「无限制」，文字就在左侧。
+                if crate::widgets::stepper::stepper(&mut layers)
+                    .range(0..=128)
+                    .step(1.0)
+                    .width(110.0)
+                    .show(ui)
+                    .changed()
+                {
+                    settings.xsynth_layers = layers as u32;
+                    changed = true;
+                }
                 if settings.xsynth_layers == 0 {
                     ui.label(
                         egui::RichText::new(t!("common.unlimited").as_ref())
@@ -209,11 +218,6 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                             .color(crate::theme::text_secondary()),
                     );
                 }
-                if crate::widgets::stepper::stepper(ui, &mut layers, 0..=128, 1.0, 110.0).changed()
-                {
-                    settings.xsynth_layers = layers as u32;
-                    changed = true;
-                }
             });
         },
     );
@@ -224,12 +228,11 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         t!("settings.audio.ignore_velocity_desc").as_ref(),
         |ui| {
             let mut threshold = settings.ignore_velocity as usize;
-            if ui
-                .add(
-                    crate::widgets::numeric_input::decimal_drag_value(&mut threshold)
-                        .range(0..=127)
-                        .speed(0.2),
-                )
+            if crate::widgets::stepper::stepper(&mut threshold)
+                .range(0..=127)
+                .step(1.0)
+                .width(110.0)
+                .show(ui)
                 .changed()
             {
                 settings.ignore_velocity = threshold.min(127) as u8;
@@ -276,12 +279,12 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             |ui| {
                 let mut v = settings.max_voices as usize;
                 ui.horizontal(|ui| {
-                    if ui
-                        .add(
-                            crate::widgets::numeric_input::decimal_drag_value(&mut v)
-                                .range(0..=65536)
-                                .speed(64.0),
-                        )
+                    // 右侧布局下先加的在最右；先放步进框，再放提示，文字就在左侧。
+                    if crate::widgets::stepper::stepper(&mut v)
+                        .range(0..=65536)
+                        .step(64.0)
+                        .width(120.0)
+                        .show(ui)
                         .changed()
                     {
                         settings.max_voices = v as u32;
@@ -339,13 +342,14 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         t!("settings.render.automation_density_desc").as_ref(),
         |ui| {
             let mut density = settings.automation_event_density as i32;
-            let drag = ui.add(
-                crate::widgets::numeric_input::decimal_drag_value(&mut density)
-                    .range(1..=480)
-                    .speed(0.2)
-                    .suffix(" tick"),
-            );
-            if drag.changed() {
+            if crate::widgets::stepper::stepper(&mut density)
+                .range(1..=480)
+                .step(1.0)
+                .suffix(" tick")
+                .width(140.0)
+                .show(ui)
+                .changed()
+            {
                 settings.automation_event_density = density.max(1) as u32;
                 changed = true;
             }

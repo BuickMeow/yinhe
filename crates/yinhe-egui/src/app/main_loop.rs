@@ -768,10 +768,11 @@ impl eframe::App for App {
         self.show_unsaved_dialog(ui);
 
         // ── Toasts + 通知中心（浮空在内容之上，右下→右上）──
-        // 自动收起时长每帧同步（两次 u32 拷贝，新建/完成时按当时值定档）
+        // 自动收起时长每帧同步（新建/完成时按当时值定档）；0 = 不自动收起。
+        let secs = |s: f32| (s > 0.0).then_some(s);
         self.notifications.set_collapse_durations(
-            self.audio_settings.toast_collapse_secs,
-            self.audio_settings.toast_action_collapse_secs,
+            secs(self.audio_settings.toast_collapse_secs),
+            secs(self.audio_settings.toast_action_collapse_secs),
         );
         self.notifications
             .set_enabled(self.audio_settings.toast_enabled);

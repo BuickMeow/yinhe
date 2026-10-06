@@ -18,12 +18,21 @@ pub use ui_session::SettingsUiSession;
 /// "最近修改的文件"列表上限
 pub const RECENT_FILES_LIMIT: usize = 10;
 
-fn default_toast_collapse_secs() -> Option<u32> {
-    Some(5)
+fn default_toast_collapse_secs() -> f32 {
+    5.0
 }
 
-fn default_toast_action_collapse_secs() -> Option<u32> {
-    Some(60)
+fn default_toast_action_collapse_secs() -> f32 {
+    60.0
+}
+
+/// 旧配置里自动收起是 `Option<u32>`（null = 不自动收起）。迁移到 `f32` 秒：
+/// null 视为 `0.0`（不自动收起），字段缺失则由 `default` 函数给默认值。
+fn de_toast_secs<'de, D>(deserializer: D) -> Result<f32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<f32>::deserialize(deserializer)?.unwrap_or(0.0))
 }
 
 fn default_toast_enabled() -> bool {
@@ -109,12 +118,18 @@ pub struct AudioSettings {
     /// 是否启用 LOD 摘要层（缩小视图时用摘要段替代逐音符绘制）。
     #[serde(default = "default_lod_enabled")]
     pub lod_enabled: bool,
-    /// 完成通知自动收起秒数（None=不自动收起）
-    #[serde(default = "default_toast_collapse_secs")]
-    pub toast_collapse_secs: Option<u32>,
-    /// 可操作通知自动收起秒数（None=不自动收起）
-    #[serde(default = "default_toast_action_collapse_secs")]
-    pub toast_action_collapse_secs: Option<u32>,
+    /// 完成通知自动收起秒数（0 = 不自动收起，支持小数）
+    #[serde(
+        default = "default_toast_collapse_secs",
+        deserialize_with = "de_toast_secs"
+    )]
+    pub toast_collapse_secs: f32,
+    /// 可操作通知自动收起秒数（0 = 不自动收起，支持小数）
+    #[serde(
+        default = "default_toast_action_collapse_secs",
+        deserialize_with = "de_toast_secs"
+    )]
+    pub toast_action_collapse_secs: f32,
     /// 是否开启通知（关闭后不再弹出任何通知，新的也不再记入历史）
     #[serde(default = "default_toast_enabled")]
     pub toast_enabled: bool,

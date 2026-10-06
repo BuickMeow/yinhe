@@ -50,13 +50,14 @@ pub fn show_midi_export_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> 
             t!("settings.midi_export.curve_density_desc").as_ref(),
             |ui| {
                 let mut density = settings.midi_export_curve_density as i32;
-                let drag = ui.add(
-                    crate::widgets::numeric_input::decimal_drag_value(&mut density)
-                        .range(1..=480)
-                        .speed(0.2)
-                        .suffix(" tick"),
-                );
-                if drag.changed() {
+                if crate::widgets::stepper::stepper(&mut density)
+                    .range(1..=480)
+                    .step(1.0)
+                    .suffix(" tick")
+                    .width(140.0)
+                    .show(ui)
+                    .changed()
+                {
                     settings.midi_export_curve_density = density.max(1) as u32;
                     changed = true;
                 }

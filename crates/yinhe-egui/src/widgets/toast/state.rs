@@ -28,9 +28,9 @@ pub struct Notifications {
     center_closed_at: Option<Instant>,
     prev_center_open: bool,
     /// 完成通知自动收起秒数（None=不自动收起；设置页同步，每帧覆盖）。
-    collapse_secs: Option<u32>,
+    collapse_secs: Option<f32>,
     /// 可操作通知自动收起秒数（None=不自动收起；设置页同步，每帧覆盖）。
-    action_collapse_secs: Option<u32>,
+    action_collapse_secs: Option<f32>,
     /// 是否开启通知（设置页同步，每帧覆盖；关闭时不再建卡、不再记入历史）。
     enabled: bool,
     /// 上次 tick 时刻（悬停暂停按帧间隔顺延 deadline 用）。
@@ -64,8 +64,8 @@ impl Notifications {
             center_opened_at: None,
             center_closed_at: None,
             prev_center_open: false,
-            collapse_secs: Some(5),
-            action_collapse_secs: Some(60),
+            collapse_secs: Some(5.0),
+            action_collapse_secs: Some(60.0),
             enabled: true,
             last_tick: None,
             card_h: HashMap::new(),
@@ -73,11 +73,11 @@ impl Notifications {
         }
     }
 
-    /// 从设置同步自动收起时长（main_loop 每帧调一次，两次 u32 拷贝）。
+    /// 从设置同步自动收起时长（main_loop 每帧调一次，两次 f32 拷贝）。
     pub fn set_collapse_durations(
         &mut self,
-        collapse_secs: Option<u32>,
-        action_collapse_secs: Option<u32>,
+        collapse_secs: Option<f32>,
+        action_collapse_secs: Option<f32>,
     ) {
         self.collapse_secs = collapse_secs;
         self.action_collapse_secs = action_collapse_secs;
@@ -123,8 +123,8 @@ impl Notifications {
         self.items.iter().find(|n| n.id == id)
     }
 
-    fn collapse_deadline(&self, secs: Option<u32>) -> Option<Instant> {
-        secs.map(|s| Instant::now() + Duration::from_secs(u64::from(s)))
+    fn collapse_deadline(&self, secs: Option<f32>) -> Option<Instant> {
+        secs.map(|s| Instant::now() + Duration::from_secs_f32(s.max(0.0)))
     }
 
     /// 该卡上帧实测高度；无实测（首帧）回退固定估算。
