@@ -97,7 +97,7 @@ pub fn control_slider<Num: egui::emath::Numeric>(
         );
         painter.circle_filled(hc, thumb_r, handle);
 
-        // 数值：画在轨道内部偏滑块的另一侧；文字色按所在底色取高对比色。
+        // 数值：画在轨道内部偏滑块的另一侧，固定用主文字色。
         if show_value {
             let value_galley = painter.layout_no_wrap(
                 format!("{:.2}", value.to_f64()),
@@ -105,15 +105,15 @@ pub fn control_slider<Num: egui::emath::Numeric>(
                 crate::theme::text_primary(),
             );
             let value_left = thumb_cx > track.center().x;
-            let (vx, bg) = if value_left {
-                (track.min.x + 8.0, accent)
+            let vx = if value_left {
+                track.min.x + 8.0
             } else {
-                (track.max.x - 8.0 - value_galley.size().x, surface)
+                track.max.x - 8.0 - value_galley.size().x
             };
             painter.galley(
                 egui::pos2(vx, rect.center().y - value_galley.size().y * 0.5),
                 value_galley,
-                crate::theme::contrast_text(bg),
+                crate::theme::text_primary(),
             );
         }
 
