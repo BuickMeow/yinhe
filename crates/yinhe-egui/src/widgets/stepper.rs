@@ -27,7 +27,8 @@ pub fn stepper<Num: egui::emath::Numeric>(
     let (rect, mut resp) = ui.allocate_exact_size(egui::vec2(width, h), egui::Sense::hover());
     let id = resp.id;
 
-    // 左右按钮各占一个正方形，中间为数值区。
+    // 左中右三段各自独立绘制，段间留缝（真实透出背景，而非画背景色）。
+    let gap = crate::scaling::scaled_font(&ctx, 2.0);
     let btn_w = h;
     let minus_rect = egui::Rect::from_min_size(rect.min, egui::vec2(btn_w, h));
     let plus_rect = egui::Rect::from_min_size(
@@ -35,8 +36,8 @@ pub fn stepper<Num: egui::emath::Numeric>(
         egui::vec2(btn_w, h),
     );
     let mid_rect = egui::Rect::from_min_max(
-        egui::pos2(minus_rect.max.x, rect.min.y),
-        egui::pos2(plus_rect.min.x, rect.max.y),
+        egui::pos2(minus_rect.max.x + gap, rect.min.y),
+        egui::pos2(plus_rect.min.x - gap, rect.max.y),
     );
 
     let minus = ui.interact(minus_rect, id.with("minus"), egui::Sense::click());
@@ -57,32 +58,15 @@ pub fn stepper<Num: egui::emath::Numeric>(
 
     if ui.is_rect_visible(rect) {
         let base = crate::theme::btn_bg();
-        control::paint_bg(
-            ui.painter(),
-            rect,
-            radius,
-            control::state_fill(base, enabled, false, false),
-            control::control_stroke(enabled, false),
-        );
+        let fill = control::state_fill(base, enabled, false, false);
+        let stroke = control::control_stroke(enabled, false);
+        // 三段各自独立的圆角矩形（段间留缝，缝隙里就是真实背景）。
+        for seg in [minus_rect, mid_rect, plus_rect] {
+            control::paint_bg(ui.painter(), seg, radius, fill, stroke);
+        }
 
-        // 两侧按钮的 hover/按下底：只圆外侧两角，贴合胶囊轮廓。
-        let r = radius as u8;
-        let corner_left = egui::CornerRadius {
-            nw: r,
-            sw: r,
-            ne: 0,
-            se: 0,
-        };
-        let corner_right = egui::CornerRadius {
-            nw: 0,
-            sw: 0,
-            ne: r,
-            se: r,
-        };
-        for (btn_rect, corners, btn) in [
-            (minus_rect, corner_left, &minus),
-            (plus_rect, corner_right, &plus),
-        ] {
+        // 两侧按钮的 hover/按下底。
+        for (btn_rect, btn) in [(minus_rect, &minus), (plus_rect, &plus)] {
             let fill = if !enabled {
                 crate::theme::text_disabled().gamma_multiply(0.25)
             } else if btn.is_pointer_button_down_on() {
@@ -92,7 +76,7 @@ pub fn stepper<Num: egui::emath::Numeric>(
             } else {
                 continue;
             };
-            ui.painter().rect_filled(btn_rect, corners, fill);
+            ui.painter().rect_filled(btn_rect, radius, fill);
         }
 
         // 加减图标。
@@ -109,17 +93,6 @@ pub fn stepper<Num: egui::emath::Numeric>(
                 egui::FontId::new(crate::theme::ICON_FONT, icon.font_family()),
                 icon_color,
             );
-        }
-
-        // 数值区两侧的细分隔线：占满整个高度，用面板背景色画，
-        // 视觉上像在胶囊上开了一道「透出背景」的缝（egui 无法真正擦除像素）。
-        let sep = egui::Stroke::new(
-            crate::scaling::scaled_font(&ctx, 1.0),
-            crate::theme::app_bg(),
-        );
-        for x in [mid_rect.min.x, mid_rect.max.x] {
-            ui.painter()
-                .line_segment([egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)], sep);
         }
     }
 
