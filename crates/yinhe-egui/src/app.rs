@@ -253,58 +253,15 @@ impl App {
         yinhe_editor_core::clipboard_file::cleanup_stale(std::time::Duration::from_secs(
             7 * 24 * 3600,
         ));
-        // ── Load fonts: Pretendard-SemiBold primary, MiSans fallback ──
+        // 先读设置（含界面语言），再按语言注入系统字体（不再内嵌字体）。
+        let audio_settings = crate::audio_settings::load_audio_settings();
+        rust_i18n::set_locale(&audio_settings.locale);
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Ui, || {
-            let mut fonts = egui::FontDefinitions::default();
-            fonts.font_data.insert(
-                "Pretendard".to_owned(),
-                egui::FontData::from_static(include_bytes!(
-                    "../../../assets/Pretendard-Medium.otf"
-                ))
-                .into(),
+            yinhe_fonts::install(
+                &cc.egui_ctx,
+                yinhe_fonts::WEIGHT_MEDIUM,
+                &audio_settings.locale,
             );
-            fonts.font_data.insert(
-                "MiSans".to_owned(),
-                egui::FontData::from_static(include_bytes!("../../../assets/MiSans-Medium.otf"))
-                    .into(),
-            );
-            let props = fonts
-                .families
-                .entry(egui::FontFamily::Proportional)
-                .or_default();
-            props.insert(0, "Pretendard".to_owned());
-            props.insert(1, "MiSans".to_owned());
-            let mono = fonts
-                .families
-                .entry(egui::FontFamily::Monospace)
-                .or_default();
-            mono.insert(0, "Pretendard".to_owned());
-            mono.insert(1, "MiSans".to_owned());
-
-            // 繁体中文回退（MiSans-TC），排在 Pretendard/MiSans 之后
-            const EXTRA_FONTS: [(&str, &[u8]); 1] =
-                [("MiSans-TC", include_bytes!("../../../assets/MiSans-TC.otf"))];
-            for (name, data) in EXTRA_FONTS {
-                fonts
-                    .font_data
-                    .insert(name.to_owned(), egui::FontData::from_static(data).into());
-            }
-            // 插到 Pretendard、MiSans 之后，egui 默认字体之前。
-            // 循环内重新取 entry，避免与上面的 props/mono 借用冲突。
-            for (i, (name, _)) in EXTRA_FONTS.iter().enumerate() {
-                let pos = 2 + i;
-                fonts
-                    .families
-                    .entry(egui::FontFamily::Proportional)
-                    .or_default()
-                    .insert(pos, name.to_string());
-                fonts
-                    .families
-                    .entry(egui::FontFamily::Monospace)
-                    .or_default()
-                    .insert(pos, name.to_string());
-            }
-            cc.egui_ctx.set_fonts(fonts);
 
             // Initialize Material Icons font with adjusted metrics
             let mut font_insert = egui_material_icons::font_insert();
@@ -326,8 +283,6 @@ impl App {
 
         let jobs = jobs::JobCenter::new();
 
-        let audio_settings = crate::audio_settings::load_audio_settings();
-        rust_i18n::set_locale(&audio_settings.locale);
         // 主题初始化（读取设置的标准色）+ 窗口/IME 深浅同步
         crate::theme::set_theme(audio_settings.theme_base);
         cc.egui_ctx.set_theme(if crate::theme::dark_mode() {

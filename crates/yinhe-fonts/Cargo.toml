@@ -1,0 +1,11 @@
+[package]
+name = "yinhe-fonts"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+egui = { workspace = true }
+font-kit = { workspace = true }
+
+[dev-dependencies]
+ab_glyph = "0.2"

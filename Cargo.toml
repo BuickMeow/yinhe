@@ -18,6 +18,7 @@ members = [
     "crates/yinhe-mixer",
     "crates/yinhe-vst3",
     "crates/yinhe-memtrace",
+    "crates/yinhe-fonts",
     "crates/yinhe-tests",
     "crates/yinhe-test-helpers",
     "crates/yinhe-theme",
@@ -44,6 +45,7 @@ egui_material_icons = "0.8"
 image = "0.25"
 tempfile = "3"
 chrono = "0.4"
+font-kit = "0.14"
 
 # 跨 crate 共享依赖
 serde = { version = "1", features = ["derive", "rc"] }
