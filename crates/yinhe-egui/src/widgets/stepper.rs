@@ -110,6 +110,19 @@ pub fn stepper<Num: egui::emath::Numeric>(
                 icon_color,
             );
         }
+
+        // 数值区两侧的细分隔线（与加减号同色）。
+        let inset = crate::scaling::scaled_font(&ctx, 4.0);
+        let sep = egui::Stroke::new(crate::scaling::scaled_font(&ctx, 1.0), icon_color);
+        for x in [mid_rect.min.x, mid_rect.max.x] {
+            ui.painter().line_segment(
+                [
+                    egui::pos2(x, rect.min.y + inset),
+                    egui::pos2(x, rect.max.y - inset),
+                ],
+                sep,
+            );
+        }
     }
 
     // 中间数值：无框 DragValue，占满数值区并居中。
