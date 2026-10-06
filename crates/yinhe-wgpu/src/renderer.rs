@@ -53,6 +53,11 @@ pub struct InstanceRenderer {
     velocity_summary: Option<Arc<crate::automation::VelocitySummary>>,
     /// 摘要对应的一致性键（revision ^ tv_hash）；与当前键不同则需重建。
     velocity_summary_revision: u64,
+    /// 摘要内容世代：`velocity_summary` 的 Arc 实体每次变化 +1。
+    /// AM 面板层缓存键必须包含它，否则后台摘要重建完成后（revision 未变）
+    /// 层命中缓存不重建，力度条停在旧摘要（滞后一拍），直到视口移动等
+    /// 其他 key 分量变化才刷新。
+    velocity_summary_gen: u64,
     /// 后台摘要构建任务：`(接收端, 构建时的一致性键)`。进行中不重启（防抖）。
     velocity_rebuild: Option<(
         std::sync::mpsc::Receiver<Arc<crate::automation::VelocitySummary>>,
@@ -120,6 +125,7 @@ impl InstanceRenderer {
                 lod_enabled: true,
                 velocity_summary: None,
                 velocity_summary_revision: 0,
+                velocity_summary_gen: 0,
                 velocity_rebuild: None,
             }
         })
@@ -409,13 +415,35 @@ impl InstanceRenderer {
         self.velocity_summary_revision
     }
 
+    /// 摘要内容世代（Arc 实体变化即 +1）。上层把它混入 GPU 层缓存键，
+    /// 保证后台摘要重建完成后力度条层会重建（不依赖 revision 变化）。
+    pub fn velocity_summary_gen(&self) -> u64 {
+        self.velocity_summary_gen
+    }
+
+    /// 替换摘要并维护世代计数：Arc 实体变化时 +1。
+    fn replace_velocity_summary(
+        &mut self,
+        summary: Option<Arc<crate::automation::VelocitySummary>>,
+    ) {
+        let changed = match (&self.velocity_summary, &summary) {
+            (Some(a), Some(b)) => !Arc::ptr_eq(a, b),
+            (None, None) => false,
+            _ => true,
+        };
+        if changed {
+            self.velocity_summary_gen = self.velocity_summary_gen.wrapping_add(1);
+        }
+        self.velocity_summary = summary;
+    }
+
     /// 后台构建完成后设置摘要及其一致性键。
     pub fn set_velocity_summary(
         &mut self,
         summary: Arc<crate::automation::VelocitySummary>,
         revision: u64,
     ) {
-        self.velocity_summary = Some(summary);
+        self.replace_velocity_summary(Some(summary));
         self.velocity_summary_revision = revision;
     }
 
@@ -424,7 +452,7 @@ impl InstanceRenderer {
         &mut self,
         summary: Option<Arc<crate::automation::VelocitySummary>>,
     ) {
-        self.velocity_summary = summary;
+        self.replace_velocity_summary(summary);
     }
 
     /// 推进 AM 力度条摘要的后台构建：先收集已完成的结果，再按需启动新任务。
@@ -442,7 +470,7 @@ impl InstanceRenderer {
             match rx.try_recv() {
                 Ok(summary) => {
                     let key = self.velocity_rebuild.take().map(|(_, k)| k).unwrap_or(0);
-                    self.velocity_summary = Some(summary);
+                    self.replace_velocity_summary(Some(summary));
                     self.velocity_summary_revision = key;
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
@@ -481,7 +509,7 @@ impl InstanceRenderer {
     /// note buffers from the previous document don't leak into the next render.
     pub fn clear_cull(&mut self) {
         self.cull.clear_cull();
-        self.velocity_summary = None;
+        self.replace_velocity_summary(None);
         self.velocity_summary_revision = 0;
         self.velocity_rebuild = None;
     }

@@ -200,6 +200,9 @@ pub fn prepare(
         view.show_velocity as u64,
         ghost_lane_hash,
         revision,
+        // 摘要世代：后台摘要重建完成时 revision 不一定变化，必须靠它触发
+        // 力度条层重建，否则停在旧摘要（滞后一拍，直到视口移动才刷新）。
+        renderer.velocity_summary_gen(),
         highlight_ticks
             .iter()
             .fold(0u64, |acc, &t| acc.wrapping_mul(31).wrapping_add(t as u64)),
