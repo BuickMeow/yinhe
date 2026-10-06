@@ -209,13 +209,7 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                             .color(crate::theme::text_secondary()),
                     );
                 }
-                if ui
-                    .add(
-                        crate::widgets::numeric_input::decimal_drag_value(&mut layers)
-                            .range(0..=128)
-                            .speed(1.0),
-                    )
-                    .changed()
+                if crate::widgets::stepper::stepper(ui, &mut layers, 0..=128, 1.0, 110.0).changed()
                 {
                     settings.xsynth_layers = layers as u32;
                     changed = true;

@@ -18,6 +18,7 @@ pub mod scrollbar;
 pub mod selection_actions;
 pub(crate) mod slider;
 pub mod split_handle;
+pub(crate) mod stepper;
 pub(crate) mod switch;
 pub(crate) mod text_input;
 pub mod time_ruler;

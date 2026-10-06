@@ -9,6 +9,28 @@ use eframe::egui;
 
 use super::control;
 
+/// 把当前 `Ui` 的样式改成「无框 DragValue」：关掉 DragValue 内部（含编辑态 TextEdit）
+/// 的底与描边，同时保留可读的选中文字色。数字框与步进框共用。
+pub(crate) fn apply_frameless_drag_visuals(ui: &mut egui::Ui) {
+    let visuals = &mut ui.style_mut().visuals;
+    visuals.extreme_bg_color = egui::Color32::TRANSPARENT;
+    visuals.text_edit_bg_color = Some(egui::Color32::TRANSPARENT);
+    // 编辑态 TextEdit 聚焦时用 selection.stroke 画内框。宽度设 0 关掉内框，
+    // 但颜色仍用于「选中文字」着色，必须给可读色（否则选中文字透明不可见）。
+    visuals.selection.stroke = egui::Stroke::new(0.0, crate::theme::text_primary());
+    let widgets = &mut visuals.widgets;
+    for v in [
+        &mut widgets.noninteractive,
+        &mut widgets.inactive,
+        &mut widgets.hovered,
+        &mut widgets.active,
+    ] {
+        v.bg_fill = egui::Color32::TRANSPARENT;
+        v.weak_bg_fill = egui::Color32::TRANSPARENT;
+        v.bg_stroke = egui::Stroke::NONE;
+    }
+}
+
 /// 带中文句号折算的数值 parser，用于 `DragValue::custom_parser`。
 pub fn decimal_parser(s: &str) -> Option<f64> {
     let s: String = s.replace('。', ".");
@@ -97,30 +119,11 @@ impl<Num: egui::emath::Numeric> egui::Widget for ControlDragValue<'_, Num> {
             ui.set_max_height(control::h(ui.ctx()));
             ui.spacing_mut().interact_size.y = control::h(ui.ctx());
             ui.scope(|ui| {
-                // 彻底关掉 DragValue 内部（含编辑态 TextEdit）的底与描边：
-                // 编辑态 TextEdit 的填充取自 extreme_bg_color，必须一并透明。
-                let visuals = &mut ui.style_mut().visuals;
-                visuals.extreme_bg_color = egui::Color32::TRANSPARENT;
-                visuals.text_edit_bg_color = Some(egui::Color32::TRANSPARENT);
-                // 编辑态 TextEdit 聚焦时用 selection.stroke 画内框。宽度设 0 关掉内框，
-                // 但颜色仍用于「选中文字」着色，必须给可读色（否则选中文字透明不可见）。
-                visuals.selection.stroke = egui::Stroke::new(0.0, crate::theme::text_primary());
-                let widgets = &mut visuals.widgets;
-                for v in [
-                    &mut widgets.noninteractive,
-                    &mut widgets.inactive,
-                    &mut widgets.hovered,
-                    &mut widgets.active,
-                ] {
-                    v.bg_fill = egui::Color32::TRANSPARENT;
-                    v.weak_bg_fill = egui::Color32::TRANSPARENT;
-                    v.bg_stroke = egui::Stroke::NONE;
-                }
+                apply_frameless_drag_visuals(ui);
                 ui.add(dv)
             })
             .inner
         });
-
         let resp = inner.inner;
         // 自绘外框描边（宽度不计入布局，保证总高 = control::h）。
         let focused = resp.has_focus();
