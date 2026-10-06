@@ -1040,7 +1040,6 @@ fn knob_row(ui: &mut egui::Ui, param: &DockParam, actions: &mut Vec<KnobAction>)
             ui.label(
                 egui::RichText::new(text)
                     .size(crate::theme::SMALL_FONT)
-                    .monospace()
                     .color(color),
             );
         });

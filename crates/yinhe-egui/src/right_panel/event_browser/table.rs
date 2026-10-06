@@ -93,12 +93,8 @@ pub(super) fn cell_text(
     row.col(|ui| {
         // 放 Label 消耗 layout 空间
         ui.add(
-            egui::Label::new(
-                egui::RichText::new(s)
-                    .size(crate::theme::SMALL_FONT)
-                    .monospace(),
-            )
-            .selectable(false),
+            egui::Label::new(egui::RichText::new(s).size(crate::theme::SMALL_FONT))
+                .selectable(false),
         );
         // 整个 cell 加交互
         let cell_rect = ui.max_rect();
@@ -128,9 +124,7 @@ pub(super) fn cell_position(
     row.col(|ui| {
         ui.add(
             egui::Label::new(
-                egui::RichText::new(bar_lookup.format(tick))
-                    .size(crate::theme::SMALL_FONT)
-                    .monospace(),
+                egui::RichText::new(bar_lookup.format(tick)).size(crate::theme::SMALL_FONT),
             )
             .selectable(false),
         );
@@ -181,7 +175,6 @@ pub(super) fn cell_row_header(
             egui::Label::new(
                 egui::RichText::new(format!("{}", page_start + row_idx + 1))
                     .size(crate::theme::SMALL_FONT)
-                    .monospace()
                     .color(label_color),
             )
             .selectable(false),
@@ -373,12 +366,8 @@ pub(super) fn cell_editable(
     let s: String = text.into();
     row.col(|ui| {
         ui.add(
-            egui::Label::new(
-                egui::RichText::new(s)
-                    .size(crate::theme::SMALL_FONT)
-                    .monospace(),
-            )
-            .selectable(false),
+            egui::Label::new(egui::RichText::new(s).size(crate::theme::SMALL_FONT))
+                .selectable(false),
         );
         let cell_rect = ui.max_rect();
         let id = ui.id().with("cell").with(row_idx);

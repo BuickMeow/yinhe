@@ -334,7 +334,6 @@ fn param_row(
             egui::Label::new(
                 egui::RichText::new(text)
                     .size(crate::theme::SMALL_FONT)
-                    .monospace()
                     .color(crate::theme::text_secondary()),
             )
             .truncate(),

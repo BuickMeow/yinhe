@@ -351,7 +351,10 @@ fn paint_labels(
         0
     };
 
-    let font_id = egui::FontId::new(crate::theme::SMALL_LABEL_FONT, egui::FontFamily::Monospace);
+    let font_id = egui::FontId::new(
+        crate::theme::SMALL_LABEL_FONT,
+        egui::FontFamily::Proportional,
+    );
 
     for i in 0..segments.len() {
         let (seg_start, num, den) = segments[i];

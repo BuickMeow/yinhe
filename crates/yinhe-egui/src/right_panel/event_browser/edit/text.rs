@@ -170,7 +170,7 @@ fn show_text_edit_popup(
                 let resp = ui.add(
                     egui::TextEdit::singleline(&mut state)
                         .desired_width(200.0)
-                        .font(egui::FontId::monospace(11.0)),
+                        .font(egui::FontId::proportional(11.0)),
                 );
                 if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     open = false;

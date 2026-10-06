@@ -994,7 +994,6 @@ fn kv(ui: &mut egui::Ui, k: &str, v: String) {
         ui.label(
             egui::RichText::new(v)
                 .size(crate::theme::SMALL_FONT)
-                .monospace()
                 .color(crate::theme::text_primary()),
         );
     });
@@ -1049,7 +1048,6 @@ fn show_project_json(ui: &mut egui::Ui, doc: &Document) {
                     ui.label(
                         egui::RichText::new(format!("{} {} ({})", status, entry.name, entry.path))
                             .size(crate::theme::SMALL_LABEL_FONT)
-                            .monospace()
                             .color(crate::theme::text_secondary()),
                     );
                 });

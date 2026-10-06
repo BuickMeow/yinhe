@@ -218,7 +218,6 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
                         egui::Label::new(
                             egui::RichText::new(&label_text)
                                 .size(crate::theme::SMALL_FONT)
-                                .monospace()
                                 .color(if is_selected {
                                     crate::theme::contrast_fg()
                                 } else {
@@ -456,7 +455,6 @@ fn render_leaf_item(
                         egui::Label::new(
                             egui::RichText::new(name)
                                 .size(crate::theme::SMALL_FONT)
-                                .monospace()
                                 .color(if is_selected {
                                     crate::theme::contrast_fg()
                                 } else {
