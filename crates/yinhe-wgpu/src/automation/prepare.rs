@@ -32,6 +32,10 @@ pub enum AutomationGhost {
     },
 }
 
+/// ghost 层「无 ghost」时用的固定非零缓存键：首次清空后命中缓存不再上传。
+/// 0 保留给「有 ghost」的强制每帧重建语义。
+const EMPTY_GHOST_KEY: u64 = 0x9e37_0000_0000_0001;
+
 /// Lane 渲染缓存键：各变体命名空间隔离（区间互不重叠），避免不同 target
 /// 撞 hash 后复用错误的 GPU 实例。name 不参与（仅显示用）。
 ///
@@ -101,8 +105,11 @@ fn hash_lane(lane: &AutomationLane) -> u64 {
 /// rendered directly from `midi` instead of from an automation lane.
 ///
 /// `show_anchors`: 在每个事件位置画圆形锚点（铅笔工具下显示）。
-/// `ghost`: 拖拽预览（Layer 1，每帧重建，无缓存）。
+/// `ghost`: 拖拽预览（Layer 1，有 ghost 时每帧重建，无 ghost 时清空后缓存）。
 /// `highlight_ticks`: 这些 tick 位置的锚点渲染为白色高亮（选中锚点，可多选）。
+///
+/// 返回：本次是否有层真正重建（Layer 0 未命中缓存，或 Layer 1 有 ghost）。
+/// 上层据此在无变化时跳过一次离屏 GPU 重画。
 ///
 /// `max_val`: 当前 panel 的值域上界。Tempo 由调用方按实际事件动态计算，
 ///            其他 target 由调用方按其值域给出。
@@ -211,7 +218,8 @@ pub fn prepare(
     let highlight_ticks_for_layer0 = highlight_ticks;
     let theme = renderer.theme();
 
-    if is_velocity {
+    // Layer 0 是否真正重建（缓存命中时为 false）。上层据此跳过无变化的离屏重画。
+    let layer0_rebuilt = if is_velocity {
         // Velocity bars via velocity pipeline (VelocityBarInstance, 16B)
         if let Some(midi) = midi {
             // LOD 摘要（Arc clone，不借用 renderer，闭包内可安全使用）。
@@ -225,7 +233,9 @@ pub fn prepare(
                     track_visible,
                     summary.as_deref(),
                 );
-            });
+            })
+        } else {
+            false
         }
     } else {
         // Data lines + anchors via curve pipeline (CurveInstance)
@@ -249,17 +259,23 @@ pub fn prepare(
                 highlight_ticks_for_layer0,
                 &theme,
             );
-        });
-    }
+        })
+    };
 
-    // Layer 1: ghost (拖拽预览，无缓存，每帧重建) — curve pipeline
-    renderer.upload_curve_layer(1, 0, |out| {
-        if let Some(g) = ghost {
-            ghost::build_ghost(out, g, w, view, max_val, show_anchors, &theme);
-        }
-    });
+    // Layer 1: ghost (拖拽预览)。有 ghost 时用 key=0 强制每帧重建；无 ghost 时
+    // 用固定的非零 key，首次清空后即命中缓存不再上传（否则会永远强制上传，
+    // 让 prepare 的返回值恒真、离屏重画省不下来）。
+    let ghost_rebuilt = renderer.upload_curve_layer(
+        1,
+        if ghost.is_some() { 0 } else { EMPTY_GHOST_KEY },
+        |out| {
+            if let Some(g) = ghost {
+                ghost::build_ghost(out, g, w, view, max_val, show_anchors, &theme);
+            }
+        },
+    );
 
-    true
+    layer0_rebuilt || ghost_rebuilt
 }
 
 /// AR 共享纹理中一条可见的自动化 lane。

@@ -98,6 +98,10 @@ impl<T: Pod> LayerSlot<T> {
         build(&mut self.scratch);
         self.count = self.scratch.len();
         self.flush(device, queue);
+        // 强制上传后把 cache_key 归零（0 = 强制语义的值）。否则先前缓存的
+        // 键会被保留，后续一次「正常键」上传若与该旧键相同会被误判为命中而
+        // 跳过，导致该层停留在 force 时的内容（如拖拽 ghost 结束后不清空）。
+        self.cache_key = 0;
     }
 
     fn ensure_chunks(&mut self, device: &Device, required: usize) {

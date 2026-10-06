@@ -410,11 +410,6 @@ impl InstanceRenderer {
         self.velocity_summary.clone()
     }
 
-    /// 摘要对应的一致性键（后台构建完成后写入）。
-    pub fn velocity_summary_revision(&self) -> u64 {
-        self.velocity_summary_revision
-    }
-
     /// 摘要内容世代（Arc 实体变化即 +1）。上层把它混入 GPU 层缓存键，
     /// 保证后台摘要重建完成后力度条层会重建（不依赖 revision 变化）。
     pub fn velocity_summary_gen(&self) -> u64 {
@@ -435,16 +430,6 @@ impl InstanceRenderer {
             self.velocity_summary_gen = self.velocity_summary_gen.wrapping_add(1);
         }
         self.velocity_summary = summary;
-    }
-
-    /// 后台构建完成后设置摘要及其一致性键。
-    pub fn set_velocity_summary(
-        &mut self,
-        summary: Arc<crate::automation::VelocitySummary>,
-        revision: u64,
-    ) {
-        self.replace_velocity_summary(Some(summary));
-        self.velocity_summary_revision = revision;
     }
 
     /// 共享另一实例的力度条摘要（AM 面板用独立 renderer，只读不重建）。
