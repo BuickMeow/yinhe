@@ -179,31 +179,26 @@ impl<Num: egui::emath::Numeric> Stepper<'_, Num> {
         }
 
         // 中间数值：无框 DragValue，占满数值区并居中。
-        let mid_resp = ui
-            .scope_builder(
-                egui::UiBuilder::new().max_rect(mid_rect).layout(
-                    egui::Layout::centered_and_justified(egui::Direction::TopDown),
-                ),
-                |ui| {
-                    numeric_input::apply_frameless_drag_visuals(ui);
-                    ui.spacing_mut().interact_size.y = h;
-                    let mut dv = egui::DragValue::new(value)
-                        .custom_parser(numeric_input::decimal_parser)
-                        .speed(step);
-                    if let Some((lo, hi)) = range {
-                        dv = dv.range(lo..=hi);
-                    }
-                    if let Some(s) = &suffix {
-                        dv = dv.suffix(s.clone());
-                    }
-                    if let Some(n) = decimals {
-                        dv = dv.fixed_decimals(n);
-                    }
-                    ui.add(dv)
-                },
-            )
-            .inner;
-        if mid_resp.changed() {
+        // 用 `new_child`（不推进父光标）而非 `scope_builder`：后者会把子 rect 的光标
+        // 推进写回父 Ui，在 `right_to_left` 行里会让后续控件错位、与控件叠在一起。
+        let mut mid_ui = ui.new_child(egui::UiBuilder::new().max_rect(mid_rect).layout(
+            egui::Layout::centered_and_justified(egui::Direction::TopDown),
+        ));
+        numeric_input::apply_frameless_drag_visuals(&mut mid_ui);
+        mid_ui.spacing_mut().interact_size.y = h;
+        let mut dv = egui::DragValue::new(value)
+            .custom_parser(numeric_input::decimal_parser)
+            .speed(step);
+        if let Some((lo, hi)) = range {
+            dv = dv.range(lo..=hi);
+        }
+        if let Some(s) = &suffix {
+            dv = dv.suffix(s.clone());
+        }
+        if let Some(n) = decimals {
+            dv = dv.fixed_decimals(n);
+        }
+        if mid_ui.add(dv).changed() {
             changed = true;
         }
 
