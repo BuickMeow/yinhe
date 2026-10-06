@@ -84,9 +84,10 @@ impl<Num: egui::emath::Numeric> egui::Widget for ControlDragValue<'_, Num> {
         let ctx = ui.ctx().clone();
         let radius = control::radius(&ctx);
         let pad_x = crate::scaling::scaled_font(&ctx, 6.0).round() as i8;
+        // 注意：不要给 Frame 设 stroke——egui 的 Frame 会把 `2 * stroke.width` 计入总尺寸
+        // （frame.rs 文档），会让数字框比其它控件高 2px。描边改在下面自绘。
         let frame = egui::Frame::new()
             .fill(crate::theme::control_bg())
-            .stroke(control::control_stroke(ui.is_enabled(), false))
             .corner_radius(radius)
             .inner_margin(egui::Margin::symmetric(pad_x, 0));
         let inner = frame.show(ui, |ui| {
@@ -117,14 +118,14 @@ impl<Num: egui::emath::Numeric> egui::Widget for ControlDragValue<'_, Num> {
         });
 
         let resp = inner.inner;
-        if resp.has_focus() {
-            ui.painter().rect_stroke(
-                inner.response.rect,
-                radius,
-                control::control_stroke(true, true),
-                egui::StrokeKind::Inside,
-            );
-        }
+        // 自绘外框描边（宽度不计入布局，保证总高 = control::h）。
+        let focused = resp.has_focus();
+        ui.painter().rect_stroke(
+            inner.response.rect,
+            radius,
+            control::control_stroke(ui.is_enabled(), focused),
+            egui::StrokeKind::Inside,
+        );
         resp
     }
 }
