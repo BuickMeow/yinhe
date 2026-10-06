@@ -157,7 +157,7 @@ pub fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bo
                 let add_btn = crate::widgets::flat::flat_button_filled_stroked(
                     ui,
                     egui::RichText::new("+").strong(),
-                    egui::vec2(28.0, 24.0),
+                    egui::vec2(24.0, 24.0),
                     None,
                     !is_adding,
                 );
@@ -263,7 +263,7 @@ fn shortcut_combo_ui(
         && crate::widgets::flat::flat_button_filled_stroked(
             ui,
             egui::RichText::new("×").strong(),
-            egui::vec2(28.0, 24.0),
+            egui::vec2(24.0, 24.0),
             None,
             true,
         )
