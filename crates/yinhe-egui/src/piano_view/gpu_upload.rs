@@ -282,6 +282,8 @@ pub struct GpuUploadState<'a> {
     pub revision: u64,
     pub note_revisions: &'a [u64; KEY_COUNT],
     pub track_visible: &'a [bool],
+    /// 选中轨道集合：驱动 cull 的「选中置顶」分区（每帧同步，内部去重）。
+    pub track_selected: &'a HashSet<u16>,
     pub hidden_notes: &'a HashSet<(u16, u32, u8)>,
     /// 调用方预先算好的 `track_visible` hash（mask 同步与 note_key 共用）。
     pub tv_hash: u64,
@@ -512,6 +514,7 @@ pub fn upload(state: GpuUploadState) {
         revision,
         note_revisions,
         track_visible,
+        track_selected,
         hidden_notes,
         tv_hash,
         hidden_hash,
@@ -544,6 +547,8 @@ pub fn upload(state: GpuUploadState) {
 
     // 1. Track 显隐 mask 同步：任何变化立即上传。
     sync_track_mask(pianoroll, track_visible, tv_hash, last_tv_hash);
+    // 选中轨道 mask 同步（选中置顶；内部按集合 hash 去重，未变则跳过）。
+    pianoroll.upload_track_selected(track_selected);
 
     // 2. 推进（或丢弃）进行中的后台重建。
     if matches!(
@@ -945,6 +950,7 @@ mod tests {
             revision: 1,
             note_revisions: &note_revisions,
             track_visible: &tv0,
+            track_selected: &HashSet::new(),
             hidden_notes: &hidden,
             tv_hash: yinhe_wgpu::hash_bools(&tv0),
             hidden_hash: yinhe_wgpu::hash_hidden(&hidden),
@@ -978,6 +984,7 @@ mod tests {
             revision: 1,
             note_revisions: &note_revisions,
             track_visible: &tv1,
+            track_selected: &HashSet::new(),
             hidden_notes: &hidden,
             tv_hash: yinhe_wgpu::hash_bools(&tv1),
             hidden_hash: yinhe_wgpu::hash_hidden(&hidden),
@@ -1012,6 +1019,7 @@ mod tests {
                 revision: 1,
                 note_revisions: &note_revisions,
                 track_visible: &tv1,
+                track_selected: &HashSet::new(),
                 hidden_notes: &hidden,
                 tv_hash: yinhe_wgpu::hash_bools(&tv1),
                 hidden_hash: yinhe_wgpu::hash_hidden(&hidden),
@@ -1045,6 +1053,7 @@ mod tests {
             revision: 1,
             note_revisions: &note_revisions,
             track_visible: &tv0b,
+            track_selected: &HashSet::new(),
             hidden_notes: &hidden,
             tv_hash: yinhe_wgpu::hash_bools(&tv0b),
             hidden_hash: yinhe_wgpu::hash_hidden(&hidden),
@@ -1064,6 +1073,7 @@ mod tests {
                 revision: 1,
                 note_revisions: &note_revisions,
                 track_visible: &tv0b,
+                track_selected: &HashSet::new(),
                 hidden_notes: &hidden,
                 tv_hash: yinhe_wgpu::hash_bools(&tv0b),
                 hidden_hash: yinhe_wgpu::hash_hidden(&hidden),
@@ -1102,6 +1112,7 @@ mod tests {
                 revision: 1,
                 note_revisions: &note_revisions,
                 track_visible: &tv0b,
+                track_selected: &HashSet::new(),
                 hidden_notes: &hidden,
                 tv_hash: yinhe_wgpu::hash_bools(&tv0b),
                 hidden_hash: yinhe_wgpu::hash_hidden(&hidden),
@@ -1263,6 +1274,7 @@ mod tests {
             revision: 1,
             note_revisions: &note_revisions,
             track_visible: &tv,
+            track_selected: &HashSet::new(),
             hidden_notes: &empty,
             tv_hash: yinhe_wgpu::hash_bools(&tv),
             hidden_hash: yinhe_wgpu::hash_hidden(&empty),
@@ -1297,6 +1309,7 @@ mod tests {
             revision: 1,
             note_revisions: &note_revisions,
             track_visible: &tv,
+            track_selected: &HashSet::new(),
             hidden_notes: &hidden,
             tv_hash: yinhe_wgpu::hash_bools(&tv),
             hidden_hash: yinhe_wgpu::hash_hidden(&hidden),
@@ -1330,6 +1343,7 @@ mod tests {
             revision: 1,
             note_revisions: &note_revisions,
             track_visible: &tv,
+            track_selected: &HashSet::new(),
             hidden_notes: &empty,
             tv_hash: yinhe_wgpu::hash_bools(&tv),
             hidden_hash: yinhe_wgpu::hash_hidden(&empty),
@@ -1484,6 +1498,7 @@ mod tests {
                     revision: 1,
                     note_revisions: &note_revisions,
                     track_visible: tv,
+                    track_selected: &HashSet::new(),
                     hidden_notes: &hidden,
                     tv_hash: yinhe_wgpu::hash_bools(tv),
                     hidden_hash: yinhe_wgpu::hash_hidden(&hidden),

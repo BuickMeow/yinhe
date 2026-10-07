@@ -94,6 +94,12 @@ pub(crate) struct CullState {
     /// Fixed-size (MAX_TRACKS/8 bytes) so per-key bind groups never need
     /// recreating on track-count growth.
     track_mask_buffer: TrackedBuffer,
+    /// Per-track selection bitmask (1 bit per track, MAX_TRACKS bits).
+    /// Written by `upload_track_selected`; read by cull.wgsl (binding 6).
+    /// Selected tracks' visible instances are partitioned to the back so the
+    /// host draws them last (global selected-on-top). Fixed-size like
+    /// `track_mask_buffer` so per-key bind groups never need recreating.
+    track_selected_buffer: TrackedBuffer,
     /// Chunk count dispatched for each key in the current frame (0 = none).
     /// Filled by `dispatch_cull`, read by `draw_visible_notes`.
     pub(crate) frame_chunk_counts: [u32; KEY_COUNT],
@@ -146,6 +152,10 @@ pub(crate) struct CullState {
 
     /// 桌面走 GPU 间接绘制（零回读），Android Adreno 驱动间接失效走回读
     use_indirect: bool,
+
+    /// 上次写入 selected mask 的集合 hash：集合未变则跳过 8KB 写入，
+    /// 避免每帧把 `notes_dirty` 置真而让 cull skip 优化失效。
+    last_track_selected_hash: u64,
 }
 
 impl CullState {
@@ -210,6 +220,16 @@ impl CullState {
                 },
                 BindGroupLayoutEntry {
                     binding: 5,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 6,
                     visibility: ShaderStages::COMPUTE,
                     ty: BindingType::Buffer {
                         ty: BufferBindingType::Storage { read_only: true },
@@ -292,6 +312,26 @@ impl CullState {
         }
         track_mask_buffer.unmap();
 
+        // Track selection bitmask: fixed size = MAX_TRACKS bits (8 KB),
+        // initialized to all-zero (= no track selected).
+        let track_selected_buffer = TrackedBuffer::new(
+            device,
+            &BufferDescriptor {
+                label: Some("cull_track_selected"),
+                size: track_mask_size,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: true,
+            },
+        );
+        {
+            let words = vec![0u32; crate::vertex::MAX_TRACKS / 32];
+            let Ok(mut mapped) = track_selected_buffer.slice(..).get_mapped_range_mut() else {
+                panic!("track_selected buffer not mappable at creation");
+            };
+            mapped.copy_from_slice(bytemuck::cast_slice(&words));
+        }
+        track_selected_buffer.unmap();
+
         // Android Adreno 间接绘制失效，强制回读；桌面走间接零回读（需 INDIRECT_FIRST_INSTANCE）
         let use_indirect = !cfg!(target_os = "android")
             && device
@@ -312,6 +352,7 @@ impl CullState {
             per_key_draw_args_buffers: (0..KEY_COUNT).map(|_| None).collect(),
             per_key_draw_args_cpu: (0..KEY_COUNT).map(|_| Vec::new()).collect(),
             track_mask_buffer,
+            track_selected_buffer,
             frame_chunk_counts: [0; KEY_COUNT],
             per_key_counts: [0; KEY_COUNT],
             bucket_indexes: (0..KEY_COUNT).map(|_| None).collect(),
@@ -323,6 +364,7 @@ impl CullState {
             summary_levels,
             notes_dirty: false,
             use_indirect,
+            last_track_selected_hash: 0,
         }
     }
 
@@ -347,6 +389,35 @@ impl CullState {
             }
         }
         queue.write_buffer(&self.track_mask_buffer, 0, bytemuck::cast_slice(&words));
+        self.notes_dirty = true;
+    }
+
+    /// Update the per-track selection bitmask (selected tracks drawn on top).
+    /// Cheap no-op when the selection set is unchanged (dedup by set hash),
+    /// so callers may invoke it every frame without defeating the cull skip
+    /// optimization. Marks `notes_dirty` on change so the next `dispatch_cull`
+    /// re-partitions the visible output.
+    pub(crate) fn upload_track_selected(
+        &mut self,
+        queue: &Queue,
+        track_selected: &std::collections::HashSet<u16>,
+    ) {
+        // 序无关 hash（HashSet 迭代顺序不定）：sum of mixed track ids。
+        let hash = track_selected.iter().fold(0u64, |acc, &t| {
+            acc.wrapping_add((t as u64).wrapping_mul(0x9e3779b97f4a7c15))
+        });
+        if hash == self.last_track_selected_hash {
+            return;
+        }
+        self.last_track_selected_hash = hash;
+        let mut words = vec![0u32; crate::vertex::MAX_TRACKS / 32];
+        for &t in track_selected {
+            let t = t as usize;
+            if t < crate::vertex::MAX_TRACKS {
+                words[t / 32] |= 1u32 << (t % 32);
+            }
+        }
+        queue.write_buffer(&self.track_selected_buffer, 0, bytemuck::cast_slice(&words));
         self.notes_dirty = true;
     }
 
@@ -409,8 +480,9 @@ impl CullState {
         // Visible buffer is 256-aligned so every chunk's sparse slots
         // [chunk*256, chunk*256+256) fit; slots are 4B u32 indices now.
         let vis_size = chunk_total * 256 * std::mem::size_of::<u32>() as u64;
-        // DrawIndexedIndirectArgs = 5 × u32 = 20B per chunk.
-        let args_size = chunk_total * std::mem::size_of::<u32>() as u64 * 5;
+        // DrawIndexedIndirectArgs = 5 × u32 = 20B per chunk, two lists
+        // (unselected + selected) → 40B per chunk.
+        let args_size = chunk_total * std::mem::size_of::<u32>() as u64 * 10;
 
         let need_recreate = match &self.per_key_buffers[key as usize] {
             None => true,
@@ -570,6 +642,10 @@ impl CullState {
                     BindGroupEntry {
                         binding: 5,
                         resource: self.track_mask_buffer.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 6,
+                        resource: self.track_selected_buffer.as_entire_binding(),
                     },
                 ],
             }));
@@ -757,16 +833,20 @@ impl CullState {
                 continue;
             };
             let bytes = 20 * chunk_count as u64;
+            // 读回两段：未选中 [0, chunk_count) 与选中 [chunk_total, ...)，
+            // 拼成 [A.., B..]，draw 时按此顺序画（选中置顶）。
+            let chunk_total = self.per_key_chunk_total(key) as u64;
             let readback = TrackedBuffer::new(
                 device,
                 &BufferDescriptor {
                     label: Some("args_sync_readback"),
-                    size: bytes,
+                    size: bytes * 2,
                     usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
                     mapped_at_creation: false,
                 },
             );
             enc.copy_buffer_to_buffer(src, 0, &readback, 0, bytes);
+            enc.copy_buffer_to_buffer(src, chunk_total * 20, &readback, bytes, bytes);
             readbacks.push(Some(readback));
         }
         if readbacks.is_empty() || readbacks.iter().all(Option::is_none) {
@@ -905,8 +985,17 @@ impl CullState {
             };
             pass.set_bind_group(1, bg, &[]);
             pass.set_vertex_buffer(0, vis_buf.slice(..));
+            // 两段 args：[0, chunk_count) = 未选中（先画），
+            // [chunk_total, chunk_total + chunk_count) = 选中（后画，置顶）。
+            let chunk_total = self.per_key_chunk_total(key) as u64;
             pass.multi_draw_indexed_indirect(args_buf, 0, chunk_count);
+            pass.multi_draw_indexed_indirect(args_buf, chunk_total * 20, chunk_count);
         }
+    }
+
+    /// 原始层每 key 的 chunk 容量（ceil(count/256)），args 缓冲分区用。
+    fn per_key_chunk_total(&self, key: u8) -> u32 {
+        self.per_key_counts[key as usize].div_ceil(256)
     }
 
     // ── LOD 摘要层 ────────────────────────────────────────────────────────
@@ -937,6 +1026,7 @@ impl CullState {
             cull_layout: &self.bind_group_layout,
             all_layout: &self.all_bind_group_layout,
             track_mask: &self.track_mask_buffer,
+            track_selected: &self.track_selected_buffer,
             dispatch_args: &self.dispatch_args_buffer,
         };
         for (level_idx, (notes, offsets)) in summaries.iter().enumerate() {
@@ -980,6 +1070,7 @@ impl CullState {
             cull_layout: &self.bind_group_layout,
             all_layout: &self.all_bind_group_layout,
             track_mask: &self.track_mask_buffer,
+            track_selected: &self.track_selected_buffer,
             dispatch_args: &self.dispatch_args_buffer,
         };
         let Some(level_ref) = self.summary_levels.get_mut(level) else {
@@ -1085,7 +1176,11 @@ impl CullState {
             };
             pass.set_bind_group(1, bg, &[]);
             pass.set_vertex_buffer(0, vis_buf.slice(..));
+            // 两段 args：未选中先画，选中后画（置顶）。args 分区 offset =
+            // chunk_total * 20（与 cull.wgsl 的 wg + chunk_total 一致）。
+            let chunk_total = summary.per_key_chunks[key as usize] as u64;
             pass.multi_draw_indexed_indirect(args_buf, 0, chunk_count);
+            pass.multi_draw_indexed_indirect(args_buf, chunk_total * 20, chunk_count);
         }
     }
 }

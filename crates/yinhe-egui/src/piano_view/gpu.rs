@@ -79,6 +79,7 @@ pub(crate) fn upload_and_prepare(
             revision,
             note_revisions,
             track_visible,
+            track_selected,
             hidden_notes,
             tv_hash,
             hidden_hash: yinhe_wgpu::hash_hidden(hidden_notes),

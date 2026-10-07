@@ -290,6 +290,12 @@ impl InstanceRenderer {
         self.cull.upload_track_mask(&self.queue, track_visible);
     }
 
+    /// Upload the per-track selection bitmask (selected tracks drawn on top).
+    /// Safe to call every frame: no-op when the selection set is unchanged.
+    pub fn upload_track_selected(&mut self, track_selected: &std::collections::HashSet<u16>) {
+        self.cull.upload_track_selected(&self.queue, track_selected);
+    }
+
     /// Upload ALL note instances to the persistent GPU buffer for compute cull.
     /// Call this once on MIDI load/change, NOT every frame.
     /// Also records per-key offsets and revisions for future incremental uploads.

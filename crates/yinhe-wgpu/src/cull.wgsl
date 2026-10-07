@@ -5,22 +5,19 @@
 // key, binding that key's buffers. This removes any global visible-note
 // cap — the total visible capacity equals the total note count.
 //
-// Output: fixed-slot sparse. Chunk c writes its visible note indices to the
-// fixed sparse slots [c*256, c*256+256) of `visible_indices` (rank-1 within
-// the chunk's prefix sum), and thread 0 writes the chunk's draw args
-// (DrawIndexedIndirectArgs: index_count=6, instance_count=wg_total,
-// first_index=0, base_vertex=0, first_instance=c*256) into `draw_args[wg]` —
-// a relative index aligned with multi_draw_indexed_indirect, which reads draw
-// args starting from index 0. The host draws with multi_draw_indexed_indirect
-// in chunk order, so the output (z) order equals the input order = tick order
-// — deterministic across frames, with no atomics and no dependence on GPU
-// workgroup scheduling.
+// Output: fixed-slot sparse, **two-way partitioned by track selection**.
+// Chunk c writes its visible indices to the fixed slots [c*256, c*256+256) of
+// `visible_indices`, unselected tracks first then selected tracks (each in
+// input order via a workgroup prefix sum). Thread 0 writes two draw args:
+//   A (unselected) at draw_args[wg]           → first_instance = c*256
+//   B (selected)   at draw_args[wg + chunk_total] → first_instance = c*256 + n0
+// where n0 = unselected visible count in the chunk. The host draws list A for
+// all chunks first, then list B — so every selected-track note lands on top of
+// every unselected note (global z priority), not just within a chunk.
 //
-// Within a chunk, a workgroup prefix sum (Hillis-Steele scan) guarantees that
-// visible instances are written in the same order as they appear in
-// `all_instances` (= all_notes order = tick order). Overlapping notes (same
-// key, same tick, different tracks) are adjacent in the input, so their
-// z-order is stable across frames — no flickering.
+// Within each group, the workgroup prefix sum (Hillis-Steele scan) keeps the
+// input order (= all_notes order = tick order), so overlapping notes are stable
+// across frames — no flickering, no atomics, no scheduling dependence.
 //
 // The vertex stage reads back the full NoteInstance from `all_instances`
 // (bound via the same per-key bind group, @group(1) in shader.wgsl) using
@@ -82,10 +79,15 @@ struct DispatchInfo {
 // Per-track visibility bitmask (1 bit per track). Track 显隐变化时由宿主写入；
 // track 显隐全量重建期间，旧 buffer + 此 mask 双重过滤保证显示正确。
 @group(0) @binding(5) var<storage, read> track_mask: array<u32>;
+// Per-track selection bitmask (1 bit per track)。选中轨道置顶：cull 把可见
+// 实例二分为「未选中组 / 选中组」，宿主先画未选中、再画选中（全局置顶）。
+@group(0) @binding(6) var<storage, read> track_selected_mask: array<u32>;
 
-// Workgroup shared memory for prefix sum.
-// After the scan, wg_prefix[i] = number of visible instances in [0..=i].
+// Workgroup shared memory for the two prefix sums.
+// After the scan, wg_prefix[i] = unselected visible count in [0..=i];
+// wg_sel[i] = selected visible count in [0..=i].
 var<workgroup> wg_prefix: array<u32, 256>;
+var<workgroup> wg_sel: array<u32, 256>;
 
 @compute @workgroup_size(256)
 fn main(
@@ -104,6 +106,7 @@ fn main(
     let in_range = index < dispatch_info.count;
 
     var visible: u32 = 0u;
+    var selected: u32 = 0u;
 
     if in_range {
         let inst = all_instances[index];
@@ -163,35 +166,55 @@ fn main(
                 }
             }
         }
+        if visible == 1u {
+            selected = select(0u, 1u, (track_selected_mask[track >> 5u] & (1u << (track & 31u))) != 0u);
+        }
     }
 
-    // Phase 1: inclusive prefix sum (Hillis-Steele scan, 8 steps for 256 threads).
-    // wg_prefix[i] = count of visible instances in [0..=i] within this workgroup.
-    wg_prefix[local_id.x] = visible;
+    // Phase 1: two inclusive prefix sums (Hillis-Steele scan, 8 steps for 256
+    // threads). wg_prefix = unselected visible count in [0..=i]; wg_sel =
+    // selected visible count in [0..=i]. Selected tracks are partitioned to the
+    // back of the chunk's slots so the host can draw all unselected chunks
+    // before all selected chunks (global selected-on-top).
+    wg_prefix[local_id.x] = visible & (1u - selected);
+    wg_sel[local_id.x] = visible & selected;
     workgroupBarrier();
 
     var stride: u32 = 1u;
     while stride < 256u {
-        var val: u32 = 0u;
+        var val0: u32 = 0u;
+        var val1: u32 = 0u;
         if local_id.x >= stride {
-            val = wg_prefix[local_id.x - stride];
+            val0 = wg_prefix[local_id.x - stride];
+            val1 = wg_sel[local_id.x - stride];
         }
         workgroupBarrier();
-        wg_prefix[local_id.x] += val;
+        wg_prefix[local_id.x] += val0;
+        wg_sel[local_id.x] += val1;
         workgroupBarrier();
         stride *= 2u;
     }
 
-    // Phase 2: thread 0 writes this chunk's draw args at the relative index
-    // `wg` (multi_draw_indexed_indirect reads args from index 0). Visible
-    // threads write to fixed sparse slots (chunk * 256 + rank - 1), so the
-    // output order is fully deterministic: (chunk, rank) == input order —
-    // stable z-order across frames, no atomics, no scheduling dependence.
+    // Phase 2: thread 0 writes this chunk's two draw args lists (A = unselected
+    // at relative index `wg`, B = selected at `wg + chunk_total`). chunk_total =
+    // ceil(count/256) is the per-key chunk capacity, so list B sits after list A
+    // in the same buffer. Visible threads write to fixed sparse slots: unselected
+    // at chunk*256 + rank - 1, selected at chunk*256 + n0 + rank - 1.
+    let n0 = wg_prefix[255u];
+    let n1 = wg_sel[255u];
+    let chunk_total = (dispatch_info.count + 255u) / 256u;
     if local_id.x == 0u {
-        draw_args[wg] = DrawIndexedIndirectArgs(6u, wg_prefix[255u], 0u, 0i, chunk * 256u);
+        draw_args[wg] = DrawIndexedIndirectArgs(6u, n0, 0u, 0i, chunk * 256u);
+        draw_args[wg + chunk_total] =
+            DrawIndexedIndirectArgs(6u, n1, 0u, 0i, chunk * 256u + n0);
     }
     if visible == 1u {
-        let dst = chunk * 256u + wg_prefix[local_id.x] - 1u;
+        var dst: u32;
+        if selected == 1u {
+            dst = chunk * 256u + n0 + wg_sel[local_id.x] - 1u;
+        } else {
+            dst = chunk * 256u + wg_prefix[local_id.x] - 1u;
+        }
         if dst < arrayLength(&visible_indices) {
             visible_indices[dst] = index;
         }

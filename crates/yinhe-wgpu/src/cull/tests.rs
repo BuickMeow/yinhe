@@ -291,6 +291,92 @@ fn cull_output_order_is_deterministic() {
     assert_eq!(a, expected, "culled output must follow input (tick) order");
 }
 
+/// 选中轨道置顶：cull 把每个 chunk 的可见实例二分为「未选中组 / 选中组」。
+/// 未选中写 chunk 前段（args A，first_instance = chunk*256），选中写后段
+/// （args B，first_instance = chunk*256 + n0）。宿主先画 A 再画 B → 全局置顶。
+#[test]
+fn cull_selected_tracks_partition_and_draw_order() {
+    let Some((device, queue)) = headless_device() else {
+        return;
+    };
+    let mut cull = CullState::new(&device);
+    let uniform_buffer = device.create_buffer(&BufferDescriptor {
+        label: Some("test_uniform"),
+        size: 256,
+        usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    // 20 notes（1 chunk）：idx 0..10 = track 0，idx 10..20 = track 1，同 tick。
+    let notes: Vec<NoteInstance> = (0..20)
+        .map(|i| NoteInstance {
+            start_tick: 0,
+            end_tick: 100,
+            packed: NoteInstance::pack(60, (i / 10) as u16, 100),
+        })
+        .collect();
+    cull.upload_one_key(&device, &queue, &uniform_buffer, 0, &notes)
+        .unwrap();
+    let sel: std::collections::HashSet<u16> = [1u16].into_iter().collect();
+    cull.upload_track_selected(&queue, &sel);
+
+    let mut encoder = device.create_command_encoder(&Default::default());
+    cull.dispatch_cull(&mut encoder, &queue, 0, 0, &visible_uniforms());
+    queue.submit([encoder.finish()]);
+
+    let read = |src: &Buffer, size: u64| -> Vec<u8> {
+        let rb = device.create_buffer(&BufferDescriptor {
+            label: Some("rb"),
+            size,
+            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut enc = device.create_command_encoder(&Default::default());
+        enc.copy_buffer_to_buffer(src, 0, &rb, 0, size);
+        queue.submit([enc.finish()]);
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let done2 = done.clone();
+        rb.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+            done2.store(true, Ordering::SeqCst);
+        });
+        device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("poll failed");
+        assert!(done.load(Ordering::SeqCst));
+        let view = rb.slice(..).get_mapped_range().expect("map");
+        let out = view.to_vec();
+        drop(view);
+        rb.unmap();
+        out
+    };
+
+    let vis_buf = cull.per_key_visible_buffers[0].as_ref().expect("uploaded");
+    let args_buf = cull.per_key_draw_args_buffers[0]
+        .as_ref()
+        .expect("uploaded");
+    // chunk_total = 1 → args A 在 [0,20)，B 在 [20,40)。
+    let vis: Vec<u32> = bytemuck::cast_slice(&read(vis_buf, 20 * 4)).to_vec();
+    let args: Vec<u32> = bytemuck::cast_slice(&read(args_buf, 40)).to_vec();
+
+    assert_eq!(
+        &vis[..10],
+        &(0..10).collect::<Vec<u32>>()[..],
+        "未选中(track 0)在前段，保持输入序"
+    );
+    assert_eq!(
+        &vis[10..20],
+        &(10..20).collect::<Vec<u32>>()[..],
+        "选中(track 1)在后段"
+    );
+    // args A（未选中）：instance_count=10, first_instance=0。
+    assert_eq!((args[1], args[4]), (10, 0), "未选中组 args");
+    // args B（选中）：instance_count=10, first_instance=n0=10。
+    assert_eq!(
+        (args[6], args[9]),
+        (10, 10),
+        "选中组 args 的 first_instance = n0"
+    );
+}
+
 fn build_index(start_ends: &[(u32, u32)]) -> KeyBucketIndex {
     let notes: Vec<NoteInstance> = start_ends
         .iter()

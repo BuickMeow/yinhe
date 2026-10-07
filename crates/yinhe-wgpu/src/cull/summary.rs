@@ -21,6 +21,7 @@ pub(crate) struct CullShared<'a> {
     pub cull_layout: &'a BindGroupLayout,
     pub all_layout: &'a BindGroupLayout,
     pub track_mask: &'a TrackedBuffer,
+    pub track_selected: &'a TrackedBuffer,
     pub dispatch_args: &'a TrackedBuffer,
 }
 
@@ -112,7 +113,8 @@ impl SummaryLevel {
         let needed = notes.len() as u64 * std::mem::size_of::<NoteInstance>() as u64;
         let chunk_total = (notes.len() as u64).div_ceil(SUMMARY_CHUNK).max(1);
         let vis_size = chunk_total * SUMMARY_CHUNK * std::mem::size_of::<u32>() as u64;
-        let args_size = chunk_total * 20;
+        // 两段 args（未选中 + 选中），每 chunk 40B。
+        let args_size = chunk_total * 40;
 
         let need_recreate = match &self.per_key_buffers[key as usize] {
             None => true,
@@ -225,6 +227,10 @@ impl SummaryLevel {
                     BindGroupEntry {
                         binding: 5,
                         resource: shared.track_mask.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 6,
+                        resource: shared.track_selected.as_entire_binding(),
                     },
                 ],
             }));
