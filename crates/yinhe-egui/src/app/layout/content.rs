@@ -362,6 +362,8 @@ impl App {
 
         // ── 左侧工具栏（仅 PR 带内，Photoshop 风格）──
         // 从 PR 内容左缘扣出竖条，走带视图不受影响；工具只对 PR/AM 生效。
+        // 绘制本身放到钢琴内容之后（见本函数末尾），保证左下角与底部横条
+        // 交叉时由工具栏压住横条。
         let tool_strip = egui::Rect::from_min_max(
             egui::pos2(layout.remaining.min.x, layout.bottom_y),
             egui::pos2(
@@ -369,22 +371,6 @@ impl App {
                 layout.remaining.max.y,
             ),
         );
-        // 纵向瀑布流不提供 AM 视图，隐藏自动化按钮（auto_ctx 也会被忽略）。
-        let show_auto_buttons = {
-            let view = &self.workspace.documents[idx].edit.pianoroll_view;
-            !view.is_vertical()
-        };
-        {
-            let doc = &mut self.workspace.documents[idx];
-            crate::chrome::tool_bar::show(
-                ui,
-                tool_strip,
-                &mut self.active_tool,
-                &mut doc.edit.show_controller_panels,
-                &mut doc.edit.controller_panels,
-                show_auto_buttons,
-            );
-        }
         let piano_left = tool_strip.max.x;
 
         // Pianoroll GPU view
@@ -680,6 +666,24 @@ impl App {
         if !velocity_edits.is_empty() {
             self.handle_velocity_edits(&velocity_edits);
         }
+
+        // ── 左侧工具栏：最后绘制（最高优先级）──
+        // 与钢琴/底部横条在左下角交叉时由工具栏压住横条；开关/新增按钮
+        // 在此生效（下一帧反映到面板）。
+        // 纵向瀑布流不提供 AM 视图，隐藏自动化按钮（auto_ctx 也会被忽略）。
+        let show_auto_buttons = !self.workspace.documents[idx]
+            .edit
+            .pianoroll_view
+            .is_vertical();
+        let doc = &mut self.workspace.documents[idx];
+        crate::chrome::tool_bar::show(
+            ui,
+            tool_strip,
+            &mut self.active_tool,
+            &mut doc.edit.show_controller_panels,
+            &mut doc.edit.controller_panels,
+            show_auto_buttons,
+        );
     }
 
     /// 把 automation 面板 velocity 笔划产生的编辑应用到 Document（一笔 = 一个 undo entry）。
