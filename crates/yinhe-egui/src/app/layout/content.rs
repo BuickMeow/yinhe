@@ -369,7 +369,22 @@ impl App {
                 layout.remaining.max.y,
             ),
         );
-        crate::chrome::tool_bar::show(ui, tool_strip, &mut self.active_tool);
+        // 纵向瀑布流不提供 AM 视图，隐藏自动化按钮（auto_ctx 也会被忽略）。
+        let show_auto_buttons = {
+            let view = &self.workspace.documents[idx].edit.pianoroll_view;
+            !view.is_vertical()
+        };
+        {
+            let doc = &mut self.workspace.documents[idx];
+            crate::chrome::tool_bar::show(
+                ui,
+                tool_strip,
+                &mut self.active_tool,
+                &mut doc.edit.show_controller_panels,
+                &mut doc.edit.controller_panels,
+                show_auto_buttons,
+            );
+        }
         let piano_left = tool_strip.max.x;
 
         // Pianoroll GPU view

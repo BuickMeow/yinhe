@@ -187,49 +187,31 @@ pub(crate) fn apply_right_click_anchor(
     }
 }
 
-/// Show the toggle / add / remove buttons horizontally.
-pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_count: &mut usize) {
-    ui.spacing_mut().item_spacing.x = 4.0;
-    ui.add_space(6.0);
-    let toggle_resp = crate::widgets::hover::hover_button(
-        ui,
-        ICON_SIGNAL_CELLULAR_ALT.codepoint,
-        egui::FontId::new(
-            crate::theme::PANEL_TOGGLE_FONT,
-            ICON_SIGNAL_CELLULAR_ALT.font_family(),
-        ),
-        crate::theme::text_label(),
-        *show_panels,
+/// 面板底部中央的关闭按钮：点谁删谁。
+///
+/// 返回是否被点击（调用方在遍历结束后从面板列表移除该索引）。
+pub(crate) fn show_panel_close(
+    ui: &mut egui::Ui,
+    panel_rect: egui::Rect,
+    grid_area: egui::Rect,
+    index: usize,
+) -> bool {
+    const BTN: f32 = 20.0;
+    let center = egui::pos2(grid_area.center().x, panel_rect.max.y - BTN * 0.5 - 2.0);
+    let btn_rect = egui::Rect::from_center_size(center, egui::vec2(BTN, BTN));
+    let resp = ui.interact(
+        btn_rect,
+        ui.id().with(("auto_panel_close", index)),
+        egui::Sense::click(),
     );
-    crate::widgets::hint::hover(ui.ctx(), &toggle_resp, t!("hint.pr.auto_toggle"));
-    if toggle_resp.clicked() {
-        *show_panels = !*show_panels;
-        if *show_panels && *panel_count == 0 {
-            *panel_count = 1;
-        }
-    }
-    if *show_panels {
-        let plus_resp = crate::widgets::hover::hover_button(
-            ui,
-            ICON_ADD.codepoint,
-            egui::FontId::new(crate::theme::PANEL_TOGGLE_FONT, ICON_ADD.font_family()),
-            crate::theme::text_label(),
-            false,
-        );
-        crate::widgets::hint::hover(ui.ctx(), &plus_resp, t!("hint.pr.auto_add"));
-        if plus_resp.clicked() {
-            *panel_count += 1;
-        }
-        let minus_resp = crate::widgets::hover::hover_button(
-            ui,
-            ICON_REMOVE.codepoint,
-            egui::FontId::new(crate::theme::PANEL_TOGGLE_FONT, ICON_REMOVE.font_family()),
-            crate::theme::text_label(),
-            false,
-        );
-        crate::widgets::hint::hover(ui.ctx(), &minus_resp, t!("hint.pr.auto_remove"));
-        if minus_resp.clicked() && *panel_count > 0 {
-            *panel_count -= 1;
-        }
-    }
+    let color = crate::widgets::hover::hover_button_color(&resp, theme::text_label(), false);
+    ui.painter().text(
+        btn_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        ICON_CLOSE.codepoint,
+        egui::FontId::new(crate::theme::ICON_FONT, ICON_CLOSE.font_family()),
+        color,
+    );
+    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.pr.auto_remove"));
+    resp.clicked()
 }

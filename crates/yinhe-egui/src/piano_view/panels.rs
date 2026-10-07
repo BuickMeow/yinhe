@@ -154,6 +154,8 @@ pub(crate) fn show_panels(
         }
         *feedback.automation_drag_ghost = auto_drag_info;
         if midi.is_some() {
+            // 水平滚动条左侧空白带（键盘宽度）：铺底色。
+            // 自动化显示/隐藏/新增按钮已移到左侧工具栏底部；删除按钮在各面板内部。
             let sb_y = rect.min.y + rect.height() - crate::widgets::scrollbar::SCROLLBAR_H;
             let sb_left_blank = egui::Rect::from_min_max(
                 egui::pos2(rect.min.x, sb_y),
@@ -164,18 +166,6 @@ pub(crate) fn show_panels(
             );
             ui.painter()
                 .rect_filled(sb_left_blank, 0.0, crate::theme::track_bg());
-            ui.scope_builder(egui::UiBuilder::new().max_rect(sb_left_blank), |ui| {
-                ui.horizontal_centered(|ui| {
-                    let mut count = ctx.panels.len();
-                    automation_panel::show_toggle_buttons(ui, ctx.show, &mut count);
-                    while ctx.panels.len() < count {
-                        ctx.panels.push(yinhe_types::AutomationPanelView::default());
-                    }
-                    while ctx.panels.len() > count {
-                        ctx.panels.pop();
-                    }
-                });
-            });
         }
     }
     panels_status_hint

@@ -31,8 +31,6 @@ pub use types::*;
 pub(crate) use value::{display_max_or_bound, format_display_value};
 use value::{min_value_zoom, panel_max_val, value_upper_bound};
 
-pub use widgets::show_toggle_buttons;
-
 /// Render all automation panels between the pianoroll content and the scrollbar.
 ///
 /// The first panel sits flush against the content above. Each subsequent panel
@@ -69,6 +67,9 @@ pub fn show_panels(
     for panel in state.panels.iter_mut() {
         panel.sync_from_pianoroll(cfg.pianoroll_scroll_x, cfg.pianoroll_ppt, lay.combo_width);
     }
+
+    // 底部中央的关闭按钮命中的面板索引（遍历结束后移除，避免边遍历边改）。
+    let mut remove_panel: Option<usize> = None;
 
     layout::sync_renderer_count(state.renderers, state.panels, state.wgpu_state, 640, 200);
 
@@ -302,7 +303,15 @@ pub fn show_panels(
 
         render::draw_value_labels(ui, panel, panel_rect, lay.combo_width, max_val_f);
 
+        if widgets::show_panel_close(ui, panel_rect, grid_area, i) {
+            remove_panel = Some(i);
+        }
+
         y_offset += panel_h;
+    }
+
+    if let Some(remove_i) = remove_panel {
+        state.panels.remove(remove_i);
     }
 
     ui.set_clip_rect(old_clip);

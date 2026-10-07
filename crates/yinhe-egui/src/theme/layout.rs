@@ -23,7 +23,6 @@ pub const ICON_FONT: f32 = 14.0; // 常规图标
 pub const ICON_FONT_LG: f32 = 16.0; // 大图标（密码可见性等）
 pub const ICON_BTN_FONT: f32 = 18.0; // 图标按钮（transport/轨道 + 等）
 pub const ICON_FONT_XL: f32 = 24.0; // 超大图标（空状态装饰）
-pub const PANEL_TOGGLE_FONT: f32 = MODE_LABEL_FONT + 2.0; // 自动化面板 toggle/+/- 图标
 pub const TRANSPORT_BTN_SIZE: f32 = 32.0;
 pub const TRANSPORT_BTN_FONT: f32 = ICON_BTN_FONT;
 /// 左侧工具栏宽度（单列竖排图标，Photoshop 风格）。
