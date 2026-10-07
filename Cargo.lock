@@ -7930,6 +7930,7 @@ dependencies = [
  "bytemuck",
  "half",
  "log",
+ "naga",
  "pollster 1.0.1",
  "rayon",
  "stacker",

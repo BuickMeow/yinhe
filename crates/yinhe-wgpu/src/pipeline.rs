@@ -386,7 +386,7 @@ impl RenderPipelineState {
         });
 
         // Velocity bar pipeline: 16-byte VelocityBarInstance vertex layout.
-        // Unified border-based mode (fill + border), reuses `fs_main` 硬边不透明.
+        // 仅描边、不填充、不加深（`fs_main_velocity`），与音符的填充+描边区分。
         let velocity_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
             label: Some("velocity_pipeline"),
             layout: Some(&pipeline_layout),
@@ -404,7 +404,7 @@ impl RenderPipelineState {
             },
             fragment: Some(FragmentState {
                 module: render_shader,
-                entry_point: Some("fs_main"),
+                entry_point: Some("fs_main_velocity"),
                 targets: &[Some(ColorTargetState {
                     format,
                     blend: None,

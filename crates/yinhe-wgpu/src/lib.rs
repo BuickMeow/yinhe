@@ -11,6 +11,9 @@ pub mod resource;
 mod util;
 pub mod vertex;
 
+#[cfg(test)]
+mod shader_tests;
+
 pub use layer::{LayerSlot, layer_cache_key};
 pub use note_buffer_key::{NoteBufferKey, hash_hidden};
 pub use render_thread::{NoteLayerData, RenderJob, RenderThreadHandle};

@@ -617,6 +617,32 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     return composite_border_fill(fill_a, border_a, base_color, in.fill_color);
 }
 
+// Velocity bars: 仅描边、不填充、不加深（描边 = 轨道色本身）。
+// 与音符共用 `VertexOutput`，但力度条刻意去掉内部填充与边框加深，
+// 让重叠的力度条更轻、更易区分。
+@fragment
+fn fs_main_velocity(in: VertexOutput) -> @location(0) vec4<f32> {
+    let base_color = in.color;
+    let p = (in.uv - 0.5) * in.half_size * 2.0;
+
+    let d_outer = max(abs(p.x) - in.half_size.x, abs(p.y) - in.half_size.y);
+    let outer_a = select(0.0, 1.0, d_outer <= 0.5);
+
+    // 内部挖空：只保留 `border_width` 宽的描边；过细的条自然退化为实线。
+    let inner_half = max(in.half_size - vec2(in.border_width), vec2(0.0));
+    var border_a = outer_a;
+    if inner_half.x > 0.0 && inner_half.y > 0.0 {
+        let d_inner = max(abs(p.x) - inner_half.x, abs(p.y) - inner_half.y);
+        let inner_a = 1.0 - smoothstep(-0.5, 0.5, d_inner);
+        border_a = outer_a - inner_a;
+    }
+
+    if border_a <= 0.0 {
+        discard;
+    }
+    return vec4(base_color.rgb, base_color.a * border_a);
+}
+
 // ── Curve / line pipeline ─────────────────────────────────────────────────
 // Renders automation segments as per-pixel SDF lines / anchors.
 // CPU pushes one CurveInstance per segment; the fragment shader computes
