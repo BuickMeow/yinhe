@@ -288,6 +288,7 @@ pub fn show(
         midi_arc,
         &*selected,
         track_visible,
+        track_selected,
         &hidden_notes,
         track_colors,
         revision,

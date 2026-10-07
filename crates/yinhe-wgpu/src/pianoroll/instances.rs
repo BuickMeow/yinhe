@@ -61,6 +61,7 @@ fn instance_visible(
         && !hidden_notes.contains(&(note.track, note.start_tick, key))
 }
 
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 fn build_key_instances(
     out: &mut Vec<NoteInstance>,
     midi: &dyn NoteSource,
@@ -69,6 +70,7 @@ fn build_key_instances(
     hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
     range: Option<(f64, f64)>,
     selected: Option<&Selection>,
+    track_selected: Option<&std::collections::HashSet<u16>>,
 ) {
     let start = out.len();
     for_each_key_note(midi, key, range, |note| {
@@ -87,7 +89,44 @@ fn build_key_instances(
         }
         out.push(inst);
     });
-    sort_key_z_order(&mut out[start..]);
+    match track_selected {
+        Some(ts) => sort_key_z_order_selected(&mut out[start..], ts),
+        None => sort_key_z_order(&mut out[start..]),
+    }
+}
+
+/// `NoteInstance` 的轨道号。
+#[inline]
+fn track_of(n: &NoteInstance) -> u16 {
+    ((n.packed >> 8) & 0xFFFF) as u16
+}
+
+/// 选中轨道优先的绘制顺序（CPU 可见层用）：
+/// 1. 未选中的在前、选中的在后（选中轨道置顶）；
+/// 2. 选中组内 `track` 降序（轨道号小的在上）；
+/// 3. 其余同 [`sort_key_z_order`]（起点升、长度降、力度升、轨道升）。
+///
+/// 不用于 GPU cull 上传缓冲（那里必须严格按 `start_tick` 有序）。
+fn sort_key_z_order_selected(
+    insts: &mut [NoteInstance],
+    track_selected: &std::collections::HashSet<u16>,
+) {
+    insts.sort_unstable_by(|a, b| {
+        let sa = track_selected.contains(&track_of(a));
+        let sb = track_selected.contains(&track_of(b));
+        sa.cmp(&sb)
+            .then_with(|| {
+                if sa {
+                    track_of(b).cmp(&track_of(a))
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            })
+            .then(a.start_tick.cmp(&b.start_tick))
+            .then(b.end_tick.cmp(&a.end_tick))
+            .then(a.velocity().cmp(&b.velocity()))
+            .then(track_of(a).cmp(&track_of(b)))
+    });
 }
 
 /// 同一 key 内的绘制顺序（z-order），完整全序（逐字段定优先级）：
@@ -174,6 +213,7 @@ pub fn build_notes(
     view: &PianoRollView,
     hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
+    track_selected: &std::collections::HashSet<u16>,
     selected: Option<&Selection>,
 ) {
     let (tick_start, tick_end) = view.visible_main_range(view.main_axis_len(w, h));
@@ -197,6 +237,7 @@ pub fn build_notes(
                     hidden_notes,
                     range,
                     selected,
+                    Some(track_selected),
                 );
                 if local.is_empty() { None } else { Some(local) }
             })
@@ -248,6 +289,7 @@ pub fn build_summary_notes(
                     track_visible,
                     hidden_notes,
                     scan,
+                    None,
                     None,
                 );
                 let mut segs = super::build_key_summary(key, &local, block);
@@ -332,6 +374,7 @@ pub fn build_key_notes(
         key,
         track_visible,
         hidden_notes,
+        None,
         None,
         None,
     );
@@ -438,6 +481,7 @@ mod tests {
             &view,
             &hidden,
             &track_visible,
+            &std::collections::HashSet::new(),
             None,
         );
         assert!(!out.is_empty(), "should produce note instances");
@@ -497,6 +541,7 @@ mod tests {
             &view,
             &hidden,
             &track_visible,
+            &std::collections::HashSet::new(),
             None,
         );
         assert!(out.is_empty(), "notes on hidden track should be skipped");
@@ -519,6 +564,7 @@ mod tests {
             &view,
             &hidden,
             &track_visible,
+            &std::collections::HashSet::new(),
             None,
         );
         assert_eq!((out[0].packed >> 8) & 0xFFFF, 2, "track should be 2");
@@ -541,6 +587,7 @@ mod tests {
             &view,
             &hidden,
             &track_visible,
+            &std::collections::HashSet::new(),
             None,
         );
         assert_eq!((out[0].packed >> 8) & 0xFFFF, 0, "track should be 0");
@@ -566,6 +613,7 @@ mod tests {
             &view,
             &hidden,
             &track_visible,
+            &std::collections::HashSet::new(),
             None,
         );
         assert_eq!(out.len(), 3, "should produce 3 note instances");
@@ -593,6 +641,7 @@ mod tests {
             &view,
             &hidden,
             &track_visible,
+            &std::collections::HashSet::new(),
             None,
         );
         assert!(
@@ -619,6 +668,7 @@ mod tests {
             &view,
             &hidden,
             &track_visible,
+            &std::collections::HashSet::new(),
             None,
         );
         assert!(out.is_empty(), "note fully off-screen-left must be culled");
@@ -658,6 +708,7 @@ mod tests {
             &view,
             &hidden,
             &track_visible,
+            &std::collections::HashSet::new(),
             Some(&sel),
         );
         assert_eq!(out.len(), 2);
@@ -710,5 +761,24 @@ mod tests {
             .map(|n| ((n.packed >> 8) & 0xFFFF) as u16)
             .collect();
         assert_eq!(tracks, vec![0, 1, 2], "track 升序，确定不闪烁");
+    }
+
+    /// 选中轨道置顶；选中组内轨道号小的在上。
+    #[test]
+    fn test_key_z_order_selected_tracks_on_top() {
+        let inst = |track: u16| NoteInstance {
+            start_tick: 0,
+            end_tick: 10,
+            packed: NoteInstance::pack(60, track, 100),
+        };
+        let mut v = vec![inst(0), inst(1), inst(2)];
+        let sel: std::collections::HashSet<u16> = [0u16, 2].into_iter().collect();
+        sort_key_z_order_selected(&mut v, &sel);
+        let tracks: Vec<u16> = v.iter().map(track_of).collect();
+        assert_eq!(
+            tracks,
+            vec![1, 2, 0],
+            "未选中(1)在下；选中组轨道号大的先画，0 最后(最上)"
+        );
     }
 }

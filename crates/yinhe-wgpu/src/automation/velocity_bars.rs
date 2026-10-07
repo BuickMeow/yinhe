@@ -27,6 +27,7 @@ pub fn build_velocity_bars(
     midi: &dyn NoteSource,
     view: &AutomationPanelView,
     track_visible: &[bool],
+    track_selected: &std::collections::HashSet<u16>,
     summary: Option<&super::velocity_summary::VelocitySummary>,
 ) {
     let (tick_start, tick_end) = view.base.visible_tick_range(w);
@@ -50,6 +51,7 @@ pub fn build_velocity_bars(
                 reserved: 0,
             });
         }
+        sort_velocity_bars(out, track_selected);
         return;
     }
 
@@ -93,14 +95,26 @@ pub fn build_velocity_bars(
     // 最普通排列：按 (tick ASC, velocity DESC, track ASC) 排序后直接绘制。
     // rayon 并行收集顺序不确定，此排序保证逐帧确定性；同 tick 响音先画
     // （被覆盖），弱音后画（顶层可见）。
-    bars.sort_unstable_by(|a, b| {
-        a.tick
-            .cmp(&b.tick)
-            .then(b.velocity().cmp(&a.velocity()))
-            .then(a.track().cmp(&b.track()))
-    });
+    sort_velocity_bars(&mut bars, track_selected);
 
     out.extend(bars);
+}
+
+/// 力度条绘制顺序（从下到上）：
+/// 1. 选中轨道在后（置顶）；2. 同组 `tick` 升序；
+/// 3. `velocity` 降序（响音先画/在下）；4. `track` 降序（轨道号小的在上）。
+fn sort_velocity_bars(
+    bars: &mut [VelocityBarInstance],
+    track_selected: &std::collections::HashSet<u16>,
+) {
+    bars.sort_unstable_by(|a, b| {
+        let sa = track_selected.contains(&a.track());
+        let sb = track_selected.contains(&b.track());
+        sa.cmp(&sb)
+            .then(a.tick.cmp(&b.tick))
+            .then(b.velocity().cmp(&a.velocity()))
+            .then(b.track().cmp(&a.track()))
+    });
 }
 
 #[cfg(test)]
@@ -148,7 +162,15 @@ mod tests {
         let view = AutomationPanelView::default();
         let tv = vec![true; 4];
         let mut out = Vec::new();
-        build_velocity_bars(&mut out, 800.0, &src, &view, &tv, None);
+        build_velocity_bars(
+            &mut out,
+            800.0,
+            &src,
+            &view,
+            &tv,
+            &std::collections::HashSet::new(),
+            None,
+        );
         out.into_iter()
             .map(|b| (b.tick, b.length, b.velocity(), b.track()))
             .collect()
@@ -235,7 +257,15 @@ mod tests {
             .sum();
         let t0 = std::time::Instant::now();
         let mut out = Vec::new();
-        build_velocity_bars(&mut out, w, &model, &view, &tv, None);
+        build_velocity_bars(
+            &mut out,
+            w,
+            &model,
+            &view,
+            &tv,
+            &std::collections::HashSet::new(),
+            None,
+        );
         let ms = t0.elapsed().as_secs_f64() * 1e3;
         println!(
             "{}: 可见 bar={before} 输出={} 保留率={:.1}% 构建+排序耗时={ms:.0}ms",
@@ -267,12 +297,28 @@ mod tests {
         };
         let mut out2 = Vec::new();
         // 暖机 1 次后取最优（3 次）。
-        build_velocity_bars(&mut out2, w2, &model, &view2, &tv, None);
+        build_velocity_bars(
+            &mut out2,
+            w2,
+            &model,
+            &view2,
+            &tv,
+            &std::collections::HashSet::new(),
+            None,
+        );
         let mut frame_ms = f64::MAX;
         for _ in 0..3 {
             out2.clear();
             let t = std::time::Instant::now();
-            build_velocity_bars(&mut out2, w2, &model, &view2, &tv, None);
+            build_velocity_bars(
+                &mut out2,
+                w2,
+                &model,
+                &view2,
+                &tv,
+                &std::collections::HashSet::new(),
+                None,
+            );
             frame_ms = frame_ms.min(t.elapsed().as_secs_f64() * 1e3);
         }
         println!(
@@ -281,5 +327,21 @@ mod tests {
             out2.len(),
             1000.0 / frame_ms,
         );
+    }
+
+    /// 选中轨道置顶；选中组内轨道号小的在上。
+    #[test]
+    fn velocity_selected_tracks_on_top() {
+        let bar = |track: u16| VelocityBarInstance {
+            tick: 0,
+            length: 10,
+            packed: VelocityBarInstance::pack(track, 100),
+            reserved: 0,
+        };
+        let mut v = vec![bar(0), bar(1), bar(2)];
+        let sel: std::collections::HashSet<u16> = [0u16, 2].into_iter().collect();
+        sort_velocity_bars(&mut v, &sel);
+        let tracks: Vec<u16> = v.iter().map(|b| b.track()).collect();
+        assert_eq!(tracks, vec![1, 2, 0], "未选中在下；选中组轨道号小的在最上");
     }
 }

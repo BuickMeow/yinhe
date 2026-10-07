@@ -241,6 +241,7 @@ pub fn show_panels(
                 data.tempo_lane,
                 data.midi,
                 data.track_visible,
+                pr_track_selected,
                 data.track_colors,
                 cfg.min_border_width,
                 show_anchors,

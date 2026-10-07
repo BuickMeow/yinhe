@@ -122,6 +122,7 @@ pub fn prepare(
     lanes: &[&AutomationLane],
     midi: Option<&dyn NoteSource>,
     track_visible: &[bool],
+    track_selected: &std::collections::HashSet<u16>,
     track_colors: &[[f32; 4]],
     min_border_width: f32,
     show_anchors: bool,
@@ -197,11 +198,17 @@ pub fn prepare(
     // (add/move/delete/set_shape/arrange_move/apply_automation_delta) 都 bump revision。
     // 拖拽 ghost 时 revision 不变，固定层 cache 复用——正是想要的行为。
     // 之前这里有 O(全事件数) 的 fixed_lanes_hash，与 revision 双重检测，纯冗余，已删除。
+    // 选中轨道集合的序无关 hash：影响力度条/曲线的绘制顺序（选中置顶），
+    // 选区变化时必须使该层缓存失效。
+    let sel_hash = track_selected.iter().fold(0u64, |acc, &t| {
+        acc ^ (t as u64).wrapping_mul(0x9e3779b97f4a7c15)
+    });
     let bars_key = layer_cache_key(&[
         vh,
         wh,
         tv_hash,
         tc_hash,
+        sel_hash,
         target_hash(&view.selected_target),
         show_anchors as u64,
         view.show_velocity as u64,
@@ -231,6 +238,7 @@ pub fn prepare(
                     midi,
                     view,
                     track_visible,
+                    track_selected,
                     summary.as_deref(),
                 );
             })
@@ -245,12 +253,19 @@ pub fn prepare(
                 Some(AutomationGhost::Move { ref lane, .. }) => Some(lane),
                 _ => None,
             };
+            // 选中轨道置顶：lane 绘制顺序 = (未选中在前, 选中在后, 组内轨道号大的在前)。
+            let mut ordered: Vec<&AutomationLane> = lanes.to_vec();
+            ordered.sort_unstable_by(|a, b| {
+                let sa = track_selected.contains(&a.track);
+                let sb = track_selected.contains(&b.track);
+                sa.cmp(&sb).then(b.track.cmp(&a.track))
+            });
             data_lines::build_data_lines(
                 out,
                 w,
                 h,
                 view,
-                lanes,
+                &ordered,
                 max_val,
                 track_visible,
                 track_colors,

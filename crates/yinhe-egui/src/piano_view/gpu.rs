@@ -37,6 +37,7 @@ pub(crate) fn upload_and_prepare(
     midi_arc: Option<&Arc<YinModel>>,
     selected: &yinhe_core::Selection,
     track_visible: &[bool],
+    track_selected: &HashSet<u16>,
     hidden_notes: &HashSet<(u16, u32, u8)>,
     track_colors: &[[f32; 4]],
     revision: u64,
@@ -177,6 +178,7 @@ pub(crate) fn upload_and_prepare(
                     view,
                     hidden_notes,
                     track_visible,
+                    track_selected,
                     Some(selected),
                 ),
             }

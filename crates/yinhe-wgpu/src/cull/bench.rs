@@ -701,6 +701,7 @@ fn bench_real_midi() {
                 &model,
                 &view,
                 &track_visible_all,
+                &std::collections::HashSet::new(),
                 Some(&vsum),
             );
             min_ms = min_ms.min(t.elapsed().as_secs_f64() * 1e3);
