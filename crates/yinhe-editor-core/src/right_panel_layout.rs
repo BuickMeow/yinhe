@@ -264,10 +264,7 @@ mod tests {
     fn default_has_three_columns_with_expected_tabs() {
         let l = RightPanelLayout::default();
         assert_eq!(l.columns.len(), 3);
-        assert_eq!(
-            l.columns[0].tabs,
-            vec![PanelKind::Track, PanelKind::Batch]
-        );
+        assert_eq!(l.columns[0].tabs, vec![PanelKind::Track, PanelKind::Batch]);
         assert_eq!(
             l.columns[1].tabs,
             vec![
@@ -278,11 +275,7 @@ mod tests {
         );
         assert_eq!(
             l.columns[2].tabs,
-            vec![
-                PanelKind::History,
-                PanelKind::Summary,
-                PanelKind::Selection
-            ]
+            vec![PanelKind::History, PanelKind::Summary, PanelKind::Selection]
         );
     }
 
