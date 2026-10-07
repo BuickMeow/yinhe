@@ -378,7 +378,6 @@ pub struct TransportContext<'a> {
     pub file_loader: &'a mut crate::file_loader::FileLoader,
     pub doc: Option<&'a yinhe_editor_core::document::Document>,
     pub follow_mode: &'a mut crate::view_interaction::FollowMode,
-    pub active_tool: &'a mut crate::widgets::tools_panel::Tool,
     pub is_recording: bool,
     pub step_input: bool,
     pub status_hint: &'a mut Option<String>,

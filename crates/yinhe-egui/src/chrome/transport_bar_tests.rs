@@ -3,7 +3,6 @@ use crate::audio_settings::AudioSettings;
 use crate::file_loader::FileLoader;
 use crate::view_interaction::FollowMode;
 use crate::widgets::action_menu::{PopupRowSpec, measure_menu_width, popup_menu_row};
-use crate::widgets::tools_panel::Tool;
 use yinhe_editor_core::document::Document;
 
 /// 为测试文档构造 PR 控制组数据（与 main_loop 组装一致）。
@@ -123,7 +122,6 @@ struct TbTestState {
 fn make_transport_harness<'a>(doc: Option<&'a Document>) -> Harness<'a, ()> {
     let mut file_loader = FileLoader::new(yinhe_editor_core::progress::new_shared());
     let mut follow_mode = FollowMode::None;
-    let mut active_tool = Tool::Select;
     let mut status_hint: Option<String> = None;
     let mut settings = AudioSettings::default();
 
@@ -143,7 +141,6 @@ fn make_transport_harness<'a>(doc: Option<&'a Document>) -> Harness<'a, ()> {
                     file_loader: &mut file_loader,
                     doc,
                     follow_mode: &mut follow_mode,
-                    active_tool: &mut active_tool,
                     status_hint: &mut status_hint,
                     settings: &mut settings,
                     is_recording: false,
@@ -165,7 +162,6 @@ fn make_transport_harness<'a>(doc: Option<&'a Document>) -> Harness<'a, ()> {
 fn make_harness_with_hidden_button<'a>(doc: Option<&'a Document>) -> Harness<'a, TbTestState> {
     let mut file_loader = FileLoader::new(yinhe_editor_core::progress::new_shared());
     let mut follow_mode = FollowMode::None;
-    let mut active_tool = Tool::Select;
     let mut status_hint: Option<String> = None;
     let mut settings = AudioSettings::default();
 
@@ -183,7 +179,6 @@ fn make_harness_with_hidden_button<'a>(doc: Option<&'a Document>) -> Harness<'a,
                     file_loader: &mut file_loader,
                     doc,
                     follow_mode: &mut follow_mode,
-                    active_tool: &mut active_tool,
                     status_hint: &mut status_hint,
                     settings: &mut settings,
                     is_recording: false,

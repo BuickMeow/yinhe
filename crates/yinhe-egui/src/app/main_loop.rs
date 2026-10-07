@@ -595,7 +595,6 @@ impl eframe::App for App {
                 file_loader: &mut self.file_loader,
                 doc: active_doc,
                 follow_mode: &mut self.follow_mode,
-                active_tool: &mut self.active_tool,
                 status_hint: &mut self.status_hint,
                 settings: &mut self.audio_settings,
                 is_recording: self.recording.is_some() || self.audio_recording.is_some(),
@@ -758,6 +757,15 @@ impl eframe::App for App {
 
         // ── Bottom device dock（三视图通用；Panel::bottom 自动扣减可用区）──
         crate::chrome::dock_bar::show(self, ui);
+
+        // ── 左侧工具栏（Photoshop 风格；仅钢琴卷帘可见时显示）──
+        if self
+            .view_mode
+            .show_pianoroll(self.show_pianoroll_in_arrange)
+            && self.workspace.active_doc.is_some()
+        {
+            crate::chrome::tool_bar::show(ui, &mut self.active_tool, &mut self.status_hint);
+        }
 
         // ── Main content area ──
         let layout = self.compute_layout(ui, right_panel_rect);

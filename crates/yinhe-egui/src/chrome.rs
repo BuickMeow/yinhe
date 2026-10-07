@@ -3,6 +3,7 @@ pub mod dialog_buttons;
 pub mod dock_bar;
 pub mod mode_bar;
 pub mod title_bar;
+pub mod tool_bar;
 pub mod transport_bar;
 pub mod transport_bar_actions;
 pub mod transport_bar_menus;

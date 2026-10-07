@@ -26,6 +26,8 @@ pub const ICON_FONT_XL: f32 = 24.0; // 超大图标（空状态装饰）
 pub const PANEL_TOGGLE_FONT: f32 = MODE_LABEL_FONT + 2.0; // 自动化面板 toggle/+/- 图标
 pub const TRANSPORT_BTN_SIZE: f32 = 32.0;
 pub const TRANSPORT_BTN_FONT: f32 = ICON_BTN_FONT;
+/// 左侧工具栏宽度（单列竖排图标，Photoshop 风格）。
+pub const TOOL_BAR_W: f32 = 40.0;
 pub const TIMECODE_FONT: f32 = 12.0;
 pub const FILE_MENU_FONT: f32 = 14.0;
 
