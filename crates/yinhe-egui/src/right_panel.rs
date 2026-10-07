@@ -4,6 +4,7 @@ pub mod event_browser;
 pub mod info_panel;
 
 use eframe::egui;
+use rust_i18n::t;
 
 use yinhe_editor_core::audio_settings::LayoutSettings;
 use yinhe_editor_core::document::Document;
@@ -74,9 +75,9 @@ pub fn show(
         ui.data_mut(|d| d.insert_temp(focus_id, tab));
     }
 
-    // 状态栏讲解行：鼠标在右面板上时清空（右面板不属于可讲解区域）
+    // 状态栏讲解行：悬停右栏面板本身（控件提示由各控件以高优先级覆盖）
     if ui.input(|i| i.pointer.hover_pos().is_some_and(|p| rect.contains(p))) {
-        crate::widgets::hint::clear(ui.ctx());
+        crate::widgets::hint::set_region(ui.ctx(), t!("hint.panel.right_panel"));
     }
 
     let theme = crate::theme::RIGHT_PANEL_MIN_WIDTH;

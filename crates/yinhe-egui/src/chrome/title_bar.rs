@@ -12,6 +12,7 @@ mod buttons;
 mod paint;
 
 use eframe::egui;
+use rust_i18n::t;
 
 use paint::BarMetrics;
 use yinhe_editor_core::document::Document;
@@ -85,9 +86,9 @@ pub(crate) fn show(
                     .hover_pos()
                     .is_some_and(|p| m.bar_rect.contains(p))
             });
-            // 状态栏讲解行：鼠标在标题栏上时清空（标题栏不属于任何可讲解区域）
+            // 状态栏讲解行：悬停标题栏面板本身（控件提示由各控件以高优先级覆盖）
             if pointer_in_bar {
-                crate::widgets::hint::clear(ui.ctx());
+                crate::widgets::hint::set_region(ui.ctx(), t!("hint.panel.title_bar"));
             }
             // 拖拽中不响应滚轮（避免插入位置跳动）
             let drag_id = ui.id().with("title_bar_drag");

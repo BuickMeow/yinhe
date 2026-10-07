@@ -210,7 +210,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
             if let Some(hint) = hovered_hint {
                 crate::widgets::hint::set(ui.ctx(), hint);
             } else if pointer_pos.is_some_and(|p| bar_rect.contains(p)) {
-                crate::widgets::hint::clear(ui.ctx());
+                crate::widgets::hint::set_region(ui.ctx(), t!("hint.panel.transport_bar"));
             }
 
             const DOUBLE_CLICK_MS: f64 = 400.0;

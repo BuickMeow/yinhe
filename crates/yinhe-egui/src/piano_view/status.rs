@@ -110,8 +110,8 @@ pub(crate) fn update_status(
             }
         };
         match hint {
-            Some(h) => crate::widgets::hint::set(ui.ctx(), h),
-            None => crate::widgets::hint::clear(ui.ctx()),
+            Some(h) => crate::widgets::hint::set_region(ui.ctx(), h),
+            None => crate::widgets::hint::clear_region(ui.ctx()),
         }
     }
 }

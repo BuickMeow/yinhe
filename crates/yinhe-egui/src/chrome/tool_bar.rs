@@ -5,6 +5,7 @@
 //! 仅钢琴卷帘可见时显示——工具只对 PR/AM 生效。
 
 use eframe::egui;
+use rust_i18n::t;
 
 use crate::widgets::tools_panel::{ALL_TOOLS, Tool};
 
@@ -42,7 +43,7 @@ pub fn show(ui: &mut egui::Ui, active_tool: &mut Tool) {
     if let Some(hint) = inner.inner {
         crate::widgets::hint::set(ui.ctx(), hint);
     } else if over_bar {
-        crate::widgets::hint::clear(ui.ctx());
+        crate::widgets::hint::set_region(ui.ctx(), t!("hint.panel.tool_bar"));
     }
 }
 

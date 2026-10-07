@@ -773,17 +773,17 @@ pub fn show(
             } else {
                 format!("{} {}", pos_str, hover_desc(pos.y))
             };
-            crate::widgets::hint::set(ui.ctx(), hint);
+            crate::widgets::hint::set_region(ui.ctx(), hint);
         } else if tp_rect.contains(pos) {
             let hint = if let Some(s) = sel_text {
                 s
             } else {
                 hover_desc(pos.y)
             };
-            crate::widgets::hint::set(ui.ctx(), hint);
+            crate::widgets::hint::set_region(ui.ctx(), hint);
         } else if arr_rect.contains(pos) {
-            // 走带视图内但不在内容区（标尺/滚动条）→ 清空
-            crate::widgets::hint::clear(ui.ctx());
+            // 走带视图内但不在内容区（标尺/滚动条）→ 清空区域提示
+            crate::widgets::hint::clear_region(ui.ctx());
         }
     }
 }

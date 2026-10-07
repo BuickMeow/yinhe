@@ -374,7 +374,7 @@ pub fn show(
                 } else if hovered_hint.is_some() {
                     hovered_hint
                 } else if over_bar {
-                    None
+                    Some(t!("hint.panel.mode_bar").to_string())
                 } else {
                     crate::widgets::hint::current(ui.ctx())
                 };
