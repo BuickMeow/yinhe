@@ -93,21 +93,19 @@ fn build_key_instances(
 /// 同一 key 内的绘制顺序（z-order），完整全序（逐字段定优先级）：
 /// 1. `start_tick` 升序（必须保持，GPU cull 的 chunk/tick 分桶依赖它）；
 /// 2. `end_tick` 降序——同起点长音符先画（在下）、短音符后画（在上）；
-/// 3. `track` 升序（多轨和弦：低轨在下、高轨在上）；
-/// 4. `velocity` 升序（其余全同时的最后裁决）。
+/// 3. `velocity` 升序；
+/// 4. `track` 升序（其余全同时的最后裁决）。
 ///
 /// 逐字段覆盖全部可变字段，保证 `sort_unstable` 下也是确定顺序（否则相等键
 /// 顺序不确定会逐帧闪烁）。`key` 在单 key 桶内恒定，无需参与；选中位不参与。
 fn sort_key_z_order(insts: &mut [NoteInstance]) {
+    let track_of = |n: &NoteInstance| (n.packed >> 8) & 0xFFFF;
     insts.sort_unstable_by(|a, b| {
         a.start_tick
             .cmp(&b.start_tick)
             .then(b.end_tick.cmp(&a.end_tick))
-            // packed 去掉选中位后 = key|track|vel；桶内 key 恒定 → 等价 track 升、vel 升。
-            .then(
-                (a.packed & !NoteInstance::SELECTED_BIT)
-                    .cmp(&(b.packed & !NoteInstance::SELECTED_BIT)),
-            )
+            .then(a.velocity().cmp(&b.velocity()))
+            .then(track_of(a).cmp(&track_of(b)))
     });
 }
 
