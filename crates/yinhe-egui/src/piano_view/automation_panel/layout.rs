@@ -62,7 +62,7 @@ pub(crate) fn begin_frame(
     let mut scroll_y: f32 = ui.data_mut(|d| d.get_persisted(scroll_id)).unwrap_or(0.0);
     scroll_y = scroll_y.clamp(0.0, max_scroll);
     let panels_area_rect = egui::Rect::from_min_max(
-        egui::pos2(0.0, layout.content_top_y),
+        egui::pos2(layout.content_left, layout.content_top_y),
         egui::pos2(
             layout.content_rect_right,
             layout.content_top_y + layout.panels_visible_h,

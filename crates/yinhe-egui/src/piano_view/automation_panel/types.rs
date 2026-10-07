@@ -41,6 +41,8 @@ pub(crate) struct PanelsState<'a> {
 #[derive(Clone, Copy)]
 pub(crate) struct PanelsLayout {
     pub combo_width: f32,
+    /// 面板左缘 x（= PR 内容左缘，与键盘左缘对齐；随左侧工具栏等偏移）。
+    pub content_left: f32,
     pub content_rect_right: f32,
     pub content_top_y: f32,
     pub panels_visible_h: f32,

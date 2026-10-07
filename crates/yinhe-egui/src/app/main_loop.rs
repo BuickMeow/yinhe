@@ -755,15 +755,6 @@ impl eframe::App for App {
         // ── Bottom device dock（三视图通用；Panel::bottom 自动扣减可用区）──
         crate::chrome::dock_bar::show(self, ui);
 
-        // ── 左侧工具栏（Photoshop 风格；仅钢琴卷帘可见时显示）──
-        if self
-            .view_mode
-            .show_pianoroll(self.show_pianoroll_in_arrange)
-            && self.workspace.active_doc.is_some()
-        {
-            crate::chrome::tool_bar::show(ui, &mut self.active_tool);
-        }
-
         // ── Main content area ──
         let layout = self.compute_layout(ui, right_panel_rect);
         self.show_main_content(ui, &layout);

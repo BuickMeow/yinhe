@@ -83,7 +83,7 @@ pub fn show_panels(
 
     for (i, panel) in state.panels.iter_mut().enumerate() {
         let handle_rect = egui::Rect::from_min_max(
-            egui::pos2(0.0, y_offset),
+            egui::pos2(lay.content_left, y_offset),
             egui::pos2(lay.content_rect_right, y_offset + SPLIT_H),
         );
         widgets::handle_split_drag(ui, panel, handle_rect, i);
@@ -94,7 +94,7 @@ pub fn show_panels(
         let panel_bottom = y_offset + panel_h;
         let panel_right = lay.content_rect_right - crate::widgets::scrollbar::SCROLLBAR_W;
         let panel_rect = egui::Rect::from_min_max(
-            egui::pos2(0.0, panel_top),
+            egui::pos2(lay.content_left, panel_top),
             egui::pos2(panel_right, panel_bottom),
         );
 

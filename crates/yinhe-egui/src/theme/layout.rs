@@ -27,7 +27,8 @@ pub const PANEL_TOGGLE_FONT: f32 = MODE_LABEL_FONT + 2.0; // 自动化面板 tog
 pub const TRANSPORT_BTN_SIZE: f32 = 32.0;
 pub const TRANSPORT_BTN_FONT: f32 = ICON_BTN_FONT;
 /// 左侧工具栏宽度（单列竖排图标，Photoshop 风格）。
-pub const TOOL_BAR_W: f32 = 40.0;
+/// 与 transport bar 的高度一致（时间码 RECT_H 36 + 底边距 8），使左侧竖条与顶部走带栏等厚。
+pub const TOOL_BAR_W: f32 = 44.0;
 pub const TIMECODE_FONT: f32 = 12.0;
 pub const FILE_MENU_FONT: f32 = 14.0;
 

@@ -91,6 +91,7 @@ pub(crate) fn show_panels(
         };
         let panels_layout = automation_panel::PanelsLayout {
             combo_width: combo_w,
+            content_left: content_rect.min.x,
             content_rect_right: rect.max.x,
             content_top_y: panels_y,
             panels_visible_h: panels_total_h,
