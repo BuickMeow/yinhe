@@ -61,6 +61,29 @@ pub(crate) fn flat_button_filled(
     )
 }
 
+/// 同 [`flat_button_filled`]，但**常态透明底**：hover/pressed 仍从 `btn_bg` 派生，
+/// `selected_bg = Some` 时优先显示选中底。用于左侧工具栏（默认融进背景）。
+pub(crate) fn flat_button_filled_ghost(
+    ui: &mut egui::Ui,
+    text: impl Into<egui::WidgetText>,
+    size: egui::Vec2,
+    selected_bg: Option<egui::Color32>,
+    enabled: bool,
+) -> egui::Response {
+    flat_button_ex(
+        ui,
+        text,
+        Some(size),
+        selected_bg,
+        enabled,
+        true,
+        None,
+        FILLED_RADIUS,
+        false,
+        None,
+    )
+}
+
 /// 同 [`flat_button_filled`]，但带轻描边（设置页按钮与输入框/步进框统一）。
 pub(crate) fn flat_button_filled_stroked(
     ui: &mut egui::Ui,

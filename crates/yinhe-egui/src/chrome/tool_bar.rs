@@ -20,7 +20,8 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, active_tool: &mut Tool) {
     let mut hovered_hint: Option<String> = None;
     ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
         ui.set_clip_rect(rect.intersect(ui.clip_rect()));
-        ui.painter().rect_filled(rect, 0.0, crate::theme::app_bg());
+        ui.painter()
+            .rect_filled(rect, 0.0, crate::theme::track_bg());
         ui.spacing_mut().item_spacing.y = 2.0;
         ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
             ui.add_space(6.0);
@@ -59,7 +60,7 @@ fn tool_button(
     let sel_bg = is_active.then(crate::theme::selected_bg);
     let resp = ui
         .push_id(("tool_bar_btn", tool.pin_index()), |ui| {
-            crate::widgets::flat::flat_button_filled(
+            crate::widgets::flat::flat_button_filled_ghost(
                 ui,
                 tool.icon()
                     .rich_text()
