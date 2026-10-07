@@ -73,10 +73,12 @@ impl App {
                 let mut automation_picker_req: Option<usize> = None;
                 let mut guard =
                     crate::app::main_loop::ReplaceGuard::new(&mut self.workspace.documents[idx]);
+                // 走带视图始终使用普通选框工具：工具选择只作用于钢琴卷帘。
+                let arrange_tool = crate::widgets::tools_panel::Tool::Select;
                 let cfg = crate::arrange::ArrangeViewCfg {
                     is_playing,
                     follow_mode: &mut follow_mode,
-                    active_tool: &self.active_tool,
+                    active_tool: &arrange_tool,
                     min_border_width: self.audio_settings.min_border_width,
                     revision: guard.as_ref().data.revision,
                 };
