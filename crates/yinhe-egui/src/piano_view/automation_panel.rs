@@ -303,7 +303,7 @@ pub fn show_panels(
 
         render::draw_value_labels(ui, panel, panel_rect, lay.combo_width, max_val_f);
 
-        if widgets::show_panel_close(ui, panel_rect, grid_area, i) {
+        if widgets::show_panel_close(ui, combo_rect, i) {
             remove_panel = Some(i);
         }
 

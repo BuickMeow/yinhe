@@ -187,17 +187,13 @@ pub(crate) fn apply_right_click_anchor(
     }
 }
 
-/// 面板底部中央的关闭按钮：点谁删谁。
+/// 面板左侧目标图标（combo 列）底部的关闭按钮：点谁删谁。
 ///
-/// 返回是否被点击（调用方在遍历结束后从面板列表移除该索引）。
-pub(crate) fn show_panel_close(
-    ui: &mut egui::Ui,
-    panel_rect: egui::Rect,
-    grid_area: egui::Rect,
-    index: usize,
-) -> bool {
-    const BTN: f32 = 20.0;
-    let center = egui::pos2(grid_area.center().x, panel_rect.max.y - BTN * 0.5 - 2.0);
+/// 位置在目标选择图标正下方（同一列），返回是否被点击
+/// （调用方在遍历结束后从面板列表移除该索引）。
+pub(crate) fn show_panel_close(ui: &mut egui::Ui, combo_rect: egui::Rect, index: usize) -> bool {
+    const BTN: f32 = 18.0;
+    let center = egui::pos2(combo_rect.center().x, combo_rect.max.y - BTN * 0.5 - 2.0);
     let btn_rect = egui::Rect::from_center_size(center, egui::vec2(BTN, BTN));
     let resp = ui.interact(
         btn_rect,
