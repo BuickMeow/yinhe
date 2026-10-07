@@ -70,6 +70,7 @@ fn build_key_instances(
     range: Option<(f64, f64)>,
     selected: Option<&Selection>,
 ) {
+    let start = out.len();
     for_each_key_note(midi, key, range, |note| {
         if !instance_visible(note, key, track_visible, hidden_notes) {
             return;
@@ -85,6 +86,20 @@ fn build_key_instances(
             inst.set_selected(true);
         }
         out.push(inst);
+    });
+    sort_key_z_order(&mut out[start..]);
+}
+
+/// 同一 key 内的绘制顺序（z-order）：`start_tick` 升序；同一 `start_tick` 时
+/// `end_tick` 降序——长音符先画（在下），短音符后画（在上），避免长音符把
+/// 同起点短音符的尾部盖住。
+///
+/// 必须保持 `start_tick` 有序：GPU cull 的 chunk/tick 分桶依赖该顺序。
+fn sort_key_z_order(insts: &mut [NoteInstance]) {
+    insts.sort_unstable_by(|a, b| {
+        a.start_tick
+            .cmp(&b.start_tick)
+            .then(b.end_tick.cmp(&a.end_tick))
     });
 }
 
@@ -124,6 +139,8 @@ fn fill_key_instances(
         };
         i += 1;
     });
+    // 与 `build_key_instances` 同一 z-order：同 start_tick 长音符在下、短音符在上。
+    sort_key_z_order(&mut out[..i]);
     i
 }
 
@@ -649,6 +666,26 @@ mod tests {
         assert_eq!(
             out.iter().find(|n| !n.is_selected()).unwrap().velocity(),
             80
+        );
+    }
+
+    /// 同 key 的 z-order：start_tick 升序；同 start_tick 时 end_tick 降序
+    /// （长音符在下、短音符在上，短音符尾部不被遮）。
+    #[test]
+    fn test_key_z_order_long_behind_short() {
+        let inst = |start: u32, end: u32| NoteInstance {
+            start_tick: start,
+            end_tick: end,
+            packed: NoteInstance::pack(60, 0, 100),
+        };
+        // 同起点：长 [0,400]、短 [0,100]；不同起点：[200,300]。
+        let mut v = vec![inst(0, 100), inst(0, 400), inst(200, 300)];
+        sort_key_z_order(&mut v);
+        let order: Vec<(u32, u32)> = v.iter().map(|n| (n.start_tick, n.end_tick)).collect();
+        assert_eq!(
+            order,
+            vec![(0, 400), (0, 100), (200, 300)],
+            "同起点长在前(在下)、短在后(在上)；start_tick 仍升序"
         );
     }
 }
