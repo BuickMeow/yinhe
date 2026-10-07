@@ -83,8 +83,6 @@ pub struct PianoViewFeedback<'a> {
     pub velocity_edits: &'a mut Vec<VelocityEdit>,
     /// 音符听觉预览请求（铅笔新建/拖拽、选框拖拽触发）。
     pub preview_reqs: &'a mut Vec<PreviewReq>,
-    /// 状态栏讲解行：钢琴卷帘悬停提示（位置 + 音高）。
-    pub status_hint: &'a mut Option<String>,
 }
 
 /// 钢琴卷帘顶部时间标尺高度（占位常量，实际值来自 theme）。

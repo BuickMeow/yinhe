@@ -10,8 +10,8 @@ use crate::widgets::tools_panel::{ALL_TOOLS, Tool};
 
 /// 渲染左侧工具栏。
 ///
-/// `status_hint`：悬停工具时写入讲解行提示；离开工具栏时清空（与 transport bar 同规则）。
-pub fn show(ui: &mut egui::Ui, active_tool: &mut Tool, status_hint: &mut Option<String>) {
+/// 悬停提示走统一讲解行（见 `widgets::hint`）；离开工具栏时清空（与 transport bar 同规则）。
+pub fn show(ui: &mut egui::Ui, active_tool: &mut Tool) {
     let btn_size = egui::vec2(
         crate::theme::TRANSPORT_BTN_SIZE,
         crate::theme::TRANSPORT_BTN_SIZE,
@@ -40,9 +40,9 @@ pub fn show(ui: &mut egui::Ui, active_tool: &mut Tool, status_hint: &mut Option<
         .input(|i| i.pointer.hover_pos())
         .is_some_and(|p| inner.response.rect.contains(p));
     if let Some(hint) = inner.inner {
-        *status_hint = Some(hint);
+        crate::widgets::hint::set(ui.ctx(), hint);
     } else if over_bar {
-        *status_hint = None;
+        crate::widgets::hint::clear(ui.ctx());
     }
 }
 

@@ -336,9 +336,7 @@ pub fn show_timecode_display(
                     if let Some(q) = pending_q {
                         events.push(TimecodeEvent::Quantize(q));
                     }
-                    if resp.hovered() {
-                        resp.on_hover_text(label);
-                    }
+                    crate::widgets::hint::hover(ui.ctx(), &resp, label);
                 },
             );
         });

@@ -103,7 +103,6 @@ impl App {
                     &mut self.right_tab,
                     &mut needs_audio_rebuild,
                     &mut needs_audio_notify,
-                    &mut self.status_hint,
                     sel_hint.as_ref(),
                     &mut automation_picker_req,
                 );
@@ -488,7 +487,6 @@ impl App {
                     note_resize_delta: &mut note_resize_delta,
                     velocity_edits: &mut velocity_edits,
                     preview_reqs: &mut preview_reqs,
-                    status_hint: &mut self.status_hint,
                 };
                 event = piano_view::show(
                     ui,
@@ -882,7 +880,6 @@ impl App {
                 &mut self.event_browser_state,
                 &mut self.info_content,
                 self.automation_drag_ghost,
-                &mut self.status_hint,
             );
             if changed {
                 self.teardown_audio();

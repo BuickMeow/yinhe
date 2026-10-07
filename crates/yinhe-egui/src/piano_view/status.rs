@@ -1,6 +1,6 @@
 //! 状态栏与性能探针段（从 `piano_view.rs` 492-553 行抽取）。
 //!
-//! 覆盖：`perf::submit` 与 `feedback.status_hint` 悬停提示（`panels_status_hint` 优先）。
+//! 覆盖：`perf::submit` 与统一悬停提示（`panels_status_hint` 优先，写入 `widgets::hint`）。
 
 use std::time::Instant;
 
@@ -15,7 +15,6 @@ use crate::app::layout::SelHintInfo;
 use crate::view_interaction::FollowMode;
 
 use super::perf;
-use super::types::PianoViewFeedback;
 
 /// 更新性能探针与状态栏悬停提示（原 `piano_view.rs` 492-553 段）。
 ///
@@ -40,7 +39,6 @@ pub(crate) fn update_status(
     sel_hint: Option<&SelHintInfo>,
     sel_rect: &SelRectState,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
-    feedback: &mut PianoViewFeedback<'_>,
 ) {
     perf::submit(perf::PerfCtx {
         t_show_start,
@@ -111,6 +109,9 @@ pub(crate) fn update_status(
                 None
             }
         };
-        *feedback.status_hint = hint;
+        match hint {
+            Some(h) => crate::widgets::hint::set(ui.ctx(), h),
+            None => crate::widgets::hint::clear(ui.ctx()),
+        }
     }
 }

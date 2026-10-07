@@ -117,7 +117,6 @@ pub fn show(
     needs_audio_rebuild: &mut bool,
     // 自动化内容变化（AM lane 增删 / 事件编辑）需要 notify_audio_model_changed。
     needs_audio_notify: &mut bool,
-    status_hint: &mut Option<String>,
     sel_hint: Option<&crate::app::layout::SelHintInfo>,
     // 「添加自动化」：请求打开设备参数选择窗口（由调用方落地）。
     automation_picker_req: &mut Option<usize>,
@@ -769,20 +768,22 @@ pub fn show(
                 .max(0.0);
             let pos_str =
                 format_tick_bar_beat_with_time_sig(tick, tpb, sig_events, def_num, def_den);
-            *status_hint = Some(if let Some(s) = sel_text {
+            let hint = if let Some(s) = sel_text {
                 s
             } else {
                 format!("{} {}", pos_str, hover_desc(pos.y))
-            });
+            };
+            crate::widgets::hint::set(ui.ctx(), hint);
         } else if tp_rect.contains(pos) {
-            *status_hint = Some(if let Some(s) = sel_text {
+            let hint = if let Some(s) = sel_text {
                 s
             } else {
                 hover_desc(pos.y)
-            });
+            };
+            crate::widgets::hint::set(ui.ctx(), hint);
         } else if arr_rect.contains(pos) {
             // 走带视图内但不在内容区（标尺/滚动条）→ 清空
-            *status_hint = None;
+            crate::widgets::hint::clear(ui.ctx());
         }
     }
 }

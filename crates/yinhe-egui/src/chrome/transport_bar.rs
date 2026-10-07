@@ -208,9 +208,9 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
             }
             let bar_rect = ui.max_rect();
             if let Some(hint) = hovered_hint {
-                *ctx.status_hint = Some(hint);
+                crate::widgets::hint::set(ui.ctx(), hint);
             } else if pointer_pos.is_some_and(|p| bar_rect.contains(p)) {
-                *ctx.status_hint = None;
+                crate::widgets::hint::clear(ui.ctx());
             }
 
             const DOUBLE_CLICK_MS: f64 = 400.0;

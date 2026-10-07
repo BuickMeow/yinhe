@@ -170,7 +170,6 @@ pub fn show(
     // 当前 PR 音符 LOD 块宽（tick）；None = 原始音符层。
     lod_block: Option<u32>,
     show_mem_breakdown: &mut bool,
-    status_hint: &Option<String>,
     notifications: &mut crate::widgets::toast::Notifications,
 ) {
     egui::Panel::bottom("bottom_bar")
@@ -377,7 +376,7 @@ pub fn show(
                 } else if over_bar {
                     None
                 } else {
-                    status_hint.clone()
+                    crate::widgets::hint::current(ui.ctx())
                 };
                 if let Some(text) = display_text {
                     ui.painter().text(

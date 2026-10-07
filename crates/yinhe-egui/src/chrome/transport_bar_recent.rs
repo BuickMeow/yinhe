@@ -117,7 +117,7 @@ pub fn recent_files_section(
                     *pending_open_path = Some(path.clone());
                     egui::Popup::close_all(ui.ctx());
                 } else if resp.hovered() {
-                    resp.on_hover_text(path);
+                    crate::widgets::hint::set(ui.ctx(), path.as_str());
                 }
             }
         });

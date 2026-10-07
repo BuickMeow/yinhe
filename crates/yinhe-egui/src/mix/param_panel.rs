@@ -354,7 +354,8 @@ fn param_row(
                 )
                 .frame(false),
             );
-            if resp.on_hover_text(t!("dock.show_automation")).clicked() {
+            crate::widgets::hint::hover(ui.ctx(), &resp, t!("dock.show_automation"));
+            if resp.clicked() {
                 am_clicked = true;
             }
         }

@@ -715,7 +715,10 @@ fn icon_button(
         )
         .frame(false),
     );
-    resp.on_hover_text(hover)
+    if resp.hovered() {
+        crate::widgets::hint::set(ui.ctx(), hover.into().text().to_owned());
+    }
+    resp
 }
 
 /// 效果器大卡片：插件效果器显示参数面板 / 原生界面入口。
@@ -838,7 +841,8 @@ fn add_column(ui: &mut egui::Ui, height: f32) -> egui::Response {
         egui::FontId::new(16.0, add.font_family()),
         crate::theme::text_muted(),
     );
-    resp.on_hover_text(t!("mix.add_insert_hint"))
+    crate::widgets::hint::hover(ui.ctx(), &resp, t!("mix.add_insert_hint"));
+    resp
 }
 
 /// 乐器大卡片（永远在最左）：XSynth 旋钮列表 / 插件参数入口；

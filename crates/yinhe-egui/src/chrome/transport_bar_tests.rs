@@ -122,7 +122,6 @@ struct TbTestState {
 fn make_transport_harness<'a>(doc: Option<&'a Document>) -> Harness<'a, ()> {
     let mut file_loader = FileLoader::new(yinhe_editor_core::progress::new_shared());
     let mut follow_mode = FollowMode::None;
-    let mut status_hint: Option<String> = None;
     let mut settings = AudioSettings::default();
 
     let mut first_frame = true;
@@ -141,7 +140,6 @@ fn make_transport_harness<'a>(doc: Option<&'a Document>) -> Harness<'a, ()> {
                     file_loader: &mut file_loader,
                     doc,
                     follow_mode: &mut follow_mode,
-                    status_hint: &mut status_hint,
                     settings: &mut settings,
                     is_recording: false,
                     step_input: false,
@@ -162,7 +160,6 @@ fn make_transport_harness<'a>(doc: Option<&'a Document>) -> Harness<'a, ()> {
 fn make_harness_with_hidden_button<'a>(doc: Option<&'a Document>) -> Harness<'a, TbTestState> {
     let mut file_loader = FileLoader::new(yinhe_editor_core::progress::new_shared());
     let mut follow_mode = FollowMode::None;
-    let mut status_hint: Option<String> = None;
     let mut settings = AudioSettings::default();
 
     let mut first_frame = true;
@@ -179,7 +176,6 @@ fn make_harness_with_hidden_button<'a>(doc: Option<&'a Document>) -> Harness<'a,
                     file_loader: &mut file_loader,
                     doc,
                     follow_mode: &mut follow_mode,
-                    status_hint: &mut status_hint,
                     settings: &mut settings,
                     is_recording: false,
                     step_input: false,

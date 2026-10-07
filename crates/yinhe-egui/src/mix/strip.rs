@@ -259,11 +259,15 @@ fn instrument_slot(
             actions.push(MixAction::OpenXsynthConfig { channel });
         }
     }
-    resp.on_hover_text(if plugin_name.is_some() {
-        t!("mix.toggle_gui").to_string()
-    } else {
-        t!("soundfont.title").to_string()
-    });
+    crate::widgets::hint::hover(
+        ui.ctx(),
+        &resp,
+        if plugin_name.is_some() {
+            t!("mix.toggle_gui").to_string()
+        } else {
+            t!("soundfont.title").to_string()
+        },
+    );
     ui.horizontal_wrapped(|ui| {
         if ui.small_button(t!("mix.params")).clicked() {
             if plugin_name.is_some() {
@@ -530,11 +534,13 @@ pub(crate) fn send_popup(
                                             .color(crate::theme::text_secondary()),
                                     );
                                     let mut pre_flag = *pre;
-                                    if ui
-                                        .checkbox(&mut pre_flag, t!("mix.pre_fader"))
-                                        .on_hover_text(t!("mix.pre_fader_hint"))
-                                        .changed()
-                                    {
+                                    let pre_resp = ui.checkbox(&mut pre_flag, t!("mix.pre_fader"));
+                                    crate::widgets::hint::hover(
+                                        ui.ctx(),
+                                        &pre_resp,
+                                        t!("mix.pre_fader_hint"),
+                                    );
+                                    if pre_resp.changed() {
                                         actions.push(MixAction::SetSend {
                                             channel,
                                             bus: b as u8,
@@ -663,7 +669,7 @@ fn label_block(ui: &mut egui::Ui, title: String, names: &str) {
         .truncate(),
     );
     if !names.is_empty() {
-        resp.on_hover_text(names);
+        crate::widgets::hint::hover(ui.ctx(), &resp, names);
     }
 }
 
@@ -699,7 +705,8 @@ fn insert_area(
             egui::FontId::new(crate::theme::ICON_FONT_SM, add.font_family()),
             crate::theme::text_muted(),
         );
-        if resp.on_hover_text(t!("mix.add_insert_hint")).clicked() {
+        crate::widgets::hint::hover(ui.ctx(), &resp, t!("mix.add_insert_hint"));
+        if resp.clicked() {
             actions.push(MixAction::OpenPicker { target });
         }
         return;
@@ -777,7 +784,7 @@ fn insert_row(
             bypassed: !is_bypassed,
         });
     }
-    dot_resp.on_hover_text(t!("mix.bypass"));
+    crate::widgets::hint::hover(ui.ctx(), &dot_resp, t!("mix.bypass"));
 
     // 名称：截断显示，hover 全名（右侧给参数按钮留位）。
     let name_rect = egui::Rect::from_min_max(
@@ -822,7 +829,8 @@ fn insert_row(
         egui::FontId::new(11.0, tune.font_family()),
         icon_color,
     );
-    if params_resp.on_hover_text(t!("mix.params")).clicked() {
+    crate::widgets::hint::hover(ui.ctx(), &params_resp, t!("mix.params"));
+    if params_resp.clicked() {
         actions.push(MixAction::OpenInsertParams { target, slot });
     }
 
@@ -830,7 +838,7 @@ fn insert_row(
     if resp.clicked() {
         actions.push(MixAction::ToggleGui { target, slot });
     }
-    resp.clone().on_hover_text(t!("mix.toggle_gui"));
+    crate::widgets::hint::hover(ui.ctx(), &resp, t!("mix.toggle_gui"));
     resp.context_menu(|ui| {
         ui.set_min_width(96.0);
         ui.set_max_width(96.0);
@@ -980,7 +988,7 @@ fn pan_bar(ui: &mut egui::Ui, pan: f32) -> Option<f32> {
     } else if resp.double_clicked() {
         return Some(0.0);
     }
-    resp.on_hover_text(format!("Pan {pan_text}"));
+    crate::widgets::hint::hover(ui.ctx(), &resp, format!("Pan {pan_text}"));
     None
 }
 

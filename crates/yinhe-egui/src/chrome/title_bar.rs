@@ -56,7 +56,6 @@ pub(crate) fn show(
     documents: &[Document],
     active_doc: &mut Option<usize>,
     tab_scroll_offset: &mut f32,
-    status_hint: &mut Option<String>,
 ) -> Option<TitleBarAction> {
     let mut action = None;
     egui::Panel::top("title_bar")
@@ -88,7 +87,7 @@ pub(crate) fn show(
             });
             // 状态栏讲解行：鼠标在标题栏上时清空（标题栏不属于任何可讲解区域）
             if pointer_in_bar {
-                *status_hint = None;
+                crate::widgets::hint::clear(ui.ctx());
             }
             // 拖拽中不响应滚轮（避免插入位置跳动）
             let drag_id = ui.id().with("title_bar_drag");
@@ -393,14 +392,12 @@ mod tests {
                         ui.ctx().add_font(egui_material_icons::font_insert());
                         return;
                     }
-                    let mut hint = None;
-                    st.action =
-                        match show(ui, documents, &mut st.active_doc, &mut st.scroll, &mut hint) {
-                            Some(TitleBarAction::CloseDocument(_)) => Some("close"),
-                            Some(TitleBarAction::ReorderTab { .. }) => Some("reorder"),
-                            Some(TitleBarAction::DetachTab(_)) => Some("detach"),
-                            None => None,
-                        };
+                    st.action = match show(ui, documents, &mut st.active_doc, &mut st.scroll) {
+                        Some(TitleBarAction::CloseDocument(_)) => Some("close"),
+                        Some(TitleBarAction::ReorderTab { .. }) => Some("reorder"),
+                        Some(TitleBarAction::DetachTab(_)) => Some("detach"),
+                        None => None,
+                    };
                 },
                 TbState::default(),
             )

@@ -397,7 +397,6 @@ impl eframe::App for App {
             &self.workspace.documents,
             &mut self.workspace.active_doc,
             &mut self.tab_scroll_offset,
-            &mut self.status_hint,
         );
         match title_bar_action {
             Some(title_bar::TitleBarAction::CloseDocument(idx)) => {
@@ -595,7 +594,6 @@ impl eframe::App for App {
                 file_loader: &mut self.file_loader,
                 doc: active_doc,
                 follow_mode: &mut self.follow_mode,
-                status_hint: &mut self.status_hint,
                 settings: &mut self.audio_settings,
                 is_recording: self.recording.is_some() || self.audio_recording.is_some(),
                 step_input: self.step_input,
@@ -734,7 +732,6 @@ impl eframe::App for App {
             self.fps,
             self.pianoroll.lod_block(),
             &mut self.show_mem_breakdown,
-            &self.status_hint,
             &mut self.notifications,
         );
         // PR 显示切换 → 布局设置写盘（帧末 sync_layout_settings 统一落盘）
@@ -764,7 +761,7 @@ impl eframe::App for App {
             .show_pianoroll(self.show_pianoroll_in_arrange)
             && self.workspace.active_doc.is_some()
         {
-            crate::chrome::tool_bar::show(ui, &mut self.active_tool, &mut self.status_hint);
+            crate::chrome::tool_bar::show(ui, &mut self.active_tool);
         }
 
         // ── Main content area ──
@@ -786,6 +783,9 @@ impl eframe::App for App {
             .set_enabled(self.audio_settings.toast_enabled);
         self.notifications.show_toasts(ui.ctx(), notif_area);
         self.notifications.show_center(ui.ctx(), notif_area);
+
+        // ── 帧末提交统一悬停提示（写入值快照给下一帧 mode bar 渲染）──
+        crate::widgets::hint::commit(ui.ctx());
 
         // ── 布局设置持久化（拖拽结束帧才写盘）──
         self.sync_layout_settings();

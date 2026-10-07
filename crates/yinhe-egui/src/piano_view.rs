@@ -461,7 +461,6 @@ pub fn show(
         sel_hint,
         sel_rect,
         bar_line_data,
-        feedback,
     );
 
     sel_action
