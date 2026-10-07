@@ -90,16 +90,24 @@ fn build_key_instances(
     sort_key_z_order(&mut out[start..]);
 }
 
-/// 同一 key 内的绘制顺序（z-order）：`start_tick` 升序；同一 `start_tick` 时
-/// `end_tick` 降序——长音符先画（在下），短音符后画（在上），避免长音符把
-/// 同起点短音符的尾部盖住。
+/// 同一 key 内的绘制顺序（z-order），完整全序（逐字段定优先级）：
+/// 1. `start_tick` 升序（必须保持，GPU cull 的 chunk/tick 分桶依赖它）；
+/// 2. `end_tick` 降序——同起点长音符先画（在下）、短音符后画（在上）；
+/// 3. `track` 升序（多轨和弦：低轨在下、高轨在上）；
+/// 4. `velocity` 升序（其余全同时的最后裁决）。
 ///
-/// 必须保持 `start_tick` 有序：GPU cull 的 chunk/tick 分桶依赖该顺序。
+/// 逐字段覆盖全部可变字段，保证 `sort_unstable` 下也是确定顺序（否则相等键
+/// 顺序不确定会逐帧闪烁）。`key` 在单 key 桶内恒定，无需参与；选中位不参与。
 fn sort_key_z_order(insts: &mut [NoteInstance]) {
     insts.sort_unstable_by(|a, b| {
         a.start_tick
             .cmp(&b.start_tick)
             .then(b.end_tick.cmp(&a.end_tick))
+            // packed 去掉选中位后 = key|track|vel；桶内 key 恒定 → 等价 track 升、vel 升。
+            .then(
+                (a.packed & !NoteInstance::SELECTED_BIT)
+                    .cmp(&(b.packed & !NoteInstance::SELECTED_BIT)),
+            )
     });
 }
 
@@ -687,5 +695,22 @@ mod tests {
             vec![(0, 400), (0, 100), (200, 300)],
             "同起点长在前(在下)、短在后(在上)；start_tick 仍升序"
         );
+    }
+
+    /// 全序补全：同 start/end 时按 track 升序（多轨和弦不闪烁）。
+    #[test]
+    fn test_key_z_order_track_tiebreak() {
+        let inst = |track: u16| NoteInstance {
+            start_tick: 0,
+            end_tick: 100,
+            packed: NoteInstance::pack(60, track, 100),
+        };
+        let mut v = vec![inst(2), inst(0), inst(1)];
+        sort_key_z_order(&mut v);
+        let tracks: Vec<u16> = v
+            .iter()
+            .map(|n| ((n.packed >> 8) & 0xFFFF) as u16)
+            .collect();
+        assert_eq!(tracks, vec![0, 1, 2], "track 升序，确定不闪烁");
     }
 }
