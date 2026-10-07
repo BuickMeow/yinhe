@@ -620,6 +620,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 // Velocity bars: 仅描边、不填充、不加深（描边 = 轨道色本身）。
 // 与音符共用 `VertexOutput`，但力度条刻意去掉内部填充与边框加深，
 // 让重叠的力度条更轻、更易区分。
+//
+// 内外缘都用硬边：内部是 discard（透明），若内缘走 smoothstep 会写出
+// 半透明像素，与网格背景混合后看起来像“第二条更浅的描边”。硬边保证
+// 只有一圈实心描边。
 @fragment
 fn fs_main_velocity(in: VertexOutput) -> @location(0) vec4<f32> {
     let base_color = in.color;
@@ -633,7 +637,7 @@ fn fs_main_velocity(in: VertexOutput) -> @location(0) vec4<f32> {
     var border_a = outer_a;
     if inner_half.x > 0.0 && inner_half.y > 0.0 {
         let d_inner = max(abs(p.x) - inner_half.x, abs(p.y) - inner_half.y);
-        let inner_a = 1.0 - smoothstep(-0.5, 0.5, d_inner);
+        let inner_a = select(0.0, 1.0, d_inner <= -0.5);
         border_a = outer_a - inner_a;
     }
 
