@@ -158,10 +158,12 @@ pub(crate) fn draw_panel_overlay(
     if let Some(preview) = &overlay.velocity_preview {
         let painter = ui.painter();
         for bar in &preview.bars {
-            painter.rect_filled(*bar, 0.0, preview.color.gamma_multiply(0.85));
-            painter.line_segment(
-                [bar.left_top(), bar.right_top()],
-                egui::Stroke::new(1.0, crate::theme::contrast_fg()),
+            // 与 GPU 力度条一致：仅描边、不填充（描边=轨道色，略透明表示预览）。
+            painter.rect_stroke(
+                *bar,
+                0.0,
+                egui::Stroke::new(2.0, preview.color.gamma_multiply(0.85)),
+                egui::StrokeKind::Inside,
             );
         }
     }
