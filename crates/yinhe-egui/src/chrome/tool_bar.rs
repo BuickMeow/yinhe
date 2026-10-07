@@ -46,7 +46,8 @@ pub fn show(
         });
         // 自动化按钮固定贴底：最下方 = 开关，其上方 = 新增。
         if show_automation_buttons {
-            let mut center_y = rect.max.y - 6.0 - btn_size.y;
+            // 贴住工具栏底缘（留 2px，避免圆角被裁）；add 在其正上方。
+            let mut center_y = rect.max.y - 2.0 - btn_size.y * 0.5;
             if let Some(hint) = automation_toggle_button(
                 ui,
                 egui::pos2(rect.center().x, center_y),
