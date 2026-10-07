@@ -30,7 +30,11 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
     let mut set_orientation = None;
     let mut timecode_events: Vec<crate::widgets::timecode::TimecodeEvent> = Vec::new();
 
-    egui::Panel::top("transport_bar")
+    let mut hovered_hint: Option<String> = None;
+    let mut timecode_rect: Option<egui::Rect> = None;
+    let mut bar_rect = egui::Rect::NOTHING;
+
+    let panel = egui::Panel::top("transport_bar")
         .frame(egui::Frame {
             fill: crate::theme::app_bg(),
             inner_margin: egui::Margin {
@@ -44,9 +48,6 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
         })
         .show(ui, |ui| {
             ui.spacing_mut().interact_size.y = 32.0;
-
-            let mut timecode_rect: Option<egui::Rect> = None;
-            let mut hovered_hint: Option<String> = None;
 
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 let btn_size = egui::vec2(
@@ -202,16 +203,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 }
             });
 
-            let pointer_pos = ui.input(|i| i.pointer.hover_pos());
-            if pointer_pos.is_some_and(|p| timecode_rect.is_some_and(|r| r.contains(p))) {
-                hovered_hint = Some(t!("hint.timecode").to_string());
-            }
-            let bar_rect = ui.max_rect();
-            if let Some(hint) = hovered_hint {
-                crate::widgets::hint::set(ui.ctx(), hint);
-            } else if pointer_pos.is_some_and(|p| bar_rect.contains(p)) {
-                crate::widgets::hint::set_region(ui.ctx(), t!("hint.panel.transport_bar"));
-            }
+            bar_rect = ui.max_rect();
 
             const DOUBLE_CLICK_MS: f64 = 400.0;
             let dbl_id = ui.id().with("transport_bar_dbl_click");
@@ -276,6 +268,17 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 
             ui.data_mut(|d| d.insert_temp(drag_id, drag_started));
         });
+
+    // ── 悬停讲解行：控件提示 > 走带空白 > 面板（内边距）──
+    let pointer_pos = ui.input(|i| i.pointer.hover_pos());
+    let in_timecode = pointer_pos.is_some_and(|p| timecode_rect.is_some_and(|r| r.contains(p)));
+    if let Some(hint) = hovered_hint {
+        crate::widgets::hint::set(ui.ctx(), hint);
+    } else if !in_timecode && pointer_pos.is_some_and(|p| bar_rect.contains(p)) {
+        crate::widgets::hint::set(ui.ctx(), t!("hint.transport_blank"));
+    } else if pointer_pos.is_some_and(|p| panel.response.rect.contains(p)) {
+        crate::widgets::hint::set_region(ui.ctx(), t!("hint.panel.transport_bar"));
+    }
 
     // 「写入自动化」开关：直接落 settings（无需经 response 往返）。
     if let Some(enabled) = play_actions.set_automation_write {

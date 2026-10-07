@@ -134,6 +134,9 @@ impl Notifications {
                 });
             self.card_h.insert(tid, area_resp.inner);
             self.items[idx].hovered = outcome.hovered;
+            if outcome.hovered {
+                crate::widgets::hint::set_region(ctx, rust_i18n::t!("hint.panel.toast"));
+            }
             if outcome.cancel {
                 // stop：只置 flag + 中止态，卡片留着等 abort 确认，不进退场
                 if let Some(c) = cancel_flag {
@@ -223,7 +226,7 @@ impl Notifications {
             .show(ctx, |ui| {
                 ui.set_max_width(CARD_W + 8.0);
                 ui.style_mut().spacing.scroll = egui::style::ScrollStyle::thin();
-                egui::ScrollArea::vertical()
+                let scroll_out = egui::ScrollArea::vertical()
                     .id_salt("yinhe_notif_center_scroll")
                     .max_width(CARD_W + 8.0)
                     .max_height(max_h)
@@ -251,6 +254,12 @@ impl Notifications {
                             ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
                         }
                     });
+                if ui.rect_contains_pointer(scroll_out.inner_rect) {
+                    crate::widgets::hint::set_region(
+                        ui.ctx(),
+                        rust_i18n::t!("hint.panel.notification_center"),
+                    );
+                }
             });
         // 交互结果在闭包外回写：stop → 中止态；操作按钮 → 执行
         for (id, outcome) in outcomes {

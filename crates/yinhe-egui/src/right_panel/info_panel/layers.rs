@@ -16,6 +16,7 @@ const ICON_SIZE: f32 = 16.0;
 
 /// 显示图层列表。
 pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) {
+    crate::right_panel::region_hint(ui, rust_i18n::t!("hint.panel.layers"));
     let num_tracks = doc.data.model.tracks.len();
     if num_tracks == 0 {
         crate::widgets::hint::empty_hint(ui, rust_i18n::t!("track.no_tracks").as_ref());
@@ -128,6 +129,11 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) {
                         ui.id().with(("layer_lock", i)),
                         egui::Sense::click(),
                     );
+                    crate::widgets::hint::hover(
+                        ui.ctx(),
+                        &lock_resp,
+                        rust_i18n::t!("hint.info.layer_lock"),
+                    );
                     if lock_resp.clicked() {
                         doc.edit.track_locked[i] = !locked;
                     }
@@ -167,6 +173,11 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) {
                         vis_rect,
                         ui.id().with(("layer_vis", i)),
                         egui::Sense::click(),
+                    );
+                    crate::widgets::hint::hover(
+                        ui.ctx(),
+                        &vis_resp,
+                        rust_i18n::t!("hint.info.layer_visible"),
                     );
                     if vis_resp.clicked() {
                         doc.edit.track_pianoroll_visible[i] = !visible;

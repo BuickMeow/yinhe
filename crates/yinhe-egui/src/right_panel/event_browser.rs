@@ -63,6 +63,7 @@ fn maintain_state(
 
 /// 「树图」选项卡：文件夹树视图（事件浏览器的上栏）。
 pub fn show_tree(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrowserState) {
+    crate::right_panel::region_hint(ui, rust_i18n::t!("hint.panel.event_tree"));
     let Some(doc) = doc else {
         crate::widgets::hint::empty_hint(
             ui,

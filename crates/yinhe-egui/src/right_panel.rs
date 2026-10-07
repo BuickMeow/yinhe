@@ -41,6 +41,19 @@ pub enum InfoContent {
     Track,
 }
 
+/// 面板区低优先级讲解：仅当指针悬停在该面板可见区域（`clip_rect`）时写入。
+///
+/// 多栏停靠下每个子面板都会渲染并调用本函数；若无条件写入，后渲染的栏会
+/// 覆盖掉指针真正所在栏的提示。用 clip 判定保证只有指针所在面板生效。
+pub(crate) fn region_hint(ui: &egui::Ui, text: impl Into<String>) {
+    let hovered = ui
+        .input(|i| i.pointer.hover_pos())
+        .is_some_and(|p| ui.clip_rect().contains(p));
+    if hovered {
+        crate::widgets::hint::set_region(ui.ctx(), text);
+    }
+}
+
 /// Render the right panel (if a tab is active).
 ///
 /// `rect` is the full area reserved for the right panel, including a 4px
@@ -91,6 +104,7 @@ pub fn show(
         egui::pos2(rect.min.x + crate::theme::SPLIT_HANDLE_W, rect.max.y),
     );
     let resp = crate::widgets::split_handle::vertical(ui, "__right_split__", handle_rect);
+    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.panel.right_split"));
     let width_drag_ended = resp.drag_stopped() || resp.double_clicked();
     if resp.dragged() {
         // Handle is at the left edge of a right-aligned panel.

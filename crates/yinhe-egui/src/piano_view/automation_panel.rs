@@ -156,8 +156,11 @@ pub fn show_panels(
                 feedback.status_hint = Some(if let Some(s) = sel_text {
                     s
                 } else {
-                    format!("{} {}", pos_str, val_str)
+                    let value_info = format!("{} {}", pos_str, val_str);
+                    format!("{} · {}", t!("hint.panel.pr_automation"), value_info)
                 });
+            } else if combo_area.contains(pos) {
+                feedback.status_hint = Some(t!("hint.panel.pr_auto_combo").to_string());
             } else if panel_rect.contains(pos) {
                 feedback.status_hint = None;
             }
@@ -279,6 +282,9 @@ pub fn show_panels(
                 &mut panel.dirty,
             );
         });
+        if crate::view_interaction::pointer_hits(ui, vsb_rect) {
+            crate::widgets::hint::set(ui.ctx(), t!("hint.pr.auto_vscroll"));
+        }
 
         let combo_rect = egui::Rect::from_min_max(
             panel_rect.min,

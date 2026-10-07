@@ -46,9 +46,12 @@ pub(crate) fn show_right_group(
                 chord_font(),
                 egui::Color32::PLACEHOLDER,
             );
-            let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
+            let (rect, resp) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
             ui.painter()
                 .galley(rect.min, galley, crate::theme::text_primary());
+            if resp.hovered() {
+                *hovered_hint = Some(t!("hint.chord_indicator").to_string());
+            }
             ui.add_space(GAP);
         }
 

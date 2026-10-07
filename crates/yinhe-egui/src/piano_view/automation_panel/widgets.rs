@@ -19,6 +19,7 @@ pub(crate) fn handle_split_drag(
 ) {
     let handle_resp =
         crate::widgets::split_handle::horizontal(ui, format!("auto_handle_{}", index), handle_rect);
+    crate::widgets::hint::hover(ui.ctx(), &handle_resp, t!("hint.pr.auto_split"));
     let press_on_handle = ui
         .input(|i| i.pointer.press_origin())
         .is_some_and(|p| handle_rect.contains(p));
@@ -62,6 +63,7 @@ pub(crate) fn show_target_combo(
                 crate::theme::text_label(),
                 false,
             );
+            crate::widgets::hint::hover(ui.ctx(), &target_resp, t!("hint.pr.target_combo"));
             let popup_id = ui.id().with("auto_target_popup");
             let is_open = ui
                 .data_mut(|d| d.get_persisted::<bool>(popup_id))
@@ -114,10 +116,15 @@ pub(crate) fn show_target_combo(
                                 _ => 0,
                             };
                             let old_cc = cc_input;
-                            ui.add(
+                            let cc_resp = ui.add(
                                 crate::widgets::numeric_input::decimal_drag_value(&mut cc_input)
                                     .range(0..=127)
                                     .speed(1),
+                            );
+                            crate::widgets::hint::hover(
+                                ui.ctx(),
+                                &cc_resp,
+                                t!("hint.pr.custom_cc"),
                             );
                             if cc_input != old_cc {
                                 panel.selected_target = AutomationTarget::CC {
@@ -194,6 +201,7 @@ pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_coun
         crate::theme::text_label(),
         *show_panels,
     );
+    crate::widgets::hint::hover(ui.ctx(), &toggle_resp, t!("hint.pr.auto_toggle"));
     if toggle_resp.clicked() {
         *show_panels = !*show_panels;
         if *show_panels && *panel_count == 0 {
@@ -208,6 +216,7 @@ pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_coun
             crate::theme::text_label(),
             false,
         );
+        crate::widgets::hint::hover(ui.ctx(), &plus_resp, t!("hint.pr.auto_add"));
         if plus_resp.clicked() {
             *panel_count += 1;
         }
@@ -218,6 +227,7 @@ pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_coun
             crate::theme::text_label(),
             false,
         );
+        crate::widgets::hint::hover(ui.ctx(), &minus_resp, t!("hint.pr.auto_remove"));
         if minus_resp.clicked() && *panel_count > 0 {
             *panel_count -= 1;
         }

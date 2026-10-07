@@ -1,4 +1,5 @@
 use eframe::egui;
+use rust_i18n::t;
 
 #[allow(clippy::single_component_path_imports)]
 use yinhe_types;
@@ -83,6 +84,9 @@ pub(crate) fn show_scrollbars(
                 )
             })
             .inner;
+        if crate::view_interaction::pointer_hits(ui, tick_sb_rect) {
+            crate::widgets::hint::set(ui.ctx(), t!("hint.pr.vscroll"));
+        }
         if tick_sb_drag != 0.0 {
             let factor = 1.0 - tick_sb_drag * 0.005;
             let anchor_y = tick_sb_rect.center().y - content_rect.min.y;
@@ -115,6 +119,9 @@ pub(crate) fn show_scrollbars(
                 )
             })
             .inner;
+        if crate::view_interaction::pointer_hits(ui, key_sb_rect) {
+            crate::widgets::hint::set(ui.ctx(), t!("hint.pr.hscroll"));
+        }
         if key_sb_drag != 0.0 {
             let factor = 1.0 - key_sb_drag * 0.005;
             let anchor_x = key_sb_rect.center().x - content_rect.min.x;
@@ -161,6 +168,9 @@ pub(crate) fn show_scrollbars(
                 )
             })
             .inner;
+        if crate::view_interaction::pointer_hits(ui, sb_rect) {
+            crate::widgets::hint::set(ui.ctx(), t!("hint.pr.hscroll"));
+        }
         if sb_drag_dy != 0.0 {
             let factor = 1.0 - sb_drag_dy * 0.005;
             let anchor_x = sb_rect.center().x - content_rect.min.x;
@@ -192,6 +202,9 @@ pub(crate) fn show_scrollbars(
                 )
             })
             .inner;
+        if crate::view_interaction::pointer_hits(ui, vsb_rect) {
+            crate::widgets::hint::set(ui.ctx(), t!("hint.pr.vscroll"));
+        }
         if vsb_drag_dx != 0.0 {
             let factor = 1.0 - vsb_drag_dx * 0.005;
             let anchor_y = vsb_rect.center().y - content_rect.min.y;

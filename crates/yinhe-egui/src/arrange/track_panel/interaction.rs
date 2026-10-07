@@ -37,6 +37,9 @@ pub fn handle_interactions(
     max_scroll: f32,
 ) {
     let dragging = drag.is_some();
+    if dragging {
+        crate::widgets::hint::set(ui.ctx(), t!("hint.arrange.drag_reorder"));
+    }
 
     // 行命中 → 音轨（AM 子行归到所属音轨；双击/单击子行等效于主行）。
     let hit = |pos: egui::Pos2| -> Option<usize> {

@@ -219,6 +219,7 @@ pub fn show_timecode_display(
         cell(0, 0),
         text_edit(bpm_id, &mut bufs.bpm, COL_WIDTHS[0] - 8.0, ROW_H),
     );
+    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.timecode.bpm"));
     select_all_on_focus(ui, &resp, bpm_id, &bufs.bpm);
     if resp.lost_focus()
         && let Ok(v) = bufs.bpm.trim().parse::<f64>()
@@ -241,6 +242,7 @@ pub fn show_timecode_display(
         sig_rect,
         text_edit(sig_id, &mut bufs.time_sig, sig_w - 4.0, ROW_H),
     );
+    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.timecode.timesig"));
     select_all_on_focus(ui, &resp, sig_id, &bufs.time_sig);
     if resp.lost_focus()
         && let Some((numerator, denominator_power)) = time_format::parse_time_sig(&bufs.time_sig)
@@ -255,6 +257,7 @@ pub fn show_timecode_display(
         ppq_rect,
         text_edit(ppq_id, &mut bufs.ppq, ppq_rect.width() - 4.0, ROW_H),
     );
+    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.timecode.ppq"));
     select_all_on_focus(ui, &resp, ppq_id, &bufs.ppq);
     if resp.lost_focus()
         && let Ok(v) = bufs.ppq.trim().parse::<u32>()
@@ -272,6 +275,7 @@ pub fn show_timecode_display(
         cell(1, 0),
         text_edit(pos_id, &mut bufs.pos, COL_WIDTHS[1] - 8.0, ROW_H),
     );
+    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.timecode.position"));
     select_all_on_focus(ui, &resp, pos_id, &bufs.pos);
     if resp.lost_focus() {
         let normalized = bufs.pos.trim().replace('。', ".");
@@ -299,6 +303,7 @@ pub fn show_timecode_display(
         cell(1, 1),
         text_edit(time_id, &mut bufs.time, COL_WIDTHS[1] - 8.0, ROW_H),
     );
+    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.timecode.seconds"));
     select_all_on_focus(ui, &resp, time_id, &bufs.time);
     if resp.lost_focus()
         && let Some(secs) = time_format::parse_time(&bufs.time)
@@ -336,7 +341,7 @@ pub fn show_timecode_display(
                     if let Some(q) = pending_q {
                         events.push(TimecodeEvent::Quantize(q));
                     }
-                    crate::widgets::hint::hover(ui.ctx(), &resp, label);
+                    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.timecode.quantize"));
                 },
             );
         });
@@ -357,6 +362,7 @@ pub fn show_timecode_display(
                         crate::theme::accent_active(),
                         false,
                     );
+                    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.timecode.keysig"));
                     egui::Popup::from_toggle_button_response(&resp)
                         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                         .show(|ui| {

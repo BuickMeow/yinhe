@@ -145,6 +145,7 @@ pub(super) fn frame(
         && music_rect.contains(pos)
         && let Some((track, clip)) = hit_test(view, row_layout, data, pos, rect)
     {
+        crate::widgets::hint::set(ui.ctx(), rust_i18n::t!("hint.arrange.audio_clip"));
         let id = egui::Id::new(("arr_audio_ctx", track, clip.id));
         let resp = ui.interact(rect, id, egui::Sense::click());
         let selected_ids = selected_ids_for(edit, track, clip.id);

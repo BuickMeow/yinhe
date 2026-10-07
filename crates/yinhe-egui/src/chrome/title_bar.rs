@@ -349,6 +349,53 @@ pub(crate) fn show(
                 }
             }
 
+            // ── 悬停讲解行（手动指针追踪；高优先级覆盖面板提示）──
+            if let Some(pos) = pointer_pos {
+                if let Some(d) = drag.as_ref() {
+                    crate::widgets::hint::set(
+                        ui.ctx(),
+                        if d.detached {
+                            t!("hint.title_bar.detach")
+                        } else {
+                            t!("hint.title_bar.reorder")
+                        },
+                    );
+                } else if m.bar_rect.contains(pos) {
+                    // 标签溢出时可滚轮横向滚动
+                    if m.max_scroll_offset(n_docs) > 0.0 {
+                        crate::widgets::hint::set(ui.ctx(), t!("hint.title_bar.scroll"));
+                    }
+                    if close_rects.iter().any(|r| r.contains(pos)) {
+                        crate::widgets::hint::set(ui.ctx(), t!("hint.title_bar.close"));
+                    } else if tab_rects.iter().any(|r| r.contains(pos)) {
+                        crate::widgets::hint::set(ui.ctx(), t!("hint.title_bar.tab"));
+                    } else if in_blank_area(pos) {
+                        let last: f64 = ui.data_mut(|d| d.get_persisted(dbl_id)).unwrap_or(0.0);
+                        let now = ui.input(|i| i.time);
+                        let pending = last > 0.0 && now - last < DOUBLE_CLICK_MS / 1000.0;
+                        crate::widgets::hint::set(
+                            ui.ctx(),
+                            if pending {
+                                t!("hint.title_bar.double_click")
+                            } else {
+                                t!("hint.title_bar.drag_window")
+                            },
+                        );
+                    }
+                }
+            }
+            // 非 macOS 窗口按钮（关闭/最大化/最小化）
+            #[cfg(not(target_os = "macos"))]
+            if let Some(pos) = pointer_pos {
+                if win_btn_rects.0.contains(pos) {
+                    crate::widgets::hint::set(ui.ctx(), t!("hint.title_bar.win_close"));
+                } else if win_btn_rects.1.contains(pos) {
+                    crate::widgets::hint::set(ui.ctx(), t!("hint.title_bar.win_max"));
+                } else if win_btn_rects.2.contains(pos) {
+                    crate::widgets::hint::set(ui.ctx(), t!("hint.title_bar.win_min"));
+                }
+            }
+
             // Persist drag/press state
             ui.data_mut(|d| {
                 if let Some(dg) = drag {

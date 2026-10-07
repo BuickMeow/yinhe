@@ -4,6 +4,7 @@
 //! 分割线。拖动选项卡可实现并入其它栏 / 在栏间分裂新栏。
 
 use eframe::egui;
+use rust_i18n::t;
 
 use yinhe_editor_core::right_panel_layout::{PanelColumn, PanelKind, RightPanelLayout};
 
@@ -153,6 +154,7 @@ pub(crate) fn show(
             egui::vec2(content_rect.width(), SPLIT_H),
         );
         let resp = crate::widgets::split_handle::horizontal(ui, ("rpanel_split", i), handle_rect);
+        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.panel.column_split"));
         if resp.dragged() {
             let dy = resp.drag_delta().y;
             // 把高度从下一栏挪给上一栏。
@@ -246,6 +248,11 @@ fn paint_header(
 ) {
     // 头背景。
     ui.painter().rect_filled(g.header, 0.0, theme::control_bg());
+
+    // 面板区提示：悬停选项卡栏（控件 hover 会以高优先级覆盖）。
+    if ui.rect_contains_pointer(g.header) {
+        crate::widgets::hint::set_region(ui.ctx(), t!("hint.panel.tab_bar"));
+    }
 
     let font = egui::FontId::proportional(crate::scaling::scaled_font(ui.ctx(), theme::SMALL_FONT));
     let mut x = g.header.min.x + PAD_X;

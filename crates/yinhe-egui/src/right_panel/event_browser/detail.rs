@@ -351,6 +351,7 @@ fn event_table_section<T>(
     tick_of: impl Fn(&T) -> u32,
     mut row_cb: impl FnMut(usize, &mut TableRow, egui::Id, &mut EventBrowserState, &T, &[u32], usize),
 ) -> (usize, usize) {
+    crate::right_panel::region_hint(ui, t!("hint.panel.event_table"));
     let edit_salt = format!("{}_edit", table_id);
     let (page, page_start, page_items) = paginate(state, events);
     let total = events.len();
@@ -1163,6 +1164,7 @@ fn summarize_targets(lanes: &[AutomationLane]) -> TargetSummary {
 }
 
 pub(super) fn show_overview(ui: &mut egui::Ui, model: &yinhe_core::YinModel) {
+    crate::right_panel::region_hint(ui, t!("hint.panel.event_overview"));
     let name = if model.meta.name.is_empty() {
         t!("event_browser.meta.untitled").to_string()
     } else {
@@ -1258,6 +1260,7 @@ pub(super) fn show_track_detail(
     track: &yinhe_core::TrackData,
     model: &yinhe_core::YinModel,
 ) {
+    crate::right_panel::region_hint(ui, t!("hint.panel.event_track_detail"));
     let header = if track.name.is_empty() {
         t!("event_browser.track_unnamed", n = idx).to_string()
     } else {

@@ -418,6 +418,7 @@ fn keyboard_zoom(
     if !crate::view_interaction::pointer_hits(ui, kb_rect) {
         return;
     }
+    crate::widgets::hint::set(ui.ctx(), rust_i18n::t!("hint.pr.keyboard_zoom"));
     let pos = ui.input(|i| i.pointer.hover_pos().unwrap_or_default());
     let anchor = pos.x - content_rect.min.x;
     let mut changed = false;

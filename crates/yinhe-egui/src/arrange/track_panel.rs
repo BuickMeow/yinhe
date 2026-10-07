@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use eframe::egui;
 use egui_material_icons::icons::{ICON_ADD, ICON_KEYBOARD_ARROW_DOWN, ICON_KEYBOARD_ARROW_RIGHT};
+use rust_i18n::t;
 
 use yinhe_core::TrackInfo;
 use yinhe_types::{ArRow, ArRowLayout, AutomationTarget};
@@ -117,6 +118,7 @@ pub(crate) fn show(
     // 「兄弟轨道」（该音轨及其全部自动化轨），它们的 chevron/加号一并显示。
     // 成熟实现：走 pointer_hits + pointer_over_popup，感知 Foreground popup 遮挡
     let hover_track = hover::hover_track(ui, panel_rect, row_layout, *scroll_y, lh);
+    let pointer_pos = ui.input(|i| i.pointer.hover_pos());
 
     for row in first_row..last_row {
         let y = panel_rect.min.y + row as f32 * lh - *scroll_y;
@@ -131,6 +133,10 @@ pub(crate) fn show(
         }
         if y > panel_rect.max.y || y + lh < panel_rect.min.y {
             continue;
+        }
+
+        if matches!(row_hit, ArRow::Track(_)) && pointer_pos.is_some_and(|p| row_rect.contains(p)) {
+            crate::widgets::hint::set(ui.ctx(), t!("hint.arrange.track_row"));
         }
 
         // ── AM 行：复用普通轨的行样式（两条文本：第一行 = 自动化名，第二行 = 所属音轨）。
@@ -220,6 +226,8 @@ pub(crate) fn show(
                     crate::theme::solo_active(),
                     egui::Id::new(("am_btn_s", track, sub)),
                 );
+                crate::widgets::hint::hover(ui.ctx(), &m_resp, t!("hint.arrange.am_mute"));
+                crate::widgets::hint::hover(ui.ctx(), &s_resp, t!("hint.arrange.am_solo"));
                 if m_resp.clicked() || s_resp.clicked() {
                     let mut next = st;
                     if m_resp.clicked() {
@@ -243,14 +251,19 @@ pub(crate) fn show(
                 .is_some_and(|t| sub + 1 == t.automation_lanes.len());
             if is_last_lane && hover_track == Some(track) {
                 let plus_color = hover::icon_contrast_color(color);
+                let plus_center = egui::pos2(
+                    badge_rect.center().x,
+                    badge_rect.max.y - BADGE_ICON_BOTTOM_INSET,
+                );
+                let plus_rect = egui::Rect::from_center_size(plus_center, egui::vec2(12.0, 16.0));
+                if pointer_pos.is_some_and(|p| plus_rect.contains(p)) {
+                    crate::widgets::hint::set(ui.ctx(), t!("hint.arrange.add_automation"));
+                }
                 // 加号放在色带列底部（与主行 chevron 同位置：底边距行底 1px）。
                 // 点击加号：直接打开「添加自动化」窗口（设备维度，不再弹菜单）。
                 if badge::badge_icon_button(
                     ui,
-                    egui::pos2(
-                        badge_rect.center().x,
-                        badge_rect.max.y - BADGE_ICON_BOTTOM_INSET,
-                    ),
+                    plus_center,
                     ICON_ADD.codepoint,
                     ICON_ADD.font_family(),
                     plus_color,
@@ -292,13 +305,18 @@ pub(crate) fn show(
             if !expanded && !has_any_lane {
                 // 无自动化未展开：色带同一图标位给无边框「+」，点击直接打开
                 // 「添加自动化」窗口（设备维度）；仅悬浮显示。
+                let plus_center = egui::pos2(
+                    badge_rect.center().x,
+                    badge_rect.max.y - BADGE_ICON_BOTTOM_INSET,
+                );
+                let plus_rect = egui::Rect::from_center_size(plus_center, egui::vec2(12.0, 16.0));
+                if family_hovered && pointer_pos.is_some_and(|p| plus_rect.contains(p)) {
+                    crate::widgets::hint::set(ui.ctx(), t!("hint.arrange.add_automation"));
+                }
                 if family_hovered
                     && badge::badge_icon_button(
                         ui,
-                        egui::pos2(
-                            badge_rect.center().x,
-                            badge_rect.max.y - BADGE_ICON_BOTTOM_INSET,
-                        ),
+                        plus_center,
                         ICON_ADD.codepoint,
                         ICON_ADD.font_family(),
                         icon_color,
@@ -326,6 +344,7 @@ pub(crate) fn show(
                     egui::Id::new(("am_chevron", idx)),
                     egui::Sense::click(),
                 );
+                crate::widgets::hint::hover(ui.ctx(), &chev_resp, t!("hint.arrange.am_expand"));
                 if family_hovered {
                     chevron_rects.push(icon_rect);
                     painter.text(
@@ -426,6 +445,9 @@ pub(crate) fn show(
                     crate::theme::solo_active(),
                     egui::Id::new(("track_btn_s", idx)),
                 );
+
+                crate::widgets::hint::hover(ui.ctx(), &m_resp, t!("hint.arrange.track_mute"));
+                crate::widgets::hint::hover(ui.ctx(), &s_resp, t!("hint.arrange.track_solo"));
 
                 if m_resp.clicked()
                     && let Some(ov) = track_overrides.get_mut(idx)

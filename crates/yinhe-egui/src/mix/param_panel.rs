@@ -189,7 +189,13 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
 
                             ui.horizontal(|ui| {
                                 ui.label(t!("mix.search"));
-                                if ui.text_edit_singleline(&mut panel.search).changed() {
+                                let search_resp = ui.text_edit_singleline(&mut panel.search);
+                                crate::widgets::hint::hover(
+                                    ui.ctx(),
+                                    &search_resp,
+                                    t!("hint.mix.param_search"),
+                                );
+                                if search_resp.changed() {
                                     panel.filter_dirty = true;
                                 }
                                 let count =
@@ -311,6 +317,7 @@ fn param_row(
                 )
             })
             .inner;
+        crate::widgets::hint::hover(ui.ctx(), &slider, t!("hint.mix.param_slider"));
         if slider.changed() {
             editing.insert(p.id, value);
             // ParamQueue 统一归一化语义（与 AM 曲线一致）；按参数范围换算。

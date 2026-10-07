@@ -91,6 +91,7 @@ pub fn popup_menu_row(
             ui.id().with("pin")
         };
         let resp = ui.interact(pin_rect, pin_id, egui::Sense::click());
+        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.menu.pin"));
         let pin_color = if is_pinned {
             crate::theme::accent_active()
         } else if resp.is_pointer_button_down_on() {

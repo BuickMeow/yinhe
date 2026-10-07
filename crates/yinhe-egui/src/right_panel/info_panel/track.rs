@@ -30,6 +30,7 @@ fn field_value(ui: &mut egui::Ui, label: &str, value: impl Into<String>) {
 
 /// 显示音轨属性（「音轨」选项卡）。返回 `true` 表示端口/通道改变。
 pub(crate) fn show_track_info(ui: &mut egui::Ui, doc: &mut Document) -> bool {
+    crate::right_panel::region_hint(ui, t!("hint.panel.info_track"));
     let num_tracks = doc.data.model.tracks.len();
     if num_tracks == 0 {
         crate::widgets::hint::empty_hint(ui, t!("track.no_tracks").as_ref());
@@ -58,6 +59,7 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
 
     // ── Conductor 轨 ──
     if Some(track_idx as u16) == doc.edit.track_cache.conductor_idx {
+        crate::right_panel::region_hint(ui, t!("hint.panel.info_conductor"));
         crate::widgets::rows::section_header(ui, t!("track.conductor").as_ref());
         if !doc.data.model.meta.name.is_empty() {
             field_value(
@@ -93,6 +95,7 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
             ("track_name", track_idx),
             None,
         );
+        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.info.track_name"));
         if resp.changed() {
             name_change = Some(name);
         }
@@ -134,16 +137,21 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
         let ch_options: Vec<(usize, String)> =
             (0..16).map(|c| (c, format!("{:02}", c + 1))).collect();
         let mut ch_sel = ti.channel as usize;
+        let ch_id = ui.id().with("track_channel");
         if crate::widgets::combo::combo_select(ui, "track_channel", &mut ch_sel, 60.0, &ch_options)
         {
             new_ch = ch_sel as u8;
             port_changed = true;
+        }
+        if let Some(resp) = ui.ctx().read_response(ch_id) {
+            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.info.channel"));
         }
         ui.add_space(4.0);
         let port_options: Vec<(usize, String)> = (0..16)
             .map(|p| (p, format!("Port {}", (b'A' + p as u8) as char)))
             .collect();
         let mut port_sel = ti.port as usize;
+        let port_id = ui.id().with("track_port");
         if crate::widgets::combo::combo_select(
             ui,
             "track_port",
@@ -153,6 +161,9 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
         ) {
             new_port = port_sel as u8;
             port_changed = true;
+        }
+        if let Some(resp) = ui.ctx().read_response(port_id) {
+            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.info.port"));
         }
     });
     if port_changed {
@@ -204,6 +215,7 @@ fn show_color_row(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) {
             ),
             stored_color != yinhe_core::DEFAULT_TRACK_COLOR,
         );
+        crate::widgets::hint::hover(ui.ctx(), &reset_btn, t!("hint.info.reset_color"));
         ui.add_space(crate::theme::GAP_SM);
         let mut srgba = crate::theme::rgba_to_color32((cur[0], cur[1], cur[2], cur[3]));
         // 色块即取色器按钮：点击一次直接展开调色板。
@@ -215,6 +227,7 @@ fn show_color_row(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) {
                 crate::scaling::scaled_font(ui.ctx(), crate::theme::ROW_H_COMPACT),
             ),
         );
+        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.info.color"));
         let changed = resp.changed();
 
         let editing = changed;

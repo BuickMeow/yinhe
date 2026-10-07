@@ -106,6 +106,7 @@ fn compute(doc: &Document) -> Option<SelData> {
 
 /// 「选框属性」：只读的选框位置 / 数量 / 跨度。
 pub(super) fn show_info(ui: &mut egui::Ui, doc: &Document) {
+    crate::right_panel::region_hint(ui, t!("hint.panel.selection"));
     let Some(d) = compute(doc) else {
         crate::widgets::hint::empty_hint(ui, t!("panel.select_hint").as_ref());
         return;
@@ -232,6 +233,7 @@ pub(super) fn show_info(ui: &mut egui::Ui, doc: &Document) {
 
 /// 「批处理」：对选框批量改值（力度/键位/…）、变速、翻转。
 pub(super) fn show_batch(ui: &mut egui::Ui, doc: &mut Document) {
+    crate::right_panel::region_hint(ui, t!("hint.panel.info_batch"));
     let Some(d) = compute(doc) else {
         crate::widgets::hint::empty_hint(ui, t!("panel.select_hint").as_ref());
         return;
@@ -362,32 +364,32 @@ pub(super) fn show_batch(ui: &mut egui::Ui, doc: &mut Document) {
         crate::widgets::rows::divider(ui);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             // right_to_left：先放右侧的「垂直翻转」，再放左侧的「水平翻转」。
-            if crate::widgets::flat::flat_button_filled_auto(
+            let flip_v = crate::widgets::flat::flat_button_filled_auto(
                 ui,
                 egui::RichText::new(t!("sel.flip_vertical")).size(crate::scaling::scaled_font(
                     ui.ctx(),
                     crate::theme::BODY_FONT,
                 )),
                 true,
-            )
-            .clicked()
-            {
+            );
+            crate::widgets::hint::hover(ui.ctx(), &flip_v, t!("hint.info.flip_vertical"));
+            if flip_v.clicked() {
                 let before = doc.capture_snapshot();
                 if let Some(action) = doc.flip_selected_notes(FlipAxis::Vertical) {
                     doc.push_undo(action, t!("undo.flip_vertical").as_ref(), before);
                 }
             }
             ui.add_space(crate::theme::GAP_SM);
-            if crate::widgets::flat::flat_button_filled_auto(
+            let flip_h = crate::widgets::flat::flat_button_filled_auto(
                 ui,
                 egui::RichText::new(t!("sel.flip_horizontal")).size(crate::scaling::scaled_font(
                     ui.ctx(),
                     crate::theme::BODY_FONT,
                 )),
                 true,
-            )
-            .clicked()
-            {
+            );
+            crate::widgets::hint::hover(ui.ctx(), &flip_h, t!("hint.info.flip_horizontal"));
+            if flip_h.clicked() {
                 let before = doc.capture_snapshot();
                 if let Some(action) = doc.flip_selected_notes(FlipAxis::Horizontal) {
                     doc.push_undo(action, t!("undo.flip_horizontal").as_ref(), before);
@@ -440,6 +442,13 @@ fn field_row(
             key,
             if uniform.is_none() { Some("—") } else { None },
         );
+        // AM 锚点字段与音符字段的输入含义不同，讲解行文案区分。
+        let hover_hint = if key.starts_with("am_") {
+            t!("hint.info.batch_anchor")
+        } else {
+            t!("hint.info.batch_field")
+        };
+        crate::widgets::hint::hover(ui.ctx(), &resp, hover_hint);
         // 实时提示（如 Key 框的音程名）：聚焦且有输入时显示
         if let Some(h) = hint
             && resp.has_focus()
@@ -580,6 +589,7 @@ fn tempo_field(
             text = display;
         }
         let resp = crate::widgets::text_input::control_text_input(ui, &mut text, 90.0, key, None);
+        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.info.tempo_field"));
         ui.ctx().data_mut(|d| d.insert_temp(buf_id, text.clone()));
         let submit = resp.lost_focus()
             || (resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));

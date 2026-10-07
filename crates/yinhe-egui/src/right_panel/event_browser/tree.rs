@@ -48,7 +48,14 @@ pub(super) fn render_tree(
     let cond_chord_count = model.conductor.chord.len();
     let cond_expanded = state.expanded_keys.contains(&ArchiveKey::Conductor);
     let child_count = 6; // 始终 6 个子节点
-    if render_dir_row(ui, "Conductor", 0, cond_expanded, child_count) {
+    if render_dir_row(
+        ui,
+        "Conductor",
+        0,
+        cond_expanded,
+        child_count,
+        t!("hint.eb.conductor").as_ref(),
+    ) {
         toggle_key(state, ArchiveKey::Conductor);
     }
     if cond_expanded {
@@ -115,7 +122,14 @@ pub(super) fn render_tree(
             n = port_track_count
         )
         .to_string();
-        if render_dir_row(ui, &port_label, 0, port_expanded, channels.len()) {
+        if render_dir_row(
+            ui,
+            &port_label,
+            0,
+            port_expanded,
+            channels.len(),
+            t!("hint.eb.port").as_ref(),
+        ) {
             toggle_key(state, port_key);
         }
         if !port_expanded {
@@ -131,7 +145,14 @@ pub(super) fn render_tree(
                 n = track_indices.len()
             )
             .to_string();
-            if render_dir_row(ui, &ch_label, 1, ch_expanded, track_indices.len()) {
+            if render_dir_row(
+                ui,
+                &ch_label,
+                1,
+                ch_expanded,
+                track_indices.len(),
+                t!("hint.eb.channel").as_ref(),
+            ) {
                 toggle_key(state, ch_key);
             }
             if !ch_expanded {
@@ -169,7 +190,7 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
     let mut toggled = false;
     let mut selected = false;
 
-    crate::widgets::rows::list_row(ui, is_selected, |ui| {
+    let row_resp = crate::widgets::rows::list_row(ui, is_selected, |ui| {
         ui.add_space(crate::theme::INDENT_STEP * 2.0);
 
         let chev = if expanded {
@@ -250,6 +271,7 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
             .selectable(false),
         );
     });
+    crate::widgets::hint::hover(ui.ctx(), &row_resp, t!("hint.eb.track"));
 
     if toggled {
         toggle_key(state, track_key);
@@ -329,10 +351,11 @@ fn render_dir_row(
     depth: usize,
     expanded: bool,
     child_count: usize,
+    hover_hint: &str,
 ) -> bool {
     let mut toggled = false;
     // 目录行无选中态，仅 hover 时给底色反馈
-    crate::widgets::rows::list_row(ui, false, |ui| {
+    let row_resp = crate::widgets::rows::list_row(ui, false, |ui| {
         ui.add_space(depth as f32 * crate::theme::INDENT_STEP);
         let chev = if expanded {
             ICON_EXPAND_MORE
@@ -402,6 +425,7 @@ fn render_dir_row(
             .selectable(false),
         );
     });
+    crate::widgets::hint::hover(ui.ctx(), &row_resp, hover_hint);
     toggled
 }
 
@@ -414,6 +438,11 @@ fn render_leaf_item(
     state: &mut EventBrowserState,
 ) {
     let is_selected = state.selected_item.as_ref() == Some(&item);
+    let hover_hint = match &item {
+        SelectedItem::ProjectJson => t!("hint.eb.project_json"),
+        SelectedItem::MappingJson => t!("hint.eb.mapping_json"),
+        _ => t!("hint.eb.leaf"),
+    };
     let resp = crate::widgets::rows::list_row(ui, is_selected, |ui| {
         ui.add_space(depth as f32 * crate::theme::INDENT_STEP + crate::theme::INDENT_STEP);
         ui.add(
@@ -447,6 +476,7 @@ fn render_leaf_item(
             .selectable(false),
         );
     });
+    crate::widgets::hint::hover(ui.ctx(), &resp, hover_hint);
     if resp.clicked() {
         state.selected_item = Some(item);
         state.selected_track = None;

@@ -121,10 +121,14 @@ fn insert_view<'a>(
 /// 顶部工具条：扫描插件 + 状态信息。
 pub(crate) fn show_toolbar(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<MixAction>) {
     ui.horizontal(|ui| {
-        if crate::widgets::flat::flat_button(ui, t!("mix.scan_plugins")).clicked() {
+        let scan_resp = crate::widgets::flat::flat_button(ui, t!("mix.scan_plugins"));
+        crate::widgets::hint::hover(ui.ctx(), &scan_resp, t!("hint.mix.scan_plugins"));
+        if scan_resp.clicked() {
             actions.push(MixAction::RescanPlugins);
         }
-        if crate::widgets::flat::flat_button(ui, t!("mix.add_bus")).clicked() {
+        let add_bus_resp = crate::widgets::flat::flat_button(ui, t!("mix.add_bus"));
+        crate::widgets::hint::hover(ui.ctx(), &add_bus_resp, t!("hint.mix.add_bus"));
+        if add_bus_resp.clicked() {
             actions.push(MixAction::AddBus);
         }
         if app.mix.scan_in_progress {
@@ -263,20 +267,24 @@ fn instrument_slot(
         ui.ctx(),
         &resp,
         if plugin_name.is_some() {
-            t!("mix.toggle_gui").to_string()
+            t!("hint.mix.toggle_gui")
         } else {
-            t!("soundfont.title").to_string()
+            t!("hint.mix.instrument_xsynth")
         },
     );
     ui.horizontal_wrapped(|ui| {
-        if ui.small_button(t!("mix.params")).clicked() {
+        let params_resp = ui.small_button(t!("mix.params"));
+        crate::widgets::hint::hover(ui.ctx(), &params_resp, t!("hint.mix.instrument_params"));
+        if params_resp.clicked() {
             if plugin_name.is_some() {
                 actions.push(MixAction::OpenInstrumentParams { channel });
             } else {
                 actions.push(MixAction::OpenXsynthConfig { channel });
             }
         }
-        if ui.small_button(t!("mix.change_instrument")).clicked() {
+        let change_resp = ui.small_button(t!("mix.change_instrument"));
+        crate::widgets::hint::hover(ui.ctx(), &change_resp, t!("hint.mix.change_instrument"));
+        if change_resp.clicked() {
             actions.push(MixAction::OpenInstrumentPicker { channel });
         }
     });
@@ -394,12 +402,14 @@ pub(crate) fn bus_strip(
                 // 删除总线（右上角小按钮；其 send 清理、更高索引前移）。
                 ui.horizontal(|ui| {
                     ui.add_space(CONTENT_W - BTN);
-                    if toggle_button(
+                    let del_resp = toggle_button(
                         ui,
                         egui_material_icons::icons::ICON_DELETE.codepoint,
                         false,
                         crate::theme::danger_text(),
-                    ) {
+                    );
+                    crate::widgets::hint::hover(ui.ctx(), &del_resp, t!("hint.mix.remove_bus"));
+                    if del_resp.clicked() {
                         actions.push(MixAction::RemoveBus { bus });
                     }
                 });
@@ -435,14 +445,15 @@ fn send_button(ui: &mut egui::Ui, send_count: usize) -> bool {
     } else {
         crate::theme::text_secondary()
     };
-    crate::widgets::flat::flat_button_fixed(
+    let resp = crate::widgets::flat::flat_button_fixed(
         ui,
         egui::RichText::new(label)
             .size(crate::theme::SMALL_FONT - 1.0)
             .color(color),
         egui::vec2(CONTENT_W, 16.0),
-    )
-    .clicked()
+    );
+    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.sends"));
+    resp.clicked()
 }
 
 /// 发送面板（某源通道对各总线的发送量 / 推子前推子后）。
@@ -515,6 +526,11 @@ pub(crate) fn send_popup(
                                         None,
                                         false,
                                     );
+                                    crate::widgets::hint::hover(
+                                        ui.ctx(),
+                                        &slider,
+                                        t!("hint.mix.send_amount"),
+                                    );
                                     if slider.changed() {
                                         actions.push(MixAction::SetSend {
                                             channel,
@@ -538,7 +554,7 @@ pub(crate) fn send_popup(
                                     crate::widgets::hint::hover(
                                         ui.ctx(),
                                         &pre_resp,
-                                        t!("mix.pre_fader_hint"),
+                                        t!("hint.mix.pre_fader"),
                                     );
                                     if pre_resp.changed() {
                                         actions.push(MixAction::SetSend {
@@ -705,7 +721,7 @@ fn insert_area(
             egui::FontId::new(crate::theme::ICON_FONT_SM, add.font_family()),
             crate::theme::text_muted(),
         );
-        crate::widgets::hint::hover(ui.ctx(), &resp, t!("mix.add_insert_hint"));
+        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.add_insert"));
         if resp.clicked() {
             actions.push(MixAction::OpenPicker { target });
         }
@@ -784,7 +800,7 @@ fn insert_row(
             bypassed: !is_bypassed,
         });
     }
-    crate::widgets::hint::hover(ui.ctx(), &dot_resp, t!("mix.bypass"));
+    crate::widgets::hint::hover(ui.ctx(), &dot_resp, t!("hint.mix.bypass"));
 
     // 名称：截断显示，hover 全名（右侧给参数按钮留位）。
     let name_rect = egui::Rect::from_min_max(
@@ -829,7 +845,7 @@ fn insert_row(
         egui::FontId::new(11.0, tune.font_family()),
         icon_color,
     );
-    crate::widgets::hint::hover(ui.ctx(), &params_resp, t!("mix.params"));
+    crate::widgets::hint::hover(ui.ctx(), &params_resp, t!("hint.mix.insert_params"));
     if params_resp.clicked() {
         actions.push(MixAction::OpenInsertParams { target, slot });
     }
@@ -838,7 +854,7 @@ fn insert_row(
     if resp.clicked() {
         actions.push(MixAction::ToggleGui { target, slot });
     }
-    crate::widgets::hint::hover(ui.ctx(), &resp, t!("mix.toggle_gui"));
+    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.toggle_gui"));
     resp.context_menu(|ui| {
         ui.set_min_width(96.0);
         ui.set_max_width(96.0);
@@ -898,13 +914,17 @@ fn ms_pan_block(ui: &mut egui::Ui, params: &StripParams, mut on_change: impl FnM
     ui.horizontal(|ui| {
         let total = BTN * 2.0 + 4.0;
         ui.add_space(((CONTENT_W - total) / 2.0).max(0.0));
-        if toggle_button(ui, "M", params.mute, crate::theme::mute_active()) {
+        let m_resp = toggle_button(ui, "M", params.mute, crate::theme::mute_active());
+        crate::widgets::hint::hover(ui.ctx(), &m_resp, t!("hint.mix.mute"));
+        if m_resp.clicked() {
             let mut p = *params;
             p.mute = !p.mute;
             on_change(p);
         }
         ui.add_space(4.0);
-        if toggle_button(ui, "S", params.solo, crate::theme::solo_active()) {
+        let s_resp = toggle_button(ui, "S", params.solo, crate::theme::solo_active());
+        crate::widgets::hint::hover(ui.ctx(), &s_resp, t!("hint.mix.solo"));
+        if s_resp.clicked() {
             let mut p = *params;
             p.solo = !p.solo;
             on_change(p);
@@ -923,7 +943,7 @@ fn toggle_button(
     label: &str,
     active: bool,
     active_color: egui::Color32,
-) -> bool {
+) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(BTN, BTN), egui::Sense::click());
     let bg = if active {
         active_color
@@ -946,7 +966,7 @@ fn toggle_button(
         egui::FontId::proportional(crate::theme::SMALL_FONT),
         fg,
     );
-    resp.clicked()
+    resp
 }
 
 /// 自绘声像条：中心刻度 + 拖动手柄，双击回中。
@@ -974,13 +994,6 @@ fn pan_bar(ui: &mut egui::Ui, pan: f32) -> Option<f32> {
     };
     painter.rect_filled(handle, 2.0, handle_color);
 
-    let pan_text = if pan.abs() < 0.01 {
-        "C".to_string()
-    } else if pan < 0.0 {
-        format!("L{:.0}", -pan * 100.0)
-    } else {
-        format!("R{:.0}", pan * 100.0)
-    };
     if resp.dragged() {
         if let Some(pos) = resp.interact_pointer_pos() {
             return Some(pan_value_at_x(pos.x, rect.center().x, rect.width() / 2.0));
@@ -988,7 +1001,7 @@ fn pan_bar(ui: &mut egui::Ui, pan: f32) -> Option<f32> {
     } else if resp.double_clicked() {
         return Some(0.0);
     }
-    crate::widgets::hint::hover(ui.ctx(), &resp, format!("Pan {pan_text}"));
+    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.pan"));
     None
 }
 
@@ -1087,6 +1100,7 @@ fn fader(ui: &mut egui::Ui, gain: f32, height: f32, mut on_gain: impl FnMut(f32)
     } else if resp.double_clicked() {
         on_gain(1.0);
     }
+    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.fader"));
 }
 
 /// 自绘电平表：L/R 双条 + 0dB 刻度。dB 映射 -60..+6；
@@ -1244,7 +1258,13 @@ fn picker_window(
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.label(t!("mix.search"));
-                                ui.text_edit_singleline(&mut app.mix.picker_filter);
+                                let search_resp =
+                                    ui.text_edit_singleline(&mut app.mix.picker_filter);
+                                crate::widgets::hint::hover(
+                                    ui.ctx(),
+                                    &search_resp,
+                                    t!("hint.mix.picker_search"),
+                                );
                             });
                             ui.separator();
                             let filter = app.mix.picker_filter.to_lowercase();
@@ -1260,11 +1280,13 @@ fn picker_window(
                                         && (filter.is_empty() || "xsynth".contains(&filter))
                                     {
                                         any = true;
-                                        if ui
-                                            .selectable_label(false, "XSynth")
-                                            .on_hover_text(t!("soundfont.title"))
-                                            .clicked()
-                                        {
+                                        let xsynth_resp = ui.selectable_label(false, "XSynth");
+                                        crate::widgets::hint::hover(
+                                            ui.ctx(),
+                                            &xsynth_resp,
+                                            t!("hint.mix.picker_xsynth"),
+                                        );
+                                        if xsynth_resp.clicked() {
                                             kind.pick_builtin(actions);
                                         }
                                     }
@@ -1282,10 +1304,14 @@ fn picker_window(
                                                     .on_hover_text(err);
                                                 continue;
                                             }
-                                            if plugin_row(ui, &p.name, p.format, true)
-                                                .on_hover_text(&p.id)
-                                                .clicked()
-                                            {
+                                            let row_resp = plugin_row(ui, &p.name, p.format, true)
+                                                .on_hover_text(&p.id);
+                                            crate::widgets::hint::hover(
+                                                ui.ctx(),
+                                                &row_resp,
+                                                t!("hint.mix.picker_plugin"),
+                                            );
+                                            if row_resp.clicked() {
                                                 kind.pick_plugin(p, actions);
                                             }
                                         }

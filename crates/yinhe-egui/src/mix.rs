@@ -18,6 +18,7 @@ pub(crate) mod rack;
 mod strip;
 
 use eframe::egui;
+use rust_i18n::t;
 use yinhe_audio::InsertTarget;
 use yinhe_audio::channel_layout::ChannelLayout;
 use yinhe_mixer::{MasterParams, StripParams};
@@ -458,6 +459,7 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
     let Some(idx) = app.workspace.active_doc else {
         return;
     };
+    crate::widgets::hint::set_region(ui.ctx(), t!("hint.panel.mix"));
 
     // 本帧的只读数据快照（Arc 克隆便宜；layout 与引擎同源，dense 映射一致）。
     let model = app.workspace.documents[idx].data.model.clone();

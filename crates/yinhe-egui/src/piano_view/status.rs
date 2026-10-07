@@ -77,36 +77,52 @@ pub(crate) fn update_status(
                     }
                     None => format!("{}", tick as u32),
                 };
-                Some(format!("{} {}", pos_str, key))
+                let info = format!("{} {}", pos_str, key);
+                Some(format!("{} · {}", t!("hint.panel.pr_content"), info))
             }
         } else {
             let kb_w = view.keyboard_width();
             let content_right_x = rect.max.x - crate::widgets::scrollbar::SCROLLBAR_W;
-            let kb_bottom = rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H;
-            let keyboard_rect = if view.is_vertical() {
+            let ruler_rect = if view.is_vertical() {
                 egui::Rect::from_min_max(
-                    egui::pos2(content_rect.min.x, kb_bottom - kb_w),
-                    egui::pos2(content_right_x, kb_bottom),
+                    egui::pos2(rect.min.x, content_rect.min.y),
+                    egui::pos2(rect.min.x + super::types::RULER_H, content_rect.max.y),
                 )
             } else {
                 egui::Rect::from_min_max(
-                    egui::pos2(content_rect.min.x, content_rect.min.y),
-                    egui::pos2(content_rect.min.x + kb_w, content_rect.max.y),
+                    egui::pos2(rect.min.x + kb_w, rect.min.y),
+                    egui::pos2(content_right_x, rect.min.y + super::types::RULER_H),
                 )
             };
-            if if view.is_vertical() {
-                keyboard_rect.contains(pos)
+            if ruler_rect.contains(pos) {
+                Some(t!("hint.panel.pr_ruler").to_string())
             } else {
-                content_rect.contains(pos)
-            } {
-                let key = if view.is_vertical() {
-                    view.cross_px_to_key(pos.x - content_rect.min.x)
+                let kb_bottom = rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H;
+                let keyboard_rect = if view.is_vertical() {
+                    egui::Rect::from_min_max(
+                        egui::pos2(content_rect.min.x, kb_bottom - kb_w),
+                        egui::pos2(content_right_x, kb_bottom),
+                    )
                 } else {
-                    view.y_to_key(pos.y - content_rect.min.y)
+                    egui::Rect::from_min_max(
+                        egui::pos2(content_rect.min.x, content_rect.min.y),
+                        egui::pos2(content_rect.min.x + kb_w, content_rect.max.y),
+                    )
                 };
-                Some(format!("{}", key))
-            } else {
-                None
+                if if view.is_vertical() {
+                    keyboard_rect.contains(pos)
+                } else {
+                    content_rect.contains(pos)
+                } {
+                    let key = if view.is_vertical() {
+                        view.cross_px_to_key(pos.x - content_rect.min.x)
+                    } else {
+                        view.y_to_key(pos.y - content_rect.min.y)
+                    };
+                    Some(format!("{} · {}", t!("hint.panel.pr_keyboard"), key))
+                } else {
+                    None
+                }
             }
         };
         match hint {

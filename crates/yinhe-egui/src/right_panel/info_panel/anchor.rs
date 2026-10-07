@@ -31,6 +31,7 @@ pub(super) fn show_anchor_info(
     target: &AutomationTarget,
     info_content: &mut Option<InfoContent>,
 ) {
+    crate::right_panel::region_hint(ui, t!("hint.panel.anchor"));
     // 值编辑器在显示空间工作：上限按 target 换算（Tempo 用理论边界）。
     let max_val = crate::piano_view::automation_panel::display_max_or_bound(target);
 
@@ -49,6 +50,7 @@ pub(super) fn show_anchor_info(
                 .range(0..=u32::MAX as i64)
                 .speed(1.0),
         );
+        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.anchor.tick"));
         if resp.gained_focus() {
             guard.gained(ui, doc);
         }
@@ -80,6 +82,7 @@ pub(super) fn show_anchor_info(
                 .range(0.0..=max_val as f64)
                 .speed(1.0),
         );
+        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.anchor.value"));
         if resp.gained_focus() {
             guard.gained(ui, doc);
         }
@@ -110,6 +113,7 @@ pub(super) fn show_anchor_info(
         let mut discrete = is_step;
         let resp =
             crate::widgets::checkbox::checkbox(ui, &mut discrete, t!("anchor.discrete").as_ref());
+        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.anchor.discrete"));
         if resp.changed() {
             let before = doc.capture_snapshot();
             let actions =
@@ -144,6 +148,7 @@ pub(super) fn show_anchor_info(
                     .speed(0.01)
                     .fixed_decimals(2),
             );
+            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.anchor.x1"));
             if resp.gained_focus() {
                 guard.gained(ui, doc);
             }
@@ -177,6 +182,7 @@ pub(super) fn show_anchor_info(
                     .speed(0.01)
                     .fixed_decimals(2),
             );
+            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.anchor.y1"));
             if resp.gained_focus() {
                 guard.gained(ui, doc);
             }
@@ -210,6 +216,7 @@ pub(super) fn show_anchor_info(
                     .speed(0.01)
                     .fixed_decimals(2),
             );
+            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.anchor.x2"));
             if resp.gained_focus() {
                 guard.gained(ui, doc);
             }
@@ -243,6 +250,7 @@ pub(super) fn show_anchor_info(
                     .speed(0.01)
                     .fixed_decimals(2),
             );
+            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.anchor.y2"));
             if resp.gained_focus() {
                 guard.gained(ui, doc);
             }
@@ -288,14 +296,14 @@ pub(super) fn show_anchor_info(
 
     crate::widgets::rows::divider(ui);
 
-    if crate::widgets::flat::flat_button(
+    let clear_resp = crate::widgets::flat::flat_button(
         ui,
         egui::RichText::new(t!("common.clear_selection").as_ref()).size(
             crate::scaling::scaled_font(ui.ctx(), crate::theme::BODY_FONT),
         ),
-    )
-    .clicked()
-    {
+    );
+    crate::widgets::hint::hover(ui.ctx(), &clear_resp, t!("hint.anchor.clear"));
+    if clear_resp.clicked() {
         *info_content = None;
     }
 }

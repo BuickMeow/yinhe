@@ -75,6 +75,7 @@ pub fn recent_files_section(
     );
     if row_resp.hovered() {
         open = true;
+        crate::widgets::hint::set(ui.ctx(), t!("hint.recent_files"));
     }
     if row_resp.clicked() {
         open = !open;

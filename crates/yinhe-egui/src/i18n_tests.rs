@@ -100,6 +100,28 @@ fn referenced_keys_exist() {
     );
 }
 
+/// 反向校验：`hint.*` key 必须都在源码里被引用，避免讲解文案变成孤立 key
+/// （`referenced_keys_exist` 只做正向校验，孤立 key 是它的盲区）。
+#[test]
+fn all_hint_keys_are_referenced() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("locales");
+    let hint_keys: BTreeSet<String> = keys_of(&dir.join("en-US.yml"))
+        .into_iter()
+        .filter(|k| k.starts_with("hint."))
+        .collect();
+    assert!(!hint_keys.is_empty(), "未解析出任何 hint.* key");
+
+    let src_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut referenced = BTreeSet::new();
+    collect_t_keys(&src_dir, &mut referenced);
+
+    let orphans: Vec<&String> = hint_keys.difference(&referenced).collect();
+    assert!(
+        orphans.is_empty(),
+        "存在源码未引用的孤立 hint.* key（应删除或接上）: {orphans:?}"
+    );
+}
+
 /// 递归扫描 rs 文件里的 `t!("key"` 字面量。
 fn collect_t_keys(dir: &PathBuf, out: &mut BTreeSet<String>) {
     let Ok(entries) = std::fs::read_dir(dir) else {

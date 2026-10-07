@@ -73,6 +73,17 @@ pub(super) fn build_table<F>(
             row_cb(i, &mut row, click_key);
         });
     });
+    // 列边界拖拽：TableBuilder 未直接暴露 resize Response，从其内部 id
+    // 读取本帧响应，指针命中列边界时补讲解行。
+    let state_id = ui.id().with(id_salt);
+    for i in 0..headers.len() {
+        if let Some(resp) = ui
+            .ctx()
+            .read_response(state_id.with("resize_column").with(i))
+        {
+            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.eb.column_resize"));
+        }
+    }
 }
 
 /// 取出 `build_table` 写入 memory 的行点击索引（若存在）。
@@ -140,6 +151,7 @@ pub(super) fn cell_position(
         let cell_rect = ui.max_rect();
         let id = ui.id().with("poscell").with(row_idx);
         let resp = ui.interact(cell_rect, id, egui::Sense::click());
+        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.eb.cell_position"));
         if resp.clicked() {
             ui.ctx()
                 .memory_mut(|m| m.data.insert_temp(click_key, row_idx));
@@ -194,6 +206,13 @@ pub(super) fn cell_row_header(
         let cell_rect = ui.max_rect();
         let id = ui.id().with("rowhdr").with(row_idx);
         let resp = ui.interact(cell_rect, id, egui::Sense::click());
+        // 选中行提示 Delete 删除，未选中提示多选/右键编辑。
+        let row_hint = if is_selected {
+            t!("hint.eb.delete_key")
+        } else {
+            t!("hint.eb.row_header")
+        };
+        crate::widgets::hint::hover(ui.ctx(), &resp, row_hint);
 
         // 左键：行选择（Ctrl/Shift 多选）
         if resp.clicked() {
@@ -400,6 +419,7 @@ pub(super) fn cell_editable(
         let cell_rect = ui.max_rect();
         let id = ui.id().with("cell").with(row_idx);
         let resp = ui.interact(cell_rect, id, egui::Sense::click());
+        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.eb.cell_editable"));
         if resp.clicked() {
             ui.ctx()
                 .memory_mut(|m| m.data.insert_temp(click_key, row_idx));
@@ -504,22 +524,21 @@ pub(super) fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -
     let mem_key = ui.id().with("eb_page_input");
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         let next_enabled = page + 1 < total_pages;
-        if ui
-            .add_enabled(
-                next_enabled,
-                egui::Label::new(
-                    ICON_NEXT
-                        .rich_text()
-                        .size(crate::scaling::scaled_font(
-                            ui.ctx(),
-                            crate::theme::ICON_FONT,
-                        ))
-                        .color(crate::theme::text_bright()),
-                )
-                .sense(egui::Sense::click()),
+        let next_resp = ui.add_enabled(
+            next_enabled,
+            egui::Label::new(
+                ICON_NEXT
+                    .rich_text()
+                    .size(crate::scaling::scaled_font(
+                        ui.ctx(),
+                        crate::theme::ICON_FONT,
+                    ))
+                    .color(crate::theme::text_bright()),
             )
-            .clicked()
-        {
+            .sense(egui::Sense::click()),
+        );
+        crate::widgets::hint::hover(ui.ctx(), &next_resp, t!("hint.eb.pager"));
+        if next_resp.clicked() {
             new_page = Some(page + 1);
         }
         ui.label(
@@ -545,6 +564,7 @@ pub(super) fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -
                 )))
                 .horizontal_align(egui::Align::Center),
         );
+        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.eb.pager"));
         let edited_buf = buf.clone();
         if resp.has_focus() {
             ui.memory_mut(|m| m.data.insert_temp(mem_key, buf));
@@ -560,22 +580,21 @@ pub(super) fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -
             ui.memory_mut(|m| m.data.remove::<String>(mem_key));
         }
         let prev_enabled = page > 0;
-        if ui
-            .add_enabled(
-                prev_enabled,
-                egui::Label::new(
-                    ICON_PREV
-                        .rich_text()
-                        .size(crate::scaling::scaled_font(
-                            ui.ctx(),
-                            crate::theme::ICON_FONT,
-                        ))
-                        .color(crate::theme::text_bright()),
-                )
-                .sense(egui::Sense::click()),
+        let prev_resp = ui.add_enabled(
+            prev_enabled,
+            egui::Label::new(
+                ICON_PREV
+                    .rich_text()
+                    .size(crate::scaling::scaled_font(
+                        ui.ctx(),
+                        crate::theme::ICON_FONT,
+                    ))
+                    .color(crate::theme::text_bright()),
             )
-            .clicked()
-        {
+            .sense(egui::Sense::click()),
+        );
+        crate::widgets::hint::hover(ui.ctx(), &prev_resp, t!("hint.eb.pager"));
+        if prev_resp.clicked() {
             new_page = Some(page - 1);
         }
     });

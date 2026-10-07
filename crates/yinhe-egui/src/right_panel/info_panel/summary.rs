@@ -8,6 +8,7 @@ use rust_i18n::t;
 
 /// 「属性概要」选项卡入口。
 pub(crate) fn show_summary_panel(ui: &mut egui::Ui, doc: &Document) {
+    crate::right_panel::region_hint(ui, t!("hint.panel.summary"));
     let num_tracks = doc.data.model.tracks.len();
     if num_tracks == 0 {
         crate::widgets::hint::empty_hint(ui, t!("track.no_tracks").as_ref());

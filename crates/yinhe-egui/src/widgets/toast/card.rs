@@ -233,6 +233,11 @@ pub(crate) fn draw_card(
                             crate::theme::text_muted(),
                             false,
                         );
+                        crate::widgets::hint::hover(
+                            ui.ctx(),
+                            &resp,
+                            rust_i18n::t!("hint.toast.dismiss"),
+                        );
                         if resp.clicked() {
                             outcome.dismiss = true;
                         }
@@ -254,6 +259,11 @@ pub(crate) fn draw_card(
                             egui::FontId::new(crate::theme::ICON_FONT_SM, ICON_STOP.font_family()),
                             stop_col,
                             false,
+                        );
+                        crate::widgets::hint::hover(
+                            ui.ctx(),
+                            &resp2,
+                            rust_i18n::t!("hint.toast.cancel"),
                         );
                         if !cancelling && resp2.clicked() {
                             c.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -282,6 +292,11 @@ pub(crate) fn draw_card(
                             crate::theme::text_muted(),
                             false,
                         );
+                        crate::widgets::hint::hover(
+                            ui.ctx(),
+                            &resp_pause,
+                            rust_i18n::t!("hint.toast.pause"),
+                        );
                         if resp_pause.clicked() {
                             p.store(!is_paused, std::sync::atomic::Ordering::Relaxed);
                         }
@@ -298,8 +313,8 @@ pub(crate) fn draw_card(
                                 egui::FontId::new(crate::theme::ICON_FONT_SM, icon.font_family()),
                                 crate::theme::text_muted(),
                                 false,
-                            )
-                            .on_hover_text(&a.label);
+                            );
+                            crate::widgets::hint::hover(ui.ctx(), &resp3, &a.label);
                             if resp3.clicked() {
                                 outcome.action = true;
                             }

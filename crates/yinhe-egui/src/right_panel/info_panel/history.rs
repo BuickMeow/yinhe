@@ -16,6 +16,7 @@ fn label_text(label: &str) -> String {
 
 /// 显示历史记录列表。
 pub(crate) fn show(ui: &mut egui::Ui, doc: &Document) {
+    crate::right_panel::region_hint(ui, rust_i18n::t!("hint.panel.history"));
     let past = doc.undo_labels();
     let future = doc.redo_labels();
 

@@ -1,6 +1,23 @@
 use eframe::egui;
 use egui_material_icons::MaterialIcon;
 use egui_material_icons::icons::*;
+use rust_i18n::t;
+
+/// 浮动工具条按钮对应的讲解行 key。
+fn action_hint(action: SelectionAction) -> String {
+    match action {
+        SelectionAction::Delete => t!("hint.pr.sel_delete"),
+        SelectionAction::Duplicate => t!("hint.pr.sel_duplicate"),
+        SelectionAction::TransposeUp => t!("hint.pr.sel_transpose_up"),
+        SelectionAction::TransposeDown => t!("hint.pr.sel_transpose_down"),
+        SelectionAction::FlipHorizontal => t!("hint.pr.sel_flip_h"),
+        SelectionAction::FlipVertical => t!("hint.pr.sel_flip_v"),
+        SelectionAction::GridConfirm
+        | SelectionAction::LineConfirm
+        | SelectionAction::ScissorsConfirm => t!("hint.pr.sel_confirm"),
+    }
+    .to_string()
+}
 
 /// Actions that can be triggered from the floating action bar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -187,6 +204,9 @@ pub fn show(
 
         // Hover detection（hover 变白 + 统一增益底色，与全项目图标按钮基准风格一致）
         let hovered = pointer_pos.is_some_and(|p| btn_rect.contains(p));
+        if hovered {
+            crate::widgets::hint::set(ui.ctx(), action_hint(action));
+        }
         if hovered {
             let down = pressed && press_btn == Some(i);
             let bg = if down {

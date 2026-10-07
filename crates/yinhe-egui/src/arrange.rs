@@ -569,6 +569,9 @@ pub fn show(
             &mut doc.edit.arrange_view.base.dirty,
             yinhe_types::Orientation::Horizontal,
         );
+        if crate::view_interaction::pointer_hits(ui, sb_rect) {
+            crate::widgets::hint::set(ui.ctx(), t!("hint.arrange.hscroll"));
+        }
         // 水平滚动条：thumb 拖 = 平移（x）+ 垂直位移 → x 轴缩放
         // 方向：上拖 = 放大，下拖 = 缩小
         if sb_drag_dy != 0.0 {
@@ -615,6 +618,9 @@ pub fn show(
                 )
             })
             .inner;
+        if crate::view_interaction::pointer_hits(ui, vsb_rect) {
+            crate::widgets::hint::set(ui.ctx(), t!("hint.arrange.vscroll"));
+        }
         // 垂直滚动条：thumb 拖 = 平移（y）+ 水平位移 → y 轴缩放（轨道行高）
         // 方向：左拖 = 放大，右拖 = 缩小
         if vsb_drag_dx != 0.0 {
@@ -669,6 +675,7 @@ pub fn show(
             egui::Id::new("arr_add_track_btn"),
             egui::Sense::click(),
         );
+        crate::widgets::hint::hover(ui.ctx(), &btn_resp, t!("hint.arrange.add_track"));
         let hovered = btn_resp.hovered();
 
         use egui_material_icons::icons::ICON_ADD;
@@ -707,6 +714,7 @@ pub fn show(
         ),
     );
     let v_resp = crate::widgets::split_handle::vertical(ui, "__v_split__", v_handle);
+    crate::widgets::hint::hover(ui.ctx(), &v_resp, t!("hint.arrange.split_v"));
     if v_resp.dragged() {
         *layout.transport_panel_width =
             (*layout.transport_panel_width + v_resp.drag_delta().x).clamp(60.0, arr_total_w - 60.0);
@@ -760,6 +768,13 @@ pub fn show(
         } else {
             None
         };
+        let ruler_rect = egui::Rect::from_min_max(
+            egui::pos2(
+                arr_rect.min.x + tp_w + crate::theme::SPLIT_HANDLE_W,
+                arr_rect.min.y,
+            ),
+            egui::pos2(gpu_rect.max.x, arr_rect.min.y + RULER_H),
+        );
         if music_rect.contains(pos) {
             let tick = doc
                 .edit
@@ -771,16 +786,23 @@ pub fn show(
             let hint = if let Some(s) = sel_text {
                 s
             } else {
-                format!("{} {}", pos_str, hover_desc(pos.y))
+                let info = format!("{} {}", pos_str, hover_desc(pos.y));
+                format!("{} · {}", t!("hint.panel.arrange_content"), info)
             };
             crate::widgets::hint::set_region(ui.ctx(), hint);
         } else if tp_rect.contains(pos) {
             let hint = if let Some(s) = sel_text {
                 s
             } else {
-                hover_desc(pos.y)
+                format!(
+                    "{} · {}",
+                    t!("hint.panel.arrange_track_panel"),
+                    hover_desc(pos.y)
+                )
             };
             crate::widgets::hint::set_region(ui.ctx(), hint);
+        } else if ruler_rect.contains(pos) {
+            crate::widgets::hint::set_region(ui.ctx(), t!("hint.panel.arrange_ruler"));
         } else if arr_rect.contains(pos) {
             // 走带视图内但不在内容区（标尺/滚动条）→ 清空区域提示
             crate::widgets::hint::clear_region(ui.ctx());
