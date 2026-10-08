@@ -669,6 +669,7 @@ sf_list.delete: "Usuń"
 # ── Automation panel ──
 automation.velocity: "Velocity"
 automation.custom_cc: "Niestandardowy CC:"
+automation.custom_rpn: "Niestandardowy RPN:"
 
 # ── Undo labels ──
 undo.delete_notes: "Usuń nuty"
@@ -1047,6 +1048,7 @@ hint.pr.auto_add: "Dodaj panel automatyzacji"
 hint.pr.auto_remove: "Usuń panel automatyzacji"
 hint.pr.target_combo: "Wybierz cel automatyzacji (Velocity/CC/parametr urządzenia)"
 hint.pr.custom_cc: "Przeciągnij/wpisz numer kontrolera CC"
+hint.pr.custom_rpn: "Przeciągnij/wpisz numer parametru RPN"
 hint.pr.auto_split: "Przeciągnij, aby zmienić wysokość panelu; kliknij dwukrotnie, aby zresetować"
 hint.pr.auto_vscroll: "Pasek przewijania wartości · przeciągnij, aby przesunąć/skalować zakres wartości"
 hint.pr.hscroll: "Poziomy pasek przewijania · przeciągnij, aby przesunąć, pionowe przeciąganie/kółko, aby skalować"

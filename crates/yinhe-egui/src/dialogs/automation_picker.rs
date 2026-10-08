@@ -13,18 +13,13 @@ use rust_i18n::t;
 use yinhe_types::AutomationTarget;
 
 /// 单选状态。
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 enum Selection {
+    #[default]
     CustomCc,
     CustomRpn,
     /// 指向 `entries` 的索引。
     Entry(usize),
-}
-
-impl Default for Selection {
-    fn default() -> Self {
-        Selection::CustomCc
-    }
 }
 
 /// 窗口里的一个可添加项（设备自带参数）。
@@ -214,38 +209,65 @@ pub(crate) fn show_viewport(
 }
 
 /// 内容区：自定义 CC / 自定义 RPN 两行 + 设备参数单选列表。
+/// 行布局统一「目标在左、控件（步进器/单选）在右」，行距取较宽松的一档。
 fn content(ui: &mut egui::Ui, state: &mut AutomationPickerState) {
     ui.add_space(4.0);
-    let title_size = crate::scaling::scaled_font(ui.ctx(), crate::theme::SUB_TITLE_FONT);
+    let row_h = crate::scaling::scaled_font(ui.ctx(), 30.0);
+    let radio_r = crate::scaling::scaled_font(ui.ctx(), 7.0);
+    let pad = crate::scaling::scaled_font(ui.ctx(), 8.0);
+    let stepper_w = crate::scaling::scaled_font(ui.ctx(), 96.0);
+    let label_size = crate::scaling::scaled_font(ui.ctx(), crate::theme::BODY_FONT);
 
     // 自定义 CC：单选 + 控制器号步进器。
-    ui.horizontal(|ui| {
-        ui.radio_value(
-            &mut state.selection,
-            Selection::CustomCc,
-            egui::RichText::new(t!("arrange.custom_cc")).size(title_size),
-        );
-        crate::widgets::stepper::stepper(&mut state.custom_cc)
-            .range(0..=127)
-            .step(1.0)
-            .width(96.0)
-            .show(ui);
-    });
-    ui.add_space(4.0);
+    let (resp, ctrl) = pick_row(
+        ui,
+        state.selection == Selection::CustomCc,
+        t!("arrange.custom_cc").as_ref(),
+        stepper_w,
+        row_h,
+        radio_r,
+        pad,
+        label_size,
+    );
+    if let Some(rect) = ctrl {
+        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            let r = crate::widgets::stepper::stepper(&mut state.custom_cc)
+                .range(0..=127)
+                .step(1.0)
+                .width(stepper_w)
+                .show(ui);
+            crate::widgets::hint::hover(ui.ctx(), &r, t!("hint.pr.custom_cc"));
+        });
+    }
+    if resp.clicked() {
+        state.selection = Selection::CustomCc;
+    }
 
     // 自定义 RPN：单选 + 参数号步进器。
-    ui.horizontal(|ui| {
-        ui.radio_value(
-            &mut state.selection,
-            Selection::CustomRpn,
-            egui::RichText::new(t!("arrange.custom_rpn")).size(title_size),
-        );
-        crate::widgets::stepper::stepper(&mut state.custom_rpn)
-            .range(0..=127)
-            .step(1.0)
-            .width(96.0)
-            .show(ui);
-    });
+    let (resp, ctrl) = pick_row(
+        ui,
+        state.selection == Selection::CustomRpn,
+        t!("arrange.custom_rpn").as_ref(),
+        stepper_w,
+        row_h,
+        radio_r,
+        pad,
+        label_size,
+    );
+    if let Some(rect) = ctrl {
+        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            let r = crate::widgets::stepper::stepper(&mut state.custom_rpn)
+                .range(0..=127)
+                .step(1.0)
+                .width(stepper_w)
+                .show(ui);
+            crate::widgets::hint::hover(ui.ctx(), &r, t!("hint.pr.custom_rpn"));
+        });
+    }
+    if resp.clicked() {
+        state.selection = Selection::CustomRpn;
+    }
+
     ui.add_space(6.0);
     ui.separator();
 
@@ -285,7 +307,6 @@ fn content(ui: &mut egui::Ui, state: &mut AutomationPickerState) {
         return;
     }
 
-    let row_h = crate::scaling::scaled_font(ui.ctx(), 24.0);
     egui::ScrollArea::vertical()
         .id_salt("automation_picker_list")
         .auto_shrink([false, false])
@@ -294,7 +315,80 @@ fn content(ui: &mut egui::Ui, state: &mut AutomationPickerState) {
             let pis: Vec<usize> = state.filtered[range.clone()].to_vec();
             for &pi in &pis {
                 let label = state.entries[pi].label.clone();
-                ui.radio_value(&mut state.selection, Selection::Entry(pi), label);
+                let (resp, _) = pick_row(
+                    ui,
+                    state.selection == Selection::Entry(pi),
+                    &label,
+                    0.0,
+                    row_h,
+                    radio_r,
+                    pad,
+                    label_size,
+                );
+                if resp.clicked() {
+                    state.selection = Selection::Entry(pi);
+                }
             }
         });
+}
+
+/// 画一行单选：目标名在左、单选圆点在右；`control_w > 0` 时在最右侧为控件
+/// （步进器）预留一块矩形，由调用方用 `scope_builder` 填入。
+/// 返回整行 Response 与可选控件矩形。
+#[allow(clippy::too_many_arguments)]
+fn pick_row(
+    ui: &mut egui::Ui,
+    selected: bool,
+    label: &str,
+    control_w: f32,
+    row_h: f32,
+    radio_r: f32,
+    pad: f32,
+    label_size: f32,
+) -> (egui::Response, Option<egui::Rect>) {
+    let (rect, resp) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), row_h),
+        egui::Sense::click(),
+    );
+    if selected {
+        ui.painter()
+            .rect_filled(rect, 4.0, crate::theme::selected_bg());
+    } else if resp.hovered() {
+        ui.painter()
+            .rect_filled(rect, 4.0, crate::theme::hover_color(crate::theme::app_bg()));
+    }
+    // 目标名（左）。
+    ui.painter().text(
+        egui::pos2(rect.min.x + pad, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::proportional(label_size),
+        if selected {
+            crate::theme::text_bright()
+        } else {
+            crate::theme::text_secondary()
+        },
+    );
+    // 单选圆点（最右）。
+    let radio_center = egui::pos2(rect.max.x - pad - radio_r, rect.center().y);
+    ui.painter().circle_stroke(
+        radio_center,
+        radio_r,
+        egui::Stroke::new(1.5, crate::theme::text_label()),
+    );
+    if selected {
+        ui.painter()
+            .circle_filled(radio_center, radio_r * 0.55, crate::theme::accent_active());
+    }
+    // 控件区（单选圆点左侧）。
+    let ctrl = (control_w > 0.0).then(|| {
+        egui::Rect::from_min_size(
+            egui::pos2(
+                rect.max.x - pad - radio_r * 2.0 - pad - control_w,
+                rect.center().y - row_h * 0.5,
+            ),
+            egui::vec2(control_w, row_h),
+        )
+    });
+    (resp, ctrl)
 }

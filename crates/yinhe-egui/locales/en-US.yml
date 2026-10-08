@@ -669,6 +669,7 @@ sf_list.delete: "Delete"
 # ── Automation panel ──
 automation.velocity: "Velocity"
 automation.custom_cc: "Custom CC:"
+automation.custom_rpn: "Custom RPN:"
 
 # ── Undo labels ──
 undo.delete_notes: "Delete notes"
@@ -1046,6 +1047,7 @@ hint.pr.auto_add: "Add an automation panel"
 hint.pr.auto_remove: "Remove an automation panel"
 hint.pr.target_combo: "Choose automation target (Velocity/CC/device parameter)"
 hint.pr.custom_cc: "Drag/type the CC controller number"
+hint.pr.custom_rpn: "Drag/type the RPN parameter number"
 hint.pr.auto_split: "Drag to resize the panel height; double-click to reset"
 hint.pr.auto_vscroll: "Value scrollbar · drag to pan/zoom the value range"
 hint.pr.hscroll: "Horizontal scrollbar · drag to pan, vertical drag/wheel to zoom"

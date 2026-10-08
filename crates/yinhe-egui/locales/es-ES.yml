@@ -669,6 +669,7 @@ sf_list.delete: "Eliminar"
 # ── Automation panel ──
 automation.velocity: "Velocidad"
 automation.custom_cc: "CC personalizado:"
+automation.custom_rpn: "RPN personalizado:"
 
 # ── Undo labels ──
 undo.delete_notes: "Eliminar notas"
@@ -1042,6 +1043,7 @@ hint.pr.auto_add: "Añadir un panel de automatización"
 hint.pr.auto_remove: "Quitar un panel de automatización"
 hint.pr.target_combo: "Elegir destino de automatización (Velocity/CC/parámetro del dispositivo)"
 hint.pr.custom_cc: "Arrastrar/escribir el número de controlador CC"
+hint.pr.custom_rpn: "Arrastra/escribe el número de parámetro RPN"
 hint.pr.auto_split: "Arrastrar para redimensionar la altura del panel; doble clic para restablecer"
 hint.pr.auto_vscroll: "Barra de desplazamiento de valores · arrastrar para desplazar/ampliar el rango de valores"
 hint.pr.hscroll: "Barra de desplazamiento horizontal · arrastrar para desplazar, arrastrar en vertical/rueda para ampliar"

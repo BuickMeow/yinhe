@@ -669,6 +669,7 @@ sf_list.delete: "Sil"
 # ── Automation panel ──
 automation.velocity: "Vuruş Hızı"
 automation.custom_cc: "Özel CC:"
+automation.custom_rpn: "Özel RPN:"
 
 # ── Undo labels ──
 undo.delete_notes: "Notaları sil"
@@ -1047,6 +1048,7 @@ hint.pr.auto_add: "Bir otomasyon paneli ekle"
 hint.pr.auto_remove: "Bir otomasyon panelini kaldır"
 hint.pr.target_combo: "Otomasyon hedefini seç (Velocity/CC/aygıt parametresi)"
 hint.pr.custom_cc: "CC denetleyici numarasını sürükle/yaz"
+hint.pr.custom_rpn: "RPN parametre numarasını sürükle/yaz"
 hint.pr.auto_split: "Panel yüksekliğini değiştirmek için sürükle; sıfırlamak için çift tıkla"
 hint.pr.auto_vscroll: "Değer kaydırma çubuğu · kaydırmak/yakınlaştırmak için sürükle"
 hint.pr.hscroll: "Yatay kaydırma çubuğu · kaydırmak için sürükle, yakınlaştırmak için dikey sürükle/tekerlek"

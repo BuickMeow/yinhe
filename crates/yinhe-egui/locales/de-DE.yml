@@ -669,6 +669,7 @@ sf_list.delete: "Löschen"
 # ── Automation panel ──
 automation.velocity: "Anschlagstärke"
 automation.custom_cc: "Benutzerdefiniertes CC:"
+automation.custom_rpn: "Benutzerdefiniertes RPN:"
 
 # ── Undo labels ──
 undo.delete_notes: "Noten löschen"
@@ -1042,6 +1043,7 @@ hint.pr.auto_add: "Automatisierungsbereich hinzufügen"
 hint.pr.auto_remove: "Automatisierungsbereich entfernen"
 hint.pr.target_combo: "Automatisierungsziel wählen (Velocity/CC/Geräteparameter)"
 hint.pr.custom_cc: "CC-Controllernummer ziehen/eingeben"
+hint.pr.custom_rpn: "RPN-Parameternummer ziehen/eingeben"
 hint.pr.auto_split: "Ziehen, um die Bereichshöhe zu ändern; Doppelklick zum Zurücksetzen"
 hint.pr.auto_vscroll: "Wert-Bildlaufleiste · ziehen zum Schwenken/Zoomen des Wertebereichs"
 hint.pr.hscroll: "Horizontale Bildlaufleiste · ziehen zum Schwenken, vertikal ziehen/Mausrad zum Zoomen"

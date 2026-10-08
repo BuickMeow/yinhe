@@ -589,6 +589,7 @@ sf_list.delete: "삭제"
 # ── 자동화 패널 ──
 automation.velocity: "Velocity"
 automation.custom_cc: "사용자 정의 CC:"
+automation.custom_rpn: "사용자 RPN:"
 
 # ── undo 라벨 ──
 undo.delete_notes: "노트 삭제"
@@ -1051,6 +1052,7 @@ hint.pr.auto_add: "자동화 패널 추가"
 hint.pr.auto_remove: "자동화 패널 제거"
 hint.pr.target_combo: "자동화 대상 선택(Velocity/CC/장치 파라미터)"
 hint.pr.custom_cc: "CC 컨트롤러 번호 드래그/입력"
+hint.pr.custom_rpn: "RPN 매개변수 번호를 드래그/입력"
 hint.pr.auto_split: "드래그해 패널 높이 조절, 더블클릭으로 초기화"
 hint.pr.auto_vscroll: "값 스크롤바 · 드래그로 팬/값 범위 확대"
 hint.pr.hscroll: "가로 스크롤바 · 드래그로 팬, 세로 드래그/휠로 확대"

@@ -589,6 +589,7 @@ sf_list.delete: "刪除"
 # ── 自动化面板 ──
 automation.velocity: "Velocity"
 automation.custom_cc: "自訂 CC:"
+automation.custom_rpn: "自訂 RPN:"
 
 # ── undo 标签 ──
 undo.delete_notes: "刪除音符"
@@ -1047,6 +1048,7 @@ hint.pr.auto_add: "增加自動化面板"
 hint.pr.auto_remove: "減少自動化面板"
 hint.pr.target_combo: "選擇自動化目標（Velocity／CC／裝置參數）"
 hint.pr.custom_cc: "拖曳／輸入 CC 控制器號"
+hint.pr.custom_rpn: "拖曳/輸入 RPN 參數號"
 hint.pr.auto_split: "拖曳調整面板高度，雙擊重設"
 hint.pr.auto_vscroll: "數值捲軸 · 拖曳平移／縮放值域"
 hint.pr.hscroll: "水平捲軸 · 拖曳平移，垂直拖／滾輪縮放"

@@ -78,8 +78,40 @@ pub(crate) fn show_target_combo(
                     .fixed_pos(popup_pos)
                     .show(ui.ctx(), |ui| {
                         egui::Frame::menu(ui.style()).show(ui, |ui| {
-                            ui.set_min_width(140.0);
-                            ui.set_max_width(140.0);
+                            let ctx = ui.ctx().clone();
+                            let scale = |v: f32| crate::scaling::scaled_font(&ctx, v);
+                            let targets = automation_targets(channel);
+                            // 动态宽度：按最宽条目测量（原固定 140 会把长名截断）。
+                            let font = egui::TextStyle::Button.resolve(ui.style());
+                            let measure = |s: &str| {
+                                ctx.fonts_mut(|f| {
+                                    f.layout_no_wrap(
+                                        s.to_owned(),
+                                        font.clone(),
+                                        egui::Color32::WHITE,
+                                    )
+                                    .size()
+                                    .x
+                                })
+                            };
+                            let stepper_w = scale(96.0);
+                            let mut content_w = measure(t!("automation.velocity").as_ref());
+                            for t in &targets {
+                                content_w = content_w.max(measure(&t.display_name()));
+                            }
+                            content_w = content_w.max(
+                                measure(t!("automation.custom_cc").as_ref())
+                                    + stepper_w
+                                    + scale(10.0),
+                            );
+                            content_w = content_w.max(
+                                measure(t!("automation.custom_rpn").as_ref())
+                                    + stepper_w
+                                    + scale(10.0),
+                            );
+                            let width = (content_w + scale(24.0)).clamp(scale(150.0), scale(380.0));
+                            ui.set_min_width(width);
+                            ui.set_max_width(width);
                             // Conductor 与其他轨道显示范围一致（仅 Tempo 可编辑由 dispatch 层限制）
                             let vel_selected = panel.show_velocity;
                             if ui
@@ -95,7 +127,7 @@ pub(crate) fn show_target_combo(
                                 ui.ctx().data_mut(|d| d.insert_persisted(popup_id, false));
                             }
                             ui.separator();
-                            for target in &automation_targets(channel) {
+                            for target in &targets {
                                 let name = target.display_name();
                                 let selected =
                                     !panel.show_velocity && panel.selected_target == *target;
@@ -110,28 +142,60 @@ pub(crate) fn show_target_combo(
                                 }
                             }
                             ui.separator();
-                            ui.label(t!("automation.custom_cc").as_ref());
-                            let mut cc_input = match &panel.selected_target {
-                                AutomationTarget::CC { controller } => *controller as i32,
-                                _ => 0,
-                            };
-                            let old_cc = cc_input;
-                            let cc_resp = ui.add(
-                                crate::widgets::numeric_input::decimal_drag_value(&mut cc_input)
-                                    .range(0..=127)
-                                    .speed(1),
-                            );
-                            crate::widgets::hint::hover(
-                                ui.ctx(),
-                                &cc_resp,
-                                t!("hint.pr.custom_cc"),
-                            );
-                            if cc_input != old_cc {
-                                panel.selected_target = AutomationTarget::CC {
-                                    controller: cc_input as u8,
+                            // 自定义 CC / RPN：目标名在左、数字步进器在右。
+                            {
+                                let mut v = match &panel.selected_target {
+                                    AutomationTarget::CC { controller } => *controller as i32,
+                                    _ => 0,
                                 };
-                                panel.show_velocity = false;
-                                panel.dirty = true;
+                                let old = v;
+                                ui.horizontal(|ui| {
+                                    ui.label(t!("automation.custom_cc").as_ref());
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            crate::widgets::stepper::stepper(&mut v)
+                                                .range(0..=127)
+                                                .step(1.0)
+                                                .width(stepper_w)
+                                                .show(ui);
+                                        },
+                                    );
+                                });
+                                if v != old {
+                                    panel.selected_target = AutomationTarget::CC {
+                                        controller: v.clamp(0, 127) as u8,
+                                    };
+                                    panel.show_velocity = false;
+                                    panel.dirty = true;
+                                }
+                            }
+                            {
+                                let mut v = match &panel.selected_target {
+                                    AutomationTarget::Rpn { parameter } => *parameter as i32,
+                                    _ => 0,
+                                };
+                                let old = v;
+                                ui.horizontal(|ui| {
+                                    ui.label(t!("automation.custom_rpn").as_ref());
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            crate::widgets::stepper::stepper(&mut v)
+                                                .range(0..=127)
+                                                .step(1.0)
+                                                .width(stepper_w)
+                                                .show(ui);
+                                        },
+                                    );
+                                });
+                                if v != old {
+                                    panel.selected_target = AutomationTarget::Rpn {
+                                        parameter: v.clamp(0, 127) as u16,
+                                    };
+                                    panel.show_velocity = false;
+                                    panel.dirty = true;
+                                }
                             }
                         });
                     });

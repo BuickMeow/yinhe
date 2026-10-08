@@ -669,6 +669,7 @@ sf_list.delete: "Удалить"
 # ── Automation panel ──
 automation.velocity: "Velocity"
 automation.custom_cc: "Свой CC:"
+automation.custom_rpn: "Пользовательский RPN:"
 
 # ── Undo labels ──
 undo.delete_notes: "Удаление нот"
@@ -1046,6 +1047,7 @@ hint.pr.auto_add: "Добавить панель автоматизации"
 hint.pr.auto_remove: "Удалить панель автоматизации"
 hint.pr.target_combo: "Выбор цели автоматизации (Velocity/CC/параметр устройства)"
 hint.pr.custom_cc: "Перетащите/введите номер контроллера CC"
+hint.pr.custom_rpn: "Перетащите/введите номер параметра RPN"
 hint.pr.auto_split: "Перетащите, чтобы изменить высоту панели; двойной щелчок — сброс"
 hint.pr.auto_vscroll: "Прокрутка значений · перетаскивание — панорамирование/масштаб диапазона значений"
 hint.pr.hscroll: "Горизонтальная прокрутка · перетаскивание — панорамирование, вертикальное перетаскивание/колесо — масштаб"

@@ -601,6 +601,7 @@ sf_list.delete: "削除"
 # ── オートメーションパネル ──
 automation.velocity: "Velocity"
 automation.custom_cc: "カスタム CC:"
+automation.custom_rpn: "カスタム RPN:"
 
 # ── undoラベル ──
 undo.delete_notes: "ノートを削除"
@@ -1052,6 +1053,7 @@ hint.pr.auto_add: "オートメーションパネルを追加"
 hint.pr.auto_remove: "オートメーションパネルを削除"
 hint.pr.target_combo: "オートメーションターゲットを選択（Velocity/CC/デバイスパラメータ）"
 hint.pr.custom_cc: "CC コントローラー番号をドラッグ/入力"
+hint.pr.custom_rpn: "RPN パラメータ番号をドラッグ/入力"
 hint.pr.auto_split: "ドラッグしてパネル高さを変更、ダブルクリックでリセット"
 hint.pr.auto_vscroll: "値スクロールバー · ドラッグでパン/値域をズーム"
 hint.pr.hscroll: "横スクロールバー · ドラッグでパン、縦ドラッグ/ホイールでズーム"
