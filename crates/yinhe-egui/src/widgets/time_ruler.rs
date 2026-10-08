@@ -12,8 +12,6 @@ const MIN_LABEL_SPACING: f32 = 38.0;
 const SUB_BEAT_DIV: u32 = 4;
 /// 标签（marker）pill 高度（横向）；纵向为 pill 宽度。
 const MARKER_PILL_THICKNESS: f32 = 16.0;
-/// 相邻标签 pill 之间的最小间隔（主轴像素），避免重叠。
-const MARKER_GAP: f32 = 2.0;
 
 /// 标尺上的标签（marker）编辑动作。由调用方应用到文档（以便接入 undo）。
 #[derive(Clone, Debug, PartialEq)]
@@ -565,12 +563,14 @@ fn paint_marker_labels(
         egui::FontFamily::Proportional,
     );
     let text_color = crate::theme::contrast_fg();
-    let pill_color = crate::theme::accent_active().gamma_multiply(0.85);
-    let line_color = crate::theme::accent_active();
+    // 不用强调色：亮色主题用更白的底、暗色主题用更黑的底（与 contrast_fg 文字色相反，保证可读）。
+    let pill_color = if crate::theme::dark_mode() {
+        egui::Color32::from_gray(24)
+    } else {
+        egui::Color32::from_gray(250)
+    };
 
     let mut out: Vec<MarkerLabel> = Vec::new();
-    // 沿主轴已占用到的末端像素（避免 pill 重叠）。
-    let mut last_end = f32::NEG_INFINITY;
     for m in markers {
         let tick = drag_preview
             .and_then(|(from, to)| (m.tick == from).then_some(to))
@@ -595,29 +595,8 @@ fn paint_marker_labels(
         let half = MARKER_PILL_THICKNESS * 0.5;
 
         // pill 沿主轴从标签 tick 起，长度 = 文本宽 + 内边距。
+        // 重叠时不跳过：全部绘制，后绘制的（tick 更大）盖在上层，两个标签都可见。
         let rect_start = main_px;
-        let rect_end = main_px + tw + 8.0;
-        // 重叠：跳过 pill，仅保留一条刻度线。
-        if rect_start < last_end + MARKER_GAP {
-            match orientation {
-                Orientation::Horizontal => painter.line_segment(
-                    [
-                        egui::pos2(rect.min.x + main_px, rect.min.y),
-                        egui::pos2(rect.min.x + main_px, rect.max.y),
-                    ],
-                    egui::Stroke::new(1.0, line_color.gamma_multiply(0.6)),
-                ),
-                Orientation::Vertical => painter.line_segment(
-                    [
-                        egui::pos2(rect.min.x, rect.min.y + main_px),
-                        egui::pos2(rect.max.x, rect.min.y + main_px),
-                    ],
-                    egui::Stroke::new(1.0, line_color.gamma_multiply(0.6)),
-                ),
-            };
-            continue;
-        }
-        last_end = rect_end;
 
         let label_rect = match orientation {
             Orientation::Horizontal => egui::Rect::from_min_size(
@@ -1063,13 +1042,14 @@ mod tests {
         assert_eq!(offsets[0], 0);
     }
 
-    /// 标签（marker）绘制：返回命中矩形，位置随 tick 递增；重叠的标签被跳过。
+    /// 标签（marker）绘制：返回命中矩形，位置随 tick 递增；重叠的标签全部绘制
+    /// （后绘制者在上层，不再跳过）。
     #[test]
     fn marker_labels_hit_rects_and_overlap() {
         let ruler = FakeRuler {
             base: make_base(0.1),
         };
-        let rect = egui::Rect::from_min_max(egui::pos2(60.0, 0.0), egui::pos2(660.0, 45.0));
+        let rect = egui::Rect::from_min_max(egui::pos2(60.0, 0.0), egui::pos2(660.0, 36.0));
         let ctx = egui::Context::default();
         ctx.begin_pass(egui::RawInput::default());
         let painter = ctx.layer_painter(egui::LayerId::new(
@@ -1106,7 +1086,7 @@ mod tests {
         // tick 越大，标签越靠右（主轴 = X）。
         assert!(hits[1].rect.min.x > hits[0].rect.min.x);
 
-        // 两个标签主轴间距过小 → 后者被跳过（仅保留 1 个 pill）。
+        // 两个标签主轴间距过小 → 两者都绘制（后者在上层，不跳过）。
         let near = vec![
             MarkerEvent {
                 tick: 0,
@@ -1129,6 +1109,6 @@ mod tests {
             labels_center,
             None,
         );
-        assert_eq!(hits.len(), 1, "重叠标签应被跳过");
+        assert_eq!(hits.len(), 2, "重叠标签也应全部绘制");
     }
 }
