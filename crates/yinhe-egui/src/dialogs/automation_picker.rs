@@ -1,29 +1,36 @@
 //! 「添加自动化」窗口（独立 OS viewport）。
 //!
-//! 自动化属于**乐器设备**（XSynth 或插件），不属于音轨：
-//! - 左列：自定义 CC / 自定义 RPN 两个网格（8 列 × 16 行 = 128 格，格子内写编号，
-//!   点亮 = 已有对应 lane，点击增/删）；
-//! - 右列：该设备自带的参数（XSynth 内置参数 / 插件参数），带搜索。
+//! 自动化属于**乐器设备**（XSynth 或插件），不属于音轨。窗口是**单选**选择器：
+//! - 自定义 CC：数字步进器选控制器号；
+//! - 自定义 RPN：数字步进器选参数号；
+//! - 设备自带参数（含 Pitch Bend、XSynth 内置参数 / 插件参数），可搜索。
 //!
-//! 窗口不修改模型：条目标签与目标在打开时（App 侧）收集，点击返回 [`Toggle`]
-//! 动作，由 App 落模型并回写点亮状态。
-
-use std::collections::HashSet;
+//! 选中一项后点底部「添加」：由 App 落模型（建一条 AM lane）并关窗。
+//! 窗口本身不修改模型，只返回 [`Toggle`] 动作。
 
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_types::AutomationTarget;
 
-/// 网格列数（8 列 × 16 行 = 128 格）。
-const GRID_COLS: usize = 8;
-const GRID_ROWS: usize = 16;
-const GRID_CELL_H: f32 = 16.0;
-const GRID_GAP: f32 = 1.0;
+/// 单选状态。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Selection {
+    CustomCc,
+    CustomRpn,
+    /// 指向 `entries` 的索引。
+    Entry(usize),
+}
 
-/// 窗口里的一个可添加项（右侧「设备自带参数」）。
+impl Default for Selection {
+    fn default() -> Self {
+        Selection::CustomCc
+    }
+}
+
+/// 窗口里的一个可添加项（设备自带参数）。
 pub(crate) struct AutomationEntry {
     pub target: AutomationTarget,
-    /// 显示名（含 CC 名 / 模块）。
+    /// 显示名（含 CC/RPN 名 / 模块）。
     pub label: String,
 }
 
@@ -39,20 +46,24 @@ pub(crate) struct AutomationPickerState {
     title: String,
     /// 设备名（XSynth / Serum 2）。
     device_name: String,
-    /// 右侧「设备自带参数」条目。
+    /// 设备自带参数条目。
     entries: Vec<AutomationEntry>,
-    /// 当前已存在的自动化目标（左网格 + 右列表共用）。
-    existing: HashSet<AutomationTarget>,
     /// 搜索过滤后的条目索引。
     filtered: Vec<usize>,
     search: String,
     filter_dirty: bool,
+    /// 当前选中项。
+    selection: Selection,
+    /// 自定义 CC 控制器号。
+    custom_cc: i32,
+    /// 自定义 RPN 参数号。
+    custom_rpn: i32,
 }
 
 /// 用户动作（窗口不修改模型，交给 App 处理）。
 pub(crate) enum AutomationPickerAction {
     None,
-    /// 添加/移除该目标的 AM lane。
+    /// 添加该目标的 AM lane。
     Toggle {
         track_idx: usize,
         target: AutomationTarget,
@@ -69,7 +80,6 @@ impl AutomationPickerState {
         title: String,
         device_name: String,
         entries: Vec<AutomationEntry>,
-        existing: HashSet<AutomationTarget>,
     ) {
         self.open = true;
         self.just_opened = true;
@@ -77,19 +87,10 @@ impl AutomationPickerState {
         self.title = title;
         self.device_name = device_name;
         self.entries = entries;
-        self.existing = existing;
         self.search.clear();
         self.filter_dirty = true;
+        self.selection = Selection::default();
         self.rebuild_filter();
-    }
-
-    /// App 落模型后回写点亮状态。
-    pub(crate) fn set_existing(&mut self, target: &AutomationTarget, existing: bool) {
-        if existing {
-            self.existing.insert(target.clone());
-        } else {
-            self.existing.remove(target);
-        }
     }
 
     fn rebuild_filter(&mut self) {
@@ -107,20 +108,18 @@ impl AutomationPickerState {
         }
         self.filter_dirty = false;
     }
-}
 
-/// 翻转一个目标并返回对应动作（同时更新本地点亮集合）。
-fn toggle(state: &mut AutomationPickerState, target: AutomationTarget) -> AutomationPickerAction {
-    let add = !state.existing.contains(&target);
-    if add {
-        state.existing.insert(target.clone());
-    } else {
-        state.existing.remove(&target);
-    }
-    AutomationPickerAction::Toggle {
-        track_idx: state.track_idx,
-        target,
-        add,
+    /// 当前选中项对应的目标（越界返回 None）。
+    fn selected_target(&self) -> Option<AutomationTarget> {
+        match self.selection {
+            Selection::CustomCc => Some(AutomationTarget::CC {
+                controller: self.custom_cc.clamp(0, 127) as u8,
+            }),
+            Selection::CustomRpn => Some(AutomationTarget::Rpn {
+                parameter: self.custom_rpn.clamp(0, 127) as u16,
+            }),
+            Selection::Entry(i) => self.entries.get(i).map(|e| e.target.clone()),
+        }
     }
 }
 
@@ -136,7 +135,7 @@ pub(crate) fn show_viewport(
 
     ctx.show_viewport_immediate(
         viewport_id,
-        crate::chrome::dialog::viewport_builder(title.as_ref(), [860.0, 640.0], false),
+        crate::chrome::dialog::viewport_builder(title.as_ref(), [520.0, 560.0], false),
         |vctx, _class| {
             if vctx.input(|i| i.viewport().close_requested()) {
                 closed = true;
@@ -160,14 +159,42 @@ pub(crate) fn show_viewport(
                             if state.filter_dirty {
                                 state.rebuild_filter();
                             }
-                            ui.columns(2, |cols| {
-                                egui::ScrollArea::vertical()
-                                    .id_salt("custom_grids_scroll")
-                                    .auto_shrink([false, false])
-                                    .show(&mut cols[0], |ui| {
-                                        custom_grids(ui, state, &mut action);
-                                    });
-                                device_params(&mut cols[1], state, &mut action);
+                            let btn_zone = crate::chrome::dialog_buttons::btn_zone_h(ui.ctx());
+                            // 内容区（按钮行以上）。
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(
+                                    ui.available_width(),
+                                    (ui.available_height() - btn_zone).max(0.0),
+                                ),
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| content(ui, state),
+                            );
+                            // 底部按钮行（贴底、右对齐）。
+                            ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
+                                use crate::chrome::dialog_buttons::{
+                                    DialogButton, dialog_button_row,
+                                };
+                                let clicked = dialog_button_row(
+                                    ui,
+                                    &[
+                                        DialogButton::secondary(t!("common.cancel").as_ref()),
+                                        DialogButton::primary(t!("dialog.automation.add").as_ref()),
+                                    ],
+                                );
+                                match clicked {
+                                    Some(0) => close = true,
+                                    Some(1) => {
+                                        if let Some(target) = state.selected_target() {
+                                            action = AutomationPickerAction::Toggle {
+                                                track_idx: state.track_idx,
+                                                target,
+                                                add: true,
+                                            };
+                                        }
+                                        close = true;
+                                    }
+                                    _ => {}
+                                }
                             });
                         });
                 });
@@ -186,115 +213,43 @@ pub(crate) fn show_viewport(
     }
 }
 
-/// 左列：自定义 CC / 自定义 RPN 两个 8×16 网格。
-fn custom_grids(
-    ui: &mut egui::Ui,
-    state: &mut AutomationPickerState,
-    action: &mut AutomationPickerAction,
-) {
-    ui.label(egui::RichText::new(t!("arrange.custom_cc")).strong().size(
-        crate::scaling::scaled_font(ui.ctx(), crate::theme::SUB_TITLE_FONT),
-    ));
+/// 内容区：自定义 CC / 自定义 RPN 两行 + 设备参数单选列表。
+fn content(ui: &mut egui::Ui, state: &mut AutomationPickerState) {
     ui.add_space(4.0);
-    if let Some(i) = number_grid(ui, &state.existing, |i| AutomationTarget::CC {
-        controller: i as u8,
-    }) {
-        *action = toggle(
-            state,
-            AutomationTarget::CC {
-                controller: i as u8,
-            },
-        );
-    }
+    let title_size = crate::scaling::scaled_font(ui.ctx(), crate::theme::SUB_TITLE_FONT);
 
-    ui.add_space(12.0);
-    ui.label(egui::RichText::new(t!("arrange.custom_rpn")).strong().size(
-        crate::scaling::scaled_font(ui.ctx(), crate::theme::SUB_TITLE_FONT),
-    ));
+    // 自定义 CC：单选 + 控制器号步进器。
+    ui.horizontal(|ui| {
+        ui.radio_value(
+            &mut state.selection,
+            Selection::CustomCc,
+            egui::RichText::new(t!("arrange.custom_cc")).size(title_size),
+        );
+        crate::widgets::stepper::stepper(&mut state.custom_cc)
+            .range(0..=127)
+            .step(1.0)
+            .width(96.0)
+            .show(ui);
+    });
     ui.add_space(4.0);
-    if let Some(i) = number_grid(ui, &state.existing, |i| AutomationTarget::Rpn {
-        parameter: i as u16,
-    }) {
-        *action = toggle(
-            state,
-            AutomationTarget::Rpn {
-                parameter: i as u16,
-            },
+
+    // 自定义 RPN：单选 + 参数号步进器。
+    ui.horizontal(|ui| {
+        ui.radio_value(
+            &mut state.selection,
+            Selection::CustomRpn,
+            egui::RichText::new(t!("arrange.custom_rpn")).size(title_size),
         );
-    }
-}
+        crate::widgets::stepper::stepper(&mut state.custom_rpn)
+            .range(0..=127)
+            .step(1.0)
+            .width(96.0)
+            .show(ui);
+    });
+    ui.add_space(6.0);
+    ui.separator();
 
-/// 8 列 × 16 行 = 128 格网格；返回本帧被点击的格号。
-fn number_grid(
-    ui: &mut egui::Ui,
-    existing: &HashSet<AutomationTarget>,
-    make_target: impl Fn(usize) -> AutomationTarget,
-) -> Option<usize> {
-    let gap = crate::scaling::scaled_font(ui.ctx(), GRID_GAP);
-    let cell_h = crate::scaling::scaled_font(ui.ctx(), GRID_CELL_H);
-    let cell_w =
-        ((ui.available_width() - gap * (GRID_COLS as f32 - 1.0)) / GRID_COLS as f32).max(1.0);
-    let font = egui::FontId::proportional(crate::scaling::scaled_font(
-        ui.ctx(),
-        crate::theme::SMALL_LABEL_FONT,
-    ));
-    let lit_bg = crate::theme::accent_active();
-    let lit_fg = crate::theme::contrast_fg();
-    let idle_bg = crate::theme::btn_bg();
-    let idle_fg = crate::theme::text_secondary();
-    let mut clicked = None;
-
-    for row in 0..GRID_ROWS {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = gap;
-            for col in 0..GRID_COLS {
-                let i = row * GRID_COLS + col;
-                let target = make_target(i);
-                let lit = existing.contains(&target);
-                let (rect, resp) =
-                    ui.allocate_exact_size(egui::vec2(cell_w, cell_h), egui::Sense::click());
-                let bg = if lit {
-                    lit_bg
-                } else if resp.hovered() {
-                    crate::theme::hover_color(idle_bg)
-                } else {
-                    idle_bg
-                };
-                let fg = if lit { lit_fg } else { idle_fg };
-                let painter = ui.painter();
-                painter.rect_filled(rect, 2.0, bg);
-                painter.rect_stroke(
-                    rect,
-                    2.0,
-                    crate::widgets::control::control_stroke(true, false),
-                    egui::StrokeKind::Inside,
-                );
-                painter.text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    format!("{i}"),
-                    font.clone(),
-                    fg,
-                );
-                crate::widgets::hint::hover(ui.ctx(), &resp, target.display_name());
-                if resp.clicked() {
-                    clicked = Some(i);
-                }
-            }
-        });
-        if row + 1 < GRID_ROWS {
-            ui.add_space(gap);
-        }
-    }
-    clicked
-}
-
-/// 右列：设备自带参数列表（搜索 + 开关）。
-fn device_params(
-    ui: &mut egui::Ui,
-    state: &mut AutomationPickerState,
-    action: &mut AutomationPickerAction,
-) {
+    // 设备自带参数：标题 + 搜索。
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(format!(
@@ -319,11 +274,9 @@ fn device_params(
             }
         });
     });
-    ui.add_space(4.0);
-    ui.separator();
+    ui.add_space(2.0);
 
     if state.entries.is_empty() {
-        ui.add_space(4.0);
         ui.label(
             egui::RichText::new(t!("dialog.automation.empty"))
                 .size(crate::theme::SMALL_FONT)
@@ -332,40 +285,16 @@ fn device_params(
         return;
     }
 
-    let row_h = crate::scaling::scaled_font(ui.ctx(), 30.0);
+    let row_h = crate::scaling::scaled_font(ui.ctx(), 24.0);
     egui::ScrollArea::vertical()
         .id_salt("automation_picker_list")
         .auto_shrink([false, false])
         .max_height(ui.available_height())
         .show_rows(ui, row_h, state.filtered.len(), |ui, range| {
-            let total = state.filtered.len();
             let pis: Vec<usize> = state.filtered[range.clone()].to_vec();
-            for (offset, &pi) in pis.iter().enumerate() {
-                let row_idx = range.start + offset;
+            for &pi in &pis {
                 let label = state.entries[pi].label.clone();
-                let target = state.entries[pi].target.clone();
-                let mut on = state.existing.contains(&target);
-                let mut toggled = false;
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(label).size(crate::scaling::scaled_font(
-                        ui.ctx(),
-                        crate::theme::BODY_FONT,
-                    )));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if crate::widgets::switch::switch(ui, &mut on).changed() {
-                            toggled = true;
-                        }
-                    });
-                });
-                if toggled {
-                    *action = toggle(state, target);
-                }
-                // 行间分割线：末尾不再画一条多余的分割线。
-                if row_idx + 1 < total {
-                    ui.add_space(2.0);
-                    ui.separator();
-                    ui.add_space(2.0);
-                }
+                ui.radio_value(&mut state.selection, Selection::Entry(pi), label);
             }
         });
 }

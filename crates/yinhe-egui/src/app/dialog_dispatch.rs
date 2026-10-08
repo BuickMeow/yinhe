@@ -563,16 +563,11 @@ impl App {
             let doc = &self.workspace.documents[idx];
             crate::arrange::plugin_instrument_of(&doc.data.model.tracks, &doc.mixer, track_idx)
         };
-        let (title, device_name, mut entries, existing, channel) = {
+        let (title, device_name, mut entries, channel) = {
             let doc = &self.workspace.documents[idx];
             let Some(track) = doc.data.model.tracks.get(track_idx) else {
                 return;
             };
-            let existing: std::collections::HashSet<yinhe_types::AutomationTarget> = track
-                .automation_lanes
-                .iter()
-                .map(|l| l.target.clone())
-                .collect();
             let track_name = track.name.clone();
             match device_instrument {
                 Some(ich) => {
@@ -602,7 +597,7 @@ impl App {
                             },
                         })
                         .collect();
-                    (track_name, name, entries, existing, ich)
+                    (track_name, name, entries, ich)
                 }
                 None => {
                     // XSynth 设备：内置参数（音源 + 通道 DSP；跳过 Tempo，那是工程级）。
@@ -617,7 +612,7 @@ impl App {
                             target: t,
                         })
                         .collect();
-                    (track_name, "XSynth".to_string(), entries, existing, ch)
+                    (track_name, "XSynth".to_string(), entries, ch)
                 }
             }
         };
@@ -631,7 +626,7 @@ impl App {
             },
         );
         self.automation_picker
-            .open(track_idx, title, device_name, entries, existing);
+            .open(track_idx, title, device_name, entries);
         crate::chrome::dialog::raise_viewport(
             ctx,
             egui::ViewportId::from_hash_of("automation_picker"),
@@ -659,8 +654,7 @@ impl App {
                 add,
             } => {
                 if let Some(idx) = self.workspace.active_doc {
-                    let now = self.apply_automation_toggle(idx, track_idx, &target, add);
-                    self.automation_picker.set_existing(&target, now);
+                    let _ = self.apply_automation_toggle(idx, track_idx, &target, add);
                 }
             }
             A::Close => self.automation_picker.open = false,
