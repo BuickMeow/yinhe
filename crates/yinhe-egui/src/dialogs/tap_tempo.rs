@@ -195,7 +195,6 @@ pub(crate) fn show_viewport(ctx: &egui::Context, state: &mut TapTempoDialogState
                                     use crate::chrome::dialog_buttons::{
                                         DialogButton, dialog_button_row,
                                     };
-                                    ui.add_space(8.0);
                                     let reset_label = t!("dialog.tap_tempo.reset");
                                     if dialog_button_row(
                                         ui,

@@ -198,7 +198,6 @@ mod tests {
                         zone,
                         |_ui| {},
                         |ui| {
-                            ui.add_space(8.0);
                             // 多帧 run 时后续帧会返回 None，需累积记录。
                             if let Some(idx) = dialog_button_row(
                                 ui,

@@ -118,7 +118,6 @@ pub(crate) fn show_viewport(
                                     use crate::chrome::dialog_buttons::{
                                         DialogButton, dialog_button_row,
                                     };
-                                    ui.add_space(8.0);
                                     let discard = t!("dialog.autosave_recovery.discard");
                                     let restore = t!("dialog.autosave_recovery.restore");
                                     if let Some(idx) = dialog_button_row(

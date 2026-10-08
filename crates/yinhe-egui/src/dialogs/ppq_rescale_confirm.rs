@@ -64,7 +64,6 @@ pub(crate) fn show_viewport(ctx: &egui::Context, old: u32, new: u32) -> PpqResca
                             bottom: 12,
                         })
                         .show(ui, |ui| {
-                            ui.set_max_width(356.0);
                             let btn_zone_h = crate::chrome::dialog_buttons::btn_zone_h(ui.ctx());
                             crate::chrome::dialog::content_with_bottom_buttons(
                                 ui,
@@ -88,7 +87,6 @@ pub(crate) fn show_viewport(ctx: &egui::Context, old: u32, new: u32) -> PpqResca
                                     use crate::chrome::dialog_buttons::{
                                         DialogButton, dialog_button_row,
                                     };
-                                    ui.add_space(8.0);
                                     let cancel = t!("common.cancel");
                                     let no = t!("dialog.ppq_rescale.no");
                                     let yes = t!("dialog.ppq_rescale.yes");

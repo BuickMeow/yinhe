@@ -566,7 +566,6 @@ fn show_password_prompt(
         },
         |ui| {
             use crate::chrome::dialog_buttons::{DialogButton, dialog_button_row};
-            ui.add_space(8.0);
             let cancel = t!("common.cancel");
             let confirm = t!("common.confirm");
             let confirm_enabled = password_len.get() > 0;

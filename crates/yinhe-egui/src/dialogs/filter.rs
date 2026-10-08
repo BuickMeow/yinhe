@@ -230,7 +230,6 @@ pub(crate) fn show_viewport(
                                     use crate::chrome::dialog_buttons::{
                                         DialogButton, dialog_button_row,
                                     };
-                                    ui.add_space(8.0);
                                     let clear = t!("dialog.filter.clear");
                                     let cancel = t!("dialog.filter.cancel");
                                     let apply = t!("dialog.filter.apply");

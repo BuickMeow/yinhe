@@ -175,7 +175,6 @@ pub(crate) fn show_settings_viewport(
                                 },
                                 |ui| {
                                     use crate::chrome::dialog_buttons::{DialogButton, dialog_button_row};
-                                    ui.add_space(8.0);
                                     let start = t!("dialog.export.start");
                                     if dialog_button_row(
                                         ui,

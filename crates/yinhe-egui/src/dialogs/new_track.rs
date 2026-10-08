@@ -238,7 +238,6 @@ pub(crate) fn show_viewport(
                             bottom: 12,
                         })
                         .show(ui, |ui| {
-                            ui.set_max_width(376.0);
                             // 分配方案：内容区算好后经 Rc cell 传给底部按钮区
                             // （两个闭包不能同时借 state，按钮区只读方案不读 state）。
                             let plan_rc: std::rc::Rc<std::cell::RefCell<Option<Plan>>> =
@@ -409,7 +408,6 @@ pub(crate) fn show_viewport(
                                     let can_confirm = plan_cell
                                         .as_ref()
                                         .is_some_and(|p| !p.specs.is_empty());
-                                    ui.add_space(8.0);
                                     let cancel = t!("common.cancel");
                                     let confirm = t!("common.confirm");
                                     if let Some(idx) = dialog_button_row(

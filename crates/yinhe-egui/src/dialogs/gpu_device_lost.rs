@@ -53,7 +53,6 @@ pub(crate) fn show_viewport(ctx: &egui::Context) -> bool {
                             bottom: 12,
                         })
                         .show(ui, |ui| {
-                            ui.set_max_width(436.0);
                             let btn_zone_h = crate::chrome::dialog_buttons::btn_zone_h(ui.ctx());
                             crate::chrome::dialog::content_with_bottom_buttons(
                                 ui,
@@ -68,7 +67,6 @@ pub(crate) fn show_viewport(ctx: &egui::Context) -> bool {
                                     use crate::chrome::dialog_buttons::{
                                         DialogButton, dialog_button_row,
                                     };
-                                    ui.add_space(8.0);
                                     let exit = t!("common.exit_app");
                                     if dialog_button_row(
                                         ui,
