@@ -727,7 +727,18 @@ impl App {
     /// spawn 失败：保留 `device_switch_pending`，把错误塞进 `device_switch_error`，
     /// 对话框保持打开让用户重选。
     pub(crate) fn switch_audio_device(&mut self, device_name: String) {
-        // 清除之前的 spawn 失败状态，允许用新设备重试
+        self.audio_settings.output_device_name = Some(device_name);
+        self.audio_settings.save();
+        self.respawn_audio();
+    }
+
+    /// 按当前设置重建音频引擎（不改设备名）：清 spawn 失败、记录恢复位置、
+    /// drop 旧 handle、后台 spawn。
+    ///
+    /// 用于"跟随系统默认设备"（`output_device_name == None`）时静默重连到新的
+    /// 默认设备，不弹设备切换对话框。
+    pub(crate) fn respawn_audio(&mut self) {
+        // 清除之前的 spawn 失败状态，允许重试
         self.audio_state.spawn_error = None;
         self.audio_state.spawn_error_doc = None;
         let saved_sample = self
@@ -739,15 +750,12 @@ impl App {
         // 记录恢复位置：spawn 完成后由 poll_audio_spawn 发送 Seek。
         self.audio_state.spawn_restore_sample = Some(saved_sample);
 
-        self.audio_settings.output_device_name = Some(device_name);
-        self.audio_settings.save();
-
         // drop 旧 handle（teardown 会 join 渲染线程并把退回的 insert 处理器
         // 交还机架 deactivate），强制 rebuild
         self.teardown_audio();
 
-        // 用新设备名重建（rebuild_audio_if_needed 会读 output_device_name，
-        // 后台 spawn，结果由每帧 poll_audio_spawn 收取）
+        // 用当前设置重建（rebuild_audio_if_needed 后台 spawn，结果由
+        // 每帧 poll_audio_spawn 收取）
         self.rebuild_audio_if_needed();
     }
 

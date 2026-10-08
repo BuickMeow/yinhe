@@ -42,11 +42,18 @@ impl App {
             .as_ref()
             .map(|h| h.handle.stream_error())
             .unwrap_or(false);
+        // 用户选择的是"系统默认/自动"设备（None）：设备变更时直接重连到新的默认
+        // 设备，不弹切换对话框。
+        let using_default_device = self.audio_settings.output_device_name.is_none();
         if audio_dead && !self.audio_state.device_switch_pending {
-            // 场景 1：流已死，必须切换
-            self.audio_state.device_switch_pending = true;
-            self.audio_state.device_switch_required = true;
-            self.audio_state.device_switch_error = None;
+            if using_default_device {
+                self.respawn_audio();
+            } else {
+                // 场景 1：流已死，必须切换
+                self.audio_state.device_switch_pending = true;
+                self.audio_state.device_switch_required = true;
+                self.audio_state.device_switch_error = None;
+            }
         } else if !self.audio_state.device_switch_pending {
             // 场景 2：轮询设备列表变更（每秒一次，避免每帧调 cpal 枚举）
             let now = std::time::Instant::now();
@@ -61,13 +68,18 @@ impl App {
                 if !self.audio_state.last_known_devices.is_empty()
                     && devices != self.audio_state.last_known_devices
                 {
-                    // 检测到设备变更 —— 暂停播放
-                    if let Some(audio) = &self.audio_state.handle {
-                        audio.handle.send(yinhe_audio::AudioCommand::Pause);
+                    if using_default_device {
+                        // 跟随系统默认：静默重连到新的默认设备
+                        self.respawn_audio();
+                    } else {
+                        // 检测到设备变更 —— 暂停播放
+                        if let Some(audio) = &self.audio_state.handle {
+                            audio.handle.send(yinhe_audio::AudioCommand::Pause);
+                        }
+                        self.audio_state.device_switch_pending = true;
+                        self.audio_state.device_switch_required = false;
+                        self.audio_state.device_switch_error = None;
                     }
-                    self.audio_state.device_switch_pending = true;
-                    self.audio_state.device_switch_required = false;
-                    self.audio_state.device_switch_error = None;
                 }
                 self.audio_state.last_known_devices = devices.clone();
                 self.audio_settings.ui_session.available_devices = devices;

@@ -81,45 +81,47 @@ pub(crate) fn show_viewport(
                                 ui,
                                 btn_zone_h,
                                 |ui| {
-                                    ui.vertical_centered(|ui| {
-                                        ui.add_space(8.0);
-                                        if allow_keep_current {
-                                            ui.label(
-                                                t!("dialog.audio_switch.devices_changed").as_ref(),
-                                            );
-                                            ui.add_space(4.0);
-                                            ui.label(t!("dialog.audio_switch.select_new").as_ref());
+                                    ui.add_space(8.0);
+                                    if allow_keep_current {
+                                        ui.label(
+                                            t!("dialog.audio_switch.devices_changed").as_ref(),
+                                        );
+                                    } else {
+                                        ui.label(t!("dialog.audio_switch.stream_error").as_ref());
+                                    }
+                                    ui.add_space(4.0);
+                                    ui.label(
+                                        egui::RichText::new(if allow_keep_current {
+                                            t!("dialog.audio_switch.select_new").to_string()
                                         } else {
-                                            ui.label(
-                                                t!("dialog.audio_switch.stream_error").as_ref(),
-                                            );
-                                            ui.add_space(4.0);
-                                            ui.label(
-                                                t!("dialog.audio_switch.select_device").as_ref(),
-                                            );
-                                        }
-                                        ui.add_space(8.0);
-                                    });
+                                            t!("dialog.audio_switch.select_device").to_string()
+                                        })
+                                        .color(crate::theme::text_secondary()),
+                                    );
+                                    ui.add_space(8.0);
 
-                                    // 设备列表 —— 用 radio button 替代宽按钮
+                                    // 设备列表：整行可选（与右栏列表行一致，全宽可点）。
                                     egui::ScrollArea::vertical()
                                         .auto_shrink([false, false])
                                         .show(ui, |ui| {
                                             if devices_vec.is_empty() {
-                                                ui.vertical_centered(|ui| {
-                                                    ui.add_space(12.0);
-                                                    ui.label(
-                                                        egui::RichText::new(
-                                                            t!("dialog.audio_switch.no_devices")
-                                                                .as_ref(),
-                                                        )
-                                                        .color(crate::theme::text_label()),
-                                                    );
-                                                });
+                                                ui.add_space(12.0);
+                                                ui.label(
+                                                    egui::RichText::new(
+                                                        t!("dialog.audio_switch.no_devices")
+                                                            .as_ref(),
+                                                    )
+                                                    .color(crate::theme::text_label()),
+                                                );
                                             }
                                             for name in &devices_vec {
-                                                let resp =
-                                                    ui.add(egui::RadioButton::new(false, name));
+                                                let resp = crate::widgets::rows::list_row(
+                                                    ui,
+                                                    false,
+                                                    |ui| {
+                                                        ui.label(name);
+                                                    },
+                                                );
                                                 if resp.clicked() {
                                                     *action_capture.borrow_mut() =
                                                         AudioDeviceSwitchAction::Switch(
