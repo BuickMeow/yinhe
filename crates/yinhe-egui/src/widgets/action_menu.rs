@@ -77,6 +77,13 @@ pub fn popup_menu_row(
         egui::RichText::new(spec.shortcut.unwrap_or(""))
     });
     let main_resp = ui.put(main_rect, main_btn);
+    // 菜单项悬停讲解（mode bar）：名称 + 快捷键；与走带栏图钉按钮（pinned_action_buttons
+    // 用 label）一致，给每项一个讲解。
+    let item_hint = match spec.shortcut {
+        Some(s) if !s.is_empty() => format!("{} · {}", spec.label, s),
+        _ => spec.label.to_string(),
+    };
+    crate::widgets::hint::hover(ui.ctx(), &main_resp, item_hint);
 
     let mut pin_resp = None;
     if let Some(is_pinned) = spec.pin {
