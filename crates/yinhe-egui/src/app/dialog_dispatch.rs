@@ -563,16 +563,17 @@ impl App {
             let doc = &self.workspace.documents[idx];
             crate::arrange::plugin_instrument_of(&doc.data.model.tracks, &doc.mixer, track_idx)
         };
-        let (channel_label, device_name, entries, show_custom_cc) = {
+        let (title, device_name, mut entries, existing, channel) = {
             let doc = &self.workspace.documents[idx];
             let Some(track) = doc.data.model.tracks.get(track_idx) else {
                 return;
             };
-            let existing: Vec<yinhe_types::AutomationTarget> = track
+            let existing: std::collections::HashSet<yinhe_types::AutomationTarget> = track
                 .automation_lanes
                 .iter()
                 .map(|l| l.target.clone())
                 .collect();
+            let track_name = track.name.clone();
             match device_instrument {
                 Some(ich) => {
                     // 插件设备：实例可用才有参数（未加载时空列表，窗口提示）。
@@ -584,64 +585,53 @@ impl App {
                         Some(instance) => (instance.name().to_string(), instance.param_list()),
                         None => (String::new(), Vec::new()),
                     };
-                    let entries = params
+                    let entries: Vec<AutomationEntry> = params
                         .into_iter()
                         .map(|p| AutomationEntry {
-                            existing: existing.iter().any(|t| {
-                                matches!(
-                                    t,
-                                    yinhe_types::AutomationTarget::Param {
-                                        device: yinhe_types::automation::ParamDevice::PluginInstrument {
-                                            channel,
-                                        },
-                                        id,
-                                        ..
-                                    } if *channel == ich && *id == p.id
-                                )
-                            }),
                             label: if p.module.is_empty() {
                                 p.name.clone()
                             } else {
                                 format!("{}/{}", p.module, p.name)
                             },
                             target: yinhe_types::AutomationTarget::Param {
-                                device: yinhe_types::automation::ParamDevice::PluginInstrument { channel: ich },
+                                device: yinhe_types::automation::ParamDevice::PluginInstrument {
+                                    channel: ich,
+                                },
                                 id: p.id,
                                 name: p.name,
                             },
                         })
                         .collect();
-                    (crate::mix::channel_label(ich), name, entries, false)
+                    (track_name, name, entries, existing, ich)
                 }
                 None => {
                     // XSynth 设备：内置参数（音源 + 通道 DSP；跳过 Tempo，那是工程级）。
-                    let entries = crate::piano_view::automation_panel::automation_targets(Some(
-                        track.global_channel(),
-                    ))
-                    .into_iter()
-                    .filter(|t| !matches!(t, yinhe_types::AutomationTarget::Tempo))
-                    .map(|t| AutomationEntry {
-                        label: crate::arrange::lane_label(&t),
-                        existing: existing.contains(&t),
-                        target: t,
-                    })
-                    .collect();
-                    (
-                        crate::mix::channel_label(track.global_channel()),
-                        "XSynth".to_string(),
-                        entries,
-                        true,
-                    )
+                    // Pitch Bend 单独提到列表首位（见下方统一插入），这里先排除。
+                    let ch = track.global_channel();
+                    let pb = pitch_bend_target(ch);
+                    let entries = crate::piano_view::automation_panel::automation_targets(Some(ch))
+                        .into_iter()
+                        .filter(|t| !matches!(t, yinhe_types::AutomationTarget::Tempo) && *t != pb)
+                        .map(|t| AutomationEntry {
+                            label: crate::arrange::lane_label(&t),
+                            target: t,
+                        })
+                        .collect();
+                    (track_name, "XSynth".to_string(), entries, existing, ch)
                 }
             }
         };
-        self.automation_picker.open(
-            track_idx,
-            channel_label,
-            device_name,
-            entries,
-            show_custom_cc,
+        // 每个设备（XSynth / 插件）必备的 Pitch Bend，固定放列表首位。
+        let pb = pitch_bend_target(channel);
+        entries.insert(
+            0,
+            AutomationEntry {
+                label: pb.display_name(),
+                target: pb,
+            },
         );
+        self.automation_picker
+            .open(track_idx, title, device_name, entries, existing);
         crate::chrome::dialog::raise_viewport(
             ctx,
             egui::ViewportId::from_hash_of("automation_picker"),
@@ -753,5 +743,14 @@ impl App {
         if !open {
             self.float_panel = None;
         }
+    }
+}
+
+/// Pitch Bend 自动化目标（通道级，每个设备都必备）。
+fn pitch_bend_target(channel: u8) -> yinhe_types::AutomationTarget {
+    yinhe_types::AutomationTarget::Param {
+        device: yinhe_types::automation::ParamDevice::ChannelInstrument { channel },
+        id: yinhe_types::automation::xsynth_param::PITCH_BEND,
+        name: String::new(),
     }
 }

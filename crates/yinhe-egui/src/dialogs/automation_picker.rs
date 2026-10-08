@@ -1,25 +1,30 @@
 //! 「添加自动化」窗口（独立 OS viewport）。
 //!
 //! 自动化属于**乐器设备**（XSynth 或插件），不属于音轨：
-//! - XSynth 设备：列出内置参数（CC/PB/RPN）+ 自定义 CC；
-//! - 插件设备：列出插件参数（可达数千个，虚拟滚动 + 搜索）。
-//!
-//! 点击条目添加对应 AM lane，再次点击移除（对勾 = 已添加）。
+//! - 左列：自定义 CC / 自定义 RPN 两个网格（8 列 × 16 行 = 128 格，格子内写编号，
+//!   点亮 = 已有对应 lane，点击增/删）；
+//! - 右列：该设备自带的参数（XSynth 内置参数 / 插件参数），带搜索。
 //!
 //! 窗口不修改模型：条目标签与目标在打开时（App 侧）收集，点击返回 [`Toggle`]
-//! 动作，由 App 落模型并回写对勾状态。
+//! 动作，由 App 落模型并回写点亮状态。
+
+use std::collections::HashSet;
 
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_types::AutomationTarget;
 
-/// 窗口里的一个可添加项。
+/// 网格列数（8 列 × 16 行 = 128 格）。
+const GRID_COLS: usize = 8;
+const GRID_ROWS: usize = 16;
+const GRID_CELL_H: f32 = 16.0;
+const GRID_GAP: f32 = 1.0;
+
+/// 窗口里的一个可添加项（右侧「设备自带参数」）。
 pub(crate) struct AutomationEntry {
     pub target: AutomationTarget,
     /// 显示名（含 CC 名 / 模块）。
     pub label: String,
-    /// 是否已有对应 AM lane（对勾）。
-    pub existing: bool,
 }
 
 /// 窗口状态（挂在 App 上，跨帧保留；打开时重置）。
@@ -30,19 +35,18 @@ pub(crate) struct AutomationPickerState {
     pub just_opened: bool,
     /// 目标轨道（lane 建在该轨上）。
     pub track_idx: usize,
-    /// 窗口标题里的通道/设备标签（MIDI-A05 / Inst-01）。
-    channel_label: String,
+    /// 窗口标题里的轨道名。
+    title: String,
     /// 设备名（XSynth / Serum 2）。
     device_name: String,
+    /// 右侧「设备自带参数」条目。
     entries: Vec<AutomationEntry>,
+    /// 当前已存在的自动化目标（左网格 + 右列表共用）。
+    existing: HashSet<AutomationTarget>,
     /// 搜索过滤后的条目索引。
     filtered: Vec<usize>,
     search: String,
     filter_dirty: bool,
-    /// 是否显示自定义 CC 行（仅 XSynth 设备）。
-    show_custom_cc: bool,
-    /// 自定义 CC 控制器号输入。
-    custom_cc: u8,
 }
 
 /// 用户动作（窗口不修改模型，交给 App 处理）。
@@ -59,32 +63,32 @@ pub(crate) enum AutomationPickerAction {
 
 impl AutomationPickerState {
     /// 打开窗口并填入条目。
-    #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
     pub(crate) fn open(
         &mut self,
         track_idx: usize,
-        channel_label: String,
+        title: String,
         device_name: String,
         entries: Vec<AutomationEntry>,
-        show_custom_cc: bool,
+        existing: HashSet<AutomationTarget>,
     ) {
         self.open = true;
         self.just_opened = true;
         self.track_idx = track_idx;
-        self.channel_label = channel_label;
+        self.title = title;
         self.device_name = device_name;
         self.entries = entries;
+        self.existing = existing;
         self.search.clear();
         self.filter_dirty = true;
-        self.show_custom_cc = show_custom_cc;
-        self.custom_cc = self.custom_cc.clamp(0, 127);
         self.rebuild_filter();
     }
 
-    /// App 落模型后回写对勾状态。
+    /// App 落模型后回写点亮状态。
     pub(crate) fn set_existing(&mut self, target: &AutomationTarget, existing: bool) {
-        if let Some(e) = self.entries.iter_mut().find(|e| &e.target == target) {
-            e.existing = existing;
+        if existing {
+            self.existing.insert(target.clone());
+        } else {
+            self.existing.remove(target);
         }
     }
 
@@ -105,19 +109,34 @@ impl AutomationPickerState {
     }
 }
 
+/// 翻转一个目标并返回对应动作（同时更新本地点亮集合）。
+fn toggle(state: &mut AutomationPickerState, target: AutomationTarget) -> AutomationPickerAction {
+    let add = !state.existing.contains(&target);
+    if add {
+        state.existing.insert(target.clone());
+    } else {
+        state.existing.remove(&target);
+    }
+    AutomationPickerAction::Toggle {
+        track_idx: state.track_idx,
+        target,
+        add,
+    }
+}
+
 /// 显示「添加自动化」窗口。
 pub(crate) fn show_viewport(
     ctx: &egui::Context,
     state: &mut AutomationPickerState,
 ) -> AutomationPickerAction {
     let viewport_id = egui::ViewportId::from_hash_of("automation_picker");
-    let title = t!("dialog.automation.title", ch = state.channel_label.as_str());
+    let title = t!("dialog.automation.title", ch = state.title.as_str());
     let mut action = AutomationPickerAction::None;
     let mut closed = false;
 
     ctx.show_viewport_immediate(
         viewport_id,
-        crate::chrome::dialog::viewport_builder(title.as_ref(), [420.0, 540.0], false),
+        crate::chrome::dialog::viewport_builder(title.as_ref(), [860.0, 640.0], false),
         |vctx, _class| {
             if vctx.input(|i| i.viewport().close_requested()) {
                 closed = true;
@@ -141,166 +160,15 @@ pub(crate) fn show_viewport(
                             if state.filter_dirty {
                                 state.rebuild_filter();
                             }
-                            // 副标题：设备名 + 参数数量 + 搜索。
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    egui::RichText::new(format!(
-                                        "{} · {}",
-                                        state.device_name,
-                                        t!("dialog.automation.count", n = state.entries.len())
-                                    ))
-                                    .size(crate::theme::SMALL_FONT)
-                                    .color(crate::theme::text_muted()),
-                                );
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if crate::widgets::text_input::control_text_input(
-                                            ui,
-                                            &mut state.search,
-                                            140.0,
-                                            "auto_picker_search",
-                                            Some(t!("mix.search").as_ref()),
-                                        )
-                                        .changed()
-                                        {
-                                            state.filter_dirty = true;
-                                        }
-                                    },
-                                );
-                            });
-                            ui.add_space(4.0);
-                            ui.label(
-                                egui::RichText::new(t!("dialog.automation.hint"))
-                                    .size(crate::theme::SMALL_FONT)
-                                    .color(crate::theme::text_muted()),
-                            );
-                            ui.separator();
-
-                            if state.entries.is_empty() {
-                                ui.label(
-                                    egui::RichText::new(t!("dialog.automation.empty"))
-                                        .size(crate::theme::SMALL_FONT)
-                                        .color(crate::theme::text_muted()),
-                                );
-                            } else {
-                                // 设置菜单样式的行：左标题（无描述）+ 右开关（= 已添加自动化）。
-                                let row_h = 40.0;
-                                let max_h = crate::widgets::scroll::snap_rows(
-                                    ui.available_height() - 40.0,
-                                    row_h,
-                                    None,
-                                );
+                            ui.columns(2, |cols| {
                                 egui::ScrollArea::vertical()
-                                    .id_salt("automation_picker_list")
+                                    .id_salt("custom_grids_scroll")
                                     .auto_shrink([false, false])
-                                    .max_height(max_h)
-                                    .show_rows(ui, row_h, state.filtered.len(), |ui, range| {
-                                        for &pi in &state.filtered[range] {
-                                            let label = state.entries[pi].label.clone();
-                                            let added = state.entries[pi].existing;
-                                            let mut on = added;
-                                            let mut toggled = false;
-                                            ui.horizontal(|ui| {
-                                                ui.label(egui::RichText::new(label).strong().size(
-                                                    crate::scaling::scaled_font(
-                                                        ui.ctx(),
-                                                        crate::theme::SUB_TITLE_FONT,
-                                                    ),
-                                                ));
-                                                ui.with_layout(
-                                                    egui::Layout::right_to_left(
-                                                        egui::Align::Center,
-                                                    ),
-                                                    |ui| {
-                                                        if crate::widgets::switch::switch(
-                                                            ui, &mut on,
-                                                        )
-                                                        .changed()
-                                                        {
-                                                            toggled = true;
-                                                        }
-                                                    },
-                                                );
-                                            });
-                                            ui.add_space(6.0);
-                                            ui.separator();
-                                            if toggled {
-                                                let target = state.entries[pi].target.clone();
-                                                state.entries[pi].existing = on;
-                                                action = AutomationPickerAction::Toggle {
-                                                    track_idx: state.track_idx,
-                                                    target,
-                                                    add: on,
-                                                };
-                                            }
-                                        }
+                                    .show(&mut cols[0], |ui| {
+                                        custom_grids(ui, state, &mut action);
                                     });
-                            }
-
-                            // 自定义 CC 行（仅 XSynth 设备）：输入控制器号 → 添加。
-                            if state.show_custom_cc {
-                                ui.add_space(8.0);
-                                ui.horizontal(|ui| {
-                                    ui.label(
-                                        egui::RichText::new(t!("arrange.custom_cc")).strong().size(
-                                            crate::scaling::scaled_font(
-                                                ui.ctx(),
-                                                crate::theme::SUB_TITLE_FONT,
-                                            ),
-                                        ),
-                                    );
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            if ui
-                                                .add(
-                                                    crate::widgets::numeric_input::decimal_drag_value(&mut state.custom_cc)
-                                                        .range(0..=127),
-                                                )
-                                                .changed()
-                                            {
-                                                // 仅更新输入值。
-                                            }
-                                            ui.label(t!("dialog.automation.cc_number"));
-                                        },
-                                    );
-                                });
-                                ui.add_space(4.0);
-                                if crate::widgets::flat::flat_button(ui, t!("arrange.create"))
-                                    .clicked()
-                                {
-                                    let target = AutomationTarget::CC {
-                                        controller: state.custom_cc,
-                                    };
-                                    let label = crate::arrange::lane_label(&target);
-                                    if let Some(e) =
-                                        state.entries.iter_mut().find(|e| e.target == target)
-                                    {
-                                        if !e.existing {
-                                            e.existing = true;
-                                            action = AutomationPickerAction::Toggle {
-                                                track_idx: state.track_idx,
-                                                target: target.clone(),
-                                                add: true,
-                                            };
-                                        }
-                                    } else {
-                                        state.entries.push(AutomationEntry {
-                                            target: target.clone(),
-                                            label,
-                                            existing: true,
-                                        });
-                                        // 新条目可能不在当前过滤结果里：重建。
-                                        state.filter_dirty = true;
-                                        action = AutomationPickerAction::Toggle {
-                                            track_idx: state.track_idx,
-                                            target,
-                                            add: true,
-                                        };
-                                    }
-                                }
-                            }
+                                device_params(&mut cols[1], state, &mut action);
+                            });
                         });
                 });
             if close {
@@ -316,4 +184,188 @@ pub(crate) fn show_viewport(
     } else {
         action
     }
+}
+
+/// 左列：自定义 CC / 自定义 RPN 两个 8×16 网格。
+fn custom_grids(
+    ui: &mut egui::Ui,
+    state: &mut AutomationPickerState,
+    action: &mut AutomationPickerAction,
+) {
+    ui.label(egui::RichText::new(t!("arrange.custom_cc")).strong().size(
+        crate::scaling::scaled_font(ui.ctx(), crate::theme::SUB_TITLE_FONT),
+    ));
+    ui.add_space(4.0);
+    if let Some(i) = number_grid(ui, &state.existing, |i| AutomationTarget::CC {
+        controller: i as u8,
+    }) {
+        *action = toggle(
+            state,
+            AutomationTarget::CC {
+                controller: i as u8,
+            },
+        );
+    }
+
+    ui.add_space(12.0);
+    ui.label(egui::RichText::new(t!("arrange.custom_rpn")).strong().size(
+        crate::scaling::scaled_font(ui.ctx(), crate::theme::SUB_TITLE_FONT),
+    ));
+    ui.add_space(4.0);
+    if let Some(i) = number_grid(ui, &state.existing, |i| AutomationTarget::Rpn {
+        parameter: i as u16,
+    }) {
+        *action = toggle(
+            state,
+            AutomationTarget::Rpn {
+                parameter: i as u16,
+            },
+        );
+    }
+}
+
+/// 8 列 × 16 行 = 128 格网格；返回本帧被点击的格号。
+fn number_grid(
+    ui: &mut egui::Ui,
+    existing: &HashSet<AutomationTarget>,
+    make_target: impl Fn(usize) -> AutomationTarget,
+) -> Option<usize> {
+    let gap = crate::scaling::scaled_font(ui.ctx(), GRID_GAP);
+    let cell_h = crate::scaling::scaled_font(ui.ctx(), GRID_CELL_H);
+    let cell_w =
+        ((ui.available_width() - gap * (GRID_COLS as f32 - 1.0)) / GRID_COLS as f32).max(1.0);
+    let font = egui::FontId::proportional(crate::scaling::scaled_font(
+        ui.ctx(),
+        crate::theme::SMALL_LABEL_FONT,
+    ));
+    let lit_bg = crate::theme::accent_active();
+    let lit_fg = crate::theme::contrast_fg();
+    let idle_bg = crate::theme::btn_bg();
+    let idle_fg = crate::theme::text_secondary();
+    let mut clicked = None;
+
+    for row in 0..GRID_ROWS {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = gap;
+            for col in 0..GRID_COLS {
+                let i = row * GRID_COLS + col;
+                let target = make_target(i);
+                let lit = existing.contains(&target);
+                let (rect, resp) =
+                    ui.allocate_exact_size(egui::vec2(cell_w, cell_h), egui::Sense::click());
+                let bg = if lit {
+                    lit_bg
+                } else if resp.hovered() {
+                    crate::theme::hover_color(idle_bg)
+                } else {
+                    idle_bg
+                };
+                let fg = if lit { lit_fg } else { idle_fg };
+                let painter = ui.painter();
+                painter.rect_filled(rect, 2.0, bg);
+                painter.rect_stroke(
+                    rect,
+                    2.0,
+                    crate::widgets::control::control_stroke(true, false),
+                    egui::StrokeKind::Inside,
+                );
+                painter.text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    format!("{i}"),
+                    font.clone(),
+                    fg,
+                );
+                crate::widgets::hint::hover(ui.ctx(), &resp, target.display_name());
+                if resp.clicked() {
+                    clicked = Some(i);
+                }
+            }
+        });
+        if row + 1 < GRID_ROWS {
+            ui.add_space(gap);
+        }
+    }
+    clicked
+}
+
+/// 右列：设备自带参数列表（搜索 + 开关）。
+fn device_params(
+    ui: &mut egui::Ui,
+    state: &mut AutomationPickerState,
+    action: &mut AutomationPickerAction,
+) {
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(format!(
+                "{} · {}",
+                state.device_name,
+                t!("dialog.automation.count", n = state.entries.len())
+            ))
+            .size(crate::theme::SMALL_FONT)
+            .color(crate::theme::text_muted()),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if crate::widgets::text_input::control_text_input(
+                ui,
+                &mut state.search,
+                140.0,
+                "auto_picker_search",
+                Some(t!("mix.search").as_ref()),
+            )
+            .changed()
+            {
+                state.filter_dirty = true;
+            }
+        });
+    });
+    ui.add_space(4.0);
+    ui.separator();
+
+    if state.entries.is_empty() {
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(t!("dialog.automation.empty"))
+                .size(crate::theme::SMALL_FONT)
+                .color(crate::theme::text_muted()),
+        );
+        return;
+    }
+
+    let row_h = crate::scaling::scaled_font(ui.ctx(), 30.0);
+    egui::ScrollArea::vertical()
+        .id_salt("automation_picker_list")
+        .auto_shrink([false, false])
+        .max_height(ui.available_height())
+        .show_rows(ui, row_h, state.filtered.len(), |ui, range| {
+            let total = state.filtered.len();
+            let pis: Vec<usize> = state.filtered[range.clone()].to_vec();
+            for (offset, &pi) in pis.iter().enumerate() {
+                let row_idx = range.start + offset;
+                let label = state.entries[pi].label.clone();
+                let target = state.entries[pi].target.clone();
+                let mut on = state.existing.contains(&target);
+                let mut toggled = false;
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(label).size(crate::scaling::scaled_font(
+                        ui.ctx(),
+                        crate::theme::BODY_FONT,
+                    )));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if crate::widgets::switch::switch(ui, &mut on).changed() {
+                            toggled = true;
+                        }
+                    });
+                });
+                if toggled {
+                    *action = toggle(state, target);
+                }
+                // 行间分割线：末尾不再画一条多余的分割线。
+                if row_idx + 1 < total {
+                    ui.add_space(2.0);
+                    ui.separator();
+                    ui.add_space(2.0);
+                }
+            }
+        });
 }

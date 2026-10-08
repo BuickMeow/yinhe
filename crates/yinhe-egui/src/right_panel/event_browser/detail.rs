@@ -1333,7 +1333,10 @@ pub(super) fn show_track_detail(
         for (ctrl, count) in &summary.cc_per_controller {
             kv(
                 ui,
-                &format!("  CC {} {}", ctrl, super::cc_label(*ctrl)),
+                &format!(
+                    "  {}",
+                    AutomationTarget::CC { controller: *ctrl }.display_name()
+                ),
                 t!("event_browser.cc_count", n = count).to_string(),
             );
         }

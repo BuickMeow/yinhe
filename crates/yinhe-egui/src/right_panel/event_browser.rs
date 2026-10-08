@@ -131,22 +131,8 @@ pub fn show_events(
 
 // ── 共享 helper（供子模块复用） ──
 //
-// 这三个函数被 tree.rs 和 detail.rs 同时使用，放在模块根避免重复。
-// 子模块通过 `super::cc_label` / `super::port_letter` / `super::group_tracks_by_port_channel` 引用。
-
-fn cc_label(controller: u8) -> &'static str {
-    match controller {
-        0 => "Bank Select MSB",
-        1 => "Modulation",
-        7 => "Volume",
-        10 => "Pan",
-        11 => "Expression",
-        64 => "Sustain",
-        91 => "Reverb",
-        93 => "Chorus",
-        _ => "",
-    }
-}
+// 这两个函数被 tree.rs 和 detail.rs 同时使用，放在模块根避免重复。
+// 子模块通过 `super::port_letter` / `super::group_tracks_by_port_channel` 引用。
 
 fn port_letter(port: u8) -> char {
     if port < 26 {

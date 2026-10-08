@@ -470,7 +470,12 @@ impl AutomationTarget {
     pub fn display_name(&self) -> String {
         match self {
             AutomationTarget::Param { device, id, name } => match builtin_param(device, *id) {
-                Some(p) => p.name.to_string(),
+                // 内置参数按 MIDI 绑定补前缀：RPN 参数显示为 "RPN nnn 名称"
+                //（如 "RPN 000 PB Sensitivity"），CC/PB 直接用参数名。
+                Some(p) => match p.midi {
+                    MidiBinding::Rpn(n) => format!("RPN {:03} {}", n, p.name),
+                    _ => p.name.to_string(),
+                },
                 None if !name.is_empty() => name.clone(),
                 None => match device {
                     ParamDevice::PluginInstrument { channel } => {
@@ -482,13 +487,20 @@ impl AutomationTarget {
             AutomationTarget::CC { controller } => {
                 let name = cc_name(*controller);
                 if name.is_empty() {
-                    format!("CC {}", controller)
+                    format!("CC {:03}", controller)
                 } else {
-                    format!("CC {} ({})", controller, name)
+                    format!("CC {:03} {}", controller, name)
                 }
             }
-            AutomationTarget::Rpn { parameter } => format!("RPN {}", parameter),
-            AutomationTarget::Nrpn { parameter } => format!("NRPN {}", parameter),
+            AutomationTarget::Rpn { parameter } => {
+                let name = rpn_name(*parameter);
+                if name.is_empty() {
+                    format!("RPN {:03}", parameter)
+                } else {
+                    format!("RPN {:03} {}", parameter, name)
+                }
+            }
+            AutomationTarget::Nrpn { parameter } => format!("NRPN {:03}", parameter),
             AutomationTarget::Tempo => "Tempo".into(),
         }
     }
@@ -502,38 +514,88 @@ fn rpn_max(parameter: u16) -> f32 {
     }
 }
 
-/// Common MIDI CC names (standard GM/GS assignments).
+/// 标准 RPN 名称（MIDI 规范 RPN 0/1/2）。未收录的返回空串。
+fn rpn_name(parameter: u16) -> &'static str {
+    match parameter {
+        0 => "PB Sensitivity",
+        1 => "Fine Tune",
+        2 => "Coarse Tune",
+        _ => "",
+    }
+}
+
+/// 标准 MIDI CC 名称（GM/GS 约定）。未定义（保留/空白）的返回空串，
+/// 显示时退化为纯 `CC nnn`。CC10 沿用应用内叫法 "Pan"。
 fn cc_name(cc: u8) -> &'static str {
     match cc {
         0 => "Bank Select MSB",
-        1 => "Mod Wheel",
-        2 => "Breath",
-        4 => "Foot",
+        1 => "Modulation Wheel",
+        2 => "Breath Controller",
+        4 => "Foot Controller",
         5 => "Portamento Time",
         6 => "Data Entry MSB",
         7 => "Volume",
         8 => "Balance",
         10 => "Pan",
         11 => "Expression",
+        12 => "Effect Control 1",
+        13 => "Effect Control 2",
+        16 => "General Purpose 1",
+        17 => "General Purpose 2",
+        18 => "General Purpose 3",
+        19 => "General Purpose 4",
         32 => "Bank Select LSB",
+        33 => "Modulation Wheel LSB",
+        34 => "Breath Controller LSB",
+        36 => "Foot Controller LSB",
+        37 => "Portamento Time LSB",
         38 => "Data Entry LSB",
+        39 => "Volume LSB",
+        40 => "Balance LSB",
+        42 => "Pan LSB",
+        43 => "Expression LSB",
+        44 => "Effect Control 1 LSB",
+        45 => "Effect Control 2 LSB",
         64 => "Sustain",
         65 => "Portamento",
         66 => "Sostenuto",
         67 => "Soft Pedal",
         68 => "Legato",
+        69 => "Hold 2",
+        70 => "Sound Controller 1",
         71 => "Resonance",
         72 => "Release",
         73 => "Attack",
         74 => "Cutoff",
+        75 => "Sound Controller 6",
+        76 => "Sound Controller 7",
+        77 => "Sound Controller 8",
+        78 => "Sound Controller 9",
+        79 => "Sound Controller 10",
+        80 => "General Purpose 5",
+        81 => "General Purpose 6",
+        82 => "General Purpose 7",
+        83 => "General Purpose 8",
         84 => "Portamento Control",
         91 => "Reverb",
         92 => "Tremolo",
         93 => "Chorus",
         94 => "Detune",
         95 => "Phaser",
+        96 => "Data Increment",
+        97 => "Data Decrement",
+        98 => "NRPN LSB",
+        99 => "NRPN MSB",
         100 => "RPN LSB",
         101 => "RPN MSB",
+        120 => "All Sound Off",
+        121 => "Reset All Controllers",
+        122 => "Local Control",
+        123 => "All Notes Off",
+        124 => "Omni Off",
+        125 => "Omni On",
+        126 => "Mono Mode On",
+        127 => "Poly Mode On",
         _ => "",
     }
 }
@@ -815,6 +877,11 @@ mod tests {
         let pb = param(&xs, xsynth_param::PITCH_BEND);
         assert_eq!(pb.display_max(), Some(16383.0));
         assert!(pb.has_center_line());
+        assert_eq!(pb.display_name(), "Pitch Bend");
+
+        // RPN 绑定的内置参数：显示带 "RPN nnn" 前缀。
+        let pbs = param(&xs, xsynth_param::PB_SENSITIVITY);
+        assert_eq!(pbs.display_name(), "RPN 000 PB Sensitivity");
 
         // 第三方插件参数：无内置表 → 归一化显示（无换算上限），名字用缓存。
         let plug = AutomationTarget::Param {
@@ -832,7 +899,7 @@ mod tests {
     #[test]
     fn test_low_level_targets() {
         let cc7 = AutomationTarget::CC { controller: 7 };
-        assert_eq!(cc7.display_name(), "CC 7 (Volume)");
+        assert_eq!(cc7.display_name(), "CC 007 Volume");
         assert_eq!(cc7.display_max(), Some(127.0));
         assert_eq!(cc7.default_value(), 0.0);
         assert!(!cc7.has_center_line());
@@ -847,7 +914,19 @@ mod tests {
 
         assert_eq!(
             AutomationTarget::Rpn { parameter: 5 }.display_name(),
-            "RPN 5"
+            "RPN 005"
+        );
+        assert_eq!(
+            AutomationTarget::Rpn { parameter: 0 }.display_name(),
+            "RPN 000 PB Sensitivity"
+        );
+        assert_eq!(
+            AutomationTarget::CC { controller: 10 }.display_name(),
+            "CC 010 Pan"
+        );
+        assert_eq!(
+            AutomationTarget::CC { controller: 3 }.display_name(),
+            "CC 003"
         );
         assert_eq!(
             AutomationTarget::Rpn { parameter: 5 }.display_max(),

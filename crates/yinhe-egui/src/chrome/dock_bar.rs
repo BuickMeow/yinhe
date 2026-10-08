@@ -60,7 +60,7 @@ enum KnobAction {
 /// 处理段，与 XSynth 的 CC 绑定参数一样走低层 `CC lane`（回放广播给通道
 /// 处理段/合成器）；PB/RPN 无低层 lane 形态，保留设备参数
 /// （`ChannelInstrument`）。返回 (target, 显示名)，显示名取参数表自己的
-/// 名字（如 "Sustain"），不用 CC 目标的通用显示名（"CC 64 (Sustain)"）。
+/// 名字（如 "Sustain"），不用 CC 目标的通用显示名（"CC 064 Sustain"）。
 fn instrument_targets(channel: u8) -> Vec<(AutomationTarget, String, f32)> {
     CHANNEL_DSP_PARAMS
         .iter()

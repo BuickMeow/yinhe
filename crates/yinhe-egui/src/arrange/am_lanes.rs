@@ -287,10 +287,8 @@ pub(crate) fn interact_all(
     out
 }
 
-/// lane 的菜单/标签名（子行绘制与右键菜单共用）。
+/// lane 的菜单/标签名（子行绘制与右键菜单共用）。统一走 `display_name`
+/// （CC/RPN 带零填充编号 + 名称，如 "CC 010 Pan"、"RPN 000 PB Sensitivity"）。
 pub(crate) fn lane_label(target: &AutomationTarget) -> String {
-    match target {
-        AutomationTarget::CC { controller } => format!("CC {:03}", controller),
-        other => other.display_name(),
-    }
+    target.display_name()
 }
