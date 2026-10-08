@@ -361,6 +361,8 @@ pub fn show(
                     .inner;
 
                 // ── 讲解/状态文字：模式栏控件 > 视图提示；模式栏空白处清空 ──
+                // 指针在弹窗（菜单/下拉等）上时，模式栏控件提示已失效，改用弹窗
+                // 自身写入的讲解（`hint::current`，由弹窗内控件 `hint::hover` 写入）。
                 let over_popup = crate::view_interaction::pointer_over_popup(ui.ctx());
                 let over_bar = ui.input(|i| {
                     i.pointer
@@ -368,7 +370,7 @@ pub fn show(
                         .is_some_and(|p| ui.max_rect().contains(p))
                 });
                 let display_text = if over_popup {
-                    None
+                    crate::widgets::hint::current(ui.ctx())
                 } else if icon_hint.is_some() {
                     icon_hint
                 } else if hovered_hint.is_some() {
