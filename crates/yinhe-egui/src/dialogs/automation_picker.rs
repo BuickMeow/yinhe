@@ -209,69 +209,16 @@ pub(crate) fn show_viewport(
 }
 
 /// 内容区：自定义 CC / 自定义 RPN 两行 + 设备参数单选列表。
-/// 行布局统一「目标在左、控件（步进器/单选）在右」，行距取较宽松的一档。
+/// 行布局统一「目标在左、控件（步进器/单选）在右」；**所有行放在同一个
+/// ScrollArea 里**（自定义两行是第 0/1 行），保证各行宽度一致、圆点对齐。
 fn content(ui: &mut egui::Ui, state: &mut AutomationPickerState) {
     ui.add_space(4.0);
     let row_h = crate::scaling::scaled_font(ui.ctx(), 30.0);
-    let radio_r = crate::scaling::scaled_font(ui.ctx(), 7.0);
     let pad = crate::scaling::scaled_font(ui.ctx(), 8.0);
     let stepper_w = crate::scaling::scaled_font(ui.ctx(), 96.0);
     let label_size = crate::scaling::scaled_font(ui.ctx(), crate::theme::BODY_FONT);
 
-    // 自定义 CC：单选 + 控制器号步进器。
-    let (resp, ctrl) = pick_row(
-        ui,
-        state.selection == Selection::CustomCc,
-        t!("arrange.custom_cc").as_ref(),
-        stepper_w,
-        row_h,
-        radio_r,
-        pad,
-        label_size,
-    );
-    if let Some(rect) = ctrl {
-        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-            let r = crate::widgets::stepper::stepper(&mut state.custom_cc)
-                .range(0..=127)
-                .step(1.0)
-                .width(stepper_w)
-                .show(ui);
-            crate::widgets::hint::hover(ui.ctx(), &r, t!("hint.pr.custom_cc"));
-        });
-    }
-    if resp.clicked() {
-        state.selection = Selection::CustomCc;
-    }
-
-    // 自定义 RPN：单选 + 参数号步进器。
-    let (resp, ctrl) = pick_row(
-        ui,
-        state.selection == Selection::CustomRpn,
-        t!("arrange.custom_rpn").as_ref(),
-        stepper_w,
-        row_h,
-        radio_r,
-        pad,
-        label_size,
-    );
-    if let Some(rect) = ctrl {
-        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-            let r = crate::widgets::stepper::stepper(&mut state.custom_rpn)
-                .range(0..=127)
-                .step(1.0)
-                .width(stepper_w)
-                .show(ui);
-            crate::widgets::hint::hover(ui.ctx(), &r, t!("hint.pr.custom_rpn"));
-        });
-    }
-    if resp.clicked() {
-        state.selection = Selection::CustomRpn;
-    }
-
-    ui.add_space(6.0);
-    ui.separator();
-
-    // 设备自带参数：标题 + 搜索。
+    // 设备自带参数：标题 + 搜索（固定，不随列表滚动）。
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(format!(
@@ -296,37 +243,90 @@ fn content(ui: &mut egui::Ui, state: &mut AutomationPickerState) {
             }
         });
     });
-    ui.add_space(2.0);
+    ui.add_space(4.0);
 
-    if state.entries.is_empty() {
-        ui.label(
-            egui::RichText::new(t!("dialog.automation.empty"))
-                .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::text_muted()),
-        );
-        return;
-    }
-
+    // 前两行固定为自定义 CC / RPN，其余为设备参数（行 2 起）。
+    let total = 2 + state.filtered.len();
     egui::ScrollArea::vertical()
         .id_salt("automation_picker_list")
         .auto_shrink([false, false])
         .max_height(ui.available_height())
-        .show_rows(ui, row_h, state.filtered.len(), |ui, range| {
-            let pis: Vec<usize> = state.filtered[range.clone()].to_vec();
-            for &pi in &pis {
-                let label = state.entries[pi].label.clone();
-                let (resp, _) = pick_row(
-                    ui,
-                    state.selection == Selection::Entry(pi),
-                    &label,
-                    0.0,
-                    row_h,
-                    radio_r,
-                    pad,
-                    label_size,
-                );
-                if resp.clicked() {
-                    state.selection = Selection::Entry(pi);
+        .show_rows(ui, row_h, total, |ui, range| {
+            let dev_start = range.start.saturating_sub(2);
+            let dev_end = range.end.saturating_sub(2).min(state.filtered.len());
+            let vis: Vec<usize> = if dev_start < dev_end {
+                state.filtered[dev_start..dev_end].to_vec()
+            } else {
+                Vec::new()
+            };
+            let mut vis_iter = vis.iter();
+            for row_idx in range.clone() {
+                match row_idx {
+                    0 => {
+                        let (resp, ctrl) = pick_row(
+                            ui,
+                            state.selection == Selection::CustomCc,
+                            t!("arrange.custom_cc").as_ref(),
+                            stepper_w,
+                            row_h,
+                            pad,
+                            label_size,
+                        );
+                        if let Some(rect) = ctrl {
+                            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                                let r = crate::widgets::stepper::stepper(&mut state.custom_cc)
+                                    .range(0..=127)
+                                    .step(1.0)
+                                    .width(stepper_w)
+                                    .show(ui);
+                                crate::widgets::hint::hover(ui.ctx(), &r, t!("hint.pr.custom_cc"));
+                            });
+                        }
+                        if resp.clicked() {
+                            state.selection = Selection::CustomCc;
+                        }
+                    }
+                    1 => {
+                        let (resp, ctrl) = pick_row(
+                            ui,
+                            state.selection == Selection::CustomRpn,
+                            t!("arrange.custom_rpn").as_ref(),
+                            stepper_w,
+                            row_h,
+                            pad,
+                            label_size,
+                        );
+                        if let Some(rect) = ctrl {
+                            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                                let r = crate::widgets::stepper::stepper(&mut state.custom_rpn)
+                                    .range(0..=127)
+                                    .step(1.0)
+                                    .width(stepper_w)
+                                    .show(ui);
+                                crate::widgets::hint::hover(ui.ctx(), &r, t!("hint.pr.custom_rpn"));
+                            });
+                        }
+                        if resp.clicked() {
+                            state.selection = Selection::CustomRpn;
+                        }
+                    }
+                    _ => {
+                        if let Some(&pi) = vis_iter.next() {
+                            let label = state.entries[pi].label.clone();
+                            let (resp, _) = pick_row(
+                                ui,
+                                state.selection == Selection::Entry(pi),
+                                &label,
+                                0.0,
+                                row_h,
+                                pad,
+                                label_size,
+                            );
+                            if resp.clicked() {
+                                state.selection = Selection::Entry(pi);
+                            }
+                        }
+                    }
                 }
             }
         });
@@ -342,7 +342,6 @@ fn pick_row(
     label: &str,
     control_w: f32,
     row_h: f32,
-    radio_r: f32,
     pad: f32,
     label_size: f32,
 ) -> (egui::Response, Option<egui::Rect>) {
@@ -370,21 +369,14 @@ fn pick_row(
         },
     );
     // 单选圆点（最右）。
-    let radio_center = egui::pos2(rect.max.x - pad - radio_r, rect.center().y);
-    ui.painter().circle_stroke(
-        radio_center,
-        radio_r,
-        egui::Stroke::new(1.5, crate::theme::text_label()),
-    );
-    if selected {
-        ui.painter()
-            .circle_filled(radio_center, radio_r * 0.55, crate::theme::accent_active());
-    }
+    let r = crate::widgets::radio::radius(ui.ctx());
+    let radio_center = egui::pos2(rect.max.x - pad - r, rect.center().y);
+    crate::widgets::radio::paint_radio(ui.painter(), radio_center, r, selected, resp.hovered());
     // 控件区（单选圆点左侧）。
     let ctrl = (control_w > 0.0).then(|| {
         egui::Rect::from_min_size(
             egui::pos2(
-                rect.max.x - pad - radio_r * 2.0 - pad - control_w,
+                rect.max.x - pad - r * 2.0 - pad - control_w,
                 rect.center().y - row_h * 0.5,
             ),
             egui::vec2(control_w, row_h),

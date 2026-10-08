@@ -71,23 +71,23 @@ pub(crate) fn show_viewport(app: &mut App, ctx: &egui::Context) -> bool {
                             // ── 模式选择：默认（全局） / 此通道专用 ──
                             let mut switch_to_global = false;
                             let mut switch_to_channel = false;
-                            if ui
-                                .radio_value(
-                                    &mut use_global,
-                                    true,
-                                    t!("soundfont.use_global").as_ref(),
-                                )
-                                .changed()
+                            if crate::widgets::radio::radio_value(
+                                ui,
+                                &mut use_global,
+                                true,
+                                t!("soundfont.use_global").as_ref(),
+                            )
+                            .changed()
                             {
                                 switch_to_global = true;
                             }
-                            if ui
-                                .radio_value(
-                                    &mut use_global,
-                                    false,
-                                    t!("soundfont.use_channel").as_ref(),
-                                )
-                                .changed()
+                            if crate::widgets::radio::radio_value(
+                                ui,
+                                &mut use_global,
+                                false,
+                                t!("soundfont.use_channel").as_ref(),
+                            )
+                            .changed()
                             {
                                 switch_to_channel = true;
                             }

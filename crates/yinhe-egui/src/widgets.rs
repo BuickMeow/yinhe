@@ -13,6 +13,7 @@ pub(crate) mod knob;
 pub(crate) mod menu;
 pub mod numeric_input;
 pub mod quantize_popup;
+pub(crate) mod radio;
 pub(crate) mod reorder;
 pub(crate) mod rows;
 pub(crate) mod scroll;
