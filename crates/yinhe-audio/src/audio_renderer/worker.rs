@@ -90,10 +90,24 @@ impl AudioRenderer {
                     self.state
                         .sf_loaded
                         .fetch_add(channels.len(), Ordering::Relaxed);
-                    // 预览引擎与主引擎共享同一音色（Arc，零拷贝）。
-                    for channel in &channels {
-                        self.preview_engine
-                            .set_channel_soundfonts(*channel, soundfonts.clone());
+                    // 预览引擎跟随主引擎：xsynth 后端共享 Arc（零拷贝）；yinhe 后端
+                    // 在下方按 key map 路径加载（与主引擎共享同一份，不额外加载
+                    // xsynth 版音色库）。
+                    let use_xsynth_preview = {
+                        #[cfg(feature = "gpu")]
+                        {
+                            !self.gpu_engine() && !self.yinhe_cpu_engine()
+                        }
+                        #[cfg(not(feature = "gpu"))]
+                        {
+                            true
+                        }
+                    };
+                    if use_xsynth_preview {
+                        for channel in &channels {
+                            self.preview_engine
+                                .set_xsynth_soundfonts(*channel, soundfonts.clone());
+                        }
                     }
                     let dense_list: Vec<(u8, u32)> = channels
                         .iter()
@@ -142,6 +156,14 @@ impl AudioRenderer {
                         {
                             eprintln!("[yinhe-cpu] Failed to load soundfonts: {e}");
                         }
+                        // 预览也是 yinhe CPU：共享同一份 key map（进程级缓存命中）。
+                        if !denses.is_empty()
+                            && let Err(e) = self
+                                .preview_engine
+                                .load_yinhe_soundfonts(&denses, &cpu_paths)
+                        {
+                            eprintln!("[yinhe-cpu] preview 音色加载失败: {e}");
+                        }
                     }
                     // GPU 路径：首次加载音色库时初始化 GpuSynth，逐通道登记；
                     // 样本统一在最后一组完成时上传一次（避免逐通道全量重传）。
@@ -158,6 +180,13 @@ impl AudioRenderer {
                             .collect();
                         let any_valid = !denses.is_empty();
                         if any_valid {
+                            // 预览跟随：YinheGpu 主引擎时预览用 yinhe CPU，共享同一份 key map。
+                            if let Err(e) = self
+                                .preview_engine
+                                .load_yinhe_soundfonts(&denses, &gpu_paths)
+                            {
+                                eprintln!("[gpu] preview 音色加载失败: {e}");
+                            }
                             if self.engine.gpu_synth.is_none() {
                                 let t_init = Instant::now();
                                 match yinhe_synth::GpuSynth::new_default(sr) {

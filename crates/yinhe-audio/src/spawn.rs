@@ -1264,14 +1264,18 @@ fn init_engine(
     sample_rate: u32,
     layout: ChannelLayout,
     interpolation: Interpolation,
+    synth_engine: SynthEngine,
 ) -> Result<EngineInit, String> {
     let (engine, preview_engine) =
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut engine = crate::engine::AudioEngine::new(sample_rate, layout);
             engine.set_interpolation(interpolation);
+            // 预览后端跟随主引擎：XSynthCpu → xsynth；YinheCpu/YinheGpu → yinhe CPU。
             let preview = crate::preview_engine::PreviewEngine::new(
+                synth_engine,
                 &engine.channel_layout,
                 engine.sample_rate,
+                interpolation.code(),
             );
             (engine, preview)
         })) {
@@ -1598,7 +1602,7 @@ pub fn spawn_cpal_audio(
         insert_return_rx,
         instrument_return_tx,
         instrument_return_rx,
-    } = init_engine(sample_rate, layout, interpolation)?;
+    } = init_engine(sample_rate, layout, interpolation, synth_engine)?;
 
     let (worker_tx, prepared_rx) = spawn_worker(sample_rate, interpolation)
         .map_err(|e| format!("Failed to spawn audio worker thread: {e}"))?;
