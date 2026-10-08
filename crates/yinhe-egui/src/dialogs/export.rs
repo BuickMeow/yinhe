@@ -51,7 +51,6 @@ pub(crate) fn show_settings_viewport(
                             bottom: 12,
                         })
                         .show(ui, |ui| {
-                            ui.set_max_width(280.0);
                             let btn_zone_h = crate::chrome::dialog_buttons::btn_zone_h(ui.ctx());
                             crate::chrome::dialog::content_with_bottom_buttons(
                                 ui,
@@ -59,7 +58,7 @@ pub(crate) fn show_settings_viewport(
                                 |ui| {
                                     ui.add_space(8.0);
 
-                                    crate::widgets::rows::form_row(
+                                    crate::widgets::rows::panel_row(
                                         ui,
                                         t!("dialog.export.bit_depth").as_ref(),
                                         |ui| {
@@ -115,7 +114,7 @@ pub(crate) fn show_settings_viewport(
                                         },
                                     );
 
-                                    crate::widgets::rows::form_row(
+                                    crate::widgets::rows::panel_row(
                                         ui,
                                         t!("dialog.export.sample_rate").as_ref(),
                                         |ui| {
@@ -155,7 +154,7 @@ pub(crate) fn show_settings_viewport(
                                         },
                                     );
 
-                                    crate::widgets::rows::form_row(
+                                    crate::widgets::rows::panel_row(
                                         ui,
                                         t!("dialog.export.xsynth_layers").as_ref(),
                                         |ui| {
