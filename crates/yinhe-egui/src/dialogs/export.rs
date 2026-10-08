@@ -59,102 +59,120 @@ pub(crate) fn show_settings_viewport(
                                 |ui| {
                                     ui.add_space(8.0);
 
-                                    ui.horizontal(|ui| {
-                                        ui.label(t!("dialog.export.bit_depth").as_ref());
-                                        let bd = bd_cb.get();
-                                        let current = match bd {
-                                            yinhe_audio::export::WavBitDepth::Bit16 => "16-bit",
-                                            yinhe_audio::export::WavBitDepth::Bit24 => "24-bit",
-                                            yinhe_audio::export::WavBitDepth::Bit32Float => {
-                                                "32-bit float"
-                                            }
-                                        };
-                                        crate::widgets::combo::combo_box(
-                                            ui,
-                                            "export_bit_depth",
-                                            current,
-                                            160.0,
-                                            |ui| {
-                                                if crate::widgets::combo::combo_item(
-                                                    ui,
-                                                    bd == yinhe_audio::export::WavBitDepth::Bit16,
-                                                    "16-bit",
-                                                )
-                                                .clicked()
-                                                {
-                                                    bd_cb.set(yinhe_audio::export::WavBitDepth::Bit16);
+                                    crate::widgets::rows::form_row(
+                                        ui,
+                                        t!("dialog.export.bit_depth").as_ref(),
+                                        |ui| {
+                                            let bd = bd_cb.get();
+                                            let current = match bd {
+                                                yinhe_audio::export::WavBitDepth::Bit16 => "16-bit",
+                                                yinhe_audio::export::WavBitDepth::Bit24 => "24-bit",
+                                                yinhe_audio::export::WavBitDepth::Bit32Float => {
+                                                    "32-bit float"
                                                 }
-                                                if crate::widgets::combo::combo_item(
-                                                    ui,
-                                                    bd == yinhe_audio::export::WavBitDepth::Bit24,
-                                                    "24-bit",
-                                                )
-                                                .clicked()
-                                                {
-                                                    bd_cb.set(yinhe_audio::export::WavBitDepth::Bit24);
-                                                }
-                                                if crate::widgets::combo::combo_item(
-                                                    ui,
-                                                    bd == yinhe_audio::export::WavBitDepth::Bit32Float,
-                                                    "32-bit float",
-                                                )
-                                                .clicked()
-                                                {
-                                                    bd_cb.set(
-                                                        yinhe_audio::export::WavBitDepth::Bit32Float,
-                                                    );
-                                                }
-                                            },
-                                        );
-                                    });
-
-                                    ui.horizontal(|ui| {
-                                        ui.label(t!("dialog.export.sample_rate").as_ref());
-                                        let r = sr_cb.get();
-                                        let sr_text = if r == 0 {
-                                            t!("dialog.export.follow_global", n = sample_rate).to_string()
-                                        } else {
-                                            format!("{} Hz", r)
-                                        };
-                                        let sample_rates: [u32; 5] = [0, 44100, 48000, 96000, 192000];
-                                        crate::widgets::combo::combo_box(
-                                            ui,
-                                            "export_sample_rate",
-                                            &sr_text,
-                                            160.0,
-                                            |ui| {
-                                                for &rate in &sample_rates {
-                                                    let label = if rate == 0 {
-                                                        t!("dialog.export.follow_global", n = sample_rate).to_string()
-                                                    } else {
-                                                        format!("{} Hz", rate)
-                                                    };
-                                                    let selected = r == rate;
+                                            };
+                                            crate::widgets::combo::combo_box(
+                                                ui,
+                                                "export_bit_depth",
+                                                current,
+                                                160.0,
+                                                |ui| {
                                                     if crate::widgets::combo::combo_item(
-                                                        ui, selected, label,
+                                                        ui,
+                                                        bd == yinhe_audio::export::WavBitDepth::Bit16,
+                                                        "16-bit",
                                                     )
                                                     .clicked()
                                                     {
-                                                        sr_cb.set(rate);
+                                                        bd_cb.set(
+                                                            yinhe_audio::export::WavBitDepth::Bit16,
+                                                        );
                                                     }
-                                                }
-                                            },
-                                        );
-                                    });
+                                                    if crate::widgets::combo::combo_item(
+                                                        ui,
+                                                        bd == yinhe_audio::export::WavBitDepth::Bit24,
+                                                        "24-bit",
+                                                    )
+                                                    .clicked()
+                                                    {
+                                                        bd_cb.set(
+                                                            yinhe_audio::export::WavBitDepth::Bit24,
+                                                        );
+                                                    }
+                                                    if crate::widgets::combo::combo_item(
+                                                        ui,
+                                                        bd == yinhe_audio::export::WavBitDepth::Bit32Float,
+                                                        "32-bit float",
+                                                    )
+                                                    .clicked()
+                                                    {
+                                                        bd_cb.set(
+                                                            yinhe_audio::export::WavBitDepth::Bit32Float,
+                                                        );
+                                                    }
+                                                },
+                                            );
+                                        },
+                                    );
 
-                                    ui.horizontal(|ui| {
-                                        ui.label(t!("dialog.export.xsynth_layers").as_ref());
-                                        let mut layers = lc_cb.get() as usize;
-                                        ui.add(
-                                            crate::widgets::numeric_input::decimal_drag_value(&mut layers)
+                                    crate::widgets::rows::form_row(
+                                        ui,
+                                        t!("dialog.export.sample_rate").as_ref(),
+                                        |ui| {
+                                            let r = sr_cb.get();
+                                            let sr_text = if r == 0 {
+                                                t!("dialog.export.follow_global", n = sample_rate)
+                                                    .to_string()
+                                            } else {
+                                                format!("{} Hz", r)
+                                            };
+                                            let sample_rates: [u32; 5] =
+                                                [0, 44100, 48000, 96000, 192000];
+                                            crate::widgets::combo::combo_box(
+                                                ui,
+                                                "export_sample_rate",
+                                                &sr_text,
+                                                160.0,
+                                                |ui| {
+                                                    for &rate in &sample_rates {
+                                                        let label = if rate == 0 {
+                                                            t!("dialog.export.follow_global", n = sample_rate)
+                                                                .to_string()
+                                                        } else {
+                                                            format!("{} Hz", rate)
+                                                        };
+                                                        let selected = r == rate;
+                                                        if crate::widgets::combo::combo_item(
+                                                            ui, selected, label,
+                                                        )
+                                                        .clicked()
+                                                        {
+                                                            sr_cb.set(rate);
+                                                        }
+                                                    }
+                                                },
+                                            );
+                                        },
+                                    );
+
+                                    crate::widgets::rows::form_row(
+                                        ui,
+                                        t!("dialog.export.xsynth_layers").as_ref(),
+                                        |ui| {
+                                            let mut layers = lc_cb.get() as usize;
+                                            ui.add(
+                                                crate::widgets::numeric_input::decimal_drag_value(
+                                                    &mut layers,
+                                                )
                                                 .range(0..=128)
                                                 .speed(1.0),
-                                        );
-                                        lc_cb.set(layers as u32);
-                                        if lc_cb.get() == 0 {
-                                            ui.label(t!("common.unlimited").as_ref());
-                                        }
-                                    });
+                                            );
+                                            lc_cb.set(layers as u32);
+                                            if lc_cb.get() == 0 {
+                                                ui.label(t!("common.unlimited").as_ref());
+                                            }
+                                        },
+                                    );
                                 },
                                 |ui| {
                                     use crate::chrome::dialog_buttons::{DialogButton, dialog_button_row};

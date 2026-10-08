@@ -36,11 +36,19 @@ pub fn combo_box(
     let scale = |v: f32| crate::scaling::scaled_font(&ctx, v);
     let radius = control::radius(&ctx);
     let pad_x = control::pad_x(&ctx);
+    let selected_text: egui::WidgetText = selected_text.into();
 
     // 自绘按钮（替代 egui ComboBox 的原生按钮，才能用 Material unfold_more）。
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(width, control::h(&ctx)), egui::Sense::hover());
     let resp = ui.interact(rect, ui.id().with(id), egui::Sense::click());
+    resp.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::ComboBox,
+            ui.is_enabled(),
+            selected_text.text(),
+        )
+    });
 
     if ui.is_rect_visible(rect) {
         let fill = control::state_fill(
@@ -57,7 +65,7 @@ pub fn combo_box(
             egui::pos2(rect.min.x + pad_x, rect.min.y),
             egui::pos2(rect.max.x - pad_x - icon_w, rect.max.y),
         );
-        let galley = selected_text.into().into_galley(
+        let galley = selected_text.into_galley(
             ui,
             Some(egui::TextWrapMode::Truncate),
             text_rect.width(),
@@ -77,12 +85,27 @@ pub fn combo_box(
         );
     }
 
+    // 弹窗可用空间以当前面板的裁剪区为准。egui 的 `Popup` 在「立即视口」（如
+    // 导出对话框）里用主窗口的 `content_rect` 判断对齐，会误判为下方放得下而
+    // 不上翻，导致弹窗被小窗口裁掉半截。这里自己算上/下可用高度：空间更大的
+    // 一侧开，并把内容高度限制到该空间（`rows_scroll` 再对齐到整行）。
+    let screen = ui.clip_rect();
+    let space_below = (screen.max.y - rect.max.y).max(0.0);
+    let space_above = (rect.min.y - screen.min.y).max(0.0);
+    let open_up = space_above > space_below;
+    let max_h = if open_up { space_above } else { space_below };
     let popup = egui::Popup::from_toggle_button_response(&resp)
+        .align(if open_up {
+            egui::RectAlign::TOP_START
+        } else {
+            egui::RectAlign::BOTTOM_START
+        })
         .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
         .width(width)
         .show(|ui| {
             ui.set_min_width(width);
             ui.set_max_width(width);
+            ui.set_max_height(max_h);
             crate::widgets::scroll::rows_scroll(
                 ui,
                 "combo_popup_scroll",
