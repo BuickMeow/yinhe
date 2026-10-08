@@ -25,6 +25,12 @@ pub(crate) fn empty_hint(ui: &mut egui::Ui, text: &str) {
 
 /// 控件/模式栏提示（高优先级）。
 const P_CONTROL: u8 = 1;
+/// 前台弹窗（菜单/下拉）内控件的提示（最高优先级）。
+///
+/// 弹窗浮在其它面板之上，但底层面板（如 AR 音轨面板）仍会因指针在其区域内而
+/// 写入控件提示；同优先级下后写者胜，会把弹窗的讲解顶掉。给弹窗提示更高的
+/// 优先级，保证「前台弹窗」的讲解始终最高。
+const P_POPUP: u8 = 2;
 /// 面板/区域提示（低优先级）。
 const P_REGION: u8 = 0;
 
@@ -68,6 +74,13 @@ pub(crate) fn set_region(ctx: &egui::Context, text: impl Into<String>) {
 pub(crate) fn hover(ctx: &egui::Context, resp: &egui::Response, text: impl Into<String>) {
     if resp.hovered() {
         set(ctx, text);
+    }
+}
+
+/// 前台弹窗内控件悬停提示（最高优先级，压过底层面板的控件提示）。
+pub(crate) fn hover_popup(ctx: &egui::Context, resp: &egui::Response, text: impl Into<String>) {
+    if resp.hovered() {
+        write(ctx, text, P_POPUP);
     }
 }
 

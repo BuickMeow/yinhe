@@ -83,7 +83,7 @@ pub fn popup_menu_row(
         Some(s) if !s.is_empty() => format!("{} · {}", spec.label, s),
         _ => spec.label.to_string(),
     };
-    crate::widgets::hint::hover(ui.ctx(), &main_resp, item_hint);
+    crate::widgets::hint::hover_popup(ui.ctx(), &main_resp, item_hint);
 
     let mut pin_resp = None;
     if let Some(is_pinned) = spec.pin {
@@ -98,7 +98,7 @@ pub fn popup_menu_row(
             ui.id().with("pin")
         };
         let resp = ui.interact(pin_rect, pin_id, egui::Sense::click());
-        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.menu.pin"));
+        crate::widgets::hint::hover_popup(ui.ctx(), &resp, t!("hint.menu.pin"));
         let pin_color = if is_pinned {
             crate::theme::accent_active()
         } else if resp.is_pointer_button_down_on() {
