@@ -4,33 +4,26 @@ use std::sync::atomic::{AtomicIsize, Ordering};
 // ---------------------------------------------------------------------------
 // Backend allocator selection
 // ---------------------------------------------------------------------------
-// macOS: jemalloc — its macOS backend aggressively munmaps freed segments,
-//        keeping RSS close to the true live allocation size.
+// macOS / Windows / Linux: mimalloc — 一套代码路径覆盖三个桌面目标，性能好、
+//        碎片低。macOS 原先用 jemalloc，改用 mimalloc 以验证 macOS 上的
+//        footprint 与空闲页归还表现是否更好。
 // Android: system allocator (bionic/scudo) — mimalloc uses initial-exec TLS
 //        which Android's dlopen rejects ("TLS symbol (null) using IE access model").
-// Other platforms (Linux, Windows): mimalloc — excellent performance and
-//        low fragmentation, with acceptable RSS behaviour on those OSes.
 //
 // BackendAlloc 始终 pub use —— feature "memtrace" 关闭时 TaggedAlloc 就是它，
 // main.rs 的 #[global_allocator] 不需要任何改动。
 // ---------------------------------------------------------------------------
 
-#[cfg(target_os = "macos")]
-pub use tikv_jemallocator::Jemalloc as BackendAlloc;
-
 #[cfg(target_os = "android")]
 pub use std::alloc::System as BackendAlloc;
 
-#[cfg(all(not(target_os = "macos"), not(target_os = "android")))]
+#[cfg(not(target_os = "android"))]
 pub use mimalloc::MiMalloc as BackendAlloc;
-
-#[cfg(target_os = "macos")]
-const BACKEND: BackendAlloc = BackendAlloc;
 
 #[cfg(target_os = "android")]
 const BACKEND: BackendAlloc = BackendAlloc;
 
-#[cfg(all(not(target_os = "macos"), not(target_os = "android")))]
+#[cfg(not(target_os = "android"))]
 const BACKEND: BackendAlloc = BackendAlloc;
 
 pub mod perf_probe;
@@ -106,26 +99,12 @@ pub fn gpu_resource_mb() -> f64 {
 // purge_free_pages —— 独立于追踪，始终启用。
 // ---------------------------------------------------------------------------
 
-#[cfg(target_os = "macos")]
-pub fn purge_free_pages() {
-    use tikv_jemalloc_ctl::{arenas, epoch, raw};
-    let _ = epoch::advance();
-    if let Ok(narenas) = arenas::narenas::read() {
-        for i in 0..narenas {
-            let name = format!("arena.{}.purge\0", i);
-            unsafe {
-                let _ = raw::write(name.as_bytes(), &mut 0u64);
-            }
-        }
-    }
-}
-
 #[cfg(target_os = "android")]
 pub fn purge_free_pages() {
     // Android 用系统分配器（scudo），无手动 purge 接口。
 }
 
-#[cfg(all(not(target_os = "macos"), not(target_os = "android")))]
+#[cfg(not(target_os = "android"))]
 pub fn purge_free_pages() {
     unsafe extern "C" {
         fn mi_collect(force: bool);
