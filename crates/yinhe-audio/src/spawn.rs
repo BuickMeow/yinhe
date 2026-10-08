@@ -710,6 +710,9 @@ pub(crate) enum WorkerCmd {
         /// 在 worker 里预热 yinhe-synth 的进程级解析缓存（GPU 与 CPU 后端共用）：
         /// 音频线程随后命中缓存，不在音频线程解析（400MB 级音色库 3-6s）。
         prefetch_keymaps: bool,
+        /// 是否加载 xsynth 版音色库（仅 XSynthCpu 需要）。yinhe 后端为 false：
+        /// 主引擎与预览都用 key map，加载 xsynth 版纯属浪费（实测 ~1.25GB 常驻缓存）。
+        load_xsynth: bool,
     },
 }
 
@@ -903,6 +906,7 @@ pub(crate) fn spawn_worker(
                         channels,
                         paths,
                         prefetch_keymaps,
+                        load_xsynth,
                     } => {
                         // 不合并，但把 try_recv 到的命令存到 pending 避免饿死
                         while let Ok(next) = cmd_rx.try_recv() {
@@ -929,14 +933,26 @@ pub(crate) fn spawn_worker(
                         }
                         #[cfg(not(feature = "gpu"))]
                         let _ = prefetch_keymaps;
-                        if let Ok(soundfonts) = crate::engine::AudioEngine::load_soundfont_paths(
-                            sample_rate,
-                            &paths,
-                            interpolation,
-                        ) {
+                        if load_xsynth {
+                            if let Ok(soundfonts) =
+                                crate::engine::AudioEngine::load_soundfont_paths(
+                                    sample_rate,
+                                    &paths,
+                                    interpolation,
+                                )
+                            {
+                                let _ = result_tx.send(WorkerResult::LoadedSoundFont {
+                                    channels,
+                                    soundfonts,
+                                    paths,
+                                });
+                            }
+                        } else {
+                            // yinhe 后端：不加载 xsynth 版音色（主引擎与预览都用 key map）。
+                            // 仅回传 paths 供主引擎登记 key map；soundfonts 留空。
                             let _ = result_tx.send(WorkerResult::LoadedSoundFont {
                                 channels,
-                                soundfonts,
+                                soundfonts: Vec::new(),
                                 paths,
                             });
                         }

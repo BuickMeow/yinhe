@@ -177,6 +177,8 @@ impl AudioRenderer {
                         channels,
                         paths,
                         prefetch_keymaps,
+                        // yinhe 后端（prefetch_keymaps=true）不需要 xsynth 版音色库。
+                        load_xsynth: !prefetch_keymaps,
                     });
                 }
             }
