@@ -400,6 +400,9 @@ pub fn show(
                     (doc.remove_track(*idx), t!("undo.remove_track").to_string())
                 }
                 track_panel::TrackAction::MoveUp { idx } => {
+                    // 重排不改变任何通道，ChannelLayout 不变 → 不重建引擎，
+                    // 只需 notify（reload_notes 重派发到新的 track 索引）。
+                    structural = false;
                     if *idx > 0 {
                         (
                             doc.move_track(*idx, *idx - 1),
@@ -410,6 +413,7 @@ pub fn show(
                     }
                 }
                 track_panel::TrackAction::MoveDown { idx } => {
+                    structural = false;
                     if *idx + 1 < doc.data.model.tracks.len() {
                         (
                             doc.move_track(*idx, *idx + 1),
@@ -420,6 +424,8 @@ pub fn show(
                     }
                 }
                 track_panel::TrackAction::MoveTracks { indices, insert_at } => {
+                    // 重排不改变通道集合 → 走 notify 而非 teardown 重建。
+                    structural = false;
                     // 拖拽排序：拆成逐个 move_track，合并为一个 Composite undo。
                     let moves = crate::widgets::reorder::plan_moves(
                         doc.data.model.tracks.len(),
@@ -447,9 +453,9 @@ pub fn show(
             if let Some(action) = undo_action {
                 doc.push_undo(action, &label, before);
                 if structural {
-                    // 方案 A：音轨结构变化（add/remove/move）→ teardown + 下帧重建。
-                    // 不再调 audio.reload_notes —— ChannelLayout 在引擎创建时冻结，
-                    // reload_notes 不会更新 active_mask/channel_map，旧引擎无法 dispatch 新通道。
+                    // 方案 A：音轨结构变化（add/remove）→ teardown + 下帧重建。
+                    // 通道集合变化，ChannelLayout 冻结后旧引擎无法 dispatch 新通道。
+                    // （重排 move 不算结构变化：通道不变，走 notify 的 reload_notes。）
                     *needs_audio_rebuild = true;
                 } else {
                     *needs_audio_notify = true;

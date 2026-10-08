@@ -919,7 +919,9 @@ impl App {
                 self.automation_drag_ghost,
             );
             if changed {
-                self.teardown_audio();
+                // 右栏改动（改 port/channel、图层拖动排序）→ 统一走 notify：
+                // 通道集合真的变了才 teardown 重建，重排等只 reload_notes。
+                self.notify_audio_model_changed();
             }
             if width_drag_ended {
                 self.layout_needs_save = true;
