@@ -162,6 +162,82 @@ impl Document {
         );
     }
 
+    // ── 带 undo 的 marker 编辑（标尺标签 / 编辑菜单用）──
+
+    fn marker_list_snapshot(&self) -> Vec<crate::history::EventListItem> {
+        self.data
+            .model
+            .conductor
+            .markers
+            .iter()
+            .cloned()
+            .map(crate::history::EventListItem::Marker)
+            .collect()
+    }
+
+    /// before != after 时 push 一个 Marker 事件列表 undo；返回是否 push。
+    fn push_marker_undo(
+        &mut self,
+        before: Vec<crate::history::EventListItem>,
+        after: Vec<crate::history::EventListItem>,
+        label: &str,
+        snapshot: crate::history::EditSnapshot,
+    ) -> bool {
+        if before == after {
+            return false;
+        }
+        self.push_undo(
+            crate::history::UndoAction::EventList(crate::history::EventListDelta {
+                target: crate::history::EventListTarget::Marker,
+                old: before,
+                new: after,
+            }),
+            label,
+            snapshot,
+        );
+        true
+    }
+
+    /// 在 `tick` 插入一个 marker（文本 `text`）并 push undo。返回是否有改动。
+    pub fn insert_marker_with_undo(&mut self, tick: u32, text: String, label: &str) -> bool {
+        let snapshot = self.capture_snapshot();
+        let before = self.marker_list_snapshot();
+        let model = std::sync::Arc::make_mut(&mut self.data.model);
+        let conductor = std::sync::Arc::make_mut(&mut model.conductor);
+        conductor
+            .markers
+            .push(yinhe_types::MarkerEvent { tick, text });
+        conductor.markers.sort_by_key(|e| e.tick);
+        self.data.bump_revision();
+        let after = self.marker_list_snapshot();
+        self.push_marker_undo(before, after, label, snapshot)
+    }
+
+    /// 修改 `old_tick` 处 marker 的 tick/文本并 push undo。返回是否有改动。
+    pub fn set_marker_with_undo(
+        &mut self,
+        old_tick: u32,
+        new_tick: u32,
+        text: String,
+        label: &str,
+    ) -> bool {
+        let snapshot = self.capture_snapshot();
+        let before = self.marker_list_snapshot();
+        self.set_marker_event(old_tick, new_tick, text);
+        let after = self.marker_list_snapshot();
+        self.push_marker_undo(before, after, label, snapshot)
+    }
+
+    /// 删除 `tick` 处 marker 并 push undo。返回是否有改动。
+    pub fn delete_marker_with_undo(&mut self, tick: u32, label: &str) -> bool {
+        let snapshot = self.capture_snapshot();
+        let before = self.marker_list_snapshot();
+        let ticks: std::collections::HashSet<u32> = std::iter::once(tick).collect();
+        self.delete_marker_events(&ticks);
+        let after = self.marker_list_snapshot();
+        self.push_marker_undo(before, after, label, snapshot)
+    }
+
     /// 插入一个 conductor 歌词事件（默认空文本）。
     pub fn insert_conductor_lyrics_event(&mut self, tick: u32) {
         conductor_insert_event!(
@@ -410,5 +486,60 @@ mod tests {
         assert!(!doc.set_time_sig_value(480, 6, 3));
         assert!(doc.set_time_sig_value(480, 7, 3));
         assert_eq!(doc.data.model.conductor.time_sig[1].numerator, 7);
+    }
+
+    /// 标尺标签编辑：insert / rename / delete 都应 push undo，且 undo 能还原。
+    #[test]
+    fn marker_edit_with_undo_roundtrip() {
+        let mut doc = Document::empty();
+
+        // 插入：push 一条 undo，数据出现。
+        assert!(doc.insert_marker_with_undo(0, "A".into(), "undo.insert_marker_event"));
+        assert_eq!(doc.data.model.conductor.markers.len(), 1);
+        assert_eq!(doc.data.model.conductor.markers[0].text, "A");
+        assert!(doc.undo());
+        assert!(doc.data.model.conductor.markers.is_empty());
+
+        // 重新插入两个，测试改名与删除。
+        doc.insert_marker_with_undo(0, "A".into(), "undo.insert_marker_event");
+        doc.insert_marker_with_undo(960, "B".into(), "undo.insert_marker_event");
+        assert_eq!(doc.data.model.conductor.markers.len(), 2);
+
+        // 改名：同 tick 改文本。
+        assert!(doc.set_marker_with_undo(0, 0, "A2".into(), "undo.rename_marker_event"));
+        assert_eq!(doc.data.model.conductor.markers[0].text, "A2");
+        assert!(doc.undo());
+        assert_eq!(doc.data.model.conductor.markers[0].text, "A");
+
+        // 移动：改 tick（文本保留）。
+        assert!(doc.set_marker_with_undo(0, 480, "A".into(), "undo.move_marker_event"));
+        assert!(
+            doc.data
+                .model
+                .conductor
+                .markers
+                .iter()
+                .any(|m| m.tick == 480)
+        );
+        assert!(doc.undo());
+        assert!(doc.data.model.conductor.markers.iter().any(|m| m.tick == 0));
+
+        // 删除：整条移除。
+        assert!(doc.delete_marker_with_undo(960, "undo.delete_marker_event"));
+        assert_eq!(doc.data.model.conductor.markers.len(), 1);
+        assert!(doc.undo());
+        assert_eq!(doc.data.model.conductor.markers.len(), 2);
+    }
+
+    /// 未找到目标 / 无实际改动时不 push undo（避免空 undo 条目）。
+    #[test]
+    fn marker_edit_noop_does_not_push_undo() {
+        let mut doc = Document::empty();
+        // 删除不存在的 tick：无改动。
+        assert!(!doc.delete_marker_with_undo(123, "undo.delete_marker_event"));
+        // 改名不存在的 tick：无改动。
+        assert!(!doc.set_marker_with_undo(123, 123, "x".into(), "undo.rename_marker_event"));
+        // 没有可撤销的条目。
+        assert!(!doc.undo());
     }
 }

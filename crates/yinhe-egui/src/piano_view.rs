@@ -339,7 +339,10 @@ pub fn show(
             egui::pos2(content_rect.min.x + kb_w, content_rect.max.y),
         )
     };
-    let sel_action = overlay::draw_overlays(
+    let markers: &[yinhe_types::MarkerEvent] = midi_arc
+        .map(|m| m.conductor.markers.as_slice())
+        .unwrap_or(&[]);
+    let (sel_action, marker_edit) = overlay::draw_overlays(
         ui,
         &painter,
         content_rect,
@@ -369,6 +372,7 @@ pub fn show(
         selected,
         pen_path.as_ref(),
         scissors_line.as_ref(),
+        markers,
     );
     let t_paint_end = if perf_on {
         Some(std::time::Instant::now())
@@ -464,8 +468,9 @@ pub fn show(
         bar_line_data,
     );
 
-    sel_action
-        .map(PianoViewEvent::SelectionAction)
+    marker_edit
+        .map(PianoViewEvent::MarkerEdit)
+        .or(sel_action.map(PianoViewEvent::SelectionAction))
         .or(quick_delete_event)
         .or(pencil_event)
         .or(eraser_event)

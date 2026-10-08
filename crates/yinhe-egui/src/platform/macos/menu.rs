@@ -111,6 +111,7 @@ impl MenuActionFrom for crate::chrome::transport_bar::EditAction {
             EditAction::TransposeDown => MenuAction::TransposeDown,
             EditAction::DedupWithinTrack => MenuAction::DedupWithinTrack,
             EditAction::DedupAcrossTracks => MenuAction::DedupAcrossTracks,
+            EditAction::InsertMarker => MenuAction::InsertMarker,
         }
     }
 }

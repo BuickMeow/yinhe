@@ -33,6 +33,8 @@ pub enum MenuAction {
     TransposeDown,
     DedupWithinTrack,
     DedupAcrossTracks,
+    /// 编辑菜单「插入标签」（在光标处插入 MIDI marker）。
+    InsertMarker,
     /// 播放菜单「播放/暂停」（Space）。
     TogglePlay,
     /// 播放菜单「停止」（Esc）。

@@ -269,6 +269,10 @@ impl eframe::App for App {
                     self.handle_edit_action(transport_bar::EditAction::DedupAcrossTracks);
                     continue;
                 }
+                MenuAction::InsertMarker => {
+                    self.handle_edit_action(transport_bar::EditAction::InsertMarker);
+                    continue;
+                }
                 MenuAction::TogglePlay => {
                     let is_playing = self
                         .audio_state

@@ -41,7 +41,11 @@ pub(crate) fn draw_overlays(
     selected: &mut yinhe_core::Selection,
     pen_path: Option<&yinhe_editor_core::pen::PenPath>,
     scissors_line: Option<&yinhe_editor_core::edit_state::AnchorLine>,
-) -> Option<crate::widgets::selection_actions::SelectionAction> {
+    markers: &[yinhe_types::MarkerEvent],
+) -> (
+    Option<crate::widgets::selection_actions::SelectionAction>,
+    Option<crate::widgets::time_ruler::MarkerEdit>,
+) {
     // 兼容任务要求的形参（部分由 midi 派生，此处透传占位，避免未使用警告）
     let _ = tpb;
     let _ = grid_rect;
@@ -168,6 +172,7 @@ pub(crate) fn draw_overlays(
 
     // ── Draw selection box on TOP of GPU content ──
     let mut sel_action = None;
+    let mut marker_edit: Option<crate::widgets::time_ruler::MarkerEdit> = None;
     // marquee::draw_marquee_box
     if effective_tool == crate::widgets::tools_panel::Tool::Select
         || effective_tool == crate::widgets::tools_panel::Tool::SelectVertical
@@ -386,7 +391,7 @@ pub(crate) fn draw_overlays(
                 egui::pos2(content_right_x, ruler_y1),
             )
         };
-        let ruler_jumped = crate::widgets::time_ruler::interactive_ruler(
+        let outcome = crate::widgets::time_ruler::interactive_ruler(
             ui,
             ruler_rect,
             view,
@@ -394,18 +399,20 @@ pub(crate) fn draw_overlays(
             def_num,
             def_den,
             sig_events,
+            markers,
             |tick| crate::view_interaction::snap_tick(tick, quantize, ppq, bar_line_data),
             "piano_ruler",
             cursor_tick,
         );
-        if ruler_jumped {
+        if outcome.jumped {
             selected.clear();
             sel_rect.clear();
         }
+        marker_edit = outcome.marker_edit;
         let _ = tpb_val;
     }
 
-    sel_action
+    (sel_action, marker_edit)
 }
 
 /// 纵向瀑布流：指针在底部键盘条上时，滚轮/触控板沿音高轴（屏幕 X）缩放。

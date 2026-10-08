@@ -138,10 +138,12 @@ pub enum EditAction {
     TransposeDown,
     DedupWithinTrack,
     DedupAcrossTracks,
+    /// 在光标位置插入一个标签（MIDI marker），默认名 = 小节.拍.tick。
+    InsertMarker,
 }
 
 impl EditAction {
-    pub const ALL: [EditAction; 16] = [
+    pub const ALL: [EditAction; 17] = [
         EditAction::Undo,
         EditAction::Redo,
         EditAction::Cut,
@@ -158,6 +160,7 @@ impl EditAction {
         EditAction::TransposeDown,
         EditAction::DedupWithinTrack,
         EditAction::DedupAcrossTracks,
+        EditAction::InsertMarker,
     ];
 
     pub const fn pinned_index(self) -> usize {
@@ -178,6 +181,7 @@ impl EditAction {
             EditAction::TransposeDown => 13,
             EditAction::DedupWithinTrack => 14,
             EditAction::DedupAcrossTracks => 15,
+            EditAction::InsertMarker => 16,
         }
     }
 
@@ -199,6 +203,7 @@ impl EditAction {
             EditAction::TransposeDown => shortcuts::ACTION_TRANSPOSE_DOWN,
             EditAction::DedupWithinTrack => shortcuts::ACTION_DEDUP_WITHIN_TRACK,
             EditAction::DedupAcrossTracks => shortcuts::ACTION_DEDUP_ACROSS_TRACKS,
+            EditAction::InsertMarker => "",
         }
     }
 
@@ -220,11 +225,15 @@ impl EditAction {
             EditAction::TransposeDown => ICON_ARROW_DOWNWARD,
             EditAction::DedupWithinTrack => ICON_STACK_OFF,
             EditAction::DedupAcrossTracks => ICON_STACK_OFF,
+            EditAction::InsertMarker => ICON_BOOKMARK,
         }
     }
 
     pub fn label_key(self) -> &'static str {
-        crate::shortcuts::action_label_key(self.action_id())
+        match self {
+            EditAction::InsertMarker => "menu.insert_marker",
+            _ => crate::shortcuts::action_label_key(self.action_id()),
+        }
     }
 
     fn is_enabled(self, has_active: bool) -> bool {
@@ -244,6 +253,9 @@ impl PopupRow for EditAction {
     }
     fn label_key(self) -> &'static str {
         self.label_key()
+    }
+    fn has_pin(self) -> bool {
+        !matches!(self, EditAction::InsertMarker)
     }
     fn is_enabled(self, has_active: bool, _loading: bool) -> bool {
         self.is_enabled(has_active)
@@ -424,7 +436,7 @@ pub const FILE_GROUPS: [&[FileAction]; 5] = [
     &[FileAction::Settings, FileAction::Exit],
 ];
 
-pub const EDIT_GROUPS: [&[EditAction]; 7] = [
+pub const EDIT_GROUPS: [&[EditAction]; 8] = [
     &[EditAction::Undo, EditAction::Redo],
     &[EditAction::Cut, EditAction::Copy, EditAction::Paste],
     &[EditAction::PasteAtOriginal, EditAction::PasteFlipped],
@@ -436,6 +448,7 @@ pub const EDIT_GROUPS: [&[EditAction]; 7] = [
     &[EditAction::Duplicate, EditAction::Delete],
     &[EditAction::TransposeUp, EditAction::TransposeDown],
     &[EditAction::DedupWithinTrack, EditAction::DedupAcrossTracks],
+    &[EditAction::InsertMarker],
 ];
 
 pub fn tool_hint(tool: crate::widgets::tools_panel::Tool) -> String {

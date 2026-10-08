@@ -790,7 +790,31 @@ impl App {
             A::TransposeDown => self.transpose_selected_notes(-12),
             A::DedupWithinTrack => self.dedup_overlapping_notes(false),
             A::DedupAcrossTracks => self.dedup_overlapping_notes(true),
+            A::InsertMarker => self.insert_marker_at_cursor(),
         }
+    }
+
+    /// 在光标 tick 处插入一个标签（MIDI marker），默认名 = `小节.拍.tick`。
+    pub(crate) fn insert_marker_at_cursor(&mut self) {
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[idx];
+        let tick = doc.edit.cursor_tick.unwrap_or(0.0).max(0.0) as u32;
+        let text = {
+            let model = &doc.data.model;
+            let tpb = model.meta.ppq;
+            let (def_num, def_den) = model.tempo_map.time_sig_default;
+            let sig = model.tempo_map.time_sig_events.as_slice();
+            yinhe_types::time_format::format_tick_bar_beat_with_time_sig(
+                tick as f64,
+                tpb,
+                sig,
+                def_num,
+                def_den,
+            )
+        };
+        doc.insert_marker_with_undo(tick, text, "undo.insert_marker_event");
     }
 
     /// Handle file menu actions from the transport bar.

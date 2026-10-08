@@ -256,7 +256,8 @@ pub fn show(
         let tpb = model.meta.ppq;
         let (def_num, def_den) = model.tempo_map.time_sig_default;
         let sig_events = model.tempo_map.time_sig_events.as_slice();
-        let ruler_jumped = crate::widgets::time_ruler::interactive_ruler(
+        let markers = model.conductor.markers.as_slice();
+        let outcome = crate::widgets::time_ruler::interactive_ruler(
             ui,
             ruler_rect,
             &mut doc.edit.arrange_view,
@@ -264,6 +265,7 @@ pub fn show(
             def_num,
             def_den,
             sig_events,
+            markers,
             |tick| {
                 crate::view_interaction::snap_tick(
                     tick,
@@ -276,9 +278,12 @@ pub fn show(
             &mut doc.edit.cursor_tick,
         );
         // 点击/拖动时间标尺跳转位置时，取消已选择的选框（含框选与全选）。
-        if ruler_jumped {
+        if outcome.jumped {
             doc.edit.selected.clear();
             doc.edit.arr_sel_rect.clear();
+        }
+        if let Some(edit) = outcome.marker_edit {
+            crate::marker_ops::apply_marker_edit(doc, edit);
         }
     }
 

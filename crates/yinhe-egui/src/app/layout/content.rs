@@ -659,6 +659,14 @@ impl App {
                 PianoViewEvent::AddNotes { track, notes } => {
                     self.add_notes_with_undo(track, notes);
                 }
+                PianoViewEvent::MarkerEdit(edit) => {
+                    if let Some(idx) = self.workspace.active_doc {
+                        crate::marker_ops::apply_marker_edit(
+                            &mut self.workspace.documents[idx],
+                            edit,
+                        );
+                    }
+                }
             }
         }
 

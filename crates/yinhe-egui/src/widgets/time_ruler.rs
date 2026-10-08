@@ -1,6 +1,8 @@
 use eframe::egui;
+use yinhe_types::time_format::format_tick_bar_beat_with_time_sig;
 use yinhe_types::{
-    Orientation, TimeSigEvent, build_time_sig_segments, compute_measure_divisor, measure_ticks,
+    MarkerEvent, Orientation, TimeSigEvent, build_time_sig_segments, compute_measure_divisor,
+    measure_ticks,
 };
 
 // ── Constants ──
@@ -8,6 +10,35 @@ use yinhe_types::{
 use crate::theme;
 const MIN_LABEL_SPACING: f32 = 38.0;
 const SUB_BEAT_DIV: u32 = 4;
+/// 标签（marker）pill 高度（横向）；纵向为 pill 宽度。
+const MARKER_PILL_THICKNESS: f32 = 16.0;
+/// 相邻标签 pill 之间的最小间隔（主轴像素），避免重叠。
+const MARKER_GAP: f32 = 2.0;
+
+/// 标尺上的标签（marker）编辑动作。由调用方应用到文档（以便接入 undo）。
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum MarkerEdit {
+    /// 重命名：`tick` 处标签文本改为 `text`。
+    Rename { tick: u32, text: String },
+    /// 删除 `tick` 处标签。
+    Delete { tick: u32 },
+    /// 移动标签：从 `from` 到 `to`。
+    Move { from: u32, to: u32 },
+}
+
+/// 标尺交互结果。
+pub(crate) struct RulerOutcome {
+    /// 本帧标尺被点击/拖动（用于清除选框）。
+    pub jumped: bool,
+    /// 标签编辑动作（若本帧触发）。
+    pub marker_edit: Option<MarkerEdit>,
+}
+
+/// 一个已绘制的标签：命中测试用。
+struct MarkerLabel {
+    tick: u32,
+    rect: egui::Rect,
+}
 
 // ── TimeRulerView trait ──
 
@@ -151,8 +182,8 @@ fn paint_background(painter: &egui::Painter, rect: egui::Rect) {
 /// `id_salt` must be unique for each ruler in the same UI scope (e.g. "piano_ruler"
 /// vs "arrange_ruler").
 ///
-/// Returns `true` if the ruler was clicked or dragged this frame (the caller
-/// typically uses this to clear any active selection box).
+/// Returns [`RulerOutcome`]：是否点击/拖动（调用方据此清除选框），
+/// 以及本帧触发的标签编辑动作。
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub(crate) fn interactive_ruler(
     ui: &mut egui::Ui,
@@ -162,12 +193,17 @@ pub(crate) fn interactive_ruler(
     default_num: u8,
     default_den: u8,
     time_sig_events: &[TimeSigEvent],
+    markers: &[MarkerEvent],
     snap: impl Fn(f64) -> f64,
     id_salt: &str,
     cursor_tick: &mut Option<f64>,
-) -> bool {
+) -> RulerOutcome {
     let painter = ui.painter_at(ruler_rect);
     paint_background(&painter, ruler_rect);
+
+    // 主轴方向与两带中心：上行标签、下行小节号（纵向：外标签、内小节号）。
+    let orientation = view.orientation();
+    let (labels_center, numbers_center) = cross_bands(ruler_rect, orientation);
     paint_labels(
         &painter,
         ruler_rect,
@@ -176,11 +212,26 @@ pub(crate) fn interactive_ruler(
         default_num,
         default_den,
         time_sig_events,
+        numbers_center,
+    );
+
+    // 标签（marker）绘制 + 命中矩形。
+    let drag_preview = marker_drag_preview(ui, id_salt);
+    let labels = paint_marker_labels(
+        &painter,
+        ruler_rect,
+        view,
+        markers,
+        tpb,
+        default_num,
+        default_den,
+        time_sig_events,
+        labels_center,
+        drag_preview,
     );
 
     // 相对主轴原点的主轴像素：横向 = 距左缘 X；纵向瀑布流 = 距**底缘** Y
     //（时间轴反转：tick 0 在底部、越大越靠上）。
-    let orientation = view.orientation();
     let main_px = |pos: egui::Pos2| -> f32 {
         match orientation {
             Orientation::Horizontal => pos.x - ruler_rect.min.x,
@@ -199,13 +250,62 @@ pub(crate) fn interactive_ruler(
         egui::Sense::click_and_drag(),
     );
 
+    // ── 标签（marker）交互：点击跳转、双击改名、右键删除、拖动移动 ──
+    // 标签在 ruler 之后注册 → 命中优先级更高；用 pointer_over_label 避免
+    // 与 ruler 自身的点击/缩放重复触发。
+    let mut marker_edit: Option<MarkerEdit> = None;
+    let mut jumped = false;
+    for label in &labels {
+        let resp = ui.interact(
+            label.rect,
+            ui.id().with((id_salt, "marker", label.tick)),
+            egui::Sense::click_and_drag(),
+        );
+        let tick = label.tick;
+        resp.context_menu(|ui| {
+            if crate::widgets::flat::flat_button(ui, rust_i18n::t!("menu.delete_marker")).clicked()
+            {
+                marker_edit = Some(MarkerEdit::Delete { tick });
+                ui.close();
+            }
+        });
+        if resp.double_clicked() {
+            start_marker_rename(ui, id_salt, tick, markers);
+        } else if resp.dragged() {
+            if let Some(pos) = resp.interact_pointer_pos() {
+                let new_tick = snap(view.main_px_to_tick(main_px(pos))).max(0.0) as u32;
+                set_marker_drag_preview(ui, id_salt, tick, new_tick);
+            }
+        } else if resp.drag_stopped() {
+            if let Some((from, to)) = take_marker_drag_preview(ui, id_salt)
+                && from == tick
+                && from != to
+            {
+                marker_edit = Some(MarkerEdit::Move { from, to });
+            }
+        } else if resp.clicked() {
+            // 点击标签：光标跳到该标签 tick + 滚动到可见。
+            *cursor_tick = Some(tick as f64);
+            scroll_tick_into_view(view, tick as f64, view_size);
+            view.mark_dirty();
+            ui.ctx().request_repaint();
+            jumped = true;
+        }
+    }
+    if let Some(edit) = marker_rename_ui(ui, id_salt, &labels, markers) {
+        marker_edit = Some(edit);
+    }
+    let pointer_over_label = ui
+        .input(|i| i.pointer.hover_pos())
+        .is_some_and(|p| labels.iter().any(|l| l.rect.contains(p)));
+
     // ── 按下标尺后沿副轴拖动 → 时间缩放（防误触：仅起点在标尺内才生效）──
     // 参考 scrollbar 的 press_origin 守卫，避免别处按下拖到标尺上误缩放。
     let press_on_ruler = ui
         .input(|i| i.pointer.press_origin())
         .is_some_and(|p| ruler_rect.contains(p));
     let mut is_zoom_drag = false;
-    if press_on_ruler && ruler_resp.dragged() {
+    if press_on_ruler && !pointer_over_label && ruler_resp.dragged() {
         let d = ruler_resp.drag_delta();
         let cross = match orientation {
             Orientation::Horizontal => d.y,
@@ -234,8 +334,8 @@ pub(crate) fn interactive_ruler(
         }
     }
 
-    let mut jumped = false;
     if !is_zoom_drag
+        && !pointer_over_label
         && (ruler_resp.clicked() || ruler_resp.dragged())
         && let Some(pos) = ruler_resp.interact_pointer_pos()
     {
@@ -248,6 +348,7 @@ pub(crate) fn interactive_ruler(
     // ── 拖出窗口边缘自动滚动（主轴）──
     // 仅当起点在标尺内才生效，避免别处按下拖入误触发；复用共享 delta（MARGIN/BASE_SPEED）。
     if press_on_ruler
+        && !pointer_over_label
         && ruler_resp.dragged()
         && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
     {
@@ -291,11 +392,277 @@ pub(crate) fn interactive_ruler(
         }
     }
 
-    jumped
+    RulerOutcome {
+        jumped,
+        marker_edit,
+    }
+}
+
+// ── 标签（marker）辅助 ──
+
+/// 两带中心：返回 (标签带中心, 小节号带中心)。横向 = 上标签、下小节号；
+/// 纵向 = 外标签、内小节号。
+fn cross_bands(rect: egui::Rect, orientation: Orientation) -> (f32, f32) {
+    match orientation {
+        Orientation::Horizontal => (
+            rect.min.y + rect.height() * 0.28,
+            rect.min.y + rect.height() * 0.72,
+        ),
+        Orientation::Vertical => (
+            rect.min.x + rect.width() * 0.28,
+            rect.min.x + rect.width() * 0.72,
+        ),
+    }
+}
+
+fn marker_drag_preview(ui: &egui::Ui, id_salt: &str) -> Option<(u32, u32)> {
+    ui.memory(|m| {
+        m.data
+            .get_temp(egui::Id::new((id_salt, "marker_drag_preview")))
+    })
+}
+
+fn set_marker_drag_preview(ui: &egui::Ui, id_salt: &str, from: u32, to: u32) {
+    ui.memory_mut(|m| {
+        m.data
+            .insert_temp(egui::Id::new((id_salt, "marker_drag_preview")), (from, to))
+    });
+}
+
+fn take_marker_drag_preview(ui: &egui::Ui, id_salt: &str) -> Option<(u32, u32)> {
+    let id = egui::Id::new((id_salt, "marker_drag_preview"));
+    let v = ui.memory(|m| m.data.get_temp(id));
+    ui.memory_mut(|m| {
+        m.data.remove::<(u32, u32)>(id);
+    });
+    v
+}
+
+fn start_marker_rename(ui: &egui::Ui, id_salt: &str, tick: u32, markers: &[MarkerEvent]) {
+    let text = markers
+        .iter()
+        .find(|m| m.tick == tick)
+        .map(|m| m.text.clone())
+        .unwrap_or_default();
+    ui.memory_mut(|m| {
+        m.data
+            .insert_temp(egui::Id::new((id_salt, "marker_rename_tick")), tick);
+        m.data
+            .insert_temp(egui::Id::new((id_salt, "marker_rename_buf")), text);
+        m.data
+            .insert_temp(egui::Id::new((id_salt, "marker_rename_focus")), true);
+    });
+}
+
+fn clear_marker_rename(ui: &egui::Ui, id_salt: &str) {
+    ui.memory_mut(|m| {
+        m.data
+            .remove::<u32>(egui::Id::new((id_salt, "marker_rename_tick")));
+        m.data
+            .remove::<String>(egui::Id::new((id_salt, "marker_rename_buf")));
+        m.data
+            .remove::<bool>(egui::Id::new((id_salt, "marker_rename_focus")));
+    });
+}
+
+/// 正在重命名的标签内联文本框；返回提交的改名动作。
+fn marker_rename_ui(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    labels: &[MarkerLabel],
+    markers: &[MarkerEvent],
+) -> Option<MarkerEdit> {
+    let tick_id = egui::Id::new((id_salt, "marker_rename_tick"));
+    let tick: u32 = ui.memory(|m| m.data.get_temp(tick_id))?;
+    let Some(label) = labels.iter().find(|l| l.tick == tick) else {
+        // 目标不在可视范围：取消。
+        clear_marker_rename(ui, id_salt);
+        return None;
+    };
+    let buf_id = egui::Id::new((id_salt, "marker_rename_buf"));
+    let mut buf: String = ui.memory(|m| m.data.get_temp(buf_id).unwrap_or_default());
+    let edit_id = egui::Id::new((id_salt, "marker_rename_edit"));
+    let rect = label
+        .rect
+        .expand2(egui::vec2(2.0, 0.0))
+        .intersect(ui.clip_rect());
+    if rect.width() <= 1.0 || rect.height() <= 1.0 {
+        return None;
+    }
+    let resp = ui.put(
+        rect,
+        egui::TextEdit::singleline(&mut buf)
+            .id(edit_id)
+            .font(egui::FontId::new(
+                crate::theme::SMALL_LABEL_FONT,
+                egui::FontFamily::Proportional,
+            ))
+            .desired_width(rect.width()),
+    );
+    let focus_id = egui::Id::new((id_salt, "marker_rename_focus"));
+    if ui.memory(|m| m.data.get_temp::<bool>(focus_id).unwrap_or(false)) {
+        resp.request_focus();
+        ui.memory_mut(|m| m.data.insert_temp(focus_id, false));
+    }
+    ui.memory_mut(|m| m.data.insert_temp(buf_id, buf.clone()));
+    if resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        clear_marker_rename(ui, id_salt);
+        return None;
+    }
+    if resp.lost_focus() {
+        clear_marker_rename(ui, id_salt);
+        let old = markers
+            .iter()
+            .find(|m| m.tick == tick)
+            .map(|m| m.text.clone())
+            .unwrap_or_default();
+        if buf != old {
+            return Some(MarkerEdit::Rename { tick, text: buf });
+        }
+    }
+    None
+}
+
+/// 点击标签跳转后，若标签起点已滚出主轴视口，则把它滚回可见。
+fn scroll_tick_into_view(view: &mut impl TimeRulerView, tick: f64, view_size: f32) {
+    let main = view.tick_to_main_px(tick);
+    let desired = if main < 0.0 {
+        4.0
+    } else if main > view_size {
+        view_size - 4.0
+    } else {
+        return;
+    };
+    let scroll = view.scroll_main_mut();
+    *scroll = (*scroll + main - desired).max(0.0);
+}
+
+/// 绘制标签（marker）pill，返回命中矩形。
+#[allow(clippy::too_many_arguments)]
+fn paint_marker_labels(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    view: &impl TimeRulerView,
+    markers: &[MarkerEvent],
+    tpb: u32,
+    default_num: u8,
+    default_den: u8,
+    time_sig_events: &[TimeSigEvent],
+    labels_center: f32,
+    drag_preview: Option<(u32, u32)>,
+) -> Vec<MarkerLabel> {
+    let orientation = view.orientation();
+    let ppu = view.pixels_per_tick();
+    if ppu <= 0.001 {
+        return Vec::new();
+    }
+    let main_size = match orientation {
+        Orientation::Horizontal => rect.width(),
+        Orientation::Vertical => rect.height(),
+    };
+    let font_id = egui::FontId::new(
+        crate::theme::SMALL_LABEL_FONT,
+        egui::FontFamily::Proportional,
+    );
+    let text_color = crate::theme::contrast_fg();
+    let pill_color = crate::theme::accent_active().gamma_multiply(0.85);
+    let line_color = crate::theme::accent_active();
+
+    let mut out: Vec<MarkerLabel> = Vec::new();
+    // 沿主轴已占用到的末端像素（避免 pill 重叠）。
+    let mut last_end = f32::NEG_INFINITY;
+    for m in markers {
+        let tick = drag_preview
+            .and_then(|(from, to)| (m.tick == from).then_some(to))
+            .unwrap_or(m.tick);
+        let main_px = view.tick_to_main_px(tick as f64);
+        if main_px < 0.0 || main_px > main_size {
+            continue;
+        }
+        let text = if m.text.is_empty() {
+            format_tick_bar_beat_with_time_sig(
+                tick as f64,
+                tpb,
+                time_sig_events,
+                default_num,
+                default_den,
+            )
+        } else {
+            m.text.clone()
+        };
+        let galley = painter.layout_no_wrap(text.clone(), font_id.clone(), text_color);
+        let tw = galley.size().x;
+        let half = MARKER_PILL_THICKNESS * 0.5;
+
+        // pill 沿主轴从标签 tick 起，长度 = 文本宽 + 内边距。
+        let rect_start = main_px;
+        let rect_end = main_px + tw + 8.0;
+        // 重叠：跳过 pill，仅保留一条刻度线。
+        if rect_start < last_end + MARKER_GAP {
+            match orientation {
+                Orientation::Horizontal => painter.line_segment(
+                    [
+                        egui::pos2(rect.min.x + main_px, rect.min.y),
+                        egui::pos2(rect.min.x + main_px, rect.max.y),
+                    ],
+                    egui::Stroke::new(1.0, line_color.gamma_multiply(0.6)),
+                ),
+                Orientation::Vertical => painter.line_segment(
+                    [
+                        egui::pos2(rect.min.x, rect.min.y + main_px),
+                        egui::pos2(rect.max.x, rect.min.y + main_px),
+                    ],
+                    egui::Stroke::new(1.0, line_color.gamma_multiply(0.6)),
+                ),
+            };
+            continue;
+        }
+        last_end = rect_end;
+
+        let label_rect = match orientation {
+            Orientation::Horizontal => egui::Rect::from_min_size(
+                egui::pos2(rect.min.x + rect_start, labels_center - half),
+                egui::vec2(tw + 8.0, MARKER_PILL_THICKNESS),
+            ),
+            Orientation::Vertical => egui::Rect::from_min_size(
+                egui::pos2(labels_center - half, rect.min.y + rect_start),
+                egui::vec2(MARKER_PILL_THICKNESS, tw + 8.0),
+            ),
+        };
+        painter.rect_filled(label_rect, 2.0, pill_color);
+        match orientation {
+            Orientation::Horizontal => {
+                painter.text(
+                    egui::pos2(label_rect.min.x + 4.0, label_rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    text,
+                    font_id.clone(),
+                    text_color,
+                );
+            }
+            Orientation::Vertical => {
+                let anchor = egui::Align2::CENTER_CENTER
+                    .anchor_size(label_rect.center(), galley.size())
+                    .min;
+                painter.add(
+                    egui::epaint::TextShape::new(anchor, galley, text_color).with_angle_and_anchor(
+                        std::f32::consts::FRAC_PI_2,
+                        egui::Align2::CENTER_CENTER,
+                    ),
+                );
+            }
+        }
+        out.push(MarkerLabel {
+            tick: m.tick,
+            rect: label_rect,
+        });
+    }
+    out
 }
 
 // ── Label painting ──
 
+#[allow(clippy::too_many_arguments)]
 fn paint_labels(
     painter: &egui::Painter,
     rect: egui::Rect,
@@ -304,6 +671,7 @@ fn paint_labels(
     default_num: u8,
     default_den: u8,
     time_sig_events: &[TimeSigEvent],
+    numbers_center: f32,
 ) {
     let orientation = view.orientation();
     let ppu = view.pixels_per_tick();
@@ -325,11 +693,8 @@ fn paint_labels(
     let tb = view.main_px_to_tick(main_size);
     let tick_start = ta.min(tb).max(0.0);
     let tick_end = ta.max(tb);
-    // 文字中线：横向 = 竖直居中、纵向 = 水平居中。
-    let text_cross_center = match orientation {
-        Orientation::Horizontal => rect.min.y + rect.height() / 2.0,
-        Orientation::Vertical => rect.min.x + rect.width() / 2.0,
-    };
+    // 小节号文字中线：落在「小节号带」（下行 / 内列），标签（marker）占另一带。
+    let text_cross_center = numbers_center;
 
     let ticks_per_sub = (tpb / SUB_BEAT_DIV).max(1);
 
@@ -624,7 +989,16 @@ mod tests {
             numerator: 3,
             denominator: 2,
         }];
-        paint_labels(&painter, rect, &ruler, 480, 4, 2, &events);
+        paint_labels(
+            &painter,
+            rect,
+            &ruler,
+            480,
+            4,
+            2,
+            &events,
+            rect.min.y + rect.height() * 0.72,
+        );
 
         let offset_x = rect.min.x - ruler.content_left();
         let mut label_ticks = Vec::new();
@@ -687,5 +1061,74 @@ mod tests {
         let segs = vec![(0, 4, 2), (960, 4, 2), (1920, 3, 2)];
         let offsets = cumulative_bar_offsets(480, &segs);
         assert_eq!(offsets[0], 0);
+    }
+
+    /// 标签（marker）绘制：返回命中矩形，位置随 tick 递增；重叠的标签被跳过。
+    #[test]
+    fn marker_labels_hit_rects_and_overlap() {
+        let ruler = FakeRuler {
+            base: make_base(0.1),
+        };
+        let rect = egui::Rect::from_min_max(egui::pos2(60.0, 0.0), egui::pos2(660.0, 45.0));
+        let ctx = egui::Context::default();
+        ctx.begin_pass(egui::RawInput::default());
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Background,
+            egui::Id::new("ruler_marker_test"),
+        ));
+        let labels_center = rect.min.y + rect.height() * 0.28;
+
+        let far = vec![
+            MarkerEvent {
+                tick: 0,
+                text: "A".into(),
+            },
+            MarkerEvent {
+                tick: 1000,
+                text: "B".into(),
+            },
+        ];
+        let hits = paint_marker_labels(
+            &painter,
+            rect,
+            &ruler,
+            &far,
+            480,
+            4,
+            2,
+            &[],
+            labels_center,
+            None,
+        );
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].tick, 0);
+        assert_eq!(hits[1].tick, 1000);
+        // tick 越大，标签越靠右（主轴 = X）。
+        assert!(hits[1].rect.min.x > hits[0].rect.min.x);
+
+        // 两个标签主轴间距过小 → 后者被跳过（仅保留 1 个 pill）。
+        let near = vec![
+            MarkerEvent {
+                tick: 0,
+                text: "A".into(),
+            },
+            MarkerEvent {
+                tick: 10,
+                text: "B".into(),
+            },
+        ];
+        let hits = paint_marker_labels(
+            &painter,
+            rect,
+            &ruler,
+            &near,
+            480,
+            4,
+            2,
+            &[],
+            labels_center,
+            None,
+        );
+        assert_eq!(hits.len(), 1, "重叠标签应被跳过");
     }
 }

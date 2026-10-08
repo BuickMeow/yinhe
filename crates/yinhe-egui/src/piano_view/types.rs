@@ -31,6 +31,8 @@ pub enum PianoViewEvent {
         track: u16,
         notes: Vec<yinhe_core::NoteEvent>,
     },
+    /// 标尺标签（marker）编辑：由 App 层落地到文档（接入 undo）。
+    MarkerEdit(crate::widgets::time_ruler::MarkerEdit),
 }
 
 /// Automation panel 上下文（all-or-nothing：要么全 Some 要么全 None）。

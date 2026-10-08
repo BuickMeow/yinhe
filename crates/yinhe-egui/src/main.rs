@@ -16,6 +16,7 @@ mod file_loader;
 mod fonts;
 #[cfg(test)]
 mod i18n_tests;
+mod marker_ops;
 mod mix;
 mod piano_view;
 mod platform;
