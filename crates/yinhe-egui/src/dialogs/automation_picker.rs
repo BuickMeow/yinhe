@@ -209,13 +209,12 @@ pub(crate) fn show_viewport(
 }
 
 /// 内容区：自定义 CC / 自定义 RPN 两行 + 设备参数单选列表。
-/// 行布局统一「目标在左、控件（步进器/单选）在右」；**所有行放在同一个
-/// ScrollArea 里**（自定义两行是第 0/1 行），保证各行宽度一致、圆点对齐。
+/// 行布局统一「目标在左、控件（步进器/单选）在右」；所有行放在同一个
+/// ScrollArea 里（自定义两行是第 0/1 行），保证各行同宽、圆点对齐。
 fn content(ui: &mut egui::Ui, state: &mut AutomationPickerState) {
     ui.add_space(4.0);
     let row_h = crate::scaling::scaled_font(ui.ctx(), 30.0);
     let pad = crate::scaling::scaled_font(ui.ctx(), 8.0);
-    let stepper_w = crate::scaling::scaled_font(ui.ctx(), 96.0);
     let label_size = crate::scaling::scaled_font(ui.ctx(), crate::theme::BODY_FONT);
 
     // 设备自带参数：标题 + 搜索（固定，不随列表滚动）。
@@ -245,6 +244,11 @@ fn content(ui: &mut egui::Ui, state: &mut AutomationPickerState) {
     });
     ui.add_space(4.0);
 
+    let cc_hint = t!("hint.pr.custom_cc");
+    let rpn_hint = t!("hint.pr.custom_rpn");
+    let cc_label = t!("arrange.custom_cc");
+    let rpn_label = t!("arrange.custom_rpn");
+
     // 前两行固定为自定义 CC / RPN，其余为设备参数（行 2 起）。
     let total = 2 + state.filtered.len();
     egui::ScrollArea::vertical()
@@ -263,66 +267,43 @@ fn content(ui: &mut egui::Ui, state: &mut AutomationPickerState) {
             for row_idx in range.clone() {
                 match row_idx {
                     0 => {
-                        let (resp, ctrl) = pick_row(
+                        if pick_row(
                             ui,
                             state.selection == Selection::CustomCc,
-                            t!("arrange.custom_cc").as_ref(),
-                            stepper_w,
+                            cc_label.as_ref(),
+                            Some((&mut state.custom_cc, cc_hint.as_ref())),
                             row_h,
                             pad,
                             label_size,
-                        );
-                        if let Some(rect) = ctrl {
-                            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-                                let r = crate::widgets::stepper::stepper(&mut state.custom_cc)
-                                    .range(0..=127)
-                                    .step(1.0)
-                                    .width(stepper_w)
-                                    .show(ui);
-                                crate::widgets::hint::hover(ui.ctx(), &r, t!("hint.pr.custom_cc"));
-                            });
-                        }
-                        if resp.clicked() {
+                        ) {
                             state.selection = Selection::CustomCc;
                         }
                     }
                     1 => {
-                        let (resp, ctrl) = pick_row(
+                        if pick_row(
                             ui,
                             state.selection == Selection::CustomRpn,
-                            t!("arrange.custom_rpn").as_ref(),
-                            stepper_w,
+                            rpn_label.as_ref(),
+                            Some((&mut state.custom_rpn, rpn_hint.as_ref())),
                             row_h,
                             pad,
                             label_size,
-                        );
-                        if let Some(rect) = ctrl {
-                            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-                                let r = crate::widgets::stepper::stepper(&mut state.custom_rpn)
-                                    .range(0..=127)
-                                    .step(1.0)
-                                    .width(stepper_w)
-                                    .show(ui);
-                                crate::widgets::hint::hover(ui.ctx(), &r, t!("hint.pr.custom_rpn"));
-                            });
-                        }
-                        if resp.clicked() {
+                        ) {
                             state.selection = Selection::CustomRpn;
                         }
                     }
                     _ => {
                         if let Some(&pi) = vis_iter.next() {
                             let label = state.entries[pi].label.clone();
-                            let (resp, _) = pick_row(
+                            if pick_row(
                                 ui,
                                 state.selection == Selection::Entry(pi),
                                 &label,
-                                0.0,
+                                None,
                                 row_h,
                                 pad,
                                 label_size,
-                            );
-                            if resp.clicked() {
+                            ) {
                                 state.selection = Selection::Entry(pi);
                             }
                         }
@@ -332,55 +313,119 @@ fn content(ui: &mut egui::Ui, state: &mut AutomationPickerState) {
         });
 }
 
-/// 画一行单选：目标名在左、单选圆点在右；`control_w > 0` 时在最右侧为控件
-/// （步进器）预留一块矩形，由调用方用 `scope_builder` 填入。
-/// 返回整行 Response 与可选控件矩形。
-#[allow(clippy::too_many_arguments)]
+/// 一行单选：目标名在左；右侧依次为「可选步进器 + 单选圆点」。
+/// 只有单选圆点可点击（返回它是否被点击），整行不可点。
+///
+/// 用固定高度的 `allocate_ui_with_layout` 行（不用 `scope_builder` 放控件：
+/// `scope_builder` 会按子内容高度回退父游标，导致带控件的行变矮、行距不齐）。
 fn pick_row(
     ui: &mut egui::Ui,
     selected: bool,
     label: &str,
-    control_w: f32,
+    stepper: Option<(&mut i32, &str)>,
     row_h: f32,
     pad: f32,
     label_size: f32,
-) -> (egui::Response, Option<egui::Rect>) {
-    let (rect, resp) = ui.allocate_exact_size(
+) -> bool {
+    let stepper_w = crate::scaling::scaled_font(ui.ctx(), 96.0);
+    let outcome = ui.allocate_ui_with_layout(
         egui::vec2(ui.available_width(), row_h),
-        egui::Sense::click(),
-    );
-    if selected {
-        ui.painter()
-            .rect_filled(rect, 4.0, crate::theme::selected_bg());
-    } else if resp.hovered() {
-        ui.painter()
-            .rect_filled(rect, 4.0, crate::theme::hover_color(crate::theme::app_bg()));
-    }
-    // 目标名（左）。
-    ui.painter().text(
-        egui::pos2(rect.min.x + pad, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        label,
-        egui::FontId::proportional(label_size),
-        if selected {
-            crate::theme::text_bright()
-        } else {
-            crate::theme::text_secondary()
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            let row_rect = ui.max_rect();
+            if selected {
+                ui.painter()
+                    .rect_filled(row_rect, 4.0, crate::theme::selected_bg());
+            }
+            ui.add_space(pad);
+            ui.label(
+                egui::RichText::new(label)
+                    .size(label_size)
+                    .color(if selected {
+                        crate::theme::text_bright()
+                    } else {
+                        crate::theme::text_secondary()
+                    }),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(pad);
+                let radio = crate::widgets::radio::radio(ui, selected);
+                if let Some((value, hint)) = stepper {
+                    let sr = crate::widgets::stepper::stepper(value)
+                        .range(0..=127)
+                        .step(1.0)
+                        .width(stepper_w)
+                        .show(ui);
+                    crate::widgets::hint::hover(ui.ctx(), &sr, hint);
+                }
+                radio.clicked()
+            })
+            .inner
         },
     );
-    // 单选圆点（最右）。
-    let r = crate::widgets::radio::radius(ui.ctx());
-    let radio_center = egui::pos2(rect.max.x - pad - r, rect.center().y);
-    crate::widgets::radio::paint_radio(ui.painter(), radio_center, r, selected, resp.hovered());
-    // 控件区（单选圆点左侧）。
-    let ctrl = (control_w > 0.0).then(|| {
-        egui::Rect::from_min_size(
-            egui::pos2(
-                rect.max.x - pad - r * 2.0 - pad - control_w,
-                rect.center().y - row_h * 0.5,
-            ),
-            egui::vec2(control_w, row_h),
-        )
-    });
-    (resp, ctrl)
+    outcome.inner
+}
+
+#[cfg(test)]
+mod geom_tests {
+    use super::*;
+
+    fn init_ctx() -> egui::Context {
+        let ctx = egui::Context::default();
+        ctx.add_font(egui_material_icons::font_insert());
+        for _ in 0..2 {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
+            out.drop_without_applying_deltas();
+        }
+        ctx
+    }
+
+    /// 回归：带步进器的行与普通行必须等高、同距、左缘对齐（曾因用
+    /// `scope_builder` 放步进器导致父游标回退，行距变成 27/33 不一致）。
+    #[test]
+    fn rows_share_pitch_and_left_edge() {
+        let ctx = init_ctx();
+        let row_h = crate::scaling::scaled_font(&ctx, 30.0);
+        let pad = crate::scaling::scaled_font(&ctx, 8.0);
+        let mut tops: Vec<f32> = Vec::new();
+        let mut minx: Vec<f32> = Vec::new();
+        let mut v = 0i32;
+        let mut item_spacing_y = 0.0f32;
+        let out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(500.0, 600.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                item_spacing_y = ui.spacing().item_spacing.y;
+                egui::ScrollArea::vertical()
+                    .id_salt("t")
+                    .auto_shrink([false, false])
+                    .show_rows(ui, row_h, 6, |ui, range| {
+                        for i in range {
+                            let cursor = ui.cursor();
+                            tops.push(cursor.min.y);
+                            minx.push(cursor.min.x);
+                            let stepper = if i < 2 { Some((&mut v, "hint")) } else { None };
+                            let _ = pick_row(ui, i == 0, "Pitch Bend", stepper, row_h, pad, 12.0);
+                        }
+                    });
+            },
+        );
+        out.drop_without_applying_deltas();
+
+        let pitches: Vec<f32> = tops.windows(2).map(|w| w[1] - w[0]).collect();
+        let expected = row_h + item_spacing_y;
+        assert!(
+            pitches.iter().all(|p| (p - expected).abs() < 0.5),
+            "行距不一致（期望 {expected}）: {pitches:?}"
+        );
+        assert!(
+            minx.iter().all(|x| (x - minx[0]).abs() < 0.5),
+            "各行左缘不齐: {minx:?}"
+        );
+    }
 }
