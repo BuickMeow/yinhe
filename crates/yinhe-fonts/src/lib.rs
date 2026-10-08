@@ -6,12 +6,9 @@
 //! - Linux：Noto Sans / DejaVu Sans + Noto Sans CJK SC/TC/JP/KR
 //!
 //! 这些是 egui 在 macOS 上的坑（AppKit/CoreText 会自动处理，egui 需要手工来）：
-//! 1. `FamilyName::SansSerif` 在 macOS 上解析成 Arial，想用 San Francisco 必须显式指定。
-//!    这里直接用系统变量字体 `.SFNS`（`/System/Library/Fonts/SFNS.ttf`），与其它
-//!    macOS 软件同源；用 `FontTweak::coords` 按 UI 字重写 `wght`、并把 `opsz`
-//!    固定为 Text 档（17）。下载版 CFF `SF Pro Text` 仅作 SFNS 缺失时的回退——
-//!    egui 渲染 CFF 比 CoreText 明显偏细，而 TrueType 的 SFNS 更接近系统观感。
-//! 2. font-kit 用数值字重挑不中下载版 `SF Pro Text` 的 Medium，需要手动按实例字重做最近匹配。
+//! 1. `FamilyName::SansSerif` 在 macOS 上解析成 Arial，想用 San Francisco 必须显式
+//!    请求 `"SF Pro Text"`（SF 是隐藏系统字体）。
+//! 2. font-kit 用数值字重挑不中 `SF Pro Text` 的 Medium，需要手动按实例字重做最近匹配。
 //! 3. font-kit 对 `.ttc` 里的中文字体（PingFang 等）报告的 weight 是错的，必须按
 //!    PostScript 名字重后缀精确匹配。
 //! 4. 日文 Hiragino 同名义字重看起来比拉丁细，需要上调一档。
@@ -77,21 +74,17 @@ pub fn build(weight: u16, locale: &str) -> FontDefinitions {
     let mut preferred = Vec::new();
     let mut cjk = Vec::new();
 
-    if let Some(handle) =
-        system_sans_handle(&source, weight).or_else(|| sans_handle(&source, weight))
-        && let Some(key) = insert(&mut fonts, "system-sans", handle, sans_tweak(weight))
+    if let Some(handle) = sans_handle(&source, weight)
+        && let Some(key) = insert(&mut fonts, "system-sans", handle, 0.0)
     {
         preferred.push(key);
     }
 
     for family in cjk_families(locale) {
         let key = format!("cjk-{}", slug(family));
-        let tweak = FontTweak {
-            y_offset_factor: cjk_y_offset_factor(family),
-            ..Default::default()
-        };
+        let offset = cjk_y_offset_factor(family);
         if let Some(handle) = cjk_handle(&source, family, weight)
-            && let Some(key) = insert(&mut fonts, &key, handle, tweak)
+            && let Some(key) = insert(&mut fonts, &key, handle, offset)
         {
             preferred.push(key.clone());
             cjk.push(key);
@@ -238,48 +231,6 @@ fn cjk_y_offset_factor(family: &str) -> f32 {
     }
 }
 
-/// 系统无衬线字体句柄。
-///
-/// macOS 直接用系统变量字体 `.SFNS`（`/System/Library/Fonts/SFNS.ttf`）：与其它
-/// macOS 软件同源，且 egui 对 TrueType 的栅格化比下载版 CFF `SF Pro Text` 更接近
-/// CoreText（后者明显偏细）。文件缺失时返回 `None`，由 [`sans_handle`] 回退。
-#[cfg(target_os = "macos")]
-fn system_sans_handle(_source: &SystemSource, _weight: u16) -> Option<Handle> {
-    let path = std::path::PathBuf::from("/System/Library/Fonts/SFNS.ttf");
-    path.is_file().then_some(Handle::Path {
-        path,
-        font_index: 0,
-    })
-}
-
-#[cfg(not(target_os = "macos"))]
-fn system_sans_handle(_source: &SystemSource, _weight: u16) -> Option<Handle> {
-    None
-}
-
-/// 系统无衬线字体的 `FontTweak`。
-///
-/// macOS 的 `.SFNS` 是变量字体：按 UI 字重写 `wght`；`opsz`（光学尺寸）固定为
-/// Text 档（17）——egui 不会随字号自动调 `opsz`，固定 17 才能让小字号与
-/// 系统 UI 的间距一致（默认值 28 会使小字偏挤）。其它平台为普通静态字体，无需变化。
-fn sans_tweak(weight: u16) -> FontTweak {
-    #[cfg(target_os = "macos")]
-    {
-        FontTweak {
-            coords: egui::epaint::text::VariationCoords::new([
-                ("wght", weight as f32),
-                ("opsz", 17.0),
-            ]),
-            ..Default::default()
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = weight;
-        FontTweak::default()
-    }
-}
-
 /// 在候选无衬线家族里挑最接近目标字重的正体实例。
 ///
 /// font-kit 的 `select_best_match` 用数值字重挑不中 Medium，所以手动做最近匹配。
@@ -388,7 +339,7 @@ fn insert(
     fonts: &mut FontDefinitions,
     key: &str,
     handle: Handle,
-    tweak: FontTweak,
+    y_offset_factor: f32,
 ) -> Option<String> {
     let (bytes, index) = match handle {
         Handle::Path { path, font_index } => (std::fs::read(path).ok()?, font_index),
@@ -396,7 +347,10 @@ fn insert(
     };
     let mut data = FontData::from_owned(bytes);
     data.index = index;
-    data = data.tweak(tweak);
+    data = data.tweak(FontTweak {
+        y_offset_factor,
+        ..FontTweak::default()
+    });
     fonts.font_data.insert(key.to_owned(), Arc::new(data));
     Some(key.to_owned())
 }
