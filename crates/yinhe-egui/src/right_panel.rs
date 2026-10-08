@@ -124,6 +124,8 @@ pub fn show(
     );
 
     let mut port_changed = false;
+    // 图层拖动排序等音轨结构变化 → 需 drop 引擎重建（与 port_changed 同路径）。
+    let mut structural_changed = false;
     let mut jump_request: Option<event_browser::JumpRequest> = None;
 
     // 边距由 dock 按「标签卡 / 内容」分别施加：分割线因此能铺满整宽。
@@ -167,7 +169,7 @@ pub fn show(
             }
             PanelKind::Layers => {
                 if let Some(doc) = doc_ref.as_deref_mut() {
-                    info_panel::show_layers(ui, doc);
+                    structural_changed |= info_panel::show_layers(ui, doc);
                 }
             }
             PanelKind::History => {
@@ -200,7 +202,7 @@ pub fn show(
     });
 
     (
-        port_changed,
+        port_changed || structural_changed,
         jump_request,
         width_drag_ended || layout_changed,
     )

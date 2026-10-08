@@ -14,13 +14,14 @@ use crate::theme;
 
 const ICON_SIZE: f32 = 16.0;
 
-/// 显示图层列表。
-pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) {
+/// 显示图层列表。返回是否发生「音轨结构变化」（拖动排序），
+/// 调用方据此 drop 音频引擎以便下帧重建。
+pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) -> bool {
     crate::right_panel::region_hint(ui, rust_i18n::t!("hint.panel.layers"));
     let num_tracks = doc.data.model.tracks.len();
     if num_tracks == 0 {
         crate::widgets::hint::empty_hint(ui, rust_i18n::t!("track.no_tracks").as_ref());
-        return;
+        return false;
     }
 
     // 兜底补齐可见/锁定缓存长度（结构变化后可能短暂不足）。
@@ -35,7 +36,17 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) {
     let row_h = crate::widgets::control::h(ui.ctx());
     let pad_x = scaled_font(ui.ctx(), theme::PAD_X);
     let icon_gap = scaled_font(ui.ctx(), 6.0);
-    crate::widgets::scroll::rows_scroll(ui, "layers_scroll", row_h, None, |ui| {
+
+    // 拖拽排序跨帧状态（算法见 widgets::reorder，与 AR 音轨面板同源）。
+    let drag_id = egui::Id::new("layers_drag");
+    let mut drag: Option<crate::widgets::reorder::DragReorder> = ui
+        .ctx()
+        .data_mut(|d| d.get_temp(drag_id))
+        .unwrap_or_default();
+    let mut item_rects: Vec<egui::Rect> = Vec::with_capacity(num_tracks);
+    let mut structural_changed = false;
+
+    crate::widgets::scroll::rows_scroll_full(ui, "layers_scroll", row_h, None, |ui| {
         for i in 0..num_tracks {
             let selected = doc.edit.track_selected.contains(&(i as u16));
             let visible = doc
@@ -56,8 +67,9 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) {
 
             let (rect, resp) = ui.allocate_exact_size(
                 egui::vec2(ui.available_width(), row_h),
-                egui::Sense::click(),
+                egui::Sense::click_and_drag(),
             );
+            item_rects.push(rect);
 
             // 选中底色。
             if selected {
@@ -222,15 +234,93 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) {
                     }
                 }
 
-                // 行点击（避开图标区）→ 单选该轨。
-                if resp.clicked() && !lock_hover && !vis_hover {
+                // 拖拽排序：从行体（避开图标区）开始拖动。
+                if resp.drag_started() && drag.is_none() && !lock_hover && !vis_hover {
+                    if !doc.edit.track_selected.contains(&(i as u16)) {
+                        doc.edit.track_selected.clear();
+                        doc.edit.track_selected.insert(i as u16);
+                    }
+                    let mut indices: Vec<usize> = doc
+                        .edit
+                        .track_selected
+                        .iter()
+                        .map(|&t| t as usize)
+                        .collect();
+                    indices.sort_unstable();
+                    // Conductor 不参与排序。
+                    indices.retain(|&j| Some(j as u16) != conductor_idx);
+                    if !indices.is_empty() {
+                        drag = Some(crate::widgets::reorder::DragReorder {
+                            indices,
+                            insert_idx: i,
+                        });
+                    }
+                }
+
+                // 行点击（避开图标区、且不在拖拽中）→ 单选该轨。
+                if resp.clicked() && !lock_hover && !vis_hover && drag.is_none() {
                     doc.edit.track_selected.clear();
                     doc.edit.track_selected.insert(i as u16);
                 }
-            } else if resp.clicked() {
+            } else if resp.clicked() && drag.is_none() {
                 doc.edit.track_selected.clear();
                 doc.edit.track_selected.insert(i as u16);
             }
         }
+
+        // 拖拽排序：更新插入位置、画插入线、松手落地。
+        if let Some(d) = drag.as_mut() {
+            if let Some(p) = ui.input(|i| i.pointer.interact_pos()) {
+                d.update_insert_idx(p.y, &item_rects);
+                // 第 0 行是 Conductor：不能把音轨插到它之前/上。
+                d.insert_idx = d.insert_idx.max(1);
+            }
+            if let Some(y) = d.insert_line_y(&item_rects)
+                && let (Some(first), Some(last)) = (item_rects.first(), item_rects.last())
+            {
+                ui.painter().line_segment(
+                    [
+                        egui::pos2(first.min.x + 4.0, y),
+                        egui::pos2(last.max.x - 4.0, y),
+                    ],
+                    egui::Stroke::new(3.0, theme::accent_active()),
+                );
+            }
+            if ui.input(|i| i.pointer.any_released()) {
+                let indices = d.indices.clone();
+                let insert_at = d.insert_idx;
+                drag = None;
+                structural_changed = apply_reorder(doc, &indices, insert_at);
+            }
+        }
     });
+
+    ui.ctx().data_mut(|d| d.insert_temp(drag_id, drag));
+    structural_changed
+}
+
+/// 把一次拖拽排序（`indices` → `insert_at`）拆成逐个 `move_track`，
+/// 合并为一个 Composite undo。返回是否真的发生改动。
+fn apply_reorder(doc: &mut Document, indices: &[usize], insert_at: usize) -> bool {
+    let moves =
+        crate::widgets::reorder::plan_moves(doc.data.model.tracks.len(), indices, insert_at);
+    if moves.is_empty() {
+        return false;
+    }
+    let before = doc.capture_snapshot();
+    let mut subs = Vec::new();
+    for (from, to) in moves {
+        if let Some(action) = doc.move_track(from, to) {
+            subs.push(action);
+        }
+    }
+    if subs.is_empty() {
+        return false;
+    }
+    doc.push_undo(
+        yinhe_editor_core::history::UndoAction::Composite(subs),
+        rust_i18n::t!("undo.move_track").as_ref(),
+        before,
+    );
+    true
 }

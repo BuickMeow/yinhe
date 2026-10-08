@@ -20,7 +20,19 @@ pub fn rows_scroll<R>(
     max_rows: Option<usize>,
     add_contents: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
-    rows_scroll_impl(ui, id, row_h, max_rows, false, add_contents)
+    rows_scroll_impl(ui, id, row_h, max_rows, false, true, add_contents)
+}
+
+/// 同 [`rows_scroll`]，但**不**把视口高度对齐到行距整数倍：用满可用高度。
+/// 列表下方不需要对齐留白时用（如图层列表）。
+pub fn rows_scroll_full<R>(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    row_h: f32,
+    max_rows: Option<usize>,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    rows_scroll_impl(ui, id, row_h, max_rows, false, false, add_contents)
 }
 
 /// 同 [`rows_scroll`]，但允许横向滚动（长文本列表，如树图）。
@@ -31,7 +43,7 @@ pub fn rows_scroll_both<R>(
     max_rows: Option<usize>,
     add_contents: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
-    rows_scroll_impl(ui, id, row_h, max_rows, true, add_contents)
+    rows_scroll_impl(ui, id, row_h, max_rows, true, true, add_contents)
 }
 
 /// 把可用高度对齐到行距整数倍（`pitch` 已含行距）。`max_rows` 见 [`rows_scroll`]。
@@ -52,10 +64,19 @@ fn rows_scroll_impl<R>(
     row_h: f32,
     max_rows: Option<usize>,
     both: bool,
+    snap: bool,
     add_contents: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
     let step = row_h + ui.spacing().item_spacing.y;
-    let max_h = snap_rows(ui.available_height(), step, max_rows);
+    let avail = ui.available_height();
+    let max_h = if snap {
+        snap_rows(avail, step, max_rows)
+    } else {
+        match max_rows {
+            Some(m) => avail.min(m as f32 * step),
+            None => avail,
+        }
+    };
     let area = if both {
         egui::ScrollArea::both()
     } else {

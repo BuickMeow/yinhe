@@ -6,6 +6,22 @@ use crate::history::UndoAction;
 
 use super::Document;
 
+/// 按 `remap`（old→new 的排列）就地重排一个「按音轨索引」的数组。
+/// 长度不匹配时不动（结构变化过程中可能短暂不等长）。
+fn remap_indexed<T>(v: &mut Vec<T>, remap: &[u16]) {
+    if v.len() != remap.len() {
+        return;
+    }
+    let mut old: Vec<Option<T>> = std::mem::take(v).into_iter().map(Some).collect();
+    let mut slots: Vec<Option<T>> = (0..old.len()).map(|_| None).collect();
+    for (i, &new_idx) in remap.iter().enumerate() {
+        if let Some(slot) = slots.get_mut(new_idx as usize) {
+            *slot = old[i].take();
+        }
+    }
+    *v = slots.into_iter().flatten().collect();
+}
+
 /// 新建音轨的规格（新建音轨对话框 → Document::add_tracks_batch）。
 #[derive(Clone, Copy, Debug)]
 pub struct NewTrackSpec {
@@ -316,6 +332,19 @@ impl Document {
 
         // Update edit state
         self.edit.track_cache.rebuild_info(&self.data);
+        // 按 track 索引的编辑态数组同样 remap，否则可见/锁定/覆盖会留在原位、
+        // 与重排后的音轨错位（图层/AR 面板显示会不一致）。
+        remap_indexed(&mut self.edit.track_visible, &note_remap);
+        remap_indexed(&mut self.edit.track_pianoroll_visible, &note_remap);
+        remap_indexed(&mut self.edit.track_locked, &note_remap);
+        remap_indexed(&mut self.edit.track_overrides, &note_remap);
+        remap_indexed(&mut self.edit.layer_solo_prev, &note_remap);
+        self.edit.layer_solo = self
+            .edit
+            .layer_solo
+            .iter()
+            .map(|&t| note_remap.get(t as usize).copied().unwrap_or(t))
+            .collect();
         self.edit.track_selected.clear();
         self.edit.track_selected.insert(to_idx as u16);
         // 移动 track 后，editing_track 用同样的 remap 规则更新
@@ -534,5 +563,29 @@ mod tests {
         let mut doc = Document::empty();
         assert!(doc.add_tracks_batch(&[]).is_none());
         assert_eq!(doc.model().tracks.len(), 17);
+    }
+
+    /// 重排音轨时，按 track 索引的编辑态数组（可见/锁定等）必须跟着音轨走。
+    #[test]
+    fn move_track_remaps_per_track_edit_state() {
+        let mut doc = Document::empty();
+        let n = doc.data.model.tracks.len();
+        doc.edit.track_pianoroll_visible = vec![true; n];
+        doc.edit.track_locked = vec![false; n];
+        doc.edit.track_visible = vec![true; n];
+        doc.edit.track_pianoroll_visible[2] = false;
+        doc.edit.track_locked[3] = true;
+        let name_at_2 = doc.data.model.tracks[2].name.clone();
+        let name_at_3 = doc.data.model.tracks[3].name.clone();
+
+        // 把 index 2 移到 index 5。
+        assert!(doc.move_track(2, 5).is_some());
+
+        // 原 index 2 的音轨现在在 5：可见性跟随。
+        assert_eq!(doc.data.model.tracks[5].name, name_at_2);
+        assert!(!doc.edit.track_pianoroll_visible[5], "可见性未跟随音轨");
+        // 原 index 3 的音轨左移到 2：锁定跟随。
+        assert_eq!(doc.data.model.tracks[2].name, name_at_3);
+        assert!(doc.edit.track_locked[2], "锁定未跟随音轨");
     }
 }

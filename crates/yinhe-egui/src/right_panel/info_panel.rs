@@ -96,9 +96,9 @@ fn render_track(
     }
 }
 
-/// 「图层」选项卡。
-pub(crate) fn show_layers(ui: &mut egui::Ui, doc: &mut Document) {
-    layers::show(ui, doc);
+/// 「图层」选项卡。返回是否发生音轨结构变化（拖动排序）。
+pub(crate) fn show_layers(ui: &mut egui::Ui, doc: &mut Document) -> bool {
+    layers::show(ui, doc)
 }
 
 /// 「历史记录」选项卡。
