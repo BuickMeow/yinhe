@@ -349,7 +349,7 @@ dialog.export.open_folder: "開啟所在資料夾"
 dialog.export.bit_depth: "位元深度："
 dialog.export.sample_rate: "取樣率："
 dialog.export.follow_global: "跟隨全域 (%{n} Hz)"
-dialog.export.xsynth_layers: "XSynth 層數："
+dialog.export.xsynth_layers: "單鍵最大複音數："
 dialog.export.start: "匯出"
 
 # ── 压缩包选择对话框 ──

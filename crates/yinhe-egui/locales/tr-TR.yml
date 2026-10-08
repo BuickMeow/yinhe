@@ -407,7 +407,7 @@ dialog.export.open_folder: "Klasörü Aç"
 dialog.export.bit_depth: "Bit Derinliği: "
 dialog.export.sample_rate: "Örnekleme Oranı: "
 dialog.export.follow_global: "Geneli Takip Et (%{n} Hz)"
-dialog.export.xsynth_layers: "XSynth Katmanları: "
+dialog.export.xsynth_layers: "Tuş başına maks. polifoni: "
 dialog.export.start: "Dışa Aktar"
 
 # ── Archive picker dialog ──

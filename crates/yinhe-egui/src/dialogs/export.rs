@@ -158,17 +158,20 @@ pub(crate) fn show_settings_viewport(
                                         ui,
                                         t!("dialog.export.xsynth_layers").as_ref(),
                                         |ui| {
-                                            let mut layers = lc_cb.get() as usize;
-                                            ui.add(
-                                                crate::widgets::numeric_input::decimal_drag_value(
-                                                    &mut layers,
-                                                )
-                                                .range(0..=128)
-                                                .speed(1.0),
-                                            );
-                                            lc_cb.set(layers as u32);
+                                            // right_to_left：先加的在最右，故「无限制」放最右、
+                                            // 步进器在其左，避免与左侧长标签挤在一起。
                                             if lc_cb.get() == 0 {
                                                 ui.label(t!("common.unlimited").as_ref());
+                                            }
+                                            let mut layers = lc_cb.get() as i32;
+                                            if crate::widgets::stepper::stepper(&mut layers)
+                                                .range(0..=128)
+                                                .step(1.0)
+                                                .width(120.0)
+                                                .show(ui)
+                                                .changed()
+                                            {
+                                                lc_cb.set(layers.max(0) as u32);
                                             }
                                         },
                                     );

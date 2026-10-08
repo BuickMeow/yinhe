@@ -407,7 +407,7 @@ dialog.export.open_folder: "Otevřít složku"
 dialog.export.bit_depth: "Bitová hloubka: "
 dialog.export.sample_rate: "Vzorkovací frekvence: "
 dialog.export.follow_global: "Podle globálního (%{n} Hz)"
-dialog.export.xsynth_layers: "Vrstvy XSynth: "
+dialog.export.xsynth_layers: "Max. polyfonie na klávesu: "
 dialog.export.start: "Exportovat"
 
 # ── Archive picker dialog ──

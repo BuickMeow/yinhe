@@ -82,8 +82,14 @@ pub(crate) fn btn_zone_h(ctx: &egui::Context) -> f32 {
 pub(crate) fn dialog_button_row(ui: &mut egui::Ui, buttons: &[DialogButton<'_>]) -> Option<usize> {
     let mut clicked = None;
     let gap = crate::scaling::scaled_font(ui.ctx(), BTN_GAP);
-    ui.horizontal(|ui| {
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    let h = crate::scaling::scaled_font(ui.ctx(), BTN_H);
+    // 行高必须按按钮高分配：`ui.horizontal` 默认按 `interact_size.y`(≈18) 开行，
+    // 30 高的按钮会溢出到行下方 12px；在 `bottom_up` 的底部按钮区里就会顶穿框的
+    // 内底边，使下边距≈0（而右边距正常）。这里显式按 BTN_H 分配。
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), h),
+        egui::Layout::right_to_left(egui::Align::Center),
+        |ui| {
             for (idx, spec) in buttons.iter().enumerate().rev() {
                 if dialog_button(ui, spec).clicked() {
                     clicked = Some(idx);
@@ -92,8 +98,8 @@ pub(crate) fn dialog_button_row(ui: &mut egui::Ui, buttons: &[DialogButton<'_>])
                     ui.add_space(gap);
                 }
             }
-        });
-    });
+        },
+    );
     clicked
 }
 
@@ -159,6 +165,13 @@ pub(crate) fn dialog_button(ui: &mut egui::Ui, spec: &DialogButton<'_>) -> egui:
         let radius = scale(BTN_RADIUS);
         let painter = ui.painter();
         painter.rect_filled(rect, radius, fill);
+        // 浅描边：与其它自绘控件一致（control_stroke），保证按钮在浅底上仍有边界。
+        painter.rect_stroke(
+            rect,
+            radius,
+            crate::widgets::control::control_stroke(spec.enabled, false),
+            egui::StrokeKind::Inside,
+        );
         painter.galley(rect.center() - galley.size() / 2.0, galley, fg);
         if resp.has_focus() {
             painter.rect_stroke(

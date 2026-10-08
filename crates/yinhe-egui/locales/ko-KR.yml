@@ -349,7 +349,7 @@ dialog.export.open_folder: "폴더 열기"
 dialog.export.bit_depth: "비트 깊이: "
 dialog.export.sample_rate: "샘플 레이트: "
 dialog.export.follow_global: "글로벌 따르기 (%{n} Hz)"
-dialog.export.xsynth_layers: "XSynth 레이어 수: "
+dialog.export.xsynth_layers: "키당 최대 폴리포니: "
 dialog.export.start: "내보내기"
 
 # ── 아카이브 선택 대화상자 ──

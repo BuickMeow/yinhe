@@ -407,7 +407,7 @@ dialog.export.open_folder: "打开所在文件夹"
 dialog.export.bit_depth: "位深度："
 dialog.export.sample_rate: "采样率："
 dialog.export.follow_global: "跟随全局 (%{n} Hz)"
-dialog.export.xsynth_layers: "XSynth层数："
+dialog.export.xsynth_layers: "单键最大复音数："
 dialog.export.start: "导出"
 
 # ── 压缩包选择对话框 ──

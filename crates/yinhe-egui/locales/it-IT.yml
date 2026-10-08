@@ -407,7 +407,7 @@ dialog.export.open_folder: "Apri cartella"
 dialog.export.bit_depth: "Profondità di bit: "
 dialog.export.sample_rate: "Frequenza di campionamento: "
 dialog.export.follow_global: "Segui globale (%{n} Hz)"
-dialog.export.xsynth_layers: "Livelli XSynth: "
+dialog.export.xsynth_layers: "Polifonia max per tasto: "
 dialog.export.start: "Esporta"
 
 # ── Archive picker dialog ──

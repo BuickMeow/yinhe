@@ -361,7 +361,7 @@ dialog.export.open_folder: "フォルダを開く"
 dialog.export.bit_depth: "ビット深度："
 dialog.export.sample_rate: "サンプルレート："
 dialog.export.follow_global: "グローバルに従う (%{n} Hz)"
-dialog.export.xsynth_layers: "XSynthレイヤー数："
+dialog.export.xsynth_layers: "1鍵あたりの最大同時発音数："
 dialog.export.start: "エクスポート"
 
 # ── アーカイブピッカーダイアログ ──
