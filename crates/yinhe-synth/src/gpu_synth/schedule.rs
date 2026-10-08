@@ -416,10 +416,7 @@ impl GpuSynth {
         // 与 loop_start/loop_end（绝对帧）一致——旧实现把 info.offset 同时
         // 加进 sample_offset 又保留 loop 回绕的绝对帧，造成双重偏移：
         // 带循环且 offset>0 的样本（如立体声钢琴库）回绕后读到静音区。
-        let sample_length = match info.stop {
-            Some(stop) => stop.min(length),
-            None => length,
-        };
+        let sample_length = info.stop.min(length);
 
         // 展开共享参数（speed/增益/声像/滤波/包络时长；公式唯一实现在
         // `voice_params::VoiceParams`，与 CPU 同源同值，CC72/73 修正也在其中）。

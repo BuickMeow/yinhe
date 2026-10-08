@@ -84,7 +84,7 @@ impl VoiceParams {
             loop_end: info.loop_end,
             loop_mode: info.loop_mode as u32,
             is_stereo: info.is_stereo,
-            interp: info.interp,
+            interp: info.interp as u32,
         }
     }
 }

@@ -102,12 +102,10 @@ pub(super) fn build_key_maps_from_sf2(
 
                     key_map[key as usize].push(KeyInfo {
                         sample_data: sample_data.clone(),
-                        sample_rate,
                         is_stereo,
-                        interp,
+                        interp: interp as u8,
                         speed_mult,
                         volume: np.volume,
-                        pan,
                         offset: region.offset,
                         ampeg_start: ampeg.ampeg_start / 100.0,
                         ampeg_delay: ampeg.ampeg_delay,
@@ -121,7 +119,7 @@ pub(super) fn build_key_maps_from_sf2(
                         loop_mode,
                         loop_start: region.loop_start,
                         loop_end: region.loop_end,
-                        stop: Some(region.sample_end),
+                        stop: region.sample_end,
                         cutoff,
                         resonance,
                         filter_type,

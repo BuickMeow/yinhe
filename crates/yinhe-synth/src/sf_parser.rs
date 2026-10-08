@@ -41,23 +41,21 @@ pub struct KeyInfo {
     /// 重采样到目标采样率后的采样数据（Arc 共享，clone 零拷贝）。
     /// 立体声样本为 LRLR 交错存储，`is_stereo` 标记布局。
     pub sample_data: Arc<[f32]>,
-    pub sample_rate: u32,
     /// 采样是否为交错立体声（false = 单声道）。
     pub is_stereo: bool,
-    /// 插值器：0=Nearest, 1=Linear（默认 0，与 xsynth `SoundfontInitOptions` 默认一致）。
-    pub interp: u32,
+    /// 插值器：0=Nearest, 1=Linear（1 字节足够，避免 4 字节对齐膨胀）。
+    pub interp: u8,
 
     /// 采样播放倍率（键位频率比 × 调音音分，等价 xsynth `get_speed_mult_from_keys` × `cents_factor`）。
     pub speed_mult: f32,
     /// 线性增益（含 vel 曲线与键位音量跟踪，等价 xsynth spawner 的 `volume`）。
     pub volume: f32,
-    /// 声像 0..1（0=左, 0.5=中, 1=右，含 vel/key 修正，等价 xsynth spawner 的 `pan`）。
-    pub pan: f32,
     /// 采样起始偏移（帧，已按目标采样率换算）。
     pub offset: u32,
-    /// 采样结束位置（帧，已换算；SF2 的 sample_end，等价 xsynth LoopParams.stop；
-    /// SFZ 无此概念为 None）。播放长度 = min(采样长度, stop) - offset。
-    pub stop: Option<u32>,
+    /// 采样结束位置（帧，已换算；SF2 的 sample_end，等价 xsynth LoopParams.stop）。
+    /// `u32::MAX` 表示无（SFZ 无此概念，播放到采样末尾）。
+    /// 播放长度 = min(采样长度, stop) - offset。
+    pub stop: u32,
 
     // ── ADSR 包络（秒；攻击/释放已有 0.001s 下限防除零）──
     pub ampeg_start: f32, // 0..1
@@ -127,14 +125,12 @@ impl Default for KeyInfo {
     fn default() -> Self {
         Self {
             sample_data: Arc::from([]),
-            sample_rate: 0,
             is_stereo: false,
             interp: 0,
             speed_mult: 1.0,
             volume: 1.0,
-            pan: 0.5,
             offset: 0,
-            stop: None,
+            stop: u32::MAX,
             ampeg_start: 0.0,
             ampeg_delay: 0.0,
             // 默认对齐 xsynth（`AmpegEnvelopeParams::default`）：attack/release
@@ -358,7 +354,6 @@ mod tests {
         let entries = build_key_maps(&sfz_path, dst_sr, 0).expect("build key maps");
         let info = &entries[0].map[60][0];
         assert!(!info.is_stereo, "单声道样本必须标记为非立体声");
-        assert_eq!(info.sample_rate, dst_sr);
 
         // 与单声道重采样参考逐样本一致（交错路径的输出会明显不同）
         let (raw, _, is_stereo) = load_wav_as_f32(&wav_path).expect("load wav");

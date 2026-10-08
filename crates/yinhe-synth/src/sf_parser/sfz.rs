@@ -106,14 +106,12 @@ pub(super) fn build_key_map_from_sfz(
                 let biquad = bake_biquad(cutoff, resonance, region.filter_type, sample_rate);
                 key_map[key as usize].push(KeyInfo {
                     sample_data: samples.clone(),
-                    sample_rate,
                     is_stereo,
-                    interp,
+                    interp: interp as u8,
                     speed_mult,
                     volume,
-                    pan,
                     offset: (region.offset as f32 * factor) as u32,
-                    stop: None,
+                    stop: u32::MAX,
                     ampeg_start: ampeg.ampeg_start / 100.0,
                     ampeg_delay: ampeg.ampeg_delay,
                     ampeg_attack: ampeg.ampeg_attack.max(0.001),

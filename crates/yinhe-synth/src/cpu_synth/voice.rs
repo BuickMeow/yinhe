@@ -177,14 +177,9 @@ impl CpuVoice {
             loop_start: p.loop_start,
             loop_end: p.loop_end,
         };
-        // 播放长度（帧）：min(采样帧数, stop) - offset。
+        // 播放长度（帧）：min(采样帧数, stop) - offset（stop=u32::MAX 表示无）。
         let total = frame_count(info);
-        voice.sample_length = match info.stop {
-            Some(stop) => stop
-                .saturating_sub(info.offset)
-                .min(total.saturating_sub(info.offset)),
-            None => total.saturating_sub(info.offset),
-        };
+        voice.sample_length = info.stop.min(total).saturating_sub(info.offset);
         // per-voice biquad 系数：加载期烘焙（`sf_parser::bake_biquad`，
         // RBJ cookbook 与 GPU/xsynth 一致）；cutoff=0 时无滤波器
         if let Some([b0, b1, b2, a1, a2]) = p.biquad {
