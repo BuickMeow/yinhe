@@ -445,7 +445,6 @@ pub fn tool_hint(tool: crate::widgets::tools_panel::Tool) -> String {
         Tool::SelectVertical => t!("hint.tool.select_vertical").to_string(),
         Tool::Pan => t!("hint.tool.pan").to_string(),
         Tool::Pencil => t!("hint.tool.pencil").to_string(),
-        Tool::Curve => t!("hint.tool.curve").to_string(),
         Tool::Scissors => t!("hint.tool.scissors").to_string(),
         Tool::Eraser => t!("hint.tool.eraser").to_string(),
         Tool::Grid => t!("hint.tool.grid").to_string(),

@@ -215,7 +215,7 @@ pub(crate) fn handle_input(
 
     // Click to set cursor — pointer release + small drag distance.
     // Hover check here also uses raw rect containment for the same reason.
-    // Skip in Select/SelectVertical/Pencil/Curve/Pan modes — those tools manage
+    // Skip in Select/SelectVertical/Pencil/Pan modes — those tools manage
     // their own clicks in drag.rs / pencil.rs.
     // 注意：Select 工具的 cursor 设置由 drag.rs 的 sel_drag_frame 处理，
     // 此处若也处理会导致坐标计算不一致（handle_input 收到 music_rect，
@@ -228,7 +228,6 @@ pub(crate) fn handle_input(
         && *active_tool != Tool::Select
         && *active_tool != Tool::SelectVertical
         && *active_tool != Tool::Pencil
-        && *active_tool != Tool::Curve
         && *active_tool != Tool::Pan
         && *active_tool != Tool::Scissors
         && *active_tool != Tool::Grid

@@ -11,9 +11,6 @@ pub(crate) fn compute_ghost(ctx: &mut InteractionCtx<'_>) -> Option<AutomationGh
     let drag_now = ctx.egui_ctx.data(|d| d.get_temp::<AutoDrag>(ctx.drag_id));
     let (p, cur_tick, cur_value) = ctx.mouse_info?;
     let drag = drag_now?;
-    let x_offset = ctx.panel.base.left_panel_width - ctx.scroll_x;
-    let cur_x = x_offset + cur_tick as f32 * ctx.ppu;
-    let cur_y = ctx.panel.value_to_y(cur_value, ctx.max_val);
     match drag {
         AutoDrag::MoveAnchor {
             old_tick,
@@ -26,20 +23,6 @@ pub(crate) fn compute_ghost(ctx: &mut InteractionCtx<'_>) -> Option<AutomationGh
                 color: ctx.track_color,
             }
         }),
-        AutoDrag::CurveDraw {
-            start_tick,
-            start_value,
-        } => {
-            let start_x = x_offset + start_tick as f32 * ctx.ppu;
-            let start_y = ctx.panel.value_to_y(start_value, ctx.max_val);
-            Some(AutomationGhost::Curve {
-                start_x,
-                start_y,
-                cur_x,
-                cur_y,
-                color: ctx.track_color,
-            })
-        }
         AutoDrag::DragControlPoint {
             prev_tick, which, ..
         } => ctx.lane.and_then(|l| {

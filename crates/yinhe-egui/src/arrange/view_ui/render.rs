@@ -348,7 +348,7 @@ pub(crate) fn prepare_automation(
     use crate::widgets::tools_panel::Tool;
     let show_anchors = matches!(
         active_tool,
-        Tool::Pencil | Tool::Curve | Tool::Select | Tool::SelectVertical
+        Tool::Pencil | Tool::Select | Tool::SelectVertical
     );
     let lh = view.lane_height();
     let scroll_y = view.base.scroll_y;

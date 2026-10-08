@@ -6,8 +6,7 @@
 //!
 //! 坐标约定：
 //! - 交互层用 lane 局部 y（lview.y_offset = 0，panel_rect = lane 屏幕矩形）；
-//! - 渲染层用 AR 纹理坐标（y_offset = 子行顶部 y），Curve ghost 的 y 在此处
-//!   从局部平移到纹理坐标。
+//! - 渲染层用 AR 纹理坐标（y_offset = 子行顶部 y），ghost lane 按 y_offset 重建。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -128,7 +127,7 @@ pub(crate) struct AmInteractionOut {
     pub cursor_tick: Option<u32>,
 }
 
-/// 对所有可见 AM 行跑一遍编辑交互（Pencil/Select/SelectVertical/Curve/Eraser）。
+/// 对所有可见 AM 行跑一遍编辑交互（Pencil/Select/SelectVertical/Eraser）。
 ///
 /// 必须在 AR 的音符选框/橡皮擦处理之外按行区域互斥（view_ui 负责 gating）。
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
@@ -235,24 +234,7 @@ pub(crate) fn interact_all(
         }
 
         if let Some(g) = ghost {
-            // Curve ghost 的 y 是 lane 局部坐标，平移到纹理坐标；
             // Move ghost 携带整条 lane，渲染时按 y_offset 重建，无需平移。
-            let g = match g {
-                AutomationGhost::Curve {
-                    start_x,
-                    start_y,
-                    cur_x,
-                    cur_y,
-                    color,
-                } => AutomationGhost::Curve {
-                    start_x,
-                    start_y: start_y + y_top,
-                    cur_x,
-                    cur_y: cur_y + y_top,
-                    color,
-                },
-                other => other,
-            };
             let max_val = match r.sub {
                 Some(sub) => io
                     .tracks

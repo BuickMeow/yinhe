@@ -5,13 +5,6 @@ use yinhe_theme::GpuTheme;
 use yinhe_types::AutomationPanelView;
 use yinhe_types::{AutomationEvent, AutomationLane, SegmentShape};
 
-/// ghost 锚点半径（像素）。
-const GHOST_RADIUS: f32 = 4.0;
-/// ghost 不透明度。
-const GHOST_ALPHA: f32 = 0.9;
-/// ghost 预览线宽（SDF 半宽）。
-const GHOST_LINE_THICKNESS: f32 = 0.5;
-
 /// 构造一条覆盖后的 lane：删除 `old_tick` 处的事件，在 `new_tick` 处插入新事件。
 ///
 /// 用于拖拽 ghost：被拖事件从原位置移动到新位置，其余事件保持不变。
@@ -187,38 +180,7 @@ pub fn build_ghost(
     show_anchors: bool,
     _theme: &GpuTheme,
 ) {
-    let push_anchor = |out: &mut Vec<CurveInstance>, x: f32, y: f32, color: [f32; 3]| {
-        out.push(CurveInstance::circle(
-            x,
-            y,
-            GHOST_RADIUS,
-            [color[0], color[1], color[2], GHOST_ALPHA],
-        ));
-    };
-
-    match ghost {
-        AutomationGhost::Move { lane, color } => {
-            // 整条 lane 作为 ghost 重新绘制
-            data_lines::build_lane_instances(out, w, view, &lane, max_val, color, show_anchors);
-        }
-        AutomationGhost::Curve {
-            start_x,
-            start_y,
-            cur_x,
-            cur_y,
-            color,
-        } => {
-            push_anchor(out, start_x, start_y, color);
-            // 直线预览：从 start 到 cur（line 即 ctrl=(0.5,0.5) 的退化贝塞尔）
-            out.push(CurveInstance::line(
-                start_x,
-                start_y,
-                cur_x,
-                cur_y,
-                GHOST_LINE_THICKNESS,
-                [color[0], color[1], color[2], GHOST_ALPHA],
-            ));
-            push_anchor(out, cur_x, cur_y, color);
-        }
-    }
+    let AutomationGhost::Move { lane, color } = ghost;
+    // 整条 lane 作为 ghost 重新绘制
+    data_lines::build_lane_instances(out, w, view, &lane, max_val, color, show_anchors);
 }

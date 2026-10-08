@@ -62,7 +62,7 @@ pub(crate) fn show_panels(
             .filter(|&t| Some(t) != conductor_idx);
         let edit_ctx = if matches!(
             *active_tool,
-            Tool::Pencil | Tool::Curve | Tool::Select | Tool::SelectVertical
+            Tool::Pencil | Tool::Select | Tool::SelectVertical
         ) {
             Some(automation_panel::AutomationEditCtx {
                 active_tool: *active_tool,

@@ -1,6 +1,5 @@
-//! Automation panel mouse interaction logic (pencil/curve tools, right-click).
+//! Automation panel mouse interaction logic (pencil tool, right-click).
 
-mod curve;
 mod drag;
 mod eraser;
 mod ghost;
@@ -288,20 +287,6 @@ pub(crate) fn handle_automation_interaction(
     match ictx.active_tool {
         Tool::Pencil => match pencil::handle_pencil(&mut ictx, &mut edits, info_content, right_tab)
         {
-            ToolResult::Break(g) => {
-                return (
-                    edits,
-                    g,
-                    None,
-                    None,
-                    ictx.marquee_rect,
-                    ictx.sel_op,
-                    blank_click_tick,
-                );
-            }
-            ToolResult::Continue => {}
-        },
-        Tool::Curve => match curve::handle_curve(&mut ictx, &mut edits) {
             ToolResult::Break(g) => {
                 return (
                     edits,

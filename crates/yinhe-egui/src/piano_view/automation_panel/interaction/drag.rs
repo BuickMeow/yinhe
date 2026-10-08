@@ -15,8 +15,6 @@ pub(crate) enum AutoDrag {
         start_tick: u32,
         start_value: f32,
     },
-    /// Curve 拖拽：起点已固定
-    CurveDraw { start_tick: u32, start_value: f32 },
     /// 拖拽 Curve 段的某个控制点。
     /// `prev_tick`：被拖段的前驱事件 tick（段的起点，shape 存于此事件）。
     /// `which`：拖的是 P1（Out）还是 P2（In）。

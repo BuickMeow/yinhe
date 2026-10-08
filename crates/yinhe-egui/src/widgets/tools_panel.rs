@@ -6,7 +6,6 @@ pub enum Tool {
     SelectVertical,
     Pan,
     Pencil,
-    Curve,
     Scissors,
     Eraser,
     Grid,
@@ -15,12 +14,11 @@ pub enum Tool {
 }
 
 /// All currently available tools — shown on the transport bar (right of the timecode).
-pub const ALL_TOOLS: [Tool; 10] = [
+pub const ALL_TOOLS: [Tool; 9] = [
     Tool::Select,
     Tool::SelectVertical,
     Tool::Pan,
     Tool::Pencil,
-    Tool::Curve,
     Tool::Scissors,
     Tool::Eraser,
     Tool::Grid,
@@ -35,11 +33,10 @@ impl Tool {
             Tool::SelectVertical => ICON_TEXT_SELECT_START,
             Tool::Pan => ICON_PAN_TOOL,
             Tool::Pencil => ICON_EDIT,
-            Tool::Curve => ICON_DRAW,
             Tool::Scissors => ICON_CONTENT_CUT,
             Tool::Eraser => ICON_INK_ERASER,
             Tool::Grid => ICON_GRID_ON,
-            Tool::Line => ICON_TIMELINE,
+            Tool::Line => ICON_PENTAGON,
             Tool::Brush => ICON_BRUSH,
         }
     }
@@ -52,7 +49,6 @@ impl Tool {
             Tool::SelectVertical => sc::ACTION_TOOL_SELECT_VERTICAL,
             Tool::Pan => sc::ACTION_TOOL_PAN,
             Tool::Pencil => sc::ACTION_TOOL_PENCIL,
-            Tool::Curve => sc::ACTION_TOOL_CURVE,
             Tool::Scissors => sc::ACTION_TOOL_SCISSORS,
             Tool::Eraser => sc::ACTION_TOOL_ERASER,
             Tool::Grid => sc::ACTION_TOOL_GRID,
@@ -73,7 +69,6 @@ impl Tool {
             Tool::SelectVertical => "tool.select_vertical",
             Tool::Pan => "tool.pan",
             Tool::Pencil => "tool.pencil",
-            Tool::Curve => "tool.curve",
             Tool::Scissors => "tool.scissors",
             Tool::Eraser => "tool.eraser",
             Tool::Grid => "tool.grid",

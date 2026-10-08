@@ -61,7 +61,7 @@ pub fn show_panels(
     let active_tool = edit_ctx.map(|c| c.active_tool).unwrap_or(Tool::Select);
     let show_anchors = matches!(
         active_tool,
-        Tool::Pencil | Tool::Curve | Tool::Select | Tool::SelectVertical
+        Tool::Pencil | Tool::Select | Tool::SelectVertical
     );
 
     for panel in state.panels.iter_mut() {

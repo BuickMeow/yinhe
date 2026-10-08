@@ -22,14 +22,6 @@ pub enum AutomationGhost {
         /// 音轨颜色（ghost 用 track color 而非黄色）。
         color: [f32; 3],
     },
-    /// Curve 拖拽：从 `start` 到 `cur` 画预览线
-    Curve {
-        start_x: f32,
-        start_y: f32,
-        cur_x: f32,
-        cur_y: f32,
-        color: [f32; 3],
-    },
 }
 
 /// ghost 层「无 ghost」时用的固定非零缓存键：首次清空后命中缓存不再上传。
@@ -191,7 +183,6 @@ pub fn prepare(
         .as_ref()
         .map(|g| match g {
             AutomationGhost::Move { lane, .. } => hash_lane(lane),
-            AutomationGhost::Curve { .. } => 1,
         })
         .unwrap_or(0);
     // 固定层 lane 内容变化由 revision 检测：所有 lane 编辑路径
@@ -356,7 +347,6 @@ pub fn prepare_arr_automation(
         .as_ref()
         .map(|(g, ..)| match g {
             AutomationGhost::Move { lane, .. } => hash_lane(lane),
-            AutomationGhost::Curve { .. } => 1,
         })
         .unwrap_or(0);
     // Conductor 颜色跟随主题主文字变化时，曲线烘焙色需重建（同 prepare 的 tc_hash）
@@ -376,9 +366,9 @@ pub fn prepare_arr_automation(
     let data_key = layer_cache_key(&[cache_key, ghost_lane_hash, tc_hash, lane_set_hash(lanes)]);
 
     // 数据层 skip_lane：ghost 为 Move 时被覆盖的 lane 由 ghost 层完整重画。
-    let skip_lane = ghost.as_ref().and_then(|(g, ..)| match g {
-        AutomationGhost::Move { lane, .. } => Some(lane),
-        AutomationGhost::Curve { .. } => None,
+    let skip_lane = ghost.as_ref().map(|(g, ..)| {
+        let AutomationGhost::Move { lane, .. } = g;
+        lane
     });
 
     let theme = renderer.theme();
