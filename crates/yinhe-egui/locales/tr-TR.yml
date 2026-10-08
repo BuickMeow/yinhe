@@ -1012,6 +1012,7 @@ hint.timecode.quantize: "Nicemleme: ön ayar seçmek için tıkla (odaklanan gö
 hint.timecode.keysig: "Ton: kök/gam ayarlamak için tıkla"
 hint.chord_indicator: "Geçerli akor (önce canlı MIDI tuşları, sonra çalma imleci)"
 hint.recent_files: "Son açılan dosyalar"
+hint.recent_opened_at: "Son açılma %{time}"
 hint.menu.pin: "Transport çubuğuna sabitle / sabitlemeyi kaldır"
 hint.dock.split: "Aygıt çubuğunun boyutunu değiştirmek için yukarı/aşağı sürükle"
 hint.dock.context: "Kanal seç (MIDI/ses)"

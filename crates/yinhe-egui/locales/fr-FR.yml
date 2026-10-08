@@ -1007,6 +1007,7 @@ hint.timecode.quantize: "Quantification : cliquer pour choisir un préréglage (
 hint.timecode.keysig: "Tonalité : cliquer pour définir la fondamentale/le mode"
 hint.chord_indicator: "Accord actuel (touches MIDI en direct d'abord, puis tête de lecture)"
 hint.recent_files: "Fichiers récemment ouverts"
+hint.recent_opened_at: "Dernière ouverture %{time}"
 hint.menu.pin: "Épingler à la barre de transport / détacher"
 hint.dock.split: "Faire glisser vers le haut/bas pour redimensionner la barre d'appareils"
 hint.dock.context: "Choisir le canal (MIDI/audio)"

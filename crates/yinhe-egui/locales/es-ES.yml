@@ -1007,6 +1007,7 @@ hint.timecode.quantize: "Cuantización: clic para elegir un preajuste (se aplica
 hint.timecode.keysig: "Tonalidad: clic para definir la raíz/la escala"
 hint.chord_indicator: "Acorde actual (primero las teclas MIDI en vivo, luego el cursor de reproducción)"
 hint.recent_files: "Archivos abiertos recientemente"
+hint.recent_opened_at: "Última apertura %{time}"
 hint.menu.pin: "Fijar a la barra de transporte / desfijar"
 hint.dock.split: "Arrastrar hacia arriba/abajo para redimensionar la barra de dispositivos"
 hint.dock.context: "Elegir canal (MIDI/audio)"

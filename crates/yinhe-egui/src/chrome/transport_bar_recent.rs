@@ -13,6 +13,17 @@ pub(crate) fn recent_display_name(path: &str) -> &str {
         .unwrap_or(path)
 }
 
+/// 把 Unix 秒格式化为本地时间 `YYYY-MM-DD HH:MM`；无效值返回空串。
+fn format_opened_at(secs: i64) -> String {
+    chrono::DateTime::from_timestamp(secs, 0)
+        .map(|dt| {
+            dt.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        })
+        .unwrap_or_default()
+}
+
 fn measure_recent_parent_row_width(ctx: &egui::Context) -> f32 {
     let spacing = &ctx.style_of(ctx.theme()).spacing;
     let pad_x = spacing.button_padding.x * 2.0;
@@ -49,6 +60,7 @@ fn measure_recent_submenu_width(ctx: &egui::Context, recent: &[String]) -> f32 {
 pub fn recent_files_section(
     ui: &mut egui::Ui,
     recent: &[String],
+    times: &std::collections::HashMap<String, i64>,
     any_row_hovered: bool,
     pending_open_path: &mut Option<String>,
 ) {
@@ -75,8 +87,8 @@ pub fn recent_files_section(
     );
     if row_resp.hovered() {
         open = true;
-        crate::widgets::hint::set(ui.ctx(), t!("hint.recent_files"));
     }
+    crate::widgets::hint::hover_popup(ui.ctx(), &row_resp, t!("hint.recent_files"));
     if row_resp.clicked() {
         open = !open;
     }
@@ -118,7 +130,16 @@ pub fn recent_files_section(
                     *pending_open_path = Some(path.clone());
                     egui::Popup::close_all(ui.ctx());
                 } else if resp.hovered() {
-                    crate::widgets::hint::set(ui.ctx(), path.as_str());
+                    // 讲解：完整路径 +（若记录了）上次打开时间。
+                    let hint = match times.get(path) {
+                        Some(&secs) => format!(
+                            "{} · {}",
+                            path,
+                            t!("hint.recent_opened_at", time = format_opened_at(secs))
+                        ),
+                        None => path.clone(),
+                    };
+                    crate::widgets::hint::hover_popup(ui.ctx(), &resp, hint);
                 }
             }
         });

@@ -1012,6 +1012,7 @@ hint.timecode.quantize: "Kvantizace: kliknutím zvolte předvolbu (platí pro ak
 hint.timecode.keysig: "Tónina: kliknutím nastavte základní tón/stupnici"
 hint.chord_indicator: "Aktuální akord (nejprve živé klávesy MIDI, poté kurzor přehrávání)"
 hint.recent_files: "Nedávno otevřené soubory"
+hint.recent_opened_at: "Naposledy otevřeno %{time}"
 hint.menu.pin: "Připnout k přenosovému pruhu / odepnout"
 hint.dock.split: "Tažením nahoru/dolů změníte výšku pruhu zařízení"
 hint.dock.context: "Zvolte kanál (MIDI/audio)"

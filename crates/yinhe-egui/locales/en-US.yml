@@ -1011,6 +1011,7 @@ hint.timecode.quantize: "Quantize: click to choose a preset (applies to the focu
 hint.timecode.keysig: "Key: click to set root/scale"
 hint.chord_indicator: "Current chord (live MIDI keys first, then playhead)"
 hint.recent_files: "Recently opened files"
+hint.recent_opened_at: "Last opened %{time}"
 hint.menu.pin: "Pin to transport bar / unpin"
 hint.dock.split: "Drag up/down to resize the device bar"
 hint.dock.context: "Choose channel (MIDI/audio)"

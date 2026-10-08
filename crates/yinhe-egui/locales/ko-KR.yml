@@ -1016,6 +1016,7 @@ hint.timecode.quantize: "퀀타이즈: 클릭해 프리셋 선택(포커스된 �
 hint.timecode.keysig: "조: 클릭해 근음/음계 설정"
 hint.chord_indicator: "현재 코드(실시간 MIDI 키 우선, 다음 재생 헤드)"
 hint.recent_files: "최근 연 파일"
+hint.recent_opened_at: "마지막으로 연 시각 %{time}"
 hint.menu.pin: "트랜스포트 바에 고정 / 고정 해제"
 hint.dock.split: "위/아래로 드래그해 장치 바 높이 조절"
 hint.dock.context: "채널 선택(MIDI/오디오)"

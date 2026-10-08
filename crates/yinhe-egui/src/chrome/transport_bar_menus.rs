@@ -22,9 +22,10 @@ pub fn show_file_menu(
     let keybindings = &settings.keybindings;
     let pinned = &mut settings.pinned_file_actions;
     let recent = &settings.recent_files;
+    let recent_times = &settings.recent_file_times;
 
     let mut render = |ui: &mut egui::Ui, any_row_hovered: bool| {
-        recent_files_section(ui, recent, any_row_hovered, pending_open_path);
+        recent_files_section(ui, recent, recent_times, any_row_hovered, pending_open_path);
     };
     let has_recent = !recent.is_empty();
     let outcome = show_action_menu(

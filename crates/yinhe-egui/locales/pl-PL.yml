@@ -1012,6 +1012,7 @@ hint.timecode.quantize: "Kwantyzacja: kliknij, aby wybrać ustawienie wstępne (
 hint.timecode.keysig: "Tonacja: kliknij, aby ustawić tonikę/skalę"
 hint.chord_indicator: "Bieżący akord (najpierw klawisze MIDI na żywo, potem kursor odtwarzania)"
 hint.recent_files: "Ostatnio otwarte pliki"
+hint.recent_opened_at: "Ostatnio otwarte %{time}"
 hint.menu.pin: "Przypnij do paska transportu / odepnij"
 hint.dock.split: "Przeciągnij w górę/w dół, aby zmienić wysokość paska urządzeń"
 hint.dock.context: "Wybierz kanał (MIDI/audio)"

@@ -158,6 +158,10 @@ pub struct AudioSettings {
     #[serde(default)]
     pub pinned_automation_write: bool,
     pub recent_files: Vec<String>,
+    /// 「最近修改的文件」各自上次打开时间（Unix 秒）。旧配置无此项 → 空，
+    /// 这些旧记录在讲解里只显示路径、不显示时间。
+    #[serde(default)]
+    pub recent_file_times: std::collections::HashMap<String, i64>,
     /// 运行时 UI 会话态（设置窗口/快捷键录制/设备枚举），不落盘。
     #[serde(skip)]
     pub ui_session: SettingsUiSession,
@@ -219,6 +223,7 @@ impl Default for AudioSettings {
             automation_write: false,
             pinned_automation_write: false,
             recent_files: Vec::new(),
+            recent_file_times: std::collections::HashMap::new(),
             ui_session: SettingsUiSession::default(),
         }
     }

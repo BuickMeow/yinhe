@@ -1017,6 +1017,7 @@ hint.timecode.quantize: "クオンタイズ：クリックでプリセット選�
 hint.timecode.keysig: "調：クリックでルート/スケールを設定"
 hint.chord_indicator: "現在のコード（ライブ MIDI キー優先、次に再生ヘッド）"
 hint.recent_files: "最近開いたファイル"
+hint.recent_opened_at: "最終オープン %{time}"
 hint.menu.pin: "トランスポートバーに固定 / 固定解除"
 hint.dock.split: "上下にドラッグしてデバイスバーの高さを変更"
 hint.dock.context: "チャンネルを選択（MIDI/オーディオ）"

@@ -1007,6 +1007,7 @@ hint.timecode.quantize: "Quantisierung: klicken, um ein Preset zu wählen (wirkt
 hint.timecode.keysig: "Tonart: klicken, um Grundton/Tonleiter festzulegen"
 hint.chord_indicator: "Aktueller Akkord (zuerst Live-MIDI-Tasten, dann Abspielposition)"
 hint.recent_files: "Zuletzt geöffnete Dateien"
+hint.recent_opened_at: "Zuletzt geöffnet %{time}"
 hint.menu.pin: "An die Transportleiste anheften / lösen"
 hint.dock.split: "Nach oben/unten ziehen, um die Geräteleiste zu skalieren"
 hint.dock.context: "Kanal wählen (MIDI/Audio)"

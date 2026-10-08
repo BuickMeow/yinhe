@@ -6,6 +6,14 @@ fn config_path() -> PathBuf {
     crate::paths::app_config_file()
 }
 
+/// 当前 Unix 时间（秒）；时钟异常时返回 0。
+fn now_unix_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
 impl AudioSettings {
     pub fn load() -> Self {
         let path = config_path();
@@ -66,11 +74,17 @@ impl AudioSettings {
         self.recent_files.retain(|p| p != path);
         self.recent_files.insert(0, path.to_string());
         self.recent_files.truncate(RECENT_FILES_LIMIT);
+        self.recent_file_times
+            .insert(path.to_string(), now_unix_secs());
+        // 清理已被截断路径的时间记录，避免 map 无限增长。
+        let keep: std::collections::HashSet<String> = self.recent_files.iter().cloned().collect();
+        self.recent_file_times.retain(|p, _| keep.contains(p));
         self.recent_files != before
     }
 
     pub fn remove_recent_file(&mut self, path: &str) {
         self.recent_files.retain(|p| p != path);
+        self.recent_file_times.remove(path);
     }
 
     pub fn available_devices(&self) -> &[String] {

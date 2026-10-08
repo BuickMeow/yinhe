@@ -1012,6 +1012,7 @@ hint.timecode.quantize: "量化：點擊選擇量化預設（作用於焦點檢�
 hint.timecode.keysig: "調式：點擊設定根音／音階"
 hint.chord_indicator: "目前和弦（即時 MIDI 鍵優先，其次播放游標）"
 hint.recent_files: "最近開啟的檔案"
+hint.recent_opened_at: "上次開啟 %{time}"
 hint.menu.pin: "固定到走帶列／取消固定"
 hint.dock.split: "上下拖曳調整裝置列高度"
 hint.dock.context: "選擇通道（MIDI／音訊）"

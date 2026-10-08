@@ -1011,6 +1011,7 @@ hint.timecode.quantize: "Quantização: clique para escolher um preset (aplica-s
 hint.timecode.keysig: "Tonalidade: clique para definir tônica/escala"
 hint.chord_indicator: "Acorde atual (primeiro teclas MIDI ao vivo, depois o cursor de reprodução)"
 hint.recent_files: "Arquivos abertos recentemente"
+hint.recent_opened_at: "Última abertura %{time}"
 hint.menu.pin: "Fixar na barra de transporte / desafixar"
 hint.dock.split: "Arraste para cima/baixo para redimensionar a barra de dispositivos"
 hint.dock.context: "Escolher canal (MIDI/áudio)"
