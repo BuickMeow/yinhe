@@ -69,67 +69,71 @@ pub(super) fn build_key_maps_from_sf2(
 
             for key in region.keyrange.clone() {
                 let key_f = key as f32;
-                for vel in *region.velrange.start()..=*region.velrange.end() {
-                    // note_params 展开 SF2 modulator 系统（vel 曲线、包络 keytrack 等）
-                    let np = region.note_params(key, vel);
-                    let ampeg = np.ampeg_envelope;
+                // 合并力度维度：一个 region 的 velrange 只生成一条 KeyInfo
+                // （lovel..hivel），参数按区间中值计算。逐 vel 展开会让 KeyInfo
+                // 数量按"键 × 力度值"爆炸（GeneralUser 287 preset 达约 770 万条、
+                // ~1GB），合并后按"键 × 力度层"计数。代价：区间内力度曲线变平。
+                let vlo = *region.velrange.start();
+                let vhi = *region.velrange.end();
+                let vel = ((vlo as u16 + vhi as u16) / 2) as u8;
+                // note_params 展开 SF2 modulator 系统（vel 曲线、包络 keytrack 等）
+                let np = region.note_params(key, vel);
+                let ampeg = np.ampeg_envelope;
 
-                    // 播放倍率（xsynth new_sf2: scale_tuning + fine/coarse tune + modulator）
-                    let tuned_key_cents =
-                        (key_f - region.root_key as f32) * region.scale_tuning as f32;
-                    let speed_mult = 2.0f32.powf(
-                        (tuned_key_cents
-                            + region.fine_tune as f32
-                            + region.coarse_tune as f32 * 100.0
-                            + np.tune_cents)
-                            / 1200.0,
-                    );
+                // 播放倍率（xsynth new_sf2: scale_tuning + fine/coarse tune + modulator）
+                let tuned_key_cents = (key_f - region.root_key as f32) * region.scale_tuning as f32;
+                let speed_mult = 2.0f32.powf(
+                    (tuned_key_cents
+                        + region.fine_tune as f32
+                        + region.coarse_tune as f32 * 100.0
+                        + np.tune_cents)
+                        / 1200.0,
+                );
 
-                    let cutoff = np
-                        .cutoff
-                        .map(|c| c.clamp(1.0, sample_rate as f32 / 2.0 - 100.0))
-                        .unwrap_or(0.0);
-                    let pan = ((np.pan as f32 / 500.0) + 1.0) / 2.0;
-                    let resonance = 10.0f32.powf(np.resonance / 20.0) * Q_BUTTERWORTH;
-                    let filter_type = FilterType::LowPass;
-                    let (pan_l, pan_r) = pan_gains(pan);
-                    let biquad = bake_biquad(cutoff, resonance, filter_type, sample_rate);
-                    let loop_mode = if region.loop_start == region.loop_end {
-                        LoopMode::NoLoop
-                    } else {
-                        convert_loop_mode(region.loop_mode)
-                    };
+                let cutoff = np
+                    .cutoff
+                    .map(|c| c.clamp(1.0, sample_rate as f32 / 2.0 - 100.0))
+                    .unwrap_or(0.0);
+                let pan = ((np.pan as f32 / 500.0) + 1.0) / 2.0;
+                let resonance = 10.0f32.powf(np.resonance / 20.0) * Q_BUTTERWORTH;
+                let filter_type = FilterType::LowPass;
+                let (pan_l, pan_r) = pan_gains(pan);
+                let biquad = bake_biquad(cutoff, resonance, filter_type, sample_rate);
+                let loop_mode = if region.loop_start == region.loop_end {
+                    LoopMode::NoLoop
+                } else {
+                    convert_loop_mode(region.loop_mode)
+                };
 
-                    key_map[key as usize].push(KeyInfo {
-                        sample_data: sample_data.clone(),
-                        sample_rate,
-                        is_stereo,
-                        interp,
-                        speed_mult,
-                        volume: np.volume,
-                        pan,
-                        offset: region.offset,
-                        ampeg_start: ampeg.ampeg_start / 100.0,
-                        ampeg_delay: ampeg.ampeg_delay,
-                        ampeg_attack: ampeg.ampeg_attack.max(0.001),
-                        ampeg_hold: ampeg.ampeg_hold,
-                        ampeg_decay: ampeg.ampeg_decay.max(0.001),
-                        ampeg_sustain: (ampeg.ampeg_sustain / 100.0).clamp(0.0, 1.0),
-                        ampeg_release: ampeg.ampeg_release.max(0.001),
-                        lovel: vel,
-                        hivel: vel,
-                        loop_mode,
-                        loop_start: region.loop_start,
-                        loop_end: region.loop_end,
-                        stop: Some(region.sample_end),
-                        cutoff,
-                        resonance,
-                        filter_type,
-                        biquad,
-                        pan_l,
-                        pan_r,
-                    });
-                }
+                key_map[key as usize].push(KeyInfo {
+                    sample_data: sample_data.clone(),
+                    sample_rate,
+                    is_stereo,
+                    interp,
+                    speed_mult,
+                    volume: np.volume,
+                    pan,
+                    offset: region.offset,
+                    ampeg_start: ampeg.ampeg_start / 100.0,
+                    ampeg_delay: ampeg.ampeg_delay,
+                    ampeg_attack: ampeg.ampeg_attack.max(0.001),
+                    ampeg_hold: ampeg.ampeg_hold,
+                    ampeg_decay: ampeg.ampeg_decay.max(0.001),
+                    ampeg_sustain: (ampeg.ampeg_sustain / 100.0).clamp(0.0, 1.0),
+                    ampeg_release: ampeg.ampeg_release.max(0.001),
+                    lovel: vlo,
+                    hivel: vhi,
+                    loop_mode,
+                    loop_start: region.loop_start,
+                    loop_end: region.loop_end,
+                    stop: Some(region.sample_end),
+                    cutoff,
+                    resonance,
+                    filter_type,
+                    biquad,
+                    pan_l,
+                    pan_r,
+                });
             }
         }
 
