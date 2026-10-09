@@ -214,3 +214,43 @@ fn layer_limit_kills_quietest() {
     // 最弱的（20）被淘汰，剩下的都 >= 40
     assert!(synth.voice_count() == 4);
 }
+
+/// 回归：切换音色库后 key map 必须替换为新库（否则表现为"换库无效"）。
+#[test]
+fn loading_new_soundfont_replaces_key_map() {
+    use std::path::Path;
+
+    fn write_tone(dir: &Path, name: &str, freq: f32) -> std::path::PathBuf {
+        let wav = dir.join(format!("{name}.wav"));
+        let sfz = dir.join(format!("{name}.sfz"));
+        let sr = 48_000u32;
+        let mut w = hound::WavWriter::create(
+            &wav,
+            hound::WavSpec {
+                channels: 1,
+                sample_rate: sr,
+                bits_per_sample: 16,
+                sample_format: hound::SampleFormat::Int,
+            },
+        )
+        .unwrap();
+        for i in 0..4800 {
+            let s = (2.0 * std::f32::consts::PI * freq * i as f32 / sr as f32).sin() * 0.5;
+            w.write_sample((s * i16::MAX as f32) as i16).unwrap();
+        }
+        w.finalize().unwrap();
+        std::fs::write(&sfz, format!("<region>\nsample={name}.wav key=60\n")).unwrap();
+        sfz
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let a = write_tone(dir.path(), "a", 220.0);
+    let b = write_tone(dir.path(), "b", 880.0);
+
+    let mut synth = CpuSynth::new(48_000);
+    synth.load_dense_soundfonts_many(&[0], &[a]).unwrap();
+    let pa = synth.port_key_maps[0][0].map()[60][0].sample_data.as_ptr() as usize;
+    synth.load_dense_soundfonts_many(&[0], &[b]).unwrap();
+    let pb = synth.port_key_maps[0][0].map()[60][0].sample_data.as_ptr() as usize;
+    assert_ne!(pa, pb, "切换音色库后 key map 必须替换为新库的采样");
+}

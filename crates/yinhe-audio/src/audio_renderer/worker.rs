@@ -245,6 +245,10 @@ impl AudioRenderer {
                     // 非 GPU feature 下 paths 不使用，显式标记避免 warning
                     #[cfg(not(feature = "gpu"))]
                     let _ = paths;
+                    // 主引擎/预览/GPU 都已切到新音色库：清理进程级 key map 缓存里
+                    // 已无引用的旧库（含整库样本），避免切换音色库后内存只增不减。
+                    #[cfg(feature = "gpu")]
+                    yinhe_synth::sweep_key_map_cache();
                     did_work = true;
                 }
                 Err(TryRecvError::Empty) => break,

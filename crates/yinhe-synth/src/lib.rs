@@ -36,6 +36,7 @@ pub const DEFAULT_MAX_VOICES: usize = 14336;
 pub(crate) const DEFAULT_MAX_LAYERS: usize = 4;
 pub use cpu_synth::CpuSynth;
 pub use gpu_synth::{ControlEvent, GpuSynth, SynthEvent, prefetch_key_maps};
+pub use sf_cache::sweep_key_map_cache;
 pub use sf_parser::{
     KeyInfo, KeyMapEntry, LoopMode, build_key_maps, load_wav_as_f32, select_key_info,
     select_key_info_multi,

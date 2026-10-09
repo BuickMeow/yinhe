@@ -13,6 +13,14 @@ type KeyMapCacheValue = Arc<Vec<sf_parser::KeyMapEntry>>;
 static KEY_MAP_CACHE: LazyLock<Mutex<HashMap<KeyMapCacheKey, KeyMapCacheValue>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// 清理进程级 key map 缓存中**已无引擎引用**的条目（`strong_count == 1`，
+/// 仅缓存自己持有）。切换/移除音色库后调用，避免旧库（含整库样本）常驻导致
+/// 内存只增不减。正在使用（主引擎/预览/GPU 持有 Arc）的条目不受影响。
+pub fn sweep_key_map_cache() {
+    let mut cache = KEY_MAP_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    cache.retain(|_, v| Arc::strong_count(v) > 1);
+}
+
 /// 预热进程级解析缓存（worker 线程调用）：未命中才解析。
 /// 音频线程随后加载同一音色库时直接命中缓存，不再在音频线程里解析（3-4s）。
 pub fn prefetch_key_maps(
