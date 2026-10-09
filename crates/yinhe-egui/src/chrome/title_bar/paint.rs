@@ -134,7 +134,7 @@ pub(super) fn paint_tabs(
         let pointer_down_on_tab =
             pointer_down && tab_rect.contains(interact_pos_val) && !is_dragged;
         let base_bg = if is_active {
-            crate::theme::control_selected_bg()
+            crate::theme::btn_bg()
         } else if pointer_down_on_tab && is_hovered {
             crate::theme::pressed_color(crate::theme::btn_bg())
         } else if is_hovered {
@@ -270,7 +270,7 @@ pub(super) fn paint_drag_overlay(
         painter.rect_filled(
             ghost_rect,
             4.0,
-            crate::theme::hover_color(crate::theme::control_selected_bg()),
+            crate::theme::hover_color(crate::theme::btn_bg()),
         );
         painter.rect_stroke(
             ghost_rect,
@@ -302,7 +302,7 @@ pub(super) fn paint_drag_overlay(
         painter.rect_filled(
             tip_rect,
             4.0,
-            crate::theme::pressed_color(crate::theme::control_selected_bg()),
+            crate::theme::pressed_color(crate::theme::btn_bg()),
         );
         painter.text(
             tip_rect.center(),
