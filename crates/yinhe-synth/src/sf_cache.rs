@@ -66,6 +66,9 @@ pub(crate) fn load_key_maps_merged(
     for path in paths {
         merged.extend(load_key_maps(path, sample_rate, interp)?.iter().cloned());
     }
+    // 各库内部已按 (bank, preset) 排序，拼接后需再整体排序：`select_key_info_multi`
+    // 依赖有序做二分。稳定排序保留各库间的先后（同键时先加载的库胜出）。
+    merged.sort_by_key(|e| (e.bank, e.preset));
     Ok(Arc::new(merged))
 }
 

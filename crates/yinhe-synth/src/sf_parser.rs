@@ -251,21 +251,29 @@ pub fn build_key_maps(
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase());
-    match ext.as_deref() {
-        Some("sfz") => Ok(vec![KeyMapEntry::expanded(
+    let mut entries = match ext.as_deref() {
+        Some("sfz") => vec![KeyMapEntry::expanded(
             0,
             0,
             sfz::build_key_map_from_sfz(path, sample_rate, interp)?,
-        )]),
-        Some("sf2") => sf2::build_key_maps_from_sf2(path, sample_rate, interp),
-        _ => Err(format!("Unsupported soundfont format: {:?}", path)),
-    }
+        )],
+        Some("sf2") => sf2::build_key_maps_from_sf2(path, sample_rate, interp)?,
+        _ => return Err(format!("Unsupported soundfont format: {:?}", path)),
+    };
+    // 按 (bank, preset) 升序，使 `select_key_info_multi` 能二分定位（GM 库常含
+    // 数百 preset，逐个线性扫描是 note_on 热路径的开销）。稳定排序保留同键条目
+    // 的原始先后，"区间内首个命中条目胜出"的语义不变。
+    entries.sort_by_key(|e| (e.bank, e.preset));
+    Ok(entries)
 }
 
 /// 多音色库 + program 选择（与 xsynth `ChannelSoundfont::rebuild_matrix` 一致）：
 /// 1. 主选：按文件顺序找 (bank, preset) 匹配且该 (key, vel) 有 region 的条目；
 /// 2. 兜底：全部主选落空后，鼓组（bank==128）找 (128, 0)，旋律找 (0, preset)；
 /// 3. 都落空 → 静音（与 xsynth 缺失 preset 静音一致）。
+///
+/// `entries` 必须按 `(bank, preset)` 升序（`build_key_maps`/`load_key_maps_merged`
+/// 已保证），据此二分定位 program 区间。
 pub fn select_key_info_multi(
     entries: &[KeyMapEntry],
     bank: u8,
@@ -273,20 +281,28 @@ pub fn select_key_info_multi(
     key: u8,
     velocity: u8,
 ) -> Option<&KeyInfo> {
-    for e in entries {
-        if e.bank == bank
-            && e.preset == preset
-            && let Some(info) = select_key_info(e.map(), key, velocity)
-        {
-            return Some(info);
-        }
+    if let Some(info) = select_in_program(entries, bank, preset, key, velocity) {
+        return Some(info);
     }
     let (rb, rp) = if bank == 128 { (128, 0) } else { (0, preset) };
-    for e in entries {
-        if e.bank == rb
-            && e.preset == rp
-            && let Some(info) = select_key_info(e.map(), key, velocity)
-        {
+    select_in_program(entries, rb, rp, key, velocity)
+}
+
+/// 二分定位 `(bank, preset)` 条目区间，返回区间内首个对该 `(key, vel)` 有 region
+/// 的条目（保持原"首个命中胜出"语义）。
+fn select_in_program(
+    entries: &[KeyMapEntry],
+    bank: u8,
+    preset: u8,
+    key: u8,
+    velocity: u8,
+) -> Option<&KeyInfo> {
+    let lo = entries.partition_point(|e| (e.bank, e.preset) < (bank, preset));
+    for e in &entries[lo..] {
+        if e.bank != bank || e.preset != preset {
+            break;
+        }
+        if let Some(info) = select_key_info(e.map(), key, velocity) {
             return Some(info);
         }
     }
@@ -433,5 +449,39 @@ mod tests {
         for (i, (a, b)) in info.sample_data.iter().zip(expected.iter()).enumerate() {
             assert!((a - b).abs() < 1e-6, "sample {i}: {a} vs {b}");
         }
+    }
+
+    fn entry(bank: u8, preset: u8, key: u8, vol: f32) -> KeyMapEntry {
+        let mut map = vec![Vec::new(); 128];
+        map[key as usize] = vec![KeyInfo {
+            volume: vol,
+            ..Default::default()
+        }];
+        KeyMapEntry::expanded(bank, preset, map)
+    }
+
+    /// G 回归：`select_key_info_multi` 改为按 (bank, preset) 二分后，命中、
+    /// 同键条目区间遍历（首个胜出）、鼓组/旋律兜底都必须与旧线性扫描一致。
+    #[test]
+    fn select_key_info_multi_binary_search_matches_linear_semantics() {
+        let mut entries = vec![
+            entry(2, 10, 60, 1.0),
+            entry(0, 5, 60, 1.0),
+            entry(0, 5, 60, 2.0), // 同 (0,5) 同 key：稳定排序后应仍首个胜出
+            entry(0, 5, 64, 3.0), // 同 (0,5) 另一 key：区间内需继续遍历
+            entry(128, 0, 38, 4.0),
+        ];
+        entries.sort_by_key(|e| (e.bank, e.preset));
+
+        let hit = select_key_info_multi(&entries, 0, 5, 60, 100).expect("(0,5) key60");
+        assert_eq!(hit.volume, 1.0, "同 (bank,preset) 同 key 应首个命中胜出");
+        assert!(select_key_info_multi(&entries, 0, 5, 64, 100).is_some());
+        assert!(
+            select_key_info_multi(&entries, 0, 9, 60, 100).is_none(),
+            "旋律兜底 (0,9) 不存在 → 静音"
+        );
+        let drum = select_key_info_multi(&entries, 128, 9, 38, 100).expect("鼓组兜底 (128,0)");
+        assert_eq!(drum.volume, 4.0);
+        assert!(select_key_info_multi(&entries, 128, 9, 60, 100).is_none());
     }
 }
