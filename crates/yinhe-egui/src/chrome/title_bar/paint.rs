@@ -170,7 +170,15 @@ pub(super) fn paint_tabs(
             } else {
                 crate::widgets::control::control_stroke(true, false)
             };
-            painter.rect_stroke(tab_rect, 4.0, stroke, egui::StrokeKind::Inside);
+            // 下描边：只画底边一条线（两端各留 2px 圆角内缩）
+            let y = tab_rect.max.y - stroke.width / 2.0;
+            painter.line_segment(
+                [
+                    egui::pos2(tab_rect.min.x + 2.0, y),
+                    egui::pos2(tab_rect.max.x - 2.0, y),
+                ],
+                stroke,
+            );
         }
 
         // Build display name with dirty indicator
