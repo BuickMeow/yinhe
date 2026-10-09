@@ -196,7 +196,7 @@ fn diag_piano_cutoff_and_loop() {
         (0u64, 0u64, 0u64, 0u64, 0u64);
     for e in &entries {
         for key in 0..128usize {
-            for info in &e.map[key] {
+            for info in &e.map()[key] {
                 total += 1;
                 if info.cutoff > 0.0 {
                     with_cut += 1;
@@ -225,12 +225,12 @@ fn diag_piano_cutoff_and_loop() {
     let mut cut_max = f32::MIN;
     for e in &entries {
         for key in 0..128usize {
-            if e.map[key].is_empty() {
+            if e.map()[key].is_empty() {
                 continue;
             }
             keys_active += 1;
             let mut key_vals = BTreeSet::new();
-            for info in &e.map[key] {
+            for info in &e.map()[key] {
                 let bits = info.cutoff.to_bits();
                 all_cut.insert(bits);
                 key_vals.insert(bits);

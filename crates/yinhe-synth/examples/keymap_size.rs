@@ -35,7 +35,7 @@ fn main() {
         for entry in &entries {
             // 外层 map: 128 个 Vec<KeyInfo> 头（ptr/len/cap = 24B）
             map_bytes += 128 * std::mem::size_of::<Vec<KeyInfo>>();
-            for key_layers in &entry.map {
+            for key_layers in entry.map() {
                 ki += key_layers.len();
                 map_bytes += key_layers.capacity() * ki_size;
                 for info in key_layers {

@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use xsynth_soundfonts::FilterType;
 
@@ -162,12 +162,72 @@ impl Default for KeyInfo {
 /// 语义与 xsynth `SoundfontInstrument` 对齐：SFZ 无 preset 概念，整个文件是
 /// (0, 0) 一个条目（等价 xsynth `SoundfontInitOptions` 默认）；SF2 每个 preset
 /// 一个条目。program（bank, preset）选择条目，选不到则静音。
-#[derive(Clone, Debug)]
+///
+/// key map 采用**惰性展开**（SF2）：只有 program 命中该 (bank, preset)、
+/// 查询到该条目时才展开。GM 库常含数百个 preset，全量展开会生成巨量 KeyInfo
+/// （GeneralUser 287 preset ≈ 670 万条 / ~800MB），而工程通常只用其中几个。
+#[derive(Clone)]
 pub struct KeyMapEntry {
     pub bank: u8,
     pub preset: u8,
-    /// (key, vel) 展开后的参数快照（与 xsynth `spawner_params_list` 等价）。
-    pub map: Vec<Vec<KeyInfo>>,
+    inner: Arc<KeyMapEntryInner>,
+}
+
+struct KeyMapEntryInner {
+    /// 展开结果（SFZ 构造时即填好；SF2 首次查询时惰性填充）。
+    map: OnceLock<Vec<Vec<KeyInfo>>>,
+    /// 惰性展开源（SF2 多 preset 用；SFZ 为 None）。
+    expand: Option<Box<dyn Fn() -> Vec<Vec<KeyInfo>> + Send + Sync>>,
+}
+
+impl KeyMapEntry {
+    /// 预展开条目（SFZ：整个文件一个条目，无惰性收益）。
+    pub(crate) fn expanded(bank: u8, preset: u8, map: Vec<Vec<KeyInfo>>) -> Self {
+        let map_cell = OnceLock::new();
+        let _ = map_cell.set(map);
+        Self {
+            bank,
+            preset,
+            inner: Arc::new(KeyMapEntryInner {
+                map: map_cell,
+                expand: None,
+            }),
+        }
+    }
+
+    /// 惰性条目（SF2：首次查询命中该 preset 时才调用 `expand`）。
+    pub(crate) fn lazy(
+        bank: u8,
+        preset: u8,
+        expand: impl Fn() -> Vec<Vec<KeyInfo>> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            bank,
+            preset,
+            inner: Arc::new(KeyMapEntryInner {
+                map: OnceLock::new(),
+                expand: Some(Box::new(expand)),
+            }),
+        }
+    }
+
+    /// (key, vel) 展开后的参数快照；首次调用触发惰性展开。
+    pub fn map(&self) -> &Vec<Vec<KeyInfo>> {
+        self.inner.map.get_or_init(|| match &self.inner.expand {
+            Some(f) => f(),
+            None => Vec::new(),
+        })
+    }
+}
+
+impl std::fmt::Debug for KeyMapEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeyMapEntry")
+            .field("bank", &self.bank)
+            .field("preset", &self.preset)
+            .field("expanded", &self.inner.map.get().is_some())
+            .finish()
+    }
 }
 
 /// 根据文件扩展名自动检测格式并构建 key map 条目列表。
@@ -182,11 +242,11 @@ pub fn build_key_maps(
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase());
     match ext.as_deref() {
-        Some("sfz") => Ok(vec![KeyMapEntry {
-            bank: 0,
-            preset: 0,
-            map: sfz::build_key_map_from_sfz(path, sample_rate, interp)?,
-        }]),
+        Some("sfz") => Ok(vec![KeyMapEntry::expanded(
+            0,
+            0,
+            sfz::build_key_map_from_sfz(path, sample_rate, interp)?,
+        )]),
         Some("sf2") => sf2::build_key_maps_from_sf2(path, sample_rate, interp),
         _ => Err(format!("Unsupported soundfont format: {:?}", path)),
     }
@@ -206,7 +266,7 @@ pub fn select_key_info_multi(
     for e in entries {
         if e.bank == bank
             && e.preset == preset
-            && let Some(info) = select_key_info(&e.map, key, velocity)
+            && let Some(info) = select_key_info(e.map(), key, velocity)
         {
             return Some(info);
         }
@@ -215,7 +275,7 @@ pub fn select_key_info_multi(
     for e in entries {
         if e.bank == rb
             && e.preset == rp
-            && let Some(info) = select_key_info(&e.map, key, velocity)
+            && let Some(info) = select_key_info(e.map(), key, velocity)
         {
             return Some(info);
         }
@@ -352,7 +412,7 @@ mod tests {
 
         let dst_sr = 48_000u32;
         let entries = build_key_maps(&sfz_path, dst_sr, 0).expect("build key maps");
-        let info = &entries[0].map[60][0];
+        let info = &entries[0].map()[60][0];
         assert!(!info.is_stereo, "单声道样本必须标记为非立体声");
 
         // 与单声道重采样参考逐样本一致（交错路径的输出会明显不同）

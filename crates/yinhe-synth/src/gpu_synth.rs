@@ -422,7 +422,7 @@ impl GpuSynth {
                             (
                                 e.bank,
                                 e.preset,
-                                e.map.iter().filter(|l| !l.is_empty()).count(),
+                                e.map().iter().filter(|l| !l.is_empty()).count(),
                             )
                         })
                         .collect(),

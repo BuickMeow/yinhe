@@ -8,7 +8,7 @@ use crate::GpuVoiceState;
 fn first_sample_ptr(s: &GpuSynth) -> *const f32 {
     s.port_key_maps[0]
         .iter()
-        .flat_map(|e| e.map.iter())
+        .flat_map(|e| e.map().iter())
         .flatten()
         .map(|info| info.sample_data.as_ptr())
         .next()
@@ -770,7 +770,7 @@ fn tmp_min_repro_batches() {
     {
         let maps = crate::sf_parser::build_key_maps(&sfz_path, sr, 0).expect("build maps");
         for key in [60u8, 61] {
-            let ok = crate::sf_parser::select_key_info(&maps[0].map, key, 127).is_some();
+            let ok = crate::sf_parser::select_key_info(maps[0].map(), key, 127).is_some();
             eprintln!("  key={key} region存在={ok}");
         }
     }

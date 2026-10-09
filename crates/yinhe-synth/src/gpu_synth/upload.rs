@@ -83,7 +83,7 @@ impl GpuSynth {
         let mut stereo: HashMap<usize, bool> = HashMap::new();
         for entries in &self.port_key_maps {
             for entry in entries.iter() {
-                for key_layers in &entry.map {
+                for key_layers in entry.map() {
                     for info in key_layers {
                         let ptr = info.sample_data.as_ptr() as usize;
                         if seen.insert(ptr) {
