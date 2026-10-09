@@ -218,6 +218,16 @@ impl KeyMapEntry {
             None => Vec::new(),
         })
     }
+
+    /// 是否被缓存之外的引用持有。
+    ///
+    /// 多库合并（`load_key_maps_merged`）会把各库条目**克隆**进合并 Vec，克隆
+    /// 共享同一 `inner`。此时该库的缓存 `Arc<Vec<KeyMapEntry>>` 引用计数仍是 1
+    /// （合并 Vec 不持有它），但 `inner` 计数 > 1。`sweep_key_map_cache` 必须据此
+    /// 判断"仍在使用"，否则会误删正在用的库，导致每次加载都重新解析、内存累积。
+    pub(crate) fn is_shared(&self) -> bool {
+        Arc::strong_count(&self.inner) > 1
+    }
 }
 
 impl std::fmt::Debug for KeyMapEntry {

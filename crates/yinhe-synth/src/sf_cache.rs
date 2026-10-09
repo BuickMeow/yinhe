@@ -18,7 +18,9 @@ static KEY_MAP_CACHE: LazyLock<Mutex<HashMap<KeyMapCacheKey, KeyMapCacheValue>>>
 /// 内存只增不减。正在使用（主引擎/预览/GPU 持有 Arc）的条目不受影响。
 pub fn sweep_key_map_cache() {
     let mut cache = KEY_MAP_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-    cache.retain(|_, v| Arc::strong_count(v) > 1);
+    // 保留：缓存 Arc 被外部持有（单库直接共享），或任一条目的 `inner` 被外部
+    // 持有（多库合并克隆了本库条目）。两者都不满足才说明彻底没人用，可释放。
+    cache.retain(|_, v| Arc::strong_count(v) > 1 || v.iter().any(|e| e.is_shared()));
 }
 
 /// 预热进程级解析缓存（worker 线程调用）：未命中才解析。
