@@ -156,7 +156,7 @@ pub(super) fn paint_tabs(
             );
         }
         painter.rect_filled(tab_rect, 4.0, bg);
-        // 拖拽中被拖标签加 accent 描边
+        // 描边：拖拽中用 accent；否则选中用文字色、未选中用普通按钮描边
         if is_dragged && dragging && !detached {
             painter.rect_stroke(
                 tab_rect,
@@ -164,6 +164,13 @@ pub(super) fn paint_tabs(
                 egui::Stroke::new(1.5, crate::theme::accent_active()),
                 egui::StrokeKind::Middle,
             );
+        } else {
+            let stroke = if is_active {
+                egui::Stroke::new(1.0, crate::theme::text_primary())
+            } else {
+                crate::widgets::control::control_stroke(true, false)
+            };
+            painter.rect_stroke(tab_rect, 4.0, stroke, egui::StrokeKind::Inside);
         }
 
         // Build display name with dirty indicator
