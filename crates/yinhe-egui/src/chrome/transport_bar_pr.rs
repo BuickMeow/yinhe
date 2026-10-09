@@ -1,4 +1,4 @@
-//! transport bar 右侧的 PR 控制组：瀑布流方向（III/三）/ 和弦指示器。
+//! transport bar 右侧的 PR 控制组：瀑布流方向（III/三）/ 和弦指示器（横竖按钮左侧）。
 //! 整组在 `right_to_left` 布局中绘制，贴右且不参与工具收拢。
 //!
 //! 主音轨切换 / 显示音轨勾选已移入右栏「图层」选项卡，不再在此渲染。
@@ -39,22 +39,6 @@ pub(crate) fn show_right_group(
     hovered_hint: &mut Option<String>,
 ) {
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        // ── 和弦指示器（最右，只读文本）──
-        if let Some(chord) = &data.chord {
-            let galley = ui.painter().layout_no_wrap(
-                chord.clone(),
-                chord_font(),
-                egui::Color32::PLACEHOLDER,
-            );
-            let (rect, resp) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
-            ui.painter()
-                .galley(rect.min, galley, crate::theme::text_primary());
-            if resp.hovered() {
-                *hovered_hint = Some(t!("hint.chord_indicator").to_string());
-            }
-            ui.add_space(GAP);
-        }
-
         // ── 三 = 横向瀑布流 ──
         let h_resp = crate::widgets::hover::hover_button(
             ui,
@@ -85,6 +69,22 @@ pub(crate) fn show_right_group(
         }
         if v_resp.hovered() {
             *hovered_hint = Some(t!("hint.orientation.vertical").to_string());
+        }
+        ui.add_space(GAP);
+
+        // ── 和弦指示器（排在横竖按钮之后，即右起排列区最左；只读文本）──
+        if let Some(chord) = &data.chord {
+            let galley = ui.painter().layout_no_wrap(
+                chord.clone(),
+                chord_font(),
+                egui::Color32::PLACEHOLDER,
+            );
+            let (rect, resp) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
+            ui.painter()
+                .galley(rect.min, galley, crate::theme::text_primary());
+            if resp.hovered() {
+                *hovered_hint = Some(t!("hint.chord_indicator").to_string());
+            }
         }
     });
 }
