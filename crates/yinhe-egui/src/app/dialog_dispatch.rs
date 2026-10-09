@@ -154,13 +154,16 @@ impl App {
         // 注意：不能拿"关闭帧开始时的设置"做 diff——设置值在窗口打开期间就已
         // 改好，关闭帧的 prev 已经是新值，diff 恒等 → 永远不重建（曾经的
         // 「改设置必须重启 App」根因）。
-        let settings_closed = crate::dialogs::settings::show_viewport(
+        let (settings_closed, settings_changed) = crate::dialogs::settings::show_viewport(
             &ctx,
             &mut self.audio_settings,
             &self.audio_state.handle,
         );
         if settings_closed {
             self.apply_settings_on_close();
+        } else if settings_changed {
+            // 设置窗口开着时改音色库：即时应用（切换即生效，不必等关窗）。
+            self.sync_soundfonts_online();
         }
         if self.audio_settings.allow_overlapping_notes != prev_allow
             || self.audio_settings.overlap_blocked_behavior != prev_behavior

@@ -613,9 +613,8 @@ fn count_gpu_sf_pending(
 pub(crate) fn group_sf_configs(configs: &[(u8, Vec<String>)]) -> Vec<(Vec<u8>, Vec<String>)> {
     let mut groups: Vec<(Vec<u8>, Vec<String>)> = Vec::new();
     for (channel, paths) in configs {
-        if paths.is_empty() {
-            continue;
-        }
+        // 空路径也要下发：引擎据此清空该通道槽位（移除音色库/静音 + 释放旧库），
+        // 否则旧库残留（旧声音 + 旧内存）。
         match groups.iter_mut().find(|(_, p)| p == paths) {
             Some((channels, _)) => channels.push(*channel),
             None => groups.push((vec![*channel], paths.clone())),

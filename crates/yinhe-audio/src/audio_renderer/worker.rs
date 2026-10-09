@@ -249,6 +249,9 @@ impl AudioRenderer {
                     // 已无引用的旧库（含整库样本），避免切换音色库后内存只增不减。
                     #[cfg(feature = "gpu")]
                     yinhe_synth::sweep_key_map_cache();
+                    // 把释放的空闲页归还 OS（jemalloc/mimalloc）：否则 RSS 只涨不降，
+                    // 表现为"清空音色库后内存不还"。
+                    yinhe_memtrace::purge_free_pages();
                     did_work = true;
                 }
                 Err(TryRecvError::Empty) => break,

@@ -140,14 +140,16 @@ pub fn show_content(
     changed
 }
 
+/// 返回 `(closed, changed)`：`closed` = 设置窗口已关闭；`changed` = 本帧有设置被改动
+/// （供调用方对音色库等做**即时应用**，不必等关窗）。
 pub(crate) fn show_viewport(
     ctx: &eframe::egui::Context,
     settings: &mut AudioSettings,
     audio: &Option<yinhe_audio::CpalAudioHandle>,
-) -> bool {
+) -> (bool, bool) {
     let viewport_id = eframe::egui::ViewportId::from_hash_of("settings_dialog");
     if !settings.ui_session.show_settings {
-        return false;
+        return (false, false);
     }
 
     let prev_xsynth_layers = settings.xsynth_layers;
@@ -158,6 +160,8 @@ pub(crate) fn show_viewport(
     let ctx_clone = ctx.clone();
     let main_ctx = ctx.clone();
     let settings_cb = settings_rc.clone();
+    let changed_flag = std::rc::Rc::new(std::cell::Cell::new(false));
+    let changed_cb = changed_flag.clone();
 
     ctx_clone.show_viewport_immediate(
         viewport_id,
@@ -201,6 +205,7 @@ pub(crate) fn show_viewport(
                             .show(ui, |ui| {
                                 let changed = show_content(ui, s, &main_ctx);
                                 if changed {
+                                    changed_cb.set(true);
                                     s.save();
                                 }
                             });
@@ -247,9 +252,9 @@ pub(crate) fn show_viewport(
         if (settings.font_scale - prev_font_scale).abs() > f32::EPSILON {
             crate::scaling::apply_font_scale(ctx, settings.font_scale);
         }
-        !settings.ui_session.show_settings
+        (!settings.ui_session.show_settings, changed_flag.get())
     } else {
-        false
+        (false, false)
     }
 }
 

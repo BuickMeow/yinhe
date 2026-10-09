@@ -356,6 +356,65 @@ fn truncate_path(path: &str) -> String {
 }
 
 #[cfg(test)]
+mod click_tests {
+    use super::*;
+    use egui_kittest::Harness;
+
+    fn click(h: &mut Harness<'_, Vec<SfEntry>>, pos: egui::Pos2) {
+        h.input_mut().time = Some(0.0);
+        h.event(egui::Event::PointerMoved(pos));
+        h.step();
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::default(),
+        });
+        h.step();
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::default(),
+        });
+        h.step();
+    }
+
+    /// 回归：点击列表右侧的开关必须翻转 `enabled`（否则"换音色库无效"）。
+    #[test]
+    fn switch_click_toggles_enabled() {
+        let entries = vec![SfEntry {
+            path: "/tmp/a.sf2".to_string(),
+            name: "A".to_string(),
+            enabled: true,
+        }];
+        let mut first = true;
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(300.0, 200.0))
+            .build_ui_state(
+                move |ui, entries: &mut Vec<SfEntry>| {
+                    if first {
+                        first = false;
+                        ui.ctx().add_font(egui_material_icons::font_insert());
+                        return;
+                    }
+                    sf_list(ui, entries, "test");
+                },
+                entries,
+            );
+        harness.step();
+        harness.step();
+        // 行高 40；开关在行右侧（宽 38，右边距 8）→ 中心约 (300-8-19, 20)。
+        click(&mut harness, egui::pos2(273.0, 20.0));
+        assert!(
+            !harness.state()[0].enabled,
+            "点击开关应把 enabled 翻成 false（实际仍为 {}）",
+            harness.state()[0].enabled
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::truncate_path;
 

@@ -117,15 +117,14 @@ impl App {
                     .collect(),
                 None => global_paths.clone(),
             };
-            // 都为空：内置 fallback（仍然没有就跳过该通道 = 静音）。
+            // 都为空：内置 fallback；仍然为空则下发**空路径**条目——引擎据此清空
+            // 该通道槽位（静音 + 释放旧库），而不是保留上一次的音色库。
             let paths = if paths.is_empty() {
                 builtin.iter().cloned().collect()
             } else {
                 paths
             };
-            if !paths.is_empty() {
-                result.push((ch, paths));
-            }
+            result.push((ch, paths));
         }
         result
     }
@@ -512,14 +511,14 @@ impl App {
 
     /// 全局音色库设置变化：在活引擎上在线替换（不 teardown、不中断播放）。
     /// 文档切换路径 `try_adopt_engine` 已用同一命令做在线替换。
-    fn sync_soundfonts_online(&mut self) {
+    pub(crate) fn sync_soundfonts_online(&mut self) {
         let (Some(audio), Some(idx)) =
             (self.audio_state.handle.as_ref(), self.workspace.active_doc)
         else {
             return;
         };
         let configs = self.resolve_sf_config(&self.workspace.documents[idx]);
-        // 现引擎音色库覆盖新配置（逐通道完全相同或超集）→ 无需重载。
+        // 现引擎音色库与目标完全一致 → 无需重载（任何差异都要重载，见 sf_configs_cover）。
         if sf_configs_cover(&self.audio_state.engine_sf_configs, &configs) {
             return;
         }
@@ -1123,10 +1122,16 @@ impl App {
 
 /// `engine` 已加载的音色库配置是否覆盖 `needed`：`needed` 的每一项
 /// 都能在 `engine` 里找到完全相同的 (源通道, paths)。
+/// 引擎当前音色库配置是否与目标**完全一致**。
+///
+/// 必须是"完全相等"而非"目标 ⊆ 引擎"：否则移除音色库/清空/关掉某通道时，
+/// 目标配置变小仍然算"已覆盖"，于是跳过重载，引擎保留旧库（旧声音 + 旧内存）。
+/// 清空所有音色库时目标为空，`⊆` 语义下 `all()` 恒真 → 永远不重载。
 fn sf_configs_cover(engine: &[(u8, Vec<String>)], needed: &[(u8, Vec<String>)]) -> bool {
-    needed
-        .iter()
-        .all(|(ch, paths)| engine.iter().any(|(c, p)| c == ch && p == paths))
+    engine.len() == needed.len()
+        && needed
+            .iter()
+            .all(|(ch, paths)| engine.iter().any(|(c, p)| c == ch && p == paths))
 }
 
 #[cfg(test)]
@@ -1141,11 +1146,17 @@ mod adopt_tests {
     }
 
     #[test]
-    fn sf_configs_cover_subset_with_same_paths() {
+    fn sf_configs_cover_requires_exact_match() {
         let engine = cfgs(&[(0, &["/a.sfz"]), (1, &["/a.sfz"])]);
-        assert!(sf_configs_cover(&engine, &cfgs(&[(0, &["/a.sfz"])])));
-        assert!(sf_configs_cover(&engine, &[]));
+        // 完全一致 → 覆盖
         assert!(sf_configs_cover(&engine, &engine));
+        // 目标变小（移除通道/清空所有音色库）→ 不算覆盖，必须重载，
+        // 否则引擎保留旧库（旧声音 + 旧内存）。
+        assert!(!sf_configs_cover(&engine, &cfgs(&[(0, &["/a.sfz"])])));
+        assert!(!sf_configs_cover(&engine, &[]));
+        // 顺序无关
+        let reordered = cfgs(&[(1, &["/a.sfz"]), (0, &["/a.sfz"])]);
+        assert!(sf_configs_cover(&engine, &reordered));
     }
 
     #[test]
