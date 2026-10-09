@@ -175,7 +175,7 @@ pub(super) fn paint_tabs(
         let text_color = if is_active {
             crate::theme::text_primary()
         } else {
-            crate::theme::text_label()
+            crate::theme::text_disabled()
         };
         let text_color_draw = if is_dragged && dragging {
             tint(text_color, alpha_mul)
