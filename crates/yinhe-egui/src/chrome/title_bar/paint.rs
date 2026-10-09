@@ -136,11 +136,11 @@ pub(super) fn paint_tabs(
         let base_bg = if is_active {
             crate::theme::control_selected_bg()
         } else if pointer_down_on_tab && is_hovered {
-            crate::theme::pressed_color(crate::theme::control_bg())
+            crate::theme::pressed_color(crate::theme::btn_bg())
         } else if is_hovered {
-            crate::theme::hover_color(crate::theme::control_bg())
+            crate::theme::hover_color(crate::theme::btn_bg())
         } else {
-            crate::theme::control_bg()
+            crate::theme::btn_bg()
         };
         let bg = if is_dragged && dragging {
             tint(base_bg, alpha_mul)
