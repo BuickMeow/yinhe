@@ -129,13 +129,11 @@ pub(super) fn paint_tabs(
             1.0
         };
 
-        // Tab background — active / pressed / hover / inactive
-        let is_hovered = tab_rect.contains(hover_pos_val) && !is_active && !is_dragged;
+        // Tab background — pressed / hover / inactive（选中与否都响应悬停/按下）
+        let is_hovered = tab_rect.contains(hover_pos_val) && !is_dragged;
         let pointer_down_on_tab =
             pointer_down && tab_rect.contains(interact_pos_val) && !is_dragged;
-        let base_bg = if is_active {
-            crate::theme::btn_bg()
-        } else if pointer_down_on_tab && is_hovered {
+        let base_bg = if pointer_down_on_tab && is_hovered {
             crate::theme::pressed_color(crate::theme::btn_bg())
         } else if is_hovered {
             crate::theme::hover_color(crate::theme::btn_bg())
@@ -156,28 +154,13 @@ pub(super) fn paint_tabs(
             );
         }
         painter.rect_filled(tab_rect, 4.0, bg);
-        // 描边：拖拽中用 accent；否则选中用文字色、未选中用普通按钮描边
+        // 拖拽中被拖标签加 accent 描边（选中/未选中的区分改为文字色，不再描边）
         if is_dragged && dragging && !detached {
             painter.rect_stroke(
                 tab_rect,
                 4.0,
                 egui::Stroke::new(1.5, crate::theme::accent_active()),
                 egui::StrokeKind::Middle,
-            );
-        } else {
-            let stroke = if is_active {
-                egui::Stroke::new(1.0, crate::theme::text_primary())
-            } else {
-                crate::widgets::control::control_stroke(true, false)
-            };
-            // 下描边：只画底边一条线（两端各留 2px 圆角内缩）
-            let y = tab_rect.max.y - stroke.width / 2.0;
-            painter.line_segment(
-                [
-                    egui::pos2(tab_rect.min.x + 2.0, y),
-                    egui::pos2(tab_rect.max.x - 2.0, y),
-                ],
-                stroke,
             );
         }
 
@@ -192,7 +175,7 @@ pub(super) fn paint_tabs(
         let text_color = if is_active {
             crate::theme::text_primary()
         } else {
-            crate::theme::text_secondary()
+            crate::theme::text_muted()
         };
         let text_color_draw = if is_dragged && dragging {
             tint(text_color, alpha_mul)
