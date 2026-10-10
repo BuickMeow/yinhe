@@ -42,11 +42,8 @@ pub enum TimecodeEvent {
     Ppq { value: u32, id: u64 },
     /// 光标位置跳转（位置/秒数输入）。
     CursorTick(f64),
-    /// 调式覆盖显示设置（`override` = None 表示关闭覆盖）。
-    KeySig {
-        r#override: Option<(u8, ScaleType)>,
-        use_events: bool,
-    },
+    /// 打开「调式（音阶）」对话框。
+    OpenScaleDialog,
     /// 量化预设（写入聚焦视图）。
     Quantize(QuantizePreset),
 }
@@ -71,7 +68,7 @@ struct Buffers {
 }
 
 /// 当前显示调式：覆盖优先于工程事件；两者都关 = None。
-fn current_key_sig(doc: &Document) -> Option<(u8, ScaleType)> {
+pub(crate) fn current_key_sig(doc: &Document) -> Option<(u8, ScaleType)> {
     if let Some(ov) = doc.edit.key_sig_override {
         return Some(ov);
     }
@@ -363,17 +360,9 @@ pub fn show_timecode_display(
                         false,
                     );
                     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.timecode.keysig"));
-                    egui::Popup::from_toggle_button_response(&resp)
-                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                        .show(|ui| {
-                            key_sig_popup(
-                                ui,
-                                key,
-                                doc.edit.key_sig_override.is_some(),
-                                doc.edit.key_sig_use_events,
-                                &mut events,
-                            );
-                        });
+                    if resp.clicked() {
+                        events.push(TimecodeEvent::OpenScaleDialog);
+                    }
                 },
             );
         });
@@ -405,98 +394,6 @@ fn seconds_to_tick(tempo_map: &yinhe_core::TempoMap, seconds: f64) -> f64 {
         }
     }
     hi.round()
-}
-
-/// 调式两列下拉：左根音 × 右音阶；下方两个开关（覆盖 / 工程事件，覆盖 > 工程事件）。
-fn key_sig_popup(
-    ui: &mut egui::Ui,
-    current: Option<(u8, ScaleType)>,
-    override_on: bool,
-    use_events: bool,
-    events: &mut Vec<TimecodeEvent>,
-) {
-    ui.spacing_mut().item_spacing.y = 4.0;
-    ui.spacing_mut().item_spacing.x = 4.0;
-    ui.spacing_mut().interact_size.y = 24.0;
-    let (cur_root, cur_scale) = current.unwrap_or((0, ScaleType::Major));
-
-    ui.horizontal(|ui| {
-        // ── 左列：根音 ──
-        ui.vertical(|ui| {
-            ui.set_min_width(84.0);
-            ui.set_max_width(84.0);
-            ui.label(t!("timecode.root"));
-            ui.separator();
-            for root in 0..12u8 {
-                let selected = current.is_some_and(|(r, _)| r == root);
-                if ui
-                    .add(crate::widgets::menu::menu_item_button(
-                        ui,
-                        selected,
-                        NOTE_NAMES[(root % 12) as usize],
-                    ))
-                    .clicked()
-                {
-                    events.push(TimecodeEvent::KeySig {
-                        r#override: Some((root, cur_scale)),
-                        use_events,
-                    });
-                    ui.close();
-                }
-            }
-        });
-        ui.separator();
-        // ── 右列：音阶 ──
-        ui.vertical(|ui| {
-            ui.set_min_width(130.0);
-            ui.set_max_width(130.0);
-            ui.label(t!("timecode.scale"));
-            ui.separator();
-            // 不做滚动限制：音阶变体数量固定（13 个），全部展示避免"少一行"。
-            for scale in ScaleType::ALL {
-                let selected = current.is_some_and(|(_, s)| s == *scale);
-                if ui
-                    .add(crate::widgets::menu::menu_item_button(
-                        ui,
-                        selected,
-                        scale.english_name(),
-                    ))
-                    .clicked()
-                {
-                    events.push(TimecodeEvent::KeySig {
-                        r#override: Some((cur_root, *scale)),
-                        use_events,
-                    });
-                    ui.close();
-                }
-            }
-        });
-    });
-    ui.separator();
-    // ── 开关：覆盖显示 / 工程事件 ──
-    let mut ov = override_on;
-    if crate::widgets::checkbox::check_scope(ui, |ui| ui.checkbox(&mut ov, t!("timecode.override")))
-        .inner
-        .clicked()
-    {
-        let value = ov.then_some(current.unwrap_or((0, ScaleType::Major)));
-        events.push(TimecodeEvent::KeySig {
-            r#override: value,
-            use_events,
-        });
-    }
-    let mut ue = use_events;
-    if crate::widgets::checkbox::check_scope(ui, |ui| {
-        ui.checkbox(&mut ue, t!("timecode.use_events"))
-    })
-    .inner
-    .clicked()
-    {
-        events.push(TimecodeEvent::KeySig {
-            r#override: override_on.then_some(current.unwrap_or((0, ScaleType::Major))),
-            use_events: ue,
-        });
-    }
 }
 
 #[cfg(test)]

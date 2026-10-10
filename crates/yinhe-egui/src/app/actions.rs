@@ -524,13 +524,12 @@ impl App {
                 TimecodeEvent::CursorTick(t) => {
                     self.workspace.documents[idx].edit.cursor_tick = Some(t.max(0.0));
                 }
-                TimecodeEvent::KeySig {
-                    r#override,
-                    use_events,
-                } => {
-                    let edit = &mut self.workspace.documents[idx].edit;
-                    edit.key_sig_override = r#override;
-                    edit.key_sig_use_events = use_events;
+                TimecodeEvent::OpenScaleDialog => {
+                    let doc = &self.workspace.documents[idx];
+                    let cur = crate::widgets::timecode::current_key_sig(doc);
+                    let override_on = doc.edit.key_sig_override.is_some();
+                    let use_events = doc.edit.key_sig_use_events;
+                    self.scale_dialog.open_at(cur, override_on, use_events);
                 }
                 TimecodeEvent::Quantize(preset) => {
                     let is_pr = self.view_focus == crate::app::ViewFocus::Pianoroll;

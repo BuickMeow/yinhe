@@ -18,7 +18,7 @@ mod gpu;
 pub(crate) mod gpu_upload;
 mod grid;
 mod interaction;
-mod keyboard;
+pub(crate) mod keyboard;
 mod layout;
 mod marquee;
 mod overlay;

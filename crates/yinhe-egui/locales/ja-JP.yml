@@ -30,6 +30,8 @@ hint.edit_menu: "編集メニュー · 元に戻す/コピー/ペースト/削�
 hint.play_menu: "再生メニュー · 再生/一時停止/停止/追従/タップテンポ"
 timecode.root: "ルート"
 timecode.scale: "スケール"
+timecode.keysig_dialog_title: "調号"
+timecode.keysig_name: "名前"
 timecode.override: "上書き表示"
 timecode.use_events: "プロジェクトイベント"
 hint.orientation.horizontal: "ピアノロール：横"

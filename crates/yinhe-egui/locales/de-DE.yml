@@ -30,6 +30,8 @@ hint.edit_menu: "Bearbeitungsmenü · Rückgängig/Kopieren/Einfügen/Löschen u
 hint.play_menu: "Wiedergabemenü · Wiedergabe/Pause/Stopp/Folgen/Tap-Tempo"
 timecode.root: "Grundton"
 timecode.scale: "Tonleiter"
+timecode.keysig_dialog_title: "Key Signature"
+timecode.keysig_name: "Name"
 timecode.override: "Anzeige überschreiben"
 timecode.use_events: "Projektereignisse"
 hint.orientation.horizontal: "Klavierrolle: horizontal"

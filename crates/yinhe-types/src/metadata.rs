@@ -27,10 +27,34 @@ pub enum ScaleType {
     MinorPentatonic,
     Blues,
     WholeTone,
+    // ── 追加变体（保持上方索引不变以兼容已存工程；UI 顺序由 `ALL` 控制）──
+    HarmonicMajor,
+    DoubleHarmonicMajor,
+    Altered,
+    Ionian,
+    Aeolian,
+    Diminished,
+    CombinationDiminished,
+    Augmented,
+    MajorBlues,
+    RagaBhairav,
+    RagaGamanasrama,
+    RagaTodi,
+    Spanish,
+    Gypsy,
+    Arabian,
+    Egyptian,
+    Hawaiian,
+    Pelog,
+    Miyakobushi,
+    Ryukyu,
 }
 
 impl ScaleType {
     /// 返回从根音开始的半音间隔。
+    ///
+    /// 八度内半音数和必须为 12（`intervals_sum_to_octave` 测试保证）。
+    /// 异域音阶（Raga/Pelog/…）采用业界常用的西方十二平均律近似。
     pub const fn intervals(&self) -> &'static [u8] {
         match self {
             Self::Major => &[2, 2, 1, 2, 2, 2, 1],
@@ -46,6 +70,26 @@ impl ScaleType {
             Self::MinorPentatonic => &[3, 2, 2, 3, 2],
             Self::Blues => &[3, 2, 1, 1, 3, 2],
             Self::WholeTone => &[2, 2, 2, 2, 2, 2],
+            Self::HarmonicMajor => &[2, 2, 1, 2, 1, 3, 1],
+            Self::DoubleHarmonicMajor => &[1, 3, 1, 2, 1, 3, 1],
+            Self::Altered => &[1, 2, 1, 2, 2, 2, 2],
+            Self::Ionian => &[2, 2, 1, 2, 2, 2, 1],
+            Self::Aeolian => &[2, 1, 2, 2, 1, 2, 2],
+            Self::Diminished => &[2, 1, 2, 1, 2, 1, 2, 1],
+            Self::CombinationDiminished => &[1, 2, 1, 2, 1, 2, 1, 2],
+            Self::Augmented => &[3, 1, 3, 1, 3, 1],
+            Self::MajorBlues => &[2, 1, 1, 3, 2, 3],
+            Self::RagaBhairav => &[1, 3, 1, 2, 1, 3, 1],
+            Self::RagaGamanasrama => &[1, 3, 2, 1, 1, 3, 1],
+            Self::RagaTodi => &[1, 2, 2, 2, 1, 2, 2],
+            Self::Spanish => &[1, 3, 1, 2, 1, 2, 2],
+            Self::Gypsy => &[2, 1, 3, 1, 1, 3, 1],
+            Self::Arabian => &[2, 2, 1, 1, 2, 2, 2],
+            Self::Egyptian => &[2, 3, 2, 3, 2],
+            Self::Hawaiian => &[2, 1, 2, 2, 2, 2, 1],
+            Self::Pelog => &[1, 2, 2, 2, 2, 1, 2],
+            Self::Miyakobushi => &[1, 4, 1, 4, 2],
+            Self::Ryukyu => &[4, 1, 2, 1, 4],
         }
     }
 
@@ -63,39 +107,79 @@ impl ScaleType {
         mask
     }
 
-    /// 所有音阶变体，供 UI 下拉选择使用。顺序与 `display_name` 对应。
+    /// 所有音阶变体（UI 列表顺序，对齐 Domino 音阶表）。与 `english_name` 对应。
     pub const ALL: &[ScaleType] = &[
         Self::Major,
         Self::NaturalMinor,
         Self::HarmonicMinor,
         Self::MelodicMinor,
+        Self::HarmonicMajor,
+        Self::DoubleHarmonicMajor,
+        Self::Altered,
+        Self::Ionian,
         Self::Dorian,
         Self::Phrygian,
         Self::Lydian,
         Self::Mixolydian,
+        Self::Aeolian,
         Self::Locrian,
+        Self::Diminished,
+        Self::CombinationDiminished,
+        Self::Augmented,
+        Self::WholeTone,
         Self::MajorPentatonic,
         Self::MinorPentatonic,
+        Self::MajorBlues,
         Self::Blues,
-        Self::WholeTone,
+        Self::RagaBhairav,
+        Self::RagaGamanasrama,
+        Self::RagaTodi,
+        Self::Spanish,
+        Self::Gypsy,
+        Self::Arabian,
+        Self::Egyptian,
+        Self::Hawaiian,
+        Self::Pelog,
+        Self::Miyakobushi,
+        Self::Ryukyu,
     ];
 
-    /// 英文名（时间码调式显示用，如 `C Major`）。
+    /// 英文名（时间码调式显示用，如 `C Natural Major`）。
     pub const fn english_name(&self) -> &'static str {
         match self {
-            Self::Major => "Major",
-            Self::NaturalMinor => "Minor",
+            Self::Major => "Natural Major",
+            Self::NaturalMinor => "Natural Minor",
             Self::HarmonicMinor => "Harmonic Minor",
             Self::MelodicMinor => "Melodic Minor",
+            Self::HarmonicMajor => "Harmonic Major",
+            Self::DoubleHarmonicMajor => "Double Harmonic Major",
+            Self::Altered => "Altered",
+            Self::Ionian => "Ionian",
             Self::Dorian => "Dorian",
             Self::Phrygian => "Phrygian",
             Self::Lydian => "Lydian",
             Self::Mixolydian => "Mixolydian",
+            Self::Aeolian => "Aeolian",
             Self::Locrian => "Locrian",
+            Self::Diminished => "Diminish",
+            Self::CombinationDiminished => "Combination Diminish",
+            Self::Augmented => "Augment",
+            Self::WholeTone => "Wholetone",
             Self::MajorPentatonic => "Major Pentatonic",
             Self::MinorPentatonic => "Minor Pentatonic",
-            Self::Blues => "Blues",
-            Self::WholeTone => "Whole Tone",
+            Self::MajorBlues => "Major Blues",
+            Self::Blues => "Minor Blues",
+            Self::RagaBhairav => "Raga Bhairav",
+            Self::RagaGamanasrama => "Raga Gamanasrama",
+            Self::RagaTodi => "Raga Todi",
+            Self::Spanish => "Spanish",
+            Self::Gypsy => "Gypsy",
+            Self::Arabian => "Arabian",
+            Self::Egyptian => "Egyptian",
+            Self::Hawaiian => "Hawaiian",
+            Self::Pelog => "Pelog",
+            Self::Miyakobushi => "Miyakobushi",
+            Self::Ryukyu => "Ryukyu",
         }
     }
 
@@ -105,15 +189,35 @@ impl ScaleType {
             Self::NaturalMinor => "自然小调",
             Self::HarmonicMinor => "和声小调",
             Self::MelodicMinor => "旋律小调",
+            Self::HarmonicMajor => "和声大调",
+            Self::DoubleHarmonicMajor => "双和声大调",
+            Self::Altered => "变化音阶",
+            Self::Ionian => "伊奥尼亚",
             Self::Dorian => "多利亚",
             Self::Phrygian => "弗里几亚",
             Self::Lydian => "利底亚",
             Self::Mixolydian => "混合利底亚",
+            Self::Aeolian => "爱奥利亚",
             Self::Locrian => "洛克里亚",
+            Self::Diminished => "减音阶",
+            Self::CombinationDiminished => "组合减音阶",
+            Self::Augmented => "增音阶",
+            Self::WholeTone => "全音阶",
             Self::MajorPentatonic => "大调五声",
             Self::MinorPentatonic => "小调五声",
-            Self::Blues => "布鲁斯",
-            Self::WholeTone => "全音阶",
+            Self::MajorBlues => "大调布鲁斯",
+            Self::Blues => "小调布鲁斯",
+            Self::RagaBhairav => "拜拉夫拉格",
+            Self::RagaGamanasrama => "伽摩那室利拉格",
+            Self::RagaTodi => "托迪拉格",
+            Self::Spanish => "西班牙音阶",
+            Self::Gypsy => "吉普赛音阶",
+            Self::Arabian => "阿拉伯音阶",
+            Self::Egyptian => "埃及音阶",
+            Self::Hawaiian => "夏威夷音阶",
+            Self::Pelog => "佩洛格",
+            Self::Miyakobushi => "都节音阶",
+            Self::Ryukyu => "琉球音阶",
         }
     }
 
@@ -121,24 +225,43 @@ impl ScaleType {
     ///
     /// 大调 → (大调根音对应的升降号数, 0)
     /// 自然小调 → (关系大调的升降号数, 1)
-    /// 其他音阶 → 替换为最接近的大/小调：
-    ///   - 小调类（和声/旋律/多利亚/弗里几亚/洛克里亚/小调五声/布鲁斯）→ 小调
-    ///   - 大调类（利底亚/混合利底亚/大调五声/全音阶）→ 大调
+    /// 其他音阶 → 替换为最接近的大/小调：含大三度的归大调、含小三度的归小调。
     pub fn to_midi_sf_mi(&self, root: u8) -> (i8, u8) {
         let root = root % 12;
         match self {
-            Self::Major => (major_root_to_sf(root), 0),
-            Self::NaturalMinor => (major_root_to_sf((root + 3) % 12), 1),
-            Self::HarmonicMinor
+            Self::Major
+            | Self::HarmonicMajor
+            | Self::DoubleHarmonicMajor
+            | Self::Ionian
+            | Self::Lydian
+            | Self::Mixolydian
+            | Self::MajorPentatonic
+            | Self::MajorBlues
+            | Self::WholeTone
+            | Self::Augmented
+            | Self::Arabian
+            | Self::RagaBhairav
+            | Self::RagaGamanasrama
+            | Self::Ryukyu => (major_root_to_sf(root), 0),
+            Self::NaturalMinor
+            | Self::HarmonicMinor
             | Self::MelodicMinor
+            | Self::Aeolian
             | Self::Dorian
             | Self::Phrygian
             | Self::Locrian
+            | Self::Altered
+            | Self::Diminished
+            | Self::CombinationDiminished
             | Self::MinorPentatonic
-            | Self::Blues => (major_root_to_sf((root + 3) % 12), 1),
-            Self::Lydian | Self::Mixolydian | Self::MajorPentatonic | Self::WholeTone => {
-                (major_root_to_sf(root), 0)
-            }
+            | Self::Blues
+            | Self::RagaTodi
+            | Self::Spanish
+            | Self::Gypsy
+            | Self::Egyptian
+            | Self::Hawaiian
+            | Self::Pelog
+            | Self::Miyakobushi => (major_root_to_sf((root + 3) % 12), 1),
         }
     }
 }
@@ -253,6 +376,27 @@ pub struct ChordEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 每个音阶的相邻音程之和必须为一个八度（12 半音），且每段间隔 > 0。
+    /// 防止新增/编辑异域音阶时写错音程（列表 / 预览 / 调内音集合都会错）。
+    #[test]
+    fn intervals_sum_to_octave() {
+        for &scale in ScaleType::ALL {
+            let sum: u32 = scale.intervals().iter().map(|&x| x as u32).sum();
+            assert_eq!(sum, 12, "{:?} 音程和应为 12，实际 {sum}", scale);
+            assert!(
+                scale.intervals().iter().all(|&x| x > 0),
+                "{:?} 存在 0 间隔",
+                scale
+            );
+            assert!(
+                scale.intervals().len() >= 5,
+                "{:?} 音数过少（{}）",
+                scale,
+                scale.intervals().len()
+            );
+        }
+    }
 
     /// C 大调应包含 C D E F G A B（pc 0,2,4,5,7,9,11），不含黑键。
     #[test]

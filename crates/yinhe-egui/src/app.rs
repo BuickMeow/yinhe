@@ -211,6 +211,7 @@ pub struct App {
 
     // ── 选择筛选对话框状态（编辑菜单触发）──
     pub(crate) filter_dialog: crate::dialogs::filter::FilterDialogState,
+    pub(crate) scale_dialog: crate::dialogs::scale::ScaleDialogState,
 
     // ── macOS platform integrations ──
     pub(crate) menu_bar: crate::platform::MenuBar,
@@ -314,6 +315,7 @@ impl App {
             automation_picker: crate::dialogs::automation_picker::AutomationPickerState::default(),
             tap_tempo_dialog: crate::dialogs::tap_tempo::TapTempoDialogState::default(),
             filter_dialog: crate::dialogs::filter::FilterDialogState::default(),
+            scale_dialog: crate::dialogs::scale::ScaleDialogState::default(),
 
             view_mode: ViewMode::Arrange,
             view_focus: ViewFocus::Arrange,

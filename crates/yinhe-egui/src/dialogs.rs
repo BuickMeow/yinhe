@@ -10,6 +10,7 @@ pub mod new_track;
 pub mod project_info;
 pub mod prop_panels;
 pub mod save_overlay;
+pub mod scale;
 pub mod settings;
 pub mod sf_list;
 pub mod system_monitor;

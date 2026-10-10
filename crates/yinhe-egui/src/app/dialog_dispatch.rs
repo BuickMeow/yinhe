@@ -351,6 +351,9 @@ impl App {
         // ── 选择筛选对话框 ──
         self.show_filter_dialog(&ctx);
 
+        // ── 调式（音阶）对话框 ──
+        self.show_scale_dialog(&ctx);
+
         // ── 插件参数自动化选择窗口 ──
         self.show_automation_picker(&ctx);
 
@@ -634,8 +637,28 @@ impl App {
         }
     }
 
+    /// 「调式（音阶）」模态对话框：确认后把选择写回 `edit`（覆盖 / 工程事件）。
+    fn show_scale_dialog(&mut self, ctx: &egui::Context) {
+        use crate::dialogs::scale::ScaleAction;
+        let action = self.scale_dialog.show(ctx);
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        match action {
+            ScaleAction::None => {}
+            ScaleAction::Cancel => {}
+            ScaleAction::Confirm {
+                r#override,
+                use_events,
+            } => {
+                let edit = &mut self.workspace.documents[idx].edit;
+                edit.key_sig_override = r#override;
+                edit.key_sig_use_events = use_events;
+            }
+        }
+    }
+
     /// 渲染音轨属性 / 工程设置浮动面板（独立视口子窗口）。
-    ///
     /// 音轨属性与右侧栏 Info 内容互斥：弹窗打开时右侧栏已收起（set_float_panel
     /// 关闭），用户点 X 只关闭弹窗，点「停靠到侧栏」则把内容搬回右侧栏 Info tab。
     /// 工程设置只在浮窗显示（无停靠入口），点 X 即关闭。

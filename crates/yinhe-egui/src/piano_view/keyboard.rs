@@ -30,6 +30,57 @@ pub fn paint(
     }
 }
 
+/// 迷你键盘（横向，每半音一格）：白键底、黑键顶，C 处标注音名；`highlight_pc`
+/// 命中的调内音用强调色叠加。与 [`paint`] 解耦（不依赖 `PianoRollView`/滚动），
+/// 供音阶预览等场景复用同一套键盘配色与画法。
+///
+/// `highlight_pc`：12 位 pitch-class bitmask（bit i = pc i 高亮；0 = 不高亮）。
+pub fn paint_mini(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    lo_key: u8,
+    hi_key: u8,
+    highlight_pc: u16,
+) {
+    if rect.width() <= 0.0 || rect.height() <= 0.0 || hi_key < lo_key {
+        return;
+    }
+    let theme = yinhe_theme::current_gpu_theme();
+    let n = (hi_key - lo_key + 1) as f32;
+    let cell_w = rect.width() / n;
+    let stroke_color = crate::theme::rgb_to_color32(theme.key_black);
+    let stroke = egui::Stroke::new((cell_w * 0.06).clamp(0.5, 1.5), stroke_color);
+
+    for key in lo_key..=hi_key {
+        let x = rect.min.x + (key - lo_key) as f32 * cell_w;
+        let key_rect =
+            egui::Rect::from_min_size(egui::pos2(x, rect.min.y), egui::vec2(cell_w, rect.height()));
+        let pc = key % 12;
+        let in_scale = highlight_pc & (1u16 << pc) != 0;
+        let fill = if in_scale {
+            crate::theme::accent_active()
+        } else if yinhe_types::is_black_key(key) {
+            crate::theme::rgb_to_color32(theme.key_black)
+        } else {
+            crate::theme::rgb_to_color32(theme.key_white)
+        };
+        painter.rect_filled(key_rect, 0.0, fill);
+        painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
+
+        // C 位置标注音名（空间足够时）
+        if pc == 0 && cell_w >= 10.0 {
+            let octave = key as i32 / 12 - 1;
+            painter.text(
+                egui::pos2(x + cell_w / 2.0, rect.max.y - 2.0),
+                egui::Align2::CENTER_BOTTOM,
+                format!("C{octave}"),
+                egui::FontId::proportional((cell_w * 0.5).clamp(8.0, 12.0)),
+                crate::theme::text_primary(),
+            );
+        }
+    }
+}
+
 /// 横向键盘（左列）：键 y = `keyboard_rect.min.y + key_to_cross_px(key)`。
 ///
 /// 数学上与旧公式一致：`key_to_cross_px`（横向）= `key_to_y` = `128*kh - scroll_y - (key+1)*kh`

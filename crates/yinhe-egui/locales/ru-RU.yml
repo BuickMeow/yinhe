@@ -30,6 +30,8 @@ hint.edit_menu: "Меню «Правка» · Отмена/Копировать/
 hint.play_menu: "Меню воспроизведения · Пуск/Пауза/Стоп/Следование/Tap Tempo"
 timecode.root: "Тоника"
 timecode.scale: "Лад"
+timecode.keysig_dialog_title: "Key Signature"
+timecode.keysig_name: "Name"
 timecode.override: "Переопределить отображение"
 timecode.use_events: "События проекта"
 hint.orientation.horizontal: "Пиано-ролл: горизонтальный"
