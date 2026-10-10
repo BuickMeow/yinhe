@@ -95,6 +95,17 @@ pub(crate) fn upload_and_prepare(
     // Prepare GPU data (ghost notes are handled separately as a transient overlay)
     let theme = pianoroll.theme().clone();
     let cull_ready = use_gpu_cull && pianoroll.cull_ready();
+    // CPU 渲染路径主 renderer 不执行 draw()，LOD 状态无人写入（mode bar 恒显示 0）。
+    // 这里用与 GPU 路径同一档位公式回写；无条件写（含 None）防止切回 GPU 路径前残留旧档位。
+    if !cull_ready {
+        let block = if lod_enabled {
+            yinhe_wgpu::select_summary_level(view.base.pixels_per_tick)
+                .map(|level| yinhe_wgpu::SUMMARY_BLOCK_TICKS[level])
+        } else {
+            None
+        };
+        pianoroll.set_lod_block(block);
+    }
     tracing::debug!(
         "[cull-frame] cull_ready={cull_ready} scroll_x={} scroll_y={} ppu={} kh={} w={w} h={h}",
         view.base.scroll_x,

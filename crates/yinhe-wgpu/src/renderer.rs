@@ -406,6 +406,12 @@ impl InstanceRenderer {
         self.last_lod_block
     }
 
+    /// CPU 渲染路径回写当前 LOD 块宽（GPU cull 路径由 `draw` 每帧负责写，
+    /// 调用方只在非 GPU cull 路径写，避免两处写值打架）。
+    pub fn set_lod_block(&mut self, block: Option<u32>) {
+        self.last_lod_block = block;
+    }
+
     /// 设置是否启用 LOD 摘要层（设置项）。
     pub fn set_lod_enabled(&mut self, enabled: bool) {
         self.lod_enabled = enabled;
