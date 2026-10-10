@@ -507,8 +507,8 @@ pencil.gate: "게이트 %{n}"
 quantize.absolute: "%{n} tick"
 quantize.custom_tick: "사용자 정의 tick"
 quantize.custom_fraction: "사용자 정의 분수"
-quantize.numerator: "n:"
-quantize.denominator: "d:"
+quantize.numerator: "분자"
+quantize.denominator: "분모"
 
 # ── SoundFont 패널 ──
 soundfont.global: "글로벌 SoundFont"

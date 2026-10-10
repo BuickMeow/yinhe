@@ -587,8 +587,8 @@ pencil.gate: "Gate %{n}"
 quantize.absolute: "%{n} tik"
 quantize.custom_tick: "Özel tik"
 quantize.custom_fraction: "Özel Kesir"
-quantize.numerator: "n:"
-quantize.denominator: "d:"
+quantize.numerator: "Numerator"
+quantize.denominator: "Denominator"
 
 # ── SoundFont panel ──
 soundfont.global: "Genel SoundFont'lar"

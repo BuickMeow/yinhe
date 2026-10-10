@@ -587,8 +587,8 @@ pencil.gate: "Délka noty %{n}"
 quantize.absolute: "%{n} tick"
 quantize.custom_tick: "Vlastní tick"
 quantize.custom_fraction: "Vlastní zlomek"
-quantize.numerator: "n:"
-quantize.denominator: "d:"
+quantize.numerator: "Numerator"
+quantize.denominator: "Denominator"
 
 # ── SoundFont panel ──
 soundfont.global: "Globální SoundFonty"

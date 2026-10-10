@@ -587,8 +587,8 @@ pencil.gate: "Gate %{n}"
 quantize.absolute: "%{n} тик"
 quantize.custom_tick: "Свой тик"
 quantize.custom_fraction: "Своя доля"
-quantize.numerator: "ч:"
-quantize.denominator: "з:"
+quantize.numerator: "Numerator"
+quantize.denominator: "Denominator"
 
 # ── SoundFont panel ──
 soundfont.global: "Глобальные SoundFont"

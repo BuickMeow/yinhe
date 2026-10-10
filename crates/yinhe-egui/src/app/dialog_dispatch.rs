@@ -637,24 +637,31 @@ impl App {
         }
     }
 
-    /// 「调式（音阶）」模态对话框：确认后把选择写回 `edit`（覆盖 / 工程事件）。
+    /// 「调式（音阶）」系统级对话框：确认后把选择写回 `edit`（覆盖 / 工程事件）。
     fn show_scale_dialog(&mut self, ctx: &egui::Context) {
         use crate::dialogs::scale::ScaleAction;
-        let action = self.scale_dialog.show(ctx);
+        if !self.scale_dialog.open {
+            return;
+        }
+        if self.scale_dialog.just_opened {
+            self.scale_dialog.just_opened = false;
+            crate::chrome::dialog::raise_viewport(
+                ctx,
+                egui::ViewportId::from_hash_of(crate::dialogs::scale::VIEWPORT_ID),
+            );
+        }
+        let action = self.scale_dialog.show_viewport(ctx);
         let Some(idx) = self.workspace.active_doc else {
             return;
         };
-        match action {
-            ScaleAction::None => {}
-            ScaleAction::Cancel => {}
-            ScaleAction::Confirm {
-                r#override,
-                use_events,
-            } => {
-                let edit = &mut self.workspace.documents[idx].edit;
-                edit.key_sig_override = r#override;
-                edit.key_sig_use_events = use_events;
-            }
+        if let ScaleAction::Confirm {
+            r#override,
+            use_events,
+        } = action
+        {
+            let edit = &mut self.workspace.documents[idx].edit;
+            edit.key_sig_override = r#override;
+            edit.key_sig_use_events = use_events;
         }
     }
 

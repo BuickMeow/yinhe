@@ -587,8 +587,8 @@ pencil.gate: "时值 %{n}"
 quantize.absolute: "%{n} tick"
 quantize.custom_tick: "自定义 tick"
 quantize.custom_fraction: "自定义时值"
-quantize.numerator: "n:"
-quantize.denominator: "d:"
+quantize.numerator: "分子"
+quantize.denominator: "分母"
 
 # ── 音色库面板 ──
 soundfont.global: "全局音色库"

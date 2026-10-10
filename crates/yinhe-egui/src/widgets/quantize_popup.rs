@@ -29,7 +29,7 @@ pub fn show(
     }
     ui.separator();
 
-    // ── 自定义时值 ──
+    // ── 自定义时值（分子 / 分母，各一个步进器）──
     let is_frac = matches!(current, QuantizePreset::Fraction(_, _));
     if ui
         .add(crate::widgets::menu::menu_item_button(
@@ -42,61 +42,35 @@ pub fn show(
         *pending = Some(QuantizePreset::Fraction(1, 1));
     }
     if let QuantizePreset::Fraction(num, den) = current {
-        // 与右栏 `rows::form_row` 同法：先固定行高、标签列等宽，再落控件，
-        // 否则标签先于数字框落位、行高后被数字框撑大，n/d 会错位。
-        let h = super::control::h(ui.ctx());
-        let label_w = crate::scaling::scaled_font(ui.ctx(), 14.0);
-        let label = |ui: &mut egui::Ui, s: &str| {
-            ui.allocate_ui_with_layout(
-                egui::vec2(label_w, h),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    ui.label(
-                        egui::RichText::new(s)
-                            .size(crate::scaling::scaled_font(
-                                ui.ctx(),
-                                crate::theme::SMALL_FONT,
-                            ))
-                            .color(crate::theme::text_label()),
-                    );
-                },
-            );
-        };
-        ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), h),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                label(ui, t!("quantize.numerator").as_ref());
-                let mut n = num;
-                if ui
-                    .add(
-                        crate::widgets::numeric_input::decimal_drag_value(&mut n)
-                            .range(1..=9999)
-                            .speed(0.5),
-                    )
-                    .changed()
-                {
-                    *pending = Some(QuantizePreset::Fraction(n, den));
-                }
-                label(ui, t!("quantize.denominator").as_ref());
-                let mut d = den;
-                if ui
-                    .add(
-                        crate::widgets::numeric_input::decimal_drag_value(&mut d)
-                            .range(1..=9999)
-                            .speed(0.5),
-                    )
-                    .changed()
-                {
-                    *pending = Some(QuantizePreset::Fraction(num, d.max(1)));
-                }
-            },
-        );
+        let mut n = num;
+        labeled_stepper(ui, t!("quantize.numerator").as_ref(), |ui| {
+            crate::widgets::stepper::stepper(&mut n)
+                .range(1u32..=9999)
+                .step(1.0)
+                .decimals(0)
+                .width(stepper_w(ui))
+                .show(ui);
+        });
+        let mut d = den;
+        labeled_stepper(ui, t!("quantize.denominator").as_ref(), |ui| {
+            crate::widgets::stepper::stepper(&mut d)
+                .range(1u32..=9999)
+                .step(1.0)
+                .decimals(0)
+                .width(stepper_w(ui))
+                .show(ui);
+        });
+        if n != num {
+            *pending = Some(QuantizePreset::Fraction(n.max(1), den));
+        }
+        if d != den {
+            *pending = Some(QuantizePreset::Fraction(num, d.max(1)));
+        }
     }
 
     ui.separator();
 
-    // ── 自定义Tick ──
+    // ── 自定义 Tick ──
     let is_abs = matches!(current, QuantizePreset::Absolute(_));
     if ui
         .add(crate::widgets::menu::menu_item_button(
@@ -110,15 +84,41 @@ pub fn show(
     }
     if let QuantizePreset::Absolute(n) = current {
         let mut val = n;
-        if ui
-            .add(
-                crate::widgets::numeric_input::decimal_drag_value(&mut val)
-                    .range(1..=99999)
-                    .speed(0.5),
-            )
-            .changed()
-        {
-            *pending = Some(QuantizePreset::Absolute(val));
+        labeled_stepper(ui, t!("quantize.custom_tick").as_ref(), |ui| {
+            crate::widgets::stepper::stepper(&mut val)
+                .range(1u32..=99999)
+                .step(1.0)
+                .decimals(0)
+                .width(stepper_w(ui))
+                .show(ui);
+        });
+        if val != n {
+            *pending = Some(QuantizePreset::Absolute(val.max(1)));
         }
     }
+}
+
+fn stepper_w(ui: &egui::Ui) -> f32 {
+    crate::scaling::scaled_font(ui.ctx(), 96.0)
+}
+
+/// 标签 + 控件行：先固定行高、标签列等宽再落控件，保证垂直居中对齐
+/// （与 `rows::form_row` 同法，但标签用正常字号——自定义时值不写小字）。
+fn labeled_stepper(ui: &mut egui::Ui, label: &str, add_control: impl FnOnce(&mut egui::Ui)) {
+    let h = super::control::h(ui.ctx());
+    let w = crate::scaling::scaled_font(ui.ctx(), 56.0);
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), h),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.allocate_ui_with_layout(
+                egui::vec2(w, h),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.label(label);
+                },
+            );
+            add_control(ui);
+        },
+    );
 }

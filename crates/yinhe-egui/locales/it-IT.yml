@@ -587,8 +587,8 @@ pencil.gate: "Gate %{n}"
 quantize.absolute: "%{n} tick"
 quantize.custom_tick: "Tick personalizzato"
 quantize.custom_fraction: "Frazione personalizzata"
-quantize.numerator: "n:"
-quantize.denominator: "d:"
+quantize.numerator: "Numerator"
+quantize.denominator: "Denominator"
 
 # ── SoundFont panel ──
 soundfont.global: "SoundFont globali"

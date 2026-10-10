@@ -30,9 +30,9 @@ pub fn paint(
     }
 }
 
-/// 迷你键盘（横向，每半音一格）：白键底、黑键顶，C 处标注音名；`highlight_pc`
-/// 命中的调内音用强调色叠加。与 [`paint`] 解耦（不依赖 `PianoRollView`/滚动），
-/// 供音阶预览等场景复用同一套键盘配色与画法。
+/// 迷你钢琴（**纵向**，低音在下 / 高音在上）：白键满宽堆叠，黑键窄条叠在其上；
+/// `highlight_pc` 命中的调内音用强调色填充。与 [`paint`] 解耦（不依赖
+/// `PianoRollView`/滚动），供音阶预览等场景复用同一套主题键盘配色。
 ///
 /// `highlight_pc`：12 位 pitch-class bitmask（bit i = pc i 高亮；0 = 不高亮）。
 pub fn paint_mini(
@@ -46,38 +46,52 @@ pub fn paint_mini(
         return;
     }
     let theme = yinhe_theme::current_gpu_theme();
-    let n = (hi_key - lo_key + 1) as f32;
-    let cell_w = rect.width() / n;
-    let stroke_color = crate::theme::rgb_to_color32(theme.key_black);
-    let stroke = egui::Stroke::new((cell_w * 0.06).clamp(0.5, 1.5), stroke_color);
+    let white = crate::theme::rgb_to_color32(theme.key_white);
+    let black = crate::theme::rgb_to_color32(theme.key_black);
+    let highlight = crate::theme::accent_active();
+    let stroke = egui::Stroke::new(1.0, black);
+    let is_black = |key: u8| yinhe_types::is_black_key(key);
+    let in_scale = |key: u8| highlight_pc & (1u16 << (key % 12)) != 0;
 
+    let white_count = (lo_key..=hi_key).filter(|&k| !is_black(k)).count().max(1);
+    let white_h = rect.height() / white_count as f32;
+
+    // 第一遍：白键（满宽，低音在下）。
+    let mut wi = 0usize;
     for key in lo_key..=hi_key {
-        let x = rect.min.x + (key - lo_key) as f32 * cell_w;
-        let key_rect =
-            egui::Rect::from_min_size(egui::pos2(x, rect.min.y), egui::vec2(cell_w, rect.height()));
-        let pc = key % 12;
-        let in_scale = highlight_pc & (1u16 << pc) != 0;
-        let fill = if in_scale {
-            crate::theme::accent_active()
-        } else if yinhe_types::is_black_key(key) {
-            crate::theme::rgb_to_color32(theme.key_black)
-        } else {
-            crate::theme::rgb_to_color32(theme.key_white)
-        };
-        painter.rect_filled(key_rect, 0.0, fill);
-        painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
-
-        // C 位置标注音名（空间足够时）
-        if pc == 0 && cell_w >= 10.0 {
-            let octave = key as i32 / 12 - 1;
-            painter.text(
-                egui::pos2(x + cell_w / 2.0, rect.max.y - 2.0),
-                egui::Align2::CENTER_BOTTOM,
-                format!("C{octave}"),
-                egui::FontId::proportional((cell_w * 0.5).clamp(8.0, 12.0)),
-                crate::theme::text_primary(),
-            );
+        if is_black(key) {
+            continue;
         }
+        let y_top = rect.max.y - (wi + 1) as f32 * white_h;
+        let r = egui::Rect::from_min_size(
+            egui::pos2(rect.min.x, y_top),
+            egui::vec2(rect.width(), white_h),
+        );
+        painter.rect_filled(r, 0.0, if in_scale(key) { highlight } else { white });
+        painter.rect_stroke(r, 0.0, stroke, egui::StrokeKind::Inside);
+        wi += 1;
+    }
+
+    // 第二遍：黑键（窄条，叠在相邻两白键的边界上）。
+    let black_w = rect.width() * 0.6;
+    let black_h = white_h * 0.62;
+    let mut wi = 0usize;
+    for key in lo_key..=hi_key {
+        if !is_black(key) {
+            wi += 1;
+            continue;
+        }
+        let y_center = if wi == 0 {
+            rect.max.y - black_h * 0.5 // 范围以黑键起头：贴底（防御）
+        } else {
+            rect.max.y - wi as f32 * white_h
+        };
+        let r = egui::Rect::from_min_size(
+            egui::pos2(rect.min.x, y_center - black_h * 0.5),
+            egui::vec2(black_w, black_h),
+        );
+        painter.rect_filled(r, 0.0, if in_scale(key) { highlight } else { black });
+        painter.rect_stroke(r, 0.0, stroke, egui::StrokeKind::Inside);
     }
 }
 
