@@ -648,12 +648,7 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                 },
             );
 
-            // 分隔线 + Master 条。
-            ui.painter().vline(
-                channels_rect.max.x + 2.0,
-                master_rect.y_range(),
-                egui::Stroke::new(1.0, crate::theme::grid_sub_beat()),
-            );
+            // Master 条（分隔由 master 通道条自身的描边提供，无需再画 vline）。
             let (master_level, master_hold) = {
                 let raw = app
                     .audio_state

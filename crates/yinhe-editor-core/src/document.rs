@@ -115,6 +115,13 @@ impl Document {
         self.history.mark_loaded();
     }
 
+    /// 新工程的默认混音台：自带一条总线（FX 1），使发送开箱可用。
+    fn default_mixer() -> MixerParams {
+        let mut m = MixerParams::default();
+        m.add_bus();
+        m
+    }
+
     pub fn empty() -> Self {
         let mut model = YinModel::new_empty_with_16_tracks();
         model.rebuild();
@@ -156,7 +163,7 @@ impl Document {
             history: UndoStack::new(),
             file_name: "Untitled".into(),
             file_path: None,
-            mixer: MixerParams::default(),
+            mixer: Self::default_mixer(),
             doc_id: next_doc_id(),
             mixer_dirty: false,
         }

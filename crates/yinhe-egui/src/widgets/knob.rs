@@ -56,11 +56,13 @@ pub fn knob(ui: &mut egui::Ui, value: &mut f32, diameter: f32) -> egui::Response
         let enabled = ui.is_enabled();
         let hovered = resp.hovered();
         let pressed = resp.is_pointer_button_down_on();
-        let painter = ui.painter_at(rect);
+        // 注意：用 `ui.painter()`（裁剪到 ui 区域）而非 `painter_at(rect)`——
+        // 后者把绘制裁到 26×26 的方框内，会切掉外圈值弧、看起来像有个方框。
+        let painter = ui.painter();
         let center = rect.center();
-        // 底座半径（描边画在其内侧）；值弧画在底座**外侧**。
-        let r_base = diameter / 2.0 - 3.0;
-        let r_arc = diameter / 2.0 - 0.5;
+        // 半径都收进直径内：值弧在最外（其外沿正好落在直径上），描边画在底座内侧。
+        let r_arc = diameter / 2.0 - 1.0;
+        let r_base = diameter / 2.0 - 3.5;
 
         // 底座圆：hover/pressed 反馈与 switch 一致。
         let base = crate::theme::control_bg();
