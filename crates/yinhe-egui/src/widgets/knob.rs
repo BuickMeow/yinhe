@@ -72,10 +72,11 @@ pub fn knob(ui: &mut egui::Ui, value: &mut f32, diameter: f32) -> egui::Response
             base
         };
         painter.circle_filled(center, r, base);
+        // 描边用字体色系（比 `line_fg` 的弱描边更清晰），与周围背景拉开差异。
         painter.circle_stroke(
             center,
             r,
-            egui::Stroke::new(1.0, crate::theme::line_fg().gamma_multiply(0.35)),
+            egui::Stroke::new(1.0, crate::theme::text_secondary()),
         );
 
         let start = START_DEG.to_radians();

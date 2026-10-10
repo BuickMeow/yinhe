@@ -60,6 +60,10 @@ const FADER_HANDLE_H: f32 = 11.0;
 /// 电平表单条宽 + 条间距（px）。
 const METER_W: f32 = 6.0;
 const METER_GAP: f32 = 2.0;
+/// 电平表左侧 dB 数字刻度栏宽（px）。
+const SCALE_W: f32 = 20.0;
+/// dB 读数垂直拖动灵敏度（dB / px）。
+const DB_PER_PX: f32 = 0.4;
 /// 推子/电平表 dB 范围。
 const DB_MIN: f32 = -60.0;
 const DB_MAX: f32 = 6.0;
@@ -184,7 +188,8 @@ fn strip_frame(
 ) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(STRIP_WIDTH, height), egui::Sense::hover());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 0.0, crate::theme::control_bg());
+    // 卡片背景用默认背景色（不再用偏灰的 control_bg）。
+    painter.rect_filled(rect, 0.0, crate::theme::app_bg());
 
     // 顶部色带（轨道/通道色）。
     let header = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), HEADER_H));
@@ -230,12 +235,8 @@ fn section<R>(
     layout: egui::Layout,
     add: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
-    ui.allocate_ui_with_layout(egui::vec2(CONTENT_W, h), layout, |ui| {
-        ui.set_min_width(CONTENT_W);
-        ui.set_max_width(CONTENT_W);
-        add(ui)
-    })
-    .inner
+    ui.allocate_ui_with_layout(egui::vec2(CONTENT_W, h), layout, add)
+        .inner
 }
 
 /// 单条 MIDI 通道条。
@@ -290,7 +291,7 @@ pub(crate) fn channel_strip(
         section(
             ui,
             SEND_ROW_H,
-            egui::Layout::top_down(egui::Align::LEFT),
+            egui::Layout::top_down(egui::Align::Center),
             |ui| {
                 send_block(ui, channel, send, has_bus, actions);
             },
@@ -321,7 +322,12 @@ pub(crate) fn channel_strip(
             },
         );
         ui.add_space(GAP);
-        db_row(ui, params.gain);
+        if let Some(g) = db_row(ui, params.gain) {
+            actions.push(MixAction::SetStrip {
+                channel,
+                params: StripParams { gain: g, ..params },
+            });
+        }
         let bar_h = (meter_h - DB_ROW_H).max(FADER_MIN_H);
         section(
             ui,
@@ -403,7 +409,12 @@ pub(crate) fn audio_strip(
                 },
             );
             ui.add_space(GAP);
-            db_row(ui, params.gain);
+            if let Some(g) = db_row(ui, params.gain) {
+                actions.push(MixAction::SetAudioStrip {
+                    channel,
+                    params: StripParams { gain: g, ..params },
+                });
+            }
             let bar_h = (meter_h - DB_ROW_H).max(FADER_MIN_H);
             section(
                 ui,
@@ -504,7 +515,12 @@ pub(crate) fn bus_strip(
                 },
             );
             ui.add_space(GAP);
-            db_row(ui, params.gain);
+            if let Some(g) = db_row(ui, params.gain) {
+                actions.push(MixAction::SetBusStrip {
+                    bus,
+                    params: StripParams { gain: g, ..params },
+                });
+            }
             let bar_h = (meter_h - DB_ROW_H).max(FADER_MIN_H);
             section(
                 ui,
@@ -552,7 +568,11 @@ pub(crate) fn master_strip(
                 device_chain(ui, InsertTarget::Master, &view, None, dev_h, actions);
             });
             ui.add_space(GAP);
-            db_row(ui, params.gain);
+            if let Some(g) = db_row(ui, params.gain) {
+                actions.push(MixAction::SetMaster {
+                    params: MasterParams { gain: g },
+                });
+            }
             let bar_h = (meter_h - DB_ROW_H).max(FADER_MIN_H);
             section(
                 ui,
@@ -574,9 +594,10 @@ pub(crate) fn master_strip(
 /// 保证这些条等高；主输出只预留 dB 读数。
 fn strip_metrics(content_h: f32, full: bool) -> (f32, f32) {
     let reserved = if full { BOTTOM_FULL } else { BOTTOM_MASTER };
-    let dev_h =
-        (content_h - reserved - FADER_MIN_H).clamp(DEVICE_ROW_H, content_h.max(DEVICE_ROW_H));
-    let meter_h = (content_h - reserved - dev_h).max(0.0);
+    // 设备区最多占 35%（避免把额外高度全吃掉、把推子/电平表压到最小）。
+    let max_dev = (content_h * 0.35).max(DEVICE_ROW_H);
+    let dev_h = (content_h - reserved - FADER_MIN_H).clamp(DEVICE_ROW_H, max_dev);
+    let meter_h = (content_h - reserved - dev_h).max(FADER_MIN_H);
     (dev_h, meter_h)
 }
 
@@ -631,9 +652,9 @@ fn instrument_row(
     );
     let painter = ui.painter();
     let bg = if resp.hovered() {
-        crate::theme::hover_color(crate::theme::btn_bg())
+        crate::theme::hover_color(crate::theme::app_bg())
     } else {
-        crate::theme::btn_bg()
+        crate::theme::app_bg()
     };
     painter.rect_filled(rect, RADIUS, bg);
     painter.rect_stroke(
@@ -735,12 +756,12 @@ fn effect_row(
         egui::Sense::click(),
     );
     let painter = ui.painter();
-    painter.rect_filled(rect, RADIUS, crate::theme::btn_bg());
+    painter.rect_filled(rect, RADIUS, crate::theme::app_bg());
     if resp.hovered() {
         painter.rect_filled(
             rect,
             RADIUS,
-            crate::theme::hover_color(crate::theme::btn_bg()),
+            crate::theme::hover_color(crate::theme::app_bg()),
         );
     }
     painter.rect_stroke(
@@ -889,9 +910,9 @@ fn add_row(ui: &mut egui::Ui, target: InsertTarget, actions: &mut Vec<MixAction>
     );
     let painter = ui.painter();
     let bg = if resp.hovered() {
-        crate::theme::hover_color(crate::theme::btn_bg())
+        crate::theme::hover_color(crate::theme::app_bg())
     } else {
-        crate::theme::btn_bg().gamma_multiply(0.6)
+        crate::theme::app_bg()
     };
     painter.rect_filled(rect, RADIUS, bg);
     painter.rect_stroke(
@@ -926,40 +947,45 @@ fn send_block(
     actions: &mut Vec<MixAction>,
 ) {
     let (amount, pre_fader) = send;
-    ui.horizontal(|ui| {
-        let mut norm = (amount / 2.0).clamp(0.0, 1.0);
-        let resp = knob(ui, &mut norm, KNOB_D);
-        if resp.changed() {
-            if !has_bus {
-                actions.push(MixAction::AddBus);
+    let group = KNOB_D + 4.0 + 26.0;
+    ui.allocate_ui_with_layout(
+        egui::vec2(group, SEND_ROW_H),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            let mut norm = (amount / 2.0).clamp(0.0, 1.0);
+            let resp = knob(ui, &mut norm, KNOB_D);
+            if resp.changed() {
+                if !has_bus {
+                    actions.push(MixAction::AddBus);
+                }
+                actions.push(MixAction::SetSend {
+                    channel,
+                    bus: 0,
+                    amount: norm * 2.0,
+                    pre_fader,
+                });
             }
-            actions.push(MixAction::SetSend {
-                channel,
-                bus: 0,
-                amount: norm * 2.0,
-                pre_fader,
+            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.send_amount"));
+            resp.context_menu(|ui| {
+                let item = ui.add(crate::widgets::menu::menu_item_button(
+                    ui,
+                    false,
+                    t!("mix.sends").as_ref(),
+                ));
+                crate::widgets::hint::hover(ui.ctx(), &item, t!("hint.mix.sends"));
+                if item.clicked() {
+                    actions.push(MixAction::OpenSends { channel });
+                    ui.close();
+                }
             });
-        }
-        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.send_amount"));
-        resp.context_menu(|ui| {
-            let item = ui.add(crate::widgets::menu::menu_item_button(
-                ui,
-                false,
-                t!("mix.sends").as_ref(),
-            ));
-            crate::widgets::hint::hover(ui.ctx(), &item, t!("hint.mix.sends"));
-            if item.clicked() {
-                actions.push(MixAction::OpenSends { channel });
-                ui.close();
-            }
-        });
-        ui.add_space(4.0);
-        ui.label(
-            egui::RichText::new("FX 1")
-                .size(crate::theme::SMALL_LABEL_FONT)
-                .color(crate::theme::text_secondary()),
-        );
-    });
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new("FX 1")
+                    .size(crate::theme::SMALL_LABEL_FONT)
+                    .color(crate::theme::text_secondary()),
+            );
+        },
+    );
 }
 
 /// M/S 按钮（居中，等宽）。
@@ -1004,25 +1030,73 @@ fn pan_knob(ui: &mut egui::Ui, pan: f32, mut on_pan: impl FnMut(f32)) {
     );
 }
 
-/// 当前增益 dB 读数（居中，推子/电平表之上）。
-fn db_row(ui: &mut egui::Ui, gain: f32) {
+/// 当前增益 dB 读数（居中，推子/电平表之上）。可垂直拖动改增益，双击回 0 dB。
+/// 返回 `Some(新增益)` 表示本次被改动。
+fn db_row(ui: &mut egui::Ui, gain: f32) -> Option<f32> {
     section(
         ui,
         DB_ROW_H,
         egui::Layout::top_down(egui::Align::Center),
         |ui| {
+            let (rect, mut resp) = ui.allocate_exact_size(
+                egui::vec2(CONTENT_W, DB_ROW_H),
+                egui::Sense::click_and_drag(),
+            );
+            let id = resp.id;
+            let mut new_gain = None;
+            // 起始值 + 指针位移重算，避免 `drag_delta` 累计语义回弹。
+            if resp.drag_started()
+                && let Some(y) = resp.interact_pointer_pos().map(|p| p.y)
+            {
+                ui.ctx().data_mut(|d| {
+                    d.insert_temp(
+                        id,
+                        DbDrag {
+                            start_gain: gain,
+                            start_y: y,
+                        },
+                    )
+                });
+            }
+            if resp.dragged()
+                && let Some(y) = resp.interact_pointer_pos().map(|p| p.y)
+                && let Some(s) = ui.ctx().data(|d| d.get_temp::<DbDrag>(id))
+            {
+                // 向上拖 = 增大。
+                let db = gain_to_db(s.start_gain) + (s.start_y - y) * DB_PER_PX;
+                new_gain = Some(db_to_gain(db));
+                resp.mark_changed();
+            }
+            if resp.drag_stopped() {
+                ui.ctx().data_mut(|d| d.remove::<DbDrag>(id));
+            }
+            if resp.double_clicked() {
+                new_gain = Some(1.0);
+            }
             let text = if gain <= 0.0001 {
                 "-∞ dB".to_string()
             } else {
                 format!("{:+.1} dB", gain_to_db(gain))
             };
-            ui.label(
-                egui::RichText::new(text)
-                    .size(crate::theme::SMALL_FONT)
-                    .color(crate::theme::text_secondary()),
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                text,
+                egui::FontId::proportional(crate::theme::SMALL_FONT),
+                crate::theme::text_secondary(),
             );
+            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.fader"));
+            resp.on_hover_cursor(egui::CursorIcon::ResizeVertical);
+            new_gain
         },
-    );
+    )
+}
+
+/// dB 读数拖动会话（存 `ctx.data` temp 槽，按 widget Id 隔离）。
+#[derive(Clone, Copy)]
+struct DbDrag {
+    start_gain: f32,
+    start_y: f32,
 }
 
 /// 自绘小开关按钮（M/S），激活时填充激活色；圆角矩形。
@@ -1101,7 +1175,7 @@ fn meter_fader(
     height: f32,
     mut on_gain: impl FnMut(f32),
 ) {
-    let group = (METER_W * 2.0 + METER_GAP) + 6.0 + FADER_HANDLE_W;
+    let group = (SCALE_W + METER_W * 2.0 + METER_GAP) + 6.0 + FADER_HANDLE_W;
     ui.allocate_ui_with_layout(
         egui::vec2(group, height),
         egui::Layout::left_to_right(egui::Align::Center),
@@ -1176,49 +1250,65 @@ fn fader(ui: &mut egui::Ui, gain: f32, height: f32, mut on_gain: impl FnMut(f32)
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.fader"));
 }
 
-/// 电平表刻度：`(dB, 是否主刻度)`。行业惯用标注点。
+/// 电平表刻度：`(dB, 是否标注数字)`。行业惯用标注点。
 const METER_TICKS: &[(f32, bool)] = &[
     (0.0, true),
-    (-6.0, false),
-    (-12.0, false),
+    (-6.0, true),
+    (-12.0, true),
     (-18.0, false),
-    (-24.0, false),
+    (-24.0, true),
     (-36.0, false),
-    (-48.0, false),
+    (-48.0, true),
 ];
 
-/// 自绘电平表：L/R 双条（直角、加宽）+ 刻度 + 峰值保持线。dB 映射 -60..+6；
-/// >0dB 金色、≥0dBFS 红色顶格。
+/// 自绘电平表：左侧 dB 数字刻度栏 + L/R 双条（直角、加宽）+ 刻度 + 峰值保持线。
+/// dB 映射 -60..+6；>0dB 金色、≥0dBFS 红色顶格。
 fn meter(ui: &mut egui::Ui, level: (f32, f32), hold: (f32, f32), height: f32) {
-    let w = METER_W * 2.0 + METER_GAP;
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, height), egui::Sense::hover());
+    let bars_w = METER_W * 2.0 + METER_GAP;
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(SCALE_W + bars_w, height), egui::Sense::hover());
     let painter = ui.painter();
-    painter.rect_filled(rect, 0.0, crate::theme::track_bg());
+    let bars = egui::Rect::from_min_size(
+        egui::pos2(rect.min.x + SCALE_W, rect.min.y),
+        egui::vec2(bars_w, height),
+    );
+    painter.rect_filled(bars, 0.0, crate::theme::track_bg());
 
-    // 刻度线（跨两条）。
-    for &(db, major) in METER_TICKS {
-        let y = rect.max.y - db_frac(db) * rect.height();
-        let alpha = if major { 0.7 } else { 0.35 };
+    // 刻度线 + 数字标注。
+    let font = egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT);
+    for &(db, labeled) in METER_TICKS {
+        let y = bars.max.y - db_frac(db) * bars.height();
         painter.hline(
-            rect.x_range(),
+            bars.x_range(),
             y,
-            egui::Stroke::new(1.0, crate::theme::text_muted().gamma_multiply(alpha)),
+            egui::Stroke::new(
+                1.0,
+                crate::theme::text_muted().gamma_multiply(if labeled { 0.7 } else { 0.35 }),
+            ),
         );
+        if labeled {
+            painter.text(
+                egui::pos2(bars.min.x - 3.0, y),
+                egui::Align2::RIGHT_CENTER,
+                format!("{}", db as i32),
+                font.clone(),
+                crate::theme::text_secondary(),
+            );
+        }
     }
 
     // L/R 填充条。
     for (i, &p) in [level.0, level.1].iter().enumerate() {
-        let x0 = rect.min.x + i as f32 * (METER_W + METER_GAP);
+        let x0 = bars.min.x + i as f32 * (METER_W + METER_GAP);
         let bar = egui::Rect::from_min_size(
-            egui::pos2(x0, rect.min.y),
-            egui::vec2(METER_W, rect.height()),
+            egui::pos2(x0, bars.min.y),
+            egui::vec2(METER_W, bars.height()),
         );
         let frac = db_frac(gain_to_db(p));
         if frac > 0.0 {
             let h = bar.height() * frac;
             let fill = egui::Rect::from_min_max(egui::pos2(bar.min.x, bar.max.y - h), bar.max);
-            let color = meter_color(p);
-            painter.rect_filled(fill, 0.0, color);
+            painter.rect_filled(fill, 0.0, meter_color(p));
         }
     }
 
@@ -1231,8 +1321,8 @@ fn meter(ui: &mut egui::Ui, level: (f32, f32), hold: (f32, f32), height: f32) {
         if h <= l + 1e-4 {
             continue;
         }
-        let x0 = rect.min.x + i as f32 * (METER_W + METER_GAP);
-        let y = rect.max.y - db_frac(gain_to_db(h)) * rect.height();
+        let x0 = bars.min.x + i as f32 * (METER_W + METER_GAP);
+        let y = bars.max.y - db_frac(gain_to_db(h)) * bars.height();
         painter.hline(
             egui::Rangef::new(x0, x0 + METER_W),
             y,
