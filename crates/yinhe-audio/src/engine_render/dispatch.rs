@@ -126,14 +126,17 @@ impl AudioEngine {
                 .unwrap_or(false);
             if !track_skipped && !lane_skipped {
                 if let Some(pp) = cc.plugin_param {
-                    // 插件参数自动化 → 该 MIDI 通道插件实例的 ParamValue。
-                    if let Some(dense) = self.channel_plugin_dense(pp.channel) {
+                    // 插件参数自动化 → 按 uid 精确投给对应乐器实例（定向，不广播）。
+                    let dense = self.channel_layout.dense_for(pp.channel as usize);
+                    if dense != u32::MAX {
                         let time = self
                             .tick_to_sample(cc.tick)
                             .saturating_sub(self.block_start_sample)
                             as u32;
-                        if let Some(Some(slot)) = self.instruments.get_mut(dense) {
-                            slot.events.push(PluginEvent::ParamValue {
+                        if let Some(Some(src)) = self.instruments.get_mut(dense as usize)
+                            && let Some(p) = src.chain.iter_mut().find(|p| p.slot_id == pp.uid)
+                        {
+                            p.params.push(PluginEvent::ParamValue {
                                 time,
                                 param_id: pp.param_id,
                                 value: f64::from(pp.value),

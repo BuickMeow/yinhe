@@ -50,6 +50,8 @@ pub(crate) struct SortedCC {
 pub(crate) struct PluginParamEvent {
     /// MIDI 全局通道（0..256，与 `TrackData::global_channel()` 对齐）。
     pub(crate) channel: u8,
+    /// 目标乐器实例 uid（同一通道可叠加多个乐器，按 uid 精确定位）。
+    pub(crate) uid: u64,
     pub(crate) param_id: u32,
     /// 归一化值 0..1。
     pub(crate) value: f32,
@@ -510,6 +512,7 @@ fn emit_param_event(
         // `plugin_param` 分支走 `PluginEvent::ParamValue`（值保持归一化）。
         ParamDevice::PluginInstrument {
             channel: plugin_channel,
+            uid,
         } => {
             out.push(SortedCC {
                 tick,
@@ -520,6 +523,7 @@ fn emit_param_event(
                 event: AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(0, 0))),
                 plugin_param: Some(PluginParamEvent {
                     channel: *plugin_channel,
+                    uid: *uid,
                     param_id: *id,
                     value: value.clamp(0.0, 1.0),
                 }),
@@ -807,7 +811,7 @@ mod tests {
     fn emit_plugin_instrument_param_keeps_normalized() {
         let model = model_with_lanes(vec![AutomationLane {
             target: AutomationTarget::Param {
-                device: ParamDevice::PluginInstrument { channel: 2 },
+                device: ParamDevice::PluginInstrument { channel: 2, uid: 7 },
                 id: 42,
                 name: "Cutoff".into(),
             },
@@ -832,6 +836,7 @@ mod tests {
         for e in events.iter() {
             let pp = e.plugin_param.expect("插件参数事件必须带 plugin_param");
             assert_eq!(pp.channel, 2);
+            assert_eq!(pp.uid, 7);
             assert_eq!(pp.param_id, 42);
             // 占位 event 恒为 Raw(0,0)：dispatch 按 plugin_param 分支优先处理。
             assert!(matches!(

@@ -490,61 +490,74 @@ impl App {
         let Some(idx) = self.workspace.active_doc else {
             return;
         };
-        let device_instrument = {
-            let doc = &self.workspace.documents[idx];
-            crate::arrange::plugin_instrument_of(&doc.data.model.tracks, &doc.mixer, track_idx)
-        };
         let (title, device_name, mut entries, channel) = {
             let doc = &self.workspace.documents[idx];
             let Some(track) = doc.data.model.tracks.get(track_idx) else {
                 return;
             };
             let track_name = track.name.clone();
-            match device_instrument {
-                Some(ich) => {
-                    // 插件设备：实例可用才有参数（未加载时空列表，窗口提示）。
-                    let (name, params) = match self
+            let ch = track.global_channel();
+            // 该通道的乐器链（可多个）：空 = 内置 XSynth。
+            let instruments: Vec<(u64, String)> = doc
+                .mixer
+                .instruments
+                .get(ch as usize)
+                .map(|refs| refs.iter().map(|r| (r.uid, r.name.clone())).collect())
+                .unwrap_or_default();
+            if instruments.is_empty() {
+                // XSynth 设备：内置参数（音源 + 通道 DSP；跳过 Tempo，那是工程级）。
+                // Pitch Bend 单独提到列表首位（见下方统一插入），这里先排除。
+                let pb = pitch_bend_target(ch);
+                let entries = crate::piano_view::automation_panel::automation_targets(Some(ch))
+                    .into_iter()
+                    .filter(|t| !matches!(t, yinhe_types::AutomationTarget::Tempo) && *t != pb)
+                    .map(|t| AutomationEntry {
+                        label: crate::arrange::lane_label(&t),
+                        target: t,
+                    })
+                    .collect();
+                (track_name, "XSynth".to_string(), entries, ch)
+            } else {
+                // 插件设备：**按乐器分组**——逐乐器列出其参数；多乐器时标签前缀乐器名。
+                let multi = instruments.len() > 1;
+                let device_name = if multi {
+                    format!("{} 个乐器", instruments.len())
+                } else {
+                    instruments[0].1.clone()
+                };
+                let mut entries: Vec<AutomationEntry> = Vec::new();
+                for (uid, name) in &instruments {
+                    let params = self
                         .instrument_racks
                         .get_mut(idx)
-                        .and_then(|rack| rack.instance_mut(ich, 0))
-                    {
-                        Some(instance) => (instance.name().to_string(), instance.param_list()),
-                        None => (String::new(), Vec::new()),
-                    };
-                    let entries: Vec<AutomationEntry> = params
-                        .into_iter()
-                        .map(|p| AutomationEntry {
-                            label: if p.module.is_empty() {
-                                p.name.clone()
-                            } else {
-                                format!("{}/{}", p.module, p.name)
-                            },
+                        .and_then(|rack| rack.instance_mut_by_uid(*uid))
+                        .map(|instance| instance.param_list())
+                        .unwrap_or_default();
+                    for p in params {
+                        let base = if p.module.is_empty() {
+                            p.name.clone()
+                        } else {
+                            format!("{}/{}", p.module, p.name)
+                        };
+                        let label = if multi {
+                            format!("{name} · {base}")
+                        } else {
+                            base
+                        };
+                        entries.push(AutomationEntry {
+                            label,
                             target: yinhe_types::AutomationTarget::Param {
                                 device: yinhe_types::automation::ParamDevice::PluginInstrument {
-                                    channel: ich,
+                                    channel: ch,
+                                    uid: *uid,
                                 },
                                 id: p.id,
                                 name: p.name,
                             },
-                        })
-                        .collect();
-                    (track_name, name, entries, ich)
+                        });
+                    }
                 }
-                None => {
-                    // XSynth 设备：内置参数（音源 + 通道 DSP；跳过 Tempo，那是工程级）。
-                    // Pitch Bend 单独提到列表首位（见下方统一插入），这里先排除。
-                    let ch = track.global_channel();
-                    let pb = pitch_bend_target(ch);
-                    let entries = crate::piano_view::automation_panel::automation_targets(Some(ch))
-                        .into_iter()
-                        .filter(|t| !matches!(t, yinhe_types::AutomationTarget::Tempo) && *t != pb)
-                        .map(|t| AutomationEntry {
-                            label: crate::arrange::lane_label(&t),
-                            target: t,
-                        })
-                        .collect();
-                    (track_name, "XSynth".to_string(), entries, ch)
-                }
+                (track_name, device_name, entries, ch)
             }
         };
         // 每个设备（XSynth / 插件）必备的 Pitch Bend，固定放列表首位。

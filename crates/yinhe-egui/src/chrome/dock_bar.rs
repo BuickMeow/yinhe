@@ -1234,10 +1234,18 @@ fn open_param_panel(
                 .get_mut(idx)
                 .and_then(|rack| rack.instance_mut(ch, 0))?;
             let title = instance.name().to_string();
+            let uid = app.workspace.documents[idx]
+                .mixer
+                .instruments
+                .get(ch as usize)
+                .and_then(|v| v.first())
+                .map(|r| r.uid)
+                .unwrap_or(0);
             Some(ParamPanel::open(
                 ParamTarget::Instrument {
                     channel: ch,
                     index: 0,
+                    uid,
                 },
                 title,
                 instance,

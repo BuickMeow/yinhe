@@ -245,6 +245,7 @@ impl AudioEngine {
                     None => {
                         src.chain.push(crate::instrument::InstrumentProc {
                             slot_id,
+                            params: Vec::new(),
                             processor: p,
                         });
                         None

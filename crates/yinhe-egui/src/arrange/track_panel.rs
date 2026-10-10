@@ -16,7 +16,6 @@ mod hover;
 mod interaction;
 mod render;
 mod types;
-pub(crate) use interaction::plugin_instrument_of;
 pub(crate) use types::TrackAction;
 
 /// 色带图标（chevron / 加号）命中区高 16px，其底边距行底（色带底）1px，

@@ -29,6 +29,10 @@ const fn default_gain() -> f32 {
     1.0
 }
 
+const fn default_instrument_uid() -> u64 {
+    1
+}
+
 impl Default for StripParams {
     fn default() -> Self {
         Self {
@@ -71,6 +75,10 @@ pub enum PluginFormat {
 /// 「哪个插件 + 是否旁通 + 状态字节」。加载时按 id 为主、路径为辅找回插件。
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InsertRef {
+    /// 工程内稳定唯一 id（仅乐器用：自动化按此寻址到具体实例，增删/排序不受影响）。
+    /// 0 = 未分配（旧工程），加载时由 `ensure_instrument_uids` 补号。
+    #[serde(default)]
+    pub uid: u64,
     /// 插件包路径（如 .clap 文件 / .vst3 bundle 目录）。
     pub plugin_path: PathBuf,
     /// 包内插件 id（CLAP id / VST3 32 位十六进制 class id）。
@@ -138,6 +146,9 @@ pub struct MixerParams {
     /// 混音参数（推子/声像/insert/send）统一走该 MIDI 通道的 strip 表。
     #[serde(default, deserialize_with = "de_instruments")]
     pub instruments: Vec<Vec<InsertRef>>,
+    /// 下一个乐器实例 uid（工程内唯一、持久化；加载时对齐到已用最大值 +1）。
+    #[serde(default = "default_instrument_uid")]
+    pub next_instrument_uid: u64,
     /// 音频通道 strip（索引 = 音频通道号，与 `TrackData::audio_channel` 对齐）。
     #[serde(default)]
     pub audio_channels: Vec<StripParams>,
@@ -166,6 +177,7 @@ impl Default for MixerParams {
             channel_inserts: vec![Vec::new(); CHANNEL_COUNT],
             master_inserts: Vec::new(),
             instruments: vec![Vec::new(); CHANNEL_COUNT],
+            next_instrument_uid: 1,
             audio_channels: Vec::new(),
             audio_inserts: Vec::new(),
             audio_sends: Vec::new(),
@@ -187,6 +199,7 @@ impl MixerParams {
         self.sends.truncate(CHANNEL_COUNT);
         self.instruments.resize(CHANNEL_COUNT, Vec::new());
         self.instruments.truncate(CHANNEL_COUNT);
+        self.ensure_instrument_uids();
         self.bus_inserts.resize(self.buses.len(), Vec::new());
         self.bus_inserts.truncate(self.buses.len());
         // 防御：清理指向不存在总线的 send（工程被手工编辑/版本迁移残留）。
@@ -199,6 +212,29 @@ impl MixerParams {
     /// 总线数量。
     pub fn bus_count(&self) -> usize {
         self.buses.len()
+    }
+
+    /// 分配一个新的乐器实例 uid（恒 ≥1）。
+    pub fn alloc_instrument_uid(&mut self) -> u64 {
+        let uid = self.next_instrument_uid.max(1);
+        self.next_instrument_uid = uid + 1;
+        uid
+    }
+
+    /// 加载后调用：给未分配 uid 的乐器补号，并把 `next_instrument_uid`
+    /// 对齐到已用最大值 +1。幂等。
+    pub fn ensure_instrument_uids(&mut self) {
+        for refs in &mut self.instruments {
+            for r in refs.iter_mut() {
+                if r.uid == 0 {
+                    let uid = self.next_instrument_uid.max(1);
+                    self.next_instrument_uid = uid + 1;
+                    r.uid = uid;
+                } else if r.uid >= self.next_instrument_uid {
+                    self.next_instrument_uid = r.uid + 1;
+                }
+            }
+        }
     }
 
     /// 新增一条总线，返回其索引。

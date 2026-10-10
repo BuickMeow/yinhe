@@ -24,8 +24,8 @@ pub(crate) enum ParamTarget {
         target: yinhe_audio::InsertTarget,
         slot: usize,
     },
-    /// MIDI 全局通道 + 该通道链内序号（挂载的插件乐器）。
-    Instrument { channel: u8, index: usize },
+    /// MIDI 全局通道 + 该通道链内序号 + 乐器 uid（挂载的插件乐器）。
+    Instrument { channel: u8, index: usize, uid: u64 },
 }
 
 /// 参数面板状态（打开时枚举一次；插件 rescan 时重枚举）。
@@ -103,27 +103,26 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
         return;
     };
 
-    // 「显示自动化」按钮状态：该乐器通道已有的插件参数 lane 集
-    //（只遍历本通道轨道，参数可达数千个，逐参数查会太贵）。
-    let am_channel = match panel.target {
-        ParamTarget::Instrument { channel, .. } => Some(channel),
+    // 「显示自动化」按钮状态：该乐器实例已有的插件参数 lane 集
+    //（只遍历该 uid 的 lane；参数可达数千个，逐参数查会太贵）。
+    let am_target = match panel.target {
+        ParamTarget::Instrument { channel, uid, .. } => Some((channel, uid)),
         ParamTarget::Insert { .. } => None,
     };
-    let am_lanes: std::collections::HashSet<(u8, u32)> = am_channel
-        .map(|channel| {
+    let am_lanes: std::collections::HashSet<(u64, u32)> = am_target
+        .map(|(_channel, target_uid)| {
             let doc = &app.workspace.documents[idx];
             doc.data
                 .model
                 .tracks
                 .iter()
-                .filter(|t| t.global_channel() == channel)
                 .flat_map(|t| t.automation_lanes.iter())
                 .filter_map(|l| match &l.target {
                     yinhe_types::AutomationTarget::Param {
-                        device: yinhe_types::automation::ParamDevice::PluginInstrument { channel },
+                        device: yinhe_types::automation::ParamDevice::PluginInstrument { uid, .. },
                         id,
                         ..
-                    } => Some((*channel, *id)),
+                    } if *uid == target_uid => Some((*uid, *id)),
                     _ => None,
                 })
                 .collect()
@@ -164,7 +163,7 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
                                     .mixer_racks
                                     .get_mut(idx)
                                     .and_then(|rack| rack.instance_mut(target, slot)),
-                                ParamTarget::Instrument { channel, index } => app
+                                ParamTarget::Instrument { channel, index, .. } => app
                                     .instrument_racks
                                     .get_mut(idx)
                                     .and_then(|rack| rack.instance_mut(channel, index)),
@@ -223,8 +222,8 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
                                 .max_height(list_h)
                                 .show_rows(ui, row_h, panel.filtered.len(), |ui, range| {
                                     for &pi in &panel.filtered[range] {
-                                        let am_exists = am_channel.map(|ch| {
-                                            am_lanes.contains(&(ch, panel.params[pi].id))
+                                        let am_exists = am_target.map(|(_ch, uid)| {
+                                            am_lanes.contains(&(uid, panel.params[pi].id))
                                         });
                                         if param_row(
                                             ui,
@@ -235,7 +234,7 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
                                             &panel.queue,
                                             &mut panel.wrote_params,
                                             am_exists,
-                                        ) && am_channel.is_some()
+                                        ) && am_target.is_some()
                                         {
                                             let p = &panel.params[pi];
                                             lane_requests.push((p.id, p.name.clone()));
@@ -250,9 +249,9 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
         },
     );
     // 「显示自动化」：创建/定位该参数的 AM lane（窗口内无法借 app，攒到外部处理）。
-    if let Some(channel) = am_channel {
+    if let Some((channel, uid)) = am_target {
         for (param_id, name) in lane_requests {
-            app.toggle_plugin_param_lane(idx, channel, param_id, &name);
+            app.toggle_plugin_param_lane(idx, channel, uid, param_id, &name);
         }
     }
     if panel.wrote_params {

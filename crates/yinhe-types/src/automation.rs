@@ -142,7 +142,9 @@ pub enum ParamDevice {
     /// 通道内置 XSynth 参数（id 见 [`XSYNTH_PARAMS`]）。
     ChannelInstrument { channel: u8 },
     /// 通道乐器插件（VST3/CLAP）参数（id 为插件原生 id）。
-    PluginInstrument { channel: u8 },
+    /// `channel` = 所在 MIDI 通道；`uid` = 该通道链内乐器实例的稳定唯一 id
+    /// （同一通道可叠加多个乐器，按 uid 区分）。
+    PluginInstrument { channel: u8, uid: u64 },
 }
 
 /// 内置参数的 MIDI 绑定（导入/导出/回放的双向映射）。
@@ -331,7 +333,7 @@ impl ParamDevice {
     pub fn channel(&self) -> u8 {
         match self {
             ParamDevice::ChannelInstrument { channel }
-            | ParamDevice::PluginInstrument { channel } => *channel,
+            | ParamDevice::PluginInstrument { channel, .. } => *channel,
         }
     }
 }
@@ -478,7 +480,7 @@ impl AutomationTarget {
                 },
                 None if !name.is_empty() => name.clone(),
                 None => match device {
-                    ParamDevice::PluginInstrument { channel } => {
+                    ParamDevice::PluginInstrument { channel, .. } => {
                         format!("Plugin Param {id} (ch {channel})")
                     }
                     _ => format!("Param {id}"),
@@ -885,7 +887,7 @@ mod tests {
 
         // 第三方插件参数：无内置表 → 归一化显示（无换算上限），名字用缓存。
         let plug = AutomationTarget::Param {
-            device: ParamDevice::PluginInstrument { channel: 2 },
+            device: ParamDevice::PluginInstrument { channel: 2, uid: 1 },
             id: 42,
             name: "Cutoff".into(),
         };

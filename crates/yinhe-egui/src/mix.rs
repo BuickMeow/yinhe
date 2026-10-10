@@ -382,6 +382,7 @@ impl App {
             for r in refs {
                 let _ = rack.add(
                     ch as u8,
+                    r.uid,
                     r.format,
                     &r.plugin_path,
                     &r.plugin_id,
@@ -766,6 +767,7 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
         MixAction::AddInsert { target, plugin } => {
             if let Some(refs) = insert_refs(app.workspace.documents[idx].mixer_mut(), target) {
                 refs.push(yinhe_mixer::InsertRef {
+                    uid: 0,
                     plugin_path: plugin.path.clone(),
                     plugin_id: plugin.id.clone(),
                     name: plugin.name.clone(),
@@ -882,11 +884,14 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
             }
         }
         MixAction::AssignInstrument { channel, plugin } => {
+            let uid;
             {
                 let doc = &mut app.workspace.documents[idx];
                 let m = doc.mixer_mut();
                 m.ensure_len();
+                uid = m.alloc_instrument_uid();
                 m.instruments[channel as usize].push(yinhe_mixer::InsertRef {
+                    uid,
                     plugin_path: plugin.path.clone(),
                     plugin_id: plugin.id.clone(),
                     name: plugin.name.clone(),
@@ -899,6 +904,7 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
                 let rack = &mut app.instrument_racks[idx];
                 if let Err(e) = rack.add(
                     channel,
+                    uid,
                     plugin.format,
                     &plugin.path,
                     &plugin.id,
@@ -953,6 +959,13 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
             }
         }
         MixAction::OpenInstrumentParams { channel, index } => {
+            let uid = app.workspace.documents[idx]
+                .mixer
+                .instruments
+                .get(channel as usize)
+                .and_then(|refs| refs.get(index))
+                .map(|r| r.uid)
+                .unwrap_or(0);
             let panel = app
                 .instrument_racks
                 .get_mut(idx)
@@ -960,7 +973,11 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
                 .map(|instance| {
                     let title = instance.name().to_string();
                     ParamPanel::open(
-                        param_panel::ParamTarget::Instrument { channel, index },
+                        param_panel::ParamTarget::Instrument {
+                            channel,
+                            index,
+                            uid,
+                        },
                         title,
                         instance,
                     )

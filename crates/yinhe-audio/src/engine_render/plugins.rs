@@ -213,9 +213,18 @@ impl AudioEngine {
                             "乐器块长 {f} 超过插件能力 {}",
                             proc.processor.max_block_frames()
                         );
+                        // 广播事件（音符/CC/PB/RPN）+ 本乐器定向参数事件合并。
+                        let ev: &[PluginEvent] = if proc.params.is_empty() {
+                            &events
+                        } else {
+                            self.event_scratch.clear();
+                            self.event_scratch.extend_from_slice(&events);
+                            self.event_scratch.extend_from_slice(&proc.params);
+                            &self.event_scratch
+                        };
                         if idx == 0 {
                             proc.processor.process(
-                                &events,
+                                ev,
                                 &mut cb.left[..f],
                                 &mut cb.right[..f],
                                 block_start_sample,
@@ -224,7 +233,7 @@ impl AudioEngine {
                             self.scratch_l[..f].fill(0.0);
                             self.scratch_r[..f].fill(0.0);
                             proc.processor.process(
-                                &events,
+                                ev,
                                 &mut self.scratch_l[..f],
                                 &mut self.scratch_r[..f],
                                 block_start_sample,
@@ -234,6 +243,7 @@ impl AudioEngine {
                                 cb.right[i] += self.scratch_r[i];
                             }
                         }
+                        proc.params.clear();
                     }
                 }
             }

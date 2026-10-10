@@ -26,7 +26,7 @@ impl AudioEngine {
     pub(crate) fn apply_chase_result(
         &mut self,
         states: &[Option<ChannelState>; 256],
-        plugin_params: &[(u8, u32, f32)],
+        plugin_params: &[(u8, u64, u32, f32)],
     ) {
         let skip = self.chase_skip();
         for ch in 0..256u32 {
@@ -84,13 +84,16 @@ impl AudioEngine {
             }
         }
         // 插件参数 chase：seek 后插件已 reset（值丢失），把目标位置的
-        // lane 值写回对应乐器实例（归一化值，下一块 process 生效）。
-        for &(ch, param_id, value) in plugin_params {
-            let Some(dense) = self.channel_plugin_dense(ch) else {
+        // lane 值写回**对应 uid 的**乐器实例（归一化值，下一块 process 生效）。
+        for &(ch, uid, param_id, value) in plugin_params {
+            let dense = self.channel_layout.dense_for(ch as usize);
+            if dense == u32::MAX {
                 continue;
-            };
-            if let Some(Some(slot)) = self.instruments.get_mut(dense) {
-                slot.events.push(PluginEvent::ParamValue {
+            }
+            if let Some(Some(src)) = self.instruments.get_mut(dense as usize)
+                && let Some(p) = src.chain.iter_mut().find(|p| p.slot_id == uid)
+            {
+                p.params.push(PluginEvent::ParamValue {
                     time: 0,
                     param_id,
                     value: f64::from(value),

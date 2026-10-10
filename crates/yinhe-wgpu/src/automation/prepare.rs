@@ -41,13 +41,16 @@ fn target_hash(target: &AutomationTarget) -> u64 {
         AutomationTarget::Rpn { parameter } => 0x2_0000 + u64::from(*parameter),
         AutomationTarget::Nrpn { parameter } => 0x3_0000 + u64::from(*parameter),
         AutomationTarget::Tempo => u64::MAX,
-        AutomationTarget::Param { device, id, .. } => {
-            let (device_tag, channel) = match device {
-                ParamDevice::ChannelInstrument { channel } => (0u64, u64::from(*channel)),
-                ParamDevice::PluginInstrument { channel } => (1, u64::from(*channel)),
-            };
-            0x4_0000_0000 + (device_tag << 40) + (channel << 32) + u64::from(*id)
-        }
+        AutomationTarget::Param { device, id, .. } => match device {
+            // 内置设备：通道级。
+            ParamDevice::ChannelInstrument { channel } => {
+                0x4_0000_0000 + (u64::from(*channel) << 32) + u64::from(*id)
+            }
+            // 插件乐器：按实例 uid 区分（同通道可叠加多个乐器）。
+            ParamDevice::PluginInstrument { uid, .. } => {
+                0x8_0000_0000 + (uid.wrapping_shl(32)) + u64::from(*id)
+            }
+        },
     }
 }
 

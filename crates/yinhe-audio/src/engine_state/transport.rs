@@ -97,6 +97,7 @@ impl AudioEngine {
         for inst in self.instruments.iter_mut().flatten() {
             for p in &mut inst.chain {
                 p.processor.reset();
+                p.params.clear();
             }
             inst.events.clear();
         }

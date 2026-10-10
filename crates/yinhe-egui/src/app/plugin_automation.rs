@@ -48,8 +48,8 @@ impl App {
             doc.edit.cursor_tick.unwrap_or(0.0).max(0.0) as u32
         };
         let mut any_change = false;
-        for (ich, param_id, value) in changes {
-            let Some((track_idx, lane_idx, target)) = self.plugin_param_lane(idx, ich, param_id)
+        for (_channel, uid, param_id, value) in changes {
+            let Some((track_idx, lane_idx, target)) = self.plugin_param_lane(idx, uid, param_id)
             else {
                 continue;
             };
@@ -205,11 +205,12 @@ impl App {
         &mut self,
         idx: usize,
         channel: u8,
+        uid: u64,
         param_id: u32,
         name: &str,
     ) {
         let target = AutomationTarget::Param {
-            device: ParamDevice::PluginInstrument { channel },
+            device: ParamDevice::PluginInstrument { channel, uid },
             id: param_id,
             name: name.to_string(),
         };
@@ -253,36 +254,29 @@ impl App {
 
     /// 找插件 GUI 改参对应的 AM lane：`(track_idx, lane_idx, target)`。
     ///
-    /// 匹配规则：轨道归属该乐器通道；lane 的 target 是同通道同 param_id 的
-    /// `PluginParam`（name 不参与匹配，换插件显示名变化不影响）。
+    /// 匹配规则：lane 的 target 是同乐器（uid 唯一）同 param_id 的
+    /// `PluginInstrument`（name 不参与匹配，换插件显示名变化不影响）。
     fn plugin_param_lane(
         &self,
         idx: usize,
-        channel: u8,
+        uid: u64,
         param_id: u32,
     ) -> Option<(u16, usize, AutomationTarget)> {
         let doc = &self.workspace.documents[idx];
-        let track_idx = doc
-            .data
-            .model
-            .tracks
-            .iter()
-            .position(|t| t.global_channel() == channel)?;
-        let track = doc.data.model.tracks.get(track_idx)?;
-        let lane_idx = track.automation_lanes.iter().position(|l| {
-            matches!(
-                &l.target,
-                AutomationTarget::Param {
-                    device: ParamDevice::PluginInstrument { channel: c },
-                    id: pid,
-                    ..
-                } if *c == channel && *pid == param_id
-            )
-        })?;
-        Some((
-            track_idx as u16,
-            lane_idx,
-            track.automation_lanes[lane_idx].target.clone(),
-        ))
+        for (ti, track) in doc.data.model.tracks.iter().enumerate() {
+            if let Some(li) = track.automation_lanes.iter().position(|l| {
+                matches!(
+                    &l.target,
+                    AutomationTarget::Param {
+                        device: ParamDevice::PluginInstrument { uid: u, .. },
+                        id: pid,
+                        ..
+                    } if *u == uid && *pid == param_id
+                )
+            }) {
+                return Some((ti as u16, li, track.automation_lanes[li].target.clone()));
+            }
+        }
+        None
     }
 }

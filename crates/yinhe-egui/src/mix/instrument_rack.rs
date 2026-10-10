@@ -47,18 +47,16 @@ pub(crate) struct InstrumentSlot {
 pub(crate) struct InstrumentRack {
     /// 全部乐器槽位，按通道分组、组内按挂载顺序排列（= 持久化链顺序）。
     slots: Vec<InstrumentSlot>,
-    /// 下一个槽位 id（单调递增）。
-    next_slot_id: u64,
     /// 已移除/被替换但仍占着渲染线程的旧实例：其旧处理器退回后按 slot_id deactivate。
     pending_return: Vec<(u64, PluginInstance)>,
     /// 最近一次加载/激活失败信息（MIX 界面状态行展示）。
     pub last_error: Option<String>,
-    /// 待处理的插件 GUI 改参（MIDI 通道, param_id, 归一化值）。
+    /// 待处理的插件 GUI 改参（MIDI 通道, 乐器 uid, param_id, 归一化值）。
     /// 每帧由 UI 消费（写入插件参数 AM lane）；队列在 `poll_requests` 填充。
-    pub gui_param_changes: Vec<(u8, u32, f64)>,
-    /// 正在 GUI 编辑（beginEdit 后未 endEdit）的乐器通道集：
+    pub gui_param_changes: Vec<(u8, u64, u32, f64)>,
+    /// 正在 GUI 编辑（beginEdit 后未 endEdit）的乐器 uid 集：
     /// 一次拖动合并为一条 undo 的分组依据。
-    pub gui_param_editing: std::collections::HashSet<u8>,
+    pub gui_param_editing: std::collections::HashSet<u64>,
 }
 
 impl InstrumentRack {
@@ -93,6 +91,12 @@ impl InstrumentRack {
         index: usize,
     ) -> Option<&mut PluginInstance> {
         self.slot_mut(channel, index)?.instance.as_mut()
+    }
+
+    /// 按 uid 取插件实例（自动化设备枚举用）。
+    pub(crate) fn instance_mut_by_uid(&mut self, uid: u64) -> Option<&mut PluginInstance> {
+        let pos = self.slot_by_id(uid)?;
+        self.slots[pos].instance.as_mut()
     }
 
     /// 该乐器通道是否持有可用插件实例（音符预览路由用：有实例走插件试听）。
@@ -183,10 +187,13 @@ impl InstrumentRack {
     }
 
     /// 追加一个乐器槽位到该通道链尾（不激活、不发送——发送走 ensure_all_sent）。
+    /// `uid` = 持久化 `InsertRef.uid`（作为槽位 id，引擎回收按它匹配）。
     /// 持久化层 InsertRef 由调用方先行 append。
+    #[allow(clippy::too_many_arguments)] // 透传插件加载参数
     pub fn add(
         &mut self,
         channel: u8,
+        uid: u64,
         format: PluginFormat,
         plugin_path: &Path,
         plugin_id: &str,
@@ -219,11 +226,9 @@ impl InstrumentRack {
         if let Some(e) = &error {
             self.last_error = Some(e.0.clone());
         }
-        let slot_id = self.next_slot_id;
-        self.next_slot_id += 1;
         self.slots.push(InstrumentSlot {
             channel,
-            slot_id,
+            slot_id: uid,
             instance,
             sent: false,
             activate_failed: false,
@@ -329,8 +334,8 @@ impl InstrumentRack {
         let mut restarts: Vec<(u8, u64)> = Vec::new();
         let mut latency_changed = false;
         // GUI 改参先收集，循环后再写自身字段（避免与 slots 的借用冲突）。
-        let mut param_changes: Vec<(u8, u32, f64)> = Vec::new();
-        let mut editing_now: Vec<(u8, bool)> = Vec::new();
+        let mut param_changes: Vec<(u8, u64, u32, f64)> = Vec::new();
+        let mut editing_now: Vec<(u64, bool)> = Vec::new();
         for rt in self.slots.iter_mut() {
             // 插件原生 GUI 轮询（主题同步 / 用户缩放 / 插件改尺寸 / 关窗）。
             #[cfg(target_os = "macos")]
@@ -346,9 +351,9 @@ impl InstrumentRack {
             };
             let (changes, editing) = instance.take_gui_param_changes();
             for (param_id, value) in changes {
-                param_changes.push((rt.channel, param_id, value));
+                param_changes.push((rt.channel, rt.slot_id, param_id, value));
             }
-            editing_now.push((rt.channel, editing));
+            editing_now.push((rt.slot_id, editing));
             let requests = instance.poll_requests();
             if requests.latency_changed {
                 latency_changed = true;
@@ -357,11 +362,11 @@ impl InstrumentRack {
                 restarts.push((rt.channel, rt.slot_id));
             }
         }
-        for (channel, editing) in editing_now {
+        for (uid, editing) in editing_now {
             if editing {
-                self.gui_param_editing.insert(channel);
+                self.gui_param_editing.insert(uid);
             } else {
-                self.gui_param_editing.remove(&channel);
+                self.gui_param_editing.remove(&uid);
             }
         }
         self.gui_param_changes.extend(param_changes);
@@ -486,6 +491,7 @@ mod tests {
         });
         let mut mixer = MixerParams::default();
         mixer.instruments[3] = vec![yinhe_mixer::InsertRef {
+            uid: 1,
             format: yinhe_mixer::PluginFormat::Clap,
             plugin_path: std::path::PathBuf::from("/tmp/x.clap"),
             plugin_id: "test".into(),

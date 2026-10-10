@@ -55,6 +55,8 @@ pub(crate) struct AudioEngine {
     /// 乐器求和用的临时缓冲：链内第 2 个及以后的乐器输出先写这里再累加。按需增长。
     pub(crate) scratch_l: Vec<f32>,
     pub(crate) scratch_r: Vec<f32>,
+    /// 乐器事件合并用的临时缓冲（广播事件 + 定向参数事件）。每块复用。
+    pub(crate) event_scratch: Vec<yinhe_mixer::PluginEvent>,
     /// 内置音源通道处理段（CC7/10/11/71/74），索引 = dense 通道。
     /// 挂插件乐器的通道不处理（CC 透传插件）。见 `channel_dsp` 模块文档。
     pub(crate) channel_dsp: Vec<crate::channel_dsp::ChannelDspChain>,
@@ -213,6 +215,7 @@ impl AudioEngine {
                 instruments: (0..compacted).map(|_| None).collect(),
                 scratch_l: Vec::new(),
                 scratch_r: Vec::new(),
+                event_scratch: Vec::new(),
                 channel_dsp: (0..compacted)
                     .map(|_| crate::channel_dsp::ChannelDspChain::new(sample_rate))
                     .collect(),

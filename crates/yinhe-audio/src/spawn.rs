@@ -731,10 +731,10 @@ pub(crate) enum WorkerResult {
     },
     /// Result of `PrepareChase` — 256-channel state snapshot.
     /// `Some(state)` = 该通道在目标位置有生效事件（无事件通道不触碰）。
-    /// `plugin_params`：插件参数 chase 值（MIDI 通道, param_id, 归一化值）。
+    /// `plugin_params`：插件参数 chase 值（MIDI 通道, 乐器 uid, param_id, 归一化值）。
     ChaseResult {
         states: Box<[Option<ChannelState>; 256]>,
-        plugin_params: Vec<(u8, u32, f32)>,
+        plugin_params: Vec<(u8, u64, u32, f32)>,
         generation: u64,
     },
     LoadedSoundFont {
@@ -972,7 +972,7 @@ pub(crate) fn spawn_worker(
 }
 
 /// `compute_chase_states` 的结果：(256 通道状态, 插件参数 chase 值列表)。
-type ChaseOutcome = (Box<[Option<ChannelState>; 256]>, Vec<(u8, u32, f32)>);
+type ChaseOutcome = (Box<[Option<ChannelState>; 256]>, Vec<(u8, u64, u32, f32)>);
 
 /// 在 worker 线程上**查询式**构建 256 通道状态快照：不再从曲首逐条累计
 /// cc_events，而是直接查询模型自动化 lane——每个 lane 二分定位目标位置的
@@ -996,8 +996,8 @@ fn compute_chase_states(
 
     // 每通道收集目标位置生效事件（tick 排序后顺序 apply，多 track 同 channel 自动合并）。
     let mut events: [Vec<SortedCC>; 256] = std::array::from_fn(|_| Vec::new());
-    // 插件参数 chase：目标位置生效的 (乐器通道, param_id, 归一化值)。
-    let mut plugin_params: Vec<(u8, u32, f32)> = Vec::new();
+    // 插件参数 chase：目标位置生效的 (乐器通道, 乐器 uid, param_id, 归一化值)。
+    let mut plugin_params: Vec<(u8, u64, u32, f32)> = Vec::new();
 
     for (track_idx, track) in model.tracks.iter().enumerate() {
         if skip_mask.get(track_idx).copied().unwrap_or(false) {
@@ -1025,13 +1025,13 @@ fn compute_chase_states(
             }
             // 第三方乐器插件参数：不进 MIDI 通道状态（占位事件会污染 CC0），单独收集。
             if let yinhe_types::AutomationTarget::Param {
-                device: yinhe_types::automation::ParamDevice::PluginInstrument { channel },
+                device: yinhe_types::automation::ParamDevice::PluginInstrument { channel, uid },
                 id,
                 ..
             } = &lane.target
             {
                 if let Some((value, _)) = lane.value_at(target_tick) {
-                    plugin_params.push((*channel, *id, value));
+                    plugin_params.push((*channel, *uid, *id, value));
                 }
                 continue;
             }

@@ -14,8 +14,11 @@ use yinhe_mixer::{InstrumentProcessor, PluginEvent};
 
 /// 链内一个乐器处理器 + 其 UI 侧槽位 id（回调 deactivate 时按 id 匹配实例）。
 pub(crate) struct InstrumentProc {
-    /// UI 侧分配的稳定槽位 id（同一通道内唯一）。
+    /// UI 侧分配的稳定槽位 id（= 持久化 `InsertRef.uid`，同一通道内唯一）。
     pub slot_id: u64,
+    /// 只投给本乐器的**定向**事件（插件参数 `ParamValue`，按 uid 定位）。
+    /// 与通道级广播事件分开存，`render_instruments` 时合并后一起 `process`。
+    pub params: Vec<PluginEvent>,
     /// activate 后 move 进来的处理器（渲染线程独占）。
     pub processor: Box<dyn InstrumentProcessor>,
 }

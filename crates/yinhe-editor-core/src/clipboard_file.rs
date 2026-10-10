@@ -249,11 +249,13 @@ fn write_note(w: &mut impl Write, note: &Note, key: u8) -> io::Result<()> {
 fn write_target(w: &mut impl Write, target: &AutomationTarget) -> io::Result<()> {
     match target {
         AutomationTarget::Param { device, id, name } => {
-            let (device_tag, channel) = match device {
-                ParamDevice::ChannelInstrument { channel } => (0u8, *channel),
-                ParamDevice::PluginInstrument { channel } => (1u8, *channel),
-            };
-            w.write_all(&[0, device_tag, channel])?;
+            match device {
+                ParamDevice::ChannelInstrument { channel } => w.write_all(&[0, 0, *channel])?,
+                ParamDevice::PluginInstrument { channel, uid } => {
+                    w.write_all(&[0, 1, *channel])?;
+                    w.write_all(&uid.to_le_bytes())?;
+                }
+            }
             w.write_all(&id.to_le_bytes())?;
             let bytes = name.as_bytes();
             w.write_all(&(bytes.len() as u32).to_le_bytes())?;
@@ -293,7 +295,14 @@ fn read_target(r: &mut impl Read) -> io::Result<AutomationTarget> {
             let channel = head[1];
             let device = match head[0] {
                 0 => ParamDevice::ChannelInstrument { channel },
-                1 => ParamDevice::PluginInstrument { channel },
+                1 => {
+                    let mut ub = [0u8; 8];
+                    r.read_exact(&mut ub)?;
+                    ParamDevice::PluginInstrument {
+                        channel,
+                        uid: u64::from_le_bytes(ub),
+                    }
+                }
                 _ => return Err(invalid("unknown param device")),
             };
             AutomationTarget::Param {
@@ -449,7 +458,10 @@ mod tests {
                 name: String::new(),
             },
             AutomationTarget::Param {
-                device: ParamDevice::PluginInstrument { channel: 11 },
+                device: ParamDevice::PluginInstrument {
+                    channel: 11,
+                    uid: 1,
+                },
                 id: 0xDEAD_BEEF,
                 name: "Filter Cutoff".into(),
             },
