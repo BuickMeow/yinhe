@@ -1036,6 +1036,7 @@ hint.arrange.audio_clip: "Trascina per spostare; trascina i bordi per tagliare; 
 hint.arrange.split_v: "Trascina per ridimensionare la larghezza delle intestazioni traccia; doppio clic per ripristinare"
 hint.arrange.hscroll: "Barra di scorrimento orizzontale · trascina per scorrere, trascina in verticale/rotella per zoomare"
 hint.arrange.vscroll: "Barra di scorrimento verticale · trascina per scorrere, trascina in orizzontale/rotella per zoomare"
+hint.arrange.corner_zoom: "Trascina per zoomare entrambi gli assi (doppio clic: adatta)"
 hint.pr.keyboard_zoom: "Rotella per zoomare l'asse delle altezze"
 hint.pr.auto_toggle: "Mostra/nascondi il pannello automazione"
 hint.pr.auto_add: "Aggiungi un pannello automazione"

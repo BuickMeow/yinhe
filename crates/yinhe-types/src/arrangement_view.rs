@@ -169,6 +169,24 @@ impl ArrangementView {
         self.base.dirty = true;
     }
 
+    /// 时间轴 fit：全曲 tick 范围铺满视口宽度。
+    pub fn fit_time(&mut self, width: f32, total_ticks: f64) {
+        if total_ticks > 0.0 && width > 0.0 {
+            self.base.pixels_per_tick = (width / total_ticks as f32).clamp(0.001, 10.0);
+            self.base.scroll_x = 0.0;
+            self.base.dirty = true;
+        }
+    }
+
+    /// 行高 fit：所有轨道/自动化行铺满视口高度（吸附到离散档位）。
+    pub fn fit_lane_height(&mut self, height: f32, total_rows: usize) {
+        if total_rows > 0 && height > 0.0 {
+            self.base.track_panel_row_height = snap_lane_height(height / total_rows as f32);
+            self.base.scroll_y = 0.0;
+            self.base.dirty = true;
+        }
+    }
+
     /// Hash of all fields that affect GPU rendering output.
     /// Used as cache key for GPU layers.
     pub fn render_hash(&self) -> u64 {

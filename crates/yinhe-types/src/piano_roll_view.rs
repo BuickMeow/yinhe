@@ -409,6 +409,24 @@ impl PianoRollView {
             self.zoom_cross_around(pointer_y, zoom_factor, viewport_height);
         }
     }
+
+    /// 时间轴 fit：让全曲 tick 范围铺满主轴视口。
+    pub fn fit_time(&mut self, main_size: f32, total_ticks: f64) {
+        if total_ticks > 0.0 && main_size > 0.0 {
+            self.base.pixels_per_tick = (main_size / total_ticks as f32).clamp(0.001, 10.0);
+            *self.main_scroll() = 0.0;
+            self.base.dirty = true;
+        }
+    }
+
+    /// 音高轴 fit：让 128 个音高键铺满副轴视口。
+    pub fn fit_pitch(&mut self, cross_size: f32) {
+        if cross_size > 0.0 {
+            self.key_height = cross_size / 128.0;
+            *self.cross_scroll() = 0.0;
+            self.base.dirty = true;
+        }
+    }
 }
 
 #[cfg(test)]

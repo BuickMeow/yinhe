@@ -1036,6 +1036,7 @@ hint.arrange.audio_clip: "Arraste para mover; arraste as bordas para recortar; a
 hint.arrange.split_v: "Arraste para redimensionar a largura dos cabeçalhos de faixa; clique duplo para redefinir"
 hint.arrange.hscroll: "Barra de rolagem horizontal · arraste para panoramizar, arraste na vertical/roda para ampliar"
 hint.arrange.vscroll: "Barra de rolagem vertical · arraste para panoramizar, arraste na horizontal/roda para ampliar"
+hint.arrange.corner_zoom: "Arraste para ampliar os dois eixos (duplo clique: ajustar)"
 hint.pr.keyboard_zoom: "Roda para ampliar o eixo das alturas"
 hint.pr.auto_toggle: "Mostrar/ocultar o painel de automação"
 hint.pr.auto_add: "Adicionar um painel de automação"

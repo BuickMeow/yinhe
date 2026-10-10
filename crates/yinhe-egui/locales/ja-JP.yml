@@ -1042,6 +1042,7 @@ hint.arrange.audio_clip: "ドラッグで移動；端をドラッグでトリム
 hint.arrange.split_v: "ドラッグしてトラックヘッダー幅を変更、ダブルクリックでリセット"
 hint.arrange.hscroll: "横スクロールバー · ドラッグでパン、縦ドラッグ/ホイールでズーム"
 hint.arrange.vscroll: "縦スクロールバー · ドラッグでパン、横ドラッグ/ホイールでズーム"
+hint.arrange.corner_zoom: "ドラッグで縦横ズーム（ダブルクリックで全体表示）"
 hint.pr.keyboard_zoom: "ホイールで音高軸をズーム"
 hint.pr.auto_toggle: "オートメーションパネルの表示/非表示"
 hint.pr.auto_add: "オートメーションパネルを追加"

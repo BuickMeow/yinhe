@@ -1037,6 +1037,7 @@ hint.arrange.audio_clip: "Tažením přesunete; tažením okrajů oříznete; ta
 hint.arrange.split_v: "Tažením změníte šířku záhlaví stopy; dvojklikem obnovíte"
 hint.arrange.hscroll: "Vodorovný posuvník · tažením posouváte, svislým tažením/kolečkem přibližujete"
 hint.arrange.vscroll: "Svislý posuvník · tažením posouváte, vodorovným tažením/kolečkem přibližujete"
+hint.arrange.corner_zoom: "Tažením přiblížíte obě osy (dvojklik: přizpůsobit)"
 hint.pr.keyboard_zoom: "Kolečkem přiblížíte osu výšky tónu"
 hint.pr.auto_toggle: "Zobrazit/skrýt panel automatizace"
 hint.pr.auto_add: "Přidat panel automatizace"

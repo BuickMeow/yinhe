@@ -564,10 +564,54 @@ pub fn show(
             egui::pos2(gpu_rect.max.x, arr_rect.max.y),
         );
 
-        // 右下角角落：横纵滚动条交叠区（SCROLLBAR_W × SCROLLBAR_H）
+        // 右下角角落：横纵滚动条交叠区（SCROLLBAR_W × SCROLLBAR_H）——缩放抓手。
+        // 拖动同时缩放横竖两轴；双击横竖一起 fit（对齐 FL）。
         let corner_rect = egui::Rect::from_min_max(gpu_rect.max, arr_rect.max);
-        ui.painter()
-            .rect_filled(corner_rect, 0.0, crate::theme::track_bg());
+        {
+            let resp = ui.interact(
+                corner_rect,
+                ui.id().with("arr_corner_zoom"),
+                egui::Sense::click_and_drag(),
+            );
+            let press_on = ui
+                .input(|i| i.pointer.press_origin())
+                .is_some_and(|p| corner_rect.contains(p));
+            let active = press_on && resp.dragged();
+            let base = crate::theme::track_bg();
+            let fill = if active {
+                crate::theme::pressed_color(base)
+            } else if resp.hovered() {
+                crate::theme::hover_color(base)
+            } else {
+                base
+            };
+            ui.painter().rect_filled(corner_rect, 0.0, fill);
+            if resp.hovered() || active {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
+            }
+            if active {
+                let d = resp.drag_delta();
+                let k = 0.005;
+                let anchor_x = corner_rect.center().x - arr_rect.min.x;
+                let anchor_y = corner_rect.center().y - arr_rect.min.y;
+                doc.edit.arrange_view.zoom_around_x(anchor_x, 1.0 + d.x * k);
+                doc.edit
+                    .arrange_view
+                    .zoom_lane_height(anchor_y, 1.0 + d.y * k);
+                ui.ctx().request_repaint();
+            } else if crate::widgets::scrollbar::double_clicked_in(ui, corner_rect) {
+                doc.edit
+                    .arrange_view
+                    .fit_time(music_rect.width(), total_ticks);
+                doc.edit
+                    .arrange_view
+                    .fit_lane_height(gpu_rect.height(), row_layout.total_rows());
+                ui.ctx().request_repaint();
+            }
+            if crate::view_interaction::pointer_hits(ui, corner_rect) {
+                crate::widgets::hint::set(ui.ctx(), t!("hint.arrange.corner_zoom"));
+            }
+        }
 
         let sb_drag_dy = crate::widgets::scrollbar::show(
             ui,
@@ -589,6 +633,12 @@ pub fn show(
             let factor = 1.0 - sb_drag_dy * 0.005;
             let anchor_x = sb_rect.center().x - arr_rect.min.x;
             doc.edit.arrange_view.zoom_around_x(anchor_x, factor);
+            ui.ctx().request_repaint();
+        }
+        if crate::widgets::scrollbar::double_clicked_in(ui, sb_rect) {
+            doc.edit
+                .arrange_view
+                .fit_time(music_rect.width(), total_ticks);
             ui.ctx().request_repaint();
         }
 
@@ -638,6 +688,12 @@ pub fn show(
             let factor = 1.0 - vsb_drag_dx * 0.005;
             let anchor_y = vsb_rect.center().y - arr_rect.min.y;
             doc.edit.arrange_view.zoom_lane_height(anchor_y, factor);
+            ui.ctx().request_repaint();
+        }
+        if crate::widgets::scrollbar::double_clicked_in(ui, vsb_rect) {
+            doc.edit
+                .arrange_view
+                .fit_lane_height(gpu_rect.height(), row_layout.total_rows());
             ui.ctx().request_repaint();
         }
 

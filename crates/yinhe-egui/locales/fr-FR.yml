@@ -1032,6 +1032,7 @@ hint.arrange.audio_clip: "Faire glisser pour déplacer ; glisser les bords pour 
 hint.arrange.split_v: "Faire glisser pour redimensionner la largeur des en-têtes de pistes ; double-clic pour réinitialiser"
 hint.arrange.hscroll: "Barre de défilement horizontale · glisser pour défiler, glisser verticalement/molette pour zoomer"
 hint.arrange.vscroll: "Barre de défilement verticale · glisser pour défiler, glisser horizontalement/molette pour zoomer"
+hint.arrange.corner_zoom: "Glisser pour zoomer les deux axes (double-clic : ajuster)"
 hint.pr.keyboard_zoom: "Molette pour zoomer l'axe des hauteurs"
 hint.pr.auto_toggle: "Afficher/masquer le panneau d'automatisation"
 hint.pr.auto_add: "Ajouter un panneau d'automatisation"

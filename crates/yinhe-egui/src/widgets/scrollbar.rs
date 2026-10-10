@@ -27,6 +27,18 @@ fn colors() -> (egui::Color32, egui::Color32, egui::Color32, egui::Color32) {
 const PPT_MIN: f32 = 0.001;
 const PPT_MAX: f32 = 10.0;
 
+/// 指针是否在 `rect` 内双击（Primary）。只读输入、不注册交互，
+/// 避免与滚动条内部已有的 `interact` 冲突。调用方用它做「双击 fit」。
+pub(crate) fn double_clicked_in(ui: &egui::Ui, rect: egui::Rect) -> bool {
+    ui.input(|i| {
+        i.pointer
+            .button_double_clicked(egui::PointerButton::Primary)
+    }) && ui
+        .input(|i| i.pointer.interact_pos())
+        .is_some_and(|p| rect.contains(p))
+        && !crate::view_interaction::pointer_over_popup(ui.ctx())
+}
+
 // ── Horizontal scrollbar ──
 
 /// Paint a scrollbar into the given rect along the **主轴方向**（时间轴）。

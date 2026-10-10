@@ -1036,6 +1036,7 @@ hint.arrange.audio_clip: "拖动移动片段；拖边缘裁剪；拖上角改淡
 hint.arrange.split_v: "拖动调整轨道头宽度，双击复位"
 hint.arrange.hscroll: "水平滚动条 · 拖动平移，垂直拖/滚轮缩放"
 hint.arrange.vscroll: "垂直滚动条 · 拖动平移，水平拖/滚轮缩放"
+hint.arrange.corner_zoom: "拖拽同时缩放横竖（双击适应全曲）"
 hint.pr.keyboard_zoom: "滚轮缩放音高轴"
 hint.pr.auto_toggle: "显示/隐藏自动化面板"
 hint.pr.auto_add: "增加自动化面板"

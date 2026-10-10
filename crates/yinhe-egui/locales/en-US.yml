@@ -1036,6 +1036,7 @@ hint.arrange.audio_clip: "Drag to move; drag edges to trim; drag top corners to 
 hint.arrange.split_v: "Drag to resize the track header width; double-click to reset"
 hint.arrange.hscroll: "Horizontal scrollbar · drag to pan, vertical drag/wheel to zoom"
 hint.arrange.vscroll: "Vertical scrollbar · drag to pan, horizontal drag/wheel to zoom"
+hint.arrange.corner_zoom: "Drag to zoom both axes (double-click to fit)"
 hint.pr.keyboard_zoom: "Wheel to zoom the pitch axis"
 hint.pr.auto_toggle: "Show/hide the automation panel"
 hint.pr.auto_add: "Add an automation panel"

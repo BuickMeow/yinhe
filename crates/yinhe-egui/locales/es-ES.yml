@@ -1032,6 +1032,7 @@ hint.arrange.audio_clip: "Arrastrar para mover; arrastrar los bordes para recort
 hint.arrange.split_v: "Arrastrar para redimensionar el ancho de los encabezados de pista; doble clic para restablecer"
 hint.arrange.hscroll: "Barra de desplazamiento horizontal · arrastrar para desplazar, arrastrar en vertical/rueda para ampliar"
 hint.arrange.vscroll: "Barra de desplazamiento vertical · arrastrar para desplazar, arrastrar en horizontal/rueda para ampliar"
+hint.arrange.corner_zoom: "Arrastra para ampliar ambos ejes (doble clic: ajustar)"
 hint.pr.keyboard_zoom: "Rueda para ampliar el eje de alturas"
 hint.pr.auto_toggle: "Mostrar/ocultar el panel de automatización"
 hint.pr.auto_add: "Añadir un panel de automatización"

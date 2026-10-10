@@ -42,6 +42,12 @@ pub(crate) fn show_scrollbars(
         egui::pos2(content_right_x, sb_y),
         egui::pos2(rect.max.x, rect.max.y),
     );
+    // 主轴/副轴视口长度（双击 fit 用）。
+    let (main_size, cross_size) = if view.is_vertical() {
+        (content_rect.height(), content_rect.width())
+    } else {
+        (content_rect.width(), content_rect.height())
+    };
     {
         let resp = ui.interact(
             corner_rect,
@@ -71,6 +77,11 @@ pub(crate) fn show_scrollbars(
             let anchor_y = content_rect.center().y - content_rect.min.y;
             view.zoom_around_x(anchor_x, 1.0 + d.x * k);
             view.zoom_around_y(anchor_y, 1.0 + d.y * k, content_rect.height());
+            ui.ctx().request_repaint();
+        } else if scrollbar::double_clicked_in(ui, corner_rect) {
+            // 双击夹角：横竖一起 fit。
+            view.fit_time(main_size, total_ticks);
+            view.fit_pitch(cross_size);
             ui.ctx().request_repaint();
         }
         if crate::view_interaction::pointer_hits(ui, corner_rect) {
@@ -127,6 +138,10 @@ pub(crate) fn show_scrollbars(
             view.zoom_around_y(anchor_y, factor, main_len);
             ui.ctx().request_repaint();
         }
+        if scrollbar::double_clicked_in(ui, tick_sb_rect) {
+            view.fit_time(main_len, total_ticks);
+            ui.ctx().request_repaint();
+        }
 
         // 音高横条
         let key_sb_rect = egui::Rect::from_min_max(
@@ -160,6 +175,10 @@ pub(crate) fn show_scrollbars(
             let factor = 1.0 - key_sb_drag * 0.005;
             let anchor_x = key_sb_rect.center().x - content_rect.min.x;
             view.zoom_around_x(anchor_x, factor);
+            ui.ctx().request_repaint();
+        }
+        if scrollbar::double_clicked_in(ui, key_sb_rect) {
+            view.fit_pitch(cross_len);
             ui.ctx().request_repaint();
         }
 
@@ -211,6 +230,10 @@ pub(crate) fn show_scrollbars(
             view.zoom_around_x(anchor_x, factor);
             ui.ctx().request_repaint();
         }
+        if scrollbar::double_clicked_in(ui, sb_rect) {
+            view.fit_time(content_rect.width(), total_ticks);
+            ui.ctx().request_repaint();
+        }
 
         // 音高竖条
         let vsb_rect = egui::Rect::from_min_max(
@@ -243,6 +266,10 @@ pub(crate) fn show_scrollbars(
             let factor = 1.0 - vsb_drag_dx * 0.005;
             let anchor_y = vsb_rect.center().y - content_rect.min.y;
             view.zoom_around_y(anchor_y, factor, content_rect.height());
+            ui.ctx().request_repaint();
+        }
+        if scrollbar::double_clicked_in(ui, vsb_rect) {
+            view.fit_pitch(content_rect.height());
             ui.ctx().request_repaint();
         }
 

@@ -1032,6 +1032,7 @@ hint.arrange.audio_clip: "Ziehen zum Verschieben; Ränder ziehen zum Trimmen; ob
 hint.arrange.split_v: "Ziehen, um die Breite der Spurköpfe zu ändern; Doppelklick zum Zurücksetzen"
 hint.arrange.hscroll: "Horizontale Bildlaufleiste · ziehen zum Schwenken, vertikal ziehen/Mausrad zum Zoomen"
 hint.arrange.vscroll: "Vertikale Bildlaufleiste · ziehen zum Schwenken, horizontal ziehen/Mausrad zum Zoomen"
+hint.arrange.corner_zoom: "Ziehen zum Zoomen beider Achsen (Doppelklick: einpassen)"
 hint.pr.keyboard_zoom: "Mausrad zum Zoomen der Tonhöhenachse"
 hint.pr.auto_toggle: "Automatisierungsbereich ein-/ausblenden"
 hint.pr.auto_add: "Automatisierungsbereich hinzufügen"

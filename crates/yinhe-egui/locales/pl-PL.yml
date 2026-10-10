@@ -1037,6 +1037,7 @@ hint.arrange.audio_clip: "Przeciągnij, aby przenieść; przeciągnij krawędzie
 hint.arrange.split_v: "Przeciągnij, aby zmienić szerokość nagłówka ścieżki; kliknij dwukrotnie, aby zresetować"
 hint.arrange.hscroll: "Poziomy pasek przewijania · przeciągnij, aby przesunąć, pionowe przeciąganie/kółko, aby skalować"
 hint.arrange.vscroll: "Pionowy pasek przewijania · przeciągnij, aby przesunąć, poziome przeciąganie/kółko, aby skalować"
+hint.arrange.corner_zoom: "Przeciągnij, aby powiększyć oba wymiary (dwuklik: dopasuj)"
 hint.pr.keyboard_zoom: "Kółko, aby skalować oś wysokości"
 hint.pr.auto_toggle: "Pokaż/ukryj panel automatyzacji"
 hint.pr.auto_add: "Dodaj panel automatyzacji"

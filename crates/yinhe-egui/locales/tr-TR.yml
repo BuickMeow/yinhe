@@ -1037,6 +1037,7 @@ hint.arrange.audio_clip: "Taşımak için sürükle; kırpmak için kenarları s
 hint.arrange.split_v: "Parça başlığı genişliğini değiştirmek için sürükle; sıfırlamak için çift tıkla"
 hint.arrange.hscroll: "Yatay kaydırma çubuğu · kaydırmak için sürükle, yakınlaştırmak için dikey sürükle/tekerlek"
 hint.arrange.vscroll: "Dikey kaydırma çubuğu · kaydırmak için sürükle, yakınlaştırmak için yatay sürükle/tekerlek"
+hint.arrange.corner_zoom: "Her iki eksende yakınlaştırmak için sürükleyin (çift tık: sığdır)"
 hint.pr.keyboard_zoom: "Perde eksenini yakınlaştırmak için tekerlek"
 hint.pr.auto_toggle: "Otomasyon panelini göster/gizle"
 hint.pr.auto_add: "Bir otomasyon paneli ekle"

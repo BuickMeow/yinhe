@@ -1037,6 +1037,7 @@ hint.arrange.audio_clip: "拖曳移動片段；拖邊緣裁剪；拖上角改淡
 hint.arrange.split_v: "拖曳調整音軌頭寬度，雙擊重設"
 hint.arrange.hscroll: "水平捲軸 · 拖曳平移，垂直拖／滾輪縮放"
 hint.arrange.vscroll: "垂直捲軸 · 拖曳平移，水平拖／滾輪縮放"
+hint.arrange.corner_zoom: "拖曳同時縮放橫豎（雙擊適應全曲）"
 hint.pr.keyboard_zoom: "滾輪縮放音高軸"
 hint.pr.auto_toggle: "顯示／隱藏自動化面板"
 hint.pr.auto_add: "增加自動化面板"
