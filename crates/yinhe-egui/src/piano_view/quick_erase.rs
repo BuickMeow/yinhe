@@ -43,14 +43,17 @@ pub(crate) fn frame(
     track_visible: &[bool],
     track_selected: &HashSet<u16>,
 ) -> Option<Vec<(u16, u32, u8)>> {
-    let (down, released, pos, over_popup) = ui.input(|i| {
+    let (down, released, pos) = ui.input(|i| {
         (
             i.pointer.button_down(egui::PointerButton::Secondary),
             i.pointer.button_released(egui::PointerButton::Secondary),
             i.pointer.interact_pos(),
-            crate::view_interaction::pointer_over_popup(ui.ctx()),
         )
     });
+    // 必须在 `ui.input` 闭包**外**调用：`Context::input` 会先取写锁，
+    // 而 `pointer_over_popup` 内部又调用 `ctx.input`，闭包内调用会重入死锁
+    // （epaint RwLock「write after 10s」）。
+    let over_popup = crate::view_interaction::pointer_over_popup(ui.ctx());
 
     let id = ui.id().with("quick_erase_stroke");
     let mut result = None;
