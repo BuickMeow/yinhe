@@ -12,7 +12,7 @@ pub const CONTENT_OPACITY: f32 = 0.7;
 // ── 字号体系 ──
 // 所有 UI 字号集中于此。高 DPI 铺垫：未来支持高分屏时在此统一乘缩放因子，
 // 避免散落的魔法数字。部分常量同值但语义不同（主题系统可独立调色/调字）。
-pub const MODE_LABEL_FONT: f32 = 9.5; // 模式栏讲解行/性能数字（超小字）
+pub const MODE_LABEL_FONT: f32 = 10.5; // 模式栏讲解行/性能数字（超小字）
 pub const SMALL_LABEL_FONT: f32 = 10.0; // 最弱提示（路径/计数/标尺刻度）
 pub const SMALL_FONT: f32 = 11.0; // 表格/字段标签/小按钮
 pub const BODY_FONT: f32 = 12.0; // 正文/字段值/事件标题

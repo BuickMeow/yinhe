@@ -174,7 +174,7 @@ pub fn show(
 ) {
     egui::Panel::bottom("bottom_bar")
         .frame(egui::Frame {
-            inner_margin: egui::Margin::symmetric(8, 6),
+            inner_margin: egui::Margin::symmetric(8, 8),
             fill: crate::theme::app_bg(),
             ..Default::default()
         })
@@ -273,8 +273,6 @@ pub fn show(
                         // Right-most first (from right to left):
                         //  1. Notifications (bell)
                         //  2. ICON_INFO
-                        //  3. ICON_MUSIC_CAST
-                        //  4. ICON_AUTO_STORIES (event browser)
 
                         // 通知铃铛：最右侧第一个，不与右侧栏联动；总开关关闭时隐藏
                         if notifications.is_enabled() {
@@ -312,21 +310,6 @@ pub fn show(
                         }
 
                         ui.add_space(4.0);
-
-                        if right_icon_button(
-                            ui,
-                            ICON_FOLDER_ZIP,
-                            *right_tab == Some(RightTab::EventBrowser),
-                            || {
-                                *right_tab = if *right_tab == Some(RightTab::EventBrowser) {
-                                    None
-                                } else {
-                                    Some(RightTab::EventBrowser)
-                                };
-                            },
-                        ) {
-                            icon_hint = Some(t!("hint.right_event_browser").to_string());
-                        }
 
                         // ── Resource metrics (CPU / MEM / FPS) — left of the right icons ──
                         ui.separator();

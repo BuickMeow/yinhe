@@ -16,7 +16,6 @@ use yinhe_types::AutomationTarget;
 #[derive(PartialEq, Clone, Copy)]
 pub enum RightTab {
     Info,
-    EventBrowser,
 }
 
 /// 工程设置独立窗口的打开状态（浮动 viewport，保留为独立窗口）。
@@ -83,7 +82,6 @@ pub fn show(
     if last != Some(tab) {
         match tab {
             RightTab::Info => layout.focus_tab(PanelKind::Track),
-            RightTab::EventBrowser => layout.focus_tab(PanelKind::EventBrowser),
         }
         ui.data_mut(|d| d.insert_temp(focus_id, tab));
     }
