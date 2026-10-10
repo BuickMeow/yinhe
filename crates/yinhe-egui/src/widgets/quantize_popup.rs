@@ -42,32 +42,56 @@ pub fn show(
         *pending = Some(QuantizePreset::Fraction(1, 1));
     }
     if let QuantizePreset::Fraction(num, den) = current {
-        ui.horizontal(|ui| {
-            ui.label(t!("quantize.numerator").as_ref());
-            let mut n = num;
-            if ui
-                .add(
-                    crate::widgets::numeric_input::decimal_drag_value(&mut n)
-                        .range(1..=9999)
-                        .speed(0.5),
-                )
-                .changed()
-            {
-                *pending = Some(QuantizePreset::Fraction(n, den));
-            }
-            ui.label(t!("quantize.denominator").as_ref());
-            let mut d = den;
-            if ui
-                .add(
-                    crate::widgets::numeric_input::decimal_drag_value(&mut d)
-                        .range(1..=9999)
-                        .speed(0.5),
-                )
-                .changed()
-            {
-                *pending = Some(QuantizePreset::Fraction(num, d.max(1)));
-            }
-        });
+        // 与右栏 `rows::form_row` 同法：先固定行高、标签列等宽，再落控件，
+        // 否则标签先于数字框落位、行高后被数字框撑大，n/d 会错位。
+        let h = super::control::h(ui.ctx());
+        let label_w = crate::scaling::scaled_font(ui.ctx(), 14.0);
+        let label = |ui: &mut egui::Ui, s: &str| {
+            ui.allocate_ui_with_layout(
+                egui::vec2(label_w, h),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.label(
+                        egui::RichText::new(s)
+                            .size(crate::scaling::scaled_font(
+                                ui.ctx(),
+                                crate::theme::SMALL_FONT,
+                            ))
+                            .color(crate::theme::text_label()),
+                    );
+                },
+            );
+        };
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), h),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                label(ui, t!("quantize.numerator").as_ref());
+                let mut n = num;
+                if ui
+                    .add(
+                        crate::widgets::numeric_input::decimal_drag_value(&mut n)
+                            .range(1..=9999)
+                            .speed(0.5),
+                    )
+                    .changed()
+                {
+                    *pending = Some(QuantizePreset::Fraction(n, den));
+                }
+                label(ui, t!("quantize.denominator").as_ref());
+                let mut d = den;
+                if ui
+                    .add(
+                        crate::widgets::numeric_input::decimal_drag_value(&mut d)
+                            .range(1..=9999)
+                            .speed(0.5),
+                    )
+                    .changed()
+                {
+                    *pending = Some(QuantizePreset::Fraction(num, d.max(1)));
+                }
+            },
+        );
     }
 
     ui.separator();
