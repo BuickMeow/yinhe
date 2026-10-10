@@ -557,24 +557,31 @@ fn sd_rounded_box(p: vec2<f32>, half_size: vec2<f32>, r: f32) -> f32 {
 fn composite_border_fill(
     fill_a: f32,
     border_a: f32,
-    base_color: vec4<f32>,
+    base_alpha: f32,
+    border_color: vec3<f32>,
     fill_color: vec3<f32>,
 ) -> vec4<f32> {
     let total_a = fill_a + border_a;
     if total_a <= 0.0 {
         discard;
     }
-    let border_color = base_color.rgb * BORDER_DARKEN_FACTOR;
     var rgb = border_color;
     if fill_a > 0.0 {
         rgb = (fill_color * fill_a + border_color * border_a) / total_a;
     }
-    return vec4(rgb, base_color.a * total_a);
+    return vec4(rgb, base_alpha * total_a);
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let base_color = in.color;
+    // 边框色：有描边时向黑加深；无描边（border_width==0，如 AR）时直接用填充色，
+    // 否则抗锯齿边缘仍会混入暗化色（BORDER_DARKEN_FACTOR=0.4），窄音符整体偏暗。
+    let border_color = select(
+        in.fill_color,
+        base_color.rgb * BORDER_DARKEN_FACTOR,
+        in.border_width > 0.0,
+    );
 
     let p = (in.uv - 0.5) * in.half_size * 2.0;
 
@@ -594,7 +601,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             border_a = outer_a - inner_a;
         }
 
-        return composite_border_fill(fill_a, border_a, base_color, in.fill_color);
+        return composite_border_fill(fill_a, border_a, base_color.a, border_color, in.fill_color);
     }
 
     // Slow path: SDF rounded rectangle — 同上
@@ -614,7 +621,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         border_a = outer_a - inner_a;
     }
 
-    return composite_border_fill(fill_a, border_a, base_color, in.fill_color);
+    return composite_border_fill(fill_a, border_a, base_color.a, border_color, in.fill_color);
 }
 
 // Velocity bars: 仅描边、不填充、不加深（描边 = 轨道色本身）。
