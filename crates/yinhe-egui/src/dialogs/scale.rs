@@ -160,12 +160,16 @@ impl ScaleDialogState {
     fn body(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         ui.set_width(ui.available_width());
-        // 行间距固定，便于把滚动区高度对齐到整行（否则非整数倍时底部一行被截成细条）。
         ui.spacing_mut().item_spacing.y = 2.0;
 
-        let row_h = crate::widgets::control::h(&ctx) + 2.0;
-        let desired = crate::scaling::scaled_font(&ctx, 260.0);
-        let list_h = (desired / row_h).floor().max(1.0) * row_h;
+        // 固定行高列表统一走 `widgets::scroll::rows_scroll`：视口高度对齐到
+        // 「行高 + 行距」的整数倍，非整数倍时底边不会露半截行。
+        let row_h = crate::widgets::control::h(&ctx);
+        let step = row_h + ui.spacing().item_spacing.y;
+        let max_rows = (crate::scaling::scaled_font(&ctx, 260.0) / step)
+            .floor()
+            .max(1.0) as usize;
+        let list_h = max_rows as f32 * step;
 
         ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
@@ -174,10 +178,12 @@ impl ScaleDialogState {
                     egui::RichText::new(t!("timecode.root").as_ref())
                         .color(crate::theme::text_label()),
                 );
-                egui::ScrollArea::vertical()
-                    .id_salt("scale_root_list")
-                    .max_height(list_h)
-                    .show(ui, |ui| {
+                crate::widgets::scroll::rows_scroll(
+                    ui,
+                    "scale_root_list",
+                    row_h,
+                    Some(max_rows),
+                    |ui| {
                         for root in 0..12u8 {
                             let selected = root == self.root;
                             if ui
@@ -191,7 +197,8 @@ impl ScaleDialogState {
                                 self.root = root;
                             }
                         }
-                    });
+                    },
+                );
             });
             ui.add_space(crate::scaling::scaled_font(&ctx, 8.0));
             ui.vertical(|ui| {
@@ -200,10 +207,12 @@ impl ScaleDialogState {
                     egui::RichText::new(t!("timecode.scale").as_ref())
                         .color(crate::theme::text_label()),
                 );
-                egui::ScrollArea::vertical()
-                    .id_salt("scale_name_list")
-                    .max_height(list_h)
-                    .show(ui, |ui| {
+                crate::widgets::scroll::rows_scroll(
+                    ui,
+                    "scale_name_list",
+                    row_h,
+                    Some(max_rows),
+                    |ui| {
                         for &scale in ScaleType::ALL {
                             let selected = scale == self.scale;
                             if ui
@@ -213,21 +222,28 @@ impl ScaleDialogState {
                                 self.scale = scale;
                             }
                         }
-                    });
+                    },
+                );
             });
             // 右侧：迷你钢琴卷帘（键盘 + 调内音音符条），随主题配色。
             ui.add_space(crate::scaling::scaled_font(&ctx, 12.0));
-            let (rect, _) = ui.allocate_exact_size(
-                egui::vec2(crate::scaling::scaled_font(&ctx, 170.0), list_h),
-                egui::Sense::hover(),
-            );
-            crate::piano_view::keyboard::paint_mini(
-                ui.painter(),
-                rect,
-                48, // C3
-                72, // C5
-                self.scale.pitch_classes(self.root),
-            );
+            ui.vertical(|ui| {
+                // 空出与左侧「根音/音阶」标题等高的位置，使预览与列表顶边对齐。
+                ui.add_space(
+                    ui.text_style_height(&egui::TextStyle::Body) + ui.spacing().item_spacing.y,
+                );
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(crate::scaling::scaled_font(&ctx, 170.0), list_h),
+                    egui::Sense::hover(),
+                );
+                crate::piano_view::keyboard::paint_mini(
+                    ui.painter(),
+                    rect,
+                    48, // C3
+                    72, // C5
+                    self.scale.pitch_classes(self.root),
+                );
+            });
         });
 
         ui.add_space(crate::scaling::scaled_font(&ctx, 8.0));
