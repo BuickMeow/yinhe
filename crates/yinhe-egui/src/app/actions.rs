@@ -207,6 +207,16 @@ impl App {
         });
     }
 
+    /// 右键拖拽擦除：沿路径命中的音符整笔合并为一个 undo 条目。
+    pub(crate) fn quick_erase_notes(&mut self, notes: Vec<(u16, u32, u8)>) {
+        if notes.is_empty() {
+            return;
+        }
+        self.with_undo(t!("undo.delete_notes").as_ref(), |doc| {
+            doc.delete_notes(&notes)
+        });
+    }
+
     /// 删除 AR 选中的音频片段；返回是否执行了删除。
     pub(crate) fn delete_selected_audio_clips(&mut self) -> bool {
         let Some(idx) = self.workspace.active_doc else {

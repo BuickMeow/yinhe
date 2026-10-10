@@ -658,6 +658,9 @@ impl App {
                         doc.delete_single_note(track, start_tick, key)
                     });
                 }
+                PianoViewEvent::QuickErase { notes } => {
+                    self.quick_erase_notes(notes);
+                }
                 PianoViewEvent::AddNotes { track, notes } => {
                     self.add_notes_with_undo(track, notes);
                 }

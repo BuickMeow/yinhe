@@ -123,19 +123,7 @@ pub(crate) fn quick_delete_early(
     track_selected: &std::collections::HashSet<u16>,
     quick_delete_mode: yinhe_editor_core::audio_settings::QuickDeleteMode,
 ) -> Option<(u16, u32, u8)> {
-    if quick_delete_mode.allows_right_click()
-        && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary))
-        && let Some(pos) = pointer.hover_pos()
-        && music_rect.contains(pos)
-        && !is_on_bar(pos, music_rect, view, eff_rects)
-    {
-        let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-        if let Some((_, track, start_tick, _, key)) =
-            hit_test_note(midi, view, local, track_visible, track_selected)
-        {
-            return Some((track, start_tick, key));
-        }
-    }
+    // 右键单击删除已由 `quick_erase`（右键拖拽批量擦除）取代，这里只保留双击删除。
     if quick_delete_mode.allows_double_click()
         && ui.input(|i| {
             i.pointer

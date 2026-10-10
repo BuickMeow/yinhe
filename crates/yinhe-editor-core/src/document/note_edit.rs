@@ -123,6 +123,36 @@ impl Document {
         }))
     }
 
+    /// Delete many notes by `(track, start_tick, key)` in one batched pass.
+    /// 用于右键拖拽擦除：整段路径合并为一个 undo 条目（只 rebuild/bump 一次）。
+    pub fn delete_notes(&mut self, notes: &[(u16, u32, u8)]) -> Option<UndoAction> {
+        if notes.is_empty() {
+            return None;
+        }
+        let model = Arc::make_mut(&mut self.data.model);
+        let mut removed = Vec::new();
+        for &(track, start_tick, key) in notes {
+            let found = model.notes[key as usize]
+                .range(start_tick, start_tick.saturating_add(1))
+                .find(|n| n.track == track && n.start_tick == start_tick)
+                .map(|n| n.id);
+            if let Some(id) = found
+                && let Some(r) = model.remove_note_by_id(key, id)
+            {
+                removed.push((r, key));
+            }
+        }
+        if removed.is_empty() {
+            return None;
+        }
+        model.rebuild_dirty();
+        self.data.bump_revision();
+        Some(UndoAction::Notes(NoteDelta {
+            before: removed,
+            after: vec![],
+        }))
+    }
+
     /// Delete all selected notes. Returns an `UndoAction` if any notes were deleted.
     pub fn delete_selected(&mut self) -> Option<UndoAction> {
         if self.edit.selected.is_empty() {

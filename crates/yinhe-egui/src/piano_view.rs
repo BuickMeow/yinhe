@@ -26,6 +26,7 @@ mod panels;
 mod pen_tool;
 mod pencil;
 mod perf;
+mod quick_erase;
 mod scrollbar;
 mod status;
 mod tool;
@@ -172,6 +173,7 @@ pub fn show(
         pencil_event,
         eraser_event,
         quick_delete_event,
+        quick_erase_event,
         brush_event,
     } = interaction::dispatch(
         ui,
@@ -472,6 +474,7 @@ pub fn show(
         .map(PianoViewEvent::MarkerEdit)
         .or(sel_action.map(PianoViewEvent::SelectionAction))
         .or(quick_delete_event)
+        .or(quick_erase_event)
         .or(pencil_event)
         .or(eraser_event)
         .or(brush_event)

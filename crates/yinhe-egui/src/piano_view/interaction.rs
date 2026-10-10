@@ -24,6 +24,7 @@ pub(crate) struct InteractionOutput {
     pub(crate) pencil_event: Option<PianoViewEvent>,
     pub(crate) eraser_event: Option<PianoViewEvent>,
     pub(crate) quick_delete_event: Option<PianoViewEvent>,
+    pub(crate) quick_erase_event: Option<PianoViewEvent>,
     pub(crate) brush_event: Option<PianoViewEvent>,
 }
 
@@ -224,6 +225,26 @@ pub(crate) fn dispatch(
         ghost_notes = ghosts;
         brush_event = event;
     }
+    // 右键拖拽批量擦除（Select/SelectVertical/Pencil 工具；受「右键删除」设置控制）。
+    let quick_erase_event = if quick_delete_mode.allows_right_click()
+        && matches!(
+            effective_tool,
+            Tool::Select | Tool::SelectVertical | Tool::Pencil
+        ) {
+        super::quick_erase::frame(
+            ui,
+            view,
+            content_rect,
+            music_rect,
+            midi,
+            track_visible,
+            track_selected,
+        )
+        .map(|notes| PianoViewEvent::QuickErase { notes })
+    } else {
+        None
+    };
+
     InteractionOutput {
         effective_tool,
         ghost_notes,
@@ -232,6 +253,7 @@ pub(crate) fn dispatch(
         pencil_event,
         eraser_event,
         quick_delete_event,
+        quick_erase_event,
         brush_event,
     }
 }

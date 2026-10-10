@@ -26,6 +26,10 @@ pub enum PianoViewEvent {
         start_tick: u32,
         key: u8,
     },
+    /// 右键拖拽擦除：沿路径批量删除音符，整笔一个 undo。
+    QuickErase {
+        notes: Vec<(u16, u32, u8)>,
+    },
     /// 批量添加音符（刷子绘制）：力度由 App 层填充为该轨记忆力度。
     AddNotes {
         track: u16,

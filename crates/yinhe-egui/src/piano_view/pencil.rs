@@ -253,13 +253,7 @@ pub(crate) fn pencil_frame(
         }
         None
     })();
-    if quick_delete_mode.allows_right_click()
-        && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary))
-        && let Some(hit) = quick_hit.clone()
-    {
-        quick_delete = Some((hit.track, hit.start_tick, hit.key));
-        return (None, Vec::new(), Vec::new(), None, None, quick_delete);
-    }
+    // 右键单击删除已由 `quick_erase`（右键拖拽批量擦除）取代，这里只保留双击删除。
     if quick_delete_mode.allows_double_click()
         && ui.input(|i| {
             i.pointer
