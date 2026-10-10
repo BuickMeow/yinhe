@@ -5,7 +5,7 @@
 //! 仅钢琴卷帘可见时显示——工具只对 PR/AM 生效，因此只占 PR 那条带，不影响走带视图。
 
 use eframe::egui;
-use egui_material_icons::icons::{ICON_ADD_CHART, ICON_BAR_CHART};
+use egui_material_icons::icons::{ICON_ADD_CHART, ICON_BAR_CHART, ICON_MORE_HORIZ};
 use rust_i18n::t;
 
 use crate::widgets::tools_panel::{ALL_TOOLS, Tool};
@@ -36,12 +36,43 @@ pub fn show(
         ui.painter()
             .rect_filled(rect, 0.0, crate::theme::track_bg());
         ui.spacing_mut().item_spacing.y = 2.0;
+        // 高度不足时：放得下的工具正常显示，最后一个槽位变省略号，
+        // 点开子悬浮栏放剩余工具（从上往下数放不下的收进去）。
+        let top_pad = 6.0;
+        let spacing_y = ui.spacing().item_spacing.y;
+        let bottom_reserved = if show_automation_buttons {
+            2.0 + btn_size.y * 2.0 + 2.0 + 2.0
+        } else {
+            0.0
+        };
+        let slot = btn_size.y + spacing_y;
+        let avail = (rect.height() - top_pad - bottom_reserved).max(0.0);
+        let fit = (((avail + spacing_y) / slot).floor() as usize).max(1);
+        let n_visible = if fit >= ALL_TOOLS.len() {
+            ALL_TOOLS.len()
+        } else {
+            fit.saturating_sub(1)
+        };
         ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-            ui.add_space(6.0);
-            for tool in ALL_TOOLS {
-                if let Some(hint) = tool_button(ui, tool, active_tool, btn_size) {
+            ui.add_space(top_pad);
+            for tool in ALL_TOOLS.iter().take(n_visible) {
+                if let Some(hint) = tool_button(ui, *tool, active_tool, btn_size) {
                     hovered_hint = Some(hint);
                 }
+            }
+            if n_visible < ALL_TOOLS.len() {
+                let more = tool_more_button(ui, btn_size);
+                if more.hovered() {
+                    hovered_hint = Some(t!("hint.tool_bar.more").to_string());
+                }
+                egui::Popup::from_toggle_button_response(&more)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
+                    .show(|ui| {
+                        ui.spacing_mut().item_spacing.y = spacing_y;
+                        for tool in ALL_TOOLS.iter().skip(n_visible) {
+                            tool_button(ui, *tool, active_tool, btn_size);
+                        }
+                    });
             }
         });
         // 自动化按钮固定贴底：最下方 = 开关，其上方 = 新增。
@@ -114,6 +145,23 @@ fn tool_button(
     }
     resp.hovered()
         .then(|| crate::chrome::transport_bar_actions::tool_hint(tool))
+}
+
+/// 溢出「…」按钮：点击弹出子悬浮栏放剩余工具。
+fn tool_more_button(ui: &mut egui::Ui, btn_size: egui::Vec2) -> egui::Response {
+    ui.push_id("tool_bar_more", |ui| {
+        crate::widgets::flat::flat_button_filled_ghost(
+            ui,
+            ICON_MORE_HORIZ
+                .rich_text()
+                .size(crate::theme::TRANSPORT_BTN_FONT)
+                .color(crate::theme::text_primary()),
+            btn_size,
+            None,
+            true,
+        )
+    })
+    .inner
 }
 
 /// 固定中心点的图标按钮：与工具按钮同款选中底 + 强调色图标。

@@ -36,13 +36,47 @@ pub(crate) fn show_scrollbars(
     let content_h = (content_bottom - content_y).max(0.0);
     let kb_w = view.keyboard_width();
 
-    // 右下角角落：横纵滚动条交叠区（SCROLLBAR_W × SCROLLBAR_H）
+    // 右下角角落：横纵滚动条交叠区（SCROLLBAR_W × SCROLLBAR_H）——缩放抓手。
+    // 拖动同时缩放横竖两轴（对齐 FL Studio 的角部缩放）。
     let corner_rect = egui::Rect::from_min_max(
         egui::pos2(content_right_x, sb_y),
         egui::pos2(rect.max.x, rect.max.y),
     );
-    ui.painter()
-        .rect_filled(corner_rect, 0.0, theme::track_bg());
+    {
+        let resp = ui.interact(
+            corner_rect,
+            ui.id().with("pr_corner_zoom"),
+            egui::Sense::click_and_drag(),
+        );
+        let press_on = ui
+            .input(|i| i.pointer.press_origin())
+            .is_some_and(|p| corner_rect.contains(p));
+        let active = press_on && resp.dragged();
+        let base = theme::track_bg();
+        let fill = if active {
+            theme::pressed_color(base)
+        } else if resp.hovered() {
+            theme::hover_color(base)
+        } else {
+            base
+        };
+        ui.painter().rect_filled(corner_rect, 0.0, fill);
+        if resp.hovered() || active {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
+        }
+        if active {
+            let d = resp.drag_delta();
+            let k = 0.005;
+            let anchor_x = content_rect.center().x - content_rect.min.x;
+            let anchor_y = content_rect.center().y - content_rect.min.y;
+            view.zoom_around_x(anchor_x, 1.0 + d.x * k);
+            view.zoom_around_y(anchor_y, 1.0 + d.y * k, content_rect.height());
+            ui.ctx().request_repaint();
+        }
+        if crate::view_interaction::pointer_hits(ui, corner_rect) {
+            crate::widgets::hint::set(ui.ctx(), t!("hint.pr.corner_zoom"));
+        }
+    }
 
     if view.is_vertical() {
         // 补齐两处夹角背景（与横向同样的 chrome 底色）：
