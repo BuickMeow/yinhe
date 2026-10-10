@@ -60,16 +60,66 @@ pub(crate) fn db_to_gain(db: f32) -> f32 {
     }
 }
 
-/// 电平 UI 侧峰值衰减速度（线性域 / 秒）。
-const METER_FALLOFF_PER_SEC: f32 = 2.5;
+/// 电平表回落速度（dB / 秒）：行业惯用约 20 dB/s（PPM 弹道：瞬时起、匀速落）。
+const METER_DB_PER_SEC: f32 = 20.0;
+/// 峰值保持时间（秒）：超过后峰值线开始按同样速度回落。
+const METER_HOLD_SECS: f32 = 1.0;
+
+/// 单个电平表的 UI 侧弹道状态（L/R 各一路：当前电平 + 峰值保持）。
+///
+/// 起跳瞬时跟随原始峰值，回落在 **dB 域**匀速（线性域递减在接近 0 时会显得忽快忽慢，
+/// 非行业惯用）。峰值保持线先停留 `METER_HOLD_SECS`，之后同样按 dB 速度回落。
+#[derive(Clone, Copy, Default)]
+pub(crate) struct MeterState {
+    level: [f32; 2],
+    hold: [f32; 2],
+    hold_age: [f32; 2],
+}
+
+impl MeterState {
+    fn update(&mut self, raw: (f32, f32), dt: f32) {
+        let drop_db = METER_DB_PER_SEC * dt;
+        let raw = [raw.0, raw.1];
+        for (i, &r) in raw.iter().enumerate() {
+            let prev_db = gain_to_db(self.level[i]);
+            let raw_db = gain_to_db(r);
+            let new_db = if raw_db >= prev_db {
+                raw_db
+            } else {
+                (prev_db - drop_db).max(raw_db)
+            };
+            self.level[i] = db_to_gain(new_db);
+            if r >= self.hold[i] {
+                self.hold[i] = r;
+                self.hold_age[i] = 0.0;
+            } else {
+                self.hold_age[i] += dt;
+                if self.hold_age[i] > METER_HOLD_SECS {
+                    self.hold[i] = db_to_gain(
+                        (gain_to_db(self.hold[i]) - drop_db).max(gain_to_db(self.level[i])),
+                    );
+                }
+            }
+        }
+    }
+
+    fn level(&self) -> (f32, f32) {
+        (self.level[0], self.level[1])
+    }
+
+    fn hold(&self) -> (f32, f32) {
+        (self.hold[0], self.hold[1])
+    }
+}
 
 /// MIX 界面的非持久化 UI 状态。
+#[derive(Default)]
 pub(crate) struct MixUiState {
-    /// 各 dense 通道的滑动峰值（L, R），UI 侧衰减用。
-    smoothed: Vec<(f32, f32)>,
-    smoothed_master: (f32, f32),
-    /// 总线条电平表滑动峰值（key = "bus{n}"，增删总线时旧键闲置无害）。
-    smoothed_buses: std::collections::HashMap<String, (f32, f32)>,
+    /// 各 dense 通道的电平表弹道状态，UI 侧衰减用。
+    smoothed: Vec<MeterState>,
+    smoothed_master: MeterState,
+    /// 总线条电平表弹道状态（key = "bus{n}"，增删总线时旧键闲置无害）。
+    smoothed_buses: std::collections::HashMap<String, MeterState>,
     /// 插件扫描结果（后台线程填充；None = 尚未完成首次扫描）。
     pub(crate) scanned: Option<Vec<PluginEntry>>,
     /// 扫描中失败的包数量（诊断展示）。
@@ -89,26 +139,6 @@ pub(crate) struct MixUiState {
     pub(crate) picker_filter: String,
     /// 插件参数面板（同一时间至多一个）。
     pub(crate) param_panel: Option<ParamPanel>,
-}
-
-impl Default for MixUiState {
-    fn default() -> Self {
-        Self {
-            smoothed: Vec::new(),
-            smoothed_master: (0.0, 0.0),
-            smoothed_buses: std::collections::HashMap::new(),
-            scanned: None,
-            scan_errors: 0,
-            scan_rx: None,
-            scan_in_progress: false,
-            picker_for: None,
-            sends_for: None,
-            xsynth_config_for: None,
-            instrument_picker_for: None,
-            picker_filter: String::new(),
-            param_panel: None,
-        }
-    }
 }
 
 /// 一帧内 strip 交互产出的动作（渲染完统一应用，避开借用冲突）。
@@ -436,22 +466,21 @@ impl App {
     }
 }
 
-/// 读某 dense 通道电平并做 UI 侧衰减。
+/// 读某 dense 通道电平并做 UI 侧弹道处理，返回 ((level L,R), (hold L,R))。
 fn smoothed_peak(
     handle: Option<&yinhe_audio::CpalAudioHandle>,
-    smoothed: &mut [(f32, f32)],
+    smoothed: &mut [MeterState],
     dense: usize,
     dt: f32,
-) -> (f32, f32) {
+) -> ((f32, f32), (f32, f32)) {
     let raw = handle
         .and_then(|a| a.handle.channel_meter_read(dense))
         .unwrap_or((0.0, 0.0));
     let Some(s) = smoothed.get_mut(dense) else {
-        return raw;
+        return (raw, raw);
     };
-    s.0 = raw.0.max(s.0 - METER_FALLOFF_PER_SEC * dt);
-    s.1 = raw.1.max(s.1 - METER_FALLOFF_PER_SEC * dt);
-    *s
+    s.update(raw, dt);
+    (s.level(), s.hold())
 }
 
 /// MIX 模式主入口（layout.rs 在 Mix 模式且已打开工程时调用）。
@@ -496,7 +525,7 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
         .map(|a| a.handle.mixer_channel_count())
         .unwrap_or(0);
     if app.mix.smoothed.len() != channel_count {
-        app.mix.smoothed = vec![(0.0, 0.0); channel_count];
+        app.mix.smoothed = vec![MeterState::default(); channel_count];
     }
 
     let mut actions: Vec<MixAction> = Vec::new();
@@ -534,7 +563,7 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                             ui.horizontal_top(|ui| {
                                 for (i, &ch) in active.iter().enumerate() {
                                     let dense = layout.dense_for(ch as usize);
-                                    let peak = if dense != u32::MAX {
+                                    let (level, hold) = if dense != u32::MAX {
                                         smoothed_peak(
                                             app.audio_state.handle.as_ref(),
                                             &mut app.mix.smoothed,
@@ -542,7 +571,7 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                                             dt,
                                         )
                                     } else {
-                                        (0.0, 0.0)
+                                        ((0.0, 0.0), (0.0, 0.0))
                                     };
                                     strip::channel_strip(
                                         app,
@@ -550,7 +579,8 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                                         idx,
                                         ch,
                                         colors[i],
-                                        peak,
+                                        level,
+                                        hold,
                                         strip_h,
                                         &mut actions,
                                     );
@@ -561,7 +591,7 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                                     ui.separator();
                                     for &ach in audio_channels.iter() {
                                         let dense = layout.audio_dense_for(ach);
-                                        let peak = if dense != u32::MAX {
+                                        let (level, hold) = if dense != u32::MAX {
                                             smoothed_peak(
                                                 app.audio_state.handle.as_ref(),
                                                 &mut app.mix.smoothed,
@@ -569,14 +599,15 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                                                 dt,
                                             )
                                         } else {
-                                            (0.0, 0.0)
+                                            ((0.0, 0.0), (0.0, 0.0))
                                         };
                                         strip::audio_strip(
                                             app,
                                             ui,
                                             idx,
                                             ach,
-                                            peak,
+                                            level,
+                                            hold,
                                             strip_h,
                                             &mut actions,
                                         );
@@ -593,18 +624,20 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                                             .as_ref()
                                             .map(|a| a.handle.bus_meter_read(b))
                                             .unwrap_or((0.0, 0.0));
-                                        let key = format!("bus{b}");
-                                        let slot =
-                                            app.mix.smoothed_buses.entry(key).or_insert((0.0, 0.0));
-                                        slot.0 = raw.0.max(slot.0 - METER_FALLOFF_PER_SEC * dt);
-                                        slot.1 = raw.1.max(slot.1 - METER_FALLOFF_PER_SEC * dt);
-                                        let peak = *slot;
+                                        let (level, hold) = {
+                                            let key = format!("bus{b}");
+                                            let slot =
+                                                app.mix.smoothed_buses.entry(key).or_default();
+                                            slot.update(raw, dt);
+                                            (slot.level(), slot.hold())
+                                        };
                                         strip::bus_strip(
                                             app,
                                             ui,
                                             idx,
                                             b as u8,
-                                            peak,
+                                            level,
+                                            hold,
                                             strip_h,
                                             &mut actions,
                                         );
@@ -621,7 +654,7 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                 master_rect.y_range(),
                 egui::Stroke::new(1.0, crate::theme::grid_sub_beat()),
             );
-            let master_peak = {
+            let (master_level, master_hold) = {
                 let raw = app
                     .audio_state
                     .handle
@@ -629,9 +662,8 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                     .map(|a| a.handle.master_meter_read())
                     .unwrap_or((0.0, 0.0));
                 let s = &mut app.mix.smoothed_master;
-                s.0 = raw.0.max(s.0 - METER_FALLOFF_PER_SEC * dt);
-                s.1 = raw.1.max(s.1 - METER_FALLOFF_PER_SEC * dt);
-                *s
+                s.update(raw, dt);
+                (s.level(), s.hold())
             };
             ui.scope_builder(
                 egui::UiBuilder::new()
@@ -642,7 +674,8 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                         app,
                         ui,
                         idx,
-                        master_peak,
+                        master_level,
+                        master_hold,
                         master_rect.height(),
                         &mut actions,
                     )
@@ -657,9 +690,13 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
     }
 
     // 电平表动画：播放中或衰减未归零时保持约 30fps 重绘。
-    let any_level = app.mix.smoothed.iter().any(|s| s.0 > 0.001 || s.1 > 0.001)
-        || app.mix.smoothed_master.0 > 0.001
-        || app.mix.smoothed_master.1 > 0.001;
+    let any_level = app.mix.smoothed.iter().any(|s| {
+        let (l, r) = s.level();
+        l > 0.001 || r > 0.001
+    }) || {
+        let (l, r) = app.mix.smoothed_master.level();
+        l > 0.001 || r > 0.001
+    };
     let playing = app
         .audio_state
         .handle

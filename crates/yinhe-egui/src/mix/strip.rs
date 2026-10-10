@@ -1,14 +1,15 @@
 //! 混音台通道条控件。
 //!
-//! 每个通道 = 一个**直角矩形 + 单层描边**（不再用圆角卡片，避免出界）。自上而下：
+//! 每个通道 = 一个**直角矩形 + 单层描边**（通道框不用圆角，避免卡片出界）。按钮类
+//! 控件用通用圆角矩形。自上而下：
 //! 1. 顶部**色带**（轨道色）+ 通道号；
-//! 2. **设备链**（若干乐器 / 效果器，可滚动，不撑破通道）；
-//! 3. **效果发送**（每条总线一行：自绘旋钮，右键进发送面板）；
+//! 2. **设备链**（若干乐器 / 效果器，固定高度、整行滚动，不撑破通道）；
+//! 3. **效果发送**（FX 1 旋钮；无总线时首次拖动自动创建）；
 //! 4. **M/S**（居中）；
 //! 5. **声像旋钮**（居中）；
-//! 6. **左侧电平表 + 右侧音量推子**（撑满剩余高度）。
+//! 6. **当前增益 dB 读数** + **左侧电平表（带刻度 + 峰值保持）+ 右侧推子**。
 //!
-//! 通道条高度由混音台撑满；所有子块用固定/受限高度排布，绝不溢出通道矩形。
+//! 各分区高度固定，因此所有通道条的推子/电平表**等高**。
 
 use eframe::egui;
 use rust_i18n::t;
@@ -34,10 +35,23 @@ const CONTENT_W: f32 = STRIP_WIDTH - PAD_X * 2.0;
 const HEADER_H: f32 = 20.0;
 /// 设备链单行高度（px）。
 const DEVICE_ROW_H: f32 = 17.0;
+/// 通用按钮圆角（px）。
+const RADIUS: f32 = 4.0;
 /// 小按钮边长（px，M/S、图标按钮）。
 const BTN: f32 = 18.0;
 /// 旋钮直径（px，发送/声像）。
 const KNOB_D: f32 = 26.0;
+/// 分区之间的竖直间隙（px）。
+const GAP: f32 = 4.0;
+/// 发送 / M-S / 声像 / dB 读数各区高度（px，固定以保证所有条等高）。
+const SEND_ROW_H: f32 = KNOB_D;
+const MS_ROW_H: f32 = BTN;
+const PAN_ROW_H: f32 = KNOB_D;
+const DB_ROW_H: f32 = 15.0;
+/// 「完整条」（通道 / 音频 / 总线）底部固定区高度。
+const BOTTOM_FULL: f32 = SEND_ROW_H + MS_ROW_H + PAN_ROW_H + DB_ROW_H + GAP * 4.0;
+/// 主输出条底部固定区高度（只有 dB 读数）。
+const BOTTOM_MASTER: f32 = DB_ROW_H + GAP;
 /// 推子槽宽（px）。
 const FADER_SLOT_W: f32 = 4.0;
 /// 推子手柄尺寸（px）。
@@ -201,11 +215,27 @@ fn strip_frame(
             .layout(egui::Layout::top_down(egui::Align::LEFT)),
         |ui| {
             ui.set_clip_rect(content);
-            ui.set_width(content.width());
-            ui.spacing_mut().item_spacing.y = 3.0;
+            ui.set_min_width(content.width());
+            ui.set_max_width(content.width());
+            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
             add_contents(ui, content.height());
         },
     );
+}
+
+/// 固定尺寸分区容器（宽度 = 内容宽，高度 = `h`）。
+fn section<R>(
+    ui: &mut egui::Ui,
+    h: f32,
+    layout: egui::Layout,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    ui.allocate_ui_with_layout(egui::vec2(CONTENT_W, h), layout, |ui| {
+        ui.set_min_width(CONTENT_W);
+        ui.set_max_width(CONTENT_W);
+        add(ui)
+    })
+    .inner
 }
 
 /// 单条 MIDI 通道条。
@@ -216,7 +246,8 @@ pub(crate) fn channel_strip(
     idx: usize,
     channel: u8,
     color: egui::Color32,
-    peak: (f32, f32),
+    level: (f32, f32),
+    hold: (f32, f32),
     height: f32,
     actions: &mut Vec<MixAction>,
 ) {
@@ -227,18 +258,14 @@ pub(crate) fn channel_strip(
         app.mixer_racks.get(idx),
         target,
     );
-    let bus_count = app.workspace.documents[idx].mixer.buses.len();
-    let sends: Vec<(f32, bool)> = (0..bus_count)
-        .map(|b| {
-            app.workspace.documents[idx]
-                .mixer
-                .sends
-                .get(channel as usize)
-                .and_then(|list| list.iter().find(|s| s.bus as usize == b))
-                .map(|s| (s.amount, s.pre_fader))
-                .unwrap_or((0.0, false))
-        })
-        .collect();
+    let has_bus = app.workspace.documents[idx].mixer.bus_count() > 0;
+    let send = app.workspace.documents[idx]
+        .mixer
+        .sends
+        .get(channel as usize)
+        .and_then(|list| list.first())
+        .map(|s| (s.amount, s.pre_fader))
+        .unwrap_or((0.0, false));
     let instrument = app.workspace.documents[idx]
         .mixer
         .instruments
@@ -248,34 +275,67 @@ pub(crate) fn channel_strip(
     let title = channel_label(channel);
 
     strip_frame(ui, color, &title, height, |ui, content_h| {
-        let max_dev = device_budget(content_h);
-        device_chain(
+        let (dev_h, meter_h) = strip_metrics(content_h, true);
+        section(ui, dev_h, egui::Layout::top_down(egui::Align::LEFT), |ui| {
+            device_chain(
+                ui,
+                target,
+                &view,
+                Some((channel, instrument.as_deref())),
+                dev_h,
+                actions,
+            );
+        });
+        ui.add_space(GAP);
+        section(
             ui,
-            target,
-            &view,
-            Some((channel, instrument.as_deref())),
-            max_dev,
-            actions,
+            SEND_ROW_H,
+            egui::Layout::top_down(egui::Align::LEFT),
+            |ui| {
+                send_block(ui, channel, send, has_bus, actions);
+            },
         );
-        if !sends.is_empty() {
-            send_block(ui, channel, &sends, actions);
-        }
-        ms_row(ui, &params, |p| {
-            actions.push(MixAction::SetStrip { channel, params: p })
-        });
-        pan_knob(ui, params.pan, |pan| {
-            actions.push(MixAction::SetStrip {
-                channel,
-                params: StripParams { pan, ..params },
-            })
-        });
-        let fh = ui.available_height().max(FADER_MIN_H);
-        meter_fader(ui, params.gain, peak, fh, |g| {
-            actions.push(MixAction::SetStrip {
-                channel,
-                params: StripParams { gain: g, ..params },
-            })
-        });
+        ui.add_space(GAP);
+        section(
+            ui,
+            MS_ROW_H,
+            egui::Layout::top_down(egui::Align::Center),
+            |ui| {
+                ms_row(ui, &params, |p| {
+                    actions.push(MixAction::SetStrip { channel, params: p })
+                });
+            },
+        );
+        ui.add_space(GAP);
+        section(
+            ui,
+            PAN_ROW_H,
+            egui::Layout::top_down(egui::Align::Center),
+            |ui| {
+                pan_knob(ui, params.pan, |pan| {
+                    actions.push(MixAction::SetStrip {
+                        channel,
+                        params: StripParams { pan, ..params },
+                    })
+                });
+            },
+        );
+        ui.add_space(GAP);
+        db_row(ui, params.gain);
+        let bar_h = (meter_h - DB_ROW_H).max(FADER_MIN_H);
+        section(
+            ui,
+            bar_h,
+            egui::Layout::top_down(egui::Align::Center),
+            |ui| {
+                meter_fader(ui, params.gain, level, hold, bar_h, |g| {
+                    actions.push(MixAction::SetStrip {
+                        channel,
+                        params: StripParams { gain: g, ..params },
+                    })
+                });
+            },
+        );
     });
 }
 
@@ -286,7 +346,8 @@ pub(crate) fn audio_strip(
     ui: &mut egui::Ui,
     idx: usize,
     channel: u16,
-    peak: (f32, f32),
+    level: (f32, f32),
+    hold: (f32, f32),
     height: f32,
     actions: &mut Vec<MixAction>,
 ) {
@@ -305,36 +366,71 @@ pub(crate) fn audio_strip(
         &title,
         height,
         |ui, content_h| {
-            device_chain(ui, target, &view, None, device_budget(content_h), actions);
-            ms_row(ui, &params, |p| {
-                actions.push(MixAction::SetAudioStrip { channel, params: p })
+            let (dev_h, meter_h) = strip_metrics(content_h, true);
+            section(ui, dev_h, egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                device_chain(ui, target, &view, None, dev_h, actions);
             });
-            pan_knob(ui, params.pan, |pan| {
-                actions.push(MixAction::SetAudioStrip {
-                    channel,
-                    params: StripParams { pan, ..params },
-                })
-            });
-            let fh = ui.available_height().max(FADER_MIN_H);
-            meter_fader(ui, params.gain, peak, fh, |g| {
-                actions.push(MixAction::SetAudioStrip {
-                    channel,
-                    params: StripParams { gain: g, ..params },
-                })
-            });
+            ui.add_space(GAP);
+            section(
+                ui,
+                SEND_ROW_H,
+                egui::Layout::top_down(egui::Align::LEFT),
+                |_ui| {},
+            );
+            ui.add_space(GAP);
+            section(
+                ui,
+                MS_ROW_H,
+                egui::Layout::top_down(egui::Align::Center),
+                |ui| {
+                    ms_row(ui, &params, |p| {
+                        actions.push(MixAction::SetAudioStrip { channel, params: p })
+                    });
+                },
+            );
+            ui.add_space(GAP);
+            section(
+                ui,
+                PAN_ROW_H,
+                egui::Layout::top_down(egui::Align::Center),
+                |ui| {
+                    pan_knob(ui, params.pan, |pan| {
+                        actions.push(MixAction::SetAudioStrip {
+                            channel,
+                            params: StripParams { pan, ..params },
+                        })
+                    });
+                },
+            );
+            ui.add_space(GAP);
+            db_row(ui, params.gain);
+            let bar_h = (meter_h - DB_ROW_H).max(FADER_MIN_H);
+            section(
+                ui,
+                bar_h,
+                egui::Layout::top_down(egui::Align::Center),
+                |ui| {
+                    meter_fader(ui, params.gain, level, hold, bar_h, |g| {
+                        actions.push(MixAction::SetAudioStrip {
+                            channel,
+                            params: StripParams { gain: g, ..params },
+                        })
+                    });
+                },
+            );
         },
     );
 }
 
-/// 总线条（bus / return）：与通道条同构（设备链 + M/S + 声像 + 电平/推子），
-/// 额外在顶部提供删除入口。
+/// 总线条（bus / return）：与通道条同构，额外在设备链上方提供删除入口。
 #[allow(clippy::too_many_arguments)] // 通道条渲染上下文透传
 pub(crate) fn bus_strip(
     app: &mut App,
     ui: &mut egui::Ui,
     idx: usize,
     bus: u8,
-    peak: (f32, f32),
+    level: (f32, f32),
+    hold: (f32, f32),
     height: f32,
     actions: &mut Vec<MixAction>,
 ) {
@@ -358,46 +454,82 @@ pub(crate) fn bus_strip(
         &title,
         height,
         |ui, content_h| {
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let del_resp = icon_button(
-                        ui,
-                        egui_material_icons::icons::ICON_DELETE.codepoint,
-                        crate::theme::danger_text(),
-                    );
-                    crate::widgets::hint::hover(ui.ctx(), &del_resp, t!("hint.mix.remove_bus"));
-                    if del_resp.clicked() {
-                        actions.push(MixAction::RemoveBus { bus });
-                    }
+            let (dev_h, meter_h) = strip_metrics(content_h, true);
+            section(ui, dev_h, egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let del_resp = icon_button(
+                            ui,
+                            egui_material_icons::icons::ICON_DELETE.codepoint,
+                            crate::theme::danger_text(),
+                        );
+                        crate::widgets::hint::hover(ui.ctx(), &del_resp, t!("hint.mix.remove_bus"));
+                        if del_resp.clicked() {
+                            actions.push(MixAction::RemoveBus { bus });
+                        }
+                    });
                 });
+                device_chain(ui, target, &view, None, dev_h - BTN, actions);
             });
-            device_chain(ui, target, &view, None, device_budget(content_h), actions);
-            ms_row(ui, &params, |p| {
-                actions.push(MixAction::SetBusStrip { bus, params: p })
-            });
-            pan_knob(ui, params.pan, |pan| {
-                actions.push(MixAction::SetBusStrip {
-                    bus,
-                    params: StripParams { pan, ..params },
-                })
-            });
-            let fh = ui.available_height().max(FADER_MIN_H);
-            meter_fader(ui, params.gain, peak, fh, |g| {
-                actions.push(MixAction::SetBusStrip {
-                    bus,
-                    params: StripParams { gain: g, ..params },
-                })
-            });
+            ui.add_space(GAP);
+            section(
+                ui,
+                SEND_ROW_H,
+                egui::Layout::top_down(egui::Align::LEFT),
+                |_ui| {},
+            );
+            ui.add_space(GAP);
+            section(
+                ui,
+                MS_ROW_H,
+                egui::Layout::top_down(egui::Align::Center),
+                |ui| {
+                    ms_row(ui, &params, |p| {
+                        actions.push(MixAction::SetBusStrip { bus, params: p })
+                    });
+                },
+            );
+            ui.add_space(GAP);
+            section(
+                ui,
+                PAN_ROW_H,
+                egui::Layout::top_down(egui::Align::Center),
+                |ui| {
+                    pan_knob(ui, params.pan, |pan| {
+                        actions.push(MixAction::SetBusStrip {
+                            bus,
+                            params: StripParams { pan, ..params },
+                        })
+                    });
+                },
+            );
+            ui.add_space(GAP);
+            db_row(ui, params.gain);
+            let bar_h = (meter_h - DB_ROW_H).max(FADER_MIN_H);
+            section(
+                ui,
+                bar_h,
+                egui::Layout::top_down(egui::Align::Center),
+                |ui| {
+                    meter_fader(ui, params.gain, level, hold, bar_h, |g| {
+                        actions.push(MixAction::SetBusStrip {
+                            bus,
+                            params: StripParams { gain: g, ..params },
+                        })
+                    });
+                },
+            );
         },
     );
 }
 
-/// 主输出条：设备链 + 电平/推子（无 M/S/声像/发送）。
+/// 主输出条：设备链 + dB 读数 + 电平/推子（无 M/S/声像/发送）。
 pub(crate) fn master_strip(
     app: &mut App,
     ui: &mut egui::Ui,
     idx: usize,
-    peak: (f32, f32),
+    level: (f32, f32),
+    hold: (f32, f32),
     height: f32,
     actions: &mut Vec<MixAction>,
 ) {
@@ -415,24 +547,37 @@ pub(crate) fn master_strip(
         &title,
         height,
         |ui, content_h| {
-            let max_dev =
-                (content_h - FADER_MIN_H - 8.0).clamp(DEVICE_ROW_H, content_h.max(DEVICE_ROW_H));
-            device_chain(ui, InsertTarget::Master, &view, None, max_dev, actions);
-            let fh = ui.available_height().max(FADER_MIN_H);
-            meter_fader(ui, params.gain, peak, fh, |g| {
-                actions.push(MixAction::SetMaster {
-                    params: MasterParams { gain: g },
-                })
+            let (dev_h, meter_h) = strip_metrics(content_h, false);
+            section(ui, dev_h, egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                device_chain(ui, InsertTarget::Master, &view, None, dev_h, actions);
             });
+            ui.add_space(GAP);
+            db_row(ui, params.gain);
+            let bar_h = (meter_h - DB_ROW_H).max(FADER_MIN_H);
+            section(
+                ui,
+                bar_h,
+                egui::Layout::top_down(egui::Align::Center),
+                |ui| {
+                    meter_fader(ui, params.gain, level, hold, bar_h, |g| {
+                        actions.push(MixAction::SetMaster {
+                            params: MasterParams { gain: g },
+                        })
+                    });
+                },
+            );
         },
     );
 }
 
-/// 设备链可用高度预算：给下方「发送 + M/S + 声像 + 推子」留够空间。
-/// MIDI 通道有发送旋钮（更高），音频/总线/主输出用同一预算也够用。
-fn device_budget(content_h: f32) -> f32 {
-    let reserved = KNOB_D + 8.0 + BTN + 8.0 + KNOB_D + 8.0 + FADER_MIN_H;
-    (content_h - reserved).clamp(DEVICE_ROW_H, (content_h * 0.5).max(DEVICE_ROW_H))
+/// 设备区与推子/电平表区高度：`full` = 预留发送/M-S/声像（通道/音频/总线），
+/// 保证这些条等高；主输出只预留 dB 读数。
+fn strip_metrics(content_h: f32, full: bool) -> (f32, f32) {
+    let reserved = if full { BOTTOM_FULL } else { BOTTOM_MASTER };
+    let dev_h =
+        (content_h - reserved - FADER_MIN_H).clamp(DEVICE_ROW_H, content_h.max(DEVICE_ROW_H));
+    let meter_h = (content_h - reserved - dev_h).max(0.0);
+    (dev_h, meter_h)
 }
 
 /// 设备链：乐器（0/1 个）+ 效果器列表 + 「+」添加入口，按整行滚动。
@@ -444,7 +589,7 @@ fn device_chain(
     max_h: f32,
     actions: &mut Vec<MixAction>,
 ) {
-    let step = DEVICE_ROW_H + ui.spacing().item_spacing.y;
+    let step = DEVICE_ROW_H + 1.0;
     let max_rows = (max_h / step).floor().max(1.0) as usize;
     crate::widgets::scroll::rows_scroll(
         ui,
@@ -452,6 +597,7 @@ fn device_chain(
         DEVICE_ROW_H,
         Some(max_rows),
         |ui| {
+            ui.spacing_mut().item_spacing.y = 1.0;
             if let Some((channel, name)) = instrument {
                 instrument_row(ui, channel, name, actions);
             }
@@ -489,10 +635,10 @@ fn instrument_row(
     } else {
         crate::theme::btn_bg()
     };
-    painter.rect_filled(rect, 0.0, bg);
+    painter.rect_filled(rect, RADIUS, bg);
     painter.rect_stroke(
         rect,
-        0.0,
+        RADIUS,
         egui::Stroke::new(1.0, crate::theme::grid_sub_beat()),
         egui::StrokeKind::Inside,
     );
@@ -589,13 +735,17 @@ fn effect_row(
         egui::Sense::click(),
     );
     let painter = ui.painter();
-    painter.rect_filled(rect, 0.0, crate::theme::btn_bg());
+    painter.rect_filled(rect, RADIUS, crate::theme::btn_bg());
     if resp.hovered() {
-        painter.rect_filled(rect, 0.0, crate::theme::hover_color(crate::theme::btn_bg()));
+        painter.rect_filled(
+            rect,
+            RADIUS,
+            crate::theme::hover_color(crate::theme::btn_bg()),
+        );
     }
     painter.rect_stroke(
         rect,
-        0.0,
+        RADIUS,
         egui::Stroke::new(1.0, crate::theme::grid_sub_beat()),
         egui::StrokeKind::Inside,
     );
@@ -743,10 +893,10 @@ fn add_row(ui: &mut egui::Ui, target: InsertTarget, actions: &mut Vec<MixAction>
     } else {
         crate::theme::btn_bg().gamma_multiply(0.6)
     };
-    painter.rect_filled(rect, 0.0, bg);
+    painter.rect_filled(rect, RADIUS, bg);
     painter.rect_stroke(
         rect,
-        0.0,
+        RADIUS,
         egui::Stroke::new(1.0, crate::theme::grid_sub_beat()),
         egui::StrokeKind::Inside,
     );
@@ -766,79 +916,116 @@ fn add_row(ui: &mut egui::Ui, target: InsertTarget, actions: &mut Vec<MixAction>
     }
 }
 
-/// 效果发送区：每条总线一行「旋钮 + FX n」；右键打开完整发送面板（含推子前/后）。
-fn send_block(ui: &mut egui::Ui, channel: u8, sends: &[(f32, bool)], actions: &mut Vec<MixAction>) {
-    for (b, &(amount, pre_fader)) in sends.iter().enumerate() {
-        ui.horizontal(|ui| {
-            let mut norm = (amount / 2.0).clamp(0.0, 1.0);
-            let resp = knob(ui, &mut norm, KNOB_D);
-            if resp.changed() {
-                actions.push(MixAction::SetSend {
-                    channel,
-                    bus: b as u8,
-                    amount: norm * 2.0,
-                    pre_fader,
-                });
+/// 效果发送区（单行）：FX 1 旋钮。无总线时首次拖动自动创建一条总线。
+/// 右键打开完整发送面板（含推子前/后、多总线）。
+fn send_block(
+    ui: &mut egui::Ui,
+    channel: u8,
+    send: (f32, bool),
+    has_bus: bool,
+    actions: &mut Vec<MixAction>,
+) {
+    let (amount, pre_fader) = send;
+    ui.horizontal(|ui| {
+        let mut norm = (amount / 2.0).clamp(0.0, 1.0);
+        let resp = knob(ui, &mut norm, KNOB_D);
+        if resp.changed() {
+            if !has_bus {
+                actions.push(MixAction::AddBus);
             }
-            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.send_amount"));
-            resp.context_menu(|ui| {
-                let item = ui.add(crate::widgets::menu::menu_item_button(
-                    ui,
-                    false,
-                    t!("mix.sends").as_ref(),
-                ));
-                crate::widgets::hint::hover(ui.ctx(), &item, t!("hint.mix.sends"));
-                if item.clicked() {
-                    actions.push(MixAction::OpenSends { channel });
-                    ui.close();
-                }
+            actions.push(MixAction::SetSend {
+                channel,
+                bus: 0,
+                amount: norm * 2.0,
+                pre_fader,
             });
-            ui.label(
-                egui::RichText::new(format!("FX {}", b + 1))
-                    .size(crate::theme::SMALL_LABEL_FONT)
-                    .color(crate::theme::text_secondary()),
-            );
+        }
+        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.send_amount"));
+        resp.context_menu(|ui| {
+            let item = ui.add(crate::widgets::menu::menu_item_button(
+                ui,
+                false,
+                t!("mix.sends").as_ref(),
+            ));
+            crate::widgets::hint::hover(ui.ctx(), &item, t!("hint.mix.sends"));
+            if item.clicked() {
+                actions.push(MixAction::OpenSends { channel });
+                ui.close();
+            }
         });
-    }
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new("FX 1")
+                .size(crate::theme::SMALL_LABEL_FONT)
+                .color(crate::theme::text_secondary()),
+        );
+    });
 }
 
-/// M/S 按钮（居中）。
+/// M/S 按钮（居中，等宽）。
 fn ms_row(ui: &mut egui::Ui, params: &StripParams, mut on_change: impl FnMut(StripParams)) {
-    ui.horizontal(|ui| {
-        let total = BTN * 2.0 + 4.0;
-        ui.add_space(((CONTENT_W - total) / 2.0).max(0.0));
-        let m_resp = toggle_button(ui, "M", params.mute, crate::theme::mute_active());
-        crate::widgets::hint::hover(ui.ctx(), &m_resp, t!("hint.mix.mute"));
-        if m_resp.clicked() {
-            let mut p = *params;
-            p.mute = !p.mute;
-            on_change(p);
-        }
-        ui.add_space(4.0);
-        let s_resp = toggle_button(ui, "S", params.solo, crate::theme::solo_active());
-        crate::widgets::hint::hover(ui.ctx(), &s_resp, t!("hint.mix.solo"));
-        if s_resp.clicked() {
-            let mut p = *params;
-            p.solo = !p.solo;
-            on_change(p);
-        }
-    });
+    let group = BTN * 2.0 + 4.0;
+    ui.allocate_ui_with_layout(
+        egui::vec2(group, MS_ROW_H),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            let m_resp = toggle_button(ui, "M", params.mute, crate::theme::mute_active());
+            crate::widgets::hint::hover(ui.ctx(), &m_resp, t!("hint.mix.mute"));
+            if m_resp.clicked() {
+                let mut p = *params;
+                p.mute = !p.mute;
+                on_change(p);
+            }
+            ui.add_space(4.0);
+            let s_resp = toggle_button(ui, "S", params.solo, crate::theme::solo_active());
+            crate::widgets::hint::hover(ui.ctx(), &s_resp, t!("hint.mix.solo"));
+            if s_resp.clicked() {
+                let mut p = *params;
+                p.solo = !p.solo;
+                on_change(p);
+            }
+        },
+    );
 }
 
 /// 声像旋钮（居中）。
 fn pan_knob(ui: &mut egui::Ui, pan: f32, mut on_pan: impl FnMut(f32)) {
-    ui.horizontal(|ui| {
-        ui.add_space(((CONTENT_W - KNOB_D) / 2.0).max(0.0));
-        let mut norm = (pan + 1.0) / 2.0;
-        let resp = knob(ui, &mut norm, KNOB_D);
-        if resp.changed() {
-            on_pan(norm * 2.0 - 1.0);
-        }
-        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.pan"));
-    });
+    ui.allocate_ui_with_layout(
+        egui::vec2(KNOB_D, PAN_ROW_H),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            let mut norm = (pan + 1.0) / 2.0;
+            let resp = knob(ui, &mut norm, KNOB_D);
+            if resp.changed() {
+                on_pan(norm * 2.0 - 1.0);
+            }
+            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.pan"));
+        },
+    );
 }
 
-/// 自绘小开关按钮（M/S），激活时填充激活色。
+/// 当前增益 dB 读数（居中，推子/电平表之上）。
+fn db_row(ui: &mut egui::Ui, gain: f32) {
+    section(
+        ui,
+        DB_ROW_H,
+        egui::Layout::top_down(egui::Align::Center),
+        |ui| {
+            let text = if gain <= 0.0001 {
+                "-∞ dB".to_string()
+            } else {
+                format!("{:+.1} dB", gain_to_db(gain))
+            };
+            ui.label(
+                egui::RichText::new(text)
+                    .size(crate::theme::SMALL_FONT)
+                    .color(crate::theme::text_secondary()),
+            );
+        },
+    );
+}
+
+/// 自绘小开关按钮（M/S），激活时填充激活色；圆角矩形。
 fn toggle_button(
     ui: &mut egui::Ui,
     label: &str,
@@ -859,10 +1046,10 @@ fn toggle_button(
         crate::theme::text_secondary()
     };
     let painter = ui.painter();
-    painter.rect_filled(rect, 0.0, bg);
+    painter.rect_filled(rect, RADIUS, bg);
     painter.rect_stroke(
         rect,
-        0.0,
+        RADIUS,
         egui::Stroke::new(1.0, crate::theme::grid_sub_beat()),
         egui::StrokeKind::Inside,
     );
@@ -876,15 +1063,23 @@ fn toggle_button(
     resp
 }
 
-/// 方形图标按钮（删除等）。
+/// 方形图标按钮（删除等）；圆角矩形。
 fn icon_button(ui: &mut egui::Ui, codepoint: &str, color: egui::Color32) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(BTN, BTN), egui::Sense::click());
-    let c = if resp.hovered() {
-        crate::theme::hover_color(color)
+    let bg = if resp.hovered() {
+        crate::theme::hover_color(crate::theme::btn_bg())
     } else {
-        color
+        crate::theme::btn_bg()
     };
-    ui.painter().text(
+    let painter = ui.painter();
+    painter.rect_filled(rect, RADIUS, bg);
+    painter.rect_stroke(
+        rect,
+        RADIUS,
+        egui::Stroke::new(1.0, crate::theme::grid_sub_beat()),
+        egui::StrokeKind::Inside,
+    );
+    painter.text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
         codepoint,
@@ -892,26 +1087,30 @@ fn icon_button(ui: &mut egui::Ui, codepoint: &str, color: egui::Color32) -> egui
             crate::theme::ICON_FONT_SM,
             egui_material_icons::icons::ICON_DELETE.font_family(),
         ),
-        c,
+        color,
     );
     resp
 }
 
-/// 电平表（左）+ 推子（右），等高。
+/// 电平表（左）+ 推子（右），等高，整体居中。
 fn meter_fader(
     ui: &mut egui::Ui,
     gain: f32,
-    peak: (f32, f32),
+    level: (f32, f32),
+    hold: (f32, f32),
     height: f32,
     mut on_gain: impl FnMut(f32),
 ) {
-    ui.horizontal_top(|ui| {
-        let total = (METER_W * 2.0 + METER_GAP) + 6.0 + FADER_HANDLE_W;
-        ui.add_space(((CONTENT_W - total) / 2.0).max(0.0));
-        meter(ui, peak, height);
-        ui.add_space(6.0);
-        fader(ui, gain, height, &mut on_gain);
-    });
+    let group = (METER_W * 2.0 + METER_GAP) + 6.0 + FADER_HANDLE_W;
+    ui.allocate_ui_with_layout(
+        egui::vec2(group, height),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            meter(ui, level, hold, height);
+            ui.add_space(6.0);
+            fader(ui, gain, height, &mut on_gain);
+        },
+    );
 }
 
 /// 自绘推子：凹槽 + 填充 + 0dB 刻度 + 手柄（拖动改值，双击回 0dB）。直角。
@@ -977,41 +1176,80 @@ fn fader(ui: &mut egui::Ui, gain: f32, height: f32, mut on_gain: impl FnMut(f32)
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.fader"));
 }
 
-/// 自绘电平表：L/R 双条（直角、加宽）+ 0dB 刻度。dB 映射 -60..+6；
+/// 电平表刻度：`(dB, 是否主刻度)`。行业惯用标注点。
+const METER_TICKS: &[(f32, bool)] = &[
+    (0.0, true),
+    (-6.0, false),
+    (-12.0, false),
+    (-18.0, false),
+    (-24.0, false),
+    (-36.0, false),
+    (-48.0, false),
+];
+
+/// 自绘电平表：L/R 双条（直角、加宽）+ 刻度 + 峰值保持线。dB 映射 -60..+6；
 /// >0dB 金色、≥0dBFS 红色顶格。
-fn meter(ui: &mut egui::Ui, peak: (f32, f32), height: f32) {
+fn meter(ui: &mut egui::Ui, level: (f32, f32), hold: (f32, f32), height: f32) {
     let w = METER_W * 2.0 + METER_GAP;
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, height), egui::Sense::hover());
     let painter = ui.painter();
     painter.rect_filled(rect, 0.0, crate::theme::track_bg());
-    for (i, &p) in [peak.0, peak.1].iter().enumerate() {
+
+    // 刻度线（跨两条）。
+    for &(db, major) in METER_TICKS {
+        let y = rect.max.y - db_frac(db) * rect.height();
+        let alpha = if major { 0.7 } else { 0.35 };
+        painter.hline(
+            rect.x_range(),
+            y,
+            egui::Stroke::new(1.0, crate::theme::text_muted().gamma_multiply(alpha)),
+        );
+    }
+
+    // L/R 填充条。
+    for (i, &p) in [level.0, level.1].iter().enumerate() {
         let x0 = rect.min.x + i as f32 * (METER_W + METER_GAP);
         let bar = egui::Rect::from_min_size(
             egui::pos2(x0, rect.min.y),
             egui::vec2(METER_W, rect.height()),
         );
         let frac = db_frac(gain_to_db(p));
-        if frac <= 0.0 {
+        if frac > 0.0 {
+            let h = bar.height() * frac;
+            let fill = egui::Rect::from_min_max(egui::pos2(bar.min.x, bar.max.y - h), bar.max);
+            let color = meter_color(p);
+            painter.rect_filled(fill, 0.0, color);
+        }
+    }
+
+    // 峰值保持线（比当前电平高时显示）。
+    for (i, (&l, &h)) in [level.0, level.1]
+        .iter()
+        .zip([hold.0, hold.1].iter())
+        .enumerate()
+    {
+        if h <= l + 1e-4 {
             continue;
         }
-        let h = bar.height() * frac;
-        let fill = egui::Rect::from_min_max(egui::pos2(bar.min.x, bar.max.y - h), bar.max);
-        let color = if p >= 1.0 {
-            crate::theme::danger_text()
-        } else if gain_to_db(p) > -6.0 {
-            crate::theme::warning_gold()
-        } else {
-            crate::theme::accent_active()
-        };
-        painter.rect_filled(fill, 0.0, color);
+        let x0 = rect.min.x + i as f32 * (METER_W + METER_GAP);
+        let y = rect.max.y - db_frac(gain_to_db(h)) * rect.height();
+        painter.hline(
+            egui::Rangef::new(x0, x0 + METER_W),
+            y,
+            egui::Stroke::new(1.0, meter_color(h)),
+        );
     }
-    // 0dB 刻度横线。
-    let zero_y = rect.max.y - db_frac(0.0) * rect.height();
-    painter.hline(
-        rect.x_range(),
-        zero_y,
-        egui::Stroke::new(1.0, crate::theme::text_muted().gamma_multiply(0.5)),
-    );
+}
+
+/// 电平着色：≥0dBFS 红、> -6dB 金、其余强调色。
+fn meter_color(p: f32) -> egui::Color32 {
+    if p >= 1.0 {
+        crate::theme::danger_text()
+    } else if gain_to_db(p) > -6.0 {
+        crate::theme::warning_gold()
+    } else {
+        crate::theme::accent_active()
+    }
 }
 
 /// 发送面板（某源通道对各总线的发送量 / 推子前推子后）。
@@ -1376,7 +1614,7 @@ fn plugin_row(
     if enabled && resp.hovered() {
         ui.painter().rect_filled(
             rect,
-            0.0,
+            RADIUS,
             crate::theme::hover_color(crate::theme::track_bg()),
         );
     }
