@@ -120,7 +120,7 @@ impl AudioRenderer {
                 // 新的加载流程开始：音频重置为未就绪（音色库/采样/管线
                 // 全部就绪后由 mark_audio_ready 置回）。
                 self.state.audio_ready.store(false, Ordering::Release);
-                self.preview_engine.stop_all();
+                self.engine.stop_preview_all();
                 self.engine.handle_command(AudioCommand::Pause);
                 self.engine.handle_command(AudioCommand::Stop);
                 // 首次加载：消费位置 == 前沿 == 0，锚定无差别。
@@ -187,7 +187,7 @@ impl AudioRenderer {
                     // 导出中忽略播放控制（取消用导出卡的停止按钮）。
                 } else if self.engine.model_loaded() {
                     let t0 = Instant::now();
-                    self.preview_engine.stop_all();
+                    self.engine.stop_preview_all();
                     self.engine
                         .handle_command(AudioCommand::Play { from_sample });
                     let dt_engine = t0.elapsed();
@@ -217,7 +217,7 @@ impl AudioRenderer {
                 if self.export.is_some() {
                     // 导出中忽略 seek。
                 } else {
-                    self.preview_engine.stop_all();
+                    self.engine.stop_preview_all();
                     self.engine.handle_command(AudioCommand::Seek { sample });
                     // 显式 seek：ring 清空锚定引擎当前（=seek 后）位置。
                     self.clear_buffered_audio(self.engine.sample_position());
@@ -229,7 +229,7 @@ impl AudioRenderer {
                 if self.export.is_some() {
                     // 导出中忽略停止（取消用导出卡的停止按钮）。
                 } else {
-                    self.preview_engine.stop_all();
+                    self.engine.stop_preview_all();
                     self.engine.handle_command(AudioCommand::Stop);
                     // Stop = 显式 seek 到 0。
                     self.clear_buffered_audio(self.engine.sample_position());
@@ -300,14 +300,14 @@ impl AudioRenderer {
                     }
                 }
                 // 提交预览组：组内按目标位置相对时值错开触发。
-                self.preview_engine.preview_notes(inputs, exclusive);
+                self.engine.preview_notes(inputs, exclusive);
             }
             AudioCommand::PreviewStop => {
-                self.preview_engine.stop_all();
+                self.engine.stop_preview_all();
             }
             // MIDI 直通单键停止：只停松开的键（和弦保持）。
             AudioCommand::PreviewStopKey { key } => {
-                self.preview_engine.stop_key(key);
+                self.engine.stop_preview_key(key);
             }
             AudioCommand::SyncBusConfig { buses, sends } => {
                 self.engine

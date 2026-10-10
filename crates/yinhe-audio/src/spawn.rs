@@ -1256,10 +1256,9 @@ fn select_output_device(device_name: Option<&str>) -> Result<cpal::Device, Strin
     }
 }
 
-/// `init_engine` 的产物：引擎、预览引擎、电平表读数端与插件退回通道。
+/// `init_engine` 的产物：引擎（内含预览引擎）、电平表读数端与插件退回通道。
 struct EngineInit {
     engine: crate::engine::AudioEngine,
-    preview_engine: crate::preview_engine::PreviewEngine,
     meters: MixerMeters,
     /// 渲染线程 → UI 的 insert 处理器退回通道（替换/移除/拆除时回收 deactivate）。
     insert_return_tx: Sender<Vec<Box<dyn InsertProcessor>>>,
@@ -1282,36 +1281,35 @@ fn init_engine(
     interpolation: Interpolation,
     synth_engine: SynthEngine,
 ) -> Result<EngineInit, String> {
-    let (engine, preview_engine) =
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut engine = crate::engine::AudioEngine::new(sample_rate, layout);
-            engine.set_interpolation(interpolation);
-            // 预览后端跟随主引擎：XSynthCpu → xsynth；YinheCpu/YinheGpu → yinhe CPU。
-            let preview = crate::preview_engine::PreviewEngine::new(
-                synth_engine,
-                &engine.channel_layout,
-                engine.sample_rate,
-                interpolation.code(),
-            );
-            (engine, preview)
-        })) {
-            Ok(pair) => pair,
-            Err(payload) => {
-                let msg = payload
-                    .downcast_ref::<String>()
-                    .map(|s| s.as_str())
-                    .or_else(|| payload.downcast_ref::<&str>().copied())
-                    .unwrap_or("unknown panic");
-                return Err(format!("Audio engine initialization failed: {msg}"));
-            }
-        };
+    let engine = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut engine = crate::engine::AudioEngine::new(sample_rate, layout);
+        engine.set_interpolation(interpolation);
+        // 预览后端跟随主引擎：XSynthCpu → xsynth；YinheCpu/YinheGpu → yinhe CPU。
+        let preview = crate::preview_engine::PreviewEngine::new(
+            synth_engine,
+            &engine.channel_layout,
+            engine.sample_rate,
+            interpolation.code(),
+        );
+        engine.set_preview_engine(preview);
+        engine
+    })) {
+        Ok(engine) => engine,
+        Err(payload) => {
+            let msg = payload
+                .downcast_ref::<String>()
+                .map(|s| s.as_str())
+                .or_else(|| payload.downcast_ref::<&str>().copied())
+                .unwrap_or("unknown panic");
+            return Err(format!("Audio engine initialization failed: {msg}"));
+        }
+    };
     let meters = MixerMeters::collect(&engine);
     let (insert_return_tx, insert_return_rx) = unbounded::<Vec<Box<dyn InsertProcessor>>>();
     let (instrument_return_tx, instrument_return_rx) =
         unbounded::<(u8, Box<dyn InstrumentProcessor>)>();
     Ok(EngineInit {
         engine,
-        preview_engine,
         meters,
         insert_return_tx,
         insert_return_rx,
@@ -1355,7 +1353,6 @@ struct RendererStarted {
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 fn init_renderer(
     engine: crate::engine::AudioEngine,
-    preview_engine: crate::preview_engine::PreviewEngine,
     cmd_rx: crossbeam_channel::Receiver<AudioCommand>,
     transport_rx: crossbeam_channel::Receiver<AudioCommand>,
     worker_tx: Sender<WorkerCmd>,
@@ -1403,7 +1400,6 @@ fn init_renderer(
 
     let handle = spawn_renderer(
         engine,
-        preview_engine,
         ring_producer,
         renderer_state,
         cmd_rx,
@@ -1612,7 +1608,6 @@ pub fn spawn_cpal_audio(
 
     let EngineInit {
         engine,
-        preview_engine,
         meters,
         insert_return_tx,
         insert_return_rx,
@@ -1636,7 +1631,6 @@ pub fn spawn_cpal_audio(
         monitor,
     } = init_renderer(
         engine,
-        preview_engine,
         cmd_rx,
         transport_rx,
         worker_tx,

@@ -33,7 +33,7 @@ impl AudioRenderer {
         cancel.store(false, Ordering::Relaxed);
         pause.store(false, Ordering::Relaxed);
         // 复位到干净起点：停止播放（清 voice/插件状态/PDC 延迟线）→ seek 0。
-        self.preview_engine.stop_all();
+        self.engine.stop_preview_all();
         self.engine.handle_command(AudioCommand::Stop);
         self.clear_buffered_audio(0);
         self.engine.set_layer_count(layer_count);

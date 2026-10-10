@@ -127,6 +127,12 @@ pub(crate) struct AudioEngine {
     /// 与 xsynth 预览（PreviewEngine）并列；`off_sample = None` 表示持续音。
     pub(crate) plugin_previews: Vec<PluginPreviewNote>,
 
+    /// 音符试听预览合成器（独立合成器实例，不经主引擎 voice）。
+    /// 预览音频累加进 mixer 通道缓冲，与播放共用同一条通道 DSP + 混音台链路，
+    /// 因此试听反映**当前**的 CC7/10/11/71/74 与推子/master/insert 状态。
+    /// 由 `init_engine` 在创建引擎后按后端注入（测试可不设置）。
+    pub(crate) preview: Option<crate::preview_engine::PreviewEngine>,
+
     /// GPU 合成器 — 启用后渲染走 GpuSynth 而非 xsynth
     #[cfg(feature = "gpu")]
     pub(crate) gpu_synth: Option<yinhe_synth::GpuSynth>,
@@ -233,6 +239,7 @@ impl AudioEngine {
                 automation_density: 1,
                 chase_generation: 0,
                 plugin_previews: Vec::new(),
+                preview: None,
                 #[cfg(feature = "gpu")]
                 gpu_synth: None,
                 #[cfg(feature = "gpu")]

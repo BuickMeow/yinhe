@@ -105,8 +105,8 @@ impl AudioRenderer {
                     };
                     if use_xsynth_preview {
                         for channel in &channels {
-                            self.preview_engine
-                                .set_xsynth_soundfonts(*channel, soundfonts.clone());
+                            self.engine
+                                .set_preview_xsynth_soundfonts(*channel, soundfonts.clone());
                         }
                     }
                     let dense_list: Vec<(u8, u32)> = channels
@@ -159,8 +159,8 @@ impl AudioRenderer {
                         // 预览也是 yinhe CPU：共享同一份 key map（进程级缓存命中）。
                         if !denses.is_empty()
                             && let Err(e) = self
-                                .preview_engine
-                                .load_yinhe_soundfonts(&denses, &cpu_paths)
+                                .engine
+                                .load_preview_yinhe_soundfonts(&denses, &cpu_paths)
                         {
                             eprintln!("[yinhe-cpu] preview 音色加载失败: {e}");
                         }
@@ -182,8 +182,8 @@ impl AudioRenderer {
                         if any_valid {
                             // 预览跟随：YinheGpu 主引擎时预览用 yinhe CPU，共享同一份 key map。
                             if let Err(e) = self
-                                .preview_engine
-                                .load_yinhe_soundfonts(&denses, &gpu_paths)
+                                .engine
+                                .load_preview_yinhe_soundfonts(&denses, &gpu_paths)
                             {
                                 eprintln!("[gpu] preview 音色加载失败: {e}");
                             }

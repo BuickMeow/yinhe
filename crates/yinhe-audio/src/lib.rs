@@ -12,6 +12,7 @@ pub mod engine;
 #[cfg(feature = "gpu")]
 mod engine_gpu;
 mod engine_mixer;
+mod engine_preview;
 mod engine_render;
 mod engine_state;
 pub mod export;

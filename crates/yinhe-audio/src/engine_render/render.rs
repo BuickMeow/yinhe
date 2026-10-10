@@ -4,11 +4,24 @@ use crate::engine::AudioEngine;
 
 use super::STEREO_CHANNELS;
 
+/// 把 mixer 的 master 立体声输出交错写入输出缓冲。
+fn write_master(output: &mut [f32], master_l: &[f32], master_r: &[f32]) {
+    for i in 0..output.len() / STEREO_CHANNELS {
+        output[i * STEREO_CHANNELS] = master_l[i];
+        output[i * STEREO_CHANNELS + 1] = master_r[i];
+    }
+}
+
 impl AudioEngine {
     pub(crate) fn render(&mut self, output: &mut [f32]) {
         let frames = output.len() / STEREO_CHANNELS;
-        if frames == 0 || !self.playing {
+        if frames == 0 {
             output.fill(0.0);
+            return;
+        }
+        // 未播放：主引擎不推进走带，只把试听预览混进同一 mixer + 通道 DSP 输出。
+        if !self.playing {
+            self.render_preview_only(output, frames);
             return;
         }
 
@@ -93,14 +106,12 @@ impl AudioEngine {
             self.dispatch_block_events(block_end_tick);
             self.dispatch_plugin_previews(block_start_sample, frames);
             self.render_instruments(block_start_sample, frames);
+            self.inject_preview(frames);
             self.render_channel_dsp(frames);
             self.render_audio_tracks(block_start_sample, frames);
 
             let (master_l, master_r) = self.mixer.process();
-            for (i, chunk) in output.chunks_exact_mut(STEREO_CHANNELS).enumerate() {
-                chunk[0] = master_l[i];
-                chunk[1] = master_r[i];
-            }
+            write_master(output, master_l, master_r);
             self.sample_position = block_end_sample;
             self.current_tick = block_end_tick;
             return;
@@ -172,6 +183,9 @@ impl AudioEngine {
         self.dispatch_plugin_previews(block_start_sample, frames);
         self.render_instruments(block_start_sample, frames);
 
+        // 试听预览音频累加进对应 dense 通道（与播放共用同一条 DSP + mixer）。
+        self.inject_preview(frames);
+
         // 内置音源通道处理段（CC7/10/11/71/74）在混音台 insert 链之前生效。
         self.render_channel_dsp(frames);
 
@@ -180,10 +194,7 @@ impl AudioEngine {
 
         // 混音：insert → 增益/声像斜坡 → mute/solo → master，然后交错输出。
         let (master_l, master_r) = self.mixer.process();
-        for (i, chunk) in output.chunks_exact_mut(STEREO_CHANNELS).enumerate() {
-            chunk[0] = master_l[i];
-            chunk[1] = master_r[i];
-        }
+        write_master(output, master_l, master_r);
 
         self.sample_position = block_end_sample;
         self.current_tick = block_end_tick;
@@ -222,11 +233,30 @@ impl AudioEngine {
         self.mixer.clear_channel_buffers();
         self.dispatch_plugin_previews(block_start, frames);
         self.render_instruments(block_start, frames);
+        self.inject_preview(frames);
         let (master_l, master_r) = self.mixer.process();
-        for (i, chunk) in output.chunks_exact_mut(STEREO_CHANNELS).enumerate() {
-            chunk[0] = master_l[i];
-            chunk[1] = master_r[i];
+        write_master(output, master_l, master_r);
+    }
+
+    /// 未播放时的纯预览渲染：清空 mixer 通道缓冲后写入预览音频，再走与播放
+    /// 完全相同的通道 DSP + 混音台链路输出（推子/master/insert/mute-solo 全生效）。
+    fn render_preview_only(&mut self, output: &mut [f32], frames: usize) {
+        if !self.previewing() {
+            output.fill(0.0);
+            return;
         }
+        // 块长变化（实时 512 / GPU 4096 / 导出 1024）：与播放路径同一逻辑。
+        if self.mixer.frames() != frames {
+            let strips = self.dense_strip_params();
+            let count = self.mixer.channel_count();
+            self.mixer.resize(count, frames, &strips);
+            self.channel_set.resize_scratches(frames);
+        }
+        self.mixer.clear_channel_buffers();
+        self.inject_preview(frames);
+        self.render_channel_dsp(frames);
+        let (master_l, master_r) = self.mixer.process();
+        write_master(output, master_l, master_r);
     }
 
     /// 内置音源通道处理段：合成器输出之后、`mixer.process()` 之前，

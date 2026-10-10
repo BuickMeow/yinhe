@@ -14,7 +14,6 @@ use crate::export::ExportJob;
 
 use crate::audio_ring::AudioRingProducer;
 use crate::engine::AudioEngine;
-use crate::preview_engine::PreviewEngine;
 use crate::spawn::{AmMsMap, AudioCommand, WorkerCmd, WorkerResult};
 
 mod commands;
@@ -150,10 +149,6 @@ struct AudioRenderer {
     scratch: Vec<f32>,
     /// 恢复/seek 后剩余淡入帧数（见 `pause_fade_frames`）。
     fade_in_frames: usize,
-    /// 预览合成器（独立 ChannelGroup/音色/状态）：预览音不占主引擎 voice。
-    preview_engine: PreviewEngine,
-    /// 预览叠加用临时缓冲。
-    preview_scratch: Vec<f32>,
     /// 预览 Stop 快速路径标志（与 AudioHandle 共享）：每轮消费，通道满丢命令也必达。
     preview_stop_flag: Arc<AtomicBool>,
     /// cpal 回调已消费的采样位置（听音位置，由回调线程更新）。
@@ -191,7 +186,6 @@ impl AudioRenderer {
     #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
     fn new(
         engine: AudioEngine,
-        preview_engine: PreviewEngine,
         ring: AudioRingProducer,
         state: RendererSharedState,
         cmd_rx: Receiver<AudioCommand>,
@@ -235,8 +229,6 @@ impl AudioRenderer {
             shutdown,
             scratch: vec![0.0; render_chunk_frames * STEREO_CHANNELS],
             fade_in_frames: 0,
-            preview_engine,
-            preview_scratch: vec![0.0; render_chunk_frames * STEREO_CHANNELS],
             preview_stop_flag,
             consumer_position,
             pending_skip,
@@ -300,7 +292,7 @@ impl AudioRenderer {
             // 松手即停。必须在 process_commands 之后消费：处理命令期间 flag 保持置位，
             // PreviewNotes 分支借此跳过堆积的旧预览组（松手后不再触发）。
             if self.preview_stop_flag.swap(false, Ordering::AcqRel) {
-                self.preview_engine.stop_all();
+                self.engine.stop_preview_all();
                 did_work = true;
             }
             // GPU 后端统一同步：命令/worker 结果可能改变位置或使事件表失效，
@@ -374,7 +366,7 @@ impl AudioRenderer {
     fn render_if_needed(&mut self) -> bool {
         // 预览组非空或有余音时强制渲染：未播放时也要输出。
         // 预览引擎是独立合成器（不依赖模型），所以预览时不需要 initialized。
-        let previewing = self.preview_engine.previewing();
+        let previewing = self.engine.previewing();
         // 乐器插件空闲渲染：存在已安装乐器时停止状态也持续 process
         //（GUI 键盘、插件预览、插件尾音 —— 成熟 DAW 语义：乐器始终在跑）。
         let idle_instruments = !self.engine.playing() && self.engine.has_instruments();
@@ -417,16 +409,12 @@ impl AudioRenderer {
         } else if idle_instruments {
             // 未播放但有乐器：只驱动乐器插件与混音输出（不推进走带）。
             self.engine.render_idle(&mut self.scratch);
+        } else if previewing {
+            // 未播放的纯试听：预览音频走 engine 的同一 mixer + 通道 DSP。
+            self.engine.render(&mut self.scratch);
         } else {
-            // 未播放：主引擎不渲染，输出静音，预览音单独叠加。
+            // 未播放：主引擎不渲染，输出静音。
             self.scratch.fill(0.0);
-        }
-        if previewing {
-            // 预览合成器独立输出，叠加到主输出；余音在 voice 自然衰减完前持续输出。
-            self.preview_engine.render(&mut self.preview_scratch);
-            for (a, b) in self.scratch.iter_mut().zip(self.preview_scratch.iter()) {
-                *a += *b;
-            }
         }
 
         // 输出限幅（GPU/CPU 路径统一在此处理；合成器内部不做 DSP）。
@@ -499,7 +487,6 @@ impl AudioRenderer {
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub(crate) fn spawn_renderer(
     engine: AudioEngine,
-    preview_engine: PreviewEngine,
     ring: AudioRingProducer,
     state: RendererSharedState,
     cmd_rx: Receiver<AudioCommand>,
@@ -526,7 +513,6 @@ pub(crate) fn spawn_renderer(
             yinhe_synth::denormals::enable_flush_denormals();
             let mut renderer = AudioRenderer::new(
                 engine,
-                preview_engine,
                 ring,
                 state,
                 cmd_rx,

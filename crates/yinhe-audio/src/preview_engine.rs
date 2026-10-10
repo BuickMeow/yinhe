@@ -1,22 +1,21 @@
+use std::borrow::BorrowMut;
 use std::cmp::Reverse;
 use std::sync::Arc;
 use xsynth_core::channel::{
     ChannelAudioEvent, ChannelConfigEvent, ChannelEvent, ChannelInitOptions,
 };
-use xsynth_core::channel_group::{
-    ChannelGroup, ChannelGroupConfig, ParallelismOptions, SynthEvent, SynthFormat,
-};
+use xsynth_core::channel_group::{ChannelGroupConfig, ParallelismOptions, SynthEvent, SynthFormat};
 use xsynth_core::soundfont::SoundfontBase;
-use xsynth_core::{AudioPipe, AudioStreamParams, ChannelCount};
+use xsynth_core::{AudioStreamParams, ChannelCount};
+use yinhe_mixer::ChannelBuffers;
 
 use crate::audio_model::SortedCC;
 use crate::channel::{ChannelState, ChaseSkip};
 use crate::channel_layout::ChannelLayout;
+use crate::channel_set::ChannelSet;
 
 #[cfg(feature = "gpu")]
 mod yinhe;
-
-pub(crate) const STEREO_CHANNELS: usize = 2;
 
 /// 为同一 channel 的一组目标位置增量 chase：`targets` 必须升序，只扫一遍 cc_events。
 /// 返回与 `targets` 一一对应的状态快照（用于预览整组音符的目标位置自动化）。
@@ -54,12 +53,15 @@ pub(crate) fn chase_channel_states(
 /// - 渲染时钟独立；NoteOff 后按 `voice_count() > 0` 继续渲染，余音自然衰减完才停，
 ///   因此余音不会被截断，也不需要"余音时长"阈值。
 pub(crate) struct XsynthPreview {
-    channel_group: ChannelGroup,
+    /// 分通道渲染的通道组（与主引擎同源），输出 planar 供混音台/DSP 处理。
+    channel_set: ChannelSet,
     /// 源通道 → dense 通道映射（与主引擎同一布局，dense 索引一致）。
     dense_map: [u32; 256],
     /// 每 port 的音色（与主引擎共享 Arc）。
     /// 每源通道（0..256）的音色库（与主引擎共享同一批 Arc，零拷贝）。
     channel_sfs: Box<[Vec<Arc<dyn SoundfontBase>>; 256]>,
+    /// per-dense planar 暂存（每块合成器输出，累加进混音台缓冲）。
+    buffers: Vec<ChannelBuffers>,
     /// 渲染时钟（预览输出帧数累计，与主引擎 sample_position 独立）。
     position: u64,
     /// 活跃预览音。
@@ -120,10 +122,17 @@ impl XsynthPreview {
             },
             parallelism: ParallelismOptions::AUTO_PER_CHANNEL,
         };
+        let buffers = (0..compacted_channels as usize)
+            .map(|_| ChannelBuffers {
+                left: Vec::new(),
+                right: Vec::new(),
+            })
+            .collect();
         Self {
-            channel_group: ChannelGroup::new(config),
+            channel_set: ChannelSet::new(config, crate::engine::ENGINE_BLOCK_FRAMES),
             dense_map: std::array::from_fn(|ch| layout.dense_for(ch)),
             channel_sfs: Box::new(std::array::from_fn(|_| Vec::new())),
+            buffers,
             position: 0,
             voices: Vec::new(),
             pending: Vec::new(),
@@ -158,14 +167,14 @@ impl XsynthPreview {
         // 音色与主引擎同源（同一 Arc，零拷贝）。
         if !self.channel_sfs[channel as usize].is_empty() {
             let sfs = self.channel_sfs[channel as usize].clone();
-            self.channel_group.send_event(SynthEvent::Channel(
+            self.channel_set.send_event(SynthEvent::Channel(
                 dense,
                 ChannelEvent::Config(ChannelConfigEvent::SetSoundfonts(sfs)),
             ));
         }
         // 目标位置自动化状态（volume/pan/Program/PBS 等）。
-        state.send_to(dense, &mut self.channel_group, &ChaseSkip::default());
-        self.channel_group.send_event(SynthEvent::Channel(
+        state.send_to(dense, &mut self.channel_set, &ChaseSkip::default());
+        self.channel_set.send_event(SynthEvent::Channel(
             dense,
             ChannelEvent::Audio(ChannelAudioEvent::NoteOn { key, vel: velocity }),
         ));
@@ -221,11 +230,26 @@ impl XsynthPreview {
     /// NoteOn、定长音符的 NoteOff）在**精确的 sample 位置**处理：块按最近事件
     /// 边界切成段，段间触发/释放，因此音符能在块内任意帧开始/结束，不会被量化
     /// 到块（512 帧 ≈ 10.7ms）边界的第一帧。余音继续渲染，voice 自然衰减完才消失。
-    pub(crate) fn render(&mut self, output: &mut [f32]) {
-        let frames = output.len() / STEREO_CHANNELS;
-        if frames == 0 {
+    /// 渲染一块到混音台 planar 通道缓冲（**累加**，每 dense 一个）。
+    ///
+    /// 事件（待触发音符的 NoteOn、定长音符的 NoteOff）在**精确的 sample 位置**
+    /// 处理：块按最近事件边界切成段，段间触发/释放。预览音频叠加在对应 dense
+    /// 通道上，随后由 `AudioEngine::render_channel_dsp` + mixer 统一处理。
+    pub(crate) fn render_add<B: BorrowMut<ChannelBuffers>>(
+        &mut self,
+        targets: &mut [B],
+        frames: usize,
+    ) {
+        if frames == 0 || self.buffers.is_empty() {
             return;
         }
+        for b in &mut self.buffers {
+            if b.left.len() < frames {
+                b.left.resize(frames, 0.0);
+                b.right.resize(frames, 0.0);
+            }
+        }
+        self.channel_set.resize_scratches(frames);
         let block_end = self.position + frames as u64;
         let mut offset_frames = 0usize;
         let mut cursor = self.position;
@@ -240,9 +264,9 @@ impl XsynthPreview {
             // next 必 > cursor（<= cursor 的事件已在上方处理完）且 <= block_end。
             debug_assert!(next > cursor || next == block_end);
             let seg_frames = (next - cursor) as usize;
-            let start = offset_frames * STEREO_CHANNELS;
-            let end = (offset_frames + seg_frames) * STEREO_CHANNELS;
-            self.channel_group.read_samples(&mut output[start..end]);
+            self.channel_set
+                .render_segment(&mut self.buffers, 0, seg_frames);
+            self.accumulate(targets, offset_frames, seg_frames);
             offset_frames += seg_frames;
             cursor = next;
         }
@@ -250,6 +274,26 @@ impl XsynthPreview {
         self.flush_pending_at(block_end);
         self.expire_voices_at(block_end);
         self.position = block_end;
+    }
+
+    /// 把内部 planar 缓冲的 `[0, frames)` 累加进目标混音台缓冲的 `[offset, ..)`。
+    fn accumulate<B: BorrowMut<ChannelBuffers>>(
+        &self,
+        targets: &mut [B],
+        offset: usize,
+        frames: usize,
+    ) {
+        let n = self.buffers.len().min(targets.len());
+        for (src, dst) in self.buffers.iter().zip(targets.iter_mut()).take(n) {
+            let dst = dst.borrow_mut();
+            let count = frames
+                .min(src.left.len())
+                .min(dst.left.len().saturating_sub(offset));
+            for k in 0..count {
+                dst.left[offset + k] += src.left[k];
+                dst.right[offset + k] += src.right[k];
+            }
+        }
     }
 
     /// 测试辅助：非替换（叠加式）提交，等价于 `preview_notes(notes, false)`。
@@ -264,7 +308,7 @@ impl XsynthPreview {
     /// 不能只看 `voice_count()`：NoteOn 后 voice 是延迟 spawn 的（渲染后才出现），
     /// 若渲染条件只看 voice 数量，未播放时第一帧就会提前退出、永不渲染 → 预览无声。
     pub(crate) fn previewing(&self) -> bool {
-        !self.voices.is_empty() || !self.pending.is_empty() || self.channel_group.voice_count() > 0
+        !self.voices.is_empty() || !self.pending.is_empty() || self.channel_set.voice_count() > 0
     }
 
     /// 停止全部预览音（NoteOff 与待触发音符；余音继续渲染直到自然衰减完）。
@@ -344,7 +388,7 @@ impl XsynthPreview {
     fn note_off(&mut self, channel: u8, key: u8) {
         let dense = self.dense_map[channel as usize];
         if dense != u32::MAX {
-            self.channel_group.send_event(SynthEvent::Channel(
+            self.channel_set.send_event(SynthEvent::Channel(
                 dense,
                 ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key }),
             ));
@@ -420,11 +464,15 @@ impl PreviewEngine {
         }
     }
 
-    pub(crate) fn render(&mut self, output: &mut [f32]) {
+    pub(crate) fn render_add<B: BorrowMut<ChannelBuffers>>(
+        &mut self,
+        targets: &mut [B],
+        frames: usize,
+    ) {
         match self {
-            PreviewEngine::XSynth(p) => p.render(output),
+            PreviewEngine::XSynth(p) => p.render_add(targets, frames),
             #[cfg(feature = "gpu")]
-            PreviewEngine::Yinhe(p) => p.render(output),
+            PreviewEngine::Yinhe(p) => p.render_add(targets, frames),
         }
     }
 
@@ -456,6 +504,23 @@ impl PreviewEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 16 通道（与测试 layout 对齐）、512 帧的 planar 混音台缓冲。
+    fn test_buffers() -> Vec<ChannelBuffers> {
+        (0..16)
+            .map(|_| ChannelBuffers {
+                left: vec![0.0; 512],
+                right: vec![0.0; 512],
+            })
+            .collect()
+    }
+
+    fn clear_buffers(bufs: &mut [ChannelBuffers]) {
+        for b in bufs.iter_mut() {
+            b.left.fill(0.0);
+            b.right.fill(0.0);
+        }
+    }
 
     #[test]
     fn exclusive_replacement_stops_playing_voices() {
@@ -496,9 +561,9 @@ mod tests {
         assert_eq!(engine.voices.len(), 2);
 
         // 渲染 10 帧（512 帧/次 = 5120 帧）：定长的到期 NoteOff，持续音保留。
-        let mut out = vec![0.0f32; 1024];
+        let mut out = test_buffers();
         for _ in 0..10 {
-            engine.render(&mut out);
+            engine.render_add(&mut out, 512);
         }
         assert_eq!(engine.voices.len(), 1, "定长音符到期移除，持续音保留");
 
@@ -533,10 +598,10 @@ mod tests {
         );
         // 定长到期 NoteOff 后余音仍在时也为真
         engine.note_on_at(0, 62, 100, Some(4800), &ChannelState::default(), 0);
-        let mut out = vec![0.0f32; 1024];
+        let mut out = test_buffers();
         for _ in 0..30 {
-            out.fill(0.0);
-            engine.render(&mut out);
+            clear_buffers(&mut out);
+            engine.render_add(&mut out, 512);
         }
         assert_eq!(engine.voices.len(), 1, "定长音符到期移除，持续音保留");
         assert!(engine.previewing(), "持续音还在");
@@ -573,15 +638,15 @@ mod tests {
         assert_eq!(engine.voices.len(), 1, "最早音符立即触发");
         assert_eq!(engine.pending.len(), 1, "第二个音符延迟等待");
 
-        let mut out = vec![0.0f32; 1024];
+        let mut out = test_buffers();
         // 渲染 9 帧（4608 帧 < 4800）：第二个音符仍未触发
         for _ in 0..9 {
-            engine.render(&mut out);
+            engine.render_add(&mut out, 512);
         }
         assert_eq!(engine.voices.len(), 1, "时值差未到，不触发");
         assert_eq!(engine.pending.len(), 1);
         // 第 10 帧（5120 帧 >= 4800）：触发第二个音符
-        engine.render(&mut out);
+        engine.render_add(&mut out, 512);
         assert_eq!(engine.voices.len(), 2, "时值差到达后触发");
         assert!(engine.pending.is_empty());
 
@@ -620,15 +685,15 @@ mod tests {
         assert_eq!(engine.voices.len(), 1);
         assert_eq!(engine.pending.len(), 1);
 
-        let mut out = vec![0.0f32; 1024];
+        let mut out = test_buffers();
         // 渲染 195 帧（99840 帧 < 100000）：第二音符必须还没触发
         // （若像旧实现那样封顶 150ms=7200 帧，这里早就全部触发了）。
         for _ in 0..195 {
-            engine.render(&mut out);
+            engine.render_add(&mut out, 512);
         }
         assert_eq!(engine.voices.len(), 1, "真实时值差未到，不触发");
         // 第 196 帧（100352 >= 100000）：到点触发
-        engine.render(&mut out);
+        engine.render_add(&mut out, 512);
         assert_eq!(engine.voices.len(), 2, "真实时值差到点后触发");
         assert!(engine.pending.is_empty());
     }
@@ -642,9 +707,9 @@ mod tests {
         let mut engine = XsynthPreview::new(&layout, 48000);
 
         // 先跑 200 帧，position 累计 102400
-        let mut out = vec![0.0f32; 1024];
+        let mut out = test_buffers();
         for _ in 0..200 {
-            engine.render(&mut out);
+            engine.render_add(&mut out, 512);
         }
 
         // 四分音符 0.5s = 24000 帧（start_position = 当前时钟位置 102400）
@@ -661,13 +726,13 @@ mod tests {
         // 渲染 20 帧（10240 帧 < 24000）：音符必须还在
         // （旧实现 position 102400 >= 24000，第一帧就把音符 NoteOff 了）。
         for _ in 0..20 {
-            engine.render(&mut out);
+            engine.render_add(&mut out, 512);
         }
         assert_eq!(engine.voices.len(), 1, "四分音符响满时长，不能提前截断");
 
         // 渲染满 24000 帧（相对起点）后到期移除
         for _ in 0..30 {
-            engine.render(&mut out);
+            engine.render_add(&mut out, 512);
         }
         assert!(engine.voices.is_empty(), "到时后正常 NoteOff");
     }
@@ -680,9 +745,9 @@ mod tests {
         let mut engine = XsynthPreview::new(&layout, 48000);
 
         // 先跑一段：position 累计到 100000 帧
-        let mut out = vec![0.0f32; 1024];
+        let mut out = test_buffers();
         for _ in 0..200 {
-            engine.render(&mut out);
+            engine.render_add(&mut out, 512);
         }
 
         engine.preview_notes_append(vec![
@@ -707,11 +772,11 @@ mod tests {
         assert_eq!(engine.pending.len(), 1);
         // 渲染 9 帧（+4608 < 5000）：第二个仍未触发
         for _ in 0..9 {
-            engine.render(&mut out);
+            engine.render_add(&mut out, 512);
         }
         assert_eq!(engine.voices.len(), 1, "绝对位置基准下时值差仍生效");
         // 第 10 帧（+5120 >= 5000）：触发
-        engine.render(&mut out);
+        engine.render_add(&mut out, 512);
         assert_eq!(engine.voices.len(), 2);
     }
 
@@ -724,7 +789,7 @@ mod tests {
         let mut engine = XsynthPreview::new(&layout, 48000);
 
         // 模拟 C2→C7 快速拖拽：60 个键，每键一组、渲染器来不及渲染。
-        let mut out = vec![0.0f32; 1024];
+        let mut out = test_buffers();
         for key in 36..96 {
             engine.preview_notes_append(vec![PreviewNoteIn {
                 channel: 0,
@@ -740,11 +805,11 @@ mod tests {
 
         // gate 到期前不能提前 NoteOff（93 × 512 = 47616 < 48000）
         for _ in 0..93 {
-            engine.render(&mut out);
+            engine.render_add(&mut out, 512);
         }
         assert_eq!(engine.voices.len(), 60, "gate 未到期不能提前 NoteOff");
         // 第 94 次渲染（48128 >= 48000）：全部到期 NoteOff
-        engine.render(&mut out);
+        engine.render_add(&mut out, 512);
         assert!(engine.voices.is_empty(), "gate 到期全部 NoteOff");
     }
 
@@ -779,12 +844,12 @@ mod tests {
         assert_eq!(engine.voices.len(), 1, "A 立即触发");
         assert_eq!(engine.pending.len(), 1, "B 还没到触发点");
 
-        let mut out = vec![0.0f32; 1024];
-        engine.render(&mut out); // [0, 512)：B 不触发
+        let mut out = test_buffers();
+        engine.render_add(&mut out, 512); // [0, 512)：B 不触发
         assert_eq!(engine.voices.len(), 1, "B 的 trigger_at 未到");
         assert_eq!(engine.pending.len(), 1);
 
-        engine.render(&mut out); // [512, 1024)：帧 1000 处触发 B
+        engine.render_add(&mut out, 512); // [512, 1024)：帧 1000 处触发 B
         assert_eq!(engine.voices.len(), 2, "块内中间帧触发");
         assert_eq!(
             engine.voices[1].start_position, 1000,
@@ -792,7 +857,7 @@ mod tests {
         );
         assert!(engine.pending.is_empty());
 
-        engine.render(&mut out); // [1024, 1536)：帧 1300 处 B 到期 NoteOff
+        engine.render_add(&mut out, 512); // [1024, 1536)：帧 1300 处 B 到期 NoteOff
         assert_eq!(engine.voices.len(), 1, "到期位置也精确到帧（只剩持续音 A）");
     }
 

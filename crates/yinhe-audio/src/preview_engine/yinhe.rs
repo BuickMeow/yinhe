@@ -6,12 +6,13 @@
 //!
 //! 主引擎为 yinhe 时，预览不再额外加载 xsynth 版音色库（省一份 ~GB 级内存）。
 
+use std::borrow::BorrowMut;
 use std::cmp::Reverse;
 
 use yinhe_mixer::ChannelBuffers;
 use yinhe_synth::{CpuSynth, SynthEvent};
 
-use super::{PreviewNoteIn, STEREO_CHANNELS};
+use super::PreviewNoteIn;
 use crate::channel::{ChannelState, ChaseSkip};
 use crate::channel_layout::ChannelLayout;
 
@@ -99,12 +100,25 @@ impl YinhePreview {
         self.flush_pending_at(self.position);
     }
 
-    pub(crate) fn render(&mut self, output: &mut [f32]) {
-        let frames = output.len() / STEREO_CHANNELS;
-        if frames == 0 {
+    /// 渲染一块到混音台 planar 通道缓冲（**累加**，每 dense 一个）。
+    ///
+    /// 与主引擎合成器共享同一次混音：预览音频叠加在对应 dense 通道上，随后由
+    /// `AudioEngine::render_channel_dsp`（当前 CC7/10/11/71/74）+ mixer 统一处理，
+    /// 使试听与播放走完全相同的通道 DSP 与混音台。
+    pub(crate) fn render_add<B: BorrowMut<ChannelBuffers>>(
+        &mut self,
+        targets: &mut [B],
+        frames: usize,
+    ) {
+        if frames == 0 || self.buffers.is_empty() {
             return;
         }
-        output.fill(0.0);
+        for b in &mut self.buffers {
+            if b.left.len() < frames {
+                b.left.resize(frames, 0.0);
+                b.right.resize(frames, 0.0);
+            }
+        }
         let block_end = self.position + frames as u64;
         let mut offset_frames = 0usize;
         let mut cursor = self.position;
@@ -114,7 +128,7 @@ impl YinhePreview {
             self.expire_voices_at(cursor);
             let next = self.next_event_boundary(block_end);
             let seg_frames = (next - cursor) as usize;
-            self.render_segment(output, offset_frames, seg_frames);
+            self.render_segment_add(targets, offset_frames, seg_frames);
             offset_frames += seg_frames;
             cursor = next;
         }
@@ -147,31 +161,27 @@ impl YinhePreview {
         }
     }
 
-    /// 渲染 `frames` 帧到 planar buffers，再下混成交错 stereo 写入 `output`。
-    fn render_segment(&mut self, output: &mut [f32], frame_offset: usize, frames: usize) {
+    /// 渲染 `frames` 帧到内部 planar buffers，再累加进目标混音台缓冲。
+    fn render_segment_add<B: BorrowMut<ChannelBuffers>>(
+        &mut self,
+        targets: &mut [B],
+        frame_offset: usize,
+        frames: usize,
+    ) {
         if frames == 0 {
             return;
         }
-        for b in &mut self.buffers {
-            if b.left.len() < frames {
-                b.left.resize(frames, 0.0);
-                b.right.resize(frames, 0.0);
-            }
-        }
-        if self.buffers.is_empty() {
-            return;
-        }
         self.synth.render_range(&mut self.buffers, 0, frames);
-        for i in 0..frames {
-            let mut l = 0.0f32;
-            let mut r = 0.0f32;
-            for b in &self.buffers {
-                l += b.left[i];
-                r += b.right[i];
+        let n = self.buffers.len().min(targets.len());
+        for (src, dst) in self.buffers.iter().zip(targets.iter_mut()).take(n) {
+            let dst = dst.borrow_mut();
+            let count = frames
+                .min(src.left.len())
+                .min(dst.left.len().saturating_sub(frame_offset));
+            for k in 0..count {
+                dst.left[frame_offset + k] += src.left[k];
+                dst.right[frame_offset + k] += src.right[k];
             }
-            let o = (frame_offset + i) * STEREO_CHANNELS;
-            output[o] += l;
-            output[o + 1] += r;
         }
     }
 
@@ -324,13 +334,23 @@ mod tests {
         );
         assert!(p.previewing(), "NoteOn 后应立即视为预览中");
 
-        let mut out = vec![0.0f32; 1024];
+        let mut out: Vec<ChannelBuffers> = (0..16)
+            .map(|_| ChannelBuffers {
+                left: vec![0.0; 512],
+                right: vec![0.0; 512],
+            })
+            .collect();
         let mut peak = 0.0f32;
         for _ in 0..30 {
-            out.fill(0.0);
-            p.render(&mut out);
-            for v in &out {
-                peak = peak.max(v.abs());
+            for b in &mut out {
+                b.left.fill(0.0);
+                b.right.fill(0.0);
+            }
+            p.render_add(&mut out, 512);
+            for b in &out {
+                for v in b.left.iter().chain(b.right.iter()) {
+                    peak = peak.max(v.abs());
+                }
             }
         }
         assert!(peak > 0.0, "yinhe 预览应产出可听信号（peak={peak}）");
