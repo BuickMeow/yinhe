@@ -639,14 +639,16 @@ impl App {
                         return;
                     };
                     // 快速删除：按 (track, start_tick, key) 定位单个音符
-                    // 仅在音符可见且在选定轨道范围内才删除（与 hit 的 track_selected 过滤一致）
+                    // 可见性/选中过滤必须与命中端 hit_test_note（用 pr_visible：
+                    // 主音轨强制可见）一致，否则主音轨被隐藏时「命中却删不掉」。
                     let edit = &self.workspace.documents[idx].edit;
-                    if !edit
+                    let visible = edit
                         .track_pianoroll_visible
                         .get(track as usize)
                         .copied()
-                        .unwrap_or(true)
-                    {
+                        .unwrap_or(true);
+                    let is_main = edit.main_track() == Some(track);
+                    if !visible && !is_main {
                         return;
                     }
                     if !edit.track_selected.is_empty() && !edit.track_selected.contains(&track) {
