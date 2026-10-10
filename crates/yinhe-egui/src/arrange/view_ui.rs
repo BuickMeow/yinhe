@@ -153,7 +153,9 @@ pub fn show(
         min_border_width: cfg.min_border_width,
         track_count,
         sel_rect_count: 0,
-        note_outline: 1,
+        // AR 音符不描边：填充即轨道原色（描边色 = 轨道色 × 0.4 会让音符整体偏暗，
+        // 尤其亮色/窄音符时与轨道色块差异明显）。
+        note_outline: 0,
         lane_height: view.lane_height(),
         value_zoom: 0.0,
         value_scroll: 0.0,
