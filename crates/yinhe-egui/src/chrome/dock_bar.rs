@@ -314,7 +314,7 @@ fn collect_dock_state(app: &mut App, idx: usize) -> Option<DockState> {
             .mixer
             .instruments
             .get(ch as usize)
-            .and_then(|o| o.as_ref())
+            .and_then(|v| v.first())
             .map(|r| r.name.clone())
     });
     let inserts: Vec<DockInsert> =
@@ -699,7 +699,7 @@ fn apply_dock_actions(app: &mut App, idx: usize, state: &DockState, actions: Vec
                         let result = app
                             .instrument_racks
                             .get_mut(idx)
-                            .map(|rack| rack.toggle_gui(ch));
+                            .map(|rack| rack.toggle_gui(ch, 0));
                         if let Some(Err(e)) = result
                             && let Some(rack) = app.instrument_racks.get_mut(idx)
                         {
@@ -1232,10 +1232,13 @@ fn open_param_panel(
             let instance = app
                 .instrument_racks
                 .get_mut(idx)
-                .and_then(|rack| rack.instance_mut(ch))?;
+                .and_then(|rack| rack.instance_mut(ch, 0))?;
             let title = instance.name().to_string();
             Some(ParamPanel::open(
-                ParamTarget::Instrument { channel: ch },
+                ParamTarget::Instrument {
+                    channel: ch,
+                    index: 0,
+                },
                 title,
                 instance,
             ))

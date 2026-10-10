@@ -209,45 +209,84 @@ impl AudioEngine {
         std::mem::take(&mut self.insert_returns)
     }
 
-    /// 安装/替换/移除某 MIDI 通道上的乐器插件实例（CLAP/VST3 等，抽象为 trait）。
-    /// 移除（`processor = None`）后该通道回到默认 XSynth。
+    /// 安装/替换/移除某 MIDI 通道乐器链里的**一个槽位**（按 `slot_id`）。
+    /// - `processor = Some`：链内不存在则追加、存在则替换（旧处理器退回）；
+    /// - `processor = None`：移除该槽位（旧处理器退回）；链空后该通道回到默认 XSynth。
     ///
-    /// 由 `AudioCommand::SetInstrument` 触发，渲染线程调用。被替换/移除的旧
+    /// 由 `AudioCommand::SetInstrumentSlot` 触发，渲染线程调用。被替换/移除的旧
     /// 处理器（以及通道未激活却收到安装命令的多余处理器）攒进 `instrument_returns`
     /// 送回 UI 线程 deactivate——渲染线程不能 deactivate 插件。
-    pub(crate) fn set_instrument(
+    pub(crate) fn set_instrument_slot(
         &mut self,
         channel: u8,
+        slot_id: u64,
         processor: Option<Box<dyn InstrumentProcessor>>,
     ) {
         let dense = self.channel_layout.dense_for(channel as usize);
         let Some(dense) = (dense != u32::MAX).then_some(dense as usize) else {
             if let Some(p) = processor {
-                self.instrument_returns.push((channel, p));
+                self.instrument_returns.push((slot_id, p));
             }
             return;
         };
         if dense >= self.instruments.len() {
             // 命令与模型不同步（dense 越界）：直接退回，不越界写。
             if let Some(p) = processor {
-                self.instrument_returns.push((channel, p));
+                self.instrument_returns.push((slot_id, p));
             }
             return;
         }
-        // 乐器延迟（PDC）：安装时查询一次，用于该通道延迟补偿。
-        let latency = processor.as_ref().map(|p| p.latency_samples()).unwrap_or(0);
-        let old = std::mem::replace(
-            &mut self.instruments[dense],
-            processor.map(|p| crate::instrument::InstrumentSource::new(channel, p)),
-        );
-        self.mixer.set_channel_latency(dense, latency);
+        let old: Option<Box<dyn InstrumentProcessor>> = match processor {
+            Some(p) => {
+                let src = self.instruments[dense]
+                    .get_or_insert_with(crate::instrument::InstrumentSource::new);
+                match src.chain.iter_mut().find(|c| c.slot_id == slot_id) {
+                    Some(slot) => Some(std::mem::replace(&mut slot.processor, p)),
+                    None => {
+                        src.chain.push(crate::instrument::InstrumentProc {
+                            slot_id,
+                            processor: p,
+                        });
+                        None
+                    }
+                }
+            }
+            None => {
+                let mut removed = None;
+                if let Some(src) = self.instruments[dense].as_mut()
+                    && let Some(pos) = src.chain.iter().position(|c| c.slot_id == slot_id)
+                {
+                    removed = Some(src.chain.remove(pos).processor);
+                    if src.chain.is_empty() {
+                        self.instruments[dense] = None;
+                    }
+                }
+                removed
+            }
+        };
         if let Some(old) = old {
-            self.instrument_returns.push((old.channel, old.processor));
+            self.instrument_returns.push((slot_id, old));
         }
+        self.refresh_channel_latency(dense);
+    }
+
+    /// 重算某 dense 通道的乐器延迟（链内取最大值）并写入混音图。
+    fn refresh_channel_latency(&mut self, dense: usize) {
+        let latency = self.instruments[dense]
+            .as_ref()
+            .map(|src| {
+                src.chain
+                    .iter()
+                    .map(|p| p.processor.latency_samples())
+                    .max()
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0);
+        self.mixer.set_channel_latency(dense, latency);
     }
 
     /// 取出待回收的乐器处理器（renderer 每轮命令处理后调用，送回 UI 线程）。
-    pub(crate) fn drain_instrument_returns(&mut self) -> Vec<(u8, Box<dyn InstrumentProcessor>)> {
+    pub(crate) fn drain_instrument_returns(&mut self) -> Vec<(u64, Box<dyn InstrumentProcessor>)> {
         std::mem::take(&mut self.instrument_returns)
     }
 
@@ -255,11 +294,8 @@ impl AudioEngine {
     /// `refresh_pdc` 内部向各处理器查询最新值）。
     pub(crate) fn refresh_latency(&mut self) {
         for dense in 0..self.instruments.len() {
-            let latency = self.instruments[dense]
-                .as_ref()
-                .map(|src| src.processor.latency_samples());
-            if let Some(latency) = latency {
-                self.mixer.set_channel_latency(dense, latency);
+            if self.instruments[dense].is_some() {
+                self.refresh_channel_latency(dense);
             }
         }
         self.mixer.refresh_pdc();

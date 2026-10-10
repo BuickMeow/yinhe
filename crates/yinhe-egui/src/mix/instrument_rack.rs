@@ -1,14 +1,13 @@
-//! 乐器机架：每个 MIDI 通道（TrackData.global_channel()）至多挂一个乐器插件实例，
-//! UI/管理线程持有其生命周期。比效果器机架（rack.rs）简单：一个通道只有一个
-//! 乐器插件（无链、无旁通、原生 GUI 暂不支持），输出直接混进该乐器 dense 通道。
+//! 乐器机架：每个 MIDI 通道（TrackData.global_channel()）可挂**多个**乐器插件
+//! 实例（叠加），UI/管理线程持有其生命周期。音符事件广播给链内每个乐器，输出
+//! 相加。空链时该通道使用内置 XSynth。
 //!
 //! 数据流：
-//! - 选择插件：InsertRef 写入 doc.mixer.instruments[channel]（持久化）→ rack.load
-//!   加载实例（不激活、不发送）→ ensure_all_sent 激活并发 SetInstrument 安装；
-//! - 移除/替换：rack.unload / load 替换 —— 已安装的旧实例移入 pending_return，
-//!   送 SetInstrument(None)/替换命令，旧处理器退回后 deactivate 旧实例；
-//! - 回收：渲染线程经乐器 return 通道退回（含通道号）→ on_returns 先匹配
-//!   pending_return（旧实例）再匹配当前槽位（teardown 回收），deactivate；
+//! - 选择插件：InsertRef 追加到 doc.mixer.instruments[channel]（持久化）→ rack.add
+//!   加载实例（不激活、不发送）→ ensure_all_sent 激活并发 SetInstrumentSlot 安装；
+//! - 移除/替换：rack.remove → 已安装的送 SetInstrumentSlot{slot_id, None}，旧实例
+//!   移入 pending_return，旧处理器退回后按 slot_id 匹配 deactivate；
+//! - 回收：渲染线程经乐器 return 通道退回 (slot_id, processor) → on_returns；
 //! - 引擎重建：teardown 把全部乐器处理器退回 → on_returns 置 sent=false，
 //!   新引擎 ensure_all_sent 重新安装（与效果器机架同一模式）。
 
@@ -22,13 +21,15 @@ use yinhe_vst3::Vst3Processor;
 use super::plugin_instance::{PluginEntry, PluginInstance};
 use super::rack::{ACTIVATE_MAX_FRAMES, PluginLoadError};
 
-/// 单个乐器通道的运行时槽位。
+/// 单个乐器槽位的运行时状态。
 pub(crate) struct InstrumentSlot {
     /// 乐器通道号（0 起）。
     pub channel: u8,
+    /// 稳定的 UI 侧槽位 id（引擎回收退回时匹配用）。
+    pub slot_id: u64,
     /// None = 加载失败占位（持久化层仍保留 InsertRef，保存不丢引用）。
     pub instance: Option<PluginInstance>,
-    /// 处理器当前在渲染线程（已 SetInstrument 且未退回）。
+    /// 处理器当前在渲染线程（已 SetInstrumentSlot 且未退回）。
     pub sent: bool,
     /// 激活失败过：不再每帧重试（重新选择插件才会再试）。
     pub activate_failed: bool,
@@ -44,11 +45,12 @@ pub(crate) struct InstrumentSlot {
 /// 一个文档的乐器机架（与 documents 平行，索引 = 文档 idx）。
 #[derive(Default)]
 pub(crate) struct InstrumentRack {
-    /// 当前已分配乐器的通道槽位，按 channel 升序。
-    pub slots: Vec<InstrumentSlot>,
-    /// 已移除/被替换但仍占着渲染线程的旧实例：其旧处理器退回后 deactivate。
-    /// 每通道至多一条（再次替换会直接覆盖丢弃更旧的——其处理器在引擎侧已丢失）。
-    pending_return: Vec<(u8, PluginInstance)>,
+    /// 全部乐器槽位，按通道分组、组内按挂载顺序排列（= 持久化链顺序）。
+    slots: Vec<InstrumentSlot>,
+    /// 下一个槽位 id（单调递增）。
+    next_slot_id: u64,
+    /// 已移除/被替换但仍占着渲染线程的旧实例：其旧处理器退回后按 slot_id deactivate。
+    pending_return: Vec<(u64, PluginInstance)>,
     /// 最近一次加载/激活失败信息（MIX 界面状态行展示）。
     pub last_error: Option<String>,
     /// 待处理的插件 GUI 改参（MIDI 通道, param_id, 归一化值）。
@@ -66,28 +68,45 @@ impl InstrumentRack {
         self.slots.iter().all(|s| s.instance.is_none() && !s.sent) && self.pending_return.is_empty()
     }
 
-    fn slot_mut(&mut self, channel: u8) -> Option<&mut InstrumentSlot> {
-        self.slots.iter_mut().find(|s| s.channel == channel)
+    /// 某通道第 `index` 个槽位（按挂载顺序）。
+    fn slot_mut(&mut self, channel: u8, index: usize) -> Option<&mut InstrumentSlot> {
+        self.slots
+            .iter_mut()
+            .filter(|s| s.channel == channel)
+            .nth(index)
     }
 
-    /// 按乐器通道取插件实例（参数面板用）。槽位不存在/无实例返回 None。
-    pub(crate) fn instance_mut(&mut self, channel: u8) -> Option<&mut PluginInstance> {
-        self.slot_mut(channel)?.instance.as_mut()
+    /// 该通道的槽位数量（UI 列表长度 / 设备链乐器段长度）。
+    pub(crate) fn slot_count(&self, channel: u8) -> usize {
+        self.slots.iter().filter(|s| s.channel == channel).count()
+    }
+
+    /// 按槽位 id 取变体（引擎退回匹配用）。
+    fn slot_by_id(&self, slot_id: u64) -> Option<usize> {
+        self.slots.iter().position(|s| s.slot_id == slot_id)
+    }
+
+    /// 按乐器通道 + 第 index 个取插件实例（参数面板用）。
+    pub(crate) fn instance_mut(
+        &mut self,
+        channel: u8,
+        index: usize,
+    ) -> Option<&mut PluginInstance> {
+        self.slot_mut(channel, index)?.instance.as_mut()
     }
 
     /// 该乐器通道是否持有可用插件实例（音符预览路由用：有实例走插件试听）。
     pub(crate) fn has_instance(&self, channel: u8) -> bool {
         self.slots
             .iter()
-            .find(|s| s.channel == channel)
-            .is_some_and(|s| s.instance.is_some())
+            .any(|s| s.channel == channel && s.instance.is_some())
     }
 
     /// 打开/关闭乐器插件原生界面（host 自建窗口 + 插件 view 嵌入）。
     /// CLAP / VST3 共用宿主 NSWindow（与效果器机架同一实现）。
     #[cfg(target_os = "macos")]
-    pub fn toggle_gui(&mut self, channel: u8) -> Result<bool, PluginLoadError> {
-        let Some(rt) = self.slot_mut(channel) else {
+    pub fn toggle_gui(&mut self, channel: u8, index: usize) -> Result<bool, PluginLoadError> {
+        let Some(rt) = self.slot_mut(channel, index) else {
             return Ok(false);
         };
         if rt.instance.is_none() {
@@ -159,14 +178,13 @@ impl InstrumentRack {
 
     /// 非 macOS：原生 GUI 尚未实现。
     #[cfg(not(target_os = "macos"))]
-    pub fn toggle_gui(&mut self, _channel: u8) -> Result<bool, PluginLoadError> {
+    pub fn toggle_gui(&mut self, _channel: u8, _index: usize) -> Result<bool, PluginLoadError> {
         Err(PluginLoadError("当前平台暂不支持插件界面".into()))
     }
 
-    /// 加载某乐器通道的插件实例（不激活、不发送——发送走 ensure_all_sent）。
-    /// 替换该通道已有槽位：已安装的旧实例移入 pending_return，等旧处理器退回 deactivate。
-    /// 持久化层 InsertRef 由调用方先行写入。
-    pub fn load(
+    /// 追加一个乐器槽位到该通道链尾（不激活、不发送——发送走 ensure_all_sent）。
+    /// 持久化层 InsertRef 由调用方先行 append。
+    pub fn add(
         &mut self,
         channel: u8,
         format: PluginFormat,
@@ -201,17 +219,11 @@ impl InstrumentRack {
         if let Some(e) = &error {
             self.last_error = Some(e.0.clone());
         }
-        // 替换已有槽位：旧实例已安装则移入 pending_return，等旧处理器退回。
-        if let Some(old_idx) = self.slots.iter().position(|s| s.channel == channel) {
-            let old = self.slots.remove(old_idx);
-            if old.sent
-                && let Some(inst) = old.instance
-            {
-                self.pending_return.push((channel, inst));
-            }
-        }
+        let slot_id = self.next_slot_id;
+        self.next_slot_id += 1;
         self.slots.push(InstrumentSlot {
             channel,
+            slot_id,
             instance,
             sent: false,
             activate_failed: false,
@@ -219,24 +231,21 @@ impl InstrumentRack {
             #[cfg(target_os = "macos")]
             gui_window: None,
         });
-        self.slots.sort_by_key(|s| s.channel);
         match error {
             Some(e) => Err(e),
             None => Ok(()),
         }
     }
 
-    /// 激活槽位并发送 SetInstrument 安装。
+    /// 激活槽位并发送 SetInstrumentSlot 安装。
     fn activate_slot(
         &mut self,
-        channel: u8,
+        pos: usize,
         handle: &AudioHandle,
         sample_rate: u32,
     ) -> Result<(), PluginLoadError> {
-        let Some(rt) = self.slot_mut(channel) else {
-            return Ok(());
-        };
-        let Some(instance) = rt.instance.as_mut() else {
+        let (channel, slot_id) = (self.slots[pos].channel, self.slots[pos].slot_id);
+        let Some(instance) = self.slots[pos].instance.as_mut() else {
             return Ok(()); // 加载失败占位：跳过激活
         };
         let processor: Box<dyn InstrumentProcessor> = match instance {
@@ -256,59 +265,68 @@ impl InstrumentRack {
                 return Err(PluginLoadError("内置效果器不是乐器，无法激活".into()));
             }
         };
-        handle.send(AudioCommand::SetInstrument {
+        handle.send(AudioCommand::SetInstrumentSlot {
             channel,
+            slot_id,
             processor: Some(processor),
         });
-        rt.sent = true;
+        self.slots[pos].sent = true;
         Ok(())
     }
 
     /// 引擎（重）spawn 后：补发所有「有实例但未在渲染线程」的乐器槽位。
     pub fn ensure_all_sent(&mut self, handle: &AudioHandle, sample_rate: u32) {
-        let targets: Vec<u8> = self
+        let targets: Vec<usize> = self
             .slots
             .iter()
-            .filter(|rt| !rt.sent && !rt.activate_failed)
-            .map(|rt| rt.channel)
+            .enumerate()
+            .filter(|(_, rt)| !rt.sent && !rt.activate_failed)
+            .map(|(i, _)| i)
             .collect();
-        for channel in targets {
-            if let Err(e) = self.activate_slot(channel, handle, sample_rate) {
+        for pos in targets {
+            if let Err(e) = self.activate_slot(pos, handle, sample_rate) {
                 self.last_error = Some(e.0);
-                if let Some(rt) = self.slot_mut(channel) {
-                    rt.activate_failed = true;
-                }
+                self.slots[pos].activate_failed = true;
             }
         }
     }
 
-    /// 移除某乐器通道（MIX 界面 ✕）：已安装的送 SetInstrument(None)，旧实例移入
-    /// pending_return 等旧处理器退回 deactivate；从未进引擎时直接 drop。
-    pub fn unload(&mut self, channel: u8, handle: Option<&AudioHandle>) {
-        let Some(idx) = self.slots.iter().position(|s| s.channel == channel) else {
-            return;
+    /// 移除该通道第 `index` 个乐器槽位：已安装的送 SetInstrumentSlot{None}，旧实例
+    /// 移入 pending_return 等旧处理器退回 deactivate；从未进引擎时直接 drop。
+    pub fn remove(&mut self, channel: u8, index: usize, handle: Option<&AudioHandle>) {
+        let pos = match self
+            .slots
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.channel == channel)
+            .nth(index)
+            .map(|(i, _)| i)
+        {
+            Some(pos) => pos,
+            None => return,
         };
-        let slot = self.slots.remove(idx);
+        let slot = self.slots.remove(pos);
         if slot.sent {
             if let Some(h) = handle {
-                h.send(AudioCommand::SetInstrument {
+                h.send(AudioCommand::SetInstrumentSlot {
                     channel,
+                    slot_id: slot.slot_id,
                     processor: None,
                 });
             }
             if let Some(inst) = slot.instance {
-                self.pending_return.push((channel, inst));
+                self.pending_return.push((slot.slot_id, inst));
             }
         }
     }
 
     /// 每帧轮询乐器插件的反向请求（CLAP/VST3 统一）：
-    /// - restart / I/O 变化 → 送 `SetInstrument(None)` 收回处理器，退回后
+    /// - restart / I/O 变化 → 送 `SetInstrumentSlot{None}` 收回处理器，退回后
     ///   `on_returns` 置 `sent=false`，下一帧 `ensure_all_sent` 重新激活补发；
     /// - 参数重扫 → 实例内暂存，参数面板刷新时消费；
     /// - 延迟变化 → CLAP 在此重查共享值，然后通知引擎重算 PDC。
     pub fn poll_requests(&mut self, handle: &AudioHandle) {
-        let mut restarts: Vec<u8> = Vec::new();
+        let mut restarts: Vec<(u8, u64)> = Vec::new();
         let mut latency_changed = false;
         // GUI 改参先收集，循环后再写自身字段（避免与 slots 的借用冲突）。
         let mut param_changes: Vec<(u8, u32, f64)> = Vec::new();
@@ -336,7 +354,7 @@ impl InstrumentRack {
                 latency_changed = true;
             }
             if requests.restart && rt.sent {
-                restarts.push(rt.channel);
+                restarts.push((rt.channel, rt.slot_id));
             }
         }
         for (channel, editing) in editing_now {
@@ -347,9 +365,10 @@ impl InstrumentRack {
             }
         }
         self.gui_param_changes.extend(param_changes);
-        for channel in restarts {
-            handle.send(AudioCommand::SetInstrument {
+        for (channel, slot_id) in restarts {
+            handle.send(AudioCommand::SetInstrumentSlot {
                 channel,
+                slot_id,
                 processor: None,
             });
         }
@@ -358,48 +377,52 @@ impl InstrumentRack {
         }
     }
 
-    /// 处理渲染线程退回的乐器处理器：先匹配 pending_return（移除/替换的旧实例），
-    /// 再匹配当前槽位（引擎 teardown 回收），deactivate 并置 sent=false。
-    ///
-    /// 退回的处理器是格式无关 trait object：按具体格式 downcast 回 CLAP 处理器
-    ///（VST3 接入后在此按槽位记录的格式分派）。
-    pub fn on_returns(&mut self, returned: Vec<(u8, Box<dyn InstrumentProcessor>)>) {
-        for (channel, processor) in returned {
+    /// 处理渲染线程退回的乐器处理器：先按 slot_id 匹配 pending_return（移除/替换的
+    /// 旧实例），再匹配当前槽位（引擎 teardown 回收），deactivate 并置 sent=false。
+    pub fn on_returns(&mut self, returned: Vec<(u64, Box<dyn InstrumentProcessor>)>) {
+        for (slot_id, processor) in returned {
             let any = processor.into_any();
             match any.downcast::<ClapProcessor>() {
                 Ok(clap) => {
-                    if let Some(idx) = self.pending_return.iter().position(|(c, _)| *c == channel) {
+                    if let Some(idx) = self
+                        .pending_return
+                        .iter()
+                        .position(|(id, _)| *id == slot_id)
+                    {
                         let (_, mut inst) = self.pending_return.remove(idx);
                         if let PluginInstance::Clap(instance) = &mut inst {
                             instance.deactivate(*clap);
                         }
                         continue;
                     }
-                    let Some(rt) = self.slot_mut(channel) else {
-                        tracing::warn!("退回的乐器处理器 channel={channel} 找不到槽位，丢弃");
+                    let Some(pos) = self.slot_by_id(slot_id) else {
+                        tracing::warn!("退回的乐器处理器 slot_id={slot_id} 找不到槽位，丢弃");
                         continue;
                     };
-                    if let Some(PluginInstance::Clap(instance)) = rt.instance.as_mut() {
+                    if let Some(PluginInstance::Clap(instance)) = self.slots[pos].instance.as_mut()
+                    {
                         instance.deactivate(*clap);
                     } else {
                         tracing::warn!(
-                            "channel={channel} 的槽位无 CLAP 实例，处理器无法 deactivate，丢弃"
+                            "slot_id={slot_id} 的槽位无 CLAP 实例，处理器无法 deactivate，丢弃"
                         );
                     }
-                    rt.sent = false;
+                    self.slots[pos].sent = false;
                 }
                 Err(any) => match any.downcast::<Vst3Processor>() {
                     Ok(vst3) => {
                         // VST3：stop（关激活）后直接释放；被替换的旧实例无需匹配。
                         vst3.stop();
-                        if let Some(idx) =
-                            self.pending_return.iter().position(|(c, _)| *c == channel)
+                        if let Some(idx) = self
+                            .pending_return
+                            .iter()
+                            .position(|(id, _)| *id == slot_id)
                         {
                             self.pending_return.remove(idx);
                             continue;
                         }
-                        if let Some(rt) = self.slot_mut(channel) {
-                            rt.sent = false;
+                        if let Some(pos) = self.slot_by_id(slot_id) {
+                            self.slots[pos].sent = false;
                         }
                     }
                     Err(_) => tracing::warn!("退回的乐器处理器类型未知，丢弃"),
@@ -408,19 +431,22 @@ impl InstrumentRack {
         }
     }
 
-    /// 保存前把实例状态写回持久化层（mixer.instruments[channel].state）。
-    /// 已移除通道的 InsertRef 由移除动作置 None，这里跳过。
+    /// 保存前把实例状态写回持久化层（mixer.instruments[channel][index].state）。
+    /// 槽位顺序与持久化链顺序一致（都是挂载顺序）。
     pub fn sync_states_to(&mut self, mixer: &mut MixerParams) {
-        for rt in self.slots.iter_mut() {
+        let mut counter: std::collections::HashMap<u8, usize> = std::collections::HashMap::new();
+        for slot in self.slots.iter_mut() {
+            let index = *counter.entry(slot.channel).or_insert(0);
+            *counter.get_mut(&slot.channel).unwrap() += 1;
             let Some(r) = mixer
                 .instruments
-                .get_mut(rt.channel as usize)
-                .and_then(|slot| slot.as_mut())
+                .get_mut(slot.channel as usize)
+                .and_then(|refs| refs.get_mut(index))
             else {
                 continue;
             };
             // 加载失败占位无实例：保留工程里的旧 state。
-            let Some(instance) = rt.instance.as_mut() else {
+            let Some(instance) = slot.instance.as_mut() else {
                 continue;
             };
             if let Some(bytes) = instance.save_state() {
@@ -450,6 +476,7 @@ mod tests {
         let mut rack = InstrumentRack::default();
         rack.slots.push(InstrumentSlot {
             channel: 3,
+            slot_id: 0,
             instance: None,
             sent: false,
             activate_failed: false,
@@ -458,28 +485,25 @@ mod tests {
             gui_window: None,
         });
         let mut mixer = MixerParams::default();
-        mixer.instruments.resize(4, None);
-        mixer.instruments[3] = Some(yinhe_mixer::InsertRef {
+        mixer.instruments[3] = vec![yinhe_mixer::InsertRef {
             format: yinhe_mixer::PluginFormat::Clap,
             plugin_path: std::path::PathBuf::from("/tmp/x.clap"),
             plugin_id: "test".into(),
             name: "Test".into(),
             bypassed: false,
             state: Some(vec![1, 2, 3]),
-        });
+        }];
         rack.sync_states_to(&mut mixer);
-        assert_eq!(
-            mixer.instruments[3].as_ref().unwrap().state,
-            Some(vec![1, 2, 3])
-        );
+        assert_eq!(mixer.instruments[3][0].state, Some(vec![1, 2, 3]));
     }
 
     #[test]
-    fn unload_unsent_slot_drops_it() {
-        // 手工塞一个未安装槽位，unload 直接 drop（无引擎命令）。
+    fn remove_unsent_slot_drops_it() {
+        // 手工塞一个未安装槽位，remove 直接 drop（无引擎命令）。
         let mut rack = InstrumentRack::default();
         rack.slots.push(InstrumentSlot {
             channel: 2,
+            slot_id: 0,
             instance: None,
             sent: false,
             activate_failed: false,
@@ -487,8 +511,8 @@ mod tests {
             #[cfg(target_os = "macos")]
             gui_window: None,
         });
-        rack.unload(2, None);
-        assert!(!rack.slots.iter().any(|s| s.channel == 2));
+        rack.remove(2, 0, None);
+        assert!(rack.slots.is_empty());
         assert!(rack.pending_return.is_empty());
     }
 }

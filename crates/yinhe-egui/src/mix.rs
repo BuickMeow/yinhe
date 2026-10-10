@@ -201,13 +201,20 @@ pub(crate) enum MixAction {
     OpenInstrumentPicker {
         channel: u8,
     },
-    /// 为 MIDI 通道分配插件乐器（InsertRef 入持久化层 + 机架加载 + 安装引擎）。
+    /// 为 MIDI 通道**追加**一个插件乐器到链尾（InsertRef 入持久化层 +
+    /// 机架加载 + 安装引擎）。
     AssignInstrument {
         channel: u8,
         plugin: PluginEntry,
     },
-    /// 移除 MIDI 通道的插件乐器（卸载机架 + 持久化层置 None → 回到 XSynth）。
+    /// 移除 MIDI 通道链内第 `index` 个插件乐器（卸载机架 + 持久化层移除，
+    /// 链路空后回到 XSynth）。
     RemoveInstrument {
+        channel: u8,
+        index: usize,
+    },
+    /// 清空某 MIDI 通道的全部插件乐器（回到内置 XSynth）。
+    ClearInstruments {
         channel: u8,
     },
     /// 打开 insert 槽位的参数面板。
@@ -215,13 +222,15 @@ pub(crate) enum MixAction {
         target: InsertTarget,
         slot: usize,
     },
-    /// 打开乐器槽位的参数面板。
+    /// 打开乐器槽位的参数面板（`index` = 该通道链内序号）。
     OpenInstrumentParams {
         channel: u8,
+        index: usize,
     },
-    /// 打开/关闭乐器插件原生界面。
+    /// 打开/关闭乐器插件原生界面（`index` = 该通道链内序号）。
     ToggleInstrumentGui {
         channel: u8,
+        index: usize,
     },
     /// 打开某 MIDI 通道内置 XSynth 的音色库配置窗口。
     OpenXsynthConfig {
@@ -369,9 +378,9 @@ impl App {
     pub(crate) fn restore_instrument_rack(&mut self, idx: usize) {
         let mixer = self.workspace.documents[idx].mixer.clone();
         let mut rack = InstrumentRack::default();
-        for (ch, r) in mixer.instruments.iter().enumerate() {
-            if let Some(r) = r {
-                let _ = rack.load(
+        for (ch, refs) in mixer.instruments.iter().enumerate() {
+            for r in refs {
+                let _ = rack.add(
                     ch as u8,
                     r.format,
                     &r.plugin_path,
@@ -861,11 +870,11 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
         MixAction::OpenXsynthConfig { channel } => {
             app.mix.xsynth_config_for = Some(channel);
         }
-        MixAction::ToggleInstrumentGui { channel } => {
+        MixAction::ToggleInstrumentGui { channel, index } => {
             let result = app
                 .instrument_racks
                 .get_mut(idx)
-                .map(|rack| rack.toggle_gui(channel));
+                .map(|rack| rack.toggle_gui(channel, index));
             if let Some(Err(e)) = result
                 && let Some(rack) = app.instrument_racks.get_mut(idx)
             {
@@ -877,8 +886,7 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
                 let doc = &mut app.workspace.documents[idx];
                 let m = doc.mixer_mut();
                 m.ensure_len();
-                let c = channel as usize;
-                m.instruments[c] = Some(yinhe_mixer::InsertRef {
+                m.instruments[channel as usize].push(yinhe_mixer::InsertRef {
                     plugin_path: plugin.path.clone(),
                     plugin_id: plugin.id.clone(),
                     name: plugin.name.clone(),
@@ -889,7 +897,7 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
             }
             if idx < app.instrument_racks.len() {
                 let rack = &mut app.instrument_racks[idx];
-                if let Err(e) = rack.load(
+                if let Err(e) = rack.add(
                     channel,
                     plugin.format,
                     &plugin.path,
@@ -903,18 +911,28 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
             app.push_mixer_state_to_engine(idx);
             app.mix.instrument_picker_for = None;
         }
-        MixAction::RemoveInstrument { channel } => {
+        MixAction::RemoveInstrument { channel, index } => {
             {
                 let doc = &mut app.workspace.documents[idx];
-                let c = channel as usize;
-                if c < doc.mixer_mut().instruments.len() {
-                    doc.mixer_mut().instruments[c] = None;
+                let refs = &mut doc.mixer_mut().instruments[channel as usize];
+                if index < refs.len() {
+                    refs.remove(index);
                 }
             }
             if idx < app.instrument_racks.len() {
                 let handle = app.audio_state.handle.as_ref().map(|a| &a.handle);
                 let rack = &mut app.instrument_racks[idx];
-                rack.unload(channel, handle);
+                rack.remove(channel, index, handle);
+            }
+        }
+        MixAction::ClearInstruments { channel } => {
+            app.workspace.documents[idx].mixer_mut().instruments[channel as usize].clear();
+            if idx < app.instrument_racks.len() {
+                let handle = app.audio_state.handle.as_ref().map(|a| &a.handle);
+                let rack = &mut app.instrument_racks[idx];
+                while rack.slot_count(channel) > 0 {
+                    rack.remove(channel, 0, handle);
+                }
             }
         }
         MixAction::OpenInsertParams { target, slot } => {
@@ -934,15 +952,15 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
                 app.mix.param_panel = Some(panel);
             }
         }
-        MixAction::OpenInstrumentParams { channel } => {
+        MixAction::OpenInstrumentParams { channel, index } => {
             let panel = app
                 .instrument_racks
                 .get_mut(idx)
-                .and_then(|rack| rack.instance_mut(channel))
+                .and_then(|rack| rack.instance_mut(channel, index))
                 .map(|instance| {
                     let title = instance.name().to_string();
                     ParamPanel::open(
-                        param_panel::ParamTarget::Instrument { channel },
+                        param_panel::ParamTarget::Instrument { channel, index },
                         title,
                         instance,
                     )

@@ -24,8 +24,8 @@ pub(crate) enum ParamTarget {
         target: yinhe_audio::InsertTarget,
         slot: usize,
     },
-    /// MIDI 全局通道（挂载的插件乐器所在通道）。
-    Instrument { channel: u8 },
+    /// MIDI 全局通道 + 该通道链内序号（挂载的插件乐器）。
+    Instrument { channel: u8, index: usize },
 }
 
 /// 参数面板状态（打开时枚举一次；插件 rescan 时重枚举）。
@@ -106,7 +106,7 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
     // 「显示自动化」按钮状态：该乐器通道已有的插件参数 lane 集
     //（只遍历本通道轨道，参数可达数千个，逐参数查会太贵）。
     let am_channel = match panel.target {
-        ParamTarget::Instrument { channel } => Some(channel),
+        ParamTarget::Instrument { channel, .. } => Some(channel),
         ParamTarget::Insert { .. } => None,
     };
     let am_lanes: std::collections::HashSet<(u8, u32)> = am_channel
@@ -164,10 +164,10 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
                                     .mixer_racks
                                     .get_mut(idx)
                                     .and_then(|rack| rack.instance_mut(target, slot)),
-                                ParamTarget::Instrument { channel } => app
+                                ParamTarget::Instrument { channel, index } => app
                                     .instrument_racks
                                     .get_mut(idx)
-                                    .and_then(|rack| rack.instance_mut(channel)),
+                                    .and_then(|rack| rack.instance_mut(channel, index)),
                             };
                             let Some(instance) = instance else {
                                 ui.label(

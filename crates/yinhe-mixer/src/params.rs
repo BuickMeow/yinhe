@@ -132,11 +132,12 @@ pub struct MixerParams {
     /// 主输出 insert 链。
     #[serde(default)]
     pub master_inserts: Vec<InsertRef>,
-    /// 乐器插件（索引 = 源 MIDI 通道，固定 CHANNEL_COUNT 长度）：
-    /// `None` = 该通道使用默认的内置 XSynth；`Some` = 挂载的 CLAP/VST3 插件。
+    /// 乐器插件链（索引 = 源 MIDI 通道，固定 CHANNEL_COUNT 长度）：
+    /// 空 = 该通道使用默认的内置 XSynth；非空 = 按序**叠加**的插件乐器，
+    /// 音符事件广播给链内每个乐器，输出相加。
     /// 混音参数（推子/声像/insert/send）统一走该 MIDI 通道的 strip 表。
-    #[serde(default)]
-    pub instruments: Vec<Option<InsertRef>>,
+    #[serde(default, deserialize_with = "de_instruments")]
+    pub instruments: Vec<Vec<InsertRef>>,
     /// 音频通道 strip（索引 = 音频通道号，与 `TrackData::audio_channel` 对齐）。
     #[serde(default)]
     pub audio_channels: Vec<StripParams>,
@@ -164,7 +165,7 @@ impl Default for MixerParams {
             master: MasterParams::default(),
             channel_inserts: vec![Vec::new(); CHANNEL_COUNT],
             master_inserts: Vec::new(),
-            instruments: vec![None; CHANNEL_COUNT],
+            instruments: vec![Vec::new(); CHANNEL_COUNT],
             audio_channels: Vec::new(),
             audio_inserts: Vec::new(),
             audio_sends: Vec::new(),
@@ -184,7 +185,7 @@ impl MixerParams {
         self.channel_inserts.truncate(CHANNEL_COUNT);
         self.sends.resize(CHANNEL_COUNT, Vec::new());
         self.sends.truncate(CHANNEL_COUNT);
-        self.instruments.resize(CHANNEL_COUNT, None);
+        self.instruments.resize(CHANNEL_COUNT, Vec::new());
         self.instruments.truncate(CHANNEL_COUNT);
         self.bus_inserts.resize(self.buses.len(), Vec::new());
         self.bus_inserts.truncate(self.buses.len());
@@ -259,6 +260,29 @@ impl MixerParams {
             self.audio_sends.resize(audio_count, Vec::new());
         }
     }
+}
+
+/// 反序列化 `instruments`：兼容旧格式。
+/// 旧：每通道 `Option<InsertRef>`（`null` 或对象）；新：每通道 `Vec<InsertRef>`。
+fn de_instruments<'de, D>(de: D) -> Result<Vec<Vec<InsertRef>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Entry {
+        One(Option<InsertRef>),
+        Many(Vec<InsertRef>),
+    }
+    let raw: Vec<Entry> = Vec::deserialize(de)?;
+    Ok(raw
+        .into_iter()
+        .map(|e| match e {
+            Entry::One(Some(r)) => vec![r],
+            Entry::One(None) => Vec::new(),
+            Entry::Many(v) => v,
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -345,5 +369,26 @@ mod tests {
             ..MixerParams::default()
         };
         assert_eq!(p.strip(200), StripParams::default());
+    }
+
+    /// 旧格式（每通道 Option<InsertRef>）与新格式（每通道 Vec）都能反序列化。
+    #[test]
+    fn de_instruments_accepts_old_and_new() {
+        #[derive(Deserialize)]
+        struct W {
+            #[serde(deserialize_with = "super::de_instruments")]
+            instruments: Vec<Vec<InsertRef>>,
+        }
+        let one = r#"{"plugin_path":"/x","plugin_id":"a","name":"A","format":"Clap","bypassed":false,"state":null}"#;
+        let old = format!(r#"{{"instruments":[null,{one}]}}"#);
+        let w: W = serde_json::from_str(&old).unwrap();
+        assert!(w.instruments[0].is_empty(), "旧 null → 空链");
+        assert_eq!(w.instruments[1].len(), 1);
+        assert_eq!(w.instruments[1][0].plugin_id, "a");
+
+        let new = format!(r#"{{"instruments":[[{one}],[]]}}"#);
+        let w2: W = serde_json::from_str(&new).unwrap();
+        assert_eq!(w2.instruments[0].len(), 1);
+        assert!(w2.instruments[1].is_empty());
     }
 }

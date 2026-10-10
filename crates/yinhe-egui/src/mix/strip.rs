@@ -264,12 +264,12 @@ pub(crate) fn channel_strip(
         .and_then(|list| list.first())
         .map(|s| (s.amount, s.pre_fader))
         .unwrap_or((0.0, false));
-    let instrument = app.workspace.documents[idx]
+    let instruments: Vec<String> = app.workspace.documents[idx]
         .mixer
         .instruments
         .get(channel as usize)
-        .and_then(|o| o.as_ref())
-        .map(|r| r.name.clone());
+        .map(|refs| refs.iter().map(|r| r.name.clone()).collect())
+        .unwrap_or_default();
     let title = channel_label(channel);
 
     strip_frame(ui, color, &title, height, |ui, content_h| {
@@ -279,7 +279,8 @@ pub(crate) fn channel_strip(
                 ui,
                 target,
                 &view,
-                Some((channel, instrument.as_deref())),
+                Some(channel),
+                &instruments,
                 dev_h,
                 actions,
             );
@@ -371,7 +372,7 @@ pub(crate) fn audio_strip(
         |ui, content_h| {
             let (dev_h, meter_h) = strip_metrics(content_h, true);
             section(ui, dev_h, egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                device_chain(ui, target, &view, None, dev_h, actions);
+                device_chain(ui, target, &view, None, &[], dev_h, actions);
             });
             ui.add_space(GAP);
             section(
@@ -477,7 +478,7 @@ pub(crate) fn bus_strip(
                         }
                     });
                 });
-                device_chain(ui, target, &view, None, dev_h - BTN, actions);
+                device_chain(ui, target, &view, None, &[], dev_h - BTN, actions);
             });
             ui.add_space(GAP);
             section(
@@ -562,7 +563,7 @@ pub(crate) fn master_strip(
         |ui, content_h| {
             let (dev_h, meter_h) = strip_metrics(content_h, false);
             section(ui, dev_h, egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                device_chain(ui, InsertTarget::Master, &view, None, dev_h, actions);
+                device_chain(ui, InsertTarget::Master, &view, None, &[], dev_h, actions);
             });
             ui.add_space(GAP);
             if let Some(g) = db_row(ui, params.gain) {
@@ -599,11 +600,13 @@ fn strip_metrics(content_h: f32, full: bool) -> (f32, f32) {
 }
 
 /// 设备链：乐器（0/1 个）+ 效果器列表 + 「+」添加入口，按整行滚动。
+#[allow(clippy::too_many_arguments)] // 设备链渲染上下文透传
 fn device_chain(
     ui: &mut egui::Ui,
     target: InsertTarget,
     view: &InsertView<'_>,
-    instrument: Option<(u8, Option<&str>)>,
+    channel: Option<u8>,
+    instruments: &[String],
     max_h: f32,
     actions: &mut Vec<MixAction>,
 ) {
@@ -616,9 +619,21 @@ fn device_chain(
         Some(max_rows),
         |ui| {
             ui.spacing_mut().item_spacing.y = 1.0;
-            if let Some((channel, name)) = instrument {
-                instrument_row(ui, channel, name, actions);
+            // 乐器段（仅 MIDI 通道）：空链显示内置 XSynth，否则逐个列出可叠加
+            // 的插件乐器，末尾留一个「+」添加入口。
+            if let Some(ch) = channel {
+                if instruments.is_empty() {
+                    xsynth_row(ui, ch, actions);
+                } else {
+                    for (i, name) in instruments.iter().enumerate() {
+                        instrument_row(ui, ch, i, name, actions);
+                    }
+                }
+                if add_row(ui, t!("hint.mix.change_instrument")) {
+                    actions.push(MixAction::OpenInstrumentPicker { channel: ch });
+                }
             }
+            // 效果器段（四种条通用）。
             for (slot, r) in view.refs.iter().enumerate() {
                 effect_row(
                     ui,
@@ -630,19 +645,15 @@ fn device_chain(
                     actions,
                 );
             }
-            add_row(ui, target, actions);
+            if add_row(ui, t!("hint.mix.add_insert")) {
+                actions.push(MixAction::OpenPicker { target });
+            }
         },
     );
 }
 
-/// 乐器设备行：名称（点击开插件界面 / XSynth 音色库），右键菜单。
-fn instrument_row(
-    ui: &mut egui::Ui,
-    channel: u8,
-    name: Option<&str>,
-    actions: &mut Vec<MixAction>,
-) {
-    let label = name.unwrap_or("XSynth");
+/// 设备行的统一外观（背景 + 单描边 + 左对齐名称）。
+fn device_row_visual(ui: &mut egui::Ui, label: &str) -> (egui::Rect, egui::Response) {
     let (rect, resp) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), DEVICE_ROW_H),
         egui::Sense::click(),
@@ -667,21 +678,21 @@ fn instrument_row(
         egui::FontId::proportional(crate::theme::SMALL_FONT),
         crate::theme::text_primary(),
     );
-    crate::widgets::hint::hover(
-        ui.ctx(),
-        &resp,
-        if name.is_some() {
-            t!("hint.mix.toggle_gui")
-        } else {
-            t!("hint.mix.instrument_xsynth")
-        },
-    );
+    (rect, resp)
+}
+
+/// 插件乐器设备行（`index` = 该通道链内序号）：点击开关插件界面，右键菜单。
+fn instrument_row(
+    ui: &mut egui::Ui,
+    channel: u8,
+    index: usize,
+    name: &str,
+    actions: &mut Vec<MixAction>,
+) {
+    let (_rect, resp) = device_row_visual(ui, name);
+    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.toggle_gui"));
     if resp.clicked() {
-        if name.is_some() {
-            actions.push(MixAction::ToggleInstrumentGui { channel });
-        } else {
-            actions.push(MixAction::OpenXsynthConfig { channel });
-        }
+        actions.push(MixAction::ToggleInstrumentGui { channel, index });
     }
     resp.context_menu(|ui| {
         ui.set_min_width(96.0);
@@ -693,11 +704,7 @@ fn instrument_row(
         ));
         crate::widgets::hint::hover(ui.ctx(), &gui_item, t!("hint.mix.toggle_gui"));
         if gui_item.clicked() {
-            if name.is_some() {
-                actions.push(MixAction::ToggleInstrumentGui { channel });
-            } else {
-                actions.push(MixAction::OpenXsynthConfig { channel });
-            }
+            actions.push(MixAction::ToggleInstrumentGui { channel, index });
             ui.close();
         }
         let params_item = ui.add(crate::widgets::menu::menu_item_button(
@@ -707,33 +714,50 @@ fn instrument_row(
         ));
         crate::widgets::hint::hover(ui.ctx(), &params_item, t!("hint.mix.instrument_params"));
         if params_item.clicked() {
-            if name.is_some() {
-                actions.push(MixAction::OpenInstrumentParams { channel });
-            } else {
-                actions.push(MixAction::OpenXsynthConfig { channel });
-            }
+            actions.push(MixAction::OpenInstrumentParams { channel, index });
             ui.close();
         }
-        let change_item = ui.add(crate::widgets::menu::menu_item_button(
+        let remove_item = ui.add(crate::widgets::menu::menu_item_button(
             ui,
             false,
-            t!("mix.change_instrument").as_ref(),
+            t!("mix.remove_insert").as_ref(),
         ));
-        crate::widgets::hint::hover(ui.ctx(), &change_item, t!("hint.mix.change_instrument"));
-        if change_item.clicked() {
-            actions.push(MixAction::OpenInstrumentPicker { channel });
+        if remove_item.clicked() {
+            actions.push(MixAction::RemoveInstrument { channel, index });
             ui.close();
         }
-        if name.is_some() {
-            let remove_item = ui.add(crate::widgets::menu::menu_item_button(
-                ui,
-                false,
-                t!("mix.remove_insert").as_ref(),
-            ));
-            if remove_item.clicked() {
-                actions.push(MixAction::RemoveInstrument { channel });
-                ui.close();
-            }
+    });
+}
+
+/// 内置 XSynth 设备行（该通道未挂任何插件乐器时显示）。
+fn xsynth_row(ui: &mut egui::Ui, channel: u8, actions: &mut Vec<MixAction>) {
+    let (_rect, resp) = device_row_visual(ui, "XSynth");
+    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.instrument_xsynth"));
+    if resp.clicked() {
+        actions.push(MixAction::OpenXsynthConfig { channel });
+    }
+    resp.context_menu(|ui| {
+        ui.set_min_width(96.0);
+        ui.set_max_width(96.0);
+        let cfg_item = ui.add(crate::widgets::menu::menu_item_button(
+            ui,
+            false,
+            t!("mix.toggle_gui").as_ref(),
+        ));
+        crate::widgets::hint::hover(ui.ctx(), &cfg_item, t!("hint.mix.instrument_xsynth"));
+        if cfg_item.clicked() {
+            actions.push(MixAction::OpenXsynthConfig { channel });
+            ui.close();
+        }
+        let params_item = ui.add(crate::widgets::menu::menu_item_button(
+            ui,
+            false,
+            t!("mix.params").as_ref(),
+        ));
+        crate::widgets::hint::hover(ui.ctx(), &params_item, t!("hint.mix.instrument_params"));
+        if params_item.clicked() {
+            actions.push(MixAction::OpenXsynthConfig { channel });
+            ui.close();
         }
     });
 }
@@ -900,7 +924,8 @@ fn effect_row(
 }
 
 /// 「+」添加入口：点击打开效果器选择器。
-fn add_row(ui: &mut egui::Ui, target: InsertTarget, actions: &mut Vec<MixAction>) {
+/// 「+」设备添加入口：返回是否被点击（调用方决定打开哪个选择器）。
+fn add_row(ui: &mut egui::Ui, hint: impl Into<String>) -> bool {
     let (rect, resp) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), DEVICE_ROW_H),
         egui::Sense::click(),
@@ -928,10 +953,8 @@ fn add_row(ui: &mut egui::Ui, target: InsertTarget, actions: &mut Vec<MixAction>
         ),
         crate::theme::text_muted(),
     );
-    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.add_insert"));
-    if resp.clicked() {
-        actions.push(MixAction::OpenPicker { target });
-    }
+    crate::widgets::hint::hover(ui.ctx(), &resp, hint);
+    resp.clicked()
 }
 
 /// 效果发送区（单行）：FX 1 旋钮。无总线时首次拖动自动创建一条总线。
@@ -1486,10 +1509,10 @@ impl PickerKind {
         }
     }
 
-    /// 点击内置 XSynth（仅乐器）：清除该通道的插件挂载。
+    /// 点击内置 XSynth（仅乐器）：清空该通道的插件乐器链（回到默认 XSynth）。
     fn pick_builtin(self, actions: &mut Vec<MixAction>) {
         if let Self::Instrument { channel } = self {
-            actions.push(MixAction::RemoveInstrument { channel });
+            actions.push(MixAction::ClearInstruments { channel });
         }
     }
 

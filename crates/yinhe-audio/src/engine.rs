@@ -48,10 +48,13 @@ pub(crate) struct AudioEngine {
     pub(crate) insert_returns: Vec<Box<dyn InsertProcessor>>,
     /// 被替换/移除的乐器处理器：同样不能在渲染线程 deactivate，攒在
     /// 这里由 renderer 送回 UI 线程回收（与 insert 同通道回流）。
-    pub(crate) instrument_returns: Vec<(u8, Box<dyn InstrumentProcessor>)>,
+    pub(crate) instrument_returns: Vec<(u64, Box<dyn InstrumentProcessor>)>,
     /// 乐器实例，长度 = `compacted_channels`，只有乐器 dense 槽位非空。
     /// 索引 = 全局 dense（= midi_compacted + 乐器通道排序位置）。
     pub(crate) instruments: Vec<Option<crate::instrument::InstrumentSource>>,
+    /// 乐器求和用的临时缓冲：链内第 2 个及以后的乐器输出先写这里再累加。按需增长。
+    pub(crate) scratch_l: Vec<f32>,
+    pub(crate) scratch_r: Vec<f32>,
     /// 内置音源通道处理段（CC7/10/11/71/74），索引 = dense 通道。
     /// 挂插件乐器的通道不处理（CC 透传插件）。见 `channel_dsp` 模块文档。
     pub(crate) channel_dsp: Vec<crate::channel_dsp::ChannelDspChain>,
@@ -208,6 +211,8 @@ impl AudioEngine {
                 insert_returns: Vec::new(),
                 instrument_returns: Vec::new(),
                 instruments: (0..compacted).map(|_| None).collect(),
+                scratch_l: Vec::new(),
+                scratch_r: Vec::new(),
                 channel_dsp: (0..compacted)
                     .map(|_| crate::channel_dsp::ChannelDspChain::new(sample_rate))
                     .collect(),
@@ -467,9 +472,11 @@ impl AudioEngine {
             AudioCommand::SyncBusConfig { buses, sends } => {
                 self.sync_bus_config(*buses, *sends);
             }
-            AudioCommand::SetInstrument { channel, processor } => {
-                self.set_instrument(channel, processor)
-            }
+            AudioCommand::SetInstrumentSlot {
+                channel,
+                slot_id,
+                processor,
+            } => self.set_instrument_slot(channel, slot_id, processor),
             AudioCommand::SetAudioSource { uuid, decoded } => {
                 self.audio_sources.insert(uuid, decoded);
             }

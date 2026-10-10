@@ -165,7 +165,7 @@ struct AudioRenderer {
     /// 被替换/移除的 insert 处理器退回 UI 线程（渲染线程不做 deactivate）。
     insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
     /// 被替换/移除的乐器处理器退回 UI 线程（渲染线程不做 deactivate）。
-    instrument_return_tx: Sender<(u8, Box<dyn yinhe_mixer::InstrumentProcessor>)>,
+    instrument_return_tx: Sender<(u64, Box<dyn yinhe_mixer::InstrumentProcessor>)>,
     /// 合成后端（spawn 时已收敛：不可用后端回退 XSynthCpu）。
     /// `YinheGpu` 时加载音色库会初始化 GpuSynth，渲染走 engine.gpu_synth。
     #[cfg(feature = "gpu")]
@@ -200,7 +200,7 @@ impl AudioRenderer {
         // cpal 回调每次请求的帧数（预览时 ring 目标下限，避免回调欠载静音）。
         callback_frames: usize,
         insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
-        instrument_return_tx: Sender<(u8, Box<dyn yinhe_mixer::InstrumentProcessor>)>,
+        instrument_return_tx: Sender<(u64, Box<dyn yinhe_mixer::InstrumentProcessor>)>,
         #[cfg(feature = "gpu")] synth_engine: SynthEngine,
         interpolation: Interpolation,
     ) -> Self {
@@ -501,7 +501,7 @@ pub(crate) fn spawn_renderer(
     // cpal 回调每次请求的帧数（预览时 ring 目标下限）。
     callback_frames: usize,
     insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
-    instrument_return_tx: Sender<(u8, Box<dyn yinhe_mixer::InstrumentProcessor>)>,
+    instrument_return_tx: Sender<(u64, Box<dyn yinhe_mixer::InstrumentProcessor>)>,
     #[cfg(feature = "gpu")] synth_engine: SynthEngine,
     interpolation: Interpolation,
 ) -> Result<JoinHandle<()>, std::io::Error> {
@@ -548,11 +548,12 @@ pub(crate) fn spawn_renderer(
                 let _ = insert_return_tx.send(leftovers);
             }
             // 引擎里仍在位的乐器处理器也退回 UI 线程回收。
-            let inst_leftovers: Vec<(u8, Box<dyn yinhe_mixer::InstrumentProcessor>)> = renderer
+            let inst_leftovers: Vec<(u64, Box<dyn yinhe_mixer::InstrumentProcessor>)> = renderer
                 .engine
                 .instruments
                 .iter_mut()
-                .filter_map(|slot| slot.take().map(|s| (s.channel, s.processor)))
+                .filter_map(|slot| slot.take())
+                .flat_map(|s| s.chain.into_iter().map(|p| (p.slot_id, p.processor)))
                 .collect();
             for p in inst_leftovers {
                 let _ = instrument_return_tx.send(p);

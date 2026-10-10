@@ -211,9 +211,12 @@ pub enum AudioCommand {
     /// 上的乐器插件实例（CLAP/VST3 等，抽象为 trait）。`Some(processor)` = 安装/替换；
     /// `None` = 移除（回到默认 XSynth）。被替换/移除的旧处理器经乐器 return 通道
     /// 送回 UI 线程 deactivate。
-    SetInstrument {
+    SetInstrumentSlot {
         channel: u8,
-        /// 处理器较大（含渲染缓冲），用 Box 避免枚举体积膨胀。
+        /// UI 侧分配的单槽位 id（同一通道内唯一）。
+        slot_id: u64,
+        /// `None` = 移除该槽位（空链后该通道回到内置 XSynth）。处理器较大
+        /// （含渲染缓冲），用 Box 避免枚举体积膨胀。
         processor: Option<Box<dyn InstrumentProcessor>>,
     },
     /// 安装/替换已解码音频素材（uuid → PCM）。UI 后台线程解码后推送；
@@ -354,7 +357,7 @@ pub struct AudioHandle {
     /// 渲染线程退回的 insert 处理器（插件 deactivate 必须在 UI/管理线程做）。
     insert_return_rx: crossbeam_channel::Receiver<Vec<Box<dyn InsertProcessor>>>,
     /// 渲染线程退回的乐器处理器（deactivate 同样必须在 UI/管理线程做）。
-    instrument_return_rx: crossbeam_channel::Receiver<(u8, Box<dyn InstrumentProcessor>)>,
+    instrument_return_rx: crossbeam_channel::Receiver<(u64, Box<dyn InstrumentProcessor>)>,
 }
 
 /// 命令分类结果：可靠通道标志 + 诊断名。
@@ -413,7 +416,7 @@ impl AudioCommand {
             AudioCommand::InsertReplace { .. } => ("InsertReplace", true),
             AudioCommand::SetBusStrip { .. } => ("SetBusStrip", false),
             AudioCommand::SyncBusConfig { .. } => ("SyncBusConfig", true),
-            AudioCommand::SetInstrument { .. } => ("SetInstrument", true),
+            AudioCommand::SetInstrumentSlot { .. } => ("SetInstrumentSlot", true),
             AudioCommand::SetAudioSource { .. } => ("SetAudioSource", false),
             AudioCommand::RefreshLatency => ("RefreshLatency", false),
             AudioCommand::ExportStart { .. } => ("ExportStart", false),
@@ -559,7 +562,7 @@ impl AudioHandle {
     }
 
     /// 取回渲染线程退回的乐器处理器（每帧轮询；deactivate 在 UI 线程做）。
-    pub fn drain_instrument_returns(&self) -> Vec<(u8, Box<dyn InstrumentProcessor>)> {
+    pub fn drain_instrument_returns(&self) -> Vec<(u64, Box<dyn InstrumentProcessor>)> {
         let mut out = Vec::new();
         while let Ok(p) = self.instrument_return_rx.try_recv() {
             out.push(p);
@@ -578,7 +581,7 @@ impl AudioHandle {
     /// 克隆乐器退回通道接收端（同 `clone_insert_return_rx` 的用途）。
     pub fn clone_instrument_return_rx(
         &self,
-    ) -> crossbeam_channel::Receiver<(u8, Box<dyn InstrumentProcessor>)> {
+    ) -> crossbeam_channel::Receiver<(u64, Box<dyn InstrumentProcessor>)> {
         self.instrument_return_rx.clone()
     }
 }
@@ -1264,8 +1267,8 @@ struct EngineInit {
     insert_return_tx: Sender<Vec<Box<dyn InsertProcessor>>>,
     insert_return_rx: crossbeam_channel::Receiver<Vec<Box<dyn InsertProcessor>>>,
     /// 渲染线程 → UI 的乐器处理器退回通道（替换/移除/拆除时回收 deactivate）。
-    instrument_return_tx: Sender<(u8, Box<dyn InstrumentProcessor>)>,
-    instrument_return_rx: crossbeam_channel::Receiver<(u8, Box<dyn InstrumentProcessor>)>,
+    instrument_return_tx: Sender<(u64, Box<dyn InstrumentProcessor>)>,
+    instrument_return_rx: crossbeam_channel::Receiver<(u64, Box<dyn InstrumentProcessor>)>,
 }
 
 /// 初始化引擎与预览引擎，并收集 UI 侧读数端/退回通道。
@@ -1307,7 +1310,7 @@ fn init_engine(
     let meters = MixerMeters::collect(&engine);
     let (insert_return_tx, insert_return_rx) = unbounded::<Vec<Box<dyn InsertProcessor>>>();
     let (instrument_return_tx, instrument_return_rx) =
-        unbounded::<(u8, Box<dyn InstrumentProcessor>)>();
+        unbounded::<(u64, Box<dyn InstrumentProcessor>)>();
     Ok(EngineInit {
         engine,
         meters,
@@ -1366,7 +1369,7 @@ fn init_renderer(
     pending_am_ms: Arc<Mutex<Option<Arc<AmMsMap>>>>,
     callback_frames: usize,
     insert_return_tx: Sender<Vec<Box<dyn InsertProcessor>>>,
-    instrument_return_tx: Sender<(u8, Box<dyn InstrumentProcessor>)>,
+    instrument_return_tx: Sender<(u64, Box<dyn InstrumentProcessor>)>,
     bus_readings: Arc<Mutex<Vec<MeterReading>>>,
     #[cfg(feature = "gpu")] synth_engine: SynthEngine,
     interpolation: Interpolation,
@@ -1739,8 +1742,9 @@ mod tests {
             .is_reliable()
         );
         assert!(
-            AudioCommand::SetInstrument {
+            AudioCommand::SetInstrumentSlot {
                 channel: 0,
+                slot_id: 0,
                 processor: None,
             }
             .is_reliable()
@@ -1925,11 +1929,12 @@ mod tests {
                 true,
             ),
             (
-                AudioCommand::SetInstrument {
+                AudioCommand::SetInstrumentSlot {
                     channel: 0,
+                    slot_id: 0,
                     processor: None,
                 },
-                "SetInstrument",
+                "SetInstrumentSlot",
                 true,
             ),
             (

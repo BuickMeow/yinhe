@@ -407,9 +407,9 @@ pub(crate) fn plugin_instrument_of(
 ) -> Option<u8> {
     let t = tracks.get(idx)?;
     let ch = t.global_channel();
-    mixer
+    (mixer
         .instruments
         .get(ch as usize)
-        .and_then(|slot| slot.as_ref())
-        .map(|_| ch)
+        .is_some_and(|v| !v.is_empty()))
+    .then_some(ch)
 }

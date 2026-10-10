@@ -506,7 +506,7 @@ impl App {
                     let (name, params) = match self
                         .instrument_racks
                         .get_mut(idx)
-                        .and_then(|rack| rack.instance_mut(ich))
+                        .and_then(|rack| rack.instance_mut(ich, 0))
                     {
                         Some(instance) => (instance.name().to_string(), instance.param_list()),
                         None => (String::new(), Vec::new()),

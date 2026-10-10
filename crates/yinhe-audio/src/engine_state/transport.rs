@@ -95,7 +95,9 @@ impl AudioEngine {
         }
         // 乐器实例随 seek 清空内部状态（尾音/envelope/挂音）与事件累积。
         for inst in self.instruments.iter_mut().flatten() {
-            inst.processor.reset();
+            for p in &mut inst.chain {
+                p.processor.reset();
+            }
             inst.events.clear();
         }
         // 插件预览的 NoteOff 调度随 seek 作废（reset 已清插件挂音）。

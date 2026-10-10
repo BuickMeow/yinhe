@@ -170,8 +170,10 @@ impl AudioEngine {
     /// 无参数变化时开销可忽略（每个处理器一次空队列检查）。
     pub(crate) fn flush_pending_plugin_params(&mut self) {
         let position = self.sample_position;
-        for slot in self.instruments.iter_mut().flatten() {
-            slot.processor.flush_pending_params(position);
+        for src in self.instruments.iter_mut().flatten() {
+            for p in &mut src.chain {
+                p.processor.flush_pending_params(position);
+            }
         }
         self.mixer.flush_pending_insert_params(position);
         for chain in &mut self.channel_dsp {
@@ -179,34 +181,64 @@ impl AudioEngine {
         }
     }
 
-    /// 把本块累积的乐器事件喂给各乐器实例，输出写进对应乐器 dense 通道。
+    /// 把本块累积的通道事件广播给链内各乐器实例，输出**求和**写进该通道缓冲。
     /// 在 xsynth 段渲染之后、mixer.process() 之前调用。
+    /// 第一个乐器直接覆盖写入通道缓冲（该通道 xsynth 此时静音），后续乐器写入
+    /// scratch 再累加。
     pub(super) fn render_instruments(&mut self, block_start_sample: u64, frames: usize) {
         let n = self.instruments.len();
         for dense in 0..n {
-            let Some(slot) = &mut self.instruments[dense] else {
+            let Some(src) = &mut self.instruments[dense] else {
                 continue;
             };
+            if src.chain.is_empty() {
+                continue;
+            }
             // take 出的 Vec 处理完归还，保留容量（避免每块重新分配）。
-            let mut events = std::mem::take(&mut slot.events);
+            let mut events = std::mem::take(&mut src.events);
             if let Some(cb) = self.mixer.channel_buffers_mut(dense) {
                 let f = frames.min(cb.left.len()).min(cb.right.len());
-                // 乐器不做隐式分段（携带事件与时间戳）：引擎块长必须 ≤ 插件
-                // 激活能力（见 MAX_ENGINE_BLOCK_FRAMES 契约），越界是宿主 bug。
-                debug_assert!(
-                    f <= slot.processor.max_block_frames(),
-                    "乐器块长 {f} 超过插件能力 {}",
-                    slot.processor.max_block_frames()
-                );
-                slot.processor.process(
-                    &events,
-                    &mut cb.left[..f],
-                    &mut cb.right[..f],
-                    block_start_sample,
-                );
+                if f > 0 {
+                    if self.scratch_l.len() < f {
+                        self.scratch_l.resize(f, 0.0);
+                    }
+                    if self.scratch_r.len() < f {
+                        self.scratch_r.resize(f, 0.0);
+                    }
+                    for (idx, proc) in src.chain.iter_mut().enumerate() {
+                        // 乐器不做隐式分段（携带事件与时间戳）：引擎块长必须 ≤
+                        // 插件激活能力（见 MAX_ENGINE_BLOCK_FRAMES 契约），越界是宿主 bug。
+                        debug_assert!(
+                            f <= proc.processor.max_block_frames(),
+                            "乐器块长 {f} 超过插件能力 {}",
+                            proc.processor.max_block_frames()
+                        );
+                        if idx == 0 {
+                            proc.processor.process(
+                                &events,
+                                &mut cb.left[..f],
+                                &mut cb.right[..f],
+                                block_start_sample,
+                            );
+                        } else {
+                            self.scratch_l[..f].fill(0.0);
+                            self.scratch_r[..f].fill(0.0);
+                            proc.processor.process(
+                                &events,
+                                &mut self.scratch_l[..f],
+                                &mut self.scratch_r[..f],
+                                block_start_sample,
+                            );
+                            for i in 0..f {
+                                cb.left[i] += self.scratch_l[i];
+                                cb.right[i] += self.scratch_r[i];
+                            }
+                        }
+                    }
+                }
             }
             events.clear();
-            slot.events = events;
+            src.events = events;
         }
     }
 }
