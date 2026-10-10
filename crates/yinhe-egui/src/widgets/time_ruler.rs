@@ -604,7 +604,8 @@ fn paint_marker_labels(
                 egui::vec2(tw + 8.0, MARKER_PILL_THICKNESS),
             ),
             Orientation::Vertical => egui::Rect::from_min_size(
-                egui::pos2(labels_center - half, rect.min.y + rect_start),
+                // 纵向时间自下而上递增：pill 从 tick 线向上展开（而非向下）。
+                egui::pos2(labels_center - half, rect.min.y + rect_start - (tw + 8.0)),
                 egui::vec2(MARKER_PILL_THICKNESS, tw + 8.0),
             ),
         };
@@ -625,7 +626,7 @@ fn paint_marker_labels(
                     .min;
                 painter.add(
                     egui::epaint::TextShape::new(anchor, galley, text_color).with_angle_and_anchor(
-                        std::f32::consts::FRAC_PI_2,
+                        -std::f32::consts::FRAC_PI_2,
                         egui::Align2::CENTER_CENTER,
                     ),
                 );
@@ -857,8 +858,8 @@ fn draw_label(
                 color,
             );
         }
-        // 纵向：竖排标签（顺时针 90°，时间向下递增时字形头朝上），
-        // 与 hover.rs 同款的旋转写法。
+        // 纵向：竖排标签（逆时针 90°，时间自下而上递增 → 阅读方向向上；
+        // 与 keyboard.rs 的 -FRAC_PI_2 约定一致）。
         Orientation::Vertical => {
             let galley = painter.layout_no_wrap(text.to_owned(), font_id.clone(), color);
             let anchor_pos = egui::Align2::CENTER_CENTER
@@ -866,7 +867,7 @@ fn draw_label(
                 .min;
             painter.add(
                 egui::epaint::TextShape::new(anchor_pos, galley, color).with_angle_and_anchor(
-                    std::f32::consts::FRAC_PI_2,
+                    -std::f32::consts::FRAC_PI_2,
                     egui::Align2::CENTER_CENTER,
                 ),
             );
