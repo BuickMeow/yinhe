@@ -156,16 +156,20 @@ impl ScaleDialogState {
         action
     }
 
-    /// 对话框主体：两列滚动 + 纵向钢琴预览 + 名称 + 开关。
+    /// 对话框主体：两列滚动 + 迷你钢琴卷帘预览 + 名称 + 开关。
     fn body(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         ui.set_width(ui.available_width());
-        rows::section_header(ui, t!("timecode.keysig_dialog_title").as_ref());
+        // 行间距固定，便于把滚动区高度对齐到整行（否则非整数倍时底部一行被截成细条）。
+        ui.spacing_mut().item_spacing.y = 2.0;
 
-        let list_h = crate::scaling::scaled_font(&ctx, 260.0);
+        let row_h = crate::widgets::control::h(&ctx) + 2.0;
+        let desired = crate::scaling::scaled_font(&ctx, 260.0);
+        let list_h = (desired / row_h).floor().max(1.0) * row_h;
+
         ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
-                ui.set_width(crate::scaling::scaled_font(&ctx, 96.0));
+                ui.set_width(crate::scaling::scaled_font(&ctx, 80.0));
                 ui.label(
                     egui::RichText::new(t!("timecode.root").as_ref())
                         .color(crate::theme::text_label()),
@@ -191,7 +195,7 @@ impl ScaleDialogState {
             });
             ui.add_space(crate::scaling::scaled_font(&ctx, 8.0));
             ui.vertical(|ui| {
-                ui.set_width(crate::scaling::scaled_font(&ctx, 200.0));
+                ui.set_width(crate::scaling::scaled_font(&ctx, 180.0));
                 ui.label(
                     egui::RichText::new(t!("timecode.scale").as_ref())
                         .color(crate::theme::text_label()),
@@ -211,10 +215,10 @@ impl ScaleDialogState {
                         }
                     });
             });
-            // 右侧：纵向钢琴预览（随主题明暗/配色）。
+            // 右侧：迷你钢琴卷帘（键盘 + 调内音音符条），随主题配色。
             ui.add_space(crate::scaling::scaled_font(&ctx, 12.0));
             let (rect, _) = ui.allocate_exact_size(
-                egui::vec2(crate::scaling::scaled_font(&ctx, 60.0), list_h),
+                egui::vec2(crate::scaling::scaled_font(&ctx, 170.0), list_h),
                 egui::Sense::hover(),
             );
             crate::piano_view::keyboard::paint_mini(
