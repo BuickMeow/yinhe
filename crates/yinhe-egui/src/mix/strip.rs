@@ -47,7 +47,7 @@ const GAP: f32 = 4.0;
 const SEND_ROW_H: f32 = KNOB_D;
 const MS_ROW_H: f32 = BTN;
 const PAN_ROW_H: f32 = KNOB_D;
-const DB_ROW_H: f32 = 15.0;
+const DB_ROW_H: f32 = 18.0;
 /// 「完整条」（通道 / 音频 / 总线）底部固定区高度。
 const BOTTOM_FULL: f32 = SEND_ROW_H + MS_ROW_H + PAN_ROW_H + DB_ROW_H + GAP * 4.0;
 /// 主输出条底部固定区高度（只有 dB 读数）。
@@ -62,8 +62,6 @@ const METER_W: f32 = 6.0;
 const METER_GAP: f32 = 2.0;
 /// 电平表左侧 dB 数字刻度栏宽（px）。
 const SCALE_W: f32 = 20.0;
-/// dB 读数垂直拖动灵敏度（dB / px）。
-const DB_PER_PX: f32 = 0.4;
 /// 推子/电平表 dB 范围。
 const DB_MIN: f32 = -60.0;
 const DB_MAX: f32 = 6.0;
@@ -214,18 +212,17 @@ fn strip_frame(
         egui::pos2(rect.min.x + PAD_X, header.max.y + 4.0),
         egui::pos2(rect.max.x - PAD_X, rect.max.y - 6.0),
     );
-    ui.scope_builder(
+    // 用 `new_child`（**不**推进父布局游标）排布内容：通道条宽度由上面的
+    // `allocate_exact_size(STRIP_WIDTH)` 决定。若用 `scope_builder`，它会按子
+    // min_rect（被 PAD_X 内缩、更窄）回退父游标，导致下一张卡覆盖本卡右侧。
+    let mut child = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(content)
             .layout(egui::Layout::top_down(egui::Align::LEFT)),
-        |ui| {
-            ui.set_clip_rect(content);
-            ui.set_min_width(content.width());
-            ui.set_max_width(content.width());
-            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-            add_contents(ui, content.height());
-        },
     );
+    child.set_clip_rect(content);
+    child.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+    add_contents(&mut child, content.height());
 }
 
 /// 固定尺寸分区容器（宽度 = 内容宽，高度 = `h`）。
@@ -1030,7 +1027,7 @@ fn pan_knob(ui: &mut egui::Ui, pan: f32, mut on_pan: impl FnMut(f32)) {
     );
 }
 
-/// 当前增益 dB 读数（居中，推子/电平表之上）。可垂直拖动改增益，双击回 0 dB。
+/// 当前增益 dB（居中，推子/电平表之上）：可点击**直接输入**、也可上下拖动。
 /// 返回 `Some(新增益)` 表示本次被改动。
 fn db_row(ui: &mut egui::Ui, gain: f32) -> Option<f32> {
     section(
@@ -1038,65 +1035,23 @@ fn db_row(ui: &mut egui::Ui, gain: f32) -> Option<f32> {
         DB_ROW_H,
         egui::Layout::top_down(egui::Align::Center),
         |ui| {
-            let (rect, mut resp) = ui.allocate_exact_size(
-                egui::vec2(CONTENT_W, DB_ROW_H),
-                egui::Sense::click_and_drag(),
-            );
-            let id = resp.id;
-            let mut new_gain = None;
-            // 起始值 + 指针位移重算，避免 `drag_delta` 累计语义回弹。
-            if resp.drag_started()
-                && let Some(y) = resp.interact_pointer_pos().map(|p| p.y)
-            {
-                ui.ctx().data_mut(|d| {
-                    d.insert_temp(
-                        id,
-                        DbDrag {
-                            start_gain: gain,
-                            start_y: y,
-                        },
-                    )
-                });
-            }
-            if resp.dragged()
-                && let Some(y) = resp.interact_pointer_pos().map(|p| p.y)
-                && let Some(s) = ui.ctx().data(|d| d.get_temp::<DbDrag>(id))
-            {
-                // 向上拖 = 增大。
-                let db = gain_to_db(s.start_gain) + (s.start_y - y) * DB_PER_PX;
-                new_gain = Some(db_to_gain(db));
-                resp.mark_changed();
-            }
-            if resp.drag_stopped() {
-                ui.ctx().data_mut(|d| d.remove::<DbDrag>(id));
-            }
-            if resp.double_clicked() {
-                new_gain = Some(1.0);
-            }
-            let text = if gain <= 0.0001 {
-                "-∞ dB".to_string()
-            } else {
-                format!("{:+.1} dB", gain_to_db(gain))
-            };
-            ui.painter().text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                text,
-                egui::FontId::proportional(crate::theme::SMALL_FONT),
-                crate::theme::text_secondary(),
+            let mut db = gain_to_db(gain);
+            let resp = ui.add_sized(
+                [CONTENT_W, DB_ROW_H],
+                egui::DragValue::new(&mut db)
+                    .speed(0.2)
+                    .range(DB_MIN..=DB_MAX)
+                    .max_decimals(1)
+                    .suffix(" dB"),
             );
             crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.fader"));
-            resp.on_hover_cursor(egui::CursorIcon::ResizeVertical);
-            new_gain
+            if resp.changed() {
+                Some(db_to_gain(db))
+            } else {
+                None
+            }
         },
     )
-}
-
-/// dB 读数拖动会话（存 `ctx.data` temp 槽，按 widget Id 隔离）。
-#[derive(Clone, Copy)]
-struct DbDrag {
-    start_gain: f32,
-    start_y: f32,
 }
 
 /// 自绘小开关按钮（M/S），激活时填充激活色；圆角矩形。

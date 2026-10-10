@@ -58,7 +58,9 @@ pub fn knob(ui: &mut egui::Ui, value: &mut f32, diameter: f32) -> egui::Response
         let pressed = resp.is_pointer_button_down_on();
         let painter = ui.painter_at(rect);
         let center = rect.center();
-        let r = diameter / 2.0 - 1.0;
+        // 底座半径（描边画在其内侧）；值弧画在底座**外侧**。
+        let r_base = diameter / 2.0 - 3.0;
+        let r_arc = diameter / 2.0 - 0.5;
 
         // 底座圆：hover/pressed 反馈与 switch 一致。
         let base = crate::theme::control_bg();
@@ -71,11 +73,11 @@ pub fn knob(ui: &mut egui::Ui, value: &mut f32, diameter: f32) -> egui::Response
         } else {
             base
         };
-        painter.circle_filled(center, r, base);
-        // 描边用字体色系（比 `line_fg` 的弱描边更清晰），与周围背景拉开差异。
+        painter.circle_filled(center, r_base, base);
+        // 描边画在底座**内侧**（字体色系，比弱描边更清晰）。
         painter.circle_stroke(
             center,
-            r,
+            r_base - 0.5,
             egui::Stroke::new(1.0, crate::theme::text_secondary()),
         );
 
@@ -87,21 +89,21 @@ pub fn knob(ui: &mut egui::Ui, value: &mut f32, diameter: f32) -> egui::Response
             crate::theme::accent_active()
         };
 
-        // 值弧（从起点扫到当前值）。
+        // 值弧：画在底座**外侧**。
         let steps = 24;
         let mut pts = Vec::with_capacity(steps + 1);
         for i in 0..=steps {
             let t = *value * (i as f32 / steps as f32);
             let ang = start + sweep * t;
-            pts.push(center + egui::vec2(ang.cos(), ang.sin()) * (r - 2.0));
+            pts.push(center + egui::vec2(ang.cos(), ang.sin()) * r_arc);
         }
         if pts.len() >= 2 {
             painter.add(egui::Shape::line(pts, egui::Stroke::new(2.0, accent)));
         }
 
-        // 指针。
+        // 指针（底座内）。
         let ang = start + sweep * *value;
-        let tip = center + egui::vec2(ang.cos(), ang.sin()) * (r - 4.0);
+        let tip = center + egui::vec2(ang.cos(), ang.sin()) * (r_base - 2.0);
         let pointer_color = if enabled {
             crate::theme::text_primary()
         } else {
@@ -113,7 +115,7 @@ pub fn knob(ui: &mut egui::Ui, value: &mut f32, diameter: f32) -> egui::Response
         if resp.has_focus() {
             painter.circle_stroke(
                 center,
-                r + 1.5,
+                r_arc + 1.5,
                 egui::Stroke::new(1.5, crate::theme::accent_active().gamma_multiply(0.9)),
             );
         }
