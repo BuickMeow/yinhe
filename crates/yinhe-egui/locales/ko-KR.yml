@@ -1,6 +1,7 @@
 # ── 공통 ──
 common.ok: "확인"
 common.cancel: "취소"
+common.save: "저장"
 common.confirm: "확인"
 common.delete: "삭제"
 common.none: "(없음)"
@@ -368,12 +369,6 @@ dialog.archive.password_wrong: "비밀번호가 잘못되었습니다. 다시 �
 dialog.archive.password_hint: "비밀번호 입력"
 
 # ── PPQ 리스케일 확인 ──
-dialog.ppq_rescale.title: "PPQ 변경"
-dialog.ppq_rescale.desc: "PPQ가 %{old}에서 %{new}(으)로 변경됩니다."
-dialog.ppq_rescale.question: "기존 노트와 자동화 이벤트의 절대 타이밍을 보존하기 위해 스케일하시겠습니까?"
-dialog.ppq_rescale.hint: "• 예: 모든 틱을 비례적으로 스케일 (권장)\n• 아니오: PPQ만 변경, 노트 위치 유지 (길이가 변경됨)"
-dialog.ppq_rescale.yes: "예 (노트 스케일)"
-dialog.ppq_rescale.no: "아니오 (노트 유지)"
 
 # ── 탭 템포 ──
 dialog.filter.title: "선택 범위 필터"

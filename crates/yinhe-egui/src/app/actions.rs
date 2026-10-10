@@ -581,7 +581,7 @@ impl App {
         );
     }
 
-    /// PPQ 直接输入：与项目设置面板一致（有音符弹 rescale 确认框，无音符直接提交）。
+    /// PPQ 直接输入（时间码）：有音符直接 rescale（保留绝对时间），无音符直接提交。
     fn apply_timecode_ppq(&mut self, ctx: &egui::Context, idx: usize, value: u32, id: u64) {
         use yinhe_editor_core::history::{begin_edit, commit_ppq};
         let doc = &mut self.workspace.documents[idx];
@@ -590,21 +590,22 @@ impl App {
             return;
         }
         begin_edit(&mut doc.edit.pending_edits, id, &old.to_string());
-        std::sync::Arc::make_mut(&mut doc.data.model).meta.ppq = value;
-        doc.data.bump_revision();
         let has_notes = doc.data.model.note_count > 0;
         if has_notes {
+            // 异步 rescale：meta.ppq 保持 old 作子线程基准，完成后 poll 里 commit。
             ctx.data_mut(|d| {
                 d.insert_temp(
-                    egui::Id::new(crate::dialogs::project_info::PPQ_RESCALE_PENDING_ID),
-                    (old, value, id),
+                    egui::Id::new(crate::app::rescale_state::RESCALE_REQUEST_ID),
+                    crate::app::rescale_state::RescaleRequest {
+                        old_ppq: old,
+                        new_ppq: value,
+                        dragvalue_id: id,
+                    },
                 )
             });
-            crate::chrome::dialog::raise_viewport(
-                ctx,
-                egui::ViewportId::from_hash_of("ppq_rescale_confirm_dialog"),
-            );
         } else {
+            std::sync::Arc::make_mut(&mut doc.data.model).meta.ppq = value;
+            doc.data.bump_revision();
             commit_ppq(doc, id, value, false);
         }
     }

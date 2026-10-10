@@ -1,6 +1,7 @@
 # ── 通用 ──
 common.ok: "確定"
 common.cancel: "取消"
+common.save: "儲存"
 common.confirm: "確認"
 common.delete: "刪除"
 common.none: "(無)"
@@ -368,12 +369,6 @@ dialog.archive.password_wrong: "密碼錯誤，請重試"
 dialog.archive.password_hint: "請輸入密碼"
 
 # ── PPQ 缩放确认 ──
-dialog.ppq_rescale.title: "PPQ 變更"
-dialog.ppq_rescale.desc: "PPQ 將從 %{old} 變為 %{new}。"
-dialog.ppq_rescale.question: "是否同時縮放既有音符與自動化事件，以保留絕對時值？"
-dialog.ppq_rescale.hint: "• 是：所有 tick 按比例縮放（建議）\n• 否：僅更改 PPQ，音符位置不變（時值會改變）"
-dialog.ppq_rescale.yes: "是（縮放音符）"
-dialog.ppq_rescale.no: "否（保持音符）"
 
 # ── 敲擊測速 ──
 dialog.filter.title: "選擇篩選"

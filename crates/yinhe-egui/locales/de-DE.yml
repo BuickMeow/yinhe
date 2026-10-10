@@ -1,6 +1,7 @@
 # ── Common ──
 common.ok: "OK"
 common.cancel: "Abbrechen"
+common.save: "Speichern"
 common.confirm: "Bestätigen"
 common.delete: "Löschen"
 common.none: "(keine)"
@@ -426,12 +427,6 @@ dialog.archive.password_wrong: "Falsches Passwort, bitte erneut versuchen"
 dialog.archive.password_hint: "Passwort eingeben"
 
 # ── PPQ rescale confirm ──
-dialog.ppq_rescale.title: "PPQ-Änderung"
-dialog.ppq_rescale.desc: "PPQ ändert sich von %{old} zu %{new}."
-dialog.ppq_rescale.question: "Vorhandene Noten und Automationsereignisse ebenfalls neu skalieren, um die absolute Zeitlage zu erhalten?"
-dialog.ppq_rescale.hint: "• Ja: Alle Ticks werden proportional skaliert (empfohlen)\n• Nein: Nur PPQ ändern, Notenpositionen unverändert (Dauern ändern sich)"
-dialog.ppq_rescale.yes: "Ja (Noten neu skalieren)"
-dialog.ppq_rescale.no: "Nein (Noten behalten)"
 
 # ── Tap tempo ──
 dialog.filter.title: "Auswahlfilter"

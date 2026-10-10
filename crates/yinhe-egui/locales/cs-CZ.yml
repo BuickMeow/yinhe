@@ -1,6 +1,7 @@
 # ── Common ──
 common.ok: "OK"
 common.cancel: "Zrušit"
+common.save: "Uložit"
 common.confirm: "Potvrdit"
 common.delete: "Smazat"
 common.none: "(žádné)"
@@ -426,12 +427,6 @@ dialog.archive.password_wrong: "Nesprávné heslo, zkuste to znovu"
 dialog.archive.password_hint: "Zadejte heslo"
 
 # ── PPQ rescale confirm ──
-dialog.ppq_rescale.title: "Změna PPQ"
-dialog.ppq_rescale.desc: "PPQ se změní z %{old} na %{new}."
-dialog.ppq_rescale.question: "Přepočítat také stávající noty a automatizační události pro zachování absolutního časování?"
-dialog.ppq_rescale.hint: "• Ano: Všechny ticky se přepočítají proporcionálně (doporučeno)\n• Ne: Změní se pouze PPQ, pozice not zůstanou (délky se změní)"
-dialog.ppq_rescale.yes: "Ano (přepočítat noty)"
-dialog.ppq_rescale.no: "Ne (zachovat noty)"
 
 # ── Tap tempo ──
 dialog.filter.title: "Filtr výběru"

@@ -1,6 +1,7 @@
 # ── Common ──
 common.ok: "ОК"
 common.cancel: "Отмена"
+common.save: "Сохранить"
 common.confirm: "Подтвердить"
 common.delete: "Удалить"
 common.none: "(нет)"
@@ -426,12 +427,6 @@ dialog.archive.password_wrong: "Неверный пароль, попробуй�
 dialog.archive.password_hint: "Введите пароль"
 
 # ── PPQ rescale confirm ──
-dialog.ppq_rescale.title: "Изменение PPQ"
-dialog.ppq_rescale.desc: "PPQ изменится с %{old} на %{new}."
-dialog.ppq_rescale.question: "Также пересчитать существующие ноты и события автоматизации для сохранения абсолютного тайминга?"
-dialog.ppq_rescale.hint: "• Да: все тики масштабируются пропорционально (рекомендуется)\n• Нет: изменить только PPQ, позиции нот без изменений (длительности изменятся)"
-dialog.ppq_rescale.yes: "Да (пересчитать ноты)"
-dialog.ppq_rescale.no: "Нет (сохранить ноты)"
 
 # ── Tap tempo ──
 dialog.filter.title: "Фильтр выделения"

@@ -1,6 +1,7 @@
 # ── Common ──
 common.ok: "OK"
 common.cancel: "Anuluj"
+common.save: "Zapisz"
 common.confirm: "Potwierdź"
 common.delete: "Usuń"
 common.none: "(brak)"
@@ -426,12 +427,6 @@ dialog.archive.password_wrong: "Nieprawidłowe hasło, spróbuj ponownie"
 dialog.archive.password_hint: "Wprowadź hasło"
 
 # ── PPQ rescale confirm ──
-dialog.ppq_rescale.title: "Zmiana PPQ"
-dialog.ppq_rescale.desc: "PPQ zmieni się z %{old} na %{new}."
-dialog.ppq_rescale.question: "Przeskalować również istniejące nuty i zdarzenia automatyzacji, aby zachować bezwzględny czas?"
-dialog.ppq_rescale.hint: "• Tak: Wszystkie ticki skalowane proporcjonalnie (zalecane)\n• Nie: Zmień tylko PPQ, pozycje nut bez zmian (czasy trwania się zmienią)"
-dialog.ppq_rescale.yes: "Tak (przeskaluj nuty)"
-dialog.ppq_rescale.no: "Nie (zachowaj nuty)"
 
 # ── Tap tempo ──
 dialog.filter.title: "Filtr zaznaczenia"

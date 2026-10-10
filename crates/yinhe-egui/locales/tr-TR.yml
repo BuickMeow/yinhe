@@ -1,6 +1,7 @@
 # ── Common ──
 common.ok: "Tamam"
 common.cancel: "İptal"
+common.save: "Kaydet"
 common.confirm: "Onayla"
 common.delete: "Sil"
 common.none: "(yok)"
@@ -426,12 +427,6 @@ dialog.archive.password_wrong: "Yanlış parola, lütfen tekrar deneyin"
 dialog.archive.password_hint: "Parolayı girin"
 
 # ── PPQ rescale confirm ──
-dialog.ppq_rescale.title: "PPQ Değişikliği"
-dialog.ppq_rescale.desc: "PPQ %{old} değerinden %{new} değerine değişecek."
-dialog.ppq_rescale.question: "Mutlak zamanlamayı korumak için mevcut notalar ve otomasyon olayları da yeniden ölçeklensin mi?"
-dialog.ppq_rescale.hint: "• Evet: Tüm tikler orantılı olarak ölçeklenir (önerilir)\n• Hayır: Yalnızca PPQ değişir, nota konumları değişmez (süreler değişir)"
-dialog.ppq_rescale.yes: "Evet (Notaları Yeniden Ölçekle)"
-dialog.ppq_rescale.no: "Hayır (Notaları Koru)"
 
 # ── Tap tempo ──
 dialog.filter.title: "Seçim Filtresi"

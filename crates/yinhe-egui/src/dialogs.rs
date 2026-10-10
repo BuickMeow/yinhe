@@ -7,7 +7,6 @@ pub mod filter;
 pub mod gpu_device_lost;
 pub mod memory_breakdown;
 pub mod new_track;
-pub mod ppq_rescale_confirm;
 pub mod project_info;
 pub mod prop_panels;
 pub mod save_overlay;

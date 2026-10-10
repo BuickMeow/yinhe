@@ -1,6 +1,7 @@
 # ── Common ──
 common.ok: "OK"
 common.cancel: "Annulla"
+common.save: "Salva"
 common.confirm: "Conferma"
 common.delete: "Elimina"
 common.none: "(nessuno)"
@@ -426,12 +427,6 @@ dialog.archive.password_wrong: "Password errata, riprova"
 dialog.archive.password_hint: "Inserisci password"
 
 # ── PPQ rescale confirm ──
-dialog.ppq_rescale.title: "Cambio PPQ"
-dialog.ppq_rescale.desc: "Il PPQ cambierà da %{old} a %{new}."
-dialog.ppq_rescale.question: "Riscala anche le note e gli eventi di automazione esistenti per preservare la temporizzazione assoluta?"
-dialog.ppq_rescale.hint: "• Sì: Tutti i tick scalati proporzionalmente (consigliato)\n• No: Cambia solo il PPQ, posizioni note invariate (le durate cambieranno)"
-dialog.ppq_rescale.yes: "Sì (riscala note)"
-dialog.ppq_rescale.no: "No (mantieni note)"
 
 # ── Tap tempo ──
 dialog.filter.title: "Filtro selezione"

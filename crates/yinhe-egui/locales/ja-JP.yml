@@ -1,6 +1,7 @@
 # ── 共通 ──
 common.ok: "OK"
 common.cancel: "キャンセル"
+common.save: "保存"
 common.confirm: "確認"
 common.delete: "削除"
 common.none: "(なし)"
@@ -380,12 +381,6 @@ dialog.archive.password_wrong: "パスワードが間違っています。再試
 dialog.archive.password_hint: "パスワードを入力"
 
 # ── PPQリスケール確認 ──
-dialog.ppq_rescale.title: "PPQ変更"
-dialog.ppq_rescale.desc: "PPQが%{old}から%{new}に変更されます。"
-dialog.ppq_rescale.question: "既存のノートとオートメーションイベントをスケールして絶対タイミングを保持しますか？"
-dialog.ppq_rescale.hint: "• はい：すべてのティックを比例スケール（推奨）\n• いいえ：PPQのみ変更、ノート位置は不变（デュレーションが変わります）"
-dialog.ppq_rescale.yes: "はい（ノートをスケール）"
-dialog.ppq_rescale.no: "いいえ（ノートを保持）"
 
 # ── タップテンポ ──
 dialog.filter.title: "選択範囲フィルター"
