@@ -21,6 +21,15 @@ struct EraseStroke {
     seen: HashSet<(u16, u32, u8)>,
 }
 
+impl EraseStroke {
+    /// 清空但保留已分配容量（避免重新分配）。
+    fn reset(&mut self) {
+        self.last = None;
+        self.hits.clear();
+        self.seen.clear();
+    }
+}
+
 /// 路径采样步长（像素）。
 const SAMPLE_STEP_PX: f32 = 4.0;
 
@@ -34,11 +43,6 @@ pub(crate) fn frame(
     track_visible: &[bool],
     track_selected: &HashSet<u16>,
 ) -> Option<Vec<(u16, u32, u8)>> {
-    let id = ui.id().with("quick_erase_stroke");
-    let mut stroke = ui
-        .data_mut(|d| d.get_temp::<EraseStroke>(id))
-        .unwrap_or_default();
-
     let (down, released, pos, over_popup) = ui.input(|i| {
         (
             i.pointer.button_down(egui::PointerButton::Secondary),
@@ -48,37 +52,39 @@ pub(crate) fn frame(
         )
     });
 
+    let id = ui.id().with("quick_erase_stroke");
     let mut result = None;
-
-    if down {
-        if let Some(p) = pos
-            && music_rect.contains(p)
-            && !over_popup
-        {
-            let from = stroke.last.unwrap_or(p);
-            sample_segment(
-                from,
-                p,
-                view,
-                content_rect,
-                midi,
-                track_visible,
-                track_selected,
-                &mut stroke,
-            );
-            stroke.last = Some(p);
+    // 就地借用状态，避免每帧 clone 整笔命中集合（黑乐谱里右键划一下可能命中海量音符）。
+    ui.data_mut(|d| {
+        let stroke = d.get_temp_mut_or_default::<EraseStroke>(id);
+        if down {
+            if let Some(p) = pos
+                && music_rect.contains(p)
+                && !over_popup
+            {
+                let from = stroke.last.unwrap_or(p);
+                sample_segment(
+                    from,
+                    p,
+                    view,
+                    content_rect,
+                    midi,
+                    track_visible,
+                    track_selected,
+                    stroke,
+                );
+                stroke.last = Some(p);
+            }
+        } else if released {
+            if !stroke.hits.is_empty() {
+                result = Some(std::mem::take(&mut stroke.hits));
+            }
+            stroke.reset();
+        } else if stroke.last.is_some() || !stroke.hits.is_empty() {
+            // 异常中断（未收到 released，如指针离开窗口）：丢弃，不删除。
+            stroke.reset();
         }
-    } else if released {
-        if !stroke.hits.is_empty() {
-            result = Some(std::mem::take(&mut stroke.hits));
-        }
-        stroke = EraseStroke::default();
-    } else if stroke.last.is_some() || !stroke.hits.is_empty() {
-        // 异常中断（未收到 released，如指针离开窗口）：丢弃，不删除。
-        stroke = EraseStroke::default();
-    }
-
-    ui.data_mut(|d| d.insert_temp(id, stroke));
+    });
     result
 }
 
