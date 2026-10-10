@@ -1,11 +1,12 @@
 // ── Rendering constants ───────────────────────────────────────────────────
 const BORDER_DARKEN_FACTOR: f32 = 0.4;
 const MAX_SEL_RECTS: u32 = 32u;
-// 填充色的力度变浅上限：力度 0 → 向白混合 80%，力度 127 → 原色。
-// 仅用于 PR 音符（mode==1）；ghost 层 vel=127 保持原色。
-const MAX_FILL_LIGHTEN: f32 = 0.8;
-// 选中填充：原色向黑加深的比例（不纯黑，避免过深难辨）。
-const SELECTED_DARKEN: f32 = 0.5;
+// 填充色的力度淡化上限：力度 0 → 向背景方向混合 50%，力度 127 → 原色。
+// 方向随主题翻转（暗色向黑、亮色向白），保留色相。仅用于 PR 音符（mode==1）；
+// ghost 层 vel=127 保持原色。
+const MAX_FILL_FADE: f32 = 0.5;
+// 选中填充：向「与背景对比最强的一极」混合的比例（暗色偏白、亮色偏黑）。
+const SELECTED_CONTRAST: f32 = 0.7;
 
 struct Uniforms {
     width: f32,
@@ -33,6 +34,7 @@ struct Uniforms {
     filter_gate_hi: u32,
     filter_flags: u32, // bit0=key, bit1=track, bit2=velocity, bit3=gate, bit4=invert
     exclude_mask: u32, // 排除表掩码（容量-1；0 = 禁用）
+    dark_theme: u32, // 1=暗色主题（力度淡化/选中高对比方向翻转）
 }
 
 // Track colors: runtime-sized storage buffer (allocated dynamically to actual
@@ -416,12 +418,15 @@ fn note_geometry(
     out.color = base_color;
 
     // 填充色：仅 PR（mode==1）按选中/力度变化；AR 等其它模式保持原色。
-    // 选中 = 原色向黑加深（不纯黑）；LOD 摘要层的 vel 为段内最大力度。
+    // 力度 → 向背景方向淡化（暗色偏黑、亮色偏白），保留色相、音符仍不透明；
+    // 选中 → 向与背景对比最强的一极（暗色偏白、亮色偏黑），选中态永远清晰。
+    let fade_target = select(vec3<f32>(1.0), vec3<f32>(0.0), u.dark_theme != 0u);
+    let selected_target = select(vec3<f32>(0.0), vec3<f32>(1.0), u.dark_theme != 0u);
     if u.mode == 1u && selected {
-        out.fill_color = mix(base_color.rgb, vec3<f32>(0.0, 0.0, 0.0), SELECTED_DARKEN);
+        out.fill_color = mix(base_color.rgb, selected_target, SELECTED_CONTRAST);
     } else if u.mode == 1u {
-        let lighten = (1.0 - f32(vel) / 127.0) * MAX_FILL_LIGHTEN;
-        out.fill_color = mix(base_color.rgb, vec3<f32>(1.0, 1.0, 1.0), lighten);
+        let fade = (1.0 - f32(vel) / 127.0) * MAX_FILL_FADE;
+        out.fill_color = mix(base_color.rgb, fade_target, fade);
     } else {
         out.fill_color = base_color.rgb;
     }

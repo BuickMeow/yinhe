@@ -36,6 +36,10 @@ pub struct Uniforms {
 
     /// 排除表掩码（容量-1；0 = 禁用查表）。排除表见 `SelectionUniform` 注释。
     pub exclude_mask: u32,
+
+    /// 当前主题是否暗基底（1=暗色）。PR 音符力度淡化方向与选中高对比方向
+    /// 据此翻转：暗色向黑淡化/选中偏白，亮色向白淡化/选中偏黑。
+    pub dark_theme: u32,
 }
 
 /// Maximum number of tracks supported. Track indices are u16, so 65536 is the

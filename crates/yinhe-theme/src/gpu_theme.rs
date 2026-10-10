@@ -5,6 +5,10 @@
 /// so a user theme change recolors the GPU-rendered views too.
 #[derive(Clone, Debug)]
 pub struct GpuTheme {
+    /// 当前主题是否暗基底。音符力度淡化/选中高对比方向据此翻转
+    /// （暗色：向黑淡化、选中偏白；亮色：向白淡化、选中偏黑）。
+    pub dark_mode: bool,
+
     // ── Pianoroll ──
     pub key_white: (f32, f32, f32),
     pub key_black: (f32, f32, f32),
@@ -48,6 +52,7 @@ impl GpuTheme {
             )
         };
         Self {
+            dark_mode: dark,
             key_white: if dark { tone(0.78) } else { tone(0.97) },
             key_black: if dark { tone(0.08) } else { tone(0.20) },
             center_line: (mix(0.28).0, mix(0.28).1, mix(0.28).2, 0.6),
@@ -137,6 +142,21 @@ mod tests {
                     t.key_white
                 );
             }
+        }
+    }
+
+    /// `dark_mode` 决定音符力度淡化/选中高对比方向，必须与基底明暗一致
+    /// （否则亮色主题会被当成暗色 → 低力度音符向黑、选中向白，全部反了）。
+    #[test]
+    fn dark_mode_matches_base() {
+        for base in [
+            crate::base::BaseColors::DARK,
+            crate::base::BaseColors::LIGHT,
+            crate::base::BaseColors::LIGHT_COOL,
+            crate::base::BaseColors::LIGHT_WARM,
+        ] {
+            let t = GpuTheme::from_base(base);
+            assert_eq!(t.dark_mode, base.is_dark(), "preset={base:?}");
         }
     }
 }

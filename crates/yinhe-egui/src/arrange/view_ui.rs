@@ -160,6 +160,7 @@ pub fn show(
         value_zoom: 0.0,
         value_scroll: 0.0,
         orientation: 0,
+        dark_theme: u32::from(yinhe_theme::current_gpu_theme().dark_mode),
         ..Default::default()
     };
     view.base.dirty = false;

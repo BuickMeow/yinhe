@@ -106,6 +106,8 @@ pub fn build_render_job(
         },
         // 排除表掩码由调用方（egui）按上传的排除表设置；默认禁用。
         exclude_mask: 0,
+        // 力度淡化/选中高对比方向：随当前主题暗亮翻转（GPU 主题全局同步）。
+        dark_theme: u32::from(yinhe_theme::current_gpu_theme().dark_mode),
     };
 
     // Grid lines 已迁移到 egui（widgets::grid_lines），wgpu 只负责 notes 层。
