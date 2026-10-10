@@ -737,3 +737,76 @@ fn same_tick_tempo_last_one_wins() {
     assert_eq!(events[1].tick, 7680);
     assert!((events[1].value - 200.0).abs() < 0.01);
 }
+
+/// 手写 SMF：format 1，track 0 含 TrackName + Copyright（artist），
+/// track 1 含单个音符。
+fn build_title_artist_midi() -> Vec<u8> {
+    let mut data = Vec::new();
+    data.extend_from_slice(b"MThd");
+    data.extend_from_slice(&6u32.to_be_bytes());
+    data.extend_from_slice(&[0, 1, 0, 2, 1, 0xE0]); // format 1, 2 tracks, 480 ppq
+
+    let name = b"Song A";
+    let artist = b"Artist B";
+
+    data.extend_from_slice(b"MTrk");
+    let mut t0: Vec<u8> = Vec::new();
+    t0.extend_from_slice(&[0x00, 0xFF, 0x03, name.len() as u8]);
+    t0.extend_from_slice(name);
+    t0.extend_from_slice(&[0x00, 0xFF, 0x02, artist.len() as u8]);
+    t0.extend_from_slice(artist);
+    t0.extend_from_slice(&[0x00, 0xFF, 0x51, 0x03, 0x07, 0xA1, 0x20]); // 120 BPM
+    t0.extend_from_slice(&[0x00, 0xFF, 0x2F, 0x00]);
+    data.extend_from_slice(&(t0.len() as u32).to_be_bytes());
+    data.extend_from_slice(&t0);
+
+    data.extend_from_slice(b"MTrk");
+    let t1: &[u8] = &[
+        0x00, 0x90, 60, 100, // NoteOn
+        0x81, 0x70, 0x80, 60, 0, // NoteOff
+        0x00, 0xFF, 0x2F, 0x00,
+    ];
+    data.extend_from_slice(&(t1.len() as u32).to_be_bytes());
+    data.extend_from_slice(t1);
+
+    data
+}
+
+#[test]
+fn import_parses_title_and_artist() {
+    let model = parse_bytes(&build_title_artist_midi()).expect("parse failed");
+    assert_eq!(model.meta.name, "Song A");
+    assert_eq!(model.meta.artist, "Artist B");
+}
+
+/// 首个 Copyright 为空时，artist 取首个非空文本。
+#[test]
+fn import_artist_uses_first_non_empty_copyright() {
+    let mut data = Vec::new();
+    data.extend_from_slice(b"MThd");
+    data.extend_from_slice(&6u32.to_be_bytes());
+    data.extend_from_slice(&[0, 0, 0, 1, 1, 0xE0]); // format 0, 1 track
+    data.extend_from_slice(b"MTrk");
+    let track: &[u8] = &[
+        0x00, 0xFF, 0x02, 0x00, // Copyright 空
+        0x00, 0xFF, 0x02, 0x03, b'A', b'r', b't', // Copyright "Art"
+        0x00, 0x90, 60, 100, 0x81, 0x70, 0x80, 60, 0, 0x00, 0xFF, 0x2F, 0x00,
+    ];
+    data.extend_from_slice(&(track.len() as u32).to_be_bytes());
+    data.extend_from_slice(track);
+
+    let model = parse_bytes(&data).expect("parse failed");
+    assert_eq!(model.meta.artist, "Art");
+}
+
+/// name + artist 经 SMF 往返后保留。
+#[test]
+fn title_artist_roundtrip_via_smf() {
+    let mut model1 = build_complex_model();
+    model1.meta.name = "Round Song".to_string();
+    model1.meta.artist = "Round Artist".to_string();
+    let bytes = write_to_bytes(&model1).unwrap();
+    let model2 = parse_bytes(&bytes).unwrap();
+    assert_eq!(model2.meta.name, "Round Song");
+    assert_eq!(model2.meta.artist, "Round Artist");
+}

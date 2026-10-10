@@ -209,6 +209,16 @@ fn build_conductor_track_with_encoding<'a>(
         events.push((ev.tick, TrackEventKind::Meta(MetaMessage::Lyric(bytes))));
     }
 
+    // artist 写回 track 0 的 Copyright（FF 02），编码方式与 name 一致。
+    if !model.meta.artist.is_empty() {
+        let bytes: &'a [u8] = if encoding == MidiImportEncoding::Utf8 {
+            model.meta.artist.as_bytes()
+        } else {
+            leak_bytes(encode_text(encoding, &model.meta.artist))
+        };
+        events.push((0, TrackEventKind::Meta(MetaMessage::Copyright(bytes))));
+    }
+
     events.sort_by_key(|e| e.0);
 
     if model.meta.name.is_empty() {

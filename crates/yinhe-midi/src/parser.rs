@@ -62,9 +62,9 @@ pub fn parse_bytes_with_encoding(
             midly::Timing::Timecode(_, _) => TIMECODE_FALLBACK_TPB,
         };
 
-        // Pass 1: collect conductor events (tempo + time-sig + key-sig + markers + song title) across ALL tracks.
+        // Pass 1: collect conductor events (tempo + time-sig + key-sig + markers + song title + artist) across ALL tracks.
         // 克隆一个惰性迭代器逐事件扫描，扫完即丢，常驻 O(1)。
-        let (conductor, song_title) = collect_conductor(track_iter.clone(), encoding)?;
+        let (conductor, cond_meta) = collect_conductor(track_iter.clone(), encoding)?;
 
         // Pass 2: per-track parse → TrackData, run in parallel across tracks.
         // Each track parses independently (all state in parse_track is local),
@@ -116,7 +116,8 @@ pub fn parse_bytes_with_encoding(
         }
 
         let meta = ProjectMeta {
-            name: song_title.unwrap_or_default(),
+            name: cond_meta.song_title.unwrap_or_default(),
+            artist: cond_meta.artist.unwrap_or_default(),
             ppq: ticks_per_beat,
             ..ProjectMeta::default()
         };
@@ -164,16 +165,25 @@ fn dedup_conductor_keep_last<T>(events: &mut Vec<T>, mut tick_of: impl FnMut(&T)
     events.reverse();
 }
 
+/// 工程级元数据：均来自 SMF track 0。
+struct ConductorMeta {
+    /// track 0 的 TrackName（FF 03）。
+    song_title: Option<String>,
+    /// track 0 的 Copyright（FF 02）。
+    artist: Option<String>,
+}
+
 fn collect_conductor(
     track_iter: midly::TrackIter,
     encoding: MidiImportEncoding,
-) -> Result<(ConductorData, Option<String>), MidiError> {
+) -> Result<(ConductorData, ConductorMeta), MidiError> {
     let mut tempo_events: Vec<AutomationEvent> = Vec::new();
     let mut time_sig: Vec<TimeSigEvent> = Vec::new();
     let mut key_sig: Vec<yinhe_types::KeySigEvent> = Vec::new();
     let mut markers: Vec<yinhe_types::MarkerEvent> = Vec::new();
     let mut lyrics: Vec<yinhe_types::LyricsEvent> = Vec::new();
     let mut song_title: Option<String> = None;
+    let mut artist: Option<String> = None;
 
     for (track_idx, track_result) in track_iter.enumerate() {
         let events = track_result?;
@@ -229,6 +239,16 @@ fn collect_conductor(
                 {
                     song_title = Some(encoding.decode(name));
                 }
+                // SMF 标准：track 0 的 Copyright（FF 02）= artist。
+                // 首个 Copyright 文本为空时，退而取首个非空文本。
+                midly::TrackEventKind::Meta(midly::MetaMessage::Copyright(text))
+                    if track_idx == 0 && artist.is_none() =>
+                {
+                    let decoded = encoding.decode(text);
+                    if !decoded.is_empty() {
+                        artist = Some(decoded);
+                    }
+                }
                 // SMF 允许歌词放在 track 0（conductor-only track）。
                 // 这些歌词在 parse_track 里会因为 track 0 无 MIDI 消息被丢弃，
                 // 因此这里在 collect_conductor 抢先收集到 ConductorData.lyrics。
@@ -262,7 +282,7 @@ fn collect_conductor(
             lyrics,
             chord: Vec::new(),
         },
-        song_title,
+        ConductorMeta { song_title, artist },
     ))
 }
 
