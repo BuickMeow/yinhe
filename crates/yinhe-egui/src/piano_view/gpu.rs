@@ -50,6 +50,9 @@ pub(crate) fn upload_and_prepare(
     cull_rebuild: &mut Option<gpu_upload::CullRebuild>,
     ghost_notes: &[(u32, u32, u8, u16)],
     ghost_selected: bool,
+    // 右键擦除拖拽中的深色预览音符 `(start_tick, end_tick, key, track)`：
+    // 以选中态深色叠加在音符原位（ghost 层最顶），提示哪些会被删。
+    erase_preview: &[(u32, u32, u8, u16)],
     // 选中高亮排除表（成员态「矩形内非成员」键，空 = 禁用）。
     exclude_table: &[[u32; 2]],
     exclude_mask: u32,
@@ -146,6 +149,10 @@ pub(crate) fn upload_and_prepare(
                     &theme,
                 );
             }
+            // 右键擦除深色预览：始终按选中态叠加。
+            for &(start_tick, end_tick, key, track) in erase_preview {
+                yinhe_wgpu::build_ghost_note(out, start_tick, end_tick, key, track, true, &theme);
+            }
         });
         ghost_upload_done = true;
     } else if let Some(rt) = render_thread {
@@ -211,6 +218,18 @@ pub(crate) fn upload_and_prepare(
                 key,
                 track,
                 ghost_selected,
+                &theme,
+            );
+        }
+        // 右键擦除深色预览：始终按选中态叠加。
+        for &(start_tick, end_tick, key, track) in erase_preview {
+            yinhe_wgpu::build_ghost_note(
+                &mut ghost_instances,
+                start_tick,
+                end_tick,
+                key,
+                track,
+                true,
                 &theme,
             );
         }

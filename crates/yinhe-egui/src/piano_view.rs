@@ -174,6 +174,7 @@ pub fn show(
         eraser_event,
         quick_delete_event,
         quick_erase_event,
+        erase_preview,
         brush_event,
     } = interaction::dispatch(
         ui,
@@ -303,6 +304,7 @@ pub fn show(
         cull_rebuild,
         &ghost_notes,
         ghost_selected,
+        &erase_preview,
         &exclude_table,
         exclude_mask,
         w,

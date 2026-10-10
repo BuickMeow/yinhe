@@ -25,6 +25,8 @@ pub(crate) struct InteractionOutput {
     pub(crate) eraser_event: Option<PianoViewEvent>,
     pub(crate) quick_delete_event: Option<PianoViewEvent>,
     pub(crate) quick_erase_event: Option<PianoViewEvent>,
+    /// 右键擦除拖拽中的深色预览：`(start_tick, end_tick, key, track)`。
+    pub(crate) erase_preview: Vec<(u32, u32, u8, u16)>,
     pub(crate) brush_event: Option<PianoViewEvent>,
 }
 
@@ -226,12 +228,12 @@ pub(crate) fn dispatch(
         brush_event = event;
     }
     // 右键拖拽批量擦除（Select/SelectVertical/Pencil 工具；受「右键删除」设置控制）。
-    let quick_erase_event = if quick_delete_mode.allows_right_click()
+    let (quick_erase_event, erase_preview) = if quick_delete_mode.allows_right_click()
         && matches!(
             effective_tool,
             Tool::Select | Tool::SelectVertical | Tool::Pencil
         ) {
-        super::quick_erase::frame(
+        let out = super::quick_erase::frame(
             ui,
             view,
             content_rect,
@@ -239,10 +241,13 @@ pub(crate) fn dispatch(
             midi,
             track_visible,
             track_selected,
+        );
+        (
+            out.commit.map(|notes| PianoViewEvent::QuickErase { notes }),
+            out.preview,
         )
-        .map(|notes| PianoViewEvent::QuickErase { notes })
     } else {
-        None
+        (None, Vec::new())
     };
 
     InteractionOutput {
@@ -254,6 +259,7 @@ pub(crate) fn dispatch(
         eraser_event,
         quick_delete_event,
         quick_erase_event,
+        erase_preview,
         brush_event,
     }
 }
