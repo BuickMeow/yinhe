@@ -232,7 +232,7 @@ fn show_auto_shape_popup(
                     let mut vals = [x1, y1, x2, y2];
                     let old_vals = vals;
                     for i in 0..4 {
-                        ui.horizontal(|ui| {
+                        crate::widgets::rows::inline_row(ui, |ui| {
                             ui.label(
                                 egui::RichText::new(labels[i])
                                     .size(crate::scaling::scaled_font(

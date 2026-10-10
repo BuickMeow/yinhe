@@ -292,7 +292,7 @@ pub(super) fn show_position_popup(
                 let (bar, tick_in_bar) = bar_lookup.tick_to_position(tick_f.max(0.0) as u32);
                 let mut bar_f = bar as f64;
                 let mut tib_f = tick_in_bar as f64;
-                ui.horizontal(|ui| {
+                crate::widgets::rows::inline_row(ui, |ui| {
                     ui.label(
                         egui::RichText::new(t!("event_browser.position.bar").to_string())
                             .size(crate::scaling::scaled_font(

@@ -64,6 +64,20 @@ pub(crate) fn form_row(ui: &mut egui::Ui, label: &str, add_control: impl FnOnce(
     });
 }
 
+/// 内联行：把「文本 + 更高控件」放在同一条水平线上时**必须**走它。
+///
+/// 裸 `ui.horizontal` 中先放的文本会按当时的行高落位，后续放进来的更高控件
+/// 把行高撑大后文本不再移动 → 文本偏上、与控件不对齐（量化弹窗 n/d 的根因）。
+/// 这里先按控件高分配行高再落内容，保证垂直居中。
+pub(crate) fn inline_row(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
+    let h = super::control::h(ui.ctx());
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), h),
+        egui::Layout::left_to_right(egui::Align::Center),
+        add_contents,
+    );
+}
+
 /// 设置行：左侧标题（+可选描述），右侧控件；行尾分隔。与设置对话框同款。
 pub(crate) fn setting_row(
     ui: &mut egui::Ui,

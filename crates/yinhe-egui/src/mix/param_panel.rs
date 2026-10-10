@@ -187,7 +187,7 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
                                 panel.rebuild_filter();
                             }
 
-                            ui.horizontal(|ui| {
+                            crate::widgets::rows::inline_row(ui, |ui| {
                                 ui.label(t!("mix.search"));
                                 let search_resp = ui.text_edit_singleline(&mut panel.search);
                                 crate::widgets::hint::hover(

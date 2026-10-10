@@ -515,7 +515,7 @@ pub(crate) fn send_popup(
                                 return;
                             }
                             for (b, (amount, pre)) in current.iter().enumerate() {
-                                ui.horizontal(|ui| {
+                                crate::widgets::rows::inline_row(ui, |ui| {
                                     ui.label(format!("BUS {}", b + 1));
                                     let mut val = *amount;
                                     let slider = crate::widgets::slider::control_slider(
@@ -1256,7 +1256,7 @@ fn picker_window(
                             bottom: 12,
                         })
                         .show(ui, |ui| {
-                            ui.horizontal(|ui| {
+                            crate::widgets::rows::inline_row(ui, |ui| {
                                 ui.label(t!("mix.search"));
                                 let search_resp =
                                     ui.text_edit_singleline(&mut app.mix.picker_filter);

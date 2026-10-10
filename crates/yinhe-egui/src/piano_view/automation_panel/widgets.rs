@@ -149,7 +149,7 @@ pub(crate) fn show_target_combo(
                                     _ => 0,
                                 };
                                 let old = v;
-                                ui.horizontal(|ui| {
+                                crate::widgets::rows::inline_row(ui, |ui| {
                                     ui.label(t!("automation.custom_cc").as_ref());
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
@@ -176,7 +176,7 @@ pub(crate) fn show_target_combo(
                                     _ => 0,
                                 };
                                 let old = v;
-                                ui.horizontal(|ui| {
+                                crate::widgets::rows::inline_row(ui, |ui| {
                                     ui.label(t!("automation.custom_rpn").as_ref());
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),

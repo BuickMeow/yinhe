@@ -218,7 +218,7 @@ fn content(ui: &mut egui::Ui, state: &mut AutomationPickerState) {
     let label_size = crate::scaling::scaled_font(ui.ctx(), crate::theme::BODY_FONT);
 
     // 设备自带参数：标题 + 搜索（固定，不随列表滚动）。
-    ui.horizontal(|ui| {
+    crate::widgets::rows::inline_row(ui, |ui| {
         ui.label(
             egui::RichText::new(format!(
                 "{} · {}",

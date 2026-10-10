@@ -244,7 +244,7 @@ pub(crate) fn show(
 
             ui.add_space(4.0);
             ui.separator();
-            ui.horizontal(|ui| {
+            crate::widgets::rows::inline_row(ui, |ui| {
                 ui.label(
                     eframe::egui::RichText::new(
                         t!("dialog.archive.file_count", n = picker.filtered.len()).as_ref(),

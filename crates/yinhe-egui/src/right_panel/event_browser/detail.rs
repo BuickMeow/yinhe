@@ -356,7 +356,7 @@ fn event_table_section<T>(
     let (page, page_start, page_items) = paginate(state, events);
     let total = events.len();
     ui.add_space(4.0);
-    ui.horizontal(|ui| {
+    crate::widgets::rows::inline_row(ui, |ui| {
         ui.label(
             egui::RichText::new(t!(
                 "event_browser.table_title",
