@@ -338,6 +338,7 @@ fn automation_icon(target: &AutomationTarget) -> egui_material_icons::MaterialIc
     match target {
         AutomationTarget::Param { .. } => ICON_TUNE,
         AutomationTarget::CC { .. } => ICON_SETTINGS,
+        AutomationTarget::PitchBend => ICON_SETTINGS,
         AutomationTarget::Rpn { .. } | AutomationTarget::Nrpn { .. } => ICON_TUNE,
         AutomationTarget::Tempo => ICON_SPEED,
     }

@@ -31,13 +31,13 @@ const EMPTY_GHOST_KEY: u64 = 0x9e37_0000_0000_0001;
 /// Lane 渲染缓存键：各变体命名空间隔离（区间互不重叠），避免不同 target
 /// 撞 hash 后复用错误的 GPU 实例。name 不参与（仅显示用）。
 ///
-/// 编码：CC `[0x1_0000, 0x1_007F]`；Rpn `[0x2_0000, 0x2_FFFF]`；
+/// 编码：CC `[0x1_0000, 0x1_007F]`；PitchBend `0x5_0000`；Rpn `[0x2_0000, 0x2_FFFF]`；
 /// Nrpn `[0x3_0000, 0x3_FFFF]`；Tempo `u64::MAX`；
-/// Param `[0x4_0000_0000, 0x5_00FF_FFFF_FFFF]`（device 1 位 @40、
-/// channel 8 位 @32、id 32 位）。
+/// Param `[0x4_0000_0000, ...]`（内置设备：channel @32 + id；插件乐器：uid @32 + id）。
 fn target_hash(target: &AutomationTarget) -> u64 {
     match target {
         AutomationTarget::CC { controller } => 0x1_0000 + u64::from(*controller),
+        AutomationTarget::PitchBend => 0x5_0000,
         AutomationTarget::Rpn { parameter } => 0x2_0000 + u64::from(*parameter),
         AutomationTarget::Nrpn { parameter } => 0x3_0000 + u64::from(*parameter),
         AutomationTarget::Tempo => u64::MAX,
@@ -484,7 +484,7 @@ mod tests {
                 name: "内置参数".into(),
             },
             AutomationTarget::Param {
-                device: ParamDevice::PluginInstrument { channel: 0 },
+                device: ParamDevice::PluginInstrument { channel: 0, uid: 1 },
                 id: 0,
                 name: String::new(),
             },
@@ -496,7 +496,7 @@ mod tests {
         }
     }
 
-    /// Param 的 device 类型 / channel / id 任一不同都必须区分。
+    /// Param 的 device 类型 / 乐器 uid / id 任一不同都必须区分。
     #[test]
     fn target_hash_param_components_distinguish() {
         let make = |device: ParamDevice, id: u32| AutomationTarget::Param {
@@ -504,10 +504,10 @@ mod tests {
             id,
             name: String::new(),
         };
-        let inst = |channel: u8| ParamDevice::PluginInstrument { channel };
+        let inst = |uid: u64| ParamDevice::PluginInstrument { channel: 0, uid };
         assert_ne!(
-            target_hash(&make(inst(0), 1)),
-            target_hash(&make(inst(0), 2))
+            target_hash(&make(inst(1), 1)),
+            target_hash(&make(inst(1), 2))
         );
         assert_ne!(
             target_hash(&make(inst(1), 1)),
@@ -515,7 +515,10 @@ mod tests {
         );
         assert_ne!(
             target_hash(&make(ParamDevice::ChannelInstrument { channel: 0 }, 3)),
-            target_hash(&make(ParamDevice::PluginInstrument { channel: 0 }, 3))
+            target_hash(&make(
+                ParamDevice::PluginInstrument { channel: 0, uid: 1 },
+                3
+            ))
         );
     }
 

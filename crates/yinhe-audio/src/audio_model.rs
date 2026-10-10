@@ -599,6 +599,17 @@ fn emit_midi_event(
                 },
             );
         }
+        AutomationTarget::PitchBend => {
+            push_control(
+                out,
+                tick,
+                channel,
+                track,
+                lane,
+                // 归一化 0..1 → 弯音 -1..1（0.5 = 中心）。
+                ControlEvent::PitchBendValue(value.clamp(0.0, 1.0) * 2.0 - 1.0),
+            );
+        }
         _ => {}
     }
 }

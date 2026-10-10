@@ -375,6 +375,8 @@ pub enum AutomationTarget {
     },
     /// 无设备归属的 MIDI CC（`value` 归一化 0..1）。
     CC { controller: u8 },
+    /// 无设备归属的 Pitch Bend（`value` 归一化 0..1，0.5 = 中心）。
+    PitchBend,
     /// 无设备归属的标准 RPN（`value` 归一化 0..1）。
     Rpn { parameter: u16 },
     /// NRPN（`value` 归一化 0..1）。
@@ -401,6 +403,7 @@ impl AutomationTarget {
                 builtin_param(device, *id).map(|p| binding_max(p.midi))
             }
             AutomationTarget::CC { .. } => Some(127.0),
+            AutomationTarget::PitchBend => Some(16383.0),
             AutomationTarget::Rpn { parameter } => Some(rpn_max(*parameter)),
             AutomationTarget::Nrpn { .. } => Some(16383.0),
             AutomationTarget::Tempo => None,
@@ -417,6 +420,7 @@ impl AutomationTarget {
                 controller: 10 | 71 | 72 | 73 | 74,
             } => 64.0 / 127.0,
             AutomationTarget::CC { .. } => 0.0,
+            AutomationTarget::PitchBend => 0.5,
             AutomationTarget::Rpn { .. } | AutomationTarget::Nrpn { .. } => 0.0,
             AutomationTarget::Tempo => 120.0,
         }
@@ -429,6 +433,7 @@ impl AutomationTarget {
                 builtin_param(device, *id).is_some_and(|p| p.center)
             }
             AutomationTarget::CC { controller } => matches!(controller, 10 | 71 | 72 | 73 | 74),
+            AutomationTarget::PitchBend => true,
             _ => false,
         }
     }
@@ -494,6 +499,7 @@ impl AutomationTarget {
                     format!("CC {:03} {}", controller, name)
                 }
             }
+            AutomationTarget::PitchBend => "Pitch Bend".into(),
             AutomationTarget::Rpn { parameter } => {
                 let name = rpn_name(*parameter);
                 if name.is_empty() {

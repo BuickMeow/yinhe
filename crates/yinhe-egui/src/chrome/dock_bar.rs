@@ -1272,7 +1272,7 @@ fn open_param_panel(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use yinhe_types::automation::{MidiBinding, ParamDevice, xsynth_param};
+    use yinhe_types::automation::MidiBinding;
 
     /// 音源面板列表：通道处理参数（前 5）+ XSynth 参数（后 7）；显示名用参数表
     /// 名字（如 "Sustain"），CC 绑定参数走低层 CC lane，PB/RPN 保留设备参数。
@@ -1307,27 +1307,17 @@ mod tests {
                 "CC{cc} 应列出"
             );
         }
-        // XSynth：CC 绑定参数走低层 CC lane，PB/RPN 保留设备参数。
+        // XSynth：全部内置参数统一为低层 MIDI 目标（CC / PitchBend / RPN）。
         for cc in [64u8, 72, 73] {
             assert!(targets.contains(&AutomationTarget::CC { controller: cc }));
         }
-        let inst = |id| AutomationTarget::Param {
-            device: ParamDevice::ChannelInstrument { channel: 4 },
-            id,
-            name: String::new(),
-        };
-        for id in [
-            xsynth_param::PITCH_BEND,
-            xsynth_param::PB_SENSITIVITY,
-            xsynth_param::FINE_TUNE,
-            xsynth_param::COARSE_TUNE,
-        ] {
-            assert!(targets.contains(&inst(id)), "PB/RPN 参数保留设备参数");
+        assert!(targets.contains(&AutomationTarget::PitchBend));
+        for parameter in [0u16, 1, 2] {
+            assert!(
+                targets.contains(&AutomationTarget::Rpn { parameter }),
+                "RPN{parameter} 应列出"
+            );
         }
-        assert!(
-            !targets.contains(&inst(xsynth_param::SUSTAIN)),
-            "CC 绑定参数不再生成设备参数条目"
-        );
     }
 
     /// 拖动会话（空 lane）：松手写事件并 push undo，undo/redo 往返一致。

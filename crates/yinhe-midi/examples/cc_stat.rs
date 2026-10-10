@@ -23,6 +23,7 @@ fn main() {
                         format!("Param({})", lane.target.display_name())
                     }
                     AutomationTarget::CC { controller } => format!("CC{controller}"),
+                    AutomationTarget::PitchBend => "PitchBend".into(),
                     AutomationTarget::Rpn { parameter } => format!("RPN{parameter}"),
                     AutomationTarget::Nrpn { parameter } => format!("NRPN{parameter}"),
                     AutomationTarget::Tempo => "Tempo".into(),

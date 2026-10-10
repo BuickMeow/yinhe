@@ -262,6 +262,7 @@ fn write_target(w: &mut impl Write, target: &AutomationTarget) -> io::Result<()>
             w.write_all(bytes)
         }
         AutomationTarget::CC { controller } => w.write_all(&[1, *controller]),
+        AutomationTarget::PitchBend => w.write_all(&[5]),
         AutomationTarget::Rpn { parameter } => {
             w.write_all(&[2])?;
             w.write_all(&parameter.to_le_bytes())
@@ -323,6 +324,7 @@ fn read_target(r: &mut impl Read) -> io::Result<AutomationTarget> {
             parameter: read_u16(r)?,
         },
         4 => AutomationTarget::Tempo,
+        5 => AutomationTarget::PitchBend,
         _ => return Err(invalid("unknown automation target")),
     })
 }

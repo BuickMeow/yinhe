@@ -1130,6 +1130,7 @@ impl TargetSummary {
                 id,
                 ..
             } if *id == xsynth_param::PITCH_BEND => self.pb_total += n,
+            AutomationTarget::PitchBend => self.pb_total += n,
             AutomationTarget::Param { .. } => self.param_total += n,
             AutomationTarget::Rpn { .. } | AutomationTarget::Nrpn { .. } => self.rpn_total += n,
             AutomationTarget::Tempo => {}

@@ -480,6 +480,17 @@ fn push_lane_event<'a>(
                 normalized_to_raw(value, 127.0) as u8,
             );
         }
+        AutomationTarget::PitchBend => {
+            events.push((
+                tick,
+                TrackEventKind::Midi {
+                    channel: ch,
+                    message: MidiMessage::PitchBend {
+                        bend: PitchBend(midly::num::u14::new(normalized_to_raw(value, 16383.0))),
+                    },
+                },
+            ));
+        }
         AutomationTarget::Rpn { parameter } => {
             push_data_entry(events, tick, ch, false, *parameter, value, rpn_full);
         }
