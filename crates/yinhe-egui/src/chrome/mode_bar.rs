@@ -174,205 +174,210 @@ pub fn show(
 ) {
     egui::Panel::bottom("bottom_bar")
         .frame(egui::Frame {
-            inner_margin: egui::Margin::symmetric(8, 8),
+            inner_margin: egui::Margin::symmetric(8, 0),
             fill: crate::theme::app_bg(),
             ..Default::default()
         })
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.add_space(2.0);
+            // 固定为与 title bar 相同的高度（TITLE_BAR_H），内容垂直居中。
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), crate::theme::TITLE_BAR_H),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.add_space(2.0);
 
-                // 本帧左侧控件 hover 提示（右侧图标提示下帧显示，见 icon_hint_id）
-                let mut hovered_hint: Option<String> = None;
+                    // 本帧左侧控件 hover 提示（右侧图标提示下帧显示，见 icon_hint_id）
+                    let mut hovered_hint: Option<String> = None;
 
-                if mode_button(ui, "ARRANGE", *view_mode == ViewMode::Arrange, || {
-                    *view_mode = ViewMode::Arrange;
-                }) {
-                    hovered_hint = Some(t!("hint.mode_arrange").to_string());
-                }
-
-                ui.add_space(2.0);
-
-                if mode_button(ui, "MIX", *view_mode == ViewMode::Mix, || {
-                    *view_mode = ViewMode::Mix;
-                }) {
-                    hovered_hint = Some(t!("hint.mode_mix").to_string());
-                }
-
-                ui.add_space(2.0);
-
-                if mode_button(ui, "EDIT", *view_mode == ViewMode::Edit, || {
-                    *view_mode = ViewMode::Edit;
-                }) {
-                    hovered_hint = Some(t!("hint.mode_edit").to_string());
-                }
-
-                // ── Piano roll toggle（仅 AR）──
-                if *view_mode == ViewMode::Arrange {
-                    ui.add_space(6.0);
-                    ui.separator();
-                    ui.add_space(6.0);
-
-                    let piano_resp = crate::widgets::hover::hover_button(
-                        ui,
-                        ICON_PIANO.codepoint,
-                        egui::FontId::new(crate::theme::ICON_FONT, ICON_PIANO.font_family()),
-                        crate::theme::mode_bar_text(),
-                        *show_pianoroll_in_arrange,
-                    );
-                    if piano_resp.clicked() {
-                        set_pianoroll_visible(
-                            show_pianoroll_in_arrange,
-                            show_bottom_dock,
-                            !*show_pianoroll_in_arrange,
-                        );
+                    if mode_button(ui, "ARRANGE", *view_mode == ViewMode::Arrange, || {
+                        *view_mode = ViewMode::Arrange;
+                    }) {
+                        hovered_hint = Some(t!("hint.mode_arrange").to_string());
                     }
-                    if piano_resp.hovered() {
-                        hovered_hint = Some(t!("hint.pr_toggle").to_string());
+
+                    ui.add_space(2.0);
+
+                    if mode_button(ui, "MIX", *view_mode == ViewMode::Mix, || {
+                        *view_mode = ViewMode::Mix;
+                    }) {
+                        hovered_hint = Some(t!("hint.mode_mix").to_string());
                     }
-                } else {
-                    // MIX/EDIT 无钢琴栏：dock 前保留一次分隔（与模式按钮分隔）。
-                    ui.add_space(6.0);
-                    ui.separator();
-                    ui.add_space(6.0);
-                }
 
-                // ── Bottom dock toggle（三视图通用设备栏；紧贴钢琴按钮，无分隔线）──
-                {
-                    let dock_icon = egui_material_icons::icons::ICON_DOCK_TO_RIGHT;
-                    let dock_resp = crate::widgets::hover::hover_button(
-                        ui,
-                        dock_icon.codepoint,
-                        egui::FontId::new(crate::theme::ICON_FONT, dock_icon.font_family()),
-                        crate::theme::mode_bar_text(),
-                        *show_bottom_dock,
-                    );
-                    if dock_resp.clicked() {
-                        set_dock_visible(
-                            show_pianoroll_in_arrange,
-                            show_bottom_dock,
-                            !*show_bottom_dock,
-                        );
+                    ui.add_space(2.0);
+
+                    if mode_button(ui, "EDIT", *view_mode == ViewMode::Edit, || {
+                        *view_mode = ViewMode::Edit;
+                    }) {
+                        hovered_hint = Some(t!("hint.mode_edit").to_string());
                     }
-                    if dock_resp.hovered() {
-                        hovered_hint = Some(t!("hint.dock_toggle").to_string());
-                    }
-                }
 
-                // ── Spacer: push right icons to the right edge ──
-                // 讲解行用 painter 绘制在 mode 按钮右侧（左对齐），绘制时机在
-                // 本布局之后，右侧图标 hover 状态当帧有效（无跨帧闪烁），
-                // 且不参与布局，不会像 right_to_left 内联那样被推到屏幕中部。
-                let hint_x = ui.cursor().min.x + 12.0;
-                let bar_center_y = ui.max_rect().center().y;
-
-                let icon_hint: Option<String> = ui
-                    .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let mut icon_hint: Option<String> = None;
-
-                        // Right-most first (from right to left):
-                        //  1. Notifications (bell)
-                        //  2. ICON_INFO
-
-                        // 通知铃铛：最右侧第一个，不与右侧栏联动；总开关关闭时隐藏
-                        if notifications.is_enabled() {
-                            let has_unread = notifications.has_unread();
-                            let icon = if has_unread {
-                                ICON_NOTIFICATIONS_UNREAD
-                            } else {
-                                ICON_NOTIFICATIONS
-                            };
-                            let was_open = notifications.center_open;
-                            if right_icon_button(ui, icon, was_open, || {
-                                notifications.center_open = !was_open;
-                                if notifications.center_open {
-                                    notifications.mark_all_read();
-                                }
-                            }) {
-                                icon_hint = Some(t!("hint.notifications").to_string());
-                            }
-                            ui.add_space(4.0);
-                        }
-
-                        if right_icon_button(
-                            ui,
-                            ICON_INFO,
-                            *right_tab == Some(RightTab::Info),
-                            || {
-                                *right_tab = if *right_tab == Some(RightTab::Info) {
-                                    None
-                                } else {
-                                    Some(RightTab::Info)
-                                };
-                            },
-                        ) {
-                            icon_hint = Some(t!("hint.right_info").to_string());
-                        }
-
-                        ui.add_space(4.0);
-
-                        // ── Resource metrics (CPU / MEM / FPS) — left of the right icons ──
+                    // ── Piano roll toggle（仅 AR）──
+                    if *view_mode == ViewMode::Arrange {
+                        ui.add_space(6.0);
                         ui.separator();
-                        ui.add_space(8.0);
+                        ui.add_space(6.0);
 
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 4.0;
-                            metric(ui, "CPU", &format!("{:.1}%", cpu_usage));
-                            ui.add_space(12.0);
-                            let ctx_clone = ui.ctx().clone();
-                            if metric_clickable(ui, "MEM", &format!("{:.1} MB", mem_mb), || {
-                                *show_mem_breakdown = true;
-                                crate::chrome::dialog::raise_viewport(
-                                    &ctx_clone,
-                                    egui::ViewportId::from_hash_of("memory_breakdown_dialog"),
-                                );
-                            }) {
-                                icon_hint = Some(t!("hint.mem").to_string());
+                        let piano_resp = crate::widgets::hover::hover_button(
+                            ui,
+                            ICON_PIANO.codepoint,
+                            egui::FontId::new(crate::theme::ICON_FONT, ICON_PIANO.font_family()),
+                            crate::theme::mode_bar_text(),
+                            *show_pianoroll_in_arrange,
+                        );
+                        if piano_resp.clicked() {
+                            set_pianoroll_visible(
+                                show_pianoroll_in_arrange,
+                                show_bottom_dock,
+                                !*show_pianoroll_in_arrange,
+                            );
+                        }
+                        if piano_resp.hovered() {
+                            hovered_hint = Some(t!("hint.pr_toggle").to_string());
+                        }
+                    } else {
+                        // MIX/EDIT 无钢琴栏：dock 前保留一次分隔（与模式按钮分隔）。
+                        ui.add_space(6.0);
+                        ui.separator();
+                        ui.add_space(6.0);
+                    }
+
+                    // ── Bottom dock toggle（三视图通用设备栏；紧贴钢琴按钮，无分隔线）──
+                    {
+                        let dock_icon = egui_material_icons::icons::ICON_DOCK_TO_RIGHT;
+                        let dock_resp = crate::widgets::hover::hover_button(
+                            ui,
+                            dock_icon.codepoint,
+                            egui::FontId::new(crate::theme::ICON_FONT, dock_icon.font_family()),
+                            crate::theme::mode_bar_text(),
+                            *show_bottom_dock,
+                        );
+                        if dock_resp.clicked() {
+                            set_dock_visible(
+                                show_pianoroll_in_arrange,
+                                show_bottom_dock,
+                                !*show_bottom_dock,
+                            );
+                        }
+                        if dock_resp.hovered() {
+                            hovered_hint = Some(t!("hint.dock_toggle").to_string());
+                        }
+                    }
+
+                    // ── Spacer: push right icons to the right edge ──
+                    // 讲解行用 painter 绘制在 mode 按钮右侧（左对齐），绘制时机在
+                    // 本布局之后，右侧图标 hover 状态当帧有效（无跨帧闪烁），
+                    // 且不参与布局，不会像 right_to_left 内联那样被推到屏幕中部。
+                    let hint_x = ui.cursor().min.x + 12.0;
+                    let bar_center_y = ui.max_rect().center().y;
+
+                    let icon_hint: Option<String> = ui
+                        .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let mut icon_hint: Option<String> = None;
+
+                            // Right-most first (from right to left):
+                            //  1. Notifications (bell)
+                            //  2. ICON_INFO
+
+                            // 通知铃铛：最右侧第一个，不与右侧栏联动；总开关关闭时隐藏
+                            if notifications.is_enabled() {
+                                let has_unread = notifications.has_unread();
+                                let icon = if has_unread {
+                                    ICON_NOTIFICATIONS_UNREAD
+                                } else {
+                                    ICON_NOTIFICATIONS
+                                };
+                                let was_open = notifications.center_open;
+                                if right_icon_button(ui, icon, was_open, || {
+                                    notifications.center_open = !was_open;
+                                    if notifications.center_open {
+                                        notifications.mark_all_read();
+                                    }
+                                }) {
+                                    icon_hint = Some(t!("hint.notifications").to_string());
+                                }
+                                ui.add_space(4.0);
                             }
-                            ui.add_space(12.0);
-                            let lod_text = match lod_block {
-                                Some(block) => format!("{block}"),
-                                None => "0".to_string(),
-                            };
-                            metric_clickable(ui, "LOD", &lod_text, || {});
-                            ui.add_space(12.0);
-                            metric(ui, "FPS", &format!("{:.1}", fps));
-                        });
 
+                            if right_icon_button(
+                                ui,
+                                ICON_INFO,
+                                *right_tab == Some(RightTab::Info),
+                                || {
+                                    *right_tab = if *right_tab == Some(RightTab::Info) {
+                                        None
+                                    } else {
+                                        Some(RightTab::Info)
+                                    };
+                                },
+                            ) {
+                                icon_hint = Some(t!("hint.right_info").to_string());
+                            }
+
+                            ui.add_space(4.0);
+
+                            // ── Resource metrics (CPU / MEM / FPS) — left of the right icons ──
+                            ui.separator();
+                            ui.add_space(8.0);
+
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                metric(ui, "CPU", &format!("{:.1}%", cpu_usage));
+                                ui.add_space(12.0);
+                                let ctx_clone = ui.ctx().clone();
+                                if metric_clickable(ui, "MEM", &format!("{:.1} MB", mem_mb), || {
+                                    *show_mem_breakdown = true;
+                                    crate::chrome::dialog::raise_viewport(
+                                        &ctx_clone,
+                                        egui::ViewportId::from_hash_of("memory_breakdown_dialog"),
+                                    );
+                                }) {
+                                    icon_hint = Some(t!("hint.mem").to_string());
+                                }
+                                ui.add_space(12.0);
+                                let lod_text = match lod_block {
+                                    Some(block) => format!("{block}"),
+                                    None => "0".to_string(),
+                                };
+                                metric_clickable(ui, "LOD", &lod_text, || {});
+                                ui.add_space(12.0);
+                                metric(ui, "FPS", &format!("{:.1}", fps));
+                            });
+
+                            icon_hint
+                        })
+                        .inner;
+
+                    // ── 讲解/状态文字：模式栏控件 > 视图提示；模式栏空白处清空 ──
+                    // 指针在弹窗（菜单/下拉等）上时，模式栏控件提示已失效，改用弹窗
+                    // 自身写入的讲解（`hint::current`，由弹窗内控件 `hint::hover` 写入）。
+                    let over_popup = crate::view_interaction::pointer_over_popup(ui.ctx());
+                    let over_bar = ui.input(|i| {
+                        i.pointer
+                            .hover_pos()
+                            .is_some_and(|p| ui.max_rect().contains(p))
+                    });
+                    let display_text = if over_popup {
+                        crate::widgets::hint::current(ui.ctx())
+                    } else if icon_hint.is_some() {
                         icon_hint
-                    })
-                    .inner;
-
-                // ── 讲解/状态文字：模式栏控件 > 视图提示；模式栏空白处清空 ──
-                // 指针在弹窗（菜单/下拉等）上时，模式栏控件提示已失效，改用弹窗
-                // 自身写入的讲解（`hint::current`，由弹窗内控件 `hint::hover` 写入）。
-                let over_popup = crate::view_interaction::pointer_over_popup(ui.ctx());
-                let over_bar = ui.input(|i| {
-                    i.pointer
-                        .hover_pos()
-                        .is_some_and(|p| ui.max_rect().contains(p))
-                });
-                let display_text = if over_popup {
-                    crate::widgets::hint::current(ui.ctx())
-                } else if icon_hint.is_some() {
-                    icon_hint
-                } else if hovered_hint.is_some() {
-                    hovered_hint
-                } else if over_bar {
-                    Some(t!("hint.panel.mode_bar").to_string())
-                } else {
-                    crate::widgets::hint::current(ui.ctx())
-                };
-                if let Some(text) = display_text {
-                    ui.painter().text(
-                        egui::pos2(hint_x, bar_center_y),
-                        egui::Align2::LEFT_CENTER,
-                        text,
-                        egui::FontId::proportional(crate::theme::MODE_LABEL_FONT),
-                        crate::theme::mode_bar_text(),
-                    );
-                }
-            });
+                    } else if hovered_hint.is_some() {
+                        hovered_hint
+                    } else if over_bar {
+                        Some(t!("hint.panel.mode_bar").to_string())
+                    } else {
+                        crate::widgets::hint::current(ui.ctx())
+                    };
+                    if let Some(text) = display_text {
+                        ui.painter().text(
+                            egui::pos2(hint_x, bar_center_y),
+                            egui::Align2::LEFT_CENTER,
+                            text,
+                            egui::FontId::proportional(crate::theme::MODE_LABEL_FONT),
+                            crate::theme::mode_bar_text(),
+                        );
+                    }
+                },
+            );
         });
 }
 
