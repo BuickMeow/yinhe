@@ -17,7 +17,10 @@ pub(crate) fn flat_button(ui: &mut egui::Ui, text: impl Into<egui::WidgetText>) 
     flat_button_ex(ui, text, None, None, true, false, None, 4.0, false, None)
 }
 
-/// 无边框按钮（固定尺寸，内容居中；MIX 条等紧凑布局用）。
+/// 无边框按钮（固定尺寸，内容居中；紧凑布局用）。
+/// 当前非测试代码已无调用点（混音条改用自绘行），仅保留给设置页快捷键对齐回归测试；
+/// 如后续无需求可连同该测试一并删除。
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn flat_button_fixed(
     ui: &mut egui::Ui,
     text: impl Into<egui::WidgetText>,

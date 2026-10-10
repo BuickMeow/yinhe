@@ -468,37 +468,24 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
         .filter(|&c| layout.is_active(c))
         .map(|c| c as u8)
         .collect();
-    // 每通道列出使用该通道的轨道名（共享通道的轨道全部列出）+ 取首个轨道的
-    // 颜色作为通道条色条（与 AR/PR 轨道色同源，含 Conductor 主题色）。
-    // Conductor 是 Master 轨（AR 里不显示通道号），不归入任何通道条。
+    // 取该通道首个使用轨道的颜色作为通道条色带（与 AR/PR 轨道色同源，含
+    // Conductor 主题色）。Conductor 是 Master 轨（AR 里不显示通道号），不归入
+    // 任何通道条。
     let edit = &app.workspace.documents[idx].edit;
     let track_colors = &edit.track_cache.colors;
     let conductor_idx = edit.track_cache.conductor_idx;
-    let (names, colors): (Vec<Vec<String>>, Vec<egui::Color32>) = active
+    let colors: Vec<egui::Color32> = active
         .iter()
         .map(|&ch| {
-            let mut names = Vec::new();
-            let mut first_track = None;
-            for (ti, t) in model.tracks.iter().enumerate() {
-                if Some(ti as u16) == conductor_idx {
-                    continue;
-                }
-                if t.global_channel() == ch {
-                    names.push(t.name.clone());
-                    if first_track.is_none() {
-                        first_track = Some(ti);
-                    }
-                }
-            }
+            let first_track = model.tracks.iter().enumerate().find_map(|(ti, t)| {
+                (Some(ti as u16) != conductor_idx && t.global_channel() == ch).then_some(ti)
+            });
             let c = first_track
                 .and_then(|ti| track_colors.get(ti).copied())
                 .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
-            (
-                names,
-                crate::theme::rgba_to_color32((c[0], c[1], c[2], c[3])),
-            )
+            crate::theme::rgba_to_color32((c[0], c[1], c[2], c[3]))
         })
-        .unzip();
+        .collect();
 
     let dt = ui.ctx().input(|i| i.stable_dt).min(0.1);
     // 引擎重建后通道数变化 → 重置滑动峰值。
@@ -562,7 +549,6 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                                         ui,
                                         idx,
                                         ch,
-                                        &names[i],
                                         colors[i],
                                         peak,
                                         strip_h,
