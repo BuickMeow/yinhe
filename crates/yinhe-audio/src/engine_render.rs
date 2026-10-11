@@ -91,6 +91,12 @@ pub(crate) fn event_to_midi(event: &AudioEvent, channel: u8, out: &mut MidiMessa
                 value.round().clamp(0.0, 127.0) as u8,
             ]);
         }
+        AudioEvent::PitchBend(v) => {
+            // v ∈ [-1, 1] → 14 bit 弯音值
+            let raw = ((v.clamp(-1.0, 1.0) + 1.0) * 8191.5) as u32;
+            out.push([0xE0 | ch, (raw & 0x7F) as u8, ((raw >> 7) & 0x7F) as u8]);
+        }
+        AudioEvent::ProgramChange(p) => out.push([0xC0 | ch, *p, 0]),
         AudioEvent::Rpn { parameter, value } => {
             let raw = quantize_rpn(*parameter, *value);
             out.push([0xB0 | ch, 101, ((parameter >> 7) & 0x7F) as u8]);
@@ -176,6 +182,9 @@ pub(crate) fn xsynth_events(event: &AudioEvent) -> XsynthMessages {
             *controller,
             value.round().clamp(0.0, 127.0) as u8,
         ))),
+        // PB / PC 直通（PB 已是 f32）。
+        AudioEvent::PitchBend(v) => out.push(control(ControlEvent::PitchBendValue(*v))),
+        AudioEvent::ProgramChange(p) => out.push(ChannelAudioEvent::ProgramChange(*p)),
         AudioEvent::Rpn { parameter, value } => match parameter {
             // 归一化 0..1 → 高层语义值（半音/音分/半音），全 f32 无量化。
             0 => out.push(control(ControlEvent::PitchBendSensitivity(value * 127.0))),

@@ -655,6 +655,7 @@ arrange.delete_automation: "删除自动化"
 arrange.add_automation: "添加自动化…"
 arrange.custom_cc: "自定义 CC"
 arrange.custom_rpn: "自定义 RPN"
+arrange.common_cc: "常用"
 arrange.track_properties: "音轨属性"
 
 # ── sf_list ──

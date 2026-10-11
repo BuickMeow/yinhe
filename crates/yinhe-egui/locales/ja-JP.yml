@@ -587,6 +587,7 @@ arrange.delete_automation: "オートメーションを削除"
 arrange.add_automation: "自動化を追加…"
 arrange.custom_cc: "カスタムCC"
 arrange.custom_rpn: "カスタム RPN"
+arrange.common_cc: "Common"
 arrange.track_properties: "トラックプロパティ"
 
 # ── sf_list ──

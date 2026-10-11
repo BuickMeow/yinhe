@@ -655,6 +655,7 @@ arrange.delete_automation: "Otomasyonu Sil"
 arrange.add_automation: "Otomasyon ekle…"
 arrange.custom_cc: "Özel CC"
 arrange.custom_rpn: "Özel RPN"
+arrange.common_cc: "Common"
 arrange.track_properties: "Parça Özellikleri"
 
 # ── sf_list ──

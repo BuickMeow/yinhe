@@ -655,6 +655,7 @@ arrange.delete_automation: "Supprimer l'automatisation"
 arrange.add_automation: "Ajouter une automatisation…"
 arrange.custom_cc: "CC personnalisé"
 arrange.custom_rpn: "RPN personnalisé"
+arrange.common_cc: "Common"
 arrange.track_properties: "Propriétés de la piste"
 
 # ── sf_list ──

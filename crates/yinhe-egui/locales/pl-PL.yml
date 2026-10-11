@@ -655,6 +655,7 @@ arrange.delete_automation: "Usuń automatyzację"
 arrange.add_automation: "Dodaj automatyzację…"
 arrange.custom_cc: "Niestandardowy CC"
 arrange.custom_rpn: "Niestandardowy RPN"
+arrange.common_cc: "Common"
 arrange.track_properties: "Właściwości ścieżki"
 
 # ── sf_list ──

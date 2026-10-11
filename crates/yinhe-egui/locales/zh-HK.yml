@@ -575,6 +575,7 @@ arrange.delete_automation: "刪除自動化"
 arrange.add_automation: "新增自動化…"
 arrange.custom_cc: "自訂 CC"
 arrange.custom_rpn: "自訂 RPN"
+arrange.common_cc: "常用"
 arrange.track_properties: "音軌屬性"
 
 # ── sf_list ──

@@ -17,13 +17,16 @@ use yinhe_types::{AutomationLane, AutomationTarget, KEY_COUNT, SegmentShape};
 /// - VST/CLAP 插件：标准 CC 序列（101/100/6/38 或 99/98/6/38，出口量化）。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum AudioEvent {
-    /// 直接透传的 xsynth 通道事件（Raw CC / PitchBend / ProgramChange；
-    /// 高层 PBS/FineTune/CoarseTune 仅供历史兼容，事件流不再生成）。
+    /// xsynth 回退路径的**音符**事件（NoteOn/NoteOff）直通；控制事件不再走这里。
     Channel(ChannelAudioEvent),
     /// 原始 MIDI CC：`controller` u8 号，`value` f32（0..127 域，**不量化**）。
     /// 引擎内部统一浮点；出口按消费者量化——yinhe-synth 用 f32，其余
     /// （xsynth / VST3 / CLAP / yinhe-dsp）round 成 u8。
     Cc { controller: u8, value: f32 },
+    /// Pitch Bend：`value` f32（-1..1）。出口转 14-bit（xsynth/插件）或 f32（yinhe-synth）。
+    PitchBend(f32),
+    /// Program Change：`value` u8 音色号。
+    ProgramChange(u8),
     /// 原生 RPN：`parameter` u16 参数号，`value` 归一化 f32（0..=1，
     /// 与自动化 lane 同值域——全链路浮点，出口才按参数值域量化）。
     Rpn { parameter: u16, value: f32 },
@@ -457,15 +460,16 @@ pub(crate) fn push_program_change(
         track,
         lane: PC_LANE,
         plugin_param: None,
-        event: AudioEvent::Channel(ChannelAudioEvent::ProgramChange(pc.program)),
+        event: AudioEvent::ProgramChange(pc.program),
     });
 }
 
 /// 同 tick 同 channel 内的分发优先级：0 = 参数/控制类（RPN、CC、PC），
-/// 1 = PitchBendValue。数值小的先发，保证 PBS/FineTune/CoarseTune 等 RPN
+/// 1 = PitchBend。数值小的先发，保证 PBS/FineTune/CoarseTune 等 RPN
 /// 参数在 PB 使用它们之前就位。
 pub(crate) fn dispatch_priority(event: &AudioEvent) -> u8 {
     match event {
+        AudioEvent::PitchBend(_) => 1,
         AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_))) => 1,
         _ => 0,
     }
@@ -608,14 +612,14 @@ fn emit_midi_event(
             );
         }
         AutomationTarget::PitchBend => {
-            push_control(
+            push_event(
                 out,
                 tick,
                 channel,
                 track,
                 lane,
                 // 归一化 0..1 → 弯音 -1..1（0.5 = 中心）。
-                ControlEvent::PitchBendValue(value.clamp(0.0, 1.0) * 2.0 - 1.0),
+                AudioEvent::PitchBend(value.clamp(0.0, 1.0) * 2.0 - 1.0),
             );
         }
         _ => {}
@@ -639,25 +643,6 @@ fn push_event(
         plugin_param: None,
         event,
     });
-}
-
-/// 推入一条 xsynth 通道事件（Raw CC / PitchBend / ProgramChange 等）。
-fn push_control(
-    out: &mut Vec<SortedCC>,
-    tick: u32,
-    channel: u32,
-    track: u16,
-    lane: u16,
-    event: ControlEvent,
-) {
-    push_event(
-        out,
-        tick,
-        channel,
-        track,
-        lane,
-        AudioEvent::Channel(ChannelAudioEvent::Control(event)),
-    );
 }
 
 /// RPN/NRPN 参数号的原始整数上限：RPN 0/2 是 7-bit，其余 14-bit
@@ -700,13 +685,13 @@ fn emit_midi_binding(
             );
         }
         MidiBinding::PitchBend => {
-            push_control(
+            push_event(
                 out,
                 tick,
                 channel,
                 track,
                 lane,
-                ControlEvent::PitchBendValue((raw as f32 - 8192.0) / 8192.0),
+                AudioEvent::PitchBend((raw as f32 - 8192.0) / 8192.0),
             );
         }
         MidiBinding::Rpn(parameter) => {
@@ -940,9 +925,7 @@ mod tests {
         let pb_values: Vec<f32> = events
             .iter()
             .filter_map(|e| match e.event {
-                AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
-                    v,
-                ))) => Some(v),
+                AudioEvent::PitchBend(v) => Some(v),
                 _ => None,
             })
             .collect();
@@ -1129,12 +1112,7 @@ mod tests {
         let pbs_idx = index_of(&events, |e| {
             matches!(e, AudioEvent::Rpn { parameter: 0, .. })
         });
-        let pb_idx = index_of(&events, |e| {
-            matches!(
-                e,
-                AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)))
-            )
-        });
+        let pb_idx = index_of(&events, |e| matches!(e, AudioEvent::PitchBend(_)));
 
         let pbs_idx = pbs_idx.expect("PBS event should exist");
         let pb_idx = pb_idx.expect("PitchBend event should exist");
@@ -1245,12 +1223,7 @@ mod tests {
         let rpn_idx = index_of(&events, |e| {
             matches!(e, AudioEvent::Rpn { parameter: 5, .. })
         });
-        let pb_idx = index_of(&events, |e| {
-            matches!(
-                e,
-                AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)))
-            )
-        });
+        let pb_idx = index_of(&events, |e| matches!(e, AudioEvent::PitchBend(_)));
 
         let rpn_idx = rpn_idx.expect("RPN 5 event should exist");
         let pb_idx = pb_idx.expect("PitchBend event should exist");
@@ -1297,12 +1270,7 @@ mod tests {
         let nrpn_idx = index_of(&events, |e| {
             matches!(e, AudioEvent::Nrpn { parameter: 10, .. })
         });
-        let pb_idx = index_of(&events, |e| {
-            matches!(
-                e,
-                AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)))
-            )
-        });
+        let pb_idx = index_of(&events, |e| matches!(e, AudioEvent::PitchBend(_)));
 
         let nrpn_idx = nrpn_idx.expect("NRPN event should exist");
         let pb_idx = pb_idx.expect("PitchBend event should exist");
@@ -1370,12 +1338,7 @@ mod tests {
         let coarse_idx = index_of(&events, |e| {
             matches!(e, AudioEvent::Rpn { parameter: 2, .. })
         });
-        let pb_idx = index_of(&events, |e| {
-            matches!(
-                e,
-                AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)))
-            )
-        });
+        let pb_idx = index_of(&events, |e| matches!(e, AudioEvent::PitchBend(_)));
 
         let fine_idx = fine_idx.expect("FineTune event should exist");
         let coarse_idx = coarse_idx.expect("CoarseTune event should exist");

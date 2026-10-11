@@ -1537,16 +1537,17 @@ fn test_chase_channel_states_incremental() {
             plugin_param: None,
             event: AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(7, 90))),
         },
-        // ch0 的 PBS=48（PB 参数，非 DSP CC，走常规 apply）
+        // ch0 的 PBS=48（RPN0，非 DSP CC，走常规 apply）
         SortedCC {
             tick: 45,
             channel: 0,
             track: 0,
             lane: 0,
             plugin_param: None,
-            event: AudioEvent::Channel(ChannelAudioEvent::Control(
-                ControlEvent::PitchBendSensitivity(48.0),
-            )),
+            event: AudioEvent::Rpn {
+                parameter: 0,
+                value: 48.0 / 127.0,
+            },
         },
         // 边界：tick == target 参与（预览无 dispatch 兜底，Bug 8 回归）
         SortedCC {
@@ -2196,6 +2197,9 @@ fn diag_cyber_night_channel_isolation() {
         let mut bych: std::collections::BTreeMap<u32, usize> = Default::default();
         for cc in engine.cc_events.iter() {
             let k = match &cc.event {
+                AudioEvent::Cc { controller, .. } => format!("CC{controller}"),
+                AudioEvent::PitchBend(_) => "PB".into(),
+                AudioEvent::ProgramChange(_) => "PC".into(),
                 AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(c, _))) => {
                     format!("CC{c}")
                 }

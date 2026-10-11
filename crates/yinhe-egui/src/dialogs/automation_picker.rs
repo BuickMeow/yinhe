@@ -249,15 +249,15 @@ fn content(ui: &mut egui::Ui, state: &mut AutomationPickerState) {
     let cc_label = t!("arrange.custom_cc");
     let rpn_label = t!("arrange.custom_rpn");
 
-    // 前两行固定为自定义 CC / RPN，其余为设备参数（行 2 起）。
-    let total = 2 + state.filtered.len();
+    // 前两行固定为自定义 CC / RPN，第 3 行为「常用」分组标题，其余为设备参数（行 3 起）。
+    let total = 3 + state.filtered.len();
     egui::ScrollArea::vertical()
         .id_salt("automation_picker_list")
         .auto_shrink([false, false])
         .max_height(ui.available_height())
         .show_rows(ui, row_h, total, |ui, range| {
-            let dev_start = range.start.saturating_sub(2);
-            let dev_end = range.end.saturating_sub(2).min(state.filtered.len());
+            let dev_start = range.start.saturating_sub(3);
+            let dev_end = range.end.saturating_sub(3).min(state.filtered.len());
             let vis: Vec<usize> = if dev_start < dev_end {
                 state.filtered[dev_start..dev_end].to_vec()
             } else {
@@ -291,6 +291,21 @@ fn content(ui: &mut egui::Ui, state: &mut AutomationPickerState) {
                         ) {
                             state.selection = Selection::CustomRpn;
                         }
+                    }
+                    2 => {
+                        // 「常用」分组标题（非可选项）：其下为带标签的常用 CC/PB/RPN。
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(ui.available_width(), row_h),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.add_space(pad);
+                                ui.label(
+                                    egui::RichText::new(t!("arrange.common_cc"))
+                                        .size(label_size)
+                                        .color(crate::theme::text_muted()),
+                                );
+                            },
+                        );
                     }
                     _ => {
                         if let Some(&pi) = vis_iter.next() {

@@ -655,6 +655,7 @@ arrange.delete_automation: "Excluir Automação"
 arrange.add_automation: "Adicionar automação…"
 arrange.custom_cc: "CC Personalizado"
 arrange.custom_rpn: "RPN personalizado"
+arrange.common_cc: "Common"
 arrange.track_properties: "Propriedades da Faixa"
 
 # ── sf_list ──

@@ -265,18 +265,12 @@ pub(crate) fn to_backend_control_event(
         AudioEvent::Channel(xsynth_core::channel::ChannelAudioEvent::Control(
             ControlEvent::PitchBendValue(v),
         )) => Some(yinhe_synth::ControlEvent::PitchBend(v)),
-        AudioEvent::Channel(xsynth_core::channel::ChannelAudioEvent::Control(
-            ControlEvent::PitchBendSensitivity(v),
-        )) => Some(yinhe_synth::ControlEvent::PitchBendSensitivity(v)),
-        AudioEvent::Channel(xsynth_core::channel::ChannelAudioEvent::Control(
-            ControlEvent::FineTune(v),
-        )) => Some(yinhe_synth::ControlEvent::FineTune(v)),
-        AudioEvent::Channel(xsynth_core::channel::ChannelAudioEvent::Control(
-            ControlEvent::CoarseTune(v),
-        )) => Some(yinhe_synth::ControlEvent::CoarseTune(v)),
         AudioEvent::Channel(xsynth_core::channel::ChannelAudioEvent::ProgramChange(p)) => {
             Some(yinhe_synth::ControlEvent::ProgramChange(p))
         }
+        // 引擎通用 PB / PC（收敛后不再走 xsynth 通道事件）。
+        AudioEvent::PitchBend(v) => Some(yinhe_synth::ControlEvent::PitchBend(v)),
+        AudioEvent::ProgramChange(p) => Some(yinhe_synth::ControlEvent::ProgramChange(p)),
         // 原生 RPN/NRPN：yinhe-synth 一等事件（u16 参数号），不拆 CC。
         AudioEvent::Rpn { parameter, value } => {
             Some(yinhe_synth::ControlEvent::Rpn { parameter, value })

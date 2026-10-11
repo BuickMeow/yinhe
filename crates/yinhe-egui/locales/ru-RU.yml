@@ -655,6 +655,7 @@ arrange.delete_automation: "Удалить автоматизацию"
 arrange.add_automation: "Добавить автоматизацию…"
 arrange.custom_cc: "Свой CC"
 arrange.custom_rpn: "Пользовательский RPN"
+arrange.common_cc: "Common"
 arrange.track_properties: "Свойства дорожки"
 
 # ── sf_list ──

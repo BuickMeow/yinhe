@@ -151,15 +151,6 @@ impl ChaseSkip {
                 ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)) => {
                     self.pitch_bend[channel] = true;
                 }
-                ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(_)) => {
-                    self.pbs[channel] = true;
-                }
-                ChannelAudioEvent::Control(ControlEvent::FineTune(_)) => {
-                    self.fine_tune[channel] = true;
-                }
-                ChannelAudioEvent::Control(ControlEvent::CoarseTune(_)) => {
-                    self.coarse_tune[channel] = true;
-                }
                 ChannelAudioEvent::ProgramChange(_) => self.program[channel] = true,
                 _ => {}
             },
@@ -167,6 +158,8 @@ impl ChaseSkip {
             AudioEvent::Cc { controller, .. } => {
                 self.cc_mask[channel] |= 1u128 << controller;
             }
+            AudioEvent::PitchBend(_) => self.pitch_bend[channel] = true,
+            AudioEvent::ProgramChange(_) => self.program[channel] = true,
             // 原生 RPN 0/1/2 与三个高层参数同语义（chase 跳过粒度一致）。
             AudioEvent::Rpn { parameter, .. } => match parameter {
                 0 => self.pbs[channel] = true,
@@ -188,6 +181,8 @@ impl ChannelState {
             AudioEvent::Cc { controller, value } => {
                 self.apply_cc(*controller, value.round().clamp(0.0, 127.0) as u8);
             }
+            AudioEvent::PitchBend(v) => self.pitch_bend = *v,
+            AudioEvent::ProgramChange(p) => self.program = *p,
             AudioEvent::Rpn { parameter, value } => self.apply_native_rpn(*parameter, *value),
             // NRPN：协议已是一等事件，当前无内部参数语义（留待扩展参数）。
             AudioEvent::Nrpn { .. } => {}
@@ -219,11 +214,6 @@ impl ChannelState {
         match event {
             ChannelAudioEvent::Control(ControlEvent::Raw(cc, val)) => self.apply_cc(*cc, *val),
             ChannelAudioEvent::Control(ControlEvent::PitchBendValue(v)) => self.pitch_bend = *v,
-            ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(v)) => {
-                self.pitch_bend_sensitivity = *v
-            }
-            ChannelAudioEvent::Control(ControlEvent::FineTune(v)) => self.fine_tune = *v,
-            ChannelAudioEvent::Control(ControlEvent::CoarseTune(v)) => self.coarse_tune = *v,
             ChannelAudioEvent::ProgramChange(p) => self.program = *p,
             _ => {}
         }
@@ -298,9 +288,10 @@ impl ChannelState {
         let mut out = Vec::with_capacity(24);
         let mut push_raw = |cc: u8, val: u8| {
             if skip.cc_mask[channel] & (1u128 << cc) == 0 {
-                out.push(AudioEvent::Channel(ChannelAudioEvent::Control(
-                    ControlEvent::Raw(cc, val),
-                )));
+                out.push(AudioEvent::Cc {
+                    controller: cc,
+                    value: f32::from(val),
+                });
             }
         };
         push_raw(0, self.bank_msb);
@@ -313,9 +304,7 @@ impl ChannelState {
         // 通道级 DSP CC（7/10/11/71/74）由 yinhe-dsp 模块处理，不再发合成器；
         // chase 回填见 `AudioEngine::apply_chase_result`。
         if !skip.program[channel] {
-            out.push(AudioEvent::Channel(ChannelAudioEvent::ProgramChange(
-                self.program,
-            )));
+            out.push(AudioEvent::ProgramChange(self.program));
         }
         // RPN 0/1/2：以原生事件重放（按后端适配），原始 14-bit 值无损。
         if !skip.pbs[channel] {
@@ -337,9 +326,7 @@ impl ChannelState {
             });
         }
         if !skip.pitch_bend[channel] {
-            out.push(AudioEvent::Channel(ChannelAudioEvent::Control(
-                ControlEvent::PitchBendValue(self.pitch_bend),
-            )));
+            out.push(AudioEvent::PitchBend(self.pitch_bend));
         }
 
         // 通用 CC：发送未被特定字段覆盖、未被 dispatch 覆盖且非 0 的控制器。
@@ -355,9 +342,10 @@ impl ChannelState {
                 && cc != 101
                 && skip.cc_mask[channel] & (1u128 << cc) == 0
             {
-                out.push(AudioEvent::Channel(ChannelAudioEvent::Control(
-                    ControlEvent::Raw(cc, val),
-                )));
+                out.push(AudioEvent::Cc {
+                    controller: cc,
+                    value: f32::from(val),
+                });
             }
         }
         out
@@ -477,16 +465,14 @@ mod tests {
     fn test_chase_skip_mark() {
         let mut skip = ChaseSkip::default();
         skip.mark(
-            &AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(64, 1))),
+            &AudioEvent::Cc {
+                controller: 64,
+                value: 1.0,
+            },
             3,
         );
-        skip.mark(
-            &AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
-                0.5,
-            ))),
-            3,
-        );
-        skip.mark(&AudioEvent::Channel(ChannelAudioEvent::ProgramChange(5)), 3);
+        skip.mark(&AudioEvent::PitchBend(0.5), 3);
+        skip.mark(&AudioEvent::ProgramChange(5), 3);
         assert_ne!(skip.cc_mask[3] & (1u128 << 64), 0);
         assert_eq!(skip.cc_mask[3] & (1u128 << 7), 0);
         assert!(skip.pitch_bend[3]);
@@ -514,9 +500,9 @@ mod tests {
 
         let events = state.events_to_send(0, &skip);
         let has_raw_cc = |cc: u8| {
-            events.iter().any(
-                |e| matches!(e, AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(c, _))) if *c == cc),
-            )
+            events
+                .iter()
+                .any(|e| matches!(e, AudioEvent::Cc { controller: c, .. } if *c == cc))
         };
         // 通道级 DSP CC（7/10/11/71/74）不走合成器事件（由 yinhe-dsp 模块处理）。
         for cc in [7u8, 10, 11, 71, 74] {
@@ -531,21 +517,21 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, AudioEvent::Rpn { parameter: 0, .. }))
         );
-        assert!(!events.iter().any(|e| matches!(
-            e,
-            AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)))
-        )));
+        assert!(!events.iter().any(|e| matches!(e, AudioEvent::PitchBend(_))));
         // 未跳过的控制器仍在
         assert!(
             events
                 .iter()
-                .any(|e| matches!(e, AudioEvent::Channel(ChannelAudioEvent::ProgramChange(_))))
+                .any(|e| matches!(e, AudioEvent::ProgramChange(_)))
         );
         // 其他 channel 不受跳过影响
         let other = state.events_to_send(1, &skip);
         assert!(other.iter().any(|e| matches!(
             e,
-            AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(1, 64)))
+            AudioEvent::Cc {
+                controller: 1,
+                value: 64.0
+            }
         )));
     }
 
