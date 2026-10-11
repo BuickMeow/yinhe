@@ -245,6 +245,14 @@ pub(crate) fn to_backend_control_event(
 ) -> Option<yinhe_synth::ControlEvent> {
     use crate::audio_model::AudioEvent;
     match *ev {
+        // 引擎内部浮点 CC → yinhe-synth f32（全精度）。
+        AudioEvent::Cc { controller, value } => {
+            // 通道级 DSP CC 由 yinhe-dsp 效果器处理，GPU 合成器不再接收。
+            if yinhe_dsp::cc::DSP_CHANNEL_CCS.contains(&controller) {
+                return None;
+            }
+            Some(yinhe_synth::ControlEvent::Raw(controller, value))
+        }
         AudioEvent::Channel(xsynth_core::channel::ChannelAudioEvent::Control(
             ControlEvent::Raw(c, v),
         )) => {
@@ -252,7 +260,7 @@ pub(crate) fn to_backend_control_event(
             if yinhe_dsp::cc::DSP_CHANNEL_CCS.contains(&c) {
                 return None;
             }
-            Some(yinhe_synth::ControlEvent::Raw(c, v))
+            Some(yinhe_synth::ControlEvent::Raw(c, f32::from(v)))
         }
         AudioEvent::Channel(xsynth_core::channel::ChannelAudioEvent::Control(
             ControlEvent::PitchBendValue(v),

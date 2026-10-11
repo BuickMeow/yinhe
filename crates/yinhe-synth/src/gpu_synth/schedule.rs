@@ -282,7 +282,7 @@ impl GpuSynth {
                     match event {
                         // All Sounds Off (CC78)：结束所有 voice；
                         // All Notes Off (CC7B)：结束所有非 held voice（held 等 damper 松开）
-                        ControlEvent::Raw(cc @ (0x78 | 0x7B), 0) => {
+                        ControlEvent::Raw(cc @ (0x78 | 0x7B), v) if v < 0.5 => {
                             let all = cc == 0x78;
                             for (i, v) in self.voices.iter_mut().enumerate() {
                                 if v.state.env_stage < 6 && (all || !v.held_by_damper) {

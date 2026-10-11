@@ -2410,7 +2410,9 @@ fn diag_cyber_night_channel_isolation() {
                             ChannelEvent::Audio(ChannelAudioEvent::ProgramChange(*p))
                         }
                         other => ChannelEvent::Audio(ChannelAudioEvent::Control(match other {
-                            yinhe_synth::ControlEvent::Raw(c, v) => ControlEvent::Raw(*c, *v),
+                            yinhe_synth::ControlEvent::Raw(c, v) => {
+                                ControlEvent::Raw(*c, v.round() as u8)
+                            }
                             yinhe_synth::ControlEvent::PitchBend(v) => {
                                 ControlEvent::PitchBendValue(*v)
                             }
@@ -2762,7 +2764,9 @@ fn diag_cyber_night_ch3_wave_dump() {
                 XEvent::Channel(
                     3,
                     ChannelEvent::Audio(ChannelAudioEvent::Control(match event {
-                        yinhe_synth::ControlEvent::Raw(c, v) => ControlEvent::Raw(*c, *v),
+                        yinhe_synth::ControlEvent::Raw(c, v) => {
+                            ControlEvent::Raw(*c, v.round() as u8)
+                        }
                         yinhe_synth::ControlEvent::PitchBend(v) => ControlEvent::PitchBendValue(*v),
                         _ => ControlEvent::Raw(0, 0),
                     })),
@@ -3614,7 +3618,9 @@ fn diag_ch3_cc_bisect() {
                     XEvent::Channel(
                         3,
                         ChannelEvent::Audio(ChannelAudioEvent::Control(match event {
-                            yinhe_synth::ControlEvent::Raw(c, v) => ControlEvent::Raw(*c, *v),
+                            yinhe_synth::ControlEvent::Raw(c, v) => {
+                                ControlEvent::Raw(*c, v.round() as u8)
+                            }
                             yinhe_synth::ControlEvent::PitchBend(v) => {
                                 ControlEvent::PitchBendValue(*v)
                             }

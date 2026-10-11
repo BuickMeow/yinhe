@@ -168,7 +168,7 @@ fn main() {
         gpu_events.push(yinhe_synth::SynthEvent::Control {
             sample: s(ms),
             channel: 0,
-            event: yinhe_synth::ControlEvent::Raw(controller, value),
+            event: yinhe_synth::ControlEvent::Raw(controller, value as f32),
         });
     }
     gpu_events.push(yinhe_synth::SynthEvent::Control {

@@ -163,6 +163,10 @@ impl ChaseSkip {
                 ChannelAudioEvent::ProgramChange(_) => self.program[channel] = true,
                 _ => {}
             },
+            // 引擎内部浮点 CC：chase 跳过粒度与 xsynth Raw CC 一致。
+            AudioEvent::Cc { controller, .. } => {
+                self.cc_mask[channel] |= 1u128 << controller;
+            }
             // 原生 RPN 0/1/2 与三个高层参数同语义（chase 跳过粒度一致）。
             AudioEvent::Rpn { parameter, .. } => match parameter {
                 0 => self.pbs[channel] = true,
@@ -180,6 +184,10 @@ impl ChannelState {
     pub(crate) fn apply(&mut self, event: &AudioEvent) {
         match event {
             AudioEvent::Channel(ev) => self.apply_channel_event(ev),
+            // 浮点 CC → chase 状态量化存 u8（xsynth/DSP 侧整数语义）。
+            AudioEvent::Cc { controller, value } => {
+                self.apply_cc(*controller, value.round().clamp(0.0, 127.0) as u8);
+            }
             AudioEvent::Rpn { parameter, value } => self.apply_native_rpn(*parameter, *value),
             // NRPN：协议已是一等事件，当前无内部参数语义（留待扩展参数）。
             AudioEvent::Nrpn { .. } => {}
@@ -209,41 +217,7 @@ impl ChannelState {
 
     fn apply_channel_event(&mut self, event: &ChannelAudioEvent) {
         match event {
-            ChannelAudioEvent::Control(ControlEvent::Raw(cc, val)) => {
-                let cc_idx = *cc as usize;
-                if cc_idx < 128 {
-                    self.cc_values[cc_idx] = *val;
-                }
-                match cc {
-                    0 => self.bank_msb = *val,
-                    6 => {
-                        self.data_entry_msb = *val;
-                        self.resolve_rpn();
-                    }
-                    7 => self.volume = *val,
-                    10 => self.pan = *val,
-                    11 => self.expression = *val,
-                    32 => self.bank_lsb = *val,
-                    38 => {
-                        self.data_entry_lsb = *val;
-                        self.resolve_rpn();
-                    }
-                    64 => self.sustain = *val,
-                    71 => self.resonance = *val,
-                    72 => {
-                        self.release = *val;
-                        self.env_set = true;
-                    }
-                    73 => {
-                        self.attack = *val;
-                        self.env_set = true;
-                    }
-                    74 => self.cutoff = *val,
-                    100 => self.rpn_lsb = Some(*val),
-                    101 => self.rpn_msb = Some(*val),
-                    _ => {}
-                }
-            }
+            ChannelAudioEvent::Control(ControlEvent::Raw(cc, val)) => self.apply_cc(*cc, *val),
             ChannelAudioEvent::Control(ControlEvent::PitchBendValue(v)) => self.pitch_bend = *v,
             ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(v)) => {
                 self.pitch_bend_sensitivity = *v
@@ -251,6 +225,43 @@ impl ChannelState {
             ChannelAudioEvent::Control(ControlEvent::FineTune(v)) => self.fine_tune = *v,
             ChannelAudioEvent::Control(ControlEvent::CoarseTune(v)) => self.coarse_tune = *v,
             ChannelAudioEvent::ProgramChange(p) => self.program = *p,
+            _ => {}
+        }
+    }
+
+    /// 应用一条 CC（号 + 已量化的 u8 值）：记录 cc_values 并更新语义字段。
+    fn apply_cc(&mut self, cc: u8, val: u8) {
+        let cc_idx = cc as usize;
+        if cc_idx < 128 {
+            self.cc_values[cc_idx] = val;
+        }
+        match cc {
+            0 => self.bank_msb = val,
+            6 => {
+                self.data_entry_msb = val;
+                self.resolve_rpn();
+            }
+            7 => self.volume = val,
+            10 => self.pan = val,
+            11 => self.expression = val,
+            32 => self.bank_lsb = val,
+            38 => {
+                self.data_entry_lsb = val;
+                self.resolve_rpn();
+            }
+            64 => self.sustain = val,
+            71 => self.resonance = val,
+            72 => {
+                self.release = val;
+                self.env_set = true;
+            }
+            73 => {
+                self.attack = val;
+                self.env_set = true;
+            }
+            74 => self.cutoff = val,
+            100 => self.rpn_lsb = Some(val),
+            101 => self.rpn_msb = Some(val),
             _ => {}
         }
     }

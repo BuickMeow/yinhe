@@ -20,6 +20,10 @@ pub(crate) enum AudioEvent {
     /// 直接透传的 xsynth 通道事件（Raw CC / PitchBend / ProgramChange；
     /// 高层 PBS/FineTune/CoarseTune 仅供历史兼容，事件流不再生成）。
     Channel(ChannelAudioEvent),
+    /// 原始 MIDI CC：`controller` u8 号，`value` f32（0..127 域，**不量化**）。
+    /// 引擎内部统一浮点；出口按消费者量化——yinhe-synth 用 f32，其余
+    /// （xsynth / VST3 / CLAP / yinhe-dsp）round 成 u8。
+    Cc { controller: u8, value: f32 },
     /// 原生 RPN：`parameter` u16 参数号，`value` 归一化 f32（0..=1，
     /// 与自动化 lane 同值域——全链路浮点，出口才按参数值域量化）。
     Rpn { parameter: u16, value: f32 },
@@ -428,10 +432,10 @@ pub(crate) fn push_program_change(
             track,
             lane: PC_LANE,
             plugin_param: None,
-            event: AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(
-                0,
-                pc.bank_msb,
-            ))),
+            event: AudioEvent::Cc {
+                controller: 0,
+                value: f32::from(pc.bank_msb),
+            },
         });
     }
     if pc.bank_lsb != 0xFF {
@@ -441,10 +445,10 @@ pub(crate) fn push_program_change(
             track,
             lane: PC_LANE,
             plugin_param: None,
-            event: AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(
-                32,
-                pc.bank_lsb,
-            ))),
+            event: AudioEvent::Cc {
+                controller: 32,
+                value: f32::from(pc.bank_lsb),
+            },
         });
     }
     out.push(SortedCC {
@@ -563,13 +567,17 @@ fn emit_midi_event(
 ) {
     match target {
         AutomationTarget::CC { controller } => {
-            push_control(
+            // 浮点 CC 进引擎事件流（不量化）；出口按消费者取整。
+            push_event(
                 out,
                 tick,
                 channel,
                 track,
                 lane,
-                ControlEvent::Raw(*controller, restore_raw(value, 127.0) as u8),
+                AudioEvent::Cc {
+                    controller: *controller,
+                    value: restore_raw(value, 127.0) as f32,
+                },
             );
         }
         AutomationTarget::Rpn { parameter } => {
@@ -679,13 +687,16 @@ fn emit_midi_binding(
     let raw = restore_raw(value, binding_max(midi));
     match midi {
         MidiBinding::Cc(controller) => {
-            push_control(
+            push_event(
                 out,
                 tick,
                 channel,
                 track,
                 lane,
-                ControlEvent::Raw(controller, raw as u8),
+                AudioEvent::Cc {
+                    controller,
+                    value: raw as f32,
+                },
             );
         }
         MidiBinding::PitchBend => {
@@ -859,7 +870,7 @@ mod tests {
         assert_eq!(events[1].plugin_param.map(|p| p.value), Some(1.0));
     }
 
-    /// 低层 CC：归一化值在 flatten 边界还原成原始整数（CC7 = 100）。
+    /// 低层 CC：归一化值在 flatten 边界还原成原始值域（CC7 = 100，f32 不量化）。
     #[test]
     fn emit_low_level_cc_restores_integer() {
         let model = model_with_lanes(vec![AutomationLane {
@@ -877,7 +888,10 @@ mod tests {
         assert_eq!(events[0].channel, 0);
         assert!(matches!(
             events[0].event,
-            AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)))
+            AudioEvent::Cc {
+                controller: 7,
+                value
+            } if (value - 100.0).abs() < 1e-4
         ));
     }
 

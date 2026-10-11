@@ -198,12 +198,12 @@ fn segmented_render_matches_small_blocks() {
         SynthEvent::Control {
             sample: 10_000,
             channel: 0,
-            event: ControlEvent::Raw(64, 127),
+            event: ControlEvent::Raw(64, 127.0),
         },
         SynthEvent::Control {
             sample: 50_000,
             channel: 0,
-            event: ControlEvent::Raw(64, 0),
+            event: ControlEvent::Raw(64, 0.0),
         },
     ];
     events.sort_by_key(|e| e.sample());
@@ -569,7 +569,10 @@ fn apply_chase_damper_release_marks_held_voices() {
     synth.voices.push(v);
 
     // 踩下再松开延音踏板：held voice 进入 release
-    synth.apply_chase(0, &[ControlEvent::Raw(64, 127), ControlEvent::Raw(64, 0)]);
+    synth.apply_chase(
+        0,
+        &[ControlEvent::Raw(64, 127.0), ControlEvent::Raw(64, 0.0)],
+    );
     let v = &synth.voices[0];
     assert_eq!(v.state.env_stage, 5, "held voice 应进入 release");
     assert_eq!(v.state.env_start, 0.7, "release 起点 = 当前 amp");
@@ -598,7 +601,7 @@ fn apply_chase_env_cc_rewalks_stage() {
     v.orig_release_frames = 2000.0;
     synth.voices.push(v);
 
-    synth.apply_chase(0, &[ControlEvent::Raw(0x49, 100)]);
+    synth.apply_chase(0, &[ControlEvent::Raw(0x49, 100.0)]);
     let v = &synth.voices[0];
     let expected = crate::channel_state::env_curve_frames(100, 4410.0, 44_100, false);
     assert!(
@@ -895,7 +898,7 @@ fn chase_skip_marks_only_post_seek_controls() {
         SynthEvent::Control {
             sample: 100,
             channel: 0,
-            event: ControlEvent::Raw(7, 100),
+            event: ControlEvent::Raw(7, 100.0),
         },
         SynthEvent::Control {
             sample: 200,
@@ -912,7 +915,7 @@ fn chase_skip_marks_only_post_seek_controls() {
         SynthEvent::Control {
             sample: 400,
             channel: 0,
-            event: ControlEvent::Raw(64, 127),
+            event: ControlEvent::Raw(64, 127.0),
         },
     ]);
     synth.seek(300);

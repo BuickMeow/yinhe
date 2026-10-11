@@ -26,9 +26,12 @@ impl AudioEngine {
     }
 }
 
-/// 提取原始 CC（号 + 值）；非 CC 事件返回 None。
+/// 提取原始 CC（号 + 值）；非 CC 事件返回 None。浮点 CC 取整回 7-bit（DSP/插件整数语义）。
 pub(crate) fn raw_cc(event: &AudioEvent) -> Option<(u8, u8)> {
     match event {
+        AudioEvent::Cc { controller, value } => {
+            Some((*controller, value.round().clamp(0.0, 127.0) as u8))
+        }
         AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(cc, value))) => {
             Some((*cc, *value))
         }
@@ -80,6 +83,14 @@ pub(crate) fn event_to_midi(event: &AudioEvent, channel: u8, out: &mut MidiMessa
             // 高层事件不再出现在事件流中；历史数据出现也不转（保持原行为）。
             _ => {}
         },
+        AudioEvent::Cc { controller, value } => {
+            // 引擎内部浮点 CC → MIDI 字节（插件只认 7-bit）。
+            out.push([
+                0xB0 | ch,
+                *controller,
+                value.round().clamp(0.0, 127.0) as u8,
+            ]);
+        }
         AudioEvent::Rpn { parameter, value } => {
             let raw = quantize_rpn(*parameter, *value);
             out.push([0xB0 | ch, 101, ((parameter >> 7) & 0x7F) as u8]);
@@ -160,6 +171,11 @@ pub(crate) fn xsynth_events(event: &AudioEvent) -> XsynthMessages {
     let control = |ev: ControlEvent| ChannelAudioEvent::Control(ev);
     match event {
         AudioEvent::Channel(ev) => out.push(*ev),
+        // 浮点 CC → xsynth 量化成 7-bit（xsynth 只认 u8）。
+        AudioEvent::Cc { controller, value } => out.push(control(ControlEvent::Raw(
+            *controller,
+            value.round().clamp(0.0, 127.0) as u8,
+        ))),
         AudioEvent::Rpn { parameter, value } => match parameter {
             // 归一化 0..1 → 高层语义值（半音/音分/半音），全 f32 无量化。
             0 => out.push(control(ControlEvent::PitchBendSensitivity(value * 127.0))),

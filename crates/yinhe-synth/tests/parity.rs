@@ -245,7 +245,7 @@ fn gpu_render(sfz: &Path) -> Vec<f32> {
         events.push(yinhe_synth::SynthEvent::Control {
             sample: ms * SR as u64 / 1000,
             channel: 0,
-            event: yinhe_synth::ControlEvent::Raw(controller, value),
+            event: yinhe_synth::ControlEvent::Raw(controller, value as f32),
         });
     }
     for (ms, value) in bend_plan() {
@@ -293,7 +293,7 @@ fn multi_port_channels_do_not_fold() {
         yinhe_synth::SynthEvent::Control {
             sample: 50 * sr / 1000,
             channel: 16,
-            event: yinhe_synth::ControlEvent::Raw(64, 127),
+            event: yinhe_synth::ControlEvent::Raw(64, 127.0),
         },
         yinhe_synth::SynthEvent::NoteOn {
             sample: 100 * sr / 1000,
@@ -312,7 +312,7 @@ fn multi_port_channels_do_not_fold() {
         yinhe_synth::SynthEvent::Control {
             sample: 1000 * sr / 1000,
             channel: 16,
-            event: yinhe_synth::ControlEvent::Raw(64, 0),
+            event: yinhe_synth::ControlEvent::Raw(64, 0.0),
         },
     ];
     gpu_events.sort_by_key(|e| e.sample());
@@ -403,7 +403,7 @@ fn multi_port_channels_do_not_fold() {
                     SynthEvent::Channel(
                         *channel as u32,
                         ChannelEvent::Audio(ChannelAudioEvent::Control(match event {
-                            yinhe_synth::ControlEvent::Raw(c, v) => ControlEvent::Raw(*c, *v),
+                            yinhe_synth::ControlEvent::Raw(c, v) => ControlEvent::Raw(*c, *v as u8),
                             yinhe_synth::ControlEvent::PitchBend(v) => ControlEvent::PitchBend(*v),
                             _ => panic!("unexpected control"),
                         })),
@@ -574,7 +574,7 @@ fn program_change_selects_preset() {
                         *channel as u32,
                         ChannelEvent::Audio(match event {
                             yinhe_synth::ControlEvent::Raw(c, v) => {
-                                ChannelAudioEvent::Control(ControlEvent::Raw(*c, *v))
+                                ChannelAudioEvent::Control(ControlEvent::Raw(*c, *v as u8))
                             }
                             yinhe_synth::ControlEvent::ProgramChange(p) => {
                                 ChannelAudioEvent::ProgramChange(*p)
@@ -754,7 +754,7 @@ fn yinhe_cpu_render(sfz: &Path) -> Vec<f32> {
         events.push(yinhe_synth::SynthEvent::Control {
             sample: ms * SR as u64 / 1000,
             channel: 0,
-            event: yinhe_synth::ControlEvent::Raw(controller, value),
+            event: yinhe_synth::ControlEvent::Raw(controller, value as f32),
         });
     }
     for (ms, value) in bend_plan() {

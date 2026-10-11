@@ -69,8 +69,9 @@ impl SynthEvent {
 /// 通道控制事件（语义与 xsynth `ControlEvent` 对齐）。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ControlEvent {
-    /// 原始 MIDI CC 事件 (controller, value)。
-    Raw(u8, u8),
+    /// 原始 MIDI CC 事件 (controller, value)。`value` 为 f32（0..127 域）：
+    /// 自动化插值不再量化到 7-bit，音源侧按需取整（如 RPN data / bank）。
+    Raw(u8, f32),
     /// 弯音值 -1..1。
     PitchBend(f32),
     /// 弯音灵敏度（半音）。

@@ -68,65 +68,69 @@ impl ChannelState {
     /// 返回是否触发了 damper 松开（需要释放 held voices）。
     pub(crate) fn process_control(&mut self, event: ControlEvent) -> bool {
         match event {
-            ControlEvent::Raw(controller, value) => match controller {
-                0x00 => {
-                    // Bank select MSB：鼓组通道（bank==128）锁定不变（xsynth set_bank）
-                    if self.bank != 128 {
-                        self.bank = value;
-                    }
-                }
-                0x64 => self.rpn_lsb = value as i8,
-                0x65 => self.rpn_msb = value as i8,
-                0x06 | 0x26 => {
-                    if self.rpn_msb == 0 {
-                        match self.rpn_lsb {
-                            0 => {
-                                // Pitch bend sensitivity（RPN0 = msb + lsb/100）
-                                if controller == 0x06 {
-                                    self.pbs_msb = value;
-                                } else {
-                                    self.pbs_lsb = value;
-                                }
-                                self.pitch_bend_sensitivity =
-                                    self.pbs_msb as f32 + self.pbs_lsb as f32 / 100.0;
-                            }
-                            1 => {
-                                // Fine tune（RPN1，14-bit：msb<<6 + lsb）
-                                if controller == 0x06 {
-                                    self.fine_tune_msb = value;
-                                } else {
-                                    self.fine_tune_lsb = value;
-                                }
-                                let val: u16 =
-                                    ((self.fine_tune_msb as u16) << 6) + self.fine_tune_lsb as u16;
-                                self.fine_tune = (val as f32 - 4096.0) / 4096.0 * 100.0;
-                            }
-                            2 if controller == 0x06 => {
-                                // Coarse tune（RPN2）
-                                self.coarse_tune = value as f32 - 64.0;
-                            }
-                            _ => {}
+            ControlEvent::Raw(controller, value) => {
+                // 整数量语义的 CC（bank/RPN 选择与数据/包络倍率）取整；damper 用阈值。
+                let vi = value.round() as u8;
+                match controller {
+                    0x00 => {
+                        // Bank select MSB：鼓组通道（bank==128）锁定不变（xsynth set_bank）
+                        if self.bank != 128 {
+                            self.bank = vi;
                         }
                     }
+                    0x64 => self.rpn_lsb = vi as i8,
+                    0x65 => self.rpn_msb = vi as i8,
+                    0x06 | 0x26 => {
+                        if self.rpn_msb == 0 {
+                            match self.rpn_lsb {
+                                0 => {
+                                    // Pitch bend sensitivity（RPN0 = msb + lsb/100）
+                                    if controller == 0x06 {
+                                        self.pbs_msb = vi;
+                                    } else {
+                                        self.pbs_lsb = vi;
+                                    }
+                                    self.pitch_bend_sensitivity =
+                                        self.pbs_msb as f32 + self.pbs_lsb as f32 / 100.0;
+                                }
+                                1 => {
+                                    // Fine tune（RPN1，14-bit：msb<<6 + lsb）
+                                    if controller == 0x06 {
+                                        self.fine_tune_msb = vi;
+                                    } else {
+                                        self.fine_tune_lsb = vi;
+                                    }
+                                    let val: u16 = ((self.fine_tune_msb as u16) << 6)
+                                        + self.fine_tune_lsb as u16;
+                                    self.fine_tune = (val as f32 - 4096.0) / 4096.0 * 100.0;
+                                }
+                                2 if controller == 0x06 => {
+                                    // Coarse tune（RPN2）
+                                    self.coarse_tune = vi as f32 - 64.0;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    0x48 => self.env_release = Some(vi),
+                    0x49 => self.env_attack = Some(vi),
+                    0x40 => {
+                        let damper = value >= 64.0;
+                        let released = self.damper && !damper;
+                        self.damper = damper;
+                        return released;
+                    }
+                    0x79 if value < 0.5 => {
+                        // Reset All Controllers。
+                        // xsynth 的 reset_control 不重置 program.bank，这里保留 bank。
+                        let bank = self.bank;
+                        *self = ChannelState::new(self.sample_rate);
+                        self.bank = bank;
+                        return true; // damper 松开语义
+                    }
+                    _ => {}
                 }
-                0x48 => self.env_release = Some(value),
-                0x49 => self.env_attack = Some(value),
-                0x40 => {
-                    let damper = value >= 64;
-                    let released = self.damper && !damper;
-                    self.damper = damper;
-                    return released;
-                }
-                0x79 if value == 0 => {
-                    // Reset All Controllers。
-                    // xsynth 的 reset_control 不重置 program.bank，这里保留 bank。
-                    let bank = self.bank;
-                    *self = ChannelState::new(self.sample_rate);
-                    self.bank = bank;
-                    return true; // damper 松开语义
-                }
-                _ => {}
-            },
+            }
             ControlEvent::PitchBend(value) => self.pitch_bend = value,
             ControlEvent::PitchBendSensitivity(value) => self.pitch_bend_sensitivity = value,
             ControlEvent::FineTune(value) => self.fine_tune = value,
@@ -247,10 +251,8 @@ pub(crate) fn env_curve_frames(
 
 /// CC72/73（包络时长）与 CC121（重置包络）需要重算活跃 voice 的包络时长。
 pub(crate) fn is_env_effect_cc(event: &ControlEvent) -> bool {
-    matches!(
-        event,
-        ControlEvent::Raw(0x48 | 0x49, _) | ControlEvent::Raw(0x79, 0)
-    )
+    matches!(event, ControlEvent::Raw(0x48 | 0x49, _))
+        || matches!(event, &ControlEvent::Raw(0x79, v) if v < 0.5)
 }
 
 #[cfg(test)]
@@ -264,34 +266,34 @@ mod tests {
         let mut ch = ChannelState::new(44100);
 
         // CC64：<64 关，>=64 开；松开返回 true
-        assert!(!ch.process_control(ControlEvent::Raw(64, 63)));
+        assert!(!ch.process_control(ControlEvent::Raw(64, 63.0)));
         assert!(!ch.damper);
-        assert!(!ch.process_control(ControlEvent::Raw(64, 127)));
+        assert!(!ch.process_control(ControlEvent::Raw(64, 127.0)));
         assert!(ch.damper);
-        assert!(ch.process_control(ControlEvent::Raw(64, 0)));
+        assert!(ch.process_control(ControlEvent::Raw(64, 0.0)));
         assert!(!ch.damper);
 
         // RPN0 弯音灵敏度（默认 2.0）：CC101/100 选择 RPN0，CC6 设 msb，CC38 设 lsb
         let mut ch = ChannelState::new(44100);
-        ch.process_control(ControlEvent::Raw(0x65, 0)); // RPN msb
-        ch.process_control(ControlEvent::Raw(0x64, 0)); // RPN lsb = 0
-        ch.process_control(ControlEvent::Raw(0x06, 5));
+        ch.process_control(ControlEvent::Raw(0x65, 0.0)); // RPN msb
+        ch.process_control(ControlEvent::Raw(0x64, 0.0)); // RPN lsb = 0
+        ch.process_control(ControlEvent::Raw(0x06, 5.0));
         assert_eq!(ch.pitch_bend_sensitivity, 5.0);
-        ch.process_control(ControlEvent::Raw(0x26, 50));
+        ch.process_control(ControlEvent::Raw(0x26, 50.0));
         assert_eq!(ch.pitch_bend_sensitivity, 5.5);
 
         // RPN1 微调（14-bit：msb<<6 + lsb）
-        ch.process_control(ControlEvent::Raw(0x64, 1));
-        ch.process_control(ControlEvent::Raw(0x06, 64));
-        ch.process_control(ControlEvent::Raw(0x26, 0));
+        ch.process_control(ControlEvent::Raw(0x64, 1.0));
+        ch.process_control(ControlEvent::Raw(0x06, 64.0));
+        ch.process_control(ControlEvent::Raw(0x26, 0.0));
         assert_eq!(ch.fine_tune, (4096.0 - 4096.0) / 4096.0 * 100.0); // 中心
-        ch.process_control(ControlEvent::Raw(0x06, 65));
-        ch.process_control(ControlEvent::Raw(0x26, 0));
+        ch.process_control(ControlEvent::Raw(0x06, 65.0));
+        ch.process_control(ControlEvent::Raw(0x26, 0.0));
         assert!((ch.fine_tune - (4160.0 - 4096.0) / 4096.0 * 100.0).abs() < 1e-3);
 
         // RPN2 粗调：CC6 设值 - 64
-        ch.process_control(ControlEvent::Raw(0x64, 2));
-        ch.process_control(ControlEvent::Raw(0x06, 70));
+        ch.process_control(ControlEvent::Raw(0x64, 2.0));
+        ch.process_control(ControlEvent::Raw(0x06, 70.0));
         assert_eq!(ch.coarse_tune, 6.0);
 
         // 弯音：bend × 灵敏度（5.5）+ 粗调 6 + 微调 1.5625 音分
@@ -302,7 +304,7 @@ mod tests {
         );
 
         // CC79 重置全部控制器
-        assert!(ch.process_control(ControlEvent::Raw(0x79, 0)));
+        assert!(ch.process_control(ControlEvent::Raw(0x79, 0.0)));
         assert_eq!(ch.pitch_bend_sensitivity, 2.0);
         assert_eq!(ch.coarse_tune, 0.0);
     }
