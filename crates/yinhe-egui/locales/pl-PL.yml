@@ -1012,6 +1012,7 @@ hint.timecode.position: "Pozycja odtwarzania: wpisz takt.bit.tick lub bezwzględ
 hint.timecode.seconds: "Pozycja czasowa: wpisz sekundy (np. 0:01.500), aby przejść"
 hint.timecode.quantize: "Kwantyzacja: kliknij, aby wybrać ustawienie wstępne (dotyczy aktywnego widoku)"
 hint.timecode.keysig: "Tonacja: kliknij, aby ustawić tonikę/skalę"
+hint.timecode.master_meter: "Poziom wyjścia master (L/R)"
 hint.chord_indicator: "Bieżący akord (najpierw klawisze MIDI na żywo, potem kursor odtwarzania)"
 hint.recent_files: "Ostatnio otwarte pliki"
 hint.recent_opened_at: "Ostatnio otwarte %{time}"

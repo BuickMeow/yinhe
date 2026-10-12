@@ -1309,6 +1309,46 @@ fn meter(ui: &mut egui::Ui, level: (f32, f32), hold: (f32, f32), height: f32) {
     }
 }
 
+/// 无刻度的窄版电平表（走带栏时间码用）：L/R 双条铺满给定矩形，带峰值保持线。
+/// 与 [`meter`] 共用 dB 映射与着色，但不画刻度栏。
+pub(crate) fn compact_meter(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    level: (f32, f32),
+    hold: (f32, f32),
+) {
+    painter.rect_filled(rect, 0.0, crate::theme::track_bg());
+    let bar_w = (rect.width() - METER_GAP) * 0.5;
+    for (i, &p) in [level.0, level.1].iter().enumerate() {
+        let x0 = rect.min.x + i as f32 * (bar_w + METER_GAP);
+        let frac = db_frac(gain_to_db(p));
+        if frac > 0.0 {
+            let h = rect.height() * frac;
+            let fill = egui::Rect::from_min_max(
+                egui::pos2(x0, rect.max.y - h),
+                egui::pos2(x0 + bar_w, rect.max.y),
+            );
+            painter.rect_filled(fill, 0.0, meter_color(p));
+        }
+    }
+    for (i, (&l, &h)) in [level.0, level.1]
+        .iter()
+        .zip([hold.0, hold.1].iter())
+        .enumerate()
+    {
+        if h <= l + 1e-4 {
+            continue;
+        }
+        let x0 = rect.min.x + i as f32 * (bar_w + METER_GAP);
+        let y = rect.max.y - db_frac(gain_to_db(h)) * rect.height();
+        painter.hline(
+            egui::Rangef::new(x0, x0 + bar_w),
+            y,
+            egui::Stroke::new(1.0, meter_color(h)),
+        );
+    }
+}
+
 /// 电平着色：≥0dBFS 红、> -6dB 金、其余强调色。
 fn meter_color(p: f32) -> egui::Color32 {
     if p >= 1.0 {

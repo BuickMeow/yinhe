@@ -1012,6 +1012,7 @@ hint.timecode.position: "Pozice přehrávání: zadejte takt.doba.tick nebo abso
 hint.timecode.seconds: "Časová pozice: zadejte sekundy (např. 0:01.500) pro přesun"
 hint.timecode.quantize: "Kvantizace: kliknutím zvolte předvolbu (platí pro aktivní zobrazení)"
 hint.timecode.keysig: "Tónina: kliknutím nastavte základní tón/stupnici"
+hint.timecode.master_meter: "Úroveň výstupu master (L/R)"
 hint.chord_indicator: "Aktuální akord (nejprve živé klávesy MIDI, poté kurzor přehrávání)"
 hint.recent_files: "Nedávno otevřené soubory"
 hint.recent_opened_at: "Naposledy otevřeno %{time}"

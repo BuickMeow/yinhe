@@ -1012,6 +1012,7 @@ hint.timecode.position: "Çalma konumu: ölçü.vuruş.tik veya mutlak tik yaz, 
 hint.timecode.seconds: "Zaman konumu: atlamak için saniye yaz (örn. 0:01.500)"
 hint.timecode.quantize: "Nicemleme: ön ayar seçmek için tıkla (odaklanan görünüme uygulanır)"
 hint.timecode.keysig: "Ton: kök/gam ayarlamak için tıkla"
+hint.timecode.master_meter: "Master çıkış seviyesi (L/R)"
 hint.chord_indicator: "Geçerli akor (önce canlı MIDI tuşları, sonra çalma imleci)"
 hint.recent_files: "Son açılan dosyalar"
 hint.recent_opened_at: "Son açılma %{time}"

@@ -1011,6 +1011,7 @@ hint.timecode.position: "Posizione di riproduzione: digita battuta.battito.tick 
 hint.timecode.seconds: "Posizione temporale: digita i secondi (es. 0:01.500) per posizionarti"
 hint.timecode.quantize: "Quantizzazione: clic per scegliere un preset (si applica alla vista attiva)"
 hint.timecode.keysig: "Tonalità: clic per impostare fondamentale/scala"
+hint.timecode.master_meter: "Livello di uscita master (L/R)"
 hint.chord_indicator: "Accordo corrente (prima i tasti MIDI dal vivo, poi la testina di riproduzione)"
 hint.recent_files: "File aperti di recente"
 hint.recent_opened_at: "Ultima apertura %{time}"

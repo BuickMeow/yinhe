@@ -1017,6 +1017,7 @@ hint.timecode.position: "再生位置：小節.拍.ティック または絶対�
 hint.timecode.seconds: "時間位置：秒を入力（例 0:01.500）でシーク"
 hint.timecode.quantize: "クオンタイズ：クリックでプリセット選択（フォーカス中のビューに適用）"
 hint.timecode.keysig: "調：クリックでルート/スケールを設定"
+hint.timecode.master_meter: "マスター出力レベル（L/R）"
 hint.chord_indicator: "現在のコード（ライブ MIDI キー優先、次に再生ヘッド）"
 hint.recent_files: "最近開いたファイル"
 hint.recent_opened_at: "最終オープン %{time}"

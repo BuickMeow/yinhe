@@ -1007,6 +1007,7 @@ hint.timecode.position: "Posición de reproducción: escribir compás.pulso.tick
 hint.timecode.seconds: "Posición temporal: escribir segundos (p. ej. 0:01.500) para posicionarse"
 hint.timecode.quantize: "Cuantización: clic para elegir un preajuste (se aplica a la vista activa)"
 hint.timecode.keysig: "Tonalidad: clic para definir la raíz/la escala"
+hint.timecode.master_meter: "Nivel de salida master (L/R)"
 hint.chord_indicator: "Acorde actual (primero las teclas MIDI en vivo, luego el cursor de reproducción)"
 hint.recent_files: "Archivos abiertos recientemente"
 hint.recent_opened_at: "Última apertura %{time}"

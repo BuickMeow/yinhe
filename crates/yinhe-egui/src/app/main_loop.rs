@@ -560,6 +560,9 @@ impl eframe::App for App {
         self.poll_plugin_param_automation();
 
         // ── Transport bar ──
+        // 总输出电平：每帧更新一次（走带栏时间码第四栏 + 混音台 master 条共用）。
+        let meter_dt = ui.ctx().input(|i| i.stable_dt).min(0.1);
+        let master_meter = crate::mix::update_master_meter(self, meter_dt);
         let active_doc = self
             .workspace
             .active_doc
@@ -608,6 +611,7 @@ impl eframe::App for App {
                     .map(|d| d.edit.quantize_arrange)
                     .unwrap_or_default(),
                 pr: pr_bar,
+                master_meter,
             },
         );
 

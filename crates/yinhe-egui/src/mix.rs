@@ -31,6 +31,7 @@ use crate::app::App;
 pub(crate) use instrument_rack::InstrumentRack;
 pub(crate) use param_panel::ParamPanel;
 pub(crate) use rack::MixerRack;
+pub(crate) use strip::compact_meter;
 
 /// 源通道总数（16 port × 16 通道）。
 const SOURCE_CHANNELS: usize = yinhe_mixer::CHANNEL_COUNT;
@@ -118,6 +119,10 @@ pub(crate) struct MixUiState {
     /// 各 dense 通道的电平表弹道状态，UI 侧衰减用。
     smoothed: Vec<MeterState>,
     smoothed_master: MeterState,
+    /// 本帧总输出电平显示值 `((level L,R), (hold L,R))`：main_loop 每帧只更新
+    /// 一次（[`update_master_meter`]），混音台 master 条与走带栏时间码表共用，
+    /// 避免同一帧两次衰减。
+    pub(crate) master_display: ((f32, f32), (f32, f32)),
     /// 总线条电平表弹道状态（key = "bus{n}"，增删总线时旧键闲置无害）。
     smoothed_buses: std::collections::HashMap<String, MeterState>,
     /// 插件扫描结果（后台线程填充；None = 尚未完成首次扫描）。
@@ -493,6 +498,21 @@ fn smoothed_peak(
     (s.level(), s.hold())
 }
 
+/// 更新总输出电平弹道（每帧一次，main_loop 在走带栏之前调用）。结果存入
+/// [`MixUiState::master_display`]，供混音台 master 条与走带栏时间码表复用。
+pub(crate) fn update_master_meter(app: &mut App, dt: f32) -> ((f32, f32), (f32, f32)) {
+    let raw = app
+        .audio_state
+        .handle
+        .as_ref()
+        .map(|a| a.handle.master_meter_read())
+        .unwrap_or((0.0, 0.0));
+    let s = &mut app.mix.smoothed_master;
+    s.update(raw, dt);
+    app.mix.master_display = (s.level(), s.hold());
+    app.mix.master_display
+}
+
 /// MIX 模式主入口（layout.rs 在 Mix 模式且已打开工程时调用）。
 pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
     let Some(idx) = app.workspace.active_doc else {
@@ -659,17 +679,8 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
             );
 
             // Master 条（分隔由 master 通道条自身的描边提供，无需再画 vline）。
-            let (master_level, master_hold) = {
-                let raw = app
-                    .audio_state
-                    .handle
-                    .as_ref()
-                    .map(|a| a.handle.master_meter_read())
-                    .unwrap_or((0.0, 0.0));
-                let s = &mut app.mix.smoothed_master;
-                s.update(raw, dt);
-                (s.level(), s.hold())
-            };
+            // 电平弹道已由 main_loop 每帧更新一次（master_display），此处只读取。
+            let (master_level, master_hold) = app.mix.master_display;
             ui.scope_builder(
                 egui::UiBuilder::new()
                     .max_rect(master_rect)

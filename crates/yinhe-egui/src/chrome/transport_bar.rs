@@ -170,7 +170,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 // ── 工具区已迁移到左侧工具栏（见 chrome::tool_bar）──
 
                 if let Some(doc) = ctx.doc {
-                    // ── 时间码（三列居中：BPM/拍号+PPQ | 位置/时间 | 量化/调式）──
+                    // ── 时间码（四列居中：BPM/拍号+PPQ | 位置/时间 | 量化/调式 | 总输出电平）──
                     if let Some(pr) = ctx.pr.as_ref() {
                         let quantize = if ctx.focus_is_pianoroll {
                             pr.quantize
@@ -183,6 +183,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                                 doc,
                                 quantize,
                                 quantize_is_pr: ctx.focus_is_pianoroll,
+                                master_meter: ctx.master_meter,
                             },
                         );
                         timecode_rect = Some(tc_rect);

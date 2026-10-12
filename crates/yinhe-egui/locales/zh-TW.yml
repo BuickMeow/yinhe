@@ -1012,6 +1012,7 @@ hint.timecode.position: "播放位置：輸入 小節.拍.tick 或絕對 tick，
 hint.timecode.seconds: "時間位置：輸入秒數（如 0:01.500）跳轉"
 hint.timecode.quantize: "量化：點擊選擇量化預設（作用於焦點檢視）"
 hint.timecode.keysig: "調式：點擊設定根音／音階"
+hint.timecode.master_meter: "總輸出電平（左右聲道）"
 hint.chord_indicator: "目前和弦（即時 MIDI 鍵優先，其次播放游標）"
 hint.recent_files: "最近開啟的檔案"
 hint.recent_opened_at: "上次開啟 %{time}"

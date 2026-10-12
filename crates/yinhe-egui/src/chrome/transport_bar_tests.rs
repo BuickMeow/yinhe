@@ -147,6 +147,7 @@ fn make_transport_harness<'a>(doc: Option<&'a Document>) -> Harness<'a, ()> {
                     focus_is_pianoroll: false,
                     quantize_arrange: Default::default(),
                     pr: pr_bar_data(doc),
+                    master_meter: ((0.0, 0.0), (0.0, 0.0)),
                 };
                 show(ui, &mut ctx);
             },
@@ -183,6 +184,7 @@ fn make_harness_with_hidden_button<'a>(doc: Option<&'a Document>) -> Harness<'a,
                     focus_is_pianoroll: false,
                     quantize_arrange: Default::default(),
                     pr: pr_bar_data(doc),
+                    master_meter: ((0.0, 0.0), (0.0, 0.0)),
                 };
                 show(ui, &mut ctx);
                 // 透明隐藏按钮：位于 x 1150..1174、y 8..32

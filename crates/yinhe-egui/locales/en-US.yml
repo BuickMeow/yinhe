@@ -1011,6 +1011,7 @@ hint.timecode.position: "Play position: type bar.beat.tick or an absolute tick, 
 hint.timecode.seconds: "Time position: type seconds (e.g. 0:01.500) to seek"
 hint.timecode.quantize: "Quantize: click to choose a preset (applies to the focused view)"
 hint.timecode.keysig: "Key: click to set root/scale"
+hint.timecode.master_meter: "Master output level (L/R)"
 hint.chord_indicator: "Current chord (live MIDI keys first, then playhead)"
 hint.recent_files: "Recently opened files"
 hint.recent_opened_at: "Last opened %{time}"

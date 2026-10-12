@@ -1,4 +1,4 @@
-//! 传输栏时间码（三列，居中）：BPM/拍号+PPQ | 位置/时间 | 量化/调式。
+//! 传输栏时间码（四列，居中）：BPM/拍号+PPQ | 位置/时间 | 量化/调式 | 总输出电平表。
 //!
 //! 每个字段点击即可 inline 编辑（无框输入，回车/失焦提交）：
 //! - BPM：单/相同 tempo 事件 → 直接改；多个不同 → 在光标位置插入新事件；
@@ -19,11 +19,11 @@ use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::time_format;
 use yinhe_types::{NOTE_NAMES, ScaleType};
 
-/// 时间码控件宽度（三列：BPM/拍号+PPQ、位置/时间、量化/调式）。
-pub const TIMECODE_WIDTH: f32 = 252.0;
+/// 时间码控件宽度（四列：BPM/拍号+PPQ、位置/时间、量化/调式、电平表）。
+pub const TIMECODE_WIDTH: f32 = 276.0;
 
-/// 三列宽度（与 `TIMECODE_WIDTH` 一致）。
-const COL_WIDTHS: [f32; 3] = [78.0, 92.0, 82.0];
+/// 四列宽度（与 `TIMECODE_WIDTH` 一致）。
+const COL_WIDTHS: [f32; 4] = [78.0, 92.0, 82.0, 24.0];
 /// 控件高度（上下两行各 18）。
 const RECT_H: f32 = 36.0;
 /// 单行高度。
@@ -55,6 +55,8 @@ pub struct TimecodeData<'a> {
     pub quantize: QuantizePreset,
     /// 量化属于 PR（true）还是 AR（false）——显示 `PR 1/16` / `AR 1/4` 前缀。
     pub quantize_is_pr: bool,
+    /// 总输出电平显示值 `((level L,R), (hold L,R))`（第四栏竖表）。
+    pub master_meter: ((f32, f32), (f32, f32)),
 }
 
 /// 编辑中的文本缓冲（egui memory 暂存；非编辑态每帧刷新为当前值）。
@@ -128,7 +130,7 @@ fn text_edit<'a>(id: egui::Id, buf: &'a mut String, width: f32, height: f32) -> 
         .desired_width(width)
 }
 
-/// 传输栏时间码显示（三列居中）。返回控件矩形与编辑事件。
+/// 传输栏时间码显示（四列居中）。返回控件矩形与编辑事件。
 pub fn show_timecode_display(
     ui: &mut egui::Ui,
     data: TimecodeData<'_>,
@@ -366,6 +368,28 @@ pub fn show_timecode_display(
                 },
             );
         });
+    }
+
+    // ── 总输出电平表（列 3，跨两行；无刻度）──
+    {
+        let top = cell(3, 0);
+        let bottom = cell(3, 1);
+        let meter_rect = egui::Rect::from_min_max(
+            egui::pos2(top.min.x + 4.0, rect.min.y + 4.0),
+            egui::pos2(bottom.max.x - 4.0, rect.max.y - 4.0),
+        );
+        crate::mix::compact_meter(
+            ui.painter(),
+            meter_rect,
+            data.master_meter.0,
+            data.master_meter.1,
+        );
+        let resp = ui.interact(
+            meter_rect,
+            ui.id().with("tc_master_meter"),
+            egui::Sense::hover(),
+        );
+        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.timecode.master_meter"));
     }
 
     ui.data_mut(|d| d.insert_temp(buf_id, bufs));

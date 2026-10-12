@@ -1011,6 +1011,7 @@ hint.timecode.position: "播放位置：输入 小节.拍.tick 或绝对 tick，
 hint.timecode.seconds: "时间位置：输入秒数（如 0:01.500）跳转"
 hint.timecode.quantize: "量化：点击选择量化预设（作用于聚焦视图）"
 hint.timecode.keysig: "调式：点击设置根音/音阶"
+hint.timecode.master_meter: "总输出电平（左右声道）"
 hint.chord_indicator: "当前和弦（实时 MIDI 键优先，其次播放光标）"
 hint.recent_files: "最近打开的文件"
 hint.recent_opened_at: "上次打开 %{time}"

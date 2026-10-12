@@ -1016,6 +1016,7 @@ hint.timecode.position: "재생 위치: 마디.박.틱 또는 절대 틱 입력,
 hint.timecode.seconds: "시간 위치: 초 입력(예: 0:01.500)으로 탐색"
 hint.timecode.quantize: "퀀타이즈: 클릭해 프리셋 선택(포커스된 뷰에 적용)"
 hint.timecode.keysig: "조: 클릭해 근음/음계 설정"
+hint.timecode.master_meter: "마스터 출력 레벨(L/R)"
 hint.chord_indicator: "현재 코드(실시간 MIDI 키 우선, 다음 재생 헤드)"
 hint.recent_files: "최근 연 파일"
 hint.recent_opened_at: "마지막으로 연 시각 %{time}"
