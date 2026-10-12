@@ -130,6 +130,40 @@ fn text_edit<'a>(id: egui::Id, buf: &'a mut String, width: f32, height: f32) -> 
         .desired_width(width)
 }
 
+/// 与 `hover::hover_button` 同款四态着色，但文字超过 `max_w` 时用**负字距**
+/// 横向压缩（字高不变，只让整体变窄）以塞进窄格——用于较长的调式名
+/// （如 `Double Harmonic Major`、`Combination Diminished`）。
+fn fit_hover_text(ui: &mut egui::Ui, text: &str, max_w: f32) -> egui::Response {
+    let font = egui::FontId::proportional(crate::theme::TIMECODE_FONT);
+    let natural =
+        ui.painter()
+            .layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::PLACEHOLDER);
+    let w = natural.size().x;
+    let spacing = if w > max_w {
+        -((w - max_w) / text.chars().count().max(1) as f32)
+    } else {
+        0.0
+    };
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        text,
+        0.0,
+        egui::text::TextFormat {
+            font_id: font,
+            color: egui::Color32::PLACEHOLDER,
+            extra_letter_spacing: spacing,
+            ..Default::default()
+        },
+    );
+    let galley = ui.painter().layout_job(job);
+    let (rect, resp) = ui.allocate_exact_size(galley.size(), egui::Sense::click());
+    let color =
+        crate::widgets::hover::hover_button_color(&resp, crate::theme::accent_active(), false);
+    ui.painter()
+        .add(egui::epaint::TextShape::new(rect.min, galley, color));
+    resp
+}
+
 /// 传输栏时间码显示（四列居中）。返回控件矩形与编辑事件。
 pub fn show_timecode_display(
     ui: &mut egui::Ui,
@@ -354,13 +388,8 @@ pub fn show_timecode_display(
             ui.with_layout(
                 egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
                 |ui| {
-                    let resp = crate::widgets::hover::hover_button(
-                        ui,
-                        &text,
-                        egui::FontId::proportional(crate::theme::TIMECODE_FONT),
-                        crate::theme::accent_active(),
-                        false,
-                    );
+                    // 过长的调式名用负字距压缩到格宽内（留 4px 边距）。
+                    let resp = fit_hover_text(ui, &text, cell_rect.width() - 4.0);
                     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.timecode.keysig"));
                     if resp.clicked() {
                         events.push(TimecodeEvent::OpenScaleDialog);

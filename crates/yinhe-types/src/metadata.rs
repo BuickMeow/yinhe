@@ -144,11 +144,11 @@ impl ScaleType {
         Self::Ryukyu,
     ];
 
-    /// 英文名（时间码调式显示用，如 `C Natural Major`）。
+    /// 英文名（时间码调式显示用，如 `C Major`）。
     pub const fn english_name(&self) -> &'static str {
         match self {
-            Self::Major => "Natural Major",
-            Self::NaturalMinor => "Natural Minor",
+            Self::Major => "Major",
+            Self::NaturalMinor => "Minor",
             Self::HarmonicMinor => "Harmonic Minor",
             Self::MelodicMinor => "Melodic Minor",
             Self::HarmonicMajor => "Harmonic Major",
