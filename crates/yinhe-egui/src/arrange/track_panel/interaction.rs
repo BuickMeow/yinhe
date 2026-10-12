@@ -50,7 +50,6 @@ pub fn handle_interactions(
     if resp.double_clicked() && !dragging {
         if let Some(pos) = resp.interact_pointer_pos()
             && let Some(idx) = hit(pos)
-            && conductor_track_idx != Some(track_info[idx].index)
         {
             // 双击：选中该行（track_selected = {该行}，即成为主音轨）并打开 PR。
             let track_idx = track_info[idx].index;
@@ -352,9 +351,7 @@ pub fn handle_interactions(
             let new_idx = current.saturating_sub(1);
             let mut found = None;
             for i in (0..=new_idx as usize).rev() {
-                if track_visible.get(i).copied().unwrap_or(true)
-                    && conductor_track_idx != Some(i as u16)
-                {
+                if track_visible.get(i).copied().unwrap_or(true) {
                     found = Some(i as u16);
                     break;
                 }
@@ -366,11 +363,9 @@ pub fn handle_interactions(
             }
         } else if !track_info.is_empty() {
             let last = track_info.len() - 1;
-            if conductor_track_idx != Some(last as u16) {
-                track_selected.clear();
-                track_selected.insert(last as u16);
-                *selection_anchor = Some(last as u16);
-            }
+            track_selected.clear();
+            track_selected.insert(last as u16);
+            *selection_anchor = Some(last as u16);
         }
         *info_content = Some(crate::right_panel::InfoContent::Track);
     }
@@ -379,9 +374,7 @@ pub fn handle_interactions(
             let new_idx = (current as usize + 1).min(num_tracks - 1);
             let mut found = None;
             for i in new_idx..num_tracks {
-                if track_visible.get(i).copied().unwrap_or(true)
-                    && conductor_track_idx != Some(i as u16)
-                {
+                if track_visible.get(i).copied().unwrap_or(true) {
                     found = Some(i as u16);
                     break;
                 }
@@ -392,26 +385,11 @@ pub fn handle_interactions(
                 *selection_anchor = Some(target);
             }
         } else if !track_info.is_empty() {
-            // 从第一条非 Conductor 的可见轨开始（Conductor 不是 MIDI 轨）。
-            let start = conductor_track_idx.map(|c| c as usize + 1).unwrap_or(0);
-            if let Some(target) =
-                (start..num_tracks).find(|&i| track_visible.get(i).copied().unwrap_or(true))
-            {
-                track_selected.clear();
-                track_selected.insert(target as u16);
-                *selection_anchor = Some(target as u16);
-            }
+            track_selected.clear();
+            track_selected.insert(0);
+            *selection_anchor = Some(0);
         }
         *info_content = Some(crate::right_panel::InfoContent::Track);
-    }
-
-    // Conductor（Master）轨不是 MIDI 轨，绝不能进入 track_selected：
-    // 否则粘贴等操作会把它当作目标轨（历史 bug）。
-    if let Some(c) = conductor_track_idx {
-        track_selected.remove(&c);
-        if *selection_anchor == Some(c) {
-            *selection_anchor = None;
-        }
     }
 
     ui.data_mut(|d| d.insert_temp(drag_id, drag.clone()));
