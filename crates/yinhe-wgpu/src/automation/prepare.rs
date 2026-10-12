@@ -325,8 +325,9 @@ fn lane_set_hash(lanes: &[ArrAutomationLane]) -> u64 {
 
 /// 构造单条 AR lane 的临时 panel view 并烘焙曲线实例。
 ///
-/// y_offset 把曲线平移到所属子行顶部；`alpha` 为该 lane 的不透明度
-/// （展开用 LINE_ALPHA，折叠预览用 FOLDED_ALPHA）。
+/// y_offset 把曲线平移到所属子行顶部；`alpha` 为该 lane 的不透明度。
+/// 展开 lane（`translucent=false`）走 `build_data_lines`（完整折线 + 锚点）；
+/// 折叠预览（`translucent=true`）走 `build_folded_stems`（仅竖线）。
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 fn build_lane_data(
     out: &mut Vec<crate::vertex::CurveInstance>,
@@ -350,21 +351,35 @@ fn build_lane_data(
         value_scroll: 0.0,
         ..Default::default()
     };
-    data_lines::build_data_lines(
-        out,
-        width,
-        height,
-        &view,
-        &[l.lane],
-        l.max_val,
-        track_visible,
-        track_colors,
-        l.show_anchors,
-        skip_lane,
-        l.highlight_ticks,
-        alpha,
-        theme,
-    );
+    if l.translucent {
+        // 折叠预览：只画竖线（从基线到值），无横线/锚点。
+        data_lines::build_folded_stems(
+            out,
+            width,
+            &view,
+            l.lane,
+            l.max_val,
+            track_visible,
+            track_colors,
+            alpha,
+        );
+    } else {
+        data_lines::build_data_lines(
+            out,
+            width,
+            height,
+            &view,
+            &[l.lane],
+            l.max_val,
+            track_visible,
+            track_colors,
+            l.show_anchors,
+            skip_lane,
+            l.highlight_ticks,
+            alpha,
+            theme,
+        );
+    }
 }
 
 /// Prepare AR 展开自动化 lane 的曲线渲染（画在 AR 共享走带纹理上）。

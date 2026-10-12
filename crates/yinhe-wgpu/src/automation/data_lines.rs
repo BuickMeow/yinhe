@@ -168,6 +168,16 @@ fn collect_segments(
     segs
 }
 
+/// lane 的曲线 RGB 颜色（按轨道色；越界回退调色板）。
+fn lane_rgb(lane: &AutomationLane, track_color: &[[f32; 4]]) -> [f32; 3] {
+    let idx = lane.track as usize;
+    let c = track_color.get(idx).copied().unwrap_or_else(|| {
+        let p = TRACK_PALETTE[idx % TRACK_PALETTE.len()];
+        [p[0], p[1], p[2], 1.0]
+    });
+    [c[0], c[1], c[2]]
+}
+
 /// Build data line instances (layer 1, curve pipeline).
 ///
 /// 渲染每条 lane 的线段和锚点。被 ghost 覆盖的 lane 由调用方通过 `skip_lane`
@@ -215,11 +225,7 @@ pub fn build_data_lines(
         if !track_visible.get(trk_idx).copied().unwrap_or(true) {
             continue;
         }
-        let c = track_color.get(trk_idx).copied().unwrap_or_else(|| {
-            let p = TRACK_PALETTE[trk_idx % TRACK_PALETTE.len()];
-            [p[0], p[1], p[2], 1.0]
-        });
-        let color = [c[0], c[1], c[2]]; // 曲线用 RGB，alpha 由 CurveInstance 打包时固定
+        let color = lane_rgb(lane, track_color); // 曲线用 RGB，alpha 由 CurveInstance 打包时固定
 
         // 收集并绘制所有段
         let segs = collect_segments(
@@ -339,6 +345,65 @@ pub(crate) fn build_lane_instances(
             w,
             color,
         );
+    }
+}
+
+/// 折叠预览：只在每个事件 tick 处画一条从基线到值的竖线（无横线、无锚点），
+/// 类似 Cubase 的折叠自动化显示。
+///
+/// 基线按参数极性区分：有中心线的目标（Pan / Pitch Bend 等双极参数）从中心
+/// 默认值出发；其余单极参数（如 Volume、Expression）从底部（值 0）出发。
+/// 竖线采用叠加层（预乘 alpha + Max 混合）：同一轨道多条 lane 重叠不加深。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
+pub(crate) fn build_folded_stems(
+    out: &mut Vec<CurveInstance>,
+    w: f32,
+    view: &AutomationPanelView,
+    lane: &AutomationLane,
+    max_val: f32,
+    track_visible: &[bool],
+    track_color: &[[f32; 4]],
+    alpha: f32,
+) {
+    if max_val <= 0.0 {
+        return;
+    }
+    let trk_idx = lane.track as usize;
+    if !track_visible.get(trk_idx).copied().unwrap_or(true) {
+        return;
+    }
+
+    let ppu = view.base.pixels_per_tick;
+    let (tick_start, tick_end) = view.base.visible_tick_range(w);
+    let pad_start = tick_start.max(0.0) as u32;
+    let pad_end = tick_end.max(0.0) as u32;
+    let x_offset = view.base.left_panel_width - view.base.scroll_x;
+    let grid_left_x = view.base.left_panel_width;
+
+    let base_val = if lane.target.has_center_line() {
+        lane.target.default_value()
+    } else {
+        0.0
+    };
+    let y_base = view.value_to_y(base_val, max_val);
+    let color = lane_rgb(lane, track_color);
+    let line_color = [color[0], color[1], color[2], alpha];
+
+    for evt in lane.events_in_range(pad_start, pad_end) {
+        let x = (x_offset + evt.tick as f32 * ppu).clamp(grid_left_x, w);
+        let y = view.value_to_y(evt.value, max_val);
+        // 与基线几乎重合：零长竖线不画。
+        if (y - y_base).abs() < 0.5 {
+            continue;
+        }
+        out.push(CurveInstance::line(
+            x,
+            y_base,
+            x,
+            y,
+            LINE_THICKNESS,
+            line_color,
+        ));
     }
 }
 
@@ -655,5 +720,87 @@ mod tests {
             expanded.iter().any(|i| i.shape == 2),
             "展开时 Step 锚点应为方块（shape 2）"
         );
+    }
+
+    /// 折叠预览只画竖线；单极参数（如 Volume）从底部出发。
+    #[test]
+    fn folded_stems_unipolar_from_bottom() {
+        let view = panel_view();
+        let colors = [[1.0, 0.0, 0.0, 1.0]];
+        let lane = AutomationLane {
+            target: AutomationTarget::CC { controller: 7 },
+            track: 0,
+            events: vec![
+                AutomationEvent {
+                    id: 0,
+                    tick: 0,
+                    value: 0.25,
+                    shape: SegmentShape::Step,
+                },
+                AutomationEvent {
+                    id: 1,
+                    tick: 1000,
+                    value: 0.75,
+                    shape: SegmentShape::Step,
+                },
+            ],
+        };
+        let mut out = Vec::new();
+        build_folded_stems(
+            &mut out,
+            400.0,
+            &view,
+            &lane,
+            1.0,
+            &[true],
+            &colors,
+            FOLDED_ALPHA,
+        );
+        assert_eq!(out.len(), 2, "每个可见事件一条竖线");
+        for inst in &out {
+            assert_eq!(inst.shape, 0, "只画线段");
+            assert!((inst.x1 - inst.x2).abs() < f32::EPSILON, "必须是竖线");
+            assert!(
+                (inst.y1 - view.panel_height).abs() < 0.01,
+                "单极参数应从底部出发: {}",
+                inst.y1
+            );
+        }
+    }
+
+    /// 折叠预览：双极参数（如 Pan）从中心默认值出发。
+    #[test]
+    fn folded_stems_bipolar_from_center() {
+        let view = panel_view();
+        let colors = [[1.0, 0.0, 0.0, 1.0]];
+        let lane = AutomationLane {
+            target: AutomationTarget::CC { controller: 10 },
+            track: 0,
+            events: vec![AutomationEvent {
+                id: 0,
+                tick: 0,
+                value: 1.0,
+                shape: SegmentShape::Step,
+            }],
+        };
+        let mut out = Vec::new();
+        build_folded_stems(
+            &mut out,
+            400.0,
+            &view,
+            &lane,
+            1.0,
+            &[true],
+            &colors,
+            FOLDED_ALPHA,
+        );
+        assert_eq!(out.len(), 1);
+        let expected_base = view.panel_height * (1.0 - lane.target.default_value());
+        assert!(
+            (out[0].y1 - expected_base).abs() < 0.05,
+            "双极应从中心出发: y1={} 期望≈{expected_base}",
+            out[0].y1
+        );
+        assert!((out[0].y2 - 0.0).abs() < 0.01, "值 1.0 → 顶部");
     }
 }
