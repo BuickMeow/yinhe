@@ -67,10 +67,10 @@ impl InsertProcessor for ChannelGain {
         &[7, 11]
     }
 
-    fn apply_cc(&mut self, cc: u8, value: u8) {
+    fn apply_cc(&mut self, cc: u8, value: f32) {
         match cc {
-            7 => self.volume = value as f32 / 127.0,
-            11 => self.expression = value as f32 / 127.0,
+            7 => self.volume = value / 127.0,
+            11 => self.expression = value / 127.0,
             _ => return,
         }
         self.update_target();
@@ -98,7 +98,7 @@ mod tests {
     #[test]
     fn volume_scales_output() {
         let mut g = ChannelGain::new(48_000);
-        g.apply_cc(7, 64); // (64/127)^2
+        g.apply_cc(7, 64.0); // (64/127)^2
         let mut l = [1.0; 4096];
         let mut r = [1.0; 4096];
         g.process(&mut l, &mut r);
@@ -110,8 +110,8 @@ mod tests {
     #[test]
     fn expression_multiplies_volume() {
         let mut g = ChannelGain::new(48_000);
-        g.apply_cc(7, 127);
-        g.apply_cc(11, 64);
+        g.apply_cc(7, 127.0);
+        g.apply_cc(11, 64.0);
         let mut l = [1.0; 4096];
         let mut r = [1.0; 4096];
         g.process(&mut l, &mut r);

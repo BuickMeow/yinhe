@@ -56,7 +56,7 @@ impl BuiltinInsert {
             return;
         }
         for &(id, value) in &self.scratch {
-            let raw = (value.clamp(0.0, 1.0) * 127.0).round() as u8;
+            let raw = (value.clamp(0.0, 1.0) * 127.0) as f32;
             self.inner.apply_cc(id as u8, raw);
         }
         self.scratch.clear();
@@ -90,7 +90,7 @@ impl InsertProcessor for BuiltinInsert {
         self.inner.handled_ccs()
     }
 
-    fn apply_cc(&mut self, cc: u8, value: u8) {
+    fn apply_cc(&mut self, cc: u8, value: f32) {
         self.inner.apply_cc(cc, value);
     }
 

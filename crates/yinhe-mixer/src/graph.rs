@@ -48,8 +48,9 @@ pub trait InsertProcessor: Send {
         &[]
     }
 
-    /// 接收被接管的 CC 值（0..127）。仅对 `handled_ccs` 中的 CC 调用。
-    fn apply_cc(&mut self, _cc: u8, _value: u8) {}
+    /// 接收被接管的 CC 值（**0..127 的 f32**，不量化，便于平滑自动化）。
+    /// 仅对 `handled_ccs` 中的 CC 调用。
+    fn apply_cc(&mut self, _cc: u8, _value: f32) {}
 
     /// 回收时还原为具体类型（如插件处理器需要 deactivate 回实例）。
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;

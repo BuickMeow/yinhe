@@ -31,9 +31,10 @@ impl ChannelDspChain {
         }
     }
 
-    /// 应用一条通道级 CC。7/11 → Gain、10 → Pan、71/74 → Filter，
-    /// 各模块自行过滤无关 CC（调用方已按 `DSP_CHANNEL_CCS` 筛选）。
-    pub(crate) fn apply_cc(&mut self, cc: u8, value: u8) {
+    /// 应用一条通道级 CC（`value` 为 0..127 的 f32，不量化）。7/11 → Gain、
+    /// 10 → Pan、71/74 → Filter，各模块自行过滤无关 CC（调用方已按
+    /// `DSP_CHANNEL_CCS` 筛选）。
+    pub(crate) fn apply_cc(&mut self, cc: u8, value: f32) {
         self.gain.apply_cc(cc, value);
         self.pan.apply_cc(cc, value);
         self.filter.apply_cc(cc, value);
@@ -75,7 +76,7 @@ mod tests {
         base.process(&mut bl, &mut br);
 
         let mut chain = ChannelDspChain::new(48_000);
-        chain.apply_cc(7, 64);
+        chain.apply_cc(7, 64.0);
         let mut l = [1.0f32; 4096];
         let mut r = [1.0f32; 4096];
         chain.process(&mut l, &mut r);
@@ -99,7 +100,7 @@ mod tests {
         base.process(&mut bl, &mut br);
 
         let mut chain = ChannelDspChain::new(48_000);
-        chain.apply_cc(7, 64);
+        chain.apply_cc(7, 64.0);
         chain.reset();
         let mut l = [1.0f32; 4096];
         let mut r = [1.0f32; 4096];

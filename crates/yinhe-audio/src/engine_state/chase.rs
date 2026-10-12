@@ -78,7 +78,7 @@ impl AudioEngine {
             {
                 for &cc in yinhe_dsp::cc::DSP_CHANNEL_CCS {
                     if skip.cc_mask[ch as usize] & (1u128 << cc) == 0 {
-                        chain.apply_cc(cc, state.dsp_cc_value(cc));
+                        chain.apply_cc(cc, f32::from(state.dsp_cc_value(cc)));
                     }
                 }
             }

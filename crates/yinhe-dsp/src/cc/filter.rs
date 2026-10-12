@@ -15,8 +15,8 @@ use yinhe_mixer::InsertProcessor;
 use crate::dsp::biquad::{BiquadState, Q_BUTTERWORTH, low_pass_coeffs};
 
 /// CC74 → 截止频率（Hz），复刻 xsynth 的 FREQS 表。
-fn cutoff_from_cc74(value: u8) -> f32 {
-    let key = value as f32 + 64.0;
+fn cutoff_from_cc74(value: f32) -> f32 {
+    let key = value + 64.0;
     let mut freq = 2.0f32.powf((key - 69.0) / 12.0) * 440.0;
     if freq > 7000.0 {
         let mult = freq / 7000.0 - 1.0;
@@ -26,8 +26,8 @@ fn cutoff_from_cc74(value: u8) -> f32 {
 }
 
 /// CC71 → 滤波器 Q，复刻 xsynth（`10^((v-64)/48) × 1/√2`）。
-fn q_from_cc71(value: u8) -> f32 {
-    let db = (value as f32 - 64.0) / 2.4;
+fn q_from_cc71(value: f32) -> f32 {
+    let db = (value - 64.0) / 2.4;
     10.0f32.powf(db / 20.0) * Q_BUTTERWORTH
 }
 
@@ -92,14 +92,14 @@ impl InsertProcessor for ChannelFilter {
         &[71, 74]
     }
 
-    fn apply_cc(&mut self, cc: u8, value: u8) {
+    fn apply_cc(&mut self, cc: u8, value: f32) {
         match cc {
             74 => {
-                self.cutoff_hz = (value < 64).then(|| cutoff_from_cc74(value));
+                self.cutoff_hz = (value < 64.0).then(|| cutoff_from_cc74(value));
                 self.dirty = true;
             }
             71 => {
-                self.q = (value > 64).then(|| q_from_cc71(value));
+                self.q = (value > 64.0).then(|| q_from_cc71(value));
                 self.dirty = true;
             }
             _ => {}
@@ -128,7 +128,7 @@ mod tests {
     #[test]
     fn cc74_below_64_enables_filter() {
         let mut f = ChannelFilter::new(48_000);
-        f.apply_cc(74, 0); // key=64 → 约 329.6 Hz
+        f.apply_cc(74, 0.0); // key=64 → 约 329.6 Hz
         assert!(f.cutoff_hz.is_some());
         assert!((f.cutoff_hz.unwrap() - 329.63).abs() < 1.0);
     }
@@ -136,24 +136,24 @@ mod tests {
     #[test]
     fn cc74_at_or_above_64_bypasses() {
         let mut f = ChannelFilter::new(48_000);
-        f.apply_cc(74, 64);
+        f.apply_cc(74, 64.0);
         assert!(f.cutoff_hz.is_none());
     }
 
     #[test]
     fn cc71_sets_q() {
         let mut f = ChannelFilter::new(48_000);
-        f.apply_cc(71, 64);
+        f.apply_cc(71, 64.0);
         assert!(f.q.is_none());
-        f.apply_cc(71, 65);
+        f.apply_cc(71, 65.0);
         assert!((f.q.unwrap() - Q_BUTTERWORTH * 10f32.powf(1.0 / 48.0)).abs() < 1e-4);
     }
 
     #[test]
     fn filtered_output_stays_finite() {
         let mut f = ChannelFilter::new(48_000);
-        f.apply_cc(74, 0);
-        f.apply_cc(71, 127);
+        f.apply_cc(74, 0.0);
+        f.apply_cc(71, 127.0);
         let mut l = [1.0f32; 2048];
         let mut r = [1.0f32; 2048];
         f.process(&mut l, &mut r);

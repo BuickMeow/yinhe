@@ -60,9 +60,9 @@ impl InsertProcessor for ChannelPan {
         &[10]
     }
 
-    fn apply_cc(&mut self, cc: u8, value: u8) {
+    fn apply_cc(&mut self, cc: u8, value: f32) {
         if cc == 10 {
-            self.pan.set_target(value as f32 / 127.0, self.ramp_samples);
+            self.pan.set_target(value / 127.0, self.ramp_samples);
         }
     }
 
@@ -89,7 +89,7 @@ mod tests {
     #[test]
     fn cc127_nearly_silences_left() {
         let mut p = ChannelPan::new(48_000);
-        p.apply_cc(10, 127);
+        p.apply_cc(10, 127.0);
         let mut l = [1.0; 4096];
         let mut r = [1.0; 4096];
         p.process(&mut l, &mut r);

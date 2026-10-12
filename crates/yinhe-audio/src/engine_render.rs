@@ -26,14 +26,12 @@ impl AudioEngine {
     }
 }
 
-/// 提取原始 CC（号 + 值）；非 CC 事件返回 None。浮点 CC 取整回 7-bit（DSP/插件整数语义）。
-pub(crate) fn raw_cc(event: &AudioEvent) -> Option<(u8, u8)> {
+/// 提取原始 CC（号 + 值 f32，0..127）；非 CC 事件返回 None。
+pub(crate) fn raw_cc(event: &AudioEvent) -> Option<(u8, f32)> {
     match event {
-        AudioEvent::Cc { controller, value } => {
-            Some((*controller, value.round().clamp(0.0, 127.0) as u8))
-        }
+        AudioEvent::Cc { controller, value } => Some((*controller, *value)),
         AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(cc, value))) => {
-            Some((*cc, *value))
+            Some((*cc, f32::from(*value)))
         }
         _ => None,
     }
