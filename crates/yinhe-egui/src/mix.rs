@@ -27,11 +27,11 @@ use self::plugin_instance::PluginEntry;
 use crate::plugin_scan::ScanProgress;
 
 use crate::app::App;
+use crate::widgets::meter::{db_to_gain, gain_to_db};
 
 pub(crate) use instrument_rack::InstrumentRack;
 pub(crate) use param_panel::ParamPanel;
 pub(crate) use rack::MixerRack;
-pub(crate) use strip::compact_meter;
 
 /// 源通道总数（16 port × 16 通道）。
 const SOURCE_CHANNELS: usize = yinhe_mixer::CHANNEL_COUNT;
@@ -45,20 +45,6 @@ pub(crate) fn channel_label(ch: u8) -> String {
 /// 音频通道号 → 显示标签（0 → "Audio-01"）。
 pub(crate) fn audio_label(ch: u16) -> String {
     format!("Audio-{:02}", u32::from(ch) + 1)
-}
-
-/// 线性增益 → dB（0 以下按 -60 显示）。
-pub(crate) fn gain_to_db(g: f32) -> f32 {
-    if g <= 0.0001 { -60.0 } else { 20.0 * g.log10() }
-}
-
-/// dB → 线性增益（≤ -60 dB 视为静音）。
-pub(crate) fn db_to_gain(db: f32) -> f32 {
-    if db <= -59.9 {
-        0.0
-    } else {
-        10f32.powf(db / 20.0)
-    }
 }
 
 /// 电平表回落速度（dB / 秒）：行业惯用约 20 dB/s（PPM 弹道：瞬时起、匀速落）。

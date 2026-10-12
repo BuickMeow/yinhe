@@ -477,7 +477,7 @@ pub(crate) fn show(
                     egui::pos2(meter_right, row_rect.max.y - VEL_METER_MARGIN),
                 );
                 let (level, hold) = track_meters.get(idx).copied().unwrap_or((0.0, 0.0));
-                draw::velocity_meter(&painter, meter_rect, level, hold);
+                crate::widgets::meter::velocity_meter(&painter, meter_rect, level, hold);
             }
         } else {
             let font = render::compact_font(*row_height);

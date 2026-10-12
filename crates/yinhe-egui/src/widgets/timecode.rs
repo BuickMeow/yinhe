@@ -378,7 +378,7 @@ pub fn show_timecode_display(
             egui::pos2(top.min.x + 4.0, rect.min.y + 4.0),
             egui::pos2(bottom.max.x - 4.0, rect.max.y - 4.0),
         );
-        crate::mix::compact_meter(
+        crate::widgets::meter::compact_meter(
             ui.painter(),
             meter_rect,
             data.master_meter.0,

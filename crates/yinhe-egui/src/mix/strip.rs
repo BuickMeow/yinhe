@@ -21,7 +21,10 @@ use crate::widgets::knob::knob;
 
 use super::plugin_instance::PluginEntry;
 use super::rack::SlotRuntime;
-use super::{MixAction, channel_label, db_to_gain, gain_to_db};
+use super::{MixAction, channel_label};
+use crate::widgets::meter::{
+    DB_MAX, DB_MIN, METER_GAP, METER_W, SCALE_W, db_frac, db_to_gain, gain_to_db,
+};
 
 /// 通道条宽度（px）。
 pub(crate) const STRIP_WIDTH: f32 = 88.0;
@@ -57,21 +60,8 @@ const FADER_SLOT_W: f32 = 4.0;
 /// 推子手柄尺寸（px）。
 const FADER_HANDLE_W: f32 = 22.0;
 const FADER_HANDLE_H: f32 = 11.0;
-/// 电平表单条宽 + 条间距（px）。
-const METER_W: f32 = 6.0;
-const METER_GAP: f32 = 2.0;
-/// 电平表左侧 dB 数字刻度栏宽（px）。
-const SCALE_W: f32 = 20.0;
-/// 推子/电平表 dB 范围。
-const DB_MIN: f32 = -60.0;
-const DB_MAX: f32 = 6.0;
 /// 推子最小高度（px）。
 const FADER_MIN_H: f32 = 60.0;
-
-/// dB 值 → 纵向占比（0 = DB_MIN，1 = DB_MAX）。
-fn db_frac(db: f32) -> f32 {
-    ((db - DB_MIN) / (DB_MAX - DB_MIN)).clamp(0.0, 1.0)
-}
 
 /// 推子：线性增益 → 推子矩形内的 y 坐标（top = 最大 dB）。
 fn fader_y(gain: f32, top: f32, bottom: f32) -> f32 {
@@ -1158,7 +1148,7 @@ fn meter_fader(
         egui::vec2(group, height),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            meter(ui, level, hold, height);
+            crate::widgets::meter::level_meter(ui, level, hold, height);
             ui.add_space(6.0);
             fader(ui, gain, height, &mut on_gain);
         },
@@ -1226,138 +1216,6 @@ fn fader(ui: &mut egui::Ui, gain: f32, height: f32, mut on_gain: impl FnMut(f32)
         on_gain(1.0);
     }
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.fader"));
-}
-
-/// 电平表刻度：`(dB, 是否标注数字)`。行业惯用标注点。
-const METER_TICKS: &[(f32, bool)] = &[
-    (0.0, true),
-    (-6.0, true),
-    (-12.0, true),
-    (-18.0, false),
-    (-24.0, true),
-    (-36.0, false),
-    (-48.0, true),
-];
-
-/// 自绘电平表：左侧 dB 数字刻度栏 + L/R 双条（直角、加宽）+ 刻度 + 峰值保持线。
-/// dB 映射 -60..+6；>0dB 金色、≥0dBFS 红色顶格。
-fn meter(ui: &mut egui::Ui, level: (f32, f32), hold: (f32, f32), height: f32) {
-    let bars_w = METER_W * 2.0 + METER_GAP;
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(SCALE_W + bars_w, height), egui::Sense::hover());
-    let painter = ui.painter();
-    let bars = egui::Rect::from_min_size(
-        egui::pos2(rect.min.x + SCALE_W, rect.min.y),
-        egui::vec2(bars_w, height),
-    );
-    painter.rect_filled(bars, 0.0, crate::theme::track_bg());
-
-    // 刻度线 + 数字标注。
-    let font = egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT);
-    for &(db, labeled) in METER_TICKS {
-        let y = bars.max.y - db_frac(db) * bars.height();
-        painter.hline(
-            bars.x_range(),
-            y,
-            egui::Stroke::new(
-                1.0,
-                crate::theme::text_muted().gamma_multiply(if labeled { 0.7 } else { 0.35 }),
-            ),
-        );
-        if labeled {
-            painter.text(
-                egui::pos2(bars.min.x - 3.0, y),
-                egui::Align2::RIGHT_CENTER,
-                format!("{}", db as i32),
-                font.clone(),
-                crate::theme::text_secondary(),
-            );
-        }
-    }
-
-    // L/R 填充条。
-    for (i, &p) in [level.0, level.1].iter().enumerate() {
-        let x0 = bars.min.x + i as f32 * (METER_W + METER_GAP);
-        let bar = egui::Rect::from_min_size(
-            egui::pos2(x0, bars.min.y),
-            egui::vec2(METER_W, bars.height()),
-        );
-        let frac = db_frac(gain_to_db(p));
-        if frac > 0.0 {
-            let h = bar.height() * frac;
-            let fill = egui::Rect::from_min_max(egui::pos2(bar.min.x, bar.max.y - h), bar.max);
-            painter.rect_filled(fill, 0.0, meter_color(p));
-        }
-    }
-
-    // 峰值保持线（比当前电平高时显示）。
-    for (i, (&l, &h)) in [level.0, level.1]
-        .iter()
-        .zip([hold.0, hold.1].iter())
-        .enumerate()
-    {
-        if h <= l + 1e-4 {
-            continue;
-        }
-        let x0 = bars.min.x + i as f32 * (METER_W + METER_GAP);
-        let y = bars.max.y - db_frac(gain_to_db(h)) * bars.height();
-        painter.hline(
-            egui::Rangef::new(x0, x0 + METER_W),
-            y,
-            egui::Stroke::new(1.0, meter_color(h)),
-        );
-    }
-}
-
-/// 无刻度的窄版电平表（走带栏时间码用）：L/R 双条铺满给定矩形，带峰值保持线。
-/// 与 [`meter`] 共用 dB 映射与着色，但不画刻度栏。
-pub(crate) fn compact_meter(
-    painter: &egui::Painter,
-    rect: egui::Rect,
-    level: (f32, f32),
-    hold: (f32, f32),
-) {
-    painter.rect_filled(rect, 0.0, crate::theme::track_bg());
-    let bar_w = (rect.width() - METER_GAP) * 0.5;
-    for (i, &p) in [level.0, level.1].iter().enumerate() {
-        let x0 = rect.min.x + i as f32 * (bar_w + METER_GAP);
-        let frac = db_frac(gain_to_db(p));
-        if frac > 0.0 {
-            let h = rect.height() * frac;
-            let fill = egui::Rect::from_min_max(
-                egui::pos2(x0, rect.max.y - h),
-                egui::pos2(x0 + bar_w, rect.max.y),
-            );
-            painter.rect_filled(fill, 0.0, meter_color(p));
-        }
-    }
-    for (i, (&l, &h)) in [level.0, level.1]
-        .iter()
-        .zip([hold.0, hold.1].iter())
-        .enumerate()
-    {
-        if h <= l + 1e-4 {
-            continue;
-        }
-        let x0 = rect.min.x + i as f32 * (bar_w + METER_GAP);
-        let y = rect.max.y - db_frac(gain_to_db(h)) * rect.height();
-        painter.hline(
-            egui::Rangef::new(x0, x0 + bar_w),
-            y,
-            egui::Stroke::new(1.0, meter_color(h)),
-        );
-    }
-}
-
-/// 电平着色：≥0dBFS 红、> -6dB 金、其余强调色。
-fn meter_color(p: f32) -> egui::Color32 {
-    if p >= 1.0 {
-        crate::theme::danger_text()
-    } else if gain_to_db(p) > -6.0 {
-        crate::theme::warning_gold()
-    } else {
-        crate::theme::accent_active()
-    }
 }
 
 /// 发送面板（某源通道对各总线的发送量 / 推子前推子后）。
@@ -1446,7 +1304,7 @@ pub(crate) fn send_popup(
                                     let db = if val <= 0.0 {
                                         "-∞".to_string()
                                     } else {
-                                        format!("{:+.1} dB", crate::mix::gain_to_db(val))
+                                        format!("{:+.1} dB", gain_to_db(val))
                                     };
                                     ui.label(
                                         egui::RichText::new(db)
