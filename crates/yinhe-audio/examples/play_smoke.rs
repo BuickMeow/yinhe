@@ -6,7 +6,7 @@
 //!
 //! 用法：
 //! ```sh
-//! cargo run --release -p yinhe-audio --example play_smoke --features gpu
+//! cargo run --release -p yinhe-audio --example play_smoke
 //! YINHE_TEST_SFZ=/path/to.sfz cargo run ...   # 指定音色库（否则内置静音）
 //! ```
 

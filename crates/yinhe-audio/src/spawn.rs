@@ -799,7 +799,6 @@ pub(crate) fn spawn_worker(
     thread::Builder::new()
         .name("audio-worker".into())
         .spawn(move || {
-            #[cfg(feature = "gpu")]
             yinhe_synth::denormals::enable_flush_denormals();
             // 内部 pending 缓冲：处理某个命令时，try_recv 到的非同类型命令存这里。
             // 下次循环优先从 pending 取，避免饿死后续命令。
@@ -934,7 +933,6 @@ pub(crate) fn spawn_worker(
                         }
                         // GPU 路径的 key map 解析（重采样 SFZ，未命中缓存时 3-4s）
                         // 移到 worker：音频线程随后只做缓存命中 + 登记。
-                        #[cfg(feature = "gpu")]
                         if prefetch_keymaps {
                             let t_prefetch = std::time::Instant::now();
                             for path in &paths {
@@ -951,8 +949,6 @@ pub(crate) fn spawn_worker(
                                 t_prefetch.elapsed()
                             ));
                         }
-                        #[cfg(not(feature = "gpu"))]
-                        let _ = prefetch_keymaps;
                         if load_xsynth {
                             if let Ok(soundfonts) =
                                 crate::engine::AudioEngine::load_soundfont_paths(
@@ -1241,18 +1237,12 @@ fn negotiate_buffer_size(
     }
 }
 
-/// 合成后端可用性收敛：YinheCpu 尚未实现；无 gpu feature 时 GPU 后端不可用。
+/// 合成后端可用性收敛：YinheCpu 尚未实现时回退。
 /// 回退明确告警（不静默假装成功），renderer 只看到实际可用的后端。
 fn resolve_synth_engine(requested: SynthEngine) -> SynthEngine {
-    let resolved = if cfg!(feature = "gpu") {
-        requested.resolved()
-    } else {
-        SynthEngine::XSynthCpu
-    };
+    let resolved = requested.resolved();
     if resolved != requested {
-        tracing::warn!(
-            "合成后端 {requested:?} 当前不可用（未实现或未编译 gpu feature），回退 {resolved:?}"
-        );
+        tracing::warn!("合成后端 {requested:?} 当前不可用（未实现），回退 {resolved:?}");
     }
     resolved
 }
@@ -1388,7 +1378,7 @@ fn init_renderer(
     insert_return_tx: Sender<Vec<Box<dyn InsertProcessor>>>,
     instrument_return_tx: Sender<(u64, Box<dyn InstrumentProcessor>)>,
     bus_readings: Arc<Mutex<Vec<MeterReading>>>,
-    #[cfg(feature = "gpu")] synth_engine: SynthEngine,
+    synth_engine: SynthEngine,
     interpolation: Interpolation,
 ) -> Result<RendererStarted, String> {
     let (ring_producer, ring_consumer) = AudioRing::new(RING_CAPACITY).split();
@@ -1434,7 +1424,6 @@ fn init_renderer(
         callback_frames,
         insert_return_tx,
         instrument_return_tx,
-        #[cfg(feature = "gpu")]
         synth_engine,
         interpolation,
     )
@@ -1666,7 +1655,6 @@ pub fn spawn_cpal_audio(
         insert_return_tx,
         instrument_return_tx,
         meters.bus_readings(),
-        #[cfg(feature = "gpu")]
         synth_engine,
         interpolation,
     )?;

@@ -123,7 +123,6 @@ impl AudioEngine {
     fn setup_percussion(&mut self, model: &AudioModel) {
         // GPU 模式的鼓组/乐器模式在 `build_gpu_events` 的 seek 注入中处理；
         // yinhe CPU 后端经 `PercussionMode` 控制事件直接生效。
-        #[cfg(feature = "gpu")]
         {
             if self.cpu_synth.is_some() {
                 self.setup_percussion_cpu_synth(model);
@@ -171,7 +170,6 @@ impl AudioEngine {
 
     /// yinhe CPU 后端的鼓组/乐器模式注入（与 ChannelSet 路径同序：
     /// 先 GM 鼓通道，再模型 bank 声明，后者覆盖前者）。
-    #[cfg(feature = "gpu")]
     fn setup_percussion_cpu_synth(&mut self, model: &AudioModel) {
         let mut events: Vec<(u32, bool)> = Vec::new();
         for src_ch in (9..256).step_by(16) {

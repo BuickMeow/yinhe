@@ -3,10 +3,6 @@ name = "yinhe-audio"
 version = "0.1.0"
 edition = "2024"
 
-[features]
-default = []
-gpu = ["yinhe-synth"]
-
 [dependencies]
 xsynth-core = "0.4"
 xsynth-soundfonts = "0.4"
@@ -18,7 +14,7 @@ hound = "3.5"
 crossbeam-channel = "0.5"
 rayon = { workspace = true }
 tracing = { workspace = true }
-yinhe-synth = { path = "../yinhe-synth", optional = true }
+yinhe-synth = { path = "../yinhe-synth" }
 
 yinhe-types = { path = "../yinhe-types" }
 yinhe-core = { path = "../yinhe-core" }

@@ -13,7 +13,6 @@ use crate::channel_layout::ChannelLayout;
 /// GPU 事件流（NoteOn 自带 `end_sample`）→ 展开出独立 NoteOff，供 xsynth 对比
 /// 路径使用：xsynth 靠 NoteOff 事件释放，GpuSynth 靠 voice 到期自释，展开后
 /// 两条路径的释放时机在同一 sample 对齐。
-#[cfg(feature = "gpu")]
 fn expand_note_offs(events: &[yinhe_synth::SynthEvent]) -> Vec<yinhe_synth::SynthEvent> {
     let mut out = Vec::with_capacity(events.len() * 2);
     for e in events {
@@ -2110,7 +2109,6 @@ fn test_chase_query_matches_flattened_scan() {
 
 /// 诊断：cyber-night.mid 的 GPU 事件列表不变量（排序 / on-off 配对 / 同 sample 聚集）。
 /// 复现"大量短音符（3 tick 中位数）换算到 sample 域后的配对与时序"。
-#[cfg(feature = "gpu")]
 #[test]
 #[ignore = "需要本地 MIDI 文件"]
 fn diag_cyber_night_event_invariants() {
@@ -2199,7 +2197,6 @@ fn diag_cyber_night_event_invariants() {
 
 /// 诊断：cyber-night 的 GPU vs xsynth 渲染对比（分通道隔离）。
 /// 用户反馈：mute 掉 "NOTE 4"（MIDI ch3，16116 音符 / 50806 pitch bend）后正常。
-#[cfg(feature = "gpu")]
 #[test]
 #[ignore = "需要本地 MIDI + SoundFont"]
 fn diag_cyber_night_channel_isolation() {
@@ -2608,7 +2605,6 @@ fn diag_cyber_night_channel_isolation() {
 }
 
 /// 诊断：ch3 前 1 秒波形的 GPU vs xsynth 逐样本对比（定位首个差异点）。
-#[cfg(feature = "gpu")]
 #[test]
 #[ignore = "需要本地 MIDI + SoundFont"]
 fn diag_cyber_night_ch3_wave_dump() {
@@ -2943,7 +2939,6 @@ fn diag_cyber_night_ch3_wave_dump() {
 }
 
 /// 诊断：隔离渲染 ch3 高音刮奏（key 107-127 同时按/放），对比 GPU 与 xsynth。
-#[cfg(feature = "gpu")]
 #[test]
 #[ignore = "需要 SoundFont"]
 fn diag_high_cluster_isolated() {
@@ -3175,7 +3170,6 @@ fn diag_high_cluster_isolated() {
 }
 
 /// 诊断：单音符 + 密集 pitch bend（每 100 samples 一个）GPU vs xsynth 对比。
-#[cfg(feature = "gpu")]
 #[test]
 #[ignore = "需要 SoundFont"]
 fn diag_pitch_bend_dense() {
@@ -3360,7 +3354,6 @@ fn diag_pitch_bend_dense() {
 }
 
 /// 诊断：单个 PB 的最小复现（导出 wav 供频率分析）。
-#[cfg(feature = "gpu")]
 #[test]
 #[ignore = "需要 SoundFont"]
 fn diag_pitch_bend_single() {
@@ -3517,7 +3510,6 @@ fn diag_pitch_bend_single() {
 }
 
 /// 诊断：纯音符 + 单个 CC，找出让 GPU 崩坏的 CC。
-#[cfg(feature = "gpu")]
 #[test]
 #[ignore = "需要本地 MIDI + SoundFont"]
 fn diag_ch3_cc_bisect() {
@@ -3755,7 +3747,6 @@ fn diag_ch3_cc_bisect() {
 
 /// 诊断：走 AudioEngine::render（应用真实入口）与裸 GpuSynth 对比。
 /// 复现"测试找不到、应用出问题"——定位差异在 render 路径还是合成器。
-#[cfg(feature = "gpu")]
 #[test]
 #[ignore = "需要本地 MIDI + SoundFont"]
 fn diag_app_render_path() {
@@ -3893,7 +3884,6 @@ fn diag_app_render_path() {
 
 /// 诊断：同一模型下 CPU 路径（xsynth）vs GPU 路径（GpuSynth）经完整 render 链路的输出对比。
 /// 这是"只有 GPU 出问题"的直接验证。
-#[cfg(feature = "gpu")]
 #[test]
 #[ignore = "需要本地 MIDI + SoundFont"]
 fn diag_engine_cpu_vs_gpu() {
@@ -4135,7 +4125,6 @@ fn source_level_cc_not_routed_to_channel_dsp() {
 
 /// yinhe CPU 后端（CpuSynth）经完整引擎链路的冒烟：加载音色库 → Play →
 /// dispatch 投递事件 → 渲染出非零输出。
-#[cfg(feature = "gpu")]
 #[test]
 #[ignore = "需要本地 SoundFont"]
 fn yinhe_cpu_engine_render_smoke() {
@@ -4168,7 +4157,6 @@ fn yinhe_cpu_engine_render_smoke() {
 /// 三合成后端（xsynth CPU / yinhe CPU / yinhe GPU）的实时倍数与峰值 voice。
 ///
 /// 输出可直接用于选择黑乐谱的优化方向（并行/分页/流水线）。
-#[cfg(feature = "gpu")]
 #[test]
 #[ignore = "需要本地 MIDI + SoundFont"]
 fn prof_cyber_night_dense_section() {
@@ -4260,7 +4248,6 @@ fn prof_cyber_night_dense_section() {
         let t0 = Instant::now();
         while rendered < target {
             // GPU：事件表同步（renderer 的 run 循环职责；测试路径手动调用）
-            #[cfg(feature = "gpu")]
             if backend == 2 {
                 engine.sync_gpu_backend();
             }
@@ -4288,7 +4275,6 @@ fn prof_cyber_night_dense_section() {
 ///
 /// 每首曲子：三后端 baseline + CpuSynth 降级分解（全功能/无滤波/无采样/
 /// 仅包络）——差值即各阶段成本占比，用于决定块级重写的收益点。
-#[cfg(feature = "gpu")]
 #[test]
 #[ignore = "需要本地 MIDI + SoundFont"]
 fn prof_blackmidi_cost_breakdown() {
@@ -4353,13 +4339,11 @@ fn prof_blackmidi_cost_breakdown() {
             let mut rendered = 0u64;
             let mut peak_voice = 0u64;
             let mut max_chunk = 0.0f64;
-            #[cfg(feature = "gpu")]
             if backend == 2 {
                 engine.sync_gpu_backend(); // 事件表构建（计时外）
             }
             let t0 = Instant::now();
             while rendered < target {
-                #[cfg(feature = "gpu")]
                 if backend == 2 {
                     engine.sync_gpu_backend();
                 }
@@ -5015,8 +4999,7 @@ mod compare_tests {
 
 /// 诊断：Ouranos bar157 起的**引擎路径**断续检测（64 帧窗口能量 + 骤降）。
 /// 裸 GPU 基准复现不了（无静音窗/无骤降），差异疑在引擎路径（seek/chase/调度）。
-/// cargo test --release -p yinhe-audio --features gpu diag_ouranos_bar157_dropout -- --ignored --nocapture
-#[cfg(feature = "gpu")]
+/// cargo test --release -p yinhe-audio diag_ouranos_bar157_dropout -- --ignored --nocapture
 #[test]
 #[ignore = "需要本地 MIDI + SoundFont"]
 fn diag_ouranos_bar157_dropout() {
@@ -5131,13 +5114,13 @@ fn diag_ouranos_bar157_dropout() {
                 velocity,
                 end_sample,
             } = ev
+                && *sample >= seek_sample
+                && *sample < win_end
             {
-                if *sample >= seek_sample && *sample < win_end {
-                    w_on += 1;
-                    *wseen
-                        .entry((*sample, *channel, *key, *velocity, *end_sample))
-                        .or_insert(0) += 1;
-                }
+                w_on += 1;
+                *wseen
+                    .entry((*sample, *channel, *key, *velocity, *end_sample))
+                    .or_insert(0) += 1;
             }
         }
         let w_red: usize = wseen
@@ -5158,17 +5141,13 @@ fn diag_ouranos_bar157_dropout() {
                     sample,
                     channel,
                     event: yinhe_synth::ControlEvent::ProgramChange(p),
-                } => {
-                    if *sample >= seek_sample && *sample < win_end {
-                        *progs.entry((*channel, 0, *p)).or_insert(0) += 1;
-                    }
+                } if *sample >= seek_sample && *sample < win_end => {
+                    *progs.entry((*channel, 0, *p)).or_insert(0) += 1;
                 }
                 yinhe_synth::SynthEvent::NoteOn {
                     sample, channel, ..
-                } => {
-                    if *sample >= seek_sample && *sample < win_end {
-                        *ch_notes.entry(*channel).or_insert(0) += 1;
-                    }
+                } if *sample >= seek_sample && *sample < win_end => {
+                    *ch_notes.entry(*channel).or_insert(0) += 1;
                 }
                 _ => {}
             }

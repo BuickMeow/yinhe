@@ -7,7 +7,6 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender};
 use yinhe_dsp::dsp::limiter::VolumeLimiter;
 use yinhe_types::Interpolation;
-#[cfg(feature = "gpu")]
 use yinhe_types::SynthEngine;
 
 use crate::export::ExportJob;
@@ -30,12 +29,10 @@ const RENDER_CHUNK_FRAMES: usize = 512;
 /// GPU 合成器模式的渲染块（帧）：GPU 每块有一次 submit + voice 状态读回
 /// 的 CPU↔GPU 往返，块越小往返越频繁、音符多时抖动越明显。
 /// 4096 帧把往返次数降低 8 倍（代价：输出批延迟增大，GPU 模式可接受）。
-#[cfg(feature = "gpu")]
 const GPU_RENDER_CHUNK_FRAMES: usize = crate::engine::MAX_ENGINE_BLOCK_FRAMES;
 
 // 引擎任何路径的块长都不得超过 MAX_ENGINE_BLOCK_FRAMES（插件激活值依据）。
 const _: () = assert!(RENDER_CHUNK_FRAMES <= crate::engine::MAX_ENGINE_BLOCK_FRAMES);
-#[cfg(feature = "gpu")]
 const _: () = assert!(GPU_RENDER_CHUNK_FRAMES <= crate::engine::MAX_ENGINE_BLOCK_FRAMES);
 const TARGET_BUFFER_FRAMES: usize = 4096;
 /// 预览激活时的 ring 目标（帧数）：降低输出延迟（≈10ms @48k）。
@@ -168,7 +165,6 @@ struct AudioRenderer {
     instrument_return_tx: Sender<(u64, Box<dyn yinhe_mixer::InstrumentProcessor>)>,
     /// 合成后端（spawn 时已收敛：不可用后端回退 XSynthCpu）。
     /// `YinheGpu` 时加载音色库会初始化 GpuSynth，渲染走 engine.gpu_synth。
-    #[cfg(feature = "gpu")]
     synth_engine: SynthEngine,
     /// 采样插值方式（初始化 CpuSynth/GpuSynth 时写入）。
     interpolation: Interpolation,
@@ -201,18 +197,15 @@ impl AudioRenderer {
         callback_frames: usize,
         insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
         instrument_return_tx: Sender<(u64, Box<dyn yinhe_mixer::InstrumentProcessor>)>,
-        #[cfg(feature = "gpu")] synth_engine: SynthEngine,
+        synth_engine: SynthEngine,
         interpolation: Interpolation,
     ) -> Self {
         // GPU 模式用更大的渲染块（见 GPU_RENDER_CHUNK_FRAMES）。
-        #[cfg(feature = "gpu")]
         let render_chunk_frames = if synth_engine == SynthEngine::YinheGpu {
             GPU_RENDER_CHUNK_FRAMES
         } else {
             RENDER_CHUNK_FRAMES
         };
-        #[cfg(not(feature = "gpu"))]
-        let render_chunk_frames = RENDER_CHUNK_FRAMES;
         let sample_rate = engine.sample_rate;
         Self {
             engine,
@@ -236,7 +229,6 @@ impl AudioRenderer {
             preview_target_frames: PREVIEW_TARGET_FRAMES.max(callback_frames),
             insert_return_tx,
             instrument_return_tx,
-            #[cfg(feature = "gpu")]
             synth_engine,
             interpolation,
             play_timing: None,
@@ -245,14 +237,12 @@ impl AudioRenderer {
 
     /// 合成后端是否为 GPU 引擎（spawn 时已把不可用后端收敛掉，只可能是
     /// `XSynthCpu`、`YinheCpu` 或 `YinheGpu`）。块长/事件表同步等 GPU 专用路径用它。
-    #[cfg(feature = "gpu")]
     #[inline]
     fn gpu_engine(&self) -> bool {
         self.synth_engine == SynthEngine::YinheGpu
     }
 
     /// 合成后端是否为 yinhe CPU 引擎（key map 预解析等 yinhe 后端共用路径）。
-    #[cfg(feature = "gpu")]
     #[inline]
     fn yinhe_cpu_engine(&self) -> bool {
         self.synth_engine == SynthEngine::YinheCpu
@@ -297,7 +287,6 @@ impl AudioRenderer {
             }
             // GPU 后端统一同步：命令/worker 结果可能改变位置或使事件表失效，
             // 渲染（或导出）前消费一次 dirty 标志。CPU 模式下是 no-op。
-            #[cfg(feature = "gpu")]
             self.engine.sync_gpu_backend();
             if self.export.is_some() {
                 // 导出模式：不推 ring、不发布播放状态（UI 保持停止外观），
@@ -505,14 +494,13 @@ pub(crate) fn spawn_renderer(
     callback_frames: usize,
     insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
     instrument_return_tx: Sender<(u64, Box<dyn yinhe_mixer::InstrumentProcessor>)>,
-    #[cfg(feature = "gpu")] synth_engine: SynthEngine,
+    synth_engine: SynthEngine,
     interpolation: Interpolation,
 ) -> Result<JoinHandle<()>, std::io::Error> {
     thread::Builder::new()
         .name("audio-renderer".into())
         .spawn(move || {
             // 长尾衰减防非规格化拖慢（x86；Arm no-op）。
-            #[cfg(feature = "gpu")]
             yinhe_synth::denormals::enable_flush_denormals();
             let mut renderer = AudioRenderer::new(
                 engine,
@@ -530,7 +518,6 @@ pub(crate) fn spawn_renderer(
                 callback_frames,
                 insert_return_tx.clone(),
                 instrument_return_tx.clone(),
-                #[cfg(feature = "gpu")]
                 synth_engine,
                 interpolation,
             );
@@ -577,7 +564,6 @@ pub(crate) fn spawn_renderer(
 /// 计数条件必须与 `LoadedSoundFont` 分支的递减条件（GPU 引擎且 dense
 /// 槽位有效）严格一致：多计一个不递减的通道，`gpu_sf_pending` 永远归不了零，
 /// `mark_audio_ready` 不触发，启动页卡在"初始化音频"（CPU 模式曾因此无法进入）。
-#[cfg(feature = "gpu")]
 fn count_gpu_sf_pending(
     configs: &[(u8, Vec<String>)],
     layout: &crate::channel_layout::ChannelLayout,
@@ -652,7 +638,6 @@ mod tests {
 
     /// 回归：CPU 模式必须为 0（曾无条件计数，导致 gpu_sf_pending 永不归零、
     /// 音频就绪不触发、启动页卡死）；未激活通道与空配置不计数。
-    #[cfg(feature = "gpu")]
     #[test]
     fn gpu_sf_pending_only_counts_gpu_eligible_channels() {
         use crate::channel_layout::ChannelLayout;

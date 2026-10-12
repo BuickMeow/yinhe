@@ -45,7 +45,6 @@ impl AudioEngine {
             }
             // yinhe CPU 后端：把同一份快照转成后端控制事件应用
             //（skip 用 CpuSynth 自己的 [chase_base, cursor) 区间统计）。
-            #[cfg(feature = "gpu")]
             if self.cpu_synth.is_some() {
                 let skip = {
                     let backend_skip = self
@@ -101,7 +100,6 @@ impl AudioEngine {
             }
         }
         // GPU 后端：同一份快照应用到 GpuSynth（skip 翻译与 dense 索引见 apply_gpu_chase）。
-        #[cfg(feature = "gpu")]
         self.apply_gpu_chase(states);
     }
 }

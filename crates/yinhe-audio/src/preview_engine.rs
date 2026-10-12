@@ -14,7 +14,6 @@ use crate::channel::{ChannelState, ChaseSkip};
 use crate::channel_layout::ChannelLayout;
 use crate::channel_set::ChannelSet;
 
-#[cfg(feature = "gpu")]
 mod yinhe;
 
 /// 为同一 channel 的一组目标位置增量 chase：`targets` 必须升序，只扫一遍 cc_events。
@@ -405,7 +404,6 @@ impl XsynthPreview {
 /// 版音色库，省掉一份 GB 级内存，也保证试听与播放音色一致。
 pub(crate) enum PreviewEngine {
     XSynth(Box<XsynthPreview>),
-    #[cfg(feature = "gpu")]
     Yinhe(Box<yinhe::YinhePreview>),
 }
 
@@ -416,7 +414,6 @@ impl PreviewEngine {
         sample_rate: u32,
         interpolation: u32,
     ) -> Self {
-        #[cfg(feature = "gpu")]
         if synth_engine != yinhe_types::SynthEngine::XSynthCpu {
             return PreviewEngine::Yinhe(Box::new(yinhe::YinhePreview::new(
                 layout,
@@ -424,8 +421,6 @@ impl PreviewEngine {
                 interpolation,
             )));
         }
-        #[cfg(not(feature = "gpu"))]
-        let _ = (synth_engine, interpolation);
         PreviewEngine::XSynth(Box::new(XsynthPreview::new(layout, sample_rate)))
     }
 
@@ -437,14 +432,12 @@ impl PreviewEngine {
     ) {
         match self {
             PreviewEngine::XSynth(p) => p.set_channel_soundfonts(channel, soundfonts),
-            #[cfg(feature = "gpu")]
             PreviewEngine::Yinhe(_) => {}
         }
     }
 
     /// yinhe 后端：按 dense 槽位加载 key map（进程级缓存，与主引擎共享）。
     /// 非 yinhe 后端为 no-op。
-    #[cfg(feature = "gpu")]
     pub(crate) fn load_yinhe_soundfonts(
         &mut self,
         denses: &[u32],
@@ -459,7 +452,6 @@ impl PreviewEngine {
     pub(crate) fn preview_notes(&mut self, notes: Vec<PreviewNoteIn>, exclusive: bool) {
         match self {
             PreviewEngine::XSynth(p) => p.preview_notes(notes, exclusive),
-            #[cfg(feature = "gpu")]
             PreviewEngine::Yinhe(p) => p.preview_notes(notes, exclusive),
         }
     }
@@ -471,7 +463,6 @@ impl PreviewEngine {
     ) {
         match self {
             PreviewEngine::XSynth(p) => p.render_add(targets, frames),
-            #[cfg(feature = "gpu")]
             PreviewEngine::Yinhe(p) => p.render_add(targets, frames),
         }
     }
@@ -479,7 +470,6 @@ impl PreviewEngine {
     pub(crate) fn previewing(&self) -> bool {
         match self {
             PreviewEngine::XSynth(p) => p.previewing(),
-            #[cfg(feature = "gpu")]
             PreviewEngine::Yinhe(p) => p.previewing(),
         }
     }
@@ -487,7 +477,6 @@ impl PreviewEngine {
     pub(crate) fn stop_all(&mut self) {
         match self {
             PreviewEngine::XSynth(p) => p.stop_all(),
-            #[cfg(feature = "gpu")]
             PreviewEngine::Yinhe(p) => p.stop_all(),
         }
     }
@@ -495,7 +484,6 @@ impl PreviewEngine {
     pub(crate) fn stop_key(&mut self, key: u8) {
         match self {
             PreviewEngine::XSynth(p) => p.stop_key(key),
-            #[cfg(feature = "gpu")]
             PreviewEngine::Yinhe(p) => p.stop_key(key),
         }
     }

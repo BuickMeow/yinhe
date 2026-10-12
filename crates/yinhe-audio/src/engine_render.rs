@@ -11,18 +11,11 @@ mod render;
 const STEREO_CHANNELS: usize = 2;
 
 impl AudioEngine {
-    /// GPU 合成器是否启用（无 `gpu` feature 时恒 false）。
+    /// GPU 合成器是否启用。
     /// dispatch 用它决定是否把事件喂给 xsynth（GPU 自管事件列表）。
     #[inline]
     pub(crate) fn gpu_synth_active(&self) -> bool {
-        #[cfg(feature = "gpu")]
-        {
-            self.gpu_synth.is_some()
-        }
-        #[cfg(not(feature = "gpu"))]
-        {
-            false
-        }
+        self.gpu_synth.is_some()
     }
 }
 
@@ -388,7 +381,7 @@ mod tests {
 }
 
 /// GPU 合成器接入混音台的冒烟测试（需 `YINHE_TEST_SFZ` 指向 SFZ 文件）。
-#[cfg(all(test, feature = "gpu"))]
+#[cfg(test)]
 mod gpu_tests {
     use std::sync::Arc;
 

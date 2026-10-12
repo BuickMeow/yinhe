@@ -28,7 +28,6 @@ impl AudioEngine {
         // GPU 路径：GpuSynth 渲染到混音台 planar 通道缓冲，之后与 CPU 路径
         // 共用插件乐器 / 音频轨 / mixer.process（insert 效果器、总线、推子全部生效）。
         // 块长变化（导出用 1024、实时 512）：与 CPU 路径同一逻辑。
-        #[cfg(feature = "gpu")]
         if self.gpu_synth.is_some() {
             if self.mixer.frames() != frames {
                 let strips = self.dense_strip_params();
@@ -157,7 +156,6 @@ impl AudioEngine {
             let segment_frames = (next_sample - rendered_until_sample) as usize;
             if segment_frames > 0 {
                 // 本段的事件 sample 依据（dispatch 在下一轮循环开头使用）
-                #[cfg(feature = "gpu")]
                 {
                     self.segment_start_sample = rendered_until_sample;
                 }
@@ -172,7 +170,6 @@ impl AudioEngine {
         // block_end_sample，剩余段无事件）。
         let remaining = block_end_sample - rendered_until_sample;
         if remaining > 0 {
-            #[cfg(feature = "gpu")]
             {
                 self.segment_start_sample = rendered_until_sample;
             }
@@ -206,7 +203,6 @@ impl AudioEngine {
     /// 渲染一个 CPU 段到混音台通道缓冲：yinhe `CpuSynth` 存在时走它，
     /// 否则走 xsynth `ChannelSet`（GPU 模式不调用本方法）。
     fn render_cpu_segment(&mut self, offset_frames: usize, frames: usize) {
-        #[cfg(feature = "gpu")]
         if let Some(cs) = self.cpu_synth.as_mut() {
             cs.render_range(self.mixer.buffers_mut(), offset_frames, frames);
             return;

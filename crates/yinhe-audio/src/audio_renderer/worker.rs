@@ -6,7 +6,6 @@ use std::time::Instant;
 use crossbeam_channel::TryRecvError;
 
 use crate::spawn::WorkerResult;
-#[cfg(feature = "gpu")]
 use yinhe_types::SynthEngine;
 
 use super::{AudioRenderer, play_log};
@@ -25,7 +24,6 @@ impl AudioRenderer {
                     let anchor = self.consumer_position.load(Ordering::Acquire);
                     self.engine.apply_prepared_model(prepared, anchor);
                     // GPU 路径：模型变化 → 事件列表失效（run 循环统一重建）
-                    #[cfg(feature = "gpu")]
                     self.engine.invalidate_gpu_events();
                     self.clear_buffered_audio(anchor);
                     self.state.initialized.store(true, Ordering::Release);
@@ -51,7 +49,6 @@ impl AudioRenderer {
                     self.engine
                         .apply_notes_only(model, yin_model, audible_delta, duration_samples);
                     // GPU 路径：音符变化 → 事件列表失效（run 循环统一重建）
-                    #[cfg(feature = "gpu")]
                     self.engine.invalidate_gpu_events();
                     // 注意：这里**不**清 ring。UpdateNotes 不 seek、不改 cc_events，
                     // 已渲染的 ring 内容是"过去时"音频（新音符只影响未来 dispatch），
@@ -93,16 +90,7 @@ impl AudioRenderer {
                     // 预览引擎跟随主引擎：xsynth 后端共享 Arc（零拷贝）；yinhe 后端
                     // 在下方按 key map 路径加载（与主引擎共享同一份，不额外加载
                     // xsynth 版音色库）。
-                    let use_xsynth_preview = {
-                        #[cfg(feature = "gpu")]
-                        {
-                            !self.gpu_engine() && !self.yinhe_cpu_engine()
-                        }
-                        #[cfg(not(feature = "gpu"))]
-                        {
-                            true
-                        }
-                    };
+                    let use_xsynth_preview = !self.gpu_engine() && !self.yinhe_cpu_engine();
                     if use_xsynth_preview {
                         for channel in &channels {
                             self.engine
@@ -129,7 +117,6 @@ impl AudioRenderer {
                     }
                     // yinhe CPU 后端：首次加载音色库时创建 CpuSynth，逐通道登记
                     // key map（无样本上传阶段；引擎 dispatch 增量投递事件）。
-                    #[cfg(feature = "gpu")]
                     if self.synth_engine == SynthEngine::YinheCpu {
                         let sr = self.engine.sample_rate;
                         let cpu_paths: Vec<std::path::PathBuf> =
@@ -167,7 +154,6 @@ impl AudioRenderer {
                     }
                     // GPU 路径：首次加载音色库时初始化 GpuSynth，逐通道登记；
                     // 样本统一在最后一组完成时上传一次（避免逐通道全量重传）。
-                    #[cfg(feature = "gpu")]
                     if self.gpu_engine() {
                         let sr = self.engine.sample_rate;
                         let gpu_paths: Vec<std::path::PathBuf> =
@@ -232,7 +218,6 @@ impl AudioRenderer {
                                 synth.finish_soundfont_load();
                                 // 预热 GPU 缓冲（满 voice 容量 + 段长）：把首次分配
                                 // 从播放阶段（第一个音符触发扩容）移到加载阶段。
-                                #[cfg(feature = "gpu")]
                                 synth.prewarm(super::GPU_RENDER_CHUNK_FRAMES as u32);
                                 play_log(&format!(
                                     "[play] GPU 采样上传完成：{:?}",
@@ -242,12 +227,8 @@ impl AudioRenderer {
                             }
                         }
                     }
-                    // 非 GPU feature 下 paths 不使用，显式标记避免 warning
-                    #[cfg(not(feature = "gpu"))]
-                    let _ = paths;
                     // 主引擎/预览/GPU 都已切到新音色库：清理进程级 key map 缓存里
                     // 已无引用的旧库（含整库样本），避免切换音色库后内存只增不减。
-                    #[cfg(feature = "gpu")]
                     yinhe_synth::sweep_key_map_cache();
                     // 把释放的空闲页归还 OS（jemalloc/mimalloc）：否则 RSS 只涨不降，
                     // 表现为"清空音色库后内存不还"。

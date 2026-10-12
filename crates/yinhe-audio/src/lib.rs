@@ -9,7 +9,6 @@ pub mod channel_layout;
 mod channel_set;
 pub mod clap_insert;
 pub mod engine;
-#[cfg(feature = "gpu")]
 mod engine_gpu;
 mod engine_mixer;
 mod engine_preview;
@@ -23,7 +22,6 @@ pub mod soundfont;
 pub mod spawn;
 
 // GPU 合成器从 yinhe-synth re-export
-#[cfg(feature = "gpu")]
 pub use yinhe_synth as synth;
 pub use yinhe_synth::DEFAULT_MAX_VOICES;
 

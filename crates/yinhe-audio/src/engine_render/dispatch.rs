@@ -15,7 +15,6 @@ use crate::engine::AudioEngine;
 /// - 否则 → xsynth `ChannelSet`。
 ///
 /// 事件 sample 取 `segment_start_sample`（每段渲染前由 render 循环更新）。
-#[cfg(feature = "gpu")]
 macro_rules! route_cpu_event {
     ($engine:ident, $dense:expr, $event:expr) => {{
         if $engine.gpu_synth.is_some() {
@@ -70,20 +69,6 @@ macro_rules! route_cpu_event {
     }};
 }
 
-#[cfg(not(feature = "gpu"))]
-macro_rules! route_cpu_event {
-    ($engine:ident, $dense:expr, $event:expr) => {{
-        for ev in $crate::engine_render::xsynth_events(&$event).as_slice() {
-            $engine
-                .channel_set
-                .send_event(xsynth_core::channel_group::SynthEvent::Channel(
-                    $dense,
-                    xsynth_core::channel::ChannelEvent::Audio(*ev),
-                ));
-        }
-    }};
-}
-
 use super::{MidiMessages, event_to_midi, raw_cc};
 
 impl AudioEngine {
@@ -91,7 +76,6 @@ impl AudioEngine {
     /// CPU 路径在分段渲染循环里逐段 dispatch；GPU 由合成器自管音符/CC，
     /// 这里只需把插件事件推完（`dispatch_and_find_next` 内部在 GPU 模式下
     /// 跳过 xsynth 发送）。
-    #[cfg(feature = "gpu")]
     pub(super) fn dispatch_block_events(&mut self, block_end_tick: u32) {
         let mut t = self.current_tick;
         while t < block_end_tick {

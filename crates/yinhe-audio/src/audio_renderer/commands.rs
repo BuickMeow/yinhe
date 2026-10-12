@@ -156,7 +156,6 @@ impl AudioRenderer {
                 // 结果逐个应用时不再清，避免频繁打断输出。
                 let anchor = self.consumer_position.load(Ordering::Acquire);
                 self.clear_buffered_audio(anchor);
-                #[cfg(feature = "gpu")]
                 {
                     self.gpu_sf_pending = super::count_gpu_sf_pending(
                         &configs,
@@ -166,10 +165,7 @@ impl AudioRenderer {
                 }
                 // yinhe 后端（GPU 或 CPU）都在 worker 预热 key map 解析缓存；
                 // xsynth 后端不需要（自己的 GLOBAL_SF_CACHE 在 worker 里加载）。
-                #[cfg(feature = "gpu")]
                 let prefetch_keymaps = self.gpu_engine() || self.yinhe_cpu_engine();
-                #[cfg(not(feature = "gpu"))]
-                let prefetch_keymaps = false;
                 // 按音色库集合分组：相同 paths 的通道只加载一次（worker 一次往返 +
                 // key map Arc 跨通道共享），避免 20 个通道重复加载同一音色库。
                 for (channels, paths) in super::group_sf_configs(&configs) {
@@ -358,7 +354,6 @@ impl AudioRenderer {
         // GPU 路径：事件列表按新 skip mask 重建（mute/solo 即时生效，
         // 不再需要重启引擎）；位置不移动（与 CPU 路径第 4 层语义一致）。
         // 事件重建 + seek 由 run 循环消费 dirty 标志时统一执行。
-        #[cfg(feature = "gpu")]
         if self.engine.gpu_synth.is_some() && self.engine.model_loaded() {
             self.engine.invalidate_gpu_events();
             let anchor = self.consumer_position.load(Ordering::Acquire);

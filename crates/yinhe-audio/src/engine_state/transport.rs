@@ -80,7 +80,6 @@ impl AudioEngine {
                 )));
         }
         // yinhe CPU 后端：清 voice/通道状态 + cursor 定位到 seek 点
-        #[cfg(feature = "gpu")]
         {
             if let Some(cs) = self.cpu_synth.as_mut() {
                 cs.seek(sample);
@@ -147,7 +146,6 @@ impl AudioEngine {
         // 渲染短暂静音 —— 比 renderer 线程同步阻塞几十万次 ChannelState::apply 更好。
 
         // GPU 后端位置跳变：置位同步标志，渲染线程渲染前统一重建事件表 + seek。
-        #[cfg(feature = "gpu")]
         {
             self.gpu_backend_dirty = true;
         }

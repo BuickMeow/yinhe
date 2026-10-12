@@ -31,9 +31,7 @@ pub(crate) const ENGINE_BLOCK_FRAMES: usize = 512;
 /// 引擎任何路径（实时/导出）的块长都不得超过该值。
 pub const MAX_ENGINE_BLOCK_FRAMES: usize = 4096;
 
-/// yinhe-synth CPU 后端槽位（`gpu` feature 下 yinhe-synth 参与构建；
-/// 后端选择由 `SynthEngine` 在 spawn 时决定）。
-#[cfg(feature = "gpu")]
+/// yinhe-synth CPU 后端槽位（后端选择由 `SynthEngine` 在 spawn 时决定）。
 pub(crate) type CpuSynthSlot = Option<yinhe_synth::CpuSynth>;
 
 /// Core MIDI synthesis engine.  Owned by the renderer thread.
@@ -150,23 +148,18 @@ pub(crate) struct AudioEngine {
     pub(crate) preview: Option<crate::preview_engine::PreviewEngine>,
 
     /// GPU 合成器 — 启用后渲染走 GpuSynth 而非 xsynth
-    #[cfg(feature = "gpu")]
     pub(crate) gpu_synth: Option<yinhe_synth::GpuSynth>,
     /// yinhe-synth CPU 合成器 — 启用后渲染走 CpuSynth 而非 xsynth。
     /// 与 GPU 后端互斥；两者都未创建时走 xsynth ChannelSet。
-    #[cfg(feature = "gpu")]
     pub(crate) cpu_synth: CpuSynthSlot,
     /// 当前 dispatch 段起点的绝对 sample：CpuSynth 的事件按 sample 生效，
     /// dispatch 用它作为事件的 sample 依据（每段渲染前由 render 循环更新）。
-    #[cfg(feature = "gpu")]
     pub(crate) segment_start_sample: u64,
     /// GPU 后端需要与引擎状态重新同步（`seek_to` 位置跳变或事件表失效时置位）。
     /// 渲染线程每轮渲染前由 `sync_gpu_backend` 消费一次，幂等；
     /// 取代过去散落在 renderer 命令处理点上的显式 `sync_gpu_synth_events` 调用。
-    #[cfg(feature = "gpu")]
     pub(crate) gpu_backend_dirty: bool,
     /// GPU 通道超限（`midi_compacted > MAX_CHANNELS`）告警只报一次，避免刷屏。
-    #[cfg(feature = "gpu")]
     pub(crate) gpu_overflow_warned: bool,
 }
 
@@ -263,15 +256,10 @@ impl AudioEngine {
                 chase_generation: 0,
                 plugin_previews: Vec::new(),
                 preview: None,
-                #[cfg(feature = "gpu")]
                 gpu_synth: None,
-                #[cfg(feature = "gpu")]
                 cpu_synth: None,
-                #[cfg(feature = "gpu")]
                 segment_start_sample: 0,
-                #[cfg(feature = "gpu")]
                 gpu_backend_dirty: true,
-                #[cfg(feature = "gpu")]
                 gpu_overflow_warned: false,
             }
         })
@@ -380,7 +368,6 @@ impl AudioEngine {
     /// 当前活跃 voice 数（当前合成后端）。
     /// 导出尾音判定用它（`export.rs`）：后端切换后语义保持不变。
     pub(crate) fn voice_count(&self) -> u64 {
-        #[cfg(feature = "gpu")]
         {
             if let Some(synth) = &self.gpu_synth {
                 return synth.voice_count() as u64;
@@ -408,14 +395,7 @@ impl AudioEngine {
     /// yinhe-synth CPU 后端是否启用（`CpuSynth`）。
     #[inline]
     pub(crate) fn yinhe_cpu_active(&self) -> bool {
-        #[cfg(feature = "gpu")]
-        {
-            self.cpu_synth.is_some()
-        }
-        #[cfg(not(feature = "gpu"))]
-        {
-            false
-        }
+        self.cpu_synth.is_some()
     }
 
     pub(crate) fn model_loaded(&self) -> bool {
@@ -433,7 +413,6 @@ impl AudioEngine {
     /// 创建晚于命令，worker 创建后会补应用本字段。
     pub(crate) fn set_max_voices(&mut self, max: Option<usize>) {
         self.max_voices = max.unwrap_or(crate::DEFAULT_MAX_VOICES);
-        #[cfg(feature = "gpu")]
         {
             if let Some(cs) = self.cpu_synth.as_mut() {
                 cs.set_max_voices(self.max_voices);
@@ -460,7 +439,6 @@ impl AudioEngine {
                 ChannelConfigEvent::SetLayerCount(count),
             )));
         // yinhe 后端（GPU/CPU）各自的 per-key layer 语义（对齐 xsynth）
-        #[cfg(feature = "gpu")]
         {
             if let Some(cs) = self.cpu_synth.as_mut() {
                 cs.set_layer_count(count);

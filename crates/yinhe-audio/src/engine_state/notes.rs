@@ -75,15 +75,11 @@ impl AudioEngine {
         }
         // GPU 模式：非插件音符的复活由事件表在 seek_pos 重建时完成，
         // 这里不写 CPU 后端、也不入 active_notes（GPU 的 NoteOff 来自事件表）。
-        #[cfg(feature = "gpu")]
         if self.gpu_synth.is_some() {
             return;
         }
-        #[cfg(feature = "gpu")]
         let sample = self.sample_position;
-        #[cfg(feature = "gpu")]
         let end_sample = self.tick_to_sample(n.end_tick);
-        #[cfg(feature = "gpu")]
         if let Some(cs) = self.cpu_synth.as_mut() {
             cs.send_event(yinhe_synth::SynthEvent::NoteOn {
                 sample,
@@ -101,14 +97,6 @@ impl AudioEngine {
                 }),
             ));
         }
-        #[cfg(not(feature = "gpu"))]
-        self.channel_set.send_event(SynthEvent::Channel(
-            dense,
-            ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
-                key: key as u8,
-                vel: n.velocity,
-            }),
-        ));
         self.active_notes.push(std::cmp::Reverse(ActiveNote {
             key: key as u8,
             dense,
@@ -139,9 +127,7 @@ impl AudioEngine {
                     });
                 }
             } else if an.dense != u32::MAX && !self.gpu_synth_active() {
-                #[cfg(feature = "gpu")]
                 let sample = self.sample_position;
-                #[cfg(feature = "gpu")]
                 if let Some(cs) = self.cpu_synth.as_mut() {
                     cs.send_event(yinhe_synth::SynthEvent::NoteOff {
                         sample,
@@ -149,13 +135,6 @@ impl AudioEngine {
                         key: an.key,
                     });
                 } else {
-                    self.channel_set.send_event(SynthEvent::Channel(
-                        an.dense,
-                        ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: an.key }),
-                    ));
-                }
-                #[cfg(not(feature = "gpu"))]
-                {
                     self.channel_set.send_event(SynthEvent::Channel(
                         an.dense,
                         ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: an.key }),
