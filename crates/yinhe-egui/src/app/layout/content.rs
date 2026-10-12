@@ -107,6 +107,7 @@ impl App {
                     &mut needs_audio_notify,
                     sel_hint.as_ref(),
                     &mut automation_picker_req,
+                    &self.mix.track_display,
                 );
                 if request_pianoroll {
                     crate::chrome::mode_bar::set_pianoroll_visible(

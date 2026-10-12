@@ -46,3 +46,38 @@ pub fn draw_inline_button(
 
     resp
 }
+
+/// 每轨力度表（向下单条）：自顶边起向下填充，`level`/`hold` 为归一化力度 0..1。
+/// 与电平表（向上、L/R 双条）以方向区分；仅播放时非零。
+pub fn velocity_meter(painter: &egui::Painter, rect: egui::Rect, level: f32, hold: f32) {
+    painter.rect_filled(rect, 0.0, crate::theme::track_bg());
+    let frac = level.clamp(0.0, 1.0);
+    if frac > 0.0 {
+        let h = rect.height() * frac;
+        painter.rect_filled(
+            egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), h)),
+            0.0,
+            velocity_color(level),
+        );
+    }
+    let hf = hold.clamp(0.0, 1.0);
+    if hf > frac + 1e-4 {
+        let y = rect.min.y + rect.height() * hf;
+        painter.hline(
+            rect.x_range(),
+            y,
+            egui::Stroke::new(1.0, velocity_color(hold)),
+        );
+    }
+}
+
+/// 力度着色：接近满力度红、>0.75 金、其余强调色。
+fn velocity_color(v: f32) -> egui::Color32 {
+    if v >= 0.96 {
+        crate::theme::danger_text()
+    } else if v > 0.75 {
+        crate::theme::warning_gold()
+    } else {
+        crate::theme::accent_active()
+    }
+}

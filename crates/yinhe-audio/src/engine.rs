@@ -1,6 +1,7 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use xsynth_core::channel::ChannelInitOptions;
 use xsynth_core::channel_group::{ChannelGroupConfig, ParallelismOptions, SynthFormat};
@@ -104,6 +105,16 @@ pub(crate) struct AudioEngine {
     /// NoteOff 检测从 O(V) retain 全扫降到 O(ended × log V) 逐个 pop。
     pub(crate) active_notes: BinaryHeap<Reverse<ActiveNote>>,
     pub(crate) ended_notes: Vec<ActiveNote>,
+    /// 力度表（每轨，仅播放时）：发声音符按 `end_tick` 排队的记账堆。
+    /// 与 `active_notes` **独立**——GPU 模式下普通音符不入 `active_notes`，
+    /// 但本堆在 dispatch 的音符循环里对**所有后端**入队，故各后端一致。
+    pub(crate) meter_notes: BinaryHeap<Reverse<(u32, u16, u8)>>,
+    /// 每轨发声音符力度直方图（`[vel] = 计数`）。
+    pub(crate) track_vel_hist: Vec<[u16; 128]>,
+    /// 每轨当前发声音符最大力度（0 = 无）。
+    pub(crate) track_vel_max: Vec<u8>,
+    /// 每轨力度表读数端（归一化 0..1）：渲染线程写、UI 读。句柄持有 Arc 克隆。
+    pub(crate) track_levels: Arc<Mutex<Vec<f32>>>,
     pub(crate) model: Option<AudioModel>,
     pub(crate) skip_track: Vec<bool>,
     /// 已解码音频素材（uuid → PCM + 峰值）。由 UI 后台解码后经
@@ -238,6 +249,10 @@ impl AudioEngine {
                 dispatched_skip: ChaseSkip::default(),
                 active_notes: BinaryHeap::new(),
                 ended_notes: Vec::new(),
+                meter_notes: BinaryHeap::new(),
+                track_vel_hist: Vec::new(),
+                track_vel_max: Vec::new(),
+                track_levels: Arc::new(Mutex::new(Vec::new())),
                 model: None,
                 skip_track: Vec::new(),
                 audio_sources: std::collections::HashMap::new(),
@@ -296,6 +311,66 @@ impl AudioEngine {
 
     pub(crate) fn playing(&self) -> bool {
         self.playing
+    }
+
+    /// 每轨力度表共享读数端（句柄 clone 用）。
+    pub(crate) fn track_levels(&self) -> Arc<Mutex<Vec<f32>>> {
+        Arc::clone(&self.track_levels)
+    }
+
+    /// 音符收音记账：出直方图，必要时重算该轨最大力度。
+    pub(crate) fn track_vel_off(&mut self, track: u16, velocity: u8) {
+        let t = track as usize;
+        if t >= self.track_vel_hist.len() {
+            return;
+        }
+        let v = (velocity & 0x7f) as usize;
+        let h = &mut self.track_vel_hist[t];
+        if h[v] > 0 {
+            h[v] -= 1;
+        }
+        if self.track_vel_max[t] == velocity && h[v] == 0 {
+            self.track_vel_max[t] = h.iter().rposition(|&c| c > 0).unwrap_or(0) as u8;
+        }
+    }
+
+    /// 清空力度表记账（seek / 模型重载），保留当前轨道数。
+    pub(crate) fn clear_track_vel(&mut self) {
+        self.meter_notes.clear();
+        for h in &mut self.track_vel_hist {
+            h.fill(0);
+        }
+        self.track_vel_max.fill(0);
+    }
+
+    /// 按模型轨道数重置力度表记账（尺寸变化时重建，否则清零）。
+    pub(crate) fn reset_track_vel(&mut self, tracks: usize) {
+        if self.track_vel_hist.len() != tracks {
+            self.track_vel_hist = vec![[0u16; 128]; tracks];
+            self.track_vel_max = vec![0u8; tracks];
+            self.meter_notes.clear();
+        } else {
+            self.clear_track_vel();
+        }
+    }
+
+    /// 发布每轨力度表读数（渲染线程每块调用；未播放或被 mute 的轨 → 0）。
+    pub(crate) fn publish_track_levels(&self) {
+        let Ok(mut g) = self.track_levels.lock() else {
+            return;
+        };
+        let n = self.track_vel_max.len();
+        if g.len() != n {
+            g.resize(n, 0.0);
+        }
+        for (i, slot) in g.iter_mut().enumerate() {
+            let muted = self.skip_track.get(i).copied().unwrap_or(false);
+            *slot = if self.playing && !muted {
+                self.track_vel_max[i] as f32 / 127.0
+            } else {
+                0.0
+            };
+        }
     }
 
     pub(crate) fn duration_samples(&self) -> u64 {

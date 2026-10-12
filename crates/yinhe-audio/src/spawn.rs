@@ -277,6 +277,8 @@ struct MixerMeters {
     master: MeterReading,
     /// 总线读数端（动态：增删总线由渲染线程更新此槽）。
     buses: Arc<Mutex<Vec<MeterReading>>>,
+    /// 每轨力度表读数端（归一化 0..1，渲染线程写、UI 读）。
+    tracks: Arc<Mutex<Vec<f32>>>,
 }
 
 impl MixerMeters {
@@ -293,6 +295,7 @@ impl MixerMeters {
                     .filter_map(|i| engine.mixer.bus_meter_reading(i))
                     .collect(),
             )),
+            tracks: engine.track_levels(),
         }
     }
 
@@ -323,6 +326,15 @@ impl MixerMeters {
     /// 读主输出电平。
     fn master_read(&self) -> (f32, f32) {
         self.master.read()
+    }
+
+    /// 读某轨力度表读数（归一化 0..1；不存在返回 0）。
+    fn track_read(&self, track: usize) -> f32 {
+        self.tracks
+            .lock()
+            .ok()
+            .and_then(|g| g.get(track).copied())
+            .unwrap_or(0.0)
     }
 }
 
@@ -550,6 +562,11 @@ impl AudioHandle {
     /// 读主输出电平。
     pub fn master_meter_read(&self) -> (f32, f32) {
         self.meters.master_read()
+    }
+
+    /// 读某轨力度表读数（归一化 0..1，仅播放时非零；不存在返回 0）。
+    pub fn track_meter_read(&self, track: usize) -> f32 {
+        self.meters.track_read(track)
     }
 
     /// 取回渲染线程退回的 insert 处理器（每帧轮询；插件 deactivate 在 UI 线程做）。

@@ -93,6 +93,39 @@ fn make_model_with_notes(notes: Vec<(u8, u32, u32, u8, u8)>) -> YinModel {
     model
 }
 
+/// 每轨力度表：NoteOn 后该轨有值，NoteOff 后回落，停止播放发布 0。
+/// 力度表记账独立于后端（GPU 模式普通音符不入 active_notes）——这里用最轻的
+/// dispatch 路径直接验证记账/回落/发布三段。
+#[test]
+fn track_velocity_meter_tracks_active_and_releases() {
+    let model = make_model_with_notes(vec![(60, 0, 480, 100, 0)]);
+    let model = Arc::new(model);
+    let mask = vec![true; 16];
+    let mut engine = AudioEngine::new(48000, ChannelLayout::from_mask(mask));
+    engine.load_model(&model);
+    engine.playing = true;
+
+    assert_eq!(engine.track_vel_max.len(), 1, "一轨一个力度表槽");
+
+    // dispatch NoteOn（start_tick=0 ≤ tick=0）→ 该轨力度 = 100。
+    engine.dispatch_and_find_next(0, 240);
+    assert_eq!(engine.track_vel_max[0], 100);
+    engine.publish_track_levels();
+    let lv = engine.track_levels.lock().unwrap()[0];
+    assert!((lv - 100.0 / 127.0).abs() < 1e-6);
+
+    // 推进过 end_tick=480 → 收音回落 0。
+    engine.dispatch_and_find_next(960, 1200);
+    assert_eq!(engine.track_vel_max[0], 0, "音符结束后回落");
+    engine.publish_track_levels();
+    assert_eq!(engine.track_levels.lock().unwrap()[0], 0.0);
+
+    // 停止播放 → 发布 0（仅播放时非零）。
+    engine.playing = false;
+    engine.publish_track_levels();
+    assert_eq!(engine.track_levels.lock().unwrap()[0], 0.0);
+}
+
 #[test]
 fn test_sorted_cc_ordering() {
     let mut cc = [
