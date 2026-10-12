@@ -56,12 +56,13 @@ impl ChannelLayout {
         let mut ch_active = [false; 256];
         let mut audio_channels: Vec<u16> = Vec::new();
         for track in model.tracks.iter() {
-            if track.kind != TrackKind::Audio {
+            if track.kind == TrackKind::Midi {
                 let ch = track.global_channel() as usize;
                 if ch < 256 {
                     ch_active[ch] = true;
                 }
-            } else if let Some(ach) = track.audio_channel
+            } else if track.kind == TrackKind::Audio
+                && let Some(ach) = track.audio_channel
                 && !audio_channels.contains(&ach)
             {
                 audio_channels.push(ach);
@@ -189,12 +190,13 @@ impl ChannelLayout {
     /// 成本 O(tracks)，与音符总数无关。
     pub fn covers_model(&self, model: &YinModel) -> bool {
         for track in model.tracks.iter() {
-            if track.kind != TrackKind::Audio {
+            if track.kind == TrackKind::Midi {
                 let ch = track.global_channel() as usize;
                 if ch < 256 && !self.is_active(ch) {
                     return false;
                 }
-            } else if let Some(ach) = track.audio_channel
+            } else if track.kind == TrackKind::Audio
+                && let Some(ach) = track.audio_channel
                 && self.audio_dense_for(ach) == u32::MAX
             {
                 return false;

@@ -74,6 +74,10 @@ impl Document {
         }
         let model = Arc::make_mut(&mut self.data.model);
         let track = model.tracks.get_mut(track_idx)?;
+        // Master（Conductor）轨不能挂非 Tempo 自动化。
+        if track.kind == yinhe_core::TrackKind::Master {
+            return None;
+        }
         let track = Arc::make_mut(track);
         // 同 target 的 lane 每轨至多一条（与 add_automation_event 的懒创建一致）。
         if track.automation_lanes.iter().any(|l| l.target == target) {

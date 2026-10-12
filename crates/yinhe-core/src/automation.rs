@@ -24,6 +24,10 @@ impl YinModel {
             return Some((&mut Arc::make_mut(&mut self.conductor).tempo, 0));
         }
         let track = Arc::make_mut(self.tracks.get_mut(track_idx)?);
+        // Master（Conductor）轨只承载 Tempo，不允许其他自动化 lane。
+        if track.kind == crate::model::TrackKind::Master {
+            return None;
+        }
         let idx = track
             .automation_lanes
             .iter()
@@ -44,6 +48,10 @@ impl YinModel {
             return Some((&mut Arc::make_mut(&mut self.conductor).tempo, 0));
         }
         let track = Arc::make_mut(self.tracks.get_mut(track_idx)?);
+        // Master（Conductor）轨只承载 Tempo，不允许懒创建其他自动化 lane。
+        if track.kind == crate::model::TrackKind::Master {
+            return None;
+        }
         let idx = match track
             .automation_lanes
             .iter()

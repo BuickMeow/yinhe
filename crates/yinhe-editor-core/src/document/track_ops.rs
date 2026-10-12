@@ -68,11 +68,11 @@ impl Document {
         // Don't allow adding after conductor if it would insert before conductor
         let insert_idx = after_idx + 1;
 
-        // Find a free channel on port 0
+        // Find a free channel on port 0（Master/Conductor 轨不占 MIDI 通道）
         let used_channels: std::collections::HashSet<u8> = model
             .tracks
             .iter()
-            .filter(|t| t.port == 0)
+            .filter(|t| t.port == 0 && t.kind == yinhe_core::TrackKind::Midi)
             .map(|t| t.channel)
             .collect();
         let channel = (0..16u8).find(|c| !used_channels.contains(c)).unwrap_or(0);

@@ -214,11 +214,12 @@ pub(crate) enum DockContext {
     Audio(u16),
 }
 
-/// 选中轨 → dock 通道语境。
-fn track_context(t: &yinhe_core::TrackData) -> DockContext {
+/// 选中轨 → dock 通道语境。Master/Conductor 轨没有通道语境（返回 None）。
+fn track_context(t: &yinhe_core::TrackData) -> Option<DockContext> {
     match t.kind {
-        TrackKind::Audio => DockContext::Audio(t.audio_channel.unwrap_or(0)),
-        TrackKind::Midi => DockContext::Midi(t.global_channel()),
+        TrackKind::Audio => Some(DockContext::Audio(t.audio_channel.unwrap_or(0))),
+        TrackKind::Midi => Some(DockContext::Midi(t.global_channel())),
+        TrackKind::Master => None,
     }
 }
 
@@ -289,7 +290,7 @@ fn collect_dock_state(app: &mut App, idx: usize) -> Option<DockState> {
                     .tracks
                     .get(ti as usize)
             })
-            .map(|t| track_context(t))
+            .and_then(|t| track_context(t))
         {
             app.dock_context = Some(context);
             app.dock_selected = None;
@@ -1325,8 +1326,9 @@ mod tests {
     fn knob_drag_writes_event_and_undo_roundtrip() {
         let mut doc = Document::empty();
         let target = AutomationTarget::CC { controller: 1 };
+        // track 1 才是 MIDI 轨（track 0 是 Conductor/Master，不能挂 CC 自动化）。
         let lane = |doc: &Document| -> Vec<AutomationEvent> {
-            doc.data.model.tracks[0]
+            doc.data.model.tracks[1]
                 .automation_lanes
                 .iter()
                 .find(|l| l.target == target)
@@ -1334,7 +1336,7 @@ mod tests {
                 .unwrap_or_default()
         };
 
-        let mut drag = begin_knob_drag(&mut doc, &[0], target.clone(), 240).expect("目标轨存在");
+        let mut drag = begin_knob_drag(&mut doc, &[1], target.clone(), 240).expect("目标轨存在");
         assert!(drag.lane_idx.is_none(), "空 lane 无索引");
         assert!(drag.before.is_empty(), "编辑前无事件");
 
@@ -1363,7 +1365,7 @@ mod tests {
         let mut doc = Document::empty();
         let target = AutomationTarget::CC { controller: 7 };
         doc.add_automation_event(
-            0,
+            1,
             target.clone(),
             AutomationEvent {
                 id: 0,
@@ -1373,10 +1375,10 @@ mod tests {
             },
         )
         .expect("lane 懒创建");
-        let old_id = doc.data.model.tracks[0].automation_lanes[0].events[0].id;
+        let old_id = doc.data.model.tracks[1].automation_lanes[0].events[0].id;
         assert_ne!(old_id, 0, "新增事件应已发号");
 
-        let mut drag = begin_knob_drag(&mut doc, &[0], target.clone(), 100).expect("目标轨存在");
+        let mut drag = begin_knob_drag(&mut doc, &[1], target.clone(), 100).expect("目标轨存在");
         assert!(drag.lane_idx.is_some(), "已有 lane 应记录索引");
         assert_eq!(drag.before.len(), 1, "编辑前快照应含已有事件");
 
@@ -1384,13 +1386,13 @@ mod tests {
         drag.moved = true;
         finish_knob_drag(&mut doc, drag);
 
-        let events = doc.data.model.tracks[0].automation_lanes[0].events.clone();
+        let events = doc.data.model.tracks[1].automation_lanes[0].events.clone();
         assert_eq!(events.len(), 1, "同 tick 只更新不新增");
         assert_eq!(events[0].value, 0.9);
         assert_eq!(events[0].id, old_id, "更新保留事件 id");
 
         assert!(doc.undo());
-        let events = doc.data.model.tracks[0].automation_lanes[0].events.clone();
+        let events = doc.data.model.tracks[1].automation_lanes[0].events.clone();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].value, 0.2, "undo 恢复旧值");
         assert_eq!(events[0].id, old_id);

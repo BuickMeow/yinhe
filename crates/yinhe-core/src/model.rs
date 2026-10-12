@@ -71,6 +71,9 @@ pub enum TrackKind {
     #[default]
     Midi,
     Audio,
+    /// 非 MIDI 的 Master/Conductor 轨：只承载 Tempo、拍号等全局事件，
+    /// 不能有音符、不能挂非 Tempo 自动化，不参与混音的 MIDI 通道路由。
+    Master,
 }
 
 // =========================================================
@@ -415,6 +418,7 @@ impl YinModel {
         let mut tracks: Vec<Arc<TrackData>> = Vec::with_capacity(17);
         let mut t = TrackData::new(0, 0);
         t.name = "Conductor".to_string();
+        t.kind = TrackKind::Master;
         tracks.push(Arc::new(t));
         for ch in 0..16u8 {
             let mut t = TrackData::new(0, ch);
@@ -548,9 +552,17 @@ impl YinModel {
         deleted
     }
 
-    /// 头部是否为 conductor 轨（无音符、无自动化 lane、无 program change）。
-    /// 空模型返回 false。
+    /// 头部是否为 conductor 轨。优先看显式角色标记（`TrackKind::Master`），
+    /// 旧存档无标记时回退到启发式（0 号位无音符、无自动化 lane、无 program
+    /// change）。空模型返回 false。
     pub fn has_conductor_track(&self) -> bool {
+        if self
+            .tracks
+            .first()
+            .is_some_and(|t| t.kind == TrackKind::Master)
+        {
+            return true;
+        }
         !self.tracks.is_empty()
             && self.track_note_count.first().copied().unwrap_or(0) == 0
             && self
@@ -560,16 +572,23 @@ impl YinModel {
     }
 
     /// 确保头部有 conductor 轨：无则在 0 号位插入「Conductor」，并把所有
-    /// 音符与自动化 lane 的轨号 +1（幂等；空模型不插入）。
+    /// 音符与自动化 lane 的轨号 +1（幂等；空模型不插入）。已有 conductor
+    /// （含旧存档的启发式判定）则补上 `TrackKind::Master` 角色标记。
     ///
     /// 返回是否真的插入了（调用方据此决定是否 `rebuild`；与
     /// [`YinModel::apply_track_remap`] 一致不自动 rebuild）。
     pub fn ensure_conductor_track(&mut self) -> bool {
-        if self.tracks.is_empty() || self.has_conductor_track() {
+        if self.tracks.is_empty() {
+            return false;
+        }
+        if self.has_conductor_track() {
+            // 已在 0 号位（旧存档无显式标记）：补齐角色，不改动任何数据。
+            Arc::make_mut(&mut self.tracks[0]).kind = TrackKind::Master;
             return false;
         }
         let mut conductor = TrackData::new(0, 0);
         conductor.name = "Conductor".to_string();
+        conductor.kind = TrackKind::Master;
         for bucket in self.notes.iter_mut() {
             for n in Arc::make_mut(bucket).iter_mut() {
                 n.track += 1;
@@ -890,6 +909,41 @@ mod tests {
 
         let mut empty = YinModel::default();
         assert!(!empty.ensure_conductor_track(), "空模型不插入");
+    }
+
+    /// Master 角色：旧存档（头部 Midi 但空）加载时补齐为 `TrackKind::Master`；
+    /// 一旦标记，身份不再依赖内容（即使混入音符仍是 conductor）。
+    #[test]
+    fn conductor_role_is_marked_and_survives_notes() {
+        // 新建工程：conductor 自带 Master。
+        let fresh = YinModel::new_empty_with_16_tracks();
+        assert_eq!(fresh.tracks[0].kind, TrackKind::Master);
+
+        // 旧存档：头部是 Midi 但为空 → 启发式识别，并补齐 Master 标记。
+        let mut legacy = YinModel {
+            tracks: vec![
+                Arc::new(TrackData::new(0, 0)),
+                Arc::new(TrackData::new(0, 1)),
+            ],
+            ..Default::default()
+        };
+        legacy.rebuild();
+        assert!(legacy.has_conductor_track(), "旧存档启发式识别 conductor");
+        assert!(!legacy.ensure_conductor_track(), "已有 conductor 不再插入");
+        assert_eq!(
+            legacy.tracks[0].kind,
+            TrackKind::Master,
+            "应补齐 Master 角色标记"
+        );
+
+        // 一旦标记 Master：即使 0 号轨混入音符，身份也不丢。
+        let mut polluted = YinModel::new_empty_with_16_tracks();
+        polluted.load_track_notes(vec![vec![note(0, 0, 60)]]);
+        polluted.rebuild();
+        assert!(
+            polluted.has_conductor_track(),
+            "Master 身份不依赖内容，混入音符仍是 conductor"
+        );
     }
 
     #[test]

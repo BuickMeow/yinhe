@@ -128,14 +128,22 @@ impl Document {
         // Calculate track offset: first selected track - min source track.
         // If no track is selected, keep original track positions.
         // AtOriginal 完全原位，不做轨道偏移。
+        // Conductor（Master）轨不能作为粘贴目标：从目标集合里排除。
+        let conductor = self.edit.track_cache.conductor_idx;
         let track_offset: i32 = if !track_selected.is_empty() && mode != PasteMode::AtOriginal {
-            let first_selected = track_selected.iter().min().copied().unwrap_or(0);
-            first_selected as i32 - src_min_track as i32
+            match track_selected
+                .iter()
+                .filter(|&&t| Some(t) != conductor)
+                .min()
+                .copied()
+            {
+                Some(first_selected) => first_selected as i32 - src_min_track as i32,
+                None => 0,
+            }
         } else {
             0
         };
 
-        let conductor = self.edit.track_cache.conductor_idx;
         let allow_overlap = self.edit.allow_overlapping_notes;
         let model = Arc::make_mut(&mut self.data.model);
 
@@ -165,6 +173,10 @@ impl Document {
                 }
             };
             let new_track = (note.track as i32 + track_offset).clamp(0, u16::MAX as i32) as u16;
+            // 兜底：任何情况下都不把音符粘贴到 Conductor（Master）轨。
+            if Some(new_track) == conductor {
+                return;
+            }
             // 「允许新重叠音符」关闭：粘贴副本与已有音符重叠 → 跳过该副本。
             // 检查在批量插入前进行，批次内部互不影响（含剪贴板源音符）。
             if !allow_overlap
@@ -462,5 +474,50 @@ mod tests {
             .find(|n| n.start_tick >= 400)
             .expect("B 的镜像副本");
         assert_eq!((b.start_tick, b.end_tick), (400, 420));
+    }
+
+    /// 回归：即使 track_selected 里包含 Conductor（Master）轨，粘贴也不能把
+    /// 音符落到 conductor 上（历史 bug：复制粘贴可错粘到 conductor）。
+    #[test]
+    fn paste_never_targets_conductor() {
+        let mut doc = Document::empty();
+        assert_eq!(
+            doc.edit.track_cache.conductor_idx,
+            Some(0),
+            "empty 应识别 conductor"
+        );
+        // 在 track 1 放一个音符并复制。
+        doc.add_note(
+            1,
+            NoteEvent {
+                id: 0,
+                start_tick: 100,
+                end_tick: 200,
+                key: 60,
+                velocity: 100,
+            },
+        );
+        let mut selection = yinhe_core::Selection::default();
+        selection.add_rect_track(100, 201, 60, 60, 1, 1);
+        let clipboard = clipboard_with(&doc, selection);
+
+        // 目标集合里只有 conductor（历史 bug 路径）。
+        let mut tracks = std::collections::HashSet::new();
+        tracks.insert(0u16);
+        let res = doc.paste_notes(&clipboard, 400.0, &tracks, PasteMode::AtCursor);
+
+        assert!(
+            doc.data.model.notes_for_track(0).next().is_none(),
+            "绝不允许音符粘贴到 Conductor 轨"
+        );
+        // conductor 被排除后无有效目标轨 → 回退原位轨（track 1），仍正常粘贴。
+        assert!(
+            doc.data
+                .model
+                .notes_for_track(1)
+                .any(|n| n.start_tick == 400),
+            "应回退到原轨 track 1"
+        );
+        assert!(res.is_some(), "仍应产生粘贴结果");
     }
 }

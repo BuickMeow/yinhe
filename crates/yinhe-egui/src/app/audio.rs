@@ -1036,7 +1036,7 @@ impl App {
         else {
             return;
         };
-        if track.kind == yinhe_core::TrackKind::Audio {
+        if track.kind != yinhe_core::TrackKind::Midi {
             return;
         }
         let ch = track.global_channel();
