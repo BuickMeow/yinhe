@@ -3446,3 +3446,121 @@ fn summary_layer_matches_legacy_pixels() {
         "摘要路径与 legacy 像素差过大: cull={px1} legacy={px2}"
     );
 }
+
+/// 折叠预览叠加层（CurveOverlay）必须用预乘 alpha + Max 混合：同一 track
+/// 颜色的线段重复叠画，alpha/颜色都不得累加变深（整层不透明度恒定）。
+#[test]
+fn curve_overlay_alpha_does_not_accumulate() {
+    let Some((device, queue)) = headless_device() else {
+        return;
+    };
+    let format = TextureFormat::Rgba8UnormSrgb;
+    let w = 64u32;
+    let h = 64u32;
+    let alpha = 0.35f32;
+
+    // 画 `draws` 条完全重合的线，返回线中心像素 (r,g,b,a)。
+    let render = |draws: usize| -> [u8; 4] {
+        let mut renderer = crate::InstanceRenderer::new(device.clone(), queue.clone(), format);
+        renderer.upload_uniforms(Uniforms {
+            width: w as f32,
+            height: h as f32,
+            ..Default::default()
+        });
+        renderer.upload_curve_overlay_layer(4, 1, |out| {
+            for _ in 0..draws {
+                out.push(crate::vertex::CurveInstance::line(
+                    0.0,
+                    32.0,
+                    64.0,
+                    32.0,
+                    3.0,
+                    [1.0, 0.0, 0.0, alpha],
+                ));
+            }
+        });
+        let target = device.create_texture(&TextureDescriptor {
+            label: Some("overlay_target"),
+            size: Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format,
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = target.create_view(&Default::default());
+        let mut enc = device.create_command_encoder(&Default::default());
+        renderer.draw(&mut enc, &view, w, h);
+        queue.submit([enc.finish()]);
+
+        let bpr = w * 4;
+        let aligned = bpr.div_ceil(256) * 256;
+        let buf = device.create_buffer(&BufferDescriptor {
+            label: Some("overlay_readback"),
+            size: (aligned * h) as u64,
+            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut enc = device.create_command_encoder(&Default::default());
+        enc.copy_texture_to_buffer(
+            TexelCopyTextureInfo {
+                texture: &target,
+                mip_level: 0,
+                origin: Origin3d::ZERO,
+                aspect: TextureAspect::All,
+            },
+            TexelCopyBufferInfo {
+                buffer: &buf,
+                layout: TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(aligned),
+                    rows_per_image: Some(h),
+                },
+            },
+            Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit([enc.finish()]);
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let d2 = done.clone();
+        buf.slice(..).map_async(MapMode::Read, move |_| {
+            d2.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        device
+            .poll(PollType::wait_indefinitely())
+            .expect("poll failed");
+        assert!(done.load(Ordering::SeqCst));
+        let mapped = buf.slice(..).get_mapped_range().expect("readback map");
+        let idx = (32 * aligned + 32 * 4) as usize;
+        let px = [
+            mapped[idx],
+            mapped[idx + 1],
+            mapped[idx + 2],
+            mapped[idx + 3],
+        ];
+        drop(mapped);
+        buf.unmap();
+        px
+    };
+
+    let single = render(1);
+    let double = render(2);
+    assert!(single[3] > 0, "应画出曲线，实际 {single:?}");
+    assert!(
+        single[3] < 200,
+        "折叠预览应半透明，实际 alpha={}",
+        single[3]
+    );
+    assert_eq!(
+        single, double,
+        "重叠后像素必须完全一致（Max 混合，不加深）：single={single:?} double={double:?}"
+    );
+}

@@ -289,6 +289,7 @@ pub fn prepare(
 }
 
 /// AR 共享纹理中一条可见的自动化 lane。
+#[derive(Clone, Copy)]
 pub struct ArrAutomationLane<'a> {
     pub lane: &'a AutomationLane,
     /// 子行顶部在 AR 纹理中的 y（像素）。
@@ -301,7 +302,8 @@ pub struct ArrAutomationLane<'a> {
     pub highlight_ticks: &'a [u32],
     /// 是否绘制锚点/控制点。折叠预览为纯曲线，不画锚点。
     pub show_anchors: bool,
-    /// 折叠预览：用更淡的不透明度，避免压过同行的音符。
+    /// 折叠预览：每个音轨收起时把其全部 lane 以全行高、半透明叠加显示，
+    /// 且用「整层固定不透明度」的叠加管线（重叠不加深）。展开时为 false。
     pub translucent: bool,
 }
 
@@ -321,11 +323,56 @@ fn lane_set_hash(lanes: &[ArrAutomationLane]) -> u64 {
     })
 }
 
+/// 构造单条 AR lane 的临时 panel view 并烘焙曲线实例。
+///
+/// y_offset 把曲线平移到所属子行顶部；`alpha` 为该 lane 的不透明度
+/// （展开用 LINE_ALPHA，折叠预览用 FOLDED_ALPHA）。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
+fn build_lane_data(
+    out: &mut Vec<crate::vertex::CurveInstance>,
+    l: &ArrAutomationLane<'_>,
+    base: &TimelineViewBase,
+    width: f32,
+    height: f32,
+    track_visible: &[bool],
+    track_colors: &[[f32; 4]],
+    skip_lane: Option<&AutomationLane>,
+    alpha: f32,
+    theme: &yinhe_theme::GpuTheme,
+) {
+    let view = AutomationPanelView {
+        base: base.clone(),
+        panel_height: l.height,
+        y_offset: l.y_top,
+        selected_target: l.lane.target.clone(),
+        show_velocity: false,
+        value_zoom: 1.0,
+        value_scroll: 0.0,
+        ..Default::default()
+    };
+    data_lines::build_data_lines(
+        out,
+        width,
+        height,
+        &view,
+        &[l.lane],
+        l.max_val,
+        track_visible,
+        track_colors,
+        l.show_anchors,
+        skip_lane,
+        l.highlight_ticks,
+        alpha,
+        theme,
+    );
+}
+
 /// Prepare AR 展开自动化 lane 的曲线渲染（画在 AR 共享走带纹理上）。
 ///
 /// Layers:
-///   2 = 数据层（各展开 lane 的线段 + 锚点，按 cache_key 缓存）
+///   2 = 展开 lane 数据层（线段 + 锚点，按 cache_key 缓存）
 ///   3 = ghost（拖拽预览，无缓存，每帧重建）
+///   4 = 折叠预览叠加层（收起音轨的全 lane，整层固定不透明度）
 ///
 /// 不碰 uniforms / track_colors：AR 的 view_ui 已上传；curve shader 只用
 /// width/height/scroll，与 AR 的 uniforms 兼容。
@@ -371,7 +418,17 @@ pub fn prepare_arr_automation(
     // revision；调用方的 offsets_hash 又只在后续轨道偏移变化时改变（单轨展开/
     // 收起时不变）。缺此 hash 会导致数据层缓存不失效（回归：单轨展开/收起
     // 自动化不刷新 GPU、lane 曲线不出现）。
-    let data_key = layer_cache_key(&[cache_key, ghost_lane_hash, tc_hash, lane_set_hash(lanes)]);
+    //
+    // 展开 lane（curve 层）与折叠预览（overlay 层）分属两层，各自的缓存键只混入
+    // 自己那一半的 lane 集合，避免一边变化导致另一边无谓重建。
+    let (expanded, folded): (Vec<_>, Vec<_>) = lanes.iter().copied().partition(|l| !l.translucent);
+    let expanded_key = layer_cache_key(&[
+        cache_key,
+        ghost_lane_hash,
+        tc_hash,
+        lane_set_hash(&expanded),
+    ]);
+    let folded_key = layer_cache_key(&[cache_key, tc_hash, lane_set_hash(&folded)]);
 
     // 数据层 skip_lane：ghost 为 Move 时被覆盖的 lane 由 ghost 层完整重画。
     let skip_lane = ghost.as_ref().map(|(g, ..)| {
@@ -381,38 +438,41 @@ pub fn prepare_arr_automation(
 
     let theme = renderer.theme();
 
-    // Layer 2: 数据层——每条可见 lane 构造一个临时 panel view，
+    // Layer 2: 展开 lane 数据层——每条可见 lane 构造一个临时 panel view，
     // y_offset 把曲线平移到所属子行顶部（upload_curve_layer 内部已
     // ensure_layer(2, Curve)，无需显式调用）。
-    renderer.upload_curve_layer(2, data_key, |out| {
-        for l in lanes {
-            let view = AutomationPanelView {
-                base: base.clone(),
-                panel_height: l.height,
-                y_offset: l.y_top,
-                selected_target: l.lane.target.clone(),
-                show_velocity: false,
-                value_zoom: 1.0,
-                value_scroll: 0.0,
-                ..Default::default()
-            };
-            data_lines::build_data_lines(
+    renderer.upload_curve_layer(2, expanded_key, |out| {
+        for l in &expanded {
+            build_lane_data(
                 out,
+                l,
+                base,
                 width,
                 height,
-                &view,
-                &[l.lane],
-                l.max_val,
                 track_visible,
                 track_colors,
-                l.show_anchors,
                 skip_lane,
-                l.highlight_ticks,
-                if l.translucent {
-                    data_lines::FOLDED_ALPHA
-                } else {
-                    data_lines::LINE_ALPHA
-                },
+                data_lines::LINE_ALPHA,
+                &theme,
+            );
+        }
+    });
+
+    // Layer 4: 折叠预览叠加层——收起音轨的全部 lane 以全行高、无锚点、整层
+    // 固定不透明度叠加（预乘 alpha + Max 混合，重叠不加深）。画在本层之上、
+    // 音符层之下。
+    renderer.upload_curve_overlay_layer(4, folded_key, |out| {
+        for l in &folded {
+            build_lane_data(
+                out,
+                l,
+                base,
+                width,
+                height,
+                track_visible,
+                track_colors,
+                None,
+                data_lines::FOLDED_ALPHA,
                 &theme,
             );
         }

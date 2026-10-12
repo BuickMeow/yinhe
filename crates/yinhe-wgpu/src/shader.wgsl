@@ -722,6 +722,19 @@ fn vs_main_curve(
 
 @fragment
 fn fs_main_curve(in: CurveOutput) -> @location(0) vec4<f32> {
+    return vec4<f32>(in.color.rgb, in.color.a * curve_coverage(in));
+}
+
+// 折叠预览叠加层：预乘 alpha 输出，配合 Max 混合实现「整层 0.35 不透明度、
+// 重叠不加深」。同一轨所有折叠 lane 共享 track 颜色，Max 即取并集覆盖。
+@fragment
+fn fs_main_curve_premul(in: CurveOutput) -> @location(0) vec4<f32> {
+    let a = in.color.a * curve_coverage(in);
+    return vec4<f32>(in.color.rgb * a, a);
+}
+
+/// 曲线/线段/锚点的覆盖度 alpha（0..1，含 1px AA）。
+fn curve_coverage(in: CurveOutput) -> f32 {
     let p = in.local;
 
     var d: f32;
@@ -748,11 +761,8 @@ fn fs_main_curve(in: CurveOutput) -> @location(0) vec4<f32> {
     // shape 1/2/3（圆/方/环）: d 是 signed distance（d=0 在几何边界），AA 在 [-1, +1]。
     //   否则 ANCHOR_RADIUS=3 的圆会渲染成半径≈thickness+1 的实心圆盘，像素化后看起来像方形。
     let aa = 1.0;
-    var alpha: f32;
     if (in.shape == 0u) {
-        alpha = 1.0 - smoothstep(in.thickness - aa, in.thickness + aa, d);
-    } else {
-        alpha = 1.0 - smoothstep(-aa, aa, d);
+        return 1.0 - smoothstep(in.thickness - aa, in.thickness + aa, d);
     }
-    return vec4<f32>(in.color.rgb, in.color.a * alpha);
+    return 1.0 - smoothstep(-aa, aa, d);
 }

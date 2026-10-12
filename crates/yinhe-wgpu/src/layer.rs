@@ -193,12 +193,14 @@ pub fn layer_cache_key(parts: &[u64]) -> u64 {
 
 /// Layer kind: decor (32B `DrawInstance`), note (16B `NoteInstance`),
 /// velocity (16B `VelocityBarInstance`), or curve (32B `CurveInstance` — automation SDF lines/curves).
+/// `CurveOverlay` 同 `Curve` 的实例布局，但用预乘 alpha + Max 混合的叠加管线绘制。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayerKind {
     Decor,
     Note,
     Velocity,
     Curve,
+    CurveOverlay,
 }
 
 /// Type-erased layer slot that can hold `DrawInstance`, `NoteInstance`, `VelocityBarInstance`, or `CurveInstance`.
@@ -207,6 +209,7 @@ pub enum AnyLayer {
     Note(LayerSlot<NoteInstance>),
     Velocity(LayerSlot<VelocityBarInstance>),
     Curve(LayerSlot<CurveInstance>),
+    CurveOverlay(LayerSlot<CurveInstance>),
 }
 
 impl AnyLayer {
@@ -216,6 +219,7 @@ impl AnyLayer {
             LayerKind::Note => AnyLayer::Note(LayerSlot::new(device)),
             LayerKind::Velocity => AnyLayer::Velocity(LayerSlot::new(device)),
             LayerKind::Curve => AnyLayer::Curve(LayerSlot::new(device)),
+            LayerKind::CurveOverlay => AnyLayer::CurveOverlay(LayerSlot::new(device)),
         }
     }
 
@@ -225,6 +229,7 @@ impl AnyLayer {
             AnyLayer::Note(_) => LayerKind::Note,
             AnyLayer::Velocity(_) => LayerKind::Velocity,
             AnyLayer::Curve(_) => LayerKind::Curve,
+            AnyLayer::CurveOverlay(_) => LayerKind::CurveOverlay,
         }
     }
 
@@ -239,6 +244,7 @@ impl AnyLayer {
             AnyLayer::Note(l) => l.draw(pass, vertex_slot, index_buffer),
             AnyLayer::Velocity(l) => l.draw(pass, vertex_slot, index_buffer),
             AnyLayer::Curve(l) => l.draw(pass, vertex_slot, None),
+            AnyLayer::CurveOverlay(l) => l.draw(pass, vertex_slot, None),
         }
     }
 }

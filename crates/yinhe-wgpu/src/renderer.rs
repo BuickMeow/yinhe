@@ -277,6 +277,12 @@ impl InstanceRenderer {
     impl_upload_layer!(upload_note_layer, Note, Note, NoteInstance);
     impl_upload_layer!(upload_curve_layer, Curve, Curve, CurveInstance);
     impl_upload_layer!(
+        upload_curve_overlay_layer,
+        CurveOverlay,
+        CurveOverlay,
+        CurveInstance
+    );
+    impl_upload_layer!(
         upload_velocity_layer,
         Velocity,
         Velocity,
@@ -558,6 +564,14 @@ impl InstanceRenderer {
         for layer in &self.layers {
             if layer.kind() == LayerKind::Curve {
                 pass.set_pipeline(&self.render.curve_pipeline);
+                layer.draw(pass, 0, None);
+            }
+        }
+        // 折叠自动化预览叠加层：预乘 alpha + Max 混合，整层不透明度恒定，
+        // 画在 curve 层之上、音符层之下。
+        for layer in &self.layers {
+            if layer.kind() == LayerKind::CurveOverlay {
+                pass.set_pipeline(&self.render.curve_overlay_pipeline);
                 layer.draw(pass, 0, None);
             }
         }

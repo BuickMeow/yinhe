@@ -18,12 +18,17 @@ use crate::vertex::{
 ///     layout, `vs_main_velocity` — unified border-based mode)
 ///   - `curve_pipeline`: automation curve pipeline (32-byte `CurveInstance` vertex layout,
 ///     `vs_main_curve`/`fs_main_curve` — per-pixel SDF line/curve)
+///   - `curve_overlay_pipeline`: 折叠自动化预览叠加层（同 `CurveInstance` 布局，
+///     `fs_main_curve_premul` + Max 混合 — 整层 alpha 固定，重叠不加深）
 pub struct RenderPipelineState {
     pub pipeline: RenderPipeline,
     pub note_pipeline: RenderPipeline,
     pub note_direct_pipeline: RenderPipeline,
     pub velocity_pipeline: RenderPipeline,
     pub curve_pipeline: RenderPipeline,
+    /// 折叠自动化预览叠加层：同 `curve_pipeline` 的 SDF 曲线，但预乘 alpha +
+    /// Max 混合，使整层 alpha 固定（重叠不加深），且可画在音符层之下。
+    pub curve_overlay_pipeline: RenderPipeline,
     pub uniform_buffer: TrackedBuffer,
     pub track_colors_buffer: TrackedBuffer,
     /// Current capacity (in vec4 entries) of `track_colors_buffer`.
@@ -385,6 +390,59 @@ impl RenderPipelineState {
             cache: None,
         });
 
+        // Curve overlay pipeline：与 curve_pipeline 同顶点布局/entry，但输出
+        // 预乘 alpha（fs_main_curve_premul），并用 Max 混合。目标纹理在折叠
+        // 音轨行处为透明，Max 取并集 → 多条 lane 重叠时 alpha 恒为层 alpha，
+        // 不会叠加变深。整体由 egui 按预乘 alpha 合成到背景。
+        let curve_overlay_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("curve_overlay_pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: VertexState {
+                module: render_shader,
+                entry_point: Some("vs_main_curve"),
+                buffers: &[Some(VertexBufferLayout {
+                    array_stride: std::mem::size_of::<CurveInstance>() as u64,
+                    step_mode: VertexStepMode::Instance,
+                    attributes: &vertex_attr_array![
+                        0 => Float32x4,
+                        1 => Float32,
+                        2 => Uint32,
+                        3 => Uint32,
+                    ],
+                })],
+                compilation_options: PipelineCompilationOptions::default(),
+            },
+            fragment: Some(FragmentState {
+                module: render_shader,
+                entry_point: Some("fs_main_curve_premul"),
+                targets: &[Some(ColorTargetState {
+                    format,
+                    blend: Some(BlendState {
+                        color: BlendComponent {
+                            src_factor: BlendFactor::One,
+                            dst_factor: BlendFactor::One,
+                            operation: BlendOperation::Max,
+                        },
+                        alpha: BlendComponent {
+                            src_factor: BlendFactor::One,
+                            dst_factor: BlendFactor::One,
+                            operation: BlendOperation::Max,
+                        },
+                    }),
+                    write_mask: ColorWrites::ALL,
+                })],
+                compilation_options: PipelineCompilationOptions::default(),
+            }),
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
+                ..PrimitiveState::default()
+            },
+            depth_stencil: None,
+            multisample: MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
         // Velocity bar pipeline: 16-byte VelocityBarInstance vertex layout.
         // 仅描边、不填充、不加深（`fs_main_velocity`），与音符的填充+描边区分。
         let velocity_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
@@ -428,6 +486,7 @@ impl RenderPipelineState {
             note_direct_pipeline,
             velocity_pipeline,
             curve_pipeline,
+            curve_overlay_pipeline,
             uniform_buffer,
             track_colors_buffer,
             track_colors_capacity: 1,
