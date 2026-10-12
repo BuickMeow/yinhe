@@ -204,6 +204,19 @@ pub(crate) fn delta_tracks(origin_tr: f32, current_tr: f32, vertical: bool) -> i
     }
 }
 
+/// 把拖拽 delta 截断到"内容最左 tick 不越过 0"。
+///
+/// `min_tick` = 选区内容（音符/选框/自动化事件）的最左 tick；`INFINITY`
+/// 表示无约束。用于 AR 拖动选区：拖动到 tick 0 后再往前拖应停住，而不是把
+/// 选区压扁到 0。
+pub(crate) fn clamp_delta_to_zero(dt: i64, min_tick: f64) -> i64 {
+    if min_tick.is_finite() {
+        dt.max(-(min_tick.max(0.0).floor() as i64))
+    } else {
+        dt
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,5 +281,20 @@ mod tests {
         assert_eq!(delta_tracks(1.0, 3.0, true), 0, "纵向无轨道位移");
         assert_eq!(delta_tracks(1.0, 3.4, false), 2, "横向向上移动 2 行");
         assert_eq!(delta_tracks(3.0, 1.0, false), -2, "横向向下移动 2 行");
+    }
+
+    /// AR 拖拽：内容最左 tick 撞 0 后 delta 截断，不能继续往左。
+    #[test]
+    fn clamp_delta_does_not_cross_zero() {
+        // 选区最左 tick=480，往左拖 -2000，只能到 -480（左端落在 0）。
+        assert_eq!(clamp_delta_to_zero(-2000, 480.0), -480);
+        // 不超过边界时原样返回。
+        assert_eq!(clamp_delta_to_zero(-100, 480.0), -100);
+        // 往右拖不受影响。
+        assert_eq!(clamp_delta_to_zero(300, 480.0), 300);
+        // 无约束（INFINITY）不截断。
+        assert_eq!(clamp_delta_to_zero(-2000, f64::INFINITY), -2000);
+        // 已经贴着 0 时不能再往左。
+        assert_eq!(clamp_delta_to_zero(-50, 0.0), 0);
     }
 }

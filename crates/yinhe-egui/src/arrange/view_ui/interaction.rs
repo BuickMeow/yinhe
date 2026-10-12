@@ -47,6 +47,12 @@ pub(crate) fn sel_drag_frame_arrange(
     let mut move_notes: Option<ArrMoveNotes> = ui
         .data_mut(|d| d.get_persisted(move_notes_id))
         .unwrap_or(None);
+    // 选区内容的最左 tick（音符 / 选框 / 自动化事件的下界）；拖拽时据此把
+    // delta 截断，使内容不能越过 tick 0。启动时算一次，避免每帧全选区重扫。
+    let move_min_tick_id = ui.id().with("arr_move_min_tick");
+    let mut move_min_tick: f64 = ui
+        .data_mut(|d| d.get_persisted(move_min_tick_id))
+        .unwrap_or(f64::INFINITY);
     let pointer = ui.input(|i| i.pointer.clone());
     let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
     let additive = cmd || ui.input(|i| i.modifiers.shift);
@@ -58,6 +64,7 @@ pub(crate) fn sel_drag_frame_arrange(
         move_orig_sel.clear();
         move_had_moved = false;
         move_notes = None;
+        move_min_tick = f64::INFINITY;
     }
     if crate::view_interaction::pointer_over_popup(ui.ctx()) {
         ui.data_mut(|d| d.insert_persisted(sel_id, drag));
@@ -65,6 +72,7 @@ pub(crate) fn sel_drag_frame_arrange(
         ui.data_mut(|d| d.insert_persisted(move_orig_id, move_orig_sel));
         ui.data_mut(|d| d.insert_persisted(move_had_moved_id, move_had_moved));
         ui.data_mut(|d| d.insert_persisted(move_notes_id, move_notes));
+        ui.data_mut(|d| d.insert_persisted(move_min_tick_id, move_min_tick));
         return (ghost_notes, hidden_notes, drag_rect);
     }
     let inside_sel_rect = is_inside_sel_rect(
@@ -109,6 +117,21 @@ pub(crate) fn sel_drag_frame_arrange(
             ));
             move_orig_sel = edit.arr_sel_rect.clone();
             edit.arr_sel_rect.clear();
+            // 内容最左 tick：选框左端（覆盖自动化事件下界）+ 选中音符的实际
+            // 起始 tick（长音符可能早于选框左端）。
+            let rect_min = move_orig_sel
+                .iter()
+                .map(|r| r.0)
+                .fold(f64::INFINITY, f64::min);
+            let notes_min = move_notes
+                .as_deref()
+                .map(|ns| {
+                    ns.iter()
+                        .map(|n| n.start_tick as f64)
+                        .fold(f64::INFINITY, f64::min)
+                })
+                .unwrap_or(f64::INFINITY);
+            move_min_tick = rect_min.min(notes_min);
             let origin = (click_tick, click_track_f);
             let alt = ui.input(|i| i.modifiers.alt);
             move_drag = Some((origin, origin, alt));
@@ -167,6 +190,8 @@ pub(crate) fn sel_drag_frame_arrange(
             data.ppq,
             data.bar_line_data,
         );
+        // 不能拖到 tick 0 之前：按内容最左 tick 截断 delta（预览与提交一致）。
+        let dt = super::types::clamp_delta_to_zero(dt, move_min_tick);
         let dtr = super::types::delta_tracks(origin_tr, current_tr, vertical);
         *edit.arr_sel_rect = move_orig_sel
             .iter()
@@ -200,6 +225,8 @@ pub(crate) fn sel_drag_frame_arrange(
                 data.ppq,
                 data.bar_line_data,
             );
+            // 不能拖到 tick 0 之前：按内容最左 tick 截断 delta。
+            let delta_ticks = super::types::clamp_delta_to_zero(delta_ticks, move_min_tick);
             let delta_tracks = super::types::delta_tracks(origin_tr, current_tr, vertical);
             if delta_ticks != 0 || delta_tracks != 0 {
                 move_had_moved = true;
@@ -231,6 +258,7 @@ pub(crate) fn sel_drag_frame_arrange(
         move_orig_sel.clear();
         move_had_moved = false;
         move_notes = None;
+        move_min_tick = f64::INFINITY;
         drag_rect = None;
     }
     if let Some((start_music, _)) = drag {
@@ -329,6 +357,7 @@ pub(crate) fn sel_drag_frame_arrange(
     ui.data_mut(|d| d.insert_persisted(move_orig_id, move_orig_sel));
     ui.data_mut(|d| d.insert_persisted(move_had_moved_id, move_had_moved));
     ui.data_mut(|d| d.insert_persisted(move_notes_id, move_notes));
+    ui.data_mut(|d| d.insert_persisted(move_min_tick_id, move_min_tick));
     (ghost_notes, hidden_notes, drag_rect)
 }
 
