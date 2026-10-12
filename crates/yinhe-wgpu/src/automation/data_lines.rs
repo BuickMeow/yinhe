@@ -14,8 +14,10 @@ const CTRL_POINT_RADIUS: f32 = 4.0;
 const CTRL_HANDLE_THICKNESS: f32 = 0.5;
 /// 控制点连线的不透明度（比锚点淡）。
 const CTRL_HANDLE_ALPHA: f32 = 0.5;
-/// 自动化线段的不透明度。
-const LINE_ALPHA: f32 = 0.85;
+/// 自动化线段的不透明度（展开 lane）。
+pub(crate) const LINE_ALPHA: f32 = 0.85;
+/// 折叠预览曲线的不透明度：比展开时更淡，避免压过音符。
+pub(crate) const FOLDED_ALPHA: f32 = 0.35;
 
 /// 一个需要绘制的线段（panel 局部像素坐标）。
 ///
@@ -186,6 +188,7 @@ pub fn build_data_lines(
     show_anchors: bool,
     skip_lane: Option<&AutomationLane>,
     highlight_ticks: &[u32],
+    alpha: f32,
     _theme: &GpuTheme,
 ) {
     if lanes.is_empty() || max_val <= 0.0 {
@@ -230,7 +233,7 @@ pub fn build_data_lines(
             grid_left_x,
         );
         for seg in &segs {
-            render_segment(out, seg, view, max_val, color);
+            render_segment(out, seg, view, max_val, color, alpha);
         }
 
         // 画锚点 + 曲线段的控制点
@@ -305,7 +308,7 @@ pub(crate) fn build_lane_instances(
         grid_left_x,
     );
     for seg in &segs {
-        render_segment(out, seg, view, max_val, color);
+        render_segment(out, seg, view, max_val, color, LINE_ALPHA);
     }
 
     if show_anchors {
@@ -431,8 +434,9 @@ fn render_segment(
     view: &AutomationPanelView,
     max_val: f32,
     color: [f32; 3],
+    alpha: f32,
 ) {
-    let line_color = [color[0], color[1], color[2], LINE_ALPHA];
+    let line_color = [color[0], color[1], color[2], alpha];
     let dx = seg.x2 - seg.x1;
     if dx <= 0.0 {
         // 同一 tick 的多事件：只画竖直跳变
@@ -528,5 +532,128 @@ fn render_curve_polyline(
         ));
         prev_x = px;
         prev_y = y;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vertex::unpack_rgba;
+    use yinhe_theme::GpuTheme;
+    use yinhe_theme::base::BaseColors;
+    use yinhe_types::AutomationTarget;
+
+    fn panel_view() -> AutomationPanelView {
+        let mut v = AutomationPanelView {
+            show_velocity: false,
+            panel_height: 40.0,
+            ..Default::default()
+        };
+        v.base.pixels_per_tick = 0.1;
+        v
+    }
+
+    fn step_lane() -> AutomationLane {
+        AutomationLane {
+            target: AutomationTarget::CC { controller: 7 },
+            track: 0,
+            events: vec![
+                AutomationEvent {
+                    id: 0,
+                    tick: 0,
+                    value: 0.0,
+                    shape: SegmentShape::Step,
+                },
+                AutomationEvent {
+                    id: 1,
+                    tick: 1000,
+                    value: 1.0,
+                    shape: SegmentShape::Step,
+                },
+            ],
+        }
+    }
+
+    /// 折叠预览依赖传入的 alpha：曲线颜色必须采用给定不透明度，
+    /// 且比展开时的 LINE_ALPHA 更淡。
+    #[test]
+    fn segment_alpha_is_applied() {
+        let view = panel_view();
+        let seg = SegSpan {
+            x1: 60.0,
+            y1: 10.0,
+            shape: SegmentShape::Step,
+            x2: 200.0,
+            y2: 30.0,
+            tick1: 0,
+            tick2: 1000,
+            v1: 0.0,
+            v2: 1.0,
+        };
+        let mut folded = Vec::new();
+        render_segment(&mut folded, &seg, &view, 1.0, [1.0, 0.0, 0.0], FOLDED_ALPHA);
+        assert!(!folded.is_empty());
+        for inst in &folded {
+            let (_, _, _, a) = unpack_rgba(inst.rgba_packed);
+            assert!((a - FOLDED_ALPHA).abs() < 0.01, "alpha={a}");
+        }
+
+        let mut expanded = Vec::new();
+        render_segment(&mut expanded, &seg, &view, 1.0, [1.0, 0.0, 0.0], LINE_ALPHA);
+        let (_, _, _, a) = unpack_rgba(expanded[0].rgba_packed);
+        assert!(a > FOLDED_ALPHA + 0.1, "展开 alpha 应显著更不透明");
+        const { assert!(FOLDED_ALPHA < 0.5, "折叠预览必须足够淡，避免压过音符") };
+    }
+
+    /// 折叠预览 show_anchors=false 时纯曲线（无方块/圆形锚点）。
+    #[test]
+    fn folded_preview_has_no_anchors() {
+        let view = panel_view();
+        let lane = step_lane();
+        let theme = GpuTheme::from_base(BaseColors::default());
+        let colors = [[1.0, 0.0, 0.0, 1.0]];
+
+        let mut folded = Vec::new();
+        build_data_lines(
+            &mut folded,
+            400.0,
+            40.0,
+            &view,
+            &[&lane],
+            1.0,
+            &[true],
+            &colors,
+            false,
+            None,
+            &[],
+            FOLDED_ALPHA,
+            &theme,
+        );
+        assert!(!folded.is_empty());
+        assert!(
+            folded.iter().all(|i| i.shape == 0),
+            "折叠预览只应有线段（shape 0）"
+        );
+
+        let mut expanded = Vec::new();
+        build_data_lines(
+            &mut expanded,
+            400.0,
+            40.0,
+            &view,
+            &[&lane],
+            1.0,
+            &[true],
+            &colors,
+            true,
+            None,
+            &[],
+            LINE_ALPHA,
+            &theme,
+        );
+        assert!(
+            expanded.iter().any(|i| i.shape == 2),
+            "展开时 Step 锚点应为方块（shape 2）"
+        );
     }
 }

@@ -266,6 +266,7 @@ pub fn prepare(
                 show_anchors,
                 skip_lane,
                 highlight_ticks_for_layer0,
+                data_lines::LINE_ALPHA,
                 &theme,
             );
         })
@@ -298,6 +299,10 @@ pub struct ArrAutomationLane<'a> {
     pub max_val: f32,
     /// 需要白色高亮的锚点 tick（选中的锚点）。
     pub highlight_ticks: &'a [u32],
+    /// 是否绘制锚点/控制点。折叠预览为纯曲线，不画锚点。
+    pub show_anchors: bool,
+    /// 折叠预览：用更淡的不透明度，避免压过同行的音符。
+    pub translucent: bool,
 }
 
 /// 可见 lane 集合 + 位置 hash（混入 AR 自动化数据层的缓存键）。
@@ -400,9 +405,14 @@ pub fn prepare_arr_automation(
                 l.max_val,
                 track_visible,
                 track_colors,
-                show_anchors,
+                l.show_anchors,
                 skip_lane,
                 l.highlight_ticks,
+                if l.translucent {
+                    data_lines::FOLDED_ALPHA
+                } else {
+                    data_lines::LINE_ALPHA
+                },
                 &theme,
             );
         }
@@ -538,6 +548,8 @@ mod tests {
             height: 40.0,
             max_val: 1.0,
             highlight_ticks: &[],
+            show_anchors: false,
+            translucent: true,
         };
         let collapsed = lane_set_hash(&[]);
         let expanded = lane_set_hash(std::slice::from_ref(&make(40.0)));

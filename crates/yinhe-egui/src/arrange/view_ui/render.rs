@@ -384,10 +384,43 @@ pub(crate) fn prepare_automation(
             height: lh,
             max_val: crate::arrange::am_lanes::lane_max_val(lane),
             highlight_ticks: &[],
+            show_anchors,
+            translucent: false,
         });
     }
     for (i, l) in am_render.iter_mut().enumerate() {
         l.highlight_ticks = &am_highlights[i];
+    }
+    // 折叠音轨的自动化预览：未展开时把该轨每条 lane 以全行高、无锚点、
+    // 半透明叠加（curve 层先于 note 层绘制，音符始终覆盖其上，不喧宾夺主）。
+    // 多条 lane 共享同一 y_top 互相重叠。纯展示，交互只在展开时可用。
+    let (first_track, last_track) = row_layout.visible_track_range(scroll_y, h, lh);
+    let conductor = data.conductor_track_idx;
+    for track in first_track..last_track.min(data.tracks.len()) {
+        if conductor == Some(track as u16)
+            || row_layout.lane_count(track) != 0
+            || !data.track_visible.get(track).copied().unwrap_or(true)
+        {
+            continue;
+        }
+        let Some(tr) = data.tracks.get(track) else {
+            continue;
+        };
+        if tr.automation_lanes.is_empty() {
+            continue;
+        }
+        let y_top = row_layout.track_y(track, lh) - scroll_y;
+        for lane in &tr.automation_lanes {
+            am_render.push(yinhe_wgpu::ArrAutomationLane {
+                lane,
+                y_top,
+                height: lh,
+                max_val: crate::arrange::am_lanes::lane_max_val(lane),
+                highlight_ticks: &[],
+                show_anchors: false,
+                translucent: true,
+            });
+        }
     }
     let hl_hash = am_highlights.iter().fold(0u64, |acc, hl| {
         hl.iter()
@@ -402,8 +435,6 @@ pub(crate) fn prepare_automation(
         revision,
         hl_hash,
     ]);
-    // 避免未使用
-    let _ = row_layout;
     yinhe_wgpu::prepare_arr_automation(
         renderer,
         w,
