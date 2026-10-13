@@ -1087,6 +1087,25 @@ impl Document {
         }
     }
 
+    /// 变速：把选中音符的整体时间跨度按 `num/den` 缩放
+    /// （`new_span = 当前跨度 × num / den`）。等价于
+    /// [`Self::rescale_selection_span`]，供「快速变速」按钮复用。
+    pub fn scale_selected_span(&mut self, num: u64, den: u64) -> Option<UndoAction> {
+        if self.edit.selected.is_empty() || den == 0 {
+            return None;
+        }
+        let (mut t0, mut t1) = (u64::MAX, 0u64);
+        for &(ts, te, _, _, _, _) in &self.edit.selected.rects {
+            t0 = t0.min(ts as u64);
+            t1 = t1.max(te as u64);
+        }
+        if t1 <= t0 {
+            return None;
+        }
+        let new_span = ((t1 - t0).saturating_mul(num) / den).max(1);
+        self.rescale_selection_span(new_span)
+    }
+
     /// 一键为整首歌去重重叠音符（用于黑乐谱叠音清理）。
     ///
     /// - `cross_track == false`：仅同一 `(track, key)` 内 `[start,end)` 相交的视为重叠，保留最早的，删后者；
@@ -1942,6 +1961,39 @@ mod tests {
         let mut doc = make_doc_with_note();
         doc.edit.selected.clear();
         assert!(doc.rescale_selection_span(200).is_none());
+    }
+
+    /// 快速变速：×2（变慢）把跨度翻倍、音符等比拉长。
+    #[test]
+    fn scale_selected_span_doubles() {
+        let mut doc = make_doc_with_note(); // 音符 (100,200)，跨度 101
+        doc.scale_selected_span(2, 1).expect("should edit");
+        let n = doc.data.model.notes[60][0];
+        assert_eq!(n.start_tick, 100);
+        assert_eq!(n.end_tick, 300, "跨度 ×2 后音符末点翻倍");
+    }
+
+    /// 快速变速：÷2（变快）把跨度减半。
+    #[test]
+    fn scale_selected_span_halves() {
+        let mut doc = make_doc_with_note();
+        doc.scale_selected_span(1, 2).expect("should edit");
+        let n = doc.data.model.notes[60][0];
+        assert_eq!(n.start_tick, 100);
+        assert!(
+            n.end_tick < 200,
+            "跨度减半后末点应提前，实际 {}",
+            n.end_tick
+        );
+    }
+
+    /// 变速：空选区 / den=0 无操作。
+    #[test]
+    fn scale_selected_span_noop_returns_none() {
+        let mut doc = make_doc_with_note();
+        assert!(doc.scale_selected_span(2, 0).is_none(), "den=0 无操作");
+        doc.edit.selected.clear();
+        assert!(doc.scale_selected_span(2, 1).is_none(), "空选区无操作");
     }
 
     #[test]

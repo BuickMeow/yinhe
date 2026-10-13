@@ -12,6 +12,8 @@ fn action_hint(action: SelectionAction) -> String {
         SelectionAction::TransposeDown => t!("hint.pr.sel_transpose_down"),
         SelectionAction::FlipHorizontal => t!("hint.pr.sel_flip_h"),
         SelectionAction::FlipVertical => t!("hint.pr.sel_flip_v"),
+        SelectionAction::LengthDouble => t!("hint.pr.sel_length_double"),
+        SelectionAction::LengthHalf => t!("hint.pr.sel_length_half"),
         SelectionAction::GridConfirm
         | SelectionAction::LineConfirm
         | SelectionAction::ScissorsConfirm => t!("hint.pr.sel_confirm"),
@@ -34,20 +36,43 @@ pub enum SelectionAction {
     LineConfirm,
     /// 剪刀工具：确认按锚点线切割音符。
     ScissorsConfirm,
+    /// 变速：选中音符长度 ×2。
+    LengthDouble,
+    /// 变速：选中音符长度 ÷2。
+    LengthHalf,
 }
 
 /// 浮动工具条按钮：`(icon, action)`。
 pub type BarButton = (MaterialIcon, SelectionAction);
 
-/// 选择工具的浮动条按钮（删除/复制/移调/翻转）。
-pub const SELECT_BAR_BUTTONS: [BarButton; 6] = [
+/// 选择工具的浮动条按钮（删除/复制/移调/变速/翻转）。
+/// 图标旋转由 [`bar_button_rotation`] 决定（如 DOWNLOAD 倒置 180° 表示升八度）。
+pub const SELECT_BAR_BUTTONS: [BarButton; 8] = [
     (ICON_DELETE, SelectionAction::Delete),
     (ICON_CONTENT_COPY, SelectionAction::Duplicate),
-    (ICON_VERTICAL_ALIGN_TOP, SelectionAction::TransposeUp),
-    (ICON_VERTICAL_ALIGN_BOTTOM, SelectionAction::TransposeDown),
+    (ICON_DOWNLOAD, SelectionAction::TransposeUp),
+    (ICON_DOWNLOAD, SelectionAction::TransposeDown),
+    (ICON_UPLOAD, SelectionAction::LengthDouble),
+    (ICON_DOWNLOAD, SelectionAction::LengthHalf),
     (ICON_FLIP, SelectionAction::FlipHorizontal),
     (ICON_FLIP, SelectionAction::FlipVertical),
 ];
+
+/// 图标旋转角（弧度）。0 = 不旋转。
+/// - 升八度：DOWNLOAD 倒置 180°；
+/// - 变速 ×2：UPLOAD 逆时针 90°；
+/// - 变速 ÷2：DOWNLOAD 顺时针 90°；
+/// - 垂直翻转：FLIP 旋转 90°。
+fn bar_button_rotation(action: SelectionAction) -> f32 {
+    use std::f32::consts::{FRAC_PI_2, PI};
+    match action {
+        SelectionAction::TransposeUp => PI,
+        SelectionAction::LengthDouble => -FRAC_PI_2,
+        SelectionAction::LengthHalf => FRAC_PI_2,
+        SelectionAction::FlipVertical => FRAC_PI_2,
+        _ => 0.0,
+    }
+}
 
 /// Gap between selection box right edge and the floating bar.
 const GAP: f32 = 8.0;
@@ -108,8 +133,8 @@ pub fn bar_rect(
     Some(bar_rect)
 }
 
-/// 在 transport bar 上横排绘制 6 个选择动作按钮
-/// （删除/复制/移调↑/移调↓/水平翻转/垂直翻转）。
+/// 在 transport bar 上横排绘制选择动作按钮
+/// （删除/复制/移调↑/移调↓/变速×2/变速÷2/水平翻转/垂直翻转）。
 ///
 /// 常驻显示；`enabled == false`（无框选）时灰显且不可点。
 /// `hovered_hint` 在可用且指针悬停时写入讲解行文案。
@@ -122,24 +147,24 @@ pub fn show_transport_buttons(
     let mut clicked = None;
     for (i, &(icon, action)) in SELECT_BAR_BUTTONS.iter().enumerate() {
         let font = egui::FontId::new(crate::theme::TRANSPORT_BTN_FONT, icon.font_family());
-        let resp = if action == SelectionAction::FlipVertical {
-            // ICON_FLIP 旋转 90° = 垂直翻转（与浮动工具条一致）。
-            crate::widgets::hover::hover_button_enabled_rotated(
-                ui,
-                icon.codepoint,
-                font,
-                crate::theme::text_label(),
-                false,
-                std::f32::consts::FRAC_PI_2,
-                enabled,
-            )
-        } else {
+        let angle = bar_button_rotation(action);
+        let resp = if angle == 0.0 {
             crate::widgets::hover::hover_button_enabled(
                 ui,
                 icon.codepoint,
                 font,
                 crate::theme::text_label(),
                 false,
+                enabled,
+            )
+        } else {
+            crate::widgets::hover::hover_button_enabled_rotated(
+                ui,
+                icon.codepoint,
+                font,
+                crate::theme::text_label(),
+                false,
+                angle,
                 enabled,
             )
         };
@@ -233,10 +258,18 @@ pub fn show(
             crate::theme::text_label()
         };
 
-        // Draw icon
+        // Draw icon（按动作旋转，如垂直翻转 = FLIP 旋转 90°）
         let icon_font_id = egui::FontId::new(ICON_SIZE, icon.font_family());
-        if action == SelectionAction::FlipVertical {
-            // ICON_FLIP 旋转 90° = 垂直翻转（绕按钮中心）
+        let angle = bar_button_rotation(action);
+        if angle == 0.0 {
+            ui.painter().text(
+                btn_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                icon.codepoint,
+                icon_font_id,
+                color,
+            );
+        } else {
             let galley =
                 ui.painter()
                     .layout_no_wrap(icon.codepoint.to_string(), icon_font_id, color);
@@ -244,18 +277,8 @@ pub fn show(
                 .anchor_size(btn_rect.center(), galley.size())
                 .min;
             ui.painter().add(
-                egui::epaint::TextShape::new(pos, galley, color).with_angle_and_anchor(
-                    std::f32::consts::FRAC_PI_2,
-                    egui::Align2::CENTER_CENTER,
-                ),
-            );
-        } else {
-            ui.painter().text(
-                btn_rect.center(),
-                egui::Align2::CENTER_CENTER,
-                icon.codepoint,
-                icon_font_id,
-                color,
+                egui::epaint::TextShape::new(pos, galley, color)
+                    .with_angle_and_anchor(angle, egui::Align2::CENTER_CENTER),
             );
         }
 

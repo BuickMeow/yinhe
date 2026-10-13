@@ -1060,6 +1060,8 @@ hint.pr.sel_transpose_down: "Транспонировать на октаву в
 hint.pr.sel_flip_h: "Отразить по горизонтали"
 hint.pr.sel_flip_v: "Отразить по вертикали"
 hint.pr.sel_confirm: "Подтвердить"
+hint.pr.sel_length_double: "Удвоить длительность"
+hint.pr.sel_length_half: "Уменьшить длительность вдвое"
 hint.info.track_name: "Название дорожки (фиксируется при потере фокуса, отменяемо)"
 hint.info.channel: "MIDI-канал"
 hint.info.port: "MIDI-порт"

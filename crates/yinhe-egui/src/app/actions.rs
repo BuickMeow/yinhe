@@ -284,6 +284,20 @@ impl App {
         self.with_undo(label.as_ref(), |doc| doc.flip_selected_notes(axis));
     }
 
+    /// 变速：选中跨度 ×2（变慢）。
+    pub(crate) fn double_selected_length(&mut self) {
+        self.with_undo(t!("undo.rescale_span").as_ref(), |doc| {
+            doc.scale_selected_span(2, 1)
+        });
+    }
+
+    /// 变速：选中跨度 ÷2（变快）。
+    pub(crate) fn half_selected_length(&mut self) {
+        self.with_undo(t!("undo.rescale_span").as_ref(), |doc| {
+            doc.scale_selected_span(1, 2)
+        });
+    }
+
     /// 一键为整首歌去重重叠音符（黑乐谱叠音清理）。
     pub(crate) fn dedup_overlapping_notes(&mut self, cross_track: bool) {
         let label = if cross_track {
@@ -817,6 +831,8 @@ impl App {
             A::TransposeDown => self.transpose_selected_notes(-12),
             A::FlipHorizontal => self.flip_selected_notes(yinhe_editor_core::FlipAxis::Horizontal),
             A::FlipVertical => self.flip_selected_notes(yinhe_editor_core::FlipAxis::Vertical),
+            A::LengthDouble => self.double_selected_length(),
+            A::LengthHalf => self.half_selected_length(),
             A::GridConfirm => self.grid_split_selection(),
             A::LineConfirm => self.line_tool_confirm(),
             A::ScissorsConfirm => self.scissors_confirm(),
