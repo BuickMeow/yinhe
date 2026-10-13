@@ -43,8 +43,8 @@ pub type BarButton = (MaterialIcon, SelectionAction);
 pub const SELECT_BAR_BUTTONS: [BarButton; 6] = [
     (ICON_DELETE, SelectionAction::Delete),
     (ICON_CONTENT_COPY, SelectionAction::Duplicate),
-    (ICON_KEYBOARD_ARROW_UP, SelectionAction::TransposeUp),
-    (ICON_KEYBOARD_ARROW_DOWN, SelectionAction::TransposeDown),
+    (ICON_VERTICAL_ALIGN_TOP, SelectionAction::TransposeUp),
+    (ICON_VERTICAL_ALIGN_BOTTOM, SelectionAction::TransposeDown),
     (ICON_FLIP, SelectionAction::FlipHorizontal),
     (ICON_FLIP, SelectionAction::FlipVertical),
 ];

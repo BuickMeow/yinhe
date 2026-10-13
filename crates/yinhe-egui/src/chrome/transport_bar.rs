@@ -189,6 +189,11 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                         );
                         timecode_rect = Some(tc_rect);
                         timecode_events.extend(tc_events);
+                        // timecode 内部用 `ui.put` 渲染各单元格，会把父游标挪到最后一个
+                        // 单元格右缘（早于整块右缘）。手动推进到时间码右缘，否则后续
+                        // 左对齐的选择按钮会压到时间码的第 4 列（电平表）上。
+                        let restore = (tc_rect.max.x - ui.cursor().min.x).max(0.0);
+                        ui.add_space(restore);
                     }
                     ui.add_space(4.0);
 

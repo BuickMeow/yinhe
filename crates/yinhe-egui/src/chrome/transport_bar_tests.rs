@@ -517,3 +517,38 @@ fn right_group_text_shapes_use_fallback_color() {
     assert!(checked >= 3, "右侧组文字/图标数量异常: {checked}");
     output.drop_without_applying_deltas();
 }
+
+/// 回归测试：transport bar 上的选择动作按钮不得压到时间码（尤其第 4 列电平表）。
+/// timecode 内部用 `ui.put` 渲染单元格会打乱父游标（提前到最后一个单元格右缘），
+/// 曾导致左对齐的按钮左移、覆盖时间码右侧。
+#[test]
+fn selection_buttons_do_not_overlap_timecode() {
+    let doc = yinhe_test_helpers::make_test_document();
+    let mut h = make_transport_harness(Some(&doc));
+    h.step();
+    h.step();
+
+    let mut tc_right: Option<f32> = None;
+    let mut delete_x: Option<f32> = None;
+    for cs in &h.output().shapes {
+        match &cs.shape {
+            egui::Shape::Rect(r)
+                if (r.rect.width() - crate::widgets::timecode::TIMECODE_WIDTH).abs() < 0.5 =>
+            {
+                tc_right = Some(r.rect.max.x);
+            }
+            egui::Shape::Text(t)
+                if t.galley.text() == egui_material_icons::icons::ICON_DELETE.codepoint =>
+            {
+                delete_x = Some(t.pos.x);
+            }
+            _ => {}
+        }
+    }
+    let tc_right = tc_right.expect("应绘制时间码背景");
+    let delete_x = delete_x.expect("应绘制删除按钮");
+    assert!(
+        delete_x >= tc_right,
+        "删除按钮 x={delete_x} 不得早于时间码右缘 {tc_right}（重叠）"
+    );
+}
