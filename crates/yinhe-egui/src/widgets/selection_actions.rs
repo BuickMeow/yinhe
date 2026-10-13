@@ -52,8 +52,8 @@ pub const SELECT_BAR_BUTTONS: [BarButton; 8] = [
     (ICON_CONTENT_COPY, SelectionAction::Duplicate),
     (ICON_DOWNLOAD, SelectionAction::TransposeUp),
     (ICON_DOWNLOAD, SelectionAction::TransposeDown),
-    (ICON_UPLOAD, SelectionAction::LengthDouble),
     (ICON_DOWNLOAD, SelectionAction::LengthHalf),
+    (ICON_UPLOAD, SelectionAction::LengthDouble),
     (ICON_FLIP, SelectionAction::FlipHorizontal),
     (ICON_FLIP, SelectionAction::FlipVertical),
 ];
