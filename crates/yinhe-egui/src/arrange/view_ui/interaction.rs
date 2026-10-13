@@ -297,7 +297,18 @@ pub(crate) fn sel_drag_frame_arrange(
             ));
         }
         if pointer.primary_released() {
+            // release 帧以释放点作为选框终点：否则快速拖拽时 egui 会把最后的
+            // move+release 合并到同一帧，`drag` 的 end 仍停留在上一帧的中间位置，
+            // 导致框选范围偏小（漏选右侧/下方的音符）。
+            let release_end = pointer.hover_pos().map(|pos| {
+                let clamped = pos.clamp(hit_rect.min, hit_rect.max);
+                egui::pos2(
+                    clamped.x - content_rect.min.x,
+                    clamped.y - content_rect.min.y,
+                )
+            });
             if let (Some(_midi_ref), Some((_, end))) = (data.midi, drag) {
+                let end = release_end.unwrap_or(end);
                 let drag_dist = (end - start_pixel).length();
                 if drag_dist < 3.0 {
                     let tick = view.x_to_tick(start_pixel.x);
