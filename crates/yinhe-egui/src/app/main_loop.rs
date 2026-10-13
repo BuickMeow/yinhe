@@ -613,8 +613,10 @@ impl eframe::App for App {
                     .unwrap_or_default(),
                 pr: pr_bar,
                 master_meter,
-                selection_available: active_doc
-                    .is_some_and(|d| !d.edit.sel_rect.effective_rects().is_empty()),
+                // PR 框选（sel_rect）或 AR 框选（arr_sel_rect）任一存在即可用。
+                selection_available: active_doc.is_some_and(|d| {
+                    !d.edit.sel_rect.effective_rects().is_empty() || !d.edit.arr_sel_rect.is_empty()
+                }),
             },
         );
 
