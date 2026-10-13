@@ -769,6 +769,7 @@ impl App {
     pub(crate) fn handle_edit_action(&mut self, action: transport_bar::EditAction) {
         use transport_bar::EditAction as A;
         let route_to_automation = self.has_selected_automation_anchors();
+        let ar_auto = self.has_selected_ar_automation();
         match action {
             A::Undo => self.undo(),
             A::Redo => self.redo(),
@@ -797,14 +798,18 @@ impl App {
             A::SelectNotesOnly => self.select_notes_only(),
             A::FilterSelection => self.open_filter_dialog(),
             A::Duplicate => {
-                if route_to_automation {
+                if ar_auto {
+                    self.duplicate_ar_selection();
+                } else if route_to_automation {
                     self.duplicate_automation_anchors();
                 } else {
                     self.duplicate_selected_notes();
                 }
             }
             A::Delete => {
-                if route_to_automation {
+                if ar_auto {
+                    self.delete_ar_selection();
+                } else if route_to_automation {
                     self.delete_automation_anchors();
                 } else {
                     self.delete_selected_notes();
@@ -828,37 +833,48 @@ impl App {
     ) {
         use crate::widgets::selection_actions::SelectionAction as A;
         let route_to_automation = self.has_selected_automation_anchors();
+        let ar_auto = self.has_selected_ar_automation();
         match action {
             A::Delete => {
-                if route_to_automation {
+                if ar_auto {
+                    self.delete_ar_selection();
+                } else if route_to_automation {
                     self.delete_automation_anchors();
                 } else {
                     self.delete_selected_notes();
                 }
             }
             A::Duplicate => {
-                if route_to_automation {
+                if ar_auto {
+                    self.duplicate_ar_selection();
+                } else if route_to_automation {
                     self.duplicate_automation_anchors();
                 } else {
                     self.duplicate_selected_notes();
                 }
             }
             A::LengthDouble => {
-                if route_to_automation {
+                if ar_auto {
+                    self.stretch_ar_selection(2, 1);
+                } else if route_to_automation {
                     self.stretch_automation_anchors(2, 1);
                 } else {
                     self.double_selected_length();
                 }
             }
             A::LengthHalf => {
-                if route_to_automation {
+                if ar_auto {
+                    self.stretch_ar_selection(1, 2);
+                } else if route_to_automation {
                     self.stretch_automation_anchors(1, 2);
                 } else {
                     self.half_selected_length();
                 }
             }
             A::FlipHorizontal => {
-                if route_to_automation {
+                if ar_auto {
+                    self.flip_ar_selection_horizontal();
+                } else if route_to_automation {
                     self.flip_automation_anchors_horizontal();
                 } else {
                     self.flip_selected_notes(yinhe_editor_core::FlipAxis::Horizontal);

@@ -447,15 +447,20 @@ impl eframe::App for App {
         // 路由：Select/SelectVertical 工具且有锚点选中时，copy/cut/duplicate/delete
         // 作用于自动化锚点；paste 由剪贴板内容类型决定（见 paste_clipboard）。
         let route_to_automation = self.has_selected_automation_anchors();
+        let ar_auto = self.has_selected_ar_automation();
         if kb.delete_selected {
-            if route_to_automation {
+            if ar_auto {
+                self.delete_ar_selection();
+            } else if route_to_automation {
                 self.delete_automation_anchors();
             } else {
                 self.delete_selected_notes();
             }
         }
         if kb.duplicate_selected {
-            if route_to_automation {
+            if ar_auto {
+                self.duplicate_ar_selection();
+            } else if route_to_automation {
                 self.duplicate_automation_anchors();
             } else {
                 self.duplicate_selected_notes();
@@ -599,7 +604,8 @@ impl eframe::App for App {
         // 选择动作按钮可用性：PR 框选 / AR 框选 / 自动化锚点选中（PR 底部面板或 AR lane）。
         let selection_available = active_doc.is_some_and(|d| {
             !d.edit.sel_rect.effective_rects().is_empty() || !d.edit.arr_sel_rect.is_empty()
-        }) || self.has_selected_automation_anchors();
+        }) || self.has_selected_automation_anchors()
+            || self.has_selected_ar_automation();
         let transport_response = transport_bar::show(
             ui,
             &mut transport_bar::TransportContext {

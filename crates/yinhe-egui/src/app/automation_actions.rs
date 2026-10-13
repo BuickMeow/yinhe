@@ -10,7 +10,8 @@
 use rust_i18n::t;
 use yinhe_editor_core::clipboard::{AutomationClipboard, AutomationSelection, PasteMode};
 use yinhe_types::{
-    AnchorSelRect, AutomationEdit, AutomationPanelView, AutomationTarget, SegmentShape,
+    AnchorSelRect, AutomationEdit, AutomationEvent, AutomationPanelView, AutomationTarget,
+    SegmentShape,
 };
 
 use crate::app::App;
@@ -607,6 +608,264 @@ impl App {
                 view.dirty = true;
             }
         }
+        self.notify_audio_model_changed();
+    }
+
+    /// 选区（rects）的 tick 跨度 `[t0, t1]`；无有效跨度返回 None。
+    fn selection_span(selection: &yinhe_core::Selection) -> Option<(f64, f64)> {
+        let (mut t0, mut t1) = (f64::INFINITY, f64::NEG_INFINITY);
+        for &(ts, te, _, _, _, _) in &selection.rects {
+            t0 = t0.min(ts as f64);
+            t1 = t1.max(te as f64);
+        }
+        (t1 > t0).then_some((t0, t1))
+    }
+
+    /// AR 框选是否选中了自动化事件（`selected` 物化出自动化成员）。
+    ///
+    /// AR 主框选把区域内音符与自动化事件一起物化进共享 `selected`，
+    /// 与 PR 底部面板 / AM lane 的 `anchor_sel_rects` 是两套不同的选区表示。
+    pub(crate) fn has_selected_ar_automation(&self) -> bool {
+        let Some(idx) = self.workspace.active_doc else {
+            return false;
+        };
+        if !matches!(self.active_tool, Tool::Select | Tool::SelectVertical) {
+            return false;
+        }
+        self.workspace.documents[idx]
+            .edit
+            .selected
+            .automation_member_count()
+            .is_some_and(|c| c > 0)
+    }
+
+    /// 汇总 AR 框选选中的自动化事件，按 `(track, lane)` 分组。
+    ///
+    /// 成员态按事件 id 判定，矩形态回退 rect + 属性筛选（与 AR 搬运口径一致）；
+    /// 不含 conductor.tempo（与 AR 框选物化范围一致）。
+    fn collect_selected_automation(
+        doc: &yinhe_editor_core::document::Document,
+    ) -> Vec<(u16, usize, AutomationTarget, Vec<AutomationEvent>)> {
+        let selection = &doc.edit.selected;
+        let mut map: std::collections::HashMap<
+            (u16, usize),
+            (AutomationTarget, Vec<AutomationEvent>),
+        > = std::collections::HashMap::new();
+        for &(_ts, _te, _kl, _kh, tl, th) in &selection.rects {
+            for track_u16 in tl..=th {
+                let track_idx = track_u16 as usize;
+                let Some(track) = doc.data.model.tracks.get(track_idx) else {
+                    continue;
+                };
+                for (lane_idx, lane) in track.automation_lanes.iter().enumerate() {
+                    for ev in &lane.events {
+                        if selection.accepts_automation_event(track_u16, &lane.target, ev) {
+                            let entry = map
+                                .entry((track_u16, lane_idx))
+                                .or_insert_with(|| (lane.target.clone(), Vec::new()));
+                            if !entry.1.iter().any(|e| e.id == ev.id) {
+                                entry.1.push(*ev);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        map.into_iter()
+            .map(|((track, lane), (target, events))| (track, lane, target, events))
+            .collect()
+    }
+
+    /// AR 框选删除：删除选中自动化事件（并删除选中的音符）。
+    pub(crate) fn delete_ar_selection(&mut self) {
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[idx];
+
+        let lanes = Self::collect_selected_automation(doc);
+        let mut edits = Vec::new();
+        for (track, lane, target, events) in &lanes {
+            for ev in events {
+                edits.push(AutomationEdit::Delete {
+                    track_idx: *track,
+                    lane_idx: *lane,
+                    target: target.clone(),
+                    tick: ev.tick,
+                });
+            }
+        }
+
+        let before = doc.capture_snapshot();
+        let mut actions = doc.apply_automation_edits(edits);
+        // 同时删除选中的音符（delete_selected 会清空共享选区）。
+        if let Some(a) = doc.delete_selected() {
+            actions.push(a);
+        }
+        doc.edit.arr_sel_rect.clear();
+        if actions.is_empty() {
+            doc.edit.selected.clear();
+            return;
+        }
+        doc.edit.pianoroll_view.base.dirty = true;
+        crate::right_panel::automation_undo::push_automation_actions(
+            doc,
+            actions,
+            t!("undo.delete_automation").as_ref(),
+            before,
+        );
+        self.notify_audio_model_changed();
+    }
+
+    /// AR 框选重复：副本偏移 = 选区跨度（单 tick 跨度时用量化间隔）。
+    /// 复用 `duplicate_selected_arrange`（音符 + 自动化一并复制）。
+    pub(crate) fn duplicate_ar_selection(&mut self) {
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[idx];
+        let Some((t0, t1)) = Self::selection_span(&doc.edit.selected) else {
+            return;
+        };
+        let span = (t1 - t0) as i64;
+        let delta = if span <= 0 {
+            doc.edit
+                .quantize_arrange
+                .tick_interval(doc.data.model.meta.ppq)
+                .max(1) as i64
+        } else {
+            span
+        };
+
+        let before = doc.capture_snapshot();
+        if let Some(a) = doc.duplicate_selected_arrange(delta, 0) {
+            // AR 选框（arr_sel_rect）跟随副本。
+            for r in &mut doc.edit.arr_sel_rect {
+                r.0 += delta as f64;
+                r.1 += delta as f64;
+            }
+            doc.edit.pianoroll_view.base.dirty = true;
+            crate::right_panel::automation_undo::push_automation_actions(
+                doc,
+                vec![a],
+                t!("undo.duplicate_automation").as_ref(),
+                before,
+            );
+            self.notify_audio_model_changed();
+        }
+    }
+
+    /// AR 框选变速：选中自动化事件按选区跨度 ×`num`/`den` 缩放 tick
+    /// （并同步缩放选中的音符）。
+    pub(crate) fn stretch_ar_selection(&mut self, num: u64, den: u64) {
+        if num == 0 || den == 0 {
+            return;
+        }
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[idx];
+        let Some((t0, t1)) = Self::selection_span(&doc.edit.selected) else {
+            return;
+        };
+        let span = (t1 - t0) as u64;
+        if span == 0 {
+            return;
+        }
+        let new_span = (span.saturating_mul(num) / den).max(1);
+        if new_span == span {
+            return;
+        }
+        let factor = new_span as f64 / span as f64;
+
+        let lanes = Self::collect_selected_automation(doc);
+        let mut edits = Vec::new();
+        for (track, lane, target, events) in &lanes {
+            let mut moves: Vec<(u32, u32, f32)> = Vec::new();
+            for ev in events {
+                let nt = (t0 + (ev.tick as f64 - t0) * factor)
+                    .round()
+                    .clamp(0.0, u32::MAX as f64) as u32;
+                if nt != ev.tick {
+                    moves.push((ev.tick, nt, ev.value));
+                }
+            }
+            if !moves.is_empty() {
+                edits.push(AutomationEdit::MoveBatch {
+                    track_idx: *track,
+                    lane_idx: *lane,
+                    target: target.clone(),
+                    moves,
+                });
+            }
+        }
+
+        let before = doc.capture_snapshot();
+        let mut actions = doc.apply_automation_edits(edits);
+        // 音符 + 选框 tick 范围同步缩放。
+        if let Some(a) = doc.rescale_selection_span(new_span) {
+            actions.push(a);
+        }
+        if actions.is_empty() {
+            return;
+        }
+        doc.edit.pianoroll_view.base.dirty = true;
+        crate::right_panel::automation_undo::push_automation_actions(
+            doc,
+            actions,
+            t!("undo.rescale_span").as_ref(),
+            before,
+        );
+        self.notify_audio_model_changed();
+    }
+
+    /// AR 框选水平翻转：选中自动化事件在选区跨度内做时间镜像（并翻转选中音符）。
+    pub(crate) fn flip_ar_selection_horizontal(&mut self) {
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[idx];
+        let Some((t0, t1)) = Self::selection_span(&doc.edit.selected) else {
+            return;
+        };
+
+        let lanes = Self::collect_selected_automation(doc);
+        let mut edits = Vec::new();
+        for (track, lane, target, events) in &lanes {
+            let mut moves: Vec<(u32, u32, f32)> = Vec::new();
+            for ev in events {
+                let nt = (t0 + (t1 - ev.tick as f64))
+                    .round()
+                    .clamp(0.0, u32::MAX as f64) as u32;
+                if nt != ev.tick {
+                    moves.push((ev.tick, nt, ev.value));
+                }
+            }
+            if !moves.is_empty() {
+                edits.push(AutomationEdit::MoveBatch {
+                    track_idx: *track,
+                    lane_idx: *lane,
+                    target: target.clone(),
+                    moves,
+                });
+            }
+        }
+
+        let before = doc.capture_snapshot();
+        let mut actions = doc.apply_automation_edits(edits);
+        if let Some(a) = doc.flip_selected_notes(yinhe_editor_core::FlipAxis::Horizontal) {
+            actions.push(a);
+        }
+        if actions.is_empty() {
+            return;
+        }
+        doc.edit.pianoroll_view.base.dirty = true;
+        crate::right_panel::automation_undo::push_automation_actions(
+            doc,
+            actions,
+            t!("undo.flip_horizontal").as_ref(),
+            before,
+        );
         self.notify_audio_model_changed();
     }
 
