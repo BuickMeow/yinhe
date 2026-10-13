@@ -404,18 +404,6 @@ mod tests {
         egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0))
     }
 
-    /// 浮动工具条上的一点（用 compute_bar_rect 计算得到，避免硬编码坐标）。
-    fn bar_point() -> egui::Pos2 {
-        let eff = [(0.0f64, 100.0f64, 60u8, 70u8)];
-        let view = test_view();
-        let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
-            &view, eff[0].0, eff[0].1, eff[0].2, eff[0].3,
-        );
-        let bar = crate::widgets::selection_actions::compute_bar_rect(content(), pixel_rect)
-            .expect("bar 应显示");
-        bar.center()
-    }
-
     /// 跑一帧 marquee_drag_frame，返回框选结果。
     fn run_frame(
         ctx: &egui::Context,
@@ -473,13 +461,13 @@ mod tests {
         raw
     }
 
-    /// 回归测试：从浮动工具条上按下拖拽不得启动框选。
-    /// （曾导致不按 ctrl 也能拉出第二个选框 —— 事件穿透。）
+    /// 回归测试：press 起点落在浮动条（`on_bar == true`）上时拖拽不得启动框选。
+    /// （曾导致不按 ctrl 也能拉出第二个选框 —— 事件穿透。现浮动条由 Grid 等工具的 ✓ 使用。）
     #[test]
     fn marquee_from_action_bar_does_not_start() {
         let ctx = egui::Context::default();
         let mut view = test_view();
-        let pos = bar_point();
+        let pos = egui::pos2(200.0, 300.0);
 
         let _ = run_frame(&ctx, press_event(pos), &mut view, true);
         let _ = run_frame(
@@ -494,7 +482,7 @@ mod tests {
             &mut view,
             true,
         );
-        assert!(result.is_none(), "从工具条按下拖拽不得产生选框（事件穿透）");
+        assert!(result.is_none(), "on_bar 起点拖拽不得产生选框（事件穿透）");
     }
 
     /// 保障测试：音乐区正常框选不受防穿透影响。

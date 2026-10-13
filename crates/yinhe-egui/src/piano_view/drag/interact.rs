@@ -24,28 +24,19 @@ pub(crate) fn on_action_bar(
 
 /// 简单点击（无 marquee）时的播放指示器定位。
 ///
-/// 点在浮动工具条（selection_actions bar）上或 music_rect 外时返回 `None`——
-/// 这是防穿透的关键：点击工具条按钮不能让 playhead 跳转（曾复发两次）。
+/// 点在 music_rect 外时返回 `None`。选择工具的浮动工具条已迁到 transport bar
+/// （位于 music_rect 之外，不再需要防穿透判断）。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn cursor_tick_from_click(
     pos: egui::Pos2,
     content_rect: egui::Rect,
     music_rect: egui::Rect,
     view: &yinhe_types::PianoRollView,
-    eff_rects: &[(f64, f64, u8, u8)],
     quantize: QuantizePreset,
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
 ) -> Option<f64> {
-    if !music_rect.contains(pos)
-        || on_action_bar(
-            pos,
-            music_rect,
-            view,
-            eff_rects,
-            crate::widgets::selection_actions::SELECT_BAR_BUTTONS.len(),
-        )
-    {
+    if !music_rect.contains(pos) {
         return None;
     }
     let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
@@ -113,8 +104,6 @@ pub(crate) fn handle_sel_marquee(
     track_selected: &std::collections::HashSet<u16>,
     track_locked: &[bool],
     vertical: bool,
-    press_on_bar: bool,
-    eff_rects: &[(f64, f64, u8, u8)],
 ) {
     if state.note_drag_origin.is_some()
         || state.sel_resize_state.is_some()
@@ -140,7 +129,7 @@ pub(crate) fn handle_sel_marquee(
             bar_line_data,
             total_ticks,
             "sel_drag",
-            press_on_bar,
+            false,
         )
     {
         let (track_lo, track_hi) = crate::selection::drag::pr_track_range(track_selected);
@@ -181,7 +170,6 @@ pub(crate) fn handle_sel_marquee(
             content_rect,
             music_rect,
             view,
-            eff_rects,
             quantize,
             ppq,
             bar_line_data,

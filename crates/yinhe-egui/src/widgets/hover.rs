@@ -15,7 +15,7 @@ pub(crate) fn hover_button(
     inactive_color: egui::Color32,
     is_active: bool,
 ) -> egui::Response {
-    hover_button_impl(ui, text, font_id, inactive_color, is_active, 0.0)
+    hover_button_impl(ui, text, font_id, inactive_color, is_active, 0.0, true)
 }
 
 /// 与 `hover_button` 相同，但文字/图标绕按钮中心旋转 `angle` 弧度。
@@ -28,7 +28,33 @@ pub(crate) fn hover_button_rotated(
     is_active: bool,
     angle: f32,
 ) -> egui::Response {
-    hover_button_impl(ui, text, font_id, inactive_color, is_active, angle)
+    hover_button_impl(ui, text, font_id, inactive_color, is_active, angle, true)
+}
+
+/// 支持禁用态的 `hover_button`：`enabled == false` 时用 `text_disabled` 灰显、
+/// 不响应点击、无 hover 高亮（`Sense::hover`，`hovered()` 仍可读作"指针在上方"）。
+pub(crate) fn hover_button_enabled(
+    ui: &mut egui::Ui,
+    text: &str,
+    font_id: egui::FontId,
+    inactive_color: egui::Color32,
+    is_active: bool,
+    enabled: bool,
+) -> egui::Response {
+    hover_button_impl(ui, text, font_id, inactive_color, is_active, 0.0, enabled)
+}
+
+/// 禁用态 + 旋转（见 [`hover_button_enabled`] / [`hover_button_rotated`]）。
+pub(crate) fn hover_button_enabled_rotated(
+    ui: &mut egui::Ui,
+    text: &str,
+    font_id: egui::FontId,
+    inactive_color: egui::Color32,
+    is_active: bool,
+    angle: f32,
+    enabled: bool,
+) -> egui::Response {
+    hover_button_impl(ui, text, font_id, inactive_color, is_active, angle, enabled)
 }
 
 /// hover 类控件的统一四态配色：active = accent_active；按下/悬停按暗色/亮色分支；
@@ -65,14 +91,24 @@ fn hover_button_impl(
     inactive_color: egui::Color32,
     is_active: bool,
     angle: f32,
+    enabled: bool,
 ) -> egui::Response {
     // 用 PLACEHOLDER 排版：glyph 不带固定色，绘制时由 TextShape 的 fallback
     // 颜色统一着色（旋转分支与自绘组合按钮复用该 galley 时不会残留白色）。
     let galley =
         ui.painter()
             .layout_no_wrap(text.to_owned(), font_id.clone(), egui::Color32::PLACEHOLDER);
-    let (rect, resp) = ui.allocate_exact_size(galley.size(), egui::Sense::click());
-    let color = hover_button_color(&resp, inactive_color, is_active);
+    let sense = if enabled {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, resp) = ui.allocate_exact_size(galley.size(), sense);
+    let color = if enabled {
+        hover_button_color(&resp, inactive_color, is_active)
+    } else {
+        crate::theme::text_disabled()
+    };
     if angle == 0.0 {
         ui.painter().text(
             rect.center(),

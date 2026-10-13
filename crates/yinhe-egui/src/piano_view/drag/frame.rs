@@ -10,7 +10,7 @@ use yinhe_types::TimeSigEvent;
 use super::group_move::note_drag_frame;
 use super::group_resize::sel_resize_frame;
 use super::hit::{handle_double_click_create, quick_delete_early};
-use super::interact::{handle_sel_marquee, on_action_bar};
+use super::interact::handle_sel_marquee;
 use super::press::sel_press;
 use super::single_move::single_note_move_frame;
 use super::single_resize::single_note_resize_frame;
@@ -55,15 +55,6 @@ pub(crate) fn sel_drag_frame(
         return (Vec::new(), Vec::new(), Vec::new(), None, None, None);
     }
     let eff_rects = sel_rect.effective_rects();
-    let press_on_bar = ui.input(|i| i.pointer.hover_pos()).is_some_and(|pos| {
-        on_action_bar(
-            pos,
-            music_rect,
-            view,
-            &eff_rects,
-            crate::widgets::selection_actions::SELECT_BAR_BUTTONS.len(),
-        )
-    });
     let can_edit =
         crate::piano_view::pencil::valid_pencil_track(write_track, track_visible, conductor_idx)
             .is_some();
@@ -73,7 +64,6 @@ pub(crate) fn sel_drag_frame(
         music_rect,
         content_rect,
         view,
-        &eff_rects,
         midi,
         track_visible,
         track_selected,
@@ -96,7 +86,6 @@ pub(crate) fn sel_drag_frame(
         track_selected,
         track_locked,
         additive,
-        press_on_bar,
         &pointer,
         can_edit,
     );
@@ -169,7 +158,6 @@ pub(crate) fn sel_drag_frame(
         music_rect,
         content_rect,
         view,
-        &eff_rects,
         midi,
         write_track,
         track_visible,
@@ -200,8 +188,6 @@ pub(crate) fn sel_drag_frame(
         track_selected,
         track_locked,
         vertical,
-        press_on_bar,
-        &eff_rects,
     );
     state.save(ui);
     (

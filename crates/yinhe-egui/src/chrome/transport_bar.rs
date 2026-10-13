@@ -28,6 +28,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
     let mut pending_edit_action = None;
     let mut pending_open_path = None;
     let mut set_orientation = None;
+    let mut selection_action = None;
     let mut timecode_events: Vec<crate::widgets::timecode::TimecodeEvent> = Vec::new();
 
     let mut hovered_hint: Option<String> = None;
@@ -191,6 +192,18 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     }
                     ui.add_space(4.0);
 
+                    // ── 选择动作按钮（timecode 右侧、左起）：常驻显示，框选后才可用 ──
+                    if ctx.pr.is_some()
+                        && let Some(action) =
+                            crate::widgets::selection_actions::show_transport_buttons(
+                                ui,
+                                ctx.selection_available,
+                                &mut hovered_hint,
+                            )
+                    {
+                        selection_action = Some(action);
+                    }
+
                     if let Some(pr) = ctx.pr.as_ref() {
                         // ── 右侧 PR 控制组（靠右，永不收缩）：III / 三 / 和弦 ──
                         transport_bar_pr::show_right_group(
@@ -296,6 +309,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
         tap_tempo: play_actions.tap_tempo,
         set_orientation,
         timecode_events,
+        selection_action,
         pending_file_action,
         pending_edit_action,
         pending_open_path,

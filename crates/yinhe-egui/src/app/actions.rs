@@ -804,6 +804,25 @@ impl App {
         }
     }
 
+    /// 处理选择动作（transport bar 选择按钮 / PR 浮动工具条共用）。
+    pub(crate) fn handle_selection_action(
+        &mut self,
+        action: crate::widgets::selection_actions::SelectionAction,
+    ) {
+        use crate::widgets::selection_actions::SelectionAction as A;
+        match action {
+            A::Delete => self.delete_selected_notes(),
+            A::Duplicate => self.duplicate_selected_notes(),
+            A::TransposeUp => self.transpose_selected_notes(12),
+            A::TransposeDown => self.transpose_selected_notes(-12),
+            A::FlipHorizontal => self.flip_selected_notes(yinhe_editor_core::FlipAxis::Horizontal),
+            A::FlipVertical => self.flip_selected_notes(yinhe_editor_core::FlipAxis::Vertical),
+            A::GridConfirm => self.grid_split_selection(),
+            A::LineConfirm => self.line_tool_confirm(),
+            A::ScissorsConfirm => self.scissors_confirm(),
+        }
+    }
+
     /// 在光标 tick 处插入一个标签（MIDI marker），默认名 = `小节.拍.tick`。
     pub(crate) fn insert_marker_at_cursor(&mut self) {
         let Some(idx) = self.workspace.active_doc else {

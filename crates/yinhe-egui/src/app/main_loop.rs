@@ -613,6 +613,8 @@ impl eframe::App for App {
                     .unwrap_or_default(),
                 pr: pr_bar,
                 master_meter,
+                selection_available: active_doc
+                    .is_some_and(|d| !d.edit.sel_rect.effective_rects().is_empty()),
             },
         );
 
@@ -696,6 +698,11 @@ impl eframe::App for App {
         // ── Handle edit menu actions（传输栏编辑 popup / 图钉）──
         if let Some(action) = transport_response.pending_edit_action {
             self.handle_edit_action(action);
+        }
+
+        // ── Handle 选择动作（传输栏选择按钮）──
+        if let Some(action) = transport_response.selection_action {
+            self.handle_selection_action(action);
         }
 
         // ── Handle file menu actions ──

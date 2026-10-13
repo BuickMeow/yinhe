@@ -403,6 +403,8 @@ pub struct TransportContext<'a> {
     pub pr: Option<super::transport_bar_pr::PrBarData>,
     /// 总输出电平显示值 `((level L,R), (hold L,R))`（时间码第四栏竖表）。
     pub master_meter: ((f32, f32), (f32, f32)),
+    /// 当前是否存在 PR 框选（决定选择动作按钮是否可用；None 文档 = false）。
+    pub selection_available: bool,
 }
 
 pub struct TransportResponse {
@@ -416,6 +418,8 @@ pub struct TransportResponse {
     pub set_orientation: Option<yinhe_types::Orientation>,
     /// 时间码编辑事件（BPM/拍号/PPQ/位置/调式/量化）。
     pub timecode_events: Vec<crate::widgets::timecode::TimecodeEvent>,
+    /// transport bar 上选择动作按钮的点击（删除/复制/移调/翻转；None = 未点击）。
+    pub selection_action: Option<crate::widgets::selection_actions::SelectionAction>,
     pub pending_file_action: Option<FileAction>,
     pub pending_edit_action: Option<EditAction>,
     pub pending_open_path: Option<String>,

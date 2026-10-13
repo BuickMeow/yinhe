@@ -28,71 +28,32 @@ fn content() -> egui::Rect {
     egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0))
 }
 
-/// 取浮动工具条上的一点（用 compute_bar_rect 计算得到，避免硬编码坐标）。
-fn bar_point(view: &yinhe_types::PianoRollView) -> egui::Pos2 {
-    let eff = [(0.0f64, 100.0f64, 60u8, 70u8)];
-    let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
-        view, eff[0].0, eff[0].1, eff[0].2, eff[0].3,
-    );
-    let bar = crate::widgets::selection_actions::compute_bar_rect(content(), pixel_rect)
-        .expect("bar 应显示");
-    bar.center()
-}
-
 #[test]
-fn click_on_action_bar_does_not_move_playhead() {
-    // 回归测试：点击浮动工具条（曾两次导致 playhead 意外跳转）
+fn click_in_music_rect_moves_playhead() {
     let view = test_view();
-    let eff = [(0.0, 100.0, 60, 70)];
-    let pos = bar_point(&view);
-    assert!(
-        on_action_bar(pos, content(), &view, &eff, 6),
-        "测试前提：该点应在工具条上"
-    );
-    let result = cursor_tick_from_click(
-        pos,
-        content(),
-        content(),
-        &view,
-        &eff,
-        QuantizePreset::Fraction(1, 4),
-        480,
-        None,
-    );
-    assert_eq!(result, None, "点在工具条上时不得移动播放指示器");
-}
-
-#[test]
-fn click_outside_bar_moves_playhead() {
-    let view = test_view();
-    let eff = [(0.0, 100.0, 60, 70)];
     // 选框左侧远处、仍在 music_rect 内的点
     let pos = egui::pos2(200.0, 300.0);
-    assert!(!on_action_bar(pos, content(), &view, &eff, 6));
     let result = cursor_tick_from_click(
         pos,
         content(),
         content(),
         &view,
-        &eff,
         QuantizePreset::Fraction(1, 4),
         480,
         None,
     );
-    assert!(result.is_some(), "工具条外的点击应正常定位");
+    assert!(result.is_some(), "music_rect 内的点击应正常定位");
 }
 
 #[test]
 fn click_outside_music_rect_returns_none() {
     let view = test_view();
-    let eff = [(0.0, 100.0, 60, 70)];
     let pos = egui::pos2(100.0, 700.0); // 超出 music_rect 下边界
     let result = cursor_tick_from_click(
         pos,
         content(),
         content(),
         &view,
-        &eff,
         QuantizePreset::Fraction(1, 4),
         480,
         None,

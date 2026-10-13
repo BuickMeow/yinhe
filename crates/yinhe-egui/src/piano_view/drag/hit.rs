@@ -95,20 +95,6 @@ pub(crate) fn hit_test_note(
     None
 }
 
-fn is_on_bar(
-    pos: egui::Pos2,
-    music_rect: egui::Rect,
-    view: &yinhe_types::PianoRollView,
-    eff_rects: &[(f64, f64, u8, u8)],
-) -> bool {
-    eff_rects.iter().any(|&(t_start, t_end, key_lo, key_hi)| {
-        let pixel_rect =
-            crate::selection::drag::music_sel_to_pixel_rect(view, t_start, t_end, key_lo, key_hi);
-        crate::widgets::selection_actions::compute_bar_rect(music_rect, pixel_rect)
-            .is_some_and(|bar| bar.contains(pos))
-    })
-}
-
 /// 选择工具的早期快速删除检测（右键 + 双击）：命中音符时返回待删除项。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn quick_delete_early(
@@ -117,7 +103,6 @@ pub(crate) fn quick_delete_early(
     music_rect: egui::Rect,
     content_rect: egui::Rect,
     view: &yinhe_types::PianoRollView,
-    eff_rects: &[(f64, f64, u8, u8)],
     midi: Option<&dyn yinhe_types::NoteSource>,
     track_visible: &[bool],
     track_selected: &std::collections::HashSet<u16>,
@@ -131,7 +116,6 @@ pub(crate) fn quick_delete_early(
         })
         && let Some(pos) = pointer.hover_pos()
         && music_rect.contains(pos)
-        && !is_on_bar(pos, music_rect, view, eff_rects)
     {
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
         if let Some((_, track, start_tick, _, key)) =
@@ -153,7 +137,6 @@ pub(crate) fn handle_double_click_create(
     music_rect: egui::Rect,
     content_rect: egui::Rect,
     view: &yinhe_types::PianoRollView,
-    eff_rects: &[(f64, f64, u8, u8)],
     midi: Option<&dyn yinhe_types::NoteSource>,
     write_track: Option<u16>,
     track_visible: &[bool],
@@ -180,7 +163,7 @@ pub(crate) fn handle_double_click_create(
         return None;
     }
     let pos = pointer.hover_pos()?;
-    if !music_rect.contains(pos) || is_on_bar(pos, music_rect, view, eff_rects) {
+    if !music_rect.contains(pos) {
         return None;
     }
     let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);

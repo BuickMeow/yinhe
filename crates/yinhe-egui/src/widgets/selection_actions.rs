@@ -51,6 +51,8 @@ pub const SELECT_BAR_BUTTONS: [BarButton; 6] = [
 
 /// Gap between selection box right edge and the floating bar.
 const GAP: f32 = 8.0;
+/// transport bar 上选择动作按钮之间的间距。
+const TRANSPORT_GAP: f32 = 4.0;
 /// Button icon size.
 const ICON_SIZE: f32 = 18.0;
 /// Horizontal padding inside the pill.
@@ -106,9 +108,52 @@ pub fn bar_rect(
     Some(bar_rect)
 }
 
-/// [`bar_rect`] 的选择工具封装（6 个按钮）。
-pub fn compute_bar_rect(content_rect: egui::Rect, sel_view_rect: egui::Rect) -> Option<egui::Rect> {
-    bar_rect(content_rect, sel_view_rect, SELECT_BAR_BUTTONS.len())
+/// 在 transport bar 上横排绘制 6 个选择动作按钮
+/// （删除/复制/移调↑/移调↓/水平翻转/垂直翻转）。
+///
+/// 常驻显示；`enabled == false`（无框选）时灰显且不可点。
+/// `hovered_hint` 在可用且指针悬停时写入讲解行文案。
+/// 返回本帧被点击的动作。
+pub fn show_transport_buttons(
+    ui: &mut egui::Ui,
+    enabled: bool,
+    hovered_hint: &mut Option<String>,
+) -> Option<SelectionAction> {
+    let mut clicked = None;
+    for (i, &(icon, action)) in SELECT_BAR_BUTTONS.iter().enumerate() {
+        let font = egui::FontId::new(crate::theme::TRANSPORT_BTN_FONT, icon.font_family());
+        let resp = if action == SelectionAction::FlipVertical {
+            // ICON_FLIP 旋转 90° = 垂直翻转（与浮动工具条一致）。
+            crate::widgets::hover::hover_button_enabled_rotated(
+                ui,
+                icon.codepoint,
+                font,
+                crate::theme::text_label(),
+                false,
+                std::f32::consts::FRAC_PI_2,
+                enabled,
+            )
+        } else {
+            crate::widgets::hover::hover_button_enabled(
+                ui,
+                icon.codepoint,
+                font,
+                crate::theme::text_label(),
+                false,
+                enabled,
+            )
+        };
+        if enabled && resp.clicked() {
+            clicked = Some(action);
+        }
+        if enabled && resp.hovered() {
+            *hovered_hint = Some(action_hint(action));
+        }
+        if i + 1 < SELECT_BAR_BUTTONS.len() {
+            ui.add_space(TRANSPORT_GAP);
+        }
+    }
+    clicked
 }
 
 /// Show a vertical floating action bar to the right of the selection box.
@@ -127,50 +172,16 @@ pub fn show(
         return None;
     }
 
-    // Convert view-local to screen coordinates
-    let sel_screen = egui::Rect::from_min_max(
-        egui::pos2(
-            content_rect.min.x + sel.min.x,
-            content_rect.min.y + sel.min.y,
-        ),
-        egui::pos2(
-            content_rect.min.x + sel.max.x,
-            content_rect.min.y + sel.max.y,
-        ),
-    );
+    // 几何与命中测试共享同一实现（bar_rect），避免两处重复计算。
+    let bar = bar_rect(content_rect, sel, btn_count)?;
 
-    // Bar dimensions
+    // Bar dimensions（按钮排布用）
     let bar_w = ICON_SIZE + H_PAD * 2.0;
-    let bar_h = ICON_SIZE * btn_count as f32
-        + V_PAD * 2.0
-        + btn_count.saturating_sub(1) as f32 * BTN_SPACING;
-
-    // Position: right of selection, vertically centered
-    let bar_x = sel_screen.max.x + GAP;
-    let bar_y = sel_screen.center().y - bar_h / 2.0;
-
-    // 整体平移到 content 区域内（不压缩高度，避免背景与按钮脱节）
-    let max_y = (content_rect.max.y - bar_h).max(content_rect.min.y);
-    let bar_y = bar_y.clamp(content_rect.min.y, max_y);
-    let bar_rect = egui::Rect::from_min_max(
-        egui::pos2(bar_x, bar_y),
-        egui::pos2(bar_x + bar_w, bar_y + bar_h),
-    );
-
-    // Don't show if too close to right edge
-    if bar_rect.max.x > content_rect.max.x - 4.0 {
-        return None;
-    }
-
-    // content 区域本身太小时隐藏
-    if content_rect.height() < bar_h * 0.5 {
-        return None;
-    }
 
     // Draw background pill (rounded rect with semi-circle ends)
     let bg_color = crate::theme::line_fg();
     let corner_radius = bar_w / 2.0;
-    ui.painter().rect_filled(bar_rect, corner_radius, bg_color);
+    ui.painter().rect_filled(bar, corner_radius, bg_color);
 
     let mut result = None;
     let pointer_pos = ui.input(|i| i.pointer.hover_pos());
@@ -180,10 +191,10 @@ pub fn show(
     // 预计算按钮矩形（press 帧也要用）。
     let btn_rects: Vec<egui::Rect> = (0..btn_count)
         .map(|i| {
-            let btn_y = bar_rect.min.y + V_PAD + i as f32 * (ICON_SIZE + BTN_SPACING);
+            let btn_y = bar.min.y + V_PAD + i as f32 * (ICON_SIZE + BTN_SPACING);
             egui::Rect::from_min_max(
-                egui::pos2(bar_rect.min.x, btn_y),
-                egui::pos2(bar_rect.max.x, btn_y + ICON_SIZE),
+                egui::pos2(bar.min.x, btn_y),
+                egui::pos2(bar.max.x, btn_y + ICON_SIZE),
             )
         })
         .collect();
@@ -271,36 +282,30 @@ mod tests {
         egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0))
     }
 
+    /// 浮动 ✓ 条（Grid/Line/Scissors 工具的 1 个确认按钮）几何：
+    /// 位于选框右侧、贴近右边缘时隐藏。
     #[test]
-    fn compute_bar_rect_normal() {
+    fn bar_rect_normal() {
         let sel = egui::Rect::from_min_size(egui::pos2(100.0, 100.0), egui::vec2(200.0, 50.0));
-        let bar = compute_bar_rect(content(), sel);
+        let bar = bar_rect(content(), sel, 1);
         assert!(bar.is_some());
         let bar = bar.unwrap();
-        // bar should be to the right of selection
         assert!(bar.min.x > sel.max.x);
     }
 
     #[test]
-    fn compute_bar_rect_near_right_edge() {
-        // Selection near right edge → bar would be clipped
+    fn bar_rect_near_right_edge_is_hidden() {
+        // 选框贴近右边缘 → 条会被裁掉，返回 None。
         let sel = egui::Rect::from_min_size(egui::pos2(600.0, 100.0), egui::vec2(180.0, 50.0));
-        let bar = compute_bar_rect(content(), sel);
+        let bar = bar_rect(content(), sel, 1);
         assert!(bar.is_none(), "bar should be clipped at right edge");
     }
 
     #[test]
-    fn compute_bar_rect_small_selection() {
-        let sel = egui::Rect::from_min_size(egui::pos2(100.0, 100.0), egui::vec2(20.0, 20.0));
-        let bar = compute_bar_rect(content(), sel);
-        assert!(bar.is_some());
-    }
-
-    #[test]
-    fn compute_bar_rect_wide_content() {
+    fn bar_rect_wide_content() {
         let wide = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(2000.0, 600.0));
         let sel = egui::Rect::from_min_size(egui::pos2(100.0, 100.0), egui::vec2(200.0, 50.0));
-        let bar = compute_bar_rect(wide, sel);
+        let bar = bar_rect(wide, sel, 1);
         assert!(bar.is_some());
     }
 }

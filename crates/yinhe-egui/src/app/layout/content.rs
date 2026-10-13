@@ -588,22 +588,7 @@ impl App {
             use crate::piano_view::PianoViewEvent;
             match event {
                 PianoViewEvent::SelectionAction(action) => {
-                    use crate::widgets::selection_actions::SelectionAction;
-                    match action {
-                        SelectionAction::Delete => self.delete_selected_notes(),
-                        SelectionAction::Duplicate => self.duplicate_selected_notes(),
-                        SelectionAction::TransposeUp => self.transpose_selected_notes(12),
-                        SelectionAction::TransposeDown => self.transpose_selected_notes(-12),
-                        SelectionAction::FlipHorizontal => {
-                            self.flip_selected_notes(yinhe_editor_core::FlipAxis::Horizontal)
-                        }
-                        SelectionAction::FlipVertical => {
-                            self.flip_selected_notes(yinhe_editor_core::FlipAxis::Vertical)
-                        }
-                        SelectionAction::GridConfirm => self.grid_split_selection(),
-                        SelectionAction::LineConfirm => self.line_tool_confirm(),
-                        SelectionAction::ScissorsConfirm => self.scissors_confirm(),
-                    }
+                    self.handle_selection_action(action);
                 }
                 PianoViewEvent::AddNote { track, note } => {
                     // 新音符默认力度 = 该音轨最近一次 velocity 修改值（无记录 100）。
