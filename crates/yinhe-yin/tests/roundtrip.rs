@@ -784,6 +784,7 @@ fn mixer_section_roundtrips() {
     };
     mixer.master.gain = 0.8;
     mixer.channel_inserts[3].push(InsertRef {
+        uid: 0,
         format: yinhe_mixer::PluginFormat::Clap,
         plugin_path: "/Library/Audio/Plug-Ins/CLAP/Example.clap".into(),
         plugin_id: "com.example.effect".into(),
@@ -792,6 +793,7 @@ fn mixer_section_roundtrips() {
         state: Some(vec![1, 2, 3, 4, 5]),
     });
     mixer.master_inserts.push(InsertRef {
+        uid: 0,
         format: yinhe_mixer::PluginFormat::Clap,
         plugin_path: "/x.clap".into(),
         plugin_id: "com.example.limiter".into(),
