@@ -1,15 +1,28 @@
-//! 自动化锚点的复制/粘贴/重复/删除快捷键操作。
+//! 自动化锚点的复制/粘贴/重复/删除/变速/翻转操作。
 //!
-//! 当 Select/SelectVertical 工具激活且有锚点选中时，
-//! copy/cut/duplicate/delete 作用于自动化锚点而非音符。
+//! 当 Select/SelectVertical 工具激活且自动化锚点被选中时，
+//! copy/cut/duplicate/delete/变速/水平翻转作用于锚点而非音符。
 //! paste 由 `App::paste_clipboard` 按剪贴板内容类型分派。
+//!
+//! 选中锚点来源：PR 底部自动化面板（`controller_panels`）与
+//! AR 展开的自动化 lane（`arr_am_views`）统一处理。
 
 use rust_i18n::t;
 use yinhe_editor_core::clipboard::{AutomationClipboard, AutomationSelection, PasteMode};
-use yinhe_types::{AnchorSelRect, AutomationTarget, SegmentShape};
+use yinhe_types::{
+    AnchorSelRect, AutomationEdit, AutomationPanelView, AutomationTarget, SegmentShape,
+};
 
 use crate::app::App;
 use crate::widgets::tools_panel::Tool;
+
+/// 选中锚点所属面板：PR 底部面板（`controller_panels` 下标）或
+/// AR lane（`arr_am_views` 键 `(track, target)`）。
+#[derive(Clone, Debug, PartialEq)]
+enum PanelRef {
+    Pr(usize),
+    Ar(u16, AutomationTarget),
+}
 
 /// 根据锚点列表计算 sel_rect（用于 paste/duplicate 后设置选中范围）。
 /// `vertical` = true 时 value_range 为 None（垂直全选），否则取 value 的 min/max。
@@ -45,19 +58,38 @@ fn sel_rect_from_anchors(anchors: &[(u32, f32)], vertical: bool) -> Option<Ancho
     })
 }
 
-/// 从 Document 读取的信息包：复制/删除/重复共用。
+/// `(id, tick, value, shape)` 的锚点快照。
+type AnchorSnap = (u32, u32, f32, SegmentShape);
+
+/// 重复操作的结果：`(面板, target, 新锚点 (tick, value))`。
+type DupResult = (PanelRef, AutomationTarget, Vec<(u32, f32)>);
+
+/// 变速/翻转的逐面板移动计划：
+/// `(面板, track_idx, lane_idx, target, t0, t1_or_factor, moves)`。
+/// 变速时第 6 项为 factor（t0 为缩放原点）；翻转时第 6 项为 t1（t0..t1 镜像）。
+type MovePlan = (
+    PanelRef,
+    u16,
+    usize,
+    AutomationTarget,
+    f64,
+    f64,
+    Vec<(u32, u32, f32)>,
+);
+
+/// 从 Document 读取的信息包：复制/删除/重复/变速/翻转共用。
 struct AnchorCtx {
-    /// 面板索引（controller_panels 中的位置）。
-    panel_idx: usize,
+    /// 所属面板（PR 下标或 AR 键）。
+    panel: PanelRef,
     /// 锚点所属 target。
     target: AutomationTarget,
     /// 锚点所属 track_idx（用于 AutomationEdit）。
     track_idx: u16,
     /// lane 在 tracks[track].automation_lanes 中的索引（Tempo 用 0）。
     lane_idx: usize,
-    /// 选中锚点快照 `(id, tick, value, shape)`，按 tick 升序。
+    /// 选中锚点快照 `(id, tick, value, shape)`。
     /// 成员态按 id 判定，矩形态回退选框几何（`panel.accepts_anchor`）。
-    selected: Vec<(u32, u32, f32, SegmentShape)>,
+    selected: Vec<AnchorSnap>,
 }
 
 /// 从 `apply_automation_edits` 返回的动作里按 target 汇总新增事件 id
@@ -79,11 +111,48 @@ fn added_ids_by_target(
     map
 }
 
+/// 把 `&mut AutomationPanelView` 的 anchor_sel_rects 的 tick 范围相对 `t0`
+/// 等比缩放（value_range 不动）。PR/AR 共用。
+fn scale_anchor_rects(panel: &mut AutomationPanelView, t0: f64, factor: f64) {
+    for r in &mut panel.anchor_sel_rects {
+        let ts = r.tick_start.min(r.tick_end);
+        let te = r.tick_start.max(r.tick_end);
+        let nts = (t0 + (ts - t0) * factor).round();
+        let nte = (t0 + (te - t0) * factor).round().max(nts + 1.0);
+        r.tick_start = nts;
+        r.tick_end = nte;
+    }
+}
+
+/// 在 `[t0, t1]` 内镜像 anchor_sel_rects 的 tick 范围（value_range 不动）。
+fn mirror_anchor_rects(panel: &mut AutomationPanelView, t0: f64, t1: f64) {
+    for r in &mut panel.anchor_sel_rects {
+        let ts = r.tick_start.min(r.tick_end);
+        let te = r.tick_start.max(r.tick_end);
+        r.tick_start = t0 + (t1 - te);
+        r.tick_end = t0 + (t1 - ts);
+    }
+}
+
+/// 选区（anchor_sel_rects）的 tick 跨度 `[t0, t1]`；无有效跨度返回 None。
+fn anchor_span(panel: &AutomationPanelView) -> Option<(f64, f64)> {
+    if panel.anchor_sel_rects.is_empty() {
+        return None;
+    }
+    let (mut t0, mut t1) = (f64::INFINITY, f64::NEG_INFINITY);
+    for r in &panel.anchor_sel_rects {
+        t0 = t0.min(r.tick_start.min(r.tick_end));
+        t1 = t1.max(r.tick_start.max(r.tick_end));
+    }
+    (t1 > t0).then_some((t0, t1))
+}
+
 impl App {
-    /// 是否有任意面板选中了自动化锚点（用于快捷键路由）。
+    /// 是否有任意面板选中了自动化锚点（用于快捷键/按钮路由）。
     ///
     /// 仅 Select/SelectVertical 工具下返回 true。
-    /// 此时 copy/cut/duplicate/delete 作用于锚点而非音符。
+    /// 此时 copy/cut/duplicate/delete/变速/水平翻转作用于锚点而非音符。
+    /// 覆盖 PR 底部面板与 AR 自动化 lane。
     pub(crate) fn has_selected_automation_anchors(&self) -> bool {
         let Some(idx) = self.workspace.active_doc else {
             return false;
@@ -91,11 +160,14 @@ impl App {
         if !matches!(self.active_tool, Tool::Select | Tool::SelectVertical) {
             return false;
         }
-        self.workspace.documents[idx]
-            .edit
-            .controller_panels
+        let edit = &self.workspace.documents[idx].edit;
+        edit.controller_panels
             .iter()
             .any(|p| !p.show_velocity && !p.anchor_sel_rects.is_empty())
+            || edit
+                .arr_am_views
+                .values()
+                .any(|p| !p.show_velocity && !p.anchor_sel_rects.is_empty())
     }
 
     /// 复制所有有选中锚点的面板到剪贴板。
@@ -108,7 +180,7 @@ impl App {
         };
         let doc = &self.workspace.documents[idx];
 
-        let selections: Vec<AutomationSelection> = doc
+        let mut selections: Vec<AutomationSelection> = doc
             .edit
             .controller_panels
             .iter()
@@ -119,6 +191,17 @@ impl App {
                 members: p.anchor_members.clone(),
             })
             .collect();
+        selections.extend(
+            doc.edit
+                .arr_am_views
+                .values()
+                .filter(|p| !p.show_velocity && !p.anchor_sel_rects.is_empty())
+                .map(|p| AutomationSelection {
+                    target: p.selected_target.clone(),
+                    sel_rects: p.anchor_sel_rects.clone(),
+                    members: p.anchor_members.clone(),
+                }),
+        );
         if selections.is_empty() {
             return;
         }
@@ -249,113 +332,313 @@ impl App {
         };
         let doc = &mut self.workspace.documents[idx];
 
-        let Some(ctx) = Self::collect_anchor_ctxs(doc).into_iter().next() else {
+        let ctxs = Self::collect_anchor_ctxs(doc);
+        if ctxs.is_empty() {
             return;
-        };
+        }
         let ppq = doc.data.model.meta.ppq;
         let quantize = doc.edit.quantize_pianoroll;
 
-        // 选中锚点（成员态按 id，矩形态按选框几何）
-        let mut selected: Vec<(u32, u32, f32, SegmentShape)> = ctx.selected.clone();
-        if selected.is_empty() {
-            return;
-        }
-        selected.sort_by_key(|(_, t, _, _)| *t);
-
-        // 偏移：选区跨度，单锚点时用量化间隔
-        let min_tick = selected.first().map(|(_, t, _, _)| *t).unwrap_or(0);
-        let max_tick = selected.last().map(|(_, t, _, _)| *t).unwrap_or(0);
-        let span = max_tick.saturating_sub(min_tick);
-        let offset = if span == 0 {
-            quantize.tick_interval(ppq).max(1)
-        } else {
-            span
-        };
-
-        // 生成副本
-        let mut edits = Vec::with_capacity(selected.len());
-        let mut new_anchors: Vec<(u32, f32)> = Vec::new();
-        for (_, tick, value, shape) in &selected {
-            let new_tick = (*tick as i64 + offset as i64).max(0) as u32;
-            edits.push(yinhe_types::AutomationEdit::Add {
-                track_idx: ctx.track_idx,
-                target: ctx.target.clone(),
-                tick: new_tick,
-                value: *value,
-                shape: *shape,
-            });
-            new_anchors.push((new_tick, *value));
+        // 每个 ctx 生成副本（偏移 = 该 ctx 选区跨度，单锚点时用量化间隔）。
+        let mut edits = Vec::new();
+        let mut new_by_panel: Vec<DupResult> = Vec::new();
+        for ctx in &ctxs {
+            let min_tick = ctx
+                .selected
+                .iter()
+                .map(|(_, t, _, _)| *t)
+                .min()
+                .unwrap_or(0);
+            let max_tick = ctx
+                .selected
+                .iter()
+                .map(|(_, t, _, _)| *t)
+                .max()
+                .unwrap_or(0);
+            let span = max_tick.saturating_sub(min_tick);
+            let offset = if span == 0 {
+                quantize.tick_interval(ppq).max(1)
+            } else {
+                span
+            };
+            let mut new_anchors: Vec<(u32, f32)> = Vec::with_capacity(ctx.selected.len());
+            for (_, tick, value, shape) in &ctx.selected {
+                let new_tick = (*tick as i64 + offset as i64).max(0) as u32;
+                edits.push(AutomationEdit::Add {
+                    track_idx: ctx.track_idx,
+                    target: ctx.target.clone(),
+                    tick: new_tick,
+                    value: *value,
+                    shape: *shape,
+                });
+                new_anchors.push((new_tick, *value));
+            }
+            new_anchors.sort_by_key(|(t, _)| *t);
+            new_by_panel.push((ctx.panel.clone(), ctx.target.clone(), new_anchors));
         }
 
         let before = doc.capture_snapshot();
         let actions = doc.apply_automation_edits(edits);
-        if !actions.is_empty() {
-            let added = added_ids_by_target(&actions);
-            doc.edit.pianoroll_view.base.dirty = true;
-            crate::right_panel::automation_undo::push_automation_actions(
-                doc,
-                actions,
-                t!("undo.duplicate_automation").as_ref(),
-                before,
-            );
-            // 重复后选中改为根据新锚点范围设置 sel_rect + 新 id 成员。
-            let vertical = self.active_tool == Tool::SelectVertical;
-            let panel = &mut doc.edit.controller_panels[ctx.panel_idx];
-            panel.anchor_sel_rects = sel_rect_from_anchors(&new_anchors, vertical)
-                .map(|r| vec![r])
-                .unwrap_or_default();
-            if let Some(ids) = added.get(&ctx.target) {
-                panel.set_anchor_members(ids.iter().copied());
-            }
-            panel.dirty = true;
-            self.notify_audio_model_changed();
+        if actions.is_empty() {
+            return;
         }
+        let added = added_ids_by_target(&actions);
+        let vertical = self.active_tool == Tool::SelectVertical;
+        doc.edit.pianoroll_view.base.dirty = true;
+        crate::right_panel::automation_undo::push_automation_actions(
+            doc,
+            actions,
+            t!("undo.duplicate_automation").as_ref(),
+            before,
+        );
+        // 重复后选中改为根据新锚点范围设置 sel_rect + 新 id 成员。
+        for (panel_ref, target, anchors) in &new_by_panel {
+            if let Some(view) = Self::panel_ref_view_mut(doc, panel_ref) {
+                view.anchor_sel_rects = sel_rect_from_anchors(anchors, vertical)
+                    .map(|r| vec![r])
+                    .unwrap_or_default();
+                if let Some(ids) = added.get(target) {
+                    view.set_anchor_members(ids.iter().copied());
+                }
+                view.dirty = true;
+            }
+        }
+        self.notify_audio_model_changed();
     }
 
-    /// 删除选中锚点。
+    /// 删除选中锚点（PR 底部面板 + AR lane）。
     pub(crate) fn delete_automation_anchors(&mut self) {
         let Some(idx) = self.workspace.active_doc else {
             return;
         };
         let doc = &mut self.workspace.documents[idx];
 
-        let Some(ctx) = Self::collect_anchor_ctxs(doc).into_iter().next() else {
+        let ctxs = Self::collect_anchor_ctxs(doc);
+        if ctxs.is_empty() {
             return;
-        };
+        }
 
-        // 删除选中锚点（ctx.selected 已是成员/几何判定后的选中集）
         let mut edits = Vec::new();
-        for (_, tick, _, _) in &ctx.selected {
-            edits.push(yinhe_types::AutomationEdit::Delete {
-                track_idx: ctx.track_idx,
-                lane_idx: ctx.lane_idx,
-                target: ctx.target.clone(),
-                tick: *tick,
-            });
+        for ctx in &ctxs {
+            for (_, tick, _, _) in &ctx.selected {
+                edits.push(AutomationEdit::Delete {
+                    track_idx: ctx.track_idx,
+                    lane_idx: ctx.lane_idx,
+                    target: ctx.target.clone(),
+                    tick: *tick,
+                });
+            }
         }
 
         let before = doc.capture_snapshot();
         let actions = doc.apply_automation_edits(edits);
-        if !actions.is_empty() {
-            doc.edit.pianoroll_view.base.dirty = true;
-            crate::right_panel::automation_undo::push_automation_actions(
-                doc,
-                actions,
-                t!("undo.delete_automation").as_ref(),
-                before,
-            );
-            let panel = &mut doc.edit.controller_panels[ctx.panel_idx];
-            panel.clear_anchor_selection();
-            panel.dirty = true;
-            self.notify_audio_model_changed();
+        if actions.is_empty() {
+            return;
         }
+        doc.edit.pianoroll_view.base.dirty = true;
+        crate::right_panel::automation_undo::push_automation_actions(
+            doc,
+            actions,
+            t!("undo.delete_automation").as_ref(),
+            before,
+        );
+        for ctx in &ctxs {
+            if let Some(view) = Self::panel_ref_view_mut(doc, &ctx.panel) {
+                view.clear_anchor_selection();
+                view.dirty = true;
+            }
+        }
+        self.notify_audio_model_changed();
+    }
+
+    /// 变速：选中锚点按选区跨度 ×`num`/`den` 缩放 tick（value 不变）。
+    /// 与音符变速同义（拉长/缩短同一时间轴区间内的锚点分布）。
+    pub(crate) fn stretch_automation_anchors(&mut self, num: u64, den: u64) {
+        if num == 0 || den == 0 {
+            return;
+        }
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[idx];
+
+        let ctxs = Self::collect_anchor_ctxs(doc);
+        if ctxs.is_empty() {
+            return;
+        }
+
+        // 每个 ctx：按选区跨度算 factor，生成 tick 缩放 moves。
+        let mut plan: Vec<MovePlan> = Vec::new();
+        for ctx in &ctxs {
+            let Some(view) = Self::panel_ref_view(doc, &ctx.panel) else {
+                continue;
+            };
+            let Some((t0, t1)) = anchor_span(view) else {
+                continue;
+            };
+            let span = (t1 - t0) as u64;
+            let new_span = (span.saturating_mul(num) / den).max(1);
+            if new_span == span {
+                continue;
+            }
+            let factor = new_span as f64 / span as f64;
+            let mut moves = Vec::new();
+            for (_, tick, value, _) in &ctx.selected {
+                let nt = (t0 + (*tick as f64 - t0) * factor)
+                    .round()
+                    .clamp(0.0, u32::MAX as f64) as u32;
+                if nt != *tick {
+                    moves.push((*tick, nt, *value));
+                }
+            }
+            if moves.is_empty() {
+                continue;
+            }
+            plan.push((
+                ctx.panel.clone(),
+                ctx.track_idx,
+                ctx.lane_idx,
+                ctx.target.clone(),
+                t0,
+                factor,
+                moves,
+            ));
+        }
+        if plan.is_empty() {
+            return;
+        }
+
+        let before = doc.capture_snapshot();
+        let mut actions = Vec::new();
+        for (_, track_idx, lane_idx, target, _, _, moves) in &plan {
+            if let Some(a) =
+                doc.move_automation_events_batch(*track_idx as usize, *lane_idx, target, moves)
+            {
+                actions.push(a);
+            }
+        }
+        if actions.is_empty() {
+            return;
+        }
+        doc.edit.pianoroll_view.base.dirty = true;
+        crate::right_panel::automation_undo::push_automation_actions(
+            doc,
+            actions,
+            t!("undo.rescale_span").as_ref(),
+            before,
+        );
+        for (panel_ref, _, _, _, t0, factor, _) in &plan {
+            if let Some(view) = Self::panel_ref_view_mut(doc, panel_ref) {
+                scale_anchor_rects(view, *t0, *factor);
+                view.dirty = true;
+            }
+        }
+        self.notify_audio_model_changed();
+    }
+
+    /// 水平翻转：选中锚点在选区跨度 `[t0, t1]` 内做时间镜像（tick 镜像、value 不变）。
+    pub(crate) fn flip_automation_anchors_horizontal(&mut self) {
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[idx];
+
+        let ctxs = Self::collect_anchor_ctxs(doc);
+        if ctxs.is_empty() {
+            return;
+        }
+
+        let mut plan: Vec<MovePlan> = Vec::new();
+        for ctx in &ctxs {
+            let Some(view) = Self::panel_ref_view(doc, &ctx.panel) else {
+                continue;
+            };
+            let Some((t0, t1)) = anchor_span(view) else {
+                continue;
+            };
+            let mut moves = Vec::new();
+            for (_, tick, value, _) in &ctx.selected {
+                let nt = (t0 + (t1 - *tick as f64))
+                    .round()
+                    .clamp(0.0, u32::MAX as f64) as u32;
+                if nt != *tick {
+                    moves.push((*tick, nt, *value));
+                }
+            }
+            if moves.is_empty() {
+                continue;
+            }
+            plan.push((
+                ctx.panel.clone(),
+                ctx.track_idx,
+                ctx.lane_idx,
+                ctx.target.clone(),
+                t0,
+                t1,
+                moves,
+            ));
+        }
+        if plan.is_empty() {
+            return;
+        }
+
+        let before = doc.capture_snapshot();
+        let mut actions = Vec::new();
+        for (_, track_idx, lane_idx, target, _, _, moves) in &plan {
+            if let Some(a) =
+                doc.move_automation_events_batch(*track_idx as usize, *lane_idx, target, moves)
+            {
+                actions.push(a);
+            }
+        }
+        if actions.is_empty() {
+            return;
+        }
+        doc.edit.pianoroll_view.base.dirty = true;
+        crate::right_panel::automation_undo::push_automation_actions(
+            doc,
+            actions,
+            t!("undo.flip_horizontal").as_ref(),
+            before,
+        );
+        for (panel_ref, _, _, _, t0, t1, _) in &plan {
+            if let Some(view) = Self::panel_ref_view_mut(doc, panel_ref) {
+                mirror_anchor_rects(view, *t0, *t1);
+                view.dirty = true;
+            }
+        }
+        self.notify_audio_model_changed();
     }
 
     // ── 辅助函数 ──
 
-    /// 从 Document 收集所有「有选中锚点」面板的操作上下文。
+    /// 按 [`PanelRef`] 取只读面板视图。
+    fn panel_ref_view<'a>(
+        doc: &'a yinhe_editor_core::document::Document,
+        p: &PanelRef,
+    ) -> Option<&'a AutomationPanelView> {
+        match p {
+            PanelRef::Pr(i) => doc.edit.controller_panels.get(*i),
+            PanelRef::Ar(track, target) => doc.edit.arr_am_views.get(&(*track, target.clone())),
+        }
+    }
+
+    /// 按 [`PanelRef`] 取可变面板视图。
+    fn panel_ref_view_mut<'a>(
+        doc: &'a mut yinhe_editor_core::document::Document,
+        p: &PanelRef,
+    ) -> Option<&'a mut AutomationPanelView> {
+        match p {
+            PanelRef::Pr(i) => doc.edit.controller_panels.get_mut(*i),
+            PanelRef::Ar(track, target) => doc.edit.arr_am_views.get_mut(&(*track, target.clone())),
+        }
+    }
+
+    /// 收集所有「有选中锚点」面板的操作上下文（PR 底部面板 + AR lane）。
     fn collect_anchor_ctxs(doc: &yinhe_editor_core::document::Document) -> Vec<AnchorCtx> {
         let mut result = Vec::new();
+
+        // ── PR 底部面板（非 Tempo 用主音轨）──
         for (panel_idx, panel) in doc.edit.controller_panels.iter().enumerate() {
             if panel.show_velocity || panel.anchor_sel_rects.is_empty() {
                 continue;
@@ -364,60 +647,87 @@ impl App {
             let Some(track_idx) = Self::track_idx_for(doc, &target) else {
                 continue;
             };
+            if let Some(ctx) =
+                Self::build_ctx(doc, PanelRef::Pr(panel_idx), track_idx, target, panel)
+            {
+                result.push(ctx);
+            }
+        }
 
-            // 选中锚点快照 (id, tick, value, shape)：成员态按 id 判定，
-            // 矩形态回退选框几何（`panel.accepts_anchor`）。
-            let (lane_idx, selected): (usize, Vec<(u32, u32, f32, SegmentShape)>) =
-                if matches!(target, AutomationTarget::Tempo) {
-                    let selected = doc
-                        .data
-                        .model
-                        .conductor
-                        .tempo
-                        .events
-                        .iter()
-                        .filter(|e| panel.accepts_anchor(e))
-                        .map(|e| (e.id, e.tick, e.value, e.shape))
-                        .collect();
-                    (0, selected)
-                } else {
-                    let Some(track) = doc.data.model.tracks.get(track_idx as usize) else {
-                        continue;
-                    };
-                    let Some((lane_idx, lane)) = track
-                        .automation_lanes
-                        .iter()
-                        .enumerate()
-                        .find(|(_, l)| l.target == target)
-                    else {
-                        continue;
-                    };
-                    let selected = lane
-                        .events
-                        .iter()
-                        .filter(|e| panel.accepts_anchor(e))
-                        .map(|e| (e.id, e.tick, e.value, e.shape))
-                        .collect();
-                    (lane_idx, selected)
-                };
-            if selected.is_empty() {
+        // ── AR lane（key 直接给出 track + target）──
+        for ((track, target), panel) in doc.edit.arr_am_views.iter() {
+            if panel.show_velocity || panel.anchor_sel_rects.is_empty() {
                 continue;
             }
-
-            result.push(AnchorCtx {
-                panel_idx,
-                target,
+            // Tempo 锚点存于 conductor（track/lane 被忽略）；非 Tempo 用 key 的 track。
+            let track_idx = if matches!(target, AutomationTarget::Tempo) {
+                doc.edit.track_cache.conductor_idx.unwrap_or(*track)
+            } else {
+                *track
+            };
+            if let Some(ctx) = Self::build_ctx(
+                doc,
+                PanelRef::Ar(*track, target.clone()),
                 track_idx,
-                lane_idx,
-                selected,
-            });
+                target.clone(),
+                panel,
+            ) {
+                result.push(ctx);
+            }
         }
+
         result
     }
 
-    /// 获取 target 对应的 track_idx。
-    /// Tempo → conductor_track_idx；其他 → 主音轨（非 conductor）。
-    /// 主音轨在 PR 强制可见（layout pr_visible），不要求 track_visible 勾选。
+    /// 构造单个面板的锚点上下文。
+    fn build_ctx(
+        doc: &yinhe_editor_core::document::Document,
+        panel: PanelRef,
+        track_idx: u16,
+        target: AutomationTarget,
+        view: &AutomationPanelView,
+    ) -> Option<AnchorCtx> {
+        let (lane_idx, selected): (usize, Vec<AnchorSnap>) =
+            if matches!(target, AutomationTarget::Tempo) {
+                let selected = doc
+                    .data
+                    .model
+                    .conductor
+                    .tempo
+                    .events
+                    .iter()
+                    .filter(|e| view.accepts_anchor(e))
+                    .map(|e| (e.id, e.tick, e.value, e.shape))
+                    .collect();
+                (0, selected)
+            } else {
+                let track = doc.data.model.tracks.get(track_idx as usize)?;
+                let (lane_idx, lane) = track
+                    .automation_lanes
+                    .iter()
+                    .enumerate()
+                    .find(|(_, l)| l.target == target)?;
+                let selected = lane
+                    .events
+                    .iter()
+                    .filter(|e| view.accepts_anchor(e))
+                    .map(|e| (e.id, e.tick, e.value, e.shape))
+                    .collect();
+                (lane_idx, selected)
+            };
+        if selected.is_empty() {
+            return None;
+        }
+        Some(AnchorCtx {
+            panel,
+            target,
+            track_idx,
+            lane_idx,
+            selected,
+        })
+    }
+
+    /// 获取 target 对应的 track_idx（PR 规则：Tempo → conductor；其他 → 主音轨）。
     fn track_idx_for(
         doc: &yinhe_editor_core::document::Document,
         target: &AutomationTarget,

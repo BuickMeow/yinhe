@@ -596,6 +596,10 @@ impl eframe::App for App {
                 chord,
             }
         });
+        // 选择动作按钮可用性：PR 框选 / AR 框选 / 自动化锚点选中（PR 底部面板或 AR lane）。
+        let selection_available = active_doc.is_some_and(|d| {
+            !d.edit.sel_rect.effective_rects().is_empty() || !d.edit.arr_sel_rect.is_empty()
+        }) || self.has_selected_automation_anchors();
         let transport_response = transport_bar::show(
             ui,
             &mut transport_bar::TransportContext {
@@ -613,10 +617,7 @@ impl eframe::App for App {
                     .unwrap_or_default(),
                 pr: pr_bar,
                 master_meter,
-                // PR 框选（sel_rect）或 AR 框选（arr_sel_rect）任一存在即可用。
-                selection_available: active_doc.is_some_and(|d| {
-                    !d.edit.sel_rect.effective_rects().is_empty() || !d.edit.arr_sel_rect.is_empty()
-                }),
+                selection_available,
             },
         );
 

@@ -819,20 +819,54 @@ impl App {
     }
 
     /// 处理选择动作（transport bar 选择按钮 / PR 浮动工具条共用）。
+    ///
+    /// 有自动化锚点选中时，删除/重复/变速/水平翻转作用于锚点（与编辑菜单一致）；
+    /// 移调/垂直翻转保持音符专用。
     pub(crate) fn handle_selection_action(
         &mut self,
         action: crate::widgets::selection_actions::SelectionAction,
     ) {
         use crate::widgets::selection_actions::SelectionAction as A;
+        let route_to_automation = self.has_selected_automation_anchors();
         match action {
-            A::Delete => self.delete_selected_notes(),
-            A::Duplicate => self.duplicate_selected_notes(),
+            A::Delete => {
+                if route_to_automation {
+                    self.delete_automation_anchors();
+                } else {
+                    self.delete_selected_notes();
+                }
+            }
+            A::Duplicate => {
+                if route_to_automation {
+                    self.duplicate_automation_anchors();
+                } else {
+                    self.duplicate_selected_notes();
+                }
+            }
+            A::LengthDouble => {
+                if route_to_automation {
+                    self.stretch_automation_anchors(2, 1);
+                } else {
+                    self.double_selected_length();
+                }
+            }
+            A::LengthHalf => {
+                if route_to_automation {
+                    self.stretch_automation_anchors(1, 2);
+                } else {
+                    self.half_selected_length();
+                }
+            }
+            A::FlipHorizontal => {
+                if route_to_automation {
+                    self.flip_automation_anchors_horizontal();
+                } else {
+                    self.flip_selected_notes(yinhe_editor_core::FlipAxis::Horizontal);
+                }
+            }
             A::TransposeUp => self.transpose_selected_notes(12),
             A::TransposeDown => self.transpose_selected_notes(-12),
-            A::FlipHorizontal => self.flip_selected_notes(yinhe_editor_core::FlipAxis::Horizontal),
             A::FlipVertical => self.flip_selected_notes(yinhe_editor_core::FlipAxis::Vertical),
-            A::LengthDouble => self.double_selected_length(),
-            A::LengthHalf => self.half_selected_length(),
             A::GridConfirm => self.grid_split_selection(),
             A::LineConfirm => self.line_tool_confirm(),
             A::ScissorsConfirm => self.scissors_confirm(),
