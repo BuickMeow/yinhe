@@ -171,7 +171,8 @@ pub fn show_transport_buttons(
         if enabled && resp.clicked() {
             clicked = Some(action);
         }
-        if enabled && resp.hovered() {
+        // 悬停即显示讲解（禁用态也提示，便于用户了解按钮用途）。
+        if resp.hovered() {
             *hovered_hint = Some(action_hint(action));
         }
         if i + 1 < SELECT_BAR_BUTTONS.len() {
