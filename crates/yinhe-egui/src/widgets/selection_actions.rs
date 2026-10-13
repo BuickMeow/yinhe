@@ -60,14 +60,14 @@ pub const SELECT_BAR_BUTTONS: [BarButton; 8] = [
 
 /// 图标旋转角（弧度）。0 = 不旋转。
 /// - 升八度：DOWNLOAD 倒置 180°；
-/// - 变速 ×2：UPLOAD 逆时针 90°；
+/// - 变速 ×2：UPLOAD 顺时针 90°；
 /// - 变速 ÷2：DOWNLOAD 顺时针 90°；
 /// - 垂直翻转：FLIP 旋转 90°。
 fn bar_button_rotation(action: SelectionAction) -> f32 {
     use std::f32::consts::{FRAC_PI_2, PI};
     match action {
         SelectionAction::TransposeUp => PI,
-        SelectionAction::LengthDouble => -FRAC_PI_2,
+        SelectionAction::LengthDouble => FRAC_PI_2,
         SelectionAction::LengthHalf => FRAC_PI_2,
         SelectionAction::FlipVertical => FRAC_PI_2,
         _ => 0.0,
