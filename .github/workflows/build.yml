@@ -60,8 +60,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system deps (ALSA for cpal)
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+      - name: Install system deps (ALSA for cpal, fontconfig/freetype for font-kit)
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libfontconfig1-dev libfreetype-dev pkg-config
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
