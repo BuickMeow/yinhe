@@ -129,8 +129,10 @@ mod tests {
 
     #[test]
     fn refresh_devices_never_mutates_settings() {
-        let mut s = AudioSettings::default();
-        s.sample_rate = 48_000;
+        let mut s = AudioSettings {
+            sample_rate: 48_000,
+            ..AudioSettings::default()
+        };
         // 新设备列表不支持当前采样率：也不得静默改写（零改动触发全量重建的根因）
         s.refresh_devices(vec!["dev".into()], vec![44_100]);
         assert_eq!(s.sample_rate, 48_000, "刷新设备不得静默改写采样率");

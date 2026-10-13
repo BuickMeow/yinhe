@@ -106,149 +106,6 @@ pub fn recognize(keys: &[u8]) -> Option<String> {
     None
 }
 
-#[cfg(test)]
-mod tests {
-    use super::recognize;
-
-    #[test]
-    fn single_key_shows_note_name() {
-        // 单音不再视为和弦
-        assert_eq!(recognize(&[60]), None);
-    }
-
-    #[test]
-    fn major_triad() {
-        assert_eq!(recognize(&[60, 64, 67]), Some("C".to_string()));
-    }
-
-    #[test]
-    fn minor_triad() {
-        assert_eq!(recognize(&[60, 63, 67]), Some("Cm".to_string()));
-    }
-
-    #[test]
-    fn dominant_seventh() {
-        assert_eq!(recognize(&[60, 64, 67, 70]), Some("C7".to_string()));
-    }
-
-    #[test]
-    fn inversion_slash_notation() {
-        // C/E：低音是 E。
-        assert_eq!(recognize(&[64, 67, 72]), Some("C/E".to_string()));
-    }
-
-    #[test]
-    fn sus4() {
-        assert_eq!(recognize(&[60, 65, 67]), Some("Csus4".to_string()));
-    }
-
-    #[test]
-    fn dim7() {
-        assert_eq!(recognize(&[60, 63, 66, 69]), Some("Cdim7".to_string()));
-    }
-
-    #[test]
-    fn add9() {
-        assert_eq!(recognize(&[60, 62, 64, 67]), Some("Cadd9".to_string()));
-    }
-
-    #[test]
-    fn ninth() {
-        assert_eq!(recognize(&[60, 62, 64, 67, 70]), Some("C9".to_string()));
-    }
-
-    #[test]
-    fn too_many_pitch_classes_rejected() {
-        // 8 个不同音级，属于乱按，不识别。
-        assert_eq!(recognize(&[60, 61, 62, 63, 64, 65, 66, 67]), None);
-    }
-
-    #[test]
-    fn wide_span_rejected() {
-        // 跨度 25 半音 > 24，不识别。
-        assert_eq!(recognize(&[60, 85]), None);
-    }
-
-    #[test]
-    fn unrecognized_returns_none() {
-        // {0,1} 不在和弦表里。
-        assert_eq!(recognize(&[60, 61]), None);
-    }
-
-    #[test]
-    fn empty_returns_none() {
-        assert_eq!(recognize(&[]), None);
-    }
-
-    fn wide_model(
-        track_count: usize,
-        hot_track: usize,
-        notes: Vec<(u8, u32, u32)>,
-    ) -> yinhe_core::YinModel {
-        use std::sync::Arc;
-        let tracks: Vec<Arc<yinhe_core::TrackData>> = (0..track_count)
-            .map(|_| Arc::new(yinhe_core::TrackData::new(0, 0)))
-            .collect();
-        let mut per_track: Vec<Vec<yinhe_core::NoteEvent>> =
-            (0..track_count).map(|_| Vec::new()).collect();
-        per_track[hot_track] = notes
-            .into_iter()
-            .map(|(key, start_tick, end_tick)| yinhe_core::NoteEvent {
-                id: 0,
-                start_tick,
-                end_tick,
-                key,
-                velocity: 100,
-            })
-            .collect();
-        let mut model = yinhe_core::YinModel {
-            tracks,
-            ..Default::default()
-        };
-        model.load_track_notes(per_track);
-        model.rebuild();
-        model
-    }
-
-    #[test]
-    fn many_tracks_sim_path_no_oob() {
-        use std::collections::HashMap;
-        // 回归：轨道数 >256（如 762 号轨）时同时发声路径曾用固定 [false; 256] 越界闪退。
-        let model = wide_model(800, 762, vec![(60, 0, 480), (64, 0, 480), (67, 0, 480)]);
-        let pr_visible = vec![true; 800];
-        let out = super::indicator_text(
-            &HashMap::new(),
-            true,
-            Some(0.0),
-            Some(&model),
-            None,
-            &pr_visible,
-            &[],
-            None,
-        );
-        assert_eq!(out, Some("C".to_string()));
-    }
-
-    #[test]
-    fn many_tracks_window_path_no_oob() {
-        use std::collections::HashMap;
-        // 分解和弦回退（窗口聚合）同理曾用固定 256 数组：sim 处仅单音，靠窗口还原 C。
-        let model = wide_model(800, 762, vec![(60, 0, 100), (64, 120, 220), (67, 240, 340)]);
-        let pr_visible = vec![true; 800];
-        let out = super::indicator_text(
-            &HashMap::new(),
-            true,
-            Some(240.0),
-            Some(&model),
-            None,
-            &pr_visible,
-            &[],
-            None,
-        );
-        assert_eq!(out, Some("C".to_string()));
-    }
-}
-
 // ── 和弦指示器（原 yinhe-egui/src/app/layout/chord.rs，下沉至此） ──
 
 /// 和弦指示器文本：实时 MIDI 直通按键优先；无按键且播放中 → 播放头处发声音符的和弦。
@@ -499,4 +356,147 @@ pub fn indicator_text(
         return Some(name);
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::recognize;
+
+    #[test]
+    fn single_key_shows_note_name() {
+        // 单音不再视为和弦
+        assert_eq!(recognize(&[60]), None);
+    }
+
+    #[test]
+    fn major_triad() {
+        assert_eq!(recognize(&[60, 64, 67]), Some("C".to_string()));
+    }
+
+    #[test]
+    fn minor_triad() {
+        assert_eq!(recognize(&[60, 63, 67]), Some("Cm".to_string()));
+    }
+
+    #[test]
+    fn dominant_seventh() {
+        assert_eq!(recognize(&[60, 64, 67, 70]), Some("C7".to_string()));
+    }
+
+    #[test]
+    fn inversion_slash_notation() {
+        // C/E：低音是 E。
+        assert_eq!(recognize(&[64, 67, 72]), Some("C/E".to_string()));
+    }
+
+    #[test]
+    fn sus4() {
+        assert_eq!(recognize(&[60, 65, 67]), Some("Csus4".to_string()));
+    }
+
+    #[test]
+    fn dim7() {
+        assert_eq!(recognize(&[60, 63, 66, 69]), Some("Cdim7".to_string()));
+    }
+
+    #[test]
+    fn add9() {
+        assert_eq!(recognize(&[60, 62, 64, 67]), Some("Cadd9".to_string()));
+    }
+
+    #[test]
+    fn ninth() {
+        assert_eq!(recognize(&[60, 62, 64, 67, 70]), Some("C9".to_string()));
+    }
+
+    #[test]
+    fn too_many_pitch_classes_rejected() {
+        // 8 个不同音级，属于乱按，不识别。
+        assert_eq!(recognize(&[60, 61, 62, 63, 64, 65, 66, 67]), None);
+    }
+
+    #[test]
+    fn wide_span_rejected() {
+        // 跨度 25 半音 > 24，不识别。
+        assert_eq!(recognize(&[60, 85]), None);
+    }
+
+    #[test]
+    fn unrecognized_returns_none() {
+        // {0,1} 不在和弦表里。
+        assert_eq!(recognize(&[60, 61]), None);
+    }
+
+    #[test]
+    fn empty_returns_none() {
+        assert_eq!(recognize(&[]), None);
+    }
+
+    fn wide_model(
+        track_count: usize,
+        hot_track: usize,
+        notes: Vec<(u8, u32, u32)>,
+    ) -> yinhe_core::YinModel {
+        use std::sync::Arc;
+        let tracks: Vec<Arc<yinhe_core::TrackData>> = (0..track_count)
+            .map(|_| Arc::new(yinhe_core::TrackData::new(0, 0)))
+            .collect();
+        let mut per_track: Vec<Vec<yinhe_core::NoteEvent>> =
+            (0..track_count).map(|_| Vec::new()).collect();
+        per_track[hot_track] = notes
+            .into_iter()
+            .map(|(key, start_tick, end_tick)| yinhe_core::NoteEvent {
+                id: 0,
+                start_tick,
+                end_tick,
+                key,
+                velocity: 100,
+            })
+            .collect();
+        let mut model = yinhe_core::YinModel {
+            tracks,
+            ..Default::default()
+        };
+        model.load_track_notes(per_track);
+        model.rebuild();
+        model
+    }
+
+    #[test]
+    fn many_tracks_sim_path_no_oob() {
+        use std::collections::HashMap;
+        // 回归：轨道数 >256（如 762 号轨）时同时发声路径曾用固定 [false; 256] 越界闪退。
+        let model = wide_model(800, 762, vec![(60, 0, 480), (64, 0, 480), (67, 0, 480)]);
+        let pr_visible = vec![true; 800];
+        let out = super::indicator_text(
+            &HashMap::new(),
+            true,
+            Some(0.0),
+            Some(&model),
+            None,
+            &pr_visible,
+            &[],
+            None,
+        );
+        assert_eq!(out, Some("C".to_string()));
+    }
+
+    #[test]
+    fn many_tracks_window_path_no_oob() {
+        use std::collections::HashMap;
+        // 分解和弦回退（窗口聚合）同理曾用固定 256 数组：sim 处仅单音，靠窗口还原 C。
+        let model = wide_model(800, 762, vec![(60, 0, 100), (64, 120, 220), (67, 240, 340)]);
+        let pr_visible = vec![true; 800];
+        let out = super::indicator_text(
+            &HashMap::new(),
+            true,
+            Some(240.0),
+            Some(&model),
+            None,
+            &pr_visible,
+            &[],
+            None,
+        );
+        assert_eq!(out, Some("C".to_string()));
+    }
 }

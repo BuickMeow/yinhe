@@ -29,7 +29,7 @@ fn ouranos_peak_gpu_bench() {
     let sr = 48_000u32;
     let frames = 4096usize;
     let t_parse = Instant::now();
-    let model = yinhe_midi::parse_path(&bench_midi()).expect("parse");
+    let model = yinhe_midi::parse_path(bench_midi()).expect("parse");
     let ppq = model.meta.ppq as u64;
     eprintln!("解析 {:.2}s ppq={ppq}", t_parse.elapsed().as_secs_f64());
 
@@ -247,7 +247,7 @@ fn gpu_vs_cpu_light() {
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(148);
-    let model = yinhe_midi::parse_path(&bench_midi()).expect("parse");
+    let model = yinhe_midi::parse_path(bench_midi()).expect("parse");
     let ppq = model.meta.ppq as u64;
     let win_start = bar.saturating_sub(1) * 4 * ppq;
     let win_end = (bar + 3) * 4 * ppq;

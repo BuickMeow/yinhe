@@ -225,7 +225,12 @@ impl ChannelSet {
                 channel.push_events_iter(events.drain(..).map(ChannelEvent::Audio));
                 channel.read_samples(&mut scratch[..interleaved_len]);
                 let buf = buf.borrow_mut();
-                for (i, s) in scratch[..interleaved_len].chunks_exact(2).enumerate() {
+                for (i, s) in scratch[..interleaved_len]
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .enumerate()
+                {
                     buf.left[offset_frames + i] = s[0];
                     buf.right[offset_frames + i] = s[1];
                 }

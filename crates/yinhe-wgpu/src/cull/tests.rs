@@ -2013,7 +2013,7 @@ fn cull_render_pixel_check() {
         for row in 0..ph {
             let start = (row as usize) * aligned_row as usize;
             let row_data = &mapped[start..start + bytes_per_row as usize];
-            for px in row_data.chunks_exact(4) {
+            for px in row_data.as_chunks::<4>().0 {
                 if px[0] > 8 || px[1] > 8 || px[2] > 8 {
                     note_pixels += 1;
                 }
@@ -2166,7 +2166,7 @@ fn cull_render_pixel_check() {
                 let start = (row as usize) * aligned_row as usize;
                 let row_data = &mapped[start..start + bytes_per_row as usize];
                 let mut row_px = 0u32;
-                for (col, px) in row_data.chunks_exact(4).enumerate() {
+                for (col, px) in row_data.as_chunks::<4>().0.iter().enumerate() {
                     if px[0] > 8 || px[1] > 8 || px[2] > 8 {
                         row_px += 1;
                         min_x = min_x.min(col as u32);
@@ -2631,7 +2631,7 @@ fn cull_draw_c_lo_nonzero_minimal() {
         for row in 0..ph {
             let start = (row as usize) * aligned_row as usize;
             let row_data = &mapped[start..start + bytes_per_row as usize];
-            for p in row_data.chunks_exact(4) {
+            for p in row_data.as_chunks::<4>().0 {
                 if p[0] > 8 || p[1] > 8 || p[2] > 8 {
                     px += 1;
                 }
@@ -2859,7 +2859,7 @@ fn note_boundary_no_gap_large_tick() {
         let mut min_col: Option<u32> = None;
         let mut max_col = 0u32;
         let mut count = 0u32;
-        for (col, p) in row_data.chunks_exact(4).enumerate() {
+        for (col, p) in row_data.as_chunks::<4>().0.iter().enumerate() {
             if p[0] > 8 || p[1] > 8 || p[2] > 8 {
                 min_col.get_or_insert(col as u32);
                 max_col = col as u32;
@@ -3330,7 +3330,10 @@ fn count_nonblack_pixels(
     let mut count = 0u64;
     for row in 0..height {
         let start = row as usize * aligned_row as usize;
-        for px in mapped[start..start + bytes_per_row as usize].chunks_exact(4) {
+        for px in mapped[start..start + bytes_per_row as usize]
+            .as_chunks::<4>()
+            .0
+        {
             if px[0] > 8 || px[1] > 8 || px[2] > 8 {
                 count += 1;
             }

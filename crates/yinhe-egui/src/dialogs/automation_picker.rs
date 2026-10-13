@@ -389,7 +389,7 @@ mod geom_tests {
         let ctx = egui::Context::default();
         ctx.add_font(egui_material_icons::font_insert());
         for _ in 0..2 {
-            let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
+            let out = ctx.run_ui(egui::RawInput::default(), |_| {});
             out.drop_without_applying_deltas();
         }
         ctx

@@ -144,7 +144,7 @@ fn count_visible_instances(device: &Device, queue: &Queue, cull: &CullState) -> 
         return 0;
     };
     let mut visible = 0u64;
-    for chunk in view.chunks_exact(20) {
+    for chunk in view.as_chunks::<20>().0 {
         visible += u32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]) as u64;
     }
     drop(view);
@@ -164,7 +164,7 @@ fn bench_args_scaling(
 ) {
     let max_args = 390_625u32; // 1e8 / 256
     let mut args_data = vec![0u32; max_args as usize * 5];
-    for chunk in args_data.chunks_exact_mut(5) {
+    for chunk in args_data.as_chunks_mut::<5>().0 {
         chunk[0] = 6; // index_count；instance_count = 0
     }
     let args_buf = device.create_buffer(&BufferDescriptor {

@@ -877,7 +877,7 @@ mod tests {
         for row in 0..ph {
             let start = (row as usize) * aligned_row as usize;
             let row_data = &mapped[start..start + bytes_per_row as usize];
-            for p in row_data.chunks_exact(4) {
+            for p in row_data.as_chunks::<4>().0 {
                 if p[0] > 8 || p[1] > 8 || p[2] > 8 {
                     if p[2] > p[0] {
                         blue += 1; // track 0 蓝色（B 通道大）
