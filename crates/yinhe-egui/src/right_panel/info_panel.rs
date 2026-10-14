@@ -13,6 +13,7 @@
 mod anchor;
 mod history;
 mod layers;
+mod layers_mix;
 pub(crate) mod selection;
 mod summary;
 mod track;
@@ -96,9 +97,14 @@ fn render_track(
     }
 }
 
-/// 「图层」选项卡。返回是否发生音轨结构变化（拖动排序）。
-pub(crate) fn show_layers(ui: &mut egui::Ui, doc: &mut Document) -> bool {
-    layers::show(ui, doc)
+/// 「图层」选项卡。`is_mix` 时显示 MIX 通道级图层（MIX 图层面板），
+/// 否则显示轨道级图层。返回是否发生音轨结构变化（拖动排序）。
+pub(crate) fn show_layers(ui: &mut egui::Ui, doc: &mut Document, is_mix: bool) -> bool {
+    if is_mix {
+        layers_mix::show(ui, doc)
+    } else {
+        layers::show(ui, doc)
+    }
 }
 
 /// 「历史记录」选项卡。

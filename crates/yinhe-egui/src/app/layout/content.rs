@@ -227,6 +227,45 @@ impl App {
             self.handle_arr_drag(delta_ticks, delta_tracks, alt);
         }
 
+        // ── 上方主视图与底部面板（钢琴卷帘/混音台）之间的分割条 ──
+        // ARRANGE：AR/PR（arr_split）；MIX：通道 AR/底部面板（mix_split）。
+        if layout.arr_h > 0.0 && (has_piano || has_mixer) {
+            let h_split_rect = egui::Rect::from_min_max(
+                egui::pos2(
+                    layout.remaining.min.x,
+                    layout.remaining.min.y + layout.arr_h,
+                ),
+                egui::pos2(
+                    layout.remaining.max.x,
+                    layout.remaining.min.y + layout.arr_h + crate::theme::SPLIT_GAP,
+                ),
+            );
+            let h_split_resp =
+                crate::widgets::split_handle::horizontal(ui, "__h_split__", h_split_rect);
+            if h_split_resp.dragged() {
+                let total_y = layout.remaining.size().y;
+                let delta = h_split_resp.drag_delta().y;
+                let ratio = ((layout.arr_h + delta) / total_y)
+                    .clamp(crate::theme::SPLIT_CLAMP_MIN, crate::theme::SPLIT_CLAMP_MAX);
+                if is_mix {
+                    self.mix_split = ratio;
+                } else {
+                    self.arr_split = ratio;
+                }
+            }
+            if h_split_resp.double_clicked() {
+                // 双击分割线 → 还原默认分割比例
+                if is_mix {
+                    self.mix_split = LayoutSettings::default().mix_split;
+                } else {
+                    self.arr_split = LayoutSettings::default().arr_split;
+                }
+            }
+            if h_split_resp.drag_stopped() || h_split_resp.double_clicked() {
+                self.layout_needs_save = true;
+            }
+        }
+
         // Pianoroll area（MIX 下与混音台/设备链三选一显示）。
         if has_piano {
             self.show_pianoroll_split(
@@ -388,47 +427,6 @@ impl App {
         follow_mode: &mut crate::view_interaction::FollowMode,
         sel_hint: Option<&SelHintInfo>,
     ) {
-        // Horizontal splitter（ARRANGE：AR/PR 的 arr_split；MIX：通道 AR/面板的 mix_split）
-        let is_mix = self.view_mode == crate::chrome::mode_bar::ViewMode::Mix;
-        if self.view_mode.show_transport() || is_mix {
-            // 整条带作为 handle（绘制+交互同一层，避免叠两层同色填充）
-            let split_right = layout.remaining.max.x;
-            let h_split_rect = egui::Rect::from_min_max(
-                egui::pos2(
-                    layout.remaining.min.x,
-                    layout.remaining.min.y + layout.arr_h,
-                ),
-                egui::pos2(
-                    split_right,
-                    layout.remaining.min.y + layout.arr_h + crate::theme::SPLIT_GAP,
-                ),
-            );
-            let h_split_resp =
-                crate::widgets::split_handle::horizontal(ui, "__h_split__", h_split_rect);
-            if h_split_resp.dragged() {
-                let total_y = layout.remaining.size().y;
-                let delta = h_split_resp.drag_delta().y;
-                let ratio = ((layout.arr_h + delta) / total_y)
-                    .clamp(crate::theme::SPLIT_CLAMP_MIN, crate::theme::SPLIT_CLAMP_MAX);
-                if is_mix {
-                    self.mix_split = ratio;
-                } else {
-                    self.arr_split = ratio;
-                }
-            }
-            if h_split_resp.double_clicked() {
-                // 双击分割线 → 还原默认分割比例
-                if is_mix {
-                    self.mix_split = LayoutSettings::default().mix_split;
-                } else {
-                    self.arr_split = LayoutSettings::default().arr_split;
-                }
-            }
-            if h_split_resp.drag_stopped() || h_split_resp.double_clicked() {
-                self.layout_needs_save = true;
-            }
-        }
-
         // ── 左侧工具栏（仅 PR 带内，Photoshop 风格）──
         // 从 PR 内容左缘扣出竖条，走带视图不受影响；工具只对 PR/AM 生效。
         let tool_strip = egui::Rect::from_min_max(
@@ -971,6 +969,7 @@ impl App {
                 &mut self.right_panel_width,
                 &mut self.right_tab,
                 &mut self.right_panel_layout,
+                self.view_mode == crate::chrome::mode_bar::ViewMode::Mix,
                 doc,
                 self.audio_state.handle.as_ref(),
                 &mut self.event_browser_state,

@@ -36,12 +36,7 @@ impl CaRow {
     }
 }
 
-/// 展开通道的合并行「变窄」比例（相对全行高）。
-pub(crate) const CHANNEL_ROW_NARROW_RATIO: f32 = 0.5;
-/// 变窄行高下限（px）。
-pub(crate) const CHANNEL_ROW_NARROW_MIN_H: f32 = 10.0;
-
-/// 通道 AR 行布局（每帧重建）。
+/// 通道 AR 行布局（每帧重建；所有行等高 = lane_height）。
 #[derive(Clone, Debug, Default)]
 pub(crate) struct CaRowLayout {
     rows: Vec<CaRow>,
@@ -66,7 +61,6 @@ impl CaRowLayout {
         lane_height: f32,
     ) -> Self {
         let full = lane_height.max(1.0);
-        let narrow = (lane_height * CHANNEL_ROW_NARROW_RATIO).max(CHANNEL_ROW_NARROW_MIN_H);
 
         let mut rows = Vec::new();
         let mut heights = Vec::new();
@@ -79,10 +73,7 @@ impl CaRowLayout {
         }
         for group in groups.iter_all() {
             let exp = expanded(group.channel);
-            push(
-                CaRow::Channel(group.channel),
-                if exp { narrow } else { full },
-            );
+            push(CaRow::Channel(group.channel), full);
             if exp {
                 for &t in &group.tracks {
                     push(CaRow::Track(t), full);
@@ -348,7 +339,7 @@ mod tests {
 
     /// 展开布局：合并行变窄，轨道行 + 自动化行全高，y 前缀和正确。
     #[test]
-    fn expanded_layout_narrow_channel_row_and_flat_tracks() {
+    fn expanded_layout_rows_are_uniform_height() {
         let model = model_with(vec![midi_track(0, 0), midi_track(0, 0), midi_track(0, 2)]);
         let groups = CaGroups::from_model(&model, Some(0));
         let lane_counts = |t: u16| match t {
@@ -362,10 +353,10 @@ mod tests {
             lane_counts,
             40.0,
         );
-        // 行：Conductor, A01(窄20), t1, t1.lane0, t1.lane1, t2, A03
+        // 行：Conductor, A01, t1, t1.lane0, t1.lane1, t2, A03（全部全高）。
         assert_eq!(layout.total_rows(), 7);
         assert_eq!(layout.row(1), Some(CaRow::Channel(CaChannel::Midi(0))));
-        assert_eq!(layout.height(1), 20.0, "展开的合并行变窄为半高");
+        assert_eq!(layout.height(1), 40.0, "展开的合并行保持全高");
         assert_eq!(layout.row(2), Some(CaRow::Track(1)));
         assert_eq!(layout.row(3), Some(CaRow::Automation { track: 1, sub: 0 }));
         assert_eq!(layout.row(4), Some(CaRow::Automation { track: 1, sub: 1 }));
@@ -373,13 +364,13 @@ mod tests {
         assert_eq!(layout.row(6), Some(CaRow::Channel(CaChannel::Midi(2))));
         assert_eq!(layout.y_top(0), 0.0);
         assert_eq!(layout.y_top(1), 40.0);
-        assert_eq!(layout.y_top(2), 60.0);
-        assert_eq!(layout.y_top(5), 180.0);
-        assert_eq!(layout.total_height(), 260.0);
-        assert_eq!(layout.hit_row(59.0), Some(1), "窄行内命中合并行");
-        assert_eq!(layout.hit_row(60.0), Some(2));
-        assert_eq!(layout.hit_row(99.9), Some(2));
-        assert_eq!(layout.hit_row(100.0), Some(3));
+        assert_eq!(layout.y_top(2), 80.0);
+        assert_eq!(layout.y_top(5), 200.0);
+        assert_eq!(layout.total_height(), 280.0);
+        assert_eq!(layout.hit_row(79.9), Some(1));
+        assert_eq!(layout.hit_row(80.0), Some(2));
+        assert_eq!(layout.hit_row(119.9), Some(2));
+        assert_eq!(layout.hit_row(120.0), Some(3));
     }
 
     /// 轨道 → 行映射与覆盖行范围。

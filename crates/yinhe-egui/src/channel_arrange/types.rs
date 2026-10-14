@@ -187,12 +187,12 @@ mod tests {
         let model = model_with(vec![midi_track(0, 0), midi_track(0, 0)]);
         let groups = CaGroups::from_model(&model, Some(0));
         let layout = CaRowLayout::build(true, &groups, |_| true, |_| 1, 40.0);
-        // 行 2=Track1(y60,h40), 3=Auto(1,0)(y100), 4=Track2(y140) → 覆盖 60..180。
+        // 行 2=Track1(y80,h40), 3=Auto(1,0)(y120), 4=Track2(y160) → 覆盖 80..200。
         let (top, bottom) = sel_view_y(&layout, &[1, 2], 0.0).unwrap();
-        assert_eq!((top, bottom), (60.0, 180.0));
+        assert_eq!((top, bottom), (80.0, 200.0));
         // scroll 平移进入局部坐标。
         let (top, bottom) = sel_view_y(&layout, &[1], 10.0).unwrap();
-        assert_eq!((top, bottom), (50.0, 90.0));
+        assert_eq!((top, bottom), (70.0, 110.0));
         assert_eq!(sel_view_y(&layout, &[9], 0.0), None);
     }
 

@@ -66,6 +66,8 @@ pub fn show(
     right_panel_width: &mut f32,
     right_tab: &mut Option<RightTab>,
     layout: &mut RightPanelLayout,
+    // MIX 视图：图层选项卡显示通道级图层（MIX 图层）。
+    is_mix: bool,
     mut doc: Option<&mut Document>,
     audio: Option<&yinhe_audio::CpalAudioHandle>,
     event_browser_state: &mut event_browser::EventBrowserState,
@@ -167,7 +169,7 @@ pub fn show(
             }
             PanelKind::Layers => {
                 if let Some(doc) = doc_ref.as_deref_mut() {
-                    structural_changed |= info_panel::show_layers(ui, doc);
+                    structural_changed |= info_panel::show_layers(ui, doc, is_mix);
                 }
             }
             PanelKind::History => {

@@ -332,6 +332,54 @@ pub(crate) fn show(
         *needs_audio_notify = true;
     }
 
+    // ── 右下角角落（横纵滚动条交叠区）：拖拽双向缩放、双击 fit ──
+    {
+        let corner_rect = egui::Rect::from_min_max(gpu_rect.max, arr_rect.max);
+        let resp = ui.interact(
+            corner_rect,
+            ui.id().with("ca_corner_zoom"),
+            egui::Sense::click_and_drag(),
+        );
+        let press_on = ui
+            .input(|i| i.pointer.press_origin())
+            .is_some_and(|p| corner_rect.contains(p));
+        let active = press_on && resp.dragged();
+        let base = crate::theme::track_bg();
+        let fill = if active {
+            crate::theme::pressed_color(base)
+        } else if resp.hovered() {
+            crate::theme::hover_color(base)
+        } else {
+            base
+        };
+        ui.painter().rect_filled(corner_rect, 0.0, fill);
+        if resp.hovered() || active {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
+        }
+        if active {
+            let d = resp.drag_delta();
+            let k = 0.005;
+            let anchor_x = corner_rect.center().x - arr_rect.min.x;
+            let anchor_y = corner_rect.center().y - arr_rect.min.y;
+            doc.edit.chan_ar_view.zoom_around_x(anchor_x, 1.0 + d.x * k);
+            doc.edit
+                .chan_ar_view
+                .zoom_lane_height(anchor_y, 1.0 + d.y * k);
+            ui.ctx().request_repaint();
+        } else if crate::widgets::scrollbar::double_clicked_in(ui, corner_rect) {
+            doc.edit
+                .chan_ar_view
+                .fit_time(music_rect.width(), total_ticks);
+            doc.edit
+                .chan_ar_view
+                .fit_lane_height(gpu_rect.height(), row_layout.total_rows());
+            ui.ctx().request_repaint();
+        }
+        if crate::view_interaction::pointer_hits(ui, corner_rect) {
+            crate::widgets::hint::set(ui.ctx(), t!("hint.arrange.corner_zoom"));
+        }
+    }
+
     // ── 水平滚动条 ──
     {
         let sb_rect = egui::Rect::from_min_max(
@@ -384,8 +432,7 @@ pub(crate) fn show(
             egui::pos2(gpu_rect.max.x, arr_rect.min.y + theme::RULER_H),
             egui::pos2(arr_rect.max.x, gpu_rect.max.y),
         );
-        let lh = doc.edit.chan_ar_view.lane_height();
-        let cells = ((row_layout.total_height() / lh).round() as usize).max(1);
+        let cells = row_layout.total_rows().max(1);
         let vsb_drag_dx = ui
             .push_id("ca_vscroll", |ui| {
                 crate::widgets::scrollbar::show_vertical(

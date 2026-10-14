@@ -371,6 +371,74 @@ pub(crate) fn draw_hover_tooltip(ctx: &egui::Context, lines: &[String], x: f32, 
 mod tests {
     use super::*;
 
+    /// 回归：垂直/水平滚轮经 handle_input 应平移视图 scroll（AR 与通道 AR 共用路径）。
+    #[test]
+    fn handle_input_wheel_pans_view() {
+        let ctx = egui::Context::default();
+        let mut view = yinhe_types::ArrangementView::default();
+        let mut cursor_tick: Option<f64> = None;
+        let mut follow = FollowMode::None;
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+
+        let mut run = |events: Vec<egui::Event>, view: &mut yinhe_types::ArrangementView| {
+            let raw = egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            };
+            let out = ctx.run_ui(raw, |ui| {
+                let rect = ui.max_rect();
+                crate::view_interaction::handle_input(
+                    ui,
+                    rect,
+                    view,
+                    &mut cursor_tick,
+                    0.0,
+                    None,
+                    None,
+                    Some(rect),
+                    false,
+                    &mut follow,
+                    &Tool::Select,
+                );
+            });
+            out.drop_without_applying_deltas();
+        };
+
+        // 指针先进入区域（建立 hover）。
+        run(vec![egui::Event::PointerMoved(screen.center())], &mut view);
+        // 垂直滚轮（向下滚 = delta.y 负）：scroll_y 应增加。
+        run(
+            vec![egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, -120.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            &mut view,
+        );
+        assert!(
+            view.base.scroll_y > 0.0,
+            "垂直滚轮应更新 scroll_y，实际 {:.3}",
+            view.base.scroll_y
+        );
+        // 水平滚轮（内容右移语义）：scroll_x 应减少。
+        run(
+            vec![egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(120.0, 0.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            &mut view,
+        );
+        assert!(
+            view.base.scroll_x < 0.0,
+            "水平滚轮应更新 scroll_x（内容右移 = 视口左移），实际 {:.3}",
+            view.base.scroll_x
+        );
+    }
+
     #[test]
     fn snap_tick_no_bar_line() {
         let result = snap_tick(500.0, QuantizePreset::Fraction(1, 4), 480, None);
