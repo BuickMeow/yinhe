@@ -43,6 +43,14 @@ pub(crate) fn viewport_id() -> egui::ViewportId {
     egui::ViewportId::from_hash_of("yinhe_welcome_dialog")
 }
 
+/// 「銀」徽标 SVG（欢迎页水印 / 关于窗口 / 启动页三处共用，避免重复 include）。
+pub(crate) const YINHE_LOGO_SVG: &[u8] = include_bytes!("../../../assets/YINHE.svg");
+
+/// 「銀」徽标图片（URI 带 `.svg` 以命中 SVG 加载器；颜色/透明度由调用方 `tint`）。
+pub(crate) fn logo_image() -> egui::Image<'static> {
+    egui::Image::from_bytes("bytes://yinhe-logo.svg", YINHE_LOGO_SVG)
+}
+
 /// 独立欢迎窗口（启动时无工程可打开 → 先让用户选择）。
 ///
 /// 返回 `(closed, action)`：`closed` = 用户关闭窗口（无工程则退出应用）；
@@ -297,13 +305,10 @@ fn paint_watermark(ui: &egui::Ui, rect: egui::Rect) {
     );
     let c = crate::theme::text_primary();
     let tint = egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), WATERMARK_ALPHA);
-    egui::Image::from_bytes(
-        "bytes://yinhe-logo.svg",
-        include_bytes!("../../../assets/YINHE.svg"),
-    )
-    .tint(tint)
-    .fit_to_exact_size(wm_rect.size())
-    .paint_at(ui, wm_rect);
+    logo_image()
+        .tint(tint)
+        .fit_to_exact_size(wm_rect.size())
+        .paint_at(ui, wm_rect);
 }
 
 /// 右下角版本号。

@@ -56,13 +56,10 @@ fn content(ui: &mut egui::Ui) {
         let logo_side = scale(104.0);
         let (rect, _) =
             ui.allocate_exact_size(egui::vec2(logo_side, logo_side), egui::Sense::hover());
-        egui::Image::from_bytes(
-            "bytes://yinhe-logo.svg",
-            include_bytes!("../../../../assets/YINHE.svg"),
-        )
-        .tint(crate::theme::text_primary())
-        .fit_to_exact_size(rect.size())
-        .paint_at(ui, rect);
+        crate::welcome::logo_image()
+            .tint(crate::theme::text_primary())
+            .fit_to_exact_size(rect.size())
+            .paint_at(ui, rect);
 
         ui.add_space(scale(8.0));
         ui.label(

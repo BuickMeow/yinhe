@@ -407,13 +407,10 @@ fn draw_splash(ui: &mut egui::Ui, shared: &StartupShared) {
         let c = crate::theme::text_primary();
         egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 150)
     };
-    egui::Image::from_bytes(
-        "bytes://yinhe-logo.svg",
-        include_bytes!("../../../../assets/YINHE.svg"),
-    )
-    .tint(logo_tint)
-    .fit_to_exact_size(logo_rect.size())
-    .paint_at(ui, logo_rect);
+    crate::welcome::logo_image()
+        .tint(logo_tint)
+        .fit_to_exact_size(logo_rect.size())
+        .paint_at(ui, logo_rect);
 
     let title_color = crate::theme::text_primary();
     let title = painter.layout_no_wrap(
