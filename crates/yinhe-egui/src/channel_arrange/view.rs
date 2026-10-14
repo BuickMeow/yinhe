@@ -283,7 +283,7 @@ pub(crate) fn show(
     }
 
     // ── 自动化层（展开行 + 折叠通道预览）──
-    let folded = super::render::collect_folded_am(layout, groups, visible.clone(), data);
+    let folded = super::render::collect_folded_am(layout, groups, visible.clone(), data, scroll_y);
     let offsets_hash = layout_hash(layout);
     crate::arrange::view_ui::render::prepare_automation(
         renderer,

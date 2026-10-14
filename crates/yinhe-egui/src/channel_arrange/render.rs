@@ -164,11 +164,15 @@ pub(crate) fn collect_am_rows(
 
 /// 通道 AR 折叠通道的自动化预览：未展开的通道把其全部轨道的全部 lane 以
 /// 该通道行的 y 顶、半透明叠加显示（与轨道 AR 的折叠预览同语义）。
+///
+/// `y_top` 输出为**纹理坐标**（音乐坐标 - scroll_y）：与展开行一致，
+/// 保证预览曲线垂直滚动时跟随（漏减 scroll_y 会导致预览固定在旧位置）。
 pub(crate) fn collect_folded_am<'a>(
     layout: &CaRowLayout,
     groups: &CaGroups,
     visible: std::ops::Range<usize>,
     data: &crate::arrange::ArrangeData<'a>,
+    scroll_y: f32,
 ) -> Vec<yinhe_wgpu::ArrAutomationLane<'a>> {
     let mut folded = Vec::new();
     for row in visible {
@@ -178,7 +182,7 @@ pub(crate) fn collect_folded_am<'a>(
         let Some(group) = groups.group(ch) else {
             continue;
         };
-        let y_top = layout.y_top(row);
+        let y_top = layout.y_top(row) - scroll_y;
         let height = layout.height(row);
         for &t in &group.tracks {
             if !data.track_visible.get(t as usize).copied().unwrap_or(true) {
@@ -332,5 +336,69 @@ pub(crate) fn draw_audio_clips(
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    use yinhe_core::{TrackData, YinModel};
+    use yinhe_types::{AutomationLane, AutomationTarget};
+
+    /// 回归：折叠通道的自动化预览 y_top 为纹理坐标，必须随 scroll_y 平移。
+    /// 曾经漏减 scroll_y，导致预览固定在旧屏幕位置、垂直（上下）滚动时不动。
+    #[test]
+    fn folded_am_y_top_follows_scroll() {
+        let mut model = YinModel::new_empty_with_16_tracks();
+        let conductor = model.tracks[0].clone();
+        let mut track = TrackData::new(0, 0);
+        track.automation_lanes.push(AutomationLane {
+            target: AutomationTarget::CC { controller: 7 },
+            track: 1,
+            events: Vec::new(),
+        });
+        model.tracks = vec![conductor, Arc::new(track)];
+
+        let groups = CaGroups::from_model(&model, Some(0));
+        let layout = CaRowLayout::build(true, &groups, |_| false, |_| 1, 40.0);
+        let visible = layout.visible_rows(0.0, 1000.0);
+
+        let track_visible = vec![true, true];
+        let track_colors = vec![[1.0, 0.0, 0.0, 1.0]; 2];
+        let tempo_lane = AutomationLane {
+            target: AutomationTarget::Tempo,
+            track: 0,
+            events: Vec::new(),
+        };
+        let tempo_map = yinhe_core::TempoMap::default();
+        let library = crate::app::audio_library::AudioLibrary::new();
+        let data = crate::arrange::ArrangeData {
+            midi: None,
+            track_visible: &track_visible,
+            track_colors: &track_colors,
+            track_info: &[],
+            quantize: yinhe_editor_core::quantize::QuantizePreset::Fraction(1, 4),
+            ppq: 480,
+            bar_line_data: None,
+            total_ticks: 1000.0,
+            num_tracks: 2,
+            tracks: &model.tracks,
+            tempo_lane: &tempo_lane,
+            conductor_track_idx: Some(0),
+            tempo_map: &tempo_map,
+            audio_library: &library,
+            audio_sources: &[],
+        };
+
+        let folded0 = collect_folded_am(&layout, &groups, visible.clone(), &data, 0.0);
+        assert_eq!(folded0.len(), 1, "折叠通道应产出 1 条预览 lane");
+        let folded100 = collect_folded_am(&layout, &groups, visible, &data, 100.0);
+        assert_eq!(
+            folded0[0].y_top - folded100[0].y_top,
+            100.0,
+            "y_top 必须随 scroll_y 平移（纹理坐标语义）"
+        );
     }
 }
