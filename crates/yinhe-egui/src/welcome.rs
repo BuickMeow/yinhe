@@ -36,7 +36,8 @@ const RECENT_MAX_H: f32 = 280.0;
 /// 内容列最大宽度。
 const COL_MAX_W: f32 = 340.0;
 /// 徽标水印不透明度（前景色淡化，淡淡地贴左下角）。
-const WATERMARK_ALPHA: u8 = 24;
+/// 档位参考：24 ≈ 9.4%、18 ≈ 7%、14 ≈ 5.5%、10 ≈ 3.9%（255 基准）。
+const WATERMARK_ALPHA: u8 = 18;
 /// 水印边长量化步长（逻辑像素）：拖动窗口时避免每帧重新光栅化 SVG。
 const WATERMARK_SIZE_STEP: f32 = 64.0;
 
