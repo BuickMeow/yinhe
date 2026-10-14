@@ -20,10 +20,11 @@ use yinhe_types::time_format;
 use yinhe_types::{NOTE_NAMES, ScaleType};
 
 /// 时间码控件宽度（四列：BPM/拍号+PPQ、位置/时间、量化/调式、电平表）。
-pub const TIMECODE_WIDTH: f32 = 276.0;
+pub const TIMECODE_WIDTH: f32 = 318.0;
 
-/// 四列宽度（与 `TIMECODE_WIDTH` 一致）。
-const COL_WIDTHS: [f32; 4] = [78.0, 92.0, 82.0, 24.0];
+/// 四列宽度（与 `TIMECODE_WIDTH` 一致）。字段文字在各列内居中，
+/// 列宽比文字本身宽出一圈左右边距（约 14px/侧）。
+const COL_WIDTHS: [f32; 4] = [92.0, 106.0, 96.0, 24.0];
 /// 控件高度（上下两行各 18）。
 const RECT_H: f32 = 36.0;
 /// 单行高度。

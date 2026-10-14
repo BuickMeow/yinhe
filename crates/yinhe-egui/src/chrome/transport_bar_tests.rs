@@ -473,7 +473,7 @@ fn drag_on_hidden_button_does_not_start_drag() {
 }
 
 /// 回归：右侧 PR 控制组的文字/图标必须由统一的前景色着色。
-/// 曾出现预排版 galley 固化白色 glyph，导致旋转的 III 图标与
+/// 曾出现预排版 galley 固化白色 glyph，导致（旋转的）方向图标与
 /// 和弦文字在浅色主题下整段发白（fallback 色被白色覆盖）。
 #[test]
 fn right_group_text_shapes_use_fallback_color() {
@@ -514,7 +514,7 @@ fn right_group_text_shapes_use_fallback_color() {
             checked += 1;
         }
     }
-    assert!(checked >= 3, "右侧组文字/图标数量异常: {checked}");
+    assert!(checked >= 2, "右侧组文字/图标数量异常: {checked}");
     output.drop_without_applying_deltas();
 }
 

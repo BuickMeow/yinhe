@@ -10,7 +10,7 @@ pub enum FileAction {
     NewProject,
     Open,
     ImportAudio,
-    /// 欢迎页面：主区域显示欢迎内容（有工程时也可打开；再点一次关闭）。
+    /// 欢迎页面：打开独立欢迎窗口（与启动欢迎窗口同款）。
     Welcome,
     Save,
     SaveAs,
@@ -434,7 +434,7 @@ pub struct TransportResponse {
     pub record_toggle: bool,
     pub step_toggle: bool,
     pub tap_tempo: bool,
-    /// 直接设定钢琴卷帘方向（III/三 两个按钮；None = 未点击）。
+    /// 直接设定钢琴卷帘方向（单按钮切换时下发目标方向；None = 未点击）。
     pub set_orientation: Option<yinhe_types::Orientation>,
     /// 时间码编辑事件（BPM/拍号/PPQ/位置/调式/量化）。
     pub timecode_events: Vec<crate::widgets::timecode::TimecodeEvent>,
@@ -491,5 +491,30 @@ pub fn tool_hint(tool: crate::widgets::tools_panel::Tool) -> String {
         Tool::Grid => t!("hint.tool.grid").to_string(),
         Tool::Line => t!("hint.tool.line").to_string(),
         Tool::Brush => t!("hint.tool.brush").to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 图钉数组长度必须覆盖全部菜单动作：新加动作后忘了同步
+    /// （`PINNED_FILE_ACTIONS_LEN` / `PINNED_EDIT_ACTIONS_LEN`）会让该项的
+    /// pin 点击静默失效（越界被 `get_mut` 忽略）。
+    #[test]
+    fn pinned_arrays_cover_all_actions() {
+        let s = crate::audio_settings::AudioSettings::default();
+        assert!(
+            s.pinned_file_actions.len() >= FileAction::ALL.len(),
+            "pinned_file_actions({}) < FileAction::ALL({})",
+            s.pinned_file_actions.len(),
+            FileAction::ALL.len()
+        );
+        assert!(
+            s.pinned_edit_actions.len() >= EditAction::ALL.len(),
+            "pinned_edit_actions({}) < EditAction::ALL({})",
+            s.pinned_edit_actions.len(),
+            EditAction::ALL.len()
+        );
     }
 }

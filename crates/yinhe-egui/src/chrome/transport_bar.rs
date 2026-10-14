@@ -210,7 +210,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     }
 
                     if let Some(pr) = ctx.pr.as_ref() {
-                        // ── 右侧 PR 控制组（靠右，永不收缩）：III / 三 / 和弦 ──
+                        // ── 右侧 PR 控制组（靠右，永不收缩）：方向切换 / 和弦 ──
                         transport_bar_pr::show_right_group(
                             ui,
                             pr,

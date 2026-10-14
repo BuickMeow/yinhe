@@ -1,11 +1,11 @@
-//! transport bar 右侧的 PR 控制组：瀑布流方向（III/三）/ 和弦指示器（横竖按钮左侧）。
-//! 整组在 `right_to_left` 布局中绘制，贴右且不参与工具收拢。
+//! transport bar 右侧的 PR 控制组：瀑布流方向（单按钮切换）/ 和弦指示器
+//! （方向按钮左侧）。整组在 `right_to_left` 布局中绘制，贴右且不参与工具收拢。
 //!
 //! 主音轨切换 / 显示音轨勾选已移入右栏「图层」选项卡，不再在此渲染。
 
 use eframe::egui;
 use egui_material_icons::MaterialIcon;
-use egui_material_icons::icons::ICON_DEHAZE;
+use egui_material_icons::icons::ICON_DOUBLE_ARROW;
 use rust_i18n::t;
 
 use yinhe_editor_core::quantize::QuantizePreset;
@@ -39,40 +39,35 @@ pub(crate) fn show_right_group(
     hovered_hint: &mut Option<String>,
 ) {
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        // ── 三 = 横向瀑布流 ──
-        let h_resp = crate::widgets::hover::hover_button(
+        // ── 瀑布流方向：单按钮切换 ──
+        // 向右双箭头 = 横向（时间向右）；顺时针 90°（向下）= 纵向瀑布流。
+        // 不使用「强调色 = 已开启」语义：图标方向本身区分当前方向。
+        let angle = if vertical {
+            std::f32::consts::FRAC_PI_2
+        } else {
+            0.0
+        };
+        let resp = crate::widgets::hover::hover_button_rotated(
             ui,
-            ICON_DEHAZE.codepoint,
-            icon_font(ICON_DEHAZE),
+            ICON_DOUBLE_ARROW.codepoint,
+            icon_font(ICON_DOUBLE_ARROW),
             crate::theme::text_label(),
-            !vertical,
+            false,
+            angle,
         );
-        if h_resp.clicked() && vertical {
-            *set_orientation = Some(Orientation::Horizontal);
+        if resp.clicked() {
+            *set_orientation = Some(if vertical {
+                Orientation::Horizontal
+            } else {
+                Orientation::Vertical
+            });
         }
-        if h_resp.hovered() {
-            *hovered_hint = Some(t!("hint.orientation.horizontal").to_string());
+        if resp.hovered() {
+            *hovered_hint = Some(t!("hint.orientation.toggle").to_string());
         }
         ui.add_space(GAP);
 
-        // ── III = 纵向瀑布流（同一图标旋转 90°）──
-        let v_resp = crate::widgets::hover::hover_button_rotated(
-            ui,
-            ICON_DEHAZE.codepoint,
-            icon_font(ICON_DEHAZE),
-            crate::theme::text_label(),
-            vertical,
-            std::f32::consts::FRAC_PI_2,
-        );
-        if v_resp.clicked() && !vertical {
-            *set_orientation = Some(Orientation::Vertical);
-        }
-        if v_resp.hovered() {
-            *hovered_hint = Some(t!("hint.orientation.vertical").to_string());
-        }
-        ui.add_space(GAP);
-
-        // ── 和弦指示器（排在横竖按钮之后，即右起排列区最左；只读文本）──
+        // ── 和弦指示器（排在方向按钮之后，即右起排列区最左；只读文本）──
         if let Some(chord) = &data.chord {
             let galley = ui.painter().layout_no_wrap(
                 chord.clone(),

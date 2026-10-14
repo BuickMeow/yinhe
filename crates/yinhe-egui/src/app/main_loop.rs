@@ -661,7 +661,7 @@ impl eframe::App for App {
             self.open_tap_tempo_dialog(ui.ctx());
         }
 
-        // ── 钢琴卷帘方向切换（III / 三 两个按钮直接设定方向）──
+        // ── 钢琴卷帘方向切换（单按钮切换：横向 ↔ 纵向瀑布流）──
         if let Some(orientation) = transport_response.set_orientation {
             // 持久化：打开新文档时沿用用户选择的方向。
             let vertical = orientation == yinhe_types::Orientation::Vertical;

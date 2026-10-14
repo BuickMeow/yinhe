@@ -19,7 +19,7 @@ pub(crate) fn hover_button(
 }
 
 /// 与 `hover_button` 相同，但文字/图标绕按钮中心旋转 `angle` 弧度。
-/// 用于复用同一图标表达垂直方向（如 ☰ 旋转 90° 表示纵向瀑布流）。
+/// 用于同一按钮表达两个方向状态（如方向图标旋转 90° 表示纵向瀑布流）。
 pub(crate) fn hover_button_rotated(
     ui: &mut egui::Ui,
     text: &str,
