@@ -10,11 +10,11 @@ use yinhe_types::{ArRow, ArRowLayout, AutomationTarget};
 
 use yinhe_editor_core::document::TrackOverride;
 
-mod badge;
-mod draw;
-mod hover;
+pub(crate) mod badge;
+pub(crate) mod draw;
+pub(crate) mod hover;
 mod interaction;
-mod render;
+pub(crate) mod render;
 mod types;
 pub(crate) use types::TrackAction;
 

@@ -29,29 +29,36 @@ pub(crate) struct AmRowRef {
     pub track: usize,
     /// 该轨 automation_lanes 的下标；None = Conductor 主行（Tempo 直显）。
     pub sub: Option<usize>,
-    /// 行号（ArRowLayout 行空间）。
-    pub row: usize,
+    /// 行顶部 y（音乐坐标，未减 scroll_y）。通道 AR 行高不均，必须显式携带。
+    pub y_top: f32,
+    /// 行高（px）。
+    pub height: f32,
 }
 
 /// 收集可视范围内的 AM 行（展开 lane + Conductor 主行）。
+/// 轨道 AR 行高均匀：y_top = row * lane_height、height = lane_height。
 pub(crate) fn visible_am_rows(
     layout: &ArRowLayout,
     first_row: usize,
     last_row: usize,
     conductor: Option<u16>,
+    lane_height: f32,
 ) -> Vec<AmRowRef> {
     let mut out = Vec::new();
     for row in first_row..last_row.min(layout.total_rows()) {
+        let y_top = row as f32 * lane_height;
         match layout.row_hit(row) {
             Some(ArRow::Automation(track, sub)) => out.push(AmRowRef {
                 track,
                 sub: Some(sub),
-                row,
+                y_top,
+                height: lane_height,
             }),
             Some(ArRow::Track(track)) if conductor == Some(track as u16) => out.push(AmRowRef {
                 track,
                 sub: None,
-                row,
+                y_top,
+                height: lane_height,
             }),
             _ => {}
         }
@@ -141,7 +148,6 @@ pub(crate) fn interact_all(
     io: &mut AmLanesIo<'_>,
 ) -> AmInteractionOut {
     let mut out = AmInteractionOut::default();
-    let lh = view.lane_height();
     let scroll_y = view.base.scroll_y;
 
     for r in rows {
@@ -166,11 +172,11 @@ pub(crate) fn interact_all(
             ),
         };
 
-        let y_top = r.row as f32 * lh - scroll_y; // 纹理坐标
+        let y_top = r.y_top - scroll_y; // 纹理坐标
         let sy = rect.min.y + y_top; // 屏幕坐标
         let lane_rect = egui::Rect::from_min_max(
             egui::pos2(music_rect.min.x, sy),
-            egui::pos2(music_rect.max.x, sy + lh),
+            egui::pos2(music_rect.max.x, sy + r.height),
         );
 
         // 每 lane 持久视图状态：anchor_sel_rects 跨帧保留，其余字段每帧同步。
@@ -179,7 +185,7 @@ pub(crate) fn interact_all(
         lview.base.scroll_x = view.base.scroll_x;
         lview.base.pixels_per_tick = view.base.pixels_per_tick;
         lview.base.left_panel_width = view.base.left_panel_width;
-        lview.panel_height = lh;
+        lview.panel_height = r.height;
         lview.y_offset = 0.0; // 交互用 panel 局部坐标
         lview.value_zoom = 1.0;
         lview.value_scroll = 0.0;
@@ -244,7 +250,7 @@ pub(crate) fn interact_all(
                     .unwrap_or(1.0),
                 None => lane_max_val(io.tempo_lane),
             };
-            out.ghost = Some((g, y_top, lh, max_val));
+            out.ghost = Some((g, y_top, r.height, max_val));
         }
 
         // tooltip：拖拽中显示 drag_info，否则 hover 超时显示 hover_info（与 PR 一致）。

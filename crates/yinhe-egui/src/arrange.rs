@@ -1,7 +1,7 @@
-mod am_lanes;
+pub(crate) mod am_lanes;
 pub(crate) use am_lanes::lane_label;
-mod track_panel;
-mod view_ui;
+pub(crate) mod track_panel;
+pub(crate) mod view_ui;
 
 use eframe::egui;
 use rust_i18n::t;
@@ -881,7 +881,7 @@ pub fn show(
 
 /// 应用音频片段编辑命令：逐条执行 Document 操作并 push undo。
 /// 每条命令一条 undo（一次拖动 = 一次撤销）。
-fn apply_audio_edit_commands(
+pub(crate) fn apply_audio_edit_commands(
     doc: &mut Document,
     library: &crate::app::audio_library::AudioLibrary,
     commands: Vec<view_ui::AudioEditCmd>,

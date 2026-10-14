@@ -214,6 +214,13 @@ pub enum UndoAction {
         before: Vec<yinhe_core::AudioClip>,
         after: Vec<yinhe_core::AudioClip>,
     },
+    /// 混音台参数整体替换（推子/声像/M-S/master/发送/总线增删）。
+    /// 参数层无细粒度依赖，整份 `MixerParams` 快照比逐字段 delta 更简单可靠；
+    /// 由 UI 层合并为一次拖动/一次点击一条 undo。
+    MixerParams {
+        before: Box<yinhe_mixer::MixerParams>,
+        after: Box<yinhe_mixer::MixerParams>,
+    },
     /// Multiple actions applied atomically (undo/redo as a single step).
     Composite(Vec<UndoAction>),
 }
@@ -386,6 +393,13 @@ impl UndoAction {
                     before,
                     after,
                 }
+            }
+            UndoAction::MixerParams {
+                mut before,
+                mut after,
+            } => {
+                std::mem::swap(&mut before, &mut after);
+                UndoAction::MixerParams { before, after }
             }
             UndoAction::Composite(actions) => {
                 // Reverse order so that reversed().redo() undoes in reverse order,

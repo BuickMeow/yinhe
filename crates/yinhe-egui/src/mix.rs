@@ -243,6 +243,49 @@ impl App {
         &mut self.mixer_racks[idx]
     }
 
+    /// 记录混音台编辑的 undo 起点（若尚无暂存）。
+    ///
+    /// 高频路径（推子/旋钮拖动）每帧调用；只在首次变更时 clone 一份
+    /// `MixerParams` 起点快照，指针空闲后由
+    /// [`App::commit_pending_mixer_undo`] 合并提交。
+    pub(crate) fn note_mixer_edit(&mut self, label: &str) {
+        if self.mixer_undo_pending.is_none()
+            && let Some(idx) = self.workspace.active_doc
+        {
+            self.mixer_undo_pending = Some((
+                Box::new(self.workspace.documents[idx].mixer.clone()),
+                label.to_string(),
+            ));
+        }
+    }
+
+    /// 指针空闲（未按住任何鼠标键）时，把暂存的混音台编辑提交为一条 undo。
+    /// 无实际变化（如点了 M/S 又点回来）时不产生 undo。
+    pub(crate) fn commit_pending_mixer_undo(&mut self, ctx: &egui::Context) {
+        let Some((before, label)) = self.mixer_undo_pending.take() else {
+            return;
+        };
+        if ctx.input(|i| i.pointer.any_down()) {
+            self.mixer_undo_pending = Some((before, label));
+            return;
+        }
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[idx];
+        if *before == doc.mixer {
+            return;
+        }
+        let after = Box::new(doc.mixer.clone());
+        let snapshot = doc.capture_snapshot();
+        doc.push_undo(
+            yinhe_editor_core::history::UndoAction::MixerParams { before, after },
+            &label,
+            snapshot,
+        );
+        doc.mixer_dirty = true;
+    }
+
     /// 更新某源通道的 strip 参数：写持久化层 + 推引擎。
     pub(crate) fn apply_strip(&mut self, idx: usize, channel: u8, params: StripParams) {
         self.workspace.documents[idx].mixer_mut().channels[channel as usize] = params;
@@ -783,9 +826,18 @@ pub(crate) fn insert_refs(
 
 fn apply_action(app: &mut App, idx: usize, action: MixAction) {
     match action {
-        MixAction::SetStrip { channel, params } => app.apply_strip(idx, channel, params),
-        MixAction::SetAudioStrip { channel, params } => app.apply_audio_strip(idx, channel, params),
-        MixAction::SetMaster { params } => app.apply_master(idx, params),
+        MixAction::SetStrip { channel, params } => {
+            app.note_mixer_edit(t!("undo.mix_param").as_ref());
+            app.apply_strip(idx, channel, params);
+        }
+        MixAction::SetAudioStrip { channel, params } => {
+            app.note_mixer_edit(t!("undo.mix_param").as_ref());
+            app.apply_audio_strip(idx, channel, params);
+        }
+        MixAction::SetMaster { params } => {
+            app.note_mixer_edit(t!("undo.mix_param").as_ref());
+            app.apply_master(idx, params);
+        }
         MixAction::OpenPicker { target } => {
             app.mix.picker_for = Some(target);
             app.mix.picker_filter.clear();
@@ -844,10 +896,12 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
             }
         }
         MixAction::AddBus => {
+            app.note_mixer_edit(t!("undo.mix_bus").as_ref());
             app.workspace.documents[idx].mixer_mut().add_bus();
             app.sync_bus_config_to_engine(idx);
         }
         MixAction::RemoveBus { bus } => {
+            app.note_mixer_edit(t!("undo.mix_bus").as_ref());
             app.workspace.documents[idx].mixer_mut().remove_bus(bus);
             let handle = app.audio_state.handle.as_ref().map(|a| &a.handle);
             if idx < app.mixer_racks.len() {
@@ -855,13 +909,17 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
             }
             app.sync_bus_config_to_engine(idx);
         }
-        MixAction::SetBusStrip { bus, params } => app.apply_bus_strip(idx, bus, params),
+        MixAction::SetBusStrip { bus, params } => {
+            app.note_mixer_edit(t!("undo.mix_param").as_ref());
+            app.apply_bus_strip(idx, bus, params);
+        }
         MixAction::SetSend {
             channel,
             bus,
             amount,
             pre_fader,
         } => {
+            app.note_mixer_edit(t!("undo.mix_send").as_ref());
             {
                 let mixer = app.workspace.documents[idx].mixer_mut();
                 if let Some(list) = mixer.sends.get_mut(channel as usize) {

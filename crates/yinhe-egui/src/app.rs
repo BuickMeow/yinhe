@@ -120,6 +120,13 @@ pub struct App {
     pub(crate) show_bottom_dock: bool,
     /// dock 高度（px，拖拽调整后持久化）。
     pub(crate) bottom_dock_height: f32,
+    /// MIX 底部是否显示混音台面板（钢琴卷帘/设备链/混音台三选一之一，持久化）。
+    pub(crate) show_mixer_panel: bool,
+    /// MIX 上下分割比例（通道 AR 高度占比，持久化）。
+    pub(crate) mix_split: f32,
+    /// 混音台编辑的 undo 暂存：首次变更记录起点快照与标签，指针空闲后
+    /// 合并提交为一条 undo（一次拖动/一组连续操作 = 一条撤销）。
+    pub(crate) mixer_undo_pending: Option<(Box<yinhe_mixer::MixerParams>, String)>,
     /// dock 参数区当前选中的设备（不持久化）。
     pub(crate) dock_selected: Option<crate::chrome::dock_bar::DockDevice>,
     /// dock 当前通道语境（MIDI / 乐器 / 音频三套命名空间；不持久化）。
@@ -152,6 +159,8 @@ pub struct App {
     pub(crate) prev_arr_count: usize,
     pub(crate) prev_pr_count: usize,
     pub(crate) prev_am_count: usize,
+    /// 通道 AR（MIX 主区域）选框数量（互斥检测用）。
+    pub(crate) prev_chan_ar_count: usize,
     pub(crate) prev_selected_nonempty: bool,
 
     // ── Cursor-follow mode (shared across arrangement & piano roll) ──
@@ -334,6 +343,9 @@ impl App {
             show_pianoroll_in_arrange: audio_settings.layout.show_pianoroll_in_arrange,
             show_bottom_dock: audio_settings.layout.show_bottom_dock,
             bottom_dock_height: audio_settings.layout.bottom_dock_height,
+            show_mixer_panel: audio_settings.layout.show_mixer_panel,
+            mix_split: audio_settings.layout.mix_split,
+            mixer_undo_pending: None,
             dock_selected: None,
             dock_context: None,
             dock_track: None,
@@ -358,6 +370,7 @@ impl App {
             prev_arr_count: 0,
             prev_pr_count: 0,
             prev_am_count: 0,
+            prev_chan_ar_count: 0,
             prev_selected_nonempty: false,
 
             follow_mode: crate::view_interaction::FollowMode::Page,

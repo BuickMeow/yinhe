@@ -14,6 +14,10 @@ pub struct LayoutSettings {
     pub show_bottom_dock: bool,
     /// 底部设备栏高度（px）。
     pub bottom_dock_height: f32,
+    /// MIX 视图底部是否显示混音台面板（钢琴卷帘/设备链/混音台三选一之一）。
+    pub show_mixer_panel: bool,
+    /// MIX 视图上下分割比例（通道 AR 高度占比）。
+    pub mix_split: f32,
     /// 右栏多栏选项卡布局。
     pub right_panel_layout: RightPanelLayout,
     /// PR 视图方向是否为纵向瀑布流（跨会话持久化，打开新文档时沿用）。
@@ -29,6 +33,8 @@ impl Default for LayoutSettings {
             show_pianoroll_in_arrange: false,
             show_bottom_dock: false,
             bottom_dock_height: 200.0,
+            show_mixer_panel: true,
+            mix_split: 0.7,
             right_panel_layout: RightPanelLayout::default(),
             pr_vertical: false,
         }

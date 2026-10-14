@@ -738,12 +738,17 @@ impl App {
         let Some(idx) = self.workspace.active_doc else {
             return;
         };
+        // 混音台参数被替换时需整体推回引擎（其余 undo 不受影响）。
+        let before_mixer = self.workspace.documents[idx].mixer.clone();
         let doc: &mut Document = &mut self.workspace.documents[idx];
         let changed = doc.undo();
         if changed {
             doc.data.bump_revision();
             doc.edit.pianoroll_view.base.dirty = true;
             self.notify_audio_model_changed();
+            if self.workspace.documents[idx].mixer != before_mixer {
+                self.push_mixer_state_to_engine(idx);
+            }
         }
     }
 
@@ -752,12 +757,16 @@ impl App {
         let Some(idx) = self.workspace.active_doc else {
             return;
         };
+        let before_mixer = self.workspace.documents[idx].mixer.clone();
         let doc: &mut Document = &mut self.workspace.documents[idx];
         let changed = doc.redo();
         if changed {
             doc.data.bump_revision();
             doc.edit.pianoroll_view.base.dirty = true;
             self.notify_audio_model_changed();
+            if self.workspace.documents[idx].mixer != before_mixer {
+                self.push_mixer_state_to_engine(idx);
+            }
         }
     }
 }

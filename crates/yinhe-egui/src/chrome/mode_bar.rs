@@ -19,12 +19,13 @@ impl ViewMode {
     }
 
     /// 是否显示 piano roll 区域。
-    /// `show_pianoroll_in_arrange` 是用户偏好：Arrange 模式下是否同时显示 PR。
+    /// `show_pianoroll_in_arrange` 是用户偏好：Arrange/Mix 模式下是否同时显示 PR。
     #[inline]
     pub fn show_pianoroll(&self, show_pianoroll_in_arrange: bool) -> bool {
         match self {
             ViewMode::Arrange => show_pianoroll_in_arrange,
-            ViewMode::Mix => false,
+            // MIX：底部三选一面板之一（通道 AR 在上方）。
+            ViewMode::Mix => show_pianoroll_in_arrange,
             ViewMode::Edit => true,
         }
     }
@@ -39,27 +40,45 @@ pub(crate) fn mod_key() -> &'static str {
     }
 }
 
-/// 设置钢琴卷帘可见性；展开时与底部设备栏互斥（同时只展开一个）。
+/// 设置钢琴卷帘可见性；展开时与设备链/混音台互斥（同时只展开一个）。
 pub(crate) fn set_pianoroll_visible(
     show_pianoroll_in_arrange: &mut bool,
     show_bottom_dock: &mut bool,
+    show_mixer_panel: &mut bool,
     visible: bool,
 ) {
     *show_pianoroll_in_arrange = visible;
     if visible {
         *show_bottom_dock = false;
+        *show_mixer_panel = false;
     }
 }
 
-/// 设置底部设备栏可见性；展开时与钢琴卷帘互斥（同时只展开一个）。
+/// 设置底部设备栏可见性；展开时与钢琴卷帘/混音台互斥（同时只展开一个）。
 pub(crate) fn set_dock_visible(
     show_pianoroll_in_arrange: &mut bool,
     show_bottom_dock: &mut bool,
+    show_mixer_panel: &mut bool,
     visible: bool,
 ) {
     *show_bottom_dock = visible;
     if visible {
         *show_pianoroll_in_arrange = false;
+        *show_mixer_panel = false;
+    }
+}
+
+/// 设置混音台面板可见性（仅 MIX）；展开时与钢琴卷帘/设备链互斥。
+pub(crate) fn set_mixer_visible(
+    show_pianoroll_in_arrange: &mut bool,
+    show_bottom_dock: &mut bool,
+    show_mixer_panel: &mut bool,
+    visible: bool,
+) {
+    *show_mixer_panel = visible;
+    if visible {
+        *show_pianoroll_in_arrange = false;
+        *show_bottom_dock = false;
     }
 }
 
@@ -163,6 +182,7 @@ pub fn show(
     view_mode: &mut ViewMode,
     show_pianoroll_in_arrange: &mut bool,
     show_bottom_dock: &mut bool,
+    show_mixer_panel: &mut bool,
     right_tab: &mut Option<RightTab>,
     cpu_usage: f32,
     mem_mb: f64,
@@ -211,8 +231,8 @@ pub fn show(
                         hovered_hint = Some(t!("hint.mode_edit").to_string());
                     }
 
-                    // ── Piano roll toggle（仅 AR）──
-                    if *view_mode == ViewMode::Arrange {
+                    // ── Piano roll toggle（ARRANGE / MIX 底部面板之一）──
+                    if matches!(*view_mode, ViewMode::Arrange | ViewMode::Mix) {
                         ui.add_space(6.0);
                         ui.separator();
                         ui.add_space(6.0);
@@ -228,6 +248,7 @@ pub fn show(
                             set_pianoroll_visible(
                                 show_pianoroll_in_arrange,
                                 show_bottom_dock,
+                                show_mixer_panel,
                                 !*show_pianoroll_in_arrange,
                             );
                         }
@@ -235,7 +256,7 @@ pub fn show(
                             hovered_hint = Some(t!("hint.pr_toggle").to_string());
                         }
                     } else {
-                        // MIX/EDIT 无钢琴栏：dock 前保留一次分隔（与模式按钮分隔）。
+                        // EDIT 无钢琴栏：dock 前保留一次分隔（与模式按钮分隔）。
                         ui.add_space(6.0);
                         ui.separator();
                         ui.add_space(6.0);
@@ -255,11 +276,35 @@ pub fn show(
                             set_dock_visible(
                                 show_pianoroll_in_arrange,
                                 show_bottom_dock,
+                                show_mixer_panel,
                                 !*show_bottom_dock,
                             );
                         }
                         if dock_resp.hovered() {
                             hovered_hint = Some(t!("hint.dock_toggle").to_string());
+                        }
+                    }
+
+                    // ── Mixer toggle（仅 MIX：底部三选一之混音台）──
+                    if *view_mode == ViewMode::Mix {
+                        let mixer_icon = egui_material_icons::icons::ICON_TUNE;
+                        let mixer_resp = crate::widgets::hover::hover_button(
+                            ui,
+                            mixer_icon.codepoint,
+                            egui::FontId::new(crate::theme::ICON_FONT, mixer_icon.font_family()),
+                            crate::theme::mode_bar_text(),
+                            *show_mixer_panel,
+                        );
+                        if mixer_resp.clicked() {
+                            set_mixer_visible(
+                                show_pianoroll_in_arrange,
+                                show_bottom_dock,
+                                show_mixer_panel,
+                                !*show_mixer_panel,
+                            );
+                        }
+                        if mixer_resp.hovered() {
+                            hovered_hint = Some(t!("hint.mixer_toggle").to_string());
                         }
                     }
 
@@ -385,20 +430,34 @@ pub fn show(
 mod tests {
     use super::*;
 
-    /// 回归：钢琴卷帘与底部设备栏互斥，展开一个自动收起另一个；
+    /// 回归：钢琴卷帘、底部设备栏、混音台三选一，展开一个自动收起另两个；
     /// 收起动作不产生互斥副作用。
     #[test]
-    fn pianoroll_and_dock_are_mutually_exclusive() {
-        let (mut piano, mut dock) = (false, true);
-        set_pianoroll_visible(&mut piano, &mut dock, true);
-        assert!(piano && !dock, "打开钢琴应收起 dock");
+    fn pianoroll_dock_mixer_are_mutually_exclusive() {
+        let (mut piano, mut dock, mut mixer) = (false, true, false);
+        set_pianoroll_visible(&mut piano, &mut dock, &mut mixer, true);
+        assert!(piano && !dock && !mixer, "打开钢琴应收起 dock 与混音台");
 
-        let (mut piano, mut dock) = (true, false);
-        set_dock_visible(&mut piano, &mut dock, true);
-        assert!(!piano && dock, "打开 dock 应收起钢琴");
+        let (mut piano, mut dock, mut mixer) = (true, false, false);
+        set_dock_visible(&mut piano, &mut dock, &mut mixer, true);
+        assert!(!piano && dock && !mixer, "打开 dock 应收起钢琴与混音台");
 
-        let (mut piano, mut dock) = (false, true);
-        set_pianoroll_visible(&mut piano, &mut dock, false);
-        assert!(!piano && dock, "收起钢琴不应动 dock");
+        let (mut piano, mut dock, mut mixer) = (true, false, false);
+        set_mixer_visible(&mut piano, &mut dock, &mut mixer, true);
+        assert!(!piano && !dock && mixer, "打开混音台应收起钢琴与 dock");
+
+        let (mut piano, mut dock, mut mixer) = (false, true, false);
+        set_pianoroll_visible(&mut piano, &mut dock, &mut mixer, false);
+        assert!(!piano && dock && !mixer, "收起钢琴不应动 dock");
+    }
+
+    /// MIX 的钢琴卷帘显示跟随用户偏好（底部三选一之一），EDIT 恒全屏。
+    #[test]
+    fn show_pianoroll_by_view_mode() {
+        assert!(!ViewMode::Arrange.show_pianoroll(false));
+        assert!(ViewMode::Arrange.show_pianoroll(true));
+        assert!(!ViewMode::Mix.show_pianoroll(false));
+        assert!(ViewMode::Mix.show_pianoroll(true));
+        assert!(ViewMode::Edit.show_pianoroll(false));
     }
 }

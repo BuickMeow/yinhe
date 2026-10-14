@@ -610,9 +610,11 @@ impl eframe::App for App {
                 chord,
             }
         });
-        // 选择动作按钮可用性：PR 框选 / AR 框选 / 自动化锚点选中（PR 底部面板或 AR lane）。
+        // 选择动作按钮可用性：PR 框选 / AR 框选 / 通道 AR 框选 / 自动化锚点选中。
         let selection_available = active_doc.is_some_and(|d| {
-            !d.edit.sel_rect.effective_rects().is_empty() || !d.edit.arr_sel_rect.is_empty()
+            !d.edit.sel_rect.effective_rects().is_empty()
+                || !d.edit.arr_sel_rect.is_empty()
+                || !d.edit.chan_ar_sel.is_empty()
         }) || self.has_selected_automation_anchors()
             || self.has_selected_ar_automation();
         let transport_response = transport_bar::show(
@@ -760,6 +762,7 @@ impl eframe::App for App {
             &mut self.view_mode,
             &mut self.show_pianoroll_in_arrange,
             &mut self.show_bottom_dock,
+            &mut self.show_mixer_panel,
             &mut self.right_tab,
             self.sys_monitor.cpu_usage,
             mem_mb,
@@ -768,11 +771,14 @@ impl eframe::App for App {
             &mut self.show_mem_breakdown,
             &mut self.notifications,
         );
-        // PR 显示切换 → 布局设置写盘（帧末 sync_layout_settings 统一落盘）
+        // PR/dock/mixer 显示切换 → 布局设置写盘（帧末 sync_layout_settings 统一落盘）
         if self.show_pianoroll_in_arrange != self.audio_settings.layout.show_pianoroll_in_arrange {
             self.layout_needs_save = true;
         }
         if self.show_bottom_dock != self.audio_settings.layout.show_bottom_dock {
+            self.layout_needs_save = true;
+        }
+        if self.show_mixer_panel != self.audio_settings.layout.show_mixer_panel {
             self.layout_needs_save = true;
         }
 
@@ -811,6 +817,9 @@ impl eframe::App for App {
 
         // ── 帧末提交统一悬停提示（写入值快照给下一帧 mode bar 渲染）──
         crate::widgets::hint::commit(ui.ctx());
+
+        // ── 混音台编辑 undo 合并提交（指针空闲时；拖动全程一条 undo）──
+        self.commit_pending_mixer_undo(ui.ctx());
 
         // ── 布局设置持久化（拖拽结束帧才写盘）──
         self.sync_layout_settings();

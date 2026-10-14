@@ -260,7 +260,7 @@ pub(crate) fn draw_audio_clips(
 
 /// 片段波形：按可见像素逐列取峰值金字塔的 (min, max) 画竖线。
 #[allow(clippy::too_many_arguments)] // 绘制上下文透传
-fn draw_clip_waveform(
+pub(crate) fn draw_clip_waveform(
     painter: &egui::Painter,
     rect: egui::Rect,
     r: egui::Rect,
@@ -318,7 +318,7 @@ fn draw_clip_waveform(
 }
 
 /// RGBA f32（0..1）→ Color32（不透明）。
-fn rgb(c: [f32; 4]) -> egui::Color32 {
+pub(crate) fn rgb(c: [f32; 4]) -> egui::Color32 {
     egui::Color32::from_rgb(
         (c[0].clamp(0.0, 1.0) * 255.0) as u8,
         (c[1].clamp(0.0, 1.0) * 255.0) as u8,
@@ -326,15 +326,57 @@ fn rgb(c: [f32; 4]) -> egui::Color32 {
     )
 }
 
+/// 轨道 AR 折叠音轨的自动化预览收集：未展开音轨把该轨每条 lane 以全行高、
+/// 无锚点、半透明叠加（curve 层先于 note 层绘制，音符始终覆盖其上，不喧宾夺主）。
+/// 多条 lane 共享同一 y_top 互相重叠。纯展示，交互只在展开时可用。
+pub(crate) fn collect_folded_previews<'a>(
+    row_layout: &ArRowLayout,
+    data: &crate::arrange::ArrangeData<'a>,
+    scroll_y: f32,
+    h: f32,
+    lh: f32,
+) -> Vec<yinhe_wgpu::ArrAutomationLane<'a>> {
+    let mut folded = Vec::new();
+    let (first_track, last_track) = row_layout.visible_track_range(scroll_y, h, lh);
+    let conductor = data.conductor_track_idx;
+    for track in first_track..last_track.min(data.tracks.len()) {
+        if conductor == Some(track as u16)
+            || row_layout.lane_count(track) != 0
+            || !data.track_visible.get(track).copied().unwrap_or(true)
+        {
+            continue;
+        }
+        let Some(tr) = data.tracks.get(track) else {
+            continue;
+        };
+        if tr.automation_lanes.is_empty() {
+            continue;
+        }
+        let y_top = row_layout.track_y(track, lh) - scroll_y;
+        for lane in &tr.automation_lanes {
+            folded.push(yinhe_wgpu::ArrAutomationLane {
+                lane,
+                y_top,
+                height: lh,
+                max_val: crate::arrange::am_lanes::lane_max_val(lane),
+                highlight_ticks: &[],
+                show_anchors: false,
+                translucent: true,
+            });
+        }
+    }
+    folded
+}
+
 /// 准备自动化曲线渲染层（layer 2 数据 + layer 3 ghost）。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn prepare_automation(
     renderer: &mut InstanceRenderer,
     view: &ArrangementView,
-    row_layout: &ArRowLayout,
     data: &crate::arrange::ArrangeData<'_>,
     edit: &crate::arrange::ArrangeEdit<'_>,
     am_rows: &[crate::arrange::am_lanes::AmRowRef],
+    folded: &[yinhe_wgpu::ArrAutomationLane<'_>],
     am_ghost: Option<(yinhe_wgpu::AutomationGhost, f32, f32, f32)>,
     w: f32,
     h: f32,
@@ -350,7 +392,6 @@ pub(crate) fn prepare_automation(
         active_tool,
         Tool::Pencil | Tool::Select | Tool::SelectVertical
     );
-    let lh = view.lane_height();
     let scroll_y = view.base.scroll_y;
     let mut am_render: Vec<yinhe_wgpu::ArrAutomationLane> = Vec::new();
     let mut am_highlights: Vec<Box<[u32]>> = Vec::new();
@@ -380,8 +421,8 @@ pub(crate) fn prepare_automation(
         ));
         am_render.push(yinhe_wgpu::ArrAutomationLane {
             lane,
-            y_top: r.row as f32 * lh - scroll_y,
-            height: lh,
+            y_top: r.y_top - scroll_y,
+            height: r.height,
             max_val: crate::arrange::am_lanes::lane_max_val(lane),
             highlight_ticks: &[],
             show_anchors,
@@ -391,37 +432,8 @@ pub(crate) fn prepare_automation(
     for (i, l) in am_render.iter_mut().enumerate() {
         l.highlight_ticks = &am_highlights[i];
     }
-    // 折叠音轨的自动化预览：未展开时把该轨每条 lane 以全行高、无锚点、
-    // 半透明叠加（curve 层先于 note 层绘制，音符始终覆盖其上，不喧宾夺主）。
-    // 多条 lane 共享同一 y_top 互相重叠。纯展示，交互只在展开时可用。
-    let (first_track, last_track) = row_layout.visible_track_range(scroll_y, h, lh);
-    let conductor = data.conductor_track_idx;
-    for track in first_track..last_track.min(data.tracks.len()) {
-        if conductor == Some(track as u16)
-            || row_layout.lane_count(track) != 0
-            || !data.track_visible.get(track).copied().unwrap_or(true)
-        {
-            continue;
-        }
-        let Some(tr) = data.tracks.get(track) else {
-            continue;
-        };
-        if tr.automation_lanes.is_empty() {
-            continue;
-        }
-        let y_top = row_layout.track_y(track, lh) - scroll_y;
-        for lane in &tr.automation_lanes {
-            am_render.push(yinhe_wgpu::ArrAutomationLane {
-                lane,
-                y_top,
-                height: lh,
-                max_val: crate::arrange::am_lanes::lane_max_val(lane),
-                highlight_ticks: &[],
-                show_anchors: false,
-                translucent: true,
-            });
-        }
-    }
+    // 折叠预览（调用方收集：轨道 AR 按轨、通道 AR 按通道）。
+    am_render.extend(folded.iter().copied());
     let hl_hash = am_highlights.iter().fold(0u64, |acc, hl| {
         hl.iter()
             .fold(acc, |a, &tk| a.wrapping_mul(31).wrapping_add(tk as u64))

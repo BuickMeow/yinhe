@@ -362,8 +362,7 @@ pub fn build_channel_ghost_notes(
         }
         // 组内按 start 有序（排序保证），与 build_channel_notes 同一合并路径。
         let mut state: Option<(u32, u32, u8)> = None;
-        for k in i..j {
-            let (s, e, _, _) = ghost_notes[k];
+        for &(s, e, _, _) in &ghost_notes[i..j] {
             match state {
                 None => state = Some((s, e.max(s), 127)),
                 Some((ms, me, mv)) => {

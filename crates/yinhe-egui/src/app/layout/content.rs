@@ -16,22 +16,25 @@ use super::{LayoutInfo, sel_hint::SelHintInfo};
 impl App {
     /// Show the main content area: arrangement view, pianoroll, and note drag handling.
     pub(in crate::app) fn show_main_content(&mut self, ui: &mut egui::Ui, layout: &LayoutInfo) {
-        // MIX 模式与（无视图但已判断文档分支更下面的）无工程状态都铺背景：
+        use crate::chrome::mode_bar::ViewMode;
+        let is_mix = self.view_mode == ViewMode::Mix;
+        let has_piano = self
+            .view_mode
+            .show_pianoroll(self.show_pianoroll_in_arrange);
+        let has_mixer = is_mix && self.show_mixer_panel;
+
+        // MIX 无工程：只铺背景（原行为）。
         // 主区域绝不能是全透明（clear_color 为全透明，透明模式下会露出桌面）。
-        let has_view = self.view_mode.show_transport()
-            || self
-                .view_mode
-                .show_pianoroll(self.show_pianoroll_in_arrange);
+        if is_mix && self.workspace.active_doc.is_none() {
+            ui.painter()
+                .rect_filled(layout.remaining, 0.0, crate::theme::track_bg());
+            return;
+        }
+        // EDIT 之外一定有一个主视图（轨道 AR / 通道 AR / 全屏 PR）。
+        let has_view = self.view_mode.show_transport() || has_piano || is_mix;
         if !has_view {
-            // MIX 模式：有工程时进混音台，否则只铺背景。
-            if self.view_mode == crate::chrome::mode_bar::ViewMode::Mix
-                && self.workspace.active_doc.is_some()
-            {
-                crate::mix::show(self, ui, layout.remaining);
-            } else {
-                ui.painter()
-                    .rect_filled(layout.remaining, 0.0, crate::theme::track_bg());
-            }
+            ui.painter()
+                .rect_filled(layout.remaining, 0.0, crate::theme::track_bg());
             return;
         }
         let Some(idx) = self.workspace.active_doc else {
@@ -113,6 +116,7 @@ impl App {
                     crate::chrome::mode_bar::set_pianoroll_visible(
                         &mut self.show_pianoroll_in_arrange,
                         &mut self.show_bottom_dock,
+                        &mut self.show_mixer_panel,
                         true,
                     );
                 }
@@ -121,6 +125,65 @@ impl App {
             } else {
                 (None, None, None)
             };
+
+        // ── 通道 AR（MIX 主区域）──
+        if is_mix {
+            let mut request_pianoroll = false;
+            let mut ca_drag_delta: Option<crate::channel_arrange::CaArRangeDelta> = None;
+            let mut ca_picker: Option<usize> = None;
+            let mut ca_notify = false;
+            {
+                let mut guard =
+                    crate::app::main_loop::ReplaceGuard::new(&mut self.workspace.documents[idx]);
+                let cfg = crate::channel_arrange::CaArrangeCfg {
+                    is_playing,
+                    follow_mode: &mut follow_mode,
+                    min_border_width: self.audio_settings.min_border_width,
+                    revision: guard.as_ref().data.revision,
+                };
+                crate::channel_arrange::show(
+                    ui,
+                    guard.as_mut(),
+                    crate::channel_arrange::CaArrangeLayout {
+                        remaining: layout.remaining,
+                        arr_h: layout.arr_h,
+                        panel_width: &mut self.transport_panel_width,
+                        drag_ended: &mut self.layout_needs_save,
+                    },
+                    &mut self.arr_renderer,
+                    &mut self.arr_render_ctx,
+                    cfg,
+                    self.audio_state.handle.as_ref(),
+                    &self.audio_library,
+                    &mut request_pianoroll,
+                    &mut self.track_selection_anchor,
+                    &mut ca_drag_delta,
+                    &mut self.info_content,
+                    &mut self.right_tab,
+                    &mut ca_notify,
+                    &mut ca_picker,
+                    &self.mix.track_display,
+                );
+                // guard dropped here
+            }
+            if ca_notify {
+                self.notify_audio_model_changed();
+            }
+            if let Some(track_idx) = ca_picker {
+                self.open_automation_picker(ui.ctx(), track_idx);
+            }
+            if let Some((dt, dtr, alt)) = ca_drag_delta {
+                self.handle_arr_drag(dt, dtr, alt);
+            }
+            if request_pianoroll {
+                crate::chrome::mode_bar::set_pianoroll_visible(
+                    &mut self.show_pianoroll_in_arrange,
+                    &mut self.show_bottom_dock,
+                    &mut self.show_mixer_panel,
+                    true,
+                );
+            }
+        }
         // 方案 A：音轨结构变化（add/remove track）→ drop 旧引擎。
         // ChannelLayout 在引擎创建时冻结，旧引擎无法 dispatch 新增通道。
         // 必须在 guard 被释放后调用 —— teardown_audio 借用 &mut self，
@@ -164,11 +227,8 @@ impl App {
             self.handle_arr_drag(delta_ticks, delta_tracks, alt);
         }
 
-        // Pianoroll area
-        if self
-            .view_mode
-            .show_pianoroll(self.show_pianoroll_in_arrange)
-        {
+        // Pianoroll area（MIX 下与混音台/设备链三选一显示）。
+        if has_piano {
             self.show_pianoroll_split(
                 ui,
                 layout,
@@ -177,6 +237,15 @@ impl App {
                 &mut follow_mode,
                 sel_hint.as_ref(),
             );
+        }
+
+        // MIX 混音台面板（底部；与钢琴卷帘/设备链三选一，默认打开）。
+        if has_mixer {
+            let rect = egui::Rect::from_min_max(
+                egui::pos2(layout.remaining.min.x, layout.bottom_y),
+                layout.remaining.max,
+            );
+            crate::mix::show(self, ui, rect);
         }
 
         self.follow_mode = follow_mode;
@@ -245,13 +314,16 @@ impl App {
         let arr_gained = arr_count > self.prev_arr_count;
         let pr_gained = pr_count > self.prev_pr_count;
         let am_gained = am_count > self.prev_am_count;
-        // AR/PR 在 press 开始新框选/空白点击时会清空 selected。
+        let chan_ar_count = doc.edit.chan_ar_sel.len();
+        let chan_ar_gained = chan_ar_count > self.prev_chan_ar_count;
+        // AR/PR/通道 AR 在 press 开始新框选/空白点击时会清空 selected。
         let selection_cleared = doc.edit.selected.is_empty() && self.prev_selected_nonempty;
 
         // 新选框只可能来自一个视图（单鼠标交互），各清除条件互不重叠。
-        let clear_arr = selection_cleared || pr_gained || am_gained;
-        let clear_pr = selection_cleared || arr_gained || am_gained;
-        let clear_am = selection_cleared || arr_gained || pr_gained;
+        let clear_arr = selection_cleared || pr_gained || am_gained || chan_ar_gained;
+        let clear_pr = selection_cleared || arr_gained || am_gained || chan_ar_gained;
+        let clear_am = selection_cleared || arr_gained || pr_gained || chan_ar_gained;
+        let clear_chan_ar = selection_cleared || arr_gained || pr_gained || am_gained;
 
         if clear_arr {
             doc.edit.arr_sel_rect.clear();
@@ -269,10 +341,28 @@ impl App {
                 v.anchor_sel_rects.clear();
             }
         }
+        if clear_chan_ar {
+            // 通道 AR 选框的轨道集合移除（按共享 Selection 的精确矩形语义移除）。
+            let ca_rects: Vec<(u32, u32, u16, u16)> = doc
+                .edit
+                .chan_ar_sel
+                .iter()
+                .flat_map(|s| {
+                    s.tracks
+                        .iter()
+                        .map(move |&t| (s.t_start as u32, s.t_end as u32, t, t))
+                })
+                .collect();
+            doc.edit.chan_ar_sel.clear();
+            for (ts, te, lo, hi) in ca_rects {
+                doc.edit.selected.remove_rects_track(&[(ts, te, lo, hi)]);
+            }
+        }
 
         // 以清除后的状态更新 prev，供下一帧比较。
         self.prev_arr_count = doc.edit.arr_sel_rect.len();
         self.prev_pr_count = doc.edit.sel_rect.rects.len();
+        self.prev_chan_ar_count = doc.edit.chan_ar_sel.len();
         self.prev_am_count = doc
             .edit
             .controller_panels
@@ -298,8 +388,9 @@ impl App {
         follow_mode: &mut crate::view_interaction::FollowMode,
         sel_hint: Option<&SelHintInfo>,
     ) {
-        // Horizontal splitter
-        if self.view_mode.show_transport() {
+        // Horizontal splitter（ARRANGE：AR/PR 的 arr_split；MIX：通道 AR/面板的 mix_split）
+        let is_mix = self.view_mode == crate::chrome::mode_bar::ViewMode::Mix;
+        if self.view_mode.show_transport() || is_mix {
             // 整条带作为 handle（绘制+交互同一层，避免叠两层同色填充）
             let split_right = layout.remaining.max.x;
             let h_split_rect = egui::Rect::from_min_max(
@@ -317,12 +408,21 @@ impl App {
             if h_split_resp.dragged() {
                 let total_y = layout.remaining.size().y;
                 let delta = h_split_resp.drag_delta().y;
-                self.arr_split = ((layout.arr_h + delta) / total_y)
+                let ratio = ((layout.arr_h + delta) / total_y)
                     .clamp(crate::theme::SPLIT_CLAMP_MIN, crate::theme::SPLIT_CLAMP_MAX);
+                if is_mix {
+                    self.mix_split = ratio;
+                } else {
+                    self.arr_split = ratio;
+                }
             }
             if h_split_resp.double_clicked() {
-                // 双击分割线 → 还原 AR/PR 默认分割比例
-                self.arr_split = LayoutSettings::default().arr_split;
+                // 双击分割线 → 还原默认分割比例
+                if is_mix {
+                    self.mix_split = LayoutSettings::default().mix_split;
+                } else {
+                    self.arr_split = LayoutSettings::default().arr_split;
+                }
             }
             if h_split_resp.drag_stopped() || h_split_resp.double_clicked() {
                 self.layout_needs_save = true;
@@ -922,6 +1022,8 @@ impl App {
         l.show_pianoroll_in_arrange = self.show_pianoroll_in_arrange;
         l.show_bottom_dock = self.show_bottom_dock;
         l.bottom_dock_height = self.bottom_dock_height;
+        l.show_mixer_panel = self.show_mixer_panel;
+        l.mix_split = self.mix_split;
         l.right_panel_layout = self.right_panel_layout.clone();
         if self.layout_needs_save {
             self.audio_settings.save();

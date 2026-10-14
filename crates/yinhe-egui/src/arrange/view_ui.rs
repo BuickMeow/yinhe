@@ -1,7 +1,7 @@
 pub(crate) mod audio_edit;
 mod interaction;
-mod render;
-mod types;
+pub(crate) mod render;
+pub(crate) mod types;
 
 /// 音频片段编辑命令（arrange.rs 应用 + undo 用）。
 pub(crate) use audio_edit::AudioEditCmd;
@@ -171,7 +171,11 @@ pub fn show(
     let hidden_notes;
     let drag_rect;
     // 音频片段交互优先：拖动/命中时消费指针，避免与框选冲突。
-    let audio_consumed = audio_edit::frame(ui, rect, music_rect, view, row_layout, &data, edit);
+    let audio_geom = audio_edit::ArAudioGeom {
+        layout: row_layout,
+        lane_height: view.lane_height(),
+    };
+    let audio_consumed = audio_edit::frame(ui, rect, music_rect, view, &audio_geom, &data, edit);
     if audio_consumed {
         ghost_notes = Vec::new();
         hidden_notes = HashSet::new();
@@ -232,8 +236,13 @@ pub fn show(
         cfg.revision,
         track_range,
     );
-    let am_rows =
-        super::am_lanes::visible_am_rows(row_layout, first_row, last_row, data.conductor_track_idx);
+    let am_rows = super::am_lanes::visible_am_rows(
+        row_layout,
+        first_row,
+        last_row,
+        data.conductor_track_idx,
+        view.lane_height(),
+    );
     let mut am_ghost: Option<(yinhe_wgpu::AutomationGhost, f32, f32, f32)> = None;
     let mut am_marquee: Option<egui::Rect> = None;
     if !am_rows.is_empty() {
@@ -264,13 +273,15 @@ pub fn show(
             view.base.dirty = true;
         }
     }
+    let folded_previews =
+        render::collect_folded_previews(row_layout, &data, scroll_y, h as f32, lh);
     render::prepare_automation(
         renderer,
         view,
-        row_layout,
         &data,
         edit,
         &am_rows,
+        &folded_previews,
         am_ghost,
         w as f32,
         h as f32,

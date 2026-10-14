@@ -68,16 +68,27 @@ impl App {
     ) -> LayoutInfo {
         let remaining = ui.available_rect_before_wrap();
 
-        let has_arr = self.view_mode.show_transport() && self.workspace.active_doc.is_some();
+        let is_mix = self.view_mode == crate::chrome::mode_bar::ViewMode::Mix;
+        let has_doc = self.workspace.active_doc.is_some();
+        // 上方主视图：轨道 AR（Arrange）或通道 AR（Mix）。
+        let has_arr = has_doc && (self.view_mode.show_transport() || is_mix);
         let has_piano = self
             .view_mode
             .show_pianoroll(self.show_pianoroll_in_arrange)
-            && self.workspace.active_doc.is_some();
+            && has_doc;
+        // 底部混音台面板（仅 MIX；与 PR/dock 三选一）。
+        let has_mixer = has_doc && is_mix && self.show_mixer_panel;
+        let has_bottom = has_piano || has_mixer;
 
         let total = remaining.size();
         let arr_h = if has_arr {
-            if has_piano {
-                (total.y * self.arr_split).max(crate::theme::MIN_ARR_HEIGHT)
+            if has_bottom {
+                let split = if is_mix {
+                    self.mix_split
+                } else {
+                    self.arr_split
+                };
+                (total.y * split).max(crate::theme::MIN_ARR_HEIGHT)
             } else {
                 total.y
             }
@@ -86,7 +97,7 @@ impl App {
         };
         let bottom_y = remaining.min.y
             + arr_h
-            + if has_arr && has_piano {
+            + if has_arr && has_bottom {
                 crate::theme::SPLIT_GAP
             } else {
                 0.0
@@ -104,7 +115,8 @@ impl App {
     /// 焦点视图不可见时切到可见的那个。Ctrl+A 等快捷键按 `view_focus` 路由。
     pub(in crate::app) fn update_view_focus(&mut self, ui: &egui::Ui, layout: &LayoutInfo) {
         let has_doc = self.workspace.active_doc.is_some();
-        let has_arr = has_doc && self.view_mode.show_transport();
+        let is_mix = self.view_mode == crate::chrome::mode_bar::ViewMode::Mix;
+        let has_arr = has_doc && (self.view_mode.show_transport() || is_mix);
         let has_piano = has_doc
             && self
                 .view_mode

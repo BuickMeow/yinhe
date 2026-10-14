@@ -186,6 +186,13 @@ impl CaRowLayout {
         map
     }
 
+    /// 单个轨道的音符行号（O(rows) 扫描；交互高频路径行数很小，够用）。
+    pub fn track_row_of(&self, track: u16) -> Option<usize> {
+        self.rows
+            .iter()
+            .position(|r| matches!(r, CaRow::Track(t) if *t == track))
+    }
+
     /// 轨道集合覆盖的行范围 (min_row, max_row+1)：用于选框绘制。
     ///
     /// 取所选轨道「音符行」的最小/最大行；自动化行紧贴在所属轨道行之后，

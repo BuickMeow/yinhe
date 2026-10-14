@@ -73,6 +73,19 @@ pub fn compute_sel_hint(doc: &Document) -> Option<SelHintInfo> {
             count: summarize_selected(model, &doc.edit.selected).count,
             span: format!("{}→{}", fmt(t0), fmt(t1)),
         })
+    } else if !doc.edit.chan_ar_sel.is_empty() {
+        // 通道 AR 框选：tick 范围 + 选中音符数（共享选区）。
+        let (t0, t1) = doc
+            .edit
+            .chan_ar_sel
+            .iter()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), s| {
+                (a.min(s.t_start), b.max(s.t_end))
+            });
+        Some(SelHintInfo {
+            count: summarize_selected(model, &doc.edit.selected).count,
+            span: format!("{}→{}", fmt(t0), fmt(t1)),
+        })
     } else if !am_rects.is_empty() {
         let (t0, t1) = am_rects
             .iter()

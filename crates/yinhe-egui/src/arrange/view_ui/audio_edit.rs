@@ -20,6 +20,42 @@ const FADE_HANDLE: f32 = 9.0;
 /// 拖动 ghost 填充色 alpha。
 const GHOST_ALPHA: u8 = 70;
 
+/// 音频片段交互所需的行几何（轨道 AR / 通道 AR 共用）。
+///
+/// y 均为音乐坐标（未减 scroll_y）；只有「轨道音符行」参与命中，
+/// 通道合并行 / 自动化行 / Conductor 行返回 None（音频片段只画在轨道行上）。
+pub(crate) trait AudioRowGeom {
+    /// 音乐坐标 y 命中的音符行所属轨道。
+    fn track_at_music_y(&self, music_y: f32) -> Option<u16>;
+    /// 轨道音符行的 (y_top, height)（音乐坐标）。
+    fn track_row_yh(&self, track: u16) -> Option<(f32, f32)>;
+}
+
+/// 轨道 AR 的行几何适配器。
+pub(crate) struct ArAudioGeom<'a> {
+    pub layout: &'a ArRowLayout,
+    pub lane_height: f32,
+}
+
+impl AudioRowGeom for ArAudioGeom<'_> {
+    fn track_at_music_y(&self, music_y: f32) -> Option<u16> {
+        match self.layout.hit_at_music_y(music_y, self.lane_height) {
+            Some(yinhe_types::ArRow::Track(t)) => u16::try_from(t).ok(),
+            _ => None,
+        }
+    }
+
+    fn track_row_yh(&self, track: u16) -> Option<(f32, f32)> {
+        let t = track as usize;
+        (t < self.layout.total_rows()).then(|| {
+            (
+                self.layout.track_y(t, self.lane_height),
+                self.layout.track_height(t, self.lane_height),
+            )
+        })
+    }
+}
+
 /// 音频片段编辑命令（arrange.rs 应用 + undo）。
 #[derive(Clone, Debug)]
 pub(crate) enum AudioEditCmd {
@@ -111,12 +147,12 @@ fn drag_id() -> egui::Id {
 /// 处理一帧音频片段交互。返回 true = 本帧音频交互消费了指针事件
 /// （调用方应跳过 AR 框选处理）。
 #[allow(clippy::too_many_arguments)]
-pub(super) fn frame(
+pub(crate) fn frame(
     ui: &egui::Ui,
     rect: egui::Rect,
     music_rect: egui::Rect,
     view: &ArrangementView,
-    row_layout: &ArRowLayout,
+    geom: &dyn AudioRowGeom,
     data: &ArrangeData<'_>,
     edit: &mut ArrangeEdit<'_>,
 ) -> bool {
@@ -126,7 +162,7 @@ pub(super) fn frame(
         let down = ui.input(|i| i.pointer.primary_down());
         if down {
             if let Some(pos) = pointer {
-                draw_drag_ghost(ui, rect, view, row_layout, data, &state, pos);
+                draw_drag_ghost(ui, rect, view, geom, data, &state, pos);
             }
             return true;
         }
@@ -143,7 +179,7 @@ pub(super) fn frame(
     // ── 右键菜单（不消费左键）──
     if let Some(pos) = ui.input(|i| i.pointer.hover_pos())
         && music_rect.contains(pos)
-        && let Some((track, clip)) = hit_test(view, row_layout, data, pos, rect)
+        && let Some((track, clip)) = hit_test(view, geom, data, pos, rect)
     {
         crate::widgets::hint::set(ui.ctx(), rust_i18n::t!("hint.arrange.audio_clip"));
         let id = egui::Id::new(("arr_audio_ctx", track, clip.id));
@@ -253,8 +289,8 @@ pub(super) fn frame(
     }
     let alt_copy = ui.input(|i| i.modifiers.alt);
 
-    if let Some((track, clip)) = hit_test(view, row_layout, data, pos, rect) {
-        let zone = hit_zone(view, row_layout, data, pos, rect, track, &clip);
+    if let Some((track, clip)) = hit_test(view, geom, data, pos, rect) {
+        let zone = hit_zone(view, geom, data, pos, rect, track, &clip);
         // 选择：命中未选中片段时单选；已选中则保持多选（便于整体拖动）。
         let key = (track as u16, clip.id);
         if !edit.selected_audio_clips.contains(&key) {
@@ -392,17 +428,19 @@ fn draw_drag_ghost(
     ui: &egui::Ui,
     rect: egui::Rect,
     view: &ArrangementView,
-    row_layout: &ArRowLayout,
+    geom: &dyn AudioRowGeom,
     data: &ArrangeData<'_>,
     state: &DragState,
     pos: egui::Pos2,
 ) {
     let painter = ui.painter();
-    let lh = view.lane_height();
     let scroll_y = view.base.scroll_y;
     let c = &state.start_clip;
-    let y_top = rect.min.y + row_layout.track_y(state.track, lh) - scroll_y;
-    let h = row_layout.track_height(state.track, lh);
+    let Some((geom_y, geom_h)) = geom.track_row_yh(state.track as u16) else {
+        return;
+    };
+    let y_top = rect.min.y + geom_y - scroll_y;
+    let h = geom_h;
     let track_color = data
         .track_colors
         .get(state.track)
@@ -475,24 +513,21 @@ fn draw_drag_ghost(
 /// 命中测试：返回 (轨道索引, 片段克隆)。
 fn hit_test(
     view: &ArrangementView,
-    row_layout: &ArRowLayout,
+    geom: &dyn AudioRowGeom,
     data: &ArrangeData<'_>,
     pos: egui::Pos2,
     rect: egui::Rect,
 ) -> Option<(usize, AudioClip)> {
-    let lh = view.lane_height();
     let scroll_y = view.base.scroll_y;
     let my = pos.y - rect.min.y + scroll_y;
-    let track = match row_layout.hit_at_music_y(my, lh) {
-        Some(yinhe_types::ArRow::Track(t)) => t,
-        _ => return None,
-    };
+    let track = geom.track_at_music_y(my)? as usize;
     let track_data = data.tracks.get(track)?;
     if track_data.kind != TrackKind::Audio {
         return None;
     }
-    let y_top = rect.min.y + row_layout.track_y(track, lh) - scroll_y;
-    let h = row_layout.track_height(track, lh);
+    let (gy, gh) = geom.track_row_yh(track as u16)?;
+    let y_top = rect.min.y + gy - scroll_y;
+    let h = gh;
     if pos.y < y_top || pos.y > y_top + h {
         return None;
     }
@@ -510,7 +545,7 @@ fn hit_test(
 /// 细分命中区（边缘/淡入淡出手柄/主体）。
 fn hit_zone(
     view: &ArrangementView,
-    row_layout: &ArRowLayout,
+    geom: &dyn AudioRowGeom,
     data: &ArrangeData<'_>,
     pos: egui::Pos2,
     rect: egui::Rect,
@@ -521,8 +556,10 @@ fn hit_zone(
     let x0 = view.tick_to_x(data.tempo_map.tick_at_time(clip.start_seconds.max(0.0)));
     let x1 = view.tick_to_x(data.tempo_map.tick_at_time(clip.end_seconds().max(0.0)));
     // 上角手柄优先（淡入/淡出）。
-    let lh = view.lane_height();
-    let y_top = rect.min.y + row_layout.track_y(track, lh) - view.base.scroll_y;
+    let y_top = geom
+        .track_row_yh(track as u16)
+        .map(|(gy, _)| rect.min.y + gy - view.base.scroll_y)
+        .unwrap_or(0.0);
     if pos.y < y_top + FADE_HANDLE + 2.0 {
         if (local_x - x0).abs() <= FADE_HANDLE {
             return HitZone::FadeInHandle;
@@ -746,67 +783,39 @@ mod tests {
         let view = test_view();
         let data = h.data();
         let layout = ArRowLayout::new([0]);
+        let geom = ArAudioGeom {
+            layout: &layout,
+            lane_height: view.lane_height(),
+        };
         let rect = frame();
         let c = clip(7, 1.0, 2.0);
         let x0 = view.tick_to_x(data.tempo_map.tick_at_time(1.0));
         let x1 = view.tick_to_x(data.tempo_map.tick_at_time(3.0));
 
         assert_eq!(
-            hit_zone(
-                &view,
-                &layout,
-                &data,
-                egui::pos2(x0 + 2.0, 5.0),
-                rect,
-                0,
-                &c
-            ),
+            hit_zone(&view, &geom, &data, egui::pos2(x0 + 2.0, 5.0), rect, 0, &c),
             HitZone::FadeInHandle,
             "上角左端为淡入手柄"
         );
         assert_eq!(
-            hit_zone(
-                &view,
-                &layout,
-                &data,
-                egui::pos2(x1 - 2.0, 5.0),
-                rect,
-                0,
-                &c
-            ),
+            hit_zone(&view, &geom, &data, egui::pos2(x1 - 2.0, 5.0), rect, 0, &c),
             HitZone::FadeOutHandle,
             "上角右端为淡出手柄"
         );
         assert_eq!(
-            hit_zone(
-                &view,
-                &layout,
-                &data,
-                egui::pos2(x0 + 2.0, 20.0),
-                rect,
-                0,
-                &c
-            ),
+            hit_zone(&view, &geom, &data, egui::pos2(x0 + 2.0, 20.0), rect, 0, &c),
             HitZone::LeftEdge,
             "行中部的左端为左边缘"
         );
         assert_eq!(
-            hit_zone(
-                &view,
-                &layout,
-                &data,
-                egui::pos2(x1 - 2.0, 20.0),
-                rect,
-                0,
-                &c
-            ),
+            hit_zone(&view, &geom, &data, egui::pos2(x1 - 2.0, 20.0), rect, 0, &c),
             HitZone::RightEdge,
             "行中部的右端为右边缘"
         );
         assert_eq!(
             hit_zone(
                 &view,
-                &layout,
+                &geom,
                 &data,
                 egui::pos2((x0 + x1) * 0.5, 20.0),
                 rect,
@@ -827,16 +836,20 @@ mod tests {
         let view = test_view();
         let data = h.data();
         let layout = ArRowLayout::new([0, 0]);
+        let geom = ArAudioGeom {
+            layout: &layout,
+            lane_height: view.lane_height(),
+        };
         let rect = frame();
         let x = view.tick_to_x(data.tempo_map.tick_at_time(1.0)) + 10.0;
 
-        let (track, hit) = hit_test(&view, &layout, &data, egui::pos2(x, 20.0), rect)
-            .expect("音频轨上的片段应命中");
+        let (track, hit) =
+            hit_test(&view, &geom, &data, egui::pos2(x, 20.0), rect).expect("音频轨上的片段应命中");
         assert_eq!(track, 0);
         assert_eq!(hit.id, 7);
 
         assert!(
-            hit_test(&view, &layout, &data, egui::pos2(x, 60.0), rect).is_none(),
+            hit_test(&view, &geom, &data, egui::pos2(x, 60.0), rect).is_none(),
             "MIDI 轨不参与音频命中"
         );
     }
