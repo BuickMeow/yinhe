@@ -116,6 +116,7 @@ menu.tap_tempo: "タップテンポ"
 
 # ── macOSアプリメニュー ──
 menu.about: "Yinheについて"
+menu.welcome_page: "ようこそページ"
 menu.settings: "設定…"
 menu.hide: "Yinheを隠す"
 menu.hide_others: "ほかを隠す"
@@ -836,6 +837,13 @@ panel.no_selection: "何も選択されていません"
 welcome.title: "ようこそ"
 welcome.open_project: "プロジェクトを開く…"
 welcome.no_recent: "最近のプロジェクトはありません"
+welcome.back: "エディターに戻る"
+
+# ── 关于窗口 ──
+about.author: "作者：节能降耗"
+about.copyright: "Copyright © 2026 节能降耗"
+about.tech: "Rust と egui で構築"
+about.license: "ライセンス：AGPL-3.0"
 
 # PR コントロールバー
 pr_bar.allow_overlap_on: "新しい重複ノートを許可：オン（クリックでオフ）"

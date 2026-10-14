@@ -205,6 +205,7 @@ impl eframe::App for App {
                 MenuAction::NewProject => transport_bar::FileAction::NewProject,
                 MenuAction::Open => transport_bar::FileAction::Open,
                 MenuAction::ImportAudio => transport_bar::FileAction::ImportAudio,
+                MenuAction::Welcome => transport_bar::FileAction::Welcome,
                 MenuAction::Save => transport_bar::FileAction::Save,
                 MenuAction::SaveAs => transport_bar::FileAction::SaveAs,
                 MenuAction::CloseDocument => transport_bar::FileAction::CloseDocument,
@@ -329,12 +330,14 @@ impl eframe::App for App {
                     );
                     continue;
                 }
+                MenuAction::About => {
+                    // 自定义关于窗口（替代 macOS 系统标准关于面板）。
+                    self.handle_file_action(transport_bar::FileAction::About, ui.ctx());
+                    continue;
+                }
                 MenuAction::Exit => transport_bar::FileAction::Exit,
-                // 系统级动作（About/Hide 等）已在平台层就地处理，不会到达这里
-                MenuAction::About
-                | MenuAction::Hide
-                | MenuAction::HideOthers
-                | MenuAction::ShowAll => continue,
+                // 系统级动作（Hide 等）已在平台层就地处理，不会到达这里
+                MenuAction::Hide | MenuAction::HideOthers | MenuAction::ShowAll => continue,
             };
             self.handle_file_action(file_action, ui.ctx());
         }

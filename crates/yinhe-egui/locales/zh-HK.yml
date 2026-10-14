@@ -116,6 +116,7 @@ menu.tap_tempo: "敲擊測速"
 
 # ── macOS App 菜单 ──
 menu.about: "關於 Yinhe"
+menu.welcome_page: "歡迎頁面"
 menu.settings: "設定…"
 menu.hide: "隱藏 Yinhe"
 menu.hide_others: "隱藏其他"
@@ -833,6 +834,13 @@ dialog.new_track.full: "256 個 MIDI Channel（A1–P16）已全部佔用，無�
 welcome.title: "歡迎"
 welcome.open_project: "開啟工程…"
 welcome.no_recent: "暫無最近工程"
+welcome.back: "返回編輯器"
+
+# ── 关于窗口 ──
+about.author: "作者：節能降耗"
+about.copyright: "版權 © 2026 節能降耗"
+about.tech: "使用 Rust 與 egui 構建"
+about.license: "授權條款：AGPL-3.0"
 
 # ── PR 控制栏（最顶部，时间标尺上方）──
 pr_bar.allow_overlap_on: "允許新重疊音符：開（點擊關閉）"

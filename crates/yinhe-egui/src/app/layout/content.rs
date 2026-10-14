@@ -35,10 +35,15 @@ impl App {
             return;
         }
         let Some(idx) = self.workspace.active_doc else {
-            // 有视图控件（AR/PR 模式）但未打开工程：铺占位面板而非透明。
-            self.show_workspace_placeholder(ui, layout);
+            // 有视图控件（AR/PR 模式）但未打开工程：显示欢迎内容而非透明。
+            self.show_welcome_content(ui, layout, false);
             return;
         };
+        // 欢迎页面（文件菜单主动打开，有工程也可用）：顶掉文档视图显示欢迎内容。
+        if self.show_welcome_page {
+            self.show_welcome_content(ui, layout, true);
+            return;
+        }
         // 三视图选框互斥：先于任何渲染执行，保证同一时刻只有一个视图拥有选框。
         self.enforce_sel_rect_exclusivity(idx);
         // 聚焦视图（指针悬停决定；Ctrl+A 等快捷键按它路由）。
@@ -182,19 +187,18 @@ impl App {
         self.follow_mode = follow_mode;
     }
 
-    /// 未打开工程时的占位面板：主区域显示欢迎页内容（新建 / 打开 / 最近 / 设置，
-    /// 与启动欢迎窗口共用同一实现）；新建/打开工程后自然切到编辑器。
+    /// 欢迎内容（无工程占位 / 文件菜单主动打开的欢迎页面共用；
+    /// 与启动欢迎窗口同一实现）。`show_back` = 有工程时主动打开（显示返回入口）。
     /// 主区域必须有画面控件——clear_color 为全透明，没有工程时会露出桌面。
-    fn show_workspace_placeholder(&mut self, ui: &mut egui::Ui, layout: &LayoutInfo) {
+    fn show_welcome_content(&mut self, ui: &mut egui::Ui, layout: &LayoutInfo, show_back: bool) {
         let area = layout.remaining;
-        // 主区域必须铺底（clear_color 为全透明，没有工程时会露出桌面）；
-        // 欢迎内容与启动欢迎窗口同一实现。
+        // 主区域铺底（clear_color 为全透明）+ 欢迎内容。
         ui.painter().rect_filled(area, 0.0, crate::theme::app_bg());
         let action = {
             let recent = &self.audio_settings.recent_files;
             let times = &self.audio_settings.recent_file_times;
             ui.scope_builder(egui::UiBuilder::new().max_rect(area), |ui| {
-                crate::welcome::welcome_content(ui, recent, times)
+                crate::welcome::welcome_content(ui, recent, times, show_back)
             })
             .inner
         };

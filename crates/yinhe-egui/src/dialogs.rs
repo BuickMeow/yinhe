@@ -1,3 +1,4 @@
+pub mod about;
 pub mod archive_picker;
 pub mod audio_device_switch;
 pub mod automation_picker;

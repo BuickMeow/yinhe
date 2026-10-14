@@ -144,6 +144,9 @@ impl App {
             }
         }
 
+        // ── About window ──
+        crate::dialogs::about::show_viewport(&ctx, &mut self.show_about);
+
         // ── Settings dialog ──
         let prev_allow = self.audio_settings.allow_overlapping_notes;
         let prev_behavior = self.audio_settings.overlap_blocked_behavior;

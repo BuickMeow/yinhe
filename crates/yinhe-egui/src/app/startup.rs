@@ -275,6 +275,8 @@ impl App {
                     crate::chrome::transport_bar::FileAction::Settings,
                     ui.ctx(),
                 ),
+                MenuAction::About => self
+                    .handle_file_action(crate::chrome::transport_bar::FileAction::About, ui.ctx()),
                 MenuAction::OpenRecent(path) => {
                     self.open_recent_file(&path);
                     chosen = self.file_loader.is_loading();
@@ -315,6 +317,9 @@ impl App {
         } else if settings_changed {
             self.sync_soundfonts_online();
         }
+
+        // 关于窗口（菜单「关于 Yinhe」打开的窗口也在此渲染）。
+        crate::dialogs::about::show_viewport(ui.ctx(), &mut self.show_about);
 
         if self.should_exit {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
@@ -391,7 +396,25 @@ fn draw_splash(ui: &mut egui::Ui, shared: &StartupShared) {
     // 消除字体行高下行留白带来的"下方边距偏大"。
     let inner = rect.shrink(18.0);
 
-    // 左下角：大号 "Yinhe"（背景字）。
+    // 左下角：大号 "Yinhe"（背景字）+ 其下方「銀」徽标（品牌字，贴底）。
+    // 徽标半透明淡化（前景色），与右侧流程文案形成主次。
+    let logo_side = 56.0;
+    let logo_rect = egui::Rect::from_min_size(
+        egui::pos2(inner.left(), inner.bottom() - logo_side),
+        egui::vec2(logo_side, logo_side),
+    );
+    let logo_tint = {
+        let c = crate::theme::text_primary();
+        egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 150)
+    };
+    egui::Image::from_bytes(
+        "bytes://yinhe-logo.svg",
+        include_bytes!("../../../../assets/YINHE.svg"),
+    )
+    .tint(logo_tint)
+    .fit_to_exact_size(logo_rect.size())
+    .paint_at(ui, logo_rect);
+
     let title_color = crate::theme::text_primary();
     let title = painter.layout_no_wrap(
         rust_i18n::t!("startup.title").to_string(),
@@ -400,7 +423,7 @@ fn draw_splash(ui: &mut egui::Ui, shared: &StartupShared) {
     );
     let title_pos = egui::pos2(
         inner.left() - title.mesh_bounds.left(),
-        inner.bottom() - title.mesh_bounds.bottom(),
+        logo_rect.top() - 4.0 - title.mesh_bounds.bottom(),
     );
     painter.galley(title_pos, title, title_color);
 
@@ -452,5 +475,43 @@ mod tests {
         // spawn 失败必须放行，否则启动页永远等不到 audio_ready。
         assert!(startup_ready(false, true, false, false));
         assert!(startup_ready(false, true, true, true));
+    }
+
+    /// 启动页离屏渲染冒烟测试：绘制（含「銀」徽标 SVG）不 panic。
+    /// 设 `YINHE_SPLASH_PREVIEW=1` 时另存 PNG 供人工查看。
+    #[test]
+    fn render_splash_smoke() {
+        use super::{StartupShared, draw_splash};
+        use std::sync::atomic::AtomicBool;
+
+        let mut first = true;
+        let mut h = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(420.0, 230.0))
+            .build_ui_state(
+                move |ui, _state: &mut ()| {
+                    // 首帧注册图片加载器（SVG），次帧起渲染启动页。
+                    if std::mem::take(&mut first) {
+                        egui_extras::install_image_loaders(ui.ctx());
+                        return;
+                    }
+                    let shared = StartupShared {
+                        status: std::sync::Mutex::new(
+                            rust_i18n::t!("startup.preparing").to_string(),
+                        ),
+                        exit_requested: AtomicBool::new(false),
+                    };
+                    draw_splash(ui, &shared);
+                },
+                (),
+            );
+        // splash 每帧 request_repaint（spinner 动画）：用固定步数推进，
+        // 不用 `run`（会因持续重绘请求触发 max_steps 断言）。
+        h.step();
+        h.step();
+        if std::env::var("YINHE_SPLASH_PREVIEW").is_ok()
+            && let Ok(img) = h.render()
+        {
+            let _ = img.save("/tmp/yinhe_splash_render.png");
+        }
     }
 }

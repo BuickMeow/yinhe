@@ -116,6 +116,7 @@ menu.tap_tempo: "Tap Tempo"
 
 # ── macOS app menu ──
 menu.about: "О Yinhe"
+menu.welcome_page: "Страница приветствия"
 menu.settings: "Настройки…"
 menu.hide: "Скрыть Yinhe"
 menu.hide_others: "Скрыть остальные"
@@ -791,6 +792,13 @@ file_dialog.not_found: "Не удаётся открыть \"%{name}\": файл
 welcome.title: "Добро пожаловать"
 welcome.open_project: "Открыть проект…"
 welcome.no_recent: "Нет недавних проектов"
+welcome.back: "Вернуться в редактор"
+
+# ── 关于窗口 ──
+about.author: "Автор: 节能降耗"
+about.copyright: "Copyright © 2026 节能降耗"
+about.tech: "Создано на Rust и egui"
+about.license: "Лицензия: AGPL-3.0"
 
 # ── PR control bar (topmost, above the time ruler) ──
 pr_bar.allow_overlap_on: "Перекрытие нот: ВКЛ (нажмите, чтобы отключить)"

@@ -51,14 +51,17 @@ pub enum MenuAction {
     SetTool(crate::widgets::tools_panel::Tool),
     /// 文件菜单「最近修改的文件」子菜单选中的路径。
     OpenRecent(String),
+    /// 文件菜单「欢迎页面」：主区域显示欢迎内容（有工程时也可用）。
+    Welcome,
     /// App 菜单「设置…」（⌘,），打开应用设置对话框。
     Settings,
     /// 文件菜单「工程设置…」，打开工程设置浮窗。
     ProjectSettings,
     /// App 菜单「退出」（⌘Q），走未保存检查流程。
     Exit,
-    /// 系统级动作：由平台层就地执行，不经过主线程通道。
+    /// App 菜单「关于 Yinhe」：打开自定义关于窗口。
     About,
+    /// 系统级动作：由平台层就地执行，不经过主线程通道。
     Hide,
     HideOthers,
     ShowAll,

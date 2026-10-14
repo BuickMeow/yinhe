@@ -195,6 +195,12 @@ pub struct App {
     // ── Memory breakdown popup state ──
     pub(crate) show_mem_breakdown: bool,
 
+    // ── 欢迎页面 / 关于窗口 ──
+    /// 欢迎页面：主区域显示欢迎内容（有工程时也可通过文件菜单打开；再点菜单关闭）。
+    pub(crate) show_welcome_page: bool,
+    /// 关于窗口是否打开。
+    pub(crate) show_about: bool,
+
     // ── Event browser ──
     pub(crate) event_browser_state: crate::right_panel::event_browser::EventBrowserState,
 
@@ -374,6 +380,8 @@ impl App {
             fps: 0.0,
 
             show_mem_breakdown: false,
+            show_welcome_page: false,
+            show_about: false,
 
             event_browser_state: crate::right_panel::event_browser::EventBrowserState::default(),
 
@@ -487,6 +495,8 @@ impl App {
     /// `execute_file_action::NewProject` 与 `execute_pending_file_action::NewProject`
     /// 共用此实现，避免两处重复 push + setup 代码。
     pub(crate) fn new_project(&mut self) {
+        // 欢迎页面显示中：新建意图是"进入编辑"，关闭页面。
+        self.show_welcome_page = false;
         let mut doc = Document::empty();
         self.apply_saved_pr_orientation(&mut doc);
         doc.sync_track_caches_with_conductor_color(crate::theme::conductor_color_f32());

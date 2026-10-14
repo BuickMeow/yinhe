@@ -116,6 +116,7 @@ menu.tap_tempo: "Tempo Vur"
 
 # ── macOS app menu ──
 menu.about: "Yinhe Hakkında"
+menu.welcome_page: "Karşılama sayfası"
 menu.settings: "Ayarlar…"
 menu.hide: "Yinhe'yi Gizle"
 menu.hide_others: "Diğerlerini Gizle"
@@ -791,6 +792,13 @@ file_dialog.not_found: "\"%{name}\" açılamıyor: dosya mevcut değil veya taş
 welcome.title: "Hoş geldiniz"
 welcome.open_project: "Proje Aç…"
 welcome.no_recent: "Son proje yok"
+welcome.back: "Düzenleyiciye Dön"
+
+# ── 关于窗口 ──
+about.author: "Yazar: 节能降耗"
+about.copyright: "Copyright © 2026 节能降耗"
+about.tech: "Rust ve egui ile geliştirildi"
+about.license: "Lisans: AGPL-3.0"
 
 # ── PR control bar (topmost, above the time ruler) ──
 pr_bar.allow_overlap_on: "Çakışan notalara izin ver: AÇIK (devre dışı bırakmak için tıkla)"

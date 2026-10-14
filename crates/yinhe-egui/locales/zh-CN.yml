@@ -116,6 +116,7 @@ menu.tap_tempo: "敲击测速"
 
 # ── macOS App 菜单 ──
 menu.about: "关于 Yinhe"
+menu.welcome_page: "欢迎页面"
 menu.settings: "设置…"
 menu.hide: "隐藏 Yinhe"
 menu.hide_others: "隐藏其他"
@@ -791,6 +792,13 @@ file_dialog.not_found: "无法打开「%{name}」：文件不存在或已被移�
 welcome.title: "欢迎"
 welcome.open_project: "打开工程…"
 welcome.no_recent: "暂无最近工程"
+welcome.back: "返回编辑器"
+
+# ── 关于窗口 ──
+about.author: "作者：节能降耗"
+about.copyright: "版权 © 2026 节能降耗"
+about.tech: "使用 Rust 与 egui 构建"
+about.license: "许可证：AGPL-3.0"
 
 # ── PR 控制栏（最顶部，时间标尺上方）──
 pr_bar.allow_overlap_on: "允许新重叠音符：开（点击关闭）"

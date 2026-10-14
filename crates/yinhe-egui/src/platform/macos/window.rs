@@ -113,13 +113,6 @@ pub(super) fn ns_app() -> Option<&'static AnyObject> {
     Some(unsafe { objc2::msg_send![class, sharedApplication] })
 }
 
-pub(super) fn show_about_panel() {
-    let Some(app) = ns_app() else { return };
-    let _: () = unsafe {
-        objc2::msg_send![app, orderFrontStandardAboutPanel: std::ptr::null_mut::<AnyObject>()]
-    };
-}
-
 pub(super) fn hide_app() {
     let Some(app) = ns_app() else { return };
     let _: () = unsafe { objc2::msg_send![app, hide: std::ptr::null_mut::<AnyObject>()] };

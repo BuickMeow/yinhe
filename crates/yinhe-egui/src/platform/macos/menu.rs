@@ -9,7 +9,7 @@ use rust_i18n::t;
 
 use super::MenuAction;
 use super::accelerator::combo_to_accelerator;
-use super::window::{hide_app, hide_others, show_about_panel, show_all_apps};
+use super::window::{hide_app, hide_others, show_all_apps};
 use yinhe_editor_core::follow::FollowMode;
 use yinhe_editor_core::shortcuts::Keybindings;
 
@@ -79,6 +79,7 @@ impl MenuActionFrom for crate::chrome::transport_bar::FileAction {
             FileAction::NewProject => MenuAction::NewProject,
             FileAction::Open => MenuAction::Open,
             FileAction::ImportAudio => MenuAction::ImportAudio,
+            FileAction::Welcome => MenuAction::Welcome,
             FileAction::Save => MenuAction::Save,
             FileAction::SaveAs => MenuAction::SaveAs,
             FileAction::CloseDocument => MenuAction::CloseDocument,
@@ -87,6 +88,7 @@ impl MenuActionFrom for crate::chrome::transport_bar::FileAction {
             FileAction::ProjectSettings => MenuAction::ProjectSettings,
             FileAction::Settings => MenuAction::Settings,
             FileAction::Exit => MenuAction::Exit,
+            FileAction::About => MenuAction::About,
         }
     }
 }
@@ -328,7 +330,6 @@ pub(super) fn init_native_menu() -> muda::Result<()> {
                 && let Some(action) = map.get(event.id())
             {
                 match action {
-                    MenuAction::About => show_about_panel(),
                     MenuAction::Hide => hide_app(),
                     MenuAction::HideOthers => hide_others(),
                     MenuAction::ShowAll => show_all_apps(),

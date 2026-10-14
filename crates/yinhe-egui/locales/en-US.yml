@@ -116,6 +116,7 @@ menu.tap_tempo: "Tap Tempo"
 
 # ── macOS app menu ──
 menu.about: "About Yinhe"
+menu.welcome_page: "Welcome Page"
 menu.settings: "Settings…"
 menu.hide: "Hide Yinhe"
 menu.hide_others: "Hide Others"
@@ -791,6 +792,13 @@ file_dialog.not_found: "Cannot open \"%{name}\": the file does not exist or has 
 welcome.title: "Welcome"
 welcome.open_project: "Open Project…"
 welcome.no_recent: "No recent projects"
+welcome.back: "Back to Editor"
+
+# ── 关于窗口 ──
+about.author: "Author: 节能降耗"
+about.copyright: "Copyright © 2026 节能降耗"
+about.tech: "Built with Rust and egui"
+about.license: "License: AGPL-3.0"
 
 # ── PR control bar (topmost, above the time ruler) ──
 pr_bar.allow_overlap_on: "Allow overlapping notes: ON (click to disable)"

@@ -116,6 +116,7 @@ menu.tap_tempo: "탭 템포"
 
 # ── macOS 앱 메뉴 ──
 menu.about: "Yinhe 정보"
+menu.welcome_page: "환영 페이지"
 menu.settings: "설정…"
 menu.hide: "Yinhe 숨기기"
 menu.hide_others: "다른 앱 숨기기"
@@ -835,6 +836,13 @@ dialog.new_track.full: "256개 MIDI 채널(A1–P16)이 모두 사용 중이라 
 welcome.title: "환영합니다"
 welcome.open_project: "프로젝트 열기…"
 welcome.no_recent: "최근 프로젝트가 없습니다"
+welcome.back: "편집기로 돌아가기"
+
+# ── 关于窗口 ──
+about.author: "제작자: 节能降耗"
+about.copyright: "Copyright © 2026 节能降耗"
+about.tech: "Rust와 egui로 제작"
+about.license: "라이선스: AGPL-3.0"
 
 # ── PR 제어 바 (최상단, 시간 눈금 위) ──
 pr_bar.allow_overlap_on: "새 겹침 노트 허용: 켬 (클릭하면 끔)"

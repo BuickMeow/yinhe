@@ -116,6 +116,7 @@ menu.tap_tempo: "Určení tempa"
 
 # ── macOS app menu ──
 menu.about: "O aplikaci Yinhe"
+menu.welcome_page: "Uvítací stránka"
 menu.settings: "Nastavení…"
 menu.hide: "Skrýt Yinhe"
 menu.hide_others: "Skrýt ostatní"
@@ -791,6 +792,13 @@ file_dialog.not_found: "Nelze otevřít \"%{name}\": soubor neexistuje nebo byl 
 welcome.title: "Vítejte"
 welcome.open_project: "Otevřít projekt…"
 welcome.no_recent: "Žádné nedávné projekty"
+welcome.back: "Zpět do editoru"
+
+# ── 关于窗口 ──
+about.author: "Autor: 节能降耗"
+about.copyright: "Copyright © 2026 节能降耗"
+about.tech: "Postaveno s Rust a egui"
+about.license: "Licence: AGPL-3.0"
 
 # ── PR control bar (topmost, above the time ruler) ──
 pr_bar.allow_overlap_on: "Povolit překrývání not: ZAPNUTO (kliknutím zakážete)"

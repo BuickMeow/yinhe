@@ -10,6 +10,8 @@ pub enum FileAction {
     NewProject,
     Open,
     ImportAudio,
+    /// 欢迎页面：主区域显示欢迎内容（有工程时也可打开；再点一次关闭）。
+    Welcome,
     Save,
     SaveAs,
     CloseDocument,
@@ -18,13 +20,16 @@ pub enum FileAction {
     ProjectSettings,
     Settings,
     Exit,
+    /// 关于窗口。
+    About,
 }
 
 impl FileAction {
-    pub const ALL: [FileAction; 11] = [
+    pub const ALL: [FileAction; 13] = [
         FileAction::NewProject,
         FileAction::Open,
         FileAction::ImportAudio,
+        FileAction::Welcome,
         FileAction::Save,
         FileAction::SaveAs,
         FileAction::CloseDocument,
@@ -33,8 +38,10 @@ impl FileAction {
         FileAction::ProjectSettings,
         FileAction::Settings,
         FileAction::Exit,
+        FileAction::About,
     ];
 
+    /// 图钉数组索引：新增项追加在末尾，保证既有 pin 持久化数据不错位。
     pub const fn pinned_index(self) -> usize {
         match self {
             FileAction::NewProject => 0,
@@ -48,6 +55,8 @@ impl FileAction {
             FileAction::ProjectSettings => 8,
             FileAction::Settings => 9,
             FileAction::Exit => 10,
+            FileAction::Welcome => 11,
+            FileAction::About => 12,
         }
     }
 
@@ -64,6 +73,8 @@ impl FileAction {
             FileAction::ProjectSettings => shortcuts::ACTION_PROJECT_SETTINGS,
             FileAction::Settings => shortcuts::ACTION_SETTINGS,
             FileAction::Exit => shortcuts::ACTION_EXIT,
+            // 欢迎页面 / 关于：无快捷键（label_key 特例，不走快捷键表）。
+            FileAction::Welcome | FileAction::About => "",
         }
     }
 
@@ -72,6 +83,7 @@ impl FileAction {
             FileAction::NewProject => ICON_NOTE_ADD,
             FileAction::Open => ICON_FOLDER_OPEN,
             FileAction::ImportAudio => ICON_AUDIO_FILE,
+            FileAction::Welcome => ICON_HOME,
             FileAction::Save => ICON_SAVE,
             FileAction::SaveAs => ICON_SAVE_ALT,
             FileAction::CloseDocument => ICON_CLOSE,
@@ -80,23 +92,31 @@ impl FileAction {
             FileAction::ProjectSettings => ICON_TUNE,
             FileAction::Settings => ICON_SETTINGS,
             FileAction::Exit => ICON_EXIT_TO_APP,
+            FileAction::About => ICON_INFO,
         }
     }
 
     pub fn label_key(self) -> &'static str {
-        crate::shortcuts::action_label_key(self.action_id())
+        match self {
+            FileAction::Welcome => "menu.welcome_page",
+            FileAction::About => "menu.about",
+            _ => crate::shortcuts::action_label_key(self.action_id()),
+        }
     }
 
     fn is_enabled(self, has_active: bool, loading: bool) -> bool {
         match self {
             FileAction::NewProject | FileAction::Open | FileAction::ImportAudio => !loading,
+            // 欢迎页面/关于/设置/退出：任何时候都可用。
+            FileAction::Welcome | FileAction::About | FileAction::Settings | FileAction::Exit => {
+                true
+            }
             FileAction::Save
             | FileAction::SaveAs
             | FileAction::CloseDocument
             | FileAction::ExportAudio
             | FileAction::ExportMidi
             | FileAction::ProjectSettings => has_active,
-            FileAction::Settings | FileAction::Exit => true,
         }
     }
 }
@@ -431,6 +451,7 @@ pub const FILE_GROUPS: [&[FileAction]; 5] = [
         FileAction::NewProject,
         FileAction::Open,
         FileAction::ImportAudio,
+        FileAction::Welcome,
     ],
     &[
         FileAction::Save,
@@ -439,7 +460,8 @@ pub const FILE_GROUPS: [&[FileAction]; 5] = [
     ],
     &[FileAction::ProjectSettings],
     &[FileAction::ExportAudio, FileAction::ExportMidi],
-    &[FileAction::Settings, FileAction::Exit],
+    // 组 5 不进 macOS 文件菜单（设置/退出在 App 菜单），About 也随之只在应用内菜单出现。
+    &[FileAction::Settings, FileAction::About, FileAction::Exit],
 ];
 
 pub const EDIT_GROUPS: [&[EditAction]; 8] = [

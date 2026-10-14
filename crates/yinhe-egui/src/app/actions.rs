@@ -928,6 +928,8 @@ impl App {
             | transport_bar::FileAction::Settings
             | transport_bar::FileAction::ProjectSettings
             | transport_bar::FileAction::ImportAudio
+            | transport_bar::FileAction::Welcome
+            | transport_bar::FileAction::About
             | transport_bar::FileAction::Open => {
                 self.execute_file_action(action, ctx);
                 return;
@@ -977,6 +979,8 @@ impl App {
             );
             return;
         }
+        // 打开意图是"进入编辑"，关闭可能显示中的欢迎页面。
+        self.show_welcome_page = false;
         self.file_loader
             .load_path(path.to_string(), self.audio_settings.midi_import_encoding);
     }
@@ -991,6 +995,7 @@ impl App {
     ) {
         use crate::welcome::WelcomeAction;
         match action {
+            // 新建 / 打开 / 最近：目标动作内部会关闭欢迎页面（进入编辑语义）。
             WelcomeAction::NewProject => {
                 self.handle_file_action(transport_bar::FileAction::NewProject, ctx);
             }
@@ -1000,6 +1005,9 @@ impl App {
             WelcomeAction::OpenRecent(path) => self.open_recent_file(&path),
             WelcomeAction::OpenSettings => {
                 self.handle_file_action(transport_bar::FileAction::Settings, ctx);
+            }
+            WelcomeAction::Back => {
+                self.show_welcome_page = false;
             }
         }
     }
@@ -1011,6 +1019,8 @@ impl App {
                 self.new_project();
             }
             transport_bar::FileAction::Open => {
+                // 打开意图是"进入编辑"，关闭可能显示中的欢迎页面。
+                self.show_welcome_page = false;
                 self.file_loader
                     .pick_file(self.audio_settings.midi_import_encoding);
             }
@@ -1050,6 +1060,14 @@ impl App {
                     ctx,
                     egui::ViewportId::from_hash_of("settings_dialog"),
                 );
+            }
+            transport_bar::FileAction::Welcome => {
+                // 切换式：文件菜单点一次打开欢迎页面，再点一次关闭（有工程时也可用）。
+                self.show_welcome_page = !self.show_welcome_page;
+            }
+            transport_bar::FileAction::About => {
+                self.show_about = true;
+                crate::chrome::dialog::raise_viewport(ctx, crate::dialogs::about::viewport_id());
             }
             transport_bar::FileAction::ProjectSettings => {
                 self.set_float_panel(ctx, Some(crate::right_panel::FloatPanel::ProjectSettings));

@@ -68,7 +68,7 @@ muda = "0.19"
 
 [package.metadata.bundle]
 name = "Yinhe"
-license = "LPGL-3.0"
+license = "AGPL-3.0"
 identifier = "com.jieneng.yinhe"
 icon = ["assets/yinhe.icns"]
 version = "0.1.0"
