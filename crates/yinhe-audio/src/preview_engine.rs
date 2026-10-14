@@ -20,6 +20,9 @@ mod yinhe;
 /// 返回与 `targets` 一一对应的状态快照（用于预览整组音符的目标位置自动化）。
 /// 事件比较在 tick 域（cc_events 已按 tick 排序）。
 ///
+/// 同 tick 同通道同目标取 max（与播放 dispatch 的聚合一致）；跨 tick 的同目标
+/// 事件仍按事件流顺序后写覆盖。
+///
 /// 边界说明（Bug 8）：预览路径没有播放那样的 dispatch 兜底（seek 后 target 处事件
 /// 由 dispatch 补发），因此 `tick == target` 的自动化跳变事件必须包含进来（含等号），
 /// 否则恰好在音符起点的跳变永远到不了预览通道，预听听到的会是跳变前的旧值。
@@ -32,13 +35,17 @@ pub(crate) fn chase_channel_states(
     let mut state = ChannelState::default();
     let mut cursor = 0usize;
     for &target in targets {
+        let start = cursor;
         while cursor < cc_events.len() && cc_events[cursor].tick <= target {
-            let cc = &cc_events[cursor];
-            // 插件参数事件不是 xsynth 通道事件（占位），跳过避免污染预览 chase。
-            if cc.plugin_param.is_none() && cc.channel == channel {
-                state.apply(&cc.event);
-            }
             cursor += 1;
+        }
+        // 同 tick 同通道同目标取 max（与播放 dispatch 的聚合一致）；
+        // 插件参数事件不是 xsynth 通道事件（占位），跳过避免污染预览 chase。
+        let seg = &cc_events[start..cursor];
+        for &i in &crate::audio_model::aggregate_max_reps(seg, |cc| {
+            cc.plugin_param.is_none() && cc.channel == channel
+        }) {
+            state.apply(&seg[i].event);
         }
         states.push(state);
     }

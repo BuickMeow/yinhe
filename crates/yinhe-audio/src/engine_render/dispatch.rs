@@ -93,22 +93,29 @@ impl AudioEngine {
         let mut next: Option<u32> = None;
 
         // ── CC 事件 ──
-        while self.cc_cursor < self.cc_events.len() && self.cc_events[self.cc_cursor].tick <= tick {
-            let cc = &self.cc_events[self.cc_cursor];
-            // mute 的音轨跳过其自动化事件（CC/PB/RPN/NRPN/PC）；
-            // AM M/S 动态掩码再跳过被旁通的 lane（PC 事件 lane==哨兵，天然不跳过）。
-            let track_skipped = self
-                .skip_track
-                .get(cc.track as usize)
-                .copied()
-                .unwrap_or(false);
-            let lane_skipped = self
-                .am_lane_skip
-                .get(cc.track as usize)
-                .and_then(|v| v.get(cc.lane as usize))
-                .copied()
-                .unwrap_or(false);
-            if !track_skipped && !lane_skipped {
+        // 本段包含全部 tick' <= tick 的待处理事件（cursor 之后的全在此段）。
+        // 先过滤（mute 轨 / AM M/S 旁通 lane），再对同 tick 同通道同目标取
+        // max：被过滤的事件不参与取 max 也不发送；整组被过滤则整组不发。
+        // 聚合只改变"发送哪条/发多少"，事件流本身保持不变（旁通切换无需重建）。
+        let seg_start = self.cc_cursor;
+        let seg_end = self.cc_events.partition_point(|cc| cc.tick <= tick);
+        if seg_end > seg_start {
+            let reps = {
+                let events = &self.cc_events[seg_start..seg_end];
+                let skip_track = &self.skip_track;
+                let am_lane_skip = &self.am_lane_skip;
+                crate::audio_model::aggregate_max_reps(events, |cc| {
+                    let track_skipped = skip_track.get(cc.track as usize).copied().unwrap_or(false);
+                    let lane_skipped = am_lane_skip
+                        .get(cc.track as usize)
+                        .and_then(|v| v.get(cc.lane as usize))
+                        .copied()
+                        .unwrap_or(false);
+                    !track_skipped && !lane_skipped
+                })
+            };
+            for &i in &reps {
+                let cc = &self.cc_events[seg_start + i];
                 if let Some(pp) = cc.plugin_param {
                     // 插件参数自动化 → 按 uid 精确投给对应乐器实例（定向，不广播）。
                     let dense = self.channel_layout.dense_for(pp.channel as usize);
@@ -176,7 +183,7 @@ impl AudioEngine {
                     }
                 }
             }
-            self.cc_cursor += 1;
+            self.cc_cursor = seg_end;
         }
         if self.cc_cursor < self.cc_events.len() {
             let cc_tick = self.cc_events[self.cc_cursor].tick;

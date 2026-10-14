@@ -64,44 +64,51 @@ impl AudioEngine {
         }
 
         // ── 通道控制事件（CC/pitch bend/RPN），tick 域转 sample 域 ──
-        // 放在音符事件之前：同 sample 时 CC 先于 note 处理（与 CPU dispatch 一致）
-        for cc in self.cc_events.iter() {
-            // mute 的音轨：跳过其自动化事件（与 CPU 路径 dispatch 一致）；
-            // AM M/S 动态掩码：跳过被旁通的 lane（PC 事件 lane==哨兵，天然不跳过）。
-            let track_skipped = self
-                .skip_track
-                .get(cc.track as usize)
-                .copied()
-                .unwrap_or(false);
-            let lane_skipped = self
-                .am_lane_skip
-                .get(cc.track as usize)
-                .and_then(|v| v.get(cc.lane as usize))
-                .copied()
-                .unwrap_or(false);
-            if track_skipped || lane_skipped {
-                continue;
+        // 放在音符事件之前：同 sample 时 CC 先于 note 处理（与 CPU dispatch 一致）。
+        // 先过滤（mute 轨 / AM M/S 旁通 lane / 插件参数 / 插件通道 / 通道无效），
+        // 再对同 tick 同通道同目标取 max（与 CPU dispatch 相同语义；被过滤的
+        // 事件不参与取 max 也不入表，整组被过滤则整组不发）。
+        let reps = {
+            let events = self.cc_events.as_slice();
+            crate::audio_model::aggregate_max_reps(events, |cc| {
+                let track_skipped = self
+                    .skip_track
+                    .get(cc.track as usize)
+                    .copied()
+                    .unwrap_or(false);
+                let lane_skipped = self
+                    .am_lane_skip
+                    .get(cc.track as usize)
+                    .and_then(|v| v.get(cc.lane as usize))
+                    .copied()
+                    .unwrap_or(false);
+                if track_skipped || lane_skipped {
+                    return false;
+                }
+                // GPU 路径不经过混音台/插件：插件参数事件无接收方，跳过。
+                if cc.plugin_param.is_some() {
+                    return false;
+                }
+                // 插件乐器通道的事件由 CPU dispatch 转 MIDI 喂插件，不进 GPU。
+                if self.channel_plugin_dense(cc.channel as u8).is_some() {
+                    return false;
+                }
+                let dense = self.channel_layout.dense_for(cc.channel as usize);
+                dense != u32::MAX
+                    && (dense as usize) < yinhe_synth::MAX_CHANNELS
+                    && to_backend_control_event(&cc.event).is_some()
+            })
+        };
+        for &i in &reps {
+            let cc = &self.cc_events[i];
+            if let Some(event) = to_backend_control_event(&cc.event) {
+                let dense = self.channel_layout.dense_for(cc.channel as usize);
+                events.push(yinhe_synth::SynthEvent::Control {
+                    sample: self.tick_to_sample(cc.tick),
+                    channel: dense as u8,
+                    event,
+                });
             }
-            // GPU 路径不经过混音台/插件：插件参数事件无接收方，跳过。
-            if cc.plugin_param.is_some() {
-                continue;
-            }
-            // 插件乐器通道的事件由 CPU dispatch 转 MIDI 喂插件，不进 GPU。
-            if self.channel_plugin_dense(cc.channel as u8).is_some() {
-                continue;
-            }
-            let dense = self.channel_layout.dense_for(cc.channel as usize);
-            if dense == u32::MAX || (dense as usize) >= yinhe_synth::MAX_CHANNELS {
-                continue;
-            }
-            let Some(event) = to_backend_control_event(&cc.event) else {
-                continue;
-            };
-            events.push(yinhe_synth::SynthEvent::Control {
-                sample: self.tick_to_sample(cc.tick),
-                channel: dense as u8,
-                event,
-            });
         }
 
         // ── 音符事件（带 dense channel）──

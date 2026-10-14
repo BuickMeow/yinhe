@@ -991,6 +991,9 @@ type ChaseOutcome = (Box<[Option<ChannelState>; 256]>, Vec<(u8, u64, u32, f32)>)
 /// cc_events，而是直接查询模型自动化 lane——每个 lane 二分定位目标位置的
 /// 生效值（Linear/Curve 段实时插值，与 density 无关的真实值），PC 取最后一条。
 ///
+/// 同 tick 同通道同目标（CC/PB/RPN/NRPN/插件参数）的多个 lane 取 max
+/// （与播放 dispatch 一致）；跨 tick 的同目标事件仍按时间顺序后写覆盖。
+///
 /// 结果由 renderer 的 `apply_chase_result` 直接 `send_to`。
 /// `skip_mask`：mute 的音轨的 lane/PC 不参与 chase，不影响同 channel 其他轨道。
 /// `am_ms`：AR 自动化 lane 的 M/S 试听旁通（与播放事件流同规则过滤）。
@@ -1074,15 +1077,33 @@ fn compute_chase_states(
             // 避免把 mute 轨的通道控制器重置回默认值。
             continue;
         }
-        // 与播放事件流一致：同 tick 参数类（RPN/CC/PC）先于 PitchBendValue。
+        // 与播放事件流一致：同 tick 参数类（RPN/CC/PC）先于 PitchBendValue；
+        // 同 tick 同通道同目标再取 max（与 dispatch/GPU 的聚合同一规则）。
         evs.sort_by_key(|e| (e.tick, crate::audio_model::dispatch_priority(&e.event)));
+        let reps = crate::audio_model::aggregate_max_reps(&evs, |_| true);
         let mut state = ChannelState::default();
-        for e in &evs {
-            state.apply(&e.event);
+        for &i in &reps {
+            state.apply(&evs[i].event);
         }
         states[ch] = Some(state);
     }
-    (states, plugin_params)
+
+    // 插件参数：同 (通道, uid, 参数) 取 max（与 dispatch 的插件参数聚合一致）。
+    let mut plugin_params_agg: Vec<(u8, u64, u32, f32)> = Vec::new();
+    for (ch, uid, param_id, value) in plugin_params {
+        match plugin_params_agg
+            .iter_mut()
+            .find(|p| p.0 == ch && p.1 == uid && p.2 == param_id)
+        {
+            Some(p) => {
+                if value > p.3 {
+                    p.3 = value;
+                }
+            }
+            None => plugin_params_agg.push((ch, uid, param_id, value)),
+        }
+    }
+    (states, plugin_params_agg)
 }
 
 /// 查询 lane 在 `target` 位置的生效值（模型 lane 声明为按 tick 排序）。
@@ -1095,6 +1116,17 @@ pub(crate) fn compute_chase_states_for_test(
     skip_mask: &[bool],
 ) -> Box<[Option<ChannelState>; 256]> {
     compute_chase_states(model, target_tick, skip_mask, &crate::spawn::AmMsMap::new()).0
+}
+
+/// 测试用包装：带 AM M/S 旁通集的 `compute_chase_states`（测试 AM lane M/S 过滤）。
+#[cfg(test)]
+pub(crate) fn compute_chase_states_with_am_ms_for_test(
+    model: &YinModel,
+    target_tick: u32,
+    skip_mask: &[bool],
+    am_ms: &crate::spawn::AmMsMap,
+) -> Box<[Option<ChannelState>; 256]> {
+    compute_chase_states(model, target_tick, skip_mask, am_ms).0
 }
 
 /// 设备枚举方向。

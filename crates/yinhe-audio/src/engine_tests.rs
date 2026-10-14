@@ -5827,3 +5827,285 @@ fn diag_ouranos_bar157_dropout() {
         first.map(|i| i * w).unwrap_or(0)
     );
 }
+
+// ---------------------------------------------------------------------------
+// 同 MIDI 通道、同 tick、同一语义目标的自动化取 max（播放聚合）
+// ---------------------------------------------------------------------------
+
+/// 两轨同 MIDI 通道（ch0）各一条 CC 自动化 lane，同 tick 各一个 Step 事件。
+fn make_two_track_cc_model(controller: u8, tick: u32, v0: u8, v1: u8) -> YinModel {
+    let lane = |track: u16, value: u8| AutomationLane {
+        target: cc_target(controller),
+        track,
+        events: vec![AutomationEvent {
+            id: 0,
+            tick,
+            value: value as f32 / 127.0,
+            shape: SegmentShape::Step,
+        }],
+    };
+    let mut t0 = TrackData::new(0, 0);
+    t0.automation_lanes = vec![lane(0, v0)];
+    let mut t1 = TrackData::new(0, 0);
+    t1.automation_lanes = vec![lane(1, v1)];
+    let mut model = YinModel {
+        tracks: vec![Arc::new(t0), Arc::new(t1)],
+        meta: ProjectMeta {
+            ppq: 480,
+            ..ProjectMeta::default()
+        },
+        ..Default::default()
+    };
+    model.rebuild();
+    model
+}
+
+/// GPU 事件表里通道 0 的指定 CC 原始值（按事件表顺序）。
+fn gpu_cc_values(engine: &AudioEngine, controller: u8) -> Vec<f32> {
+    engine
+        .build_gpu_events(0)
+        .iter()
+        .filter_map(|e| match e {
+            yinhe_synth::SynthEvent::Control {
+                channel: 0,
+                event: yinhe_synth::ControlEvent::Raw(cc, v),
+                ..
+            } if *cc == controller => Some(*v),
+            _ => None,
+        })
+        .collect()
+}
+
+/// 需求：同 MIDI 通道、同 tick、同一语义目标（CC1）的多轨自动化播放时取 max
+/// （旧行为是后写覆盖 = track 索引大者胜出），事件流本身不合并（导出不变）。
+/// 两个写入顺序都生效。
+#[test]
+fn test_same_tick_same_channel_cc_dispatch_and_gpu_take_max() {
+    let sr = 44100u32;
+    for (v0, v1) in [(40u8, 100u8), (100, 40)] {
+        let model = Arc::new(make_two_track_cc_model(1, 100, v0, v1));
+        let mut engine = AudioEngine::new(sr, ChannelLayout::from_mask(vec![true; 16]));
+        engine.load_model(&model);
+        engine.playing = true;
+
+        // 模型数据不合并：事件流仍保留两条（导出/编辑不受影响）。
+        let cc1_count = engine
+            .cc_events
+            .iter()
+            .filter(|c| matches!(c.event, AudioEvent::Cc { controller: 1, .. }))
+            .count();
+        assert_eq!(cc1_count, 2, "事件流不合并数据（仍两条）");
+
+        // CPU dispatch：两条都被消费（cursor 越过），实际只发一条代表。
+        engine.dispatch_and_find_next(100, 100_000);
+        assert_eq!(engine.cc_cursor, 2, "两条都被消费");
+        assert_ne!(
+            engine.dispatched_skip.cc_mask[0] & (1u128 << 1),
+            0,
+            "CC1 应已发送（代表事件）"
+        );
+
+        // GPU 事件表（同一事件流的另一消费路径）：同键只入表一条，值 = max。
+        let values = gpu_cc_values(&engine, 1);
+        assert_eq!(values.len(), 1, "GPU 事件表同键只入表一条");
+        assert_eq!(
+            values[0], 100.0,
+            "同 tick 同通道同 CC 取 max（v0={v0}, v1={v1}）"
+        );
+    }
+}
+
+/// 需求：被 AM M/S 旁通（am_lane_skip）的 lane 不参与 max，取未旁通者的值；
+/// 轨道 mute（skip_track）同理；全部被过滤则整组不发。
+#[test]
+fn test_same_tick_cc_max_respects_track_mute_and_am_ms() {
+    let model = Arc::new(make_two_track_cc_model(1, 100, 40, 100));
+    let mut engine = AudioEngine::new(44100, ChannelLayout::from_mask(vec![true; 16]));
+    engine.load_model(&model);
+
+    // 无旁通：取 max = 100。
+    assert_eq!(gpu_cc_values(&engine, 1), vec![100.0]);
+
+    // 轨道 mute（skip_track）：取未被 mute 轨道那条的值。
+    engine.skip_track = vec![true, false];
+    assert_eq!(gpu_cc_values(&engine, 1), vec![100.0]);
+    engine.skip_track = vec![false, true];
+    assert_eq!(gpu_cc_values(&engine, 1), vec![40.0]);
+    // 两条都被 mute → 整组不发。
+    engine.skip_track = vec![true, true];
+    assert!(gpu_cc_values(&engine, 1).is_empty());
+
+    // CPU dispatch：全旁通时不发送（不打点 chase_skip），但 cursor 仍越过。
+    engine.cc_cursor = 0;
+    engine.dispatched_skip = crate::channel::ChaseSkip::default();
+    engine.dispatch_and_find_next(100, 100_000);
+    assert_eq!(
+        engine.dispatched_skip.cc_mask[0] & (1u128 << 1),
+        0,
+        "全被过滤则不发"
+    );
+    assert_eq!(engine.cc_cursor, 2, "事件仍被消费越过");
+
+    // AM M/S（am_lane_skip，由模型 + am_ms map 构建）：mute track0 的 lane
+    // → 取 track1 = 100。
+    engine.skip_track = vec![false, false];
+    let mut am_ms = crate::spawn::AmMsMap::new();
+    am_ms.insert(
+        (0u16, cc_target(1)),
+        yinhe_types::AmMsState {
+            mute: true,
+            solo: false,
+        },
+    );
+    engine.am_lane_skip = crate::audio_model::build_am_lane_skip(&model, &am_ms);
+    assert_eq!(gpu_cc_values(&engine, 1), vec![100.0]);
+
+    // solo track1 的 lane：同轨只有它 solo，track0 未 solo 被旁通 → 取 100。
+    let mut am_ms = crate::spawn::AmMsMap::new();
+    am_ms.insert(
+        (1u16, cc_target(1)),
+        yinhe_types::AmMsState {
+            mute: false,
+            solo: true,
+        },
+    );
+    engine.am_lane_skip = crate::audio_model::build_am_lane_skip(&model, &am_ms);
+    assert_eq!(gpu_cc_values(&engine, 1), vec![100.0]);
+
+    // 两条都 mute → 整组不发。
+    let mut am_ms = crate::spawn::AmMsMap::new();
+    for track in 0u16..2 {
+        am_ms.insert(
+            (track, cc_target(1)),
+            yinhe_types::AmMsState {
+                mute: true,
+                solo: false,
+            },
+        );
+    }
+    engine.am_lane_skip = crate::audio_model::build_am_lane_skip(&model, &am_ms);
+    assert!(gpu_cc_values(&engine, 1).is_empty());
+}
+
+/// 需求：chase（seek 恢复）与播放一致——同通道同 tick 同目标取 max；
+/// 轨道 mute / AM M/S 旁通的 lane 不参与；全被过滤则无状态（应用时不触碰通道）。
+#[test]
+fn test_chase_same_tick_same_target_takes_max() {
+    // 两轨同通道 CC7（volume）：同 tick 100，track0=40、track1=100。
+    let make = |v0: u8, v1: u8| {
+        let lane = |track: u16, value: u8| AutomationLane {
+            target: cc_target(7),
+            track,
+            events: vec![AutomationEvent {
+                id: 0,
+                tick: 100,
+                value: value as f32 / 127.0,
+                shape: SegmentShape::Step,
+            }],
+        };
+        let mut t0 = TrackData::new(0, 0);
+        t0.automation_lanes = vec![lane(0, v0)];
+        let mut t1 = TrackData::new(0, 0);
+        t1.automation_lanes = vec![lane(1, v1)];
+        let mut m = YinModel {
+            tracks: vec![Arc::new(t0), Arc::new(t1)],
+            meta: ProjectMeta {
+                ppq: 480,
+                ..ProjectMeta::default()
+            },
+            ..Default::default()
+        };
+        m.rebuild();
+        m
+    };
+
+    let model = make(40, 100);
+    let states = crate::spawn::compute_chase_states_for_test(&model, 200, &[false, false]);
+    assert_eq!(
+        states[0].as_ref().map(|s| s.volume),
+        Some(100),
+        "同 tick 同目标取 max"
+    );
+
+    // 写入顺序颠倒（track0=100、track1=40）仍取 max。
+    let reversed = make(100, 40);
+    let states = crate::spawn::compute_chase_states_for_test(&reversed, 200, &[false, false]);
+    assert_eq!(
+        states[0].as_ref().map(|s| s.volume),
+        Some(100),
+        "顺序颠倒仍取 max"
+    );
+
+    // 轨道 mute：只取未被 mute 那条。
+    let states = crate::spawn::compute_chase_states_for_test(&model, 200, &[true, false]);
+    assert_eq!(states[0].as_ref().map(|s| s.volume), Some(100));
+    let states = crate::spawn::compute_chase_states_for_test(&model, 200, &[false, true]);
+    assert_eq!(states[0].as_ref().map(|s| s.volume), Some(40));
+    // 两条都 mute → 无状态（chase 应用时不触碰通道）。
+    let states = crate::spawn::compute_chase_states_for_test(&model, 200, &[true, true]);
+    assert!(states[0].is_none());
+
+    // AM M/S 旁通：mute track0 的 CC7 lane → 取 track1 = 100。
+    let mut am_ms = crate::spawn::AmMsMap::new();
+    am_ms.insert(
+        (0u16, cc_target(7)),
+        yinhe_types::AmMsState {
+            mute: true,
+            solo: false,
+        },
+    );
+    let states = crate::spawn::compute_chase_states_with_am_ms_for_test(
+        &model,
+        200,
+        &[false, false],
+        &am_ms,
+    );
+    assert_eq!(states[0].as_ref().map(|s| s.volume), Some(100));
+
+    // 两条 lane 都 mute → 无状态。
+    am_ms.insert(
+        (1u16, cc_target(7)),
+        yinhe_types::AmMsState {
+            mute: true,
+            solo: false,
+        },
+    );
+    let states = crate::spawn::compute_chase_states_with_am_ms_for_test(
+        &model,
+        200,
+        &[false, false],
+        &am_ms,
+    );
+    assert!(states[0].is_none(), "全部旁通则整组不发（无状态）");
+}
+
+/// 需求：预览 chase 与播放一致——同 tick 同通道同目标取 max；不同语义键
+/// （CC7 与 CC10）互不干扰；更晚 tick 的同键事件照常后写覆盖（不跨 tick 聚合）。
+#[test]
+fn test_preview_chase_same_tick_takes_max() {
+    use crate::audio_model::SortedCC;
+    use crate::preview_engine::chase_channel_states;
+
+    let ev = |tick: u32, cc: u8, value: u8| SortedCC {
+        tick,
+        channel: 0,
+        track: 0,
+        lane: 0,
+        plugin_param: None,
+        event: AudioEvent::Cc {
+            controller: cc,
+            value: f32::from(value),
+        },
+    };
+    let cc_events = vec![
+        ev(10, 7, 40),
+        ev(10, 7, 100),
+        ev(10, 10, 20),
+        ev(10, 10, 80),
+        ev(20, 7, 10), // 更晚的同键事件：后写覆盖
+    ];
+    let states = chase_channel_states(&cc_events, 0, &[10, 20]);
+    assert_eq!(states[0].volume, 100, "同 tick 同键取 max");
+    assert_eq!(states[0].pan, 80, "不同语义键互不干扰");
+    assert_eq!(states[1].volume, 10, "更晚的同键事件照常生效");
+}

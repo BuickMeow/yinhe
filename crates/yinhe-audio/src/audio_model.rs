@@ -328,6 +328,132 @@ pub(crate) fn build_am_lane_skip(
         .collect()
 }
 
+/// 同 tick 同通道自动化的语义聚合键：键相同的事件是同一控制目标，播放时
+/// 取最大值发送（多条自动化数据仍全部保留，不合并模型；导出不受影响）。
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum AggKey {
+    /// MIDI CC：按控制器号（xsynth Raw CC 事件与内部浮点 CC 同键）。
+    Cc { controller: u8 },
+    /// Pitch Bend：按变体（xsynth PitchBendValue 事件与内部浮点 PB 同键）。
+    PitchBend,
+    /// 原生 RPN：按参数号。
+    Rpn { parameter: u16 },
+    /// 原生 NRPN：按参数号。
+    Nrpn { parameter: u16 },
+    /// xsynth 高层 PitchBendSensitivity：独立键（tones 域，与归一化 RPN0
+    /// 值域不同，不混用 max）。
+    ChannelPitchBendSensitivity,
+    /// xsynth 高层 FineTune：独立键（cents 域）。
+    ChannelFineTune,
+    /// xsynth 高层 CoarseTune：独立键（semitones 域）。
+    ChannelCoarseTune,
+    /// 插件参数：按乐器实例 uid + 参数 id（分组维度已含通道）。
+    PluginParam { uid: u64, param_id: u32 },
+}
+
+/// 事件的聚合键（`None` = 不参与聚合，如 ProgramChange 原样发送）。
+fn agg_key(cc: &SortedCC) -> Option<AggKey> {
+    // 插件参数事件：`event` 是占位（无 xsynth 语义），按 (uid, param_id) 聚合。
+    if let Some(pp) = &cc.plugin_param {
+        return Some(AggKey::PluginParam {
+            uid: pp.uid,
+            param_id: pp.param_id,
+        });
+    }
+    match &cc.event {
+        AudioEvent::Cc { controller, .. } => Some(AggKey::Cc {
+            controller: *controller,
+        }),
+        AudioEvent::PitchBend(_) => Some(AggKey::PitchBend),
+        AudioEvent::Rpn { parameter, .. } => Some(AggKey::Rpn {
+            parameter: *parameter,
+        }),
+        AudioEvent::Nrpn { parameter, .. } => Some(AggKey::Nrpn {
+            parameter: *parameter,
+        }),
+        // xsynth 高层事件：Raw CC 与内部浮点 CC 同目标；PitchBendValue 与
+        // 内部浮点 PB 同目标。
+        AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(controller, _))) => {
+            Some(AggKey::Cc {
+                controller: *controller,
+            })
+        }
+        AudioEvent::Channel(ChannelAudioEvent::Control(
+            ControlEvent::PitchBendValue(_) | ControlEvent::PitchBend(_),
+        )) => Some(AggKey::PitchBend),
+        AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(_))) => {
+            Some(AggKey::ChannelPitchBendSensitivity)
+        }
+        AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::FineTune(_))) => {
+            Some(AggKey::ChannelFineTune)
+        }
+        AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::CoarseTune(_))) => {
+            Some(AggKey::ChannelCoarseTune)
+        }
+        _ => None,
+    }
+}
+
+/// 事件的聚合比较值（取 max 用）：各变体内部的归一化值 / 具体值。
+fn agg_value(cc: &SortedCC) -> f32 {
+    if let Some(pp) = &cc.plugin_param {
+        return pp.value;
+    }
+    match &cc.event {
+        AudioEvent::Cc { value, .. }
+        | AudioEvent::Rpn { value, .. }
+        | AudioEvent::Nrpn { value, .. } => *value,
+        AudioEvent::PitchBend(v) => *v,
+        AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(_, v))) => f32::from(*v),
+        AudioEvent::Channel(ChannelAudioEvent::Control(
+            ControlEvent::PitchBendValue(v)
+            | ControlEvent::PitchBend(v)
+            | ControlEvent::PitchBendSensitivity(v)
+            | ControlEvent::FineTune(v)
+            | ControlEvent::CoarseTune(v),
+        )) => *v,
+        // 不参与聚合的事件（agg_key 返回 None）：不会被比较。
+        _ => 0.0,
+    }
+}
+
+/// 对一段已按 `(tick, channel, priority)` 排序的事件做「同 tick 同通道同目标
+/// 取 max」聚合：返回应发送的事件下标（进入 reps 的顺序 = 组内首见事件的顺序）。
+///
+/// 不重排事件：同 tick 内 RPN/参数类先于 PitchBend 的既有优先级由首见顺序
+/// 天然保持；组内代表 = 值最大者，并列取首见。
+///
+/// `keep` 在聚合前过滤（mute 轨 / AM M/S 旁通 lane / 后端不消费的事件）：
+/// 被过滤的事件不参与取 max 也不输出——整组被过滤则整组不发。
+pub(crate) fn aggregate_max_reps<F>(events: &[SortedCC], mut keep: F) -> Vec<usize>
+where
+    F: FnMut(&SortedCC) -> bool,
+{
+    let mut reps: Vec<usize> = Vec::new();
+    let mut groups: HashMap<(u32, u32, AggKey), usize> = HashMap::new();
+    for (i, cc) in events.iter().enumerate() {
+        if !keep(cc) {
+            continue;
+        }
+        let Some(key) = agg_key(cc) else {
+            reps.push(i);
+            continue;
+        };
+        match groups.get(&(cc.tick, cc.channel, key)) {
+            Some(&pos) => {
+                if agg_value(cc) > agg_value(&events[reps[pos]]) {
+                    reps[pos] = i;
+                }
+            }
+            None => {
+                groups.insert((cc.tick, cc.channel, key), reps.len());
+                reps.push(i);
+            }
+        }
+    }
+    reps
+}
+
 /// Flatten automation lanes + program changes into sorted, deduped SortedCC events.
 ///
 /// Standard RPN 0/1/2 are sent as high-level xsynth events (PitchBendSensitivity,
@@ -337,7 +463,8 @@ pub(crate) fn build_am_lane_skip(
 /// （最平滑），值越大中间事件越少。Step 段不受影响（保持值到下一点）。
 ///
 /// 所有 lane 的事件**全部展平**（AM M/S 旁通由 dispatch 时的动态掩码负责），
-/// 旁通切换无需重建本事件流。
+/// 旁通切换无需重建本事件流。同 tick 同通道同目标（见 [`AggKey`]）的"取 max"
+/// 聚合发生在消费端（dispatch / GPU 事件表 / chase），此处不合并数据。
 ///
 /// Returns `Arc<Vec>` so the same events can be shared between the renderer and
 /// the worker thread (for chase computation) without cloning.
@@ -1350,5 +1477,267 @@ mod tests {
             coarse_idx,
             pb_idx
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // 同 tick 同通道同目标取 max（聚合辅助）
+    // -----------------------------------------------------------------------
+
+    /// 构造测试用 SortedCC。
+    fn scc(tick: u32, channel: u32, event: AudioEvent) -> SortedCC {
+        SortedCC {
+            tick,
+            channel,
+            track: 0,
+            lane: 0,
+            plugin_param: None,
+            event,
+        }
+    }
+
+    /// 同 tick 同通道同 CC：聚合为一个代表，值取 max（两个顺序都生效）。
+    #[test]
+    fn aggregate_max_reps_cc_takes_max_both_orders() {
+        let asc = vec![
+            scc(
+                10,
+                0,
+                AudioEvent::Cc {
+                    controller: 7,
+                    value: 40.0,
+                },
+            ),
+            scc(
+                10,
+                0,
+                AudioEvent::Cc {
+                    controller: 7,
+                    value: 100.0,
+                },
+            ),
+        ];
+        let reps = aggregate_max_reps(&asc, |_| true);
+        assert_eq!(reps.len(), 1, "同 tick 同通道同 CC 只保留一条");
+        assert_eq!(agg_value(&asc[reps[0]]), 100.0, "取 max");
+
+        let desc = vec![
+            scc(
+                10,
+                0,
+                AudioEvent::Cc {
+                    controller: 7,
+                    value: 100.0,
+                },
+            ),
+            scc(
+                10,
+                0,
+                AudioEvent::Cc {
+                    controller: 7,
+                    value: 40.0,
+                },
+            ),
+        ];
+        let reps = aggregate_max_reps(&desc, |_| true);
+        assert_eq!(reps.len(), 1);
+        assert_eq!(agg_value(&desc[reps[0]]), 100.0, "顺序颠倒仍取 max");
+    }
+
+    /// 不同语义键互不干扰；不聚合事件（ProgramChange）原样保留；输出顺序 =
+    /// 组内首见顺序（同 tick 内 RPN 先于 PitchBend 的优先级不被破坏）。
+    #[test]
+    fn aggregate_max_reps_keeps_distinct_keys_and_order() {
+        let events = vec![
+            // 组 1：CC7（首见）
+            scc(
+                10,
+                0,
+                AudioEvent::Cc {
+                    controller: 7,
+                    value: 40.0,
+                },
+            ),
+            // 不聚合：PC 原地保留
+            scc(10, 0, AudioEvent::ProgramChange(5)),
+            // 组 2：CC10（首见）
+            scc(
+                10,
+                0,
+                AudioEvent::Cc {
+                    controller: 10,
+                    value: 80.0,
+                },
+            ),
+            // 组 1 的代表更新（值更大）
+            scc(
+                10,
+                0,
+                AudioEvent::Cc {
+                    controller: 7,
+                    value: 100.0,
+                },
+            ),
+        ];
+        let reps = aggregate_max_reps(&events, |_| true);
+        let out: Vec<&AudioEvent> = reps.iter().map(|&i| &events[i].event).collect();
+        assert_eq!(
+            out,
+            vec![
+                &AudioEvent::Cc {
+                    controller: 7,
+                    value: 100.0
+                },
+                &AudioEvent::ProgramChange(5),
+                &AudioEvent::Cc {
+                    controller: 10,
+                    value: 80.0
+                },
+            ],
+            "代表事件按首见顺序发送，CC7/CC10 互不干扰"
+        );
+    }
+
+    /// 过滤先于聚合：被过滤（mute/旁通）的事件不参与 max；整组被过滤则不发。
+    #[test]
+    fn aggregate_max_reps_filters_before_max() {
+        let events = vec![
+            scc(
+                10,
+                0,
+                AudioEvent::Cc {
+                    controller: 7,
+                    value: 40.0,
+                },
+            ),
+            scc(
+                10,
+                0,
+                AudioEvent::Cc {
+                    controller: 7,
+                    value: 100.0,
+                },
+            ),
+        ];
+        // 过滤掉第二条（值 100 的"被旁通"事件）→ 代表降级为 40
+        let reps = aggregate_max_reps(
+            &events,
+            |cc| !matches!(cc.event, AudioEvent::Cc { value, .. } if value == 100.0),
+        );
+        assert_eq!(reps.len(), 1);
+        assert_eq!(agg_value(&events[reps[0]]), 40.0);
+
+        // 全部过滤 → 整组不发
+        let reps = aggregate_max_reps(&events, |_| false);
+        assert!(reps.is_empty());
+    }
+
+    /// 不同 tick 的同键事件不聚合（后写覆盖由发送顺序决定）。
+    #[test]
+    fn aggregate_max_reps_does_not_merge_across_ticks() {
+        let events = vec![
+            scc(
+                10,
+                0,
+                AudioEvent::Cc {
+                    controller: 7,
+                    value: 100.0,
+                },
+            ),
+            scc(
+                20,
+                0,
+                AudioEvent::Cc {
+                    controller: 7,
+                    value: 40.0,
+                },
+            ),
+        ];
+        let reps = aggregate_max_reps(&events, |_| true);
+        assert_eq!(reps, vec![0, 1]);
+    }
+
+    /// xsynth 高层 Raw CC / PitchBendValue 与内部浮点 CC / PB 同目标聚合；
+    /// RPN 按参数号独立（不与 PB 混）。
+    #[test]
+    fn aggregate_max_reps_unifies_high_level_and_float_events() {
+        let events = vec![
+            scc(
+                10,
+                0,
+                AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(7, 40))),
+            ),
+            scc(
+                10,
+                0,
+                AudioEvent::Cc {
+                    controller: 7,
+                    value: 100.0,
+                },
+            ),
+            scc(
+                10,
+                0,
+                AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
+                    0.25,
+                ))),
+            ),
+            scc(10, 0, AudioEvent::PitchBend(0.5)),
+            scc(
+                10,
+                0,
+                AudioEvent::Rpn {
+                    parameter: 0,
+                    value: 48.0 / 127.0,
+                },
+            ),
+        ];
+        let reps = aggregate_max_reps(&events, |_| true);
+        let out: Vec<f32> = reps.iter().map(|&i| agg_value(&events[i])).collect();
+        assert_eq!(out, vec![100.0, 0.5, 48.0 / 127.0]);
+    }
+
+    /// 插件参数事件按 (uid, param_id) 取 max；不同参数互不干扰。
+    #[test]
+    fn aggregate_max_reps_plugin_params_take_max() {
+        let pp = |uid: u64, param_id: u32, value: f32| {
+            Some(PluginParamEvent {
+                channel: 0,
+                uid,
+                param_id,
+                value,
+            })
+        };
+        let placeholder =
+            || AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(0, 0)));
+        let events = vec![
+            SortedCC {
+                tick: 10,
+                channel: 0,
+                track: 0,
+                lane: 0,
+                plugin_param: pp(1, 2, 0.2),
+                event: placeholder(),
+            },
+            SortedCC {
+                tick: 10,
+                channel: 0,
+                track: 1,
+                lane: 0,
+                plugin_param: pp(1, 2, 0.9),
+                event: placeholder(),
+            },
+            SortedCC {
+                tick: 10,
+                channel: 0,
+                track: 2,
+                lane: 0,
+                plugin_param: pp(1, 3, 0.4),
+                event: placeholder(),
+            },
+        ];
+        let reps = aggregate_max_reps(&events, |_| true);
+        assert_eq!(reps.len(), 2, "同参数取 max，不同参数各自保留");
+        let vals: Vec<f32> = reps.iter().map(|&i| agg_value(&events[i])).collect();
+        assert_eq!(vals, vec![0.9, 0.4]);
     }
 }
