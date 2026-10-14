@@ -787,9 +787,10 @@ file_dialog.export_mid: "export.mid"
 file_dialog.open_failed: "\"%{name}\" açılamıyor: geçerli bir .yin dosyası olmayabilir veya gömülü MIDI'sinde Şef parçası eksik olabilir."
 file_dialog.not_found: "\"%{name}\" açılamıyor: dosya mevcut değil veya taşınmış. Son dosyalar listesinden kaldırıldı."
 
-# ── Workspace placeholder ──
-workspace.placeholder_hint: "Düzenlemeye başlamak için bir proje oluşturun veya açın"
-workspace.placeholder_shortcuts: "Proje oluşturmak veya açmak için Dosya menüsünü ya da başlık çubuğunu kullanın"
+# ── Karşılama sayfası ──
+welcome.title: "Hoş geldiniz"
+welcome.open_project: "Proje Aç…"
+welcome.no_recent: "Son proje yok"
 
 # ── PR control bar (topmost, above the time ruler) ──
 pr_bar.allow_overlap_on: "Çakışan notalara izin ver: AÇIK (devre dışı bırakmak için tıkla)"

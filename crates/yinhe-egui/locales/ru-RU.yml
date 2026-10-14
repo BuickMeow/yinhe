@@ -787,9 +787,10 @@ file_dialog.export_mid: "export.mid"
 file_dialog.open_failed: "Не удаётся открыть \"%{name}\": возможно, это недопустимый файл .yin или во встроенном MIDI отсутствует дорожка дирижёра."
 file_dialog.not_found: "Не удаётся открыть \"%{name}\": файл не существует или был перемещён. Он удалён из списка недавних файлов."
 
-# ── Workspace placeholder ──
-workspace.placeholder_hint: "Создайте или откройте проект, чтобы начать редактирование"
-workspace.placeholder_shortcuts: "Используйте меню «Файл» или строку заголовка для создания или открытия проекта"
+# ── Страница приветствия ──
+welcome.title: "Добро пожаловать"
+welcome.open_project: "Открыть проект…"
+welcome.no_recent: "Нет недавних проектов"
 
 # ── PR control bar (topmost, above the time ruler) ──
 pr_bar.allow_overlap_on: "Перекрытие нот: ВКЛ (нажмите, чтобы отключить)"

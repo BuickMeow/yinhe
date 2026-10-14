@@ -28,6 +28,7 @@ mod selection;
 mod shortcuts;
 mod theme;
 mod view_interaction;
+mod welcome;
 mod widgets;
 
 fn main() {

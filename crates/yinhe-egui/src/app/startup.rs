@@ -18,6 +18,9 @@ const SPLASH_VIEWPORT_ID: &str = "yinhe_startup_splash";
 pub(crate) struct StartupState {
     /// 仍处于启动阶段（主窗口隐藏、启动页显示）。
     pub(crate) pending: bool,
+    /// 启动就绪后无工程可打开：显示独立欢迎窗口（主窗口保持隐藏），
+    /// 用户完成选择（新建 / 打开 / 最近）后进入主界面。
+    pub(crate) welcome: bool,
     /// 启动页共享状态（deferred viewport 闭包无法访问 `App`）。
     pub(crate) shared: Arc<StartupShared>,
     /// 启动页是否已创建（首次创建时拉前台一次）。
@@ -28,6 +31,7 @@ impl StartupState {
     pub(crate) fn new() -> Self {
         Self {
             pending: true,
+            welcome: false,
             shared: Arc::new(StartupShared {
                 status: Mutex::new(String::new()),
                 exit_requested: AtomicBool::new(false),
@@ -121,6 +125,12 @@ impl App {
             .as_ref()
             .is_some_and(|a| a.handle.audio_ready());
         let audio_failed = self.audio_state.spawn_error.is_some();
+        // 无工程（启动欢迎页路径）不等音频：音频按文档创建，无文档时不会 spawn，
+        // 等待音频就绪会永远卡在启动页。有工程/正在加载时才等音频。
+        let no_project = self.workspace.documents.is_empty()
+            && !self.file_loader.is_loading()
+            && self.audio_state.pending_doc_activate.is_none();
+        let audio_ready = no_project || audio_ready;
 
         if startup_ready(
             audio_ready,
@@ -128,8 +138,15 @@ impl App {
             self.file_loader.is_loading(),
             self.audio_state.pending_doc_activate.is_some(),
         ) {
-            // 就绪：进入主界面（不再声明启动页 → 窗口随之销毁）。
             self.startup.pending = false;
+            // 无工程可打开（无命令行文件 / 无待恢复残留）→ 先显示独立欢迎窗口，
+            // 主窗口保持隐藏；用户选择新建/打开/最近后由 `welcome_ui` 进入主界面。
+            if self.welcome_needed() {
+                self.startup.welcome = true;
+                ui.ctx().request_repaint();
+                return;
+            }
+            // 就绪：进入主界面（不再声明启动页 → 窗口随之销毁）。
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::Visible(true));
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
@@ -186,6 +203,137 @@ impl App {
             return rust_i18n::t!("mix.scanning").to_string();
         }
         rust_i18n::t!("startup.preparing").to_string()
+    }
+
+    /// 启动就绪后是否需要先显示欢迎窗口：没有任何工程可打开时才弹
+    /// （命令行文件、自动恢复残留都算「有工程可打开」，直接进主界面）。
+    ///
+    /// 启动不再预置空白工程（`Workspace::empty`），所以只需判断文档为空。
+    fn welcome_needed(&self) -> bool {
+        self.workspace.documents.is_empty() && self.jobs.autosave.recovery.is_none()
+    }
+
+    /// 欢迎窗口阶段每帧：主窗口保持隐藏、独立欢迎窗口显示；
+    /// 用户完成选择（新建 / 打开 / 最近）后进入主界面。
+    ///
+    /// 与启动页同一原则：只驱动必要后台流程（音频 / 文件加载 / 插件扫描），
+    /// 反馈（加载 toast 等）统一由主界面承担。
+    pub(crate) fn welcome_ui(&mut self, ui: &mut egui::Ui) {
+        if self.should_exit {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+        crate::theme::apply_to_ctx(ui.ctx());
+
+        // 主窗口保持隐藏（与启动页同理；隐藏期间刷新被 eframe 节流到约 100ms）。
+        ui.ctx()
+            .send_viewport_cmd(egui::ViewportCommand::Visible(false));
+
+        // 必要后台流程（与启动阶段同一调用集合）。
+        self.poll_async_operations();
+        self.rebuild_audio_if_needed();
+        self.poll_audio_spawn();
+        self.poll_audio_progress();
+        self.poll_insert_returns();
+        self.poll_pending_doc_activate();
+        if self.mix.scanned.is_none() && !self.mix.scan_in_progress {
+            crate::mix::start_plugin_scan(self);
+        }
+        crate::mix::poll_plugin_scan(self);
+
+        // macOS 原生菜单：与主界面同一套入口（新建/打开/设置/最近/退出）；
+        // 设置窗口打开或快捷键录制时暂停加速键（与主循环一致）。
+        let suspend_menu_accels = self.audio_settings.ui_session.show_settings
+            || self.audio_settings.ui_session.shortcut_recording;
+        // 用户是否已做出选择（决定何时进入主界面）。
+        let mut chosen = false;
+        for action in self.menu_bar.poll(
+            &self.audio_settings.keybindings,
+            suspend_menu_accels,
+            &self.audio_settings.recent_files,
+            self.follow_mode,
+            self.active_tool,
+        ) {
+            use crate::platform::MenuAction;
+            match action {
+                MenuAction::Exit => self.should_exit = true,
+                MenuAction::NewProject => {
+                    self.handle_file_action(
+                        crate::chrome::transport_bar::FileAction::NewProject,
+                        ui.ctx(),
+                    );
+                    chosen = true;
+                }
+                MenuAction::Open => {
+                    self.handle_file_action(
+                        crate::chrome::transport_bar::FileAction::Open,
+                        ui.ctx(),
+                    );
+                    chosen = self.file_loader.is_loading();
+                }
+                MenuAction::Settings => self.handle_file_action(
+                    crate::chrome::transport_bar::FileAction::Settings,
+                    ui.ctx(),
+                ),
+                MenuAction::OpenRecent(path) => {
+                    self.open_recent_file(&path);
+                    chosen = self.file_loader.is_loading();
+                }
+                // 其余动作无处落地（无文档），丢弃。
+                _ => {}
+            }
+        }
+
+        // 独立欢迎窗口（同一帧返回动作）。
+        let (closed, action) = crate::welcome::show_window(
+            ui.ctx(),
+            &self.audio_settings.recent_files,
+            &self.audio_settings.recent_file_times,
+        );
+        if closed {
+            // 无工程则退出（启动向导语义：关闭欢迎窗口 = 放弃启动）。
+            self.should_exit = true;
+        }
+        if let Some(action) = action {
+            if matches!(action, crate::welcome::WelcomeAction::NewProject) {
+                chosen = true;
+            }
+            self.handle_welcome_action(action, ui.ctx());
+            // 打开/最近：文件已开始加载才算选择成功（文件选择器取消则留在欢迎窗口）。
+            chosen |= self.file_loader.is_loading();
+        }
+
+        // 设置窗口：欢迎页「设置」按钮打开的窗口也在此渲染
+        // （与主循环 dialog_dispatch 的同逻辑：关闭时让设置落地）。
+        let (settings_closed, settings_changed) = crate::dialogs::settings::show_viewport(
+            ui.ctx(),
+            &mut self.audio_settings,
+            &self.audio_state.handle,
+        );
+        if settings_closed {
+            self.apply_settings_on_close();
+        } else if settings_changed {
+            self.sync_soundfonts_online();
+        }
+
+        if self.should_exit {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+
+        // 用户已做出选择（新建完成 / 打开或最近文件已开始加载）→ 进入主界面；
+        // 加载进度、失败提示等反馈都由主界面的 toast 承担。
+        if chosen {
+            self.startup.welcome = false;
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
+            ui.ctx().request_repaint();
+            return;
+        }
+
+        // 主窗口隐藏时刷新被节流；持续请求以驱动欢迎窗口交互与后台轮询。
+        ui.ctx().request_repaint();
     }
 }
 

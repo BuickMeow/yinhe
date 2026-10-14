@@ -787,9 +787,10 @@ file_dialog.export_mid: "export.mid"
 file_dialog.open_failed: "Cannot open \"%{name}\": may not be a valid .yin file, or its embedded MIDI lacks a Conductor track."
 file_dialog.not_found: "Cannot open \"%{name}\": the file does not exist or has been moved. It has been removed from the recent files list."
 
-# ── Workspace placeholder ──
-workspace.placeholder_hint: "Create or open a project to start editing"
-workspace.placeholder_shortcuts: "Use the File menu or title bar to create or open a project"
+# ── Welcome page ──
+welcome.title: "Welcome"
+welcome.open_project: "Open Project…"
+welcome.no_recent: "No recent projects"
 
 # ── PR control bar (topmost, above the time ruler) ──
 pr_bar.allow_overlap_on: "Allow overlapping notes: ON (click to disable)"

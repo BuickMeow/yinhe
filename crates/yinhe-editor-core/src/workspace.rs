@@ -24,6 +24,17 @@ impl Workspace {
         Self::default()
     }
 
+    /// 空工作区：无任何文档（启动欢迎页 / 用户关闭全部工程后的状态）。
+    /// 与 `Default`（自带一个未修改的 Untitled 占位文档）不同，
+    /// 启动流程改用本构造器：启动后不预置空白工程，由欢迎页让用户选择。
+    pub fn empty() -> Self {
+        Self {
+            documents: Vec::new(),
+            active_doc: None,
+            prev_active_doc: None,
+        }
+    }
+
     /// 判断打开 MIDI/.yin 时是否应替换当前标签页而非另开一个。
     /// 仅当当前是首次启动的 Untitled（`documents.len() == 1`、活跃在 idx 0、
     /// `file_path.is_none()` 且未修改）时返回 true。

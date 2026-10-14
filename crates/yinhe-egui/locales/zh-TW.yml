@@ -829,9 +829,10 @@ panel.dock_to_side: "停靠到側欄"
 panel.no_selection: "未選取任何內容"
 dialog.new_track.full: "256 個 MIDI 通道（A1–P16）已全部佔用，無法新增"
 
-# ── 工作區佔位面板 ──
-workspace.placeholder_hint: "新增或開啟一個工程開始編輯"
-workspace.placeholder_shortcuts: "點擊標題列／選單列新增或開啟工程"
+# ── 歡迎頁 ──
+welcome.title: "歡迎"
+welcome.open_project: "開啟工程…"
+welcome.no_recent: "暫無最近工程"
 
 # ── PR 控制列（最頂部，時間標尺上方）──
 pr_bar.allow_overlap_on: "允許新重疊音符：開（點擊關閉）"

@@ -981,6 +981,29 @@ impl App {
             .load_path(path.to_string(), self.audio_settings.midi_import_encoding);
     }
 
+    /// 执行欢迎页动作（独立欢迎窗口 / 主界面无工程占位共用入口）。
+    ///
+    /// 映射到现有文件动作与最近文件逻辑，保证与菜单/走带栏入口行为一致。
+    pub(crate) fn handle_welcome_action(
+        &mut self,
+        action: crate::welcome::WelcomeAction,
+        ctx: &egui::Context,
+    ) {
+        use crate::welcome::WelcomeAction;
+        match action {
+            WelcomeAction::NewProject => {
+                self.handle_file_action(transport_bar::FileAction::NewProject, ctx);
+            }
+            WelcomeAction::OpenProject => {
+                self.handle_file_action(transport_bar::FileAction::Open, ctx);
+            }
+            WelcomeAction::OpenRecent(path) => self.open_recent_file(&path),
+            WelcomeAction::OpenSettings => {
+                self.handle_file_action(transport_bar::FileAction::Settings, ctx);
+            }
+        }
+    }
+
     /// Execute a file action immediately without checking for unsaved changes.
     fn execute_file_action(&mut self, action: transport_bar::FileAction, ctx: &egui::Context) {
         match action {

@@ -832,9 +832,10 @@ panel.pop_out: "ウィンドウとして切り離す"
 panel.dock_to_side: "サイドバーにドッキング"
 panel.no_selection: "何も選択されていません"
 
-# ワークスペースプレースホルダー
-workspace.placeholder_hint: "新規作成またはプロジェクトを開いて編集を開始"
-workspace.placeholder_shortcuts: "タイトルバー / メニューバーをクリックしてプロジェクトを新規作成または開く"
+# ── ようこそページ ──
+welcome.title: "ようこそ"
+welcome.open_project: "プロジェクトを開く…"
+welcome.no_recent: "最近のプロジェクトはありません"
 
 # PR コントロールバー
 pr_bar.allow_overlap_on: "新しい重複ノートを許可：オン（クリックでオフ）"

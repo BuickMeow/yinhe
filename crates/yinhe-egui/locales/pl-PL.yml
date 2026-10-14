@@ -787,9 +787,10 @@ file_dialog.export_mid: "export.mid"
 file_dialog.open_failed: "Nie można otworzyć \"%{name}\": może to nie być prawidłowy plik .yin lub osadzone MIDI nie zawiera ścieżki konduktora."
 file_dialog.not_found: "Nie można otworzyć \"%{name}\": plik nie istnieje lub został przeniesiony. Został usunięty z listy ostatnich plików."
 
-# ── Workspace placeholder ──
-workspace.placeholder_hint: "Utwórz lub otwórz projekt, aby rozpocząć edycję"
-workspace.placeholder_shortcuts: "Użyj menu Plik lub paska tytułu, aby utworzyć lub otworzyć projekt"
+# ── Strona powitalna ──
+welcome.title: "Witamy"
+welcome.open_project: "Otwórz projekt…"
+welcome.no_recent: "Brak ostatnich projektów"
 
 # ── PR control bar (topmost, above the time ruler) ──
 pr_bar.allow_overlap_on: "Zezwalaj na nakładające się nuty: WŁ. (kliknij, aby wyłączyć)"

@@ -787,9 +787,10 @@ file_dialog.export_mid: "export.mid"
 file_dialog.open_failed: "Nelze otevřít \"%{name}\": nemusí jít o platný soubor .yin, nebo jeho vložené MIDI postrádá stopu dirigenta."
 file_dialog.not_found: "Nelze otevřít \"%{name}\": soubor neexistuje nebo byl přesunut. Byl odebrán ze seznamu nedávných souborů."
 
-# ── Workspace placeholder ──
-workspace.placeholder_hint: "Vytvořte nebo otevřete projekt a začněte upravovat"
-workspace.placeholder_shortcuts: "Pomocí nabídky Soubor nebo záhlaví vytvořte nebo otevřete projekt"
+# ── Uvítací stránka ──
+welcome.title: "Vítejte"
+welcome.open_project: "Otevřít projekt…"
+welcome.no_recent: "Žádné nedávné projekty"
 
 # ── PR control bar (topmost, above the time ruler) ──
 pr_bar.allow_overlap_on: "Povolit překrývání not: ZAPNUTO (kliknutím zakážete)"

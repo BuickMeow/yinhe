@@ -787,9 +787,10 @@ file_dialog.export_mid: "export.mid"
 file_dialog.open_failed: "No se puede abrir \"%{name}\": puede que no sea un archivo .yin válido, o su MIDI incrustado no tenga una pista conductora."
 file_dialog.not_found: "No se puede abrir \"%{name}\": el archivo no existe o se ha movido. Se ha eliminado de la lista de archivos recientes."
 
-# ── Workspace placeholder ──
-workspace.placeholder_hint: "Crea o abre un proyecto para empezar a editar"
-workspace.placeholder_shortcuts: "Usa el menú Archivo o la barra de título para crear o abrir un proyecto"
+# ── Página de bienvenida ──
+welcome.title: "Bienvenido"
+welcome.open_project: "Abrir proyecto…"
+welcome.no_recent: "No hay proyectos recientes"
 
 # ── PR control bar (topmost, above the time ruler) ──
 pr_bar.allow_overlap_on: "Permitir notas superpuestas: SÍ (clic para desactivar)"

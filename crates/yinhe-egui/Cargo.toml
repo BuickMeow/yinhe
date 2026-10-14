@@ -32,7 +32,8 @@ serde_json = { workspace = true }
 dirs = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
-egui_extras = { workspace = true }
+# svg feature：欢迎页左下角「銀」字徽标水印渲染（egui 官方 SVG 加载器，resvg）。
+egui_extras = { workspace = true, features = ["svg"] }
 wgpu = { workspace = true }
 rfd = { workspace = true }
 #pollster = { workspace = true }

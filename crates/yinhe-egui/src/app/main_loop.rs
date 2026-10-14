@@ -106,6 +106,12 @@ impl eframe::App for App {
             return;
         }
 
+        // ── 欢迎阶段：无工程可打开时先显示独立欢迎窗口 ──
+        if self.startup.welcome {
+            self.welcome_ui(ui);
+            return;
+        }
+
         let _ui_total_start = if yinhe_memtrace::perf_probe::enabled() {
             Some(std::time::Instant::now())
         } else {

@@ -6,6 +6,7 @@ use crate::widgets::action_menu::{PopupRowSpec, popup_menu_row};
 
 const RECENT_SUBMENU_OPEN_ID: &str = "recent_files_submenu_open";
 
+/// 最近文件的显示名（仅文件名单段，路径过长时用于列表行）。
 pub(crate) fn recent_display_name(path: &str) -> &str {
     std::path::Path::new(path)
         .file_name()
@@ -14,7 +15,7 @@ pub(crate) fn recent_display_name(path: &str) -> &str {
 }
 
 /// 把 Unix 秒格式化为本地时间 `YYYY-MM-DD HH:MM`；无效值返回空串。
-fn format_opened_at(secs: i64) -> String {
+pub(crate) fn format_opened_at(secs: i64) -> String {
     chrono::DateTime::from_timestamp(secs, 0)
         .map(|dt| {
             dt.with_timezone(&chrono::Local)

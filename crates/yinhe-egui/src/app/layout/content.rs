@@ -182,55 +182,25 @@ impl App {
         self.follow_mode = follow_mode;
     }
 
-    /// 未打开工程时的占位面板：铺满背景 + 居中卡片（与 MIX 模式同思路，
-    /// 主区域始终有画面控件；否则 clear_color 为全透明，没有工程时会露出桌面）。
-    fn show_workspace_placeholder(&self, ui: &mut egui::Ui, layout: &LayoutInfo) {
+    /// 未打开工程时的占位面板：主区域显示欢迎页内容（新建 / 打开 / 最近 / 设置，
+    /// 与启动欢迎窗口共用同一实现）；新建/打开工程后自然切到编辑器。
+    /// 主区域必须有画面控件——clear_color 为全透明，没有工程时会露出桌面。
+    fn show_workspace_placeholder(&mut self, ui: &mut egui::Ui, layout: &LayoutInfo) {
         let area = layout.remaining;
+        // 主区域必须铺底（clear_color 为全透明，没有工程时会露出桌面）；
+        // 欢迎内容与启动欢迎窗口同一实现。
         ui.painter().rect_filled(area, 0.0, crate::theme::app_bg());
-
-        let card_size = egui::vec2(340.0, 150.0);
-        let card_rect = egui::Rect::from_center_size(area.center(), card_size);
-        ui.painter()
-            .rect_filled(card_rect, 10.0, crate::theme::control_bg());
-        ui.painter().rect_stroke(
-            card_rect,
-            10.0,
-            egui::Stroke::new(1.0, crate::theme::line_fg()),
-            egui::StrokeKind::Inside,
-        );
-
-        let icon = egui_material_icons::icons::ICON_MUSIC_NOTE;
-        ui.scope_builder(egui::UiBuilder::new().max_rect(card_rect), |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(16.0);
-                ui.add(
-                    egui::Label::new(
-                        icon.rich_text()
-                            .size(crate::theme::ICON_FONT_XL)
-                            .color(crate::theme::text_muted()),
-                    )
-                    .selectable(false),
-                );
-                ui.add_space(10.0);
-                ui.label(
-                    egui::RichText::new(t!("common.no_document"))
-                        .size(crate::theme::SUB_TITLE_FONT)
-                        .color(crate::theme::text_primary()),
-                );
-                ui.add_space(6.0);
-                ui.label(
-                    egui::RichText::new(t!("workspace.placeholder_hint"))
-                        .size(crate::theme::SMALL_FONT)
-                        .color(crate::theme::text_disabled()),
-                );
-                ui.add_space(10.0);
-                ui.label(
-                    egui::RichText::new(t!("workspace.placeholder_shortcuts"))
-                        .size(crate::theme::SMALL_LABEL_FONT)
-                        .color(crate::theme::text_label()),
-                );
-            });
-        });
+        let action = {
+            let recent = &self.audio_settings.recent_files;
+            let times = &self.audio_settings.recent_file_times;
+            ui.scope_builder(egui::UiBuilder::new().max_rect(area), |ui| {
+                crate::welcome::welcome_content(ui, recent, times)
+            })
+            .inner
+        };
+        if let Some(action) = action {
+            self.handle_welcome_action(action, ui.ctx());
+        }
     }
     ///
     /// 每帧渲染前检查各视图的选框数量与共享选区状态：

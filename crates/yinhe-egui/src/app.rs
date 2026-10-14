@@ -278,6 +278,8 @@ impl App {
         } else {
             egui::ThemePreference::Light
         });
+        // 图片加载器（欢迎页「銀」字徽标水印用 SVG；幂等，重复调用无副作用）。
+        egui_extras::install_image_loaders(&cc.egui_ctx);
         // UI 缩放 / 字体（DPI + 字体大小，appearance 分类，独立比例）
         crate::scaling::apply_ui_scale(&cc.egui_ctx, audio_settings.ui_scale);
         crate::scaling::apply_font_scale(&cc.egui_ctx, audio_settings.font_scale);
@@ -300,10 +302,12 @@ impl App {
 
             controller_renderers: Vec::new(),
 
-            workspace: yinhe_editor_core::workspace::Workspace::default(),
+            // 启动不预置空白工程：无文档状态由欢迎页承接（用户显式新建才创建）。
+            workspace: yinhe_editor_core::workspace::Workspace::empty(),
             mix: crate::mix::MixUiState::default(),
-            mixer_racks: vec![crate::mix::MixerRack::default()],
-            instrument_racks: vec![crate::mix::InstrumentRack::default()],
+            // 与 workspace.documents 平行，初始同样为空（新建/打开时同步 push）。
+            mixer_racks: Vec::new(),
+            instrument_racks: Vec::new(),
 
             transport_panel_width: audio_settings.layout.transport_panel_width,
             startup: startup::StartupState::new(),
@@ -465,7 +469,7 @@ impl App {
 
     /// 判断打开 MIDI/.yin 时是否应替换当前标签页而非另开一个。
     /// 已下沉至 `yinhe-editor-core::workspace`，此处薄壳代理保持调用方不变。
-    fn should_replace_initial_untitled(&self) -> bool {
+    pub(crate) fn should_replace_initial_untitled(&self) -> bool {
         self.workspace.should_replace_initial_untitled()
     }
 
@@ -482,7 +486,7 @@ impl App {
     /// 新建空白工程（Document::empty）并切换为活跃标签页。
     /// `execute_file_action::NewProject` 与 `execute_pending_file_action::NewProject`
     /// 共用此实现，避免两处重复 push + setup 代码。
-    fn new_project(&mut self) {
+    pub(crate) fn new_project(&mut self) {
         let mut doc = Document::empty();
         self.apply_saved_pr_orientation(&mut doc);
         doc.sync_track_caches_with_conductor_color(crate::theme::conductor_color_f32());
