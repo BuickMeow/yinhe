@@ -34,8 +34,7 @@ timecode.keysig_dialog_title: "Key Signature"
 timecode.keysig_name: "Name"
 timecode.override: "Anzeige überschreiben"
 timecode.use_events: "Projektereignisse"
-hint.orientation.horizontal: "Klavierrolle: horizontal"
-hint.orientation.vertical: "Klavierrolle: vertikaler Wasserfall"
+hint.orientation.toggle: "Klavierrollen-Richtung umschalten (horizontal ↔ vertikaler Wasserfall)"
 hint.track: "Spur %{n}"
 hint.sel_notes: "Auswahl %{n} Noten %{span}"
 hint.sel_events: "Auswahl %{n} Ereignisse %{span}"
@@ -792,7 +791,6 @@ file_dialog.not_found: "Kann \"%{name}\" nicht öffnen: Die Datei existiert nich
 welcome.title: "Willkommen"
 welcome.open_project: "Projekt öffnen…"
 welcome.no_recent: "Keine zuletzt geöffneten Projekte"
-welcome.back: "Zurück zum Editor"
 
 # ── 关于窗口 ──
 about.author: "Autor: 节能降耗"

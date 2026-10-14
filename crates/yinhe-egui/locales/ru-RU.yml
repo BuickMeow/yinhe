@@ -34,8 +34,7 @@ timecode.keysig_dialog_title: "Key Signature"
 timecode.keysig_name: "Name"
 timecode.override: "Переопределить отображение"
 timecode.use_events: "События проекта"
-hint.orientation.horizontal: "Пиано-ролл: горизонтальный"
-hint.orientation.vertical: "Пиано-ролл: вертикальный водопад"
+hint.orientation.toggle: "Переключить направление пиано-ролла (горизонтально ↔ вертикальный водопад)"
 hint.track: "Дорожка %{n}"
 hint.sel_notes: "Выделено %{n} нот %{span}"
 hint.sel_events: "Выделено %{n} событий %{span}"
@@ -792,7 +791,6 @@ file_dialog.not_found: "Не удаётся открыть \"%{name}\": файл
 welcome.title: "Добро пожаловать"
 welcome.open_project: "Открыть проект…"
 welcome.no_recent: "Нет недавних проектов"
-welcome.back: "Вернуться в редактор"
 
 # ── 关于窗口 ──
 about.author: "Автор: 节能降耗"

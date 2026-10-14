@@ -34,8 +34,7 @@ timecode.keysig_dialog_title: "Key Signature"
 timecode.keysig_name: "Name"
 timecode.override: "Přepsat zobrazení"
 timecode.use_events: "Události projektu"
-hint.orientation.horizontal: "Klavírní válec: vodorovně"
-hint.orientation.vertical: "Klavírní válec: svislý vodopád"
+hint.orientation.toggle: "Přepnout směr piano rollu (vodorovně ↔ svislý vodopád)"
 hint.track: "Stopa %{n}"
 hint.sel_notes: "Výběr %{n} not %{span}"
 hint.sel_events: "Výběr %{n} událostí %{span}"
@@ -792,7 +791,6 @@ file_dialog.not_found: "Nelze otevřít \"%{name}\": soubor neexistuje nebo byl 
 welcome.title: "Vítejte"
 welcome.open_project: "Otevřít projekt…"
 welcome.no_recent: "Žádné nedávné projekty"
-welcome.back: "Zpět do editoru"
 
 # ── 关于窗口 ──
 about.author: "Autor: 节能降耗"

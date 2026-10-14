@@ -34,8 +34,7 @@ timecode.keysig_dialog_title: "調式"
 timecode.keysig_name: "名稱"
 timecode.override: "覆蓋顯示"
 timecode.use_events: "工程事件"
-hint.orientation.horizontal: "鋼琴卷簾：橫向"
-hint.orientation.vertical: "鋼琴卷簾：縱向瀑布流"
+hint.orientation.toggle: "切換鋼琴卷簾方向（橫向 ↔ 縱向瀑布流）"
 hint.track: "音軌 %{n}"
 hint.sel_notes: "選框 %{n}音符 %{span}"
 hint.sel_events: "選框 %{n}事件 %{span}"
@@ -834,7 +833,6 @@ dialog.new_track.full: "256 個 MIDI 通道（A1–P16）已全部佔用，無�
 welcome.title: "歡迎"
 welcome.open_project: "開啟工程…"
 welcome.no_recent: "暫無最近工程"
-welcome.back: "返回編輯器"
 
 # ── 关于窗口 ──
 about.author: "作者：節能降耗"

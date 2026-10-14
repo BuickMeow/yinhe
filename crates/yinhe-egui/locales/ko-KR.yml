@@ -34,8 +34,7 @@ timecode.keysig_dialog_title: "조표"
 timecode.keysig_name: "이름"
 timecode.override: "오버라이드 표시"
 timecode.use_events: "프로젝트 이벤트"
-hint.orientation.horizontal: "피아노 롤: 가로"
-hint.orientation.vertical: "피아노 롤: 세로 폭포형"
+hint.orientation.toggle: "피아노 롤 방향 전환(가로 ↔ 세로 폭포수)"
 hint.track: "트랙 %{n}"
 hint.sel_notes: "선택 %{n}음표 %{span}"
 hint.sel_events: "선택 %{n}이벤트 %{span}"
@@ -836,7 +835,6 @@ dialog.new_track.full: "256개 MIDI 채널(A1–P16)이 모두 사용 중이라 
 welcome.title: "환영합니다"
 welcome.open_project: "프로젝트 열기…"
 welcome.no_recent: "최근 프로젝트가 없습니다"
-welcome.back: "편집기로 돌아가기"
 
 # ── 关于窗口 ──
 about.author: "제작자: 节能降耗"

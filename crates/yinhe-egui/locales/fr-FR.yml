@@ -34,8 +34,7 @@ timecode.keysig_dialog_title: "Key Signature"
 timecode.keysig_name: "Name"
 timecode.override: "Forcer l'affichage"
 timecode.use_events: "Événements du projet"
-hint.orientation.horizontal: "Piano roll : horizontal"
-hint.orientation.vertical: "Piano roll : cascade verticale"
+hint.orientation.toggle: "Basculer la direction du piano roll (horizontal ↔ cascade verticale)"
 hint.track: "Piste %{n}"
 hint.sel_notes: "Sélection %{n} notes %{span}"
 hint.sel_events: "Sélection %{n} événements %{span}"
@@ -792,7 +791,6 @@ file_dialog.not_found: "Impossible d'ouvrir \"%{name}\" : le fichier n'existe pa
 welcome.title: "Bienvenue"
 welcome.open_project: "Ouvrir un projet…"
 welcome.no_recent: "Aucun projet récent"
-welcome.back: "Retour à l'éditeur"
 
 # ── 关于窗口 ──
 about.author: "Auteur : 节能降耗"

@@ -34,8 +34,7 @@ timecode.keysig_dialog_title: "Key Signature"
 timecode.keysig_name: "Name"
 timecode.override: "Görünümü geçersiz kıl"
 timecode.use_events: "Proje olayları"
-hint.orientation.horizontal: "Piano roll: yatay"
-hint.orientation.vertical: "Piano roll: dikey şelale"
+hint.orientation.toggle: "Piyano rulo yönünü değiştir (yatay ↔ dikey şelale)"
 hint.track: "Parça %{n}"
 hint.sel_notes: "Seçim %{n} nota %{span}"
 hint.sel_events: "Seçim %{n} olay %{span}"
@@ -792,7 +791,6 @@ file_dialog.not_found: "\"%{name}\" açılamıyor: dosya mevcut değil veya taş
 welcome.title: "Hoş geldiniz"
 welcome.open_project: "Proje Aç…"
 welcome.no_recent: "Son proje yok"
-welcome.back: "Düzenleyiciye Dön"
 
 # ── 关于窗口 ──
 about.author: "Yazar: 节能降耗"

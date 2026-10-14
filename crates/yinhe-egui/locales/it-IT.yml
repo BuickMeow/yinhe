@@ -34,8 +34,7 @@ timecode.keysig_dialog_title: "Key Signature"
 timecode.keysig_name: "Name"
 timecode.override: "Sovrascrivi visualizzazione"
 timecode.use_events: "Eventi del progetto"
-hint.orientation.horizontal: "Piano roll: orizzontale"
-hint.orientation.vertical: "Piano roll: cascata verticale"
+hint.orientation.toggle: "Cambia la direzione del piano roll (orizzontale ↔ cascata verticale)"
 hint.track: "Traccia %{n}"
 hint.sel_notes: "Selezione %{n} note %{span}"
 hint.sel_events: "Selezione %{n} eventi %{span}"
@@ -792,7 +791,6 @@ file_dialog.not_found: "Impossibile aprire \"%{name}\": il file non esiste o è 
 welcome.title: "Benvenuto"
 welcome.open_project: "Apri progetto…"
 welcome.no_recent: "Nessun progetto recente"
-welcome.back: "Torna all'editor"
 
 # ── 关于窗口 ──
 about.author: "Autore: 节能降耗"
