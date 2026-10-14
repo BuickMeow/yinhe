@@ -39,6 +39,7 @@ pub struct InstanceRenderer {
     cached_uniforms: Option<Uniforms>,
     cached_track_colors: Option<Vec<[f32; 4]>>,
     cached_track_offsets: Option<Vec<f32>>,
+    cached_row_heights: Option<Vec<f32>>,
     cached_selection: Option<SelectionUniform>,
     /// 排除表上传去重缓存。
     cached_exclude: Option<Vec<[u32; 2]>>,
@@ -117,6 +118,7 @@ impl InstanceRenderer {
                 cached_uniforms: None,
                 cached_track_colors: None,
                 cached_track_offsets: None,
+                cached_row_heights: None,
                 cached_selection: None,
                 cached_exclude: None,
                 layers: Vec::new(),
@@ -213,6 +215,39 @@ impl InstanceRenderer {
         self.render.rebuild_bind_group(&self.device);
         // Invalidate cache to force re-upload with the new buffer.
         self.cached_track_offsets = None;
+    }
+
+    /// Upload AR 每行行高表（通道 AR 的展开合并行变窄依赖它）。Skips the write when unchanged.
+    pub fn upload_row_heights(&mut self, heights: &[f32]) {
+        self.ensure_row_heights_capacity(heights.len());
+        if self.cached_row_heights.as_deref() != Some(heights) {
+            let bytes = bytemuck::cast_slice(heights);
+            self.queue
+                .write_buffer(&self.render.row_heights_buffer, 0, bytes);
+            self.cached_row_heights = Some(heights.to_vec());
+        }
+    }
+
+    /// Grow the row_heights storage buffer when count exceeds current capacity.
+    fn ensure_row_heights_capacity(&mut self, count: usize) {
+        if count <= self.render.row_heights_capacity as usize {
+            return;
+        }
+        let new_capacity = count.max(4) as u32;
+        let new_size = new_capacity as u64 * 4;
+        let new_buffer = TrackedBuffer::new(
+            &self.device,
+            &BufferDescriptor {
+                label: Some("row_heights"),
+                size: new_size,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
+        self.render.row_heights_buffer = new_buffer;
+        self.render.row_heights_capacity = new_capacity;
+        self.render.rebuild_bind_group(&self.device);
+        self.cached_row_heights = None;
     }
 
     /// Upload selection rects to the GPU.  Skips the write when the value is unchanged.

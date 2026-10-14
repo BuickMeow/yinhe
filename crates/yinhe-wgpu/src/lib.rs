@@ -25,7 +25,10 @@ pub use vertex::{
 pub use yinhe_theme::GpuTheme;
 
 // Re-export types that were previously provided by the separate crates
-pub use arrangement::{build_ghost_notes, build_notes as build_arr_notes};
+pub use arrangement::{
+    build_channel_ghost_notes, build_channel_notes, build_ghost_notes,
+    build_notes as build_arr_notes,
+};
 pub use automation::{
     ArrAutomationLane, AutomationGhost, VelocityBlock, VelocitySummary, build_lane_multi_copy,
     build_lane_multi_move, build_lane_override, build_lane_shape_override, prepare_arr_automation,

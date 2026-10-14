@@ -10,6 +10,7 @@ static GLOBAL_ALLOC: TaggedAlloc = TaggedAlloc;
 mod app;
 mod arrange;
 mod audio_settings;
+mod channel_arrange;
 mod chrome;
 mod dialogs;
 mod file_loader;

@@ -83,6 +83,12 @@ impl Document {
         }
         // AR 选框：全范围单矩形（含 conductor track），供 AR 视图绘制。
         self.edit.arr_sel_rect = vec![(0.0, (max_end + 1) as f64, 0, num_tracks as usize - 1)];
+        // 通道 AR 选框：全范围 + 全部非 Conductor 轨道。
+        self.edit.chan_ar_sel = vec![crate::edit_state::ChanSelRect {
+            t_start: 0.0,
+            t_end: (max_end + 1) as f64,
+            tracks: (0..num_tracks).filter(|&t| Some(t) != conductor).collect(),
+        }];
     }
 
     /// Paste notes from the clipboard snapshot.

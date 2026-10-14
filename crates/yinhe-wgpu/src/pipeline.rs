@@ -37,6 +37,12 @@ pub struct RenderPipelineState {
     pub track_offsets_buffer: TrackedBuffer,
     /// Current capacity (in f32 entries) of `track_offsets_buffer`.
     pub track_offsets_capacity: u32,
+    /// AR 模式下每行的行高表（f32 数组，shader binding 5）。
+    /// 轨道 AR 上传全 `lane_height`；通道 AR 上传每行实际行高（展开的
+    /// 通道合并行变窄），shader 按行高压缩音符 key 空间。
+    pub row_heights_buffer: TrackedBuffer,
+    /// Current capacity (in f32 entries) of `row_heights_buffer`.
+    pub row_heights_capacity: u32,
     pub selection_buffer: TrackedBuffer,
     /// 选中高亮排除表（成员态「矩形内非成员」键，`array<vec2<u32>>`，binding 4）。
     pub exclude_buffer: TrackedBuffer,
@@ -90,6 +96,19 @@ impl RenderPipelineState {
             &BufferDescriptor {
                 label: Some("track_offsets"),
                 size: track_offsets_size,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
+
+        // Row heights buffer（AR 每行行高；通道 AR 的窄合并行依赖它）——
+        // 初始 4 个 f32（16B），随行数按需增长，见 renderer.rs
+        // ensure_row_heights_capacity。
+        let row_heights_buffer = TrackedBuffer::new(
+            device,
+            &BufferDescriptor {
+                label: Some("row_heights"),
+                size: 16, // 4 × f32
                 usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             },
@@ -172,6 +191,16 @@ impl RenderPipelineState {
                     },
                     count: None,
                 },
+                BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: ShaderStages::VERTEX,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -198,6 +227,10 @@ impl RenderPipelineState {
                 BindGroupEntry {
                     binding: 4,
                     resource: exclude_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: row_heights_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -492,6 +525,8 @@ impl RenderPipelineState {
             track_colors_capacity: 1,
             track_offsets_buffer,
             track_offsets_capacity: 4,
+            row_heights_buffer,
+            row_heights_capacity: 4,
             selection_buffer,
             exclude_buffer,
             exclude_capacity,
@@ -526,6 +561,10 @@ impl RenderPipelineState {
                 BindGroupEntry {
                     binding: 4,
                     resource: self.exclude_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: self.row_heights_buffer.as_entire_binding(),
                 },
             ],
         });

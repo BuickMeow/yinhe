@@ -47,6 +47,11 @@ var<storage> tc: array<vec4<f32>>;
 @group(0) @binding(3)
 var<storage, read> track_offsets: array<f32>;
 
+// Row heights（通道 AR）：每个「行 id」的实际行高。轨道 AR 全行 = lane_height，
+// 通道 AR 展开的通道合并行变窄为半高，音符 key 空间随之压缩。PR 不使用。
+@group(0) @binding(5)
+var<storage, read> row_heights: array<f32>;
+
 struct SelectionUniform {
     rects: array<vec4<u32>, MAX_SEL_RECTS * 2u>, // 2 vec4 per rect: (tick_start, tick_end, key_lo, key_hi) + (track_lo, track_hi, 0, 0)
 }
@@ -371,7 +376,10 @@ fn note_geometry(
             pixel_h = u.key_height;
         } else {
             // AR (mode == 2u): lane_height based vertical layout
-            let lh = u.lane_height;
+            // 行高 per-row（通道 AR 的窄合并行）：`row_heights[track]`；
+            // 轨道 AR 由 CPU 上传全 lane_height，行为不变。
+            let row_idx = min(track, arrayLength(&row_heights) - 1u);
+            let lh = row_heights[row_idx];
             let lh_per_key = lh / 128.0;
             let track_y = track_offsets[min(track, arrayLength(&track_offsets) - 1u)];
             pixel_y = -u.scroll_y + track_y + lh - (f32(key) + 1.0) * lh_per_key;

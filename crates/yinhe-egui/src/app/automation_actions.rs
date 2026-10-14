@@ -703,6 +703,7 @@ impl App {
             actions.push(a);
         }
         doc.edit.arr_sel_rect.clear();
+        doc.edit.chan_ar_sel.clear();
         if actions.is_empty() {
             doc.edit.selected.clear();
             return;
@@ -743,6 +744,10 @@ impl App {
             for r in &mut doc.edit.arr_sel_rect {
                 r.0 += delta as f64;
                 r.1 += delta as f64;
+            }
+            for r in &mut doc.edit.chan_ar_sel {
+                r.t_start += delta as f64;
+                r.t_end += delta as f64;
             }
             doc.edit.pianoroll_view.base.dirty = true;
             crate::right_panel::automation_undo::push_automation_actions(

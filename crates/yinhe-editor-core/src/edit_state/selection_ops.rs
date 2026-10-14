@@ -32,6 +32,10 @@ impl EditState {
             r.0 += dt as f64;
             r.1 += dt as f64;
         }
+        for r in &mut self.chan_ar_sel {
+            r.t_start += dt as f64;
+            r.t_end += dt as f64;
+        }
     }
 
     /// 音符选框整体 key 平移，同步更新 auto_vertical 标记
@@ -62,6 +66,9 @@ impl EditState {
         }
         for r in &mut self.arr_sel_rect {
             r.1 = (r.1 + dt as f64).max(r.0 + 1.0);
+        }
+        for r in &mut self.chan_ar_sel {
+            r.t_end = (r.t_end + dt as f64).max(r.t_start + 1.0);
         }
         for r in &mut self.selected.rects {
             let new_te = (r.1 as i64 + dt).max(r.0 as i64 + 1) as u32;
@@ -107,6 +114,13 @@ impl EditState {
             scale_rect(&mut ts, &mut te);
             r.0 = ts as f64;
             r.1 = te as f64;
+        }
+        for r in &mut self.chan_ar_sel {
+            let mut ts = r.t_start as u64;
+            let mut te = r.t_end as u64;
+            scale_rect(&mut ts, &mut te);
+            r.t_start = ts as f64;
+            r.t_end = te as f64;
         }
     }
 

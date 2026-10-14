@@ -21,6 +21,19 @@ pub struct AnchorLine {
     pub end: (f64, u8),
 }
 
+/// 通道 AR（MIX 主区域）的选框条目：tick 范围 + 轨道集合。
+///
+/// 与 `arr_sel_rect` 的区别：通道 AR 以「通道 → 轨道行」组织，一个通道的
+/// 轨道索引可能不连续，无法用 `(track_lo, track_hi)` 连续范围表达；因此
+/// 选框直接携带轨道集合。框选在「行空间」进行，提交时按行 → 轨道归纳。
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChanSelRect {
+    pub t_start: f64,
+    pub t_end: f64,
+    /// 选中的轨道索引集合（升序、去重）。
+    pub tracks: Vec<u16>,
+}
+
 /// 轨道相关派生缓存的聚合容器。
 ///
 /// 全部字段都是权威数据（`ProjectData` / `YinModel`）的派生视图，可安全重建；
@@ -121,6 +134,8 @@ pub struct EditState {
     /// 剪刀工具待确认的锚点线（✓ 切割后清空）。
     pub scissors_line: Option<AnchorLine>,
     pub arr_sel_rect: Vec<(f64, f64, usize, usize)>,
+    /// 通道 AR（MIX 主区域）的行空间选框。会话态，不落盘。
+    pub chan_ar_sel: Vec<ChanSelRect>,
     pub recent_velocity: Vec<Option<(u32, u8)>>,
     pub recent_gate: Vec<Option<(u32, u32)>>,
     pub arr_am_expanded: Vec<bool>,
@@ -134,6 +149,13 @@ pub struct EditState {
     pub pianoroll_view: yinhe_types::PianoRollView,
     /// AR 工程走带视口（滚动/缩放），每文档独立，不落盘。
     pub arrange_view: yinhe_types::ArrangementView,
+    /// 通道 AR（MIX 主区域）视口（滚动/缩放/行高），每文档独立，不落盘。
+    pub chan_ar_view: yinhe_types::ArrangementView,
+    /// 通道 AR：MIDI 通道展开状态（按 global channel 0..=255 索引）。
+    /// 展开 = 通道行下方平铺该通道的轨道行与自动化行。
+    pub chan_ar_expanded_midi: Vec<bool>,
+    /// 通道 AR：音频通道展开状态（按 audio_channel 索引）。
+    pub chan_ar_expanded_audio: Vec<bool>,
     /// 调式覆盖显示（时间码第三列）：Some 时优先于工程 key_sig 事件。
     /// 仅覆盖显示，不改工程数据；不落盘。
     pub key_sig_override: Option<(u8, yinhe_types::ScaleType)>,
@@ -169,6 +191,7 @@ impl Default for EditState {
             pen_path: None,
             scissors_line: None,
             arr_sel_rect: Vec::new(),
+            chan_ar_sel: Vec::new(),
             recent_velocity: Vec::new(),
             recent_gate: Vec::new(),
             arr_am_expanded: Vec::new(),
@@ -178,6 +201,9 @@ impl Default for EditState {
             selected_audio_clips: HashSet::new(),
             pianoroll_view: yinhe_types::PianoRollView::default(),
             arrange_view: yinhe_types::ArrangementView::default(),
+            chan_ar_view: yinhe_types::ArrangementView::default(),
+            chan_ar_expanded_midi: Vec::new(),
+            chan_ar_expanded_audio: Vec::new(),
             key_sig_override: None,
             key_sig_use_events: true,
         }

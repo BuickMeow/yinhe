@@ -210,6 +210,8 @@ pub fn show(
         (((scroll_y + h as f32) / lh).ceil().max(0.0) as usize).min(row_layout.total_rows());
     let track_range = row_layout.visible_track_range(scroll_y, h as f32, lh);
     renderer.upload_track_offsets(&row_layout.track_offsets(lh));
+    // 轨道 AR 每行均为全行高：上传全 lane_height，shader 行为与 row_heights 引入前一致。
+    renderer.upload_row_heights(&vec![lh; row_layout.total_rows()]);
     let offsets_hash = row_layout.track_offsets(lh).iter().fold(0u64, |acc, &o| {
         acc.wrapping_mul(0x9e3779b97f4a7c15)
             .wrapping_add(o.to_bits() as u64)

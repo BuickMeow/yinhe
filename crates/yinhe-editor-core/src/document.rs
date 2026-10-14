@@ -314,6 +314,7 @@ impl Document {
             track_selected: self.edit.track_selected.clone(),
             sel_rect: self.edit.sel_rect.clone(),
             arr_sel_rect: self.edit.arr_sel_rect.clone(),
+            chan_ar_sel: self.edit.chan_ar_sel.clone(),
             anchor_sel_rects: self
                 .edit
                 .controller_panels
@@ -346,6 +347,7 @@ impl Document {
         edit.track_selected = snapshot.track_selected.clone();
         edit.sel_rect = snapshot.sel_rect.clone();
         edit.arr_sel_rect = snapshot.arr_sel_rect.clone();
+        edit.chan_ar_sel = snapshot.chan_ar_sel.clone();
         for (i, panel) in edit.controller_panels.iter_mut().enumerate() {
             if let Some(rects) = snapshot.anchor_sel_rects.get(i) {
                 panel.anchor_sel_rects = rects.clone();

@@ -22,6 +22,8 @@ pub struct EditSnapshot {
     pub sel_rect: SelRectState,
     /// AR 选框（f64 tick + usize track）。
     pub arr_sel_rect: Vec<(f64, f64, usize, usize)>,
+    /// 通道 AR 选框（tick 范围 + 轨道集合）。
+    pub chan_ar_sel: Vec<crate::edit_state::ChanSelRect>,
     /// 每面板的 AM 选框（controller_panels 顺序）。
     pub anchor_sel_rects: Vec<Vec<AnchorSelRect>>,
     /// 每面板的 AM 锚点成员位图（与 `anchor_sel_rects` 对齐；None = 矩形态）。
