@@ -22,6 +22,10 @@ use yinhe_types::{NOTE_NAMES, ScaleType};
 /// 时间码控件宽度（四列：BPM/拍号+PPQ、位置/时间、量化/调式、电平表）。
 pub const TIMECODE_WIDTH: f32 = 276.0;
 
+/// 时间码灰块与相邻控件的保底间距（左右两侧；见 `show_timecode_display` 占位
+/// 与 `chrome::transport_bar` 灰块后的 add_space）。
+pub const MIN_SIDE_GAP: f32 = 24.0;
+
 /// 四列宽度（内容宽，灰底外框与内容同宽）。
 const COL_WIDTHS: [f32; 4] = [78.0, 92.0, 82.0, 24.0];
 /// 控件高度（上下两行各 18）。
@@ -190,11 +194,12 @@ pub fn show_timecode_display(
     let ppq_str = ppq.to_string();
     let key = current_key_sig(doc);
 
-    // 居中占位（与旧两列实现一致：时间码把本栏分成左右两半）
+    // 居中占位（与旧两列实现一致：时间码把本栏分成左右两半）。
+    // 保底 `MIN_SIDE_GAP`：窗口窄/左侧控件多时，灰块与左邻之间也留出间距。
     let bar_cx = ui.max_rect().center().x;
     let cursor_x = ui.cursor().min.x;
     let rect_l = bar_cx - TIMECODE_WIDTH * 0.5;
-    let pad = (rect_l - cursor_x).max(0.0);
+    let pad = (rect_l - cursor_x).max(MIN_SIDE_GAP);
     ui.add_space(pad);
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(TIMECODE_WIDTH, RECT_H), egui::Sense::hover());

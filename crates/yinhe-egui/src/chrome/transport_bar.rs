@@ -195,18 +195,20 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                         let restore = (tc_rect.max.x - ui.cursor().min.x).max(0.0);
                         ui.add_space(restore);
                     }
-                    ui.add_space(4.0);
 
                     // ── 选择动作按钮（timecode 右侧、左起）：常驻显示，框选后才可用 ──
-                    if ctx.pr.is_some()
-                        && let Some(action) =
+                    // 与灰块之间留出保底间距（外框外的边距）。
+                    if ctx.pr.is_some() {
+                        ui.add_space(crate::widgets::timecode::MIN_SIDE_GAP);
+                        if let Some(action) =
                             crate::widgets::selection_actions::show_transport_buttons(
                                 ui,
                                 ctx.selection_available,
                                 &mut hovered_hint,
                             )
-                    {
-                        selection_action = Some(action);
+                        {
+                            selection_action = Some(action);
+                        }
                     }
 
                     if let Some(pr) = ctx.pr.as_ref() {
