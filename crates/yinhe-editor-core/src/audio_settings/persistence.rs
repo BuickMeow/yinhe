@@ -27,8 +27,13 @@ impl AudioSettings {
                         }
                         s.ui_scale = s.ui_scale.clamp(0.75, 2.0);
                         s.font_scale = s.font_scale.clamp(0.75, 2.0);
-                        if s.pinned_edit_actions.len() < 12 {
-                            s.pinned_edit_actions.resize(12, false);
+                        if s.pinned_file_actions.len() < super::PINNED_FILE_ACTIONS_LEN {
+                            s.pinned_file_actions
+                                .resize(super::PINNED_FILE_ACTIONS_LEN, false);
+                        }
+                        if s.pinned_edit_actions.len() < super::PINNED_EDIT_ACTIONS_LEN {
+                            s.pinned_edit_actions
+                                .resize(super::PINNED_EDIT_ACTIONS_LEN, false);
                         }
                         let before_len = s.recent_files.len();
                         s.recent_files

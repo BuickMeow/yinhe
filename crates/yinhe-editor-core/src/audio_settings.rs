@@ -18,6 +18,13 @@ pub use ui_session::SettingsUiSession;
 /// "最近修改的文件"列表上限
 pub const RECENT_FILES_LIMIT: usize = 10;
 
+/// 文件菜单图钉数组长度：必须与 egui 层 `FileAction::ALL.len()` 保持一致
+/// （egui 层的 `pinned_arrays_cover_all_actions` 测试防漏改；
+/// 旧配置加载时自动扩容，见 `persistence::load`）。
+pub const PINNED_FILE_ACTIONS_LEN: usize = 13;
+/// 编辑菜单图钉数组长度：必须与 `EditAction::ALL.len()` 保持一致。
+pub const PINNED_EDIT_ACTIONS_LEN: usize = 17;
+
 fn default_toast_collapse_secs() -> f32 {
     5.0
 }
@@ -213,8 +220,8 @@ impl Default for AudioSettings {
             auto_save_interval_secs: default_auto_save_interval_secs(),
             layout: LayoutSettings::default(),
             keybindings: Keybindings::default(),
-            pinned_file_actions: vec![false; 10],
-            pinned_edit_actions: vec![false; 16],
+            pinned_file_actions: vec![false; PINNED_FILE_ACTIONS_LEN],
+            pinned_edit_actions: vec![false; PINNED_EDIT_ACTIONS_LEN],
             pinned_play_pause: false,
             pinned_stop: false,
             pinned_record: false,
