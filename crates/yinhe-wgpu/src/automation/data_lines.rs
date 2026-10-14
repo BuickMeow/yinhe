@@ -18,6 +18,10 @@ const CTRL_HANDLE_ALPHA: f32 = 0.5;
 pub(crate) const LINE_ALPHA: f32 = 0.85;
 /// 折叠预览曲线的不透明度：比展开时更淡，避免压过音符。
 pub(crate) const FOLDED_ALPHA: f32 = 0.35;
+/// 自动化表（值柱条）的不透明度：比折线淡，先于折线绘制被其覆盖。
+const BAR_ALPHA: f32 = 0.30;
+/// 柱条水平采样间隔（px）。
+const BAR_STEP_PX: f32 = 2.0;
 
 /// 一个需要绘制的线段（panel 局部像素坐标）。
 ///
@@ -178,6 +182,48 @@ fn lane_rgb(lane: &AutomationLane, track_color: &[[f32; 4]]) -> [f32; 3] {
     [c[0], c[1], c[2]]
 }
 
+/// 自动化表：在可见范围内按固定像素间隔采样 lane 值，画「基线 → 值」的
+/// 竖线柱。基线由 [`AutomationTarget::bar_baseline`] 决定：
+/// 一般参数底部起（0.0），声像/弯音/调音类中部起（0.5）。
+///
+/// 实例先于折线 push，绘制顺序保证折线覆盖柱条。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
+fn push_value_bars(
+    out: &mut Vec<CurveInstance>,
+    w: f32,
+    view: &AutomationPanelView,
+    lane: &AutomationLane,
+    max_val: f32,
+    x_offset: f32,
+    grid_left_x: f32,
+    color: [f32; 3],
+) {
+    let ppu = view.base.pixels_per_tick;
+    if ppu <= 0.0 || w <= grid_left_x || lane.events.is_empty() {
+        return;
+    }
+    let baseline = lane.target.bar_baseline();
+    let y_base = view.value_to_y(baseline, max_val);
+    let bar_color = [color[0], color[1], color[2], BAR_ALPHA];
+    let mut x = grid_left_x;
+    while x <= w {
+        let tick = ((x - x_offset) / ppu).max(0.0) as u32;
+        // 第一个事件之前没有值（value_at = None），不画柱。
+        if let Some((v, _)) = lane.value_at(tick) {
+            let y_v = view.value_to_y(v, max_val);
+            out.push(CurveInstance::line(
+                x,
+                y_base,
+                x,
+                y_v,
+                LINE_THICKNESS,
+                bar_color,
+            ));
+        }
+        x += BAR_STEP_PX;
+    }
+}
+
 /// Build data line instances (layer 1, curve pipeline).
 ///
 /// 渲染每条 lane 的线段和锚点。被 ghost 覆盖的 lane 由调用方通过 `skip_lane`
@@ -226,6 +272,9 @@ pub fn build_data_lines(
             continue;
         }
         let color = lane_rgb(lane, track_color); // 曲线用 RGB，alpha 由 CurveInstance 打包时固定
+
+        // 自动化表（值柱条）：先画柱，折线随后覆盖其上。
+        push_value_bars(out, w, view, lane, max_val, x_offset, grid_left_x, color);
 
         // 收集并绘制所有段
         let segs = collect_segments(
@@ -668,6 +717,87 @@ mod tests {
         let (_, _, _, a) = unpack_rgba(expanded[0].rgba_packed);
         assert!(a > FOLDED_ALPHA + 0.1, "展开 alpha 应显著更不透明");
         const { assert!(FOLDED_ALPHA < 0.5, "折叠预览必须足够淡，避免压过音符") };
+    }
+
+    /// 自动化表：基线按 target 决定（Pan 中部起、普通 CC 底部起），
+    /// 值柱从基线画到值；首个事件之前的区间不画柱。
+    #[test]
+    fn value_bars_use_target_baseline() {
+        let view = {
+            let mut v = AutomationPanelView {
+                show_velocity: false,
+                panel_height: 100.0,
+                ..Default::default()
+            };
+            v.base.pixels_per_tick = 1.0;
+            v.base.left_panel_width = 0.0;
+            v
+        };
+        let make_lane = |target: AutomationTarget| AutomationLane {
+            target,
+            track: 0,
+            events: vec![AutomationEvent {
+                id: 0,
+                tick: 0,
+                value: 1.0,
+                shape: SegmentShape::Step,
+            }],
+        };
+
+        // 普通 CC：底部基线（0.0）→ 柱从底部到顶部。
+        let mut bottom = Vec::new();
+        push_value_bars(
+            &mut bottom,
+            100.0,
+            &view,
+            &make_lane(AutomationTarget::CC { controller: 1 }),
+            1.0,
+            0.0,
+            0.0,
+            [1.0, 0.0, 0.0],
+        );
+        assert!(!bottom.is_empty(), "应有柱条实例");
+        assert_eq!(bottom[0].y1, 100.0, "底部基线");
+        assert_eq!(bottom[0].y2, 0.0, "值 1.0 到顶");
+
+        // Pan（CC10）：中部基线（0.5）→ 柱从中部到顶部。
+        let mut mid = Vec::new();
+        push_value_bars(
+            &mut mid,
+            100.0,
+            &view,
+            &make_lane(AutomationTarget::CC { controller: 10 }),
+            1.0,
+            0.0,
+            0.0,
+            [1.0, 0.0, 0.0],
+        );
+        assert_eq!(mid[0].y1, 50.0, "中部基线");
+        assert_eq!(mid[0].y2, 0.0);
+
+        // 第一个事件之前不画柱。
+        let lane = AutomationLane {
+            target: AutomationTarget::CC { controller: 1 },
+            track: 0,
+            events: vec![AutomationEvent {
+                id: 0,
+                tick: 1000,
+                value: 1.0,
+                shape: SegmentShape::Step,
+            }],
+        };
+        let mut none = Vec::new();
+        push_value_bars(
+            &mut none,
+            50.0,
+            &view,
+            &lane,
+            1.0,
+            0.0,
+            0.0,
+            [1.0, 0.0, 0.0],
+        );
+        assert!(none.is_empty(), "首个事件之前的区间不画柱");
     }
 
     /// 折叠预览 show_anchors=false 时纯曲线（无方块/圆形锚点）。

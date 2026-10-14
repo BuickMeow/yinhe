@@ -35,6 +35,7 @@ const BTN_GAP: f32 = 2.0;
 /// 面板一帧的可变输入（借用聚合）。
 pub(crate) struct CaPanelIo<'a> {
     pub track_info: &'a [yinhe_core::TrackInfo],
+    /// 每轨显示色（= 通道 AR 统一后的通道色；Conductor 为主题色）。
     pub track_colors: &'a [[f32; 4]],
     pub track_visible: &'a [bool],
     pub track_meters: &'a [(f32, f32)],
@@ -48,6 +49,14 @@ pub(crate) struct CaPanelIo<'a> {
     pub arr_am_ms: &'a mut HashMap<(u16, AutomationTarget), AmMsState>,
     /// 双击轨道行 → 请求打开钢琴卷帘。
     pub request_pianoroll: &'a mut bool,
+    /// 混音台 MIDI 通道 strip（索引 = 源通道 0..256；通道行 M/S）。
+    pub midi_strips: &'a [yinhe_mixer::StripParams],
+    /// 混音台音频通道 strip（索引 = 音频通道；通道行 M/S）。
+    pub audio_strips: &'a [yinhe_mixer::StripParams],
+    /// MIDI 通道电平显示值（索引 = 源通道；(L,R) level/hold）。
+    pub midi_levels: &'a [crate::widgets::meter::StereoMeter],
+    /// 音频通道电平显示值（索引 = 音频通道）。
+    pub audio_levels: &'a [crate::widgets::meter::StereoMeter],
 }
 
 /// 面板一帧输出。
@@ -59,6 +68,10 @@ pub(crate) struct CaPanelOut {
     pub am_ms_dirty: bool,
     /// 「添加自动化」请求（轨道索引）。
     pub automation_picker: Option<u16>,
+    /// 通道行 M/S 变更（MIDI 源通道 → 新 strip 参数）。
+    pub set_strips: Vec<(u8, yinhe_mixer::StripParams)>,
+    /// 通道行 M/S 变更（音频通道 → 新 strip 参数）。
+    pub set_audio_strips: Vec<(u16, yinhe_mixer::StripParams)>,
 }
 
 /// 通道是否展开。
@@ -253,6 +266,83 @@ pub(crate) fn show(
                         font,
                         crate::theme::text_primary(),
                     );
+                }
+
+                // 通道行 = 混音台通道条：M/S（详情模式）+ 双声道电平表（贴右缘）。
+                let (muted, soloed, strip) = match ch {
+                    CaChannel::Midi(c) => {
+                        let p = io.midi_strips.get(c as usize).copied().unwrap_or_default();
+                        (p.mute, p.solo, p)
+                    }
+                    CaChannel::Audio(c) => {
+                        let p = io.audio_strips.get(c as usize).copied().unwrap_or_default();
+                        (p.mute, p.solo, p)
+                    }
+                };
+                let (level, hold) = match ch {
+                    CaChannel::Midi(c) => io
+                        .midi_levels
+                        .get(c as usize)
+                        .copied()
+                        .unwrap_or(((0.0, 0.0), (0.0, 0.0))),
+                    CaChannel::Audio(c) => io
+                        .audio_levels
+                        .get(c as usize)
+                        .copied()
+                        .unwrap_or(((0.0, 0.0), (0.0, 0.0))),
+                };
+                let bar_w = crate::widgets::meter::METER_W * 2.0 + crate::widgets::meter::METER_GAP;
+                let meter_right = row_rect.max.x - 4.0;
+                let meter_rect = egui::Rect::from_min_max(
+                    egui::pos2(meter_right - bar_w, row_rect.min.y + 4.0),
+                    egui::pos2(meter_right, row_rect.max.y - 4.0),
+                );
+                crate::widgets::meter::compact_meter(&painter, meter_rect, level, hold);
+                if show_details {
+                    let total_btn_w = 2.0 * BTN_SIZE + BTN_GAP;
+                    let chan_btn_x = meter_rect.min.x - 6.0 - total_btn_w;
+                    let chan_btn_y = badge_rect.center().y - BTN_SIZE * 0.5;
+                    let m_rect = egui::Rect::from_min_size(
+                        egui::pos2(chan_btn_x, chan_btn_y),
+                        egui::vec2(BTN_SIZE, BTN_SIZE),
+                    );
+                    let s_rect = egui::Rect::from_min_size(
+                        egui::pos2(chan_btn_x + BTN_SIZE + BTN_GAP, chan_btn_y),
+                        egui::vec2(BTN_SIZE, BTN_SIZE),
+                    );
+                    let m_resp = draw_inline_button(
+                        ui,
+                        &painter,
+                        m_rect,
+                        "M",
+                        muted,
+                        crate::theme::mute_active(),
+                        egui::Id::new(("ca_chan_m", ch)),
+                    );
+                    let s_resp = draw_inline_button(
+                        ui,
+                        &painter,
+                        s_rect,
+                        "S",
+                        soloed,
+                        crate::theme::solo_active(),
+                        egui::Id::new(("ca_chan_s", ch)),
+                    );
+                    crate::widgets::hint::hover(ui.ctx(), &m_resp, t!("hint.mix.mute"));
+                    crate::widgets::hint::hover(ui.ctx(), &s_resp, t!("hint.mix.solo"));
+                    if m_resp.clicked() || s_resp.clicked() {
+                        let mut next = strip;
+                        if m_resp.clicked() {
+                            next.mute = !next.mute;
+                        }
+                        if s_resp.clicked() {
+                            next.solo = !next.solo;
+                        }
+                        match ch {
+                            CaChannel::Midi(c) => out.set_strips.push((c, next)),
+                            CaChannel::Audio(c) => out.set_audio_strips.push((c, next)),
+                        }
+                    }
                 }
 
                 // chevron（悬停显示；窄行也放色带底部）。

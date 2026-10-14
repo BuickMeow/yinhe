@@ -65,6 +65,12 @@ pub(crate) fn show(
     needs_audio_notify: &mut bool,
     automation_picker_req: &mut Option<usize>,
     track_meters: &[(f32, f32)],
+    // 通道电平显示值（L/R，独立衰减；见 App::ca_channel_levels）。
+    midi_levels: &[crate::widgets::meter::StereoMeter],
+    audio_levels: &[crate::widgets::meter::StereoMeter],
+    // 通道行 M/S 变更输出（由调用方 note_mixer_edit + apply_*）。
+    set_strips: &mut Vec<(u8, yinhe_mixer::StripParams)>,
+    set_audio_strips: &mut Vec<(u16, yinhe_mixer::StripParams)>,
 ) {
     let arr_total_w = layout.remaining.width();
     crate::widgets::hint::set_region(ui.ctx(), t!("hint.panel.mix"));
@@ -199,11 +205,17 @@ pub(crate) fn show(
     let mut picker_track: Option<u16> = None;
     let mut panel_audio_dirty = false;
     let mut panel_am_ms_dirty = false;
+    // 面板色带统一为通道色（与 GPU 层同源）。
+    let channel_colors = groups.track_colors_by_channel(
+        &doc.edit.track_cache.colors,
+        conductor_idx,
+        conductor_color,
+    );
     ui.scope_builder(egui::UiBuilder::new().max_rect(tp_rect), |ui| {
         ui.set_clip_rect(tp_rect);
         let io = &mut panel::CaPanelIo {
             track_info: &doc.edit.track_cache.info,
-            track_colors: &doc.edit.track_cache.colors,
+            track_colors: &channel_colors,
             track_visible: &doc.edit.track_visible,
             track_meters,
             track_overrides: &mut doc.edit.track_overrides,
@@ -215,6 +227,10 @@ pub(crate) fn show(
             tracks: &doc.data.model.tracks,
             arr_am_ms: &mut doc.edit.arr_am_ms,
             request_pianoroll,
+            midi_strips: &doc.mixer.channels,
+            audio_strips: &doc.mixer.audio_channels,
+            midi_levels,
+            audio_levels,
         };
         let out = panel::show(
             ui,
@@ -227,6 +243,8 @@ pub(crate) fn show(
         panel_audio_dirty = out.audio_dirty;
         panel_am_ms_dirty = out.am_ms_dirty;
         picker_track = out.automation_picker;
+        set_strips.extend(out.set_strips);
+        set_audio_strips.extend(out.set_audio_strips);
     });
     if let Some(t) = picker_track {
         *automation_picker_req = Some(t as usize);

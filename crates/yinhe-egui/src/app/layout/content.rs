@@ -132,6 +132,11 @@ impl App {
             let mut ca_drag_delta: Option<crate::channel_arrange::CaArRangeDelta> = None;
             let mut ca_picker: Option<usize> = None;
             let mut ca_notify = false;
+            let mut ca_set_strips: Vec<(u8, yinhe_mixer::StripParams)> = Vec::new();
+            let mut ca_set_audio_strips: Vec<(u16, yinhe_mixer::StripParams)> = Vec::new();
+            // 通道电平显示值（独立衰减；见 App::ca_channel_levels）。
+            let ca_dt = ui.ctx().input(|i| i.stable_dt).min(0.1);
+            let (ca_midi_levels, ca_audio_levels) = self.ca_channel_levels(idx, ca_dt);
             {
                 let mut guard =
                     crate::app::main_loop::ReplaceGuard::new(&mut self.workspace.documents[idx]);
@@ -163,6 +168,10 @@ impl App {
                     &mut ca_notify,
                     &mut ca_picker,
                     &self.mix.track_display,
+                    &ca_midi_levels,
+                    &ca_audio_levels,
+                    &mut ca_set_strips,
+                    &mut ca_set_audio_strips,
                 );
                 // guard dropped here
             }
@@ -174,6 +183,26 @@ impl App {
             }
             if let Some((dt, dtr, alt)) = ca_drag_delta {
                 self.handle_arr_drag(dt, dtr, alt);
+            }
+            // 通道行 M/S（混音台通道）：与混音台同一 undo 合并路径。
+            for (ch, params) in ca_set_strips {
+                self.note_mixer_edit(t!("undo.mix_param").as_ref());
+                self.apply_strip(idx, ch, params);
+            }
+            for (ach, params) in ca_set_audio_strips {
+                self.note_mixer_edit(t!("undo.mix_param").as_ref());
+                self.apply_audio_strip(idx, ach, params);
+            }
+            // 通道电平动画：播放中或衰减未归零时保持约 30fps 重绘。
+            let ca_any_level = ca_midi_levels
+                .iter()
+                .any(|&((l, r), _)| l > 0.001 || r > 0.001)
+                || ca_audio_levels
+                    .iter()
+                    .any(|&((l, r), _)| l > 0.001 || r > 0.001);
+            if is_playing || ca_any_level {
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(33));
             }
             if request_pianoroll {
                 crate::chrome::mode_bar::set_pianoroll_visible(

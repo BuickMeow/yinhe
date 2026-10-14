@@ -9,6 +9,9 @@
 
 use eframe::egui;
 
+/// 立体声电平显示值：`((level L, level R), (hold L, hold R))`（线性增益）。
+pub(crate) type StereoMeter = ((f32, f32), (f32, f32));
+
 /// 电平表单条宽 + 条间距（px）。
 pub(crate) const METER_W: f32 = 6.0;
 pub(crate) const METER_GAP: f32 = 2.0;

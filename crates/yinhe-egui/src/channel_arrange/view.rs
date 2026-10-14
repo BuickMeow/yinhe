@@ -166,7 +166,31 @@ pub(crate) fn show(
     let scroll_y = view.base.scroll_y;
     let visible = layout.visible_rows(scroll_y, h as f32);
     let track_rows = super::render::build_track_rows(layout, groups, visible.clone());
-    let colors = row_colors(layout, groups, data.track_colors, cfg.conductor_color);
+    // 通道 AR 统一颜色：同一通道的轨道行/音符/自动化曲线/音频片段都用通道色
+    // （首轨色）。下游（AM 交互、自动化层、音频片段）统一走 data_uni。
+    let channel_colors = groups.track_colors_by_channel(
+        data.track_colors,
+        data.conductor_track_idx,
+        cfg.conductor_color,
+    );
+    let data_uni = crate::arrange::ArrangeData {
+        midi: data.midi,
+        track_visible: data.track_visible,
+        track_colors: &channel_colors,
+        track_info: data.track_info,
+        quantize: data.quantize,
+        ppq: data.ppq,
+        bar_line_data: data.bar_line_data,
+        total_ticks: data.total_ticks,
+        num_tracks: data.num_tracks,
+        tracks: data.tracks,
+        tempo_lane: data.tempo_lane,
+        conductor_track_idx: data.conductor_track_idx,
+        tempo_map: data.tempo_map,
+        audio_library: data.audio_library,
+        audio_sources: data.audio_sources,
+    };
+    let colors = row_colors(layout, groups, &channel_colors, cfg.conductor_color);
     let uniforms = Uniforms {
         width: w as f32,
         height: h as f32,
@@ -212,7 +236,7 @@ pub(crate) fn show(
             layout,
             groups,
             &track_rows,
-            data,
+            &data_uni,
             edit,
             chan_ar_sel,
         );
@@ -239,7 +263,7 @@ pub(crate) fn show(
         view,
         layout,
         &track_rows,
-        data,
+        &data_uni,
         &hidden_notes,
         &mut ghost_notes,
         w as f32,
@@ -264,7 +288,7 @@ pub(crate) fn show(
         let mut io = crate::arrange::am_lanes::AmLanesIo {
             tracks: data.tracks,
             tempo_lane: data.tempo_lane,
-            track_colors: data.track_colors,
+            track_colors: &channel_colors,
             selected: edit.selected,
             info_content: edit.info_content,
             right_tab: edit.right_tab,
@@ -283,12 +307,13 @@ pub(crate) fn show(
     }
 
     // ── 自动化层（展开行 + 折叠通道预览）──
-    let folded = super::render::collect_folded_am(layout, groups, visible.clone(), data, scroll_y);
+    let folded =
+        super::render::collect_folded_am(layout, groups, visible.clone(), &data_uni, scroll_y);
     let offsets_hash = layout_hash(layout);
     crate::arrange::view_ui::render::prepare_automation(
         renderer,
         view,
-        data,
+        &data_uni,
         edit,
         &am_rows,
         &folded,

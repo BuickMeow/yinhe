@@ -473,6 +473,30 @@ impl AutomationTarget {
         }
     }
 
+    /// 值柱条（自动化表）的基线（归一化值域比例）：
+    /// - `0.0`：底部起（一般参数，值越大越高）；
+    /// - `0.5`：中部起（对称量：声像 / 弯音 / 调音类）。
+    pub fn bar_baseline(&self) -> f32 {
+        match self {
+            AutomationTarget::PitchBend => 0.5,
+            AutomationTarget::CC { controller: 10 } => 0.5,
+            // 标准 RPN 0/1/2 = PB Sensitivity / Fine Tune / Coarse Tune（对称量）。
+            AutomationTarget::Rpn { parameter } if *parameter <= 2 => 0.5,
+            AutomationTarget::Param { id, .. }
+                if matches!(
+                    *id,
+                    xsynth_param::PITCH_BEND
+                        | xsynth_param::PB_SENSITIVITY
+                        | xsynth_param::FINE_TUNE
+                        | xsynth_param::COARSE_TUNE
+                ) =>
+            {
+                0.5
+            }
+            _ => 0.0,
+        }
+    }
+
     /// 显示名（下拉/AR/事件浏览器共用）。
     pub fn display_name(&self) -> String {
         match self {
@@ -801,6 +825,24 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    /// 自动化表基线：对称量（弯音/声像/调音 RPN 与内置 PB/调音参数）
+    /// 中部起；其余（CC、Tempo 等）底部起。
+    #[test]
+    fn bar_baseline_by_target() {
+        assert_eq!(AutomationTarget::PitchBend.bar_baseline(), 0.5);
+        assert_eq!(AutomationTarget::CC { controller: 10 }.bar_baseline(), 0.5);
+        assert_eq!(AutomationTarget::CC { controller: 7 }.bar_baseline(), 0.0);
+        assert_eq!(AutomationTarget::Rpn { parameter: 1 }.bar_baseline(), 0.5);
+        assert_eq!(AutomationTarget::Rpn { parameter: 3 }.bar_baseline(), 0.0);
+        assert_eq!(AutomationTarget::Tempo.bar_baseline(), 0.0);
+        let pb = AutomationTarget::Param {
+            device: ParamDevice::ChannelInstrument { channel: 0 },
+            id: xsynth_param::PITCH_BEND,
+            name: String::new(),
+        };
+        assert_eq!(pb.bar_baseline(), 0.5);
     }
 
     #[test]

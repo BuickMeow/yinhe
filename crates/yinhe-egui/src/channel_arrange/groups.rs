@@ -97,6 +97,34 @@ impl CaGroups {
     pub fn iter_all(&self) -> impl Iterator<Item = &CaChannelGroup> {
         self.midi.iter().chain(self.audio.iter())
     }
+
+    /// 每轨道的显示色（通道 AR 统一色）：该轨道所属通道的首轨色；
+    /// Conductor 轨用 conductor 色；不归任何通道的轨道保留自身色。
+    ///
+    /// 通道 AR 内「同一通道 = 同一颜色」：轨道行、音符、自动化曲线、
+    /// 音频片段全部走该表。
+    pub fn track_colors_by_channel(
+        &self,
+        track_colors: &[[f32; 4]],
+        conductor_idx: Option<u16>,
+        conductor_color: [f32; 4],
+    ) -> Vec<[f32; 4]> {
+        let mut out: Vec<[f32; 4]> = track_colors.to_vec();
+        for group in self.iter_all() {
+            let c = group.color(track_colors);
+            for &t in &group.tracks {
+                if let Some(slot) = out.get_mut(t as usize) {
+                    *slot = c;
+                }
+            }
+        }
+        if let Some(ci) = conductor_idx
+            && let Some(slot) = out.get_mut(ci as usize)
+        {
+            *slot = conductor_color;
+        }
+        out
+    }
 }
 
 #[cfg(test)]
@@ -147,6 +175,24 @@ mod tests {
         assert_eq!(groups.audio[1].tracks, vec![3]);
         // Conductor（索引 0）不归组。
         assert!(groups.iter_all().all(|g| !g.tracks.contains(&0u16)));
+    }
+
+    /// 同通道轨道统一为通道色（首轨色）；Conductor 用主题色。
+    #[test]
+    fn track_colors_by_channel_unifies_same_channel() {
+        let model = model_with(vec![midi_track(0, 0), midi_track(0, 2), midi_track(0, 0)]);
+        let groups = CaGroups::from_model(&model, Some(0));
+        let colors = vec![
+            [0.1, 0.1, 0.1, 1.0],
+            [1.0, 0.0, 0.0, 1.0],
+            [0.0, 0.0, 1.0, 1.0],
+            [0.0, 1.0, 0.0, 1.0],
+        ];
+        let uni = groups.track_colors_by_channel(&colors, Some(0), [0.9, 0.9, 0.9, 1.0]);
+        assert_eq!(uni[1], [1.0, 0.0, 0.0, 1.0], "A01 首轨色");
+        assert_eq!(uni[3], [1.0, 0.0, 0.0, 1.0], "A01 另一轨统一为首轨色");
+        assert_eq!(uni[2], [0.0, 0.0, 1.0, 1.0], "不同通道保持自身色");
+        assert_eq!(uni[0], [0.9, 0.9, 0.9, 1.0], "Conductor 用主题色");
     }
 
     /// 通道色带取首轨颜色；越界回退默认色。
