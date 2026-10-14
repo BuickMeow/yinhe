@@ -231,6 +231,8 @@ pub(crate) fn show(
             audio_strips: &doc.mixer.audio_channels,
             midi_levels,
             audio_levels,
+            cursor_tick: doc.edit.cursor_tick,
+            tempo_lane: &doc.data.model.conductor.tempo,
         };
         let out = panel::show(
             ui,

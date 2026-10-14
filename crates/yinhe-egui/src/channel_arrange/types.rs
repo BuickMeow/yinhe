@@ -153,13 +153,14 @@ mod tests {
         let model = model_with(vec![midi_track(0, 0), midi_track(0, 0)]);
         let groups = CaGroups::from_model(&model, Some(0));
         let layout = CaRowLayout::build(true, &groups, |_| true, |_| 1, 40.0);
-        // 行：0=Conductor, 1=A01(窄) , 2=Track1, 3=Auto(1,0), 4=Track2, 5=Auto(2,0)
+        // 两段式行序：0=Conductor, 1=A01, 2=Track1, 3=Track2, 4=Auto(1,0), 5=Auto(2,0)
         assert_eq!(anchor_track(&layout, &groups, 0), None);
         assert_eq!(anchor_track(&layout, &groups, 1), Some(1));
         assert_eq!(anchor_track(&layout, &groups, 2), Some(1));
-        assert_eq!(anchor_track(&layout, &groups, 3), Some(1));
-        assert_eq!(anchor_track(&layout, &groups, 4), Some(2));
-        assert!(is_am_row(&layout, 3));
+        assert_eq!(anchor_track(&layout, &groups, 3), Some(2));
+        assert_eq!(anchor_track(&layout, &groups, 4), Some(1));
+        assert_eq!(anchor_track(&layout, &groups, 5), Some(2));
+        assert!(is_am_row(&layout, 4));
         assert!(!is_am_row(&layout, 2));
     }
 
@@ -187,12 +188,13 @@ mod tests {
         let model = model_with(vec![midi_track(0, 0), midi_track(0, 0)]);
         let groups = CaGroups::from_model(&model, Some(0));
         let layout = CaRowLayout::build(true, &groups, |_| true, |_| 1, 40.0);
-        // 行 2=Track1(y80,h40), 3=Auto(1,0)(y120), 4=Track2(y160) → 覆盖 80..200。
+        // 两段式：行 2=Track1、3=Track2、4=Auto(1,0)、5=Auto(2,0)；
+        // [1,2] 的包围盒 = 行 2..=5 → y 80..240。
         let (top, bottom) = sel_view_y(&layout, &[1, 2], 0.0).unwrap();
-        assert_eq!((top, bottom), (80.0, 200.0));
-        // scroll 平移进入局部坐标。
+        assert_eq!((top, bottom), (80.0, 240.0));
+        // 单轨 [1]：相关行 2 与 4 → 包围盒行 2..=4 → y 80..200（scroll 10→70..190）。
         let (top, bottom) = sel_view_y(&layout, &[1], 10.0).unwrap();
-        assert_eq!((top, bottom), (70.0, 110.0));
+        assert_eq!((top, bottom), (70.0, 190.0));
         assert_eq!(sel_view_y(&layout, &[9], 0.0), None);
     }
 

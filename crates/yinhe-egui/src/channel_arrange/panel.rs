@@ -57,6 +57,10 @@ pub(crate) struct CaPanelIo<'a> {
     pub midi_levels: &'a [crate::widgets::meter::StereoMeter],
     /// 音频通道电平显示值（索引 = 音频通道）。
     pub audio_levels: &'a [crate::widgets::meter::StereoMeter],
+    /// 编辑/播放光标 tick（自动化表显示光标处的 lane 值）。
+    pub cursor_tick: Option<f64>,
+    /// Conductor 的 Tempo lane（Conductor 行自动化表）。
+    pub tempo_lane: &'a yinhe_types::AutomationLane,
 }
 
 /// 面板一帧输出。
@@ -108,6 +112,33 @@ fn channel_name(ch: CaChannel) -> String {
         CaChannel::Midi(c) => crate::mix::channel_label(c),
         CaChannel::Audio(c) => crate::mix::audio_label(c),
     }
+}
+
+/// Conductor 行的自动化表（Tempo）：贴右缘绘制。
+fn draw_lane_meter(
+    painter: &egui::Painter,
+    row_rect: egui::Rect,
+    show_details: bool,
+    lane: &yinhe_types::AutomationLane,
+    cursor_tick: Option<f64>,
+    color: egui::Color32,
+) {
+    if !show_details {
+        return;
+    }
+    let meter_right = row_rect.max.x - VEL_METER_MARGIN;
+    let meter_left = meter_right - VEL_METER_W;
+    let meter_rect = egui::Rect::from_min_max(
+        egui::pos2(meter_left, row_rect.min.y + VEL_METER_MARGIN),
+        egui::pos2(meter_right, row_rect.max.y - VEL_METER_MARGIN),
+    );
+    crate::widgets::meter::automation_meter(
+        painter,
+        meter_rect,
+        crate::arrange::am_lanes::lane_cursor_value(lane, cursor_tick),
+        lane.target.bar_baseline(),
+        color,
+    );
 }
 
 /// 每帧绘制通道面板。
@@ -233,6 +264,15 @@ pub(crate) fn show(
                         crate::theme::text_primary(),
                     );
                 }
+                // 自动化表：Conductor 行显示 Tempo 在当前光标处的值。
+                draw_lane_meter(
+                    &painter,
+                    row_rect,
+                    show_details,
+                    io.tempo_lane,
+                    io.cursor_tick,
+                    color32,
+                );
             }
             CaRow::Channel(ch) => {
                 let name = channel_name(ch);
@@ -581,11 +621,14 @@ pub(crate) fn show(
                         font,
                         crate::theme::text_primary(),
                     );
-                    // AM 试听 M/S 按钮（右缘对齐，与轨道行的 M/S 同位置）。
+                    // 自动化表（贴右缘）+ AM 试听 M/S（M/S 让位到表的左侧，
+                    // 与轨道行的「力度表 + M/S」布局一致）。
                     let key = (track, lane.target.clone());
                     let st = io.arr_am_ms.get(&key).copied().unwrap_or_default();
                     let total_btn_w = 2.0 * BTN_SIZE + BTN_GAP;
-                    let btn_x_start = row_rect.max.x - total_btn_w - 6.0;
+                    let meter_right = row_rect.max.x - VEL_METER_MARGIN;
+                    let meter_left = meter_right - VEL_METER_W;
+                    let btn_x_start = meter_left - VEL_METER_GAP - total_btn_w;
                     let btn_y = badge_rect.center().y - BTN_SIZE * 0.5;
                     let m_rect = egui::Rect::from_min_size(
                         egui::pos2(btn_x_start, btn_y),
@@ -630,6 +673,18 @@ pub(crate) fn show(
                         }
                         out.am_ms_dirty = true;
                     }
+                    // 自动化表：光标处 lane 值（基线依种类：法线/折叠由 target 决定）。
+                    let meter_rect = egui::Rect::from_min_max(
+                        egui::pos2(meter_left, row_rect.min.y + VEL_METER_MARGIN),
+                        egui::pos2(meter_right, row_rect.max.y - VEL_METER_MARGIN),
+                    );
+                    crate::widgets::meter::automation_meter(
+                        &painter,
+                        meter_rect,
+                        crate::arrange::am_lanes::lane_cursor_value(lane, io.cursor_tick),
+                        lane.target.bar_baseline(),
+                        color32,
+                    );
                 }
 
                 // 最后一条自动化行：悬停显示加号（再次添加自动化）。

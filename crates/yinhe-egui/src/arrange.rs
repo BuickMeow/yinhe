@@ -348,6 +348,8 @@ pub fn show(
             &mut doc.edit.arr_am_selected,
             &mut doc.edit.arr_am_ms,
             track_meters,
+            doc.edit.cursor_tick,
+            &doc.data.model.conductor.tempo,
         );
 
         if audio_dirty {

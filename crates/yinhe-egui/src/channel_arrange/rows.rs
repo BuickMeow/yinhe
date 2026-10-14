@@ -75,8 +75,12 @@ impl CaRowLayout {
             let exp = expanded(group.channel);
             push(CaRow::Channel(group.channel), full);
             if exp {
+                // 两段式：先全部音符轨道行，再全部自动化行
+                // （同通道的轨道集中在上、自动化集中在下，便于对比与框选）。
                 for &t in &group.tracks {
                     push(CaRow::Track(t), full);
+                }
+                for &t in &group.tracks {
                     for sub in 0..lane_counts(t) {
                         push(CaRow::Automation { track: t, sub }, full);
                     }
@@ -186,16 +190,21 @@ impl CaRowLayout {
 
     /// 轨道集合覆盖的行范围 (min_row, max_row+1)：用于选框绘制。
     ///
-    /// 取所选轨道「音符行」的最小/最大行；自动化行紧贴在所属轨道行之后，
-    /// 因此该范围天然涵盖其间的自动化行。
+    /// 相关行 = 集合内轨道的「音符行」与「自动化行」；两段式布局下
+    /// 自动化行集中在音符行之后，取最小/最大相关行即包围盒
+    /// （框内可能包含未选中轨的行，属矩形选框的正常语义——选中内容
+    /// 仍按轨道集合精确）。
     pub fn rows_covering_tracks(&self, tracks: &[u16]) -> Option<(usize, usize)> {
-        let map = self.track_row_map();
         let mut lo = usize::MAX;
         let mut hi = 0usize;
-        for t in tracks {
-            if let Some(&r) = map.get(t) {
-                lo = lo.min(r);
-                hi = hi.max(r);
+        for (i, row) in self.rows.iter().enumerate() {
+            let hit = match row {
+                CaRow::Track(t) | CaRow::Automation { track: t, .. } => tracks.contains(t),
+                _ => false,
+            };
+            if hit {
+                lo = lo.min(i);
+                hi = hi.max(i);
             }
         }
         (lo != usize::MAX).then_some((lo, hi + 1))
@@ -353,19 +362,20 @@ mod tests {
             lane_counts,
             40.0,
         );
-        // 行：Conductor, A01, t1, t1.lane0, t1.lane1, t2, A03（全部全高）。
+        // 两段式：先全部音符轨道行，再全部自动化行（全部全高）。
+        // 行：Conductor, A01, t1, t2, t1.lane0, t1.lane1, A03。
         assert_eq!(layout.total_rows(), 7);
         assert_eq!(layout.row(1), Some(CaRow::Channel(CaChannel::Midi(0))));
         assert_eq!(layout.height(1), 40.0, "展开的合并行保持全高");
         assert_eq!(layout.row(2), Some(CaRow::Track(1)));
-        assert_eq!(layout.row(3), Some(CaRow::Automation { track: 1, sub: 0 }));
-        assert_eq!(layout.row(4), Some(CaRow::Automation { track: 1, sub: 1 }));
-        assert_eq!(layout.row(5), Some(CaRow::Track(2)));
+        assert_eq!(layout.row(3), Some(CaRow::Track(2)));
+        assert_eq!(layout.row(4), Some(CaRow::Automation { track: 1, sub: 0 }));
+        assert_eq!(layout.row(5), Some(CaRow::Automation { track: 1, sub: 1 }));
         assert_eq!(layout.row(6), Some(CaRow::Channel(CaChannel::Midi(2))));
         assert_eq!(layout.y_top(0), 0.0);
         assert_eq!(layout.y_top(1), 40.0);
         assert_eq!(layout.y_top(2), 80.0);
-        assert_eq!(layout.y_top(5), 200.0);
+        assert_eq!(layout.y_top(4), 160.0);
         assert_eq!(layout.total_height(), 280.0);
         assert_eq!(layout.hit_row(79.9), Some(1));
         assert_eq!(layout.hit_row(80.0), Some(2));
@@ -386,9 +396,11 @@ mod tests {
             40.0,
         );
         let map = layout.track_row_map();
+        // 两段式：t1 音符行在 2、t2 音符行在 3、t1 自动化行在 4/5。
         assert_eq!(map[&1], 2);
-        assert_eq!(map[&2], 5);
-        assert_eq!(layout.rows_covering_tracks(&[1]), Some((2, 3)));
+        assert_eq!(map[&2], 3);
+        // 覆盖范围取相关行（音符行 + 自动化行）的包围盒。
+        assert_eq!(layout.rows_covering_tracks(&[1]), Some((2, 6)));
         assert_eq!(layout.rows_covering_tracks(&[1, 2]), Some((2, 6)));
         assert_eq!(layout.rows_covering_tracks(&[9]), None);
     }

@@ -80,6 +80,18 @@ pub(crate) fn lane_max_val(lane: &AutomationLane) -> f32 {
     }
 }
 
+/// 某 lane 在编辑/播放光标处的归一化值（0..1；Tempo 按动态上限归一化）。
+/// `None` = 无光标或首个事件之前（面板自动化表显示空表）。
+pub(crate) fn lane_cursor_value(lane: &AutomationLane, cursor_tick: Option<f64>) -> Option<f32> {
+    let ct = cursor_tick?;
+    let max_val = lane_max_val(lane);
+    if max_val <= 0.0 {
+        return None;
+    }
+    let (v, _) = lane.value_at(ct.max(0.0) as u32)?;
+    Some((v / max_val).clamp(0.0, 1.0))
+}
+
 /// 高亮锚点 tick 集合（Select 框选的锚点 + Pencil 点选的 info_content 锚点）。
 /// 与 PR automation_panel.rs 的 highlight 计算逻辑一致。
 pub(crate) fn lane_highlight_ticks(

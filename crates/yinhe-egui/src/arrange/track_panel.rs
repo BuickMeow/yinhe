@@ -6,7 +6,7 @@ use egui_material_icons::icons::{ICON_ADD, ICON_KEYBOARD_ARROW_DOWN, ICON_KEYBOA
 use rust_i18n::t;
 
 use yinhe_core::TrackInfo;
-use yinhe_types::{ArRow, ArRowLayout, AutomationTarget};
+use yinhe_types::{ArRow, ArRowLayout, AutomationLane, AutomationTarget};
 
 use yinhe_editor_core::document::TrackOverride;
 
@@ -60,6 +60,10 @@ pub(crate) fn show(
     am_ms: &mut std::collections::HashMap<(u16, AutomationTarget), yinhe_types::AmMsState>,
     // 每轨力度表显示值 `(level, hold)`（索引 = 音轨；仅播放时非零）。
     track_meters: &[(f32, f32)],
+    // 编辑/播放光标 tick（自动化表显示光标处的 lane 值）。
+    cursor_tick: Option<f64>,
+    // Conductor 的 Tempo lane（Conductor 行自动化表）。
+    tempo_lane: &AutomationLane,
 ) -> (bool, bool, Vec<TrackAction>) {
     let panel_rect = ui.max_rect();
     let panel_w = panel_rect.width();
@@ -207,7 +211,10 @@ pub(crate) fn show(
                 let st = am_ms.get(&key).copied().unwrap_or_default();
                 let gap = 2.0;
                 let total_btn_w = 2.0 * btn_size.x + gap;
-                let btn_x_start = row_rect.max.x - total_btn_w - 6.0;
+                // 自动化表贴右缘，M/S 让位到其左侧（与普通轨的「力度表 + M/S」布局一致）。
+                let meter_right = row_rect.max.x - VEL_METER_MARGIN;
+                let meter_left = meter_right - VEL_METER_W;
+                let btn_x_start = meter_left - VEL_METER_GAP - total_btn_w;
                 let btn_y = badge_rect.center().y - btn_size.y * 0.5;
                 let m_rect = egui::Rect::from_min_size(egui::pos2(btn_x_start, btn_y), btn_size);
                 let s_rect = egui::Rect::from_min_size(
@@ -249,6 +256,18 @@ pub(crate) fn show(
                     }
                     am_ms_dirty = true;
                 }
+                // 自动化表：编辑/播放光标处该 lane 的值（基线依种类）。
+                let meter_rect = egui::Rect::from_min_max(
+                    egui::pos2(meter_left, row_rect.min.y + VEL_METER_MARGIN),
+                    egui::pos2(meter_right, row_rect.max.y - VEL_METER_MARGIN),
+                );
+                crate::widgets::meter::automation_meter(
+                    &painter,
+                    meter_rect,
+                    crate::arrange::am_lanes::lane_cursor_value(lane, cursor_tick),
+                    lane.target.bar_baseline(),
+                    color32,
+                );
             }
 
             // 最后一条自动化行：在该行右侧（M/S 旁）显示加号，点击再次添加自动化。
@@ -478,6 +497,21 @@ pub(crate) fn show(
                 );
                 let (level, hold) = track_meters.get(idx).copied().unwrap_or((0.0, 0.0));
                 crate::widgets::meter::velocity_meter(&painter, meter_rect, level, hold);
+            } else {
+                // Conductor 行：Tempo 自动化表（贴右缘；光标处 BPM 按动态上限归一化）。
+                let meter_right = row_rect.max.x - VEL_METER_MARGIN;
+                let meter_left = meter_right - VEL_METER_W;
+                let meter_rect = egui::Rect::from_min_max(
+                    egui::pos2(meter_left, row_rect.min.y + VEL_METER_MARGIN),
+                    egui::pos2(meter_right, row_rect.max.y - VEL_METER_MARGIN),
+                );
+                crate::widgets::meter::automation_meter(
+                    &painter,
+                    meter_rect,
+                    crate::arrange::am_lanes::lane_cursor_value(tempo_lane, cursor_tick),
+                    tempo_lane.target.bar_baseline(),
+                    color32,
+                );
             }
         } else {
             let font = render::compact_font(*row_height);
