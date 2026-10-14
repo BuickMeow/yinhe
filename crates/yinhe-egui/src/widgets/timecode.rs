@@ -20,13 +20,9 @@ use yinhe_types::time_format;
 use yinhe_types::{NOTE_NAMES, ScaleType};
 
 /// 时间码控件宽度（四列：BPM/拍号+PPQ、位置/时间、量化/调式、电平表）。
-/// = 四列内容宽（276）+ 左右外框边距（`FRAME_PAD_X` × 2）。
-pub const TIMECODE_WIDTH: f32 = 308.0;
+pub const TIMECODE_WIDTH: f32 = 276.0;
 
-/// 外框（圆角背景块）左右边距：内容列与外框边缘的空隙。
-const FRAME_PAD_X: f32 = 16.0;
-
-/// 四列宽度（内容区，不含外框边距）。
+/// 四列宽度（内容宽，灰底外框与内容同宽）。
 const COL_WIDTHS: [f32; 4] = [78.0, 92.0, 82.0, 24.0];
 /// 控件高度（上下两行各 18）。
 const RECT_H: f32 = 36.0;
@@ -203,16 +199,11 @@ pub fn show_timecode_display(
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(TIMECODE_WIDTH, RECT_H), egui::Sense::hover());
 
-    // 背景（整个外框）+ 内容区：内容列左右各留 `FRAME_PAD_X` 的外框边距。
+    // 背景（外框与内容同宽：内容紧贴外框边缘）+ 列分隔线。
     ui.painter()
         .rect_filled(rect, egui::CornerRadius::same(8), crate::theme::track_bg());
-    let content = egui::Rect::from_min_max(
-        egui::pos2(rect.min.x + FRAME_PAD_X, rect.min.y),
-        egui::pos2(rect.max.x - FRAME_PAD_X, rect.max.y),
-    );
-    // 列分隔线（上下贯通外框全高）。
     let grid = egui::Stroke::new(1.0, crate::theme::line_fg());
-    let mut col_x = content.min.x;
+    let mut col_x = rect.min.x;
     for (i, width) in COL_WIDTHS.iter().enumerate() {
         if i > 0 {
             ui.painter().line_segment(
@@ -223,9 +214,9 @@ pub fn show_timecode_display(
         col_x += *width;
     }
 
-    // 单元格矩形：列 × 行（0 = 上，1 = 下；基于外框内的内容区）。
+    // 单元格矩形：列 × 行（0 = 上，1 = 下）。
     let cell = |col: usize, row: usize| -> egui::Rect {
-        let x0 = content.min.x + COL_WIDTHS[..col].iter().sum::<f32>();
+        let x0 = rect.min.x + COL_WIDTHS[..col].iter().sum::<f32>();
         let y0 = rect.min.y + row as f32 * (RECT_H * 0.5);
         egui::Rect::from_min_size(
             egui::pos2(x0, y0),
