@@ -51,7 +51,7 @@ pub enum MenuAction {
     SetTool(crate::widgets::tools_panel::Tool),
     /// 文件菜单「最近修改的文件」子菜单选中的路径。
     OpenRecent(String),
-    /// 文件菜单「欢迎页面」：主区域显示欢迎内容（有工程时也可用）。
+    /// 文件菜单「欢迎页面」：打开独立欢迎窗口（与启动欢迎窗口同款）。
     Welcome,
     /// App 菜单「设置…」（⌘,），打开应用设置对话框。
     Settings,

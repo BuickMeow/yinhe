@@ -147,6 +147,23 @@ impl App {
         // ── About window ──
         crate::dialogs::about::show_viewport(&ctx, &mut self.show_about);
 
+        // ── Welcome window（文件菜单「欢迎页面」打开的独立窗口）──
+        // 与启动阶段的欢迎窗口同款（同一 viewport id；两个场景互斥不会同时出现）。
+        // 关闭普通窗口 = 收起页面（不像启动向导场景那样退出应用）。
+        if self.show_welcome_page {
+            let (closed, action) = crate::welcome::show_window(
+                &ctx,
+                &self.audio_settings.recent_files,
+                &self.audio_settings.recent_file_times,
+            );
+            if closed {
+                self.show_welcome_page = false;
+            }
+            if let Some(action) = action {
+                self.handle_welcome_action(action, &ctx);
+            }
+        }
+
         // ── Settings dialog ──
         let prev_allow = self.audio_settings.allow_overlapping_notes;
         let prev_behavior = self.audio_settings.overlap_blocked_behavior;

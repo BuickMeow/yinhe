@@ -1006,9 +1006,6 @@ impl App {
             WelcomeAction::OpenSettings => {
                 self.handle_file_action(transport_bar::FileAction::Settings, ctx);
             }
-            WelcomeAction::Back => {
-                self.show_welcome_page = false;
-            }
         }
     }
 
@@ -1062,8 +1059,9 @@ impl App {
                 );
             }
             transport_bar::FileAction::Welcome => {
-                // 切换式：文件菜单点一次打开欢迎页面，再点一次关闭（有工程时也可用）。
-                self.show_welcome_page = !self.show_welcome_page;
+                // 打开独立欢迎窗口（与启动欢迎窗口同款）；已打开时拉到前台。
+                self.show_welcome_page = true;
+                crate::chrome::dialog::raise_viewport(ctx, crate::welcome::viewport_id());
             }
             transport_bar::FileAction::About => {
                 self.show_about = true;

@@ -196,7 +196,8 @@ pub struct App {
     pub(crate) show_mem_breakdown: bool,
 
     // ── 欢迎页面 / 关于窗口 ──
-    /// 欢迎页面：主区域显示欢迎内容（有工程时也可通过文件菜单打开；再点菜单关闭）。
+    /// 独立欢迎窗口显示中（文件菜单「欢迎页面」打开，与启动欢迎窗口同款；
+    /// 关闭窗口只收起页面，不退出应用）。
     pub(crate) show_welcome_page: bool,
     /// 关于窗口是否打开。
     pub(crate) show_about: bool,

@@ -20,9 +20,6 @@ pub(crate) enum WelcomeAction {
     OpenProject,
     OpenRecent(String),
     OpenSettings,
-    /// 返回编辑器：仅「有工程时主动打开欢迎页」场景会产生
-    /// （点击返回按钮，或点击内容列以外任意位置）。
-    Back,
 }
 
 /// 主按钮高度（逻辑像素，随字体缩放）。
@@ -71,7 +68,7 @@ pub(crate) fn show_window(
                 .show(ui, |ui| {
                     // 先内容（含水印），后标题栏：标题栏的标题/关闭按钮始终在最上层，
                     // 不被水印或背景覆盖。背景由 CentralPanel frame 铺满。
-                    action = welcome_content(ui, recent, recent_times, false);
+                    action = welcome_content(ui, recent, recent_times);
                     crate::chrome::dialog::title_bar(ui, &t!("welcome.title"), &mut closed, false);
                 });
             action
@@ -81,15 +78,10 @@ pub(crate) fn show_window(
 }
 
 /// 欢迎页内容（独立窗口 / 主界面占位共用）。返回本帧用户触发的动作。
-///
-/// `show_back`：有工程时主动打开（文件菜单）时为 true——在内容列顶部显示
-/// 「返回编辑器」，并且点击内容列以外任意位置也视为返回（tab/走带栏等
-/// 主界面交互自然退出欢迎页）。
 pub(crate) fn welcome_content(
     ui: &mut egui::Ui,
     recent: &[String],
     recent_times: &HashMap<String, i64>,
-    show_back: bool,
 ) -> Option<WelcomeAction> {
     let rect = ui.max_rect();
     // 装饰（水印/版本号）直接绘制，不参与布局；背景由调用方铺垫
@@ -104,8 +96,7 @@ pub(crate) fn welcome_content(
     let set_h = scale(BTN_H_SETTINGS);
     let col_w = (rect.width() - 48.0).clamp(200.0, COL_MAX_W);
     let list_h = recent_list_height(ui.ctx(), recent.len());
-    let back_h = if show_back { set_h + 14.0 } else { 0.0 };
-    let total_h = back_h + btn_h + 10.0 + btn_h + 24.0 + 18.0 + 6.0 + list_h + 20.0 + set_h;
+    let total_h = btn_h + 10.0 + btn_h + 24.0 + 18.0 + 6.0 + list_h + 20.0 + set_h;
     let top = ((rect.height() - total_h) * 0.5).max(14.0);
     let col_rect = egui::Rect::from_min_size(
         egui::pos2(rect.center().x - col_w * 0.5, rect.min.y + top),
@@ -115,27 +106,6 @@ pub(crate) fn welcome_content(
     let mut action = None;
     ui.scope_builder(egui::UiBuilder::new().max_rect(col_rect), |ui| {
         ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-
-        if show_back {
-            // 返回编辑器（仅"有工程时主动打开"场景）。
-            let back_w = (col_w * 0.55).clamp(120.0, 180.0);
-            ui.horizontal(|ui| {
-                ui.add_space((col_w - back_w) * 0.5);
-                if welcome_button(
-                    ui,
-                    t!("welcome.back").as_ref(),
-                    ICON_ARROW_BACK,
-                    false,
-                    back_w,
-                    BTN_H_SETTINGS,
-                )
-                .clicked()
-                {
-                    action = Some(WelcomeAction::Back);
-                }
-            });
-            ui.add_space(14.0);
-        }
 
         if welcome_button(
             ui,
@@ -210,16 +180,6 @@ pub(crate) fn welcome_content(
             }
         });
     });
-
-    // 有工程时主动打开：点击内容列以外（tab 栏 / 走带栏 / 面板等）视为返回编辑器。
-    if action.is_none() && show_back && ui.input(|i| i.pointer.any_click()) {
-        let outside = ui
-            .input(|i| i.pointer.interact_pos())
-            .is_some_and(|pos| !col_rect.expand(8.0).contains(pos));
-        if outside {
-            action = Some(WelcomeAction::Back);
-        }
-    }
     action
 }
 
@@ -374,10 +334,6 @@ mod tests {
     }
 
     fn harness(recent: Vec<&str>) -> Harness<'static, St> {
-        harness_with_back(recent, false)
-    }
-
-    fn harness_with_back(recent: Vec<&str>, show_back: bool) -> Harness<'static, St> {
         let recent: Vec<String> = recent.into_iter().map(str::to_string).collect();
         let mut first_frame = true;
         Harness::builder()
@@ -392,7 +348,7 @@ mod tests {
                     }
                     let times = HashMap::new();
                     // 多帧 run 时后续帧返回 None，需累积记录。
-                    if let Some(a) = welcome_content(ui, &recent, &times, show_back) {
+                    if let Some(a) = welcome_content(ui, &recent, &times) {
                         st.action = Some(a);
                     }
                 },
@@ -454,16 +410,5 @@ mod tests {
         h.run();
         let hint = leak_label(t!("welcome.no_recent").as_ref());
         assert!(h.query_by_label(hint).is_some());
-    }
-
-    #[test]
-    fn back_button_returns_back_action() {
-        // 有工程时主动打开欢迎页：显示「返回编辑器」，点击返回 Back。
-        let mut h = harness_with_back(vec!["/tmp/demo.yin"], true);
-        h.run();
-        h.get_by_label(leak_label(t!("welcome.back").as_ref()))
-            .click();
-        h.run();
-        assert_eq!(h.state().action, Some(WelcomeAction::Back));
     }
 }
