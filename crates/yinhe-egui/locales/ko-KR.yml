@@ -832,7 +832,6 @@ panel.no_selection: "선택된 항목이 없습니다"
 dialog.new_track.full: "256개 MIDI 채널(A1–P16)이 모두 사용 중이라 새로 만들 수 없습니다"
 
 # ── 환영 페이지 ──
-welcome.title: "환영합니다"
 welcome.open_project: "프로젝트 열기…"
 welcome.no_recent: "최근 프로젝트가 없습니다"
 

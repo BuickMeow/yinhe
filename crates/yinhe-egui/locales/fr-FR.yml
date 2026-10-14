@@ -788,7 +788,6 @@ file_dialog.open_failed: "Impossible d'ouvrir \"%{name}\" : ce n'est peut-être 
 file_dialog.not_found: "Impossible d'ouvrir \"%{name}\" : le fichier n'existe pas ou a été déplacé. Il a été retiré de la liste des fichiers récents."
 
 # ── Page d'accueil ──
-welcome.title: "Bienvenue"
 welcome.open_project: "Ouvrir un projet…"
 welcome.no_recent: "Aucun projet récent"
 

@@ -788,7 +788,6 @@ file_dialog.open_failed: "无法打开「%{name}」：可能不是有效的 .yin
 file_dialog.not_found: "无法打开「%{name}」：文件不存在或已被移动，已从最近使用列表中移除。"
 
 # ── 欢迎页 ──
-welcome.title: "欢迎"
 welcome.open_project: "打开工程…"
 welcome.no_recent: "暂无最近工程"
 

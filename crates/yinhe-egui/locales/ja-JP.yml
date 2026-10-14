@@ -833,7 +833,6 @@ panel.dock_to_side: "サイドバーにドッキング"
 panel.no_selection: "何も選択されていません"
 
 # ── ようこそページ ──
-welcome.title: "ようこそ"
 welcome.open_project: "プロジェクトを開く…"
 welcome.no_recent: "最近のプロジェクトはありません"
 

@@ -788,7 +788,6 @@ file_dialog.open_failed: "\"%{name}\" açılamıyor: geçerli bir .yin dosyası 
 file_dialog.not_found: "\"%{name}\" açılamıyor: dosya mevcut değil veya taşınmış. Son dosyalar listesinden kaldırıldı."
 
 # ── Karşılama sayfası ──
-welcome.title: "Hoş geldiniz"
 welcome.open_project: "Proje Aç…"
 welcome.no_recent: "Son proje yok"
 

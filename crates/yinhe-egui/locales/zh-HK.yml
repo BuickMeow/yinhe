@@ -830,7 +830,6 @@ panel.no_selection: "未選擇任何內容"
 dialog.new_track.full: "256 個 MIDI Channel（A1–P16）已全部佔用，無法新增"
 
 # ── 歡迎頁 ──
-welcome.title: "歡迎"
 welcome.open_project: "開啟工程…"
 welcome.no_recent: "暫無最近工程"
 

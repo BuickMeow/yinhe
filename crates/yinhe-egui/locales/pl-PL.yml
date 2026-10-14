@@ -788,7 +788,6 @@ file_dialog.open_failed: "Nie można otworzyć \"%{name}\": może to nie być pr
 file_dialog.not_found: "Nie można otworzyć \"%{name}\": plik nie istnieje lub został przeniesiony. Został usunięty z listy ostatnich plików."
 
 # ── Strona powitalna ──
-welcome.title: "Witamy"
 welcome.open_project: "Otwórz projekt…"
 welcome.no_recent: "Brak ostatnich projektów"
 

@@ -24,14 +24,16 @@ pub(crate) enum WelcomeAction {
 
 /// 主按钮高度（逻辑像素，随字体缩放）。
 const BTN_H: f32 = 38.0;
-/// 设置（次要）按钮高度。
-const BTN_H_SETTINGS: f32 = 32.0;
 /// 最近列表行高估算（用于垂直居中；实际行高由 MenuItemButton 决定）。
 const ROW_H: f32 = 26.0;
 /// 最近列表最大高度（超出滚动）。
 const RECENT_MAX_H: f32 = 280.0;
-/// 内容列最大宽度。
-const COL_MAX_W: f32 = 340.0;
+/// 左栏（按钮列）宽度。
+const LEFT_COL_W: f32 = 190.0;
+/// 左右两栏间距。
+const COL_GAP: f32 = 28.0;
+/// 两栏总宽上限。
+const TOTAL_COL_MAX_W: f32 = 560.0;
 /// 徽标水印不透明度（前景色淡化，淡淡地贴左下角）。
 /// 档位参考：24 ≈ 9.4%、18 ≈ 7%、14 ≈ 5.5%、10 ≈ 3.9%（255 基准）。
 const WATERMARK_ALPHA: u8 = 18;
@@ -63,7 +65,7 @@ pub(crate) fn show_window(
     let mut closed = false;
     let action = ctx.show_viewport_immediate(
         viewport_id(),
-        crate::chrome::dialog::viewport_builder(&t!("welcome.title"), [620.0, 560.0], false),
+        crate::chrome::dialog::viewport_builder("Yinhe", [620.0, 560.0], false),
         |ui, _class| {
             // 子窗口深浅与主窗口同步（与设置窗口一致）。
             crate::theme::apply_to_ctx(ui.ctx());
@@ -77,7 +79,7 @@ pub(crate) fn show_window(
                     // 先内容（含水印），后标题栏：标题栏的标题/关闭按钮始终在最上层，
                     // 不被水印或背景覆盖。背景由 CentralPanel frame 铺满。
                     action = welcome_content(ui, recent, recent_times);
-                    crate::chrome::dialog::title_bar(ui, &t!("welcome.title"), &mut closed, false);
+                    crate::chrome::dialog::title_bar(ui, "Yinhe", &mut closed, false);
                 });
             action
         },
@@ -97,95 +99,106 @@ pub(crate) fn welcome_content(
     paint_watermark(ui, rect);
     paint_version(ui, rect);
 
-    // 内容列：垂直居中；内容高于可用区时贴顶（最小 14 边距）。
+    // 两栏内容：左 = 操作按钮（垂直叠放），右 = 最近使用列表；整体垂直居中。
     let ctx = ui.ctx().clone();
     let scale = |v: f32| crate::scaling::scaled_font(&ctx, v);
     let btn_h = scale(BTN_H);
-    let set_h = scale(BTN_H_SETTINGS);
-    let col_w = (rect.width() - 48.0).clamp(200.0, COL_MAX_W);
+    let left_w = scale(LEFT_COL_W);
+    let col_gap = scale(COL_GAP);
+    let total_w = (rect.width() - 48.0).clamp(left_w + col_gap + 200.0, TOTAL_COL_MAX_W);
+    let right_w = total_w - left_w - col_gap;
+
     let list_h = recent_list_height(ui.ctx(), recent.len());
-    let total_h = btn_h + 10.0 + btn_h + 24.0 + 18.0 + 6.0 + list_h + 20.0 + set_h;
+    let right_h = scale(18.0) + scale(6.0) + list_h;
+    let left_h = btn_h * 3.0 + scale(20.0);
+    let total_h = left_h.max(right_h);
     let top = ((rect.height() - total_h) * 0.5).max(14.0);
     let col_rect = egui::Rect::from_min_size(
-        egui::pos2(rect.center().x - col_w * 0.5, rect.min.y + top),
-        egui::vec2(col_w, total_h),
+        egui::pos2(rect.center().x - total_w * 0.5, rect.min.y + top),
+        egui::vec2(total_w, total_h),
     );
 
     let mut action = None;
     ui.scope_builder(egui::UiBuilder::new().max_rect(col_rect), |ui| {
         ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
 
-        if welcome_button(
-            ui,
-            t!("file.new_project").as_ref(),
-            ICON_NOTE_ADD,
-            true,
-            col_w,
-            BTN_H,
-        )
-        .clicked()
-        {
-            action = Some(WelcomeAction::NewProject);
-        }
-        ui.add_space(10.0);
-        if welcome_button(
-            ui,
-            t!("welcome.open_project").as_ref(),
-            ICON_FOLDER_OPEN,
-            false,
-            col_w,
-            BTN_H,
-        )
-        .clicked()
-        {
-            action = Some(WelcomeAction::OpenProject);
-        }
+            // ── 左栏：三个垂直叠放的按钮 ──
+            ui.vertical(|ui| {
+                ui.set_width(left_w);
+                if welcome_button(
+                    ui,
+                    t!("file.new_project").as_ref(),
+                    ICON_NOTE_ADD,
+                    true,
+                    left_w,
+                    BTN_H,
+                )
+                .clicked()
+                {
+                    action = Some(WelcomeAction::NewProject);
+                }
+                ui.add_space(scale(10.0));
+                if welcome_button(
+                    ui,
+                    t!("welcome.open_project").as_ref(),
+                    ICON_FOLDER_OPEN,
+                    false,
+                    left_w,
+                    BTN_H,
+                )
+                .clicked()
+                {
+                    action = Some(WelcomeAction::OpenProject);
+                }
+                ui.add_space(scale(10.0));
+                if welcome_button(
+                    ui,
+                    t!("file.settings").as_ref(),
+                    ICON_SETTINGS,
+                    false,
+                    left_w,
+                    BTN_H,
+                )
+                .clicked()
+                {
+                    action = Some(WelcomeAction::OpenSettings);
+                }
+            });
 
-        ui.add_space(24.0);
-        ui.label(
-            egui::RichText::new(t!("menu.recent_files").to_string())
-                .size(scale(crate::theme::SMALL_FONT))
-                .color(crate::theme::text_label()),
-        );
-        ui.add_space(6.0);
-        if recent.is_empty() {
-            ui.label(
-                egui::RichText::new(t!("welcome.no_recent").to_string())
-                    .size(scale(crate::theme::BODY_FONT))
-                    .color(crate::theme::text_disabled()),
-            );
-        } else {
-            egui::ScrollArea::vertical()
-                .id_salt("welcome_recent_scroll")
-                .max_height(RECENT_MAX_H)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 2.0;
-                    for path in recent {
-                        if recent_row(ui, path, recent_times).clicked() {
-                            action = Some(WelcomeAction::OpenRecent(path.clone()));
-                        }
-                    }
-                });
-        }
+            ui.add_space(col_gap);
 
-        ui.add_space(20.0);
-        // 设置：次要小按钮，半宽居中。
-        let set_w = (col_w * 0.55).clamp(120.0, 180.0);
-        ui.horizontal(|ui| {
-            ui.add_space((col_w - set_w) * 0.5);
-            if welcome_button(
-                ui,
-                t!("file.settings").as_ref(),
-                ICON_SETTINGS,
-                false,
-                set_w,
-                BTN_H_SETTINGS,
-            )
-            .clicked()
-            {
-                action = Some(WelcomeAction::OpenSettings);
-            }
+            // ── 右栏：最近使用列表 ──
+            ui.vertical(|ui| {
+                ui.set_width(right_w);
+                ui.label(
+                    egui::RichText::new(t!("menu.recent_files").to_string())
+                        .size(scale(crate::theme::SMALL_FONT))
+                        .color(crate::theme::text_label()),
+                );
+                ui.add_space(scale(6.0));
+                if recent.is_empty() {
+                    ui.label(
+                        egui::RichText::new(t!("welcome.no_recent").to_string())
+                            .size(scale(crate::theme::BODY_FONT))
+                            .color(crate::theme::text_disabled()),
+                    );
+                } else {
+                    egui::ScrollArea::vertical()
+                        .id_salt("welcome_recent_scroll")
+                        .max_height(RECENT_MAX_H)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 2.0;
+                            for path in recent {
+                                if recent_row(ui, path, recent_times).clicked() {
+                                    action = Some(WelcomeAction::OpenRecent(path.clone()));
+                                }
+                            }
+                        });
+                }
+            });
         });
     });
     action
@@ -254,10 +267,23 @@ fn welcome_button(
 }
 
 /// 最近工程列表行：文件名 + 右侧上次打开时间；hover 显示完整路径。
+/// 最近列表行的文件类型图标：MIDI → 音频文件，.yin → auto awesome，其余通用。
+fn recent_icon(path: &str) -> egui_material_icons::MaterialIcon {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+    match ext.as_deref() {
+        Some("mid" | "midi") => ICON_AUDIO_FILE,
+        Some("yin") => ICON_AUTO_AWESOME,
+        _ => ICON_DESCRIPTION,
+    }
+}
+
 fn recent_row(ui: &mut egui::Ui, path: &str, times: &HashMap<String, i64>) -> egui::Response {
     let name = recent_display_name(path);
     let job = crate::widgets::icon_text::icon_text(
-        ICON_DESCRIPTION,
+        recent_icon(path),
         name,
         crate::theme::FILE_MENU_FONT,
         crate::theme::text_primary(),

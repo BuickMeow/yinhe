@@ -788,7 +788,6 @@ file_dialog.open_failed: "Cannot open \"%{name}\": may not be a valid .yin file,
 file_dialog.not_found: "Cannot open \"%{name}\": the file does not exist or has been moved. It has been removed from the recent files list."
 
 # ── Welcome page ──
-welcome.title: "Welcome"
 welcome.open_project: "Open Project…"
 welcome.no_recent: "No recent projects"
 
