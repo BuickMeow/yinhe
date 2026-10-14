@@ -122,6 +122,40 @@ fn undo_restores_track_name() {
     assert!(doc.history.can_undo());
 }
 
+/// 混音台参数 undo/redo：整份参数替换、reversed 交换 before/after，
+/// 应用后 mixer_dirty 置位（保存时能落盘）。
+#[test]
+fn mixer_params_undo_redo_roundtrip() {
+    let mut doc = make_doc("t");
+    doc.mixer.ensure_len();
+    doc.mixer.channels[0].gain = 0.25;
+    doc.mixer.master.gain = 0.8;
+    let before = Box::new(doc.mixer.clone());
+    // 模拟一次混音台编辑：通道 0 推子 + master 同时变化。
+    doc.mixer.channels[0].gain = 0.5;
+    doc.mixer.master.gain = 0.4;
+    let after = Box::new(doc.mixer.clone());
+    assert_ne!(*before, *after);
+
+    doc.history.push(UndoEntry {
+        action: UndoAction::MixerParams { before, after },
+        label: "mix".to_string(),
+        snapshot: EditSnapshot::default(),
+    });
+    doc.mixer_dirty = false;
+
+    // Undo 恢复编辑前参数。
+    assert!(doc.undo());
+    assert_eq!(doc.mixer.channels[0].gain, 0.25);
+    assert_eq!(doc.mixer.master.gain, 0.8);
+    assert!(doc.mixer_dirty, "undo 后应标脏以便保存");
+
+    // Redo 恢复编辑后参数。
+    assert!(doc.redo());
+    assert_eq!(doc.mixer.channels[0].gain, 0.5);
+    assert_eq!(doc.mixer.master.gain, 0.4);
+}
+
 #[test]
 fn track_color_undo_redo() {
     let mut doc = make_doc("t");

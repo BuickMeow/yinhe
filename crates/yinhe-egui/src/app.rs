@@ -124,9 +124,9 @@ pub struct App {
     pub(crate) show_mixer_panel: bool,
     /// MIX 上下分割比例（通道 AR 高度占比，持久化）。
     pub(crate) mix_split: f32,
-    /// 混音台编辑的 undo 暂存：首次变更记录起点快照与标签，指针空闲后
-    /// 合并提交为一条 undo（一次拖动/一组连续操作 = 一条撤销）。
-    pub(crate) mixer_undo_pending: Option<(Box<yinhe_mixer::MixerParams>, String)>,
+    /// 混音台编辑的 undo 暂存：首次变更记录 (文档 id, 起点快照, 标签)，
+    /// 指针空闲后合并提交为一条 undo（一次拖动/一组连续操作 = 一条撤销）。
+    pub(crate) mixer_undo_pending: Option<(u64, Box<yinhe_mixer::MixerParams>, String)>,
     /// dock 参数区当前选中的设备（不持久化）。
     pub(crate) dock_selected: Option<crate::chrome::dock_bar::DockDevice>,
     /// dock 当前通道语境（MIDI / 乐器 / 音频三套命名空间；不持久化）。

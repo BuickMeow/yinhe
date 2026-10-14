@@ -252,27 +252,30 @@ impl App {
         if self.mixer_undo_pending.is_none()
             && let Some(idx) = self.workspace.active_doc
         {
-            self.mixer_undo_pending = Some((
-                Box::new(self.workspace.documents[idx].mixer.clone()),
-                label.to_string(),
-            ));
+            let doc = &self.workspace.documents[idx];
+            self.mixer_undo_pending =
+                Some((doc.doc_id, Box::new(doc.mixer.clone()), label.to_string()));
         }
     }
 
     /// 指针空闲（未按住任何鼠标键）时，把暂存的混音台编辑提交为一条 undo。
     /// 无实际变化（如点了 M/S 又点回来）时不产生 undo。
     pub(crate) fn commit_pending_mixer_undo(&mut self, ctx: &egui::Context) {
-        let Some((before, label)) = self.mixer_undo_pending.take() else {
+        let Some((doc_id, before, label)) = self.mixer_undo_pending.take() else {
             return;
         };
         if ctx.input(|i| i.pointer.any_down()) {
-            self.mixer_undo_pending = Some((before, label));
+            self.mixer_undo_pending = Some((doc_id, before, label));
             return;
         }
         let Some(idx) = self.workspace.active_doc else {
             return;
         };
         let doc = &mut self.workspace.documents[idx];
+        // 拖动期间用户切换过文档（极少数场景）：暂存与当前文档不符则丢弃。
+        if doc.doc_id != doc_id {
+            return;
+        }
         if *before == doc.mixer {
             return;
         }

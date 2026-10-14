@@ -281,7 +281,10 @@ pub(crate) fn show(
                     crate::widgets::hint::set(ui.ctx(), t!("hint.ca.channel_row"));
                 }
 
-                if resp.clicked() {
+                if resp.double_clicked() {
+                    // 双击通道行：展开/收起（与单击 chevron 等效，else 分支防第二击重复处理）。
+                    toggle_expanded(ch, io);
+                } else if resp.clicked() {
                     let press_on_icon = resp
                         .interact_pointer_pos()
                         .is_some_and(|p| icon_rect.contains(p));
@@ -295,9 +298,6 @@ pub(crate) fn show(
                         *io.selection_anchor = g.tracks.first().copied();
                         *io.info_content = Some(crate::right_panel::InfoContent::Track);
                     }
-                }
-                if resp.double_clicked() {
-                    toggle_expanded(ch, io);
                 }
             }
             CaRow::Track(t) => {
@@ -443,18 +443,18 @@ pub(crate) fn show(
                 if hovered {
                     crate::widgets::hint::set(ui.ctx(), t!("hint.arrange.track_row"));
                 }
-                if resp.clicked() && !over_popup {
-                    io.track_selected.clear();
-                    io.track_selected.insert(t);
-                    *io.selection_anchor = Some(t);
-                    *io.info_content = Some(crate::right_panel::InfoContent::Track);
-                }
                 if resp.double_clicked() && !over_popup {
+                    // 双击轨道行：选中并打开钢琴卷帘（与轨道 AR 一致）。
                     io.track_selected.clear();
                     io.track_selected.insert(t);
                     *io.selection_anchor = Some(t);
                     *io.info_content = Some(crate::right_panel::InfoContent::Track);
                     *io.request_pianoroll = true;
+                } else if resp.clicked() && !over_popup {
+                    io.track_selected.clear();
+                    io.track_selected.insert(t);
+                    *io.selection_anchor = Some(t);
+                    *io.info_content = Some(crate::right_panel::InfoContent::Track);
                 }
             }
             CaRow::Automation { track, sub } => {
