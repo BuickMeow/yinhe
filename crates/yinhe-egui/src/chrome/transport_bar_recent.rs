@@ -14,6 +14,20 @@ pub(crate) fn recent_display_name(path: &str) -> &str {
         .unwrap_or(path)
 }
 
+/// 最近文件的类型图标（欢迎页列表与文件菜单共用）：
+/// MIDI → 音频文件图标，.yin → auto awesome，其余（压缩包等）→ 通用文档。
+pub(crate) fn recent_file_icon(path: &str) -> egui_material_icons::MaterialIcon {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+    match ext.as_deref() {
+        Some("mid" | "midi") => ICON_AUDIO_FILE,
+        Some("yin") => ICON_AUTO_AWESOME,
+        _ => ICON_DESCRIPTION,
+    }
+}
+
 /// 把 Unix 秒格式化为本地时间 `YYYY-MM-DD HH:MM`；无效值返回空串。
 pub(crate) fn format_opened_at(secs: i64) -> String {
     chrono::DateTime::from_timestamp(secs, 0)
@@ -116,7 +130,7 @@ pub fn recent_files_section(
                 let (resp, _) = popup_menu_row(
                     ui,
                     PopupRowSpec {
-                        icon: ICON_DESCRIPTION,
+                        icon: recent_file_icon(path),
                         label: recent_display_name(path),
                         shortcut: None,
                         enabled: true,

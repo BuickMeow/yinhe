@@ -267,23 +267,10 @@ fn welcome_button(
 }
 
 /// 最近工程列表行：文件名 + 右侧上次打开时间；hover 显示完整路径。
-/// 最近列表行的文件类型图标：MIDI → 音频文件，.yin → auto awesome，其余通用。
-fn recent_icon(path: &str) -> egui_material_icons::MaterialIcon {
-    let ext = std::path::Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_ascii_lowercase());
-    match ext.as_deref() {
-        Some("mid" | "midi") => ICON_AUDIO_FILE,
-        Some("yin") => ICON_AUTO_AWESOME,
-        _ => ICON_DESCRIPTION,
-    }
-}
-
 fn recent_row(ui: &mut egui::Ui, path: &str, times: &HashMap<String, i64>) -> egui::Response {
     let name = recent_display_name(path);
     let job = crate::widgets::icon_text::icon_text(
-        recent_icon(path),
+        crate::chrome::transport_bar_recent::recent_file_icon(path),
         name,
         crate::theme::FILE_MENU_FONT,
         crate::theme::text_primary(),
