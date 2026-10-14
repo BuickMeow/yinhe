@@ -18,6 +18,7 @@ pub(crate) mod midi_input;
 pub(crate) mod plugin_automation;
 pub(crate) mod poll;
 pub(crate) mod rescale_state;
+pub(crate) mod splash;
 pub(crate) mod startup;
 
 use crate::chrome::mode_bar::ViewMode;
