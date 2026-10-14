@@ -792,8 +792,8 @@ file_dialog.open_failed: "Не удаётся открыть \"%{name}\": воз
 file_dialog.not_found: "Не удаётся открыть \"%{name}\": файл не существует или был перемещён. Он удалён из списка недавних файлов."
 
 # ── Страница приветствия ──
-welcome.open_project: "Открыть проект…"
-welcome.no_recent: "Нет недавних проектов"
+welcome.open_project: "Открыть файл…"
+welcome.no_recent: "Нет недавних файлов"
 
 # ── 关于窗口 ──
 about.author: "Автор: 节能降耗"

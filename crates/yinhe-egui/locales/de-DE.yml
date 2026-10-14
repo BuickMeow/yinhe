@@ -792,8 +792,8 @@ file_dialog.open_failed: "Kann \"%{name}\" nicht öffnen: Möglicherweise keine 
 file_dialog.not_found: "Kann \"%{name}\" nicht öffnen: Die Datei existiert nicht oder wurde verschoben. Sie wurde aus der Liste der zuletzt verwendeten Dateien entfernt."
 
 # ── Willkommensseite ──
-welcome.open_project: "Projekt öffnen…"
-welcome.no_recent: "Keine zuletzt geöffneten Projekte"
+welcome.open_project: "Datei öffnen…"
+welcome.no_recent: "Keine zuletzt geöffneten Dateien"
 
 # ── 关于窗口 ──
 about.author: "Autor: 节能降耗"

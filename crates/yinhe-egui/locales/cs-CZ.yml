@@ -792,8 +792,8 @@ file_dialog.open_failed: "Nelze otevřít \"%{name}\": nemusí jít o platný so
 file_dialog.not_found: "Nelze otevřít \"%{name}\": soubor neexistuje nebo byl přesunut. Byl odebrán ze seznamu nedávných souborů."
 
 # ── Uvítací stránka ──
-welcome.open_project: "Otevřít projekt…"
-welcome.no_recent: "Žádné nedávné projekty"
+welcome.open_project: "Otevřít soubor…"
+welcome.no_recent: "Žádné nedávné soubory"
 
 # ── 关于窗口 ──
 about.author: "Autor: 节能降耗"

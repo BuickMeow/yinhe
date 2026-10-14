@@ -792,8 +792,8 @@ file_dialog.open_failed: "Não é possível abrir \"%{name}\": pode não ser um 
 file_dialog.not_found: "Não é possível abrir \"%{name}\": o arquivo não existe ou foi movido. Ele foi removido da lista de arquivos recentes."
 
 # ── Página de boas-vindas ──
-welcome.open_project: "Abrir projeto…"
-welcome.no_recent: "Nenhum projeto recente"
+welcome.open_project: "Abrir arquivo…"
+welcome.no_recent: "Nenhum arquivo recente"
 
 # ── 关于窗口 ──
 about.author: "Autor: 节能降耗"

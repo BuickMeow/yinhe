@@ -836,8 +836,8 @@ panel.no_selection: "未選取任何內容"
 dialog.new_track.full: "256 個 MIDI 通道（A1–P16）已全部佔用，無法新增"
 
 # ── 歡迎頁 ──
-welcome.open_project: "開啟工程…"
-welcome.no_recent: "暫無最近工程"
+welcome.open_project: "開啟檔案…"
+welcome.no_recent: "暫無最近檔案"
 
 # ── 关于窗口 ──
 about.author: "作者：節能降耗"

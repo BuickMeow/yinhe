@@ -792,8 +792,8 @@ file_dialog.open_failed: "Nie można otworzyć \"%{name}\": może to nie być pr
 file_dialog.not_found: "Nie można otworzyć \"%{name}\": plik nie istnieje lub został przeniesiony. Został usunięty z listy ostatnich plików."
 
 # ── Strona powitalna ──
-welcome.open_project: "Otwórz projekt…"
-welcome.no_recent: "Brak ostatnich projektów"
+welcome.open_project: "Otwórz plik…"
+welcome.no_recent: "Brak ostatnich plików"
 
 # ── 关于窗口 ──
 about.author: "Autor: 节能降耗"

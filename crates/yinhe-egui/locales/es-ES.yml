@@ -792,8 +792,8 @@ file_dialog.open_failed: "No se puede abrir \"%{name}\": puede que no sea un arc
 file_dialog.not_found: "No se puede abrir \"%{name}\": el archivo no existe o se ha movido. Se ha eliminado de la lista de archivos recientes."
 
 # ── Página de bienvenida ──
-welcome.open_project: "Abrir proyecto…"
-welcome.no_recent: "No hay proyectos recientes"
+welcome.open_project: "Abrir archivo…"
+welcome.no_recent: "No hay archivos recientes"
 
 # ── 关于窗口 ──
 about.author: "Autor: 节能降耗"
