@@ -410,6 +410,8 @@ impl eframe::App for App {
             &self.workspace.documents,
             &mut self.workspace.active_doc,
             &mut self.tab_scroll_offset,
+            &self.audio_settings.recent_files,
+            &self.audio_settings.recent_file_times,
         );
         match title_bar_action {
             Some(title_bar::TitleBarAction::CloseDocument(idx)) => {
@@ -436,6 +438,19 @@ impl eframe::App for App {
             Some(title_bar::TitleBarAction::DetachTab(idx)) => {
                 // 脏文档也直接 detach：临时保存包含未保存内容，不丢数据，不弹确认
                 self.detach_tab_to_new_window(idx);
+            }
+            Some(title_bar::TitleBarAction::OpenRecent(path)) => {
+                self.open_recent_file(&path);
+            }
+            Some(title_bar::TitleBarAction::RemoveRecent(path)) => {
+                self.audio_settings.remove_recent_file(&path);
+                self.audio_settings.save();
+            }
+            Some(title_bar::TitleBarAction::OpenRecentInNewWindow(path)) => {
+                self.open_recent_in_new_window(&path);
+            }
+            Some(title_bar::TitleBarAction::OpenFile) => {
+                self.handle_file_action(transport_bar::FileAction::Open, ui.ctx());
             }
             None => {}
         }

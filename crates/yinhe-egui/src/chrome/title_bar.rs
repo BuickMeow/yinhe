@@ -10,6 +10,7 @@
 #[cfg(not(target_os = "macos"))]
 mod buttons;
 mod paint;
+mod popup;
 
 use eframe::egui;
 use rust_i18n::t;
@@ -30,6 +31,14 @@ pub(crate) enum TitleBarAction {
     },
     /// 拖出到新窗口：把标签 idx 的工程在新进程打开
     DetachTab(usize),
+    /// 工程选择 popup：打开最近文件（追加为新文档）
+    OpenRecent(String),
+    /// 工程选择 popup：从最近文件列表移除记录
+    RemoveRecent(String),
+    /// 工程选择 popup：在新窗口（新进程）打开最近文件
+    OpenRecentInNewWindow(String),
+    /// 工程选择 popup：打开文件选择器（.yin / .mid 等）
+    OpenFile,
 }
 
 /// 标签拖拽跨帧状态（标题栏横向，单标签）
@@ -57,6 +66,8 @@ pub(crate) fn show(
     documents: &[Document],
     active_doc: &mut Option<usize>,
     tab_scroll_offset: &mut f32,
+    recent: &[String],
+    recent_times: &std::collections::HashMap<String, i64>,
 ) -> Option<TitleBarAction> {
     let mut action = None;
     egui::Panel::top("title_bar")
@@ -68,16 +79,15 @@ pub(crate) fn show(
             ..Default::default()
         })
         .show(ui, |ui| {
-            let m = BarMetrics::new(ui.max_rect());
+            // macOS 原生全屏（新桌面）时系统红绿灯隐藏，收回为它预留的空间
+            let fullscreen = ui.input(|i| i.viewport().fullscreen).unwrap_or(false);
+            let m = BarMetrics::new(ui.max_rect(), fullscreen);
             let painter = ui.painter().clone();
             let n_docs = documents.len();
 
-            // ── Precompute tab/close rects for hit-testing and reorder ──
+            // ── Precompute tab rects for hit-testing and reorder ──
             let tab_rects: Vec<egui::Rect> = (0..n_docs)
                 .map(|i| m.tab_rect(*tab_scroll_offset, i))
-                .collect();
-            let close_rects: Vec<egui::Rect> = (0..n_docs)
-                .map(|i| m.close_rect(*tab_scroll_offset, i))
                 .collect();
 
             // ── Handle mouse wheel / trackpad scroll for tab overflow ──
@@ -162,28 +172,25 @@ pub(crate) fn show(
                 });
             }
 
-            // 标签上按下后移动超过阈值则进入拖拽（关闭按钮区域不触发）
+            // 标签上按下后移动超过阈值则进入拖拽
             if drag.is_none()
                 && let (Some(p), Some(cur)) = (press.clone(), pointer_pos)
                 && pointer_down
                 && (cur - p.pos).length() > max_click_dist
                 && let Some(from) = p.idx
             {
-                let press_on_close = close_rects.get(from).is_some_and(|c| c.contains(p.pos));
-                if !press_on_close {
-                    let mut tmp = crate::widgets::reorder::DragReorder {
-                        indices: vec![from],
-                        insert_idx: 0,
-                    };
-                    tmp.update_insert_idx_horizontal(cur.x, &tab_rects);
-                    drag = Some(TitleDrag {
-                        from,
-                        insert_idx: tmp.insert_idx,
-                        detached: false,
-                    });
-                    press = None;
-                    ui.ctx().request_repaint();
-                }
+                let mut tmp = crate::widgets::reorder::DragReorder {
+                    indices: vec![from],
+                    insert_idx: 0,
+                };
+                tmp.update_insert_idx_horizontal(cur.x, &tab_rects);
+                drag = Some(TitleDrag {
+                    from,
+                    insert_idx: tmp.insert_idx,
+                    detached: false,
+                });
+                press = None;
+                ui.ctx().request_repaint();
             }
 
             // 空白区按下后移动超过点击阈值 → 启动系统窗口拖动（每按只发一次）。
@@ -263,6 +270,12 @@ pub(crate) fn show(
                 (c, mx, mn)
             };
 
+            // ── 工程选择 popup 状态与点击标签后的开合 ──
+            let mut doc_popup: popup::PopupState = ui
+                .data_mut(|d| d.get_temp(popup::state_id()))
+                .unwrap_or_default();
+            let mut popup_toggled = false;
+
             // ── Press/drag 结束后的点击 / 排序 / detach 判定 ──
             // 拖拽中主键已抬起但没收到 release 事件（指针离开视口被吞）→ 视为释放
             let drag_stuck_release = drag.is_some() && !ui.input(|i| i.pointer.any_down());
@@ -289,13 +302,13 @@ pub(crate) fn show(
                     && let Some(release) = pointer_pos
                     && (release - p.pos).length() < max_click_dist
                 {
-                    // 标签 / 关闭按钮点击（按下与松开都在同一矩形内）
+                    // 标签点击：打开/关闭工程选择 popup（切换文档由 popup 行选择）
                     if let Some(i) = p.idx {
-                        if close_rects[i].contains(p.pos) && close_rects[i].contains(release) {
-                            action = Some(TitleBarAction::CloseDocument(i));
-                        } else if tab_rects[i].contains(p.pos) && tab_rects[i].contains(release) {
-                            *active_doc = Some(i);
-                        }
+                        doc_popup.open = !doc_popup.open;
+                        doc_popup.anchor_x = tab_rects
+                            .get(i)
+                            .map_or(m.bar_rect.min.x + m.left_padding, |r| r.min.x);
+                        popup_toggled = true;
                     } else {
                         // 窗口按钮（仅非 macOS；macOS 用系统红绿灯）
                         #[cfg(not(target_os = "macos"))]
@@ -321,6 +334,42 @@ pub(crate) fn show(
                     }
                 }
             }
+
+            // ── 工程选择 popup：拖拽/点击外部/Esc 关闭，渲染在最后（浮在最上层）──
+            if drag.is_some() {
+                doc_popup.open = false;
+            }
+            if doc_popup.open && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                doc_popup.open = false;
+            }
+            if doc_popup.open {
+                let out = popup::show(
+                    ui,
+                    &m,
+                    documents,
+                    active_doc,
+                    recent,
+                    recent_times,
+                    doc_popup.anchor_x,
+                );
+                if out.close {
+                    doc_popup.open = false;
+                }
+                if let Some(a) = out.action {
+                    action = Some(a);
+                }
+                // 点击 popup 外部关闭（本帧刚由标签点击切换时跳过）
+                if doc_popup.open
+                    && !popup_toggled
+                    && ui.input(|i| i.pointer.any_pressed())
+                    && let Some(pos) = pointer_pos
+                    && !out.rect.contains(pos)
+                    && !tab_rects.iter().any(|r| r.contains(pos))
+                {
+                    doc_popup.open = false;
+                }
+            }
+            ui.data_mut(|d| d.insert_temp(popup::state_id(), doc_popup));
 
             // ── Paint window buttons (non-macOS, visual only) ──
             #[cfg(not(target_os = "macos"))]
@@ -365,9 +414,7 @@ pub(crate) fn show(
                     if m.max_scroll_offset(n_docs) > 0.0 {
                         crate::widgets::hint::set(ui.ctx(), t!("hint.title_bar.scroll"));
                     }
-                    if close_rects.iter().any(|r| r.contains(pos)) {
-                        crate::widgets::hint::set(ui.ctx(), t!("hint.title_bar.close"));
-                    } else if tab_rects.iter().any(|r| r.contains(pos)) {
+                    if tab_rects.iter().any(|r| r.contains(pos)) {
                         crate::widgets::hint::set(ui.ctx(), t!("hint.title_bar.tab"));
                     } else if in_blank_area(pos) {
                         let last: f64 = ui.data_mut(|d| d.get_persisted(dbl_id)).unwrap_or(0.0);
@@ -420,6 +467,7 @@ pub(crate) fn show(
 mod tests {
     use super::*;
     use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable as _;
 
     /// 测试状态：active_doc / 滚动 / 最近一次 title bar 动作。
     #[derive(Default)]
@@ -429,23 +477,37 @@ mod tests {
         scroll: f32,
     }
 
-    /// macOS left_padding=80、tab_w=120 → 首个标签 rect [80..200]×[4..28]。
-    fn make_harness<'a>(documents: &'a [Document]) -> Harness<'a, TbState> {
+    /// macOS left_padding=80、tab_w=200 → 首个标签 rect [80..280]×[4..28]。
+    /// 窗口高度取够高，保证标题栏下方的 popup 落在视口内可被点击。
+    fn make_harness<'a>(documents: &'a [Document], recent: &'a [String]) -> Harness<'a, TbState> {
         let mut first_frame = true;
         Harness::builder()
-            .with_size(egui::vec2(1200.0, 32.0))
+            .with_size(egui::vec2(1200.0, 600.0))
             .build_ui_state(
                 move |ui, st| {
                     if std::mem::take(&mut first_frame) {
                         ui.ctx().add_font(egui_material_icons::font_insert());
                         return;
                     }
-                    st.action = match show(ui, documents, &mut st.active_doc, &mut st.scroll) {
-                        Some(TitleBarAction::CloseDocument(_)) => Some("close"),
-                        Some(TitleBarAction::ReorderTab { .. }) => Some("reorder"),
-                        Some(TitleBarAction::DetachTab(_)) => Some("detach"),
-                        None => None,
-                    };
+                    let times = std::collections::HashMap::new();
+                    if let Some(a) = show(
+                        ui,
+                        documents,
+                        &mut st.active_doc,
+                        &mut st.scroll,
+                        recent,
+                        &times,
+                    ) {
+                        st.action = Some(match a {
+                            TitleBarAction::CloseDocument(_) => "close",
+                            TitleBarAction::ReorderTab { .. } => "reorder",
+                            TitleBarAction::DetachTab(_) => "detach",
+                            TitleBarAction::OpenRecent(_) => "open_recent",
+                            TitleBarAction::RemoveRecent(_) => "remove_recent",
+                            TitleBarAction::OpenRecentInNewWindow(_) => "recent_new_window",
+                            TitleBarAction::OpenFile => "open_file",
+                        });
+                    }
                 },
                 TbState::default(),
             )
@@ -484,6 +546,11 @@ mod tests {
         );
     }
 
+    fn click_at(h: &mut Harness<'_, TbState>, pos: egui::Pos2, time: f64) {
+        press_at(h, pos, time);
+        release_at(h, pos, time + 0.05);
+    }
+
     fn has_command(h: &Harness<'_, TbState>, cmd: &egui::ViewportCommand) -> bool {
         h.output()
             .viewport_output
@@ -491,11 +558,17 @@ mod tests {
             .is_some_and(|o| o.commands.iter().any(|c| c == cmd))
     }
 
+    fn popup_open(h: &Harness<'_, TbState>) -> bool {
+        h.ctx
+            .data(|d| d.get_temp::<popup::PopupState>(popup::state_id()))
+            .is_some_and(|s| s.open)
+    }
+
     /// 回归测试：标签上按住并拖动不得移动窗口（也不得误触排序/detach）。
     #[test]
     fn drag_on_tab_does_not_start_window_drag() {
         let docs = vec![yinhe_test_helpers::make_test_document()];
-        let mut h = make_harness(&docs);
+        let mut h = make_harness(&docs, &[]);
         let start = egui::pos2(140.0, 16.0); // 第一个标签中心
         press_at(&mut h, start, 2.0);
         for i in 1..=5 {
@@ -516,7 +589,7 @@ mod tests {
     #[test]
     fn drag_blank_area_starts_window_drag() {
         let docs = vec![yinhe_test_helpers::make_test_document()];
-        let mut h = make_harness(&docs);
+        let mut h = make_harness(&docs, &[]);
         let start = egui::pos2(600.0, 16.0);
         press_at(&mut h, start, 2.0);
         event_at(
@@ -531,35 +604,119 @@ mod tests {
         release_at(&mut h, start + egui::vec2(10.0, 0.0), 2.15);
     }
 
-    /// 单击标签切换活跃文档；拖拽阈值内的小幅移动不产生排序动作。
+    /// 单击标签打开工程选择 popup；再点一次关闭（不直接切换文档）。
     #[test]
-    fn click_tab_switches_active_doc() {
-        let docs = vec![
-            yinhe_test_helpers::make_test_document(),
-            yinhe_test_helpers::make_test_document(),
-        ];
-        let mut h = make_harness(&docs);
+    fn click_tab_toggles_popup() {
+        let docs = vec![yinhe_test_helpers::make_test_document()];
+        let mut h = make_harness(&docs, &[]);
         h.state_mut().active_doc = Some(0);
-        let start = egui::pos2(262.0, 16.0); // 第二个标签中心（80+122+60）
-        press_at(&mut h, start, 2.0);
-        release_at(&mut h, start, 2.05);
-        assert_eq!(h.state().active_doc, Some(1), "单击第二个标签应切换活跃");
-        assert_eq!(h.state().action, None);
+        let start = egui::pos2(140.0, 16.0);
+        click_at(&mut h, start, 2.0);
+        assert!(popup_open(&h), "单击标签应打开 popup");
+        assert_eq!(h.state().active_doc, Some(0), "标签点击不直接切换文档");
+        click_at(&mut h, start, 2.2);
+        assert!(!popup_open(&h), "再点一次标签应关闭 popup");
     }
 
-    /// 点击关闭按钮应返回 CloseDocument 动作。
+    /// Esc 关闭 popup。
     #[test]
-    fn click_close_button_emits_close_action() {
+    fn escape_closes_popup() {
         let docs = vec![yinhe_test_helpers::make_test_document()];
-        let mut h = make_harness(&docs);
-        // 关闭按钮在标签右缘内 20px：rect [180..200]×[4..28]
-        let start = egui::pos2(190.0, 16.0);
-        press_at(&mut h, start, 2.0);
-        release_at(&mut h, start, 2.05);
-        assert_eq!(
-            h.state().action,
-            Some("close"),
-            "点关闭按钮应触发 CloseDocument"
+        let mut h = make_harness(&docs, &[]);
+        let start = egui::pos2(140.0, 16.0);
+        click_at(&mut h, start, 2.0);
+        assert!(popup_open(&h));
+        event_at(
+            &mut h,
+            2.2,
+            egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::default(),
+            },
         );
+        assert!(!popup_open(&h), "Esc 应关闭 popup");
+    }
+
+    /// popup「当前窗口」行：点击切换活跃文档并关闭 popup。
+    #[test]
+    fn click_doc_row_switches_active_doc() {
+        let mut d0 = yinhe_test_helpers::make_test_document();
+        d0.file_name = "alpha.mid".to_string();
+        let mut d1 = yinhe_test_helpers::make_test_document();
+        d1.file_name = "beta.mid".to_string();
+        let docs = vec![d0, d1];
+        let mut h = make_harness(&docs, &[]);
+        h.state_mut().active_doc = Some(0);
+        click_at(&mut h, egui::pos2(140.0, 16.0), 2.0);
+        h.run();
+        h.get_by_label_contains("beta.mid").click();
+        h.run();
+        assert_eq!(h.state().active_doc, Some(1), "点击行应切换活跃文档");
+        assert!(!popup_open(&h), "选中行后 popup 应关闭");
+    }
+
+    /// popup「最近文件」行：点击返回 OpenRecent 动作。
+    #[test]
+    fn click_recent_row_emits_open_recent() {
+        let docs = vec![yinhe_test_helpers::make_test_document()];
+        let recent = vec!["/tmp/song.mid".to_string()];
+        let mut h = make_harness(&docs, &recent);
+        click_at(&mut h, egui::pos2(140.0, 16.0), 2.0);
+        h.run();
+        h.get_by_label_contains("song.mid").click();
+        h.run();
+        assert_eq!(h.state().action, Some("open_recent"));
+        assert!(!popup_open(&h), "触发动作后 popup 应关闭");
+    }
+
+    /// popup 底部「打开文件」按钮：返回 OpenFile 动作。
+    #[test]
+    fn click_open_file_button_emits_action() {
+        let docs = vec![yinhe_test_helpers::make_test_document()];
+        let mut h = make_harness(&docs, &[]);
+        click_at(&mut h, egui::pos2(140.0, 16.0), 2.0);
+        h.run();
+        let label = t!("title_bar.open_file").to_string();
+        h.get_by_label_contains(&label).click();
+        h.run();
+        assert_eq!(h.state().action, Some("open_file"));
+        assert!(!popup_open(&h));
+    }
+
+    /// 最近文件行悬停后出现的 × 图标：返回 RemoveRecent 动作。
+    #[test]
+    fn click_remove_recent_icon_emits_action() {
+        let docs = vec![yinhe_test_helpers::make_test_document()];
+        let recent = vec!["/tmp/song.mid".to_string()];
+        let mut h = make_harness(&docs, &recent);
+        click_at(&mut h, egui::pos2(140.0, 16.0), 2.0);
+        h.run();
+        h.get_by_label_contains("song.mid").hover();
+        h.run();
+        let label = t!("hint.title_bar.remove_recent").to_string();
+        h.get_by_label_contains(&label).click();
+        h.run();
+        assert_eq!(h.state().action, Some("remove_recent"));
+        assert!(!popup_open(&h));
+    }
+
+    /// 最近文件行悬停后出现的 ↗ 图标：返回 OpenRecentInNewWindow 动作。
+    #[test]
+    fn click_open_recent_in_new_window_icon_emits_action() {
+        let docs = vec![yinhe_test_helpers::make_test_document()];
+        let recent = vec!["/tmp/song.mid".to_string()];
+        let mut h = make_harness(&docs, &recent);
+        click_at(&mut h, egui::pos2(140.0, 16.0), 2.0);
+        h.run();
+        h.get_by_label_contains("song.mid").hover();
+        h.run();
+        let label = t!("hint.title_bar.open_new").to_string();
+        h.get_by_label_contains(&label).click();
+        h.run();
+        assert_eq!(h.state().action, Some("recent_new_window"));
+        assert!(!popup_open(&h));
     }
 }

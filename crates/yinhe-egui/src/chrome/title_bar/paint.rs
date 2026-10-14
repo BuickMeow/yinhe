@@ -10,30 +10,28 @@ use super::TitleDrag;
 /// 标题栏几何常量与坐标换算（show 与绘制函数共用，避免公式散落多处）。
 pub(super) struct BarMetrics {
     pub bar_rect: egui::Rect,
-    /// macOS 左侧留给红绿灯的宽度。
+    /// macOS 左侧留给红绿灯的宽度（原生全屏时红绿灯隐藏，收回为普通内边距）。
     pub left_padding: f32,
     pub tab_w: f32,
     pub tab_h: f32,
     pub tab_y: f32,
     pub tab_gap: f32,
-    pub close_w: f32,
 }
 
 impl BarMetrics {
-    pub(super) fn new(bar_rect: egui::Rect) -> Self {
+    /// `fullscreen`：窗口是否处于 macOS 原生全屏（全屏到新桌面时系统红绿灯不显示，
+    /// 无需为它留空）。
+    pub(super) fn new(bar_rect: egui::Rect, fullscreen: bool) -> Self {
         let tab_h = 24.0;
+        let reserve_traffic_lights = cfg!(target_os = "macos") && !fullscreen;
         Self {
             bar_rect,
-            left_padding: if cfg!(target_os = "macos") {
-                80.0
-            } else {
-                10.0
-            },
-            tab_w: 120.0, // Uniform tab width: fixed 120px for compact tabs
+            left_padding: if reserve_traffic_lights { 80.0 } else { 10.0 },
+            // 极简标签（无背景），加宽以显示更长的工程名
+            tab_w: 200.0,
             tab_h,
             tab_y: bar_rect.center().y - tab_h / 2.0,
             tab_gap: 2.0,
-            close_w: 20.0,
         }
     }
 
@@ -44,15 +42,6 @@ impl BarMetrics {
         egui::Rect::from_min_max(
             egui::pos2(x, self.tab_y),
             egui::pos2(x + self.tab_w, self.tab_y + self.tab_h),
-        )
-    }
-
-    /// 第 i 个标签的关闭按钮矩形。
-    pub(super) fn close_rect(&self, scroll_offset: f32, i: usize) -> egui::Rect {
-        let tab_rect = self.tab_rect(scroll_offset, i);
-        egui::Rect::from_min_size(
-            egui::pos2(tab_rect.max.x - self.close_w, tab_rect.min.y),
-            egui::vec2(self.close_w, self.tab_h),
         )
     }
 
@@ -79,8 +68,8 @@ pub(super) fn tint(c: egui::Color32, mul: f32) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (c.a() as f32 * mul) as u8)
 }
 
-/// 绘制标题文字 + 全部文档标签（拖拽中的标签半透明 + accent 描边 + 阴影，
-/// 关闭按钮在拖拽中隐藏防误触）。
+/// 绘制标题文字 + 全部文档标签（拖拽中的标签半透明 + accent 描边 + 阴影）。
+/// 常态无按钮背景（只显示未保存圆点 + 工程名），悬停/按下才有底色。
 pub(super) fn paint_tabs(
     painter: &egui::Painter,
     ui: &egui::Ui,
@@ -103,7 +92,7 @@ pub(super) fn paint_tabs(
     let padding = 6.0;
     // 未保存圆点占位（直径 8 + 间距 6）
     let dirty_dot_w = 14.0;
-    let text_max_w = m.tab_w - m.close_w - padding * 2.0;
+    let text_max_w = m.tab_w - padding * 2.0;
 
     let hover_pos_val = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
     let interact_pos_val = ui.input(|i| i.pointer.interact_pos()).unwrap_or_default();
@@ -129,21 +118,20 @@ pub(super) fn paint_tabs(
             1.0
         };
 
-        // Tab background — pressed / hover / inactive（选中与否都响应悬停/按下）
+        // Tab background — 常态透明（极简），仅悬停/按下给底色
         let is_hovered = tab_rect.contains(hover_pos_val) && !is_dragged;
         let pointer_down_on_tab =
             pointer_down && tab_rect.contains(interact_pos_val) && !is_dragged;
-        let base_bg = if pointer_down_on_tab && is_hovered {
-            crate::theme::pressed_color(crate::theme::btn_bg())
-        } else if is_hovered {
-            crate::theme::hover_color(crate::theme::btn_bg())
-        } else {
-            crate::theme::btn_bg()
-        };
+        let base_bg = crate::theme::btn_bg();
         let bg = if is_dragged && dragging {
+            // 拖拽中保持可见：用按钮底色并叠透明度
             tint(base_bg, alpha_mul)
+        } else if pointer_down_on_tab && is_hovered {
+            crate::theme::pressed_color(crate::theme::app_bg())
+        } else if is_hovered {
+            crate::theme::hover_color(crate::theme::app_bg())
         } else {
-            base_bg
+            egui::Color32::TRANSPARENT
         };
         // 被拖标签画阴影边框，突出悬浮感
         if is_dragged && dragging && !detached {
@@ -232,20 +220,6 @@ pub(super) fn paint_tabs(
             font_id.clone(),
             text_color_draw,
         );
-
-        // Close button（拖拽中隐藏，避免误触）
-        if !dragging {
-            let tab_close_rect = m.close_rect(scroll_offset, i);
-            let close_hover = tab_close_rect.contains(hover_pos_val);
-            let close_pressed =
-                close_hover && ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
-            crate::chrome::dialog::paint_close_button(
-                painter,
-                tab_close_rect,
-                close_hover,
-                close_pressed,
-            );
-        }
     }
 }
 
@@ -326,5 +300,24 @@ pub(super) fn paint_drag_overlay(
             [egui::pos2(x_clamped, y1), egui::pos2(x_clamped, y2)],
             egui::Stroke::new(2.5, crate::theme::accent_active()),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// macOS 窗口模式为红绿灯留 80px；原生全屏（新桌面，红绿灯隐藏）收回为 10px。
+    #[test]
+    fn left_padding_follows_fullscreen() {
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 32.0));
+        let windowed = BarMetrics::new(rect, false);
+        let fullscreen = BarMetrics::new(rect, true);
+        if cfg!(target_os = "macos") {
+            assert_eq!(windowed.left_padding, 80.0);
+        } else {
+            assert_eq!(windowed.left_padding, 10.0);
+        }
+        assert_eq!(fullscreen.left_padding, 10.0);
     }
 }

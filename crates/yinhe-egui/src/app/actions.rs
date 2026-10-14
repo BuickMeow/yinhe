@@ -969,29 +969,38 @@ impl App {
         self.execute_file_action(action, ctx);
     }
 
-    /// 打开「最近修改的文件」（transport bar 子菜单 / macOS 菜单栏共用）。
+    /// 打开「最近修改的文件」（transport bar 子菜单 / 标题栏 popup / macOS 菜单栏共用）。
     /// 文件已被移动/删除时从列表移除并报错。
     ///
     /// 打开是**追加新文档**（不取代/关闭现有文档），因此不检查未保存修改：
     /// 触发保存确认只在会丢失当前文档的场景（关闭文档 / 新建 / 退出）。
     pub(crate) fn open_recent_file(&mut self, path: &str) {
-        if !std::path::Path::new(path).exists() {
-            self.audio_settings.remove_recent_file(path);
-            self.audio_settings.save();
-            let name = std::path::Path::new(path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or(path);
-            self.show_error(
-                t!("toast.file_missing"),
-                t!("file_dialog.not_found", name = name),
-            );
+        if self.prune_missing_recent_file(path) {
             return;
         }
         // 打开意图是"进入编辑"，关闭可能显示中的欢迎页面。
         self.show_welcome_page = false;
         self.file_loader
             .load_path(path.to_string(), self.audio_settings.midi_import_encoding);
+    }
+
+    /// 最近文件已被移动/删除：移除记录、保存并报错，返回 true（调用方直接返回）。
+    /// 「打开为文档」与「新窗口打开」两个入口共用。
+    pub(crate) fn prune_missing_recent_file(&mut self, path: &str) -> bool {
+        if std::path::Path::new(path).exists() {
+            return false;
+        }
+        self.audio_settings.remove_recent_file(path);
+        self.audio_settings.save();
+        let name = std::path::Path::new(path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(path);
+        self.show_error(
+            t!("toast.file_missing"),
+            t!("file_dialog.not_found", name = name),
+        );
+        true
     }
 
     /// 执行欢迎页动作（独立欢迎窗口 / 主界面无工程占位共用入口）。

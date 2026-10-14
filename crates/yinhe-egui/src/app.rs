@@ -745,4 +745,28 @@ impl App {
             }
         }
     }
+
+    /// 在新窗口（新进程）打开最近文件（标题栏工程选择 popup 的 ↗ 图标）。
+    /// 与 `detach_tab_to_new_window` 同款方案：把文件路径作为参数启动新进程；
+    /// 文件已不存在时移除记录并报错。
+    pub(crate) fn open_recent_in_new_window(&mut self, path: &str) {
+        if self.prune_missing_recent_file(path) {
+            return;
+        }
+        let spawn_res = std::env::current_exe()
+            .map_err(|e| e.to_string())
+            .and_then(|exe| {
+                std::process::Command::new(exe)
+                    .arg(path)
+                    .spawn()
+                    .map_err(|e| e.to_string())
+            });
+        if let Err(e) = spawn_res {
+            tracing::error!("Failed to open recent file in a new window: {}", e);
+            self.show_error(
+                t!("toast.error_title"),
+                t!("title_bar.detach_spawn_failed", e = e),
+            );
+        }
+    }
 }
