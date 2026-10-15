@@ -624,6 +624,16 @@ pub(crate) fn update_track_meters(app: &mut App, dt: f32) {
     }
 }
 
+/// 混音主体几何：通道区 + 主输出区。主输出贴面板右缘（无右边距），
+/// 与通道区之间留 4px 分隔缝（缝隙底色由调用方铺轨道色）。
+pub(crate) fn body_layout(body: egui::Rect) -> (egui::Rect, egui::Rect) {
+    let mut channels_rect = body;
+    channels_rect.max.x = (body.max.x - (strip::STRIP_WIDTH + 4.0)).max(body.min.x);
+    let master_rect =
+        egui::Rect::from_min_max(egui::pos2(channels_rect.max.x + 4.0, body.min.y), body.max);
+    (channels_rect, master_rect)
+}
+
 /// MIX 模式主入口（layout.rs 在 Mix 模式且已打开工程时调用）。
 pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
     let Some(idx) = app.workspace.active_doc else {
@@ -675,11 +685,11 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
     ui.painter().rect_filled(rect, 0.0, crate::theme::app_bg());
 
     // 左侧工具栏（PR 面板工具条同款）：从面板左缘扣出竖条，右侧为混音主体。
+    // 工具栏在主体之后绘制（见下方），保证层级高于混音台元素。
     let tool_rect = egui::Rect::from_min_max(
         rect.min,
         egui::pos2(rect.min.x + crate::theme::TOOL_BAR_W, rect.max.y),
     );
-    tool_bar::show(app, ui, tool_rect, &mut actions);
 
     ui.scope_builder(
         egui::UiBuilder::new()
@@ -689,14 +699,18 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
             ))
             .layout(egui::Layout::top_down(egui::Align::LEFT)),
         |ui| {
-            // 主体：左侧横向滚动通道条 + 右侧固定 Master。
-            let master_w = strip::STRIP_WIDTH + 16.0;
+            // 主体：左侧横向滚动通道条 + 右侧固定 Master（贴面板右缘，无右边距）。
             let body = ui.available_rect_before_wrap();
-            let mut channels_rect = body;
-            channels_rect.max.x = (body.max.x - master_w).max(body.min.x);
-            let master_rect = egui::Rect::from_min_max(
-                egui::pos2(channels_rect.max.x + 4.0, body.min.y),
-                body.max,
+            let (channels_rect, master_rect) = body_layout(body);
+            // 通道区与主输出之间的 4px 缝隙铺轨道底色作分隔：亮色主题下
+            // 不再露出一条突兀的 app_bg 白带（暗色下与面板底差异极小）。
+            ui.painter().rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(channels_rect.max.x, body.min.y),
+                    egui::pos2(master_rect.min.x, body.max.y),
+                ),
+                0.0,
+                crate::theme::track_bg(),
             );
 
             ui.scope_builder(
@@ -805,6 +819,8 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                     .max_rect(master_rect)
                     .layout(egui::Layout::top_down(egui::Align::Center)),
                 |ui| {
+                    // 极窄面板时条宽可能超出 master_rect：裁到区域，防画到通道区/工具栏
+                    ui.set_clip_rect(master_rect.intersect(ui.clip_rect()));
                     strip::master_strip(
                         app,
                         ui,
@@ -818,6 +834,10 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
             );
         },
     );
+
+    // 左侧工具栏：在主体之后绘制（后注册的 widget 命中优先），层级高于混音台
+    // 元素；只投递 MixAction、按钮 id 稳定，不存在状态或时序问题。
+    tool_bar::show(app, ui, tool_rect, &mut actions);
 
     // 统一应用本帧动作。
     for action in actions {
@@ -1245,5 +1265,17 @@ mod tests {
         assert_eq!(mixer.master_inserts[0].plugin_id, "vst-master");
 
         assert!(!strip_builtin_inserts(&mut mixer), "无内置 insert 不算迁移");
+    }
+
+    /// 回归：主输出贴面板右缘（无右边距），与通道区之间仅 4px 分隔缝；
+    /// 常规宽度下主输出条宽度 = 通道条宽度（不溢出、不居中留缝）。
+    #[test]
+    fn master_rect_is_flush_with_panel_right() {
+        let body = egui::Rect::from_min_max(egui::pos2(44.0, 100.0), egui::pos2(1440.0, 700.0));
+        let (channels, master) = body_layout(body);
+        assert_eq!(master.max.x, body.max.x, "主输出应贴右缘");
+        assert_eq!(master.width(), strip::STRIP_WIDTH, "条宽 = 通道条宽");
+        assert_eq!(master.min.x - channels.max.x, 4.0, "中间留 4px 分隔缝");
+        assert_eq!(channels.min.x, body.min.x, "通道区从主体左缘开始");
     }
 }
