@@ -69,7 +69,7 @@ fn content(ui: &mut egui::Ui) {
         );
         ui.add_space(scale(2.0));
         ui.label(
-            egui::RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
+            egui::RichText::new(crate::version::version())
                 .size(scale(crate::theme::SMALL_FONT))
                 .color(crate::theme::text_muted()),
         );

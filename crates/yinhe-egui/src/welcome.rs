@@ -326,7 +326,7 @@ fn paint_watermark(ui: &egui::Ui, rect: egui::Rect) {
 
 /// 右下角版本号。
 fn paint_version(ui: &egui::Ui, rect: egui::Rect) {
-    let text = format!("v{}", env!("CARGO_PKG_VERSION"));
+    let text = crate::version::version().to_owned();
     let font = egui::FontId::proportional(crate::scaling::scaled_font(
         ui.ctx(),
         crate::theme::SMALL_FONT,

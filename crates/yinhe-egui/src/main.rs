@@ -28,6 +28,7 @@ mod scaling;
 mod selection;
 mod shortcuts;
 mod theme;
+mod version;
 mod view_interaction;
 mod welcome;
 mod widgets;
