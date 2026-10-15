@@ -1152,3 +1152,10 @@ hint.mix.picker_favorite: "お気に入りに追加 / 解除"
 hint.mix.picker_fav_filter: "お気に入りのみ表示"
 hint.mix.param_search: "名前/モジュールでパラメータを絞り込み"
 hint.mix.param_slider: "ドラッグしてプラグインパラメータを調整"
+
+# ── フローティングパネル ──
+float.pianoroll: "ピアノロール"
+float.dock: "デバイスドック"
+float.mixer: "ミキサー"
+hint.float_panel: "独立ウィンドウで表示"
+hint.float_panel_dock: "ドックに戻す"

@@ -11,7 +11,7 @@ pub mod theme;
 pub mod ui_session;
 
 pub use edit::{OverlapBlockedBehavior, QuickDeleteMode};
-pub use layout::LayoutSettings;
+pub use layout::{FloatPanelState, LayoutSettings};
 pub use theme::CustomTheme;
 pub use ui_session::SettingsUiSession;
 

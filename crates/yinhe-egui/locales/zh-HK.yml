@@ -1147,3 +1147,10 @@ hint.mix.picker_favorite: "加入收藏 / 取消收藏"
 hint.mix.picker_fav_filter: "只看收藏的外掛"
 hint.mix.param_search: "按名稱／模組篩選參數"
 hint.mix.param_slider: "拖曳調整外掛參數"
+
+# ── 浮動面板視窗 ──
+float.pianoroll: "鋼琴卷簾"
+float.dock: "設備欄"
+float.mixer: "混音台"
+hint.float_panel: "浮動為獨立視窗"
+hint.float_panel_dock: "收回停靠"

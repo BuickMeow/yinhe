@@ -1147,3 +1147,10 @@ hint.mix.picker_favorite: "Favorilere ekle / çıkar"
 hint.mix.picker_fav_filter: "Yalnızca favorileri göster"
 hint.mix.param_search: "Parametreleri ada/modüle göre filtrele"
 hint.mix.param_slider: "Eklenti parametresini ayarlamak için sürükle"
+
+# ── Yüzen panel pencereleri ──
+float.pianoroll: "Piano roll"
+float.dock: "Cihaz yuvası"
+float.mixer: "Mikser"
+hint.float_panel: "Ayrı pencerede göster"
+hint.float_panel_dock: "Yuvaya geri döndür"

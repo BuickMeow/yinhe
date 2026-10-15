@@ -1147,3 +1147,10 @@ hint.mix.picker_favorite: "Dodaj / usuń z ulubionych"
 hint.mix.picker_fav_filter: "Pokaż tylko ulubione"
 hint.mix.param_search: "Filtruj parametry według nazwy/modułu"
 hint.mix.param_slider: "Przeciągnij, aby dostosować parametr wtyczki"
+
+# ── Pływające panele ──
+float.pianoroll: "Pianoroll"
+float.dock: "Dok urządzeń"
+float.mixer: "Mikser"
+hint.float_panel: "Pokaż w osobnym oknie"
+hint.float_panel_dock: "Wróć do doku"

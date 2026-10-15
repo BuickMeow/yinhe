@@ -1147,3 +1147,10 @@ hint.mix.picker_favorite: "Přidat / odebrat z oblíbených"
 hint.mix.picker_fav_filter: "Zobrazit pouze oblíbené"
 hint.mix.param_search: "Filtrovat parametry podle názvu/modulu"
 hint.mix.param_slider: "Tažením upravíte parametr pluginu"
+
+# ── Plovoucí panely ──
+float.pianoroll: "Klavírní válec"
+float.dock: "Dok zařízení"
+float.mixer: "Mixpult"
+hint.float_panel: "Zobrazit v samostatném okně"
+hint.float_panel_dock: "Zpět do doku"

@@ -1146,3 +1146,10 @@ hint.mix.picker_favorite: "Adicionar / remover dos favoritos"
 hint.mix.picker_fav_filter: "Mostrar apenas favoritos"
 hint.mix.param_search: "Filtrar parâmetros por nome/módulo"
 hint.mix.param_slider: "Arraste para ajustar o parâmetro do plugin"
+
+# ── Janelas de painéis flutuantes ──
+float.pianoroll: "Piano roll"
+float.dock: "Dock de dispositivos"
+float.mixer: "Mixer"
+hint.float_panel: "Mostrar em janela separada"
+hint.float_panel_dock: "Voltar ao dock"

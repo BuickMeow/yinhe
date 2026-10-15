@@ -782,6 +782,9 @@ impl eframe::App for App {
             &mut self.show_pianoroll_in_arrange,
             &mut self.show_bottom_dock,
             &mut self.show_mixer_panel,
+            &mut self.float_pianoroll,
+            &mut self.float_bottom_dock,
+            &mut self.float_mixer,
             &mut self.right_tab,
             self.sys_monitor.cpu_usage,
             mem_mb,
@@ -798,6 +801,16 @@ impl eframe::App for App {
             self.layout_needs_save = true;
         }
         if self.show_mixer_panel != self.audio_settings.layout.show_mixer_panel {
+            self.layout_needs_save = true;
+        }
+        // 浮动形态切换（气泡泊出/收回、窗口关闭）→ 同样需要写盘。
+        if self.float_pianoroll != self.audio_settings.layout.float_pianoroll.floating {
+            self.layout_needs_save = true;
+        }
+        if self.float_bottom_dock != self.audio_settings.layout.float_bottom_dock.floating {
+            self.layout_needs_save = true;
+        }
+        if self.float_mixer != self.audio_settings.layout.float_mixer.floating {
             self.layout_needs_save = true;
         }
 
@@ -818,6 +831,8 @@ impl eframe::App for App {
         let layout = self.compute_layout(ui, right_panel_rect);
         self.show_main_content(ui, &layout);
         self.show_panels_and_overlays(ui, &layout);
+        // ── 浮动面板窗口（PR / 设备链 / 混音台泊出）──
+        self.show_floating_panels(ui.ctx());
         crate::mix::show_global_overlays(self, ui.ctx());
         self.show_dialogs(ui);
         self.show_unsaved_dialog(ui);

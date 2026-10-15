@@ -1146,3 +1146,10 @@ hint.mix.picker_favorite: "Aggiungi / rimuovi dai preferiti"
 hint.mix.picker_fav_filter: "Mostra solo i preferiti"
 hint.mix.param_search: "Filtra i parametri per nome/modulo"
 hint.mix.param_slider: "Trascina per regolare il parametro del plugin"
+
+# ── Finestre dei pannelli mobili ──
+float.pianoroll: "Piano roll"
+float.dock: "Dock dispositivi"
+float.mixer: "Mixer"
+hint.float_panel: "Mostra in una finestra separata"
+hint.float_panel_dock: "Rientra nel dock"

@@ -11,6 +11,7 @@ pub(crate) mod autosave;
 pub(crate) mod clipboard_sync;
 pub(crate) mod dialog_dispatch;
 pub(crate) mod export_state;
+pub(crate) mod floating;
 pub(crate) mod jobs;
 pub(crate) mod layout;
 pub(crate) mod main_loop;
@@ -124,6 +125,15 @@ pub struct App {
     pub(crate) show_mixer_panel: bool,
     /// MIX 底部混音台面板高度（px，拖拽调整后持久化）。
     pub(crate) mix_height: f32,
+    // ── 浮动面板窗口（泊出为独立 OS 窗口）──
+    /// 浮动形态开关；与对应 `show_*` 停靠开关互斥（泊出时 `show_*` 置 false）。
+    pub(crate) float_pianoroll: bool,
+    pub(crate) float_bottom_dock: bool,
+    pub(crate) float_mixer: bool,
+    /// 浮动窗口最近稳定矩形（窗口移动停稳一帧后写入，持久化到 LayoutSettings）。
+    pub(crate) float_pianoroll_rect: Option<egui::Rect>,
+    pub(crate) float_bottom_dock_rect: Option<egui::Rect>,
+    pub(crate) float_mixer_rect: Option<egui::Rect>,
     /// 混音台编辑的 undo 暂存：首次变更记录 (文档 id, 起点快照, 标签)，
     /// 指针空闲后合并提交为一条 undo（一次拖动/一组连续操作 = 一条撤销）。
     pub(crate) mixer_undo_pending: Option<(u64, Box<yinhe_mixer::MixerParams>, String)>,
@@ -345,6 +355,24 @@ impl App {
             bottom_dock_height: audio_settings.layout.bottom_dock_height,
             show_mixer_panel: audio_settings.layout.show_mixer_panel,
             mix_height: audio_settings.layout.mix_height,
+            float_pianoroll: audio_settings.layout.float_pianoroll.floating,
+            float_bottom_dock: audio_settings.layout.float_bottom_dock.floating,
+            float_mixer: audio_settings.layout.float_mixer.floating,
+            float_pianoroll_rect: audio_settings
+                .layout
+                .float_pianoroll
+                .rect
+                .map(floating::arr_to_rect),
+            float_bottom_dock_rect: audio_settings
+                .layout
+                .float_bottom_dock
+                .rect
+                .map(floating::arr_to_rect),
+            float_mixer_rect: audio_settings
+                .layout
+                .float_mixer
+                .rect
+                .map(floating::arr_to_rect),
             mixer_undo_pending: None,
             dock_selected: None,
             dock_context: None,

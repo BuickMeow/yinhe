@@ -41,6 +41,13 @@ pub(crate) fn mark_viewport_closed(ctx: &egui::Context, id: egui::ViewportId) {
     });
 }
 
+/// 关闭一个子窗口视口：发 `Visible(false)` 并复位"上帧已打开"标记。
+/// 浮动面板与弹窗的统一关闭路径（下次打开时 `raise_viewport` 重新拉前台）。
+pub(crate) fn close_viewport(ctx: &egui::Context, id: egui::ViewportId) {
+    ctx.send_viewport_cmd_to(id, egui::ViewportCommand::Visible(false));
+    mark_viewport_closed(ctx, id);
+}
+
 pub(crate) fn viewport_builder(
     title: &str,
     size: [f32; 2],

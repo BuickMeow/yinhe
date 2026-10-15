@@ -204,6 +204,24 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui) {
         });
 }
 
+/// 浮动窗口形态：在给定矩形内渲染设备链（无分割条/无面板边框），
+/// 供 `app::floating` 的独立窗口调用。
+pub(crate) fn show_floating(app: &mut App, idx: usize, ui: &mut egui::Ui, rect: egui::Rect) {
+    let content = egui::Rect::from_min_max(
+        egui::pos2(rect.min.x + DOCK_PAD_X, rect.min.y + 4.0),
+        egui::pos2(rect.max.x - DOCK_PAD_X, rect.max.y - 4.0),
+    );
+    if ui
+        .input(|i| i.pointer.hover_pos())
+        .is_some_and(|p| content.contains(p))
+    {
+        crate::widgets::hint::set_region(ui.ctx(), t!("hint.panel.dock"));
+    }
+    ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
+        show_body(app, idx, ui);
+    });
+}
+
 /// dock 的通道语境（MIDI / 音频两套命名空间独立）。
 /// MIDI 通道同时是乐器（XSynth 或插件）的挂载点。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

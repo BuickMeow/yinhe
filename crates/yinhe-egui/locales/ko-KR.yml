@@ -1151,3 +1151,10 @@ hint.mix.picker_favorite: "즐겨찾기에 추가 / 제거"
 hint.mix.picker_fav_filter: "즐겨찾기만 보기"
 hint.mix.param_search: "이름/모듈로 파라미터 필터링"
 hint.mix.param_slider: "드래그해 플러그인 파라미터 조정"
+
+# ── 플로팅 패널 창 ──
+float.pianoroll: "피아노 롤"
+float.dock: "장치 독"
+float.mixer: "믹서"
+hint.float_panel: "독립 창으로 띄우기"
+hint.float_panel_dock: "독으로 되돌리기"

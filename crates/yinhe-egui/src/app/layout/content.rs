@@ -1,5 +1,6 @@
 #![allow(unused_imports)]
 use crate::app::App;
+use crate::app::floating;
 use crate::arrange;
 use crate::piano_view;
 use crate::right_panel::automation_undo::push_automation_actions;
@@ -451,7 +452,8 @@ impl App {
     }
 
     /// Show the pianoroll split area, including the split handle and pianoroll view.
-    fn show_pianoroll_split(
+    /// 浮动窗口形态由 `app::floating` 以合成布局复用本函数。
+    pub(in crate::app) fn show_pianoroll_split(
         &mut self,
         ui: &mut egui::Ui,
         layout: &LayoutInfo,
@@ -849,10 +851,11 @@ impl App {
         req: crate::right_panel::event_browser::JumpRequest,
         layout: &LayoutInfo,
     ) {
-        // 1. 切到 piano roll 视图（如果当前不在）
-        if !self
-            .view_mode
-            .show_pianoroll(self.show_pianoroll_in_arrange)
+        // 1. 切到 piano roll 视图（如果当前不在；浮动 PR 窗口打开时无需切换）
+        if !self.float_pianoroll
+            && !self
+                .view_mode
+                .show_pianoroll(self.show_pianoroll_in_arrange)
         {
             self.view_mode = crate::chrome::mode_bar::ViewMode::Edit;
         }
@@ -1056,6 +1059,18 @@ impl App {
         l.bottom_dock_height = self.bottom_dock_height;
         l.show_mixer_panel = self.show_mixer_panel;
         l.mix_height = self.mix_height;
+        l.float_pianoroll = yinhe_editor_core::audio_settings::FloatPanelState {
+            floating: self.float_pianoroll,
+            rect: self.float_pianoroll_rect.map(floating::rect_to_arr),
+        };
+        l.float_bottom_dock = yinhe_editor_core::audio_settings::FloatPanelState {
+            floating: self.float_bottom_dock,
+            rect: self.float_bottom_dock_rect.map(floating::rect_to_arr),
+        };
+        l.float_mixer = yinhe_editor_core::audio_settings::FloatPanelState {
+            floating: self.float_mixer,
+            rect: self.float_mixer_rect.map(floating::rect_to_arr),
+        };
         l.right_panel_layout = self.right_panel_layout.clone();
         if self.layout_needs_save {
             self.audio_settings.save();

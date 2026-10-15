@@ -183,6 +183,9 @@ pub fn show(
     show_pianoroll_in_arrange: &mut bool,
     show_bottom_dock: &mut bool,
     show_mixer_panel: &mut bool,
+    float_pianoroll: &mut bool,
+    float_bottom_dock: &mut bool,
+    float_mixer: &mut bool,
     right_tab: &mut Option<RightTab>,
     cpu_usage: f32,
     mem_mb: f64,
@@ -192,6 +195,8 @@ pub fn show(
     show_mem_breakdown: &mut bool,
     notifications: &mut crate::widgets::toast::Notifications,
 ) {
+    // 面板按钮本帧信息（浮动气泡锚点/触发用；Panel 闭包内收集，闭包外消费）。
+    let mut panel_buttons: Vec<PanelButtonInfo> = Vec::new();
     egui::Panel::bottom("bottom_bar")
         .frame(egui::Frame {
             inner_margin: egui::Margin::symmetric(8, 0),
@@ -242,19 +247,34 @@ pub fn show(
                             ICON_PIANO.codepoint,
                             egui::FontId::new(crate::theme::ICON_FONT, ICON_PIANO.font_family()),
                             crate::theme::mode_bar_text(),
-                            *show_pianoroll_in_arrange,
+                            *show_pianoroll_in_arrange || *float_pianoroll,
                         );
                         if piano_resp.clicked() {
-                            set_pianoroll_visible(
-                                show_pianoroll_in_arrange,
-                                show_bottom_dock,
-                                show_mixer_panel,
-                                !*show_pianoroll_in_arrange,
-                            );
+                            if *float_pianoroll {
+                                // 浮动窗口打开时：点击 = 关闭窗口（停靠形态保持不变）。
+                                *float_pianoroll = false;
+                                crate::chrome::dialog::close_viewport(
+                                    ui.ctx(),
+                                    crate::app::floating::pianoroll_id(),
+                                );
+                            } else {
+                                set_pianoroll_visible(
+                                    show_pianoroll_in_arrange,
+                                    show_bottom_dock,
+                                    show_mixer_panel,
+                                    !*show_pianoroll_in_arrange,
+                                );
+                            }
                         }
                         if piano_resp.hovered() {
                             hovered_hint = Some(t!("hint.pr_toggle").to_string());
                         }
+                        panel_buttons.push(PanelButtonInfo {
+                            target: FloatBubbleTarget::Pianoroll,
+                            rect: piano_resp.rect,
+                            hovered: piano_resp.hovered(),
+                            secondary_clicked: piano_resp.secondary_clicked(),
+                        });
                     } else {
                         // EDIT 无钢琴栏：dock 前保留一次分隔（与模式按钮分隔）。
                         ui.add_space(6.0);
@@ -270,19 +290,34 @@ pub fn show(
                             dock_icon.codepoint,
                             egui::FontId::new(crate::theme::ICON_FONT, dock_icon.font_family()),
                             crate::theme::mode_bar_text(),
-                            *show_bottom_dock,
+                            *show_bottom_dock || *float_bottom_dock,
                         );
                         if dock_resp.clicked() {
-                            set_dock_visible(
-                                show_pianoroll_in_arrange,
-                                show_bottom_dock,
-                                show_mixer_panel,
-                                !*show_bottom_dock,
-                            );
+                            if *float_bottom_dock {
+                                // 浮动窗口打开时：点击 = 关闭窗口（停靠形态保持不变）。
+                                *float_bottom_dock = false;
+                                crate::chrome::dialog::close_viewport(
+                                    ui.ctx(),
+                                    crate::app::floating::dock_id(),
+                                );
+                            } else {
+                                set_dock_visible(
+                                    show_pianoroll_in_arrange,
+                                    show_bottom_dock,
+                                    show_mixer_panel,
+                                    !*show_bottom_dock,
+                                );
+                            }
                         }
                         if dock_resp.hovered() {
                             hovered_hint = Some(t!("hint.dock_toggle").to_string());
                         }
+                        panel_buttons.push(PanelButtonInfo {
+                            target: FloatBubbleTarget::Dock,
+                            rect: dock_resp.rect,
+                            hovered: dock_resp.hovered(),
+                            secondary_clicked: dock_resp.secondary_clicked(),
+                        });
                     }
 
                     // ── Mixer toggle（仅 MIX：底部三选一之混音台）──
@@ -294,20 +329,35 @@ pub fn show(
                             mixer_icon.codepoint,
                             egui::FontId::new(crate::theme::ICON_FONT, mixer_icon.font_family()),
                             crate::theme::mode_bar_text(),
-                            *show_mixer_panel,
+                            *show_mixer_panel || *float_mixer,
                             -std::f32::consts::FRAC_PI_2,
                         );
                         if mixer_resp.clicked() {
-                            set_mixer_visible(
-                                show_pianoroll_in_arrange,
-                                show_bottom_dock,
-                                show_mixer_panel,
-                                !*show_mixer_panel,
-                            );
+                            if *float_mixer {
+                                // 浮动窗口打开时：点击 = 关闭窗口（停靠形态保持不变）。
+                                *float_mixer = false;
+                                crate::chrome::dialog::close_viewport(
+                                    ui.ctx(),
+                                    crate::app::floating::mixer_id(),
+                                );
+                            } else {
+                                set_mixer_visible(
+                                    show_pianoroll_in_arrange,
+                                    show_bottom_dock,
+                                    show_mixer_panel,
+                                    !*show_mixer_panel,
+                                );
+                            }
                         }
                         if mixer_resp.hovered() {
                             hovered_hint = Some(t!("hint.mixer_toggle").to_string());
                         }
+                        panel_buttons.push(PanelButtonInfo {
+                            target: FloatBubbleTarget::Mixer,
+                            rect: mixer_resp.rect,
+                            hovered: mixer_resp.hovered(),
+                            secondary_clicked: mixer_resp.secondary_clicked(),
+                        });
                     }
 
                     // ── Spacer: push right icons to the right edge ──
@@ -426,6 +476,311 @@ pub fn show(
                 },
             );
         });
+
+    // ── 面板按钮浮动气泡（悬停延迟显示 / 右键固定 / 点击图标浮动或收回）──
+    float_bubble(
+        ui.ctx(),
+        &panel_buttons,
+        show_pianoroll_in_arrange,
+        float_pianoroll,
+        show_bottom_dock,
+        float_bottom_dock,
+        show_mixer_panel,
+        float_mixer,
+    );
+}
+
+/// 浮动气泡指向的面板（模式栏三个面板按钮）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum FloatBubbleTarget {
+    Pianoroll,
+    Dock,
+    Mixer,
+}
+
+/// 面板按钮本帧信息（气泡触发与锚点定位用）。
+struct PanelButtonInfo {
+    target: FloatBubbleTarget,
+    rect: egui::Rect,
+    hovered: bool,
+    secondary_clicked: bool,
+}
+
+/// 悬停气泡跨帧状态（存 egui temp data）。
+#[derive(Clone, Copy, Default)]
+struct FloatBubbleState {
+    /// 当前气泡指向的面板（None = 未显示）。
+    target: Option<FloatBubbleTarget>,
+    /// 右键固定：不随指针移出关闭（点外部 / Esc / 再次右键关闭）。
+    pinned: bool,
+    /// 悬停候选（指针停在按钮上、等待延迟计时）。
+    candidate: Option<FloatBubbleTarget>,
+    candidate_since: f64,
+    /// 指针离开按钮与气泡后的隐藏计时起点（None = 不应隐藏）。
+    hide_since: Option<f64>,
+}
+
+/// 悬停延迟：指针停留多久才弹出气泡（避免扫过模式栏时一路弹）。
+const BUBBLE_SHOW_DELAY: f64 = 0.25;
+/// 隐藏宽限：指针离开按钮与气泡后延迟多久关闭（允许鼠标从按钮移进气泡点击）。
+const BUBBLE_HIDE_GRACE: f64 = 0.2;
+/// 气泡尺寸（单图标）。
+const BUBBLE_SIZE: egui::Vec2 = egui::vec2(40.0, 32.0);
+/// 尾巴高度 = 气泡底边到按钮顶边的距离。
+const BUBBLE_TAIL_H: f32 = 7.0;
+/// 尾巴底宽。
+const BUBBLE_TAIL_W: f32 = 10.0;
+
+/// 气泡图标点击后的动作。
+#[derive(Clone, Copy)]
+enum BubbleAction {
+    /// 泊出为独立窗口。
+    Float,
+    /// 收回停靠。
+    DockBack,
+}
+
+/// 面板按钮的浮动气泡：悬停延迟显示、右键固定、点击图标浮动/收回。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
+fn float_bubble(
+    ctx: &egui::Context,
+    buttons: &[PanelButtonInfo],
+    show_pianoroll_in_arrange: &mut bool,
+    float_pianoroll: &mut bool,
+    show_bottom_dock: &mut bool,
+    float_bottom_dock: &mut bool,
+    show_mixer_panel: &mut bool,
+    float_mixer: &mut bool,
+) {
+    let state_id = egui::Id::new("mode_bar_float_bubble");
+    let mut st: FloatBubbleState = ctx.data_mut(|d| d.get_temp(state_id)).unwrap_or_default();
+    let now = ctx.input(|i| i.time);
+    let pointer = ctx.input(|i| i.pointer.hover_pos());
+    let any_click = ctx.input(|i| i.pointer.any_click());
+    let esc = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+    let hovered = buttons.iter().find(|b| b.hovered).map(|b| b.target);
+
+    // ── 右键：固定 / 取消固定（同一按钮再次右键 = 关闭）──
+    let mut just_pinned = false;
+    for b in buttons {
+        if !b.secondary_clicked {
+            continue;
+        }
+        if st.pinned && st.target == Some(b.target) {
+            st = FloatBubbleState::default();
+        } else {
+            st.target = Some(b.target);
+            st.pinned = true;
+            st.candidate = None;
+            just_pinned = true;
+        }
+    }
+
+    // ── 悬停：延迟显示（固定态不参与）──
+    if !st.pinned {
+        match hovered {
+            Some(t) => {
+                if st.candidate != Some(t) {
+                    st.candidate = Some(t);
+                    st.candidate_since = now;
+                    if st.target != Some(t) {
+                        st.target = None;
+                    }
+                }
+                if st.target != Some(t) && now - st.candidate_since >= BUBBLE_SHOW_DELAY {
+                    st.target = Some(t);
+                }
+            }
+            None => {
+                st.candidate = None;
+            }
+        }
+    }
+
+    if esc {
+        st = FloatBubbleState::default();
+    }
+
+    // ── 绘制气泡（若显示中）──
+    let mut over_bubble = false;
+    if let Some(target) = st.target {
+        let Some(btn) = buttons.iter().find(|b| b.target == target) else {
+            // 按钮本帧不可见（如 EDIT 无钢琴按钮）→ 气泡随之关闭。
+            ctx.data_mut(|d| d.insert_temp(state_id, FloatBubbleState::default()));
+            return;
+        };
+        let floating = match target {
+            FloatBubbleTarget::Pianoroll => *float_pianoroll,
+            FloatBubbleTarget::Dock => *float_bottom_dock,
+            FloatBubbleTarget::Mixer => *float_mixer,
+        };
+        // 气泡在按钮正上方居中；靠窗口边缘时水平收进。
+        let win = ctx.input(|i| i.viewport().inner_rect);
+        let cx = match win {
+            Some(win) if win.width() > BUBBLE_SIZE.x + 8.0 => btn.rect.center().x.clamp(
+                win.min.x + BUBBLE_SIZE.x / 2.0 + 4.0,
+                win.max.x - BUBBLE_SIZE.x / 2.0 - 4.0,
+            ),
+            _ => btn.rect.center().x,
+        };
+        let bubble_rect = egui::Rect::from_min_size(
+            egui::pos2(
+                cx - BUBBLE_SIZE.x / 2.0,
+                btn.rect.min.y - BUBBLE_TAIL_H - BUBBLE_SIZE.y,
+            ),
+            BUBBLE_SIZE,
+        );
+        let fill = crate::theme::btn_bg();
+        let stroke = egui::Stroke::new(1.0, crate::theme::line_fg());
+        let area = egui::Area::new(state_id.with("area"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(bubble_rect.min)
+            .constrain(false)
+            .show(ctx, |ui| {
+                let (rect, _) = ui.allocate_exact_size(BUBBLE_SIZE, egui::Sense::hover());
+                let painter = ui.painter();
+                // 尾巴（先画；气泡主体盖住其顶边，接缝再用底色抹平）。
+                painter.add(egui::Shape::convex_polygon(
+                    vec![
+                        egui::pos2(cx - BUBBLE_TAIL_W / 2.0, rect.max.y),
+                        egui::pos2(cx + BUBBLE_TAIL_W / 2.0, rect.max.y),
+                        egui::pos2(cx, rect.max.y + BUBBLE_TAIL_H),
+                    ],
+                    fill,
+                    stroke,
+                ));
+                painter.rect(rect, 6.0, fill, stroke, egui::StrokeKind::Inside);
+                painter.rect_filled(
+                    egui::Rect::from_min_max(
+                        egui::pos2(cx - BUBBLE_TAIL_W / 2.0, rect.max.y - 1.0),
+                        egui::pos2(cx + BUBBLE_TAIL_W / 2.0, rect.max.y + 0.5),
+                    ),
+                    0.0,
+                    fill,
+                );
+                // 图标按钮：未浮动 = 泊出；已浮动 = 收回停靠。
+                let icon = if floating {
+                    ICON_OPEN_IN_NEW_OFF
+                } else {
+                    ICON_OPEN_IN_NEW
+                };
+                let icon_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(24.0, 24.0));
+                let resp = ui.interact(icon_rect, ui.id().with("float_icon"), egui::Sense::click());
+                let color = crate::widgets::hover::hover_button_color(
+                    &resp,
+                    crate::theme::text_primary(),
+                    false,
+                );
+                ui.painter().text(
+                    icon_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    icon.codepoint,
+                    egui::FontId::new(crate::theme::ICON_FONT, icon.font_family()),
+                    color,
+                );
+                crate::widgets::hint::hover(
+                    ctx,
+                    &resp,
+                    if floating {
+                        t!("hint.float_panel_dock")
+                    } else {
+                        t!("hint.float_panel")
+                    },
+                );
+                if resp.clicked() {
+                    Some(if floating {
+                        BubbleAction::DockBack
+                    } else {
+                        BubbleAction::Float
+                    })
+                } else {
+                    None
+                }
+            });
+        over_bubble = area
+            .response
+            .rect
+            .expand(4.0)
+            .contains(pointer.unwrap_or(egui::Pos2::ZERO));
+
+        // 点击图标：执行浮动/收回，并关闭气泡。
+        if let Some(act) = area.inner {
+            match (target, act) {
+                (FloatBubbleTarget::Pianoroll, BubbleAction::Float) => {
+                    *show_pianoroll_in_arrange = false;
+                    *float_pianoroll = true;
+                    crate::chrome::dialog::raise_viewport(
+                        ctx,
+                        crate::app::floating::pianoroll_id(),
+                    );
+                }
+                (FloatBubbleTarget::Pianoroll, BubbleAction::DockBack) => {
+                    *float_pianoroll = false;
+                    set_pianoroll_visible(
+                        show_pianoroll_in_arrange,
+                        show_bottom_dock,
+                        show_mixer_panel,
+                        true,
+                    );
+                    crate::chrome::dialog::close_viewport(
+                        ctx,
+                        crate::app::floating::pianoroll_id(),
+                    );
+                }
+                (FloatBubbleTarget::Dock, BubbleAction::Float) => {
+                    *show_bottom_dock = false;
+                    *float_bottom_dock = true;
+                    crate::chrome::dialog::raise_viewport(ctx, crate::app::floating::dock_id());
+                }
+                (FloatBubbleTarget::Dock, BubbleAction::DockBack) => {
+                    *float_bottom_dock = false;
+                    set_dock_visible(
+                        show_pianoroll_in_arrange,
+                        show_bottom_dock,
+                        show_mixer_panel,
+                        true,
+                    );
+                    crate::chrome::dialog::close_viewport(ctx, crate::app::floating::dock_id());
+                }
+                (FloatBubbleTarget::Mixer, BubbleAction::Float) => {
+                    *show_mixer_panel = false;
+                    *float_mixer = true;
+                    crate::chrome::dialog::raise_viewport(ctx, crate::app::floating::mixer_id());
+                }
+                (FloatBubbleTarget::Mixer, BubbleAction::DockBack) => {
+                    *float_mixer = false;
+                    set_mixer_visible(
+                        show_pianoroll_in_arrange,
+                        show_bottom_dock,
+                        show_mixer_panel,
+                        true,
+                    );
+                    crate::chrome::dialog::close_viewport(ctx, crate::app::floating::mixer_id());
+                }
+            }
+            st = FloatBubbleState::default();
+        }
+
+        // 固定态：点击气泡外部（且不是刚右键固定）→ 关闭。
+        if st.pinned && !just_pinned && any_click && !over_bubble {
+            st = FloatBubbleState::default();
+        }
+    }
+
+    // ── 指针离开按钮与气泡：宽限后关闭（固定态除外）──
+    if st.target.is_some() {
+        let over_button = hovered == st.target;
+        if st.pinned || over_button || over_bubble {
+            st.hide_since = None;
+        } else {
+            let since = *st.hide_since.get_or_insert(now);
+            if now - since >= BUBBLE_HIDE_GRACE {
+                st = FloatBubbleState::default();
+            }
+        }
+    }
+
+    ctx.data_mut(|d| d.insert_temp(state_id, st));
 }
 
 #[cfg(test)]
@@ -461,5 +816,83 @@ mod tests {
         assert!(!ViewMode::Mix.show_pianoroll(false));
         assert!(ViewMode::Mix.show_pianoroll(true));
         assert!(ViewMode::Edit.show_pianoroll(false));
+    }
+
+    /// 浮动气泡状态机：悬停延迟显示；右键固定；Esc 关闭。
+    #[test]
+    fn float_bubble_hover_delay_and_pin() {
+        let ctx = egui::Context::default();
+        // 首帧注册图标字体（气泡绘制 material-icons 字形）。
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui_extras::install_image_loaders(ui.ctx());
+            crate::fonts::install(
+                ui.ctx(),
+                yinhe_fonts::WEIGHT_MEDIUM,
+                rust_i18n::locale().as_ref(),
+            );
+        })
+        .drop_without_applying_deltas();
+        let (mut sp, mut fp, mut sd, mut fd, mut sm, mut fm) =
+            (false, false, false, false, false, false);
+        let rect = egui::Rect::from_min_size(egui::pos2(100.0, 700.0), egui::vec2(20.0, 20.0));
+        let mut buttons = vec![PanelButtonInfo {
+            target: FloatBubbleTarget::Pianoroll,
+            rect,
+            hovered: true,
+            secondary_clicked: false,
+        }];
+        let mut run = |time: f64, events: Vec<egui::Event>, buttons: &[PanelButtonInfo]| {
+            let mut input = egui::RawInput {
+                time: Some(time),
+                ..Default::default()
+            };
+            input.events = events;
+            ctx.run_ui(input, |ui| {
+                float_bubble(
+                    ui.ctx(),
+                    buttons,
+                    &mut sp,
+                    &mut fp,
+                    &mut sd,
+                    &mut fd,
+                    &mut sm,
+                    &mut fm,
+                );
+            })
+            .drop_without_applying_deltas();
+        };
+        let state = |ctx: &egui::Context| -> FloatBubbleState {
+            ctx.data_mut(|d| d.get_temp(egui::Id::new("mode_bar_float_bubble")))
+                .unwrap_or_default()
+        };
+
+        // 悬停首帧：不立即弹出（延迟计时开始）。
+        run(0.0, Vec::new(), &buttons);
+        assert_eq!(state(&ctx).target, None, "悬停首帧不应立即弹出");
+        // 停留 0.25s 后弹出。
+        run(0.3, Vec::new(), &buttons);
+        assert_eq!(
+            state(&ctx).target,
+            Some(FloatBubbleTarget::Pianoroll),
+            "停留 0.25s 后应弹出气泡"
+        );
+        // 右键固定。
+        buttons[0].secondary_clicked = true;
+        run(0.4, Vec::new(), &buttons);
+        assert!(state(&ctx).pinned, "右键应固定气泡");
+        // Esc 关闭。
+        buttons[0].secondary_clicked = false;
+        run(
+            0.5,
+            vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::default(),
+            }],
+            &buttons,
+        );
+        assert_eq!(state(&ctx).target, None, "Esc 应关闭气泡");
     }
 }

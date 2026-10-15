@@ -1146,3 +1146,10 @@ hint.mix.picker_favorite: "Добавить / убрать из избранно
 hint.mix.picker_fav_filter: "Показывать только избранное"
 hint.mix.param_search: "Фильтрация параметров по названию/модулю"
 hint.mix.param_slider: "Перетащите для настройки параметра плагина"
+
+# ── Плавающие панели ──
+float.pianoroll: "Пиано-ролл"
+float.dock: "Панель устройств"
+float.mixer: "Микшер"
+hint.float_panel: "Открыть в отдельном окне"
+hint.float_panel_dock: "Вернуть в док"
