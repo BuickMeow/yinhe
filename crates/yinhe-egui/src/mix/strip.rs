@@ -218,8 +218,8 @@ pub(crate) fn channel_strip(
         .unwrap_or_default();
     let title = channel_label(channel);
 
-    strip_frame(ui, color, &title, height, |ui, content_h| {
-        let (dev_h, meter_h) = strip_metrics(content_h, true);
+    let rect = strip_frame(ui, color, &title, height, |ui, content_h| {
+        let dev_h = strip_metrics(content_h, true);
         section(ui, dev_h, egui::Layout::top_down(egui::Align::LEFT), |ui| {
             device_chain(
                 ui,
@@ -237,7 +237,7 @@ pub(crate) fn channel_strip(
             SEND_ROW_H,
             egui::Layout::top_down(egui::Align::Center),
             |ui| {
-                send_block(ui, channel, &sends, bus_count, actions);
+                send_block(ui, SendSource::Channel(channel), &sends, bus_count, actions);
             },
         );
         ui.add_space(GAP);
@@ -272,7 +272,8 @@ pub(crate) fn channel_strip(
                 params: StripParams { gain: g, ..params },
             });
         }
-        let bar_h = (meter_h - DB_ROW_H).max(FADER_MIN_H);
+        // 推子/电平表吸收剩余高度：底边贴住内容区底边（无下方空白）。
+        let bar_h = ui.available_height().max(FADER_MIN_H);
         section(
             ui,
             bar_h,
@@ -287,6 +288,15 @@ pub(crate) fn channel_strip(
             },
         );
     });
+    // 双击色带：打开底部设备链并选中该通道。
+    header_double_click_opens_dock(
+        app,
+        ui,
+        idx,
+        rect,
+        crate::chrome::dock_bar::DockContext::Midi(channel),
+        ("mix_header_dock_midi", channel),
+    );
 }
 
 /// 音频通道条（多条音频轨共享同一音频通道 = 共享本条）。
@@ -309,14 +319,22 @@ pub(crate) fn audio_strip(
         target,
     );
     let title = crate::mix::audio_label(channel);
+    // 本音频通道的发送列表与总线总数（发送区行数）。
+    let audio_sends = app.workspace.documents[idx]
+        .mixer
+        .audio_sends
+        .get(channel as usize)
+        .cloned()
+        .unwrap_or_default();
+    let bus_count = app.workspace.documents[idx].mixer.bus_count();
 
-    strip_frame(
+    let rect = strip_frame(
         ui,
         crate::theme::accent_active(),
         &title,
         height,
         |ui, content_h| {
-            let (dev_h, meter_h) = strip_metrics(content_h, true);
+            let dev_h = strip_metrics(content_h, true);
             section(ui, dev_h, egui::Layout::top_down(egui::Align::LEFT), |ui| {
                 device_chain(ui, target, &view, None, &[], dev_h, actions);
             });
@@ -325,7 +343,15 @@ pub(crate) fn audio_strip(
                 ui,
                 SEND_ROW_H,
                 egui::Layout::top_down(egui::Align::LEFT),
-                |_ui| {},
+                |ui| {
+                    send_block(
+                        ui,
+                        SendSource::Audio(channel),
+                        &audio_sends,
+                        bus_count,
+                        actions,
+                    );
+                },
             );
             ui.add_space(GAP);
             section(
@@ -359,7 +385,8 @@ pub(crate) fn audio_strip(
                     params: StripParams { gain: g, ..params },
                 });
             }
-            let bar_h = (meter_h - DB_ROW_H).max(FADER_MIN_H);
+            // 推子/电平表吸收剩余高度：底边贴住内容区底边（无下方空白）。
+            let bar_h = ui.available_height().max(FADER_MIN_H);
             section(
                 ui,
                 bar_h,
@@ -374,6 +401,15 @@ pub(crate) fn audio_strip(
                 },
             );
         },
+    );
+    // 双击色带：打开底部设备链并选中该音频通道。
+    header_double_click_opens_dock(
+        app,
+        ui,
+        idx,
+        rect,
+        crate::chrome::dock_bar::DockContext::Audio(channel),
+        ("mix_header_dock_audio", channel),
     );
 }
 
@@ -402,6 +438,14 @@ pub(crate) fn bus_strip(
         target,
     );
     let title = format!("BUS {}", bus + 1);
+    // 本总线的发送列表（总线 → 总线，含自发送）与总线总数（发送区行数）。
+    let bus_sends = app.workspace.documents[idx]
+        .mixer
+        .bus_sends
+        .get(bus as usize)
+        .cloned()
+        .unwrap_or_default();
+    let bus_count = app.workspace.documents[idx].mixer.bus_count();
 
     let rect = strip_frame(
         ui,
@@ -409,7 +453,7 @@ pub(crate) fn bus_strip(
         &title,
         height,
         |ui, content_h| {
-            let (dev_h, meter_h) = strip_metrics(content_h, true);
+            let dev_h = strip_metrics(content_h, true);
             section(ui, dev_h, egui::Layout::top_down(egui::Align::LEFT), |ui| {
                 device_chain(ui, target, &view, None, &[], dev_h, actions);
             });
@@ -418,7 +462,9 @@ pub(crate) fn bus_strip(
                 ui,
                 SEND_ROW_H,
                 egui::Layout::top_down(egui::Align::LEFT),
-                |_ui| {},
+                |ui| {
+                    send_block(ui, SendSource::Bus(bus), &bus_sends, bus_count, actions);
+                },
             );
             ui.add_space(GAP);
             section(
@@ -452,7 +498,8 @@ pub(crate) fn bus_strip(
                     params: StripParams { gain: g, ..params },
                 });
             }
-            let bar_h = (meter_h - DB_ROW_H).max(FADER_MIN_H);
+            // 推子/电平表吸收剩余高度：底边贴住内容区底边（无下方空白）。
+            let bar_h = ui.available_height().max(FADER_MIN_H);
             section(
                 ui,
                 bar_h,
@@ -526,7 +573,7 @@ pub(crate) fn master_strip(
         &title,
         height,
         |ui, content_h| {
-            let (dev_h, meter_h) = strip_metrics(content_h, false);
+            let dev_h = strip_metrics(content_h, false);
             section(ui, dev_h, egui::Layout::top_down(egui::Align::LEFT), |ui| {
                 device_chain(ui, InsertTarget::Master, &view, None, &[], dev_h, actions);
             });
@@ -536,7 +583,8 @@ pub(crate) fn master_strip(
                     params: MasterParams { gain: g },
                 });
             }
-            let bar_h = (meter_h - DB_ROW_H).max(FADER_MIN_H);
+            // 推子/电平表吸收剩余高度：底边贴住内容区底边（无下方空白）。
+            let bar_h = ui.available_height().max(FADER_MIN_H);
             section(
                 ui,
                 bar_h,
@@ -553,15 +601,49 @@ pub(crate) fn master_strip(
     );
 }
 
-/// 设备区与推子/电平表区高度：`full` = 预留发送/M-S/声像（通道/音频/总线），
-/// 保证这些条等高；主输出只预留 dB 读数。
-fn strip_metrics(content_h: f32, full: bool) -> (f32, f32) {
+/// 设备链可用高度：`full` = 预留发送/M-S/声像（通道/音频/总线），
+/// 主输出只预留 dB 读数。推子/电平表吸收剩余高度（各条 `bar_h` 取剩余可用）。
+fn strip_metrics(content_h: f32, full: bool) -> f32 {
     let reserved = if full { BOTTOM_FULL } else { BOTTOM_MASTER };
     // 设备区最多占 35%（避免把额外高度全吃掉、把推子/电平表压到最小）。
     let max_dev = (content_h * 0.35).max(DEVICE_ROW_H);
-    let dev_h = (content_h - reserved - FADER_MIN_H).clamp(DEVICE_ROW_H, max_dev);
-    let meter_h = (content_h - reserved - dev_h).max(FADER_MIN_H);
-    (dev_h, meter_h)
+    (content_h - reserved - FADER_MIN_H).clamp(DEVICE_ROW_H, max_dev)
+}
+
+/// 色带双击：打开底部设备链（dock）并选中该通道（通道条 / 音频条共用）。
+/// 同步 `dock_track` 防止下一帧被「跟随选中轨」覆盖；总线/主输出没有 dock
+/// 语境，不调用本函数。
+fn header_double_click_opens_dock(
+    app: &mut App,
+    ui: &egui::Ui,
+    idx: usize,
+    rect: egui::Rect,
+    context: crate::chrome::dock_bar::DockContext,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+) {
+    let header = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), HEADER_H));
+    let resp = ui.interact(header, ui.id().with(id_salt), egui::Sense::click());
+    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.header_double_click"));
+    if !resp.double_clicked() {
+        return;
+    }
+    // 展开设备链（与钢琴卷帘/混音台互斥），并选中该通道。
+    crate::chrome::mode_bar::set_dock_visible(
+        &mut app.show_pianoroll_in_arrange,
+        &mut app.show_bottom_dock,
+        &mut app.show_mixer_panel,
+        true,
+    );
+    app.layout_needs_save = true;
+    let selected_track = app.workspace.documents[idx]
+        .edit
+        .track_selected
+        .iter()
+        .min()
+        .copied();
+    app.dock_track = selected_track;
+    app.dock_context = Some(context);
+    app.dock_selected = None;
 }
 
 /// 设备链：乐器（0/1 个）+ 效果器列表 + 「+」添加入口，按整行滚动。
@@ -922,14 +1004,26 @@ fn add_row(ui: &mut egui::Ui, hint: impl Into<String>) -> bool {
     resp.clicked()
 }
 
+/// 发送源：MIDI 通道 / 音频通道（`sends`/`audio_sends` 表按通道索引）
+/// 或总线（`bus_sends` 表按总线索引）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SendSource {
+    Channel(u8),
+    Audio(u16),
+    Bus(u8),
+}
+
 /// 效果发送区（独占一区，竖向滚动）：**每条总线一行**（旋钮 + 「BUS n」），
 /// 超出显示区（一行高）的部分竖向滚动查看；无总线时保留一个 BUS 1 占位
-/// （首次拖动自动创建第一条总线）。所有通道的发送区共用同一个滚动位置
+/// （首次拖动自动创建第一条总线）。所有通道/总线的发送区共用同一个滚动位置
 /// （`ScrollArea` 用同一 id_salt）——滚动任一通道即整排同步滚动。
-/// 右键任一旋钮打开完整发送面板（含推子前/后、多总线）。
+///
+/// 总线源发送到**自己**时显示 ICON_REFRESH 开关（点击启用/禁用自发送）：
+/// 自发送经块级延迟防止反馈环路，提示见 `hint.mix.bus_self_send`。
+/// 通道源右键任一旋钮打开完整发送面板（含推子前/后、多总线）。
 fn send_block(
     ui: &mut egui::Ui,
-    channel: u8,
+    source: SendSource,
     sends: &[SendParams],
     bus_count: usize,
     actions: &mut Vec<MixAction>,
@@ -938,41 +1032,80 @@ fn send_block(
     egui::ScrollArea::vertical()
         // 同一 id_salt：全部通道条共享滚动偏移，滚动即整排同步
         .id_salt("mix_send_scroll")
+        // egui 默认 min_scrolled_size=64 会把一行高的发送区撑到 64px，
+        // 这里放开下限，让发送区严格保持 SEND_ROW_H（一行高）。
+        .min_scrolled_height(0.0)
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
             for b in 0..knobs {
+                let target = b as u8;
                 ui.horizontal(|ui| {
-                    let send = sends.iter().find(|s| s.bus as usize == b);
+                    let send = sends.iter().find(|s| s.bus == target);
                     let (amount, pre_fader) = send
                         .map(|s| (s.amount, s.pre_fader))
                         .unwrap_or((0.0, false));
-                    let mut norm = (amount / 2.0).clamp(0.0, 1.0);
-                    let resp = knob(ui, &mut norm, KNOB_D);
-                    if resp.changed() {
-                        if bus_count == 0 {
-                            actions.push(MixAction::AddBus);
+                    // 总线自发送（总线 → 自己）：图标开关，不显示旋钮。
+                    let self_send = source == SendSource::Bus(target);
+                    if self_send {
+                        let resp = self_send_toggle(ui, amount > 0.0);
+                        if resp.clicked() {
+                            actions.push(MixAction::SetBusSend {
+                                bus: target,
+                                target_bus: target,
+                                amount: if amount > 0.0 { 0.0 } else { 1.0 },
+                            });
                         }
-                        actions.push(MixAction::SetSend {
-                            channel,
-                            bus: b as u8,
-                            amount: norm * 2.0,
-                            pre_fader,
-                        });
+                    } else {
+                        let mut norm = (amount / 2.0).clamp(0.0, 1.0);
+                        let resp = knob(ui, &mut norm, KNOB_D);
+                        if resp.changed() {
+                            match source {
+                                SendSource::Channel(channel) => {
+                                    if bus_count == 0 {
+                                        actions.push(MixAction::AddBus);
+                                    }
+                                    actions.push(MixAction::SetSend {
+                                        channel,
+                                        bus: target,
+                                        amount: norm * 2.0,
+                                        pre_fader,
+                                    });
+                                }
+                                SendSource::Audio(channel) => {
+                                    actions.push(MixAction::SetAudioSend {
+                                        channel,
+                                        bus: target,
+                                        amount: norm * 2.0,
+                                        pre_fader,
+                                    });
+                                }
+                                SendSource::Bus(bus) => {
+                                    actions.push(MixAction::SetBusSend {
+                                        bus,
+                                        target_bus: target,
+                                        amount: norm * 2.0,
+                                    });
+                                }
+                            }
+                        }
+                        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.send_amount"));
+                        // 完整发送面板目前只支持通道源。
+                        if let SendSource::Channel(channel) = source {
+                            resp.context_menu(|ui| {
+                                let item = ui.add(crate::widgets::menu::menu_item_button(
+                                    ui,
+                                    false,
+                                    t!("mix.sends").as_ref(),
+                                ));
+                                crate::widgets::hint::hover(ui.ctx(), &item, t!("hint.mix.sends"));
+                                if item.clicked() {
+                                    actions.push(MixAction::OpenSends { channel });
+                                    ui.close();
+                                }
+                            });
+                        }
                     }
-                    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.send_amount"));
-                    resp.context_menu(|ui| {
-                        let item = ui.add(crate::widgets::menu::menu_item_button(
-                            ui,
-                            false,
-                            t!("mix.sends").as_ref(),
-                        ));
-                        crate::widgets::hint::hover(ui.ctx(), &item, t!("hint.mix.sends"));
-                        if item.clicked() {
-                            actions.push(MixAction::OpenSends { channel });
-                            ui.close();
-                        }
-                    });
                     ui.add_space(4.0);
                     ui.label(
                         egui::RichText::new(format!("BUS {}", b + 1))
@@ -982,6 +1115,31 @@ fn send_block(
                 });
             }
         });
+}
+
+/// 自发送开关图标（ICON_REFRESH，占位与旋钮同宽同高保持对齐）：
+/// 启用 = 强调色，禁用 = 弱化色；悬停提示「启用后会引入一个缓冲区延迟」。
+fn self_send_toggle(ui: &mut egui::Ui, enabled: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(KNOB_D, KNOB_D), egui::Sense::click());
+    let color = if enabled {
+        crate::theme::accent_active()
+    } else if resp.hovered() {
+        crate::theme::text_primary()
+    } else {
+        crate::theme::text_muted()
+    };
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        egui_material_icons::icons::ICON_REFRESH.codepoint,
+        egui::FontId::new(
+            crate::theme::ICON_FONT,
+            egui_material_icons::icons::ICON_REFRESH.font_family(),
+        ),
+        color,
+    );
+    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.bus_self_send"));
+    resp
 }
 
 /// M/S 按钮（居中，等宽）。

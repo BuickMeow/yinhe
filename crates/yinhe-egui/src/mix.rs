@@ -197,6 +197,19 @@ pub(crate) enum MixAction {
         amount: f32,
         pre_fader: bool,
     },
+    /// 更新某音频通道对某总线的发送。
+    SetAudioSend {
+        channel: u16,
+        bus: u8,
+        amount: f32,
+        pre_fader: bool,
+    },
+    /// 更新某总线对某总线的发送（含自发送；总线发送统一推子后）。
+    SetBusSend {
+        bus: u8,
+        target_bus: u8,
+        amount: f32,
+    },
     /// 打开乐器选择器（channel = MIDI 通道；含内置 XSynth 与插件）。
     OpenInstrumentPicker {
         channel: u8,
@@ -381,15 +394,22 @@ impl App {
 
     /// 全量同步总线配置（增删总线 / 改发送后推一次）。
     pub(crate) fn sync_bus_config_to_engine(&mut self, idx: usize) {
-        let (buses, sends) = {
+        let (buses, sends, bus_sends, audio_sends) = {
             let mixer = self.workspace.documents[idx].mixer_mut();
             mixer.ensure_len();
-            (mixer.buses.clone(), mixer.sends.clone())
+            (
+                mixer.buses.clone(),
+                mixer.sends.clone(),
+                mixer.bus_sends.clone(),
+                mixer.audio_sends.clone(),
+            )
         };
         if let Some(a) = &self.audio_state.handle {
             a.handle.send(yinhe_audio::AudioCommand::SyncBusConfig {
                 buses: Box::new(buses),
                 sends: Box::new(sends),
+                bus_sends: Box::new(bus_sends),
+                audio_sends: Box::new(audio_sends),
             });
         }
     }
@@ -1015,6 +1035,54 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
                         });
                     }
                     // 发送量为 0 的条目不再保留（避免持久化层堆积）。
+                    list.retain(|s| s.amount > 0.0);
+                }
+            }
+            app.sync_bus_config_to_engine(idx);
+        }
+        MixAction::SetAudioSend {
+            channel,
+            bus,
+            amount,
+            pre_fader,
+        } => {
+            app.note_mixer_edit(t!("undo.mix_send").as_ref());
+            {
+                let mixer = app.workspace.documents[idx].mixer_mut();
+                if let Some(list) = mixer.audio_sends.get_mut(channel as usize) {
+                    if let Some(send) = list.iter_mut().find(|s| s.bus == bus) {
+                        send.amount = amount;
+                        send.pre_fader = pre_fader;
+                    } else if amount > 0.0 {
+                        list.push(yinhe_mixer::SendParams {
+                            bus,
+                            amount,
+                            pre_fader,
+                        });
+                    }
+                    list.retain(|s| s.amount > 0.0);
+                }
+            }
+            app.sync_bus_config_to_engine(idx);
+        }
+        MixAction::SetBusSend {
+            bus,
+            target_bus,
+            amount,
+        } => {
+            app.note_mixer_edit(t!("undo.mix_send").as_ref());
+            {
+                let mixer = app.workspace.documents[idx].mixer_mut();
+                if let Some(list) = mixer.bus_sends.get_mut(bus as usize) {
+                    if let Some(send) = list.iter_mut().find(|s| s.bus == target_bus) {
+                        send.amount = amount;
+                    } else if amount > 0.0 {
+                        list.push(yinhe_mixer::SendParams {
+                            bus: target_bus,
+                            amount,
+                            pre_fader: false,
+                        });
+                    }
                     list.retain(|s| s.amount > 0.0);
                 }
             }
