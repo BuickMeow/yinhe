@@ -81,7 +81,24 @@ fn run_inner() -> Result<(), ExitCode> {
             .arg(&plist),
     )?;
 
-    // 3) .lproj 兜底：部分系统组件只认 Resources 下的 .lproj 目录，目录存在即可
+    // 3) CI 注入的版本号写进 Info.plist（Finder/系统显示正确的构建版本）。
+    //    本地构建没有 YINHE_VERSION，保持 cargo-bundle 用 Cargo.toml 写的版本。
+    if let Ok(version) = std::env::var("YINHE_VERSION")
+        && !version.is_empty()
+    {
+        status(
+            cmd("plutil")
+                .args([
+                    "-replace",
+                    "CFBundleShortVersionString",
+                    "-string",
+                    &version,
+                ])
+                .arg(&plist),
+        )?;
+    }
+
+    // 4) .lproj 兜底：部分系统组件只认 Resources 下的 .lproj 目录，目录存在即可
     //    让 CFBundle 的 knownLocalizations 包含该语言。
     for lang in ["zh-Hans", "en", "ja", "ko"] {
         let dir = format!("{app}/Contents/Resources/{lang}.lproj");
@@ -91,7 +108,7 @@ fn run_inner() -> Result<(), ExitCode> {
             .map_err(|e| report_io("创建 InfoPlist.strings", &strings, &e))?;
     }
 
-    // 4) 声明文档类型与导出的 UTI（用 plutil -insert -json：PlistBuddy 批量 -c
+    // 5) 声明文档类型与导出的 UTI（用 plutil -insert -json：PlistBuddy 批量 -c
     //    指令会 Abort trap）。
     status(
         cmd("plutil")
@@ -114,7 +131,7 @@ fn run_inner() -> Result<(), ExitCode> {
             .arg(&plist),
     )?;
 
-    // 5) 整体重签名（--force 覆盖链接器的部分签名，--deep 递归签嵌套内容），
+    // 6) 整体重签名（--force 覆盖链接器的部分签名，--deep 递归签嵌套内容），
     //    seal 上 Info.plist 和 Resources，使 codesign --verify 通过。
     status(
         cmd("codesign")
@@ -122,18 +139,18 @@ fn run_inner() -> Result<(), ExitCode> {
             .arg(&app),
     )?;
 
-    // 6) 清除 bundle 内所有 xattr（quarantine/macl/lastuseddate 等），
+    // 7) 清除 bundle 内所有 xattr（quarantine/macl/lastuseddate 等），
     //    避免这些属性随 dmg 扩散到其他电脑触发 Gatekeeper。
     status(cmd("xattr").args(["-cr"]).arg(&app))?;
 
-    // 7) 验证签名，失败即退出。
+    // 8) 验证签名，失败即退出。
     status(
         cmd("codesign")
             .args(["--verify", "--deep", "--strict", "--verbose=2"])
             .arg(&app),
     )?;
 
-    // 8) 生成 dmg：与 cargo-bundle 的 dmg 布局一致（应用 + Applications 软链）。
+    // 9) 生成 dmg：与 cargo-bundle 的 dmg 布局一致（应用 + Applications 软链）。
     let staging = std::path::Path::new(STAGING_DIR);
     if staging.exists() {
         fs::remove_dir_all(staging).map_err(|e| report_io("清理 staging", STAGING_DIR, &e))?;
