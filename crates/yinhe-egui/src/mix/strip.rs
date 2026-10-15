@@ -14,7 +14,7 @@
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_audio::InsertTarget;
-use yinhe_mixer::{InsertRef, MasterParams, MixerParams, StripParams};
+use yinhe_mixer::{InsertRef, MasterParams, MixerParams, SendParams, StripParams};
 
 use crate::app::App;
 use crate::widgets::knob::knob;
@@ -198,14 +198,14 @@ pub(crate) fn channel_strip(
         app.mixer_racks.get(idx),
         target,
     );
-    let has_bus = app.workspace.documents[idx].mixer.bus_count() > 0;
-    let send = app.workspace.documents[idx]
+    let bus_count = app.workspace.documents[idx].mixer.bus_count();
+    // 本通道的发送列表：每条总线一个旋钮（数量很小，clone 免借用纠缠）。
+    let sends = app.workspace.documents[idx]
         .mixer
         .sends
         .get(channel as usize)
-        .and_then(|list| list.first())
-        .map(|s| (s.amount, s.pre_fader))
-        .unwrap_or((0.0, false));
+        .cloned()
+        .unwrap_or_default();
     let instruments: Vec<String> = app.workspace.documents[idx]
         .mixer
         .instruments
@@ -233,7 +233,7 @@ pub(crate) fn channel_strip(
             SEND_ROW_H,
             egui::Layout::top_down(egui::Align::Center),
             |ui| {
-                send_block(ui, channel, send, has_bus, actions);
+                send_block(ui, channel, &sends, bus_count, actions);
             },
         );
         ui.add_space(GAP);
@@ -899,55 +899,71 @@ fn add_row(ui: &mut egui::Ui, hint: impl Into<String>) -> bool {
     resp.clicked()
 }
 
-/// 效果发送区（单行）：FX 1 旋钮。无总线时首次拖动自动创建一条总线。
-/// 右键打开完整发送面板（含推子前/后、多总线）。
+/// 效果发送区（横向滚动行）：**每条总线一个旋钮**（FX 1…FX n），无总线时保留
+/// 一个 FX 1 占位（首次拖动自动创建第一条总线）。所有通道的发送区共用同一个
+/// 横向滚动位置（`ScrollArea` 用同一 id_salt）——滚动任一通道即整排同步滚动。
+/// 右键任一旋钮打开完整发送面板（含推子前/后、多总线）。
 fn send_block(
     ui: &mut egui::Ui,
     channel: u8,
-    send: (f32, bool),
-    has_bus: bool,
+    sends: &[SendParams],
+    bus_count: usize,
     actions: &mut Vec<MixAction>,
 ) {
-    let (amount, pre_fader) = send;
-    let group = KNOB_D + 4.0 + 26.0;
-    ui.allocate_ui_with_layout(
-        egui::vec2(group, SEND_ROW_H),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            let mut norm = (amount / 2.0).clamp(0.0, 1.0);
-            let resp = knob(ui, &mut norm, KNOB_D);
-            if resp.changed() {
-                if !has_bus {
-                    actions.push(MixAction::AddBus);
-                }
-                actions.push(MixAction::SetSend {
-                    channel,
-                    bus: 0,
-                    amount: norm * 2.0,
-                    pre_fader,
-                });
-            }
-            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.send_amount"));
-            resp.context_menu(|ui| {
-                let item = ui.add(crate::widgets::menu::menu_item_button(
-                    ui,
-                    false,
-                    t!("mix.sends").as_ref(),
-                ));
-                crate::widgets::hint::hover(ui.ctx(), &item, t!("hint.mix.sends"));
-                if item.clicked() {
-                    actions.push(MixAction::OpenSends { channel });
-                    ui.close();
+    let knobs = bus_count.max(1);
+    // 只允许横向滚动：让普通滚轮（y 分量）也能滚这条单方向区域，
+    // 并清空输入防止冒泡给父级。
+    ui.style_mut().always_scroll_the_only_direction = true;
+    egui::ScrollArea::horizontal()
+        // 同一 id_salt：全部通道条共享滚动偏移，滚动即整排同步
+        .id_salt("mix_send_scroll")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            ui.horizontal(|ui| {
+                for b in 0..knobs {
+                    if b > 0 {
+                        ui.add_space(8.0);
+                    }
+                    let send = sends.iter().find(|s| s.bus as usize == b);
+                    let (amount, pre_fader) = send
+                        .map(|s| (s.amount, s.pre_fader))
+                        .unwrap_or((0.0, false));
+                    let mut norm = (amount / 2.0).clamp(0.0, 1.0);
+                    let resp = knob(ui, &mut norm, KNOB_D);
+                    if resp.changed() {
+                        if bus_count == 0 {
+                            actions.push(MixAction::AddBus);
+                        }
+                        actions.push(MixAction::SetSend {
+                            channel,
+                            bus: b as u8,
+                            amount: norm * 2.0,
+                            pre_fader,
+                        });
+                    }
+                    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.send_amount"));
+                    resp.context_menu(|ui| {
+                        let item = ui.add(crate::widgets::menu::menu_item_button(
+                            ui,
+                            false,
+                            t!("mix.sends").as_ref(),
+                        ));
+                        crate::widgets::hint::hover(ui.ctx(), &item, t!("hint.mix.sends"));
+                        if item.clicked() {
+                            actions.push(MixAction::OpenSends { channel });
+                            ui.close();
+                        }
+                    });
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new(format!("FX {}", b + 1))
+                            .size(crate::theme::SMALL_LABEL_FONT)
+                            .color(crate::theme::text_secondary()),
+                    );
                 }
             });
-            ui.add_space(4.0);
-            ui.label(
-                egui::RichText::new("FX 1")
-                    .size(crate::theme::SMALL_LABEL_FONT)
-                    .color(crate::theme::text_secondary()),
-            );
-        },
-    );
+        });
 }
 
 /// M/S 按钮（居中，等宽）。
