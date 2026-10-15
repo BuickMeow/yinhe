@@ -85,10 +85,10 @@ pub(crate) fn show(
             let painter = ui.painter().clone();
             let n_docs = documents.len();
 
-            // ── Precompute tab rects for hit-testing and reorder ──
-            let tab_rects: Vec<egui::Rect> = (0..n_docs)
-                .map(|i| m.tab_rect(*tab_scroll_offset, i))
-                .collect();
+            // ── Precompute tab widths / rects for hit-testing and reorder ──
+            // 标签宽度动态（按工程名实测，最长 MAX_TAB_W）
+            let tab_widths = paint::tab_widths(&painter, documents);
+            let tab_rects = paint::tab_rects(&m, *tab_scroll_offset, &tab_widths);
 
             // ── Handle mouse wheel / trackpad scroll for tab overflow ──
             let pointer_in_bar = ui.input(|i| {
@@ -126,7 +126,7 @@ pub(crate) fn show(
                 }
 
                 // Clamp scroll offset
-                *tab_scroll_offset = tab_scroll_offset.clamp(0.0, m.max_scroll_offset(n_docs));
+                *tab_scroll_offset = tab_scroll_offset.clamp(0.0, m.max_scroll_offset(&tab_widths));
 
                 if scroll_delta != egui::Vec2::ZERO || (zoom_delta - 1.0).abs() > 0.001 {
                     ui.ctx().request_repaint();
@@ -148,7 +148,7 @@ pub(crate) fn show(
             let max_click_dist = egui::InputOptions::default().max_click_dist;
 
             // 空白区（标签右侧、窗口按钮左侧）：窗口拖动 + 双击最大化区域
-            let blank_left = m.blank_left(*tab_scroll_offset, n_docs);
+            let blank_left = m.blank_left(*tab_scroll_offset, &tab_widths);
             let blank_right = if cfg!(target_os = "macos") {
                 m.bar_rect.max.x
             } else {
@@ -228,7 +228,7 @@ pub(crate) fn show(
                         *tab_scroll_offset = (*tab_scroll_offset - SPEED).max(0.0);
                     } else if cur.x > m.bar_rect.max.x - MARGIN {
                         *tab_scroll_offset =
-                            (*tab_scroll_offset + SPEED).min(m.max_scroll_offset(n_docs));
+                            (*tab_scroll_offset + SPEED).min(m.max_scroll_offset(&tab_widths));
                     }
                 }
                 ui.ctx().request_repaint();
@@ -241,7 +241,7 @@ pub(crate) fn show(
                 &m,
                 documents,
                 *active_doc,
-                *tab_scroll_offset,
+                &tab_rects,
                 drag.as_ref(),
             );
             if let Some(d) = drag.as_ref() {
@@ -411,7 +411,7 @@ pub(crate) fn show(
                     );
                 } else if m.bar_rect.contains(pos) {
                     // 标签溢出时可滚轮横向滚动
-                    if m.max_scroll_offset(n_docs) > 0.0 {
+                    if m.max_scroll_offset(&tab_widths) > 0.0 {
                         crate::widgets::hint::set(ui.ctx(), t!("hint.title_bar.scroll"));
                     }
                     if tab_rects.iter().any(|r| r.contains(pos)) {
@@ -477,8 +477,9 @@ mod tests {
         scroll: f32,
     }
 
-    /// macOS left_padding=80、tab_w=400 → 首个标签 rect [80..480]×[4..28]。
-    /// 窗口高度取够高，保证标题栏下方的 popup 落在视口内可被点击。
+    /// macOS left_padding=80、标签宽度动态（短名 "test.mid" 取最小宽度 120）
+    /// → 首个标签 rect [80..200]×[4..28]；窗口取够高，保证标题栏下方的 popup
+    /// 落在视口内可被点击。
     fn make_harness<'a>(documents: &'a [Document], recent: &'a [String]) -> Harness<'a, TbState> {
         let mut first_frame = true;
         Harness::builder()

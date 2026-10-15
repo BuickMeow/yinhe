@@ -12,11 +12,19 @@ pub(super) struct BarMetrics {
     pub bar_rect: egui::Rect,
     /// macOS 左侧留给红绿灯的宽度（原生全屏时红绿灯隐藏，收回为普通内边距）。
     pub left_padding: f32,
-    pub tab_w: f32,
     pub tab_h: f32,
     pub tab_y: f32,
     pub tab_gap: f32,
 }
+
+/// 标签最小宽度（短名不至于太窄，保证点击目标）。
+const MIN_TAB_W: f32 = 120.0;
+/// 标签最大宽度（超长工程名截断，悬停跑马灯展示）。
+const MAX_TAB_W: f32 = 400.0;
+/// 标签文字左右内边距。
+const TAB_PADDING: f32 = 6.0;
+/// 未保存圆点占位（直径 8 + 间距 6）。
+const DIRTY_DOT_W: f32 = 14.0;
 
 impl BarMetrics {
     /// `fullscreen`：窗口是否处于 macOS 原生全屏（全屏到新桌面时系统红绿灯不显示，
@@ -27,40 +35,61 @@ impl BarMetrics {
         Self {
             bar_rect,
             left_padding: if reserve_traffic_lights { 80.0 } else { 10.0 },
-            // 极简标签（无背景），加宽以显示更长的工程名
-            tab_w: 400.0,
             tab_h,
             tab_y: bar_rect.center().y - tab_h / 2.0,
             tab_gap: 2.0,
         }
     }
 
-    /// 第 i 个标签矩形（考虑滚动偏移；不裁剪可视性）。
-    pub(super) fn tab_rect(&self, scroll_offset: f32, i: usize) -> egui::Rect {
-        let x = self.bar_rect.min.x + self.left_padding - scroll_offset
-            + i as f32 * (self.tab_w + self.tab_gap);
-        egui::Rect::from_min_max(
-            egui::pos2(x, self.tab_y),
-            egui::pos2(x + self.tab_w, self.tab_y + self.tab_h),
-        )
-    }
-
-    /// n 个标签的总宽度（含间距）。
-    pub(super) fn tabs_width(&self, n: usize) -> f32 {
-        n as f32 * (self.tab_w + self.tab_gap)
+    /// 标签总宽度（含尾部间距，与原固定宽度公式一致）。
+    pub(super) fn tabs_width(&self, widths: &[f32]) -> f32 {
+        widths.iter().sum::<f32>() + widths.len() as f32 * self.tab_gap
     }
 
     /// 滚动偏移上限（标签溢出量）。
-    pub(super) fn max_scroll_offset(&self, n: usize) -> f32 {
+    pub(super) fn max_scroll_offset(&self, widths: &[f32]) -> f32 {
         let available_w = self.bar_rect.width() - self.left_padding;
-        (self.tabs_width(n) - available_w).max(0.0)
+        (self.tabs_width(widths) - available_w).max(0.0)
     }
 
     /// 空白区左界（最后一个标签布局右端，不小于 left_padding）。
-    pub(super) fn blank_left(&self, scroll_offset: f32, n: usize) -> f32 {
-        (self.bar_rect.min.x + self.left_padding - scroll_offset + self.tabs_width(n))
+    pub(super) fn blank_left(&self, scroll_offset: f32, widths: &[f32]) -> f32 {
+        (self.bar_rect.min.x + self.left_padding - scroll_offset + self.tabs_width(widths))
             .max(self.bar_rect.min.x + self.left_padding)
     }
+}
+
+/// 每个文档的标签宽度：按工程名实测（未保存圆点占位 + 左右内边距），
+/// clamp 到 `[MIN_TAB_W, MAX_TAB_W]`——动态长度，最长 400。
+pub(super) fn tab_widths(painter: &egui::Painter, documents: &[Document]) -> Vec<f32> {
+    let font = egui::FontId::proportional(crate::theme::BODY_FONT);
+    documents
+        .iter()
+        .map(|doc| {
+            let text_w = painter
+                .layout_no_wrap(doc.file_name.clone(), font.clone(), egui::Color32::WHITE)
+                .size()
+                .x;
+            let dot_w = if doc.is_dirty() { DIRTY_DOT_W } else { 0.0 };
+            (text_w + dot_w + TAB_PADDING * 2.0).clamp(MIN_TAB_W, MAX_TAB_W)
+        })
+        .collect()
+}
+
+/// 全部标签矩形（按各标签动态宽度排布，考虑滚动偏移；不裁剪可视性）。
+pub(super) fn tab_rects(m: &BarMetrics, scroll_offset: f32, widths: &[f32]) -> Vec<egui::Rect> {
+    let mut x = m.bar_rect.min.x + m.left_padding - scroll_offset;
+    widths
+        .iter()
+        .map(|&w| {
+            let rect = egui::Rect::from_min_max(
+                egui::pos2(x, m.tab_y),
+                egui::pos2(x + w, m.tab_y + m.tab_h),
+            );
+            x += w + m.tab_gap;
+            rect
+        })
+        .collect()
 }
 
 /// 给颜色乘一个透明度系数（拖拽中的半透明标签/ghost 用）。
@@ -76,7 +105,7 @@ pub(super) fn paint_tabs(
     m: &BarMetrics,
     documents: &[Document],
     active_doc: Option<usize>,
-    scroll_offset: f32,
+    tab_rects: &[egui::Rect],
     drag: Option<&TitleDrag>,
 ) {
     // ── Draw title BEHIND tabs (lower z-order) ──
@@ -89,10 +118,8 @@ pub(super) fn paint_tabs(
     );
 
     let font_id = egui::FontId::proportional(crate::theme::BODY_FONT);
-    let padding = 6.0;
-    // 未保存圆点占位（直径 8 + 间距 6）
-    let dirty_dot_w = 14.0;
-    let text_max_w = m.tab_w - padding * 2.0;
+    let padding = TAB_PADDING;
+    let dirty_dot_w = DIRTY_DOT_W;
 
     let hover_pos_val = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
     let interact_pos_val = ui.input(|i| i.pointer.interact_pos()).unwrap_or_default();
@@ -101,7 +128,7 @@ pub(super) fn paint_tabs(
 
     for (i, doc) in documents.iter().enumerate() {
         let is_active = active_doc == Some(i);
-        let tab_rect = m.tab_rect(scroll_offset, i);
+        let tab_rect = tab_rects[i];
 
         let is_visible = tab_rect.max.x >= m.bar_rect.min.x + m.left_padding
             && tab_rect.min.x <= m.bar_rect.max.x;
@@ -156,8 +183,9 @@ pub(super) fn paint_tabs(
         let file_name = doc.file_name.as_str();
         let dirty_dot = doc.is_dirty();
         let display_name = file_name.to_string();
-        // 未保存时文字可用宽度减去圆点占位
-        let text_max_w_cur = text_max_w - if dirty_dot { dirty_dot_w } else { 0.0 };
+        // 本标签动态宽度内、扣掉左右内边距与圆点占位后的文字可用宽度
+        let text_max_w_cur =
+            tab_rect.width() - padding * 2.0 - if dirty_dot { dirty_dot_w } else { 0.0 };
 
         // Tab text with ellipsis truncation
         let text_color = if is_active {
@@ -271,8 +299,9 @@ pub(super) fn paint_drag_overlay(
 
     if drag.detached {
         let Some(cur) = pointer_pos else { return };
-        // Detach 幽灵标签跟随指针
-        let ghost_rect = egui::Rect::from_center_size(cur, egui::vec2(m.tab_w, m.tab_h));
+        // Detach 幽灵标签跟随指针（宽度取被拖标签的动态宽度）
+        let ghost_w = tab_rects.get(drag.from).map_or(MIN_TAB_W, |r| r.width());
+        let ghost_rect = egui::Rect::from_center_size(cur, egui::vec2(ghost_w, m.tab_h));
         painter.rect_filled(
             ghost_rect,
             4.0,
