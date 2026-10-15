@@ -35,6 +35,24 @@ pub enum FlipAxis {
     Vertical,
 }
 
+/// 人性化参数：三路独立随机偏差的幅度（0 = 该项不动）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HumanizeParams {
+    /// 时间：start/end 整体平移 ±timing tick（gate 不变）。
+    pub timing: u32,
+    /// 力度：velocity ±velocity（clamp 0..=127）。
+    pub velocity: u8,
+    /// 时值：gate ±gate tick（最短 1 tick）。
+    pub gate: u32,
+}
+
+impl HumanizeParams {
+    /// 三路幅度全为 0：不产生任何修改。
+    pub fn is_noop(&self) -> bool {
+        self.timing == 0 && self.velocity == 0 && self.gate == 0
+    }
+}
+
 impl Document {
     /// Add a single note. Returns an `UndoAction` if the note was added.
     pub fn add_note(&mut self, track_idx: u16, note: NoteEvent) -> Option<UndoAction> {
@@ -932,6 +950,63 @@ impl Document {
         }))
     }
 
+    /// 人性化：给选中音符注入三路独立随机偏差（时间平移 / 力度 / 时值），
+    /// 一键操作、一次撤销。返回 `None` 表示没有音符被修改。
+    ///
+    /// - 时间：start/end 整体平移 ±timing tick（gate 不变，start 不越过 0）；
+    /// - 力度：velocity ±velocity（clamp 0..=127）；
+    /// - 时值：gate ±gate tick（最短 1 tick）。
+    pub fn humanize_selected(&mut self, params: HumanizeParams) -> Option<UndoAction> {
+        // xorshift 状态不能为 0（吸收态），`| 1` 兜底。
+        let mut rng = uuid::Uuid::new_v4().as_u128() as u64 | 1;
+        self.humanize_selected_with_rng(params, &mut rng)
+    }
+
+    /// `humanize_selected` 的确定性版本：随机状态由调用方提供（测试用固定种子）。
+    fn humanize_selected_with_rng(
+        &mut self,
+        params: HumanizeParams,
+        rng: &mut u64,
+    ) -> Option<UndoAction> {
+        if self.edit.selected.is_empty() || params.is_noop() {
+            return None;
+        }
+        let model = Arc::make_mut(&mut self.data.model);
+        let originals = batch_ops::remove_selected(model, &self.edit.selected);
+        if originals.is_empty() {
+            return None;
+        }
+
+        let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
+            std::collections::HashMap::new();
+        let mut changed = false;
+        for (note, old_key) in &originals {
+            let new_note = humanize_note(*note, params, rng);
+            if new_note.start_tick != note.start_tick
+                || new_note.end_tick != note.end_tick
+                || new_note.velocity != note.velocity
+            {
+                changed = true;
+            }
+            new_by_key.entry(*old_key).or_default().push(new_note);
+        }
+        if !changed {
+            // 原样插回，模型内容不变（无 undo 动作）
+            batch_ops::insert_batch(model, new_by_key);
+            model.rebuild_dirty();
+            return None;
+        }
+
+        let after = batch_ops::flatten_by_key(&new_by_key);
+        batch_ops::insert_batch(model, new_by_key);
+        model.rebuild_dirty();
+        self.data.bump_revision();
+        Some(UndoAction::Notes(NoteDelta {
+            before: originals,
+            after,
+        }))
+    }
+
     /// 变速：把选框整体时间跨度（min ts .. max te）缩放为 `new_span` tick。
     ///
     /// 选中音符相对跨度起点等比缩放（可 undo），`selected` / `sel_rect` /
@@ -1450,6 +1525,55 @@ fn grid_cuts_in_note(n: &yinhe_types::Note, t0: u32, t1: u32, interval: u64) -> 
     cuts
 }
 
+/// xorshift64 伪随机：人性化抖动足够（无需密码学质量）。
+fn xorshift64(state: &mut u64) -> u64 {
+    let mut x = *state;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    *state = x;
+    x
+}
+
+/// 闭区间 `[-amp, amp]` 的随机整数（含 0）；`amp == 0` 时恒为 0（不消耗随机数）。
+fn rand_offset(rng: &mut u64, amp: u32) -> i64 {
+    if amp == 0 {
+        return 0;
+    }
+    let span = amp as u64 * 2 + 1;
+    (xorshift64(rng) % span) as i64 - amp as i64
+}
+
+/// 对单个音符施加三路随机偏差（见 [`Document::humanize_selected`]）。
+fn humanize_note(
+    note: yinhe_types::Note,
+    params: HumanizeParams,
+    rng: &mut u64,
+) -> yinhe_types::Note {
+    let mut n = note;
+    // 时间：整体平移，gate 不变；start 不越过 0、end 永远大于 start。
+    let dt = rand_offset(rng, params.timing);
+    if dt != 0 {
+        let s = (n.start_tick as i64 + dt).clamp(0, u32::MAX as i64 - 1);
+        let e = (n.end_tick as i64 + dt).clamp(s + 1, u32::MAX as i64);
+        n.start_tick = s as u32;
+        n.end_tick = e as u32;
+    }
+    // 力度：clamp 0..=127。
+    let dv = rand_offset(rng, params.velocity as u32);
+    if dv != 0 {
+        n.velocity = (n.velocity as i64 + dv).clamp(0, 127) as u8;
+    }
+    // 时值：只动 end（gate 最短 1 tick）。
+    let dg = rand_offset(rng, params.gate);
+    if dg != 0 {
+        let len = (n.end_tick - n.start_tick) as i64 + dg;
+        let new_end = n.start_tick as i64 + len.max(1);
+        n.end_tick = new_end.clamp(n.start_tick as i64 + 1, u32::MAX as i64) as u32;
+    }
+    n
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1521,6 +1645,110 @@ mod tests {
         // 选中它
         doc.edit.selected.add_rect_track(100, 201, 60, 60, 0, 0);
         doc
+    }
+
+    #[test]
+    fn humanize_applies_bounded_offsets() {
+        let mut doc = make_doc_with_note(); // 音符：100~200，key 60，velocity 100
+        let before = doc.data.model.notes[60][0];
+        let mut rng = 0x1234_5678_9ABC_DEF0u64;
+        let params = HumanizeParams {
+            timing: 10,
+            velocity: 8,
+            gate: 6,
+        };
+        let action = doc.humanize_selected_with_rng(params, &mut rng);
+        assert!(action.is_some(), "有选中音符应产生动作");
+        let after = doc.data.model.notes[60][0];
+
+        let dt = after.start_tick as i64 - before.start_tick as i64;
+        assert!(dt.abs() <= 10, "时间偏移应在 ±10，实际 {dt}");
+        let dv = after.velocity as i64 - before.velocity as i64;
+        assert!(dv.abs() <= 8, "力度偏移应在 ±8，实际 {dv}");
+        let gate_before = (before.end_tick - before.start_tick) as i64;
+        let gate_after = (after.end_tick - after.start_tick) as i64;
+        assert!(
+            (gate_after - gate_before).abs() <= 6,
+            "时值偏移应在 ±6，实际 {}",
+            gate_after - gate_before
+        );
+        assert!(after.end_tick > after.start_tick, "end 必须大于 start");
+    }
+
+    #[test]
+    fn humanize_undo_restores_original() {
+        let mut doc = make_doc_with_note();
+        let before = doc.data.model.notes[60][0];
+        let snap = doc.capture_snapshot();
+        let mut rng = 42u64;
+        let action = doc
+            .humanize_selected_with_rng(
+                HumanizeParams {
+                    timing: 12,
+                    velocity: 6,
+                    gate: 8,
+                },
+                &mut rng,
+            )
+            .expect("应产生动作");
+        doc.push_undo(action, "humanize", snap);
+        assert!(doc.undo(), "undo 应成功");
+        let restored = doc.data.model.notes[60][0];
+        assert_eq!(restored.start_tick, before.start_tick);
+        assert_eq!(restored.end_tick, before.end_tick);
+        assert_eq!(restored.velocity, before.velocity);
+        assert_eq!(restored.id, before.id);
+    }
+
+    #[test]
+    fn humanize_noop_or_empty_returns_none() {
+        let mut doc = make_doc_with_note();
+        let mut rng = 7u64;
+        assert!(
+            doc.humanize_selected_with_rng(
+                HumanizeParams {
+                    timing: 0,
+                    velocity: 0,
+                    gate: 0
+                },
+                &mut rng
+            )
+            .is_none(),
+            "全 0 参数应无动作"
+        );
+        doc.edit.selected.clear();
+        assert!(
+            doc.humanize_selected_with_rng(
+                HumanizeParams {
+                    timing: 5,
+                    velocity: 5,
+                    gate: 5
+                },
+                &mut rng
+            )
+            .is_none(),
+            "空选区应无动作"
+        );
+    }
+
+    #[test]
+    fn humanize_many_rounds_stay_valid() {
+        let mut doc = make_doc_with_note();
+        // 全时间轴选中，保证每轮都命中音符（抖动后不脱出）。
+        doc.edit.selected.clear();
+        doc.edit.selected.add_rect_track(0, u32::MAX, 60, 60, 0, 0);
+        let params = HumanizeParams {
+            timing: 500,
+            velocity: 127,
+            gate: 500,
+        };
+        for seed in 1..=200u64 {
+            let mut rng = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            let _ = doc.humanize_selected_with_rng(params, &mut rng);
+            let n = doc.data.model.notes[60][0];
+            assert!(n.end_tick > n.start_tick, "seed {seed}: end 应大于 start");
+            assert!(n.velocity <= 127, "seed {seed}: velocity 应 ≤127");
+        }
     }
 
     /// 回归：矩形态选区（全选/轨道选择等）移动后，成员集物化为「实际被移动
