@@ -698,12 +698,15 @@ fn float_bubble(
         };
         let floating = sw.is_floating(target);
         // 气泡在按钮正上方居中；靠窗口边缘时水平收进。
-        let win = ctx.input(|i| i.viewport().inner_rect);
-        let cx = match win {
-            Some(win) if win.width() > BUBBLE_SIZE.x + 8.0 => btn.rect.center().x.clamp(
-                win.min.x + BUBBLE_SIZE.x / 2.0 + 4.0,
-                win.max.x - BUBBLE_SIZE.x / 2.0 - 4.0,
-            ),
+        // 注意：`inner_rect` 是**显示器坐标**（窗口不在显示器原点时 min.x ≠ 0），
+        // 而按钮 rect 是视口局部坐标 → 只能取宽度做 clamp，不能用 min/max.x。
+        let win_w = ctx.input(|i| i.viewport().inner_rect).map(|r| r.width());
+        let cx = match win_w {
+            Some(w) if w > BUBBLE_SIZE.x + 8.0 => btn
+                .rect
+                .center()
+                .x
+                .clamp(BUBBLE_SIZE.x / 2.0 + 4.0, w - BUBBLE_SIZE.x / 2.0 - 4.0),
             _ => btn.rect.center().x,
         };
         let bubble_rect = egui::Rect::from_min_size(
@@ -928,5 +931,69 @@ mod tests {
             &buttons,
         );
         assert_eq!(state(&ctx).target, None, "Esc 应关闭气泡");
+    }
+
+    /// 回归：气泡水平居中不受窗口在显示器上的位置影响。
+    ///
+    /// 曾经误用 `inner_rect.min.x`（**显示器坐标**）去 clamp 按钮 rect
+    /// （**视口局部坐标**）→ 窗口不在显示器原点时气泡被向右推（位置歪）。
+    /// 现在只取 `inner_rect.width()` 做边缘收进，两个坐标系不再混用。
+    #[test]
+    fn bubble_center_unaffected_by_window_origin() {
+        let ctx = egui::Context::default();
+        // 首帧注册图标字体（气泡为图标字形）。
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.ctx().add_font(egui_material_icons::font_insert());
+        })
+        .drop_without_applying_deltas();
+
+        let (mut sp, mut fp, mut sd, mut fd, mut sm, mut fm) =
+            (false, false, false, false, false, false);
+        // 按钮位于视口局部 x≈100；窗口在显示器 x=300 处（inner_rect 为显示器坐标）。
+        let btn_rect = egui::Rect::from_min_size(egui::pos2(90.0, 700.0), egui::vec2(20.0, 20.0));
+        let buttons = vec![PanelButtonInfo {
+            target: PanelKind::Pianoroll,
+            rect: btn_rect,
+            hovered: true,
+            secondary_clicked: false,
+        }];
+        let mut run = |time: f64| {
+            let mut input = egui::RawInput {
+                time: Some(time),
+                ..Default::default()
+            };
+            input.viewports.insert(
+                egui::ViewportId::ROOT,
+                egui::ViewportInfo {
+                    inner_rect: Some(egui::Rect::from_min_size(
+                        egui::pos2(300.0, 50.0),
+                        egui::vec2(960.0, 32.0),
+                    )),
+                    ..Default::default()
+                },
+            );
+            ctx.run_ui(input, |ui| {
+                float_bubble(
+                    ui.ctx(),
+                    &buttons,
+                    &mut sp,
+                    &mut fp,
+                    &mut sd,
+                    &mut fd,
+                    &mut sm,
+                    &mut fm,
+                );
+            })
+            .drop_without_applying_deltas();
+        };
+        run(0.0);
+        run(0.3); // 越过悬停延迟 → 气泡弹出
+        let area = ctx
+            .memory(|m| m.area_rect(egui::Id::new("mode_bar_float_bubble").with("area")))
+            .expect("停留 0.3s 后气泡应已显示");
+        assert!(
+            (area.center().x - btn_rect.center().x).abs() <= 2.0,
+            "气泡应居中于按钮上方: area={area:?} button={btn_rect:?}"
+        );
     }
 }

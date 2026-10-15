@@ -257,9 +257,10 @@ impl App {
 }
 
 /// 浮动面板窗口 builder：复用对话框窗口样式（macOS 无边框/全尺寸内容），
-/// 恢复上次位置（越界时夹回主显示器可见范围），可缩放、可最大化。
+/// 恢复上次位置（窗口坐标即显示器坐标，原样恢复；拔屏后由系统收回主显示器），
+/// 可缩放、可最大化。
 fn float_window_builder(
-    ctx: &egui::Context,
+    _ctx: &egui::Context,
     title: &str,
     stored: Option<egui::Rect>,
     default_size: egui::Vec2,
@@ -271,21 +272,9 @@ fn float_window_builder(
     let mut vb = crate::chrome::dialog::viewport_builder(title, [size.x, size.y], true)
         .with_min_inner_size([360.0, 200.0]);
     if let Some(pos) = pos {
-        let monitor = ctx.input(|i| i.viewport().monitor_size);
-        vb = vb.with_position(clamp_window_pos(pos, size, monitor));
+        vb = vb.with_position(pos);
     }
     vb
-}
-
-/// 夹回主显示器：保证标题栏区域可见（换显示器/拔掉副屏后窗口不丢）。
-fn clamp_window_pos(pos: egui::Pos2, size: egui::Vec2, monitor: Option<egui::Vec2>) -> egui::Pos2 {
-    let Some(m) = monitor else {
-        return pos;
-    };
-    egui::pos2(
-        pos.x.clamp(120.0 - size.x, (m.x - 120.0).max(0.0)),
-        pos.y.clamp(0.0, (m.y - 48.0).max(0.0)),
-    )
 }
 
 /// 同步浮动窗口矩形：窗口移动/缩放中只更新「上帧快照」，
@@ -320,24 +309,5 @@ mod tests {
     fn rect_roundtrip() {
         let r = egui::Rect::from_min_size(egui::pos2(120.0, 80.0), egui::vec2(960.0, 520.0));
         assert_eq!(arr_to_rect(rect_to_arr(r)), r);
-    }
-
-    /// 越界位置夹回主显示器：标题栏区域保持可见。
-    #[test]
-    fn clamp_window_pos_keeps_title_visible() {
-        let size = egui::vec2(900.0, 500.0);
-        let monitor = Some(egui::vec2(1920.0, 1080.0));
-        // 正常位置不动
-        let p = egui::pos2(100.0, 60.0);
-        assert_eq!(clamp_window_pos(p, size, monitor), p);
-        // 右下方越界 → 夹回
-        let p = clamp_window_pos(egui::pos2(5000.0, 3000.0), size, monitor);
-        assert!(p.x <= 1920.0 - 120.0 && p.y <= 1080.0 - 48.0);
-        // 左上方越界 → 夹回
-        let p = clamp_window_pos(egui::pos2(-2000.0, -300.0), size, monitor);
-        assert!(p.x >= 120.0 - size.x && p.y >= 0.0);
-        // 无显示器信息 → 原样
-        let p = egui::pos2(-500.0, -100.0);
-        assert_eq!(clamp_window_pos(p, size, None), p);
     }
 }
