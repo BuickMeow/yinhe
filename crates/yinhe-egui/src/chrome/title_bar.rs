@@ -477,7 +477,7 @@ mod tests {
         scroll: f32,
     }
 
-    /// macOS left_padding=80、tab_w=200 → 首个标签 rect [80..280]×[4..28]。
+    /// macOS left_padding=80、tab_w=400 → 首个标签 rect [80..480]×[4..28]。
     /// 窗口高度取够高，保证标题栏下方的 popup 落在视口内可被点击。
     fn make_harness<'a>(documents: &'a [Document], recent: &'a [String]) -> Harness<'a, TbState> {
         let mut first_frame = true;

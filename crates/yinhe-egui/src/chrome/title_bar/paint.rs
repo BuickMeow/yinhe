@@ -28,7 +28,7 @@ impl BarMetrics {
             bar_rect,
             left_padding: if reserve_traffic_lights { 80.0 } else { 10.0 },
             // 极简标签（无背景），加宽以显示更长的工程名
-            tab_w: 200.0,
+            tab_w: 400.0,
             tab_h,
             tab_y: bar_rect.center().y - tab_h / 2.0,
             tab_gap: 2.0,
@@ -170,12 +170,62 @@ pub(super) fn paint_tabs(
         } else {
             text_color
         };
-        let text_to_draw = {
-            let full_w = painter
-                .layout_no_wrap(display_name.clone(), font_id.clone(), text_color)
-                .size()
-                .x;
-            if full_w <= text_max_w_cur {
+        // 完整名称宽度（跑马灯判定与截断逻辑共用一次测量）
+        let full_w = painter
+            .layout_no_wrap(display_name.clone(), font_id.clone(), text_color)
+            .size()
+            .x;
+
+        let mut text_x = tab_rect.min.x + padding;
+        if dirty_dot {
+            // 未保存指示：Material 风格圆点（比文字深一点的灰色）
+            let dot_color = if is_dragged && dragging {
+                tint(crate::theme::tab_dirty_dot(), alpha_mul)
+            } else {
+                crate::theme::tab_dirty_dot()
+            };
+            painter.circle_filled(
+                egui::pos2(text_x + 4.0, tab_rect.center().y),
+                4.0,
+                dot_color,
+            );
+            text_x += dirty_dot_w;
+        }
+
+        // 悬停且名称超宽（静态显示会被截断）→ 跑马灯横向滚动完整名称：
+        // 文字尾部留 MARQUEE_GAP 间隔后接开头，无限循环。被拖拽的标签不滚动。
+        let marquee_id = ui.id().with(("tab_marquee_start", i));
+        if is_hovered && full_w > text_max_w_cur {
+            // 先取 time 再进 data_mut（在 data_mut 闭包里调用 ui.input 会死锁）
+            let time = ui.input(|i| i.time);
+            let start = ui.data_mut(|d| *d.get_temp_mut_or_insert_with(marquee_id, || time));
+            const MARQUEE_GAP: f32 = 48.0;
+            const MARQUEE_SPEED: f32 = 30.0;
+            let elapsed = (time - start) as f32;
+            let cycle = full_w + MARQUEE_GAP;
+            let offset = (elapsed * MARQUEE_SPEED) % cycle;
+            // 只裁剪文字区 [text_x, 标签右缘-padding]，未保存圆点不受影响
+            let clip = egui::Rect::from_min_max(
+                egui::pos2(text_x, tab_rect.min.y),
+                egui::pos2(tab_rect.max.x - padding, tab_rect.max.y),
+            );
+            let clipped = painter.with_clip_rect(clip);
+            let x1 = text_x - offset;
+            for x in [x1, x1 + cycle] {
+                clipped.text(
+                    egui::pos2(x, tab_rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    display_name.clone(),
+                    font_id.clone(),
+                    text_color_draw,
+                );
+            }
+            ui.ctx().request_repaint();
+        } else {
+            // 未悬停/未被截断：清掉计时，下次悬停重新从文字开头滚动
+            ui.data_mut(|d| d.remove::<f64>(marquee_id));
+            // Tab text with ellipsis truncation
+            let text_to_draw = if full_w <= text_max_w_cur {
                 display_name
             } else {
                 let ellipsis = "\u{2026}";
@@ -195,31 +245,15 @@ pub(super) fn paint_tabs(
                     truncated.push(c);
                 }
                 format!("{}{}", truncated, ellipsis)
-            }
-        };
-        let mut text_x = tab_rect.min.x + padding;
-        if dirty_dot {
-            // 未保存指示：Material 风格圆点（比文字深一点的灰色）
-            let dot_color = if is_dragged && dragging {
-                tint(crate::theme::tab_dirty_dot(), alpha_mul)
-            } else {
-                crate::theme::tab_dirty_dot()
             };
-            painter.circle_filled(
-                egui::pos2(text_x + 4.0, tab_rect.center().y),
-                4.0,
-                dot_color,
+            painter.text(
+                egui::pos2(text_x, tab_rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                text_to_draw,
+                font_id.clone(),
+                text_color_draw,
             );
-            text_x += dirty_dot_w;
         }
-        let text_pos = egui::pos2(text_x, tab_rect.center().y);
-        painter.text(
-            text_pos,
-            egui::Align2::LEFT_CENTER,
-            text_to_draw,
-            font_id.clone(),
-            text_color_draw,
-        );
     }
 }
 
