@@ -651,16 +651,13 @@ pub(crate) fn update_track_meters(app: &mut App, dt: f32) {
     }
 }
 
-/// 通道区与主输出之间的间隙（px）：给通道区横向滚动条留位，
-/// 避免浮动滚动条把手贴住主输出的左分界线。
-const CHANNELS_GAP: f32 = 8.0;
-
 /// 混音主体几何：通道区 + 主输出区。主输出贴面板右缘（无右边距），
-/// 与通道区之间留 [`CHANNELS_GAP`] 间隙（滚动条浮动其中）。
+/// 与通道区**无间隙**（边距彻底去掉：通道条与主输出直接相邻，靠主输出
+/// 自身的左描边分隔；滚动条把手浮动在通道区自身的视口右缘内）。
 pub(crate) fn body_layout(body: egui::Rect) -> (egui::Rect, egui::Rect) {
     let master_w = strip::STRIP_WIDTH;
     let mut channels_rect = body;
-    channels_rect.max.x = (body.max.x - master_w - CHANNELS_GAP).max(body.min.x);
+    channels_rect.max.x = (body.max.x - master_w).max(body.min.x);
     let master_rect = egui::Rect::from_min_max(
         egui::pos2((body.max.x - master_w).max(body.min.x), body.min.y),
         body.max,
@@ -1345,7 +1342,7 @@ mod tests {
         assert!(!strip_builtin_inserts(&mut mixer), "无内置 insert 不算迁移");
     }
 
-    /// 回归：主输出贴面板右缘（无右边距），与通道区之间留滚动条间隙；
+    /// 回归：主输出贴面板右缘（无右边距），与通道区**无间隙**；
     /// 常规宽度下主输出条宽度 = 通道条宽度（不溢出、不居中留缝）。
     #[test]
     fn master_rect_is_flush_with_panel_right() {
@@ -1353,11 +1350,7 @@ mod tests {
         let (channels, master) = body_layout(body);
         assert_eq!(master.max.x, body.max.x, "主输出应贴右缘");
         assert_eq!(master.width(), strip::STRIP_WIDTH, "条宽 = 通道条宽");
-        assert_eq!(
-            master.min.x - channels.max.x,
-            CHANNELS_GAP,
-            "中间留滚动条间隙"
-        );
+        assert_eq!(master.min.x, channels.max.x, "与通道区无间隙");
         assert_eq!(channels.min.x, body.min.x, "通道区从主体左缘开始");
     }
 }
