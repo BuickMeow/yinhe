@@ -14,6 +14,7 @@ fn action_hint(action: SelectionAction) -> String {
         SelectionAction::FlipVertical => t!("hint.pr.sel_flip_v"),
         SelectionAction::LengthDouble => t!("hint.pr.sel_length_double"),
         SelectionAction::LengthHalf => t!("hint.pr.sel_length_half"),
+        SelectionAction::Humanize => t!("hint.pr.sel_humanize"),
         SelectionAction::GridConfirm
         | SelectionAction::LineConfirm
         | SelectionAction::ScissorsConfirm => t!("hint.pr.sel_confirm"),
@@ -40,14 +41,16 @@ pub enum SelectionAction {
     LengthDouble,
     /// 变速：选中音符长度 ÷2。
     LengthHalf,
+    /// 人性化：给选中音符注入随机偏差（时间/力度/时值）。
+    Humanize,
 }
 
 /// 浮动工具条按钮：`(icon, action)`。
 pub type BarButton = (MaterialIcon, SelectionAction);
 
-/// 选择工具的浮动条按钮（删除/复制/移调/变速/翻转）。
+/// 选择工具的浮动条按钮（删除/复制/移调/变速/翻转/人性化）。
 /// 图标旋转由 [`bar_button_rotation`] 决定（如 DOWNLOAD 倒置 180° 表示升八度）。
-pub const SELECT_BAR_BUTTONS: [BarButton; 8] = [
+pub const SELECT_BAR_BUTTONS: [BarButton; 9] = [
     (ICON_DELETE, SelectionAction::Delete),
     (ICON_CONTENT_COPY, SelectionAction::Duplicate),
     (ICON_DOWNLOAD, SelectionAction::TransposeUp),
@@ -56,6 +59,7 @@ pub const SELECT_BAR_BUTTONS: [BarButton; 8] = [
     (ICON_UPLOAD, SelectionAction::LengthDouble),
     (ICON_FLIP, SelectionAction::FlipHorizontal),
     (ICON_FLIP, SelectionAction::FlipVertical),
+    (ICON_AUTO_FIX, SelectionAction::Humanize),
 ];
 
 /// 图标旋转角（弧度）。0 = 不旋转。

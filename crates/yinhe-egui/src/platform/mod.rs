@@ -33,6 +33,8 @@ pub enum MenuAction {
     TransposeDown,
     DedupWithinTrack,
     DedupAcrossTracks,
+    /// 编辑菜单「人性化」：给选中音符注入随机偏差（时间/力度/时值）。
+    Humanize,
     /// 编辑菜单「插入标签」（在光标处插入 MIDI marker）。
     InsertMarker,
     /// 播放菜单「播放/暂停」（Space）。

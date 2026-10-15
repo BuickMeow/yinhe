@@ -52,6 +52,8 @@ pub const ACTION_TRANSPOSE_UP: &str = "transpose_up";
 pub const ACTION_TRANSPOSE_DOWN: &str = "transpose_down";
 pub const ACTION_DEDUP_WITHIN_TRACK: &str = "dedup_within_track";
 pub const ACTION_DEDUP_ACROSS_TRACKS: &str = "dedup_across_tracks";
+/// 人性化：给选中音符注入随机偏差（时间/力度/时值）。
+pub const ACTION_HUMANIZE: &str = "humanize";
 
 pub const ACTION_TOGGLE_PLAY: &str = "toggle_play";
 pub const ACTION_STOP: &str = "stop";
@@ -95,6 +97,7 @@ pub const ALL_ACTION_IDS: &[&str] = &[
     ACTION_TRANSPOSE_DOWN,
     ACTION_DEDUP_WITHIN_TRACK,
     ACTION_DEDUP_ACROSS_TRACKS,
+    ACTION_HUMANIZE,
     ACTION_TOGGLE_PLAY,
     ACTION_STOP,
     ACTION_TOOL_SELECT,
@@ -182,6 +185,7 @@ fn default_combo(action_id: &str) -> Option<KeyCombo> {
         ACTION_DELETE => combo(false, false, false, "Delete"),
         ACTION_TRANSPOSE_UP => combo(false, true, false, "ArrowUp"),
         ACTION_TRANSPOSE_DOWN => combo(false, true, false, "ArrowDown"),
+        ACTION_HUMANIZE => None,
         ACTION_TOGGLE_PLAY => combo(false, false, false, "Space"),
         ACTION_STOP => combo(false, false, false, "Escape"),
         // 工具切换默认用主键盘数字键 1-9、0（按工具栏显示顺序）。

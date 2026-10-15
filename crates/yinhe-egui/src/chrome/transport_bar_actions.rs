@@ -158,12 +158,14 @@ pub enum EditAction {
     TransposeDown,
     DedupWithinTrack,
     DedupAcrossTracks,
+    /// 人性化：给选中音符注入随机偏差（时间/力度/时值）。
+    Humanize,
     /// 在光标位置插入一个标签（MIDI marker），默认名 = 小节.拍.tick。
     InsertMarker,
 }
 
 impl EditAction {
-    pub const ALL: [EditAction; 17] = [
+    pub const ALL: [EditAction; 18] = [
         EditAction::Undo,
         EditAction::Redo,
         EditAction::Cut,
@@ -180,6 +182,7 @@ impl EditAction {
         EditAction::TransposeDown,
         EditAction::DedupWithinTrack,
         EditAction::DedupAcrossTracks,
+        EditAction::Humanize,
         EditAction::InsertMarker,
     ];
 
@@ -201,7 +204,9 @@ impl EditAction {
             EditAction::TransposeDown => 13,
             EditAction::DedupWithinTrack => 14,
             EditAction::DedupAcrossTracks => 15,
+            // InsertMarker 保持既有索引（不可 pin）；新增项一律追加末尾。
             EditAction::InsertMarker => 16,
+            EditAction::Humanize => 17,
         }
     }
 
@@ -223,6 +228,7 @@ impl EditAction {
             EditAction::TransposeDown => shortcuts::ACTION_TRANSPOSE_DOWN,
             EditAction::DedupWithinTrack => shortcuts::ACTION_DEDUP_WITHIN_TRACK,
             EditAction::DedupAcrossTracks => shortcuts::ACTION_DEDUP_ACROSS_TRACKS,
+            EditAction::Humanize => shortcuts::ACTION_HUMANIZE,
             EditAction::InsertMarker => "",
         }
     }
@@ -245,6 +251,7 @@ impl EditAction {
             EditAction::TransposeDown => ICON_ARROW_DOWNWARD,
             EditAction::DedupWithinTrack => ICON_STACK_OFF,
             EditAction::DedupAcrossTracks => ICON_STACK_OFF,
+            EditAction::Humanize => ICON_AUTO_FIX,
             EditAction::InsertMarker => ICON_BOOKMARK,
         }
     }
@@ -524,7 +531,7 @@ pub const FILE_GROUPS: [&[FileAction]; 5] = [
     &[FileAction::Settings, FileAction::About, FileAction::Exit],
 ];
 
-pub const EDIT_GROUPS: [&[EditAction]; 8] = [
+pub const EDIT_GROUPS: [&[EditAction]; 9] = [
     &[EditAction::Undo, EditAction::Redo],
     &[EditAction::Cut, EditAction::Copy, EditAction::Paste],
     &[EditAction::PasteAtOriginal, EditAction::PasteFlipped],
@@ -535,6 +542,7 @@ pub const EDIT_GROUPS: [&[EditAction]; 8] = [
     ],
     &[EditAction::Duplicate, EditAction::Delete],
     &[EditAction::TransposeUp, EditAction::TransposeDown],
+    &[EditAction::Humanize],
     &[EditAction::DedupWithinTrack, EditAction::DedupAcrossTracks],
     &[EditAction::InsertMarker],
 ];

@@ -310,6 +310,17 @@ impl App {
         });
     }
 
+    /// 人性化：给选中音符注入温和随机偏差（时间/力度/时值各 ±8）。
+    pub(crate) fn humanize_selected_notes(&mut self) {
+        self.with_undo(t!("undo.humanize").as_ref(), |doc| {
+            doc.humanize_selected(yinhe_editor_core::HumanizeParams {
+                timing: 8,
+                velocity: 8,
+                gate: 8,
+            })
+        });
+    }
+
     // ── Copy / Cut / Paste / Select All ──
 
     /// Copy selected notes to the clipboard as an O(1) model snapshot.
@@ -830,6 +841,7 @@ impl App {
             A::TransposeDown => self.transpose_selected_notes(-12),
             A::DedupWithinTrack => self.dedup_overlapping_notes(false),
             A::DedupAcrossTracks => self.dedup_overlapping_notes(true),
+            A::Humanize => self.humanize_selected_notes(),
             A::InsertMarker => self.insert_marker_at_cursor(),
         }
     }
@@ -894,6 +906,7 @@ impl App {
             A::TransposeUp => self.transpose_selected_notes(12),
             A::TransposeDown => self.transpose_selected_notes(-12),
             A::FlipVertical => self.flip_selected_notes(yinhe_editor_core::FlipAxis::Vertical),
+            A::Humanize => self.humanize_selected_notes(),
             A::GridConfirm => self.grid_split_selection(),
             A::LineConfirm => self.line_tool_confirm(),
             A::ScissorsConfirm => self.scissors_confirm(),

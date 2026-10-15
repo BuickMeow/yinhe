@@ -197,6 +197,7 @@ impl eframe::App for App {
                         | MenuAction::TransposeDown
                         | MenuAction::DedupWithinTrack
                         | MenuAction::DedupAcrossTracks
+                        | MenuAction::Humanize
                 )
             {
                 continue;
@@ -274,6 +275,10 @@ impl eframe::App for App {
                 }
                 MenuAction::DedupAcrossTracks => {
                     self.handle_edit_action(transport_bar::EditAction::DedupAcrossTracks);
+                    continue;
+                }
+                MenuAction::Humanize => {
+                    self.handle_edit_action(transport_bar::EditAction::Humanize);
                     continue;
                 }
                 MenuAction::InsertMarker => {

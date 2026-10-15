@@ -29,6 +29,7 @@ pub use clipboard::{
 pub use config::{ProjectSfConfig, SfEntry};
 pub use document::automation_edit::AnchorField;
 pub use document::note_edit::FlipAxis;
+pub use document::note_edit::HumanizeParams;
 pub use document::note_edit::NoteField;
 pub use document::track_ops::NewTrackSpec;
 pub use document::{Document, TrackOverride};
