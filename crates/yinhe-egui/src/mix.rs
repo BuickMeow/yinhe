@@ -138,6 +138,8 @@ pub(crate) struct MixUiState {
     /// 插件选择器当前选中条目 id（`PluginEntry.id`；内置 XSynth 用
     /// [`strip::XS_SELECTED_ID`]）。
     pub(crate) picker_selected: Option<String>,
+    /// 插件选择器星标筛选（点亮 = 只显示已收藏插件）。
+    pub(crate) picker_fav_only: bool,
     /// 插件参数面板（同一时间至多一个）。
     pub(crate) param_panel: Option<ParamPanel>,
     /// 通道 AR（MIX 主区域）面板的通道电平弹道状态（dense 索引）。

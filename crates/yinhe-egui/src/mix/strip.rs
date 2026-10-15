@@ -658,7 +658,8 @@ fn device_chain(
     max_h: f32,
     actions: &mut Vec<MixAction>,
 ) {
-    let step = DEVICE_ROW_H + 1.0;
+    // 行距 0（行间靠底部 1px 分隔线分隔），整行取高。
+    let step = DEVICE_ROW_H;
     let max_rows = (max_h / step).floor().max(1.0) as usize;
     crate::widgets::scroll::rows_scroll(
         ui,
@@ -666,7 +667,7 @@ fn device_chain(
         DEVICE_ROW_H,
         Some(max_rows),
         |ui| {
-            ui.spacing_mut().item_spacing.y = 1.0;
+            ui.spacing_mut().item_spacing.y = 0.0;
             // 乐器段（仅 MIDI 通道）：空链显示内置 XSynth，否则逐个列出可叠加
             // 的插件乐器。
             if let Some(ch) = channel {
@@ -714,7 +715,7 @@ fn device_row_frame(ui: &mut egui::Ui) -> (egui::Rect, egui::Response) {
     (rect, resp)
 }
 
-/// 设备行的统一外观（背景 + 单描边 + 左对齐名称）。
+/// 设备行的统一外观（背景 + 底部细分隔线 + 左对齐名称）。
 fn device_row_visual(ui: &mut egui::Ui, label: &str) -> (egui::Rect, egui::Response) {
     let (rect, resp) = device_row_frame(ui);
     let painter = ui.painter();
@@ -724,13 +725,15 @@ fn device_row_visual(ui: &mut egui::Ui, label: &str) -> (egui::Rect, egui::Respo
         crate::theme::app_bg()
     };
     painter.rect_filled(rect, 0.0, bg);
-    painter.rect_stroke(
-        rect,
-        0.0,
+    // 行间仅底部 1px 分隔线（去掉整圈边框，接近色带式的连续列表）。
+    painter.hline(
+        rect.x_range(),
+        rect.max.y - 0.5,
         egui::Stroke::new(1.0, crate::theme::grid_sub_beat()),
-        egui::StrokeKind::Inside,
     );
-    painter.text(
+    // 名称左侧内边距；右侧留出「更换乐器」按钮的悬停区。
+    let name_clip = egui::Rect::from_min_max(rect.min, egui::pos2(rect.max.x - 20.0, rect.max.y));
+    painter.with_clip_rect(name_clip).text(
         egui::pos2(rect.min.x + 6.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         label,
@@ -738,6 +741,47 @@ fn device_row_visual(ui: &mut egui::Ui, label: &str) -> (egui::Rect, egui::Respo
         crate::theme::text_primary(),
     );
     (rect, resp)
+}
+
+/// 乐器行右侧的「更换乐器」按钮（悬停出现）：打开统一选择器（乐器语境）。
+/// 行的其余部分仍执行原点击行为（打开乐器界面/配置）。
+fn instrument_swap_button(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    channel: u8,
+    row_salt: u64,
+    actions: &mut Vec<MixAction>,
+) {
+    if !ui.rect_contains_pointer(rect) {
+        return;
+    }
+    let swap_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.max.x - 12.0, rect.center().y),
+        egui::vec2(18.0, DEVICE_ROW_H),
+    );
+    let resp = ui.interact(
+        swap_rect,
+        ui.id().with(("mix_swap_instr", channel, row_salt)),
+        egui::Sense::click(),
+    );
+    let icon = egui_material_icons::icons::ICON_SWAP_HORIZ;
+    let color = if resp.hovered() {
+        crate::theme::accent_active()
+    } else {
+        crate::theme::text_muted()
+    };
+    ui.painter().text(
+        swap_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        icon.codepoint,
+        egui::FontId::new(crate::theme::ICON_FONT_SM, icon.font_family()),
+        color,
+    );
+    let clicked = resp.clicked();
+    resp.on_hover_text(t!("hint.mix.swap_instrument"));
+    if clicked {
+        actions.push(MixAction::OpenInstrumentPicker { channel });
+    }
 }
 
 /// 插件乐器设备行（`index` = 该通道链内序号）：点击开关插件界面，右键菜单。
@@ -748,11 +792,12 @@ fn instrument_row(
     name: &str,
     actions: &mut Vec<MixAction>,
 ) {
-    let (_rect, resp) = device_row_visual(ui, name);
+    let (rect, resp) = device_row_visual(ui, name);
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.toggle_gui"));
     if resp.clicked() {
         actions.push(MixAction::ToggleInstrumentGui { channel, index });
     }
+    instrument_swap_button(ui, rect, channel, index as u64, actions);
     resp.context_menu(|ui| {
         ui.set_min_width(96.0);
         ui.set_max_width(96.0);
@@ -790,11 +835,12 @@ fn instrument_row(
 
 /// 内置 XSynth 设备行（该通道未挂任何插件乐器时显示）。
 fn xsynth_row(ui: &mut egui::Ui, channel: u8, actions: &mut Vec<MixAction>) {
-    let (_rect, resp) = device_row_visual(ui, "XSynth");
+    let (rect, resp) = device_row_visual(ui, "XSynth");
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.instrument_xsynth"));
     if resp.clicked() {
         actions.push(MixAction::OpenXsynthConfig { channel });
     }
+    instrument_swap_button(ui, rect, channel, 0, actions);
     resp.context_menu(|ui| {
         ui.set_min_width(96.0);
         ui.set_max_width(96.0);
@@ -837,11 +883,11 @@ fn effect_row(
     if resp.hovered() {
         painter.rect_filled(rect, 0.0, crate::theme::hover_color(crate::theme::app_bg()));
     }
-    painter.rect_stroke(
-        rect,
-        0.0,
+    // 行间仅底部 1px 分隔线（去掉整圈边框，接近色带式的连续列表）。
+    painter.hline(
+        rect.x_range(),
+        rect.max.y - 0.5,
         egui::Stroke::new(1.0, crate::theme::grid_sub_beat()),
-        egui::StrokeKind::Inside,
     );
 
     // 状态点（点击旁通）：正常 = 强调/次文字色；旁通 = 灰。
@@ -985,11 +1031,11 @@ fn add_row(ui: &mut egui::Ui, hint: impl Into<String>) -> bool {
         crate::theme::app_bg()
     };
     painter.rect_filled(rect, 0.0, bg);
-    painter.rect_stroke(
-        rect,
-        0.0,
+    // 行间仅底部 1px 分隔线（去掉整圈边框，接近色带式的连续列表）。
+    painter.hline(
+        rect.x_range(),
+        rect.max.y - 0.5,
         egui::Stroke::new(1.0, crate::theme::grid_sub_beat()),
-        egui::StrokeKind::Inside,
     );
     painter.text(
         rect.center(),
@@ -1469,60 +1515,55 @@ pub(crate) fn send_popup(
 /// 选择器左侧分类页签。
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum PickerTab {
-    /// 乐器（内置 XSynth + 插件乐器）。
+    /// 全部（所有插件 + 内置 XSynth）。
     #[default]
+    All,
+    /// 乐器（内置 XSynth + 插件乐器）。
     Instrument,
     /// 效果器（插件效果器）。
     Effect,
-    /// 扩展（全部已安装的 VST / CLAP 插件）。
+    /// 扩展（全部已安装的 VST / CLAP 插件，不含内置）。
     Extension,
-    /// 收藏（star 标记过的插件）。
-    Favorite,
 }
 
 /// 选择器中内置 XSynth 行的选中 id（非插件条目）。
 pub(crate) const XS_SELECTED_ID: &str = "__xsynth__";
 
 impl PickerTab {
-    const ALL: [Self; 4] = [
-        Self::Instrument,
-        Self::Effect,
-        Self::Extension,
-        Self::Favorite,
-    ];
+    const ALL: [Self; 4] = [Self::All, Self::Instrument, Self::Effect, Self::Extension];
 
     fn icon(self) -> egui_material_icons::MaterialIcon {
         use egui_material_icons::icons::*;
         match self {
+            Self::All => ICON_APPS,
             Self::Instrument => ICON_PIANO,
             Self::Effect => ICON_GRADIENT,
             Self::Extension => ICON_EXTENSION,
-            Self::Favorite => ICON_STAR,
         }
     }
 
     fn label(self) -> String {
         match self {
+            Self::All => t!("mix.picker_tab_all").to_string(),
             Self::Instrument => t!("mix.picker_tab_instrument").to_string(),
             Self::Effect => t!("mix.picker_tab_effect").to_string(),
             Self::Extension => t!("mix.picker_tab_extension").to_string(),
-            Self::Favorite => t!("mix.picker_tab_favorite").to_string(),
         }
     }
 
     /// 该条目是否属于本分类。
-    fn matches(self, plugin: &PluginEntry, favorites: &[String]) -> bool {
+    fn matches(self, plugin: &PluginEntry) -> bool {
         match self {
+            Self::All => true,
             Self::Instrument => plugin.is_instrument,
             Self::Effect => plugin.is_effect,
             Self::Extension => true,
-            Self::Favorite => favorites.iter().any(|f| f == &plugin.id),
         }
     }
 
-    /// 是否显示内置 XSynth 项（仅乐器分类）。
+    /// 是否显示内置 XSynth 项（全部 / 乐器分类）。
     fn shows_xsynth(self) -> bool {
-        self == Self::Instrument
+        matches!(self, Self::All | Self::Instrument)
     }
 }
 
@@ -1614,8 +1655,7 @@ fn picker_tab_bar(app: &mut App, ui: &mut egui::Ui) {
         egui::vec2(bar_w, ui.available_height()),
         egui::Sense::hover(),
     );
-    let painter = ui.painter();
-    painter.rect_filled(rect, 0.0, crate::theme::track_bg());
+    // 贴窗口左缘、无底色（与窗口背景一体）。
     let btn = crate::theme::TRANSPORT_BTN_SIZE;
     ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
@@ -1654,7 +1694,20 @@ fn picker_tab_bar(app: &mut App, ui: &mut egui::Ui) {
     });
 }
 
-/// 中间列表：搜索 + 分类过滤 + 单击选中 / 双击加载。
+/// 厂家分组标题行（列表按厂家分组时的组头）。
+fn vendor_header(ui: &mut egui::Ui, vendor: &str) {
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 20.0), egui::Sense::hover());
+    ui.painter().text(
+        egui::pos2(rect.min.x + 6.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        vendor,
+        egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT),
+        crate::theme::text_label(),
+    );
+}
+
+/// 中间列表：自绘搜索框 + 星标筛选 + 按厂家分组 + 单击选中 / 双击加载。
 fn picker_list(
     app: &mut App,
     ui: &mut egui::Ui,
@@ -1668,14 +1721,46 @@ fn picker_list(
         egui::vec2(list_w, ui.available_height()),
         egui::Layout::top_down(egui::Align::LEFT),
         |ui| {
-            crate::widgets::rows::inline_row(ui, |ui| {
-                ui.label(t!("mix.search"));
-                let search_resp = ui.text_edit_singleline(&mut app.mix.picker_filter);
+            // 搜索行：自绘输入框 + 星标筛选开关（点亮 = 只看收藏）。
+            ui.horizontal(|ui| {
+                let star_w = 26.0;
+                let input_w = (ui.available_width() - star_w - 6.0).max(80.0);
+                let search_resp = crate::widgets::text_input::control_text_input(
+                    ui,
+                    &mut app.mix.picker_filter,
+                    input_w,
+                    "mix_picker_search",
+                    Some(&t!("mix.search")),
+                );
                 search_resp.on_hover_text(t!("hint.mix.picker_search"));
+                let fav_only = app.mix.picker_fav_only;
+                let (icon, color) = if fav_only {
+                    (
+                        egui_material_icons::icons::ICON_STAR,
+                        crate::theme::warning_gold(),
+                    )
+                } else {
+                    (
+                        egui_material_icons::icons::ICON_STAR.outlined(),
+                        crate::theme::text_muted(),
+                    )
+                };
+                let star_resp = crate::widgets::flat::flat_button_filled_ghost(
+                    ui,
+                    icon.rich_text().size(crate::theme::ICON_FONT).color(color),
+                    egui::vec2(star_w, crate::widgets::control::h(ui.ctx())),
+                    None,
+                    true,
+                )
+                .on_hover_text(t!("hint.mix.picker_fav_filter"));
+                if star_resp.clicked() {
+                    app.mix.picker_fav_only = !fav_only;
+                }
             });
             ui.separator();
             let filter = app.mix.picker_filter.to_lowercase();
             let favorites = app.audio_settings.favorite_plugins.clone();
+            let fav_only = app.mix.picker_fav_only;
             let tab = app.mix.picker_tab;
             let mut clicked: Option<String> = None;
             let mut activated: Option<String> = None;
@@ -1684,8 +1769,12 @@ fn picker_list(
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     let mut any = false;
-                    // 内置 XSynth：仅乐器分类（选择 = 清除插件挂载）。
-                    if tab.shows_xsynth() && (filter.is_empty() || "xsynth".contains(&filter)) {
+                    // 内置 XSynth：全部/乐器分类（选择 = 清除插件挂载）；
+                    // 星标筛选（只看收藏）时隐藏（XSynth 不是插件、不可收藏）。
+                    if tab.shows_xsynth()
+                        && !fav_only
+                        && (filter.is_empty() || "xsynth".contains(&filter))
+                    {
                         any = true;
                         let selected = app.mix.picker_selected.as_deref() == Some(XS_SELECTED_ID);
                         let resp = plugin_row(
@@ -1704,9 +1793,24 @@ fn picker_list(
                         }
                     }
                     if let Some(plugins) = app.mix.scanned.as_ref() {
-                        for p in plugins.iter().filter(|p| tab.matches(p, &favorites)) {
-                            if !filter.is_empty() && !p.name.to_lowercase().contains(&filter) {
-                                continue;
+                        // 过滤（分类 + 星标筛选 + 搜索）后**按厂家分组**，
+                        // 组内按名称排序；组头仅在厂家非空时绘制。
+                        let mut list: Vec<&PluginEntry> = plugins
+                            .iter()
+                            .filter(|p| tab.matches(p))
+                            .filter(|p| !fav_only || favorites.iter().any(|f| f == &p.id))
+                            .filter(|p| {
+                                filter.is_empty() || p.name.to_lowercase().contains(&filter)
+                            })
+                            .collect();
+                        list.sort_by(|a, b| {
+                            a.vendor.cmp(&b.vendor).then_with(|| a.name.cmp(&b.name))
+                        });
+                        let mut last_vendor: Option<&str> = None;
+                        for p in list {
+                            if !p.vendor.is_empty() && last_vendor != Some(p.vendor.as_str()) {
+                                vendor_header(ui, &p.vendor);
+                                last_vendor = Some(p.vendor.as_str());
                             }
                             any = true;
                             let enabled = p.error.is_none() && kind.can_pick(p);
@@ -1845,7 +1949,7 @@ fn picker_info(app: &mut App, ui: &mut egui::Ui) {
                     match p.format {
                         yinhe_mixer::PluginFormat::Clap => "CLAP",
                         yinhe_mixer::PluginFormat::Vst3 => "VST3",
-                        yinhe_mixer::PluginFormat::Builtin => "DSP",
+                        yinhe_mixer::PluginFormat::Builtin => "Yinhe",
                     }
                 ))
                 .size(crate::theme::SMALL_FONT)
@@ -1866,7 +1970,7 @@ fn picker_info(app: &mut App, ui: &mut egui::Ui) {
     );
 }
 
-/// 统一插件选择器窗口：左侧分类（乐器/效果器/扩展/收藏）+ 中间列表 +
+/// 统一插件选择器窗口：左侧分类（全部/乐器/效果器/扩展，贴窗口左缘）+ 中间列表 +
 /// 右侧插件信息与收藏 + 底部按钮。单击选中、双击或「好」加载选中项。
 fn picker_window(
     app: &mut App,
@@ -1895,7 +1999,8 @@ fn picker_window(
                     crate::chrome::dialog::title_bar(ui, title.as_ref(), &mut closed, false);
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
-                            left: 12,
+                            // 左栏贴窗口左缘（无内边距、无底色），列表与信息保留右/下边距。
+                            left: 0,
                             right: 12,
                             top: 0,
                             bottom: 12,
@@ -1911,35 +2016,39 @@ fn picker_window(
                                 egui::Layout::left_to_right(egui::Align::TOP),
                                 |ui| {
                                     picker_tab_bar(app, ui);
+                                    // 左栏贴边后，列表与左栏之间的间距。
+                                    ui.add_space(12.0);
                                     picker_list(app, ui, kind, actions, &mut close);
                                     picker_info(app, ui);
                                 },
                             );
-                            // 底部按钮：取消 / 好（好 = 加载选中项，未选中置灰）。
-                            let ok_text = t!("mix.picker_ok");
-                            let cancel_text = t!("mix.picker_cancel");
-                            let ok_enabled = app.mix.picker_selected.is_some();
-                            if let Some(idx) = crate::chrome::dialog_buttons::dialog_button_row(
-                                ui,
-                                &[
-                                    crate::chrome::dialog_buttons::DialogButton::secondary(
-                                        cancel_text.as_ref(),
-                                    ),
-                                    crate::chrome::dialog_buttons::DialogButton::primary(
-                                        ok_text.as_ref(),
-                                    )
-                                    .enabled(ok_enabled),
-                                ],
-                            ) {
-                                match idx {
-                                    0 => close = true,
-                                    1 => {
-                                        pick_selected(app, kind, actions);
-                                        close = true;
+                            // 底部按钮贴底（bottom_up）：下边距与右边距一致。
+                            ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
+                                let ok_text = t!("mix.picker_ok");
+                                let cancel_text = t!("mix.picker_cancel");
+                                let ok_enabled = app.mix.picker_selected.is_some();
+                                if let Some(idx) = crate::chrome::dialog_buttons::dialog_button_row(
+                                    ui,
+                                    &[
+                                        crate::chrome::dialog_buttons::DialogButton::secondary(
+                                            cancel_text.as_ref(),
+                                        ),
+                                        crate::chrome::dialog_buttons::DialogButton::primary(
+                                            ok_text.as_ref(),
+                                        )
+                                        .enabled(ok_enabled),
+                                    ],
+                                ) {
+                                    match idx {
+                                        0 => close = true,
+                                        1 => {
+                                            pick_selected(app, kind, actions);
+                                            close = true;
+                                        }
+                                        _ => {}
                                     }
-                                    _ => {}
                                 }
-                            }
+                            });
                         });
                 });
             if closed {
@@ -2020,7 +2129,8 @@ fn plugin_row(
     let fmt = match format {
         yinhe_mixer::PluginFormat::Clap => "CLAP",
         yinhe_mixer::PluginFormat::Vst3 => "VST3",
-        yinhe_mixer::PluginFormat::Builtin => "DSP",
+        // 内置内容（如 XSynth）归 yinhe 自身，而非 DSP 插件格式。
+        yinhe_mixer::PluginFormat::Builtin => "Yinhe",
     };
     ui.painter().text(
         egui::pos2(rect.max.x - 6.0, rect.center().y),
