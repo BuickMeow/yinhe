@@ -120,6 +120,9 @@ pub struct AudioSettings {
     pub custom_themes: Vec<CustomTheme>,
     #[serde(default)]
     pub favorite_themes: Vec<String>,
+    /// 收藏的插件（`PluginEntry.id`；插件选择器的 star 标记，跨工程持久化）。
+    #[serde(default)]
+    pub favorite_plugins: Vec<String>,
     pub ui_scale: f32,
     pub font_scale: f32,
     /// 是否启用 LOD 摘要层（缩小视图时用摘要段替代逐音符绘制）。
@@ -210,6 +213,7 @@ impl Default for AudioSettings {
             theme_preset: "ink-wash".to_string(),
             custom_themes: Vec::new(),
             favorite_themes: Vec::new(),
+            favorite_plugins: Vec::new(),
             ui_scale: 1.0,
             font_scale: 1.0,
             lod_enabled: true,

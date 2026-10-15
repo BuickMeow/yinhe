@@ -12,18 +12,23 @@ use egui::epaint::text::FontPriority;
 pub(crate) fn install(ctx: &egui::Context, weight: u16, locale: &str) {
     let mut defs = yinhe_fonts::build(weight, locale);
 
-    let mut insert = egui_material_icons::font_insert();
-    // 默认 y_offset_factor=0.05 会让图标偏下，置 0 居中。
-    insert.data.tweak.y_offset_factor = 0.0;
-    for family in insert.families {
-        let list = defs.families.entry(family.family).or_default();
-        match family.priority {
-            FontPriority::Highest => list.insert(0, insert.name.clone()),
-            FontPriority::Lowest => list.push(insert.name.clone()),
+    // filled + outlined 两个字体家族（outlined 用于收藏 star 等空心图标）。
+    for mut insert in [
+        egui_material_icons::font_insert(),
+        egui_material_icons::font_insert_outlined(),
+    ] {
+        // 默认 y_offset_factor=0.05 会让图标偏下，置 0 居中。
+        insert.data.tweak.y_offset_factor = 0.0;
+        for family in insert.families {
+            let list = defs.families.entry(family.family).or_default();
+            match family.priority {
+                FontPriority::Highest => list.insert(0, insert.name.clone()),
+                FontPriority::Lowest => list.push(insert.name.clone()),
+            }
         }
+        defs.font_data
+            .insert(insert.name.clone(), Arc::new(insert.data));
     }
-    defs.font_data
-        .insert(insert.name.clone(), Arc::new(insert.data));
 
     ctx.set_fonts(defs);
 }

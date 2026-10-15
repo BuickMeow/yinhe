@@ -133,6 +133,11 @@ pub(crate) struct MixUiState {
     /// 乐器选择器目标：MIDI 通道（挂载点）；None = 未打开。
     pub(crate) instrument_picker_for: Option<u8>,
     pub(crate) picker_filter: String,
+    /// 插件选择器左侧分类页签（打开时按语境初始化）。
+    pub(crate) picker_tab: strip::PickerTab,
+    /// 插件选择器当前选中条目 id（`PluginEntry.id`；内置 XSynth 用
+    /// [`strip::XS_SELECTED_ID`]）。
+    pub(crate) picker_selected: Option<String>,
     /// 插件参数面板（同一时间至多一个）。
     pub(crate) param_panel: Option<ParamPanel>,
     /// 通道 AR（MIX 主区域）面板的通道电平弹道状态（dense 索引）。
@@ -941,6 +946,9 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
         }
         MixAction::OpenPicker { target } => {
             app.mix.picker_for = Some(target);
+            app.mix.instrument_picker_for = None;
+            app.mix.picker_tab = strip::PickerTab::Effect;
+            app.mix.picker_selected = None;
             app.mix.picker_filter.clear();
         }
         MixAction::AddInsert { target, plugin } => {
@@ -1100,6 +1108,9 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
         }
         MixAction::OpenInstrumentPicker { channel } => {
             app.mix.instrument_picker_for = Some(channel);
+            app.mix.picker_for = None;
+            app.mix.picker_tab = strip::PickerTab::Instrument;
+            app.mix.picker_selected = None;
             app.mix.picker_filter.clear();
         }
         MixAction::OpenXsynthConfig { channel } => {
