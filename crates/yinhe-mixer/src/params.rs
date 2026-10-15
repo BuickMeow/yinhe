@@ -144,7 +144,8 @@ pub struct MixerParams {
     /// 空 = 该通道使用默认的内置 XSynth；非空 = 按序**叠加**的插件乐器，
     /// 音符事件广播给链内每个乐器，输出相加。
     /// 混音参数（推子/声像/insert/send）统一走该 MIDI 通道的 strip 表。
-    #[serde(default, deserialize_with = "de_instruments")]
+    /// 旧格式（每通道 `Option<InsertRef>`）由混音段版本号处理：版本不符整段忽略。
+    #[serde(default)]
     pub instruments: Vec<Vec<InsertRef>>,
     /// 下一个乐器实例 uid（工程内唯一、持久化；加载时对齐到已用最大值 +1）。
     #[serde(default = "default_instrument_uid")]
@@ -164,6 +165,10 @@ pub struct MixerParams {
     /// 每条总线的 insert 链（与 `buses` 等长）。
     #[serde(default)]
     pub bus_inserts: Vec<Vec<InsertRef>>,
+    /// 每条总线的发送列表（与 `buses` 等长；总线可发送到其他总线或自己）。
+    /// 自发送（bus → 自己）会引入一个缓冲块延迟，防止反馈环路。
+    #[serde(default)]
+    pub bus_sends: Vec<Vec<SendParams>>,
     /// 每个源通道的发送列表（按源通道索引；一个通道可发往多条总线）。
     #[serde(default)]
     pub sends: Vec<Vec<SendParams>>,
@@ -183,6 +188,7 @@ impl Default for MixerParams {
             audio_sends: Vec::new(),
             buses: Vec::new(),
             bus_inserts: Vec::new(),
+            bus_sends: Vec::new(),
             sends: Vec::new(),
         }
     }
@@ -202,9 +208,18 @@ impl MixerParams {
         self.ensure_instrument_uids();
         self.bus_inserts.resize(self.buses.len(), Vec::new());
         self.bus_inserts.truncate(self.buses.len());
+        self.bus_sends.resize(self.buses.len(), Vec::new());
+        self.bus_sends.truncate(self.buses.len());
         // 防御：清理指向不存在总线的 send（工程被手工编辑/版本迁移残留）。
+        // MIDI / 音频 / 总线三张发送表一视同仁。
         let bus_count = self.buses.len();
         for list in &mut self.sends {
+            list.retain(|s| (s.bus as usize) < bus_count);
+        }
+        for list in &mut self.audio_sends {
+            list.retain(|s| (s.bus as usize) < bus_count);
+        }
+        for list in &mut self.bus_sends {
             list.retain(|s| (s.bus as usize) < bus_count);
         }
     }
@@ -241,11 +256,13 @@ impl MixerParams {
     pub fn add_bus(&mut self) -> u8 {
         self.buses.push(StripParams::default());
         self.bus_inserts.push(Vec::new());
+        self.bus_sends.push(Vec::new());
         (self.buses.len() - 1) as u8
     }
 
     /// 删除总线 `bus`：移除其参数与 insert 链，清理指向它的 send、
     /// 并把更高索引的 send 目标前移一位（保持路由语义）。
+    /// MIDI 通道 / 音频通道 / 总线三张发送表统一维护。
     pub fn remove_bus(&mut self, bus: u8) {
         let idx = bus as usize;
         if idx >= self.buses.len() {
@@ -255,7 +272,15 @@ impl MixerParams {
         if idx < self.bus_inserts.len() {
             self.bus_inserts.remove(idx);
         }
-        for list in &mut self.sends {
+        if idx < self.bus_sends.len() {
+            self.bus_sends.remove(idx);
+        }
+        for list in self
+            .sends
+            .iter_mut()
+            .chain(self.audio_sends.iter_mut())
+            .chain(self.bus_sends.iter_mut())
+        {
             list.retain(|s| s.bus != bus);
             for s in list.iter_mut() {
                 if s.bus > bus {
@@ -296,29 +321,6 @@ impl MixerParams {
             self.audio_sends.resize(audio_count, Vec::new());
         }
     }
-}
-
-/// 反序列化 `instruments`：兼容旧格式。
-/// 旧：每通道 `Option<InsertRef>`（`null` 或对象）；新：每通道 `Vec<InsertRef>`。
-fn de_instruments<'de, D>(de: D) -> Result<Vec<Vec<InsertRef>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Entry {
-        One(Option<InsertRef>),
-        Many(Vec<InsertRef>),
-    }
-    let raw: Vec<Entry> = Vec::deserialize(de)?;
-    Ok(raw
-        .into_iter()
-        .map(|e| match e {
-            Entry::One(Some(r)) => vec![r],
-            Entry::One(None) => Vec::new(),
-            Entry::Many(v) => v,
-        })
-        .collect())
 }
 
 #[cfg(test)]
@@ -397,6 +399,85 @@ mod tests {
         assert!(p.sends[0].is_empty(), "越界 bus 的 send 应被清理");
     }
 
+    /// 总线发送表随增删总线维护（清理指向被删总线、目标索引前移）；
+    /// 音频通道发送表同步维护（回归：旧实现漏了 audio_sends）。
+    #[test]
+    fn bus_sends_follow_bus_add_remove() {
+        let mut p = MixerParams::default();
+        p.ensure_len();
+        p.add_bus();
+        p.add_bus();
+        p.add_bus();
+        // bus0 → bus1；bus2 → bus0；音频通道 0 → bus2
+        p.bus_sends[0].push(SendParams {
+            bus: 1,
+            amount: 1.0,
+            pre_fader: false,
+        });
+        p.bus_sends[2].push(SendParams {
+            bus: 0,
+            amount: 1.0,
+            pre_fader: false,
+        });
+        p.audio_sends = vec![vec![SendParams {
+            bus: 2,
+            amount: 1.0,
+            pre_fader: false,
+        }]];
+
+        p.remove_bus(1);
+        assert!(p.bus_sends[0].is_empty(), "指向被删总线的发送应清理");
+        assert_eq!(p.bus_sends.len(), 2);
+        assert_eq!(p.bus_sends[1].len(), 1, "高索引总线前移保留");
+        assert_eq!(p.bus_sends[1][0].bus, 0);
+        assert_eq!(p.audio_sends[0][0].bus, 1, "音频发送目标随索引前移");
+    }
+
+    /// 总线自发送随其他总线删除保持指向自己（索引前移）。
+    #[test]
+    fn bus_self_send_survives_other_bus_removal() {
+        let mut p = MixerParams::default();
+        p.ensure_len();
+        p.add_bus();
+        p.add_bus();
+        p.bus_sends[1].push(SendParams {
+            bus: 1,
+            amount: 1.0,
+            pre_fader: false,
+        });
+        p.remove_bus(0);
+        assert_eq!(p.bus_sends.len(), 1);
+        assert_eq!(p.bus_sends[0].len(), 1, "自发送应保留");
+        assert_eq!(p.bus_sends[0][0].bus, 0, "目标随索引前移保持指向自己");
+    }
+
+    /// ensure_len 清理三张发送表里指向不存在总线的条目。
+    #[test]
+    fn ensure_len_prunes_all_send_tables() {
+        let mut p = MixerParams::default();
+        p.ensure_len();
+        p.add_bus();
+        p.sends[0].push(SendParams {
+            bus: 5,
+            amount: 1.0,
+            pre_fader: false,
+        });
+        p.audio_sends = vec![vec![SendParams {
+            bus: 5,
+            amount: 1.0,
+            pre_fader: false,
+        }]];
+        p.bus_sends[0].push(SendParams {
+            bus: 5,
+            amount: 1.0,
+            pre_fader: false,
+        });
+        p.ensure_len();
+        assert!(p.sends[0].is_empty());
+        assert!(p.audio_sends[0].is_empty());
+        assert!(p.bus_sends[0].is_empty());
+    }
+
     #[test]
     fn strip_out_of_range_gives_default() {
         let p = MixerParams {
@@ -405,26 +486,5 @@ mod tests {
             ..MixerParams::default()
         };
         assert_eq!(p.strip(200), StripParams::default());
-    }
-
-    /// 旧格式（每通道 Option<InsertRef>）与新格式（每通道 Vec）都能反序列化。
-    #[test]
-    fn de_instruments_accepts_old_and_new() {
-        #[derive(Deserialize)]
-        struct W {
-            #[serde(deserialize_with = "super::de_instruments")]
-            instruments: Vec<Vec<InsertRef>>,
-        }
-        let one = r#"{"plugin_path":"/x","plugin_id":"a","name":"A","format":"Clap","bypassed":false,"state":null}"#;
-        let old = format!(r#"{{"instruments":[null,{one}]}}"#);
-        let w: W = serde_json::from_str(&old).unwrap();
-        assert!(w.instruments[0].is_empty(), "旧 null → 空链");
-        assert_eq!(w.instruments[1].len(), 1);
-        assert_eq!(w.instruments[1][0].plugin_id, "a");
-
-        let new = format!(r#"{{"instruments":[[{one}],[]]}}"#);
-        let w2: W = serde_json::from_str(&new).unwrap();
-        assert_eq!(w2.instruments[0].len(), 1);
-        assert!(w2.instruments[1].is_empty());
     }
 }

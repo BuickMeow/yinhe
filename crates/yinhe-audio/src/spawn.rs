@@ -202,10 +202,14 @@ pub enum AudioCommand {
         params: StripParams,
     },
     /// 全量同步总线配置（增删总线 / 改发送后推一次）：
-    /// `buses` 为总线参数、`sends` 为按源通道索引的发送列表。
+    /// `buses` 为总线参数、`sends` 为按源通道索引的发送列表、
+    /// `bus_sends` 为按总线索引的发送列表（总线 → 总线）、
+    /// `audio_sends` 为按音频通道索引的发送列表。
     SyncBusConfig {
         buses: Box<Vec<StripParams>>,
         sends: Box<Vec<Vec<SendParams>>>,
+        bus_sends: Box<Vec<Vec<SendParams>>>,
+        audio_sends: Box<Vec<Vec<SendParams>>>,
     },
     /// 安装/替换/移除某**MIDI 通道**（0..256，与 `TrackData::global_channel()` 对齐）
     /// 上的乐器插件实例（CLAP/VST3 等，抽象为 trait）。`Some(processor)` = 安装/替换；
@@ -1961,6 +1965,8 @@ mod tests {
                 AudioCommand::SyncBusConfig {
                     buses: Box::new(Vec::new()),
                     sends: Box::new(Vec::new()),
+                    bus_sends: Box::new(Vec::new()),
+                    audio_sends: Box::new(Vec::new()),
                 },
                 "SyncBusConfig",
                 true,

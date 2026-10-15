@@ -222,14 +222,19 @@ impl std::borrow::BorrowMut<ChannelBuffers> for ChannelChain {
     }
 }
 
-/// 单条总线（bus / return）的完整信号链：缓冲 + strip + insert 链 + 电平表。
-/// 总线无 PDC 与发送。
+/// 单条总线（bus / return）的完整信号链：缓冲 + strip + insert 链 + 电平表 + 发送。
+/// 总线发送到自身或已处理目标时读取**上一块输出快照**（块级延迟），防止反馈环路。
 struct BusChain {
     buffers: ChannelBuffers,
     strip: StripState,
     inserts: Vec<Box<dyn InsertProcessor>>,
     meter: MeterTap,
     reading: MeterReading,
+    /// 总线发送列表（bus → bus）。
+    sends: Vec<SendParams>,
+    /// 上一块 post-fader 输出快照（延迟发送读取）。
+    prev_out_l: Vec<f32>,
+    prev_out_r: Vec<f32>,
 }
 
 impl BusChain {
@@ -244,12 +249,17 @@ impl BusChain {
             inserts: Vec::new(),
             meter,
             reading,
+            sends: Vec::new(),
+            prev_out_l: vec![0.0; frames],
+            prev_out_r: vec![0.0; frames],
         }
     }
 
     fn resize_frames(&mut self, frames: usize) {
         self.buffers.left.resize(frames, 0.0);
         self.buffers.right.resize(frames, 0.0);
+        self.prev_out_l.resize(frames, 0.0);
+        self.prev_out_r.resize(frames, 0.0);
     }
 }
 
@@ -494,6 +504,13 @@ impl MixerGraph {
         }
     }
 
+    /// 设置某总线的发送列表（结构性变化时全量推）。
+    pub fn set_bus_sends(&mut self, bus: usize, sends: Vec<SendParams>) {
+        if let Some(chain) = self.buses.get_mut(bus) {
+            chain.sends = sends;
+        }
+    }
+
     /// 在总线链槽位插入处理器（越界则追加）。
     pub fn insert_bus_insert(&mut self, bus: usize, slot: usize, p: Box<dyn InsertProcessor>) {
         if let Some(chain) = self.buses.get_mut(bus) {
@@ -621,6 +638,8 @@ impl MixerGraph {
         }
         for chain in &mut self.buses {
             chain.buffers.clear();
+            chain.prev_out_l.fill(0.0);
+            chain.prev_out_r.fill(0.0);
         }
     }
 
@@ -744,37 +763,101 @@ impl MixerGraph {
         }
     }
 
-    /// 总线段：insert 链 → 电平表（pre-fader）→ 推子 → master 累加。
+    /// 总线段：延迟发送 → insert 链 → 电平表（pre-fader）→ 推子 → 顺序发送 →
+    /// master 累加；最后更新输出快照。
+    ///
+    /// 总线发送（bus → bus）：目标索引大于自身时直接累加**当前块**输出（目标在
+    /// 本块稍后处理，信号进入其 insert 链之前）；自发送与逆序目标读取**上一块
+    /// 输出快照**（块级延迟），既避免自反馈代数环，也保证任意发送图无顺序依赖。
     fn process_buses(
         buses: &mut [BusChain],
         master: &mut MasterChain,
         frames: usize,
         any_solo: bool,
     ) {
-        for chain in buses.iter_mut() {
-            for insert in &mut chain.inserts {
-                insert.process(&mut chain.buffers.left, &mut chain.buffers.right);
+        let n = buses.len();
+
+        // ① 延迟发送（自发送 / 逆序目标）：源上一块输出 → 目标本块输入。
+        //    先于任何总线处理，保证目标处理时已包含汇入信号。
+        for src_i in 0..n {
+            let sends = buses[src_i].sends.clone();
+            if sends.is_empty() {
+                continue;
             }
-            let p = chain.strip.params;
+            let src_params = buses[src_i].strip.params;
+            for send in &sends {
+                if send.amount == 0.0 {
+                    continue;
+                }
+                let dst_i = send.bus as usize;
+                if dst_i >= n || dst_i > src_i {
+                    continue; // 顺序发送在 ③ 处理
+                }
+                if !bus_send_allowed(any_solo, &src_params, buses[dst_i].strip.params.solo) {
+                    continue;
+                }
+                route_bus_send(buses, src_i, dst_i, true, send.amount, frames);
+            }
+        }
+
+        // ② 逐条处理（索引顺序）：insert → 电平表 → 推子 → 顺序发送 → master。
+        //    顺序发送的目标索引更大、尚未处理，信号会进入其 insert 链之前。
+        for i in 0..n {
+            {
+                let chain = &mut buses[i];
+                for insert in &mut chain.inserts {
+                    insert.process(&mut chain.buffers.left, &mut chain.buffers.right);
+                }
+                let p = chain.strip.params;
+                let audible = !p.mute && (!any_solo || p.solo);
+                if audible {
+                    chain.meter.publish(
+                        &chain.buffers.left[..frames],
+                        &chain.buffers.right[..frames],
+                    );
+                } else {
+                    chain.meter.publish(&[0.0; 0], &[0.0; 0]);
+                }
+                chain
+                    .strip
+                    .apply_fader(&mut chain.buffers.left, &mut chain.buffers.right);
+            }
+            let sends = buses[i].sends.clone();
+            if !sends.is_empty() {
+                let src_params = buses[i].strip.params;
+                for send in &sends {
+                    if send.amount == 0.0 {
+                        continue;
+                    }
+                    let dst_i = send.bus as usize;
+                    if dst_i >= n || dst_i <= i {
+                        continue; // 延迟发送已在 ① 处理
+                    }
+                    if !bus_send_allowed(any_solo, &src_params, buses[dst_i].strip.params.solo) {
+                        continue;
+                    }
+                    route_bus_send(buses, i, dst_i, false, send.amount, frames);
+                }
+            }
+            let p = buses[i].strip.params;
             let audible = !p.mute && (!any_solo || p.solo);
             if audible {
-                chain.meter.publish(
-                    &chain.buffers.left[..frames],
-                    &chain.buffers.right[..frames],
-                );
-            } else {
-                chain.meter.publish(&[0.0; 0], &[0.0; 0]);
-            }
-            chain
-                .strip
-                .apply_fader(&mut chain.buffers.left, &mut chain.buffers.right);
-            if audible {
-                let src = &chain.buffers;
+                let src = &buses[i].buffers;
                 for f in 0..frames {
                     master.l[f] += src.left[f];
                     master.r[f] += src.right[f];
                 }
             }
+        }
+
+        // ④ 更新输出快照（所有发送读取完成后）：本块输出 → 下一块的「上一块」。
+        for chain in buses.iter_mut() {
+            chain
+                .prev_out_l
+                .copy_from_slice(&chain.buffers.left[..frames]);
+            chain
+                .prev_out_r
+                .copy_from_slice(&chain.buffers.right[..frames]);
         }
     }
 
@@ -828,6 +911,53 @@ fn route_send(
             bus.buffers.left[f] += src.left[f] * send.amount;
             bus.buffers.right[f] += src.right[f] * send.amount;
         }
+    }
+}
+
+/// 总线发送是否可听：源 mute 不发；有 solo 时要求源或目标 solo
+/// （与通道发送 `route_send` 的判定一致）。
+fn bus_send_allowed(any_solo: bool, src: &StripParams, dst_solo: bool) -> bool {
+    !src.mute && (!any_solo || src.solo || dst_solo)
+}
+
+/// 把 `src_i` 总线的输出按 `amount` 累加进 `dst_i` 总线的输入缓冲。
+/// `from_snapshot` = true 读上一块输出快照（延迟发送，防反馈环），
+/// 否则读当前块输出（顺序发送，目标在之后处理）。
+fn route_bus_send(
+    buses: &mut [BusChain],
+    src_i: usize,
+    dst_i: usize,
+    from_snapshot: bool,
+    amount: f32,
+    frames: usize,
+) {
+    if src_i == dst_i {
+        // 自发送：只可能是延迟发送（读快照、写本总线输入）。
+        debug_assert!(from_snapshot, "自发送必须走上一块快照，否则同块代数环");
+        let chain = &mut buses[src_i];
+        let (prev_l, prev_r) = (&chain.prev_out_l, &chain.prev_out_r);
+        for f in 0..frames {
+            chain.buffers.left[f] += prev_l[f] * amount;
+            chain.buffers.right[f] += prev_r[f] * amount;
+        }
+        return;
+    }
+    // 拆分借用：同时读源、写目标。
+    let (src, dst) = if src_i < dst_i {
+        let (left, right) = buses.split_at_mut(dst_i);
+        (&left[src_i], &mut right[0])
+    } else {
+        let (left, right) = buses.split_at_mut(src_i);
+        (&right[0], &mut left[dst_i])
+    };
+    let (src_l, src_r): (&[f32], &[f32]) = if from_snapshot {
+        (&src.prev_out_l[..frames], &src.prev_out_r[..frames])
+    } else {
+        (&src.buffers.left[..frames], &src.buffers.right[..frames])
+    };
+    for f in 0..frames {
+        dst.buffers.left[f] += src_l[f] * amount;
+        dst.buffers.right[f] += src_r[f] * amount;
     }
 }
 
@@ -1265,6 +1395,122 @@ mod tests {
         let single = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
         let expect = single * core::f32::consts::FRAC_1_SQRT_2;
         assert!((l[3] - expect).abs() < 1e-6);
+    }
+
+    /// 总线顺序发送（bus0 → bus1）：同一块到达，汇入信号会经过 bus1 的推子。
+    #[test]
+    fn bus_send_forward_is_same_block() {
+        let mut g = graph_with(&[StripParams::default()], 4);
+        g.resize_buses(2, 4, &[StripParams::default(), StripParams::default()]);
+        // 通道 → bus0；bus0 → bus1（目标索引更大 = 顺序发送，无延迟）。
+        g.set_sends(
+            0,
+            vec![SendParams {
+                bus: 0,
+                amount: 1.0,
+                pre_fader: false,
+            }],
+        );
+        g.set_bus_sends(
+            0,
+            vec![SendParams {
+                bus: 1,
+                amount: 1.0,
+                pre_fader: false,
+            }],
+        );
+        fill(&mut g, 0, 0.5);
+        let (l, _r) = g.process();
+        let single = 0.5 * core::f32::consts::FRAC_1_SQRT_2; // 通道直达
+        let bus0 = single * core::f32::consts::FRAC_1_SQRT_2; // bus0 输出
+        let bus1 = bus0 * core::f32::consts::FRAC_1_SQRT_2; // 经 bus1 推子
+        assert!(
+            (l[3] - (single + bus0 + bus1)).abs() < 1e-6,
+            "bus0 → bus1 应在同一块到达: {}",
+            l[3]
+        );
+    }
+
+    /// 总线自发送（bus0 → bus0）：块级延迟——第 1 块无反馈，第 2 块出现。
+    #[test]
+    fn bus_self_send_is_delayed_one_block() {
+        let mut g = graph_with(&[StripParams::default()], 4);
+        g.resize_buses(1, 4, &[StripParams::default()]);
+        g.set_sends(
+            0,
+            vec![SendParams {
+                bus: 0,
+                amount: 1.0,
+                pre_fader: false,
+            }],
+        );
+        g.set_bus_sends(
+            0,
+            vec![SendParams {
+                bus: 0,
+                amount: 1.0,
+                pre_fader: false,
+            }],
+        );
+        fill(&mut g, 0, 0.5);
+        let (l, _r) = g.process();
+        let single = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
+        let bus0 = single * core::f32::consts::FRAC_1_SQRT_2;
+        assert!(
+            (l[3] - (single + bus0)).abs() < 1e-6,
+            "第 1 块不应有自反馈（快照全 0）: {}",
+            l[3]
+        );
+        // 第 2 块：无新输入；上一块 bus0 输出反馈回自己（延迟一块）。
+        fill(&mut g, 0, 0.0);
+        let (l2, _r2) = g.process();
+        let fb = bus0 * core::f32::consts::FRAC_1_SQRT_2;
+        assert!(
+            (l2[3] - fb).abs() < 1e-6,
+            "第 2 块应出现一块延迟的自反馈: {}",
+            l2[3]
+        );
+    }
+
+    /// 总线逆序发送（bus1 → bus0）：目标索引更小 → 同样走块级延迟。
+    #[test]
+    fn bus_send_backward_is_delayed_one_block() {
+        let mut g = graph_with(&[StripParams::default()], 4);
+        g.resize_buses(2, 4, &[StripParams::default(), StripParams::default()]);
+        // 通道 → bus1；bus1 → bus0（逆序）。
+        g.set_sends(
+            0,
+            vec![SendParams {
+                bus: 1,
+                amount: 1.0,
+                pre_fader: false,
+            }],
+        );
+        g.set_bus_sends(
+            1,
+            vec![SendParams {
+                bus: 0,
+                amount: 1.0,
+                pre_fader: false,
+            }],
+        );
+        fill(&mut g, 0, 0.5);
+        let (l, _r) = g.process();
+        let single = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
+        let bus1 = single * core::f32::consts::FRAC_1_SQRT_2;
+        assert!(
+            (l[3] - (single + bus1)).abs() < 1e-6,
+            "第 1 块 bus0 不应有逆序汇入: {}",
+            l[3]
+        );
+        fill(&mut g, 0, 0.0);
+        let (l2, _r2) = g.process();
+        let fb = bus1 * core::f32::consts::FRAC_1_SQRT_2;
+        assert!(
+            (l2[3] - fb).abs() < 1e-6,
+            "逆序发送应延迟一块后到达 bus0: {}",
+            l2[3]
+        );
     }
 
     #[test]

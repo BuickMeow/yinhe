@@ -525,8 +525,13 @@ impl AudioEngine {
                 processor,
             } => self.insert_replace(target, slot, processor),
             AudioCommand::SetBusStrip { bus, params } => self.set_bus_strip(bus, params),
-            AudioCommand::SyncBusConfig { buses, sends } => {
-                self.sync_bus_config(*buses, *sends);
+            AudioCommand::SyncBusConfig {
+                buses,
+                sends,
+                bus_sends,
+                audio_sends,
+            } => {
+                self.sync_bus_config(*buses, *sends, *bus_sends, *audio_sends);
             }
             AudioCommand::SetInstrumentSlot {
                 channel,

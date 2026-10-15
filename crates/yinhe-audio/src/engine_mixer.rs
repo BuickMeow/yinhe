@@ -32,7 +32,8 @@ impl AudioEngine {
         self.sync_sends_to_graph();
     }
 
-    /// 把按通道命名空间索引的发送列表映射到 dense 通道并推给混音图。
+    /// 把按通道命名空间索引的发送列表映射到 dense 通道并推给混音图；
+    /// 总线发送（bus → bus）按总线索引直接推。
     /// 未激活通道的 send 暂存于持久化层，引擎重建/激活后由全量同步补上。
     fn sync_sends_to_graph(&mut self) {
         let sends = self.mixer_params.sends.clone();
@@ -48,6 +49,10 @@ impl AudioEngine {
                 .cloned()
                 .unwrap_or_default();
             self.mixer.set_sends(dense, list);
+        }
+        let bus_sends = self.mixer_params.bus_sends.clone();
+        for (i, list) in bus_sends.into_iter().enumerate() {
+            self.mixer.set_bus_sends(i, list);
         }
     }
 
@@ -79,9 +84,17 @@ impl AudioEngine {
     }
 
     /// 全量同步总线参数与发送（增删总线 / 改 send 后推一次）。
-    pub(crate) fn sync_bus_config(&mut self, buses: Vec<StripParams>, sends: Vec<Vec<SendParams>>) {
+    pub(crate) fn sync_bus_config(
+        &mut self,
+        buses: Vec<StripParams>,
+        sends: Vec<Vec<SendParams>>,
+        bus_sends: Vec<Vec<SendParams>>,
+        audio_sends: Vec<Vec<SendParams>>,
+    ) {
         self.mixer_params.buses = buses;
         self.mixer_params.sends = sends;
+        self.mixer_params.bus_sends = bus_sends;
+        self.mixer_params.audio_sends = audio_sends;
         let buses = self.mixer_params.buses.clone();
         self.mixer
             .resize_buses(buses.len(), self.mixer.frames(), &buses);

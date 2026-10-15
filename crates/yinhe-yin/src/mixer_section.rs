@@ -9,7 +9,7 @@ use crate::error::YinError;
 
 /// 混音段格式版本（段内前 4 字节）。MixerParams 字段演进时递增，
 /// 加载侧版本不符则忽略混音段（工程本体照常打开）。
-const MIXER_SECTION_VERSION: u32 = 5;
+const MIXER_SECTION_VERSION: u32 = 6;
 
 /// 编码混音段：version u32 LE + zstd(postcard MixerParams)。
 pub(crate) fn encode_mixer_section(mixer: &MixerParams, level: i32) -> Result<Vec<u8>, YinError> {
