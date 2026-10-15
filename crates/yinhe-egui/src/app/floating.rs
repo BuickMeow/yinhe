@@ -39,6 +39,19 @@ pub(in crate::app) fn rect_to_arr(r: egui::Rect) -> [f32; 4] {
     [r.min.x, r.min.y, r.width(), r.height()]
 }
 
+/// 浮动窗口内容区：标题栏之下整块。
+///
+/// 不用 `ui.available_rect_before_wrap()`：`title_bar` 结尾的 `allocate_space`
+/// 会额外推进 `item_spacing`（默认 3px），内容与标题栏之间多出一条缝，
+/// 看起来像标题栏偏高（PR 窗口尤其明显）。
+fn float_content_rect(ui: &egui::Ui) -> egui::Rect {
+    let max = ui.max_rect();
+    egui::Rect::from_min_max(
+        egui::pos2(max.min.x, max.min.y + crate::theme::TITLE_BAR_H),
+        max.max,
+    )
+}
+
 impl App {
     /// 浮动开关的借用集合（模式栏气泡 / 视图菜单共用切换逻辑）。
     pub(in crate::app) fn float_switches(&mut self) -> crate::chrome::mode_bar::FloatSwitches<'_> {
@@ -113,7 +126,7 @@ impl App {
                     }
                     // 内容区：标题栏之下整块给 PR（左侧工具条 + 卷帘本体），
                     // 与主窗口停靠形态共用同一渲染路径（合成布局）。
-                    let rect = ui.available_rect_before_wrap();
+                    let rect = float_content_rect(ui);
                     let layout = crate::app::layout::LayoutInfo {
                         remaining: rect,
                         arr_h: 0.0,
@@ -183,7 +196,7 @@ impl App {
                     if close {
                         return;
                     }
-                    let rect = ui.available_rect_before_wrap();
+                    let rect = float_content_rect(ui);
                     crate::chrome::dock_bar::show_floating(self, idx, ui, rect);
                 });
             if close {
@@ -238,7 +251,7 @@ impl App {
                     if close {
                         return;
                     }
-                    let rect = ui.available_rect_before_wrap();
+                    let rect = float_content_rect(ui);
                     crate::mix::show(self, ui, rect);
                 });
             if close {
@@ -309,5 +322,39 @@ mod tests {
     fn rect_roundtrip() {
         let r = egui::Rect::from_min_size(egui::pos2(120.0, 80.0), egui::vec2(960.0, 520.0));
         assert_eq!(arr_to_rect(rect_to_arr(r)), r);
+    }
+
+    /// 回归：浮动窗口内容区紧贴标题栏下沿（无 `item_spacing` 缝）。
+    #[test]
+    fn float_content_starts_at_title_bar_bottom() {
+        let ctx = egui::Context::default();
+        let mut content_top = 0.0;
+        let mut old_top = 0.0;
+        ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                let mut close = false;
+                crate::chrome::dialog::title_bar(ui, "T", &mut close, true);
+                // 旧写法：多出 item_spacing 缝（这也是"标题栏看起来偏高"的来源）。
+                old_top = ui.available_rect_before_wrap().min.y;
+                content_top = float_content_rect(ui).min.y;
+            },
+        )
+        .drop_without_applying_deltas();
+        assert_eq!(
+            content_top,
+            crate::theme::TITLE_BAR_H,
+            "内容区应紧贴标题栏下沿"
+        );
+        assert!(
+            old_top > crate::theme::TITLE_BAR_H,
+            "对照：available_rect_before_wrap 会多出缝（{old_top}）"
+        );
     }
 }

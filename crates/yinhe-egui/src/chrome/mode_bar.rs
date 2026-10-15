@@ -602,8 +602,8 @@ struct FloatBubbleState {
 const BUBBLE_SHOW_DELAY: f64 = 0.25;
 /// 隐藏宽限：指针离开按钮与气泡后延迟多久关闭（允许鼠标从按钮移进气泡点击）。
 const BUBBLE_HIDE_GRACE: f64 = 0.2;
-/// 气泡尺寸（单图标）。
-const BUBBLE_SIZE: egui::Vec2 = egui::vec2(40.0, 32.0);
+/// 气泡尺寸（单图标；正方形，尾巴不计入）。
+const BUBBLE_SIZE: egui::Vec2 = egui::vec2(32.0, 32.0);
 /// 尾巴高度 = 气泡底边到按钮顶边的距离。
 const BUBBLE_TAIL_H: f32 = 7.0;
 /// 尾巴底宽。
@@ -716,8 +716,6 @@ fn float_bubble(
             ),
             BUBBLE_SIZE,
         );
-        let fill = crate::theme::btn_bg();
-        let stroke = egui::Stroke::new(1.0, crate::theme::line_fg());
         let area = egui::Area::new(state_id.with("area"))
             .order(egui::Order::Foreground)
             .fixed_pos(bubble_rect.min)
@@ -725,6 +723,11 @@ fn float_bubble(
             .show(ctx, |ui| {
                 let (rect, _) = ui.allocate_exact_size(BUBBLE_SIZE, egui::Sense::hover());
                 let painter = ui.painter();
+                // 样式对齐弹窗（`Frame::menu`）：window_fill + window_stroke + menu 圆角。
+                let visuals = &ui.style().visuals;
+                let fill = visuals.window_fill;
+                let stroke = visuals.window_stroke;
+                let corner = visuals.menu_corner_radius;
                 // 尾巴（先画；气泡主体盖住其顶边，接缝再用底色抹平）。
                 painter.add(egui::Shape::convex_polygon(
                     vec![
@@ -735,7 +738,7 @@ fn float_bubble(
                     fill,
                     stroke,
                 ));
-                painter.rect(rect, 6.0, fill, stroke, egui::StrokeKind::Inside);
+                painter.rect(rect, corner, fill, stroke, egui::StrokeKind::Inside);
                 painter.rect_filled(
                     egui::Rect::from_min_max(
                         egui::pos2(cx - BUBBLE_TAIL_W / 2.0, rect.max.y - 1.0),
