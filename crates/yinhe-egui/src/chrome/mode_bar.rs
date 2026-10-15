@@ -288,12 +288,14 @@ pub fn show(
                     // ── Mixer toggle（仅 MIX：底部三选一之混音台）──
                     if *view_mode == ViewMode::Mix {
                         let mixer_icon = egui_material_icons::icons::ICON_TUNE;
-                        let mixer_resp = crate::widgets::hover::hover_button(
+                        // 图标旋转：顺时针 270°（= 逆时针 90°），朝向与实际混音台一致
+                        let mixer_resp = crate::widgets::hover::hover_button_rotated(
                             ui,
                             mixer_icon.codepoint,
                             egui::FontId::new(crate::theme::ICON_FONT, mixer_icon.font_family()),
                             crate::theme::mode_bar_text(),
                             *show_mixer_panel,
+                            -std::f32::consts::FRAC_PI_2,
                         );
                         if mixer_resp.clicked() {
                             set_mixer_visible(
