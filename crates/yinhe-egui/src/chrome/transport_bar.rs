@@ -177,7 +177,12 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 show_view_menu(
                     &view_btn,
                     &ctx.settings.keybindings,
-                    (ctx.float_pianoroll, ctx.float_dock, ctx.float_mixer),
+                    (
+                        ctx.float_arrange,
+                        ctx.float_pianoroll,
+                        ctx.float_dock,
+                        ctx.float_mixer,
+                    ),
                     has_active,
                     &mut pending_view_action,
                 );

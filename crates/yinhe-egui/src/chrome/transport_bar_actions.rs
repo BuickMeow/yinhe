@@ -411,9 +411,10 @@ pub struct PlayActions {
 impl PopupRow for crate::chrome::mode_bar::PanelKind {
     fn pinned_index(self) -> usize {
         match self {
-            crate::chrome::mode_bar::PanelKind::Pianoroll => 0,
-            crate::chrome::mode_bar::PanelKind::Dock => 1,
-            crate::chrome::mode_bar::PanelKind::Mixer => 2,
+            crate::chrome::mode_bar::PanelKind::Arrange => 0,
+            crate::chrome::mode_bar::PanelKind::Pianoroll => 1,
+            crate::chrome::mode_bar::PanelKind::Dock => 2,
+            crate::chrome::mode_bar::PanelKind::Mixer => 3,
         }
     }
 
@@ -429,6 +430,7 @@ impl PopupRow for crate::chrome::mode_bar::PanelKind {
 
     fn icon(self) -> egui_material_icons::MaterialIcon {
         match self {
+            crate::chrome::mode_bar::PanelKind::Arrange => ICON_VIEW_TIMELINE,
             crate::chrome::mode_bar::PanelKind::Pianoroll => ICON_PIANO,
             crate::chrome::mode_bar::PanelKind::Dock => ICON_DOCK_TO_RIGHT,
             crate::chrome::mode_bar::PanelKind::Mixer => ICON_TUNE,
@@ -437,6 +439,7 @@ impl PopupRow for crate::chrome::mode_bar::PanelKind {
 
     fn label_key(self) -> &'static str {
         match self {
+            crate::chrome::mode_bar::PanelKind::Arrange => "menu.float_arrange",
             crate::chrome::mode_bar::PanelKind::Pianoroll => "menu.float_pianoroll",
             crate::chrome::mode_bar::PanelKind::Dock => "menu.float_dock",
             crate::chrome::mode_bar::PanelKind::Mixer => "menu.float_mixer",
@@ -476,6 +479,8 @@ pub struct TransportContext<'a> {
     pub float_pianoroll: bool,
     pub float_dock: bool,
     pub float_mixer: bool,
+    /// 工程走带主视图是否浮动。
+    pub float_arrange: bool,
 }
 
 pub struct TransportResponse {

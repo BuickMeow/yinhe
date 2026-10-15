@@ -167,16 +167,17 @@ pub fn show_play_menu(
     }
 }
 
-/// 「视图」菜单：底部面板泊出为独立窗口 / 收回停靠（勾选态 = 当前浮动）。
+/// 「视图」菜单：底部面板/主视图泊出为独立窗口 / 收回（勾选态 = 当前浮动）。
 pub fn show_view_menu(
     button: &egui::Response,
     keybindings: &yinhe_editor_core::shortcuts::Keybindings,
-    floats: (bool, bool, bool),
+    floats: (bool, bool, bool, bool),
     has_active: bool,
     pending_action: &mut Option<PanelKind>,
 ) {
-    let (fp, fd, fm) = floats;
+    let (fa, fp, fd, fm) = floats;
     let selected = |kind: PanelKind| match kind {
+        PanelKind::Arrange => fa,
         PanelKind::Pianoroll => fp,
         PanelKind::Dock => fd,
         PanelKind::Mixer => fm,

@@ -1156,3 +1156,8 @@ menu.float_pianoroll: "Détacher le piano roll"
 menu.float_dock: "Détacher le dock d'appareils"
 menu.float_mixer: "Détacher la console de mixage"
 hint.view_menu: "Menu Affichage · détacher les panneaux"
+
+# ── Arrange float ──
+float.arrange: "Arrangement"
+float.yielded: "Cette vue est détachée dans une fenêtre séparée"
+menu.float_arrange: "Détacher l'arrangement"

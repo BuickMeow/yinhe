@@ -1160,3 +1160,8 @@ menu.float_pianoroll: "Float Piano Roll"
 menu.float_dock: "Float Device Dock"
 menu.float_mixer: "Float Mixer"
 hint.view_menu: "View menu · float panels as separate windows"
+
+# ── Arrange float ──
+float.arrange: "Arrangement"
+float.yielded: "This view is floating in a separate window"
+menu.float_arrange: "Float Arrangement"

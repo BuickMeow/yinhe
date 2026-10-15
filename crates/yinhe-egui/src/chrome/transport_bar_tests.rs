@@ -150,6 +150,7 @@ fn make_transport_harness<'a>(doc: Option<&'a Document>) -> Harness<'a, ()> {
                     master_meter: ((0.0, 0.0), (0.0, 0.0)),
                     selection_available: false,
                     float_pianoroll: false,
+                    float_arrange: false,
                     float_dock: false,
                     float_mixer: false,
                 };
@@ -191,6 +192,7 @@ fn make_harness_with_hidden_button<'a>(doc: Option<&'a Document>) -> Harness<'a,
                     master_meter: ((0.0, 0.0), (0.0, 0.0)),
                     selection_available: false,
                     float_pianoroll: false,
+                    float_arrange: false,
                     float_dock: false,
                     float_mixer: false,
                 };

@@ -1160,3 +1160,8 @@ menu.float_pianoroll: "Пиано-ролл в отдельном окне"
 menu.float_dock: "Панель устройств в отдельном окне"
 menu.float_mixer: "Микшер в отдельном окне"
 hint.view_menu: "Меню «Вид» · панели в отдельных окнах"
+
+# ── Arrange float ──
+float.arrange: "Аранжировка"
+float.yielded: "Этот вид открыт в отдельном окне"
+menu.float_arrange: "Аранжировка в отдельном окне"

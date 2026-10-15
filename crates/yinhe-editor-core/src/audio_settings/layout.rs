@@ -38,6 +38,8 @@ pub struct LayoutSettings {
     pub float_bottom_dock: FloatPanelState,
     /// 混音台浮动窗口。
     pub float_mixer: FloatPanelState,
+    /// 工程走带（ARRANGE 主视图）浮动窗口。
+    pub float_arrange: FloatPanelState,
     /// 右栏多栏选项卡布局。
     pub right_panel_layout: RightPanelLayout,
     /// PR 视图方向是否为纵向瀑布流（跨会话持久化，打开新文档时沿用）。
@@ -58,6 +60,7 @@ impl Default for LayoutSettings {
             float_pianoroll: FloatPanelState::default(),
             float_bottom_dock: FloatPanelState::default(),
             float_mixer: FloatPanelState::default(),
+            float_arrange: FloatPanelState::default(),
             right_panel_layout: RightPanelLayout::default(),
             pr_vertical: false,
         }

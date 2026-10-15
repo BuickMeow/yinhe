@@ -1156,3 +1156,8 @@ menu.float_pianoroll: "Klavierrolle als eigenes Fenster"
 menu.float_dock: "Geräte-Dock als eigenes Fenster"
 menu.float_mixer: "Mixer als eigenes Fenster"
 hint.view_menu: "Ansicht-Menü · Panels als eigenes Fenster"
+
+# ── Arrange float ──
+float.arrange: "Arrangement"
+float.yielded: "Diese Ansicht ist in einem eigenen Fenster"
+menu.float_arrange: "Arrangement als eigenes Fenster"

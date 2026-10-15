@@ -1161,3 +1161,8 @@ menu.float_pianoroll: "Klavírní válec v samostatném okně"
 menu.float_dock: "Dok zařízení v samostatném okně"
 menu.float_mixer: "Mixpult v samostatném okně"
 hint.view_menu: "Menu Zobrazení · panely v samostatných oknech"
+
+# ── Arrange float ──
+float.arrange: "Aranžmá"
+float.yielded: "Tento pohled je v samostatném okně"
+menu.float_arrange: "Aranžmá v samostatném okně"

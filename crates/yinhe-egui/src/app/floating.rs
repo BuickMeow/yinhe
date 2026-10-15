@@ -29,6 +29,11 @@ pub(crate) fn mixer_id() -> egui::ViewportId {
     egui::ViewportId::from_hash_of("float_mixer")
 }
 
+/// 浮动工程走带（ARRANGE 主视图）窗口 id。
+pub(crate) fn arrange_id() -> egui::ViewportId {
+    egui::ViewportId::from_hash_of("float_arrange")
+}
+
 /// 持久化矩形 `[x, y, w, h]` → `egui::Rect`。
 pub(in crate::app) fn arr_to_rect(a: [f32; 4]) -> egui::Rect {
     egui::Rect::from_min_size(egui::pos2(a[0], a[1]), egui::vec2(a[2], a[3]))
@@ -62,25 +67,79 @@ impl App {
             float_dock: &mut self.float_bottom_dock,
             show_mixer: &mut self.show_mixer_panel,
             float_mixer: &mut self.float_mixer,
+            float_arrange: &mut self.float_arrange,
+            view_mode: &mut self.view_mode,
         }
     }
 
     /// 每帧绘制浮动面板窗口（`show_main_content` 之后调用）。
     pub(in crate::app) fn show_floating_panels(&mut self, ctx: &egui::Context) {
+        self.show_float_arrange(ctx);
         self.show_float_pianoroll(ctx);
         self.show_float_dock(ctx);
         self.show_float_mixer(ctx);
     }
 
+    /// 浮动工程走带窗口。
+    fn show_float_arrange(&mut self, ctx: &egui::Context) {
+        if !self.float_arrange {
+            return;
+        }
+        if self.workspace.active_doc.is_none() {
+            self.float_arrange = false;
+            crate::chrome::dialog::close_viewport(ctx, arrange_id());
+            return;
+        }
+        let id = arrange_id();
+        let title = t!("float.arrange").to_string();
+        let builder = float_window_builder(
+            ctx,
+            &title,
+            self.float_arrange_rect,
+            egui::vec2(1280.0, 720.0),
+        );
+
+        let mut close = false;
+        let mut cur_rect: Option<egui::Rect> = None;
+        ctx.show_viewport_immediate(id, builder, |ui, _class| {
+            crate::theme::apply_to_ctx(ui.ctx());
+            cur_rect = ui.input(|i| i.viewport().inner_rect);
+            if ui.input(|i| i.viewport().close_requested()) {
+                close = true;
+            }
+            egui::CentralPanel::default()
+                .frame(egui::Frame::new().fill(crate::theme::app_bg()))
+                .show(ui, |ui| {
+                    let mut title_close = false;
+                    crate::chrome::dialog::title_bar(ui, &title, &mut title_close, true);
+                    if title_close {
+                        close = true;
+                    }
+                    if close {
+                        return;
+                    }
+                    let rect = float_content_rect(ui);
+                    let mut follow_mode = self.follow_mode;
+                    self.show_arrange_view(ui, rect, rect.height(), &mut follow_mode, true);
+                    self.follow_mode = follow_mode;
+                });
+            if close {
+                self.float_arrange = false;
+                crate::chrome::dialog::close_viewport(ui.ctx(), id);
+            }
+        });
+        sync_window_rect(
+            ctx,
+            id,
+            cur_rect,
+            &mut self.float_arrange_rect,
+            &mut self.layout_needs_save,
+        );
+    }
+
     /// 浮动钢琴卷帘窗口。
     fn show_float_pianoroll(&mut self, ctx: &egui::Context) {
         if !self.float_pianoroll {
-            return;
-        }
-        // EDIT 模式主窗口恒为全屏 PR（GPU 视图单实例）→ 浮动 PR 自动收起。
-        if self.view_mode == crate::chrome::mode_bar::ViewMode::Edit {
-            self.float_pianoroll = false;
-            crate::chrome::dialog::close_viewport(ctx, pianoroll_id());
             return;
         }
         let Some(idx) = self.workspace.active_doc else {

@@ -661,6 +661,7 @@ impl eframe::App for App {
                 float_pianoroll: self.float_pianoroll,
                 float_dock: self.float_bottom_dock,
                 float_mixer: self.float_mixer,
+                float_arrange: self.float_arrange,
             },
         );
 
@@ -797,6 +798,7 @@ impl eframe::App for App {
             &mut self.float_pianoroll,
             &mut self.float_bottom_dock,
             &mut self.float_mixer,
+            &mut self.float_arrange,
             &mut self.right_tab,
             self.sys_monitor.cpu_usage,
             mem_mb,
@@ -823,6 +825,9 @@ impl eframe::App for App {
             self.layout_needs_save = true;
         }
         if self.float_mixer != self.audio_settings.layout.float_mixer.floating {
+            self.layout_needs_save = true;
+        }
+        if self.float_arrange != self.audio_settings.layout.float_arrange.floating {
             self.layout_needs_save = true;
         }
 

@@ -67,6 +67,12 @@ pub struct App {
     // ── Arrangement (shared GPU resources) ──
     pub(crate) arr_render_ctx: RenderContext,
     pub(crate) arr_renderer: yinhe_wgpu::InstanceRenderer,
+    /// 浮动工程走带窗口的独立渲染上下文/渲染器。
+    ///
+    /// AR 与通道 AR 共享主实例（预览纹理单张，同帧只允许渲染一个 AR 系视图）；
+    /// 浮动窗口必须独立，否则与主窗口视图互相覆盖纹理。
+    pub(crate) float_arr_render_ctx: RenderContext,
+    pub(crate) float_arr_renderer: yinhe_wgpu::InstanceRenderer,
     pub(crate) arr_split: f32,
 
     // ── Automation panel GPU resources (per-document, per-panel) ──
@@ -130,10 +136,13 @@ pub struct App {
     pub(crate) float_pianoroll: bool,
     pub(crate) float_bottom_dock: bool,
     pub(crate) float_mixer: bool,
+    /// 工程走带主视图浮动（ARRANGE）。
+    pub(crate) float_arrange: bool,
     /// 浮动窗口最近稳定矩形（窗口移动停稳一帧后写入，持久化到 LayoutSettings）。
     pub(crate) float_pianoroll_rect: Option<egui::Rect>,
     pub(crate) float_bottom_dock_rect: Option<egui::Rect>,
     pub(crate) float_mixer_rect: Option<egui::Rect>,
+    pub(crate) float_arrange_rect: Option<egui::Rect>,
     /// 混音台编辑的 undo 暂存：首次变更记录 (文档 id, 起点快照, 标签)，
     /// 指针空闲后合并提交为一条 undo（一次拖动/一组连续操作 = 一条撤销）。
     pub(crate) mixer_undo_pending: Option<(u64, Box<yinhe_mixer::MixerParams>, String)>,
@@ -291,6 +300,7 @@ impl App {
 
         let render_ctx = RenderContext::new(cc, default_w, default_h);
         let arr_render_ctx = RenderContext::new(cc, default_w, default_h / 3);
+        let float_arr_render_ctx = RenderContext::new(cc, default_w, default_h / 3);
 
         let device = render_ctx.device().clone();
         let queue = render_ctx.queue().clone();
@@ -312,6 +322,10 @@ impl App {
         crate::scaling::apply_font_scale(&cc.egui_ctx, audio_settings.font_scale);
         let last_automation_density = audio_settings.automation_event_density;
 
+        // 浮动工程走带窗口的独立渲染器（主 AR 实例随后 move 走 device/queue）。
+        let float_arr_renderer =
+            yinhe_wgpu::InstanceRenderer::new(device.clone(), queue.clone(), format);
+
         let mut app = Self {
             render_ctx,
             pianoroll: yinhe_wgpu::InstanceRenderer::new(device.clone(), queue.clone(), format),
@@ -325,6 +339,8 @@ impl App {
 
             arr_render_ctx,
             arr_renderer: yinhe_wgpu::InstanceRenderer::new(device, queue, format),
+            float_arr_render_ctx,
+            float_arr_renderer,
             arr_split: audio_settings.layout.arr_split,
 
             controller_renderers: Vec::new(),
@@ -358,6 +374,7 @@ impl App {
             float_pianoroll: audio_settings.layout.float_pianoroll.floating,
             float_bottom_dock: audio_settings.layout.float_bottom_dock.floating,
             float_mixer: audio_settings.layout.float_mixer.floating,
+            float_arrange: audio_settings.layout.float_arrange.floating,
             float_pianoroll_rect: audio_settings
                 .layout
                 .float_pianoroll
@@ -371,6 +388,11 @@ impl App {
             float_mixer_rect: audio_settings
                 .layout
                 .float_mixer
+                .rect
+                .map(floating::arr_to_rect),
+            float_arrange_rect: audio_settings
+                .layout
+                .float_arrange
                 .rect
                 .map(floating::arr_to_rect),
             mixer_undo_pending: None,
@@ -508,6 +530,8 @@ impl App {
     pub(crate) fn invalidate_cull_state(&mut self) {
         self.pianoroll.clear_cull();
         self.arr_renderer.clear_cull();
+        // 浮动工程走带窗口的独立渲染器同样清空（否则残留旧文档音符）。
+        self.float_arr_renderer.clear_cull();
         // 丢弃进行中的后台重建（旧文档数据不得上传到新文档；
         // 后台线程 send 失败自动退出）。
         self.cull_rebuild = None;

@@ -1161,3 +1161,8 @@ menu.float_pianoroll: "Pianoroll w osobnym oknie"
 menu.float_dock: "Dok urządzeń w osobnym oknie"
 menu.float_mixer: "Mikser w osobnym oknie"
 hint.view_menu: "Menu Widok · panele w osobnych oknach"
+
+# ── Arrange float ──
+float.arrange: "Aranżacja"
+float.yielded: "Ten widok jest w osobnym oknie"
+menu.float_arrange: "Aranżacja w osobnym oknie"

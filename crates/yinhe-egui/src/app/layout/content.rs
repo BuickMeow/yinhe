@@ -59,73 +59,23 @@ impl App {
         // 讲解行选框统计（存在选框时 Some；PR/AR/AM 互斥，单一来源）
         let sel_hint = Self::compute_sel_hint(&self.workspace.documents[idx]);
 
-        // Arrangement view
-        let mut needs_audio_rebuild = false;
-        // AR 自动化 lane 增删/编辑 → notify_audio_model_changed（不重建引擎）。
-        let mut needs_audio_notify = false;
-        /// AR 视图单帧输出（guard drop 后由 App 消费）。
-        type ArrOutputs = (
-            Option<crate::arrange::ArrDragDelta>,
-            Option<crate::arrange::ArrSelRect>,
-            Option<usize>,
-        );
-        let (arr_drag_delta, arr_eraser_rect, automation_picker_req): ArrOutputs =
-            if self.view_mode.show_transport() {
-                let mut request_pianoroll = false;
-                let mut arr_drag_delta: Option<crate::arrange::ArrDragDelta> = None;
-                let mut arr_eraser_rect: Option<crate::arrange::ArrSelRect> = None;
-                let mut automation_picker_req: Option<usize> = None;
-                let mut guard =
-                    crate::app::main_loop::ReplaceGuard::new(&mut self.workspace.documents[idx]);
-                // 走带视图始终使用普通选框工具：工具选择只作用于钢琴卷帘。
-                let arrange_tool = crate::widgets::tools_panel::Tool::Select;
-                let cfg = crate::arrange::ArrangeViewCfg {
-                    is_playing,
-                    follow_mode: &mut follow_mode,
-                    active_tool: &arrange_tool,
-                    min_border_width: self.audio_settings.min_border_width,
-                    revision: guard.as_ref().data.revision,
-                };
-                arrange::show(
+        // Arrangement view（工程走带；浮动窗口打开时主窗口让位）
+        if self.view_mode.show_transport() {
+            if self.float_arrange {
+                Self::paint_float_yielded(
                     ui,
-                    guard.as_mut(),
-                    crate::arrange::ArrangeLayout {
-                        remaining: layout.remaining,
-                        arr_h: layout.arr_h,
-                        transport_panel_width: &mut self.transport_panel_width,
-                        drag_ended: &mut self.layout_needs_save,
-                    },
-                    &mut self.arr_renderer,
-                    &mut self.arr_render_ctx,
-                    cfg,
-                    &mut self.last_cursor_tick,
-                    self.audio_state.handle.as_ref(),
-                    &self.audio_library,
-                    &mut request_pianoroll,
-                    &mut self.track_selection_anchor,
-                    &mut arr_drag_delta,
-                    &mut arr_eraser_rect,
-                    &mut self.info_content,
-                    &mut self.right_tab,
-                    &mut needs_audio_rebuild,
-                    &mut needs_audio_notify,
-                    sel_hint.as_ref(),
-                    &mut automation_picker_req,
-                    &self.mix.track_display,
+                    egui::Rect::from_min_max(
+                        layout.remaining.min,
+                        egui::pos2(
+                            layout.remaining.max.x,
+                            layout.remaining.min.y + layout.arr_h,
+                        ),
+                    ),
                 );
-                if request_pianoroll {
-                    crate::chrome::mode_bar::set_pianoroll_visible(
-                        &mut self.show_pianoroll_in_arrange,
-                        &mut self.show_bottom_dock,
-                        &mut self.show_mixer_panel,
-                        true,
-                    );
-                }
-                (arr_drag_delta, arr_eraser_rect, automation_picker_req)
-                // guard dropped here
             } else {
-                (None, None, None)
-            };
+                self.show_arrange_view(ui, layout.remaining, layout.arr_h, &mut follow_mode, false);
+            }
+        }
 
         // ── 通道 AR（MIX 主区域）──
         if is_mix {
@@ -214,48 +164,9 @@ impl App {
                 );
             }
         }
-        // 方案 A：音轨结构变化（add/remove track）→ drop 旧引擎。
-        // ChannelLayout 在引擎创建时冻结，旧引擎无法 dispatch 新增通道。
-        // 必须在 guard 被释放后调用 —— teardown_audio 借用 &mut self，
-        // 与 ReplaceGuard 借用的 &mut self.workspace.documents[idx] 冲突。
-        // 下一帧 rebuild_audio_if_needed 会用新 model 重新 spawn 引擎和 ChannelLayout。
-        if needs_audio_rebuild {
-            self.teardown_audio();
-        }
-        // 右键「添加插件参数自动化…」：打开参数选择窗口。
-        if let Some(track_idx) = automation_picker_req {
-            self.open_automation_picker(ui.ctx(), track_idx);
-        }
-        // 自动化内容变化（AR lane 增删 / AM 事件编辑）：与 PR 的
-        // handle_automation_edits 同路径，通知音频引擎 model 已变。
-        if needs_audio_notify {
-            self.notify_audio_model_changed();
-        }
-
-        // Handle AR eraser (guard is dropped, no outstanding borrow on self.workspace.documents)
-        if let Some((t_start, t_end, track_lo, track_hi)) = arr_eraser_rect {
-            let mut sel = yinhe_core::Selection::default();
-            sel.add_rect_track(
-                t_start as u32,
-                t_end as u32,
-                0,
-                yinhe_types::MAX_KEY,
-                track_lo as u16,
-                track_hi as u16,
-            );
-            let Some(idx) = self.workspace.active_doc else {
-                return;
-            };
-            self.workspace.documents[idx].edit.selected = sel;
-            self.with_undo(t!("undo.eraser_arrange").as_ref(), |doc| {
-                doc.delete_selected()
-            });
-        }
-
-        // Handle AR drag after guard is dropped (no outstanding borrow on self.workspace.documents)
-        if let Some((delta_ticks, delta_tracks, alt)) = arr_drag_delta {
-            self.handle_arr_drag(delta_ticks, delta_tracks, alt);
-        }
+        // 方案 A：音轨结构变化、AR 橡皮擦、AR 拖动、自动化通知、
+        // 参数自动化选择窗口等 AR 事件落地，全部在 `show_arrange_view` 内处理
+        // （guard 释放后执行，见该方法）。
 
         // ── 上方主视图与底部面板（钢琴卷帘/混音台）之间的分割条 ──
         // ARRANGE：AR/PR（arr_split）；MIX：通道 AR/底部面板（mix_height）。
@@ -302,14 +213,25 @@ impl App {
 
         // Pianoroll area（MIX 下与混音台/设备链三选一显示）。
         if has_piano {
-            self.show_pianoroll_split(
-                ui,
-                layout,
-                idx,
-                is_playing,
-                &mut follow_mode,
-                sel_hint.as_ref(),
-            );
+            if self.view_mode == ViewMode::Edit && self.float_pianoroll {
+                // EDIT 主视图 = 全屏 PR：浮动窗口打开时主窗口让位（GPU 视图单实例）。
+                Self::paint_float_yielded(
+                    ui,
+                    egui::Rect::from_min_max(
+                        egui::pos2(layout.remaining.min.x, layout.bottom_y),
+                        layout.remaining.max,
+                    ),
+                );
+            } else {
+                self.show_pianoroll_split(
+                    ui,
+                    layout,
+                    idx,
+                    is_playing,
+                    &mut follow_mode,
+                    sel_hint.as_ref(),
+                );
+            }
         }
 
         // MIX 混音台面板（底部；与钢琴卷帘/设备链三选一，默认打开）。
@@ -322,6 +244,143 @@ impl App {
         }
 
         self.follow_mode = follow_mode;
+    }
+
+    /// 工程走带（AR）视图渲染 + 事件落地：主窗口与浮动窗口共用同一路径。
+    ///
+    /// `floating` 选择渲染器/渲染上下文：AR 系视图共享主实例（预览纹理单张，
+    /// 同帧只能渲染一个），浮动窗口必须走独立实例，否则与主窗口视图互相覆盖。
+    pub(in crate::app) fn show_arrange_view(
+        &mut self,
+        ui: &mut egui::Ui,
+        remaining: egui::Rect,
+        arr_h: f32,
+        follow_mode: &mut crate::view_interaction::FollowMode,
+        floating: bool,
+    ) {
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let is_playing = self
+            .audio_state
+            .handle
+            .as_ref()
+            .map(|a| a.handle.is_playing())
+            .unwrap_or(false);
+        let sel_hint = Self::compute_sel_hint(&self.workspace.documents[idx]);
+
+        let mut request_pianoroll = false;
+        let mut arr_drag_delta: Option<crate::arrange::ArrDragDelta> = None;
+        let mut arr_eraser_rect: Option<crate::arrange::ArrSelRect> = None;
+        let mut automation_picker_req: Option<usize> = None;
+        // 方案 A：音轨结构变化（add/remove track）→ drop 旧引擎。
+        // ChannelLayout 在引擎创建时冻结，旧引擎无法 dispatch 新增通道。
+        // 必须在 guard 被释放后调用 —— teardown_audio 借用 &mut self，
+        // 与 ReplaceGuard 借用的 &mut self.workspace.documents[idx] 冲突。
+        let mut needs_audio_rebuild = false;
+        // AR 自动化 lane 增删/编辑 → notify_audio_model_changed（不重建引擎）。
+        let mut needs_audio_notify = false;
+        {
+            let mut guard =
+                crate::app::main_loop::ReplaceGuard::new(&mut self.workspace.documents[idx]);
+            // 走带视图始终使用普通选框工具：工具选择只作用于钢琴卷帘。
+            let arrange_tool = crate::widgets::tools_panel::Tool::Select;
+            let cfg = crate::arrange::ArrangeViewCfg {
+                is_playing,
+                follow_mode,
+                active_tool: &arrange_tool,
+                min_border_width: self.audio_settings.min_border_width,
+                revision: guard.as_ref().data.revision,
+            };
+            let (renderer, render_ctx) = if floating {
+                (&mut self.float_arr_renderer, &mut self.float_arr_render_ctx)
+            } else {
+                (&mut self.arr_renderer, &mut self.arr_render_ctx)
+            };
+            arrange::show(
+                ui,
+                guard.as_mut(),
+                crate::arrange::ArrangeLayout {
+                    remaining,
+                    arr_h,
+                    transport_panel_width: &mut self.transport_panel_width,
+                    drag_ended: &mut self.layout_needs_save,
+                },
+                renderer,
+                render_ctx,
+                cfg,
+                &mut self.last_cursor_tick,
+                self.audio_state.handle.as_ref(),
+                &self.audio_library,
+                &mut request_pianoroll,
+                &mut self.track_selection_anchor,
+                &mut arr_drag_delta,
+                &mut arr_eraser_rect,
+                &mut self.info_content,
+                &mut self.right_tab,
+                &mut needs_audio_rebuild,
+                &mut needs_audio_notify,
+                sel_hint.as_ref(),
+                &mut automation_picker_req,
+                &self.mix.track_display,
+            );
+            // guard dropped here
+        }
+        if request_pianoroll {
+            crate::chrome::mode_bar::set_pianoroll_visible(
+                &mut self.show_pianoroll_in_arrange,
+                &mut self.show_bottom_dock,
+                &mut self.show_mixer_panel,
+                true,
+            );
+        }
+        // 音轨结构变化 → drop 旧引擎（下一帧 rebuild_audio_if_needed 重建）。
+        if needs_audio_rebuild {
+            self.teardown_audio();
+        }
+        // 右键「添加插件参数自动化…」：打开参数选择窗口。
+        if let Some(track_idx) = automation_picker_req {
+            self.open_automation_picker(ui.ctx(), track_idx);
+        }
+        // 自动化内容变化（AR lane 增删）：通知音频引擎 model 已变。
+        if needs_audio_notify {
+            self.notify_audio_model_changed();
+        }
+        // AR 橡皮擦（guard 已释放，可借 &mut self）。
+        if let Some((t_start, t_end, track_lo, track_hi)) = arr_eraser_rect {
+            let mut sel = yinhe_core::Selection::default();
+            sel.add_rect_track(
+                t_start as u32,
+                t_end as u32,
+                0,
+                yinhe_types::MAX_KEY,
+                track_lo as u16,
+                track_hi as u16,
+            );
+            if let Some(idx) = self.workspace.active_doc {
+                self.workspace.documents[idx].edit.selected = sel;
+                self.with_undo(t!("undo.eraser_arrange").as_ref(), |doc| {
+                    doc.delete_selected()
+                });
+            }
+        }
+        // AR 拖动/复制（guard 已释放）。
+        if let Some((delta_ticks, delta_tracks, alt)) = arr_drag_delta {
+            self.handle_arr_drag(delta_ticks, delta_tracks, alt);
+        }
+    }
+
+    /// 主视图已浮动为独立窗口时的占位提示（视图让位）。
+    fn paint_float_yielded(ui: &egui::Ui, rect: egui::Rect) {
+        ui.painter()
+            .rect_filled(rect, 0.0, crate::theme::track_bg());
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            t!("float.yielded"),
+            egui::FontId::proportional(crate::theme::BODY_FONT),
+            crate::theme::text_muted(),
+        );
     }
 
     /// 欢迎内容（无工程占位；与启动欢迎窗口同一实现）。
@@ -1070,6 +1129,10 @@ impl App {
         l.float_mixer = yinhe_editor_core::audio_settings::FloatPanelState {
             floating: self.float_mixer,
             rect: self.float_mixer_rect.map(floating::rect_to_arr),
+        };
+        l.float_arrange = yinhe_editor_core::audio_settings::FloatPanelState {
+            floating: self.float_arrange,
+            rect: self.float_arrange_rect.map(floating::rect_to_arr),
         };
         l.right_panel_layout = self.right_panel_layout.clone();
         if self.layout_needs_save {

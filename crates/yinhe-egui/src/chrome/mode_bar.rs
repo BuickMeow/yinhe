@@ -4,7 +4,7 @@ use rust_i18n::t;
 
 use crate::right_panel::RightTab;
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 pub enum ViewMode {
     Arrange,
     Mix,
@@ -82,8 +82,13 @@ pub(crate) fn set_mixer_visible(
     }
 }
 
-/// 返回 true 表示当前鼠标悬停在该按钮上（供状态栏讲解行使用）。
-fn mode_button(ui: &mut egui::Ui, label: &str, is_selected: bool, on_click: impl FnOnce()) -> bool {
+/// 模式按钮（ARRANGE/MIX/EDIT）：返回 `Response`（hover 提示与浮动气泡共用）。
+fn mode_button(
+    ui: &mut egui::Ui,
+    label: &str,
+    is_selected: bool,
+    on_click: impl FnOnce(),
+) -> egui::Response {
     let resp = crate::widgets::hover::hover_button(
         ui,
         label,
@@ -94,7 +99,7 @@ fn mode_button(ui: &mut egui::Ui, label: &str, is_selected: bool, on_click: impl
     if resp.clicked() {
         on_click();
     }
-    resp.hovered()
+    resp
 }
 
 fn right_icon_button(
@@ -186,6 +191,7 @@ pub fn show(
     float_pianoroll: &mut bool,
     float_bottom_dock: &mut bool,
     float_mixer: &mut bool,
+    float_arrange: &mut bool,
     right_tab: &mut Option<RightTab>,
     cpu_usage: f32,
     mem_mb: f64,
@@ -214,27 +220,51 @@ pub fn show(
                     // 本帧左侧控件 hover 提示（右侧图标提示下帧显示，见 icon_hint_id）
                     let mut hovered_hint: Option<String> = None;
 
-                    if mode_button(ui, "ARRANGE", *view_mode == ViewMode::Arrange, || {
-                        *view_mode = ViewMode::Arrange;
-                    }) {
+                    let arrange_resp =
+                        mode_button(ui, "ARRANGE", *view_mode == ViewMode::Arrange, || {
+                            *view_mode = ViewMode::Arrange;
+                        });
+                    if arrange_resp.hovered() {
                         hovered_hint = Some(t!("hint.mode_arrange").to_string());
                     }
+                    panel_buttons.push(PanelButtonInfo {
+                        target: PanelKind::Arrange,
+                        rect: arrange_resp.rect,
+                        hovered: arrange_resp.hovered(),
+                        secondary_clicked: arrange_resp.secondary_clicked(),
+                    });
 
                     ui.add_space(2.0);
 
-                    if mode_button(ui, "MIX", *view_mode == ViewMode::Mix, || {
+                    let mix_resp = mode_button(ui, "MIX", *view_mode == ViewMode::Mix, || {
                         *view_mode = ViewMode::Mix;
-                    }) {
+                    });
+                    if mix_resp.hovered() {
                         hovered_hint = Some(t!("hint.mode_mix").to_string());
                     }
+                    // MIX 的气泡浮动「混音台」（通道走带主视图暂不支持浮动）。
+                    panel_buttons.push(PanelButtonInfo {
+                        target: PanelKind::Mixer,
+                        rect: mix_resp.rect,
+                        hovered: mix_resp.hovered(),
+                        secondary_clicked: mix_resp.secondary_clicked(),
+                    });
 
                     ui.add_space(2.0);
 
-                    if mode_button(ui, "EDIT", *view_mode == ViewMode::Edit, || {
+                    let edit_resp = mode_button(ui, "EDIT", *view_mode == ViewMode::Edit, || {
                         *view_mode = ViewMode::Edit;
-                    }) {
+                    });
+                    if edit_resp.hovered() {
                         hovered_hint = Some(t!("hint.mode_edit").to_string());
                     }
+                    // EDIT 的气泡浮动「钢琴卷帘」（与钢琴图标同一个窗口）。
+                    panel_buttons.push(PanelButtonInfo {
+                        target: PanelKind::Pianoroll,
+                        rect: edit_resp.rect,
+                        hovered: edit_resp.hovered(),
+                        secondary_clicked: edit_resp.secondary_clicked(),
+                    });
 
                     // ── Piano roll toggle（ARRANGE / MIX 底部面板之一）──
                     if matches!(*view_mode, ViewMode::Arrange | ViewMode::Mix) {
@@ -481,26 +511,30 @@ pub fn show(
     float_bubble(
         ui.ctx(),
         &panel_buttons,
+        view_mode,
         show_pianoroll_in_arrange,
         float_pianoroll,
         show_bottom_dock,
         float_bottom_dock,
         show_mixer_panel,
         float_mixer,
+        float_arrange,
     );
 }
 
-/// 底部可浮动面板种类（模式栏气泡 / 视图菜单 / macOS 原生菜单共用）。
+/// 可浮动视图/面板种类（模式栏气泡 / 视图菜单 / macOS 原生菜单共用）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum PanelKind {
+    /// 工程走带主视图（ARRANGE）。
+    Arrange,
     Pianoroll,
     Dock,
     Mixer,
 }
 
 impl PanelKind {
-    /// 全部可浮动面板（视图菜单/原生菜单遍历用）。
-    pub const ALL: [PanelKind; 3] = [Self::Pianoroll, Self::Dock, Self::Mixer];
+    /// 全部可浮动视图（视图菜单/原生菜单遍历用）。
+    pub const ALL: [PanelKind; 4] = [Self::Arrange, Self::Pianoroll, Self::Dock, Self::Mixer];
 }
 
 /// 浮动开关的借用集合（`App` 字段或模式栏参数）。
@@ -512,21 +546,31 @@ pub(crate) struct FloatSwitches<'a> {
     pub float_dock: &'a mut bool,
     pub show_mixer: &'a mut bool,
     pub float_mixer: &'a mut bool,
+    /// 工程走带视图浮动（视图由模式决定，没有独立停靠开关）。
+    pub float_arrange: &'a mut bool,
+    /// 当前视图模式：收回停靠时切到该视图所在模式；
+    /// EDIT 下 PR 即主视图，收回不启用底部面板。
+    pub view_mode: &'a mut ViewMode,
 }
 
 impl FloatSwitches<'_> {
-    /// 该面板当前是否处于浮动形态。
+    /// 该视图当前是否处于浮动形态。
     pub(crate) fn is_floating(&self, kind: PanelKind) -> bool {
         match kind {
+            PanelKind::Arrange => *self.float_arrange,
             PanelKind::Pianoroll => *self.float_pianoroll,
             PanelKind::Dock => *self.float_dock,
             PanelKind::Mixer => *self.float_mixer,
         }
     }
 
-    /// 泊出：从停靠形态移走并拉前台（浮动不占主窗口空间，不触发三选一互斥）。
+    /// 泊出：从主窗口移走并拉前台（浮动不占主窗口空间，不触发三选一互斥）。
     pub(crate) fn float(&mut self, ctx: &egui::Context, kind: PanelKind) {
         match kind {
+            PanelKind::Arrange => {
+                *self.float_arrange = true;
+                crate::chrome::dialog::raise_viewport(ctx, crate::app::floating::arrange_id());
+            }
             PanelKind::Pianoroll => {
                 *self.show_pianoroll = false;
                 *self.float_pianoroll = true;
@@ -545,12 +589,27 @@ impl FloatSwitches<'_> {
         }
     }
 
-    /// 收回停靠：关窗口 + 停靠可见（与其它停靠面板三选一互斥）。
+    /// 收回停靠：关窗口 + 视图回主窗口（底部面板与其它停靠面板三选一互斥）。
     pub(crate) fn dock_back(&mut self, ctx: &egui::Context, kind: PanelKind) {
         match kind {
+            PanelKind::Arrange => {
+                *self.float_arrange = false;
+                crate::chrome::dialog::close_viewport(ctx, crate::app::floating::arrange_id());
+                // 工程走带只在 ARRANGE 模式的主窗口显示：收回即切回该模式。
+                *self.view_mode = ViewMode::Arrange;
+            }
             PanelKind::Pianoroll => {
                 *self.float_pianoroll = false;
-                set_pianoroll_visible(self.show_pianoroll, self.show_dock, self.show_mixer, true);
+                // EDIT 模式 PR 即主视图：收回直接回主窗口，不启用底部面板
+                // （避免误关停靠的设备栏/混音台）。
+                if *self.view_mode != ViewMode::Edit {
+                    set_pianoroll_visible(
+                        self.show_pianoroll,
+                        self.show_dock,
+                        self.show_mixer,
+                        true,
+                    );
+                }
                 crate::chrome::dialog::close_viewport(ctx, crate::app::floating::pianoroll_id());
             }
             PanelKind::Dock => {
@@ -562,6 +621,8 @@ impl FloatSwitches<'_> {
                 *self.float_mixer = false;
                 set_mixer_visible(self.show_pianoroll, self.show_dock, self.show_mixer, true);
                 crate::chrome::dialog::close_viewport(ctx, crate::app::floating::mixer_id());
+                // 混音台面板只在 MIX 模式停靠显示：收回即切到 MIX。
+                *self.view_mode = ViewMode::Mix;
             }
         }
     }
@@ -623,12 +684,14 @@ enum BubbleAction {
 fn float_bubble(
     ctx: &egui::Context,
     buttons: &[PanelButtonInfo],
+    view_mode: &mut ViewMode,
     show_pianoroll_in_arrange: &mut bool,
     float_pianoroll: &mut bool,
     show_bottom_dock: &mut bool,
     float_bottom_dock: &mut bool,
     show_mixer_panel: &mut bool,
     float_mixer: &mut bool,
+    float_arrange: &mut bool,
 ) {
     let state_id = egui::Id::new("mode_bar_float_bubble");
     let mut st: FloatBubbleState = ctx.data_mut(|d| d.get_temp(state_id)).unwrap_or_default();
@@ -695,6 +758,8 @@ fn float_bubble(
             float_dock: &mut *float_bottom_dock,
             show_mixer: &mut *show_mixer_panel,
             float_mixer: &mut *float_mixer,
+            float_arrange: &mut *float_arrange,
+            view_mode: &mut *view_mode,
         };
         let floating = sw.is_floating(target);
         // 气泡在按钮正上方居中；靠窗口边缘时水平收进。
@@ -874,6 +939,8 @@ mod tests {
         .drop_without_applying_deltas();
         let (mut sp, mut fp, mut sd, mut fd, mut sm, mut fm) =
             (false, false, false, false, false, false);
+        let mut fa = false;
+        let mut vm = ViewMode::Arrange;
         let rect = egui::Rect::from_min_size(egui::pos2(100.0, 700.0), egui::vec2(20.0, 20.0));
         let mut buttons = vec![PanelButtonInfo {
             target: PanelKind::Pianoroll,
@@ -891,12 +958,14 @@ mod tests {
                 float_bubble(
                     ui.ctx(),
                     buttons,
+                    &mut vm,
                     &mut sp,
                     &mut fp,
                     &mut sd,
                     &mut fd,
                     &mut sm,
                     &mut fm,
+                    &mut fa,
                 );
             })
             .drop_without_applying_deltas();
@@ -952,6 +1021,8 @@ mod tests {
 
         let (mut sp, mut fp, mut sd, mut fd, mut sm, mut fm) =
             (false, false, false, false, false, false);
+        let mut fa = false;
+        let mut vm = ViewMode::Arrange;
         // 按钮位于视口局部 x≈100；窗口在显示器 x=300 处（inner_rect 为显示器坐标）。
         let btn_rect = egui::Rect::from_min_size(egui::pos2(90.0, 700.0), egui::vec2(20.0, 20.0));
         let buttons = vec![PanelButtonInfo {
@@ -979,12 +1050,14 @@ mod tests {
                 float_bubble(
                     ui.ctx(),
                     &buttons,
+                    &mut vm,
                     &mut sp,
                     &mut fp,
                     &mut sd,
                     &mut fd,
                     &mut sm,
                     &mut fm,
+                    &mut fa,
                 );
             })
             .drop_without_applying_deltas();
@@ -998,5 +1071,62 @@ mod tests {
             (area.center().x - btn_rect.center().x).abs() <= 2.0,
             "气泡应居中于按钮上方: area={area:?} button={btn_rect:?}"
         );
+    }
+
+    /// 浮动开关：ARRANGE 泊出只置浮动标志；收回关闭窗口并切回 ARRANGE 模式
+    /// （工程走带只在 ARRANGE 模式的主窗口显示）。
+    #[test]
+    fn float_switches_arrange_roundtrip() {
+        let ctx = egui::Context::default();
+        let (mut sp, mut fp, mut sd, mut fd, mut sm, mut fm) =
+            (false, false, false, false, false, false);
+        let mut fa = false;
+        let mut vm = ViewMode::Mix;
+        let mut sw = FloatSwitches {
+            show_pianoroll: &mut sp,
+            float_pianoroll: &mut fp,
+            show_dock: &mut sd,
+            float_dock: &mut fd,
+            show_mixer: &mut sm,
+            float_mixer: &mut fm,
+            float_arrange: &mut fa,
+            view_mode: &mut vm,
+        };
+        assert!(!sw.is_floating(PanelKind::Arrange));
+        sw.float(&ctx, PanelKind::Arrange);
+        assert!(sw.is_floating(PanelKind::Arrange), "泊出后应为浮动形态");
+        assert_eq!(*sw.view_mode, ViewMode::Mix, "泊出不切换模式");
+        sw.dock_back(&ctx, PanelKind::Arrange);
+        assert!(!sw.is_floating(PanelKind::Arrange), "收回后应关闭浮动");
+        assert_eq!(
+            *sw.view_mode,
+            ViewMode::Arrange,
+            "收回工程走带应切回 ARRANGE 模式"
+        );
+    }
+
+    /// 浮动开关：EDIT 模式下收回钢琴卷帘只关窗口，不动底部面板互斥。
+    #[test]
+    fn float_switches_pianoroll_dock_back_in_edit_keeps_dock() {
+        let ctx = egui::Context::default();
+        let (mut sp, mut fp) = (false, true);
+        let (mut sd, mut fd) = (true, false);
+        let (mut sm, mut fm) = (false, false);
+        let mut fa = false;
+        let mut vm = ViewMode::Edit;
+        let mut sw = FloatSwitches {
+            show_pianoroll: &mut sp,
+            float_pianoroll: &mut fp,
+            show_dock: &mut sd,
+            float_dock: &mut fd,
+            show_mixer: &mut sm,
+            float_mixer: &mut fm,
+            float_arrange: &mut fa,
+            view_mode: &mut vm,
+        };
+        sw.dock_back(&ctx, PanelKind::Pianoroll);
+        assert!(!fp, "收回后应关闭浮动");
+        assert!(sd, "EDIT 下收回卷帘不应收起停靠的设备栏");
+        assert!(!sp, "EDIT 下不应启用底部卷帘面板");
     }
 }
