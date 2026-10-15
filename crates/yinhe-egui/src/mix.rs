@@ -651,13 +651,20 @@ pub(crate) fn update_track_meters(app: &mut App, dt: f32) {
     }
 }
 
+/// 通道区与主输出之间的间隙（px）：给通道区横向滚动条留位，
+/// 避免浮动滚动条把手贴住主输出的左分界线。
+const CHANNELS_GAP: f32 = 8.0;
+
 /// 混音主体几何：通道区 + 主输出区。主输出贴面板右缘（无右边距），
-/// 与通道区之间留 4px 分隔缝（缝隙底色由调用方铺轨道色）。
+/// 与通道区之间留 [`CHANNELS_GAP`] 间隙（滚动条浮动其中）。
 pub(crate) fn body_layout(body: egui::Rect) -> (egui::Rect, egui::Rect) {
+    let master_w = strip::STRIP_WIDTH;
     let mut channels_rect = body;
-    channels_rect.max.x = (body.max.x - (strip::STRIP_WIDTH + 4.0)).max(body.min.x);
-    let master_rect =
-        egui::Rect::from_min_max(egui::pos2(channels_rect.max.x + 4.0, body.min.y), body.max);
+    channels_rect.max.x = (body.max.x - master_w - CHANNELS_GAP).max(body.min.x);
+    let master_rect = egui::Rect::from_min_max(
+        egui::pos2((body.max.x - master_w).max(body.min.x), body.min.y),
+        body.max,
+    );
     (channels_rect, master_rect)
 }
 
@@ -729,16 +736,6 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
             // 主体：左侧横向滚动通道条 + 右侧固定 Master（贴面板右缘，无右边距）。
             let body = ui.available_rect_before_wrap();
             let (channels_rect, master_rect) = body_layout(body);
-            // 通道区与主输出之间的 4px 缝隙铺轨道底色作分隔：亮色主题下
-            // 不再露出一条突兀的 app_bg 白带（暗色下与面板底差异极小）。
-            ui.painter().rect_filled(
-                egui::Rect::from_min_max(
-                    egui::pos2(channels_rect.max.x, body.min.y),
-                    egui::pos2(master_rect.min.x, body.max.y),
-                ),
-                0.0,
-                crate::theme::track_bg(),
-            );
 
             ui.scope_builder(
                 egui::UiBuilder::new()
@@ -1348,7 +1345,7 @@ mod tests {
         assert!(!strip_builtin_inserts(&mut mixer), "无内置 insert 不算迁移");
     }
 
-    /// 回归：主输出贴面板右缘（无右边距），与通道区之间仅 4px 分隔缝；
+    /// 回归：主输出贴面板右缘（无右边距），与通道区之间留滚动条间隙；
     /// 常规宽度下主输出条宽度 = 通道条宽度（不溢出、不居中留缝）。
     #[test]
     fn master_rect_is_flush_with_panel_right() {
@@ -1356,7 +1353,11 @@ mod tests {
         let (channels, master) = body_layout(body);
         assert_eq!(master.max.x, body.max.x, "主输出应贴右缘");
         assert_eq!(master.width(), strip::STRIP_WIDTH, "条宽 = 通道条宽");
-        assert_eq!(master.min.x - channels.max.x, 4.0, "中间留 4px 分隔缝");
+        assert_eq!(
+            master.min.x - channels.max.x,
+            CHANNELS_GAP,
+            "中间留滚动条间隙"
+        );
         assert_eq!(channels.min.x, body.min.x, "通道区从主体左缘开始");
     }
 }
