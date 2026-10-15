@@ -228,7 +228,8 @@ pub fn show(
                         hovered_hint = Some(t!("hint.mode_arrange").to_string());
                     }
                     panel_buttons.push(PanelButtonInfo {
-                        target: PanelKind::Arrange,
+                        button: BubbleButton::ArrangeMode,
+                        kind: PanelKind::Arrange,
                         rect: arrange_resp.rect,
                         hovered: arrange_resp.hovered(),
                         secondary_clicked: arrange_resp.secondary_clicked(),
@@ -244,7 +245,8 @@ pub fn show(
                     }
                     // MIX 的气泡浮动「混音台」（通道走带主视图暂不支持浮动）。
                     panel_buttons.push(PanelButtonInfo {
-                        target: PanelKind::Mixer,
+                        button: BubbleButton::MixMode,
+                        kind: PanelKind::Mixer,
                         rect: mix_resp.rect,
                         hovered: mix_resp.hovered(),
                         secondary_clicked: mix_resp.secondary_clicked(),
@@ -260,7 +262,8 @@ pub fn show(
                     }
                     // EDIT 的气泡浮动「钢琴卷帘」（与钢琴图标同一个窗口）。
                     panel_buttons.push(PanelButtonInfo {
-                        target: PanelKind::Pianoroll,
+                        button: BubbleButton::EditMode,
+                        kind: PanelKind::Pianoroll,
                         rect: edit_resp.rect,
                         hovered: edit_resp.hovered(),
                         secondary_clicked: edit_resp.secondary_clicked(),
@@ -300,7 +303,8 @@ pub fn show(
                             hovered_hint = Some(t!("hint.pr_toggle").to_string());
                         }
                         panel_buttons.push(PanelButtonInfo {
-                            target: PanelKind::Pianoroll,
+                            button: BubbleButton::PrIcon,
+                            kind: PanelKind::Pianoroll,
                             rect: piano_resp.rect,
                             hovered: piano_resp.hovered(),
                             secondary_clicked: piano_resp.secondary_clicked(),
@@ -343,7 +347,8 @@ pub fn show(
                             hovered_hint = Some(t!("hint.dock_toggle").to_string());
                         }
                         panel_buttons.push(PanelButtonInfo {
-                            target: PanelKind::Dock,
+                            button: BubbleButton::DockIcon,
+                            kind: PanelKind::Dock,
                             rect: dock_resp.rect,
                             hovered: dock_resp.hovered(),
                             secondary_clicked: dock_resp.secondary_clicked(),
@@ -383,7 +388,8 @@ pub fn show(
                             hovered_hint = Some(t!("hint.mixer_toggle").to_string());
                         }
                         panel_buttons.push(PanelButtonInfo {
-                            target: PanelKind::Mixer,
+                            button: BubbleButton::MixerIcon,
+                            kind: PanelKind::Mixer,
                             rect: mixer_resp.rect,
                             hovered: mixer_resp.hovered(),
                             secondary_clicked: mixer_resp.secondary_clicked(),
@@ -637,9 +643,26 @@ impl FloatSwitches<'_> {
     }
 }
 
+/// 模式栏气泡按钮的唯一标识。
+///
+/// 同一个 [`PanelKind`] 可能挂在多个按钮上（EDIT 与钢琴图标都浮动卷帘），
+/// 锚点/固定必须按按钮唯一识别——按 PanelKind 查会命中第一个同名按钮，气泡跑偏。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BubbleButton {
+    ArrangeMode,
+    MixMode,
+    EditMode,
+    PrIcon,
+    DockIcon,
+    MixerIcon,
+}
+
 /// 面板按钮本帧信息（气泡触发与锚点定位用）。
 struct PanelButtonInfo {
-    target: PanelKind,
+    /// 按钮唯一标识（气泡锚点/固定目标）。
+    button: BubbleButton,
+    /// 该按钮对应的浮动视图。
+    kind: PanelKind,
     rect: egui::Rect,
     hovered: bool,
     secondary_clicked: bool,
@@ -648,12 +671,12 @@ struct PanelButtonInfo {
 /// 悬停气泡跨帧状态（存 egui temp data）。
 #[derive(Clone, Copy, Default)]
 struct FloatBubbleState {
-    /// 当前气泡指向的面板（None = 未显示）。
-    target: Option<PanelKind>,
+    /// 当前气泡指向的按钮（None = 未显示）。
+    target: Option<BubbleButton>,
     /// 右键固定：不随指针移出关闭（点外部 / Esc / 再次右键关闭）。
     pinned: bool,
     /// 悬停候选（指针停在按钮上、等待延迟计时）。
-    candidate: Option<PanelKind>,
+    candidate: Option<BubbleButton>,
     candidate_since: f64,
     /// 指针离开按钮与气泡后的隐藏计时起点（None = 不应隐藏）。
     hide_since: Option<f64>,
@@ -699,7 +722,7 @@ fn float_bubble(
     let pointer = ctx.input(|i| i.pointer.hover_pos());
     let any_click = ctx.input(|i| i.pointer.any_click());
     let esc = ctx.input(|i| i.key_pressed(egui::Key::Escape));
-    let hovered = buttons.iter().find(|b| b.hovered).map(|b| b.target);
+    let hovered = buttons.iter().find(|b| b.hovered).map(|b| b.button);
 
     // ── 右键：固定 / 取消固定（同一按钮再次右键 = 关闭）──
     let mut just_pinned = false;
@@ -707,10 +730,10 @@ fn float_bubble(
         if !b.secondary_clicked {
             continue;
         }
-        if st.pinned && st.target == Some(b.target) {
+        if st.pinned && st.target == Some(b.button) {
             st = FloatBubbleState::default();
         } else {
-            st.target = Some(b.target);
+            st.target = Some(b.button);
             st.pinned = true;
             st.candidate = None;
             just_pinned = true;
@@ -745,7 +768,7 @@ fn float_bubble(
     // ── 绘制气泡（若显示中）──
     let mut over_bubble = false;
     if let Some(target) = st.target {
-        let Some(btn) = buttons.iter().find(|b| b.target == target) else {
+        let Some(btn) = buttons.iter().find(|b| b.button == target) else {
             // 按钮本帧不可见（如 EDIT 无钢琴按钮）→ 气泡随之关闭。
             ctx.data_mut(|d| d.insert_temp(state_id, FloatBubbleState::default()));
             return;
@@ -761,7 +784,7 @@ fn float_bubble(
             float_arrange: &mut *float_arrange,
             view_mode: &mut *view_mode,
         };
-        let floating = sw.is_floating(target);
+        let floating = sw.is_floating(btn.kind);
         // 气泡在按钮正上方居中；靠窗口边缘时水平收进。
         // 注意：`inner_rect` 是**显示器坐标**（窗口不在显示器原点时 min.x ≠ 0），
         // 而按钮 rect 是视口局部坐标 → 只能取宽度做 clamp，不能用 min/max.x。
@@ -860,8 +883,8 @@ fn float_bubble(
         // 点击图标：执行浮动/收回，并关闭气泡。
         if let Some(act) = area.inner {
             match act {
-                BubbleAction::Float => sw.float(ctx, target),
-                BubbleAction::DockBack => sw.dock_back(ctx, target),
+                BubbleAction::Float => sw.float(ctx, btn.kind),
+                BubbleAction::DockBack => sw.dock_back(ctx, btn.kind),
             }
             st = FloatBubbleState::default();
         }
@@ -943,7 +966,8 @@ mod tests {
         let mut vm = ViewMode::Arrange;
         let rect = egui::Rect::from_min_size(egui::pos2(100.0, 700.0), egui::vec2(20.0, 20.0));
         let mut buttons = vec![PanelButtonInfo {
-            target: PanelKind::Pianoroll,
+            button: BubbleButton::PrIcon,
+            kind: PanelKind::Pianoroll,
             rect,
             hovered: true,
             secondary_clicked: false,
@@ -982,7 +1006,7 @@ mod tests {
         run(0.3, Vec::new(), &buttons);
         assert_eq!(
             state(&ctx).target,
-            Some(PanelKind::Pianoroll),
+            Some(BubbleButton::PrIcon),
             "停留 0.25s 后应弹出气泡"
         );
         // 右键固定。
@@ -1026,7 +1050,8 @@ mod tests {
         // 按钮位于视口局部 x≈100；窗口在显示器 x=300 处（inner_rect 为显示器坐标）。
         let btn_rect = egui::Rect::from_min_size(egui::pos2(90.0, 700.0), egui::vec2(20.0, 20.0));
         let buttons = vec![PanelButtonInfo {
-            target: PanelKind::Pianoroll,
+            button: BubbleButton::PrIcon,
+            kind: PanelKind::Pianoroll,
             rect: btn_rect,
             hovered: true,
             secondary_clicked: false,
@@ -1128,5 +1153,73 @@ mod tests {
         assert!(!fp, "收回后应关闭浮动");
         assert!(sd, "EDIT 下收回卷帘不应收起停靠的设备栏");
         assert!(!sp, "EDIT 下不应启用底部卷帘面板");
+    }
+
+    /// 回归：同一 `PanelKind` 挂在多个按钮上时，气泡锚点必须跟随实际悬停的按钮。
+    ///
+    /// MIX 模式下 EDIT 按钮与钢琴图标都浮动卷帘；曾按 PanelKind 查按钮 →
+    /// 命中第一个（EDIT），悬停钢琴图标时气泡却指向 EDIT。
+    #[test]
+    fn bubble_anchors_to_hovered_button_not_first_same_kind() {
+        let ctx = egui::Context::default();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.ctx().add_font(egui_material_icons::font_insert());
+        })
+        .drop_without_applying_deltas();
+
+        let (mut sp, mut fp, mut sd, mut fd, mut sm, mut fm) =
+            (false, false, false, false, false, false);
+        let mut fa = false;
+        let mut vm = ViewMode::Mix;
+        // EDIT 模式按钮（左，未悬停）与钢琴图标（右，悬停）：同一 PanelKind::Pianoroll。
+        let edit_rect = egui::Rect::from_min_size(egui::pos2(300.0, 700.0), egui::vec2(50.0, 20.0));
+        let piano_rect =
+            egui::Rect::from_min_size(egui::pos2(400.0, 700.0), egui::vec2(20.0, 20.0));
+        let buttons = vec![
+            PanelButtonInfo {
+                button: BubbleButton::EditMode,
+                kind: PanelKind::Pianoroll,
+                rect: edit_rect,
+                hovered: false,
+                secondary_clicked: false,
+            },
+            PanelButtonInfo {
+                button: BubbleButton::PrIcon,
+                kind: PanelKind::Pianoroll,
+                rect: piano_rect,
+                hovered: true,
+                secondary_clicked: false,
+            },
+        ];
+        let mut run = |time: f64| {
+            let input = egui::RawInput {
+                time: Some(time),
+                ..Default::default()
+            };
+            ctx.run_ui(input, |ui| {
+                float_bubble(
+                    ui.ctx(),
+                    &buttons,
+                    &mut vm,
+                    &mut sp,
+                    &mut fp,
+                    &mut sd,
+                    &mut fd,
+                    &mut sm,
+                    &mut fm,
+                    &mut fa,
+                );
+            })
+            .drop_without_applying_deltas();
+        };
+        run(0.0);
+        run(0.3);
+        let area = ctx
+            .memory(|m| m.area_rect(egui::Id::new("mode_bar_float_bubble").with("area")))
+            .expect("停留 0.3s 后气泡应已显示");
+        assert!(
+            (area.center().x - piano_rect.center().x).abs() <= 2.0,
+            "气泡应锚定在悬停的钢琴图标上方（而非同名 EDIT 按钮）: area={area:?}"
+        );
     }
 }
