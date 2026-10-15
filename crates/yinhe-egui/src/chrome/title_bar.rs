@@ -39,6 +39,8 @@ pub(crate) enum TitleBarAction {
     OpenRecentInNewWindow(String),
     /// 工程选择 popup：打开文件选择器（.yin / .mid 等）
     OpenFile,
+    /// 应用名「Yinhe」点击：打开欢迎窗口
+    OpenWelcome,
 }
 
 /// 标签拖拽跨帧状态（标题栏横向，单标签）
@@ -89,6 +91,8 @@ pub(crate) fn show(
             // 标签宽度动态（按工程名实测，最长 MAX_TAB_W）
             let tab_widths = paint::tab_widths(&painter, documents);
             let tab_rects = paint::tab_rects(&m, *tab_scroll_offset, &tab_widths);
+            // 应用名「Yinhe」可点击矩形（打开欢迎窗口）
+            let title_rect = paint::title_rect(&painter, &m);
 
             // ── Handle mouse wheel / trackpad scroll for tab overflow ──
             let pointer_in_bar = ui.input(|i| {
@@ -331,6 +335,10 @@ pub(crate) fn show(
                                     .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                             }
                         }
+                        // 应用名「Yinhe」点击：打开欢迎窗口（像歌曲标题一样可点）
+                        if title_rect.contains(p.pos) && title_rect.contains(release) {
+                            action = Some(TitleBarAction::OpenWelcome);
+                        }
                     }
                 }
             }
@@ -385,6 +393,7 @@ pub(crate) fn show(
                 && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary))
                 && let Some(pos) = pointer_pos
                 && in_blank_area(pos)
+                && !title_rect.contains(pos)
             {
                 let now = ui.input(|i| i.time);
                 let last_click: f64 = ui.data_mut(|d| d.get_persisted(dbl_id)).unwrap_or(0.0);
@@ -416,6 +425,10 @@ pub(crate) fn show(
                     }
                     if tab_rects.iter().any(|r| r.contains(pos)) {
                         crate::widgets::hint::set(ui.ctx(), t!("hint.title_bar.tab"));
+                    } else if title_rect.contains(pos) {
+                        // 应用名可点击（打开欢迎窗口）：手型光标 + 讲解
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        crate::widgets::hint::set(ui.ctx(), t!("hint.title_bar.app_title"));
                     } else if in_blank_area(pos) {
                         let last: f64 = ui.data_mut(|d| d.get_persisted(dbl_id)).unwrap_or(0.0);
                         let now = ui.input(|i| i.time);
@@ -507,6 +520,7 @@ mod tests {
                             TitleBarAction::RemoveRecent(_) => "remove_recent",
                             TitleBarAction::OpenRecentInNewWindow(_) => "recent_new_window",
                             TitleBarAction::OpenFile => "open_file",
+                            TitleBarAction::OpenWelcome => "open_welcome",
                         });
                     }
                 },
@@ -719,5 +733,15 @@ mod tests {
         h.run();
         assert_eq!(h.state().action, Some("recent_new_window"));
         assert!(!popup_open(&h));
+    }
+
+    /// 点击标题栏中央的应用名「Yinhe」：返回 OpenWelcome（打开欢迎窗口）。
+    #[test]
+    fn click_app_title_opens_welcome() {
+        let docs = vec![yinhe_test_helpers::make_test_document()];
+        let mut h = make_harness(&docs, &[]);
+        // 「Yinhe」居中于标题栏：1200 宽窗口 → 中心 x = 600
+        click_at(&mut h, egui::pos2(600.0, 16.0), 2.0);
+        assert_eq!(h.state().action, Some("open_welcome"));
     }
 }

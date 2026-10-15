@@ -1006,6 +1006,7 @@ hint.panel.pr_automation: "Panel automatizace: kreslení/výběr kotevních bod�
 hint.panel.pr_auto_combo: "Levá strana panelu automatizace: zvolte cíl"
 hint.panel.mix: "Zobrazení mixu: kanálové pruhy / sběrnice / master"
 hint.title_bar.tab: "Karta dokumentu: kliknutím otevřete výběr projektu, tažením změníte pořadí, vytažením otevřete nové okno"
+hint.title_bar.app_title: "Název aplikace: kliknutím otevřete uvítací stránku"
 hint.title_bar.close: "Zavřít dokument (při neuložených změnách se zeptá)"
 hint.title_bar.reorder: "Tažením změníte pořadí karet dokumentů"
 hint.title_bar.detach: "Uvolněním otevřete tento dokument v novém okně"

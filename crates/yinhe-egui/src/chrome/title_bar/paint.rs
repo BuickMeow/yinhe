@@ -97,6 +97,19 @@ pub(super) fn tint(c: egui::Color32, mul: f32) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (c.a() as f32 * mul) as u8)
 }
 
+/// 标题栏中央的应用名（可点击：打开欢迎窗口）。
+pub(super) const APP_TITLE: &str = "Yinhe";
+
+/// 应用名「Yinhe」的可点击矩形（文字实测 + 少量内边距，居中于标题栏）。
+pub(super) fn title_rect(painter: &egui::Painter, m: &BarMetrics) -> egui::Rect {
+    let galley = painter.layout_no_wrap(
+        APP_TITLE.to_string(),
+        egui::FontId::proportional(crate::theme::SUB_TITLE_FONT),
+        egui::Color32::WHITE,
+    );
+    egui::Rect::from_center_size(m.bar_rect.center(), galley.size() + egui::vec2(12.0, 2.0))
+}
+
 /// 绘制标题文字 + 全部文档标签（拖拽中的标签半透明 + accent 描边 + 阴影）。
 /// 常态无按钮背景（只显示未保存圆点 + 工程名），悬停/按下才有底色。
 pub(super) fn paint_tabs(
@@ -108,13 +121,26 @@ pub(super) fn paint_tabs(
     tab_rects: &[egui::Rect],
     drag: Option<&TitleDrag>,
 ) {
-    // ── Draw title BEHIND tabs (lower z-order) ──
+    // ── Draw title BEHIND tabs (lower z-order)；悬停有底色，可点击 ──
+    let title = title_rect(painter, m);
+    let title_hovered = drag.is_none() && ui.rect_contains_pointer(title);
+    if title_hovered {
+        painter.rect_filled(
+            title,
+            4.0,
+            crate::theme::hover_color(crate::theme::app_bg()),
+        );
+    }
     painter.text(
-        egui::pos2(m.bar_rect.center().x, m.bar_rect.center().y),
+        title.center(),
         egui::Align2::CENTER_CENTER,
-        "Yinhe",
+        APP_TITLE,
         egui::FontId::proportional(crate::theme::SUB_TITLE_FONT),
-        crate::theme::text_secondary(),
+        if title_hovered {
+            crate::theme::text_primary()
+        } else {
+            crate::theme::text_secondary()
+        },
     );
 
     let font_id = egui::FontId::proportional(crate::theme::BODY_FONT);

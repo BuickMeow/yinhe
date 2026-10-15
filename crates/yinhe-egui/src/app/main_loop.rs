@@ -452,6 +452,10 @@ impl eframe::App for App {
             Some(title_bar::TitleBarAction::OpenFile) => {
                 self.handle_file_action(transport_bar::FileAction::Open, ui.ctx());
             }
+            Some(title_bar::TitleBarAction::OpenWelcome) => {
+                // 应用名「Yinhe」点击：打开欢迎窗口（与菜单「欢迎页面」同一入口）
+                self.handle_file_action(transport_bar::FileAction::Welcome, ui.ctx());
+            }
             None => {}
         }
 

@@ -1001,6 +1001,7 @@ hint.panel.pr_automation: "Panneau d'automatisation : dessiner/sélectionner les
 hint.panel.pr_auto_combo: "Côté gauche du panneau d'automatisation : choisir une cible"
 hint.panel.mix: "Vue mixage : tranches de canaux / bus / master"
 hint.title_bar.tab: "Onglet de document : cliquer pour ouvrir le sélecteur de projet, glisser pour réorganiser, extraire pour ouvrir dans une nouvelle fenêtre"
+hint.title_bar.app_title: "Titre de l'application : cliquer pour ouvrir la page d'accueil"
 hint.title_bar.close: "Fermer le document (demande confirmation si non enregistré)"
 hint.title_bar.reorder: "Faire glisser pour réorganiser les onglets de document"
 hint.title_bar.detach: "Relâcher pour ouvrir ce document dans une nouvelle fenêtre"

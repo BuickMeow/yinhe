@@ -1011,6 +1011,7 @@ hint.panel.pr_automation: "オートメーションパネル：アンカーの�
 hint.panel.pr_auto_combo: "オートメーションパネル左側：ターゲットを選択"
 hint.panel.mix: "ミックスビュー：チャンネルストリップ / バス / マスター"
 hint.title_bar.tab: "ドキュメントタブ：クリックでプロジェクト選択を開く、ドラッグで並べ替え、外へドラッグで新規ウィンドウ"
+hint.title_bar.app_title: "アプリ名：クリックでウェルカムページを開く"
 hint.title_bar.close: "ドキュメントを閉じる（未保存なら確認）"
 hint.title_bar.reorder: "ドラッグしてドキュメントタブを並べ替え"
 hint.title_bar.detach: "離すとこのドキュメントを新しいウィンドウで開く"
