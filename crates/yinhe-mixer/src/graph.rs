@@ -255,11 +255,14 @@ impl BusChain {
         }
     }
 
+    /// 重建缓冲帧长（含「上一块输出快照」；块长变化时调用，会分配内存）。
+    /// 必须与 [`ChannelChain`] 一致地「重建」而非 `Vec::resize`：只增不减会
+    /// 留下旧长度，块长变小时 `process` 按 frames 的拷贝就会长度不匹配。
     fn resize_frames(&mut self, frames: usize) {
-        self.buffers.left.resize(frames, 0.0);
-        self.buffers.right.resize(frames, 0.0);
-        self.prev_out_l.resize(frames, 0.0);
-        self.prev_out_r.resize(frames, 0.0);
+        self.buffers.left = vec![0.0; frames];
+        self.buffers.right = vec![0.0; frames];
+        self.prev_out_l = vec![0.0; frames];
+        self.prev_out_r = vec![0.0; frames];
     }
 }
 
@@ -328,6 +331,12 @@ impl MixerGraph {
         let n_old = self.channels.len().min(channel_count);
         self.channels.truncate(n_old);
         for chain in &mut self.channels {
+            chain.resize_frames(frames);
+        }
+        // 总线缓冲与「上一块输出快照」必须随块长同步重建：漏掉会让
+        // process 里按 frames 的拷贝/索引与旧长度错位（实时 512 ↔ 暂停
+        // 淡出 441 的块长切换曾因此 copy_from_slice panic）。
+        for chain in &mut self.buses {
             chain.resize_frames(frames);
         }
         for i in n_old..channel_count {
@@ -1547,6 +1556,42 @@ mod tests {
         g.resize_buses(3, 4, &[]);
         assert_eq!(g.bus_count(), 3);
         assert_eq!(g.buses[1].strip.params.gain, 0.25);
+    }
+
+    /// 回归：块长变化时总线缓冲与「上一块输出快照」必须同步重建。
+    /// 块长切换只走 `MixerGraph::resize`，而它曾漏掉总线、`BusChain` 又用
+    /// 只增不减的 `Vec::resize`——实时 512 → 暂停淡出 441 时 `process` 的
+    /// `copy_from_slice` 长度不匹配直接 panic（音频线程退出、再也播不出声）。
+    #[test]
+    fn block_resize_rebuilds_bus_buffers() {
+        let strips = [StripParams::default()];
+        let mut g = graph_with(&strips, 512);
+        g.resize_buses(1, 512, &[StripParams::default()]);
+        g.set_sends(
+            0,
+            vec![SendParams {
+                bus: 0,
+                amount: 1.0,
+                pre_fader: false,
+            }],
+        );
+        fill(&mut g, 0, 0.5);
+        let (l, _r) = g.process();
+        assert_eq!(l.len(), 512);
+
+        // 暂停淡出：441 帧的短块（原实现在此 panic）。
+        g.resize(1, 441, &strips);
+        fill(&mut g, 0, 0.5);
+        let (l, _r) = g.process();
+        assert_eq!(l.len(), 441);
+        // 发送链路仍通：通道直达 + 总线两路汇入 master，非静音。
+        assert!(l.iter().any(|v| v.abs() > 1e-6));
+
+        // 恢复播放：块长回到 512，同样安全。
+        g.resize(1, 512, &strips);
+        fill(&mut g, 0, 0.5);
+        let (l, _r) = g.process();
+        assert_eq!(l.len(), 512);
     }
 
     #[test]
