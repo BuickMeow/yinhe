@@ -34,7 +34,7 @@ impl Default for LayoutSettings {
             show_bottom_dock: false,
             bottom_dock_height: 200.0,
             show_mixer_panel: true,
-            mix_height: 240.0,
+            mix_height: 480.0,
             right_panel_layout: RightPanelLayout::default(),
             pr_vertical: false,
         }

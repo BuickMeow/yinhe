@@ -630,6 +630,16 @@ fn header_double_click_opens_dock(
     if !resp.double_clicked() {
         return;
     }
+    // 分割条命中区（面板上方 2px 缝隙 + 向面板内下探 4px，见
+    // `widgets::split_handle` 的 HIT_PAD）内不处理色带双击：
+    // 让「双击分割条复位面板高度」优先，避免误触打开设备链。
+    let split_hit_pad = crate::theme::SPLIT_GAP + 4.0;
+    if ui
+        .input(|i| i.pointer.interact_pos())
+        .is_some_and(|p| p.y < rect.min.y + split_hit_pad)
+    {
+        return;
+    }
     // 展开设备链（与钢琴卷帘/混音台互斥），并选中该通道。
     crate::chrome::mode_bar::set_dock_visible(
         &mut app.show_pianoroll_in_arrange,
