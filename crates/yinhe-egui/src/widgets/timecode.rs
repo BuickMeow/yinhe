@@ -356,9 +356,10 @@ pub fn show_timecode_display(
     {
         let quantize = data.quantize;
         let prefix = if data.quantize_is_pr { "PR" } else { "AR" };
-        // Auto（自适应）显示当前解析出的网格，让用户知道实际吸到哪一档。
+        // Auto（自适应）显示当前解析出的网格，让用户知道实际吸到哪一档
+        // （注意保持紧凑：列宽 82px @ 12px 字体）。
         let label = if quantize == QuantizePreset::Auto {
-            format!("{} Auto ({})", prefix, data.quantize_effective.label())
+            format!("{} Auto {}", prefix, data.quantize_effective.label())
         } else {
             format!("{} {}", prefix, quantize.label())
         };
