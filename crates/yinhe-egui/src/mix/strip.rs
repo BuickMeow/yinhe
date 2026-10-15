@@ -145,14 +145,6 @@ fn strip_frame(
         crate::theme::contrast_text(color),
     );
 
-    // 单层描边确定一个通道。
-    painter.rect_stroke(
-        rect,
-        0.0,
-        egui::Stroke::new(1.0, crate::theme::line_fg()),
-        egui::StrokeKind::Inside,
-    );
-
     let content = egui::Rect::from_min_max(
         egui::pos2(rect.min.x + PAD_X, header.max.y + 4.0),
         egui::pos2(rect.max.x - PAD_X, rect.max.y - 6.0),
@@ -169,6 +161,16 @@ fn strip_frame(
     child.set_clip_rect(rect);
     child.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
     add_contents(&mut child, content.height());
+
+    // 单层描边确定一个通道。**最后画**：设备链行整宽贴边（不透明填充）会盖住
+    // 左右描边，色带同理——描边放最后保证通道之间的分界线贯穿全高、不被内容
+    // 打断（色带与设备行都在描边之下）。
+    painter.rect_stroke(
+        rect,
+        0.0,
+        egui::Stroke::new(1.0, crate::theme::line_fg()),
+        egui::StrokeKind::Inside,
+    );
     rect
 }
 
