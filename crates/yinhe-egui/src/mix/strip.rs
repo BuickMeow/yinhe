@@ -4,7 +4,7 @@
 //! 控件用通用圆角矩形。自上而下：
 //! 1. 顶部**色带**（轨道色）+ 通道号；
 //! 2. **设备链**（若干乐器 / 效果器，固定高度、整行滚动，不撑破通道）；
-//! 3. **效果发送**（FX 1 旋钮；无总线时首次拖动自动创建）；
+//! 3. **效果发送**（BUS 1 旋钮；无总线时首次拖动自动创建）；
 //! 4. **M/S**（居中）；
 //! 5. **声像旋钮**（居中）；
 //! 6. **当前增益 dB 读数** + **左侧电平表（带刻度 + 峰值保持）+ 右侧推子**。
@@ -119,13 +119,14 @@ fn insert_view<'a>(
 
 /// 通道条外框：直角矩形 + 单层描边 + 顶部色带（写标题）。
 /// `add_contents` 在色带下方的内容区排布，参数为其可用高度。
+/// 返回整条卡片矩形（调用方可在色带行上叠加交互，如总线删除按钮）。
 fn strip_frame(
     ui: &mut egui::Ui,
     color: egui::Color32,
     title: &str,
     height: f32,
     add_contents: impl FnOnce(&mut egui::Ui, f32),
-) {
+) -> egui::Rect {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(STRIP_WIDTH, height), egui::Sense::hover());
     let painter = ui.painter_at(rect);
     // 卡片背景用默认背景色（不再用偏灰的 control_bg）。
@@ -139,7 +140,9 @@ fn strip_frame(
         egui::Align2::LEFT_CENTER,
         title,
         egui::FontId::proportional(crate::theme::SMALL_FONT),
-        crate::theme::contrast_fg(),
+        // 色带文字用「色带颜色的对比色」：与音轨面板色带图标（箭头/加号）
+        // 同一套取色（contrast_text），随色带颜色变化。
+        crate::theme::contrast_text(color),
     );
 
     // 单层描边确定一个通道。
@@ -165,6 +168,7 @@ fn strip_frame(
     child.set_clip_rect(content);
     child.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
     add_contents(&mut child, content.height());
+    rect
 }
 
 /// 固定尺寸分区容器（宽度 = 内容宽，高度 = `h`）。
@@ -399,7 +403,7 @@ pub(crate) fn bus_strip(
     );
     let title = format!("BUS {}", bus + 1);
 
-    strip_frame(
+    let rect = strip_frame(
         ui,
         crate::theme::accent_active(),
         &title,
@@ -407,20 +411,7 @@ pub(crate) fn bus_strip(
         |ui, content_h| {
             let (dev_h, meter_h) = strip_metrics(content_h, true);
             section(ui, dev_h, egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                ui.horizontal(|ui| {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let del_resp = icon_button(
-                            ui,
-                            egui_material_icons::icons::ICON_DELETE.codepoint,
-                            crate::theme::danger_text(),
-                        );
-                        crate::widgets::hint::hover(ui.ctx(), &del_resp, t!("hint.mix.remove_bus"));
-                        if del_resp.clicked() {
-                            actions.push(MixAction::RemoveBus { bus });
-                        }
-                    });
-                });
-                device_chain(ui, target, &view, None, &[], dev_h - BTN, actions);
+                device_chain(ui, target, &view, None, &[], dev_h, actions);
             });
             ui.add_space(GAP);
             section(
@@ -477,6 +468,38 @@ pub(crate) fn bus_strip(
             );
         },
     );
+
+    // 色带行右侧：删除总线按钮（与标题同一行）。图标取色与色带文字同源
+    // （色带对比色），悬停转危险色。
+    let header = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), HEADER_H));
+    let del_rect = egui::Rect::from_center_size(
+        egui::pos2(header.max.x - PAD_X - 6.0, header.center().y),
+        egui::vec2(14.0, 14.0),
+    );
+    let del_resp = ui.interact(
+        del_rect,
+        ui.id().with(("mix_bus_remove", bus)),
+        egui::Sense::click(),
+    );
+    let del_color = if del_resp.hovered() {
+        crate::theme::danger_text_bright()
+    } else {
+        crate::theme::contrast_text(crate::theme::accent_active())
+    };
+    ui.painter().text(
+        del_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        egui_material_icons::icons::ICON_DELETE.codepoint,
+        egui::FontId::new(
+            crate::theme::ICON_FONT_SM,
+            egui_material_icons::icons::ICON_DELETE.font_family(),
+        ),
+        del_color,
+    );
+    crate::widgets::hint::hover(ui.ctx(), &del_resp, t!("hint.mix.remove_bus"));
+    if del_resp.clicked() {
+        actions.push(MixAction::RemoveBus { bus });
+    }
 }
 
 /// 主输出条：设备链 + dB 读数 + 电平/推子（无 M/S/声像/发送）。
@@ -899,8 +922,8 @@ fn add_row(ui: &mut egui::Ui, hint: impl Into<String>) -> bool {
     resp.clicked()
 }
 
-/// 效果发送区（独占一区，竖向滚动）：**每条总线一行**（旋钮 + 「FX n」），
-/// 超出显示区（一行高）的部分竖向滚动查看；无总线时保留一个 FX 1 占位
+/// 效果发送区（独占一区，竖向滚动）：**每条总线一行**（旋钮 + 「BUS n」），
+/// 超出显示区（一行高）的部分竖向滚动查看；无总线时保留一个 BUS 1 占位
 /// （首次拖动自动创建第一条总线）。所有通道的发送区共用同一个滚动位置
 /// （`ScrollArea` 用同一 id_salt）——滚动任一通道即整排同步滚动。
 /// 右键任一旋钮打开完整发送面板（含推子前/后、多总线）。
@@ -952,7 +975,7 @@ fn send_block(
                     });
                     ui.add_space(4.0);
                     ui.label(
-                        egui::RichText::new(format!("FX {}", b + 1))
+                        egui::RichText::new(format!("BUS {}", b + 1))
                             .size(crate::theme::SMALL_LABEL_FONT)
                             .color(crate::theme::text_secondary()),
                     );
@@ -1064,35 +1087,6 @@ fn toggle_button(
         label,
         egui::FontId::proportional(crate::theme::SMALL_FONT),
         fg,
-    );
-    resp
-}
-
-/// 方形图标按钮（删除等）；圆角矩形。
-fn icon_button(ui: &mut egui::Ui, codepoint: &str, color: egui::Color32) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(BTN, BTN), egui::Sense::click());
-    let bg = if resp.hovered() {
-        crate::theme::hover_color(crate::theme::btn_bg())
-    } else {
-        crate::theme::btn_bg()
-    };
-    let painter = ui.painter();
-    painter.rect_filled(rect, RADIUS, bg);
-    painter.rect_stroke(
-        rect,
-        RADIUS,
-        egui::Stroke::new(1.0, crate::theme::grid_sub_beat()),
-        egui::StrokeKind::Inside,
-    );
-    painter.text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        codepoint,
-        egui::FontId::new(
-            crate::theme::ICON_FONT_SM,
-            egui_material_icons::icons::ICON_DELETE.font_family(),
-        ),
-        color,
     );
     resp
 }
