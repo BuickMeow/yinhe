@@ -1153,3 +1153,10 @@ float.dock: "Панель устройств"
 float.mixer: "Микшер"
 hint.float_panel: "Открыть в отдельном окне"
 hint.float_panel_dock: "Вернуть в док"
+
+# ── View menu ──
+menu.view: "Вид"
+menu.float_pianoroll: "Пиано-ролл в отдельном окне"
+menu.float_dock: "Панель устройств в отдельном окне"
+menu.float_mixer: "Микшер в отдельном окне"
+hint.view_menu: "Меню «Вид» · панели в отдельных окнах"

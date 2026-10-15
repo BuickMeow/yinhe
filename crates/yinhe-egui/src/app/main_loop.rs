@@ -318,6 +318,10 @@ impl eframe::App for App {
                     self.active_tool = tool;
                     continue;
                 }
+                MenuAction::ToggleFloatPanel(kind) => {
+                    self.float_switches().toggle(ui.ctx(), kind);
+                    continue;
+                }
                 MenuAction::OpenRecent(path) => {
                     self.open_recent_file(&path);
                     continue;
@@ -654,6 +658,9 @@ impl eframe::App for App {
                 pr: pr_bar,
                 master_meter,
                 selection_available,
+                float_pianoroll: self.float_pianoroll,
+                float_dock: self.float_bottom_dock,
+                float_mixer: self.float_mixer,
             },
         );
 
@@ -742,6 +749,11 @@ impl eframe::App for App {
         // ── Handle 选择动作（传输栏选择按钮）──
         if let Some(action) = transport_response.selection_action {
             self.handle_selection_action(action);
+        }
+
+        // ── Handle 视图菜单：面板浮动/收回切换 ──
+        if let Some(kind) = transport_response.pending_view_action {
+            self.float_switches().toggle(ui.ctx(), kind);
         }
 
         // ── Handle file menu actions ──

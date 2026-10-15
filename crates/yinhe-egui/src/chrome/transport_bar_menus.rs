@@ -1,13 +1,18 @@
 use crate::audio_settings::AudioSettings;
 use crate::file_loader::FileLoader;
-use crate::widgets::action_menu::{ActionMenuExtra, show_action_menu};
+use crate::widgets::action_menu::{
+    ActionMenuExtra, PopupRow, PopupRowSpec, measure_menu_width, popup_menu_row, show_action_menu,
+};
 use eframe::egui;
+use rust_i18n::t;
 
 use super::transport_bar_actions::{
-    EDIT_GROUPS, EditAction, FILE_GROUPS, FileAction, PlayActions, PlayMenuAction,
+    EDIT_GROUPS, EditAction, FILE_GROUPS, FileAction, PlayActions, PlayMenuAction, VIEW_GROUPS,
 };
 use super::transport_bar_recent::{recent_files_section, recent_parent_width};
 use crate::view_interaction::FollowMode;
+
+use super::mode_bar::PanelKind;
 
 const RECENT_SUBMENU_OPEN_ID: &str = "recent_files_submenu_open";
 
@@ -160,4 +165,50 @@ pub fn show_play_menu(
             PlayMenuAction::Follow(mode, _) => **follow_mode = mode,
         }
     }
+}
+
+/// 「视图」菜单：底部面板泊出为独立窗口 / 收回停靠（勾选态 = 当前浮动）。
+pub fn show_view_menu(
+    button: &egui::Response,
+    keybindings: &yinhe_editor_core::shortcuts::Keybindings,
+    floats: (bool, bool, bool),
+    has_active: bool,
+    pending_action: &mut Option<PanelKind>,
+) {
+    let (fp, fd, fm) = floats;
+    let selected = |kind: PanelKind| match kind {
+        PanelKind::Pianoroll => fp,
+        PanelKind::Dock => fd,
+        PanelKind::Mixer => fm,
+    };
+    let width = measure_menu_width(&button.ctx, &VIEW_GROUPS, keybindings);
+    egui::Popup::from_toggle_button_response(button)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .width(width)
+        .show(|ui| {
+            ui.spacing_mut().item_spacing.y = 4.0;
+            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.set_min_width(width);
+            ui.set_max_width(width);
+            for &kind in &PanelKind::ALL {
+                let (resp, _) = popup_menu_row(
+                    ui,
+                    PopupRowSpec {
+                        icon: kind.icon(),
+                        label: &t!(kind.label_key()),
+                        shortcut: None,
+                        enabled: has_active,
+                        selected: selected(kind),
+                        accent: None,
+                        pin: None,
+                        pin_index: None,
+                        chevron: false,
+                    },
+                );
+                if resp.clicked() && has_active {
+                    *pending_action = Some(kind);
+                    ui.close();
+                }
+            }
+        });
 }

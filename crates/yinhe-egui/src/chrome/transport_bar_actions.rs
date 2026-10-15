@@ -405,6 +405,53 @@ pub struct PlayActions {
     pub set_automation_write: Option<bool>,
 }
 
+/// 「视图」菜单：底部面板泊出为独立窗口 / 收回停靠。
+/// 直接复用 [`PanelKind`](crate::chrome::mode_bar::PanelKind)，
+/// 菜单层只补充 label/icon 映射（下方 `PopupRow` impl）。
+impl PopupRow for crate::chrome::mode_bar::PanelKind {
+    fn pinned_index(self) -> usize {
+        match self {
+            crate::chrome::mode_bar::PanelKind::Pianoroll => 0,
+            crate::chrome::mode_bar::PanelKind::Dock => 1,
+            crate::chrome::mode_bar::PanelKind::Mixer => 2,
+        }
+    }
+
+    /// 浮动开关是勾选式切换，不需要图钉。
+    fn has_pin(self) -> bool {
+        false
+    }
+
+    /// 无快捷键。
+    fn action_id(self) -> &'static str {
+        ""
+    }
+
+    fn icon(self) -> egui_material_icons::MaterialIcon {
+        match self {
+            crate::chrome::mode_bar::PanelKind::Pianoroll => ICON_PIANO,
+            crate::chrome::mode_bar::PanelKind::Dock => ICON_DOCK_TO_RIGHT,
+            crate::chrome::mode_bar::PanelKind::Mixer => ICON_TUNE,
+        }
+    }
+
+    fn label_key(self) -> &'static str {
+        match self {
+            crate::chrome::mode_bar::PanelKind::Pianoroll => "menu.float_pianoroll",
+            crate::chrome::mode_bar::PanelKind::Dock => "menu.float_dock",
+            crate::chrome::mode_bar::PanelKind::Mixer => "menu.float_mixer",
+        }
+    }
+
+    fn is_enabled(self, has_active: bool, _loading: bool) -> bool {
+        has_active
+    }
+}
+
+/// 「视图」菜单分组（单组三行）。
+pub const VIEW_GROUPS: [&[crate::chrome::mode_bar::PanelKind]; 1] =
+    [&crate::chrome::mode_bar::PanelKind::ALL];
+
 /// 传输栏上下文与响应
 pub struct TransportContext<'a> {
     pub file_loader: &'a mut crate::file_loader::FileLoader,
@@ -425,6 +472,10 @@ pub struct TransportContext<'a> {
     pub master_meter: ((f32, f32), (f32, f32)),
     /// 当前是否存在 PR 框选（决定选择动作按钮是否可用；None 文档 = false）。
     pub selection_available: bool,
+    /// 底部面板当前浮动状态（视图菜单勾选态显示）。
+    pub float_pianoroll: bool,
+    pub float_dock: bool,
+    pub float_mixer: bool,
 }
 
 pub struct TransportResponse {
@@ -443,6 +494,8 @@ pub struct TransportResponse {
     pub pending_file_action: Option<FileAction>,
     pub pending_edit_action: Option<EditAction>,
     pub pending_open_path: Option<String>,
+    /// 「视图」菜单：面板浮动/收回切换（None = 未点击）。
+    pub pending_view_action: Option<crate::chrome::mode_bar::PanelKind>,
 }
 
 /// 文件/编辑分组常量

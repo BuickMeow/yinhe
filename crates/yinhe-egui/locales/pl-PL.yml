@@ -1154,3 +1154,10 @@ float.dock: "Dok urządzeń"
 float.mixer: "Mikser"
 hint.float_panel: "Pokaż w osobnym oknie"
 hint.float_panel_dock: "Wróć do doku"
+
+# ── View menu ──
+menu.view: "Widok"
+menu.float_pianoroll: "Pianoroll w osobnym oknie"
+menu.float_dock: "Dok urządzeń w osobnym oknie"
+menu.float_mixer: "Mikser w osobnym oknie"
+hint.view_menu: "Menu Widok · panele w osobnych oknach"

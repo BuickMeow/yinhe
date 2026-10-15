@@ -6,7 +6,7 @@ use crate::widgets::action_menu::pinned_action_buttons;
 use crate::widgets::timecode::show_timecode_display;
 
 use super::transport_bar_actions::{PlayActions, PlayMenuAction};
-use super::transport_bar_menus::{show_edit_menu, show_file_menu, show_play_menu};
+use super::transport_bar_menus::{show_edit_menu, show_file_menu, show_play_menu, show_view_menu};
 use super::transport_bar_pr;
 
 pub use super::transport_bar_actions::{
@@ -27,6 +27,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
     let mut pending_file_action = None;
     let mut pending_edit_action = None;
     let mut pending_open_path = None;
+    let mut pending_view_action = None;
     let mut set_orientation = None;
     let mut selection_action = None;
     let mut timecode_events: Vec<crate::widgets::timecode::TimecodeEvent> = Vec::new();
@@ -167,6 +168,19 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                         PlayMenuAction::Follow(..) => unreachable!("跟随档无图钉"),
                     }
                 }
+
+                // ── 视图菜单（底部面板泊出为独立窗口 / 收回停靠）──
+                let view_btn = menu_button(ui, "view_menu", ICON_OPEN_IN_NEW, btn_size);
+                if view_btn.hovered() {
+                    hovered_hint = Some(t!("hint.view_menu").to_string());
+                }
+                show_view_menu(
+                    &view_btn,
+                    &ctx.settings.keybindings,
+                    (ctx.float_pianoroll, ctx.float_dock, ctx.float_mixer),
+                    has_active,
+                    &mut pending_view_action,
+                );
 
                 // ── 工具区已迁移到左侧工具栏（见 chrome::tool_bar）──
 
@@ -320,6 +334,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
         pending_file_action,
         pending_edit_action,
         pending_open_path,
+        pending_view_action,
     }
 }
 

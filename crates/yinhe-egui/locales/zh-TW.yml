@@ -1154,3 +1154,10 @@ float.dock: "設備列"
 float.mixer: "混音台"
 hint.float_panel: "浮動為獨立視窗"
 hint.float_panel_dock: "收回停靠"
+
+# ── View menu ──
+menu.view: "檢視"
+menu.float_pianoroll: "浮動鋼琴卷簾"
+menu.float_dock: "浮動設備列"
+menu.float_mixer: "浮動混音台"
+hint.view_menu: "檢視選單 · 面板浮動為獨立視窗"

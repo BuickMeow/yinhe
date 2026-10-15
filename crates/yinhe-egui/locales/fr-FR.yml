@@ -1149,3 +1149,10 @@ float.dock: "Dock d'appareils"
 float.mixer: "Console de mixage"
 hint.float_panel: "Afficher dans une fenêtre séparée"
 hint.float_panel_dock: "Rattacher au dock"
+
+# ── View menu ──
+menu.view: "Affichage"
+menu.float_pianoroll: "Détacher le piano roll"
+menu.float_dock: "Détacher le dock d'appareils"
+menu.float_mixer: "Détacher la console de mixage"
+hint.view_menu: "Menu Affichage · détacher les panneaux"

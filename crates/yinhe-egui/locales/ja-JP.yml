@@ -1159,3 +1159,10 @@ float.dock: "デバイスドック"
 float.mixer: "ミキサー"
 hint.float_panel: "独立ウィンドウで表示"
 hint.float_panel_dock: "ドックに戻す"
+
+# ── View menu ──
+menu.view: "表示"
+menu.float_pianoroll: "ピアノロールを独立ウィンドウで表示"
+menu.float_dock: "デバイスドックを独立ウィンドウで表示"
+menu.float_mixer: "ミキサーを独立ウィンドウで表示"
+hint.view_menu: "表示メニュー · パネルを独立ウィンドウに"

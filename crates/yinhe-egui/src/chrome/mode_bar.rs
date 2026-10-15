@@ -270,7 +270,7 @@ pub fn show(
                             hovered_hint = Some(t!("hint.pr_toggle").to_string());
                         }
                         panel_buttons.push(PanelButtonInfo {
-                            target: FloatBubbleTarget::Pianoroll,
+                            target: PanelKind::Pianoroll,
                             rect: piano_resp.rect,
                             hovered: piano_resp.hovered(),
                             secondary_clicked: piano_resp.secondary_clicked(),
@@ -313,7 +313,7 @@ pub fn show(
                             hovered_hint = Some(t!("hint.dock_toggle").to_string());
                         }
                         panel_buttons.push(PanelButtonInfo {
-                            target: FloatBubbleTarget::Dock,
+                            target: PanelKind::Dock,
                             rect: dock_resp.rect,
                             hovered: dock_resp.hovered(),
                             secondary_clicked: dock_resp.secondary_clicked(),
@@ -353,7 +353,7 @@ pub fn show(
                             hovered_hint = Some(t!("hint.mixer_toggle").to_string());
                         }
                         panel_buttons.push(PanelButtonInfo {
-                            target: FloatBubbleTarget::Mixer,
+                            target: PanelKind::Mixer,
                             rect: mixer_resp.rect,
                             hovered: mixer_resp.hovered(),
                             secondary_clicked: mixer_resp.secondary_clicked(),
@@ -490,17 +490,95 @@ pub fn show(
     );
 }
 
-/// 浮动气泡指向的面板（模式栏三个面板按钮）。
+/// 底部可浮动面板种类（模式栏气泡 / 视图菜单 / macOS 原生菜单共用）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum FloatBubbleTarget {
+pub(crate) enum PanelKind {
     Pianoroll,
     Dock,
     Mixer,
 }
 
+impl PanelKind {
+    /// 全部可浮动面板（视图菜单/原生菜单遍历用）。
+    pub const ALL: [PanelKind; 3] = [Self::Pianoroll, Self::Dock, Self::Mixer];
+}
+
+/// 浮动开关的借用集合（`App` 字段或模式栏参数）。
+/// 集中「泊出 / 收回停靠」逻辑，避免气泡与菜单各自重复 match 分支。
+pub(crate) struct FloatSwitches<'a> {
+    pub show_pianoroll: &'a mut bool,
+    pub float_pianoroll: &'a mut bool,
+    pub show_dock: &'a mut bool,
+    pub float_dock: &'a mut bool,
+    pub show_mixer: &'a mut bool,
+    pub float_mixer: &'a mut bool,
+}
+
+impl FloatSwitches<'_> {
+    /// 该面板当前是否处于浮动形态。
+    pub(crate) fn is_floating(&self, kind: PanelKind) -> bool {
+        match kind {
+            PanelKind::Pianoroll => *self.float_pianoroll,
+            PanelKind::Dock => *self.float_dock,
+            PanelKind::Mixer => *self.float_mixer,
+        }
+    }
+
+    /// 泊出：从停靠形态移走并拉前台（浮动不占主窗口空间，不触发三选一互斥）。
+    pub(crate) fn float(&mut self, ctx: &egui::Context, kind: PanelKind) {
+        match kind {
+            PanelKind::Pianoroll => {
+                *self.show_pianoroll = false;
+                *self.float_pianoroll = true;
+                crate::chrome::dialog::raise_viewport(ctx, crate::app::floating::pianoroll_id());
+            }
+            PanelKind::Dock => {
+                *self.show_dock = false;
+                *self.float_dock = true;
+                crate::chrome::dialog::raise_viewport(ctx, crate::app::floating::dock_id());
+            }
+            PanelKind::Mixer => {
+                *self.show_mixer = false;
+                *self.float_mixer = true;
+                crate::chrome::dialog::raise_viewport(ctx, crate::app::floating::mixer_id());
+            }
+        }
+    }
+
+    /// 收回停靠：关窗口 + 停靠可见（与其它停靠面板三选一互斥）。
+    pub(crate) fn dock_back(&mut self, ctx: &egui::Context, kind: PanelKind) {
+        match kind {
+            PanelKind::Pianoroll => {
+                *self.float_pianoroll = false;
+                set_pianoroll_visible(self.show_pianoroll, self.show_dock, self.show_mixer, true);
+                crate::chrome::dialog::close_viewport(ctx, crate::app::floating::pianoroll_id());
+            }
+            PanelKind::Dock => {
+                *self.float_dock = false;
+                set_dock_visible(self.show_pianoroll, self.show_dock, self.show_mixer, true);
+                crate::chrome::dialog::close_viewport(ctx, crate::app::floating::dock_id());
+            }
+            PanelKind::Mixer => {
+                *self.float_mixer = false;
+                set_mixer_visible(self.show_pianoroll, self.show_dock, self.show_mixer, true);
+                crate::chrome::dialog::close_viewport(ctx, crate::app::floating::mixer_id());
+            }
+        }
+    }
+
+    /// 切换：未浮动 → 泊出；已浮动 → 收回停靠。
+    pub(crate) fn toggle(&mut self, ctx: &egui::Context, kind: PanelKind) {
+        if self.is_floating(kind) {
+            self.dock_back(ctx, kind);
+        } else {
+            self.float(ctx, kind);
+        }
+    }
+}
+
 /// 面板按钮本帧信息（气泡触发与锚点定位用）。
 struct PanelButtonInfo {
-    target: FloatBubbleTarget,
+    target: PanelKind,
     rect: egui::Rect,
     hovered: bool,
     secondary_clicked: bool,
@@ -510,11 +588,11 @@ struct PanelButtonInfo {
 #[derive(Clone, Copy, Default)]
 struct FloatBubbleState {
     /// 当前气泡指向的面板（None = 未显示）。
-    target: Option<FloatBubbleTarget>,
+    target: Option<PanelKind>,
     /// 右键固定：不随指针移出关闭（点外部 / Esc / 再次右键关闭）。
     pinned: bool,
     /// 悬停候选（指针停在按钮上、等待延迟计时）。
-    candidate: Option<FloatBubbleTarget>,
+    candidate: Option<PanelKind>,
     candidate_since: f64,
     /// 指针离开按钮与气泡后的隐藏计时起点（None = 不应隐藏）。
     hide_since: Option<f64>,
@@ -609,11 +687,16 @@ fn float_bubble(
             ctx.data_mut(|d| d.insert_temp(state_id, FloatBubbleState::default()));
             return;
         };
-        let floating = match target {
-            FloatBubbleTarget::Pianoroll => *float_pianoroll,
-            FloatBubbleTarget::Dock => *float_bottom_dock,
-            FloatBubbleTarget::Mixer => *float_mixer,
+        // 浮动开关借用集合（图标状态与点击动作共用同一来源）。
+        let mut sw = FloatSwitches {
+            show_pianoroll: &mut *show_pianoroll_in_arrange,
+            float_pianoroll: &mut *float_pianoroll,
+            show_dock: &mut *show_bottom_dock,
+            float_dock: &mut *float_bottom_dock,
+            show_mixer: &mut *show_mixer_panel,
+            float_mixer: &mut *float_mixer,
         };
+        let floating = sw.is_floating(target);
         // 气泡在按钮正上方居中；靠窗口边缘时水平收进。
         let win = ctx.input(|i| i.viewport().inner_rect);
         let cx = match win {
@@ -705,58 +788,9 @@ fn float_bubble(
 
         // 点击图标：执行浮动/收回，并关闭气泡。
         if let Some(act) = area.inner {
-            match (target, act) {
-                (FloatBubbleTarget::Pianoroll, BubbleAction::Float) => {
-                    *show_pianoroll_in_arrange = false;
-                    *float_pianoroll = true;
-                    crate::chrome::dialog::raise_viewport(
-                        ctx,
-                        crate::app::floating::pianoroll_id(),
-                    );
-                }
-                (FloatBubbleTarget::Pianoroll, BubbleAction::DockBack) => {
-                    *float_pianoroll = false;
-                    set_pianoroll_visible(
-                        show_pianoroll_in_arrange,
-                        show_bottom_dock,
-                        show_mixer_panel,
-                        true,
-                    );
-                    crate::chrome::dialog::close_viewport(
-                        ctx,
-                        crate::app::floating::pianoroll_id(),
-                    );
-                }
-                (FloatBubbleTarget::Dock, BubbleAction::Float) => {
-                    *show_bottom_dock = false;
-                    *float_bottom_dock = true;
-                    crate::chrome::dialog::raise_viewport(ctx, crate::app::floating::dock_id());
-                }
-                (FloatBubbleTarget::Dock, BubbleAction::DockBack) => {
-                    *float_bottom_dock = false;
-                    set_dock_visible(
-                        show_pianoroll_in_arrange,
-                        show_bottom_dock,
-                        show_mixer_panel,
-                        true,
-                    );
-                    crate::chrome::dialog::close_viewport(ctx, crate::app::floating::dock_id());
-                }
-                (FloatBubbleTarget::Mixer, BubbleAction::Float) => {
-                    *show_mixer_panel = false;
-                    *float_mixer = true;
-                    crate::chrome::dialog::raise_viewport(ctx, crate::app::floating::mixer_id());
-                }
-                (FloatBubbleTarget::Mixer, BubbleAction::DockBack) => {
-                    *float_mixer = false;
-                    set_mixer_visible(
-                        show_pianoroll_in_arrange,
-                        show_bottom_dock,
-                        show_mixer_panel,
-                        true,
-                    );
-                    crate::chrome::dialog::close_viewport(ctx, crate::app::floating::mixer_id());
-                }
+            match act {
+                BubbleAction::Float => sw.float(ctx, target),
+                BubbleAction::DockBack => sw.dock_back(ctx, target),
             }
             st = FloatBubbleState::default();
         }
@@ -836,7 +870,7 @@ mod tests {
             (false, false, false, false, false, false);
         let rect = egui::Rect::from_min_size(egui::pos2(100.0, 700.0), egui::vec2(20.0, 20.0));
         let mut buttons = vec![PanelButtonInfo {
-            target: FloatBubbleTarget::Pianoroll,
+            target: PanelKind::Pianoroll,
             rect,
             hovered: true,
             secondary_clicked: false,
@@ -873,7 +907,7 @@ mod tests {
         run(0.3, Vec::new(), &buttons);
         assert_eq!(
             state(&ctx).target,
-            Some(FloatBubbleTarget::Pianoroll),
+            Some(PanelKind::Pianoroll),
             "停留 0.25s 后应弹出气泡"
         );
         // 右键固定。

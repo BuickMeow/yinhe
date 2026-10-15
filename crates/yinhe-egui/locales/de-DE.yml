@@ -1149,3 +1149,10 @@ float.dock: "Geräte-Dock"
 float.mixer: "Mixer"
 hint.float_panel: "Als eigenes Fenster anzeigen"
 hint.float_panel_dock: "Zurück andocken"
+
+# ── View menu ──
+menu.view: "Ansicht"
+menu.float_pianoroll: "Klavierrolle als eigenes Fenster"
+menu.float_dock: "Geräte-Dock als eigenes Fenster"
+menu.float_mixer: "Mixer als eigenes Fenster"
+hint.view_menu: "Ansicht-Menü · Panels als eigenes Fenster"

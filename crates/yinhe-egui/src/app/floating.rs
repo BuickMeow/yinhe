@@ -40,6 +40,18 @@ pub(in crate::app) fn rect_to_arr(r: egui::Rect) -> [f32; 4] {
 }
 
 impl App {
+    /// 浮动开关的借用集合（模式栏气泡 / 视图菜单共用切换逻辑）。
+    pub(in crate::app) fn float_switches(&mut self) -> crate::chrome::mode_bar::FloatSwitches<'_> {
+        crate::chrome::mode_bar::FloatSwitches {
+            show_pianoroll: &mut self.show_pianoroll_in_arrange,
+            float_pianoroll: &mut self.float_pianoroll,
+            show_dock: &mut self.show_bottom_dock,
+            float_dock: &mut self.float_bottom_dock,
+            show_mixer: &mut self.show_mixer_panel,
+            float_mixer: &mut self.float_mixer,
+        }
+    }
+
     /// 每帧绘制浮动面板窗口（`show_main_content` 之后调用）。
     pub(in crate::app) fn show_floating_panels(&mut self, ctx: &egui::Context) {
         self.show_float_pianoroll(ctx);
