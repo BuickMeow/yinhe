@@ -257,7 +257,7 @@ impl App {
         }
 
         // ── 上方主视图与底部面板（钢琴卷帘/混音台）之间的分割条 ──
-        // ARRANGE：AR/PR（arr_split）；MIX：通道 AR/底部面板（mix_split）。
+        // ARRANGE：AR/PR（arr_split）；MIX：通道 AR/底部面板（mix_height）。
         if layout.arr_h > 0.0 && (has_piano || has_mixer) {
             let h_split_rect = egui::Rect::from_min_max(
                 egui::pos2(
@@ -274,18 +274,22 @@ impl App {
             if h_split_resp.dragged() {
                 let total_y = layout.remaining.size().y;
                 let delta = h_split_resp.drag_delta().y;
-                let ratio = ((layout.arr_h + delta) / total_y)
-                    .clamp(crate::theme::SPLIT_CLAMP_MIN, crate::theme::SPLIT_CLAMP_MAX);
                 if is_mix {
-                    self.mix_split = ratio;
+                    // 底部混音台高度（px）：向上拖（delta < 0）变高。
+                    let max_h = (total_y - crate::theme::MIN_ARR_HEIGHT - crate::theme::SPLIT_GAP)
+                        .max(crate::theme::MIN_ARR_HEIGHT);
+                    self.mix_height = (total_y - (layout.arr_h + delta) - crate::theme::SPLIT_GAP)
+                        .clamp(crate::theme::MIN_ARR_HEIGHT, max_h);
                 } else {
+                    let ratio = ((layout.arr_h + delta) / total_y)
+                        .clamp(crate::theme::SPLIT_CLAMP_MIN, crate::theme::SPLIT_CLAMP_MAX);
                     self.arr_split = ratio;
                 }
             }
             if h_split_resp.double_clicked() {
                 // 双击分割线 → 还原默认分割比例
                 if is_mix {
-                    self.mix_split = LayoutSettings::default().mix_split;
+                    self.mix_height = LayoutSettings::default().mix_height;
                 } else {
                     self.arr_split = LayoutSettings::default().arr_split;
                 }
@@ -1051,7 +1055,7 @@ impl App {
         l.show_bottom_dock = self.show_bottom_dock;
         l.bottom_dock_height = self.bottom_dock_height;
         l.show_mixer_panel = self.show_mixer_panel;
-        l.mix_split = self.mix_split;
+        l.mix_height = self.mix_height;
         l.right_panel_layout = self.right_panel_layout.clone();
         if self.layout_needs_save {
             self.audio_settings.save();

@@ -122,8 +122,8 @@ pub struct App {
     pub(crate) bottom_dock_height: f32,
     /// MIX 底部是否显示混音台面板（钢琴卷帘/设备链/混音台三选一之一，持久化）。
     pub(crate) show_mixer_panel: bool,
-    /// MIX 上下分割比例（通道 AR 高度占比，持久化）。
-    pub(crate) mix_split: f32,
+    /// MIX 底部混音台面板高度（px，拖拽调整后持久化）。
+    pub(crate) mix_height: f32,
     /// 混音台编辑的 undo 暂存：首次变更记录 (文档 id, 起点快照, 标签)，
     /// 指针空闲后合并提交为一条 undo（一次拖动/一组连续操作 = 一条撤销）。
     pub(crate) mixer_undo_pending: Option<(u64, Box<yinhe_mixer::MixerParams>, String)>,
@@ -344,7 +344,7 @@ impl App {
             show_bottom_dock: audio_settings.layout.show_bottom_dock,
             bottom_dock_height: audio_settings.layout.bottom_dock_height,
             show_mixer_panel: audio_settings.layout.show_mixer_panel,
-            mix_split: audio_settings.layout.mix_split,
+            mix_height: audio_settings.layout.mix_height,
             mixer_undo_pending: None,
             dock_selected: None,
             dock_context: None,

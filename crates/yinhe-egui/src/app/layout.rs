@@ -83,12 +83,13 @@ impl App {
         let total = remaining.size();
         let arr_h = if has_arr {
             if has_bottom {
-                let split = if is_mix {
-                    self.mix_split
+                if is_mix {
+                    // MIX：底部混音台高度固定（px，可拖拽调整），上方通道 AR 占剩余。
+                    (total.y - self.mix_height - crate::theme::SPLIT_GAP)
+                        .max(crate::theme::MIN_ARR_HEIGHT)
                 } else {
-                    self.arr_split
-                };
-                (total.y * split).max(crate::theme::MIN_ARR_HEIGHT)
+                    (total.y * self.arr_split).max(crate::theme::MIN_ARR_HEIGHT)
+                }
             } else {
                 total.y
             }
