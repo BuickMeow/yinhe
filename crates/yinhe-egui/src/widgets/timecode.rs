@@ -57,6 +57,8 @@ pub struct TimecodeData<'a> {
     pub doc: &'a Document,
     /// 聚焦视图的量化（AR 或 PR）。
     pub quantize: QuantizePreset,
+    /// Auto（自适应）当前解析出的具体网格；非 Auto 时 == `quantize`。
+    pub quantize_effective: QuantizePreset,
     /// 量化属于 PR（true）还是 AR（false）——显示 `PR 1/16` / `AR 1/4` 前缀。
     pub quantize_is_pr: bool,
     /// 总输出电平显示值 `((level L,R), (hold L,R))`（第四栏竖表）。
@@ -353,11 +355,13 @@ pub fn show_timecode_display(
     // ── 量化（列 2 上；`AR 1/4` / `PR 1/16`，与拍号区分）──
     {
         let quantize = data.quantize;
-        let label = format!(
-            "{} {}",
-            if data.quantize_is_pr { "PR" } else { "AR" },
-            quantize.label()
-        );
+        let prefix = if data.quantize_is_pr { "PR" } else { "AR" };
+        // Auto（自适应）显示当前解析出的网格，让用户知道实际吸到哪一档。
+        let label = if quantize == QuantizePreset::Auto {
+            format!("{} Auto ({})", prefix, data.quantize_effective.label())
+        } else {
+            format!("{} {}", prefix, quantize.label())
+        };
         let cell_rect = cell(2, 0);
         ui.scope_builder(egui::UiBuilder::new().max_rect(cell_rect), |ui| {
             ui.with_layout(

@@ -14,6 +14,32 @@ pub fn show(
     ui.spacing_mut().item_spacing.x = 4.0;
     ui.set_min_width(200.0);
     ui.set_max_width(200.0);
+
+    // ── 特殊档位：关闭吸附 / 自适应 ──
+    if ui
+        .add(crate::widgets::menu::menu_item_button(
+            ui,
+            current == QuantizePreset::Off,
+            t!("quantize.off"),
+        ))
+        .clicked()
+    {
+        *pending = Some(QuantizePreset::Off);
+        ui.close();
+    }
+    if ui
+        .add(crate::widgets::menu::menu_item_button(
+            ui,
+            current == QuantizePreset::Auto,
+            t!("quantize.auto"),
+        ))
+        .clicked()
+    {
+        *pending = Some(QuantizePreset::Auto);
+        ui.close();
+    }
+    ui.separator();
+
     for preset in QuantizePreset::ALL {
         if ui
             .add(crate::widgets::menu::menu_item_button(

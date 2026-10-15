@@ -192,16 +192,17 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 if let Some(doc) = ctx.doc {
                     // ── 时间码（四列居中：BPM/拍号+PPQ | 位置/时间 | 量化/调式 | 总输出电平）──
                     if let Some(pr) = ctx.pr.as_ref() {
-                        let quantize = if ctx.focus_is_pianoroll {
-                            pr.quantize
+                        let (quantize, quantize_effective) = if ctx.focus_is_pianoroll {
+                            (pr.quantize, pr.quantize_effective)
                         } else {
-                            ctx.quantize_arrange
+                            (ctx.quantize_arrange, ctx.quantize_arrange_effective)
                         };
                         let (tc_rect, tc_events) = show_timecode_display(
                             ui,
                             crate::widgets::timecode::TimecodeData {
                                 doc,
                                 quantize,
+                                quantize_effective,
                                 quantize_is_pr: ctx.focus_is_pianoroll,
                                 master_meter: ctx.master_meter,
                             },

@@ -9,6 +9,7 @@ use eframe::egui;
 use rust_i18n::t;
 use yinhe_editor_core::audio_settings::LayoutSettings;
 use yinhe_editor_core::batch_ops::summarize_selected;
+use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::time_format::{format_tick_bar_beat_with_time_sig, measure_ticks};
 use yinhe_types::{AnchorSelRect, NoteSource, VelocityEdit};
 
@@ -654,9 +655,19 @@ impl App {
                     .filter(|(i, _)| pr_visible.get(*i).copied().unwrap_or(false))
                     .flat_map(|(_, t)| t.automation_lanes.iter())
                     .collect();
-                // 新建音符默认长度：该轨 gate 记忆，无记忆回退量化间隔
+                // 新建音符默认长度：该轨 gate 记忆，无记忆回退量化间隔。
+                // 量化档位先解析：Auto（自适应）按当前 PR 缩放出具体网格；
+                // Off（关闭吸附）没有网格，默认长度回退 1/16 音符间隔。
+                let pr_quantize = doc
+                    .edit
+                    .quantize_pianoroll
+                    .resolved(doc.edit.pianoroll_view.base.pixels_per_tick, tpb);
                 let default_gate = write_track.map(|t| {
-                    let fallback = doc.edit.quantize_pianoroll.tick_interval(tpb);
+                    let fallback = if pr_quantize == QuantizePreset::Off {
+                        QuantizePreset::Fraction(1, 16).tick_interval(tpb)
+                    } else {
+                        pr_quantize.tick_interval(tpb)
+                    };
                     doc.edit.default_gate(t, fallback)
                 });
                 let auto_ctx = Some(piano_view::AutomationPanelsCtx {
@@ -699,7 +710,7 @@ impl App {
                     &doc.edit.track_cache.colors,
                     &mut doc.edit.cursor_tick,
                     is_playing,
-                    doc.edit.quantize_pianoroll,
+                    pr_quantize,
                     tpb,
                     Some((tpb, ts_num, ts_den, &ts_events)),
                     &doc.data.model.conductor.key_sig,

@@ -584,6 +584,8 @@ pencil.tick: "Тик %{n}"
 pencil.gate: "Gate %{n}"
 
 # ── Quantize ──
+quantize.auto: "Авто (адаптивно)"
+quantize.off: "Выкл. (без привязки)"
 quantize.absolute: "%{n} тик"
 quantize.custom_tick: "Свой тик"
 quantize.custom_fraction: "Своя доля"

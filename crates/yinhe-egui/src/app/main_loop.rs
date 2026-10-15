@@ -630,6 +630,10 @@ impl eframe::App for App {
             );
             transport_bar::PrBarData {
                 quantize: doc.edit.quantize_pianoroll,
+                quantize_effective: doc.edit.quantize_pianoroll.resolved(
+                    doc.edit.pianoroll_view.base.pixels_per_tick,
+                    doc.data.model.meta.ppq,
+                ),
                 chord,
             }
         });
@@ -654,6 +658,14 @@ impl eframe::App for App {
                 focus_is_pianoroll: self.view_focus == crate::app::ViewFocus::Pianoroll,
                 quantize_arrange: active_doc
                     .map(|d| d.edit.quantize_arrange)
+                    .unwrap_or_default(),
+                quantize_arrange_effective: active_doc
+                    .map(|d| {
+                        d.edit.quantize_arrange.resolved(
+                            d.edit.arrange_view.base.pixels_per_tick,
+                            d.data.model.meta.ppq,
+                        )
+                    })
                     .unwrap_or_default(),
                 pr: pr_bar,
                 master_meter,

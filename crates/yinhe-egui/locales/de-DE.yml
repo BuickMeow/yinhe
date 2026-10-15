@@ -584,6 +584,8 @@ pencil.tick: "Tick %{n}"
 pencil.gate: "Gate %{n}"
 
 # ── Quantize ──
+quantize.auto: "Automatisch (adaptiv)"
+quantize.off: "Aus (ohne Einrasten)"
 quantize.absolute: "%{n} Tick"
 quantize.custom_tick: "Benutzerdefinierter Tick"
 quantize.custom_fraction: "Benutzerdefinierter Bruch"

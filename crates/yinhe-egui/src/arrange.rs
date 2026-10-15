@@ -258,6 +258,11 @@ pub fn show(
         let (def_num, def_den) = model.tempo_map.time_sig_default;
         let sig_events = model.tempo_map.time_sig_events.as_slice();
         let markers = model.conductor.markers.as_slice();
+        // 量化档位解析：Auto（自适应）按当前 AR 缩放出具体网格。
+        let ar_quantize = doc
+            .edit
+            .quantize_arrange
+            .resolved(doc.edit.arrange_view.base.pixels_per_tick, tpb);
         let outcome = crate::widgets::time_ruler::interactive_ruler(
             ui,
             ruler_rect,
@@ -270,7 +275,7 @@ pub fn show(
             |tick| {
                 crate::view_interaction::snap_tick(
                     tick,
-                    doc.edit.quantize_arrange,
+                    ar_quantize,
                     tpb,
                     Some((tpb, def_num, def_den, sig_events)),
                 )
@@ -493,7 +498,10 @@ pub fn show(
             track_visible: &doc.edit.track_visible,
             track_colors: &doc.edit.track_cache.colors,
             track_info: &doc.edit.track_cache.info,
-            quantize: doc.edit.quantize_arrange,
+            quantize: doc
+                .edit
+                .quantize_arrange
+                .resolved(doc.edit.arrange_view.base.pixels_per_tick, model.meta.ppq),
             ppq: model.meta.ppq,
             bar_line_data: Some((
                 model.meta.ppq,

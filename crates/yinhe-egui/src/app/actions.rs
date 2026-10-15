@@ -434,9 +434,11 @@ impl App {
             return 1;
         };
         let doc = &self.workspace.documents[idx];
+        let ppq = doc.data.model.meta.ppq;
         doc.edit
             .quantize_pianoroll
-            .tick_interval(doc.data.model.meta.ppq)
+            .resolved(doc.edit.pianoroll_view.base.pixels_per_tick, ppq)
+            .tick_interval(ppq)
             .max(1)
     }
 

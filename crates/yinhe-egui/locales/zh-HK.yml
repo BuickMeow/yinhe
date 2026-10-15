@@ -504,6 +504,8 @@ pencil.tick: "tick %{n}"
 pencil.gate: "時值 %{n}"
 
 # ── 量化 ──
+quantize.auto: "自動（隨縮放）"
+quantize.off: "關閉吸附"
 quantize.absolute: "%{n} tick"
 quantize.custom_tick: "自訂 tick"
 quantize.custom_fraction: "自訂時值"
