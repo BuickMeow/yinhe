@@ -117,54 +117,6 @@ fn insert_view<'a>(
     }
 }
 
-/// 顶部工具条：扫描插件 + 添加总线 + 状态信息。
-pub(crate) fn show_toolbar(app: &mut App, ui: &mut egui::Ui, actions: &mut Vec<MixAction>) {
-    ui.horizontal(|ui| {
-        let scan_resp = crate::widgets::flat::flat_button(ui, t!("mix.scan_plugins"));
-        crate::widgets::hint::hover(ui.ctx(), &scan_resp, t!("hint.mix.scan_plugins"));
-        if scan_resp.clicked() {
-            actions.push(MixAction::RescanPlugins);
-        }
-        let add_bus_resp = crate::widgets::flat::flat_button(ui, t!("mix.add_bus"));
-        crate::widgets::hint::hover(ui.ctx(), &add_bus_resp, t!("hint.mix.add_bus"));
-        if add_bus_resp.clicked() {
-            actions.push(MixAction::AddBus);
-        }
-        if app.mix.scan_in_progress {
-            ui.label(
-                egui::RichText::new(t!("mix.scanning"))
-                    .small()
-                    .color(crate::theme::text_secondary()),
-            );
-        } else if let Some(plugins) = &app.mix.scanned {
-            let effects = plugins.iter().filter(|p| p.is_effect).count();
-            ui.label(
-                egui::RichText::new(t!("mix.scan_status", count = effects))
-                    .small()
-                    .color(crate::theme::text_secondary()),
-            );
-            if app.mix.scan_errors > 0 {
-                ui.label(
-                    egui::RichText::new(t!("mix.scan_errors", count = app.mix.scan_errors))
-                        .small()
-                        .color(crate::theme::warning_gold()),
-                );
-            }
-        }
-        // 机架最近一次错误（加载/激活失败）。
-        if let Some(idx) = app.workspace.active_doc
-            && let Some(err) = app.mixer_racks.get(idx).and_then(|r| r.last_error.as_ref())
-        {
-            ui.label(
-                egui::RichText::new(err)
-                    .small()
-                    .color(crate::theme::danger_text()),
-            );
-        }
-    });
-    ui.separator();
-}
-
 /// 通道条外框：直角矩形 + 单层描边 + 顶部色带（写标题）。
 /// `add_contents` 在色带下方的内容区排布，参数为其可用高度。
 fn strip_frame(

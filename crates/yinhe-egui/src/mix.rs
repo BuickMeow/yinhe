@@ -16,6 +16,7 @@ pub(crate) mod param_panel;
 pub(crate) mod plugin_instance;
 pub(crate) mod rack;
 mod strip;
+mod tool_bar;
 
 use eframe::egui;
 use rust_i18n::t;
@@ -673,13 +674,21 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
     // 铺背景。
     ui.painter().rect_filled(rect, 0.0, crate::theme::app_bg());
 
+    // 左侧工具栏（PR 面板工具条同款）：从面板左缘扣出竖条，右侧为混音主体。
+    let tool_rect = egui::Rect::from_min_max(
+        rect.min,
+        egui::pos2(rect.min.x + crate::theme::TOOL_BAR_W, rect.max.y),
+    );
+    tool_bar::show(app, ui, tool_rect, &mut actions);
+
     ui.scope_builder(
         egui::UiBuilder::new()
-            .max_rect(rect)
+            .max_rect(egui::Rect::from_min_max(
+                egui::pos2(tool_rect.max.x, rect.min.y),
+                rect.max,
+            ))
             .layout(egui::Layout::top_down(egui::Align::LEFT)),
         |ui| {
-            strip::show_toolbar(app, ui, &mut actions);
-
             // 主体：左侧横向滚动通道条 + 右侧固定 Master。
             let master_w = strip::STRIP_WIDTH + 16.0;
             let body = ui.available_rect_before_wrap();
