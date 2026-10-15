@@ -899,9 +899,10 @@ fn add_row(ui: &mut egui::Ui, hint: impl Into<String>) -> bool {
     resp.clicked()
 }
 
-/// 效果发送区（横向滚动行）：**每条总线一个旋钮**（FX 1…FX n），无总线时保留
-/// 一个 FX 1 占位（首次拖动自动创建第一条总线）。所有通道的发送区共用同一个
-/// 横向滚动位置（`ScrollArea` 用同一 id_salt）——滚动任一通道即整排同步滚动。
+/// 效果发送区（独占一区，竖向滚动）：**每条总线一行**（旋钮 + 「FX n」），
+/// 超出显示区（一行高）的部分竖向滚动查看；无总线时保留一个 FX 1 占位
+/// （首次拖动自动创建第一条总线）。所有通道的发送区共用同一个滚动位置
+/// （`ScrollArea` 用同一 id_salt）——滚动任一通道即整排同步滚动。
 /// 右键任一旋钮打开完整发送面板（含推子前/后、多总线）。
 fn send_block(
     ui: &mut egui::Ui,
@@ -911,20 +912,14 @@ fn send_block(
     actions: &mut Vec<MixAction>,
 ) {
     let knobs = bus_count.max(1);
-    // 只允许横向滚动：让普通滚轮（y 分量）也能滚这条单方向区域，
-    // 并清空输入防止冒泡给父级。
-    ui.style_mut().always_scroll_the_only_direction = true;
-    egui::ScrollArea::horizontal()
+    egui::ScrollArea::vertical()
         // 同一 id_salt：全部通道条共享滚动偏移，滚动即整排同步
         .id_salt("mix_send_scroll")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.x = 0.0;
-            ui.horizontal(|ui| {
-                for b in 0..knobs {
-                    if b > 0 {
-                        ui.add_space(8.0);
-                    }
+            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+            for b in 0..knobs {
+                ui.horizontal(|ui| {
                     let send = sends.iter().find(|s| s.bus as usize == b);
                     let (amount, pre_fader) = send
                         .map(|s| (s.amount, s.pre_fader))
@@ -961,8 +956,8 @@ fn send_block(
                             .size(crate::theme::SMALL_LABEL_FONT)
                             .color(crate::theme::text_secondary()),
                     );
-                }
-            });
+                });
+            }
         });
 }
 
