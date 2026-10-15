@@ -299,12 +299,17 @@ pub(crate) fn pointer_hits(ui: &egui::Ui, rect: egui::Rect) -> bool {
 /// Returns true if the pointer is currently over a popup/menu or toast.
 /// When true, lower layers should not process pointer events to avoid click-through.
 pub(crate) fn pointer_over_popup(ctx: &egui::Context) -> bool {
-    if let Some(pos) = ctx.input(|i| i.pointer.hover_pos())
-        && let Some(layer) = ctx.layer_id_at(pos)
-    {
-        return matches!(layer.order, egui::Order::Foreground | egui::Order::Tooltip);
-    }
-    false
+    let pos = ctx.input(|i| i.pointer.hover_pos());
+    pos.is_some_and(|pos| overlay_at(ctx, pos))
+}
+
+/// 位置 `pos` 处是否有弹窗/浮层（Foreground/Tooltip）覆盖。
+///
+/// 该类浮层消费指针交互；视图交互与焦点判定用它排除"被遮挡的落点"
+/// （如点击下拉菜单项时，坐标仍在菜单下方的视图矩形内）。
+pub(crate) fn overlay_at(ctx: &egui::Context, pos: egui::Pos2) -> bool {
+    ctx.layer_id_at(pos)
+        .is_some_and(|layer| matches!(layer.order, egui::Order::Foreground | egui::Order::Tooltip))
 }
 
 // 已下沉至 yinhe-editor-core::quantize，薄壳 re-export 保持调用方不变
@@ -512,5 +517,33 @@ mod tests {
         // 100000 / 480 = 208.33 → round to 208 → 208*480 = 99840
         let result = snap_tick(100000.0, QuantizePreset::Fraction(1, 4), 480, None);
         assert_eq!(result, 99840.0);
+    }
+
+    /// 浮层判定回归：Foreground 层（下拉菜单/弹窗所在层）覆盖的坐标应被
+    /// 识别为 overlay；普通背景区域不是。修复"点击量化弹窗项误切聚焦视图"
+    /// 依赖该判定。
+    #[test]
+    fn overlay_at_detects_foreground_layer() {
+        let ctx = egui::Context::default();
+        let inside = egui::pos2(150.0, 130.0);
+        let outside = egui::pos2(10.0, 10.0);
+        // 前两帧：在 Foreground 层注册一块"弹窗"区域（层矩形与可见性下一帧生效）。
+        for _ in 0..2 {
+            ctx.run_ui(Default::default(), |ui| {
+                egui::Area::new(egui::Id::new("overlay_test_popup"))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(egui::pos2(100.0, 100.0))
+                    .show(ui.ctx(), |ui| {
+                        ui.add_sized([100.0, 60.0], egui::Label::new("popup"));
+                    });
+            })
+            .drop_without_applying_deltas();
+        }
+        // 第三帧：判定。
+        ctx.run_ui(Default::default(), |_ui| {
+            assert!(overlay_at(&ctx, inside), "弹窗区域应识别为浮层");
+            assert!(!overlay_at(&ctx, outside), "空白区域不应识别为浮层");
+        })
+        .drop_without_applying_deltas();
     }
 }

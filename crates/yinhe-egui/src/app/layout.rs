@@ -142,6 +142,11 @@ impl App {
                 None
             }
         });
+        // 按下落在弹窗/浮层（Foreground/Tooltip）上时不算"点击了落点视图"：
+        // 该点击由浮层消费。若仍按坐标切换焦点，下拉菜单（通常覆盖在 AR 上方）
+        // 里的选择会误把焦点切到 AR（如量化档位写进错误视图）。
+        let press_pos =
+            press_pos.filter(|&pos| !crate::view_interaction::overlay_at(ui.ctx(), pos));
         self.view_focus = resolve_view_focus(
             self.view_focus,
             press_pos,
