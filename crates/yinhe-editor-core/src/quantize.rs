@@ -4,6 +4,9 @@
 /// - `Fraction(num, den)`: snap to `num/den` of a whole note
 ///   (e.g. `Fraction(1, 16)` = 1/16 note, `Fraction(3, 8)` = 3/8 note)
 /// - `Absolute(n)`: snap every `n` ticks (PPQ-independent)
+///
+/// 另有两个特殊档位：`Auto`（自适应，随缩放自动变细/变粗，使用前必须
+/// 经 [`QuantizePreset::resolved`] 解析）与 `Off`（关闭吸附）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QuantizePreset {
     /// Note fraction: `num / den` of a whole note.
@@ -11,6 +14,12 @@ pub enum QuantizePreset {
     Fraction(u32, u32),
     /// Absolute tick interval: snap every `n` ticks.
     Absolute(u32),
+    /// 自适应网格：随视图缩放自动变细/变粗（放大越大格越细，最大到 1 tick）。
+    /// **使用前必须经 [`QuantizePreset::resolved`] 解析成具体档位**；
+    /// 未解析时按"不吸附"处理（防御性）。
+    Auto,
+    /// 关闭吸附：所有 snap 原样返回（保留原 tick）。
+    Off,
 }
 
 impl QuantizePreset {
@@ -36,6 +45,8 @@ impl QuantizePreset {
         match self {
             QuantizePreset::Fraction(num, den) => format!("{}/{}", num, den),
             QuantizePreset::Absolute(n) => format!("{} tick", n),
+            QuantizePreset::Auto => "Auto".to_string(),
+            QuantizePreset::Off => "Off".to_string(),
         }
     }
 
@@ -43,6 +54,7 @@ impl QuantizePreset {
     ///
     /// For `Fraction(num, den)`: `tick_interval = PPQ × 4 × num / den`.
     /// For `Absolute(n)`: returns `n` directly.
+    /// For `Auto` / `Off`: 0（无静态网格；0 使 snap 恒等返回）。
     pub fn tick_interval(&self, ppq: u32) -> u32 {
         match self {
             QuantizePreset::Fraction(num, den) => {
@@ -53,6 +65,25 @@ impl QuantizePreset {
                     .div_ceil(d)
             }
             QuantizePreset::Absolute(n) => *n,
+            QuantizePreset::Auto | QuantizePreset::Off => 0,
+        }
+    }
+
+    /// 是否"自由"（不吸附）：`Off` 与未解析的 `Auto`。
+    ///
+    /// `Auto` 正常使用前会被 [`QuantizePreset::resolved`] 解析掉；
+    /// 未解析的残留在 snap 路径上按不吸附处理，避免错误吸附。
+    pub fn is_free(&self) -> bool {
+        matches!(self, QuantizePreset::Auto | QuantizePreset::Off)
+    }
+
+    /// 把 `Auto` 解析为当前缩放下最合适的档位；其他档位原样返回。
+    ///
+    /// `pixels_per_tick` 为视图水平缩放（px / tick）。
+    pub fn resolved(self, pixels_per_tick: f32, ppq: u32) -> QuantizePreset {
+        match self {
+            QuantizePreset::Auto => auto_preset(pixels_per_tick, ppq),
+            other => other,
         }
     }
 
@@ -94,6 +125,7 @@ impl QuantizePreset {
             QuantizePreset::Absolute(n) => {
                 format!("{} tick", n)
             }
+            QuantizePreset::Auto | QuantizePreset::Off => self.label(),
         }
     }
 }
@@ -102,6 +134,55 @@ impl Default for QuantizePreset {
     fn default() -> Self {
         QuantizePreset::Fraction(1, 4)
     }
+}
+
+// ── 自适应网格（Auto） ──
+
+/// 自适应网格的目标屏幕格宽（像素）：解析时选格宽最接近该值的档位。
+/// 13px 保证默认视图（0.15 px/tick）落在 1/16，最大缩放（10 px/tick）能到 1 tick。
+pub const AUTO_TARGET_PX: f32 = 13.0;
+
+/// 自适应档位的候选序列（由粗到细）：标准时值 1/1…1/128，再延伸到 8/4/2/1 tick。
+/// 不含三连音：自适应沿 2 分频链平滑切换，避免缩放时网格跳到奇数细分。
+const AUTO_SEQUENCE: &[QuantizePreset] = &[
+    QuantizePreset::Fraction(1, 1),
+    QuantizePreset::Fraction(1, 2),
+    QuantizePreset::Fraction(1, 4),
+    QuantizePreset::Fraction(1, 8),
+    QuantizePreset::Fraction(1, 16),
+    QuantizePreset::Fraction(1, 32),
+    QuantizePreset::Fraction(1, 64),
+    QuantizePreset::Fraction(1, 128),
+    QuantizePreset::Absolute(8),
+    QuantizePreset::Absolute(4),
+    QuantizePreset::Absolute(2),
+    QuantizePreset::Absolute(1),
+];
+
+/// 自适应网格解析：选"屏幕格宽最接近 [`AUTO_TARGET_PX`]"的档位（对数距离）。
+///
+/// - 网格间距随 `pixels_per_tick` 变小而变粗、变大而变细；
+/// - 序列按 tick_interval 做单调过滤：PPQ 较小时（如 96）跳过比
+///   1/128 还粗的绝对 tick 档，保证结果始终是有效且单调变细的网格；
+/// - 放大到最大缩放时解析为 1 tick，可写 tick 级音符。
+pub fn auto_preset(pixels_per_tick: f32, ppq: u32) -> QuantizePreset {
+    let ppu = pixels_per_tick.max(0.001);
+    let mut best: Option<(QuantizePreset, f32)> = None;
+    let mut last_interval = u32::MAX;
+    for &cand in AUTO_SEQUENCE {
+        let interval = cand.tick_interval(ppq);
+        // 非单调（比上一档还粗）的候选跳过：小 PPQ 下绝对 tick 档会越界。
+        if interval == 0 || interval >= last_interval {
+            continue;
+        }
+        last_interval = interval;
+        let px = interval as f32 * ppu;
+        let err = (px / AUTO_TARGET_PX).ln().abs();
+        if best.is_none_or(|(_, best_err)| err < best_err) {
+            best = Some((cand, err));
+        }
+    }
+    best.map_or(QuantizePreset::Fraction(1, 1), |(cand, _)| cand)
 }
 
 // ── 小节感知的 snap（原 yinhe-egui/src/view_interaction.rs，下沉至此） ──
@@ -115,6 +196,9 @@ pub fn snap_tick(
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
 ) -> f64 {
+    if quantize.is_free() {
+        return tick;
+    }
     if let Some((tpb, num, den, events)) = bar_line_data {
         let (bar_start, next_bar) = measure_bounds_at_tick(tick, tpb, num, den, events);
         let offset = tick - bar_start;
@@ -137,6 +221,9 @@ pub fn snap_tick_ceil(
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
 ) -> f64 {
+    if quantize.is_free() {
+        return tick;
+    }
     if let Some((tpb, num, den, events)) = bar_line_data {
         let (bar_start, next_bar) = measure_bounds_at_tick(tick, tpb, num, den, events);
         let offset = tick - bar_start;
@@ -159,6 +246,9 @@ pub fn snap_tick_floor(
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
 ) -> f64 {
+    if quantize.is_free() {
+        return tick;
+    }
     if let Some((tpb, num, den, events)) = bar_line_data {
         let (bar_start, next_bar) = measure_bounds_at_tick(tick, tpb, num, den, events);
         let offset = tick - bar_start;
@@ -344,6 +434,81 @@ mod tests {
     fn test_snap_tick_zero_interval() {
         let result = QuantizePreset::Fraction(1, 4).snap_tick(100.0, 0);
         assert_eq!(result, 100.0);
+    }
+
+    #[test]
+    fn off_is_identity_for_all_snap_forms() {
+        let ts_events: [TimeSigEvent; 0] = [];
+        let bar_data = Some((480u32, 4u8, 4u8, ts_events.as_slice()));
+        for tick in [0.0, 1.0, 123.7, 999.99, 4800.0] {
+            assert_eq!(snap_tick(tick, QuantizePreset::Off, 480, None), tick);
+            assert_eq!(snap_tick(tick, QuantizePreset::Off, 480, bar_data), tick);
+            assert_eq!(
+                snap_tick_ceil(tick, QuantizePreset::Off, 480, bar_data),
+                tick
+            );
+            assert_eq!(
+                snap_tick_floor(tick, QuantizePreset::Off, 480, bar_data),
+                tick
+            );
+        }
+    }
+
+    #[test]
+    fn auto_resolves_by_zoom() {
+        // 默认视图（0.15 px/tick）解析为 1/16；最大缩放（10 px/tick）到 1 tick。
+        assert_eq!(auto_preset(0.15, 480), QuantizePreset::Fraction(1, 16));
+        assert_eq!(auto_preset(10.0, 480), QuantizePreset::Absolute(1));
+        assert_eq!(auto_preset(1.0, 480), QuantizePreset::Fraction(1, 128));
+        assert_eq!(auto_preset(0.001, 480), QuantizePreset::Fraction(1, 1));
+    }
+
+    #[test]
+    fn auto_resolves_monotonic_across_zoom() {
+        // 缩放连续增大 → 解析结果的 tick_interval 单调不增（网格只会越来越细）。
+        let ppq = 480;
+        let mut last = u32::MAX;
+        let mut ppu = 0.001f32;
+        while ppu <= 10.0 {
+            let interval = auto_preset(ppu, ppq).tick_interval(ppq);
+            assert!(
+                interval <= last,
+                "ppu={ppu} interval={interval} last={last}"
+            );
+            last = interval;
+            ppu *= 1.1;
+        }
+    }
+
+    #[test]
+    fn auto_small_ppq_skips_non_monotonic_ticks() {
+        // 96 PPQ：1/128 = 3t，绝对档 8/4 应被跳过，结果仍是合法网格。
+        let p = auto_preset(10.0, 96);
+        let interval = p.tick_interval(96);
+        assert!((1..=3).contains(&interval), "got {p:?}");
+        assert_eq!(p, QuantizePreset::Absolute(1));
+    }
+
+    #[test]
+    fn resolved_passthrough_and_auto() {
+        assert_eq!(
+            QuantizePreset::Fraction(1, 8).resolved(10.0, 480),
+            QuantizePreset::Fraction(1, 8)
+        );
+        assert_eq!(QuantizePreset::Off.resolved(10.0, 480), QuantizePreset::Off);
+        assert_eq!(
+            QuantizePreset::Auto.resolved(10.0, 480),
+            QuantizePreset::Absolute(1)
+        );
+        assert!(!QuantizePreset::Auto.resolved(10.0, 480).is_free());
+    }
+
+    #[test]
+    fn free_presets_have_zero_interval() {
+        assert_eq!(QuantizePreset::Auto.tick_interval(480), 0);
+        assert_eq!(QuantizePreset::Off.tick_interval(480), 0);
+        assert!(QuantizePreset::Auto.is_free());
+        assert!(QuantizePreset::Off.is_free());
     }
 
     #[test]
