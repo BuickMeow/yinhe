@@ -208,7 +208,10 @@ impl Document {
                 .map(|i| track_color(&model.tracks[i], i, conductor_track_idx))
                 .collect();
 
-            let mut mixer = mixer.unwrap_or_default();
+            // 无混音数据的导入（.mid / 压缩包内 MIDI / 老 .yin 无混音段）走新工程
+            // 默认混音台：自带一条总线（FX 1），使通道条发送旋钮开箱可用；
+            // .yin 工程自带混音数据（Some）时原样保留，不重复加总线。
+            let mut mixer = mixer.unwrap_or_else(Self::default_mixer);
             mixer.ensure_len();
             let mut data = ProjectData::new(Arc::new(model), project_file, mapping_file);
             data.rebuild_model();
@@ -619,6 +622,41 @@ mod tests {
         assert_ne!(
             a.data.revision, b.data.revision,
             "新文档初始 revision 必须全局唯一，否则跨文档 GPU 缓存键碰撞"
+        );
+    }
+
+    /// 导入无混音数据的 MIDI（`from_model(..., None)`）应与新工程一致：自带一条
+    /// 总线，使通道条发送旋钮（FX 1）开箱可用；.yin 工程自带混音数据（Some）时
+    /// 原样保留，不重复加总线。
+    #[test]
+    fn from_model_defaults_to_one_bus_only_without_mixer() {
+        let make = |mixer: Option<MixerParams>| {
+            let mut model = YinModel::new_empty_with_16_tracks();
+            model.rebuild();
+            Document::from_model(
+                "/tmp/test.mid",
+                model,
+                QuantizePreset::Fraction(1, 4),
+                QuantizePreset::Fraction(1, 16),
+                ProjectFile::default(),
+                MappingFile::default(),
+                mixer,
+            )
+            .expect("from_model")
+        };
+
+        let imported = make(None);
+        assert_eq!(
+            imported.mixer.bus_count(),
+            1,
+            "导入 MIDI 应自动创建一条总线（FX 1）"
+        );
+
+        let with_saved_mixer = make(Some(MixerParams::default()));
+        assert_eq!(
+            with_saved_mixer.mixer.bus_count(),
+            0,
+            "工程自带混音数据（含空总线）不应被改写"
         );
     }
 
