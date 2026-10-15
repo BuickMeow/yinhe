@@ -83,11 +83,12 @@ impl App {
         let total = remaining.size();
         let arr_h = if has_arr {
             if has_bottom {
-                if is_mix {
+                if has_mixer {
                     // MIX：底部混音台高度固定（px，可拖拽调整），上方通道 AR 占剩余。
                     (total.y - self.mix_height - crate::theme::SPLIT_GAP)
                         .max(crate::theme::MIN_ARR_HEIGHT)
                 } else {
+                    // 其余底部面板（钢琴卷帘等）：与 ARRANGE 视图一致，用分割比例。
                     (total.y * self.arr_split).max(crate::theme::MIN_ARR_HEIGHT)
                 }
             } else {

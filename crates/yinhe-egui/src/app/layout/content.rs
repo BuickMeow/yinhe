@@ -274,7 +274,7 @@ impl App {
             if h_split_resp.dragged() {
                 let total_y = layout.remaining.size().y;
                 let delta = h_split_resp.drag_delta().y;
-                if is_mix {
+                if has_mixer {
                     // 底部混音台高度（px）：向上拖（delta < 0）变高。
                     let max_h = (total_y - crate::theme::MIN_ARR_HEIGHT - crate::theme::SPLIT_GAP)
                         .max(crate::theme::MIN_ARR_HEIGHT);
@@ -287,8 +287,8 @@ impl App {
                 }
             }
             if h_split_resp.double_clicked() {
-                // 双击分割线 → 还原默认分割比例
-                if is_mix {
+                // 双击分割线 → 还原默认分割
+                if has_mixer {
                     self.mix_height = LayoutSettings::default().mix_height;
                 } else {
                     self.arr_split = LayoutSettings::default().arr_split;
