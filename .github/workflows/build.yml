@@ -2,7 +2,7 @@ name: build
 
 # 两种触发，版本号都走"裸 x.y.z"体系：
 #   push v* tag → 正式版（版本号 = tag 去 v 前缀，如 v0.1.0 → 0.1.0）；
-#   手动触发    → 快照 <Cargo.toml 版本>-beta.N（N 按已有 tag 自动排），挂 Pre-release。
+#   手动触发    → 快照 <workspace 版本>-beta.N（N 按已有 tag 自动排），挂 Pre-release。
 on:
   push:
     tags:
@@ -42,14 +42,14 @@ jobs:
             tag="${GITHUB_REF_NAME}"
             prerelease=false
           else
-            # 快照：基准版本取 Cargo.toml（下一个正式版），后缀 -beta.N 自动排。
-            base="$(grep -m1 '^version = ' crates/yinhe-egui/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+            # 快照：基准版本取根 Cargo.toml 的 [workspace.package] version，后缀 -beta.N 自动排。
+            base="$(awk -F'"' '/^\[workspace\.package\]/{f=1; next} /^\[/{f=0} f&&/^version =/{print $2; exit}' Cargo.toml)"
             if [[ ! "${base}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "::error::无法从 crates/yinhe-egui/Cargo.toml 读到纯 x.y.z 格式的 version（读到：${base}）"
+              echo "::error::无法从根 Cargo.toml 的 [workspace.package] 读到纯 x.y.z 格式的 version（读到：${base}）"
               exit 1
             fi
             if [[ -n "$(git tag -l "v${base}")" ]]; then
-              echo "::error::正式版 v${base} 已发布，请先把 crates/yinhe-egui/Cargo.toml 的 version 改成下一个正式版"
+              echo "::error::正式版 v${base} 已发布，请先更新根 Cargo.toml 的 [workspace.package] version"
               exit 1
             fi
             last_n="$(git tag -l "${base}-beta.*" | sed 's/.*-beta\.//' | grep -E '^[0-9]+$' | sort -n | tail -n1 || true)"
