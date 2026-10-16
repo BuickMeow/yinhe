@@ -24,10 +24,7 @@ impl App {
                     .active_doc
                     .and_then(|idx| self.workspace.documents.get(idx))
                     .map(|doc| (doc.edit.quantize_arrange, doc.edit.quantize_pianoroll))
-                    .unwrap_or((
-                        QuantizePreset::Fraction(1, 4),
-                        QuantizePreset::Fraction(1, 16),
-                    ));
+                    .unwrap_or((QuantizePreset::Auto, QuantizePreset::Auto));
                 match Document::from_model(
                     &path,
                     *model,
@@ -105,10 +102,7 @@ impl App {
                     .active_doc
                     .and_then(|idx| self.workspace.documents.get(idx))
                     .map(|doc| (doc.edit.quantize_arrange, doc.edit.quantize_pianoroll))
-                    .unwrap_or((
-                        QuantizePreset::Fraction(1, 4),
-                        QuantizePreset::Fraction(1, 16),
-                    ));
+                    .unwrap_or((QuantizePreset::Auto, QuantizePreset::Auto));
                 let project_file =
                     yinhe_yin::ProjectFile::from_meta_with_sf(&model.meta, sf.overrides.clone());
                 let result = Document::from_model(
