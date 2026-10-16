@@ -216,6 +216,17 @@ impl EditState {
         self.track_selected.iter().min().copied()
     }
 
+    /// PR 画布有效显隐 = `track_pianoroll_visible ∪ 主音轨`（主音轨强制可见）。
+    ///
+    /// PR 渲染与 PR 滚动条密度预览共用本规则——单一来源，避免两边漂移
+    /// 导致"预览和画布不一致"。
+    pub fn pr_visible(&self) -> Vec<bool> {
+        let main = self.main_track();
+        (0..self.track_pianoroll_visible.len())
+            .map(|i| self.track_pianoroll_visible[i] || main == Some(i as u16))
+            .collect()
+    }
+
     /// 写入目标轨 = 主音轨，无选中时回退到首个非 Conductor 轨
     pub fn write_track(&self) -> Option<u16> {
         self.main_track().or_else(|| {

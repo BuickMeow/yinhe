@@ -584,14 +584,13 @@ impl App {
                 };
                 // PR 显示 = PR 显示音轨勾选集合（track_pianoroll_visible），
                 // 主音轨强制可见。与 AR 显隐（track_visible）分离，互不影响。
+                // 同一规则由 EditState::pr_visible 提供（密度预览共用）。
                 let main = doc.edit.main_track();
                 // PR 编辑目标轨 = 主音轨（= 选中集合最小者）。无选中 = None：
                 // 铅笔/选框/自动化一律不响应操作（不再回退到第一个非 Conductor 轨）。
                 // 提前计算避开后面的可变借用。
                 let write_track = main;
-                let pr_visible: Vec<bool> = (0..doc.edit.track_pianoroll_visible.len())
-                    .map(|i| doc.edit.track_pianoroll_visible[i] || main == Some(i as u16))
-                    .collect();
+                let pr_visible: Vec<bool> = doc.edit.pr_visible();
                 // 锁定掩码：长度对齐轨道数，缺省 false。
                 let pr_locked: Vec<bool> = (0..doc.data.model.tracks.len())
                     .map(|i| doc.edit.track_locked.get(i).copied().unwrap_or(false))
@@ -691,8 +690,10 @@ impl App {
                     velocity_edits: &mut velocity_edits,
                     preview_reqs: &mut preview_reqs,
                 };
+                // PR 滚动条预览跟随 PR 专属显隐（track_pianoroll_visible ∪ 主音轨），
+                // 与 PR 画布一致；AR/通道 AR 用 doc.density（track_visible）。
                 let density_preview = crate::widgets::scrollbar::DensityPreview {
-                    density: doc.density.view(),
+                    density: doc.density_pr.view(),
                     track_colors: &doc.edit.track_cache.colors,
                 };
                 event = piano_view::show(

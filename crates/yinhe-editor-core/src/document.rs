@@ -52,9 +52,15 @@ pub struct Document {
     pub mixer_dirty: bool,
     /// 会话内稳定 id（自动保存文件命名与恢复关联用；不持久化、不参与界面对比）。
     pub doc_id: u64,
-    /// 滚动条音符密度预览（派生数据；不进 undo 快照、不序列化）。
+    /// 滚动条音符密度预览——AR/通道 AR 用（跟随 `track_visible` 显隐）。
     /// 每帧由 `sync_density` 在预算内增量刷新。
     pub density: crate::density::NoteDensityMap,
+    /// 滚动条音符密度预览——PR 用（跟随 PR 专属显隐
+    /// `track_pianoroll_visible ∪ 主音轨`，与 PR 画布一致）。
+    ///
+    /// 与 [`Self::density`] 分开维护的原因：PR 与 AR 的轨道显隐互相独立，
+    /// 同一份数据无法同时满足两种过滤；编辑时两份一起增量重扫，成本可忽略。
+    pub density_pr: crate::density::NoteDensityMap,
 }
 
 impl Default for Document {
@@ -101,15 +107,24 @@ impl Document {
         self.mixer_dirty = false;
     }
 
-    /// 每帧预算内增量刷新滚动条密度预览（跟随 `track_visible` 显隐）。
+    /// 每帧预算内增量刷新滚动条密度预览。
+    ///
+    /// 维护两份数据：`density` 跟随 `track_visible`（AR/通道 AR 用），
+    /// `density_pr` 跟随 PR 专属显隐（`track_pianoroll_visible ∪ 主音轨`，
+    /// 与 PR 画布一致）。预算对半分给两份，编辑时各自只重扫脏 key。
     pub fn sync_density(&mut self, budget: std::time::Duration) {
         let Self {
             data,
             edit,
             density,
+            density_pr,
             ..
         } = self;
-        density.sync(&data.model, &edit.track_visible, budget);
+        let half = budget / 2;
+        density.sync(&data.model, &edit.track_visible, half);
+        // 与 PR 画布同一份显隐规则（EditState::pr_visible）。
+        let pr_visible = edit.pr_visible();
+        density_pr.sync(&data.model, &pr_visible, half);
     }
 
     /// 当前撤销栈长度（异步保存的版本快照用）。
@@ -181,6 +196,7 @@ impl Document {
             doc_id: next_doc_id(),
             mixer_dirty: false,
             density: Default::default(),
+            density_pr: Default::default(),
         }
     }
 
@@ -267,6 +283,7 @@ impl Document {
                 mixer_dirty: false,
                 doc_id: next_doc_id(),
                 density: Default::default(),
+                density_pr: Default::default(),
             })
         })
     }
@@ -639,6 +656,56 @@ mod tests {
             a.data.revision, b.data.revision,
             "新文档初始 revision 必须全局唯一，否则跨文档 GPU 缓存键碰撞"
         );
+    }
+
+    /// PR 与 AR 的显隐互相独立，密度预览同理：`pianoroll_visible` 只影响
+    /// `density_pr`（PR 滚动条），`track_visible` 只影响 `density`（AR 滚动条）。
+    #[test]
+    fn density_pr_follows_pianoroll_visibility_separately() {
+        use std::sync::Arc;
+        use std::time::Duration;
+        use yinhe_types::Note;
+        let note = |id: u32, track: u16| Note {
+            id,
+            start_tick: 100,
+            end_tick: 200,
+            velocity: 100,
+            track,
+        };
+        let mut doc = Document::empty();
+        {
+            let m = Arc::make_mut(&mut doc.data.model);
+            m.insert_note(60, note(1, 0));
+            m.insert_note(60, note(2, 1));
+        }
+        doc.data.rebuild_model_dirty();
+        doc.sync_density(Duration::MAX);
+        assert_eq!(doc.density.view().rows.iter().sum::<u32>(), 2);
+        assert_eq!(doc.density_pr.view().rows.iter().sum::<u32>(), 2);
+
+        // PR 画布显隐：隐藏 track 1 → 只有 density_pr 变化。
+        doc.edit.track_pianoroll_visible[1] = false;
+        doc.sync_density(Duration::MAX);
+        assert_eq!(
+            doc.density.view().rows.iter().sum::<u32>(),
+            2,
+            "AR 数据不受 PR 显隐影响"
+        );
+        assert_eq!(
+            doc.density_pr.view().rows.iter().sum::<u32>(),
+            1,
+            "PR 数据跟随 pianoroll 显隐"
+        );
+
+        // AR 显隐：隐藏 track 0 → 只有 density 变化。
+        doc.edit.track_visible[0] = false;
+        doc.sync_density(Duration::MAX);
+        assert_eq!(
+            doc.density.view().rows.iter().sum::<u32>(),
+            1,
+            "AR 数据跟随 track_visible"
+        );
+        assert_eq!(doc.density_pr.view().rows.iter().sum::<u32>(), 1);
     }
 
     /// 导入无混音数据的 MIDI（`from_model(..., None)`）应与新工程一致：自带一条

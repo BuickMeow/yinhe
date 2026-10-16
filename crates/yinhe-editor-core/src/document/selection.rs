@@ -266,6 +266,7 @@ mod tests {
             mixer_dirty: false,
             doc_id: 0,
             density: Default::default(),
+            density_pr: Default::default(),
         }
     }
 

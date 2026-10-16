@@ -292,6 +292,7 @@ mod tests {
             mixer_dirty: false,
             doc_id: 0,
             density: Default::default(),
+            density_pr: Default::default(),
         };
         // 加一个音符 (tick 100~200, key 60)
         doc.add_note(
