@@ -240,7 +240,11 @@ impl Document {
             return None;
         }
         let ppq = self.data.model.meta.ppq;
-        let quantize = self.edit.quantize_pianoroll;
+        // Auto 先按 PR 缩放出具体网格（与直线工具预览一致）；Off 无网格不生成。
+        let quantize = self
+            .edit
+            .quantize_pianoroll
+            .resolved(self.edit.pianoroll_view.base.pixels_per_tick, ppq);
         let (tpb, num, den, events) = pr_bar_line_data(&self.data.model);
         let bar = Some((tpb, num, den, events.as_slice()));
         let velocity = self.edit.default_velocity(track);
@@ -261,7 +265,11 @@ impl Document {
     pub fn split_scissors_line(&mut self) -> Option<UndoAction> {
         let line = self.edit.scissors_line?;
         let ppq = self.data.model.meta.ppq;
-        let quantize = self.edit.quantize_pianoroll;
+        // Auto 先按 PR 缩放出具体网格（与剪刀预览一致）；Off 无网格不吸附。
+        let quantize = self
+            .edit
+            .quantize_pianoroll
+            .resolved(self.edit.pianoroll_view.base.pixels_per_tick, ppq);
         let (tpb, num, den, events) = pr_bar_line_data(&self.data.model);
         let bar = Some((tpb, num, den, events.as_slice()));
         let cuts = crate::quantize::line_cuts(line.start, line.end, quantize, ppq, bar);

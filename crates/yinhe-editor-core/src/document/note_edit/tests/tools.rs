@@ -326,3 +326,71 @@ fn split_scissors_line_cuts_via_anchor_line() {
     doc.edit.scissors_line = None;
     assert!(doc.split_scissors_line().is_none(), "无线时返回 None");
 }
+
+/// 回归：直线工具在 `Auto` 档也必须能生成（Auto 先按 PR 缩放出具体网格；
+/// 与预览同源，否则预览有音符、确认却生成空）。
+#[test]
+fn generate_pen_notes_resolves_auto_quantize() {
+    let mut doc = make_doc_with_note();
+    doc.edit.track_selected.insert(0);
+    doc.edit.quantize_pianoroll = crate::quantize::QuantizePreset::Auto;
+    doc.edit.pianoroll_view.base.pixels_per_tick = 0.1;
+    let interval = doc
+        .edit
+        .quantize_pianoroll
+        .resolved(
+            doc.edit.pianoroll_view.base.pixels_per_tick,
+            doc.data.model.meta.ppq,
+        )
+        .tick_interval(doc.data.model.meta.ppq);
+    assert!(interval > 0, "Auto 应解析出具体网格");
+    doc.edit.pen_path = Some(crate::pen::PenPath {
+        anchors: vec![
+            crate::pen::PenAnchor::new(0.0, 62.0),
+            crate::pen::PenAnchor::new(interval as f64 * 4.0, 62.0),
+        ],
+        closed: false,
+    });
+
+    doc.generate_pen_notes().expect("Auto 解析后应生成");
+    let notes: Vec<(u32, u32)> = doc.data.model.notes[62]
+        .iter()
+        .map(|n| (n.start_tick, n.end_tick))
+        .collect();
+    assert!(!notes.is_empty(), "应生成音符");
+    for (s, e) in notes {
+        assert_eq!(e - s, interval, "gate = 解析出的网格间隔");
+        assert_eq!(s % interval, 0, "起点落在网格上");
+    }
+}
+
+/// 回归：剪刀工具在 `Auto` 档切点必须吸附到解析出的网格（与预览一致），
+/// 而不是把未吸附的原始 tick 当作切点。
+#[test]
+fn split_scissors_line_resolves_auto_quantize() {
+    let mut doc = make_doc_with_note();
+    doc.edit.quantize_pianoroll = crate::quantize::QuantizePreset::Auto;
+    doc.edit.pianoroll_view.base.pixels_per_tick = 0.1;
+    let interval = doc
+        .edit
+        .quantize_pianoroll
+        .resolved(
+            doc.edit.pianoroll_view.base.pixels_per_tick,
+            doc.data.model.meta.ppq,
+        )
+        .tick_interval(doc.data.model.meta.ppq);
+    assert!(interval > 0, "Auto 应解析出具体网格");
+
+    doc.add_note(0, ev(0, interval * 4, 62));
+    // 线放在 1.5 个网格处：吸附（round）后切点应为 2×interval。
+    doc.edit.scissors_line = Some(crate::edit_state::AnchorLine {
+        start: ((interval * 3) as f64 / 2.0, 60),
+        end: ((interval * 3) as f64 / 2.0, 62),
+    });
+    doc.split_scissors_line().expect("应切割");
+    let starts: Vec<u32> = doc.data.model.notes[62]
+        .iter()
+        .map(|n| n.start_tick)
+        .collect();
+    assert_eq!(starts, vec![0, interval * 2], "切点吸附到 Auto 解析网格");
+}
