@@ -65,6 +65,8 @@ pub struct NoteDensityMap {
     /// 待重扫 key（配合 `pending_mask` 去重）。
     pending: Vec<u8>,
     pending_mask: [bool; PREVIEW_KEYS],
+    /// 下一次 `sync` 需要全量并行重建（模型换代/桶宽变化）。
+    full_rebuild_due: bool,
     /// `rescan_key` 的复用缓冲，避免每次分配。
     scratch: Vec<u32>,
     /// 主导轨统计的每桶临时计数（复用，避免每次分配）。
@@ -91,6 +93,7 @@ impl NoteDensityMap {
             model_ptr: 0,
             pending: Vec::new(),
             pending_mask: [false; PREVIEW_KEYS],
+            full_rebuild_due: true,
             scratch: Vec::new(),
             track_scratch: Vec::new(),
         }
@@ -112,6 +115,10 @@ impl NoteDensityMap {
     pub fn sync(&mut self, model: &YinModel, track_visible: &[bool], budget: Duration) {
         self.ensure_model(model);
         self.ensure_layout(model.tick_length);
+        if self.full_rebuild_due {
+            self.full_rebuild_due = false;
+            self.rebuild_all(model, track_visible);
+        }
         self.collect_visible_changes(model, track_visible);
         self.collect_revision_changes(model);
         self.consume(model, track_visible, budget);
@@ -119,7 +126,7 @@ impl NoteDensityMap {
 
     // ── 内部 ──
 
-    /// 模型换代 / 桶宽变化：清空计数与快照，全部 key 重扫。
+    /// 模型换代 / 桶宽变化：清空计数与快照，下一次 `sync` 全量并行重扫。
     ///
     /// `rescale_ppq` 就地替换 `doc.data.model` 后必须显式调用（tick 语义
     /// 全变）；其余模型替换由 [`Self::ensure_model`] 的指针检测兜底。
@@ -127,7 +134,9 @@ impl NoteDensityMap {
         self.reset_counts();
         self.rev_snapshot = [None; PREVIEW_KEYS];
         self.visible_snapshot.clear();
-        self.mark_all();
+        self.pending.clear();
+        self.pending_mask = [false; PREVIEW_KEYS];
+        self.full_rebuild_due = true;
     }
 
     /// 模型替换检测（加载/新建/undo 恢复）：指针变化即为新模型。
@@ -197,12 +206,6 @@ impl NoteDensityMap {
         }
     }
 
-    fn mark_all(&mut self) {
-        for k in 0..PREVIEW_KEYS {
-            self.mark(k);
-        }
-    }
-
     /// 显隐变化：用 `bucket_track_stats` 找出"含该轨的 key"重扫。
     /// 只算变化的 track（通常 1 个）；长度差按新增轨默认可见处理。
     fn collect_visible_changes(&mut self, model: &YinModel, visible: &[bool]) {
@@ -261,59 +264,135 @@ impl NoteDensityMap {
         }
     }
 
-    /// 重扫一个 key：统计可见音符到 scratch，覆盖该行、更新行最大，
-    /// 并求每桶计数最大的轨道（主导轨，绘制按轨着色用）。
+    /// 全量并行重建（模型换代 / 桶宽变化后第一次 `sync`）。
+    ///
+    /// rayon 按 key 并行一次完成——1 亿音符约 10-20ms（低频操作），
+    /// 避免"逐帧从一头扫到另一头"的可见扫描感。增量编辑不走这里。
+    fn rebuild_all(&mut self, model: &YinModel, visible: &[bool]) {
+        use rayon::prelude::*;
+        let n = self.n_buckets;
+        if n == 0 {
+            return;
+        }
+        let bucket = self.bucket_ticks.max(1);
+        let Self {
+            rows,
+            dominant,
+            row_max,
+            rev_snapshot,
+            pending,
+            pending_mask,
+            visible_snapshot,
+            ..
+        } = self;
+        rows.par_chunks_mut(n)
+            .zip(dominant.par_chunks_mut(n))
+            .zip(row_max.par_iter_mut())
+            .zip(rev_snapshot.par_iter_mut())
+            .enumerate()
+            .for_each(|(key, (((row, dom), peak), rev))| {
+                let mut scratch = Vec::new();
+                let mut track_scratch = Vec::new();
+                *peak = scan_key(
+                    &model.notes[key],
+                    visible,
+                    bucket,
+                    row,
+                    dom,
+                    &mut scratch,
+                    &mut track_scratch,
+                );
+                *rev = Some(model.note_revisions[key]);
+            });
+        pending.clear();
+        pending_mask.fill(false);
+        *visible_snapshot = visible.to_vec();
+        self.max_count = row_max.iter().copied().max().unwrap_or(0);
+    }
+
+    /// 重扫一个 key：统计可见音符，覆盖该行、更新行最大与主导轨。
     fn rescan_key(&mut self, model: &YinModel, visible: &[bool], key: usize) {
         let n = self.n_buckets;
         if n == 0 || key >= PREVIEW_KEYS {
             return;
         }
         let bucket = self.bucket_ticks.max(1);
-        let row = &mut self.rows[key * n..(key + 1) * n];
-        let dom = &mut self.dominant[key * n..(key + 1) * n];
-        let scratch = &mut self.scratch;
-        let track_scratch = &mut self.track_scratch;
-        scratch.clear();
-        scratch.resize(n, 0);
-        dom.fill(NO_TRACK);
-        track_scratch.clear();
-        // 音符按 start_tick 有序 → 桶索引单调，单遍分组统计每桶主导轨。
-        let mut cur_bucket = usize::MAX;
-        for note in model.notes[key].iter() {
-            if !visible.get(note.track as usize).copied().unwrap_or(true) {
-                continue;
-            }
-            let b = (note.start_tick / bucket) as usize;
-            if b >= n {
-                continue;
-            }
-            scratch[b] += 1;
-            if b != cur_bucket {
-                if cur_bucket != usize::MAX {
-                    dom[cur_bucket] = dominant_of(track_scratch);
-                }
-                cur_bucket = b;
-                track_scratch.clear();
-            }
-            if let Some(e) = track_scratch.iter_mut().find(|(t, _)| *t == note.track) {
-                e.1 += 1;
-            } else {
-                track_scratch.push((note.track, 1));
-            }
-        }
-        if cur_bucket != usize::MAX {
-            dom[cur_bucket] = dominant_of(track_scratch);
-        }
-        let mut row_peak = 0u32;
-        for (slot, &new) in row.iter_mut().zip(scratch.iter()) {
-            *slot = new;
-            if new > row_peak {
-                row_peak = new;
-            }
-        }
-        self.row_max[key] = row_peak;
-        self.rev_snapshot[key] = Some(model.note_revisions[key]);
+        let Self {
+            rows,
+            dominant,
+            row_max,
+            rev_snapshot,
+            scratch,
+            track_scratch,
+            ..
+        } = self;
+        let row = &mut rows[key * n..(key + 1) * n];
+        let dom = &mut dominant[key * n..(key + 1) * n];
+        row_max[key] = scan_key(
+            &model.notes[key],
+            visible,
+            bucket,
+            row,
+            dom,
+            scratch,
+            track_scratch,
+        );
+        rev_snapshot[key] = Some(model.note_revisions[key]);
     }
+}
+
+/// 统计一个 key 的可见音符：`row`（桶计数）与 `dom`（每桶主导轨）就地覆盖，
+/// `scratch`/`track_scratch` 为复用缓冲。返回最大格计数。
+///
+/// 音符按 `start_tick` 有序 → 桶索引单调，单遍分组统计每桶主导轨。
+fn scan_key(
+    notes: &yinhe_types::NoteBucket,
+    visible: &[bool],
+    bucket: u32,
+    row: &mut [u32],
+    dom: &mut [u32],
+    scratch: &mut Vec<u32>,
+    track_scratch: &mut Vec<(u16, u32)>,
+) -> u32 {
+    let n = row.len();
+    scratch.clear();
+    scratch.resize(n, 0);
+    dom.fill(NO_TRACK);
+    track_scratch.clear();
+    let mut cur_bucket = usize::MAX;
+    for note in notes.iter() {
+        if !visible.get(note.track as usize).copied().unwrap_or(true) {
+            continue;
+        }
+        let b = (note.start_tick / bucket) as usize;
+        if b >= n {
+            continue;
+        }
+        scratch[b] += 1;
+        if b != cur_bucket {
+            if cur_bucket != usize::MAX {
+                dom[cur_bucket] = dominant_of(track_scratch);
+            }
+            cur_bucket = b;
+            track_scratch.clear();
+        }
+        if let Some(e) = track_scratch.iter_mut().find(|(t, _)| *t == note.track) {
+            e.1 += 1;
+        } else {
+            track_scratch.push((note.track, 1));
+        }
+    }
+    if cur_bucket != usize::MAX {
+        dom[cur_bucket] = dominant_of(track_scratch);
+    }
+    let mut row_peak = 0u32;
+    for (slot, &new) in row.iter_mut().zip(scratch.iter()) {
+        *slot = new;
+        if new > row_peak {
+            row_peak = new;
+        }
+    }
+    row_peak
 }
 
 /// 桶内计数最大的轨；并列取 track id 小者（确定性）。空桶返回 [`NO_TRACK`]。
@@ -485,17 +564,23 @@ mod tests {
         assert_eq!(cell(&d, 60, b as usize), 1);
     }
 
-    /// 预算再小也至少完成一个 key，多次 sync 后结果与全量一致。
+    /// 全量重建（首次/换代）一次完成不依赖预算；增量编辑零预算分帧，
+    /// 多次 sync 后结果与一次全量一致。
     #[test]
     fn budget_splits_work_across_syncs() {
         let mut m = model();
-        for k in [50u8, 55, 60, 64, 70, 80] {
+        m.insert_note(50, note(1, 100, 200, 0));
+        m.rebuild_dirty();
+        let mut split = NoteDensityMap::new();
+        let zero = Duration::ZERO;
+        // 首次 sync = 全量并行重建，一次完成。
+        split.sync(&m, &visible(), zero);
+        assert!(split.pending.is_empty(), "全量重建不依赖预算");
+
+        for k in [55u8, 60, 64, 70, 80, 90] {
             m.insert_note(k, note(k as u32, 100, 200, 0));
         }
         m.rebuild_dirty();
-
-        let mut split = NoteDensityMap::new();
-        let zero = Duration::ZERO;
         let mut frames = 0;
         loop {
             split.sync(&m, &visible(), zero);
@@ -503,13 +588,14 @@ mod tests {
             if split.pending.is_empty() {
                 break;
             }
-            assert!(frames < 300, "分帧应有限步完成");
+            assert!(frames < 20, "分帧应有限步完成");
         }
         assert!(frames >= 2, "零预算应分成多帧（实际 {frames}）");
 
         let mut full = NoteDensityMap::new();
         full.sync(&m, &visible(), FULL);
         assert_eq!(split.view().rows, full.view().rows);
+        assert_eq!(split.view().dominant, full.view().dominant);
     }
 
     /// 模型替换（加载/新建）：旧计数作废，全量重扫新模型。

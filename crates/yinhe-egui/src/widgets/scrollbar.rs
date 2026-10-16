@@ -217,17 +217,23 @@ pub(crate) fn show(
     let middle_hovered = on_sb && (middle_resp.hovered() || middle_resp.dragged());
 
     // Paint rectangle with appropriate color。
-    // thumb 静止时半透明：视口铺满整条（fit 全曲）时也必须透出密度预览；
-    // hover/drag 提升不透明度保证交互可见性。
+    // thumb 半透明：视口铺满整条（fit 全曲）时也必须透出密度预览；
+    // hover/drag 提升到 80% 保证交互可见性。边框（文本色系）让轮廓清晰。
     let thumb_color =
         if on_sb && (left_resp.dragged() || right_resp.dragged() || middle_resp.dragged()) {
-            rect_drag_color
+            rect_drag_color.gamma_multiply(0.8)
         } else if middle_hovered || left_hovered || right_hovered {
             rect_hover_color.gamma_multiply(0.8)
         } else {
             rect_color.gamma_multiply(0.45)
         };
     ui.painter().rect_filled(rect_rect, 0.0, thumb_color);
+    ui.painter().rect_stroke(
+        rect_rect,
+        0.0,
+        egui::Stroke::new(1.0, theme::text_secondary()),
+        egui::StrokeKind::Inside,
+    );
 
     // ── Playhead on scrollbar（整曲进度，与 thumb 同 scale）──
     // `total_ticks` 已含 64 小节 padded（follow::total_ticks_padded），与 thumb 同一套映射，

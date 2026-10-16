@@ -13,6 +13,7 @@ yinhe-mixer = { path = "../yinhe-mixer" }
 yinhe-memtrace = { path = "../yinhe-memtrace" }
 yinhe-theme = { path = "../yinhe-theme" }
 dirs = { workspace = true }
+rayon = { workspace = true }
 uuid = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
