@@ -1089,8 +1089,12 @@ fn send_block(
 ) {
     let knobs = bus_count.max(1);
     egui::ScrollArea::vertical()
-        // 同一 id_salt：全部通道条共享滚动偏移，滚动即整排同步
+        // 同一 id_salt：全部通道条共享滚动偏移，滚动即整排同步。
         .id_salt("mix_send_scroll")
+        // 滚动条控件 id 派生自 id_salt；多个 ScrollArea 共享同一 id_salt 时，
+        // 同屏出现的滚动条会互相触发 egui 的 widget ID 冲突。send 区只有
+        // 一行高，隐藏滚动条并保留滚轮同步滚动（hover 任一通道条滚动即可）。
+        .scroll_bar_visibility(egui::containers::scroll_area::ScrollBarVisibility::AlwaysHidden)
         // egui 默认 min_scrolled_size=64 会把一行高的发送区撑到 64px，
         // 这里放开下限，让发送区严格保持 SEND_ROW_H（一行高）。
         .min_scrolled_height(0.0)
@@ -2205,6 +2209,71 @@ mod tests {
             let y = fader_y(gain, TOP, BOTTOM);
             let back = fader_gain_at_y(y, TOP, BOTTOM);
             assert!(approx(back, gain), "gain={gain} y={y} back={back}");
+        }
+    }
+
+    /// 回归：同一容器内多行设备行的交互 ID 必须互不相同。
+    ///
+    /// `device_row_frame` 交互 ID 取自 `ui.next_auto_id()`（只预览、不推进），
+    /// 依赖随后的 `ui.allocate_space` 推进计数器——两者任一被改动/移除都会
+    /// 让整列设备行共享同一 ID（debug 构建下满屏 ID 冲突警告）。
+    #[test]
+    fn device_rows_have_unique_interaction_ids() {
+        let ctx = egui::Context::default();
+        let output = ctx.run_ui(Default::default(), |ui| {
+            let (r1, resp1) = device_row_frame(ui);
+            let (r2, resp2) = device_row_frame(ui);
+            assert!(r1.min.y < r2.min.y, "两行应纵向排布");
+            assert_ne!(resp1.id, resp2.id, "两行交互 ID 必须不同");
+        });
+        // 同时扫描本帧绘制文本：不应出现 egui 的 ID 冲突警告。
+        let mut clash_text = None;
+        for cs in &output.shapes {
+            if let egui::Shape::Text(t) = &cs.shape
+                && t.galley.text().contains("of widget ID")
+            {
+                clash_text = Some(t.galley.text().to_owned());
+            }
+        }
+        output.drop_without_applying_deltas();
+        assert!(clash_text.is_none(), "触发 ID 冲突警告: {clash_text:?}");
+    }
+
+    /// 实验：两个通道条共享同一 `mix_send_scroll` 滚动位置时，
+    /// 检查 ScrollArea 内部是否产生 ID 冲突（滚动条 / 拖拽捕获区）。
+    #[test]
+    fn send_blocks_shared_scroll_no_id_clash() {
+        let ctx = egui::Context::default();
+        let mut actions: Vec<MixAction> = Vec::new();
+        // 两帧：滚动条显隐由上一帧内容尺寸决定。
+        for _ in 0..2 {
+            let output = ctx.run_ui(Default::default(), |ui| {
+                ui.horizontal_top(|ui| {
+                    // 固定一行高：4 条总线内容溢出 → 滚动条出现（与通道条一致）。
+                    section(
+                        ui,
+                        SEND_ROW_H,
+                        egui::Layout::top_down(egui::Align::Center),
+                        |ui| send_block(ui, SendSource::Channel(0), &[], 4, &mut actions),
+                    );
+                    section(
+                        ui,
+                        SEND_ROW_H,
+                        egui::Layout::top_down(egui::Align::Center),
+                        |ui| send_block(ui, SendSource::Channel(1), &[], 4, &mut actions),
+                    );
+                });
+            });
+            let mut clashes: Vec<String> = Vec::new();
+            for cs in &output.shapes {
+                if let egui::Shape::Text(t) = &cs.shape
+                    && t.galley.text().contains("of widget ID")
+                {
+                    clashes.push(t.galley.text().to_owned());
+                }
+            }
+            output.drop_without_applying_deltas();
+            assert!(clashes.is_empty(), "send_block ID 冲突: {clashes:?}");
         }
     }
 }
