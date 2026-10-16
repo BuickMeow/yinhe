@@ -1,7 +1,7 @@
 use eframe::egui;
 use rust_i18n::t;
 
-use yinhe_editor_core::quantize::QuantizePreset;
+use yinhe_editor_core::quantize::{QuantizePreset, presets_for_ppq};
 
 /// Quantization popup menu: common presets + custom fraction + custom tick.
 ///
@@ -56,22 +56,22 @@ pub fn show(
                 *pending = Some(QuantizePreset::Auto);
                 ui.close();
             }
-            separator_row(ui, pitch);
+            separator_row(ui, row_h);
 
-            for preset in QuantizePreset::ALL {
+            for preset in presets_for_ppq(ppq) {
                 if ui
                     .add(crate::widgets::menu::menu_item_button(
                         ui,
-                        *preset == current,
+                        preset == current,
                         preset.display_item(ppq),
                     ))
                     .clicked()
                 {
-                    *pending = Some(*preset);
+                    *pending = Some(preset);
                     ui.close();
                 }
             }
-            separator_row(ui, pitch);
+            separator_row(ui, row_h);
 
             // ── 自定义时值（分子 / 分母，各一个步进器）──
             let is_frac = matches!(current, QuantizePreset::Fraction(_, _));
@@ -112,7 +112,7 @@ pub fn show(
                 }
             }
 
-            separator_row(ui, pitch);
+            separator_row(ui, row_h);
 
             // ── 自定义 Tick ──
             let is_abs = matches!(current, QuantizePreset::Absolute(_));
@@ -143,11 +143,12 @@ pub fn show(
         });
 }
 
-/// 分隔行：占一个行距、线居中——内容总高保持行距的整数倍，
-/// 滚动视口底边永远压在行边界上（无半截行）。
-fn separator_row(ui: &mut egui::Ui, pitch: f32) {
+/// 分隔行：占一个行高、线居中。行高（而非"行高 + 间距"）加其后的间距
+/// 恰好一个行距，保证后续行顶部始终落在行距网格上——滚动视口底边永远
+/// 压在行边界上（无半截行）。
+fn separator_row(ui: &mut egui::Ui, row_h: f32) {
     let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), pitch),
+        egui::vec2(ui.available_width(), row_h),
         egui::Sense::hover(),
     );
     ui.painter().hline(

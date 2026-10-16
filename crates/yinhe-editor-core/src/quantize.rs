@@ -23,7 +23,9 @@ pub enum QuantizePreset {
 }
 
 impl QuantizePreset {
-    /// Common fraction presets in display order (excluding `Absolute`).
+    /// 固定分数档位列表（不包括 `Absolute`）。
+    /// 桌面量化下拉菜单已改用 [`presets_for_ppq`] 按 PPQ 动态推导；
+    /// 此常量供 Android 弹窗与测试使用。
     pub const ALL: &'static [QuantizePreset] = &[
         QuantizePreset::Fraction(1, 1),   // Whole
         QuantizePreset::Fraction(1, 2),   // Half
@@ -127,6 +129,33 @@ impl QuantizePreset {
             }
             QuantizePreset::Auto | QuantizePreset::Off => self.label(),
         }
+    }
+}
+
+/// 按 PPQ 推导的常用档位列表（桌面下拉菜单用）：
+/// - **2 分频链**：`1/1, 1/2, 1/4, …` 细分到最后一个整数 tick 档
+///   （如 1920 PPQ → `1/512` = 15 tick；再细分 7.5 非整即止）；
+/// - **三连音链**：`1/6, 1/12, …` 同样细分到底
+///   （如 1920 PPQ → `1/1536` = 5 tick）。
+///
+/// 列表显示仍用分数（`display_item` 附带折算出的 tick 数），
+/// 随 PPQ 灵活伸缩（1920 PPQ 到 15 tick，480 PPQ 到 15 tick，96 PPQ 到 3 tick）。
+pub fn presets_for_ppq(ppq: u32) -> Vec<QuantizePreset> {
+    let whole = ppq.max(1).saturating_mul(4); // 全音符的 tick 数
+    let mut out = Vec::new();
+    push_dyadic_chain(&mut out, whole, 1); // 2 分频链
+    push_dyadic_chain(&mut out, whole, 6); // 三连音链（分母 3 × 2^k）
+    out
+}
+
+/// 从分母 `den` 起按 ×2 细分入列；分母不再整除全音符 tick 数（tick 非整数）即止。
+fn push_dyadic_chain(out: &mut Vec<QuantizePreset>, whole: u32, mut den: u32) {
+    while den <= whole && whole.is_multiple_of(den) {
+        out.push(QuantizePreset::Fraction(1, den));
+        den = match den.checked_mul(2) {
+            Some(next) => next,
+            None => break,
+        };
     }
 }
 
@@ -509,6 +538,38 @@ mod tests {
         assert_eq!(QuantizePreset::Off.tick_interval(480), 0);
         assert!(QuantizePreset::Auto.is_free());
         assert!(QuantizePreset::Off.is_free());
+    }
+
+    #[test]
+    fn presets_for_ppq_1920_chains() {
+        let list = presets_for_ppq(1920);
+        // 2 分频链：1/1 → 1/512（15 tick；再细分 7.5 非整即止）。
+        assert_eq!(list.first(), Some(&QuantizePreset::Fraction(1, 1)));
+        assert!(list.contains(&QuantizePreset::Fraction(1, 512)));
+        assert!(!list.contains(&QuantizePreset::Fraction(1, 1024)));
+        // 三连音链：1/6（1280 tick）→ 1/1536（5 tick；再细分 2.5 非整即止）。
+        assert!(list.contains(&QuantizePreset::Fraction(1, 6)));
+        assert_eq!(QuantizePreset::Fraction(1, 6).tick_interval(1920), 1280);
+        assert!(list.contains(&QuantizePreset::Fraction(1, 1536)));
+        assert!(!list.contains(&QuantizePreset::Fraction(1, 3072)));
+        // 全链整数 tick、无重复。
+        let mut seen: Vec<QuantizePreset> = Vec::new();
+        for p in &list {
+            assert!(p.tick_interval(1920) >= 1, "{p:?}");
+            assert!(!seen.contains(p), "重复档位 {p:?}");
+            seen.push(*p);
+        }
+    }
+
+    #[test]
+    fn presets_for_ppq_480_chains() {
+        let list = presets_for_ppq(480);
+        assert!(list.contains(&QuantizePreset::Fraction(1, 128)));
+        assert_eq!(QuantizePreset::Fraction(1, 128).tick_interval(480), 15);
+        assert!(list.contains(&QuantizePreset::Fraction(1, 384)));
+        assert_eq!(QuantizePreset::Fraction(1, 384).tick_interval(480), 5);
+        assert!(!list.contains(&QuantizePreset::Fraction(1, 256))); // 7.5 非整
+        assert!(!list.contains(&QuantizePreset::Fraction(1, 768))); // 2.5 非整
     }
 
     #[test]
