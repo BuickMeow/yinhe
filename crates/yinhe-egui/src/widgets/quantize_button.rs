@@ -123,7 +123,7 @@ fn draw(ui: &egui::Ui, rect: egui::Rect, resp: &egui::Response, quantize: Quanti
                             center.x + FRAC_LINE_W * 0.5,
                         ),
                         center.y,
-                        egui::Stroke::new(1.0, color),
+                        egui::Stroke::new(1.5, color),
                     );
                 }
                 ValueDisplay::Tick(n) => {
