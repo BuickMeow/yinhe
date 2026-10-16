@@ -189,7 +189,37 @@ fn split_selection_by_grid_returns_none_when_scope_blocks() {
     doc.edit.track_selected.clear();
     doc.edit.quantize_pianoroll = crate::quantize::QuantizePreset::Absolute(0);
     assert!(doc.split_selection_by_grid().is_none(), "interval 0 不切");
+    doc.edit.quantize_pianoroll = crate::quantize::QuantizePreset::Off;
+    assert!(doc.split_selection_by_grid().is_none(), "Off 不切");
     assert_eq!(doc.data.model.notes[60].len(), 1, "模型未被改动");
+}
+
+/// 回归：`Auto` 量化必须先按 PR 缩放出具体网格（与量化按钮显示一致），
+/// 否则网格切割会静默无操作（旧网格工具同病）。
+#[test]
+fn split_selection_by_grid_resolves_auto_quantize() {
+    let mut doc = make_doc_with_note();
+    doc.edit.quantize_pianoroll = crate::quantize::QuantizePreset::Auto;
+    doc.edit.pianoroll_view.base.pixels_per_tick = 0.1; // 肉眼看合理缩放下 Auto 必解析出 >0 的网格
+    let ppq = doc.data.model.meta.ppq;
+    let interval = doc
+        .edit
+        .quantize_pianoroll
+        .resolved(doc.edit.pianoroll_view.base.pixels_per_tick, ppq)
+        .tick_interval(ppq);
+    assert!(interval > 0, "Auto 应解析出具体网格");
+
+    // 放一条横跨 8 个网格点的长音，框住整条 → 应切成 8 段。
+    let span = interval * 8;
+    doc.add_note(0, ev(0, span, 62));
+    doc.edit.sel_rect.rects = vec![(0.0, span as f64, 62, 62)];
+    doc.split_selection_by_grid().expect("Auto 解析后应能切");
+    let starts: Vec<u32> = doc.data.model.notes[62]
+        .iter()
+        .map(|n| n.start_tick)
+        .collect();
+    let expect: Vec<u32> = (0..8).map(|i| i * interval).collect();
+    assert_eq!(starts, expect, "按解析出的 Auto 网格切开");
 }
 
 /// 钢笔生成：沿音高行逐行、gate=量化间隔、力度=记忆力度，undo/redo 回放。

@@ -80,16 +80,20 @@ impl Document {
 
     /// 网格切割（操作栏按钮）：把选框内（含边界）的音符按当前量化网格切开。
     ///
+    /// - 量化档位先解析：`Auto` 按当前 PR 缩放出具体网格（与量化按钮显示一致），
+    ///   `Off` / 0 间隔无网格可切，返回 `None`；
     /// - 只切选框与音符的交集区段：框外的音符头/尾保留；
     /// - 切点 = 落在 `[t0, t1]` 且严格处于音符内部的量化网格点；
     /// - 作用域与其它 PR 编辑一致：`track_selected`（空 = 全部）∩ PR 可见轨。
     ///
     /// 返回副本制 undo（before = 原音符，after = 各段）。
     pub fn split_selection_by_grid(&mut self) -> Option<UndoAction> {
+        let ppq = self.data.model.meta.ppq;
         let interval = self
             .edit
             .quantize_pianoroll
-            .tick_interval(self.data.model.meta.ppq);
+            .resolved(self.edit.pianoroll_view.base.pixels_per_tick, ppq)
+            .tick_interval(ppq);
         if interval == 0 || self.edit.sel_rect.rects.is_empty() {
             return None;
         }

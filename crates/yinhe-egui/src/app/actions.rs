@@ -712,13 +712,16 @@ impl App {
         }
     }
 
-    /// 网格切割：按量化网格切开选框内音符，然后清空选框（一个 undo entry）。
+    /// 网格切割：按量化网格切开选框内音符（`Auto` 先按 PR 缩放出具体网格），
+    /// 然后清空选框（一个 undo entry）；无切点时保留选框，方便换档/调框重试。
     pub(crate) fn grid_split_selection(&mut self) {
-        self.with_undo(t!("undo.grid_split").as_ref(), |doc| {
-            doc.split_selection_by_grid()
-        });
-        // 确认后清空选框与选区（无论是否切到音符）。
-        if let Some(idx) = self.workspace.active_doc {
+        let changed = self
+            .with_undo_result(t!("undo.grid_split").as_ref(), |doc| {
+                doc.split_selection_by_grid().map(|action| (action, ()))
+            })
+            .is_some();
+        // 只有真的切到音符才清空选框与选区。
+        if changed && let Some(idx) = self.workspace.active_doc {
             let doc = &mut self.workspace.documents[idx];
             doc.edit.sel_rect.clear();
             doc.edit.selected.clear();
