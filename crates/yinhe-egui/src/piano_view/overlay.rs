@@ -330,7 +330,7 @@ pub(crate) fn draw_overlays(
     let line_buttons = [(ICON_CHECK, SelectionAction::LineConfirm)];
     let scissors_buttons = [(ICON_CHECK, SelectionAction::ScissorsConfirm)];
     let bar_spec: Option<(&[BarButton], Option<egui::Rect>)> = match effective_tool {
-        // 选择工具的 6 个动作按钮已迁到 transport bar（见 selection_actions::show_transport_buttons），
+        // 选择工具的动作按钮已迁到 transport bar（见 selection_actions::SELECT_BAR_BUTTONS），
         // 此处不再绘制浮动条。
         crate::widgets::tools_panel::Tool::Select
         | crate::widgets::tools_panel::Tool::SelectVertical => None,
