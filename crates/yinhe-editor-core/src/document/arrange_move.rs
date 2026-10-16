@@ -539,6 +539,7 @@ mod tests {
             mixer: Default::default(),
             mixer_dirty: false,
             doc_id: 0,
+            density: Default::default(),
         }
     }
 

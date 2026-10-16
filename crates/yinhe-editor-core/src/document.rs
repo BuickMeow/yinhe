@@ -52,6 +52,9 @@ pub struct Document {
     pub mixer_dirty: bool,
     /// 会话内稳定 id（自动保存文件命名与恢复关联用；不持久化、不参与界面对比）。
     pub doc_id: u64,
+    /// 滚动条音符密度预览（派生数据；不进 undo 快照、不序列化）。
+    /// 每帧由 `sync_density` 在预算内增量刷新。
+    pub density: crate::density::NoteDensityMap,
 }
 
 impl Default for Document {
@@ -96,6 +99,17 @@ impl Document {
     pub fn mark_saved_at(&mut self, past_len: usize) {
         self.history.mark_saved_at(past_len);
         self.mixer_dirty = false;
+    }
+
+    /// 每帧预算内增量刷新滚动条密度预览（跟随 `track_visible` 显隐）。
+    pub fn sync_density(&mut self, budget: std::time::Duration) {
+        let Self {
+            data,
+            edit,
+            density,
+            ..
+        } = self;
+        density.sync(&data.model, &edit.track_visible, budget);
     }
 
     /// 当前撤销栈长度（异步保存的版本快照用）。
@@ -166,6 +180,7 @@ impl Document {
             mixer: Self::default_mixer(),
             doc_id: next_doc_id(),
             mixer_dirty: false,
+            density: Default::default(),
         }
     }
 
@@ -251,6 +266,7 @@ impl Document {
                 mixer,
                 mixer_dirty: false,
                 doc_id: next_doc_id(),
+                density: Default::default(),
             })
         })
     }
