@@ -23,8 +23,8 @@ const HEIGHT: f32 = crate::theme::TRANSPORT_BTN_SIZE;
 const RADIUS: f32 = 6.0;
 /// 图标字号。
 const ICON_SIZE: f32 = crate::theme::TRANSPORT_BTN_FONT;
-/// 数值字号。
-const NUM_SIZE: f32 = 10.0;
+/// 数值字号（与时间码字号一致，引用同一常量便于同步）。
+const NUM_SIZE: f32 = crate::theme::TIMECODE_FONT;
 /// 分数上下两行相对按钮中心的垂直偏移。
 const FRAC_DY: f32 = 6.0;
 /// 分数线宽度。
