@@ -424,6 +424,7 @@ pub(crate) fn show(
             &mut doc.edit.chan_ar_view.base.scroll_x,
             &mut doc.edit.chan_ar_view.base.pixels_per_tick,
             total_ticks,
+            Some(&doc.density.view()),
             doc.edit.cursor_tick,
             &mut doc.edit.chan_ar_view.base.dirty,
             yinhe_types::Orientation::Horizontal,

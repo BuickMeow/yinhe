@@ -44,6 +44,8 @@ impl App {
             self.show_welcome_content(ui, layout);
             return;
         };
+        // 滚动条密度预览：预算内增量重扫脏 key（跟随 track_visible 显隐）。
+        self.workspace.documents[idx].sync_density(yinhe_editor_core::density::SYNC_BUDGET);
         // 三视图选框互斥：先于任何渲染执行，保证同一时刻只有一个视图拥有选框。
         self.enforce_sel_rect_exclusivity(idx);
         // 聚焦视图（指针悬停决定；Ctrl+A 等快捷键按它路由）。
@@ -689,6 +691,7 @@ impl App {
                     velocity_edits: &mut velocity_edits,
                     preview_reqs: &mut preview_reqs,
                 };
+                let density_preview = doc.density.view();
                 event = piano_view::show(
                     ui,
                     ui.available_size(),
@@ -706,6 +709,7 @@ impl App {
                     Some(&doc.data.model),
                     &mut doc.edit.selected,
                     &pr_visible,
+                    Some(&density_preview),
                     &pr_locked,
                     &doc.edit.track_cache.colors,
                     &mut doc.edit.cursor_tick,

@@ -1,4 +1,5 @@
 use eframe::egui;
+use yinhe_editor_core::density::NoteDensityView;
 
 use crate::theme;
 
@@ -58,6 +59,7 @@ pub(crate) fn show(
     scroll_x: &mut f32,
     pixels_per_tick: &mut f32,
     total_ticks: f64,
+    preview: Option<&NoteDensityView<'_>>,
     play_tick: Option<f64>,
     dirty: &mut bool,
     orientation: yinhe_types::Orientation,
@@ -123,6 +125,13 @@ pub(crate) fn show(
     let (bg_color, rect_color, rect_hover_color, rect_drag_color) = colors();
     // Paint background bar
     ui.painter().rect_filled(rect, 0.0, bg_color);
+
+    // ── Density preview（背景之上、thumb 之下；不参与交互）──
+    if let Some(d) = preview
+        && d.max_count > 0
+    {
+        draw_density_bars(ui, &screen_rect, sb_w, scale, d);
+    }
 
     // ── Rectangle visual ──
     let th_right = rect_right.min(sb_w);
@@ -280,6 +289,55 @@ pub(crate) fn show(
     // 背景区域 / 未按下：返回 0，不触发任何缩放/平移。
     // （缩放对面轴的 dy 已由 thumb 中间拖拽的垂直位移提供。）
     0.0
+}
+
+/// 密度预览：沿主轴逐像素列画亮度条（`scale` = 主轴像素 / tick）。
+///
+/// 每列聚合其覆盖的桶计数，再换算成"每 tick 密度"用 `ln(1+x)` 压缩映射到
+/// alpha——黑乐谱密集段与稀疏段的桶计数差几个数量级，线性映射会把稀疏段
+/// 压成全黑；按密度（而非绝对值）归一还能让缩放不改变整体亮度模式。
+fn draw_density_bars(
+    ui: &egui::Ui,
+    screen_rect: &impl Fn(f32, f32) -> egui::Rect,
+    sb_w: f32,
+    scale: f64,
+    d: &NoteDensityView<'_>,
+) {
+    let n = d.total.len();
+    if n == 0 || scale <= 0.0 || sb_w <= 0.0 {
+        return;
+    }
+    let bucket = d.bucket_ticks.max(1) as u64;
+    let inv_scale = 1.0 / scale; // 主轴像素 → tick
+    // 最大桶密度归一（音符/tick），与缩放无关。
+    let max_density = (d.max_count as f32 / bucket as f32).max(f32::EPSILON);
+    let max_ln = max_density.ln_1p().max(f32::EPSILON);
+    let color = theme::accent_active();
+    let cols = sb_w.ceil() as usize;
+    let mut b = 0usize; // 单调推进的桶游标（列与列 tick 区间连续）
+    for col in 0..cols {
+        let x0 = col as f32;
+        let x1 = ((col + 1) as f32).min(sb_w);
+        if x1 <= x0 {
+            break;
+        }
+        let tick_end = (x1 as f64 * inv_scale).ceil() as u64;
+        let b_end = (tick_end.div_ceil(bucket) as usize).min(n);
+        let mut count = 0u64;
+        while b < b_end {
+            count += d.total[b] as u64;
+            b += 1;
+        }
+        if count == 0 {
+            continue;
+        }
+        let covered = ((x1 - x0) as f64 * inv_scale).max(1.0) as f32;
+        let density = count as f32 / covered;
+        let a = density.ln_1p() / max_ln;
+        let alpha = (0.12 + 0.5 * a).min(0.62);
+        ui.painter()
+            .rect_filled(screen_rect(x0, x1), 0.0, color.gamma_multiply(alpha));
+    }
 }
 
 // ── Vertical scrollbar (pixel-space) ──
@@ -696,6 +754,7 @@ mod tests {
                 ppt,
                 1000.0,
                 None,
+                None,
                 dirty,
                 yinhe_types::Orientation::Horizontal,
             );
@@ -703,6 +762,38 @@ mod tests {
         .textures_delta
         .clear();
         out
+    }
+
+    /// 密度预览：有数据时逐列绘制不 panic（含超出桶覆盖范围的尾部）。
+    #[test]
+    fn density_preview_renders_without_panic() {
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(300.0, 16.0));
+        let mut scroll_x = 0.0f32;
+        let mut ppt = 1.0f32;
+        let mut dirty = false;
+        let total: Vec<u32> = (0..100).map(|i| (i % 7) * 50).collect();
+        let view = NoteDensityView {
+            total: &total,
+            bucket_ticks: 10,
+            max_count: 300,
+        };
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            show(
+                ui,
+                rect,
+                300.0,
+                &mut scroll_x,
+                &mut ppt,
+                1000.0,
+                Some(&view),
+                None,
+                &mut dirty,
+                yinhe_types::Orientation::Horizontal,
+            );
+        })
+        .textures_delta
+        .clear();
     }
 
     /// 跑一帧值空间滚动条（show_vertical_value），无返回值。

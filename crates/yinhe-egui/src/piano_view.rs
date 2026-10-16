@@ -64,6 +64,8 @@ pub fn show(
     midi_arc: Option<&std::sync::Arc<yinhe_core::YinModel>>,
     selected: &mut yinhe_core::Selection,
     track_visible: &[bool],
+    // 滚动条密度预览（轨道显隐过滤后的全曲计数；由 Document 每帧增量维护）。
+    density_preview: Option<&yinhe_editor_core::density::NoteDensityView<'_>>,
     track_locked: &[bool],
     track_colors: &[[f32; 4]],
     cursor_tick: &mut Option<f64>,
@@ -447,6 +449,7 @@ pub fn show(
         w,
         h,
         total_ticks,
+        density_preview,
         *cursor_tick,
         pr_orientation,
     );

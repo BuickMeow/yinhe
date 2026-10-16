@@ -1,5 +1,6 @@
 use eframe::egui;
 use rust_i18n::t;
+use yinhe_editor_core::density::NoteDensityView;
 
 #[allow(clippy::single_component_path_imports)]
 use yinhe_types;
@@ -27,6 +28,7 @@ pub(crate) fn show_scrollbars(
     w: u32,
     h: u32,
     total_ticks: f64,
+    density_preview: Option<&NoteDensityView<'_>>,
     play_tick: Option<f64>,
     pr_orientation: yinhe_types::Orientation,
 ) {
@@ -123,6 +125,7 @@ pub(crate) fn show_scrollbars(
                     &mut view.base.scroll_y,
                     &mut view.base.pixels_per_tick,
                     total_ticks,
+                    density_preview,
                     play_tick,
                     &mut view.base.dirty,
                     pr_orientation,
@@ -215,6 +218,7 @@ pub(crate) fn show_scrollbars(
                     &mut view.base.scroll_x,
                     &mut view.base.pixels_per_tick,
                     total_ticks,
+                    density_preview,
                     play_tick,
                     &mut view.base.dirty,
                     pr_orientation,
