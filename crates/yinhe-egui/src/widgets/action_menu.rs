@@ -9,6 +9,11 @@ pub trait PopupRow: Copy {
     fn icon(self) -> egui_material_icons::MaterialIcon;
     fn label_key(self) -> &'static str;
     fn is_enabled(self, has_active: bool, loading: bool) -> bool;
+    /// 是否需要存在选择（PR 框选 / AR 框选 / 自动化锚点等）才可执行；
+    /// true 时调用方在无选择状态下灰显该行（菜单与图钉按钮共用）。
+    fn needs_selection(self) -> bool {
+        false
+    }
     fn has_pin(self) -> bool {
         true
     }
@@ -189,6 +194,7 @@ pub fn show_action_menu<T: PopupRow>(
     button: &egui::Response,
     groups: &[&[T]],
     has_active: bool,
+    selection_available: bool,
     loading: bool,
     keybindings: &yinhe_editor_core::shortcuts::Keybindings,
     pinned: Option<&mut [bool]>,
@@ -217,7 +223,8 @@ pub fn show_action_menu<T: PopupRow>(
                     ui.separator();
                 }
                 for &action in *group {
-                    let enabled = action.is_enabled(has_active, loading);
+                    let enabled = action.is_enabled(has_active, loading)
+                        && (!action.needs_selection() || selection_available);
                     let is_pinned = pinned
                         .as_ref()
                         .is_some_and(|p| p.get(action.pinned_index()).copied().unwrap_or(false));
@@ -284,6 +291,7 @@ pub fn pinned_action_buttons<T: PopupRow>(
     actions: &[T],
     pinned: &[bool],
     has_active: bool,
+    selection_available: bool,
     loading: bool,
     hovered_hint: &mut Option<String>,
     pending: &mut Option<T>,
@@ -296,7 +304,8 @@ pub fn pinned_action_buttons<T: PopupRow>(
         if !pinned.get(idx).copied().unwrap_or(false) {
             continue;
         }
-        let enabled = action.is_enabled(has_active, loading);
+        let enabled = action.is_enabled(has_active, loading)
+            && (!action.needs_selection() || selection_available);
         let icon = action.icon();
         let color = action.icon_accent().unwrap_or_else(|| {
             if enabled {

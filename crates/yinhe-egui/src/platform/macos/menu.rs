@@ -66,6 +66,8 @@ pub(super) struct NativeMenu {
     pub(super) recent_items: std::cell::RefCell<Vec<MenuItem>>,
     pub(super) follow_checks: Vec<(FollowMode, &'static str, CheckMenuItem)>,
     pub(super) tool_checks: Vec<(crate::widgets::tools_panel::Tool, CheckMenuItem)>,
+    pub(super) orientation_checks: Vec<(yinhe_types::Orientation, &'static str, CheckMenuItem)>,
+    pub(super) panels_check: CheckMenuItem,
 }
 
 pub(super) trait MenuActionFrom {
@@ -116,6 +118,11 @@ impl MenuActionFrom for crate::chrome::transport_bar::EditAction {
             EditAction::Humanize => MenuAction::Humanize,
             EditAction::FillGaps => MenuAction::FillGaps,
             EditAction::MergeNotes => MenuAction::MergeNotes,
+            EditAction::LengthDouble => MenuAction::LengthDouble,
+            EditAction::LengthHalf => MenuAction::LengthHalf,
+            EditAction::FlipHorizontal => MenuAction::FlipHorizontal,
+            EditAction::FlipVertical => MenuAction::FlipVertical,
+            EditAction::GridSplit => MenuAction::GridSplit,
             EditAction::InsertMarker => MenuAction::InsertMarker,
         }
     }
@@ -258,21 +265,52 @@ pub(super) fn init_native_menu() -> muda::Result<()> {
         map.insert(item.id().clone(), MenuAction::SetFollowMode(mode));
         follow_checks.push((mode, key, item));
     }
+    // 跟随已移入视图菜单（播放菜单只留走带控制）。
     let sep_play = PredefinedMenuItem::separator();
-    let sep_follow = PredefinedMenuItem::separator();
-    let mut play_items: Vec<&dyn IsMenuItem> = vec![
+    let play_items: Vec<&dyn IsMenuItem> = vec![
         play_item.as_ref(),
         stop_item.as_ref(),
         &sep_play,
         record_item.as_ref(),
         step_item.as_ref(),
         tap_item.as_ref(),
-        &sep_follow,
     ];
-    for (_, _, item) in &follow_checks {
-        play_items.push(item);
-    }
     let play_menu = Submenu::with_items(t!("menu.playback"), true, &play_items)?;
+
+    // ── 视图子菜单：跟随档 / 钢琴卷帘方向 / 自动化面板显隐 ──
+    const ORIENTATIONS: [(yinhe_types::Orientation, &str); 2] = [
+        (
+            yinhe_types::Orientation::Horizontal,
+            "menu.orientation.horizontal",
+        ),
+        (
+            yinhe_types::Orientation::Vertical,
+            "menu.orientation.vertical",
+        ),
+    ];
+    let mut orientation_checks: Vec<(yinhe_types::Orientation, &'static str, CheckMenuItem)> =
+        Vec::new();
+    for (orientation, key) in ORIENTATIONS {
+        let item = CheckMenuItem::new(t!(key), true, false, None);
+        map.insert(item.id().clone(), MenuAction::SetOrientation(orientation));
+        items.push((key, Box::new(item.clone())));
+        orientation_checks.push((orientation, key, item));
+    }
+    let panels_item = CheckMenuItem::new(t!("menu.automation_panels"), true, false, None);
+    map.insert(panels_item.id().clone(), MenuAction::ToggleAutomationPanels);
+    items.push(("menu.automation_panels", Box::new(panels_item.clone())));
+
+    let sep_view = PredefinedMenuItem::separator();
+    let mut view_items: Vec<&dyn IsMenuItem> = Vec::new();
+    for (_, _, item) in &follow_checks {
+        view_items.push(item);
+    }
+    view_items.push(&sep_view);
+    for (_, _, item) in &orientation_checks {
+        view_items.push(item);
+    }
+    view_items.push(&panels_item);
+    let view_menu = Submenu::with_items(t!("menu.view"), true, &view_items)?;
 
     // ── 工具子菜单（单选勾选；与 transport bar 工具菜单保持一致）──
     let mut tool_checks: Vec<(crate::widgets::tools_panel::Tool, CheckMenuItem)> = Vec::new();
@@ -292,8 +330,14 @@ pub(super) fn init_native_menu() -> muda::Result<()> {
         .collect();
     let tools_menu = Submenu::with_items(t!("menu.tools"), true, &tool_refs)?;
 
-    let menu_items: Vec<&dyn IsMenuItem> =
-        vec![&app_menu, &file_menu, &edit_menu, &play_menu, &tools_menu];
+    let menu_items: Vec<&dyn IsMenuItem> = vec![
+        &app_menu,
+        &file_menu,
+        &edit_menu,
+        &view_menu,
+        &play_menu,
+        &tools_menu,
+    ];
     let menu = Menu::with_items(&menu_items)?;
     menu.init_for_nsapp();
 
@@ -310,6 +354,7 @@ pub(super) fn init_native_menu() -> muda::Result<()> {
     items.push(("menu.quit", quit_item));
     items.push(("menu.file", Box::new(file_menu)));
     items.push(("menu.edit", Box::new(edit_menu)));
+    items.push(("menu.view", Box::new(view_menu)));
     items.push(("menu.playback", Box::new(play_menu)));
     items.push(("menu.tools", Box::new(tools_menu)));
     items.push(("menu.app", Box::new(app_menu)));
@@ -323,6 +368,8 @@ pub(super) fn init_native_menu() -> muda::Result<()> {
             recent_items: std::cell::RefCell::new(Vec::new()),
             follow_checks,
             tool_checks,
+            orientation_checks,
+            panels_check: panels_item,
         });
     });
 

@@ -8,6 +8,7 @@ use super::transport_bar_actions::{
 };
 use super::transport_bar_recent::{recent_files_section, recent_parent_width};
 use crate::view_interaction::FollowMode;
+use yinhe_types::Orientation;
 
 const RECENT_SUBMENU_OPEN_ID: &str = "recent_files_submenu_open";
 
@@ -32,6 +33,7 @@ pub fn show_file_menu(
         button,
         &FILE_GROUPS,
         has_active,
+        false,
         file_loader.is_loading(),
         keybindings,
         Some(pinned),
@@ -55,6 +57,7 @@ pub fn show_file_menu(
 pub fn show_edit_menu(
     button: &egui::Response,
     has_active: bool,
+    selection_available: bool,
     settings: &mut AudioSettings,
     pending_action: &mut Option<EditAction>,
 ) {
@@ -64,6 +67,7 @@ pub fn show_edit_menu(
         button,
         &EDIT_GROUPS,
         has_active,
+        selection_available,
         false,
         keybindings,
         Some(pinned),
@@ -83,35 +87,23 @@ pub fn show_play_menu(
     actions: &mut PlayActions,
 ) {
     let has_active = ctx.doc.is_some();
-    let follow_mode = &mut ctx.follow_mode;
     let settings = &mut ctx.settings;
-    let groups: [&[PlayMenuAction]; 2] = [
-        &[
-            PlayMenuAction::PlayPause {
-                playing: is_playing,
-            },
-            PlayMenuAction::Stop,
-            PlayMenuAction::Record {
-                recording: ctx.is_recording,
-            },
-            PlayMenuAction::StepInput {
-                active: ctx.step_input,
-            },
-            PlayMenuAction::TapTempo,
-            PlayMenuAction::AutomationWrite {
-                enabled: settings.automation_write,
-            },
-        ],
-        &[
-            PlayMenuAction::Follow(FollowMode::None, **follow_mode == FollowMode::None),
-            PlayMenuAction::Follow(FollowMode::Centered, **follow_mode == FollowMode::Centered),
-            PlayMenuAction::Follow(FollowMode::Page, **follow_mode == FollowMode::Page),
-            PlayMenuAction::Follow(
-                FollowMode::Continuous,
-                **follow_mode == FollowMode::Continuous,
-            ),
-        ],
-    ];
+    let groups: [&[PlayMenuAction]; 1] = [&[
+        PlayMenuAction::PlayPause {
+            playing: is_playing,
+        },
+        PlayMenuAction::Stop,
+        PlayMenuAction::Record {
+            recording: ctx.is_recording,
+        },
+        PlayMenuAction::StepInput {
+            active: ctx.step_input,
+        },
+        PlayMenuAction::TapTempo,
+        PlayMenuAction::AutomationWrite {
+            enabled: settings.automation_write,
+        },
+    ]];
     let mut pending = None;
     let mut pinned = [
         settings.pinned_play_pause,
@@ -125,6 +117,7 @@ pub fn show_play_menu(
         button,
         &groups,
         has_active,
+        false,
         false,
         &settings.keybindings,
         Some(&mut pinned),
@@ -157,7 +150,66 @@ pub fn show_play_menu(
             PlayMenuAction::AutomationWrite { enabled } => {
                 actions.set_automation_write = Some(!enabled);
             }
-            PlayMenuAction::Follow(mode, _) => **follow_mode = mode,
+        }
+    }
+}
+
+/// 视图菜单：跟随档（单选）｜钢琴卷帘方向（单选）｜自动化面板显隐。
+/// 点击结果：跟随直接写 `ctx.follow_mode`；方向与面板开关经 out 参数
+/// 交回 `transport_bar::show` 打包进 `TransportResponse`。
+pub fn show_view_menu(
+    button: &egui::Response,
+    ctx: &mut super::transport_bar_actions::TransportContext<'_>,
+    set_orientation: &mut Option<yinhe_types::Orientation>,
+    set_automation_panels: &mut Option<bool>,
+) {
+    use super::transport_bar_actions::{ViewAction, ViewAction as V};
+    let has_active = ctx.doc.is_some();
+    let vertical = ctx.orientation_vertical;
+    // 自动化面板当前状态（无文档 = 关）与可用性（纵向瀑布流不提供 AM 视图）。
+    let panels = ctx.doc.map(|d| d.edit.show_controller_panels);
+    let panels_enabled = has_active && !vertical;
+    let follow_mode = &mut ctx.follow_mode;
+    let settings = &mut ctx.settings;
+
+    let follow_items = [
+        V::Follow(FollowMode::None, **follow_mode == FollowMode::None),
+        V::Follow(FollowMode::Centered, **follow_mode == FollowMode::Centered),
+        V::Follow(FollowMode::Page, **follow_mode == FollowMode::Page),
+        V::Follow(
+            FollowMode::Continuous,
+            **follow_mode == FollowMode::Continuous,
+        ),
+    ];
+    let groups: [&[ViewAction]; 2] = [
+        &follow_items,
+        &[
+            V::Orientation(Orientation::Horizontal, !vertical),
+            V::Orientation(Orientation::Vertical, vertical),
+            V::AutomationPanels {
+                show: panels.unwrap_or(false),
+                enabled: panels_enabled,
+            },
+        ],
+    ];
+
+    let mut pending: Option<ViewAction> = None;
+    show_action_menu(
+        button,
+        &groups,
+        has_active,
+        false,
+        false,
+        &settings.keybindings,
+        None,
+        &mut pending,
+        None,
+    );
+    if let Some(action) = pending {
+        match action {
+            V::Follow(mode, _) => **follow_mode = mode,
+            V::Orientation(orientation, _) => *set_orientation = Some(orientation),
+            V::AutomationPanels { show, .. } => *set_automation_panels = Some(!show),
         }
     }
 }

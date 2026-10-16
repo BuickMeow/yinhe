@@ -6,7 +6,7 @@ use crate::widgets::action_menu::pinned_action_buttons;
 use crate::widgets::timecode::show_timecode_display;
 
 use super::transport_bar_actions::{PlayActions, PlayMenuAction};
-use super::transport_bar_menus::{show_edit_menu, show_file_menu, show_play_menu};
+use super::transport_bar_menus::{show_edit_menu, show_file_menu, show_play_menu, show_view_menu};
 use super::transport_bar_pr;
 
 pub use super::transport_bar_actions::{
@@ -28,6 +28,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
     let mut pending_edit_action = None;
     let mut pending_open_path = None;
     let mut set_orientation = None;
+    let mut set_automation_panels = None;
     let mut selection_action = None;
     let mut timecode_events: Vec<crate::widgets::timecode::TimecodeEvent> = Vec::new();
 
@@ -76,6 +77,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     &FileAction::ALL,
                     &ctx.settings.pinned_file_actions,
                     has_active,
+                    false,
                     ctx.file_loader.is_loading(),
                     &mut hovered_hint,
                     &mut pending_file_action,
@@ -88,6 +90,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 show_edit_menu(
                     &edit_btn,
                     has_active,
+                    ctx.selection_available,
                     ctx.settings,
                     &mut pending_edit_action,
                 );
@@ -98,9 +101,21 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     &EditAction::ALL,
                     &ctx.settings.pinned_edit_actions,
                     has_active,
+                    ctx.selection_available,
                     false,
                     &mut hovered_hint,
                     &mut pending_edit_action,
+                );
+
+                let view_btn = menu_button(ui, "view_menu", ICON_VISIBILITY, btn_size);
+                if view_btn.hovered() {
+                    hovered_hint = Some(t!("hint.view_menu").to_string());
+                }
+                show_view_menu(
+                    &view_btn,
+                    ctx,
+                    &mut set_orientation,
+                    &mut set_automation_panels,
                 );
 
                 let is_playing = ctx
@@ -145,6 +160,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     &play_btn_pins,
                     has_active,
                     false,
+                    false,
                     &mut hovered_hint,
                     &mut pending_play,
                 );
@@ -164,7 +180,6 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                         PlayMenuAction::AutomationWrite { enabled } => {
                             play_actions.set_automation_write = Some(!enabled);
                         }
-                        PlayMenuAction::Follow(..) => unreachable!("跟随档无图钉"),
                     }
                 }
 
@@ -345,6 +360,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
         step_toggle: play_actions.step,
         tap_tempo: play_actions.tap_tempo,
         set_orientation,
+        set_automation_panels,
         timecode_events,
         selection_action,
         pending_file_action,

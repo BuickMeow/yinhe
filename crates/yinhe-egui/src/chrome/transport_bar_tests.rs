@@ -1,5 +1,6 @@
 use super::*;
 use crate::audio_settings::AudioSettings;
+use crate::chrome::transport_bar_actions::ViewAction;
 use crate::file_loader::FileLoader;
 use crate::view_interaction::FollowMode;
 use crate::widgets::action_menu::{PopupRowSpec, measure_menu_width, popup_menu_row};
@@ -34,17 +35,31 @@ fn menu_widths_are_content_aware() {
     let kbs = &settings.keybindings;
     let w_file = measure_menu_width(&ctx, &FILE_GROUPS, kbs);
     let w_edit = measure_menu_width(&ctx, &EDIT_GROUPS, kbs);
-    let play: [&[PlayMenuAction]; 2] = [
-        &[
-            PlayMenuAction::PlayPause { playing: false },
-            PlayMenuAction::Stop,
-            PlayMenuAction::Record { recording: false },
-            PlayMenuAction::StepInput { active: false },
-        ],
-        &[PlayMenuAction::Follow(FollowMode::None, true)],
-    ];
+    let play: [&[PlayMenuAction]; 1] = [&[
+        PlayMenuAction::PlayPause { playing: false },
+        PlayMenuAction::Stop,
+        PlayMenuAction::Record { recording: false },
+        PlayMenuAction::StepInput { active: false },
+    ]];
     let w_play = measure_menu_width(&ctx, &play, kbs);
-    for (name, w) in [("file", w_file), ("edit", w_edit), ("play", w_play)] {
+    // 视图菜单：跟随（视图组）+ 方向/面板（PR 控制组）。
+    let view: [&[ViewAction]; 2] = [
+        &[ViewAction::Follow(FollowMode::None, true)],
+        &[
+            ViewAction::Orientation(yinhe_types::Orientation::Horizontal, true),
+            ViewAction::AutomationPanels {
+                show: false,
+                enabled: true,
+            },
+        ],
+    ];
+    let w_view = measure_menu_width(&ctx, &view, kbs);
+    for (name, w) in [
+        ("file", w_file),
+        ("edit", w_edit),
+        ("play", w_play),
+        ("view", w_view),
+    ] {
         assert!((100.0..=500.0).contains(&w), "{name} 菜单宽度异常: {w}");
     }
 }
@@ -67,14 +82,14 @@ fn play_menu_rows_have_consistent_spacing() {
         ui.set_min_width(200.0);
         ui.set_max_width(200.0);
         // 带 shortcut（与真实 popup 一致：播放/暂停 Space、停止 Esc）
-        // 含录音/步进行（无快捷键），覆盖全部播放菜单行的间距一致性。
+        // 覆盖全部播放菜单行（录音/步进/测速/写入自动化无快捷键）的间距一致性。
         let rows: [(PlayMenuAction, Option<&str>); 6] = [
             (PlayMenuAction::PlayPause { playing: false }, Some("Space")),
             (PlayMenuAction::Stop, Some("Esc")),
             (PlayMenuAction::Record { recording: false }, None),
             (PlayMenuAction::StepInput { active: false }, None),
-            (PlayMenuAction::Follow(FollowMode::None, true), None),
-            (PlayMenuAction::Follow(FollowMode::Page, false), None),
+            (PlayMenuAction::TapTempo, None),
+            (PlayMenuAction::AutomationWrite { enabled: false }, None),
         ];
         for (r, shortcut) in rows {
             let (resp, _) = popup_menu_row(

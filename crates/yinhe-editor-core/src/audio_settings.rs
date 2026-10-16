@@ -23,7 +23,7 @@ pub const RECENT_FILES_LIMIT: usize = 10;
 /// 旧配置加载时自动扩容，见 `persistence::load`）。
 pub const PINNED_FILE_ACTIONS_LEN: usize = 13;
 /// 编辑菜单图钉数组长度：必须与 `EditAction::ALL.len()` 保持一致。
-pub const PINNED_EDIT_ACTIONS_LEN: usize = 20;
+pub const PINNED_EDIT_ACTIONS_LEN: usize = 25;
 
 fn default_toast_collapse_secs() -> f32 {
     5.0

@@ -108,6 +108,7 @@ impl App {
             &self.audio_settings.recent_files,
             self.follow_mode,
             self.active_tool,
+            crate::platform::ViewMenuState::default(),
         ) {
             if matches!(action, crate::platform::MenuAction::Exit) {
                 self.should_exit = true;
@@ -252,6 +253,7 @@ impl App {
             &self.audio_settings.recent_files,
             self.follow_mode,
             self.active_tool,
+            crate::platform::ViewMenuState::default(),
         ) {
             use crate::platform::MenuAction;
             match action {

@@ -58,6 +58,16 @@ pub const ACTION_HUMANIZE: &str = "humanize";
 pub const ACTION_FILL_GAPS: &str = "fill_gaps";
 /// 合并：把框选内首尾严格相接的同 key 音符合并成一个。
 pub const ACTION_MERGE_NOTES: &str = "merge_notes";
+/// 变速：选中音符时值 ×2。
+pub const ACTION_LENGTH_DOUBLE: &str = "length_double";
+/// 变速：选中音符时值 ÷2。
+pub const ACTION_LENGTH_HALF: &str = "length_half";
+/// 水平翻转选中音符（时间轴镜像）。
+pub const ACTION_FLIP_HORIZONTAL: &str = "flip_horizontal";
+/// 垂直翻转选中音符（音高轴镜像）。
+pub const ACTION_FLIP_VERTICAL: &str = "flip_vertical";
+/// 网格切割：按当前量化切分选框内音符。
+pub const ACTION_GRID_SPLIT: &str = "grid_split";
 
 pub const ACTION_TOGGLE_PLAY: &str = "toggle_play";
 pub const ACTION_STOP: &str = "stop";
@@ -103,6 +113,11 @@ pub const ALL_ACTION_IDS: &[&str] = &[
     ACTION_HUMANIZE,
     ACTION_FILL_GAPS,
     ACTION_MERGE_NOTES,
+    ACTION_LENGTH_DOUBLE,
+    ACTION_LENGTH_HALF,
+    ACTION_FLIP_HORIZONTAL,
+    ACTION_FLIP_VERTICAL,
+    ACTION_GRID_SPLIT,
     ACTION_TOGGLE_PLAY,
     ACTION_STOP,
     ACTION_TOOL_SELECT,

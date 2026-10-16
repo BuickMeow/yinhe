@@ -53,23 +53,34 @@ pub(super) fn refresh_recent_submenu(files: &[String]) {
     });
 }
 
-pub(super) fn refresh_follow_checks(mode: FollowMode) {
+/// 视图相关勾选与可用性同步（跟随档 / 工具单选 / 卷帘方向 / 自动化面板）。
+pub(super) fn refresh_view_checks(
+    mode: FollowMode,
+    active: crate::widgets::tools_panel::Tool,
+    view: crate::platform::ViewMenuState,
+) {
+    use yinhe_types::Orientation;
     NATIVE_MENU.with(|cell| {
         if let Some(native) = cell.get() {
             for (m, _, item) in &native.follow_checks {
                 item.set_checked(*m == mode);
             }
-        }
-    });
-}
-
-/// 同步工具子菜单的单选勾选（与当前激活工具一致）。
-pub(super) fn refresh_tool_checks(active: crate::widgets::tools_panel::Tool) {
-    NATIVE_MENU.with(|cell| {
-        if let Some(native) = cell.get() {
             for (tool, item) in &native.tool_checks {
                 item.set_checked(*tool == active);
             }
+            let current = if view.pr_vertical {
+                Orientation::Vertical
+            } else {
+                Orientation::Horizontal
+            };
+            for (orientation, _, item) in &native.orientation_checks {
+                item.set_checked(*orientation == current);
+                item.set_enabled(view.has_active_doc);
+            }
+            native.panels_check.set_checked(view.show_automation_panels);
+            native
+                .panels_check
+                .set_enabled(view.has_active_doc && !view.pr_vertical);
         }
     });
 }

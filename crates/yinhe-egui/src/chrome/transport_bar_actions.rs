@@ -166,10 +166,20 @@ pub enum EditAction {
     MergeNotes,
     /// 在光标位置插入一个标签（MIDI marker），默认名 = 小节.拍.tick。
     InsertMarker,
+    /// 变速：选中音符时值 ×2。
+    LengthDouble,
+    /// 变速：选中音符时值 ÷2。
+    LengthHalf,
+    /// 水平翻转选中音符（时间轴镜像）。
+    FlipHorizontal,
+    /// 垂直翻转选中音符（音高轴镜像）。
+    FlipVertical,
+    /// 网格切割：按当前量化切分选框内音符（清空选框）。
+    GridSplit,
 }
 
 impl EditAction {
-    pub const ALL: [EditAction; 20] = [
+    pub const ALL: [EditAction; 25] = [
         EditAction::Undo,
         EditAction::Redo,
         EditAction::Cut,
@@ -190,6 +200,11 @@ impl EditAction {
         EditAction::FillGaps,
         EditAction::MergeNotes,
         EditAction::InsertMarker,
+        EditAction::LengthDouble,
+        EditAction::LengthHalf,
+        EditAction::FlipHorizontal,
+        EditAction::FlipVertical,
+        EditAction::GridSplit,
     ];
 
     pub const fn pinned_index(self) -> usize {
@@ -215,6 +230,11 @@ impl EditAction {
             EditAction::Humanize => 17,
             EditAction::FillGaps => 18,
             EditAction::MergeNotes => 19,
+            EditAction::LengthDouble => 20,
+            EditAction::LengthHalf => 21,
+            EditAction::FlipHorizontal => 22,
+            EditAction::FlipVertical => 23,
+            EditAction::GridSplit => 24,
         }
     }
 
@@ -239,6 +259,11 @@ impl EditAction {
             EditAction::Humanize => shortcuts::ACTION_HUMANIZE,
             EditAction::FillGaps => shortcuts::ACTION_FILL_GAPS,
             EditAction::MergeNotes => shortcuts::ACTION_MERGE_NOTES,
+            EditAction::LengthDouble => shortcuts::ACTION_LENGTH_DOUBLE,
+            EditAction::LengthHalf => shortcuts::ACTION_LENGTH_HALF,
+            EditAction::FlipHorizontal => shortcuts::ACTION_FLIP_HORIZONTAL,
+            EditAction::FlipVertical => shortcuts::ACTION_FLIP_VERTICAL,
+            EditAction::GridSplit => shortcuts::ACTION_GRID_SPLIT,
             EditAction::InsertMarker => "",
         }
     }
@@ -265,6 +290,11 @@ impl EditAction {
             EditAction::FillGaps => ICON_COMPARE_ARROWS,
             EditAction::MergeNotes => ICON_LINE_STYLE,
             EditAction::InsertMarker => ICON_BOOKMARK,
+            EditAction::LengthDouble => ICON_EXPAND,
+            EditAction::LengthHalf => ICON_COMPRESS,
+            EditAction::FlipHorizontal => ICON_FLIP,
+            EditAction::FlipVertical => ICON_FLIP,
+            EditAction::GridSplit => ICON_GRID_ON,
         }
     }
 
@@ -296,6 +326,28 @@ impl PopupRow for EditAction {
     fn has_pin(self) -> bool {
         !matches!(self, EditAction::InsertMarker)
     }
+    /// 需要存在选择（框选/自动化锚点）才可执行的动作。
+    fn needs_selection(self) -> bool {
+        matches!(
+            self,
+            EditAction::Cut
+                | EditAction::Copy
+                | EditAction::Duplicate
+                | EditAction::Delete
+                | EditAction::TransposeUp
+                | EditAction::TransposeDown
+                | EditAction::DedupWithinTrack
+                | EditAction::DedupAcrossTracks
+                | EditAction::Humanize
+                | EditAction::FillGaps
+                | EditAction::MergeNotes
+                | EditAction::LengthDouble
+                | EditAction::LengthHalf
+                | EditAction::FlipHorizontal
+                | EditAction::FlipVertical
+                | EditAction::GridSplit
+        )
+    }
     fn is_enabled(self, has_active: bool, _loading: bool) -> bool {
         self.is_enabled(has_active)
     }
@@ -320,7 +372,6 @@ pub enum PlayMenuAction {
     AutomationWrite {
         enabled: bool,
     },
-    Follow(crate::view_interaction::FollowMode, bool),
 }
 
 impl PopupRow for PlayMenuAction {
@@ -332,12 +383,7 @@ impl PopupRow for PlayMenuAction {
             PlayMenuAction::StepInput { .. } => 3,
             PlayMenuAction::TapTempo => 4,
             PlayMenuAction::AutomationWrite { .. } => 5,
-            PlayMenuAction::Follow(..) => 0,
         }
-    }
-
-    fn has_pin(self) -> bool {
-        !matches!(self, PlayMenuAction::Follow(..))
     }
 
     fn action_id(self) -> &'static str {
@@ -349,7 +395,6 @@ impl PopupRow for PlayMenuAction {
     }
 
     fn icon(self) -> egui_material_icons::MaterialIcon {
-        use crate::view_interaction::FollowModeExt;
         match self {
             PlayMenuAction::PlayPause { playing } => {
                 if playing {
@@ -363,7 +408,6 @@ impl PopupRow for PlayMenuAction {
             PlayMenuAction::StepInput { .. } => ICON_STEP,
             PlayMenuAction::TapTempo => ICON_SPEED,
             PlayMenuAction::AutomationWrite { .. } => ICON_EDIT_NOTE,
-            PlayMenuAction::Follow(mode, _) => mode.icon(),
         }
     }
 
@@ -375,12 +419,6 @@ impl PopupRow for PlayMenuAction {
             PlayMenuAction::StepInput { .. } => "menu.step_input",
             PlayMenuAction::TapTempo => "menu.tap_tempo",
             PlayMenuAction::AutomationWrite { .. } => "menu.automation_write",
-            PlayMenuAction::Follow(mode, _) => match mode {
-                crate::view_interaction::FollowMode::None => "follow.none",
-                crate::view_interaction::FollowMode::Centered => "follow.centered",
-                crate::view_interaction::FollowMode::Page => "follow.page",
-                crate::view_interaction::FollowMode::Continuous => "follow.continuous",
-            },
         }
     }
 
@@ -391,7 +429,6 @@ impl PopupRow for PlayMenuAction {
             PlayMenuAction::AutomationWrite { enabled } if enabled => {
                 Some(crate::theme::accent_active())
             }
-            PlayMenuAction::Follow(_, selected) if selected => Some(crate::theme::accent_active()),
             _ => None,
         }
     }
@@ -401,13 +438,84 @@ impl PopupRow for PlayMenuAction {
             PlayMenuAction::Record { recording } => recording,
             PlayMenuAction::StepInput { active } => active,
             PlayMenuAction::AutomationWrite { enabled } => enabled,
-            PlayMenuAction::Follow(_, sel) => sel,
             _ => false,
         }
     }
 
     fn is_enabled(self, _has_active: bool, _loading: bool) -> bool {
         true
+    }
+}
+
+/// 视图菜单动作：跟随档（单选）｜钢琴卷帘方向（单选）｜自动化面板显隐。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ViewAction {
+    /// 跟随档（第二项 = 当前选中档）。
+    Follow(crate::view_interaction::FollowMode, bool),
+    /// 钢琴卷帘方向（第二项 = 当前方向）。
+    Orientation(yinhe_types::Orientation, bool),
+    /// 自动化面板显隐开关：`show` = 当前是否显示；`enabled` = 当前是否可切换
+    /// （纵向瀑布流不提供 AM 视图，始终不可选）。
+    AutomationPanels { show: bool, enabled: bool },
+}
+
+impl PopupRow for ViewAction {
+    fn pinned_index(self) -> usize {
+        0
+    }
+
+    fn has_pin(self) -> bool {
+        false
+    }
+
+    fn action_id(self) -> &'static str {
+        ""
+    }
+
+    fn icon(self) -> egui_material_icons::MaterialIcon {
+        use crate::view_interaction::FollowModeExt;
+        match self {
+            ViewAction::Follow(mode, _) => mode.icon(),
+            ViewAction::Orientation(orientation, _) => match orientation {
+                yinhe_types::Orientation::Horizontal => ICON_EAST,
+                yinhe_types::Orientation::Vertical => ICON_SOUTH,
+            },
+            ViewAction::AutomationPanels { .. } => ICON_BAR_CHART,
+        }
+    }
+
+    fn label_key(self) -> &'static str {
+        use crate::view_interaction::FollowMode;
+        match self {
+            ViewAction::Follow(mode, _) => match mode {
+                FollowMode::None => "follow.none",
+                FollowMode::Centered => "follow.centered",
+                FollowMode::Page => "follow.page",
+                FollowMode::Continuous => "follow.continuous",
+            },
+            ViewAction::Orientation(orientation, _) => match orientation {
+                yinhe_types::Orientation::Horizontal => "menu.orientation.horizontal",
+                yinhe_types::Orientation::Vertical => "menu.orientation.vertical",
+            },
+            ViewAction::AutomationPanels { .. } => "menu.automation_panels",
+        }
+    }
+
+    fn is_selected(self) -> bool {
+        match self {
+            ViewAction::Follow(_, selected) => selected,
+            ViewAction::Orientation(_, selected) => selected,
+            ViewAction::AutomationPanels { show, .. } => show,
+        }
+    }
+
+    fn is_enabled(self, has_active: bool, _loading: bool) -> bool {
+        match self {
+            // 跟随是全局播放模式，无文档也可切换。
+            ViewAction::Follow(..) => true,
+            ViewAction::Orientation(..) => has_active,
+            ViewAction::AutomationPanels { enabled, .. } => has_active && enabled,
+        }
     }
 }
 
@@ -457,6 +565,8 @@ pub struct TransportResponse {
     pub tap_tempo: bool,
     /// 直接设定钢琴卷帘方向（单按钮切换时下发目标方向；None = 未点击）。
     pub set_orientation: Option<yinhe_types::Orientation>,
+    /// 视图菜单「自动化面板」开关（Some = 设为该值）。
+    pub set_automation_panels: Option<bool>,
     /// 时间码编辑事件（BPM/拍号/PPQ/位置/调式/量化）。
     pub timecode_events: Vec<crate::widgets::timecode::TimecodeEvent>,
     /// transport bar 上选择动作按钮的点击（删除/复制/移调/翻转；None = 未点击）。
@@ -485,21 +595,40 @@ pub const FILE_GROUPS: [&[FileAction]; 5] = [
     &[FileAction::Settings, FileAction::About, FileAction::Exit],
 ];
 
-pub const EDIT_GROUPS: [&[EditAction]; 10] = [
+/// 编辑菜单分组：撤销｜剪贴板｜选择｜插入（无选择操作）｜
+/// 基础编辑｜变换（音高/时值/方向）｜清理与改造——后三组均作用于选区。
+pub const EDIT_GROUPS: [&[EditAction]; 7] = [
     &[EditAction::Undo, EditAction::Redo],
-    &[EditAction::Cut, EditAction::Copy, EditAction::Paste],
-    &[EditAction::PasteAtOriginal, EditAction::PasteFlipped],
+    &[
+        EditAction::Cut,
+        EditAction::Copy,
+        EditAction::Paste,
+        EditAction::PasteAtOriginal,
+        EditAction::PasteFlipped,
+    ],
     &[
         EditAction::SelectAll,
         EditAction::SelectNotesOnly,
         EditAction::FilterSelection,
     ],
-    &[EditAction::Duplicate, EditAction::Delete],
-    &[EditAction::TransposeUp, EditAction::TransposeDown],
-    &[EditAction::Humanize],
-    &[EditAction::FillGaps, EditAction::MergeNotes],
-    &[EditAction::DedupWithinTrack, EditAction::DedupAcrossTracks],
     &[EditAction::InsertMarker],
+    &[EditAction::Delete, EditAction::Duplicate],
+    &[
+        EditAction::TransposeUp,
+        EditAction::TransposeDown,
+        EditAction::LengthHalf,
+        EditAction::LengthDouble,
+        EditAction::FlipHorizontal,
+        EditAction::FlipVertical,
+    ],
+    &[
+        EditAction::Humanize,
+        EditAction::FillGaps,
+        EditAction::MergeNotes,
+        EditAction::GridSplit,
+        EditAction::DedupWithinTrack,
+        EditAction::DedupAcrossTracks,
+    ],
 ];
 
 pub fn tool_hint(tool: crate::widgets::tools_panel::Tool) -> String {

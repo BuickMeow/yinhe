@@ -803,12 +803,14 @@ impl App {
 
 impl App {
     /// 处理编辑动作（transport bar 编辑 popup / 图钉与 macOS 菜单共用）。
-    /// copy/cut/duplicate/delete 在自动化锚点选中时作用于锚点；
+    /// 与选择按钮共用的动作（删除/重复/移调/变速/翻转/人性化/填缝/合并/
+    /// 网格切割）统一转发 `handle_selection_action`，避免两套实现漂移；
+    /// copy/cut 在自动化锚点选中时作用于锚点；
     /// paste 按剪贴板内容类型分派（见 paste_clipboard）。
     pub(crate) fn handle_edit_action(&mut self, action: transport_bar::EditAction) {
+        use crate::widgets::selection_actions::SelectionAction as S;
         use transport_bar::EditAction as A;
         let route_to_automation = self.has_selected_automation_anchors();
-        let ar_auto = self.has_selected_ar_automation();
         match action {
             A::Undo => self.undo(),
             A::Redo => self.redo(),
@@ -836,31 +838,21 @@ impl App {
             A::SelectAll => self.select_all(),
             A::SelectNotesOnly => self.select_notes_only(),
             A::FilterSelection => self.open_filter_dialog(),
-            A::Duplicate => {
-                if ar_auto {
-                    self.duplicate_ar_selection();
-                } else if route_to_automation {
-                    self.duplicate_automation_anchors();
-                } else {
-                    self.duplicate_selected_notes();
-                }
-            }
-            A::Delete => {
-                if ar_auto {
-                    self.delete_ar_selection();
-                } else if route_to_automation {
-                    self.delete_automation_anchors();
-                } else {
-                    self.delete_selected_notes();
-                }
-            }
-            A::TransposeUp => self.transpose_selected_notes(12),
-            A::TransposeDown => self.transpose_selected_notes(-12),
+            // ── 与 transport bar 选择按钮共用：单一实现 ──
+            A::Duplicate => self.handle_selection_action(S::Duplicate),
+            A::Delete => self.handle_selection_action(S::Delete),
+            A::TransposeUp => self.handle_selection_action(S::TransposeUp),
+            A::TransposeDown => self.handle_selection_action(S::TransposeDown),
+            A::LengthDouble => self.handle_selection_action(S::LengthDouble),
+            A::LengthHalf => self.handle_selection_action(S::LengthHalf),
+            A::FlipHorizontal => self.handle_selection_action(S::FlipHorizontal),
+            A::FlipVertical => self.handle_selection_action(S::FlipVertical),
+            A::Humanize => self.handle_selection_action(S::Humanize),
+            A::FillGaps => self.handle_selection_action(S::FillGaps),
+            A::MergeNotes => self.handle_selection_action(S::MergeNotes),
+            A::GridSplit => self.handle_selection_action(S::GridConfirm),
             A::DedupWithinTrack => self.dedup_overlapping_notes(false),
             A::DedupAcrossTracks => self.dedup_overlapping_notes(true),
-            A::Humanize => self.humanize_selected_notes(),
-            A::FillGaps => self.fill_gaps_selected_notes(),
-            A::MergeNotes => self.merge_selected_notes(),
             A::InsertMarker => self.insert_marker_at_cursor(),
         }
     }
@@ -955,6 +947,38 @@ impl App {
             )
         };
         doc.insert_marker_with_undo(tick, text, "undo.insert_marker_event");
+    }
+
+    /// 视图菜单「自动化面板」开关：设置当前文档的面板显示状态；
+    /// 开启且无面板时补一个默认面板（与工具栏底部按钮的显隐逻辑一致）。
+    /// 纵向瀑布流不提供 AM 视图，忽略请求。
+    pub(crate) fn set_automation_panels(&mut self, show: bool) {
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[idx];
+        if doc.edit.pianoroll_view.is_vertical() {
+            return;
+        }
+        doc.edit.show_controller_panels = show;
+        if show && doc.edit.controller_panels.is_empty() {
+            doc.edit
+                .controller_panels
+                .push(yinhe_types::AutomationPanelView::default());
+        }
+    }
+
+    /// 钢琴卷帘方向落地（transport bar 方向按钮 / 视图菜单共用）：
+    /// 持久化到 layout 设置（新文档沿用），并写入当前文档视口。
+    pub(crate) fn set_pr_orientation(&mut self, orientation: yinhe_types::Orientation) {
+        let vertical = orientation == yinhe_types::Orientation::Vertical;
+        if self.audio_settings.layout.pr_vertical != vertical {
+            self.audio_settings.layout.pr_vertical = vertical;
+            self.audio_settings.save();
+        }
+        if let Some(doc) = self.workspace.active_doc_mut() {
+            doc.edit.pianoroll_view.set_orientation(orientation);
+        }
     }
 
     /// Handle file menu actions from the transport bar.

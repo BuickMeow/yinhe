@@ -167,12 +167,31 @@ impl eframe::App for App {
         let mut menu_stop = false;
         let mut menu_record = false;
         let mut menu_step = false;
+        // 视图菜单（macOS 原生）同步：卷帘方向、自动化面板显隐、有无活动文档。
+        let (pr_vertical, show_automation_panels) = self
+            .workspace
+            .active_doc
+            .and_then(|idx| self.workspace.documents.get(idx))
+            .map(|d| {
+                (
+                    d.edit.pianoroll_view.is_vertical(),
+                    d.edit.show_controller_panels,
+                )
+            })
+            .unwrap_or((false, false));
+        let has_active_doc = self.workspace.active_doc.is_some();
+        let view_menu_state = crate::platform::ViewMenuState {
+            pr_vertical,
+            show_automation_panels,
+            has_active_doc,
+        };
         for action in self.menu_bar.poll(
             &self.audio_settings.keybindings,
             suspend_menu_accels,
             &self.audio_settings.recent_files,
             self.follow_mode,
             self.active_tool,
+            view_menu_state,
         ) {
             use crate::platform::MenuAction;
             // 输入框聚焦时编辑类菜单动作让位给文本编辑（与 handle_keyboard_shortcuts
@@ -200,6 +219,11 @@ impl eframe::App for App {
                         | MenuAction::Humanize
                         | MenuAction::FillGaps
                         | MenuAction::MergeNotes
+                        | MenuAction::LengthDouble
+                        | MenuAction::LengthHalf
+                        | MenuAction::FlipHorizontal
+                        | MenuAction::FlipVertical
+                        | MenuAction::GridSplit
                 )
             {
                 continue;
@@ -295,6 +319,26 @@ impl eframe::App for App {
                     self.handle_edit_action(transport_bar::EditAction::InsertMarker);
                     continue;
                 }
+                MenuAction::LengthDouble => {
+                    self.handle_edit_action(transport_bar::EditAction::LengthDouble);
+                    continue;
+                }
+                MenuAction::LengthHalf => {
+                    self.handle_edit_action(transport_bar::EditAction::LengthHalf);
+                    continue;
+                }
+                MenuAction::FlipHorizontal => {
+                    self.handle_edit_action(transport_bar::EditAction::FlipHorizontal);
+                    continue;
+                }
+                MenuAction::FlipVertical => {
+                    self.handle_edit_action(transport_bar::EditAction::FlipVertical);
+                    continue;
+                }
+                MenuAction::GridSplit => {
+                    self.handle_edit_action(transport_bar::EditAction::GridSplit);
+                    continue;
+                }
                 MenuAction::TogglePlay => {
                     let is_playing = self
                         .audio_state
@@ -327,6 +371,15 @@ impl eframe::App for App {
                 }
                 MenuAction::SetFollowMode(mode) => {
                     self.follow_mode = mode;
+                    continue;
+                }
+                MenuAction::SetOrientation(orientation) => {
+                    self.set_pr_orientation(orientation);
+                    continue;
+                }
+                MenuAction::ToggleAutomationPanels => {
+                    // 与工具栏开关同款切换语义（本帧初值取反）。
+                    self.set_automation_panels(!show_automation_panels);
                     continue;
                 }
                 MenuAction::SetTool(tool) => {
@@ -714,17 +767,14 @@ impl eframe::App for App {
             self.open_tap_tempo_dialog(ui.ctx());
         }
 
-        // ── 钢琴卷帘方向切换（单按钮切换：横向 ↔ 纵向瀑布流）──
+        // ── 钢琴卷帘方向切换（单按钮切换 / 视图菜单）──
         if let Some(orientation) = transport_response.set_orientation {
-            // 持久化：打开新文档时沿用用户选择的方向。
-            let vertical = orientation == yinhe_types::Orientation::Vertical;
-            if self.audio_settings.layout.pr_vertical != vertical {
-                self.audio_settings.layout.pr_vertical = vertical;
-                self.audio_settings.save();
-            }
-            if let Some(doc) = self.workspace.active_doc_mut() {
-                doc.edit.pianoroll_view.set_orientation(orientation);
-            }
+            self.set_pr_orientation(orientation);
+        }
+
+        // ── 自动化面板显隐（视图菜单开关）──
+        if let Some(show) = transport_response.set_automation_panels {
+            self.set_automation_panels(show);
         }
 
         // ── 时间码编辑事件（BPM/拍号/PPQ/位置/调式/量化）──

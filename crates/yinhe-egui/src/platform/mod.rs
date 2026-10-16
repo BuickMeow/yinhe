@@ -39,6 +39,16 @@ pub enum MenuAction {
     FillGaps,
     /// 编辑菜单「合并」：把框选内首尾严格相接的同 key 音符合并成一个。
     MergeNotes,
+    /// 编辑菜单「变速 ×2」：选中音符时值加倍。
+    LengthDouble,
+    /// 编辑菜单「变速 ÷2」：选中音符时值减半。
+    LengthHalf,
+    /// 编辑菜单「水平翻转」。
+    FlipHorizontal,
+    /// 编辑菜单「垂直翻转」。
+    FlipVertical,
+    /// 编辑菜单「网格切割」：按当前量化切分选框内音符。
+    GridSplit,
     /// 编辑菜单「插入标签」（在光标处插入 MIDI marker）。
     InsertMarker,
     /// 播放菜单「播放/暂停」（Space）。
@@ -55,6 +65,10 @@ pub enum MenuAction {
     SetFollowMode(yinhe_editor_core::follow::FollowMode),
     /// 工具菜单：切换当前工具。
     SetTool(crate::widgets::tools_panel::Tool),
+    /// 视图菜单「钢琴卷帘方向」单选。
+    SetOrientation(yinhe_types::Orientation),
+    /// 视图菜单「自动化面板」显示开关。
+    ToggleAutomationPanels,
     /// 文件菜单「最近修改的文件」子菜单选中的路径。
     OpenRecent(String),
     /// 文件菜单「欢迎页面」：打开独立欢迎窗口（与启动欢迎窗口同款）。
@@ -73,6 +87,17 @@ pub enum MenuAction {
     ShowAll,
 }
 
+/// macOS 原生菜单视图状态（视图菜单勾选与可用性同步用）。
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ViewMenuState {
+    /// 当前文档钢琴卷帘是否纵向（决定方向勾选与自动化面板项可用性）。
+    pub pr_vertical: bool,
+    /// 当前文档自动化面板是否显示。
+    pub show_automation_panels: bool,
+    /// 是否存在活动文档（无文档时方向/面板项禁用）。
+    pub has_active_doc: bool,
+}
+
 /// Handle to the native menu bar and its action receiver.
 pub struct MenuBar {
     inner: MenuBarInner,
@@ -89,8 +114,8 @@ impl MenuBar {
     /// keybindings 用于检测快捷键配置变化并同步原生菜单加速键（macOS）；
     /// suspend 为 true（设置窗口打开/快捷键录制中）时暂停原生菜单加速键，
     /// 避免系统级拦截组合键。
-    /// recent_files / follow_mode 用于同步原生菜单的动态内容
-    /// （最近文件子菜单、跟随档勾选），与 transport bar popup 保持一致。
+    /// recent_files / follow_mode / view 用于同步原生菜单的动态内容
+    /// （最近文件子菜单、跟随档勾选、视图菜单勾选与可用性），与 transport bar 一致。
     pub fn poll(
         &mut self,
         keybindings: &yinhe_editor_core::shortcuts::Keybindings,
@@ -98,9 +123,16 @@ impl MenuBar {
         recent_files: &[String],
         follow_mode: yinhe_editor_core::follow::FollowMode,
         active_tool: crate::widgets::tools_panel::Tool,
+        view: ViewMenuState,
     ) -> Vec<MenuAction> {
-        self.inner
-            .poll(keybindings, suspend, recent_files, follow_mode, active_tool)
+        self.inner.poll(
+            keybindings,
+            suspend,
+            recent_files,
+            follow_mode,
+            active_tool,
+            view,
+        )
     }
 
     /// Poll for file paths passed in by the OS (Finder "Open With" on macOS).
