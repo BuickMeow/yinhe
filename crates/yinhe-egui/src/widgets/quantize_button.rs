@@ -1,9 +1,10 @@
 //! 量化按钮：传输栏时间码左侧的量化入口。
 //!
-//! 一颗圆角底按钮（样式与菜单类按钮一致），内容随当前档位变化：
+//! 一颗正方形圆角底按钮（尺寸与传输栏其它按钮一致），内容随档位变化：
 //! - `Auto` → AUTO 图标（不显示数值）；
 //! - `Off` / `Absolute(1)` → OFF 图标（不显示数值）；
-//! - 其他手动档位 → 浅色 ON 图标 + 数值（分数上下叠 / tick 数字）。
+//! - 其他手动档位 → 浅色 ON 图标 + 数值**叠加在图标上方**（分数上下叠 /
+//!   tick 数字），数值字色比图标更浅，整体呈"数值为主、图标为底"的观感。
 //!
 //! 点击后由调用方挂量化弹窗（`Popup::from_toggle_button_response`）。
 
@@ -14,22 +15,18 @@ use egui_material_icons::icons::{
 };
 use yinhe_editor_core::quantize::QuantizePreset;
 
-/// 按钮宽度（固定：档位切换时布局不跳动）。
-pub const WIDTH: f32 = 56.0;
-/// 按钮高度（与传输栏其它按钮一致）。
+/// 按钮宽度（正方形，与传输栏其它按钮一致）。
+pub const WIDTH: f32 = crate::theme::TRANSPORT_BTN_SIZE;
+/// 按钮高度。
 const HEIGHT: f32 = crate::theme::TRANSPORT_BTN_SIZE;
 /// 圆角（与 `flat_button_filled` 的有底按钮一致）。
 const RADIUS: f32 = 6.0;
 /// 图标字号。
 const ICON_SIZE: f32 = crate::theme::TRANSPORT_BTN_FONT;
-/// 数值字号（分数/数字）。
-const NUM_SIZE: f32 = 11.0;
-/// 手动档位下图标中心相对按钮中心的水平偏移（图标在左）。
-const ICON_DX: f32 = -9.0;
-/// 手动档位下数值中心相对按钮中心的水平偏移（数值在右）。
-const VALUE_DX: f32 = 12.0;
+/// 数值字号。
+const NUM_SIZE: f32 = 10.0;
 /// 分数上下两行相对按钮中心的垂直偏移。
-const FRAC_DY: f32 = 6.0;
+const FRAC_DY: f32 = 5.0;
 
 /// 数值展示形式。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,8 +75,8 @@ fn draw(ui: &egui::Ui, rect: egui::Rect, resp: &egui::Response, quantize: Quanti
 
     let (icon, value) = button_state(quantize);
     let painter = ui.painter();
-    let icon_font = egui::FontId::new(ICON_SIZE, icon.font_family());
     let center = rect.center();
+    let icon_font = egui::FontId::new(ICON_SIZE, icon.font_family());
     match value {
         None => {
             painter.text(
@@ -91,29 +88,28 @@ fn draw(ui: &egui::Ui, rect: egui::Rect, resp: &egui::Response, quantize: Quanti
             );
         }
         Some(display) => {
-            // 浅色图标 + 数值同框（数值为主体）。
+            // 图标作为浅色底，数值叠加在其上（数值字色更浅）。
             painter.text(
-                center + egui::vec2(ICON_DX, 0.0),
+                center,
                 egui::Align2::CENTER_CENTER,
                 icon.codepoint,
                 icon_font,
-                crate::theme::text_secondary(),
+                crate::theme::text_muted(),
             );
             let num_font = egui::FontId::proportional(NUM_SIZE);
-            let value_center = center + egui::vec2(VALUE_DX, 0.0);
-            let color = crate::theme::text_primary();
+            let color = crate::theme::text_secondary();
             match display {
                 ValueDisplay::Fraction(num, den) => {
                     // 分子在上、分母在下（叠加的分数字形）。
                     painter.text(
-                        value_center - egui::vec2(0.0, FRAC_DY),
+                        center - egui::vec2(0.0, FRAC_DY),
                         egui::Align2::CENTER_CENTER,
                         num.to_string(),
                         num_font.clone(),
                         color,
                     );
                     painter.text(
-                        value_center + egui::vec2(0.0, FRAC_DY),
+                        center + egui::vec2(0.0, FRAC_DY),
                         egui::Align2::CENTER_CENTER,
                         den.to_string(),
                         num_font,
@@ -122,7 +118,7 @@ fn draw(ui: &egui::Ui, rect: egui::Rect, resp: &egui::Response, quantize: Quanti
                 }
                 ValueDisplay::Tick(n) => {
                     painter.text(
-                        value_center,
+                        center,
                         egui::Align2::CENTER_CENTER,
                         n.to_string(),
                         num_font,
