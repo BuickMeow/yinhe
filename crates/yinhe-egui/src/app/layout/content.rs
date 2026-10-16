@@ -691,7 +691,10 @@ impl App {
                     velocity_edits: &mut velocity_edits,
                     preview_reqs: &mut preview_reqs,
                 };
-                let density_preview = doc.density.view();
+                let density_preview = crate::widgets::scrollbar::DensityPreview {
+                    density: doc.density.view(),
+                    track_colors: &doc.edit.track_cache.colors,
+                };
                 event = piano_view::show(
                     ui,
                     ui.available_size(),

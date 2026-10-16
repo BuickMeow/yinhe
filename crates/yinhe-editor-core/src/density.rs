@@ -25,12 +25,18 @@ pub const SYNC_BUDGET: Duration = Duration::from_millis(4);
 /// 不绘制——与 PR 画布语义一致，同时省一半内存。
 pub const PREVIEW_KEYS: usize = 128;
 
+/// `dominant` 数组中的"无数据"哨兵。
+pub const NO_TRACK: u32 = u32::MAX;
+
 /// 滚动条绘制的只读视图。
 pub struct NoteDensityView<'a> {
     /// `PREVIEW_KEYS × n_buckets` 行主序：`rows[key * n_buckets + bucket]`
     /// = 该 key 在该 tick 桶的可见音符数。tick 覆盖
     /// `[0, n_buckets * bucket_ticks)`，之外（滚动条 padding 区）视为 0。
     pub rows: &'a [u32],
+    /// 与 `rows` 同形状：每格计数最大的轨道 id（[`NO_TRACK`] = 无数据）。
+    /// 绘制端用它按轨道色着色；并列取 track id 小者。
+    pub dominant: &'a [u32],
     /// 每行的桶数。
     pub n_buckets: usize,
     /// 每桶覆盖的 tick 数。
@@ -46,6 +52,8 @@ pub struct NoteDensityMap {
     n_buckets: usize,
     /// `PREVIEW_KEYS × n_buckets` 行主序计数（已按可见轨道过滤）。
     rows: Vec<u32>,
+    /// 与 `rows` 同形状的主导轨（每格计数最大的 track，`NO_TRACK` = 无）。
+    dominant: Vec<u32>,
     /// 每行的最大格计数（维护全局 `max_count` 用，避免全量扫描）。
     row_max: [u32; PREVIEW_KEYS],
     max_count: u32,
@@ -59,6 +67,8 @@ pub struct NoteDensityMap {
     pending_mask: [bool; PREVIEW_KEYS],
     /// `rescan_key` 的复用缓冲，避免每次分配。
     scratch: Vec<u32>,
+    /// 主导轨统计的每桶临时计数（复用，避免每次分配）。
+    track_scratch: Vec<(u16, u32)>,
 }
 
 impl Default for NoteDensityMap {
@@ -73,6 +83,7 @@ impl NoteDensityMap {
             bucket_ticks: INITIAL_BUCKET_TICKS,
             n_buckets: 0,
             rows: Vec::new(),
+            dominant: Vec::new(),
             row_max: [0; PREVIEW_KEYS],
             max_count: 0,
             rev_snapshot: [None; PREVIEW_KEYS],
@@ -81,6 +92,7 @@ impl NoteDensityMap {
             pending: Vec::new(),
             pending_mask: [false; PREVIEW_KEYS],
             scratch: Vec::new(),
+            track_scratch: Vec::new(),
         }
     }
 
@@ -88,6 +100,7 @@ impl NoteDensityMap {
     pub fn view(&self) -> NoteDensityView<'_> {
         NoteDensityView {
             rows: &self.rows,
+            dominant: &self.dominant,
             n_buckets: self.n_buckets,
             bucket_ticks: self.bucket_ticks.max(1),
             max_count: self.max_count,
@@ -152,19 +165,24 @@ impl NoteDensityMap {
         let old_n = self.n_buckets;
         let n = need.max(old_n + old_n / 2).max(16);
         let mut new_rows = vec![0u32; PREVIEW_KEYS * n];
+        let mut new_dominant = vec![NO_TRACK; PREVIEW_KEYS * n];
         if old_n > 0 {
             for k in 0..PREVIEW_KEYS {
                 new_rows[k * n..k * n + old_n]
                     .copy_from_slice(&self.rows[k * old_n..k * old_n + old_n]);
+                new_dominant[k * n..k * n + old_n]
+                    .copy_from_slice(&self.dominant[k * old_n..k * old_n + old_n]);
             }
         }
         self.rows = new_rows;
+        self.dominant = new_dominant;
         self.scratch.resize(n, 0);
         self.n_buckets = n;
     }
 
     fn reset_counts(&mut self) {
         self.rows.fill(0);
+        self.dominant.fill(NO_TRACK);
         self.row_max = [0; PREVIEW_KEYS];
         self.max_count = 0;
     }
@@ -243,27 +261,51 @@ impl NoteDensityMap {
         }
     }
 
-    /// 重扫一个 key：统计可见音符到 scratch，覆盖该行并更新行最大。
+    /// 重扫一个 key：统计可见音符到 scratch，覆盖该行、更新行最大，
+    /// 并求每桶计数最大的轨道（主导轨，绘制按轨着色用）。
     fn rescan_key(&mut self, model: &YinModel, visible: &[bool], key: usize) {
         let n = self.n_buckets;
         if n == 0 || key >= PREVIEW_KEYS {
             return;
         }
         let bucket = self.bucket_ticks.max(1);
-        self.scratch.clear();
-        self.scratch.resize(n, 0);
+        let row = &mut self.rows[key * n..(key + 1) * n];
+        let dom = &mut self.dominant[key * n..(key + 1) * n];
+        let scratch = &mut self.scratch;
+        let track_scratch = &mut self.track_scratch;
+        scratch.clear();
+        scratch.resize(n, 0);
+        dom.fill(NO_TRACK);
+        track_scratch.clear();
+        // 音符按 start_tick 有序 → 桶索引单调，单遍分组统计每桶主导轨。
+        let mut cur_bucket = usize::MAX;
         for note in model.notes[key].iter() {
             if !visible.get(note.track as usize).copied().unwrap_or(true) {
                 continue;
             }
             let b = (note.start_tick / bucket) as usize;
-            if b < n {
-                self.scratch[b] += 1;
+            if b >= n {
+                continue;
+            }
+            scratch[b] += 1;
+            if b != cur_bucket {
+                if cur_bucket != usize::MAX {
+                    dom[cur_bucket] = dominant_of(track_scratch);
+                }
+                cur_bucket = b;
+                track_scratch.clear();
+            }
+            if let Some(e) = track_scratch.iter_mut().find(|(t, _)| *t == note.track) {
+                e.1 += 1;
+            } else {
+                track_scratch.push((note.track, 1));
             }
         }
-        let row = &mut self.rows[key * n..(key + 1) * n];
+        if cur_bucket != usize::MAX {
+            dom[cur_bucket] = dominant_of(track_scratch);
+        }
         let mut row_peak = 0u32;
-        for (slot, &new) in row.iter_mut().zip(self.scratch.iter()) {
+        for (slot, &new) in row.iter_mut().zip(scratch.iter()) {
             *slot = new;
             if new > row_peak {
                 row_peak = new;
@@ -272,6 +314,19 @@ impl NoteDensityMap {
         self.row_max[key] = row_peak;
         self.rev_snapshot[key] = Some(model.note_revisions[key]);
     }
+}
+
+/// 桶内计数最大的轨；并列取 track id 小者（确定性）。空桶返回 [`NO_TRACK`]。
+fn dominant_of(counts: &[(u16, u32)]) -> u32 {
+    let mut best_track = NO_TRACK;
+    let mut best_count = 0u32;
+    for &(t, c) in counts {
+        if c > best_count || (c == best_count && (t as u32) < best_track) {
+            best_count = c;
+            best_track = t as u32;
+        }
+    }
+    best_track
 }
 
 #[cfg(test)]
@@ -493,5 +548,30 @@ mod tests {
         assert_eq!(v.max_count, 1, "扩展音域不参与归一化");
         let sum: u32 = v.rows.iter().sum();
         assert_eq!(sum, 1);
+    }
+
+    /// 主导轨：桶内计数最大的轨（并列取 id 小者）；显隐过滤后随之变化。
+    #[test]
+    fn dominant_track_per_bucket() {
+        let mut m = model();
+        // 桶 0：track 0 两个 + track 1 一个 → 主导 = 0。
+        m.insert_note(60, note(1, 100, 200, 0));
+        m.insert_note(60, note(2, 110, 210, 0));
+        m.insert_note(60, note(3, 120, 220, 1));
+        // 桶 1（tick ≥ 1024）：只有 track 1 → 主导 = 1。
+        m.insert_note(60, note(4, 1500, 1600, 1));
+        m.rebuild_dirty();
+        let mut d = NoteDensityMap::new();
+        let mut vis = visible();
+        d.sync(&m, &vis, FULL);
+        let nb = d.n_buckets;
+        assert_eq!(d.view().dominant[60 * nb], 0);
+        assert_eq!(d.view().dominant[60 * nb + 1], 1);
+        assert_eq!(d.view().dominant[60 * nb + 2], NO_TRACK, "空桶无主导轨");
+
+        // 隐藏 track 0 → 桶 0 主导变为 track 1。
+        vis[0] = false;
+        d.sync(&m, &vis, FULL);
+        assert_eq!(d.view().dominant[60 * nb], 1);
     }
 }

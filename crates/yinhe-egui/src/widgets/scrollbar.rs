@@ -1,5 +1,5 @@
 use eframe::egui;
-use yinhe_editor_core::density::{NoteDensityView, PREVIEW_KEYS};
+use yinhe_editor_core::density::{NO_TRACK, NoteDensityView, PREVIEW_KEYS};
 
 use crate::theme;
 
@@ -42,6 +42,12 @@ pub(crate) fn double_clicked_in(ui: &egui::Ui, rect: egui::Rect) -> bool {
 
 // ── Horizontal scrollbar ──
 
+/// 密度预览的绘制参数：计数数据 + 轨道配色（索引 = track id，`[r,g,b,a]`）。
+pub(crate) struct DensityPreview<'a> {
+    pub density: NoteDensityView<'a>,
+    pub track_colors: &'a [[f32; 4]],
+}
+
 /// Paint a scrollbar into the given rect along the **主轴方向**（时间轴）。
 ///
 /// The scrollbar represents the full timeline; a draggable rectangle
@@ -59,7 +65,7 @@ pub(crate) fn show(
     scroll_x: &mut f32,
     pixels_per_tick: &mut f32,
     total_ticks: f64,
-    preview: Option<&NoteDensityView<'_>>,
+    preview: Option<&DensityPreview<'_>>,
     play_tick: Option<f64>,
     dirty: &mut bool,
     orientation: yinhe_types::Orientation,
@@ -127,8 +133,8 @@ pub(crate) fn show(
     ui.painter().rect_filled(rect, 0.0, bg_color);
 
     // ── Density preview（背景之上、thumb 之下；不参与交互）──
-    if let Some(d) = preview
-        && d.max_count > 0
+    if let Some(p) = preview
+        && p.density.max_count > 0
     {
         // 副轴像素行数 = 滚动条实际像素高度/宽度（加高自动更细），
         // 行 r 覆盖 key `[r*128/px_rows, (r+1)*128/px_rows)`。
@@ -160,7 +166,15 @@ pub(crate) fn show(
                 )
             }
         };
-        draw_density_bars(ui, &cell_rect, px_rows, sb_w, scale, d);
+        draw_density_bars(
+            ui,
+            &cell_rect,
+            px_rows,
+            sb_w,
+            scale,
+            &p.density,
+            p.track_colors,
+        );
     }
 
     // ── Rectangle visual ──
@@ -202,14 +216,16 @@ pub(crate) fn show(
     let right_hovered = on_sb && (right_resp.hovered() || right_resp.dragged());
     let middle_hovered = on_sb && (middle_resp.hovered() || middle_resp.dragged());
 
-    // Paint rectangle with appropriate color
+    // Paint rectangle with appropriate color。
+    // thumb 静止时半透明：视口铺满整条（fit 全曲）时也必须透出密度预览；
+    // hover/drag 提升不透明度保证交互可见性。
     let thumb_color =
         if on_sb && (left_resp.dragged() || right_resp.dragged() || middle_resp.dragged()) {
             rect_drag_color
         } else if middle_hovered || left_hovered || right_hovered {
-            rect_hover_color
+            rect_hover_color.gamma_multiply(0.8)
         } else {
-            rect_color
+            rect_color.gamma_multiply(0.45)
         };
     ui.painter().rect_filled(rect_rect, 0.0, thumb_color);
 
@@ -326,6 +342,9 @@ pub(crate) fn show(
 /// 数据是每 key 一行的全分辨率计数（`PREVIEW_KEYS` 行），这里按滚动条的
 /// 像素行聚合（24px 高 → 24 行 × 5.3 key/行）；计数经 ln 压缩映射到
 /// alpha，0 计数不画——黑乐谱的低音 bass 线、段落轮廓由此可辨。
+///
+/// 颜色取格子内计数最大的 `(key, 桶)` 的主导轨色（与 AR 画布轨色一致）；
+/// 主导轨缺失或配色表没有该轨时回退到主题强调色。
 fn draw_density_bars(
     ui: &egui::Ui,
     cell_rect: &impl Fn(f32, f32, usize) -> egui::Rect,
@@ -333,15 +352,22 @@ fn draw_density_bars(
     sb_w: f32,
     scale: f64,
     d: &NoteDensityView<'_>,
+    track_colors: &[[f32; 4]],
 ) {
     let n = d.n_buckets;
-    if n == 0 || px_rows == 0 || scale <= 0.0 || sb_w <= 0.0 || d.rows.len() < PREVIEW_KEYS * n {
+    if n == 0
+        || px_rows == 0
+        || scale <= 0.0
+        || sb_w <= 0.0
+        || d.rows.len() < PREVIEW_KEYS * n
+        || d.dominant.len() < PREVIEW_KEYS * n
+    {
         return;
     }
     let bucket = d.bucket_ticks.max(1) as u64;
     let inv_scale = 1.0 / scale; // 主轴像素 → tick
     let max_ln = (d.max_count as f32).ln_1p().max(f32::EPSILON);
-    let color = theme::accent_active();
+    let fallback = theme::accent_active();
     let cols = sb_w.ceil() as usize;
     let mut b = 0usize; // 单调推进的桶游标（列与列 tick 区间连续）
     for col in 0..cols {
@@ -362,23 +388,44 @@ fn draw_density_bars(
                 continue;
             }
             let mut count = 0u64;
+            let mut best_cell = 0u32;
+            let mut best_track = NO_TRACK;
             for k in k0..k1 {
                 let base = k * n;
                 for i in b..b_end {
-                    count += d.rows[base + i] as u64;
+                    let c = d.rows[base + i];
+                    count += c as u64;
+                    if c > best_cell {
+                        best_cell = c;
+                        best_track = d.dominant[base + i];
+                    }
                 }
             }
             if count == 0 {
                 continue;
             }
+            let color = track_color(best_track, track_colors).unwrap_or(fallback);
             // ln 压缩；一个像素行聚合多个 key，允许超过单格 max（clamp 上限）。
             let a = (count as f32).ln_1p() / max_ln;
-            let alpha = (0.22 + 0.66 * a).min(0.9);
+            let alpha = (0.28 + 0.62 * a).min(0.95);
             ui.painter()
                 .rect_filled(cell_rect(x0, x1, r), 0.0, color.gamma_multiply(alpha));
         }
         b = b_end;
     }
+}
+
+/// 主导轨对应的 egui 颜色（`[f32;4]` RGBA → rgb 部分）。
+fn track_color(track: u32, colors: &[[f32; 4]]) -> Option<egui::Color32> {
+    if track == NO_TRACK {
+        return None;
+    }
+    let c = colors.get(track as usize)?;
+    Some(egui::Color32::from_rgb(
+        (c[0].clamp(0.0, 1.0) * 255.0) as u8,
+        (c[1].clamp(0.0, 1.0) * 255.0) as u8,
+        (c[2].clamp(0.0, 1.0) * 255.0) as u8,
+    ))
 }
 
 // ── Vertical scrollbar (pixel-space) ──
@@ -805,7 +852,8 @@ mod tests {
         out
     }
 
-    /// 密度预览：有数据时逐格绘制不 panic（含超出桶覆盖范围的尾部）。
+    /// 密度预览：有数据时逐格绘制不 panic（含超出桶覆盖范围的尾部、
+    /// 主导轨缺失与配色表越界的回退路径）。
     #[test]
     fn density_preview_renders_without_panic() {
         let ctx = egui::Context::default();
@@ -817,11 +865,31 @@ mod tests {
         let rows: Vec<u32> = (0..PREVIEW_KEYS * n_buckets)
             .map(|i| (i % 7) as u32 * 50)
             .collect();
+        // 0..3 轮流当主导轨（3 越界 → 回退路径），部分桶无主导轨。
+        let dominant: Vec<u32> = (0..PREVIEW_KEYS * n_buckets)
+            .map(|i| {
+                if i % 11 == 0 {
+                    NO_TRACK
+                } else {
+                    (i % 4) as u32
+                }
+            })
+            .collect();
         let view = NoteDensityView {
             rows: &rows,
+            dominant: &dominant,
             n_buckets,
             bucket_ticks: 10,
             max_count: 300,
+        };
+        let colors: Vec<[f32; 4]> = vec![
+            [1.0, 0.5, 0.2, 1.0],
+            [0.2, 0.6, 1.0, 1.0],
+            [0.5, 1.0, 0.4, 1.0],
+        ];
+        let preview = DensityPreview {
+            density: view,
+            track_colors: &colors,
         };
         ctx.run_ui(egui::RawInput::default(), |ui| {
             show(
@@ -831,7 +899,7 @@ mod tests {
                 &mut scroll_x,
                 &mut ppt,
                 1000.0,
-                Some(&view),
+                Some(&preview),
                 None,
                 &mut dirty,
                 yinhe_types::Orientation::Horizontal,

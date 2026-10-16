@@ -417,6 +417,10 @@ pub(crate) fn show(
             ),
             egui::pos2(gpu_rect.max.x, arr_rect.max.y),
         );
+        let preview = crate::widgets::scrollbar::DensityPreview {
+            density: doc.density.view(),
+            track_colors: &doc.edit.track_cache.colors,
+        };
         let sb_drag_dy = crate::widgets::scrollbar::show(
             ui,
             sb_rect,
@@ -424,7 +428,7 @@ pub(crate) fn show(
             &mut doc.edit.chan_ar_view.base.scroll_x,
             &mut doc.edit.chan_ar_view.base.pixels_per_tick,
             total_ticks,
-            Some(&doc.density.view()),
+            Some(&preview),
             doc.edit.cursor_tick,
             &mut doc.edit.chan_ar_view.base.dirty,
             yinhe_types::Orientation::Horizontal,
