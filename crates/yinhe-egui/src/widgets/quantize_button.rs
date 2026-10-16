@@ -88,13 +88,13 @@ fn draw(ui: &egui::Ui, rect: egui::Rect, resp: &egui::Response, quantize: Quanti
             );
         }
         Some(display) => {
-            // 图标作为最浅的底（"只有一点点能看到"），数值叠加在其上保持可读。
+            // 图标作为水印级最浅的底（"只有一点点能看到"），数值叠加在其上保持可读。
             painter.text(
                 center,
                 egui::Align2::CENTER_CENTER,
                 icon.codepoint,
                 icon_font,
-                crate::theme::text_disabled(),
+                crate::theme::text_faint(),
             );
             let num_font = egui::FontId::proportional(NUM_SIZE);
             let color = crate::theme::text_secondary();

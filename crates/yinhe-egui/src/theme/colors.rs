@@ -58,6 +58,7 @@ theme_getters! {
     text_muted => text_muted,
     text_label => text_label,
     text_disabled => text_disabled,
+    text_faint => text_faint,
     mode_bar_text => mode_bar_text,
     accent_active => accent_active,
     selected_bg => selected_bg,

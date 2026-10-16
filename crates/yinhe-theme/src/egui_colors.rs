@@ -40,6 +40,8 @@ pub struct Theme {
     pub text_muted: Color32,
     pub text_label: Color32,
     pub text_disabled: Color32,
+    /// 最浅的装饰性文字色（水印级：底图标等"只一点点可见"的元素）。
+    pub text_faint: Color32,
     pub mode_bar_text: Color32,
     // ── 强调 / 选中 / hover ──
     pub accent_active: Color32,
@@ -163,6 +165,8 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
     let text_muted = gray_tone(text, bg, dark, if dark { 0.73 } else { 0.22 });
     let text_label = gray_tone(text, bg, dark, if dark { 0.58 } else { 0.36 });
     let text_disabled = gray_tone(text, bg, dark, if dark { 0.36 } else { 0.66 });
+    // 水印级：比 disabled 再淡一档（"只一点点可见"的装饰性元素用）。
+    let text_faint = gray_tone(text, bg, dark, if dark { 0.2 } else { 0.8 });
 
     // ── 表面层级：两套 token（暗色提亮、亮色压暗，幅度各自感知校准）──
     // 暗色主题在深底上用"提亮"表达层级；亮色主题在浅底上用"压暗"表达层级。
@@ -217,6 +221,7 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
         text_muted,
         text_label,
         text_disabled,
+        text_faint,
         mode_bar_text: text_label,
         accent_active: accent,
         selected_bg,
@@ -254,6 +259,8 @@ mod tests {
         assert_eq!(t.app_bg, Color32::from_rgb(25, 25, 28));
         assert_eq!(t.text_primary, Color32::from_gray(220));
         assert_eq!(t.text_disabled, Color32::from_gray(79));
+        // 水印级：220 × 0.2 = 44
+        assert_eq!(t.text_faint, Color32::from_gray(44));
         assert_eq!(t.accent_active, Color32::from_rgb(100, 180, 255));
         // 选中底 = 背景混强调色（同色相）：25,25,28 混 (100,180,255) 30%
         assert_eq!(t.selected_bg, Color32::from_rgb(47, 71, 96));
@@ -275,6 +282,7 @@ mod tests {
         // 灰阶比主文字浅（亮色主题灰阶 = 主文字向背景插值，而非乘法变暗）
         assert!(t.text_label.r() > t.text_primary.r());
         assert!(t.text_disabled.r() > t.text_label.r());
+        assert!(t.text_faint.r() > t.text_disabled.r());
         // 线条色比背景亮/暗方向随主题（亮色主题线条比背景暗）
         assert!(t.line_fg.r() < t.app_bg.r());
         let dark = derive_theme(crate::base::BaseColors::DARK);
@@ -297,6 +305,7 @@ mod tests {
                 t.text_muted,
                 t.text_label,
                 t.text_disabled,
+                t.text_faint,
             ];
             assert!(
                 ladder.windows(2).all(|w| lum(w[0]) <= lum(w[1])),
@@ -305,7 +314,7 @@ mod tests {
                 base
             );
             // 最弱档与主文字拉开足够差距（>= 40 级），否则亮色下灰字≈黑字
-            assert!(lum(ladder[5]) - lum(ladder[0]) >= 40, "base={:?}", base);
+            assert!(lum(ladder[6]) - lum(ladder[0]) >= 40, "base={:?}", base);
         }
     }
 
