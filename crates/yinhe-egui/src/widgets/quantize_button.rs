@@ -26,7 +26,9 @@ const ICON_SIZE: f32 = crate::theme::TRANSPORT_BTN_FONT;
 /// 数值字号。
 const NUM_SIZE: f32 = 10.0;
 /// 分数上下两行相对按钮中心的垂直偏移。
-const FRAC_DY: f32 = 5.0;
+const FRAC_DY: f32 = 6.0;
+/// 分数线宽度。
+const FRAC_LINE_W: f32 = 14.0;
 
 /// 数值展示形式。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,7 +102,7 @@ fn draw(ui: &egui::Ui, rect: egui::Rect, resp: &egui::Response, quantize: Quanti
             let color = crate::theme::text_secondary();
             match display {
                 ValueDisplay::Fraction(num, den) => {
-                    // 分子在上、分母在下（叠加的分数字形）。
+                    // 分子在上、分母在下（叠加的分数字形），中间画分数线。
                     painter.text(
                         center - egui::vec2(0.0, FRAC_DY),
                         egui::Align2::CENTER_CENTER,
@@ -114,6 +116,14 @@ fn draw(ui: &egui::Ui, rect: egui::Rect, resp: &egui::Response, quantize: Quanti
                         den.to_string(),
                         num_font,
                         color,
+                    );
+                    painter.hline(
+                        egui::Rangef::new(
+                            center.x - FRAC_LINE_W * 0.5,
+                            center.x + FRAC_LINE_W * 0.5,
+                        ),
+                        center.y,
+                        egui::Stroke::new(1.0, color),
                     );
                 }
                 ValueDisplay::Tick(n) => {
