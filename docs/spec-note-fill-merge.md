@@ -1,6 +1,6 @@
 # 音符批量填缝 / 框选合并 Spec
 
-状态：草案 v1（2026-10-16）——核心语义已与用户确认，见文末「决策记录」
+状态：已实现（2026-10-16），待用户验证。核心语义已与用户确认，见文末「决策记录」
 
 ## 背景
 
@@ -15,17 +15,16 @@
 
 `crates/yinhe-egui/src/widgets/selection_actions.rs` 的 `SELECT_BAR_BUTTONS` 从 9 个扩到 11 个（追加末尾）：
 
-- 填缝：`ICON_LINEAR_SCALE`（横向双向箭头，拉长/贴合）
-- 合并：`ICON_MERGE_TYPE`（合并）
-
-> 图标为初选，确定后落定。
+- 填缝：`ICON_COMPARE_ARROWS`（⇄ 双向箭头，拉长/贴合）
+- 合并：`ICON_LINE_STYLE`（线条样式）
 
 行为与既有选择动作完全一致：
 
 - 常驻显示；`selection_available == false`（无 PR/AR/通道框选、无自动化锚点选中）时灰显不可点；
 - 悬停写入讲解行（`hint.pr.sel_fill_gaps` / `hint.pr.sel_merge_notes`）；
 - 只对**音符**生效：AR 框选 / 通道框选 / 自动化锚点选中时点击为空操作（同「移调」「垂直翻转」现状）；
-- 点击后经 `PianoViewEvent::SelectionAction` → `App::handle_selection_action` 分发。
+- 点击后经 `PianoViewEvent::SelectionAction` → `App::handle_selection_action` 分发；
+- 同步加入编辑菜单（`EditAction::FillGaps` / `MergeNotes`，支持图钉；macOS 原生菜单经 `EDIT_GROUPS` 自动跟进）。
 
 窄窗口风险：11 个按钮宽约 238px（18px 图标 + 4px 间距），需在 1280 宽下目视确认不挤到右侧 PR 控制组。
 
@@ -100,19 +99,25 @@ Undo = 单个 `UndoAction::Notes(NoteDelta { before, after })`（无操作式 un
 复杂度 O(N)；内存 = 被合并掉的音符数（进 delta）。
 Undo：`apply_note_delta` 按 id 移除/插入；链首 id 复用为合并音符 id，undo/redo 对称（先 remove `after` 再 insert `before`，同一 id 可安全重放）。
 
-## 代码触点清单
+## 代码触点清单（实现记录）
 
 | 文件 | 改动 |
 |---|---|
-| `crates/yinhe-editor-core/src/document/note_edit.rs` | 新增 `fill_gaps_selected` / `merge_adjacent_selected` + 单元测试 |
-| `crates/yinhe-egui/src/widgets/selection_actions.rs` | `SelectionAction` 枚举 + `SELECT_BAR_BUTTONS` + `action_hint` |
-| `crates/yinhe-egui/src/app/actions.rs` | `handle_selection_action` 分发 + 两个 `with_undo` 包装函数 |
-| `crates/yinhe-egui/locales/*.yml`（15 个） | `undo.fill_gaps` / `undo.merge_notes` / `hint.pr.sel_fill_gaps` / `hint.pr.sel_merge_notes` |
-| `crates/yinhe-egui/src/widgets/selection_actions.rs` 等 | 「人性化」图标 `ICON_AUTO_FIX` → `ICON_PERSON`（transport bar 选择按钮 + 编辑菜单两处） |
+| `crates/yinhe-editor-core/src/document/note_edit.rs` | 新增 `fill_gaps_selected` / `merge_adjacent_selected` + 助手 `apply_end_ticks` / `record_merge_chain` + 11 个单元测试 |
+| `crates/yinhe-editor-core/src/shortcuts.rs` | 新增 `ACTION_FILL_GAPS` / `ACTION_MERGE_NOTES`（默认无快捷键） |
+| `crates/yinhe-editor-core/src/audio_settings.rs` | `PINNED_EDIT_ACTIONS_LEN` 18 → 20 |
+| `crates/yinhe-egui/src/widgets/selection_actions.rs` | `SelectionAction` 枚举 + `SELECT_BAR_BUTTONS`（9 → 11）+ `action_hint` + 唯一性冒烟测试 |
+| `crates/yinhe-egui/src/chrome/transport_bar_actions.rs` | `EditAction` 新增两项（图钉索引 18/19）+ `EDIT_GROUPS` 新分组；「人性化」图标改 `ICON_PERSON` |
+| `crates/yinhe-egui/src/app/actions.rs` | `handle_edit_action` / `handle_selection_action` 分发 + 两个 `with_undo` 包装函数 |
+| `crates/yinhe-egui/src/app/main_loop.rs`、`platform/mod.rs`、`platform/macos/menu.rs` | macOS 原生菜单跟进（MenuAction + 分发） |
+| `crates/yinhe-egui/src/shortcuts.rs` | `ACTION_FILL_GAPS` / `ACTION_MERGE_NOTES` 的 i18n label 映射 |
+| `crates/yinhe-egui/locales/*.yml`（15 个） | `menu.` / `undo.` / `hint.pr.sel_` 共 6 个 key 全语言补齐 |
 
 注意：`i18n_tests::all_locales_have_same_keys` 会校验 15 个语言文件 key 完全一致，新增 key 必须全语言补齐。
 
-## 测试计划
+验证：`cargo test -p yinhe-editor-core`（325 通过）、`cargo test -p yinhe-egui`（331 通过）、`cargo clippy` 两个 crate 零 warning。
+
+## 测试计划（已落地）
 
 单元测试（`note_edit.rs`）：
 
@@ -121,29 +126,30 @@ Undo：`apply_note_delta` 按 id 移除/插入；链首 id 复用为合并音符
 3. 填缝：最后一个起音保持原终点；
 4. 填缝：按轨道分组，轨道之间不互相贴合；
 5. 填缝：框外音符不作为目标、不被修改；
-6. 填缝：属性筛选生效（被筛掉的音符断开网格）；
-7. 填缝：单起点返回 `None`；undo 往返恢复；
-8. 填缝：同轨道多 key 共享起音网格（琶音拉平）。
+6. 填缝：属性筛选生效（被筛掉的音符不参与）；
+7. 填缝：单起点返回 `None`；undo/redo 往返恢复；
+8. 填缝：同轨道多 key 共享起音网格。
 
 合并：
 
 9. 合并：首尾链压成一个，保留链首 id / 力度，终点 = 链尾终点；
 10. 合并：1 tick 空隙 / 1 tick 重叠都断开；
-11. 合并：链上音符未全部框选 → 不合并；
+11. 合并：链上音符未全部框选 → 不合并（被筛选排除的音符断开链）；
 12. 合并：同 key 不同轨道不合并；
 13. 合并：多条链一次完成、单 undo 项回滚；
 14. 合并：无可合并链返回 `None`。
 
-UI 侧：`SELECT_BAR_BUTTONS` 数量与 action 唯一性冒烟测试（防重复添加/漏绑定）。
+UI 侧：`SELECT_BAR_BUTTONS` 数量与 action 唯一性冒烟测试。
 
 ## 决策记录
 
 1. 填缝**按轨道分组**（同轨道跨 key 共享起音网格；用户选择，非按 (轨道,key)）；
 2. 重叠对齐 = **终点贴合**（起点全不动，终点 = 下一个不同起点；类似 Cubase Legato 工具）；
 3. 最后一个起音**保持原终点**，选框外音符不参与；
-4. 合并保留**最早（链首）音符**的 id / 力度 / 轨道；同轨道 + 同 key、严格 `end == next.start`、链上全部被框选。
+4. 合并保留**最早（链首）音符**的 id / 力度 / 轨道；同轨道 + 同 key、严格 `end == next.start`、链上全部被框选；
+5. 两个操作**同时加入编辑菜单**（支持图钉）；图标：填缝 `ICON_COMPARE_ARROWS`、合并 `ICON_LINE_STYLE`；「人性化」图标改 `ICON_PERSON`。
 
-## 可选后续（未决议）
+## 可选后续
 
-- 是否同步加入编辑菜单（`EditAction`，支持图钉/快捷键）；
-- 100M 级选中时的流式实现优化（当前物化版已够用，按需再做）。
+- 100M 级选中时的流式实现优化（当前按选区物化 + 逐桶 `update_matching`，按需再做）；
+- 若需要：为两个动作设置默认快捷键（快捷键设置页目前也只列了部分动作）。
