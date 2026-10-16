@@ -103,7 +103,8 @@ Undo：`apply_note_delta` 按 id 移除/插入；链首 id 复用为合并音符
 
 | 文件 | 改动 |
 |---|---|
-| `crates/yinhe-editor-core/src/document/note_edit.rs` | 新增 `fill_gaps_selected` / `merge_adjacent_selected` + 助手 `apply_end_ticks` / `record_merge_chain` + 11 个单元测试 |
+| `crates/yinhe-editor-core/src/document/note_edit/cleanup.rs` | `fill_gaps_selected` / `merge_adjacent_selected` + 助手 `apply_end_ticks` / `record_merge_chain`（note_edit 已按主题拆分，见下） |
+| `crates/yinhe-editor-core/src/document/note_edit/tests/humanize_cleanup.rs` | 11 个单元测试 |
 | `crates/yinhe-editor-core/src/shortcuts.rs` | 新增 `ACTION_FILL_GAPS` / `ACTION_MERGE_NOTES`（默认无快捷键） |
 | `crates/yinhe-editor-core/src/audio_settings.rs` | `PINNED_EDIT_ACTIONS_LEN` 18 → 20 |
 | `crates/yinhe-egui/src/widgets/selection_actions.rs` | `SelectionAction` 枚举 + `SELECT_BAR_BUTTONS`（9 → 11）+ `action_hint` + 唯一性冒烟测试 |
