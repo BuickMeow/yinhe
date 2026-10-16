@@ -1318,19 +1318,7 @@ impl Document {
 
         // Phase 2（写回）：只改终点、不换桶；`update_matching` 仅深拷贝命中块。
         let model = Arc::make_mut(&mut self.data.model);
-        for (key, plan) in updates {
-            let bucket = Arc::make_mut(&mut model.notes[key as usize]);
-            bucket.update_matching(
-                |n| plan.contains_key(&n.id),
-                |n| {
-                    if let Some(&new_end) = plan.get(&n.id) {
-                        n.end_tick = new_end;
-                    }
-                },
-            );
-            // 只改 end_tick、排序键（start_tick）不变：无需重排。
-            model.mark_dirty(key);
-        }
+        apply_end_ticks(model, &updates);
         model.rebuild_dirty();
         self.data.bump_revision();
         Some(UndoAction::Notes(NoteDelta { before, after }))
@@ -1418,21 +1406,10 @@ impl Document {
 
         // Phase 2（写回）：链首改终点 + 删除链内其余音符；只触达命中的 key 桶。
         let model = Arc::make_mut(&mut self.data.model);
-        for (key, plan) in head_updates {
-            let k = key as usize;
-            let bucket = Arc::make_mut(&mut model.notes[k]);
-            bucket.update_matching(
-                |n| plan.contains_key(&n.id),
-                |n| {
-                    if let Some(&new_end) = plan.get(&n.id) {
-                        n.end_tick = new_end;
-                    }
-                },
-            );
-            if let Some(ids) = to_remove.get(&key) {
-                bucket.remove_by_ids(ids);
-            }
-            // 只改终点 + 删音符，start_tick 排序不变量不变：无需重排。
+        apply_end_ticks(model, &head_updates);
+        for (key, ids) in to_remove {
+            let bucket = Arc::make_mut(&mut model.notes[key as usize]);
+            bucket.remove_by_ids(&ids);
             model.mark_dirty(key);
         }
         model.rebuild_dirty();
@@ -1771,6 +1748,26 @@ fn humanize_note(
         n.end_tick = new_end.clamp(n.start_tick as i64 + 1, u32::MAX as i64) as u32;
     }
     n
+}
+
+/// 批量改终点（按 key 分组的 `id → 新终点` 计划）：`update_matching` 只深拷贝
+/// 命中块。`end_tick` 不参与排序键，改完无需重排。填缝/合并共用。
+fn apply_end_ticks(
+    model: &mut yinhe_core::YinModel,
+    updates: &std::collections::HashMap<u8, std::collections::HashMap<u32, u32>>,
+) {
+    for (&key, plan) in updates {
+        let bucket = Arc::make_mut(&mut model.notes[key as usize]);
+        bucket.update_matching(
+            |n| plan.contains_key(&n.id),
+            |n| {
+                if let Some(&new_end) = plan.get(&n.id) {
+                    n.end_tick = new_end;
+                }
+            },
+        );
+        model.mark_dirty(key);
+    }
 }
 
 /// 把一条（长度 ≥ 2 的）相邻音符链登记进合并计划：
