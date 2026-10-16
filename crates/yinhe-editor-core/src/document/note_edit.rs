@@ -1241,6 +1241,205 @@ impl Document {
         }))
     }
 
+    /// 框选填缝：按**轨道**分组，把选中音符的终点贴合到该轨道「下一个不同的起点」。
+    ///
+    /// - 同一轨道内所有选中音符的起点去重升序为 `s₁ < … < sₖ`：起点为 `sᵢ`
+    ///   （i < k）的音符 `end_tick → sᵢ₊₁`；起点为 `sₖ` 的音符保持原终点；
+    /// - 只改终点（起点/key/轨道/力度/id 不动），顺带消除「起始不同却重叠」
+    ///   与「同起点终点不一致」；框外音符不参与（既不被改、也不作为贴合目标）；
+    /// - 被属性筛选排除的音符视同未选中；
+    /// - 详情见 `docs/spec-note-fill-merge.md`。返回 `None` 表示无变化。
+    pub fn fill_gaps_selected(&mut self) -> Option<UndoAction> {
+        if self.edit.selected.is_empty() {
+            return None;
+        }
+
+        // Phase 1（只读）：按轨道收集选中音符并计算新终点，同时生成 undo
+        // delta 与「id → 新终点」写回计划（Phase 2 不再读模型）。
+        let mut by_track: std::collections::HashMap<u16, Vec<(yinhe_types::Note, u8)>> =
+            std::collections::HashMap::new();
+        {
+            let model = &self.data.model;
+            let selection = &self.edit.selected;
+            for (k, ranges) in selection.merged_tick_ranges_by_key().iter().enumerate() {
+                if ranges.is_empty() {
+                    continue;
+                }
+                let key = k as u8;
+                for &(lo, hi) in ranges {
+                    for n in model.notes[k].range(lo, hi) {
+                        if !selection.accepts_note(n, key) {
+                            continue;
+                        }
+                        by_track.entry(n.track).or_default().push((*n, key));
+                    }
+                }
+            }
+        }
+
+        let mut before: Vec<(yinhe_types::Note, u8)> = Vec::new();
+        let mut after: Vec<(yinhe_types::Note, u8)> = Vec::new();
+        // key → (note id → 新终点)
+        let mut updates: std::collections::HashMap<u8, std::collections::HashMap<u32, u32>> =
+            std::collections::HashMap::new();
+        for notes in by_track.values_mut() {
+            notes.sort_unstable_by_key(|(n, _)| n.start_tick);
+            // 去重起点序列（notes 已按起点升序）。
+            let mut starts: Vec<u32> = Vec::with_capacity(notes.len());
+            for (n, _) in notes.iter() {
+                if starts.last() != Some(&n.start_tick) {
+                    starts.push(n.start_tick);
+                }
+            }
+            if starts.len() < 2 {
+                continue; // 只有一个起点：没有「下一个起点」可贴合
+            }
+            let mut idx = 0usize;
+            for (n, key) in notes.iter() {
+                while idx < starts.len() && starts[idx] < n.start_tick {
+                    idx += 1;
+                }
+                let Some(&next) = starts.get(idx + 1) else {
+                    continue; // 最后一个起点：保持原终点
+                };
+                if n.end_tick == next {
+                    continue;
+                }
+                let mut updated = *n;
+                updated.end_tick = next;
+                before.push((*n, *key));
+                after.push((updated, *key));
+                updates.entry(*key).or_default().insert(n.id, next);
+            }
+        }
+        if after.is_empty() {
+            return None;
+        }
+
+        // Phase 2（写回）：只改终点、不换桶；`update_matching` 仅深拷贝命中块。
+        let model = Arc::make_mut(&mut self.data.model);
+        for (key, plan) in updates {
+            let bucket = Arc::make_mut(&mut model.notes[key as usize]);
+            bucket.update_matching(
+                |n| plan.contains_key(&n.id),
+                |n| {
+                    if let Some(&new_end) = plan.get(&n.id) {
+                        n.end_tick = new_end;
+                    }
+                },
+            );
+            // 只改 end_tick、排序键（start_tick）不变：无需重排。
+            model.mark_dirty(key);
+        }
+        model.rebuild_dirty();
+        self.data.bump_revision();
+        Some(UndoAction::Notes(NoteDelta { before, after }))
+    }
+
+    /// 框选合并：同一轨道 + 同一 key、首尾严格相接（`end == 下一个 start`）
+    /// 的连续音符链压成一个音符。
+    ///
+    /// - 保留链首音符的 id/力度/轨道，终点取链尾终点，删除链内其余音符；
+    /// - 1 tick 空隙或重叠都断开；链上所有音符都必须被框选（被属性筛选
+    ///   排除的音符视同未选中会断开链）；框外音符不参与判定；
+    /// - 详情见 `docs/spec-note-fill-merge.md`。返回 `None` 表示无可合并链。
+    pub fn merge_adjacent_selected(&mut self) -> Option<UndoAction> {
+        if self.edit.selected.is_empty() {
+            return None;
+        }
+
+        // Phase 1（只读）：逐 (key, track) 扫描选框内音符，找最大相邻链并
+        // 生成 undo delta 与写回计划（Phase 2 不再读模型）。
+        let mut before: Vec<(yinhe_types::Note, u8)> = Vec::new();
+        let mut after: Vec<(yinhe_types::Note, u8)> = Vec::new();
+        // key → (链首 id → 合并后终点)
+        let mut head_updates: std::collections::HashMap<u8, std::collections::HashMap<u32, u32>> =
+            std::collections::HashMap::new();
+        // key → 被合并掉的 id 集合
+        let mut to_remove: std::collections::HashMap<u8, std::collections::HashSet<u32>> =
+            std::collections::HashMap::new();
+        {
+            let model = &self.data.model;
+            let selection = &self.edit.selected;
+            for (k, ranges) in selection.merged_tick_ranges_by_key().iter().enumerate() {
+                if ranges.is_empty() {
+                    continue;
+                }
+                let key = k as u8;
+                // 按轨道分组（同一 key 桶内跨轨音符交错；桶内已按起点排序）。
+                let mut per_track: std::collections::HashMap<u16, Vec<(yinhe_types::Note, bool)>> =
+                    std::collections::HashMap::new();
+                for &(lo, hi) in ranges {
+                    for n in model.notes[k].range(lo, hi) {
+                        let selected = selection.accepts_note(n, key);
+                        per_track.entry(n.track).or_default().push((*n, selected));
+                    }
+                }
+                for notes in per_track.values() {
+                    let mut run: Vec<yinhe_types::Note> = Vec::new();
+                    for (n, selected) in notes {
+                        let adjacent = run.last().is_some_and(|prev| prev.end_tick == n.start_tick);
+                        if *selected && adjacent {
+                            run.push(*n);
+                            continue;
+                        }
+                        if run.len() >= 2 {
+                            record_merge_chain(
+                                &mut run,
+                                key,
+                                &mut before,
+                                &mut after,
+                                &mut head_updates,
+                                &mut to_remove,
+                            );
+                        } else {
+                            run.clear();
+                        }
+                        if *selected {
+                            run.push(*n);
+                        }
+                    }
+                    if run.len() >= 2 {
+                        record_merge_chain(
+                            &mut run,
+                            key,
+                            &mut before,
+                            &mut after,
+                            &mut head_updates,
+                            &mut to_remove,
+                        );
+                    }
+                }
+            }
+        }
+        if after.is_empty() {
+            return None;
+        }
+
+        // Phase 2（写回）：链首改终点 + 删除链内其余音符；只触达命中的 key 桶。
+        let model = Arc::make_mut(&mut self.data.model);
+        for (key, plan) in head_updates {
+            let k = key as usize;
+            let bucket = Arc::make_mut(&mut model.notes[k]);
+            bucket.update_matching(
+                |n| plan.contains_key(&n.id),
+                |n| {
+                    if let Some(&new_end) = plan.get(&n.id) {
+                        n.end_tick = new_end;
+                    }
+                },
+            );
+            if let Some(ids) = to_remove.get(&key) {
+                bucket.remove_by_ids(ids);
+            }
+            // 只改终点 + 删音符，start_tick 排序不变量不变：无需重排。
+            model.mark_dirty(key);
+        }
+        model.rebuild_dirty();
+        self.data.bump_revision();
+        Some(UndoAction::Notes(NoteDelta { before, after }))
+    }
+
     /// 剪刀切割：对每个 `(key, cut)`，切开该行中跨过 `cut` 的音符。
     ///
     /// 只切 `track_selected`（空 = 全部）∩ `track_pianoroll_visible` 的轨道；
@@ -1572,6 +1771,41 @@ fn humanize_note(
         n.end_tick = new_end.clamp(n.start_tick as i64 + 1, u32::MAX as i64) as u32;
     }
     n
+}
+
+/// 把一条（长度 ≥ 2 的）相邻音符链登记进合并计划：
+/// undo delta（`before` = 链上全部原音符，`after` = 合并结果）+ 写回计划。
+///
+/// 合并结果保留链首 id/力度/轨道，终点取链尾 `end_tick`；链尾之后的音符全部删除。
+fn record_merge_chain(
+    chain: &mut Vec<yinhe_types::Note>,
+    key: u8,
+    before: &mut Vec<(yinhe_types::Note, u8)>,
+    after: &mut Vec<(yinhe_types::Note, u8)>,
+    head_updates: &mut std::collections::HashMap<u8, std::collections::HashMap<u32, u32>>,
+    to_remove: &mut std::collections::HashMap<u8, std::collections::HashSet<u32>>,
+) {
+    if chain.len() < 2 {
+        chain.clear();
+        return;
+    }
+    let Some(last_end) = chain.last().map(|n| n.end_tick) else {
+        chain.clear();
+        return;
+    };
+    let mut merged = chain[0];
+    merged.end_tick = last_end;
+    head_updates
+        .entry(key)
+        .or_default()
+        .insert(merged.id, last_end);
+    let removals = to_remove.entry(key).or_default();
+    for n in &chain[1..] {
+        removals.insert(n.id);
+    }
+    before.extend(chain.iter().map(|n| (*n, key)));
+    after.push((merged, key));
+    chain.clear();
 }
 
 #[cfg(test)]
@@ -3196,5 +3430,277 @@ mod tests {
         assert_eq!(doc.data.model.notes[60].len(), 1);
         assert_eq!(doc.data.model.notes[60][0].track, 0, "保留最早的 track0");
         assert!(doc.data.revision > rev, "去重应 bump revision");
+    }
+
+    // ── 框选填缝 / 框选合并（见 docs/spec-note-fill-merge.md）──
+
+    /// 某 key 桶的 (start, end, track) 快照（桶内顺序）。
+    fn spans(doc: &Document, key: u8) -> Vec<(u32, u32, u16)> {
+        doc.data.model.notes[key as usize]
+            .iter()
+            .map(|n| (n.start_tick, n.end_tick, n.track))
+            .collect()
+    }
+
+    /// 设置音符力度（测试用）。
+    fn set_velocity(doc: &mut Document, key: u8, id: u32, velocity: u8) {
+        let model = Arc::make_mut(&mut doc.data.model);
+        let bucket = Arc::make_mut(&mut model.notes[key as usize]);
+        if let Some(n) = bucket.find_mut(id) {
+            n.velocity = velocity;
+        }
+    }
+
+    /// 填缝：断续音符终点逐个贴合下一个起点；同一轨道内跨 key 共享起音网格。
+    #[test]
+    fn fill_gaps_extends_to_next_start_across_keys() {
+        let mut doc = make_doc_with_note(); // k60 [100,200)（已选中）
+        doc.add_note(0, ev(300, 320, 62));
+        doc.add_note(0, ev(400, 410, 62)); // 最后一个起点：保持原终点
+        doc.edit.selected.clear();
+        doc.edit.selected.add_rect_track(0, 1000, 0, 127, 0, 0);
+        let snap = doc.capture_snapshot();
+        let rev = doc.data.revision;
+
+        let action = doc.fill_gaps_selected().expect("应有终点变化");
+        assert_eq!(spans(&doc, 60), vec![(100, 300, 0)], "k60 终点贴合 300");
+        assert_eq!(
+            spans(&doc, 62),
+            vec![(300, 400, 0), (400, 410, 0)],
+            "k62 贴合 400；最后一个起点保持 410"
+        );
+        assert!(doc.data.revision > rev);
+        match &action {
+            UndoAction::Notes(delta) => {
+                assert_eq!(delta.before.len(), 2);
+                assert_eq!(delta.after.len(), 2);
+            }
+            other => panic!("期望副本制 Notes，实际 {other:?}"),
+        }
+
+        doc.push_undo(action, "fill", snap);
+        assert!(doc.undo(), "undo 应恢复原终点");
+        assert_eq!(spans(&doc, 60), vec![(100, 200, 0)]);
+        assert_eq!(spans(&doc, 62), vec![(300, 320, 0), (400, 410, 0)]);
+        assert!(doc.redo(), "redo 应再次贴合");
+        assert_eq!(spans(&doc, 60), vec![(100, 300, 0)]);
+    }
+
+    /// 填缝：长音符被剪短贴合下一个起点；同起点音符终点统一；最后一个起音组不改。
+    #[test]
+    fn fill_gaps_trims_overlap_and_unifies_same_start() {
+        let mut doc = make_doc_with_note(); // k60 [100,200)
+        doc.add_note(0, ev(0, 300, 60)); // 跨过后面所有起点 → 剪短
+        doc.add_note(0, ev(100, 200, 60)); // 与 [100,300) 同起点旧终点
+        doc.add_note(0, ev(0, 50, 60)); // 与 A 同起点 [0,300)
+        doc.add_note(0, ev(300, 400, 60)); // 最后一个起点：保持原终点
+        doc.edit.selected.clear();
+        doc.edit.selected.add_rect_track(0, 500, 60, 60, 0, 0);
+
+        doc.fill_gaps_selected().expect("应有终点变化");
+        let got = spans(&doc, 60);
+        assert_eq!(
+            got,
+            vec![
+                (0, 100, 0),
+                (0, 100, 0),
+                (100, 300, 0),
+                (100, 300, 0),
+                (300, 400, 0),
+            ],
+            "重叠剪短 + 同起点统一到 100；最后一个起点保持 400"
+        );
+    }
+
+    /// 填缝：只有一个不同起点 → 无变化返回 None，不 bump revision。
+    #[test]
+    fn fill_gaps_single_start_returns_none() {
+        let mut doc = make_doc_with_note(); // k60 [100,200)（唯一选中音符）
+        let before = note_tuples(&doc);
+        let rev = doc.data.revision;
+        assert!(doc.fill_gaps_selected().is_none());
+        assert_eq!(note_tuples(&doc), before);
+        assert_eq!(doc.data.revision, rev, "无变化不得 bump revision");
+    }
+
+    /// 填缝：按轨道分组——其他轨道的起点不作为本轨道的贴合目标。
+    #[test]
+    fn fill_gaps_groups_by_track() {
+        let mut doc = make_doc_tracks(2); // track0 k60 [100,200)
+        doc.add_note(1, ev(150, 400, 62)); // track1：若全局分组会把 k60 剪到 150
+        doc.edit.selected.clear();
+        doc.edit.selected.add_rect_track(0, 1000, 0, 127, 0, 1);
+        assert!(
+            doc.fill_gaps_selected().is_none(),
+            "各轨只有一个起点：不得跨轨道贴合"
+        );
+        assert_eq!(spans(&doc, 60), vec![(100, 200, 0)]);
+        assert_eq!(spans(&doc, 62), vec![(150, 400, 1)]);
+
+        // 在 track0 再放一条：track0 内部贴合，track1 不受影响。
+        doc.add_note(0, ev(500, 600, 62));
+        doc.fill_gaps_selected().expect("track0 应有贴合");
+        assert_eq!(spans(&doc, 60), vec![(100, 500, 0)]);
+        assert_eq!(
+            spans(&doc, 62),
+            vec![(150, 400, 1), (500, 600, 0)],
+            "track1 音符不被跨轨影响且自身保持原终点"
+        );
+    }
+
+    /// 填缝：框外音符不参与（既不被改，也不作为贴合目标）。
+    #[test]
+    fn fill_gaps_ignores_notes_outside_selection() {
+        let mut doc = make_doc_with_note(); // k60 [100,200)（选中，选区至 201）
+        doc.add_note(0, ev(250, 300, 60)); // 框外
+        let before = note_tuples(&doc);
+        assert!(
+            doc.fill_gaps_selected().is_none(),
+            "框外音符不得作为贴合目标"
+        );
+        assert_eq!(note_tuples(&doc), before, "框外音符不得被修改");
+    }
+
+    /// 填缝：属性筛选生效——被筛掉的音符不参与、不作为贴合目标。
+    #[test]
+    fn fill_gaps_honors_selection_filter() {
+        let mut doc = make_doc_with_note(); // k60 [100,200) v100
+        doc.add_note(0, ev(300, 400, 60));
+        doc.add_note(0, ev(500, 600, 60));
+        let ids: Vec<u32> = doc.data.model.notes[60].iter().map(|n| n.id).collect();
+        set_velocity(&mut doc, 60, ids[2], 30); // 最后一条力度 30 → 被筛选排除
+        doc.edit.selected.clear();
+        doc.edit.selected.add_rect_track(0, 1000, 60, 60, 0, 0);
+        doc.edit.selected.filter.velocity = Some((90, 127));
+
+        doc.fill_gaps_selected().expect("应有贴合到 300");
+        assert_eq!(
+            spans(&doc, 60),
+            vec![(100, 300, 0), (300, 400, 0), (500, 600, 0)],
+            "被筛掉的 [500,600) 不参与且不被改"
+        );
+    }
+
+    /// 合并：首尾严格相接的链压成一条，保留链首 id/力度，终点取链尾终点。
+    #[test]
+    fn merge_adjacent_chain_keeps_head_attributes() {
+        let mut doc = make_doc_with_note(); // k60 [100,200)
+        doc.add_note(0, ev(200, 250, 60));
+        doc.add_note(0, ev(250, 300, 60));
+        doc.edit.selected.clear();
+        doc.edit.selected.add_rect_track(100, 301, 60, 60, 0, 0);
+        let ids: Vec<u32> = doc.data.model.notes[60].iter().map(|n| n.id).collect();
+        set_velocity(&mut doc, 60, ids[2], 40); // 链尾力度不同 → 以链首为准
+        let snap = doc.capture_snapshot();
+
+        let action = doc.merge_adjacent_selected().expect("应合并成一条");
+        assert_eq!(spans(&doc, 60), vec![(100, 300, 0)]);
+        let merged = doc.data.model.notes[60][0];
+        assert_eq!(merged.id, ids[0], "保留链首 id");
+        assert_eq!(merged.velocity, 100, "保留链首力度");
+        match &action {
+            UndoAction::Notes(delta) => {
+                assert_eq!(delta.before.len(), 3, "before 含链上全部音符");
+                assert_eq!(delta.after.len(), 1);
+            }
+            other => panic!("期望副本制 Notes，实际 {other:?}"),
+        }
+
+        doc.push_undo(action, "merge", snap);
+        assert!(doc.undo(), "undo 应恢复 3 条");
+        assert_eq!(doc.data.model.notes[60].len(), 3);
+        assert!(doc.redo(), "redo 应再次合并");
+        assert_eq!(spans(&doc, 60), vec![(100, 300, 0)]);
+        assert!(doc.data.model.notes[60].is_sorted(), "桶保持有序");
+    }
+
+    /// 合并：1 tick 空隙或重叠都断开（不合并）。
+    #[test]
+    fn merge_adjacent_gap_or_overlap_breaks_chain() {
+        // 1 tick 空隙
+        let mut doc = make_doc_with_note(); // k60 [100,200)
+        doc.add_note(0, ev(201, 300, 60));
+        doc.edit.selected.add_rect_track(0, 1000, 60, 60, 0, 0);
+        assert!(
+            doc.merge_adjacent_selected().is_none(),
+            "1 tick 空隙不得合并"
+        );
+        assert_eq!(doc.data.model.notes[60].len(), 2);
+
+        // 1 tick 重叠
+        let mut doc2 = make_doc_with_note(); // k60 [100,200)
+        doc2.add_note(0, ev(199, 300, 60));
+        doc2.edit.selected.add_rect_track(0, 1000, 60, 60, 0, 0);
+        assert!(doc2.merge_adjacent_selected().is_none(), "重叠不得合并");
+        assert_eq!(doc2.data.model.notes[60].len(), 2);
+    }
+
+    /// 合并：链上音符必须全部被框选——被筛选排除的音符会断开链。
+    #[test]
+    fn merge_adjacent_requires_all_selected() {
+        let mut doc = make_doc_with_note(); // k60 [100,200) 选中
+        doc.add_note(0, ev(200, 250, 60)); // 相接
+        doc.add_note(0, ev(250, 300, 60)); // 相接
+        let ids: Vec<u32> = doc.data.model.notes[60].iter().map(|n| n.id).collect();
+        set_velocity(&mut doc, 60, ids[1], 30); // 中间一条力度 30
+        doc.edit.selected.add_rect_track(0, 1000, 60, 60, 0, 0);
+        doc.edit.selected.filter.velocity = Some((90, 127)); // 中间的排除
+
+        assert!(
+            doc.merge_adjacent_selected().is_none(),
+            "中间音符未选中 → 链断裂，两侧不合并"
+        );
+        assert_eq!(doc.data.model.notes[60].len(), 3);
+    }
+
+    /// 合并：同 key 不同轨道不合并；同轨链正常合并。
+    #[test]
+    fn merge_adjacent_same_track_only() {
+        let mut doc = make_doc_tracks(2); // track0 k60 [100,200)
+        doc.add_note(1, ev(200, 300, 60)); // track1 同 key 相接
+        doc.edit.selected.clear();
+        doc.edit.selected.add_rect_track(0, 1000, 60, 60, 0, 1);
+        assert!(
+            doc.merge_adjacent_selected().is_none(),
+            "跨轨同 key 不得合并"
+        );
+        assert_eq!(spans(&doc, 60).len(), 2);
+
+        doc.add_note(0, ev(200, 300, 60)); // track0 相接 → 与 track0 链合并
+        doc.merge_adjacent_selected().expect("track0 相邻链应合并");
+        assert_eq!(
+            spans(&doc, 60),
+            vec![(100, 300, 0), (200, 300, 1)],
+            "只合并 track0 的链，track1 音符不动"
+        );
+    }
+
+    /// 合并：同一次点击处理多条链，单 undo 项整体回滚。
+    #[test]
+    fn merge_adjacent_multiple_chains_one_undo() {
+        let mut doc = make_doc_with_note(); // k60 [100,200)
+        doc.add_note(0, ev(200, 300, 60)); // 与上一条相连
+        doc.add_note(0, ev(500, 510, 60));
+        doc.add_note(0, ev(510, 520, 60));
+        doc.add_note(0, ev(520, 530, 60)); // 三条链
+        doc.edit.selected.clear();
+        doc.edit.selected.add_rect_track(0, 1000, 60, 60, 0, 0);
+        let snap = doc.capture_snapshot();
+
+        let action = doc.merge_adjacent_selected().expect("两条链都应合并");
+        assert_eq!(spans(&doc, 60), vec![(100, 300, 0), (500, 530, 0)]);
+        match &action {
+            UndoAction::Notes(delta) => {
+                assert_eq!(delta.before.len(), 5);
+                assert_eq!(delta.after.len(), 2);
+            }
+            other => panic!("期望副本制 Notes，实际 {other:?}"),
+        }
+
+        doc.push_undo(action, "merge", snap);
+        assert!(doc.undo());
+        assert_eq!(doc.data.model.notes[60].len(), 5, "一次 undo 恢复全部");
+        assert!(doc.redo());
+        assert_eq!(spans(&doc, 60), vec![(100, 300, 0), (500, 530, 0)]);
     }
 }

@@ -54,6 +54,10 @@ pub const ACTION_DEDUP_WITHIN_TRACK: &str = "dedup_within_track";
 pub const ACTION_DEDUP_ACROSS_TRACKS: &str = "dedup_across_tracks";
 /// 人性化：给选中音符注入随机偏差（时间/力度/时值）。
 pub const ACTION_HUMANIZE: &str = "humanize";
+/// 填缝：把框选内音符的终点贴合到同轨道「下一个不同的起点」。
+pub const ACTION_FILL_GAPS: &str = "fill_gaps";
+/// 合并：把框选内首尾严格相接的同 key 音符合并成一个。
+pub const ACTION_MERGE_NOTES: &str = "merge_notes";
 
 pub const ACTION_TOGGLE_PLAY: &str = "toggle_play";
 pub const ACTION_STOP: &str = "stop";
@@ -98,6 +102,8 @@ pub const ALL_ACTION_IDS: &[&str] = &[
     ACTION_DEDUP_WITHIN_TRACK,
     ACTION_DEDUP_ACROSS_TRACKS,
     ACTION_HUMANIZE,
+    ACTION_FILL_GAPS,
+    ACTION_MERGE_NOTES,
     ACTION_TOGGLE_PLAY,
     ACTION_STOP,
     ACTION_TOOL_SELECT,
@@ -186,6 +192,8 @@ fn default_combo(action_id: &str) -> Option<KeyCombo> {
         ACTION_TRANSPOSE_UP => combo(false, true, false, "ArrowUp"),
         ACTION_TRANSPOSE_DOWN => combo(false, true, false, "ArrowDown"),
         ACTION_HUMANIZE => None,
+        ACTION_FILL_GAPS => None,
+        ACTION_MERGE_NOTES => None,
         ACTION_TOGGLE_PLAY => combo(false, false, false, "Space"),
         ACTION_STOP => combo(false, false, false, "Escape"),
         // 工具切换默认用主键盘数字键 1-9、0（按工具栏显示顺序）。
