@@ -168,39 +168,48 @@ impl Default for QuantizePreset {
 // ── 自适应网格（Auto） ──
 
 /// 自适应网格的目标屏幕格宽（像素）：解析时选格宽最接近该值的档位。
-/// 13px 保证默认视图（0.15 px/tick）落在 1/16，最大缩放（10 px/tick）能到 1 tick。
 pub const AUTO_TARGET_PX: f32 = 13.0;
 
-/// 自适应档位的候选序列（由粗到细）：标准时值 1/1…1/128，再延伸到 8/4/2/1 tick。
-/// 不含三连音：自适应沿 2 分频链平滑切换，避免缩放时网格跳到奇数细分。
-const AUTO_SEQUENCE: &[QuantizePreset] = &[
-    QuantizePreset::Fraction(1, 1),
-    QuantizePreset::Fraction(1, 2),
-    QuantizePreset::Fraction(1, 4),
-    QuantizePreset::Fraction(1, 8),
-    QuantizePreset::Fraction(1, 16),
-    QuantizePreset::Fraction(1, 32),
-    QuantizePreset::Fraction(1, 64),
-    QuantizePreset::Fraction(1, 128),
-    QuantizePreset::Absolute(8),
-    QuantizePreset::Absolute(4),
-    QuantizePreset::Absolute(2),
-    QuantizePreset::Absolute(1),
-];
+/// 自适应网格的候选档位（由粗到细，**不含三连音**）：
+/// - 2 分频链：`1/1, 1/2, 1/4, …` 到该 PPQ 下最后一个整数 tick 档；
+/// - 继续按 2 的幂 tick 减半（8, 4, 2, 1），直到 **1 tick** 为止。
+///
+/// 与下拉菜单（[`presets_for_ppq`]，含三连音）不同源：自适应沿 2 分频
+/// 平滑切换，避免缩放时网格跳到奇数细分。
+fn auto_candidates(ppq: u32) -> Vec<QuantizePreset> {
+    let whole = ppq.max(1).saturating_mul(4);
+    let mut out = Vec::new();
+    let mut den = 1u32;
+    let mut last_tick = whole;
+    while den <= whole && whole.is_multiple_of(den) {
+        last_tick = whole / den;
+        out.push(QuantizePreset::Fraction(1, den));
+        den = match den.checked_mul(2) {
+            Some(next) => next,
+            None => break,
+        };
+    }
+    // 链尾 tick 之后继续 2 分频到 1：tick 域上取"≤ 链尾的最大 2 的幂"逐半。
+    let mut t = last_tick.next_power_of_two() >> 1;
+    while t >= 1 {
+        out.push(QuantizePreset::Absolute(t));
+        t >>= 1;
+    }
+    out
+}
 
-/// 自适应网格解析：选"屏幕格宽最接近 [`AUTO_TARGET_PX`]"的档位（对数距离）。
+/// 自适应网格解析：在 [`auto_candidates`] 里选"屏幕格宽最接近
+/// [`AUTO_TARGET_PX`]"的那一档（对数距离）。
 ///
 /// - 网格间距随 `pixels_per_tick` 变小而变粗、变大而变细；
-/// - 序列按 tick_interval 做单调过滤：PPQ 较小时（如 96）跳过比
-///   1/128 还粗的绝对 tick 档，保证结果始终是有效且单调变细的网格；
-/// - 放大到最大缩放时解析为 1 tick，可写 tick 级音符。
+/// - 放大到最大缩放时解析为 1 tick（序列末端），可写 tick 级音符。
 pub fn auto_preset(pixels_per_tick: f32, ppq: u32) -> QuantizePreset {
     let ppu = pixels_per_tick.max(0.001);
     let mut best: Option<(QuantizePreset, f32)> = None;
     let mut last_interval = u32::MAX;
-    for &cand in AUTO_SEQUENCE {
+    for cand in auto_candidates(ppq) {
         let interval = cand.tick_interval(ppq);
-        // 非单调（比上一档还粗）的候选跳过：小 PPQ 下绝对 tick 档会越界。
+        // 防御：interval 为 0 或非单调（不应出现）的候选跳过。
         if interval == 0 || interval >= last_interval {
             continue;
         }
@@ -485,7 +494,10 @@ mod tests {
 
     #[test]
     fn auto_resolves_by_zoom() {
-        // 默认视图（0.15 px/tick）解析为 1/16；最大缩放（10 px/tick）到 1 tick。
+        // 480 PPQ 候选按格宽降序（tick）：1920, 960, 480, 240, 120, 60, 30, 15,
+        // 8, 4, 2, 1（纯 2 分频，不含三连音）。
+        // 默认视图（0.15 px/tick）→ 1/16（120t = 18px，最接近 13px）；
+        // 最大缩放（10 px/tick）→ 1 tick。
         assert_eq!(auto_preset(0.15, 480), QuantizePreset::Fraction(1, 16));
         assert_eq!(auto_preset(10.0, 480), QuantizePreset::Absolute(1));
         assert_eq!(auto_preset(1.0, 480), QuantizePreset::Fraction(1, 128));
@@ -510,11 +522,10 @@ mod tests {
     }
 
     #[test]
-    fn auto_small_ppq_skips_non_monotonic_ticks() {
-        // 96 PPQ：1/128 = 3t，绝对档 8/4 应被跳过，结果仍是合法网格。
+    fn auto_small_ppq_reaches_one_tick() {
+        // 96 PPQ：2 分频链到 1/128 = 3t，再沿 2 的幂 tick 减半到 1t。
         let p = auto_preset(10.0, 96);
-        let interval = p.tick_interval(96);
-        assert!((1..=3).contains(&interval), "got {p:?}");
+        assert_eq!(p.tick_interval(96), 1);
         assert_eq!(p, QuantizePreset::Absolute(1));
     }
 
