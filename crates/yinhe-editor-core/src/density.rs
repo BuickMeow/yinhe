@@ -10,9 +10,20 @@
 //! UI 线程永不被全量扫描阻塞。轨道显隐变化用 `bucket_track_stats`
 //! 定位"含该轨的 key"，同样只重扫受影响的 key。
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use yinhe_core::YinModel;
+
+/// 全局单调版本源：密度内容每次变化取一个新值，供绘制端纹理缓存失效判定。
+///
+/// 刻意用全局计数器而非 per-map 自增——切换文档时两份数据的版本号不可能
+/// 撞车（否则纹理缓存会误判命中、显示上一份文档的图）。
+static NEXT_DENSITY_VERSION: AtomicU64 = AtomicU64::new(1);
+
+fn next_density_version() -> u64 {
+    NEXT_DENSITY_VERSION.fetch_add(1, Ordering::Relaxed)
+}
 
 /// 初始桶宽（tick）。
 const INITIAL_BUCKET_TICKS: u32 = 1024;
@@ -44,6 +55,8 @@ pub struct NoteDensityView<'a> {
     /// 单个 (key, 桶) 格的最大计数（亮度归一化基准；绘制端聚合后允许超过）。
     /// 0 = 无数据。
     pub max_count: u32,
+    /// 内容版本：每次计数/布局变化取全局新值（绘制端纹理缓存失效判定）。
+    pub version: u64,
 }
 
 /// 全曲音符密度（每 key 一行 × tick 桶）。
@@ -57,6 +70,8 @@ pub struct NoteDensityMap {
     /// 每行的最大格计数（维护全局 `max_count` 用，避免全量扫描）。
     row_max: [u32; PREVIEW_KEYS],
     max_count: u32,
+    /// 内容版本（见 [`NoteDensityView::version`]）。
+    version: u64,
     /// 每个 key 上次重扫时的 revision；`None` = 必须重扫（新模型/桶宽变化）。
     /// 只追踪显示域 key（≥ 128 无关预览）。
     rev_snapshot: [Option<u64>; PREVIEW_KEYS],
@@ -88,6 +103,7 @@ impl NoteDensityMap {
             dominant: Vec::new(),
             row_max: [0; PREVIEW_KEYS],
             max_count: 0,
+            version: next_density_version(),
             rev_snapshot: [None; PREVIEW_KEYS],
             visible_snapshot: Vec::new(),
             model_ptr: 0,
@@ -107,6 +123,7 @@ impl NoteDensityMap {
             n_buckets: self.n_buckets,
             bucket_ticks: self.bucket_ticks.max(1),
             max_count: self.max_count,
+            version: self.version,
         }
     }
 
@@ -187,6 +204,7 @@ impl NoteDensityMap {
         self.dominant = new_dominant;
         self.scratch.resize(n, 0);
         self.n_buckets = n;
+        self.version = next_density_version();
     }
 
     fn reset_counts(&mut self) {
@@ -194,6 +212,7 @@ impl NoteDensityMap {
         self.dominant.fill(NO_TRACK);
         self.row_max = [0; PREVIEW_KEYS];
         self.max_count = 0;
+        self.version = next_density_version();
     }
 
     fn mark(&mut self, key: usize) {
@@ -261,6 +280,7 @@ impl NoteDensityMap {
         if rescanned {
             // 全局最大 = 各行最大值的最大（O(key 行)，无需全量扫描）。
             self.max_count = self.row_max.iter().copied().max().unwrap_or(0);
+            self.version = next_density_version();
         }
     }
 
@@ -308,6 +328,7 @@ impl NoteDensityMap {
         pending_mask.fill(false);
         *visible_snapshot = visible.to_vec();
         self.max_count = row_max.iter().copied().max().unwrap_or(0);
+        self.version = next_density_version();
     }
 
     /// 重扫一个 key：统计可见音符，覆盖该行、更新行最大与主导轨。

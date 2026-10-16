@@ -143,34 +143,12 @@ pub(crate) fn show(
         } else {
             rect.height().round().max(1.0) as usize
         };
-        // 格子矩形：主轴沿时间轴（含纵向镜像），副轴沿音高（低音在底部/左端，
-        // 与键盘方向一致）。
-        let cell_rect = |a0: f32, a1: f32, r: usize| -> egui::Rect {
-            let (c0, c1) = if vertical {
-                let w = rect.width() / px_rows as f32;
-                (rect.min.x + r as f32 * w, rect.min.x + (r as f32 + 1.0) * w)
-            } else {
-                let h = rect.height() / px_rows as f32;
-                (rect.max.y - (r as f32 + 1.0) * h, rect.max.y - r as f32 * h)
-            };
-            let (s0, s1) = (to_screen(a0), to_screen(a1));
-            if vertical {
-                egui::Rect::from_min_max(
-                    egui::pos2(c0, rect.min.y + s0.min(s1)),
-                    egui::pos2(c1, rect.min.y + s0.max(s1)),
-                )
-            } else {
-                egui::Rect::from_min_max(
-                    egui::pos2(rect.min.x + s0.min(s1), c0),
-                    egui::pos2(rect.min.x + s0.max(s1), c1),
-                )
-            }
-        };
-        draw_density_bars(
+        draw_density_image(
             ui,
-            &cell_rect,
-            px_rows,
+            rect,
+            vertical,
             sb_w,
+            px_rows,
             scale,
             &p.density,
             p.track_colors,
@@ -343,19 +321,123 @@ pub(crate) fn show(
     0.0
 }
 
-/// 密度预览：按音高行画 2D 分布（低音在底部 / 纵向模式在左端）。
+/// 密度预览纹理缓存（每滚动条实例一份，存于 egui Context 持久数据）。
 ///
-/// 数据是每 key 一行的全分辨率计数（`PREVIEW_KEYS` 行），这里按滚动条的
-/// 像素行聚合（24px 高 → 24 行 × 5.3 key/行）；计数经 ln 压缩映射到
-/// alpha，0 计数不画——黑乐谱的低音 bass 线、段落轮廓由此可辨。
+/// 失效判定四要素：数据版本 / 纹理尺寸 / 轨道配色。任一变化即重建像素
+/// 并更新纹理——切显隐（版本变）、改颜色（配色变）、窗口 resize 与多窗口
+/// 不同尺寸（w/h 变）都被覆盖。稳态（无变化）每帧只画 1 个 image。
+#[derive(Clone, Default)]
+struct DensityTextureCache {
+    handle: Option<egui::TextureHandle>,
+    version: u64,
+    w: usize,
+    h: usize,
+    colors: Vec<[f32; 4]>,
+}
+
+/// 密度预览（纹理化）：把像素网格渲染进纹理，只在失效判定命中时重建。
 ///
-/// 颜色取格子内计数最大的 `(key, 桶)` 的主导轨色（与 AR 画布轨色一致）；
-/// 主导轨缺失或配色表没有该轨时回退到主题强调色。
-fn draw_density_bars(
+/// 纹理尺寸 = 该滚动条当前的实际像素网格（`ceil(主轴长) × 副轴行数`，
+/// 纵向转置），不存在"缓存了过期尺寸"的情况；resize 拖动期间每帧重建
+/// 一次（约 1ms 构建），松手后归零。
+#[allow(clippy::too_many_arguments)]
+fn draw_density_image(
     ui: &egui::Ui,
-    cell_rect: &impl Fn(f32, f32, usize) -> egui::Rect,
-    px_rows: usize,
+    rect: egui::Rect,
+    vertical: bool,
     sb_w: f32,
+    px_rows: usize,
+    scale: f64,
+    d: &NoteDensityView<'_>,
+    track_colors: &[[f32; 4]],
+) {
+    let (w, h) = if vertical {
+        (px_rows, sb_w.ceil().max(1.0) as usize)
+    } else {
+        (sb_w.ceil().max(1.0) as usize, px_rows)
+    };
+    let id = ui.id().with("__sb_density_tex__");
+    let need_rebuild = ui.ctx().data_mut(|data| {
+        let cache = data.get_persisted_mut_or(id, DensityTextureCache::default());
+        if cache.version != d.version
+            || cache.w != w
+            || cache.h != h
+            || cache.colors != track_colors
+        {
+            cache.version = d.version;
+            cache.w = w;
+            cache.h = h;
+            cache.colors.clear();
+            cache.colors.extend_from_slice(track_colors);
+            true
+        } else {
+            false
+        }
+    });
+    if need_rebuild {
+        let mut pixels = vec![egui::Color32::TRANSPARENT; w * h];
+        fill_density_pixels(
+            &mut pixels,
+            w,
+            h,
+            vertical,
+            sb_w,
+            px_rows,
+            scale,
+            d,
+            track_colors,
+        );
+        let image = egui::ColorImage::new([w, h], pixels);
+        // 已有纹理就地更新（避免反复创建/销毁 GPU 纹理），否则新建。
+        let existing = ui.ctx().data_mut(|data| {
+            data.get_persisted_mut_or(id, DensityTextureCache::default())
+                .handle
+                .clone()
+        });
+        match existing {
+            Some(mut handle) => handle.set(image, egui::TextureOptions::LINEAR),
+            None => {
+                let handle =
+                    ui.ctx()
+                        .load_texture("density_preview", image, egui::TextureOptions::LINEAR);
+                ui.ctx().data_mut(|data| {
+                    data.get_persisted_mut_or(id, DensityTextureCache::default())
+                        .handle = Some(handle)
+                });
+            }
+        }
+    }
+    let tex = ui.ctx().data_mut(|data| {
+        data.get_persisted_mut_or(id, DensityTextureCache::default())
+            .handle
+            .as_ref()
+            .map(|h| h.id())
+    });
+    if let Some(tex) = tex {
+        ui.painter().image(
+            tex,
+            rect,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+    }
+}
+
+/// 填充密度纹理像素（premultiplied RGBA，`w × h` 对应屏幕像素网格）。
+///
+/// 横向：x = 主轴列（左→右），y = 副轴行（顶 = 高音，底 = 低音）。
+/// 纵向：x = 副轴行（左 = 低音），y = 主轴列（时间轴镜像：内容起点在底部）。
+///
+/// 每格取格子内计数最大的 `(key, 桶)` 的主导轨色（与 AR 画布轨色一致），
+/// 计数经 ln 压缩映射到 alpha；0 计数留透明。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
+fn fill_density_pixels(
+    out: &mut [egui::Color32],
+    w: usize,
+    h: usize,
+    vertical: bool,
+    sb_w: f32,
+    px_rows: usize,
     scale: f64,
     d: &NoteDensityView<'_>,
     track_colors: &[[f32; 4]],
@@ -374,15 +456,10 @@ fn draw_density_bars(
     let inv_scale = 1.0 / scale; // 主轴像素 → tick
     let max_ln = (d.max_count as f32).ln_1p().max(f32::EPSILON);
     let fallback = theme::accent_active();
-    let cols = sb_w.ceil() as usize;
+    let cols = if vertical { h } else { w }; // 主轴像素数
     let mut b = 0usize; // 单调推进的桶游标（列与列 tick 区间连续）
     for col in 0..cols {
-        let x0 = col as f32;
-        let x1 = ((col + 1) as f32).min(sb_w);
-        if x1 <= x0 {
-            break;
-        }
-        let tick_end = (x1 as f64 * inv_scale).ceil() as u64;
+        let tick_end = ((col + 1) as f64 * inv_scale).ceil() as u64;
         let b_end = (tick_end.div_ceil(bucket) as usize).min(n);
         if b_end <= b {
             continue;
@@ -414,8 +491,14 @@ fn draw_density_bars(
             // ln 压缩；一个像素行聚合多个 key，允许超过单格 max（clamp 上限）。
             let a = (count as f32).ln_1p() / max_ln;
             let alpha = (0.28 + 0.62 * a).min(0.95);
-            ui.painter()
-                .rect_filled(cell_rect(x0, x1, r), 0.0, color.gamma_multiply(alpha));
+            let px = color.gamma_multiply(alpha);
+            let idx = if vertical {
+                // 内容 col=0 在屏幕底部（时间轴镜像），低音行 r 在左端。
+                (h - 1 - col) * w + r
+            } else {
+                (px_rows - 1 - r) * w + col
+            };
+            out[idx] = px;
         }
         b = b_end;
     }
@@ -884,19 +967,25 @@ mod tests {
         let colors: Vec<[f32; 4]> = (0..16)
             .map(|i| [i as f32 / 16.0, 0.5, 1.0 - i as f32 / 16.0, 1.0])
             .collect();
-        let view = NoteDensityView {
-            rows: &rows,
-            dominant: &dominant,
-            n_buckets,
-            bucket_ticks: 1024,
-            max_count: 200,
-        };
-        let preview = DensityPreview {
-            density: view,
-            track_colors: &colors,
-        };
-        let mut run_frames = |n: usize| {
+        let mut run_frames = |n: usize, bump_version: bool| -> std::time::Duration {
+            let start = Instant::now();
+            let mut ver = 7u64;
             for _ in 0..n {
+                if bump_version {
+                    ver += 1;
+                }
+                let view = NoteDensityView {
+                    rows: &rows,
+                    dominant: &dominant,
+                    n_buckets,
+                    bucket_ticks: 1024,
+                    max_count: 200,
+                    version: ver,
+                };
+                let preview = DensityPreview {
+                    density: view,
+                    track_colors: &colors,
+                };
                 ctx.run_ui(egui::RawInput::default(), |ui| {
                     show(
                         ui,
@@ -914,14 +1003,85 @@ mod tests {
                 .textures_delta
                 .clear();
             }
+            start.elapsed() / n as u32
         };
-        run_frames(10); // 预热（字体/缓存初始化）
-        let t = Instant::now();
-        run_frames(100);
+        run_frames(10, false); // 预热（字体/缓存初始化）
         println!(
-            "density draw avg: {:?}/frame (2000 cols × 24 rows, ~2.4万非零格)",
-            t.elapsed() / 100
+            "steady-state (纹理复用): {:?}/frame",
+            run_frames(100, false)
         );
+        println!(
+            "rebuild-every-frame (编辑中): {:?}/frame",
+            run_frames(100, true)
+        );
+    }
+
+    /// 纹理缓存失效矩阵：稳态复用不重建；数据版本（编辑/切显隐）、
+    /// 轨道配色（颜色重分配）、尺寸（窗口 resize）任一变化必须重建。
+    /// 通过 `textures_delta.set` 数量观察（该帧只调 show，无其他纹理产出）。
+    #[test]
+    fn density_texture_invalidation_matrix() {
+        let ctx = egui::Context::default();
+        let mut scroll_x = 0.0f32;
+        let mut ppt = 1.0f32;
+        let mut dirty = false;
+        let n_buckets = 100;
+        let rows: Vec<u32> = (0..PREVIEW_KEYS * n_buckets)
+            .map(|i| (i % 5) as u32)
+            .collect();
+        let dominant: Vec<u32> = vec![0; PREVIEW_KEYS * n_buckets];
+        let colors_a: Vec<[f32; 4]> = vec![[1.0, 0.5, 0.2, 1.0]];
+        let colors_b: Vec<[f32; 4]> = vec![[0.2, 0.5, 1.0, 1.0]];
+
+        let mut run = |version: u64, rect_w: f32, colors: &[[f32; 4]]| -> usize {
+            let view = NoteDensityView {
+                rows: &rows,
+                dominant: &dominant,
+                n_buckets,
+                bucket_ticks: 10,
+                max_count: 2,
+                version,
+            };
+            let preview = DensityPreview {
+                density: view,
+                track_colors: colors,
+            };
+            let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(rect_w, 24.0));
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                show(
+                    ui,
+                    rect,
+                    rect_w,
+                    &mut scroll_x,
+                    &mut ppt,
+                    1000.0,
+                    Some(&preview),
+                    None,
+                    &mut dirty,
+                    yinhe_types::Orientation::Horizontal,
+                );
+            });
+            let n = out.textures_delta.set.len();
+            out.textures_delta.clear();
+            n
+        };
+        // 首次建立纹理（顺带吞掉字体等一次性纹理帧）。
+        let _ = run(1, 300.0, &colors_a);
+        assert_eq!(run(1, 300.0, &colors_a), 0, "稳态不得重建纹理");
+        assert!(
+            run(2, 300.0, &colors_a) >= 1,
+            "数据版本变化（编辑/切显隐）应重建"
+        );
+        assert_eq!(run(2, 300.0, &colors_a), 0, "继续稳态");
+        assert!(
+            run(2, 300.0, &colors_b) >= 1,
+            "配色变化（颜色重分配）应重建"
+        );
+        assert!(
+            run(2, 350.0, &colors_b) >= 1,
+            "尺寸变化（窗口 resize）应重建"
+        );
+        assert_eq!(run(2, 350.0, &colors_b), 0, "稳态不得重建纹理");
     }
 
     /// 密度预览：有数据时逐格绘制不 panic（含超出桶覆盖范围的尾部、
@@ -953,6 +1113,7 @@ mod tests {
             n_buckets,
             bucket_ticks: 10,
             max_count: 300,
+            version: 1,
         };
         let colors: Vec<[f32; 4]> = vec![
             [1.0, 0.5, 0.2, 1.0],
