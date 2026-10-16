@@ -147,6 +147,10 @@ pub fn bar_rect(
     Some(bar_rect)
 }
 
+/// 网格切割悬停标志（egui temp data）：为 true 时钢琴卷帘把当前选框
+/// 切换成「网格预览」（强调色选框 + 量化网格线）。
+pub const GRID_PREVIEW_HOVER_ID: &str = "pr_grid_preview_hover";
+
 /// 在 transport bar 上横排绘制选择动作按钮
 /// （删除/复制/移调↑/移调↓/变速×2/变速÷2/水平翻转/垂直翻转）。
 ///
@@ -159,6 +163,7 @@ pub fn show_transport_buttons(
     hovered_hint: &mut Option<String>,
 ) -> Option<SelectionAction> {
     let mut clicked = None;
+    let mut grid_hovered = false;
     for (i, &(icon, action)) in SELECT_BAR_BUTTONS.iter().enumerate() {
         let font = egui::FontId::new(crate::theme::TRANSPORT_BTN_FONT, icon.font_family());
         let angle = bar_button_rotation(action);
@@ -189,10 +194,15 @@ pub fn show_transport_buttons(
         if resp.hovered() {
             *hovered_hint = Some(action_hint(action));
         }
+        // 网格按钮悬停：钢琴卷帘把当前选框切换成网格预览（同帧生效）。
+        if enabled && resp.hovered() && action == SelectionAction::GridConfirm {
+            grid_hovered = true;
+        }
         if i + 1 < SELECT_BAR_BUTTONS.len() {
             ui.add_space(TRANSPORT_GAP);
         }
     }
+    ui.data_mut(|d| d.insert_temp(egui::Id::new(GRID_PREVIEW_HOVER_ID), grid_hovered));
     clicked
 }
 

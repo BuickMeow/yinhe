@@ -242,7 +242,17 @@ pub(crate) fn draw_overlays(
         }
         _ => {}
     }
-    // 已提交的持久选框：任意工具下均保持可见
+    // 已提交的持久选框：任意工具下均保持可见。
+    // 悬停 transport bar 网格按钮时切换为「网格预览」：强调色选框 + 量化网格线，
+    // 预览即将按哪个网格切割（与切割用的已解析量化同源；Off 无网格不预览）。
+    let grid_interval = quantize.tick_interval(ppq);
+    let grid_preview = grid_interval > 0
+        && ui.data_mut(|d| {
+            d.get_temp::<bool>(egui::Id::new(
+                crate::widgets::selection_actions::GRID_PREVIEW_HOVER_ID,
+            ))
+            .unwrap_or(false)
+        });
     {
         let eff_rects = sel_rect.effective_rects();
         if !eff_rects.is_empty() {
@@ -254,6 +264,11 @@ pub(crate) fn draw_overlays(
                     )
                 })
                 .collect();
+            let (fill_color, stroke_color) = if grid_preview {
+                (crate::theme::accent_active(), crate::theme::accent_active())
+            } else {
+                (crate::theme::contrast_fg(), crate::theme::contrast_fg())
+            };
             {
                 let kb_w_shift = if view.is_vertical() {
                     0.0
@@ -274,10 +289,30 @@ pub(crate) fn draw_overlays(
                             ui.painter(),
                             music_rect,
                             shifted,
-                            crate::theme::contrast_fg(),
-                            crate::theme::contrast_fg(),
+                            fill_color,
+                            stroke_color,
                         );
                     }
+                }
+            }
+            if grid_preview {
+                let main_len = if view.is_vertical() {
+                    music_rect.height()
+                } else {
+                    music_rect.width()
+                };
+                for &(t0, t1, kl, kh) in &eff_rects {
+                    paint_rect_grid(
+                        painter,
+                        content_rect,
+                        view,
+                        t0,
+                        t1,
+                        kl,
+                        kh,
+                        grid_interval,
+                        main_len,
+                    );
                 }
             }
         }
@@ -401,5 +436,68 @@ fn keyboard_zoom(
     if changed {
         view.base.dirty = true;
         ui.ctx().request_repaint();
+    }
+}
+
+/// 在选框范围内画量化网格线（仅主轴方向：横向画竖线、纵向画横线），
+/// 按可见范围裁剪。网格间距不足 1px 时跳过（画出来是一片纯色）。
+///
+/// `main_len` = 主轴视口长度（横向 = 音乐区宽，纵向 = 内容高）。
+/// 供 transport bar 网格按钮的悬停预览使用（与切割用的已解析量化同源）。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
+fn paint_rect_grid(
+    painter: &egui::Painter,
+    content_rect: egui::Rect,
+    view: &PianoRollView,
+    t_start: f64,
+    t_end: f64,
+    key_lo: u8,
+    key_hi: u8,
+    interval: u32,
+    main_len: f32,
+) {
+    if interval == 0 {
+        return;
+    }
+    // 网格间距不足 1px 时画出来是一片纯色，跳过内部线。
+    if (interval as f32) * view.base.pixels_per_tick < 1.0 {
+        return;
+    }
+    let (vis0, vis1) = view.visible_main_range(main_len);
+    let lo = t_start.max(vis0).max(0.0);
+    let hi = t_end.min(vis1);
+    if hi <= lo {
+        return;
+    }
+    // 副轴覆盖范围：横向 key_hi 在上（小 y），纵向 key_lo 在左。
+    let (cross0, cross1) = if view.is_vertical() {
+        (
+            view.key_to_cross_px(key_lo),
+            view.key_to_cross_px(key_hi) + view.key_height,
+        )
+    } else {
+        (
+            view.key_to_cross_px(key_hi),
+            view.key_to_cross_px(key_lo) + view.key_height,
+        )
+    };
+    let stroke = egui::Stroke::new(1.0, crate::theme::accent_active().gamma_multiply(0.55));
+    let interval_f = interval as f64;
+    let mut t = (lo / interval_f).ceil() * interval_f;
+    while t <= hi {
+        let main_px = crate::selection::drag::tick_to_main_px_dir(view, t);
+        let (a, b) = if view.is_vertical() {
+            (
+                egui::pos2(content_rect.min.x + cross0, content_rect.min.y + main_px),
+                egui::pos2(content_rect.min.x + cross1, content_rect.min.y + main_px),
+            )
+        } else {
+            (
+                egui::pos2(content_rect.min.x + main_px, content_rect.min.y + cross0),
+                egui::pos2(content_rect.min.x + main_px, content_rect.min.y + cross1),
+            )
+        };
+        painter.line_segment([a, b], stroke);
+        t += interval_f;
     }
 }
