@@ -666,10 +666,14 @@ impl eframe::App for App {
                     .unwrap_or_default(),
                 quantize_arrange_effective: active_doc
                     .map(|d| {
-                        d.edit.quantize_arrange.resolved(
-                            d.edit.arrange_view.base.pixels_per_tick,
-                            d.data.model.meta.ppq,
-                        )
+                        // MIX 主区域是通道 AR（chan_ar_view）：Auto 的解析必须
+                        // 跟随通道 AR 的缩放；其他模式跟随普通 AR 视口。
+                        let ppu = if self.view_mode == crate::chrome::mode_bar::ViewMode::Mix {
+                            d.edit.chan_ar_view.base.pixels_per_tick
+                        } else {
+                            d.edit.arrange_view.base.pixels_per_tick
+                        };
+                        d.edit.quantize_arrange.resolved(ppu, d.data.model.meta.ppq)
                     })
                     .unwrap_or_default(),
                 pr: pr_bar,
