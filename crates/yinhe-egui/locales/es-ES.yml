@@ -1156,13 +1156,7 @@ hint.float_panel: "Mostrar en ventana independiente"
 hint.float_panel_dock: "Volver al dock"
 
 # ── View menu ──
-menu.view: "Vista"
-menu.float_pianoroll: "Piano roll en ventana independiente"
-menu.float_dock: "Dock de dispositivos en ventana independiente"
-menu.float_mixer: "Mezclador en ventana independiente"
-hint.view_menu: "Menú Vista · paneles en ventanas independientes"
 
 # ── Arrange float ──
 float.arrange: "Arreglo"
 float.yielded: "Esta vista está en una ventana independiente"
-menu.float_arrange: "Arreglo en ventana independiente"

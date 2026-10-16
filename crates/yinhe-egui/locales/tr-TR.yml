@@ -1161,13 +1161,7 @@ hint.float_panel: "Ayrı pencerede göster"
 hint.float_panel_dock: "Yuvaya geri döndür"
 
 # ── View menu ──
-menu.view: "Görünüm"
-menu.float_pianoroll: "Piano roll ayrı pencerede"
-menu.float_dock: "Cihaz yuvası ayrı pencerede"
-menu.float_mixer: "Mikser ayrı pencerede"
-hint.view_menu: "Görünüm menüsü · paneller ayrı pencerelerde"
 
 # ── Arrange float ──
 float.arrange: "Aranjman"
 float.yielded: "Bu görünüm ayrı bir pencerede"
-menu.float_arrange: "Aranjmanı ayrı pencerede göster"

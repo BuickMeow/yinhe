@@ -1160,13 +1160,7 @@ hint.float_panel: "Mostra in una finestra separata"
 hint.float_panel_dock: "Rientra nel dock"
 
 # ── View menu ──
-menu.view: "Visualizza"
-menu.float_pianoroll: "Piano roll in finestra separata"
-menu.float_dock: "Dock dispositivi in finestra separata"
-menu.float_mixer: "Mixer in finestra separata"
-hint.view_menu: "Menu Visualizza · pannelli in finestre separate"
 
 # ── Arrange float ──
 float.arrange: "Arrangiamento"
 float.yielded: "Questa vista è in una finestra separata"
-menu.float_arrange: "Arrangiamento in finestra separata"

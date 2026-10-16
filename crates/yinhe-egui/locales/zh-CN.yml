@@ -1160,13 +1160,7 @@ hint.float_panel: "浮动为独立窗口"
 hint.float_panel_dock: "收回停靠"
 
 # ── View menu ──
-menu.view: "视图"
-menu.float_pianoroll: "浮动钢琴卷帘"
-menu.float_dock: "浮动设备栏"
-menu.float_mixer: "浮动混音台"
-hint.view_menu: "视图菜单 · 面板浮动为独立窗口"
 
 # ── Arrange float ──
 float.arrange: "工程走带"
 float.yielded: "该视图已浮动为独立窗口"
-menu.float_arrange: "浮动工程走带"

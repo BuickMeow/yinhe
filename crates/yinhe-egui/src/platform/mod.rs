@@ -51,8 +51,6 @@ pub enum MenuAction {
     SetFollowMode(yinhe_editor_core::follow::FollowMode),
     /// 工具菜单：切换当前工具。
     SetTool(crate::widgets::tools_panel::Tool),
-    /// 视图菜单：底部面板泊出为独立窗口 / 收回停靠。
-    ToggleFloatPanel(crate::chrome::mode_bar::PanelKind),
     /// 文件菜单「最近修改的文件」子菜单选中的路径。
     OpenRecent(String),
     /// 文件菜单「欢迎页面」：打开独立欢迎窗口（与启动欢迎窗口同款）。

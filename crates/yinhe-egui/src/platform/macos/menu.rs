@@ -290,38 +290,8 @@ pub(super) fn init_native_menu() -> muda::Result<()> {
         .collect();
     let tools_menu = Submenu::with_items(t!("menu.tools"), true, &tool_refs)?;
 
-    // ── 视图子菜单（底部面板泊出为独立窗口 / 收回停靠）──
-    let mut view_rows: Vec<(&'static str, Box<dyn MenuText>)> = Vec::new();
-    for (kind, key) in [
-        (
-            crate::chrome::mode_bar::PanelKind::Pianoroll,
-            "menu.float_pianoroll",
-        ),
-        (crate::chrome::mode_bar::PanelKind::Dock, "menu.float_dock"),
-        (
-            crate::chrome::mode_bar::PanelKind::Mixer,
-            "menu.float_mixer",
-        ),
-    ] {
-        let item = Box::new(MenuItem::new(t!(key), true, None));
-        map.insert(item.id().clone(), MenuAction::ToggleFloatPanel(kind));
-        view_rows.push((key, item));
-    }
-    let view_refs: Vec<&dyn IsMenuItem> = view_rows
-        .iter()
-        .map(|(_, b)| b.as_ref() as &dyn IsMenuItem)
-        .collect();
-    let view_menu = Submenu::with_items(t!("menu.view"), true, &view_refs)?;
-    items.extend(view_rows);
-
-    let menu_items: Vec<&dyn IsMenuItem> = vec![
-        &app_menu,
-        &file_menu,
-        &edit_menu,
-        &play_menu,
-        &view_menu,
-        &tools_menu,
-    ];
+    let menu_items: Vec<&dyn IsMenuItem> =
+        vec![&app_menu, &file_menu, &edit_menu, &play_menu, &tools_menu];
     let menu = Menu::with_items(&menu_items)?;
     menu.init_for_nsapp();
 
@@ -339,7 +309,6 @@ pub(super) fn init_native_menu() -> muda::Result<()> {
     items.push(("menu.file", Box::new(file_menu)));
     items.push(("menu.edit", Box::new(edit_menu)));
     items.push(("menu.playback", Box::new(play_menu)));
-    items.push(("menu.view", Box::new(view_menu)));
     items.push(("menu.tools", Box::new(tools_menu)));
     items.push(("menu.app", Box::new(app_menu)));
 

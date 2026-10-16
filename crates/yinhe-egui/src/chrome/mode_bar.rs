@@ -538,13 +538,8 @@ pub(crate) enum PanelKind {
     Mixer,
 }
 
-impl PanelKind {
-    /// 全部可浮动视图（视图菜单/原生菜单遍历用）。
-    pub const ALL: [PanelKind; 4] = [Self::Arrange, Self::Pianoroll, Self::Dock, Self::Mixer];
-}
-
 /// 浮动开关的借用集合（`App` 字段或模式栏参数）。
-/// 集中「泊出 / 收回停靠」逻辑，避免气泡与菜单各自重复 match 分支。
+/// 集中「泊出 / 收回停靠」逻辑，避免各调用点重复 match 分支。
 pub(crate) struct FloatSwitches<'a> {
     pub show_pianoroll: &'a mut bool,
     pub float_pianoroll: &'a mut bool,
@@ -630,15 +625,6 @@ impl FloatSwitches<'_> {
                 // 混音台面板只在 MIX 模式停靠显示：收回即切到 MIX。
                 *self.view_mode = ViewMode::Mix;
             }
-        }
-    }
-
-    /// 切换：未浮动 → 泊出；已浮动 → 收回停靠。
-    pub(crate) fn toggle(&mut self, ctx: &egui::Context, kind: PanelKind) {
-        if self.is_floating(kind) {
-            self.dock_back(ctx, kind);
-        } else {
-            self.float(ctx, kind);
         }
     }
 }

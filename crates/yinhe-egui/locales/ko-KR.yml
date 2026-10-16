@@ -1165,13 +1165,7 @@ hint.float_panel: "독립 창으로 띄우기"
 hint.float_panel_dock: "독으로 되돌리기"
 
 # ── View menu ──
-menu.view: "보기"
-menu.float_pianoroll: "피아노 롤을 독립 창으로"
-menu.float_dock: "장치 독을 독립 창으로"
-menu.float_mixer: "믹서를 독립 창으로"
-hint.view_menu: "보기 메뉴 · 패널을 독립 창으로"
 
 # ── Arrange float ──
 float.arrange: "어레인지"
 float.yielded: "이 보기는 독립 창에 표시 중"
-menu.float_arrange: "어레인지를 독립 창으로"

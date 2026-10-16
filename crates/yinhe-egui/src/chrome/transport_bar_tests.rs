@@ -154,10 +154,6 @@ fn make_transport_harness<'a>(doc: Option<&'a Document>) -> Harness<'a, ()> {
                     pr: pr_bar_data(doc),
                     master_meter: ((0.0, 0.0), (0.0, 0.0)),
                     selection_available: false,
-                    float_pianoroll: false,
-                    float_arrange: false,
-                    float_dock: false,
-                    float_mixer: false,
                 };
                 show(ui, &mut ctx);
             },
@@ -197,10 +193,6 @@ fn make_harness_with_hidden_button<'a>(doc: Option<&'a Document>) -> Harness<'a,
                     pr: pr_bar_data(doc),
                     master_meter: ((0.0, 0.0), (0.0, 0.0)),
                     selection_available: false,
-                    float_pianoroll: false,
-                    float_arrange: false,
-                    float_dock: false,
-                    float_mixer: false,
                 };
                 show(ui, &mut ctx);
                 // 透明隐藏按钮：位于 x 1150..1174、y 8..32
