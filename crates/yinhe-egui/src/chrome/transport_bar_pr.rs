@@ -17,8 +17,8 @@ pub(crate) const GAP: f32 = 4.0;
 /// PR 控制数据（只读：量化 / 和弦指示器）。
 pub struct PrBarData {
     pub quantize: QuantizePreset,
-    /// Auto（自适应）当前解析出的具体网格；非 Auto 时 == `quantize`。
-    pub quantize_effective: QuantizePreset,
+    /// `Auto` 档在当前 PR 缩放下解析出的具体网格（量化弹窗内显示）。
+    pub quantize_auto_resolved: QuantizePreset,
     /// 和弦指示器文本（实时 MIDI 按键优先，其次播放中光标处和弦）。
     pub chord: Option<String>,
 }

@@ -426,8 +426,8 @@ pub struct TransportContext<'a> {
     pub focus_is_pianoroll: bool,
     /// AR 量化（PR 量化在 `pr.quantize`）。
     pub quantize_arrange: yinhe_editor_core::quantize::QuantizePreset,
-    /// AR 量化 Auto（自适应）当前解析出的具体网格；非 Auto 时 == `quantize_arrange`。
-    pub quantize_arrange_effective: yinhe_editor_core::quantize::QuantizePreset,
+    /// `Auto` 档在当前 AR 缩放下解析出的具体网格（量化弹窗内显示）。
+    pub quantize_arrange_auto_resolved: yinhe_editor_core::quantize::QuantizePreset,
     /// PR 控制组数据（量化/和弦；无活动文档 = None，右侧组不显示）。
     pub pr: Option<super::transport_bar_pr::PrBarData>,
     /// 总输出电平显示值 `((level L,R), (hold L,R))`（时间码第四栏竖表）。

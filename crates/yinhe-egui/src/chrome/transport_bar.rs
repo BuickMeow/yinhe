@@ -171,20 +171,49 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 // ── 工具区已迁移到左侧工具栏（见 chrome::tool_bar）──
 
                 if let Some(doc) = ctx.doc {
-                    // ── 时间码（四列居中：BPM/拍号+PPQ | 位置/时间 | 量化/调式 | 总输出电平）──
+                    // ── 量化按钮（时间码左侧：图标+数值，点击弹出量化菜单）──
                     if let Some(pr) = ctx.pr.as_ref() {
-                        let (quantize, quantize_effective) = if ctx.focus_is_pianoroll {
-                            (pr.quantize, pr.quantize_effective)
+                        let (quantize, auto_resolved) = if ctx.focus_is_pianoroll {
+                            (pr.quantize, pr.quantize_auto_resolved)
                         } else {
-                            (ctx.quantize_arrange, ctx.quantize_arrange_effective)
+                            (ctx.quantize_arrange, ctx.quantize_arrange_auto_resolved)
                         };
+                        // 时间码水平居中（内部以 `MIN_SIDE_GAP` 为保底下限）：
+                        // 把按钮预先推到"时间码左缘左侧 24px + 按钮宽"处，
+                        // 使按钮紧贴时间码左缘、时间码位置不被挤动。
+                        let tc_left = ui.max_rect().center().x
+                            - crate::widgets::timecode::TIMECODE_WIDTH * 0.5;
+                        let btn_left = tc_left
+                            - crate::widgets::timecode::MIN_SIDE_GAP
+                            - crate::widgets::quantize_button::WIDTH;
+                        let need = btn_left - ui.cursor().min.x;
+                        ui.add_space(need.max(crate::widgets::timecode::MIN_SIDE_GAP));
+                        let resp = crate::widgets::quantize_button::quantize_button(ui, quantize);
+                        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.timecode.quantize"));
+                        let mut pending_q = None;
+                        egui::Popup::from_toggle_button_response(&resp)
+                            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                            .show(|ui| {
+                                crate::widgets::quantize_popup::show(
+                                    ui,
+                                    doc.data.model.meta.ppq,
+                                    quantize,
+                                    auto_resolved,
+                                    &mut pending_q,
+                                );
+                            });
+                        if let Some(q) = pending_q {
+                            timecode_events
+                                .push(crate::widgets::timecode::TimecodeEvent::Quantize(q));
+                        }
+                    }
+
+                    // ── 时间码（四列居中：BPM/拍号+PPQ | 位置/时间 | 调式 | 总输出电平）──
+                    if ctx.pr.is_some() {
                         let (tc_rect, tc_events) = show_timecode_display(
                             ui,
                             crate::widgets::timecode::TimecodeData {
                                 doc,
-                                quantize,
-                                quantize_effective,
-                                quantize_is_pr: ctx.focus_is_pianoroll,
                                 master_meter: ctx.master_meter,
                             },
                         );

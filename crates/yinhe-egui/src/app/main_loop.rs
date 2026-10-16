@@ -631,7 +631,7 @@ impl eframe::App for App {
             );
             transport_bar::PrBarData {
                 quantize: doc.edit.quantize_pianoroll,
-                quantize_effective: doc.edit.quantize_pianoroll.resolved(
+                quantize_auto_resolved: yinhe_editor_core::quantize::auto_preset(
                     doc.edit.pianoroll_view.base.pixels_per_tick,
                     doc.data.model.meta.ppq,
                 ),
@@ -660,7 +660,7 @@ impl eframe::App for App {
                 quantize_arrange: active_doc
                     .map(|d| d.edit.quantize_arrange)
                     .unwrap_or_default(),
-                quantize_arrange_effective: active_doc
+                quantize_arrange_auto_resolved: active_doc
                     .map(|d| {
                         // MIX 主区域是通道 AR（chan_ar_view）：Auto 的解析必须
                         // 跟随通道 AR 的缩放；其他模式跟随普通 AR 视口。
@@ -669,7 +669,8 @@ impl eframe::App for App {
                         } else {
                             d.edit.arrange_view.base.pixels_per_tick
                         };
-                        d.edit.quantize_arrange.resolved(ppu, d.data.model.meta.ppq)
+                        // Auto 会解析成的网格（弹窗内显示用，与当前档位无关）。
+                        yinhe_editor_core::quantize::auto_preset(ppu, d.data.model.meta.ppq)
                     })
                     .unwrap_or_default(),
                 pr: pr_bar,

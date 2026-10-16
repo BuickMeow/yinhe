@@ -9,7 +9,7 @@ use yinhe_editor_core::document::Document;
 fn pr_bar_data(doc: Option<&Document>) -> Option<crate::chrome::transport_bar_pr::PrBarData> {
     doc.map(|doc| crate::chrome::transport_bar_pr::PrBarData {
         quantize: doc.edit.quantize_pianoroll,
-        quantize_effective: doc.edit.quantize_pianoroll.resolved(
+        quantize_auto_resolved: yinhe_editor_core::quantize::auto_preset(
             doc.edit.pianoroll_view.base.pixels_per_tick,
             doc.data.model.meta.ppq,
         ),
@@ -150,7 +150,7 @@ fn make_transport_harness<'a>(doc: Option<&'a Document>) -> Harness<'a, ()> {
                     orientation_vertical: false,
                     focus_is_pianoroll: false,
                     quantize_arrange: Default::default(),
-                    quantize_arrange_effective: Default::default(),
+                    quantize_arrange_auto_resolved: Default::default(),
                     pr: pr_bar_data(doc),
                     master_meter: ((0.0, 0.0), (0.0, 0.0)),
                     selection_available: false,
@@ -189,7 +189,7 @@ fn make_harness_with_hidden_button<'a>(doc: Option<&'a Document>) -> Harness<'a,
                     orientation_vertical: false,
                     focus_is_pianoroll: false,
                     quantize_arrange: Default::default(),
-                    quantize_arrange_effective: Default::default(),
+                    quantize_arrange_auto_resolved: Default::default(),
                     pr: pr_bar_data(doc),
                     master_meter: ((0.0, 0.0), (0.0, 0.0)),
                     selection_available: false,
@@ -492,7 +492,7 @@ fn right_group_text_shapes_use_fallback_color() {
         .drop_without_applying_deltas();
     let data = crate::chrome::transport_bar_pr::PrBarData {
         quantize: yinhe_editor_core::quantize::QuantizePreset::default(),
-        quantize_effective: yinhe_editor_core::quantize::QuantizePreset::default(),
+        quantize_auto_resolved: yinhe_editor_core::quantize::QuantizePreset::default(),
         chord: Some("Cmaj7".to_string()),
     };
     let output = ctx.run_ui(Default::default(), |ui| {

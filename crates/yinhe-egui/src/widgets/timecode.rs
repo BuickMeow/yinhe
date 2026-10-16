@@ -55,12 +55,6 @@ pub enum TimecodeEvent {
 /// 时间码输入数据。
 pub struct TimecodeData<'a> {
     pub doc: &'a Document,
-    /// 聚焦视图的量化（AR 或 PR）。
-    pub quantize: QuantizePreset,
-    /// Auto（自适应）当前解析出的具体网格；非 Auto 时 == `quantize`。
-    pub quantize_effective: QuantizePreset,
-    /// 量化属于 PR（true）还是 AR（false）——显示 `PR 1/16` / `AR 1/4` 前缀。
-    pub quantize_is_pr: bool,
     /// 总输出电平显示值 `((level L,R), (hold L,R))`（第四栏竖表）。
     pub master_meter: ((f32, f32), (f32, f32)),
 }
@@ -352,43 +346,7 @@ pub fn show_timecode_display(
         events.push(TimecodeEvent::CursorTick(t));
     }
 
-    // ── 量化（列 2 上；`AR 1/4` / `PR 1/16`，与拍号区分）──
-    {
-        let quantize = data.quantize;
-        let prefix = if data.quantize_is_pr { "PR" } else { "AR" };
-        // Auto（自适应）显示当前解析出的网格，让用户知道实际吸到哪一档
-        // （注意保持紧凑：列宽 82px @ 12px 字体）。
-        let label = if quantize == QuantizePreset::Auto {
-            format!("{} Auto {}", prefix, data.quantize_effective.label())
-        } else {
-            format!("{} {}", prefix, quantize.label())
-        };
-        let cell_rect = cell(2, 0);
-        ui.scope_builder(egui::UiBuilder::new().max_rect(cell_rect), |ui| {
-            ui.with_layout(
-                egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                |ui| {
-                    let resp = crate::widgets::hover::hover_button(
-                        ui,
-                        &label,
-                        egui::FontId::proportional(crate::theme::TIMECODE_FONT),
-                        crate::theme::accent_active(),
-                        false,
-                    );
-                    let mut pending_q = None;
-                    egui::Popup::from_toggle_button_response(&resp)
-                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                        .show(|ui| {
-                            crate::widgets::quantize_popup::show(ui, ppq, quantize, &mut pending_q);
-                        });
-                    if let Some(q) = pending_q {
-                        events.push(TimecodeEvent::Quantize(q));
-                    }
-                    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.timecode.quantize"));
-                },
-            );
-        });
-    }
+    // ── 量化（列 2 上）：入口已迁至传输栏时间码左侧的量化按钮 ──
 
     // ── 调式（列 2 下）──
     {

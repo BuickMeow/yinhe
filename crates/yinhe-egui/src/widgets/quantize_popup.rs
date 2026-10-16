@@ -4,10 +4,14 @@ use rust_i18n::t;
 use yinhe_editor_core::quantize::QuantizePreset;
 
 /// Quantization popup menu: common presets + custom fraction + custom tick.
+///
+/// `auto_resolved`：当前视图下 `Auto` 会解析成的具体网格——显示在 Auto 行
+/// 末尾（进入弹窗即可知道自适应的实际尺度）。
 pub fn show(
     ui: &mut egui::Ui,
     ppq: u32,
     current: QuantizePreset,
+    auto_resolved: QuantizePreset,
     pending: &mut Option<QuantizePreset>,
 ) {
     ui.spacing_mut().item_spacing.y = 4.0;
@@ -27,11 +31,12 @@ pub fn show(
         *pending = Some(QuantizePreset::Off);
         ui.close();
     }
+    let auto_label = format!("{} · {}", t!("quantize.auto"), auto_resolved.label());
     if ui
         .add(crate::widgets::menu::menu_item_button(
             ui,
             current == QuantizePreset::Auto,
-            t!("quantize.auto"),
+            auto_label,
         ))
         .clicked()
     {
