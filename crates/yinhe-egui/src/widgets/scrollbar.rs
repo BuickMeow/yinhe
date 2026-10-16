@@ -1,5 +1,5 @@
 use eframe::egui;
-use yinhe_editor_core::density::NoteDensityView;
+use yinhe_editor_core::density::{NoteDensityView, PREVIEW_KEYS};
 
 use crate::theme;
 
@@ -130,7 +130,37 @@ pub(crate) fn show(
     if let Some(d) = preview
         && d.max_count > 0
     {
-        draw_density_bars(ui, &screen_rect, sb_w, scale, d);
+        // 副轴像素行数 = 滚动条实际像素高度/宽度（加高自动更细），
+        // 行 r 覆盖 key `[r*128/px_rows, (r+1)*128/px_rows)`。
+        let px_rows = if vertical {
+            rect.width().round().max(1.0) as usize
+        } else {
+            rect.height().round().max(1.0) as usize
+        };
+        // 格子矩形：主轴沿时间轴（含纵向镜像），副轴沿音高（低音在底部/左端，
+        // 与键盘方向一致）。
+        let cell_rect = |a0: f32, a1: f32, r: usize| -> egui::Rect {
+            let (c0, c1) = if vertical {
+                let w = rect.width() / px_rows as f32;
+                (rect.min.x + r as f32 * w, rect.min.x + (r as f32 + 1.0) * w)
+            } else {
+                let h = rect.height() / px_rows as f32;
+                (rect.max.y - (r as f32 + 1.0) * h, rect.max.y - r as f32 * h)
+            };
+            let (s0, s1) = (to_screen(a0), to_screen(a1));
+            if vertical {
+                egui::Rect::from_min_max(
+                    egui::pos2(c0, rect.min.y + s0.min(s1)),
+                    egui::pos2(c1, rect.min.y + s0.max(s1)),
+                )
+            } else {
+                egui::Rect::from_min_max(
+                    egui::pos2(rect.min.x + s0.min(s1), c0),
+                    egui::pos2(rect.min.x + s0.max(s1), c1),
+                )
+            }
+        };
+        draw_density_bars(ui, &cell_rect, px_rows, sb_w, scale, d);
     }
 
     // ── Rectangle visual ──
@@ -291,27 +321,26 @@ pub(crate) fn show(
     0.0
 }
 
-/// 密度预览：沿主轴逐像素列画亮度条（`scale` = 主轴像素 / tick）。
+/// 密度预览：按音高行画 2D 分布（低音在底部 / 纵向模式在左端）。
 ///
-/// 每列聚合其覆盖的桶计数，再换算成"每 tick 密度"用 `ln(1+x)` 压缩映射到
-/// alpha——黑乐谱密集段与稀疏段的桶计数差几个数量级，线性映射会把稀疏段
-/// 压成全黑；按密度（而非绝对值）归一还能让缩放不改变整体亮度模式。
+/// 数据是每 key 一行的全分辨率计数（`PREVIEW_KEYS` 行），这里按滚动条的
+/// 像素行聚合（24px 高 → 24 行 × 5.3 key/行）；计数经 ln 压缩映射到
+/// alpha，0 计数不画——黑乐谱的低音 bass 线、段落轮廓由此可辨。
 fn draw_density_bars(
     ui: &egui::Ui,
-    screen_rect: &impl Fn(f32, f32) -> egui::Rect,
+    cell_rect: &impl Fn(f32, f32, usize) -> egui::Rect,
+    px_rows: usize,
     sb_w: f32,
     scale: f64,
     d: &NoteDensityView<'_>,
 ) {
-    let n = d.total.len();
-    if n == 0 || scale <= 0.0 || sb_w <= 0.0 {
+    let n = d.n_buckets;
+    if n == 0 || px_rows == 0 || scale <= 0.0 || sb_w <= 0.0 || d.rows.len() < PREVIEW_KEYS * n {
         return;
     }
     let bucket = d.bucket_ticks.max(1) as u64;
     let inv_scale = 1.0 / scale; // 主轴像素 → tick
-    // 最大桶密度归一（音符/tick），与缩放无关。
-    let max_density = (d.max_count as f32 / bucket as f32).max(f32::EPSILON);
-    let max_ln = max_density.ln_1p().max(f32::EPSILON);
+    let max_ln = (d.max_count as f32).ln_1p().max(f32::EPSILON);
     let color = theme::accent_active();
     let cols = sb_w.ceil() as usize;
     let mut b = 0usize; // 单调推进的桶游标（列与列 tick 区间连续）
@@ -323,20 +352,32 @@ fn draw_density_bars(
         }
         let tick_end = (x1 as f64 * inv_scale).ceil() as u64;
         let b_end = (tick_end.div_ceil(bucket) as usize).min(n);
-        let mut count = 0u64;
-        while b < b_end {
-            count += d.total[b] as u64;
-            b += 1;
-        }
-        if count == 0 {
+        if b_end <= b {
             continue;
         }
-        let covered = ((x1 - x0) as f64 * inv_scale).max(1.0) as f32;
-        let density = count as f32 / covered;
-        let a = density.ln_1p() / max_ln;
-        let alpha = (0.12 + 0.5 * a).min(0.62);
-        ui.painter()
-            .rect_filled(screen_rect(x0, x1), 0.0, color.gamma_multiply(alpha));
+        for r in 0..px_rows {
+            let k0 = r * PREVIEW_KEYS / px_rows;
+            let k1 = ((r + 1) * PREVIEW_KEYS / px_rows).min(PREVIEW_KEYS);
+            if k1 <= k0 {
+                continue;
+            }
+            let mut count = 0u64;
+            for k in k0..k1 {
+                let base = k * n;
+                for i in b..b_end {
+                    count += d.rows[base + i] as u64;
+                }
+            }
+            if count == 0 {
+                continue;
+            }
+            // ln 压缩；一个像素行聚合多个 key，允许超过单格 max（clamp 上限）。
+            let a = (count as f32).ln_1p() / max_ln;
+            let alpha = (0.22 + 0.66 * a).min(0.9);
+            ui.painter()
+                .rect_filled(cell_rect(x0, x1, r), 0.0, color.gamma_multiply(alpha));
+        }
+        b = b_end;
     }
 }
 
@@ -764,7 +805,7 @@ mod tests {
         out
     }
 
-    /// 密度预览：有数据时逐列绘制不 panic（含超出桶覆盖范围的尾部）。
+    /// 密度预览：有数据时逐格绘制不 panic（含超出桶覆盖范围的尾部）。
     #[test]
     fn density_preview_renders_without_panic() {
         let ctx = egui::Context::default();
@@ -772,9 +813,13 @@ mod tests {
         let mut scroll_x = 0.0f32;
         let mut ppt = 1.0f32;
         let mut dirty = false;
-        let total: Vec<u32> = (0..100).map(|i| (i % 7) * 50).collect();
+        let n_buckets = 100;
+        let rows: Vec<u32> = (0..PREVIEW_KEYS * n_buckets)
+            .map(|i| (i % 7) as u32 * 50)
+            .collect();
         let view = NoteDensityView {
-            total: &total,
+            rows: &rows,
+            n_buckets,
             bucket_ticks: 10,
             max_count: 300,
         };

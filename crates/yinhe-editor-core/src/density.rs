@@ -1,54 +1,62 @@
 //! 滚动条音符密度预览的派生数据。
 //!
-//! 全曲音符按固定 tick 桶计数：每 key 一行 + 一行总计（只含当前可见轨道的
-//! 音符）。滚动条把桶聚合到像素列画亮度条，每帧绘制成本 O(桶数)，与音符数
-//! 无关——1 亿音符也只是"计数更大"。
+//! 全曲可见音符按 `(key, tick 桶)` 计数：**每个 key 一行**（全分辨率，
+//! 只含当前可见轨道的音符）。绘制端按滚动条的实际像素高度把 key 行聚合
+//! 成像素行（24px 高 → 24 行 × 5.3 key/行；滚动条加高则自动更细），
+//! 每帧绘制成本 O(桶数 × key 行)，与音符数无关——1 亿音符也只是"计数更大"。
 //!
 //! 增量机制与音频/GPU 上传同构：对比 `note_revisions` 快照找出脏 key，
-//! 只重扫脏 key 并把差值合进总计行。`sync` 每帧在预算内处理一部分，
+//! 只重扫脏 key（覆盖整行计数）。`sync` 每帧在预算内处理一部分，
 //! UI 线程永不被全量扫描阻塞。轨道显隐变化用 `bucket_track_stats`
 //! 定位"含该轨的 key"，同样只重扫受影响的 key。
 
 use std::time::{Duration, Instant};
 
 use yinhe_core::YinModel;
-use yinhe_types::KEY_COUNT;
 
 /// 初始桶宽（tick）。
 const INITIAL_BUCKET_TICKS: u32 = 1024;
-/// 桶数上限（2 的幂保证翻倍不改变对齐）。超出后桶宽翻倍，内存恒为
-/// `KEY_COUNT × MAX_BUCKETS × 4B ≈ 8MB`（相对 1 亿音符模型的 1.6GB 可忽略）。
+/// 桶数上限（2 的幂保证翻倍不改变对齐）。超出后桶宽翻倍。
 const MAX_BUCKETS: usize = 8192;
 /// 每帧默认重扫预算：显著低于一帧的渲染开销，编辑期不掉帧。
 pub const SYNC_BUDGET: Duration = Duration::from_millis(4);
 
+/// 预览统计的显示域（= PR 显示键数）。扩展音域（key ≥ 128）不统计、
+/// 不绘制——与 PR 画布语义一致，同时省一半内存。
+pub const PREVIEW_KEYS: usize = 128;
+
 /// 滚动条绘制的只读视图。
 pub struct NoteDensityView<'a> {
-    /// 每桶的可见音符数；tick 覆盖 `[0, total.len() * bucket_ticks)`，
-    /// 之外（含滚动条尾部 padding 区）视为 0。
-    pub total: &'a [u32],
+    /// `PREVIEW_KEYS × n_buckets` 行主序：`rows[key * n_buckets + bucket]`
+    /// = 该 key 在该 tick 桶的可见音符数。tick 覆盖
+    /// `[0, n_buckets * bucket_ticks)`，之外（滚动条 padding 区）视为 0。
+    pub rows: &'a [u32],
+    /// 每行的桶数。
+    pub n_buckets: usize,
     /// 每桶覆盖的 tick 数。
     pub bucket_ticks: u32,
-    /// 最大桶计数（亮度归一化用）。0 = 无数据。
+    /// 单个 (key, 桶) 格的最大计数（亮度归一化基准；绘制端聚合后允许超过）。
+    /// 0 = 无数据。
     pub max_count: u32,
 }
 
-/// 全曲音符密度（每 key 一行 + 总计行）。
+/// 全曲音符密度（每 key 一行 × tick 桶）。
 pub struct NoteDensityMap {
     bucket_ticks: u32,
     n_buckets: usize,
-    /// `KEY_COUNT × n_buckets` 行主序计数（已按可见轨道过滤）。
-    per_key: Vec<u32>,
-    /// 总计行 = 各行同桶之和。绘制直接用它；per_key 行仅用于增量差值。
-    total: Vec<u32>,
+    /// `PREVIEW_KEYS × n_buckets` 行主序计数（已按可见轨道过滤）。
+    rows: Vec<u32>,
+    /// 每行的最大格计数（维护全局 `max_count` 用，避免全量扫描）。
+    row_max: [u32; PREVIEW_KEYS],
     max_count: u32,
     /// 每个 key 上次重扫时的 revision；`None` = 必须重扫（新模型/桶宽变化）。
-    rev_snapshot: [Option<u64>; KEY_COUNT],
+    /// 只追踪显示域 key（≥ 128 无关预览）。
+    rev_snapshot: [Option<u64>; PREVIEW_KEYS],
     visible_snapshot: Vec<bool>,
     model_ptr: usize,
     /// 待重扫 key（配合 `pending_mask` 去重）。
     pending: Vec<u8>,
-    pending_mask: [bool; KEY_COUNT],
+    pending_mask: [bool; PREVIEW_KEYS],
     /// `rescan_key` 的复用缓冲，避免每次分配。
     scratch: Vec<u32>,
 }
@@ -64,14 +72,14 @@ impl NoteDensityMap {
         Self {
             bucket_ticks: INITIAL_BUCKET_TICKS,
             n_buckets: 0,
-            per_key: Vec::new(),
-            total: Vec::new(),
+            rows: Vec::new(),
+            row_max: [0; PREVIEW_KEYS],
             max_count: 0,
-            rev_snapshot: [None; KEY_COUNT],
+            rev_snapshot: [None; PREVIEW_KEYS],
             visible_snapshot: Vec::new(),
             model_ptr: 0,
             pending: Vec::new(),
-            pending_mask: [false; KEY_COUNT],
+            pending_mask: [false; PREVIEW_KEYS],
             scratch: Vec::new(),
         }
     }
@@ -79,7 +87,8 @@ impl NoteDensityMap {
     /// 绘制视图（为空/未就绪时 `max_count == 0`）。
     pub fn view(&self) -> NoteDensityView<'_> {
         NoteDensityView {
-            total: &self.total,
+            rows: &self.rows,
+            n_buckets: self.n_buckets,
             bucket_ticks: self.bucket_ticks.max(1),
             max_count: self.max_count,
         }
@@ -103,7 +112,7 @@ impl NoteDensityMap {
     /// 全变）；其余模型替换由 [`Self::ensure_model`] 的指针检测兜底。
     pub fn reset(&mut self) {
         self.reset_counts();
-        self.rev_snapshot = [None; KEY_COUNT];
+        self.rev_snapshot = [None; PREVIEW_KEYS];
         self.visible_snapshot.clear();
         self.mark_all();
     }
@@ -142,26 +151,28 @@ impl NoteDensityMap {
     fn grow(&mut self, need: usize) {
         let old_n = self.n_buckets;
         let n = need.max(old_n + old_n / 2).max(16);
-        let mut new_per_key = vec![0u32; KEY_COUNT * n];
+        let mut new_rows = vec![0u32; PREVIEW_KEYS * n];
         if old_n > 0 {
-            for k in 0..KEY_COUNT {
-                new_per_key[k * n..k * n + old_n]
-                    .copy_from_slice(&self.per_key[k * old_n..k * old_n + old_n]);
+            for k in 0..PREVIEW_KEYS {
+                new_rows[k * n..k * n + old_n]
+                    .copy_from_slice(&self.rows[k * old_n..k * old_n + old_n]);
             }
         }
-        self.per_key = new_per_key;
-        self.total.resize(n, 0);
+        self.rows = new_rows;
         self.scratch.resize(n, 0);
         self.n_buckets = n;
     }
 
     fn reset_counts(&mut self) {
-        self.total.fill(0);
-        self.per_key.fill(0);
+        self.rows.fill(0);
+        self.row_max = [0; PREVIEW_KEYS];
         self.max_count = 0;
     }
 
     fn mark(&mut self, key: usize) {
+        if key >= PREVIEW_KEYS {
+            return;
+        }
         if !self.pending_mask[key] {
             self.pending_mask[key] = true;
             self.pending.push(key as u8);
@@ -169,7 +180,7 @@ impl NoteDensityMap {
     }
 
     fn mark_all(&mut self) {
-        for k in 0..KEY_COUNT {
+        for k in 0..PREVIEW_KEYS {
             self.mark(k);
         }
     }
@@ -188,7 +199,7 @@ impl NoteDensityMap {
                 continue;
             }
             let track = t as u16;
-            for k in 0..KEY_COUNT {
+            for k in 0..PREVIEW_KEYS {
                 if model.bucket_track_stats[k].contains_key(&track) {
                     self.mark(k);
                 }
@@ -200,7 +211,7 @@ impl NoteDensityMap {
     /// revision 变化（编辑/undo/批量，由 note_write 统一 bump）→ 标脏。
     /// 分帧期间已扫过的 key 快照已更新，不会重复入队。
     fn collect_revision_changes(&mut self, model: &YinModel) {
-        for k in 0..KEY_COUNT {
+        for k in 0..PREVIEW_KEYS {
             if self.rev_snapshot[k] != Some(model.note_revisions[k]) {
                 self.mark(k);
             }
@@ -227,14 +238,15 @@ impl NoteDensityMap {
             }
         }
         if rescanned {
-            self.refresh_max();
+            // 全局最大 = 各行最大值的最大（O(key 行)，无需全量扫描）。
+            self.max_count = self.row_max.iter().copied().max().unwrap_or(0);
         }
     }
 
-    /// 重扫一个 key：统计可见音符到 scratch，再按差值合进总计行。
+    /// 重扫一个 key：统计可见音符到 scratch，覆盖该行并更新行最大。
     fn rescan_key(&mut self, model: &YinModel, visible: &[bool], key: usize) {
         let n = self.n_buckets;
-        if n == 0 {
+        if n == 0 || key >= PREVIEW_KEYS {
             return;
         }
         let bucket = self.bucket_ticks.max(1);
@@ -249,20 +261,16 @@ impl NoteDensityMap {
                 self.scratch[b] += 1;
             }
         }
-        let row = &mut self.per_key[key * n..(key + 1) * n];
-        for (i, slot) in row.iter_mut().enumerate() {
-            let old = *slot;
-            let new = self.scratch[i];
-            if new != old {
-                self.total[i] = self.total[i].saturating_sub(old).saturating_add(new);
-            }
+        let row = &mut self.rows[key * n..(key + 1) * n];
+        let mut row_peak = 0u32;
+        for (slot, &new) in row.iter_mut().zip(self.scratch.iter()) {
             *slot = new;
+            if new > row_peak {
+                row_peak = new;
+            }
         }
+        self.row_max[key] = row_peak;
         self.rev_snapshot[key] = Some(model.note_revisions[key]);
-    }
-
-    fn refresh_max(&mut self) {
-        self.max_count = self.total.iter().copied().max().unwrap_or(0);
     }
 }
 
@@ -294,24 +302,33 @@ mod tests {
     /// 全量预算：一次 sync 完成所有待扫 key。
     const FULL: Duration = Duration::MAX;
 
+    /// 视图里 (key, 桶) 的计数。
+    fn cell(d: &NoteDensityMap, key: usize, bucket: usize) -> u32 {
+        let v = d.view();
+        v.rows[key * v.n_buckets + bucket]
+    }
+
     #[test]
-    fn counts_notes_per_bucket() {
+    fn counts_notes_per_key_and_bucket() {
         let mut m = model();
         m.insert_note(60, note(1, 100, 200, 0));
         m.insert_note(60, note(2, 3000, 3100, 0));
+        m.insert_note(30, note(3, 100, 200, 0)); // 低音 bass
         m.rebuild_dirty();
         let mut d = NoteDensityMap::new();
         d.sync(&m, &visible(), FULL);
         let v = d.view();
         assert_eq!(v.bucket_ticks, INITIAL_BUCKET_TICKS);
         // tick 100 → 桶 0；tick 3000 → 桶 2。
-        assert_eq!(v.total[0], 1);
-        assert_eq!(v.total[2], 1);
+        assert_eq!(cell(&d, 60, 0), 1);
+        assert_eq!(cell(&d, 60, 2), 1);
+        assert_eq!(cell(&d, 30, 0), 1, "低音有独立的 key 行");
         assert_eq!(v.max_count, 1);
-        assert_eq!(v.total.iter().sum::<u32>(), 2);
+        let sum: u32 = v.rows.iter().sum();
+        assert_eq!(sum, 3);
     }
 
-    /// 编辑后只重扫脏 key，其他 key 的计数不受影响。
+    /// 编辑后只重扫脏 key，其他 key 的行不受影响。
     #[test]
     fn incremental_rescan_updates_dirty_key_only() {
         let mut m = model();
@@ -319,17 +336,17 @@ mod tests {
         m.rebuild_dirty();
         let mut d = NoteDensityMap::new();
         d.sync(&m, &visible(), FULL);
-        assert_eq!(d.view().total[0], 1);
+        assert_eq!(cell(&d, 60, 0), 1);
 
         m.insert_note(64, note(2, 100, 200, 0));
         m.rebuild_dirty();
         d.sync(&m, &visible(), FULL);
-        let v = d.view();
-        assert_eq!(v.total[0], 2, "新 key 的音符应计入同一桶");
-        assert_eq!(v.max_count, 2);
+        assert_eq!(cell(&d, 60, 0), 1, "未动的 key 行保持不变");
+        assert_eq!(cell(&d, 64, 0), 1, "新 key 计入自己的行");
+        assert_eq!(d.view().max_count, 1);
     }
 
-    /// 删除音符后计数回落（差值合并正确）。
+    /// 删除音符后计数回落。
     #[test]
     fn removal_decrements_counts() {
         let mut m = model();
@@ -338,12 +355,13 @@ mod tests {
         m.rebuild_dirty();
         let mut d = NoteDensityMap::new();
         d.sync(&m, &visible(), FULL);
-        assert_eq!(d.view().total[0], 2);
+        assert_eq!(cell(&d, 60, 0), 2);
+        assert_eq!(d.view().max_count, 2);
 
         m.remove_note_by_id(60, 1);
         m.rebuild_dirty();
         d.sync(&m, &visible(), FULL);
-        assert_eq!(d.view().total[0], 1);
+        assert_eq!(cell(&d, 60, 0), 1);
         assert_eq!(d.view().max_count, 1);
     }
 
@@ -357,15 +375,17 @@ mod tests {
         let mut d = NoteDensityMap::new();
         let mut vis = visible();
         d.sync(&m, &vis, FULL);
-        assert_eq!(d.view().total[0], 2);
+        assert_eq!(cell(&d, 60, 0), 1);
+        assert_eq!(cell(&d, 62, 0), 1);
 
         vis[1] = false;
         d.sync(&m, &vis, FULL);
-        assert_eq!(d.view().total[0], 1, "隐藏 track 1 后只应剩 1 个音符");
+        assert_eq!(cell(&d, 60, 0), 1);
+        assert_eq!(cell(&d, 62, 0), 0, "隐藏 track 1 后其音符消失");
 
         vis[1] = true;
         d.sync(&m, &vis, FULL);
-        assert_eq!(d.view().total[0], 2, "恢复显隐后计数回来");
+        assert_eq!(cell(&d, 62, 0), 1, "恢复显隐后计数回来");
     }
 
     /// 曲长增长：桶数自动扩容且旧计数保留。
@@ -385,10 +405,11 @@ mod tests {
         d.sync(&m, &visible(), FULL);
         assert!(d.n_buckets > n_before, "桶数应增长");
         let v = d.view();
-        assert_eq!(v.total[0], 1, "旧音符仍在桶 0");
+        assert_eq!(cell(&d, 60, 0), 1, "旧音符仍在桶 0");
         let b = 4_000_000 / v.bucket_ticks as u64;
-        assert_eq!(v.total[b as usize], 1, "新音符落在其桶");
-        assert_eq!(v.total.iter().sum::<u32>(), 2);
+        assert_eq!(cell(&d, 60, b as usize), 1, "新音符落在其桶");
+        let sum: u32 = v.rows.iter().sum();
+        assert_eq!(sum, 2);
     }
 
     /// 曲长超出桶数上限 → 桶宽翻倍（保持对齐），计数仍正确。
@@ -403,10 +424,10 @@ mod tests {
         d.sync(&m, &visible(), FULL);
         let v = d.view();
         assert_eq!(v.bucket_ticks, INITIAL_BUCKET_TICKS * 2, "桶宽应翻倍");
-        assert!(v.total.len() <= MAX_BUCKETS, "桶数不超上限");
-        assert_eq!(v.total[0], 1);
+        assert!(v.n_buckets <= MAX_BUCKETS, "桶数不超上限");
+        assert_eq!(cell(&d, 60, 0), 1);
         let b = far as u64 / v.bucket_ticks as u64;
-        assert_eq!(v.total[b as usize], 1);
+        assert_eq!(cell(&d, 60, b as usize), 1);
     }
 
     /// 预算再小也至少完成一个 key，多次 sync 后结果与全量一致。
@@ -433,7 +454,7 @@ mod tests {
 
         let mut full = NoteDensityMap::new();
         full.sync(&m, &visible(), FULL);
-        assert_eq!(split.view().total, full.view().total);
+        assert_eq!(split.view().rows, full.view().rows);
     }
 
     /// 模型替换（加载/新建）：旧计数作废，全量重扫新模型。
@@ -444,15 +465,33 @@ mod tests {
         m1.rebuild_dirty();
         let mut d = NoteDensityMap::new();
         d.sync(&m1, &visible(), FULL);
-        assert_eq!(d.view().total.iter().sum::<u32>(), 1);
+        assert_eq!(cell(&d, 60, 0), 1);
 
         let mut m2 = model();
         m2.insert_note(64, note(9, 5000, 5100, 0));
         m2.insert_note(64, note(10, 5000, 5100, 0));
         m2.rebuild_dirty();
         d.sync(&m2, &visible(), FULL);
+        assert_eq!(cell(&d, 60, 0), 0, "旧模型的计数不得残留");
+        assert_eq!(cell(&d, 64, 4), 2, "tick 5000 → 桶 4");
+        assert_eq!(d.view().max_count, 2);
+    }
+
+    /// 扩展音域（key ≥ 128）不进预览：不统计、也不占用重扫预算。
+    #[test]
+    fn extended_key_range_excluded() {
+        let mut m = model();
+        m.insert_note(60, note(1, 100, 200, 0));
+        let mut d = NoteDensityMap::new();
+        d.sync(&m, &visible(), FULL);
+        assert_eq!(cell(&d, 60, 0), 1);
+
+        m.insert_note(130, note(2, 100, 200, 0));
+        m.rebuild_dirty();
+        d.sync(&m, &visible(), FULL);
         let v = d.view();
-        assert_eq!(v.total.iter().sum::<u32>(), 2);
-        assert_eq!(v.total[0], 0, "旧模型的计数不得残留");
+        assert_eq!(v.max_count, 1, "扩展音域不参与归一化");
+        let sum: u32 = v.rows.iter().sum();
+        assert_eq!(sum, 1);
     }
 }
