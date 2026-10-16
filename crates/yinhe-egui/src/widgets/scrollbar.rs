@@ -858,6 +858,72 @@ mod tests {
         out
     }
 
+    /// 性能标定（手动运行）：
+    /// `cargo test -p yinhe-egui --release bench_density_draw -- --ignored --nocapture`
+    ///
+    /// 模拟最坏场景：2000px 宽滚动条、1000 万 tick 全曲（约 5 桶/列）、
+    /// 50% 非零填充的黑乐谱密度，测每帧绘制（含 egui tessellation）。
+    #[test]
+    #[ignore = "性能标定，手动运行"]
+    fn bench_density_draw() {
+        use std::time::Instant;
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(2000.0, 24.0));
+        let mut scroll_x = 0.0f32;
+        let mut ppt = 0.0002f32; // 2000px 视口 ≈ 全曲 1000 万 tick
+        let mut dirty = false;
+        let n_buckets = 9766; // 10_000_000 / 1024
+        let mut rows = vec![0u32; PREVIEW_KEYS * n_buckets];
+        let mut dominant = vec![NO_TRACK; PREVIEW_KEYS * n_buckets];
+        for (i, v) in rows.iter_mut().enumerate() {
+            if i % 2 == 0 {
+                *v = (i % 200) as u32 + 1;
+                dominant[i] = (i % 16) as u32;
+            }
+        }
+        let colors: Vec<[f32; 4]> = (0..16)
+            .map(|i| [i as f32 / 16.0, 0.5, 1.0 - i as f32 / 16.0, 1.0])
+            .collect();
+        let view = NoteDensityView {
+            rows: &rows,
+            dominant: &dominant,
+            n_buckets,
+            bucket_ticks: 1024,
+            max_count: 200,
+        };
+        let preview = DensityPreview {
+            density: view,
+            track_colors: &colors,
+        };
+        let mut run_frames = |n: usize| {
+            for _ in 0..n {
+                ctx.run_ui(egui::RawInput::default(), |ui| {
+                    show(
+                        ui,
+                        rect,
+                        2000.0,
+                        &mut scroll_x,
+                        &mut ppt,
+                        10_000_000.0,
+                        Some(&preview),
+                        None,
+                        &mut dirty,
+                        yinhe_types::Orientation::Horizontal,
+                    );
+                })
+                .textures_delta
+                .clear();
+            }
+        };
+        run_frames(10); // 预热（字体/缓存初始化）
+        let t = Instant::now();
+        run_frames(100);
+        println!(
+            "density draw avg: {:?}/frame (2000 cols × 24 rows, ~2.4万非零格)",
+            t.elapsed() / 100
+        );
+    }
+
     /// 密度预览：有数据时逐格绘制不 panic（含超出桶覆盖范围的尾部、
     /// 主导轨缺失与配色表越界的回退路径）。
     #[test]

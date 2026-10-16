@@ -636,6 +636,66 @@ mod tests {
         assert_eq!(sum, 1);
     }
 
+    /// 性能标定（手动运行）：
+    /// `cargo test -p yinhe-editor-core --release bench_density_scale -- --ignored --nocapture`
+    #[test]
+    #[ignore = "性能标定，手动运行"]
+    fn bench_density_scale() {
+        use std::time::Instant;
+        const PER_KEY: u32 = 40_000; // × 88 key ≈ 352 万音符
+        let mut m = model();
+        for key in 21u8..=108 {
+            let mut notes: Vec<Note> = (0..PER_KEY)
+                .map(|i| {
+                    let start = (i * 31 + (i % 17) * 512) % 20_000_000;
+                    Note {
+                        id: key as u32 * 1_000_000 + i,
+                        start_tick: start,
+                        end_tick: start + 240,
+                        velocity: 100,
+                        track: (i % 16) as u16,
+                    }
+                })
+                .collect();
+            notes.sort_by_key(|n| n.start_tick);
+            m.notes[key as usize] =
+                std::sync::Arc::new(yinhe_types::NoteBucket::from_sorted(notes));
+        }
+        m.rebuild();
+        let vis = vec![true; 16];
+        println!("notes = {}", m.note_count);
+
+        // 全量重建（加载场景）。
+        let mut d = NoteDensityMap::new();
+        let t = Instant::now();
+        d.sync(&m, &vis, SYNC_BUDGET);
+        println!(
+            "full rebuild (parallel): {:?} (n_buckets={})",
+            t.elapsed(),
+            d.n_buckets
+        );
+
+        // 单 key 增量（编辑场景）。
+        for _ in 0..5 {
+            m.mark_dirty(60);
+            let t = Instant::now();
+            d.sync(&m, &vis, SYNC_BUDGET);
+            println!("incremental 1 key: {:?}", t.elapsed());
+        }
+
+        // 128 key 全脏（全选删除级联）：受 4ms 预算分帧约束。
+        for k in 0..128u8 {
+            m.mark_dirty(k);
+        }
+        let t = Instant::now();
+        d.sync(&m, &vis, SYNC_BUDGET);
+        println!(
+            "incremental 128 keys (budgeted): {:?}, pending after = {}",
+            t.elapsed(),
+            d.pending.len()
+        );
+    }
+
     /// 主导轨：桶内计数最大的轨（并列取 id 小者）；显隐过滤后随之变化。
     #[test]
     fn dominant_track_per_bucket() {
