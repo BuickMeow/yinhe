@@ -230,7 +230,6 @@ pub(crate) fn handle_input(
         && *active_tool != Tool::Pencil
         && *active_tool != Tool::Pan
         && *active_tool != Tool::Scissors
-        && *active_tool != Tool::Grid
         && *active_tool != Tool::Line
         && *active_tool != Tool::Brush
         && let Some(pos) = content_resp.interact_pointer_pos()

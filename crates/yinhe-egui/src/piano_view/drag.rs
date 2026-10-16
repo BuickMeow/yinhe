@@ -19,9 +19,7 @@ pub(crate) use frame::sel_drag_frame;
 pub(crate) use group_move::note_drag_frame;
 pub(crate) use group_resize::sel_resize_frame;
 pub(crate) use hit::{double_click_note, hit_test_note, rect_has_notes};
-pub(crate) use interact::{
-    clamped_local, cursor_tick_from_click, drag_scroll_and_clamp, on_action_bar,
-};
+pub(crate) use interact::{clamped_local, cursor_tick_from_click, drag_scroll_and_clamp};
 pub(crate) use press::sel_press;
 pub(crate) use single_move::single_note_move_frame;
 pub(crate) use single_resize::single_note_resize_frame;

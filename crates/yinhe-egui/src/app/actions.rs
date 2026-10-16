@@ -712,7 +712,7 @@ impl App {
         }
     }
 
-    /// 网格工具确认：按量化网格切开选框内音符，然后清空选框（一个 undo entry）。
+    /// 网格切割：按量化网格切开选框内音符，然后清空选框（一个 undo entry）。
     pub(crate) fn grid_split_selection(&mut self) {
         self.with_undo(t!("undo.grid_split").as_ref(), |doc| {
             doc.split_selection_by_grid()

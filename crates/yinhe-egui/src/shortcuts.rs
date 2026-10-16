@@ -377,7 +377,6 @@ pub fn action_label_key(action_id: &str) -> &'static str {
         sc::ACTION_TOOL_PENCIL => "shortcuts.tool_pencil",
         sc::ACTION_TOOL_SCISSORS => "shortcuts.tool_scissors",
         sc::ACTION_TOOL_ERASER => "shortcuts.tool_eraser",
-        sc::ACTION_TOOL_GRID => "shortcuts.tool_grid",
         sc::ACTION_TOOL_LINE => "shortcuts.tool_line",
         sc::ACTION_TOOL_BRUSH => "shortcuts.tool_brush",
         _ => "shortcuts.unknown",

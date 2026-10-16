@@ -68,7 +68,6 @@ pub const ACTION_TOOL_PAN: &str = "tool_pan";
 pub const ACTION_TOOL_PENCIL: &str = "tool_pencil";
 pub const ACTION_TOOL_SCISSORS: &str = "tool_scissors";
 pub const ACTION_TOOL_ERASER: &str = "tool_eraser";
-pub const ACTION_TOOL_GRID: &str = "tool_grid";
 pub const ACTION_TOOL_LINE: &str = "tool_line";
 pub const ACTION_TOOL_BRUSH: &str = "tool_brush";
 
@@ -112,7 +111,6 @@ pub const ALL_ACTION_IDS: &[&str] = &[
     ACTION_TOOL_PENCIL,
     ACTION_TOOL_SCISSORS,
     ACTION_TOOL_ERASER,
-    ACTION_TOOL_GRID,
     ACTION_TOOL_LINE,
     ACTION_TOOL_BRUSH,
 ];
@@ -203,9 +201,8 @@ fn default_combo(action_id: &str) -> Option<KeyCombo> {
         ACTION_TOOL_PENCIL => combo(false, false, false, "4"),
         ACTION_TOOL_SCISSORS => combo(false, false, false, "5"),
         ACTION_TOOL_ERASER => combo(false, false, false, "6"),
-        ACTION_TOOL_GRID => combo(false, false, false, "7"),
-        ACTION_TOOL_LINE => combo(false, false, false, "8"),
-        ACTION_TOOL_BRUSH => combo(false, false, false, "9"),
+        ACTION_TOOL_LINE => combo(false, false, false, "7"),
+        ACTION_TOOL_BRUSH => combo(false, false, false, "8"),
         _ => None,
     }
 }

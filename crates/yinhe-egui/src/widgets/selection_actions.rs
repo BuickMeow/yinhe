@@ -17,9 +17,10 @@ fn action_hint(action: SelectionAction) -> String {
         SelectionAction::Humanize => t!("hint.pr.sel_humanize"),
         SelectionAction::FillGaps => t!("hint.pr.sel_fill_gaps"),
         SelectionAction::MergeNotes => t!("hint.pr.sel_merge_notes"),
-        SelectionAction::GridConfirm
-        | SelectionAction::LineConfirm
-        | SelectionAction::ScissorsConfirm => t!("hint.pr.sel_confirm"),
+        SelectionAction::GridConfirm => t!("hint.pr.sel_grid_split"),
+        SelectionAction::LineConfirm | SelectionAction::ScissorsConfirm => {
+            t!("hint.pr.sel_confirm")
+        }
     }
     .to_string()
 }
@@ -33,7 +34,7 @@ pub enum SelectionAction {
     TransposeDown,
     FlipHorizontal,
     FlipVertical,
-    /// 网格工具：确认按网格切割框内音符。
+    /// 网格切割：按当前量化切分框内音符（transport bar 按钮）。
     GridConfirm,
     /// 直线工具：确认按锚点线生成音符。
     LineConfirm,
@@ -54,9 +55,9 @@ pub enum SelectionAction {
 /// 浮动工具条按钮：`(icon, action)`。
 pub type BarButton = (MaterialIcon, SelectionAction);
 
-/// 选择工具的浮动条按钮（删除/复制/移调/变速/翻转/人性化/填缝/合并）。
+/// 选择工具的浮动条按钮（删除/复制/移调/变速/翻转/人性化/填缝/合并/网格切割）。
 /// 图标旋转由 [`bar_button_rotation`] 决定（如 DOWNLOAD 倒置 180° 表示升八度）。
-pub const SELECT_BAR_BUTTONS: [BarButton; 11] = [
+pub const SELECT_BAR_BUTTONS: [BarButton; 12] = [
     (ICON_DELETE, SelectionAction::Delete),
     (ICON_CONTENT_COPY, SelectionAction::Duplicate),
     (ICON_DOWNLOAD, SelectionAction::TransposeUp),
@@ -68,6 +69,7 @@ pub const SELECT_BAR_BUTTONS: [BarButton; 11] = [
     (ICON_PERSON, SelectionAction::Humanize),
     (ICON_COMPARE_ARROWS, SelectionAction::FillGaps),
     (ICON_LINE_STYLE, SelectionAction::MergeNotes),
+    (ICON_GRID_ON, SelectionAction::GridConfirm),
 ];
 
 /// 图标旋转角（弧度）。0 = 不旋转。
@@ -101,7 +103,7 @@ const BTN_SPACING: f32 = 4.0;
 
 /// Compute the screen-space rect of the floating action bar for a given
 /// selection rect, or `None` if the bar would be clipped / off-screen.
-/// `btn_count` 决定条高（选择工具 6 个按钮，网格工具仅 ✓ 1 个）。
+/// `btn_count` 决定条高（直线/剪刀工具各 1 个确认按钮）。
 pub fn bar_rect(
     content_rect: egui::Rect,
     sel_view_rect: egui::Rect,
@@ -196,7 +198,7 @@ pub fn show_transport_buttons(
 
 /// Show a vertical floating action bar to the right of the selection box.
 ///
-/// `buttons` 决定按钮数量与动作（选择工具 6 个，网格工具仅确认）。
+/// `buttons` 决定按钮数量与动作（直线/剪刀工具各一个确认按钮）。
 /// Returns the action that was clicked, if any.
 pub fn show(
     ui: &mut egui::Ui,
@@ -349,7 +351,7 @@ mod tests {
     /// 新按钮追加末尾，数量变化时此测试会提醒同步提示文案。
     #[test]
     fn select_bar_buttons_are_unique() {
-        assert_eq!(SELECT_BAR_BUTTONS.len(), 11);
+        assert_eq!(SELECT_BAR_BUTTONS.len(), 12);
         for (i, &(_, a)) in SELECT_BAR_BUTTONS.iter().enumerate() {
             for &(_, b) in &SELECT_BAR_BUTTONS[i + 1..] {
                 assert_ne!(a, b, "动作重复绑定: {a:?}");

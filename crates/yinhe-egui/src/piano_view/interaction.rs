@@ -171,20 +171,6 @@ pub(crate) fn dispatch(
             total_ticks,
             track_selected,
         );
-    } else if effective_tool == Tool::Grid {
-        super::grid::grid_frame(
-            ui,
-            content_rect,
-            music_rect,
-            view,
-            selected,
-            sel_rect,
-            quantize,
-            ppq,
-            bar_line_data,
-            total_ticks,
-            track_selected,
-        );
     } else if effective_tool == Tool::Scissors {
         super::anchor_line::frame(
             ui,
@@ -333,7 +319,6 @@ pub(crate) fn update_hover_cursor(
     }
 
     if (effective_tool == Tool::Scissors
-        || effective_tool == Tool::Grid
         || effective_tool == Tool::Line
         || effective_tool == Tool::Brush)
         && !crate::view_interaction::pointer_over_popup(ui.ctx())

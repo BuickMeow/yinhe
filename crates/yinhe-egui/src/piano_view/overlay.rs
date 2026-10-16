@@ -190,7 +190,6 @@ pub(crate) fn draw_overlays(
             crate::theme::contrast_fg(),
             crate::theme::contrast_fg(),
             vertical,
-            None,
         );
     } else if effective_tool == crate::widgets::tools_panel::Tool::Eraser {
         super::marquee::draw_marquee_box(
@@ -205,23 +204,6 @@ pub(crate) fn draw_overlays(
             crate::theme::danger_text_bright(),
             crate::theme::danger_text_bright(),
             false,
-            None,
-        );
-    } else if effective_tool == crate::widgets::tools_panel::Tool::Grid {
-        // 网格工具：拖拽中的框内直接显示量化网格（与松手后的持久框一致）。
-        super::marquee::draw_marquee_box(
-            ui,
-            content_rect,
-            music_rect,
-            view,
-            quantize,
-            ppq,
-            bar_line_data,
-            "grid_drag",
-            crate::theme::accent_active(),
-            crate::theme::accent_active(),
-            false,
-            Some(quantize.tick_interval(ppq)),
         );
     }
 
@@ -261,7 +243,6 @@ pub(crate) fn draw_overlays(
         _ => {}
     }
     // 已提交的持久选框：任意工具下均保持可见
-    let mut persisted_last: Option<egui::Rect> = None;
     {
         let eff_rects = sel_rect.effective_rects();
         if !eff_rects.is_empty() {
@@ -273,7 +254,6 @@ pub(crate) fn draw_overlays(
                     )
                 })
                 .collect();
-            persisted_last = persisted_pixel_rects.last().copied();
             {
                 let kb_w_shift = if view.is_vertical() {
                     0.0
@@ -300,33 +280,10 @@ pub(crate) fn draw_overlays(
                     }
                 }
             }
-            // 网格工具：持久选框内叠加量化网格线。
-            if effective_tool == crate::widgets::tools_panel::Tool::Grid {
-                let interval = quantize.tick_interval(ppq);
-                let main_len = if view.is_vertical() {
-                    music_rect.height()
-                } else {
-                    music_rect.width()
-                };
-                for &(t0, t1, kl, kh) in &eff_rects {
-                    super::grid::paint_rect_grid(
-                        painter,
-                        content_rect,
-                        view,
-                        t0,
-                        t1,
-                        kl,
-                        kh,
-                        interval,
-                        main_len,
-                    );
-                }
-            }
         }
     }
 
-    // ── 浮动工具条：选择/网格用选框定位，直线/剪刀用锚点线 bbox 定位 ──
-    let grid_buttons = [(ICON_CHECK, SelectionAction::GridConfirm)];
+    // ── 浮动工具条：直线/剪刀用锚点线 bbox 定位 ──
     let line_buttons = [(ICON_CHECK, SelectionAction::LineConfirm)];
     let scissors_buttons = [(ICON_CHECK, SelectionAction::ScissorsConfirm)];
     let bar_spec: Option<(&[BarButton], Option<egui::Rect>)> = match effective_tool {
@@ -334,7 +291,6 @@ pub(crate) fn draw_overlays(
         // 此处不再绘制浮动条。
         crate::widgets::tools_panel::Tool::Select
         | crate::widgets::tools_panel::Tool::SelectVertical => None,
-        crate::widgets::tools_panel::Tool::Grid => Some((&grid_buttons[..], persisted_last)),
         crate::widgets::tools_panel::Tool::Line => pen_path.map(|p| {
             (
                 &line_buttons[..],
