@@ -42,9 +42,13 @@ impl TimelineViewBase {
     }
 
     /// The tick range visible on screen.
+    ///
+    /// 不变式 `start <= end`：窗口窄于 `left_panel_width`（combo 列等）时
+    /// `width - left_panel_width < 0`，`end` 会算出负数；clamp 到 `start`
+    /// 返回空范围，否则下游二分切片 `lo > hi` 直接 panic。
     pub fn visible_tick_range(&self, width: f32) -> (f64, f64) {
         let start = self.x_to_tick(self.left_panel_width).max(0.0);
-        let end = self.x_to_tick(width);
+        let end = self.x_to_tick(width).max(start);
         (start, end)
     }
 
@@ -117,6 +121,17 @@ mod tests {
         // start = x_to_tick(100) = 0, end = x_to_tick(1100) = 10000
         assert!((start - 0.0).abs() < 1.0);
         assert!((end - 10000.0).abs() < 1.0);
+    }
+
+    /// 窗口窄于 left_panel_width 时 end 会算出负数，必须 clamp 到 start
+    /// 返回空范围——否则 events_in_range 二分切片 lo > hi 直接 panic。
+    #[test]
+    fn test_visible_tick_range_width_below_left_panel() {
+        let mut b = make_base();
+        b.scroll_x = 500.0; // ppu=0.1 → start = 500/0.1 = 5000
+        let (start, end) = b.visible_tick_range(50.0); // 50 < left_panel_width=100
+        assert!((start - 5000.0).abs() < 1.0);
+        assert_eq!(end, start);
     }
 
     #[test]
