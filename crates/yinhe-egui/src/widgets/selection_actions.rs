@@ -15,6 +15,8 @@ fn action_hint(action: SelectionAction) -> String {
         SelectionAction::LengthDouble => t!("hint.pr.sel_length_double"),
         SelectionAction::LengthHalf => t!("hint.pr.sel_length_half"),
         SelectionAction::Humanize => t!("hint.pr.sel_humanize"),
+        SelectionAction::FillGaps => t!("hint.pr.sel_fill_gaps"),
+        SelectionAction::MergeNotes => t!("hint.pr.sel_merge_notes"),
         SelectionAction::GridConfirm
         | SelectionAction::LineConfirm
         | SelectionAction::ScissorsConfirm => t!("hint.pr.sel_confirm"),
@@ -43,14 +45,18 @@ pub enum SelectionAction {
     LengthHalf,
     /// 人性化：给选中音符注入随机偏差（时间/力度/时值）。
     Humanize,
+    /// 填缝：把框选内音符终点贴合到同轨道下一个不同起点（消除断续与叠音）。
+    FillGaps,
+    /// 合并：把框选内首尾严格相接的同 key 音符合并成一个。
+    MergeNotes,
 }
 
 /// 浮动工具条按钮：`(icon, action)`。
 pub type BarButton = (MaterialIcon, SelectionAction);
 
-/// 选择工具的浮动条按钮（删除/复制/移调/变速/翻转/人性化）。
+/// 选择工具的浮动条按钮（删除/复制/移调/变速/翻转/人性化/填缝/合并）。
 /// 图标旋转由 [`bar_button_rotation`] 决定（如 DOWNLOAD 倒置 180° 表示升八度）。
-pub const SELECT_BAR_BUTTONS: [BarButton; 9] = [
+pub const SELECT_BAR_BUTTONS: [BarButton; 11] = [
     (ICON_DELETE, SelectionAction::Delete),
     (ICON_CONTENT_COPY, SelectionAction::Duplicate),
     (ICON_DOWNLOAD, SelectionAction::TransposeUp),
@@ -59,7 +65,9 @@ pub const SELECT_BAR_BUTTONS: [BarButton; 9] = [
     (ICON_UPLOAD, SelectionAction::LengthDouble),
     (ICON_FLIP, SelectionAction::FlipHorizontal),
     (ICON_FLIP, SelectionAction::FlipVertical),
-    (ICON_AUTO_FIX, SelectionAction::Humanize),
+    (ICON_PERSON, SelectionAction::Humanize),
+    (ICON_COMPARE_ARROWS, SelectionAction::FillGaps),
+    (ICON_LINE_STYLE, SelectionAction::MergeNotes),
 ];
 
 /// 图标旋转角（弧度）。0 = 不旋转。
@@ -335,5 +343,22 @@ mod tests {
         let sel = egui::Rect::from_min_size(egui::pos2(100.0, 100.0), egui::vec2(200.0, 50.0));
         let bar = bar_rect(wide, sel, 1);
         assert!(bar.is_some());
+    }
+
+    /// 选择按钮表：动作不重复（防复制粘贴时漏改），且每个动作都有讲解文案来源。
+    /// 新按钮追加末尾，数量变化时此测试会提醒同步提示文案。
+    #[test]
+    fn select_bar_buttons_are_unique() {
+        assert_eq!(SELECT_BAR_BUTTONS.len(), 11);
+        for (i, &(_, a)) in SELECT_BAR_BUTTONS.iter().enumerate() {
+            for &(_, b) in &SELECT_BAR_BUTTONS[i + 1..] {
+                assert_ne!(a, b, "动作重复绑定: {a:?}");
+            }
+        }
+        // 讲解行必须能取到非空文案（缺失 key 会回退为 key 本身，也非空；
+        // 真正的 key 完整性由 i18n_tests 覆盖）。
+        for &(_, action) in SELECT_BAR_BUTTONS.iter() {
+            assert!(!action_hint(action).is_empty(), "缺少讲解文案: {action:?}");
+        }
     }
 }

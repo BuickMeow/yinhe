@@ -114,6 +114,8 @@ impl MenuActionFrom for crate::chrome::transport_bar::EditAction {
             EditAction::DedupWithinTrack => MenuAction::DedupWithinTrack,
             EditAction::DedupAcrossTracks => MenuAction::DedupAcrossTracks,
             EditAction::Humanize => MenuAction::Humanize,
+            EditAction::FillGaps => MenuAction::FillGaps,
+            EditAction::MergeNotes => MenuAction::MergeNotes,
             EditAction::InsertMarker => MenuAction::InsertMarker,
         }
     }

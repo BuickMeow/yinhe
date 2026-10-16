@@ -321,6 +321,20 @@ impl App {
         });
     }
 
+    /// 填缝：把框选内音符终点贴合到同轨道「下一个不同起点」。
+    pub(crate) fn fill_gaps_selected_notes(&mut self) {
+        self.with_undo(t!("undo.fill_gaps").as_ref(), |doc| {
+            doc.fill_gaps_selected()
+        });
+    }
+
+    /// 合并：把框选内首尾严格相接的同 key 音符合并成一个。
+    pub(crate) fn merge_selected_notes(&mut self) {
+        self.with_undo(t!("undo.merge_notes").as_ref(), |doc| {
+            doc.merge_adjacent_selected()
+        });
+    }
+
     // ── Copy / Cut / Paste / Select All ──
 
     /// Copy selected notes to the clipboard as an O(1) model snapshot.
@@ -842,6 +856,8 @@ impl App {
             A::DedupWithinTrack => self.dedup_overlapping_notes(false),
             A::DedupAcrossTracks => self.dedup_overlapping_notes(true),
             A::Humanize => self.humanize_selected_notes(),
+            A::FillGaps => self.fill_gaps_selected_notes(),
+            A::MergeNotes => self.merge_selected_notes(),
             A::InsertMarker => self.insert_marker_at_cursor(),
         }
     }
@@ -907,6 +923,8 @@ impl App {
             A::TransposeDown => self.transpose_selected_notes(-12),
             A::FlipVertical => self.flip_selected_notes(yinhe_editor_core::FlipAxis::Vertical),
             A::Humanize => self.humanize_selected_notes(),
+            A::FillGaps => self.fill_gaps_selected_notes(),
+            A::MergeNotes => self.merge_selected_notes(),
             A::GridConfirm => self.grid_split_selection(),
             A::LineConfirm => self.line_tool_confirm(),
             A::ScissorsConfirm => self.scissors_confirm(),

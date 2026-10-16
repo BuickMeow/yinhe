@@ -198,6 +198,8 @@ impl eframe::App for App {
                         | MenuAction::DedupWithinTrack
                         | MenuAction::DedupAcrossTracks
                         | MenuAction::Humanize
+                        | MenuAction::FillGaps
+                        | MenuAction::MergeNotes
                 )
             {
                 continue;
@@ -279,6 +281,14 @@ impl eframe::App for App {
                 }
                 MenuAction::Humanize => {
                     self.handle_edit_action(transport_bar::EditAction::Humanize);
+                    continue;
+                }
+                MenuAction::FillGaps => {
+                    self.handle_edit_action(transport_bar::EditAction::FillGaps);
+                    continue;
+                }
+                MenuAction::MergeNotes => {
+                    self.handle_edit_action(transport_bar::EditAction::MergeNotes);
                     continue;
                 }
                 MenuAction::InsertMarker => {

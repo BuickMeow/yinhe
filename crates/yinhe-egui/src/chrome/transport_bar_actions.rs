@@ -160,12 +160,16 @@ pub enum EditAction {
     DedupAcrossTracks,
     /// 人性化：给选中音符注入随机偏差（时间/力度/时值）。
     Humanize,
+    /// 填缝：把框选内音符终点贴合到同轨道下一个不同起点（消除断续与叠音）。
+    FillGaps,
+    /// 合并：把框选内首尾严格相接的同 key 音符合并成一个。
+    MergeNotes,
     /// 在光标位置插入一个标签（MIDI marker），默认名 = 小节.拍.tick。
     InsertMarker,
 }
 
 impl EditAction {
-    pub const ALL: [EditAction; 18] = [
+    pub const ALL: [EditAction; 20] = [
         EditAction::Undo,
         EditAction::Redo,
         EditAction::Cut,
@@ -183,6 +187,8 @@ impl EditAction {
         EditAction::DedupWithinTrack,
         EditAction::DedupAcrossTracks,
         EditAction::Humanize,
+        EditAction::FillGaps,
+        EditAction::MergeNotes,
         EditAction::InsertMarker,
     ];
 
@@ -207,6 +213,8 @@ impl EditAction {
             // InsertMarker 保持既有索引（不可 pin）；新增项一律追加末尾。
             EditAction::InsertMarker => 16,
             EditAction::Humanize => 17,
+            EditAction::FillGaps => 18,
+            EditAction::MergeNotes => 19,
         }
     }
 
@@ -229,6 +237,8 @@ impl EditAction {
             EditAction::DedupWithinTrack => shortcuts::ACTION_DEDUP_WITHIN_TRACK,
             EditAction::DedupAcrossTracks => shortcuts::ACTION_DEDUP_ACROSS_TRACKS,
             EditAction::Humanize => shortcuts::ACTION_HUMANIZE,
+            EditAction::FillGaps => shortcuts::ACTION_FILL_GAPS,
+            EditAction::MergeNotes => shortcuts::ACTION_MERGE_NOTES,
             EditAction::InsertMarker => "",
         }
     }
@@ -251,7 +261,9 @@ impl EditAction {
             EditAction::TransposeDown => ICON_ARROW_DOWNWARD,
             EditAction::DedupWithinTrack => ICON_STACK_OFF,
             EditAction::DedupAcrossTracks => ICON_STACK_OFF,
-            EditAction::Humanize => ICON_AUTO_FIX,
+            EditAction::Humanize => ICON_PERSON,
+            EditAction::FillGaps => ICON_COMPARE_ARROWS,
+            EditAction::MergeNotes => ICON_LINE_STYLE,
             EditAction::InsertMarker => ICON_BOOKMARK,
         }
     }
@@ -473,7 +485,7 @@ pub const FILE_GROUPS: [&[FileAction]; 5] = [
     &[FileAction::Settings, FileAction::About, FileAction::Exit],
 ];
 
-pub const EDIT_GROUPS: [&[EditAction]; 9] = [
+pub const EDIT_GROUPS: [&[EditAction]; 10] = [
     &[EditAction::Undo, EditAction::Redo],
     &[EditAction::Cut, EditAction::Copy, EditAction::Paste],
     &[EditAction::PasteAtOriginal, EditAction::PasteFlipped],
@@ -485,6 +497,7 @@ pub const EDIT_GROUPS: [&[EditAction]; 9] = [
     &[EditAction::Duplicate, EditAction::Delete],
     &[EditAction::TransposeUp, EditAction::TransposeDown],
     &[EditAction::Humanize],
+    &[EditAction::FillGaps, EditAction::MergeNotes],
     &[EditAction::DedupWithinTrack, EditAction::DedupAcrossTracks],
     &[EditAction::InsertMarker],
 ];

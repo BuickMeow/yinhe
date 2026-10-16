@@ -35,6 +35,10 @@ pub enum MenuAction {
     DedupAcrossTracks,
     /// 编辑菜单「人性化」：给选中音符注入随机偏差（时间/力度/时值）。
     Humanize,
+    /// 编辑菜单「填缝」：把框选内音符终点贴合到下一个起点。
+    FillGaps,
+    /// 编辑菜单「合并」：把框选内首尾严格相接的同 key 音符合并成一个。
+    MergeNotes,
     /// 编辑菜单「插入标签」（在光标处插入 MIDI marker）。
     InsertMarker,
     /// 播放菜单「播放/暂停」（Space）。
