@@ -11,8 +11,9 @@ mod audio;
 mod input;
 mod render;
 mod scene;
+mod theme_colors;
 
-use std::ffi::c_void;
+use std::ffi::{CStr, CString, c_void};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
@@ -363,9 +364,16 @@ pub extern "system" fn Java_com_jieneng_yinhe_1flutter_MainActivity_nativeInitCo
     mut env: jni::EnvUnowned<'local>,
     _this: jni::objects::JObject<'local>,
     context: jni::objects::JObject<'local>,
+    files_dir: jni::objects::JString<'local>,
 ) {
     init_logging();
     use jni::Outcome;
+    // 私有目录：最近文件持久化用。
+    if let Some(dir) = read_jstring(&mut env, &files_dir)
+        && !dir.is_empty()
+    {
+        scene::set_files_dir(dir);
+    }
     let outcome = env.with_env(|env| -> jni::errors::Result<usize> {
         Ok(env.get_java_vm()?.get_raw() as usize)
     });
@@ -444,4 +452,63 @@ pub extern "C" fn yinhe_playback_seconds() -> f64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_playhead_x() -> f32 {
     scene::playhead_x()
+}
+
+/// 视图快照（Dart 文本浮层用）：写入 12 个 f32，成功返回 1。
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_view_snapshot(out: *mut f32) -> i32 {
+    if out.is_null() {
+        return 0;
+    }
+    let snap = scene::view_snapshot();
+    unsafe {
+        std::ptr::copy_nonoverlapping(snap.as_ptr(), out, snap.len());
+    }
+    1
+}
+
+/// 最近文件 JSON（堆分配，调用方用 `yinhe_free_string` 释放）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_recent_json() -> *mut std::ffi::c_char {
+    to_c_string(scene::recent_json())
+}
+
+/// 轨道面板 JSON（堆分配，调用方用 `yinhe_free_string` 释放）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_tracks_json() -> *mut std::ffi::c_char {
+    to_c_string(scene::tracks_json())
+}
+
+/// 释放本库返回的堆字符串。
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_free_string(ptr: *mut std::ffi::c_char) {
+    if ptr.is_null() {
+        return;
+    }
+    unsafe {
+        drop(CString::from_raw(ptr));
+    }
+}
+
+/// 打开指定路径的 MIDI（最近文件列表点击用）。
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_open_path(path: *const std::ffi::c_char) {
+    if path.is_null() {
+        return;
+    }
+    let path = unsafe { CStr::from_ptr(path) };
+    match path.to_str() {
+        Ok(p) => scene::open_midi(p.to_string()),
+        Err(e) => log::error!("打开路径无效: {e}"),
+    }
+}
+
+fn to_c_string(s: String) -> *mut std::ffi::c_char {
+    match CString::new(s) {
+        Ok(c) => c.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
 }

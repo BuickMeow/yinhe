@@ -22,6 +22,16 @@ pub const AR_TRACK_PANEL_W: f32 = 168.0;
 /// AR 行高（逻辑像素，触屏友好的旧壳值）。
 pub const AR_LANE_HEIGHT: f32 = 56.0;
 
+/// 轨道面板用的精简轨道信息（Dart 浮层绘制）。
+pub struct TrackInfoLite {
+    pub name: String,
+    pub port: u8,
+    pub channel: u8,
+    pub color: [f32; 4],
+    pub muted: bool,
+    pub soloed: bool,
+}
+
 /// 渲染线程与触摸手势共享的场景数据。
 pub struct RenderScene {
     /// 当前文档模型（None = 无文档，渲染清屏）。
@@ -40,6 +50,10 @@ pub struct RenderScene {
     pub total_ticks: f64,
     /// 轨道数（AR 布局/vendor 层构建用）。
     pub num_tracks: usize,
+    /// 轨道面板信息（名称/端口/颜色/M/S）。
+    pub tracks: Vec<TrackInfoLite>,
+    /// 每拍 tick 数（网格对齐用）。
+    pub ppq: u32,
 }
 
 impl Default for RenderScene {
@@ -53,6 +67,8 @@ impl Default for RenderScene {
             track_visible: Vec::new(),
             total_ticks: 0.0,
             num_tracks: 0,
+            tracks: Vec::new(),
+            ppq: 480,
         }
     }
 }
@@ -115,6 +131,7 @@ fn load_document(path: &str) -> Result<Document, String> {
     doc.mark_loaded();
     // 与演示文档一致的 conductor 色（保证两台机器/两种来源配色相同）。
     doc.sync_track_caches_with_conductor_color([0.85, 0.85, 0.88, 1.0]);
+    push_recent(path);
     Ok(doc)
 }
 
@@ -147,6 +164,30 @@ fn apply_document(doc: &Document, min_ticks: f64) {
     let visible = doc.edit.pr_visible();
     let num_tracks = model.tracks.len();
     let note_count = model.note_count;
+    let ppq = model.meta.ppq;
+    let tracks: Vec<TrackInfoLite> = model
+        .tracks
+        .iter()
+        .enumerate()
+        .map(|(i, t)| TrackInfoLite {
+            name: t.name.to_string(),
+            port: t.port,
+            channel: t.channel,
+            color: colors.get(i).copied().unwrap_or([0.5, 0.5, 0.5, 1.0]),
+            muted: doc
+                .edit
+                .track_overrides
+                .get(i)
+                .map(|o| o.muted)
+                .unwrap_or(false),
+            soloed: doc
+                .edit
+                .track_overrides
+                .get(i)
+                .map(|o| o.soloed)
+                .unwrap_or(false),
+        })
+        .collect();
 
     let Ok(mut s) = scene().lock() else {
         return;
@@ -159,6 +200,8 @@ fn apply_document(doc: &Document, min_ticks: f64) {
     s.track_visible = visible;
     s.total_ticks = total_ticks;
     s.num_tracks = num_tracks;
+    s.tracks = tracks;
+    s.ppq = ppq;
     drop(s);
 
     log::info!("文档就绪: {note_count} 音符, {total_ticks:.0} tick, {num_tracks} 轨");
@@ -239,4 +282,212 @@ fn add_demo_notes(doc: &mut Document) -> u32 {
     }
 
     max_tick
+}
+
+// ── 最近文件（主页列表，持久化到私有目录 recent.txt）──
+
+struct RecentEntry {
+    path: String,
+    opened: u64,
+}
+
+static RECENT: OnceLock<Mutex<Vec<RecentEntry>>> = OnceLock::new();
+static FILES_DIR: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+
+fn recent_slot() -> &'static Mutex<Vec<RecentEntry>> {
+    RECENT.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn files_dir_slot() -> &'static Mutex<Option<String>> {
+    FILES_DIR.get_or_init(|| Mutex::new(None))
+}
+
+/// Kotlin 侧传入私有目录（用于最近文件持久化）。
+pub fn set_files_dir(dir: String) {
+    if let Ok(mut g) = files_dir_slot().lock() {
+        *g = Some(dir);
+    }
+    load_recent();
+}
+
+fn recent_file_path() -> Option<String> {
+    files_dir_slot()
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|d| format!("{d}/recent.txt")))
+}
+
+fn load_recent() {
+    let Some(path) = recent_file_path() else {
+        return;
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let mut list = Vec::new();
+    for line in text.lines() {
+        let mut parts = line.splitn(2, '\t');
+        let (Some(p), Some(t)) = (parts.next(), parts.next()) else {
+            continue;
+        };
+        let Ok(opened) = t.trim().parse::<u64>() else {
+            continue;
+        };
+        if !p.is_empty() {
+            list.push(RecentEntry {
+                path: p.to_string(),
+                opened,
+            });
+        }
+    }
+    list.truncate(10);
+    if let Ok(mut slot) = recent_slot().lock() {
+        *slot = list;
+    }
+}
+
+fn save_recent() {
+    let Some(path) = recent_file_path() else {
+        return;
+    };
+    let Ok(list) = recent_slot().lock() else {
+        return;
+    };
+    let mut text = String::new();
+    for e in list.iter() {
+        text.push_str(&e.path);
+        text.push('\t');
+        text.push_str(&e.opened.to_string());
+        text.push('\n');
+    }
+    if let Err(e) = std::fs::write(&path, text) {
+        log::error!("最近文件写入失败: {e}");
+    }
+}
+
+/// 记录一次成功打开（去重、置顶、限 10 条、持久化）。
+fn push_recent(path: &str) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if let Ok(mut list) = recent_slot().lock() {
+        list.retain(|e| e.path != path);
+        list.insert(
+            0,
+            RecentEntry {
+                path: path.to_string(),
+                opened: now,
+            },
+        );
+        list.truncate(10);
+    }
+    save_recent();
+}
+
+/// 最近文件 JSON（Dart 解析）：`[{"name","path","time"}]`。
+pub fn recent_json() -> String {
+    let Ok(list) = recent_slot().lock() else {
+        return "[]".into();
+    };
+    let mut out = String::from("[");
+    for (i, e) in list.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        let name = e.path.rsplit('/').next().unwrap_or(&e.path);
+        out.push_str(&format!(
+            "{{\"name\":\"{}\",\"path\":\"{}\",\"time\":{}}}",
+            json_escape(name),
+            json_escape(&e.path),
+            e.opened
+        ));
+    }
+    out.push(']');
+    out
+}
+
+/// 轨道面板 JSON：`[{"index","name","port","channel","color":[r,g,b,a],"muted","soloed"}]`。
+pub fn tracks_json() -> String {
+    let Ok(s) = scene().lock() else {
+        return "[]".into();
+    };
+    let mut out = String::from("[");
+    for (i, t) in s.tracks.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!(
+            "{{\"index\":{},\"name\":\"{}\",\"port\":{},\"channel\":{},\"color\":[{},{},{},{}],\"muted\":{},\"soloed\":{}}}",
+            i,
+            json_escape(&t.name),
+            t.port,
+            t.channel,
+            t.color[0],
+            t.color[1],
+            t.color[2],
+            t.color[3],
+            t.muted,
+            t.soloed
+        ));
+    }
+    out.push(']');
+    out
+}
+
+/// 视图快照（Dart 文本浮层用），固定 12 个 f32：
+/// `[mode, ppu, scroll_x, scroll_y, key_height, left_panel_w, lane_height,
+///   total_ticks, ppq, key0_y, time_sig_num, time_sig_den]`
+pub fn view_snapshot() -> [f32; 12] {
+    let Ok(s) = scene().lock() else {
+        return [0.0; 12];
+    };
+    let ppq = s.ppq as f32;
+    match s.view_mode {
+        ViewMode::Pianoroll => [
+            1.0,
+            s.pr_view.base.pixels_per_tick,
+            s.pr_view.base.scroll_x,
+            s.pr_view.base.scroll_y,
+            s.pr_view.key_height,
+            s.pr_view.keyboard_width(),
+            0.0,
+            s.total_ticks as f32,
+            ppq,
+            s.pr_view.key_to_y(0),
+            4.0,
+            4.0,
+        ],
+        ViewMode::Arrangement => [
+            0.0,
+            s.arr_view.base.pixels_per_tick,
+            s.arr_view.base.scroll_x,
+            s.arr_view.base.scroll_y,
+            0.0,
+            s.arr_view.base.left_panel_width,
+            s.arr_view.lane_height(),
+            s.total_ticks as f32,
+            ppq,
+            0.0,
+            4.0,
+            4.0,
+        ],
+    }
+}
+
+/// 极简 JSON 字符串转义（双引号/反斜杠/控制字符）。
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {}
+            _ => out.push(c),
+        }
+    }
+    out
 }

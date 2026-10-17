@@ -17,11 +17,12 @@ use yinhe_wgpu::InstanceRenderer;
 use yinhe_wgpu::pianoroll::{
     SUMMARY_BLOCK_TICKS, build_notes, build_render_job, build_summary_notes, select_summary_level,
 };
-use yinhe_wgpu::vertex::NoteInstance;
+use yinhe_wgpu::vertex::{DrawInstance, NoteInstance};
 
 use crate::Gpu;
 use crate::OwnedWindow;
 use crate::scene::ViewMode;
+use crate::theme_colors as tc;
 
 /// 音符层缓存键里的视图标签（防止 PR/AR 切换时缓存串层）。
 const VIEW_TAG_PIANOROLL: u64 = 1;
@@ -134,9 +135,11 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
             s.track_colors.clone(),
             s.track_visible.clone(),
             s.num_tracks,
+            s.ppq,
         )
     };
-    let (view_mode, model, pr_view, arr_view, track_colors, track_visible, num_tracks) = snapshot;
+    let (view_mode, model, pr_view, arr_view, track_colors, track_visible, num_tracks, ppq) =
+        snapshot;
 
     // ── 取帧纹理 ──
     let frame = match t.surface.get_current_texture() {
@@ -163,7 +166,7 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
     if let Some(model) = &model {
         match view_mode {
             ViewMode::Pianoroll => {
-                upload_pianoroll(t, model, &pr_view, &track_colors, &track_visible, w, h)
+                upload_pianoroll(t, model, &pr_view, &track_colors, &track_visible, ppq, w, h)
             }
             ViewMode::Arrangement => upload_arrangement(
                 t,
@@ -172,6 +175,7 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
                 &track_colors,
                 &track_visible,
                 num_tracks,
+                ppq,
                 w,
                 h,
             ),
@@ -188,10 +192,10 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
                 depth_slice: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.0,
-                        g: 0.0,
-                        b: 0.0,
-                        a: 0.0,
+                        r: 240.0 / 255.0,
+                        g: 240.0 / 255.0,
+                        b: 244.0 / 255.0,
+                        a: 1.0,
                     }),
                     store: wgpu::StoreOp::Store,
                 },
@@ -221,15 +225,18 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
 }
 
 /// PR 视图：uniforms + 音符层（含 LOD 摘要）上传。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 fn upload_pianoroll(
     t: &mut Target,
     model: &YinModel,
     view: &PianoRollView,
     track_colors: &[[f32; 4]],
     track_visible: &[bool],
+    ppq: u32,
     w: f32,
     h: f32,
 ) {
+    upload_pianoroll_decor(t, view, ppq, w, h);
     let job = build_render_job(
         w as u32,
         h as u32,
@@ -285,10 +292,10 @@ fn upload_pianoroll(
         }
         t.notes_cache_key = key;
     }
-    t.renderer.ensure_layers(1);
+    t.renderer.ensure_layers(2);
     let notes_buf = &t.notes_buf;
     t.renderer
-        .upload_note_layer(0, key, |out| out.extend_from_slice(notes_buf));
+        .upload_note_layer(1, key, |out| out.extend_from_slice(notes_buf));
 }
 
 /// AR 视图：uniforms + 轨道布局（offsets/行高）+ 音符层上传。
@@ -300,6 +307,7 @@ fn upload_arrangement(
     track_colors: &[[f32; 4]],
     track_visible: &[bool],
     num_tracks: usize,
+    ppq: u32,
     w: f32,
     h: f32,
 ) {
@@ -307,6 +315,7 @@ fn upload_arrangement(
     if num_tracks == 0 {
         return;
     }
+    upload_arrangement_decor(t, view, track_colors, num_tracks, ppq, w, h);
     let lane_h = view.lane_height();
     let offsets: Vec<f32> = (0..num_tracks).map(|i| i as f32 * lane_h).collect();
     // ★ shader 用 row_heights 计算行高；不传会退化成 1px 高的音符。
@@ -360,8 +369,156 @@ fn upload_arrangement(
         );
         t.notes_cache_key = key;
     }
-    t.renderer.ensure_layers(1);
+    t.renderer.ensure_layers(2);
     let notes_buf = &t.notes_buf;
     t.renderer
-        .upload_note_layer(0, key, |out| out.extend_from_slice(notes_buf));
+        .upload_note_layer(1, key, |out| out.extend_from_slice(notes_buf));
+}
+
+// ── 装饰层（wgpu decor，画在音符下层，像素级对齐桌面视觉）──
+
+/// PR 装饰：键盘列 + 时间轴网格。
+fn upload_pianoroll_decor(t: &mut Target, view: &PianoRollView, ppq: u32, w: f32, h: f32) {
+    let kb_w = view.keyboard_width();
+    let kh = view.key_height;
+    let mut items: Vec<DrawInstance> = Vec::with_capacity(320);
+    // 底层背景（surface 清屏透明，统一在 decor 里铺浅色底）。
+    items.push(DrawInstance::solid_rect(0.0, 0.0, w, h, tc::BG));
+    if kh > 0.0 {
+        for key in 0..=127u8 {
+            let y = view.key_to_y(key);
+            if y + kh < 0.0 || y > h {
+                continue;
+            }
+            let color = if yinhe_types::is_black_key(key) {
+                tc::KEY_BLACK
+            } else {
+                tc::KEY_WHITE
+            };
+            items.push(DrawInstance::solid_rect(0.0, y, kb_w, kh, color));
+        }
+        // 键盘右缘分隔线。
+        items.push(DrawInstance::solid_rect(
+            kb_w - 1.0,
+            0.0,
+            1.0,
+            h,
+            tc::TEXT_PRIMARY,
+        ));
+    }
+    push_time_grid(&mut items, &view.base, ppq, w, h, kb_w, true);
+    // 装饰数量小且随视口变化：每帧重建（cache_key=0 强制）。
+    t.renderer
+        .upload_decor_layer(0, 0, |out| out.extend_from_slice(&items));
+}
+
+/// AR 装饰：轨道行背景/色条 + 时间轴网格。
+fn upload_arrangement_decor(
+    t: &mut Target,
+    view: &ArrangementView,
+    track_colors: &[[f32; 4]],
+    num_tracks: usize,
+    ppq: u32,
+    w: f32,
+    h: f32,
+) {
+    let panel = view.base.left_panel_width;
+    let lane_h = view.lane_height();
+    let mut items: Vec<DrawInstance> = Vec::with_capacity(256);
+    // 底层背景（surface 清屏透明，统一在 decor 里铺浅色底）。
+    items.push(DrawInstance::solid_rect(0.0, 0.0, w, h, tc::BG));
+    if lane_h > 0.0 {
+        let (first, last) = yinhe_types::ArrangementView::visible_track_range_static(
+            view.base.scroll_y,
+            h,
+            lane_h,
+            num_tracks,
+        );
+        for idx in first..last {
+            let y = yinhe_types::ArrangementView::lane_y_static(idx, view.base.scroll_y, lane_h);
+            if idx % 2 == 0 {
+                items.push(DrawInstance::solid_rect(
+                    0.0,
+                    y,
+                    panel,
+                    lane_h,
+                    tc::STRIPE_BG,
+                ));
+            }
+            let color = track_colors
+                .get(idx)
+                .copied()
+                .unwrap_or([0.5, 0.5, 0.5, 1.0]);
+            items.push(DrawInstance::solid_rect(0.0, y, 6.0, lane_h, color));
+        }
+        items.push(DrawInstance::solid_rect(
+            panel - 1.0,
+            0.0,
+            1.0,
+            h,
+            tc::TEXT_PRIMARY,
+        ));
+    }
+    push_time_grid(&mut items, &view.base, ppq, w, h, panel, false);
+    t.renderer
+        .upload_decor_layer(0, 0, |out| out.extend_from_slice(&items));
+}
+
+/// 时间轴网格线（与桌面 `paint_grid_lines` 同规则；默认 4/4 定拍）。
+///
+/// 级别：合并小节线 / 小节线 / 拍线 / 十六分线 / tick 线，
+/// 由 ppu 与 `GRID_MIN_SPACING` 决定（与桌面一致）。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
+fn push_time_grid(
+    items: &mut Vec<DrawInstance>,
+    base: &yinhe_types::TimelineViewBase,
+    ppq: u32,
+    w: f32,
+    h: f32,
+    start_x: f32,
+    with_sub_tick: bool,
+) {
+    let ppu = base.pixels_per_tick;
+    if ppu <= 0.001 {
+        return;
+    }
+    let tpb = ppq.max(1);
+    let measure = tpb * 4;
+    let measure_px = measure as f32 * ppu;
+    let mut divisor = 1u32;
+    while (measure_px * divisor as f32) < tc::GRID_MIN_SPACING && divisor < 16 {
+        divisor *= 2;
+    }
+    let merged = divisor > 1;
+    let show_beat = !merged;
+    let show_sub = with_sub_tick && show_beat && (tpb as f32 * ppu) >= tc::GRID_MIN_SPACING;
+    let show_tick = with_sub_tick && show_sub && ppu >= 10.0;
+    let sub_ticks = (tpb / 4).max(1);
+    let step: u32 = if show_tick {
+        1
+    } else if show_sub {
+        sub_ticks
+    } else if show_beat {
+        tpb
+    } else {
+        (measure * divisor / 2).max(1)
+    };
+    let (tick_start, tick_end) = base.visible_tick_range(w);
+    let mut tick = ((tick_start.max(0.0) as u32) / step) * step;
+    while (tick as f64) <= tick_end {
+        let x = base.tick_to_x(tick as f64);
+        if x >= start_x {
+            let color = if tick.is_multiple_of(measure) {
+                tc::GRID_MEASURE
+            } else if tick.is_multiple_of(tpb) {
+                tc::GRID_BEAT
+            } else if tick.is_multiple_of(sub_ticks) {
+                tc::GRID_SUB
+            } else {
+                tc::GRID_TICK
+            };
+            items.push(DrawInstance::solid_rect(x, 0.0, 1.0, h, color));
+        }
+        tick = tick.saturating_add(step.max(1));
+    }
 }
