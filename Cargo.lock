@@ -7922,6 +7922,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "yinhe-flutter"
+version = "0.1.0"
+dependencies = [
+ "android_logger",
+ "bytemuck",
+ "jni 0.22.4",
+ "log",
+ "pollster 1.0.1",
+ "wgpu",
+]
+
+[[package]]
 name = "yinhe-fonts"
 version = "0.1.0"
 dependencies = [

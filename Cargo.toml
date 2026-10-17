@@ -14,6 +14,7 @@ members = [
     "crates/yinhe-editor-core",
     "crates/yinhe-egui",
     "crates/yinhe-android",
+    "crates/yinhe-flutter",
     "crates/yinhe-clap",
     "crates/yinhe-mixer",
     "crates/yinhe-vst3",

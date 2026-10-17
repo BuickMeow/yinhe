@@ -1,0 +1,20 @@
+[package]
+name = "yinhe-flutter"
+version.workspace = true
+edition = "2024"
+description = "Yinhe Flutter(Android) 纹理桥：wgpu 渲染结果直接送入 Flutter Texture"
+
+[lib]
+# 仅作为 Android cdylib 加载：libyinhe_flutter.so
+crate-type = ["cdylib"]
+
+[dependencies]
+wgpu = { workspace = true }
+bytemuck = { workspace = true }
+pollster = { workspace = true }
+log = "0.4"
+jni = "0.22"
+
+[target.'cfg(target_os = "android")'.dependencies]
+# 安卓上 stdout 不可见，日志必须走 logcat。
+android_logger = "0.14"
