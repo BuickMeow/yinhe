@@ -68,6 +68,38 @@ final CStrDart soundfontPath = bridge.lookupFunction<CStrNative, CStrDart>(
   'yinhe_soundfont_path',
 );
 
+/// 歌曲标题（空串 = 未设置）。
+final CStrDart songTitle = bridge.lookupFunction<CStrNative, CStrDart>(
+  'yinhe_song_title',
+);
+
+typedef IntArgNative = ffi.Int32 Function(ffi.Int32);
+typedef IntArgDart = int Function(int);
+
+/// 设置“显示轨道”过滤（-1 = 全部轨道）。
+final IntArgDart setDisplayTrack = bridge
+    .lookupFunction<IntArgNative, IntArgDart>('yinhe_set_display_track');
+
+typedef ActionNative = ffi.Int32 Function();
+typedef ActionDart = int Function();
+
+/// 撤销一步。
+final ActionDart undo = bridge.lookupFunction<ActionNative, ActionDart>(
+  'yinhe_undo',
+);
+
+/// 重做一步。
+final ActionDart redo = bridge.lookupFunction<ActionNative, ActionDart>(
+  'yinhe_redo',
+);
+
+typedef RenderFrameNative = ffi.Int32 Function();
+typedef RenderFrameDart = int Function();
+
+/// Flutter 帧驱动渲染：渲染一帧并同步等待完成。
+final RenderFrameDart renderFrame = bridge
+    .lookupFunction<RenderFrameNative, RenderFrameDart>('yinhe_render_frame');
+
 typedef FreeNative = ffi.Void Function(ffi.Pointer<Utf8>);
 typedef FreeDart = void Function(ffi.Pointer<Utf8>);
 

@@ -28,17 +28,25 @@ class PlayheadPainter extends CustomPainter {
   bool shouldRepaint(covariant PlayheadPainter oldDelegate) => false;
 }
 
-/// 时间标尺：顶部小节号 + 拍刻度（合并规则与桌面 time_ruler 一致）。
+/// 时间标尺（与桌面 `time_ruler` 一致）：只有小节/拍/子拍/tick 文本标签，
+/// 无刻度线；背景铺 `track_bg`（含左侧面板/键盘上方留白）。
 class RulerPainter extends CustomPainter {
   RulerPainter(this.snap) : super(repaint: snap);
 
   final ValueNotifier<List<double>> snap;
 
+  /// 标尺高度（逻辑像素，与桌面 `RULER_H` 一致）。
   static const double height = 30.0;
   static const double minLabelSpacing = 38.0;
+  static const int subBeatDiv = 4;
 
   @override
   void paint(Canvas canvas, Size size) {
+    // 背景：整条（含面板/键盘上方留白）。
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, size.width, size.height),
+      Paint()..color = YinheTheme.trackBg,
+    );
     final s = snap.value;
     if (s.length < 12 || size.width <= 0) {
       return;
@@ -50,82 +58,82 @@ class RulerPainter extends CustomPainter {
     if (ppu <= 0) {
       return;
     }
-    final measureTicks = ppq * 4;
-    var divisor = 1.0;
-    while (measureTicks * ppu * divisor < minLabelSpacing && divisor < 64) {
+    final tpb = ppq.round().clamp(1, 1 << 24);
+    final measure = tpb * 4;
+    final measurePx = measure * ppu;
+    var divisor = 1;
+    while (measurePx * divisor < minLabelSpacing && divisor < 64) {
       divisor *= 2;
     }
-    final barStep = measureTicks * divisor;
+    final barStep = measure * divisor;
 
-    // 背景 + 底线：只覆盖时间区（左侧轨道面板不遮挡）。
-    canvas.drawRect(
-      Rect.fromLTWH(kbW, 0, size.width - kbW, size.height),
-      Paint()..color = YinheTheme.bg,
-    );
-    canvas.drawLine(
-      Offset(kbW, size.height - 0.5),
-      Offset(size.width, size.height - 0.5),
-      Paint()
-        ..color = YinheTheme.lineFg
-        ..strokeWidth = 1,
-    );
+    final showBeat = tpb * ppu >= minLabelSpacing;
+    final subTicks = (tpb ~/ subBeatDiv).clamp(1, measure);
+    final showSub = subTicks * ppu >= minLabelSpacing;
+    final showTick = ppu >= minLabelSpacing;
 
-    double xOfTick(double tick) => tick * ppu - scrollX + kbW;
     final startTick = ((-kbW + scrollX) / ppu).clamp(0.0, double.infinity);
     final endTick = ((size.width - kbW + scrollX) / ppu).clamp(
       0.0,
       double.infinity,
     );
+    double xOf(int tick) => tick * ppu - scrollX + kbW;
+    // 桌面：文本带中心在标尺高度 0.72 处、左对齐 +2px。
+    final yCenter = size.height * 0.72;
 
-    final barPaint = Paint()
-      ..color = YinheTheme.textMuted
-      ..strokeWidth = 1;
-    final beatPaint = Paint()
-      ..color = YinheTheme.lineFg
-      ..strokeWidth = 1;
-
-    // 拍线（仅在未合并小节标签时）。
-    if (divisor == 1.0) {
-      var t = (startTick / ppq).floor() * ppq;
-      while (t <= endTick + ppq) {
-        final x = xOfTick(t);
-        if (x >= kbW && x <= size.width && (t % measureTicks != 0)) {
-          canvas.drawLine(
-            Offset(x, size.height - 7),
-            Offset(x, size.height),
-            beatPaint,
-          );
+    final step = showTick
+        ? 1
+        : showSub
+        ? subTicks
+        : showBeat
+        ? tpb
+        : barStep;
+    var tick = (startTick.toInt() ~/ step) * step;
+    final endI = endTick.toInt();
+    while (tick <= endI + step) {
+      final x = xOf(tick);
+      if (x >= kbW && x <= size.width + 40) {
+        final isMeasure = tick % barStep == 0;
+        final isBeat = !isMeasure && tick % tpb == 0;
+        String? label;
+        Color? color;
+        if (isMeasure) {
+          label = '${tick ~/ measure + 1}';
+          color = YinheTheme.measureLabel;
+        } else if (isBeat && showBeat) {
+          final bar = tick ~/ measure + 1;
+          final beat = (tick % measure) ~/ tpb + 1;
+          label = '$bar.$beat';
+          color = YinheTheme.textLabel;
+        } else if (showSub) {
+          final bar = tick ~/ measure + 1;
+          final beat = (tick % measure) ~/ tpb + 1;
+          if (showTick) {
+            label = '$bar.$beat.${(tick % tpb).toString().padLeft(3, '0')}';
+            color = YinheTheme.tickLabel;
+          } else {
+            final sub = (tick % tpb) ~/ subTicks;
+            label = '$bar.$beat.$sub';
+            color = YinheTheme.textDisabled;
+          }
         }
-        t += ppq;
+        if (label != null) {
+          _label(canvas, label, Offset(x + 2, yCenter), color!);
+        }
       }
-    }
-
-    // 小节刻度 + 小节号。
-    var tick = (startTick / barStep).floor() * barStep;
-    while (tick <= endTick + barStep) {
-      final x = xOfTick(tick);
-      if (x >= kbW && x <= size.width) {
-        canvas.drawLine(
-          Offset(x, size.height - 13),
-          Offset(x, size.height),
-          barPaint,
-        );
-        final bar = (tick / measureTicks).floor() + 1;
-        _label(canvas, '$bar', Offset(x + 3, 2));
-      }
-      tick += barStep;
+      tick += step;
     }
   }
 
-  void _label(Canvas canvas, String text, Offset pos) {
+  void _label(Canvas canvas, String text, Offset pos, Color color) {
     final tp = TextPainter(
       text: TextSpan(
         text: text,
-        style: TextStyle(fontSize: 10, color: YinheTheme.textLabel),
+        style: TextStyle(fontSize: 10, color: color),
       ),
       textDirection: TextDirection.ltr,
     )..layout();
-    tp.paint(canvas, pos);
+    tp.paint(canvas, Offset(pos.dx, pos.dy - tp.height / 2));
   }
 
   @override
@@ -341,7 +349,9 @@ class AutomationPainter extends CustomPainter {
 
   /// null = 力度模式。
   final AutomationLaneData? lane;
-  final List<Offset> velocity;
+
+  /// 力度条（每音符一条）：(tick, length, velocity01)。
+  final List<(double, double, double)> velocity;
   final Color color;
   final ValueNotifier<List<double>> snap;
 
@@ -371,21 +381,32 @@ class AutomationPainter extends CustomPainter {
 
     final l = lane;
     if (l == null) {
-      // 力度条：每个 tick 一根 3px 竖条（底部对齐）。
-      final paint = Paint()..color = color;
-      for (final p in velocity) {
-        final x = xOf(p.dx);
-        if (x < -4) {
+      // 力度条（与桌面 wgpu 一致）：每音符一条空心描边柱，
+      // 宽度 = gate × ppu（最小 2px），高度 ∝ (velocity-1)/126。
+      final paint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0
+        ..color = color;
+      for (final (tick, len, vel01) in velocity) {
+        final rawLeft = xOf(tick);
+        final rawRight = xOf(tick + len);
+        if (rawRight < -4) {
           continue;
         }
-        if (x > size.width + 4) {
+        if (rawLeft > size.width + 4) {
           break;
         }
-        final top = yOf(p.dy);
-        canvas.drawRect(
-          Rect.fromLTWH(x - 1.5, top, 3, size.height - top),
-          paint,
-        );
+        final left = rawLeft.clamp(0.0, size.width);
+        var width = rawRight - left;
+        if (width < 2.0) {
+          width = 2.0;
+        }
+        final top = yOf(vel01);
+        var height = size.height - top;
+        if (height < 1.0) {
+          height = 1.0;
+        }
+        canvas.drawRect(Rect.fromLTWH(left, top, width, height), paint);
       }
       return;
     }

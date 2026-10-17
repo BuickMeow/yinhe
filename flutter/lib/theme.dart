@@ -15,11 +15,14 @@ class YinheTheme {
   static Color get btnBg => Color.lerp(bg, _black, 0.05) ?? bg;
   static Color get lineFg => Color.lerp(bg, _black, 0.07) ?? bg;
   static Color get stripeBg => Color.lerp(bg, _black, 0.06) ?? bg;
+  static Color get trackBg => Color.lerp(bg, _black, 0.12) ?? bg;
   static Color get textSecondary => Color.lerp(text, bg, 0.14) ?? text;
   static Color get textMuted => Color.lerp(text, bg, 0.22) ?? text;
   static Color get textLabel => Color.lerp(text, bg, 0.36) ?? text;
   static Color get textDisabled => Color.lerp(text, bg, 0.66) ?? text;
   static Color get textFaint => Color.lerp(text, bg, 0.9) ?? text;
+  static Color get measureLabel => Color.lerp(text, bg, 0.12) ?? text;
+  static Color get tickLabel => Color.lerp(bg, text, 0.22) ?? text;
   static Color get selectedBg => Color.lerp(bg, accent, 0.30) ?? bg;
   static Color get primaryButtonBg =>
       Color.lerp(accent, Colors.white, 0.72) ?? accent;

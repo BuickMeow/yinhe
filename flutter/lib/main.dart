@@ -86,8 +86,8 @@ class _StudioShellState extends State<StudioShell>
   /// combo 索引：0 = Velocity（默认），1..=N = 自动化 lane。
   int _autoIndex = 0;
 
-  /// 力度条数据（tick, velocity01）。
-  List<Offset> _velocityBars = const [];
+  /// 力度条数据：(tick, length, velocity01)。
+  List<(double, double, double)> _velocityBars = const [];
 
   /// 收起自动化栏（最大化画布）。
   bool _autoCollapsed = false;
@@ -95,6 +95,18 @@ class _StudioShellState extends State<StudioShell>
   /// 拖动中的锚点预览（tick, value）。
   final ValueNotifier<(double, double)?> _autoPreview = ValueNotifier(null);
   bool _draggingAnchor = false;
+
+  /// 当前工具（PR 工具选择；索引对应 `_toolDefs`）。
+  int _tool = 0;
+
+  /// 量化档位显示（桌面：每文档瞬态，默认自动）。
+  String _quantizeLabel = '自动';
+
+  /// “显示轨道”过滤（-1 = 全部轨道）。
+  int _displayTrack = -1;
+
+  /// 歌曲标题（meta.name；空 = 未设置）。
+  String _songTitle = '';
 
   final ValueNotifier<double> _playhead = ValueNotifier<double>(-1);
   final ValueNotifier<List<double>> _snap = ValueNotifier<List<double>>(
@@ -119,8 +131,16 @@ class _StudioShellState extends State<StudioShell>
     _channel.setMethodCallHandler(_onNativeCall);
     _init();
     _ticker = createTicker((_) {
+      // 帧驱动同步：先让 wgpu 渲染当前状态的一帧（同步等待完成），再用同一状态
+      // 刷新浮层，保证纹理与 Flutter 浮层出自同一份场景数据、同一帧合成。
+      if (!_showHome) {
+        rust.renderFrame();
+      }
       _playhead.value = rust.playheadX();
-      _snap.value = _readSnapshot();
+      final snap = _readSnapshot();
+      if (!_sameSnapshot(snap)) {
+        _snap.value = snap;
+      }
       _updateTimecode();
     })..start();
     _recent = _readRecent();
@@ -156,6 +176,20 @@ class _StudioShellState extends State<StudioShell>
       return _snap.value;
     }
     return List<double>.generate(12, (i) => _snapPtr[i]);
+  }
+
+  /// 视图快照是否与当前一致（避免无变化时触发整层重绘）。
+  bool _sameSnapshot(List<double> next) {
+    final cur = _snap.value;
+    if (identical(cur, next)) {
+      return true;
+    }
+    for (var i = 0; i < next.length; i++) {
+      if (i >= cur.length || cur[i] != next[i]) {
+        return false;
+      }
+    }
+    return true;
   }
 
   List<RecentItem> _readRecent() {
@@ -203,6 +237,7 @@ class _StudioShellState extends State<StudioShell>
     });
     _loadAutomation();
     _loadVelocity();
+    _loadSongTitle();
   }
 
   Future<void> _onNativeCall(MethodCall call) async {
@@ -217,8 +252,10 @@ class _StudioShellState extends State<StudioShell>
           _showHome = false;
           _viewMode = kViewArrangement;
           _activeTrack = null;
+          _displayTrack = -1;
         });
         rust.setViewMode(kViewArrangement);
+        rust.setDisplayTrack(-1);
         Future.delayed(const Duration(milliseconds: 800), _refreshDocumentMeta);
       case 'onSoundFontPicked':
         setState(() => _soundFontName = path.split('/').last);
@@ -267,9 +304,11 @@ class _StudioShellState extends State<StudioShell>
       _showHome = false;
       _viewMode = kViewArrangement;
       _activeTrack = null;
+      _displayTrack = -1;
       _playing = false;
     });
     _updateTimecode();
+    rust.setDisplayTrack(-1);
     Future.delayed(const Duration(milliseconds: 600), _refreshDocumentMeta);
   }
 
@@ -285,8 +324,10 @@ class _StudioShellState extends State<StudioShell>
       _showHome = false;
       _viewMode = kViewArrangement;
       _activeTrack = null;
+      _displayTrack = -1;
     });
     rust.setViewMode(kViewArrangement);
+    rust.setDisplayTrack(-1);
     Future.delayed(const Duration(milliseconds: 800), _refreshDocumentMeta);
   }
 
@@ -329,7 +370,7 @@ class _StudioShellState extends State<StudioShell>
     });
   }
 
-  /// 读取当前轨道的力度条数据（按 tick 聚合）。
+  /// 读取当前轨道的力度条数据（每音符一条）。
   void _loadVelocity() {
     final rows = _tracks.value;
     if (rows.isEmpty) {
@@ -338,15 +379,16 @@ class _StudioShellState extends State<StudioShell>
     }
     final track = (_activeTrack ?? 0).clamp(0, rows.length - 1);
     final ptr = rust.velocityJson(track);
-    var bars = const <Offset>[];
+    var bars = const <(double, double, double)>[];
     if (ptr != ffi.nullptr) {
       try {
         final list = jsonDecode(ptr.toDartString()) as List<dynamic>;
         bars = [
           for (final e in list)
-            Offset(
+            (
               ((e as List<dynamic>)[0] as num).toDouble(),
               (e[1] as num).toDouble(),
+              (e[2] as num).toDouble(),
             ),
         ];
       } catch (_) {
@@ -359,6 +401,23 @@ class _StudioShellState extends State<StudioShell>
       return;
     }
     setState(() => _velocityBars = bars);
+  }
+
+  /// 读取歌曲标题（meta.name）。
+  void _loadSongTitle() {
+    final ptr = rust.songTitle();
+    if (ptr == ffi.nullptr) {
+      return;
+    }
+    try {
+      final title = ptr.toDartString();
+      if (!mounted) {
+        return;
+      }
+      setState(() => _songTitle = title);
+    } finally {
+      rust.freeString(ptr);
+    }
   }
 
   void _setAutoCollapsed(bool collapsed) {
@@ -612,10 +671,8 @@ class _StudioShellState extends State<StudioShell>
     if (_dragging || _draggingAnchor) {
       return;
     }
+    // 只写入事件；纹理与浮层统一在下一帧同步刷新（帧驱动，输入侧已就地 clamp）。
     rust.touch(kind, p.dx, p.dy, pointer);
-    // 视图快照与演奏指示线同步刷新：缓解 Flutter 浮层与 wgpu 纹理的相位差。
-    _snap.value = _readSnapshot();
-    _playhead.value = rust.playheadX();
   }
 
   int? _rowAt(Offset p) {
@@ -742,9 +799,12 @@ class _StudioShellState extends State<StudioShell>
                   child: LayoutBuilder(
                     builder: (context, constraints) {
                       final size = constraints.biggest;
+                      // 内容画布 = 画布区减去顶部标尺条（Rust 坐标系从标尺下方开始）。
+                      final contentH = (size.height - RulerPainter.height)
+                          .clamp(1.0, double.infinity);
                       final dpr = MediaQuery.devicePixelRatioOf(context);
                       final pixelW = (size.width * dpr).round();
-                      final pixelH = (size.height * dpr).round();
+                      final pixelH = (contentH * dpr).round();
                       if (_reportedPixelSize?.width != pixelW ||
                           _reportedPixelSize?.height != pixelH) {
                         _reportedPixelSize = Size(
@@ -755,12 +815,16 @@ class _StudioShellState extends State<StudioShell>
                           'w': pixelW,
                           'h': pixelH,
                           'lw': size.width,
-                          'lh': size.height,
+                          'lh': contentH,
                         });
                       }
                       return Stack(
                         children: [
-                          Positioned.fill(
+                          Positioned(
+                            left: 0,
+                            right: 0,
+                            top: RulerPainter.height,
+                            bottom: 0,
                             child: GestureDetector(
                               behavior: HitTestBehavior.translucent,
                               onTapUp: (d) => _handleCanvasTap(d.localPosition),
@@ -793,7 +857,11 @@ class _StudioShellState extends State<StudioShell>
                               ),
                             ),
                           if (!_showHome)
-                            Positioned.fill(
+                            Positioned(
+                              left: 0,
+                              right: 0,
+                              top: RulerPainter.height,
+                              bottom: 0,
                               child: IgnorePointer(
                                 child: CustomPaint(
                                   painter: LabelsPainter(
@@ -850,14 +918,28 @@ class _StudioShellState extends State<StudioShell>
     );
   }
 
-  /// 上侧栏：播放/暂停、停止、时间码；右上角主页（PR 时另有走带入口）。
+  /// 上侧栏：左 = 视图入口（AR 主页 / PR 返回走带）+ 走带；
+  /// 右（从右往左）= 曲名框、重做、撤销、工具（仅 PR）、量化。
   Widget _buildTopBar() {
+    final isPr = _viewMode == kViewPianoroll;
     return Container(
       height: 42,
       color: Color.lerp(YinheTheme.bg, Colors.black, 0.04),
       padding: const EdgeInsets.symmetric(horizontal: 6),
       child: Row(
         children: [
+          // 左侧：AR = 主页图标；PR = 返回走带（左箭头，与主页返回一致）。
+          IconButton(
+            onPressed: isPr
+                ? () => _setView(kViewArrangement)
+                : () => setState(() => _showHome = true),
+            icon: Icon(isPr ? Icons.arrow_back : Icons.home),
+            color: YinheTheme.text,
+            tooltip: isPr ? '返回走带' : '主页',
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+          ),
           IconButton(
             onPressed: _togglePlay,
             icon: Icon(_playing ? Icons.pause : Icons.play_arrow),
@@ -895,73 +977,192 @@ class _StudioShellState extends State<StudioShell>
               ),
             ),
           ),
-          // 当前文件（标题栏位置）。
-          if (_fileName != null)
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                child: Text(
-                  _fileName!,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: YinheTheme.textDisabled,
-                    fontSize: 12,
-                  ),
-                ),
-              ),
-            )
-          else
-            const Spacer(),
-          if (_viewMode == kViewPianoroll) ...[
-            _ViewTab(
-              label: '走带',
-              selected: false,
-              onTap: () => _setView(kViewArrangement),
-            ),
-            const SizedBox(width: 6),
-          ],
-          _ViewTab(
-            label: '主页',
-            selected: false,
-            onTap: () => setState(() => _showHome = true),
-          ),
+          const Spacer(),
+          _buildQuantizeButton(),
+          if (isPr) _buildToolButton(),
+          _iconAction(Icons.undo, '撤销', _undo),
+          _iconAction(Icons.redo, '重做', _redo),
+          _buildSongBox(),
         ],
       ),
     );
   }
-}
 
-class _ViewTab extends StatelessWidget {
-  const _ViewTab({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
+  Widget _iconAction(IconData icon, String tooltip, VoidCallback onTap) {
+    return IconButton(
+      onPressed: onTap,
+      icon: Icon(icon),
+      color: YinheTheme.textSecondary,
+      tooltip: tooltip,
+      visualDensity: VisualDensity.compact,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+    );
+  }
 
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: selected ? YinheTheme.accent : YinheTheme.controlBg,
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: selected ? Colors.white : YinheTheme.textSecondary,
-              fontSize: 13,
+  /// 量化按钮（与桌面同规则：自动/关闭/2 分频链 + 三连音链，只改吸附档位）。
+  Widget _buildQuantizeButton() {
+    return PopupMenuButton<String>(
+      tooltip: '量化（吸附档位）',
+      padding: EdgeInsets.zero,
+      onSelected: (v) => setState(() => _quantizeLabel = v),
+      itemBuilder: (_) => [
+        const PopupMenuItem(value: '关闭', child: Text('关闭吸附')),
+        const PopupMenuItem(value: '自动', child: Text('自动（随缩放）')),
+        for (final (label, ticks) in _quantizePresets())
+          PopupMenuItem(value: label, child: Text('$label（$ticks tick）')),
+      ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.motion_photos_on,
+              size: 16,
+              color: YinheTheme.textSecondary,
             ),
+            const SizedBox(width: 4),
+            Text(
+              _quantizeLabel,
+              style: TextStyle(color: YinheTheme.textLabel, fontSize: 13),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 常用量化档位（与桌面 `presets_for_ppq` 同规则）。
+  List<(String, int)> _quantizePresets() {
+    final whole = _ppq.round().clamp(1, 1 << 24) * 4;
+    final out = <(String, int)>[];
+    void chain(int start) {
+      var den = start;
+      while (den <= whole && whole % den == 0) {
+        out.add(('1/$den', whole ~/ den));
+        den *= 2;
+      }
+    }
+
+    chain(1);
+    chain(6);
+    return out;
+  }
+
+  /// 工具选择按钮（仅 PR，与桌面 `tools_panel::ALL_TOOLS` 同序）。
+  Widget _buildToolButton() {
+    return PopupMenuButton<int>(
+      tooltip: '工具',
+      padding: EdgeInsets.zero,
+      onSelected: (v) => setState(() => _tool = v),
+      itemBuilder: (_) => [
+        for (var i = 0; i < _toolDefs.length; i++)
+          PopupMenuItem(
+            value: i,
+            child: Row(
+              children: [
+                Icon(
+                  _toolDefs[i].$1,
+                  size: 18,
+                  color: i == _tool
+                      ? YinheTheme.accent
+                      : YinheTheme.textSecondary,
+                ),
+                const SizedBox(width: 8),
+                Text(_toolDefs[i].$2),
+              ],
+            ),
+          ),
+      ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Icon(
+          _toolDefs[_tool].$1,
+          size: 18,
+          color: YinheTheme.textSecondary,
+        ),
+      ),
+    );
+  }
+
+  /// 曲名框：显示歌曲标题（或当前过滤轨道）；点击更改“显示哪条音符”。
+  Widget _buildSongBox() {
+    final rows = _tracks.value;
+    final filtering = _displayTrack >= 0 && _displayTrack < rows.length;
+    final text = filtering
+        ? rows[_displayTrack].name
+        : (_songTitle.isNotEmpty ? _songTitle : (_fileName ?? '未命名'));
+    return PopupMenuButton<int>(
+      tooltip: '显示轨道',
+      padding: EdgeInsets.zero,
+      onSelected: _selectDisplayTrack,
+      itemBuilder: (_) => [
+        const PopupMenuItem(value: -1, child: Text('全部轨道')),
+        for (var i = 0; i < rows.length; i++)
+          PopupMenuItem(
+            value: i,
+            child: Text('${i.toString().padLeft(3, '0')}  ${rows[i].name}'),
+          ),
+      ],
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        constraints: const BoxConstraints(maxWidth: 190),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: YinheTheme.controlBg,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(
+          text,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: filtering ? YinheTheme.accent : YinheTheme.text,
+            fontSize: 12,
           ),
         ),
       ),
     );
   }
+
+  /// 选择“显示轨道”（-1 = 全部）；同步自动化/力度条跟随。
+  void _selectDisplayTrack(int track) {
+    setState(() {
+      _displayTrack = track;
+      if (track >= 0) {
+        _activeTrack = track;
+      }
+    });
+    rust.setDisplayTrack(track);
+    _loadAutomation();
+    _loadVelocity();
+  }
+
+  /// 撤销一步（含快照/音频刷新）。
+  void _undo() {
+    if (rust.undo() == 1) {
+      _refreshDocumentMeta();
+    }
+  }
+
+  /// 重做一步（含快照/音频刷新）。
+  void _redo() {
+    if (rust.redo() == 1) {
+      _refreshDocumentMeta();
+    }
+  }
+
+  /// PR 工具定义（图标 + 名称，与桌面顺序一致）。
+  static const List<(IconData, String)> _toolDefs = [
+    (Icons.highlight_alt, '选择'),
+    (Icons.select_all, '垂直选择'),
+    (Icons.pan_tool, '手形'),
+    (Icons.edit, '铅笔'),
+    (Icons.content_cut, '剪刀'),
+    (Icons.auto_fix_normal, '橡皮擦'),
+    (Icons.pentagon, '钢笔'),
+    (Icons.brush, '刷子'),
+  ];
 }
