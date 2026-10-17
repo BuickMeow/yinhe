@@ -185,7 +185,11 @@ impl App {
             } else {
                 EventListTarget::ConductorChord
             };
-            let label = "undo.insert_lyrics_event";
+            let label = if lyrics {
+                "undo.insert_lyrics_event"
+            } else {
+                "undo.insert_chord_event"
+            };
             doc.event_list_edit_with_undo(target, label, |d| {
                 if lyrics {
                     d.insert_conductor_lyrics_event(tick);
