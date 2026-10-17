@@ -55,7 +55,7 @@ pub(crate) fn visible_tick_range(uniforms: &Uniforms) -> (u32, u32) {
 }
 
 pub(crate) struct CullState {
-    pipeline: ComputePipeline,
+    pipeline: Option<ComputePipeline>,
     /// 供 note_pipeline 复用为 render pipeline 的 group 1（顶点阶段索引间接读）。
     pub(crate) bind_group_layout: BindGroupLayout,
     /// 顶点阶段专用的「all_instances 只读」bind group layout（单 binding）。
@@ -160,11 +160,6 @@ pub(crate) struct CullState {
 
 impl CullState {
     pub(crate) fn new(device: &Device) -> Self {
-        let cull_shader = device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("cull_shader"),
-            source: ShaderSource::Wgsl(include_str!("../cull.wgsl").into()),
-        });
-
         let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("cull_bind_group_layout"),
             entries: &[
@@ -258,20 +253,10 @@ impl CullState {
             }],
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            label: Some("cull_pipeline_layout"),
-            bind_group_layouts: &[Some(&bind_group_layout)],
-            immediate_size: 0,
-        });
-
-        let pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
-            label: Some("cull_pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &cull_shader,
-            entry_point: Some("main"),
-            compilation_options: PipelineCompilationOptions::default(),
-            cache: None,
-        });
+        // 计算管线不在此创建：推迟到首次全量上传（`ensure_pipeline`）。
+        // 原因：部分环境（如 Android 模拟器的 MoltenVK）编译使用 workgroup
+        // 共享内存的 compute shader 会失败并导致 device lost；CPU 渲染路径
+        // 从不使用 cull，推迟创建后这些环境可以正常渲染。
 
         // Dispatch args + per-key note count + c_lo, KEY_COUNT slots × 256 bytes each.
         // Slot layout: [wg_x, wg_y, wg_z, count, c_lo] (20 bytes) + padding.
@@ -342,7 +327,7 @@ impl CullState {
             .map(|_| SummaryLevel::new())
             .collect();
         Self {
-            pipeline,
+            pipeline: None,
             bind_group_layout,
             all_bind_group_layout,
             per_key_bind_groups: (0..KEY_COUNT).map(|_| None).collect(),
@@ -425,6 +410,36 @@ impl CullState {
     /// slices it into per-key segments. Each key gets its own storage buffer
     /// (grown on demand) and bind group, keeping every binding under the
     /// `max_storage_buffer_binding_size` limit regardless of total note count.
+    /// 惰性创建 cull 计算管线（首次全量上传时调用）。
+    ///
+    /// 推迟创建的原因：部分环境（Android 模拟器的 MoltenVK）编译使用
+    /// workgroup 共享内存的 compute shader 会失败并导致 device lost；
+    /// CPU 渲染路径从不使用 cull，推迟创建后这些环境可以正常渲染。
+    fn ensure_pipeline(&mut self, device: &Device) {
+        if self.pipeline.is_some() {
+            return;
+        }
+        let shader = device.create_shader_module(ShaderModuleDescriptor {
+            label: Some("cull_shader"),
+            source: ShaderSource::Wgsl(include_str!("../cull.wgsl").into()),
+        });
+        let layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Some("cull_pipeline_layout"),
+            bind_group_layouts: &[Some(&self.bind_group_layout)],
+            immediate_size: 0,
+        });
+        let pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
+            label: Some("cull_pipeline"),
+            layout: Some(&layout),
+            module: &shader,
+            entry_point: Some("main"),
+            compilation_options: PipelineCompilationOptions::default(),
+            cache: None,
+        });
+        tracing::info!("GPU cull 计算管线已创建（首次全量上传，惰性）");
+        self.pipeline = Some(pipeline);
+    }
+
     pub(crate) fn upload_all_notes(
         &mut self,
         device: &Device,
@@ -434,6 +449,7 @@ impl CullState {
         per_key_offsets: &[u32; KEY_COUNT + 1],
         key_revisions: &[u64; KEY_COUNT],
     ) -> Result<(), GpuBudgetError> {
+        self.ensure_pipeline(device);
         for key in 0u8..=MAX_KEY {
             let start = per_key_offsets[key as usize] as usize;
             let end = per_key_offsets[key as usize + 1] as usize;
@@ -457,6 +473,7 @@ impl CullState {
         key: u8,
         notes: &[NoteInstance],
     ) -> Result<(), GpuBudgetError> {
+        self.ensure_pipeline(device);
         // 空 key 不建缓冲：省 3 次 create_buffer + bind_group，首帧 128→非空数
         if notes.is_empty() {
             for buf in [
@@ -784,7 +801,10 @@ impl CullState {
 
         // Per-key cull dispatches. Only keys with visible chunks are dispatched
         // (info[slot] == 0 means chunk_count == 0 → skip).
-        cull_pass.set_pipeline(&self.pipeline);
+        let Some(pipeline) = &self.pipeline else {
+            return false;
+        };
+        cull_pass.set_pipeline(pipeline);
         for key in key_lo..=key_hi {
             let Some(bg) = &self.per_key_bind_groups[key as usize] else {
                 continue;
@@ -1021,6 +1041,7 @@ impl CullState {
         uniform_buffer: &Buffer,
         summaries: &[(Vec<NoteInstance>, [u32; KEY_COUNT + 1])],
     ) -> Result<(), GpuBudgetError> {
+        self.ensure_pipeline(device);
         let shared = CullShared {
             uniform_buffer,
             cull_layout: &self.bind_group_layout,
@@ -1065,6 +1086,7 @@ impl CullState {
         key: u8,
         notes: &[NoteInstance],
     ) -> bool {
+        self.ensure_pipeline(device);
         let shared = CullShared {
             uniform_buffer,
             cull_layout: &self.bind_group_layout,
@@ -1123,7 +1145,10 @@ impl CullState {
             label: Some("summary_cull"),
             timestamp_writes: None,
         });
-        cull_pass.set_pipeline(&self.pipeline);
+        let Some(pipeline) = &self.pipeline else {
+            return false;
+        };
+        cull_pass.set_pipeline(pipeline);
         for key in key_lo..=key_hi {
             let Some(bg) = &summary.per_key_bind_groups[key as usize] else {
                 continue;
